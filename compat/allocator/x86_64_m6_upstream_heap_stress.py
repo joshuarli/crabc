@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import argparse
 import hashlib
 import importlib.util
 import json
@@ -63,7 +64,32 @@ def require_pass(record, name: str) -> None:
         raise harness.HarnessError(f"{name}: {record['kind']} status={record['status']}; raw evidence in {ARTIFACTS}")
 
 
-def run_differential() -> int:
+def parse_cases(arguments: list[str]) -> tuple[tuple[tuple[int, int, int], ...], bool]:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--case", nargs=3, type=int, metavar=("WORKERS", "SCALE", "ITERATIONS"))
+    parsed = parser.parse_args(arguments)
+    if parsed.case is None:
+        return MATRIX, False
+    selected = tuple(parsed.case)
+    if selected not in MATRIX:
+        parser.error("--case must select one tuple from the upstream Heap stress matrix")
+    return (selected,), True
+
+
+def write_receipt(cases_to_run, focused_case, products, evidence_cases):
+    if focused_case:
+        return None
+    if cases_to_run != MATRIX:
+        raise harness.HarnessError("partial upstream Heap stress matrix cannot publish a receipt")
+    receipt = receipts.write_receipt(harness.ROOT, RUNNER, ARTIFACTS, products, evidence_cases,
+        {"workers": "1,2,4,8", "scale-iterations": "1:8,10:8,101:1", "rolling-heaps": "4",
+         "watchdog-seconds": str(WATCHDOG_SECONDS), "boundary": "native-mi-adapter", "profile": "release", "workload-assertions": "active"}, True)
+    receipts.read_receipt(harness.ROOT, RUNNER)
+    return receipt
+
+
+def run_differential(cases_to_run: tuple[tuple[int, int, int], ...] = MATRIX,
+                     focused_case: bool = False) -> int:
     execution = harness.require_native_x86_64(require_image_identity=True)
     seal = receipts.source_seal(harness.ROOT)
     pin = harness.load_pin()
@@ -88,7 +114,7 @@ def run_differential() -> int:
             products[path.name] = retained
         provenance = output / "inputs.json"
         provenance.write_text(json.dumps({"upstream": pin, "source_hashes": SOURCE_HASHES,
-            "matrix": MATRIX, "watchdog_seconds": WATCHDOG_SECONDS,
+            "matrix": cases_to_run, "watchdog_seconds": WATCHDOG_SECONDS,
             "control_source_sha256": hashlib.sha256(retained_control.read_bytes()).hexdigest(),
             "execution": execution, "source": seal,
             "boundary": "mi_* native adapter; host musl provides pthreads and C process substrate",
@@ -149,7 +175,7 @@ def run_differential() -> int:
                 elif stderr:
                     raise harness.HarnessError(f"{case}: unexpected callback-route diagnostics; raw evidence in {output}")
                 cases.append((case, 0, logs))
-        for workers, scale, iterations in MATRIX:
+        for workers, scale, iterations in cases_to_run:
             expected = (f"Using {workers} threads with a {scale}% load-per-thread and {iterations} iterations"
                         " (allow large objects) (using 4 rolling heaps)\n").encode()
             for backend, binary in (("c", c_driver), ("rust", rust_driver)):
@@ -165,17 +191,18 @@ def run_differential() -> int:
                          "native-mi-adapter.a": output / "native-mi-adapter.a", "inputs.json": provenance})
         if receipts.source_seal(harness.ROOT) != seal:
             raise harness.HarnessError("source changed during upstream Heap stress execution")
-        receipt = receipts.write_receipt(harness.ROOT, RUNNER, ARTIFACTS, products, cases,
-            {"workers": "1,2,4,8", "scale-iterations": "1:8,10:8,101:1", "rolling-heaps": "4",
-             "watchdog-seconds": str(WATCHDOG_SECONDS), "boundary": "native-mi-adapter", "profile": "release", "workload-assertions": "active"}, True)
-        receipts.read_receipt(harness.ROOT, RUNNER)
-        print(f"unmodified upstream Heap stress: {len(MATRIX)} C/Rust pairs passed; {receipt}")
-    return len(MATRIX)
+        receipt = write_receipt(cases_to_run, focused_case, products, cases)
+        if focused_case:
+            print(f"focused unmodified upstream Heap stress case passed: {cases_to_run[0]}; raw evidence in {output}")
+        else:
+            print(f"unmodified upstream Heap stress: {len(MATRIX)} C/Rust pairs passed; {receipt}")
+    return len(cases_to_run)
 
 
 if __name__ == "__main__":
     try:
-        run_differential()
+        selected_cases, focused_case = parse_cases(sys.argv[1:])
+        run_differential(selected_cases, focused_case)
     except (harness.HarnessError, stress.EvidenceError, receipts.ReceiptError) as error:
         print(f"Heap stress failed: {error}", file=sys.stderr)
         raise SystemExit(1)
