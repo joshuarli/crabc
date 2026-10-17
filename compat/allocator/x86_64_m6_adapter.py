@@ -282,6 +282,22 @@ def compare_recorded_replay(recorded_stdout, recorded_stderr, replayed_stdout, r
             raise harness.HarnessError(f"retained {side} {stream} differs on replay")
 
 
+def valid_client_arguments(profile):
+    return ("--valid-domain", "debug-1") if profile == "debug-1" else ()
+
+
+def strip_valid_client_profile_marker(profile, side, stderr):
+    if profile != "debug-1":
+        return stderr
+    if side not in ("c", "native"):
+        raise harness.HarnessError("unknown M6 valid-client backend")
+    expected = f"m6-valid-domain profile=debug-1 backend={side} guarded_precise={int(side == 'c')}"
+    markers = re.findall(r"^m6-valid-domain .*?$", stderr, re.MULTILINE)
+    if markers != [expected]:
+        raise harness.HarnessError(f"debug-1 {side} valid-client source/profile marker differs")
+    return re.sub(r"^m6-valid-domain .*?\n", "", stderr, count=1, flags=re.MULTILINE)
+
+
 def compare_runs(c_run, native_run, profile):
     traces = {side: m7.parse_options_trace(result["stdout"], side, TRACE_BEGIN, TRACE_END)
               for side, result in (("c", c_run), ("native", native_run))}
@@ -300,19 +316,8 @@ def compare_runs(c_run, native_run, profile):
         if traces["c"][key] != "1,0":
             raise harness.HarnessError(f"{profile} {key} did not return to its pre-allocation count: "
                 f"{traces['c'][key]}")
-    stderr = {"c": c_run["stderr"], "native": native_run["stderr"]}
-    if profile == "debug-1":
-        expected = {
-            "c": "m6-valid-domain profile=debug-1 backend=c guarded_precise=1",
-            "native": "m6-valid-domain profile=debug-1 backend=native guarded_precise=0",
-        }
-        for side, record in (("c", c_run), ("native", native_run)):
-            marker = expected[side]
-            markers = re.findall(r"^m6-valid-domain .*?$", record["stderr"], re.MULTILINE)
-            if markers != [marker]:
-                raise harness.HarnessError(f"debug-1 {side} valid-client source/profile marker differs")
-            stderr[side] = re.sub(r"^m6-valid-domain .*?\n", "", record["stderr"], count=1,
-                                  flags=re.MULTILINE)
+    stderr = {side: strip_valid_client_profile_marker(profile, side, record["stderr"])
+              for side, record in (("c", c_run), ("native", native_run))}
     for stream, c_value, native_value in (
         ("stdout", stdout["c"], stdout["native"]),
         ("stderr", stderr["c"], stderr["native"]),
@@ -502,9 +507,7 @@ def run_profiles(profiles, output=ARTIFACTS):
             passed(f"{backend}-link", [compiler, str(caller), str(allocator), "-pthread", "-o", str(binary)])
             products[f"{profile}-{backend}"] = binary
             products[f"{profile}-{backend}.o"] = caller
-            run_arguments = [str(binary)]
-            if profile == "debug-1":
-                run_arguments += ["--valid-domain", "debug-1"]
+            run_arguments = [str(binary), *valid_client_arguments(profile)]
             result, logs = record(output, f"{profile}-{backend}-run", run_arguments, directory, runtime=True)
             status = result.get("status", 1) if result["kind"] == "process" else 1
             cases.append((f"{profile}-{backend}-run", status, logs))
@@ -652,8 +655,8 @@ def read_and_replay(profiles, replay=False):
                 argv = [str(binary)]
                 if backend == "native-contract":
                     argv += ["--exact", CONTRACT, "--nocapture", "--test-threads=1"]
-                elif profile == "debug-1":
-                    argv += ["--valid-domain", "debug-1"]
+                else:
+                    argv += valid_client_arguments(profile)
                 result, logs = record(scratch, name, argv, scratch, runtime=True,
                     timeout=900 if backend == "native-contract" else 600)
                 if result["kind"] != "process" or result["status"] != 0:

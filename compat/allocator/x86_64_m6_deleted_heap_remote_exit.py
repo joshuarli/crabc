@@ -13,6 +13,7 @@ import tempfile
 import run as harness
 import x86_64_m4_gate as m4
 import x86_64_m7_gate as m7
+import x86_64_m6_adapter as m6_adapter
 from x86_64_m6_heap_convenience import record
 from x86_64_m6_upstream_heap_stress import load_module, stress
 
@@ -111,12 +112,20 @@ def ownership_matrix(driver, artifacts, runner, profiles, modes, begin, end, exp
             raise harness.HarnessError("ownership receipt profile or workload selection differs")
         expected_cases = []
         for profile in profiles:
-            expected_cases.extend(f"{profile}-{name}" for name in ("oracle-build", "native-build"))
+            expected_cases.append(f"{profile}-oracle-build")
+            if profile == "debug-1":
+                expected_cases.append("debug-1-source-debug-preprocess")
+            expected_cases.append(f"{profile}-native-build")
             for backend in ("c", "native"):
                 expected_cases.extend(f"{profile}-{backend}-{step}" for step in ("compile", "link", *modes))
             expected_cases.extend(f"{profile}-{mode}-observations" for mode in modes)
         if receipt.case_ids() != expected_cases:
             raise harness.HarnessError("ownership receipt lacks the ordered full build/runtime/observation roster")
+        if "debug-1" in profiles:
+            inputs = harness.read_json(receipt.path.parent / "products" / "inputs.json")
+            proof = harness.read_json(receipt.path.parent / "products" / "debug-1-source-debug-preprocess.json")
+            proof = {**proof, "stdout": stress.byte_record_payload(proof["stdout"], "source debug proof").decode()}
+            m4.source_debug_option_scope(proof, inputs)
         print("Heap ownership exact-source physical receipt: PASS", flush=True)
         if replay:
             execution = harness.require_native_x86_64(require_image_identity=True)
@@ -133,9 +142,13 @@ def ownership_matrix(driver, artifacts, runner, profiles, modes, begin, end, exp
                     binary.chmod(0o755)
                     for mode in modes:
                         case = f"{name}-{mode}"
-                        result, _ = record(scratch, case, [str(binary), *([] if mode == "joined" else [mode])], scratch, True)
+                        arguments = [*m6_adapter.valid_client_arguments(profile),
+                                     *([] if mode == "joined" else [mode])]
+                        result, _ = record(scratch, case, [str(binary), *arguments], scratch, True)
                         if result["kind"] != "process" or result["status"] != 0:
                             raise harness.HarnessError(f"retained ownership caller {case} failed; raw {scratch}")
+                        m6_adapter.strip_valid_client_profile_marker(
+                            profile, backend, stress.byte_record_payload(result["stderr"], case).decode())
                         recorded = next(c for c in receipt.cases if c["id"] == case)
                         for stream in ("stdout", "stderr"):
                             log = next(p for p in recorded["logs"] if p.endswith("." + stream))
@@ -157,13 +170,14 @@ def ownership_matrix(driver, artifacts, runner, profiles, modes, begin, end, exp
         retained = output / original.name
         shutil.copy2(original, retained)
         products[retained.name] = retained
+    compiler = harness.require_tool("musl-gcc")
     inputs = output / "inputs.json"
     inputs.write_text(json.dumps({"source": seal, "execution": execution, "upstream": pin,
         "profiles": profiles, "modes": modes, "parameters": parameters,
+        "compiler": compiler, "source_directory": str(source),
         "fixture_sha256": hashlib.sha256(driver.read_bytes()).hexdigest()}, indent=2) + "\n")
     products[inputs.name] = inputs
     print(f"Heap ownership raw products: {output}", flush=True)
-    compiler = harness.require_tool("musl-gcc")
     for profile in profiles:
         directory = output / profile
         directory.mkdir()
@@ -181,6 +195,18 @@ def ownership_matrix(driver, artifacts, runner, profiles, modes, begin, end, exp
         oracle_ok = build("oracle-build", [compiler, *flags, "-c", str(source / "src/static.c"), "-o", str(oracle)])
         if oracle_ok:
             products[f"{profile}-oracle.o"] = oracle
+        if profile == "debug-1":
+            proof_command = [compiler, "-std=c11", *m4.api_profile_flags(profile), "-DMI_LIBC_MUSL=1",
+                             "-I", str(source / "include"), "-E", str(source / "src/static.c")]
+            proof, proof_logs = record(output, "debug-1-source-debug-preprocess", proof_command, source)
+            cases.append(("debug-1-source-debug-preprocess",
+                          proof["status"] if proof["kind"] == "process" else 1, proof_logs))
+            if proof["kind"] != "process" or proof["status"] != 0:
+                raise harness.HarnessError("debug-1 source option-use preprocessing failed")
+            decoded_proof = {**proof, "stdout": stress.byte_record_payload(
+                proof["stdout"], "debug-1 source debug preprocess").decode()}
+            m4.source_debug_option_scope(decoded_proof, {"compiler": compiler, "source_directory": source})
+            products[proof_logs[0].name] = proof_logs[0]
         library = directory / "native-mi-adapter.a"
         target = directory / "cargo-target"
         native_ok = False
@@ -198,7 +224,9 @@ def ownership_matrix(driver, artifacts, runner, profiles, modes, begin, end, exp
                 continue
             binary = directory / backend
             caller = directory / f"{backend}.o"
-            if not build(f"{backend}-compile", [compiler, *flags, "-c", str(driver), "-o", str(caller)]):
+            client_flags = ["-DCRABC_NATIVE_MI_ADAPTER=1"] if backend == "native" else []
+            if not build(f"{backend}-compile", [compiler, *flags, *client_flags,
+                                                 "-c", str(driver), "-o", str(caller)]):
                 continue
             products[f"{profile}-{backend}.o"] = caller
             if not build(f"{backend}-link", [compiler, str(caller), str(allocator), "-pthread", "-o", str(binary)]):
@@ -206,7 +234,9 @@ def ownership_matrix(driver, artifacts, runner, profiles, modes, begin, end, exp
             products[f"{profile}-{backend}"] = binary
             for mode in modes:
                 name = f"{profile}-{backend}-{mode}"
-                result, logs = record(output, name, [str(binary), *([] if mode == "joined" else [mode])], directory, True)
+                arguments = [*m6_adapter.valid_client_arguments(profile),
+                             *([] if mode == "joined" else [mode])]
+                result, logs = record(output, name, [str(binary), *arguments], directory, True)
                 cases.append((name, result["status"] if result["kind"] == "process" else 1, logs))
                 observations[backend, mode] = result
                 print(f"Heap ownership {name}: {result['kind']} status {result['status']}", flush=True)
@@ -222,7 +252,12 @@ def ownership_matrix(driver, artifacts, runner, profiles, modes, begin, end, exp
                     continue
                 raw_stdout[backend] = stress.byte_record_payload(result["stdout"], backend)
                 stdout = raw_stdout[backend].decode()
-                diagnostics[backend] = stress.byte_record_payload(result["stderr"], backend)
+                raw_stderr = stress.byte_record_payload(result["stderr"], backend).decode()
+                try:
+                    diagnostics[backend] = m6_adapter.strip_valid_client_profile_marker(profile, backend, raw_stderr).encode()
+                except harness.HarnessError as error:
+                    failure.append(str(error))
+                    diagnostics[backend] = raw_stderr.encode()
                 if diagnostics[backend]:
                     failure.append(f"{backend}: ownership caller reported allocator diagnostics")
                 try:

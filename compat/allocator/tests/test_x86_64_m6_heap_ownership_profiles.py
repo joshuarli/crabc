@@ -58,7 +58,8 @@ class OwnershipProfileReceiptTests(unittest.TestCase):
 
 
 class OwnershipProfileProducerTests(unittest.TestCase):
-    def run_producer(self, root, profiles, expected, *, failure=None, native_change=False, diagnostic=b""):
+    def run_producer(self, root, profiles, expected, *, failure=None, native_change=False, diagnostic=b"",
+                     commands=None, fixture=deletion, modes=("joined",)):
         source = root / "source"
         (source / "include").mkdir(parents=True)
         for name in ("mimalloc.h", "mimalloc-stats.h"):
@@ -66,30 +67,42 @@ class OwnershipProfileProducerTests(unittest.TestCase):
         (source / "LICENSE").write_text("fixture license\n")
         seal = {"revision": "a" * 40, "worktree_sha256": "b" * 64}
         def execute(argv, **kwargs):
+            if commands is not None:
+                commands.append(argv)
             stdout, stderr, status = b"", b"", 0
             if "--target-dir" in argv:
                 target = Path(argv[argv.index("--target-dir") + 1])
                 library = target / ownership.m4.RUST_TARGET / "release" / ownership.m4.ADAPTER_STATICLIB
                 library.parent.mkdir(parents=True)
                 library.write_bytes(b"native adapter")
+            elif "-E" in argv:
+                stdout = (b"mi_option_guarded_precise mi_option_guarded_precise "
+                          b"mi_option_is_enabled(mi_option_guarded_precise)\n")
             elif "-o" in argv:
                 Path(argv[argv.index("-o") + 1]).write_bytes(b"retained caller or oracle")
             else:
-                stderr = diagnostic
                 binary = Path(argv[0])
                 profile, backend = binary.parent.name, binary.name
-                trace = dict(deletion.EXPECTED)
-                trace["exit.freed"] = "37,0,1" if profile == "debug-1" else "37,0,0"
-                trace["exit.collected"] = "0,1" if profile == "debug-1" else "0,0"
+                mode = next((argument for argument in argv[1:] if argument in ("before", "after")), "joined")
+                if profile == "debug-1":
+                    stderr = (f"m6-valid-domain profile=debug-1 backend={backend} "
+                              f"guarded_precise={int(backend == 'c')}\n").encode() + diagnostic
+                else:
+                    stderr = diagnostic
+                trace = dict(expected[mode]) if mode in expected else dict(expected)
+                if "exit.freed" in trace:
+                    trace["exit.freed"] = "37,0,1" if profile == "debug-1" else "37,0,0"
+                    trace["exit.collected"] = "0,1" if profile == "debug-1" else "0,0"
                 if native_change and backend == "native":
                     trace["exit.collected"] = "0,0"
-                stdout = (deletion.BEGIN + "\n" + "\n".join(f"{key}={value}" for key, value in trace.items()) + "\n" + deletion.END + "\n").encode()
+                stdout = (fixture.BEGIN + "\n" + "\n".join(f"{key}={value}" for key, value in trace.items()) + "\n" + fixture.END + "\n").encode()
                 if failure is not None and profile == "release":
                     status = -11
                     stdout = b"before final free\xff\n"
                     stderr = b"retained diagnostic\n"
             return {"kind": "process", "status": status,
-                "stdout": ownership.stress.bytes_record(stdout), "stderr": ownership.stress.bytes_record(stderr)}
+                "command": argv, "stdout": ownership.stress.bytes_record(stdout),
+                "stderr": ownership.stress.bytes_record(stderr)}
         with ExitStack() as stack:
             stack.enter_context(patch.object(ownership.harness, "ROOT", root))
             stack.enter_context(patch.object(ownership.harness, "require_native_x86_64", return_value={}))
@@ -99,14 +112,86 @@ class OwnershipProfileProducerTests(unittest.TestCase):
             stack.enter_context(patch.object(ownership.harness, "safe_extract", return_value=source))
             stack.enter_context(patch.object(ownership.harness, "require_tool", return_value="fixture-compiler"))
             stack.enter_context(patch.object(ownership.stress, "command_record", side_effect=execute))
-            ownership.ownership_matrix(deletion.DRIVER, root / "artifacts", deletion.RUNNER,
-                profiles, ("joined",), deletion.BEGIN, deletion.END, {"joined": expected})
+            expected_by_mode = expected if set(expected) == set(modes) else {modes[0]: expected}
+            ownership.ownership_matrix(fixture.DRIVER, root / "artifacts", fixture.RUNNER,
+                profiles, modes, fixture.BEGIN, fixture.END, expected_by_mode)
 
     def test_debug_geometry_comes_from_the_full_matching_c_caller(self):
         work = ownership.harness.ROOT / ".work/tmp"
         work.mkdir(parents=True, exist_ok=True)
         with tempfile.TemporaryDirectory(dir=work) as temporary:
             self.run_producer(Path(temporary), ("debug-1",), deletion.EXPECTED)
+
+    def test_debug_offset_clients_use_the_valid_client_profile_for_both_owners(self):
+        work = ownership.harness.ROOT / ".work/tmp"
+        work.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(dir=work) as temporary:
+            commands = []
+            self.run_producer(Path(temporary), ("debug-1",), deletion.EXPECTED, commands=commands)
+
+        runtime_commands = {
+            Path(command[0]).name: command[1:]
+            for command in commands
+            if Path(command[0]).name in ("c", "native")
+        }
+        self.assertEqual(runtime_commands, {
+            "c": ["--valid-domain", "debug-1"],
+            "native": ["--valid-domain", "debug-1"],
+        })
+        build_commands = {
+            Path(command[command.index("-o") + 1]).name: command
+            for command in commands
+            if "-o" in command and Path(command[command.index("-o") + 1]).name in ("c.o", "native.o")
+        }
+        self.assertNotIn("-DCRABC_NATIVE_MI_ADAPTER=1", build_commands["c.o"])
+        self.assertIn("-DCRABC_NATIVE_MI_ADAPTER=1", build_commands["native.o"])
+
+        with tempfile.TemporaryDirectory(dir=work) as temporary:
+            commands = []
+            self.run_producer(Path(temporary), ("debug-1",), ownership.EXPECTED,
+                              commands=commands, fixture=ownership, modes=("before", "after"))
+
+        runtime_commands = {
+            (Path(command[0]).name, command[-1]): command[1:]
+            for command in commands
+            if Path(command[0]).name in ("c", "native")
+        }
+        self.assertEqual(runtime_commands, {
+            ("c", "before"): ["--valid-domain", "debug-1", "before"],
+            ("c", "after"): ["--valid-domain", "debug-1", "after"],
+            ("native", "before"): ["--valid-domain", "debug-1", "before"],
+            ("native", "after"): ["--valid-domain", "debug-1", "after"],
+        })
+
+    def test_debug_receipt_reads_and_replays_its_recorded_callers(self):
+        work = ownership.harness.ROOT / ".work/tmp"
+        work.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(dir=work) as temporary:
+            root = Path(temporary)
+            self.run_producer(root, ("debug-1",), deletion.EXPECTED)
+
+            replay_commands = []
+            with patch.object(ownership.harness, "ROOT", root), \
+                 patch.object(ownership.harness, "require_native_x86_64", return_value={"image_id": "fixture-image"}), \
+                 patch.object(ownership.harness, "validate_native_execution_provenance"), \
+                 patch.object(ownership.receipts, "source_seal",
+                              return_value={"revision": "a" * 40, "worktree_sha256": "b" * 64}), \
+                 patch.object(ownership, "record") as replay:
+                receipt = ownership.receipts.read_receipt(root, deletion.RUNNER + "-debug-1")
+
+                def replay_record(scratch, case_id, argv, cwd, runtime):
+                    replay_commands.append(argv)
+                    case = next(item for item in receipt.cases if item["id"] == case_id)
+                    record_path = next(path for path in case["logs"] if path.endswith(".json"))
+                    return ownership.harness.read_json(receipt.path.parent / "logs" / record_path), []
+
+                replay.side_effect = replay_record
+                ownership.ownership_matrix(deletion.DRIVER, deletion.ARTIFACTS, deletion.RUNNER,
+                    ("debug-1",), ("joined",), deletion.BEGIN, deletion.END,
+                    {"joined": deletion.EXPECTED}, read=True, replay=True)
+
+        self.assertEqual([command[1:] for command in replay_commands], [
+            ["--valid-domain", "debug-1"], ["--valid-domain", "debug-1"]])
 
     def test_matching_nonzero_callers_do_not_admit_and_later_profiles_still_run(self):
         work = ownership.harness.ROOT / ".work/tmp"

@@ -4,6 +4,7 @@
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
+#include <string.h>
 #include <unistd.h>
 
 #include "mimalloc.h"
@@ -26,8 +27,23 @@ static void* owner(void* argument) {
   return NULL;
 }
 
-int main(void) {
+int main(int argc, char** argv) {
   setvbuf(stdout, NULL, _IONBF, 0);
+  const bool valid_domain = argc == 3 && strcmp(argv[1], "--valid-domain") == 0
+      && strcmp(argv[2], "debug-1") == 0;
+  if (argc != 1 && !valid_domain) return 2;
+  if (valid_domain) {
+    if (MI_DEBUG != 1 || MI_STAT != 2) return 2;
+#if defined(CRABC_NATIVE_MI_ADAPTER)
+    mi_option_set_enabled(mi_option_guarded_precise, false);
+    fprintf(stderr, "m6-valid-domain profile=debug-1 backend=native guarded_precise=%ld\n",
+        mi_option_get(mi_option_guarded_precise));
+#else
+    mi_option_set_enabled(mi_option_guarded_precise, true);
+    fprintf(stderr, "m6-valid-domain profile=debug-1 backend=c guarded_precise=%ld\n",
+        mi_option_get(mi_option_guarded_precise));
+#endif
+  }
   mi_option_set(mi_option_arena_reserve, 0);
   puts("CRABC_MI_M6_HEAP_DELETE_AFTER_OWNER_EXIT_BEGIN");
   owner_result_t result = {0};
@@ -43,8 +59,6 @@ int main(void) {
       mi_heap_of(result.singleton) == result.heap,
       result.regular[0] == 0x5a,
       result.singleton[0] == 0 && result.singleton[80] == 0);
-  // Save address bits before delete/free; later PageMap probes never
-  // dereference the former Heap or blocks.
   uintptr_t heap_address = (uintptr_t)result.heap;
   uintptr_t regular_address = (uintptr_t)result.regular;
   uintptr_t singleton_address = (uintptr_t)result.singleton;

@@ -84,11 +84,37 @@ static mi_stats_t stats_now(void) {
 
 int main(int argc, char** argv) {
   setvbuf(stdout, NULL, _IONBF, 0);
+  const bool valid_domain = argc >= 3 && strcmp(argv[1], "--valid-domain") == 0
+      && strcmp(argv[2], "debug-1") == 0;
+  if ((valid_domain && argc > 4) || (!valid_domain && argc > 2)) return 2;
+  const int mode_argument = valid_domain ? 3 : 1;
+  bool exit_before_free = false;
+  if (argc > mode_argument) {
+    if (strcmp(argv[mode_argument], "before") == 0) {
+      exit_before_free = false;
+    } else if (strcmp(argv[mode_argument], "after") == 0) {
+      exit_before_free = true;
+    } else {
+      return 2;
+    }
+  }
+  if (valid_domain) {
+    if (MI_DEBUG != 1 || MI_STAT != 2) return 2;
+#if defined(CRABC_NATIVE_MI_ADAPTER)
+    mi_option_set_enabled(mi_option_guarded_precise, false);
+    fprintf(stderr, "m6-valid-domain profile=debug-1 backend=native guarded_precise=%ld\n",
+        mi_option_get(mi_option_guarded_precise));
+#else
+    mi_option_set_enabled(mi_option_guarded_precise, true);
+    fprintf(stderr, "m6-valid-domain profile=debug-1 backend=c guarded_precise=%ld\n",
+        mi_option_get(mi_option_guarded_precise));
+#endif
+  }
   mi_option_set(mi_option_arena_reserve, 0);
   remote_exit_state_t state = {
       .lock = PTHREAD_MUTEX_INITIALIZER,
       .changed = PTHREAD_COND_INITIALIZER,
-      .exit_before_free = argc > 1 && strcmp(argv[1], "after") == 0,
+      .exit_before_free = exit_before_free,
   };
   puts("CRABC_MI_M6_DELETED_HEAP_REMOTE_EXIT_BEGIN");
   pthread_t owner;
