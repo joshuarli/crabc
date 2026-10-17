@@ -35,13 +35,18 @@ RUNNER = "allocator-heap-delete-attached-worker"
 def require_diagnostic_target(record, profile):
     if profile != "debug-1":
         raise harness.HarnessError("attached-worker diagnostics require debug-1")
-    if record.get("kind") != "process" or record.get("status") != -11:
+    if record.get("status") != -11:
         raise harness.HarnessError("attached-worker diagnostics require the retained pinned-C SIGSEGV")
     stdout = record.get("stdout")
     expected = "\n".join((BEGIN, "attached.owner=1,1", "attached.live=1,1,1,1",
         "attached.delete=37,1,1,1", "attached.stats=2,0")) + "\n"
     if stdout != expected or record.get("stderr") != "":
         raise harness.HarnessError("retained attached-worker SIGSEGV did not occur after Heap deletion")
+
+
+def require_diagnostic_build(record, diagnostic):
+    if record.get("status") != 0:
+        raise harness.HarnessError(f"attached-worker diagnostic-only pinned-C build failed; raw {diagnostic}")
 
 
 def observe(fixture, drivers, output, cases, profile):
@@ -195,6 +200,7 @@ def diagnose_retained_crash(fixture):
             or inputs.get("driver_sha256") != harness.sha256_file(retained_driver)):
         raise harness.HarnessError("retained attached-worker crash does not match its fixture inputs")
     diagnostic = Path(tempfile.mkdtemp(prefix="diagnostic-", dir=output))
+    diagnostic.chmod(0o755)
     driver = diagnostic / fixture.DRIVER.name
     helper = diagnostic / "x86_64_m6_heap_ownership_diagnostic.h"
     shutil.copy2(fixture.DRIVER, driver)
@@ -213,8 +219,7 @@ def diagnose_retained_crash(fixture):
         "-pthread", "-o", str(binary)], cwd=source)
     harness.write_json(diagnostic / "c-diagnostic-build.json", build)
     (diagnostic / "c-diagnostic-build.log").write_text(str(build["stdout"]) + str(build["stderr"]))
-    if build["kind"] != "process" or build["status"] != 0:
-        raise harness.HarnessError(f"attached-worker diagnostic-only pinned-C build failed; raw {diagnostic}")
+    require_diagnostic_build(build, diagnostic)
     diagnostic_inputs = {"profile": profile, "raw_failure": str(raw_path),
         "upstream": pin, "archive_sha256": harness.sha256_file(retained_archive),
         "driver_sha256": hashlib.sha256(driver.read_bytes()).hexdigest(),
