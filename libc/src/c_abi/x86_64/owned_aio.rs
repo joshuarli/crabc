@@ -63,7 +63,6 @@ const F_GETFL: i64 = 3;
 const SEEK_CUR: c_int = 1;
 
 const AIO_CANCELED: c_int = 0;
-const AIO_NOTCANCELED: c_int = 1;
 const AIO_ALLDONE: c_int = 2;
 
 const SIG_BLOCK: c_int = 0;
