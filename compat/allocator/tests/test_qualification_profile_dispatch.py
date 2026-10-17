@@ -255,6 +255,16 @@ class AllocatorQualificationProfileDispatchTests(unittest.TestCase):
         self.assertIn('allocator-heap-lifecycle [--faults]', result.stdout)
         self.assertFalse(self.log.exists())
 
+    def test_public_theap_profiles_and_existing_debug_action_stay_distinct(self):
+        for arguments in ([], ['--debug'], ['--matrix'],
+                          *(['--profile', name] for name in ('release', 'debug-1', 'stat-1', 'stat-2'))):
+            self.assertEqual(self.runner_arguments('allocator-public-theap', *arguments),
+                             ('compat/allocator/x86_64_m6_public_theap.py', arguments))
+        for arguments in (['--profile'], ['--profile', 'secure-5'], ['--debug', '--matrix'],
+                          ['--profile', 'debug-1', '--debug'], ['--matrix', '--profile', 'release'],
+                          ['--matrix', '--matrix']):
+            self.assert_rejected('allocator-public-theap', *arguments)
+
     def test_m7_development_traces_are_bounded_and_unoptimized(self):
         for name in ('options-environment', 'option-effects', 'statistics-level-one-output-merge',
                      'statistics-level-two-requested', 'statistics-level-two-bins',

@@ -170,7 +170,10 @@ contract. Lanes whose driver is a `.c` plus `.py` pair in this directory are:
   valid-client parity claim. Other public API lanes include
   `allocator-public-heap-alignment`,
   `allocator-heap-convenience [--read|--replay]`,
+  `allocator-public-theap [--matrix|--profile release|debug-1|stat-1|stat-2]`,
   `allocator-upstream-heap-stress`, `allocator-upstream-subprocess-stress`.
+  Theap's existing `--debug` action keeps its unoptimized ordinary legal-client
+  workload. It cannot be combined with a profile or matrix selection.
 - Options and output statistics development traces: `allocator-m7 --differential
   TRACE` accepts `options-environment`, `option-effects`,
   `statistics-level-one-output-merge`, `statistics-level-two-requested`,

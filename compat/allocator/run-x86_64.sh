@@ -94,7 +94,7 @@ Private native Linux/x86-64 mimalloc evidence commands:
   allocator-m6-heap-delete-with-attached-worker [--profile release|debug-1|stat-1|stat-2|--matrix] [--collect|--diagnose|--read|--replay]
   allocator-upstream-subprocess-stress
   allocator-upstream-heap-stress
-  allocator-public-heap-alignment | allocator-public-theap [--debug]
+  allocator-public-heap-alignment | allocator-public-theap [--debug|--matrix|--profile release|debug-1|stat-1|stat-2]
   allocator-heap-convenience [--read|--replay]
   allocator-m6 [--qualification-profile baseline|full] [--check|--reader-tests]
   allocator-unit [--filter module::tests::exact_test_name] | allocator-core-unit
@@ -1277,10 +1277,13 @@ case "$command" in
     allocator-public-theap)
         if [ "$#" -eq 0 ]; then
             theap_arguments=()
-        elif [ "$#" -eq 1 ] && [ "$1" = --debug ]; then
-            theap_arguments=(--debug)
+        elif [ "$#" -eq 1 ] && { [ "$1" = --debug ] || [ "$1" = --matrix ]; }; then
+            theap_arguments=("$1")
+        elif [ "$#" -eq 2 ] && [ "$1" = --profile ]; then
+            case "$2" in release|debug-1|stat-1|stat-2) ;; *) fail "unknown public Theap profile" ;; esac
+            theap_arguments=(--profile "$2")
         else
-            fail "allocator-public-theap accepts only --debug"
+            fail "allocator-public-theap accepts --debug, --matrix, or --profile release|debug-1|stat-1|stat-2"
         fi
         ensure_image
         run_in_container python3 compat/allocator/x86_64_m6_public_theap.py "${theap_arguments[@]}"
