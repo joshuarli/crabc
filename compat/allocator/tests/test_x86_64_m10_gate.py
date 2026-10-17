@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import shutil
 import subprocess
 import sys
@@ -26,6 +27,29 @@ def temporary_directory() -> tempfile.TemporaryDirectory:
     scratch = ROOT / ".work/tmp"
     scratch.mkdir(parents=True, exist_ok=True)
     return tempfile.TemporaryDirectory(dir=scratch)
+
+
+class ReportReadabilityTests(unittest.TestCase):
+    def test_atomic_reports_preserve_cross_owner_readability_without_write_access(self):
+        with temporary_directory() as directory:
+            path = Path(directory) / 'report.json'
+            gate.harness.write_json(path, {'status': 'passed'})
+            self.assertEqual(path.stat().st_mode & 0o777, 0o644)
+
+    @unittest.skipUnless(os.geteuid() == 0, 'cross-UID replay runs in the root allocator producer image')
+    def test_root_produced_reports_are_readable_after_uid_and_gid_change(self):
+        with temporary_directory() as directory:
+            root = Path(directory)
+            root.chmod(0o755)
+            path = root / 'report.json'
+            gate.harness.write_json(path, {'status': 'passed'})
+            self.assertEqual(path.stat().st_uid, 0)
+            result = subprocess.run([sys.executable, '-c',
+                'import json,os,sys; assert os.geteuid()==65534 and os.getegid()==65534; '
+                'assert json.load(open(sys.argv[1]))=={"status":"passed"}; '
+                'assert not os.access(sys.argv[1], os.W_OK)', str(path)],
+                user=65534, group=65534, extra_groups=[], capture_output=True, text=True)
+            self.assertEqual(result.returncode, 0, result.stderr)
 
 
 @unittest.skipUnless(all(TOOLS.values()), "needs cc, ar and nm")

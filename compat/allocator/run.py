@@ -7030,6 +7030,7 @@ def write_json(path: Path, payload: Mapping[str, Any]) -> None:
         ) as stream:
             json.dump(payload, stream, indent=2, sort_keys=True)
             stream.write("\n")
+            os.fchmod(stream.fileno(), 0o644)
             staged = Path(stream.name)
         os.replace(staged, path)
     except BaseException:
