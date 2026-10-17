@@ -1,9 +1,14 @@
 # Qualify and promote crabc's native x86-64 runtime
 
-**Status: paused 2026-10-14.** Winddown requested by the owner. All lanes and
-campaign commands have stopped; select no further work until resumed. The
-accepted C allocator remains the default. Public x86 support remains false:
+**Status: active 2026-10-17.** The owner resumed the campaign. The coordinator
+read this handoff and `docs/lanes.md`, then ran `campaign-status`. Five lanes
+are running: the existing source-closure bridge, M6 fixture and crash triage,
+the H0 text collector loop, source accounting, and dead-code cleanup.
+The accepted C allocator remains the default. Public x86 support remains false:
 180 of 223 capabilities, nine of 26 families, zero of eight gates.
+
+The following 2026-10-14 handoff records the paused baseline. Current lane
+results follow in the campaign log.
 
 - **Resume:** "Read plan.md and docs/lanes.md, then resume the paused campaign
   as coordinator, unattended, launching every ready lane in the plan's priority
