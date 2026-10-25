@@ -49,6 +49,8 @@ def run(offline: bool) -> dict[str, str]:
     pin = harness.load_pin()
     archive = harness.fetch_archive(pin, offline)
     environment = dict(os.environ)
+    environment["CARGO_PROFILE_TEST_OPT_LEVEL"] = "0"
+    environment["CARGO_PROFILE_TEST_DEBUG"] = "0"
     with harness.temporary_directory("m1-clock-fallback-") as directory:
         temporary = Path(directory)
         source = harness.safe_extract(archive, temporary / "source", pin["archive_root"])

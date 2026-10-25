@@ -26,6 +26,8 @@ clock_t __wrap_clock(void) {
 }
 
 int main(void) {
+  preferred_calls = 0;
+  fallback_calls = 0;
   const mi_msecs_t milliseconds = _mi_prim_clock_now();
   puts("CRABC_M1_CLOCK_FALLBACK_BEGIN");
   printf("preferred.calls=%zu\nfallback.calls=%zu\nclock.milliseconds=%lld\n",
