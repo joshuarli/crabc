@@ -4,17 +4,15 @@
 # definitions and the x86 binary80 global assembly included by `src/lib.rs`.
 # The `source_definition` field records either a real Rust definition
 # or the exact assembly export directives, without inventing a Rust fp80 type.
-# They are
-# installed as ordinary archive providers. The owned shared-libc link also
-# consumes that exact one-member archive for its private compiler-generated
-# calls: that physical copy is LOCAL in libc.so and absent from .dynsym. This
+# They are installed as ordinary archive providers. Shared libc and dynamic
+# applications localize each extracted copy and omit it from .dynsym. This
 # does not alter either installed archive's GLOBAL DEFAULT provider contract.
 schema = 1
 target = "x86_64-unknown-linux-musl"
 owner_group = "owned-compiler-helper-archive"
 source = "builtins/src/lib.rs"
 builder = "builtins/build_x86_64.py"
-producer_scope = "bounded native compiler-helper archive plus private same-member shared-libc placement; no shared public exposure, family completion, promotion, or public support"
+producer_scope = "bounded native compiler-helper archive plus private shared-libc and dynamic-application placements; no shared public exposure, family completion, promotion, or public support"
 
 [archive]
 name = "libcrabc-builtins.a"
@@ -31,6 +29,11 @@ type = "FUNC"
 binding = "LOCAL"
 visibility = "DEFAULT"
 dynsym = false
+
+[dynamic_application]
+artifact = "dynamic-application"
+linker_option = "--exclude-libs=libcrabc-builtins.a"
+helper_dynsym = false
 
 [[helpers]]
 name = "__addoti4"

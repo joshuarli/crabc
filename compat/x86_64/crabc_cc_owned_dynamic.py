@@ -31,8 +31,9 @@ import owned_dynamic_receipt as receipt_contract
 FORMAT = "crabc-x86-64-owned-dynamic-sysroot-v1"
 INTERPRETER = "/lib/ld-crabc-x86_64.so.1"
 ALIASES = {"lib/ld-musl-x86_64.so.1": "ld-crabc-x86_64.so.1"}
+COMPILER_HELPER_ARCHIVE = "libcrabc-builtins.a"
 REQUIRED = {"usr/lib/libc.so", "usr/lib/crt1.o", "usr/lib/Scrt1.o", "usr/lib/crti.o", "usr/lib/crtn.o",
-            "usr/lib/crabc-dynamic-attach.o", "usr/lib/libcrabc-builtins.a", "lib/ld-crabc-x86_64.so.1",
+            "usr/lib/crabc-dynamic-attach.o", "usr/lib/" + COMPILER_HELPER_ARCHIVE, "lib/ld-crabc-x86_64.so.1",
             "share/crabc/owned_dynamic_receipt.py", "share/crabc/owned_dynamic_elf.py"}
 APPLICATION_DSO_BASENAME = re.compile(r"[^/\x00]+\.so(?:\.[0-9]+)*\Z")
 RECEIPT_V1_FIELDS = receipt_contract.V1_FIELDS
@@ -743,9 +744,11 @@ def execute(root: Path, arguments: list[str]) -> None:
             raise shared.DriverError("duplicate application quote include directory")
         quote_include_dirs.append(directory)
     library = root / "usr/lib"
+    archive = library / COMPILER_HELPER_ARCHIVE
     link = [shared.linker(root), *(["-shared"] if mode == "shared" else ["-pie"] if mode == "pie" else []), f"--hash-style={application_hash_style}",
             "--eh-frame-hdr", "-z", "relro", "-z", binding, "-z", "noexecstack", "-z", "text", *([] if runtime_imports else ["--no-undefined"]),
             "--allow-shlib-undefined", "--disable-new-dtags" if application_search_kind == "rpath" else "--enable-new-dtags", "-rpath", application_search_path]
+    link.append(f"--exclude-libs={archive.name}")
     if export_dynamic:
         link.append("--export-dynamic")
     entry_object = "Scrt1.o" if mode == "pie" else "crt1.o"
@@ -851,21 +854,20 @@ def execute(root: Path, arguments: list[str]) -> None:
             # ELF x86 PIC objects name this linker-synthesized table anchor;
             # it is not an import from a target runtime library.
             object_provided, object_required = {*provided, "_GLOBAL_OFFSET_TABLE_"}, set()
-            for path in [*objects, library / "libcrabc-builtins.a"]:
+            for path in [*objects, archive]:
                 definitions, required = dynamic_symbols(path, temporary, object_symbols=True)
                 object_provided.update(definitions)
                 if path in objects: object_required.update(required)
             if object_required - object_provided != runtime_imports:
                 raise shared.DriverError(f"runtime imports differ from exact unresolved object symbols: {sorted(object_required - object_provided)}")
         if mode == "shared": link += ["-soname", output.name]
-        link += [str(library / "crti.o"), *(str(path) for path in objects),
+        link += [str(library / "crti.o"), *(str(path) for path in objects), str(archive),
                  *(str(path) for path in direct_dso_paths), str(library / "libc.so"),
-                 str(library / "libcrabc-builtins.a"), str(library / "crtn.o"), "-o", str(output)]
+                 str(library / "crtn.o"), "-o", str(output)]
         trace = run([*link[:-2], "--trace", f"-Map={map_path}", *link[-2:]], temporary).splitlines()
         runtime = [library / name for name in ("crti.o", "libc.so", "crtn.o")]
         if mode != "shared": runtime += [library / entry_object, library / "crabc-dynamic-attach.o"]
         direct = [*runtime, *objects, *direct_dso_paths]
-        archive = library / "libcrabc-builtins.a"
         # LLD may not extract an archive member. Every other input must appear,
         # and no ambient startup, library, script or helper input is permitted.
         seen = set()

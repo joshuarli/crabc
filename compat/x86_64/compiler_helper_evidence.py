@@ -31,6 +31,7 @@ CONTRACT = Path("builtins/x86_64-helper-contract.toml")
 SOURCE = Path("builtins/src/lib.rs")
 BUILDER = Path("builtins/build_x86_64.py")
 DYNAMIC_BUILDER = Path("scripts/build_x86_64_owned_dynamic_sysroot.py")
+DYNAMIC_DRIVER = Path("compat/x86_64/crabc_cc_owned_dynamic.py")
 DYNAMIC_QUALIFICATION = Path("compat/x86_64/owned_dynamic_qualification.py")
 AGGREGATE_PROBE = Path("builtins/fixtures/x86_64_compiler_helper_aggregate_probe.c")
 AGGREGATE_START = Path("builtins/fixtures/x86_64_compiler_helper_aggregate_start.S")
@@ -40,6 +41,7 @@ SHARED_PLACEMENT_FIXTURES = (
     Path("builtins/fixtures/x86_64_compiler_helper_shared_direct.c"),
     Path("builtins/fixtures/x86_64_compiler_helper_shared_dso.c"),
     Path("builtins/fixtures/x86_64_compiler_helper_shared_dso_consumer.c"),
+    Path("builtins/fixtures/x86_64_compiler_helper_shared_dso_interpose.c"),
     Path("builtins/fixtures/x86_64_compiler_helper_shared_interpose.c"),
 )
 SELECTION = Path("compat/x86_64/native-abi-selection.toml")
@@ -63,7 +65,7 @@ SOURCE_FILES = (*(Path("builtins/fixtures/llvm22_float_complex") / name for name
                 *(Path("builtins/fixtures/musl126_binary80") / name for name in
                   ("fmaxl.c", "logbl.c", "ilogbl.c", "scalbnl.c", "__fpclassifyl.c", "__signbitl.c", "COPYRIGHT", "SHA256SUMS")),
                 CAST_PROBE, BINARY32_CAST_PROBE, CONTRACT, SOURCE, Path("builtins/src/x86_64_complex_classification.rs"), BUILDER, DYNAMIC_BUILDER, DYNAMIC_QUALIFICATION, AGGREGATE_PROBE, AGGREGATE_START, AGGREGATE_RUNNER,
-                SHARED_PLACEMENT_RUNNER, *SHARED_PLACEMENT_FIXTURES, READER, SELECTION, DOCUMENTATION,
+                SHARED_PLACEMENT_RUNNER, *SHARED_PLACEMENT_FIXTURES, DYNAMIC_DRIVER, READER, SELECTION, DOCUMENTATION,
                 BUILTINS_DOCUMENTATION, MATERIALIZED_DYNAMIC_DOCUMENTATION, SELECTION_DOCUMENTATION, ELF_READER)
 SCHEMA = "crabc.x86_64-compiler-helper-owner/v1"
 AGGREGATE_SCHEMA = "crabc.x86_64-compiler-helper-aggregate/v1"
@@ -82,6 +84,11 @@ SHARED_LIBC_METADATA = {
     "binding": "LOCAL",
     "visibility": "DEFAULT",
     "dynsym": False,
+}
+DYNAMIC_APPLICATION_METADATA = {
+    "artifact": "dynamic-application",
+    "linker_option": SHARED_LIBC_METADATA["linker_option"],
+    "helper_dynsym": False,
 }
 HELPER_ABIS = {
     "u128-to-binary64", "binary64-to-u128", "u128-to-binary32", "binary32-to-u128",
@@ -161,7 +168,7 @@ def validate_contract(value: object, *, root: Path = ROOT) -> dict[str, Any]:
     """Validate exact finite source ownership, never infer a prefix roster."""
 
     require(type(value) is dict and set(value) == {
-        "schema", "target", "owner_group", "source", "builder", "producer_scope", "archive", "shared_libc", "helpers",
+        "schema", "target", "owner_group", "source", "builder", "producer_scope", "archive", "shared_libc", "dynamic_application", "helpers",
     }, "compiler-helper contract fields differ")
     require(type(value["schema"]) is int and value["schema"] == 1 and value["target"] == TARGET,
             "compiler-helper contract schema/target differs")
@@ -175,6 +182,8 @@ def validate_contract(value: object, *, root: Path = ROOT) -> dict[str, Any]:
             and archive["placements"] == list(ARCHIVE_PLACEMENTS), "compiler-helper archive placements differ")
     require(same(value["shared_libc"], SHARED_LIBC_METADATA),
             "compiler-helper shared-libc placement differs")
+    require(same(value["dynamic_application"], DYNAMIC_APPLICATION_METADATA),
+            "compiler-helper dynamic-application placement differs")
     helpers = value["helpers"]
     require(type(helpers) is list and bool(helpers), "compiler-helper helper roster differs")
     result: list[dict[str, Any]] = []
@@ -195,7 +204,8 @@ def validate_contract(value: object, *, root: Path = ROOT) -> dict[str, Any]:
     require(names == sorted(names) and len(names) == len(set(names)) and set(names) == set(source_definitions(root)), "compiler-helper helper roster differs")
     return {"schema": 1, "target": TARGET, "owner_group": value["owner_group"], "source": value["source"],
             "builder": value["builder"], "producer_scope": value["producer_scope"], "archive": dict(archive),
-            "shared_libc": dict(SHARED_LIBC_METADATA), "helpers": result}
+            "shared_libc": dict(SHARED_LIBC_METADATA),
+            "dynamic_application": dict(DYNAMIC_APPLICATION_METADATA), "helpers": result}
 
 
 def load_contract(root: Path = ROOT) -> dict[str, Any]:

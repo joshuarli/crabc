@@ -722,13 +722,14 @@ def _dynamic_link_command(root: Path, workload: Path, executable: Path, linkage:
         linker, *(["-pie"] if linkage == "pie" else []), "--hash-style=sysv", "--eh-frame-hdr", "-z", "relro",
         "-z", "now", "-z", "noexecstack", "-z", "text", "--no-undefined",
         "--allow-shlib-undefined", "--enable-new-dtags", "-rpath", "/usr/lib",
+        "--exclude-libs=libcrabc-builtins.a",
     ]
     if export_dynamic:
         command.append("--export-dynamic")
     command.extend(("--dynamic-linker",
         INTERPRETER, str(library / entry), str(library / "crabc-dynamic-attach.o"),
-        str(library / "crti.o"), str(workload), str(library / "libc.so"),
-        str(library / "libcrabc-builtins.a"), str(library / "crtn.o"), "-o", str(executable)))
+        str(library / "crti.o"), str(workload), str(library / "libcrabc-builtins.a"),
+        str(library / "libc.so"), str(library / "crtn.o"), "-o", str(executable)))
     return command
 
 
@@ -1012,14 +1013,14 @@ def _retained_dynamic_command(root: Path, source_mount: str, product: Path, work
     command = [
         linker, *(["-pie"] if linkage == "pie" else []), "--hash-style=sysv", "--eh-frame-hdr", "-z", "relro", "-z", "now",
         "-z", "noexecstack", "-z", "text", "--no-undefined", "--allow-shlib-undefined", "--enable-new-dtags",
-        "-rpath", "/usr/lib",
+        "-rpath", "/usr/lib", "--exclude-libs=libcrabc-builtins.a",
     ]
     if export_dynamic:
         command.append("--export-dynamic")
     command.extend(("--dynamic-linker", INTERPRETER,
         *(recorded(path, "dynamic link input") for path in (
             library / entry, library / "crabc-dynamic-attach.o", library / "crti.o", workload,
-            library / "libc.so", library / "libcrabc-builtins.a", library / "crtn.o",
+            library / "libcrabc-builtins.a", library / "libc.so", library / "crtn.o",
         )), "-o", recorded(executable, "dynamic output")))
     return command
 

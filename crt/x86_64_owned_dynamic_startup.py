@@ -199,8 +199,6 @@ def wide_markers() -> list[str]:
 # interpreter rewrites it, so that observation is not requested there.
 ENTRY_MARKERS = {"kernel": "Me", "direct": "M"}
 
-# The one compiler-helper archive member supplies every two-word helper the
-# fixtures use; libc.so keeps its private copy local.
 HELPER_SYMBOLS = ("__udivti3", "__umodti3", "__divti3", "__modti3")
 OWNED_CRT_NOTE = struct.pack("<III", 6, 4, 0x43525401) + b"CRABC\0\0\0" + struct.pack("<I", 1)
 
@@ -331,14 +329,12 @@ def require_hardened_dynamic_image(path: Path, image: ElfImage) -> None:
 
 
 def require_owned_helpers(path: Path, image: ElfImage) -> None:
-    """Compiler helpers are ordinary archive definitions, never runtime imports."""
-
     for name in HELPER_SYMBOLS:
         defined = [item for item in image.symtab if item.name == name and item.section != 0]
         require(len(defined) == 1 and defined[0].symbol_type == STT_FUNC,
                 f"{path.name}: {name} is not defined once from the helper archive")
-        require(not any(item.name == name and item.section == 0 for item in image.dynsym),
-                f"{path.name}: {name} remains a dynamic import")
+        require(not any(item.name == name for item in image.dynsym),
+                f"{path.name}: {name} remains dynamically visible")
 
 
 def check_executable(path: Path, mode: str) -> dict[str, object]:
@@ -365,22 +361,15 @@ def check_executable(path: Path, mode: str) -> dict[str, object]:
 
 
 def check_shared_object(path: Path, name: str, helpers: bool) -> list[str]:
-    """Check an application DSO and return the helper names it exports.
-
-    The export list is an observed open condition, not an accepted contract:
-    musl's libgcc.a helpers are hidden, while the owned archive's are
-    GLOBAL DEFAULT and therefore leave the extracting DSO's dynsym.
-    """
-
     image = parse_elf(path)
     require(image.elf_type == 3 and image.interpreter is None, f"{path.name}: not an interpreter-free ET_DYN")
     require(image.soname == name and image.needed == ("libc.so",), f"{path.name}: SONAME/DT_NEEDED differs")
     require_hardened_dynamic_image(path, image)
     if helpers:
         require_owned_helpers(path, image)
-    return sorted(item.name for item in image.dynsym
-                  if item.section != 0 and item.name.startswith("__") and item.symbol_type == STT_FUNC
-                  and item.name.endswith(("ti2", "ti3", "ti4", "di2", "si2", "dc3")))
+    exported = sorted(item.name for item in image.dynsym if item.name in HELPER_SYMBOLS)
+    require(not exported, f"{path.name}: owned compiler helpers remain exported: {exported}")
+    return exported
 
 
 def check_link_receipt(product: Path, output: Path, mode: str, objects: list[Path],
@@ -392,23 +381,23 @@ def check_link_receipt(product: Path, output: Path, mode: str, objects: list[Pat
     archive = library / "libcrabc-builtins.a"
     if mode == "dynamic-shared-object":
         runtime = ["crti.o", "libc.so", "crtn.o", "libcrabc-builtins.a"]
-        ordered = [library / "crti.o", *objects, *dsos, library / "libc.so", archive, library / "crtn.o"]
+        ordered = [library / "crti.o", *objects, archive, *dsos, library / "libc.so", library / "crtn.o"]
     else:
         entry = MODES[mode][1]
         runtime = [entry, "crabc-dynamic-attach.o", "crti.o", "libc.so", "crtn.o", "libcrabc-builtins.a"]
         ordered = [library / entry, library / "crabc-dynamic-attach.o", library / "crti.o", *objects,
-                   *dsos, library / "libc.so", archive, library / "crtn.o"]
+                   archive, *dsos, library / "libc.so", library / "crtn.o"]
     require(receipt.get("output_sha256") == sha256(output), f"{output.name}: receipt does not bind the output")
     require(receipt.get("owned_runtime_inputs") == sorted(f"usr/lib/{name}" for name in runtime),
             f"{output.name}: owned runtime input roster differs")
     command = receipt.get("link_command")
     require(isinstance(command, list) and command[-2:] == ["-o", str(output)], f"{output.name}: link command shape")
+    require(command.count(f"--exclude-libs={archive.name}") == 1,
+            f"{output.name}: helper archive localization option differs")
     positional = [item for item in command if item.startswith("/") and Path(item) in set(ordered)]
     require(positional == [str(path) for path in ordered], f"{output.name}: link input order differs: {positional}")
     if mode != "dynamic-shared-object":
         require(command[command.index("--dynamic-linker") + 1] == INTERPRETER, f"{output.name}: dynamic linker")
-    # LLD's trace names the extracted helper member at the archive's position;
-    # any other input, or a missing extraction, changes this exact sequence.
     trace = receipt.get("link_trace")
     member = f"{archive}(crabc-builtins.o)"
     expected_trace = [member if path == archive else str(path) for path in ordered]
@@ -472,9 +461,9 @@ def build(recorder: Recorder, product: Path, work: Path) -> dict[str, object]:
         recorder.run(f"link-{target.name}", [driver, "--dynamic-shared-object", str(obj), "-o", str(target)])
         exported = check_shared_object(target, target.name, helpers)
         if helpers:
-            report["shared_objects"][target.name] = check_link_receipt(
-                product, target, "dynamic-shared-object", [obj], [])
-            report["open_conditions"] = {"application_dso_exported_helpers": exported}
+            placement = check_link_receipt(product, target, "dynamic-shared-object", [obj], [])
+            placement["helper_dynsym"] = exported
+            report["shared_objects"][target.name] = placement
         recorder.run(f"oracle-{target.name}", [str(ORACLE_COMPILER), "-fPIC", "-shared", *FIXTURE_FLAGS,
                                                "-fstack-protector-strong", str(source),
                                                f"-Wl,-soname,{target.name}", "-o", str(oracle / target.name)])

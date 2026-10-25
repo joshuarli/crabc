@@ -98,6 +98,7 @@ class CompilerHelperEvidenceTests(unittest.TestCase):
         self.assertEqual(EVIDENCE.helper_names(contract), tuple(sorted(EVIDENCE.helper_names(contract))))
         self.assertEqual(contract["archive"]["placements"], ["static-builtins", "dynamic-builtins"])
         self.assertEqual(contract["shared_libc"], EVIDENCE.SHARED_LIBC_METADATA)
+        self.assertEqual(contract["dynamic_application"], EVIDENCE.DYNAMIC_APPLICATION_METADATA)
         self.assertTrue(all(row["metadata"] == EVIDENCE.HELPER_METADATA for row in contract["helpers"]))
 
     def test_source_and_contract_are_a_bijection(self) -> None:
@@ -125,6 +126,10 @@ class CompilerHelperEvidenceTests(unittest.TestCase):
         wrong = copy.deepcopy(contract)
         wrong["shared_libc"]["dynsym"] = 0
         with self.assertRaisesRegex(EVIDENCE.CompilerHelperEvidenceError, "shared-libc"):
+            EVIDENCE.validate_contract(wrong)
+        wrong = copy.deepcopy(contract)
+        wrong["dynamic_application"]["helper_dynsym"] = True
+        with self.assertRaisesRegex(EVIDENCE.CompilerHelperEvidenceError, "dynamic-application"):
             EVIDENCE.validate_contract(wrong)
 
 

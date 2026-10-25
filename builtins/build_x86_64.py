@@ -49,6 +49,11 @@ SHARED_LIBC_METADATA = {
     "visibility": "DEFAULT",
     "dynsym": False,
 }
+DYNAMIC_APPLICATION_METADATA = {
+    "artifact": "dynamic-application",
+    "linker_option": SHARED_LIBC_METADATA["linker_option"],
+    "helper_dynsym": False,
+}
 HELPER_ABIS = frozenset({
     "u128-to-binary64", "binary64-to-u128", "u128-to-binary32", "binary32-to-u128",
     "i128-to-binary80", "u128-to-binary80", "binary80-to-i128", "binary80-to-u128", "complex-binary80",
@@ -94,7 +99,7 @@ def native_source_definitions(source: Path) -> dict[str, str]:
 
 def load_native_contract_value(value: object) -> dict[str, object]:
     """Validate the finite producer contract; no symbol prefix is an input."""
-    _require(type(value) is dict and set(value) == {"schema", "target", "owner_group", "source", "builder", "producer_scope", "archive", "shared_libc", "helpers"},
+    _require(type(value) is dict and set(value) == {"schema", "target", "owner_group", "source", "builder", "producer_scope", "archive", "shared_libc", "dynamic_application", "helpers"},
              "native helper contract fields differ")
     _require(type(value["schema"]) is int and value["schema"] == 1 and value["target"] == TARGET,
              "native helper contract schema/target differs")
@@ -108,6 +113,10 @@ def load_native_contract_value(value: object) -> dict[str, object]:
     _require(type(shared_libc) is dict and type(shared_libc.get("dynsym")) is bool
              and shared_libc == SHARED_LIBC_METADATA,
              "native helper shared-libc placement differs")
+    dynamic_application = value["dynamic_application"]
+    _require(type(dynamic_application) is dict and type(dynamic_application.get("helper_dynsym")) is bool
+             and dynamic_application == DYNAMIC_APPLICATION_METADATA,
+             "native helper dynamic-application placement differs")
     helpers = value["helpers"]
     _require(type(helpers) is list and len(helpers) == len(REQUIRED_SYMBOLS), "native helper roster differs")
     names: list[str] = []
@@ -134,7 +143,8 @@ def load_native_contract_value(value: object) -> dict[str, object]:
              "native helper roster differs")
     return {"schema": value["schema"], "target": value["target"], "owner_group": value["owner_group"],
             "source": value["source"], "builder": value["builder"], "producer_scope": value["producer_scope"],
-            "archive": archive, "shared_libc": dict(SHARED_LIBC_METADATA), "helpers": normalized}
+            "archive": archive, "shared_libc": dict(SHARED_LIBC_METADATA),
+            "dynamic_application": dict(DYNAMIC_APPLICATION_METADATA), "helpers": normalized}
 
 
 def load_native_contract() -> dict[str, object]:

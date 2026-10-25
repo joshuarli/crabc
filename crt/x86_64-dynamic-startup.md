@@ -174,11 +174,14 @@ after kernel entry that `AT_ENTRY` names the installed `_start`. Both final
 executables must carry the owned `PT_INTERP`, exact `DT_NEEDED`, nonempty
 preinit/init/fini tags, their entry at the installed `_start`, the owned CRT
 note, RELRO, NOW binding and a non-executable stack. The driver receipt must
-name exactly `Scrt1.o`/`crt1.o`, `crabc-dynamic-attach.o`, `crti.o`, the
-application object and DSO, `libc.so`, `libcrabc-builtins.a` and `crtn.o` in
-that order, and LLD's trace must extract `crabc-builtins.o` at the archive's
-position. Relinking the same object is byte-identical, and the same link
-without `libcrabc-builtins.a` fails on `__udivti3`.
+include exactly one `--exclude-libs=libcrabc-builtins.a` option. Its inputs are
+ordered as `Scrt1.o`/`crt1.o`, `crabc-dynamic-attach.o`, `crti.o`, application
+objects, `libcrabc-builtins.a`, application DSOs, `libc.so`, and `crtn.o`.
+LLD's trace must extract `crabc-builtins.o` at the archive's position.
+Relinking the same object is byte-identical, and the same link without
+`libcrabc-builtins.a` fails on `__udivti3`. Archive helpers are absent from
+each executable and DSO's `.dynsym`, while strong helper definitions from
+caller objects remain public.
 
 A separate wide graph from `fixtures/owned_dynamic_startup_wide.c` gives the
 executable, one initial hub dependency and one runtime plugin 24 constructors
@@ -198,11 +201,6 @@ extracted products.
 
 Open conditions, recorded rather than asserted:
 
-- Helper definitions extracted into an application DSO are exported `GLOBAL
-  DEFAULT`, so an executable linked against that DSO imports them instead of
-  extracting its own. Musl's `libgcc.a` helpers are hidden. The fixture keeps
-  helper use out of the main image's link-time dependency so each image's own
-  extraction stays observable.
 - After a direct interpreter command the owned loader rewrites the process
   auxv (`AT_PHDR`, `AT_ENTRY`, ...), while musl changes only its private copy.
   This loader policy is outside the CRT transcript.

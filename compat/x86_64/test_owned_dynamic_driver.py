@@ -466,6 +466,13 @@ class InstalledDynamicDriverTests(unittest.TestCase):
                                            capture_output=True, text=True, check=False)
                 self.assertEqual(completed.returncode, 0, completed.stderr)
                 receipt = json.loads(Path(str(output) + ".crabc-link.json").read_text())
+                command = receipt["link_command"]
+                archive = str(root / "usr/lib/libcrabc-builtins.a")
+                libc = str(root / "usr/lib/libc.so")
+                self.assertEqual(command.count("--exclude-libs=libcrabc-builtins.a"), 1)
+                self.assertLess(command.index(archive), command.index(libc))
+                if output != leaf:
+                    self.assertLess(command.index(archive), command.index(str(leaf)))
                 self.assertEqual(receipt["manifest_sha256"],
                                  hashlib.sha256((root / driver.MANIFEST).read_bytes()).hexdigest())
                 inspection_path, _ = driver.elf_inspection.sidecar_paths(output)
@@ -568,6 +575,7 @@ class InstalledDynamicDriverTests(unittest.TestCase):
         plan = json.loads(output.getvalue())
         self.assertEqual(plan["application_runpath"], "/app/lib:$ORIGIN/plugins")
         self.assertIn("/app/lib:$ORIGIN/plugins", plan["linker"])
+        self.assertIn("--exclude-libs=libcrabc-builtins.a", plan["linker"])
 
     def _dynamic_receipt(self, *search_arguments):
         """Generate a receipt through the driver while replacing only external tools."""
@@ -586,9 +594,8 @@ class InstalledDynamicDriverTests(unittest.TestCase):
             linked_output.write_bytes(b"owned dynamic executable")
             library = self.root / "usr/lib"
             trace = [
-                library / "crti.o", library / "libc.so", library / "crtn.o",
-                library / "Scrt1.o", library / "crabc-dynamic-attach.o", workload,
-                library / "libcrabc-builtins.a",
+                library / "Scrt1.o", library / "crabc-dynamic-attach.o", library / "crti.o",
+                workload, library / "libcrabc-builtins.a", library / "libc.so", library / "crtn.o",
             ]
             return "\n".join(str(path) for path in trace)
 
@@ -632,9 +639,8 @@ class InstalledDynamicDriverTests(unittest.TestCase):
                 linked.write_bytes(b"owned dynamic executable")
                 library = self.root / "usr/lib"
                 return "\n".join(str(path) for path in (
-                    library / "crti.o", library / "libc.so", library / "crtn.o",
-                    library / "Scrt1.o", library / "crabc-dynamic-attach.o", objects[0],
-                    library / "libcrabc-builtins.a",
+                    library / "Scrt1.o", library / "crabc-dynamic-attach.o", library / "crti.o",
+                    objects[0], library / "libcrabc-builtins.a", library / "libc.so", library / "crtn.o",
                 ))
 
             environment = {driver.RETAIN_LINK_EVIDENCE_ENV: "1"} if retain else {}
@@ -666,6 +672,11 @@ class InstalledDynamicDriverTests(unittest.TestCase):
         receipt = json.loads(receipt_path.read_text())
         self.assertEqual(receipt["schema"], 2)
         self.assertEqual(set(receipt), driver.RECEIPT_V2_FIELDS)
+        command = receipt["link_command"]
+        archive = str(self.root / "usr/lib/libcrabc-builtins.a")
+        self.assertEqual(command.count("--exclude-libs=libcrabc-builtins.a"), 1)
+        self.assertLess(command.index(str(workload)), command.index(archive))
+        self.assertLess(command.index(archive), command.index(str(self.root / "usr/lib/libc.so")))
         self.assertEqual(
             (receipt["application_search_kind"], receipt["application_runpath"],
              receipt["application_rpath"], receipt["application_hash_style"]),

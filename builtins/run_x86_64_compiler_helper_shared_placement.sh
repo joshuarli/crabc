@@ -1,14 +1,4 @@
 #!/usr/bin/env bash
-# Bounded installed shared-libc placement proof for the owned helper archive.
-#
-# It accepts a supplied materialized dynamic product or builds one. The
-# installed archive remains an ordinary GLOBAL DEFAULT provider for executable
-# and application-DSO consumers; only the exact copy pulled into libc.so is
-# local. A C allocator retains its direct helper-call witness; native counting
-# can compile inline. Both selections require ordinary archive consumers and
-# the strong public helper fixture. The raw commands, source seal and installed
-# artifacts remain below the caller-selected checkout-local work directory for
-# host inspection.
 set -euo pipefail
 umask 002
 
@@ -20,6 +10,7 @@ readonly BUILDER="$ROOT_DIR/scripts/build_x86_64_owned_dynamic_sysroot.py"
 readonly DIRECT="$ROOT_DIR/builtins/fixtures/x86_64_compiler_helper_shared_direct.c"
 readonly DSO="$ROOT_DIR/builtins/fixtures/x86_64_compiler_helper_shared_dso.c"
 readonly DSO_CONSUMER="$ROOT_DIR/builtins/fixtures/x86_64_compiler_helper_shared_dso_consumer.c"
+readonly DSO_INTERPOSE="$ROOT_DIR/builtins/fixtures/x86_64_compiler_helper_shared_dso_interpose.c"
 readonly INTERPOSE="$ROOT_DIR/builtins/fixtures/x86_64_compiler_helper_shared_interpose.c"
 
 fail() { printf 'ERROR: native compiler-helper shared placement: %s\n' "$*" >&2; exit 1; }
@@ -34,7 +25,7 @@ fi
 case "$(uname -m)" in x86_64|amd64) ;; *) fail "refuses emulation on $(uname -m)";; esac
 [[ "$IMAGE_ID" =~ ^crabc-core-evidence@sha256:[0-9a-f]{64}$ ]] || fail "missing pinned image identity"
 for tool in chroot nm objdump python3 readelf sha256sum timeout; do require_tool "$tool"; done
-for input in "$READER" "$BUILDER" "$DIRECT" "$DSO" "$DSO_CONSUMER" "$INTERPOSE"; do
+for input in "$READER" "$BUILDER" "$DIRECT" "$DSO" "$DSO_CONSUMER" "$DSO_INTERPOSE" "$INTERPOSE"; do
     [ -f "$input" ] || fail "missing input $input"
 done
 work_admission=(validate-work-dir --root "$ROOT_DIR" --work "$WORK_DIR_REQUEST")
@@ -97,8 +88,6 @@ case "$ALLOCATOR_BACKEND" in
         record libc-bitmap-caller objdump --disassemble=mi_bbitmap_try_find_and_clearNC "$LIBC"
         ;;
     native-shadow|native)
-        # Native counting can lower inline, without an allocator helper call.
-        # Private placement and ordinary archive consumers remain required.
         ;;
 esac
 python3 - "$ROOT_DIR/builtins/x86_64-helper-contract.toml" \
@@ -166,35 +155,73 @@ record dso-link "$DRIVER" --dynamic-shared-object "$DSO" -o "$WORK_DIR/libhelper
 record dso-consumer-link "$DRIVER" --dynamic-pie "$DSO_CONSUMER" \
     --application-dso "$WORK_DIR/libhelper.so" -o "$WORK_DIR/dso-consumer"
 record interpose-link "$DRIVER" --dynamic-pie -rdynamic "$INTERPOSE" -o "$WORK_DIR/interpose"
+record dso-interpose-link "$DRIVER" --dynamic-pie -rdynamic "$DSO_INTERPOSE" \
+    --application-dso "$WORK_DIR/libhelper.so" -o "$WORK_DIR/dso-interpose"
 record direct-symtab readelf --symbols -W "$WORK_DIR/direct"
+record direct-symbols readelf --dyn-syms -W "$WORK_DIR/direct"
+record dso-symtab readelf --symbols -W "$WORK_DIR/libhelper.so"
 record dso-symbols readelf --dyn-syms -W "$WORK_DIR/libhelper.so"
+record dso-consumer-symtab readelf --symbols -W "$WORK_DIR/dso-consumer"
+record dso-consumer-symbols readelf --dyn-syms -W "$WORK_DIR/dso-consumer"
 record interpose-symbols readelf --dyn-syms -W "$WORK_DIR/interpose"
+record dso-interpose-symbols readelf --dyn-syms -W "$WORK_DIR/dso-interpose"
 python3 - "$ARCHIVE" "$WORK_DIR/direct.crabc-link.json" "$WORK_DIR/libhelper.so.crabc-link.json" \
-    "$WORK_DIR/raw/direct-symtab.stdout" "$WORK_DIR/raw/dso-symbols.stdout" \
-    "$WORK_DIR/raw/interpose-symbols.stdout" <<'PY'
+    "$WORK_DIR/dso-consumer.crabc-link.json" "$WORK_DIR/interpose.crabc-link.json" \
+    "$WORK_DIR/dso-interpose.crabc-link.json" "$WORK_DIR/raw/direct-symtab.stdout" \
+    "$WORK_DIR/raw/direct-symbols.stdout" "$WORK_DIR/raw/dso-symtab.stdout" "$WORK_DIR/raw/dso-symbols.stdout" \
+    "$WORK_DIR/raw/dso-consumer-symtab.stdout" "$WORK_DIR/raw/dso-consumer-symbols.stdout" \
+    "$WORK_DIR/raw/interpose-symbols.stdout" "$WORK_DIR/raw/dso-interpose-symbols.stdout" \
+    "$ROOT_DIR/builtins/x86_64-helper-contract.toml" <<'PY'
 import hashlib
 import json
 from pathlib import Path
 import sys
+import tomllib
 
-archive, direct_receipt, dso_receipt, direct_symbols, dso_symbols, interpose_symbols = map(Path, sys.argv[1:])
+archive, direct_receipt, dso_receipt, consumer_receipt, interpose_receipt, dso_interpose_receipt = map(Path, sys.argv[1:7])
+direct_symtab, direct_symbols, dso_symtab, dso_symbols, consumer_symtab, consumer_symbols = map(Path, sys.argv[7:13])
+interpose_symbols, dso_interpose_symbols, contract_path = map(Path, sys.argv[13:16])
+contract = tomllib.loads(contract_path.read_text(encoding='utf-8'))
+policy = contract['dynamic_application']
+expected_option = '--exclude-libs=' + contract['archive']['name']
+if policy != {'artifact': 'dynamic-application', 'linker_option': expected_option, 'helper_dynsym': False}:
+    raise SystemExit('dynamic application helper placement contract differs')
 digest = hashlib.sha256(archive.read_bytes()).hexdigest()
-for receipt_path in (direct_receipt, dso_receipt):
+member = f"{archive}(crabc-builtins.o)"
+for receipt_path in (direct_receipt, dso_receipt, consumer_receipt, interpose_receipt, dso_interpose_receipt):
     receipt = json.loads(receipt_path.read_text(encoding='utf-8'))
-    if 'usr/lib/libcrabc-builtins.a' not in receipt.get('owned_runtime_inputs', []):
+    if 'usr/lib/' + contract['archive']['name'] not in receipt.get('owned_runtime_inputs', []):
         raise SystemExit('installed dynamic driver omitted the helper archive role')
-    if not any('libcrabc-builtins.a(crabc-builtins.o)' in line for line in receipt.get('link_trace', [])):
-        raise SystemExit('installed dynamic driver did not extract the helper member')
     if not any(item.get('sha256') == digest and str(item.get('path', '')).endswith('/usr/lib/libcrabc-builtins.a')
                for item in receipt.get('input_receipts', [])):
         raise SystemExit('installed dynamic driver receipt does not bind the helper archive bytes')
+    if receipt.get('link_command', []).count(expected_option) != 1:
+        raise SystemExit('dynamic application link omits its exact helper localization option')
+for receipt_path in (direct_receipt, dso_receipt, consumer_receipt):
+    receipt = json.loads(receipt_path.read_text(encoding='utf-8'))
+    if receipt.get('link_trace', []).count(member) != 1:
+        raise SystemExit('ordinary image did not extract its own helper archive member')
+consumer_link = json.loads(consumer_receipt.read_text(encoding='utf-8'))
+consumer_command = consumer_link['link_command']
+if consumer_command.index(str(archive)) > consumer_command.index(str(dso_receipt.parent / 'libhelper.so')):
+    raise SystemExit('consumer helper archive follows its application DSO')
+def rows(path):
+    return [line.split() for line in path.read_text(encoding='utf-8').splitlines()
+            if len(line.split()) >= 8 and line.split()[0].endswith(':')]
+helpers = {row['name'] for row in contract['helpers']}
+for path in (direct_symbols, dso_symbols, consumer_symbols):
+    if any(row[-1] in helpers for row in rows(path)):
+        raise SystemExit('owned application helper leaked into .dynsym')
 def defines(path, name):
     return any(line.split()[3:6] == ['FUNC', 'GLOBAL', 'DEFAULT'] and line.split()[-1] == name
-               for line in path.read_text(encoding='utf-8').splitlines() if len(line.split()) >= 8 and line.split()[0].endswith(':'))
-if not defines(direct_symbols, '__popcountdi2') or not defines(dso_symbols, '__popcountdi2'):
-    raise SystemExit('ordinary executable or application DSO did not receive its helper from the archive')
-if not defines(interpose_symbols, '__popcountdi2'):
-    raise SystemExit('interposition executable does not expose its strong helper definition')
+               for line in path.read_text(encoding='utf-8').splitlines()
+               if len(line.split()) >= 8 and line.split()[0].endswith(':'))
+for path in (direct_symtab, dso_symtab, consumer_symtab):
+    if not any(row[-1] == '__popcountdi2' and row[6] != 'UND' for row in rows(path)):
+        raise SystemExit('application image did not define its extracted __popcountdi2 helper')
+for path in (interpose_symbols, dso_interpose_symbols):
+    if not defines(path, '__popcountdi2'):
+        raise SystemExit('user-authored strong helper is not GLOBAL DEFAULT in .dynsym')
 PY
 
 readonly EXECUTION_ROOT="$WORK_DIR/execution-root"
@@ -204,12 +231,14 @@ cp "$WORK_DIR/libhelper.so" "$EXECUTION_ROOT/usr/lib/libhelper.so"
 cp "$WORK_DIR/direct" "$EXECUTION_ROOT/direct"
 cp "$WORK_DIR/dso-consumer" "$EXECUTION_ROOT/dso-consumer"
 cp "$WORK_DIR/interpose" "$EXECUTION_ROOT/interpose"
+cp "$WORK_DIR/dso-interpose" "$EXECUTION_ROOT/dso-interpose"
 record direct-execute timeout 20 chroot "$EXECUTION_ROOT" /direct
 record dso-execute timeout 20 chroot "$EXECUTION_ROOT" /dso-consumer
 record interpose-execute timeout 20 chroot "$EXECUTION_ROOT" /interpose
+record dso-interpose-execute timeout 20 chroot "$EXECUTION_ROOT" /dso-interpose
 record product-admission-after python3 -B "$READER" validate-materialized-product --root "$ROOT_DIR" --product "$PRODUCT"
 record product-admission-unchanged cmp -s "$WORK_DIR/raw/product-admission-before.stdout" "$WORK_DIR/raw/product-admission-after.stdout"
 python3 -B "$READER" validate-source-seal "$WORK_DIR/source-before.json" >/dev/null
 sha256sum "$ARCHIVE" "$LIBC" "$LOADER" "$WORK_DIR/direct" "$WORK_DIR/libhelper.so" \
-    "$WORK_DIR/dso-consumer" "$WORK_DIR/interpose" >"$WORK_DIR/artifacts.sha256"
+    "$WORK_DIR/dso-consumer" "$WORK_DIR/interpose" "$WORK_DIR/dso-interpose" >"$WORK_DIR/artifacts.sha256"
 printf 'native x86 compiler-helper shared placement: PASS (%s)\n' "$WORK_DIR"

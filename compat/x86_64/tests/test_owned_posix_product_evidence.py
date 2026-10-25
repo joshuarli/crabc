@@ -475,10 +475,11 @@ class OwnedPosixProductEvidenceTests(unittest.TestCase):
             str(self.linker), *( ["-pie"] if linkage == "pie" else []), "--hash-style=sysv",
             "--eh-frame-hdr", "-z", "relro", "-z", "now", "-z", "noexecstack", "-z", "text", "--no-undefined",
             "--allow-shlib-undefined", "--enable-new-dtags", "-rpath", "/usr/lib",
+            "--exclude-libs=libcrabc-builtins.a",
             *(["--export-dynamic"] if export_dynamic else []),
             "--dynamic-linker", "/lib/ld-crabc-x86_64.so.1", str(runtime / entry),
             str(runtime / "crabc-dynamic-attach.o"), str(runtime / "crti.o"), str(self.workload),
-            str(runtime / "libc.so"), str(runtime / "libcrabc-builtins.a"), str(runtime / "crtn.o"),
+            str(runtime / "libcrabc-builtins.a"), str(runtime / "libc.so"), str(runtime / "crtn.o"),
             "-o", str(self.executable),
         ]
         manifest = self.dynamic / "share/crabc/manifest.json"
@@ -497,7 +498,7 @@ class OwnedPosixProductEvidenceTests(unittest.TestCase):
             "input_receipts": [{"path": str(path), "sha256": digest(path)} for path in inputs],
             "resolved_linker": {"path": str(self.linker), "sha256": digest(self.linker)},
             "link_command": link,
-            "link_trace": [str(path) for path in [runtime / entry, runtime / "crabc-dynamic-attach.o", runtime / "crti.o", self.workload, runtime / "libc.so", runtime / "crtn.o"]],
+            "link_trace": [str(path) for path in [runtime / entry, runtime / "crabc-dynamic-attach.o", runtime / "crti.o", self.workload, runtime / "libcrabc-builtins.a", runtime / "libc.so", runtime / "crtn.o"]],
             "campaign_complete": False,
         })
         return receipt

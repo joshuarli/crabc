@@ -38,13 +38,14 @@ class InstalledLinkReceiptTests(unittest.TestCase):
         self.dso = root / "libdependency.so"
         archive = self.library / "libcrabc-builtins.a"
         self.inputs = [self.library / "Scrt1.o", self.library / "crabc-dynamic-attach.o",
-                       self.library / "crti.o", self.object, self.dso, self.library / "libc.so",
-                       archive, self.library / "crtn.o"]
+                       self.library / "crti.o", self.object, archive, self.dso,
+                       self.library / "libc.so", self.library / "crtn.o"]
         self.receipt = {
             "output_sha256": hashlib.sha256(self.output.read_bytes()).hexdigest(),
             "owned_runtime_inputs": sorted(f"usr/lib/{name}" for name in (
                 "Scrt1.o", "crabc-dynamic-attach.o", "crti.o", "libc.so", "crtn.o", "libcrabc-builtins.a")),
-            "link_command": ["ld.lld", "-pie", "--dynamic-linker", startup.INTERPRETER,
+            "link_command": ["ld.lld", "-pie", "--exclude-libs=libcrabc-builtins.a",
+                             "--dynamic-linker", startup.INTERPRETER,
                              *(str(path) for path in self.inputs), "-o", str(self.output)],
             "link_trace": [f"{archive}(crabc-builtins.o)" if path == archive else str(path)
                            for path in self.inputs],
@@ -62,8 +63,15 @@ class InstalledLinkReceiptTests(unittest.TestCase):
 
     def test_reordered_crt_inputs_are_rejected(self) -> None:
         command = self.receipt["link_command"]
-        command[4], command[6] = command[6], command[4]
+        crt_entry = command.index(str(self.library / "Scrt1.o"))
+        crt_init = command.index(str(self.library / "crti.o"))
+        command[crt_entry], command[crt_init] = command[crt_init], command[crt_entry]
         with self.assertRaisesRegex(startup.EvidenceError, "link input order"):
+            self.check()
+
+    def test_missing_helper_localization_is_rejected(self) -> None:
+        self.receipt["link_command"].remove("--exclude-libs=libcrabc-builtins.a")
+        with self.assertRaisesRegex(startup.EvidenceError, "helper archive localization"):
             self.check()
 
     def test_unextracted_helper_archive_is_rejected(self) -> None:

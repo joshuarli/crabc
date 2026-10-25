@@ -165,10 +165,10 @@ byte-identical musl 1.2.6 `dynamic.list` input. It gives LLD musl's finite
 exception scope: public data remains interposable for copy relocations, and
 the listed allocator functions remain interposable by design. Ordinary shared
 libc calls bind locally without rewriting their source public spellings. The
-producer rejects a changed source/hash/order, records the selected data and
-allocator categories plus final normalized libc link command in
-`share/crabc/libc-shared.provenance.json`, and does not apply this policy to
-the loader, application DSOs, or static archives. It is deliberately not a
+producer rejects a changed source/hash/order and records the selected data
+and allocator categories plus final normalized libc link command in
+`share/crabc/libc-shared.provenance.json`. This libc symbol-list policy does
+not apply to the loader, application DSOs, or static archives and is not a
 blanket `-Bsymbolic` policy.
 The actual shared libc and loader must have no NEEDED, PT_INTERP, TEXTREL or
 absolute 32-bit dynamic relocations, and must have RELRO and an NX stack.
@@ -176,8 +176,13 @@ The exact one-member `libcrabc-builtins.a` is also linked into libc only for
 private compiler-generated calls. Its bounded helper definitions (the roster in
 [`builtins/x86_64-helper-contract.toml`](../../builtins/x86_64-helper-contract.toml)) are made
 local with `--exclude-libs=libcrabc-builtins.a`; the separately installed
-archive remains the ordinary provider for applications and application DSOs.
-Every application link records hashed inputs, exact command and checked LLD
+archive retains its `GLOBAL DEFAULT` provider contract. The dynamic driver uses
+the same exact archive exclusion for application executables and DSOs. It puts
+the archive after application objects and before application DSOs, so each
+image extracts its own helpers before a DSO can satisfy an unresolved call.
+Those extracted helpers stay out of that image's `.dynsym`; public definitions
+from caller object files remain eligible for ordinary interposition. Every
+application link records hashed inputs, exact command and checked LLD
 input trace; undeclared target inputs fail. The driver disables Python bytecode
 publication itself, so importing its shared checks cannot dirty the install.
 An output-derived receipt is exclusively reserved before compilation or

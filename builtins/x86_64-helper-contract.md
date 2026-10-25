@@ -6,16 +6,21 @@ selects the unversioned `FUNC GLOBAL DEFAULT` C entries in each distinct
 installed archive placement: `static-builtins` and `dynamic-builtins`. Equal
 archive bytes do not merge those placements.
 
-The owned dynamic builder also passes that exact archive to the one `libc.so`
-link because selected Rust libc leaves can need compiler-generated operations.
+The owned dynamic builder passes that exact archive to the `libc.so` link
+because selected Rust libc leaves can need compiler-generated operations.
 `scripts/build_x86_64_owned_dynamic_sysroot.py` uses
-`--exclude-libs=libcrabc-builtins.a` only for that shared link. Consequently,
-the same definitions remain `FUNC LOCAL DEFAULT` in libc's full `.symtab`
-and are absent from libc's `.dynsym`; they are not a shared-libc API. The
-archive builder rejects every extra external definition, so this archive-name
-rule cannot localize another owner. It does not change either installed archive
-or an application/DSO's ordinary dynamic-driver link, which still names the
-installed `usr/lib/libcrabc-builtins.a` after `libc.so`.
+`--exclude-libs=libcrabc-builtins.a` for that link, leaving the extracted
+definitions `FUNC LOCAL DEFAULT` in libc's `.symtab` and absent from its
+`.dynsym`.
+
+The installed dynamic driver applies the same archive-only exclusion to each
+application executable and DSO. It places the archive after input objects and
+before application DSOs, so an application's unresolved helper call extracts
+its own archive member before a DSO can satisfy it. Extracted helper definitions
+are absent from the output `.dynsym`; strong definitions from caller object
+files remain public. The installed archive itself keeps its `GLOBAL DEFAULT`
+contract, and the exclusion cannot capture another owner because the archive
+builder rejects every extra external definition.
 
 The named definitions live in [`src/lib.rs`](src/lib.rs): `Uint128` is the
 `#[repr(C)]` low-word/high-word carrier for the native C `__int128` ABI;
@@ -90,14 +95,15 @@ CRABC_COMPILER_HELPER_SHARED_WORK_DIR=/workspace/.work/x86_64/compiler-helper-sh
 
 It builds one private materialized product, validates its installed manifest
 before and after execution, validates the installed archive and producer/link
-provenance, then checks all selected libc `.symtab` rows and `.dynsym` absence. The
-fixture executable and application DSO are copied only to a separate private
-execution root, so the observed installed product remains unchanged. A direct
-executable and a helper-using application DSO must each
-extract `crabc-builtins.o` from the installed archive under the existing owned
-driver. Every selected helper copy in libc remains local and absent from
-`.dynsym`, including definitions that its compiler-generated code does not use.
-These private definitions cannot be preempted by an executable's public helper.
+provenance, then checks selected libc `.symtab` rows and `.dynsym` absence. The
+fixture executable and application DSOs are copied only to a separate private
+execution root. A direct executable, helper-using DSO, and executable linked
+against that DSO must each extract `crabc-builtins.o` from the installed
+archive. Each image's selected archive helpers stay out of its `.dynsym`,
+including definitions its compiler-generated code does not use. A separate
+executable strong-helper fixture confirms that caller object definitions remain
+`GLOBAL DEFAULT` and cannot preempt a DSO's private helper call. Every selected
+libc helper copy also remains local and absent from `.dynsym`.
 
 For an admitted C allocator backend, the runner additionally requires the
 emitted `mi_bbitmap_try_find_and_clearNC` caller to transfer directly to local

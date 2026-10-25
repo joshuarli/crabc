@@ -82,12 +82,13 @@ physical argv, which producer command captures retain separately from the
 installed description.
 
 The native [x86-64 compiler-helper archive contract](x86_64-helper-contract.md)
-names the selected Rust C-ABI and binary80 assembly entries, their two installed archive placements,
-and the bounded aggregate C consumer proof. When the dynamic builder consumes
-that exact archive for private libc compiler-generated calls, it localizes only
-that libc.so copy; the installed archive remains the ordinary provider for
-applications and application DSOs. The focused shared-placement runner in the
-same contract records that boundary. Neither proof promotes native support.
+names the selected Rust C-ABI and binary80 assembly entries, their two installed
+archive placements, and the bounded aggregate C consumer proof. The dynamic
+builder localizes the archive's private `libc.so` copy. The installed dynamic
+driver places the same archive before application DSOs and hides helpers pulled
+into each executable or DSO from that image's `.dynsym`. Caller object
+definitions remain public. The focused shared-placement runner exercises the
+separate archive and image contracts. Neither proof promotes native support.
 
 The x86 binary80 entries use checked Rust global assembly because Rust has no
 fp80 C scalar type. The fixed LLVM 22.1.3 kernels and local musl 1.2.6 math
