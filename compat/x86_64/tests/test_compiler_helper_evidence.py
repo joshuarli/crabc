@@ -22,6 +22,97 @@ SPEC.loader.exec_module(EVIDENCE)
 
 
 class CompilerHelperEvidenceTests(unittest.TestCase):
+    def _debug_dynamic_product(self, root: Path) -> Path:
+        product = root / "debug-product"
+        files = (
+            "bin/crabc-cc-dynamic",
+            "share/crabc/crabc_cc_static.py",
+            "share/crabc/owned_dynamic_receipt.py",
+            "share/crabc/owned_dynamic_elf.py",
+            "share/crabc/dynamic-product-state.json",
+            "share/crabc/libc-shared.provenance.json",
+            "usr/include/fixture.h",
+            "lib/ld-crabc-x86_64.so.1",
+            "usr/lib/crt1.o",
+            "usr/lib/Scrt1.o",
+            "usr/lib/crti.o",
+            "usr/lib/crtn.o",
+            "usr/lib/crabc-dynamic-attach.o",
+            "usr/lib/libc.so",
+            "usr/lib/libcrabc-builtins.a",
+        )
+        for relative in files:
+            path = product / relative
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes((relative + "\n").encode())
+        for relative in ("bin/crabc-cc-dynamic", "lib/ld-crabc-x86_64.so.1", "usr/lib/libc.so"):
+            (product / relative).chmod(0o755)
+        (product / "lib/ld-musl-x86_64.so.1").symlink_to("ld-crabc-x86_64.so.1")
+        state = {
+            "build_profile": "debug",
+            "allocator_backend": "native-shadow",
+            "allocator_lifecycle_test_audit": False,
+            "status": "materialized-unqualified",
+        }
+        (product / "share/crabc/dynamic-product-state.json").write_text(EVIDENCE.canonical_json(state))
+        provenance = {key: state[key] for key in
+                      ("build_profile", "allocator_backend", "allocator_lifecycle_test_audit")}
+        (product / "share/crabc/libc-shared.provenance.json").write_text(EVIDENCE.canonical_json(provenance))
+        payload = {
+            path.relative_to(product).as_posix(): EVIDENCE.digest(path)
+            for path in sorted(product.rglob("*"))
+            if path.is_file() and not path.is_symlink()
+        }
+        manifest = {
+            "schema": 1,
+            "format": "crabc-x86-64-owned-dynamic-sysroot-v1",
+            "target": EVIDENCE.TARGET,
+            "toolchain": "pinned",
+            "files": payload,
+            "build_profile": "debug",
+            "source_sha256": self._current_source_digest(),
+            "symlinks": {"lib/ld-musl-x86_64.so.1": "ld-crabc-x86_64.so.1"},
+        }
+        manifest_path = product / "share/crabc/manifest.json"
+        manifest_path.write_text(EVIDENCE.canonical_json(manifest))
+        return product
+
+    def _current_source_digest(self) -> str:
+        module_dir = Path(EVIDENCE.__file__).resolve().parent
+        if str(module_dir) not in sys.path:
+            sys.path.insert(0, str(module_dir))
+        import owned_dynamic_qualification as qualification
+
+        return qualification.source_digest()
+
+    def test_materialized_debug_product_binds_current_source_and_installed_payload(self) -> None:
+        scratch = ROOT / ".work/x86_64/compiler-helper-evidence-tests"
+        scratch.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(dir=scratch) as temporary:
+            product = self._debug_dynamic_product(Path(temporary))
+            identity = EVIDENCE.validate_materialized_dynamic_product(ROOT, product)
+            self.assertEqual(identity, EVIDENCE.digest(product / "share/crabc/manifest.json"))
+
+    def test_materialized_debug_product_rejects_stale_source_and_changed_payload(self) -> None:
+        scratch = ROOT / ".work/x86_64/compiler-helper-evidence-tests"
+        scratch.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(dir=scratch) as temporary:
+            product = self._debug_dynamic_product(Path(temporary))
+            manifest_path = product / "share/crabc/manifest.json"
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            manifest["source_sha256"] = "f" * 64
+            manifest_path.write_text(EVIDENCE.canonical_json(manifest))
+            with self.assertRaises(EVIDENCE.CompilerHelperEvidenceError) as stale:
+                EVIDENCE.validate_materialized_dynamic_product(ROOT, product)
+            self.assertIn("source differs", str(stale.exception.__cause__))
+
+            manifest["source_sha256"] = self._current_source_digest()
+            manifest_path.write_text(EVIDENCE.canonical_json(manifest))
+            (product / "usr/lib/libcrabc-builtins.a").write_bytes(b"changed archive\n")
+            with self.assertRaises(EVIDENCE.CompilerHelperEvidenceError) as changed:
+                EVIDENCE.validate_materialized_dynamic_product(ROOT, product)
+            self.assertIn("payload hash mismatch", str(changed.exception.__cause__))
+
     def test_complex_edge_differential_keeps_final_elf_and_rejects_tampering(self) -> None:
         if not Path(EVIDENCE.ORACLE_CC).is_file():
             self.skipTest("pinned musl compiler is available only in the native image")

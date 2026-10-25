@@ -123,6 +123,11 @@ allocator consumption of `__popcountdi2`. Backend applicability comes from the
 admitted product's allocator provenance. This is focused product evidence only;
 it is not a dynamic qualification or a complete helper family.
 
+A supplied debug product is admitted for this component proof after its
+installed payload validates and its manifest source digest matches the current
+checkout. This path carries no qualification claim; release products retain
+the qualification product reader.
+
 To reuse the selected dynamic product of a larger collection, pass its absolute
 checkout-local path as the runner's sole argument. The owning product reader
 admits it before and after execution, and fixtures still run in a separate

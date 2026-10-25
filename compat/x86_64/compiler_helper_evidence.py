@@ -33,6 +33,7 @@ BUILDER = Path("builtins/build_x86_64.py")
 DYNAMIC_BUILDER = Path("scripts/build_x86_64_owned_dynamic_sysroot.py")
 DYNAMIC_DRIVER = Path("compat/x86_64/crabc_cc_owned_dynamic.py")
 DYNAMIC_QUALIFICATION = Path("compat/x86_64/owned_dynamic_qualification.py")
+DYNAMIC_PRODUCT_EVIDENCE = Path("compat/x86_64/owned_posix_product_evidence.py")
 AGGREGATE_PROBE = Path("builtins/fixtures/x86_64_compiler_helper_aggregate_probe.c")
 AGGREGATE_START = Path("builtins/fixtures/x86_64_compiler_helper_aggregate_start.S")
 AGGREGATE_RUNNER = Path("builtins/run_x86_64_compiler_helper_aggregate.sh")
@@ -65,7 +66,8 @@ SOURCE_FILES = (*(Path("builtins/fixtures/llvm22_float_complex") / name for name
                 *(Path("builtins/fixtures/musl126_binary80") / name for name in
                   ("fmaxl.c", "logbl.c", "ilogbl.c", "scalbnl.c", "__fpclassifyl.c", "__signbitl.c", "COPYRIGHT", "SHA256SUMS")),
                 CAST_PROBE, BINARY32_CAST_PROBE, CONTRACT, SOURCE, Path("builtins/src/x86_64_complex_classification.rs"), BUILDER, DYNAMIC_BUILDER, DYNAMIC_QUALIFICATION, AGGREGATE_PROBE, AGGREGATE_START, AGGREGATE_RUNNER,
-                SHARED_PLACEMENT_RUNNER, *SHARED_PLACEMENT_FIXTURES, DYNAMIC_DRIVER, READER, SELECTION, DOCUMENTATION,
+                SHARED_PLACEMENT_RUNNER, *SHARED_PLACEMENT_FIXTURES, DYNAMIC_DRIVER,
+                DYNAMIC_PRODUCT_EVIDENCE, READER, SELECTION, DOCUMENTATION,
                 BUILTINS_DOCUMENTATION, MATERIALIZED_DYNAMIC_DOCUMENTATION, SELECTION_DOCUMENTATION, ELF_READER)
 SCHEMA = "crabc.x86_64-compiler-helper-owner/v1"
 AGGREGATE_SCHEMA = "crabc.x86_64-compiler-helper-aggregate/v1"
@@ -1274,7 +1276,12 @@ def checkout_work_directory(root: Path, path: Path, *, product: Path | None = No
 
 
 def validate_materialized_dynamic_product(root: Path, product: Path) -> str:
-    """Use the owned product reader before and after private execution copies."""
+    """Admit a source-matched product before and after private execution copies.
+
+    Release products use the qualification reader. Debug products use the
+    installed payload and current-source readers for component development;
+    that path carries no qualification claim.
+    """
 
     root = _physical_directory(root, "compiler-helper checkout")
     product = _physical_directory(product, "compiler-helper installed dynamic product")
@@ -1284,9 +1291,16 @@ def validate_materialized_dynamic_product(root: Path, product: Path) -> str:
     if str(module_dir) not in sys.path:
         sys.path.insert(0, str(module_dir))
     import owned_dynamic_qualification as qualification
+    import owned_posix_product_evidence as product_evidence
+    import crabc_cc_owned_dynamic as driver
     try:
+        manifest = driver.validate_installation(product)
+        if manifest.get("build_profile") == "debug":
+            product_evidence.validate_debug_product_source(product, qualification.source_digest())
+            return digest(product / "share/crabc/manifest.json")
         return qualification.product_identity(product)
-    except (qualification.QualificationError, OSError, ValueError) as error:
+    except (qualification.QualificationError, product_evidence.ProductEvidenceError,
+            driver.shared.DriverError, OSError, ValueError) as error:
         raise CompilerHelperEvidenceError("compiler-helper installed dynamic product is not admitted") from error
 
 
