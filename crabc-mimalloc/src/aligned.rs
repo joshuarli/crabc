@@ -325,8 +325,13 @@ mod tests {
             })
         );
         assert_eq!(allocation_plan(8, PAGE_MAX_OVERALLOC_ALIGN * 2, 1, OS_PAGE), None);
-        assert_eq!(allocation_plan(8, PAGE_META_ALIGNMENT, 0, OS_PAGE), None);
-        assert_eq!(allocation_plan(8, 2 * PAGE_META_ALIGNMENT, 0, OS_PAGE), None);
+        for alignment in [PAGE_META_ALIGNMENT, 2 * PAGE_META_ALIGNMENT] {
+            let expected = if crate::config::PAGE_META_IS_ALIGNED { None } else {
+                Some(AlignedAllocationPlan::HugeSingleton { request: SMALL_SIZE_MAX + 1, alignment })
+            };
+            assert_eq!(allocation_plan(8, alignment, 0, OS_PAGE), expected);
+            assert_eq!(allocation_plan(8, alignment, 1, OS_PAGE), None);
+        }
         assert_eq!(allocation_plan(8, 0, 0, OS_PAGE), None);
         assert_eq!(allocation_plan(8, 24, 0, OS_PAGE), None);
         assert_eq!(allocation_plan(MAX_ALLOC_SIZE + 1, 16, 0, OS_PAGE), None);

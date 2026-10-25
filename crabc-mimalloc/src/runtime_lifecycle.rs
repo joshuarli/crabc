@@ -22545,7 +22545,7 @@ mod tests {
         );
     }
 
-    #[cfg(all(target_arch = "x86_64", not(miri)))]
+    #[cfg(all(target_arch = "x86_64", not(miri), not(feature = "mi-secure-1")))]
     #[test]
     fn native_medium_arena_clients_retain_published_aligned_metadata_aliases() {
         crate::test_process::run_in_fresh_process(

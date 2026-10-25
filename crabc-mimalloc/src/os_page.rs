@@ -4354,6 +4354,19 @@ mod tests {
             )
             .unwrap();
             assert_eq!(layout.block_size(), block_size);
+            if !crate::config::PAGE_META_IS_ALIGNED {
+                let slices = if crate::config::SECURE_LEVEL >= 2 && block_size == 64 * KIB { 3 } else { 2 };
+                assert_eq!(layout.slice_count(), slices);
+                assert_eq!(layout.allocation_size(), slices * 64 * KIB);
+                assert_eq!(layout.mapping_length(), (slices + 1) * 64 * KIB);
+                assert_eq!(layout.metadata_offset(), 64 * KIB);
+                assert_eq!(layout.metadata_slot_count(), 1);
+                assert_eq!(layout.metadata_commit_size(), 0);
+                assert_eq!(layout.block_start_offset(), 64 * KIB);
+                assert_eq!(layout.page_offset(), 64 * KIB);
+                assert_eq!(layout.page_map_size(), 128 * KIB);
+                continue;
+            }
             assert_eq!(layout.slice_count(), 1);
             assert_eq!(layout.allocation_size(), 64 * KIB);
             assert_eq!(layout.mapping_length(), 192 * KIB);
