@@ -5,13 +5,14 @@ remains selected. Public x86 support remains false: 180 of 223 capabilities,
 nine of 26 families, zero of eight gates.
 
 - **Resume:** "Read plan.md and docs/lanes.md, then resume the campaign as
-  coordinator, unattended. Preserve the denied stress invocation. Keep one
-  implementation owner on corrected-C owner-exit comparison and production
-  lifecycle reduction, one independent upstream investigator, and one reviewer
-  only after a causal patch exists. Keep independent runtime lanes moving."
+  coordinator, unattended. Preserve both harness-denied allocator items.
+  Finish the resumable dynamic-product prerequisite and independent runtime
+  families. Keep allocator execution parked until its harness condition
+  changes. Preserve one implementation owner for any later lifetime work."
   First command from the repository root:
   `./scripts/dev-x86_64.sh campaign-status`.
-- **State:** `main`, implementation integrated through `6a3c35998`.
+- **State:** recovery started at `f86442475`. Dynamic replay is integrated
+  through `8aaaade77`, and allocator implementation through `6a3c35998`.
   Missing images were rebuilt through their tracked launchers. The core pin is
   `sha256:8ddb31ba1b3d1ad97cc292f6396a114403caa71ae55c933ed7a3ee8b26ff7013`;
   the allocator image is
@@ -63,13 +64,45 @@ nine of 26 families, zero of eight gates.
   (`include/mimalloc/internal.h:1063`), with null or unmapped Heap state.
   Do not patch the oracle or convert these failures into passes.
 
+**Session recovery:** resumed `01a1740f-c839-7a22-83de-5e33ff5494af` from its
+local transcript and surviving worktrees. The three-way remote owner-exit
+comparison completed release and debug-1 before a new harness rejection.
+Corrected C and Rust match migration to the main Heap and final PageMap
+release. Pristine release C retains the deleted identity and region. Pristine
+debug C exits with SIGSEGV in both orderings. Raw runs `run-p8zmkrnm` and
+`run-blq4kzem` remain under the `m6-pr1420-stale` worktree's allocator
+`target/compat/allocator/x86_64/m6-deleted-heap-remote-exit/` directory.
+These observations precede the final harness edits and prove no qualification.
+
+The allocator worker then received a harness rejection labeled "possible
+cybersecurity risk". No rejected tool invocation was identified in its output.
+Further allocator execution and the attached-worker extension are parked.
+Do not retry or rephrase that extension under unchanged harness conditions.
+Its harness and fixture changes are retained at `lane/m6-pr1420-stale` /
+`42ec957ec`, without integration. The final harness passes 16 focused host
+tests but has no native verification. Independent upstream inspection found the
+detached-Theap predicate guard from `6c45ba091cdda559b844651c93980df239ce9f72`
+is a prerequisite for the corrected debug drain. Regular queued-page coverage
+and the Rust-only rolling-stress diagnosis remain open.
+
+Independent runtime checks use frozen `f86442475` products. Pthread
+composition, lifecycle, join cancellation, condition cancellation and mutex
+components pass. The family remains unqualified because the interrupted
+dynamic matrix has no complete receipt and POSIX has no `execution.json`.
+The separate `r2-static` and `r2-dynamic` receipts bind older `6ccf644dc` and
+cannot fill that gap. Preserve the current matching component evidence under
+`.work/wt/runtime-pthread-resume/.work/x86_64/tmp/`.
+
 **Open lanes:** resumed scratch worktrees exist under `.work/wt/`. The secure
 and cold-arena work is integrated; their worktrees may be retired after this
 handoff commit. New independent lanes start from the current `main`.
 
 | Branch or integrated scope | State and next step |
 | --- | --- |
-| M6 Heap lifecycle | The combined upstream retirement correction is integrated and reviewed at `6a3c35998`. Production regressions cover cache reuse, live OS migration, FULL queues, remote frees and owner exit. Pristine C still fails the cache-reuse probe; explicitly identity-corrected C passes. Combined corrected-C owner-exit evidence and full M6 remain open. The original rolling-stress SIGSEGV remains unexplained and its denied invocation stays parked. |
+| M6 Heap lifecycle | The combined upstream retirement correction is integrated and reviewed at `6a3c35998`. Remote owner-exit release and debug-1 observations match corrected C, preserving pristine leaks and crashes. Final harness edits at parked `42ec957ec` pass 16 host tests but remain unverified natively. A new harness rejection parks allocator execution and the attached-worker extension. Full M6 and the original rolling-stress diagnosis remain open. |
+| `lane/dynamic-loop` at `8aaaade77` | Integrated resumable preparation and per-case replay. Independent review's swallowed validation error is fixed with a shell regression. All 87 touched host tests and merged structure, ledger and inventory checks pass. Native preparation, selected installed/cycle, and next-case installed/cli pass. The remaining 217 of 219 checkpoints are running on this frozen source, alongside a matching static cohort. No qualification receipt exists yet. |
+| `lane/runtime-pthread-resume` at `f86442475` | Five supplied-product component checks pass with matching frozen products. Dynamic qualification and the dependent POSIX execution receipt remain incomplete, so no pthread family admission is claimed. |
+| `lane/runtime-resolver-resume` at `f86442475` | Matching-product classic-netdb replay passes 23 scenarios across seven entry arms, and its receipt reconstructs. The interrupted dynamic matrix cannot support resolver-family admission. Preserve its original output and step as `resolver-products/out/dynamic.failed-1` and `steps/01-dynamic-products.failed-1`, and its stopped replacement attempt separately. |
 | Secure Page layout | Integrated through `0e4e4c1e3`. Independent review found no P1/P2 product defect. The exact production layout passed secure levels 0–5, all nine Rust profiles passed, M4/M7 host modules passed, and merged-tip C/R configuration differentials passed secure 1, 3 and 5 with 19 keys each. |
 | A3 cold-arena prefix retry | Closed by `4b5ea1ae7` and `fe268b89f`. Pinned C and production Rust both retry the same 114688-byte prefix after the first callback refusal and return an owned in-arena block. The earlier contrary reading confused the arena claim failure with its caller's fresh-page retry. A separate backing-selection failure difference remains only a source-level candidate because the static-main path has not reproduced it. |
 | A3 clock source comparison | `e7f5ff9e8` supersedes the earlier source reading: pinned Linux C falls back to `clock()` after monotonic-clock failure, and Rust follows that path. `eb10d6607` isolates the sample from allocator startup counters and uses the development Rust profile. Native C and Rust match one preferred call, one fallback call and 1234 milliseconds. |
@@ -105,11 +138,11 @@ and source pins remain tracked. Pinned-input `.cache/` directories outside
   including the fixed NUMA mapping and regular-arena reclaim/purge item.
   No unique uncommitted source or handoff was found. All parked implementation
   branches remain, including `lane/dynamic-owner-root` at `009f5642c`.
-- **Next:** retain the lifecycle recovery's single implementation owner for
-  combined corrected-C owner-exit evidence and remaining production-path gaps.
-  Keep the harness-denied invocation parked. Its original SIGSEGV still lacks
-  a causal disposition. Independent resolver, loader, CRT/sysroot, pthread/text
-  and consumer work may continue without adding allocator lifecycle writers.
+- **Next:** finish the frozen dynamic matrix and matching static cohort, then
+  run the POSIX, pthread and resolver families against those exact products.
+  Preserve both parked allocator items until their harness condition changes.
+  The original rolling-stress SIGSEGV still lacks a causal disposition.
+  Independent loader, CRT/sysroot, text and consumer work may continue.
   H0 `pow`'s edge comparator now accepts the existing finite exponent-one
   correction (`f3edf363c`), but native replay remains required. The older
   numeric child-metadata footprint decision remains open.
