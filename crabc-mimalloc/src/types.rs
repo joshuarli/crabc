@@ -3472,14 +3472,6 @@ impl ThreadLocalData {
         guard.unlock().map_err(ThreadLocalTheapListError::Lock)
     }
 
-    /// Removes one Heap-owned Theap using `mi_heap_free_theaps` ordering.
-    /// `_mi_heap_detach_theaps` first holds the Heap lock and try-locks this
-    /// TLD to unlink only the TLD edge; a later Heap-locked pass clears the
-    /// Heap links after `theap->tld` is null. Like C, it leaves the Release
-    /// `theap->heap` publication untouched through `_mi_theap_decref`.
-    /// The parent metadata-Theap remains on this TLD throughout the child
-    /// Heap's destruction.
-    ///
     /// # Safety
     /// The caller has exclusive teardown authority over `heap` and `theap`,
     /// no child clients or producers remain, and the exact Theap allocation
@@ -3632,6 +3624,7 @@ impl ThreadLocalData {
             }
             *(*theap).hnext.get() = null_mut();
             *(*theap).hprev.get() = null_mut();
+            (*theap).heap.store(null_mut(), Ordering::Release);
         }
         heap_guard
             .unlock()
@@ -8493,9 +8486,11 @@ impl Theap {
         !self.heap.load(core::sync::atomic::Ordering::Relaxed).is_null()
     }
 
-    /// Whether this dynamic metadata image has been removed from both
-    /// intrusive lists. The source may retain its old `heap` pointer after
-    /// list unlink until the following metadata free.
+    #[inline]
+    pub(crate) fn heap_identity_is_cleared(&self) -> bool {
+        self.heap.load(Ordering::Acquire).is_null()
+    }
+
     /// # Safety
     /// The exact metadata capability is exclusively retained and no Heap or
     /// TLD list operation can mutate these links concurrently.

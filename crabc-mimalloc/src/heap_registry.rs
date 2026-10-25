@@ -902,6 +902,7 @@ impl Heap {
                 current = *(*theap.as_ptr()).hnext.get();
                 *(*theap.as_ptr()).hnext.get() = core::ptr::null_mut();
                 *(*theap.as_ptr()).hprev.get() = core::ptr::null_mut();
+                (*theap.as_ptr()).heap.store(core::ptr::null_mut(), Ordering::Release);
             }
             visit(theap);
         }

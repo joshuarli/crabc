@@ -5272,7 +5272,9 @@ impl SourceRetainedTheapSession {
         // SAFETY: the registry's additional reference keeps this image live;
         // no cleared TLD or freed Heap pointer is dereferenced here.
         let theap_ref = unsafe { retained_theap.as_ref() };
-        if !theap_ref.is_initialized() || !theap_ref.is_bound_to_main_subprocess(crate::subproc::MainSubprocess::global()) {
+        if !theap_ref.heap_identity_is_cleared()
+            || !theap_ref.is_bound_to_main_subprocess(crate::subproc::MainSubprocess::global())
+        {
             return Err(SourceRetainedTheapSessionError::InvalidTheap);
         }
         if page_is_in_full(page_ref) && theap_ref.allows_page_abandon() {
