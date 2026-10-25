@@ -7,8 +7,8 @@ nine of 26 families, zero of eight gates.
 - **Resume:** "Read plan.md and docs/lanes.md, then resume the campaign as
   coordinator, unattended. Preserve both harness-denied allocator items.
   Finish the resumable dynamic-product prerequisite and independent runtime
-  families. Keep allocator execution parked until its harness condition
-  changes. Preserve one implementation owner for any later lifetime work."
+  families. Keep the affected allocator diagnostics parked until their harness
+  condition changes. Preserve one implementation owner for later lifetime work."
   First command from the repository root:
   `./scripts/dev-x86_64.sh campaign-status`.
 - **State:** recovery started at `f86442475`. Dynamic replay is integrated
@@ -76,7 +76,7 @@ These observations precede the final harness edits and prove no qualification.
 
 The allocator worker then received a harness rejection labeled "possible
 cybersecurity risk". No rejected tool invocation was identified in its output.
-Further allocator execution and the attached-worker extension are parked.
+The affected owner-exit extension and its further diagnostics are parked.
 Do not retry or rephrase that extension under unchanged harness conditions.
 Its harness and fixture changes are retained at `lane/m6-pr1420-stale` /
 `42ec957ec`, without integration. The final harness passes 16 focused host
@@ -93,14 +93,27 @@ The separate `r2-static` and `r2-dynamic` receipts bind older `6ccf644dc` and
 cannot fill that gap. Preserve the current matching component evidence under
 `.work/wt/runtime-pthread-resume/.work/x86_64/tmp/`.
 
+**Collection method:** the single-case `--next` route replays completed
+loader and corpus evidence before every case. Use the existing `run_case`
+full-loop API for the remaining standard-authority cases inside the tracked
+`scripts/lanes/rust-check.sh` image. Keep `dlopen-pie`, `dlopen-non-pie`,
+`pthread-signal`, `linux-control`, `kernel-residual`, `credentials-profile`,
+`filesystem-mechanisms`, `pty`, `classic-netdb`, `resolver-cancellation`,
+`loader-synthetic` and `package-corpus` on the original materialized launcher.
+Independent source review traced their authority requirements, including
+mounts hidden behind helpers. The second/cycle pilot passed. Source, product,
+live-oracle and checkpoint checks stay active for every new case. Final
+`--finish` and receipt validation still require all 219 checkpoints and their
+physical evidence. This method changes no source, gate or required coverage.
+
 **Open lanes:** resumed scratch worktrees exist under `.work/wt/`. The secure
 and cold-arena work is integrated; their worktrees may be retired after this
 handoff commit. New independent lanes start from the current `main`.
 
 | Branch or integrated scope | State and next step |
 | --- | --- |
-| M6 Heap lifecycle | The combined upstream retirement correction is integrated and reviewed at `6a3c35998`. Remote owner-exit release and debug-1 observations match corrected C, preserving pristine leaks and crashes. Final harness edits at parked `42ec957ec` pass 16 host tests but remain unverified natively. A new harness rejection parks allocator execution and the attached-worker extension. Full M6 and the original rolling-stress diagnosis remain open. |
-| `lane/dynamic-loop` at `8aaaade77` | Integrated resumable preparation and per-case replay. Independent review's swallowed validation error is fixed with a shell regression. All 87 touched host tests and merged structure, ledger and inventory checks pass. Native preparation, selected installed/cycle, and next-case installed/cli pass. The remaining 217 of 219 checkpoints are running on this frozen source, alongside a matching static cohort. No qualification receipt exists yet. |
+| M6 Heap lifecycle | The combined upstream retirement correction is integrated and reviewed at `6a3c35998`. Remote owner-exit release and debug-1 observations match corrected C, preserving pristine leaks and crashes. Final harness edits at parked `42ec957ec` pass 16 host tests but remain unverified natively. A new harness rejection parks the affected owner-exit extension. Full M6 and the original rolling-stress diagnosis remain open. |
+| `lane/dynamic-loop` at `8aaaade77` | Integrated resumable preparation and per-case replay. Independent review's swallowed validation error is fixed with a shell regression. All 87 touched host tests and merged structure, ledger and inventory checks pass. Matching static preparation and all 73 installed-product cases pass. Second and extracted collection continues through the existing full-loop API, with authority-sensitive cases kept on the original launcher. All three pairs have their nine text component reports and Wordexp input seals. Primary crypt and atomic companions pass. Family readers and full dynamic qualification remain open. |
 | `lane/runtime-pthread-resume` at `f86442475` | Five supplied-product component checks pass with matching frozen products. Dynamic qualification and the dependent POSIX execution receipt remain incomplete, so no pthread family admission is claimed. |
 | `lane/runtime-resolver-resume` at `f86442475` | Matching-product classic-netdb replay passes 23 scenarios across seven entry arms, and its receipt reconstructs. The interrupted dynamic matrix cannot support resolver-family admission. Preserve its original output and step as `resolver-products/out/dynamic.failed-1` and `steps/01-dynamic-products.failed-1`, and its stopped replacement attempt separately. |
 | Secure Page layout | Integrated through `0e4e4c1e3`. Independent review found no P1/P2 product defect. The exact production layout passed secure levels 0–5, all nine Rust profiles passed, M4/M7 host modules passed, and merged-tip C/R configuration differentials passed secure 1, 3 and 5 with 19 keys each. |
