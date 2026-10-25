@@ -94,9 +94,11 @@ class CompilerHelperEvidenceTests(unittest.TestCase):
 
     def test_contract_binds_source_unversioned_global_default_functions(self) -> None:
         contract = EVIDENCE.load_contract(ROOT)
+        self.assertEqual(contract["schema"], 2)
         self.assertEqual(set(EVIDENCE.helper_names(contract)), set(EVIDENCE.source_definitions(ROOT)))
         self.assertEqual(EVIDENCE.helper_names(contract), tuple(sorted(EVIDENCE.helper_names(contract))))
         self.assertEqual(contract["archive"]["placements"], ["static-builtins", "dynamic-builtins"])
+        self.assertEqual(contract["archive"]["debug_source_core_support"], "localized-in-member")
         self.assertEqual(contract["shared_libc"], EVIDENCE.SHARED_LIBC_METADATA)
         self.assertEqual(contract["dynamic_application"], EVIDENCE.DYNAMIC_APPLICATION_METADATA)
         self.assertTrue(all(row["metadata"] == EVIDENCE.HELPER_METADATA for row in contract["helpers"]))
@@ -109,6 +111,10 @@ class CompilerHelperEvidenceTests(unittest.TestCase):
 
     def test_reader_rejects_extra_helper_wrong_metadata_and_shared_placement(self) -> None:
         contract = EVIDENCE.load_contract(ROOT)
+        wrong = copy.deepcopy(contract)
+        wrong["schema"] = 1
+        with self.assertRaisesRegex(EVIDENCE.CompilerHelperEvidenceError, "schema/target"):
+            EVIDENCE.validate_contract(wrong)
         with self.assertRaisesRegex(EVIDENCE.CompilerHelperEvidenceError, "helper roster"):
             EVIDENCE.validate_contract({**contract, "helpers": contract["helpers"][:-1]})
         wrong = copy.deepcopy(contract)
@@ -121,6 +127,10 @@ class CompilerHelperEvidenceTests(unittest.TestCase):
             EVIDENCE.validate_contract(wrong)
         wrong = copy.deepcopy(contract)
         wrong["archive"]["placements"].append("candidate-shared")
+        with self.assertRaisesRegex(EVIDENCE.CompilerHelperEvidenceError, "placements"):
+            EVIDENCE.validate_contract(wrong)
+        wrong = copy.deepcopy(contract)
+        wrong["archive"]["debug_source_core_support"] = "public-dynamic-symbols"
         with self.assertRaisesRegex(EVIDENCE.CompilerHelperEvidenceError, "placements"):
             EVIDENCE.validate_contract(wrong)
         wrong = copy.deepcopy(contract)
@@ -304,7 +314,7 @@ class CompilerHelperEvidenceTests(unittest.TestCase):
             archive.write_bytes(b"owned archive bytes\n")
             archive_identity = EVIDENCE._work_identity(work, archive, "archive")
             provenance = {
-                "schema": 1, "target": EVIDENCE.TARGET, "scope": "bounded", "source": EVIDENCE.SOURCE.as_posix(),
+                "schema": 2, "target": EVIDENCE.TARGET, "scope": "bounded", "source": EVIDENCE.SOURCE.as_posix(),
                 "contract": EVIDENCE.CONTRACT.as_posix(), "reproducible": True,
                 "archive": {"members": [EVIDENCE.ARCHIVE_MEMBER],
                             "defined_symbols": list(EVIDENCE.helper_names(contract)),

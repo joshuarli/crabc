@@ -170,16 +170,20 @@ def validate_contract(value: object, *, root: Path = ROOT) -> dict[str, Any]:
     require(type(value) is dict and set(value) == {
         "schema", "target", "owner_group", "source", "builder", "producer_scope", "archive", "shared_libc", "dynamic_application", "helpers",
     }, "compiler-helper contract fields differ")
-    require(type(value["schema"]) is int and value["schema"] == 1 and value["target"] == TARGET,
+    require(type(value["schema"]) is int and value["schema"] == 2 and value["target"] == TARGET,
             "compiler-helper contract schema/target differs")
     require(value["owner_group"] == "owned-compiler-helper-archive" and value["source"] == SOURCE.as_posix()
             and value["builder"] == BUILDER.as_posix() and type(value["producer_scope"]) is str
             and value["producer_scope"], "compiler-helper owner source differs")
     archive = value["archive"]
-    require(type(archive) is dict and set(archive) == {"name", "member", "placements"},
+    require(type(archive) is dict and set(archive) == {
+        "name", "member", "placements", "debug_source_core_support",
+    },
             "compiler-helper archive fields differ")
     require(archive["name"] == "libcrabc-builtins.a" and archive["member"] == ARCHIVE_MEMBER
-            and archive["placements"] == list(ARCHIVE_PLACEMENTS), "compiler-helper archive placements differ")
+            and archive["placements"] == list(ARCHIVE_PLACEMENTS)
+            and archive["debug_source_core_support"] == "localized-in-member",
+            "compiler-helper archive placements differ")
     require(same(value["shared_libc"], SHARED_LIBC_METADATA),
             "compiler-helper shared-libc placement differs")
     require(same(value["dynamic_application"], DYNAMIC_APPLICATION_METADATA),
@@ -202,7 +206,7 @@ def validate_contract(value: object, *, root: Path = ROOT) -> dict[str, Any]:
                        "caller_obligation": obligation, "metadata": _helper_metadata(row["metadata"])})
         names.append(name)
     require(names == sorted(names) and len(names) == len(set(names)) and set(names) == set(source_definitions(root)), "compiler-helper helper roster differs")
-    return {"schema": 1, "target": TARGET, "owner_group": value["owner_group"], "source": value["source"],
+    return {"schema": value["schema"], "target": TARGET, "owner_group": value["owner_group"], "source": value["source"],
             "builder": value["builder"], "producer_scope": value["producer_scope"], "archive": dict(archive),
             "shared_libc": dict(SHARED_LIBC_METADATA),
             "dynamic_application": dict(DYNAMIC_APPLICATION_METADATA), "helpers": result}
@@ -1809,7 +1813,7 @@ def _provenance(path: Path, contract: Mapping[str, Any], archive_identity: Mappi
     value = _read_json(path, "compiler-helper archive provenance")
     require(type(value) is dict and set(value) == {"schema", "target", "scope", "source", "contract", "archive", "reproducible"},
             "compiler-helper archive provenance fields differ")
-    require(type(value["schema"]) is int and value["schema"] == 1 and type(value["target"]) is str
+    require(type(value["schema"]) is int and value["schema"] == 2 and type(value["target"]) is str
             and value["target"] == TARGET and type(value["scope"]) is str and bool(value["scope"])
             and type(value["source"]) is str and value["source"] == SOURCE.as_posix()
             and type(value["contract"]) is str and value["contract"] == CONTRACT.as_posix()

@@ -7,7 +7,7 @@
 # They are installed as ordinary archive providers. Shared libc and dynamic
 # applications localize each extracted copy and omit it from .dynsym. This
 # does not alter either installed archive's GLOBAL DEFAULT provider contract.
-schema = 1
+schema = 2
 target = "x86_64-unknown-linux-musl"
 owner_group = "owned-compiler-helper-archive"
 source = "builtins/src/lib.rs"
@@ -18,6 +18,7 @@ producer_scope = "bounded native compiler-helper archive plus private shared-lib
 name = "libcrabc-builtins.a"
 member = "crabc-builtins.o"
 placements = ["static-builtins", "dynamic-builtins"]
+debug_source_core_support = "localized-in-member"
 
 # Every selected helper copy remains private, including unused definitions.
 # Compiler-generated calls that are emitted resolve to these local copies;

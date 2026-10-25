@@ -122,7 +122,15 @@ expected_policy = {
 }
 if libc_provenance.get('shared_compiler_helper_archive') != expected_policy:
     raise SystemExit('installed libc provenance helper placement differs')
-if policy['linker_option'] not in libc_provenance.get('libc_shared_link_command', []):
+exclude_prefix = '--exclude-libs='
+linker_options = libc_provenance.get('libc_shared_link_command', [])
+excluded_archives = {
+    name
+    for argument in linker_options
+    if argument.startswith(exclude_prefix)
+    for name in argument[len(exclude_prefix):].split(',')
+}
+if policy['linker_option'][len(exclude_prefix):] not in excluded_archives:
     raise SystemExit('installed libc link command omits exact helper localization')
 defined = {line.split()[-1] for line in archive_symbols_path.read_text(encoding='utf-8').splitlines()
            if len(line.split()) >= 2 and not line.endswith(':')}

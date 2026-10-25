@@ -79,7 +79,9 @@ therefore record the same installed command when their inputs agree.
 `archive.portable_compile_command` additionally uses portable source and tool
 spellings. The builder's `compile_object` executes and returns the original
 physical argv, which producer command captures retain separately from the
-installed description.
+installed description. Debug provenance also records the source-core
+partial-link command, the imported source-core symbols, and the source archive
+hash. The link roots every helper entry and discards unreachable core sections.
 
 The native [x86-64 compiler-helper archive contract](x86_64-helper-contract.md)
 names the selected Rust C-ABI and binary80 assembly entries, their two installed

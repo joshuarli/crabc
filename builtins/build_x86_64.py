@@ -101,14 +101,15 @@ def load_native_contract_value(value: object) -> dict[str, object]:
     """Validate the finite producer contract; no symbol prefix is an input."""
     _require(type(value) is dict and set(value) == {"schema", "target", "owner_group", "source", "builder", "producer_scope", "archive", "shared_libc", "dynamic_application", "helpers"},
              "native helper contract fields differ")
-    _require(type(value["schema"]) is int and value["schema"] == 1 and value["target"] == TARGET,
+    _require(type(value["schema"]) is int and value["schema"] == 2 and value["target"] == TARGET,
              "native helper contract schema/target differs")
     _require(value["owner_group"] == "owned-compiler-helper-archive" and value["source"] == "builtins/src/lib.rs"
              and value["builder"] == "builtins/build_x86_64.py" and type(value["producer_scope"]) is str,
              "native helper contract ownership differs")
     archive = value["archive"]
     _require(type(archive) is dict and archive == {"name": ARCHIVE_NAME, "member": MEMBER_NAME,
-             "placements": ["static-builtins", "dynamic-builtins"]}, "native helper archive placements differ")
+             "placements": ["static-builtins", "dynamic-builtins"],
+             "debug_source_core_support": "localized-in-member"}, "native helper archive placements differ")
     shared_libc = value["shared_libc"]
     _require(type(shared_libc) is dict and type(shared_libc.get("dynsym")) is bool
              and shared_libc == SHARED_LIBC_METADATA,
@@ -248,9 +249,12 @@ def compile_object(output: Path, *, profile: str = "release", runtime_core: Path
     return command
 
 
-def symbols(llvm_nm: str, artifact: Path, flag: str) -> set[str]:
+def symbols(llvm_nm: str, artifact: Path, flag: str, *, external_only: bool = True) -> set[str]:
     result: set[str] = set()
-    for line in run([llvm_nm, flag, "--extern-only", str(artifact)]).splitlines():
+    command = [llvm_nm, flag]
+    if external_only:
+        command.append("--extern-only")
+    for line in run([*command, str(artifact)]).splitlines():
         fields = line.split()
         if len(fields) >= 2 and not line.endswith(":"):
             result.add(fields[-1])
@@ -308,7 +312,32 @@ def build(output: Path, *, profile: str = "release", runtime_core: Path | None =
         compile_command = compile_object(member, profile=profile, runtime_core=runtime_core, runtime_compiler_builtins=runtime_compiler_builtins)
         installed_compile_command = list(compile_command)
         installed_compile_command[installed_compile_command.index("-o") + 1] = f"$CRABC_BUILTINS_STAGE/{MEMBER_NAME}"
+        source_core_support_symbols: set[str] = set()
+        installed_source_core_link_command: list[str] | None = None
         if profile == "debug":
+            core_archive = runtime_core.with_suffix(".rlib")
+            core_symbols = symbols(llvm_nm, core_archive, "--defined-only")
+            helper_undefined = symbols(llvm_nm, member, "--undefined-only")
+            source_core_support_symbols = helper_undefined & core_symbols
+            unknown = helper_undefined - source_core_support_symbols - {"memset"}
+            if unknown:
+                raise BuildError(f"debug helpers request symbols outside source core and libc memset: {sorted(unknown)!r}")
+            closed_member = stage / "crabc-builtins-closed.o"
+            source_core_link = [
+                lld, "-r", "--gc-sections",
+                *(f"--undefined={name}" for name in sorted(REQUIRED_SYMBOLS)),
+                str(member), "--whole-archive", str(core_archive), "--no-whole-archive",
+                "-o", str(closed_member),
+            ]
+            run(source_core_link)
+            installed_source_core_link_command = list(source_core_link)
+            installed_source_core_link_command[installed_source_core_link_command.index(str(member))] = f"$CRABC_BUILTINS_STAGE/{MEMBER_NAME}"
+            installed_source_core_link_command[installed_source_core_link_command.index("-o") + 1] = "$CRABC_BUILTINS_STAGE/crabc-builtins-closed.o"
+            closed_definitions = symbols(llvm_nm, closed_member, "--defined-only", external_only=False)
+            missing = sorted(source_core_support_symbols - closed_definitions)
+            if missing:
+                raise BuildError(f"source-core helper dependencies did not enter the owned archive: {missing!r}")
+            shutil.move(closed_member, member)
             private = symbols(llvm_nm, member, "--defined-only") - REQUIRED_SYMBOLS
             if any(not name.startswith(("_R", "_ZN")) for name in private):
                 raise BuildError("debug helpers contain an unexpected non-Rust definition")
@@ -332,16 +361,16 @@ def build(output: Path, *, profile: str = "release", runtime_core: Path | None =
         undefined = symbols(llvm_nm, closure, "--undefined-only")
         runtime_dependencies = set()
         if profile == "debug":
-            runtime_dependencies = symbols(llvm_nm, runtime_core.with_suffix(".rlib"), "--defined-only")
             if runtime_libc is None or "memset" not in symbols(llvm_nm, runtime_libc, "--defined-only"):
                 raise BuildError("debug helpers require the source-built libc memset provider")
             runtime_dependencies.add("memset")
         if undefined - runtime_dependencies:
-            raise BuildError(f"x86 helper archive requests an ambient runtime: {sorted(undefined)!r}")
+            raise BuildError(f"x86 helper archive lacks source-owned closure: {sorted(undefined - runtime_dependencies)!r}")
         shutil.copyfile(staged, output)
         return {
             "profile": profile,
-            "source_core_dependencies": sorted(undefined),
+            "source_core_support_symbols": sorted(source_core_support_symbols),
+            "source_core_link_command": installed_source_core_link_command,
             "source_core_archive_sha256": sha256(runtime_core.with_suffix(".rlib")) if runtime_core is not None else None,
             "source_libc_archive_sha256": sha256(runtime_libc) if runtime_libc is not None else None,
             "compile_command": installed_compile_command,
@@ -387,7 +416,7 @@ def main() -> int:
             if not reproducible:
                 raise BuildError("clean x86 helper archive builds produced different bytes")
     provenance = {
-        "schema": 1,
+        "schema": 2,
         "target": TARGET,
         "scope": "bounded private x86 static consumers only; not a complete compiler runtime or public sysroot",
         "source": "builtins/src/lib.rs",

@@ -61,10 +61,12 @@ class NativeCompilerHelperContractTests(unittest.TestCase):
             BUILDER.compile_object(Path("/owned/helper.o"), profile="debug")
     def test_contract_is_the_exact_native_builder_symbol_roster(self) -> None:
         contract = BUILDER.load_native_contract()
+        self.assertEqual(contract["schema"], 2)
         names = tuple(helper["name"] for helper in contract["helpers"])
         self.assertEqual(set(names), BUILDER.REQUIRED_SYMBOLS)
         self.assertEqual(contract["archive"]["member"], "crabc-builtins.o")
         self.assertEqual(contract["archive"]["placements"], ["static-builtins", "dynamic-builtins"])
+        self.assertEqual(contract["archive"]["debug_source_core_support"], "localized-in-member")
         self.assertEqual(contract["shared_libc"], BUILDER.SHARED_LIBC_METADATA)
         self.assertEqual(contract["dynamic_application"], BUILDER.DYNAMIC_APPLICATION_METADATA)
         self.assertTrue(all(helper["metadata"] == {
@@ -90,6 +92,12 @@ class NativeCompilerHelperContractTests(unittest.TestCase):
         malformed = copy.deepcopy(contract)
         malformed["helpers"][0]["metadata"]["version_default"] = 0
         with self.assertRaisesRegex(BUILDER.BuildError, "metadata types"):
+            BUILDER.load_native_contract_value(malformed)
+
+    def test_contract_rejects_the_previous_schema(self) -> None:
+        malformed = tomllib.loads((ROOT / "x86_64-helper-contract.toml").read_text(encoding="utf-8"))
+        malformed["schema"] = 1
+        with self.assertRaisesRegex(BUILDER.BuildError, "schema/target"):
             BUILDER.load_native_contract_value(malformed)
 
     def test_contract_rejects_a_public_shared_libc_copy(self) -> None:
