@@ -1539,6 +1539,12 @@ facts common to both are compared.
   every non-weak-key state fact (split, zero-result retry, forced weak
   initialization, strong reinit no-op). Exact weak-key/output comparison is
   inapplicable: both paths consume ASLR/time and use different cores.
+  Native x86 `ProcessMainRuntimeStartupTail` owns warning dispatch and weak
+  default/metadata Theap reinitialization. The existing
+  `runtime_lifecycle::tests::entropy_failure_at_runtime_startup_is_reseeded_before_activation`
+  regression checks that both states become strong after transient initial
+  entropy failures. This runtime check is separate from the primitive state
+  trace.
 - **Removal:** when pinned upstream changes its weak path or the project crypto
   boundary changes; it does not authorize a local replacement core.
 

@@ -204,10 +204,27 @@ and source pins remain tracked. Pinned-input `.cache/` directories outside
   20 tests after correcting a stale help assertion for the admitted `--faults`
   action. The runner passed 24 tests with one intentional skip; the selector
   passed five tests; the new secure-3 trace executed one passing Rust test.
-  Paired C free-list trace and raw C corruption status remain unrun.
+  The resumed secure-3 component comparison now matches all eight C/Rust
+  free-list fields, including all 65 block offsets and random consumption.
+  The C invalid-link fixture terminates with the expected SIGABRT; the named
+  Rust actual-Page regression rejects the invalid link without consuming its
+  state. Both exact Rust selectors execute one passing test. The existing
+  native startup entropy-failure regression also passes under secure-3,
+  confirming both default and metadata states are reseeded before activation.
+  These use unoptimized builds in the pinned core image and remain component
+  evidence. No parked diagnostic or full qualification was retried.
   Allocator architecture checks also passed earlier. No complete
   final-main cohort, native promotion or fresh performance qualification passed.
   Perf gate deferred: host busy.
+
+**Current source accounting:** the native x86 startup warning/reseed path
+already exists in `process_init` and `meta`. Corrected the random-state map's
+stale claim that this call site is absent. The approved RustCrypto weak-key
+substitution and all existing verification flags remain unchanged. The local
+component logs are under `.work/tmp/native-secure-free-list/` in the main
+checkout. Every allocator execution brief states that the tested code and
+fixtures belong to this undeployed greenfield project. No harness rejection
+occurred for these bounded checks.
 - **Historical reboot audit:** verified physical absence of `.work/`, pruned worktree
   registrations, and confirmed only the main checkout remains. All 69 unmerged
   branches remain named in this handoff. No process uses a scratch working
