@@ -46,9 +46,11 @@ const DT_SYMENT: u64 = 11;
 const UNRESOLVED: usize = 0;
 
 type ClockGettime = unsafe extern "C" fn(i32, *mut u8) -> i32;
+#[cfg(any(target_arch = "aarch64", test))]
 type Gettimeofday = unsafe extern "C" fn(*mut u8, *mut u8) -> i32;
 
 static CLOCK_GETTIME: AtomicUsize = AtomicUsize::new(UNRESOLVED);
+#[cfg(target_arch = "aarch64")]
 static GETTIMEOFDAY: AtomicUsize = AtomicUsize::new(UNRESOLVED);
 
 #[derive(Copy, Clone)]
@@ -99,6 +101,7 @@ pub(crate) unsafe fn clock_gettime_status(clock_id: i32, timespec: *mut u8) -> i
 ///
 /// `timeval` must be null or writable for one target Linux `struct timeval`;
 /// `timezone` is passed through under the kernel ABI.
+#[cfg(target_arch = "aarch64")]
 #[inline(always)]
 pub(crate) unsafe fn gettimeofday_status(timeval: *mut u8, timezone: *mut u8) -> i32 {
     let cached = GETTIMEOFDAY.load(Ordering::Relaxed);
@@ -177,6 +180,7 @@ unsafe fn validated_clock_gettime_function(address: usize) -> Option<ClockGettim
     Some(unsafe { mem::transmute::<usize, ClockGettime>(address) })
 }
 
+#[cfg(any(target_arch = "aarch64", test))]
 #[inline]
 unsafe fn validated_gettimeofday_function(address: usize) -> Option<Gettimeofday> {
     if address == UNRESOLVED || address & 3 != 0 {
@@ -195,6 +199,7 @@ unsafe fn published_clock_gettime_function(address: usize) -> ClockGettime {
     unsafe { mem::transmute::<usize, ClockGettime>(address) }
 }
 
+#[cfg(target_arch = "aarch64")]
 #[inline(always)]
 unsafe fn published_gettimeofday_function(address: usize) -> Gettimeofday {
     debug_assert_ne!(address, UNRESOLVED);
@@ -214,6 +219,7 @@ unsafe extern "C" fn direct_clock_gettime(clock_id: i32, timespec: *mut u8) -> i
     }) as i32
 }
 
+#[cfg(any(target_arch = "aarch64", test))]
 unsafe extern "C" fn direct_gettimeofday(timeval: *mut u8, timezone: *mut u8) -> i32 {
     // SAFETY: the caller owns the kernel two-pointer output contract.
     (unsafe {
@@ -247,6 +253,7 @@ fn select_clock_gettime(base: Option<usize>) -> ClockGettime {
         .unwrap_or(direct_clock_gettime)
 }
 
+#[cfg(any(target_arch = "aarch64", test))]
 #[inline]
 fn select_gettimeofday(base: Option<usize>) -> Gettimeofday {
     base.and_then(|base| unsafe { resolve_kernel_gettimeofday(base) })
@@ -262,6 +269,7 @@ unsafe fn resolve_kernel_clock_gettime(base: usize) -> Option<usize> {
     unsafe { resolve_kernel_vdso_function(base, clock_gettime_symbol_offset) }
 }
 
+#[cfg(any(target_arch = "aarch64", test))]
 unsafe fn resolve_kernel_gettimeofday(base: usize) -> Option<usize> {
     // SAFETY: `base` originates from the kernel aux vector in the caller.
     unsafe { resolve_kernel_vdso_function(base, gettimeofday_symbol_offset) }
@@ -301,6 +309,7 @@ fn clock_gettime_symbol_offset(image: &[u8]) -> Option<usize> {
     vdso_symbol_offset(image, &[b"__vdso_clock_gettime", b"__kernel_clock_gettime"])
 }
 
+#[cfg(any(target_arch = "aarch64", test))]
 fn gettimeofday_symbol_offset(image: &[u8]) -> Option<usize> {
     vdso_symbol_offset(
         image,
