@@ -6,9 +6,11 @@ nine of 26 families, zero of eight gates.
 
 - **Resume:** "Read plan.md and docs/lanes.md, then resume the campaign as
   coordinator, unattended. Preserve both harness-denied allocator items.
-  Finish the resumable dynamic-product prerequisite and independent runtime
-  families. Keep the affected allocator diagnostics parked until their harness
-  condition changes. Preserve one implementation owner for later lifetime work."
+  Prioritize concrete missing production behavior. Use exact regressions and
+  affected component checks during implementation. Keep broad qualification
+  and performance work deferred until explicitly requested by workload name.
+  Keep the affected allocator diagnostics parked until their harness condition
+  changes. Preserve one implementation owner for later lifetime work."
   First command from the repository root:
   `./scripts/dev-x86_64.sh campaign-status`.
 - **State:** recovery started at `f86442475`. Dynamic replay is integrated
@@ -93,7 +95,28 @@ The separate `r2-static` and `r2-dynamic` receipts bind older `6ccf644dc` and
 cannot fill that gap. Preserve the current matching component evidence under
 `.work/wt/runtime-pthread-resume/.work/x86_64/tmp/`.
 
-**Collection method:** the single-case `--next` route replays completed
+**Owner steering (2026-10-25):** feature completeness takes priority over
+qualification and performance collection. Apply the test-pyramid philosophy
+without starting a separate testing audit. Normal iteration uses exact
+regressions and affected component checks, with existing build products.
+Substantial scenarios and Full workloads require an explicit request naming
+the workload. The campaign's unfinished deliverables do not automatically
+authorize their exhaustive matrices or prerequisites. Performance remains
+release acceptance and never blocks feature implementation. Deferred checks
+remain unmet and cannot support promotion or a campaign-complete claim.
+
+**Retained collection:** 195 of 219 dynamic checkpoints passed at frozen
+`8aaaade77`. The remaining 24 authority-sensitive cases, final collection,
+publication and dependent family admissions are deferred. All three text
+pairs have their nine component reports and independent Wordexp input seals.
+Primary crypt and atomic companions pass. Static Lua passes source and
+bytecode workloads in static ET_EXEC and static-PIE on all three products.
+Its report is `.work/x86_64/lua-static-proof/run-96h89eq3/report.json` in
+`dynamic-loop`. The invoking host UID cannot traverse that root-owned report
+directory. The pinned-image read confirms all six product/mode results, but
+host-side cohort discovery remains an open qualification-tooling issue.
+
+**Collection method, for a later named qualification run:** the single-case `--next` route replays completed
 loader and corpus evidence before every case. Use the existing `run_case`
 full-loop API for the remaining standard-authority cases inside the tracked
 `scripts/lanes/rust-check.sh` image. Keep `dlopen-pie`, `dlopen-non-pie`,
@@ -113,7 +136,7 @@ handoff commit. New independent lanes start from the current `main`.
 | Branch or integrated scope | State and next step |
 | --- | --- |
 | M6 Heap lifecycle | The combined upstream retirement correction is integrated and reviewed at `6a3c35998`. Remote owner-exit release and debug-1 observations match corrected C, preserving pristine leaks and crashes. Final harness edits at parked `42ec957ec` pass 16 host tests but remain unverified natively. A new harness rejection parks the affected owner-exit extension. Full M6 and the original rolling-stress diagnosis remain open. |
-| `lane/dynamic-loop` at `8aaaade77` | Integrated resumable preparation and per-case replay. Independent review's swallowed validation error is fixed with a shell regression. All 87 touched host tests and merged structure, ledger and inventory checks pass. Matching static preparation and all 73 installed-product cases pass. Second and extracted collection continues through the existing full-loop API, with authority-sensitive cases kept on the original launcher. All three pairs have their nine text component reports and Wordexp input seals. Primary crypt and atomic companions pass. Family readers and full dynamic qualification remain open. |
+| `lane/dynamic-loop` at `8aaaade77` | Integrated resumable preparation and per-case replay. Independent review's swallowed validation error is fixed with a shell regression. All 87 touched host tests and merged structure, ledger and inventory checks pass. Matching static preparation, 195 dynamic checkpoints, all three text component sets and static Lua pass. The 24 remaining dynamic cases and terminal qualification are deferred under the owner's feature-first direction. Preserve the frozen products and evidence. |
 | `lane/runtime-pthread-resume` at `f86442475` | Five supplied-product component checks pass with matching frozen products. Dynamic qualification and the dependent POSIX execution receipt remain incomplete, so no pthread family admission is claimed. |
 | `lane/runtime-resolver-resume` at `f86442475` | Matching-product classic-netdb replay passes 23 scenarios across seven entry arms, and its receipt reconstructs. The interrupted dynamic matrix cannot support resolver-family admission. Preserve its original output and step as `resolver-products/out/dynamic.failed-1` and `steps/01-dynamic-products.failed-1`, and its stopped replacement attempt separately. |
 | Secure Page layout | Integrated through `0e4e4c1e3`. Independent review found no P1/P2 product defect. The exact production layout passed secure levels 0–5, all nine Rust profiles passed, M4/M7 host modules passed, and merged-tip C/R configuration differentials passed secure 1, 3 and 5 with 19 keys each. |
@@ -151,8 +174,10 @@ and source pins remain tracked. Pinned-input `.cache/` directories outside
   including the fixed NUMA mapping and regular-arena reclaim/purge item.
   No unique uncommitted source or handoff was found. All parked implementation
   branches remain, including `lane/dynamic-owner-root` at `009f5642c`.
-- **Next:** finish the frozen dynamic matrix and matching static cohort, then
-  run the POSIX, pthread and resolver families against those exact products.
+- **Next:** implement a demonstrated missing production behavior with focused
+  regression and component evidence. Distinguish a feature gap from an
+  unqualified result or an intentional scope boundary. Resume exhaustive
+  qualification only after an explicit request naming that workload.
   Preserve both parked allocator items until their harness condition changes.
   The original rolling-stress SIGSEGV still lacks a causal disposition.
   Independent loader, CRT/sysroot, text and consumer work may continue.
@@ -690,8 +715,9 @@ the smaller of 24 (`.claude/settings.json`) and what memory allows.
 
 ### Parity and completeness
 
-The ledger does not change here. A runtime item is done when its cohort steps
-pass on merged `main`, which the coordinator checks in the rehearsal (H0).
+The ledger does not change here. Implement missing behavior and use the
+smallest relevant behavioral checks for each change. Family admission remains
+separate and requires its named manual cohort proof on the selected revision.
 Each lane owns its workstream's files; where a fix needs a file another lane
 owns, it reports the change and the owning lane makes it.
 
@@ -707,7 +733,7 @@ owns, it reports the change and the owning lane makes it.
 | R8 | M | Consumers: steps `rust-std-lto`, `lua-static`, `lua-dynamic`, `lua-admission` | `unwinder/`, `compat/lto/`, `compat/rust-std/`, `compat/lua/` | G1a, G1b; R7 merged | Those steps pass |
 | A0 | S | Allocator discovery, fixing nothing: run `allocator-m1` to `allocator-m7` and `source_convergence.py --summary` (without `--summary` for the full condition list), each gate in its own worktree, and record every failing condition with the module it points at. | Worktrees only | A table in the campaign log of failing conditions by gate and by `crabc-mimalloc/src` module |
 | A1 | L | Fix the two failures from G2 at their origin | `crabc-mimalloc/src` | G2 | Both G2 tests pass in release; opt0 passes or is parked per the prescribed decision |
-| A2 | S | Prove pointer-first realloc by behavior. Reading the code says `native_reallocate` routes by the page; no test realloc's a block owned by another live thread or a block on an abandoned page. Add both; fix the product if either refuses. | `crabc-mimalloc/src` | A1 | Two named unit tests pass; `python3 -B compat/allocator/architecture_ratchet.py --check` still exits 0 |
+| A2 | S | Preserve the existing production-path regressions `pointer_first_reallocation_replaces_another_live_threads_client` and `pointer_first_reallocation_replaces_an_abandoned_page_client` in `runtime_lifecycle.rs`. The earlier claim that these tests were absent was stale. Add product work only for a demonstrated failure. | `crabc-mimalloc/src/runtime_lifecycle.rs` | Related reallocation changes | Run the affected named filter when its behavior changes. Source inspection confirms both regressions exist; they were not rerun during this resume. |
 | A3 | L | Allocator milestones M1 to M7. `--check` only validates a gate's contract and passes today; the gate itself must run. | `crabc-mimalloc/src`, `compat/allocator/` gates and fixtures | A0; a module group starts when its files are free | `./compat/allocator/run-x86_64.sh allocator-mN` exits 0 for N in 1..7 with `overall_status: passed` in its report (`--qualification-profile full` for M5, which M9 and M10 read; `baseline` for M6 and M7) |
 | A4 | M | Allocator milestone M8, which runs the loader, package corpus, std/LTO and Lua consumers under the native-shadow backend | `compat/allocator/` M8 gate and drivers, `libc` native-shadow integration modules | A3, G1b, R6 to R8 merged | `./compat/allocator/run-x86_64.sh allocator-m8` exits 0 with `overall_status: passed` |
 | A5 | L | Source convergence, which M9 requires: every pinned source unit implemented, no transitional route left, every difference registered and closed | `crabc-mimalloc/src`, `compat/allocator/port-map.toml`, `compat/allocator/known-differences.md` | A0; a source unit starts when its Rust modules are free | `python3 -B compat/allocator/source_convergence.py --summary` prints `met` on all five lines |
