@@ -66,6 +66,57 @@ nine of 26 families, zero of eight gates.
   (`include/mimalloc/internal.h:1063`), with null or unmapped Heap state.
   Do not patch the oracle or convert these failures into passes.
 
+**OpenCode recovery (2026-10-25):** resumed
+`ses_e8b14cb11ffezH3VsZ9DlQyVk1` after its provider usage limit stopped the
+feature campaign. Its five new worktrees were clean at `582a0462f`.
+`a20d011d3` records the `gai_strerror` correction for
+`EAI_AGAIN`, `EAI_FAIL` and `EAI_NODATA`, with a retained numeric-netdb
+regression. The new assertions passed pinned musl and failed the original
+candidate with exit 44. After the correction, `libc-numeric-netdb` and the
+libc crate check pass in `r5-gai-strerror`. All nine Rust profiles, ledger,
+inventory and structure checks pass in the main checkout.
+
+Pinned-source checks rejected the proposed daemon-order and unsupported
+`dlinfo` changes: both implementations already match musl. The owned C
+resolver already implements `AI_ADDRCONFIG` family filtering. The private
+standalone resolver-runtime artifact still rejects symbolic calls with that
+flag, but its numeric path accepts it. No resolver policy changed.
+Bounded allocator inspection found the option-size overflow, `mi_urealloc`
+usable-size reporting and Linux reset-fallback candidates match pinned C.
+These rejected candidates caused no code change or native workload run.
+`2550e4fbf` records the reviewed compiler-helper visibility correction.
+Dynamic application links place `libcrabc-builtins.a` before application DSOs
+and localize its extracted definitions with `--exclude-libs`. The archive
+retains `GLOBAL DEFAULT` providers, and caller-object definitions remain
+public. The helper contract, startup and POSIX receipt readers, fixtures and
+docs now require that placement. Direct native comparison used identical
+objects and one source-built optimized helper archive with the retained debug
+runtime. The ordinary consumer exits zero before and after. A public executable
+helper preempts the baseline DSO and exits one; the corrected DSO keeps its
+private helper and exits zero. ELF checks confirm private extraction and the
+public override. Removing the archive fails on unresolved `__popcountdi2`.
+Raw evidence remains in
+`.work/wt/r7-builtins-visibility/.work/tmp/r7-helper-native/`, under
+`baseline-corrected` and `candidate-final`.
+
+The helper lane passes 58 focused host tests. After integration, the main
+checkout passes the 15 builder/CRT contract tests and three affected driver
+tests again. The official shared-placement receipt remains unverified; the
+interactive resume did not create its required clean commit. The development product's opt-0 helper
+archive also leaves `core::ub_checks` calls unresolved during application
+links. The direct comparison used the optimized archive without changing the
+product or weakening its reader. No full candidate product or qualification
+was collected. Both implementation worktrees retain uncommitted source copies
+and evidence. The addrconfig lane's musl scratch remains under
+its `.work/tmp`: automatic review denied its removal with
+"rm -f style commands are not permitted. Use a safer approach". The cleanup
+was not retried. Both earlier denied allocator items
+remain parked. The user then requested unattended campaign completion with
+`afk`. Local campaign commits now preserve the reviewed work. Continue fixing
+demonstrated implementation and component blockers. Broad qualification and
+performance still require the named-workload request from the owner steering
+below. No push, qualification or promotion occurred.
+
 **Session recovery:** resumed `01a1740f-c839-7a22-83de-5e33ff5494af` from its
 local transcript and surviving worktrees. The three-way remote owner-exit
 comparison completed release and debug-1 before a new harness rejection.
