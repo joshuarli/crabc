@@ -473,6 +473,27 @@ fi
                 self.assertFalse(self.capture.with_suffix(".calls").exists())
                 self.assertFalse((self.checkout / ".work").exists())
 
+    def test_cold_arena_prefix_retry_dispatches_closed_offline_command(self):
+        help_result = self.launch("--help")
+        self.assertEqual(help_result.returncode, 0, help_result.stderr)
+        self.assertIn("allocator-cold-arena-prefix-retry", help_result.stdout)
+        self.assertFalse(self.capture.with_suffix(".calls").exists())
+
+        result = self.launch("allocator-cold-arena-prefix-retry")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        arguments = self.capture.read_bytes().split(b"\0")[:-1]
+        self.assertEqual(
+            arguments[-3:],
+            [b"python3", b"compat/allocator/x86_64_cold_arena_prefix_retry.py", b"--offline"],
+        )
+
+        self.capture.unlink(missing_ok=True)
+        self.capture.with_suffix(".calls").unlink(missing_ok=True)
+        rejected = self.launch("allocator-cold-arena-prefix-retry", "unexpected")
+        self.assertEqual(rejected.returncode, 2)
+        self.assertIn("allocator-cold-arena-prefix-retry takes no arguments", rejected.stderr)
+        self.assertFalse(self.capture.with_suffix(".calls").exists())
+
 
 class X86_64RunnerBoundaryTests(unittest.TestCase):
     def run_launcher(self, *arguments: str) -> subprocess.CompletedProcess[str]:
