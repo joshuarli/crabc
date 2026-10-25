@@ -16,6 +16,9 @@
 #ifndef MI_OPT_FREE_SMALL
 #define MI_OPT_FREE_SMALL 0
 #endif
+#ifndef MI_PAGE_META_IS_ALIGNED
+#define MI_PAGE_META_IS_ALIGNED 0
+#endif
 
 #define VALUE(name) printf(#name "=%zu\n", (size_t)(name))
 int main(void) {
