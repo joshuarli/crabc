@@ -151,6 +151,18 @@ decisions remain open. `afk` preserves those boundaries; it does not authorize
 the deferred matrices or retry a denial. No support, backend or gate claim
 changes. No push or promotion occurred.
 
+The frozen H0 rehearsal at `ad7e18d35`, retained in
+`.work/wt/cohort-correctness-resume`, passed static products and stopped at
+dynamic products before its runtime case roster. Bash rejected the local
+`case_name` because argument parsing had already made that name readonly.
+The initial dynamic consumers and 130 loader tests passed; the remaining
+66 correctness steps did not run. Raw failure streams remain in
+`.work/x86_64/cohort/steps/01-dynamic-products/` within that checkout.
+The runner now gives its roster iterator a distinct name. A retained
+full-dispatch regression reproduced the failure and passes after the repair;
+all 28 qualification-candidate Python tests pass. Qualification restarts
+from a fresh frozen candidate; this failed rehearsal makes no main claims.
+
 The addrconfig lane's musl scratch remains under its `.work/tmp`: automatic
 review denied its removal with "rm -f style commands are not permitted. Use
 a safer approach". The cleanup was not retried. The completed

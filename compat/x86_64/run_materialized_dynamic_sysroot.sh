@@ -199,7 +199,7 @@ check_basic_product() {
 }
 
 check_runtime_suites() {
-    local label="$1" cases case_name
+    local label="$1" cases runtime_case
     cases="$(python3 -B - "$ROOT" <<'PYTHON'
 import sys
 sys.path.insert(0, sys.argv[1] + '/compat/x86_64')
@@ -207,9 +207,9 @@ from owned_dynamic_qualification import CASES
 print('\n'.join(CASES))
 PYTHON
 )"
-    while IFS= read -r case_name; do
+    while IFS= read -r runtime_case; do
         python3 -B "$ROOT/compat/x86_64/owned_dynamic_qualification.py" run \
-            --work "$work" --product "$label" --case "$case_name"
+            --work "$work" --product "$label" --case "$runtime_case"
     done <<<"$cases"
 }
 

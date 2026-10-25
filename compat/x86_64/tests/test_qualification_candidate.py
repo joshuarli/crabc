@@ -365,6 +365,38 @@ class AttachmentTests(unittest.TestCase):
 
 
 class DynamicWorkPathTests(unittest.TestCase):
+    def test_materialized_dynamic_full_run_dispatches_every_product_case(self) -> None:
+        from owned_dynamic_qualification import CASES
+
+        scratch = ROOT / ".work/tmp"
+        scratch.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(prefix="materialized-full.", dir=scratch) as temporary:
+            result = subprocess.run(
+                ["bash", "-c", r'''
+set -T
+function /usr/local/bin/crabc-x86_64-musl-gcc() { :; }
+timeout() { :; }
+cmp() { :; }
+trap 'check_basic_product() { :; }' DEBUG
+python3() {
+    if [ "$2" = - ]; then
+        command python3 "$@"
+    elif [ "${3:-}" = run ]; then
+        printf 'case %s %s\n' "$7" "$9"
+    fi
+}
+source "$1" --work "$2"
+''', str(ROOT / "compat/x86_64/run_materialized_dynamic_sysroot.sh"),
+                 str(ROOT / "compat/x86_64/run_materialized_dynamic_sysroot.sh"),
+                 str(Path(temporary) / "products")], cwd=ROOT,
+                env={**os.environ, "TMPDIR": str(scratch)},
+                capture_output=True, text=True, check=False)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertEqual(
+                [line for line in result.stdout.splitlines() if line.startswith("case ")],
+                [f"case {product} {case}" for product in ("installed", "second", "extracted")
+                 for case in CASES])
+
     def test_materialized_dynamic_prepare_propagates_final_validation_failure(self) -> None:
         scratch = ROOT / ".work/x86_64/tmp"
         scratch.mkdir(parents=True, exist_ok=True)
