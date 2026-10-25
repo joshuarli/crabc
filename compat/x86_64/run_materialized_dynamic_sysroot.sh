@@ -239,8 +239,8 @@ for label in installed second extracted; do
     printf 'materialized dynamic product: PASS (%s)\n' "$label"
 done
 if [ "$action" = prepare ]; then
-    printf 'materialized dynamic products prepared; next case: %s\n' \
-        "$(python3 -B "$ROOT/compat/x86_64/owned_dynamic_qualification.py" next --work "$work")"
+    next_case="$(python3 -B "$ROOT/compat/x86_64/owned_dynamic_qualification.py" next --work "$work")"
+    printf 'materialized dynamic products prepared; next case: %s\n' "$next_case"
     exit 0
 fi
 for label in installed second extracted; do
