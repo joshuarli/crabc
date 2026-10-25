@@ -91,6 +91,13 @@ for index, (old, new) in enumerate(zip(struct.iter_unpack("<5Q", oracle),
         corrected["records"] += old != new
         corrected["results"] += old[2] != new[2]
         corrected["flags"] += old[4] != new[4]
+    elif (precision == "pow" and exponent == 0x3ff0000000000000
+          and base & 0x7fffffffffffffff < 0x7ff0000000000000):
+        if result != base or flags:
+            raise SystemExit(f"pow finite identity failed at {index}: {old} / {new}")
+        corrected["records"] += old != new
+        corrected["results"] += old[2] != new[2]
+        corrected["flags"] += old[4] != new[4]
     elif old != new:
         raise SystemExit(f"pow edge mismatch at {index}: {old} / {new}")
 
@@ -121,8 +128,8 @@ for precision in ("pow", "powf"):
                              f"missing {expected_coverage - exercised}; "
                              f"unexpected {exercised - expected_coverage}")
 if corrected["records"] == 0:
-    raise SystemExit("powf finite identity correction was not exercised")
+    raise SystemExit("finite pow identity correction was not exercised")
 print(f"pow {'huge-exponent' if huge else 'edge'} corpus: {len(oracle) // record_size} records; "
-      f"{corrected['records']} explicit finite powf(x,1) differences "
+      f"{corrected['records']} explicit finite pow(x,1)/powf(x,1) differences "
       f"({corrected['results']} results, {corrected['flags']} flags); "
       "all rounding modes, values, caller errno, and IEEE flag classes verified")
