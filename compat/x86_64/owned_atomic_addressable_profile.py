@@ -199,9 +199,9 @@ def _link_command(reader, objects, binary, mode, linker):
                library / 'crti.o']
     return [linker, *(('-pie',) if mode == 'pie' else ()), '--hash-style=sysv', '--eh-frame-hdr', '-z', 'relro', '-z', 'now',
             '-z', 'noexecstack', '-z', 'text', '--no-undefined', '--allow-shlib-undefined', '--enable-new-dtags',
-            '-rpath', '/usr/lib', '--dynamic-linker', sealed.INTERPRETER,
-            *(reader.recorded(path) for path in [*runtime, *objects, library / 'libc.so',
-                                                   library / 'libcrabc-builtins.a', library / 'crtn.o']),
+            '-rpath', '/usr/lib', '--exclude-libs=libcrabc-builtins.a', '--dynamic-linker', sealed.INTERPRETER,
+            *(reader.recorded(path) for path in [*runtime, *objects, library / 'libcrabc-builtins.a',
+                                                   library / 'libc.so', library / 'crtn.o']),
             '-o', reader.recorded(binary)]
 
 

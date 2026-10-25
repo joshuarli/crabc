@@ -902,7 +902,8 @@ def verify_candidate_receipt(
     library = product / "usr/lib"
     link = [str(linker_path), *( ["-shared"] if shared_object else ["-pie"]), "--hash-style=sysv",
             "--eh-frame-hdr", "-z", "relro", "-z", "now", "-z", "noexecstack", "-z", "text", "--no-undefined",
-            "--allow-shlib-undefined", "--enable-new-dtags", "-rpath", runpath]
+            "--allow-shlib-undefined", "--enable-new-dtags", "-rpath", runpath,
+            "--exclude-libs=libcrabc-builtins.a"]
     if export_dynamic:
         link.append("--export-dynamic")
     runtime = [library / name for name in ("crti.o", "libc.so", "crtn.o")]
@@ -912,8 +913,9 @@ def verify_candidate_receipt(
         link.extend(("--dynamic-linker", CANONICAL_INTERPRETER, str(entry), str(library / "crabc-dynamic-attach.o")))
     if shared_object:
         link.extend(("-soname", output.name))
-    link.extend((str(library / "crti.o"), *(str(path) for path in objects), *(str(path) for path in application_dsos),
-                 str(library / "libc.so"), str(library / "libcrabc-builtins.a"), str(library / "crtn.o"), "-o", str(output)))
+    link.extend((str(library / "crti.o"), *(str(path) for path in objects), str(library / "libcrabc-builtins.a"),
+                 *(str(path) for path in application_dsos), str(library / "libc.so"), str(library / "crtn.o"),
+                 "-o", str(output)))
     if receipt["link_command"] != link:
         fail("candidate dynamic link receipt command drifted")
     direct = [*runtime, *objects, *application_dsos]

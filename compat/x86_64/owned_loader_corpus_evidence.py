@@ -748,17 +748,17 @@ def _loader_sidecar_command(linker: str, root: Path, source_mount: str, product:
     command = [linker, "-shared" if kind == "shared" else "-pie", "--hash-style=" + hash_style,
                "--eh-frame-hdr", "-z", "relro", "-z", "now", "-z", "noexecstack", "-z", "text", "--no-undefined",
                "--allow-shlib-undefined", "--disable-new-dtags" if search_kind == "rpath" else "--enable-new-dtags",
-               "-rpath", search_path]
-    if kind == "shared":
-        command.extend(("-soname", Path(link["output"]).name))
+               "-rpath", search_path, "--exclude-libs=libcrabc-builtins.a"]
     if export_dynamic:
         command.append("--export-dynamic")
     if kind == "executable":
         command.extend(("--dynamic-linker", "/lib/ld-crabc-x86_64.so.1", recorded(library / "Scrt1.o"),
                         recorded(library / "crabc-dynamic-attach.o")))
-    command.extend((recorded(library / "crti.o"), link["object"],
+    if kind == "shared":
+        command.extend(("-soname", Path(link["output"]).name))
+    command.extend((recorded(library / "crti.o"), link["object"], recorded(library / "libcrabc-builtins.a"),
                     *(item["path"] for item in link["dependencies"]), recorded(library / "libc.so"),
-                    recorded(library / "libcrabc-builtins.a"), recorded(library / "crtn.o"), "-o", link["output"]))
+                    recorded(library / "crtn.o"), "-o", link["output"]))
     return command
 
 

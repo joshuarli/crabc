@@ -624,24 +624,10 @@ def _retained_dlfcn_link_record(product: Path, work: Path, output: Path, stem: s
     require(seen_applications == set(applications), f"{stem} retained application DSO roster drifted")
 
     linker = str(replay.tool_path("linker"))
-    command = [linker]
-    if mode == "shared":
-        command.append("-shared")
-    elif mode == "pie":
-        command.append("-pie")
-    elif mode != "exec":
-        fail(f"{stem} retained link mode is unsupported")
-    command += ["--hash-style=sysv", "--eh-frame-hdr", "-z", "relro", "-z", "now", "-z", "noexecstack", "-z", "text",
-                "--no-undefined", "--allow-shlib-undefined", "--enable-new-dtags", "-rpath", "/usr/lib"]
-    if mode == "shared":
-        command += ["-soname", executable.name]
-    else:
-        assert entry is not None
-        command += ["--dynamic-linker", fork_evidence.INTERPRETER, replay.recorded(entry),
-                    replay.recorded(library / "crabc-dynamic-attach.o")]
-    command += [replay.recorded(library / "crti.o"), replay.recorded(object_path),
-                *(replay.recorded(path) for path in application_paths), replay.recorded(library / "libc.so"),
-                replay.recorded(archive), replay.recorded(library / "crtn.o"), "-o", replay.recorded(executable)]
+    require(mode in {"shared", "pie", "exec"}, f"{stem} retained link mode is unsupported")
+    _, command = fork_evidence.expected_base(
+        product, executable, mode, object_path, application_paths, linker, replay=replay,
+    )
     require(receipt.get("link_command") == command, f"{stem} retained link command drifted")
     direct = {replay.recorded(library / "crti.o"), replay.recorded(object_path),
               *(replay.recorded(path) for path in application_paths), replay.recorded(library / "libc.so"),

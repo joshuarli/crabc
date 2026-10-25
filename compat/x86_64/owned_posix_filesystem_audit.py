@@ -450,13 +450,7 @@ def audit_dynamic_receipt(
     require_record(receipt, "manifest_sha256", digest(manifest_path), "dynamic receipt")
     require_record(receipt, "output_path", str(candidate), "dynamic receipt")
     require_record(receipt, "output_sha256", digest(candidate), "dynamic receipt")
-    expected_command = [
-        str(linker), *(["-pie"] if mode == "pie" else []), "--hash-style=sysv", "--eh-frame-hdr", "-z",
-        "relro", "-z", "now", "-z", "noexecstack", "-z", "text", "--no-undefined",
-        "--allow-shlib-undefined", "--enable-new-dtags", "-rpath", "/usr/lib",
-        "--dynamic-linker", DYNAMIC_INTERPRETER, str(entry), str(attach), str(prologue),
-        str(application), str(libc), str(builtins), str(epilogue), "-o", str(candidate),
-    ]
+    expected_command = product_evidence._dynamic_link_command(root, application, candidate, mode, str(linker))
     require_record(receipt, "link_command", expected_command, "dynamic receipt")
     require_trace_order(
         receipt.get("link_trace"),

@@ -69,11 +69,9 @@ class LoaderRuntimeRegistryEvidenceTests(unittest.TestCase):
         digest = lambda path: hashlib.sha256(path.read_bytes()).hexdigest()
         inputs = [library / name for name in ('crti.o', 'libc.so', 'crtn.o')]
         inputs += [object_path, library / 'libcrabc-builtins.a']
-        command = [str(replay.tool_path('linker')), '-shared', '--hash-style=sysv', '--eh-frame-hdr', '-z', 'relro',
-                   '-z', 'now', '-z', 'noexecstack', '-z', 'text', '--no-undefined', '--allow-shlib-undefined',
-                   '--enable-new-dtags', '-rpath', '/usr/lib', '-soname', stem,
-                   replay.recorded(library / 'crti.o'), replay.recorded(object_path), replay.recorded(library / 'libc.so'),
-                   replay.recorded(library / 'libcrabc-builtins.a'), replay.recorded(library / 'crtn.o'), '-o', replay.recorded(executable)]
+        _, command = EVIDENCE.fork_evidence.expected_base(
+            product, executable, 'shared', object_path, [], str(replay.tool_path('linker')), replay=replay,
+        )
         receipt = {'schema': 2, 'format': EVIDENCE.product_evidence.DYNAMIC_PRODUCT_FORMAT, 'mode': 'shared',
                    'binding': 'now', 'runtime_imports': [], 'application_runpath': '/usr/lib', 'application_rpath': None,
                    'application_search_kind': 'runpath', 'application_hash_style': 'sysv',
@@ -192,12 +190,9 @@ class LoaderRuntimeRegistryEvidenceTests(unittest.TestCase):
             digest = lambda path: hashlib.sha256(path.read_bytes()).hexdigest()
             inputs = [runtime / name for name in ('crti.o', 'libc.so', 'crtn.o', 'Scrt1.o', 'crabc-dynamic-attach.o')]
             inputs += [object_path, runtime / 'libcrabc-builtins.a']
-            command = [str(replay.tool_path('linker')), '-pie', '--hash-style=sysv', '--eh-frame-hdr', '-z', 'relro', '-z', 'now',
-                       '-z', 'noexecstack', '-z', 'text', '--no-undefined', '--allow-shlib-undefined', '--enable-new-dtags',
-                       '-rpath', '/usr/lib', '--dynamic-linker', EVIDENCE.fork_evidence.INTERPRETER,
-                       replay.recorded(runtime / 'Scrt1.o'), replay.recorded(runtime / 'crabc-dynamic-attach.o'),
-                       replay.recorded(runtime / 'crti.o'), replay.recorded(object_path), replay.recorded(runtime / 'libc.so'),
-                       replay.recorded(runtime / 'libcrabc-builtins.a'), replay.recorded(runtime / 'crtn.o'), '-o', replay.recorded(executable)]
+            _, command = EVIDENCE.fork_evidence.expected_base(
+                product, executable, 'pie', object_path, [], str(replay.tool_path('linker')), replay=replay,
+            )
             expected_command = list(command)
             receipt = {
                 'schema': 2, 'format': EVIDENCE.product_evidence.DYNAMIC_PRODUCT_FORMAT, 'mode': 'pie', 'binding': 'now',
@@ -219,6 +214,19 @@ class LoaderRuntimeRegistryEvidenceTests(unittest.TestCase):
                  mock.patch.object(EVIDENCE.subprocess, 'run', side_effect=AssertionError('host dlfcn replay invoked a command')):
                 observed = EVIDENCE._link_record(product, work, output, 'consumer', 'pie', replay=replay)
             self.assertEqual(observed['mode'], 'pie')
+            legacy_command = list(expected_command)
+            legacy_command.remove('--exclude-libs=libcrabc-builtins.a')
+            archive = replay.recorded(runtime / 'libcrabc-builtins.a')
+            libc = replay.recorded(runtime / 'libc.so')
+            archive_index, libc_index = legacy_command.index(archive), legacy_command.index(libc)
+            legacy_command[archive_index], legacy_command[libc_index] = legacy_command[libc_index], legacy_command[archive_index]
+            receipt['link_command'] = legacy_command
+            receipt_path.write_text(json.dumps(receipt), encoding='utf-8')
+            with mock.patch.object(EVIDENCE.product_evidence, 'retained_elf_facts', return_value=facts), \
+                 self.assertRaisesRegex(EVIDENCE.RuntimeRegistryEvidenceError, 'link command'):
+                EVIDENCE._link_record(product, work, output, 'consumer', 'pie', replay=replay)
+            receipt['link_command'] = expected_command
+            receipt_path.write_text(json.dumps(receipt), encoding='utf-8')
             # Native collection must reopen the same compiler-created input
             # that host replay will need before it seals this receipt.
             object_path.unlink()

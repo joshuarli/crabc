@@ -230,13 +230,9 @@ class OwnedPosixFilesystemTests(unittest.TestCase):
             "manifest_sha256": auditor.digest(product / auditor.MANIFEST_RELATIVE),
             "output_path": str(candidate),
             "output_sha256": auditor.digest(candidate),
-            "link_command": [
-                str(linker), "-pie", "--hash-style=sysv", "--eh-frame-hdr", "-z", "relro", "-z", "now", "-z",
-                "noexecstack", "-z", "text", "--no-undefined", "--allow-shlib-undefined",
-                "--enable-new-dtags", "-rpath", "/usr/lib", "--dynamic-linker",
-                auditor.DYNAMIC_INTERPRETER, str(entry), str(attach), str(prologue),
-                str(application), str(libc), str(builtins), str(epilogue), "-o", str(candidate),
-            ],
+            "link_command": auditor.product_evidence._dynamic_link_command(
+                product, application, candidate, "pie", str(linker)
+            ),
             "link_trace": [
                 str(entry), str(attach), str(prologue), str(application), str(libc) + "(member.o)",
                 str(builtins) + "(member.o)", str(epilogue),

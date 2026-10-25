@@ -577,7 +577,7 @@ def _libc_test_link(reader, phase, *, unit, side, objects, contract, product, ou
         same(phase['receipt']['linker'], linker, 'libc-test retained linker identity')
         sealed = [linker['path'], '-shared' if shared else '-pie', '--hash-style=sysv', '--eh-frame-hdr', '-z', 'relro', '-z', 'now',
                   '-z', 'noexecstack', '-z', 'text', '--no-undefined', '--allow-shlib-undefined', '--enable-new-dtags',
-                  '-rpath', roles['runpath']]
+                  '-rpath', roles['runpath'], '--exclude-libs=libcrabc-builtins.a']
         if roles['export_dynamic']:
             sealed.append('--export-dynamic')
         if shared:
@@ -585,7 +585,8 @@ def _libc_test_link(reader, phase, *, unit, side, objects, contract, product, ou
         else:
             sealed += ['--dynamic-linker', '/lib/ld-crabc-x86_64.so.1', reader.recorded(library / 'Scrt1.o'),
                        reader.recorded(library / 'crabc-dynamic-attach.o')]
-        sealed += [reader.recorded(path) for path in [library / 'crti.o', *objects, *dsos, library / 'libc.so', builtins, library / 'crtn.o']]
+        sealed += [reader.recorded(path) for path in [library / 'crti.o', *objects, builtins, *dsos,
+                                                       library / 'libc.so', library / 'crtn.o']]
         sealed += ['-o', reader.recorded(output)]
         same(receipt['link_command'], sealed, 'libc-test canonical sealed link command')
         direct = {reader.recorded(path) for path in [*runtime, *objects, *dsos]}
@@ -1121,14 +1122,15 @@ def _os_sealed_link(reader, *, binary, receipt_path, shared, output, workload_pa
     require(isinstance(linker['path'], str) and Path(linker['path']).is_absolute() and
             re.fullmatch('[0-9a-f]{64}', linker['sha256']) is not None, 'os-test sealed linker identity is malformed')
     command = [linker['path'], '-shared' if shared else '-pie', '--hash-style=sysv', '--eh-frame-hdr', '-z', 'relro', '-z', 'now',
-               '-z', 'noexecstack', '-z', 'text', '--no-undefined', '--allow-shlib-undefined', '--enable-new-dtags', '-rpath', '/usr/lib']
+               '-z', 'noexecstack', '-z', 'text', '--no-undefined', '--allow-shlib-undefined', '--enable-new-dtags',
+               '-rpath', '/usr/lib', '--exclude-libs=libcrabc-builtins.a']
     if shared:
         command += ['-soname', Path(output).name]
     else:
         command += ['--dynamic-linker', '/lib/ld-crabc-x86_64.so.1', reader.recorded(library / 'Scrt1.o'),
                     reader.recorded(library / 'crabc-dynamic-attach.o')]
-    command += [reader.recorded(library / 'crti.o'), workload_path, reader.recorded(library / 'libc.so'),
-                reader.recorded(builtins), reader.recorded(library / 'crtn.o'), '-o', output]
+    command += [reader.recorded(library / 'crti.o'), workload_path, reader.recorded(builtins),
+                reader.recorded(library / 'libc.so'), reader.recorded(library / 'crtn.o'), '-o', output]
     same(receipt['link_command'], command, 'os-test canonical sealed link command')
     direct, archive = {reader.recorded(path) for path in runtime} | {workload_path}, reader.recorded(builtins)
     trace = receipt['link_trace']

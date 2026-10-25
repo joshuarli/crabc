@@ -248,7 +248,8 @@ def check_dso_link(root: Path, directory: Path, receipt: shared.Receipt,
     command = [linker_path, "-shared", "--hash-style=sysv", "--eh-frame-hdr", "-z", "relro",
                "-z", "now", "-z", "noexecstack", "-z", "text", "--no-undefined",
                "--allow-shlib-undefined", "--enable-new-dtags", "-rpath", "/usr/lib",
-               "-soname", f"libdso-{role}.so", crti, object_path, libc, builtins, crtn,
+               "--exclude-libs=libcrabc-builtins.a", "-soname", f"libdso-{role}.so",
+               crti, object_path, builtins, libc, crtn,
                "-o", output_path]
     require(sidecar.get("link_command") == command, f"{name} owned link command differs")
 

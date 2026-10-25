@@ -13,6 +13,7 @@ from pathlib import Path
 
 SOURCE_DIR = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(SOURCE_DIR))
+import owned_posix_product_evidence as product_evidence
 
 from owned_pthread_alias_contract_reader import (
     ALIASES,
@@ -248,14 +249,10 @@ class OwnedPthreadAliasContractReaderTests(unittest.TestCase):
             f"{product_root}/usr/lib/crti.o", f"{work_path}/contract.o",
             f"{product_root}/usr/lib/libc.so", f"{product_root}/usr/lib/crtn.o",
         ]
-        command = [
-            "/tools/ld.lld", "-pie", "--hash-style=sysv", "--eh-frame-hdr", "-z", "relro", "-z", "now",
-            "-z", "noexecstack", "-z", "text", "--no-undefined", "--allow-shlib-undefined",
-            "--enable-new-dtags", "-rpath", "/usr/lib", "--export-dynamic", "--dynamic-linker",
-            "/lib/ld-crabc-x86_64.so.1", *trace[:3], f"{work_path}/contract.o",
-            f"{product_root}/usr/lib/libc.so", f"{product_root}/usr/lib/libcrabc-builtins.a",
-            f"{product_root}/usr/lib/crtn.o", "-o", f"{work_path}/{binary}",
-        ]
+        command = product_evidence._dynamic_link_command(
+            Path(product_root), Path(f"{work_path}/contract.o"), Path(f"{work_path}/{binary}"),
+            "pie", "/tools/ld.lld", export_dynamic=True,
+        )
         receipt = {
             "schema": 2, "format": "crabc-x86-64-owned-dynamic-sysroot-v1",
             "campaign_complete": False, "mode": "pie", "output_path": f"{work_path}/{binary}",
@@ -280,6 +277,17 @@ class OwnedPthreadAliasContractReaderTests(unittest.TestCase):
             "original_paths": {"driver": f"{product_root}/bin/crabc-cc-dynamic"},
         }}
         _validate_dynamic_link_receipt(receipt_path, work_path, binary, artifacts, products)
+        legacy = list(command)
+        legacy.remove("--exclude-libs=libcrabc-builtins.a")
+        archive = f"{product_root}/usr/lib/libcrabc-builtins.a"
+        libc = f"{product_root}/usr/lib/libc.so"
+        archive_index, libc_index = legacy.index(archive), legacy.index(libc)
+        legacy[archive_index], legacy[libc_index] = legacy[libc_index], legacy[archive_index]
+        receipt["link_command"] = legacy
+        receipt_path.write_text(__import__("json").dumps(receipt) + "\n", encoding="utf-8")
+        with self.assertRaisesRegex(ReceiptError, "dynamic linker command changed"):
+            _validate_dynamic_link_receipt(receipt_path, work_path, binary, artifacts, products)
+        receipt["link_command"] = command
         receipt["link_command"][1] = "--forged-pie"
         receipt_path.write_text(__import__("json").dumps(receipt) + "\n", encoding="utf-8")
         with self.assertRaisesRegex(ReceiptError, "dynamic linker command changed"):

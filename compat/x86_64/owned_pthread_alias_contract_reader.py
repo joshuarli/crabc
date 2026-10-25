@@ -25,6 +25,7 @@ import subprocess
 import sys
 from typing import Any, NamedTuple
 import owned_dynamic_qualification as dynamic_materialization
+import owned_posix_product_evidence as product_evidence
 
 
 SCHEMA = "crabc.x86_64-owned-pthread-alias-contract/v1"
@@ -89,6 +90,7 @@ SOURCE_CONTRACT_PATHS = (
     "libc/src/c_abi/x86_64/pthread_mutex.rs",
     "libc/src/c_abi/x86_64/pthread_once.rs",
     "libc/src/c_abi/x86_64/pthread_tsd.rs",
+    "compat/x86_64/owned_posix_product_evidence.py",
 )
 COLLECTOR_PATHS = {
     "probe": "compat/x86_64/owned_pthread_alias_contract_probe.c",
@@ -1277,17 +1279,10 @@ def _validate_dynamic_link_receipt(
     require(receipt["link_trace"] == expected_trace,
             f"{binary} dynamic link trace changed")
     linker = _resolved_linker_path(receipt["resolved_linker"], binary)
-    expected_link = [linker]
-    if expected_mode == "pie":
-        expected_link.append("-pie")
-    expected_link += [
-        "--hash-style=sysv", "--eh-frame-hdr", "-z", "relro", "-z", "now", "-z", "noexecstack", "-z", "text",
-        "--no-undefined", "--allow-shlib-undefined", "--enable-new-dtags", "-rpath", "/usr/lib",
-        "--export-dynamic", "--dynamic-linker", INTERPRETER,
-        f"{root}/usr/lib/{crt}", f"{root}/usr/lib/crabc-dynamic-attach.o",
-        f"{root}/usr/lib/crti.o", f"{work}/contract.o", f"{root}/usr/lib/libc.so",
-        f"{root}/usr/lib/libcrabc-builtins.a", f"{root}/usr/lib/crtn.o", "-o", f"{work}/{binary}",
-    ]
+    expected_link = product_evidence._dynamic_link_command(
+        Path(root), Path(f"{work}/contract.o"), Path(f"{work}/{binary}"),
+        "pie" if expected_mode == "pie" else "non-pie", linker, export_dynamic=True,
+    )
     require(receipt["link_command"] == expected_link,
             f"{binary} dynamic linker command changed")
 

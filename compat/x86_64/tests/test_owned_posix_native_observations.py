@@ -436,11 +436,13 @@ class NativeObservationsTests(unittest.TestCase):
             builtins = product / 'usr/lib/libcrabc-builtins.a'
             linker = {'path': '/pinned/ld.lld', 'sha256': 'c' * 64}
             sealed = [linker['path'], '-shared' if shared else '-pie', '--hash-style=sysv', '--eh-frame-hdr', '-z', 'relro', '-z', 'now',
-                      '-z', 'noexecstack', '-z', 'text', '--no-undefined', '--allow-shlib-undefined', '--enable-new-dtags', '-rpath', '/usr/lib']
+                      '-z', 'noexecstack', '-z', 'text', '--no-undefined', '--allow-shlib-undefined', '--enable-new-dtags',
+                      '-rpath', '/usr/lib', '--exclude-libs=libcrabc-builtins.a']
             if shared: sealed += ['-soname', output.name]
             else: sealed += ['--dynamic-linker', '/lib/ld-crabc-x86_64.so.1', self.recorded(product / 'usr/lib/Scrt1.o'), self.recorded(product / 'usr/lib/crabc-dynamic-attach.o')]
-            sealed += [self.recorded(product / 'usr/lib/crti.o'), self.recorded(object_path), self.recorded(product / 'usr/lib/libc.so'),
-                       self.recorded(builtins), self.recorded(product / 'usr/lib/crtn.o'), '-o', self.recorded(output)]
+            sealed += [self.recorded(product / 'usr/lib/crti.o'), self.recorded(object_path), self.recorded(builtins),
+                       self.recorded(product / 'usr/lib/libc.so'), self.recorded(product / 'usr/lib/crtn.o'),
+                       '-o', self.recorded(output)]
             self.put(receipt_path, {'schema': 1, 'format': native.PRODUCT_FORMAT, 'mode': 'shared' if shared else 'pie', 'binding': 'now',
                 'runtime_imports': [], 'application_runpath': '/usr/lib', 'application_dsos': {}, 'campaign_complete': False,
                 'manifest_sha256': self.binding(manifest)['sha256'], 'output_path': self.recorded(output), 'output_sha256': self.binding(binary)['sha256'],
@@ -1033,7 +1035,8 @@ class NativeObservationsTests(unittest.TestCase):
                 builtins = copied_product / 'usr/lib/libcrabc-builtins.a'
                 linker = {'path': '/pinned/ld.lld', 'sha256': 'a' * 64}
                 sealed = [linker['path'], '-shared' if shared else '-pie', '--hash-style=sysv', '--eh-frame-hdr', '-z', 'relro', '-z', 'now',
-                          '-z', 'noexecstack', '-z', 'text', '--no-undefined', '--allow-shlib-undefined', '--enable-new-dtags', '-rpath', roles['runpath']]
+                          '-z', 'noexecstack', '-z', 'text', '--no-undefined', '--allow-shlib-undefined', '--enable-new-dtags',
+                          '-rpath', roles['runpath'], '--exclude-libs=libcrabc-builtins.a']
                 if roles['export_dynamic']:
                     sealed.append('--export-dynamic')
                 if shared:
@@ -1041,7 +1044,8 @@ class NativeObservationsTests(unittest.TestCase):
                 else:
                     sealed += ['--dynamic-linker', '/lib/ld-crabc-x86_64.so.1', self.recorded(copied_product / 'usr/lib/Scrt1.o'),
                                self.recorded(copied_product / 'usr/lib/crabc-dynamic-attach.o')]
-                sealed += list(map(self.recorded, [copied_product / 'usr/lib/crti.o', *inputs, *dsos, copied_product / 'usr/lib/libc.so', builtins, copied_product / 'usr/lib/crtn.o']))
+                sealed += list(map(self.recorded, [copied_product / 'usr/lib/crti.o', *inputs, builtins, *dsos,
+                                                   copied_product / 'usr/lib/libc.so', copied_product / 'usr/lib/crtn.o']))
                 sealed += ['-o', self.recorded(output)]
                 trace = list(map(self.recorded, [*runtime, *inputs, *dsos]))
                 receipt = {'schema': 1, 'format': native.PRODUCT_FORMAT, 'mode': 'shared' if shared else 'pie', 'binding': 'now',

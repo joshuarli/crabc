@@ -361,9 +361,10 @@ def _shared_link_command(root: Path, object_path: Path, output: Path, linker: Pa
     return [
         str(linker), "-shared", "--hash-style=sysv", "--eh-frame-hdr", "-z", "relro", "-z", "now",
         "-z", "noexecstack", "-z", "text", "--no-undefined", "--allow-shlib-undefined",
-        "--enable-new-dtags", "-rpath", "/usr/lib", "-soname", output.name,
-        recorded(library / "crti.o", replay), recorded(object_path, replay), recorded(library / "libc.so", replay),
-        recorded(library / "libcrabc-builtins.a", replay), recorded(library / "crtn.o", replay), "-o", recorded(output, replay),
+        "--enable-new-dtags", "-rpath", "/usr/lib", "--exclude-libs=libcrabc-builtins.a", "-soname", output.name,
+        recorded(library / "crti.o", replay), recorded(object_path, replay),
+        recorded(library / "libcrabc-builtins.a", replay), recorded(library / "libc.so", replay),
+        recorded(library / "crtn.o", replay), "-o", recorded(output, replay),
     ]
 
 

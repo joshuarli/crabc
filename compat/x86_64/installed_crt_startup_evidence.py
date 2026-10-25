@@ -1021,12 +1021,13 @@ def descriptor_receipt(root,work,inputs,tools,label,mode,workload,output,applica
     mounted=lambda path:ordinary.mounted(root,path)
     common=[linker['path'],*(['-shared'] if mode=='shared' else ['-pie']),'--hash-style=sysv',
             '--eh-frame-hdr','-z','relro','-z','now','-z','noexecstack','-z','text','--no-undefined',
-            '--allow-shlib-undefined','--enable-new-dtags','-rpath','/usr/lib']
+            '--allow-shlib-undefined','--enable-new-dtags','-rpath','/usr/lib','--exclude-libs=libcrabc-builtins.a']
     if mode=='shared':common+=['-soname',output.name]
     else:common+=['--dynamic-linker','/lib/ld-crabc-x86_64.so.1',mounted(library/'Scrt1.o'),
                   mounted(library/'crabc-dynamic-attach.o')]
-    command=[*common,mounted(library/'crti.o'),mounted(workload),*(mounted(path) for path in application_dsos),
-             mounted(library/'libc.so'),mounted(archive),mounted(library/'crtn.o'),'-o',mounted(output)]
+    command=[*common,mounted(library/'crti.o'),mounted(workload),mounted(archive),
+             *(mounted(path) for path in application_dsos),mounted(library/'libc.so'),mounted(library/'crtn.o'),
+             '-o',mounted(output)]
     require(record['link_command']==command,'descriptor '+label+' link command differs')
     direct=([mounted(library/'crti.o'),mounted(workload)] if mode=='shared' else
             [mounted(library/'Scrt1.o'),mounted(library/'crabc-dynamic-attach.o'),

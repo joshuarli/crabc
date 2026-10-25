@@ -321,6 +321,72 @@ class OwnedDynamicForkRunnerTests(unittest.TestCase):
         self.assertIn('compile dependency roster or installed-header hashes drifted', source)
         self.assertIn('validation', source)
 
+    def test_link_receipts_match_the_driver_for_shared_pie_and_exec(self) -> None:
+        evidence = load_evidence()
+        import crabc_cc_owned_dynamic as driver
+
+        scratch_root = ROOT / ".work/x86_64/owned-dynamic-fork-runner-tests"
+        scratch_root.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(dir=scratch_root) as temporary:
+            root = Path(temporary) / "product"
+            self._write_product(root)
+            work = Path(temporary) / "work"
+            work.mkdir()
+            object_path = work / "consumer.o"
+            object_path.write_bytes(b"consumer object")
+            dso = work / "libfork-initial.so"
+            dso.write_bytes(b"fork DSO")
+            library = root / "usr/lib"
+            linker = Path(temporary) / "ld.lld"
+            linker.write_bytes(b"owned linker")
+            linker.chmod(0o755)
+
+            import owned_posix_product_evidence as product_evidence
+
+            for mode, mode_flag, export_dynamic, include_dso in (
+                ("shared", "--dynamic-shared-object", False, True),
+                ("pie", "--dynamic-pie", False, True),
+                ("exec", "--dynamic-non-pie", False, True),
+                ("pie", "--dynamic-pie", True, False),
+                ("exec", "--dynamic-non-pie", True, False),
+            ):
+                output = work / f"consumer-{mode}-{'exported' if export_dynamic else 'ordinary'}"
+                dsos = [dso] if include_dso else []
+
+                def link(command, _temporary):
+                    output.write_bytes(b"linked output")
+                    map_argument = next(argument for argument in command if argument.startswith("-Map="))
+                    Path(map_argument.removeprefix("-Map=")).write_text("link map\n", encoding="utf-8")
+                    direct = [library / "crti.o", object_path, *dsos, library / "libc.so", library / "crtn.o"]
+                    if mode != "shared":
+                        entry = "Scrt1.o" if mode == "pie" else "crt1.o"
+                        direct += [library / entry, library / "crabc-dynamic-attach.o"]
+                    return "\n".join(str(path) for path in direct)
+
+                arguments = [mode_flag]
+                if export_dynamic:
+                    arguments.append("-rdynamic")
+                if dsos:
+                    arguments += ["--application-dso", str(dso)]
+                arguments += [str(object_path), "-o", str(output)]
+                with patch.object(driver.shared, "linker", return_value=str(linker)), \
+                     patch.object(driver.shared, "require_x86_64_relocatable_object", return_value=object_path), \
+                     patch.object(driver, "dynamic_symbols", return_value=(set(), set())), \
+                     patch.object(driver, "dso_metadata", return_value=(dso.name, ["libc.so"])), \
+                     patch.object(driver, "final_elf_inspection", return_value={}), \
+                     patch.object(driver, "run", side_effect=link):
+                    driver.execute(root, arguments)
+
+                record = json.loads(Path(str(output) + ".crabc-link.json").read_text(encoding="utf-8"))
+                if export_dynamic:
+                    expected = product_evidence._dynamic_link_command(
+                        root, object_path, output, "pie" if mode == "pie" else "non-pie",
+                        str(linker), export_dynamic=True,
+                    )
+                else:
+                    _, expected = evidence.expected_base(root, output, mode, object_path, dsos, str(linker))
+                self.assertEqual(record["link_command"], expected)
+
     def test_raw_status_stdout_and_stderr_are_retained_for_all_runs(self) -> None:
         source = RUNNER.read_text(encoding="utf-8")
         self.assertIn('"$output" 2>"${output%.stdout}.stderr" || status=$?', source)

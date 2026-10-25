@@ -159,6 +159,70 @@ class TimedFeatureReceiptBoundaryTests(unittest.TestCase):
                 with self.assertRaisesRegex(reader.ReceiptError, "allocator provenance"):
                     reader._validate_dynamic_materialization_state(forged, source, files, "test dynamic state")
 
+    def test_dynamic_receipt_uses_the_shared_current_link_contract(self) -> None:
+        reader = importlib.import_module("owned_pthread_timed_feature_contract_reader")
+        root = "/products/dynamic"
+        work = "/workspace/.work/x86_64/timed-driver-command"
+        binary = "dynamic-pie-contract"
+        linker = "/tools/ld.lld"
+        manifest_name = "retained/products/dynamic-manifest.json"
+        runtime_files = (
+            "usr/lib/Scrt1.o", "usr/lib/crabc-dynamic-attach.o", "usr/lib/crti.o",
+            "usr/lib/crtn.o", "usr/lib/libc.so", "usr/lib/libcrabc-builtins.a",
+        )
+        digests = {name: f"{index + 1:x}" * 64 for index, name in enumerate(runtime_files)}
+        scratch_root = ROOT / ".work/x86_64/tmp"
+        scratch_root.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(dir=scratch_root) as temporary:
+            receipt_path = Path(temporary) / f"{binary}.crabc-link.json"
+            manifest_path = Path(temporary) / manifest_name
+            manifest_path.parent.mkdir(parents=True)
+            manifest_path.write_text(json.dumps({"files": digests}) + "\n", encoding="utf-8")
+            output = f"{work}/{binary}"
+            command = reader.product_evidence._dynamic_link_command(
+                Path(root), Path(f"{work}/contract.o"), Path(output), "pie", linker, export_dynamic=True,
+            )
+            trace = [
+                f"{root}/usr/lib/Scrt1.o", f"{root}/usr/lib/crabc-dynamic-attach.o",
+                f"{root}/usr/lib/crti.o", f"{work}/contract.o", f"{root}/usr/lib/libc.so",
+                f"{root}/usr/lib/crtn.o",
+            ]
+            receipt = {
+                "application_dsos": {}, "application_hash_style": "sysv", "application_rpath": None,
+                "application_runpath": "/usr/lib", "application_search_kind": "runpath", "binding": "now",
+                "campaign_complete": False, "format": "crabc-x86-64-owned-dynamic-sysroot-v1",
+                "input_receipts": [
+                    {"path": f"{root}/{name}", "sha256": digest} for name, digest in digests.items()
+                ] + [{"path": f"{work}/contract.o", "sha256": "7" * 64}],
+                "link_command": command, "link_trace": trace, "manifest_sha256": "8" * 64, "mode": "pie",
+                "output_path": output, "output_sha256": "9" * 64,
+                "owned_runtime_inputs": sorted(runtime_files),
+                "resolved_linker": {"path": linker, "sha256": "a" * 64},
+                "runtime_imports": [], "schema": 2,
+            }
+            receipt_path.write_text(json.dumps(receipt) + "\n", encoding="utf-8")
+            artifacts = {
+                binary: {"sha256": "9" * 64}, "contract.o": {"sha256": "7" * 64},
+                manifest_name: {"sha256": "8" * 64},
+            }
+            products = {"dynamic": {
+                "manifest": manifest_name,
+                "original_paths": {"driver": f"{root}/bin/crabc-cc-dynamic"},
+            }}
+            image_manifest = {"files": {linker: {"sha256": "a" * 64}}}
+            with mock.patch.object(reader, "_audit_owned_final_elf"):
+                reader._validate_dynamic_link_receipt(
+                    receipt_path, work, binary, artifacts, products, image_manifest,
+                )
+
+            receipt["link_command"].remove("--exclude-libs=libcrabc-builtins.a")
+            receipt_path.write_text(json.dumps(receipt) + "\n", encoding="utf-8")
+            with mock.patch.object(reader, "_audit_owned_final_elf"), \
+                 self.assertRaisesRegex(reader.ReceiptError, "dynamic linker command changed"):
+                reader._validate_dynamic_link_receipt(
+                    receipt_path, work, binary, artifacts, products, image_manifest,
+                )
+
     def test_feature_source_route_is_present_and_does_not_claim_a_build_invocation(self) -> None:
         reader = importlib.import_module("owned_pthread_timed_feature_contract_reader")
         record = reader.evaluate_feature_source(ROOT)

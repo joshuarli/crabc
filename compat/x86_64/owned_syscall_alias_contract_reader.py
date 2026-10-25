@@ -493,10 +493,10 @@ def validate_dynamic_link_receipts(output, runner, inputs, command_runner):
                            {"path": original("libcrabc-builtins.a"), "sha256": digest(retained_product / "usr/lib/libcrabc-builtins.a")}]
             command = [linker["path"], *(["-pie"] if mode == "pie" else []), "--hash-style=sysv",
                        "--eh-frame-hdr", "-z", "relro", "-z", "now", "-z", "noexecstack", "-z", "text", "--no-undefined",
-                       "--allow-shlib-undefined", "--enable-new-dtags", "-rpath", "/usr/lib",
+                       "--allow-shlib-undefined", "--enable-new-dtags", "-rpath", "/usr/lib", "--exclude-libs=libcrabc-builtins.a",
                        *(["--export-dynamic"] if probe == "override" else []), "--dynamic-linker", "/lib/ld-crabc-x86_64.so.1",
                        original(crt), original("crabc-dynamic-attach.o"), original("crti.o"), obj,
-                       original("libc.so"), original("libcrabc-builtins.a"), original("crtn.o"), "-o", str(command_runner / stem)]
+                       original("libcrabc-builtins.a"), original("libc.so"), original("crtn.o"), "-o", str(command_runner / stem)]
             require(same(record["input_receipts"], input_rows) and record["owned_runtime_inputs"] == runtime
                     and same(record["resolved_linker"], {key: linker[key] for key in ("path", "sha256")})
                     and record["manifest_sha256"] == inputs["dynamic_manifest"]["original"]["sha256"]

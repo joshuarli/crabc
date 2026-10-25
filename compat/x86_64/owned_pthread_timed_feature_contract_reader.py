@@ -187,6 +187,7 @@ SOURCE_CONTRACT_PATHS = (
     "libc/src/c_abi/x86_64/pthread_mutex.rs",
     "compat/x86_64/parity.toml",
     "scripts/build_x86_64_owned_sysroot.py",
+    "compat/x86_64/owned_posix_product_evidence.py",
 )
 COLLECTOR_PATHS = {
     "probe": "compat/x86_64/owned_pthread_timed_feature_contract_probe.c",
@@ -1789,17 +1790,10 @@ def _validate_dynamic_link_receipt(
     require(isinstance(files, dict) and receipt["resolved_linker"] == {
         "path": linker, "sha256": files.get(linker, {}).get("sha256"),
     }, f"{binary} dynamic linker is not the trusted pinned LLD")
-    expected_link = [linker]
-    if expected_mode == "pie":
-        expected_link.append("-pie")
-    expected_link += [
-        "--hash-style=sysv", "--eh-frame-hdr", "-z", "relro", "-z", "now", "-z", "noexecstack", "-z", "text",
-        "--no-undefined", "--allow-shlib-undefined", "--enable-new-dtags", "-rpath", "/usr/lib",
-        "--export-dynamic", "--dynamic-linker", INTERPRETER,
-        f"{root}/usr/lib/{crt}", f"{root}/usr/lib/crabc-dynamic-attach.o",
-        f"{root}/usr/lib/crti.o", f"{work}/contract.o", f"{root}/usr/lib/libc.so",
-        f"{root}/usr/lib/libcrabc-builtins.a", f"{root}/usr/lib/crtn.o", "-o", f"{work}/{binary}",
-    ]
+    expected_link = product_evidence._dynamic_link_command(
+        Path(root), Path(f"{work}/contract.o"), Path(f"{work}/{binary}"),
+        "pie" if expected_mode == "pie" else "non-pie", linker, export_dynamic=True,
+    )
     require(receipt["link_command"] == expected_link,
             f"{binary} dynamic linker command changed")
     _audit_owned_final_elf(path.parent / binary, "pie" if expected_mode == "pie" else "non-pie")

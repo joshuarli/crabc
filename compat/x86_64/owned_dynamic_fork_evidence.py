@@ -398,14 +398,16 @@ def expected_base(product: Path, output: Path, mode: str, object_path: Path, dso
         fail("unsupported receipt mode")
     command += ["--hash-style=sysv", "--eh-frame-hdr", "-z", "relro", "-z", "now", "-z", "noexecstack", "-z", "text",
                 "--no-undefined", "--allow-shlib-undefined", "--enable-new-dtags", "-rpath", "/usr/lib"]
+    command.append("--exclude-libs=libcrabc-builtins.a")
     if mode != "shared":
         entry = library / ("Scrt1.o" if mode == "pie" else "crt1.o")
         runtime += [entry, library / "crabc-dynamic-attach.o"]
         command += ["--dynamic-linker", INTERPRETER, recorded(entry, replay), recorded(library / "crabc-dynamic-attach.o", replay)]
     else:
         command += ["-soname", output.name]
-    command += [recorded(library / "crti.o", replay), recorded(object_path, replay), *(recorded(path, replay) for path in dsos),
-                recorded(library / "libc.so", replay), recorded(library / "libcrabc-builtins.a", replay), recorded(library / "crtn.o", replay),
+    command += [recorded(library / "crti.o", replay), recorded(object_path, replay),
+                recorded(library / "libcrabc-builtins.a", replay), *(recorded(path, replay) for path in dsos),
+                recorded(library / "libc.so", replay), recorded(library / "crtn.o", replay),
                 "-o", recorded(output, replay)]
     inputs = [*runtime, object_path, *dsos, library / "libcrabc-builtins.a"]
     return inputs, command
