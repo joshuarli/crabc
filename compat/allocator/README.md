@@ -46,6 +46,20 @@ reuse `.work/allocator-x86_64/target`. The other `allocator-m3` subsets are `--d
 `--miri-page-ownership-only`, `--page-ownership-only`, and
 `--queue-reorder-only`.
 
+Compare a cold managed arena's prefix refusal and retry in pinned C and
+production Rust:
+
+```sh
+./compat/allocator/run-x86_64.sh allocator-cold-arena-prefix-retry
+```
+
+The callback allows the 524288-byte metadata commit and refuses the first
+114688-byte data prefix. The check requires a second prefix at the same
+arena address, Heap ownership, and writable client bytes. Pinned
+`arena.c:1016–1023` returns no page after prefix refusal.
+`page.c:855–863` retries fresh allocation. OS fallback applies earlier,
+when fresh backing selection or Heap arena-page metadata allocation fails.
+
 Python-only checks need no container (see
 [Host-side Python tests](#host-side-python-tests)):
 
