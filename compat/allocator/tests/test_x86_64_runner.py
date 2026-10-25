@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import os
 import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -13,6 +14,8 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[3]
 RUNNER = ROOT / "compat/allocator/run-x86_64.sh"
 ROOT_DISPATCHER = ROOT / "scripts/dev.sh"
+sys.path.insert(0, str(ROOT / "compat/allocator"))
+import x86_64_m6_upstream_heap_stress as heap_stress
 
 
 class X86AllocatorWorkspaceTests(unittest.TestCase):
@@ -66,11 +69,17 @@ fi
         uname.chmod(0o755)
 
     def launch(self, *arguments: str, work: str | None = None,
-               cpu_limit: str | None = None, cargo_build_jobs: str | None = None):
+               cpu_limit: str | None = None, cargo_build_jobs: str | None = None,
+               allocator_pythonpath: bool = False):
         env = os.environ.copy()
         env.pop("CRABC_ALLOCATOR_X86_64_WORK_DIR", None)
         env.pop("CRABC_ALLOCATOR_X86_64_CPU_LIMIT", None)
         env.pop("CARGO_BUILD_JOBS", None)
+        if allocator_pythonpath:
+            pythonpath = [str(ROOT / "compat/allocator")]
+            if env.get("PYTHONPATH"):
+                pythonpath.append(env["PYTHONPATH"])
+            env["PYTHONPATH"] = os.pathsep.join(pythonpath)
         if work is not None:
             env["CRABC_ALLOCATOR_X86_64_WORK_DIR"] = work
         if cpu_limit is not None:
@@ -167,7 +176,7 @@ fi
         self.capture.unlink(missing_ok=True)
         rejected = self.launch("allocator-public-theap", "--profile", "secure-1")
         self.assertEqual(rejected.returncode, 2)
-        self.assertIn("allocator-public-theap accepts only --debug", rejected.stderr)
+        self.assertIn("unknown public Theap profile", rejected.stderr)
         self.assertFalse(self.capture.exists())
 
     def test_allocator_containers_disable_core_dumps(self):
@@ -202,7 +211,12 @@ fi
 
                 rejected = self.launch(command, "unexpected")
                 self.assertEqual(rejected.returncode, 2)
-                self.assertIn(f"{command} takes no arguments", rejected.stderr)
+                expected_error = (
+                    "allocator-heap-lifecycle accepts only --faults"
+                    if command == "allocator-heap-lifecycle"
+                    else f"{command} takes no arguments"
+                )
+                self.assertIn(expected_error, rejected.stderr)
 
     def test_m6_gate_command_is_closed(self):
         for arguments, expected in (
@@ -417,6 +431,47 @@ fi
             self.assertEqual(result.returncode, expected, result.stderr)
         self.assertFalse((self.checkout / ".work").exists())
         self.assertFalse(self.capture.with_suffix(".calls").exists())
+
+    def test_upstream_heap_stress_forwards_every_admitted_case(self):
+        for case in heap_stress.MATRIX:
+            with self.subTest(case=case):
+                result = self.launch(
+                    "allocator-upstream-heap-stress", "--case", *(str(value) for value in case),
+                    allocator_pythonpath=True,
+                )
+                self.assertEqual(result.returncode, 0, result.stderr)
+                arguments = self.capture.read_bytes().split(b"\0")[:-1]
+                self.assertEqual(
+                    arguments[-6:],
+                    [b"python3", b"compat/allocator/x86_64_m6_upstream_heap_stress.py",
+                     b"--case", *(str(value).encode() for value in case)],
+                )
+
+    def test_upstream_heap_stress_without_a_case_keeps_the_full_matrix(self):
+        result = self.launch("allocator-upstream-heap-stress", allocator_pythonpath=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        arguments = self.capture.read_bytes().split(b"\0")[:-1]
+        self.assertEqual(
+            arguments[-2:],
+            [b"python3", b"compat/allocator/x86_64_m6_upstream_heap_stress.py"],
+        )
+
+    def test_upstream_heap_stress_rejects_invalid_cases_before_docker(self):
+        invalid_arguments = (
+            ("--case",),
+            ("--case", "4", "1"),
+            ("--case", "4", "1", "8", "extra"),
+            ("--case", "4", "x", "8"),
+            ("--case", "4", "2", "8"),
+            ("--unknown",),
+        )
+        for arguments in invalid_arguments:
+            with self.subTest(arguments=arguments):
+                result = self.launch("allocator-upstream-heap-stress", *arguments,
+                                     allocator_pythonpath=True)
+                self.assertEqual(result.returncode, 2, result.stderr)
+                self.assertFalse(self.capture.with_suffix(".calls").exists())
+                self.assertFalse((self.checkout / ".work").exists())
 
 
 class X86_64RunnerBoundaryTests(unittest.TestCase):

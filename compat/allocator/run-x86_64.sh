@@ -93,7 +93,7 @@ Private native Linux/x86-64 mimalloc evidence commands:
   allocator-m6-heap-delete-after-owner-exit [--profile release|debug-1|stat-1|stat-2|--matrix] [--source-only|--read|--replay]
   allocator-m6-heap-delete-with-attached-worker [--profile release|debug-1|stat-1|stat-2|--matrix] [--collect|--diagnose|--read|--replay]
   allocator-upstream-subprocess-stress
-  allocator-upstream-heap-stress
+  allocator-upstream-heap-stress [--case WORKERS SCALE ITERATIONS]
   allocator-public-heap-alignment | allocator-public-theap [--debug|--matrix|--profile release|debug-1|stat-1|stat-2]
   allocator-heap-convenience [--read|--replay]
   allocator-m6 [--qualification-profile baseline|full] [--check|--reader-tests]
@@ -1297,9 +1297,14 @@ case "$command" in
         run_in_container python3 compat/allocator/x86_64_m6_heap_convenience.py "$@"
         ;;
     allocator-upstream-heap-stress)
-        [ "$#" -eq 0 ] || fail "allocator-upstream-heap-stress takes no arguments"
+        python3 -B -c '
+import sys
+sys.path.insert(0, sys.argv.pop(1))
+from x86_64_m6_upstream_heap_stress import parse_cases
+parse_cases(sys.argv[1:])
+' "$ROOT_DIR/compat/allocator" "$@"
         ensure_image
-        run_in_container python3 compat/allocator/x86_64_m6_upstream_heap_stress.py
+        run_in_container python3 compat/allocator/x86_64_m6_upstream_heap_stress.py "$@"
         ;;
     allocator-upstream-subprocess-stress)
         [ "$#" -eq 0 ] || fail "allocator-upstream-subprocess-stress takes no arguments"

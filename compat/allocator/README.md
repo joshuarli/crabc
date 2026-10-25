@@ -171,7 +171,10 @@ contract. Lanes whose driver is a `.c` plus `.py` pair in this directory are:
   `allocator-public-heap-alignment`,
   `allocator-heap-convenience [--read|--replay]`,
   `allocator-public-theap [--matrix|--profile release|debug-1|stat-1|stat-2]`,
-  `allocator-upstream-heap-stress`, `allocator-upstream-subprocess-stress`.
+  `allocator-upstream-heap-stress [--case WORKERS SCALE ITERATIONS]`,
+  `allocator-upstream-subprocess-stress`. Heap stress accepts one tuple from
+  its existing matrix for a focused run; without `--case` it runs the full
+  matrix. Focused runs do not publish a qualification receipt.
   Theap's existing `--debug` action keeps its unoptimized ordinary legal-client
   workload. It cannot be combined with a profile or matrix selection.
 - Options and output statistics development traces: `allocator-m7 --differential
