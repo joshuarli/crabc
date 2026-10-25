@@ -162,6 +162,19 @@ The runner now gives its roster iterator a distinct name. A retained
 full-dispatch regression reproduced the failure and passes after the repair;
 all 28 qualification-candidate Python tests pass. Qualification restarts
 from a fresh frozen candidate; this failed rehearsal makes no main claims.
+`94500051d` records the repair. The replacement H0 checkout is
+`.work/wt/cohort-correctness-retry` at frozen `2be258d50`; its ledger and
+derived inventory exactly match the first rehearsal. Preparation, structure,
+inventory and preflight pass, with 68 correctness stages and no blockers.
+Static products pass on the replacement revision.
+The replacement stops at installed dynamic `fork`: its reader reconstructs
+the pre-R7 link command, while the sealed producer receipt uses the reviewed
+private-helper exclusion and placement. The raw fixture is retained under
+`cohort/out/dynamic/qualification-scratch/tmp/general-dynamic-fork.lxE34x/`
+in that checkout. All three basic products and earlier installed runtime
+cases pass. Repair belongs to `lane/fork-helper-contract` at
+`.work/wt/fork-helper-contract`; the next cohort checkout is
+`.work/wt/cohort-correctness-third`. Previous candidates remain immutable.
 
 The addrconfig lane's musl scratch remains under its `.work/tmp`: automatic
 review denied its removal with "rm -f style commands are not permitted. Use
@@ -1092,6 +1105,22 @@ Append one line per judgment call a reader would otherwise miss.
   corrected C comparator through the existing differences register. Runtime
   promotion no longer waits on native-allocator A1 unless that work finds a
   shared accepted-C runtime defect.
+- 2026-10-25: preserve the parked H0 `math/pow` aggregate contract rather
+  than invent an acceptance exception. A bounded fresh static-product check
+  reconfirmed both zero exits, empty stderr, and 24 oracle versus ten candidate
+  diagnostics. Removing exactly the fourteen finite subnormal exponent-one
+  oracle diagnostics leaves the candidate stream byte-identical in order;
+  source and all four input headers match the pin. Raw evidence remains in
+  `.work/tmp/pow-discriminator-ad7e18d35`. This is the same semantic condition
+  as the earlier three-attempt investigation, not a changed prerequisite.
+  No additional native diagnostic or aggregate-policy change is authorized
+  by that reconfirmation. Continue independent H0 commands when it blocks.
+- 2026-10-25: hold C-ABI family admission under the current accepted-C
+  cohort. Its fixed roster requires three explicitly native-shadow allocator
+  runners (policy, override and DSO composition), each rejecting accepted-C
+  products, and repeats the parked complete libc-test aggregate. Do not change
+  backends, trim the roster, or credit an incomplete assessment. Other H0
+  producers remain independent of POSIX and C-ABI admission.
 
 ## Campaign log
 
