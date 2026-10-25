@@ -13,7 +13,7 @@ nine of 26 families, zero of eight gates.
   `./scripts/dev-x86_64.sh campaign-status`.
 - **State:** `main`, implementation integrated through `6a3c35998`.
   Missing images were rebuilt through their tracked launchers. The core pin is
-  `sha256:7b23b2b173fc6ffe7d71ae80b0890c27a1ea5e3fdc70e8b0af394084c5cfee4c`;
+  `sha256:8ddb31ba1b3d1ad97cc292f6396a114403caa71ae55c933ed7a3ee8b26ff7013`;
   the allocator image is
   `sha256:0563bff4a212ae92c8ab2d81fb58e6bd4c2034de7873cbd1fd7618468c752268`.
   Rust nightly and upstream pins are unchanged. Image recovery is now authorized
