@@ -1,16 +1,18 @@
 # Qualify and promote crabc's native x86-64 runtime
 
-**Status: blocked 2026-10-25.** The latest implementation checkpoint is
-committed and passes its focused checks. Terminal qualification and promotion
-remain blocked by the owner steering and denied diagnostics below. The C
+**Status: active 2026-10-25.** The owner resumed campaign execution with
+"Proceed" after the verified checkpoint. The selected next workload is
+`qualification-candidate --profile correctness`, beginning with a frozen H0
+rehearsal. Performance follows correctness. The denied allocator diagnostics
+remain parked and cannot support native promotion. The C
 allocator remains selected. Public x86 support remains false: 180 of 223
 capabilities, nine of 26 families, zero of eight gates.
 
 - **Resume:** "Read plan.md and docs/lanes.md, then resume the campaign as
   coordinator, unattended. Preserve both harness-denied allocator items.
-  Prioritize concrete missing production behavior. Use exact regressions and
-  affected component checks during implementation. Keep broad qualification
-  and performance work deferred until explicitly requested by workload name.
+  Run the authorized `qualification-candidate --profile correctness`
+  workload. Fix demonstrated failures with exact regressions and affected
+  component checks. Performance follows accepted correctness evidence.
   Keep the affected allocator diagnostics parked until their harness condition
   changes. Preserve one implementation owner for later lifetime work."
   First command from the repository root:
@@ -140,9 +142,9 @@ absolute. Preserve the existing raw-value implementation; a new differential
 would need an explicit conformance disposition rather than copying the musl
 behavior. Neither parked allocator failure is closed by these inspections.
 
-Unattended execution stops at the remaining authority boundaries. D2 needs an
-explicitly named correctness-qualification workload, and D3/D4 need the named
-runtime performance workloads after correctness. D5 also needs disposition
+That checkpoint stopped at the previous named-workload boundary. The owner's
+subsequent "Proceed" resumes correctness qualification through the named
+runner above. D3/D4 follow accepted correctness evidence. D5 still needs disposition
 of the denied allocator diagnostics and its still-unmet source/performance
 gates. The existing H0 raw-oracle correction and numeric child-metadata
 decisions remain open. `afk` preserves those boundaries; it does not authorize
