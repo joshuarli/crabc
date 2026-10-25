@@ -12,7 +12,7 @@ nine of 26 families, zero of eight gates.
   `./scripts/dev-x86_64.sh campaign-status`.
 - **State:** `main`, implementation integrated through `0e4e4c1e3`.
   Missing images were rebuilt through their tracked launchers. The core pin is
-  `sha256:2e4ee4db02ecbe811a36c44c284c1920411f3dba6355ec83d515d2235f8e4bb6`;
+  `sha256:7b23b2b173fc6ffe7d71ae80b0890c27a1ea5e3fdc70e8b0af394084c5cfee4c`;
   the allocator image is
   `sha256:0563bff4a212ae92c8ab2d81fb58e6bd4c2034de7873cbd1fd7618468c752268`.
   Rust nightly and upstream pins are unchanged. Image recovery is now authorized
@@ -63,7 +63,7 @@ handoff commit. New independent lanes start from the current `main`.
 | M6 Heap lifecycle | The exact rolling-stress diagnostic is parked by the harness denial; do not retry or route around it. A separate recovery lane compares pinned C, explicitly corrected upstream C, and Rust for the lifetime transitions fixed by upstream `23a5db4`, `4192c77`, and `b85f2d0`. The release SIGSEGV and pinned C debug owner-exit failures remain known red until a production-path regression establishes their causes. |
 | Secure Page layout | Integrated through `0e4e4c1e3`. Independent review found no P1/P2 product defect. The exact production layout passed secure levels 0–5, all nine Rust profiles passed, M4/M7 host modules passed, and merged-tip C/R configuration differentials passed secure 1, 3 and 5 with 19 keys each. |
 | A3 cold-arena prefix retry | Closed by `4b5ea1ae7` and `fe268b89f`. Pinned C and production Rust both retry the same 114688-byte prefix after the first callback refusal and return an owned in-arena block. The earlier contrary reading confused the arena claim failure with its caller's fresh-page retry. A separate backing-selection failure difference remains only a source-level candidate because the static-main path has not reproduced it. |
-| A3 clock source gap on main | Linux pinned C ignores the monotonic `clock_gettime` failure; its `clock()` branch is compile-time only. Rust's runtime CPU-clock fallback is not source-defined. `64e159039` corrects the accounting and Rust-only test name; existing 28-field EIO proof is unchanged. No fabricated failure oracle was added. |
+| A3 clock source comparison | `e7f5ff9e8` supersedes the earlier source reading: pinned Linux C falls back to `clock()` after monotonic-clock failure, and Rust follows that path. The paired failure probe and launcher route are integrated. Native execution of that probe remains required. |
 | `cohort/rehearsal-native` at `12db93c58` | Frozen R2/R3 rehearsal, never merge. Static preparation, installed/second/extracted dynamic products and publish passed. Resolver physical network, classic netdb (23 scenarios, seven arms), and cancellation (847 same-object cases) passed. Network cancellation was interrupted when the dispatcher auto-started it at winddown; it is incomplete. No later loader/CRT/sysroot/consumer item started. |
 | `lane/runtime-replay` at `284011169` | Frozen runtime prerequisite rehearsal, never merge. Static products, all three 65-leaf dynamic matrices, finish and publish passed. Pthread/text collection never started. Regenerate against final main before qualification. |
 | `cohort/rehearsal` at `21e9a89cf` | Historical H0 `pow` flags conflict and incomplete text aggregate, parked after the prescribed investigation. The owner still owes the raw-oracle versus documented valid-result correction decision. |
@@ -100,7 +100,9 @@ and source pins remain tracked. Pinned-input `.cache/` directories outside
   harness-denied invocation parked while using the upstream regressions as new
   focused evidence. Independent resolver, loader, CRT/sysroot, pthread/text
   and consumer work may continue without adding allocator lifecycle writers.
-  H0 `pow` and the older numeric child-metadata footprint decision remain open.
+  H0 `pow`'s edge comparator now accepts the existing finite exponent-one
+  correction (`f3edf363c`), but native replay remains required. The older
+  numeric child-metadata footprint decision remains open.
   No performance gate or allocator promotion may bypass correctness/source
   prerequisites. The C backend stays selected.
 - **Verified:** at merged `0e4e4c1e3`, ledger and AArch64 inventory checks,
@@ -457,6 +459,32 @@ required 0.95, with code 977,406 bytes against C's 108,311. No runtime
 scorecard survives.
 
 ## Allocator lifecycle recovery
+
+**Resume checkpoint, 2026-10-25:** session
+`01a173c2-f7f7-79f3-9cdb-457b6e007a1d` left the recovery implementation on
+`lane/m6-pr1420-stale`. Its deterministic production regression reproduces
+the stale cached Theap after Heap address reuse. The candidate clears detached
+Theap identity, and focused destroy and delete reuse tests pass. The candidate
+is not integrated. Independent upstream review found that `b85f2d0` drains
+owned page queues before clearing the Heap pointer. That ordering still needs
+production-path verification before accepting the correction. The denied
+rolling-stress invocation remains parked, and its cause is unproven.
+
+The upstream ordering audit is complete: `23a5db4` releases the Heap TLS key
+after retiring Theaps and before visiting Heap pages. `4192c77` clears the
+retired Theap's Heap identity before decref. `b85f2d0` first collects every
+owned page queue, including FULL, while the Heap identity remains live.
+Rust must preserve that combined order. Its test expecting a live OS page to
+retain a deleted Heap contradicts the documented migration to the main Heap.
+Correct that test, reproduce the failure, then repair the production path.
+The pristine-C stale-cache fixture reproduces the defect, and the explicitly
+corrected one-line C build passes through the new focused launcher route on
+the recovery branch. No full lifecycle or original-stress pass is claimed.
+
+The missing core image was rebuilt through the tracked launcher and repinned
+in `0f4720f9c`. Eleven image-dispatch tests and the native `crabc-core` check
+pass. Earlier receipts retain their original image identities and do not
+qualify this environment.
 
 The allocator's immediate deliverable is a causal Heap/Theap/Page lifetime
 model, not another broad milestone run. Keep the pristine v3.5.0 oracle and
