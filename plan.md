@@ -5,9 +5,10 @@ remains selected. Public x86 support remains false: 180 of 223 capabilities,
 nine of 26 families, zero of eight gates.
 
 - **Resume:** "Read plan.md and docs/lanes.md, then resume the campaign as
-  coordinator, unattended. Preserve the denied stress invocation, run the
-  Heap-lifecycle recovery sequence with one implementation owner and one
-  upstream investigator, and keep independent runtime lanes moving."
+  coordinator, unattended. Preserve the denied stress invocation. Keep one
+  implementation owner on corrected-C owner-exit comparison and production
+  lifecycle reduction, one independent upstream investigator, and one reviewer
+  only after a causal patch exists. Keep independent runtime lanes moving."
   First command from the repository root:
   `./scripts/dev-x86_64.sh campaign-status`.
 - **State:** `main`, implementation integrated through `6a3c35998`.
@@ -500,6 +501,43 @@ The missing core image was rebuilt through the tracked launcher and repinned
 in `0f4720f9c`. Eleven image-dispatch tests and the native `crabc-core` check
 pass. Earlier receipts retain their original image identities and do not
 qualify this environment.
+
+### Prior-art policy
+
+Use later mimalloc and other allocators to select hypotheses, invariants and
+adversarial schedules. They do not replace the pinned source, the production
+Rust path or this repository's qualification chain.
+
+- `microsoft/mimalloc` changes `23a5db4`, `4192c77` and `b85f2d0` are the
+  accepted Heap-retirement correction. Keep pristine v3.5.0 failures and label
+  every corrected-C comparison. Do not re-pin during this recovery.
+- HeetaeCho-XCENA's `mimalloc-rs` is a v3.3.2 ownership-model reference for
+  tagged remote frees, queue collection, abandoned-page reclaim and Theap
+  ownership. Its standard TLS use and incomplete shared-Heap destruction make
+  it unsuitable as a replacement or parity oracle.
+- ElyMalloc is a v3-based ABI and integration-test checklist. Its remote-free
+  stack, page-map shape and unconditional hardening differ from the pinned
+  configuration, so its implementation does not establish source parity.
+- Oven's `bun-dev3-v2` tests are schedule donors. Prioritize Heap teardown,
+  delete races, Heap address reuse, parked-thread handoff and commit failure.
+  Port only a minimal schedule that exercises a named current production
+  transition. Preserve the original workload and result.
+- Rustine PR 1212 is a low-confidence research reference. It cannot justify a
+  production ownership or aliasing decision without independent source proof.
+
+The next allocator result is the three-way owner-exit comparison on one valid
+workload: pristine v3.5.0 C, explicitly corrected C, and production Rust. Record
+Heap, Theap and Page ownership before deletion, after deletion and at final
+free. After that, select one Oven schedule or Heeta ownership invariant that
+targets a still-unproved production transition. Do not add a model where a
+production-path regression can express the behavior.
+
+Heap retirement, owner exit, remote free, cached Theaps and PageMap lifetime
+remain one state machine with one implementation owner. A three-attempt failure
+on this central work triggers a smaller reproducer, discriminating
+instrumentation, upstream-history review or an independent ownership review.
+It does not trigger unrelated allocator work. Independent runtime families may
+continue in parallel.
 
 The allocator's immediate deliverable is a causal Heap/Theap/Page lifetime
 model, not another broad milestone run. Keep the pristine v3.5.0 oracle and
