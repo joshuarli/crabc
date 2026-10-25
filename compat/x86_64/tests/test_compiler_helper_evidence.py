@@ -31,6 +31,28 @@ class CompilerHelperEvidenceTests(unittest.TestCase):
                     EVIDENCE.CompilerHelperEvidenceError, "allocator profile"):
                 EVIDENCE.allocator_popcount_witness_for_profile(profile)
 
+    def test_combined_product_profile_comes_from_the_embedded_dynamic_manifest(self) -> None:
+        import crabc_cc_owned_dynamic as driver
+
+        scratch = ROOT / ".work/x86_64/compiler-helper-evidence-tests"
+        scratch.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(dir=scratch) as temporary:
+            product = Path(temporary)
+            manifest = {"schema": 1, "format": driver.COMBINED_FORMAT}
+            embedded_path = product / driver.COMBINED_PRODUCT_MANIFEST
+            embedded_path.parent.mkdir(parents=True)
+            embedded = {"schema": 1, "format": driver.FORMAT, "build_profile": "release"}
+            embedded_path.write_text(EVIDENCE.canonical_json(embedded), encoding="utf-8")
+
+            self.assertEqual(
+                EVIDENCE.dynamic_product_profile_from_admitted_manifest(product, manifest), "release"
+            )
+
+            embedded["build_profile"] = "unknown"
+            embedded_path.write_text(EVIDENCE.canonical_json(embedded), encoding="utf-8")
+            with self.assertRaisesRegex(EVIDENCE.CompilerHelperEvidenceError, "allocator profile"):
+                EVIDENCE.dynamic_product_profile_from_admitted_manifest(product, manifest)
+
     def _debug_dynamic_product(self, root: Path) -> Path:
         product = root / "debug-product"
         files = (
