@@ -4160,13 +4160,72 @@ pub(crate) mod tests {
                     assert_eq!(unsafe { Theap::heap_at(cached) }, heap.as_ptr());
                     ready_tx.send(()).unwrap();
                     resume_rx.recv().unwrap();
-                    assert_eq!(unsafe { Theap::heap_at(cached) }, heap.as_ptr());
+                    assert!(unsafe { Theap::heap_at(cached) }.is_null());
                     assert_eq!(finish_current_thread_native_after_user_destructors(), ThreadFinishResult::Finished);
                 });
                 ready_rx.recv().unwrap();
                 assert_eq!(unsafe { native_heap_release(heap, true) }, Ok(HeapReleaseOutcome::Released));
                 resume_tx.send(()).unwrap();
                 worker.join().expect("the worker finishes after Heap destruction");
+            },
+        );
+    }
+
+    #[cfg(all(target_arch = "x86_64", not(miri)))]
+    #[test]
+    fn destroy_shared_heap_reuse_address_rejects_cached_theap() {
+        use crate::runtime_lifecycle::{
+            attach_current_thread, finish_current_thread_native_after_user_destructors,
+            ThreadAttachResult, ThreadFinishResult,
+        };
+        crate::test_process::run_in_fresh_process(
+            "subproc::main_heaps::tests::destroy_shared_heap_reuse_address_rejects_cached_theap",
+            || {
+                assert!(crate::runtime_lifecycle::test_initialize_process_from_host_environment(4096, unsafe {
+                    crate::__crabc_runtime::RuntimeStderrOutput::new(no_output)
+                }));
+                assert!(crate::runtime_lifecycle::prepare_native_later_thread_arena());
+                let heap = native_heap_new().expect("the original shared Heap");
+                let heap_address = heap.as_ptr().addr();
+                let (ready_tx, ready_rx) = std::sync::mpsc::sync_channel(0);
+                let (resume_tx, resume_rx) = std::sync::mpsc::sync_channel(0);
+                let worker = std::thread::spawn(move || {
+                    let descriptor = crate::__crabc_runtime::current_native_allocator_thread_descriptor();
+                    assert!(unsafe {
+                        crate::__crabc_runtime::register_current_native_allocator_worker_descriptor(descriptor)
+                    });
+                    assert_eq!(attach_current_thread(), ThreadAttachResult::Attached);
+                    let old_heap = NonNull::new(heap_address as *mut Heap).unwrap();
+                    for _ in 0..2 {
+                        let block = unsafe { native_heap_allocate(old_heap, 64, None, false) }
+                            .expect("the worker allocates on the original Heap");
+                        assert_eq!(unsafe { native_free(block) }, NativePageFreeResult::Freed);
+                    }
+                    let thread = current_main_thread().expect("the worker owns a TLD");
+                    let cached_before_lookup = cached_theap();
+                    let old_theap = heap_theap(thread, old_heap).expect("the original Heap Theap");
+                    assert_eq!(cached_before_lookup, old_theap);
+                    assert_eq!(unsafe { Theap::heap_at(old_theap) }, old_heap.as_ptr());
+                    ready_tx.send(()).unwrap();
+                    let reused_heap_address = resume_rx.recv().unwrap();
+                    let reused_heap = NonNull::new(reused_heap_address as *mut Heap).unwrap();
+                    assert!(unsafe { Theap::heap_at(old_theap) }.is_null());
+                    let selected = heap_theap(thread, reused_heap).expect("the reused Heap Theap");
+                    assert_ne!(selected, old_theap);
+                    assert_eq!(unsafe { Theap::heap_at(selected) }, reused_heap.as_ptr());
+                    let block = unsafe { native_heap_allocate(reused_heap, 64, None, false) }
+                        .expect("the worker allocates on the reused Heap");
+                    assert_eq!(unsafe { heap_of_block(block) }, Some(reused_heap));
+                    assert_eq!(unsafe { native_free(block) }, NativePageFreeResult::Freed);
+                    assert_eq!(finish_current_thread_native_after_user_destructors(), ThreadFinishResult::Finished);
+                });
+                ready_rx.recv().unwrap();
+                assert_eq!(unsafe { native_heap_release(heap, true) }, Ok(HeapReleaseOutcome::Released));
+                let reused_heap = native_heap_new().expect("a Heap reusing the released image");
+                assert_eq!(reused_heap.as_ptr().addr(), heap_address);
+                resume_tx.send(reused_heap.as_ptr().addr()).unwrap();
+                worker.join().expect("the worker allocates after address reuse");
+                assert_eq!(unsafe { native_heap_release(reused_heap, true) }, Ok(HeapReleaseOutcome::Released));
             },
         );
     }
