@@ -62,16 +62,6 @@ RUNTIME_DISCARD_UNWIND_SCRIPT = ROOT / "libc/src/c_abi/x86_64/owned_discard_unwi
 # The interpreter packs small mutable statics into the last .data page.
 LOADER_BSS_LAYOUT_SCRIPT = ROOT / "ldso/x86_64-owned-bss-layout.ld"
 COMPILER_HELPER_CONTRACT = ROOT / "builtins/x86_64-helper-contract.toml"
-SHARED_LIBC_COMPILER_HELPER_ARCHIVE = "libcrabc-builtins.a"
-SHARED_LIBC_COMPILER_HELPER_MEMBER = "crabc-builtins.o"
-SHARED_LIBC_COMPILER_HELPER_POLICY = {
-    "artifact": "candidate-shared",
-    "linker_option": "--exclude-libs=libcrabc-builtins.a",
-    "type": "FUNC",
-    "binding": "LOCAL",
-    "visibility": "DEFAULT",
-    "dynsym": False,
-}
 MUSL_1_2_6_DYNAMIC_LIST_SHA256 = "264ae3bf630a7f6d894a51f91f9acae45b89a5f639537353d03af1a04e9da0f9"
 ERRNO_PRIVATE_ALIAS_LIST_SHA256 = "2e69ec5346002fa183b51dbbbef2f24744bd89093b5cfac6329337c1b3d240dd"
 ERRNO_PRIVATE_ALIAS_MEMBERS = ("___errno_location",)
@@ -248,19 +238,17 @@ def shared_libc_compiler_helper_archive_policy() -> dict[str, object]:
         value = tomllib.loads(COMPILER_HELPER_CONTRACT.read_text(encoding="utf-8"))
     except (OSError, UnicodeDecodeError, tomllib.TOMLDecodeError) as error:
         raise common.BuildError("native compiler-helper contract cannot be read") from error
-    if (type(value) is not dict
-            or value.get("archive") != {"name": SHARED_LIBC_COMPILER_HELPER_ARCHIVE,
-                                         "member": SHARED_LIBC_COMPILER_HELPER_MEMBER,
-                                         "placements": ["static-builtins", "dynamic-builtins"]}
-            or type(value.get("shared_libc")) is not dict
-            or type(value["shared_libc"].get("dynsym")) is not bool
-            or value.get("shared_libc") != SHARED_LIBC_COMPILER_HELPER_POLICY):
-        raise common.BuildError("native compiler-helper shared-libc placement differs from its producer contract")
+    import compiler_helper_evidence as helper_evidence
+    try:
+        contract = helper_evidence.validate_contract(value, root=ROOT)
+    except helper_evidence.CompilerHelperEvidenceError as error:
+        raise common.BuildError("native compiler-helper shared-libc placement differs from its producer contract") from error
+    archive = contract["archive"]
     return {
         "source": identity,
-        "archive": SHARED_LIBC_COMPILER_HELPER_ARCHIVE,
-        "member": SHARED_LIBC_COMPILER_HELPER_MEMBER,
-        **SHARED_LIBC_COMPILER_HELPER_POLICY,
+        "archive": archive["name"],
+        "member": archive["member"],
+        **contract["shared_libc"],
     }
 
 
@@ -424,7 +412,8 @@ def shared_libc_link_command(
 ) -> list[str]:
     """Return the one musl-shaped shared-libc link, with no global policy leak."""
 
-    if builtins.name != SHARED_LIBC_COMPILER_HELPER_ARCHIVE:
+    helper_policy = shared_libc_compiler_helper_archive_policy()
+    if builtins.name != helper_policy["archive"]:
         raise common.BuildError("shared libc must consume the exact compiler-helper archive name")
 
     return [
@@ -432,7 +421,7 @@ def shared_libc_link_command(
         f"--dynamic-list={dynamic_list}",
         *([f"--version-script={mimalloc_hidden_exports}"] if mimalloc_hidden_exports is not None else []),
         f"--version-script={errno_private_aliases}",
-        "--exclude-libs=" + SHARED_LIBC_COMPILER_HELPER_ARCHIVE,
+        helper_policy["linker_option"],
         "-z", "relro", "-z", "now", "-z", "noexecstack", "-z", "text",
         # Packed DT_RELR relative relocations: 849 RELA records (21 KiB the
         # loader reads at every start) become a 264-byte bitmap stream.
@@ -927,6 +916,7 @@ def build_debug_payload(output: Path, stage: Path, *, allocator_backend: str, li
     """Link opt0 source-built runtime objects without using installed Rust runtimes."""
     inputs = common.build_debug_runtime_inputs(stage, allocator_backend=allocator_backend,
                                                lifecycle_test_audit=lifecycle_test_audit, dynamic=True)
+    helper_policy = shared_libc_compiler_helper_archive_policy()
     tools = inputs["producer_tools"]
     ar = common.producer_tool_path(tools, "llvm-ar")
     nm = common.producer_tool_path(tools, "llvm-nm")
@@ -936,6 +926,8 @@ def build_debug_payload(output: Path, stage: Path, *, allocator_backend: str, li
     run = common.run
     objects = inputs["source_objects"]
     builtins = inputs["builtins"]
+    if builtins.name != helper_policy["archive"]:
+        raise common.BuildError("debug libc must consume the exact compiler-helper archive name")
     core = inputs["source_core"]
     compiler = inputs["source_compiler_builtins"]
     selected = [row["name"] for row in inputs["libc_provenance"]["selected_members"]]
@@ -958,7 +950,7 @@ def build_debug_payload(output: Path, stage: Path, *, allocator_backend: str, li
                     f"--version-script={rust_private}",
                     f"--version-script={stage / 'libc-errno-private.exports'}",
                     *([f"--version-script={stage / 'libc-mimalloc-hidden.exports'}"] if accepted_c else []),
-                    "--exclude-libs=libcrabc-builtins.a,libcrabc-source-core.a", "--gc-sections",
+                    f"{helper_policy['linker_option']},{private_core.name}", "--gc-sections",
                     "-z", "relro", "-z", "now", "-z", "noexecstack", "-z", "text",
                     *(str(objects / name) for name in selected), str(private_core), str(builtins),
                     str(RUNTIME_DISCARD_UNWIND_SCRIPT), "-o", str(library / "libc.so")]
@@ -1026,7 +1018,7 @@ def build_debug_payload(output: Path, stage: Path, *, allocator_backend: str, li
     interpreter.parent.mkdir()
     loader_link = [str(lld), "-shared", "-Bsymbolic", "--hash-style=sysv", "-e", "_start", "--no-undefined",
                    "-z", "now", "-z", "noexecstack", f"--version-script={private_exports}",
-                   "--exclude-libs=libcrabc-source-core.a,libcrabc-builtins.a", str(loader_object),
+                   f"--exclude-libs={private_core.name},{helper_policy['archive']}", str(loader_object),
                    str(private_core), str(builtins), str(RUNTIME_DISCARD_UNWIND_SCRIPT), str(LOADER_BSS_LAYOUT_SCRIPT),
                    "-o", str(interpreter)]
     run(loader_link)
@@ -1044,7 +1036,7 @@ def build_debug_payload(output: Path, stage: Path, *, allocator_backend: str, li
     common.write_json(metadata / "libc-shared.provenance.json", {**inputs["libc_provenance"],
         "shared_dynamic_list": dynamic_list, "shared_errno_private_aliases": errno_policy,
         "shared_mimalloc_hidden_exports": allocator_policy,
-        "shared_compiler_helper_archive": shared_libc_compiler_helper_archive_policy(),
+        "shared_compiler_helper_archive": helper_policy,
         "libc_shared_link_command": libc_command,
         "main_source_core_dependencies": sorted(dependencies), "main_source_core_link_command": support_command,
         "attachment_compile_commands": attachment_commands, "attachment_link_command": attachment_command})
