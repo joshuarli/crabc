@@ -22,6 +22,15 @@ SPEC.loader.exec_module(EVIDENCE)
 
 
 class CompilerHelperEvidenceTests(unittest.TestCase):
+    def test_allocator_popcount_witness_follows_the_product_build_profile(self) -> None:
+        self.assertEqual(EVIDENCE.allocator_popcount_witness_for_profile("release"),
+                         "mi_bbitmap_try_find_and_clearNC")
+        self.assertEqual(EVIDENCE.allocator_popcount_witness_for_profile("debug"), "mi_popcount")
+        for profile in (None, True, "unknown"):
+            with self.subTest(profile=profile), self.assertRaisesRegex(
+                    EVIDENCE.CompilerHelperEvidenceError, "allocator profile"):
+                EVIDENCE.allocator_popcount_witness_for_profile(profile)
+
     def _debug_dynamic_product(self, root: Path) -> Path:
         product = root / "debug-product"
         files = (

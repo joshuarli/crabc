@@ -92,6 +92,10 @@ DYNAMIC_APPLICATION_METADATA = {
     "linker_option": SHARED_LIBC_METADATA["linker_option"],
     "helper_dynsym": False,
 }
+ALLOCATOR_POPCOUNT_WITNESSES = {
+    "debug": "mi_popcount",
+    "release": "mi_bbitmap_try_find_and_clearNC",
+}
 HELPER_ABIS = {
     "u128-to-binary64", "binary64-to-u128", "u128-to-binary32", "binary32-to-u128",
     "i128-to-binary80", "u128-to-binary80", "binary80-to-i128", "binary80-to-u128", "complex-binary80",
@@ -108,6 +112,12 @@ class CompilerHelperEvidenceError(ValueError):
 def require(condition: bool, message: str) -> None:
     if not condition:
         raise CompilerHelperEvidenceError(message)
+
+
+def allocator_popcount_witness_for_profile(profile: object) -> str:
+    require(type(profile) is str and profile in ALLOCATOR_POPCOUNT_WITNESSES,
+            "compiler-helper allocator profile differs")
+    return ALLOCATOR_POPCOUNT_WITNESSES[profile]
 
 
 def same(left: object, right: object) -> bool:

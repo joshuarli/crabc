@@ -72,20 +72,34 @@ record libc-dynsym readelf --dyn-syms -W "$LIBC"
 record libc-symtab readelf --symbols -W "$LIBC"
 record libc-undefined nm --undefined-only "$LIBC"
 record loader-undefined nm --undefined-only "$LOADER"
-record allocator-backend python3 - "$PRODUCT/share/crabc/libc-shared.provenance.json" <<'PY_BACKEND'
+record allocator-backend python3 - "$PRODUCT/share/crabc/libc-shared.provenance.json" \
+    "$PRODUCT/share/crabc/manifest.json" "$READER" <<'PY_BACKEND'
 import json
 from pathlib import Path
 import sys
 
-backend = json.loads(Path(sys.argv[1]).read_text(encoding='utf-8')).get('allocator_backend')
+sys.path.insert(0, str(Path(sys.argv[3]).resolve().parent))
+import compiler_helper_evidence as evidence
+
+provenance = json.loads(Path(sys.argv[1]).read_text(encoding='utf-8'))
+manifest = json.loads(Path(sys.argv[2]).read_text(encoding='utf-8'))
+backend = provenance.get('allocator_backend')
+profile = manifest.get('build_profile')
 if backend not in {'accepted-c', 'pinned-c-evidence', 'native-shadow', 'native'}:
     raise SystemExit('shared-helper product allocator backend differs')
-print(backend)
+witness = evidence.allocator_popcount_witness_for_profile(profile)
+provenance_profile = provenance.get('build_profile')
+if (profile == 'debug' and provenance_profile != 'debug'
+        or profile == 'release' and provenance_profile not in (None, 'release')):
+    raise SystemExit('shared-helper product provenance profile differs')
+print(f'{profile}\t{backend}\t{witness}')
 PY_BACKEND
-readonly ALLOCATOR_BACKEND="$(cat "$WORK_DIR/raw/allocator-backend.stdout")"
+IFS=$'\t' read -r PRODUCT_PROFILE ALLOCATOR_BACKEND POPCOUNT_WITNESS \
+    <"$WORK_DIR/raw/allocator-backend.stdout"
+readonly PRODUCT_PROFILE ALLOCATOR_BACKEND POPCOUNT_WITNESS
 case "$ALLOCATOR_BACKEND" in
     accepted-c|pinned-c-evidence)
-        record libc-bitmap-caller objdump --disassemble=mi_bbitmap_try_find_and_clearNC "$LIBC"
+        record libc-bitmap-caller objdump --disassemble="$POPCOUNT_WITNESS" "$LIBC"
         ;;
     native-shadow|native)
         ;;

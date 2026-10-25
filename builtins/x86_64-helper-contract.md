@@ -112,16 +112,19 @@ executable strong-helper fixture confirms that caller object definitions remain
 `GLOBAL DEFAULT` and cannot preempt a DSO's private helper call. Every selected
 libc helper copy also remains local and absent from `.dynsym`.
 
-For an admitted C allocator backend, the runner additionally requires the
-emitted `mi_bbitmap_try_find_and_clearNC` caller to transfer directly to local
-`__popcountdi2`. The strong exported `__popcountdi2` fixture must still allocate
-and free successfully. For `native-shadow` and `native`, population counting
-may compile to inline arithmetic without a helper transfer. The runner keeps
-the same private-placement, direct executable, application DSO, and strong
-helper fixture checks, but does not require a C allocator caller or claim native
-allocator consumption of `__popcountdi2`. Backend applicability comes from the
-admitted product's allocator provenance. This is focused product evidence only;
-it is not a dynamic qualification or a complete helper family.
+For an admitted C allocator backend, the runner checks the direct local
+`__popcountdi2` transfer in the allocator function selected by the product's
+build profile. Release products check `mi_bbitmap_try_find_and_clearNC`;
+debug products check `mi_popcount`, the opt0 leaf called through
+`mi_bfield_popcount` by the generic bitmap search. The strong exported
+`__popcountdi2` fixture must still allocate and free successfully. For
+`native-shadow` and `native`, population counting may compile to inline
+arithmetic without a helper transfer. The runner keeps the same private
+placement, direct executable, application DSO, and strong helper fixture
+checks, but does not require a C allocator caller or claim native allocator
+consumption of `__popcountdi2`. Backend applicability comes from the admitted
+product's allocator provenance. This is focused product evidence only; it is
+not a dynamic qualification or a complete helper family.
 
 A supplied debug product is admitted for this component proof after its
 installed payload validates and its manifest source digest matches the current
