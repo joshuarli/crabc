@@ -7,8 +7,8 @@
 #include <sys/mman.h>
 #include "mimalloc.h"
 
-#define ARENA_SIZE (32UL * 1024 * 1024)
 static uintptr_t base;
+static size_t arena_size;
 static bool armed;
 static size_t metadata_calls, metadata_bytes, prefix_calls, prefix_bytes;
 static uintptr_t refused_prefix;
@@ -19,7 +19,7 @@ static bool commit_memory(bool commit, void* start, size_t size, bool* zero, voi
   (void)arg;
   if (!commit) abort();
   uintptr_t address = (uintptr_t)start;
-  if (address < base || size > ARENA_SIZE || address - base > ARENA_SIZE - size) abort();
+  if (address < base || size > arena_size || address - base > arena_size - size) abort();
   if (armed && zero == NULL) {
     metadata_calls++;
     metadata_bytes = size;
@@ -41,11 +41,13 @@ static bool commit_memory(bool commit, void* start, size_t size, bool* zero, voi
 
 int main(void) {
   mi_process_init();
-  void* mapping = mmap(NULL, 2 * ARENA_SIZE, PROT_NONE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+  arena_size = mi_arena_min_size();
+  size_t alignment = mi_arena_min_alignment();
+  void* mapping = mmap(NULL, arena_size + alignment, PROT_NONE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
   if (mapping == MAP_FAILED) abort();
-  base = ((uintptr_t)mapping + ARENA_SIZE - 1) & ~(ARENA_SIZE - 1);
+  base = ((uintptr_t)mapping + alignment - 1) & ~(alignment - 1);
   mi_arena_id_t arena;
-  if (!mi_manage_memory((void*)base, ARENA_SIZE, false, false, true, -1, false,
+  if (!mi_manage_memory((void*)base, arena_size, false, false, true, -1, false,
                         commit_memory, NULL, &arena)) abort();
   armed = true;
   unsigned char* block = mi_malloc(100000);
@@ -59,7 +61,7 @@ int main(void) {
          metadata_calls, metadata_bytes, prefix_calls, prefix_bytes);
   printf("prefix.refused_bytes=%zu\n", refused_bytes);
   printf("prefix.same=%d\nclient.in_arena=%d\nclient.owned=%d\nclient.bytes=%d\n",
-         same_prefix, (uintptr_t)block >= base && (uintptr_t)block < base + ARENA_SIZE,
+         same_prefix, (uintptr_t)block >= base && (uintptr_t)block < base + arena_size,
          mi_check_owned(block) && mi_heap_contains(mi_heap_main(), block), bytes);
   puts("CRABC_COLD_ARENA_PREFIX_RETRY_END");
   mi_free(block);

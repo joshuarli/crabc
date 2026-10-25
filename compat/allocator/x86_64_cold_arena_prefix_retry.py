@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import os
 from pathlib import Path
 
 import run as harness
@@ -47,6 +48,7 @@ def main() -> int:
     pin = harness.load_pin()
     archive = harness.fetch_archive(pin, args.offline)
     environment = {
+        **os.environ,
         "mimalloc_page_commit_on_demand": "1", "mimalloc_arena_eager_commit": "0",
         "mimalloc_purge_delay": "-1", "mimalloc_arena_reserve": "0",
     }
