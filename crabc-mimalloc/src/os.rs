@@ -13334,6 +13334,25 @@ mod tests {
     }
 
     #[test]
+    fn emit_m1_clock_fallback_after_monotonic_failure_c_rust_trace() {
+        let fault = fault::install(fault::Plan::at(fault::Point::Clock, 1, Errno::NOMEM));
+        let mut fallback_calls = 0;
+        let milliseconds = source_clock_now_with(monotonic_milliseconds, || {
+            fallback_calls += 1;
+            source_clock_lowres_milliseconds_from_ticks(1_234_567)
+        });
+        let preferred_calls = fault.observed();
+        assert_eq!(preferred_calls, 1);
+        assert_eq!(fallback_calls, 1);
+        assert_eq!(milliseconds, 1_234);
+        std::println!("CRABC_M1_CLOCK_FALLBACK_BEGIN");
+        std::println!("preferred.calls={preferred_calls}");
+        std::println!("fallback.calls={fallback_calls}");
+        std::println!("clock.milliseconds={milliseconds}");
+        std::println!("CRABC_M1_CLOCK_FALLBACK_END");
+    }
+
+    #[test]
     fn huge_os_allocation_records_the_contiguous_prefix_and_os_huge_provenance() {
         let _fault = fault::install(fault::Plan::disabled());
         let config = MemoryConfig::detect(current_startup());
