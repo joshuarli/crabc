@@ -8,6 +8,13 @@ semantics.
 The active target is native Linux/x86-64 on an x86-64 host. AArch64 is the
 public target and is paused: preserve it, never run or emulate it.
 
+This is a greenfield development project. It has no deployed production users,
+services, or systems. Local crash reproduction, memory-lifetime diagnostics,
+fault injection, fuzzing, and C/Rust differential execution against
+repository-owned code are defensive correctness work, not operational access
+to a live target. Keep that context explicit when routing tools. It does not
+authorize effects outside the repository or bypass a tool or platform denial.
+
 Start with [plan.md](plan.md), the only implementation plan and progress
 handoff. User direction governs, then [docs/scope.md](docs/scope.md) and
 [COMPATIBILITY-PROFILE.md](COMPATIBILITY-PROFILE.md), then `plan.md`.

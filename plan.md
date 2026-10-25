@@ -5,9 +5,9 @@ remains selected. Public x86 support remains false: 180 of 223 capabilities,
 nine of 26 families, zero of eight gates.
 
 - **Resume:** "Read plan.md and docs/lanes.md, then resume the campaign as
-  coordinator, unattended. Preserve the harness-denied M6 park, start the clock
-  and remaining allocator source gaps, and resume independent runtime lanes in
-  priority order."
+  coordinator, unattended. Preserve the denied stress invocation, run the
+  Heap-lifecycle recovery sequence with one implementation owner and one
+  upstream investigator, and keep independent runtime lanes moving."
   First command from the repository root:
   `./scripts/dev-x86_64.sh campaign-status`.
 - **State:** `main`, implementation integrated through `0e4e4c1e3`.
@@ -43,9 +43,11 @@ nine of 26 families, zero of eight gates.
   RIP and fault address are not captured. Its tracked launcher route is now
   complete, but the resumed diagnostic tool call was denied by the harness's
   automatic safety review. The Charter makes that denial a hard stop, so the
-  item is parked without a retry or alternate route. Shared current-Heap
-  traffic and deletion of four-iteration-old Heaps remain candidates, not a
-  diagnosis.
+  exact invocation is parked without a retry or alternate route. New upstream
+  lifetime fixes provide separate focused regressions; the recovery sequence
+  below investigates those without rerunning the denied action. Shared
+  current-Heap traffic and deletion of four-iteration-old Heaps remain
+  candidates, not a diagnosis.
   Pinned C M6 debug owner-exit cases also still fail: remote before/after and
   attached-worker frees retain a deleted Page Heap. Captured faults reach
   `mi_stat_free` (`src/free.c:751`) or `mi_page_subproc`
@@ -58,7 +60,7 @@ handoff commit. New independent lanes start from the current `main`.
 
 | Branch or integrated scope | State and next step |
 | --- | --- |
-| M6 Heap stress | Parked by the resumed harness denial. Closed forwarding for `--case 4 1 8` is integrated at `e9a9d243b`; do not retry or route around the denied diagnostic. The release SIGSEGV and pinned C debug owner-exit failures remain known red. |
+| M6 Heap lifecycle | The exact rolling-stress diagnostic is parked by the harness denial; do not retry or route around it. A separate recovery lane compares pinned C, explicitly corrected upstream C, and Rust for the lifetime transitions fixed by upstream `23a5db4`, `4192c77`, and `b85f2d0`. The release SIGSEGV and pinned C debug owner-exit failures remain known red until a production-path regression establishes their causes. |
 | Secure Page layout | Integrated through `0e4e4c1e3`. Independent review found no P1/P2 product defect. The exact production layout passed secure levels 0–5, all nine Rust profiles passed, M4/M7 host modules passed, and merged-tip C/R configuration differentials passed secure 1, 3 and 5 with 19 keys each. |
 | A3 cold-arena prefix retry | Closed by `4b5ea1ae7` and `fe268b89f`. Pinned C and production Rust both retry the same 114688-byte prefix after the first callback refusal and return an owned in-arena block. The earlier contrary reading confused the arena claim failure with its caller's fresh-page retry. A separate backing-selection failure difference remains only a source-level candidate because the static-main path has not reproduced it. |
 | A3 clock source gap on main | Linux pinned C ignores the monotonic `clock_gettime` failure; its `clock()` branch is compile-time only. Rust's runtime CPU-clock fallback is not source-defined. `64e159039` corrects the accounting and Rust-only test name; existing 28-field EIO proof is unchanged. No fabricated failure oracle was added. |
@@ -94,10 +96,10 @@ and source pins remain tracked. Pinned-input `.cache/` directories outside
   including the fixed NUMA mapping and regular-arena reclaim/purge item.
   No unique uncommitted source or handoff was found. All parked implementation
   branches remain, including `lane/dynamic-owner-root` at `009f5642c`.
-- **Next:** leave the harness-denied Heap stress item parked. Resolve the clock
-  source gap and the remaining cold-arena backing-selection candidate while
-  continuing independent resolver, loader, CRT/sysroot, pthread/text and
-  consumer qualification on a fresh cohort.
+- **Next:** execute the Heap-lifecycle recovery sequence below. Keep the
+  harness-denied invocation parked while using the upstream regressions as new
+  focused evidence. Independent resolver, loader, CRT/sysroot, pthread/text
+  and consumer work may continue without adding allocator lifecycle writers.
   H0 `pow` and the older numeric child-metadata footprint decision remain open.
   No performance gate or allocator promotion may bypass correctness/source
   prerequisites. The C backend stays selected.
@@ -196,8 +198,16 @@ Deliverables:
   2x against the last recorded number. Record anything else seen and leave it.
 - **Time-box per failing step.** One failing cohort step, test, or gate
   condition gets 3 attempts, each a hypothesis with a predicted observation
-  as `root-cause` describes. Then park that step with the finding and take
-  the next one that does not depend on it.
+  as `root-cause` describes. Then park that exact step. If it is a central
+  allocator-lifecycle blocker, escalate to a smaller production-path
+  reproducer, discriminating instrumentation, independent source/history
+  review, or an oracle-contract audit before starting unrelated allocator
+  work. Each attempt must make the next hypothesis narrower.
+- **Correct demonstrated upstream defects explicitly.** Keep pristine pinned
+  v3.5.0 as the differential oracle and preserve its failing observation. A
+  valid workload that demonstrates a pinned-C defect may compare against a
+  separately identified corrected C build and register one reviewed semantic
+  erratum. A corrected build never silently replaces the pin.
 - **A claim commit that is not proven is reverted.** H1, O2 and O4 commit
   what a revision claims before its cohort runs. If that cohort is parked,
   revert the claim commit first, so `main` never carries an unproven
@@ -210,7 +220,10 @@ Deliverables:
   `orchestrate` and [docs/lanes.md](docs/lanes.md) set out. An idle slot
   with ready work is a defect. Budget 8 GiB per lane that builds
   `crabc-mimalloc` tests; read peak memory of the first launches and keep
-  12 GiB available.
+  12 GiB available. Heap retirement, Theap lifetime, remote free, PageMap
+  lifetime and owner exit are one state machine: they have one persistent
+  implementation owner, one independent semantic investigator, and one
+  reviewer only after a causal patch exists.
 - Lane worktrees live at `.work/wt/<lane>` on branch `lane/<id>`; all scratch
   stays under `.work/`. The coordinator removes a lane's
   worktree and branch once its workstream has nothing ready. A parked lane keeps its
@@ -443,6 +456,40 @@ Allocator at `e8b25e956`: suite throughput lower95 0.37 of pinned C against a
 required 0.95, with code 977,406 bytes against C's 108,311. No runtime
 scorecard survives.
 
+## Allocator lifecycle recovery
+
+The allocator's immediate deliverable is a causal Heap/Theap/Page lifetime
+model, not another broad milestone run. Keep the pristine v3.5.0 oracle and
+compare any demonstrated defect with an explicitly corrected upstream C build.
+Do not change the source pin during this recovery.
+
+1. Compare upstream lifetime fixes `23a5db4`, `4192c77` and `b85f2d0` with
+   pinned C and the Rust production path. Audit whether the deleted-Heap
+   fixtures encode faulty observed behavior instead of the documented
+   `mi_heap_delete` contract. Completion is one causal disposition per fix:
+   applicable correction, unrelated correction, or invalid fixture premise.
+2. Reduce the Rust-only rolling-Heap failure through production-path
+   handshakes modeled on the applicable upstream regression. The denied
+   `allocator-upstream-heap-stress --case 4 1 8` diagnostic is not rerun.
+   Completion requires the first invalid transition, a deterministic
+   regression, and a product fix before the original workload can be retried
+   under a changed authorization or harness condition.
+3. Apply the reviewed semantic correction. Cover main and child Heaps,
+   delete and destroy, OS and arena pages, remote frees, cached Theaps, owner
+   exit, and final free through the real allocator route. An isolated model may
+   supplement but never replace that regression.
+4. Remove retained-deleted-Heap registries, special free paths, or duplicate
+   retirement sequencing only where the corrected production invariant makes
+   them redundant. This bounded simplification is part of the correction, not
+   a general allocator rewrite.
+5. Resume the remaining source gaps and M1–M7 qualification only after the
+   lifecycle correction and its independent review merge.
+
+One persistent implementation owner holds the lifecycle state machine. One
+independent investigator owns pinned/upstream semantics and reproducer design.
+Bring in one reviewer when a causal patch exists. Other agents may work only on
+independent runtime families or read-only allocator evidence.
+
 ## Sequence
 
 Sizes: S is under half a session, M one session, L several sessions in one
@@ -567,7 +614,7 @@ whose files are disjoint, all measured in the same window.
 
 | ID | Size | Item | Needs | Acceptance |
 | --- | --- | --- | --- | --- |
-| O1 | L | Runtime scorecard in the cohort worktree at the H1 commit: three `perf-c` attempts and `perf-native --mode full`. Fix any row above 1.00 or over 2R by removing work (syscalls, copies, passes), as `performance-by-mechanism` describes, without changing selected semantics; confirm each fix with a focused development-mode rerun of its rows, since a full run binds to a qualified commit. Log every row against 0.90. | H1, A1, T2, T3 | The full scorecard is in the campaign log, and every row above 1.00 has a merged fix whose focused rerun is at or below 1.00 |
+| O1 | L | Runtime scorecard in the cohort worktree at the H1 commit: three `perf-c` attempts and `perf-native --mode full`. Fix any row above 1.00 or over 2R by removing work (syscalls, copies, passes), as `performance-by-mechanism` describes, without changing selected semantics; confirm each fix with a focused development-mode rerun of its rows, since a full run binds to a qualified commit. Log every row against 0.90. Native-allocator lifecycle work is not a prerequisite unless it demonstrates a shared accepted-C runtime defect. | H1, T2, T3 | The full scorecard is in the campaign log, and every row above 1.00 has a merged fix whose focused rerun is at or below 1.00 |
 | O2 | L | The promotion revision (D4). One commit sets `public_support = true` in the ledger, the generator and the manifest, marks `performance.release` verified with its receipt path, and updates `README.md`, `AGENTS.md` and `docs/scope.md`. Then, at that commit, in one work directory: the cohort `--through publish-lua-source-build`, the correctness chain, the performance measurements, then the same cohort resumed with the performance inputs under `--profile full`, and the promotion check. A failure is fixed forward and the revision is requalified. | O1, T1, T5 | In the cohort worktree, `./scripts/dev-x86_64.sh campaign-promotion-check --qualification-receipt PATH` passes |
 | O3 | L | Allocator performance. First a fresh three-run engine baseline (`allocator-perf-engine --full`) and a profile. Then remove work in the order the profile gives. Each increment is one mechanism with before and after numbers vetted by `benchmark-checklist`. | A4, A5, T1 | In one checkout at one commit, `./compat/allocator/run-x86_64.sh allocator-m9 --profile baseline` exits 0 on three agreeing full reports: suite throughput lower95 at least 0.95, critical rows at least 0.90, critical p99 cost upper95 at most 1.10, peak RSS and PSS upper95 at most 1.05 geomean and 1.10 critical; `architecture_ratchet.py --gate --runtime-evidence FILE` exits 0 |
 | O4 | L | The switch revision (D5): one commit sets `DEFAULT_ALLOCATOR_BACKEND = "native"` in `scripts/build_x86_64_owned_sysroot.py`; then requalify that commit as O2 did | O2, O3, T4 | `./compat/allocator/run-x86_64.sh allocator-m10 --profile baseline --check --performance-receipt PATH --qualification-receipt CHAIN` passes, and the promotion check passes at the switched revision |
@@ -693,8 +740,10 @@ Made so far, each with its commit, for the owner:
 - Physical NUMA and explicit huge-page qualification on this host.
 - New receipt schemas, validators, per-artifact proofs, or status documents.
 - Tuning before its parity items are done, and beating musl by 10% as a gate.
-- Rewriting the allocator port for size or idiom. Optimization removes measured
-  work; a structural rewrite is an owner decision, not a lane's.
+- Rewriting the allocator port for size or idiom. A demonstrated lifetime
+  correction may delete compensating ownership machinery and consolidate its
+  retirement sequence when production-path regressions prove the simpler
+  invariant. Broader structural rewriting remains an owner decision.
 - Pushing, releasing, or publishing anything.
 
 ## Reference
@@ -758,6 +807,13 @@ Append one line per judgment call a reader would otherwise miss.
   storage's raw physical metadata charges and failing comparisons. The
   empty-child correction avoids unnecessary storage; it does not establish
   parity for populated children or authorize substituting C-sized charges.
+- 2026-10-25: allocator recovery now treats Heap/Theap/Page retirement as one
+  state machine with one implementation owner, one independent upstream
+  investigator, and a reviewer after a causal patch. Demonstrated v3.5.0
+  defects retain pristine-C evidence and may use an explicitly identified
+  corrected C comparator through the existing differences register. Runtime
+  promotion no longer waits on native-allocator A1 unless that work finds a
+  shared accepted-C runtime defect.
 
 ## Campaign log
 
