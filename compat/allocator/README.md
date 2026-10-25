@@ -170,6 +170,10 @@ contract. Lanes whose driver is a `.c` plus `.py` pair in this directory are:
   cases under seven option profiles (`default` sets nothing, the other six set
   `mimalloc_*` environment variables) so each process reads them from its own
   option table.
+- Cached Heap identity regression: `allocator-heap-destroy-stale-theap` runs
+  the same deterministic address-reuse handshake against pristine pinned C
+  and a separately extracted C tree with upstream PR #1420's identity clear.
+  The pristine failure remains expected evidence; the corrected tree must pass.
 - Public API adapter: `allocator-m6-adapter [--matrix]` links
   [`x86_64_m6_adapter_driver.c`](x86_64_m6_adapter_driver.c) once against the
   pinned C sources and once against the native adapter's M6 exports and

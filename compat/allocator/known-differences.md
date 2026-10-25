@@ -16,6 +16,43 @@ and how a port-map row carries it. The register covers both the paused
 AArch64 production record and the native x86 port; figures quoted in an entry
 are tied to the target it names.
 
+### `CRABC-MI-HEAP-RETIREMENT` — accepted upstream semantic correction
+
+- **Port map:** `src/heap.c:child-thread-empty-non-main-heap-lifecycle`, `src/heap.c:main-subprocess-non-main-heap-lifecycle`
+
+Pinned `src/heap.c:mi_heap_free_theaps` can leave queued OS Pages naming a
+freed Heap and cached Theaps naming a reused Heap address. The Rust retirement
+path applies upstream `b85f2d0`, `4192c77` and `23a5db4` together: detach each
+Theap, drain every queue through `BIN_FULL`, then release-clear its Heap
+identity before merging statistics and dropping the Heap reference. Empty
+Pages are released. Live Pages enter the retiring Heap's arena or OS registry.
+The dynamic TLS key is released and zeroed before Heap-wide Page migration or
+destruction. `mi_heap_delete` moves all surviving Pages to the subprocess main
+Heap. A final remote free during OS Page migration releases the empty claimed
+Page from that main Heap's list and statistics before releasing its mapping.
+These are engine semantics. The C ABI and source pins are unchanged.
+
+The Rust production tests in `subproc_main_heaps.rs` cover same-address Heap
+reuse for delete and destroy, live arena and OS Page migration, an attached
+worker's full OS queue with a queued remote free, and a final remote free at
+the OS move's unown CAS. The local OS identity and unown-CAS tests fail before
+the correction and pass after it. `source_heap_api.rs` checks aligned survivor
+membership and final free after owner exit. `heap_lifecycle.rs` covers child
+Heap teardown and abandoned OS Page migration.
+
+`allocator-heap-destroy-stale-theap` preserves the pristine v3.5.0 cache-reuse
+failure and compares it with a separately extracted C tree containing only
+`4192c77`'s identity invalidation. That corrected C comparison proves the cache
+transition alone. It does not qualify the combined Page handoff. The pinned C
+owner-exit failures remain recorded in `plan.md`; no corrected C build replaces
+the pristine oracle.
+
+The correction removes the retained-deleted-Heap registry and its extra Theap
+references and special free route. It adds no persistent allocator state.
+Native performance and promotion gates remain open. The bounded production
+regressions establish correctness, not performance qualification. Remove this
+erratum only when a separately reviewed source pin includes these corrections.
+
 ### `CRABC-MI-LIVE-PAGE-ASSERTION-CUSTODY` — failure ownership boundary
 
 Pinned `src/theap.c:62,100` validates each queued Page before collection while

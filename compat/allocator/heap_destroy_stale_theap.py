@@ -15,7 +15,7 @@ TRACE = re.compile(r"^m6\.heap\.stale\.(reused|cached_old|cache_changed|contains
 
 def build_and_run(source: Path, output: Path, artifacts: Path, label: str) -> tuple[int, str]:
     command = [
-        harness.require_tool("musl-gcc"), "-std=c11", "-fPIC", "-ftls-model=initial-exec",
+        harness.require_tool("musl-gcc"), "-std=c11", "-D_GNU_SOURCE", "-fPIC", "-ftls-model=initial-exec",
         "-DMI_SHARED_LIB", "-DMI_SHARED_LIB_EXPORT", "-DMI_LIBC_MUSL=1",
         "-DMI_PRIM_HAS_PROCESS_ATTACH=1", "-I", str(source / "include"),
         "-I", str(source / "src"), *harness.CONFIGURATION_PROFILES["release"],
@@ -25,7 +25,9 @@ def build_and_run(source: Path, output: Path, artifacts: Path, label: str) -> tu
     (artifacts / f"{label}-build.log").write_text(build["stdout"] + build["stderr"])
     harness.require_success(build, f"stale Theap {label} C build")
     run = harness.command_record([str(output)], cwd=source, timeout_seconds=60)
-    return int(run["status"]), str(run["stdout"]) + str(run["stderr"])
+    output = str(run["stdout"]) + str(run["stderr"])
+    (artifacts / f"{label}-run.log").write_text(f"status={run['status']}\n" + output)
+    return int(run["status"]), output
 
 
 def observe(label: str, status: int, output: str, expected: tuple[int, int, int, int]) -> None:
@@ -66,8 +68,8 @@ def main() -> None:
         heap_source.write_text(content.replace(ANCHOR, ANCHOR + PATCH, 1))
         (artifacts / "pinned").mkdir(exist_ok=True)
         (artifacts / "patched").mkdir(exist_ok=True)
-        pinned_status, pinned_output = build_and_run(source, artifacts / "pinned", artifacts, "pinned")
-        patched_status, patched_output = build_and_run(patched, artifacts / "patched", artifacts, "patched")
+        pinned_status, pinned_output = build_and_run(source, artifacts / "pinned/repro", artifacts, "pinned")
+        patched_status, patched_output = build_and_run(patched, artifacts / "patched/repro", artifacts, "patched")
     observe("pinned v3.5.0", pinned_status, pinned_output, (1, 1, 0, 0))
     observe("PR #1420 patch", patched_status, patched_output, (1, 1, 1, 1))
     print(f"stale cached Theap: pinned v3.5.0 fails after Heap address reuse; PR #1420's one-line heap invalidation passes; {artifacts}")

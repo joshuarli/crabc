@@ -2476,8 +2476,31 @@ pub(crate) unsafe fn delete_non_main_heap_pages(
                 if Heap::push_os_abandoned_page_at(target.heap, page) { Ok(()) } else { Err(AbandonError::PreUnownPublication) }
             })
         };
-        if !matches!(abandoned, Ok(abandoned::AbandonResult::UnownedUnmapped)) {
-            return false;
+        match abandoned {
+            Ok(abandoned::AbandonResult::UnownedUnmapped) => {}
+            Ok(abandoned::AbandonResult::Empty) => {
+                let regular = unsafe { page.as_ref() }.reserved() > 1;
+                let released = unsafe {
+                    release_claimed_non_arena_page_with_list_removal_and_statistics(
+                        page_map, backing.process(), page, memory, regular,
+                        |page| if Heap::remove_os_abandoned_page_at(target.heap, page) {
+                            NonArenaPageListRemoval::Removed
+                        } else {
+                            NonArenaPageListRemoval::NotRemoved
+                        },
+                        |page| page_statistics_bin(page).is_some_and(|bin| Theap::record_page_released_at(target.theap, bin)),
+                    )
+                };
+                match released {
+                    ClaimedProcessNonArenaPageRelease::Released => {}
+                    ClaimedProcessNonArenaPageRelease::RetainedAfterList(retained) => {
+                        core::mem::forget(retained);
+                        return false;
+                    }
+                    ClaimedProcessNonArenaPageRelease::RetainedBeforeList => return false,
+                }
+            }
+            _ => return false,
         }
     }
     true
@@ -5242,54 +5265,6 @@ impl SourceRetainedTheapSession {
         })
     }
 
-    /// Forms a free-only source view from a deleted Heap's separately
-    /// retained Theap. Its TLD link has already been cleared, so the calling
-    /// thread supplies its current sequence while the held page supplies the
-    /// exact source thread identity and queue membership.
-    ///
-    /// # Safety
-    /// `retained_theap` has a live list reference for the entire operation;
-    /// `allocation` is the exact current source-local block on one of its OS
-    /// pages, and no other owner mutates its ordinary queue or page fields.
-    pub(crate) unsafe fn from_deleted_heap_local_allocation(
-        allocation: &LiveAllocationPointer,
-        current: LiveThreadId,
-        retained_theap: NonNull<Theap>,
-        sequence: usize,
-    ) -> Result<Self, SourceRetainedTheapSessionError> {
-        if allocation.page_state() != LiveAllocationPageState::LiveOwnerAssociated
-            || !allocation.is_associated_with(current)
-        {
-            return Err(SourceRetainedTheapSessionError::NotLiveAssociated);
-        }
-        let page = allocation.page();
-        // SAFETY: the held allocation retains this registered OS page and
-        // its immutable source queue identity through the local operation.
-        let page_ref = unsafe { page.as_ref() };
-        if !page_ref.memid().is_os() || page_ref.theap() != retained_theap.as_ptr() {
-            return Err(SourceRetainedTheapSessionError::InvalidTheap);
-        }
-        // SAFETY: the registry's additional reference keeps this image live;
-        // no cleared TLD or freed Heap pointer is dereferenced here.
-        let theap_ref = unsafe { retained_theap.as_ref() };
-        if !theap_ref.heap_identity_is_cleared()
-            || !theap_ref.is_bound_to_main_subprocess(crate::subproc::MainSubprocess::global())
-        {
-            return Err(SourceRetainedTheapSessionError::InvalidTheap);
-        }
-        if page_is_in_full(page_ref) && theap_ref.allows_page_abandon() {
-            return Err(SourceRetainedTheapSessionError::FullTheapCanAbandon);
-        }
-        let bin = page_queue_bin(page_ref).ok_or(SourceRetainedTheapSessionError::MissingQueue)?;
-        let queue = theap_ref.queue(bin).ok_or(SourceRetainedTheapSessionError::MissingQueue)?;
-        // SAFETY: the retained Theap owns this page's complete queue links;
-        // the check rejects a stale or unrelated raw page association.
-        if !unsafe { page_queue_has_member_link_coherence(queue, page) } {
-            return Err(SourceRetainedTheapSessionError::QueueLinkIncoherent);
-        }
-        Ok(Self { theap: retained_theap, thread: current, sequence, _not_send_or_sync: PhantomData })
-    }
-
     #[inline]
     fn theap(&self) -> &Theap {
         // SAFETY: construction proved the retained metadata allocation and
@@ -5489,12 +5464,7 @@ unsafe impl TheapPageSession for SourceRetainedTheapSession {
 }
 
 impl<'arena, 'map, B: PageBacking<'arena>> PageAllocatorEngine<'arena, 'map, SourceRetainedTheapSession, B> {
-    /// Releases pages retired by a deleted Heap's final local frees. No
-    /// future allocation can revisit that Heap's detached Theap queue, so
-    /// the queue must be drained before its retained image reference leaves.
-    pub(crate) fn collect_deleted_heap_retired_pages(&mut self) -> bool {
-        self.collect_retired_pages_with_admission(true, true)
-    }
+
 
     /// Activates a free-only engine over one retained source Theap.
     ///
@@ -46212,25 +46182,106 @@ enum ProductionOwnerExitError {
     UnsupportedPage,
 }
 
-/// The state disjoint from the field-scoped local Theap authority held by
-/// `theap_collect_abandon_queues_at`.
-///
-/// In particular, this deliberately does not contain a
-/// `PageAllocatorEngine`, a `MainHeapThreadPageDrainSession`, an attachment,
-/// a whole-Theap reference, or a whole-page reference. A live remote producer may retain a pointer to
-/// its atomic page projection during `collect_page` and `abandon_page`; those
-/// operations therefore use only the raw field projections in `types.rs`.
-/// Terminal release takes a whole-page mutable reference only after the
-/// source `used == 0` proof excludes a live client and its producer.
+/// # Safety
+/// The Heap's Theaps have left their TLD lists. The caller exclusively owns
+/// this Theap's queues and retains its Heap, page backing and PageMap through
+/// retirement. Remote producers may publish only to their live blocks' Pages.
+/// A false result is terminal: retain the entire Heap and backing.
+pub(crate) unsafe fn abandon_retiring_heap_theap<'arena>(
+    theap: NonNull<Theap>,
+    heap: NonNull<Heap>,
+    page_map: &PageMap,
+    backing: &impl PageBacking<'arena>,
+) -> bool {
+    let mut first = None;
+    for bin in 0..=BIN_FULL {
+        let Some(queue) = (unsafe { theap.as_ref() }).queue(bin) else { return false; };
+        if let Some(page) = NonNull::new(queue.first()) {
+            first = Some(page);
+            break;
+        }
+    }
+    let Some(first) = first else { return unsafe { source_theap_local_queues_empty_at(theap) }; };
+    let owner = unsafe { Page::xthread_id_pointer_at(first).as_ref() }.load(Ordering::Acquire)
+        & !crate::types::PAGE_FLAG_MASK;
+    let Some(thread) = LiveThreadId::new(owner) else { return false; };
+    let mut pending_os_release = None;
+    let mut pending_fresh_initialization = None;
+    let mut pending_live_page_validity = None;
+    let mut collection_poison = None;
+    #[cfg(test)]
+    let mut page_free_collect_failure_once = PageCollectFailureInjection::None;
+    let mut callbacks = HeapRetirementCallbacks(ProductionOwnerExitCallbacks {
+        thread, theap, arena: backing, arena_lifetime: PhantomData, page_map,
+        main_heap: None, heap,
+        pending_os_release: &mut pending_os_release,
+        pending_fresh_initialization: &mut pending_fresh_initialization,
+        pending_live_page_validity: &mut pending_live_page_validity,
+        collection_poison: &mut collection_poison, page_commit_poison: false,
+        #[cfg(test)]
+        page_free_collect_failure_once: &mut page_free_collect_failure_once,
+    });
+    let prepass = TheapCollectAbandonFieldPrepass::new(
+        |_: &mut TheapCollectAbandonFieldAccess, _: &mut HeapRetirementCallbacks<'_, '_, 'arena, '_, _>| Ok(()),
+        |_: &mut TheapCollectAbandonFieldAccess, _: &mut HeapRetirementCallbacks<'_, '_, 'arena, '_, _>| Ok(()),
+    );
+    let drained = unsafe { theap_collect_abandon_queues_at(theap, prepass, &mut callbacks) }.is_ok();
+    let complete = drained && pending_os_release.is_none() && pending_fresh_initialization.is_none()
+        && pending_live_page_validity.is_none() && collection_poison.is_none()
+        && unsafe { source_theap_local_queues_empty_at(theap) };
+    if !complete {
+        core::mem::forget((pending_os_release, pending_fresh_initialization, pending_live_page_validity, collection_poison));
+    }
+    complete
+}
+
+struct HeapRetirementCallbacks<'state, 'main, 'arena, 'map, B: PageBacking<'arena>>(
+    ProductionOwnerExitCallbacks<'state, 'main, 'arena, 'map, B>,
+);
+
+impl<'arena, B: PageBacking<'arena>> TheapCollectAbandonCallbacks for HeapRetirementCallbacks<'_, '_, 'arena, '_, B> {
+    type Error = ProductionOwnerExitError;
+    type Retained = TheapCollectAbandonTerminalContext;
+
+    fn collect_page(&mut self, current: TheapCollectAbandonCurrentPage<'_>) -> Result<TheapCollectAbandonPageAction, Self::Error> {
+        let page = current.page();
+        self.0.page_free_collect_force(page).map_err(|error| {
+            self.0.retain_collection_poison(page, error);
+            ProductionOwnerExitError::Collection
+        })?;
+        if unsafe { ProductionOwnerExitCallbacks::<B>::used_at(page) } == 0 {
+            return Ok(TheapCollectAbandonPageAction::Release);
+        }
+        self.0.page_free_collect_false(page).map_err(|error| {
+            self.0.retain_collection_poison(page, error);
+            ProductionOwnerExitError::Collection
+        })?;
+        Ok(if unsafe { ProductionOwnerExitCallbacks::<B>::used_at(page) } == 0 {
+            TheapCollectAbandonPageAction::Release
+        } else {
+            TheapCollectAbandonPageAction::Abandon
+        })
+    }
+
+    fn release_page(&mut self, page: TheapCollectAbandonReleasedPage<'_>) -> Result<(), Self::Error> {
+        self.0.release_page(page)
+    }
+
+    fn abandon_page(&mut self, page: TheapCollectAbandonAbandonedPage<'_>) -> Result<(), Self::Error> {
+        self.0.abandon_page(page)
+    }
+
+    fn retain_terminal(&mut self, terminal: TheapCollectAbandonTerminalContext) -> Self::Retained {
+        terminal
+    }
+}
+
 struct ProductionOwnerExitCallbacks<'state, 'main, 'arena, 'map, B: PageBacking<'arena>> {
     thread: LiveThreadId,
     theap: NonNull<Theap>,
     arena: &'state B,
     arena_lifetime: PhantomData<&'arena ()>,
     page_map: &'map PageMap,
-    /// The process main Heap lease that serializes its OS-abandoned list, or
-    /// `None` for a child-subprocess Theap, whose OS pages cannot be
-    /// abandoned yet (see `collect_abandon_child_thread_done`).
     main_heap: Option<MainStaticHeapLease<'main>>,
     heap: NonNull<Heap>,
     pending_os_release: &'state mut Option<OsAlignedPageOwner>,

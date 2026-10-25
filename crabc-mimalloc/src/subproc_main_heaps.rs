@@ -40,7 +40,6 @@ use crate::compiler_tls::{
     is_empty_dynamic_backing, DynamicThreadLocalBacking,
 };
 use crate::arena::{ArenaId, ExclusiveArenaTheapReservation};
-use crate::lock::PrivateLock;
 use crate::meta::{ChildPageEngineState, MetaAllocation, MetaAllocator};
 use crate::os_page::OsAlignedPageOwner;
 use crate::process_init::{ProcessMainBackingBinding, ProcessMainInitializationStorage};
@@ -165,63 +164,9 @@ pub(crate) struct MainHeapTheapImage {
     theap: Theap,
     page_engine: ChildPageEngineState,
     allocation: Option<MainHeapTheapAllocation>,
-    retained_deleted_next: *mut MainHeapTheapImage,
-    retained_deleted_os_pages: usize,
 }
 
-/// Holds the exact Theap image while a deleted Heap still has an OS page in
-/// one of its local queues. The page keeps its source Heap identity and may
-/// need the queue again when its final block is freed. Only pointer identity
-/// is observed through the list; a borrow of the image requires a matching
-/// source-local page observation and native process admission.
-struct RetainedDeletedHeapTheaps {
-    lock: PrivateLock,
-    head: UnsafeCell<*mut Theap>,
-}
 
-// SAFETY: the lock serializes list links. A listed image has one additional
-// Theap reference, so its metadata stays mapped until list removal.
-unsafe impl Sync for RetainedDeletedHeapTheaps {}
-
-static RETAINED_DELETED_HEAP_THEAPS: RetainedDeletedHeapTheaps = RetainedDeletedHeapTheaps {
-    lock: PrivateLock::new(),
-    head: UnsafeCell::new(core::ptr::null_mut()),
-};
-
-/// # Safety
-/// The retained-list lock is held, and this exact image has left the Heap
-/// list permanently. The list's source reference keeps its link mapped.
-unsafe fn retained_deleted_next(theap: NonNull<Theap>) -> *mut Theap {
-    #[cfg(target_arch = "x86_64")]
-    return unsafe { Theap::main_heap_retained_next_at(theap) };
-    #[cfg(not(target_arch = "x86_64"))]
-    unsafe { (*theap.cast::<MainHeapTheapImage>().as_ptr()).retained_deleted_next.cast() }
-}
-
-/// # Safety
-/// As for `retained_deleted_next`; the lock also excludes every writer.
-unsafe fn set_retained_deleted_next(theap: NonNull<Theap>, next: *mut Theap) {
-    #[cfg(target_arch = "x86_64")]
-    unsafe { Theap::set_main_heap_retained_next_at(theap, next); }
-    #[cfg(not(target_arch = "x86_64"))]
-    unsafe { (*theap.cast::<MainHeapTheapImage>().as_ptr()).retained_deleted_next = next.cast(); }
-}
-
-#[cfg(test)]
-pub(crate) fn retained_deleted_heap_owner_count_for_test() -> Option<usize> {
-    let retained = &RETAINED_DELETED_HEAP_THEAPS;
-    let guard = retained.lock.lock().ok()?;
-    let mut count = 0usize;
-    // SAFETY: the lock protects every link and each listed image has a live
-    // reference until it is removed.
-    let mut image = unsafe { *retained.head.get() };
-    while !image.is_null() {
-        count = count.checked_add(1)?;
-        image = unsafe { retained_deleted_next(NonNull::new_unchecked(image)) };
-    }
-    drop(guard);
-    Some(count)
-}
 
 enum MainHeapTheapAllocation {
     Metadata(MetaAllocation<'static>),
@@ -574,14 +519,6 @@ fn is_main_subprocess_heap(heap: NonNull<Heap>) -> bool {
     !heap.is_subprocess_main() && core::ptr::eq(heap.subprocess_pointer(), MainSubprocess::global().identity().as_ptr())
 }
 
-/// The live non-main Heap of a page, without taking the subprocess Heap-list
-/// lock. Source `mi_page_heap` reads the page identity directly: deletion
-/// moves surviving arena pages to the main Heap before freeing the old image.
-/// OS pages retained by a deleted Heap are the exception in this engine;
-/// their retained Theap registry must exclude the stale identity first.
-/// This also permits allocation/free in a statistics output callback while
-/// the source visitor holds the Heap-list lock.
-///
 /// # Safety
 /// `page` is held live by an allocation observation, and its Heap identity
 /// cannot move or be destroyed concurrently with this call.
@@ -592,14 +529,6 @@ unsafe fn live_non_main_heap_of_page(page: NonNull<Page>) -> Option<NonNull<Heap
     if is_process_main_heap(heap) {
         return None;
     }
-    // SAFETY: the observation retains the page and the deleted-Heap registry
-    // compares only its raw Theap identity, never the potentially freed Heap.
-    if unsafe { retained_deleted_heap_os_page(page) }? {
-        return None;
-    }
-    // SAFETY: surviving arena pages have moved before Heap release; an OS
-    // page naming a released Heap was excluded above. Valid use excludes
-    // concurrent destruction of the remaining Heap.
     (unsafe { Heap::non_main_subprocess_at(heap) } == Some(NonNull::from(MainSubprocess::global().identity()))).then_some(heap)
 }
 
@@ -875,71 +804,6 @@ unsafe fn free_vanished_theap_metadata(theap: NonNull<Theap>) -> bool {
     }
 }
 
-/// Whether a still-linked Theap queue contains an OS page that Heap deletion
-/// cannot reach through the Heap's abandoned OS-page list.
-///
-/// # Safety
-/// The caller excludes mutation of this Theap's queues and their pages.
-unsafe fn local_os_page_count(theap: NonNull<Theap>) -> Option<usize> {
-    let mut found = 0usize;
-    for bin in 0..crate::config::BIN_COUNT {
-        // SAFETY: the caller retains the live Theap and its queue exclusion.
-        let queue = unsafe { theap.as_ref() }.queue(bin)?;
-        let mut page = queue.first();
-        let mut seen = 0;
-        while let Some(current) = NonNull::new(page) {
-            if seen >= queue.count() {
-                return None;
-            }
-            // SAFETY: each linked page stays live until this Heap operation
-            // has finished detaching the Theap.
-            let image = unsafe { current.as_ref() };
-            if image.memid().is_os() && unsafe { Page::theap_at(current) } == theap.as_ptr() {
-                found = found.checked_add(1)?;
-            }
-            page = unsafe { Page::next_at(current) };
-            seen += 1;
-        }
-        if seen != queue.count() {
-            return None;
-        }
-    }
-    Some(found)
-}
-
-/// Takes an additional image reference before its Heap and cached references
-/// can disappear, then publishes that owner for a later page-local free.
-///
-/// # Safety
-/// The Theap belongs to the Heap being deleted, its queues are quiescent,
-/// and its image remains live through this call.
-unsafe fn retain_deleted_theap_if_needed(theap: NonNull<Theap>) -> bool {
-    let needed = unsafe { local_os_page_count(theap) };
-    if needed == Some(0) {
-        return true;
-    }
-    // SAFETY: the Heap still owns its listed Theap reference. On an unusual
-    // queue or lock failure, this additional reference deliberately remains
-    // terminally retained instead of exposing a stale page->theap pointer.
-    unsafe { Theap::incref_at(theap) };
-    let Some(needed) = needed else {
-        return false;
-    };
-    let retained = &RETAINED_DELETED_HEAP_THEAPS;
-    let Ok(guard) = retained.lock.lock() else { return false };
-    // SAFETY: Heap detach cleared its links before invoking this callback.
-    // The held retained-list lock and extra source reference protect the
-    // detached link until its final page leaves the source queues.
-    unsafe {
-        #[cfg(not(target_arch = "x86_64"))]
-        { (*theap.cast::<MainHeapTheapImage>().as_ptr()).retained_deleted_os_pages = needed; }
-        set_retained_deleted_next(theap, *retained.head.get());
-        *retained.head.get() = theap.as_ptr();
-    }
-    drop(guard);
-    true
-}
-
 /// Observe the source cache and thread slot without creating or republishing
 /// a Theap. Abandoned-page reclaim uses this same cache-first selection.
 fn existing_heap_theap(heap: NonNull<Heap>) -> Option<NonNull<Theap>> {
@@ -1116,8 +980,6 @@ fn create_theap_image(thread: MainThread, heap: NonNull<Heap>) -> Option<NonNull
         Theap::write_empty_at(NonNull::new_unchecked(core::ptr::addr_of_mut!((*image).theap)));
         core::ptr::addr_of_mut!((*image).page_engine).write(ChildPageEngineState::Active);
         core::ptr::addr_of_mut!((*image).allocation).write(Some(allocation));
-        core::ptr::addr_of_mut!((*image).retained_deleted_next).write(core::ptr::null_mut());
-        core::ptr::addr_of_mut!((*image).retained_deleted_os_pages).write(0);
         let theap = &mut (*image).theap;
         let provenance = if requested.as_ptr().is_null() {
             theap.set_dynamic_metadata_memid(memory)
@@ -1729,167 +1591,6 @@ pub(crate) unsafe fn local_heap_theap_of_page(page: NonNull<crate::types::Page>)
     (theap != thread.theap && unsafe { Theap::tld_at(theap) } == thread.tld.as_ptr()).then_some(theap)
 }
 
-/// Whether an OS page still names a Theap retained after its process-main
-/// Heap was deleted. The page's Heap field may already name freed memory;
-/// this classification follows only the live retained Theap registry.
-/// `None` means the registry lock was unavailable and callers must not try
-/// another Heap classification from the same raw page identity.
-///
-/// # Safety
-/// `page` is held live by one exact allocation observation for this call.
-pub(crate) unsafe fn retained_deleted_heap_os_page(page: NonNull<Page>) -> Option<bool> {
-    // SAFETY: the held allocation keeps the immutable OS provenance and raw
-    // Theap identity stable. The latter is compared by value only.
-    if !unsafe { Page::is_os_backed_at(page) } {
-        return Some(false);
-    }
-    let source_theap = unsafe { Page::theap_at(page) };
-    if source_theap.is_null() {
-        return Some(false);
-    }
-    let retained = &RETAINED_DELETED_HEAP_THEAPS;
-    let guard = retained.lock.lock().ok()?;
-    // SAFETY: the lock protects every link, and each image owns its extra
-    // reference until it is removed from this list.
-    let mut image = unsafe { *retained.head.get() };
-    while !image.is_null() {
-        if image == source_theap {
-            drop(guard);
-            return Some(true);
-        }
-        image = unsafe { retained_deleted_next(NonNull::new_unchecked(image)) };
-    }
-    drop(guard);
-    Some(false)
-}
-
-/// Frees a source-local OS block whose Heap has already left the public Heap
-/// list, using the separately retained Theap queue instead of a stale Heap
-/// or TLD pointer. `None` means the page has no such retained owner.
-///
-/// # Safety
-/// `allocation` is one exact live block associated with `current`, and the
-/// caller has admitted the native operation. No concurrent local owner may
-/// change this page's ordinary fields during the free.
-pub(crate) unsafe fn native_free_deleted_heap_local(
-    allocation: &mut Option<crate::process_page_map::LiveAllocationPointer>,
-    current: LiveThreadId,
-) -> Option<NativePageFreeResult> {
-    let page = allocation.as_ref()?.page();
-    // SAFETY: the held live allocation keeps the page metadata initialized;
-    // this raw pointer value is compared with retained owners, never followed.
-    let source_theap = unsafe { Page::theap_at(page) };
-    let retained = &RETAINED_DELETED_HEAP_THEAPS;
-    let guard = match retained.lock.lock() {
-        Ok(guard) => guard,
-        Err(_) => return Some(NativePageFreeResult::Retained),
-    };
-    // SAFETY: the held lock protects each list link. Every listed image owns
-    // an additional Theap reference until it is unlinked.
-    let mut image = unsafe { *retained.head.get() };
-    while !image.is_null() && image != source_theap {
-        image = unsafe { retained_deleted_next(NonNull::new_unchecked(image)) };
-    }
-    drop(guard);
-    let theap = NonNull::new(image.cast::<Theap>())?;
-    let allocation = allocation.take()?;
-    let Some(thread) = current_main_thread() else { return Some(NativePageFreeResult::Retained) };
-    if thread.thread != current {
-        return Some(NativePageFreeResult::Retained);
-    }
-    let Some(binding) = binding() else { return Some(NativePageFreeResult::Retained) };
-    let Ok(page_map) = (unsafe { binding.page_map().page_map_for_owned_ranges() }) else {
-        return Some(NativePageFreeResult::Retained);
-    };
-    let session = match unsafe {
-        crate::single_thread::SourceRetainedTheapSession::from_deleted_heap_local_allocation(
-            &allocation, current, theap, thread.sequence.get(),
-        )
-    } {
-        Ok(session) => session,
-        Err(_) => return Some(NativePageFreeResult::Retained),
-    };
-    let backing = crate::page_backing::RuntimeFirstRegularPageBacking::source_registry(binding.process(), thread.numa_node);
-    // SAFETY: the registry's ref keeps the exact Theap and queue mapped;
-    // the held allocation proves the page, block, and local thread identity.
-    let Some(mut engine) = (unsafe {
-        crate::single_thread::PageAllocatorEngine::activate_source_retained_local_free(
-            session, backing, ArenaId::none(), page_map,
-        )
-    }) else { return Some(NativePageFreeResult::Retained) };
-    // SAFETY: the retained list reference keeps this queue image live through
-    // the local free and forced retirement. Arena pages may leave too; only
-    // OS pages consume the deleted-Heap claim.
-    let Some(os_pages_before) = (unsafe { local_os_page_count(theap) }) else {
-        return Some(NativePageFreeResult::Retained);
-    };
-    // SAFETY: the session owns the page's ordinary local fields for this
-    // exact current block and the caller consumes it once.
-    let freed = unsafe { engine.free_captured_live_allocation(allocation) }.is_ok();
-    let retired = freed && engine.collect_deleted_heap_retired_pages();
-    let finished = engine.finish_source_retained_local_free().is_ok();
-    if !(freed && retired && finished) {
-        return Some(NativePageFreeResult::Retained);
-    }
-    let Some(os_pages_after) = (unsafe { local_os_page_count(theap) }) else {
-        return Some(NativePageFreeResult::Retained);
-    };
-    let Some(released_pages) = os_pages_before.checked_sub(os_pages_after) else {
-        return Some(NativePageFreeResult::Retained);
-    };
-    if !release_retained_deleted_os_pages(theap, released_pages, os_pages_after) {
-        return Some(NativePageFreeResult::Retained);
-    }
-    Some(NativePageFreeResult::Freed)
-}
-
-fn release_retained_deleted_os_pages(theap: NonNull<Theap>, _released_pages: usize, remaining_pages: usize) -> bool {
-    let retained = &RETAINED_DELETED_HEAP_THEAPS;
-    let Ok(guard) = retained.lock.lock() else { return false };
-    // SAFETY: the lock protects the intrusive list and this image's extra
-    // reference; no queue remains when the caller enters this removal.
-    let mut previous = core::ptr::null_mut::<Theap>();
-    let mut current = unsafe { *retained.head.get() };
-    while !current.is_null() && current.cast::<Theap>() != theap.as_ptr() {
-        previous = current;
-        current = unsafe { retained_deleted_next(NonNull::new_unchecked(current)) };
-    }
-    if current.is_null() {
-        drop(guard);
-        return false;
-    }
-    // The successful local free already counted the exact quiescent source
-    // queues. Keeping another count in an allocation tail would enlarge the
-    // source request and duplicate the queues' ownership state.
-    #[cfg(target_arch = "x86_64")]
-    let remaining = remaining_pages;
-    #[cfg(not(target_arch = "x86_64"))]
-    let remaining = {
-        let image = current.cast::<MainHeapTheapImage>();
-        let Some(remaining) = (unsafe { (*image).retained_deleted_os_pages }).checked_sub(_released_pages) else {
-            drop(guard);
-            return false;
-        };
-        unsafe { (*image).retained_deleted_os_pages = remaining; }
-        remaining
-    };
-    if remaining != 0 {
-        drop(guard);
-        return true;
-    }
-    let next = unsafe { retained_deleted_next(NonNull::new_unchecked(current)) };
-    unsafe {
-        if previous.is_null() { *retained.head.get() = next; }
-        else { set_retained_deleted_next(NonNull::new_unchecked(previous), next); }
-        set_retained_deleted_next(NonNull::new_unchecked(current), core::ptr::null_mut());
-    }
-    drop(guard);
-    // SAFETY: the list reference is consumed exactly once after no page
-    // queue can name this image again.
-    unsafe { theap_decref(theap) };
-    true
-}
-
 /// The native local free of `block` through `theap` (see
 /// [`local_heap_theap_of_page`]).
 ///
@@ -2071,24 +1772,19 @@ pub(crate) unsafe fn native_heap_release(heap: NonNull<Heap>, destroy: bool) -> 
     }
     let main_subprocess = MainSubprocess::global();
     let main_heap = NonNull::new(main_subprocess.ready_main_heap_pointer()).ok_or(HeapReleaseError::InvalidChild)?;
-    let mut retained_os_pages = true;
-    // `mi_heap_free_theaps`.
-    // SAFETY: the Heap and its Theaps are live.
+    let binding = binding().ok_or(HeapReleaseError::InvalidChild)?;
+    let backing = crate::page_backing::RuntimeFirstRegularPageBacking::source_registry(binding.process(), thread.numa_node);
+    let page_map = unsafe { binding.page_map().page_map_for_owned_ranges() }.map_err(|_| HeapReleaseError::Retained)?;
     unsafe {
         heap.as_ref().detach_and_take_theaps(main_subprocess.identity(), |theap| {
-            // SAFETY: the detached Theap still has its Heap-list reference,
-            // and no caller may mutate this Heap's pages during deletion.
-            if !destroy {
-                retained_os_pages &= unsafe { retain_deleted_theap_if_needed(theap) };
-            }
+            crate::single_thread::abandon_retiring_heap_theap(theap, heap, page_map, &backing)
+        }, |theap| {
             heap.as_ref().merge_detached_theap_statistics(theap.as_ref());
             theap_decref(theap);
         })
     }
     .map_err(HeapReleaseError::List)?;
-    if !retained_os_pages {
-        return Err(HeapReleaseError::Retained);
-    }
+    unsafe { crate::types::heap_registry::lifecycle::retire_heap_thread_local_key(heap) }?;
     let target = if destroy {
         None
     } else {
@@ -2096,10 +1792,6 @@ pub(crate) unsafe fn native_heap_release(heap: NonNull<Heap>, destroy: bool) -> 
         let theap = heap_theap(thread, main_heap).ok_or(HeapReleaseError::Retained)?;
         Some(crate::single_thread::NonMainHeapPageTarget { heap: main_heap, theap })
     };
-    let binding = binding().ok_or(HeapReleaseError::InvalidChild)?;
-    let backing = crate::page_backing::RuntimeFirstRegularPageBacking::source_registry(binding.process(), thread.numa_node);
-    // SAFETY: the detached Heap's pages are owned by this operation.
-    let page_map = unsafe { binding.page_map().page_map_for_owned_ranges() }.map_err(|_| HeapReleaseError::Retained)?;
     // SAFETY: every Theap of the Heap is detached above.
     let moved = unsafe {
         crate::single_thread::delete_non_main_heap_pages(
@@ -2189,6 +1881,8 @@ pub(crate) unsafe fn destroy_all_terminal() -> bool {
         // SAFETY: the Heap and its Theaps are live; no thread runs on them.
         let detached = unsafe {
             heap.as_ref().detach_and_take_theaps(identity, |theap| {
+                crate::single_thread::abandon_retiring_heap_theap(theap, heap, page_map, &backing)
+            }, |theap| {
                 heap.as_ref().merge_detached_theap_statistics(theap.as_ref());
                 theap_decref(theap);
             })
@@ -2196,6 +1890,7 @@ pub(crate) unsafe fn destroy_all_terminal() -> bool {
         // `_mi_heap_destroy_pages`.
         // SAFETY: every Theap of the Heap is detached above.
         if detached.is_err()
+            || unsafe { crate::types::heap_registry::lifecycle::retire_heap_thread_local_key(heap) }.is_err()
             || !unsafe {
                 crate::single_thread::delete_non_main_heap_pages(
                     heap, None, main_subprocess.arena_backing().registry(), page_map, &backing,
@@ -3865,6 +3560,106 @@ pub(crate) mod tests {
         );
     }
 
+    #[cfg(all(target_arch = "x86_64", not(miri)))]
+    #[test]
+    fn delete_abandoned_os_page_retires_final_free_published_during_move() {
+        crate::test_process::run_in_fresh_process(
+            "subproc::main_heaps::tests::delete_abandoned_os_page_retires_final_free_published_during_move",
+            || {
+                assert!(crate::runtime_lifecycle::test_initialize_process_from_host_environment(4096, unsafe {
+                    crate::__crabc_runtime::RuntimeStderrOutput::new(no_output)
+                }));
+                assert!(crate::runtime_lifecycle::prepare_native_later_thread_arena());
+                crate::source_options_api::option_set(crate::config::SourceOption::ArenaReserve as i32, 0);
+                crate::source_options_api::option_set(crate::config::SourceOption::DisallowArenaAlloc as i32, 1);
+                let heap = native_heap_new().unwrap();
+                let address = heap.as_ptr().addr();
+                let worker = std::thread::spawn(move || {
+                    let descriptor = crate::__crabc_runtime::current_native_allocator_thread_descriptor();
+                    assert!(unsafe { crate::__crabc_runtime::register_current_native_allocator_worker_descriptor(descriptor) });
+                    assert_eq!(crate::runtime_lifecycle::attach_current_thread(), crate::runtime_lifecycle::ThreadAttachResult::Attached);
+                    let heap = NonNull::new(address as *mut Heap).unwrap();
+                    let block = unsafe { native_heap_allocate(heap, 81, Some((128, 11)), true) }.unwrap();
+                    let address = block.as_ptr().addr();
+                    assert_eq!(crate::runtime_lifecycle::finish_current_thread_native_after_user_destructors(), crate::runtime_lifecycle::ThreadFinishResult::Finished);
+                    address
+                });
+                let block = NonNull::new(worker.join().unwrap() as *mut u8).unwrap();
+                let binding = binding().unwrap();
+                let page = unsafe { binding.page_map().lookup_live_allocation(block) }.unwrap().unwrap().page();
+                assert_eq!(unsafe { Heap::os_abandoned_head_at(heap) }, page.as_ptr());
+                unsafe { crate::abandoned::test_inject_abandoned_client_free_before_unown(page, block) };
+                assert_eq!(unsafe { native_heap_release(heap, false) }, Ok(HeapReleaseOutcome::Released));
+                assert!(unsafe { binding.page_map().lookup_registered_page(block.as_ptr()) }.unwrap().is_none());
+            },
+        );
+    }
+
+    #[cfg(all(target_arch = "x86_64", not(miri)))]
+    #[test]
+    fn delete_attached_worker_full_os_page_collects_remote_free_and_moves_survivors() {
+        crate::test_process::run_in_fresh_process(
+            "subproc::main_heaps::tests::delete_attached_worker_full_os_page_collects_remote_free_and_moves_survivors",
+            || {
+                assert!(crate::runtime_lifecycle::test_initialize_process_from_host_environment(4096, unsafe {
+                    crate::__crabc_runtime::RuntimeStderrOutput::new(no_output)
+                }));
+                assert!(crate::runtime_lifecycle::prepare_native_later_thread_arena());
+                crate::source_options_api::option_set(crate::config::SourceOption::ArenaReserve as i32, 0);
+                crate::source_options_api::option_set(crate::config::SourceOption::DisallowArenaAlloc as i32, 1);
+                crate::source_options_api::option_set(crate::config::SourceOption::PageFullRetain as i32, -1);
+                let heap = native_heap_new().unwrap();
+                let heap_address = heap.as_ptr().addr();
+                let (ready_tx, ready_rx) = std::sync::mpsc::sync_channel(0);
+                let (resume_tx, resume_rx) = std::sync::mpsc::sync_channel(0);
+                let worker = std::thread::spawn(move || {
+                    let descriptor = crate::__crabc_runtime::current_native_allocator_thread_descriptor();
+                    assert!(unsafe { crate::__crabc_runtime::register_current_native_allocator_worker_descriptor(descriptor) });
+                    assert_eq!(crate::runtime_lifecycle::attach_current_thread(), crate::runtime_lifecycle::ThreadAttachResult::Attached);
+                    let heap = NonNull::new(heap_address as *mut Heap).unwrap();
+                    let request = crate::config::SMALL_MAX_OBJ_SIZE + 1;
+                    let first = unsafe { native_heap_allocate(heap, request, None, false) }.unwrap();
+                    let page = unsafe { binding().unwrap().page_map().lookup_live_allocation(first) }.unwrap().unwrap().page();
+                    assert!(unsafe { Page::is_os_backed_at(page) });
+                    let reserved = usize::from(unsafe { page.as_ref() }.reserved());
+                    assert!(reserved > 2);
+                    let mut blocks = Vec::with_capacity(reserved + 1);
+                    blocks.push(first.as_ptr().addr());
+                    for _ in 1..reserved {
+                        let block = unsafe { native_heap_allocate(heap, request, None, false) }.unwrap();
+                        assert_eq!(unsafe { binding().unwrap().page_map().lookup_live_allocation(block) }.unwrap().unwrap().page(), page);
+                        unsafe { block.as_ptr().write_bytes(0x5a, 80) };
+                        blocks.push(block.as_ptr().addr());
+                    }
+                    let extra = unsafe { native_heap_allocate(heap, request, None, false) }.unwrap();
+                    unsafe { extra.as_ptr().write_bytes(0x5a, 80) };
+                    blocks.push(extra.as_ptr().addr());
+                    assert!(crate::types::page_queue::page_is_in_full(unsafe { page.as_ref() }));
+                    ready_tx.send(blocks).unwrap();
+                    resume_rx.recv().unwrap();
+                    assert_eq!(crate::runtime_lifecycle::finish_current_thread_native_after_user_destructors(), crate::runtime_lifecycle::ThreadFinishResult::Finished);
+                });
+                let blocks = ready_rx.recv().unwrap();
+                let remote = NonNull::new(blocks[0] as *mut u8).unwrap();
+                assert_eq!(unsafe { native_free(remote) }, NativePageFreeResult::Freed);
+                assert_eq!(unsafe { native_heap_release(heap, false) }, Ok(HeapReleaseOutcome::Released));
+                let main = MainSubprocess::global().ready_main_heap_pointer();
+                for &address in &blocks[1..] {
+                    let block = NonNull::new(address as *mut u8).unwrap();
+                    let page = unsafe { binding().unwrap().page_map().lookup_live_allocation(block) }.unwrap().unwrap().page();
+                    assert_eq!(unsafe { Page::heap_identity_at(page) }, main);
+                    assert_eq!(unsafe { block.as_ptr().read() }, 0x5a);
+                    assert_eq!(unsafe { block.as_ptr().add(79).read() }, 0x5a);
+                }
+                resume_tx.send(()).unwrap();
+                worker.join().unwrap();
+                for &address in &blocks[1..] {
+                    assert_eq!(unsafe { native_free(NonNull::new(address as *mut u8).unwrap()) }, NativePageFreeResult::Freed);
+                }
+            },
+        );
+    }
+
     use std::vec::Vec;
 
     unsafe extern "C" fn no_output(_: *const core::ffi::c_char) {}
@@ -3911,9 +3706,6 @@ pub(crate) mod tests {
                 ) };
                 assert!(state.completed);
                 crate::source_options_api::option_set(crate::config::SourceOption::ArenaReserve as i32, 0);
-                // Exclude this Heap's existing arena for the new regular OS
-                // page. A huge OS singleton would instead join the abandoned
-                // list and move to the main Heap during deletion.
                 crate::source_options_api::option_set(crate::config::SourceOption::DisallowArenaAlloc as i32, 1);
                 let os = unsafe { native_heap_allocate(heap, 81, Some((128, 11)), true) }.expect("an OS block");
                 let os_page = page_of(os);
@@ -3924,10 +3716,7 @@ pub(crate) mod tests {
                 assert_eq!(unsafe { native_heap_release(heap, false) }, Ok(HeapReleaseOutcome::Released));
                 assert_eq!(unsafe { Page::heap_identity_at(regular_page) }, MainSubprocess::global().ready_main_heap_pointer());
                 assert_eq!(unsafe { heap_of_page(regular_page) }, None);
-                assert_eq!(unsafe { Page::heap_identity_at(os_page) }, heap.as_ptr());
-                assert_eq!(retained_deleted_heap_owner_count_for_test(), Some(1));
-                // The stale OS Heap address is never projected, even while
-                // another source visitor holds the subprocess Heap-list lock.
+                assert_eq!(unsafe { Page::heap_identity_at(os_page) }, MainSubprocess::global().ready_main_heap_pointer());
                 MainSubprocess::global().identity().heap_list().visit_heaps(|_| {
                     assert_eq!(unsafe { heap_of_page(os_page) }, None);
                     assert_eq!(unsafe { local_heap_theap_of_page(os_page) }, None);
@@ -3935,7 +3724,6 @@ pub(crate) mod tests {
                 }).unwrap();
                 assert_eq!(unsafe { native_free(regular) }, NativePageFreeResult::Freed);
                 assert_eq!(unsafe { native_free(os) }, NativePageFreeResult::Freed);
-                assert_eq!(retained_deleted_heap_owner_count_for_test(), Some(0));
             },
         );
     }
@@ -4174,60 +3962,74 @@ pub(crate) mod tests {
     #[cfg(all(target_arch = "x86_64", not(miri)))]
     #[test]
     fn destroy_shared_heap_reuse_address_rejects_cached_theap() {
+        shared_heap_reuse_rejects_stale_cached_theap(
+            true,
+            "subproc::main_heaps::tests::destroy_shared_heap_reuse_address_rejects_cached_theap",
+        );
+    }
+
+    #[cfg(all(target_arch = "x86_64", not(miri)))]
+    #[test]
+    fn delete_shared_heap_reuse_address_rejects_cached_theap() {
+        shared_heap_reuse_rejects_stale_cached_theap(
+            false,
+            "subproc::main_heaps::tests::delete_shared_heap_reuse_address_rejects_cached_theap",
+        );
+    }
+
+    #[cfg(all(target_arch = "x86_64", not(miri)))]
+    fn shared_heap_reuse_rejects_stale_cached_theap(destroy: bool, test_name: &'static str) {
         use crate::runtime_lifecycle::{
             attach_current_thread, finish_current_thread_native_after_user_destructors,
             ThreadAttachResult, ThreadFinishResult,
         };
-        crate::test_process::run_in_fresh_process(
-            "subproc::main_heaps::tests::destroy_shared_heap_reuse_address_rejects_cached_theap",
-            || {
-                assert!(crate::runtime_lifecycle::test_initialize_process_from_host_environment(4096, unsafe {
-                    crate::__crabc_runtime::RuntimeStderrOutput::new(no_output)
-                }));
-                assert!(crate::runtime_lifecycle::prepare_native_later_thread_arena());
-                let heap = native_heap_new().expect("the original shared Heap");
-                let heap_address = heap.as_ptr().addr();
-                let (ready_tx, ready_rx) = std::sync::mpsc::sync_channel(0);
-                let (resume_tx, resume_rx) = std::sync::mpsc::sync_channel(0);
-                let worker = std::thread::spawn(move || {
-                    let descriptor = crate::__crabc_runtime::current_native_allocator_thread_descriptor();
-                    assert!(unsafe {
-                        crate::__crabc_runtime::register_current_native_allocator_worker_descriptor(descriptor)
-                    });
-                    assert_eq!(attach_current_thread(), ThreadAttachResult::Attached);
-                    let old_heap = NonNull::new(heap_address as *mut Heap).unwrap();
-                    for _ in 0..2 {
-                        let block = unsafe { native_heap_allocate(old_heap, 64, None, false) }
-                            .expect("the worker allocates on the original Heap");
-                        assert_eq!(unsafe { native_free(block) }, NativePageFreeResult::Freed);
-                    }
-                    let thread = current_main_thread().expect("the worker owns a TLD");
-                    let cached_before_lookup = cached_theap();
-                    let old_theap = heap_theap(thread, old_heap).expect("the original Heap Theap");
-                    assert_eq!(cached_before_lookup, old_theap);
-                    assert_eq!(unsafe { Theap::heap_at(old_theap) }, old_heap.as_ptr());
-                    ready_tx.send(()).unwrap();
-                    let reused_heap_address = resume_rx.recv().unwrap();
-                    let reused_heap = NonNull::new(reused_heap_address as *mut Heap).unwrap();
-                    assert!(unsafe { Theap::heap_at(old_theap) }.is_null());
-                    let selected = heap_theap(thread, reused_heap).expect("the reused Heap Theap");
-                    assert_ne!(selected, old_theap);
-                    assert_eq!(unsafe { Theap::heap_at(selected) }, reused_heap.as_ptr());
-                    let block = unsafe { native_heap_allocate(reused_heap, 64, None, false) }
-                        .expect("the worker allocates on the reused Heap");
-                    assert_eq!(unsafe { heap_of_block(block) }, Some(reused_heap));
-                    assert_eq!(unsafe { native_free(block) }, NativePageFreeResult::Freed);
-                    assert_eq!(finish_current_thread_native_after_user_destructors(), ThreadFinishResult::Finished);
+        crate::test_process::run_in_fresh_process(test_name, || {
+            assert!(crate::runtime_lifecycle::test_initialize_process_from_host_environment(4096, unsafe {
+                crate::__crabc_runtime::RuntimeStderrOutput::new(no_output)
+            }));
+            assert!(crate::runtime_lifecycle::prepare_native_later_thread_arena());
+            let heap = native_heap_new().expect("the original shared Heap");
+            let heap_address = heap.as_ptr().addr();
+            let (ready_tx, ready_rx) = std::sync::mpsc::sync_channel(0);
+            let (resume_tx, resume_rx) = std::sync::mpsc::sync_channel(0);
+            let worker = std::thread::spawn(move || {
+                let descriptor = crate::__crabc_runtime::current_native_allocator_thread_descriptor();
+                assert!(unsafe {
+                    crate::__crabc_runtime::register_current_native_allocator_worker_descriptor(descriptor)
                 });
-                ready_rx.recv().unwrap();
-                assert_eq!(unsafe { native_heap_release(heap, true) }, Ok(HeapReleaseOutcome::Released));
-                let reused_heap = native_heap_new().expect("a Heap reusing the released image");
-                assert_eq!(reused_heap.as_ptr().addr(), heap_address);
-                resume_tx.send(reused_heap.as_ptr().addr()).unwrap();
-                worker.join().expect("the worker allocates after address reuse");
-                assert_eq!(unsafe { native_heap_release(reused_heap, true) }, Ok(HeapReleaseOutcome::Released));
-            },
-        );
+                assert_eq!(attach_current_thread(), ThreadAttachResult::Attached);
+                let old_heap = NonNull::new(heap_address as *mut Heap).unwrap();
+                for _ in 0..2 {
+                    let block = unsafe { native_heap_allocate(old_heap, 64, None, false) }
+                        .expect("the worker allocates on the original Heap");
+                    assert_eq!(unsafe { native_free(block) }, NativePageFreeResult::Freed);
+                }
+                let thread = current_main_thread().expect("the worker owns a TLD");
+                let cached_before_lookup = cached_theap();
+                let old_theap = heap_theap(thread, old_heap).expect("the original Heap Theap");
+                assert_eq!(cached_before_lookup, old_theap);
+                assert_eq!(unsafe { Theap::heap_at(old_theap) }, old_heap.as_ptr());
+                ready_tx.send(()).unwrap();
+                let reused_heap_address = resume_rx.recv().unwrap();
+                let reused_heap = NonNull::new(reused_heap_address as *mut Heap).unwrap();
+                assert!(unsafe { Theap::heap_at(old_theap) }.is_null());
+                let selected = heap_theap(thread, reused_heap).expect("the reused Heap Theap");
+                assert_ne!(selected, old_theap);
+                assert_eq!(unsafe { Theap::heap_at(selected) }, reused_heap.as_ptr());
+                let block = unsafe { native_heap_allocate(reused_heap, 64, None, false) }
+                    .expect("the worker allocates on the reused Heap");
+                assert_eq!(unsafe { heap_of_block(block) }, Some(reused_heap));
+                assert_eq!(unsafe { native_free(block) }, NativePageFreeResult::Freed);
+                assert_eq!(finish_current_thread_native_after_user_destructors(), ThreadFinishResult::Finished);
+            });
+            ready_rx.recv().unwrap();
+            assert_eq!(unsafe { native_heap_release(heap, destroy) }, Ok(HeapReleaseOutcome::Released));
+            let reused_heap = native_heap_new().expect("a Heap reusing the released image");
+            assert_eq!(reused_heap.as_ptr().addr(), heap_address);
+            resume_tx.send(reused_heap.as_ptr().addr()).unwrap();
+            worker.join().expect("the worker allocates after address reuse");
+            assert_eq!(unsafe { native_heap_release(reused_heap, true) }, Ok(HeapReleaseOutcome::Released));
+        });
     }
 
     /// `_mi_heap_theap_set` can fail while growing regular thread-local

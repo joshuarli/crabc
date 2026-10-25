@@ -14085,22 +14085,6 @@ unsafe fn native_free_pointer_first(
             RUNTIME_PROCESS.retain_page_owner();
             return NativePageFreeResult::Retained;
         }
-        // A deleted Heap can leave an OS-backed page associated with this
-        // thread even though its Heap and ordinary Theap roots are gone.
-        // Compare its raw Theap identity with the retained queue owner
-        // before any ordinary path can follow that stale page pointer.
-        let mut held = Some(allocation);
-        // SAFETY: the held PageMap observation proves the exact live block
-        // and its source-local thread identity for this one operation.
-        if let Some(result) = unsafe {
-            crate::subproc::main_heaps::native_free_deleted_heap_local(&mut held, current)
-        } {
-            if result == NativePageFreeResult::Retained {
-                RUNTIME_PROCESS.retain_page_owner();
-            }
-            return result;
-        }
-        let allocation = held.expect("an unmatched retained Heap leaves its allocation untouched");
         // A page of this thread's Theap for a non-main Heap of the process
         // main subprocess is freed through that Theap's own engine.
         // SAFETY: the observation associated the page with this thread.
@@ -14324,10 +14308,6 @@ unsafe fn record_uninitialized_nonlocal_free_statistics(
 fn native_free_pointer_first_nonlocal(
     allocation: LiveAllocationPointer,
 ) -> NativePageFreeResult {
-    // The process-main Heap is never deleted while a native allocation is
-    // live. Its exact page identity needs neither the linked Heap registry
-    // nor the retained deleted-Heap and child-subprocess classifications.
-    // A null process-main pointer cannot classify an unowned page as main.
     let main_heap = crate::subproc::MainSubprocess::global().ready_main_heap_pointer();
     // SAFETY: the held exact-live allocation keeps its page metadata alive;
     // this reads only the raw, immutable Heap identity.
@@ -14345,15 +14325,8 @@ fn native_free_pointer_first_nonlocal(
             return unsafe { crate::subproc::main_heaps::native_free_nonlocal(heap, allocation) };
         }
     }
-    let deleted_main_os_page = if process_main_page {
-        false
-    } else {
-        // A page of a non-main Heap of the process main subprocess takes the
-        // Heap-owned route with the process registry.
-        // SAFETY: the exact live allocation retains its stable page identity.
-        // Deleted OS owners are excluded before immutable Heap fields are read.
+    if !process_main_page {
         if let Some(heap) = unsafe { crate::subproc::main_heaps::heap_of_page(allocation.page()) } {
-            // SAFETY: forwarded exact-live-allocation contract.
             #[cfg(feature = "mi-stat-1")]
             if !unsafe { record_uninitialized_nonlocal_free_statistics(&allocation, crate::subproc::SubprocessIdentity::global()) } {
                 RUNTIME_PROCESS.retain_page_owner();
@@ -14361,28 +14334,8 @@ fn native_free_pointer_first_nonlocal(
             }
             return unsafe { crate::subproc::main_heaps::native_free_nonlocal(heap, allocation) };
         }
-        // A deleted process-main Heap can leave an OS page carrying its freed
-        // Heap address. Its retained Theap proves the process-main owner without
-        // following that stale address in the child-Heap classification below.
-        match unsafe {
-            crate::subproc::main_heaps::retained_deleted_heap_os_page(allocation.page())
-        } {
-            Some(matched) => matched,
-            None => {
-                RUNTIME_PROCESS.retain_page_owner();
-                return NativePageFreeResult::Retained;
-            }
-        }
-    };
-    // A page of a child subprocess takes that child's own `mi_free_block_mt`
-    // route: its abandoned pages belong to the child main Heap and arenas,
-    // never to the process-main remote-free tail below.
-    // SAFETY: the retained deleted process-main Theap has already been
-    // excluded, and the exact live allocation holds the remaining page.
-    let child_identity = if deleted_main_os_page { None } else {
-        // SAFETY: the exact allocation retains its live Heap and subprocess.
-        unsafe { crate::types::Heap::child_heap_of_page(allocation.page()) }.map(|(_, identity)| identity)
-    };
+    }
+    let child_identity = unsafe { crate::types::Heap::child_heap_of_page(allocation.page()) }.map(|(_, identity)| identity);
     if let Some(identity) = child_identity {
         #[cfg(feature = "mi-stat-1")]
         if !unsafe { record_uninitialized_nonlocal_free_statistics(&allocation, identity.as_ref()) } {
@@ -14715,7 +14668,7 @@ pub(crate) unsafe fn with_native_allocation_owner<R>(
 /// Theap or Page reference or owner lock survives entry. The callback cannot
 /// delete that Heap, finish that member, or consume an in-flight client whose
 /// lifetime supplies the operation's span. Nested ordinary allocation is
-/// permitted. A deleted Heap's retained Page does not satisfy this contract.
+/// permitted.
 #[cfg(target_arch = "x86_64")]
 pub(crate) unsafe fn with_native_heap_callback_owner<R>(
     heap: core::ptr::NonNull<crate::types::Heap>,
@@ -14758,17 +14711,7 @@ unsafe fn unguard_native_live_client(block: core::ptr::NonNull<u8>) -> Option<()
     }
     let page_size = map.memory_config().ok()?.page_size().bytes();
     let tail = allocation.guarded_tail_page(page_size)?;
-    // A deleted main Heap can leave an OS Page and retained Theap alive.
-    // Classify that actual retained registry before following Page.heap.
-    // SAFETY: the exact client keeps the Page and its immutable identities live.
-    let deleted_main = unsafe {
-        crate::subproc::main_heaps::retained_deleted_heap_os_page(allocation.page())
-    }?;
-    let heap = if deleted_main { None } else {
-        // SAFETY: the preceding retained-deleted classification excludes the
-        // stale main-Heap field; the live client retains its remaining owner.
-        core::ptr::NonNull::new(unsafe { crate::types::Page::heap_identity_at(allocation.page()) })
-    };
+    let heap = core::ptr::NonNull::new(unsafe { crate::types::Page::heap_identity_at(allocation.page()) });
     drop(allocation);
     let remove = |process: crate::os::VmProcess<'_>| {
         // SAFETY: the original block provenance supplied this complete tail
@@ -14778,13 +14721,7 @@ unsafe fn unguard_native_live_client(block: core::ptr::NonNull<u8>) -> Option<()
             tail.as_ptr(), page_size, false, process,
         ) };
     };
-    if deleted_main {
-        Some(remove(RUNTIME_PROCESS.active_vm_process()?))
-    } else {
-        // SAFETY: the live owner and ended-projection contract above hold;
-        // child admission failure leaves protection and the client unchanged.
-        unsafe { with_native_heap_callback_owner(heap?, remove) }
-    }
+    unsafe { with_native_heap_callback_owner(heap?, remove) }
 }
 
 /// Frees one captured local metadata client through its original process-main

@@ -1367,13 +1367,12 @@ mod heap_membership_tests {
                 let page = unsafe { binding.page_map().lookup_registered_page(block.as_ptr()) }
                     .expect("a readable map").expect("a registered page");
                 let page_theap = unsafe { Page::theap_at(page) };
-                assert_eq!(unsafe { heap_of(block.as_ptr()) }, heap.as_ptr().cast());
+                assert_eq!(unsafe { heap_of(block.as_ptr()) }, heap_main());
                 assert!(!page_theap.is_null());
-                assert_eq!(crate::subproc::main_heaps::retained_deleted_heap_owner_count_for_test(), Some(1));
+                assert_eq!(unsafe { page.as_ref() }.abandoned_test_thread_id(), crate::types::THREAD_ID_ABANDONED);
                 // SAFETY: deleting the Heap retains this exact live block
                 // and its page registration until the caller frees it.
                 assert_eq!(unsafe { native_free(block) }, NativePageFreeResult::Freed);
-                assert_eq!(crate::subproc::main_heaps::retained_deleted_heap_owner_count_for_test(), Some(0));
                 // The final retired OS page has left the process PageMap;
                 // this lookup only probes its former address and dereferences nothing.
                 assert!(unsafe { binding.page_map().lookup_registered_page(block.as_ptr()) }
@@ -1384,9 +1383,9 @@ mod heap_membership_tests {
 
     #[cfg(all(target_arch = "x86_64", not(miri)))]
     #[test]
-    fn deleted_heap_keeps_theap_until_last_os_page_retires() {
+    fn deleted_heap_moves_both_os_pages_to_main() {
         crate::test_process::run_in_fresh_process(
-            "source_heap_api::heap_membership_tests::deleted_heap_keeps_theap_until_last_os_page_retires",
+            "source_heap_api::heap_membership_tests::deleted_heap_moves_both_os_pages_to_main",
             || {
                 assert!(crate::runtime_lifecycle::test_initialize_process_from_host_environment(4096, unsafe {
                     crate::__crabc_runtime::RuntimeStderrOutput::new(no_output)
@@ -1412,15 +1411,14 @@ mod heap_membership_tests {
                 assert!(unsafe { last_page.as_ref() }.memid().is_os());
                 // SAFETY: this thread excludes concurrent Heap use.
                 assert_eq!(unsafe { native_heap_release(heap, false) }, Ok(HeapReleaseOutcome::Released));
-                assert_eq!(crate::subproc::main_heaps::retained_deleted_heap_owner_count_for_test(), Some(1));
+                assert_eq!(unsafe { Page::heap_identity_at(first_page) }.cast(), heap_main());
+                assert_eq!(unsafe { Page::heap_identity_at(last_page) }.cast(), heap_main());
                 // SAFETY: each exact live block is returned once, with no
                 // competing owner of either ordinary page queue.
                 assert_eq!(unsafe { native_free(first) }, NativePageFreeResult::Freed);
-                assert_eq!(crate::subproc::main_heaps::retained_deleted_heap_owner_count_for_test(), Some(1));
                 assert!(unsafe { binding.page_map().lookup_registered_page(last.as_ptr()) }
                     .expect("a readable map").is_some());
                 assert_eq!(unsafe { native_free(last) }, NativePageFreeResult::Freed);
-                assert_eq!(crate::subproc::main_heaps::retained_deleted_heap_owner_count_for_test(), Some(0));
             },
         );
     }
@@ -1612,9 +1610,9 @@ mod heap_membership_tests {
 
     #[cfg(all(target_arch = "x86_64", not(miri)))]
     #[test]
-    fn remote_final_free_after_deleted_heap_owner_exit_preserves_page_membership() {
+    fn remote_final_free_after_deleted_heap_owner_exit_retires_moved_page() {
         crate::test_process::run_in_fresh_process(
-            "source_heap_api::heap_membership_tests::remote_final_free_after_deleted_heap_owner_exit_preserves_page_membership",
+            "source_heap_api::heap_membership_tests::remote_final_free_after_deleted_heap_owner_exit_retires_moved_page",
             || {
                 assert!(crate::runtime_lifecycle::test_initialize_process_from_host_environment(4096, unsafe {
                     crate::__crabc_runtime::RuntimeStderrOutput::new(no_output)
@@ -1649,7 +1647,7 @@ mod heap_membership_tests {
                     // the sole holder of the exact live block, and it frees
                     // it once through the page's remote atomic list.
                     assert_eq!(unsafe { native_free(block) }, NativePageFreeResult::Freed);
-                    assert!(unsafe { is_in_heap_region(block.as_ptr()) });
+                    assert!(!unsafe { is_in_heap_region(block.as_ptr()) });
                     assert_eq!(finish_current_thread_native_after_user_destructors(), ThreadFinishResult::NotAttached);
                 });
                 let address = receiver.recv().expect("the deleted Heap block");
@@ -1659,10 +1657,7 @@ mod heap_membership_tests {
                 assert!(unsafe { is_in_heap_region(block.as_ptr()) });
                 remote_handoff.send(address).expect("give the remote worker its block");
                 remote.join().expect("the remote free finishes");
-                // Source leaves this detached OS page registered after both
-                // workers have finished and the final client is gone.
-                assert!(unsafe { is_in_heap_region(block.as_ptr()) });
-                assert_eq!(crate::subproc::main_heaps::retained_deleted_heap_owner_count_for_test(), Some(1));
+                assert!(!unsafe { is_in_heap_region(block.as_ptr()) });
             },
         );
     }

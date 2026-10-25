@@ -3594,9 +3594,35 @@ fn unown<M: MappedAbandonedPages + ?Sized>(
         || {
             #[cfg(test)]
             test_publish_owner_exit_remote_free_before_unown(page);
+            #[cfg(test)]
+            test_free_abandoned_client_before_unown(page);
         },
         || {},
     )
+}
+
+#[cfg(test)]
+#[thread_local]
+static mut ABANDONED_LATE_FREE: Option<(NonNull<Page>, NonNull<u8>)> = None;
+
+/// # Safety
+/// The caller transfers one actual live client to this injection. Its Page
+/// remains registered and initialized until the matching unown consumes it.
+/// No other operation may free or access that client after installation.
+#[cfg(test)]
+pub(crate) unsafe fn test_inject_abandoned_client_free_before_unown(page: NonNull<Page>, block: NonNull<u8>) {
+    let slot = unsafe { &mut *core::ptr::addr_of_mut!(ABANDONED_LATE_FREE) };
+    assert!(slot.is_none());
+    *slot = Some((page, block));
+}
+
+#[cfg(test)]
+fn test_free_abandoned_client_before_unown(page: NonNull<Page>) {
+    let slot = unsafe { &mut *core::ptr::addr_of_mut!(ABANDONED_LATE_FREE) };
+    if slot.as_ref().is_some_and(|(expected, _)| *expected == page) {
+        let (_, block) = slot.take().unwrap();
+        assert_eq!(unsafe { crate::runtime_lifecycle::native_free(block) }, crate::runtime_lifecycle::NativePageFreeResult::Freed);
+    }
 }
 
 #[cfg(test)]

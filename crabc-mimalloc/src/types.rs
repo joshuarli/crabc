@@ -8486,11 +8486,6 @@ impl Theap {
         !self.heap.load(core::sync::atomic::Ordering::Relaxed).is_null()
     }
 
-    #[inline]
-    pub(crate) fn heap_identity_is_cleared(&self) -> bool {
-        self.heap.load(Ordering::Acquire).is_null()
-    }
-
     /// # Safety
     /// The exact metadata capability is exclusively retained and no Heap or
     /// TLD list operation can mutate these links concurrently.
@@ -8877,28 +8872,6 @@ impl Theap {
         }
         marker.store(!expected, Ordering::Release);
         RetainedFreshTaskMarkerOutcome::Changed(guard.unlock())
-    }
-
-    /// Reads the source Heap link after it becomes retained-list storage.
-    ///
-    /// # Safety
-    /// Heap detachment has cleared both links and no Heap lifecycle can
-    /// reattach this image. The caller holds the retained-list lock and a live
-    /// source reference; page sessions cannot access or modify this link.
-    #[cfg(target_arch = "x86_64")]
-    pub(crate) unsafe fn main_heap_retained_next_at(theap: NonNull<Self>) -> *mut Self {
-        unsafe { core::ptr::addr_of!((*theap.as_ptr()).hnext).cast::<*mut Self>().read() }
-    }
-
-    /// Writes only the detached link under retained-list ownership.
-    ///
-    /// # Safety
-    /// The same detachment, lifetime, and lock obligations as the read apply.
-    /// A non-null successor has its own retained live source reference. Clear
-    /// this link before releasing the list's reference to this image.
-    #[cfg(target_arch = "x86_64")]
-    pub(crate) unsafe fn set_main_heap_retained_next_at(theap: NonNull<Self>, next: *mut Self) {
-        unsafe { core::ptr::addr_of_mut!((*theap.as_ptr()).hnext).cast::<*mut Self>().write(next) };
     }
 
     #[inline]

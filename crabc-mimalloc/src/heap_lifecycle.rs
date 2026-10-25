@@ -423,6 +423,7 @@ unsafe fn child_heap_release_foreign(
     if child.main_heap_pointer() == Some(heap) {
         return Ok(HeapReleaseOutcome::MainHeapRefused);
     }
+    let (backing, page_map) = unsafe { retiring_child_heap_backing(child, binding) }?;
     let identity = child
         .with_child_image(|image| core::ptr::NonNull::from(image.get_ref().identity()))
         .ok_or(HeapReleaseError::InvalidChild)?;
@@ -430,6 +431,8 @@ unsafe fn child_heap_release_foreign(
     // SAFETY: the Heap's Theap list is stable under the child record lock.
     unsafe {
         heap.as_ref().detach_and_take_theaps(identity.as_ref(), |theap| {
+            crate::single_thread::abandon_retiring_heap_theap(theap, heap, page_map, &backing)
+        }, |theap| {
             heap.as_ref().merge_detached_theap_statistics(theap.as_ref());
             if !Theap::decref_at(theap) {
                 return;
@@ -455,6 +458,7 @@ unsafe fn child_heap_release_foreign(
         })
     }
     .map_err(HeapReleaseError::List)?;
+    unsafe { retire_heap_thread_local_key(heap) }?;
     if !released {
         return Err(HeapReleaseError::Retained);
     }
@@ -605,6 +609,19 @@ unsafe fn free_heap_metadata(
     }
 }
 
+unsafe fn retiring_child_heap_backing(
+    child: &mut ChildMainHeapContextOwner<'_>,
+    binding: ProcessMainBackingBinding,
+) -> Result<(crate::page_backing::ChildMetadataArenaBacking<'static>, &'static crate::page_map::PageMap), HeapReleaseError> {
+    child.with_child_image(|image| {
+        let image = unsafe { core::pin::Pin::new_unchecked(&*core::ptr::from_ref(image.get_ref())) };
+        let process = crate::os::ChildVmProcess::new(binding.process(), image).map_err(|_| HeapReleaseError::Retained)?;
+        let pair = crate::process_arena::ChildProcessPageArenaLease::join(binding.page_map(), process).map_err(|_| HeapReleaseError::Retained)?;
+        let page_map = unsafe { pair.page_map_for_owned_ranges() }.map_err(|_| HeapReleaseError::Retained)?;
+        Ok((crate::page_backing::ChildMetadataArenaBacking::new(pair), page_map))
+    }).ok_or(HeapReleaseError::InvalidChild)?
+}
+
 /// `mi_heap_delete_pages` over the child's arenas; see
 /// `single_thread::delete_non_main_heap_pages`.
 ///
@@ -652,6 +669,7 @@ unsafe fn free_heap_theaps(
     binding: ProcessMainBackingBinding,
     heap: NonNull<Heap>,
 ) -> Result<(), HeapReleaseError> {
+    let (backing, page_map) = unsafe { retiring_child_heap_backing(child, binding) }?;
     let identity = child
         .with_child_image(|image| core::ptr::NonNull::from(image.get_ref().identity()))
         .ok_or(HeapReleaseError::InvalidChild)?;
@@ -661,6 +679,8 @@ unsafe fn free_heap_theaps(
     // excludes other operations on this Heap.
     let detached = unsafe {
         heap.as_ref().detach_and_take_theaps(identity.as_ref(), |theap| {
+            crate::single_thread::abandon_retiring_heap_theap(theap, heap, page_map, &backing)
+        }, |theap| {
             heap.as_ref().merge_detached_theap_statistics(theap.as_ref());
             if let Err(error) = owner.theap_decref(child, binding, theap) {
                 released = Err(error);
@@ -668,12 +688,13 @@ unsafe fn free_heap_theaps(
         })
     };
     detached.map_err(HeapReleaseError::List)?;
+    unsafe { retire_heap_thread_local_key(heap) }?;
     released.map_err(|_| HeapReleaseError::Retained)
 }
 
 /// The shared `mi_heap_free` (`heap.c:185-226`) for a non-main Heap whose
 /// Theaps and pages are gone: its per-arena page records are freed, then
-/// statistics, counts, list, thread-local slot, and image.
+/// statistics, counts, list, and image after thread-local key retirement.
 ///
 /// # Safety
 /// As for [`child_heap_delete`].
@@ -737,6 +758,7 @@ pub(crate) unsafe fn child_heap_force_destroy_for_subprocess_destroy(
     binding: ProcessMainBackingBinding,
     heap: NonNull<Heap>,
 ) -> Result<(), HeapReleaseError> {
+    let (backing, page_map) = unsafe { retiring_child_heap_backing(child, binding) }?;
     let identity = child
         .with_child_image(|image| core::ptr::NonNull::from(image.get_ref().identity()))
         .ok_or(HeapReleaseError::InvalidChild)?;
@@ -744,6 +766,8 @@ pub(crate) unsafe fn child_heap_force_destroy_for_subprocess_destroy(
     // runs on the child.
     unsafe {
         heap.as_ref().detach_and_take_theaps(identity.as_ref(), |theap| {
+            crate::single_thread::abandon_retiring_heap_theap(theap, heap, page_map, &backing)
+        }, |theap| {
             heap.as_ref().merge_detached_theap_statistics(theap.as_ref());
             if crate::types::Theap::decref_at(theap) && !crate::types::Theap::is_detached_at(theap) {
                 identity.as_ref().record_statistics_theap_unlinked();
@@ -751,6 +775,7 @@ pub(crate) unsafe fn child_heap_force_destroy_for_subprocess_destroy(
         })
     }
     .map_err(HeapReleaseError::List)?;
+    unsafe { retire_heap_thread_local_key(heap) }?;
     // SAFETY: the Theaps are detached above.
     unsafe { delete_heap_pages(child, binding, heap, None) }?;
     // SAFETY: the live Heap; its records go with the child arenas.
@@ -816,13 +841,17 @@ pub(crate) unsafe fn initialize_and_link_non_main_heap(
     Ok(heap)
 }
 
-/// Releases a detached Heap's exact key lease before removing its owner.
-/// A refusal keeps the live or terminal lease in the retained Heap image.
-///
 /// # Safety
-/// `image` is the exclusively retained live allocation of a non-main Heap
-/// already removed from every source list, with no Theap, page, or TLS slot
-/// user. No projection of its key field overlaps this operation.
+/// `heap` is an exclusively retained non-main Heap image. Every Theap has
+/// left both source lists, drained its queues and cleared its Heap identity.
+/// No thread uses this Heap or its key. Registered pages remain owned by the
+/// subsequent migration or destruction pass. A failure retains the image.
+pub(crate) unsafe fn retire_heap_thread_local_key(heap: NonNull<Heap>) -> Result<(), HeapReleaseError> {
+    unsafe { release_heap_thread_local_key(heap.cast()) }?;
+    unsafe { (*heap.as_ptr()).theap_slot = 0; }
+    Ok(())
+}
+
 unsafe fn release_heap_thread_local_key(
     image: NonNull<NonMainHeapImage>,
 ) -> Result<(), HeapReleaseError> {
@@ -838,12 +867,12 @@ unsafe fn release_heap_thread_local_key(
 }
 
 /// [`unlink_empty_heap`] for a Heap of any subprocess given its main Heap:
-/// statistics to `main`, count and list removal, and the key release;
+/// statistics to `main`, count and list removal;
 /// returns the image for the caller's free.
 ///
 /// # Safety
 /// `heap` is a live non-main Heap of `subprocess` without Theaps or pages
-/// that no thread uses, and `main` that subprocess's main Heap.
+/// that no thread uses, its key is retired, and `main` is its subprocess main Heap.
 pub(crate) unsafe fn unlink_non_main_heap(
     heap: NonNull<Heap>,
     main: NonNull<Heap>,
@@ -851,7 +880,7 @@ pub(crate) unsafe fn unlink_non_main_heap(
 ) -> Result<NonNull<NonMainHeapImage>, HeapReleaseError> {
     // SAFETY: forwarded.
     let heap_ref = unsafe { &mut *heap.as_ptr() };
-    if !heap_ref.is_without_theaps_or_pages() {
+    if !heap_ref.is_without_theaps_or_pages() || heap_ref.regular_theap_slot() != 0 {
         return Err(HeapReleaseError::NotEmpty);
     }
     // SAFETY: `main` is the subprocess's live main Heap.
@@ -859,14 +888,12 @@ pub(crate) unsafe fn unlink_non_main_heap(
     // SAFETY: the Heap has no Theap and stays pinned until its free.
     unsafe { subprocess.heap_list().unlink_non_main(heap_ref, subprocess) }.map_err(HeapReleaseError::List)?;
     let image = heap.cast::<NonMainHeapImage>();
-    // SAFETY: the image is off every list and exclusively owned now.
-    unsafe { release_heap_thread_local_key(image) }?;
     Ok(image)
 }
 
 /// `mi_heap_free` up to the image free: refuse the main Heap (`None`) and a
 /// Heap with a Theap or page, merge statistics to the main Heap, remove the
-/// count and list edges, and release the thread-local slot. Returns the image
+/// count and list edges after key retirement. Returns the image
 /// that the caller frees or retains.
 ///
 /// # Safety
@@ -883,7 +910,7 @@ unsafe fn unlink_empty_heap(
     // SAFETY: by the caller contract the Heap is a live non-main image that
     // no thread uses; list operations below hold the list lock.
     let heap_ref = unsafe { &mut *heap.as_ptr() };
-    if !heap_ref.is_without_theaps_or_pages() {
+    if !heap_ref.is_without_theaps_or_pages() || heap_ref.regular_theap_slot() != 0 {
         return Err(HeapReleaseError::NotEmpty);
     }
     // heap.c:201-203 `mi_heap_stats_merge_to_main`.
@@ -898,10 +925,7 @@ unsafe fn unlink_empty_heap(
         })
         .ok_or(HeapReleaseError::InvalidChild)?;
     unlinked.map_err(HeapReleaseError::List)?;
-    // heap.c:220-224 `_mi_thread_local_free(heap->theap)`.
     let image = heap.cast::<NonMainHeapImage>();
-    // SAFETY: the image is off every list and exclusively owned now.
-    unsafe { release_heap_thread_local_key(image) }?;
     Ok(Some(image))
 }
 
@@ -1360,7 +1384,7 @@ mod tests {
                     // SAFETY: this fresh worker owns its pristine thread roots.
                     let Ok(ChildThreadAddOutcome::Added(mut member)) =
                         (unsafe { add_current_thread(child, binding) }) else { panic!("child attachment"); };
-                    for direct_unlink in [false, true] {
+                    for direct_key_retirement in [false, true] {
                         // SAFETY: the admitted worker is the sole child user.
                         let heap = unsafe { child_heap_new(child, &mut member, binding, keys) }.unwrap();
                         let image = heap.cast::<NonMainHeapImage>();
@@ -1369,18 +1393,12 @@ mod tests {
                         keys.registry.test_fail_next_release_lock();
                         // SAFETY: this live Heap has no Theap or application
                         // pages, and no other thread uses its lists or key.
-                        let result = if direct_unlink {
-                            let main = child.main_heap_pointer().unwrap();
-                            child.with_child_image(|image| unsafe {
-                                unlink_non_main_heap(heap, main, image.identity())
-                            }).unwrap().map(|_| HeapReleaseOutcome::Released)
+                        let result = if direct_key_retirement {
+                            unsafe { retire_heap_thread_local_key(heap) }.map(|_| HeapReleaseOutcome::Released)
                         } else {
                             unsafe { child_heap_destroy(child, &mut member, binding, heap) }
                         };
                         assert_eq!(result, Err(HeapReleaseError::Retained));
-                        // SAFETY: the refused release retains the original live
-                        // image, already off its Heap list. Only the exact key
-                        // lease is settled here; no list transition is retried.
                         let slot = unsafe { &mut *core::ptr::addr_of_mut!((*image.as_ptr()).slot) };
                         let retained = slot.as_mut().expect("the image retains the unreleased key lease");
                         assert_eq!(retained.key().raw(), key);
@@ -1388,6 +1406,9 @@ mod tests {
                         retained.release().expect("the unchanged exact lease retries its own release");
                         slot.take();
                         assert_eq!(keys.registry.test_live_lease_count(), 0);
+                        unsafe { (*heap.as_ptr()).theap_slot = 0; }
+                        assert_eq!(unsafe { unlink_empty_heap(child, heap) }, Ok(Some(image)));
+
                         // SAFETY: key release completed; no source pointer or
                         // field view names this original live Heap image now.
                         assert!(unsafe { free_heap_metadata(member.owner_mut(), child, binding, image.cast()) });
@@ -1542,6 +1563,7 @@ mod tests {
 
                     assert_eq!(unsafe { child_heap_destroy(child, &mut member, binding, fourth) },
                         Ok(HeapReleaseOutcome::Released));
+                    assert!(unsafe { crate::types::Theap::heap_at(theap) }.is_null());
                     trace.push(theaps(child).current);
                     let (_, _, _, main_tprev, main_tld) = unsafe { crate::types::Theap::test_list_links(main_theap) };
                     trace.push(i64::from(

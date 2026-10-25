@@ -19,6 +19,7 @@ pub(crate) enum SourceHeapRegistryError {
     InvalidImage,
     #[cfg(target_arch = "x86_64")]
     RetainedFreshTask,
+    RetainedPages,
     ListLockAcquire(Errno),
     ListLockRelease(Errno),
 }
@@ -817,21 +818,18 @@ impl super::ThreadLocalData {
 }
 
 impl Heap {
-    /// Source `_mi_heap_detach_theaps` (`theap.c:381-412`) then the list
-    /// hand-off of `mi_heap_free_theaps` (`heap.c:162-172`): every Theap of
-    /// this Heap leaves its TLD's list, taking that TLD's lock with a
-    /// try-lock and backing off (counting `heaps_delete_wait`) while a
-    /// finishing thread holds it; then the Heap list is emptied and returned
-    /// through `visit` in list order, with each Theap's Heap links cleared.
-    /// `visit` merges statistics and drops the Heap's reference.
-    ///
     /// # Safety
-    /// The Heap and every listed Theap and TLD are live; the caller excludes
-    /// other Heap-list operations on this Heap. A thread that finishes
-    /// concurrently changes its TLD list only under that TLD's lock.
+    /// The Heap, listed Theaps and named TLDs remain live. The caller excludes
+    /// all Heap operations except thread exit under the TLD list lock.
+    /// `drain` owns each detached Theap's queues and must release empty Pages
+    /// or publish live Pages into this Heap's registries before returning true.
+    /// `visit` merges statistics and consumes the Heap's Theap reference after
+    /// its Heap identity is cleared. A drain failure requires retaining the
+    /// entire Heap, remaining Theaps and Page backing without retrying teardown.
     pub(crate) unsafe fn detach_and_take_theaps(
         &self,
         subprocess: &SubprocessIdentity,
+        mut drain: impl FnMut(core::ptr::NonNull<super::Theap>) -> bool,
         mut visit: impl FnMut(core::ptr::NonNull<super::Theap>),
     ) -> Result<(), SourceHeapRegistryError> {
         loop {
@@ -902,6 +900,11 @@ impl Heap {
                 current = *(*theap.as_ptr()).hnext.get();
                 *(*theap.as_ptr()).hnext.get() = core::ptr::null_mut();
                 *(*theap.as_ptr()).hprev.get() = core::ptr::null_mut();
+            }
+            if !drain(theap) {
+                return Err(SourceHeapRegistryError::RetainedPages);
+            }
+            unsafe {
                 (*theap.as_ptr()).heap.store(core::ptr::null_mut(), Ordering::Release);
             }
             visit(theap);
@@ -1738,7 +1741,7 @@ mod tests {
         // No competing Heap-list operation or finishing thread exists; every
         // original image remains allocated throughout the locked retirement.
         unsafe {
-            heap.as_ref().detach_and_take_theaps(subprocess.identity(), |theap| {
+            heap.as_ref().detach_and_take_theaps(subprocess.identity(), |_| true, |theap| {
                 let pointer = theap.as_ptr();
                 assert!((*pointer).tld.is_null());
                 assert!((*pointer).tnext.is_null() && (*pointer).tprev.is_null());
@@ -1748,7 +1751,7 @@ mod tests {
             assert_eq!(visited, [second, first]);
             assert!(heap.as_ref().test_theaps_head().is_null());
             assert!((*tld.as_ptr()).theaps.is_null());
-            heap.as_ref().detach_and_take_theaps(subprocess.identity(), |_| {
+            heap.as_ref().detach_and_take_theaps(subprocess.identity(), |_| true, |_| {
                 panic!("an empty retired list cannot revisit a member");
             }).unwrap();
             drop(Box::from_raw(second.as_ptr()));
