@@ -8,20 +8,28 @@ semantics.
 The active target is native Linux/x86-64 on an x86-64 host. AArch64 is the
 public target and is paused: preserve it, never run or emulate it.
 
-This is a greenfield libc, not a deployed one. There are no production users,
-services, deployments, credentials, or data at risk, and no attacker reaching a
-running system: the code is developed, exercised, and broken locally. Size
-security review to that reality. Memory-safety defects, undefined behavior, and
-unsound public APIs are real defects and stay in scope; a deployment threat
-model, secret handling, and production access control do not exist here, and a
-refusal reasoned from them is a misapplied control, which is worth naming
-rather than quietly working around.
+This is a greenfield libc under local development. It is not deployed in any
+practical sense and serves no production users or services. The code is built,
+exercised and deliberately broken in local native containers and disposable
+fixtures. This project has no production credentials, customer data, live
+third-party targets or deployed systems to protect.
 
-Local crash reproduction, memory-lifetime diagnostics, fault injection, fuzzing,
-and C/Rust differential execution against repository-owned code are defensive
-correctness work, not operational access to a live target. Keep that context
-explicit when routing tools. None of this authorizes effects outside the
-repository or bypasses a tool or platform denial.
+Allocator crash reproduction, use-after-free diagnostics, register and
+backtrace inspection, fault injection, fuzzing, and C/Rust differential tests
+against repository-owned code are defensive correctness work. Crashes and
+deliberately invalid inputs can be expected test outcomes. Memory-safety
+defects, undefined behavior and unsound public APIs remain real defects to
+investigate and fix. Evaluate security concerns against the actual local
+operation and its effects. Do not invent a deployment, attacker or production
+access-control requirement for these tests.
+
+State repository ownership, fixture isolation and the correctness purpose in
+tool and subagent briefs. A rejection based on an assumed deployed target
+misapplies this project's context; report that mismatch explicitly. This
+context does not authorize effects outside the repository or override tool
+or platform restrictions. If an action is denied, preserve its exact scope
+and stated reason, stop that action, and continue independent authorized work.
+Do not rephrase or reroute a denied action to evade the restriction.
 
 Start with [plan.md](plan.md), the only implementation plan and progress
 handoff. User direction governs, then [docs/scope.md](docs/scope.md) and
