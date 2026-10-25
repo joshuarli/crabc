@@ -222,7 +222,11 @@ static int check_errors(void)
     if (getaddrinfo("192.0.2.1", "1", &hints, &result) != EAI_FAMILY)
         return 3;
     if (!text_equal(gai_strerror(EAI_NONAME), "Name does not resolve") ||
-        !text_equal(gai_strerror(EAI_OVERFLOW), "Overflow"))
+        !text_equal(gai_strerror(EAI_AGAIN), "Try again") ||
+        !text_equal(gai_strerror(EAI_FAIL), "Non-recoverable error") ||
+        !text_equal(gai_strerror(EAI_NODATA), "Name has no usable address") ||
+        !text_equal(gai_strerror(EAI_OVERFLOW), "Overflow") ||
+        !text_equal(gai_strerror(12345), "Unknown error"))
         return 4;
     return 0;
 }

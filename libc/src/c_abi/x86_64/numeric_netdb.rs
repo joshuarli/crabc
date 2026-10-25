@@ -71,6 +71,9 @@ const NI_SUPPORTED: c_int = NI_NUMERICHOST
 
 const EAI_BADFLAGS: c_int = -1;
 const EAI_NONAME: c_int = -2;
+const EAI_AGAIN: c_int = -3;
+const EAI_FAIL: c_int = -4;
+const EAI_NODATA: c_int = -5;
 const EAI_FAMILY: c_int = -6;
 const EAI_SOCKTYPE: c_int = -7;
 const EAI_SERVICE: c_int = -8;
@@ -625,6 +628,9 @@ static_archive_member! { getnameinfo_source {
 
 static EAI_BADFLAGS_TEXT: &[u8] = b"Invalid flags\0";
 static EAI_NONAME_TEXT: &[u8] = b"Name does not resolve\0";
+static EAI_AGAIN_TEXT: &[u8] = b"Try again\0";
+static EAI_FAIL_TEXT: &[u8] = b"Non-recoverable error\0";
+static EAI_NODATA_TEXT: &[u8] = b"Name has no usable address\0";
 static EAI_FAMILY_TEXT: &[u8] = b"Unrecognized address family or invalid length\0";
 static EAI_SOCKTYPE_TEXT: &[u8] = b"Unrecognized socket type\0";
 static EAI_SERVICE_TEXT: &[u8] = b"Unrecognized service\0";
@@ -641,6 +647,9 @@ static_archive_member! { gai_strerror_source {
         match error {
             EAI_BADFLAGS => EAI_BADFLAGS_TEXT.as_ptr(),
             EAI_NONAME => EAI_NONAME_TEXT.as_ptr(),
+            EAI_AGAIN => EAI_AGAIN_TEXT.as_ptr(),
+            EAI_FAIL => EAI_FAIL_TEXT.as_ptr(),
+            EAI_NODATA => EAI_NODATA_TEXT.as_ptr(),
             EAI_FAMILY => EAI_FAMILY_TEXT.as_ptr(),
             EAI_SOCKTYPE => EAI_SOCKTYPE_TEXT.as_ptr(),
             EAI_SERVICE => EAI_SERVICE_TEXT.as_ptr(),
