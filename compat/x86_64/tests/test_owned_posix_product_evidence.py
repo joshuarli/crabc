@@ -789,6 +789,8 @@ class OwnedPosixProductEvidenceTests(unittest.TestCase):
             path = product / "share/crabc/manifest.json"
             manifest = json.loads(path.read_text(encoding="utf-8"))
             manifest["toolchain"] = "pinned"
+            if product == self.dynamic:
+                manifest["build_profile"] = "release"
             if "installed" in manifest:
                 manifest["installed"]["files"]["usr/lib/Scrt1.o"] = digest(self.static / "usr/lib/Scrt1.o")
                 manifest["source_sha256"] = source_sha256
@@ -816,6 +818,17 @@ class OwnedPosixProductEvidenceTests(unittest.TestCase):
         audit = self.load_consumer("owned_posix_filesystem_audit")
         self.assertEqual(fork.product_manifest(root), manifest)
         self.assertEqual(audit.validate_dynamic_product(root), root)
+
+    def test_compiler_helper_uses_embedded_dynamic_profile_in_combined_sysroot(self) -> None:
+        root = self.combined_product()
+        import crabc_cc_owned_dynamic as driver
+        import compiler_helper_evidence as compiler_helpers
+
+        manifest = driver.validate_installation(root)
+        self.assertEqual(manifest["format"], driver.COMBINED_FORMAT)
+        self.assertEqual(
+            compiler_helpers.dynamic_product_profile_from_admitted_manifest(root, manifest), "release"
+        )
 
     @staticmethod
     def load_consumer(name: str):

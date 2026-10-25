@@ -73,7 +73,7 @@ record libc-symtab readelf --symbols -W "$LIBC"
 record libc-undefined nm --undefined-only "$LIBC"
 record loader-undefined nm --undefined-only "$LOADER"
 record allocator-backend python3 - "$PRODUCT/share/crabc/libc-shared.provenance.json" \
-    "$PRODUCT/share/crabc/manifest.json" "$READER" <<'PY_BACKEND'
+    "$PRODUCT/share/crabc/manifest.json" "$READER" "$PRODUCT" <<'PY_BACKEND'
 import json
 from pathlib import Path
 import sys
@@ -84,7 +84,7 @@ import compiler_helper_evidence as evidence
 provenance = json.loads(Path(sys.argv[1]).read_text(encoding='utf-8'))
 manifest = json.loads(Path(sys.argv[2]).read_text(encoding='utf-8'))
 backend = provenance.get('allocator_backend')
-profile = manifest.get('build_profile')
+profile = evidence.dynamic_product_profile_from_admitted_manifest(Path(sys.argv[4]), manifest)
 if backend not in {'accepted-c', 'pinned-c-evidence', 'native-shadow', 'native'}:
     raise SystemExit('shared-helper product allocator backend differs')
 witness = evidence.allocator_popcount_witness_for_profile(profile)

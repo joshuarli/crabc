@@ -101,6 +101,8 @@ class CompilerHelperEvidenceTests(unittest.TestCase):
             product = self._debug_dynamic_product(Path(temporary))
             identity = EVIDENCE.validate_materialized_dynamic_product(ROOT, product)
             self.assertEqual(identity, EVIDENCE.digest(product / "share/crabc/manifest.json"))
+            manifest = json.loads((product / "share/crabc/manifest.json").read_text(encoding="utf-8"))
+            self.assertEqual(EVIDENCE.dynamic_product_profile_from_admitted_manifest(product, manifest), "debug")
 
     def test_materialized_debug_product_rejects_stale_source_and_changed_payload(self) -> None:
         scratch = ROOT / ".work/x86_64/compiler-helper-evidence-tests"

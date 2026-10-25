@@ -120,6 +120,22 @@ def allocator_popcount_witness_for_profile(profile: object) -> str:
     return ALLOCATOR_POPCOUNT_WITNESSES[profile]
 
 
+def dynamic_product_profile_from_admitted_manifest(product: Path, manifest: Mapping[str, Any]) -> str:
+    """Resolve a validated dynamic profile from a standalone or combined tree."""
+    import crabc_cc_owned_dynamic as driver
+
+    require(type(manifest) is dict, "compiler-helper installed dynamic manifest differs")
+    if manifest.get("format") == driver.COMBINED_FORMAT:
+        manifest = _read_json(Path(product) / driver.COMBINED_PRODUCT_MANIFEST,
+                              "compiler-helper embedded dynamic manifest")
+    else:
+        require(manifest.get("format") == driver.FORMAT,
+                "compiler-helper installed dynamic product format differs")
+    profile = manifest.get("build_profile")
+    allocator_popcount_witness_for_profile(profile)
+    return profile
+
+
 def same(left: object, right: object) -> bool:
     """Compare JSON values without treating booleans as integers."""
 
