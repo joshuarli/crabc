@@ -10,7 +10,7 @@ nine of 26 families, zero of eight gates.
   upstream investigator, and keep independent runtime lanes moving."
   First command from the repository root:
   `./scripts/dev-x86_64.sh campaign-status`.
-- **State:** `main`, implementation integrated through `0e4e4c1e3`.
+- **State:** `main`, implementation integrated through `6a3c35998`.
   Missing images were rebuilt through their tracked launchers. The core pin is
   `sha256:7b23b2b173fc6ffe7d71ae80b0890c27a1ea5e3fdc70e8b0af394084c5cfee4c`;
   the allocator image is
@@ -25,6 +25,10 @@ nine of 26 families, zero of eight gates.
   symbols; and bounded artifact/source-seal reuse. The resumed campaign added
   closed Heap-stress forwarding, the paired cold-arena retry differential,
   secure M7 configuration routes, and the source-faithful secure Page layout.
+  The lifecycle recovery now drains owned queues before clearing Theap Heap
+  identity, retires TLS keys before Heap-wide traversal, migrates live OS pages
+  on delete, and handles a last remote free during migration. It removes the
+  retained-deleted-Heap registry and its special free paths.
   The focused Heap selector still cannot publish a full qualification receipt.
 - **Contract changes:** the Python runner now reports all-skipped modules as
   unverified with nonzero exit, and distinguishes skipped tests from fixture
@@ -38,6 +42,10 @@ nine of 26 families, zero of eight gates.
   retained offset mappings. Secure level 0 retains its 128-byte Page and
   aligned metadata layout. M4 and M7 C profiles set `MI_FREE_IS_CHECKED=1`
   whenever `MI_SECURE` is nonzero.
+  `6a3c35998` applies the reviewed upstream Heap-retirement corrections as
+  `CRABC-MI-HEAP-RETIREMENT`. Surviving blocks report the subprocess main Heap
+  after delete. Tests that required retained deleted-Heap identity were wrong
+  and now check main-Heap migration and final release. The C ABI is unchanged.
 - **Known red:** the unmodified upstream rolling-Heap stress case with four
   workers, scale 1 and eight iterations passed C but Rust exited with SIGSEGV.
   RIP and fault address are not captured. Its tracked launcher route is now
@@ -60,10 +68,10 @@ handoff commit. New independent lanes start from the current `main`.
 
 | Branch or integrated scope | State and next step |
 | --- | --- |
-| M6 Heap lifecycle | The exact rolling-stress diagnostic is parked by the harness denial; do not retry or route around it. A separate recovery lane compares pinned C, explicitly corrected upstream C, and Rust for the lifetime transitions fixed by upstream `23a5db4`, `4192c77`, and `b85f2d0`. The release SIGSEGV and pinned C debug owner-exit failures remain known red until a production-path regression establishes their causes. |
+| M6 Heap lifecycle | The combined upstream retirement correction is integrated and reviewed at `6a3c35998`. Production regressions cover cache reuse, live OS migration, FULL queues, remote frees and owner exit. Pristine C still fails the cache-reuse probe; explicitly identity-corrected C passes. Combined corrected-C owner-exit evidence and full M6 remain open. The original rolling-stress SIGSEGV remains unexplained and its denied invocation stays parked. |
 | Secure Page layout | Integrated through `0e4e4c1e3`. Independent review found no P1/P2 product defect. The exact production layout passed secure levels 0–5, all nine Rust profiles passed, M4/M7 host modules passed, and merged-tip C/R configuration differentials passed secure 1, 3 and 5 with 19 keys each. |
 | A3 cold-arena prefix retry | Closed by `4b5ea1ae7` and `fe268b89f`. Pinned C and production Rust both retry the same 114688-byte prefix after the first callback refusal and return an owned in-arena block. The earlier contrary reading confused the arena claim failure with its caller's fresh-page retry. A separate backing-selection failure difference remains only a source-level candidate because the static-main path has not reproduced it. |
-| A3 clock source comparison | `e7f5ff9e8` supersedes the earlier source reading: pinned Linux C falls back to `clock()` after monotonic-clock failure, and Rust follows that path. The paired failure probe and launcher route are integrated. Native execution of that probe remains required. |
+| A3 clock source comparison | `e7f5ff9e8` supersedes the earlier source reading: pinned Linux C falls back to `clock()` after monotonic-clock failure, and Rust follows that path. `eb10d6607` isolates the sample from allocator startup counters and uses the development Rust profile. Native C and Rust match one preferred call, one fallback call and 1234 milliseconds. |
 | `cohort/rehearsal-native` at `12db93c58` | Frozen R2/R3 rehearsal, never merge. Static preparation, installed/second/extracted dynamic products and publish passed. Resolver physical network, classic netdb (23 scenarios, seven arms), and cancellation (847 same-object cases) passed. Network cancellation was interrupted when the dispatcher auto-started it at winddown; it is incomplete. No later loader/CRT/sysroot/consumer item started. |
 | `lane/runtime-replay` at `284011169` | Frozen runtime prerequisite rehearsal, never merge. Static products, all three 65-leaf dynamic matrices, finish and publish passed. Pthread/text collection never started. Regenerate against final main before qualification. |
 | `cohort/rehearsal` at `21e9a89cf` | Historical H0 `pow` flags conflict and incomplete text aggregate, parked after the prescribed investigation. The owner still owes the raw-oracle versus documented valid-result correction decision. |
@@ -96,16 +104,24 @@ and source pins remain tracked. Pinned-input `.cache/` directories outside
   including the fixed NUMA mapping and regular-arena reclaim/purge item.
   No unique uncommitted source or handoff was found. All parked implementation
   branches remain, including `lane/dynamic-owner-root` at `009f5642c`.
-- **Next:** execute the Heap-lifecycle recovery sequence below. Keep the
-  harness-denied invocation parked while using the upstream regressions as new
-  focused evidence. Independent resolver, loader, CRT/sysroot, pthread/text
+- **Next:** retain the lifecycle recovery's single implementation owner for
+  combined corrected-C owner-exit evidence and remaining production-path gaps.
+  Keep the harness-denied invocation parked. Its original SIGSEGV still lacks
+  a causal disposition. Independent resolver, loader, CRT/sysroot, pthread/text
   and consumer work may continue without adding allocator lifecycle writers.
   H0 `pow`'s edge comparator now accepts the existing finite exponent-one
   correction (`f3edf363c`), but native replay remains required. The older
   numeric child-metadata footprint decision remains open.
   No performance gate or allocator promotion may bypass correctness/source
   prerequisites. The C backend stays selected.
-- **Verified:** at merged `0e4e4c1e3`, ledger and AArch64 inventory checks,
+- **Verified:** at merged `6a3c35998`, all nine Rust profiles, ledger and
+  AArch64 inventory checks, structure, 38 focused host tests, four exact native
+  cache-reuse/FULL-queue/late-free regressions, and the pristine versus corrected
+  C cache probe pass from `.work/wt/verify`. The unchanged rebased lifecycle
+  patch also passed 13 focused native tests and independent review. The paired
+  clock probe and three host trace tests passed at `eb10d6607`; lifecycle
+  integration does not change the clock implementation or probe.
+  At earlier merged `0e4e4c1e3`, ledger and AArch64 inventory checks,
   structure, 144 focused host tests, all Rust feature profiles, the paired
   cold-arena retry, and secure M7 configuration profiles 1, 3 and 5 passed.
   Earlier merged production singleton integration and 38-value C/R
@@ -461,25 +477,24 @@ scorecard survives.
 ## Allocator lifecycle recovery
 
 **Resume checkpoint, 2026-10-25:** session
-`01a173c2-f7f7-79f3-9cdb-457b6e007a1d` left the recovery implementation on
-`lane/m6-pr1420-stale`. Its deterministic production regression reproduces
-the stale cached Theap after Heap address reuse. The candidate clears detached
-Theap identity, and focused destroy and delete reuse tests pass. The candidate
-is not integrated. Independent upstream review found that `b85f2d0` drains
-owned page queues before clearing the Heap pointer. That ordering still needs
-production-path verification before accepting the correction. The denied
-rolling-stress invocation remains parked, and its cause is unproven.
+`01a173c2-f7f7-79f3-9cdb-457b6e007a1d` left an unfinished stale-cache fix.
+The combined correction is now integrated at `6a3c35998` after independent
+review. Deterministic production regressions established three defects:
+cached Theap acceptance after Heap address reuse, live OS pages retaining a
+deleted Heap, and a final remote free making OS migration fail. All three now
+pass. The retained-deleted-Heap registry and special free paths are removed.
+The denied rolling-stress invocation remains parked, and its cause is unproven.
 
 The upstream ordering audit is complete: `23a5db4` releases the Heap TLS key
 after retiring Theaps and before visiting Heap pages. `4192c77` clears the
 retired Theap's Heap identity before decref. `b85f2d0` first collects every
 owned page queue, including FULL, while the Heap identity remains live.
-Rust must preserve that combined order. Its test expecting a live OS page to
-retain a deleted Heap contradicts the documented migration to the main Heap.
-Correct that test, reproduce the failure, then repair the production path.
+Rust now preserves that combined order. Tests expecting a live OS page to
+retain a deleted Heap contradicted the documented migration to the main Heap.
+Those tests now check surviving payloads, main-Heap ownership and final release.
 The pristine-C stale-cache fixture reproduces the defect, and the explicitly
 corrected one-line C build passes through the new focused launcher route on
-the recovery branch. No full lifecycle or original-stress pass is claimed.
+merged main. No full lifecycle qualification or original-stress pass is claimed.
 
 The missing core image was rebuilt through the tracked launcher and repinned
 in `0f4720f9c`. Eleven image-dispatch tests and the native `crabc-core` check
