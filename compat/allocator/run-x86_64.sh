@@ -30,6 +30,7 @@ Private native Linux/x86-64 mimalloc evidence commands:
   image
   allocator --quick
   allocator-m1
+  allocator-m1-clock-fallback
   allocator-m2
   allocator-m3 [--differential-only|--owner-only|--miri-only|--miri-ownership-only|--miri-guarded-ownership-only|--miri-page-ownership-only|--page-ownership-only|--queue-reorder-only]
   allocator-m4 [--check|--gate ID|--reader-tests|--operations-matrix [--read|--replay]]
@@ -483,6 +484,8 @@ case "$command" in
         usage
         exit 0
         ;;
+    allocator-m1-clock-fallback)
+        ;;
     allocator-public-theap)
         ;;
     allocator-dynamic-full-direct-small-unmapped-reabandon|image|allocator|allocator-m1|allocator-m2|allocator-m3|allocator-m5|allocator-m4|allocator-m7|allocator-m8|allocator-m9|allocator-m10|allocator-divergence-evidence|allocator-tls|allocator-lifecycle|allocator-startup-regular-arena|allocator-initialization-tld|allocator-fault|allocator-fault-seam-inventory|allocator-release-evidence|allocator-api-coverage|allocator-cmake-modes|allocator-header-modes|allocator-static-modes|allocator-remote-free|allocator-live-owner-full-medium-remote-release|allocator-live-owner-full-medium-one-remote-unfull-reuse|allocator-direct-remote|allocator-mapped-reclaim|allocator-mapped-adoption|allocator-regular-mapped-reclaim|allocator-direct-small-allocation-adoption|allocator-unmapped-reabandon|allocator-on-demand|allocator-direct-on-demand|allocator-aligned-overalloc-realloc|allocator-regular-small|allocator-direct-small-full-retire|allocator-medium-full-retire|allocator-full-non-direct-small-force-collect-post-exit|allocator-full-direct-small-force-collect-post-exit|allocator-dynamic-full-direct-small-one-remote-force-collect-to-mapped|allocator-dynamic-full-direct-small-unmapped-reabandon|allocator-dynamic-full-non-direct-small-one-remote-force-collect-to-mapped|allocator-dynamic-full-non-direct-small-unmapped-reabandon|allocator-dynamic-full-medium-one-remote-force-collect-to-mapped|allocator-dynamic-full-medium-unmapped-reabandon|allocator-dynamic-full-large-one-remote-force-collect-to-mapped|allocator-dynamic-full-large-unmapped-reabandon|allocator-dynamic-full-large-homogeneous-aggregate|allocator-dynamic-full-medium-homogeneous-aggregate|allocator-dynamic-full-singleton-homogeneous-aggregate|allocator-dynamic-full-non-direct-small-homogeneous-aggregate|allocator-later-thread-exit-full-direct-small-pages|allocator-dynamic-nonfull-regular-pages-distinct-bin-aggregate|allocator-automatic-pthread-destructor|allocator-cancellation-pthread-destructor|allocator-process-done-pthread-key|allocator-automatic-arena-reservation|allocator-dynamic-os-aligned-singleton|allocator-dynamic-arena-singleton-post-exit|allocator-mapped-post-exit|allocator-retired-prepass|allocator-deferred-free-callback|allocator-aggregate-post-exit|allocator-aggregate-still-live|allocator-aggregate-same-bin-still-live|allocator-perf|allocator-perf-engine|allocator-perf-integrated|allocator-codegen-audit|allocator-native-local-trace|allocator-huge-registry|allocator-huge-reservation|allocator-huge-numa-qualification|allocator-cold-arena-prefix-retry|allocator-arena-destroy|allocator-m2-arena-lifecycle|allocator-m2-metadata-ownership|allocator-heap-destroy|allocator-reclaim-on-free|allocator-subprocess-lifecycle|allocator-heap-lifecycle|allocator-m6-adapter|allocator-public-heap-alignment|allocator-heap-convenience|allocator-upstream-subprocess-stress|allocator-upstream-heap-stress|allocator-m6|allocator-unit|allocator-native-integration|allocator-core-unit)
@@ -516,6 +519,11 @@ case "$command" in
         [ "$#" -eq 0 ] || fail "allocator-m1 takes no arguments"
         ensure_image
         run_in_container python3 compat/allocator/run.py --m1 --offline
+        ;;
+    allocator-m1-clock-fallback)
+        [ "$#" -eq 0 ] || fail "allocator-m1-clock-fallback takes no arguments"
+        ensure_image
+        run_in_container python3 compat/allocator/m1_clock_fallback_x86_64.py --offline
         ;;
     allocator-m2)
         [ "$#" -eq 0 ] || fail "allocator-m2 takes no arguments"

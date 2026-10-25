@@ -456,6 +456,27 @@ fi
             [b"python3", b"compat/allocator/x86_64_m6_upstream_heap_stress.py"],
         )
 
+    def test_m1_clock_fallback_dispatches_offline_command_without_arguments(self):
+        help_result = self.launch("--help")
+        self.assertEqual(help_result.returncode, 0, help_result.stderr)
+        self.assertIn("allocator-m1-clock-fallback", help_result.stdout)
+        self.assertFalse(self.capture.with_suffix(".calls").exists())
+
+        result = self.launch("allocator-m1-clock-fallback")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        arguments = self.capture.read_bytes().split(b"\0")[:-1]
+        self.assertEqual(
+            arguments[-3:],
+            [b"python3", b"compat/allocator/m1_clock_fallback_x86_64.py", b"--offline"],
+        )
+
+        self.capture.unlink(missing_ok=True)
+        self.capture.with_suffix(".calls").unlink(missing_ok=True)
+        rejected = self.launch("allocator-m1-clock-fallback", "unexpected")
+        self.assertEqual(rejected.returncode, 2)
+        self.assertIn("allocator-m1-clock-fallback takes no arguments", rejected.stderr)
+        self.assertFalse(self.capture.with_suffix(".calls").exists())
+
     def test_upstream_heap_stress_rejects_invalid_cases_before_docker(self):
         invalid_arguments = (
             ("--case",),
