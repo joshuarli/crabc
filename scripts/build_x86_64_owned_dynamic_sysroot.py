@@ -1043,7 +1043,9 @@ def build_debug_payload(output: Path, stage: Path, *, allocator_backend: str, li
     common.write_json(metadata / "loader.elf.json", audit_shared_elf(interpreter))
     common.write_json(metadata / "libc-shared.provenance.json", {**inputs["libc_provenance"],
         "shared_dynamic_list": dynamic_list, "shared_errno_private_aliases": errno_policy,
-        "shared_mimalloc_hidden_exports": allocator_policy, "libc_shared_link_command": libc_command,
+        "shared_mimalloc_hidden_exports": allocator_policy,
+        "shared_compiler_helper_archive": shared_libc_compiler_helper_archive_policy(),
+        "libc_shared_link_command": libc_command,
         "main_source_core_dependencies": sorted(dependencies), "main_source_core_link_command": support_command,
         "attachment_compile_commands": attachment_commands, "attachment_link_command": attachment_command})
     common.write_json(metadata / "loader.provenance.json", {"build_profile": "debug", "target": common.TARGET,
