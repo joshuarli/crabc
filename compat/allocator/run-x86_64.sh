@@ -37,6 +37,7 @@ Private native Linux/x86-64 mimalloc evidence commands:
   allocator-m5 [--qualification-profile correctness|full] [--check|--gate ID|--reader-tests]
   allocator-m7 --differential options-environment|option-effects|statistics-level-one-output-merge|statistics-level-two-requested|statistics-level-two-bins|statistics-level-two-page-huge|statistics-aligned-debug
   allocator-m7 [--qualification-profile baseline|full] [--check|--gate ID|--reader-tests|--arena-print|--private-context-arena-print]
+  allocator-m7 --configuration-differential --configuration-profile secure-1|secure-3|secure-5 [--replay]
   allocator-m8 [--check|--gate ID|--reader-tests]
   allocator-m9 [--profile baseline|full] [--check|--reader-tests|--validate-retained|--report PATH...]
   allocator-divergence-evidence [--profile correctness|full] [--check|--reader-tests]
@@ -627,13 +628,36 @@ case "$command" in
                 *) fail "unknown M7 development trace" ;;
             esac
             m7_command=(python3 compat/allocator/x86_64_m7_gate.py --offline --development-trace "$2")
+        elif [ "$#" -eq 3 ] || [ "$#" -eq 4 ]; then
+            if [ "$#" -eq 4 ] && [ "$4" != --replay ]; then
+                fail "allocator-m7 configuration differential accepts only an optional trailing --replay"
+            fi
+            if [ "$1" = --configuration-differential ]; then
+                [ "$2" = --configuration-profile ] || fail "allocator-m7 configuration differential requires --configuration-profile"
+                m7_configuration_profile="$3"
+            elif [ "$1" = --configuration-profile ] && [ "$3" = --configuration-differential ]; then
+                m7_configuration_profile="$2"
+            else
+                fail "allocator-m7 configuration differential requires --configuration-differential and --configuration-profile"
+            fi
+            case "$m7_configuration_profile" in
+                secure-1|secure-3|secure-5) ;;
+                *) fail "allocator-m7 configuration profile must be secure-1, secure-3, or secure-5" ;;
+            esac
+            if [ "$#" -eq 4 ]; then
+                m7_command=(python3 compat/allocator/x86_64_m7_gate.py --configuration-replay
+                    --configuration-profile "$m7_configuration_profile")
+            else
+                m7_command=(python3 compat/allocator/x86_64_m7_gate.py --offline
+                    --configuration-differential --configuration-profile "$m7_configuration_profile")
+            fi
         elif [ "$#" -eq 2 ] && [ "$1" = --gate ]; then
             m7_command=(python3 compat/allocator/x86_64_m7_gate.py --gate "$2")
         else
-            fail "allocator-m7 accepts only --check, --gate ID, --reader-tests, --arena-print, or --private-context-arena-print, or --differential TRACE"
+            fail "allocator-m7 accepts only --check, --gate ID, --reader-tests, --arena-print, --private-context-arena-print, --differential TRACE, or --configuration-differential --configuration-profile secure-1|secure-3|secure-5 [--replay]"
         fi
         case "${1:-}" in
-            --reader-tests|--arena-print|--private-context-arena-print|--differential)
+            --reader-tests|--arena-print|--private-context-arena-print|--differential|--configuration-differential|--configuration-profile)
                 [ "$hardware_qualification_selected" = false ] || fail "this operation does not select a qualification profile"
                 ;;
             *) m7_command+=(--qualification-profile "$hardware_qualification_profile") ;;

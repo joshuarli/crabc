@@ -494,6 +494,63 @@ fi
         self.assertIn("allocator-cold-arena-prefix-retry takes no arguments", rejected.stderr)
         self.assertFalse(self.capture.with_suffix(".calls").exists())
 
+    def test_m7_configuration_differential_dispatches_closed_secure_profiles(self):
+        help_result = self.launch("--help")
+        self.assertEqual(help_result.returncode, 0, help_result.stderr)
+        self.assertIn(
+            "allocator-m7 --configuration-differential --configuration-profile secure-1|secure-3|secure-5 [--replay]",
+            help_result.stdout,
+        )
+        selections = (
+            ("secure-1", ("--configuration-differential", "--configuration-profile", "secure-1")),
+            ("secure-3", ("--configuration-profile", "secure-3", "--configuration-differential")),
+            ("secure-5", ("--configuration-differential", "--configuration-profile", "secure-5")),
+        )
+        for profile, arguments in selections:
+            with self.subTest(profile=profile):
+                result = self.launch("allocator-m7", *arguments)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                dispatched = self.capture.read_bytes().split(b"\0")[:-1]
+                self.assertEqual(
+                    dispatched[-6:],
+                    [b"python3", b"compat/allocator/x86_64_m7_gate.py", b"--offline",
+                     b"--configuration-differential", b"--configuration-profile", profile.encode()],
+                )
+
+    def test_m7_configuration_replay_uses_the_existing_runner_mode(self):
+        result = self.launch(
+            "allocator-m7", "--configuration-differential", "--configuration-profile", "secure-3",
+            "--replay",
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        dispatched = self.capture.read_bytes().split(b"\0")[:-1]
+        self.assertEqual(
+            dispatched[-5:],
+            [b"python3", b"compat/allocator/x86_64_m7_gate.py", b"--configuration-replay",
+             b"--configuration-profile", b"secure-3"],
+        )
+
+    def test_m7_configuration_differential_rejects_invalid_profiles_before_docker(self):
+        invalid_selections = (
+            ("--configuration-differential", "--configuration-profile", "secure-2"),
+            ("--configuration-differential", "--configuration-profile", "secure-4"),
+            ("--configuration-differential", "--configuration-profile", "debug-1"),
+            ("--configuration-differential", "--configuration-profile", "guarded-secure-1"),
+            ("--configuration-differential", "--configuration-profile", "secure-2", "--replay"),
+            ("--configuration-differential", "--configuration-profile", "secure-1", "unknown"),
+            ("--configuration-differential", "--configuration-profile"),
+            ("--configuration-differential",),
+            ("--configuration-profile", "secure-1"),
+        )
+        for arguments in invalid_selections:
+            with self.subTest(arguments=arguments):
+                self.capture.unlink(missing_ok=True)
+                self.capture.with_suffix(".calls").unlink(missing_ok=True)
+                result = self.launch("allocator-m7", *arguments)
+                self.assertEqual(result.returncode, 2, result.stderr)
+                self.assertFalse(self.capture.with_suffix(".calls").exists())
+                self.assertFalse((self.checkout / ".work").exists())
+
 
 class X86_64RunnerBoundaryTests(unittest.TestCase):
     def run_launcher(self, *arguments: str) -> subprocess.CompletedProcess[str]:
