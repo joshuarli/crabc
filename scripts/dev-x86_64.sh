@@ -685,7 +685,8 @@ Native Linux/x86-64 staged-foundation evidence commands:
   owned-dynamic-pthread-exit  test installed dynamic main and last pthread exit
   owned-dynamic-fork  test installed loader, TLS and pthread fork transactions
   runtime-private-facades [DYNAMIC_SYSROOT]  run crabc-rs RuntimeV1 dl/thread/cfile facades through an installed dynamic product
-  materialized-dynamic-sysroot [--work NEW_DIR [--allocator-backend accepted-c|native-shadow]]  build and test the installed initial-graph shared runtime
+  materialized-dynamic-sysroot [--work NEW_DIR [--prepare] [--allocator-backend accepted-c|native-shadow]]  build and test the installed initial-graph shared runtime
+  materialized-dynamic-sysroot --resume WORK --next|--case PRODUCT CASE|--finish  resume one validated dynamic product case or finish its receipt
   crt-object-bundle  stage and audit the private five-object x86 Rust CRT bundle
   unwinder-build  build and audit the pinned standalone Rust unwind archive (not runtime qualification)
   unwinder-cleanup  run the standalone pinned-musl Rust cleanup unwind regression
@@ -10481,19 +10482,53 @@ PY
     materialized-dynamic-sysroot)
         materialized_dynamic_arguments=()
         materialized_allocator_arguments=()
-        if [ "$#" -eq 4 ] && [ "$1" = --work ] && [ "$3" = --allocator-backend ]; then
-            case "$4" in
-                accepted-c) ;;
-                native-shadow) materialized_allocator_arguments=(--allocator-backend native-shadow) ;;
-                *) fail "unsupported materialized dynamic allocator backend: $4" ;;
-            esac
-        elif [ "$#" -ne 0 ] && { [ "$#" -ne 2 ] || [ "$1" != --work ]; }; then
-            fail "materialized-dynamic-sysroot takes no arguments or --work NEW_DIR [--allocator-backend accepted-c|native-shadow]"
-        fi
-        if [ "$#" -ge 2 ]; then
-            materialized_dynamic_work="$(translate_owned_posix_product "$2" fresh-output)" || exit 2
-            materialized_dynamic_arguments=(--work "$materialized_dynamic_work" "${materialized_allocator_arguments[@]}")
-        fi
+        case "$#" in
+            0) ;;
+            2)
+                [ "$1" = --work ] || fail "materialized-dynamic-sysroot takes --work NEW_DIR, --prepare, or --resume WORK"
+                materialized_dynamic_work="$(translate_owned_posix_product "$2" fresh-output)" || exit 2
+                materialized_dynamic_arguments=(--work "$materialized_dynamic_work")
+                ;;
+            3)
+                if [ "$1" = --work ] && [ "$3" = --prepare ]; then
+                    materialized_dynamic_work="$(translate_owned_posix_product "$2" fresh-output)" || exit 2
+                    materialized_dynamic_arguments=(--work "$materialized_dynamic_work" --prepare)
+                elif [ "$1" = --resume ] && { [ "$3" = --next ] || [ "$3" = --finish ]; }; then
+                    materialized_dynamic_work="$(translate_owned_posix_product "$2")" || exit 2
+                    materialized_dynamic_arguments=(--resume "$materialized_dynamic_work" "$3")
+                else
+                    fail "materialized-dynamic-sysroot takes --work NEW_DIR --prepare or --resume WORK --next|--finish"
+                fi
+                ;;
+            4)
+                [ "$1" = --work ] && [ "$3" = --allocator-backend ] || \
+                    fail "materialized-dynamic-sysroot takes --work NEW_DIR [--prepare] --allocator-backend BACKEND"
+                materialized_dynamic_work="$(translate_owned_posix_product "$2" fresh-output)" || exit 2
+                case "$4" in
+                    accepted-c) ;;
+                    native-shadow) materialized_allocator_arguments=(--allocator-backend native-shadow) ;;
+                    *) fail "unsupported materialized dynamic allocator backend: $4" ;;
+                esac
+                materialized_dynamic_arguments=(--work "$materialized_dynamic_work" "${materialized_allocator_arguments[@]}")
+                ;;
+            5)
+                if [ "$1" = --work ] && [ "$3" = --prepare ] && [ "$4" = --allocator-backend ]; then
+                    materialized_dynamic_work="$(translate_owned_posix_product "$2" fresh-output)" || exit 2
+                    case "$5" in
+                        accepted-c) ;;
+                        native-shadow) materialized_allocator_arguments=(--allocator-backend native-shadow) ;;
+                        *) fail "unsupported materialized dynamic allocator backend: $5" ;;
+                    esac
+                    materialized_dynamic_arguments=(--work "$materialized_dynamic_work" --prepare "${materialized_allocator_arguments[@]}")
+                elif [ "$1" = --resume ] && [ "$3" = --case ]; then
+                    materialized_dynamic_work="$(translate_owned_posix_product "$2")" || exit 2
+                    materialized_dynamic_arguments=(--resume "$materialized_dynamic_work" --case "$4" "$5")
+                else
+                    fail "materialized-dynamic-sysroot takes --work NEW_DIR --prepare --allocator-backend BACKEND or --resume WORK --case PRODUCT CASE"
+                fi
+                ;;
+            *) fail "materialized-dynamic-sysroot received invalid arguments" ;;
+        esac
         ensure_image
         run_in_dynamic_loader_mount_container bash /workspace/compat/x86_64/run_materialized_dynamic_sysroot.sh "${materialized_dynamic_arguments[@]}"
         ;;

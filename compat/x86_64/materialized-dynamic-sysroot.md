@@ -9,6 +9,41 @@ It also executes retained runtime graphs and all-thread DTV growth. This is
 component evidence, not completion of `dynamic-product.toml`.
 Run it from the host with `./scripts/dev-x86_64.sh materialized-dynamic-sysroot`.
 
+## Resume one dynamic product case
+
+Use a retained work directory when you need to stop between runtime cases.
+Prepare the products and bounded consumer evidence once:
+
+```bash
+./scripts/dev-x86_64.sh materialized-dynamic-sysroot --work NEW_DIR --prepare
+```
+
+Run one missing case in product and catalog order:
+
+```bash
+./scripts/dev-x86_64.sh materialized-dynamic-sysroot --resume WORK --next
+```
+
+Run a selected missing case with `--case PRODUCT CASE`. For example, use
+`--case installed cycle` to run the `cycle` case through the `installed` tree.
+`--next` validates all existing case records before it chooses a case.
+`--case` validates the current source, product trees, package archives, and
+selected checkpoint before it runs. Both routes reject stale products,
+archives, preparation, and partial checkpoints. `--next` skips validated
+completed records. `--case` refuses a completed target without replacing its
+log or record.
+
+Finish after all cases have records for all three products:
+
+```bash
+./scripts/dev-x86_64.sh materialized-dynamic-sysroot --resume WORK --finish
+```
+
+`--finish` writes `qualification.json` only after the existing collector
+validates the complete case matrix, installed products, base observations, and
+package archives. `qualification-candidate` continues to run the complete
+materialized dynamic cohort and consumes that same full receipt.
+
 ## One owner per runtime state
 
 `x86-owned-dynamic-runtime` shares the existing owned x86 C ABI leaf roster,

@@ -14,6 +14,61 @@ ROOT = Path(__file__).resolve().parents[3]
 
 
 class DynamicLoaderDispatchTests(unittest.TestCase):
+    def test_materialized_dynamic_prepare_and_resume_routes_keep_the_case_bound(self):
+        scratch = ROOT / ".work/x86_64/tmp"
+        scratch.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(dir=scratch) as temporary:
+            work = Path(temporary)
+            captured = work / "captured.jsonl"
+            docker = work / "docker"
+            docker.write_text(
+                f"#!{sys.executable}\n"
+                "import json, os, sys\n"
+                "if sys.argv[1:3] == ['image', 'inspect']:\n"
+                "    if '--format' in sys.argv:\n"
+                "        field = sys.argv[sys.argv.index('--format') + 1]\n"
+                "        print({'{{.Os}}/{{.Architecture}}': 'linux/amd64', '{{.Id}}': 'sha256:fixture'}[field])\n"
+                "elif sys.argv[1] == 'run':\n"
+                "    with open(os.environ['DISPATCH_CAPTURE'], 'a') as output:\n"
+                "        output.write(json.dumps(sys.argv[1:]) + '\\n')\n"
+                "else:\n"
+                "    raise SystemExit('unexpected Docker operation')\n"
+            )
+            docker.chmod(0o755)
+            environment = dict(os.environ)
+            environment.update(
+                PATH=f"{work}{os.pathsep}{os.environ['PATH']}",
+                DISPATCH_CAPTURE=str(captured),
+                CRABC_X86_64_CORE_IMAGE="fixture",
+                CRABC_X86_64_WORK_DIR=str(ROOT / ".work/x86_64"),
+            )
+            prepared = work / "prepared"
+            retained = work / "retained"
+            retained.mkdir()
+            (retained / "qualification-scratch/tmp").mkdir(parents=True)
+            routes = (
+                (["--work", str(prepared), "--prepare"],
+                 ["--work", f"/workspace/{prepared.relative_to(ROOT).as_posix()}", "--prepare"]),
+                (["--resume", str(retained), "--next"],
+                 ["--resume", f"/workspace/{retained.relative_to(ROOT).as_posix()}", "--next"]),
+                (["--resume", str(retained), "--case", "installed", "cycle"],
+                 ["--resume", f"/workspace/{retained.relative_to(ROOT).as_posix()}", "--case", "installed", "cycle"]),
+                (["--resume", str(retained), "--finish"],
+                 ["--resume", f"/workspace/{retained.relative_to(ROOT).as_posix()}", "--finish"]),
+            )
+            for arguments, expected in routes:
+                result = subprocess.run(
+                    ["bash", str(ROOT / "scripts/dev-x86_64.sh"), "materialized-dynamic-sysroot", *arguments],
+                    cwd=ROOT, env=environment, capture_output=True, text=True,
+                )
+                self.assertEqual(result.returncode, 0, result.stderr)
+                invocation = json.loads(captured.read_text().splitlines()[-1])
+                self.assertIn("--cap-add=SYS_CHROOT", invocation)
+                expected_invocation = [
+                    "bash", "/workspace/compat/x86_64/run_materialized_dynamic_sysroot.sh", *expected,
+                ]
+                self.assertEqual(invocation[-len(expected_invocation):], expected_invocation)
+
     def test_pthread_lifecycle_dispatches_inspect_the_pinned_image_first(self):
         scratch = ROOT / ".work/x86_64/tmp"
         scratch.mkdir(parents=True, exist_ok=True)

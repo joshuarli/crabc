@@ -622,6 +622,144 @@ class OwnedDynamicQualificationTests(unittest.TestCase):
             [(self.work / product, self.source) for product in qualification.PRODUCTS],
         )
 
+    def test_next_case_rejects_stale_preparation_source(self):
+        preparation = qualification.read(self.work / "qualification-prepare.json")
+        preparation["source_sha256"] = "f" * 64
+        (self.work / "qualification-prepare.json").write_text(json.dumps(preparation))
+        before = (self.work / "qualification-cases/installed/cycle.log").read_bytes()
+
+        with mock.patch.object(qualification.subprocess, "run") as run:
+            with self.assertRaisesRegex(qualification.QualificationError, "missing or stale preparation evidence"):
+                qualification.run_next_case(self.work)
+
+        run.assert_not_called()
+        self.assertEqual((self.work / "qualification-cases/installed/cycle.log").read_bytes(), before)
+
+    def test_next_case_rejects_a_stale_product_before_running_or_overwriting(self):
+        case_log = self.work / "qualification-cases/installed/cycle.log"
+        case_record = self.work / "qualification-cases/installed/cycle.json"
+        log_bytes, record_bytes = case_log.read_bytes(), case_record.read_bytes()
+        identity = qualification._product_identity
+
+        def stale_second_product(product, source):
+            if product.name == "second":
+                raise qualification.QualificationError("installed product source is stale")
+            return identity(product, source)
+
+        with mock.patch.object(qualification, "_product_identity", side_effect=stale_second_product), \
+             mock.patch.object(qualification.subprocess, "run") as run:
+            with self.assertRaisesRegex(qualification.QualificationError, "installed product source is stale"):
+                qualification.run_next_case(self.work)
+
+        run.assert_not_called()
+        self.assertEqual(case_log.read_bytes(), log_bytes)
+        self.assertEqual(case_record.read_bytes(), record_bytes)
+
+    def test_next_case_rejects_a_changed_product_archive_before_running(self):
+        archive_path = self.work / "runtime.tar"
+        archive_path.unlink()
+        with tarfile.open(archive_path, "w") as archive:
+            member = tarfile.TarInfo("payload")
+            payload = b"changed package payload"
+            member.size = len(payload)
+            archive.addfile(member, io.BytesIO(payload))
+        case_log = self.work / "qualification-cases/installed/cycle.log"
+        case_record = self.work / "qualification-cases/installed/cycle.json"
+        log_bytes, record_bytes = case_log.read_bytes(), case_record.read_bytes()
+
+        with mock.patch.object(qualification.subprocess, "run") as run:
+            with self.assertRaisesRegex(qualification.QualificationError, "package member count differs"):
+                qualification.run_next_case(self.work)
+
+        run.assert_not_called()
+        self.assertEqual(case_log.read_bytes(), log_bytes)
+        self.assertEqual(case_record.read_bytes(), record_bytes)
+
+    def test_next_case_selects_the_first_missing_product_case_in_catalog_order(self):
+        first_product = self.work / "qualification-cases/installed"
+        cycle_record = (first_product / "cycle.json").read_bytes()
+        cycle_log = (first_product / "cycle.log").read_bytes()
+        (first_product / "cycle.json").unlink()
+        (first_product / "cycle.log").unlink()
+        self.assertEqual(qualification.next_missing_case(self.work), ("installed", "cycle"))
+
+        (first_product / "cycle.json").write_bytes(cycle_record)
+        (first_product / "cycle.log").write_bytes(cycle_log)
+        (first_product / "cli.json").unlink()
+        (first_product / "cli.log").unlink()
+        self.assertEqual(qualification.next_missing_case(self.work), ("installed", "cli"))
+
+    def test_resume_cli_reports_and_runs_one_deterministic_case(self):
+        output = io.StringIO()
+        with mock.patch.object(sys, "argv", ["owned_dynamic_qualification.py", "next", "--work", str(self.work)]), \
+             mock.patch.object(qualification, "next_missing_case", return_value=("installed", "cycle")), \
+             contextlib.redirect_stdout(output):
+            self.assertEqual(qualification.main(), 0)
+        self.assertEqual(output.getvalue(), "installed cycle\n")
+
+        with mock.patch.object(sys, "argv", ["owned_dynamic_qualification.py", "run-next", "--work", str(self.work)]), \
+             mock.patch.object(qualification, "run_next_case", return_value=("installed", "cycle")) as run_next:
+            self.assertEqual(qualification.main(), 0)
+        run_next.assert_called_once_with(self.work)
+
+        with mock.patch.object(sys, "argv", ["owned_dynamic_qualification.py", "run-resumed", "--work", str(self.work),
+                                               "--product", "second", "--case", "cycle"]), \
+             mock.patch.object(qualification, "run_resumed_case") as run_case:
+            self.assertEqual(qualification.main(), 0)
+        run_case.assert_called_once_with(self.work, "second", "cycle")
+
+    def test_run_case_refuses_a_completed_checkpoint_without_overwriting_it(self):
+        case_log = self.work / "qualification-cases/installed/cycle.log"
+        case_record = self.work / "qualification-cases/installed/cycle.json"
+        log_bytes, record_bytes = case_log.read_bytes(), case_record.read_bytes()
+
+        with mock.patch.object(qualification.subprocess, "run") as run:
+            with self.assertRaisesRegex(qualification.QualificationError, "case is already complete"):
+                qualification.run_case(self.work, "installed", "cycle")
+
+        run.assert_not_called()
+        self.assertEqual(case_log.read_bytes(), log_bytes)
+        self.assertEqual(case_record.read_bytes(), record_bytes)
+
+    def test_run_resumed_case_executes_only_the_selected_missing_case(self):
+        destination = self.work / "qualification-cases/installed"
+        for product in qualification.PRODUCTS:
+            for path in (self.work / "qualification-cases" / product).iterdir():
+                path.unlink()
+        leaf = self.work / "leaf-artifacts/selected-cycle"
+        leaf.mkdir(parents=True)
+        (leaf / "consumer").write_bytes(b"selected leaf output")
+
+        def execute(command, **arguments):
+            arguments["stdout"].write(f"case passed; evidence: {leaf}\n".encode())
+            return subprocess.CompletedProcess(command, 0)
+
+        with mock.patch.object(qualification, "require_live_oracle"), \
+             mock.patch.object(qualification, "subprocess") as subprocess_module, \
+             mock.patch.object(qualification, "leaf_evidence_directories", return_value={leaf}):
+            subprocess_module.run.side_effect = execute
+            qualification.run_resumed_case(self.work, "installed", "cycle")
+
+        subprocess_module.run.assert_called_once()
+        command, options = subprocess_module.run.call_args
+        self.assertEqual(command[0], qualification.case_command(self.work, "installed", "cycle"))
+        self.assertEqual(options["cwd"], self.root)
+        self.assertTrue((destination / "cycle.json").is_file())
+        self.assertTrue((destination / "cycle.log").is_file())
+        self.assertEqual({path.name for path in destination.iterdir()}, {"cycle.json", "cycle.log"})
+
+    def test_finish_refuses_partial_case_matrix_without_writing_a_receipt(self):
+        case_log = self.work / "qualification-cases/installed/cycle.log"
+        case_record = self.work / "qualification-cases/installed/cycle.json"
+        case_log.unlink()
+        case_record.unlink()
+
+        with self.assertRaisesRegex(qualification.QualificationError, "dynamic product qualification is missing cases"):
+            qualification.finish(self.work)
+
+        self.assertFalse((self.work / "qualification.json").exists())
+        self.assertFalse(case_record.exists())
+
     def publish(self, path):
         with mock.patch.object(sys, "argv", ["owned_dynamic_qualification.py", "publish", "--receipt", str(path)]), \
              contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):

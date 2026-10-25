@@ -542,13 +542,81 @@ def validate_loader_corpus_case(work: Path, product: str, case: str, log: Path,
         raise QualificationError(f"{case} evidence rejected: {error}") from error
 
 
-def run_case(work: Path, product: str, case: str) -> None:
-    require(product in PRODUCTS and case in CASES, "unknown product or coverage case")
+def current_products(work: Path) -> tuple[str, dict[str, str]]:
     work = evidence_path(work)
     source = source_digest()
+    manifests = {}
+    for product in PRODUCTS:
+        product_path = evidence_path(work / product)
+        manifests[product] = _product_identity(product_path, source)
+    require(len(set(manifests.values())) == 1, "three product manifests differ")
+    validate_product_archives(work)
+    require(source == source_digest(), "source changed during product validation")
+    return source, manifests
+
+
+def validated_resume_state(work: Path) -> tuple[str, dict[str, str], tuple[tuple[str, str], ...]]:
+    work = evidence_path(work)
+    source, manifests = current_products(work)
+    preparation_evidence(work, source)
+
+    missing = []
+    for product in PRODUCTS:
+        directory = work / "qualification-cases" / product
+        for path in (directory.parent, directory):
+            if path.exists() or path.is_symlink():
+                require(path.is_dir() and not path.is_symlink() and path.resolve() == path,
+                        f"invalid product case directory: {product}")
+        names = {path.name for path in directory.iterdir()} if directory.is_dir() else set()
+        expected_names = {case + suffix for case in CASES for suffix in (".json", ".log")}
+        require(names <= expected_names, f"unknown product case checkpoint: {product}")
+        for case in CASES:
+            record_path = directory / (case + ".json")
+            log_path = directory / (case + ".log")
+            require(not record_path.is_symlink() and not log_path.is_symlink(),
+                    f"invalid case checkpoint: {product}/{case}")
+            record_exists, log_exists = record_path.exists(), log_path.exists()
+            require(record_exists == log_exists, f"incomplete case checkpoint: {product}/{case}")
+            if not record_exists:
+                missing.append((product, case))
+                continue
+            try:
+                validate_case(read(record_path), product, case, source, manifests[product])
+            except QualificationError as error:
+                raise QualificationError(f"invalid case checkpoint {product}/{case}: {error}") from error
+    receipt_path = work / "qualification.json"
+    if receipt_path.exists() or receipt_path.is_symlink():
+        require(receipt_path.is_file() and not receipt_path.is_symlink(),
+                "invalid dynamic product qualification receipt")
+        require(not missing, "qualification receipt exists with missing cases")
+        validate_receipt(receipt_path)
+    require(source == source_digest(), "source changed during resume validation")
+    return source, manifests, tuple(missing)
+
+
+def validate_product_archives(work: Path) -> None:
+    for archive, product in (("runtime.tar", "installed"), ("second-runtime.tar", "second")):
+        archive_path = evidence_path(work / archive)
+        require(archive_path.is_file() and not archive_path.is_symlink(),
+                f"missing or unsafe product archive: {archive_path}")
+        validate_archive(archive_path, work / product)
+    require(digest(evidence_path(work / "runtime.tar")) == digest(evidence_path(work / "second-runtime.tar")),
+            "independent product archives differ")
+
+
+def next_missing_case(work: Path) -> tuple[str, str] | None:
+    _source, _manifests, missing = validated_resume_state(work)
+    return missing[0] if missing else None
+
+
+def _run_case(work: Path, product: str, case: str, source: str, manifest: str,
+              *, resume: bool = False) -> None:
     oracle = read(work / "qualification-prepare.json")["oracle"]
     require_live_oracle(work, oracle)
-    manifest = _product_identity(work / product, source)
+    if resume:
+        require(source == source_digest() and _product_identity(work / product, source) == manifest,
+                "source or installed product changed before coverage case")
+
     script, mode = CASES[case]
     environment = {key: value for key, value in os.environ.items()
                    if not key.startswith(("CRABC_GENERAL_DYNAMIC_", "LD_"))}
@@ -558,9 +626,9 @@ def run_case(work: Path, product: str, case: str) -> None:
     destination.mkdir(parents=True, exist_ok=True)
     log = destination / (case + ".log")
     command = case_command(work, product, case)
-    if case in DNS_CASES:
-        temporary = dns_namespace_environment(work, product, case, environment)
     with log.open("xb") as output:
+        if case in DNS_CASES:
+            temporary = dns_namespace_environment(work, product, case, environment)
         completed = subprocess.run(command, cwd=ROOT, env=environment, stdout=output, stderr=subprocess.STDOUT)
     print(log.read_text(errors="replace"), end="", flush=True)
     if case in DNS_CASES:
@@ -589,6 +657,43 @@ def run_case(work: Path, product: str, case: str) -> None:
         "log": relative(log), "log_sha256": digest(log), "exit_status": 0,
         "source_mount": str(ROOT), "artifacts": artifact_snapshot(log, str(ROOT)),
     })
+
+
+def run_case(work: Path, product: str, case: str) -> None:
+    require(product in PRODUCTS and case in CASES, "unknown product or coverage case")
+    work = evidence_path(work)
+    destination = work / "qualification-cases" / product
+    record_path, log_path = destination / (case + ".json"), destination / (case + ".log")
+    for path in (destination.parent, destination):
+        if path.exists() or path.is_symlink():
+            require(path.is_dir() and not path.is_symlink() and path.resolve() == path,
+                    f"invalid product case directory: {product}")
+    require(not record_path.is_symlink() and not log_path.is_symlink(),
+            f"invalid case checkpoint: {product}/{case}")
+    record_exists, log_exists = record_path.exists(), log_path.exists()
+    require(record_exists == log_exists, f"incomplete case checkpoint: {product}/{case}")
+    require(not record_exists, f"case is already complete: {product}/{case}")
+    source = source_digest()
+    manifest = _product_identity(evidence_path(work / product), source)
+    _run_case(work, product, case, source, manifest)
+
+
+def run_resumed_case(work: Path, product: str, case: str) -> None:
+    require(product in PRODUCTS and case in CASES, "unknown product or coverage case")
+    work = evidence_path(work)
+    source, manifests, missing = validated_resume_state(work)
+    require((product, case) in missing, f"case is already complete: {product}/{case}")
+    _run_case(work, product, case, source, manifests[product], resume=True)
+
+
+def run_next_case(work: Path) -> tuple[str, str]:
+    work = evidence_path(work)
+    source, manifests, missing = validated_resume_state(work)
+    require(bool(missing), "no missing dynamic product cases")
+    product, case = missing[0]
+    print(f"running next dynamic product case: {product}/{case}", flush=True)
+    _run_case(work, product, case, source, manifests[product], resume=True)
+    return product, case
 
 
 def validate_case(record: dict, product: str, case: str, source: str, manifest: str) -> None:
@@ -727,6 +832,20 @@ def validate_receipt(path: Path) -> dict:
     return receipt
 
 
+def finish(work: Path) -> dict:
+    work = evidence_path(work)
+    receipt_path = work / "qualification.json"
+    require(not receipt_path.exists() and not receipt_path.is_symlink(),
+            "qualification receipt already exists")
+    _source, _manifests, missing = validated_resume_state(work)
+    require(not missing, "dynamic product qualification is missing cases")
+    make_retained_evidence_readable(work)
+    receipt = collect(work)
+    write_new(receipt_path, receipt)
+    print(f"dynamic product qualification ready for review: {receipt_path}")
+    return receipt
+
+
 def publish_receipt(path: Path) -> None:
     """Atomically replace the reviewed pointer; never rewrite any receipt.
 
@@ -790,7 +909,10 @@ def load_publication() -> dict | None:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("operation", choices=("prepare", "run", "finish", "validate", "publish"))
+    parser.add_argument(
+        "operation",
+        choices=("prepare", "run", "run-resumed", "next", "run-next", "finish", "validate", "publish"),
+    )
     parser.add_argument("--work", type=Path)
     parser.add_argument("--product", choices=PRODUCTS)
     parser.add_argument("--case", choices=CASES)
@@ -803,11 +925,19 @@ def main() -> int:
         elif args.operation == "run":
             require(args.work is not None, "run requires --work")
             run_case(args.work, args.product, args.case)
+        elif args.operation == "run-resumed":
+            require(args.work is not None, "run-resumed requires --work")
+            run_resumed_case(args.work, args.product, args.case)
+        elif args.operation == "next":
+            require(args.work is not None, "next requires --work")
+            case = next_missing_case(args.work)
+            print("no missing dynamic product cases" if case is None else f"{case[0]} {case[1]}")
+        elif args.operation == "run-next":
+            require(args.work is not None, "run-next requires --work")
+            run_next_case(args.work)
         elif args.operation == "finish":
             require(args.work is not None, "finish requires --work")
-            make_retained_evidence_readable(args.work)
-            write_new(args.work / "qualification.json", collect(args.work))
-            print(f"dynamic product qualification ready for review: {args.work / 'qualification.json'}")
+            finish(args.work)
         else:
             require(args.receipt is not None, "operation requires --receipt")
             if args.operation == "publish":
@@ -815,7 +945,7 @@ def main() -> int:
             else:
                 validate_receipt(args.receipt)
             print("dynamic product receipt validated; family and platform gates remain independent")
-    except (QualificationError, OSError, ValueError, subprocess.SubprocessError) as error:
+    except (QualificationError, OSError, ValueError, subprocess.SubprocessError, tarfile.TarError) as error:
         print(f"dynamic qualification: {error}", file=sys.stderr)
         return 1
     return 0

@@ -397,6 +397,23 @@ class DynamicWorkPathTests(unittest.TestCase):
                     self.assertIn("new physical checkout .work directory", result.stderr)
                     self.assertFalse((parent / "new").exists())
 
+    def test_materialized_dynamic_resume_rejects_symlinked_work_before_running(self) -> None:
+        scratch = ROOT / ".work/x86_64/tmp"
+        scratch.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(prefix="materialized-resume.", dir=scratch) as temporary:
+            parent = Path(temporary)
+            target = parent / "physical"
+            target.mkdir()
+            link = parent / "link"
+            link.symlink_to(target, target_is_directory=True)
+            result = subprocess.run(
+                ["bash", str(ROOT / "compat/x86_64/run_materialized_dynamic_sysroot.sh"),
+                 "--resume", str(link), "--next"], cwd=ROOT,
+                env={**os.environ, "TMPDIR": str(scratch)},
+                capture_output=True, text=True, check=False)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("physical checkout .work directory", result.stderr)
+            self.assertEqual(list(target.iterdir()), [])
 
 if __name__ == "__main__":
     unittest.main()
