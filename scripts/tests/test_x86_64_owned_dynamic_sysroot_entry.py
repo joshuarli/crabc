@@ -83,7 +83,7 @@ class DynamicSysrootEntryTests(unittest.TestCase):
             self.assertTrue(any(row["name"] == "owned_entry" and row["section_index"].isdigit()
                                 for row in dynamic))
 
-    def test_shared_helper_policy_projects_the_current_contract(self):
+    def test_shared_helper_policy_and_roots_project_the_current_contract(self):
         spec = importlib.util.spec_from_file_location("dynamic_helper_policy_contract", PRODUCER)
         builder = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(builder)
@@ -99,6 +99,9 @@ class DynamicSysrootEntryTests(unittest.TestCase):
             "member": contract["archive"]["member"],
             **contract["shared_libc"],
         })
+        self.assertEqual(builder.debug_shared_libc_compiler_helper_root_arguments(), [
+            f"--undefined={row['name']}" for row in contract["helpers"]
+        ])
 
     def test_debug_manifest_seals_source_without_release_materialization_fields(self):
         spec = importlib.util.spec_from_file_location("dynamic_debug_source_producer", PRODUCER)

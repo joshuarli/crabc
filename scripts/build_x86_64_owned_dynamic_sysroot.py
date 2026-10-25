@@ -223,6 +223,19 @@ def shared_libc_mimalloc_hidden_exports(stage: Path) -> dict[str, object]:
     }
 
 
+def load_validated_compiler_helper_contract() -> dict[str, object]:
+    try:
+        value = tomllib.loads(COMPILER_HELPER_CONTRACT.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, tomllib.TOMLDecodeError) as error:
+        raise common.BuildError("native compiler-helper contract cannot be read") from error
+    import compiler_helper_evidence as helper_evidence
+    try:
+        contract = helper_evidence.validate_contract(value, root=ROOT)
+    except helper_evidence.CompilerHelperEvidenceError as error:
+        raise common.BuildError("native compiler-helper shared-libc placement differs from its producer contract") from error
+    return contract
+
+
 def shared_libc_compiler_helper_archive_policy() -> dict[str, object]:
     """Bind libc.so's private copy to the archive's exact producer contract.
 
@@ -234,15 +247,7 @@ def shared_libc_compiler_helper_archive_policy() -> dict[str, object]:
     """
 
     identity = _source_file_identity(COMPILER_HELPER_CONTRACT, "native compiler-helper contract")
-    try:
-        value = tomllib.loads(COMPILER_HELPER_CONTRACT.read_text(encoding="utf-8"))
-    except (OSError, UnicodeDecodeError, tomllib.TOMLDecodeError) as error:
-        raise common.BuildError("native compiler-helper contract cannot be read") from error
-    import compiler_helper_evidence as helper_evidence
-    try:
-        contract = helper_evidence.validate_contract(value, root=ROOT)
-    except helper_evidence.CompilerHelperEvidenceError as error:
-        raise common.BuildError("native compiler-helper shared-libc placement differs from its producer contract") from error
+    contract = load_validated_compiler_helper_contract()
     archive = contract["archive"]
     return {
         "source": identity,
@@ -250,6 +255,11 @@ def shared_libc_compiler_helper_archive_policy() -> dict[str, object]:
         "member": archive["member"],
         **contract["shared_libc"],
     }
+
+
+def debug_shared_libc_compiler_helper_root_arguments() -> list[str]:
+    contract = load_validated_compiler_helper_contract()
+    return [f"--undefined={row['name']}" for row in contract["helpers"]]
 
 
 def shared_libc_errno_private_aliases(stage: Path) -> dict[str, object]:
@@ -951,8 +961,10 @@ def build_debug_payload(output: Path, stage: Path, *, allocator_backend: str, li
                     f"--version-script={stage / 'libc-errno-private.exports'}",
                     *([f"--version-script={stage / 'libc-mimalloc-hidden.exports'}"] if accepted_c else []),
                     f"{helper_policy['linker_option']},{private_core.name}", "--gc-sections",
+                    *debug_shared_libc_compiler_helper_root_arguments(),
                     "-z", "relro", "-z", "now", "-z", "noexecstack", "-z", "text",
-                    *(str(objects / name) for name in selected), str(private_core), str(builtins),
+                    *(str(objects / name) for name in selected), str(private_core),
+                    "--whole-archive", str(builtins), "--no-whole-archive",
                     str(RUNTIME_DISCARD_UNWIND_SCRIPT), "-o", str(library / "libc.so")]
     run(libc_command)
     (library / "libc.so").chmod(0o755)
