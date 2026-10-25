@@ -1,8 +1,10 @@
 # Qualify and promote crabc's native x86-64 runtime
 
-**Status: active 2026-10-25.** The campaign resumed on `main`. The C allocator
-remains selected. Public x86 support remains false: 180 of 223 capabilities,
-nine of 26 families, zero of eight gates.
+**Status: blocked 2026-10-25.** The latest implementation checkpoint is
+committed and passes its focused checks. Terminal qualification and promotion
+remain blocked by the owner steering and denied diagnostics below. The C
+allocator remains selected. Public x86 support remains false: 180 of 223
+capabilities, nine of 26 families, zero of eight gates.
 
 - **Resume:** "Read plan.md and docs/lanes.md, then resume the campaign as
   coordinator, unattended. Preserve both harness-denied allocator items.
@@ -99,23 +101,63 @@ Raw evidence remains in
 `.work/wt/r7-builtins-visibility/.work/tmp/r7-helper-native/`, under
 `baseline-corrected` and `candidate-final`.
 
-The helper lane passes 58 focused host tests. After integration, the main
-checkout passes the 15 builder/CRT contract tests and three affected driver
-tests again. The official shared-placement receipt remains unverified; the
-interactive resume did not create its required clean commit. The development product's opt-0 helper
-archive also leaves `core::ub_checks` calls unresolved during application
-links. The direct comparison used the optimized archive without changing the
-product or weakening its reader. No full candidate product or qualification
-was collected. Both implementation worktrees retain uncommitted source copies
-and evidence. The addrconfig lane's musl scratch remains under
-its `.work/tmp`: automatic review denied its removal with
-"rm -f style commands are not permitted. Use a safer approach". The cleanup
-was not retried. Both earlier denied allocator items
-remain parked. The user then requested unattended campaign completion with
-`afk`. Local campaign commits now preserve the reviewed work. Continue fixing
-demonstrated implementation and component blockers. Broad qualification and
-performance still require the named-workload request from the owner steering
-below. No push, qualification or promotion occurred.
+The owner then requested unattended completion with `afk`. The R7 continuation
+fixed the opt-0 archive's missing physical source-core closure in `83027f78d`.
+Reachable source-core sections now live privately in its existing helper
+member, and the final closure check permits only the source libc's `memset`
+import. The private helper contract and provenance use schema v2. Independent
+review found no P1/P2 in the closure or development-admission changes.
+Debug component admission uses existing payload and current-source validators;
+its four-field unqualified state and the strict qualification reader remain
+unchanged. The producer now derives placement and roots from the canonical
+helper contract. Its old schema copy rejected v2; the retained real-contract
+regression demonstrated that failure before `21658f98f` fixed it.
+
+The complete shared-placement component passes at `16d33340f` with a fresh
+accepted-C debug product. It verifies all 40 private libc helper definitions,
+the opt-0 `mi_popcount` transfer, executable/DSO/consumer archive placement,
+strong caller-defined helpers, and product invariance. Release retains its
+`mi_bbitmap_try_find_and_clearNC` witness. Combined-product profiles come from
+the embedded dynamic manifest. Preserve the clean matching checkout at
+`.work/wt/r7-builtins-visibility` and its
+`.work/x86_64/r7-helper-debug-placement-16d33340f/` evidence; do not rebase it
+while that evidence has readers. Earlier failed runs remain alongside it.
+
+The main checkout passes all 133 tests in the six affected Python modules,
+ledger, inventory and structure checks. `4b6e36d88` scopes the private vDSO
+`gettimeofday` family to its actual AArch64 and test consumers. Its 11 native
+vDSO tests and all nine Rust feature profiles pass, and the unused native x86
+helper warnings are gone. No AArch64 execution occurred. The bounded
+`libc-math-pow` component passes at `f17a53763`: 256 scalar records and two
+4,800-record edge sets, retaining the explicit finite-exponent-one oracle
+differences. Its matching checkout and raw evidence remain in
+`.work/wt/r1-daemon-order`.
+
+Bounded POSIX, stdio and allocator retirement source reviews established no
+additional causal fix. An ABS-symbol loader candidate was an oracle mismatch,
+not a demonstrated Rust defect: ELF requires `SHN_ABS` values to remain
+absolute. Preserve the existing raw-value implementation; a new differential
+would need an explicit conformance disposition rather than copying the musl
+behavior. Neither parked allocator failure is closed by these inspections.
+
+Unattended execution stops at the remaining authority boundaries. D2 needs an
+explicitly named correctness-qualification workload, and D3/D4 need the named
+runtime performance workloads after correctness. D5 also needs disposition
+of the denied allocator diagnostics and its still-unmet source/performance
+gates. The existing H0 raw-oracle correction and numeric child-metadata
+decisions remain open. `afk` preserves those boundaries; it does not authorize
+the deferred matrices or retry a denial. No support, backend or gate claim
+changes. No push or promotion occurred.
+
+The addrconfig lane's musl scratch remains under its `.work/tmp`: automatic
+review denied its removal with "rm -f style commands are not permitted. Use
+a safer approach". The cleanup was not retried. The completed
+`r5-gai-strerror` and `r6-dlinfo-error` lanes had clean, integrated heads and
+no artifact consumers. Ordinary `git worktree remove` returned `Permission
+denied` for both. Git removed their registrations but left unregistered
+directory residues with stale `.git` files under `.work/wt/`. Their branches
+remain intact; no further removal or permission changes were attempted.
+Other frozen products and both earlier denied allocator items remain parked.
 
 **Session recovery:** resumed `01a1740f-c839-7a22-83de-5e33ff5494af` from its
 local transcript and surviving worktrees. The three-way remote owner-exit
@@ -232,8 +274,9 @@ and source pins remain tracked. Pinned-input `.cache/` directories outside
   Preserve both parked allocator items until their harness condition changes.
   The original rolling-stress SIGSEGV still lacks a causal disposition.
   Independent loader, CRT/sysroot, text and consumer work may continue.
-  H0 `pow`'s edge comparator now accepts the existing finite exponent-one
-  correction (`f3edf363c`), but native replay remains required. The older
+  H0 `pow`'s edge comparator accepts the existing finite exponent-one
+  correction (`f3edf363c`), and the bounded native pow component passes at
+  `f17a53763`. The older
   numeric child-metadata footprint decision remains open.
   No performance gate or allocator promotion may bypass correctness/source
   prerequisites. The C backend stays selected.
