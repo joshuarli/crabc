@@ -46,7 +46,8 @@ import native_callable_declarations as callable_declarations
 import owned_posix_product_evidence as product_evidence
 
 
-SCHEMA = "crabc.x86_64-native-declaration-abi/v1"
+SCHEMA = "crabc.x86_64-native-declaration-abi/v2"
+VALIDATION_SCHEMA = "crabc.x86_64-native-declaration-abi-validation/v2"
 RECORD_LAYOUT_PROJECTION_SCHEMA = "crabc.x86_64-native-declaration-record-layout-projection/v1"
 CONTRACT_PATH = ROOT / "compat" / "x86_64" / "native_declaration_abi.toml"
 TARGET = "x86_64-unknown-linux-musl"
@@ -1797,12 +1798,307 @@ def reviewed_cpp_linkage_boundary(
     return {**copy.deepcopy(reviewed), "reference_job_indices": reference_indices, "c_providers": c_providers}
 
 
+def _selected_callable_declaration_types() -> dict[str, Any]:
+    contract = callable_inventory.load_contract()
+    report = read_json_object(contract.generated_inventory, "checked header callable inventory")
+    require(report.get("schema") == callable_inventory.SCHEMA,
+            "checked header callable inventory schema differs")
+    records = report.get("callables")
+    require(isinstance(records, list), "checked header callable inventory rows are absent")
+
+    def selected_type(tree: str, name: str, profile: str) -> str:
+        rows = [row for row in records if isinstance(row, Mapping) and row.get("tree") == tree
+                and row.get("name") == name and row.get("profile") == profile
+                and row.get("classification") == "external" and row.get("declaration_kind") == "function"]
+        require(len(rows) == 1
+                and rows[0].get("declaring_header") == ("alloca.h" if name == "alloca" else "sys/soundcard.h")
+                and type(rows[0].get("type")) is str and bool(rows[0]["type"]),
+                f"checked {tree} {name} declaration type differs")
+        return rows[0]["type"]
+
+    return {
+        "alloca": selected_type("candidate", "alloca", "c11-gnu"),
+        "seqbuf_dump": {
+            tree: {
+                "c": selected_type(tree, "seqbuf_dump", "c11-gnu"),
+                "cxx": selected_type(tree, "seqbuf_dump", "cxx17-gnu"),
+            }
+            for tree in ("candidate", "reference")
+        },
+    }
+
+
+def _selected_deferred_owner_map(account: Mapping[str, Any]) -> dict[str, dict[str, Any]]:
+    rows = account.get("deferred")
+    require(isinstance(rows, list) and bool(rows), "selected deferred callable account is absent")
+    members_by_id: dict[str, list[str]] = {}
+    owners_by_id: dict[str, dict[str, Any]] = {}
+    for index, row in enumerate(rows):
+        require(isinstance(row, Mapping), f"selected deferred callable row {index} is invalid")
+        name = _symbol(row.get("name"), f"selected deferred callable row {index} name")
+        group_id = _string(row.get("id"), f"selected deferred callable row {index} owner")
+        resolution = _string(row.get("resolution"), f"selected deferred callable row {index} resolution")
+        group = {"id": group_id, "resolution": resolution}
+        require(group_id not in owners_by_id or owners_by_id[group_id] == group,
+                f"selected deferred owner {group_id} changes resolution")
+        owners_by_id[group_id] = group
+        members_by_id.setdefault(group_id, []).append(name)
+    return {
+        name: {**owners_by_id[group_id], "members": sorted(members_by_id[group_id])}
+        for group_id, names in members_by_id.items()
+        for name in names
+    }
+
+
+def _selected_callable_boundary_summary(
+    deferred: Mapping[str, Any],
+    products: Mapping[str, Any],
+    compiler: Mapping[str, Any],
+    alloca: Mapping[str, Any],
+    seqbuf: Mapping[str, Any],
+    providers: Mapping[str, Any],
+    raw_provider_observations: Mapping[str, Any],
+    *,
+    retained: Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
+    def owner(name: str, resolution: str, description: str) -> dict[str, Any]:
+        raw = deferred.get(name)
+        require(isinstance(raw, Mapping) and raw.get("resolution") == resolution,
+                f"selected {description} {resolution} owner receipt is missing or differs")
+        members = raw.get("members")
+        require(isinstance(members, list) and members == [name],
+                f"selected {description} owner member roster differs")
+        group_id = _string(raw.get("id"), f"selected {description} owner id")
+        return {"id": group_id, "members": list(members), "resolution": resolution}
+
+    alloca_owner = owner("alloca", "compiler-builtin", "alloca")
+    seqbuf_owner = owner("seqbuf_dump", "consumer-supplied", "seqbuf_dump")
+    no_provider_groups = {
+        _string(value.get("id"), "selected no-provider owner id"): value
+        for value in deferred.values()
+        if isinstance(value, Mapping) and value.get("resolution") == "oracle-declared-no-provider"
+    }
+    require(len(no_provider_groups) == 1, "selected oracle no-provider owner roster differs")
+    no_provider_raw = next(iter(no_provider_groups.values()))
+    no_provider_members = no_provider_raw.get("members")
+    require(isinstance(no_provider_members, list) and len(no_provider_members) == 9,
+            "selected oracle no-provider roster differs")
+    no_provider_members = [_symbol(name, "selected oracle no-provider member") for name in no_provider_members]
+    require(no_provider_members == sorted(set(no_provider_members)),
+            "selected oracle no-provider roster differs")
+    no_provider_owner = {
+        "id": next(iter(no_provider_groups)),
+        "members": list(no_provider_members),
+        "resolution": "oracle-declared-no-provider",
+    }
+    for name in no_provider_members:
+        value = deferred.get(name)
+        require(isinstance(value, Mapping) and value.get("id") == no_provider_owner["id"]
+                and value.get("resolution") == no_provider_owner["resolution"]
+                and value.get("members") == no_provider_members,
+                "selected oracle no-provider roster differs")
+
+    require(set(products) == {"static", "dynamic"}, "selected callable boundary product roster differs")
+    product_rows: dict[str, dict[str, Any]] = {}
+    for kind in ("static", "dynamic"):
+        row = _exact_keys(products[kind], {"root", "manifest", "installed_headers", "libc"},
+                          f"selected callable boundary {kind} product")
+        root = _string(row["root"], f"selected callable boundary {kind} product root")
+        root_path = Path(root)
+        require(root_path.is_absolute() and root_path.is_relative_to(SOURCE_MOUNT / ".work"),
+                f"selected callable boundary {kind} product root escapes checkout work")
+        manifest = _exact_keys(row["manifest"], {"mode", "path", "sha256", "size"},
+                               f"selected callable boundary {kind} manifest")
+        libc = _exact_keys(row["libc"], {"mode", "path", "sha256", "size"},
+                           f"selected callable boundary {kind} libc")
+        headers = _exact_keys(row["installed_headers"], {"path", "tree_sha256"},
+                              f"selected callable boundary {kind} headers")
+        require(manifest["path"] == root + "/share/crabc/manifest.json"
+                and headers["path"] == root + "/usr/include"
+                and libc["path"] == root + ("/usr/lib/libc.a" if kind == "static" else "/usr/lib/libc.so"),
+                f"selected callable boundary {kind} product paths differ")
+        for identity, description in ((manifest, "manifest"), (libc, "libc")):
+            require(type(identity["mode"]) is int and identity["mode"] >= 0
+                    and type(identity["size"]) is int and identity["size"] > 0
+                    and re.fullmatch(r"[0-9a-f]{64}", _string(identity["sha256"], f"selected {kind} {description} digest")) is not None,
+                    f"selected callable boundary {kind} {description} identity differs")
+        require(re.fullmatch(r"[0-9a-f]{64}", _string(headers["tree_sha256"], f"selected {kind} header tree digest")) is not None,
+                f"selected callable boundary {kind} header tree identity differs")
+        product_rows[kind] = copy.deepcopy(dict(row))
+    require(product_rows["static"]["installed_headers"]["tree_sha256"]
+            == product_rows["dynamic"]["installed_headers"]["tree_sha256"],
+            "selected callable boundary installed header trees differ")
+
+    compiler_row = _exact_keys(compiler, {"mode", "path", "sha256", "size"},
+                               "selected callable boundary compiler")
+    require(Path(_string(compiler_row["path"], "selected callable boundary compiler path")).is_absolute()
+            and type(compiler_row["mode"]) is int and compiler_row["mode"] > 0
+            and type(compiler_row["size"]) is int and compiler_row["size"] > 0
+            and re.fullmatch(r"[0-9a-f]{64}", _string(compiler_row["sha256"], "selected callable boundary compiler digest")) is not None,
+            "selected callable boundary compiler identity differs")
+    declaration_types = _selected_callable_declaration_types()
+
+    alloca_row = _exact_keys(alloca, {"header", "profile", "compiler", "qual_type", "undefined_symbols",
+                                     "relocation_symbols", "links", "raw"},
+                             "selected alloca compiler boundary")
+    require(alloca_row["header"] == "alloca.h" and alloca_row["profile"] == "c11-gnu"
+            and alloca_row["qual_type"] == declaration_types["alloca"],
+            "alloca declaration differs")
+    require(strict_equal(alloca_row["compiler"], compiler_row), "alloca compiler differs")
+    require(alloca_row["undefined_symbols"] == [] and alloca_row["relocation_symbols"] == [],
+            "alloca object imports a callable or emits an external relocation")
+    links = alloca_row["links"]
+    require(isinstance(links, list) and [link.get("linkage") for link in links if isinstance(link, Mapping)]
+            == ["static", "dynamic"], "alloca product link roster differs")
+    for index, link in enumerate(links):
+        link = _exact_keys(link, {"linkage", "returncode", "raw"}, f"alloca product link {index}")
+        raw = _exact_keys(link["raw"], {"command", "output", "receipt"}, f"alloca product link raw {index}")
+        require(link.get("returncode") == 0 and all(isinstance(item, Mapping) and bool(item) for item in raw.values()),
+                "alloca product link receipt is missing")
+    alloca_receipt = {
+        "owner": alloca_owner,
+        "name": "alloca",
+        "declaration": {"header": "alloca.h", "profile": "c11-gnu", "qual_type": declaration_types["alloca"]},
+        "compiler": copy.deepcopy(dict(compiler_row)),
+        "no_libc_import": {"undefined_symbols": [], "relocation_symbols": []},
+        "links": copy.deepcopy(links),
+        "raw": copy.deepcopy(dict(_exact_keys(alloca_row["raw"], {"source", "object", "symbols", "relocations", "compile"},
+                                               "alloca raw observations"))),
+    }
+    require(all(isinstance(item, Mapping) and bool(item) for item in alloca_receipt["raw"].values()),
+            "alloca raw artifact observation is missing")
+
+    seqbuf_row = _exact_keys(seqbuf, {"jobs"}, "selected seqbuf_dump consumer boundary")
+    raw_jobs = seqbuf_row["jobs"]
+    require(isinstance(raw_jobs, list) and len(raw_jobs) == 4,
+            "seqbuf_dump consumer job roster differs")
+    jobs: list[dict[str, Any]] = []
+    expected_jobs = [(tree, language, profile, symbol)
+                     for tree in ("candidate", "reference")
+                     for language, profile, symbol in (
+                         ("c", "c11-gnu", "seqbuf_dump"),
+                         ("cxx", "cxx17-gnu", "_Z11seqbuf_dumpv"),
+                     )]
+    for index, (raw_job, expected) in enumerate(zip(raw_jobs, expected_jobs, strict=True)):
+        tree, language, profile, symbol = expected
+        qual_type = declaration_types["seqbuf_dump"][tree][language]
+        job = _exact_keys(raw_job, {"tree", "header", "language", "profile", "qual_type", "definition_symbol",
+                                    "consumer_undefined_symbol", "same_language_link", "opposite_language_link", "raw"},
+                          f"seqbuf_dump consumer job {index}")
+        require((job["tree"], job["header"], job["language"], job["profile"], job["qual_type"],
+                 job["definition_symbol"], job["consumer_undefined_symbol"])
+                == (tree, "sys/soundcard.h", language, profile, qual_type, symbol, symbol),
+                "seqbuf_dump declaration or consumer linkage differs")
+        same_language = _exact_keys(job["same_language_link"], {"returncode", "undefined_symbols", "raw"},
+                                    f"seqbuf_dump same-language link {index}")
+        opposite_language = _exact_keys(job["opposite_language_link"],
+                                         {"returncode", "undefined_symbols", "raw"},
+                                         f"seqbuf_dump opposite-language link {index}")
+        same_raw = _exact_keys(same_language["raw"], {"command", "output", "symbols", "relocations"},
+                               f"seqbuf_dump same-language raw link {index}")
+        opposite_raw = _exact_keys(opposite_language["raw"],
+                                   {"command", "output", "symbols", "relocations"},
+                                   f"seqbuf_dump opposite-language raw link {index}")
+        require(all(isinstance(item, Mapping) and bool(item) for item in (*same_raw.values(), *opposite_raw.values())),
+                f"seqbuf_dump linked raw observation {index} is missing")
+        require(same_language.get("returncode") == 0
+                and same_language.get("undefined_symbols") == [],
+                "seqbuf_dump same-language consumer link differs")
+        require(opposite_language.get("returncode") == 0
+                and opposite_language.get("undefined_symbols") == [symbol],
+                "seqbuf_dump opposite-language consumer link differs")
+        raw = _exact_keys(job["raw"], {"definition_source", "definition_object", "definition_compile",
+                                        "definition_symbols", "definition_relocations", "consumer_source",
+                                        "consumer_object", "consumer_compile", "consumer_symbols", "consumer_relocations"},
+                          f"seqbuf_dump raw consumer observations {index}")
+        require(all(isinstance(item, Mapping) and bool(item) for item in raw.values()),
+                f"seqbuf_dump raw consumer observation {index} is missing")
+        jobs.append(copy.deepcopy(dict(job)))
+    seqbuf_receipt = {
+        "owner": seqbuf_owner,
+        "name": "seqbuf_dump",
+        "header": "sys/soundcard.h",
+        "compiler": copy.deepcopy(dict(compiler_row)),
+        "jobs": jobs,
+    }
+
+    require(set(providers) == {"candidate", "reference"}, "selected oracle provider inventory tree roster differs")
+    require(set(raw_provider_observations) == {"candidate", "reference"},
+            "selected oracle provider raw tree roster differs")
+    provider_absence: dict[str, dict[str, list[dict[str, Any]]]] = {}
+    for tree in ("candidate", "reference"):
+        require(set(providers[tree]) == {"static", "shared"},
+                f"selected {tree} provider inventory roster differs")
+        require(set(raw_provider_observations[tree]) == {"static", "shared"},
+                f"selected {tree} provider raw inventory roster differs")
+        provider_absence[tree] = {}
+        for form in ("static", "shared"):
+            raw_rows = providers[tree][form]
+            require(isinstance(raw_rows, Sequence) and not isinstance(raw_rows, (str, bytes)) and bool(raw_rows),
+                    f"selected {tree} {form} provider inventory is missing")
+            matches = []
+            for row in raw_rows:
+                require(isinstance(row, Mapping), f"selected {tree} {form} provider row is invalid")
+                if row.get("name") in no_provider_members and row.get("binding") in {"GLOBAL", "WEAK"} \
+                        and row.get("section_index") != "UND":
+                    matches.append({key: row.get(key) for key in ("name", "binding", "visibility", "section_index", "type")})
+            require(not matches, f"selected {tree} {form} libc provides declared no-provider name(s)")
+            raw_inventory = raw_provider_observations[tree][form]
+            expected_raw = {"members", "headers", "sections", "symbols"} if form == "static" else {"symbols"}
+            require(isinstance(raw_inventory, Mapping) and set(raw_inventory) == expected_raw
+                    and all(isinstance(item, Mapping) and bool(item) for item in raw_inventory.values()),
+                    f"selected {tree} {form} raw provider inventory is missing")
+            provider_absence[tree][form] = matches
+    no_provider_receipt = {
+        "owner": no_provider_owner,
+        "members": list(no_provider_members),
+        "provider_absence": provider_absence,
+        "raw_provider_observations": copy.deepcopy({tree: dict(forms) for tree, forms in raw_provider_observations.items()}),
+    }
+    summary = {
+        "products": product_rows,
+        "alloca": alloca_receipt,
+        "seqbuf_dump": seqbuf_receipt,
+        "oracle_no_provider": no_provider_receipt,
+    }
+    if retained is not None:
+        require(strict_equal(retained, summary), "retained selected callable boundary differs")
+    return summary
+
+
 def oracle_static_provider_rows(members: Sequence[str], header_text: str, section_text: str,
                                 symbol_text: str, archive: str) -> list[dict[str, Any]]:
     """Keep every archive member, including physically symbol-free ELF objects."""
     facts = abi_inventory.parse_archive_elf_facts(header_text, section_text, symbol_text, members,
                                                  expected_archive=archive)
     return [row for member in facts for table in member["symbol_tables"] for row in table["rows"]]
+
+
+def _selected_callable_product_seal(static_product: Path, dynamic_product: Path) -> dict[str, Any]:
+    products = {}
+    for kind, supplied in (("static", static_product), ("dynamic", dynamic_product)):
+        root = _physical_path(supplied, f"selected callable {kind} product", directory=True)
+        require(root.is_relative_to(ROOT / ".work"), f"selected callable {kind} product escapes checkout work")
+        root_path = str(SOURCE_MOUNT / root.relative_to(ROOT))
+        manifest = _external_identity(root / "share/crabc/manifest.json", f"selected callable {kind} product manifest")
+        manifest["path"] = root_path + "/share/crabc/manifest.json"
+        libc_relative = "usr/lib/libc.a" if kind == "static" else "usr/lib/libc.so"
+        libc = _external_identity(root / libc_relative, f"selected callable {kind} libc")
+        libc["path"] = root_path + "/" + libc_relative
+        try:
+            header_digest = elf_facts.installed_header_tree_digest(root / "usr/include")
+        except (ValueError, OSError, abi_inventory.InventoryError) as error:
+            raise NativeDeclarationAbiError(f"selected callable {kind} installed header tree rejected: {error}") from error
+        products[kind] = {
+            "root": root_path,
+            "manifest": manifest,
+            "installed_headers": {"path": root_path + "/usr/include", "tree_sha256": header_digest},
+            "libc": libc,
+        }
+    require(products["static"]["installed_headers"]["tree_sha256"]
+            == products["dynamic"]["installed_headers"]["tree_sha256"],
+            "selected callable installed header trees differ")
+    return products
 
 
 def physical_reference_join(path: Path, symbol_text: str, section_text: str, *, static: bool) -> dict[str, Any]:
@@ -1870,10 +2166,429 @@ def physical_reference_join(path: Path, symbol_text: str, section_text: str, *, 
             "relocations": relocations}
 
 
+def _selected_callable_boundary_evidence(
+    boundary_output: Path,
+    recorded_output: Path,
+    *,
+    static_product: Path,
+    dynamic_product: Path,
+    products: Mapping[str, Any],
+    deferred: Mapping[str, Any],
+    tools: Mapping[str, Any],
+    extra_tools: Mapping[str, Any],
+    resource_include: str,
+    timeout_seconds: float,
+    provider_rows: Mapping[str, Any],
+    raw_provider_observations: Mapping[str, Any],
+    command: Any,
+    owned_linker: Mapping[str, Any],
+    retained: Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
+    replay = retained is not None
+    if replay:
+        retained = _exact_keys(retained, {"products", "alloca", "seqbuf_dump", "oracle_no_provider"},
+                               "selected callable boundary receipt")
+        retained_alloca = _exact_keys(
+            retained["alloca"],
+            {"owner", "name", "declaration", "compiler", "no_libc_import", "links", "raw"},
+            "selected alloca boundary receipt",
+        )
+        retained_declaration = _exact_keys(
+            retained_alloca["declaration"], {"header", "profile", "qual_type"},
+            "selected alloca declaration receipt",
+        )
+        retained_no_import = _exact_keys(
+            retained_alloca["no_libc_import"], {"undefined_symbols", "relocation_symbols"},
+            "selected alloca import receipt",
+        )
+        previous_alloca = {
+            "header": retained_declaration["header"],
+            "profile": retained_declaration["profile"],
+            "compiler": retained_alloca["compiler"],
+            "qual_type": retained_declaration["qual_type"],
+            "undefined_symbols": retained_no_import["undefined_symbols"],
+            "relocation_symbols": retained_no_import["relocation_symbols"],
+            "links": retained_alloca["links"],
+            "raw": retained_alloca["raw"],
+        }
+        previous_seqbuf = _exact_keys(
+            retained["seqbuf_dump"], {"owner", "name", "header", "compiler", "jobs"},
+            "selected seqbuf_dump boundary receipt",
+        )
+        require(retained_alloca["name"] == "alloca" and previous_seqbuf["name"] == "seqbuf_dump",
+                "selected callable boundary names differ")
+    else:
+        previous_alloca = None
+        previous_seqbuf = None
+    selected_root = boundary_output / "selected-callable-boundaries"
+    if not replay:
+        selected_root.mkdir()
+    _physical_path(selected_root, "selected callable boundary evidence", directory=True)
+    compiler = tools["clang"]["identity"]
+    readelf = tools["readelf"]["identity"]["path"]
+    linker = extra_tools["ld"]["identity"]["path"]
+    profiles = _profile_records()
+    def directory(path: Path) -> Path:
+        if not replay:
+            path.mkdir(parents=True)
+        return _physical_path(path, "selected callable boundary raw directory", directory=True)
+
+    def recorded(path: Path) -> Path:
+        return recorded_output / path.relative_to(boundary_output)
+
+    def source(path: Path, value: str, previous: object, description: str) -> dict[str, Any]:
+        if replay:
+            descriptor = _validate_artifact_descriptor(boundary_output, previous, description)
+        else:
+            _write_new_text(path, value)
+            descriptor = _artifact_identity(boundary_output, path, description)
+        require(descriptor["path"] == path.relative_to(boundary_output).as_posix()
+                and _decode_raw_text(boundary_output / descriptor["path"], description) == value,
+                f"{description} source bytes differ")
+        return descriptor
+
+    def object_file(path: Path, previous: object, description: str) -> dict[str, Any]:
+        descriptor = (_validate_artifact_descriptor(boundary_output, previous, description) if replay
+                      else _artifact_identity(boundary_output, path, description))
+        require(descriptor["path"] == path.relative_to(boundary_output).as_posix(), f"{description} path differs")
+        return descriptor
+
+    def output_text(record: Mapping[str, Any], description: str) -> str:
+        descriptor = _exact_keys(record.get("stdout"), {"mode", "path", "sha256", "size"},
+                                 f"{description} stdout")
+        return _decode_raw_text(boundary_output / descriptor["path"], description)
+
+    def collect_object(
+        *,
+        tree: str,
+        profile_name: str,
+        role: str,
+        source_text: str,
+        previous: Mapping[str, Any] | None,
+        header_root: Path,
+    ) -> dict[str, Any]:
+        profile = profiles.get(profile_name)
+        require(profile is not None, f"selected {role} profile is not admitted")
+        directory_path = directory(selected_root / role / tree / profile_name)
+        source_path = directory_path / (role + ".cpp" if profile.language == "cxx" else role + ".c")
+        object_path = directory_path / (role + ".o")
+        previous = _exact_keys(previous, {"source", "object", "compile", "symbols", "relocations"},
+                               f"selected {role} {tree}:{profile_name}") if replay else None
+        source_record = source(
+            source_path,
+            source_text,
+            previous["source"] if replay else None,
+            f"selected {role} source",
+        )
+        source_recorded = recorded(source_path)
+        object_recorded = recorded(object_path)
+        expected_argv = _compile_argv(
+            Path(compiler["path"]), profile, header_root, Path(resource_include),
+            Path("/opt/linux-5.10-uapi/include"), source_recorded, object_recorded,
+        )
+        compile_record = command(
+            directory_path,
+            "compile",
+            expected_argv,
+            previous["compile"] if replay else None,
+        )
+        require(compile_record["returncode"] == 0,
+                f"selected {role} header compile failed: {tree}:{profile_name}")
+        object_record = object_file(object_path, previous["object"] if replay else None, f"selected {role} object")
+        raw = {"source": source_record, "object": object_record, "compile": compile_record}
+        for label, flags in (("symbols", ["-sW"]), ("relocations", ["-rW"])):
+            inspection = command(
+                directory_path,
+                label,
+                [readelf, *flags, str(object_recorded)],
+                previous[label] if replay else None,
+            )
+            require(inspection["returncode"] == 0, f"selected {role} {label} inspection failed")
+            raw[label] = inspection
+        return {"path": object_path, "raw": raw,
+                "symbols": parse_symbol_table(output_text(raw["symbols"], f"selected {role} symbol table")),
+                "relocations": parse_relocations(output_text(raw["relocations"], f"selected {role} relocation table"))}
+
+    alloca_previous = _exact_keys(
+        previous_alloca,
+        {"header", "profile", "compiler", "qual_type", "undefined_symbols", "relocation_symbols", "links", "raw"},
+        "selected alloca receipt",
+    ) if replay else None
+    alloca_raw_previous = _exact_keys(alloca_previous["raw"], {"source", "object", "symbols", "relocations", "compile"},
+                                      "selected alloca raw observations") if replay else None
+    alloca_directory = directory(selected_root / "alloca" / "c11-gnu")
+    alloca_source_path = alloca_directory / "source.c"
+    alloca_object_path = alloca_directory / "alloca.o"
+    alloca_source = (
+        "#include <alloca.h>\n"
+        "int main(void) {\n"
+        "    volatile size_t size = 64;\n"
+        "    volatile unsigned char *bytes = alloca(size);\n"
+        "    bytes[0] = (unsigned char)size;\n"
+        "    return bytes[0] != (unsigned char)size;\n"
+        "}\n"
+    )
+    alloca_source_record = source(
+        alloca_source_path,
+        alloca_source,
+        alloca_raw_previous["source"] if replay else None,
+        "selected alloca source",
+    )
+    alloca_source_recorded = recorded(alloca_source_path)
+    alloca_object_recorded = recorded(alloca_object_path)
+    profile = profiles["c11-gnu"]
+    alloca_argv = [
+        str(compiler["path"]), "-x", "c", f"-std={profile.standard}", "-nostdinc",
+        "-I", str(static_product / "usr/include"), "-isystem", resource_include,
+        "-isystem", "/opt/linux-5.10-uapi/include", *[f"-D{value}" for value in profile.defines],
+        "-O0", "-fno-stack-protector", "-fdata-sections", "-c",
+        str(alloca_source_recorded), "-o", str(alloca_object_recorded),
+    ]
+    alloca_compile = command(alloca_directory, "compile", alloca_argv,
+                             alloca_raw_previous["compile"] if replay else None)
+    require(alloca_compile["returncode"] == 0, "selected alloca header compile failed")
+    alloca_object_record = object_file(alloca_object_path,
+                                       alloca_raw_previous["object"] if replay else None,
+                                       "selected alloca object")
+    alloca_raw: dict[str, Any] = {
+        "source": alloca_source_record,
+        "object": alloca_object_record,
+        "compile": alloca_compile,
+    }
+    alloca_symbols = command(
+        alloca_directory, "symbols", [readelf, "-sW", str(alloca_object_recorded)],
+        alloca_raw_previous["symbols"] if replay else None,
+    )
+    alloca_relocations = command(
+        alloca_directory, "relocations", [readelf, "-rW", str(alloca_object_recorded)],
+        alloca_raw_previous["relocations"] if replay else None,
+    )
+    require(alloca_symbols["returncode"] == alloca_relocations["returncode"] == 0,
+            "selected alloca ELF inspection failed")
+    alloca_raw["symbols"] = alloca_symbols
+    alloca_raw["relocations"] = alloca_relocations
+    alloca_symbol_rows = parse_symbol_table(output_text(alloca_symbols, "selected alloca symbols"))
+    alloca_relocation_rows = parse_relocations(output_text(alloca_relocations, "selected alloca relocations"))
+    alloca_undefined = sorted({row["name"] for row in alloca_symbol_rows
+                               if row["binding"] in {"GLOBAL", "WEAK"} and row["section_index"] == "UND" and row["name"]})
+    alloca_external_relocations = sorted({row["symbol"] for row in alloca_relocation_rows
+                                          if row["symbol"] in alloca_undefined})
+    alloca_links = []
+    previous_links = alloca_previous["links"] if replay else []
+    require(isinstance(previous_links, list) if replay else True, "retained alloca product link roster is invalid")
+    require(not replay or len(previous_links) == 2, "retained alloca product link roster differs")
+    for index, (kind, product, form) in enumerate((("static", static_product, "static"),
+                                                   ("dynamic", dynamic_product, "non-pie"))):
+        previous_link = previous_links[index] if replay else None
+        if replay:
+            previous_link = _exact_keys(previous_link, {"linkage", "returncode", "raw"}, "retained alloca link")
+            require(previous_link["linkage"] == kind, "retained alloca product link identity differs")
+        link_directory = directory(selected_root / "alloca" / kind / "link")
+        executable = link_directory / "probe"
+        receipt_name = "probe.receipt.json" if kind == "static" else "probe.crabc-link.json"
+        receipt_path = link_directory / receipt_name
+        driver = product / "bin" / ("crabc-cc" if kind == "static" else "crabc-cc-dynamic")
+        recorded_driver = SOURCE_MOUNT / driver.relative_to(ROOT)
+        argv = [str(recorded_driver), "-static" if kind == "static" else "--dynamic-non-pie"]
+        if kind == "static":
+            argv.extend(["--link-receipt", receipt_name])
+        argv.extend([str(alloca_object_recorded), "-o", str(recorded(executable))])
+        link_command = command(link_directory, "link", argv,
+                                previous_link["raw"]["command"] if replay else None)
+        require(link_command["returncode"] == 0, f"selected alloca {kind} product link failed")
+        output_record = object_file(executable,
+                                    previous_link["raw"]["output"] if replay else None,
+                                    f"selected alloca {kind} linked output")
+        require(output_record["path"] == executable.relative_to(boundary_output).as_posix(),
+                f"selected alloca {kind} linked output path differs")
+        receipt_value = read_json_object(receipt_path, f"selected alloca {kind} link receipt")
+        resolved_linker = receipt_value.get("resolved_linker")
+        require(isinstance(resolved_linker, Mapping)
+                and {key: resolved_linker.get(key) for key in ("path", "sha256")}
+                    == {key: owned_linker.get(key) for key in ("path", "sha256")},
+                f"selected alloca {kind} linker identity differs")
+        if not replay:
+            product_evidence.validate_link(product, alloca_object_path, executable, receipt_path, form)
+        receipt_join = product_evidence.validate_retained_link(
+            ROOT, str(SOURCE_MOUNT), product, alloca_object_path, executable, receipt_path,
+            form, {key: owned_linker[key] for key in ("path", "sha256")},
+        )
+        receipt_join["product"] = products[kind]["root"]
+        alloca_links.append({"linkage": kind, "returncode": link_command["returncode"],
+                             "raw": {"command": link_command, "output": output_record,
+                                     "receipt": receipt_join}})
+
+    alloca_observation = {
+        "header": "alloca.h",
+        "profile": "c11-gnu",
+        "compiler": copy.deepcopy(dict(compiler)),
+        "qual_type": _selected_callable_declaration_types()["alloca"],
+        "undefined_symbols": alloca_undefined,
+        "relocation_symbols": alloca_external_relocations,
+        "links": alloca_links,
+        "raw": alloca_raw,
+    }
+    seqbuf_jobs = []
+    previous_jobs = previous_seqbuf["jobs"] if replay else []
+    require(not replay or isinstance(previous_jobs, list) and len(previous_jobs) == 4,
+            "retained seqbuf_dump consumer job roster differs")
+    seqbuf_types = _selected_callable_declaration_types()["seqbuf_dump"]
+    for tree in ("candidate", "reference"):
+        header_root = static_product / "usr/include" if tree == "candidate" else Path("/opt/musl-1.2.6/include")
+        tree_jobs = {}
+        for language_index, (language, profile_name, symbol) in enumerate((
+            ("c", "c11-gnu", "seqbuf_dump"),
+            ("cxx", "cxx17-gnu", "_Z11seqbuf_dumpv"),
+        )):
+            index = (0 if tree == "candidate" else 2) + language_index
+            previous_job = previous_jobs[index] if replay else None
+            if replay:
+                previous_job = _exact_keys(previous_job, {"tree", "header", "language", "profile", "qual_type",
+                                                          "definition_symbol", "consumer_undefined_symbol",
+                                                          "same_language_link", "opposite_language_link", "raw"},
+                                           f"retained seqbuf_dump consumer job {index}")
+            declaration_source = "#include <sys/soundcard.h>\nvoid seqbuf_dump(void) {}\n"
+            consumer_source = ("#include <sys/soundcard.h>\n"
+                               "void (*callback_address)(void) = SEQ_DUMPBUF;\n")
+            raw_previous = previous_job["raw"] if replay else None
+            raw_previous = _exact_keys(raw_previous, {"definition_source", "definition_object", "definition_compile",
+                                                      "definition_symbols", "definition_relocations", "consumer_source",
+                                                      "consumer_object", "consumer_compile", "consumer_symbols",
+                                                      "consumer_relocations"},
+                                       f"retained seqbuf_dump raw job {index}") if replay else None
+            definition = collect_object(
+                tree=tree, profile_name=profile_name, role="definition", source_text=declaration_source,
+                previous={"source": raw_previous["definition_source"], "object": raw_previous["definition_object"],
+                          "compile": raw_previous["definition_compile"], "symbols": raw_previous["definition_symbols"],
+                          "relocations": raw_previous["definition_relocations"]} if replay else None,
+                header_root=header_root,
+            )
+            consumer = collect_object(
+                tree=tree, profile_name=profile_name, role="consumer", source_text=consumer_source,
+                previous={"source": raw_previous["consumer_source"], "object": raw_previous["consumer_object"],
+                          "compile": raw_previous["consumer_compile"], "symbols": raw_previous["consumer_symbols"],
+                          "relocations": raw_previous["consumer_relocations"]} if replay else None,
+                header_root=header_root,
+            )
+            definitions = [row for row in definition["symbols"]
+                           if row["name"] == symbol and row["section_index"] != "UND"]
+            require(len(definitions) == 1 and definitions[0]["type"] == "FUNC"
+                    and definitions[0]["binding"] == "GLOBAL" and definitions[0]["visibility"] == "DEFAULT",
+                    f"seqbuf_dump consumer definition differs: {tree}:{profile_name}")
+            consumer_undefined = sorted({row["name"] for row in consumer["symbols"]
+                                         if row["binding"] in {"GLOBAL", "WEAK"}
+                                         and row["section_index"] == "UND" and row["name"]})
+            require(consumer_undefined == [symbol]
+                    and any(row["symbol"] == symbol for row in consumer["relocations"]),
+                    f"seqbuf_dump consumer callback reference differs: {tree}:{profile_name}")
+            tree_jobs[profile_name] = {
+                "tree": tree,
+                "language": language,
+                "profile": profile_name,
+                "symbol": symbol,
+                "previous": previous_job,
+                "raw_previous": raw_previous,
+                "definition": definition,
+                "consumer": consumer,
+            }
+        for language, profile_name, symbol in (("c", "c11-gnu", "seqbuf_dump"),
+                                                ("cxx", "cxx17-gnu", "_Z11seqbuf_dumpv")):
+            index = len(seqbuf_jobs)
+            job = tree_jobs[profile_name]
+            previous_job = job["previous"]
+            link_observations = {}
+            for link_kind, provider_profile, expected_undefined in (
+                ("same_language_link", profile_name, []),
+                ("opposite_language_link", "cxx17-gnu" if language == "c" else "c11-gnu", [symbol]),
+            ):
+                link_name = "same" if link_kind == "same_language_link" else "opposite"
+                link_directory = directory(selected_root / "seqbuf_dump" / tree / profile_name / link_name)
+                provider_key = (tree, provider_profile)
+                previous_link = previous_job[link_kind] if replay else None
+                if replay:
+                    previous_link = _exact_keys(previous_link, {"returncode", "undefined_symbols", "raw"},
+                                                f"retained seqbuf_dump {link_name} link")
+                    previous_raw = _exact_keys(previous_link["raw"], {"command", "output", "symbols", "relocations"},
+                                               f"retained seqbuf_dump {link_name} raw link")
+                else:
+                    previous_raw = None
+                provider_object = tree_jobs[provider_profile]["definition"]["path"]
+                linked_object = link_directory / "linked.o"
+                recorded_consumer = recorded(job["consumer"]["path"])
+                recorded_provider = recorded(provider_object)
+                recorded_linked = recorded(linked_object)
+                link_command = command(
+                    link_directory,
+                    "link",
+                    [linker, "-r", str(recorded_consumer), str(recorded_provider), "-o", str(recorded_linked)],
+                    previous_raw["command"] if replay else None,
+                )
+                require(link_command["returncode"] == 0,
+                        f"seqbuf_dump {link_name} consumer link failed: {tree}:{profile_name}")
+                linked_record = object_file(linked_object, previous_raw["output"] if replay else None,
+                                            f"seqbuf_dump {link_name} linked object")
+                linked_symbols = command(link_directory, "symbols",
+                                         [readelf, "-sW", str(recorded_linked)],
+                                         previous_raw["symbols"] if replay else None)
+                linked_relocations = command(link_directory, "relocations",
+                                             [readelf, "-rW", str(recorded_linked)],
+                                             previous_raw["relocations"] if replay else None)
+                require(linked_symbols["returncode"] == linked_relocations["returncode"] == 0,
+                        f"seqbuf_dump {link_name} ELF inspection failed")
+                linked_rows = parse_symbol_table(output_text(linked_symbols, "seqbuf_dump linked symbols"))
+                undefined = sorted({row["name"] for row in linked_rows
+                                    if row["binding"] in {"GLOBAL", "WEAK"}
+                                    and row["section_index"] == "UND" and row["name"]})
+                require(undefined == expected_undefined,
+                        f"seqbuf_dump {link_name} consumer linkage differs: {tree}:{profile_name}")
+                link_observations[link_kind] = {
+                    "returncode": link_command["returncode"],
+                    "undefined_symbols": undefined,
+                    "raw": {"command": link_command, "output": linked_record,
+                            "symbols": linked_symbols, "relocations": linked_relocations},
+                }
+            seqbuf_jobs.append({
+                "tree": tree,
+                "header": "sys/soundcard.h",
+                "language": language,
+                "profile": profile_name,
+                "qual_type": seqbuf_types[tree][language],
+                "definition_symbol": symbol,
+                "consumer_undefined_symbol": symbol,
+                "same_language_link": link_observations["same_language_link"],
+                "opposite_language_link": link_observations["opposite_language_link"],
+                "raw": {
+                    "definition_source": job["definition"]["raw"]["source"],
+                    "definition_object": job["definition"]["raw"]["object"],
+                    "definition_compile": job["definition"]["raw"]["compile"],
+                    "definition_symbols": job["definition"]["raw"]["symbols"],
+                    "definition_relocations": job["definition"]["raw"]["relocations"],
+                    "consumer_source": job["consumer"]["raw"]["source"],
+                    "consumer_object": job["consumer"]["raw"]["object"],
+                    "consumer_compile": job["consumer"]["raw"]["compile"],
+                    "consumer_symbols": job["consumer"]["raw"]["symbols"],
+                    "consumer_relocations": job["consumer"]["raw"]["relocations"],
+                },
+            })
+    result = _selected_callable_boundary_summary(
+        deferred,
+        products,
+        compiler,
+        alloca_observation,
+        {"jobs": seqbuf_jobs},
+        provider_rows,
+        raw_provider_observations,
+        retained=retained,
+    )
+    return result
+
+
 def _cpp_linkage_evidence(
     output: Path, plans: Sequence[Mapping[str, Any]], *, tools: Mapping[str, Any],
     resource_include: str, static_product: Path, dynamic_product: Path,
-    timeout_seconds: float, retained: Mapping[str, Any] | None = None,
+    timeout_seconds: float, deferred: Mapping[str, Any] | None = None,
+    retained: Mapping[str, Any] | None = None,
+    selected_retained: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Collect or replay the same finite oracle controls and owned bridge links.
 
@@ -1969,6 +2684,11 @@ def _cpp_linkage_evidence(
         "archive-headers": [readelf, "-hW", str(recorded_output / "inputs/static")],
         "archive-sections": [readelf, "-SW", str(recorded_output / "inputs/static")],
         "shared-symbols": [readelf, "--dyn-syms", "--wide", str(recorded_output / "inputs/shared")],
+        "candidate-archive-members": [extra_tools["ar"]["identity"]["path"], "t",
+                                      products["static"]["root"] + "/usr/lib/libc.a"],
+        "candidate-archive-symbols": [readelf, "-sW", products["static"]["root"] + "/usr/lib/libc.a"],
+        "candidate-archive-headers": [readelf, "-hW", products["static"]["root"] + "/usr/lib/libc.a"],
+        "candidate-archive-sections": [readelf, "-SW", products["static"]["root"] + "/usr/lib/libc.a"],
         "candidate-shared-symbols": [readelf, "--dyn-syms", "--wide", products["dynamic"]["root"] + "/usr/lib/libc.so"],
     }
     for label, argv in inventory_commands.items():
@@ -1981,6 +2701,18 @@ def _cpp_linkage_evidence(
                                                        stdout(raw["archive-symbols"]),
                                                        str(recorded_output / "inputs/static")),
                  "shared": abi_inventory.parse_dynamic_symbol_rows(stdout(raw["shared-symbols"]))}
+    candidate_members = abi_inventory.parse_archive_members(stdout(raw["candidate-archive-members"]))
+    candidate_archive = products["static"]["root"] + "/usr/lib/libc.a"
+    candidate_providers = {
+        "static": oracle_static_provider_rows(
+            candidate_members,
+            stdout(raw["candidate-archive-headers"]),
+            stdout(raw["candidate-archive-sections"]),
+            stdout(raw["candidate-archive-symbols"]),
+            candidate_archive,
+        ),
+        "shared": abi_inventory.parse_dynamic_symbol_rows(stdout(raw["candidate-shared-symbols"])),
+    }
     if replay:
         require(isinstance(retained["jobs"], list) and len(retained["jobs"]) == len(selected),
                 "reviewed linkage probe job roster differs")
@@ -2087,8 +2819,42 @@ def _cpp_linkage_evidence(
         require(set(retained["tools"]) == {"ar", "ld", "lld"} and set(retained["raw"]) == set(raw)
                 and set(retained["oracle_inputs"]) == set(oracle_inputs), "reviewed linkage input roster differs")
     extra_tools["lld"] = lld_identity
+    raw_provider_observations = {
+        "candidate": {
+            "static": {"members": raw["candidate-archive-members"]["stdout"],
+                       "headers": raw["candidate-archive-headers"]["stdout"],
+                       "sections": raw["candidate-archive-sections"]["stdout"],
+                       "symbols": raw["candidate-archive-symbols"]["stdout"]},
+            "shared": {"symbols": raw["candidate-shared-symbols"]["stdout"]},
+        },
+        "reference": {
+            "static": {"members": raw["archive-members"]["stdout"],
+                       "headers": raw["archive-headers"]["stdout"],
+                       "sections": raw["archive-sections"]["stdout"],
+                       "symbols": raw["archive-symbols"]["stdout"]},
+            "shared": {"symbols": raw["shared-symbols"]["stdout"]},
+        },
+    }
+    selected_boundaries = _selected_callable_boundary_evidence(
+        boundary_output,
+        recorded_output,
+        static_product=static_product,
+        dynamic_product=dynamic_product,
+        products=_selected_callable_product_seal(static_product, dynamic_product),
+        deferred={} if deferred is None else deferred,
+        tools=tools,
+        extra_tools=extra_tools,
+        resource_include=resource_include,
+        timeout_seconds=timeout_seconds,
+        provider_rows={"candidate": candidate_providers, "reference": providers},
+        raw_provider_observations=raw_provider_observations,
+        command=command,
+        owned_linker=lld_identity,
+        retained=selected_retained,
+    )
     return {"classification": classification, "jobs": jobs, "links": links, "oracle_inputs": oracle_inputs,
-            "products": products, "raw": raw, "tools": extra_tools}
+            "products": products, "raw": raw, "tools": extra_tools,
+            "selected_callable_boundaries": selected_boundaries}
 
 
 def _report_status() -> dict[str, bool]:
@@ -2399,6 +3165,7 @@ def build_report(
     record_layout_projection: Mapping[str, Any],
     jobs: Sequence[Mapping[str, Any]],
     reviewed_cpp_linkage_boundary: Mapping[str, Any] | None = None,
+    selected_callable_boundaries: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     require(len(plans) == len(jobs) and bool(plans), "ordinary declaration plan/job roster differs")
     for ordinal, (plan, job) in enumerate(zip(plans, jobs, strict=True)):
@@ -2420,6 +3187,7 @@ def build_report(
         "oracle": ORACLE,
         "record_layout_projection": copy.deepcopy(dict(record_layout_projection)),
         "reviewed_cpp_linkage_boundary": copy.deepcopy(reviewed_cpp_linkage_boundary),
+        "selected_callable_boundaries": copy.deepcopy(selected_callable_boundaries),
         "schema": SCHEMA,
         "status": _report_status(),
         "summary": summary,
@@ -2448,15 +3216,21 @@ def collect_report(
         output = _physical_path(output, "declaration ABI evidence directory", directory=True)
         source_snapshots = _snapshot_source_files(output)
         header_identity = _external_identity(header_report, "header declaration report")
-        _account, plans, callable_plan_source, header_tools = derive_callable_plan(header_report)
+        account, plans, callable_plan_source, header_tools = derive_callable_plan(header_report)
         layout = _record_layout_projection()
         tools, resource_include = _collection_tools(output, timeout_seconds, header_tools=header_tools)
         require((static_product is None) == (dynamic_product is None), "both reviewed owned products must be supplied together")
         reviewed_boundary = None
+        selected_boundaries = None
         if static_product is not None and dynamic_product is not None:
-            reviewed_boundary = _cpp_linkage_evidence(output, plans, tools=tools, resource_include=str(resource_include),
-                                                       static_product=static_product, dynamic_product=dynamic_product,
-                                                       timeout_seconds=timeout_seconds)
+            boundary_evidence = _cpp_linkage_evidence(
+                output, plans, tools=tools, resource_include=str(resource_include),
+                static_product=static_product, dynamic_product=dynamic_product,
+                timeout_seconds=timeout_seconds,
+                deferred=_selected_deferred_owner_map(account),
+            )
+            selected_boundaries = boundary_evidence.pop("selected_callable_boundaries")
+            reviewed_boundary = boundary_evidence
         jobs = _collect_jobs(
             output,
             plans,
@@ -2479,6 +3253,7 @@ def collect_report(
             record_layout_projection=layout,
             jobs=jobs,
             reviewed_cpp_linkage_boundary=reviewed_boundary,
+            selected_callable_boundaries=selected_boundaries,
         )
         _write_new_json(output / "report.json", report)
         return report
@@ -2619,7 +3394,7 @@ def validate_report(
     expected_keys = {
         "callable_plan", "callable_plan_source", "execution", "header_declaration_report", "inputs", "jobs",
         "oracle", "record_layout_projection", "schema", "status", "summary", "target",
-        "reviewed_cpp_linkage_boundary",
+        "reviewed_cpp_linkage_boundary", "selected_callable_boundaries",
     }
     require(set(report) == expected_keys, "native declaration ABI report fields differ")
     require(report["schema"] == SCHEMA and report["target"] == TARGET and report["oracle"] == ORACLE,
@@ -2629,7 +3404,7 @@ def validate_report(
     source_snapshots = _validate_source_snapshots(output, inputs["source_snapshots"])
     supplied_header_report = _physical_path(header_report, "supplied header declaration report", directory=False)
     header_identity = _validate_collector_header_identity(report["header_declaration_report"], supplied_header_report)
-    _account, plans, callable_plan_source, header_tools = derive_callable_plan(
+    account, plans, callable_plan_source, header_tools = derive_callable_plan(
         supplied_header_report,
         header_envelope=header_envelope,
     )
@@ -2649,10 +3424,22 @@ def validate_report(
     if boundary is not None:
         require(static_product is not None and dynamic_product is not None,
                 "reviewed linkage replay requires both exact supplied owned products")
-        rebuilt_boundary = _cpp_linkage_evidence(output, plans, tools=tools, resource_include=resource_path,
-                                                 static_product=static_product, dynamic_product=dynamic_product,
-                                                 timeout_seconds=execution["timeout_seconds"], retained=boundary)
-        require(strict_equal(boundary, rebuilt_boundary), "retained reviewed linkage boundary differs")
+        selected_boundary = report["selected_callable_boundaries"]
+        require(isinstance(selected_boundary, Mapping), "selected callable boundary replay receipt is absent")
+        rebuilt = _cpp_linkage_evidence(
+            output, plans, tools=tools, resource_include=resource_path,
+            static_product=static_product, dynamic_product=dynamic_product,
+            timeout_seconds=execution["timeout_seconds"],
+            deferred=_selected_deferred_owner_map(account),
+            retained=boundary,
+            selected_retained=selected_boundary,
+        )
+        rebuilt_selected = rebuilt.pop("selected_callable_boundaries")
+        require(strict_equal(boundary, rebuilt), "retained reviewed linkage boundary differs")
+        require(strict_equal(selected_boundary, rebuilt_selected), "retained selected callable boundary differs")
+    else:
+        require(report["selected_callable_boundaries"] is None,
+                "selected callable boundary lacks its provider and consumer inputs")
     jobs = [
         _validate_job(
             output,
@@ -2674,6 +3461,7 @@ def validate_report(
         "execution": execution,
         "header_declaration_report": header_identity,
         "record_layout_projection": layout,
+        "selected_callable_boundaries": copy.deepcopy(report["selected_callable_boundaries"]),
         "report": report,
         "summary": summary,
     }
@@ -2683,12 +3471,14 @@ def validation_result(report_path: Path, replayed: Mapping[str, Any]) -> dict[st
     """Render a compact host-side replay receipt without duplicating raw jobs."""
     report_path = _physical_path(report_path, "native declaration ABI report", directory=False)
     require(isinstance(replayed, Mapping) and set(replayed) == {
-        "callable_plan", "execution", "header_declaration_report", "record_layout_projection", "report", "summary"
+        "callable_plan", "execution", "header_declaration_report", "record_layout_projection",
+        "selected_callable_boundaries", "report", "summary"
     }, "native declaration ABI replay result differs")
     return {
         "header_declaration_report": copy.deepcopy(dict(replayed["header_declaration_report"])),
         "report": _external_identity(report_path, "native declaration ABI report"),
-        "schema": "crabc.x86_64-native-declaration-abi-validation/v1",
+        "schema": VALIDATION_SCHEMA,
+        "selected_callable_boundaries": copy.deepcopy(replayed["selected_callable_boundaries"]),
         "status": copy.deepcopy(dict(replayed["report"]["status"])),
         "summary": copy.deepcopy(dict(replayed["summary"])),
     }

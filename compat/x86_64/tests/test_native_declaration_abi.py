@@ -64,6 +64,209 @@ def group(
 
 
 class NativeDeclarationAbiTests(unittest.TestCase):
+    def selected_boundary_fixture(self):
+        deferred = {
+            "alloca": {
+                "id": "x86-header-callable-builtin-v1",
+                "members": ["alloca"],
+                "resolution": "compiler-builtin",
+            },
+            "seqbuf_dump": {
+                "id": "x86-header-callable-consumer-supplied-v1",
+                "members": ["seqbuf_dump"],
+                "resolution": "consumer-supplied",
+            },
+        }
+        no_provider = [
+            "_flush_cache", "cachectl", "cacheflush", "getcontext", "makecontext",
+            "pthread_mutexattr_getprioceiling", "pthread_mutexattr_setprioceiling",
+            "setcontext", "swapcontext",
+        ]
+        deferred.update({name: {
+            "id": "x86-header-callable-oracle-no-provider-v1",
+            "members": no_provider,
+            "resolution": "oracle-declared-no-provider",
+        } for name in no_provider})
+        compiler = {"mode": 0o755, "path": "/tools/clang", "sha256": "a" * 64, "size": 1}
+        products = {
+            kind: {
+                "root": f"/workspace/.work/products/{kind}",
+                "manifest": {"mode": 0o644, "path": f"/workspace/.work/products/{kind}/share/crabc/manifest.json",
+                             "sha256": ("b" if kind == "static" else "c") * 64, "size": 1},
+                "installed_headers": {"path": f"/workspace/.work/products/{kind}/usr/include",
+                                      "tree_sha256": "d" * 64},
+                "libc": {"mode": 0o644 if kind == "static" else 0o755,
+                         "path": f"/workspace/.work/products/{kind}/usr/lib/libc.{ 'a' if kind == 'static' else 'so' }",
+                         "sha256": ("e" if kind == "static" else "f") * 64, "size": 1},
+            }
+            for kind in ("static", "dynamic")
+        }
+        alloca = {
+            "header": "alloca.h",
+            "profile": "c11-gnu",
+            "compiler": copy.deepcopy(compiler),
+            "qual_type": "void *(size_t)",
+            "undefined_symbols": [],
+            "relocation_symbols": [],
+            "links": [
+                {"linkage": kind, "returncode": 0,
+                 "raw": {key: {"path": kind + "-" + key} for key in ("command", "output", "receipt")}}
+                for kind in ("static", "dynamic")
+            ],
+            "raw": {key: {"path": value} for key, value in {
+                "source": "alloca-source", "object": "alloca-object", "symbols": "alloca-symbols",
+                "relocations": "alloca-relocations", "compile": "alloca-compile",
+            }.items()},
+        }
+        seqbuf_jobs = []
+        for tree in ("candidate", "reference"):
+            for language, profile, qual_type, symbol in (
+                ("c", "c11-gnu", "void (void)", "seqbuf_dump"),
+                ("cxx", "cxx17-gnu", "void ()", "_Z11seqbuf_dumpv"),
+            ):
+                seqbuf_jobs.append({
+                    "tree": tree,
+                    "header": "sys/soundcard.h",
+                    "language": language,
+                    "profile": profile,
+                    "qual_type": qual_type,
+                    "definition_symbol": symbol,
+                    "consumer_undefined_symbol": symbol,
+                    "same_language_link": {
+                        "returncode": 0,
+                        "undefined_symbols": [],
+                        "raw": {key: {"path": "same-" + key} for key in ("command", "output", "symbols", "relocations")},
+                    },
+                    "opposite_language_link": {
+                        "returncode": 0,
+                        "undefined_symbols": [symbol],
+                        "raw": {key: {"path": "opposite-" + key} for key in ("command", "output", "symbols", "relocations")},
+                    },
+                    "raw": {key: {"path": value} for key, value in {
+                        "definition_source": "definition-source", "definition_object": "definition-object",
+                        "definition_compile": "definition-compile",
+                        "definition_symbols": "definition-symbols", "definition_relocations": "definition-relocations",
+                        "consumer_source": "consumer-source", "consumer_object": "consumer-object",
+                        "consumer_compile": "consumer-compile",
+                        "consumer_symbols": "consumer-symbols", "consumer_relocations": "consumer-relocations",
+                    }.items()},
+                })
+        providers = {
+            tree: {
+                "static": [{"name": "unrelated", "binding": "GLOBAL", "visibility": "DEFAULT",
+                            "section_index": "1", "type": "FUNC"}],
+                "shared": [{"name": "unrelated", "binding": "GLOBAL", "visibility": "DEFAULT",
+                            "section_index": "1", "type": "FUNC"}],
+            }
+            for tree in ("candidate", "reference")
+        }
+        raw_provider_observations = {
+            "candidate": {"static": {key: {"path": "candidate-" + key} for key in ("members", "headers", "sections", "symbols")},
+                          "shared": {"symbols": {"path": "candidate-shared-symbols"}}},
+            "reference": {"static": {key: {"path": "reference-" + key} for key in ("members", "headers", "sections", "symbols")},
+                          "shared": {"symbols": {"path": "reference-shared-symbols"}}},
+        }
+        return deferred, products, compiler, alloca, {"jobs": seqbuf_jobs}, providers, raw_provider_observations
+
+    def test_selected_callable_boundary_receipt_has_exact_owner_scope_and_raw_observations(self):
+        arguments = self.selected_boundary_fixture()
+        receipt = ABI._selected_callable_boundary_summary(*arguments)
+        replayed = ABI._selected_callable_boundary_summary(*arguments, retained=receipt)
+        self.assertEqual(replayed, receipt)
+        self.assertEqual(receipt["alloca"]["owner"]["resolution"], "compiler-builtin")
+        self.assertEqual(receipt["alloca"]["no_libc_import"], {"undefined_symbols": [], "relocation_symbols": []})
+        self.assertEqual(receipt["seqbuf_dump"]["owner"]["resolution"], "consumer-supplied")
+        self.assertEqual(len(receipt["seqbuf_dump"]["jobs"]), 4)
+        self.assertEqual(receipt["seqbuf_dump"]["jobs"][1]["definition_symbol"], "_Z11seqbuf_dumpv")
+        self.assertEqual(receipt["oracle_no_provider"]["members"], sorted(name for name in arguments[0]
+                                                                           if arguments[0][name]["resolution"] == "oracle-declared-no-provider"))
+        self.assertEqual(receipt["oracle_no_provider"]["provider_absence"], {
+            tree: {form: [] for form in ("static", "shared")}
+            for tree in ("candidate", "reference")
+        })
+        self.assertEqual(receipt["oracle_no_provider"]["raw_provider_observations"], arguments[6])
+        self.assertEqual(receipt["products"], arguments[1])
+
+    def test_selected_callable_replay_accepts_the_report_v2_boundary_shape(self):
+        class ReplayReached(Exception):
+            pass
+
+        arguments = self.selected_boundary_fixture()
+        receipt = ABI._selected_callable_boundary_summary(*arguments)
+        scratch = ROOT / ".work" / "tmp"
+        scratch.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(dir=scratch) as temporary:
+            boundary_output = Path(temporary) / "reviewed-cpp-linkage"
+            selected_root = boundary_output / "selected-callable-boundaries"
+            (selected_root / "alloca" / "c11-gnu").mkdir(parents=True)
+            tools = {
+                "clang": {"identity": {"mode": 0o755, "path": "/tools/clang", "sha256": "a" * 64, "size": 1}},
+                "readelf": {"identity": {"path": "/tools/readelf"}},
+            }
+            extra_tools = {"ld": {"identity": {"path": "/tools/ld"}}}
+            with mock.patch.object(ABI, "_profile_records", return_value={}), \
+                    mock.patch.object(ABI, "_validate_artifact_descriptor", side_effect=ReplayReached):
+                with self.assertRaises(ReplayReached):
+                    ABI._selected_callable_boundary_evidence(
+                        boundary_output,
+                        Path("/workspace") / boundary_output.relative_to(ROOT),
+                        static_product=Path("/unused/static"),
+                        dynamic_product=Path("/unused/dynamic"),
+                        products=arguments[1],
+                        deferred=arguments[0],
+                        tools=tools,
+                        extra_tools=extra_tools,
+                        resource_include="/resource/include",
+                        timeout_seconds=1,
+                        provider_rows=arguments[5],
+                        raw_provider_observations=arguments[6],
+                        command=lambda *args, **kwargs: None,
+                        owned_linker={"path": "/tools/ld", "sha256": "c" * 64},
+                        retained=receipt,
+                    )
+
+    def test_selected_callable_boundary_receipt_rejects_missing_owner_evidence_and_providers(self):
+        arguments = self.selected_boundary_fixture()
+        missing_owner = copy.deepcopy(arguments)
+        del missing_owner[0]["seqbuf_dump"]
+        with self.assertRaisesRegex(ABI.NativeDeclarationAbiError, "consumer-supplied"):
+            ABI._selected_callable_boundary_summary(*missing_owner)
+
+        missing_name = copy.deepcopy(arguments)
+        del missing_name[0]["swapcontext"]
+        with self.assertRaisesRegex(ABI.NativeDeclarationAbiError, "no-provider roster"):
+            ABI._selected_callable_boundary_summary(*missing_name)
+
+        injected_provider = copy.deepcopy(arguments)
+        injected_provider[5]["candidate"]["static"].append({
+            "name": "getcontext", "binding": "GLOBAL", "visibility": "DEFAULT", "section_index": "1", "type": "FUNC",
+        })
+        with self.assertRaisesRegex(ABI.NativeDeclarationAbiError, "candidate static libc provides"):
+            ABI._selected_callable_boundary_summary(*injected_provider)
+
+    def test_selected_callable_boundary_receipt_rejects_wrong_declaration_compiler_or_consumer(self):
+        for index, path, value, message in (
+            (3, ("qual_type",), "long *(size_t)", "alloca declaration"),
+            (3, ("compiler", "path"), "/tools/other-clang", "alloca compiler"),
+            (4, ("jobs", 0, "qual_type"), "int (void)", "seqbuf_dump declaration"),
+            (4, ("jobs", 1, "consumer_undefined_symbol"), "seqbuf_dump", "declaration or consumer linkage"),
+        ):
+            arguments = self.selected_boundary_fixture()
+            value_target = arguments[index]
+            for key in path[:-1]:
+                value_target = value_target[key]
+            value_target[path[-1]] = value
+            with self.subTest(message=message), self.assertRaisesRegex(ABI.NativeDeclarationAbiError, message):
+                ABI._selected_callable_boundary_summary(*arguments)
+
+    def test_selected_callable_boundary_receipt_rejects_changed_product_seal(self):
+        arguments = self.selected_boundary_fixture()
+        retained = ABI._selected_callable_boundary_summary(*arguments)
+        changed = copy.deepcopy(arguments)
+        changed[1]["dynamic"]["libc"]["sha256"] = "0" * 64
+        with self.assertRaisesRegex(ABI.NativeDeclarationAbiError, "retained selected callable boundary differs"):
+            ABI._selected_callable_boundary_summary(*changed, retained=retained)
+
     @contextlib.contextmanager
     def reviewed_header_products(self):
         scratch = ROOT / '.work/tmp'

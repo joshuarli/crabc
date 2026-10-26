@@ -1,4 +1,4 @@
-schema = "crabc.x86_64-native-declaration-abi/v1"
+schema = "crabc.x86_64-native-declaration-abi/v2"
 target = "x86_64-unknown-linux-musl"
 oracle = "Pinned musl 1.2.6"
 header_declaration_report_schema = "crabc.x86_64-header-declaration-inventory/v1"

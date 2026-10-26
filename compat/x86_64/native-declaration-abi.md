@@ -61,6 +61,36 @@ ordinary callable declaration in this object witness.  The `h_errno` macro's
 per-thread storage, lifecycle, and accessor-to-storage semantics remain the
 separate runtime obligation; this collector does not make a storage claim.
 
+## Selected callable boundaries
+
+Report schema v2 requires the `selected_callable_boundaries` field. The field
+is `null` when collection has no supplied static and dynamic products.
+Selection accepts these owner receipts only when both product roots are
+present and current.
+
+The receipt covers the three deferred declaration owners. The `alloca` probe
+compiles the installed `alloca.h` declaration, retains its object symbol and
+relocation tables, and links the object through both owned product drivers.
+The object must have no external undefined symbol or external relocation.
+
+The `seqbuf_dump` probe compiles the typed callback definition and a consumer
+that references it against the candidate installed header tree and pinned
+musl headers. C and C++ jobs retain their defined symbols, consumer
+references, same-language links, and opposite-language unresolved symbols.
+The C++ job keeps its ordinary C++ linkage.
+
+The oracle no-provider receipt checks the exact nine selected names against
+the current candidate `libc.a` and `libc.so` and pinned musl `libc.a` and
+`libc.so`. It retains complete archive member, ELF header, section, symbol,
+and shared dynamic-symbol observations. Any global or weak definition for a
+selected name rejects the receipt.
+
+The receipt seals both product manifests, both libc files, and each installed
+header tree. The ordinary declaration report also retains the collector's
+current-source seal. These checks establish only the selected declaration
+boundaries; they do not supply providers or close runtime, family, promotion,
+or public-support claims.
+
 The layout projection replays the complete checked 1,337-row
 `header_record_layout_matrix` report and exposes only `_ns_flagdata` element
 facts from `arpa/nameser.h` and `in6_addr` facts from `netinet/in.h`, across
@@ -86,7 +116,8 @@ receipt owns a resource header, that file's retained size and digest are joined
 to this resource-tree copy. All output is a fresh direct child of
 `.work/x86_64/native-declaration-abi`.
 
-For example, after retaining a source-matching header receipt locally:
+For example, after retaining a source-matching header receipt and owned
+static and dynamic products locally:
 
 ```sh
 docker run --rm --network none --user "$(id -u):$(id -g)" \
@@ -95,6 +126,8 @@ docker run --rm --network none --user "$(id -u):$(id -g)" \
   "$(python3 -B compat/x86_64/core_image.py)" \
   python3 -B compat/x86_64/native_declaration_abi.py --collect \
     --header-report /workspace/.work/x86_64/header-declaration-input/report.json \
+    --static-product /workspace/.work/x86_64/abi/static/products/primary \
+    --dynamic-product /workspace/.work/x86_64/abi/dynamic/installed \
     --output /workspace/.work/x86_64/native-declaration-abi/clean-COMMIT
 ```
 
@@ -110,7 +143,9 @@ clang, resource-root, or readelf paths on the host:
 ```sh
 python3 -B compat/x86_64/native_declaration_abi.py --validate-report \
   .work/x86_64/native-declaration-abi/clean-COMMIT/report.json \
-  --header-report .work/x86_64/header-declaration-input/report.json
+  --header-report .work/x86_64/header-declaration-input/report.json \
+  --static-product .work/x86_64/abi/static/products/primary \
+  --dynamic-product .work/x86_64/abi/dynamic/installed
 ```
 
 `native_abi_selection.py` can consume this current receipt with the same
@@ -119,7 +154,8 @@ once and passes its exact return value to `validate_report`; the declaration
 reader still validates the physical header-report identity, all of its own
 current source snapshots, and every retained raw object observation. This is a
 composition-only reuse boundary, not a historical-report mode or a second
-header authority.
+header authority. A selection that attaches selected callable boundaries also
+supplies the same static and dynamic product roots used during collection.
 
 Both collection and replay report explicit `false` values for callable
 declaration ABI completion, runtime semantics, family completion, promotion,
