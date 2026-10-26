@@ -260,6 +260,25 @@ Both real-filesystem regressions fail before the fix. Focused checks pass
 standalone `owned-resolver-network` proof; it cannot admit the old H0 artifact.
 The H0 main runner is in OS-test collection; its pthread-family assessment
 runs independently from the completed three-pair POSIX matrix.
+OS-test, signal/process and pinned pthread-stress components then pass; the
+native coordinator reaches its retained 434-unit libc-test report and final
+classification. The independent pthread-family receipt passes for all three
+product pairs with 16 coverage topics. The text channel runs the existing 28
+pair-producer/input-seal steps, reusing primary word-expansion evidence.
+
+The first fresh resolver proof confirms readable run and report publication,
+then its independent reader finds `reference.events.json` still private. The
+DNS fixture's atomic event writer also used `mkstemp`'s `0600` mode.
+`0392fcce3` makes new event receipts `0644` before serialization; its real-FS
+replacement regression fails before the fix, and all 13 helper tests pass.
+The detached `.work/wt/resolver-complete-readability-proof` at that revision
+passes a fresh standalone `owned-resolver-network` producer. Ordinary host
+glob discovery finds one readable `run-pseboig1/report.json`, whose bytes match
+the published report. The full existing receipt reader passes as UID/GID 1000
+with read-only source/evidence mounts and networking disabled. No workload is
+replayed or artifact changed after production. Logs remain in that checkout's
+`.work/tmp/resolver-complete-readable-proof.*`. Both earlier failed resolver
+proofs and the original H0 artifact remain unchanged and unadmitted.
 
 The addrconfig lane's musl scratch remains under its `.work/tmp`: automatic
 review denied its removal with "rm -f style commands are not permitted. Use
