@@ -206,9 +206,16 @@ host report discovery. Preserve the unadmitted `run-pvivcgda` result and
 read and traverse bits while preserving inherited setgid, and use one precisely
 named allocator across static, dynamic and supplied paths. All 78 focused
 tests pass, including real-filesystem restrictive-umask and setgid regressions.
-The detached `.work/wt/lua-readability-proof` at `067b9a2bc` is prepared for a
-fresh standalone static Lua producer and ordinary host-reader verification.
-It does not alter the running H0 source or its existing artifact.
+The detached `.work/wt/lua-readability-proof` at `067b9a2bc` passes a fresh
+standalone static Lua producer. Host discovery finds and opens its actual
+`run-2o2_ahqd/report.json`. The existing `admit_static()` reader passes as
+UID/GID 1000 in the pinned image with networking disabled and source, product
+and evidence mounted read-only. Its ordinary latest-report selection validates
+the retained records and owned static product. Image-only compiler paths are
+validated in the image, not treated as host files. Raw logs remain under that
+checkout's `.work/tmp/lua-readable-proof.*`. This is a focused static proof,
+not three-product Lua admission or qualification of current main. It does not
+alter the running H0 source or its existing artifact.
 
 The addrconfig lane's musl scratch remains under its `.work/tmp`: automatic
 review denied its removal with "rm -f style commands are not permitted. Use
