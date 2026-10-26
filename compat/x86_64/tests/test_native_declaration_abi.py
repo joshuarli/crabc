@@ -439,6 +439,99 @@ class NativeDeclarationAbiTests(unittest.TestCase):
                 collector_product = Path("/workspace") / roots["static"].relative_to(ROOT)
                 self.assertEqual(ABI._installed_product_header_root(collector_product), expected_header_root)
 
+    def test_selected_callable_collector_consumes_real_symbol_and_relocation_rows(self):
+        compiler, readelf = (shutil.which(name) for name in ("clang", "readelf"))
+        if any(tool is None for tool in (compiler, readelf)):
+            self.skipTest("native compiler and ELF reader are required")
+        scratch = ROOT / ".work" / "tmp"
+        scratch.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(dir=scratch) as temporary:
+            tiny_object = Path(temporary) / "alloca.o"
+            source = (
+                "#include <alloca.h>\n"
+                "int selected_alloca(void) {\n"
+                "    volatile size_t size = 64;\n"
+                "    volatile unsigned char *bytes = alloca(size);\n"
+                "    bytes[0] = (unsigned char)size;\n"
+                "    return bytes[0] != (unsigned char)size;\n"
+                "}\n"
+            )
+            compiled = subprocess.run(
+                [compiler, "-x", "c", "-std=c11", "-I", str(ROOT / "include"), "-O0",
+                 "-fno-stack-protector", "-fdata-sections", "-c", "-o", str(tiny_object), "-"],
+                input=source,
+                text=True,
+                capture_output=True,
+                check=False,
+                env={**os.environ, "LANG": "C", "LC_ALL": "C", "TMPDIR": str(scratch)},
+            )
+            self.assertEqual(compiled.returncode, 0, compiled.stderr)
+            symbols = subprocess.run(
+                [readelf, "-sW", str(tiny_object)], text=True, capture_output=True, check=True,
+            ).stdout
+            relocations = subprocess.run(
+                [readelf, "-rW", str(tiny_object)], text=True, capture_output=True, check=True,
+            ).stdout
+            parsed_symbols = ABI.parse_symbol_table(symbols)
+            undefined_symbols = sorted({row["name"] for row in parsed_symbols
+                                        if row["binding"] in {"GLOBAL", "WEAK"}
+                                        and row["section"] == "UND" and row["name"]})
+            self.assertEqual(undefined_symbols, [])
+
+            class LinkReached(Exception):
+                pass
+
+            with self.reviewed_header_products() as (output, roots, _retained):
+                boundary_output = output / "selected-boundary-parser"
+                boundary_output.mkdir()
+                recorded_output = Path("/workspace") / boundary_output.relative_to(ROOT)
+
+                def collect_command(directory, label, argv, _previous=None):
+                    if label == "link":
+                        raise LinkReached
+                    if label == "compile":
+                        recorded_object = Path(argv[argv.index("-o") + 1])
+                        physical_object = boundary_output / recorded_object.relative_to(recorded_output)
+                        physical_object.write_bytes(tiny_object.read_bytes())
+                        output_text = ""
+                    elif label == "symbols":
+                        output_text = symbols
+                    elif label == "relocations":
+                        output_text = relocations
+                    else:
+                        raise AssertionError(f"unexpected selected boundary command: {label}")
+                    stdout_path = directory / f"{label}.stdout"
+                    stdout_path.write_text(output_text, encoding="utf-8")
+                    return {
+                        "returncode": 0,
+                        "stdout": ABI._artifact_identity(boundary_output, stdout_path, f"selected {label} stdout"),
+                    }
+
+                deferred = self.selected_boundary_fixture()[0]
+                tools = {
+                    "clang": {"identity": {"mode": 0o755, "path": compiler, "sha256": "a" * 64, "size": 1}},
+                    "readelf": {"identity": {"path": readelf}},
+                }
+                profile = ABI.callable_inventory.Profile("c11-gnu", "c", "c11", ("_GNU_SOURCE=1",))
+                with mock.patch.object(ABI, "_profile_records", return_value={"c11-gnu": profile}), \
+                        self.assertRaises(LinkReached):
+                    ABI._selected_callable_boundary_evidence(
+                        boundary_output,
+                        recorded_output,
+                        static_product=roots["static"],
+                        dynamic_product=roots["dynamic"],
+                        products={},
+                        deferred=deferred,
+                        tools=tools,
+                        extra_tools={"ld": {"identity": {"path": "/tools/ld"}}},
+                        resource_include="/tools/resource",
+                        timeout_seconds=1,
+                        provider_rows={},
+                        raw_provider_observations={},
+                        command=collect_command,
+                        owned_linker={},
+                    )
+
     def test_physical_c_bridge_links_and_pinned_cpp_reference_fails_without_a_provider(self):
         compiler, linker, readelf, archiver, objcopy = (shutil.which(name) for name in ("clang", "ld", "readelf", "ar", "objcopy"))
         if any(tool is None for tool in (compiler, linker, readelf, archiver, objcopy)):

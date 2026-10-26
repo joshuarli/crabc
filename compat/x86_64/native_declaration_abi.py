@@ -2376,7 +2376,7 @@ def _selected_callable_boundary_evidence(
     alloca_symbol_rows = parse_symbol_table(output_text(alloca_symbols, "selected alloca symbols"))
     alloca_relocation_rows = parse_relocations(output_text(alloca_relocations, "selected alloca relocations"))
     alloca_undefined = sorted({row["name"] for row in alloca_symbol_rows
-                               if row["binding"] in {"GLOBAL", "WEAK"} and row["section_index"] == "UND" and row["name"]})
+                               if row["binding"] in {"GLOBAL", "WEAK"} and row["section"] == "UND" and row["name"]})
     alloca_external_relocations = sorted({row["symbol"] for row in alloca_relocation_rows
                                           if row["symbol"] in alloca_undefined})
     alloca_links = []
@@ -2478,13 +2478,13 @@ def _selected_callable_boundary_evidence(
                 header_root=header_root,
             )
             definitions = [row for row in definition["symbols"]
-                           if row["name"] == symbol and row["section_index"] != "UND"]
+                           if row["name"] == symbol and row["section"] != "UND"]
             require(len(definitions) == 1 and definitions[0]["type"] == "FUNC"
                     and definitions[0]["binding"] == "GLOBAL" and definitions[0]["visibility"] == "DEFAULT",
                     f"seqbuf_dump consumer definition differs: {tree}:{profile_name}")
             consumer_undefined = sorted({row["name"] for row in consumer["symbols"]
                                          if row["binding"] in {"GLOBAL", "WEAK"}
-                                         and row["section_index"] == "UND" and row["name"]})
+                                         and row["section"] == "UND" and row["name"]})
             require(consumer_undefined == [symbol]
                     and any(row["symbol"] == symbol for row in consumer["relocations"]),
                     f"seqbuf_dump consumer callback reference differs: {tree}:{profile_name}")
@@ -2545,7 +2545,7 @@ def _selected_callable_boundary_evidence(
                 linked_rows = parse_symbol_table(output_text(linked_symbols, "seqbuf_dump linked symbols"))
                 undefined = sorted({row["name"] for row in linked_rows
                                     if row["binding"] in {"GLOBAL", "WEAK"}
-                                    and row["section_index"] == "UND" and row["name"]})
+                                    and row["section"] == "UND" and row["name"]})
                 require(undefined == expected_undefined,
                         f"seqbuf_dump {link_name} consumer linkage differs: {tree}:{profile_name}")
                 link_observations[link_kind] = {
