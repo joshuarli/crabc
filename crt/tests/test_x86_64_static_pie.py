@@ -7,6 +7,7 @@ import json
 import os
 import platform
 import re
+import resource
 import signal
 import struct
 import subprocess
@@ -51,6 +52,10 @@ def native_x86_64_evidence() -> bool:
         and platform.system() == "Linux"
         and platform.machine() in {"x86_64", "amd64"}
     )
+
+
+def disable_core_dump() -> None:
+    resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
 
 
 def toolchain_rustc() -> list[str]:
@@ -393,7 +398,7 @@ class X86_64StaticPieTests(unittest.TestCase):
 
                 relro_write = subprocess.run(
                     [str(executable), "!"], stdin=subprocess.DEVNULL,
-                    stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False,
+                    stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False, preexec_fn=disable_core_dump,
                 )
                 self.assertEqual(relro_write.returncode, -signal.SIGSEGV)
                 self.assertEqual(relro_write.stdout, b"I")
@@ -414,14 +419,14 @@ class X86_64StaticPieTests(unittest.TestCase):
 
                 executable_relro = subprocess.run(
                     [str(executable_relro_header(executable))], stdin=subprocess.DEVNULL,
-                    stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False,
+                    stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False, preexec_fn=disable_core_dump,
                 )
                 self.assertEqual(executable_relro.returncode, 127, executable_relro.stderr.decode(errors="replace"))
                 self.assertEqual(executable_relro.stdout, b"")
 
                 overlap = subprocess.run(
                     [str(overlapping_executable_load(executable))], stdin=subprocess.DEVNULL,
-                    stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False,
+                    stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False, preexec_fn=disable_core_dump,
                 )
                 self.assertEqual(overlap.returncode, 127, overlap.stderr.decode(errors="replace"))
                 self.assertEqual(overlap.stdout, b"")
