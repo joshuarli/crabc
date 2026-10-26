@@ -17,6 +17,8 @@ uses the selected `locale_multibyte` and `wide_character` owners for musl's
 `mbtowc`, case mapping, and POSIX wide character classes, including invalid
 UTF-8 progression. It keeps the public `FNM_PATHNAME`, `FNM_NOESCAPE`,
 `FNM_PERIOD`, `FNM_LEADING_DIR`, and `FNM_CASEFOLD` behavior at the C boundary.
+The native oracle's escaped-leading-period and bracket-range rules follow
+the `[musl_native]` revision in `compat/upstreams.toml`.
 
 `glob` preserves musl's `glob_t` layout and its flexible `struct match`
 allocation convention: each returned pathname is one allocation whose prefix

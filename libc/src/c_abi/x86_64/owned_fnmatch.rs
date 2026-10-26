@@ -356,8 +356,7 @@ unsafe fn match_bracket_c(mut pattern: *const c_char, character: c_int, folded: 
             {
                 return !inverted;
             }
-            // Source continue still reaches the enclosing for-loop increment.
-            pattern = unsafe { pattern.add(decoded as usize) };
+            pattern = unsafe { pattern.add(decoded as usize + 1) };
             continue;
         }
         if unsafe { byte(pattern) } == b'['
@@ -399,7 +398,9 @@ unsafe fn match_bracket_c(mut pattern: *const c_char, character: c_int, folded: 
             }
             pattern = unsafe { pattern.add(decoded as usize - 1) };
         }
-        if wide == character || wide == folded {
+        if (wide == character || wide == folded)
+            && (unsafe { byte(pattern.add(1)) } != b'-' || unsafe { byte(pattern.add(2)) } == b']')
+        {
             return !inverted;
         }
         pattern = unsafe { pattern.add(1) };
@@ -571,16 +572,13 @@ pub(super) unsafe fn fnmatch_internal(
     let mut string_step = 0usize;
     let mut tail_count = 0usize;
 
-    // Keep C mode's direct source-byte test. The bounded shell entry has no
-    // text terminator beyond `string_count`, and its quote map turns a raw
-    // expansion-derived `\\.` into the first logical literal unit.
     let string_starts_with_period = if mode.is_shell() {
         string_count != 0 && unsafe { byte(string) } == b'.'
     } else {
         (unsafe { byte(string) }) == b'.'
     };
     let pattern_starts_with_period = match mode {
-        PatternMode::C => (unsafe { byte(pattern) }) == b'.',
+        PatternMode::C => matches!(unsafe { byte(pattern) }, b'.' | b'\\'),
         PatternMode::Shell(_) => unsafe {
             shell_starts_with_literal_period(pattern, pattern_count, flags, mode)
         },
