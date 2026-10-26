@@ -599,6 +599,20 @@ class OwnedStdioComponentReceiptTests(unittest.TestCase):
         with self.assertRaisesRegex(receipt.ReceiptError, "dynamic pie link map"):
             self.validate()
 
+    def test_mold_link_map_binds_placements_and_workload(self) -> None:
+        path = self.fixture.work / "dynamic-pie.crabc-link.map"
+        path.write_text(
+            "VMA Size Align Out In Symbol\n"
+            "0x1000 16 16 .text\n"
+            f"0x1000 16 1 {self.fixture.object}:(.text)\n"
+            "0x2000 4 1 .rodata\n"
+            f"0x2000 4 1 {self.fixture.object}:(.rodata)\n"
+        )
+        receipt.validate_link_map(self.fixture.work, "dynamic-pie", self.fixture.dynamic, self.fixture.object)
+        path.write_text(path.read_text().replace(str(self.fixture.object), str(self.fixture.work / "foreign.o")))
+        with self.assertRaisesRegex(receipt.ReceiptError, "foreign input"):
+            receipt.validate_link_map(self.fixture.work, "dynamic-pie", self.fixture.dynamic, self.fixture.object)
+
     def test_dynamic_link_map_cannot_claim_a_shared_library_output_section(self) -> None:
         path = self.fixture.work / "dynamic-pie.crabc-link.map"
         library = self.fixture.dynamic / "usr/lib/libc.so"

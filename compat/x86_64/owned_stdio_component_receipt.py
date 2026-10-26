@@ -799,16 +799,15 @@ def archive_member_names(archive: Path) -> set[str]:
 
 
 def validate_link_map(work: Path, name: str, product: Path, workload: Path) -> None:
-    """Bind LLD's retained placements and input contributors to this output."""
-
     map_path = regular(work / (name + ".crabc-link.map"), name.replace("-", " ") + " link map")
     try:
         lines = map_path.read_text(encoding="utf-8").splitlines()
     except (OSError, UnicodeDecodeError) as error:
         raise ReceiptError(name.replace("-", " ") + " link map is unreadable") from error
     label = name.replace("-", " ") + " link map"
-    require(lines and lines[0].split() == ["VMA", "LMA", "Size", "Align", "Out", "In", "Symbol"],
-            label + " header differs")
+    header = lines[0].split() if lines else []
+    mold = header == ["VMA", "Size", "Align", "Out", "In", "Symbol"]
+    require(mold or header == ["VMA", "LMA", "Size", "Align", "Out", "In", "Symbol"], label + " header differs")
     sections = elf_section_layout(work / name)
     mapped: dict[str, tuple[int, int]] = {}
     contributors: set[str] = set()
@@ -823,9 +822,11 @@ def validate_link_map(work: Path, name: str, product: Path, workload: Path) -> N
     archive_prefixes = tuple(str(library / archive) + "(" for archive in archives)
     member_index: dict[str, set[str]] = {}
     for line in lines[1:]:
-        match = re.fullmatch(r"\s*([0-9a-f]+)\s+[0-9a-f]+\s+([0-9a-f]+)\s+\d+\s+(\S.*)", line)
-        require(match is not None, label + " contains a non-LLD record")
-        address, size, entry = int(match[1], 16), int(match[2], 16), match[3]
+        pattern = (r"\s*(0x[0-9a-f]+|0)\s+(\d+)\s+\d+\s+(\S.*)" if mold else
+                   r"\s*([0-9a-f]+)\s+[0-9a-f]+\s+([0-9a-f]+)\s+\d+\s+(\S.*)")
+        match = re.fullmatch(pattern, line)
+        require(match is not None, label + " contains an invalid record")
+        address, size, entry = int(match[1], 16), int(match[2], 10 if mold else 16), match[3]
         if entry in sections:
             require(entry not in mapped, label + " repeats an output section")
             mapped[entry] = (address, size)
