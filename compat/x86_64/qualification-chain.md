@@ -100,8 +100,12 @@ Each of the gate's retained evidence rows reruns its own leaf reader; the last
 applies `native-abi-selection require-closure`. The manual path is:
 
 ```sh
+mkdir -p .work/x86_64/abi .work/x86_64/native-abi-inventory \
+  .work/x86_64/header-declaration-inventory .work/x86_64/public-data-ordinary-link \
+  .work/x86_64/abi-differential
 ./scripts/dev-x86_64.sh owned-posix-static-products .work/x86_64/abi/static
-./scripts/dev-x86_64.sh materialized-dynamic-sysroot   # its installed product is $DYN
+./scripts/dev-x86_64.sh materialized-dynamic-sysroot --work .work/x86_64/abi/dynamic --prepare
+DYN=.work/x86_64/abi/dynamic/installed
 P="--static-product .work/x86_64/abi/static/products/primary --dynamic-product $DYN --static-preparation .work/x86_64/abi/static/preparation.json"
 ./scripts/dev-x86_64.sh native-abi-inventory collect $P --output .work/x86_64/native-abi-inventory/abi
 ./scripts/dev-x86_64.sh native-abi-elf-facts collect --base-inventory .work/x86_64/native-abi-inventory/abi/report.json $P --output .work/x86_64/abi/elf
@@ -117,6 +121,11 @@ R="--native-abi-inventory .work/x86_64/native-abi-inventory/abi/report.json \
   --output .work/x86_64/abi-differential/abi
 ./scripts/dev-x86_64.sh qualification-manifest --publish compat.abi-differential abi-evidence .work/x86_64/abi-differential/abi/abi-evidence.json
 ```
+
+Create these output parents as the host user before the container produces
+their children. Bounded dynamic preparation supplies a materialized product
+for ELF inspection; it does not run or claim the full runtime qualification
+matrix. ABI selection closure and the other runtime gates remain separate.
 
 `resolver-network` publication replays the report that the retained copy names
 and requires identical bytes, so a stale `latest.json` from an older producer
