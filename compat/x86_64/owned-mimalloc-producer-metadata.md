@@ -25,6 +25,17 @@ basis, and alignment authority. In particular, `pthread_key_t` follows the
 x86-selected `include/pthread.h:26,30` route to
 `include/bits/alltypes.h:322`, where it is `unsigned`.
 
+The `source_hidden_objects` bucket separately accounts for twelve C globals
+outside the 424-name version script. Nine are `OBJECT` definitions and three
+are `TLS` definitions. Their static C member rows are `GLOBAL HIDDEN`; their
+shared rows are `LOCAL HIDDEN`, with no shared `.dynsym` entry. The contract
+pins each C definition, declaration, profile condition, source consumer and
+size/alignment basis. The three TLS objects are x86-64 pointers with size and
+alignment 8. Cache-aligned objects require alignment 64, and
+`_mi_process_is_initialized` requires alignment 1. The ELF rows must also
+match each exact type and size. These names remain outside the localization
+list and are not authorized Rust imports.
+
 `owned_mimalloc_producer_metadata.py` accepts ELF facts already authenticated
 by `native_abi_elf_facts.py`, plus the static and shared owned-product
 provenance records. It does not replay those receipts or build a product.
@@ -67,6 +78,12 @@ The reader requires these finite producer facts:
   Both static and shared `st_value` fields must themselves be divisible by the
   source-required alignment. Shared TLS `st_value` is a TLS-relative offset;
   the reader does not subtract the `.tdata` virtual address.
+- The twelve source-hidden C objects retain their exact source-selected type,
+  size and alignment. Their static C definitions remain `GLOBAL HIDDEN` and
+  their shared definitions remain `LOCAL HIDDEN`; none may appear in shared
+  `.dynsym` or in a static Rust member. Their selected static provider must be
+  the fixed-C archive member. This bucket does not expand the 424-entry
+  version script or the eight Rust-root imports.
 - None of the 424 identities has a shared `.dynsym` row.
 - The archive map retains the raw Cargo allocator archive identity, the
   reconstructed `libc.a` identity, exactly one C `*-static.o` member, and the

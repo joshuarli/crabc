@@ -169,6 +169,8 @@ LOADER_STRUCTURAL_OWNER_LIMITS = [
 FIXED_C_PRODUCER_GROUP = 'allocator-shared-local'
 FIXED_C_PRODUCER_OWNER = 'fixed-C-mimalloc-producer'
 FIXED_C_PRODUCER_ARTIFACTS = ('candidate-static', 'candidate-shared')
+FIXED_C_SOURCE_HIDDEN_GROUP = 'allocator-source-hidden'
+FIXED_C_SOURCE_HIDDEN_MEMBERS = producer_metadata.EXPECTED_SOURCE_HIDDEN_OBJECTS
 FIXED_C_PRODUCER_SOURCE_FILES = (
     'libc/src/c_abi/x86_64/owned_mimalloc_hidden.list',
     'compat/x86_64/owned_mimalloc_producer_metadata.py',
@@ -3255,6 +3257,29 @@ def fixed_c_producer_metadata_selection(contract: Mapping[str, Any], inputs: Map
             and group['placement_metadata'] == {}
             and group['static_metadata_rule'] == 'explicit',
             'fixed-C producer owner scope differs')
+    source_hidden_groups = [row for row in contract['owner_groups']
+                            if row['id'] == FIXED_C_SOURCE_HIDDEN_GROUP]
+    require(len(source_hidden_groups) == 1, 'fixed-C source-hidden owner group is absent or duplicated')
+    source_hidden_group = source_hidden_groups[0]
+    require(source_hidden_group['selector'] == 'explicit'
+            and source_hidden_group['disposition'] == 'private-provider'
+            and source_hidden_group['owner'] == FIXED_C_PRODUCER_OWNER
+            and source_hidden_group['family'] == 'libc.c-abi-compat'
+            and tuple(source_hidden_group['artifacts']) == FIXED_C_PRODUCER_ARTIFACTS
+            and source_hidden_group['sources'] == list(FIXED_C_PRODUCER_SOURCE_FILES[:5])
+            and source_hidden_group['members'] == list(FIXED_C_SOURCE_HIDDEN_MEMBERS)
+            and source_hidden_group['members_file'] == ''
+            and source_hidden_group['delegated_members'] == []
+            and source_hidden_group['expected_type'] == ''
+            and source_hidden_group['placement_metadata'] == {
+                'candidate-static': {'binding': 'GLOBAL', 'visibility': 'HIDDEN'},
+                'candidate-shared': {'binding': 'LOCAL', 'visibility': 'HIDDEN'},
+            }
+            and source_hidden_group['static_metadata_rule'] == 'explicit',
+            'fixed-C source-hidden owner scope differs')
+    source_hidden_members = group_members(source_hidden_group, inputs)
+    require(source_hidden_members == list(FIXED_C_SOURCE_HIDDEN_MEMBERS),
+            'fixed-C source-hidden member roster differs')
     source_bindings = {}
     for name in FIXED_C_PRODUCER_SOURCE_FILES:
         binding = inputs['bindings'].get(name)
@@ -3271,6 +3296,23 @@ def fixed_c_producer_metadata_selection(contract: Mapping[str, Any], inputs: Map
     require(members == owner_members and len(members) == 424, 'fixed-C producer member roster differs')
     require(set(metadata) == set(members) and len(metadata) == len(members),
             'fixed-C producer metadata roster differs')
+    try:
+        source_hidden_metadata = producer_metadata.selected_source_hidden_metadata()
+    except (ValueError, OSError) as error:
+        raise SelectionError(f'fixed-C source-hidden metadata contract rejected: {error}') from error
+    require(list(source_hidden_metadata) == source_hidden_members,
+            'fixed-C source-hidden metadata roster differs')
+    for name, roles in source_hidden_metadata.items():
+        roles = exact(roles, {'static', 'shared'}, f'fixed-C source-hidden metadata {name}')
+        for role, expected_binding in (('static', 'GLOBAL'), ('shared', 'LOCAL')):
+            row = exact(roles[role], {'type', 'binding', 'visibility', 'size_bytes', 'alignment_bytes'},
+                        f'fixed-C source-hidden {role} metadata {name}')
+            require(row['type'] in {'OBJECT', 'TLS'} and row['binding'] == expected_binding
+                    and row['visibility'] == 'HIDDEN' and type(row['size_bytes']) is int
+                    and row['size_bytes'] > 0 and type(row['alignment_bytes']) is int
+                    and row['alignment_bytes'] > 0
+                    and row['alignment_bytes'] & (row['alignment_bytes'] - 1) == 0,
+                    f'fixed-C source-hidden metadata is invalid: {name}')
     data_layouts = {row['name']: row for row in owner_contract['metadata']['data_objects']}
     data_layouts[owner_contract['metadata']['tls_object']['name']] = owner_contract['metadata']['tls_object']
     for name in members:
@@ -3298,6 +3340,9 @@ def fixed_c_producer_metadata_selection(contract: Mapping[str, Any], inputs: Map
         'group': copy.deepcopy(group),
         'members': list(members),
         'metadata': copy.deepcopy(metadata),
+        'source_hidden_group': copy.deepcopy(source_hidden_group),
+        'source_hidden_members': list(source_hidden_members),
+        'source_hidden_metadata': copy.deepcopy(source_hidden_metadata),
         'source_inputs': source_bindings,
     }
 
@@ -3461,11 +3506,17 @@ def fixed_c_producer_metadata_adapter(facts: Mapping[str, Any], measurement: Map
                 'member_count': len(selection['members']),
                 'metadata_buckets': {
                     'strong-functions': 419, 'weak-null-fallback': 1, 'data-objects': 3, 'initial-exec-tls': 1,
+                    'source-hidden-objects': len(FIXED_C_SOURCE_HIDDEN_MEMBERS),
                 },
                 'rust_root_c_imports': 8,
                 'shared_dynsym_private_names': 'absent',
             }),
             'fixed-C producer account scope differs')
+    source_hidden_bucket = exact(account.get('metadata_buckets', {}).get('source-hidden-objects'),
+                                 {'count', 'members'}, 'fixed-C source-hidden account bucket')
+    require(source_hidden_bucket['count'] == len(FIXED_C_SOURCE_HIDDEN_MEMBERS)
+            and [row.get('name') for row in source_hidden_bucket['members']] == list(FIXED_C_SOURCE_HIDDEN_MEMBERS),
+            'fixed-C source-hidden account roster differs')
 
     after = {'elf_facts': file_identity(paths['elf_report']), 'base_inventory': file_identity(paths['base_inventory']),
              'static_preparation': _producer_product_identity(paths['static_preparation'], str(inventory.STATIC_PREPARATION_PATH),
@@ -3483,6 +3534,10 @@ def fixed_c_producer_metadata_adapter(facts: Mapping[str, Any], measurement: Map
             'member_count': len(selection['members']),
             'metadata_placement_count': len(selection['members']) * len(FIXED_C_PRODUCER_ARTIFACTS),
             'data_layout_placement_count': 8,
+            'source_hidden_owner_group': FIXED_C_SOURCE_HIDDEN_GROUP,
+            'source_hidden_member_count': len(selection['source_hidden_members']),
+            'source_hidden_metadata_placement_count':
+                len(selection['source_hidden_members']) * len(FIXED_C_PRODUCER_ARTIFACTS),
         },
         'source_inputs': selection['source_inputs'],
         'inputs': {
@@ -3495,21 +3550,29 @@ def fixed_c_producer_metadata_adapter(facts: Mapping[str, Any], measurement: Map
             },
         },
         'selected_metadata': selection['metadata'],
+        'source_hidden_metadata': selection['source_hidden_metadata'],
         'account': account,
     }
 
 
 def attach_fixed_c_producer_metadata(expanded: Sequence[Mapping[str, Any]], companion: Mapping[str, Any]) -> list[dict[str, Any]]:
     """Apply only the fixed-C account's exact metadata before ELF observation."""
-    companion = exact(companion, {'status', 'selection', 'source_inputs', 'inputs', 'selected_metadata', 'account'},
+    companion = exact(companion, {
+        'status', 'selection', 'source_inputs', 'inputs', 'selected_metadata', 'source_hidden_metadata', 'account',
+    },
                       'fixed-C producer companion')
     selection = exact(companion['selection'], {
         'owner_group', 'owner', 'artifacts', 'member_count', 'metadata_placement_count', 'data_layout_placement_count',
+        'source_hidden_owner_group', 'source_hidden_member_count', 'source_hidden_metadata_placement_count',
     }, 'fixed-C producer companion selection')
     require(companion['status'] == 'component-pass-not-qualification'
             and selection['owner_group'] == FIXED_C_PRODUCER_GROUP
             and selection['owner'] == FIXED_C_PRODUCER_OWNER
-            and selection['artifacts'] == list(FIXED_C_PRODUCER_ARTIFACTS),
+            and selection['artifacts'] == list(FIXED_C_PRODUCER_ARTIFACTS)
+            and selection['source_hidden_owner_group'] == FIXED_C_SOURCE_HIDDEN_GROUP
+            and selection['source_hidden_member_count'] == len(FIXED_C_SOURCE_HIDDEN_MEMBERS)
+            and selection['source_hidden_metadata_placement_count']
+                == len(FIXED_C_SOURCE_HIDDEN_MEMBERS) * len(FIXED_C_PRODUCER_ARTIFACTS),
             'fixed-C producer companion selection differs')
     metadata = companion['selected_metadata']
     require(type(metadata) is dict and len(metadata) == selection['member_count'] == 424,
@@ -3550,6 +3613,82 @@ def attach_fixed_c_producer_metadata(expanded: Sequence[Mapping[str, Any]], comp
                 'owner': FIXED_C_PRODUCER_OWNER,
             })
     require(len(joins) == selection['metadata_placement_count'], 'fixed-C producer placement count differs')
+    return joins
+
+
+def attach_fixed_c_source_hidden_metadata(
+    expanded: Sequence[Mapping[str, Any]], companion: Mapping[str, Any],
+) -> list[dict[str, Any]]:
+    companion = exact(companion, {
+        'status', 'selection', 'source_inputs', 'inputs', 'selected_metadata', 'source_hidden_metadata', 'account',
+    }, 'fixed-C producer companion')
+    selection = exact(companion['selection'], {
+        'owner_group', 'owner', 'artifacts', 'member_count', 'metadata_placement_count', 'data_layout_placement_count',
+        'source_hidden_owner_group', 'source_hidden_member_count', 'source_hidden_metadata_placement_count',
+    }, 'fixed-C source-hidden companion selection')
+    require(companion['status'] == 'component-pass-not-qualification'
+            and selection['owner_group'] == FIXED_C_PRODUCER_GROUP
+            and selection['owner'] == FIXED_C_PRODUCER_OWNER
+            and selection['artifacts'] == list(FIXED_C_PRODUCER_ARTIFACTS)
+            and selection['source_hidden_owner_group'] == FIXED_C_SOURCE_HIDDEN_GROUP
+            and selection['source_hidden_member_count'] == len(FIXED_C_SOURCE_HIDDEN_MEMBERS)
+            and selection['source_hidden_metadata_placement_count']
+                == len(FIXED_C_SOURCE_HIDDEN_MEMBERS) * len(FIXED_C_PRODUCER_ARTIFACTS),
+            'fixed-C source-hidden companion selection differs')
+    metadata = companion['source_hidden_metadata']
+    require(type(metadata) is dict and list(metadata) == list(FIXED_C_SOURCE_HIDDEN_MEMBERS),
+            'fixed-C source-hidden metadata roster differs')
+    bucket = exact(companion['account']['metadata_buckets'].get('source-hidden-objects'), {'count', 'members'},
+                   'fixed-C source-hidden account bucket')
+    require(bucket['count'] == len(FIXED_C_SOURCE_HIDDEN_MEMBERS)
+            and [row.get('name') for row in bucket['members']] == list(FIXED_C_SOURCE_HIDDEN_MEMBERS),
+            'fixed-C source-hidden account roster differs')
+    records = {}
+    for record in expanded:
+        key = identity_key(record['identity'])
+        require(key not in records, 'expanded identity is duplicated before source-hidden metadata attachment')
+        records[key] = record
+    selected_records = [record for record in records.values()
+                        if record['selection'].get('group') == FIXED_C_SOURCE_HIDDEN_GROUP]
+    selected_names = set()
+    for record in selected_records:
+        name, version, default = identity_key(record['identity'])
+        require(version is None and default is False, 'fixed-C source-hidden identity is unexpectedly versioned')
+        selected_names.add(name)
+        require(record['selection'].get('disposition') == 'private-provider'
+                and record['selection'].get('owner') == FIXED_C_PRODUCER_OWNER,
+                'fixed-C source-hidden identity has another owner')
+    require(selected_names == set(metadata) == set(FIXED_C_SOURCE_HIDDEN_MEMBERS),
+            'fixed-C source-hidden selection scope differs')
+    joins = []
+    for name in FIXED_C_SOURCE_HIDDEN_MEMBERS:
+        record = records[identity_key(identity(name))]
+        placements = {item['artifact_key']: item for item in record['expected_placements']}
+        require(set(placements) == set(FIXED_C_PRODUCER_ARTIFACTS)
+                and len(placements) == len(record['expected_placements']),
+                f'fixed-C source-hidden placement scope differs: {name}')
+        roles = exact(metadata[name], {'static', 'shared'}, f'fixed-C source-hidden metadata {name}')
+        for artifact_key, role in zip(FIXED_C_PRODUCER_ARTIFACTS, ('static', 'shared')):
+            expected = exact(roles[role], {'type', 'binding', 'visibility', 'size_bytes', 'alignment_bytes'},
+                             f'fixed-C source-hidden {role} metadata {name}')
+            require(expected['type'] in {'OBJECT', 'TLS'}
+                    and expected['binding'] == ('GLOBAL' if role == 'static' else 'LOCAL')
+                    and expected['visibility'] == 'HIDDEN'
+                    and type(expected['size_bytes']) is int and expected['size_bytes'] > 0
+                    and type(expected['alignment_bytes']) is int and expected['alignment_bytes'] > 0
+                    and expected['alignment_bytes'] & (expected['alignment_bytes'] - 1) == 0,
+                    f'fixed-C source-hidden metadata is invalid: {name}')
+            placements[artifact_key]['metadata'] = copy.deepcopy(expected)
+            placements[artifact_key]['metadata_rule'] = 'explicit'
+            joins.append({
+                'identity': copy.deepcopy(record['identity']),
+                'artifact_key': artifact_key,
+                'metadata': copy.deepcopy(expected),
+                'owner_group': FIXED_C_SOURCE_HIDDEN_GROUP,
+                'owner': FIXED_C_PRODUCER_OWNER,
+            })
+    require(len(joins) == selection['source_hidden_metadata_placement_count'],
+            'fixed-C source-hidden placement count differs')
     return joins
 
 
@@ -13359,6 +13498,9 @@ def _build_report(*, contract_path: Path, paths: Mapping[str, Path], declaration
     fixed_c_producer_metadata_pending = attach_fixed_c_producer_metadata(
         expanded, fixed_c_producer_metadata_companion,
     )
+    fixed_c_source_hidden_metadata_pending = attach_fixed_c_source_hidden_metadata(
+        expanded, fixed_c_producer_metadata_companion,
+    )
     compiler_helper_shared_placement_pending = attach_compiler_helper_shared_placement(
         expanded, compiler_helper_companion, contract, inputs,
     )
@@ -13388,6 +13530,9 @@ def _build_report(*, contract_path: Path, paths: Mapping[str, Path], declaration
     )
     fixed_c_producer_metadata_joins = bind_fixed_c_producer_metadata_joins(
         accounting, fixed_c_producer_metadata_pending,
+    )
+    fixed_c_source_hidden_metadata_joins = bind_fixed_c_producer_metadata_joins(
+        accounting, fixed_c_source_hidden_metadata_pending,
     )
     compiler_helper_shared_placement_joins = bind_compiler_helper_shared_placement_joins(
         accounting, compiler_helper_shared_placement_pending,
@@ -13721,6 +13866,7 @@ def _build_report(*, contract_path: Path, paths: Mapping[str, Path], declaration
             'contract': contract, 'measurement': measurement, 'declaration_companion': declaration,
             'fixed_c_producer_metadata_companion': fixed_c_producer_metadata_companion,
             'fixed_c_producer_metadata_joins': fixed_c_producer_metadata_joins,
+            'fixed_c_source_hidden_metadata_joins': fixed_c_source_hidden_metadata_joins,
             'module_private_joins': module_private_joins,
             'process_private_dispatcher_joins': process_private_dispatcher_joins,
             'provider_link_proof': provider_link_proof, 'provider_link_joins': provider_link_joins,

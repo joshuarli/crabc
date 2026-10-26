@@ -1007,12 +1007,19 @@ measurement. The shared builder still localizes the names with its exact
 version script. The [visibility component](owned-mimalloc-export-visibility.md)
 requires their absence from dynsym, their LOCAL shared symtab definitions, and
 preserved static providers and public allocation metadata. This fixed-C
-attachment supplies metadata only for that exact list. It neither selects an
-unrelated private owner. The separate native C allocator-boundary receipt can
+attachment supplies metadata only for the 424-name list. It does not select
+other private owners. The separate native C allocator-boundary receipt can
 prove its eight exact static Rust-root imports and the selected C member's
 three private VM calls; allocator semantics,
 lifecycle beyond that bounded receipt, family completion, promotion, and
 public support remain open.
+
+The same fixed-C source account records twelve C source-hidden data objects
+in the separate `allocator-source-hidden` group. It requires `GLOBAL HIDDEN`
+definitions in the selected static C member and `LOCAL HIDDEN` definitions in
+shared `libc.so`. These names remain outside the 424-entry version script and
+the eight Rust-root imports. This account does not authorize a Rust member to
+import a C-private object.
 
 The pinned Rust compiler's allocation error default, shim, and marker form
 one conditional static archive class. `native-abi-selection.toml` names the

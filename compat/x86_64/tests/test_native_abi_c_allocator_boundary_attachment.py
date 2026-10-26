@@ -129,6 +129,7 @@ class NativeCAllocatorBoundaryAttachmentTests(unittest.TestCase):
                     "weak-null-fallback": 1,
                     "data-objects": 3,
                     "initial-exec-tls": 1,
+                    "source-hidden-objects": len(selection.FIXED_C_SOURCE_HIDDEN_MEMBERS),
                 },
                 "rust_root_c_imports": len(self.names),
                 "shared_dynsym_private_names": "absent",

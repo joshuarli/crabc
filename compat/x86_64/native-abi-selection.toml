@@ -81,6 +81,22 @@ reason = "Exact fixed-C mimalloc producer metadata supplies both static and shar
 static_metadata_rule = "explicit"
 
 [[owner_groups]]
+id = "allocator-source-hidden"
+selector = "explicit"
+disposition = "private-provider"
+owner = "fixed-C-mimalloc-producer"
+family = "libc.c-abi-compat"
+artifacts = ["candidate-static", "candidate-shared"]
+sources = ["libc/src/c_abi/x86_64/owned_mimalloc_hidden.list", "compat/x86_64/owned_mimalloc_producer_metadata.py", "compat/x86_64/owned_mimalloc_producer_metadata.toml", "compat/x86_64/owned-mimalloc-producer-metadata.md", "compat/x86_64/owned-mimalloc-export-visibility.md"]
+members = ["__mi_theap_cached", "__mi_theap_default", "__mi_theap_main", "_mi_cpu_movsb_max", "_mi_cpu_stosb_max", "_mi_page_empty", "_mi_page_map", "_mi_process_is_initialized", "_mi_theap_empty", "_mi_theap_empty_wrong", "heap_main", "theap_main"]
+members_file = ""
+expected_type = ""
+delegated_members = []
+placement_metadata = {"candidate-static" = {"binding" = "GLOBAL", "visibility" = "HIDDEN"}, "candidate-shared" = {"binding" = "LOCAL", "visibility" = "HIDDEN"}}
+reason = "Pinned fixed-C source defines these twelve private data objects in the selected C member. They have a separate hidden placement shape from the 424-name shared-localization roster and are not Rust-root imports."
+static_metadata_rule = "explicit"
+
+[[owner_groups]]
 id = "owned-compiler-helper-archive"
 selector = "explicit"
 disposition = "private-provider"
@@ -1102,14 +1118,6 @@ sources = ["crabc-rs/src/lib.rs", "libc/src/c_abi/x86_64/runtime_facade_v1.rs", 
 disposition = "unresolved"
 reason = "The owned dynamic product supplies the private __crabc_runtime_v1 getter, but no native consumer evidence yet establishes full cfile, dl, and runtime_thread facade parity."
 requirements = ["explicit native facade consumer/protocol selection and complete evidence"]
-
-[[structural_groups]]
-id = "restricted-static-source"
-members = ["__mi_theap_cached", "__mi_theap_default", "__mi_theap_main", "_mi_cpu_movsb_max", "_mi_cpu_stosb_max", "_mi_page_empty", "_mi_page_map", "_mi_process_is_initialized", "_mi_theap_empty", "_mi_theap_empty_wrong", "heap_main", "theap_main"]
-sources = ["AGENTS.md", "compat/x86_64/native-abi-selection.md"]
-disposition = "unresolved"
-reason = "Exact source attribution remains unresolved by restriction; no allocator metadata investigation or inherited shared visibility waiver."
-requirements = ["authorized exact owner accounting; retained d8 source audit267e737f only preserves unresolved observations"]
 
 [[object_contracts]]
 id = "object:___environ"

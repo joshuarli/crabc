@@ -6,7 +6,7 @@ two owned-product provenance records, and the selected dynamic-product manifest.
 It does not build products, replay ELF collection, select public ABI providers,
 or infer ownership from prefixes.
 Its closed contract binds the selected libmimalloc-sys 0.1.49 source bundle,
-the exact 424-name localization list, and four C producer metadata buckets.
+the exact 424-name localization list, and five C producer metadata buckets.
 """
 from __future__ import annotations
 
@@ -31,8 +31,8 @@ import compiler_helper_evidence as compiler_helpers
 
 CONTRACT_PATH = MODULE_DIRECTORY / "owned_mimalloc_producer_metadata.toml"
 HIDDEN_LIST = ROOT / "libc/src/c_abi/x86_64/owned_mimalloc_hidden.list"
-SCHEMA = "crabc.x86_64-owned-mimalloc-producer-metadata/v1"
-RECEIPT_SCHEMA = "crabc.x86_64-owned-mimalloc-producer-metadata-receipt/v1"
+SCHEMA = "crabc.x86_64-owned-mimalloc-producer-metadata/v2"
+RECEIPT_SCHEMA = "crabc.x86_64-owned-mimalloc-producer-metadata-receipt/v2"
 ELF_FACTS_SCHEMA = "crabc.x86_64-native-abi-elf-facts/v1"
 TARGET = "x86_64-unknown-linux-musl"
 DYNAMIC_PRODUCT_MANIFEST_SCHEMA = 1
@@ -65,6 +65,21 @@ EXPECTED_DATA_OBJECTS = (
     "_mi_stats_main",
 )
 EXPECTED_TLS_OBJECT = "mi_thread_locals"
+EXPECTED_SOURCE_HIDDEN_LAYOUTS = {
+    "_mi_page_empty": ("OBJECT", 120, 64),
+    "_mi_page_map": ("OBJECT", 8, 64),
+    "_mi_cpu_movsb_max": ("OBJECT", 8, 64),
+    "_mi_cpu_stosb_max": ("OBJECT", 8, 64),
+    "__mi_theap_default": ("TLS", 8, 8),
+    "__mi_theap_main": ("TLS", 8, 8),
+    "__mi_theap_cached": ("TLS", 8, 8),
+    "_mi_theap_empty": ("OBJECT", 8096, 64),
+    "_mi_theap_empty_wrong": ("OBJECT", 8096, 64),
+    "theap_main": ("OBJECT", 8096, 64),
+    "heap_main": ("OBJECT", 6440, 64),
+    "_mi_process_is_initialized": ("OBJECT", 1, 1),
+}
+EXPECTED_SOURCE_HIDDEN_OBJECTS = tuple(sorted(EXPECTED_SOURCE_HIDDEN_LAYOUTS))
 EXPECTED_WEAK_NULL_FALLBACK = "_ZSt15get_new_handlerv"
 SHA256_RE = re.compile(r"[0-9a-f]{64}\Z")
 LINKER_NAME_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*\Z")
@@ -168,6 +183,14 @@ def _exact_metadata(value: object, description: str) -> dict[str, str]:
     return result
 
 
+def _source_hidden_metadata(value: object, description: str) -> dict[str, str]:
+    record = mapping(value, description, {"type", "binding", "visibility"})
+    result = {field: text(record[field], f"{description}.{field}") for field in ("type", "binding", "visibility")}
+    require(result["type"] in {"OBJECT", "TLS"}, f"{description}.type is unsupported")
+    require(result["visibility"] == "HIDDEN", f"{description}.visibility is not HIDDEN")
+    return result
+
+
 def _source_reference(value: object, description: str) -> dict[str, str]:
     record = mapping(value, description, {"path", "sha256"})
     path = text(record["path"], f"{description}.path")
@@ -227,6 +250,76 @@ def _source_layout(
             record["source_required_alignment"], f"{description}.source_required_alignment"
         ),
         "include_route": text(record["include_route"], f"{description}.include_route"),
+    }
+
+
+def _source_hidden_proof(
+    value: object,
+    description: str,
+    source_hashes: Mapping[str, str],
+) -> dict[str, Any]:
+    record = mapping(
+        value,
+        description,
+        {
+            "definition_path", "definition_sha256", "definition_line", "definition",
+            "declaration_path", "declaration_sha256", "declaration_line", "declaration",
+            "c_type", "size_basis", "alignment_path", "alignment_sha256", "alignment_line",
+            "alignment_basis", "source_required_alignment", "profile_condition", "c_consumers",
+        },
+    )
+    source_references = {}
+    for label in ("definition", "declaration", "alignment"):
+        path = text(record[f"{label}_path"], f"{description}.{label}_path")
+        digest = sha256(record[f"{label}_sha256"], f"{description}.{label}_sha256")
+        require(path.startswith("libmimalloc-sys/c_src/mimalloc/v3/"),
+                f"{description}.{label}_path leaves pinned v3 source")
+        require(source_hashes.get(path) == digest, f"{description} {label} source is not pinned")
+        source_references[label] = {"path": path, "sha256": digest}
+    raw_consumers = record["c_consumers"]
+    require(type(raw_consumers) is list and bool(raw_consumers), f"{description}.c_consumers is empty")
+    consumers = []
+    seen_paths = set()
+    for index, raw in enumerate(raw_consumers):
+        consumer = mapping(raw, f"{description}.c_consumers[{index}]", {"path", "sha256", "references"})
+        path = text(consumer["path"], f"{description}.c_consumers[{index}].path")
+        digest = sha256(consumer["sha256"], f"{description}.c_consumers[{index}].sha256")
+        require(path.startswith("libmimalloc-sys/c_src/mimalloc/v3/")
+                and source_hashes.get(path) == digest,
+                f"{description} consumer source is not pinned")
+        require(path not in seen_paths, f"{description} repeats a consumer source")
+        seen_paths.add(path)
+        references = consumer["references"]
+        require(type(references) is list and bool(references), f"{description} consumer references are empty")
+        normalized_references = [text(item, f"{description} consumer reference") for item in references]
+        require(normalized_references == sorted(set(normalized_references)),
+                f"{description} consumer references must be sorted and unique")
+        consumers.append({"path": path, "sha256": digest, "references": normalized_references})
+    require([item["path"] for item in consumers] == sorted(seen_paths),
+            f"{description} consumer sources must be sorted")
+    return {
+        "definition": {
+            **source_references["definition"],
+            "line": positive(record["definition_line"], f"{description}.definition_line"),
+            "spelling": text(record["definition"], f"{description}.definition"),
+        },
+        "declaration": {
+            **source_references["declaration"],
+            "line": positive(record["declaration_line"], f"{description}.declaration_line"),
+            "spelling": text(record["declaration"], f"{description}.declaration"),
+        },
+        "c_type": text(record["c_type"], f"{description}.c_type"),
+        "size_basis": text(record["size_basis"], f"{description}.size_basis"),
+        "alignment": {
+            **source_references["alignment"],
+            "line": positive(record["alignment_line"], f"{description}.alignment_line"),
+            "basis": text(record["alignment_basis"], f"{description}.alignment_basis"),
+            "source_required_alignment": positive(
+                record["source_required_alignment"], f"{description}.source_required_alignment"
+            ),
+        },
+        "profile_condition": text(record["profile_condition"], f"{description}.profile_condition"),
+        "c_consumers": consumers,
     }
 
 
@@ -376,7 +469,11 @@ def _validate_contract(value: object) -> dict[str, Any]:
     require(localization["version_script_argument"] == "--version-script=$BUILD/libc-mimalloc-hidden.exports",
             "shared allocator version-script argument differs")
 
-    metadata = mapping(contract["metadata"], "allocator metadata", {"strong_functions", "weak_null_fallback", "data_objects", "tls_object"})
+    metadata = mapping(
+        contract["metadata"],
+        "allocator metadata",
+        {"strong_functions", "weak_null_fallback", "data_objects", "tls_object", "source_hidden_objects"},
+    )
     strong = mapping(metadata["strong_functions"], "strong allocator functions", {"static", "shared", "excluded_names"})
     strong["static"] = _exact_metadata(strong["static"], "strong allocator static metadata")
     strong["shared"] = _exact_metadata(strong["shared"], "strong allocator shared metadata")
@@ -442,6 +539,41 @@ def _validate_contract(value: object) -> dict[str, Any]:
         "allocator TLS metadata differs",
     )
 
+    raw_source_hidden = metadata["source_hidden_objects"]
+    require(type(raw_source_hidden) is list and len(raw_source_hidden) == len(EXPECTED_SOURCE_HIDDEN_OBJECTS),
+            "source-hidden allocator data roster differs")
+    source_hidden: list[dict[str, Any]] = []
+    for index, raw in enumerate(raw_source_hidden):
+        item = mapping(
+            raw,
+            f"source-hidden allocator data object {index}",
+            {"name", "static", "shared", "size_bytes", "source"},
+        )
+        item["name"] = text(item["name"], f"source-hidden allocator data object {index} name")
+        item["static"] = _source_hidden_metadata(
+            item["static"], f"source-hidden allocator static metadata {item['name']}"
+        )
+        item["shared"] = _source_hidden_metadata(
+            item["shared"], f"source-hidden allocator shared metadata {item['name']}"
+        )
+        item["size_bytes"] = positive(item["size_bytes"], f"source-hidden allocator size {item['name']}")
+        item["source"] = _source_hidden_proof(
+            item["source"], f"source-hidden allocator source {item['name']}", source_hashes
+        )
+        expected_type, expected_size, expected_alignment = EXPECTED_SOURCE_HIDDEN_LAYOUTS.get(
+            item["name"], (None, None, None)
+        )
+        require(
+            item["static"] == {"type": expected_type, "binding": "GLOBAL", "visibility": "HIDDEN"}
+            and item["shared"] == {"type": expected_type, "binding": "LOCAL", "visibility": "HIDDEN"}
+            and item["size_bytes"] == expected_size
+            and item["source"]["alignment"]["source_required_alignment"] == expected_alignment,
+            f"source-hidden allocator metadata differs for {item['name']}",
+        )
+        source_hidden.append(item)
+    require(tuple(item["name"] for item in source_hidden) == EXPECTED_SOURCE_HIDDEN_OBJECTS,
+            "source-hidden allocator data names differ")
+
     excluded = names(strong["excluded_names"], "strong allocator function exclusions")
     require(
         excluded == sorted([weak["name"], *(item["name"] for item in data), tls["name"]]),
@@ -491,6 +623,7 @@ def _validate_contract(value: object) -> dict[str, Any]:
             "weak_null_fallback": dict(weak),
             "data_objects": data,
             "tls_object": dict(tls),
+            "source_hidden_objects": source_hidden,
         },
         "rust_root_imports": {"names": import_names},
         "rust_root_data_references": {"names": reference_names},
@@ -571,6 +704,23 @@ def selected_metadata() -> dict[str, dict[str, dict[str, object]]]:
             "shared": shared,
         }
     require(len(result) == 424, "selected producer metadata roster differs")
+    return result
+
+
+def selected_source_hidden_metadata() -> dict[str, dict[str, dict[str, object]]]:
+    contract = load_contract()
+    result = {}
+    for item in contract["metadata"]["source_hidden_objects"]:
+        alignment = item["source"]["alignment"]["source_required_alignment"]
+        result[item["name"]] = {}
+        for role in ("static", "shared"):
+            result[item["name"]][role] = {
+                **item[role],
+                "size_bytes": item["size_bytes"],
+                "alignment_bytes": alignment,
+            }
+    require(tuple(result) == EXPECTED_SOURCE_HIDDEN_OBJECTS,
+            "selected source-hidden metadata roster differs")
     return result
 
 
@@ -943,6 +1093,7 @@ def _validate_metadata_rows(
     members: Sequence[str],
     c_member: Mapping[str, Any],
     shared: Mapping[str, Any],
+    rust_members: Sequence[Mapping[str, Any]],
 ) -> dict[str, Any]:
     c_rows = _symbol_tables(c_member.get("symbol_tables"), "static C provider", {".symtab"})[".symtab"]
     shared_tables = _symbol_tables(shared.get("symbol_tables"), "shared libc", {".dynsym", ".symtab"})
@@ -955,6 +1106,17 @@ def _validate_metadata_rows(
     require(shared_names == expected_names, "shared local provider roster differs from exact hidden member list")
     leaked = sorted({row.get("name") for row in dynsym_rows if row.get("name") in expected_names})
     require(not leaked, f"shared dynsym exposes private C producer names: {leaked}")
+
+    source_hidden_names = set(EXPECTED_SOURCE_HIDDEN_OBJECTS)
+    require(source_hidden_names.isdisjoint(expected_names),
+            "source-hidden allocator objects overlap the shared-localization roster")
+    rust_rows = [row for rows in _rust_member_rows(rust_members) for row in rows]
+    rust_private_names = sorted({row.get("name") for row in rust_rows if row.get("name") in source_hidden_names})
+    require(not rust_private_names,
+            f"Rust member references or defines source-hidden C objects: {rust_private_names}")
+    shared_dynsym_names = sorted({row.get("name") for row in dynsym_rows if row.get("name") in source_hidden_names})
+    require(not shared_dynsym_names,
+            f"shared dynsym exposes source-hidden C objects: {shared_dynsym_names}")
 
     metadata = contract["metadata"]
     weak = metadata["weak_null_fallback"]
@@ -1038,6 +1200,42 @@ def _validate_metadata_rows(
     require(tls_static_alignment == tls["producer"]["static_section_alignment"], f"TLS layout differs for {tls['name']}")
     require(tls_shared_alignment >= tls_source_alignment, f"TLS layout differs for {tls['name']}")
 
+    source_hidden_records: list[dict[str, Any]] = []
+    for item in contract["metadata"]["source_hidden_objects"]:
+        name = item["name"]
+        static_row = _named_row(c_rows, name, "static source-hidden C provider")
+        shared_row = _named_row(shared_rows, name, "shared source-hidden C provider")
+        static = _symbol_metadata(static_row, item["static"], f"static source-hidden object {name}")
+        shared_metadata = _symbol_metadata(shared_row, item["shared"], f"shared source-hidden object {name}")
+        require(static["size_bytes"] == item["size_bytes"]
+                and shared_metadata["size_bytes"] == item["size_bytes"],
+                f"source-hidden object size differs for {name}")
+        required_alignment = item["source"]["alignment"]["source_required_alignment"]
+        static_section_alignment = _section_alignment(c_member, static_row, f"static source-hidden object {name}")
+        shared_section_alignment = _section_alignment(shared, shared_row, f"shared source-hidden object {name}")
+        require(static_section_alignment >= required_alignment
+                and shared_section_alignment >= required_alignment,
+                f"source-hidden object section alignment differs for {name}")
+        source_hidden_records.append({
+            "name": name,
+            "static_member": text(c_member.get("member"), "source-hidden static C member"),
+            "static": static,
+            "shared": shared_metadata,
+            "layout": {
+                "size_bytes": item["size_bytes"],
+                "source": item["source"],
+                "static_section_alignment": static_section_alignment,
+                "shared_section_alignment": shared_section_alignment,
+                "source_required_alignment": required_alignment,
+                "static_symbol_value": _symbol_value_alignment(
+                    static_row, required_alignment, f"static source-hidden object {name}"
+                ),
+                "shared_symbol_value": _symbol_value_alignment(
+                    shared_row, required_alignment, f"shared source-hidden object {name}"
+                ),
+            },
+        })
+
     return {
         "strong-functions": {
             "count": len(strong_records),
@@ -1077,6 +1275,10 @@ def _validate_metadata_rows(
                     ),
                 },
             }],
+        },
+        "source-hidden-objects": {
+            "count": len(source_hidden_records),
+            "members": source_hidden_records,
         },
     }
 
@@ -1233,7 +1435,7 @@ def account_producer_metadata(
     )
     c_member, rust_members = _static_members(report, static_members, c_member_name, rust_member_names)
     shared = mapping(report["facts"]["candidate-shared"], "shared ELF facts")
-    buckets = _validate_metadata_rows(contract, members, c_member, shared)
+    buckets = _validate_metadata_rows(contract, members, c_member, shared, rust_members)
     joins = _validate_rust_root_imports(contract, members, rust_members, c_member, shared)
     data_references = _validate_rust_root_data_references(contract, rust_members, c_member, shared)
     strong_names = {record["name"] for record in buckets["strong-functions"]["members"]}
@@ -1264,7 +1466,8 @@ def account_producer_metadata(
         "scope": {
             "member_count": len(members),
             "metadata_buckets": {name: buckets[name]["count"] for name in (
-                "strong-functions", "weak-null-fallback", "data-objects", "initial-exec-tls"
+                "strong-functions", "weak-null-fallback", "data-objects", "initial-exec-tls",
+                "source-hidden-objects",
             )},
             "rust_root_c_imports": len(joins),
             "shared_dynsym_private_names": "absent",

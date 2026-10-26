@@ -58,7 +58,7 @@ class NativeAbiProducerMetadataTests(unittest.TestCase):
         cls.inputs = selection.load_source_inputs(cls.contract, selection.CONTRACT_PATH)
         cls.companion = selection.fixed_c_producer_metadata_selection(cls.contract, cls.inputs)
         expanded = selection.expand_obligations(cls.contract, cls.inputs)
-        cls.pending = selection.attach_fixed_c_producer_metadata(expanded, {
+        producer_companion = {
             'status': 'component-pass-not-qualification',
             'selection': {
                 'owner_group': selection.FIXED_C_PRODUCER_GROUP,
@@ -67,12 +67,18 @@ class NativeAbiProducerMetadataTests(unittest.TestCase):
                 'member_count': len(cls.companion['members']),
                 'metadata_placement_count': len(cls.companion['members']) * 2,
                 'data_layout_placement_count': 8,
+                'source_hidden_owner_group': selection.FIXED_C_SOURCE_HIDDEN_GROUP,
+                'source_hidden_member_count': len(cls.companion['source_hidden_members']),
+                'source_hidden_metadata_placement_count': len(cls.companion['source_hidden_members']) * 2,
             },
             'source_inputs': cls.companion['source_inputs'],
             'inputs': {},
             'selected_metadata': cls.companion['metadata'],
-            'account': {},
-        })
+            'source_hidden_metadata': cls.companion['source_hidden_metadata'],
+            'account': cls.producer_account(),
+        }
+        cls.pending = selection.attach_fixed_c_producer_metadata(expanded, producer_companion)
+        cls.source_hidden_pending = selection.attach_fixed_c_source_hidden_metadata(expanded, producer_companion)
         cls.helper_pending = selection.attach_compiler_helper_shared_placement(
             expanded, cls.helper_companion(), cls.contract, cls.inputs,
         )
@@ -222,9 +228,16 @@ class NativeAbiProducerMetadataTests(unittest.TestCase):
                 'metadata_buckets': {
                     'strong-functions': 419, 'weak-null-fallback': 1,
                     'data-objects': 3, 'initial-exec-tls': 1,
+                    'source-hidden-objects': len(selection.FIXED_C_SOURCE_HIDDEN_MEMBERS),
                 },
                 'rust_root_c_imports': 8,
                 'shared_dynsym_private_names': 'absent',
+            },
+            'metadata_buckets': {
+                'source-hidden-objects': {
+                    'count': len(selection.FIXED_C_SOURCE_HIDDEN_MEMBERS),
+                    'members': [{'name': name} for name in selection.FIXED_C_SOURCE_HIDDEN_MEMBERS],
+                },
             },
         }
 
@@ -261,6 +274,33 @@ class NativeAbiProducerMetadataTests(unittest.TestCase):
                     'candidate-shared': {'type': kind, 'binding': 'LOCAL', 'visibility': 'DEFAULT',
                                          'size_bytes': size, 'alignment_bytes': shared_alignment},
                 })
+
+    def test_fixed_c_source_hidden_objects_keep_separate_hidden_placements(self):
+        self.assertEqual(self.companion['source_hidden_group']['id'], selection.FIXED_C_SOURCE_HIDDEN_GROUP)
+        self.assertEqual(self.companion['source_hidden_members'], list(selection.FIXED_C_SOURCE_HIDDEN_MEMBERS))
+        self.assertEqual(len(self.pending), 848)
+        self.assertEqual(len(self.source_hidden_pending), 24)
+        for name, roles in self.companion['source_hidden_metadata'].items():
+            with self.subTest(name=name):
+                self.assertEqual(self.placements(name), {
+                    'candidate-static': roles['static'],
+                    'candidate-shared': roles['shared'],
+                })
+                self.assertEqual(self.records[name]['selection']['group'], selection.FIXED_C_SOURCE_HIDDEN_GROUP)
+                self.assertEqual(self.records[name]['selection']['owner'], selection.FIXED_C_PRODUCER_OWNER)
+
+    def test_fixed_c_source_hidden_selection_rejects_roster_and_visibility_drift(self):
+        contract = copy.deepcopy(self.contract)
+        group = next(row for row in contract['owner_groups'] if row['id'] == selection.FIXED_C_SOURCE_HIDDEN_GROUP)
+        group['members'].append('_mi_unlisted_private_object')
+        with self.assertRaisesRegex(selection.SelectionError, 'source-hidden owner scope differs'):
+            selection.fixed_c_producer_metadata_selection(contract, self.inputs)
+
+        metadata = copy.deepcopy(self.companion['source_hidden_metadata'])
+        metadata['_mi_page_map']['shared']['visibility'] = 'DEFAULT'
+        with mock.patch.object(selection.producer_metadata, 'selected_source_hidden_metadata', return_value=metadata):
+            with self.assertRaisesRegex(selection.SelectionError, 'source-hidden metadata is invalid'):
+                selection.fixed_c_producer_metadata_selection(self.contract, self.inputs)
 
     def test_fixed_c_selection_binds_the_exact_owner_roster_and_source_inputs(self):
         self.assertEqual(self.companion['group']['id'], selection.FIXED_C_PRODUCER_GROUP)
@@ -299,6 +339,8 @@ class NativeAbiProducerMetadataTests(unittest.TestCase):
         account.assert_called_once()
         self.assertEqual(result['selection']['member_count'], 424)
         self.assertEqual(result['selection']['metadata_placement_count'], 848)
+        self.assertEqual(result['selection']['source_hidden_member_count'], 12)
+        self.assertEqual(result['selection']['source_hidden_metadata_placement_count'], 24)
         self.assertEqual(result['inputs']['before'], result['inputs']['after'])
         self.assertEqual(result['inputs']['public_elf_replay']['candidate_build'], measurement['candidate_build'])
 

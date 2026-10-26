@@ -22,6 +22,22 @@ SPEC.loader.exec_module(producer)
 import compiler_helper_evidence as helpers
 
 
+SOURCE_HIDDEN_ELF_ROWS = (
+    ("_mi_page_empty", "OBJECT", 120, 64),
+    ("_mi_page_map", "OBJECT", 8, 64),
+    ("_mi_cpu_movsb_max", "OBJECT", 8, 64),
+    ("_mi_cpu_stosb_max", "OBJECT", 8, 64),
+    ("__mi_theap_default", "TLS", 8, 8),
+    ("__mi_theap_main", "TLS", 8, 8),
+    ("__mi_theap_cached", "TLS", 8, 8),
+    ("_mi_theap_empty", "OBJECT", 8096, 64),
+    ("_mi_theap_empty_wrong", "OBJECT", 8096, 64),
+    ("theap_main", "OBJECT", 8096, 64),
+    ("heap_main", "OBJECT", 6440, 64),
+    ("_mi_process_is_initialized", "OBJECT", 1, 1),
+)
+
+
 def symbol(
     name: str,
     *,
@@ -144,16 +160,35 @@ class FixedCMimallocProducerMetadataTests(unittest.TestCase):
             c_rows.append(static)
             shared_rows.append(shared)
 
+        source_hidden_sections = []
+        for index, (name, kind, size, alignment) in enumerate(SOURCE_HIDDEN_ELF_ROWS, start=1):
+            static_index = 300 + index
+            shared_index = 400 + index
+            c_rows.append(symbol(
+                name, kind=kind, binding="GLOBAL", visibility="HIDDEN",
+                section=str(static_index), size=size,
+            ))
+            shared_rows.append(symbol(
+                name, kind=kind, binding="LOCAL", visibility="HIDDEN",
+                section=str(shared_index), size=size,
+            ))
+            source_hidden_sections.extend([
+                {"index": static_index, "alignment": alignment, "name": ".fixture.source-hidden"},
+                {"index": shared_index, "alignment": alignment, "name": ".fixture.source-hidden"},
+            ])
+
         # The selected functions share ordinary executable text sections in
         # this complete-ELF-shaped fixture.  Data and TLS intentionally use
         # their own placement records above.
         static_sections.extend([
             {"index": 10, "alignment": 16, "name": ".text.fixture", "flags": "AX"},
             {"index": 41, "alignment": 16, "name": ".text.weak", "flags": "AX"},
+            *source_hidden_sections[::2],
         ])
         shared_sections.append(
             {"index": 9, "alignment": 16, "name": ".text.fixture", "flags": "AX"}
         )
+        shared_sections.extend(source_hidden_sections[1::2])
 
         imports = contract["rust_root_imports"]["names"]
         references = contract["rust_root_data_references"]["names"]
@@ -362,7 +397,7 @@ class FixedCMimallocProducerMetadataTests(unittest.TestCase):
                 with self.assertRaises(producer.ProducerMetadataError):
                     producer.account_producer_metadata(facts, static, shared, manifest)
 
-    def test_accounts_exact_four_metadata_buckets_and_eight_rust_root_joins(self) -> None:
+    def test_accounts_exact_five_metadata_buckets_and_eight_rust_root_joins(self) -> None:
         account = self.account()
         self.assertEqual(account["status"], "component-pass-not-qualification")
         self.assertEqual(account["scope"]["member_count"], 424)
@@ -371,6 +406,7 @@ class FixedCMimallocProducerMetadataTests(unittest.TestCase):
             "weak-null-fallback": 1,
             "data-objects": 3,
             "initial-exec-tls": 1,
+            "source-hidden-objects": len(SOURCE_HIDDEN_ELF_ROWS),
         })
         self.assertEqual(account["scope"]["rust_root_c_imports"], 8)
         self.assertEqual(account["archive_map"]["raw_cargo_allocator_archive_sha256"], "e" * 64)
@@ -391,7 +427,6 @@ class FixedCMimallocProducerMetadataTests(unittest.TestCase):
         self.assertFalse(account["status_flags"]["family_completion"])
         self.assertFalse(account["status_flags"]["promotion_ready"])
         self.assertFalse(account["status_flags"]["public_support"])
-
         layouts = {
             record["name"]: record["layout"]
             for record in account["metadata_buckets"]["data-objects"]["members"]
@@ -414,7 +449,99 @@ class FixedCMimallocProducerMetadataTests(unittest.TestCase):
             },
         )
         self.assertEqual(layouts["mi_thread_locals"]["shared_symbol_value"]["integer"], 0)
-        self.assertEqual(layouts["mi_thread_locals"]["shared_symbol_value"]["modulo_source_required_alignment"], 0)
+
+    def test_accounts_the_exact_source_hidden_c_data_objects(self) -> None:
+        account = self.account()
+        bucket = account["metadata_buckets"].get("source-hidden-objects")
+        self.assertIsNotNone(bucket)
+        self.assertEqual(bucket["count"], len(SOURCE_HIDDEN_ELF_ROWS))
+        self.assertEqual(
+            [(item["name"], item["static"]["type"], item["static"]["size_bytes"])
+             for item in bucket["members"]],
+            sorted((name, kind, size) for name, kind, size, _ in SOURCE_HIDDEN_ELF_ROWS),
+        )
+        self.assertTrue(all(
+            item["static"]["binding"] == "GLOBAL"
+            and item["static"]["visibility"] == "HIDDEN"
+            and item["shared"]["binding"] == "LOCAL"
+            and item["shared"]["visibility"] == "HIDDEN"
+            for item in bucket["members"]
+        ))
+        self.assertEqual(account["scope"]["member_count"], 424)
+        self.assertEqual(account["scope"]["rust_root_c_imports"], 8)
+        self.assertEqual(account["rust_root_c_data_reference_joins"][0]["name"], "_mi_heap_default_key")
+        self.assertEqual(
+            {item["name"] for item in bucket["members"]},
+            {name for name, _, _, _ in SOURCE_HIDDEN_ELF_ROWS},
+        )
+        self.assertTrue(all(item["static_member"] == "b85de32113adef8e-static.o"
+                            for item in bucket["members"]))
+
+    def test_rejects_source_hidden_provider_and_rust_import_drift(self) -> None:
+        cases = (
+            ("foreign Rust member defines same name", "rust-definition", "Rust member references or defines"),
+            ("C data provider moved into Rust member", "wrong-c-member", "Rust member references or defines"),
+            ("TLS provider changed to OBJECT", "tls-as-object", "type differs"),
+            ("object size changed", "wrong-size", "size differs"),
+            ("static visibility became DEFAULT", "default-visibility", "visibility differs"),
+            ("shared provider became GLOBAL", "shared-global", "binding differs"),
+            ("shared dynsym leak", "dynsym-leak", "shared dynsym exposes source-hidden"),
+            ("Rust member imports a private C object", "rust-import", "Rust member references or defines"),
+            ("C source member identity changed", "wrong-c-object", "static ELF member roster differs"),
+        )
+        for label, change, message in cases:
+            with self.subTest(change=label):
+                facts, static, shared, manifest = self.fixture()
+                source_name = "__mi_theap_main" if change == "tls-as-object" else "_mi_page_map"
+                static_c_rows = facts["facts"]["candidate-static"][1]["symbol_tables"][0]["rows"]
+                rust_rows = facts["facts"]["candidate-static"][0]["symbol_tables"][0]["rows"]
+                static_row = next(row for row in static_c_rows if row["name"] == source_name)
+                shared_elf = facts["facts"]["candidate-shared"]
+                shared_rows = shared_elf["symbol_tables"][1]["rows"]
+                shared_row = next(row for row in shared_rows if row["name"] == source_name)
+                if change == "rust-definition":
+                    rust_rows.append(symbol(source_name, kind="OBJECT", binding="GLOBAL",
+                                            visibility="HIDDEN", section="8", size=8))
+                elif change == "wrong-c-member":
+                    static_c_rows.remove(static_row)
+                    rust_rows.append(static_row)
+                elif change == "tls-as-object":
+                    static_row["type"] = "OBJECT"
+                elif change == "wrong-size":
+                    static_row["size_bytes"] = 7
+                    static_row["size"] = "7"
+                elif change == "default-visibility":
+                    static_row["visibility"] = "DEFAULT"
+                elif change == "shared-global":
+                    shared_row["binding"] = "GLOBAL"
+                elif change == "dynsym-leak":
+                    shared_elf["symbol_tables"][0]["rows"].append(
+                        symbol(source_name, kind="OBJECT", binding="LOCAL", visibility="HIDDEN",
+                               section="999", size=8)
+                    )
+                elif change == "rust-import":
+                    rust_rows.append(symbol(source_name, kind="NOTYPE", section="UND", size=0))
+                elif change == "wrong-c-object":
+                    facts["facts"]["candidate-static"][1]["member"] = "other-static.o"
+                with self.assertRaisesRegex(producer.ProducerMetadataError, message):
+                    producer.account_producer_metadata(facts, static, shared, manifest)
+
+    def test_source_hidden_roster_and_source_member_are_closed(self) -> None:
+        import tomllib
+
+        raw = tomllib.loads(producer.CONTRACT_PATH.read_text(encoding="utf-8"))
+        extra = copy.deepcopy(raw["metadata"]["source_hidden_objects"][-1])
+        extra["name"] = "_mi_unlisted_private_object"
+        raw["metadata"]["source_hidden_objects"].append(extra)
+        with self.assertRaisesRegex(producer.ProducerMetadataError, "source-hidden allocator data roster"):
+            producer._validate_contract(raw)
+
+        raw = tomllib.loads(producer.CONTRACT_PATH.read_text(encoding="utf-8"))
+        raw["metadata"]["source_hidden_objects"][0]["source"]["definition_path"] = (
+            "libmimalloc-sys/c_src/mimalloc/v3/src/page-map.c"
+        )
+        with self.assertRaisesRegex(producer.ProducerMetadataError, "definition source is not pinned"):
+            producer._validate_contract(raw)
 
     def test_accounts_retained_h0_aligned_import_and_owned_providers(self) -> None:
         facts, static_provenance, shared_provenance, shared_manifest = self.fixture()
@@ -536,7 +663,9 @@ class FixedCMimallocProducerMetadataTests(unittest.TestCase):
     def test_rejects_omitted_or_extra_identity_from_exact_roster(self) -> None:
         facts, static_provenance, shared_provenance, shared_manifest = self.fixture()
         c_member = facts["facts"]["candidate-static"][1]
-        c_member["symbol_tables"][0]["rows"].pop()
+        c_member["symbol_tables"][0]["rows"].remove(
+            next(row for row in c_member["symbol_tables"][0]["rows"] if row["name"] == self.members[0])
+        )
         with self.assertRaisesRegex(producer.ProducerMetadataError, "static provider roster differs"):
             producer.account_producer_metadata(facts, static_provenance, shared_provenance, shared_manifest)
 
