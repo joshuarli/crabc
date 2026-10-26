@@ -34,12 +34,36 @@ transfers and 44 resolved calls. The 22 focused tests pass with one existing
 skip. These additional receipts are not bound into the frozen outer ABI
 report, so its installed-helper blocker is not yet cleared.
 
-The next bounded group finishes exact ownership of twelve source-hidden
-fixed-C allocator data objects and removes seven redundant test-only link
-witnesses while retaining their public-API behavior and ownership checks.
-Then bind the remaining genuine component proofs and collect combined-source
-evidence. Do not repeat the parked `pow` aggregate or denied allocator
-diagnostics. No qualification, backend or public-support claim changes.
+`25fdd6dc5` and `9c5b0e949` account twelve source-hidden fixed-C allocator
+data objects separately from the unchanged 424-name localization roster and
+eight Rust imports. Exact C ownership, type, size, alignment and static/shared
+visibility checks pass against retained source-99 facts. The receipt schema
+is v2; this is component accounting, not current qualification. Independent
+review found no defect.
+
+`beb229c13` removes the seven redundant test-only exports. Real public API
+anchors preserve component extraction and behavior checks. All nine affected
+native components, four dynamic entry modes and the expanded private lookup
+regression pass; independent review found no lost coverage. `f2c979ed7` fixes
+a further reproduced static export defect by placing `__tsearch_balance`'s
+hidden directive in its definition member. Exact installed-archive checks and
+the existing tree, memory and process-exec components pass. The owned
+`__memcpy_fwd` remains a real `FUNC`; its current selector incorrectly expects
+the oracle's size-zero `NOTYPE` label and needs a separate policy correction.
+
+The combined tree through `f2c979ed7` passes all nine Rust profiles, the ledger,
+inventory and structure checks, and 72 tests in four affected Python modules.
+The helper module runs inside the pinned image because an existing root-owned
+scratch directory prevents the invoking host UID from creating test files.
+That normal filesystem error is not an automatic safety rejection.
+
+The next bounded group binds the four installed helper modes and real
+RuntimeV1 facade component into ordinary ABI evidence, adds physical proof for
+the eleven existing compiler/consumer/oracle-no-provider declaration
+boundaries, and corrects exact remaining loader/private provider placement.
+Then collect combined-source evidence. Do not repeat the parked `pow`
+aggregate or denied allocator diagnostics. No qualification, backend or
+public-support claim changes.
 
 - **Resume:** "Read plan.md and docs/lanes.md, then resume the campaign as
   coordinator, unattended. Preserve both harness-denied allocator items.
@@ -405,7 +429,7 @@ the public-data reader now consumes the calendar owner's candidate and oracle
 TZif transcripts. Focused tests preserve path, hash, binding and output rejection
 cases. The clean `.work/wt/abi-companion-proof-final` is frozen at `f29b75dfb`.
 Both product preparations and all four collectors pass there. Its
-standard twenty-producer loop is running once to verify the repaired paths.
+standard twenty-producer loop passed all repaired paths.
 
 The earlier `a438c509b` partial assembly passes with seventeen companions,
 retaining 218 closure blockers and all promotion/public flags false. Three
@@ -421,8 +445,8 @@ they require the selecting source to match the measured candidate build.
 The fresh `.work/wt/abi-selector-proof` is frozen at `99cd68019`. Host checks,
 both product preparations and all four collectors pass. Its complete companion
 loop passes all twenty producers, binding twenty-one companions and retaining
-the two family-flow requirements. Assembly is active; its single persisted-selection
-replay follows success. No source seal or required role is waived to reuse an
+the two family-flow requirements. Assembly and its normal persisted-selection
+replay pass as recorded at the current checkpoint. No source seal or required role is waived to reuse an
 older cohort. The preceding `f29b75dfb` loop also passes all twenty producers,
 including all four repaired paths. Fifteen completed mutable source worktrees
 are retired after clean-state and patch-equivalence checks, with branches
