@@ -71,6 +71,8 @@ MUSL_REGULAR_FILES = (
 MUSL_LOADER = "lib/ld-musl-x86_64.so.1"
 MUSL_COMPILER = Path("/usr/local/bin/crabc-x86_64-musl-gcc")
 SOURCE_FILES = (
+    "compat/x86_64/run_musl_oracle.sh",
+    "compat/x86_64/musl_oracle.py",
     "compat/x86_64/native_abi_inventory.py",
     "compat/x86_64/owned_posix_product_evidence.py",
     "compat/x86_64/owned_dynamic_qualification.py",
@@ -2559,7 +2561,7 @@ def _repository_musl_pin() -> dict[str, str]:
         value = tomllib.loads(path.read_text(encoding="utf-8"))
     except (OSError, UnicodeDecodeError, tomllib.TOMLDecodeError) as error:
         raise InventoryError("repository musl pin is unreadable") from error
-    musl = value.get("musl")
+    musl = value.get("musl_native")
     require(isinstance(musl, dict), "repository musl pin is absent")
     expected = {
         "version",

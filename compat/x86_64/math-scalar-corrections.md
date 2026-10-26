@@ -1,25 +1,35 @@
 # Native scalar math conformance corrections
 
-The native x86 math providers preserve the algorithms from musl 1.2.6 while
-correcting demonstrated result and exception defects in five source bodies.
-This is C ABI compatibility machinery within the mature-algorithms policy in
-`AGENTS.md`, not a new math implementation or a numerical-support limitation. The independent pinned musl
-oracle remains unchanged. Candidate success and oracle failure are distinct
+The native x86 math providers translate the released musl 1.2.6 source-port
+authority and correct demonstrated result and exception defects in five source
+bodies. This is C ABI compatibility machinery within the mature-algorithms
+policy in `AGENTS.md`, not a new math implementation or a numerical-support
+limitation. The active native x86-64 oracle is a separate musl 1.2.6 snapshot;
+the paused AArch64 oracle remains the release baseline. The active snapshot
+passes the original `fmaf` and `nextafterl` tests and still fails the original
+`fmal` and `powf` tests. Candidate success and oracle failure remain distinct
 observations; matched failures do not establish conformance.
 
 ## Source and build ownership
 
-The source authority is musl release commit
+The implementation and source-port authority is musl release commit
 `9fa28ece75d8a2191de7c5bb53bed224c5947417`, archive SHA-256
 `d585fd3b613c66151fc3249e8ed44f77020cb5e6c1e635a616d3f9f82460512a`, normalized
 complete source-tree SHA-256
 `2ebc86943f5cdac77729695b304a08f6308e7a218f9d484cec5675006b207d88`.
-Each existing generator validates that unmodified tree before applying
-`math_scalar_corrections.py` to a temporary source copy. Exact replacement
-anchors fail closed on source drift. Pinned GCC 15.2.0 emits the checked PIC
-assembly; Rust builds consume that assembly through the existing modules.
-No production C compiler, external runtime object, dependency, or FMA ISA is
-introduced. AArch64 sources and selection remain unchanged.
+The active native x86-64 oracle snapshot is commit
+`7813e9119eb5fe681b6750b8a033a0490bca0941`, archive SHA-256
+`8c16adf94bfd61358cf884353a4c0b71837ed792e7b7f056c86354436cf05bdb`, and
+normalized complete source-tree SHA-256
+`25147f955c696eba8881eb347e5a44ff47e7f91ccc30f9e6dada0188a28600cf`.
+The tree digest covers all 2,661 files extracted from that archive and omits
+only the generated `.crabc-oracle` manifest. Each existing generator validates
+the released source tree before applying `math_scalar_corrections.py` to a
+temporary source copy. Exact replacement anchors fail closed on source drift.
+Pinned GCC 15.2.0 emits the checked PIC assembly; Rust builds consume that
+assembly through the existing modules. No production C compiler, external
+runtime object, dependency, or FMA ISA is introduced. AArch64 sources and
+selection remain unchanged.
 
 | Upstream body | Established algorithm and license | Native owner / generator suffix |
 | --- | --- | --- |
@@ -51,10 +61,12 @@ covers the zero/minimum-subnormal midpoint when `n=53`. Smaller magnitudes
 cannot be binary32 midpoints. The original normal test, exact-result bypass,
 signed residual repair, exceptional inputs, and directed modes are retained.
 
-For example, the pinned source returns the upper neighbour for
+For example, the released source returns the upper neighbour for
 `fmaf(-0x1.001p-81f, 0x1.ffe002p-70f, 0x1.0002p-133f)` under RN. Exact dyadic
 arithmetic requires `0x1.0001p-133f`, with underflow and inexact. The correction
-also resolves all seven retained upstream `special/fmaf.h` result failures.
+also resolves all seven retained release-source `special/fmaf.h` result
+failures. The active snapshot passes the unchanged original `fmaf` libc-test
+unit, so `fmaf` has no native oracle-defect disposition.
 
 ## Binary80 FMA rounding and tininess
 
@@ -139,13 +151,17 @@ or public-target qualification.
 
 `./scripts/dev-x86_64.sh math-scalar-corrections` retains its evidence directory.
 The six isolated regressions run first: a corrected candidate returns zero;
-the independent pinned musl executable returns failure bitmask 63. The stream
+the active native musl executable returns failure bitmask 62. The stream
 then checks the deterministic exact-dyadic vector stream across all four rounding
 modes and both clean and pre-existing divide-by-zero/inexact flags. It covers
 signed zeros, quiet/signalling NaNs, infinities, subnormals, normal boundaries,
 and positive/negative FMA and `nextafterl` transitions. Native result bits,
 rounding state, all six x86 status bits, exact expectations, and per-arm failures
-are retained. The integer judge separately rounds at bounded and unbounded
+are retained. Against the active snapshot, the exact judge observes 688 oracle
+mismatches: 594 for `fmal`, 70 for `powf`, and 24 for `nextafterl`; `fmaf` has
+none. The corrected candidate passes all 25,632 vectors. The original libc-test
+`nextafterl` unit passes despite those separate boundary mismatches; it receives
+no libc-test oracle-defect disposition. The integer judge separately rounds at bounded and unbounded
 exponents; no host floating-point library supplies expected values.
 
 The pure ABI proof compiles the actual production math/fenv modules through

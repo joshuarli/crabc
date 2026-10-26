@@ -118,6 +118,7 @@ SOURCES = tuple(PROBES.values()) + (
     "compat/x86_64/owned_dynamic_receipt.py",
     "compat/x86_64/owned_posix_product_evidence.py", "compat/x86_64/owned_crypt_runtime_evidence.py",
     "compat/x86_64/owned_dynamic_qualification.py", "compat/x86_64/run_qualification_manifest.py",
+    "compat/x86_64/run_musl_oracle.sh", "compat/x86_64/musl_oracle.py",
     "compat/upstreams.toml", "docker/x86_64-musl-oracle-gcc", "docs/evidence/x86-owned-aio.md",
 )
 TOOL_NAMES = ("dynamic-driver", "compiler", "linker", "oracle-compiler", "chroot", "timeout")
@@ -407,7 +408,7 @@ def _check_input(root: Path, work: Path, value: object, *, after: bool) -> tuple
     if qualification_value["pins_sha256"] != _sha(pins) or qualification_value["compiler_wrapper_sha256"] != _sha(wrapper):
         fail("AIO retained musl qualification pin differs")
     try:
-        musl = tomllib.loads(pins.read_text(encoding="utf-8"))["musl"]
+        musl = tomllib.loads(pins.read_text(encoding="utf-8"))["musl_native"]
     except (OSError, UnicodeDecodeError, tomllib.TOMLDecodeError, KeyError) as error:
         raise EvidenceError("caller musl pins are malformed") from error
     manifest = ("format=crabc-pinned-musl-oracle-v1\n" f"version={musl['version']}\nsource_sha256={musl['sha256']}\n"

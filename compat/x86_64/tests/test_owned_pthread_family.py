@@ -747,7 +747,7 @@ class PthreadPhaseInputTests(unittest.TestCase):
         pins = self.root / "compat/upstreams.toml"
         pins.parent.mkdir(exist_ok=True)
         pins.write_text(
-            "[musl]\nversion = \"1.2.6\"\nsha256 = \"fixture-source\"\nfallback_revision = \"fixture-revision\"\n",
+            "[musl_native]\nversion = \"1.2.6\"\nsha256 = \"fixture-source\"\nfallback_revision = \"fixture-revision\"\n",
             encoding="utf-8",
         )
         wrapper = self.root / "docker/x86_64-musl-oracle-gcc"

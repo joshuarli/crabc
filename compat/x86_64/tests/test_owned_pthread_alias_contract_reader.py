@@ -69,6 +69,38 @@ class OwnedPthreadAliasContractReaderTests(unittest.TestCase):
                 _parse_args(base + partial)
         self.assertEqual(_expected_retained_paths(True) - _expected_retained_paths(False), {HISTORICAL_INPUT_COPY})
 
+    def test_collector_rejects_resealed_musl_helper_or_pin_from_another_source(self) -> None:
+        import owned_pthread_alias_contract_reader as reader
+        identity = {"revision": "1" * 40, "tree": "2" * 40, "source_sha256": "3" * 64}
+        snapshot = self.root / "source-before.json"
+        snapshot.write_text(json.dumps({"schema": reader.SOURCE_SNAPSHOT_SCHEMA, "identity": identity}))
+        artifacts = {"source-before.json": artifact_record(self.root, snapshot)}
+        collector = {"source_before": identity, "source_after": identity, "files": {}}
+        inputs = {}
+        source_root = SOURCE_DIR.parents[1]
+        for name, tracked in reader.COLLECTOR_PATHS.items():
+            relative = reader._input_copy_path(name)
+            retained = self.root / relative
+            retained.parent.mkdir(parents=True, exist_ok=True)
+            retained.write_bytes((source_root / tracked).read_bytes())
+            record = artifact_record(self.root, retained)
+            artifacts[relative] = record
+            collector["files"][name] = record
+            if name in reader.INPUT_NAMES:
+                inputs[name] = record
+        reader._validate_collector(self.root, collector, artifacts, inputs)
+        for name in ("musl_oracle", "musl_pin"):
+            with self.subTest(dependency=name):
+                relative = reader._input_copy_path(name)
+                retained = self.root / relative
+                original = retained.read_bytes()
+                retained.write_bytes(original + b"\nchanged collector dependency\n")
+                artifacts[relative] = collector["files"][name] = artifact_record(self.root, retained)
+                with self.assertRaisesRegex(ReceiptError, f"collector {name} differs from current authority"):
+                    reader._validate_collector(self.root, collector, artifacts, inputs)
+                retained.write_bytes(original)
+                artifacts[relative] = collector["files"][name] = artifact_record(self.root, retained)
+
     def test_candidate_mq_worker_detach_may_live_in_a_sibling_module_member(self) -> None:
         """The per-module archive may place `notify_start` apart from `mq_notify`."""
         import owned_pthread_alias_contract_reader as reader

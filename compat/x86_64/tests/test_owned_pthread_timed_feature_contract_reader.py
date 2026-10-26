@@ -326,6 +326,7 @@ class TimedFeatureReceiptBoundaryTests(unittest.TestCase):
                 "probe", "reader", "runner", "syscall_authority", "static_authority",
                 "elf_authority", "static_preparation_owner", "static_package_owner",
                 "product_validator", "dynamic_probe_authority", "image_manifest", "rust_toolchain",
+                "musl_oracle", "musl_pin",
             },
         )
 

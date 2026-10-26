@@ -36,8 +36,9 @@ ROOT = Path(__file__).resolve().parents[2]
 INVENTORY_SCHEMA = "crabc.x86_64-header-callable-inventory-report/v2"
 NO_PROVIDER_RESOLUTION = "oracle-declared-no-provider"
 MUSL_VERSION = "1.2.6"
-MUSL_SHA256 = "d585fd3b613c66151fc3249e8ed44f77020cb5e6c1e635a616d3f9f82460512a"
-MUSL_REVISION = "9fa28ece75d8a2191de7c5bb53bed224c5947417"
+MUSL_PIN = tomllib.loads((ROOT / "compat/upstreams.toml").read_text(encoding="utf-8"))["musl_native"]
+MUSL_SHA256 = MUSL_PIN["sha256"]
+MUSL_REVISION = MUSL_PIN["fallback_revision"]
 MUSL_ROOT = Path(f"/opt/musl-{MUSL_VERSION}")
 ORACLE_CC = Path("/usr/local/bin/crabc-x86_64-musl-gcc")
 NEW_PRIORITY_CEILING_NAMES = (
@@ -375,7 +376,7 @@ def acquire_source_archive(receipt: Receipt, scratch_root: Path, source_url: str
     cache_dir = scratch_root / "source-oracles"
     cache_dir.mkdir(exist_ok=True)
     require(cache_dir.is_dir() and not cache_dir.is_symlink(), "source archive cache is unsafe")
-    cached = cache_dir / f"musl-{MUSL_VERSION}.tar.gz"
+    cached = cache_dir / f"musl-{MUSL_REVISION}.tar.gz"
     require(not cached.is_symlink(), "source archive cache entry is unsafe")
     retained = receipt.work_dir / "inputs" / cached.name
     if cached.is_file() and not cached.is_symlink():
@@ -399,7 +400,7 @@ def extract_and_scan_source(receipt: Receipt, archive: Path, members: Sequence[s
     source_dir = receipt.work_dir / "source"
     source_dir.mkdir()
     receipt.command("source-archive-extract", ["tar", "-xzf", str(archive), "-C", str(source_dir)])
-    roots = sorted(path for path in source_dir.iterdir() if path.is_dir() and path.name == f"musl-{MUSL_VERSION}")
+    roots = sorted(path for path in source_dir.iterdir() if path.is_dir() and path.name == f"musl-{MUSL_REVISION}")
     require(len(roots) == 1, "pinned musl source archive root is invalid")
     src = roots[0] / "src"
     require(src.is_dir(), "pinned musl source archive has no src directory")
@@ -594,7 +595,7 @@ def parse_args(arguments: Sequence[str] | None) -> argparse.Namespace:
     parser.add_argument("--readelf", default="readelf")
     parser.add_argument("--work-root", type=Path, required=True)
     parser.add_argument("--scratch-root", type=Path, required=True)
-    parser.add_argument("--source-url", default=f"https://musl.libc.org/releases/musl-{MUSL_VERSION}.tar.gz")
+    parser.add_argument("--source-url", default=MUSL_PIN["source"])
     return parser.parse_args(arguments)
 
 

@@ -25,6 +25,7 @@ import subprocess
 import sys
 from typing import Any, NamedTuple
 import owned_dynamic_qualification as dynamic_materialization
+from musl_oracle import load_pin
 import owned_posix_product_evidence as product_evidence
 
 
@@ -34,7 +35,7 @@ SOURCE_SNAPSHOT_SCHEMA = "crabc.x86_64-owned-pthread-alias-source-snapshot/v1"
 STATUS = "component-verified"
 COMPONENT = "pthread-c11-alias-internal-binding"
 MUSL_RELEASE = "musl-1.2.6"
-MUSL_SOURCE_COMMIT = "9fa28ece75d8a2191de7c5bb53bed224c5947417"
+MUSL_SOURCE_COMMIT = load_pin(Path(__file__).resolve().parents[1] / "upstreams.toml")["fallback_revision"]
 SUCCESS_TRANSCRIPT = b"owned-pthread-alias-contract-ok\n"
 TIMEOUT_SECONDS = 45
 INTERPRETER = "/lib/ld-crabc-x86_64.so.1"
@@ -106,6 +107,8 @@ COLLECTOR_PATHS = {
     "probe": "compat/x86_64/owned_pthread_alias_contract_probe.c",
     "reader": "compat/x86_64/owned_pthread_alias_contract_reader.py",
     "runner": "compat/x86_64/run_owned_pthread_alias_contract.sh",
+    "musl_oracle": "compat/x86_64/musl_oracle.py",
+    "musl_pin": "compat/upstreams.toml",
 }
 INPUT_NAMES = (
     "probe",
@@ -512,6 +515,8 @@ def _input_copy_path(name: str) -> str:
         "probe": "retained/collector/probe.c",
         "reader": "retained/collector/reader.py",
         "runner": "retained/collector/runner.sh",
+        "musl_oracle": "retained/collector/musl-oracle.py",
+        "musl_pin": "retained/collector/upstreams.toml",
         "oracle_compiler": "retained/oracle/compiler-wrapper",
         "musl_shared": "retained/oracle/libc.so",
         "musl_archive": "retained/oracle/libc.a",
@@ -1432,6 +1437,8 @@ def _expected_retained_paths(historical: bool = True) -> set[str]:
         "retained/collector/probe.c",
         "retained/collector/reader.py",
         "retained/collector/runner.sh",
+        "retained/collector/musl-oracle.py",
+        "retained/collector/upstreams.toml",
         "retained/oracle/compiler-wrapper",
         "retained/oracle/libc.so",
         "retained/oracle/libc.a",
@@ -1566,18 +1573,20 @@ def _validate_collector(work: Path, collector: Mapping[str, object], artifacts: 
     snapshot_path = validate_retained_artifact(work, artifacts["source-before.json"], "source-before snapshot")
     require(_load_source_snapshot(snapshot_path) == before, "retained source-before snapshot changed")
     files = collector["files"]
-    require(isinstance(files, dict) and tuple(sorted(files)) == ("probe", "reader", "runner"),
+    require(isinstance(files, dict) and tuple(sorted(files)) == tuple(sorted(COLLECTOR_PATHS)),
             "collector source roster changed")
-    for name, relative in (
-        ("probe", "retained/collector/probe.c"),
-        ("reader", "retained/collector/reader.py"),
-        ("runner", "retained/collector/runner.sh"),
-    ):
+    for name in COLLECTOR_PATHS:
+        relative = _input_copy_path(name)
         require(files[name] == artifacts[relative], f"collector {name} record changed")
         validate_retained_artifact(work, artifacts[relative], f"collector {name}")
-        require(artifacts[relative]["sha256"] == inputs[name]["sha256"]
-                and artifacts[relative]["size"] == inputs[name]["size"],
-                f"collector {name} differs from captured input")
+        if name in inputs:
+            require(artifacts[relative]["sha256"] == inputs[name]["sha256"]
+                    and artifacts[relative]["size"] == inputs[name]["size"],
+                    f"collector {name} differs from captured input")
+        else:
+            authority = Path(__file__).resolve().parents[2] / COLLECTOR_PATHS[name]
+            require(sha256(authority) == artifacts[relative]["sha256"],
+                    f"collector {name} differs from current authority")
 
 
 def _validate_selected_products(
@@ -1862,6 +1871,8 @@ def collect_report(
     product = _validate_product_anchor(product_report, inputs)
     selected_source = _selected_source_identity(root, product["anchor"])
     _copy_input_set(work, inputs)
+    for name in ("musl_oracle", "musl_pin"):
+        _copy_regular(root / COLLECTOR_PATHS[name], work / _input_copy_path(name), name)
     _copy_source_contract(work, root, str(selected_source["revision"]))
     _copy_product_sidecars(work, product)
     require((historical_inputs is None) == (historical_source_commit is None),
@@ -1901,11 +1912,7 @@ def collect_report(
         "collector": {
             "source_before": before,
             "source_after": current,
-            "files": {
-                "probe": artifacts["retained/collector/probe.c"],
-                "reader": artifacts["retained/collector/reader.py"],
-                "runner": artifacts["retained/collector/runner.sh"],
-            },
+            "files": {name: artifacts[_input_copy_path(name)] for name in COLLECTOR_PATHS},
         },
         "inputs": {
             name: {"original_path": inputs[name]["path"], "retained": _input_copy_path(name)}

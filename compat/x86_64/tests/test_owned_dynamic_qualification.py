@@ -40,7 +40,7 @@ class OwnedDynamicQualificationTests(unittest.TestCase):
         self.work.mkdir(parents=True)
         pins = self.root / "compat/upstreams.toml"
         pins.parent.mkdir(parents=True)
-        pins.write_text('[musl]\nversion = "1.2.6"\nsha256 = "' + "d" * 64
+        pins.write_text('[musl_native]\nversion = "1.2.6"\nsha256 = "' + "d" * 64
                         + '"\nfallback_revision = "' + "e" * 40 + '"\n')
         wrapper = self.root / "docker/x86_64-musl-oracle-gcc"
         wrapper.parent.mkdir()

@@ -699,7 +699,7 @@ class PublicDataOrdinaryLinkEvidenceTests(unittest.TestCase):
             if name == "compiler_wrapper":
                 path.write_bytes((ROOT / "docker/x86_64-musl-oracle-gcc").read_bytes())
             elif name == "source_manifest":
-                pins = tomllib.loads((ROOT / "compat/upstreams.toml").read_text())["musl"]
+                pins = tomllib.loads((ROOT / "compat/upstreams.toml").read_text())["musl_native"]
                 path.write_text(
                     "format=crabc-pinned-musl-oracle-v1\n"
                     + f"version={pins['version']}\nsource_sha256={pins['sha256']}\n"

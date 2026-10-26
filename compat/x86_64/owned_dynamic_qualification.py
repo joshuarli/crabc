@@ -300,7 +300,7 @@ def validate_oracle(work: Path, oracle: dict) -> dict[str, str]:
     require(oracle["runtime_sha256"] == files["runtime"]
             and oracle["compiler_wrapper_sha256"] == files["compiler_wrapper"], "oracle identity differs from retained bytes")
     require(files["compiler_wrapper"] == digest(ROOT / "docker/x86_64-musl-oracle-gcc"), "oracle compiler wrapper differs from pinned source")
-    pins = tomllib.loads((ROOT / "compat/upstreams.toml").read_text())["musl"]
+    pins = tomllib.loads((ROOT / "compat/upstreams.toml").read_text())["musl_native"]
     expected_manifest = ("format=crabc-pinned-musl-oracle-v1\n"
                          f"version={pins['version']}\nsource_sha256={pins['sha256']}\n"
                          f"fallback_revision={pins['fallback_revision']}\narchitecture=x86_64\n")

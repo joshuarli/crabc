@@ -65,6 +65,7 @@ NON_FILE_SCOPE_KINDS = frozenset({
     "RecordDecl",
 })
 SOURCE_CONTRACT_FILES = (
+    "compat/upstreams.toml",
     "compat/x86_64/header_declaration_inventory.py",
     "compat/x86_64/header_abi_matrix.py",
     "compat/x86_64/header_abi_matrix.toml",

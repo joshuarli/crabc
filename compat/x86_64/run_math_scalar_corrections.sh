@@ -26,7 +26,7 @@ for arm in oracle candidate; do
     status=0
     "$work/$arm.regression" || status=$?
     printf '%s\n' "$status" >"$work/$arm.regression.status"
-    if [ "$arm" = candidate ]; then [ "$status" -eq 0 ]; else [ "$status" -eq 63 ]; fi
+    if [ "$arm" = candidate ]; then [ "$status" -eq 0 ]; else [ "$status" -eq 62 ]; fi
     "$cc" "${flags[@]}" compat/x86_64/math_scalar_corrections_stream.c \
         compat/x86_64/math_scalar_corrections_start.S "${libraries[@]}" -o "$work/$arm.stream"
 done

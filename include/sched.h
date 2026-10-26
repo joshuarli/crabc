@@ -88,7 +88,11 @@ int __sched_cpucount(size_t, const cpu_set_t *);
 
 #define CPU_SET_S(i, size, set) __CPU_op_S(i, size, set, |=)
 #define CPU_CLR_S(i, size, set) __CPU_op_S(i, size, set, &=~)
+#if defined(__x86_64__)
+#define CPU_ISSET_S(i, size, set) (!!__CPU_op_S(i, size, set, &))
+#else
 #define CPU_ISSET_S(i, size, set) __CPU_op_S(i, size, set, &)
+#endif
 
 #define __CPU_op_func_S(func, op) \
 static __inline void __CPU_##func##_S(size_t __size, cpu_set_t *__dest, \

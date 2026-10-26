@@ -1019,7 +1019,7 @@ def _libc_oracle(reader, report):
     same(value['files']['loader']['sha256'], value['files']['libc']['sha256'], 'libc-test pinned loader and libc bytes')
     same(value['files']['compiler_wrapper']['sha256'], digest(reader.root / 'docker/x86_64-musl-oracle-gcc'),
          'libc-test pinned compiler wrapper source')
-    pin = tomllib.loads(read_bytes(reader.root / 'compat/upstreams.toml').decode())['musl']
+    pin = tomllib.loads(read_bytes(reader.root / 'compat/upstreams.toml').decode())['musl_native']
     source_manifest = ('format=crabc-pinned-musl-oracle-v1\nversion=' + pin['version'] + '\nsource_sha256=' + pin['sha256'] +
                        '\nfallback_revision=' + pin['fallback_revision'] + '\narchitecture=x86_64\n').encode()
     specs_manifest = (value['files']['specs']['sha256'] + '  /opt/musl-1.2.6/lib/musl-gcc.specs\n').encode()

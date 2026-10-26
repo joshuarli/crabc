@@ -130,7 +130,7 @@ _Static_assert(CRABC_TYPE_IS(CPU_SET_S(0, sizeof(macro_set), &macro_set),
 _Static_assert(CRABC_TYPE_IS(CPU_CLR_S(0, sizeof(macro_set), &macro_set),
     unsigned long), "CPU_CLR_S type");
 _Static_assert(CRABC_TYPE_IS(CPU_ISSET_S(0, sizeof(macro_set), &macro_set),
-    unsigned long), "CPU_ISSET_S type");
+    int), "CPU_ISSET_S type");
 _Static_assert(CRABC_TYPE_IS(__CPU_op_S(0, sizeof(macro_set), &macro_set, |=),
     unsigned long), "__CPU_op_S type");
 _Static_assert(CRABC_TYPE_IS(CPU_ZERO_S(sizeof(macro_set), &macro_set), void *),
@@ -147,7 +147,7 @@ _Static_assert(CRABC_TYPE_IS(CPU_SET(0, &macro_set), unsigned long),
     "CPU_SET type");
 _Static_assert(CRABC_TYPE_IS(CPU_CLR(0, &macro_set), unsigned long),
     "CPU_CLR type");
-_Static_assert(CRABC_TYPE_IS(CPU_ISSET(0, &macro_set), unsigned long),
+_Static_assert(CRABC_TYPE_IS(CPU_ISSET(0, &macro_set), int),
     "CPU_ISSET type");
 _Static_assert(CRABC_TYPE_IS(CPU_ZERO(&macro_set), void *), "CPU_ZERO type");
 _Static_assert(CRABC_TYPE_IS(CPU_EQUAL(&macro_set, &macro_set), int),

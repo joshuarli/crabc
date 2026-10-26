@@ -3,14 +3,14 @@
     "/opt/musl-1.2.6/lib/libc.a": {
       "mode": 420,
       "path": "/opt/musl-1.2.6/lib/libc.a",
-      "sha256": "d0400c3754724e89c4185e3388d2e139461aa0cc4029f2ec566c962916852775",
-      "size": 2731126
+      "sha256": "9debbb7df9e6cd37f00eedfe059101d15ed12d191f559ccad6dc29398c580ffb",
+      "size": 2733172
     },
     "/opt/musl-1.2.6/lib/libc.so": {
       "mode": 493,
       "path": "/opt/musl-1.2.6/lib/libc.so",
-      "sha256": "8aea1cf45942b85b9d20bfcc4fbe78dcd6748f7d7c615513b38d3f9a897bdb65",
-      "size": 798104
+      "sha256": "f003571aaed56e48e1c32f57b372c8875dd8e8160a78f076f4babe7d48fad433",
+      "size": 798320
     },
     "/opt/musl-1.2.6/lib/musl-gcc.specs": {
       "mode": 420,

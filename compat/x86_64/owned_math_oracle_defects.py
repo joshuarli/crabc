@@ -13,9 +13,9 @@ import tomllib
 import owned_posix_native_observations as native
 
 SCHEMA = 'crabc.x86_64-math-oracle-defects/v1'
-MUSL_REVISION = '9fa28ece75d8a2191de7c5bb53bed224c5947417'
-MUSL_ARCHIVE_SHA256 = 'd585fd3b613c66151fc3249e8ed44f77020cb5e6c1e635a616d3f9f82460512a'
-MUSL_TREE_SHA256 = '2ebc86943f5cdac77729695b304a08f6308e7a218f9d484cec5675006b207d88'
+MUSL_REVISION = '7813e9119eb5fe681b6750b8a033a0490bca0941'
+MUSL_ARCHIVE_SHA256 = '8c16adf94bfd61358cf884353a4c0b71837ed792e7b7f056c86354436cf05bdb'
+MUSL_TREE_SHA256 = '25147f955c696eba8881eb347e5a44ff47e7f91ccc30f9e6dada0188a28600cf'
 
 # These are the correction source-to-assembly chain and its independent proof
 # closure.  The four checked assembly inputs include fmal's nextafterl support;
@@ -35,6 +35,7 @@ PROOF_SOURCES = (
     'compat/x86_64/generate_libc_math_special.py',
     'compat/x86_64/run_math_scalar_corrections.sh',
     'compat/x86_64/run_musl_oracle.sh',
+    'compat/x86_64/musl_oracle.py',
     'compat/x86_64/verify_math_scalar_corrections.py',
     'compat/x86_64/verify_math_pow_records.py',
     'compat/x86_64/math_scalar_corrections_boundary.rs',
@@ -69,28 +70,6 @@ PROOF_SOURCES = (
 # output.  Each message is the entire observed pinned-musl discrepancy after
 # the source path and the harness's terminal FAIL marker are added.
 ORACLE_DEFECTS = {
-    'math/fmaf': {
-        'source': 'src/math/fmaf.c',
-        'source_sha256': 'a9986572cc7a8fcf6a56a88ca10a57867be22fad2442b9b484489badb21498d3',
-        'headers': {'src/math/special/fmaf.h': 'd358f3f778693b518ffe93bbda6ab76043355613aafe5a9a7fe50ee13211e8fa'},
-        'algorithm': 'subnormal-binary32-midpoint-spacing',
-        'diagnostics': (
-            ('src/math/special/fmaf.h', 78, '',
-             'RN fmaf(-0x1.001p-81,0x1.ffe002p-70,0x1.0002p-133) want 0x1.0001p-133 got 0x1.0002p-133 ulperr 0.500 = 0x1p+0 + -0x1p-1'),
-            ('src/math/special/fmaf.h', 82, '',
-             'RN fmaf(0x1.01008p-75,0x1.fe01p-76,0x1p-128) want 0x1.000008p-128 got 0x1p-128 ulperr -0.500 = -0x1p+0 + 0x1p-1'),
-            ('src/math/special/fmaf.h', 83, '',
-             'RN fmaf(0x1.01008p-75,0x1.fe01p-76,-0x1p-128) want -0x1.fffffp-129 got -0x1p-128 ulperr -0.500 = -0x1p+0 + 0x1p-1'),
-            ('src/math/special/fmaf.h', 84, '',
-             'RN fmaf(-0x1.002002p-75,-0x1.ffc004p-76,0x1p-142) want 0x1.02p-142 got 0x1p-142 ulperr -0.500 = -0x1p+0 + 0x1p-1'),
-            ('src/math/special/fmaf.h', 85, '',
-             'RN fmaf(-0x1.002002p-75,0x1.ffc004p-76,0x1p-142) want 0x1.fcp-143 got 0x1p-142 ulperr 0.500 = 0x1p+0 + -0x1p-1'),
-            ('src/math/special/fmaf.h', 86, '',
-             'RN fmaf(0x1.43cb1ep-75,0x1.94cd22p-76,0x1.f8p-144) want 0x1.f8p-144 got 0x1p-143 ulperr 0.500 = 0x1p+0 + -0x1p-1'),
-            ('src/math/special/fmaf.h', 87, '',
-             'RN fmaf(0x1.43cb1ep-75,0x1.94cd22p-76,-0x1.f8p-144) want -0x1.f8p-144 got -0x1.fp-144 ulperr 0.500 = 0x1p+0 + -0x1p-1'),
-        ),
-    },
     'math/fmal': {
         'source': 'src/math/fmal.c',
         'source_sha256': 'd061e49f12822c9adba55a05dcc14bae235258f6584d9251c0f673b719c96a7d',
@@ -143,7 +122,7 @@ def proof_sources(root):
     sources = {}
     for relative in PROOF_SOURCES:
         sources[relative] = {'path': relative, 'sha256': native.digest(root / relative)}
-    pins = tomllib.loads(native.read_bytes(root / 'compat/upstreams.toml').decode('utf-8'))['musl']
+    pins = tomllib.loads(native.read_bytes(root / 'compat/upstreams.toml').decode('utf-8'))['musl_native']
     native.same({key: pins.get(key) for key in ('version', 'sha256', 'fallback_revision')},
                 {'version': '1.2.6', 'sha256': MUSL_ARCHIVE_SHA256, 'fallback_revision': MUSL_REVISION},
                 'math oracle-defect musl provenance')

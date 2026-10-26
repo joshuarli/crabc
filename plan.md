@@ -8,6 +8,67 @@ remain parked and cannot support native promotion. The C
 allocator remains selected. Public x86 support remains false: 180 of 223
 capabilities, nine of 26 families, zero of eight gates.
 
+**Oracle refresh checkpoint:** the owner approved pinning verified upstream
+musl commit `7813e9119eb5fe681b6750b8a033a0490bca0941` for active native
+x86-64. `[musl_native]` selects that exact snapshot; `[musl]` remains the
+released 1.2.6 source-port and paused AArch64 authority. This explicit owner
+direction supersedes the campaign's earlier prohibition on changing this
+native oracle pin. The Rust nightly and all other upstream pins stay fixed.
+
+Both native images build successfully. The selected core image is
+`sha256:003fa69ebb28d18daa88c82ac351126ce1d7ff2c56e191ce720ac3f6bd331cd9`;
+the allocator image is
+`sha256:5bdc00e76b34eb24615a3de84ecd6faeba539ba775e107e8a0e05d3f1803ed50`.
+Both installed source markers match the approved snapshot. The unchanged
+original timer probe object links against each installed oracle and passes
+four bounded `failure_once` runs per image, with zero exit status, no output
+and no timeout. The released oracle's errno-clobber and cancellation startup
+failures remain preserved in `.work/wt/timer-reset-oracle-triage/.work/tmp`.
+No candidate runtime fault or qualification result follows from this oracle
+repair. Six native image-input manifests now bind the rebuilt oracle bytes; all
+eight owning manifests authenticate 156 identities. Tool-only manifests remain
+unchanged. The callable inventory was regenerated from the snapshot; its
+selected surface and incomplete status are unchanged. Native `CPU_ISSET` and
+`CPU_ISSET_S` now normalize to 0/1 (`int` in C, `bool` in C++); the paused
+AArch64 branch keeps its prior macro. The runtime regression and header ABI
+proof pass. Callable inventory/audit tests pass all 53 tests. The ledger
+validator passes with the existing 26 families and unchanged qualification
+flags. Independent completion review found no demonstrated defect.
+
+The active snapshot passes the unchanged original libc-test `fmaf` and
+`nextafterl` units. Only the exact `fmal` and `powf` diagnostic dispositions
+remain; their complete snapshot archive/revision/source-tree identity replaces
+the released oracle identity. The pure production-source ABI proof passes all
+25,632 exact vectors for the candidate and all 9,064 existing corpus records.
+It retains 688 snapshot-oracle mismatches: 594 `fmal`, 70 `powf`, 24
+`nextafterl`, zero `fmaf`. The exact-judge boundary failures are distinct from
+the passing original libc-test `nextafterl` unit, which has no disposition.
+Preserve `.work/x86_64/tmp/math-scalar-corrections.vYggFC` in
+`musl-upstream-refresh`, including both raw arms and the exact judge output.
+No production math algorithm or threshold changed. The stable native observer
+module passes all 35 tests in the pinned image. Reader/source-closure checks
+pass 12 focused modules (267 tests run, one existing skip); native ABI,
+dynamic qualification, AIO and wordexp checks pass all 142 tests. The callable
+inventory/audit pair passes all 53 tests. These are component checks, without
+fresh installed-product or family qualification.
+
+Fresh native products and owning component receipts must now be prepared at
+the integrated source revision using the snapshot image. Old clean products
+and reports retain their historical image/source authority and cannot be
+relabelled. The next bounded campaign proof is the loader registry and
+structural owner, whose earlier timer-reset workload exposed the released
+oracle defect. The parked POSIX aggregate and denied allocator diagnostics
+remain parked.
+
+The old-oracle combined assembly completed at frozen `a95273254` with 27
+companions, all 5,168 identities and 41,270 occurrences, zero rejected
+companions, 52 closure blockers and 44 ABI-prerequisite blockers. It retains
+the failed loader timer producer and blocked structural owner honestly.
+Preserve `.work/x86_64/abi-differential/combined-selection` and
+`.work/tmp/combined-assemble.*` in `abi-component-proof-fixed`. Its assembled
+result has not undergone combined canonical replay and is historical after
+the oracle refresh.
+
 **Current steering checkpoint:** frozen `a95273254` in
 `.work/wt/abi-component-proof-fixed` passes fresh products, four ABI
 collectors, all five component producers and normal canonical replay.
@@ -1484,8 +1545,9 @@ Forbidden:
   any AArch64 behavior, default or gate (`compat/perf/run.py` included).
 - Lowering a correctness threshold, shrinking a corpus, rewriting an upstream
   workload, or reclassifying a failure as expected to pass a gate.
-- Changing an upstream pin (musl 1.2.6, mimalloc v3.5.0, the Rust nightly,
-  `unwinding` 0.2.10).
+- Changing an upstream pin without explicit owner direction. The approved
+  native musl snapshot exception is recorded above; paused AArch64, mimalloc
+  v3.5.0, the Rust nightly and `unwinding` 0.2.10 remain fixed.
 - Widening the public C ABI or header surface beyond the selected profile.
 - An allocator algorithm that diverges from pinned mimalloc without a
   `known-differences.md` entry and the differential and performance evidence
@@ -1571,7 +1633,7 @@ and [compat/allocator/README.md](compat/allocator/README.md).
 | Boundary | Required contract |
 | --- | --- |
 | Active target | Native Linux/x86-64 little-endian, Linux >= 5.10; `x86_64-unknown-linux-musl` where a Rust target name is needed. No AArch64 execution or emulation. |
-| Compatibility | Pinned musl 1.2.6, Linux ELF and System V AMD64 ABI, and `COMPATIBILITY-PROFILE.md`. Rustix remains test-only; no glibc or ambient target-runtime fallback. |
+| Compatibility | Exact `[musl_native]` oracle for native x86-64; released `[musl]` 1.2.6 for paused AArch64. Linux ELF and System V AMD64 ABI, and `COMPATIBILITY-PROFILE.md`. Rustix remains test-only; no glibc or ambient target-runtime fallback. |
 | Frozen runtime | AArch64 commit `3e100d45c5a0798c2d3862d5e2eef584c610ccf9`: exactly 223 capabilities and 26 required families. `compat/x86_64/aarch64_frozen_baseline.json` owns the three immutable ledger, ABI and header digests. Validate them, never refresh them to absorb drift. |
 | Runtime accounting | `compat/x86_64/parity.toml` owns exact capability mappings, family dependencies, and promotion. Every capability and required family occurs exactly once. Export ratchets are not inventories, schedules, or semantic proof. |
 | Allocator source | mimalloc v3.5.0, commit `18b08671c9302247bfb682286e6bf3cc1773f801`; archive hash, license, and source provenance in `crabc-mimalloc/UPSTREAM.md`. No silent upgrade or allocator redesign. |

@@ -1,16 +1,9 @@
 #!/usr/bin/env bash
-# Native Linux/x86-64 pinned-musl oracle toolchain check.
-#
-# Invoke only from docker/Dockerfile.x86_64's native linux/amd64 image. This
-# does not build or select crabc-libc. It proves that the C/POSIX oracle is the
-# exact musl 1.2.6 source build beneath /opt rather than Alpine's bootstrap
-# runtime, and leaves all generated files in a disposable directory.
 set -euo pipefail
 
 readonly ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-readonly MUSL_VERSION=1.2.6
-readonly MUSL_SHA256=d585fd3b613c66151fc3249e8ed44f77020cb5e6c1e635a616d3f9f82460512a
-readonly MUSL_REV=9fa28ece75d8a2191de7c5bb53bed224c5947417
+MUSL_VERSION="$(python3 -B "$ROOT_DIR/compat/x86_64/musl_oracle.py" --pins "$ROOT_DIR/compat/upstreams.toml" version)"
+readonly MUSL_VERSION
 readonly MUSL_ROOT="/opt/musl-${MUSL_VERSION}"
 readonly MUSL_LIBC="${MUSL_ROOT}/lib/libc.so"
 readonly MUSL_LOADER="${MUSL_ROOT}/lib/ld-musl-x86_64.so.1"
@@ -53,14 +46,9 @@ require_tool realpath
 [ -d "${MUSL_ROOT}/include" ] || fail "missing pinned musl headers"
 
 if ! diff -u <(
-    printf '%s\n' \
-        'format=crabc-pinned-musl-oracle-v1' \
-        "version=${MUSL_VERSION}" \
-        "source_sha256=${MUSL_SHA256}" \
-        "fallback_revision=${MUSL_REV}" \
-        'architecture=x86_64'
+    python3 -B "$ROOT_DIR/compat/x86_64/musl_oracle.py" --pins "$ROOT_DIR/compat/upstreams.toml" manifest
 ) "${MUSL_ROOT}/.crabc-oracle"; then
-    fail "source-verification manifest does not match the pinned release"
+    fail "source-verification manifest does not match the pinned snapshot"
 fi
 
 sha256sum -c "${MUSL_ROOT}/.crabc-musl-gcc-specs.sha256" >/dev/null || {
@@ -127,4 +115,4 @@ runtime_output="$(env -u LD_LIBRARY_PATH -u LD_PRELOAD "$probe")"
 }
 
 printf 'x86 pinned musl %s oracle toolchain: PASS (%s)\n' \
-    "$MUSL_VERSION" "$compiler_target"
+    "${MUSL_VERSION} snapshot" "$compiler_target"

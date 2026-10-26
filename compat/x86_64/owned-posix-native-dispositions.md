@@ -124,23 +124,24 @@ raw execution evidence; a success marker alone is insufficient.
 
 ## Corrected scalar math pinned-musl oracle defects
 
-Three libc-test entries have a separate, finite source/oracle-defect result;
-they are not compatibility-profile dispositions. `math/fmaf`, `math/fmal`, and
-`math/powf` each retain the exact pinned musl 1.2.6 diagnostic stream and exit
-status 1 after the owned candidate exits 0 with empty stdout and stderr.
+Two libc-test entries have a separate, finite source/oracle-defect result;
+they are not compatibility-profile dispositions. `math/fmal` and `math/powf`
+retain their exact active native musl 1.2.6 snapshot diagnostic streams and
+exit status 1 after the owned candidate exits 0 with empty stdout and stderr.
 `owned_math_oracle_defects.py` binds the complete pinned libc-test source tree,
 each prepared source and diagnostic header hash, the musl provenance, and the
 fixed correction implementation, generators, probe, and installed-product
 proof sources. It also reconstructs every diagnostic path and byte plus the
-terminal `FAIL /math/... [status 1]` marker.
+terminal `FAIL /math/... [status 1]` marker. The separate release 1.2.6
+source-port authority remains in `math-scalar-corrections.md`.
 
 The resulting nested disposition is explicitly
 `candidate-passed-oracle-defect`: it records a candidate pass and a pinned-musl
-oracle defect, never a candidate limitation or a raw musl pass. A candidate
+native oracle defect, never a candidate limitation or a raw musl pass. A candidate
 failure, an oracle pass, matched raw failure, changed/missing/extra diagnostic,
 source or header drift, timeout, failed link/root, or any unlisted unit fails
-closed. `math/nextafterl` remains an ordinary raw pass; this finite set admits
-neither it nor `random` or another unlisted unit.
+closed. `math/fmaf` and `math/nextafterl` remain ordinary raw passes; this finite
+set admits neither them nor `random` or another unlisted unit.
 
 The native coordinator requires the complete family `execution.json`,
 `--crypt-profile RECEIPT`, `--atomic-addressable-profile RECEIPT`,

@@ -1,5 +1,15 @@
 # Native x86-64 harness
 
+The active native musl oracle is snapshot
+`7813e9119eb5fe681b6750b8a033a0490bca0941`, pinned by archive SHA-256 and
+commit in `compat/upstreams.toml` under `[musl_native]`. Both native image
+builders consume that table. Upstream's `VERSION` and the install prefix remain
+`1.2.6` and `/opt/musl-1.2.6`. The `.crabc-oracle` marker binds the exact
+snapshot archive and commit, so the prefix alone never identifies the source.
+The `[musl]` release pin, paused AArch64 evidence and existing source-port
+attributions retain their original identities. New native evidence requires
+rebuilt images and cannot reuse release-oracle receipts as snapshot proof.
+
 This directory holds the probes, manifests, ledgers, validators and component
 contracts for the native Linux/x86-64 little-endian campaign defined by
 [plan.md](../../plan.md). Everything here is private foundation evidence until
@@ -93,9 +103,10 @@ The focused [native scalar math corrections](math-scalar-corrections.md) retain
 independent exact numerical expectations and raw fixed-musl defects. Run
 `./scripts/dev-x86_64.sh math-scalar-corrections` for their pure ABI proof and
 existing family corpora; the document separates installed-product evidence.
-The native libc-test observer records only `math/fmaf`, `math/fmal`, and
-`math/powf` as source-bound candidate-pass/pinned-musl-oracle-defect
-dispositions; it does not classify `nextafterl`, `wordexp`, or `random` this way.
+The native libc-test observer records only `math/fmal` and `math/powf` as
+source-bound candidate-pass/native-musl-oracle-defect dispositions. The active
+snapshot passes the original `math/fmaf` and `math/nextafterl` units, which
+remain raw observations; `wordexp` and `random` are not math dispositions.
 
 [owned-static-dl-iterate-phdr.md](owned-static-dl-iterate-phdr.md) records the
 installed static main-executable program-header and calling-thread TLS

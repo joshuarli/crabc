@@ -58,9 +58,11 @@ Measured timings are in [docs/lanes.md](docs/lanes.md).
 
 - Linux, little-endian, kernel 5.10 or newer; no older-kernel fallbacks, new
   architectures, or portability layers.
-- Pinned musl 1.2.6 is the C/POSIX oracle. Glibc is neither oracle nor
-  fallback; rustix is a test oracle only. Target artifacts borrow no ambient
-  musl, CRT, compiler runtime, header or loader input.
+- The native x86-64 C/POSIX oracle is the exact `[musl_native]` snapshot
+  in `compat/upstreams.toml`. Paused AArch64 keeps the released `[musl]` 1.2.6
+  baseline. Glibc is neither oracle nor fallback; rustix is a test oracle only.
+  Target artifacts borrow no ambient musl, CRT, compiler runtime, header or
+  loader input.
 - No allocator invention: only the source-faithful port of pinned mimalloc
   v3.5.0, with the exact C source kept as its oracle. The C backend stays
   selected until the native allocator passes its promotion gate.

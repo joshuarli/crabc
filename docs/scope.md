@@ -37,8 +37,10 @@ requirement.
 
 Oracles:
 
-- Pinned musl **1.2.6** is the C/POSIX compatibility oracle. Use the applicable
-  Linux and System V AMD64 ABI contracts for target boundaries.
+- The native x86-64 C/POSIX oracle is the exact musl snapshot in
+  `compat/upstreams.toml` under `[musl_native]`. The paused AArch64 oracle
+  remains the released **1.2.6** pin under `[musl]`. Use the applicable Linux
+  and System V AMD64 ABI contracts for target boundaries.
 - Rustix is a pinned test oracle, never a production dependency.
 - Glibc is neither an oracle nor a fallback. Candidate target artifacts must
   not borrow ambient runtime inputs from musl, CRT, compiler runtimes, headers

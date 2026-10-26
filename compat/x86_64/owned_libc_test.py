@@ -583,7 +583,7 @@ def pinned_musl_identity() -> dict[str, Any]:
         raise EvidenceError(f"pinned musl identity is unavailable: {error}") from error
 
     try:
-        musl_pin = tomllib.loads((ROOT / "compat/upstreams.toml").read_text(encoding="utf-8"))["musl"]
+        musl_pin = tomllib.loads((ROOT / "compat/upstreams.toml").read_text(encoding="utf-8"))["musl_native"]
         version = musl_pin["version"]
         source_sha256 = musl_pin["sha256"]
         fallback_revision = musl_pin["fallback_revision"]

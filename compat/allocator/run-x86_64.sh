@@ -317,16 +317,13 @@ ensure_image() {
             test "$(rustup show active-toolchain)" = "$1-x86_64-unknown-linux-musl (default)"
             test "$(rustc -vV | sed -n "s/^host: //p")" = x86_64-unknown-linux-musl
             test -f "$(rustc --print target-libdir)/self-contained/libunwind.a"
-            test "$(cat /opt/musl-1.2.6/.crabc-oracle)" = "format=crabc-pinned-musl-oracle-v1
-version=1.2.6
-source_sha256=d585fd3b613c66151fc3249e8ed44f77020cb5e6c1e635a616d3f9f82460512a
-fallback_revision=9fa28ece75d8a2191de7c5bb53bed224c5947417
-architecture=x86_64"
+            test "$(cat /opt/musl-1.2.6/.crabc-oracle)" = "$2"
             sha256sum -c /usr/local/share/crabc-allocator-image-tools.sha256 >/dev/null
             /opt/musl-1.2.6/lib/libc.so 2>&1 | grep -F "Version 1.2.6" >/dev/null
             cmake --version >/dev/null
             cargo miri --version >/dev/null
         ' allocator-image-authentication "$rust_channel" \
+        "$(python3 -B "$ROOT_DIR/compat/x86_64/musl_oracle.py" --pins "$ROOT_DIR/compat/upstreams.toml" manifest)" \
         || fail "allocator image authentication failed; rebuild with ./compat/allocator/run-x86_64.sh image"
 }
 

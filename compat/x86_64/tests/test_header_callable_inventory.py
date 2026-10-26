@@ -49,6 +49,44 @@ AUDIT = load_module("header_callable_linkage_audit_test", AUDIT_PATH)
 
 
 class HeaderCallableInventoryTests(unittest.TestCase):
+    @unittest.skipUnless(
+        Path("/usr/local/bin/crabc-x86_64-musl-gcc").is_file(),
+        "requires the pinned native musl compiler",
+    )
+    def test_sched_cpu_isset_s_returns_boolean(self) -> None:
+        scratch = ROOT / ".work" / "x86_64" / "header-callable-inventory-tests"
+        scratch.mkdir(parents=True, exist_ok=True)
+        source = scratch / "sched-cpu-isset-s.c"
+        executable = scratch / "sched-cpu-isset-s"
+        source.write_text(
+            "#include <sched.h>\n"
+            "int main(void) {\n"
+            "    cpu_set_t set = {0};\n"
+            "    CPU_SET_S(3, sizeof(set), &set);\n"
+            "    return CPU_ISSET_S(3, sizeof(set), &set) != 1 ||\n"
+            "        CPU_ISSET_S(2, sizeof(set), &set) != 0 ||\n"
+            "        CPU_ISSET_S(1024, sizeof(set), &set) != 0;\n"
+            "}\n",
+            encoding="utf-8",
+        )
+        subprocess.run(
+            [
+                "/usr/local/bin/crabc-x86_64-musl-gcc",
+                "-std=c11",
+                "-D_GNU_SOURCE",
+                "-I",
+                str(ROOT / "include"),
+                str(source),
+                "-o",
+                str(executable),
+            ],
+            check=True,
+            cwd=ROOT,
+            capture_output=True,
+            text=True,
+        )
+        subprocess.run([str(executable)], check=True, cwd=ROOT)
+
     def test_installed_private_uapi_keeps_the_public_header_roster(self) -> None:
         scratch = ROOT / ".work/x86_64/header-callable-inventory-tests"
         scratch.mkdir(parents=True, exist_ok=True)

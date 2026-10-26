@@ -128,7 +128,7 @@ static_assert(__is_same(decltype(CPU_SET_S(0, sizeof(macro_set), &macro_set)),
 static_assert(__is_same(decltype(CPU_CLR_S(0, sizeof(macro_set), &macro_set)),
     unsigned long), "CPU_CLR_S type");
 static_assert(__is_same(decltype(CPU_ISSET_S(0, sizeof(macro_set), &macro_set)),
-    unsigned long), "CPU_ISSET_S type");
+    bool), "CPU_ISSET_S type");
 static_assert(__is_same(decltype(__CPU_op_S(0, sizeof(macro_set), &macro_set, |=)),
     unsigned long), "__CPU_op_S type");
 static_assert(__is_same(decltype(CPU_ZERO_S(sizeof(macro_set), &macro_set)), void *),
@@ -145,7 +145,7 @@ static_assert(__is_same(decltype(CPU_SET(0, &macro_set)), unsigned long),
     "CPU_SET type");
 static_assert(__is_same(decltype(CPU_CLR(0, &macro_set)), unsigned long),
     "CPU_CLR type");
-static_assert(__is_same(decltype(CPU_ISSET(0, &macro_set)), unsigned long),
+static_assert(__is_same(decltype(CPU_ISSET(0, &macro_set)), bool),
     "CPU_ISSET type");
 static_assert(__is_same(decltype(CPU_ZERO(&macro_set)), void *), "CPU_ZERO type");
 static_assert(__is_same(decltype(CPU_EQUAL(&macro_set, &macro_set)), bool),

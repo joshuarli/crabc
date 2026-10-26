@@ -54,7 +54,8 @@ SCHEMA = "crabc.x86_64-header-callable-inventory-report/v2"
 TARGET = "x86_64-unknown-linux-musl"
 PLATFORM = "Linux/x86-64 little-endian"
 MUSL_VERSION = "1.2.6"
-MUSL_SOURCE_SHA256 = "d585fd3b613c66151fc3249e8ed44f77020cb5e6c1e635a616d3f9f82460512a"
+MUSL_PIN = tomllib.loads((ROOT / "compat/upstreams.toml").read_text(encoding="utf-8"))["musl_native"]
+MUSL_SOURCE_SHA256 = MUSL_PIN["sha256"]
 LINUX_UAPI_VERSION = "5.10"
 LINUX_UAPI_SOURCE_SHA256 = "dcdf99e43e98330d925016985bfbc7b83c66d367b714b2de0cbbfcbf83d8ca43"
 LINUX_UAPI_HEADER_MANIFEST_SHA256 = "00cdc98ceb35926f68dc57dc0d84a989a6df4f60f84b1ae5981b54bb1088eb0e"
@@ -62,7 +63,7 @@ MUSL_ORACLE_MARKER = {
     "format": "crabc-pinned-musl-oracle-v1",
     "version": MUSL_VERSION,
     "source_sha256": MUSL_SOURCE_SHA256,
-    "fallback_revision": "9fa28ece75d8a2191de7c5bb53bed224c5947417",
+    "fallback_revision": MUSL_PIN["fallback_revision"],
     "architecture": "x86_64",
 }
 LINUX_UAPI_MARKER = {
@@ -133,7 +134,7 @@ def load_contract(path: Path = CONTRACT_PATH) -> InventoryContract:
     require(raw.get("schema") == "crabc.x86_64-header-callable-inventory/v2", "inventory contract schema changed")
     require(raw.get("target") == TARGET, "inventory contract target changed")
     require(raw.get("platform") == PLATFORM, "inventory contract platform changed")
-    require(raw.get("oracle") == "Pinned musl 1.2.6", "inventory contract oracle changed")
+    require(raw.get("oracle") == "Pinned native musl snapshot", "inventory contract oracle changed")
 
     inputs = raw.get("inputs")
     require(isinstance(inputs, Mapping), "inventory contract inputs are missing")
@@ -861,7 +862,7 @@ def refresh_provider_accounting(report: Mapping[str, Any], contract: InventoryCo
         and report.get("contract_schema") == "crabc.x86_64-header-callable-inventory/v2"
         and report.get("target") == TARGET
         and report.get("platform") == PLATFORM
-        and report.get("oracle") == "Pinned musl 1.2.6",
+        and report.get("oracle") == "Pinned native musl snapshot",
         "checked compiler-derived callable facts have an unexpected schema",
     )
     require(
@@ -1044,7 +1045,7 @@ def build_report(
         "contract_schema": "crabc.x86_64-header-callable-inventory/v2",
         "target": TARGET,
         "platform": PLATFORM,
-        "oracle": "Pinned musl 1.2.6",
+        "oracle": "Pinned native musl snapshot",
         "inputs": {
             "compiler": "clang JSON AST and preprocessor records",
             "linux_uapi_header_manifest_sha256": LINUX_UAPI_HEADER_MANIFEST_SHA256,

@@ -759,6 +759,9 @@ def evaluate_object_linkage(
 # contract to the collector requires adding its bytes here rather than
 # silently trusting the checkout at replay time.
 SOURCE_FILES = (
+    "compat/x86_64/run_musl_oracle.sh",
+    "compat/x86_64/musl_oracle.py",
+    "compat/upstreams.toml",
     "compat/x86_64/native_declaration_abi.py",
     "compat/x86_64/native_declaration_abi.toml",
     "compat/x86_64/header_declaration_inventory.py",

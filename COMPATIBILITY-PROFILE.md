@@ -17,7 +17,9 @@ libSystem backend for `crabc-rs` would be separately scoped.
 Core Unix behavior is not approximate: filesystems, descriptors/pipes,
 signals, fork/exec, pthread/TLS, sockets, mappings, time, stdio, the bounded
 resolver, dynamic linking, errno, and ABI require full selected semantics.
-Musl 1.2.6 is the C compatibility oracle; glibc is neither oracle nor fallback.
+The exact `[musl_native]` snapshot in `compat/upstreams.toml` is the active
+x86-64 C compatibility oracle. Paused AArch64 retains released musl 1.2.6.
+Glibc is neither oracle nor fallback.
 Newer-kernel requirements are explicit; there are no pre-5.10 fallback goals.
 
 Capabilities are accounted as core Unix, useful POSIX/runtime, C ABI machinery,
@@ -25,6 +27,9 @@ Rust-subsumed, or deliberately unsupported. Full Rust-facade coverage means
 semantic accounting, not a Rust wrapper for every C symbol. Native
 `pattern::glob`/`glob_at` retain explicit roots and owned byte results, not a
 hidden process-CWD traversal policy.
+
+For native x86-64, `CPU_ISSET` and `CPU_ISSET_S` return zero or one, with
+type `int` in C and `bool` in C++, matching the selected oracle headers.
 
 ## Deliberate limits
 

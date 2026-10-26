@@ -380,8 +380,8 @@ class HeaderDeclarationInventoryTests(unittest.TestCase):
         marker_musl.write_text(
             "format=crabc-pinned-musl-oracle-v1\n"
             "version=1.2.6\n"
-            "source_sha256=d585fd3b613c66151fc3249e8ed44f77020cb5e6c1e635a616d3f9f82460512a\n"
-            "fallback_revision=9fa28ece75d8a2191de7c5bb53bed224c5947417\n"
+            "source_sha256=8c16adf94bfd61358cf884353a4c0b71837ed792e7b7f056c86354436cf05bdb\n"
+            "fallback_revision=7813e9119eb5fe681b6750b8a033a0490bca0941\n"
             "architecture=x86_64\n",
             encoding="utf-8",
         )

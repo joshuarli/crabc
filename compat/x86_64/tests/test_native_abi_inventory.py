@@ -7,6 +7,7 @@ import importlib.util
 import json
 import sys
 import tempfile
+import tomllib
 import unittest
 from unittest import mock
 from pathlib import Path
@@ -22,6 +23,19 @@ SPEC.loader.exec_module(inventory)
 
 
 class NativeAbiInventoryParserTests(unittest.TestCase):
+    def test_oracle_marker_rejects_release_and_unknown_snapshot_identity(self) -> None:
+        pins = tomllib.loads((ROOT / "compat/upstreams.toml").read_text())
+        native_pin = pins["musl_native"]
+        def marker(pin):
+            return ("format=crabc-pinned-musl-oracle-v1\n"
+                    f"version={pin['version']}\nsource_sha256={pin['sha256']}\n"
+                    f"fallback_revision={pin['fallback_revision']}\narchitecture=x86_64\n")
+        self.assertEqual(inventory._parse_oracle_manifest(marker(native_pin), native_pin)["fallback_revision"],
+                         native_pin["fallback_revision"])
+        for stale_pin in (pins["musl"], dict(native_pin, fallback_revision="0" * 40)):
+            with self.assertRaisesRegex(inventory.InventoryError, "disagrees with repository pin"):
+                inventory._parse_oracle_manifest(marker(stale_pin), native_pin)
+
     def test_dynamic_records_preserve_version_defaultness_and_measurements(self) -> None:
         raw = """\
 Symbol table '.dynsym' contains 5 entries:

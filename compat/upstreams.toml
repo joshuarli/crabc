@@ -16,6 +16,13 @@ sha256 = "d585fd3b613c66151fc3249e8ed44f77020cb5e6c1e635a616d3f9f82460512a"
 fallback_repository = "https://github.com/ifduyue/musl.git"
 fallback_revision = "9fa28ece75d8a2191de7c5bb53bed224c5947417"
 
+[musl_native]
+version = "1.2.6"
+source = "https://codeload.github.com/ifduyue/musl/tar.gz/7813e9119eb5fe681b6750b8a033a0490bca0941"
+sha256 = "8c16adf94bfd61358cf884353a4c0b71837ed792e7b7f056c86354436cf05bdb"
+fallback_repository = "https://github.com/ifduyue/musl.git"
+fallback_revision = "7813e9119eb5fe681b6750b8a033a0490bca0941"
+
 [linux_5_10_uapi]
 # Native x86 header evidence treats this as a kernel-header input only.  The
 # derived identity is the deterministic output of `make ARCH=x86

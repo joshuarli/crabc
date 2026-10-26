@@ -31,13 +31,14 @@ import owned_posix_product_evidence as product_evidence
 import owned_posix_static_products as static_products
 import owned_pthread_alias_contract_reader as pthread_reader
 import core_image
+from musl_oracle import load_pin
 
 SCHEMA = "crabc.x86_64-owned-syscall-alias-contract/v3"
 IMAGE_MANIFEST = MODULE_DIR / "owned-syscall-alias-image-inputs-current.json"
 STATUS = {"component_complete": True, "family_completion": False,
           "runtime_qualification": False, "promotion_ready": False, "public_support": False}
 IMAGE = core_image.CORE_IMAGE_REFERENCE
-MUSL_SOURCE_COMMIT = "9fa28ece75d8a2191de7c5bb53bed224c5947417"
+MUSL_SOURCE_COMMIT = load_pin(Path(__file__).resolve().parents[1] / "upstreams.toml")["fallback_revision"]
 # The runner expands to 47 parametrized ``run`` envelopes.
 EXPECTED_COMMANDS = 47
 ROOT = Path(__file__).resolve().parents[2]
@@ -70,6 +71,8 @@ RUNTIME_SOURCES = (
     "libc/src/c_abi/x86_64/owned_dynamic.list",
 )
 COLLECTOR_SOURCES = (
+    "compat/x86_64/musl_oracle.py",
+    "compat/upstreams.toml",
     "compat/x86_64/run_owned_syscall_alias_contract.sh",
     "compat/x86_64/owned_syscall_alias_contract_reader.py",
     "compat/x86_64/owned_syscall_alias_authority.py",

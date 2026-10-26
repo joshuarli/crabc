@@ -1423,7 +1423,12 @@ class NativeObservationsTests(unittest.TestCase):
         oracle_files['loader']['resolved_path'] = oracle_files['libc']['path']
         oracle_files['compiler_wrapper']['sha256'] = self.binding(self.root / 'docker/x86_64-musl-oracle-gcc')['sha256']
         import tomllib
-        pin = tomllib.loads((self.root / 'compat/upstreams.toml').read_text())['musl']
+        pin = tomllib.loads((self.root / 'compat/upstreams.toml').read_text())['musl_native']
+        if math_defects:
+            for name, value in (('MUSL_REVISION', pin['fallback_revision']), ('MUSL_ARCHIVE_SHA256', pin['sha256'])):
+                identity_patch = patch.object(math_oracle_defects, name, value)
+                identity_patch.start()
+                self.addCleanup(identity_patch.stop)
         manifest_text = ('format=crabc-pinned-musl-oracle-v1\nversion=' + pin['version'] + '\nsource_sha256=' + pin['sha256'] +
                          '\nfallback_revision=' + pin['fallback_revision'] + '\narchitecture=x86_64\n')
         oracle_files['source_manifest']['sha256'] = hashlib.sha256(manifest_text.encode()).hexdigest()
@@ -1756,20 +1761,20 @@ class NativeObservationsTests(unittest.TestCase):
              patch.object(wordexp_policy, 'upstream_disposition', side_effect=self.fixture_wordexp_disposition):
             result = native.collect('libc-test', self.leaf, source_mount=self.mount, dynamic_product=self.product,
                                     root=self.root, profile_inputs=inputs)
-            self.assertEqual(report['counts'], {'passed': 428, 'runtime-failed': 6})
+            self.assertEqual(report['counts'], {'passed': 429, 'runtime-failed': 5})
             self.assertEqual(len(result['observations']), 434)
             self.assertEqual(result['qualification']['status'], 'profile-qualified')
-            self.assertEqual(len(result['qualification']['dispositions']), 6)
+            self.assertEqual(len(result['qualification']['dispositions']), 5)
             self.assertEqual(len(result['qualification']['dispositions'][0]['differences']), 28)
             self.assertEqual(result['qualification']['dispositions'][1]['unit'], 'functional/strptime')
             self.assertEqual(result['qualification']['dispositions'][2]['unit'], 'functional/wordexp')
             self.assertEqual(result['qualification']['dispositions'][2]['status'], 'posix-policy-qualified')
             self.assertEqual([entry['unit'] for entry in result['qualification']['dispositions'][3:]],
-                             ['math/fmaf', 'math/fmal', 'math/powf'])
+                             ['math/fmal', 'math/powf'])
             self.assertTrue(all(entry['status'] == 'candidate-passed-oracle-defect'
                                 for entry in result['qualification']['dispositions'][3:]))
             count_changed = json.loads(json.dumps(report))
-            count_changed['counts']['runtime-failed'] = 5
+            count_changed['counts']['runtime-failed'] = 4
             self.put(self.leaf / 'libc-test.json', count_changed)
             with self.assertRaises(native.NativeObservationError):
                 native.collect('libc-test', self.leaf, source_mount=self.mount, dynamic_product=self.product,
@@ -1781,7 +1786,7 @@ class NativeObservationsTests(unittest.TestCase):
                 native.collect('libc-test', self.leaf, source_mount=self.mount, dynamic_product=self.product,
                                root=self.root, profile_inputs=inputs)
 
-    def test_native_libc_observer_keeps_corrected_math_as_candidate_passed_oracle_defects(self):
+    def test_native_libc_observer_keeps_snapshot_math_passes_raw_and_only_disposes_remaining_defects(self):
         report = self.libc_test_fixture(profile=True, math_defects=True)
         proof = self.profile_companions()
         inputs = self.profile_input_paths()
@@ -1791,7 +1796,7 @@ class NativeObservationsTests(unittest.TestCase):
                 result = native.collect('libc-test', self.leaf, source_mount=self.mount, dynamic_product=self.product,
                                         root=self.root, profile_inputs=inputs)
         defects = [entry for entry in result['qualification']['dispositions'] if entry['unit'].startswith('math/')]
-        self.assertEqual([entry['unit'] for entry in defects], ['math/fmaf', 'math/fmal', 'math/powf'])
+        self.assertEqual([entry['unit'] for entry in defects], ['math/fmal', 'math/powf'])
         self.assertTrue(all(entry['status'] == 'candidate-passed-oracle-defect' for entry in defects))
         self.assertTrue(all(entry['candidate']['passed'] and not entry['oracle']['passed'] for entry in defects))
         for name in math_oracle_defects.ORACLE_DEFECTS:
@@ -1800,7 +1805,26 @@ class NativeObservationsTests(unittest.TestCase):
             self.assertEqual((self.leaf / 'execution' / name / 'oracle.stdout').read_bytes(),
                              math_oracle_defects.expected_oracle_stdout(name, self.recorded(self.leaf / 'source-prepared')))
             self.assertEqual((self.leaf / 'execution' / name / 'oracle.stderr').read_bytes(), b'')
-        self.assertEqual(report['counts'], {'passed': 428, 'runtime-failed': 6})
+        self.assertEqual(report['counts'], {'passed': 429, 'runtime-failed': 5})
+        for name in ('math/fmaf', 'math/nextafterl'):
+            unit = next(item for item in report['units'] if item['id'] == name)
+            self.assertEqual(unit['status'], 'passed')
+            self.assertEqual(unit['runtime']['oracle']['record']['exit_status'], 0)
+            self.assertEqual(unit['runtime']['candidate']['record']['exit_status'], 0)
+            self.assertEqual((self.leaf / 'execution' / name / 'oracle.stdout').read_bytes(), b'')
+            self.assertEqual((self.leaf / 'execution' / name / 'candidate.stdout').read_bytes(), b'')
+
+    def test_math_defect_dispositions_accept_exact_native_snapshot_and_reject_pin_drift(self):
+        for path in math_oracle_defects.PROOF_SOURCES:
+            self.copy_source(path)
+        proofs = math_oracle_defects.proof_sources(self.root)
+        self.assertIn('compat/upstreams.toml', proofs)
+        pins = self.root / 'compat/upstreams.toml'
+        text = pins.read_text()
+        text = text.replace(math_oracle_defects.MUSL_ARCHIVE_SHA256, '0' * 64)
+        pins.write_text(text)
+        with self.assertRaisesRegex(native.NativeObservationError, 'math oracle-defect musl provenance differs'):
+            math_oracle_defects.proof_sources(self.root)
 
     def test_native_libc_math_oracle_defect_rejects_changed_stream_source_and_unlisted_failures(self):
         report = self.libc_test_fixture(profile=True, math_defects=True)
@@ -1815,12 +1839,12 @@ class NativeObservationsTests(unittest.TestCase):
                                           root=self.root, profile_inputs=inputs)
         original_report = (self.leaf / 'libc-test.json').read_bytes()
 
-        candidate = self.leaf / 'execution/math/fmaf/candidate.stdout'
+        candidate = self.leaf / 'execution/math/fmal/candidate.stdout'
         candidate_before = candidate.read_bytes()
-        status_path = self.leaf / 'execution/math/fmaf/candidate.status.json'
+        status_path = self.leaf / 'execution/math/fmal/candidate.status.json'
         status_before = status_path.read_bytes()
         changed = json.loads(original_report)
-        unit = next(item for item in changed['units'] if item['id'] == 'math/fmaf')
+        unit = next(item for item in changed['units'] if item['id'] == 'math/fmal')
         self.put(candidate, b'unexpected candidate diagnostic\n')
         unit['runtime']['candidate']['record']['stdout'] = self.binding(candidate)
         self.put(status_path, unit['runtime']['candidate']['record'])
@@ -1831,12 +1855,12 @@ class NativeObservationsTests(unittest.TestCase):
         self.put(candidate, candidate_before)
         self.put(status_path, status_before)
 
-        oracle = self.leaf / 'execution/math/fmaf/oracle.stdout'
+        oracle = self.leaf / 'execution/math/fmal/oracle.stdout'
         oracle_before = oracle.read_bytes()
-        status_path = self.leaf / 'execution/math/fmaf/oracle.status.json'
+        status_path = self.leaf / 'execution/math/fmal/oracle.status.json'
         status_before = status_path.read_bytes()
         changed = json.loads(original_report)
-        unit = next(item for item in changed['units'] if item['id'] == 'math/fmaf')
+        unit = next(item for item in changed['units'] if item['id'] == 'math/fmal')
         self.put(oracle, oracle_before + b'unexpected oracle diagnostic\n')
         unit['runtime']['oracle']['record']['stdout'] = self.binding(oracle)
         self.put(status_path, unit['runtime']['oracle']['record'])
@@ -1847,7 +1871,7 @@ class NativeObservationsTests(unittest.TestCase):
         self.put(oracle, oracle_before)
         self.put(status_path, status_before)
 
-        header = self.leaf / 'source-prepared/src/math/special/fmaf.h'
+        header = self.leaf / 'source-prepared/src/math/special/fmal.h'
         header_before = header.read_bytes()
         header.write_bytes(header_before + b'changed header\n')
         self.put(self.leaf / 'libc-test.json', original_report)
@@ -1855,7 +1879,7 @@ class NativeObservationsTests(unittest.TestCase):
             collect()
         header.write_bytes(header_before)
 
-        for name in ('math/nextafterl', 'functional/case_000'):
+        for name in ('math/fmaf', 'math/nextafterl', 'functional/case_000'):
             with self.subTest(unit=name):
                 output = self.leaf / 'execution' / name / 'oracle.stdout'
                 output_before = output.read_bytes()
@@ -1871,7 +1895,7 @@ class NativeObservationsTests(unittest.TestCase):
                 self.put(status_path, unit['runtime']['oracle']['record'])
                 unit['runtime']['oracle']['status_record'] = self.binding(status_path)
                 changed['status'] = 'incomplete'
-                changed['counts'] = {'passed': 427, 'runtime-failed': 7}
+                changed['counts'] = {'passed': 428, 'runtime-failed': 6}
                 self.put(self.leaf / 'libc-test.json', changed)
                 with self.assertRaises(native.NativeObservationError, msg='unlisted runtime failure cannot gain a math disposition'):
                     collect()

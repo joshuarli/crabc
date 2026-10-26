@@ -28,6 +28,7 @@ import tomllib
 from typing import Any, NamedTuple
 
 import owned_dynamic_qualification as dynamic_materialization
+from musl_oracle import load_pin
 from owned_syscall_alias_authority import (RELOCATION_NAMES, archive_members, capture_git_objects, elf_bytes,
                                            require_symbol_stream, section_name, source_tree)
 from owned_static_link_authority import (StaticFunctionContract, StaticLinkAuthorityError,
@@ -47,7 +48,7 @@ SOURCE_SNAPSHOT_SCHEMA = "crabc.x86_64-owned-pthread-timed-feature-source-snapsh
 STATUS = "component-verified"
 COMPONENT = "pthread-timed-feature-alias-linkage"
 MUSL_RELEASE = "musl-1.2.6"
-MUSL_SOURCE_COMMIT = "9fa28ece75d8a2191de7c5bb53bed224c5947417"
+MUSL_SOURCE_COMMIT = load_pin(Path(__file__).resolve().parents[1] / "upstreams.toml")["fallback_revision"]
 SUCCESS_TRANSCRIPT = b"owned-pthread-timed-feature-contract-ok\n"
 TIMEOUT_SECONDS = 45
 INTERPRETER = "/lib/ld-crabc-x86_64.so.1"
@@ -190,6 +191,8 @@ SOURCE_CONTRACT_PATHS = (
     "compat/x86_64/owned_posix_product_evidence.py",
 )
 COLLECTOR_PATHS = {
+    "musl_oracle": "compat/x86_64/musl_oracle.py",
+    "musl_pin": "compat/upstreams.toml",
     "probe": "compat/x86_64/owned_pthread_timed_feature_contract_probe.c",
     "reader": "compat/x86_64/owned_pthread_timed_feature_contract_reader.py",
     "runner": "compat/x86_64/run_owned_pthread_timed_feature_contract.sh",
@@ -2075,6 +2078,8 @@ def _copy_input_set(work: Path, inputs: Mapping[str, Mapping[str, object]]) -> N
 
 def _collector_copy_path(name: str) -> str:
     paths = {
+        "musl_oracle": "retained/collector/musl-oracle.py",
+        "musl_pin": "retained/collector/upstreams.toml",
         "probe": "retained/collector/probe.c",
         "reader": "retained/collector/reader.py",
         "runner": "retained/collector/runner.sh",

@@ -64,6 +64,7 @@ SOURCES = (PROBE, POSIX_PROBE, ENGINE_PROBE, SOURCE_POLICY_PROBE, QUOTE_MATRIX_P
            "compat/x86_64/owned_dynamic_receipt.py",
            "compat/x86_64/owned_posix_product_evidence.py", "compat/x86_64/owned_crypt_runtime_evidence.py",
            "compat/x86_64/owned_dynamic_qualification.py", "compat/x86_64/run_qualification_manifest.py",
+           "compat/x86_64/run_musl_oracle.sh", "compat/x86_64/musl_oracle.py",
            "compat/upstreams.toml", "docker/x86_64-musl-oracle-gcc")
 SHELL_CASES = ("normal", "missing", "inaccessible", "invalid")
 NULL_FIXTURE_NAME = "null"
@@ -1304,7 +1305,7 @@ def _validate_retained_oracle(root: Path, work: Path, value: object) -> dict[str
     if files["compiler_wrapper"] != _sha(wrapper_path):
         fail("wordexp retained oracle compiler differs from the caller pin")
     try:
-        pins = tomllib.loads(pins_path.read_text(encoding="utf-8"))["musl"]
+        pins = tomllib.loads(pins_path.read_text(encoding="utf-8"))["musl_native"]
     except (OSError, UnicodeDecodeError, tomllib.TOMLDecodeError, KeyError) as error:
         raise EvidenceError("wordexp caller upstream pins are malformed") from error
     expected_manifest = ("format=crabc-pinned-musl-oracle-v1\n"

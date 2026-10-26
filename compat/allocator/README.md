@@ -92,7 +92,7 @@ crabc libc, loader, sysroot, or `crabc-rs`. `./compat/allocator/run-x86_64.sh
 - `CRABC_ALLOCATOR_X86_64_CPU_LIMIT` (Docker CPU quota) and `CARGO_BUILD_JOBS`
   are forwarded only when set; each must be a positive integer.
 - The image authenticates its toolchain (the dated nightly in
-  `rust-toolchain.toml`, musl 1.2.6 oracle, Miri) before every run.
+  `rust-toolchain.toml`, musl snapshot from `[musl_native]`, Miri) before every run.
 - In a linked git worktree the launcher mounts the worktree's git metadata
   read-only so revision attestation works; it never invents a clean state.
 - `allocator-huge-numa-qualification` adds `CAP_IPC_LOCK`;

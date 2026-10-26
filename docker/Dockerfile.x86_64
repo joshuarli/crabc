@@ -9,10 +9,6 @@ FROM alpine:3.24.1@sha256:79ff19e9084a00eece421b2523fb93e22d730e2c0e525905de047e
 
 COPY rust-toolchain.toml /tmp/rust-toolchain.toml
 ARG RUST_TARGET=x86_64-unknown-linux-musl
-ARG MUSL_VERSION=1.2.6
-ARG MUSL_SHA256=d585fd3b613c66151fc3249e8ed44f77020cb5e6c1e635a616d3f9f82460512a
-ARG MUSL_REV=9fa28ece75d8a2191de7c5bb53bed224c5947417
-ARG MUSL_MIRROR=https://github.com/ifduyue/musl.git
 ARG LINUX_UAPI_VERSION=5.10
 ARG LINUX_UAPI_SHA256=dcdf99e43e98330d925016985bfbc7b83c66d367b714b2de0cbbfcbf83d8ca43
 # These pin the deterministic `make headers_install` output as well as its
@@ -54,24 +50,11 @@ RUN test "$(uname -m)" = "x86_64" \
     # container while resolving the workspace toolchain declaration.
     && rustup component add rust-src llvm-tools
 
-# Alpine's bootstrap musl is never the C/POSIX oracle. Build only the pinned
-# upstream source under /opt, so the oracle compiler has an unambiguous header,
-# library, and dynamic-loader root. The release archive is primary and its
-# SHA-256 is checked before extraction. A documented immutable v1.2.6 commit
-# is the sole network fallback, and is checked after checkout.
+COPY compat/upstreams.toml /tmp/upstreams.toml
+COPY compat/x86_64/musl_oracle.py /tmp/musl_oracle.py
 RUN set -eu \
-    && if curl --fail --location --retry 3 --output /tmp/musl.tar.gz \
-            "https://musl.libc.org/releases/musl-${MUSL_VERSION}.tar.gz"; then \
-        echo "${MUSL_SHA256}  /tmp/musl.tar.gz" | sha256sum -c - \
-        && tar -C /tmp -xzf /tmp/musl.tar.gz; \
-    else \
-        rm -f /tmp/musl.tar.gz \
-        && git clone --depth 1 --branch "v${MUSL_VERSION}" "${MUSL_MIRROR}" \
-            "/tmp/musl-${MUSL_VERSION}" \
-        && cd "/tmp/musl-${MUSL_VERSION}" \
-        && test "$(git rev-parse HEAD)" = "${MUSL_REV}" \
-        && rm -rf .git; \
-    fi \
+    && MUSL_VERSION="$(python3 -B /tmp/musl_oracle.py --pins /tmp/upstreams.toml version)" \
+    && python3 -B /tmp/musl_oracle.py --pins /tmp/upstreams.toml acquire "/tmp/musl-${MUSL_VERSION}" \
     && cd "/tmp/musl-${MUSL_VERSION}" \
     && ./configure \
         --prefix="/opt/musl-${MUSL_VERSION}" \
@@ -91,13 +74,7 @@ RUN set -eu \
     # runtime is the pinned musl tree. Keeping it beneath /opt preserves the
     # reference tree's library priority over the bootstrap system libc.
     && cp /usr/lib/libssp_nonshared.a "/opt/musl-${MUSL_VERSION}/lib/" \
-    && printf '%s\n' \
-        'format=crabc-pinned-musl-oracle-v1' \
-        "version=${MUSL_VERSION}" \
-        "source_sha256=${MUSL_SHA256}" \
-        "fallback_revision=${MUSL_REV}" \
-        'architecture=x86_64' \
-        > "/opt/musl-${MUSL_VERSION}/.crabc-oracle" \
+    && cp .crabc-oracle "/opt/musl-${MUSL_VERSION}/.crabc-oracle" \
     && sha256sum "/opt/musl-${MUSL_VERSION}/lib/musl-gcc.specs" \
         > "/opt/musl-${MUSL_VERSION}/.crabc-musl-gcc-specs.sha256" \
     && rm -rf /tmp/musl.tar.gz "/tmp/musl-${MUSL_VERSION}"
