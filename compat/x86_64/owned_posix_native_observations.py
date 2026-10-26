@@ -30,6 +30,7 @@ import owned_os_test_aio_suspend_source as aio_suspend_source
 import owned_posix_product_evidence as product_evidence
 import owned_dynamic_qualification as dynamic_qualification
 import owned_crypt_runtime_evidence as payload_evidence
+import owned_dynamic_elf as dynamic_elf
 
 ROOT = Path(__file__).resolve().parents[2]
 MODES = ('pie-kernel', 'pie-direct', 'non-pie-kernel', 'non-pie-direct')
@@ -285,6 +286,8 @@ def _bootstrap_exact_roster(reader):
         'dynamic-pie.crabc-link.json', 'dynamic-non-pie.crabc-link.json',
         'dynamic-pie-payload.json', 'dynamic-non-pie-payload.json',
     }
+    for name in ('dynamic-pie', 'dynamic-non-pie'):
+        files.update(path.name for path in dynamic_elf.sidecar_paths(reader.leaf / name))
     files.update(label + '.command.json' for label in BOOTSTRAP_COMMANDS)
     files.update(label + '.' + stream for label in BOOTSTRAP_COMMANDS
                  for stream in ('status', 'stdout', 'stderr'))
@@ -326,6 +329,23 @@ def _bootstrap_payload(reader, dynamic_product, mode, executable):
     return record
 
 
+def _bootstrap_elf_sidecars(reader, mode, executable):
+    inspection_path, link_map_path = dynamic_elf.sidecar_paths(executable)
+
+    def reject(message):
+        raise NativeObservationError('bootstrap ' + mode + ' ELF sidecar differs: ' + message)
+
+    dynamic_elf.validate_record(
+        read_json(inspection_path), executable,
+        output_format=product_evidence.DYNAMIC_PRODUCT_FORMAT,
+        fail=reject, recorded_path=reader.recorded,
+    )
+    return {
+        'inspection': reader.identity(inspection_path),
+        'link_map': reader.identity(link_map_path),
+    }
+
+
 def collect_bootstrap_primitives(leaf_root, *, static_product, dynamic_product):
     """Reconstruct the installed bootstrap jump and memory evidence read-only.
 
@@ -357,6 +377,10 @@ def collect_bootstrap_primitives(leaf_root, *, static_product, dynamic_product):
         top_level_before = _bootstrap_top_level_snapshot(reader)
         payload_before = {
             mode: _bootstrap_payload(reader, reader.product, mode, outputs[mode])
+            for mode in ('dynamic-pie', 'dynamic-non-pie')
+        }
+        elf_sidecars_before = {
+            mode: _bootstrap_elf_sidecars(reader, mode, outputs[mode])
             for mode in ('dynamic-pie', 'dynamic-non-pie')
         }
 
@@ -416,6 +440,11 @@ def collect_bootstrap_primitives(leaf_root, *, static_product, dynamic_product):
             for mode in ('dynamic-pie', 'dynamic-non-pie')
         }
         same(payload_after, payload_before, 'bootstrap copied dynamic payload during replay')
+        elf_sidecars_after = {
+            mode: _bootstrap_elf_sidecars(reader, mode, outputs[mode])
+            for mode in ('dynamic-pie', 'dynamic-non-pie')
+        }
+        same(elf_sidecars_after, elf_sidecars_before, 'bootstrap dynamic ELF sidecars during replay')
         products_after = {
             'static': _bootstrap_product_snapshot(reader, static, 'static', source_sha256),
             'dynamic': _bootstrap_product_snapshot(reader, reader.product, 'dynamic', source_sha256),
@@ -442,6 +471,7 @@ def collect_bootstrap_primitives(leaf_root, *, static_product, dynamic_product):
             'translation_flags': list(translation_flags),
             'commands': command_records,
             'links': links,
+            'elf_sidecars': {'before': elf_sidecars_before, 'after': elf_sidecars_after},
             'observations': observations,
             'payloads': {'before': payload_before, 'after': payload_after},
             'qualification': {'status': 'passed', 'raw_passed': True, 'dispositions': []},

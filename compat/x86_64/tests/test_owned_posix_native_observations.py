@@ -27,6 +27,10 @@ PRODUCT_FIXTURE_SPEC = importlib.util.spec_from_file_location(
     'owned_posix_product_evidence_fixtures', HERE / 'tests/test_owned_posix_product_evidence.py')
 PRODUCT_FIXTURE = importlib.util.module_from_spec(PRODUCT_FIXTURE_SPEC)
 PRODUCT_FIXTURE_SPEC.loader.exec_module(PRODUCT_FIXTURE)
+ELF_FIXTURE_SPEC = importlib.util.spec_from_file_location(
+    'owned_dynamic_elf_fixtures', HERE / 'tests/test_owned_dynamic_elf.py')
+ELF_FIXTURE = importlib.util.module_from_spec(ELF_FIXTURE_SPEC)
+ELF_FIXTURE_SPEC.loader.exec_module(ELF_FIXTURE)
 
 MODES = ('pie-kernel', 'pie-direct', 'non-pie-kernel', 'non-pie-direct')
 
@@ -132,15 +136,40 @@ class NativeObservationsTests(unittest.TestCase):
         binaries = {}
         for mode in ('static', 'static-pie', 'dynamic-pie', 'dynamic-non-pie'):
             linkage = mode if mode in ('static', 'static-pie') else mode.removeprefix('dynamic-')
-            executable = self.put(leaf / mode, PRODUCT_FIXTURE.sealed_elf(linkage))
+            if mode.startswith('static'):
+                executable_bytes = PRODUCT_FIXTURE.sealed_elf(linkage)
+            else:
+                dynamic_mode = 'pie' if linkage == 'pie' else 'exec'
+                elf_type = native.dynamic_elf.ET_DYN if linkage == 'pie' else native.dynamic_elf.ET_EXEC
+                flags_1 = native.dynamic_elf.DF_1_NOW | (
+                    native.dynamic_elf.DF_1_PIE if linkage == 'pie' else 0)
+                executable_bytes = ELF_FIXTURE.build_image(
+                    elf_type=elf_type, flags_1=flags_1, needed=('libc.so',),
+                )
+            executable = self.put(leaf / mode, executable_bytes)
             executable.chmod(0o755)
             product_fixture.executable = executable
             if mode.startswith('static'):
                 receipt = product_fixture.static_receipt(linkage)
             else:
-                receipt = product_fixture.dynamic_receipt(linkage)
+                with patch.object(PRODUCT_FIXTURE, 'sealed_elf', return_value=executable_bytes):
+                    receipt = product_fixture.dynamic_receipt(linkage)
                 receipt.rename(leaf / (mode + '.crabc-link.json'))
                 receipt = leaf / (mode + '.crabc-link.json')
+                inspection_path, link_map_path = native.dynamic_elf.sidecar_paths(executable)
+                link_map_path.write_bytes(b'owned dynamic link map\n')
+                facts = native.dynamic_elf.inspect(executable)
+                expected = ELF_FIXTURE.expectation(
+                    mode=dynamic_mode, needed=('libc.so',), provided_symbols=frozenset({'puts'}),
+                )
+                native.dynamic_elf.require_expected(facts, expected)
+                inspection = native.dynamic_elf.record(
+                    executable, facts, expected,
+                    output_format='crabc-x86-64-owned-dynamic-sysroot-v1', link_map=link_map_path,
+                )
+                inspection['output_path'] = self.bootstrap_recorded(executable)
+                inspection['link_map']['path'] = self.bootstrap_recorded(link_map_path)
+                self.put(inspection_path, inspection)
             product = product_fixture.static if mode.startswith('static') else dynamic
             binaries[mode] = (executable, receipt, linkage, product)
 
@@ -520,6 +549,24 @@ class NativeObservationsTests(unittest.TestCase):
         self.bootstrap_fixture()
         with self.assertRaises(native.NativeObservationError):
             self.collect_bootstrap(source_digests=(self.bootstrap_source_sha256, '0' * 64))
+
+    def test_bootstrap_primitives_rejects_missing_or_changed_dynamic_elf_sidecars(self):
+        self.bootstrap_fixture()
+        inspection_path, _ = native.dynamic_elf.sidecar_paths(self.bootstrap_leaf / 'dynamic-pie')
+        inspection_path.unlink()
+        with self.assertRaises(native.NativeObservationError): self.collect_bootstrap()
+
+        self.bootstrap_fixture()
+        inspection_path, link_map_path = native.dynamic_elf.sidecar_paths(self.bootstrap_leaf / 'dynamic-pie')
+        inspection = json.loads(inspection_path.read_text())
+        inspection['facts']['needed'] = ['libforeign.so']
+        self.put(inspection_path, inspection)
+        with self.assertRaises(native.NativeObservationError): self.collect_bootstrap()
+
+        self.bootstrap_fixture()
+        _, link_map_path = native.dynamic_elf.sidecar_paths(self.bootstrap_leaf / 'dynamic-non-pie')
+        link_map_path.write_bytes(b'changed link map\n')
+        with self.assertRaises(native.NativeObservationError): self.collect_bootstrap()
 
     def test_bootstrap_primitives_rejects_product_and_payload_mutation_during_replay(self):
         self.bootstrap_fixture()

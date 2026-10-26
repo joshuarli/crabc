@@ -50,9 +50,10 @@ scripts/lanes/rust-check.sh bash compat/x86_64/run_libc_bootstrap_primitives.sh 
 ```
 
 It retains one unchanged workload object, the pinned-musl oracle, four sealed
-links, six raw execution modes, and pre/post custody checks for both copied
-dynamic payloads under the pinned `TMPDIR`. Compilation and links are bounded
-to 60 seconds; each execution is bounded to 10 seconds. The replay API is
+links, the dynamic ELF inspection and map sidecars, six raw execution modes,
+and pre/post custody checks for both copied dynamic payloads under pinned
+`TMPDIR`. Compilation and links are bounded to 60 seconds; each execution is
+bounded to 10 seconds. The replay API is
 to 60 seconds; each execution is bounded to 10 seconds. The replay API is
 `owned_posix_native_observations.collect_bootstrap_primitives`. It takes named
 `static_product` and `dynamic_product` arguments. It reads the fixed checkout
