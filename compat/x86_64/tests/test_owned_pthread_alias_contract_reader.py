@@ -314,16 +314,25 @@ class OwnedPthreadAliasContractReaderTests(unittest.TestCase):
 
         self.assertFalse(same_definition(alias, forwarding_body))
 
-    def _static_symbol_stream(self, path: Path, provider_shapes: dict[str, tuple[str, str, str]]) -> None:
+    def _static_symbol_stream(
+        self,
+        path: Path,
+        provider_shapes: dict[str, tuple[str, str, str]],
+        alias_shapes: dict[str, tuple[str, str, str]] | None = None,
+        alias_values: dict[str, str] | None = None,
+    ) -> None:
         providers = tuple(dict.fromkeys(provider for _, provider in ALIASES))
+        alias_shapes = alias_shapes or {}
+        alias_values = alias_values or {}
         lines = []
         for index, provider in enumerate(providers, start=1):
             aliases = [public for public, target in ALIASES if target == provider]
             rows = [
-                (public, "FUNC", "WEAK", "DEFAULT")
+                (public, *alias_shapes.get(public, ("FUNC", "WEAK", "DEFAULT")),
+                 alias_values.get(public, f"{index:016x}"))
                 for public in aliases
             ]
-            rows.append((provider, *provider_shapes[provider]))
+            rows.append((provider, *provider_shapes[provider], f"{index:016x}"))
             lines.extend((
                 f"File: libc.a({provider}.o)",
                 f"Symbol table '.symtab' contains {len(rows) + 1} entries:",
@@ -331,17 +340,28 @@ class OwnedPthreadAliasContractReaderTests(unittest.TestCase):
                 "     0: 0000000000000000     0 NOTYPE  LOCAL  DEFAULT  UND ",
             ))
             lines.extend(
-                f"{row_index:6}: {index:016x}     1 {symbol_type:<7} {binding:<6} {visibility:<7} 3 {name}"
-                for row_index, (name, symbol_type, binding, visibility) in enumerate(rows, start=1)
+                f"{row_index:6}: {value}     1 {symbol_type:<7} {binding:<6} {visibility:<7} 3 {name}"
+                for row_index, (name, symbol_type, binding, visibility, value) in enumerate(rows, start=1)
             )
         path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
     def test_static_alias_provider_shapes_follow_their_archive_role(self) -> None:
         providers = tuple(dict.fromkeys(provider for _, provider in ALIASES))
+        candidate_observed_shapes = {
+            provider: ("FUNC", "GLOBAL", "HIDDEN")
+            for provider in providers
+        }
+        musl_source_local = {"__pthread_detach", "__pthread_getspecific"}
+        musl_observed_shapes = {
+            provider: ("FUNC", "LOCAL", "DEFAULT")
+            if provider in musl_source_local
+            else ("FUNC", "GLOBAL", "HIDDEN")
+            for provider in providers
+        }
         musl_path = self.root / "musl-static-symbols.txt"
         candidate_path = self.root / "candidate-static-symbols.txt"
-        self._static_symbol_stream(musl_path, MUSL_ARCHIVE_PROVIDER_SHAPES)
-        self._static_symbol_stream(candidate_path, CANDIDATE_ARCHIVE_PROVIDER_SHAPES)
+        self._static_symbol_stream(musl_path, musl_observed_shapes)
+        self._static_symbol_stream(candidate_path, candidate_observed_shapes)
 
         _, musl_definitions = _static_symbols(
             musl_path, MUSL_ARCHIVE_PROVIDER_SHAPES, "musl source"
@@ -351,15 +371,16 @@ class OwnedPthreadAliasContractReaderTests(unittest.TestCase):
         )
 
         self.assertEqual(
-            {provider for provider in providers
-             if MUSL_ARCHIVE_PROVIDER_SHAPES[provider] != CANDIDATE_ARCHIVE_PROVIDER_SHAPES[provider]},
+            {provider for provider in providers if musl_observed_shapes[provider] != candidate_observed_shapes[provider]},
             {"__pthread_detach", "__pthread_getspecific"},
         )
+        self.assertEqual(MUSL_ARCHIVE_PROVIDER_SHAPES, musl_observed_shapes)
+        self.assertEqual(CANDIDATE_ARCHIVE_PROVIDER_SHAPES, candidate_observed_shapes)
         for public in ("pthread_detach", "thrd_detach", "pthread_getspecific", "tss_get"):
-            source_shape = MUSL_ARCHIVE_PROVIDER_SHAPES[
+            source_shape = musl_observed_shapes[
                 next(provider for alias, provider in ALIASES if alias == public)
             ]
-            candidate_shape = CANDIDATE_ARCHIVE_PROVIDER_SHAPES[
+            candidate_shape = candidate_observed_shapes[
                 next(provider for alias, provider in ALIASES if alias == public)
             ]
             self.assertEqual(tuple(musl_definitions[public]["provider"][key]
@@ -367,21 +388,47 @@ class OwnedPthreadAliasContractReaderTests(unittest.TestCase):
             self.assertEqual(tuple(candidate_definitions[public]["provider"][key]
                                    for key in ("type", "binding", "visibility")), candidate_shape)
 
-        invalid_candidate_shapes = dict(CANDIDATE_ARCHIVE_PROVIDER_SHAPES)
-        invalid_candidate_shapes["__pthread_detach"] = ("FUNC", "LOCAL", "DEFAULT")
-        invalid_candidate_path = self.root / "invalid-candidate-static-symbols.txt"
-        self._static_symbol_stream(invalid_candidate_path, invalid_candidate_shapes)
-        with self.assertRaisesRegex(ReceiptError, "candidate Rust form"):
-            _static_symbols(
-                invalid_candidate_path, CANDIDATE_ARCHIVE_PROVIDER_SHAPES, "candidate Rust"
-            )
+        for invalid_name, invalid_shape in (
+            ("local", ("FUNC", "LOCAL", "DEFAULT")),
+            ("public", ("FUNC", "GLOBAL", "DEFAULT")),
+        ):
+            invalid_candidate_shapes = dict(candidate_observed_shapes)
+            invalid_candidate_shapes["__pthread_detach"] = invalid_shape
+            invalid_candidate_path = self.root / f"invalid-candidate-{invalid_name}-static-symbols.txt"
+            self._static_symbol_stream(invalid_candidate_path, invalid_candidate_shapes)
+            with self.subTest(candidate_shape=invalid_name), self.assertRaisesRegex(
+                ReceiptError, "candidate Rust form"
+            ):
+                _static_symbols(
+                    invalid_candidate_path, CANDIDATE_ARCHIVE_PROVIDER_SHAPES, "candidate Rust"
+                )
 
-        invalid_musl_shapes = dict(MUSL_ARCHIVE_PROVIDER_SHAPES)
+        invalid_musl_shapes = dict(musl_observed_shapes)
         invalid_musl_shapes["__pthread_getspecific"] = ("FUNC", "GLOBAL", "HIDDEN")
         invalid_musl_path = self.root / "invalid-musl-static-symbols.txt"
         self._static_symbol_stream(invalid_musl_path, invalid_musl_shapes)
         with self.assertRaisesRegex(ReceiptError, "musl source form"):
             _static_symbols(invalid_musl_path, MUSL_ARCHIVE_PROVIDER_SHAPES, "musl source")
+
+        invalid_alias_shape_path = self.root / "invalid-alias-shape-static-symbols.txt"
+        self._static_symbol_stream(
+            invalid_alias_shape_path, candidate_observed_shapes,
+            alias_shapes={"pthread_detach": ("FUNC", "GLOBAL", "DEFAULT")},
+        )
+        with self.assertRaisesRegex(ReceiptError, "pthread_detach is not FUNC WEAK DEFAULT"):
+            _static_symbols(
+                invalid_alias_shape_path, CANDIDATE_ARCHIVE_PROVIDER_SHAPES, "candidate Rust"
+            )
+
+        invalid_alias_value_path = self.root / "invalid-alias-value-static-symbols.txt"
+        self._static_symbol_stream(
+            invalid_alias_value_path, candidate_observed_shapes,
+            alias_values={"pthread_detach": "000000000000dead"},
+        )
+        with self.assertRaisesRegex(ReceiptError, "pthread_detach and __pthread_detach do not share"):
+            _static_symbols(
+                invalid_alias_value_path, CANDIDATE_ARCHIVE_PROVIDER_SHAPES, "candidate Rust"
+            )
 
     def _shared_symbol_stream(self, section: str) -> Path:
         """Build the complete finite shared alias roster with one Ndx spelling."""
