@@ -14,8 +14,11 @@ collectors, installed process-trio behavior and assembly. Twenty-two companion
 producers pass. The installed-helper producer fails on a missing `os` import.
 Assembly retains 5,168 identities, 41,270 occurrences, zero rejected companions
 and 37 closure blockers. Declaration, CRT, RuntimeV1, AIO and public-data
-runtime attachments pass. One normal canonical replay is running with retained
-inputs read-only and the required temporary scratch writable.
+runtime attachments pass. The single normal canonical replay also passes,
+retaining 29 ABI-prerequisite blockers. All 23 companion seals, both complete
+product trees and modes, six reports, source and scratch rosters remain
+unchanged. Preserve its raw output in
+`.work/wt/abi-owner-proof-fixed/.work/tmp/abi-owner-fixed-reader-normal.stdout`.
 
 `8f96a7404` fixes the helper command recorder's missing import. Its regression
 executes real child commands and preserves exact arguments, streams and both
@@ -32,9 +35,16 @@ The next source group adds exact CRT consumer ownership for `main`, validated
 auxv publication and the absent C-runtime personality. A separate component
 extension adds the visible `wcsftime_l` alias to the existing locale receipt.
 These changes remain provisional until their focused checks and matching
-native proof pass. The existing installed math component is running once on
-the fresh helper-pilot products to establish the next inverse-trig and
-`pow10l` behavior evidence. It does not run the parked POSIX aggregate.
+native proof pass. The existing installed math component passes all 206 entries
+and six modes on the fresh helper-pilot products. Its owning retained reader
+also passes. The existing stdio component and its owning reader pass all ten
+C/C++ header profiles and six modes, including the `fopen64` macro row.
+These reports support later exact identity joins while the full text-family
+receipt remains absent. The math report proves installed `pow10l` behavior,
+but not its isolated feature archive. The math lane is extending the existing
+leaf collection to retain that distinct proof. The existing signal/process
+component is running once against the same product pair for restorer evidence.
+None of these components runs the parked POSIX aggregate.
 The remaining structural, consumer-owned and feature-alias identity proofs
 remain implementation work. The parked POSIX aggregate and denied allocator
 diagnostics remain outside the retry scope. No qualification claim changes.
