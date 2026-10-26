@@ -175,6 +175,19 @@ in that checkout. All three basic products and earlier installed runtime
 cases pass. Repair belongs to `lane/fork-helper-contract` at
 `.work/wt/fork-helper-contract`; the next cohort checkout is
 `.work/wt/cohort-correctness-third`. Previous candidates remain immutable.
+`4e7e0b144` integrates the repair across fourteen reader files and fifteen
+exact command comparisons. The readers preserve input receipt order, link
+traces and replay rules while adopting R7's helper exclusion and archive
+placement. The direct-driver regression covers shared, PIE, executable and
+exported links; negative tests reject legacy placement. Focused host tests
+pass, including POSIX OS observations under `/usr/bin/python3`. The default
+shell Python resolves to a user Python 3.15 path, which that pinned-control-plane
+fixture correctly rejects. The pthread alias fixture has one existing skip;
+the native allocator DSO receipt's sole fixture test is unavailable and is
+not proof. No allocator diagnostic ran. Main ledger, inventory and structure
+checks pass without promotion. The third rehearsal is frozen at `b3a226cce`
+with the same provisional claims, five receipt paths, and zero preflight
+blockers across 68 correctness stages.
 
 The addrconfig lane's musl scratch remains under its `.work/tmp`: automatic
 review denied its removal with "rm -f style commands are not permitted. Use
