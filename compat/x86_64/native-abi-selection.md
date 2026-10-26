@@ -898,7 +898,8 @@ when its clean source and both installed products match the selected cohort.
 The reader seals the pinned musl wrapper, GCC executable and specs, then
 relinks the retained workload object with the runner's exact static flags and
 compares the resulting oracle executable before accepting any output trace.
-`__crabc_runtime_v1` and `rust_eh_personality` remain outside these
+`__fork_handler` and `__funcs_on_exit` use the private process-dispatcher
+roles below. `__crabc_runtime_v1` and `rust_eh_personality` remain outside these
 source-owner groups. This section does not add allocator metadata or Rust
 unwinder identities.
 
@@ -926,12 +927,26 @@ definition of any member is still a metadata mismatch and remains a closure
 blocker, so this selection cannot hide an export leak. The public weak aliases
 of these bodies keep their separate feature-alias and component-receipt
 requirements. Private spellings whose candidate exposure differs from musl stay
-unselected until their owning lane repairs the export. Examples are the
+unselected until their owning lane repairs the export, including the
 default-visibility static `__init_ssp`. The process and exit hooks documented
 in [owned atfork callback registry](owned-atfork-registry.md) retain hidden
-implementation definitions. Their native selection still requires fresh
-product measurements and exact accounting of each strong archive provider
-and weak fallback; the export repair alone supplies no selection receipt.
+implementation definitions. The component owner groups select seven shared
+local hidden bodies and the static-only strong hidden `__stdio_exit` body.
+The weak hidden `__ldso_atfork` and `__membarrier_init` hooks remain inert;
+their selection grants no loader or membarrier protocol.
+
+`process_private_dispatcher_joins` accounts only `__fork_handler` and
+`__funcs_on_exit`. Each static placement retains two raw definitions with
+`archive_definition_roles`: a strong hidden function in the same authenticated
+Rust member as `pthread_atfork` or `__cxa_atexit`, and a weak hidden executable
+NOTYPE assembly stub beside `fork` or `exit`. The pinned C reference must
+retain the corresponding strong and weak hidden FUNC definitions in exactly
+`pthread_atfork.lo`/`fork.lo` or `atexit.lo`/`exit.lo`. Both candidate members
+must belong to the sealed Rust archive roster and remain distinct. Unexpected
+members, duplicates, visibility, binding, type or section roles keep the
+placement blocked. This source-specific join neither discards weak rows nor
+accepts a generic strong-over-weak metadata choice. The export repair and
+these physical placements supply no lifecycle or qualification receipt.
 
 The existing weak static `dl_iterate_phdr` placement also has an owned-startup
 consumer contract: [owned static executable enumeration](owned-static-dl-iterate-phdr.md).

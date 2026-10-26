@@ -2348,6 +2348,9 @@ def load_source_inputs(contract: Mapping[str, Any], contract_path: Path) -> dict
                        for row in feature_rows for alias in row.aliases]
     files = set(contract['inputs'].values()) | {
         'compat/x86_64/native_abi_selection.py', 'compat/x86_64/tests/test_native_abi_selection.py',
+        'compat/x86_64/tests/test_native_abi_process_private_roles.py',
+        'compat/x86_64/owned_process_private_symbols_probe.c',
+        'compat/x86_64/run_owned_atfork_registry.sh',
         'compat/x86_64/native_abi_inventory.py', 'compat/x86_64/native_abi_elf_facts.py',
         'compat/x86_64/header_callable_disposition.py', 'compat/x86_64/header_callable_disposition.toml',
         'compat/x86_64/header_callable_linkage_audit.py', 'compat/x86_64/header_callable_inventory.py',
@@ -2999,6 +3002,90 @@ def attach_provider_links(accounting: Mapping[str, Any], proof: Mapping[str, Any
                       'definition_index': observed['definition_index'],
                       'reference_indices': observed['import_indices'],
                       'physical_final_links': copy.deepcopy(observed.get('links', {}))})
+    return joins
+
+
+def attach_process_private_dispatcher_roles(accounting: Mapping[str, Any],
+                                            rust_members: Sequence[str]) -> list[dict[str, Any]]:
+    """Account the two source-owned strong dispatchers and their exact weak stubs.
+
+    This joins archive roles, not interchangeable metadata. Every raw definition
+    remains in its placement. Candidate members must belong to the authenticated
+    Rust roster and contain their owning public entry point. The pinned oracle
+    must retain both hidden definitions in the exact C source members.
+    """
+    members = set(strings(list(rust_members), 'process dispatcher Rust members', empty=False))
+    records, placements, occurrences = _accounting_indexes(accounting, description='private process dispatcher roles')
+    joins = []
+    for name, anchors in (
+        ('__fork_handler', (('pthread_atfork', 'pthread_atfork.lo'), ('fork', 'fork.lo'))),
+        ('__funcs_on_exit', (('__cxa_atexit', 'atexit.lo'), ('exit', 'exit.lo'))),
+    ):
+        key = (name, None, False)
+        record = records.get(key)
+        placement = placements.get((key, 'candidate-static'))
+        reason = 'missing, ambiguous or mismatched selected provider placement: candidate-static'
+        if not (record and placement and reason in record['unresolved']
+                and record['selection'].get('disposition') == 'private-provider'
+                and record['selection'].get('owner') == 'x86-process-private-dispatchers'
+                and record['selection'].get('group') == 'component-owned-process-private-dispatchers'
+                and placement.get('expected_metadata') == {'type': 'FUNC', 'binding': 'GLOBAL', 'visibility': 'HIDDEN'}):
+            continue
+        roles = []
+        for artifact in ('candidate-static', 'reference-static'):
+            definitions = [row for row in occurrences.values() if row['artifact_key'] == artifact
+                           and row['role'] != 'unnamed'
+                           and identity_key(row_identity(row['row'])) == key]
+            if len(definitions) != 2:
+                break
+            for binding, role, (anchor, reference_member) in zip(
+                ('GLOBAL', 'WEAK'), ('strong-provider', 'weak-fallback'), anchors,
+            ):
+                selected = [row for row in definitions if row['row']['binding'] == binding]
+                owners = [row for row in occurrences.values() if row['artifact_key'] == artifact
+                          and row['role'] != 'unnamed'
+                          and identity_key(row_identity(row['row'])) == (anchor, None, False)
+                          and row['role'] == 'definition']
+                if len(selected) != 1 or len(owners) != 1:
+                    break
+                body, owner = selected[0], owners[0]
+                kind = 'NOTYPE' if artifact == 'candidate-static' and binding == 'WEAK' else 'FUNC'
+                metadata = {'type': kind, 'binding': binding, 'visibility': 'HIDDEN'}
+                if not (body['role'] == owner['role'] == 'definition'
+                        and body['table'] == owner['table'] == '.symtab'
+                        and body['member_occurrence'] == owner['member_occurrence'] == 0
+                        and body['member_index'] == owner['member_index']
+                        and body['member_name'] == owner['member_name']
+                        and (body['member_name'] in members if artifact == 'candidate-static'
+                             else body['member_name'] == reference_member)
+                        and body['definition_section']['type'] == 'PROGBITS'
+                        and 'X' in body['definition_section']['flags']
+                        and not metadata_differences(metadata, body['row'], body['definition_section'])
+                        and not metadata_differences({'type': 'FUNC', 'binding': 'GLOBAL', 'visibility': 'DEFAULT'},
+                                                     owner['row'], owner['definition_section'])):
+                    break
+                roles.append({'artifact_key': artifact, 'role': role,
+                              'occurrence_index': body['index'], 'owner_occurrence_index': owner['index'],
+                              'owner_symbol': anchor, 'member_name': body['member_name'],
+                              'member_index': body['member_index'], 'member_occurrence': 0,
+                              'expected_metadata': metadata})
+            else:
+                continue
+            break
+        if (len(roles) != 4 or placement.get('definition_count') != 2
+                or roles[0]['member_index'] == roles[1]['member_index']
+                or roles[2]['member_index'] == roles[3]['member_index']):
+            continue
+        candidate_roles = [row for row in roles if row['artifact_key'] == 'candidate-static']
+        indices = [row['occurrence_index'] for row in candidate_roles]
+        if set(placement.get('occurrence_indices', [])) != set(indices):
+            continue
+        placement['metadata_differences'] = [{'occurrence_index': index, 'fields': []}
+                                            for index in placement['occurrence_indices']]
+        placement['archive_definition_roles'] = candidate_roles
+        placement['placement_observed'] = True
+        _remove_identity_requirements(accounting, record, [reason], description=f'private dispatcher {name}')
+        joins.append({'identity': copy.deepcopy(record['identity']), 'archive_definition_roles': roles})
     return joins
 
 
@@ -13284,6 +13371,9 @@ def _build_report(*, contract_path: Path, paths: Mapping[str, Path], declaration
         accounting, contract['module_private_symbols'],
         fixed_c_producer_metadata_companion['account']['archive_map']['static_rust_members'],
     )
+    process_private_dispatcher_joins = attach_process_private_dispatcher_roles(
+        accounting, fixed_c_producer_metadata_companion['account']['archive_map']['static_rust_members'],
+    )
     process_exit_static_import_joins = attach_process_exit_static_imports(
         accounting, contract['process_exit_static_imports'],
         fixed_c_producer_metadata_companion['account']['archive_map']['static_rust_members'],
@@ -13632,6 +13722,7 @@ def _build_report(*, contract_path: Path, paths: Mapping[str, Path], declaration
             'fixed_c_producer_metadata_companion': fixed_c_producer_metadata_companion,
             'fixed_c_producer_metadata_joins': fixed_c_producer_metadata_joins,
             'module_private_joins': module_private_joins,
+            'process_private_dispatcher_joins': process_private_dispatcher_joins,
             'provider_link_proof': provider_link_proof, 'provider_link_joins': provider_link_joins,
             'process_exit_static_import_joins': process_exit_static_import_joins,
             'private_complex_mul_joins': private_complex_mul_joins,

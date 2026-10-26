@@ -396,7 +396,7 @@ SOURCE_OWNER_NAMES = frozenset('''
 _IO_feof_unlocked _IO_ferror_unlocked _IO_getc _IO_getc_unlocked _IO_putc _IO_putc_unlocked
 __crypt_blowfish __crypt_md5 __crypt_r __crypt_sha256 __crypt_sha512
 __ctype_b_loc __ctype_tolower_loc __ctype_toupper_loc
-__cxa_atexit __cxa_finalize __fork_handler __funcs_on_exit
+__cxa_atexit __cxa_finalize
 __isalnum_l __isalpha_l __isblank_l __iscntrl_l __isdigit_l __isgraph_l __islower_l __isprint_l __ispunct_l __isspace_l __isupper_l __isxdigit_l __tolower_l __toupper_l __strcasecmp_l __strncasecmp_l __strcoll_l __strxfrm_l
 __duplocale __freelocale __newlocale __nl_langinfo __nl_langinfo_l __uselocale __iswalnum_l __iswalpha_l __iswblank_l __iswcntrl_l __iswctype_l __iswdigit_l __iswgraph_l __iswlower_l __iswprint_l __iswpunct_l __iswspace_l __iswupper_l __iswxdigit_l __towctrans_l __towlower_l __towupper_l __wcscoll_l __wcsxfrm_l __wctrans_l __wctype_l
 __strerror_l __wcsftime_l __strtod_l __strtof_l __strtold_l
@@ -430,7 +430,7 @@ class SourceOwnerPolicyTests(unittest.TestCase):
                          if group['id'].startswith('source-owned-')]
         selected = {name for group in source_groups for name in group['members']}
         self.assertEqual(selected, SOURCE_OWNER_NAMES)
-        self.assertEqual(len(selected), 108)
+        self.assertEqual(len(selected), 106)
         for name in ('__crabc_runtime_v1', 'rust_eh_personality'):
             self.assertNotIn(name, selected)
             self.assertFalse(self.records[name]['selection'].get('group', '').startswith('source-owned-'))
@@ -472,6 +472,22 @@ class SourceOwnerPolicyTests(unittest.TestCase):
                 {'artifact_key': 'candidate-static', 'metadata': {'type': 'FUNC', 'binding': 'GLOBAL', 'visibility': 'PROTECTED'}, 'metadata_rule': 'explicit'},
                 {'artifact_key': 'candidate-shared', 'metadata': {'type': 'FUNC', 'binding': 'GLOBAL', 'visibility': 'PROTECTED'}, 'metadata_rule': 'explicit'},
             ])
+
+    def test_process_hooks_select_private_bodies_and_keep_static_only_stdio_distinct(self):
+        for name in ('__aio_atfork', '__execvpe', '__futimesat', '__ldso_atfork',
+                     '__membarrier_init', '__stdio_exit', '__fork_handler', '__funcs_on_exit'):
+            with self.subTest(name=name):
+                record = self.records[name]
+                self.assertEqual(record['selection']['disposition'], 'private-provider')
+                placements = {row['artifact_key']: row['metadata'] for row in record['expected_placements']}
+                binding = 'WEAK' if name in {'__ldso_atfork', '__membarrier_init'} else 'GLOBAL'
+                self.assertEqual(placements['candidate-static'],
+                                 {'type': 'FUNC', 'binding': binding, 'visibility': 'HIDDEN'})
+                if name == '__stdio_exit':
+                    self.assertEqual(set(placements), {'candidate-static'})
+                else:
+                    self.assertEqual(placements['candidate-shared'],
+                                     {'type': 'FUNC', 'binding': 'LOCAL', 'visibility': 'HIDDEN'})
 
     def test_crypt_direct_bodies_and_tls_startup_boundaries_do_not_collapse(self):
         crypt = self.groups['source-owned-crypt-private-helper-bodies']

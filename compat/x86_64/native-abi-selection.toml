@@ -296,13 +296,77 @@ owner = "x86-process-exit-atfork"
 family = "libc.c-abi-compat"
 artifacts = ["candidate-static", "candidate-shared"]
 sources = ["libc/src/c_abi/x86_64/process_exit.rs", "libc/src/c_abi/x86_64/pthread_atfork.rs", "libc/src/c_abi/x86_64/static_c_abi.rs"]
-members = ["__cxa_atexit", "__cxa_finalize", "__fork_handler", "__funcs_on_exit"]
+members = ["__cxa_atexit", "__cxa_finalize"]
 members_file = ""
 expected_type = "FUNC"
 delegated_members = []
 placement_metadata = {}
 reason = "Selected exit and atfork bodies retain their separate lifecycle component contracts."
 static_metadata_rule = "selected-native-oracle-function"
+
+[[owner_groups]]
+id = "component-owned-process-private-dispatchers"
+selector = "explicit"
+disposition = "private-provider"
+owner = "x86-process-private-dispatchers"
+family = "libc.c-abi-compat"
+artifacts = ["candidate-static", "candidate-shared"]
+sources = ["libc/src/c_abi/x86_64/process_exit.rs", "libc/src/c_abi/x86_64/pthread_atfork.rs", "libc/src/c_abi/x86_64/static_startup.rs"]
+members = ["__fork_handler", "__funcs_on_exit"]
+members_file = ""
+expected_type = "FUNC"
+delegated_members = []
+placement_metadata = {"candidate-static" = {"type" = "FUNC", "binding" = "GLOBAL", "visibility" = "HIDDEN"}, "candidate-shared" = {"type" = "FUNC", "binding" = "LOCAL", "visibility" = "HIDDEN"}}
+reason = "Pinned-musl private dispatchers: each static strong provider and weak fallback requires its exact public owner in a separate authenticated archive member; the shared body is local and hidden."
+static_metadata_rule = "explicit"
+
+[[owner_groups]]
+id = "component-owned-process-private-bodies"
+selector = "explicit"
+disposition = "private-provider"
+owner = "x86-process-private-bodies"
+family = "libc.c-abi-compat"
+artifacts = ["candidate-static", "candidate-shared"]
+sources = ["libc/src/c_abi/x86_64/owned_aio.rs", "libc/src/c_abi/x86_64/process_exec_path.rs", "libc/src/c_abi/x86_64/timestamp_updates.rs"]
+members = ["__aio_atfork", "__execvpe", "__futimesat"]
+members_file = ""
+expected_type = "FUNC"
+delegated_members = []
+placement_metadata = {"candidate-static" = {"type" = "FUNC", "binding" = "GLOBAL", "visibility" = "HIDDEN"}, "candidate-shared" = {"type" = "FUNC", "binding" = "LOCAL", "visibility" = "HIDDEN"}}
+reason = "Pinned-musl hidden AIO, pathname-search and timestamp implementation bodies; public aliases retain separate callable and feature evidence."
+static_metadata_rule = "explicit"
+
+[[owner_groups]]
+id = "component-owned-process-private-weak-hooks"
+selector = "explicit"
+disposition = "private-provider"
+owner = "x86-process-private-weak-hooks"
+family = "libc.c-abi-compat"
+artifacts = ["candidate-static", "candidate-shared"]
+sources = ["libc/src/c_abi/x86_64/pthread_atfork.rs", "libc/src/c_abi/x86_64/pthread_create_join.rs"]
+members = ["__ldso_atfork", "__membarrier_init"]
+members_file = ""
+expected_type = "FUNC"
+delegated_members = []
+placement_metadata = {"candidate-static" = {"type" = "FUNC", "binding" = "WEAK", "visibility" = "HIDDEN"}, "candidate-shared" = {"type" = "FUNC", "binding" = "LOCAL", "visibility" = "HIDDEN"}}
+reason = "Source-owned inert hidden weak hooks preserve static replacement without exposing a dynamic protocol or selecting the pinned oracle's separate strong providers."
+static_metadata_rule = "explicit"
+
+[[owner_groups]]
+id = "component-owned-static-stdio-exit-body"
+selector = "explicit"
+disposition = "private-provider"
+owner = "x86-static-stdio-exit-body"
+family = "libc.c-abi-compat"
+artifacts = ["candidate-static"]
+sources = ["libc/src/c_abi/x86_64/static_startup.rs", "libc/src/c_abi/x86_64/stdio_standard.rs"]
+members = ["__stdio_exit"]
+members_file = ""
+expected_type = "FUNC"
+delegated_members = []
+placement_metadata = {"candidate-static" = {"type" = "FUNC", "binding" = "GLOBAL", "visibility" = "HIDDEN"}}
+reason = "The owned static product includes the real hidden stream-finalization body; musl exit.c's default-visible weak dummy is a separate source role, not its metadata oracle."
+static_metadata_rule = "explicit"
 
 [[owner_groups]]
 id = "source-owned-locale-narrow-same-definition-aliases"
