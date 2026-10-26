@@ -6,6 +6,7 @@ from __future__ import annotations
 import hashlib
 import importlib.util
 import json
+import os
 import signal
 import shutil
 import subprocess
@@ -52,6 +53,52 @@ class NativeDynamicDispatcherTests(unittest.TestCase):
         latest = RUNNER.publish_report(private, self.latest)
         self.assertEqual(latest.stat().st_mode & 0o777, 0o644)
         self.assertEqual(latest.read_text(encoding="utf-8"), "{}\n")
+
+    def test_native_dynamic_lane_root_is_traversable_under_restrictive_umask(self) -> None:
+        self.temporary.chmod(0o755)
+        work = self.temporary / "dynamic-work"
+        work.mkdir()
+        work.chmod(0o755)
+        cache = self.temporary / "cache"
+        cache.mkdir()
+        archive = self.temporary / "lua.tar.gz"
+        archive.write_bytes(b"source archive")
+        wrapper = self.temporary / "wrapper"
+        wrapper.write_bytes(b"compiler wrapper")
+        compiler = self.temporary / "musl-compiler"
+        compiler.write_bytes(b"compiler")
+        headers = self.temporary / "headers"
+        headers.mkdir()
+        with (
+            mock.patch.object(RUNNER, "require_native_x86_64"),
+            mock.patch.object(RUNNER.LUA, "load_manifest", return_value={"lua": {"archive_root": "lua"}}),
+            mock.patch.object(RUNNER.LUA, "fetch_archive", return_value=archive),
+            mock.patch.object(
+                RUNNER,
+                "owned_dynamic_sysroot",
+                return_value=(self.temporary / "sysroot", wrapper, {"headers": headers}, {}),
+            ),
+            mock.patch.object(RUNNER, "require_regular", return_value=compiler),
+            mock.patch.object(
+                RUNNER.LUA, "safe_extract", side_effect=RUNNER.LUA.RunnerError("stop before extraction")
+            ),
+        ):
+            previous_umask = os.umask(0o077)
+            try:
+                report = RUNNER.run_dynamic_lane(
+                    sysroot_path=self.temporary / "sysroot",
+                    work_root=work,
+                    cache=cache,
+                    offline=True,
+                    jobs=1,
+                    timeout=5.0,
+                )
+            finally:
+                os.umask(previous_umask)
+
+        lane_root = Path(report["work_directory"])
+        self.assertEqual(report["error"], "stop before extraction")
+        self.assertEqual(lane_root.stat().st_mode & 0o777, 0o755)
 
     @staticmethod
     def lane(label: str, *, passed: bool) -> dict[str, object]:

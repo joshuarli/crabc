@@ -3,11 +3,13 @@
 
 from __future__ import annotations
 
+import argparse
 import concurrent.futures
 import importlib.util
 import json
 import os
 import shutil
+import stat
 import sys
 import tempfile
 import textwrap
@@ -87,6 +89,79 @@ class NativeStaticDispatcherTests(unittest.TestCase):
         latest = RUNNER.publish_x86_static_dispatch_report(private, self.latest)
         self.assertEqual(latest.stat().st_mode & 0o777, 0o644)
         self.assertEqual(latest.read_text(encoding="utf-8"), "{}\n")
+
+    def test_state_root_is_traversable_under_restrictive_umask(self) -> None:
+        self.temporary.chmod(0o755)
+        self.parent.mkdir(parents=True)
+        self.parent.chmod(0o2755)
+        previous_umask = os.umask(0o077)
+        try:
+            state = RUNNER.allocate_x86_static_dispatch_state(self.parent)
+        finally:
+            os.umask(previous_umask)
+
+        state_mode = state.stat().st_mode
+        self.assertEqual(state_mode & 0o777, 0o755)
+        self.assertTrue(state_mode & stat.S_ISGID)
+        previous_umask = os.umask(0o022)
+        try:
+            receipt_directory = state / "source"
+            receipt_directory.mkdir()
+            receipt = receipt_directory / "receipt.json"
+            receipt.write_text("{}\n", encoding="utf-8")
+            report = state / "report.json"
+            RUNNER.write_json_atomic(report, {"passed": True})
+        finally:
+            os.umask(previous_umask)
+        self.assertEqual(receipt_directory.stat().st_mode & 0o777, 0o755)
+        self.assertEqual(receipt.stat().st_mode & 0o777, 0o644)
+        self.assertEqual(report.stat().st_mode & 0o777, 0o644)
+        self.assertEqual(receipt.read_text(encoding="utf-8"), "{}\n")
+        self.assertEqual(report.read_text(encoding="utf-8"), '{\n  "passed": true\n}\n')
+
+    def test_native_static_run_root_is_traversable_under_restrictive_umask(self) -> None:
+        self.temporary.chmod(0o755)
+        work = self.temporary / "static-work"
+        work.mkdir()
+        work.chmod(0o755)
+        (work / "cache").mkdir()
+        archive = self.temporary / "lua.tar.gz"
+        archive.write_bytes(b"source archive")
+        compiler = self.temporary / "musl-compiler"
+        compiler.write_bytes(b"compiler")
+        header = self.temporary / "headers"
+        header.mkdir()
+        args = argparse.Namespace(
+            manifest=RUNNER.MANIFEST,
+            offline=True,
+            sysroot=self.temporary / "sysroot",
+            mode=None,
+            work_root=work,
+            jobs=1,
+            timeout=5.0,
+        )
+        with (
+            mock.patch.object(RUNNER, "require_native_x86_64"),
+            mock.patch.object(RUNNER, "load_manifest", return_value={"lua": {"archive_root": "lua"}}),
+            mock.patch.object(RUNNER, "fetch_archive", return_value=archive),
+            mock.patch.object(
+                RUNNER,
+                "owned_static_sysroot",
+                return_value=(self.temporary / "sysroot", self.temporary / "wrapper", {"headers": header}, {}),
+            ),
+            mock.patch.object(RUNNER, "require_pinned_x86_musl_compiler", return_value=compiler),
+            mock.patch.object(RUNNER, "selected_static_modes", return_value=()),
+            mock.patch.object(RUNNER, "safe_extract", side_effect=RUNNER.RunnerError("stop before extraction")),
+        ):
+            previous_umask = os.umask(0o077)
+            try:
+                report = RUNNER.run_x86_static(args)
+            finally:
+                os.umask(previous_umask)
+
+        run_root = Path(report["work_directory"])
+        self.assertEqual(report["error"], "stop before extraction")
+        self.assertEqual(run_root.stat().st_mode & 0o777, 0o755)
 
     def test_two_concurrent_invocations_get_distinct_state_and_valid_latest_report(self) -> None:
         with concurrent.futures.ThreadPoolExecutor(max_workers=2) as executor:

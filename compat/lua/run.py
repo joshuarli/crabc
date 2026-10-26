@@ -2021,7 +2021,7 @@ def run_x86_static(args: argparse.Namespace) -> dict[str, object]:
         raise RunnerError("debug Lua requires an explicitly debug-built owned sysroot")
     oracle = require_pinned_x86_musl_compiler()
     modes = selected_static_modes(args.mode)
-    run_root = Path(tempfile.mkdtemp(prefix="run-", dir=work_root))
+    run_root = allocate_x86_static_dispatch_state(work_root)
     report: dict[str, object] = {
         "schema_version": 2,
         "runner": "crabc-lua-native-x86-static-source-build" + ("-debug" if build_profile == "debug" else ""),
@@ -2090,10 +2090,18 @@ def run_x86_static(args: argparse.Namespace) -> dict[str, object]:
 
 
 def allocate_x86_static_dispatch_state(parent: Path = DEFAULT_X86_STATIC_WORK_ROOT) -> Path:
-    """Allocate one physical private producer/qualification root below ``.work``."""
+    """Allocate one physical native run root below ``.work``."""
 
     parent = native_work_root(parent)
     state = Path(tempfile.mkdtemp(prefix="run-", dir=parent))
+    try:
+        descriptor = os.open(state, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+        try:
+            os.fchmod(descriptor, stat.S_IMODE(os.fstat(descriptor).st_mode) | 0o055)
+        finally:
+            os.close(descriptor)
+    except OSError as error:
+        raise RunnerError(f"native Lua result root is not host-traversable: {state}") from error
     state = require_physical_directory(state, "native Lua static dispatcher invocation root")
     try:
         state.relative_to(parent)
