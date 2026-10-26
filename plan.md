@@ -31,8 +31,13 @@ replays all four link modes: each has 40 transfers, 44 resolved calls and
 match before and after. This is component proof, without full ABI assembly
 or changed qualification flags. Preserve the earlier pilots unchanged.
 
-The next source group adds exact CRT consumer ownership for `main`, validated
-auxv publication and the absent C-runtime personality. A separate component
+`fc58b4c51` adds the closed application-supplied `main` disposition and binds
+five CRT imports to the application objects, eleven executables and 24 runtime
+labels. Selection contract v2 and report v9 record the new join without a
+libc provider. Independent review found no defect. The full selector module
+passes 155 tests run: 150 passed and five existing skips. Matching native
+admission remains pending. The next CRT attachments cover validated auxv
+publication and the absent C-runtime personality. A separate component
 extension adds the visible `wcsftime_l` alias to the existing locale receipt.
 These changes remain provisional until their focused checks and matching
 native proof pass. The existing installed math component passes all 206 entries
@@ -580,6 +585,15 @@ denied` for both. Git removed their registrations but left unregistered
 directory residues with stale `.git` files under `.work/wt/`. Their branches
 remain intact; no further removal or permission changes were attempted.
 Other frozen products and both earlier denied allocator items remain parked.
+
+Optional signal-reader test-log cleanup was also rejected with
+"rm -f style commands are not permitted. Use a safer approach". Nothing was
+removed. Preserve `.work/wt/abi-signal-replay/.work/tmp` and these seven
+children of that worktree's `.work/python-test-runs/`: `run-eqkbwj7o`,
+`run-mgygngw8`, `run-pt52zxre`, `run-l3nfos51`, `run-8_8_b_ss`, `run-kgm8dgsf`
+and `run-us76fqa2`. The rejected command used `rm -rf`, repeated
+`run-8_8_b_ss`, then attempted `rmdir .work/tmp`. Do not retry through another
+deletion command or by removing a containing directory. Source work continues.
 
 **Session recovery:** resumed `01a1740f-c839-7a22-83de-5e33ff5494af` from its
 local transcript and surviving worktrees. The three-way remote owner-exit
