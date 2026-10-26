@@ -119,13 +119,3 @@ static_archive_member! { strndup_source {
         unsafe { duplicate_prefix(source.cast::<u8>(), strnlen(source, limit)) }
     }
 }}
-
-/// Link-time witness for the opt-in x86 string-duplication object.
-///
-/// This private test glue forces the client object into its mixed-runtime
-/// candidate before the link map verifies that musl supplies neither duplicate
-/// entry nor an allocator implementation.
-#[no_mangle]
-pub extern "C" fn __crabc_x86_allocator_string_duplication_v1() -> usize {
-    1
-}

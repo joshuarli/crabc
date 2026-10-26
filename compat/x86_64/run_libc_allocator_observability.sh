@@ -103,7 +103,7 @@ fi
 
 bash "$ROOT_DIR/compat/x86_64/run_musl_oracle.sh" >/dev/null
 
-work_dir="$(mktemp -d /tmp/crabc-x86-64-libc-allocator-observability.XXXXXX)"
+work_dir="$(mktemp -d "${TMPDIR:?}/crabc-x86-64-libc-allocator-observability.XXXXXX")"
 trap 'rm -rf -- "$work_dir"' EXIT
 crt_dir="$work_dir/crt"
 cargo_target="$work_dir/cargo-target"
@@ -181,21 +181,14 @@ python3 "$ROOT_DIR/builtins/build_x86_64.py" --output "$builtins_archive" \
 [ -f "$builtins_archive" ] || fail "owned compiler helper builder did not emit an archive"
 
 mapfile -t observability_members < <(
-    archive_member_for_symbol "$archive" __crabc_x86_allocator_observability_v1
-)
-mapfile -t usable_members < <(
     archive_member_for_symbol "$archive" malloc_usable_size
 )
 mapfile -t allocator_members < <(
-    archive_member_for_symbol "$archive" __crabc_x86_allocator_runtime_v1
+    archive_member_for_symbol "$archive" free
 )
 mapfile -t backend_members < <(ar t "$archive" | grep -- '-static\.o$')
 [ "${#observability_members[@]}" -eq 1 ] \
-    || fail "observability witness must have exactly one crate object owner"
-[ "${#usable_members[@]}" -eq 1 ] \
     || fail "malloc_usable_size must have exactly one crate object owner"
-[ "${observability_members[0]}" = "${usable_members[0]}" ] \
-    || fail "observability witness and malloc_usable_size have different owners"
 [ "${#allocator_members[@]}" -eq 1 ] \
     || fail "allocator wrapper must have exactly one crate object owner"
 [ "${observability_members[0]}" != "${allocator_members[0]}" ] \
@@ -215,7 +208,6 @@ mapfile -t observability_symbols < <(
         sort -u
 )
 expected_observability_symbols=(
-    __crabc_x86_allocator_observability_v1
     malloc_usable_size
 )
 if [ "${observability_symbols[*]}" != "${expected_observability_symbols[*]}" ]; then
@@ -273,7 +265,7 @@ readelf --dynamic --wide "$candidate" >"$candidate_dynamic" || true
 readelf --relocs --wide "$candidate" >"$candidate_relocations"
 objdump -d "$candidate" >"$candidate_disassembly"
 
-for symbol in _start __crabc_x86_allocator_observability_v1 \
+for symbol in _start \
     __crabc_x86_static_tls_bootstrap __libc_start_main malloc malloc_usable_size \
     mi_usable_size pthread_create pthread_join pthread_key_create \
     pthread_setspecific pthread_mutex_lock pthread_mutex_unlock mmap munmap \

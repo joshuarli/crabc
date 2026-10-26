@@ -30,10 +30,6 @@
 #error "allocator-basic-runtime-v1 requires native Linux/x86-64 little-endian LP64"
 #endif
 
-#ifdef CRABC_ALLOCATOR_BASIC_RUNTIME_V1_CANDIDATE
-extern size_t __crabc_x86_allocator_observability_v1(void);
-#endif
-
 /* musl 1.2.6 mallocng uses UNIT == 16 on the selected LP64 targets. */
 static const size_t musl_mallocng_max_alignment = ((size_t)1 << 31) * 16;
 
@@ -921,11 +917,6 @@ static void allocator_exit_probe(void)
 int main(void)
 {
     int result;
-
-#ifdef CRABC_ALLOCATOR_BASIC_RUNTIME_V1_CANDIDATE
-    if (__crabc_x86_allocator_observability_v1() != 1)
-        return 100;
-#endif
 
     if (atexit(allocator_exit_probe) != 0)
         return 101;

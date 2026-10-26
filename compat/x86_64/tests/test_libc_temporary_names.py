@@ -74,8 +74,8 @@ class X86LibcTemporaryNamesTests(unittest.TestCase):
         for required in (
             "x86-temporary-names",
             "x86-allocator-string-duplication",
-            "temporary_name_members",
-            "duplication_members",
+            "tmpnam_members",
+            "strdup_members",
             "allocator_members",
             "backend_members",
             "tmpnam",

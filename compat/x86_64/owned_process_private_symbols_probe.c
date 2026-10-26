@@ -4,6 +4,10 @@
 
 int main(void) {
     static const char *const private_names[] = {
+        "__crabc_x86_allocator_runtime_v1", "__crabc_x86_allocator_observability_v1",
+        "__crabc_x86_allocator_string_duplication_v1", "__crabc_x86_environment_runtime_v1",
+        "__crabc_x86_posix_spawn_file_actions_v1", "__crabc_x86_scandir_v1",
+        "__crabc_x86_temporary_names_v1",
         "__aio_atfork", "__execvpe", "__futimesat", "__ldso_atfork",
         "__membarrier_init", "__stdio_exit", "__fork_handler", "__funcs_on_exit"
     };

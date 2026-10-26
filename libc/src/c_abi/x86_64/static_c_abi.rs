@@ -1215,16 +1215,6 @@ mod allocator {
         }
     }
 
-    /// Link-time witness for the opt-in x86 allocator wrapper object.
-    ///
-    /// This is private test glue, not an installed libc interface. The
-    /// mixed-runtime differential calls it solely to force this archive
-    /// member into the candidate before pinned musl supplies the still-missing
-    /// process/runtime prerequisites of the bundled allocator backend.
-    #[no_mangle]
-    pub extern "C" fn __crabc_x86_allocator_runtime_v1() -> usize {
-        1
-    }
 }
 
 // The selected native adapter retains the same private internal allocation
@@ -1409,9 +1399,6 @@ mod pthread_mutexattr_type_setter;
 #[path = "pthread_mutex_prioceiling_query.rs"]
 mod pthread_mutex_prioceiling_query;
 
-// The sole AArch64 allocator-observability capability is a separate strong
-// C entry, not part of the weak allocation family. Its private witness keeps
-// archive ownership independently auditable in the feature-built x86 image.
 #[cfg(all(
     crabc_x86_allocator_observability,
     not(feature = "native-mimalloc-shadow"),
@@ -1421,10 +1408,6 @@ mod allocator_observability {
 
     include!("../../allocator_observability_mimalloc.rs");
 
-    #[no_mangle]
-    pub extern "C" fn __crabc_x86_allocator_observability_v1() -> usize {
-        1
-    }
 }
 
 #[cfg(all(
@@ -1447,10 +1430,6 @@ mod allocator_observability {
         unsafe { crabc_mimalloc::__crabc_runtime::native_usable_size(block) }.unwrap_or(0)
     }
 
-    #[no_mangle]
-    pub extern "C" fn __crabc_x86_allocator_observability_v1() -> usize {
-        1
-    }
 }
 
 // The crypt leaf deliberately resolves its temporary RustCrypto allocation

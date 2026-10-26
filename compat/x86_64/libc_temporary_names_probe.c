@@ -81,9 +81,7 @@ _Static_assert(__builtin_types_compatible_p(__typeof__(&tmpnam),
 _Static_assert(__builtin_types_compatible_p(__typeof__(&tempnam),
     char *(*)(const char *, const char *)), "tempnam declaration");
 
-#ifdef CRABC_TEMPORARY_NAMES_CANDIDATE
-extern size_t __crabc_x86_temporary_names_v1(void);
-#endif
+static char *(*volatile temporary_name_entry)(char *) = tmpnam;
 
 static long raw_syscall3(long number, long argument1, long argument2,
     long argument3)
@@ -210,7 +208,7 @@ static int build_path_max_minus_one_directory(char *directory)
     char absent_root[L_tmpnam];
     size_t length = 0;
 
-    if (tmpnam(absent_root) != absent_root ||
+    if (temporary_name_entry(absent_root) != absent_root ||
         !has_generated_path(absent_root, "/tmp/tmpnam_"))
         return -1;
     while (absent_root[length] != '\0') {
@@ -353,10 +351,6 @@ static int check_readlink_failure_retry(void)
 
 int crabc_x86_64_temporary_names_probe(void)
 {
-#ifdef CRABC_TEMPORARY_NAMES_CANDIDATE
-    if (__crabc_x86_temporary_names_v1() != 1)
-        return 100;
-#endif
     if (check_tmpnam() != 0)
         return 1;
     if (check_tempnam() != 0)

@@ -65,7 +65,7 @@ done
 bash "$ROOT_DIR/compat/x86_64/run_musl_oracle.sh" >/dev/null
 bash "$ROOT_DIR/compat/x86_64/run_crypt_header_abi.sh" >/dev/null
 
-work_dir="$(mktemp -d /tmp/crabc-x86-64-libc-crypt-allocator-composition.XXXXXX)"
+work_dir="$(mktemp -d "${TMPDIR:?}/crabc-x86-64-libc-crypt-allocator-composition.XXXXXX")"
 trap 'rm -rf -- "$work_dir"' EXIT
 target_dir="$work_dir/cargo-target"
 full_archive="$target_dir/x86_64-unknown-linux-musl/debug/libc.a"
@@ -121,7 +121,7 @@ build_source_runtime_libc "$target_dir/x86_64-unknown-linux-musl/debug/libc.a" \
 
 mapfile -t crypt_members < <(archive_member_for_symbol "$full_archive" crypt)
 mapfile -t allocator_members < <(
-    archive_member_for_symbol "$full_archive" __crabc_x86_allocator_runtime_v1
+    archive_member_for_symbol "$full_archive" free
 )
 mapfile -t errno_members < <(archive_member_for_symbol "$full_archive" __errno_location)
 mapfile -t backend_members < <(ar t "$full_archive" | grep -- '-static\.o$')
@@ -187,7 +187,7 @@ for symbol in mi_malloc_aligned mi_zalloc mi_realloc_aligned mi_free; do
 done
 nm -g --defined-only "$selected_member_dir/${allocator_members[0]}" \
     "$selected_member_dir/${backend_members[0]}" >"$selected_provider_symbols"
-for symbol in malloc_usable_size __crabc_x86_allocator_observability_v1; do
+for symbol in malloc_usable_size; do
     if grep -Eq "[[:space:]][TW][[:space:]]${symbol}$" "$selected_provider_symbols"; then
         fail "selected provider leaked separate allocator-observability symbol $symbol"
     fi
@@ -221,7 +221,7 @@ for symbol in malloc aligned_alloc free; do
     esac
     assert_elf_function_binding "$candidate_symbols" "$symbol" "$binding" "candidate"
 done
-for symbol in malloc_usable_size __crabc_x86_allocator_observability_v1; do
+for symbol in malloc_usable_size; do
     if grep -Eq "[[:space:]]${symbol}$" "$candidate_symbols"; then
         fail "candidate leaked separate allocator-observability symbol $symbol"
     fi

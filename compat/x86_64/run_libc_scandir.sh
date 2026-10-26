@@ -50,7 +50,7 @@ done
 bash "$ROOT_DIR/compat/x86_64/run_musl_oracle.sh" >/dev/null
 bash "$ROOT_DIR/compat/x86_64/run_dirent_header_abi.sh" >/dev/null
 
-work_dir="$(mktemp -d /tmp/crabc-x86-64-libc-scandir.XXXXXX)"
+work_dir="$(mktemp -d "${TMPDIR:?}/crabc-x86-64-libc-scandir.XXXXXX")"
 trap 'rm -rf -- "$work_dir"' EXIT
 target_dir="$work_dir/cargo-target"
 archive="$target_dir/x86_64-unknown-linux-musl/debug/libc.a"
@@ -106,7 +106,7 @@ build_source_runtime_libc "$target_dir/x86_64-unknown-linux-musl/debug/libc.a" \
 
 nm -A --defined-only "$archive" >"$archive_symbols"
 readelf --symbols --wide "$archive" >"$archive_elf_symbols"
-for symbol in __crabc_x86_scandir_v1 scandir malloc realloc free; do
+for symbol in scandir malloc realloc free; do
     grep -Eq "[[:space:]][TW][[:space:]]${symbol}$" "$archive_symbols" \
         || fail "feature archive does not define $symbol"
 done
@@ -125,13 +125,13 @@ for symbol in malloc realloc free; do
 done
 
 mapfile -t scandir_members < <(
-    archive_member_for_symbol "$archive" __crabc_x86_scandir_v1
+    archive_member_for_symbol "$archive" scandir
 )
 mapfile -t directory_members < <(archive_member_for_symbol "$archive" opendir)
 mapfile -t qsort_members < <(archive_member_for_symbol "$archive" qsort)
 mapfile -t byte_string_members < <(archive_member_for_symbol "$archive" strverscmp)
 mapfile -t allocator_members < <(
-    archive_member_for_symbol "$archive" __crabc_x86_allocator_runtime_v1
+    archive_member_for_symbol "$archive" free
 )
 mapfile -t errno_members < <(archive_member_for_symbol "$archive" __errno_location)
 mapfile -t backend_members < <(ar t "$archive" | grep -- '-static\.o$')
@@ -169,7 +169,7 @@ if [ "$(ar t "$selected_archive" | sort)" != \
     fail "selected archive member set drifted during extraction"
 fi
 
-"$ORACLE_CC" -std=c11 -D_GNU_SOURCE -DCRABC_SCANDIR_CANDIDATE \
+"$ORACLE_CC" -std=c11 -D_GNU_SOURCE \
     -DCRABC_SCANDIR_ALLOCATION_WRAP \
     -I"$ROOT_DIR/include" -static -fno-pie -no-pie -fno-builtin \
     -fno-stack-protector "${allocation_wrap_flags[@]}" -Wl,-Map,"$link_map" \
@@ -187,7 +187,7 @@ for symbol in malloc realloc free; do
         "$candidate" >>"$candidate_allocator_thunks"
 done
 
-for symbol in __crabc_x86_scandir_v1 scandir opendir closedir readdir qsort \
+for symbol in scandir opendir closedir readdir qsort \
     malloc realloc free; do
     grep -Eq "[[:space:]]${symbol}$" "$candidate_symbols" \
         || fail "candidate lacks crabc scandir dependency $symbol"

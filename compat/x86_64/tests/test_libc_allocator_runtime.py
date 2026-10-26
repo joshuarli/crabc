@@ -39,7 +39,6 @@ class X86LibcAllocatorRuntimeTests(unittest.TestCase):
         self.assertNotIn('crabc_x86_allocator_runtime', crate_root)
         self.assertIn('#[cfg(all(\n    crabc_x86_allocator_runtime,\n    not(feature = "native-mimalloc-shadow"),\n))]', target_root)
         self.assertIn('include!("../../allocator_mimalloc.rs");', target_root)
-        self.assertIn("__crabc_x86_allocator_runtime_v1", target_root)
         self.assertIn("cabi_set_allocator_errno(EINVAL);", wrapper)
         self.assertIn("mi_realloc_aligned", wrapper)
         self.assertIn("return malloc(new_size);", wrapper)
@@ -100,8 +99,6 @@ class X86LibcAllocatorRuntimeTests(unittest.TestCase):
             "--features x86-allocator-runtime",
             "archive_member_for_symbol",
             "assert_elf_function_binding",
-            "__crabc_x86_allocator_runtime_v1",
-            "__crabc_x86_allocator_observability_v1",
             "mi_malloc_aligned",
             "mi_zalloc",
             "mi_realloc_aligned",

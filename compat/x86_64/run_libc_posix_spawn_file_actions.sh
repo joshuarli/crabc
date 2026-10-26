@@ -88,19 +88,19 @@ build_source_runtime_libc "$target_dir/x86_64-unknown-linux-musl/debug/libc.a" \
 [ -f "$full_archive" ] || fail "cargo did not emit the feature archive"
 
 mapfile -t action_members < <(
-    archive_member_for_symbol "$full_archive" __crabc_x86_posix_spawn_file_actions_v1
+    archive_member_for_symbol "$full_archive" posix_spawn_file_actions_destroy
 )
 mapfile -t init_members < <(
     archive_member_for_symbol "$full_archive" posix_spawn_file_actions_init
 )
 mapfile -t allocator_members < <(
-    archive_member_for_symbol "$full_archive" __crabc_x86_allocator_runtime_v1
+    archive_member_for_symbol "$full_archive" free
 )
 mapfile -t errno_members < <(
     archive_member_for_symbol "$full_archive" __errno_location
 )
 mapfile -t backend_members < <(ar t "$full_archive" | grep -- '-static\.o$')
-[ "${#action_members[@]}" -eq 1 ] || fail "provider witness has ambiguous ownership"
+[ "${#action_members[@]}" -eq 1 ] || fail "action provider has ambiguous ownership"
 [ "${#init_members[@]}" -eq 1 ] || fail "file-actions init has ambiguous ownership"
 [ "${#allocator_members[@]}" -eq 1 ] || fail "allocator wrapper has ambiguous ownership"
 [ "${#errno_members[@]}" -eq 1 ] || fail "errno has ambiguous ownership"
@@ -137,7 +137,6 @@ mapfile -t action_symbols < <(
         awk '$2 ~ /^[TW]$/ && $1 !~ /^_R/ { print $1 }' | sort -u
 )
 expected_action_symbols=(
-    __crabc_x86_posix_spawn_file_actions_v1
     posix_spawn_file_actions_addchdir_np
     posix_spawn_file_actions_addclose
     posix_spawn_file_actions_adddup2

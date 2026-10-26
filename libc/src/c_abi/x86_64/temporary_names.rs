@@ -268,13 +268,3 @@ static_archive_member! { tempnam_source {
         ptr::null_mut()
     }
 }}
-
-/// Link-time witness for the opt-in legacy temporary-name object.
-///
-/// This private test glue lets the native runner prove that both public
-/// names share exactly one crate-owned object without exposing another public
-/// header callable.
-#[no_mangle]
-pub extern "C" fn __crabc_x86_temporary_names_v1() -> usize {
-    1
-}

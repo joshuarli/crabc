@@ -35,9 +35,7 @@ _Static_assert(__builtin_types_compatible_p(__typeof__(&strdup),
 _Static_assert(__builtin_types_compatible_p(__typeof__(&strndup),
     char *(*)(const char *, size_t)), "strndup declaration");
 
-#ifdef CRABC_ALLOCATOR_STRING_DUPLICATION_CANDIDATE
-extern size_t __crabc_x86_allocator_string_duplication_v1(void);
-#endif
+static char *(*volatile duplication_entry)(const char *) = strdup;
 
 static long raw_syscall4(long number, long argument1, long argument2,
     long argument3, long argument4)
@@ -110,7 +108,7 @@ static int check_strdup_ownership(void)
     char *copy;
 
     errno = E2BIG;
-    copy = strdup(source);
+    copy = duplication_entry(source);
     if (copy == NULL || copy == source ||
         !bytes_equal((const unsigned char *)copy,
             (const unsigned char *)source, sizeof source) || errno != E2BIG)
@@ -203,10 +201,6 @@ cleanup:
 
 int crabc_x86_64_allocator_string_duplication_probe(void)
 {
-#ifdef CRABC_ALLOCATOR_STRING_DUPLICATION_CANDIDATE
-    if (__crabc_x86_allocator_string_duplication_v1() != 1)
-        return 100;
-#endif
     if (check_strdup_ownership() != 0)
         return 1;
     if (check_strndup_limits() != 0)

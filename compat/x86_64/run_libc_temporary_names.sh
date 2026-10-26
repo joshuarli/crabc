@@ -275,7 +275,7 @@ done
 bash "$ROOT_DIR/compat/x86_64/run_musl_oracle.sh" >/dev/null
 bash "$ROOT_DIR/compat/x86_64/run_temporary_names_header_abi.sh" >/dev/null
 
-work_dir="$(mktemp -d /tmp/crabc-x86-64-libc-temporary-names.XXXXXX)"
+work_dir="$(mktemp -d "${TMPDIR:?}/crabc-x86-64-libc-temporary-names.XXXXXX")"
 trap 'rm -rf -- "$work_dir"' EXIT
 baseline_target="$work_dir/cargo-baseline"
 featured_target="$work_dir/cargo-featured"
@@ -328,22 +328,20 @@ assert_feature_delta "$baseline_symbols" "$featured_symbols" \
     "$feature_additions" "$feature_removed"
 
 nm -A --defined-only "$baseline_archive" >"$work_dir/baseline-archive-symbols"
-if grep -Eq '[[:space:]][TW][[:space:]](tmpnam|tempnam|__crabc_x86_temporary_names_v1)$' \
+if grep -Eq '[[:space:]][TW][[:space:]](tmpnam|tempnam)$' \
     "$work_dir/baseline-archive-symbols"; then
     fail "allocator string-duplication baseline unexpectedly owns temporary names"
 fi
 nm -A --defined-only "$featured_archive" >"$archive_symbols"
-for symbol in __crabc_x86_temporary_names_v1 tmpnam tempnam strdup strndup \
-    __crabc_x86_allocator_string_duplication_v1 \
-    __crabc_x86_allocator_runtime_v1 __errno_location; do
+for symbol in tmpnam tempnam strdup strndup \
+    __errno_location; do
     grep -Eq "[[:space:]][TW][[:space:]]${symbol}$" "$archive_symbols" ||
         fail "feature archive does not define $symbol"
 done
 
-mapfile -t temporary_name_members < <(
-    archive_member_for_symbol "$featured_archive" __crabc_x86_temporary_names_v1
+mapfile -t tmpnam_members < <(
+    archive_member_for_symbol "$featured_archive" tmpnam
 )
-mapfile -t tmpnam_members < <(archive_member_for_symbol "$featured_archive" tmpnam)
 mapfile -t tempnam_members < <(archive_member_for_symbol "$featured_archive" tempnam)
 mapfile -t temp_name_random_members < <(
     archive_member_for_demangled_symbol "$featured_archive" \
@@ -353,14 +351,13 @@ mapfile -t raw_syscall_members < <(
     archive_member_for_demangled_symbol "$featured_archive" \
         c::x86_64_static_c_abi::raw_syscall::syscall3
 )
-mapfile -t duplication_members < <(
+mapfile -t strdup_members < <(
     archive_member_for_symbol "$featured_archive" \
-        __crabc_x86_allocator_string_duplication_v1
+        strdup
 )
-mapfile -t strdup_members < <(archive_member_for_symbol "$featured_archive" strdup)
 mapfile -t strndup_members < <(archive_member_for_symbol "$featured_archive" strndup)
 mapfile -t allocator_members < <(
-    archive_member_for_symbol "$featured_archive" __crabc_x86_allocator_runtime_v1
+    archive_member_for_symbol "$featured_archive" free
 )
 mapfile -t errno_members < <(archive_member_for_symbol "$featured_archive" __errno_location)
 mapfile -t memcpy_members < <(archive_member_for_symbol "$featured_archive" memcpy)
@@ -368,24 +365,22 @@ mapfile -t memset_members < <(archive_member_for_symbol "$featured_archive" mems
 mapfile -t strlen_members < <(archive_member_for_symbol "$featured_archive" strlen)
 mapfile -t backend_members < <(ar t "$featured_archive" | grep -- '-static\.o$')
 
-[ "${#temporary_name_members[@]}" -eq 1 ] ||
-    fail "temporary-name witness must have exactly one crate object owner"
-[ "${#tmpnam_members[@]}" -eq 1 ] && [ "${#tempnam_members[@]}" -eq 1 ] ||
+[ "${#tmpnam_members[@]}" -eq 1 ] ||
+    fail "temporary-name provider must have exactly one crate object owner"
+[ "${#tempnam_members[@]}" -eq 1 ] ||
     fail "each temporary-name entry must have exactly one crate object owner"
-[ "${temporary_name_members[0]}" = "${tmpnam_members[0]}" ] && \
-    [ "${temporary_name_members[0]}" = "${tempnam_members[0]}" ] ||
-    fail "temporary-name witness, tmpnam, and tempnam must share one owner"
+[ "${tmpnam_members[0]}" = "${tempnam_members[0]}" ] ||
+    fail "tmpnam and tempnam must share one owner"
 # The optimizer may inline these private helpers into every caller; an
 # out-of-line copy must still have exactly one crate object owner.
 [ "${#temp_name_random_members[@]}" -le 1 ] ||
     fail "temporary-name suffix helper has more than one crate object owner"
 [ "${#raw_syscall_members[@]}" -le 1 ] ||
     fail "temporary-name raw readlink helper has more than one crate object owner"
-[ "${#duplication_members[@]}" -eq 1 ] && [ "${#strdup_members[@]}" -eq 1 ] && \
+[ "${#strdup_members[@]}" -eq 1 ] && \
     [ "${#strndup_members[@]}" -eq 1 ] ||
     fail "allocator string-duplication closure has ambiguous ownership"
-[ "${duplication_members[0]}" = "${strdup_members[0]}" ] && \
-    [ "${duplication_members[0]}" = "${strndup_members[0]}" ] ||
+[ "${strdup_members[0]}" = "${strndup_members[0]}" ] ||
     fail "strdup/strndup must share their existing allocation-client owner"
 [ "${#allocator_members[@]}" -eq 1 ] ||
     fail "allocator wrapper must have exactly one crate object owner"
@@ -400,28 +395,28 @@ mapfile -t backend_members < <(ar t "$featured_archive" | grep -- '-static\.o$')
 [ "${#backend_members[@]}" -eq 1 ] ||
     fail "allocator backend must have exactly one bundled static object"
 for dependency_member in "${temp_name_random_members[@]}" \
-    "${raw_syscall_members[@]}" "${duplication_members[0]}" \
+    "${raw_syscall_members[@]}" "${strdup_members[0]}" \
     "${allocator_members[0]}" "${errno_members[0]}"; do
-    [ "${temporary_name_members[0]}" != "$dependency_member" ] ||
+    [ "${tmpnam_members[0]}" != "$dependency_member" ] ||
         fail "temporary-name owner unexpectedly shares a closure dependency object"
 done
 
 mkdir "$work_dir/selected-members"
 (
     cd "$work_dir/selected-members"
-    ar x "$featured_archive" "${temporary_name_members[0]}" \
+    ar x "$featured_archive" "${tmpnam_members[0]}" \
         "${temp_name_random_members[@]}" "${raw_syscall_members[@]}" \
-        "${duplication_members[0]}" "${allocator_members[0]}" \
+        "${strdup_members[0]}" "${allocator_members[0]}" \
         "${errno_members[0]}" "${memcpy_members[0]}" \
         "${strlen_members[0]}" "${backend_members[0]}"
-    ar crs "$selected_archive" "${temporary_name_members[0]}" \
+    ar crs "$selected_archive" "${tmpnam_members[0]}" \
         "${temp_name_random_members[@]}" "${raw_syscall_members[@]}" \
-        "${duplication_members[0]}" "${allocator_members[0]}" \
+        "${strdup_members[0]}" "${allocator_members[0]}" \
         "${errno_members[0]}" "${memcpy_members[0]}" \
         "${strlen_members[0]}" "${backend_members[0]}"
 )
 
-"$ORACLE_CC" -std=c11 -D_GNU_SOURCE -DCRABC_TEMPORARY_NAMES_CANDIDATE \
+"$ORACLE_CC" -std=c11 -D_GNU_SOURCE \
     -I"$ROOT_DIR/include" -static -fno-pie -no-pie -fno-builtin \
     -fno-stack-protector -Wl,-Map,"$link_map" \
     compat/x86_64/libc_temporary_names_probe.c "$selected_archive" \
@@ -432,7 +427,7 @@ readelf --program-headers --wide "$candidate" >"$candidate_program_headers"
 readelf --dynamic --wide "$candidate" >"$candidate_dynamic" || true
 readelf --relocs --wide "$candidate" >"$candidate_relocations"
 objdump -d "$candidate" >"$candidate_disassembly"
-for symbol in __crabc_x86_temporary_names_v1 tmpnam tempnam strdup strndup \
+for symbol in tmpnam tempnam strdup strndup \
     malloc free __errno_location; do
     grep -Eq "[[:space:]]${symbol}$" "$candidate_symbols" ||
         fail "candidate lacks temporary-name closure symbol $symbol"
@@ -444,8 +439,8 @@ for symbol in tmpnam tempnam; do
     ' "$candidate_symbols" ||
         fail "candidate $symbol is not a strong global function"
 done
-for member in "${temporary_name_members[0]}" "${raw_syscall_members[@]}" \
-    "${duplication_members[0]}" \
+for member in "${tmpnam_members[0]}" "${raw_syscall_members[@]}" \
+    "${strdup_members[0]}" \
     "${allocator_members[0]}" "${errno_members[0]}" "${memcpy_members[0]}" \
     "${strlen_members[0]}" "${backend_members[0]}"; do
     grep -Fq "$selected_archive($member)" "$link_map" ||

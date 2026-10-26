@@ -533,12 +533,3 @@ static_archive_member! { clearenv_source {
         }
     }
 }}
-
-/// Link-time witness for the opt-in allocator-backed environment owner.
-///
-/// The mixed-runtime test uses this private symbol to prove it did not
-/// accidentally select the legacy fixed-table environment object instead.
-#[no_mangle]
-pub extern "C" fn __crabc_x86_environment_runtime_v1() -> usize {
-    1
-}

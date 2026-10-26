@@ -403,12 +403,3 @@ static_archive_member! { posix_spawn_file_actions_destroy_source {
         0
     }
 }}
-
-/// Link-time witness for this opt-in provider object.
-///
-/// This is test glue only; it is not an installed libc interface and is
-/// excluded from the seven-name POSIX roster by the local archive gate.
-#[no_mangle]
-pub extern "C" fn __crabc_x86_posix_spawn_file_actions_v1() -> usize {
-    1
-}

@@ -23,9 +23,7 @@
 #error "this fixture requires native Linux/x86-64 little-endian LP64"
 #endif
 
-#ifdef CRABC_ALLOCATOR_RUNTIME_CANDIDATE
-extern size_t __crabc_x86_allocator_runtime_v1(void);
-#endif
+static void *(*volatile allocation_entry)(size_t) = malloc;
 
 static int bytes_equal(const unsigned char *left, const unsigned char *right,
     size_t length)
@@ -53,15 +51,10 @@ int crabc_x86_64_allocator_runtime_probe(void)
     void *page_aligned;
     size_t index;
 
-#ifdef CRABC_ALLOCATOR_RUNTIME_CANDIDATE
-    if (__crabc_x86_allocator_runtime_v1() != 1)
-        return 100;
-#endif
-
     /* malloc(0) is implementation-defined; this records the pinned-musl
      * non-null, distinct, naturally aligned result. */
     errno = E2BIG;
-    zero_a = malloc(0);
+    zero_a = allocation_entry(0);
     zero_b = malloc(0);
     if (zero_a == NULL || zero_b == NULL || zero_a == zero_b ||
         (uintptr_t)zero_a % 16 != 0 || (uintptr_t)zero_b % 16 != 0 ||

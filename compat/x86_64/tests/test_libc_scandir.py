@@ -27,7 +27,6 @@ class X86LibcScandirTests(unittest.TestCase):
         self.assertIn('x86-scandir = ["x86-allocator-runtime"]', manifest)
         self.assertNotIn("x86-scandir", static_root)
         self.assertNotIn("\nscandir\n", static_exports)
-        self.assertNotIn("\n__crabc_x86_scandir_v1\n", static_exports)
         self.assertIn('#[cfg(crabc_x86_scandir)]', implementation)
         self.assertIn('pub unsafe extern "C" fn scandir(', implementation)
         self.assertIn("src/dirent/scandir.c", implementation)
@@ -86,7 +85,6 @@ class X86LibcScandirTests(unittest.TestCase):
             "scandir.lo",
             "strverscmp.lo",
             "donate.lo",
-            "__crabc_x86_scandir_v1",
             "run_dirent_header_abi.sh",
             "-static -fno-pie -no-pie",
             "env -i LC_ALL=C TZ=UTC",

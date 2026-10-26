@@ -206,21 +206,14 @@ nm -g --defined-only "$builtins_archive" | grep -E '[[:space:]]T[[:space:]]__pop
     || fail "owned compiler helper archive lacks __popcountdi2"
 
 mapfile -t observability_members < <(
-    archive_member_for_symbol "$archive" __crabc_x86_allocator_observability_v1
-)
-mapfile -t usable_members < <(
     archive_member_for_symbol "$archive" malloc_usable_size
 )
 mapfile -t allocator_members < <(
-    archive_member_for_symbol "$archive" __crabc_x86_allocator_runtime_v1
+    archive_member_for_symbol "$archive" free
 )
 mapfile -t backend_members < <(ar t "$archive" | grep -- '-static\.o$')
 [ "${#observability_members[@]}" -eq 1 ] \
-    || fail "observability witness must have exactly one crate object owner"
-[ "${#usable_members[@]}" -eq 1 ] \
     || fail "malloc_usable_size must have exactly one crate object owner"
-[ "${observability_members[0]}" = "${usable_members[0]}" ] \
-    || fail "observability witness and malloc_usable_size have different owners"
 [ "${#allocator_members[@]}" -eq 1 ] \
     || fail "allocator wrapper must have exactly one crate object owner"
 [ "${observability_members[0]}" != "${allocator_members[0]}" ] \
@@ -235,7 +228,6 @@ mkdir "$work_dir/owners"
         "${backend_members[0]}"
 )
 expected_wrapper_symbols=(
-    __crabc_x86_allocator_runtime_v1
     aligned_alloc
     calloc
     free
@@ -264,8 +256,6 @@ observer_elf_symbols="$work_dir/observer-symbols"
 readelf --symbols --wide "$work_dir/owners/${observability_members[0]}" \
     >"$observer_elf_symbols"
 assert_elf_function_binding "$observer_elf_symbols" \
-    __crabc_x86_allocator_observability_v1 GLOBAL "allocator observer"
-assert_elf_function_binding "$observer_elf_symbols" \
     malloc_usable_size GLOBAL "allocator observer"
 for symbol in mi_malloc_aligned mi_zalloc mi_realloc_aligned mi_free mi_usable_size; do
     nm -g --defined-only "$work_dir/owners/${backend_members[0]}" |
@@ -280,7 +270,7 @@ for symbol in "${expected_wrapper_symbols[@]}" malloc_usable_size; do
 done
 
 "$ORACLE_CC" -std=c11 -D_GNU_SOURCE \
-    -DCRABC_ALLOCATOR_BASIC_RUNTIME_V1_CANDIDATE \
+    \
     -fno-pie -ffreestanding -fno-builtin -fno-stack-protector \
     -ftls-model=local-exec -I"$ROOT_DIR/include" \
     -c compat/x86_64/libc_allocator_basic_runtime_v1_probe.c -o "$probe_object"
@@ -320,8 +310,8 @@ if grep -Eq 'rust_eh_personality|_Unwind_[A-Za-z0-9_]*|panic_(abort|unwind)' \
     fail "candidate selected a target unwind or panic runtime identity"
 fi
 
-for symbol in _start __crabc_x86_allocator_runtime_v1 \
-    __crabc_x86_allocator_observability_v1 __crabc_x86_static_tls_bootstrap \
+for symbol in _start \
+    __crabc_x86_static_tls_bootstrap \
     __libc_start_main malloc calloc realloc reallocarray free aligned_alloc \
     posix_memalign memalign valloc malloc_usable_size mi_malloc_aligned \
     mi_zalloc mi_realloc_aligned mi_free mi_usable_size pthread_create \

@@ -93,7 +93,6 @@ class X86LibcAllocatorBasicRuntimeV1Tests(unittest.TestCase):
         self.assertIn("if total == 0 {\n            return malloc(0);\n        }", wrapper)
 
         for required in (
-            "CRABC_ALLOCATOR_BASIC_RUNTIME_V1_CANDIDATE",
             "malloc(0)",
             "free(NULL)",
             "calloc(0, 17)",
@@ -127,8 +126,6 @@ class X86LibcAllocatorBasicRuntimeV1Tests(unittest.TestCase):
         for required in (
             "x86-owned-static-runtime-core",
             "crt/src/x86_64_${object}.rs",
-            "__crabc_x86_allocator_observability_v1",
-            "__crabc_x86_allocator_runtime_v1",
             "malloc_usable_size",
             "expected_wrapper_symbols",
             "observer_elf_symbols",

@@ -136,7 +136,7 @@ done
 
 bash "$ROOT_DIR/compat/x86_64/run_musl_oracle.sh" >/dev/null
 
-work_dir="$(mktemp -d /tmp/crabc-x86-64-libc-environment.XXXXXX)"
+work_dir="$(mktemp -d "${TMPDIR:?}/crabc-x86-64-libc-environment.XXXXXX")"
 trap 'rm -rf -- "$work_dir"' EXIT
 crt_dir="$work_dir/crt"
 cargo_target="$work_dir/cargo-target"
@@ -214,17 +214,17 @@ python3 "$ROOT_DIR/builtins/build_x86_64.py" --output "$builtins_archive" \
 [ -f "$builtins_archive" ] || fail "owned compiler helper builder did not emit an archive"
 
 mapfile -t environment_members < <(
-    archive_member_for_symbol "$archive" __crabc_x86_environment_runtime_v1
+    archive_member_for_symbol "$archive" setenv
 )
 mapfile -t allocator_members < <(
-    archive_member_for_symbol "$archive" __crabc_x86_allocator_runtime_v1
+    archive_member_for_symbol "$archive" free
 )
 mapfile -t errno_members < <(
     archive_member_for_symbol "$archive" __errno_location
 )
 mapfile -t backend_members < <(ar t "$archive" | grep -- '-static\.o$')
 [ "${#environment_members[@]}" -eq 1 ] ||
-    fail "environment runtime witness must have exactly one crate object owner"
+    fail "environment runtime provider must have exactly one crate object owner"
 [ "${#allocator_members[@]}" -eq 1 ] ||
     fail "allocator wrapper must have exactly one crate object owner"
 for symbol in "${ENVIRONMENT_ALLOCATOR_SYMBOLS[@]}"; do
@@ -234,7 +234,7 @@ for symbol in "${ENVIRONMENT_ALLOCATOR_SYMBOLS[@]}"; do
     [ "${#allocator_symbol_members[@]}" -eq 1 ] ||
         fail "selected allocator must have exactly one ${symbol} object owner"
     [ "${allocator_symbol_members[0]}" = "${allocator_members[0]}" ] ||
-        fail "selected allocator witness and ${symbol} have different object owners"
+        fail "selected allocator owner and ${symbol} have different object owners"
 done
 [ "${#errno_members[@]}" -eq 1 ] ||
     fail "errno must have exactly one crate object owner"
@@ -249,7 +249,7 @@ for symbol in __environ environ _environ ___environ getenv setenv putenv unseten
     [ "${#symbol_members[@]}" -eq 1 ] ||
         fail "environment runtime must have exactly one $symbol object owner"
     [ "${symbol_members[0]}" = "${environment_members[0]}" ] ||
-        fail "environment runtime witness and $symbol have different object owners"
+        fail "environment runtime provider and $symbol have different object owners"
 done
 
 mkdir "$work_dir/environment-owner"
@@ -264,7 +264,6 @@ mapfile -t environment_symbols < <(
 )
 expected_environment_symbols=(
     ___environ
-    __crabc_x86_environment_runtime_v1
     __environ
     _environ
     clearenv
@@ -298,7 +297,7 @@ if ! awk '$4 == "FUNC" && $5 == "WEAK" && $8 == "malloc" { found = 1 }
     fail "candidate wrapper path selected a strong malloc override"
 fi
 
-"$ORACLE_CC" -std=c11 -D_GNU_SOURCE -DCRABC_ENVIRONMENT_RUNTIME_CANDIDATE \
+"$ORACLE_CC" -std=c11 -D_GNU_SOURCE \
     -DCRABC_ENVIRONMENT_ALLOCATION_WRAP -fno-pie -ffreestanding -fno-builtin \
     -fno-stack-protector \
     -ftls-model=local-exec -I"$ROOT_DIR/include" \
@@ -368,7 +367,7 @@ readelf --relocs --wide "$candidate" >"$candidate_relocations"
 objdump -d "$candidate" >"$candidate_disassembly"
 grep -Eq '[[:space:]]\.init_array[[:space:]]' "$candidate_sections" ||
     fail "candidate lacks .init_array constructor entry"
-for symbol in _start __crabc_x86_environment_runtime_v1 \
+for symbol in _start \
     __crabc_x86_static_tls_bootstrap __libc_start_main __environ environ \
     _environ ___environ getenv setenv putenv unsetenv clearenv malloc realloc \
     free mi_malloc_aligned mi_realloc mi_free; do

@@ -66,7 +66,7 @@ done
 
 bash "$ROOT_DIR/compat/x86_64/run_musl_oracle.sh" >/dev/null
 
-work_dir="$(mktemp -d /tmp/crabc-x86-64-libc-allocator-runtime.XXXXXX)"
+work_dir="$(mktemp -d "${TMPDIR:?}/crabc-x86-64-libc-allocator-runtime.XXXXXX")"
 trap 'rm -rf -- "$work_dir"' EXIT
 target_dir="$work_dir/cargo-target"
 full_archive="$target_dir/x86_64-unknown-linux-musl/debug/libc.a"
@@ -105,7 +105,7 @@ build_source_runtime_libc "$target_dir/x86_64-unknown-linux-musl/debug/libc.a" \
 [ -f "$full_archive" ] || fail "cargo did not emit the opt-in x86 libc archive"
 
 mapfile -t allocator_members < <(
-    archive_member_for_symbol "$full_archive" __crabc_x86_allocator_runtime_v1
+    archive_member_for_symbol "$full_archive" free
 )
 mapfile -t errno_members < <(
     archive_member_for_symbol "$full_archive" __errno_location
@@ -146,7 +146,6 @@ mapfile -t wrapper_exports < <(
 # own `malloc` that `calloc` and `aligned_alloc` use to detect a replacement;
 # it is not an exported entry.
 expected_wrapper_symbols=(
-    __crabc_x86_allocator_runtime_v1
     aligned_alloc
     calloc
     free
@@ -195,7 +194,7 @@ for symbol in "${expected_wrapper_symbols[@]}" malloc_usable_size; do
 done
 
 "$ORACLE_CC" -std=c11 -D_GNU_SOURCE \
-    -DCRABC_ALLOCATOR_RUNTIME_CANDIDATE -I"$ROOT_DIR/include" \
+    -I"$ROOT_DIR/include" \
     -static -fno-pie -no-pie -fno-builtin -fno-stack-protector \
     -Wl,-Map,"$link_map" compat/x86_64/libc_allocator_runtime_probe.c \
     "$selected_archive" -o "$candidate"
@@ -206,7 +205,7 @@ readelf --dynamic --wide "$candidate" >"$candidate_dynamic" || true
 readelf --relocs --wide "$candidate" >"$candidate_relocations"
 objdump -d "$candidate" >"$candidate_disassembly"
 
-for symbol in __crabc_x86_allocator_runtime_v1 aligned_alloc calloc free malloc \
+for symbol in aligned_alloc calloc free malloc \
     memalign posix_memalign realloc reallocarray valloc; do
     grep -Eq "[[:space:]]${symbol}$" "$candidate_symbols" \
         || fail "candidate lacks crabc allocator symbol $symbol"
@@ -219,7 +218,7 @@ for symbol in "${expected_wrapper_symbols[@]}"; do
     assert_elf_function_binding "$candidate_symbols" "$symbol" "$binding" \
         "candidate"
 done
-for symbol in malloc_usable_size __crabc_x86_allocator_observability_v1; do
+for symbol in malloc_usable_size; do
     if grep -Eq "[[:space:]]${symbol}$" "$candidate_symbols"; then
         fail "candidate leaked separate allocator-observability symbol $symbol"
     fi

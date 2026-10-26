@@ -52,10 +52,6 @@ _Static_assert(CRABC_TYPE_IS(__typeof__(&scandir), scandir_signature),
 _Static_assert(CRABC_TYPE_IS(__typeof__(&alphasort), scandir_compare_signature),
     "alphasort declaration");
 
-#ifdef CRABC_SCANDIR_CANDIDATE
-extern size_t __crabc_x86_scandir_v1(void);
-#endif
-
 /*
  * The mixed-runtime runner links this fixture with --wrap for the three C
  * allocator spellings.  It deliberately distinguishes scandir's vector
@@ -64,6 +60,10 @@ extern size_t __crabc_x86_scandir_v1(void);
  * while pinned musl's opendir is not.  Recording only the returned scandir
  * allocations gives both executions one observable rollback contract.
  */
+static int (*volatile directory_entry)(const char *, struct dirent ***,
+    int (*)(const struct dirent *),
+    int (*)(const struct dirent **, const struct dirent **)) = scandir;
+
 #ifdef CRABC_SCANDIR_ALLOCATION_WRAP
 enum scandir_failure_target {
     CRABC_FAIL_NOTHING,
@@ -269,7 +269,7 @@ static int check_owned_sorted_result(void)
     int index;
 
     errno = E2BIG;
-    count = scandir("scandir-directory", &entries, select_non_dot, alphasort);
+    count = directory_entry("scandir-directory", &entries, select_non_dot, alphasort);
     if (count != 3 || entries == NULL || errno != E2BIG) return 1;
     for (index = 0; index < count; ++index) {
         if (entries[index] == NULL || !strings_equal(entries[index]->d_name,
@@ -403,9 +403,6 @@ int crabc_x86_64_scandir_probe(void)
 {
 #ifdef CRABC_SCANDIR_ALLOCATION_WRAP
     int allocation_failure_status;
-#endif
-#ifdef CRABC_SCANDIR_CANDIDATE
-    if (__crabc_x86_scandir_v1() != 1) return 100;
 #endif
     if (!raw_create_directory("scandir-directory")) return 1;
     if (!raw_create_file("scandir-directory/zeta") ||

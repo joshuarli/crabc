@@ -39,10 +39,6 @@ typedef int (*putenv_signature)(char *);
 typedef int (*unsetenv_signature)(const char *);
 typedef int (*clearenv_signature)(void);
 
-#ifdef CRABC_ENVIRONMENT_RUNTIME_CANDIDATE
-extern size_t __crabc_x86_environment_runtime_v1(void);
-#endif
-
 _Static_assert(CRABC_TYPE_IS(&getenv, getenv_signature),
     "getenv declaration");
 _Static_assert(CRABC_TYPE_IS(&setenv, setenv_signature),
@@ -68,6 +64,8 @@ _Static_assert(sizeof(char *) == 8 && _Alignof(char *) == 8,
  * can be published. The post-publication ownership-registry allocation failure is
  * deliberately outside this regression's claim.
  */
+static int (*volatile environment_entry)(const char *, const char *, int) = setenv;
+
 #ifdef CRABC_ENVIRONMENT_ALLOCATION_WRAP
 enum environment_allocation_failure_target {
     CRABC_FAIL_NOTHING,
@@ -172,7 +170,7 @@ void crabc_x86_64_environment_init(void)
     }
 
     constructor_initial_environment = environ;
-    if (setenv("CRABC_X86_CONSTRUCTOR", "visible", 1) != 0) {
+    if (environment_entry("CRABC_X86_CONSTRUCTOR", "visible", 1) != 0) {
         constructor_status = 4;
         return;
     }
@@ -494,10 +492,6 @@ int crabc_x86_64_environment_probe(int argc, char **argv, char **envp)
 {
     int status;
 
-#ifdef CRABC_ENVIRONMENT_RUNTIME_CANDIDATE
-    if (__crabc_x86_environment_runtime_v1() != 1)
-        return 90;
-#endif
     status = check_constructor_environment(envp);
     if (status != 0)
         return 1 + status;

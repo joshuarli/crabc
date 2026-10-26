@@ -42,7 +42,6 @@ class X86LibcAllocatorStringDuplicationTests(unittest.TestCase):
             "cabi_allocator_malloc",
             "duplicate_prefix",
             "errno::set_errno(ENOMEM)",
-            "__crabc_x86_allocator_string_duplication_v1",
         ):
             self.assertIn(required, implementation)
         for forbidden in (
@@ -66,12 +65,11 @@ class X86LibcAllocatorStringDuplicationTests(unittest.TestCase):
         ).read_text(encoding="utf-8")
 
         for required in (
-            "strdup(source)",
+            "duplication_entry(source)",
             'strndup("abcdef", 3)',
             'strndup("ignored", 0)',
             "check_page_edges",
             "raw_mprotect",
-            "__crabc_x86_allocator_string_duplication_v1",
             "errno != E2BIG",
             "errno != ENOTTY",
         ):
@@ -79,7 +77,6 @@ class X86LibcAllocatorStringDuplicationTests(unittest.TestCase):
         for required in (
             "mixed-runtime differential",
             "x86-allocator-string-duplication",
-            "__crabc_x86_allocator_string_duplication_v1",
             "strdup_members",
             "strndup_members",
             "string-duplication export surface drifted",

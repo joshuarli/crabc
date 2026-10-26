@@ -26,7 +26,6 @@
 #if !defined(__x86_64__)
 #error "the private candidate fork shim is Linux/x86-64 only"
 #endif
-extern size_t __crabc_x86_allocator_observability_v1(void);
 #endif
 
 struct worker_result {
@@ -91,11 +90,6 @@ int crabc_allocator_observability_probe(void)
     int status;
     size_t index;
     size_t usable;
-
-#ifdef CRABC_ALLOCATOR_OBSERVABILITY_CANDIDATE
-    if (__crabc_x86_allocator_observability_v1() != 1)
-        return 100;
-#endif
 
     errno = EDOM;
     if (malloc_usable_size(NULL) != 0 || errno != EDOM)

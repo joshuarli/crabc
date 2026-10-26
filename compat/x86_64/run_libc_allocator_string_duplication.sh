@@ -49,7 +49,7 @@ done
 
 bash "$ROOT_DIR/compat/x86_64/run_musl_oracle.sh" >/dev/null
 
-work_dir="$(mktemp -d /tmp/crabc-x86-64-libc-allocator-string-duplication.XXXXXX)"
+work_dir="$(mktemp -d "${TMPDIR:?}/crabc-x86-64-libc-allocator-string-duplication.XXXXXX")"
 trap 'rm -rf -- "$work_dir"' EXIT
 target_dir="$work_dir/cargo-target"
 full_archive="$target_dir/x86_64-unknown-linux-musl/debug/libc.a"
@@ -84,51 +84,48 @@ build_source_runtime_libc "$target_dir/x86_64-unknown-linux-musl/debug/libc.a" \
     --features x86-allocator-string-duplication
 [ -f "$full_archive" ] || fail "cargo did not emit the opt-in x86 libc archive"
 
-mapfile -t duplication_members < <(
+mapfile -t strdup_members < <(
     archive_member_for_symbol "$full_archive" \
-        __crabc_x86_allocator_string_duplication_v1
+        strdup
 )
-mapfile -t strdup_members < <(archive_member_for_symbol "$full_archive" strdup)
 mapfile -t strndup_members < <(archive_member_for_symbol "$full_archive" strndup)
 mapfile -t allocator_members < <(
-    archive_member_for_symbol "$full_archive" __crabc_x86_allocator_runtime_v1
+    archive_member_for_symbol "$full_archive" free
 )
 mapfile -t errno_members < <(archive_member_for_symbol "$full_archive" __errno_location)
 mapfile -t backend_members < <(ar t "$full_archive" | grep -- '-static\.o$')
-[ "${#duplication_members[@]}" -eq 1 ] \
-    || fail "string-duplication witness must have exactly one crate object owner"
-[ "${#strdup_members[@]}" -eq 1 ] && [ "${#strndup_members[@]}" -eq 1 ] \
+[ "${#strdup_members[@]}" -eq 1 ] \
+    || fail "string-duplication provider must have exactly one crate object owner"
+[ "${#strndup_members[@]}" -eq 1 ] \
     || fail "each duplication entry must have exactly one crate object owner"
-[ "${duplication_members[0]}" = "${strdup_members[0]}" ] && \
-    [ "${duplication_members[0]}" = "${strndup_members[0]}" ] \
-    || fail "witness, strdup, and strndup must share one object owner"
+[ "${strdup_members[0]}" = "${strndup_members[0]}" ] \
+    || fail "strdup and strndup must share one object owner"
 [ "${#allocator_members[@]}" -eq 1 ] \
     || fail "allocator wrapper must have exactly one crate object owner"
 [ "${#errno_members[@]}" -eq 1 ] \
     || fail "errno must have exactly one crate object owner"
 [ "${#backend_members[@]}" -eq 1 ] \
     || fail "allocator backend must have exactly one bundled static object"
-[ "${duplication_members[0]}" != "${allocator_members[0]}" ] \
+[ "${strdup_members[0]}" != "${allocator_members[0]}" ] \
     || fail "string duplication and allocation wrapper unexpectedly share one object"
-[ "${duplication_members[0]}" != "${errno_members[0]}" ] \
+[ "${strdup_members[0]}" != "${errno_members[0]}" ] \
     || fail "string duplication and errno ownership unexpectedly share one object"
 
 mkdir "$work_dir/selected-members"
 (
     cd "$work_dir/selected-members"
-    ar x "$full_archive" "${duplication_members[0]}" "${allocator_members[0]}" \
+    ar x "$full_archive" "${strdup_members[0]}" "${allocator_members[0]}" \
         "${errno_members[0]}" "${backend_members[0]}"
-    ar crs "$selected_archive" "${duplication_members[0]}" \
+    ar crs "$selected_archive" "${strdup_members[0]}" \
         "${allocator_members[0]}" "${errno_members[0]}" "${backend_members[0]}"
 )
 
 mapfile -t duplication_symbols < <(
     nm -g --defined-only --format=posix \
-        "$work_dir/selected-members/${duplication_members[0]}" |
+        "$work_dir/selected-members/${strdup_members[0]}" |
         awk '$2 ~ /^[TW]$/ && $1 !~ /^_R/ { print $1 }' | sort -u
 )
 expected_duplication_symbols=(
-    __crabc_x86_allocator_string_duplication_v1
     strdup
     strndup
 )
@@ -144,7 +141,7 @@ for symbol in mi_malloc_aligned mi_free; do
 done
 
 "$ORACLE_CC" -std=c11 -D_GNU_SOURCE \
-    -DCRABC_ALLOCATOR_STRING_DUPLICATION_CANDIDATE -I"$ROOT_DIR/include" \
+    -I"$ROOT_DIR/include" \
     -static -fno-pie -no-pie -fno-builtin -fno-stack-protector \
     -Wl,-Map,"$link_map" compat/x86_64/libc_allocator_string_duplication_probe.c \
     "$selected_archive" -o "$candidate"
@@ -155,7 +152,7 @@ readelf --dynamic --wide "$candidate" >"$candidate_dynamic" || true
 readelf --relocs --wide "$candidate" >"$candidate_relocations"
 objdump -d "$candidate" >"$candidate_disassembly"
 
-for symbol in __crabc_x86_allocator_string_duplication_v1 strdup strndup malloc free; do
+for symbol in strdup strndup malloc free; do
     grep -Eq "[[:space:]]${symbol}$" "$candidate_symbols" \
         || fail "candidate lacks crabc string-duplication symbol $symbol"
 done

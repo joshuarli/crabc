@@ -74,3 +74,11 @@ headers and links that object against pinned musl and both dynamic executable
 kinds. Kernel and direct-loader entry must reject every private spelling
 through `dlsym(RTLD_DEFAULT, ...)`, report `dlerror`, and still resolve the
 public process, atfork, exit and alias names.
+
+The same lookup probe rejects the seven component test markers listed in
+`owned_process_private_symbols_probe.c`. Component runners identify their
+archive members through real allocation, environment, file-action, directory
+and temporary-name APIs. Typed volatile public function pointers in the C
+probes retain ordinary extraction while the existing member, backend and link
+map checks establish ownership. The real `__crabc_runtime_v1` descriptor getter
+remains exported for Rust facade consumers.

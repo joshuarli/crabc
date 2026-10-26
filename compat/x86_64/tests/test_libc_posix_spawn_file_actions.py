@@ -50,7 +50,6 @@ class X86LibcPosixSpawnFileActionsTests(unittest.TestCase):
             "pinned-musl allocator implementation",
             "pinned-musl file-actions implementation",
             "x86-posix-spawn-file-actions",
-            "__crabc_x86_posix_spawn_file_actions_v1",
         ):
             self.assertIn(required, runner)
         self.assertNotIn("-nostdlib", runner)

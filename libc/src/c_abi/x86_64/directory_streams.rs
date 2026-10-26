@@ -919,16 +919,6 @@ static_archive_member! { scandir_source {
     }
 }}
 
-/// Link-time witness for the opt-in x86 scandir object.
-///
-/// The mixed-runtime runner calls this only to force the feature-gated object
-/// into its candidate before the link map rejects musl's scandir and
-/// allocation implementations. It is not an installed libc interface.
-#[cfg(crabc_x86_scandir)]
-#[no_mangle]
-pub extern "C" fn __crabc_x86_scandir_v1() -> usize {
-    1
-}
 
 // Musl's `src/dirent/rewinddir.c` object.
 static_archive_member! { rewinddir_source {
