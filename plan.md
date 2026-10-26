@@ -188,8 +188,11 @@ not proof. No allocator diagnostic ran. Main ledger, inventory and structure
 checks pass without promotion. The third rehearsal is frozen at `b3a226cce`
 with the same provisional claims, five receipt paths, and zero preflight
 blockers across 68 correctness stages.
-On that frozen revision, static products and the complete installed and rebuilt
-dynamic rosters pass. The extracted roster is running.
+On that frozen revision, static products and the complete dynamic producer pass
+for installed, rebuilt and extracted products. Its 219-case receipt matches
+the candidate source digest, retains all promotion/public flags false, and
+passes the outer host replay. The runner records `dynamic-products` complete
+and proceeds to its registered publication and the POSIX prefix.
 Independent header-declaration collection succeeds at
 `.work/x86_64/header-declaration-inventory/candidate-cohort/report.json`,
 preserving unresolved-linkage observations rather than claiming ABI completion.
