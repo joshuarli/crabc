@@ -790,19 +790,29 @@ the pinned x86 public long-double algorithms. Frozen `__restore` maps to the
 native hidden `rt_sigreturn` restorer in `signal_foundation.rs`. None implies
 a fabricated native helper export.
 
-`__crabc_runtime_v1` needs separate treatment. The owned dynamic libc supplies
-the private getter from `runtime_facade_v1.rs`, and the `crabc-rs` `cfile`, `dl`,
-and `runtime_thread` facades import it on x86-64. Its component evidence is the
-`runtime-private-facades` run described in [README.md](README.md). The policy
-nevertheless keeps the name unresolved: full native facade parity still
-requires explicit native consumer/protocol selection and evidence; the
-existing private loader TLS descriptor does not automatically satisfy that
-facade contract.
+`__crabc_runtime_v1` is a private dynamic provider owned by
+`runtime_facade_v1.rs`. The `crabc-rs` `cfile`, `dl`, and `runtime_thread`
+facades import it on x86-64. The owner group selects one `FUNC GLOBAL DEFAULT`
+definition of size 8 in the shared libc `.dynsym` and `.symtab`. A static
+provider is rejected.
+
+`runtime_private_facades.py` retains the six Rust probe objects, the C input
+objects, the three DSO and twelve executable link receipts, the linked
+products, and all 24 raw execution results. The selector re-reads each Rust
+object's symbols and revalidates each installed-driver receipt against the
+ordered input objects and selected product. The single-object link reader
+remains strict; the scoped RuntimeV1 path uses its exact ordered multi-object
+reader. The report binds the current clean source and dynamic product
+manifest. Pass the report with
+`--runtime-private-facades-report` to attach the getter and facade evidence to
+the same selected source and dynamic product. This closes only the RuntimeV1
+facade consumer requirement. It does not qualify the dynamic runtime family,
+the dynamic product, or public support.
 
 ## Runtime component attachments
 
-The selection reader can independently attach either current-product receipt
-without replaying the header declaration envelope.
+The selection reader attaches each bounded current-product receipt without
+replaying the header declaration envelope.
 
 - `loader_runtime_registry_evidence.py` is the sole reader for the ten
   `loader-runtime-operations` imports. The attachment binds its exact shared

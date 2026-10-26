@@ -61,6 +61,7 @@ import headers_layouts_aggregate
 import owned_public_data_variable_runtime as public_data_variable_runtime
 import loader_structural_owner_contract_reader as loader_structural_owner_evidence
 import owned_bsd_random_receipt as bsd_random_evidence
+import runtime_private_facades as runtime_facades
 
 SCHEMA = 'crabc.x86_64-native-abi-selection-report/v8'
 CONTRACT_SCHEMA = 'crabc.x86_64-native-abi-selection/v1'
@@ -166,6 +167,10 @@ LOADER_STRUCTURAL_OWNER_LIMITS = [
     'Only eight structural-replacement identities are attached.',
     'The component selects no old provider placement, family completion, runtime qualification, promotion, or public support.',
 ]
+RUNTIME_PRIVATE_FACADE_REQUIREMENT = 'current-source RuntimeV1 facade consumer and dynamic getter evidence'
+RUNTIME_PRIVATE_FACADE_GROUP = 'runtime-v1-private-getter'
+RUNTIME_PRIVATE_FACADE_OWNER = 'crabc-rs-runtime-facade-v1'
+RUNTIME_PRIVATE_FACADE_LIMITS = list(runtime_facades.LIMITS)
 FIXED_C_PRODUCER_GROUP = 'allocator-shared-local'
 FIXED_C_PRODUCER_OWNER = 'fixed-C-mimalloc-producer'
 FIXED_C_PRODUCER_ARTIFACTS = ('candidate-static', 'candidate-shared')
@@ -764,9 +769,12 @@ def validate_contract(value: Any) -> dict[str, Any]:
                     require(record['disposition'] == 'public-provider' and record['expected_type'] == 'FUNC' and 'candidate-static' in record['artifacts'], 'oracle metadata requires an already selected public static function')
                 require(type(record['placement_metadata']) is dict and set(record['placement_metadata']) <= set(record['artifacts']), 'placement metadata artifact differs')
                 for metadata in record['placement_metadata'].values():
-                    require(type(metadata) is dict and set(metadata) <= {'type', 'binding', 'visibility'}, 'placement metadata fields differ')
+                    require(type(metadata) is dict and set(metadata) <= {'type', 'binding', 'visibility', 'size_bytes'}, 'placement metadata fields differ')
                     for key, values in (('type', SUPPORTED_TYPES), ('binding', SUPPORTED_BINDINGS), ('visibility', SUPPORTED_VISIBILITIES)):
                         require(key not in metadata or metadata[key] in values, f'placement {key} invalid')
+                    require('size_bytes' not in metadata or type(metadata['size_bytes']) is int
+                            and not isinstance(metadata['size_bytes'], bool) and metadata['size_bytes'] >= 0,
+                            'placement size_bytes invalid')
             elif field == 'structural_groups':
                 exact(record, {'id', 'members', 'sources', 'disposition', 'reason', 'requirements'}, 'structural group')
                 strings(record['members'], 'structural members', empty=False)
@@ -2501,6 +2509,8 @@ def expand_obligations(contract: Mapping[str, Any], inputs: Mapping[str, Any]) -
                 # a selected placement; it cannot imply the weak public
                 # aliases, hidden shared localization, or normal consumers.
                 record['unresolved'].append(LOCALE_ALIAS_RECEIPT_REQUIREMENT)
+            if group['id'] == RUNTIME_PRIVATE_FACADE_GROUP:
+                record['unresolved'].append(RUNTIME_PRIVATE_FACADE_REQUIREMENT)
     for name, owner in inputs['deferred'].items():
         record = obtain(name)
         require(record['selection'] is None, f'deferred/provider overlap: {name}')
@@ -5310,6 +5320,64 @@ def loader_runtime_registry_adapter(report_path: Path | None, *, facts: Mapping[
         'measurement_reports': measurement_reports,
         'inputs': copy.deepcopy(inputs),
         'limits': list(RUNTIME_REGISTRY_LIMITS),
+    }
+
+
+def runtime_private_facades_adapter(report_path: Path | None, *, facts: Mapping[str, Any],
+                                    measurement: Mapping[str, Any], paths: Mapping[str, Path],
+                                    source: Mapping[str, Any]) -> dict[str, Any] | None:
+    if report_path is None:
+        return None
+    require(Path(runtime_facades.ROOT) == ROOT and Path(runtime_facades.__file__).resolve().parent == MODULE_DIR
+            and runtime_facades.SCHEMA == 'crabc.x86_64-runtime-private-facades/v2',
+            'RuntimeV1 facade reader belongs to a different checkout or schema')
+    report_path = physical_work_path(report_path, directory=False)
+    before = file_identity(report_path)
+    source = exact(dict(source), {'revision', 'content_sha256', 'clean'}, 'RuntimeV1 facade selection source')
+    require(source['clean'] is True, 'RuntimeV1 facades require a clean selected source')
+    _measurement_source_matches(source, measurement, 'RuntimeV1 facade')
+    measurement_reports = _measurement_report_bindings(measurement, 'RuntimeV1 facade')
+    current = _current_product_identities(paths)
+    try:
+        report = runtime_facades.validate_report(
+            report_path, expected_source=source, dynamic_product=paths['dynamic_product'],
+            dynamic_libc_sha256=current['dynamic_libc']['sha256'],
+        )
+    except (KeyError, TypeError, ValueError, OSError, runtime_facades.EvidenceError) as error:
+        raise SelectionError(f'RuntimeV1 facade component rejected: {error}') from error
+    require(same(before, file_identity(report_path)), 'RuntimeV1 facade report changed during replay')
+    report = exact(report, set(runtime_facades.REPORT_FIELDS), 'RuntimeV1 facade reader report')
+    require(report['source'] == source and report['limits'] == RUNTIME_PRIVATE_FACADE_LIMITS,
+            'RuntimeV1 facade source or evidence limits differ')
+    product = exact(report['product'], {'root', 'manifest', 'libc'},
+                    'RuntimeV1 facade product')
+    require(product['root'] == str(paths['dynamic_product'].relative_to(ROOT)),
+            'RuntimeV1 facade product root differs from selected dynamic product')
+    manifest = exact(product['manifest'], {'path', 'sha256', 'size', 'mode'}, 'RuntimeV1 facade manifest')
+    require(manifest == {'path': 'share/crabc/manifest.json',
+                         **_identity_payload(current['dynamic_manifest'], 'RuntimeV1 selected dynamic manifest')},
+            'RuntimeV1 facade manifest identity differs from selected dynamic product')
+    dynamic = exact(product['libc'], {'path', 'sha256', 'size', 'mode'}, 'RuntimeV1 facade dynamic libc')
+    require(dynamic == {'path': 'usr/lib/libc.so', **_identity_payload(current['dynamic_libc'],
+                                                                         'RuntimeV1 selected dynamic libc')},
+            'RuntimeV1 facade libc identity differs from selected dynamic product')
+    facts_artifacts = facts.get('artifacts')
+    require(type(facts_artifacts) is dict, 'public ELF facts omit RuntimeV1 facade artifacts')
+    shared = facts_artifacts.get('candidate-shared')
+    require(type(shared) is dict and type(shared.get('identity')) is dict,
+            'public ELF facts omit the selected RuntimeV1 dynamic libc')
+    _require_same_identity_payload(shared['identity'], current['dynamic_libc'],
+                                   'RuntimeV1 facade selected shared libc')
+    return {
+        'status': 'runtime-v1-facades-observed-with-boundaries',
+        'reader': file_identity(Path(runtime_facades.__file__)),
+        'report_path': str(report_path.relative_to(ROOT)),
+        'report': before,
+        'source': copy.deepcopy(source),
+        'product': copy.deepcopy(product),
+        'measurement_reports': measurement_reports,
+        'receipt': copy.deepcopy(report),
+        'limits': list(RUNTIME_PRIVATE_FACADE_LIMITS),
     }
 
 
@@ -9556,6 +9624,93 @@ def _accounting_indexes(accounting: Mapping[str, Any], *, description: str) -> t
     return records, placements, occurrences
 
 
+def attach_runtime_private_facades(accounting: Mapping[str, Any],
+                                   companion: Mapping[str, Any] | None) -> list[dict[str, Any]]:
+    if companion is None:
+        return []
+    companion = exact(companion, {
+        'status', 'reader', 'report_path', 'report', 'source', 'product', 'measurement_reports', 'receipt', 'limits',
+    }, 'RuntimeV1 facade companion')
+    require(companion['status'] == 'runtime-v1-facades-observed-with-boundaries'
+            and companion['limits'] == RUNTIME_PRIVATE_FACADE_LIMITS,
+            'RuntimeV1 facade companion boundary differs')
+    receipt = exact(companion['receipt'], set(runtime_facades.REPORT_FIELDS), 'RuntimeV1 facade receipt')
+    require(receipt['schema'] == runtime_facades.SCHEMA and receipt['target'] == runtime_facades.TARGET
+            and receipt['capability'] == 'runtime.private-facades'
+            and receipt['family'] == 'ldso.dynamic-runtime'
+            and receipt['source'] == companion['source']
+            and receipt['product'] == companion['product']
+            and receipt['family_qualified'] is False and receipt['promotion_ready'] is False
+            and receipt['public_support'] is False and receipt['limits'] == RUNTIME_PRIVATE_FACADE_LIMITS
+            and receipt['features'] == list(runtime_facades.FEATURES)
+            and receipt['normal_dependencies'] == list(runtime_facades.EXPECTED_PACKAGES)
+            and set(receipt['probes']) == {probe.example for probe in runtime_facades.PROBES}
+            and len(receipt['executions']) == len(runtime_facades.PROBES) * 4,
+            'RuntimeV1 facade receipt contract differs')
+    identity_value = identity(runtime_facades.PRIVATE_RUNTIME)
+    key = identity_key(identity_value)
+    records, placements, occurrences = _accounting_indexes(accounting, description='RuntimeV1 facade attachment')
+    record = records.get(key)
+    require(record is not None and record.get('selection', {}).get('disposition') == 'private-provider'
+            and record['selection'].get('owner') == RUNTIME_PRIVATE_FACADE_OWNER
+            and record['selection'].get('group') == RUNTIME_PRIVATE_FACADE_GROUP
+            and record.get('unresolved') == [RUNTIME_PRIVATE_FACADE_REQUIREMENT],
+            'RuntimeV1 getter selected requirement differs')
+    expected_metadata = {'type': 'FUNC', 'binding': 'GLOBAL', 'visibility': 'DEFAULT', 'size_bytes': 8}
+    placement = placements.get((key, 'candidate-shared'))
+    require(type(placement) is dict and placement.get('placement_observed') is True
+            and placement.get('definition_count') == 1 and placement.get('expected_metadata') == expected_metadata
+            and _metadata_difference_rows_are_empty(placement.get('metadata_differences'),
+                                                    'RuntimeV1 shared getter placement'),
+            'RuntimeV1 shared getter placement differs')
+    shared_rows = [row for row in occurrences.values()
+                   if row.get('artifact_key') == 'candidate-shared'
+                   and identity_key(row_identity(row['row'])) == key and row.get('role') == 'definition']
+    by_table = {row.get('table'): row for row in shared_rows}
+    require(len(shared_rows) == 2 and len(by_table) == 2 and set(by_table) == {'.dynsym', '.symtab'}
+            and type(placement.get('occurrence_indices')) is list
+            and set(placement['occurrence_indices']) == {row['index'] for row in shared_rows},
+            'RuntimeV1 shared getter occurrence roster differs')
+    for table, occurrence in by_table.items():
+        row = occurrence['row']
+        require({field: row.get(field) for field in (
+            'type', 'binding', 'visibility', 'size_bytes', 'version', 'version_default',
+        )} == {
+            'type': 'FUNC', 'binding': 'GLOBAL', 'visibility': 'DEFAULT', 'size_bytes': 8,
+            'version': None, 'version_default': False,
+        } and row.get('section_index') != 'UND'
+                and occurrence.get('accounting') == {
+                    'disposition': 'private-provider', 'owner': RUNTIME_PRIVATE_FACADE_OWNER,
+                    'scope': 'candidate-shared',
+                },
+                f'RuntimeV1 shared getter metadata differs: {table}')
+    static_definitions = [row for row in occurrences.values()
+                          if row.get('artifact_key') == 'candidate-static'
+                          and identity_key(row_identity(row['row'])) == key
+                          and row.get('role') in {'definition', 'local-definition'}]
+    require(not static_definitions, 'RuntimeV1 getter unexpectedly has a static provider')
+    indices = [by_table[table]['index'] for table in ('.dynsym', '.symtab')]
+    require(set(placement['occurrence_indices']) == set(indices),
+            'RuntimeV1 shared getter table ordering differs')
+    record['unresolved'].remove(RUNTIME_PRIVATE_FACADE_REQUIREMENT)
+    accounting['blockers'][:] = [blocker for blocker in accounting['blockers'] if not (
+        blocker.get('code') == 'identity-unresolved'
+        and identity_key(blocker.get('identity', {})) == key
+        and blocker.get('reason') == RUNTIME_PRIVATE_FACADE_REQUIREMENT
+    )]
+    return [{
+        'identity': identity_value,
+        'owner': RUNTIME_PRIVATE_FACADE_OWNER,
+        'artifact_key': 'candidate-shared',
+        'occurrence_indices': indices,
+        'probe_count': len(receipt['probes']),
+        'execution_count': len(receipt['executions']),
+        'requirements_discharged': [RUNTIME_PRIVATE_FACADE_REQUIREMENT],
+        'static_provider_count': 0,
+        'shared_tables': ['.dynsym', '.symtab'],
+    }]
+
+
 def _selected_placement(placements: Mapping[tuple[tuple[str, str | None, bool], str], Mapping[str, Any]],
                         occurrences: Mapping[int, Mapping[str, Any]], *, name: str, artifact_key: str,
                         table: str, role: str, metadata: Mapping[str, Any], description: str) -> tuple[dict[str, Any], dict[str, Any]]:
@@ -13312,6 +13467,7 @@ def _build_report(*, contract_path: Path, paths: Mapping[str, Path], declaration
                   compiler_helper_aggregate_report: Path | None = None,
                  compiler_helper_installed_links: Mapping[str, Path] | None = None,
                   loader_runtime_registry_report: Path | None = None,
+                  runtime_private_facades_report: Path | None = None,
                   pthread_alias_contract_report: Path | None = None,
                   prepared_worker_tls_report: Path | None = None,
                   errno_storage_lifecycle_report: Path | None = None,
@@ -13368,6 +13524,11 @@ def _build_report(*, contract_path: Path, paths: Mapping[str, Path], declaration
     loader_runtime_registry_companion = _admit(rejected, 'loader_runtime_registry_report', lambda: loader_runtime_registry_adapter(
         loader_runtime_registry_report, facts=facts, measurement=measurement, paths=paths, source=source_before,
     ))
+    runtime_private_facades_companion = _admit(
+        rejected, 'runtime_private_facades_report',
+        lambda: runtime_private_facades_adapter(
+            runtime_private_facades_report, facts=facts, measurement=measurement, paths=paths, source=source_before,
+        ))
     pthread_alias_contract_companion = _admit(rejected, 'pthread_alias_contract_report', lambda: pthread_alias_contract_adapter(
         pthread_alias_contract_report, facts=facts, measurement=measurement, paths=paths, source=source_before,
     ))
@@ -13544,6 +13705,9 @@ def _build_report(*, contract_path: Path, paths: Mapping[str, Path], declaration
     loader_runtime_registry_joins, loader_runtime_registry_companion = _attach(
         rejected, 'loader_runtime_registry_report', accounting, loader_runtime_registry_companion,
         lambda: attach_loader_runtime_registry(accounting, loader_runtime_registry_companion))
+    runtime_private_facades_joins, runtime_private_facades_companion = _attach(
+        rejected, 'runtime_private_facades_report', accounting, runtime_private_facades_companion,
+        lambda: attach_runtime_private_facades(accounting, runtime_private_facades_companion))
     pthread_alias_contract_joins, pthread_alias_contract_companion = _attach(
         rejected, 'pthread_alias_contract_report', accounting, pthread_alias_contract_companion,
         lambda: attach_pthread_alias_contract(accounting, pthread_alias_contract_companion))
@@ -13796,6 +13960,11 @@ def _build_report(*, contract_path: Path, paths: Mapping[str, Path], declaration
         loader_structural_owner_companion, paths=paths, source=source_before, measurement=measurement,
         loader_debug_report=loader_debug_report, loader_runtime_registry_report=loader_runtime_registry_report,
     )
+    if runtime_private_facades_companion is not None:
+        runtime_report_path = ROOT / runtime_private_facades_companion['report_path']
+        require(same(runtime_private_facades_adapter(
+            runtime_report_path, facts=facts, measurement=measurement, paths=paths, source=source_before,
+        ), runtime_private_facades_companion), 'RuntimeV1 facade evidence changed during final recheck')
     _recheck_headers_layouts_aggregate(headers_layouts_aggregate_companion)
     if headers_layouts_product_pair_companion is not None:
         require(same(headers_layouts_product_pair_companion, headers_layouts_product_pair_adapter(
@@ -13828,6 +13997,7 @@ def _build_report(*, contract_path: Path, paths: Mapping[str, Path], declaration
         'loader_debug_report': public_data_linkage_companion,
         'compiler_helper_aggregate_report': compiler_helper_companion,
         'loader_runtime_registry_report': loader_runtime_registry_companion,
+        'runtime_private_facades_report': runtime_private_facades_companion,
         'pthread_alias_contract_report': pthread_alias_contract_companion,
         'prepared_worker_tls_report': prepared_worker_tls_companion,
         'errno_storage_lifecycle_report': errno_storage_lifecycle_companion,
@@ -13882,6 +14052,8 @@ def _build_report(*, contract_path: Path, paths: Mapping[str, Path], declaration
             'compiler_helper_import_joins': compiler_helper_import_joins,
             'loader_runtime_registry_companion': loader_runtime_registry_companion,
             'loader_runtime_registry_joins': loader_runtime_registry_joins,
+            'runtime_private_facades_companion': runtime_private_facades_companion,
+            'runtime_private_facades_joins': runtime_private_facades_joins,
             'pthread_alias_contract_companion': pthread_alias_contract_companion,
             'pthread_alias_contract_joins': pthread_alias_contract_joins,
             'prepared_worker_tls_companion': prepared_worker_tls_companion,
@@ -13952,6 +14124,7 @@ def build_report(*, output: Path, contract_path: Path = CONTRACT_PATH, declarati
                  compiler_helper_aggregate_report: Path | None = None,
                  compiler_helper_installed_links: Mapping[str, Path] | None = None,
                  loader_runtime_registry_report: Path | None = None,
+                 runtime_private_facades_report: Path | None = None,
                  pthread_alias_contract_report: Path | None = None,
                  prepared_worker_tls_report: Path | None = None,
                  errno_storage_lifecycle_report: Path | None = None,
@@ -13991,6 +14164,7 @@ def build_report(*, output: Path, contract_path: Path = CONTRACT_PATH, declarati
                            compiler_helper_aggregate_report=compiler_helper_aggregate_report,
                            compiler_helper_installed_links=compiler_helper_installed_links,
                            loader_runtime_registry_report=loader_runtime_registry_report,
+                           runtime_private_facades_report=runtime_private_facades_report,
                            pthread_alias_contract_report=pthread_alias_contract_report,
                            prepared_worker_tls_report=prepared_worker_tls_report,
                            errno_storage_lifecycle_report=errno_storage_lifecycle_report,
@@ -14030,6 +14204,7 @@ def validate_report(report_path: Path, *, contract_path: Path = CONTRACT_PATH, d
                     compiler_helper_aggregate_report: Path | None = None,
                  compiler_helper_installed_links: Mapping[str, Path] | None = None,
                     loader_runtime_registry_report: Path | None = None,
+                    runtime_private_facades_report: Path | None = None,
                     pthread_alias_contract_report: Path | None = None,
                     prepared_worker_tls_report: Path | None = None,
                     errno_storage_lifecycle_report: Path | None = None,
@@ -14071,6 +14246,7 @@ def validate_report(report_path: Path, *, contract_path: Path = CONTRACT_PATH, d
                              compiler_helper_aggregate_report=compiler_helper_aggregate_report,
                              compiler_helper_installed_links=compiler_helper_installed_links,
                              loader_runtime_registry_report=loader_runtime_registry_report,
+                             runtime_private_facades_report=runtime_private_facades_report,
                              pthread_alias_contract_report=pthread_alias_contract_report,
                              prepared_worker_tls_report=prepared_worker_tls_report,
                              errno_storage_lifecycle_report=errno_storage_lifecycle_report,
@@ -14118,6 +14294,7 @@ def main(argv: Sequence[str]) -> int:
     parser.add_argument('--compiler-helper-aggregate-report', type=Path)
     parser.add_argument('--compiler-helper-installed-link', nargs=2, action='append', metavar=('MODE', 'RECEIPT'))
     parser.add_argument('--loader-runtime-registry-report', type=Path)
+    parser.add_argument('--runtime-private-facades-report', type=Path)
     parser.add_argument('--pthread-alias-contract-report', type=Path)
     parser.add_argument('--prepared-worker-tls-report', type=Path)
     parser.add_argument('--errno-storage-lifecycle-report', type=Path)
@@ -14173,6 +14350,7 @@ def main(argv: Sequence[str]) -> int:
                                                 'static_preparation', 'declaration_report', 'public_data_ordinary_link_report',
                                                 'loader_debug_abi_report', 'compiler_helper_aggregate_report',
                                                 'ordinary_declaration_abi_report', 'loader_runtime_registry_report',
+                                                'runtime_private_facades_report',
                                                 'pthread_alias_contract_report', 'prepared_worker_tls_report',
                                                 'errno_storage_lifecycle_report', 'native_c_allocator_boundary_report', 'provider_link_work',
                                                 'strlen_ordinary_import_work', 'memmove_ordinary_import_work', 'memcmp_ordinary_import_work',

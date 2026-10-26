@@ -1143,13 +1143,21 @@ disposition = "structural-replacement"
 reason = "Selected hidden native rt_sigreturn restorer owns the return protocol."
 requirements = ["current source-bound owning component and consumer semantics receipt"]
 
-[[structural_groups]]
-id = "native-runtime-facade-protocol-open"
+[[owner_groups]]
+id = "runtime-v1-private-getter"
+selector = "explicit"
+disposition = "private-provider"
+owner = "crabc-rs-runtime-facade-v1"
+family = "ldso.dynamic-runtime"
+artifacts = ["candidate-shared"]
+sources = ["crabc-rs/Cargo.toml", "crabc-rs/src/cfile.rs", "crabc-rs/src/dl.rs", "crabc-rs/src/lib.rs", "crabc-rs/src/runtime_thread.rs", "libc/src/c_abi/x86_64/runtime_facade_v1.rs", "compat/x86_64/runtime_private_facades.py", "compat/x86_64/native-abi-selection.md"]
 members = ["__crabc_runtime_v1"]
-sources = ["crabc-rs/src/lib.rs", "libc/src/c_abi/x86_64/runtime_facade_v1.rs", "compat/x86_64/native-abi-selection.md"]
-disposition = "unresolved"
-reason = "The owned dynamic product supplies the private __crabc_runtime_v1 getter, but no native consumer evidence yet establishes full cfile, dl, and runtime_thread facade parity."
-requirements = ["explicit native facade consumer/protocol selection and complete evidence"]
+members_file = ""
+expected_type = "FUNC"
+delegated_members = []
+placement_metadata = {"candidate-shared" = {"type" = "FUNC", "binding" = "GLOBAL", "visibility" = "DEFAULT", "size_bytes" = 8}}
+reason = "The six source-bound RuntimeV1 probes use one immutable process table getter supplied by dynamic libc."
+static_metadata_rule = "explicit"
 
 [[object_contracts]]
 id = "object:___environ"

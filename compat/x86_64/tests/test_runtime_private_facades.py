@@ -3,10 +3,14 @@
 
 from __future__ import annotations
 
+import copy
 import importlib.util
+import json
 from pathlib import Path
 import sys
+import tempfile
 import unittest
+from unittest import mock
 
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -20,6 +24,13 @@ SPEC.loader.exec_module(facades)
 
 def probe(example: str):
     return next(item for item in facades.PROBES if item.example == example)
+
+
+def retained(root: Path, relative: str, payload: bytes) -> dict[str, object]:
+    path = root / relative
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(payload)
+    return facades.artifact_identity(path, root)
 
 
 class ProbeAdmissionTests(unittest.TestCase):
@@ -82,6 +93,133 @@ class ProbeAdmissionTests(unittest.TestCase):
                 [members[0], members[0].replace("0123abcd", "0123abce")],
                 "x86_64_cfile_facade_probe",
             )
+
+
+class ReceiptBindingTests(unittest.TestCase):
+    def test_rejects_the_unsealed_v1_report(self) -> None:
+        scratch = ROOT / ".work/runtime-private-facades-tests"
+        scratch.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(dir=scratch) as temporary:
+            report = Path(temporary) / "report.json"
+            report.write_text(json.dumps({"schema": "crabc.x86_64-runtime-private-facades/v1"}), encoding="utf-8")
+            with self.assertRaisesRegex(facades.EvidenceError, "report fields differ"):
+                facades.validate_report(report, expected_source={}, dynamic_product=Path(temporary),
+                                        dynamic_libc_sha256="0" * 64)
+
+    def test_accepts_exact_current_probe_product_and_execution_rosters(self) -> None:
+        source = {'revision': 'a' * 40, 'content_sha256': 'b' * 64, 'clean': True}
+        product = {
+            'root': '.work/current/dynamic',
+            'manifest': {'path': 'share/crabc/manifest.json', 'sha256': 'c' * 64,
+                         'size': 1, 'mode': 0o644},
+            'libc': {'path': 'usr/lib/libc.so', 'sha256': 'd' * 64,
+                     'size': 1, 'mode': 0o755},
+        }
+        scratch = ROOT / ".work/runtime-private-facades-tests"
+        scratch.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(dir=scratch) as temporary:
+            work = Path(temporary)
+            probes = {}
+            for item in facades.PROBES:
+                probes[item.example] = {
+                    'features': list(item.features),
+                    'object': retained(work, f'objects/{item.example}.o', b'object'),
+                    'undefined': [facades.PRIVATE_RUNTIME],
+                    'global_definitions': sorted(item.entries),
+                    'same_source_aarch64': item.same_source_aarch64,
+                }
+            dsos = {}
+            for item in facades.DSOS:
+                dsos[item.name] = {
+                    'artifact': retained(work, f'products/{item.name}', item.name.encode()),
+                    'object': retained(work, f'objects/{item.name}.o', b'dso object'),
+                    'receipt': retained(work, f'products/{item.name}.crabc-link.json', b'dso receipt'),
+                }
+            executables = {}
+            for item in facades.PROBES:
+                for mode in ('pie', 'non-pie'):
+                    name = f'{item.example}-{mode}'
+                    executables[name] = {
+                        'artifact': retained(work, f'products/{name}', b'executable'),
+                        'objects': [
+                            probes[item.example]['object'],
+                            retained(work, f'objects/{name}-fixture.o', b'fixture object'),
+                        ],
+                        'receipt': retained(work, f'products/{name}.crabc-link.json', b'executable receipt'),
+                    }
+            executions = []
+            for item in facades.PROBES:
+                for mode in ('pie', 'non-pie'):
+                    for entry in ('kernel', 'direct'):
+                        label = f'{item.example}-{mode}-{entry}'
+                        executions.append({
+                            'probe': item.example, 'mode': mode, 'entry': entry, 'status': 0, 'passed': True,
+                            'stdout': retained(work, f'raw/{label}.stdout', item.expected_stdout),
+                            'stderr': retained(work, f'raw/{label}.stderr', b''),
+                            'status_file': retained(work, f'raw/{label}.status', b'0\n'),
+                        })
+            report = {
+                'schema': facades.SCHEMA, 'capability': 'runtime.private-facades',
+                'family': 'ldso.dynamic-runtime', 'target': facades.TARGET,
+                'toolchain': 'nightly-2026-09-15', 'features': list(facades.FEATURES),
+                'normal_dependencies': list(facades.EXPECTED_PACKAGES), 'source': source, 'product': product,
+                'probes': probes, 'products': {'dsos': dsos, 'executables': executables},
+                'executions': executions, 'family_qualified': False, 'promotion_ready': False,
+                'public_support': False, 'limits': list(facades.LIMITS),
+            }
+            report_path = work / 'report.json'
+            report_path.write_text(json.dumps(report), encoding='utf-8')
+            with mock.patch.object(facades, 'source_identity', return_value=source), \
+                    mock.patch.object(facades, 'product_identity', return_value=product), \
+                    mock.patch.object(facades, 'pinned_channel', return_value='nightly-2026-09-15'), \
+                    mock.patch.object(facades, 'llvm_tools', return_value={}), \
+                    mock.patch.object(
+                        facades, 'inspect_probe',
+                        side_effect=lambda _tools, item, _obj, _work: copy.deepcopy(probes[item.example]),
+                    ), \
+                    mock.patch.object(facades.product_evidence, 'validate_multi_object_link') as validate_link, \
+                    mock.patch.object(facades.timer_evidence, '_validate_shared_receipt') as validate_dso_receipt, \
+                    mock.patch.object(facades.timer_evidence, '_validate_tls_elf'):
+                self.assertEqual(facades.validate_report(
+                    report_path, expected_source=source, dynamic_product=Path(temporary),
+                    dynamic_libc_sha256=product['libc']['sha256'],
+                ), report)
+                self.assertEqual(validate_link.call_count, len(executables))
+                self.assertEqual(validate_dso_receipt.call_count, len(dsos))
+                changed = copy.deepcopy(report)
+                changed['probes']['x86_64_cfile_facade_probe']['undefined'].append('memcpy')
+                report_path.write_text(json.dumps(changed), encoding='utf-8')
+                with self.assertRaisesRegex(facades.EvidenceError, 'differ from retained ELF object'):
+                    facades.validate_report(
+                        report_path, expected_source=source, dynamic_product=Path(temporary),
+                        dynamic_libc_sha256=product['libc']['sha256'],
+                    )
+                changed = copy.deepcopy(report)
+                changed['executions'].pop()
+                report_path.write_text(json.dumps(changed), encoding='utf-8')
+                with self.assertRaisesRegex(facades.EvidenceError, 'execution matrix differs'):
+                    facades.validate_report(
+                        report_path, expected_source=source, dynamic_product=Path(temporary),
+                        dynamic_libc_sha256=product['libc']['sha256'],
+                    )
+
+    def test_rechecks_each_retained_artifact_bytes_and_mode(self) -> None:
+        scratch = ROOT / ".work/runtime-private-facades-tests"
+        scratch.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(dir=scratch) as temporary:
+            root = Path(temporary)
+            retained = root / "raw/probe.stdout"
+            retained.parent.mkdir()
+            retained.write_bytes(b"runtime probe ok\n")
+            identity = facades.artifact_identity(retained, root)
+            self.assertEqual(facades._artifact_path(root, identity, "probe stdout"), retained)
+            retained.chmod(0o600)
+            with self.assertRaisesRegex(facades.EvidenceError, "artifact bytes differ"):
+                facades._artifact_path(root, identity, "probe stdout")
+            retained.chmod(identity["mode"])
+            retained.write_bytes(b"changed\n")
+            with self.assertRaisesRegex(facades.EvidenceError, "artifact bytes differ"):
+                facades._artifact_path(root, identity, "probe stdout")
 
 
 if __name__ == "__main__":

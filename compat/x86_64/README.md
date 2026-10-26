@@ -420,15 +420,22 @@ providers or close pthread lifecycle, family, or public-support evidence.
 ## Rust RuntimeV1 facades
 
 `./scripts/dev-x86_64.sh runtime-private-facades [DYNAMIC_SYSROOT]` proves the
-frozen `runtime.private-facades` mapping: `crabc_rs::{dl, runtime_thread,
+frozen `runtime.private-facades` mapping. `crabc_rs::{dl, runtime_thread,
 cfile}` reach the installed dynamic libc's loader, pthread, and stream owners
-only through the private `__crabc_runtime_v1` table. It checks the facade's
-normal dependency graph and each release fat-LTO probe object's imports, then
-runs the three unchanged frozen AArch64 probes and three x86 differentials
-against the same product's public dlfcn, pthread, and stdio results in PIE and
-non-PIE executables through kernel and direct interpreter entry. Without an
-argument it builds a fresh product; raw outputs and `report.json` stay in the
-printed evidence directory. It does not qualify `ldso.dynamic-runtime`.
+through the private `__crabc_runtime_v1` table. The runner checks the normal
+dependency graph and each release fat-LTO probe object's imports. It runs the
+three unchanged frozen AArch64 probes. It also runs three x86 probes. The
+loader, thread, and C file probes compare results against public dlfcn,
+pthread, and stdio behavior from the same product.
+Each probe uses PIE and non-PIE executables, entered through both the kernel
+and the direct interpreter. Without an argument it builds a fresh product.
+The report binds the clean source and dynamic product manifest. It retains the
+six probe objects and twelve linked executables. It records each execution's
+stdout, stderr, and status bytes.
+The selector replays those retained files when you pass the report with
+`--runtime-private-facades-report`. The attachment selects the shared getter
+provider and closes only this consumer requirement. It does not qualify the
+dynamic product or `ldso.dynamic-runtime`.
 
 ## Installed descriptor control
 

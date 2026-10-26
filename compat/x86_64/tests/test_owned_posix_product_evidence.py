@@ -461,16 +461,18 @@ class OwnedPosixProductEvidenceTests(unittest.TestCase):
             str(library / "crtn.o"), "-o", "<output>",
         ]
 
-    def dynamic_receipt(self, linkage: str = "pie", *, export_dynamic: bool = False) -> Path:
+    def dynamic_receipt(self, linkage: str = "pie", *, export_dynamic: bool = False,
+                        workloads: tuple[Path, ...] | None = None) -> Path:
         self.executable.write_bytes(sealed_elf(linkage))
         mode, entry = {"pie": ("pie", "Scrt1.o"), "non-pie": ("exec", "crt1.o")}[linkage]
         receipt = self.root / f"{linkage}.crabc-link.json"
         runtime = self.dynamic / "usr/lib"
+        workload_objects = (self.workload,) if workloads is None else workloads
         direct = [
             runtime / "crti.o", runtime / "libc.so", runtime / "crtn.o",
             runtime / entry, runtime / "crabc-dynamic-attach.o",
         ]
-        inputs = [*direct, self.workload, runtime / "libcrabc-builtins.a"]
+        inputs = [*direct, *workload_objects, runtime / "libcrabc-builtins.a"]
         link = [
             str(self.linker), *( ["-pie"] if linkage == "pie" else []), "--hash-style=sysv",
             "--eh-frame-hdr", "-z", "relro", "-z", "now", "-z", "noexecstack", "-z", "text", "--no-undefined",
@@ -478,7 +480,8 @@ class OwnedPosixProductEvidenceTests(unittest.TestCase):
             "--exclude-libs=libcrabc-builtins.a",
             *(["--export-dynamic"] if export_dynamic else []),
             "--dynamic-linker", "/lib/ld-crabc-x86_64.so.1", str(runtime / entry),
-            str(runtime / "crabc-dynamic-attach.o"), str(runtime / "crti.o"), str(self.workload),
+            str(runtime / "crabc-dynamic-attach.o"), str(runtime / "crti.o"),
+            *(str(workload) for workload in workload_objects),
             str(runtime / "libcrabc-builtins.a"), str(runtime / "libc.so"), str(runtime / "crtn.o"),
             "-o", str(self.executable),
         ]
@@ -498,7 +501,7 @@ class OwnedPosixProductEvidenceTests(unittest.TestCase):
             "input_receipts": [{"path": str(path), "sha256": digest(path)} for path in inputs],
             "resolved_linker": {"path": str(self.linker), "sha256": digest(self.linker)},
             "link_command": link,
-            "link_trace": [str(path) for path in [runtime / entry, runtime / "crabc-dynamic-attach.o", runtime / "crti.o", self.workload, runtime / "libcrabc-builtins.a", runtime / "libc.so", runtime / "crtn.o"]],
+            "link_trace": [str(path) for path in [runtime / entry, runtime / "crabc-dynamic-attach.o", runtime / "crti.o", *workload_objects, runtime / "libcrabc-builtins.a", runtime / "libc.so", runtime / "crtn.o"]],
             "campaign_complete": False,
         })
         return receipt
@@ -645,6 +648,44 @@ class OwnedPosixProductEvidenceTests(unittest.TestCase):
                 self.assertEqual(identity["linkage"], linkage)
                 self.assertEqual(identity["workload_sha256"], digest(self.workload))
                 self.assertEqual(identity["executable_sha256"], digest(self.executable))
+
+    def test_multi_object_reader_binds_exact_ordered_dynamic_inputs(self) -> None:
+        second = self.root / "fixture.o"
+        second.write_bytes(b"fixture object")
+        workloads = (self.workload, second)
+        receipt = self.dynamic_receipt("pie", workloads=workloads)
+        with mock.patch.object(evidence, "_readelf", return_value=self.readelf("pie")):
+            identity = evidence.validate_multi_object_link(
+                self.dynamic, workloads, self.executable, receipt, "pie"
+            )
+            with self.assertRaisesRegex(evidence.ProductEvidenceError, "wrong input roster"):
+                evidence.validate_link(self.dynamic, self.workload, self.executable, receipt, "pie")
+            foreign = self.root / "foreign.o"
+            foreign.write_bytes(b"foreign object")
+            for changed in (
+                (second, self.workload), (self.workload,), (self.workload, foreign),
+                (self.workload, second, second),
+            ):
+                with self.subTest(workloads=changed), self.assertRaises(evidence.ProductEvidenceError):
+                    evidence.validate_multi_object_link(
+                        self.dynamic, changed, self.executable, receipt, "pie"
+                    )
+        self.assertEqual(identity["workload_sha256s"], [digest(path) for path in workloads])
+
+    def test_multi_object_reader_rejects_ambiguous_inputs_and_linkages(self) -> None:
+        second = self.root / "fixture.o"
+        second.write_bytes(b"fixture object")
+        receipt = self.dynamic_receipt("pie", workloads=(self.workload, second))
+        with mock.patch.object(evidence, "_readelf", return_value=self.readelf("pie")):
+            for workloads in ((), [self.workload, second], (self.workload, self.workload)):
+                with self.subTest(workloads=workloads), self.assertRaises(evidence.ProductEvidenceError):
+                    evidence.validate_multi_object_link(
+                        self.dynamic, workloads, self.executable, receipt, "pie"
+                    )
+            with self.assertRaisesRegex(evidence.ProductEvidenceError, "pie or non-pie"):
+                evidence.validate_multi_object_link(
+                    self.dynamic, (self.workload, second), self.executable, receipt, "static"
+                )
 
     def test_every_link_input_mode_is_derived_from_the_product_owner(self) -> None:
         for product, modes, linkage in (

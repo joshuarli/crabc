@@ -83,6 +83,31 @@ class FchdirOrdinaryImportTests(unittest.TestCase):
 
 
 class SelectionContractTests(unittest.TestCase):
+    def test_runtime_v1_getter_has_one_exact_shared_private_provider(self):
+        contract = selection.load_contract()
+        groups = [row for row in contract['owner_groups'] if row['id'] == 'runtime-v1-private-getter']
+        self.assertEqual(len(groups), 1)
+        group = groups[0]
+        self.assertEqual(group['selector'], 'explicit')
+        self.assertEqual(group['disposition'], 'private-provider')
+        self.assertEqual(group['owner'], 'crabc-rs-runtime-facade-v1')
+        self.assertEqual(group['family'], 'ldso.dynamic-runtime')
+        self.assertEqual(group['artifacts'], ['candidate-shared'])
+        self.assertEqual(group['members'], ['__crabc_runtime_v1'])
+        self.assertEqual(group['expected_type'], 'FUNC')
+        self.assertEqual(group['placement_metadata'], {
+            'candidate-shared': {
+                'type': 'FUNC', 'binding': 'GLOBAL', 'visibility': 'DEFAULT', 'size_bytes': 8,
+            },
+        })
+        self.assertNotIn('__crabc_runtime_v1', {
+            name for row in contract['structural_groups'] for name in row['members']
+        })
+        changed = copy.deepcopy(contract)
+        selected = next(row for row in changed['owner_groups'] if row['id'] == group['id'])
+        selected['placement_metadata']['candidate-shared']['size_bytes'] = 7
+        self.assertEqual(selection.validate_contract(changed)['owner_groups'], changed['owner_groups'])
+
     def test_initial_tid_operation_has_exact_source_abi_and_shared_only_endpoint(self):
         contract = selection.load_contract()
         protocol = next(row for row in contract['private_protocols']
@@ -253,6 +278,96 @@ class SelectionContractTests(unittest.TestCase):
         del contract['object_contracts'][0]['c_abi_type']
         with self.assertRaisesRegex(selection.SelectionError, 'fields'):
             selection.validate_contract(contract)
+
+
+class RuntimePrivateFacadeAttachmentTests(unittest.TestCase):
+    def companion(self):
+        reader = selection.runtime_facades
+        source = {'revision': 'a' * 40, 'content_sha256': 'b' * 64, 'clean': True}
+        product = {
+            'root': '.work/product',
+            'manifest': {'path': 'share/crabc/manifest.json', 'sha256': 'c' * 64, 'size': 1, 'mode': 0o644},
+            'libc': {'path': 'usr/lib/libc.so', 'sha256': 'd' * 64, 'size': 1, 'mode': 0o755},
+        }
+        receipt = {
+            'schema': reader.SCHEMA, 'capability': 'runtime.private-facades', 'family': 'ldso.dynamic-runtime',
+            'target': reader.TARGET, 'toolchain': 'nightly-2026-09-15', 'features': list(reader.FEATURES),
+            'normal_dependencies': list(reader.EXPECTED_PACKAGES), 'source': source, 'product': product,
+            'probes': {probe.example: {} for probe in reader.PROBES},
+            'products': {'dsos': {}, 'executables': {}},
+            'executions': [{} for _ in range(len(reader.PROBES) * 4)],
+            'family_qualified': False, 'promotion_ready': False, 'public_support': False,
+            'limits': list(reader.LIMITS),
+        }
+        return {
+            'status': 'runtime-v1-facades-observed-with-boundaries', 'reader': {},
+            'report_path': '.work/report.json', 'report': {}, 'source': source, 'product': product,
+            'measurement_reports': {}, 'receipt': receipt, 'limits': list(reader.LIMITS),
+        }
+
+    def accounting(self):
+        name = '__crabc_runtime_v1'
+        ident = identity(name)
+        key = selection.identity_key(ident)
+        record = {
+            'identity': ident,
+            'selection': {'disposition': 'private-provider', 'owner': selection.RUNTIME_PRIVATE_FACADE_OWNER,
+                          'group': selection.RUNTIME_PRIVATE_FACADE_GROUP},
+            'unresolved': [selection.RUNTIME_PRIVATE_FACADE_REQUIREMENT],
+        }
+        occurrences = []
+        for index, table in ((1, '.dynsym'), (2, '.symtab')):
+            occurrences.append({
+                'index': index, 'artifact_key': 'candidate-shared', 'table': table, 'role': 'definition',
+                'row': symbol(name, value='0000000000000800', size=8),
+                'accounting': {'disposition': 'private-provider', 'owner': selection.RUNTIME_PRIVATE_FACADE_OWNER,
+                               'scope': 'candidate-shared'},
+            })
+        return {
+            'identities': [record],
+            'placement_joins': [{
+                'identity': ident, 'artifact_key': 'candidate-shared',
+                'expected_metadata': {'type': 'FUNC', 'binding': 'GLOBAL', 'visibility': 'DEFAULT', 'size_bytes': 8},
+                'placement_observed': True, 'definition_count': 1,
+                'metadata_differences': [{'occurrence_index': 1, 'fields': []},
+                                         {'occurrence_index': 2, 'fields': []}],
+                'occurrence_indices': [1, 2],
+            }],
+            'occurrences': occurrences,
+            'blockers': [{'code': 'identity-unresolved', 'identity': ident,
+                          'reason': selection.RUNTIME_PRIVATE_FACADE_REQUIREMENT}],
+        }
+
+    def test_attaches_only_the_two_exact_shared_getter_rows(self):
+        accounting = self.accounting()
+        joins = selection.attach_runtime_private_facades(accounting, self.companion())
+        self.assertEqual(joins[0]['identity'], identity('__crabc_runtime_v1'))
+        self.assertEqual(joins[0]['shared_tables'], ['.dynsym', '.symtab'])
+        self.assertEqual(joins[0]['static_provider_count'], 0)
+        self.assertEqual(accounting['identities'][0]['unresolved'], [])
+        self.assertEqual(accounting['blockers'], [])
+
+    def test_missing_receipt_keeps_the_getter_requirement_open(self):
+        accounting = self.accounting()
+        self.assertEqual(selection.attach_runtime_private_facades(accounting, None), [])
+        self.assertEqual(accounting['identities'][0]['unresolved'], [selection.RUNTIME_PRIVATE_FACADE_REQUIREMENT])
+        self.assertEqual(len(accounting['blockers']), 1)
+
+    def test_rejects_wrong_shared_metadata_and_any_static_provider(self):
+        for mutate in (
+            lambda value: value['occurrences'][0]['row'].__setitem__('size_bytes', 7),
+            lambda value: value['occurrences'].append({
+                'index': 3, 'artifact_key': 'candidate-static', 'table': 'member', 'role': 'definition',
+                'row': symbol('__crabc_runtime_v1', size=8),
+                'accounting': {'disposition': 'private-provider', 'owner': selection.RUNTIME_PRIVATE_FACADE_OWNER,
+                               'scope': 'candidate-static'},
+            }),
+        ):
+            with self.subTest(mutate=mutate):
+                accounting = self.accounting()
+                mutate(accounting)
+                with self.assertRaises(selection.SelectionError):
+                    selection.attach_runtime_private_facades(accounting, self.companion())
 
 
 class PublicDataDeclarationRuntimeAttachmentTests(unittest.TestCase):
@@ -2492,6 +2607,18 @@ class PathAndCommandTests(unittest.TestCase):
             self.assertEqual(selection.main(arguments), 0)
         self.assertEqual(build.call_args.kwargs['loader_structural_owner_receipt_report'],
                          Path('.work/loader-structural/report.json'))
+
+    def test_cli_threads_runtime_private_facade_report(self):
+        arguments = ['build-report']
+        for flag in ('measurement-checkout', 'elf-facts', 'base-inventory', 'static-product', 'dynamic-product', 'static-preparation'):
+            arguments += ['--' + flag, '.work/not-present']
+        arguments += ['--output', '.work/output', '--runtime-private-facades-report',
+                      '.work/runtime-private-facades/report.json']
+        report = {'identities': [], 'occurrences': [], 'closure': {'complete': False, 'blockers': []}}
+        with mock.patch.object(selection, 'build_report', return_value=report) as build:
+            self.assertEqual(selection.main(arguments), 0)
+        self.assertEqual(build.call_args.kwargs['runtime_private_facades_report'],
+                         Path('.work/runtime-private-facades/report.json'))
 
     def test_cli_threads_public_data_declaration_runtime_report(self):
         arguments = ['build-report']
