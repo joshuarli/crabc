@@ -221,9 +221,9 @@ PY
         "$dynamic_product/bin/crabc-cc-dynamic" --dynamic-pie -std=c11 -D_GNU_SOURCE \
         -fno-builtin -fno-stack-protector -H -c "$SOURCE" -o "$candidate_object"
 
-    step=installed-musl-compile
-    run_recorded compile-oracle "$oracle_binary" "${candidate_env[@]}" "$ORACLE_CC" \
-        -std=c11 -D_GNU_SOURCE -fno-builtin -fno-stack-protector "$SOURCE" -o "$oracle_binary"
+    step=installed-musl-link
+    run_recorded link-oracle "$oracle_binary" "${candidate_env[@]}" "$ORACLE_CC" \
+        -static -fno-pie -no-pie "$candidate_object" -o "$oracle_binary"
 
     step=installed-musl-oracle
     run_recorded run-oracle - "${runtime_env[@]}" "$oracle_binary"

@@ -61,7 +61,7 @@ BOOTSTRAP_RUNS = (
     'run-dynamic-pie-direct', 'run-dynamic-non-pie-kernel', 'run-dynamic-non-pie-direct',
 )
 BOOTSTRAP_COMMANDS = (
-    'compile-candidate', 'compile-oracle', 'link-static', 'link-static-pie',
+    'compile-candidate', 'link-oracle', 'link-static', 'link-static-pie',
     'link-dynamic-pie', 'link-dynamic-non-pie', *BOOTSTRAP_RUNS,
 )
 
@@ -230,6 +230,7 @@ def _bootstrap_expected_commands(reader, static_product, dynamic_product):
     object_path = leaf / 'workload.o'
     oracle = leaf / 'oracle'
     output_paths = {
+        'oracle': oracle,
         'static': leaf / 'static', 'static-pie': leaf / 'static-pie',
         'dynamic-pie': leaf / 'dynamic-pie', 'dynamic-non-pie': leaf / 'dynamic-non-pie',
     }
@@ -243,8 +244,8 @@ def _bootstrap_expected_commands(reader, static_product, dynamic_product):
     commands = {
         'compile-candidate': [*env, dynamic_driver, '--dynamic-pie', '-std=c11', '-D_GNU_SOURCE',
             '-fno-builtin', '-fno-stack-protector', '-H', '-c', source, '-o', mounted_object],
-        'compile-oracle': [*env, BOOTSTRAP_ORACLE_COMPILER, '-std=c11', '-D_GNU_SOURCE',
-            '-fno-builtin', '-fno-stack-protector', source, '-o', mounted_oracle],
+        'link-oracle': [*env, BOOTSTRAP_ORACLE_COMPILER, '-static', '-fno-pie', '-no-pie',
+            mounted_object, '-o', mounted_oracle],
         'link-static': [*env, static_driver, '-static', '--link-receipt', 'static.receipt.json',
             mounted_object, '-o', reader.recorded(output_paths['static'])],
         'link-static-pie': [*env, static_driver, '-static-pie', '--link-receipt', 'static-pie.receipt.json',
@@ -391,7 +392,7 @@ def collect_bootstrap_primitives(leaf_root, *, static_product, dynamic_product):
                       outputs['dynamic-pie'] if label == 'link-dynamic-pie' else
                       outputs['dynamic-non-pie'] if label == 'link-dynamic-non-pie' else
                       reader.leaf / 'workload.o' if label == 'compile-candidate' else
-                      reader.leaf / 'oracle' if label == 'compile-oracle' else None)
+                      reader.leaf / 'oracle' if label == 'link-oracle' else None)
             command_records[label], raw_commands[label], _ = _bootstrap_command(
                 reader, label, commands[label], output,
             )

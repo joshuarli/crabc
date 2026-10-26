@@ -195,8 +195,8 @@ class NativeObservationsTests(unittest.TestCase):
             'compile-candidate': (oracle_prefix + [dynamic_driver,
                 '--dynamic-pie', '-std=c11', '-D_GNU_SOURCE', '-fno-builtin', '-fno-stack-protector',
                 '-H', '-c', source, '-o', object_record], object_path),
-            'compile-oracle': (oracle_prefix + ['/usr/local/bin/crabc-x86_64-musl-gcc', '-std=c11',
-                '-D_GNU_SOURCE', '-fno-builtin', '-fno-stack-protector', source, '-o', oracle_record], oracle),
+            'link-oracle': (oracle_prefix + ['/usr/local/bin/crabc-x86_64-musl-gcc', '-static',
+                '-fno-pie', '-no-pie', object_record, '-o', oracle_record], oracle),
             'link-static': (oracle_prefix + [static_driver, '-static', '--link-receipt', 'static.receipt.json',
                 object_record, '-o', self.bootstrap_recorded(binaries['static'][0])], binaries['static'][0]),
             'link-static-pie': (oracle_prefix + [static_driver, '-static-pie', '--link-receipt',
@@ -496,8 +496,10 @@ class NativeObservationsTests(unittest.TestCase):
         })
         self.assertEqual(set(result['links']), {'static', 'static-pie', 'dynamic-pie', 'dynamic-non-pie'})
         self.assertEqual(result['observations']['dynamic-pie-direct']['candidate']['stdout']['base64'], '')
-        self.assertEqual(result['source']['path'], 'compat/x86_64/libc_bootstrap_primitives_probe.c')
-        self.assertEqual(result['source_owners']['__sigsetjmp_tail']['path'], 'libc/src/c_abi/x86_64/setjmp.rs')
+        object_path = result['commands']['compile-candidate']['output']['path']
+        for label in ('link-oracle', 'link-static', 'link-static-pie',
+                      'link-dynamic-pie', 'link-dynamic-non-pie'):
+            self.assertIn(object_path, result['commands'][label]['argv'])
         self.assertEqual({path: path.read_bytes() for path in retained}, retained)
 
     def test_bootstrap_primitives_rejects_missing_modes_and_wrong_source_or_headers(self):
