@@ -62,6 +62,14 @@ Cargo's 256-unit default, so rustc would merge modules into shared members in
 an order that any codegen change reshuffles. A ceiling above the module count
 keeps one member per module; rustc never splits a module to reach it.
 
+The source-runtime receipt stores the exact Cargo argument vector. Its first
+argument is `/opt/cargo/bin/rustup`, the lexical manager frontend. That path
+resolves to `/usr/bin/rustup-init`; invoking the resolved bootstrap target
+selects installer mode and rejects `rustup run`. The producer supports release
+builds and libc-only rustc arguments. Retained math replay accepts only the
+development profile, the requested feature list, and no libc-only rustc
+arguments.
+
 The selected-native shadow target graph is:
 
 ```text

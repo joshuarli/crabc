@@ -5,9 +5,11 @@ from __future__ import annotations
 
 import importlib.util
 import argparse
+import json
 import tempfile
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 
@@ -346,12 +348,147 @@ class NativeStaticSourceRuntimeClosureTests(unittest.TestCase):
 
         identity = CLOSURE.pinned_rustup_frontend(frontend, target)
 
-        self.assertEqual(identity["argv0"], "rustup")
+        self.assertEqual(identity["argv0"], str(frontend))
         self.assertEqual(identity["frontend"], str(frontend))
         self.assertEqual(identity["resolved_target"], str(target))
 
         with self.assertRaisesRegex(CLOSURE.ClosureError, "lexical rustup frontend"):
             CLOSURE.pinned_rustup_frontend(target, target)
+
+    def test_retained_cargo_command_accepts_only_the_fixed_feature_invocation(self) -> None:
+        feature = CLOSURE.RETAINED_MATH_FEATURE
+        baseline = [
+            str(CLOSURE.PINNED_RUSTUP_FRONTEND), "run", CLOSURE.TOOLCHAIN, "cargo",
+            "-Zbuild-std=core,alloc,compiler_builtins", "rustc", "--locked", "--offline", "-vv",
+            "--message-format=json-render-diagnostics", "-p", "crabc-libc", "--lib", "--target",
+            CLOSURE.TARGET,
+        ]
+        accepted = [*baseline, "--features", feature]
+
+        class ReachedCargoFiles(Exception):
+            pass
+
+        with tempfile.TemporaryDirectory(dir=ROOT / ".work" / "tmp") as temporary:
+            graph = Path(temporary) / "graph"
+            graph.mkdir()
+            receipt_path = graph / "receipt.json"
+            with patch.object(CLOSURE, "physical_child", side_effect=ReachedCargoFiles):
+                for features, command in (("", baseline), (feature, accepted)):
+                    profile = CLOSURE.source_runtime_profile(features)
+                    receipt = {
+                        "cargo_command": command,
+                        "profile": profile["name"],
+                        "features": features,
+                        "cargo_profile": "dev",
+                        "cargo_profile_dev_debug": 0,
+                        "cargo_profile_dev_codegen_units": CLOSURE.DEV_CODEGEN_UNITS,
+                        "libc_rustc_arguments": [],
+                        "c_environment": {},
+                        "runtime_flags": list(CLOSURE.RUNTIME_FLAGS),
+                    }
+                    receipt_path.write_text(json.dumps(receipt), encoding="utf-8")
+
+                    with self.subTest(features=features):
+                        with self.assertRaises(ReachedCargoFiles):
+                            CLOSURE.replay_cargo_graph(graph, features)
+
+                changed_commands = (
+                    ["rustup", *accepted[1:]],
+                    [*accepted, "--release"],
+                    [*accepted[:-1], "x86-crypt"],
+                    [*accepted, "--", "--cfg", "receipt_probe"],
+                )
+                for changed in changed_commands:
+                    receipt["cargo_command"] = changed
+                    receipt_path.write_text(json.dumps(receipt), encoding="utf-8")
+                    with self.subTest(changed=changed):
+                        with self.assertRaisesRegex(CLOSURE.ClosureError, "Cargo argv differs"):
+                            CLOSURE.replay_cargo_graph(graph, feature)
+
+                del receipt["cargo_command"]
+                receipt_path.write_text(json.dumps(receipt), encoding="utf-8")
+                with self.assertRaisesRegex(CLOSURE.ClosureError, "Cargo argv differs"):
+                    CLOSURE.replay_cargo_graph(graph, feature)
+
+    def test_build_records_the_original_cargo_argv_after_runtime_invocations(self) -> None:
+        with tempfile.TemporaryDirectory(dir=ROOT / ".work" / "tmp") as temporary:
+            fixture = Path(temporary)
+            repository = fixture / "repository"
+            work_root = repository / ".work" / "x86_64"
+            project_vendor = work_root / "cargo" / "native-static-source-runtime-vendor"
+            project_vendor.mkdir(parents=True)
+            libc_source = repository / "libc" / "src" / "lib.rs"
+            libc_source.parent.mkdir(parents=True)
+            libc_source.write_text("#![no_std]\n", encoding="utf-8")
+
+            rustup_home = fixture / "opt" / "rustup"
+            sysroot = rustup_home / "toolchains" / f"{CLOSURE.TOOLCHAIN}-x86_64-unknown-linux-musl"
+            rust_source = sysroot / "lib" / "rustlib" / "src" / "rust" / "library"
+            for relative in CLOSURE.RUNTIME_SOURCES.values():
+                source = rust_source / relative
+                source.parent.mkdir(parents=True, exist_ok=True)
+                source.write_text("#![no_std]\n", encoding="utf-8")
+
+            artifacts = {}
+            artifact_root = fixture / "artifacts"
+            artifact_root.mkdir()
+            for name in (*CLOSURE.RUNTIME_SOURCES, "c"):
+                artifact = artifact_root / (f"lib{name}.a" if name == "c" else f"lib{name}.rlib")
+                artifact.write_bytes(name.encode("ascii"))
+                artifacts[name] = artifact
+
+            expected = [
+                str(CLOSURE.PINNED_RUSTUP_FRONTEND), "run", CLOSURE.TOOLCHAIN, "cargo",
+                "-Zbuild-std=core,alloc,compiler_builtins", "rustc", "--locked", "--offline", "-vv",
+                "--message-format=json-render-diagnostics", "-p", "crabc-libc", "--lib", "--target",
+                CLOSURE.TARGET, "--release", "--features", CLOSURE.RETAINED_MATH_FEATURE,
+                "--", "--cfg", "receipt_probe",
+            ]
+            captured = {}
+
+            def retain_streams(command, _environment, stdout_path, stderr_path, _description):
+                captured["run_command"] = list(command)
+                stdout_path.write_text("{}\n", encoding="utf-8")
+                stderr_path.write_text("", encoding="utf-8")
+
+            def rustc_invocation(_commands, name):
+                return ["/opt/rustup/bin/rustc", "--crate-name", name]
+
+            arguments = SimpleNamespace(
+                features=CLOSURE.RETAINED_MATH_FEATURE,
+                relocation_model="static",
+                rustc_arguments=["--cfg", "receipt_probe"],
+                release=True,
+                work=Path("build"),
+            )
+            with (
+                patch.object(CLOSURE, "ROOT", repository),
+                patch.object(CLOSURE, "PINNED_RUSTUP_HOME", rustup_home),
+                patch.object(CLOSURE, "pinned_environment", return_value=(
+                    {"argv0": str(CLOSURE.PINNED_RUSTUP_FRONTEND)}, {},
+                )),
+                patch.object(CLOSURE.subprocess, "run", return_value=SimpleNamespace(
+                    returncode=0, stdout=f"{sysroot}\n", stderr="",
+                )),
+                patch.object(CLOSURE, "private_vendor", return_value={"private_vendor": True}),
+                patch.object(CLOSURE, "run", side_effect=retain_streams),
+                patch.object(CLOSURE, "cargo_records", return_value=[]),
+                patch.object(CLOSURE, "emitted_artifacts", return_value={}),
+                patch.object(CLOSURE, "artifact_for_source", side_effect=lambda _records, _source, name, _target, _suffix: artifacts[name]),
+                patch.object(CLOSURE, "cargo_commands", return_value=[]),
+                patch.object(CLOSURE, "invocation_for", side_effect=rustc_invocation),
+                patch.object(CLOSURE, "command_record", return_value={}),
+                patch.object(CLOSURE, "required_tool", return_value=Path("/tool")),
+                patch.object(CLOSURE, "staticlib_closure", return_value={}),
+            ):
+                CLOSURE.build(arguments)
+
+            receipt = json.loads((work_root / "build" / "receipt.json").read_text(encoding="utf-8"))
+            self.assertEqual(captured["run_command"], expected)
+            self.assertEqual(receipt["cargo_command"], expected)
+            self.assertEqual(receipt["cargo_profile"], "release")
+            self.assertEqual(receipt["features"], CLOSURE.RETAINED_MATH_FEATURE)
+            self.assertEqual(receipt["libc_rustc_arguments"], ["--cfg", "receipt_probe"])
 
     def test_project_vendor_requires_exact_versioned_package_directory(self) -> None:
         work = ROOT / ".work"

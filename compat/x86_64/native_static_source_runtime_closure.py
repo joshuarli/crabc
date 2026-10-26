@@ -954,13 +954,22 @@ def command_record(command: Sequence[str], target: pathlib.Path, expected_runtim
 
 
 def retained_cargo_command(features: str) -> list[str]:
+    return source_runtime_cargo_command(str(PINNED_RUSTUP_FRONTEND), features)
+
+
+def source_runtime_cargo_command(rustup_argv0: str, features: str, *, release: bool = False,
+                                 libc_rustc_arguments: Sequence[str] = ()) -> list[str]:
     command = [
-        "rustup", "run", TOOLCHAIN, "cargo", "-Zbuild-std=core,alloc,compiler_builtins", "rustc",
+        rustup_argv0, "run", TOOLCHAIN, "cargo", "-Zbuild-std=core,alloc,compiler_builtins", "rustc",
         "--locked", "--offline", "-vv", "--message-format=json-render-diagnostics", "-p", "crabc-libc",
         "--lib", "--target", TARGET,
     ]
+    if release:
+        command.append("--release")
     if features:
         command.extend(("--features", features))
+    if libc_rustc_arguments:
+        command.extend(("--", *libc_rustc_arguments))
     return command
 
 
@@ -1106,7 +1115,7 @@ def pinned_rustup_frontend(frontend: pathlib.Path, expected_target: pathlib.Path
     if resolved != target:
         fail(f"pinned Rust lexical frontend resolves to an unexpected target: {resolved}")
     return {
-        "argv0": frontend.name,
+        "argv0": str(frontend),
         "frontend": str(frontend),
         "resolved_target": str(target),
         "resolved_target_sha256": digest(target),
@@ -1378,19 +1387,12 @@ def build(arguments: argparse.Namespace, *, c_environment: dict[str, str] | None
         "CARGO_ENCODED_RUSTFLAGS": "\x1f".join(flags),
         "TMPDIR": str(temporary),
     }
-    command = [
-        rustup["argv0"], "run", TOOLCHAIN, "cargo", "-Zbuild-std=core,alloc,compiler_builtins", "rustc",
-        "--locked", "--offline", "-vv", "--message-format=json-render-diagnostics", "-p", "crabc-libc", "--lib",
-        "--target", TARGET,
-    ]
-    if arguments.release:
-        command.append("--release")
-    if arguments.features:
-        command.extend(("--features", arguments.features))
-    if libc_arguments:
-        command.extend(("--", *libc_arguments))
+    cargo_command = source_runtime_cargo_command(
+        rustup["argv0"], arguments.features, release=arguments.release,
+        libc_rustc_arguments=libc_arguments,
+    )
     stdout_path, stderr_path = work / "cargo.stdout.jsonl", work / "cargo.stderr.log"
-    run(command, environment, stdout_path, stderr_path, "source-built native static runtime Cargo graph")
+    run(cargo_command, environment, stdout_path, stderr_path, "source-built native static runtime Cargo graph")
     records = cargo_records(stdout_path)
     emitted = emitted_artifacts(records, target)
     runtime_sources = {
@@ -1407,9 +1409,9 @@ def build(arguments: argparse.Namespace, *, c_environment: dict[str, str] | None
     expected_runtime_sources = dict(runtime_sources)
     source_runtime_rustc = {}
     for name, source in runtime_sources.items():
-        command = invocation_for(commands, name)
+        rustc_command = invocation_for(commands, name)
         source_runtime_rustc[name] = command_record(
-            command, target, {}, emitted, name, source, flags=flags,
+            rustc_command, target, {}, emitted, name, source, flags=flags,
         )
     libc_command = invocation_for(commands, "c")
     libc_externs = profile["libc_externs"]
@@ -1447,7 +1449,7 @@ def build(arguments: argparse.Namespace, *, c_environment: dict[str, str] | None
         "toolchain": TOOLCHAIN,
         "pinned_rustup": rustup,
         "immediate_abort_semantics": "development-only Rust panics abort immediately instead of using static_c_abi.rs's nonreturning spin panic handler",
-        "cargo_command": command,
+        "cargo_command": cargo_command,
         "cargo_profile_dev_debug": 0,
         "cargo_profile_dev_codegen_units": DEV_CODEGEN_UNITS,
         "c_environment": c_environment or {},
