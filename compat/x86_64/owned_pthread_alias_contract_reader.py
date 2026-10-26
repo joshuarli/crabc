@@ -24,7 +24,6 @@ import stat
 import subprocess
 import sys
 from typing import Any, NamedTuple
-import crabc_cc_static as static_driver
 import owned_dynamic_qualification as dynamic_materialization
 import owned_posix_product_evidence as product_evidence
 
@@ -1341,7 +1340,7 @@ def _validate_static_link_receipt(
         item = receipt[kind]
         sidecar_path = receipt_path.with_suffix(f".{kind}")
         expected_name = sidecar_path.name
-        expected_path = static_driver.receipt_file_path(sidecar_path, receipt_path)
+        expected_path = expected_name
         require(isinstance(item, dict) and set(item) == {"path", "sha256"}
                 and item["path"] == expected_path
                 and item["sha256"] == artifacts[expected_name]["sha256"],
