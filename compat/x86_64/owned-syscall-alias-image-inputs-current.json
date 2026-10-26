@@ -51,8 +51,8 @@
     "/opt/cargo/bin/rustup": {
       "mode": 493,
       "path": "/usr/bin/rustup-init",
-      "sha256": "cff2994a6ad07692c9b2551f7211dc320de8bef89b280ab1185e373651e29834",
-      "size": 5740848
+      "sha256": "2148f284cdc49cc4f9cd66a5d77c8170ca93d292aec688900596c52d4c19a94e",
+      "size": 5626744
     },
     "/opt/musl-1.2.6/lib/libc.a": {
       "mode": 420,
