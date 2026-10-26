@@ -61,11 +61,20 @@ The next reader group is provisional: `11c4bf8fe`, `152f7d6cf` and
 `47d105a4f` wire the four installed helper modes and existing AIO producer
 into the ordinary companion set. Their focused tests pass; neither new
 producer has run against current products. `ee3251d46` extends the existing
-CRT component to v5 with the exact nine additional source roles. Its four
-owner regressions pass, but its dedicated adapter suite has four retained
-failures at the selector's obsolete twelve-name invariant. That adapter
-correction is assigned to the sole selector writer. RuntimeV1 and declaration
-boundary owners remain under review before integration. The prepared clean
+CRT component to v5 with the exact nine additional source roles. `0f78f327d`
+corrects its adapter without clearing unrelated provider requirements; the
+dedicated suite now passes eleven tests with three existing skips. The four
+earlier failures remain retained. RuntimeV1 v2 admission and wrapper wiring
+are integrated through `5148b35a6`; `61705f24d` compares actual getter table
+definitions without pinning compiler code size and documents the required
+pinned-image reader context. `1932698fd` repairs an integration regression
+in the shared receipt helpers: existing single-object callers retain their
+`Path` interface, while the new API accepts an exact ordered object tuple.
+Eight affected modules pass 170 tests with one skip; the original failing
+pthread receipt module also passes all fourteen tests on integrated main.
+Declaration boundary collection remains under review: its owner is correcting
+an overwritten inventory variable and portable header-path reconstruction.
+The prepared clean
 `.work/wt/abi-owner-proof` contains pinned inputs only; do not produce target
 artifacts until this group is integrated and its source revision is frozen.
 
