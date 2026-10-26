@@ -32,26 +32,30 @@ cache, and mapping. Full fork coordination belongs to the pthread/process
 transaction, not this module. `localtime`/`gmtime`/`asctime` retain source-shaped
 shared-result overwrite behavior; their `_r` variants use caller storage.
 
-## Explicit pinned-oracle corrections
+## Pinned native TZif differences
 
-The pinned reader has independently reproduced valid-file defects. Acceptance
-for these cases follows [RFC 9636 §§3.1–3.3](https://www.rfc-editor.org/rfc/rfc9636.html#section-3)
-and the [POSIX `tzset` global-offset contract](https://pubs.opengroup.org/onlinepubs/9699919799/functions/tzset.html),
-not those defective results:
+The native x86-64 oracle uses snapshot
+`7813e9119eb5fe681b6750b8a033a0490bca0941`. The owned implementation remains
+source-derived from musl 1.2.6. Acceptance follows [RFC 9636 §§3.1–3.3](https://www.rfc-editor.org/rfc/rfc9636.html#section-3)
+and the [POSIX `tzset` global-offset contract](https://pubs.opengroup.org/onlinepubs/9699919799/functions/tzset.html).
+The probe's `check` mode still requires the specified output in every candidate
+mode. Its `observe` mode records the snapshot's exact output:
 
-| Case | Pinned musl observation | Owned invariant |
+| Probe row | Snapshot output | RFC/POSIX output |
 | --- | --- | --- |
-| NUL-version v1, fixed UTC+1 | Offset zero and empty name | Offset +3600, name ONE, timezone -3600 |
-| NUL-version v1, fixed UTC-5 | Offset zero and empty name | Offset -18000, name ONE, timezone +18000 |
-| No transitions, nonempty `XXX-3` footer | Uses type-zero offset 0 | Uses footer offset +10800 |
-| Before first transition, type zero is DST | Guesses lowest non-DST type | Uses type zero, including one-transition files |
-| Empty footer, fixed UTC+1 | Leaves timezone zero | Uses signed type-derived timezone -3600 |
+| NUL-version v1, fixed UTC+1 | Offset +3600, timezone 4294963696, name ONE | Offset +3600, timezone -3600, name ONE |
+| NUL-version v1, fixed UTC-5 | Offset -18000, timezone +18000, name ONE | Offset -18000, timezone +18000, name ONE |
+| No transitions, nonempty `XXX-3` footer | Offset 0, timezone -10800, name ONE | Offset +10800, timezone -10800, name XXX |
+| Before first transition, type zero is DST, v2 and v3 | Offset +3600, timezone -3600, standard, name TWO | Offset +7200, timezone -3600, DST, name ONE |
+| Empty footer, fixed UTC+1 | Offset +3600, timezone 0, name ONE | Offset +3600, timezone -3600, name ONE |
 
-The signed-global defect can also be isolated using musl's nonstandard ASCII
-`'1'` header: a +3600 type produces `timezone=4294963696`. The owned parser
-accepts the specified NUL/2/3/4 version bytes and casts the signed offset before
-negating it. The ordinary v2/v3 differential matrix excludes none of its
-existing observations to accommodate these corrections.
+`zi_read32` returns `uint32_t`, so negating a positive offset wraps before
+assignment to `long __timezone`. `scan_trans` returns type zero for a file with
+no transitions, bypassing a nonempty footer. Before the first transition it
+chooses a non-DST type instead of type zero. An empty footer reaches the POSIX
+parser, which sets `__timezone` to zero instead of using type zero. The
+reader still requires candidate stdout to equal `TZIF_SPECIFICATION_STDOUT`
+byte for byte.
 
 Mapped counts, section boundaries, type indices, and abbreviation termination
 are checked before access. Invalid ranges fall back to UTC. Leap records are

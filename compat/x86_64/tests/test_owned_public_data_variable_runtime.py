@@ -946,8 +946,8 @@ class PublicDataVariableRuntimePublicReplayTests(unittest.TestCase):
             b'6 offset=3600 timezone=-3600 dst=0 name=ONE\n'
         )
         oracle_stdout = (
-            b'1 offset=0 timezone=0 dst=0 name=\n'
-            b'2 offset=0 timezone=0 dst=0 name=\n'
+            b'1 offset=3600 timezone=4294963696 dst=0 name=ONE\n'
+            b'2 offset=-18000 timezone=18000 dst=0 name=ONE\n'
             b'3 offset=0 timezone=-10800 dst=0 name=ONE\n'
             b'4 offset=3600 timezone=-3600 dst=0 name=TWO\n'
             b'5 offset=3600 timezone=-3600 dst=0 name=TWO\n'

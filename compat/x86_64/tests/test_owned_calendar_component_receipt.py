@@ -485,6 +485,24 @@ class OwnedCalendarComponentReceiptTests(unittest.TestCase):
         self.assertNotIn("oracle-tzif-check", plan)
         self.assertIn("oracle-tzif-observe", plan)
 
+    def test_current_native_tzif_observation_is_exact_and_candidate_stays_specified(self) -> None:
+        observation = (
+            b"1 offset=3600 timezone=4294963696 dst=0 name=ONE\n"
+            b"2 offset=-18000 timezone=18000 dst=0 name=ONE\n"
+            b"3 offset=0 timezone=-10800 dst=0 name=ONE\n"
+            b"4 offset=3600 timezone=-3600 dst=0 name=TWO\n"
+            b"5 offset=3600 timezone=-3600 dst=0 name=TWO\n"
+            b"6 offset=3600 timezone=0 dst=0 name=ONE\n"
+        )
+        self.assertEqual(
+            self.module.classify_tzif_streams(self.module.TZIF_SPECIFICATION_STDOUT, observation),
+            "candidate-matches-specification",
+        )
+        with self.assertRaisesRegex(
+            self.module.CalendarReceiptError, "pinned-musl TZif defect transcript differs",
+        ):
+            self.module.classify_tzif_streams(self.module.TZIF_SPECIFICATION_STDOUT, observation[:-1])
+
     def test_guard_plan_proves_all_capability_sets_without_busybox_setpriv(self) -> None:
         plan = self.module.command_plan(self.root, self.work, self.static, self.dynamic, self.tools)
         command = plan["candidate-static-et-exec-adjustment-guards"]

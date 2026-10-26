@@ -3,8 +3,8 @@
 **Status: active 2026-10-26.** The owner explicitly requested unattended
 execution until the campaign is complete. Continue accepted slices through
 H0, qualification, performance, promotion and closeout; do not stop at
-intermediate checkpoints. The remaining ordinary ABI producers pass except stdio and the refreshed
-TZif oracle transcript. Stdio is repaired and accepted at `cefed90c8`: fresh
+intermediate checkpoints. The remaining ordinary ABI producers pass except
+stdio and the refreshed TZif oracle transcript. Stdio is repaired and accepted at `cefed90c8`: fresh
 static/dynamic products, six runtime modes, ten header profiles and normal
 reader all pass. Fixed-memory overflow now reports `ENOSPC`/stream error,
 retains the fitting prefix and permits recovery; full write-only buffers retain
@@ -12,11 +12,17 @@ the final data byte. Cookie short writes are unchanged. The original fixture
 encoded obsolete oracle behavior; same-object oracle/candidate discrimination
 proved the defect before repair. The ABI ratchet oracle origin is refreshed
 after checking all 1,650 public identities and ABI fields are unchanged; its
-historical candidate floor is preserved. The current work is the source-bound
-TZif transcript correction and six remaining feature-alias proofs, then fresh
+historical candidate floor is preserved. The TZif oracle transcript now matches the exact snapshot observation while
+candidate output still must equal the RFC/POSIX specification; all 44 focused
+calendar/public-data tests pass in the pinned image. The current work is the
+six remaining feature-alias proofs and reopened admission repairs, then fresh
 combined collection and canonical replay.
-The prior POSIX `math/pow` and C-ABI admission holds are awaiting an explicit
-owner decision to reopen. Denied allocator actions remain parked. The C
+The owner explicitly reopened both prior POSIX `math/pow` and C-ABI
+admission decisions, superseding the two 2026-10-25 holds below. The pow repair
+must bind the exact finite oracle diagnostics and preserve every other raw
+result. C-ABI keeps all three allocation/interposition/DSO runners and all
+public workloads, and binds them to the cohort's actual selected backend;
+native allocator identity checks remain required for native profiles. Denied allocator actions remain parked. The C
 allocator stays selected until its independent promotion proof passes. Public
 x86 support remains false: 180 of 223 capabilities, nine of 26 families,
 zero of eight gates.
