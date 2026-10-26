@@ -145,6 +145,52 @@ class AbiDifferentialEvidenceTests(unittest.TestCase):
         self.assertEqual(environment, {})
         self.assertIn("compiler_helper_installed_links", evidence.DIRECTORY_COMPANIONS)
 
+    def test_runtime_private_facades_producer_uses_selected_dynamic_product(self) -> None:
+        producer = next(row for row in evidence.PRODUCERS if row.keyword == "runtime_private_facades_report")
+        output = self.work / "runtime-private-facades"
+        argv, environment = producer.command(self.cohort(), {}, output)
+        self.assertEqual(argv, ["python3", "-B", "compat/x86_64/runtime_private_facades.py",
+                                "--dynamic-sysroot", str(self.work / "dynamic")])
+        self.assertEqual(environment, {"TMPDIR": str(output)})
+        child = output / "runtime-private-facades.fixture"
+        child.mkdir()
+        report = child / "report.json"
+        report.write_text("runtime facade receipt")
+        self.assertEqual(producer.report(output), report)
+
+    def test_runtime_private_facades_report_is_sealed_and_forwarded(self) -> None:
+        import native_abi_ratchet
+        import native_abi_selection
+
+        work = self.work / "runtime-private-facades"
+        work.mkdir()
+        report = work / "report.json"
+        report.write_text("runtime facade receipt")
+        relative = report.relative_to(evidence.ROOT).as_posix()
+        self.record["selection_companions"] = {
+            "runtime_private_facades_report": {"path": relative, "sha256": evidence._sha256(report)},
+        }
+        loaded = evidence.load(self.write())
+        self.assertEqual(loaded.selection_arguments()["runtime_private_facades_report"], report)
+
+        output = evidence.OUTPUT_PARENT / f"assemble-runtime-facades-test-{self.work.name}"
+        self.addCleanup(lambda: __import__("shutil").rmtree(output, ignore_errors=True))
+        arguments = argparse.Namespace(**self.cohort().__dict__, output=output, companions=None,
+                                       selection_companion=[f"runtime_private_facades_report={report}"])
+
+        def build_report(*, output, **kwargs):
+            self.assertEqual(kwargs["runtime_private_facades_report"], report)
+            output.mkdir()
+            (output / "report.json").write_text("selection")
+
+        with mock.patch.object(native_abi_ratchet, "check", return_value=self.reports["native_abi_ratchet"]), \
+             mock.patch.object(native_abi_selection, "build_report", side_effect=build_report):
+            receipt = evidence.assemble(arguments)
+        entry = json.loads(receipt.read_text())["selection_companions"]["runtime_private_facades_report"]
+        self.assertEqual(entry, {"path": relative, "sha256": evidence._sha256(report)})
+        assembled = evidence.load(receipt)
+        self.assertEqual(assembled.selection_arguments()["runtime_private_facades_report"], report)
+
     def test_owned_aio_producer_uses_the_selected_pair_and_boundary(self) -> None:
         producer = next(row for row in evidence.PRODUCERS if row.keyword == "owned_aio_report")
         output = self.work / "owned-aio"

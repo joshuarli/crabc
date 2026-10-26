@@ -76,6 +76,7 @@ SELECTION_COMPANIONS = (
     "compiler_helper_aggregate_report",
     "compiler_helper_installed_links",
     "loader_runtime_registry_report",
+    "runtime_private_facades_report",
     "pthread_alias_contract_report",
     "prepared_worker_tls_report",
     "errno_storage_lifecycle_report",
@@ -546,6 +547,11 @@ PRODUCERS = (
                           "--base-inventory", str(c.native_abi_inventory), "--elf-report", str(c.native_abi_elf_facts),
                           *_p(c), "--output", str(o)], {}),
         _in),
+    CompanionProducer(
+        "runtime_private_facades_report",
+        lambda c, r, o: (["python3", "-B", "compat/x86_64/runtime_private_facades.py",
+                          "--dynamic-sysroot", str(c.dynamic_product)], _tmpdir_env(o)),
+        _only_child_report),
     CompanionProducer(
         "pthread_alias_contract_report",
         lambda c, r, o: (["bash", "compat/x86_64/run_owned_pthread_alias_contract.sh", "--receipt-dir", str(o),
