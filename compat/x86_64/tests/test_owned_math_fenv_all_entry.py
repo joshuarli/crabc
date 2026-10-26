@@ -7,6 +7,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import shlex
 import shutil
 import subprocess
 import sys
@@ -279,6 +280,173 @@ def binary80_feature_fixture(work: Path, *, changed_baseline: bool = False,
     return work
 
 
+def native_source_runtime_records(work: Path) -> tuple[Path, Path]:
+    graph = work / "source-runtime-feature"
+    receipt_path = graph / "receipt.json"
+    receipt_data = json.loads(receipt_path.read_text(encoding="utf-8"))
+    target = graph / "cargo-target"
+    target_dir = target / "x86_64-unknown-linux-musl" / "debug" / "deps"
+    target_dir.mkdir(parents=True)
+    rust_source = Path("/opt/rustup/toolchains") / f"{receipt.source_runtime.TOOLCHAIN}-x86_64-unknown-linux-musl" / "lib/rustlib/src/rust/library"
+    toolchain_root = Path("/opt/rustup/toolchains") / f"{receipt.source_runtime.TOOLCHAIN}-x86_64-unknown-linux-musl"
+    archive_tool = receipt.source_runtime.required_tool(toolchain_root, "llvm-ar")
+    undefined_tool = receipt.source_runtime.required_tool(toolchain_root, "llvm-nm")
+
+    def identity(path: Path) -> dict[str, object]:
+        data = path.read_bytes()
+        return {"path": str(path), "sha256": hashlib.sha256(data).hexdigest(), "size": len(data)}
+
+    runtime_objects: dict[str, Path] = {}
+    artifacts: dict[str, tuple[Path, Path]] = {}
+    cargo_records = []
+    for name, relative in receipt.source_runtime.RUNTIME_SOURCES.items():
+        source = rust_source / relative
+        rlib = target_dir / f"lib{name}-fixture.rlib"
+        rmeta = target_dir / f"lib{name}-fixture.rmeta"
+        source_file = target_dir / f"{name}-fixture.c"
+        object_file = target_dir / f"{name}.runtime.o"
+        source_file.write_text(f"static int {name}_fixture(void) {{ return 1; }}\n", encoding="utf-8")
+        compiled = subprocess.run(["/usr/bin/cc", "-c", str(source_file), "-o", str(object_file)],
+                                  capture_output=True, text=True, check=False)
+        if compiled.returncode:
+            raise AssertionError(compiled.stderr)
+        packed = subprocess.run([str(archive_tool), "rcs", str(rlib), str(object_file)],
+                                capture_output=True, text=True, check=False)
+        if packed.returncode:
+            raise AssertionError(packed.stderr)
+        runtime_objects[name] = object_file
+        rmeta.write_bytes(f"{name} rust metadata artifact".encode("ascii"))
+        artifacts[name] = (rlib, rmeta)
+        crate_features = {
+            "core": [],
+            "compiler_builtins": ["arch", "compiler-builtins", "default", "unmangled-names"],
+            "alloc": [],
+        }[name]
+        cargo_records.append({
+            "reason": "compiler-artifact",
+            "package_id": f"path+file:///fixture/{name}#0.0.0",
+            "target": {
+                "name": name, "src_path": str(source), "kind": ["lib"],
+                "crate_types": ["lib"], "edition": "2021", "test": False,
+            },
+            "features": crate_features,
+            "profile": {
+                "opt_level": "2", "debuginfo": 0, "debug_assertions": True,
+                "overflow_checks": False, "test": False,
+            },
+            "filenames": [str(rlib), str(rmeta)],
+        })
+    archive = graph / "cargo-target" / "x86_64-unknown-linux-musl" / "debug" / "libc.a"
+    copied_archive = work / "feature-target/x86_64-unknown-linux-musl/debug/libc.a"
+    for candidate in (archive, copied_archive):
+        packed = subprocess.run(
+            [str(archive_tool), "rcs", str(candidate), str(runtime_objects["core"]),
+             str(runtime_objects["compiler_builtins"])],
+            capture_output=True, text=True, check=False,
+        )
+        if packed.returncode:
+            raise AssertionError(packed.stderr)
+    cargo_records.append({
+        "reason": "compiler-artifact",
+        "package_id": "path+file:///fixture/crabc-libc#0.3.0",
+        "target": {
+            "name": "c", "src_path": str(ROOT / "libc/src/lib.rs"), "kind": ["staticlib"],
+            "crate_types": ["staticlib"], "edition": "2021", "test": False,
+        },
+        "features": ["default", "x86-math-long-double-completion"],
+        "profile": {
+            "opt_level": "2", "debuginfo": 0, "debug_assertions": True,
+            "overflow_checks": False, "test": False,
+        },
+        "filenames": [str(archive)],
+    })
+    stdout = graph / "cargo.stdout.jsonl"
+    stdout.write_text("".join(json.dumps(record, sort_keys=True) + "\n" for record in cargo_records), encoding="utf-8")
+
+    def rustc_command(crate: str, source: Path, extern_names: tuple[str, ...]) -> list[str]:
+        command = [
+            str(Path("/opt/rustup/toolchains") / f"{receipt.source_runtime.TOOLCHAIN}-x86_64-unknown-linux-musl" / "bin/rustc"),
+            "--crate-name", crate, "--edition=2021", str(source),
+            "--crate-type", "lib", "--target", receipt.source_runtime.TARGET,
+            "-Copt-level=2", "-Cstrip=debuginfo", "-Cdebug-assertions=on",
+            "-Coverflow-checks=off", "-Ccodegen-units=65536",
+            *receipt.source_runtime.RUNTIME_FLAGS,
+        ]
+        crate_features = {
+            "core": [],
+            "compiler_builtins": ["arch", "compiler-builtins", "default", "unmangled-names"],
+            "alloc": [],
+            "c": ["default", "x86-math-long-double-completion"],
+        }[crate]
+        for feature in crate_features:
+            command.extend(("--cfg", f'feature="{feature}"'))
+        for name in extern_names:
+            modifiers = ("priv",) if crate == "alloc" and name == "compiler_builtins" else (
+                ("noprelude", "nounused") if crate == "c" else ()
+            )
+            prefix = "" if not modifiers else f"{','.join(modifiers)}:"
+            for path in artifacts[name]:
+                command.extend(("--extern", f"{prefix}{name}={path}"))
+        return command
+
+    commands = [
+        rustc_command("core", rust_source / receipt.source_runtime.RUNTIME_SOURCES["core"], ()),
+        rustc_command("compiler_builtins", rust_source / receipt.source_runtime.RUNTIME_SOURCES["compiler_builtins"], ("core",)),
+        rustc_command("alloc", rust_source / receipt.source_runtime.RUNTIME_SOURCES["alloc"], ("compiler_builtins", "core")),
+        rustc_command("c", ROOT / "libc/src/lib.rs", ("alloc", "compiler_builtins", "core")),
+    ]
+    for command in commands:
+        command[command.index("--crate-type") + 1] = "staticlib" if command[command.index("--crate-name") + 1] == "c" else "lib"
+    stderr = graph / "cargo.stderr.log"
+    stderr.write_text("".join(
+        f"     Running `{shlex.join(command)}`\n   Compiling fixture\n" for command in commands
+    ) + "    Finished `dev` profile [optimized + debuginfo] target(s) in 1.00s\n", encoding="utf-8")
+
+    parsed = receipt.source_runtime.cargo_records(stdout)
+    emitted = receipt.source_runtime.emitted_artifacts(parsed, target)
+    runtime_sources = {name: rust_source / relative for name, relative in receipt.source_runtime.RUNTIME_SOURCES.items()}
+    source_commands = receipt.source_runtime.cargo_commands(stderr)
+    source_runtime_rustc = {
+        name: receipt.source_runtime.command_record(
+            receipt.source_runtime.invocation_for(source_commands, name), target, {}, emitted, name, source,
+            flags=receipt.source_runtime.RUNTIME_FLAGS,
+        )
+        for name, source in runtime_sources.items()
+    }
+    libc_command = receipt.source_runtime.invocation_for(source_commands, "c")
+    libc_externs = receipt.source_runtime.derived_libc_externs(libc_command, "fixture Cargo crabc-libc rustc")
+    primary = receipt.source_runtime.command_record(
+        libc_command, target, runtime_sources, emitted, "crabc-libc", ROOT / "libc/src/lib.rs",
+        extern_matrix=libc_externs, flags=receipt.source_runtime.RUNTIME_FLAGS,
+    )
+    receipt_data["cargo_stdout"] = identity(stdout)
+    receipt_data["cargo_stderr"] = identity(stderr)
+    receipt_data["cargo_command"] = receipt.source_runtime.retained_cargo_command(receipt.LONG_DOUBLE_FEATURE)
+    receipt_data["source_runtime_artifacts"] = {
+        name: identity(paths[0]) for name, paths in artifacts.items()
+    }
+    receipt_data["source_runtime_rustc"] = source_runtime_rustc
+    receipt_data["primary_rustc"] = primary
+    receipt_data["pinned_rustup"] = receipt.source_runtime.pinned_rustup_frontend(
+        receipt.source_runtime.PINNED_RUSTUP_FRONTEND, receipt.source_runtime.PINNED_RUSTUP_TARGET,
+    )
+    receipt_data["vendor"] = {
+        "project_vendor_root": str(ROOT / ".work/x86_64/cargo/native-static-source-runtime-vendor"),
+        "private_vendor_root": str(graph / "cargo-vendor"),
+        "packages": [{"name": "core", "version": "1.0.0", "package_checksum": "a" * 64}],
+    }
+    receipt_data["rust_source"] = str(rust_source)
+    closure = receipt.source_runtime.staticlib_closure(
+        archive_tool, undefined_tool, archive,
+        {name: paths[0] for name, paths in artifacts.items()}, graph, None,
+    )
+    receipt_data["staticlib_closure"] = closure
+    receipt_path.write_text(json.dumps(receipt_data, sort_keys=True) + "\n", encoding="utf-8")
+    copied = Path(f"{work}/feature-target/x86_64-unknown-linux-musl/debug/libc.a.source-runtime.json")
+    shutil.copyfile(receipt_path, copied)
+    return graph, copied
+
+
 class OwnedMathFenvAllEntryTests(unittest.TestCase):
     def test_binary80_feature_roster_adds_only_the_existing_long_double_feature(self) -> None:
         baseline, feature = receipt.feature_archive_roster(ROOT)
@@ -292,10 +460,21 @@ class OwnedMathFenvAllEntryTests(unittest.TestCase):
         expected = tuple(sorted(("fixture_base", "exp10l", "fdiml", "pow10l")))
 
         def validate(work: Path) -> dict[str, object]:
+            def replay(graph: Path, _features: str, _scratch: Path) -> object:
+                archive = graph / "cargo-target/x86_64-unknown-linux-musl/debug/libc.a"
+                listed = subprocess.run(["/usr/bin/ar", "t", str(archive)], capture_output=True,
+                                        text=True, check=False)
+                if listed.returncode:
+                    raise AssertionError(listed.stderr)
+                return receipt.source_runtime.RetainedStaticlibEvidence(
+                    frozenset(), frozenset(listed.stdout.splitlines()),
+                )
+
             with mock.patch.object(receipt, "feature_archive_roster",
                                    return_value=(("fixture_base",), expected)), \
                  mock.patch.object(receipt.binary80_stream, "parse", return_value=[]), \
-                 mock.patch.object(receipt.binary80_stream, "validate"):
+                 mock.patch.object(receipt.binary80_stream, "validate"), \
+                 mock.patch.object(receipt.source_runtime, "replay_retained_graph", side_effect=replay):
                 return receipt.validate_binary80_feature_work(ROOT, work.relative_to(ROOT))
 
         with tempfile.TemporaryDirectory(prefix="binary80-feature-receipt.", dir=scratch) as temporary:
@@ -325,14 +504,12 @@ class OwnedMathFenvAllEntryTests(unittest.TestCase):
             cases = (
                 ("aggregate-archive-substitution", {"extra_symbol": "sin"}, None),
                 ("changed-baseline-archive", {}, "changed-baseline"),
-                ("extra-enabled-feature", {}, "extra-feature"),
                 ("unexpected-export", {"extra_symbol": "unowned_export"}, None),
                 ("baseline-binding-mutation", {"changed_baseline": True}, None),
                 ("strong-alias", {"strong_alias": True}, None),
                 ("different-alias-member", {"alias_member": True}, None),
                 ("different-alias-section", {"alias_section": True}, None),
                 ("duplicate-member-name", {"duplicate_member_name": True}, None),
-                ("raw-graph-mutation", {}, "raw-graph"),
             )
             for name, options, mutation in cases:
                 with self.subTest(name=name):
@@ -356,6 +533,176 @@ class OwnedMathFenvAllEntryTests(unittest.TestCase):
                         path.write_bytes(path.read_bytes() + b"mutated\n")
                     with self.assertRaises(receipt.ReceiptError):
                         validate(work)
+
+    def test_binary80_source_runtime_rejects_rustc_rows_that_disagree_with_cargo_streams(self) -> None:
+        scratch = ROOT / ".work/x86_64/tmp"
+        scratch.mkdir(parents=True, exist_ok=True)
+        replay_scratch = ROOT / ".work/tmp"
+        replay_scratch.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(prefix="binary80-source-runtime-replay.", dir=scratch) as temporary:
+            work = binary80_feature_fixture(Path(temporary) / "feature")
+            graph, copied = native_source_runtime_records(work)
+            receipt_path = graph / "receipt.json"
+            original = json.loads(receipt_path.read_text(encoding="utf-8"))
+            graph_evidence = receipt.source_runtime.replay_cargo_graph(
+                graph, receipt.LONG_DOUBLE_FEATURE,
+            )
+            self.assertEqual(
+                graph_evidence.archive,
+                graph / "cargo-target/x86_64-unknown-linux-musl/debug/libc.a",
+            )
+            archive = work / "feature-target/x86_64-unknown-linux-musl/debug/libc.a"
+            with mock.patch.object(
+                receipt.source_runtime, "replay_private_vendor", return_value=original["vendor"],
+            ):
+                with tempfile.TemporaryDirectory(prefix="staticlib-replay.", dir=replay_scratch) as temporary:
+                    staticlib_evidence = receipt.source_runtime.replay_retained_graph(
+                        graph, receipt.LONG_DOUBLE_FEATURE, Path(temporary),
+                    )
+            self.assertEqual(staticlib_evidence.source_runtime_members, frozenset({
+                "core.runtime.o", "compiler_builtins.runtime.o",
+            }))
+
+            stdout_path = graph / "cargo.stdout.jsonl"
+            stderr_path = graph / "cargo.stderr.log"
+            original_stdout = stdout_path.read_bytes()
+            original_stderr = stderr_path.read_bytes()
+            for mismatch, mutate in (
+                ("cargo-profile", lambda record: record["profile"].__setitem__("opt_level", "3")),
+                ("cargo-features", lambda record: record["features"].remove("x86-math-long-double-completion")),
+            ):
+                with self.subTest(mismatch=mismatch):
+                    stdout_path.write_bytes(original_stdout)
+                    rows = receipt.source_runtime.cargo_records(graph / "cargo.stdout.jsonl")
+                    cargo_row = receipt.source_runtime.artifact_record_for_source(
+                        rows, ROOT / "libc/src/lib.rs", "c",
+                    )
+                    mutate(cargo_row)
+                    (graph / "cargo.stdout.jsonl").write_text(
+                        "".join(json.dumps(row, sort_keys=True) + "\n" for row in rows), encoding="utf-8",
+                    )
+                    changed = json.loads(json.dumps(original))
+                    changed["cargo_stdout"] = receipt.source_runtime.file_record(
+                        graph / "cargo.stdout.jsonl", "fixture Cargo JSON stream",
+                    )
+                    receipt_path.write_text(json.dumps(changed, sort_keys=True) + "\n", encoding="utf-8")
+                    with self.assertRaises(receipt.source_runtime.ClosureError):
+                        receipt.source_runtime.replay_cargo_graph(graph, receipt.LONG_DOUBLE_FEATURE)
+                    stdout_path.write_bytes(original_stdout)
+                    receipt_path.write_text(json.dumps(original, sort_keys=True) + "\n", encoding="utf-8")
+
+            stderr_path.write_bytes(original_stderr)
+            commands = receipt.source_runtime.cargo_commands(stderr_path)
+            libc_command = receipt.source_runtime.invocation_for(commands, "c")
+            feature_cfg = libc_command.index('feature="x86-math-long-double-completion"')
+            del libc_command[feature_cfg - 1:feature_cfg + 1]
+            stderr_path.write_text("".join(
+                f"     Running `{shlex.join(command)}`\n   Compiling fixture\n" for command in commands
+            ) + "    Finished `dev` profile [optimized + debuginfo] target(s) in 1.00s\n", encoding="utf-8")
+            changed = json.loads(json.dumps(original))
+            changed["cargo_stderr"] = receipt.source_runtime.file_record(
+                stderr_path, "fixture Cargo diagnostics",
+            )
+            receipt_path.write_text(json.dumps(changed, sort_keys=True) + "\n", encoding="utf-8")
+            with self.assertRaises(receipt.source_runtime.ClosureError):
+                receipt.source_runtime.replay_cargo_graph(graph, receipt.LONG_DOUBLE_FEATURE)
+            stderr_path.write_bytes(original_stderr)
+            receipt_path.write_text(json.dumps(original, sort_keys=True) + "\n", encoding="utf-8")
+
+            stale_closure = json.loads(json.dumps(original))
+            stale_closure["staticlib_closure"]["source_runtime_members"][0]["sha256"] = "0" * 64
+            serialized = json.dumps(stale_closure, sort_keys=True) + "\n"
+            receipt_path.write_text(serialized, encoding="utf-8")
+            copied.write_text(serialized, encoding="utf-8")
+            with mock.patch.object(
+                receipt.source_runtime, "replay_private_vendor", return_value=original["vendor"],
+            ):
+                with tempfile.TemporaryDirectory(prefix="staticlib-replay-negative.", dir=replay_scratch) as temporary:
+                    with self.assertRaisesRegex(
+                        receipt.source_runtime.ClosureError, "member closure differs",
+                    ):
+                        receipt.source_runtime.replay_retained_graph(
+                            graph, receipt.LONG_DOUBLE_FEATURE, Path(temporary),
+                        )
+
+            def wrong_primary(value: dict[str, object]) -> None:
+                value["primary_rustc"]["arguments"] = [
+                    "rustc", "--crate-name", "c", "--target", "aarch64-unknown-linux-musl",
+                ]
+
+            def wrong_source_runtime(value: dict[str, object]) -> None:
+                value["source_runtime_rustc"]["core"]["arguments"] = [
+                    "rustc", "--crate-name", "core", "--target", "aarch64-unknown-linux-musl",
+                ]
+
+            def wrong_runtime_flags(value: dict[str, object]) -> None:
+                value["runtime_flags"] = []
+
+            def wrong_extern_edge(value: dict[str, object]) -> None:
+                value["primary_rustc"]["all_externs"]["core"]["path"] = "unbound-core.rlib"
+
+            def missing_runtime_artifact(value: dict[str, object]) -> None:
+                del value["source_runtime_artifacts"]["alloc"]
+
+            def extra_cargo_feature(value: dict[str, object]) -> None:
+                value["cargo_command"].append("--all-features")
+
+            def wrong_feature(value: dict[str, object]) -> None:
+                features = "x86-math-long-double-completion,x86-math-complex"
+                value["features"] = features
+                value["cargo_command"] = receipt.source_runtime.retained_cargo_command(features)
+
+            mutations = (
+                ("primary-rustc", wrong_primary),
+                ("source-runtime-rustc", wrong_source_runtime),
+                ("runtime-flags", wrong_runtime_flags),
+                ("extern-edge", wrong_extern_edge),
+                ("source-runtime-artifact", missing_runtime_artifact),
+                ("cargo-command", extra_cargo_feature),
+                ("features", wrong_feature),
+            )
+            for name, mutate in mutations:
+                with self.subTest(mutation=name):
+                    mutated = json.loads(json.dumps(original))
+                    mutate(mutated)
+                    serialized = json.dumps(mutated, sort_keys=True) + "\n"
+                    receipt_path.write_text(serialized, encoding="utf-8")
+                    copied.write_text(serialized, encoding="utf-8")
+                    with self.assertRaises(receipt.ReceiptError):
+                        receipt.validate_feature_build(
+                            ROOT, archive, copied, graph, receipt.LONG_DOUBLE_FEATURE, "feature",
+                        )
+
+            graph_receipt = json.loads(json.dumps(original))
+            stderr = graph / "cargo.stderr.log"
+            stderr.write_bytes(stderr.read_bytes() + b"unbound diagnostics\n")
+            serialized = json.dumps(graph_receipt, sort_keys=True) + "\n"
+            receipt_path.write_text(serialized, encoding="utf-8")
+            copied.write_text(serialized, encoding="utf-8")
+            with self.assertRaises(receipt.ReceiptError):
+                receipt.validate_feature_build(
+                    ROOT, archive, copied, graph, receipt.LONG_DOUBLE_FEATURE, "feature",
+                )
+
+    def test_archive_public_bindings_rejects_unaccounted_archive_members(self) -> None:
+        for member in ("unexpected.o", "compiler_builtins.extra.rcgu.o"):
+            with self.subTest(member=member), self.assertRaisesRegex(
+                receipt.ReceiptError, "unaccounted archive member",
+            ):
+                receipt.archive_public_bindings(
+                    f"libc.a:{member}:00000000 T foreign_export\n",
+                    "fixture archive", frozenset(), frozenset({member}),
+                )
+
+    def test_archive_public_bindings_excludes_only_replayed_runtime_members(self) -> None:
+        bindings = receipt.archive_public_bindings(
+            "libc.a:core.rcgu.o:00000000 T runtime_symbol\n"
+            "libc.a:c.math.rcgu.o:00000000 T fdiml\n",
+            "fixture archive", frozenset({"core.rcgu.o"}),
+            frozenset({"core.rcgu.o", "c.math.rcgu.o"}),
+        )
+
+        self.assertEqual(bindings, {"fdiml": {"T"}})
 
     def test_decimal_logarithms_run_in_parent_and_joined_workers(self) -> None:
         compiler = Path("/usr/local/bin/crabc-x86_64-musl-gcc")

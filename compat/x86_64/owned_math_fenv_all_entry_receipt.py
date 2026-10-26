@@ -18,6 +18,7 @@ import re
 import stat
 import subprocess
 import sys
+import tempfile
 from typing import Any, TypedDict
 
 import owned_math_fenv_all_entry_contract as contract
@@ -199,90 +200,25 @@ def feature_file(root: Path, work: Path, name: object, label: str) -> Path:
     return path
 
 
-def validate_runtime_file_identity(value: object, label: str,
-                                   graph: Path | None = None) -> Path:
-    require(isinstance(value, dict) and set(value) == {"path", "sha256", "size"},
-            f"{label} source-runtime identity fields differ")
-    name, expected, size = value["path"], value["sha256"], value["size"]
-    require(isinstance(name, str) and Path(name).is_absolute()
-            and isinstance(expected, str) and re.fullmatch(r"[0-9a-f]{64}", expected)
-            and isinstance(size, int) and size >= 0,
-            f"{label} source-runtime identity value differs")
-    path = Path(name)
-    try:
-        resolved = path.resolve(strict=True)
-    except (OSError, RuntimeError) as error:
-        raise ReceiptError(f"{label} source-runtime file is missing") from error
-    require(resolved == path and path.is_file() and not path.is_symlink(),
-            f"{label} source-runtime file is not physical")
-    if graph is not None:
-        require(path.is_relative_to(graph), f"{label} source-runtime file escapes its retained graph")
-    require(path.stat().st_size == size and digest(path) == expected,
-            f"{label} source-runtime file identity differs")
-    return path
-
-
-def validate_source_runtime_identities(value: object) -> None:
-    if isinstance(value, dict):
-        if set(value) == {"path", "sha256", "size"}:
-            validate_runtime_file_identity(value, "nested")
-            return
-        for child in value.values():
-            validate_source_runtime_identities(child)
-    elif isinstance(value, list):
-        for child in value:
-            validate_source_runtime_identities(child)
-
-
 def validate_feature_build(root: Path, archive: Path, copied_receipt: Path, graph: Path,
-                           features: str, label: str) -> None:
+                           features: str, label: str) -> source_runtime.RetainedStaticlibEvidence:
     graph_receipt_path = physical(root, (graph / "receipt.json").relative_to(root).as_posix())
     require(copied_receipt.read_bytes() == graph_receipt_path.read_bytes(),
             f"{label} copied source-runtime receipt differs from its retained graph")
-    receipt = read(graph_receipt_path)
-    required = {
-        "schema", "profile", "features", "cargo_profile", "libc_rustc_arguments", "scope",
-        "target", "toolchain", "pinned_rustup", "cargo_command", "cargo_profile_dev_debug",
-        "cargo_profile_dev_codegen_units", "c_environment", "runtime_flags", "cargo_stdout",
-        "cargo_stderr", "rust_source", "vendor", "source_runtime_artifacts",
-        "source_runtime_rustc", "primary_rustc", "allocator_rustc", "staticlib_closure",
-        "immediate_abort_semantics",
-    }
-    require(set(receipt) == required and receipt["schema"] == 1,
-            f"{label} source-runtime receipt fields differ")
-    require(receipt["immediate_abort_semantics"] ==
-            "development-only Rust panics abort immediately instead of using static_c_abi.rs's nonreturning spin panic handler",
-            f"{label} source-runtime abort semantics differ")
-    profile = source_runtime.source_runtime_profile(features)
-    require(receipt["features"] == features and receipt["profile"] == profile["name"]
-            and receipt["cargo_profile"] == "dev" and receipt["target"] == source_runtime.TARGET
-            and receipt["toolchain"] == source_runtime.TOOLCHAIN,
-            f"{label} source-runtime selection differs")
-    require(receipt["scope"] == "private-native-static-source-runtime-closure-not-product-or-dynamic-qualification"
-            and receipt["libc_rustc_arguments"] == [] and receipt["c_environment"] == {},
-            f"{label} source-runtime build scope differs")
-    command = receipt["cargo_command"]
-    require(isinstance(command, list) and all(isinstance(item, str) for item in command),
-            f"{label} source-runtime Cargo argv is malformed")
-    feature_arguments = [command[index + 1] for index, item in enumerate(command[:-1])
-                         if item == "--features"]
-    require(feature_arguments == ([features] if features else []),
-            f"{label} source-runtime Cargo argv enables a different feature set")
-    require("-p" in command and command[command.index("-p") + 1] == "crabc-libc"
-            and "--lib" in command and "--target" in command
-            and command[command.index("--target") + 1] == source_runtime.TARGET,
-            f"{label} source-runtime Cargo argv differs")
-    closure = receipt["staticlib_closure"]
-    require(isinstance(closure, dict) and "archive" in closure,
-            f"{label} source-runtime archive receipt is missing")
-    archived = validate_runtime_file_identity(closure["archive"], f"{label} archive", graph)
+    scratch_root = root / ".work" / "tmp"
+    scratch_root.mkdir(parents=True, exist_ok=True)
+    try:
+        with tempfile.TemporaryDirectory(prefix=f"{label}-source-runtime-replay.", dir=scratch_root) as temporary:
+            evidence = source_runtime.replay_retained_graph(graph, features, Path(temporary))
+    except source_runtime.ClosureError as error:
+        raise ReceiptError(f"{label} retained source-runtime graph is not replayable: {error}") from error
+    archived = physical(
+        root,
+        (graph / "cargo-target" / source_runtime.TARGET / "debug" / "libc.a").relative_to(root).as_posix(),
+    )
     require(archived.read_bytes() == archive.read_bytes(),
             f"{label} retained archive differs from its source-runtime graph")
-    cargo_stdout = validate_runtime_file_identity(receipt["cargo_stdout"], f"{label} Cargo stdout", graph)
-    cargo_stderr = validate_runtime_file_identity(receipt["cargo_stderr"], f"{label} Cargo stderr", graph)
-    require(cargo_stdout == graph / "cargo.stdout.jsonl" and cargo_stderr == graph / "cargo.stderr.log",
-            f"{label} source-runtime raw Cargo streams differ")
-    validate_source_runtime_identities(receipt)
+    return evidence
 
 
 def replay_archive_output(retained: Path, command: list[str], label: str) -> bytes:
@@ -294,9 +230,15 @@ def replay_archive_output(retained: Path, command: list[str], label: str) -> byt
     return completed.stdout
 
 
-def archive_public_bindings(text: str, label: str) -> dict[str, set[str]]:
+def archive_public_bindings(text: str, label: str, source_runtime_members: frozenset[str],
+                            archive_members: frozenset[str]) -> dict[str, set[str]]:
     result: dict[str, set[str]] = {}
     excluded = re.compile(r"^(?:_R|_ZN|DW\.ref\.|anon\.)")
+    require(bool(archive_members) and source_runtime_members <= archive_members,
+            f"{label} source-runtime member proof is not closed over the archive")
+    for member in archive_members:
+        require(member in source_runtime_members or re.fullmatch(r"c\..+\.rcgu\.o", member) is not None,
+                f"{label} has unaccounted archive member {member}")
     for line_number, line in enumerate(text.splitlines(), start=1):
         fields = line.split()
         require(len(fields) >= 3, f"{label} archive symbol row is malformed at line {line_number}")
@@ -304,7 +246,9 @@ def archive_public_bindings(text: str, label: str) -> dict[str, set[str]]:
         location = fields[0].rsplit(":", 2)
         require(len(location) == 3,
                 f"{label} archive member location is malformed at line {line_number}")
-        if re.fullmatch(r"c\..+\.rcgu\.o", location[1]) is None:
+        member = location[1]
+        require(member in archive_members, f"{label} symbol row names an unaccounted archive member {member}")
+        if member in source_runtime_members:
             continue
         if binding in {"T", "W", "D", "V", "B", "R"} and not excluded.search(name) \
                 and name not in {"crabc_x86_64_signal_restorer", "__crabc_x86_pthread_clone"}:
@@ -358,6 +302,7 @@ def validate_binary80_feature_work(root: Path, feature_work: Path) -> Binary80Fe
         "feature": work / "source-runtime-feature",
     }
     archive_paths = {}
+    source_runtime_evidence = {}
     for name, features in (("baseline", ""), ("feature", LONG_DOUBLE_FEATURE)):
         archive = feature_file(root, work, expected_archive_paths[name].relative_to(root).as_posix(),
                                f"binary80 {name} archive")
@@ -371,7 +316,9 @@ def validate_binary80_feature_work(root: Path, feature_work: Path) -> Binary80Fe
                                    f"binary80 {name} source-runtime graph")
         require(graph == expected_graphs[name],
                 f"binary80 {name} source-runtime graph path differs")
-        validate_feature_build(root, archive, copied_receipt, graph, features, name)
+        source_runtime_evidence[name] = validate_feature_build(
+            root, archive, copied_receipt, graph, features, name,
+        )
         audit = {
             "nm_symbols": ["/usr/bin/nm", "-A", "--defined-only", str(archive)],
             "nm_globals": ["/usr/bin/nm", "-A", "-g", "--defined-only", str(archive)],
@@ -397,9 +344,13 @@ def validate_binary80_feature_work(root: Path, feature_work: Path) -> Binary80Fe
         archive_paths[name] = (archive, raw)
 
     baseline_bindings = archive_public_bindings(archive_paths["baseline"][1]["nm_globals"].decode(),
-                                                "binary80 baseline")
+                                                "binary80 baseline",
+                                                source_runtime_evidence["baseline"].source_runtime_members,
+                                                source_runtime_evidence["baseline"].archive_members)
     feature_bindings = archive_public_bindings(archive_paths["feature"][1]["nm_globals"].decode(),
-                                               "binary80 feature")
+                                               "binary80 feature",
+                                               source_runtime_evidence["feature"].source_runtime_members,
+                                               source_runtime_evidence["feature"].archive_members)
     require(tuple(sorted(baseline_bindings)) == baseline_roster,
             "binary80 baseline archive differs from the selected-static roster")
     require(tuple(sorted(feature_bindings)) == feature_roster,

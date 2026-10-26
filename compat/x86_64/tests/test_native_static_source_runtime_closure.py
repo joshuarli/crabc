@@ -167,6 +167,17 @@ class NativeStaticSourceRuntimeClosureTests(unittest.TestCase):
                 with self.assertRaisesRegex(CLOSURE.ClosureError, "libc rustc argument"):
                     CLOSURE.libc_rustc_arguments(rejected)
 
+    def test_rustc_cannot_override_runtime_flags_after_the_required_values(self) -> None:
+        for trailing in (("-C", "panic=unwind"), ("-C", "panic")):
+            with self.subTest(trailing=trailing):
+                command, target, runtime, artifacts, source = self._command(immediate_abort=True)
+                command.extend(trailing)
+
+                with self.assertRaisesRegex(CLOSURE.ClosureError, "overrides the source-runtime flag"):
+                    CLOSURE.command_record(
+                        command, target, runtime, self._emitted(artifacts), "crabc-libc", source,
+                    )
+
     def test_derived_staticlib_closure_takes_alloc_all_or_nothing(self) -> None:
         with tempfile.TemporaryDirectory(dir=ROOT / ".work") as temporary:
             work = Path(temporary)
@@ -340,6 +351,29 @@ class NativeStaticSourceRuntimeClosureTests(unittest.TestCase):
         )
 
         self.assertEqual(found, package.resolve())
+
+    def test_private_vendor_replay_matches_locked_sources_and_rejects_changed_bytes(self) -> None:
+        work_root = ROOT / ".work" / "tmp"
+        work_root.mkdir(parents=True, exist_ok=True)
+        toolchain_root = CLOSURE.PINNED_RUSTUP_HOME / "toolchains" / f"{CLOSURE.TOOLCHAIN}-x86_64-unknown-linux-musl"
+        rust_source = toolchain_root / "lib" / "rustlib" / "src" / "rust" / "library"
+        project_vendor = ROOT / ".work" / "x86_64" / "cargo" / "native-static-source-runtime-vendor"
+        if not project_vendor.is_dir():
+            self.skipTest("requires the prepared workspace Cargo vendor")
+        with tempfile.TemporaryDirectory(prefix="source-runtime-vendor-replay.", dir=work_root) as temporary:
+            work = Path(temporary)
+            produced = CLOSURE.private_vendor(work, rust_source, project_vendor)
+
+            self.assertEqual(CLOSURE.replay_private_vendor(work, rust_source), produced)
+
+            package = Path(produced["packages"][0]["directory"])
+            vendored_file = next(
+                path for path in package.rglob("*")
+                if path.is_file() and path.name != ".cargo-checksum.json"
+            )
+            vendored_file.write_bytes(vendored_file.read_bytes() + b"changed")
+            with self.assertRaisesRegex(CLOSURE.ClosureError, "file digest differs"):
+                CLOSURE.replay_private_vendor(work, rust_source)
 
     def test_cargo_commands_accepts_literal_backticks_in_multiline_description(self) -> None:
         work = ROOT / ".work"

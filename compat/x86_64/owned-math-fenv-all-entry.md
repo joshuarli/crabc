@@ -87,5 +87,9 @@ feature sets, exact public additions and bindings, retained archive paths, and
 the concrete symbol rows for the archive and final consumer. Archive rows keep
 the member index and name, section, and value so an alias cannot pass across
 duplicate archive member names. It derives this account from the retained
-source-runtime graphs and artifacts; the existing
+source-runtime graphs and artifacts. The reader replays each Cargo graph from
+its raw streams and physical inputs. The export ratchet counts C module
+members only after the replay identifies every bundled source-runtime member.
+It rejects archive members outside those two sets, even when a member has no
+global symbol. The existing
 `validate_report` remains the reader for an installed math product pair.

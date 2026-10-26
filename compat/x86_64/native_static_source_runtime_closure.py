@@ -183,6 +183,18 @@ class CargoExtern(NamedTuple):
     metadata_path: pathlib.Path | None = None
 
 
+class RetainedCargoGraph(NamedTuple):
+    receipt: dict[str, Any]
+    archive: pathlib.Path
+    rust_source: pathlib.Path
+    rlibs: dict[str, pathlib.Path]
+
+
+class RetainedStaticlibEvidence(NamedTuple):
+    source_runtime_members: frozenset[str]
+    archive_members: frozenset[str]
+
+
 def fail(message: str) -> None:
     raise ClosureError(message)
 
@@ -242,6 +254,15 @@ def physical(path: pathlib.Path, description: str, *, directory: bool = False) -
             fail(f"{description} is not a directory: {path}")
     elif not resolved.is_file():
         fail(f"{description} is not a regular file: {path}")
+    return resolved
+
+
+def physical_child(root: pathlib.Path, relative: pathlib.Path, description: str,
+                   *, directory: bool = False) -> pathlib.Path:
+    path = root / relative
+    resolved = physical(path, description, directory=directory)
+    if resolved != path:
+        fail(f"{description} is not a physical child of its owner: {path}")
     return resolved
 
 
@@ -434,6 +455,94 @@ def private_vendor(work: pathlib.Path, rust_source: pathlib.Path, project_vendor
     }
 
 
+def replay_private_vendor(work: pathlib.Path, rust_source: pathlib.Path) -> dict[str, object]:
+    rust_config = physical(rust_source / ".cargo" / "config.toml", "pinned rust-src vendor config")
+    try:
+        config = tomllib.loads(rust_config.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, tomllib.TOMLDecodeError) as error:
+        raise ClosureError("pinned rust-src vendor config is invalid") from error
+    expected_config = {
+        "source": {
+            "crates-io": {"replace-with": "vendored-sources"},
+            "vendored-sources": {"directory": "vendor"},
+        },
+    }
+    if config != expected_config:
+        fail("pinned rust-src vendor config differs from the declared source replacement")
+    rust_lock = physical(rust_source / "Cargo.lock", "pinned rust-src lock")
+    project_lock = physical(ROOT / "Cargo.lock", "workspace lock")
+    rust_packages = lock_registry_packages(rust_lock, "pinned rust-src lock")
+    project_packages = lock_registry_packages(project_lock, "workspace lock")
+    source_vendor = physical(rust_source / "vendor", "pinned rust-src vendor", directory=True)
+    project_vendor = physical(
+        ROOT / ".work" / "x86_64" / "cargo" / "native-static-source-runtime-vendor",
+        "authenticated project Cargo vendor",
+        directory=True,
+    )
+    vendor = physical_child(work, pathlib.Path("cargo-vendor"), "private composite vendor", directory=True)
+    source_directories = {path.name for path in source_vendor.iterdir() if path.is_dir()}
+    if any(path.is_symlink() or not path.is_dir() for path in source_vendor.iterdir()):
+        fail("pinned rust-src vendor root contains a non-package entry")
+    project_only: dict[str, pathlib.Path] = {}
+    for key, (name, version, checksum) in sorted(project_packages.items()):
+        if key not in source_directories:
+            project_only[key] = find_project_vendor_package(
+                project_vendor, name, version, f"workspace registry package {key}"
+            )
+    if any(path.is_symlink() or not path.is_dir() for path in vendor.iterdir()):
+        fail("private composite vendor root contains a non-package entry")
+    actual_directories = {path.name for path in vendor.iterdir()}
+    if actual_directories != source_directories | set(project_only):
+        fail("private composite vendor package directories differ from locked sources")
+
+    records: dict[str, dict[str, object]] = {}
+    for key, (name, version, checksum) in sorted(rust_packages.items()):
+        source_record = vendor_package_record(
+            source_vendor / key, name, version, checksum, f"pinned rust-src vendor package {key} source"
+        )
+        private_record = vendor_package_record(
+            vendor / key, name, version, checksum, f"pinned rust-src vendor package {key}"
+        )
+        if source_record["file_tree_sha256"] != private_record["file_tree_sha256"]:
+            fail(f"private vendor package differs from pinned rust-src package {key}")
+        records[key] = private_record
+    for key, (name, version, checksum) in sorted(project_packages.items()):
+        existing = records.get(key)
+        if existing is not None:
+            if existing["package_checksum"] != checksum:
+                fail(f"workspace and pinned rust-src disagree about registry package {key}")
+            continue
+        source_record = vendor_package_record(
+            project_only[key], name, version, checksum, f"workspace registry package {key} source"
+        )
+        private_record = vendor_package_record(
+            vendor / key, name, version, checksum, f"workspace registry package {key}"
+        )
+        if source_record["file_tree_sha256"] != private_record["file_tree_sha256"]:
+            fail(f"private vendor package differs from workspace package {key}")
+        records[key] = private_record
+    cargo_home = physical_child(work, pathlib.Path("cargo-home"), "private Cargo home", directory=True)
+    config_path = physical_child(cargo_home, pathlib.Path("config.toml"), "private Cargo source config")
+    if {path.name for path in cargo_home.iterdir()} != {"config.toml"}:
+        fail("private Cargo home contains an unrecorded input")
+    expected_text = (
+        "[source.crates-io]\nreplace-with = \"crabc-native-source-runtime\"\n\n"
+        "[source.crabc-native-source-runtime]\n"
+        f"directory = {json.dumps(str(vendor))}\n\n[net]\noffline = true\n"
+    )
+    if config_path.read_text(encoding="utf-8") != expected_text:
+        fail("private Cargo config differs from the offline composite vendor")
+    return {
+        "rust_source_lock": file_record(rust_lock, "pinned rust-src lock"),
+        "workspace_lock": file_record(project_lock, "workspace lock"),
+        "rust_source_vendor_config": file_record(rust_config, "pinned rust-src vendor config"),
+        "project_vendor_root": str(project_vendor),
+        "private_vendor_root": str(vendor),
+        "packages": [records[key] for key in sorted(records)],
+        "cargo_config": file_record(config_path, "private Cargo source config"),
+    }
+
+
 def run(command: Sequence[str], environment: dict[str, str], stdout_path: pathlib.Path,
         stderr_path: pathlib.Path, description: str) -> None:
     completed = subprocess.run(command, cwd=ROOT, env=environment, stdin=subprocess.DEVNULL,
@@ -480,8 +589,8 @@ def artifact_path(record: dict[str, Any], target: pathlib.Path, description: str
     return candidates[0]
 
 
-def artifact_for_source(records: Sequence[dict[str, Any]], source: pathlib.Path, name: str,
-                        target: pathlib.Path, suffix: str) -> pathlib.Path:
+def artifact_record_for_source(records: Sequence[dict[str, Any]], source: pathlib.Path,
+                               name: str) -> dict[str, Any]:
     matches: list[dict[str, Any]] = []
     for record in records:
         if record.get("reason") != "compiler-artifact":
@@ -499,7 +608,86 @@ def artifact_for_source(records: Sequence[dict[str, Any]], source: pathlib.Path,
             continue
     if len(matches) != 1:
         fail(f"Cargo did not retain exactly one {name} compiler artifact for {source}: {len(matches)}")
-    return artifact_path(matches[0], target, f"Cargo {name} artifact", suffix)
+    return matches[0]
+
+
+def artifact_for_source(records: Sequence[dict[str, Any]], source: pathlib.Path, name: str,
+                        target: pathlib.Path, suffix: str) -> pathlib.Path:
+    return artifact_path(
+        artifact_record_for_source(records, source, name), target, f"Cargo {name} artifact", suffix,
+    )
+
+
+def validate_cargo_artifact_command(record: dict[str, Any], command: Sequence[str],
+                                    description: str) -> None:
+    target = record.get("target")
+    if not isinstance(target, dict):
+        fail(f"Cargo {description} artifact has no target metadata")
+    crate_names = option_values(command, "--crate-name")
+    if len(crate_names) != 1 or target.get("name") != crate_names[0]:
+        fail(f"Cargo {description} target name differs from its rustc command")
+    editions = option_values(command, "--edition")
+    if len(editions) != 1 or target.get("edition") != editions[0]:
+        fail(f"Cargo {description} target edition differs from its rustc command")
+    crate_types = option_values(command, "--crate-type")
+    kinds, target_crate_types = target.get("kind"), target.get("crate_types")
+    if (not crate_types or not isinstance(kinds, list) or not isinstance(target_crate_types, list)
+            or kinds != crate_types or target_crate_types != crate_types):
+        fail(f"Cargo {description} target crate types differ from its rustc command")
+
+    target_test = target.get("test")
+    command_test = "--test" in command
+    if type(target_test) is not bool or target_test != command_test:
+        fail(f"Cargo {description} target test mode differs from its rustc command")
+
+    recorded_features = record.get("features")
+    if (not isinstance(recorded_features, list)
+            or any(not isinstance(feature, str) for feature in recorded_features)
+            or len(set(recorded_features)) != len(recorded_features)):
+        fail(f"Cargo {description} artifact has malformed features")
+    rustc_features: list[str] = []
+    for raw in option_values(command, "--cfg"):
+        if not raw.startswith("feature="):
+            continue
+        try:
+            feature = json.loads(raw.partition("=")[2])
+        except json.JSONDecodeError as error:
+            raise ClosureError(f"Cargo {description} rustc has malformed feature cfg") from error
+        if not isinstance(feature, str) or not FEATURE_NAME.fullmatch(feature):
+            fail(f"Cargo {description} rustc has malformed feature cfg")
+        rustc_features.append(feature)
+    if len(set(rustc_features)) != len(rustc_features) or set(rustc_features) != set(recorded_features):
+        fail(f"Cargo {description} artifact features differ from its rustc cfg features")
+
+    profile = record.get("profile")
+    profile_fields = {"opt_level", "debuginfo", "debug_assertions", "overflow_checks", "test"}
+    if (not isinstance(profile, dict) or set(profile) != profile_fields
+            or not isinstance(profile.get("opt_level"), str)
+            or type(profile.get("debuginfo")) is not int
+            or type(profile.get("debug_assertions")) is not bool
+            or type(profile.get("overflow_checks")) is not bool
+            or type(profile.get("test")) is not bool):
+        fail(f"Cargo {description} artifact has malformed profile metadata")
+    if profile["test"] != command_test:
+        fail(f"Cargo {description} profile test mode differs from its rustc command")
+
+    effective: dict[str, str | None] = {}
+    for value in option_values(command, "-C"):
+        name, separator, setting = value.partition("=")
+        if name in {"opt-level", "debuginfo", "strip", "debug-assertions", "overflow-checks", "codegen-units"}:
+            effective[name] = setting if separator else None
+    expected_values = {
+        "opt-level": profile["opt_level"],
+        "debug-assertions": "on" if profile["debug_assertions"] else "off",
+        "overflow-checks": "on" if profile["overflow_checks"] else "off",
+    }
+    for name, expected in expected_values.items():
+        if effective.get(name) != expected:
+            fail(f"Cargo {description} profile {name} differs from its rustc command")
+    if effective.get("codegen-units") != str(DEV_CODEGEN_UNITS):
+        fail(f"Cargo {description} profile codegen-units differs from its rustc command")
+    if profile["debuginfo"] != 0 or effective.get("strip") != "debuginfo" or "debuginfo" in effective:
+        fail(f"Cargo {description} profile debuginfo differs from its rustc command")
 
 
 def emitted_artifacts(records: Sequence[dict[str, Any]], target: pathlib.Path) -> dict[pathlib.Path, dict[str, object]]:
@@ -674,6 +862,16 @@ def command_record(command: Sequence[str], target: pathlib.Path, expected_runtim
     missing = [flag for flag in required_flags if flag.removeprefix("-C").removeprefix("-Z") not in values]
     if missing:
         fail(f"Cargo {crate} rustc invocation omits source-runtime flags: {missing!r}")
+    effective: dict[str, str | None] = {}
+    for value in values:
+        name, separator, setting = value.partition("=")
+        if name in RUNTIME_OWNED_CODEGEN_OPTIONS:
+            effective[name] = setting if separator else None
+    for flag in required_flags:
+        option = flag.removeprefix("-C").removeprefix("-Z")
+        name, separator, setting = option.partition("=")
+        if separator and name in RUNTIME_OWNED_CODEGEN_OPTIONS and effective.get(name) != setting:
+            fail(f"Cargo {crate} rustc invocation overrides the source-runtime flag: {name}={effective.get(name)!r}")
     crate_externs = externs(command, f"Cargo {crate} rustc")
     require_extern_modifier_matrix(crate, crate_externs, extern_matrix)
     selected: dict[str, dict[str, object]] = {}
@@ -732,6 +930,142 @@ def command_record(command: Sequence[str], target: pathlib.Path, expected_runtim
         "runtime_externs": selected,
         "all_externs": all_externs,
     }
+
+
+def retained_cargo_command(features: str) -> list[str]:
+    command = [
+        "rustup", "run", TOOLCHAIN, "cargo", "-Zbuild-std=core,alloc,compiler_builtins", "rustc",
+        "--locked", "--offline", "-vv", "--message-format=json-render-diagnostics", "-p", "crabc-libc",
+        "--lib", "--target", TARGET,
+    ]
+    if features:
+        command.extend(("--features", features))
+    return command
+
+
+def replay_cargo_graph(graph: pathlib.Path, features: str) -> RetainedCargoGraph:
+    requested_graph = graph
+    graph = physical(graph, "retained source-runtime graph", directory=True)
+    if graph != requested_graph:
+        fail("retained source-runtime graph path is not physical")
+    normalized = normalized_features(features)
+    if normalized != features:
+        fail("retained source-runtime feature list is not canonical")
+    try:
+        receipt = json.loads((graph / "receipt.json").read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as error:
+        raise ClosureError("retained source-runtime receipt is invalid") from error
+    if not isinstance(receipt, dict):
+        fail("retained source-runtime receipt is not an object")
+    if receipt.get("cargo_command") != retained_cargo_command(features):
+        fail("retained source-runtime Cargo argv differs from its fixed feature build")
+    profile = source_runtime_profile(features)
+    if receipt.get("profile") != profile["name"] or receipt.get("features") != features:
+        fail("retained source-runtime profile or feature set differs")
+    if receipt.get("cargo_profile") != "dev" or receipt.get("cargo_profile_dev_debug") != 0 \
+            or receipt.get("cargo_profile_dev_codegen_units") != DEV_CODEGEN_UNITS:
+        fail("retained source-runtime Cargo profile differs")
+    if receipt.get("libc_rustc_arguments") != [] or receipt.get("c_environment") != {}:
+        fail("retained source-runtime build admits extra compiler arguments or C environment")
+    if receipt.get("runtime_flags") != list(RUNTIME_FLAGS):
+        fail("retained source-runtime flags differ")
+
+    target = physical_child(graph, pathlib.Path("cargo-target"), "retained source-runtime Cargo target", directory=True)
+    stdout = physical_child(graph, pathlib.Path("cargo.stdout.jsonl"), "retained source-runtime Cargo JSON stream")
+    stderr = physical_child(graph, pathlib.Path("cargo.stderr.log"), "retained source-runtime Cargo diagnostics")
+    if receipt.get("cargo_stdout") != file_record(stdout, "retained source-runtime Cargo JSON stream") \
+            or receipt.get("cargo_stderr") != file_record(stderr, "retained source-runtime Cargo diagnostics"):
+        fail("retained source-runtime Cargo stream identities differ")
+    records = cargo_records(stdout)
+    emitted = emitted_artifacts(records, target)
+    toolchain_root = physical(
+        PINNED_RUSTUP_HOME / "toolchains" / f"{TOOLCHAIN}-x86_64-unknown-linux-musl",
+        "pinned Rust toolchain root",
+        directory=True,
+    )
+    rust_source = physical(
+        toolchain_root / "lib" / "rustlib" / "src" / "rust" / "library",
+        "pinned rust-src library",
+        directory=True,
+    )
+    if receipt.get("rust_source") != str(rust_source):
+        fail("retained source-runtime source tree differs from the pinned rust-src")
+    runtime_sources = {
+        name: physical(rust_source / relative, f"pinned {name} source")
+        for name, relative in RUNTIME_SOURCES.items()
+    }
+    rlibs = {
+        name: artifact_for_source(records, source, name, target, ".rlib")
+        for name, source in runtime_sources.items()
+    }
+    libc_source = physical(ROOT / "libc" / "src" / "lib.rs", "crabc-libc source")
+    archive = artifact_for_source(records, libc_source, "c", target, ".a")
+    expected_archive = graph / "cargo-target" / TARGET / "debug" / "libc.a"
+    if archive != expected_archive:
+        fail("retained source-runtime archive is not the fixed debug staticlib artifact")
+
+    commands = cargo_commands(stderr)
+    pinned_rustc = physical(toolchain_root / "bin" / "rustc", "pinned rustc executable")
+    for command in commands:
+        executable = next(
+            (item for item in command if re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*=.*", item) is None),
+            None,
+        )
+        if executable is None or physical(pathlib.Path(executable), "Cargo rustc executable") != pinned_rustc:
+            fail("retained Cargo graph invokes a rustc outside the pinned toolchain")
+    source_runtime_rustc = {}
+    for name, source in runtime_sources.items():
+        command = invocation_for(commands, name)
+        validate_cargo_artifact_command(
+            artifact_record_for_source(records, source, name), command, name,
+        )
+        source_runtime_rustc[name] = command_record(
+            command, target, {}, emitted, name, source, flags=RUNTIME_FLAGS,
+        )
+    libc_command = invocation_for(commands, "c")
+    validate_cargo_artifact_command(
+        artifact_record_for_source(records, libc_source, "c"), libc_command, "crabc-libc",
+    )
+    libc_externs = profile["libc_externs"]
+    if libc_externs is None:
+        libc_externs = derived_libc_externs(libc_command, "retained Cargo crabc-libc rustc")
+    primary = command_record(
+        libc_command, target, runtime_sources, emitted, "crabc-libc", libc_source,
+        extern_matrix=libc_externs, flags=RUNTIME_FLAGS,
+    )
+    emits_crabc_mimalloc = any(identity.get("target_name") == "crabc_mimalloc" for identity in emitted.values())
+    builds_crabc_mimalloc = profile["builds_crabc_mimalloc"]
+    if builds_crabc_mimalloc is None:
+        builds_crabc_mimalloc = emits_crabc_mimalloc
+    allocator = None
+    if builds_crabc_mimalloc:
+        allocator_source = physical(ROOT / "crabc-mimalloc" / "src" / "lib.rs", "crabc-mimalloc source")
+        allocator_command = invocation_for(commands, "crabc_mimalloc")
+        allocator_name = option_values(allocator_command, "--crate-name")
+        if len(allocator_name) != 1:
+            fail("Cargo crabc-mimalloc rustc has ambiguous crate identity")
+        validate_cargo_artifact_command(
+            artifact_record_for_source(records, allocator_source, allocator_name[0]),
+            allocator_command, "crabc-mimalloc",
+        )
+        allocator = command_record(
+            allocator_command, target, runtime_sources, emitted,
+            "crabc-mimalloc", allocator_source, flags=RUNTIME_FLAGS,
+        )
+    elif emits_crabc_mimalloc:
+        fail("retained source-runtime graph unexpectedly emits crabc-mimalloc")
+    reconstructed = {
+        "source_runtime_artifacts": {
+            name: file_record(path, f"retained source-built {name} rlib") for name, path in rlibs.items()
+        },
+        "source_runtime_rustc": source_runtime_rustc,
+        "primary_rustc": primary,
+        "allocator_rustc": allocator,
+    }
+    for field, value in reconstructed.items():
+        if receipt.get(field) != value:
+            fail(f"retained source-runtime {field} differs from Cargo's physical graph")
+    return RetainedCargoGraph(receipt=receipt, archive=archive, rust_source=rust_source, rlibs=rlibs)
 
 
 def required_tool(sysroot: pathlib.Path, name: str) -> pathlib.Path:
@@ -890,6 +1224,84 @@ def staticlib_closure(ar: pathlib.Path, nm: pathlib.Path, archive: pathlib.Path,
     }
 
 
+def replay_retained_graph(graph: pathlib.Path, features: str, scratch: pathlib.Path) -> RetainedStaticlibEvidence:
+    requested_graph = graph
+    graph = physical(graph, "retained source-runtime graph", directory=True)
+    if graph != requested_graph:
+        fail("retained source-runtime graph path is not physical")
+    try:
+        graph.relative_to(ROOT / ".work")
+    except ValueError as error:
+        raise ClosureError("retained source-runtime graph escapes checkout .work") from error
+    requested_scratch = scratch
+    scratch = physical(scratch, "source-runtime replay scratch", directory=True)
+    if scratch != requested_scratch:
+        fail("source-runtime replay scratch path is not physical")
+    try:
+        scratch.relative_to(ROOT / ".work" / "tmp")
+    except ValueError as error:
+        raise ClosureError("source-runtime replay scratch escapes .work/tmp") from error
+    if scratch == graph or graph.is_relative_to(scratch) or scratch.is_relative_to(graph):
+        fail("source-runtime replay scratch overlaps its retained graph")
+    if any(scratch.iterdir()):
+        fail("source-runtime replay scratch is not empty")
+    cargo = replay_cargo_graph(graph, features)
+    receipt = cargo.receipt
+    required_fields = {
+        "schema", "profile", "features", "cargo_profile", "libc_rustc_arguments", "scope",
+        "target", "toolchain", "pinned_rustup", "cargo_command", "cargo_profile_dev_debug",
+        "cargo_profile_dev_codegen_units", "c_environment", "runtime_flags", "cargo_stdout",
+        "cargo_stderr", "rust_source", "vendor", "source_runtime_artifacts",
+        "source_runtime_rustc", "primary_rustc", "allocator_rustc", "staticlib_closure",
+        "immediate_abort_semantics",
+    }
+    if set(receipt) != required_fields or receipt.get("schema") != 1:
+        fail("retained source-runtime receipt fields differ")
+    if receipt.get("scope") != "private-native-static-source-runtime-closure-not-product-or-dynamic-qualification":
+        fail("retained source-runtime scope differs")
+    if receipt.get("target") != TARGET or receipt.get("toolchain") != TOOLCHAIN:
+        fail("retained source-runtime target or toolchain differs")
+    if receipt.get("immediate_abort_semantics") != (
+        "development-only Rust panics abort immediately instead of using static_c_abi.rs's nonreturning spin panic handler"
+    ):
+        fail("retained source-runtime abort semantics differ")
+    expected_rustup = pinned_rustup_frontend(PINNED_RUSTUP_FRONTEND, PINNED_RUSTUP_TARGET)
+    if receipt.get("pinned_rustup") != expected_rustup:
+        fail("retained source-runtime rustup identity differs from the pinned frontend")
+    if receipt.get("vendor") != replay_private_vendor(graph, cargo.rust_source):
+        fail("retained source-runtime vendor differs from pinned and workspace sources")
+
+    sysroot = physical(
+        PINNED_RUSTUP_HOME / "toolchains" / f"{TOOLCHAIN}-x86_64-unknown-linux-musl",
+        "pinned Rust sysroot",
+        directory=True,
+    )
+    profile = source_runtime_profile(features)
+    closure = staticlib_closure(
+        required_tool(sysroot, "llvm-ar"), required_tool(sysroot, "llvm-nm"),
+        cargo.archive, cargo.rlibs, scratch, profile["staticlib_runtime_names"],
+    )
+    retained_undefined = physical_child(
+        graph, pathlib.Path("staticlib-undefined-symbols.txt"), "retained staticlib undefined-symbol inventory",
+    )
+    replayed_undefined = physical_child(
+        scratch, pathlib.Path("staticlib-undefined-symbols.txt"), "replayed staticlib undefined-symbol inventory",
+    )
+    if retained_undefined.read_bytes() != replayed_undefined.read_bytes():
+        fail("retained staticlib undefined-symbol inventory differs from the archive")
+    closure["undefined_symbols"] = file_record(
+        retained_undefined, "retained staticlib undefined-symbol inventory"
+    )
+    if receipt.get("staticlib_closure") != closure:
+        fail("retained source-runtime staticlib member closure differs from archive and source rlibs")
+    members_directory = physical(scratch / "staticlib-members", "replayed staticlib members", directory=True)
+    member_names = frozenset(path.name for path in members_directory.iterdir())
+    runtime_names = frozenset(item["member"] for item in closure["source_runtime_members"])
+    if not member_names or not runtime_names <= member_names:
+        fail("replayed staticlib member inventory is incomplete")
+    return RetainedStaticlibEvidence(source_runtime_members=runtime_names, archive_members=member_names)
+
+
 def build(arguments: argparse.Namespace, *, c_environment: dict[str, str] | None = None) -> pathlib.Path:
     if c_environment is not None:
         allowed = {"CC_x86_64_unknown_linux_musl", "CFLAGS_x86_64_unknown_linux_musl", "CC_SHELL_ESCAPED_FLAGS"}
@@ -971,13 +1383,19 @@ def build(arguments: argparse.Namespace, *, c_environment: dict[str, str] | None
     archive = artifact_for_source(records, libc_source, "c", target, ".a")
     commands = cargo_commands(stderr_path)
     expected_runtime_sources = dict(runtime_sources)
-    source_runtime_rustc = {
-        name: command_record(
-            invocation_for(commands, name), target, {}, emitted, name, source, flags=flags,
+    source_runtime_rustc = {}
+    for name, source in runtime_sources.items():
+        command = invocation_for(commands, name)
+        validate_cargo_artifact_command(
+            artifact_record_for_source(records, source, name), command, name,
         )
-        for name, source in runtime_sources.items()
-    }
+        source_runtime_rustc[name] = command_record(
+            command, target, {}, emitted, name, source, flags=flags,
+        )
     libc_command = invocation_for(commands, "c")
+    validate_cargo_artifact_command(
+        artifact_record_for_source(records, libc_source, "c"), libc_command, "crabc-libc",
+    )
     libc_externs = profile["libc_externs"]
     if libc_externs is None:
         libc_externs = derived_libc_externs(libc_command, "Cargo crabc-libc rustc")
@@ -991,9 +1409,18 @@ def build(arguments: argparse.Namespace, *, c_environment: dict[str, str] | None
         builds_crabc_mimalloc = emits_crabc_mimalloc
     allocator = None
     if builds_crabc_mimalloc:
+        allocator_source = physical(ROOT / "crabc-mimalloc" / "src" / "lib.rs", "crabc-mimalloc source")
+        allocator_command = invocation_for(commands, "crabc_mimalloc")
+        allocator_name = option_values(allocator_command, "--crate-name")
+        if len(allocator_name) != 1:
+            fail("Cargo crabc-mimalloc rustc has ambiguous crate identity")
+        validate_cargo_artifact_command(
+            artifact_record_for_source(records, allocator_source, allocator_name[0]),
+            allocator_command, "crabc-mimalloc",
+        )
         allocator = command_record(
-            invocation_for(commands, "crabc_mimalloc"), target, expected_runtime_sources, emitted, "crabc-mimalloc",
-            physical(ROOT / "crabc-mimalloc" / "src" / "lib.rs", "crabc-mimalloc source"), flags=flags,
+            allocator_command, target, expected_runtime_sources, emitted, "crabc-mimalloc",
+            allocator_source, flags=flags,
         )
     elif emits_crabc_mimalloc:
         fail("C allocator source-runtime profile unexpectedly emitted crabc-mimalloc")

@@ -139,6 +139,17 @@ source `core` and `compiler_builtins` members and rejects source `alloc`
 members. The raw undefined symbol inventory is retained for diagnosis but does
 not by itself decide link reachability.
 
+`replay_retained_graph()` reads the saved Cargo JSON and verbose compiler log
+again. It rebuilds each rustc record from those streams and the physical
+artifacts. It checks the pinned compiler path, effective runtime flags, source
+files, every `--extern` edge, and each Cargo artifact's profile, feature cfgs,
+edition, crate types, and test mode against its raw rustc command. It also
+checks the private vendor against the pinned rust-src and workspace locks. The
+reader re-extracts the staticlib
+under `.work/tmp`, compares every source-runtime object with its `.rlib`, and
+rechecks the undefined-symbol inventory. It runs no Cargo or rustc command
+and executes no target artifact.
+
 The existing C fixture is linked with its owned CRT objects and its unchanged
 `-nostdlib -static -Wl,--no-undefined -Wl,--gc-sections` closure.  The producer
 retains the linker map and `rust_eh_personality` trace, records every selected
