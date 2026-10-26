@@ -151,6 +151,8 @@ _start:
     jae .Lstatic_pie_fail
     cmp DWORD PTR [r8], 1
     jne .Lstatic_pie_relro_range_next
+    cmp QWORD PTR [r8 + 40], 0
+    je .Lstatic_pie_relro_range_next
     mov eax, DWORD PTR [r8 + 4]
     and eax, 3
     cmp eax, 2
@@ -168,11 +170,41 @@ _start:
     cmp rdi, rax
     jb .Lstatic_pie_relro_range_next
     cmp rsi, rcx
-    jbe .Lstatic_pie_relro_range_done
+    jbe .Lstatic_pie_relro_executable_check
 .Lstatic_pie_relro_range_next:
     add r8, 56
     inc r9
     jmp .Lstatic_pie_relro_range
+.Lstatic_pie_relro_executable_check:
+    mov r8, r12
+    xor r9d, r9d
+.Lstatic_pie_relro_executable_next:
+    cmp r9, r13
+    jae .Lstatic_pie_relro_range_done
+    cmp DWORD PTR [r8], 1
+    jne .Lstatic_pie_relro_executable_advance
+    cmp QWORD PTR [r8 + 40], 0
+    je .Lstatic_pie_relro_executable_advance
+    test DWORD PTR [r8 + 4], 1
+    jz .Lstatic_pie_relro_executable_advance
+    mov rax, QWORD PTR [r8 + 16]
+    add rax, rbx
+    jc .Lstatic_pie_fail
+    mov rcx, rax
+    add rcx, QWORD PTR [r8 + 40]
+    jc .Lstatic_pie_fail
+    add rcx, 4095
+    jc .Lstatic_pie_fail
+    and rcx, -4096
+    and rax, -4096
+    cmp rdi, rcx
+    jae .Lstatic_pie_relro_executable_advance
+    cmp rax, rsi
+    jb .Lstatic_pie_fail
+.Lstatic_pie_relro_executable_advance:
+    add r8, 56
+    inc r9
+    jmp .Lstatic_pie_relro_executable_next
 .Lstatic_pie_relro_range_done:
 
     // PT_DYNAMIC must itself be completely mapped before tag traversal.

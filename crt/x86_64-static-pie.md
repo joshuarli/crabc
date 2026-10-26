@@ -25,7 +25,8 @@ The static evidence consumes exactly these Rust-produced objects:
   relocation ranges against `PT_LOAD`; applies only symbol-free
   `R_X86_64_RELATIVE` RELA/RELR records to writable mappings; seals
   at most one nonempty `PT_GNU_RELRO` contained in a page-rounded writable,
-  non-executable load; then calls the static-only lifecycle handoff. Its
+  non-executable load and disjoint from executable load pages; then calls the
+  static-only lifecycle handoff. Its
   pre-relocation assembly never reads TLS or the GOT.
 
 - `crti.o` and `crtn.o`: ordered `.init`/`.fini` frame fragments consumed by

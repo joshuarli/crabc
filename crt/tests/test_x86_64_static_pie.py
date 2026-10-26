@@ -198,6 +198,22 @@ def executable_relro_header(path: Path) -> Path:
     return bad
 
 
+def overlapping_executable_load(path: Path) -> Path:
+    data, headers = elf_layout(path)
+    writable = next(index for index, header in enumerate(headers) if header[0] == PT_LOAD and header[1] & 2)
+    spare = next(index for index, header in enumerate(headers) if header[0] == 0x6474e551)
+    mutable = bytearray(data)
+    program_offset = struct.unpack_from("<Q", data, 32)[0]
+    source = program_offset + writable * 56
+    target = program_offset + spare * 56
+    mutable[target:target + 56] = data[source:source + 56]
+    struct.pack_into("<I", mutable, target + 4, 5)
+    overlap = path.with_name(path.name + ".overlapping-executable-load")
+    overlap.write_bytes(mutable)
+    overlap.chmod(0o755)
+    return overlap
+
+
 def relocation_summary(path: Path) -> list[tuple[int, int, int]]:
     data, program_headers = elf_layout(path)
     tags = dynamic_tags(data, program_headers)
@@ -402,6 +418,13 @@ class X86_64StaticPieTests(unittest.TestCase):
                 )
                 self.assertEqual(executable_relro.returncode, 127, executable_relro.stderr.decode(errors="replace"))
                 self.assertEqual(executable_relro.stdout, b"")
+
+                overlap = subprocess.run(
+                    [str(overlapping_executable_load(executable))], stdin=subprocess.DEVNULL,
+                    stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False,
+                )
+                self.assertEqual(overlap.returncode, 127, overlap.stderr.decode(errors="replace"))
+                self.assertEqual(overlap.stdout, b"")
 
                 if not packed_relr:
                     malformed = corrupt_first_relative_relocation(executable)
