@@ -131,7 +131,7 @@ for symbol in __errno_location __crabc_x86_static_tls_bootstrap __fork_handler \
     grep -Eq "[[:space:]][TW][[:space:]]${symbol}$" "$archive_symbols" ||
         fail "archive does not define ${symbol}"
 done
-grep -Eq 'FUNC +WEAK +DEFAULT +.*__ldso_atfork$' "$archive_elf_symbols" ||
+grep -Eq 'FUNC +WEAK +HIDDEN +.*__ldso_atfork$' "$archive_elf_symbols" ||
     fail 'archive lost musl weak __ldso_atfork binding'
 grep -Eq 'FUNC +WEAK +DEFAULT +.*__aio_atfork$' "$archive_elf_symbols" ||
     fail 'archive lost musl weak __aio_atfork binding'
@@ -183,7 +183,7 @@ for symbol in __errno_location __crabc_x86_static_tls_bootstrap __fork_handler \
     grep -Eq "[[:space:]]${symbol}$" "$candidate_symbols" ||
         fail "candidate does not define ${symbol}"
 done
-grep -Eq 'FUNC +WEAK +DEFAULT +.*__ldso_atfork$' "$candidate_symbols" ||
+grep -Eq 'FUNC +WEAK +HIDDEN +.*__ldso_atfork$' "$candidate_symbols" ||
     fail 'candidate lost musl weak __ldso_atfork binding'
 grep -Eq 'FUNC +WEAK +DEFAULT +.*__aio_atfork$' "$candidate_symbols" ||
     fail 'candidate lost musl weak __aio_atfork binding'
@@ -191,9 +191,9 @@ readelf --symbols --wide "$candidate_loader_hook" >"$work_dir/candidate-loader-h
 awk '$4 == "FUNC" && $5 == "GLOBAL" && $6 == "DEFAULT" && $7 != "UND" && $8 == "fork" { found=1 } END { exit found ? 0 : 1 }' \
     "$work_dir/candidate-loader-hook-symbols" ||
     fail 'caller override did not extract the archive fork member'
-grep -Eq 'FUNC +GLOBAL +DEFAULT +.*__ldso_atfork$' "$work_dir/candidate-loader-hook-symbols" ||
+grep -Eq 'FUNC +GLOBAL +HIDDEN +.*__ldso_atfork$' "$work_dir/candidate-loader-hook-symbols" ||
     fail 'caller strong __ldso_atfork did not override the archive weak binding'
-if grep -Eq 'FUNC +WEAK +DEFAULT +.*__ldso_atfork$' "$work_dir/candidate-loader-hook-symbols"; then
+if grep -Eq 'FUNC +WEAK +HIDDEN +.*__ldso_atfork$' "$work_dir/candidate-loader-hook-symbols"; then
     fail 'caller override retained the archive weak __ldso_atfork binding'
 fi
 readelf --symbols --wide "$candidate_aio_hook" >"$work_dir/candidate-aio-hook-symbols"

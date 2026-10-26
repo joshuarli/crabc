@@ -5,6 +5,7 @@ ulimit -c 0
 readonly ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 readonly oracle_cc=/usr/local/bin/crabc-x86_64-musl-gcc
 readonly probe="$ROOT/compat/x86_64/owned_atfork_registry_probe.c"
+readonly private_probe="$ROOT/compat/x86_64/owned_process_private_symbols_probe.c"
 [ "$(uname -sm)" = 'Linux x86_64' ] || { printf 'atfork registry requires native Linux/x86-64\n' >&2; exit 1; }
 # Aggregate dynamic gates supply an already built installed or extracted
 # product. The focused command also builds and checks both static entries.
@@ -46,7 +47,19 @@ if [ -z "$provided_dynamic_sysroot" ]; then
     provided_dynamic_sysroot="$work/dynamic-sysroot"
 fi
 cp -a "$provided_dynamic_sysroot" "$work/execution-root"
+"$provided_dynamic_sysroot/bin/crabc-cc-dynamic" --dynamic-pie -std=c11 \
+    -c "$private_probe" -o "$work/private-symbols.o"
+"$oracle_cc" "$work/private-symbols.o" -o "$work/oracle-private-symbols"
+timeout 20 "$work/oracle-private-symbols" >"$work/oracle-private-symbols.stdout"
 for mode in pie non-pie; do
+    "$provided_dynamic_sysroot/bin/crabc-cc-dynamic" "--dynamic-$mode" \
+        "$work/private-symbols.o" -o "$work/execution-root/private-symbols-$mode"
+    timeout 20 chroot "$work/execution-root" "/private-symbols-$mode" \
+        >"$work/private-symbols-$mode.stdout"
+    cmp "$work/oracle-private-symbols.stdout" "$work/private-symbols-$mode.stdout"
+    timeout 20 chroot "$work/execution-root" /lib/ld-crabc-x86_64.so.1 \
+        "/private-symbols-$mode" >"$work/private-symbols-direct-$mode.stdout"
+    cmp "$work/oracle-private-symbols.stdout" "$work/private-symbols-direct-$mode.stdout"
     "$provided_dynamic_sysroot/bin/crabc-cc-dynamic" "--dynamic-$mode" -std=c11 "$probe" -o "$work/dynamic-$mode"
     cp "$work/dynamic-$mode" "$work/execution-root/consumer-$mode"
     for scenario in ordinary exit-hooks; do
@@ -57,4 +70,4 @@ for mode in pie non-pie; do
         cmp "$work/oracle-$scenario.stdout" "$work/direct-$mode-$scenario.stdout"
     done
 done
-printf 'owned atfork registry: PASS (musl + installed static/static-PIE/dynamic PIE/non-PIE kernel/direct, 4096-4099 ordered callbacks, three-generation inherited registry, child/parent/worker registration, failed-fork parent completion; atexit/__cxa_atexit order, registration during exit, fork-inherited and worker-thread exit hooks); evidence: %s\n' "$work"
+printf 'owned atfork registry: PASS (musl + installed static/static-PIE/dynamic PIE/non-PIE kernel/direct, 4096-4099 ordered callbacks, three-generation inherited registry, child/parent/worker registration, failed-fork parent completion; atexit/__cxa_atexit order, registration during exit, fork-inherited and worker-thread exit hooks; dynamic private-hook lookup rejection and public aliases); evidence: %s\n' "$work"

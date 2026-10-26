@@ -78,6 +78,7 @@ static_archive_member! { atexit_lock {
 }}
 
 const COUNT: usize = 32;
+core::arch::global_asm!(".hidden __funcs_on_exit");
 type ExitFunction = unsafe extern "C" fn(*mut c_void);
 type PlainExitFunction = unsafe extern "C" fn();
 

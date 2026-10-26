@@ -144,6 +144,7 @@ static_archive_member! { exit_source {
         ".p2align 4",
         "crabc_x86_exit_funcs_on_exit_dummy:",
         "ret",
+        ".hidden __funcs_on_exit",
         ".weak __funcs_on_exit",
         ".set __funcs_on_exit, crabc_x86_exit_funcs_on_exit_dummy",
     );
@@ -199,6 +200,9 @@ pub unsafe extern "C" fn __stdio_exit() {
     #[cfg(crabc_x86_owned_runtime)]
     unsafe { super::stdio_standard::flush_all_on_exit() };
 }
+
+#[cfg(crabc_x86_owned_runtime)]
+core::arch::global_asm!(".hidden __stdio_exit");
 
 /// Enter a selected static C application after the real x86 CRT installed TLS.
 ///

@@ -248,6 +248,7 @@ const PTHREAD_CLONE_FLAGS: i32 = CLONE_VM
 #[no_mangle]
 #[linkage = "weak"]
 pub unsafe extern "C" fn __membarrier_init() {}
+core::arch::global_asm!(".hidden __membarrier_init");
 
 // Keep the control record in a private page-aligned anonymous mapping. Static
 // Initial TLS v1 owns a second exact PT_TLS materialization. A private worker

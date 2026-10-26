@@ -1558,6 +1558,7 @@ static_archive_member! { aio_source {
     pub unsafe extern "C" fn __aio_atfork(who: c_int) {
         unsafe { atfork(who) };
     }
+    core::arch::global_asm!(".hidden __aio_atfork");
 }}
 
 

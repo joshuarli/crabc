@@ -109,6 +109,7 @@ unsafe fn raw_selected_fork() -> i64 {
 // through the public symbol, so a program that defines its own
 // `pthread_atfork` replaces this registry without linking it.
 static_archive_member! { pthread_atfork_source {
+    core::arch::global_asm!(".hidden __fork_handler");
     #[cfg(not(crabc_x86_owned_runtime))]
     #[derive(Clone, Copy)]
     struct AtforkRegistration {
@@ -326,7 +327,7 @@ static_archive_member! { fork_source {
     /// Musl 1.2.6 `src/process/fork.c` publishes its inert `dummy(int)` through
     /// `weak_alias(dummy, __ldso_atfork)`.  A dynamically linked musl process
     /// instead gets the loader-owned locking body from `ldso/dynlink.c`, so a
-    /// static archive consumer must retain this default-visible weak spelling for
+    /// static archive consumer must retain this hidden weak spelling for
     /// a stronger loader or application definition to replace.
     ///
     /// This selected static runtime has no mutable loader lock graph.  Keep the
@@ -338,6 +339,7 @@ static_archive_member! { fork_source {
     #[no_mangle]
     #[linkage = "weak"]
     pub unsafe extern "C" fn __ldso_atfork(_who: c_int) {}
+    core::arch::global_asm!(".hidden __ldso_atfork");
 
     // musl fork.c `weak_alias(dummy, __fork_handler)`: in the installed static
     // archive, a program that never links pthread_atfork.c's member forks
@@ -348,6 +350,7 @@ static_archive_member! { fork_source {
         ".p2align 4",
         "crabc_x86_fork_handler_dummy:",
         "ret",
+        ".hidden __fork_handler",
         ".weak __fork_handler",
         ".set __fork_handler, crabc_x86_fork_handler_dummy",
     );

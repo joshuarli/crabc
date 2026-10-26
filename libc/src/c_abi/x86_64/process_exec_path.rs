@@ -242,6 +242,7 @@ pub unsafe extern "C" fn __execvpe(
 // implementation or changing the internal `__execvpe` owner.
 core::arch::global_asm!(
     r#"
+    .hidden __execvpe
     .weak execvpe
     .set execvpe, __execvpe
     .section .note.GNU-stack,"",@progbits

@@ -234,6 +234,7 @@ static_archive_member! { futimens_source {
 static_archive_member! { futimesat_source {
     // Musl defines this alias beside its target, in the same object.
     core::arch::global_asm!(
+        ".hidden __futimesat",
         ".weak futimesat",
         ".set futimesat, __futimesat",
     );

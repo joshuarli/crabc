@@ -927,9 +927,11 @@ blocker, so this selection cannot hide an export leak. The public weak aliases
 of these bodies keep their separate feature-alias and component-receipt
 requirements. Private spellings whose candidate exposure differs from musl stay
 unselected until their owning lane repairs the export. Examples are the
-exported `__aio_atfork`, `__execvpe`, `__futimesat`, `__ldso_atfork` and
-`__membarrier_init`, and the default-visibility static `__stdio_exit` and
-`__init_ssp`.
+default-visibility static `__init_ssp`. The process and exit hooks documented
+in [owned atfork callback registry](owned-atfork-registry.md) retain hidden
+implementation definitions. Their native selection still requires fresh
+product measurements and exact accounting of each strong archive provider
+and weak fallback; the export repair alone supplies no selection receipt.
 
 The existing weak static `dl_iterate_phdr` placement also has an owned-startup
 consumer contract: [owned static executable enumeration](owned-static-dl-iterate-phdr.md).

@@ -58,3 +58,19 @@ linkage evidence. The focused private `libc-pthread-atfork` gate independently
 checks that the older 32-record path remains intact. The runtime fixture does
 not force exhaustion of the allocator or change the outer fork subsystem's
 existing limits.
+
+The installed products keep `__aio_atfork`, `__execvpe`, `__futimesat`,
+`__ldso_atfork`, `__membarrier_init`, `__stdio_exit`, `__fork_handler` and
+`__funcs_on_exit` private to libc, matching the hidden declarations in pinned
+musl's internal and source-only headers. The static archive retains hidden
+definitions; its weak atfork and exit fallbacks can still be replaced during
+static linking. The inert private-fixture `__stdio_exit` fallback retains
+musl `exit.c`'s default-visible weak shape, while the owned stream-finalization
+body is strong and hidden. Public `execvpe` and `futimesat` retain their weak,
+default-visible aliases.
+
+The runner compiles `owned_process_private_symbols_probe.c` once with installed
+headers and links that object against pinned musl and both dynamic executable
+kinds. Kernel and direct-loader entry must reject every private spelling
+through `dlsym(RTLD_DEFAULT, ...)`, report `dlerror`, and still resolve the
+public process, atfork, exit and alias names.
