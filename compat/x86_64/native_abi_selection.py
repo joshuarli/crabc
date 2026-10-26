@@ -63,8 +63,8 @@ import loader_structural_owner_contract_reader as loader_structural_owner_eviden
 import owned_bsd_random_receipt as bsd_random_evidence
 import runtime_private_facades as runtime_facades
 
-SCHEMA = 'crabc.x86_64-native-abi-selection-report/v10'
-CONTRACT_SCHEMA = 'crabc.x86_64-native-abi-selection/v2'
+SCHEMA = 'crabc.x86_64-native-abi-selection-report/v11'
+CONTRACT_SCHEMA = 'crabc.x86_64-native-abi-selection/v3'
 TARGET = inventory.TARGET
 CONTRACT_PATH = MODULE_DIR / 'native-abi-selection.toml'
 RUST_ALLOC_HANDLER_NAMES = (
@@ -154,6 +154,7 @@ APPLICATION_MAIN_SOURCES = (
     'compat/x86_64/installed_crt_startup_probe.c',
 )
 APPLICATION_MAIN_REASON = 'The application supplies main to the CRT; libc does not provide it.'
+NATIVE_OWNERSHIP_REQUIREMENT = 'native selection or structural ownership is unresolved'
 APPLICATION_MAIN_OWNER_GROUP = {
     'id': APPLICATION_MAIN_GROUP, 'selector': 'explicit', 'disposition': 'application-supplied',
     'owner': APPLICATION_MAIN_OWNER, 'family': 'crt.dynamic-startup',
@@ -176,6 +177,16 @@ AUXV_STRUCTURAL_GROUP = {
     'id': AUXV_OWNER_GROUP, 'members': [AUXV_OWNER_NAME], 'sources': [AUXV_OWNER_SOURCE],
     'disposition': 'structural-replacement', 'reason': AUXV_OWNER_REASON,
     'requirements': [AUXV_OWNER_REQUIREMENT],
+}
+RUST_C_PROFILE_PERSONALITY_ABSENCE_POLICY = {
+    'id': 'rust-c-profile-personality-absence',
+    'name': 'rust_eh_personality',
+    'origin': {
+        'kind': 'frozen-project-dynamic',
+        'capability': {'id': 'runtime.compiler-abi', 'classification': 'internal-runtime'},
+    },
+    'scope': 'ordinary-c-profile',
+    'reason': 'The current C-profile candidates and ordinary C final ELFs have no personality definition or import.',
 }
 DISPOSITIONS = {'public-provider', 'private-provider', 'application-supplied', 'unresolved'}
 SUPPORTED_TYPES = {'NOTYPE', 'OBJECT', 'FUNC', 'SECTION', 'FILE', 'COMMON', 'TLS', 'IFUNC'}
@@ -676,7 +687,7 @@ def validate_contract(value: Any) -> dict[str, Any]:
                            'object_contracts', 'private_protocols', 'module_private_symbols',
                            'process_exit_static_imports', 'linker_dynamic_table', 'crt_init_fini_binding',
                            'rust_allocation_handlers', 'private_complex_mul_helpers',
-                           'private_float_scanner_helpers',
+                           'private_float_scanner_helpers', 'rust_c_profile_personality_absence',
                            'requirements'},
                    'selection contract')
     closure = exact(result['closure'], {'admission_family', 'admission_family_scope', 'campaign_family_scope'},
@@ -758,6 +769,11 @@ def validate_contract(value: Any) -> dict[str, Any]:
     string(float_scanner['reason'], 'private float scanner reason')
     for path in strings(float_scanner['sources'], 'private float scanner sources', empty=False):
         source_path(path)
+    personality_absence = exact(result['rust_c_profile_personality_absence'],
+                                {'id', 'name', 'origin', 'scope', 'reason'},
+                                'Rust C-profile personality absence rule')
+    require(same(personality_absence, RUST_C_PROFILE_PERSONALITY_ABSENCE_POLICY),
+            'Rust C-profile personality absence rule differs')
     require(result['schema'] == CONTRACT_SCHEMA and result['target'] == TARGET, 'selection schema/target changed')
     require(same(result['inputs'], INPUT_PATHS), 'selection input roster differs')
     for path in result['inputs'].values():
@@ -2607,7 +2623,7 @@ def expand_obligations(contract: Mapping[str, Any], inputs: Mapping[str, Any]) -
             else:
                 record['selection'] = {'disposition': 'unresolved', 'owner': None,
                                        'reason': 'selecting inputs need an explicit native owner/disposition'}
-                record['unresolved'].append('native selection or structural ownership is unresolved')
+                record['unresolved'].append(NATIVE_OWNERSHIP_REQUIREMENT)
     return [records[key] for key in sorted(records, key=identity_order)]
 
 
@@ -8889,6 +8905,225 @@ def attach_auxv_observation(accounting: Mapping[str, Any], rule: Mapping[str, An
     }]
 
 
+def attach_rust_c_profile_personality_absence(accounting: Mapping[str, Any], rule: Mapping[str, Any],
+                                              source: Mapping[str, Any], paths: Mapping[str, Path],
+                                              crt_companion: Mapping[str, Any] | None,
+                                              crt_observations: Mapping[str, Any] | None,
+                                              ordinary_report_path: Path | None) -> list[dict[str, Any]]:
+    if (not same(rule, RUST_C_PROFILE_PERSONALITY_ABSENCE_POLICY)
+            or crt_companion is None or crt_observations is None or ordinary_report_path is None):
+        return []
+    if (type(source) is not dict
+            or set(source) != {'revision', 'content_sha256', 'clean'}
+            or source.get('clean') is not True
+            or type(source.get('revision')) is not str
+            or type(source.get('content_sha256')) is not str
+            or not re.fullmatch(r'[0-9a-f]{40}', source['revision'])
+            or not re.fullmatch(r'[0-9a-f]{64}', source['content_sha256'])
+            or crt_companion.get('source') != source):
+        return []
+    reader = _crt_startup_reader()
+    if (reader.SCHEMA != 'crabc.x86_64-installed-crt-startup/v5'
+            or crt_companion.get('status') != 'crt-startup-observed-with-boundaries'
+            or crt_companion.get('reader') != file_identity(Path(reader.__file__))
+            or crt_companion.get('contract') != file_identity(ROOT / 'compat/x86_64/installed-crt-startup.toml')):
+        return []
+    expected_products = set(reader.product_paths(reader.ROOT, {
+        'static_preparation': {'primary': {'path': '.'}}, 'dynamic_product': {'path': '.'},
+    }))
+    products = crt_companion.get('products', {})
+    cohort = crt_companion.get('cohort_inputs', {})
+    account = crt_companion.get('account', {})
+    runtime_labels = [row['label'] for row in reader.runtime_cells()]
+    if (type(products) is not dict or set(products) != expected_products
+            or not all(type(products[name]) is dict and type(products[name].get('sha256')) is str
+                       and re.fullmatch(r'[0-9a-f]{64}', products[name]['sha256'])
+                       for name in expected_products)
+            or type(cohort) is not dict or set(cohort) != {'static_manifest', 'dynamic_manifest', 'dynamic_state'}
+            or not all(type(cohort[name]) is dict and type(cohort[name].get('sha256')) is str
+                       and re.fullmatch(r'[0-9a-f]{64}', cohort[name]['sha256'])
+                       for name in cohort)
+            or type(account) is not dict or account.get('identity_names') != list(reader.NAMES)
+            or account.get('runtime_labels') != runtime_labels
+            or crt_observations.get('runtime_labels') != runtime_labels):
+        return []
+    expected_fact_names = expected_products | {case['name'] for case in reader.cases()} | {
+        'normal-object', 'empty-object',
+    }
+    facts = crt_observations.get('complete_elf_facts')
+    if type(facts) is not dict or set(facts) != expected_fact_names:
+        return []
+    candidate_cases = {case['name'] for case in reader.cases()
+                       if not case['mode'].startswith('oracle-')}
+    candidate_fact_names = sorted(expected_products | candidate_cases | {'normal-object', 'empty-object'})
+    candidate_symbol_rows = []
+    for fact_name in candidate_fact_names:
+        fact = facts[fact_name]
+        members = fact if type(fact) is list else [fact]
+        for member in members:
+            if type(member) is not dict or type(member.get('symbol_tables')) is not list:
+                return []
+            for table in member['symbol_tables']:
+                if (type(table) is not dict or type(table.get('name')) is not str
+                        or type(table.get('rows')) is not list
+                        or not all(type(row) is dict for row in table['rows'])):
+                    return []
+                candidate_symbol_rows.extend(
+                    {'artifact': fact_name, 'table': table['name'], 'row': row}
+                    for row in table['rows']
+                    if row.get('name') == RUST_C_PROFILE_PERSONALITY_ABSENCE_POLICY['name']
+                )
+    if candidate_symbol_rows:
+        return []
+
+    ordinary_report_path = physical_work_path(ordinary_report_path, directory=False)
+    if not ordinary_report_path.is_relative_to(ROOT / '.work'):
+        return []
+    ordinary_before = file_identity(ordinary_report_path)
+    try:
+        expected_inputs = ordinary_link_evidence.admit_inputs(
+            ROOT, paths['static_preparation'], paths['static_product'], paths['dynamic_product'],
+        )
+        ordinary_replay = ordinary_link_evidence.validate_report(ROOT, ordinary_report_path)
+    except (ValueError, OSError):
+        return []
+    if file_identity(ordinary_report_path) != ordinary_before:
+        return []
+    if (type(ordinary_replay) is not dict or set(ordinary_replay) != {'report', 'links'}
+            or ordinary_replay.get('report') != {
+                'path': ordinary_report_path.relative_to(ROOT).as_posix(),
+                'sha256': ordinary_before['sha256'], 'size': ordinary_before['size'],
+            }
+            or type(ordinary_replay.get('links')) is not dict
+            or set(ordinary_replay['links']) != set(ordinary_link_evidence.CANDIDATE_MODES)):
+        return []
+    ordinary_report = read_json(ordinary_report_path)
+    static_inputs = expected_inputs.get('static_preparation')
+    static_primary = static_inputs.get('primary') if type(static_inputs) is dict else None
+    dynamic_inputs = expected_inputs.get('dynamic_product')
+    if (type(ordinary_report) is not dict
+            or ordinary_report.get('source_before') != expected_inputs
+            or ordinary_report.get('source_after') != expected_inputs
+            or type(expected_inputs.get('source')) is not dict
+            or expected_inputs['source'] != {
+                'revision': source['revision'], 'content_sha256': source['content_sha256'],
+            }
+            or type(static_primary) is not dict
+            or static_primary.get('manifest') != cohort['static_manifest']
+            or type(dynamic_inputs) is not dict
+            or dynamic_inputs.get('manifest') != cohort['dynamic_manifest']
+            or dynamic_inputs.get('state') != cohort['dynamic_state']
+            or type(ordinary_report.get('links')) is not dict
+            or set(ordinary_report['links']) != set(ordinary_link_evidence.CANDIDATE_MODES)
+            or type(ordinary_report.get('commands')) is not list):
+        return []
+    ordinary_final_elfs = {}
+    for mode in ordinary_link_evidence.CANDIDATE_MODES:
+        command_label = mode + '-symbols'
+        command_rows = [row for row in ordinary_report['commands']
+                        if type(row) is dict and row.get('label') == command_label]
+        if len(command_rows) != 1:
+            return []
+        symbol_identity = command_rows[0].get('stdout')
+        try:
+            symbol_path = ordinary_link_evidence.resolve_work_identity(
+                ROOT, symbol_identity, command_label + ' retained symbol output',
+            )
+        except (ValueError, OSError):
+            return []
+        if symbol_path != ordinary_link_evidence.raw_path(ordinary_report_path.parent, command_label, 'stdout'):
+            return []
+        try:
+            symbol_tables = inventory.parse_elf_symbol_tables(symbol_path.read_text(encoding='utf-8'))
+        except (ValueError, OSError, inventory.InventoryError):
+            return []
+        expected_tables = ['.symtab'] if mode == 'static' else ['.dynsym', '.symtab']
+        if [table['name'] for table in symbol_tables] != expected_tables:
+            return []
+        if any(row.get('name') == RUST_C_PROFILE_PERSONALITY_ABSENCE_POLICY['name']
+               for table in symbol_tables for row in table['rows']):
+            return []
+        link = ordinary_report['links'][mode]
+        if type(link) is not dict:
+            return []
+        try:
+            executable_path = ordinary_link_evidence.resolve_work_identity(
+                ROOT, link.get('executable'), mode + ' retained executable',
+            )
+        except (ValueError, OSError):
+            return []
+        executable = ordinary_link_evidence.work_file_identity(ROOT, executable_path, mode + ' retained executable')
+        replay_link = ordinary_replay['links'][mode]
+        if (type(replay_link) is not dict
+                or replay_link.get('executable_sha256') != executable['sha256']):
+            return []
+        ordinary_final_elfs[mode] = {
+            'executable': executable,
+            'symbol_output': symbol_identity,
+            'symbol_tables': expected_tables,
+            'personality_rows': 0,
+        }
+    if file_identity(ordinary_report_path) != ordinary_before:
+        return []
+
+    records, placements, occurrences = _accounting_indexes(
+        accounting, description='Rust C-profile personality absence',
+    )
+    if type(accounting.get('artifacts')) is not dict or set(accounting['artifacts']) != {
+        artifact.key for artifact in elf_facts.ARTIFACTS
+    }:
+        return []
+    key = identity_key(identity(RUST_C_PROFILE_PERSONALITY_ABSENCE_POLICY['name']))
+    record = records.get(key)
+    if (record is None
+            or record.get('identity') != identity(RUST_C_PROFILE_PERSONALITY_ABSENCE_POLICY['name'])
+            or record.get('origins') != [RUST_C_PROFILE_PERSONALITY_ABSENCE_POLICY['origin']]
+            or record.get('selection') != {
+                'disposition': 'unresolved', 'owner': None,
+                'reason': 'selecting inputs need an explicit native owner/disposition',
+            }
+            or record.get('expected_placements') != []
+            or record.get('unresolved') != [NATIVE_OWNERSHIP_REQUIREMENT]
+            or any(placement_identity == key for placement_identity, _artifact in placements)):
+        return []
+    identity_blockers = [row for row in accounting['blockers']
+                         if row.get('code') == 'identity-unresolved'
+                         and identity_key(row.get('identity', {})) == key]
+    if [row.get('reason') for row in identity_blockers] != [NATIVE_OWNERSHIP_REQUIREMENT]:
+        return []
+    candidate_artifacts = {artifact.key for artifact in elf_facts.ARTIFACTS if artifact.owner != 'reference'}
+    candidate_occurrences = [row for row in occurrences.values()
+                             if row.get('artifact_key') in candidate_artifacts
+                             and type(row.get('row')) is dict
+                             and row['row'].get('name') == RUST_C_PROFILE_PERSONALITY_ABSENCE_POLICY['name']]
+    if candidate_occurrences:
+        return []
+    occurrence_snapshot = copy.deepcopy(accounting['occurrences'])
+    artifact_snapshot = copy.deepcopy(accounting['artifacts'])
+    record['selection'] = {
+        'disposition': 'unselected-observation',
+        'owner': RUST_C_PROFILE_PERSONALITY_ABSENCE_POLICY['id'],
+        'scope': RUST_C_PROFILE_PERSONALITY_ABSENCE_POLICY['scope'],
+        'reason': RUST_C_PROFILE_PERSONALITY_ABSENCE_POLICY['reason'],
+    }
+    _remove_identity_requirements(
+        accounting, record, [NATIVE_OWNERSHIP_REQUIREMENT],
+        description='Rust C-profile personality absence observation',
+    )
+    require(accounting['occurrences'] == occurrence_snapshot
+            and accounting['artifacts'] == artifact_snapshot,
+            'Rust C-profile personality absence attachment changed complete ELF accounting')
+    return [{
+        'identity': copy.deepcopy(record['identity']),
+        'owner': RUST_C_PROFILE_PERSONALITY_ABSENCE_POLICY['id'],
+        'scope': RUST_C_PROFILE_PERSONALITY_ABSENCE_POLICY['scope'],
+        'candidate_elf_facts': candidate_fact_names,
+        'candidate_symbol_rows': 0,
+        'ordinary_c_final_elfs': ordinary_final_elfs,
+        'requirements_discharged': [NATIVE_OWNERSHIP_REQUIREMENT],
+    }]
+
+
 def attach_libc_start_main_imports(accounting: Mapping[str, Any],
                                    crt_companion: Mapping[str, Any] | None,
                                    rust_members: Sequence[str],
@@ -14709,6 +14944,10 @@ def _build_report(*, contract_path: Path, paths: Mapping[str, Path], declaration
         accounting, next(row for row in contract['structural_groups'] if row['id'] == AUXV_OWNER_GROUP),
         source_before, inputs['bindings'], crt_startup_companion, crt_observations,
     )
+    rust_c_profile_personality_absence_joins = attach_rust_c_profile_personality_absence(
+        accounting, contract['rust_c_profile_personality_absence'], source_before, paths,
+        crt_startup_companion, crt_observations, ordinary_link_report,
+    )
     application_main_import_joins = attach_application_main_imports(
         accounting, next(row for row in contract['owner_groups'] if row['id'] == APPLICATION_MAIN_GROUP),
         crt_startup_companion, crt_observations,
@@ -14922,6 +15161,7 @@ def _build_report(*, contract_path: Path, paths: Mapping[str, Path], declaration
             'crt_startup_joins': crt_startup_joins,
             'crt_descriptor_handoff_joins': crt_descriptor_handoff_joins,
             'auxv_observation_joins': auxv_observation_joins,
+            'rust_c_profile_personality_absence_joins': rust_c_profile_personality_absence_joins,
             'application_main_import_joins': application_main_import_joins,
             'libc_start_main_import_joins': libc_start_main_import_joins,
             'linker_dynamic_table_joins': linker_dynamic_table_joins,

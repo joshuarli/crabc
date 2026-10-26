@@ -2059,6 +2059,209 @@ class AuxvObservationAttachmentTests(unittest.TestCase):
                 self.assertEqual(accounting, before)
 
 
+class RustCProfilePersonalityAbsenceTests(unittest.TestCase):
+    NAME = 'rust_eh_personality'
+    POLICY = {
+        'id': 'rust-c-profile-personality-absence',
+        'name': NAME,
+        'origin': {
+            'kind': 'frozen-project-dynamic',
+            'capability': {'id': 'runtime.compiler-abi', 'classification': 'internal-runtime'},
+        },
+        'scope': 'ordinary-c-profile',
+        'reason': 'The current C-profile candidates and ordinary C final ELFs have no personality definition or import.',
+    }
+    REQUIREMENT = 'native selection or structural ownership is unresolved'
+
+    def accounting(self):
+        return {
+            'identities': [{
+                'identity': selection.identity(self.NAME),
+                'origins': [copy.deepcopy(self.POLICY['origin'])],
+                'selection': {'disposition': 'unresolved', 'owner': None,
+                              'reason': 'selecting inputs need an explicit native owner/disposition'},
+                'expected_placements': [], 'unresolved': [self.REQUIREMENT],
+            }],
+            'artifacts': {artifact.key: {'occurrence_indices': []}
+                          for artifact in selection.elf_facts.ARTIFACTS},
+            'placement_joins': [], 'occurrences': [],
+            'blockers': [{'code': 'identity-unresolved', 'identity': selection.identity(self.NAME),
+                          'reason': self.REQUIREMENT},
+                         {'code': 'companion-rejected', 'companion': 'other', 'detail': 'preserve this blocker'}],
+        }
+
+    def crt_evidence(self):
+        source, _bindings, companion, observations = AuxvObservationAttachmentTests().evidence()
+        return source, companion, observations
+
+    @staticmethod
+    def table(name, symbols=()):
+        rows = ['     0: 0000000000000000     0 NOTYPE  LOCAL  DEFAULT  UND']
+        for index, symbol in enumerate(symbols, 1):
+            symbol_name, section = symbol if type(symbol) is tuple else (symbol, 'UND')
+            rows.append(f'     {index}: 0000000000000000     0 FUNC    GLOBAL DEFAULT  {section} {symbol_name}')
+        return (f"Symbol table '{name}' contains {len(rows)} entries:\n"
+                '   Num:    Value          Size Type    Bind   Vis      Ndx Name\n'
+                + '\n'.join(rows) + '\n')
+
+    def ordinary_evidence(self, directory, source, companion, *, personality_mode=None,
+                          personality_table='.dynsym', product_mismatch=False,
+                          source_mismatch=False, omitted_symbol_mode=None):
+        root = Path(directory)
+        raw_root = root / 'raw'
+        raw_root.mkdir()
+        expected_inputs = {'source': {
+            'revision': source['revision'], 'content_sha256': source['content_sha256'],
+        }, 'static_preparation': {'primary': {'manifest': companion['cohort_inputs']['static_manifest']},
+                                  'source': {'revision': source['revision'],
+                                             'content_sha256': source['content_sha256']}},
+            'dynamic_product': {'manifest': companion['cohort_inputs']['dynamic_manifest'],
+                                'state': companion['cohort_inputs']['dynamic_state']}}
+        if product_mismatch:
+            expected_inputs['static_preparation']['primary']['manifest'] = {
+                **expected_inputs['static_preparation']['primary']['manifest'], 'sha256': 'f' * 64,
+            }
+        if source_mismatch:
+            expected_inputs['source']['content_sha256'] = 'e' * 64
+        commands = []
+        links = {}
+        for mode in selection.ordinary_link_evidence.CANDIDATE_MODES:
+            table_names = ('.symtab',) if mode == 'static' else ('.dynsym', '.symtab')
+            if mode != omitted_symbol_mode:
+                output = ''.join(self.table(
+                    table, [(self.NAME, '1' if table == '.symtab' else 'UND')]
+                    if mode == personality_mode and table == personality_table else (),
+                ) for table in table_names)
+                stdout = raw_root / f'{mode}-symbols.stdout'
+                stdout.write_text(output)
+                label = mode + '-symbols'
+                commands.append({
+                    'label': label,
+                    'stdout': selection.ordinary_link_evidence.work_file_identity(
+                        selection.ROOT, stdout, label + ' stdout'),
+                })
+            executable = root / mode
+            executable.write_bytes(mode.encode())
+            executable_identity = selection.ordinary_link_evidence.work_file_identity(
+                selection.ROOT, executable, mode + ' executable',
+            )
+            links[mode] = {'executable': executable_identity}
+        report_path = root / 'report.json'
+        report_path.write_text(json.dumps({
+            'source_before': expected_inputs, 'source_after': copy.deepcopy(expected_inputs),
+            'commands': commands, 'links': links,
+        }))
+        report_identity = selection.ordinary_link_evidence.work_file_identity(
+            selection.ROOT, report_path, 'ordinary-link report',
+        )
+        replay = {
+            'report': report_identity,
+            'links': {mode: {'executable_sha256': value['executable']['sha256']}
+                      for mode, value in links.items()},
+        }
+        return report_path, expected_inputs, replay
+
+    def attach(self, accounting, source, companion, observations, paths, report_path, expected_inputs, replay):
+        with mock.patch.object(selection.ordinary_link_evidence, 'admit_inputs', return_value=expected_inputs), \
+                mock.patch.object(selection.ordinary_link_evidence, 'validate_report', return_value=replay):
+            return selection.attach_rust_c_profile_personality_absence(
+                accounting, self.POLICY, source, paths, companion, observations, report_path,
+            )
+
+    def test_policy_is_one_exact_frozen_dynamic_compiler_abi_observation(self):
+        contract = selection.load_contract()
+        self.assertEqual(contract['rust_c_profile_personality_absence'], self.POLICY)
+        self.assertEqual(contract['schema'], 'crabc.x86_64-native-abi-selection/v3')
+
+    def test_current_crt_and_ordinary_c_receipts_classify_only_personality_absence(self):
+        source, companion, observations = self.crt_evidence()
+        scratch = ROOT / '.work/tmp'
+        scratch.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(dir=scratch) as directory:
+            report_path, expected_inputs, replay = self.ordinary_evidence(directory, source, companion)
+            paths = {'static_preparation': Path('static-preparation'),
+                     'static_product': Path('static-product'), 'dynamic_product': Path('dynamic-product')}
+            accounting = self.accounting()
+            before_occurrences = copy.deepcopy(accounting['occurrences'])
+            before_artifacts = copy.deepcopy(accounting['artifacts'])
+            joins = self.attach(accounting, source, companion, observations, paths,
+                                report_path, expected_inputs, replay)
+        expected_candidates = sorted(
+            set(selection._crt_startup_reader().product_paths(selection._crt_startup_reader().ROOT, {
+                'static_preparation': {'primary': {'path': '.'}}, 'dynamic_product': {'path': '.'},
+            }))
+            | {case['name'] for case in selection._crt_startup_reader().cases()
+               if not case['mode'].startswith('oracle-')}
+            | {'normal-object', 'empty-object'}
+        )
+        self.assertEqual(len(joins), 1)
+        self.assertEqual(joins[0]['identity'], selection.identity(self.NAME))
+        self.assertEqual(joins[0]['candidate_elf_facts'], expected_candidates)
+        self.assertEqual(joins[0]['candidate_symbol_rows'], 0)
+        self.assertEqual(set(joins[0]['ordinary_c_final_elfs']),
+                         set(selection.ordinary_link_evidence.CANDIDATE_MODES))
+        self.assertEqual(accounting['identities'][0]['selection'], {
+            'disposition': 'unselected-observation', 'owner': self.POLICY['id'],
+            'scope': self.POLICY['scope'], 'reason': self.POLICY['reason'],
+        })
+        self.assertEqual(accounting['identities'][0]['unresolved'], [])
+        self.assertEqual(accounting['occurrences'], before_occurrences)
+        self.assertEqual(accounting['artifacts'], before_artifacts)
+        self.assertEqual(accounting['blockers'], [
+            {'code': 'companion-rejected', 'companion': 'other', 'detail': 'preserve this blocker'},
+        ])
+
+    def test_absence_rejects_missing_or_stale_proof_and_any_candidate_symbol(self):
+        cases = ('missing CRT receipt', 'stale CRT source publication', 'extra origin',
+                 'unrelated requirement', 'candidate product fact', 'candidate occurrence',
+                 'ordinary C final ELF import', 'ordinary C final ELF definition', 'ordinary C source differs',
+                 'ordinary product cohort differs', 'ordinary C report misses a mode',
+                 'CRT runtime roster differs', 'missing ordinary C receipt')
+        scratch = ROOT / '.work/tmp'
+        scratch.mkdir(parents=True, exist_ok=True)
+        for label in cases:
+            with self.subTest(label=label), tempfile.TemporaryDirectory(dir=scratch) as directory:
+                source, companion, observations = self.crt_evidence()
+                accounting = self.accounting()
+                report_mode = ('dynamic-pie' if label in {'ordinary C final ELF import',
+                                                           'ordinary C final ELF definition'} else None)
+                report_table = '.symtab' if label == 'ordinary C final ELF definition' else '.dynsym'
+                report_path, expected_inputs, replay = self.ordinary_evidence(
+                    directory, source, companion, personality_mode=report_mode,
+                    personality_table=report_table,
+                    product_mismatch=label == 'ordinary product cohort differs',
+                    source_mismatch=label == 'ordinary C source differs',
+                    omitted_symbol_mode='dynamic-non-pie' if label == 'ordinary C report misses a mode' else None,
+                )
+                paths = {'static_preparation': Path('static-preparation'),
+                         'static_product': Path('static-product'), 'dynamic_product': Path('dynamic-product')}
+                if label == 'missing CRT receipt':
+                    companion, observations = None, None
+                elif label == 'stale CRT source publication':
+                    companion = {**companion, 'source': {'revision': 'c' * 40,
+                        'content_sha256': 'd' * 64, 'clean': True}}
+                elif label == 'extra origin':
+                    accounting['identities'][0]['origins'].append({'kind': 'native-candidate-occurrence', 'index': 0})
+                elif label == 'unrelated requirement':
+                    accounting['identities'][0]['unresolved'].append('another blocker')
+                elif label == 'candidate product fact':
+                    observations['complete_elf_facts']['static-crti.o']['symbol_tables'][0]['rows'].append(
+                        ApplicationMainImportBindingTests.symbol(name=self.NAME, section='UND', kind='FUNC'))
+                elif label == 'candidate occurrence':
+                    accounting['occurrences'].append({
+                        'index': 0, 'artifact_key': 'candidate-static',
+                        'row': ApplicationMainImportBindingTests.symbol(name=self.NAME, section='UND', kind='FUNC'),
+                    })
+                elif label == 'CRT runtime roster differs':
+                    observations['runtime_labels'].pop()
+                before = copy.deepcopy(accounting)
+                self.assertEqual(self.attach(accounting, source, companion, observations, paths,
+                                             None if label in {'missing CRT receipt', 'missing ordinary C receipt'}
+                                             else report_path,
+                                             expected_inputs, replay), [])
+                self.assertEqual(accounting, before)
+
+
 class LinkerDynamicTableBindingTests(unittest.TestCase):
     """A weak archive reference resolves in each final image's link domain."""
 

@@ -696,16 +696,25 @@ a retained runtime map, probe, source snapshot, or raw command output cannot
 change after the initial reader replay. A report with only one component stays
 independently optional and leaves both descriptor requirements unresolved.
 
-The selection report schema is `crabc.x86_64-native-abi-selection-report/v10`.
-Version 10 adds `auxv_observation_joins` from the existing CRT v5 component
-receipt. It records the two application-object `getauxval` imports, all
-candidate ELF fact names checked for legacy `__auxv`, and the complete CRT
-runtime cell roster. Version 9 added `application_main_import_joins`, which
-records the exact five import occurrences, application objects, candidate
-executables, and runtime labels. The selection contract is
-`crabc.x86_64-native-abi-selection/v2`; version 2 adds the exact
+The selection report schema is `crabc.x86_64-native-abi-selection-report/v11`.
+Version 10 reports and v2 contracts must be regenerated before replay.
+Version 11 adds `rust_c_profile_personality_absence_joins`. The join classifies
+the single frozen `rust_eh_personality` origin as an unselected observation.
+It requires the current CRT v5 receipt and complete candidate CRT facts to
+show no symbol row. It also requires all four retained ordinary C final ELF
+symbol tables to show no definition or import. Both readers must use the
+selected source and product manifests. The join makes no claim about Rust
+standard library or unwind behavior. Version 10 adds `auxv_observation_joins`
+from the existing CRT v5 component receipt. It records the two
+application-object `getauxval` imports, all candidate ELF fact names checked
+for legacy `__auxv`, and the complete CRT runtime cell roster.
+Version 9 added `application_main_import_joins`, which records the exact five
+import occurrences, application objects, candidate executables, and runtime
+labels. The selection contract is
+`crabc.x86_64-native-abi-selection/v3`; version 3 adds the exact
 `crt-application-main-consumer` owner group with no expected provider
-placements. Version 8 added the optional closed
+placements and the single `rust_c_profile_personality_absence` rule. Version 8
+added the optional closed
 `posix_sysv_signal_admission_companion` and
 `posix_sysv_signal_admission_joins` fields. Version 7 added the optional closed
 `locale_alias_contract_companion` and `locale_alias_contract_joins` fields.
@@ -1110,8 +1119,10 @@ also require their own physical visibility and consumer decisions. They do
 not inherit the allocator decision. The x86 abort-only libc root does not
 define `rust_eh_personality`: stock Rust std owns the real personality in
 Rust consumers. The owned Rust cleanup consumer rejects ambient native
-unwind inputs and exercises that ownership; ordinary installed C consumers
-must retain link closure without a libc personality definition or dependency.
+unwind inputs and exercises that ownership. The selector's
+`rust_c_profile_personality_absence_joins` records absence from the current
+candidate CRT facts and retained ordinary C final ELF tables. It says nothing
+about Rust consumers or unwind behavior.
 This does not change the paused AArch64 root or the isolated legacy proof
 roots. Compiler
 helpers in the installed builtins archive remain a consumer link-closure

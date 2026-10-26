@@ -1,5 +1,5 @@
 # Exact native owner policy; complete observations and unresolved evidence stay separate.
-schema = "crabc.x86_64-native-abi-selection/v2"
+schema = "crabc.x86_64-native-abi-selection/v3"
 target = "x86_64-unknown-linux-musl"
 
 [closure]
@@ -1102,6 +1102,13 @@ owner = "x86-float-scanner"
 names = ["crabc_x86_float_parse_shlim", "crabc_x86_float_parse_floatscan"]
 sources = ["libc/src/c_abi/x86_64/float_parse.rs", "libc/src/c_abi/x86_64/float_parse_musl_x86_64.S", "libc/src/c_abi/x86_64/float_parse_musl_support_x86_64.S", "libc/src/c_abi/x86_64/float_parse_musl_entry_x86_64.S", "libc/src/c_abi/x86_64/float_parse_locale_musl_x86_64.S"]
 reason = "The two private pseudo-FILE scanner helpers serve the owned string and locale entry objects."
+
+[rust_c_profile_personality_absence]
+id = "rust-c-profile-personality-absence"
+name = "rust_eh_personality"
+origin = { kind = "frozen-project-dynamic", capability = { id = "runtime.compiler-abi", classification = "internal-runtime" } }
+scope = "ordinary-c-profile"
+reason = "The current C-profile candidates and ordinary C final ELFs have no personality definition or import."
 
 [[structural_groups]]
 id = "loader-entry-stages"
