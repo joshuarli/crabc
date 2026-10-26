@@ -240,13 +240,13 @@ class ComponentAttachmentTests(unittest.TestCase):
         self.assertEqual(accounting, before)
 
     def test_stdio_and_signal_adapters_require_exact_installed_cells(self):
-        (self.work / 'report.json').write_text('{}')
+        (self.work / 'owned-stdio-products.json').write_text('{}')
         row = stdio.fopen64_row(static=True)
         result = {'products': {'static': str(self.paths['static_product']), 'dynamic': str(self.paths['dynamic_product'])},
                   'rows': {'stdio.fopen64-alias': row}}
         with mock.patch.object(stdio, 'validate_report', return_value=result) as replay:
             companion = selection.installed_stdio_adapter(self.work, paths=self.paths)
-            replay.assert_called_once_with(self.work / 'report.json', ROOT, require_static=True)
+            replay.assert_called_once_with(self.work / 'owned-stdio-products.json', ROOT, require_static=True)
             self.assertEqual(companion['fopen64_structural'], row)
         row['object_import'] = 'fopen64'
         with mock.patch.object(stdio, 'validate_report', return_value=result):

@@ -14526,13 +14526,13 @@ def installed_stdio_adapter(work: Path | None, *, paths: Mapping[str, Path]) -> 
     import owned_stdio_component_receipt as reader
     work = physical_work_path(work, directory=True, own=True)
     try:
-        result = reader.validate_report(work / 'report.json', ROOT, require_static=True)
+        result = reader.validate_report(work / 'owned-stdio-products.json', ROOT, require_static=True)
     except (OSError, RuntimeError, ValueError, KeyError, TypeError) as error:
         raise SelectionError(f'installed stdio component rejected: {error}') from error
     require(result['products'] == {'static': str(paths['static_product']), 'dynamic': str(paths['dynamic_product'])},
             'installed stdio component uses another selected product pair')
     row = _text_fopen64_row_projection(result['rows']['stdio.fopen64-alias'], _text_family_reader())
-    return {'work': work.relative_to(ROOT).as_posix(), 'report': file_identity(work / 'report.json'),
+    return {'work': work.relative_to(ROOT).as_posix(), 'report': file_identity(work / 'owned-stdio-products.json'),
             'result': result, 'fopen64_structural': row}
 
 
