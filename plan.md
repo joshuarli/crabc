@@ -94,6 +94,37 @@ or claim qualification. The six remaining auxv/inverse-trig/restorer/Rust
 personality identity obligations have no current selector attachment; they
 are follow-up proof work after this bounded pilot, not owner-only blockers.
 
+The first pilot is frozen at `9f08169e7` in `.work/wt/abi-owner-proof`.
+Fresh products and all four collectors pass. The 23-producer loop records
+nineteen produced, two failed and two dependency-blocked, plus the two family
+flows; twenty companions are bound. AIO and RuntimeV1 execute successfully.
+Partial assembly and the single normal canonical reader pass with 5,168
+identities, 41,271 occurrences, 92 closure blockers and 84 ABI-prerequisite
+blockers. All source, product trees/modes, report and companion seals and four
+scratch-parent rosters remain unchanged. No qualification claim follows.
+
+`82bb27372` fixes the declaration collector's compact-parser `section` field
+consumers without changing complete-inventory `section_index` rows.
+`23e7a5080` preserves the full CRT consumer/object projection while passing
+only product roles to its strict product account. `c599339d6` ignores unrelated
+unnamed ELF rows before converting the RuntimeV1 getter identity. Their
+regressions reproduce the actual pilot failures. Focused checks pass 235 tests
+run: 221 passed and fourteen existing skips.
+
+The pilot also exposes a real static `__crabc_owned_vfork_result` DEFAULT
+definition despite a hidden reference in another member. `15bcaa87b` moves
+the unchanged errno-conversion body into its existing `vfork_source` member,
+where the hidden directive applies to the provider. The installed-archive
+regression fails before and passes after; all nine Rust profiles and seven
+process-trio host tests pass. Two mixed-runtime fixture attempts did not
+establish behavior and were stopped. Use the existing installed C-backend
+`owned-process-trio` workload with the next fresh product pair for that proof.
+
+Freeze the resulting main revision in `.work/wt/abi-owner-proof-fixed`, then
+repeat the bounded product/collector/companion path once, including that
+process-trio check. Preserve the first pilot unchanged. No new source work
+joins this retry before these four causal repairs receive native proof.
+
 The next bounded group binds the four installed helper modes and real
 RuntimeV1 facade component into ordinary ABI evidence, adds physical proof for
 the eleven existing compiler/consumer/oracle-no-provider declaration
