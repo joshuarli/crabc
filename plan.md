@@ -8,6 +8,39 @@ remain parked and cannot support native promotion. The C
 allocator remains selected. Public x86 support remains false: 180 of 223
 capabilities, nine of 26 families, zero of eight gates.
 
+**Current steering checkpoint:** the frozen `99cd68019` ABI proof now passes
+the normal canonical reader: 5,175 identities, 41,307 occurrences and zero
+rejected companions. Its 146 closure blockers remain truthful. The first
+read-only container attempt failed because two existing companion readers
+need temporary scratch beside their reports; the normal replay passed with
+only those scratch parents writable and their retained inputs sealed. Before
+and after input identities and temporary-directory rosters match. Preserve
+`.work/wt/abi-selector-proof` and its raw reader output.
+
+`48f2e7ca9` makes seven native process implementation exports private and
+hides the static strong `__stdio_exit`; pinned-musl weak fallbacks and public
+aliases remain intact. `7727f2f81` accounts their exact strong/weak archive
+roles without discarding either definition. The dlsym regression fails the
+old candidate and passes musl and all four patched dynamic modes; static
+callback/exit checks, affected components and all nine Rust profiles pass.
+Independent review found no defect. The real RuntimeV1 facade component also
+passes 24 executions on clean `7727f2f81`; its report remains unqualified in
+`.work/wt/runtime-facade-proof`.
+
+`544f22d1c` repairs retained compiler-helper validation to require global
+static providers and local dynamic providers, with no dynamic helper exports.
+All four actual installed link modes replay successfully, each with 40
+transfers and 44 resolved calls. The 22 focused tests pass with one existing
+skip. These additional receipts are not bound into the frozen outer ABI
+report, so its installed-helper blocker is not yet cleared.
+
+The next bounded group finishes exact ownership of twelve source-hidden
+fixed-C allocator data objects and removes seven redundant test-only link
+witnesses while retaining their public-API behavior and ownership checks.
+Then bind the remaining genuine component proofs and collect combined-source
+evidence. Do not repeat the parked `pow` aggregate or denied allocator
+diagnostics. No qualification, backend or public-support claim changes.
+
 - **Resume:** "Read plan.md and docs/lanes.md, then resume the campaign as
   coordinator, unattended. Preserve both harness-denied allocator items.
   Run the authorized `qualification-candidate --profile correctness`
