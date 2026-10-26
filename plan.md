@@ -601,9 +601,28 @@ SEC0 source audit, after the hardening-plan rebase:
 | Search and secure startup | `x86_64_library_search.rs` derives secure state from auxv and credentials, suppresses environment paths and preloads in secure mode, and currently allows relative nonsecure origins. `x86_64_library_search_tests.rs` covers secure filtering; `runtime-dynamic-loader.md` describes startup dependencies and preload behavior. | SEC2 must apply the absolute-path and validated-origin policy to environment, options, system paths, RPATH/RUNPATH, dependencies, preloads and `dlopen`, with positive compatibility controls. |
 | Guards and startup ordering | `static_startup.rs` installs auxv and secure state before constructors. `installed_crt_startup_probe.c` and `libc_crt_static_tls_probe.c` observe kernel-seeded guards and startup/TLS behavior. | SEC1 needs hardened constructor and worker sentinels through dynamic and static-PIE products, including the loader-to-CRT handoff. |
 
-These are source observations and existing fixture pointers, not a hardened
-product or qualification result. SEC0 still needs the product-identity design,
-mixed-product checks, and a complete route-by-route fixture mapping.
+For product identity, use separately compiled compatibility and hardened CRT
+and interpreter artifacts. The hardened driver selects a distinct interpreter
+path and records the selection in the existing product manifests and link
+receipts. Extend the existing owned CRT note and loader handoff so each owned
+side checks the other's profile before callbacks. A conventional foreign main
+has no owned profile marker; admission still follows the selected interpreter's
+policy. Static PIE binds its selection to its CRT and product manifest. The
+drivers reject a conflicting combined sysroot or requested non-PIE mode.
+
+A process-controlled switch or one interpreter selected only by environment
+cannot meet the fixed-profile contract. A pathname alone also cannot identify
+the running interpreter during direct entry. The note and handoff checks
+therefore complement the installed path and receipt identity; neither grants
+trust to arbitrary guest input. SEC1/SEC2 must exercise matching and crossed
+owned products, malformed markers, conventional inputs, direct entry and
+kernel entry. SEC3 must reject a receipt whose profile, source or product bytes
+do not match; the existing `runtime_profile` describes materialization and
+must not be mistaken for this selection.
+
+These are source observations and an implementation decision, not a hardened
+product or qualification result. SEC0 still needs a complete route-by-route
+fixture mapping and exercised mixed-product controls.
 
 No core item requires MDWE, irreversible mapping sealing or hardware control
 flow protection. Those need separately scoped future kernel/CPU/ABI and
