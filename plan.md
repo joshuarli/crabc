@@ -335,11 +335,34 @@ policy and checks visibility, binding and address failures.
 
 The affected focused Python suites pass, with existing fixture skips retained
 as unverified. No runtime implementation changed. The prepared
-`.work/wt/abi-companion-proof` will freeze the integrated revision and run fresh
-static preparation, bounded dynamic materialization, the four collectors and
-the standard companion loop. Existing frozen products and failures remain
-unchanged. No qualification claim or publication changes. Performance remains
-behind correctness.
+`.work/wt/abi-companion-proof` is frozen at `a438c509b`. Host checks, fresh
+static preparation, bounded dynamic materialization and all four collectors
+pass. The complete companion loop finishes with sixteen producers passing,
+four failing, no blocked dependencies and two family-flow outcomes. The
+declaration header correction and all four image-input refreshes pass natively.
+Seventeen companions, including the checked-in header aggregate, are bound in
+its actual manifest. Standard assembly of this partial set is next, without a
+closure or publication claim.
+
+The remaining failures expose the next concrete repairs. The pthread reader
+expects checkout-relative static map and trace paths, while its driver emits
+receipt-relative names. The syscall reader omits the static receipt argument
+and has the same stale sidecar expectation. `74272cf99` integrates that syscall
+repair with canonical-driver and independent path-mutation regressions.
+The CRT proof advances past conventional linking but stops at default PIE on
+the same `__udivti3` import. Its remaining explicit link modes must supply their
+application helpers without changing the selected CRT or libc roles. The
+public-data proof advances beyond declaration admission, then rejects the
+shared TZif probe's initial `strptime` assertion line. The calendar reader
+already expects that line. The candidate's other six rows and the oracle's
+six rows match the existing expectations. Mutable `abi-pthread-receipt-paths`,
+`abi-crt-helper-modes` and `abi-timezone-runtime` own those repairs. No runtime
+implementation defect or new oracle disposition is established by these errors.
+
+The four completed first-group mutable worktrees were retired with ordinary
+worktree removal after clean-state and patch-equivalence checks. Their branches
+remain. Existing frozen products and failures remain unchanged. No qualification
+claim or publication changes. Performance remains behind correctness.
 
 The addrconfig lane's musl scratch remains under its `.work/tmp`: automatic
 review denied its removal with "rm -f style commands are not permitted. Use
