@@ -284,6 +284,18 @@ _start:
     mov QWORD PTR [rsp + 32], rcx
     jmp .Lstatic_pie_dynamic
 .Lstatic_pie_dynamic_done:
+    mov rax, QWORD PTR [rsp + 80]
+    and eax, 3
+    jz .Lstatic_pie_rela_tags_done
+    cmp eax, 3
+    jne .Lstatic_pie_fail
+.Lstatic_pie_rela_tags_done:
+    mov rax, QWORD PTR [rsp + 80]
+    and eax, 28
+    jz .Lstatic_pie_relr_tags_done
+    cmp eax, 28
+    jne .Lstatic_pie_fail
+.Lstatic_pie_relr_tags_done:
 
     // Only symbol-free R_X86_64_RELATIVE RELA records are valid here.
     mov rsi, QWORD PTR [rsp + 8]
