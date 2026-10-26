@@ -48,10 +48,12 @@ it never uses Alpine's bootstrap musl as an oracle. The narrow signgam probe che
 `signgam`, `lgamma_r` writes its explicit sign without updating it, and
 `__signgam` is the same storage. It does not make a math-family claim. The
 standard-stream group observes three distinct initialized slots and descriptor
-behavior without selecting a `FILE` layout. Timezone retains its existing TZif
-fixture as a source-specific known-difference observation and adds the direct
-POSIX-TZ `timezone`, `daylight`, `tzname` refresh and same-storage dependency
-probe. For `TZ=UTC0`, it requires a non-null `tzname[0]` of `UTC` and the
+behavior without selecting a `FILE` layout. The public-data receipt keeps its
+TZif fixture as a source-specific known-difference observation. It reads the
+candidate specification and pinned-musl defect transcripts from
+`owned_calendar_component_receipt.py`. Its separate POSIX-TZ probe checks
+`timezone`, `daylight`, and `tzname` publication, refresh, and same-storage
+aliases. For `TZ=UTC0`, it requires a non-null `tzname[0]` of `UTC` and the
 non-null empty daylight-name slot which pinned musl's POSIX parser and
 `owned_timezone.rs` both publish when the input contains no DST abbreviation.
 The subsequent EST/EDT refresh proves the daylight-bearing case. This ordinary

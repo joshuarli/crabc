@@ -32,6 +32,7 @@ import header_declaration_inventory
 import native_declaration_abi
 import native_data_declarations
 import owned_errno_storage_lifecycle
+import owned_calendar_component_receipt as calendar_receipt
 import core_image
 CONTRACT_PATH = MODULE_DIR / 'owned_public_data_variable_runtime.toml'
 SCHEMA = 'crabc.x86_64-owned-public-data-variable-runtime/v1'
@@ -88,10 +89,6 @@ PROBE_SCENARIOS = (
      'compat/x86_64/owned_public_data_variable_runtime_probe.c', ('timezone',), (), True),
 )
 
-# These bytes are intentionally values, not escaped transcript renderings.
-# The historic TZif source has one pinned-musl observation that is retained as
-# a known difference; every other row compares the candidate to the same musl
-# source run as well as to this finite source-owned expected stream.
 EXPECTED_STDOUT = {
     'ns-flagdata': b'',
     'in6addr-any': b'',
@@ -114,24 +111,9 @@ EXPECTED_STDOUT = {
     'getopt-and-program-names': b'',
     'math-sign': b'math-sign-global-ok\n',
     'standard-stream-slots': b'',
-    'timezone-tzif-known-difference': (
-        b'1 offset=3600 timezone=-3600 dst=0 name=ONE\n'
-        b'2 offset=-18000 timezone=18000 dst=0 name=ONE\n'
-        b'3 offset=10800 timezone=-10800 dst=0 name=XXX\n'
-        b'4 offset=7200 timezone=-3600 dst=1 name=ONE\n'
-        b'5 offset=7200 timezone=-3600 dst=1 name=ONE\n'
-        b'6 offset=3600 timezone=-3600 dst=0 name=ONE\n'
-    ),
+    'timezone-tzif-known-difference': calendar_receipt.TZIF_SPECIFICATION_STDOUT,
     'timezone-posix-publication': b'timezone-globals-ok\n',
 }
-TZIF_ORACLE_STDOUT = (
-    b'1 offset=0 timezone=0 dst=0 name=\n'
-    b'2 offset=0 timezone=0 dst=0 name=\n'
-    b'3 offset=0 timezone=-10800 dst=0 name=ONE\n'
-    b'4 offset=3600 timezone=-3600 dst=0 name=TWO\n'
-    b'5 offset=3600 timezone=-3600 dst=0 name=TWO\n'
-    b'6 offset=3600 timezone=0 dst=0 name=ONE\n'
-)
 
 
 def _candidate_cells() -> list[dict[str, str]]:
@@ -239,6 +221,7 @@ def source_inputs(contract: Mapping[str, Any] | None = None) -> list[dict[str, A
     paths = [
         CONTRACT_PATH.relative_to(ROOT).as_posix(),
         'compat/x86_64/owned_public_data_variable_runtime.py',
+        'compat/x86_64/owned_calendar_component_receipt.py',
         'compat/x86_64/run_owned_public_data_variable_runtime.sh',
         'compat/x86_64/owned-public-data-variable-runtime.md',
         'compat/x86_64/tests/test_owned_public_data_variable_runtime.py',
@@ -847,7 +830,8 @@ class Collector:
         directory = self.output / 'executables' / identifier
         oracle_root = self.output / 'roots' / identifier / 'oracle-static'
         _oracle_root_setup(oracle_root, self.output, directory / 'oracle-static', scenario['fixture_directories'])
-        oracle_expected = TZIF_ORACLE_STDOUT if identifier == 'timezone-tzif-known-difference' else expected
+        oracle_expected = (calendar_receipt.TZIF_MUSL_DEFECT_STDOUT
+                           if identifier == 'timezone-tzif-known-difference' else expected)
         self.executions[identifier + '/oracle-static'] = self._run_one_root(
             identifier + '-oracle-static-run', oracle_root, scenario['oracle_argv'], oracle_expected,
         )
@@ -1011,7 +995,8 @@ def _validate_commands(receipt_root: Path, records: object, *, origin_output: Pa
             if label == identifier + '-oracle-static-run':
                 root = origin_output / 'roots' / identifier / 'oracle-static'
                 argv = scenario['oracle_argv']
-                expected = TZIF_ORACLE_STDOUT if identifier == 'timezone-tzif-known-difference' else scenario['expected_stdout']
+                expected = (calendar_receipt.TZIF_MUSL_DEFECT_STDOUT
+                            if identifier == 'timezone-tzif-known-difference' else scenario['expected_stdout'])
             else:
                 cell_name = label[len(identifier) + 1:-len('-run')]
                 cell = next(cell for cell in scenario['candidate_cells'] if cell['id'] == cell_name)

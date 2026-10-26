@@ -16,6 +16,7 @@ from unittest import mock
 ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(ROOT / 'compat/x86_64'))
 import owned_public_data_variable_runtime as reader
+import owned_calendar_component_receipt as calendar_receipt
 import crabc_cc_owned_dynamic as dynamic_driver
 import crabc_cc_static as static_driver
 import owned_posix_product_evidence as product_evidence
@@ -98,6 +99,7 @@ class PublicDataVariableRuntimeContractTests(unittest.TestCase):
         paths = [record['path'] for record in reader.source_inputs()]
         self.assertIn('compat/x86_64/owned_timezone_tzif_probe.c', paths)
         self.assertIn('compat/x86_64/owned_public_data_variable_runtime_probe.c', paths)
+        self.assertIn('compat/x86_64/owned_calendar_component_receipt.py', paths)
         self.assertIn('compat/x86_64/tests/test_owned_public_data_variable_runtime.py', paths)
         self.assertIn('include/netdb.h', paths)
         self.assertIn('compat/x86_64/native-abi-selection.toml', paths)
@@ -223,7 +225,7 @@ class PublicDataVariableRuntimeContractTests(unittest.TestCase):
         self.assertEqual(reader.EXPECTED_STDOUT['timezone-posix-publication'], b'timezone-globals-ok\n')
         self.assertEqual(len(reader.EXPECTED_STDOUT['timezone-posix-publication']), 20)
         self.assertNotIn(b'\\n', reader.EXPECTED_STDOUT['math-sign'])
-        self.assertNotIn(b'\\n', reader.TZIF_ORACLE_STDOUT)
+        self.assertNotIn(b'\\n', calendar_receipt.TZIF_MUSL_DEFECT_STDOUT)
 
     def test_retained_input_policy_rejects_a_symlink_before_resolving_it(self) -> None:
         work = ROOT / '.work' / 'public-data-runtime-source-tests'
@@ -770,6 +772,12 @@ class PublicDataVariableRuntimePublicReplayTests(unittest.TestCase):
         return {'label': label, 'argv': argv, 'cwd': str(self.receipt if cwd is None else cwd),
                 'outcome': 'ok', **paths}
 
+    def _replace_command_stdout(self, report: dict[str, object], label: str, stdout: bytes) -> None:
+        row = next(item for item in report['commands'] if item['label'] == label)
+        path = reader._recorded_command_path(self.receipt, label, 'stdout')
+        self._write(path, stdout, 0o644)
+        row['stdout'] = reader.ordinary_link.work_file_identity(ROOT, path, 'synthetic stdout')
+
     def _command_rows(self) -> list[dict[str, object]]:
         rows = []
         invocation = '/tools/chroot'
@@ -799,7 +807,7 @@ class PublicDataVariableRuntimePublicReplayTests(unittest.TestCase):
                     cwd = None
                 rows.append(self._raw_record(identifier + '-' + mode + '-link', argv, cwd=cwd))
             oracle_root = self.receipt / 'roots' / identifier / 'oracle-static'
-            oracle_stdout = (reader.TZIF_ORACLE_STDOUT if identifier == 'timezone-tzif-known-difference'
+            oracle_stdout = (calendar_receipt.TZIF_MUSL_DEFECT_STDOUT if identifier == 'timezone-tzif-known-difference'
                              else scenario['expected_stdout'])
             rows.append(self._raw_record(
                 identifier + '-oracle-static-run',
@@ -928,6 +936,32 @@ class PublicDataVariableRuntimePublicReplayTests(unittest.TestCase):
 
     def test_public_replay_binds_all_command_object_link_root_and_final_boundaries(self) -> None:
         report = self._report()
+        candidate_stdout = (
+            b'0 initial-strptime-zone=UTC dst=0\n'
+            b'1 offset=3600 timezone=-3600 dst=0 name=ONE\n'
+            b'2 offset=-18000 timezone=18000 dst=0 name=ONE\n'
+            b'3 offset=10800 timezone=-10800 dst=0 name=XXX\n'
+            b'4 offset=7200 timezone=-3600 dst=1 name=ONE\n'
+            b'5 offset=7200 timezone=-3600 dst=1 name=ONE\n'
+            b'6 offset=3600 timezone=-3600 dst=0 name=ONE\n'
+        )
+        oracle_stdout = (
+            b'1 offset=0 timezone=0 dst=0 name=\n'
+            b'2 offset=0 timezone=0 dst=0 name=\n'
+            b'3 offset=0 timezone=-10800 dst=0 name=ONE\n'
+            b'4 offset=3600 timezone=-3600 dst=0 name=TWO\n'
+            b'5 offset=3600 timezone=-3600 dst=0 name=TWO\n'
+            b'6 offset=3600 timezone=0 dst=0 name=ONE\n'
+        )
+        self.assertEqual(calendar_receipt.TZIF_SPECIFICATION_STDOUT, candidate_stdout)
+        self.assertEqual(calendar_receipt.TZIF_MUSL_DEFECT_STDOUT, oracle_stdout)
+        self._replace_command_stdout(
+            report, 'timezone-tzif-known-difference-oracle-static-run', oracle_stdout,
+        )
+        for cell in reader.execution_plan()[-2]['candidate_cells']:
+            self._replace_command_stdout(
+                report, 'timezone-tzif-known-difference-' + cell['id'] + '-run', candidate_stdout,
+            )
         path = self._write_report(report)
 
         def retained_link(_root, _mount, _product, _object, _executable, _receipt, linkage, _linker):
@@ -949,6 +983,30 @@ class PublicDataVariableRuntimePublicReplayTests(unittest.TestCase):
             result = self._validate(path)
             self.assertEqual(result['coverage'], report['coverage'])
             self.assertEqual(result['report']['path'], 'report.json')
+
+            changed = copy.deepcopy(report)
+            missing_initial_observation = candidate_stdout.split(b'\n', 1)[1]
+            self._replace_command_stdout(
+                changed, 'timezone-tzif-known-difference-static-run', missing_initial_observation,
+            )
+            self._write_report(changed)
+            with self.assertRaisesRegex(reader.PublicDataVariableRuntimeError, 'stdout differs'):
+                self._validate(path)
+
+            changed = copy.deepcopy(report)
+            altered_observation = candidate_stdout.replace(b'initial-strptime-zone=UTC',
+                                                           b'initial-strptime-zone=GMT', 1)
+            self._replace_command_stdout(
+                changed, 'timezone-tzif-known-difference-static-run', altered_observation,
+            )
+            self._write_report(changed)
+            with self.assertRaisesRegex(reader.PublicDataVariableRuntimeError, 'stdout differs'):
+                self._validate(path)
+
+            self._replace_command_stdout(
+                report, 'timezone-tzif-known-difference-static-run', candidate_stdout,
+            )
+            self._write_report(report)
 
             changed = copy.deepcopy(report)
             next(row for row in changed['commands']
