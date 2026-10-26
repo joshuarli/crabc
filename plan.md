@@ -1,18 +1,22 @@
 # Qualify and promote crabc's native x86-64 runtime
 
-**Status: paused 2026-10-26.** Owner requested campaign winddown and cleanup; start no campaign work until resumed.
+**Status: active 2026-10-26.** Native correctness qualification remains incomplete.
 
-**Priority on resume: runtime hardening (SEC0–SEC3).** The owner requested the
+**Priority: runtime hardening (SEC0–SEC3).** The owner requested the
 glibc-style execution/loading defenses for crabc. Implement and qualify an
 explicit hardened native x86-64 product alongside compatibility products before
 the next correctness/public-promotion claim. This documentation change does not
 resume the campaign or credit retained receipts against the new contract.
 
-Resume prompt: “Resume plan.md from accepted `775ff60ac`; start SEC0, integrate SEC1–SEC3 with the existing runtime owners and correctness repairs, then freeze a fresh cohort for qualification and promotion.”
-First command: `git worktree add .work/wt/cohort-resume -b cohort/resume-20261026 main`.
-Accepted source is `775ff60ac`; main and `lane/campaign-integration` are clean. No public-support, allocator-default or qualification flag changed.
+Resume from main after `444caecb1`. The cohort at `6d00fc20b` passed static products and the repaired stdio case, then failed dynamic products on the pattern differential. Its retained outputs are in `.work/wt/cohort-stdio-mold`. The earlier cohort at `e4572dcea` failed the stdio map reader; `62d1319d3` fixes that reader and its 30-test suite passes.
+
+`fe4a287ad` aligns escaped leading periods and bracket ranges with the native musl oracle. The existing directed edge matrix and all C-locale fnmatch corpus blocks match; the UTF-8 fnmatch and glob corpora still differ. After three attempts, park the pattern qualification step. Resume it only with a narrower discriminating UTF-8 reproducer and source comparison. No family claim is qualified.
+
+The independent static Lua run against `6d00fc20b` failed all three products because its reader rejected mold's `trace:` prefix. `444caecb1` repairs the reader and its 24-test suite passes. A fresh source-bound static Lua run is required. Source convergence reports 151 implementation rows, 24 transitional routes, five intentional differences, and two known differences unmet. The accepted C allocator and public-support flag remain unchanged.
+
+Previous accepted source was `775ff60ac`. No public-support, allocator-default or qualification flag changed.
 Proof: 150 integrated reader tests pass; the next seven-module check has 134 passes/one receipt-dependent skip. Wordexp passes all 108 cells, independent input capture, companion replay and the exact 20/67 join. Three fresh locale products, the locale leaf/reader and the kache Rust check pass; independent review has no open P1/P2.
-Next on resume: audit the accepted source against the hardened contract (SEC0), complete SEC1–SEC3 and the existing correctness prerequisites, then prepare the source-frozen cohort. Bring forward only the prospective ledger/inventory delta from parked `cohort/native-mold-20261026-4` (`e0f103f24`), regenerate digests and prepare the existing pinned inputs before the correctness run. The delta remains prospective until H1; never merge the rehearsal claims or reuse old receipts as hardening proof.
+Next: audit the accepted source against the hardened contract (SEC0), complete SEC1–SEC3 and the existing correctness prerequisites, then prepare the source-frozen cohort. Bring forward only the prospective ledger/inventory delta from parked `cohort/native-mold-20261026-4` (`e0f103f24`), regenerate digests and prepare the existing pinned inputs before the correctness run. The delta remains prospective until H1; never merge the rehearsal claims or reuse old receipts as hardening proof.
 Current evidence consumers remain at `.work/wt/campaign-integration`, `.work/wt/cohort-native-mold`, `.work/wt/cohort-native-mold-2`, `.work/wt/cohort-native-mold-3`, `.work/wt/locale-null-base` and `.work/wt/wordexp-oracle-refresh`; retained raw failures and causal artifacts must not be relabelled as current-source qualification.
 The three failed mold cohorts remain frozen at `7eb375e52`, `fd3245f24`, `66d1727f0`. H04 has not begun proof; its prepared inputs are retained. Fresh products are required after the locale fix; the old-product stdio attempt correctly refuses current-source binding.
 Parking commits preserve completed lane source, original fixture locations and pre-parking HEAD context. Historical receipts keep their original identity; reconstruct their recorded source state or regenerate rather than crediting a parking commit.
