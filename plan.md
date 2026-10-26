@@ -1,6 +1,6 @@
 # Qualify and promote crabc's native x86-64 runtime
 
-**Status: active 2026-10-25.** The owner resumed campaign execution with
+**Status: active 2026-10-26.** The owner resumed campaign execution with
 "Proceed" after the verified checkpoint. The selected next workload is
 `qualification-candidate --profile correctness`, beginning with a frozen H0
 rehearsal. Performance follows correctness. The denied allocator diagnostics
@@ -270,8 +270,15 @@ summary remain in the frozen checkout. The independent pthread-family receipt
 passes for all three product pairs with 16 coverage topics. The text channel
 runs the existing 28
 pair-producer/input-seal steps, reusing primary word-expansion evidence.
-All 28 producers and seals pass; final text-family assembly is running against
-their actual reports, the completed matrix, and the pthread receipt.
+All 28 producers and seals pass. Final text-family assembly also passes against
+their actual reports, the completed matrix, and the pthread receipt. Its actual
+`cohort/out/text-family/receipt.json` verifies sixteen capabilities and nine
+component groups, with component and family completion true, promotion and
+public support false. Source before and after remains the frozen `b3a226cce`
+revision and digest. The 68-stage inventory now contains 54 successful
+operations (eight normal runner steps and 46 direct operations), two failures,
+two passing producers blocked by discovery, and ten held steps. No synthetic
+completion records were written. This H0 remains unqualified.
 
 The first fresh resolver proof confirms readable run and report publication,
 then its independent reader finds `reference.events.json` still private. The
@@ -295,6 +302,29 @@ four existing collectors followed by the ordinary assembler. It must not mix
 old `b3a226cce` facts or waive optional-companion selection closure. Its goal is
 to exercise the repaired eight-import account against complete fresh ELF rows,
 not to claim promotion from collector output.
+
+The replacement fresh ABI proof at frozen `36cbc825d`, retained in
+`.work/wt/abi-header-binding-proof`, passes static preparation, bounded dynamic
+materialization and all four collectors. Ordinary assembly without companions
+passes and accounts for all eight Rust-to-C allocator function imports. Selection
+closure remains false with 799 explicit blockers; collector success is not ABI
+completion. The standard same-source companion loop then finishes once:
+twelve producers pass, seven fail, one dependent producer is blocked, and two
+companions require their existing family flows. Its complete manifest and raw
+logs remain under `.work/x86_64/abi-differential/abi-proof-companions/`.
+
+The next bounded repair group owns the demonstrated failures in separate
+mutable worktrees: `abi-declaration-composition` shares strict installed-header
+composition validation with the ordinary declaration owner;
+`abi-pthread-binding` investigates `__pthread_detach` archive binding;
+`abi-crt-link` investigates the conventional PIE link error; and
+`abi-companion-image-inputs` compares four failed image-input checks. The latter
+has established that all four retained manifests differ from the accepted
+rebuilt image only in the rustup-init executable bytes and size, with matching
+path and mode. No comparison will be relaxed. The coordinator must review the
+corresponding exact manifest refresh before a new same-source native proof.
+Existing frozen products, failed receipts and main qualification claims remain
+unchanged. Performance remains behind correctness.
 
 The addrconfig lane's musl scratch remains under its `.work/tmp`: automatic
 review denied its removal with "rm -f style commands are not permitted. Use
