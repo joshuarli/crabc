@@ -379,12 +379,19 @@ retaining 218 closure blockers and all promotion/public flags false. Three
 successful receipts are rejected by stale selector joins: locale product trees
 have identical entries in different ordering; pthread's collector and selected
 source rosters share a legitimately repeated file; and the resolver selector
-omits three required current input roles. `abi-selector-joins` owns those
-repairs and a bounded inspection of the four repaired producer adapters.
+omits three required current input roles. `99cd68019` integrates those repairs
+and the bounded inspection found no additional defect in the four repaired
+producer adapters. The direct regressions and related attachment suites pass,
+with existing skips left unverified.
 Historical measurement mode cannot close these current companion joins because
 they require the selecting source to match the measured candidate build.
-After selector integration, a fresh combined proof is required. No source seal
-or required role will be waived to reuse an older cohort.
+The fresh `.work/wt/abi-selector-proof` is frozen at `99cd68019`. Host checks,
+both product preparations and all four collectors pass. Its complete companion
+loop is running once before assembly. No source seal or required role is waived
+to reuse an older cohort. The preceding `f29b75dfb` loop has independently passed
+the repaired pthread, CRT and syscall producers; public-data validation remains
+active. The nine completed mutable worktrees from these two repair groups are
+retired after clean-state and patch-equivalence checks, with branches retained.
 
 The addrconfig lane's musl scratch remains under its `.work/tmp`: automatic
 review denied its removal with "rm -f style commands are not permitted. Use
