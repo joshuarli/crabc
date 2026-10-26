@@ -133,9 +133,9 @@ class NativeCrtStartupAttachmentTests(unittest.TestCase):
                 visibility: str='DEFAULT', section_index: str='UND', value: str='0000000000000000') -> None:
             row_indices[artifact]+=1
             row=self._row(name,section=section_index,binding=binding,visibility=visibility)
+            size=1 if section_index!='UND' and name!='_GLOBAL_OFFSET_TABLE_' else 0
             row.update({'type':type,'row_index':row_indices[artifact],
-                        'size_bytes':1 if section_index!='UND' else 0,
-                        'size':'1' if section_index!='UND' else '0','value':value})
+                        'size_bytes':size,'size':str(size),'value':value})
             section=None if section_index=='UND' else {
                 'name':'.got.plt' if name=='_GLOBAL_OFFSET_TABLE_' else '.text.'+name,
                 'index':int(section_index),'address':value,'type':'PROGBITS',
@@ -161,7 +161,7 @@ class NativeCrtStartupAttachmentTests(unittest.TestCase):
         for name,placements in source_definitions.items():
             rows=[row for row in observed if row['row']['name']==name]
             self.assertEqual({row['artifact_key'] for row in rows},set(placements))
-            self.assertTrue(all(row['role']=='definition' for row in rows))
+            self.assertTrue(all(row['row']['section_index']!='UND' for row in rows))
             for row in rows:
                 artifact=row['artifact_key']
                 self.assertEqual({key:row['row'][key] for key in ('type','binding','visibility')},
@@ -169,6 +169,7 @@ class NativeCrtStartupAttachmentTests(unittest.TestCase):
 
         occurrences=[]
         identities = []
+        placement_joins = []
         blockers = []
         by_name={name:[] for name in names}
         for index, source in enumerate(observed):
@@ -179,9 +180,15 @@ class NativeCrtStartupAttachmentTests(unittest.TestCase):
             occurrence={
                 'index':index,'artifact_key':source['artifact_key'],'member_name':source['member'],
                 'member_index':source['member_index'],'member_occurrence':source['member_occurrence'],
-                'table_section_index':source['table_section_index'],'definition_section':source['section'],
+                'table':'.symtab','table_section_index':source['table_section_index'],
+                'definition_section':source['section'],
                 'role':role,'row':row,
             }
+            group=source_group_by_member.get(row['name'])
+            if group is not None and role == 'definition':
+                occurrence['accounting']={
+                    'disposition':'private-provider','owner':group['owner'],'scope':source['artifact_key'],
+                }
             occurrences.append(occurrence);by_name[row['name']].append(occurrence)
         for name in names:
             rows=by_name[name]
@@ -194,12 +201,20 @@ class NativeCrtStartupAttachmentTests(unittest.TestCase):
                 reasons.extend('candidate definition placement is not selected: '+artifact
                                for artifact in sorted({row['artifact_key'] for row in rows
                                                       if row['role']=='definition'}))
+                chosen={'disposition':disposition,'owner':owner}
+                expected=[]
             else:
                 owner=group['owner'];disposition=group['disposition'];reasons=[]
+                chosen={key:group[key] for key in ('disposition','owner','family','reason','sources')}
+                chosen['group']=group['id']
+                expected=[
+                    {'artifact_key':artifact,'metadata':metadata,'metadata_rule':'explicit'}
+                    for artifact,metadata in source_definitions[name].items()
+                ]
             identities.append({
                 'identity': {'name': name, 'version': None, 'version_default': False},
-                'selection': {'disposition': disposition, 'owner': owner,
-                              **({'group':group['id']} if group is not None else {})},
+                'selection': chosen,
+                'expected_placements':expected,
                 'unresolved': reasons[:],
             })
             blockers.extend({
@@ -207,6 +222,16 @@ class NativeCrtStartupAttachmentTests(unittest.TestCase):
                 'identity': {'name': name, 'version': None, 'version_default': False},
                 'reason': reason,
             } for reason in reasons)
+            if group is not None:
+                for artifact,metadata in source_definitions[name].items():
+                    occurrence=next(row for row in rows
+                                    if row['artifact_key']==artifact and row['role']=='definition')
+                    placement_joins.append({
+                        'identity': {'name': name, 'version': None, 'version_default': False},
+                        'artifact_key':artifact,'definition_count':1,'occurrence_indices':[occurrence['index']],
+                        'expected_metadata':metadata,'metadata_differences':[],'placement_observed':True,
+                        'metadata_origin':None,
+                    })
         companion = {
             'status': 'crt-startup-observed-with-boundaries', 'reader': {}, 'contract': {}, 'report': {},
             'source': {}, 'source_inputs': {}, 'products': products,
@@ -216,7 +241,8 @@ class NativeCrtStartupAttachmentTests(unittest.TestCase):
                         'descriptor_handoff': {}, 'descriptor_runtime_admission': {}},
             'limits': list(selection.CRT_STARTUP_LIMITS),
         }
-        accounting = {'identities': identities, 'placement_joins': [], 'occurrences': occurrences, 'blockers': blockers}
+        accounting = {'identities': identities, 'placement_joins': placement_joins,
+                      'occurrences': occurrences, 'blockers': blockers}
         original_accounting = copy.deepcopy(accounting)
         joins = selection.attach_native_crt_startup(accounting, companion)
         self.assertEqual(len(joins), 21)
@@ -226,7 +252,21 @@ class NativeCrtStartupAttachmentTests(unittest.TestCase):
         got_join=next(row for row in joins if row['identity']['name']=='_GLOBAL_OFFSET_TABLE_')
         got_rows=[occurrences[index] for index in got_join['occurrence_indices']]
         self.assertEqual({(row['artifact_key'],row['role']) for row in got_rows},
-                         {('candidate-static','import'),('candidate-shared','definition')})
+                         {('candidate-static','import'),('candidate-shared','local-definition')})
+
+        blocked = copy.deepcopy(original_accounting)
+        private_name = reader.SOURCE_CRT_NAMES[0]
+        private_record = next(row for row in blocked['identities']
+                              if row['identity']['name'] == private_name)
+        private_blocker = selection.ORDINARY_IMPORT_REASON
+        private_record['unresolved'].append(private_blocker)
+        blocked['blockers'].append({
+            'code':'identity-unresolved','identity':copy.deepcopy(private_record['identity']),
+            'reason':private_blocker,
+        })
+        selection.attach_native_crt_startup(blocked, companion)
+        self.assertIn(private_blocker, private_record['unresolved'])
+        self.assertIn(private_blocker, [row['reason'] for row in blocked['blockers']])
 
         malformed = copy.deepcopy(companion)
         malformed['account']['occurrences'].pop()

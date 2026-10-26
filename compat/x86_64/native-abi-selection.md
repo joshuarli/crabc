@@ -677,8 +677,8 @@ runtime admission with the worker v2 lifetime/mapping/fork account in one
 `runtimev1_descriptor_lifecycle_joins` record. That record references the
 existing one weak source occurrence, retains empty provider occurrence lists,
 and removes only the two remaining descriptor requirements. It does not alter
-the twelve CRT identity joins, the existing transport join, or any raw ELF
-occurrence.
+the canonical closed CRT identity roster, the existing transport join, or any
+raw ELF occurrence.
 
 Both reports must bind the same clean selected source, complete/base/static
 measurement reports, static preparation, static archive, dynamic manifest and

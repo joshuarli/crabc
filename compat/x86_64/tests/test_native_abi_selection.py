@@ -528,6 +528,7 @@ __crabc_fini_array_start_address __crabc_fini_array_end_address
 __crabc_x86_64_dynamic_executable_fini __crabc_x86_64_dynamic_executable_init __crabc_x86_64_dynamic_start
 __crabc_x86_64_executable_fini __crabc_x86_64_executable_init
 __crabc_x86_64_owned_crt_handoff_value __crabc_x86_64_static_pie_start _start
+__crabc_x86_64_exec_start __crabc_x86_64_attached_owned_crt_handoff
 '''.split())
 
 
@@ -647,7 +648,6 @@ class SourceOwnerPolicyTests(unittest.TestCase):
     def test_crt_definition_placements_keep_entry_bridges_and_handoff_distinct(self):
         source_groups = [group for group in self.groups.values() if group['id'].startswith('source-crt-')]
         self.assertEqual({name for group in source_groups for name in group['members']}, CRT_OWNER_NAMES)
-        self.assertEqual(len(CRT_OWNER_NAMES), 14)
         all_crt = ['static-crt1.o', 'static-Scrt1.o', 'static-rcrt1.o', 'dynamic-crt1.o', 'dynamic-Scrt1.o']
         bridges = self.groups['source-crt-linker-array-address-bridges']
         self.assertEqual(bridges['artifacts'], all_crt)
@@ -658,7 +658,15 @@ class SourceOwnerPolicyTests(unittest.TestCase):
         self.assertEqual([row['artifact_key'] for row in entry['expected_placements']], all_crt)
         self.assertIn('not a C-callable provider', entry['selection']['reason'])
         handoff = self.records['__crabc_x86_64_owned_crt_handoff_value']
-        self.assertEqual([row['artifact_key'] for row in handoff['expected_placements']], ['static-Scrt1.o', 'dynamic-crt1.o', 'dynamic-Scrt1.o'])
+        self.assertEqual([row['artifact_key'] for row in handoff['expected_placements']], ['static-Scrt1.o', 'dynamic-Scrt1.o'])
+        dispatcher = self.records['__crabc_x86_64_exec_start']
+        self.assertEqual(dispatcher['selection']['group'], 'source-crt-conventional-dispatcher')
+        self.assertEqual([row['artifact_key'] for row in dispatcher['expected_placements']],
+                         ['static-crt1.o', 'dynamic-crt1.o'])
+        attached = self.records['__crabc_x86_64_attached_owned_crt_handoff']
+        self.assertEqual(attached['selection']['group'], 'source-crt-attached-owned-handoff')
+        self.assertEqual([row['artifact_key'] for row in attached['expected_placements']],
+                         ['static-crt1.o', 'dynamic-crt1.o', 'dynamic-crabc-dynamic-attach.o'])
         self.assertNotIn('__crabc_x86_64_owned_crt_handoff', CRT_OWNER_NAMES)
 
 

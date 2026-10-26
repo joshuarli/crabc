@@ -6722,7 +6722,7 @@ def _crt_startup_identity_names(reader: Any) -> tuple[str, ...]:
     """Derive, rather than repeat, the closed startup spelling roster."""
     names = tuple(reader.NAMES)
     contract = reader.contract(ROOT)
-    require(len(names) == 12 and len(names) == len(set(names))
+    require(bool(names) and len(names) == len(set(names))
             and same(list(names), contract['identities'])
             and contract['record_sizes'] == {
                 'owned_handoff': 32,
@@ -6763,6 +6763,52 @@ def _crt_startup_identity_names(reader: Any) -> tuple[str, ...]:
             },
             'CRT startup owner contract differs')
     return names
+
+
+def _crt_startup_source_provider_groups(
+        reader: Any) -> tuple[dict[str, Mapping[str, Any]], Mapping[str, Any]]:
+    source_definitions = reader.contract(ROOT)['source_crt_definitions']
+    source_names = tuple(reader.SOURCE_CRT_NAMES)
+    require(bool(source_names) and len(source_names) == len(set(source_names))
+            and set(source_names) == set(source_definitions),
+            'CRT startup source-provider identity roster differs')
+    owner_group_names = {
+        'source-crt-conventional-dispatcher': 'x86-crt-entry-dispatcher',
+        'source-crt-attached-owned-handoff': 'x86-owned-crt-handoff-attachment',
+        'source-crt-static-lifecycle-bodies': 'x86-static-crt-lifecycle',
+        'source-crt-dynamic-lifecycle-bodies': 'x86-dynamic-crt-lifecycle',
+        'source-crt-owned-handoff-accessor': 'x86-dynamic-crt-handoff',
+    }
+    contract = load_contract(CONTRACT_PATH)
+    source_crt_groups = [group for group in contract['owner_groups']
+                         if group['id'].startswith('source-crt-')]
+    groups = {
+        group['id']: group for group in contract['owner_groups']
+        if group['id'] in owner_group_names
+    }
+    require(set(groups) == set(owner_group_names), 'CRT startup source-provider group roster differs')
+    by_name: dict[str, Mapping[str, Any]] = {}
+    for name in source_names:
+        matches = [group for group in source_crt_groups if name in group['members']]
+        require(len(matches) == 1 and matches[0]['id'] in owner_group_names,
+                f'CRT startup source-provider group differs: {name}')
+        group = matches[0]
+        placements = source_definitions[name]
+        group_members = {member for member in source_names
+                         if any(member in candidate['members'] for candidate in groups.values()
+                                if candidate['id'] == group['id'])}
+        require(group['selector'] == 'explicit' and group['disposition'] == 'private-provider'
+                and group['owner'] == owner_group_names[group['id']]
+                and group['expected_type'] == 'FUNC'
+                and group['artifacts'] == list(placements)
+                and same(group['placement_metadata'], placements)
+                and group['members'] == sorted(group_members)
+                and group['delegated_members'] == []
+                and group['members_file'] == ''
+                and group['static_metadata_rule'] == 'explicit',
+                f'CRT startup source-provider contract differs: {name}')
+        by_name[name] = group
+    return by_name, source_definitions
 
 
 def _crt_startup_product_identities(paths: Mapping[str, Path]) -> dict[str, dict[str, Any]]:
@@ -8205,6 +8251,7 @@ def attach_native_crt_startup(accounting: Mapping[str, Any], companion: Mapping[
             'CRT startup companion boundary differs')
     reader = _crt_startup_reader()
     names = _crt_startup_identity_names(reader)
+    source_groups, source_definitions = _crt_startup_source_provider_groups(reader)
     account = exact(companion['account'], {
         'identity_names', 'occurrences', 'runtime_labels', 'descriptor_handoff', 'descriptor_runtime_admission',
     },
@@ -8217,7 +8264,7 @@ def attach_native_crt_startup(accounting: Mapping[str, Any], companion: Mapping[
     }, 'CRT startup companion metadata cohort differs')
     for name, value in cohort_inputs.items():
         _identity_payload(value, f'CRT startup companion {name}')
-    records, _placements, occurrences = _accounting_indexes(accounting, description='CRT startup attachment')
+    records, placements, occurrences = _accounting_indexes(accounting, description='CRT startup attachment')
     observed_by_name = {name: [] for name in names}
     selected_indices: set[int] = set()
     for observed in account['occurrences']:
@@ -8240,17 +8287,53 @@ def attach_native_crt_startup(accounting: Mapping[str, Any], companion: Mapping[
     joins: list[dict[str, Any]] = []
     for name in names:
         record = records.get((name, None, False))
-        require(record is not None
-                and record.get('selection', {}).get('disposition') == 'structural-replacement'
-                and record['selection'].get('owner') == 'crt-startup-link-boundaries',
-                f'CRT startup selection differs: {name}')
         rows = observed_by_name[name]
-        reasons = [CRT_STARTUP_RECEIPT_REQUIREMENT]
-        if any(row['role'] == 'import' for row in rows):
-            reasons.append(ORDINARY_IMPORT_REASON)
-        for artifact_key in sorted({row['artifact_key'] for row in rows if row['role'] == 'definition'}):
-            reasons.append(f'candidate definition placement is not selected: {artifact_key}')
-        _remove_identity_requirements(accounting, record, reasons, description=f'CRT startup {name}')
+        source_group = source_groups.get(name)
+        if source_group is None:
+            require(record is not None
+                    and record.get('selection', {}).get('disposition') == 'structural-replacement'
+                    and record['selection'].get('owner') == 'crt-startup-link-boundaries',
+                    f'CRT startup selection differs: {name}')
+            reasons = [CRT_STARTUP_RECEIPT_REQUIREMENT]
+            if any(row['role'] == 'import' for row in rows):
+                reasons.append(ORDINARY_IMPORT_REASON)
+            for artifact_key in sorted({row['artifact_key'] for row in rows if row['role'] == 'definition'}):
+                reasons.append(f'candidate definition placement is not selected: {artifact_key}')
+            _remove_identity_requirements(accounting, record, reasons, description=f'CRT startup {name}')
+        else:
+            expected_selection = {
+                'disposition': source_group['disposition'], 'owner': source_group['owner'],
+                'group': source_group['id'], 'family': source_group['family'],
+                'reason': source_group['reason'], 'sources': source_group['sources'],
+            }
+            require(record is not None and same(record.get('selection'), expected_selection),
+                    f'CRT startup source-provider selection differs: {name}')
+            source_metadata = source_definitions[name]
+            expected_placements = [
+                {'artifact_key': artifact_key, 'metadata': metadata, 'metadata_rule': 'explicit'}
+                for artifact_key, metadata in source_metadata.items()
+            ]
+            require(same(record.get('expected_placements'), expected_placements),
+                    f'CRT startup source-provider placement contract differs: {name}')
+            expected_indices = set()
+            for artifact_key, metadata in source_metadata.items():
+                placement, occurrence = _selected_placement(
+                    placements, occurrences, name=name, artifact_key=artifact_key,
+                    table='.symtab', role='definition', metadata=metadata,
+                    description=f'CRT startup source-provider {name} in {artifact_key}',
+                )
+                require(same(placement.get('expected_metadata'), metadata)
+                        and occurrence.get('accounting') == {
+                            'disposition': 'private-provider', 'owner': source_group['owner'],
+                            'scope': artifact_key,
+                        }, f'CRT startup source-provider accounting differs: {name} in {artifact_key}')
+                expected_indices.add(occurrence['index'])
+            observed_provider_indices = {
+                row['index'] for row in rows if row['artifact_key'] in source_metadata
+                and row['role'] == 'definition'
+            }
+            require(observed_provider_indices == expected_indices,
+                    f'CRT startup source-provider receipt rows differ: {name}')
         joins.append({
             'identity': copy.deepcopy(record['identity']),
             'occurrence_indices': sorted(row['index'] for row in rows),
