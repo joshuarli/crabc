@@ -150,6 +150,12 @@ under `.work/tmp`, compares every source-runtime object with its `.rlib`, and
 rechecks the undefined-symbol inventory. It runs no Cargo or rustc command
 and executes no target artifact.
 
+For retained math receipts, the `crabc-libc` Cargo feature set must match the
+requested baseline or long-double profile and the current `libc/Cargo.toml`.
+Both profile entries must remain free of dependency feature edges, so an
+additional weak dependency feature fails even when archive exports stay the
+same.
+
 The existing C fixture is linked with its owned CRT objects and its unchanged
 `-nostdlib -static -Wl,--no-undefined -Wl,--gc-sections` closure.  The producer
 retains the linker map and `rust_eh_personality` trace, records every selected

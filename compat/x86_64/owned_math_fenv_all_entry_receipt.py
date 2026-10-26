@@ -38,7 +38,7 @@ SCOPE = [
     "math.elementary-long-double", "math.elementary-fenv-sensitive",
     "math.special", "math.complex",
 ]
-LONG_DOUBLE_FEATURE = "x86-math-long-double-completion"
+LONG_DOUBLE_FEATURE = source_runtime.RETAINED_MATH_FEATURE
 LONG_DOUBLE_ADDITIONS = ("exp10l", "fdiml", "pow10l")
 LINKAGES = ("static", "static-pie", "dynamic-pie", "dynamic-non-pie")
 EXECUTION_CELLS = (

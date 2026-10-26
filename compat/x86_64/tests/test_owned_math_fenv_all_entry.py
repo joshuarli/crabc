@@ -454,6 +454,19 @@ class OwnedMathFenvAllEntryTests(unittest.TestCase):
         self.assertEqual(set(baseline) - set(feature), set())
         self.assertEqual(len(feature), len(baseline) + 3)
 
+    def test_retained_math_feature_profiles_match_current_manifest(self) -> None:
+        self.assertEqual(
+            receipt.source_runtime.retained_math_package_features(""), frozenset({"default"}),
+        )
+        self.assertEqual(
+            receipt.source_runtime.retained_math_package_features(receipt.LONG_DOUBLE_FEATURE),
+            frozenset({"default", receipt.LONG_DOUBLE_FEATURE}),
+        )
+        with self.assertRaisesRegex(
+            receipt.source_runtime.ClosureError, "does not support this requested feature profile",
+        ):
+            receipt.source_runtime.retained_math_package_features("x86-owned-allocator-lifecycle-test-audit")
+
     def test_binary80_feature_receipt_replays_isolated_archive_and_consumer_evidence(self) -> None:
         scratch = ROOT / ".work/x86_64/tmp"
         scratch.mkdir(parents=True, exist_ok=True)
@@ -567,6 +580,51 @@ class OwnedMathFenvAllEntryTests(unittest.TestCase):
             stderr_path = graph / "cargo.stderr.log"
             original_stdout = stdout_path.read_bytes()
             original_stderr = stderr_path.read_bytes()
+
+            rows = receipt.source_runtime.cargo_records(stdout_path)
+            cargo_row = receipt.source_runtime.artifact_record_for_source(
+                rows, ROOT / "libc/src/lib.rs", "c",
+            )
+            extra_feature = "x86-owned-allocator-lifecycle-test-audit"
+            cargo_row["features"].append(extra_feature)
+            stdout_path.write_text(
+                "".join(json.dumps(row, sort_keys=True) + "\n" for row in rows), encoding="utf-8",
+            )
+            commands = receipt.source_runtime.cargo_commands(stderr_path)
+            libc_command = receipt.source_runtime.invocation_for(commands, "c")
+            libc_command.extend(("--cfg", f'feature="{extra_feature}"'))
+            stderr_path.write_text("".join(
+                f"     Running `{shlex.join(command)}`\n   Compiling fixture\n" for command in commands
+            ) + "    Finished `dev` profile [optimized + debuginfo] target(s) in 1.00s\n", encoding="utf-8")
+            emitted = receipt.source_runtime.emitted_artifacts(rows, graph / "cargo-target")
+            runtime_sources = {
+                name: Path(original["rust_source"]) / relative
+                for name, relative in receipt.source_runtime.RUNTIME_SOURCES.items()
+            }
+            changed = json.loads(json.dumps(original))
+            changed["cargo_stdout"] = receipt.source_runtime.file_record(
+                stdout_path, "fixture Cargo JSON stream",
+            )
+            changed["cargo_stderr"] = receipt.source_runtime.file_record(
+                stderr_path, "fixture Cargo diagnostics",
+            )
+            changed["primary_rustc"] = receipt.source_runtime.command_record(
+                libc_command, graph / "cargo-target", runtime_sources, emitted,
+                "crabc-libc", ROOT / "libc/src/lib.rs",
+                extern_matrix=receipt.source_runtime.derived_libc_externs(
+                    libc_command, "fixture Cargo crabc-libc rustc",
+                ),
+                flags=receipt.source_runtime.RUNTIME_FLAGS,
+            )
+            receipt_path.write_text(json.dumps(changed, sort_keys=True) + "\n", encoding="utf-8")
+            with self.assertRaisesRegex(
+                receipt.source_runtime.ClosureError, "feature closure differs from the requested",
+            ):
+                receipt.source_runtime.replay_cargo_graph(graph, receipt.LONG_DOUBLE_FEATURE)
+            stdout_path.write_bytes(original_stdout)
+            stderr_path.write_bytes(original_stderr)
+            receipt_path.write_text(json.dumps(original, sort_keys=True) + "\n", encoding="utf-8")
+
             for mismatch, mutate in (
                 ("cargo-profile", lambda record: record["profile"].__setitem__("opt_level", "3")),
                 ("cargo-features", lambda record: record["features"].remove("x86-math-long-double-completion")),

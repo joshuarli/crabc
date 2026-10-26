@@ -168,6 +168,7 @@ DERIVED_PROFILE: dict[str, object] = {
 SUPPORTED_EXTERN_MODIFIERS = {(), ("priv",), ("noprelude", "nounused")}
 # Unmerged codegen-unit ceiling for the dev profile; see build().
 DEV_CODEGEN_UNITS = 65536
+RETAINED_MATH_FEATURE = "x86-math-long-double-completion"
 
 
 class ClosureError(RuntimeError):
@@ -212,6 +213,26 @@ def source_runtime_profile(features: str) -> dict[str, object]:
     """Select a named source-runtime closure profile, else the derived one."""
 
     return SOURCE_RUNTIME_PROFILES.get(normalized_features(features), DERIVED_PROFILE)
+
+
+def retained_math_package_features(features: str) -> frozenset[str]:
+    normalized = normalized_features(features)
+    requested = normalized.split(",") if normalized else []
+    if requested not in ([], [RETAINED_MATH_FEATURE]):
+        fail("retained math graph does not support this requested feature profile")
+    try:
+        manifest = tomllib.loads(physical(ROOT / "libc" / "Cargo.toml", "crabc-libc Cargo manifest")
+                                 .read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, tomllib.TOMLDecodeError) as error:
+        raise ClosureError("crabc-libc Cargo manifest is invalid") from error
+    definitions = manifest.get("features")
+    if not isinstance(definitions, dict):
+        fail("crabc-libc Cargo manifest has no feature definitions")
+    selected = ["default", *requested]
+    for name in selected:
+        if definitions.get(name) != []:
+            fail(f"retained math Cargo feature has an unreviewed dependency edge: {name}")
+    return frozenset(selected)
 
 
 def libc_rustc_arguments(arguments: Sequence[str]) -> list[str]:
@@ -1023,9 +1044,10 @@ def replay_cargo_graph(graph: pathlib.Path, features: str) -> RetainedCargoGraph
             command, target, {}, emitted, name, source, flags=RUNTIME_FLAGS,
         )
     libc_command = invocation_for(commands, "c")
-    validate_retained_math_artifact_command(
-        artifact_record_for_source(records, libc_source, "c"), libc_command, "crabc-libc",
-    )
+    libc_artifact = artifact_record_for_source(records, libc_source, "c")
+    validate_retained_math_artifact_command(libc_artifact, libc_command, "crabc-libc")
+    if set(libc_artifact["features"]) != retained_math_package_features(features):
+        fail("Cargo crabc-libc feature closure differs from the requested retained math profile")
     libc_externs = profile["libc_externs"]
     if libc_externs is None:
         libc_externs = derived_libc_externs(libc_command, "retained Cargo crabc-libc rustc")
