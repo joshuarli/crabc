@@ -1187,8 +1187,22 @@ def selected_callable_boundary_fixture():
 
     boundaries = {
         'products': {'static': {}, 'dynamic': {}},
-        'alloca': {'owner': owner('compiler-builtin')},
-        'seqbuf_dump': {'owner': owner('consumer-supplied')},
+        'alloca': {
+            'owner': owner('compiler-builtin'),
+            'name': 'alloca',
+            'declaration': {'header': 'alloca.h', 'profile': 'c11-gnu', 'qual_type': 'void *(size_t)'},
+            'compiler': {'path': '/tools/clang'},
+            'no_libc_import': {'undefined_symbols': [], 'relocation_symbols': []},
+            'links': [],
+            'raw': {'source': {}, 'object': {}, 'symbols': {}, 'relocations': {}, 'compile': {}},
+        },
+        'seqbuf_dump': {
+            'owner': owner('consumer-supplied'),
+            'name': 'seqbuf_dump',
+            'header': 'sys/soundcard.h',
+            'compiler': {'path': '/tools/clang'},
+            'jobs': [],
+        },
         'oracle_no_provider': {
             'owner': owner('oracle-declared-no-provider'),
             'members': owner('oracle-declared-no-provider')['members'],
@@ -1202,14 +1216,21 @@ def selected_callable_boundary_fixture():
         'consumer-supplied': 'consumer-supplied',
         'oracle-declared-no-provider': 'oracle-no-provider',
     }
-    accounting = {'identities': [
+    records = [
         {
             'identity': identity(row['name']),
             'selection': {'disposition': disposition[row['resolution']], 'owner': row['id']},
             'unresolved': [selection.SELECTED_CALLABLE_BOUNDARY_REQUIREMENT, 'another open condition'],
         }
         for row in deferred
-    ]}
+    ]
+    accounting = {
+        'identities': records,
+        'blockers': [
+            {'code': 'identity-unresolved', 'identity': row['identity'], 'reason': reason}
+            for row in records for reason in row['unresolved']
+        ] + [{'code': 'companion-rejected', 'companion': 'other', 'detail': 'preserve'}],
+    }
     return boundaries, callable_account, accounting
 
 
@@ -1222,10 +1243,19 @@ class SelectedCallableBoundaryAttachmentTests(unittest.TestCase):
             {row['identity']['name'] for row in joins},
             {row['identity']['name'] for row in accounting['identities']},
         )
+        before = copy.deepcopy(accounting)
         attached = selection.attach_selected_callable_boundaries(accounting, joins)
         self.assertEqual(attached, joins)
         self.assertTrue(all(row['unresolved'] == ['another open condition']
                             for row in accounting['identities']))
+        discharged = {selection.identity_key(row['identity']) for row in joins}
+        expected_blockers = [
+            row for row in before['blockers']
+            if not (row.get('code') == 'identity-unresolved'
+                    and selection.identity_key(row['identity']) in discharged
+                    and row.get('reason') == selection.SELECTED_CALLABLE_BOUNDARY_REQUIREMENT)
+        ]
+        self.assertEqual(accounting['blockers'], expected_blockers)
 
     def test_boundary_owner_must_match_the_current_deferred_partition(self):
         boundaries, callable_account, _ = selected_callable_boundary_fixture()

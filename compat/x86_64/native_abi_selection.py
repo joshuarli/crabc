@@ -4169,13 +4169,15 @@ def selected_callable_boundary_joins(
     no_provider_owner = expected_owner('oracle-declared-no-provider')
     require(compiler_owner['members'] == ['alloca'] and consumer_owner['members'] == ['seqbuf_dump'],
             'selected callable boundary builtin or consumer identity differs')
-    alloca = exact(boundaries['alloca'], {'owner'}, 'selected alloca boundary')
-    seqbuf = exact(boundaries['seqbuf_dump'], {'owner'}, 'selected seqbuf_dump boundary')
+    alloca = boundaries['alloca']
+    seqbuf = boundaries['seqbuf_dump']
+    require(isinstance(alloca, Mapping) and isinstance(seqbuf, Mapping),
+            'selected alloca or seqbuf_dump boundary differs')
     no_provider = exact(boundaries['oracle_no_provider'], {
         'members', 'owner', 'provider_absence', 'raw_provider_observations',
     }, 'selected oracle no-provider boundary')
-    receipt_owner(alloca['owner'], compiler_owner, 'selected alloca boundary owner')
-    receipt_owner(seqbuf['owner'], consumer_owner, 'selected seqbuf_dump boundary owner')
+    receipt_owner(alloca.get('owner'), compiler_owner, 'selected alloca boundary owner')
+    receipt_owner(seqbuf.get('owner'), consumer_owner, 'selected seqbuf_dump boundary owner')
     receipt_owner(no_provider['owner'], no_provider_owner, 'selected oracle no-provider boundary owner')
     require(no_provider['members'] == no_provider_owner['members'],
             'selected oracle no-provider boundary members differ')
@@ -4249,7 +4251,10 @@ def attach_selected_callable_boundaries(
         retained.append(copy.deepcopy(dict(row)))
     require(joined == set(expected), 'selected callable boundary identity roster differs')
     for record in pending:
-        record['unresolved'].remove(SELECTED_CALLABLE_BOUNDARY_REQUIREMENT)
+        _remove_identity_requirements(
+            accounting, record, (SELECTED_CALLABLE_BOUNDARY_REQUIREMENT,),
+            description=f"selected callable boundary {record['identity']['name']}",
+        )
     return retained
 
 
