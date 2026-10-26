@@ -8823,7 +8823,7 @@ def attach_auxv_observation(accounting: Mapping[str, Any], rule: Mapping[str, An
                 'type', 'binding', 'visibility', 'section_index', 'version', 'version_index',
                 'version_default', 'size_bytes',
         )} != {
-                'type': 'FUNC', 'binding': 'GLOBAL', 'visibility': 'DEFAULT', 'section_index': 'UND',
+                'type': 'NOTYPE', 'binding': 'GLOBAL', 'visibility': 'DEFAULT', 'section_index': 'UND',
                 'version': None, 'version_index': None, 'version_default': False, 'size_bytes': 0,
         } or type(row.get('row_index')) is not int):
             return []

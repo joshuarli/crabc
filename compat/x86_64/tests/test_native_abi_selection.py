@@ -1774,12 +1774,14 @@ class ApplicationMainImportBindingTests(unittest.TestCase):
                  'visibility': 'DEFAULT', 'symbol_section': 0, 'symbol_type': '0', 'symbol_value': 0}
                 for kind, addend in self.RELOCATIONS[artifact]
             ]
-        application_rows = [
+        facts['normal-object'] = self.object_fact([
             self.symbol(section='1', kind='FUNC', size=343, row_index=1),
-            self.symbol(name='getauxval', kind='FUNC', row_index=2),
-        ]
-        facts['normal-object'] = self.object_fact(application_rows)
-        facts['empty-object'] = self.object_fact(application_rows)
+            self.symbol(name='getauxval', kind='NOTYPE', row_index=24),
+        ])
+        facts['empty-object'] = self.object_fact([
+            self.symbol(section='1', kind='FUNC', size=343, row_index=1),
+            self.symbol(name='getauxval', kind='NOTYPE', row_index=18),
+        ])
         executables = {}
         candidate_cases = [row for row in reader.cases() if not row['mode'].startswith('oracle-')]
         linked_executables = {}
@@ -2000,7 +2002,7 @@ class AuxvObservationAttachmentTests(unittest.TestCase):
         joins = self.attach(accounting, source, source_bindings, companion, observations)
         self.assertEqual(joins, [{
             'identity': selection.identity(self.NAME), 'owner': self.GROUP,
-            'getauxval_imports': {'normal-object': [2], 'empty-object': [2]},
+            'getauxval_imports': {'normal-object': [24], 'empty-object': [18]},
             'candidate_elf_facts': candidate_fact_names,
             'candidate_legacy_occurrences': 0,
             'oracle_occurrence_indices': [0],
@@ -2021,7 +2023,7 @@ class AuxvObservationAttachmentTests(unittest.TestCase):
             return source, source_bindings, _companion, observations
 
         def alter_getauxval_import(_accounting, source, source_bindings, _companion, observations):
-            observations['complete_elf_facts']['normal-object']['symbol_tables'][0]['rows'][1]['type'] = 'NOTYPE'
+            observations['complete_elf_facts']['normal-object']['symbol_tables'][0]['rows'][1]['type'] = 'FUNC'
             return source, source_bindings, _companion, observations
 
         cases = {
