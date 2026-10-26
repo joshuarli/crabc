@@ -1308,7 +1308,8 @@ def _libc_test(reader):
         strptime_profile = profiled and name == 'functional/strptime'
         wordexp_profile = profiled and name == 'functional/wordexp'
         math_oracle_defect = profiled and name in math_oracle.ORACLE_DEFECTS
-        profiled_runtime = crypt_profile or strptime_profile or wordexp_profile or math_oracle_defect
+        math_pow_discrepancy = profiled and name == 'math/pow'
+        profiled_runtime = crypt_profile or strptime_profile or wordexp_profile or math_oracle_defect or math_pow_discrepancy
         same([unit['id'], unit['kind'], unit['suite'], unit['status']],
              [name, kind, definition['suite'], 'runtime-failed' if profiled_runtime else 'passed'], 'libc-test unit role and status')
         source, obj = leaf / 'source-prepared' / definition['source'], object_paths[name]
@@ -1357,7 +1358,8 @@ def _libc_test(reader):
             continue
         runtime = unit['runtime']
         same(runtime['comparison'], {'status': 'blocked', 'reason': 'candidate runtime did not pass this prepared root'}
-             if crypt_profile else {'status': 'blocked', 'reason': 'pinned-musl runtime did not pass this prepared root'}
+             if crypt_profile else {'status': 'failed', 'detail': 'candidate raw status/stdout/stderr differs from pinned musl'}
+             if math_pow_discrepancy else {'status': 'blocked', 'reason': 'pinned-musl runtime did not pass this prepared root'}
              if strptime_profile or wordexp_profile or math_oracle_defect else {'status': 'passed', 'detail': 'passed'},
              'libc-test runtime comparison')
         results, raw = {}, {}
@@ -1415,6 +1417,10 @@ def _libc_test(reader):
                 companion=reader.profile_companions['wordexp'])
             disposition['profiles'] = profile_contract.profile_sources(reader.root)
             dispositions.append(disposition)
+        elif math_pow_discrepancy:
+            dispositions.append(math_oracle.pow_disposition(reader, source, unit=name,
+                candidate_status=runtime['candidate']['record']['exit_status'], candidate_stdout=raw['candidate'][0], candidate_stderr=raw['candidate'][1],
+                oracle_status=runtime['oracle']['record']['exit_status'], oracle_stdout=raw['oracle'][0], oracle_stderr=raw['oracle'][1]))
         elif math_oracle_defect:
             dispositions.append(math_oracle.oracle_defect_disposition(reader, source, unit=name,
                 candidate_status=runtime['candidate']['record']['exit_status'], candidate_stdout=raw['candidate'][0], candidate_stderr=raw['candidate'][1],
@@ -1422,7 +1428,7 @@ def _libc_test(reader):
         else:
             require(raw['oracle'] == raw['candidate'], 'libc-test raw runtime streams differ: ' + name)
         observations[name] = {'kind': kind, **results}
-    expected_dispositions = ['functional/crypt', 'functional/strptime', 'functional/wordexp', *math_oracle.ORACLE_DEFECTS]
+    expected_dispositions = ['functional/crypt', 'functional/strptime', 'functional/wordexp', *sorted((*math_oracle.ORACLE_DEFECTS, 'math/pow'))]
     require(not profiled or [entry['unit'] for entry in dispositions] == expected_dispositions,
             'libc-test fixed profile and math oracle-defect dispositions are missing')
     return reader.finish('libc-test', 'libc-test.json', observations, objects,

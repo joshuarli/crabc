@@ -143,6 +143,25 @@ source or header drift, timeout, failed link/root, or any unlisted unit fails
 closed. `math/fmaf` and `math/nextafterl` remain ordinary raw passes; this finite
 set admits neither them nor `random` or another unlisted unit.
 
+`math/pow` has a different raw contract. Both unchanged libc-test executables
+exit zero with empty stderr. The pinned native oracle emits 24 `X` diagnostics;
+the candidate emits ten. The unit remains `runtime-failed` because its raw
+streams differ. Its separate disposition is
+`candidate-corrected-oracle-discrepancy`, with `raw_passed: false` and both
+diagnostic counts retained. The ten candidate diagnostics remain visible.
+
+The reader requires the exact whole stdout stream from each arm, in order.
+Exactly fourteen oracle diagnostics concern finite binary64 subnormal inputs
+with exponent one. Each pinned source row expects its original operand and no
+exceptions. The existing integer dyadic parser proves that each operand is an
+exact multiple of binary64 subnormal spacing, so the identity requires no
+rounding or new exceptions. All four input headers, the complete unit source,
+the native musl pin, and the production correction and proof source closure
+remain bound. The other ten diagnostics match byte for byte. A changed,
+missing, added, or reordered diagnostic, a nonzero exit, source or header drift,
+or an invalid identity proof rejects the disposition. No workload case or raw
+observation changes.
+
 The native coordinator requires the complete family `execution.json`,
 `--crypt-profile RECEIPT`, `--atomic-addressable-profile RECEIPT`,
 `--wordexp-profile RECEIPT`, and
@@ -156,8 +175,8 @@ The state transition is explicit:
 1. An ordinary component has raw success and qualification `passed`.
 2. Only OS-test or libc-test may retain raw exit 1 and raw failure while an
    independently reconstructed qualification is `profile-qualified`. The
-   three scalar-math entries are separate named candidate-pass/pinned-musl-
-   defect records inside the libc-test result; they do not widen that profile.
+   three scalar-math entries retain their separate source-bound dispositions
+   inside the libc-test result. They do not widen that profile.
 3. Missing or invalid required companion evidence, a missing or invalid
    source contract, an unexpected raw outcome, or any other failure stops
    execution and retains `incomplete.json`.

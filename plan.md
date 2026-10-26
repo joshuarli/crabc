@@ -18,9 +18,14 @@ calendar/public-data tests pass in the pinned image. The current work is the
 six remaining feature-alias proofs and reopened admission repairs, then fresh
 combined collection and canonical replay.
 The owner explicitly reopened both prior POSIX `math/pow` and C-ABI
-admission decisions, superseding the two 2026-10-25 holds below. The pow repair
-must bind the exact finite oracle diagnostics and preserve every other raw
-result. C-ABI keeps all three allocation/interposition/DSO runners and all
+admission decisions, superseding the two 2026-10-25 holds below. The pow admission repair now binds both exact complete streams, the
+unchanged source/all four headers and fourteen independently proved subnormal
+identities. It preserves 24 oracle/10 candidate diagnostics, both zero exits,
+raw comparison failure and `raw_passed: false`. Both full focused modules pass
+38 tests in the pinned image; the expanded identity proof passes 120 identities
+and 40 controls using unchanged production bytes. Independent review found no
+false acceptance. Full native aggregate admission remains to be exercised at
+the next clean integrated revision. C-ABI keeps all three allocation/interposition/DSO runners and all
 public workloads, and binds them to the cohort's actual selected backend;
 native allocator identity checks remain required for native profiles. Denied allocator actions remain parked. The C
 allocator stays selected until its independent promotion proof passes. Public

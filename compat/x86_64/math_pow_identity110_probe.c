@@ -1,4 +1,3 @@
-/* Exact finite power identities through ordinary compiler-generated C calls. */
 #include <fenv.h>
 #include <float.h>
 #include <math.h>
@@ -12,6 +11,10 @@ static const double bases[] = {
     0.0, -0.0, DBL_TRUE_MIN, -DBL_TRUE_MIN, DBL_MIN, -DBL_MIN,
     0.1, -0.1, 0.5, -0.5, 1.0, -1.0, 1.5, -1.5, 2.0, -2.0,
     DBL_MAX, -DBL_MAX,
+    0x1p-1042, -0x1p-1042, 0x1p-1073, -0x1p-1073,
+    0x1p-1024, -0x1p-1024, 0x1p-1023, -0x1p-1023,
+    0x1.ffffffffffffcp-1023, -0x1.ffffffffffffcp-1023,
+    0x1.ffffffffffffep-1023, -0x1.ffffffffffffep-1023,
 };
 static const struct { double base, exponent; } controls[] = {
     {4.0, 0.5}, {1.5, 2.0}, {-2.0, 3.0}, {2.0, -1.0},

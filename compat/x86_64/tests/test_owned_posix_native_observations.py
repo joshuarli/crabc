@@ -1359,7 +1359,7 @@ class NativeObservationsTests(unittest.TestCase):
             source_names[source_names.index('functional/case_064')] = 'functional/strptime'
             source_names[source_names.index('functional/case_063')] = 'functional/wordexp'
         if math_defects:
-            for number, name in enumerate(('fmaf', 'fmal', 'powf', 'nextafterl')):
+            for number, name in enumerate(('fmaf', 'fmal', 'pow', 'powf', 'nextafterl')):
                 source_names[source_names.index(f'math/case_{number:03d}')] = 'math/' + name
         for name in source_names:
             self.put(stage / 'src' / (name + '.c'), ('/* ' + name + ' */\n').encode())
@@ -1373,6 +1373,20 @@ class NativeObservationsTests(unittest.TestCase):
                 self.put(stage / source, b'fixture math unit\n')
                 for header in definition['headers']:
                     self.put(stage / header, b'fixture diagnostic header\n')
+        if math_defects:
+            pow_definition = copy.deepcopy(math_oracle_defects.POW_DEFECT)
+            self.put(stage / pow_definition['source'], b'fixture complete pow unit')
+            pow_definition['source_sha256'] = native.digest(stage / pow_definition['source'])
+            for relative in pow_definition['headers']:
+                lines = [''] * 800
+                if relative == 'src/math/ucb/pow.h':
+                    for line, base in math_oracle_defects.POW_IDENTITIES:
+                        lines[line - 1] = f'T(RN, {base}, 0x1p+0, {base}, 0x0p+0, 0)'
+                self.put(stage / relative, ('\n'.join(lines) + '\n').encode())
+                pow_definition['headers'][relative] = native.digest(stage / relative)
+            pow_patch = patch.object(math_oracle_defects, 'POW_DEFECT', pow_definition)
+            pow_patch.start()
+            self.addCleanup(pow_patch.stop)
         self.put(stage / 'src/api/unistd.c', b'C(_PC_TIMESTAMP_RESOLUTION)\nC(_SC_XOPEN_UUCP)\n')
         for number in range(29): self.put(stage / f'src/math/gen/g{number:02d}.c', b'generator\n')
         self.put(stage / 'src/musl/pleval.c', b'excluded upstream target\n')
@@ -1596,6 +1610,11 @@ class NativeObservationsTests(unittest.TestCase):
                             path = self.leaf / 'execution' / name / (side + '.stdout')
                             self.put(path, output)
                             record.update(exit_status=1, stdout=self.binding(path))
+                        if math_defects and name == 'math/pow':
+                            output = math_oracle_defects.expected_pow_stdout(self.recorded(prepared), candidate=side == 'candidate')
+                            path = self.leaf / 'execution' / name / (side + '.stdout')
+                            self.put(path, output)
+                            record.update(stdout=self.binding(path))
                         status = self.put(self.leaf / 'execution' / name / (side + '.status.json'), record)
                         copied_files = [
                             {'destination': '/runtest', 'sha256': self.binding(self.leaf / 'links' / side / 'common/runtest.exe')['sha256']},
@@ -1655,6 +1674,10 @@ class NativeObservationsTests(unittest.TestCase):
                 unit['runtime']['oracle']['status'] = 'failed'
                 unit['runtime']['comparison'] = {'status': 'blocked', 'reason': 'pinned-musl runtime did not pass this prepared root'}
                 report.update(status='incomplete', counts={'passed': 429, 'runtime-failed': 5})
+            if math_defects and name == 'math/pow':
+                unit['status'] = 'runtime-failed'
+                unit['runtime']['comparison'] = {'status': 'failed',
+                    'detail': 'candidate raw status/stdout/stderr differs from pinned musl'}
             report['units'].append(unit)
         runtime_failed = sum(unit['status'] == 'runtime-failed' for unit in report['units'])
         if runtime_failed:
@@ -1761,18 +1784,18 @@ class NativeObservationsTests(unittest.TestCase):
              patch.object(wordexp_policy, 'upstream_disposition', side_effect=self.fixture_wordexp_disposition):
             result = native.collect('libc-test', self.leaf, source_mount=self.mount, dynamic_product=self.product,
                                     root=self.root, profile_inputs=inputs)
-            self.assertEqual(report['counts'], {'passed': 429, 'runtime-failed': 5})
+            self.assertEqual(report['counts'], {'passed': 428, 'runtime-failed': 6})
             self.assertEqual(len(result['observations']), 434)
             self.assertEqual(result['qualification']['status'], 'profile-qualified')
-            self.assertEqual(len(result['qualification']['dispositions']), 5)
+            self.assertEqual(len(result['qualification']['dispositions']), 6)
             self.assertEqual(len(result['qualification']['dispositions'][0]['differences']), 28)
             self.assertEqual(result['qualification']['dispositions'][1]['unit'], 'functional/strptime')
             self.assertEqual(result['qualification']['dispositions'][2]['unit'], 'functional/wordexp')
             self.assertEqual(result['qualification']['dispositions'][2]['status'], 'posix-policy-qualified')
             self.assertEqual([entry['unit'] for entry in result['qualification']['dispositions'][3:]],
-                             ['math/fmal', 'math/powf'])
+                             ['math/fmal', 'math/pow', 'math/powf'])
             self.assertTrue(all(entry['status'] == 'candidate-passed-oracle-defect'
-                                for entry in result['qualification']['dispositions'][3:]))
+                                for entry in result['qualification']['dispositions'][3:] if entry['unit'] != 'math/pow'))
             count_changed = json.loads(json.dumps(report))
             count_changed['counts']['runtime-failed'] = 4
             self.put(self.leaf / 'libc-test.json', count_changed)
@@ -1796,16 +1819,21 @@ class NativeObservationsTests(unittest.TestCase):
                 result = native.collect('libc-test', self.leaf, source_mount=self.mount, dynamic_product=self.product,
                                         root=self.root, profile_inputs=inputs)
         defects = [entry for entry in result['qualification']['dispositions'] if entry['unit'].startswith('math/')]
-        self.assertEqual([entry['unit'] for entry in defects], ['math/fmal', 'math/powf'])
-        self.assertTrue(all(entry['status'] == 'candidate-passed-oracle-defect' for entry in defects))
-        self.assertTrue(all(entry['candidate']['passed'] and not entry['oracle']['passed'] for entry in defects))
+        self.assertEqual([entry['unit'] for entry in defects], ['math/fmal', 'math/pow', 'math/powf'])
+        self.assertTrue(all(entry['status'] == 'candidate-passed-oracle-defect' for entry in defects if entry['unit'] != 'math/pow'))
+        self.assertTrue(all(entry['candidate']['passed'] and not entry['oracle']['passed'] for entry in defects if entry['unit'] != 'math/pow'))
+        pow_result = next(entry for entry in defects if entry['unit'] == 'math/pow')
+        self.assertEqual(pow_result['candidate']['diagnostic_count'], 10)
+        self.assertEqual(pow_result['oracle']['diagnostic_count'], 24)
+        self.assertFalse(pow_result['raw_passed'])
+        self.assertEqual(pow_result['status'], 'candidate-corrected-oracle-discrepancy')
         for name in math_oracle_defects.ORACLE_DEFECTS:
             self.assertEqual((self.leaf / 'execution' / name / 'candidate.stdout').read_bytes(), b'')
             self.assertEqual((self.leaf / 'execution' / name / 'candidate.stderr').read_bytes(), b'')
             self.assertEqual((self.leaf / 'execution' / name / 'oracle.stdout').read_bytes(),
                              math_oracle_defects.expected_oracle_stdout(name, self.recorded(self.leaf / 'source-prepared')))
             self.assertEqual((self.leaf / 'execution' / name / 'oracle.stderr').read_bytes(), b'')
-        self.assertEqual(report['counts'], {'passed': 429, 'runtime-failed': 5})
+        self.assertEqual(report['counts'], {'passed': 428, 'runtime-failed': 6})
         for name in ('math/fmaf', 'math/nextafterl'):
             unit = next(item for item in report['units'] if item['id'] == name)
             self.assertEqual(unit['status'], 'passed')
