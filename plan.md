@@ -96,12 +96,31 @@ collector validates real dynamic sidecars; malformed product arguments cannot
 select the default archive gate. Focused checks and independent review pass.
 Its six-mode native proof remains pending.
 
-Next freeze the resulting source in `.work/wt/abi-bootstrap-math-proof`,
-prepare fresh bounded products and run only the installed bootstrap component
-and retained binary80 leaf with their owning readers. Preserve failed attempts.
-These are component checks, without ABI assembly or a qualification claim.
-Then attach the existing math, stdio, signal and bootstrap proofs to their
-exact remaining identities using the current source/product cohort.
+The frozen `ba318ec4c` component pilot in
+`.work/wt/abi-bootstrap-math-proof` passes fresh static and dynamic preparation
+and all 247 binary80 records. Its owner readers expose two defects. Bootstrap
+looks for the release dynamic digest in the debug-only manifest field. The
+math producer records its last runtime rustc invocation as the Cargo command.
+Preserve both failed reader outputs and the original products and math work.
+
+`eb87b89ab` binds bootstrap to sealed release materialization state. Its
+observation and product modules pass all 76 tests. `eb4577f5f` preserves the
+actual Cargo command and the pinned lexical rustup frontend. The integrated
+eight-module check passes 277 tests run, with 272 passed and five skips.
+Five new optional directory companions attach installed math, stdio, signal,
+bootstrap and isolated binary80 evidence. Selection report v12 clears only
+their exact structural and feature-alias requirements. Review caught an
+initial restorer join that rejected legitimate undefined archive imports.
+The corrected definition check preserves those imports and their blockers.
+All sixteen component attachment tests pass on integrated main.
+
+Next freeze the combined source in the prepared
+`.work/wt/abi-component-proof`. Prepare fresh bounded products and run the
+five component producers and their owning readers. Collect the four existing
+ABI inputs, assemble the bounded companion set and replay its canonical
+reader once. Keep unrelated blockers and qualification flags unchanged.
+The parked POSIX aggregate and denied allocator diagnostics remain outside
+this wave.
 
 **Earlier accepted checkpoint:** the frozen `99cd68019` ABI proof passes
 the normal canonical reader: 5,175 identities, 41,307 occurrences and zero
