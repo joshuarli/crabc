@@ -442,7 +442,7 @@ class X86_64StaticPieTests(unittest.TestCase):
                     stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False, preexec_fn=disable_core_dump,
                 )
                 self.assertEqual(relro_write.returncode, -signal.SIGSEGV)
-                self.assertEqual(relro_write.stdout, b"I")
+                self.assertEqual(relro_write.stdout, b"")
 
                 duplicate = subprocess.run(
                     [str(duplicate_relro_header(executable))], stdin=subprocess.DEVNULL,

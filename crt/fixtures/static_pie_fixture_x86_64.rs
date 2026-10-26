@@ -40,6 +40,9 @@ fn write_stdout(bytes: &[u8]) {
 }
 
 unsafe extern "C" fn constructor() {
+    if unsafe { core::ptr::read_volatile(core::ptr::addr_of!(TEST_RELRO)) } {
+        unsafe { core::ptr::write_volatile(core::ptr::addr_of_mut!(RELRO_WORD), 19) };
+    }
     write_stdout(b"I");
 }
 
@@ -58,6 +61,7 @@ static FINI: unsafe extern "C" fn() = destructor;
 #[used]
 #[link_section = ".data.rel.ro"]
 static mut RELRO_WORD: usize = 17;
+static mut TEST_RELRO: bool = false;
 
 #[no_mangle]
 pub unsafe extern "C" fn main(
@@ -67,10 +71,6 @@ pub unsafe extern "C" fn main(
 ) -> i32 {
     if argc <= 0 || argv.is_null() || unsafe { core::ptr::read(argv) }.is_null() {
         return 81;
-    }
-    if argc > 1 && unsafe { **argv.add(1) } == b'!' {
-        unsafe { core::ptr::write_volatile(core::ptr::addr_of_mut!(RELRO_WORD), 19) };
-        return 83;
     }
 
     let mut output = [0u8; 16];
@@ -96,6 +96,9 @@ pub unsafe extern "C" fn __libc_start_main(
     let expected_envp = argv.wrapping_add(argc as usize + 1);
     if argv.is_null() || argc < 0 || expected_envp.is_null() {
         exit(82);
+    }
+    if argc > 1 && unsafe { **argv.add(1) } == b'!' {
+        unsafe { core::ptr::write_volatile(core::ptr::addr_of_mut!(TEST_RELRO), true) };
     }
     if !init.is_null() {
         let callback: LifecycleHook = unsafe { core::mem::transmute(init) };
