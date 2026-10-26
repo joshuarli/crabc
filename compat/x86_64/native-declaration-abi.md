@@ -6,6 +6,13 @@ ordinary C/C++ object spelling for a selected callable declaration, and two
 small record-layout facts needed by selected public data declarations.  Its
 reviewed boundary is `native_declaration_abi.toml`.
 
+The reviewed C++ linkage probes validate each supplied product's installed
+headers through the ELF owner's `installed_header_tree_digest`.
+The shared validator requires exactly the current source project headers and
+the pinned Linux UAPI exports, including their directory roster.
+Unknown files, altered bytes, symlinks, and nonregular entries reject collection
+and retained replay before the reviewed links are accepted.
+
 The collector first replays exactly one retained
 `header_declaration_inventory` envelope and reconstructs the existing checked
 callable disposition and checked header matrix.  It does not carry a second

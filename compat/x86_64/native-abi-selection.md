@@ -138,7 +138,9 @@ raw declaration to its retained AST job and physical-header dependency.  Its
 candidate include-tree digest binds the current source project headers.
 Each selected product's physical `usr/include` must contain exactly those
 project headers and the authenticated pinned Linux UAPI export tree.
-The selector checks project bytes, the pinned kernel manifest, and the complete
+The selector uses the ELF owner's `installed_header_tree_digest`, shared with
+the ordinary declaration ABI reader.
+The validator checks project bytes, the pinned kernel manifest, and the complete
 directory roster, rejecting symlinks and other nonregular entries.
 The recorded static and dynamic digests cover each complete installed tree.
 An installed header change rejects the declaration attachment even when the

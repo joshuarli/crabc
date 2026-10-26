@@ -4,8 +4,11 @@
 from __future__ import annotations
 
 import copy
+import contextlib
+import hashlib
 import importlib.util
 import json
+import os
 from pathlib import Path
 import shutil
 import struct
@@ -61,6 +64,79 @@ def group(
 
 
 class NativeDeclarationAbiTests(unittest.TestCase):
+    @contextlib.contextmanager
+    def reviewed_header_products(self):
+        scratch = ROOT / '.work/tmp'
+        scratch.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(dir=scratch) as temporary:
+            work = Path(temporary)
+            output = work / 'evidence'
+            (output / 'reviewed-cpp-linkage').mkdir(parents=True)
+            roots = {kind: work / kind for kind in ('static', 'dynamic')}
+            kernel = {'linux/example.h': b'#define KERNEL_EXAMPLE 1\n'}
+            manifest = ''.join(f'{hashlib.sha256(value).hexdigest()}  ./{name}\n'
+                               for name, value in sorted(kernel.items()))
+            products = {}
+            for kind, root in roots.items():
+                shutil.copytree(ROOT / 'include', root / 'usr/include')
+                for name, value in kernel.items():
+                    path = root / 'usr/include/crabc-linux-uapi' / name
+                    path.parent.mkdir(parents=True, exist_ok=True)
+                    path.write_bytes(value)
+                product_manifest = root / 'share/crabc/manifest.json'
+                product_manifest.parent.mkdir(parents=True)
+                product_manifest.write_text('{}\n')
+                identity = ABI._external_identity(product_manifest, 'fixture product manifest')
+                identity['path'] = str(ABI.SOURCE_MOUNT / product_manifest.relative_to(ROOT))
+                products[kind] = {'root': str(ABI.SOURCE_MOUNT / root.relative_to(ROOT)), 'manifest': identity}
+            retained = {'classification': None, 'jobs': None, 'links': None, 'oracle_inputs': None,
+                        'products': products, 'raw': None, 'tools': {'ar': {'identity': {}, 'version': {}}}}
+            with mock.patch.object(ABI.callable_inventory, 'LINUX_UAPI_HEADER_MANIFEST_SHA256',
+                                   hashlib.sha256(manifest.encode()).hexdigest()):
+                yield output, roots, retained
+
+    def test_reviewed_cpp_links_accept_authenticated_installed_header_composition(self):
+        class RetainedToolReplay(Exception):
+            pass
+
+        with self.reviewed_header_products() as (output, roots, retained):
+            with mock.patch.object(ABI, '_cpp_boundary_plans', return_value=[]), \
+                    mock.patch.object(ABI, '_profile_records', return_value={}), \
+                    mock.patch.object(ABI, '_validate_tool_identity', side_effect=RetainedToolReplay):
+                with self.assertRaises(RetainedToolReplay):
+                    ABI._cpp_linkage_evidence(output, [], tools={}, resource_include='/unused',
+                                              static_product=roots['static'], dynamic_product=roots['dynamic'],
+                                              timeout_seconds=1, retained=retained)
+
+    def test_reviewed_cpp_links_reject_header_composition_drift_in_either_product(self):
+        def replace_with_symlink(path):
+            path.unlink()
+            path.symlink_to(ROOT / 'include/stdio.h')
+
+        mutations = {
+            'project-bytes': lambda root: (root / 'stdio.h').write_text('foreign\n'),
+            'kernel-bytes': lambda root: (root / 'crabc-linux-uapi/linux/example.h').write_text('foreign\n'),
+            'project-file': lambda root: (root / 'foreign.h').write_text('foreign\n'),
+            'kernel-file': lambda root: (root / 'crabc-linux-uapi/linux/foreign.h').write_text('foreign\n'),
+            'project-directory': lambda root: (root / 'foreign').mkdir(),
+            'kernel-directory': lambda root: (root / 'crabc-linux-uapi/foreign').mkdir(),
+            'missing-kernel': lambda root: shutil.rmtree(root / 'crabc-linux-uapi'),
+            'project-symlink': lambda root: replace_with_symlink(root / 'stdio.h'),
+            'kernel-symlink': lambda root: replace_with_symlink(root / 'crabc-linux-uapi/linux/example.h'),
+            'nonregular-entry': lambda root: os.mkfifo(root / 'foreign'),
+        }
+        for kind in ('static', 'dynamic'):
+            for name, mutate in mutations.items():
+                with self.subTest(product=kind, mutation=name), self.reviewed_header_products() as (output, roots, retained):
+                    mutate(roots[kind] / 'usr/include')
+                    with mock.patch.object(ABI, '_cpp_boundary_plans', return_value=[]), \
+                            mock.patch.object(ABI, '_profile_records', return_value={}), \
+                            mock.patch.object(ABI, '_validate_tool_identity', side_effect=AssertionError('accepted drift')):
+                        with self.assertRaisesRegex(ABI.NativeDeclarationAbiError, f'reviewed {kind} installed header tree rejected'):
+                            ABI._cpp_linkage_evidence(output, [], tools={}, resource_include='/unused',
+                                                      static_product=roots['static'], dynamic_product=roots['dynamic'],
+                                                      timeout_seconds=1, retained=retained)
+
     def test_physical_c_bridge_links_and_pinned_cpp_reference_fails_without_a_provider(self):
         compiler, linker, readelf, archiver, objcopy = (shutil.which(name) for name in ("clang", "ld", "readelf", "ar", "objcopy"))
         if any(tool is None for tool in (compiler, linker, readelf, archiver, objcopy)):

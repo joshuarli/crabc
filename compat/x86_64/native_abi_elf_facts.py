@@ -21,12 +21,13 @@ if str(MODULE_DIR) not in sys.path:
     sys.path.insert(0, str(MODULE_DIR))
 import native_abi_inventory as inventory
 import header_callable_inventory as header_authority
+import header_abi_matrix as header_matrix
 
 ROOT = inventory.ROOT
 SCHEMA = 'crabc.x86_64-native-abi-elf-facts/v1'
 BASE_REPORT = Path('/inputs/base-inventory/report.json')
 SOURCE_FILES = (*inventory.SOURCE_FILES, 'compat/x86_64/native_abi_elf_facts.py',
-                'compat/x86_64/header_callable_inventory.py')
+                'compat/x86_64/header_callable_inventory.py', 'compat/x86_64/header_abi_matrix.py')
 TOOL_NAMES = ('ar', 'readelf')
 STATUS = {
     'classification': 'measurement-only-no-abi-selection-or-promotion',
@@ -118,6 +119,33 @@ def _installed_header_placements(payload_files: Mapping[str, str]) -> set[str]:
             == header_authority.LINUX_UAPI_HEADER_MANIFEST_SHA256,
             'installed Linux UAPI export roster or bytes differ from pinned manifest')
     return {'usr/' + row['path'] for row in tree['files']} | {prefix + name for name in exported}
+
+
+def installed_header_tree_digest(root: Path) -> str:
+    """Validate the exact source-project and pinned-UAPI composition.
+
+    Return the full physical installed-tree digest, rejecting unknown files,
+    directories, symlinks, and nonregular entries in either header owner.
+    """
+    observed = header_matrix.header_tree_digest(root)
+    project_root = ROOT / 'include'
+    project_files = {'usr/' + row['path']: row['sha256']
+                     for row in inventory._header_tree_identity(project_root)['files']}
+    installed_files = {'usr/' + row['path']: row['sha256']
+                       for row in inventory._header_tree_identity(root)['files']}
+    require(set(installed_files) == _installed_header_placements(installed_files),
+            'installed header roster differs from current project and pinned Linux UAPI')
+    require({name: installed_files[name] for name in project_files} == project_files,
+            'installed project header bytes differ from current source')
+    directories = {path.relative_to(project_root).as_posix()
+                   for path in project_root.rglob('*') if path.is_dir()}
+    for name in installed_files:
+        if name.startswith('usr/include/crabc-linux-uapi/'):
+            directories.update(parent.as_posix() for parent in Path(name.removeprefix('usr/include/')).parents
+                               if parent != Path('.'))
+    require({path.relative_to(root).as_posix() for path in root.rglob('*') if path.is_dir()} == directories,
+            'installed header directory roster differs from authenticated composition')
+    return observed
 
 
 def _command_specs(artifact: Artifact) -> tuple[tuple[str, str, str], ...]:

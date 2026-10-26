@@ -41,6 +41,7 @@ import header_callable_inventory as callable_inventory
 import header_declaration_inventory as declaration_inventory
 import feature_archive_roster as feature_archive_roster
 import native_abi_inventory as abi_inventory
+import native_abi_elf_facts as elf_facts
 import native_callable_declarations as callable_declarations
 import owned_posix_product_evidence as product_evidence
 
@@ -779,6 +780,7 @@ SOURCE_FILES = (
     "compat/x86_64/native_callable_declarations.toml",
     "compat/x86_64/feature_archive_roster.py",
     "compat/x86_64/native_abi_inventory.py",
+    "compat/x86_64/native_abi_elf_facts.py",
     "compat/x86_64/owned_posix_product_evidence.py",
     "compat/x86_64/owned_dynamic_qualification.py",
     "compat/x86_64/owned_dynamic_receipt.py",
@@ -1898,9 +1900,10 @@ def _cpp_linkage_evidence(
         products[kind] = {"root": str(SOURCE_MOUNT / path.relative_to(ROOT)),
                           "manifest": _external_identity(manifest, f"reviewed {kind} product manifest")}
         products[kind]["manifest"]["path"] = str(SOURCE_MOUNT / manifest.relative_to(ROOT))
-        require(declaration_inventory.abi_matrix.header_tree_digest(path / "usr/include")
-                == declaration_inventory.abi_matrix.header_tree_digest(ROOT / "include"),
-                f"reviewed {kind} installed header tree differs")
+        try:
+            elf_facts.installed_header_tree_digest(path / "usr/include")
+        except (ValueError, OSError, abi_inventory.InventoryError) as error:
+            raise NativeDeclarationAbiError(f"reviewed {kind} installed header tree rejected: {error}") from error
     if replay:
         require(strict_equal(retained["products"], products), "reviewed supplied product identity differs")
 
