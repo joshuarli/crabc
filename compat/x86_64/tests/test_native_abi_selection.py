@@ -83,6 +83,35 @@ class FchdirOrdinaryImportTests(unittest.TestCase):
 
 
 class SelectionContractTests(unittest.TestCase):
+    def test_memory_copy_providers_select_exact_x86_loader_placements(self):
+        names = ['bcmp', 'memcmp', 'memcpy', 'memmove', 'memset']
+        contract = selection.load_contract()
+        groups = [row for row in contract['owner_groups'] if row['id'] == 'loader-memory-function-copies']
+        self.assertEqual(len(groups), 1)
+        group = groups[0]
+        self.assertEqual(group['selector'], 'explicit')
+        self.assertEqual(group['disposition'], 'public-provider')
+        self.assertEqual(group['owner'], 'checked-header-provider-routing')
+        self.assertEqual(group['family'], 'libc.c-abi-compat')
+        self.assertEqual(group['members'], names)
+        self.assertEqual(group['artifacts'], ['candidate-static', 'candidate-shared', 'candidate-loader'])
+        self.assertEqual(group['expected_type'], 'FUNC')
+        self.assertEqual(group['static_metadata_rule'], 'selected-native-oracle-function')
+        self.assertEqual(group['placement_metadata']['candidate-loader'], {
+            'type': 'FUNC', 'binding': 'GLOBAL', 'visibility': 'DEFAULT',
+        })
+        provider_group = next(row for row in contract['owner_groups']
+                              if row['id'] == 'declared-callable-providers')
+        self.assertTrue(set(names) <= set(provider_group['delegated_members']))
+        inputs = selection.load_source_inputs(contract, selection.CONTRACT_PATH)
+        records = {row['identity']['name']: row for row in selection.expand_obligations(contract, inputs)}
+        for name in names:
+            record = records[name]
+            self.assertEqual(record['selection']['group'], group['id'])
+            loader = next(row for row in record['expected_placements']
+                          if row['artifact_key'] == 'candidate-loader')
+            self.assertEqual(loader['metadata'], group['placement_metadata']['candidate-loader'])
+
     def test_runtime_v1_getter_has_one_exact_shared_private_provider(self):
         contract = selection.load_contract()
         groups = [row for row in contract['owner_groups'] if row['id'] == 'runtime-v1-private-getter']

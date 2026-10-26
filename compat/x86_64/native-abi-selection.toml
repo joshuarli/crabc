@@ -43,9 +43,25 @@ sources = ["compat/x86_64/header_callable_disposition.toml", "compat/x86_64/feat
 members = []
 members_file = ""
 expected_type = "FUNC"
-delegated_members = ["atomic_flag_clear", "atomic_flag_clear_explicit", "atomic_flag_test_and_set", "atomic_flag_test_and_set_explicit", "atomic_signal_fence", "atomic_thread_fence", "ioperm", "iopl", "tgkill"]
+delegated_members = ["atomic_flag_clear", "atomic_flag_clear_explicit", "atomic_flag_test_and_set", "atomic_flag_test_and_set_explicit", "atomic_signal_fence", "atomic_thread_fence", "bcmp", "memcmp", "memcpy", "memmove", "memset", "ioperm", "iopl", "tgkill"]
 placement_metadata = {}
 reason = "Installed native external functions select their checked provider routes. Declaration, exact binding, extraction and family evidence remain separate."
+static_metadata_rule = "selected-native-oracle-function"
+
+[[owner_groups]]
+id = "loader-memory-function-copies"
+selector = "explicit"
+disposition = "public-provider"
+owner = "checked-header-provider-routing"
+family = "libc.c-abi-compat"
+artifacts = ["candidate-static", "candidate-shared", "candidate-loader"]
+sources = ["compat/x86_64/header_callable_disposition.toml", "compat/x86_64/feature_archive_roster.py", "libc/src/c_abi/x86_64/static_c_abi.rs", "libc/src/c_abi/x86_64/memory.rs", "ldso/src/x86_64_initial_graph.rs"]
+members = ["bcmp", "memcmp", "memcpy", "memmove", "memset"]
+members_file = ""
+expected_type = "FUNC"
+delegated_members = []
+placement_metadata = {"candidate-loader" = {"type" = "FUNC", "binding" = "GLOBAL", "visibility" = "DEFAULT"}}
+reason = "The checked header routes retain their libc providers, and the x86-64 initial loader supplies these exact dynamic copies."
 static_metadata_rule = "selected-native-oracle-function"
 
 [[owner_groups]]

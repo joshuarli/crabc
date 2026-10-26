@@ -215,6 +215,196 @@ def abort_fixture() -> tuple[dict, dict]:
     return accounting, companion
 
 
+def memory_loader_fixture(name: str) -> tuple[dict, dict]:
+    accounting, companion = abort_fixture()
+    ident = selection.identity(name)
+    record = accounting["identities"][0]
+    record["identity"] = ident
+    record["selection"]["group"] = "loader-memory-function-copies"
+    record["expected_placements"] = [
+        {"artifact_key": "candidate-static", "metadata": {"type": "FUNC"}},
+        {"artifact_key": "candidate-shared", "metadata": {
+            "type": "FUNC", "binding": "GLOBAL", "visibility": "DEFAULT",
+        }},
+        {"artifact_key": "candidate-loader", "metadata": {
+            "type": "FUNC", "binding": "GLOBAL", "visibility": "DEFAULT",
+        }},
+    ]
+    accounting["blockers"][0]["identity"] = ident
+    for placement in accounting["placement_joins"]:
+        placement["identity"] = ident
+    for row in accounting["occurrences"]:
+        row["row"]["name"] = name
+        row["row"]["raw_name"] = name
+    loader_row = {
+        "name": name, "raw_name": name, "version": None, "version_default": False,
+        "binding": "GLOBAL", "visibility": "DEFAULT", "section_index": "6",
+        "type": "FUNC", "value": "00000000000153f5", "size_bytes": 40,
+    }
+    accounting["occurrences"].append({
+        "index": 9, "artifact_key": "candidate-loader", "artifact_sha256": "d" * 64,
+        "table": ".dynsym", "role": "definition", "row": loader_row,
+        "accounting": {"disposition": "public-provider", "owner": "checked-header-provider-routing",
+                       "scope": "candidate-loader"},
+    })
+    accounting["placement_joins"].append({
+        "identity": ident, "artifact_key": "candidate-loader", "placement_observed": True,
+        "definition_count": 1, "occurrence_indices": [9],
+        "metadata_differences": [{"occurrence_index": 9, "fields": []}],
+        "expected_metadata": {"type": "FUNC", "binding": "GLOBAL", "visibility": "DEFAULT"},
+    })
+    claim = companion["account"]["c_runtime_imports"]["imports"][0]
+    claim["name"] = name
+    for field in ("static_rust_provider", "shared_dynsym_provider", "shared_symtab_provider"):
+        claim[field]["name"] = name
+    projection = companion["ordinary_import_resolutions"].pop("abort")
+    companion["ordinary_import_resolutions"][name] = projection
+    for field in ("static_provider", "shared_dynsym_provider", "shared_symtab_provider"):
+        projection[field]["name"] = name
+    for item in projection["importers"]:
+        item["import"]["name"] = name
+    shared = projection["shared_final"]
+    for index, item in enumerate(shared["importers"]):
+        call = item["calls"][0]
+        call.update(got_slot=0x5000 + index * 8, branch_kind="indirect-call",
+                    source_function=call["function"])
+        item["no_call_source_functions"] = []
+    shared["provider_calls"] = [deepcopy(item["calls"][0]) for item in shared["importers"]]
+    return accounting, companion
+
+
+def memory_loader_receipt_fixture(name: str) -> tuple[dict, dict, dict, dict, dict | None]:
+    accounting, companion = memory_loader_fixture(name)
+    companion["account"]["c_runtime_imports"]["imports"] = []
+    c_member_index = companion["account"]["c_runtime_imports"]["static_c_member"]["member_index"]
+    accounting["occurrences"] = [row for row in accounting["occurrences"]
+                                  if row.get("member_index") != c_member_index]
+    projection = companion["ordinary_import_resolutions"][name]
+    projection["dynamic_final_import_absent"] = False
+    projection["dynamic_final_owned_imports"] = [
+        {"mode": mode, "import_rows": 2, "shared_provider_address": 0x3000}
+        for mode in ("pie", "non-pie")
+    ]
+    projection["importers"] = projection["importers"][:1]
+    shared = projection["shared_final"]
+    shared["importers"] = shared["importers"][:1]
+    for link in projection["static_final_links"].values():
+        link["importers"] = link["importers"][:1]
+    direct_name = "bcopy" if name == "memmove" else "bcmp" if name == "memcmp" else None
+    if name != "memcmp":
+        second_member = {"member": "second-rust-importer.o", "member_index": 25,
+                         "member_occurrence": 0}
+        second_importer = deepcopy(projection["importers"][0])
+        second_importer["member"] = second_member
+        second_importer["member_sha256"] = "c" * 64
+        second_importer["source_calls"] = [{
+            "section": ".text.call_25", "offset": 5, "kind": "R_X86_64_GOTPCREL",
+        }]
+        second_importer["shared_caller_functions"] = ["call_25"]
+        projection["importers"].append(second_importer)
+        source_import = next(row for row in accounting["occurrences"]
+                             if row.get("artifact_key") == "candidate-static" and row.get("role") == "import")
+        second_occurrence = deepcopy(source_import)
+        second_occurrence.update(index=10, member_name=second_member["member"],
+                                 member_index=second_member["member_index"], member_occurrence=0)
+        second_occurrence["row"]["row_index"] = 2
+        accounting["occurrences"].append(second_occurrence)
+        for link in projection["static_final_links"].values():
+            link["importers"].append({
+                "member": second_member,
+                "resolved_calls": [{"section": ".text.call_25", "offset": 5,
+                                    "call_address": 0x1200, "target_address": link["provider_address"],
+                                    "got_slot": 0x3600, "kind": "R_X86_64_GOTPCREL"}],
+                "discarded_calls": [],
+            })
+        second_shared = {
+            "member": second_member,
+            "calls": [{"function": "call_25", "source_function": "call_25",
+                       "call_address": 0x2900, "got_slot": 0x5100,
+                       "target_address": 0x3000, "branch_kind": "indirect-call"}],
+            "no_call_source_functions": [],
+        }
+        shared["importers"].append(second_shared)
+    if direct_name is not None:
+        direct_index = 1 if name == "memmove" else 0
+        projection["importers"][direct_index]["shared_caller_functions"] = [direct_name]
+        shared["importers"][direct_index]["calls"] = []
+        shared["importers"][direct_index]["no_call_source_functions"] = [direct_name]
+    shared["provider_calls"] = [deepcopy(call) for item in shared["importers"] for call in item["calls"]]
+    shared_direct_call = None
+    if direct_name is not None:
+        offset = 3 if name == "memmove" else 0
+        shared_direct_call = {
+            "libc_sha256": "d" * 64,
+            direct_name + "_address": 0x7000,
+            "call_address": 0x7000 + offset,
+            "provider_address": 0x3000,
+            "branch_kind": "direct-tail-jump",
+        }
+    loader_occurrence = {
+        "loader_sha256": "d" * 64, "address": 0x153f5,
+        "size_bytes": 40, "section_index": "6",
+    }
+    return accounting, companion, projection, loader_occurrence, shared_direct_call
+
+
+class OrdinaryMemoryLoaderImportAttachmentTests(unittest.TestCase):
+    def test_memcpy_and_memset_importers_join_the_exact_loader_definition(self) -> None:
+        for name in ("memcpy", "memset"):
+            with self.subTest(name=name):
+                accounting, companion = memory_loader_fixture(name)
+                joins = selection._attach_ordinary_static_import(accounting, companion, name)
+                self.assertEqual(joins[0]["identity"]["name"], name)
+                self.assertEqual(joins[0]["loader_occurrence_index"], 9)
+                self.assertEqual(accounting["blockers"], [])
+
+    def test_receipt_backed_loader_occurrences_match_the_selected_rows(self) -> None:
+        for name in ("memmove", "memcmp", "bcmp"):
+            with self.subTest(name=name):
+                accounting, companion, projection, loader_occurrence, shared_direct_call = (
+                    memory_loader_receipt_fixture(name))
+                joins = selection._attach_ordinary_static_import(
+                    accounting, companion, name, projection_override=projection,
+                    loader_occurrence=loader_occurrence, shared_direct_call=shared_direct_call,
+                )
+                self.assertEqual(joins[0]["loader_occurrence_index"], 9)
+                self.assertEqual(accounting["blockers"], [])
+                for field, value in (
+                    ("loader_sha256", "e" * 64), ("address", 0x153f6),
+                    ("size_bytes", 41), ("section_index", "7"),
+                ):
+                    mutated_accounting, mutated_companion, changed_projection, _, changed_direct = (
+                        memory_loader_receipt_fixture(name))
+                    bad_occurrence = dict(loader_occurrence)
+                    bad_occurrence[field] = value
+                    with self.subTest(field=field), self.assertRaises(selection.SelectionError):
+                        selection._attach_ordinary_static_import(
+                            mutated_accounting, mutated_companion, name,
+                            projection_override=changed_projection,
+                            loader_occurrence=bad_occurrence,
+                            shared_direct_call=changed_direct,
+                        )
+
+    def test_missing_or_mismatched_loader_rows_keep_the_import_reason(self) -> None:
+        mutations = (
+            lambda value: value["occurrences"].pop(),
+            lambda value: value["occurrences"][-1]["row"].__setitem__("type", "NOTYPE"),
+            lambda value: value["occurrences"][-1]["row"].__setitem__("binding", "WEAK"),
+            lambda value: value["occurrences"][-1]["row"].__setitem__("visibility", "HIDDEN"),
+            lambda value: value["occurrences"][-1]["row"].__setitem__("section_index", "UND"),
+            lambda value: value["occurrences"][-1]["row"].__setitem__("size_bytes", 0),
+            lambda value: value["placement_joins"][-1].__setitem__("placement_observed", False),
+            lambda value: value["occurrences"].append(deepcopy(value["occurrences"][-1])),
+        )
+        for mutate in mutations:
+            with self.subTest(mutate=mutate):
+                accounting, companion = memory_loader_fixture("memcpy")
+                mutate(accounting)
+                with self.assertRaises(selection.SelectionError):
+                    selection._attach_ordinary_static_import(accounting, companion, "memcpy")
+                self.assertEqual(accounting["identities"][0]["unresolved"], [selection.ORDINARY_IMPORT_REASON])
+
+
 class OrdinaryAbortImportAttachmentTests(unittest.TestCase):
     def test_two_archive_call_forms_join_unique_provider(self) -> None:
         accounting, companion = abort_fixture()

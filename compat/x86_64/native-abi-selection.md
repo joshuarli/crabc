@@ -897,6 +897,14 @@ placement such as the two protected stdio bodies. Candidate ELF never creates a
 selection or determines a new normative alias relation. Private crypt bodies
 and all CRT placements state their metadata explicitly.
 
+The `loader-memory-function-copies` group keeps the checked-header owner and
+its static and shared placements for `bcmp`, `memcmp`, `memcpy`, `memmove`, and
+`memset`. It also selects each `FUNC GLOBAL DEFAULT` definition in the
+`candidate-loader` `.dynsym` from `ldso/src/x86_64_initial_graph.rs`. The
+ordinary import joins bind those loader rows to the existing archive-call
+evidence. The `memmove`, `memcmp`, and `bcmp` receipts also bind their loader
+hash and symbol row.
+
 The BSD random quartet (`initstate`, `random`, `setstate`, `srandom`) is selected
 through the checked installed-header provider route and the owned static
 runtime's exact feature roster. The source is `bsd_random.rs`; its installed

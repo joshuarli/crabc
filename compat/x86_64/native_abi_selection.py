@@ -149,6 +149,8 @@ SUPPORTED_TYPES = {'NOTYPE', 'OBJECT', 'FUNC', 'SECTION', 'FILE', 'COMMON', 'TLS
 SUPPORTED_BINDINGS = {'LOCAL', 'GLOBAL', 'WEAK', 'UNIQUE'}
 SUPPORTED_VISIBILITIES = {'DEFAULT', 'INTERNAL', 'HIDDEN', 'PROTECTED'}
 ORDINARY_IMPORT_REASON = 'exact ordinary import/provider or optional weak/null resolution proof is missing'
+LOADER_MEMORY_GROUP = 'loader-memory-function-copies'
+LOADER_MEMORY_RECEIPT_NAMES = frozenset({'memmove', 'memcmp', 'bcmp'})
 PUBLIC_DATA_LINKAGE_LIMITS = [
     'No lifecycle, strong-override, interposition, COPY-relocation, or header-feature-profile proof.',
     'Shared-only _dl_debug_addr remains owned by the loader debugger component.',
@@ -10322,21 +10324,64 @@ def _attach_ordinary_static_import(accounting: Mapping[str, Any],
                         and row.get('row', {}).get('name') == name
                         for row in occurrences.values()),
                 'strlen has an unexpected candidate loader placement')
-    if name in {'memmove', 'memcmp', 'bcmp'}:
+    loader_rows = []
+    loader_memory_names = set(native_c_allocator_boundary.OWNED_MEMORY_IMPORTS) | LOADER_MEMORY_RECEIPT_NAMES
+    if name in loader_memory_names:
+        loader_expected = [expected for expected in record['expected_placements']
+                           if expected.get('artifact_key') == 'candidate-loader']
+        require(record['selection'].get('group') == LOADER_MEMORY_GROUP
+                and len(loader_expected) == 1
+                and loader_expected[0].get('metadata') == {
+                    'type': 'FUNC', 'binding': 'GLOBAL', 'visibility': 'DEFAULT',
+                }, f'{name} loader owner placement differs')
         loader_rows = [row for row in occurrences.values()
                        if row.get('artifact_key') == 'candidate-loader'
                        and row.get('row', {}).get('name') == name]
-        require(loader_occurrence is not None and len(loader_rows) == 1
+        require(len(loader_rows) == 1
                 and loader_rows[0].get('table') == '.dynsym'
                 and loader_rows[0].get('role') == 'definition'
                 and all(loader_rows[0]['row'].get(field) == value for field, value in {
                     'type': 'FUNC', 'binding': 'GLOBAL', 'visibility': 'DEFAULT',
                     'version': None, 'version_default': False,
-                    'section_index': loader_occurrence.get('section_index'),
-                    'size_bytes': loader_occurrence.get('size_bytes'),
                 }.items())
-                and int(loader_rows[0]['row']['value'], 16) == loader_occurrence.get('address'),
-                f'{name} loader occurrence differs from retained ELF')
+                and type(loader_rows[0]['row'].get('section_index')) is str
+                and re.fullmatch(r'[1-9][0-9]*', loader_rows[0]['row']['section_index']) is not None
+                and type(loader_rows[0]['row'].get('size_bytes')) is int
+                and loader_rows[0]['row']['size_bytes'] > 0
+                and type(loader_rows[0]['row'].get('value')) is str
+                and re.fullmatch(r'[0-9a-fA-F]{16}', loader_rows[0]['row']['value']) is not None
+                and int(loader_rows[0]['row']['value'], 16) > 0
+                and type(loader_rows[0].get('artifact_sha256')) is str
+                and re.fullmatch(r'[0-9a-f]{64}', loader_rows[0]['artifact_sha256']) is not None
+                and loader_rows[0].get('accounting') == {
+                    'disposition': 'public-provider', 'owner': record['selection']['owner'],
+                    'scope': 'candidate-loader',
+                }, f'{name} loader definition differs from selected ELF')
+        loader_placement = placements.get((key, 'candidate-loader'))
+        require(loader_placement is not None
+                and loader_placement.get('placement_observed') is True
+                and loader_placement.get('definition_count') == 1
+                and loader_placement.get('occurrence_indices') == [loader_rows[0]['index']]
+                and loader_placement.get('expected_metadata') == loader_expected[0]['metadata']
+                and _metadata_difference_rows_are_empty(
+                    loader_placement.get('metadata_differences'), f'{name} loader placement'),
+                f'{name} loader placement is not selected')
+        require((loader_occurrence is not None) == (name in LOADER_MEMORY_RECEIPT_NAMES),
+                f'{name} loader receipt presence differs')
+        if loader_occurrence is not None:
+            loader_occurrence = exact(loader_occurrence, {
+                'loader_sha256', 'address', 'size_bytes', 'section_index',
+            }, f'{name} loader receipt occurrence')
+            row = loader_rows[0]['row']
+            require(loader_occurrence['loader_sha256'] == loader_rows[0]['artifact_sha256']
+                    and type(loader_occurrence['address']) is int and loader_occurrence['address'] > 0
+                    and loader_occurrence['address'] == int(row['value'], 16)
+                    and type(loader_occurrence['size_bytes']) is int
+                    and loader_occurrence['size_bytes'] == row['size_bytes']
+                    and loader_occurrence['section_index'] == row['section_index'],
+                    f'{name} loader receipt does not match selected ELF')
+    else:
+        require(loader_occurrence is None, f'{name} has an unexpected loader receipt')
     static_imports = [row for row in rows if row.get('artifact_key') == 'candidate-static'
                       and row.get('role') == 'import']
     require(len(rows) == len(importers) + 3 and len(static_imports) == len(importers)
@@ -10522,7 +10567,7 @@ def _attach_ordinary_static_import(accounting: Mapping[str, Any],
              'import_occurrence_indices': sorted(row['index'] for row in static_imports),
              'import_members': [item['member']['member'] for item in importers],
              'static_final_modes': ['static', 'static-pie'],
-             **({'loader_occurrence_index': loader_rows[0]['index']} if name in {'memmove', 'memcmp', 'bcmp'} else {}),
+             **({'loader_occurrence_index': loader_rows[0]['index']} if loader_rows else {}),
              'shared_fs_tls_address': tls_claim,
              'discharged_reason': ORDINARY_IMPORT_REASON}]
 
