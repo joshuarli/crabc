@@ -758,14 +758,14 @@ selector = "explicit"
 disposition = "private-provider"
 owner = "x86-static-crt-lifecycle"
 family = "crt.static-pie"
-artifacts = ["static-crt1.o", "static-rcrt1.o"]
+artifacts = ["static-crt1.o", "static-rcrt1.o", "dynamic-crt1.o"]
 sources = ["crt/src/x86_64_startup.rs", "crt/src/x86_64_crt1.rs", "crt/src/x86_64_rcrt1.rs", "crt/x86_64-static-pie.md"]
 members = ["__crabc_x86_64_executable_fini", "__crabc_x86_64_executable_init", "__crabc_x86_64_static_pie_start"]
 members_file = ""
 expected_type = "FUNC"
 delegated_members = []
-placement_metadata = {"static-crt1.o" = {"type" = "FUNC", "binding" = "GLOBAL", "visibility" = "DEFAULT"}, "static-rcrt1.o" = {"type" = "FUNC", "binding" = "GLOBAL", "visibility" = "DEFAULT"}}
-reason = "Static crt1 and rcrt1 define these lifecycle/start helpers. Their ET_EXEC/ET_DYN mode use remains in the static CRT contract."
+placement_metadata = {"static-crt1.o" = {"type" = "FUNC", "binding" = "GLOBAL", "visibility" = "DEFAULT"}, "static-rcrt1.o" = {"type" = "FUNC", "binding" = "GLOBAL", "visibility" = "DEFAULT"}, "dynamic-crt1.o" = {"type" = "FUNC", "binding" = "GLOBAL", "visibility" = "DEFAULT"}}
+reason = "The static lifecycle helpers appear in both combined crt1 objects and static rcrt1."
 static_metadata_rule = "explicit"
 
 [[owner_groups]]
@@ -774,14 +774,14 @@ selector = "explicit"
 disposition = "private-provider"
 owner = "x86-dynamic-crt-lifecycle"
 family = "crt.dynamic-startup"
-artifacts = ["static-Scrt1.o", "dynamic-crt1.o", "dynamic-Scrt1.o"]
-sources = ["crt/src/x86_64_dynamic_startup.rs", "crt/src/x86_64_Scrt1.rs", "crt/x86_64-dynamic-startup.md"]
+artifacts = ["static-crt1.o", "static-Scrt1.o", "dynamic-crt1.o", "dynamic-Scrt1.o"]
+sources = ["crt/src/x86_64_crt1.rs", "crt/src/x86_64_dynamic_startup.rs", "crt/src/x86_64_Scrt1.rs", "crt/x86_64-dynamic-startup.md"]
 members = ["__crabc_x86_64_dynamic_executable_fini", "__crabc_x86_64_dynamic_executable_init", "__crabc_x86_64_dynamic_start"]
 members_file = ""
 expected_type = "FUNC"
 delegated_members = []
-placement_metadata = {"static-Scrt1.o" = {"type" = "FUNC", "binding" = "GLOBAL", "visibility" = "DEFAULT"}, "dynamic-crt1.o" = {"type" = "FUNC", "binding" = "GLOBAL", "visibility" = "DEFAULT"}, "dynamic-Scrt1.o" = {"type" = "FUNC", "binding" = "GLOBAL", "visibility" = "DEFAULT"}}
-reason = "Static Scrt1 and dynamic crt1/Scrt1 define the distinct dynamic startup/lifecycle helpers."
+placement_metadata = {"static-crt1.o" = {"type" = "FUNC", "binding" = "GLOBAL", "visibility" = "DEFAULT"}, "static-Scrt1.o" = {"type" = "FUNC", "binding" = "GLOBAL", "visibility" = "DEFAULT"}, "dynamic-crt1.o" = {"type" = "FUNC", "binding" = "GLOBAL", "visibility" = "DEFAULT"}, "dynamic-Scrt1.o" = {"type" = "FUNC", "binding" = "GLOBAL", "visibility" = "DEFAULT"}}
+reason = "The dynamic lifecycle helpers appear in both combined crt1 objects and both Scrt1 objects."
 static_metadata_rule = "explicit"
 
 [[owner_groups]]
@@ -790,14 +790,46 @@ selector = "explicit"
 disposition = "private-provider"
 owner = "x86-dynamic-crt-handoff"
 family = "crt.dynamic-startup"
-artifacts = ["static-Scrt1.o", "dynamic-crt1.o", "dynamic-Scrt1.o"]
+artifacts = ["static-Scrt1.o", "dynamic-Scrt1.o"]
 sources = ["crt/src/x86_64_dynamic_startup.rs", "crt/src/x86_64_Scrt1.rs", "crt/x86_64-dynamic-startup.md"]
 members = ["__crabc_x86_64_owned_crt_handoff_value"]
 members_file = ""
 expected_type = "FUNC"
 delegated_members = []
-placement_metadata = {"static-Scrt1.o" = {"type" = "FUNC", "binding" = "GLOBAL", "visibility" = "DEFAULT"}, "dynamic-crt1.o" = {"type" = "FUNC", "binding" = "GLOBAL", "visibility" = "DEFAULT"}, "dynamic-Scrt1.o" = {"type" = "FUNC", "binding" = "GLOBAL", "visibility" = "DEFAULT"}}
+placement_metadata = {"static-Scrt1.o" = {"type" = "FUNC", "binding" = "GLOBAL", "visibility" = "DEFAULT"}, "dynamic-Scrt1.o" = {"type" = "FUNC", "binding" = "GLOBAL", "visibility" = "DEFAULT"}}
 reason = "Exported accessor FUNC for the owned handoff record, distinct from weak undefined __crabc_x86_64_owned_crt_handoff OBJECT transport."
+static_metadata_rule = "explicit"
+
+[[owner_groups]]
+id = "source-crt-conventional-dispatcher"
+selector = "explicit"
+disposition = "private-provider"
+owner = "x86-crt-entry-dispatcher"
+family = "crt.static-pie"
+artifacts = ["static-crt1.o", "dynamic-crt1.o"]
+sources = ["crt/src/x86_64_crt1.rs"]
+members = ["__crabc_x86_64_exec_start"]
+members_file = ""
+expected_type = "FUNC"
+delegated_members = []
+placement_metadata = {"static-crt1.o" = {"type" = "FUNC", "binding" = "GLOBAL", "visibility" = "DEFAULT"}, "dynamic-crt1.o" = {"type" = "FUNC", "binding" = "GLOBAL", "visibility" = "DEFAULT"}}
+reason = "Combined crt1 objects dispatch static and dynamic executable entry using source-owned mode detection."
+static_metadata_rule = "explicit"
+
+[[owner_groups]]
+id = "source-crt-attached-owned-handoff"
+selector = "explicit"
+disposition = "private-provider"
+owner = "x86-owned-crt-handoff-attachment"
+family = "crt.dynamic-startup"
+artifacts = ["static-crt1.o", "dynamic-crt1.o", "dynamic-crabc-dynamic-attach.o"]
+sources = ["crt/src/x86_64_crt1.rs", "crt/src/x86_64_owned_crt_handoff_attachment.rs"]
+members = ["__crabc_x86_64_attached_owned_crt_handoff"]
+members_file = ""
+expected_type = "FUNC"
+delegated_members = []
+placement_metadata = {"static-crt1.o" = {"type" = "FUNC", "binding" = "WEAK", "visibility" = "HIDDEN"}, "dynamic-crt1.o" = {"type" = "FUNC", "binding" = "WEAK", "visibility" = "HIDDEN"}, "dynamic-crabc-dynamic-attach.o" = {"type" = "FUNC", "binding" = "GLOBAL", "visibility" = "HIDDEN"}}
+reason = "Combined CRTs define weak HIDDEN fallbacks. The dynamic attachment defines their GLOBAL HIDDEN replacement."
 static_metadata_rule = "explicit"
 
 [[owner_groups]]

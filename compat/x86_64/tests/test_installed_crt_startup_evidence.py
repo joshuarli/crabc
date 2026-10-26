@@ -15,6 +15,55 @@ import unittest
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]))
 import installed_crt_startup_evidence as reader
 
+SOURCE_CRT_DEFINITIONS={
+    '__crabc_x86_64_exec_start': {
+        'static-crt1.o': {'type':'FUNC','binding':'GLOBAL','visibility':'DEFAULT'},
+        'dynamic-crt1.o': {'type':'FUNC','binding':'GLOBAL','visibility':'DEFAULT'},
+    },
+    '__crabc_x86_64_attached_owned_crt_handoff': {
+        'static-crt1.o': {'type':'FUNC','binding':'WEAK','visibility':'HIDDEN'},
+        'dynamic-crt1.o': {'type':'FUNC','binding':'WEAK','visibility':'HIDDEN'},
+        'dynamic-crabc-dynamic-attach.o': {'type':'FUNC','binding':'GLOBAL','visibility':'HIDDEN'},
+    },
+    '__crabc_x86_64_static_pie_start': {
+        'static-crt1.o': {'type':'FUNC','binding':'GLOBAL','visibility':'DEFAULT'},
+        'static-rcrt1.o': {'type':'FUNC','binding':'GLOBAL','visibility':'DEFAULT'},
+        'dynamic-crt1.o': {'type':'FUNC','binding':'GLOBAL','visibility':'DEFAULT'},
+    },
+    '__crabc_x86_64_executable_init': {
+        'static-crt1.o': {'type':'FUNC','binding':'GLOBAL','visibility':'DEFAULT'},
+        'static-rcrt1.o': {'type':'FUNC','binding':'GLOBAL','visibility':'DEFAULT'},
+        'dynamic-crt1.o': {'type':'FUNC','binding':'GLOBAL','visibility':'DEFAULT'},
+    },
+    '__crabc_x86_64_executable_fini': {
+        'static-crt1.o': {'type':'FUNC','binding':'GLOBAL','visibility':'DEFAULT'},
+        'static-rcrt1.o': {'type':'FUNC','binding':'GLOBAL','visibility':'DEFAULT'},
+        'dynamic-crt1.o': {'type':'FUNC','binding':'GLOBAL','visibility':'DEFAULT'},
+    },
+    '__crabc_x86_64_dynamic_start': {
+        'static-crt1.o': {'type':'FUNC','binding':'GLOBAL','visibility':'DEFAULT'},
+        'static-Scrt1.o': {'type':'FUNC','binding':'GLOBAL','visibility':'DEFAULT'},
+        'dynamic-crt1.o': {'type':'FUNC','binding':'GLOBAL','visibility':'DEFAULT'},
+        'dynamic-Scrt1.o': {'type':'FUNC','binding':'GLOBAL','visibility':'DEFAULT'},
+    },
+    '__crabc_x86_64_dynamic_executable_init': {
+        'static-crt1.o': {'type':'FUNC','binding':'GLOBAL','visibility':'DEFAULT'},
+        'static-Scrt1.o': {'type':'FUNC','binding':'GLOBAL','visibility':'DEFAULT'},
+        'dynamic-crt1.o': {'type':'FUNC','binding':'GLOBAL','visibility':'DEFAULT'},
+        'dynamic-Scrt1.o': {'type':'FUNC','binding':'GLOBAL','visibility':'DEFAULT'},
+    },
+    '__crabc_x86_64_dynamic_executable_fini': {
+        'static-crt1.o': {'type':'FUNC','binding':'GLOBAL','visibility':'DEFAULT'},
+        'static-Scrt1.o': {'type':'FUNC','binding':'GLOBAL','visibility':'DEFAULT'},
+        'dynamic-crt1.o': {'type':'FUNC','binding':'GLOBAL','visibility':'DEFAULT'},
+        'dynamic-Scrt1.o': {'type':'FUNC','binding':'GLOBAL','visibility':'DEFAULT'},
+    },
+    '__crabc_x86_64_owned_crt_handoff_value': {
+        'static-Scrt1.o': {'type':'FUNC','binding':'GLOBAL','visibility':'DEFAULT'},
+        'dynamic-Scrt1.o': {'type':'FUNC','binding':'GLOBAL','visibility':'DEFAULT'},
+    },
+}
+
 @unittest.skipUnless(Path('/opt/rustup/toolchains/nightly-2026-09-15-x86_64-unknown-linux-musl/bin/rustc').is_file(),
                      'physical CRT regression requires the pinned native environment')
 class OwnedCrtFramePhysicalTests(unittest.TestCase):
@@ -923,7 +972,12 @@ int main(void) {
 
     def test_contract_is_closed_and_flags_are_booleans(self):
         contract=reader.expected_contract()
-        self.assertEqual(len(contract['identities']),12)
+        self.assertEqual(len(contract['identities']),21)
+        self.assertEqual(contract['source_crt_definitions'],SOURCE_CRT_DEFINITIONS)
+        self.assertEqual(set(SOURCE_CRT_DEFINITIONS),set(contract['identities'])-set(reader.NAMES[:12]))
+        self.assertIn('crt/src/x86_64_owned_crt_handoff_attachment.rs',reader.RUNTIME_SOURCES)
+        self.assertIn('crt/src/x86_64_owned_crt_handoff_attachment.rs',reader.COLLECTOR_SOURCES)
+        reader.contract(reader.ROOT)
         admission=contract['descriptor_handoff']['admission']
         self.assertEqual(set(admission['mutations']),set(reader.DESCRIPTOR_MUTATIONS))
         self.assertEqual(admission['source_object']['relocation']['kind'],42)
@@ -932,6 +986,133 @@ int main(void) {
         for bad in ({**contract,'public_support':0},{**contract,'identities':contract['identities'][:-1]},
                     {**contract,'extra':True}):
             with self.assertRaises(reader.StartupEvidenceError):reader.validate_contract(bad)
+
+    def test_source_crt_native_owner_groups_keep_exact_sources_and_artifact_roles(self):
+        contract=reader.tomllib.loads((reader.ROOT/'compat/x86_64/native-abi-selection.toml').read_text())
+        self.assertEqual(len(contract['owner_groups']),len({group['id'] for group in contract['owner_groups']}))
+        groups={group['id']:group for group in contract['owner_groups']}
+        source_groups={group['id'] for group in contract['owner_groups'] if group['id'].startswith('source-crt-')}
+        self.assertEqual(source_groups,{
+            'source-crt-linker-array-address-bridges','source-crt-static-lifecycle-bodies',
+            'source-crt-dynamic-lifecycle-bodies','source-crt-owned-handoff-accessor',
+            'source-crt-conventional-dispatcher','source-crt-attached-owned-handoff',
+            'source-crt-raw-entry-symbol',
+        })
+        self.assertEqual(groups['source-crt-static-lifecycle-bodies']['artifacts'],
+                         ['static-crt1.o','static-rcrt1.o','dynamic-crt1.o'])
+        self.assertEqual(groups['source-crt-static-lifecycle-bodies']['members'],[
+            '__crabc_x86_64_executable_fini','__crabc_x86_64_executable_init','__crabc_x86_64_static_pie_start'])
+        self.assertEqual(set(groups['source-crt-static-lifecycle-bodies']['placement_metadata']),
+                         set(groups['source-crt-static-lifecycle-bodies']['artifacts']))
+        self.assertEqual(groups['source-crt-dynamic-lifecycle-bodies']['artifacts'],
+                         ['static-crt1.o','static-Scrt1.o','dynamic-crt1.o','dynamic-Scrt1.o'])
+        self.assertIn('crt/src/x86_64_crt1.rs',groups['source-crt-dynamic-lifecycle-bodies']['sources'])
+        self.assertEqual(groups['source-crt-dynamic-lifecycle-bodies']['members'],[
+            '__crabc_x86_64_dynamic_executable_fini','__crabc_x86_64_dynamic_executable_init',
+            '__crabc_x86_64_dynamic_start'])
+        self.assertEqual(set(groups['source-crt-dynamic-lifecycle-bodies']['placement_metadata']),
+                         set(groups['source-crt-dynamic-lifecycle-bodies']['artifacts']))
+        self.assertEqual(groups['source-crt-owned-handoff-accessor']['artifacts'],
+                         ['static-Scrt1.o','dynamic-Scrt1.o'])
+        self.assertEqual(groups['source-crt-owned-handoff-accessor']['members'],
+                         ['__crabc_x86_64_owned_crt_handoff_value'])
+        self.assertEqual(set(groups['source-crt-owned-handoff-accessor']['placement_metadata']),
+                         set(groups['source-crt-owned-handoff-accessor']['artifacts']))
+        for group_id in ('source-crt-static-lifecycle-bodies','source-crt-dynamic-lifecycle-bodies',
+                         'source-crt-owned-handoff-accessor'):
+            group=groups[group_id]
+            self.assertEqual(group['placement_metadata'],{
+                artifact:{'type':'FUNC','binding':'GLOBAL','visibility':'DEFAULT'}
+                for artifact in group['artifacts']})
+        self.assertEqual(groups['source-crt-conventional-dispatcher'], {
+            'id':'source-crt-conventional-dispatcher','selector':'explicit','disposition':'private-provider',
+            'owner':'x86-crt-entry-dispatcher','family':'crt.static-pie',
+            'artifacts':['static-crt1.o','dynamic-crt1.o'],'sources':['crt/src/x86_64_crt1.rs'],
+            'members':['__crabc_x86_64_exec_start'],'members_file':'','expected_type':'FUNC',
+            'delegated_members':[],'placement_metadata':{
+                'static-crt1.o':{'type':'FUNC','binding':'GLOBAL','visibility':'DEFAULT'},
+                'dynamic-crt1.o':{'type':'FUNC','binding':'GLOBAL','visibility':'DEFAULT'}},
+            'reason':'Combined crt1 objects dispatch static and dynamic executable entry using source-owned mode detection.',
+            'static_metadata_rule':'explicit',
+        })
+        self.assertEqual(groups['source-crt-attached-owned-handoff'], {
+            'id':'source-crt-attached-owned-handoff','selector':'explicit','disposition':'private-provider',
+            'owner':'x86-owned-crt-handoff-attachment','family':'crt.dynamic-startup',
+            'artifacts':['static-crt1.o','dynamic-crt1.o','dynamic-crabc-dynamic-attach.o'],
+            'sources':['crt/src/x86_64_crt1.rs','crt/src/x86_64_owned_crt_handoff_attachment.rs'],
+            'members':['__crabc_x86_64_attached_owned_crt_handoff'],'members_file':'','expected_type':'FUNC',
+            'delegated_members':[],'placement_metadata':{
+                'static-crt1.o':{'type':'FUNC','binding':'WEAK','visibility':'HIDDEN'},
+                'dynamic-crt1.o':{'type':'FUNC','binding':'WEAK','visibility':'HIDDEN'},
+                'dynamic-crabc-dynamic-attach.o':{'type':'FUNC','binding':'GLOBAL','visibility':'HIDDEN'}},
+            'reason':'Combined CRTs define weak HIDDEN fallbacks. The dynamic attachment defines their GLOBAL HIDDEN replacement.',
+            'static_metadata_rule':'explicit',
+        })
+        self.assertTrue((reader.ROOT/'crt/src/x86_64_owned_crt_handoff_attachment.rs').is_file())
+
+    def test_source_crt_definition_rows_keep_exact_object_roles(self):
+        facts=self.fixture();placements=reader.account_products(facts)
+        def named_rows(artifact):
+            members=facts[artifact] if type(facts[artifact]) is list else [facts[artifact]]
+            return [row for member in members for table in member['symbol_tables'] for row in table['rows']]
+        for name,artifacts in SOURCE_CRT_DEFINITIONS.items():
+            observed={artifact for artifact in facts if any(row['name']==name for row in named_rows(artifact))}
+            self.assertEqual(observed,set(artifacts),name)
+            for artifact,metadata in artifacts.items():
+                item=placements[artifact][name]
+                self.assertEqual({key:item['row'][key] for key in ('type','binding','visibility')},metadata)
+
+    def test_source_crt_definition_rows_reject_missing_wrong_duplicate_and_unowned_roles(self):
+        for name,artifacts in SOURCE_CRT_DEFINITIONS.items():
+            for artifact in artifacts:
+                with self.subTest(name=name,artifact=artifact):
+                    facts=self.fixture()
+                    members=facts[artifact] if type(facts[artifact]) is list else [facts[artifact]]
+                    member=next(member for member in members if any(
+                        row['name']==name for table in member['symbol_tables'] for row in table['rows']))
+                    rows=member['symbol_tables'][0]['rows']
+                    rows.remove(next(row for row in rows if row['name']==name))
+                    with self.assertRaises(reader.StartupEvidenceError):reader.account_products(facts)
+        name='__crabc_x86_64_attached_owned_crt_handoff';artifact='static-crt1.o'
+        for mutation in ('missing','binding','visibility','type','section','duplicate'):
+            with self.subTest(mutation=mutation):
+                facts=self.fixture();rows=facts[artifact]['symbol_tables'][0]['rows']
+                row=next(row for row in rows if row['name']==name)
+                if mutation=='missing':rows.remove(row)
+                elif mutation=='binding':row['binding']='GLOBAL'
+                elif mutation=='visibility':row['visibility']='DEFAULT'
+                elif mutation=='type':row['type']='NOTYPE'
+                elif mutation=='section':row['section_index']='UND'
+                elif mutation=='duplicate':rows.append(copy.deepcopy(row))
+                with self.assertRaises(reader.StartupEvidenceError):reader.account_products(facts)
+        facts=self.fixture()
+        rogue={'row_index':1,'name':name,'type':'FUNC','binding':'GLOBAL','visibility':'HIDDEN',
+               'section_index':'1','version':None,'version_default':False,
+               'size_bytes':1,'value':'0000000000000000'}
+        facts['candidate-static'][0]['symbol_tables'][0]['rows'].append(rogue)
+        with self.assertRaises(reader.StartupEvidenceError):reader.account_products(facts)
+        facts=self.fixture()
+        strong=next(row for row in facts['dynamic-crabc-dynamic-attach.o']['symbol_tables'][0]['rows']
+                    if row['name']==name)
+        strong['binding']='WEAK'
+        with self.assertRaises(reader.StartupEvidenceError):reader.account_products(facts)
+        for extra_name,artifact,metadata in (
+            (name,'static-Scrt1.o',{'type':'FUNC','binding':'WEAK','visibility':'HIDDEN'}),
+            ('__crabc_x86_64_owned_crt_handoff_value','dynamic-crt1.o',
+             {'type':'FUNC','binding':'GLOBAL','visibility':'DEFAULT'}),
+            ('__crabc_x86_64_exec_start','dynamic-Scrt1.o',
+             {'type':'FUNC','binding':'GLOBAL','visibility':'DEFAULT'}),
+        ):
+            with self.subTest(unowned=(extra_name,artifact)):
+                facts=self.fixture()
+                facts[artifact]['symbol_tables'][0]['rows'].append({
+                    'row_index':100,'name':extra_name,**metadata,'section_index':'1',
+                    'version':None,'version_default':False,'size_bytes':1,
+                    'value':'0000000000000000',
+                })
+                with self.assertRaises(reader.StartupEvidenceError):reader.account_products(facts)
+        facts=self.fixture();facts['unowned-crt.o']=facts['static-crt1.o']
+        with self.assertRaises(reader.StartupEvidenceError):reader.account_products(facts)
 
     def test_exact_weak_object_requires_defined_table_origin_and_zero_addend(self):
         row={'name':reader.CONVENTIONAL,'binding':'WEAK','visibility':'DEFAULT','type':'OBJECT',
@@ -996,6 +1177,10 @@ int main(void) {
             elif key=='static-rcrt1.o':values.append(row(reader.BOOTSTRAP,visibility='HIDDEN'))
             else:values.append(row(reader.HANDOFF,'OBJECT','WEAK'))
             if key=='dynamic-Scrt1.o':values.append(row(reader.ATTACH))
+            for name,artifacts in SOURCE_CRT_DEFINITIONS.items():
+                metadata=artifacts.get(key)
+                if metadata is not None:
+                    values.append(row(name,metadata['type'],metadata['binding'],metadata['visibility'],section='1'))
             facts[key]=member(values)
         facts['candidate-static']=[{**member([row(reader.BOOTSTRAP,'FUNC',visibility='HIDDEN',section='1')]),'member':'runtime.o','member_index':0,'member_occurrence':0},
                                   {**member([row('_GLOBAL_OFFSET_TABLE_')]),'member':'producer.o','member_index':1,'member_occurrence':0}]
@@ -1004,6 +1189,11 @@ int main(void) {
         facts['candidate-loader']=member([])
         facts['dynamic-crabc-dynamic-attach.o']=member([row(reader.ATTACH,'FUNC',section='1'),row(reader.RECORD,'FUNC',visibility='HIDDEN',section='1'),
                                                         row(reader.HANDOFF,'OBJECT','WEAK')])
+        for name,artifacts in SOURCE_CRT_DEFINITIONS.items():
+            metadata=artifacts.get('dynamic-crabc-dynamic-attach.o')
+            if metadata is not None:
+                facts['dynamic-crabc-dynamic-attach.o']['symbol_tables'][0]['rows'].append(
+                    row(name,metadata['type'],metadata['binding'],metadata['visibility'],section='1'))
         for key in ('static-crti.o','dynamic-crti.o'):
             facts[key]=member([row(name,'FUNC',section='1') for name in ('_init','_fini')])
         for key in ('static-crtn.o','dynamic-crtn.o'):
@@ -1023,9 +1213,8 @@ int main(void) {
             with self.assertRaises(reader.StartupEvidenceError):reader.account_products(facts)
         facts=self.fixture();facts['dynamic-Scrt1.o']['symbol_tables'][0]['rows']=[x for x in facts['dynamic-Scrt1.o']['symbol_tables'][0]['rows'] if x['name']!=reader.HANDOFF]
         with self.assertRaises(reader.StartupEvidenceError):reader.account_products(facts)
-        # The conventional crt1.o must not import the loader handoff itself.
         facts=self.fixture();facts['static-crt1.o']['symbol_tables'][0]['rows'].append(
-            copy.deepcopy(facts['static-Scrt1.o']['symbol_tables'][0]['rows'][-1]))
+            copy.deepcopy(facts['static-Scrt1.o']['symbol_tables'][0]['rows'][0]))
         with self.assertRaises(reader.StartupEvidenceError):reader.account_products(facts)
 
     def test_private_startup_names_cannot_gain_public_loader_or_shared_definitions(self):

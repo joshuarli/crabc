@@ -49,12 +49,14 @@ class NativeCrtStartupAttachmentTests(unittest.TestCase):
             'version_index': None, 'common_alignment': None,
         }
 
-    def test_owner_derives_the_closed_twelve_identity_roster(self) -> None:
+    def test_owner_derives_the_closed_twenty_one_identity_roster(self) -> None:
         reader = selection._crt_startup_reader()
         names = selection._crt_startup_identity_names(reader)
         self.assertEqual(names, tuple(reader.NAMES))
-        self.assertEqual(len(names), 12)
+        self.assertEqual(len(names), 21)
         self.assertNotIn('__init_ssp', names)
+        self.assertEqual(set(reader.SOURCE_CRT_NAMES),set(reader.expected_contract()['source_crt_definitions']))
+        self.assertIn('crt/src/x86_64_owned_crt_handoff_attachment.rs',reader.RUNTIME_SOURCES)
         self.assertEqual(reader.contract(ROOT)['record_sizes'], {
             'owned_handoff': 32,
             'conventional_snapshot': 88,
@@ -113,28 +115,91 @@ class NativeCrtStartupAttachmentTests(unittest.TestCase):
     def test_attachment_joins_only_the_observed_rows_and_keeps_the_got_boundary_exact(self) -> None:
         reader = selection._crt_startup_reader()
         names = selection._crt_startup_identity_names(reader)
-        observed = []
-        occurrences = []
+        artifacts=reader.product_paths(ROOT,{
+            'static_preparation':{'primary':{'path':'.work/static'}},
+            'dynamic_product':{'path':'.work/dynamic'},
+        })
+        products={name:{} for name in artifacts}
+        named_rows={name:[] for name in artifacts}
+        source_definitions=reader.expected_contract()['source_crt_definitions']
+        source_groups=reader.tomllib.loads((ROOT/'compat/x86_64/native-abi-selection.toml').read_text())['owner_groups']
+        source_group_by_member={member:group for group in source_groups
+                                if group['id'].startswith('source-crt-')
+                                for member in group['members'] if member in source_definitions}
+        self.assertEqual(set(source_group_by_member),set(source_definitions))
+        row_indices={name:0 for name in artifacts}
+
+        def add(artifact: str, name: str, *, type: str='NOTYPE', binding: str='GLOBAL',
+                visibility: str='DEFAULT', section_index: str='UND', value: str='0000000000000000') -> None:
+            row_indices[artifact]+=1
+            row=self._row(name,section=section_index,binding=binding,visibility=visibility)
+            row.update({'type':type,'row_index':row_indices[artifact],
+                        'size_bytes':1 if section_index!='UND' else 0,
+                        'size':'1' if section_index!='UND' else '0','value':value})
+            section=None if section_index=='UND' else {
+                'name':'.got.plt' if name=='_GLOBAL_OFFSET_TABLE_' else '.text.'+name,
+                'index':int(section_index),'address':value,'type':'PROGBITS',
+                'flags':'WA' if name=='_GLOBAL_OFFSET_TABLE_' else 'AX',
+            }
+            named_rows[artifact].append({
+                'member':'startup.o' if artifact=='candidate-static' else None,
+                'member_index':0 if artifact=='candidate-static' else None,
+                'member_occurrence':0 if artifact=='candidate-static' else None,
+                'table_section_index':2,'row':row,'section':section,
+            })
+
+        for name in names:
+            if name in source_definitions:
+                continue
+            add('candidate-static',name)
+        add('candidate-shared','_GLOBAL_OFFSET_TABLE_',type='NOTYPE',binding='LOCAL',
+            visibility='HIDDEN',section_index='18',value='0000000000000900')
+        for name,placements in source_definitions.items():
+            for artifact,metadata in placements.items():
+                add(artifact,name,**metadata,section_index='1')
+        observed=selection._crt_startup_observed_rows(named_rows,names,products)
+        for name,placements in source_definitions.items():
+            rows=[row for row in observed if row['row']['name']==name]
+            self.assertEqual({row['artifact_key'] for row in rows},set(placements))
+            self.assertTrue(all(row['role']=='definition' for row in rows))
+            for row in rows:
+                artifact=row['artifact_key']
+                self.assertEqual({key:row['row'][key] for key in ('type','binding','visibility')},
+                                 placements[artifact])
+
+        occurrences=[]
         identities = []
         blockers = []
-        for index, name in enumerate(names):
-            row = self._row(name)
-            source = {
-                'artifact_key': 'candidate-static', 'member': None, 'member_index': None,
-                'member_occurrence': None, 'table_section_index': index + 1,
-                'section': None, 'row': row,
+        by_name={name:[] for name in names}
+        for index, source in enumerate(observed):
+            row=source['row']
+            role=('import' if row['section_index']=='UND' else
+                  'local-definition' if row['name']=='_GLOBAL_OFFSET_TABLE_' and source['artifact_key']=='candidate-shared'
+                  else 'definition')
+            occurrence={
+                'index':index,'artifact_key':source['artifact_key'],'member_name':source['member'],
+                'member_index':source['member_index'],'member_occurrence':source['member_occurrence'],
+                'table_section_index':source['table_section_index'],'definition_section':source['section'],
+                'role':role,'row':row,
             }
-            observed.append(source)
-            occurrences.append({
-                'index': index, 'artifact_key': source['artifact_key'], 'member_name': source['member'],
-                'member_index': source['member_index'], 'member_occurrence': source['member_occurrence'],
-                'table_section_index': source['table_section_index'], 'definition_section': source['section'],
-                'role': 'import', 'row': row,
-            })
-            reasons = [selection.CRT_STARTUP_RECEIPT_REQUIREMENT, selection.ORDINARY_IMPORT_REASON]
+            occurrences.append(occurrence);by_name[row['name']].append(occurrence)
+        for name in names:
+            rows=by_name[name]
+            group=source_group_by_member.get(name)
+            if group is None:
+                owner='crt-startup-link-boundaries';disposition='structural-replacement'
+                reasons=[selection.CRT_STARTUP_RECEIPT_REQUIREMENT]
+                if any(row['role']=='import' for row in rows):
+                    reasons.append(selection.ORDINARY_IMPORT_REASON)
+                reasons.extend('candidate definition placement is not selected: '+artifact
+                               for artifact in sorted({row['artifact_key'] for row in rows
+                                                      if row['role']=='definition'}))
+            else:
+                owner=group['owner'];disposition=group['disposition'];reasons=[]
             identities.append({
                 'identity': {'name': name, 'version': None, 'version_default': False},
-                'selection': {'disposition': 'structural-replacement', 'owner': 'crt-startup-link-boundaries'},
+                'selection': {'disposition': disposition, 'owner': owner,
+                              **({'group':group['id']} if group is not None else {})},
                 'unresolved': reasons[:],
             })
             blockers.extend({
@@ -142,25 +207,9 @@ class NativeCrtStartupAttachmentTests(unittest.TestCase):
                 'identity': {'name': name, 'version': None, 'version_default': False},
                 'reason': reason,
             } for reason in reasons)
-        got = next(row for row in observed if row['row']['name'] == '_GLOBAL_OFFSET_TABLE_')
-        got['row'] = self._row('_GLOBAL_OFFSET_TABLE_', binding='GLOBAL', visibility='DEFAULT')
-        shared_got = {
-            'artifact_key': 'candidate-shared', 'member': None, 'member_index': None,
-            'member_occurrence': None, 'table_section_index': 99,
-            'section': {'name': '.got.plt', 'index': 18, 'address': '0000000000000900',
-                        'type': 'PROGBITS', 'flags': 'WA'},
-            'row': {**self._row('_GLOBAL_OFFSET_TABLE_', section='18', binding='LOCAL',
-                                visibility='HIDDEN'), 'value': '0000000000000900'},
-        }
-        observed.append(shared_got)
-        occurrences.append({
-            'index': len(occurrences), 'artifact_key': 'candidate-shared', 'member_name': None,
-            'member_index': None, 'member_occurrence': None, 'table_section_index': 99,
-            'definition_section': shared_got['section'], 'role': 'local-definition', 'row': shared_got['row'],
-        })
         companion = {
             'status': 'crt-startup-observed-with-boundaries', 'reader': {}, 'contract': {}, 'report': {},
-            'source': {}, 'source_inputs': {}, 'products': {'candidate-static': {}, 'candidate-shared': {}},
+            'source': {}, 'source_inputs': {}, 'products': products,
             'cohort_inputs': self._projection_cohort_inputs(),
             'measurement_reports': {},
             'account': {'identity_names': list(names), 'occurrences': observed, 'runtime_labels': [],
@@ -170,13 +219,14 @@ class NativeCrtStartupAttachmentTests(unittest.TestCase):
         accounting = {'identities': identities, 'placement_joins': [], 'occurrences': occurrences, 'blockers': blockers}
         original_accounting = copy.deepcopy(accounting)
         joins = selection.attach_native_crt_startup(accounting, companion)
-        self.assertEqual(len(joins), 12)
+        self.assertEqual(len(joins), 21)
+        self.assertEqual(sum(join['owner_observation_count'] for join in joins),len(observed))
         self.assertTrue(all(not row['unresolved'] for row in accounting['identities']))
         self.assertFalse(accounting['blockers'])
-        self.assertEqual(
-            next(row for row in joins if row['identity']['name'] == '_GLOBAL_OFFSET_TABLE_')['occurrence_indices'],
-            [0, 12],
-        )
+        got_join=next(row for row in joins if row['identity']['name']=='_GLOBAL_OFFSET_TABLE_')
+        got_rows=[occurrences[index] for index in got_join['occurrence_indices']]
+        self.assertEqual({(row['artifact_key'],row['role']) for row in got_rows},
+                         {('candidate-static','import'),('candidate-shared','definition')})
 
         malformed = copy.deepcopy(companion)
         malformed['account']['occurrences'].pop()
@@ -227,12 +277,14 @@ class NativeCrtStartupAttachmentTests(unittest.TestCase):
         reader = selection._crt_startup_reader()
         names = selection._crt_startup_identity_names(reader)
         products = {name: {} for name in receipt['inputs_before']['startup_artifacts']}
-        self.assertEqual(len(names), 12)
+        self.assertEqual(len(names), 21)
         self.assertEqual(len(products), 9)
+        projected=reader.account_products(receipt['observations']['complete_elf_facts'])['all_named_rows']
+        self.assertTrue(set(products)<=set(projected))
         observed = selection._crt_startup_observed_rows(
-            receipt['observations']['product_placements']['all_named_rows'], names, products,
+            {artifact:projected[artifact] for artifact in products}, names, products,
         )
-        self.assertEqual(len(observed), 44)
+        self.assertEqual(len(observed), 72)
         self.assertEqual(
             len([row for row in observed if row['row']['name'] == '_GLOBAL_OFFSET_TABLE_']), 2,
         )
@@ -261,8 +313,8 @@ class NativeCrtStartupAttachmentTests(unittest.TestCase):
     def test_retained_e8_projection_joins_all_actual_startup_roles(self) -> None:
         accounting, companion = self._actual_e8_accounting_and_companion()
         joins = selection.attach_native_crt_startup(accounting, companion)
-        self.assertEqual(len(joins), 12)
-        self.assertEqual(sum(join['owner_observation_count'] for join in joins), 44)
+        self.assertEqual(len(joins), 21)
+        self.assertEqual(sum(join['owner_observation_count'] for join in joins), 72)
         records = {row['identity']['name']: row for row in accounting['identities']}
         occurrences = {row['index']: row for row in accounting['occurrences']}
         for join in joins:

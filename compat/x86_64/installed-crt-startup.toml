@@ -1,5 +1,5 @@
-schema = "crabc.x86_64-installed-crt-startup/v4"
-identities = ["_GLOBAL_OFFSET_TABLE_", "__crabc_x86_64_loader_conventional_startup_v1", "__crabc_x86_64_owned_crt_handoff", "__crabc_x86_loader_tls_runtime_v1_attach", "__crabc_x86_loader_tls_runtime_v1_record", "__crabc_x86_static_tls_bootstrap", "__preinit_array_start", "__preinit_array_end", "__init_array_start", "__init_array_end", "__fini_array_start", "__fini_array_end"]
+schema = "crabc.x86_64-installed-crt-startup/v5"
+identities = ["_GLOBAL_OFFSET_TABLE_", "__crabc_x86_64_loader_conventional_startup_v1", "__crabc_x86_64_owned_crt_handoff", "__crabc_x86_loader_tls_runtime_v1_attach", "__crabc_x86_loader_tls_runtime_v1_record", "__crabc_x86_static_tls_bootstrap", "__preinit_array_start", "__preinit_array_end", "__init_array_start", "__init_array_end", "__fini_array_start", "__fini_array_end", "__crabc_x86_64_exec_start", "__crabc_x86_64_attached_owned_crt_handoff", "__crabc_x86_64_static_pie_start", "__crabc_x86_64_executable_init", "__crabc_x86_64_executable_fini", "__crabc_x86_64_dynamic_start", "__crabc_x86_64_dynamic_executable_init", "__crabc_x86_64_dynamic_executable_fini", "__crabc_x86_64_owned_crt_handoff_value"]
 modes = ["static", "static-pie", "owned-pie", "owned-non-pie", "conventional-pie", "conventional-non-pie", "default-pie", "oracle-static", "oracle-static-pie", "oracle-pie", "oracle-non-pie"]
 variants = ["normal", "empty"]
 descriptor_import_required = false
@@ -17,6 +17,17 @@ main_attachment = ["__crabc_x86_loader_tls_runtime_v1_attach", "__crabc_x86_load
 private_loader_handoffs = ["__crabc_x86_64_owned_crt_handoff", "__crabc_x86_64_loader_conventional_startup_v1"]
 
 application_frames = ["_init", "_fini"]
+
+[source_crt_definitions]
+"__crabc_x86_64_exec_start" = { "static-crt1.o" = { type = "FUNC", binding = "GLOBAL", visibility = "DEFAULT" }, "dynamic-crt1.o" = { type = "FUNC", binding = "GLOBAL", visibility = "DEFAULT" } }
+"__crabc_x86_64_attached_owned_crt_handoff" = { "static-crt1.o" = { type = "FUNC", binding = "WEAK", visibility = "HIDDEN" }, "dynamic-crt1.o" = { type = "FUNC", binding = "WEAK", visibility = "HIDDEN" }, "dynamic-crabc-dynamic-attach.o" = { type = "FUNC", binding = "GLOBAL", visibility = "HIDDEN" } }
+"__crabc_x86_64_static_pie_start" = { "static-crt1.o" = { type = "FUNC", binding = "GLOBAL", visibility = "DEFAULT" }, "static-rcrt1.o" = { type = "FUNC", binding = "GLOBAL", visibility = "DEFAULT" }, "dynamic-crt1.o" = { type = "FUNC", binding = "GLOBAL", visibility = "DEFAULT" } }
+"__crabc_x86_64_executable_init" = { "static-crt1.o" = { type = "FUNC", binding = "GLOBAL", visibility = "DEFAULT" }, "static-rcrt1.o" = { type = "FUNC", binding = "GLOBAL", visibility = "DEFAULT" }, "dynamic-crt1.o" = { type = "FUNC", binding = "GLOBAL", visibility = "DEFAULT" } }
+"__crabc_x86_64_executable_fini" = { "static-crt1.o" = { type = "FUNC", binding = "GLOBAL", visibility = "DEFAULT" }, "static-rcrt1.o" = { type = "FUNC", binding = "GLOBAL", visibility = "DEFAULT" }, "dynamic-crt1.o" = { type = "FUNC", binding = "GLOBAL", visibility = "DEFAULT" } }
+"__crabc_x86_64_dynamic_start" = { "static-crt1.o" = { type = "FUNC", binding = "GLOBAL", visibility = "DEFAULT" }, "static-Scrt1.o" = { type = "FUNC", binding = "GLOBAL", visibility = "DEFAULT" }, "dynamic-crt1.o" = { type = "FUNC", binding = "GLOBAL", visibility = "DEFAULT" }, "dynamic-Scrt1.o" = { type = "FUNC", binding = "GLOBAL", visibility = "DEFAULT" } }
+"__crabc_x86_64_dynamic_executable_init" = { "static-crt1.o" = { type = "FUNC", binding = "GLOBAL", visibility = "DEFAULT" }, "static-Scrt1.o" = { type = "FUNC", binding = "GLOBAL", visibility = "DEFAULT" }, "dynamic-crt1.o" = { type = "FUNC", binding = "GLOBAL", visibility = "DEFAULT" }, "dynamic-Scrt1.o" = { type = "FUNC", binding = "GLOBAL", visibility = "DEFAULT" } }
+"__crabc_x86_64_dynamic_executable_fini" = { "static-crt1.o" = { type = "FUNC", binding = "GLOBAL", visibility = "DEFAULT" }, "static-Scrt1.o" = { type = "FUNC", binding = "GLOBAL", visibility = "DEFAULT" }, "dynamic-crt1.o" = { type = "FUNC", binding = "GLOBAL", visibility = "DEFAULT" }, "dynamic-Scrt1.o" = { type = "FUNC", binding = "GLOBAL", visibility = "DEFAULT" } }
+"__crabc_x86_64_owned_crt_handoff_value" = { "static-Scrt1.o" = { type = "FUNC", binding = "GLOBAL", visibility = "DEFAULT" }, "dynamic-Scrt1.o" = { type = "FUNC", binding = "GLOBAL", visibility = "DEFAULT" } }
 
 [descriptor_handoff]
 name = "__crabc_x86_64_loader_tls_runtime_v1"

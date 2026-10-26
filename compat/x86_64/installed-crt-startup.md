@@ -2,10 +2,23 @@
 
 `installed_crt_startup_evidence.py` observes one finite installed boundary:
 CRT entry → initial process/TLS state → executable initialization → main →
-ordinary process finalization. The contract names twelve identities: six
-linker arrays and `_GLOBAL_OFFSET_TABLE_`, hidden static bootstrap, owned
-handoff, main attachment/accessor, and the conventional-libc startup wire.
-It neither adds public symbols nor qualifies the CRT, libc or loader family.
+ordinary process finalization. The contract names 21 identities: six linker
+arrays, `_GLOBAL_OFFSET_TABLE_`, the startup wires, and nine source-owned CRT
+definitions. It neither adds public symbols nor qualifies the CRT, libc or
+loader family.
+
+Schema v5 records the exact source object roles for the nine CRT definitions.
+The three static lifecycle functions are GLOBAL DEFAULT FUNC definitions in
+`static-crt1.o`, `dynamic-crt1.o`, and `static-rcrt1.o`. The three dynamic
+lifecycle functions have the same ELF metadata in both `crt1.o` objects and
+both `Scrt1.o` objects. The handoff accessor is a GLOBAL DEFAULT FUNC only in
+the two `Scrt1.o` objects. The combined `crt1.o` objects define
+`__crabc_x86_64_exec_start` as GLOBAL DEFAULT FUNC. They also define weak
+hidden `__crabc_x86_64_attached_owned_crt_handoff` fallbacks. The source
+`crt/src/x86_64_owned_crt_handoff_attachment.rs` defines that handoff as a
+strong hidden function in the owned dynamic attachment object. The role table
+records these source definitions and their visibility. Runtime
+checks remain mode-specific.
 
 `collect` accepts `--static-preparation`, `--static-product`,
 `--dynamic-product`, `--historical-facts` and fresh `--output`, all physical
@@ -112,9 +125,9 @@ object, selected runtime and linker identities, direct DSO input, exact command
 and trace, output, and manifest. The general ordinary-link reader intentionally
 does not admit application DSOs; this component owns only this one named direct
 DSO relation. A source/product cohort that admits a malformed wire cannot produce a
-schema-v4 receipt.
+schema-v5 receipt.
 
-Schema v4 adds a separate RuntimeV1 selected-object admission account to that
+Schema v4 added a separate RuntimeV1 selected-object admission account to that
 same transaction. Its collector-only
 `installed_crt_startup_descriptor_runtime_probe.c` provides controlled record,
 TCB and DTV prefixes and directly statically links the sealed selected

@@ -26,7 +26,7 @@ import owned_static_link_authority as static_authority
 import compiler_helper_evidence as compiler_helpers
 from loader_debug_abi_evidence import Elf
 ROOT=Path(__file__).resolve().parents[2]
-SCHEMA='crabc.x86_64-installed-crt-startup/v4'
+SCHEMA='crabc.x86_64-installed-crt-startup/v5'
 CONVENTIONAL='__crabc_x86_64_loader_conventional_startup_v1'
 HANDOFF='__crabc_x86_64_owned_crt_handoff'
 ATTACH='__crabc_x86_loader_tls_runtime_v1_attach'
@@ -76,7 +76,56 @@ DESCRIPTOR_MUTATIONS={
     'wrong-addend':('addend',1),
 }
 ARRAYS=tuple('__'+a+'_array_'+b for a in ('preinit','init','fini') for b in ('start','end'))
-NAMES=('_GLOBAL_OFFSET_TABLE_',CONVENTIONAL,HANDOFF,ATTACH,RECORD,BOOTSTRAP,*ARRAYS)
+SOURCE_CRT_DEFINITIONS={
+    '__crabc_x86_64_exec_start': {
+        'static-crt1.o': {'type':'FUNC','binding':'GLOBAL','visibility':'DEFAULT'},
+        'dynamic-crt1.o': {'type':'FUNC','binding':'GLOBAL','visibility':'DEFAULT'},
+    },
+    '__crabc_x86_64_attached_owned_crt_handoff': {
+        'static-crt1.o': {'type':'FUNC','binding':'WEAK','visibility':'HIDDEN'},
+        'dynamic-crt1.o': {'type':'FUNC','binding':'WEAK','visibility':'HIDDEN'},
+        'dynamic-crabc-dynamic-attach.o': {'type':'FUNC','binding':'GLOBAL','visibility':'HIDDEN'},
+    },
+    '__crabc_x86_64_static_pie_start': {
+        'static-crt1.o': {'type':'FUNC','binding':'GLOBAL','visibility':'DEFAULT'},
+        'static-rcrt1.o': {'type':'FUNC','binding':'GLOBAL','visibility':'DEFAULT'},
+        'dynamic-crt1.o': {'type':'FUNC','binding':'GLOBAL','visibility':'DEFAULT'},
+    },
+    '__crabc_x86_64_executable_init': {
+        'static-crt1.o': {'type':'FUNC','binding':'GLOBAL','visibility':'DEFAULT'},
+        'static-rcrt1.o': {'type':'FUNC','binding':'GLOBAL','visibility':'DEFAULT'},
+        'dynamic-crt1.o': {'type':'FUNC','binding':'GLOBAL','visibility':'DEFAULT'},
+    },
+    '__crabc_x86_64_executable_fini': {
+        'static-crt1.o': {'type':'FUNC','binding':'GLOBAL','visibility':'DEFAULT'},
+        'static-rcrt1.o': {'type':'FUNC','binding':'GLOBAL','visibility':'DEFAULT'},
+        'dynamic-crt1.o': {'type':'FUNC','binding':'GLOBAL','visibility':'DEFAULT'},
+    },
+    '__crabc_x86_64_dynamic_start': {
+        'static-crt1.o': {'type':'FUNC','binding':'GLOBAL','visibility':'DEFAULT'},
+        'static-Scrt1.o': {'type':'FUNC','binding':'GLOBAL','visibility':'DEFAULT'},
+        'dynamic-crt1.o': {'type':'FUNC','binding':'GLOBAL','visibility':'DEFAULT'},
+        'dynamic-Scrt1.o': {'type':'FUNC','binding':'GLOBAL','visibility':'DEFAULT'},
+    },
+    '__crabc_x86_64_dynamic_executable_init': {
+        'static-crt1.o': {'type':'FUNC','binding':'GLOBAL','visibility':'DEFAULT'},
+        'static-Scrt1.o': {'type':'FUNC','binding':'GLOBAL','visibility':'DEFAULT'},
+        'dynamic-crt1.o': {'type':'FUNC','binding':'GLOBAL','visibility':'DEFAULT'},
+        'dynamic-Scrt1.o': {'type':'FUNC','binding':'GLOBAL','visibility':'DEFAULT'},
+    },
+    '__crabc_x86_64_dynamic_executable_fini': {
+        'static-crt1.o': {'type':'FUNC','binding':'GLOBAL','visibility':'DEFAULT'},
+        'static-Scrt1.o': {'type':'FUNC','binding':'GLOBAL','visibility':'DEFAULT'},
+        'dynamic-crt1.o': {'type':'FUNC','binding':'GLOBAL','visibility':'DEFAULT'},
+        'dynamic-Scrt1.o': {'type':'FUNC','binding':'GLOBAL','visibility':'DEFAULT'},
+    },
+    '__crabc_x86_64_owned_crt_handoff_value': {
+        'static-Scrt1.o': {'type':'FUNC','binding':'GLOBAL','visibility':'DEFAULT'},
+        'dynamic-Scrt1.o': {'type':'FUNC','binding':'GLOBAL','visibility':'DEFAULT'},
+    },
+}
+SOURCE_CRT_NAMES=tuple(SOURCE_CRT_DEFINITIONS)
+NAMES=('_GLOBAL_OFFSET_TABLE_',CONVENTIONAL,HANDOFF,ATTACH,RECORD,BOOTSTRAP,*ARRAYS,*SOURCE_CRT_NAMES)
 MODES=('static','static-pie','owned-pie','owned-non-pie','conventional-pie','conventional-non-pie','default-pie','oracle-static','oracle-static-pie','oracle-pie','oracle-non-pie')
 STATUS={'component':'verified','family_completion':False,'runtime_qualification':False,'selection_closure':False,'public_support':False}
 class StartupEvidenceError(ValueError):pass
@@ -95,10 +144,7 @@ def expected_contract():
                      'private_static_bootstrap':BOOTSTRAP,'main_attachment':[ATTACH,RECORD],
                      'private_loader_handoffs':[HANDOFF,CONVENTIONAL],
                      'application_frames':['_init','_fini']},
-            # The descriptor is a private loader-to-main-image weak-GOT wire.
-            # It is deliberately separate from the twelve CRT identity rows:
-            # those rows prove CRT callers, while this account proves the
-            # final main-image transport they use.
+            'source_crt_definitions':copy.deepcopy(SOURCE_CRT_DEFINITIONS),
             'descriptor_handoff':{
                 'name':DESCRIPTOR,'source_artifact':'dynamic-crabc-dynamic-attach.o',
                 'source_relocation':{'kind':9,'addend':-4,'symbol_type':'0','binding':'WEAK',
@@ -109,9 +155,6 @@ def expected_contract():
                 'geometry':{'size_bytes':72,'alignment_bytes':8,
                             'magic':'43524142435f5451','version':1,'process_mode':2,
                             'owner':1,'ready_state':2,'generation':1},
-                # Mutation files are derived from the linked owned main, then
-                # run through the selected product loader in `candidate-root`.
-                # They are not a second interpreter/product authority.
                 'admission':{
                     'main_case':'owned-pie-normal',
                     'mutations':{
@@ -128,10 +171,6 @@ def expected_contract():
                     'entry_modes':['kernel','direct'],
                     'rejection':{'status':127,'stdout':'','stderr':'reloc\n'},
                 },
-                # This is a selected-object execution account. Its freestanding
-                # endpoints deliberately use controlled storage and a strong
-                # test record where present; it neither changes nor replaces
-                # the separate main-image weak-GOT transport account above.
                 'runtime_admission':{
                     'probe':{'source':DESCRIPTOR_RUNTIME_PROBE,
                              'attachment_artifact':'dynamic-crabc-dynamic-attach.o',
@@ -376,7 +415,8 @@ def validate_streams(streams):
 
 RUNTIME_SOURCES=('crt/src/x86_64_startup.rs','crt/src/x86_64_dynamic_startup.rs','crt/src/x86_64_array_boundaries.rs',
     'crt/src/x86_64_crti.rs','crt/src/x86_64_crtn.rs',
-    'crt/src/x86_64_crt1.rs','crt/src/x86_64_rcrt1.rs','crt/src/x86_64_Scrt1.rs','crt/build_x86_64.py',
+    'crt/src/x86_64_crt1.rs','crt/src/x86_64_rcrt1.rs','crt/src/x86_64_Scrt1.rs',
+    'crt/src/x86_64_owned_crt_handoff_attachment.rs','crt/build_x86_64.py',
     'scripts/build_x86_64_owned_dynamic_sysroot.py','ldso/Cargo.toml','ldso/build.rs',
     'libc/src/c_abi/x86_64/static_tls.rs','libc/src/c_abi/x86_64/static_startup.rs',
     'libc/src/c_abi/x86_64/conventional_startup_v1.rs','libc/src/c_abi/x86_64/dynamic_main_thread_runtime_v1_lifecycle.rs',
@@ -609,14 +649,15 @@ def exact(facts,key,name,table='.symtab'):
 
 def account_products(facts):
     result={}
+    artifact_names=tuple(product_paths(ROOT,{
+        'static_preparation':{'primary':{'path':'.work/static'}},
+        'dynamic_product':{'path':'.work/dynamic'},
+    }))
+    require(set(facts)==set(artifact_names),'startup product artifact roster differs')
     for key in ('static-crt1.o','static-Scrt1.o','static-rcrt1.o','dynamic-crt1.o','dynamic-Scrt1.o'):
         result[key]={}
         for name in ARRAYS:
             item=exact(facts,key,name);require_import(item['row'],'NOTYPE','GLOBAL','DEFAULT');result[key][name]=item
-    # Both products install the one conventional crt1.o. It carries failing
-    # weak defaults for the static bootstrap and the RuntimeV1 attachment
-    # that libc.a or crabc-dynamic-attach.o override, and never imports the
-    # handoff; rcrt1.o and Scrt1.o keep their single mode's strong imports.
     for key in ('static-crt1.o','dynamic-crt1.o'):
         for name,visibility in ((BOOTSTRAP,'HIDDEN'),(ATTACH,'DEFAULT')):
             item=exact(facts,key,name);require_function(item['row'],item['section'],visibility,'WEAK');result[key][name]=item
@@ -635,14 +676,23 @@ def account_products(facts):
     result['candidate-shared']={}
     for table in ('.dynsym','.symtab'):
         item=exact(facts,'candidate-shared',CONVENTIONAL,table);require_import(item['row'],'OBJECT','WEAK','DEFAULT');result['candidate-shared'][table]=item
-    # These records are supplied by source-selected startup resolution, not
-    # exported loader functions. The one canonical libc import is checked
-    # above; admitting another dynamic spelling would change this boundary.
     for key,allowed in (('candidate-shared',{CONVENTIONAL}),('candidate-loader',set())):
         require(all(x['row']['name'] not in NAMES or x['row']['name'] in allowed
                     for x in rows(facts,key,'.dynsym')),'unexpected public startup identity: '+key)
-    # Retain local, weak and absent named providers without fabricating imports
-    # for source-resolved private loader records or optimized attachments.
+    for name,placements in expected_contract()['source_crt_definitions'].items():
+        for key in artifact_names:
+            symtab=[item for item in rows(facts,key,'.symtab') if item['row']['name']==name]
+            dynsym=[item for item in rows(facts,key,'.dynsym') if item['row']['name']==name]
+            expected=placements.get(key)
+            if expected is None:
+                require(not symtab and not dynsym,'source CRT definition has an unowned placement: '+key+'/'+name)
+                continue
+            require(len(symtab)==1 and not dynsym,
+                    'source CRT definition count differs: '+key+'/'+name)
+            item=symtab[0]
+            require_function(item['row'],item['section'],expected['visibility'],expected['binding'])
+            require(item['row']['type']==expected['type'],'source CRT definition type differs: '+key+'/'+name)
+            result.setdefault(key,{})[name]=item
     for key in ('static-crti.o','dynamic-crti.o'):
         result[key]={}
         for name in ('_init','_fini'):
