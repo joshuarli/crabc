@@ -14,8 +14,12 @@ The checked policy has two tracked inputs:
   a separate exact reviewed-extension policy. It does not revise the floor or
   turn an observed historical extra into a musl identity.
 
-The frozen floor's origin records the pinned musl 1.2.6 shared object and pin
-identity, and the separate materialized-unqualified candidate build identity.
+The oracle origin records the approved native musl snapshot's shared object
+and pin identity. The candidate origin remains the separate historical
+materialized-unqualified build. The snapshot refresh preserves all 1,650
+oracle identities and every ratcheted ABI field byte-for-byte; only the oracle
+source and shared-object identities change. The historical candidate roster,
+initial comparison state and additions policy remain unchanged.
 
 The baseline's musl and candidate identity rosters and its initial missing,
 unexpected and mismatched identities are the `oracle_symbols`,

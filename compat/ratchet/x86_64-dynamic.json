@@ -60513,16 +60513,16 @@
     "oracle": {
       "repository_pin": {
         "fallback_repository": "https://github.com/ifduyue/musl.git",
-        "fallback_revision": "9fa28ece75d8a2191de7c5bb53bed224c5947417",
-        "sha256": "d585fd3b613c66151fc3249e8ed44f77020cb5e6c1e635a616d3f9f82460512a",
-        "source": "https://musl.libc.org/releases/musl-1.2.6.tar.gz",
+        "fallback_revision": "7813e9119eb5fe681b6750b8a033a0490bca0941",
+        "sha256": "8c16adf94bfd61358cf884353a4c0b71837ed792e7b7f056c86354436cf05bdb",
+        "source": "https://codeload.github.com/ifduyue/musl/tar.gz/7813e9119eb5fe681b6750b8a033a0490bca0941",
         "version": "1.2.6"
       },
       "shared_identity": {
         "mode": 493,
         "path": "/opt/musl-1.2.6/lib/libc.so",
-        "sha256": "8aea1cf45942b85b9d20bfcc4fbe78dcd6748f7d7c615513b38d3f9a897bdb65",
-        "size": 798104
+        "sha256": "f003571aaed56e48e1c32f57b372c8875dd8e8160a78f076f4babe7d48fad433",
+        "size": 798320
       }
     }
   },
