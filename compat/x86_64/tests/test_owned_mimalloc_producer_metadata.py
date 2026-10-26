@@ -177,9 +177,6 @@ class FixedCMimallocProducerMetadataTests(unittest.TestCase):
                 {"index": shared_index, "alignment": alignment, "name": ".fixture.source-hidden"},
             ])
 
-        # The selected functions share ordinary executable text sections in
-        # this complete-ELF-shaped fixture.  Data and TLS intentionally use
-        # their own placement records above.
         static_sections.extend([
             {"index": 10, "alignment": 16, "name": ".text.fixture", "flags": "AX"},
             {"index": 41, "alignment": 16, "name": ".text.weak", "flags": "AX"},
@@ -449,6 +446,9 @@ class FixedCMimallocProducerMetadataTests(unittest.TestCase):
             },
         )
         self.assertEqual(layouts["mi_thread_locals"]["shared_symbol_value"]["integer"], 0)
+        self.assertEqual(
+            layouts["mi_thread_locals"]["shared_symbol_value"]["modulo_source_required_alignment"], 0
+        )
 
     def test_accounts_the_exact_source_hidden_c_data_objects(self) -> None:
         account = self.account()
