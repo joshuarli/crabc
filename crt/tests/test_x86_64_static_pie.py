@@ -219,6 +219,21 @@ def overlapping_executable_load(path: Path) -> Path:
     return overlap
 
 
+def duplicate_relocation_tag(path: Path, tag: int) -> Path:
+    data, headers = elf_layout(path)
+    dynamic = next(header for header in headers if header[0] == PT_DYNAMIC)
+    entries = range(dynamic[2], dynamic[2] + dynamic[5], 16)
+    value = next(struct.unpack_from("<qQ", data, offset)[1] for offset in entries
+                 if struct.unpack_from("<q", data, offset)[0] == tag)
+    debug = next(offset for offset in entries if struct.unpack_from("<q", data, offset)[0] == 21)
+    mutable = bytearray(data)
+    struct.pack_into("<qQ", mutable, debug, tag, value)
+    duplicate = path.with_name(path.name + f".duplicate-{tag}")
+    duplicate.write_bytes(mutable)
+    duplicate.chmod(0o755)
+    return duplicate
+
+
 def relocation_summary(path: Path) -> list[tuple[int, int, int]]:
     data, program_headers = elf_layout(path)
     tags = dynamic_tags(data, program_headers)
@@ -431,6 +446,17 @@ class X86_64StaticPieTests(unittest.TestCase):
                 self.assertEqual(overlap.returncode, 127, overlap.stderr.decode(errors="replace"))
                 self.assertEqual(overlap.stdout, b"")
 
+                tags = dynamic_tags(*elf_layout(executable))
+                for tag in (7, 8, 35, 36, 37):
+                    if tag not in tags:
+                        continue
+                    duplicate_tag = subprocess.run(
+                        [str(duplicate_relocation_tag(executable, tag))], stdin=subprocess.DEVNULL,
+                        stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False,
+                        preexec_fn=disable_core_dump,
+                    )
+                    self.assertEqual(duplicate_tag.returncode, 127, duplicate_tag.stderr.decode(errors="replace"))
+                    self.assertEqual(duplicate_tag.stdout, b"")
                 if not packed_relr:
                     malformed = corrupt_first_relative_relocation(executable)
                     rejected = subprocess.run(

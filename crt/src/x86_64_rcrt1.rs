@@ -25,7 +25,7 @@ _start:
     mov r15, rsp
     xor ebp, ebp
     and rsp, -16
-    sub rsp, 80
+    sub rsp, 96
 
     // Walk argc, argv, envp, then auxv for AT_PHDR/AT_PHENT/AT_PHNUM.
     mov rax, QWORD PTR [r15]
@@ -231,6 +231,7 @@ _start:
     mov QWORD PTR [rsp + 16], rax
     mov QWORD PTR [rsp + 24], rax
     mov QWORD PTR [rsp + 32], rax
+    mov QWORD PTR [rsp + 80], rax
 .Lstatic_pie_dynamic:
     lea rax, [r8 + 16]
     cmp rax, r9
@@ -242,26 +243,36 @@ _start:
     jz .Lstatic_pie_dynamic_done
     cmp rax, 7
     jne .Lstatic_pie_not_rela
+    bts QWORD PTR [rsp + 80], 0
+    jc .Lstatic_pie_fail
     mov QWORD PTR [rsp], rcx
     jmp .Lstatic_pie_dynamic
 .Lstatic_pie_not_rela:
     cmp rax, 8
     jne .Lstatic_pie_not_relasz
+    bts QWORD PTR [rsp + 80], 1
+    jc .Lstatic_pie_fail
     mov QWORD PTR [rsp + 8], rcx
     jmp .Lstatic_pie_dynamic
 .Lstatic_pie_not_relasz:
     cmp rax, 36
     jne .Lstatic_pie_not_relr
+    bts QWORD PTR [rsp + 80], 2
+    jc .Lstatic_pie_fail
     mov QWORD PTR [rsp + 16], rcx
     jmp .Lstatic_pie_dynamic
 .Lstatic_pie_not_relr:
     cmp rax, 35
     jne .Lstatic_pie_not_relrsz
+    bts QWORD PTR [rsp + 80], 3
+    jc .Lstatic_pie_fail
     mov QWORD PTR [rsp + 24], rcx
     jmp .Lstatic_pie_dynamic
 .Lstatic_pie_not_relrsz:
     cmp rax, 37
     jne .Lstatic_pie_dynamic
+    bts QWORD PTR [rsp + 80], 4
+    jc .Lstatic_pie_fail
     mov QWORD PTR [rsp + 32], rcx
     jmp .Lstatic_pie_dynamic
 .Lstatic_pie_dynamic_done:

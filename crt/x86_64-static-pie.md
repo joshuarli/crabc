@@ -23,7 +23,8 @@ The static evidence consumes exactly these Rust-produced objects:
 - `rcrt1.o`: parses Linux's initial stack for `AT_PHDR`, `AT_PHENT`, and
   `AT_PHNUM`; derives the load bias from `PT_PHDR`; validates dynamic and
   relocation ranges against `PT_LOAD`; applies only symbol-free
-  `R_X86_64_RELATIVE` RELA/RELR records to writable mappings; seals
+  `R_X86_64_RELATIVE` RELA/RELR records to writable mappings; rejects repeated
+  RELA/RELR address and size tags and repeated RELR entry-size tags; seals
   at most one nonempty `PT_GNU_RELRO` contained in a page-rounded writable,
   non-executable load and disjoint from executable load pages; then calls the
   static-only lifecycle handoff. Its
