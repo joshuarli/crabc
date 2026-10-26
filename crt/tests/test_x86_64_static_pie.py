@@ -272,6 +272,19 @@ def invalid_first_relr(path: Path, value: int) -> Path:
     return invalid
 
 
+def textrel_declaration(path: Path, tag: int, value: int) -> Path:
+    data, headers = elf_layout(path)
+    dynamic = next(header for header in headers if header[0] == PT_DYNAMIC)
+    entry = next(offset for offset in range(dynamic[2], dynamic[2] + dynamic[5], 16)
+                 if struct.unpack_from("<q", data, offset)[0] == 21)
+    mutable = bytearray(data)
+    struct.pack_into("<qQ", mutable, entry, tag, value)
+    invalid = path.with_name(path.name + f".textrel-{tag}")
+    invalid.write_bytes(mutable)
+    invalid.chmod(0o755)
+    return invalid
+
+
 def relocation_summary(path: Path) -> list[tuple[int, int, int]]:
     data, program_headers = elf_layout(path)
     tags = dynamic_tags(data, program_headers)
@@ -483,6 +496,15 @@ class X86_64StaticPieTests(unittest.TestCase):
                 )
                 self.assertEqual(overlap.returncode, 127, overlap.stderr.decode(errors="replace"))
                 self.assertEqual(overlap.stdout, b"")
+
+                for tag, value in ((22, 0), (30, 4)):
+                    textrel = subprocess.run(
+                        [str(textrel_declaration(executable, tag, value))], stdin=subprocess.DEVNULL,
+                        stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False,
+                        preexec_fn=disable_core_dump,
+                    )
+                    self.assertEqual(textrel.returncode, 127, textrel.stderr.decode(errors="replace"))
+                    self.assertEqual(textrel.stdout, b"")
 
                 tags = dynamic_tags(*elf_layout(executable))
                 for tag in (7, 8, 9, 35, 36, 37):

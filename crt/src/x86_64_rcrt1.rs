@@ -241,6 +241,14 @@ _start:
     add r8, 16
     test rax, rax
     jz .Lstatic_pie_dynamic_done
+    cmp rax, 22
+    je .Lstatic_pie_fail
+    cmp rax, 30
+    jne .Lstatic_pie_not_flags
+    test rcx, 4
+    jnz .Lstatic_pie_fail
+    jmp .Lstatic_pie_dynamic
+.Lstatic_pie_not_flags:
     cmp rax, 7
     jne .Lstatic_pie_not_rela
     bts QWORD PTR [rsp + 80], 0

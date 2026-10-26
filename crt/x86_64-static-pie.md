@@ -23,14 +23,13 @@ The static evidence consumes exactly these Rust-produced objects:
 - `rcrt1.o`: parses Linux's initial stack for `AT_PHDR`, `AT_PHENT`, and
   `AT_PHNUM`; derives the load bias from `PT_PHDR`; validates dynamic and
   relocation ranges against `PT_LOAD`; applies only symbol-free
-  `R_X86_64_RELATIVE` RELA/RELR records to writable mappings; rejects repeated
-  RELA/RELR address, size and entry-size tags, incomplete table descriptors,
-  and invalid entry sizes for nonempty tables; seals
+  `R_X86_64_RELATIVE` RELA/RELR records to writable mappings; rejects
+  text-relocation declarations, repeated RELA/RELR address, size or entry-size
+  tags, incomplete table descriptors, and invalid entry sizes for nonempty tables; seals
   at most one nonempty `PT_GNU_RELRO` contained in a page-rounded writable,
   non-executable load and disjoint from executable load pages; then calls the
-  static-only lifecycle handoff. Its
-  pre-relocation assembly never reads TLS or the GOT.
-
+  static-only lifecycle handoff. Its pre-relocation assembly never reads TLS
+  or the GOT.
 - `crti.o` and `crtn.o`: ordered `.init`/`.fini` frame fragments consumed by
   the static lifecycle handoff.
 
