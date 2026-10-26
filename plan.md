@@ -188,17 +188,27 @@ not proof. No allocator diagnostic ran. Main ledger, inventory and structure
 checks pass without promotion. The third rehearsal is frozen at `b3a226cce`
 with the same provisional claims, five receipt paths, and zero preflight
 blockers across 68 correctness stages.
-On that frozen revision, static products and the complete installed dynamic
-roster pass. The rebuilt roster is running; the extracted roster is pending.
+On that frozen revision, static products and the complete installed and rebuilt
+dynamic rosters pass. The extracted roster is running.
 Independent header-declaration collection succeeds at
 `.work/x86_64/header-declaration-inventory/candidate-cohort/report.json`,
 preserving unresolved-linkage observations rather than claiming ABI completion.
 The independent static-sysroot 72-path suite passes, with its genuine receipt
 at `.work/x86_64/reports/owned-static-product/run.z5hf3j7k/receipt.json` and its
 registered publication at `.work/x86_64/owned-static-qualification.json`.
-Combined-sysroot and static Lua checks run alongside the dynamic roster with
-separate scratch and logs in the checkout's `.work/tmp/`. No synthetic cohort
-completion records are written for these direct H0 commands.
+Combined-sysroot checks run alongside the dynamic roster with separate scratch
+and logs in the checkout's `.work/tmp/`. No synthetic cohort completion records
+are written for these direct H0 commands. The supplied static Lua computation
+exits zero with `passed=true`, but its root-owned `2700` run directory prevents
+host report discovery. Preserve the unadmitted `run-pvivcgda` result and
+`.work/tmp/lua-static.{stdout,stderr}` without changing their permissions.
+`a76ee7ebe` and `067b9a2bc` fix fresh native Lua result roots: add group/other
+read and traverse bits while preserving inherited setgid, and use one precisely
+named allocator across static, dynamic and supplied paths. All 78 focused
+tests pass, including real-filesystem restrictive-umask and setgid regressions.
+The detached `.work/wt/lua-readability-proof` at `067b9a2bc` is prepared for a
+fresh standalone static Lua producer and ordinary host-reader verification.
+It does not alter the running H0 source or its existing artifact.
 
 The addrconfig lane's musl scratch remains under its `.work/tmp`: automatic
 review denied its removal with "rm -f style commands are not permitted. Use
