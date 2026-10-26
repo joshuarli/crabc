@@ -72,11 +72,27 @@ in the shared receipt helpers: existing single-object callers retain their
 `Path` interface, while the new API accepts an exact ordered object tuple.
 Eight affected modules pass 170 tests with one skip; the original failing
 pthread receipt module also passes all fourteen tests on integrated main.
-Declaration boundary collection remains under review: its owner is correcting
-an overwritten inventory variable and portable header-path reconstruction.
-The prepared clean
+Declaration v2 collection and its two reviewed fixes are integrated through
+`3e3624335`. `91122c2d8` selects the real hidden `__memcpy_fwd` function;
+`c933ebaa0` selects only the five exact loader memory copies while preserving
+their ordinary caller proofs. `a9759df7f` and `ae006cdad` attach the eleven
+source-derived callable boundaries, preserving the producer's normalized
+records and removing only matching identity and closure requirements after
+complete validation. The final ten-module check passes 361 tests run:
+347 passed and fourteen existing skips. Ledger, inventory and structure
+checks pass. All nine Rust profiles remain verified for the unchanged Rust
+inputs from the earlier combined implementation check.
+
+This source group is ready for its first combined native pilot. The prepared clean
 `.work/wt/abi-owner-proof` contains pinned inputs only; do not produce target
-artifacts until this group is integrated and its source revision is frozen.
+artifacts until its HEAD is updated to the resulting clean main revision and
+frozen. Run fresh bounded static/dynamic preparation, all four collectors,
+the ordinary companion set including the installed helper, RuntimeV1 and AIO
+producers, assembly and one normal canonical selection replay. Retain raw
+failures and honest unresolved closure; do not run the parked POSIX aggregate
+or claim qualification. The six remaining auxv/inverse-trig/restorer/Rust
+personality identity obligations have no current selector attachment; they
+are follow-up proof work after this bounded pilot, not owner-only blockers.
 
 The next bounded group binds the four installed helper modes and real
 RuntimeV1 facade component into ordinary ABI evidence, adds physical proof for
