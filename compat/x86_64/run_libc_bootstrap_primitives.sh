@@ -176,6 +176,7 @@ if [ -n "$static_input" ]; then
     readonly static_product="$static_input"
     readonly dynamic_product="$dynamic_input"
     readonly candidate_object="$work_dir/workload.o"
+    readonly dependency_file="$work_dir/workload.d"
     readonly oracle_binary="$work_dir/oracle"
     readonly candidate_env=(/usr/bin/env -i PATH=/usr/bin:/bin "TMPDIR=$TMPDIR" /usr/bin/timeout 60s)
     readonly runtime_env=(/usr/bin/env -i PATH=/usr/bin:/bin /usr/bin/timeout 10s)
@@ -186,11 +187,15 @@ if [ -n "$static_input" ]; then
     run_recorded() {
         local label="$1"
         local output="$2"
+        local dependency_record_path=''
         local status=0
         shift 2
+        if [ "$label" = compile-candidate ]; then
+            dependency_record_path="$work_dir/workload.d"
+        fi
         "$@" >"$work_dir/$label.stdout" 2>"$work_dir/$label.stderr" || status=$?
         printf '%s\n' "$status" >"$work_dir/$label.status"
-        python3 -B - "$work_dir/$label.command.json" "$work_dir" "$status" "$output" "$@" <<'PY'
+        python3 -B - "$work_dir/$label.command.json" "$work_dir" "$status" "$output" "$dependency_record_path" "$@" <<'PY'
 import hashlib
 import json
 from pathlib import Path
@@ -200,14 +205,21 @@ record_path = Path(sys.argv[1])
 cwd = sys.argv[2]
 status = int(sys.argv[3])
 output = sys.argv[4]
-argv = sys.argv[5:]
+dependency_file = sys.argv[5]
+argv = sys.argv[6:]
 identity = None
 if output != '-' and Path(output).is_file() and not Path(output).is_symlink():
     data = Path(output).read_bytes()
     identity = {'path': output, 'sha256': hashlib.sha256(data).hexdigest()}
+dependency_identity = None
+if dependency_file and Path(dependency_file).is_file() and not Path(dependency_file).is_symlink():
+    data = Path(dependency_file).read_bytes()
+    dependency_identity = {'path': dependency_file, 'sha256': hashlib.sha256(data).hexdigest()}
+record = {'argv': argv, 'cwd': cwd, 'status': status, 'output': identity}
+if dependency_file:
+    record['dependency_file'] = dependency_identity
 with record_path.open('x', encoding='utf-8', newline='\n') as stream:
-    json.dump({'argv': argv, 'cwd': cwd, 'status': status, 'output': identity},
-              stream, sort_keys=True, separators=(',', ':'))
+    json.dump(record, stream, sort_keys=True, separators=(',', ':'))
     stream.write('\n')
 PY
         [ "$status" -eq 0 ] || fail "$label exited with status $status; raw evidence retained"
@@ -225,7 +237,10 @@ PY
     step=installed-candidate-compile
     run_recorded compile-candidate "$candidate_object" "${candidate_env[@]}" \
         "$dynamic_product/bin/crabc-cc-dynamic" --dynamic-pie -std=c11 -D_GNU_SOURCE \
-        -fno-builtin -fno-stack-protector -H -c "$SOURCE" -o "$candidate_object"
+        -fno-builtin -fno-stack-protector --application-dependency-file "$dependency_file" \
+        -c "$SOURCE" -o "$candidate_object"
+    [ -f "$dependency_file" ] && [ ! -L "$dependency_file" ] \
+        || fail "installed compiler did not retain its header dependency file"
 
     step=installed-musl-link
     run_recorded link-oracle "$oracle_binary" "${candidate_env[@]}" "$ORACLE_CC" \

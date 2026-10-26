@@ -52,12 +52,14 @@ scripts/lanes/rust-check.sh bash compat/x86_64/run_libc_bootstrap_primitives.sh 
 Source checks read a release dynamic product's sealed materialization state.
 Debug dynamic products bind source in their manifest.
 
-The command compiles one workload object through the installed driver and headers, then
-links that object to pinned musl and all four candidate modes. It retains the
-object, four sealed links, dynamic ELF inspection and map sidecars, six raw
-execution modes, and pre/post custody checks for both copied dynamic payloads
-under pinned `TMPDIR`. Compilation and links are bounded to 60 seconds; each
-execution is bounded to 10 seconds. The replay API is
+The command compiles one workload object through the installed driver and headers,
+retaining the driver's dependency file to prove that the frozen source and each
+required header came from the selected product. It then links that object to
+pinned musl and all four candidate modes. It retains the object, dependency file,
+four sealed links, dynamic ELF inspection and map sidecars, six raw execution
+modes, and pre/post custody checks for both copied dynamic payloads under pinned
+`TMPDIR`. Compilation and links are bounded to 60 seconds; each execution is
+bounded to 10 seconds. The replay API is
 `owned_posix_native_observations.collect_bootstrap_primitives`. It takes named
 `static_product` and `dynamic_product` arguments. It reads the fixed checkout
 source and product identities, names the local `__sigsetjmp_tail` source

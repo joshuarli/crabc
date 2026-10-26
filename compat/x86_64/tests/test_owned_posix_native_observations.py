@@ -23,6 +23,7 @@ import owned_pthread_stress_source as profile
 import owned_os_test_aio_suspend_source as aio_suspend_source
 import owned_dynamic_qualification as dynamic_qualification
 import owned_crypt_runtime_evidence as payload_evidence
+import crabc_cc_owned_dynamic as dynamic_driver
 
 PRODUCT_FIXTURE_SPEC = importlib.util.spec_from_file_location(
     'owned_posix_product_evidence_fixtures', HERE / 'tests/test_owned_posix_product_evidence.py')
@@ -89,6 +90,19 @@ class NativeObservationsTests(unittest.TestCase):
     def bootstrap_recorded(self, path):
         return self.mount + '/' + path.relative_to(ROOT).as_posix()
 
+    def bootstrap_dependency_bytes(self, headers):
+        target = self.bootstrap_recorded(self.bootstrap_leaf / 'workload.o')
+        source = self.bootstrap_recorded(native.BOOTSTRAP_SOURCE)
+        recorded_headers = [self.bootstrap_recorded(header) for header in headers]
+        return (target + ': ' + ' '.join([source, *recorded_headers]) + '\n').encode()
+
+    def bind_bootstrap_dependency(self):
+        command_path = self.bootstrap_leaf / 'compile-candidate.command.json'
+        command = json.loads(command_path.read_text())
+        dependency = self.bootstrap_leaf / 'workload.d'
+        command['dependency_file']['sha256'] = hashlib.sha256(dependency.read_bytes()).hexdigest()
+        self.put(command_path, command)
+
     def bootstrap_fixture(self):
         self.bootstrap_fixture_count = getattr(self, 'bootstrap_fixture_count', 0) + 1
         suffix = str(self.bootstrap_fixture_count)
@@ -113,6 +127,7 @@ class NativeObservationsTests(unittest.TestCase):
         headers = ('errno.h', 'fenv.h', 'setjmp.h', 'bits/setjmp.h', 'features.h', 'signal.h',
                    'bits/alltypes.h', 'bits/signal.h', 'string.h', 'strings.h', 'sys/mman.h',
                    'sys/syscall.h', 'bits/syscall.h')
+        self.bootstrap_headers = headers
         dynamic = product_fixture.dynamic
         for name in headers:
             product_fixture.put(str((dynamic / 'usr/include' / name).relative_to(product_fixture.root)),
@@ -134,6 +149,8 @@ class NativeObservationsTests(unittest.TestCase):
         product_fixture.write_json(static_manifest_path, static_manifest)
 
         object_path = self.put(leaf / 'workload.o', b'bootstrap-object')
+        dependency_path = self.put(leaf / 'workload.d', self.bootstrap_dependency_bytes(
+            [dynamic / 'usr/include' / name for name in headers]))
         oracle = self.put(leaf / 'oracle', b'musl-oracle')
         oracle.chmod(0o755)
         product_fixture.workload = object_path
@@ -199,7 +216,8 @@ class NativeObservationsTests(unittest.TestCase):
         commands = {
             'compile-candidate': (oracle_prefix + [dynamic_driver,
                 '--dynamic-pie', '-std=c11', '-D_GNU_SOURCE', '-fno-builtin', '-fno-stack-protector',
-                '-H', '-c', source, '-o', object_record], object_path),
+                '--application-dependency-file', self.bootstrap_recorded(dependency_path),
+                '-c', source, '-o', object_record], object_path),
             'link-oracle': (oracle_prefix + ['/usr/local/bin/crabc-x86_64-musl-gcc', '-static',
                 '-fno-pie', '-no-pie', object_record, '-o', oracle_record], oracle),
             'link-static': (oracle_prefix + [static_driver, '-static', '--link-receipt', 'static.receipt.json',
@@ -227,19 +245,23 @@ class NativeObservationsTests(unittest.TestCase):
                 else:
                     argv.append('/consumer')
                 commands[f'run-{mode}-{route}'] = (argv, None)
-        headers_trace = b''.join(b'. ' + self.bootstrap_recorded(dynamic / 'usr/include' / name).encode() + b'\n'
-                                 for name in headers)
         for label, (argv, output) in commands.items():
             stdout = b''
-            stderr = headers_trace if label == 'compile-candidate' else b''
+            stderr = b''
             self.put(leaf / (label + '.stdout'), stdout)
             self.put(leaf / (label + '.stderr'), stderr)
             self.put(leaf / (label + '.status'), b'0\n')
-            self.put(leaf / (label + '.command.json'), {
+            command_record = {
                 'argv': argv, 'cwd': mount_work, 'status': 0,
                 'output': None if output is None else {
                     'path': self.bootstrap_recorded(output), 'sha256': hashlib.sha256(output.read_bytes()).hexdigest()},
-            })
+            }
+            if label == 'compile-candidate':
+                command_record['dependency_file'] = {
+                    'path': self.bootstrap_recorded(dependency_path),
+                    'sha256': hashlib.sha256(dependency_path.read_bytes()).hexdigest(),
+                }
+            self.put(leaf / (label + '.command.json'), command_record)
 
     def collect_bootstrap(self, link_validator=None, source_digests=None):
         source_patch = (patch.object(native.dynamic_qualification, 'source_digest',
@@ -527,8 +549,73 @@ class NativeObservationsTests(unittest.TestCase):
         self.put(path, command)
         with self.assertRaises(native.NativeObservationError): self.collect_bootstrap()
         self.bootstrap_fixture()
-        self.put(self.bootstrap_leaf / 'compile-candidate.stderr', b'. /usr/include/errno.h\n')
+        self.put(self.bootstrap_leaf / 'workload.d', self.bootstrap_dependency_bytes(
+            [self.bootstrap_dynamic / 'usr/include' / name for name in self.bootstrap_headers[1:]]))
+        self.bind_bootstrap_dependency()
         with self.assertRaises(native.NativeObservationError): self.collect_bootstrap()
+
+    def test_bootstrap_primitives_rejects_missing_foreign_and_mutated_dependency_files(self):
+        self.bootstrap_fixture()
+        (self.bootstrap_leaf / 'workload.d').unlink()
+        with self.assertRaises(native.NativeObservationError): self.collect_bootstrap()
+
+        self.bootstrap_fixture()
+        foreign_header = ROOT / 'include/errno.h'
+        self.put(self.bootstrap_leaf / 'workload.d', self.bootstrap_dependency_bytes(
+            [self.bootstrap_dynamic / 'usr/include' / name for name in self.bootstrap_headers[1:]] +
+            [foreign_header]))
+        self.bind_bootstrap_dependency()
+        with self.assertRaises(native.NativeObservationError): self.collect_bootstrap()
+
+        self.bootstrap_fixture()
+        foreign_source = self.put(self.bootstrap_leaf.parent / 'foreign-source.c', b'int main(void) { return 0; }\n')
+        dependency = self.bootstrap_leaf / 'workload.d'
+        source_path = self.bootstrap_recorded(native.BOOTSTRAP_SOURCE).encode()
+        dependency.write_bytes(dependency.read_bytes().replace(
+            source_path, self.bootstrap_recorded(foreign_source).encode()))
+        self.bind_bootstrap_dependency()
+        with self.assertRaises(native.NativeObservationError): self.collect_bootstrap()
+
+        self.bootstrap_fixture()
+        dependency = self.bootstrap_leaf / 'workload.d'
+        dependency.write_bytes(dependency.read_bytes() + b' /workspace/usr/include/foreign.h\n')
+        with self.assertRaises(native.NativeObservationError): self.collect_bootstrap()
+
+    def test_bootstrap_compile_uses_the_driver_dependency_file_contract(self):
+        self.bootstrap_fixture()
+        source = self.put(self.bootstrap_leaf / 'driver-probe.c', b'#include <fixture.h>\n')
+        output = self.bootstrap_leaf / 'driver-probe.o'
+        dependency = self.bootstrap_leaf / 'driver-probe.d'
+        arguments = [
+            '--dynamic-pie', '-std=c11', '-D_GNU_SOURCE', '-fno-builtin',
+            '-fno-stack-protector', '-c', str(source), '-o', str(output),
+        ]
+        with patch.object(dynamic_driver.shared, 'compiler', return_value='/owned/gcc'), \
+             patch.object(dynamic_driver.shared, 'linker', return_value='/owned/ld.lld'), \
+             patch.object(dynamic_driver, 'run') as run:
+            with self.assertRaisesRegex(dynamic_driver.shared.DriverError, 'unsupported driver flag: -H'):
+                dynamic_driver.execute(self.bootstrap_dynamic, [*arguments[:-5], '-H', *arguments[-5:]])
+            run.assert_not_called()
+
+            def compile_fixture(command, temporary):
+                dependency_output = Path(command[command.index('-MF') + 1])
+                object_output = Path(command[command.index('-o') + 1])
+                header = self.bootstrap_dynamic / 'usr/include/fixture.h'
+                object_output.write_bytes(b'controlled compiler object\n')
+                dependency_output.write_text(
+                    f'{object_output}: {source} {header}\n', encoding='utf-8')
+                return ''
+
+            run.side_effect = compile_fixture
+            dynamic_driver.execute(self.bootstrap_dynamic, [
+                '--dynamic-pie', '--application-dependency-file', str(dependency), *arguments[1:],
+            ])
+
+        self.assertTrue(output.is_file())
+        self.assertIn(str(self.bootstrap_dynamic / 'usr/include/fixture.h'), dependency.read_text())
+        command = run.call_args.args[0]
+        self.assertIn('-MD', command)
+        self.assertEqual(command[command.index('-MF') + 1], str(dependency))
 
     def test_bootstrap_primitives_rejects_changed_object_product_payload_and_raw_result(self):
         self.bootstrap_fixture()

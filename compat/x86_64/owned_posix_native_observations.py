@@ -249,7 +249,8 @@ def _bootstrap_expected_commands(reader, static_product, dynamic_product):
     mounted_oracle = reader.recorded(oracle)
     commands = {
         'compile-candidate': [*env, dynamic_driver, '--dynamic-pie', '-std=c11', '-D_GNU_SOURCE',
-            '-fno-builtin', '-fno-stack-protector', '-H', '-c', source, '-o', mounted_object],
+            '-fno-builtin', '-fno-stack-protector', '--application-dependency-file',
+            reader.recorded(leaf / 'workload.d'), '-c', source, '-o', mounted_object],
         'link-oracle': [*env, BOOTSTRAP_ORACLE_COMPILER, '-static', '-fno-pie', '-no-pie',
             mounted_object, '-o', mounted_oracle],
         'link-static': [*env, static_driver, '-static', '--link-receipt', 'static.receipt.json',
@@ -286,7 +287,7 @@ def _bootstrap_top_level_snapshot(reader):
 
 def _bootstrap_exact_roster(reader):
     files = {
-        'workload.o', 'oracle', 'static', 'static-pie', 'dynamic-pie', 'dynamic-non-pie',
+        'workload.o', 'workload.d', 'oracle', 'static', 'static-pie', 'dynamic-pie', 'dynamic-non-pie',
         'static.receipt.json', 'static-pie.receipt.json',
         'static.receipt.map', 'static.receipt.trace',
         'static-pie.receipt.map', 'static-pie.receipt.trace',
@@ -311,16 +312,54 @@ def _bootstrap_exact_roster(reader):
         physical(reader.leaf / name, directory=True)
 
 
-def _bootstrap_command(reader, label, argv, output_path):
+def _bootstrap_command(reader, label, argv, output_path, dependency_file=None):
     output = None if output_path is None else {
         'path': reader.recorded(output_path), 'sha256': digest(output_path),
     }
+    retained = {'argv': argv, 'cwd': reader.recorded(reader.leaf), 'status': 0, 'output': output}
+    if dependency_file is not None:
+        retained['dependency_file'] = {
+            'path': reader.recorded(dependency_file), 'sha256': digest(dependency_file),
+        }
     same(read_json(reader.leaf / (label + '.command.json')),
-         {'argv': argv, 'cwd': reader.recorded(reader.leaf), 'status': 0, 'output': output},
-         'bootstrap ' + label + ' command and output')
+         retained, 'bootstrap ' + label + ' command and output')
     data, identities = reader.raw(label)
-    return {'argv': argv, 'cwd': reader.recorded(reader.leaf), 'output': output,
-            'streams': identities}, data, identities
+    result = {'argv': argv, 'cwd': reader.recorded(reader.leaf), 'output': output,
+              'streams': identities}
+    if dependency_file is not None:
+        result['dependency_file'] = retained['dependency_file']
+    return result, data, identities
+
+
+def _validate_bootstrap_dependencies(reader, dependency_file):
+    try:
+        text = read_bytes(dependency_file).decode('utf-8')
+    except (UnicodeDecodeError, NativeObservationError) as error:
+        raise NativeObservationError('bootstrap compiler dependency file is unreadable') from error
+    text = text.replace('\\\r\n', ' ').replace('\\\n', ' ')
+    require(':' in text, 'bootstrap compiler dependency file lacks a target')
+    target, dependencies = text.split(':', 1)
+    require(target.strip() == reader.recorded(reader.leaf / 'workload.o'),
+            'bootstrap compiler dependency target differs')
+    paths = dependencies.split()
+    require(paths and len(paths) == len(set(paths)),
+            'bootstrap compiler dependency paths are empty or duplicated')
+    source_record = reader.recorded(BOOTSTRAP_SOURCE)
+    source_count = 0
+    headers = set()
+    for value in paths:
+        require('\\' not in value, 'bootstrap compiler dependency path uses unsupported escaping')
+        if value == source_record:
+            source = reader.local(value, within=reader.root)
+            require(source == physical(BOOTSTRAP_SOURCE),
+                    'bootstrap compiler dependency source differs')
+            source_count += 1
+        else:
+            headers.add(reader.local(value, within=reader.product / 'usr/include'))
+    require(source_count == 1, 'bootstrap compiler dependency file must name the frozen source once')
+    expected = {physical(reader.product / 'usr/include' / header) for header in BOOTSTRAP_HEADERS}
+    missing = sorted(str(path.relative_to(reader.product / 'usr/include')) for path in expected - headers)
+    require(not missing, 'bootstrap compiler dependency file omits installed header: ' + ', '.join(missing))
 
 
 def _bootstrap_payload(reader, dynamic_product, mode, executable):
@@ -399,14 +438,12 @@ def collect_bootstrap_primitives(leaf_root, *, static_product, dynamic_product):
                       outputs['dynamic-non-pie'] if label == 'link-dynamic-non-pie' else
                       reader.leaf / 'workload.o' if label == 'compile-candidate' else
                       reader.leaf / 'oracle' if label == 'link-oracle' else None)
+            dependency_file = reader.leaf / 'workload.d' if label == 'compile-candidate' else None
             command_records[label], raw_commands[label], _ = _bootstrap_command(
-                reader, label, commands[label], output,
+                reader, label, commands[label], output, dependency_file,
             )
 
-        header_trace = raw_commands['compile-candidate']['stderr']
-        for header in BOOTSTRAP_HEADERS:
-            expected = reader.recorded(reader.product / 'usr/include' / header).encode()
-            require(expected in header_trace, 'bootstrap compile did not use installed header: ' + header)
+        _validate_bootstrap_dependencies(reader, reader.leaf / 'workload.d')
         translation_flags = translation_contract.hosted_translation_flags(reader.product)
 
         links = {}
