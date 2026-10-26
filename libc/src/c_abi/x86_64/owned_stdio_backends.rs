@@ -17,10 +17,10 @@
 //! overwrite does not truncate the old tail. Expanded storage is zero-filled.
 //! Wide growing storage publishes wchar_t-unit positions; its private decoder
 //! state survives split byte writes and is cleared by every successful seek.
-//! Non-error short memory/cookie writes do not manufacture F_ERR, including
-//! ms_write's realloc failure; fflush follows upstream output-state semantics.
 
 use super::*;
+
+const ENOSPC: c_int = 28;
 
 #[derive(Clone, Copy)]
 #[repr(u8)]
@@ -260,21 +260,22 @@ unsafe fn read_failure(stream: *mut StandardStream, status: isize) {
     }
 }
 
-// Caller has handled pending FILE bytes. Memory/cookie backends deliberately
-// preserve musl's non-error short-write behavior; only negative cookie writes
-// invalidate output state. No callback runs under a Rust backend reference.
 pub(super) unsafe fn write(stream: *mut StandardStream, source: *const u8, length: usize) -> usize {
     unsafe {
         match (*stream).backend {
             Backend::Fixed(mut state) => {
                 if state.mode == b'a' { state.position = state.length; }
                 let count = length.min(state.size-state.position);
+                if count < length {
+                    errno::set_errno(ENOSPC);
+                    (*stream).write_failed = true;
+                    mark_error(stream);
+                }
                 if count != 0 { ptr::copy_nonoverlapping(source, state.buffer.add(state.position), count); }
                 state.position += count;
                 if state.position > state.length {
                     state.length = state.position;
                     if state.length < state.size { *state.buffer.add(state.length) = 0; }
-                    else if (*stream).flags & F_NORD != 0 && state.size != 0 { *state.buffer.add(state.size-1) = 0; }
                 }
                 (*stream).backend = Backend::Fixed(state);
                 count

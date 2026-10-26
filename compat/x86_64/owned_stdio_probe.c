@@ -24,6 +24,7 @@
 #include <pthread.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 #include <unistd.h>
 #include <wchar.h>
 
@@ -321,9 +322,6 @@ static ssize_t short_cookie_write(void *opaque, const char *bytes, size_t count)
     return live_write(opaque, bytes, count > 2 ? 2 : count);
 }
 
-/* A positive short backend write publishes only complete fwrite items.
- * Both streams borrow live storage through close; neither short prefix sets
- * the stream error indicator or replaces the callback's errno. */
 static int short_write_composition(int tls)
 {
     char fixed_bytes[4] = { 0 };
@@ -337,8 +335,15 @@ static int short_write_composition(int tls)
         setvbuf(stream, NULL, _IONBF, 0) != 0)
         goto close_live;
     errno = EDOM;
-    if (fwrite("abcdef", 2, 3, fixed) != 2 || ferror(fixed) != 0 || errno != EDOM ||
+    if (fwrite("abcdef", 2, 3, fixed) != 2 || ferror(fixed) == 0 || errno != ENOSPC ||
         !equal_bytes(fixed_bytes, "abcd", 4))
+        goto close_live;
+    clearerr(fixed);
+    if (ferror(fixed) != 0 || fseek(fixed, 0, SEEK_SET) != 0)
+        goto close_live;
+    errno = EDOM;
+    if (fwrite("WXYZ", 2, 2, fixed) != 2 || ferror(fixed) != 0 || errno != EDOM ||
+        !equal_bytes(fixed_bytes, "WXYZ", 4))
         goto close_live;
     if (fwrite("ABCD", 2, 2, stream) != 1 || ferror(stream) != 0 || errno != EDOM ||
         cookie.position != 2 || cookie.length != 2 || !equal_bytes(cookie.bytes, "AB", 2) ||
@@ -351,6 +356,34 @@ close_live:
     if (fixed != NULL && fclose(fixed) != 0)
         result = 3;
     return result;
+}
+
+static int fixed_write_capacity(void)
+{
+    char bytes[4] = { 0 };
+    char staging[16];
+    const char *modes[] = { "w", "w+" };
+    for (size_t mode = 0; mode < 2; ++mode) {
+        FILE *stream = fmemopen(bytes, sizeof(bytes), modes[mode]);
+        if (stream == NULL)
+            return 1;
+        int result = setvbuf(stream, staging, _IOFBF, sizeof(staging));
+        errno = EDOM;
+        if (result == 0 && (fwrite("abcdef", 2, 3, stream) != 3 || ferror(stream) != 0 ||
+            fflush(stream) != EOF || ferror(stream) == 0 || errno != ENOSPC ||
+            !equal_bytes(bytes, "abcd", 4)))
+            result = 2;
+        clearerr(stream);
+        if (result == 0 && (fseek(stream, 0, SEEK_SET) != 0 ||
+            fwrite("WXYZ", 2, 2, stream) != 2 || fflush(stream) != 0 ||
+            ferror(stream) != 0 || !equal_bytes(bytes, "WXYZ", 4)))
+            result = 3;
+        if (fclose(stream) != 0)
+            result = 4;
+        if (result != 0)
+            return result;
+    }
+    return 0;
 }
 
 static int memory_cookie_composition(int tls)
@@ -420,6 +453,8 @@ static void *callback_worker(void *opaque)
     *result = memory_cookie_composition(31);
     if (*result == 0)
         *result = short_write_composition(31);
+    if (*result == 0)
+        *result = fixed_write_capacity();
     return opaque;
 }
 
@@ -465,6 +500,8 @@ int main(int argc, char **argv)
     FILE *pending;
     cookie_io_functions_t functions = { NULL, exit_write, NULL, NULL };
 
+    if (argc == 2 && strcmp(argv[1], "short-write") == 0)
+        return short_write_composition(17) || fixed_write_capacity();
     if (argc != 4)
         return 80;
     if (byte_stream(argv[1], argv[2]) != 0)
@@ -473,7 +510,7 @@ int main(int argc, char **argv)
         return 82;
     if (wide_stream(argv[3]) != 0)
         return 83;
-    if (memory_cookie_composition(17) != 0 || short_write_composition(17) != 0 ||
+    if (memory_cookie_composition(17) != 0 || short_write_composition(17) != 0 || fixed_write_capacity() != 0 ||
         pthread_create(&worker, NULL, callback_worker, &result) != 0 ||
         pthread_join(worker, &worker_result) != 0 || worker_result != &result ||
         result != 0 || callback_tls != 17)

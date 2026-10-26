@@ -21,9 +21,22 @@ The wide stream fixes `LC_CTYPE` to `C.UTF-8`, establishes wide orientation,
 and checks one Euro sign plus a supplementary-plane character through
 `fputwc`, `fputws`, `fgetwc`, `ungetwc`, `fgetws`, and EOF. It neither changes
 the byte stream's orientation nor establishes a general locale or encoding
-policy. The component excludes cookie and memory streams, standard streams,
-threads, wide printf/scanf grammar, arbitrary locale maps, legacy encodings,
-and general stdio completion.
+policy. Separate memory and cookie streams compose allocator calls, callback
+TLS and nested stream writes on the main thread and a joined worker.
+The component excludes wide printf/scanf grammar, arbitrary locale maps,
+legacy encodings and general stdio completion.
+
+Fixed memory streams follow `src/stdio/fmemopen.c::mwrite` in the approved
+native musl snapshot `7813e9119eb5fe681b6750b8a033a0490bca0941`.
+An overflowing write retains the fitting prefix, returns only complete items,
+sets `ferror` and reports `ENOSPC`. Buffered overflow reports the error at
+`fflush` and discards the pending output. `clearerr` and seeking permit a
+later successful write. A full write-only buffer retains its final data byte
+without replacing that byte with NUL. The released 1.2.6 behavior silently
+truncated overflow and overwrote that final byte in write-only mode.
+Positive short cookie writes retain their callback errno and leave the error
+indicator clear. The shared fixture checks both backends independently,
+including buffered and unbuffered memory writes on the main thread and worker.
 
 The named `stdio.fopen64-alias` row is a Linux/x86-64 LP64 macro consumer. The
 same object requires exactly `_LARGEFILE64_SOURCE=1`, proves that the installed
