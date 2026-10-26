@@ -114,13 +114,32 @@ initial restorer join that rejected legitimate undefined archive imports.
 The corrected definition check preserves those imports and their blockers.
 All sixteen component attachment tests pass on integrated main.
 
-Next freeze the combined source in the prepared
-`.work/wt/abi-component-proof`. Prepare fresh bounded products and run the
-five component producers and their owning readers. Collect the four existing
-ABI inputs, assemble the bounded companion set and replay its canonical
-reader once. Keep unrelated blockers and qualification flags unchanged.
-The parked POSIX aggregate and denied allocator diagnostics remain outside
-this wave.
+The combined pilot is frozen at `8633a75f3` in
+`.work/wt/abi-component-proof`. Fresh products and all four ABI collectors
+pass. Installed math, stdio, signal and binary80 producers pass. Bootstrap
+fails compilation because the installed driver rejects `-H`. Partial
+assembly retains 5,168 identities and 41,270 occurrences. The three inverse
+trig joins and restorer join pass. Stdio and binary80 companions are rejected:
+the adapter uses the wrong stdio filename, and graph replay rejects Cargo's
+generated cache metadata. The bootstrap companion is absent. No canonical
+replay or qualification claim is made for this partial assembly.
+
+`40983d3cb` fixes the stdio report filename. Bootstrap now uses the driver's
+existing dependency-file mechanism. Its compile record binds `workload.d`,
+and replay checks the exact source, target and installed header inputs.
+The graph reader recognizes optional Cargo-generated cache metadata while
+preserving mandatory exact configuration, vendor checks and unknown input
+rejection. Focused independent review finds no remaining defect. The three
+math modules pass all 62 tests. The bootstrap integration check passes 93 of
+94 tests before correcting one new fixture's ambient-linker assumption. That
+single regression then passes in the pinned image with both tool effects
+controlled. The worker's full bootstrap module passes all 34 tests.
+
+Freeze the repaired source in the prepared
+`.work/wt/abi-component-proof-fixed`, then repeat bounded component and
+selector proof. Preserve the original pilot and raw failures. The parked
+POSIX aggregate and denied allocator diagnostics remain outside this wave.
+Qualification flags stay unchanged.
 
 **Earlier accepted checkpoint:** the frozen `99cd68019` ABI proof passes
 the normal canonical reader: 5,175 identities, 41,307 occurrences and zero
