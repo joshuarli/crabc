@@ -34,6 +34,7 @@ SOURCE_INPUTS = (
     ROOT / "compat/lua/run.py",
     ROOT / "compat/lua/run_x86_dynamic.py",
     ROOT / "compat/lua/source_build_admission.py",
+    ROOT / "compat/x86_64/owned_posix_product_evidence.py",
     ROOT / "compat/lua/manifest.toml",
 )
 _NONPROMOTING = ("runtime_v1_published", "family_completion", "promotion_ready", "public_support")

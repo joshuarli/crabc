@@ -66,6 +66,7 @@ import owned_cleanup  # noqa: E402
 import installed_backtrace  # noqa: E402
 import owned_rust_link  # noqa: E402
 import owned_posix_product_evidence as product_evidence  # noqa: E402
+import mold_link_trace
 
 SCHEMA = "crabc.x86_64-consumer-rust-std-lto/v1"
 GATE = "consumer.rust-std-lto"
@@ -748,6 +749,56 @@ def lto_expected_stdout() -> bytes:
     return f"lto-libc:ok\nlto-workload:{total:016x}\n".encode()
 
 
+def _oracle_static_inputs() -> dict[str, Path]:
+    inputs = {name: MUSL_LIB / filename for name, filename in (
+        ("crt-start", "Scrt1.o"), ("crt-prologue", "crti.o"),
+        ("libssp", "libssp_nonshared.a"), ("pthread", "libpthread.a"),
+        ("libc", "libc.a"), ("crt-epilogue", "crtn.o"),
+    )}
+    for name, filename in (("crtbegin", "crtbeginS.o"), ("crtend", "crtendS.o"),
+                           ("libgcc", "libgcc.a"), ("libgcc-eh", "libgcc_eh.a")):
+        inputs[name] = Path(checked_output(
+            [ORACLE_CC, "-print-file-name=" + filename], "oracle " + filename,
+        ).strip()).resolve(strict=True)
+    return inputs
+
+
+def _oracle_static_commands(lane: Path) -> list[list[str]]:
+    source, obj, binary = FIXTURES["lto"] / "static.c", lane / "static.o", lane / "musl-static"
+    return [
+        [str(ORACLE_CC), *STATIC_C_FLAGS, "-static", "-no-pie", "-c", str(source), "-o", str(obj)],
+        [str(ORACLE_CC), *STATIC_C_FLAGS, "-static", "-no-pie", str(obj), "-Wl,--trace", "-o", str(binary)],
+    ]
+
+
+def _validate_oracle_static_lane(report: Mapping[str, Any], lane: Path) -> None:
+    inputs = _oracle_static_inputs()
+    identities = {name: {"path": str(path), "sha256": sha256_file(path)} for name, path in inputs.items()}
+    require(report.get("oracle_inputs") == identities, "lto/A: oracle input identity differs")
+    obj, binary, trace = lane / "static.o", lane / "musl-static", lane / "step1.stdout"
+    require(report.get("object") == {"path": str(obj), "sha256": sha256_file(obj)},
+            "lto/A: retained compiled object differs")
+    require(report.get("executable") == {"path": str(binary), "sha256": sha256_file(binary)},
+            "lto/A: retained linked executable differs")
+    steps = report.get("steps")
+    require(isinstance(steps, list) and len(steps) == 2
+            and [step.get("command") for step in steps] == _oracle_static_commands(lane)
+            and all(step.get("returncode") == 0 for step in steps), "lto/A: oracle build commands differ")
+    require(steps[1].get("stdout") == {"path": str(trace), "sha256": sha256_file(trace)},
+            "lto/A: oracle trace identity differs")
+    try:
+        mold_link_trace.validate_trace(
+            trace.read_text(errors="replace").splitlines(),
+            initial_objects=[str(inputs[name]) for name in ("crt-start", "crt-prologue", "crtbegin")] + [str(obj)],
+            archives=[(str(inputs[name]), inputs[name].read_bytes()) for name in (
+                "libssp", "libgcc", "libgcc-eh", "pthread", "libc", "libgcc", "libgcc-eh", "pthread", "libc",
+            )],
+            final_objects=[str(inputs[name]) for name in ("crtend", "crt-epilogue")],
+        )
+    except ValueError as error:
+        raise GateError(f"lto/A: {error}") from error
+
+
 def static_c_lane(context: Context, key: str) -> dict[str, Any]:
     """Frozen A (pinned musl) and B (installed sealed static driver) C lanes."""
 
@@ -757,8 +808,7 @@ def static_c_lane(context: Context, key: str) -> dict[str, Any]:
     binary = lane / ("musl-static" if key == "A" else "crabc-static")
     environment = tool_environment()
     if key == "A":
-        # A doubled GNU ld trace names every extracted archive member.
-        steps = [[str(ORACLE_CC), *STATIC_C_FLAGS, "-static", "-no-pie", str(source), "-Wl,-t,-t", "-o", str(binary)]]
+        steps = _oracle_static_commands(lane)
     else:
         driver = context.root("static") / "bin/crabc-cc"
         steps = [[str(driver), "-static", *STATIC_C_FLAGS, "-c", str(source), "-o", str(lane / "static.o")],
@@ -778,15 +828,19 @@ def static_c_lane(context: Context, key: str) -> dict[str, Any]:
     report["executable"] = context.retained.record(binary)
     unmet: list[str] = []
     if key == "A":
-        lines = (lane / "step0.stdout").read_text(errors="replace").splitlines()
-        musl_libc = str(MUSL_LIB / "libc.a")
-        # GNU ld spells an archive member ``path(member)`` or ``(path)member``.
-        report["musl_libc_selected"] = any(line.startswith((musl_libc + "(", f"({musl_libc})")) for line in lines)
-        if not report["musl_libc_selected"]:
-            unmet.append("lto/A: link trace does not select the pinned musl libc.a")
+        report["object"] = context.retained.record(lane / "static.o")
+        report["oracle_inputs"] = {name: context.retained.record(path) for name, path in _oracle_static_inputs().items()}
+        try:
+            _validate_oracle_static_lane(report, lane)
+            report["musl_libc_selected"] = True
+        except GateError as error:
+            report["musl_libc_selected"] = False
+            unmet.append(str(error))
     else:
         report["link_receipt"] = context.retained.record(lane / "crabc-static.link.json")
-        trace_lines = (lane / "crabc-static.link.trace").read_text(errors="replace").splitlines()
+        trace_lines = product_evidence.semantic_link_trace(
+            (lane / "crabc-static.link.trace").read_text(errors="replace").splitlines()
+        )
         libc = str(context.root("static") / "usr/lib/libc.a")
         report["installed_libc_selected"] = any(line.startswith(libc + "(") for line in trace_lines)
         report["foreign_runtime_in_trace"] = [line for line in trace_lines
@@ -1319,6 +1373,7 @@ def validate_receipt(root: Path, path: Path) -> dict[str, Any]:
         require(isinstance(gates[gate], dict) and isinstance(gates[gate].get("lanes"), dict)
                 and set(gates[gate]["lanes"]) == set(lanes),
                 f"consumer gate {gate} lacks its frozen consumer lanes")
+    _validate_oracle_static_lane(gates["lto"]["lanes"]["A"], path.parent / "gates/lto/A")
     unwind = record.get("unwind")
     require(isinstance(unwind, dict) and set(unwind) == set(UNWIND_PRODUCTS),
             "consumer gate receipt lacks the installed/extracted unwind matrix")

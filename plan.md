@@ -6,66 +6,71 @@ stopping at intermediate checkpoints. Both prior POSIX `math/pow` and C-ABI
 admission holds are reopened; denied allocator actions remain parked.
 
 Main accepts the corrected timer cancellation and fixed-memory stdio behavior,
-the refreshed TZif oracle observation, and the exact finite `pow` disposition.
-The latter preserves both complete diagnostic streams and raw failure status;
-its independent proof covers fourteen subnormal identities. The native oracle
-ratchet preserves all 1,650 public ABI identities and its historical candidate
-floor. Fresh complete POSIX and C-ABI admission still need native execution.
+the refreshed TZif observation, and the exact finite `pow` disposition. The
+approved native musl snapshot preserves all 1,650 public ABI identities and
+the historical candidate floor. Kache and mold own native Rust compilation
+and final links; the Rust nightly and paused AArch64 inputs stay unchanged.
+Six feature aliases have a source-bound companion, selector schema v13, and
+the correctness runner now collects the complete ABI companion manifest.
 
-The active integration on `lane/campaign-integration` binds native Rust builds
-to kache and the physical pinned compiler, and final links to mold. LLD remains
-only for intermediate LLVM bitcode materialization. The nightly and paused
-AArch64 inputs are unchanged. Product readers authenticate compiler tools
-against the current image manifest, including during host replay. Six feature
-aliases have a source-bound companion and selector schema v13; their fresh
-native proof remains required. C-ABI admission retains every workload and
-validates the actual selected allocator backend. CRT audits retain source
-bindings, exact bytes and contributor order while accounting for mold's final
-executable symbol bindings and map format. Public alias visibility is unchanged.
+Frozen H0 attempts remain preserved in `.work/wt/cohort-native-mold`,
+`cohort-native-mold-2` and `cohort-native-mold-3`. The first exposes kache's
+missing external dependency trace and the weak CRT handoff relocation. Both
+repairs pass cold/warm or unchanged-product behavioral checks. The second
+reaches ELF scope and exposes readelf's OSABI-dependent GNU-unique spelling;
+the full original scope matrix passes after checking the actual unique binding.
 
-The native linker uses mold's layout with the original classified objects.
-Unsupported LLD ordering and section scripts are retired. Unwind tables retain
-the required reachable header. Archive helpers remain `GLOBAL DEFAULT`; mold
-localizes unexported static helpers to `LOCAL DEFAULT` and excluded dynamic
-helpers to `LOCAL HIDDEN`, absent from `.dynsym`.
+The third, frozen at `66d1727f0`, passes static preparation and all three
+basic dynamic products. Full ELF scope passes. Its dlopen fixture stops on
+optional `DT_RELACOUNT`; the repaired fixture derives the leading RELATIVE
+block, validates any count, and uses genuine dynamic-table padding. Independent
+PIE and non-PIE dlopen runs now pass RELR, 41 TLS modules, rollback, concurrent
+loads and all 37 search decisions. Both lazy modes and constructor exit pass.
+The next CRT startup reader still compares raw mold trace prefixes to paths;
+its adapter repair and remaining installed cases are in progress.
 
-Nine Rust profiles and the focused native tool/CRT checks pass. Independent
-review found no P1/P2 in the integrated tool, structural and native layout
-changes. Static three-product preparation passes at frozen `a02498e2d` in
-`.work/wt/campaign-verification`. Its native Python matrix records 3,399
-passes, 75 skips and four failing modules. Three stale metadata/transcript
-fixtures are corrected with focused native proof; the root-only resolver
-chroot check passes when run as root. Eight receipt-only jobs remain
-unverified until supplied with actual installed products. The portable batch
-records 669 passes, nine skips and two stale M2 trace-fixture errors; the
-corrected finite trace and all fourteen parser tests pass. No allocator
-workload follows from those parser checks.
+The accepted-C C-ABI workload and allocator-policy workload each pass all 22
+cases against the frozen products. Override and allocator DSO workloads pass.
+Policy custody readers now account for mold's exact member trace, decimal map
+sizes, zero symbol extents and final localized `main`, preserving the source
+object's exact size and contribution. All 57 focused policy/consumer tests pass.
+The generic member-trace helper is source-bound. Independent review finds no
+P1/P2 in these repairs; full current-source qualification remains required.
 
-Frozen H0 `7eb375e52` in `.work/wt/cohort-native-mold` passes static
-preparation. Its independent declaration collector passes with 54,160
-occurrences retained. Full dynamic preparation stops because kache restores
-the allocator object without an external GCC `-MF` dependency trace. A
-same-root cold/warm reproduction identifies that C compiler cache hit. The
-repair retains the trace beside the Cargo `OUT_DIR` object; both real builds
-pass the unchanged source/header reader.
+The full 434-unit libc-test diagnostic passes every candidate translation and
+link after normalizing mold trace prefixes for validation while preserving
+raw receipts. It records 419 passes, five oracle-link failures and ten runtime
+failures. Four oracle DSOs incorrectly contain `PT_INTERP`, blocking a fifth
+unit. The native oracle wrapper now suppresses the interpreter for `-shared`
+as for static links. Its ten tests pass, including real shared, static,
+static-PIE and dynamic-PIE ELF behavior. Both images rebuild successfully. The core image is
+`sha256:8585153fd2b5af9efb1d957afdb63ce97ded5f8471b6aa6a9b3b0aa19649fa34`;
+the allocator image is
+`sha256:9e2eaa592d4aebde271f273d16d0db90d64f4143fa7a85ce1b0c1e1ac81d83d2`.
+All eight existing input manifests validate; seven change only the compiler
+wrapper identity. Exact crypt, strptime and math streams match their existing
+finite dispositions. The wordexp oracle's 104-to-67 diagnostic change is
+caused solely by upstream `wordexp.c`: clearing injected shell parameters and
+redirecting stderr by fd removes exactly 37 old diagnostics. The unchanged
+original workload and a one-file oracle transplant reproduce both full streams.
+Its exact oracle record is being refreshed; candidate checks stay unchanged.
 
-Cold dynamic discovery on that same frozen source produces matching installed
-packages, then its first consumer exits 127 with `reloc`. Mold omitted the
-weak CRT handoff's dynamic relocation. Executable links now retain weak imports
-with `-z dynamic-undefined-weak`, owned by the dynamic receipt contract and
-used by both normal readers. The same consumer relinked against unchanged
-loader and libc bytes passes and matches the oracle, including 24 worker
-cycles and stdio. All 169 integrated builder, metadata, driver and receipt
-tests pass. The remaining exact receipt readers consume the same executable
-flags, and all 146 unwinder tests pass. No loader validation or relocation
-rule is relaxed.
+All 150 integrated trace, policy, consumer, driver, observer and RELR tests pass
+in the rebuilt core image. Nine image/oracle modules report 186 passes and one
+skip; the qualification declaration/read boundary passes all 16. Lua, resolver
+and performance trace adapters preserve raw records while validating semantic
+paths; their five-module check reports 124 passes and four existing skips.
+No timing or runtime performance claim follows from these reader checks.
+The next H0 worktree, `.work/wt/cohort-native-mold-4`, is prepared with all 59
+authenticated corpus archives and the unchanged prospective family claims.
+Finish the demonstrated downstream trace adapters, freeze the repaired source
+and refreshed images, then run the complete correctness cohort there. Never
+advance or relabel a frozen failed cohort. Skips do not count as native proof.
 
-The correctness runner now collects and seals the complete ABI companion
-manifest before assembly. Freeze these integrated repairs for a new H0 run.
-Preserve both failed cohorts and their raw output. Skipped native tests do not
-count as proof. Documentation link and router checks report zero errors.
-The accepted-C allocator stays selected. Public x86 support remains false:
-180 of 223 capabilities, nine of 26 families and zero of eight gates.
+The accepted-C allocator stays selected. Denied allocator diagnostics remain
+parked. Public x86 support remains false: 180 of 223 capabilities, nine of 26
+families and zero of eight gates. Continue through qualification, performance,
+promotion and permitted closeout without stopping at these component checks.
 
 **Accepted timer/loader checkpoint:** frozen `45b2d052c` in
 `.work/wt/timer-loader-proof` passes fresh accepted-C static and dynamic
@@ -80,12 +85,6 @@ normal registry and debug readers. Preserve
 `.work/tmp/final-owner-reader.{stdout,stderr,status}` in that frozen worktree.
 No ABI selection assembly, family qualification, public support or allocator
 promotion is claimed.
-
-Next collect the remaining ordinary companions on this same clean cohort,
-reusing the fresh products, four collectors and three accepted loader trees.
-Then assemble and replay the combined selection before taking the remaining
-feature-alias proofs. The parked POSIX aggregate and denied allocator
-diagnostics remain outside this work.
 
 **Oracle refresh checkpoint:** the owner approved pinning verified upstream
 musl commit `7813e9119eb5fe681b6750b8a033a0490bca0941` for active native

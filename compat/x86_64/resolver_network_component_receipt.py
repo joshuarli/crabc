@@ -106,6 +106,7 @@ SOURCE_PATHS = {
     "workload": "compat/resolver-network/workload.c",
     "dns_fixture": "compat/resolver-network/dns_server.py",
     "dynamic_receipt_contract": "compat/x86_64/owned_dynamic_receipt.py",
+    "link_trace_validation": "compat/x86_64/owned_posix_product_evidence.py",
     "static_link_authority": "compat/x86_64/owned_static_link_authority.py",
     "elf_structure": "compat/x86_64/loader_debug_abi_evidence.py",
     "dynamic_elf_structure": "compat/x86_64/owned_dynamic_elf.py",

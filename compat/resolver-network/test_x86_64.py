@@ -522,6 +522,19 @@ class NativeResolverNetworkRunnerTests(unittest.TestCase):
                             "application_hash_style": "sysv",
                         })
                     self.assertEqual(audit(record)["input_count"], 7)
+                    mold_record = {
+                        **record,
+                        "link_trace": [*(f"trace: {line}" for line in record["link_trace"]),
+                                       f"trace: {archive}(libcrabc-builtins.o)"],
+                    }
+                    result = audit(mold_record)
+                    self.assertEqual(result["link_trace"], mold_record["link_trace"])
+                    foreign_record = {
+                        **mold_record,
+                        "link_trace": [*mold_record["link_trace"], "trace: /ambient/libgcc.a(helper.o)"],
+                    }
+                    with self.assertRaisesRegex(runner.RunnerError, "unowned input"):
+                        audit(foreign_record)
 
             valid = {
                 **base, "schema": 2, "application_search_kind": "runpath",

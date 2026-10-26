@@ -8,15 +8,17 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import re
 import stat
 import struct
 import subprocess
 import sys
-from typing import Any
+from typing import Any, Literal
 
 import native_shadow_receipt
 from installed_allocator_backend import static_and_dynamic_backend
 import owned_dynamic_elf
+import mold_link_trace
 
 
 RUNNER = "owned-native-allocator-policy"
@@ -124,7 +126,7 @@ def _elf_mode(path: Path) -> tuple[int, str | None]:
     return kind, interpreters[0] if interpreters else None
 
 
-def _application_main_symbol(path: Path) -> tuple[int, int]:
+def _application_main_symbol(path: Path, *, binding: Literal["GLOBAL", "LOCAL"]) -> tuple[int, int]:
     """Read the one defined application entry symbol from an ELF symbol table."""
     data = path.read_bytes()
     _require(len(data) >= 64 and data[:7] == b"\x7fELF\x02\x01\x01",
@@ -155,36 +157,42 @@ def _application_main_symbol(path: Path) -> tuple[int, int]:
     matches = []
     for entry in range(offset, offset + size, entry_size):
         name, info, _, section, value, symbol_size = struct.unpack_from("<IBBHQQ", data, entry)
-        if info == 0x12 and section != 0 and strings[name:name + 5] == b"main\0":
+        if info == {"GLOBAL": 0x12, "LOCAL": 0x02}[binding] and section != 0 and strings[name:name + 5] == b"main\0":
             matches.append((value, symbol_size))
     _require(len(matches) == 1 and matches[0][1] > 0,
-             f"{path.name} lacks one defined global main function")
+             f"{path.name} lacks one defined {binding.lower()} main function")
     return matches[0]
 
 
-def _application_map_main(path: Path, object_name: str) -> tuple[int, int]:
-    """Read the application's linked main address and extent from the LLD map."""
+def _application_map_main(path: Path, object_name: str, *, main_size: int) -> tuple[int, int]:
+    """Read main's Mold contribution using the independently read ELF extent."""
+    lines = path.read_text().splitlines()
+    _require(lines and lines[0].split() == ["VMA", "Size", "Align", "Out", "In", "Symbol"],
+             f"{path.name} has a wrong Mold map header")
     main = []
     application_text = []
-    for line in path.read_text().splitlines():
-        fields = line.split()
-        if len(fields) != 5:
-            continue
-        try:
-            address, size = int(fields[0], 16), int(fields[2], 16)
-        except ValueError:
-            continue
-        if fields[4] == "main":
-            main.append((address, size))
-        elif fields[4].endswith(f"/{object_name}:(.text)"):
-            application_text.append((address, size))
+    owner = None
+    for line in lines[1:]:
+        match = re.fullmatch(r"\s*(0x[0-9a-f]+|0)\s+(\d+)\s+(\d+)\s+(.*)", line)
+        _require(match is not None, f"{path.name} has a malformed Mold map row")
+        address, size, _alignment, name = match.groups()
+        address, size = int(address, 16), int(size)
+        if ":(" in name and name.endswith(")"):
+            owner = name
+            if name.endswith(f"/{object_name}:(.text)"):
+                application_text.append((owner, address, size))
+        elif name.startswith(".") or name in ("EHDR", "PHDR"):
+            owner = None
+        elif name == "main":
+            main.append((owner, address, size))
     _require(len(main) == 1 and len(application_text) == 1,
              f"{path.name} lacks one application main and text section")
-    address, size = main[0]
-    text_address, text_size = application_text[0]
-    _require(size > 0 and text_address <= address and address + size <= text_address + text_size,
+    main_owner, address, map_size = main[0]
+    text_owner, text_address, text_size = application_text[0]
+    _require(main_owner == text_owner and map_size == 0 and main_size > 0
+             and text_address <= address and address + main_size <= text_address + text_size,
              f"{path.name} main is outside the retained application object")
-    return address, size
+    return address, main_size
 
 
 def _check_products(root: Path, read: native_shadow_receipt.Receipt) -> None:
@@ -343,15 +351,21 @@ def _check_oracle_link(retained: Path, hashes: dict[str, str], program: str) -> 
     }
     _require(record == expected, f"oracle-{program} link input identity differs")
     trace = (retained / f"trace-oracle-{program}").read_text(errors="replace").splitlines()
-    expected_trace = [runtime[name]["path"] for name in (
-        "oracle-musl-scrt1", "oracle-musl-crti", "oracle-crtbegin"
-    )] + [object_path] + [runtime[name]["path"] for name in (
-        "oracle-musl-libssp", "oracle-libgcc", "oracle-libgcc-eh",
-        "oracle-musl-libpthread", "oracle-musl-libc",
-        "oracle-libgcc", "oracle-libgcc-eh", "oracle-musl-libpthread", "oracle-musl-libc",
-        "oracle-crtend", "oracle-musl-crtn",
-    )]
-    _require(trace == expected_trace, f"oracle-{program} linker trace has missing or ambient inputs")
+    try:
+        mold_link_trace.validate_trace(
+            trace,
+            initial_objects=[runtime[name]["path"] for name in (
+                "oracle-musl-scrt1", "oracle-musl-crti", "oracle-crtbegin",
+            )] + [object_path],
+            archives=[(runtime[name]["path"], (retained / name).read_bytes()) for name in (
+                "oracle-musl-libssp", "oracle-libgcc", "oracle-libgcc-eh", "oracle-musl-libpthread", "oracle-musl-libc",
+                "oracle-libgcc", "oracle-libgcc-eh", "oracle-musl-libpthread", "oracle-musl-libc",
+            )],
+            final_objects=[runtime[name]["path"] for name in ("oracle-crtend", "oracle-musl-crtn")],
+        )
+    except ValueError as error:
+        raise native_shadow_receipt.ReceiptError(f"{RUNNER}: oracle-{program}: {error}") from error
+
 
 
 def _check_static_link(retained: Path, hashes: dict[str, str], program: str, mode: str) -> None:
@@ -394,12 +408,9 @@ def _check_static_link(retained: Path, hashes: dict[str, str], program: str, mod
     _require(application.get("sha256") == hashes[f"object-{name}"] and
              Path(str(application.get("path"))).name == f"object-{name}.o",
              f"{name} static application object differs")
-    # The output hash in the link receipt can be rewritten with a substituted
-    # same-mode ELF. Its main function must also be the one placed from the
-    # retained application object at the address recorded by the linker map.
-    object_main = _application_main_symbol(retained / f"object-{name}")
-    map_main = _application_map_main(retained / f"map-{name}", f"object-{name}.o")
-    output_main = _application_main_symbol(retained / name)
+    object_main = _application_main_symbol(retained / f"object-{name}", binding="GLOBAL")
+    map_main = _application_map_main(retained / f"map-{name}", f"object-{name}.o", main_size=object_main[1])
+    output_main = _application_main_symbol(retained / name, binding="LOCAL")
     _require(output_main == map_main and output_main[1] == object_main[1],
              f"{name} ELF main differs from retained map or application object")
 
@@ -431,22 +442,29 @@ def _check_dynamic_link(retained: Path, hashes: dict[str, str], program: str, mo
                  f"{name} dynamic {basename} input differs")
     command = record.get("link_command")
     trace = record.get("link_trace")
-    _require(isinstance(command, list) and isinstance(trace, list) and
-             all(item["path"] in command for item in inputs) and
-             all(item["path"] in trace for item in inputs if Path(item["path"]).name != "libcrabc-builtins.a"),
+    _require(isinstance(command, list) and isinstance(trace, list) and all(isinstance(row, str) for row in trace)
+             and all(item["path"] in command for item in inputs),
              f"{name} dynamic linker command or trace omits an input")
+    try:
+        mold_link_trace.validate_trace(
+            trace,
+            initial_objects=[by_name[basename]["path"] for basename in (
+                "Scrt1.o" if mode == "pie" else "crt1.o", "crabc-dynamic-attach.o", "crti.o", f"object-{name}.o",
+            )],
+            archives=[(by_name["libcrabc-builtins.a"]["path"], (retained / "dynamic-builtins").read_bytes())],
+            final_objects=[by_name[basename]["path"] for basename in ("libc.so", "crtn.o")],
+        )
+    except ValueError as error:
+        raise native_shadow_receipt.ReceiptError(f"{RUNNER}: {name}: {error}") from error
     inspection = _json(retained / f"elf-{name}")
     _require(inspection.get("output_sha256") == hashes[name] and
              inspection.get("link_map", {}).get("sha256") == hashes[f"map-{name}"] and
              inspection.get("declared", {}).get("mode") == link_mode and
              inspection.get("facts") == owned_dynamic_elf.inspect(retained / name),
              f"{name} ELF inspection or link map differs from the executed product")
-    # A rehashed link and ELF inspection can describe a different executable
-    # with the same loader mode. Check that LLD placed the retained application
-    # object's main function at the address carried by the final ELF.
-    object_main = _application_main_symbol(retained / f"object-{name}")
-    map_main = _application_map_main(retained / f"map-{name}", f"object-{name}.o")
-    output_main = _application_main_symbol(retained / name)
+    object_main = _application_main_symbol(retained / f"object-{name}", binding="GLOBAL")
+    map_main = _application_map_main(retained / f"map-{name}", f"object-{name}.o", main_size=object_main[1])
+    output_main = _application_main_symbol(retained / name, binding="LOCAL")
     _require(output_main == map_main and output_main[1] == object_main[1],
              f"{name} ELF main differs from retained map or application object")
 

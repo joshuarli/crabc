@@ -7,7 +7,7 @@ set -eu
 
 for argument do
     case "$argument" in
-        -static|-static-pie)
+        -static|-static-pie|-shared)
             set -- -Wl,--no-dynamic-linker "$@"
             break
             ;;

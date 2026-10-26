@@ -941,6 +941,7 @@ def _libc_test_link(reader, phase, *, unit, side, objects, contract, product, ou
         archive = reader.recorded(builtins)
         trace = receipt['link_trace']
         require(isinstance(trace, list) and all(isinstance(item, str) for item in trace), 'libc-test sealed trace is malformed')
+        trace = product_evidence.semantic_link_trace(trace)
         require(all(item in direct or item == archive or (item.startswith(archive + '(') and item.endswith(')')) for item in trace),
                 'libc-test sealed trace has a foreign input')
         require(direct <= set(trace), 'libc-test sealed trace omits a direct input')
@@ -1489,6 +1490,7 @@ def _os_sealed_link(reader, *, binary, receipt_path, shared, output, workload_pa
     direct, archive = {reader.recorded(path) for path in runtime} | {workload_path}, reader.recorded(builtins)
     trace = receipt['link_trace']
     require(isinstance(trace, list) and all(isinstance(item, str) for item in trace), 'os-test malformed sealed trace')
+    trace = product_evidence.semantic_link_trace(trace)
     require(all(item in direct or item == archive or (item.startswith(archive + '(') and item.endswith(')')) for item in trace),
             'os-test sealed trace has a foreign input')
     require(direct <= set(trace), 'os-test sealed trace omits a direct input')

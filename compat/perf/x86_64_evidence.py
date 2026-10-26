@@ -1522,7 +1522,7 @@ def validate_dynamic_direct_receipt(
     """Replay one schema-2 installed-driver link receipt.
 
     A schema-2 receipt is the direct-DSO form: every declared application DSO
-    reaches both LLD's input list and its trace.  It is deliberately distinct
+    reaches both the link command and its trace.  It is deliberately distinct
     from :func:`validate_dynamic_graph_receipt`, whose schema-3 closure nodes
     may be validation-only.  Keeping these readers separate means the normal
     no-DSO and direct-DSO links cannot accidentally acquire graph semantics.
@@ -1570,6 +1570,7 @@ def validate_dynamic_direct_receipt(
             "dynamic direct-link command is invalid")
     require(isinstance(trace, list) and all(isinstance(value, str) for value in trace),
             "dynamic direct-link trace is invalid")
+    normalized_trace = _x86_module(checkout, "owned_posix_product_evidence").semantic_link_trace(trace)
     inputs = record["input_receipts"]
     require(isinstance(inputs, list), "dynamic direct-link input receipts are invalid")
     direct_receipts: dict[str, str] = {}
@@ -1591,7 +1592,7 @@ def validate_dynamic_direct_receipt(
         # host replay sees the translated checkout spelling.  Either is one
         # exact input, never an unbound basename search.
         command_count = command.count(recorded) + (0 if alternate == recorded else command.count(alternate))
-        trace_count = trace.count(recorded) + (0 if alternate == recorded else trace.count(alternate))
+        trace_count = normalized_trace.count(recorded) + (0 if alternate == recorded else normalized_trace.count(alternate))
         require(command_count == 1 and trace_count == 1,
                 "dynamic direct-link DSO is not an exact linker/trace input")
     dynamic = parse_dynamic_section(dynamic_raw.read_text(encoding="utf-8", errors="replace"))
@@ -1624,9 +1625,8 @@ def validate_dynamic_graph_receipt(
     """Read a schema-3 graph receipt without weakening zero-DSO readers.
 
     The normal POSIX reader intentionally only recognizes zero-DSO executable
-    receipts.  Performance graph links use the driver-owned opt-in schema-3
-    reader and insist that closure nodes remain validation-only: direct nodes
-    are the only DSO paths admitted to LLD's command and trace.
+    receipts. Performance graph links use the driver-owned opt-in schema-3
+    reader and keep transitive closure nodes out of the link command and trace.
     """
 
     record = load_json(receipt_path, "dynamic graph receipt")
@@ -1705,11 +1705,12 @@ def validate_dynamic_graph_receipt(
     trace = record["link_trace"]
     require(isinstance(command, list) and all(isinstance(item, str) for item in command), "graph link command is invalid")
     require(isinstance(trace, list) and all(isinstance(item, str) for item in trace), "graph link trace is invalid")
+    normalized_trace = _x86_module(checkout, "owned_posix_product_evidence").semantic_link_trace(trace)
     for path in direct_paths:
         require(command.count(path) == 1, "graph direct DSO is not exactly one linker input")
-        require(trace.count(path) == 1, "graph direct DSO is not exactly one trace input")
+        require(normalized_trace.count(path) == 1, "graph direct DSO is not exactly one trace input")
     for path in transitive_paths:
-        require(path not in command and path not in trace, "graph closure was flattened into LLD")
+        require(path not in command and path not in normalized_trace, "graph closure was passed as a linker input")
     raw = dynamic_raw.read_text(encoding="utf-8", errors="replace")
     dynamic = parse_dynamic_section(raw)
     require(dynamic["needed"] == [*expected_direct, "libc.so"], "graph output DT_NEEDED differs from direct roots plus libc")

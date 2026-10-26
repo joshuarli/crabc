@@ -40,6 +40,7 @@ import core_image
 import resolver_network_component_receipt as component_receipt
 
 import owned_dynamic_receipt as receipt_contract
+import owned_posix_product_evidence as product_evidence
 import owned_static_link_authority as static_authority
 
 MUSL_ROOT = Path("/opt/musl-1.2.6")
@@ -63,6 +64,7 @@ RECEIPT_SOURCE_FILES = {
     "workload": ROOT / "compat/resolver-network/workload.c",
     "dns_fixture": ROOT / "compat/resolver-network/dns_server.py",
     "dynamic_receipt_contract": ROOT / "compat/x86_64/owned_dynamic_receipt.py",
+    "link_trace_validation": ROOT / "compat/x86_64/owned_posix_product_evidence.py",
     "static_link_authority": ROOT / "compat/x86_64/owned_static_link_authority.py",
     "elf_structure": ROOT / "compat/x86_64/loader_debug_abi_evidence.py",
     "dynamic_elf_structure": ROOT / "compat/x86_64/owned_dynamic_elf.py",
@@ -786,7 +788,7 @@ def dynamic_receipt_audit(sysroot: Path, mode: str, object_file: Path, output: P
         raise RunnerError(f"dynamic {mode} link trace is invalid")
     allowed = {*(str(path) for path in runtime), str(object_file.resolve())}
     seen: set[str] = set()
-    for line in trace:
+    for line in product_evidence.semantic_link_trace(trace):
         if line in allowed:
             seen.add(line)
         elif line == str(archive) or (line.startswith(str(archive) + "(") and line.endswith(")")):

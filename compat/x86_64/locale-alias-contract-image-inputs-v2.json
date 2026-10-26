@@ -201,8 +201,8 @@
     "/usr/local/bin/crabc-x86_64-musl-gcc": {
       "mode": 493,
       "path": "/usr/local/bin/crabc-x86_64-musl-gcc",
-      "sha256": "414207f9700e9c40fbd92483cbcb7e7948b1e698c410df6caae04847bec10d29",
-      "size": 569
+      "sha256": "c315b4af3c8786dc0e17aa611a688cfca6cf5d0791d33c9248f6d4f626dc920e",
+      "size": 577
     },
     "/usr/local/bin/kache": {
       "mode": 493,

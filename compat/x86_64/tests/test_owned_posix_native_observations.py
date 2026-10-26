@@ -892,7 +892,7 @@ class NativeObservationsTests(unittest.TestCase):
             self.put(receipt_path, {'schema': 1, 'format': native.PRODUCT_FORMAT, 'mode': 'shared' if shared else 'pie', 'binding': 'now',
                 'runtime_imports': [], 'application_runpath': '/usr/lib', 'application_dsos': {}, 'campaign_complete': False,
                 'manifest_sha256': self.binding(manifest)['sha256'], 'output_path': self.recorded(output), 'output_sha256': self.binding(binary)['sha256'],
-                'resolved_linker': linker, 'link_command': sealed, 'link_trace': [*map(self.recorded, runtime), self.recorded(object_path)],
+                'resolved_linker': linker, 'link_command': sealed, 'link_trace': ['trace: ' + item for item in [*map(self.recorded, runtime), self.recorded(object_path)]],
                 'input_receipts': [*(self.binding(path) for path in runtime), {'path': self.recorded(object_path), 'sha256': self.binding(retained)['sha256']}, self.binding(builtins)],
                 'owned_runtime_inputs': sorted(path.relative_to(product).as_posix() for path in [*runtime, builtins])})
             linked = {'linkage': 'shared' if shared else 'pie', 'product_manifest_sha256': self.binding(manifest)['sha256'],
@@ -1512,7 +1512,7 @@ class NativeObservationsTests(unittest.TestCase):
                 sealed += list(map(self.recorded, [copied_product / 'usr/lib/crti.o', *inputs, builtins, *dsos,
                                                    copied_product / 'usr/lib/libc.so', copied_product / 'usr/lib/crtn.o']))
                 sealed += ['-o', self.recorded(output)]
-                trace = list(map(self.recorded, [*runtime, *inputs, *dsos]))
+                trace = ['trace: ' + item for item in map(self.recorded, [*runtime, *inputs, *dsos])]
                 receipt = {'schema': 1, 'format': native.PRODUCT_FORMAT, 'mode': 'shared' if shared else 'pie', 'binding': 'now',
                            'runtime_imports': [], 'application_runpath': roles['runpath'], 'campaign_complete': False,
                            'manifest_sha256': self.binding(manifest)['sha256'], 'output_path': self.recorded(output),

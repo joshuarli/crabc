@@ -26,11 +26,20 @@ def digest(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
+def archive(*names: str) -> bytes:
+    data = b"!<arch>\n"
+    for name in names:
+        body = b"member bytes"
+        header = f"{name + '/':<16}{0:<12}{0:<6}{0:<6}{'100644':<8}{len(body):<10}`\n".encode()
+        data += header + body + (b"\n" if len(body) % 2 else b"")
+    return data
+
+
 MAIN_ADDRESS, MAIN_SIZE = 0x401000, 0x10
 
 
-def elf(kind: int, interpreter: str | None = None, tag: bytes = b"") -> bytes:
-    """A minimal ELF64 x86-64 file with one defined global ``main`` function.
+def elf(kind: int, interpreter: str | None = None, tag: bytes = b"", binding: str = "GLOBAL") -> bytes:
+    """A minimal ELF64 x86-64 file with one defined ``main`` function.
 
     ``tag`` makes otherwise identical files distinct by content.
     """
@@ -43,7 +52,7 @@ def elf(kind: int, interpreter: str | None = None, tag: bytes = b"") -> bytes:
     struct.pack_into("<Q", data, 40, 256)
     struct.pack_into("<HH", data, 58, 64, 3)
     data[192:198] = b"\0main\0"
-    struct.pack_into("<IBBHQQ", data, 224, 1, 0x12, 0, 1, MAIN_ADDRESS, MAIN_SIZE)
+    struct.pack_into("<IBBHQQ", data, 224, 1, {"GLOBAL": 0x12, "LOCAL": 0x02}[binding], 0, 1, MAIN_ADDRESS, MAIN_SIZE)
     struct.pack_into("<IIQQQQIIQQ", data, 256 + 64, 0, 2, 0, 0, 200, 48, 2, 0, 8, 24)
     struct.pack_into("<IIQQQQIIQQ", data, 256 + 128, 0, 3, 0, 0, 192, 6, 0, 0, 1, 0)
     data[480:480 + len(tag)] = tag
@@ -57,9 +66,11 @@ def elf(kind: int, interpreter: str | None = None, tag: bytes = b"") -> bytes:
 
 
 def link_map(name: str) -> bytes:
-    """An LLD map placing the application object's ``main`` at the ELF symbol."""
-    return (f"{MAIN_ADDRESS:x} {MAIN_ADDRESS:x} 20 16 /work/object-{name}.o:(.text)\n"
-            f"{MAIN_ADDRESS:x} {MAIN_ADDRESS:x} {MAIN_SIZE:x} 1 main\n").encode()
+    return ("VMA Size Align Out In Symbol\n"
+            f"0x{MAIN_ADDRESS:x} 32 16 .text\n"
+            f"0x{MAIN_ADDRESS:x} 32 16 /work/object-{name}.o:(.text)\n"
+            f"0x{MAIN_ADDRESS:x} 0 0 main\n").encode()
+
 
 
 class PolicyReceiptTests(unittest.TestCase):
@@ -114,6 +125,10 @@ class PolicyReceiptTests(unittest.TestCase):
         }:
             product(name, name.encode())
 
+        for name in ("oracle-musl-libssp", "oracle-libgcc", "oracle-libgcc-eh", "oracle-musl-libc"):
+            product(name, archive("member.o"))
+        product("oracle-musl-libpthread", archive())
+        product("dynamic-builtins", archive("builtins.o"))
         product("static-libc-archive", b"archive")
         product("dynamic-libc", b"shared-libc")
         product("dynamic-loader", b"loader")
@@ -166,11 +181,11 @@ class PolicyReceiptTests(unittest.TestCase):
         }}).encode())
         for program in policy.PROGRAMS:
             product(f"oracle-{program}", elf(2))
-            product(f"static-{program}", elf(2))
-            product(f"static-pie-{program}", elf(2 if wrong_elf_mode else 3))
+            product(f"static-{program}", elf(2, binding="LOCAL"))
+            product(f"static-pie-{program}", elf(2 if wrong_elf_mode else 3, binding="LOCAL"))
             for kind in ("pie", "non-pie"):
                 product(f"dynamic-{kind}-{program}", elf(3 if kind == "pie" else 2,
-                                                        "/lib/ld-crabc-x86_64.so.1"))
+                                                        "/lib/ld-crabc-x86_64.so.1", binding="LOCAL"))
             oracle_compiler_inputs = {
                 "oracle-gcc": {"path": "/usr/bin/gcc", "sha256": digest(files["oracle-gcc"])},
                 "oracle-specs": {"path": "/opt/musl-1.2.6/lib/musl-gcc.specs",
@@ -210,13 +225,12 @@ class PolicyReceiptTests(unittest.TestCase):
                 "oracle-libgcc-eh": "/usr/lib/gcc/test/libgcc_eh.a",
             }
             trace_roles = ("oracle-musl-scrt1", "oracle-musl-crti", "oracle-crtbegin")
-            trace_after_object = (
-                "oracle-musl-libssp", "oracle-libgcc", "oracle-libgcc-eh",
-                "oracle-musl-libpthread", "oracle-musl-libc", "oracle-libgcc", "oracle-libgcc-eh",
-                "oracle-musl-libpthread", "oracle-musl-libc", "oracle-crtend", "oracle-musl-crtn",
-            )
-            trace = [oracle_runtime[name] for name in trace_roles] + [f"/work/object-oracle-{program}.o"] + [
-                oracle_runtime[name] for name in trace_after_object]
+            trace = [oracle_runtime[name] for name in trace_roles] + [f"/work/object-oracle-{program}.o"]
+            trace += [oracle_runtime[name] + "(member.o)" for name in (
+                "oracle-musl-libssp", "oracle-libgcc", "oracle-libgcc-eh", "oracle-musl-libc",
+            )]
+            trace += [oracle_runtime["oracle-crtend"], oracle_runtime["oracle-musl-crtn"]]
+            trace = ["trace: " + line for line in trace]
             product(f"trace-oracle-{program}", ("\n".join(trace) + "\n").encode())
             record(f"link-oracle-{program}", {
                 "schema": "crabc.x86_64-allocator-policy-oracle-link/v1", "program": program,
@@ -283,7 +297,11 @@ class PolicyReceiptTests(unittest.TestCase):
                     "output_sha256": digest(files[name]), "output_path": f"/work/{name}.exe",
                     "application_dsos": {}, "input_receipts": inputs,
                     "link_command": [item["path"] for item in inputs],
-                    "link_trace": [item["path"] for item in inputs],
+                    "link_trace": ["trace: " + next(item["path"] for item in inputs if Path(item["path"]).name == basename)
+                                   + ("(builtins.o)" if basename == "libcrabc-builtins.a" else "")
+                                   for basename in ("Scrt1.o" if mode == "pie" else "crt1.o",
+                                                    "crabc-dynamic-attach.o", "crti.o", f"object-{name}.o",
+                                                    "libcrabc-builtins.a", "libc.so", "crtn.o")],
                 })
                 record(f"elf-{name}", {
                     "output_sha256": digest(files[name]),
@@ -317,6 +335,82 @@ class PolicyReceiptTests(unittest.TestCase):
             "needed": ["libc.so"], "symbol_versioning": False,
         }):
             return policy.read_policy_receipt(self.root)
+
+    def test_mold_trace_binds_archive_members_and_empty_pthread_archive(self) -> None:
+        self.publish()
+        self.assertEqual(len(self.read().cases), 22)
+
+    def test_rehashed_oracle_trace_cannot_drop_or_substitute_archive_members(self) -> None:
+        for mutation in ("foreign-row", "foreign-member", "missing-member"):
+            with self.subTest(mutation=mutation):
+                receipt_path = self.publish()
+                retained = receipt_path.parent / "products"
+                target = retained / "trace-oracle-basic"
+                lines = target.read_text().splitlines()
+                if mutation == "foreign-row":
+                    lines.append("trace: /foreign/runtime.o")
+                elif mutation == "foreign-member":
+                    lines[4] = lines[4].replace("member.o", "foreign.o")
+                else:
+                    del lines[4]
+                target.write_text("\n".join(lines) + "\n")
+                link_path = retained / "link-oracle-basic"
+                link = json.loads(link_path.read_text())
+                link["trace_sha256"] = digest(target)
+                link_path.write_text(json.dumps(link))
+                record = json.loads(receipt_path.read_text())
+                for name, artifact in (("trace-oracle-basic", target), ("link-oracle-basic", link_path)):
+                    record["products"][name] = {"sha256": digest(artifact), "size": artifact.stat().st_size}
+                receipt_path.write_text(json.dumps(record))
+                receipt.read_receipt(self.root, policy.RUNNER)
+                with self.assertRaisesRegex(receipt.ReceiptError, "linker trace"):
+                    self.read()
+
+    def test_mold_map_requires_the_exact_owner_and_complete_elf_extent(self) -> None:
+        original = link_map("static-basic").decode()
+        target = self.work / "application.map"
+        target.write_text(original)
+        self.assertEqual(policy._application_map_main(target, "object-static-basic.o", main_size=MAIN_SIZE),
+                         (MAIN_ADDRESS, MAIN_SIZE))
+        variants = (
+            original + f"0x{MAIN_ADDRESS:x} 0 0 main\n",
+            original.replace(f"0x{MAIN_ADDRESS:x} 0 0 main", f"0x{MAIN_ADDRESS + 32:x} 0 0 main"),
+            original.replace(f"0x{MAIN_ADDRESS:x} 0 0 main",
+                             f"0x{MAIN_ADDRESS:x} 32 16 /work/foreign.o:(.text)\n0x{MAIN_ADDRESS:x} 0 0 main"),
+            original.replace("32 16 /work/object", "8 16 /work/object"),
+            original.replace("0 0 main", "16 0 main"),
+        )
+        for changed in variants:
+            with self.subTest(map=changed):
+                target.write_text(changed)
+                with self.assertRaises(receipt.ReceiptError):
+                    policy._application_map_main(target, "object-static-basic.o", main_size=MAIN_SIZE)
+
+    def test_rehashed_dynamic_trace_cannot_admit_a_foreign_archive_member(self) -> None:
+        receipt_path = self.publish()
+        target = receipt_path.parent / "products/link-dynamic-pie-basic"
+        link = json.loads(target.read_text())
+        link["link_trace"][4] = link["link_trace"][4].replace("builtins.o", "foreign.o")
+        target.write_text(json.dumps(link))
+        record = json.loads(receipt_path.read_text())
+        record["products"]["link-dynamic-pie-basic"] = {"sha256": digest(target), "size": target.stat().st_size}
+        receipt_path.write_text(json.dumps(record))
+        receipt.read_receipt(self.root, policy.RUNNER)
+        with self.assertRaisesRegex(receipt.ReceiptError, "dynamic-pie-basic: linker trace"):
+            self.read()
+
+    def test_application_main_binding_distinguishes_object_and_final_elf(self) -> None:
+        target = self.work / "main.elf"
+        for kind, expected, wrong in ((1, "GLOBAL", "LOCAL"), (2, "LOCAL", "GLOBAL"), (3, "LOCAL", "GLOBAL")):
+            with self.subTest(kind=kind):
+                target.write_bytes(elf(kind, binding=expected))
+                self.assertEqual(policy._application_main_symbol(target, binding=expected), (MAIN_ADDRESS, MAIN_SIZE))
+                with self.assertRaisesRegex(receipt.ReceiptError, "defined .* main function"):
+                    policy._application_main_symbol(target, binding=wrong)
+
+    def test_mold_zero_size_map_symbols_keep_the_object_elf_extent(self) -> None:
+        self.publish()
+        self.assertEqual(len(self.read().cases), 22)
 
     def test_accepted_c_retains_the_complete_public_policy_matrix(self) -> None:
         self.publish(backend="accepted-c")

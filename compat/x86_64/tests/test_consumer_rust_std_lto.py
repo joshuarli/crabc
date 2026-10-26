@@ -281,6 +281,32 @@ class ReceiptReaderTests(unittest.TestCase):
                                str(archive): GATE.sha256_file(archive),
                                str(link_receipt): GATE.sha256_file(link_receipt)},
         }
+        oracle_lane = root / "gates/lto/A"
+        oracle_lane.mkdir(parents=True)
+        self.oracle_inputs = {}
+        for name in ("crt-start", "crt-prologue", "crtbegin", "libssp", "libgcc", "libgcc-eh",
+                     "pthread", "libc", "crtend", "crt-epilogue"):
+            artifact = oracle_lane / name
+            artifact.write_bytes(b"!<arch>\n" if name in ("libssp", "libgcc", "libgcc-eh", "pthread", "libc")
+                                 else name.encode())
+            self.oracle_inputs[name] = artifact
+        for filename in ("static.o", "musl-static"):
+            (oracle_lane / filename).write_bytes(filename.encode())
+        trace = [str(self.oracle_inputs[name]) for name in ("crt-start", "crt-prologue", "crtbegin")]
+        trace += [str(oracle_lane / "static.o")]
+        trace += [str(self.oracle_inputs[name]) for name in ("crtend", "crt-epilogue")]
+        trace_path = oracle_lane / "step1.stdout"
+        trace_path.write_text("".join("trace: " + row + "\n" for row in trace))
+        identity = lambda artifact: {"path": str(artifact), "sha256": GATE.sha256_file(artifact)}
+        steps = [{"command": command, "returncode": 0} for command in GATE._oracle_static_commands(oracle_lane)]
+        steps[1]["stdout"] = identity(trace_path)
+        self.record["gates"]["lto"]["lanes"]["A"].update({
+            "oracle_inputs": {name: identity(artifact) for name, artifact in self.oracle_inputs.items()},
+            "object": identity(oracle_lane / "static.o"), "executable": identity(oracle_lane / "musl-static"),
+            "steps": steps,
+        })
+        for artifact in (*self.oracle_inputs.values(), oracle_lane / "static.o", oracle_lane / "musl-static", trace_path):
+            self.record["retained_files"][str(artifact)] = GATE.sha256_file(artifact)
         self.record["gates"]["rust-std"]["lanes"]["stock-std"]["candidate_build"] = {
             "link_receipt": {"path": str(link_receipt), "sha256": GATE.sha256_file(link_receipt)}}
         for label in GATE.UNWIND_PRODUCTS:
@@ -294,6 +320,7 @@ class ReceiptReaderTests(unittest.TestCase):
         qualification.source_digest.return_value = "a" * 64
         qualification.QualificationError = DYNAMIC_QUALIFICATION.QualificationError
         self.patches = [
+            mock.patch.object(GATE, "_oracle_static_inputs", return_value=self.oracle_inputs),
             mock.patch.dict(sys.modules, {"owned_dynamic_qualification": qualification}),
             mock.patch.object(GATE, "cohort_products",
                               side_effect=lambda *_: (copy.deepcopy(self.cohort), self.product_paths)),
@@ -345,6 +372,20 @@ class ReceiptReaderTests(unittest.TestCase):
         record["unwind"]["primary"]["cross_dso"]["stock-std"]["unmet"] = ["execution failed"]
         with self.assertRaisesRegex(GATE.GateError, "cross-DSO"):
             self.validate(record)
+
+    def test_rehashed_oracle_trace_rejects_a_foreign_archive_member(self) -> None:
+        lane = self.receipt.parent / "gates/lto/A"
+        trace = lane / "step1.stdout"
+        trace.write_text(trace.read_text() + "trace: /foreign/libc.a(member.o)\n")
+        self.record["gates"]["lto"]["lanes"]["A"]["steps"][1]["stdout"]["sha256"] = GATE.sha256_file(trace)
+        self.record["retained_files"][str(trace)] = GATE.sha256_file(trace)
+        with self.assertRaisesRegex(GATE.GateError, "linker trace"):
+            self.validate(self.record)
+
+    def test_rehashed_oracle_build_cannot_link_another_object(self) -> None:
+        self.record["gates"]["lto"]["lanes"]["A"]["steps"][1]["command"][-4] = "/foreign/object.o"
+        with self.assertRaisesRegex(GATE.GateError, "oracle build commands"):
+            self.validate(self.record)
 
     def test_changed_nested_cleanup_evidence_fails_even_when_summary_passes(self) -> None:
         with mock.patch.object(GATE.installed_backtrace, "owned_receipt",

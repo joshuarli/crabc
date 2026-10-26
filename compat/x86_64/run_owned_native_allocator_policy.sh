@@ -272,7 +272,7 @@ for program in "${programs[@]}"; do
     receipt_products+=("source-$program=$source")
     "$oracle_cc" -static -fno-pie -no-pie "${common_flags[@]}" -c "$source" -o "$work/object-oracle-$program.o"
     record_compile oracle "$program" "$source" "$work/object-oracle-$program.o" "$oracle_cc"
-    "$oracle_cc" -static -fno-pie -no-pie "${common_flags[@]}" -Wl,-t \
+    "$oracle_cc" -static -fno-pie -no-pie "${common_flags[@]}" -Wl,--trace \
         "$work/object-oracle-$program.o" -o "$work/oracle-$program.exe" >"$work/trace-oracle-$program.txt"
     record_oracle_link "$program"
     receipt_products+=("oracle-$program=$work/oracle-$program.exe")

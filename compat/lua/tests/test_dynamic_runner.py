@@ -451,6 +451,19 @@ class NativeDynamicReceiptTests(unittest.TestCase):
             with self.subTest(schema=schema):
                 self.assertEqual(self.audit(self.record(schema))["status"], "passed")
 
+    def test_audit_accepts_mold_trace_prefix_and_archive_member_without_rewriting_receipt(self) -> None:
+        record = self.record(2)
+        raw_trace = [f"trace: {line}" for line in record["link_trace"]]
+        raw_trace.append(f"trace: {self.runtime['builtins']}(math.o)")
+        record["link_trace"] = raw_trace
+
+        self.assertEqual(self.audit(record)["status"], "passed")
+        self.assertEqual(json.loads(self.receipt.read_text(encoding="utf-8"))["link_trace"], raw_trace)
+
+        record["link_trace"] = [*raw_trace, "trace: /ambient/libgcc.a(helper.o)"]
+        with self.assertRaisesRegex(RUNNER.LUA.RunnerError, "unowned input"):
+            self.audit(record)
+
     def test_audit_rejects_unversioned_mixed_and_non_sysv_search_receipts(self) -> None:
         valid = self.record(2)
         for changed in (

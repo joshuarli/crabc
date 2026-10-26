@@ -34,6 +34,7 @@ import run as LUA  # noqa: E402
 
 ROOT = LUA.ROOT
 sys.path.insert(0, str(ROOT / "compat/x86_64"))
+import owned_posix_product_evidence as product_evidence
 import owned_dynamic_receipt as receipt_contract
 
 FIXTURES = LUA.FIXTURES
@@ -583,18 +584,15 @@ def audit_dynamic_receipt(
         raise LUA.RunnerError(f"sealed dynamic {output.name} trace is invalid")
     permitted = {str(path) for path in direct}
     seen: set[str] = set()
-    for line in trace:
+    for line in product_evidence.semantic_link_trace(trace):
         if line in permitted:
             seen.add(line)
         elif line == str(archive) or (
             line.startswith(f"{archive}(") and line.endswith(")")
         ):
-            seen.add(str(archive))
+            continue
         else:
             raise LUA.RunnerError(f"sealed dynamic link consumed an unowned input: {line}")
-    # The driver records the fixed helper archive even when this source graph
-    # does not extract a member.  LLD therefore need not print the archive in
-    # its trace; every direct input remains mandatory.
     if seen != permitted:
         raise LUA.RunnerError(f"sealed dynamic {output.name} trace omitted a closed input")
     text = "\n".join(trace)

@@ -16,6 +16,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
 
@@ -548,7 +549,7 @@ class DynamicReceiptReplayTests(unittest.TestCase):
                 "application_dsos": {"libbench.so": dso_hash}, "owned_runtime_inputs": [],
                 "input_receipts": [{"path": str(dso), "sha256": dso_hash}],
                 "resolved_linker": {"path": "/usr/bin/ld.lld", "sha256": "a" * 64},
-                "link_command": ["/usr/bin/ld.lld", str(dso)], "link_trace": [str(dso)], "campaign_complete": False,
+                "link_command": ["/usr/bin/ld.lld", str(dso)], "link_trace": [f"trace: {dso}"], "campaign_complete": False,
             }
             receipt.write_text(__import__("json").dumps(record), encoding="utf-8")
             search = type("Search", (), {"schema": 2, "kind": "runpath", "path": "/app/lib:/usr/lib", "hash_style": "sysv"})()
@@ -558,6 +559,7 @@ class DynamicReceiptReplayTests(unittest.TestCase):
                     checkout=ROOT, product=product, receipt_path=receipt, output=output, dynamic_raw=dynamic,
                     expected_direct=[dso], expected_mode="pie", expected_search_path="/app/lib:/usr/lib",
                 )
+                self.assertEqual(__import__("json").loads(receipt.read_text(encoding="utf-8"))["link_trace"], record["link_trace"])
                 record["application_dsos"] = {"libbench.so": "b" * 64}
                 receipt.write_text(__import__("json").dumps(record), encoding="utf-8")
                 with self.assertRaisesRegex(evidence.EvidenceError, "DSO roster"):
@@ -565,6 +567,77 @@ class DynamicReceiptReplayTests(unittest.TestCase):
                         checkout=ROOT, product=product, receipt_path=receipt, output=output, dynamic_raw=dynamic,
                         expected_direct=[dso], expected_mode="pie", expected_search_path="/app/lib:/usr/lib",
                     )
+
+    def test_graph_receipt_counts_mold_direct_trace_and_preserves_raw_archive_trace(self) -> None:
+        with tempfile.TemporaryDirectory(dir=WORK_ROOT) as temporary:
+            directory = Path(temporary)
+            product = directory / "product"
+            library = product / "usr/lib"
+            library.mkdir(parents=True)
+            manifest = product / "share/crabc/manifest.json"
+            manifest.parent.mkdir(parents=True)
+            manifest.write_text("{}\n", encoding="utf-8")
+            output = directory / "workload"
+            output.write_bytes(b"elf-output")
+            direct = directory / "libbench-root.so"
+            direct.write_bytes(b"direct dso")
+            transitive = directory / "libbench-leaf.so"
+            transitive.write_bytes(b"transitive dso")
+            archive = library / "libcrabc-builtins.a"
+            archive.write_bytes(b"owned archive")
+            dynamic = directory / "dynamic.raw"
+            dynamic.write_text(
+                " 0x0000000000000001 (NEEDED)             Shared library: [libbench-root.so]\n"
+                " 0x0000000000000001 (NEEDED)             Shared library: [libc.so]\n"
+                " 0x000000000000001d (RUNPATH)            Library runpath: [/app/lib:/usr/lib]\n"
+                " 0x0000000000000004 (HASH)               0x0\n", encoding="utf-8",
+            )
+            direct_hash = hashlib.sha256(direct.read_bytes()).hexdigest()
+            transitive_hash = hashlib.sha256(transitive.read_bytes()).hexdigest()
+            dependencies = {
+                "libbench-root.so": ["libbench-leaf.so", "libc.so"],
+                "libbench-leaf.so": ["libc.so"],
+            }
+            closure = (
+                SimpleNamespace(name="libbench-root.so", path=str(direct), sha256=direct_hash,
+                                role="direct", needed=tuple(dependencies["libbench-root.so"])),
+                SimpleNamespace(name="libbench-leaf.so", path=str(transitive), sha256=transitive_hash,
+                                role="transitive", needed=tuple(dependencies["libbench-leaf.so"])),
+            )
+            search = SimpleNamespace(
+                schema=3, kind="runpath", path="/app/lib:/usr/lib", hash_style="sysv",
+                application_dso_closure=closure,
+            )
+            contract = type("Contract", (), {"validate": staticmethod(lambda *args, **kwargs: search)})()
+            raw_trace = [f"trace: {direct}", f"trace: {archive}(builtins.o)"]
+            receipt = directory / "workload.crabc-link.json"
+            record = {
+                "schema": 3, "format": "crabc-x86-64-owned-dynamic-sysroot-v1", "mode": "pie", "binding": "now",
+                "runtime_imports": [], "application_runpath": "/app/lib:/usr/lib", "application_rpath": None,
+                "application_search_kind": "runpath", "application_hash_style": "sysv",
+                "output_path": str(output), "output_sha256": hashlib.sha256(output.read_bytes()).hexdigest(),
+                "manifest_sha256": hashlib.sha256(manifest.read_bytes()).hexdigest(),
+                "application_dsos": {"libbench-root.so": direct_hash, "libbench-leaf.so": transitive_hash},
+                "application_dso_roles": {"libbench-root.so": "direct", "libbench-leaf.so": "transitive"},
+                "application_dso_needed": dependencies, "owned_runtime_inputs": [],
+                "input_receipts": [
+                    {"role": "direct-application-dso", "name": "libbench-root.so", "path": str(direct), "sha256": direct_hash},
+                    {"role": "transitive-application-dso", "name": "libbench-leaf.so", "path": str(transitive), "sha256": transitive_hash},
+                    {"role": "linker-input", "path": str(archive), "sha256": hashlib.sha256(archive.read_bytes()).hexdigest()},
+                ],
+                "resolved_linker": {"path": "/usr/bin/ld.mold", "sha256": "a" * 64},
+                "link_command": ["/usr/bin/ld.mold", str(direct), str(archive)],
+                "link_trace": raw_trace, "campaign_complete": False,
+            }
+            receipt.write_text(json.dumps(record), encoding="utf-8")
+            with patch.object(evidence, "_receipt_contract", return_value=contract):
+                result = evidence.validate_dynamic_graph_receipt(
+                    checkout=ROOT, product=product, receipt_path=receipt, output=output, dynamic_raw=dynamic,
+                    expected_direct=["libbench-root.so"], expected_needed=dependencies,
+                    expected_search_path="/app/lib:/usr/lib",
+                )
+            self.assertEqual(result["direct_dsos"], ["libbench-root.so"])
+            self.assertEqual(json.loads(receipt.read_text(encoding="utf-8"))["link_trace"], raw_trace)
 
 
 class ImageToolManifestTests(unittest.TestCase):

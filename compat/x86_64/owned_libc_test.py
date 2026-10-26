@@ -24,6 +24,7 @@ import tomllib
 from typing import Any, Iterable, Sequence
 
 import owned_dynamic_receipt as receipt_contract
+import owned_posix_product_evidence as product_evidence
 import installed_compiler_translation as translation_contract
 
 sys.dont_write_bytecode = True
@@ -931,7 +932,7 @@ def verify_candidate_receipt(
     direct_text = {str(path) for path in direct}
     archive = str(library / "libcrabc-builtins.a")
     seen: set[str] = set()
-    for item in trace:
+    for item in product_evidence.semantic_link_trace(trace):
         if item in direct_text:
             seen.add(item)
         elif item == archive or (item.startswith(archive + "(") and item.endswith(")")):

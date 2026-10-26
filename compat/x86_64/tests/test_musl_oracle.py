@@ -4,6 +4,7 @@ import hashlib
 import importlib.util
 import io
 from pathlib import Path
+import re
 import subprocess
 import sys
 import tarfile
@@ -16,6 +17,7 @@ ROOT = Path(__file__).resolve().parents[3]
 SPEC = importlib.util.spec_from_file_location("native_musl_pin_test", ROOT / "compat/x86_64/musl_oracle.py")
 ORACLE = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(ORACLE)
+ORACLE_COMPILER = Path("/usr/local/bin/crabc-x86_64-musl-gcc")
 
 
 class NativeMuslOracleTests(unittest.TestCase):
@@ -143,6 +145,28 @@ class NativeMuslOracleTests(unittest.TestCase):
             path.write_text("[musl_native]\n" + "".join(f'{key} = "{item}"\n' for key, item in pin.items()))
             with self.assertRaises(ValueError):
                 ORACLE.load_pin(path)
+
+    @unittest.skipUnless(ORACLE_COMPILER.is_file(), "requires pinned musl compiler")
+    def test_native_oracle_link_modes_emit_interpreter_only_for_executables(self):
+        source = self.root / "link-modes.c"
+        source.write_text("int shared_probe(void) { return 23; }\nint main(void) { return 0; }\n")
+        modes = {
+            "shared": (("-fPIC", "-shared"), "DYN", False),
+            "static": (("-static", "-fno-pie", "-no-pie"), "EXEC", False),
+            "static-pie": (("-static-pie", "-fPIE"), "DYN", False),
+            "pie": (("-fPIE", "-pie"), "DYN", True),
+        }
+        for mode, (arguments, expected_type, has_interpreter) in modes.items():
+            with self.subTest(mode=mode):
+                output = self.root / mode
+                subprocess.run([str(ORACLE_COMPILER), *arguments, str(source), "-o", str(output)],
+                               check=True, capture_output=True, text=True)
+                headers = subprocess.run(["/usr/bin/readelf", "-lW", str(output)],
+                                         check=True, capture_output=True, text=True).stdout
+                elf_type = re.search(r"Elf file type is (\w+)", headers)
+                self.assertIsNotNone(elf_type)
+                self.assertEqual(elf_type.group(1), expected_type)
+                self.assertEqual(bool(re.search(r"(?m)^\s*INTERP\s", headers)), has_interpreter)
 
 
 if __name__ == "__main__":

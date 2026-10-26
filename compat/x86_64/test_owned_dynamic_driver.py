@@ -269,6 +269,26 @@ class InstalledDynamicDriverTests(unittest.TestCase):
                 fail=self._receipt_value_failure, allow_application_dso_closure=True,
             )
 
+    def test_libc_test_receipt_reader_retains_mold_trace_and_rejects_foreign_inputs(self):
+        import owned_libc_test as libc_test
+        root = self._installed_native_driver_fixture()
+        work = Path(self.temporary.name) / "libc-test-trace"
+        work.mkdir()
+        source, workload, output = work / "main.c", work / "main.o", work / "main"
+        source.write_text("int main(void) { return 0; }\n")
+        self._run_native(["/usr/bin/gcc", "-fPIC", "-c", str(source), "-o", str(workload)])
+        driver.execute(root, ["--dynamic-pie", str(workload), "-o", str(output)])
+        receipt = Path(str(output) + ".crabc-link.json")
+        recorded = json.loads(receipt.read_text())
+        arguments = dict(product=root, output=output, receipt_path=receipt, objects=[workload],
+                         application_dsos=[], shared_object=False, runpath="/usr/lib", export_dynamic=False)
+        observed = libc_test.verify_candidate_receipt(**arguments)
+        self.assertEqual(observed["link_trace"], recorded["link_trace"])
+        recorded["link_trace"].append("trace: /foreign/runtime.o")
+        receipt.write_text(json.dumps(recorded))
+        with self.assertRaisesRegex(libc_test.EvidenceError, "unadmitted input"):
+            libc_test.verify_candidate_receipt(**arguments)
+
     def test_executable_weak_data_import_keeps_its_dynamic_got_relocation(self):
         root = self._installed_native_driver_fixture()
         work = Path(self.temporary.name) / "weak-data-import"
