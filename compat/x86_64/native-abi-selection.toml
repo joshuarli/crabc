@@ -1,5 +1,5 @@
 # Exact native owner policy; complete observations and unresolved evidence stay separate.
-schema = "crabc.x86_64-native-abi-selection/v1"
+schema = "crabc.x86_64-native-abi-selection/v2"
 target = "x86_64-unknown-linux-musl"
 
 [closure]
@@ -591,6 +591,22 @@ delegated_members = []
 placement_metadata = {}
 reason = "Exact source-defined getauxval compatibility alias."
 static_metadata_rule = "selected-native-oracle-function"
+
+[[owner_groups]]
+id = "crt-application-main-consumer"
+selector = "explicit"
+disposition = "application-supplied"
+owner = "x86-crt-application-main"
+family = "crt.dynamic-startup"
+artifacts = ["static-crt1.o", "static-Scrt1.o", "static-rcrt1.o", "dynamic-crt1.o", "dynamic-Scrt1.o"]
+sources = ["crt/src/x86_64_startup.rs", "crt/src/x86_64_dynamic_startup.rs", "compat/x86_64/installed_crt_startup_probe.c"]
+members = ["main"]
+members_file = ""
+expected_type = ""
+delegated_members = []
+placement_metadata = {}
+reason = "The application supplies main to the CRT; libc does not provide it."
+static_metadata_rule = "explicit"
 
 [[owner_groups]]
 id = "source-owned-crt-libc-startup-boundary"

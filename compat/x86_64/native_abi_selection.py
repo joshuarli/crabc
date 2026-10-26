@@ -63,8 +63,8 @@ import loader_structural_owner_contract_reader as loader_structural_owner_eviden
 import owned_bsd_random_receipt as bsd_random_evidence
 import runtime_private_facades as runtime_facades
 
-SCHEMA = 'crabc.x86_64-native-abi-selection-report/v8'
-CONTRACT_SCHEMA = 'crabc.x86_64-native-abi-selection/v1'
+SCHEMA = 'crabc.x86_64-native-abi-selection-report/v9'
+CONTRACT_SCHEMA = 'crabc.x86_64-native-abi-selection/v2'
 TARGET = inventory.TARGET
 CONTRACT_PATH = MODULE_DIR / 'native-abi-selection.toml'
 RUST_ALLOC_HANDLER_NAMES = (
@@ -144,7 +144,25 @@ POSIX_SYSV_SIGNAL_LIMITS = [
 BSD_RANDOM_NAMES = ('initstate', 'random', 'setstate', 'srandom')
 BSD_RANDOM_REQUIREMENT = 'current source-bound selected-provider and BSD random semantic receipt'
 SELECTORS = {'header-providers', 'feature-abi-only', 'exact-file-members', 'explicit'}
-DISPOSITIONS = {'public-provider', 'private-provider', 'unresolved'}
+APPLICATION_MAIN_GROUP = 'crt-application-main-consumer'
+APPLICATION_MAIN_OWNER = 'x86-crt-application-main'
+APPLICATION_MAIN_ARTIFACTS = (
+    'static-crt1.o', 'static-Scrt1.o', 'static-rcrt1.o', 'dynamic-crt1.o', 'dynamic-Scrt1.o',
+)
+APPLICATION_MAIN_SOURCES = (
+    'crt/src/x86_64_startup.rs', 'crt/src/x86_64_dynamic_startup.rs',
+    'compat/x86_64/installed_crt_startup_probe.c',
+)
+APPLICATION_MAIN_REASON = 'The application supplies main to the CRT; libc does not provide it.'
+APPLICATION_MAIN_OWNER_GROUP = {
+    'id': APPLICATION_MAIN_GROUP, 'selector': 'explicit', 'disposition': 'application-supplied',
+    'owner': APPLICATION_MAIN_OWNER, 'family': 'crt.dynamic-startup',
+    'artifacts': list(APPLICATION_MAIN_ARTIFACTS), 'sources': list(APPLICATION_MAIN_SOURCES),
+    'members': ['main'], 'members_file': '', 'delegated_members': [], 'expected_type': '',
+    'placement_metadata': {},
+    'static_metadata_rule': 'explicit', 'reason': APPLICATION_MAIN_REASON,
+}
+DISPOSITIONS = {'public-provider', 'private-provider', 'application-supplied', 'unresolved'}
 SUPPORTED_TYPES = {'NOTYPE', 'OBJECT', 'FUNC', 'SECTION', 'FILE', 'COMMON', 'TLS', 'IFUNC'}
 SUPPORTED_BINDINGS = {'LOCAL', 'GLOBAL', 'WEAK', 'UNIQUE'}
 SUPPORTED_VISIBILITIES = {'DEFAULT', 'INTERNAL', 'HIDDEN', 'PROTECTED'}
@@ -849,6 +867,14 @@ def validate_contract(value: Any) -> dict[str, Any]:
                         },
                     }), 'initial TID private operation source ABI differs')
                 strings(record['requirements'], 'private requirements', empty=False)
+    application_main_groups = [row for row in result['owner_groups']
+                               if row['id'] == APPLICATION_MAIN_GROUP]
+    application_supplied_groups = [row for row in result['owner_groups']
+                                   if row['disposition'] == 'application-supplied']
+    require(len(application_supplied_groups) == 1
+            and application_supplied_groups == application_main_groups
+            and same(application_main_groups[0], APPLICATION_MAIN_OWNER_GROUP),
+            'application-supplied owner group roster differs')
     exact(result['requirements'], {'declaration_companion', 'semantic_receipts', 'family_receipts', 'same_source_products'}, 'requirements')
     require(all(value is True for value in result['requirements'].values()), 'selection requirements cannot be disabled')
     explicit_members = [name for row in result['owner_groups'] if row['selector'] == 'explicit' for name in row['members']]
@@ -2468,17 +2494,16 @@ def expand_obligations(contract: Mapping[str, Any], inputs: Mapping[str, Any]) -
             record['selection'] = {'disposition': group['disposition'], 'owner': group['owner'], 'group': group['id'],
                                    'family': group['family'], 'reason': group['reason'], 'sources': group['sources']}
             record['origins'].append({'kind': 'source-owner-group', 'group': group['id']})
-            for artifact in group['artifacts']:
-                metadata = {'type': group['expected_type']} if group['expected_type'] else {}
-                # Frozen metadata is an explicit inherited shared requirement;
-                # function byte sizes and static binding are separate domains.
-                frozen_row = next((r for r in inputs['frozen_dynamic'] if r['name'] == name), None)
-                if artifact == 'candidate-shared' and frozen_row:
-                    metadata.update({key: frozen_row[key] for key in ('type', 'binding', 'visibility')})
-                    if frozen_row['type'] in {'OBJECT', 'TLS'}:
-                        metadata['size_bytes'] = int(frozen_row['size'])
-                metadata.update(group['placement_metadata'].get(artifact, {}))
-                record['expected_placements'].append({'artifact_key': artifact, 'metadata': metadata, 'metadata_rule': group['static_metadata_rule'] if artifact == 'candidate-static' else 'explicit'})
+            if group['disposition'] != 'application-supplied':
+                for artifact in group['artifacts']:
+                    metadata = {'type': group['expected_type']} if group['expected_type'] else {}
+                    frozen_row = next((r for r in inputs['frozen_dynamic'] if r['name'] == name), None)
+                    if artifact == 'candidate-shared' and frozen_row:
+                        metadata.update({key: frozen_row[key] for key in ('type', 'binding', 'visibility')})
+                        if frozen_row['type'] in {'OBJECT', 'TLS'}:
+                            metadata['size_bytes'] = int(frozen_row['size'])
+                    metadata.update(group['placement_metadata'].get(artifact, {}))
+                    record['expected_placements'].append({'artifact_key': artifact, 'metadata': metadata, 'metadata_rule': group['static_metadata_rule'] if artifact == 'candidate-static' else 'explicit'})
             if group['id'] == 'declared-callable-providers' and name in BSD_RANDOM_NAMES:
                 # Feature routing selects a provider, but cannot prove ordinary
                 # extraction, state behavior, or fork recovery in real products.
@@ -8490,6 +8515,199 @@ def _crt_libc_start_main_observations(companion: Mapping[str, Any]) -> Mapping[s
     return report['observations']
 
 
+def attach_application_main_imports(accounting: Mapping[str, Any], rule: Mapping[str, Any],
+                                   crt_companion: Mapping[str, Any] | None,
+                                   observations: Mapping[str, Any] | None) -> list[dict[str, Any]]:
+    require(same(rule, APPLICATION_MAIN_OWNER_GROUP), 'application main owner rule differs')
+    if crt_companion is None or observations is None:
+        return []
+    reader = _crt_startup_reader()
+    if not set(APPLICATION_MAIN_SOURCES) <= set(reader.COLLECTOR_SOURCES):
+        return []
+    expected_products = set(reader.product_paths(reader.ROOT, {
+        'static_preparation': {'primary': {'path': '.'}}, 'dynamic_product': {'path': '.'},
+    }))
+    products = crt_companion.get('products', {})
+    account = crt_companion.get('account', {})
+    cohort = crt_companion.get('cohort_inputs', {})
+    runtime_labels = [row['label'] for row in reader.runtime_cells()]
+    if (crt_companion.get('status') != 'crt-startup-observed-with-boundaries'
+            or type(products) is not dict or set(products) != expected_products
+            or not all(type(products[name]) is dict and type(products[name].get('sha256')) is str
+                       and re.fullmatch(r'[0-9a-f]{64}', products[name]['sha256'])
+                       for name in expected_products)
+            or type(account) is not dict or account.get('identity_names') != list(reader.NAMES)
+            or account.get('runtime_labels') != runtime_labels
+            or observations.get('runtime_labels') != runtime_labels
+            or type(cohort) is not dict
+            or not all(type(cohort.get(name)) is dict and type(cohort[name].get('sha256')) is str
+                       and re.fullmatch(r'[0-9a-f]{64}', cohort[name]['sha256'])
+                       for name in ('static_manifest', 'dynamic_manifest'))):
+        return []
+    records, placements, occurrences = _accounting_indexes(
+        accounting, description='application main CRT imports')
+    key = identity_key(identity('main'))
+    record = records.get(key)
+    if (record is None
+            or record.get('selection') != {
+                'disposition': 'application-supplied', 'owner': APPLICATION_MAIN_OWNER,
+                'group': APPLICATION_MAIN_GROUP, 'family': 'crt.dynamic-startup',
+                'reason': APPLICATION_MAIN_REASON, 'sources': list(APPLICATION_MAIN_SOURCES),
+            }
+            or record.get('expected_placements') != []
+            or record.get('unresolved') != [ORDINARY_IMPORT_REASON]
+            or any(placement_identity == key for placement_identity, _artifact in placements)):
+        return []
+    identity_blockers = [blocker for blocker in accounting['blockers']
+                         if blocker.get('code') == 'identity-unresolved'
+                         and identity_key(blocker.get('identity', {})) == key]
+    if ([blocker.get('reason') for blocker in identity_blockers] != [ORDINARY_IMPORT_REASON]):
+        return []
+    candidate_rows = [row for row in occurrences.values()
+                      if not row.get('artifact_key', '').startswith('reference-')
+                      and row.get('row', {}).get('name') == 'main']
+    if (len(candidate_rows) != len(APPLICATION_MAIN_ARTIFACTS)
+            or {row.get('artifact_key') for row in candidate_rows} != set(APPLICATION_MAIN_ARTIFACTS)):
+        return []
+    by_artifact = {row['artifact_key']: row for row in candidate_rows}
+    for artifact in APPLICATION_MAIN_ARTIFACTS:
+        occurrence = by_artifact[artifact]
+        row = occurrence['row']
+        if (occurrence.get('role') != 'import' or occurrence.get('table') != '.symtab'
+                or occurrence.get('member_name') is not None
+                or occurrence.get('member_index') is not None
+                or occurrence.get('member_occurrence') is not None
+                or occurrence.get('artifact_sha256') != products[artifact]['sha256']
+                or occurrence.get('accounting') != {
+                    'disposition': 'application-supplied', 'owner': APPLICATION_MAIN_OWNER,
+                    'scope': artifact,
+                }
+                or identity_key(row_identity(row)) != key
+                or {field: row.get(field) for field in (
+                    'type', 'binding', 'visibility', 'section_index', 'version', 'version_index',
+                    'version_default', 'size_bytes',
+                )} != {
+                    'type': 'NOTYPE', 'binding': 'GLOBAL', 'visibility': 'DEFAULT',
+                    'section_index': 'UND', 'version': None, 'version_index': None,
+                    'version_default': False,
+                    'size_bytes': 0,
+                }):
+            return []
+    facts = observations.get('complete_elf_facts', {})
+    if type(facts) is not dict:
+        return []
+
+    def named_rows(fact: Any) -> list[tuple[str, Mapping[str, Any]]]:
+        members = fact if type(fact) is list else [fact]
+        result = []
+        for member in members:
+            if type(member) is not dict or type(member.get('symbol_tables')) is not list:
+                return []
+            for table in member['symbol_tables']:
+                if type(table) is not dict or type(table.get('rows')) is not list:
+                    return []
+                result.extend((table.get('name'), row) for row in table['rows']
+                              if type(row) is dict and row.get('name') == 'main')
+        return result
+
+    for artifact in ('candidate-static', 'candidate-shared', 'candidate-loader'):
+        if artifact not in facts or named_rows(facts[artifact]):
+            return []
+    for artifact in APPLICATION_MAIN_ARTIFACTS:
+        component_rows = named_rows(facts.get(artifact))
+        if (len(component_rows) != 1 or component_rows[0][0] != '.symtab'
+                or not same(component_rows[0][1], by_artifact[artifact]['row'])):
+            return []
+    relocations = observations.get('product_relocations', {})
+    if type(relocations) is not dict:
+        return []
+    expected_relocations = {
+        'static-crt1.o': ((10, 0), (10, 0)),
+        'static-Scrt1.o': ((9, -4),),
+        'static-rcrt1.o': ((9, -4),),
+        'dynamic-crt1.o': ((10, 0), (10, 0)),
+        'dynamic-Scrt1.o': ((9, -4),),
+    }
+    for artifact, expected in expected_relocations.items():
+        rows = relocations.get(artifact)
+        if type(rows) is not list:
+            return []
+        main_relocations = [row for row in rows if row.get('name') == 'main']
+        actual = sorted((row.get('kind'), row.get('addend')) for row in main_relocations)
+        if (actual != sorted(expected)
+                or not all(row.get('binding') == 'GLOBAL' and row.get('visibility') == 'DEFAULT'
+                           and row.get('symbol_section') == 0 and row.get('symbol_type') == '0'
+                           and row.get('symbol_value') == 0
+                           for row in main_relocations)):
+            return []
+
+    def main_definition(fact: Any) -> dict[str, Any] | None:
+        matches = named_rows(fact)
+        if len(matches) != 1 or matches[0][0] != '.symtab':
+            return None
+        row = matches[0][1]
+        if (row.get('type') != 'FUNC' or row.get('binding') != 'GLOBAL'
+                or row.get('visibility') != 'DEFAULT' or row.get('version') is not None
+                or row.get('version_default') is not False
+                or type(row.get('size_bytes')) is not int or row['size_bytes'] <= 0
+                or type(row.get('section_index')) is not str
+                or not re.fullmatch(r'[1-9][0-9]*', row['section_index'])):
+            return None
+        members = fact if type(fact) is list else [fact]
+        sections = [section for member in members for section in member.get('sections', [])
+                    if type(section) is dict and str(section.get('index')) == row['section_index']]
+        if (len(sections) != 1 or sections[0].get('type') != 'PROGBITS'
+                or 'X' not in sections[0].get('flags', '')):
+            return None
+        return dict(row)
+
+    object_sizes = {}
+    for name in ('normal-object', 'empty-object'):
+        row = main_definition(facts.get(name))
+        if row is None:
+            return []
+        object_sizes[name] = row['size_bytes']
+    executables = observations.get('executables', {})
+    if type(executables) is not dict:
+        return []
+    candidate_cases = [case for case in reader.cases() if not case['mode'].startswith('oracle-')]
+    linked_executables = {}
+    for case in candidate_cases:
+        name, mode, variant = case['name'], case['mode'], case['variant']
+        fact = facts.get(name)
+        executable = executables.get(name)
+        row = main_definition(fact)
+        if row is None or type(executable) is not dict:
+            return []
+        expected_type = ('EXEC (Executable file)' if mode in
+                         ('static', 'owned-non-pie', 'conventional-non-pie')
+                         else 'DYN (Position-Independent Executable file)')
+        if ([field.get('value') for field in fact.get('header', {}).get('fields', [])
+             if field.get('name') == 'Type'] != [expected_type]
+                or row['size_bytes'] != object_sizes[variant + '-object']
+                or executable.get('needed') != ([] if mode in ('static', 'static-pie') else ['libc.so'])):
+            return []
+        linkage = {'static': 'static', 'static-pie': 'static-pie',
+                   'owned-pie': 'pie', 'owned-non-pie': 'non-pie'}.get(mode)
+        if linkage is not None:
+            validated = executable.get('link', {}).get('validated', {})
+            manifest = 'static_manifest' if mode in ('static', 'static-pie') else 'dynamic_manifest'
+            if (validated.get('linkage') != linkage
+                    or validated.get('product_manifest_sha256') != cohort[manifest]['sha256']
+                    or validated.get('executable_sha256') != executable.get('identity', {}).get('sha256')):
+                return []
+        linked_executables[name] = variant + '-object'
+    join = {
+        'identity': copy.deepcopy(record['identity']), 'owner': APPLICATION_MAIN_OWNER,
+        'crt_import_occurrence_indices': sorted(row['index'] for row in candidate_rows),
+        'application_objects': ['empty-object', 'normal-object'],
+        'linked_executables': linked_executables, 'runtime_labels': runtime_labels,
+    }
+    _remove_identity_requirements(
+        accounting, record, [ORDINARY_IMPORT_REASON], description='application-supplied main CRT imports')
+    return [join]
+
+
 def attach_libc_start_main_imports(accounting: Mapping[str, Any],
                                    crt_companion: Mapping[str, Any] | None,
                                    rust_members: Sequence[str],
@@ -14161,6 +14379,10 @@ def _build_report(*, contract_path: Path, paths: Mapping[str, Path], declaration
         empty=([], []))
     crt_observations = (_crt_libc_start_main_observations(crt_startup_companion)
                         if crt_startup_companion is not None else None)
+    application_main_import_joins = attach_application_main_imports(
+        accounting, next(row for row in contract['owner_groups'] if row['id'] == APPLICATION_MAIN_GROUP),
+        crt_startup_companion, crt_observations,
+    )
     libc_start_main_import_joins = attach_libc_start_main_imports(
         accounting, crt_startup_companion, archive_map['static_rust_members'], crt_observations,
     )
@@ -14369,6 +14591,7 @@ def _build_report(*, contract_path: Path, paths: Mapping[str, Path], declaration
             'crt_startup_companion': crt_startup_companion,
             'crt_startup_joins': crt_startup_joins,
             'crt_descriptor_handoff_joins': crt_descriptor_handoff_joins,
+            'application_main_import_joins': application_main_import_joins,
             'libc_start_main_import_joins': libc_start_main_import_joins,
             'linker_dynamic_table_joins': linker_dynamic_table_joins,
             'crt_init_fini_import_joins': crt_init_fini_import_joins,

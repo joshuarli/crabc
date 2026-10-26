@@ -171,6 +171,23 @@ class SelectionContractTests(unittest.TestCase):
                 with self.assertRaisesRegex(selection.SelectionError, 'initial TID'):
                     selection.validate_contract(changed)
 
+    def test_application_supplied_disposition_is_closed_to_main(self):
+        contract = selection.load_contract()
+        group = next(row for row in contract['owner_groups']
+                     if row['id'] == 'crt-application-main-consumer')
+        self.assertEqual(group['members'], ['main'])
+        self.assertEqual(group['artifacts'], [
+            'static-crt1.o', 'static-Scrt1.o', 'static-rcrt1.o', 'dynamic-crt1.o', 'dynamic-Scrt1.o',
+        ])
+        self.assertEqual(group['expected_type'], '')
+        self.assertEqual(group['placement_metadata'], {})
+        changed = copy.deepcopy(contract)
+        allocator_group = next(row for row in changed['owner_groups']
+                               if row['id'] == 'allocator-shared-local')
+        allocator_group['disposition'] = 'application-supplied'
+        with self.assertRaisesRegex(selection.SelectionError, 'application-supplied owner group roster'):
+            selection.validate_contract(changed)
+
     def test_public_data_runtime_reader_report_bridges_only_the_fixed_receipt_name(self):
         work = ROOT / '.work/x86_64/native-abi-selection-tests'
         work.mkdir(parents=True, exist_ok=True)
@@ -1650,6 +1667,238 @@ class LibcStartMainImportBindingTests(unittest.TestCase):
                 self.assertEqual(self.bind(accounting, companion, observations), [])
                 self.assertEqual(accounting['identities'][0]['unresolved'], [selection.ORDINARY_IMPORT_REASON])
                 self.assertEqual(len(accounting['blockers']), 1)
+
+
+class ApplicationMainImportBindingTests(unittest.TestCase):
+    NAME = 'main'
+    CRT_ARTIFACTS = ('static-crt1.o', 'static-Scrt1.o', 'static-rcrt1.o',
+                     'dynamic-crt1.o', 'dynamic-Scrt1.o')
+    PRODUCTS = ('candidate-static', 'candidate-shared', 'candidate-loader',
+                *CRT_ARTIFACTS, 'static-crti.o', 'static-crtn.o',
+                'dynamic-crabc-dynamic-attach.o', 'dynamic-crti.o', 'dynamic-crtn.o')
+    SOURCES = ['crt/src/x86_64_startup.rs', 'crt/src/x86_64_dynamic_startup.rs',
+               'compat/x86_64/installed_crt_startup_probe.c']
+    RELOCATIONS = {
+        'static-crt1.o': ((10, 0), (10, 0)),
+        'static-Scrt1.o': ((9, -4),),
+        'static-rcrt1.o': ((9, -4),),
+        'dynamic-crt1.o': ((10, 0), (10, 0)),
+        'dynamic-Scrt1.o': ((9, -4),),
+    }
+    MODE_LINKAGE = {'static': ('static', 'EXEC (Executable file)'),
+                    'static-pie': ('static-pie', 'DYN (Position-Independent Executable file)'),
+                    'owned-pie': ('pie', 'DYN (Position-Independent Executable file)'),
+                    'owned-non-pie': ('non-pie', 'EXEC (Executable file)')}
+
+    @classmethod
+    def rule(cls):
+        return {
+            'id': 'crt-application-main-consumer', 'selector': 'explicit',
+            'disposition': 'application-supplied', 'owner': 'x86-crt-application-main',
+            'family': 'crt.dynamic-startup', 'artifacts': list(cls.CRT_ARTIFACTS),
+            'sources': list(cls.SOURCES), 'members': [cls.NAME], 'members_file': '',
+            'delegated_members': [], 'expected_type': '', 'placement_metadata': {},
+            'static_metadata_rule': 'explicit',
+            'reason': 'The application supplies main to the CRT; libc does not provide it.',
+        }
+
+    @staticmethod
+    def symbol(*, section='UND', kind='NOTYPE', binding='GLOBAL', size=0, row_index=1):
+        return {'name': 'main', 'raw_name': 'main', 'version': None, 'version_default': False,
+                'version_index': None, 'section_index': section, 'type': kind, 'binding': binding,
+                'visibility': 'DEFAULT', 'value': '0000000000000000', 'size': str(size),
+                'size_bytes': size, 'row_index': row_index}
+
+    @classmethod
+    def object_fact(cls, row=None, *, elf_type='REL'):
+        rows = [] if row is None else [row]
+        section_index = row['section_index'] if row is not None else '1'
+        sections = ([{'index': int(section_index), 'name': '.text.main', 'type': 'PROGBITS',
+                      'flags': 'AX', 'address': '0000000000001000', 'size': '000040'}]
+                    if row is not None and section_index != 'UND' else [])
+        return {
+            'header': {'fields': [{'name': 'Type', 'value': elf_type}]},
+            'sections': sections,
+            'symbol_tables': [{'name': '.symtab', 'section_index': 4, 'rows': rows}],
+        }
+
+    def candidate_facts(self):
+        observed, artifacts = {}, {}
+        for index, artifact in enumerate(selection.elf_facts.ARTIFACTS, 1):
+            member = {'member': artifact.key + '.member', 'member_index': 0,
+                      'member_occurrence': 0, 'sections': [],
+                      'symbol_tables': [{'name': '.symtab', 'section_index': 4, 'rows': []}]}
+            observed[artifact.key] = [member] if artifact.kind == 'archive' else member
+            digest = self.PRODUCTS.index(artifact.key) + 1 if artifact.key in self.PRODUCTS else index
+            artifacts[artifact.key] = {'identity': {'sha256': format(digest, '064x')}}
+            if artifact.key in self.CRT_ARTIFACTS:
+                member['symbol_tables'][0]['rows'].append(self.symbol(
+                    row_index=self.CRT_ARTIFACTS.index(artifact.key) + 20, section='UND'))
+        return {'facts': observed, 'artifacts': artifacts}
+
+    def selected_accounting(self):
+        rule = self.rule()
+        return selection.account_placements([{
+            'identity': selection.identity(self.NAME), 'origins': [],
+            'selection': {'disposition': rule['disposition'], 'owner': rule['owner'],
+                          'group': rule['id'], 'family': rule['family'],
+                          'reason': rule['reason'], 'sources': rule['sources']},
+            'expected_placements': [], 'unresolved': [],
+        }], self.candidate_facts())
+
+    def component(self):
+        reader = selection._crt_startup_reader()
+        products = {name: {'sha256': format(index + 1, '064x')}
+                    for index, name in enumerate(self.PRODUCTS)}
+        cohort = {'static_manifest': {'sha256': 'a' * 64},
+                  'dynamic_manifest': {'sha256': 'b' * 64}}
+        runtime_labels = [row['label'] for row in reader.runtime_cells()]
+        account = {'identity_names': list(reader.NAMES), 'runtime_labels': runtime_labels}
+        companion = {'status': 'crt-startup-observed-with-boundaries', 'products': products,
+                     'cohort_inputs': cohort, 'account': account}
+        facts = {
+            'candidate-static': [{'member': 'libc.o', 'member_index': 0, 'member_occurrence': 0,
+                                  **self.object_fact()}],
+            'candidate-shared': self.object_fact(), 'candidate-loader': self.object_fact(),
+            'dynamic-crabc-dynamic-attach.o': self.object_fact(),
+        }
+        product_relocations = {}
+        for index, artifact in enumerate(self.CRT_ARTIFACTS):
+            imported = self.symbol(row_index=index + 20)
+            facts[artifact] = self.object_fact(imported)
+            product_relocations[artifact] = [
+                {'name': self.NAME, 'kind': kind, 'addend': addend, 'binding': 'GLOBAL',
+                 'visibility': 'DEFAULT', 'symbol_section': 0, 'symbol_type': '0', 'symbol_value': 0}
+                for kind, addend in self.RELOCATIONS[artifact]
+            ]
+        facts['normal-object'] = self.object_fact(
+            self.symbol(section='1', kind='FUNC', size=343, row_index=1))
+        facts['empty-object'] = self.object_fact(
+            self.symbol(section='1', kind='FUNC', size=343, row_index=1))
+        executables = {}
+        candidate_cases = [row for row in reader.cases() if not row['mode'].startswith('oracle-')]
+        linked_executables = {}
+        for case in candidate_cases:
+            name, mode, variant = case['name'], case['mode'], case['variant']
+            linkage, elf_type = self.MODE_LINKAGE.get(
+                mode, (None, 'DYN (Position-Independent Executable file)'
+                       if mode in ('conventional-pie', 'default-pie')
+                       else 'EXEC (Executable file)'))
+            facts[name] = self.object_fact(
+                self.symbol(section='1', kind='FUNC', size=343, row_index=1), elf_type=elf_type)
+            needed = [] if mode in ('static', 'static-pie') else ['libc.so']
+            executable = {'identity': {'sha256': name}, 'needed': needed}
+            if linkage is not None:
+                manifest = cohort['static_manifest'] if mode in ('static', 'static-pie') else cohort['dynamic_manifest']
+                executable['link'] = {'validated': {
+                    'linkage': linkage, 'product_manifest_sha256': manifest['sha256'],
+                    'executable_sha256': name,
+                }}
+            executables[name] = executable
+            linked_executables[name] = variant + '-object'
+        observations = {'complete_elf_facts': facts, 'product_relocations': product_relocations,
+                        'executables': executables, 'runtime_labels': runtime_labels}
+        return companion, observations, candidate_cases, linked_executables
+
+    def bind(self, accounting=None, companion=None, observations=None):
+        if companion is None or observations is None:
+            companion, observations, _, _ = self.component()
+        return selection.attach_application_main_imports(
+            accounting or self.selected_accounting(), self.rule(), companion, observations)
+
+    def unowned_accounting(self):
+        expanded = [{
+            'identity': selection.identity(self.NAME), 'origins': [],
+            'selection': {'disposition': 'unresolved', 'owner': None,
+                          'reason': 'candidate occurrence has no reviewed native owner/disposition'},
+            'expected_placements': [],
+            'unresolved': ['candidate binding ownership is unresolved'],
+        }]
+        return selection.account_placements(expanded, self.candidate_facts())
+
+    def test_unowned_crt_main_imports_keep_both_selection_reasons(self):
+        accounting = self.unowned_accounting()
+        record = accounting['identities'][0]
+        self.assertEqual(record['identity'], selection.identity(self.NAME))
+        self.assertEqual(record['unresolved'], sorted((
+            'candidate binding ownership is unresolved', selection.ORDINARY_IMPORT_REASON,
+        )))
+        imports = [row for row in accounting['occurrences'] if row['row']['name'] == self.NAME]
+        self.assertEqual([row['artifact_key'] for row in imports], list(self.CRT_ARTIFACTS))
+        self.assertEqual([row['role'] for row in imports], ['import'] * 5)
+        self.assertEqual([row['reason'] for row in accounting['blockers']], record['unresolved'])
+
+    def test_contract_assigns_application_main_without_provider_placements(self):
+        contract = selection.load_contract()
+        rule = next(row for row in contract['owner_groups']
+                    if row['id'] == self.rule()['id'])
+        self.assertEqual(rule, self.rule())
+        inputs = selection.load_source_inputs(contract, selection.CONTRACT_PATH)
+        expanded = selection.expand_obligations(contract, inputs)
+        record = next(row for row in expanded if row['identity'] == selection.identity(self.NAME))
+        self.assertEqual(record['selection']['disposition'], 'application-supplied')
+        self.assertEqual(record['selection']['owner'], 'x86-crt-application-main')
+        self.assertEqual(record['expected_placements'], [])
+
+    def test_exact_application_main_imports_join_runtime_cohort(self):
+        accounting = self.selected_accounting()
+        companion, observations, cases, linked = self.component()
+        joins = self.bind(accounting, companion, observations)
+        self.assertEqual(len(joins), 1)
+        import_indices = sorted(row['index'] for row in accounting['occurrences']
+                                if row['row']['name'] == self.NAME)
+        self.assertEqual(joins[0], {
+            'identity': selection.identity(self.NAME), 'owner': 'x86-crt-application-main',
+            'crt_import_occurrence_indices': import_indices,
+            'application_objects': ['empty-object', 'normal-object'],
+            'linked_executables': linked,
+            'runtime_labels': companion['account']['runtime_labels'],
+        })
+        self.assertEqual(len(cases), 11)
+        self.assertEqual(accounting['identities'][0]['unresolved'], [])
+        self.assertEqual(accounting['blockers'], [])
+
+    def test_main_join_rejects_foreign_or_incomplete_consumer_evidence(self):
+        def altered_accounting(name):
+            accounting = self.selected_accounting()
+            companion, observations, _cases, _linked = self.component()
+            name(accounting, companion, observations)
+            return accounting, companion, observations
+
+        cases = {
+            'wrong CRT relocation mode': lambda a, c, o: o['product_relocations']['static-Scrt1.o'][0].update(kind=10),
+            'missing CRT import': lambda a, c, o: a['occurrences'].pop(),
+            'foreign CRT import': lambda a, c, o: a['occurrences'][0].update(artifact_key='dynamic-crabc-dynamic-attach.o'),
+            'extra static libc provider': lambda a, c, o: o['complete_elf_facts']['candidate-static'][0]['symbol_tables'][0]['rows'].append(
+                self.symbol(section='1', kind='FUNC', size=343)),
+            'extra shared libc provider': lambda a, c, o: o['complete_elf_facts']['candidate-shared']['symbol_tables'][0]['rows'].append(
+                self.symbol(section='1', kind='FUNC', size=343)),
+            'extra loader libc provider': lambda a, c, o: o['complete_elf_facts']['candidate-loader']['symbol_tables'][0]['rows'].append(
+                self.symbol(section='1', kind='FUNC', size=343)),
+            'unexpected loader placement join': lambda a, c, o: a['placement_joins'].append(
+                {'identity': selection.identity(self.NAME), 'artifact_key': 'candidate-loader'}),
+            'altered application object': lambda a, c, o: o['complete_elf_facts']['empty-object']['symbol_tables'][0]['rows'][0].update(binding='WEAK'),
+            'wrong executable mode': lambda a, c, o: o['complete_elf_facts']['static-normal']['header']['fields'][0].update(
+                value='DYN (Position-Independent Executable file)'),
+            'incomplete runtime cohort': lambda a, c, o: c['account']['runtime_labels'].pop(),
+        }
+        for label, alter in cases.items():
+            with self.subTest(label=label):
+                accounting, companion, observations = altered_accounting(alter)
+                before = copy.deepcopy(accounting)
+                self.assertEqual(self.bind(accounting, companion, observations), [])
+                self.assertEqual(accounting, before)
+
+    def test_main_join_preserves_unrelated_identity_requirement(self):
+        accounting = self.selected_accounting()
+        companion, observations, _cases, _linked = self.component()
+        accounting['identities'][0]['unresolved'].append('unrelated owner requirement remains')
+        accounting['blockers'].append({'code': 'identity-unresolved',
+                                        'identity': selection.identity(self.NAME),
+                                        'reason': 'unrelated owner requirement remains'})
+        before = copy.deepcopy(accounting)
+        self.assertEqual(self.bind(accounting, companion, observations), [])
+        self.assertEqual(accounting, before)
 
 
 class LinkerDynamicTableBindingTests(unittest.TestCase):

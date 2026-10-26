@@ -696,9 +696,15 @@ a retained runtime map, probe, source snapshot, or raw command output cannot
 change after the initial reader replay. A report with only one component stays
 independently optional and leaves both descriptor requirements unresolved.
 
-The selection report schema is `crabc.x86_64-native-abi-selection-report/v8`;
-v8 adds the optional closed `posix_sysv_signal_admission_companion` and
-`posix_sysv_signal_admission_joins` fields. v7 added the optional closed
+The selection report schema is `crabc.x86_64-native-abi-selection-report/v9`.
+Version 9 adds `application_main_import_joins` from the existing CRT v5
+component receipt. It records the exact five import occurrences, application
+objects, candidate executables, and runtime labels. The selection contract is
+`crabc.x86_64-native-abi-selection/v2`; version 2 adds the exact
+`crt-application-main-consumer` owner group with no expected provider
+placements. Version 8 added the optional closed
+`posix_sysv_signal_admission_companion` and
+`posix_sysv_signal_admission_joins` fields. Version 7 added the optional closed
 `locale_alias_contract_companion` and `locale_alias_contract_joins` fields.
 The current selector also records the
 non-promoting `text_family_semantic_companion` and multi-family
@@ -896,6 +902,12 @@ from the named current source roots. It does not promote another spelling with a
 | `source-owned-exit-and-atfork-runtime`, `source-owned-auxv-observation-alias`, `source-owned-stack-check-fail`, `source-owned-pivot-root-syscall` | Process lifecycle, auxv, compiler-failure, and kernel-admin roots select static/shared providers. `pivot_root` stays in its existing kernel-admin feature and capability/error contract. |
 | `source-owned-crypt-private-helper-bodies` | `crypt.rs` selects five direct private static/shared bodies. They are not aliases merely because some values coincide. `crypt_r` is a distinct weak wrapper of `__crypt_r`, outside this five-member group. |
 | `source-owned-crt-libc-startup-boundary`, `source-owned-loader-libc-tls-boundary` | `__libc_start_main` has distinct static and shared libc bodies; the five CRT undefined edges retain their independent startup proof. `__tls_get_addr` has distinct shared-libc and loader bodies and deliberately has no static-libc placement. |
+| `crt-application-main-consumer` | `main` is application-supplied. The five CRT objects import it, and no libc provider placement is expected. The selector joins those rows to both application objects, all eleven candidate executables, and the current 24-cell CRT runtime cohort. |
+
+The `application-supplied` disposition is limited to the `main` owner group.
+The selector removes its ordinary-import blocker only when all five CRT imports
+have exact `GLOBAL DEFAULT UND NOTYPE` rows and the current CRT receipt proves
+the application definitions, executable modes, and runtime cells.
 
 For public source-selected functions with a static placement, the policy may use
 `selected-native-oracle-function` only to obtain the static `FUNC` binding and
