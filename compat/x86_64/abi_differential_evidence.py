@@ -80,6 +80,7 @@ SELECTION_COMPANIONS = (
     "prepared_worker_tls_report",
     "errno_storage_lifecycle_report",
     "native_c_allocator_boundary_report",
+    "owned_aio_report",
     "stdio_alias_contract_report",
     "crt_startup_report",
     "syscall_alias_contract_report",
@@ -503,6 +504,12 @@ def _only_child_report(output: Path) -> Path:
     return children[0] / "report.json"
 
 
+def _only_owned_aio_report(output: Path) -> Path:
+    children = [path for path in output.iterdir() if path.is_dir() and not path.is_symlink()]
+    require(len(children) == 1, f"{output} does not hold exactly one owned AIO evidence tree")
+    return children[0] / "owned-aio-receipts.json"
+
+
 def _tmpdir_env(output: Path) -> dict[str, str]:
     output.mkdir()
     return {"TMPDIR": str(output)}
@@ -559,6 +566,11 @@ PRODUCERS = (
         lambda c, r, o: (["python3", "-B", "compat/x86_64/native_c_allocator_boundary.py", "collect", *_p(c),
                           "--elf-facts-report", str(c.native_abi_elf_facts), "--output", str(o)], {}),
         _in),
+    CompanionProducer(
+        "owned_aio_report",
+        lambda c, r, o: (["bash", "compat/x86_64/run_owned_aio.sh", "--static-sysroot",
+                          str(c.static_product), str(c.dynamic_product)], _tmpdir_env(o)),
+        _only_owned_aio_report, requires=("native_c_allocator_boundary_report",)),
     CompanionProducer(
         "stdio_alias_contract_report",
         lambda c, r, o: (["python3", "-B", "compat/x86_64/owned_stdio_alias_contract_reader.py", "collect",

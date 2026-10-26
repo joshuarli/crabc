@@ -145,6 +145,61 @@ class AbiDifferentialEvidenceTests(unittest.TestCase):
         self.assertEqual(environment, {})
         self.assertIn("compiler_helper_installed_links", evidence.DIRECTORY_COMPANIONS)
 
+    def test_owned_aio_producer_uses_the_selected_pair_and_boundary(self) -> None:
+        producer = next(row for row in evidence.PRODUCERS if row.keyword == "owned_aio_report")
+        output = self.work / "owned-aio"
+        boundary = self.work / "native-c-allocator-boundary.json"
+        boundary.write_text("boundary receipt")
+        argv, environment = producer.command(
+            self.cohort(), {"native_c_allocator_boundary_report": boundary}, output)
+        self.assertEqual(producer.requires, ("native_c_allocator_boundary_report",))
+        self.assertEqual(argv, ["bash", "compat/x86_64/run_owned_aio.sh", "--static-sysroot",
+                                str(self.work / "static"), str(self.work / "dynamic")])
+        self.assertEqual(environment, {"TMPDIR": str(output)})
+        child = output / "owned-aio-fixture"
+        child.mkdir()
+        report = child / "owned-aio-receipts.json"
+        report.write_text("receipt")
+        self.assertEqual(producer.report(output), report)
+
+    def test_owned_aio_report_is_sealed_and_forwarded_with_boundary(self) -> None:
+        import native_abi_ratchet
+        import native_abi_selection
+
+        aio_work = self.work / "owned-aio"
+        aio_work.mkdir()
+        report = aio_work / "owned-aio-receipts.json"
+        report.write_text("owned aio receipt")
+        boundary = self.work / "native-c-allocator-boundary.json"
+        boundary.write_text("boundary receipt")
+        self.record["selection_companions"] = {
+            "owned_aio_report": {"path": report.relative_to(evidence.ROOT).as_posix(),
+                                  "sha256": evidence._sha256(report)},
+            "native_c_allocator_boundary_report": {
+                "path": boundary.relative_to(evidence.ROOT).as_posix(),
+                "sha256": evidence._sha256(boundary),
+            },
+        }
+        self.assertEqual(evidence.load(self.write()).selection_arguments()["owned_aio_report"], report)
+        output = evidence.OUTPUT_PARENT / f"assemble-aio-test-{self.work.name}"
+        self.addCleanup(lambda: __import__("shutil").rmtree(output, ignore_errors=True))
+        arguments = argparse.Namespace(**self.cohort().__dict__, output=output, companions=None,
+                                       selection_companion=[f"owned_aio_report={report}",
+                                                            f"native_c_allocator_boundary_report={boundary}"])
+
+        def build_report(*, output, **kwargs):
+            self.assertEqual(kwargs["owned_aio_report"], report)
+            self.assertEqual(kwargs["native_c_allocator_boundary_report"], boundary)
+            output.mkdir()
+            (output / "report.json").write_text("selection")
+
+        with mock.patch.object(native_abi_ratchet, "check", return_value=self.reports["native_abi_ratchet"]), \
+             mock.patch.object(native_abi_selection, "build_report", side_effect=build_report):
+            receipt = evidence.assemble(arguments)
+        entry = json.loads(receipt.read_text())["selection_companions"]["owned_aio_report"]
+        self.assertEqual(entry, {"path": report.relative_to(evidence.ROOT).as_posix(),
+                                 "sha256": evidence._sha256(report)})
+
     def test_directory_companion_seal_binds_symbolic_link_target(self) -> None:
         work = self.work / "symlink-companion"
         work.mkdir()
