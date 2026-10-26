@@ -185,8 +185,6 @@ int main(int argc,char **argv) {
         2
 #endif
     ) _Exit(108);
-    /* Volatile inputs require the compiler's ordinary two-word division
-     * helper, whose provider must be extracted beside the owned CRT. */
     volatile unsigned __int128 numerator=((unsigned __int128)1<<100)|7;
     volatile unsigned __int128 denominator=3;
     if (numerator/denominator!=((((unsigned __int128)1<<100)|7)/3)) _Exit(112);

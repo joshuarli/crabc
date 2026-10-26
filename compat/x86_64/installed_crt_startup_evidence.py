@@ -23,6 +23,7 @@ import owned_posix_product_evidence as products
 import owned_posix_static_products as static_products
 import owned_dynamic_qualification as qualification
 import owned_static_link_authority as static_authority
+import compiler_helper_evidence as compiler_helpers
 from loader_debug_abi_evidence import Elf
 ROOT=Path(__file__).resolve().parents[2]
 SCHEMA='crabc.x86_64-installed-crt-startup/v4'
@@ -389,6 +390,8 @@ RUNTIME_SOURCES=('crt/src/x86_64_startup.rs','crt/src/x86_64_dynamic_startup.rs'
 COLLECTOR_SOURCES=tuple(dict.fromkeys((*substrate.COLLECTOR_SOURCES,*RUNTIME_SOURCES,
     'compat/x86_64/installed_crt_startup_evidence.py','compat/x86_64/installed-crt-startup.toml',
     'compat/x86_64/installed_crt_startup_probe.c','compat/x86_64/installed_crt_startup_descriptor_dso.c',
+    'compat/x86_64/compiler_helper_evidence.py',compiler_helpers.CONTRACT.as_posix(),
+    compiler_helpers.SOURCE.as_posix(),compiler_helpers.SOURCE.with_name('x86_64_binary80.rs').as_posix(),
     DESCRIPTOR_RUNTIME_PROBE,
     'compat/x86_64/owned_static_link_authority.py',
     'compat/x86_64/prepared_worker_tls_evidence.py')))
@@ -499,6 +502,9 @@ def plan(root,work,inputs,tools):
     def add(label,argv,cwd='/workspace',**expected):
         specs.append({'label':label.replace('.','-').lower(),'argv':argv,'cwd':cwd,**expected})
     library=root/inputs['dynamic_product']['path']/'usr/lib';static=root/inputs['static_preparation']['primary']['path']/'usr/lib'
+    helper_contract=compiler_helpers.load_contract(root)
+    helper_archive=helper_contract['archive']['name']
+    helper_exclusion=helper_contract['dynamic_application']['linker_option']
     for variant in ('normal','empty'):
         add(variant+'-compile',[tool('dynamic_driver'),'--dynamic-shared-object','-std=c11',
             *(['-DEMPTY_ARRAYS'] if variant=='empty' else []),'-c',p('installed_crt_startup_probe.c'),'-o',p(variant+'.o')])
@@ -513,13 +519,14 @@ def plan(root,work,inputs,tools):
             entry='rcrt1.o' if mode=='oracle-static-pie' else 'Scrt1.o' if pie else 'crt1.o'
             crt=static/entry if mode=='default-pie' else work/'inputs/oracle-crt'/entry
             runtime=library/'libc.so' if mode.startswith('conventional') else work/'inputs/oracle-static/libc_a' if is_static else work/'qualification-oracle/runtime'
-            # Explicit ordinary musl CRT input is essential: the owned driver
-            # deliberately selects its own entry and cannot certify this mode.
+            conventional=mode.startswith('conventional')
             argv=[tool('linker'),*(['-static'] if is_static else []),*(['-pie'] if pie else []),
                   '--hash-style=sysv','-z','now','-z','relro','-z','noexecstack','--no-undefined',
-                  *([] if is_static else ['--allow-shlib-undefined','--dynamic-linker',
+                  *([] if is_static else ['--allow-shlib-undefined',
+                     *([helper_exclusion] if conventional else []),'--dynamic-linker',
                      '/lib/ld-crabc-x86_64.so.1' if mode.startswith('conventional') else '/lib/ld-musl-x86_64.so.1']),
                   m(crt),p('inputs/oracle-crt/crti.o'),obj,
+                  *([m(library/helper_archive)] if conventional else []),
                   *([m(runtime)] if is_static or mode.startswith('conventional') else ['-L',p('oracle-link'),'-l:libc.so']),p('inputs/oracle-crt/crtn.o'),'-Map='+p(name+'.map'),'-o',p(name)]
             add(name+'-link',argv)
     admission=expected_contract()['descriptor_handoff']['admission'];dso=admission['dso']

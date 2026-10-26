@@ -1039,10 +1039,13 @@ int main(void) {
     def test_final_link_plan_keeps_same_object_and_exact_conventional_crt_owner(self):
         from unittest.mock import patch
         root=Path('/workspace');work=root/'.work/receipt'
+        checkout=reader.ROOT
+        helper_contract=reader.compiler_helpers.load_contract(checkout)
         inputs={'static_preparation':{'primary':{'path':'.work/static'}},'dynamic_product':{'path':'.work/dynamic'}}
         tools={name:{'original':{'path':'/tool/'+name}} for name in (*reader.ordinary.TOOL_ROLES,'ar')}
         tools['chroot']['invocation']={}
-        with patch.object(reader.ordinary,'validate_chroot_invocation',return_value='/usr/sbin/chroot'):
+        with patch.object(reader.ordinary,'validate_chroot_invocation',return_value='/usr/sbin/chroot'), \
+             patch.object(reader.compiler_helpers,'load_contract',return_value=helper_contract):
             plan=reader.plan(root,work,inputs,tools)
         for compilation in [x for x in plan if x['label'].endswith('-compile')]:
             self.assertNotIn('-fPIC',compilation['argv'])
@@ -1063,5 +1066,44 @@ int main(void) {
                 self.assertIn(str(work/'inputs/oracle-crt'/('Scrt1.o' if case['mode']=='conventional-pie' else 'crt1.o')),row['argv'])
                 self.assertIn(str(root/'.work/dynamic/usr/lib/libc.so'),row['argv'])
                 self.assertNotIn(str(root/'.work/dynamic/usr/lib/crabc-dynamic-attach.o'),row['argv'])
+                archive=str(root/'.work/dynamic/usr/lib'/helper_contract['archive']['name'])
+                self.assertEqual(row['argv'].count(archive),1)
+                exclusion=helper_contract['dynamic_application']['linker_option']
+                self.assertIn(exclusion,row['argv'])
+                self.assertLess(row['argv'].index(exclusion),
+                                row['argv'].index('--dynamic-linker'))
+                self.assertLess(row['argv'].index(str(work/(case['variant']+'.o'))),
+                                row['argv'].index(archive))
+                self.assertLess(row['argv'].index(archive),
+                                row['argv'].index(str(root/'.work/dynamic/usr/lib/libc.so')))
+
+        parent=checkout/'.work/tmp';parent.mkdir(parents=True,exist_ok=True)
+        with tempfile.TemporaryDirectory(dir=parent) as directory:
+            work=Path(directory)
+            with patch.object(reader.ordinary,'validate_chroot_invocation',return_value='/usr/sbin/chroot'):
+                spec=next(item for item in reader.plan(checkout,work,inputs,tools)
+                          if item['label']=='conventional-pie-normal-link')
+            raw=work/'raw';raw.mkdir()
+            paths={suffix:reader.ordinary.raw_path(work,spec['label'],suffix)
+                   for suffix in ('command.json','stdout','stderr','status')}
+            paths['command.json'].write_text(json.dumps(spec['argv'])+'\n')
+            paths['stdout'].write_bytes(b'')
+            paths['stderr'].write_bytes(b'')
+            paths['status'].write_bytes(b'0\n')
+            row={'label':spec['label'],'argv':list(spec['argv']),'cwd':spec['cwd'],'outcome':'ok',
+                 **{field:reader.ordinary.work_file_identity(checkout,paths[suffix],'startup '+field)
+                    for field,suffix in (('command','command.json'),('stdout','stdout'),
+                                         ('stderr','stderr'),('status','status'))}}
+            with patch.object(reader,'plan',return_value=[spec]):
+                reader.validate_commands(checkout,work,inputs,tools,[row])
+                archive=reader.ordinary.mounted(
+                    checkout,checkout/inputs['dynamic_product']['path']/'usr/lib'/helper_contract['archive']['name'])
+                exclusion=helper_contract['dynamic_application']['linker_option']
+                legacy_argv=[argument for argument in spec['argv'] if argument not in (archive,exclusion)]
+                paths['command.json'].write_text(json.dumps(legacy_argv)+'\n')
+                legacy={**row,'argv':legacy_argv,
+                        'command':reader.ordinary.work_file_identity(checkout,paths['command.json'],'legacy command')}
+                with self.assertRaises(reader.StartupEvidenceError):
+                    reader.validate_commands(checkout,work,inputs,tools,[legacy])
 
 if __name__=='__main__':unittest.main()

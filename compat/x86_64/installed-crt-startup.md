@@ -28,8 +28,10 @@ allocator bodies. Dynamic main empty-array cases have genuinely empty ranges.
 Static ET_EXEC/static PIE use their installed driver; owned dynamic PIE and
 non-PIE use the installed dynamic driver and its actual receipts. Ordinary
 conventional entry explicitly links retained pinned-musl crt1/Scrt1 with the
-selected candidate shared libc and loader. The static product's default
-Scrt1 is separately exercised with pinned musl and its weak-null handoff.
+selected candidate shared libc and loader. Each conventional link places
+`libcrabc-builtins.a` before `libc.so`. Its exclusion flag keeps archive
+symbols out of the executable's dynamic symbol table. The static product's
+default Scrt1 is separately exercised with pinned musl and its weak-null handoff.
 The musl references consume retained explicit CRT/libc inputs with the same
 pinned linker, with no ambient target runtime search.
 
