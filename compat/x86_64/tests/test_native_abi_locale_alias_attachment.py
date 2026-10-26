@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Policy guards for the finite locale/time alias selector attachment.
 
-The receipt may discharge only four hidden time bodies and the three matching
-public feature-alias requirements.  The rest of the 98-name component remains
+The receipt may discharge only four hidden time bodies and the four matching
+public feature-alias requirements. The rest of the 100-name component remains
 validated by its own reader; it is not a blanket selector provider route.
 """
 from __future__ import annotations
@@ -22,7 +22,7 @@ import locale_alias_contract_receipt as locale_reader
 
 
 PRIVATE_BODIES = ('__asctime_r', '__gmtime_r', '__localtime_r', '__strftime_l')
-PUBLIC_FEATURE_ALIASES = ('asctime_r', 'localtime_r', 'strftime_l')
+PUBLIC_FEATURE_ALIASES = ('asctime_r', 'localtime_r', 'strftime_l', 'wcsftime_l')
 GROUP = 'component-owned-locale-time-private-bodies'
 OWNER = 'x86-owned-locale-time-private-bodies'
 REQUIREMENT = 'current source-bound locale/time alias and normal consumer receipt'
@@ -56,7 +56,7 @@ class LocaleAliasOwnerPolicyTests(unittest.TestCase):
                     },
                 ])
 
-    def test_no_receipt_keeps_exactly_seven_locale_requirements_open(self) -> None:
+    def test_no_receipt_keeps_exactly_eight_locale_requirements_open(self) -> None:
         contract = selection.load_contract(selection.CONTRACT_PATH)
         inputs = selection.load_source_inputs(contract, selection.CONTRACT_PATH)
         records = {row['identity']['name']: row for row in selection.expand_obligations(contract, inputs)}
@@ -67,7 +67,17 @@ class LocaleAliasOwnerPolicyTests(unittest.TestCase):
                 'source-selected alias requires exact feature archive selection and component receipt',
             ])
         self.assertNotIn('__tzset', records)
-        self.assertNotEqual(records['wcsftime_l']['unresolved'], [])
+        self.assertEqual(records['wcsftime_l']['unresolved'], [
+            'source-selected alias requires exact feature archive selection and component receipt',
+        ])
+
+    def test_wcsftime_alias_uses_the_planned_owned_static_feature_route(self) -> None:
+        feature = selection._locale_alias_source_feature_requirements()['wcsftime_l']
+        self.assertEqual(feature['target'], '__wcsftime_l')
+        self.assertEqual(feature['binding'], 'weak-same-address')
+        self.assertEqual(feature['owner'], 'x86-owned-static-runtime')
+        self.assertEqual(feature['state'], 'planned')
+        self.assertEqual(feature['feature_selection_source'], 'scripts/build_x86_64_owned_sysroot.py')
 
     def test_product_tree_join_preserves_setgid_descendants_but_not_the_product_root(self) -> None:
         """Match the existing product-owner tree convention exactly."""
@@ -267,7 +277,7 @@ class LocaleAliasAdapterTests(unittest.TestCase):
                 },
             },
             'collector_commands': [], 'runner_commands': commands, 'snapshots': {}, 'artifacts': artifacts,
-            'runtime': {'normal_consumers': True}, 'symbols': {'complete_98_name_contract': True},
+            'runtime': {'normal_consumers': True}, 'symbols': {'complete_100_name_contract': True},
             'nonclaims': list(locale_reader.NONCLAIMS),
         }
         report = self._write('receipt.json', __import__('json').dumps(raw, sort_keys=True).encode() + b'\n')
@@ -430,6 +440,7 @@ class LocaleAliasAdapterTests(unittest.TestCase):
                     if row['identity']['name'] in {
                         '__asctime_r', '__gmtime_r', '__localtime_r', '__strftime_l',
                         'asctime_r', 'gmtime_r', 'localtime_r', 'strftime_l',
+                        'wcsftime_l', '__wcsftime_l',
                     }}
         occurrences: list[dict[str, object]] = []
         placements: list[dict[str, object]] = []
@@ -469,32 +480,144 @@ class LocaleAliasAdapterTests(unittest.TestCase):
                     'expected_metadata': metadata, 'placement_observed': True, 'definition_count': 1,
                     'occurrence_indices': [occurrence_index], 'metadata_differences': [],
                 })
+        visible_indices = {}
+        for artifact, table, name, binding, member in (
+            ('candidate-static', '.symtab', 'wcsftime_l', 'WEAK', True),
+            ('candidate-static', '.symtab', '__wcsftime_l', 'GLOBAL', True),
+            ('candidate-shared', '.dynsym', 'wcsftime_l', 'WEAK', False),
+            ('candidate-shared', '.dynsym', '__wcsftime_l', 'GLOBAL', False),
+            ('candidate-shared', '.symtab', 'wcsftime_l', 'WEAK', False),
+            ('candidate-shared', '.symtab', '__wcsftime_l', 'GLOBAL', False),
+        ):
+            occurrence_index = len(occurrences)
+            occurrences.append({
+                'index': occurrence_index,
+                'artifact_key': artifact,
+                'table': table,
+                'role': 'definition',
+                'member_index': 0 if member else None,
+                'member_occurrence': 0 if member else None,
+                'member_name': 'c.owned_wcsftime.o' if member else None,
+                'table_section_index': 1,
+                'definition_section': {'name': '.text'},
+                'row': self._symbol(name, binding, 'DEFAULT', f'{300 if member else 400:016x}',
+                                    occurrence_index + 1),
+            })
+            visible_indices[(artifact, table, name)] = occurrence_index
+        function_alias_observations = [{
+            'identity': copy.deepcopy(selected['wcsftime_l']['identity']),
+            'target': selection.identity('__wcsftime_l'),
+            'artifact_key': 'candidate-static',
+            'same_domain_pairs': [[
+                visible_indices[('candidate-static', '.symtab', 'wcsftime_l')],
+                visible_indices[('candidate-static', '.symtab', '__wcsftime_l')],
+            ]],
+            'feature_contract': copy.deepcopy(
+                selected['wcsftime_l']['function_alias_requirements'][0]
+            ),
+            'feature_archive_receipt_proven': False,
+            'runtime_semantics_proven': False,
+        }]
         blockers = [
             {'code': 'identity-unresolved', 'identity': copy.deepcopy(record['identity']), 'reason': reason}
             for record in selected.values() for reason in record['unresolved']
         ]
         return {'identities': list(selected.values()), 'placement_joins': placements,
-                'occurrences': occurrences, 'blockers': blockers}
+                'occurrences': occurrences, 'function_alias_observations': function_alias_observations,
+                'blockers': blockers}
 
-    def test_attachment_discharges_only_the_seven_locale_reasons(self) -> None:
+    def _companion(self) -> dict[str, object]:
         report, reader = self._receipt()
         with mock.patch.object(selection, '_locale_alias_reader', return_value=reader):
             companion = selection.native_locale_alias_adapter(
                 report, facts=self.facts, measurement=self.measurement, paths=self.paths, source=self.source,
             )
-            assert companion is not None
-            accounting = self._accounting()
-            before = copy.deepcopy(accounting)
-            self.assertEqual(selection.attach_native_locale_alias(accounting, None), [])
-            self.assertEqual(accounting, before)
-            joins = selection.attach_native_locale_alias(accounting, companion)
+        assert companion is not None
+        return companion
+
+    def _visible_row(self, accounting: dict[str, object], artifact: str,
+                     table: str, name: str) -> dict[str, object]:
+        rows = [row for row in accounting['occurrences']
+                if row['artifact_key'] == artifact and row['table'] == table
+                and row['row']['name'] == name]
+        self.assertEqual(len(rows), 1)
+        return rows[0]
+
+    def test_adapter_projects_the_complete_100_name_locale_contract(self) -> None:
+        projection = self._companion()['result']['source_contract']
+        self.assertEqual(len(projection['names']), 100)
+        self.assertIn('wcsftime_l', projection['names'])
+        self.assertIn('__wcsftime_l', projection['names'])
+        self.assertTrue(projection['wcsftime_l_in_contract'])
+
+    def test_attachment_discharges_only_the_eight_locale_reasons(self) -> None:
+        accounting = self._accounting()
+        before = copy.deepcopy(accounting)
+        self.assertEqual(selection.attach_native_locale_alias(accounting, None), [])
+        self.assertEqual(accounting, before)
+        joins = selection.attach_native_locale_alias(accounting, self._companion())
         self.assertEqual(len(joins), 1)
         self.assertEqual(len(joins[0]['time_aliases']), 4)
-        self.assertEqual(joins[0]['complete_elf_occurrence_count'], 20)
+        self.assertEqual(len(joins[0]['visible_aliases']), 1)
+        self.assertEqual(joins[0]['complete_elf_occurrence_count'], 26)
         records = {row['identity']['name']: row for row in accounting['identities']}
         for name in PRIVATE_BODIES + PUBLIC_FEATURE_ALIASES:
             self.assertEqual(records[name]['unresolved'], [])
         self.assertEqual(records['gmtime_r']['unresolved'], [])
+        self.assertEqual(joins[0]['wcsftime_l_in_contract'], True)
+        self.assertEqual(accounting['blockers'], [])
+
+    def test_visible_wcsftime_pair_joins_strong_provider_in_all_selected_tables(self) -> None:
+        accounting = self._accounting()
+        joins = selection.attach_native_locale_alias(accounting, self._companion())
+        visible = joins[0]['visible_aliases'][0]
+        self.assertEqual(visible['public_identity']['name'], 'wcsftime_l')
+        self.assertEqual(visible['provider_identity']['name'], '__wcsftime_l')
+        self.assertEqual(visible['static_member']['name'], 'c.owned_wcsftime.o')
+        self.assertEqual(visible['shared_tables'], ['.dynsym', '.symtab'])
+        self.assertEqual(visible['feature_contract']['owner'], 'x86-owned-static-runtime')
+        self.assertFalse(visible['feature_archive_receipt_proven'])
+        self.assertFalse(visible['runtime_semantics_proven'])
+
+    def test_visible_pair_rejects_invalid_rows_and_stale_feature_proof(self) -> None:
+        cases = (
+            ('hidden provider', lambda a: self._visible_row(a, 'candidate-static', '.symtab', '__wcsftime_l')['row'].update(visibility='HIDDEN')),
+            ('missing provider', lambda a: a['occurrences'].remove(self._visible_row(a, 'candidate-shared', '.dynsym', '__wcsftime_l'))),
+            ('weak provider', lambda a: self._visible_row(a, 'candidate-static', '.symtab', '__wcsftime_l')['row'].update(binding='WEAK')),
+            ('strong public alias', lambda a: self._visible_row(a, 'candidate-static', '.symtab', 'wcsftime_l')['row'].update(binding='GLOBAL')),
+            ('wrong member', lambda a: self._visible_row(a, 'candidate-static', '.symtab', '__wcsftime_l').update(member_name='c.other.o')),
+            ('wrong section', lambda a: self._visible_row(a, 'candidate-static', '.symtab', '__wcsftime_l')['row'].update(section_index='2')),
+            ('wrong address', lambda a: self._visible_row(a, 'candidate-static', '.symtab', '__wcsftime_l')['row'].update(value='000000000000012d')),
+            ('extra dynsym row', lambda a: a['occurrences'].append({
+                **copy.deepcopy(self._visible_row(a, 'candidate-shared', '.dynsym', '__wcsftime_l')),
+                'index': max(row['index'] for row in a['occurrences']) + 1,
+            })),
+            ('foreign planned feature', lambda a: a['identities'][next(
+                index for index, row in enumerate(a['identities'])
+                if row['identity']['name'] == 'wcsftime_l'
+            )]['function_alias_requirements'][0].update(owner='x86-owned-dynamic-runtime')),
+            ('stale aggregate proof', lambda a: a['function_alias_observations'][0].update(same_domain_pairs=[])),
+        )
+        for label, mutate in cases:
+            with self.subTest(label=label):
+                accounting = self._accounting()
+                mutate(accounting)
+                with self.assertRaises(selection.SelectionError):
+                    selection.attach_native_locale_alias(accounting, self._companion())
+
+    def test_attachment_preserves_unrelated_wcsftime_and_identity_blockers(self) -> None:
+        accounting = self._accounting()
+        public = next(row for row in accounting['identities'] if row['identity']['name'] == 'wcsftime_l')
+        public['unresolved'].append('unrelated proof remains open')
+        unrelated = {
+            'code': 'identity-unresolved', 'identity': copy.deepcopy(public['identity']),
+            'reason': 'unrelated proof remains open',
+        }
+        accounting['blockers'].append(unrelated)
+        joins = selection.attach_native_locale_alias(accounting, self._companion())
+        self.assertEqual(len(joins), 1)
+        self.assertEqual(public['unresolved'], ['unrelated proof remains open'])
+        self.assertIn(unrelated, accounting['blockers'])
 
     def test_selector_cli_forwards_the_optional_locale_receipt_path(self) -> None:
         report, _reader = self._receipt()

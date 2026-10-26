@@ -866,15 +866,18 @@ replaying the header declaration envelope.
   it neither widens private provider scope nor treats the receipt as resolver
   family evidence.
 - `locale_alias_contract_receipt.py` owns source-bound replay for the complete
-  existing locale/time surface and every normal installed-header consumer
+  100-name locale/time surface and every normal installed-header consumer
   command. The optional `--locale-alias-contract-report` does not select that
-  whole surface. It joins only `__asctime_r`, `__gmtime_r`, `__localtime_r`,
-  `__strftime_l`, and the existing feature requirements for `asctime_r`,
-  `localtime_r`, and `strftime_l`. The `tzset`/`__tzset` relation remains
-  source-local with no selected `__tzset` placement; `wcsftime_l` is not part
-  of this component. The selector requires exact current-source and full
-  product-tree joins, then replays the public reader after the join. It does
-  not infer a provider from a symbol name or complete locale behavior.
+  whole surface. It joins four hidden bodies, `__asctime_r`, `__gmtime_r`,
+  `__localtime_r`, and `__strftime_l`, plus the public feature requirements for
+  `asctime_r`, `localtime_r`, `strftime_l`, and `wcsftime_l`. It joins the weak
+  public `wcsftime_l` alias to the `GLOBAL DEFAULT` `__wcsftime_l` provider in
+  the candidate static archive and shared library. Its feature archive and
+  runtime semantics remain unproven. The `tzset`/`__tzset` relation remains
+  source-local with no selected `__tzset` placement. The selector requires
+  exact current-source and full product-tree joins, then replays the public
+  reader after the join. It does not infer a provider from a symbol name or
+  complete locale behavior.
 - `loader_structural_owner_contract_reader.py` owns retained replay for the
   eight existing structural replacements in `loader-entry-stages`,
   `loader-registration-operations`, and `loader-always-atomic-guard`.  The

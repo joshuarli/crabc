@@ -291,10 +291,12 @@ LOCALE_ALIAS_PRIVATE_GROUP = 'component-owned-locale-time-private-bodies'
 LOCALE_ALIAS_PRIVATE_OWNER = 'x86-owned-locale-time-private-bodies'
 LOCALE_ALIAS_RECEIPT_REQUIREMENT = 'current source-bound locale/time alias and normal consumer receipt'
 LOCALE_ALIAS_PRIVATE_BODIES = ('__asctime_r', '__gmtime_r', '__localtime_r', '__strftime_l')
-LOCALE_ALIAS_PUBLIC_FEATURE_ALIASES = ('asctime_r', 'localtime_r', 'strftime_l')
+LOCALE_ALIAS_PUBLIC_FEATURE_ALIASES = ('asctime_r', 'localtime_r', 'strftime_l', 'wcsftime_l')
+LOCALE_ALIAS_VISIBLE_PAIRS = (('wcsftime_l', '__wcsftime_l'),)
+LOCALE_ALIAS_FEATURE_REQUIREMENT = 'source-selected alias requires exact feature archive selection and component receipt'
 LOCALE_ALIAS_LIMITS = [
-    'Only the four hidden locale/time bodies and three matching public feature aliases are joined.',
-    'The complete 98-name locale receipt remains an input boundary; __tzset has no selected placement and wcsftime_l is excluded.',
+    'Only four hidden locale/time bodies, the visible wcsftime_l pair, and four matching public feature aliases are joined.',
+    'The complete 100-name locale receipt remains an input boundary; __tzset has no selected placement.',
     'The receipt selects no other locale provider, runtime qualification, family completion, promotion, or public support.',
 ]
 RESOLVER_ALIAS_STATIC_LINK_INPUTS = (
@@ -13281,7 +13283,7 @@ def _locale_alias_product_join(reader: Any, validated: Mapping[str, Any], raw: M
 
 
 def _locale_alias_contract_projection(reader: Any) -> dict[str, Any]:
-    """Derive the current finite 98-name surface; do not hard-code a count alone."""
+    """Derive the current finite 100-name surface; do not hard-code a count alone."""
     contract = read_json(ROOT / reader.CONTRACT_PATH)
     expected = {
         'schema', 'oracle', 'visible_aliases', 'hidden_aliases', 'file_local_aliases',
@@ -13306,22 +13308,24 @@ def _locale_alias_contract_projection(reader: Any) -> dict[str, Any]:
         'asctime_r': '__asctime_r', 'gmtime_r': '__gmtime_r',
         'localtime_r': '__localtime_r', 'strftime_l': '__strftime_l',
     }
-    require(len(names) == 98 and dict(hidden) == expected_hidden
+    require(len(visible) == 44 and len(hidden) == 4 and len(names) == 100
+            and dict(hidden) == expected_hidden
             and contract['file_local_aliases'] == {'tzset': '__tzset'}
-            and '__tzset' not in names and 'wcsftime_l' not in names,
-            'locale source contract finite 98-name boundary differs')
+            and '__tzset' not in names
+            and dict(visible).get('wcsftime_l') == '__wcsftime_l',
+            'locale source contract finite 100-name boundary differs')
     return {
         'hidden_aliases': [[public, expected_hidden[public]] for public in expected_hidden],
         'names': sorted(names),
         'source_local_alias': 'tzset/__tzset (source-local oracle distinction)',
-        'wcsftime_l_in_contract': False,
+        'wcsftime_l_in_contract': True,
     }
 
 
 def native_locale_alias_adapter(report_path: Path | None, *, facts: Mapping[str, Any],
                                 measurement: Mapping[str, Any], paths: Mapping[str, Path],
                                 source: Mapping[str, Any]) -> dict[str, Any] | None:
-    """Admit one full locale receipt before selecting its seven exact reasons."""
+    """Admit one full locale receipt before selecting its eight exact reasons."""
     if report_path is None:
         return None
     reader = _locale_alias_reader()
@@ -13396,7 +13400,7 @@ def native_locale_alias_adapter(report_path: Path | None, *, facts: Mapping[str,
 
 
 def _locale_alias_named_rows(occurrences: Mapping[int, Mapping[str, Any]], name: str) -> list[dict[str, Any]]:
-    """Keep the 98-name receipt separate from the seven selector identities."""
+    """Keep the 100-name receipt separate from the eight selector identities."""
     return [dict(row) for row in occurrences.values()
             if type(row.get('row')) is dict and row['row'].get('name') == name]
 
@@ -13413,7 +13417,7 @@ def _locale_alias_one_row(rows: Sequence[Mapping[str, Any]], *, artifact_key: st
 
 
 def _locale_alias_source_feature_requirements() -> dict[str, dict[str, Any]]:
-    """Re-read the three existing public feature requirements exactly."""
+    """Re-read the four existing public feature requirements exactly."""
     contract = load_contract(CONTRACT_PATH)
     inputs = load_source_inputs(contract, CONTRACT_PATH)
     expanded = expand_obligations(contract, inputs)
@@ -13423,7 +13427,8 @@ def _locale_alias_source_feature_requirements() -> dict[str, dict[str, Any]]:
         'feature_selection_source', 'sources', 'baseline_features', 'enabled_features',
     }
     expected = {
-        'asctime_r': '__asctime_r', 'localtime_r': '__localtime_r', 'strftime_l': '__strftime_l',
+        'asctime_r': '__asctime_r', 'localtime_r': '__localtime_r',
+        'strftime_l': '__strftime_l', 'wcsftime_l': '__wcsftime_l',
     }
     requirements: dict[str, dict[str, Any]] = {}
     for public, target in expected.items():
@@ -13434,7 +13439,12 @@ def _locale_alias_source_feature_requirements() -> dict[str, dict[str, Any]]:
         feature = exact(record['function_alias_requirements'][0], fields,
                         f'locale public source feature requirement {public}')
         require(feature['name'] == public and feature['target'] == target
-                and feature['binding'] == 'weak-same-address',
+                and feature['binding'] == 'weak-same-address'
+                and feature['owner'] == 'x86-owned-static-runtime'
+                and feature['state'] == 'planned'
+                and feature['evidence_record'] is None
+                and feature['feature_selection_source'] == 'scripts/build_x86_64_owned_sysroot.py'
+                and feature['enabled_features'] == ['x86-owned-static-runtime'],
                 f'locale public source feature requirement differs: {public}')
         requirements[public] = copy.deepcopy(feature)
     require(tuple(requirements) == LOCALE_ALIAS_PUBLIC_FEATURE_ALIASES,
@@ -13442,9 +13452,142 @@ def _locale_alias_source_feature_requirements() -> dict[str, dict[str, Any]]:
     return requirements
 
 
+def _locale_alias_visible_wcsftime_join(
+        accounting: Mapping[str, Any], records: Mapping[tuple[str, str | None, bool], dict[str, Any]],
+        occurrences: Mapping[int, Mapping[str, Any]], feature: Mapping[str, Any]) -> dict[str, Any]:
+    public, provider = LOCALE_ALIAS_VISIBLE_PAIRS[0]
+    public_record = records.get((public, None, False))
+    provider_record = records.get((provider, None, False))
+    require(public_record is not None
+            and public_record.get('selection', {}).get('disposition') == 'public-provider'
+            and type(public_record.get('function_alias_requirements')) is list
+            and len(public_record['function_alias_requirements']) == 1
+            and same(public_record['function_alias_requirements'][0], feature),
+            'locale wcsftime_l source feature selection differs')
+    require(provider_record is not None
+            and provider_record.get('selection', {}).get('disposition') == 'public-provider'
+            and provider_record['selection'].get('owner') == 'x86-wide-time-alias'
+            and provider_record['selection'].get('group') == 'source-owned-wide-time-same-definition-alias'
+            and LOCALE_ALIAS_RECEIPT_REQUIREMENT not in provider_record.get('unresolved', []),
+            'locale __wcsftime_l must remain a public provider')
+
+    public_metadata = {'type': 'FUNC', 'binding': 'WEAK', 'visibility': 'DEFAULT'}
+    provider_metadata = {'type': 'FUNC', 'binding': 'GLOBAL', 'visibility': 'DEFAULT'}
+    rows = {
+        ('candidate-static', '.symtab', public): _locale_alias_one_row(
+            _locale_alias_named_rows(occurrences, public), artifact_key='candidate-static',
+            table='.symtab', role='definition', metadata=public_metadata,
+            description='locale wcsftime_l static public alias'),
+        ('candidate-static', '.symtab', provider): _locale_alias_one_row(
+            _locale_alias_named_rows(occurrences, provider), artifact_key='candidate-static',
+            table='.symtab', role='definition', metadata=provider_metadata,
+            description='locale __wcsftime_l static provider'),
+        ('candidate-shared', '.dynsym', public): _locale_alias_one_row(
+            _locale_alias_named_rows(occurrences, public), artifact_key='candidate-shared',
+            table='.dynsym', role='definition', metadata=public_metadata,
+            description='locale wcsftime_l shared dynsym alias'),
+        ('candidate-shared', '.dynsym', provider): _locale_alias_one_row(
+            _locale_alias_named_rows(occurrences, provider), artifact_key='candidate-shared',
+            table='.dynsym', role='definition', metadata=provider_metadata,
+            description='locale __wcsftime_l shared dynsym provider'),
+        ('candidate-shared', '.symtab', public): _locale_alias_one_row(
+            _locale_alias_named_rows(occurrences, public), artifact_key='candidate-shared',
+            table='.symtab', role='definition', metadata=public_metadata,
+            description='locale wcsftime_l shared symtab alias'),
+        ('candidate-shared', '.symtab', provider): _locale_alias_one_row(
+            _locale_alias_named_rows(occurrences, provider), artifact_key='candidate-shared',
+            table='.symtab', role='definition', metadata=provider_metadata,
+            description='locale __wcsftime_l shared symtab provider'),
+    }
+    for name in (public, provider):
+        for occurrence in (row for key, row in rows.items() if key[2] == name):
+            require(same(row_identity(occurrence['row']), identity(name)),
+                    f'locale {name} symbol identity differs')
+
+    static_public = rows[('candidate-static', '.symtab', public)]
+    static_provider = rows[('candidate-static', '.symtab', provider)]
+    member = {
+        'name': static_public.get('member_name'),
+        'index': static_public.get('member_index'),
+        'occurrence': static_public.get('member_occurrence'),
+    }
+    require(type(member['name']) is str and member['name']
+            and type(member['index']) is int and not isinstance(member['index'], bool) and member['index'] >= 0
+            and type(member['occurrence']) is int and not isinstance(member['occurrence'], bool)
+            and member['occurrence'] >= 0
+            and all(static_provider.get(field) == static_public.get(field)
+                    for field in ('member_name', 'member_index', 'member_occurrence'))
+            and same_definition_domain(static_public, static_provider),
+            'locale wcsftime_l static aliases differ in member, section, or address')
+
+    shared_public_rows = [rows[('candidate-shared', table, public)] for table in ('.dynsym', '.symtab')]
+    shared_provider_rows = [rows[('candidate-shared', table, provider)] for table in ('.dynsym', '.symtab')]
+    for occurrence in (*shared_public_rows, *shared_provider_rows):
+        require(occurrence.get('member_name') is None and occurrence.get('member_index') is None
+                and occurrence.get('member_occurrence') is None,
+                'locale wcsftime_l shared definition has archive member data')
+    require(same_definition_domain(shared_public_rows[0], shared_provider_rows[0])
+            and same_definition_domain(shared_public_rows[1], shared_provider_rows[1])
+            and same_definition_domain(shared_public_rows[0], shared_public_rows[1])
+            and same_definition_domain(shared_provider_rows[0], shared_provider_rows[1]),
+            'locale wcsftime_l shared aliases differ in section or address')
+
+    expected_indices = {row['index'] for row in rows.values()}
+    actual_indices = set()
+    pair_names = {public, provider}
+    for occurrence in occurrences.values():
+        row = occurrence.get('row')
+        if (occurrence.get('artifact_key') not in {'candidate-static', 'candidate-shared'}
+                or type(row) is not dict or row.get('name') not in pair_names):
+            continue
+        if occurrence.get('artifact_key') == 'candidate-static' and _is_static_member_reference(
+                occurrence, private=set()):
+            require(row.get('type') == 'FUNC', 'locale wcsftime_l static reference is not a function')
+            continue
+        actual_indices.add(occurrence['index'])
+    require(actual_indices == expected_indices,
+            'locale wcsftime_l candidate occurrence roster differs')
+
+    alias_observations = accounting.get('function_alias_observations')
+    require(type(alias_observations) is list, 'locale wcsftime_l aggregate alias observation is absent')
+    matches = [observation for observation in alias_observations
+               if observation.get('identity') == public_record['identity']
+               and observation.get('target') == provider_record['identity']
+               and observation.get('artifact_key') == 'candidate-static']
+    require(len(matches) == 1, 'locale wcsftime_l aggregate alias observation is absent or ambiguous')
+    observation = exact(matches[0], {
+        'identity', 'target', 'artifact_key', 'same_domain_pairs', 'feature_contract',
+        'feature_archive_receipt_proven', 'runtime_semantics_proven',
+    }, 'locale wcsftime_l aggregate alias observation')
+    require(observation['same_domain_pairs'] == [[static_public['index'], static_provider['index']]]
+            and same(observation['feature_contract'], feature)
+            and observation['feature_archive_receipt_proven'] is False
+            and observation['runtime_semantics_proven'] is False,
+            'locale wcsftime_l aggregate feature alias observation differs')
+
+    _remove_identity_requirements(accounting, public_record, (LOCALE_ALIAS_FEATURE_REQUIREMENT,),
+                                  description='locale public alias wcsftime_l')
+    return {
+        'public_identity': copy.deepcopy(public_record['identity']),
+        'provider_identity': copy.deepcopy(provider_record['identity']),
+        'static_public_occurrence_index': static_public['index'],
+        'static_provider_occurrence_index': static_provider['index'],
+        'static_member': member,
+        'shared_dynsym_public_occurrence_index': rows[('candidate-shared', '.dynsym', public)]['index'],
+        'shared_dynsym_provider_occurrence_index': rows[('candidate-shared', '.dynsym', provider)]['index'],
+        'shared_symtab_public_occurrence_index': rows[('candidate-shared', '.symtab', public)]['index'],
+        'shared_symtab_provider_occurrence_index': rows[('candidate-shared', '.symtab', provider)]['index'],
+        'shared_tables': ['.dynsym', '.symtab'],
+        'feature_contract': copy.deepcopy(feature),
+        'feature_archive_receipt_proven': False,
+        'runtime_semantics_proven': False,
+        'requirements_discharged': [LOCALE_ALIAS_FEATURE_REQUIREMENT],
+    }
+
+
 def attach_native_locale_alias(accounting: Mapping[str, Any],
                                companion: Mapping[str, Any] | None) -> list[dict[str, Any]]:
-    """Discharge exactly four private and three public locale/time reasons."""
+    """Discharge exactly four private and four public locale/time reasons."""
     if companion is None:
         return []
     reader = _locale_alias_reader()
@@ -13578,14 +13721,18 @@ def attach_native_locale_alias(accounting: Mapping[str, Any],
         and not _is_static_member_reference(row, private={private for _public, private in hidden_pairs})
     }
     require(actual_indices == expected_indices, 'locale alias candidate occurrence roster differs')
+    visible_join = _locale_alias_visible_wcsftime_join(
+        accounting, records, occurrences, feature_requirements['wcsftime_l'],
+    )
     require(len(occurrences) == occurrence_count
             and sum(row.get('role') == 'unnamed' for row in occurrences.values()) == unnamed_count
             and len(joins) == 4,
             'locale alias attachment changed complete occurrence accounting')
     return [{
         'time_aliases': joins,
+        'visible_aliases': [visible_join],
         'source_local_alias': 'tzset/__tzset (source-local oracle distinction)',
-        'wcsftime_l_in_contract': False,
+        'wcsftime_l_in_contract': True,
         'requirements_discharged': [
             LOCALE_ALIAS_RECEIPT_REQUIREMENT,
             'source-selected alias requires exact feature archive selection and component receipt',
