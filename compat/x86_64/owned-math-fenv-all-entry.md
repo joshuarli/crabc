@@ -80,3 +80,12 @@ the eleven role-object bytes across all pairs. A report from a different source
 transaction, or a single development product pair, cannot satisfy that
 three-pair receipt. Neither the runner nor the adapter completes a math family,
 qualifies a general libm, changes promotion state, or claims public support.
+
+The module also exposes `validate_binary80_feature_work(root, work)` for the
+isolated long-double feature account. It returns the baseline and enabled
+feature sets, exact public additions and bindings, retained archive paths, and
+the concrete symbol rows for the archive and final consumer. Archive rows keep
+the member index and name, section, and value so an alias cannot pass across
+duplicate archive member names. It derives this account from the retained
+source-runtime graphs and artifacts; the existing
+`validate_report` remains the reader for an installed math product pair.

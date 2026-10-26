@@ -14,10 +14,11 @@ import hashlib
 import importlib.util
 import json
 from pathlib import Path
+import re
 import stat
 import subprocess
 import sys
-from typing import Any
+from typing import Any, TypedDict
 
 import owned_math_fenv_all_entry_contract as contract
 import owned_math_fenv_all_entry_evidence as providers
@@ -25,6 +26,8 @@ import owned_crypt_runtime_evidence as payload_evidence
 import owned_dynamic_qualification as qualification
 import owned_posix_family_execution as family
 import owned_posix_product_evidence as product_evidence
+import native_static_source_runtime_closure as source_runtime
+import validate_libc_math_long_double_completion as binary80_stream
 import validate_owned_math_fenv_all_entry as stream
 
 SCHEMA = "crabc.x86_64-owned-math-fenv-all-entry-receipt/v1"
@@ -34,6 +37,8 @@ SCOPE = [
     "math.elementary-long-double", "math.elementary-fenv-sensitive",
     "math.special", "math.complex",
 ]
+LONG_DOUBLE_FEATURE = "x86-math-long-double-completion"
+LONG_DOUBLE_ADDITIONS = ("exp10l", "fdiml", "pow10l")
 LINKAGES = ("static", "static-pie", "dynamic-pie", "dynamic-non-pie")
 EXECUTION_CELLS = (
     ("static", "static-run"),
@@ -53,6 +58,27 @@ CONTRACT = Path("compat/x86_64/owned_math_fenv_all_entry_contract.py")
 COVERAGE = Path("compat/crabc-rs/coverage.toml")
 COMPLEX_BASELINE = Path("compat/x86_64/validate_parity_ledger.py")
 DRIVER = Path("compat/x86_64/owned_math_fenv_all_entry_driver.c")
+
+
+class Binary80SymbolRow(TypedDict):
+    member_index: int | None
+    member: str | None
+    value: str
+    type: str
+    binding: str
+    visibility: str
+    section: str
+
+
+class Binary80FeatureAccount(TypedDict):
+    work: str
+    baseline_features: list[str]
+    enabled_features: list[str]
+    additions: list[str]
+    baseline_archive: str
+    feature_archive: str
+    archive_symbols: dict[str, Binary80SymbolRow]
+    consumer_symbols: dict[str, Binary80SymbolRow]
 
 
 def direct_sources() -> tuple[Path, ...]:
@@ -151,6 +177,352 @@ def validate_identity(root: Path, value: object, label: str) -> Path:
 
 def expected_symbols(root: Path) -> list[str]:
     return list(providers.selected_symbols(root))
+
+
+def feature_archive_roster(root: Path) -> tuple[tuple[str, ...], tuple[str, ...]]:
+    baseline_path = physical(root, Path("compat/x86_64/static_c_abi_exports.txt").as_posix())
+    baseline = tuple(sorted(
+        line.strip() for line in baseline_path.read_text(encoding="utf-8").splitlines()
+        if line.strip() and not line.lstrip().startswith("#")
+    ))
+    require(baseline and len(baseline) == len(set(baseline)),
+            "selected-static C ABI archive roster is empty or repeats names")
+    require(not set(LONG_DOUBLE_ADDITIONS) & set(baseline),
+            "binary80 feature additions already occur in the selected-static roster")
+    return baseline, tuple(sorted((*baseline, *LONG_DOUBLE_ADDITIONS)))
+
+
+def feature_file(root: Path, work: Path, name: object, label: str) -> Path:
+    require(isinstance(name, str), f"{label} path is malformed")
+    path = physical(root, name)
+    require(path.is_relative_to(work), f"{label} escapes its retained feature work directory")
+    return path
+
+
+def validate_runtime_file_identity(value: object, label: str,
+                                   graph: Path | None = None) -> Path:
+    require(isinstance(value, dict) and set(value) == {"path", "sha256", "size"},
+            f"{label} source-runtime identity fields differ")
+    name, expected, size = value["path"], value["sha256"], value["size"]
+    require(isinstance(name, str) and Path(name).is_absolute()
+            and isinstance(expected, str) and re.fullmatch(r"[0-9a-f]{64}", expected)
+            and isinstance(size, int) and size >= 0,
+            f"{label} source-runtime identity value differs")
+    path = Path(name)
+    try:
+        resolved = path.resolve(strict=True)
+    except (OSError, RuntimeError) as error:
+        raise ReceiptError(f"{label} source-runtime file is missing") from error
+    require(resolved == path and path.is_file() and not path.is_symlink(),
+            f"{label} source-runtime file is not physical")
+    if graph is not None:
+        require(path.is_relative_to(graph), f"{label} source-runtime file escapes its retained graph")
+    require(path.stat().st_size == size and digest(path) == expected,
+            f"{label} source-runtime file identity differs")
+    return path
+
+
+def validate_source_runtime_identities(value: object) -> None:
+    if isinstance(value, dict):
+        if set(value) == {"path", "sha256", "size"}:
+            validate_runtime_file_identity(value, "nested")
+            return
+        for child in value.values():
+            validate_source_runtime_identities(child)
+    elif isinstance(value, list):
+        for child in value:
+            validate_source_runtime_identities(child)
+
+
+def validate_feature_build(root: Path, archive: Path, copied_receipt: Path, graph: Path,
+                           features: str, label: str) -> None:
+    graph_receipt_path = physical(root, (graph / "receipt.json").relative_to(root).as_posix())
+    require(copied_receipt.read_bytes() == graph_receipt_path.read_bytes(),
+            f"{label} copied source-runtime receipt differs from its retained graph")
+    receipt = read(graph_receipt_path)
+    required = {
+        "schema", "profile", "features", "cargo_profile", "libc_rustc_arguments", "scope",
+        "target", "toolchain", "pinned_rustup", "cargo_command", "cargo_profile_dev_debug",
+        "cargo_profile_dev_codegen_units", "c_environment", "runtime_flags", "cargo_stdout",
+        "cargo_stderr", "rust_source", "vendor", "source_runtime_artifacts",
+        "source_runtime_rustc", "primary_rustc", "allocator_rustc", "staticlib_closure",
+        "immediate_abort_semantics",
+    }
+    require(set(receipt) == required and receipt["schema"] == 1,
+            f"{label} source-runtime receipt fields differ")
+    require(receipt["immediate_abort_semantics"] ==
+            "development-only Rust panics abort immediately instead of using static_c_abi.rs's nonreturning spin panic handler",
+            f"{label} source-runtime abort semantics differ")
+    profile = source_runtime.source_runtime_profile(features)
+    require(receipt["features"] == features and receipt["profile"] == profile["name"]
+            and receipt["cargo_profile"] == "dev" and receipt["target"] == source_runtime.TARGET
+            and receipt["toolchain"] == source_runtime.TOOLCHAIN,
+            f"{label} source-runtime selection differs")
+    require(receipt["scope"] == "private-native-static-source-runtime-closure-not-product-or-dynamic-qualification"
+            and receipt["libc_rustc_arguments"] == [] and receipt["c_environment"] == {},
+            f"{label} source-runtime build scope differs")
+    command = receipt["cargo_command"]
+    require(isinstance(command, list) and all(isinstance(item, str) for item in command),
+            f"{label} source-runtime Cargo argv is malformed")
+    feature_arguments = [command[index + 1] for index, item in enumerate(command[:-1])
+                         if item == "--features"]
+    require(feature_arguments == ([features] if features else []),
+            f"{label} source-runtime Cargo argv enables a different feature set")
+    require("-p" in command and command[command.index("-p") + 1] == "crabc-libc"
+            and "--lib" in command and "--target" in command
+            and command[command.index("--target") + 1] == source_runtime.TARGET,
+            f"{label} source-runtime Cargo argv differs")
+    closure = receipt["staticlib_closure"]
+    require(isinstance(closure, dict) and "archive" in closure,
+            f"{label} source-runtime archive receipt is missing")
+    archived = validate_runtime_file_identity(closure["archive"], f"{label} archive", graph)
+    require(archived.read_bytes() == archive.read_bytes(),
+            f"{label} retained archive differs from its source-runtime graph")
+    cargo_stdout = validate_runtime_file_identity(receipt["cargo_stdout"], f"{label} Cargo stdout", graph)
+    cargo_stderr = validate_runtime_file_identity(receipt["cargo_stderr"], f"{label} Cargo stderr", graph)
+    require(cargo_stdout == graph / "cargo.stdout.jsonl" and cargo_stderr == graph / "cargo.stderr.log",
+            f"{label} source-runtime raw Cargo streams differ")
+    validate_source_runtime_identities(receipt)
+
+
+def replay_archive_output(retained: Path, command: list[str], label: str) -> bytes:
+    completed = subprocess.run(command, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+                                stderr=subprocess.PIPE, check=False)
+    require(completed.returncode == 0, f"{label} inspection exited with status {completed.returncode}")
+    require(not completed.stderr, f"{label} inspection wrote stderr")
+    require(retained.read_bytes() == completed.stdout, f"{label} retained inspection differs from archive bytes")
+    return completed.stdout
+
+
+def archive_public_bindings(text: str, label: str) -> dict[str, set[str]]:
+    result: dict[str, set[str]] = {}
+    excluded = re.compile(r"^(?:_R|_ZN|DW\.ref\.|anon\.)")
+    for line_number, line in enumerate(text.splitlines(), start=1):
+        fields = line.split()
+        require(len(fields) >= 3, f"{label} archive symbol row is malformed at line {line_number}")
+        binding, name = fields[-2], fields[-1]
+        location = fields[0].rsplit(":", 2)
+        require(len(location) == 3,
+                f"{label} archive member location is malformed at line {line_number}")
+        if re.fullmatch(r"c\..+\.rcgu\.o", location[1]) is None:
+            continue
+        if binding in {"T", "W", "D", "V", "B", "R"} and not excluded.search(name) \
+                and name not in {"crabc_x86_64_signal_restorer", "__crabc_x86_pthread_clone"}:
+            result.setdefault(name, set()).add(binding)
+    return result
+
+
+def archive_symbol_rows(text: str, names: set[str], label: str,
+                        require_member: bool = True) -> dict[str, list[Binary80SymbolRow]]:
+    current_member = "" if require_member else label
+    current_member_index: int | None = None
+    next_member_index = 0
+    result: dict[str, list[Binary80SymbolRow]] = {}
+    for line_number, line in enumerate(text.splitlines(), start=1):
+        if line.startswith("File: "):
+            match = re.search(r"\(([^()]*)\)$", line)
+            require(match is not None, f"{label} archive member row is malformed")
+            current_member = match.group(1)
+            current_member_index = next_member_index
+            next_member_index += 1
+            continue
+        fields = line.split()
+        if len(fields) < 8 or not fields[0].endswith(":") or fields[0][:-1].isdigit() is False:
+            continue
+        value, _size, kind, binding, visibility, section, name = fields[1:8]
+        if name in names:
+            require((current_member or not require_member) and section != "UND",
+                    f"{label} selected archive definition is unresolved at line {line_number}")
+            require(not require_member or current_member_index is not None,
+                    f"{label} archive definition lacks a member occurrence")
+            result.setdefault(name, []).append({
+                "member_index": current_member_index, "member": current_member,
+                "value": value, "type": kind,
+                "binding": binding, "visibility": visibility, "section": section,
+            })
+    return result
+
+
+def validate_binary80_feature_work(root: Path, feature_work: Path) -> Binary80FeatureAccount:
+    root = root.resolve(strict=True)
+    require(not feature_work.is_absolute(), "binary80 feature work path must be checkout-relative")
+    work = physical_directory(root, feature_work.as_posix(), "binary80 retained feature work")
+    require(work.is_relative_to(root / ".work"), "binary80 retained feature work escapes checkout .work")
+    baseline_roster, feature_roster = feature_archive_roster(root)
+    expected_archive_paths = {
+        "baseline": work / "base-target" / source_runtime.TARGET / "debug/libc.a",
+        "feature": work / "feature-target" / source_runtime.TARGET / "debug/libc.a",
+    }
+    expected_graphs = {
+        "baseline": work / "source-runtime-baseline",
+        "feature": work / "source-runtime-feature",
+    }
+    archive_paths = {}
+    for name, features in (("baseline", ""), ("feature", LONG_DOUBLE_FEATURE)):
+        archive = feature_file(root, work, expected_archive_paths[name].relative_to(root).as_posix(),
+                               f"binary80 {name} archive")
+        require(archive == expected_archive_paths[name],
+                f"binary80 {name} archive is not the isolated source-runtime output")
+        copied_receipt = feature_file(root, work, Path(f"{archive}.source-runtime.json").relative_to(root).as_posix(),
+                                      f"binary80 {name} source-runtime receipt")
+        require(copied_receipt == Path(f"{archive}.source-runtime.json"),
+                f"binary80 {name} source-runtime receipt path differs")
+        graph = physical_directory(root, expected_graphs[name].relative_to(root).as_posix(),
+                                   f"binary80 {name} source-runtime graph")
+        require(graph == expected_graphs[name],
+                f"binary80 {name} source-runtime graph path differs")
+        validate_feature_build(root, archive, copied_receipt, graph, features, name)
+        audit = {
+            "nm_symbols": ["/usr/bin/nm", "-A", "--defined-only", str(archive)],
+            "nm_globals": ["/usr/bin/nm", "-A", "-g", "--defined-only", str(archive)],
+            "readelf_symbols": ["/usr/bin/readelf", "--symbols", "--wide", str(archive)],
+        }
+        raw = {}
+        for field, command in audit.items():
+            retained_path = {
+                "baseline": {
+                    "nm_symbols": "base-archive-symbols",
+                    "nm_globals": "base-archive-globals",
+                    "readelf_symbols": "base-archive-readelf",
+                },
+                "feature": {
+                    "nm_symbols": "archive-symbols",
+                    "nm_globals": "archive-globals",
+                    "readelf_symbols": "feature-archive-readelf",
+                },
+            }[name][field]
+            retained = feature_file(root, work, (work / retained_path).relative_to(root).as_posix(),
+                                    f"binary80 {name} {field}")
+            raw[field] = replay_archive_output(retained, command, f"binary80 {name} {field}")
+        archive_paths[name] = (archive, raw)
+
+    baseline_bindings = archive_public_bindings(archive_paths["baseline"][1]["nm_globals"].decode(),
+                                                "binary80 baseline")
+    feature_bindings = archive_public_bindings(archive_paths["feature"][1]["nm_globals"].decode(),
+                                               "binary80 feature")
+    require(tuple(sorted(baseline_bindings)) == baseline_roster,
+            "binary80 baseline archive differs from the selected-static roster")
+    require(tuple(sorted(feature_bindings)) == feature_roster,
+            "binary80 feature archive differs from its exact isolated roster")
+    require({name: value for name, value in feature_bindings.items() if name in baseline_bindings}
+            == baseline_bindings,
+            "binary80 feature changed a baseline archive binding or type")
+    for name, expected_binding in (("fdiml", "T"), ("exp10l", "T"), ("pow10l", "W")):
+        require(feature_bindings.get(name) == {expected_binding},
+                f"binary80 feature archive binding differs for {name}")
+    alias_rows = archive_symbol_rows(archive_paths["feature"][1]["readelf_symbols"].decode(),
+                                     {"exp10l", "fdiml", "pow10l"}, "binary80 feature")
+    for name, binding in (("fdiml", "GLOBAL"), ("exp10l", "GLOBAL"), ("pow10l", "WEAK")):
+        rows = alias_rows.get(name, [])
+        require(len(rows) == 1 and rows[0]["type"] == "FUNC" and rows[0]["binding"] == binding
+                and rows[0]["visibility"] == "DEFAULT",
+                f"binary80 feature archive definition differs for {name}")
+    exp10l, pow10l = alias_rows["exp10l"][0], alias_rows["pow10l"][0]
+    require((exp10l["member_index"], exp10l["member"], exp10l["section"], exp10l["value"])
+            == (pow10l["member_index"], pow10l["member"], pow10l["section"], pow10l["value"]),
+            "binary80 exp10l/pow10l archive alias does not share member occurrence, name, section, and value")
+
+    oracle = {
+        "binary": "musl-reference", "link_argv": "oracle-link.argv.json",
+        "run_argv": "oracle-run.argv.json", "records": "reference.records",
+        "stderr": "reference.stderr", "status": "reference.status",
+    }
+    consumer = {
+        "binary": "crabc-candidate", "symbols": "candidate-symbols",
+        "link_argv": "consumer-link.argv.json", "run_argv": "consumer-run.argv.json",
+        "records": "candidate.records", "stderr": "candidate.stderr", "status": "candidate.status",
+    }
+    oracle_binary = feature_file(root, work, (work / oracle["binary"]).relative_to(root).as_posix(),
+                                 "binary80 oracle binary")
+    consumer_binary = feature_file(root, work, (work / consumer["binary"]).relative_to(root).as_posix(),
+                                   "binary80 final C consumer")
+    oracle_records = feature_file(root, work, (work / oracle["records"]).relative_to(root).as_posix(),
+                                  "binary80 oracle records")
+    candidate_records = feature_file(root, work, (work / consumer["records"]).relative_to(root).as_posix(),
+                                     "binary80 candidate records")
+    oracle_stderr = feature_file(root, work, (work / oracle["stderr"]).relative_to(root).as_posix(),
+                                 "binary80 oracle stderr")
+    candidate_stderr = feature_file(root, work, (work / consumer["stderr"]).relative_to(root).as_posix(),
+                                    "binary80 candidate stderr")
+    oracle_status = feature_file(root, work, (work / oracle["status"]).relative_to(root).as_posix(),
+                                 "binary80 oracle status")
+    candidate_status = feature_file(root, work, (work / consumer["status"]).relative_to(root).as_posix(),
+                                    "binary80 candidate status")
+    require(oracle_status.read_bytes() == candidate_status.read_bytes() == b"0\n"
+            and not oracle_stderr.read_bytes() and not candidate_stderr.read_bytes(),
+            "binary80 oracle or candidate process status differs")
+    try:
+        binary80_stream.validate(binary80_stream.parse(oracle_records))
+        binary80_stream.validate(binary80_stream.parse(candidate_records))
+    except (OSError, ValueError) as error:
+        raise ReceiptError(f"binary80 record stream is invalid: {error}") from error
+    require(oracle_records.read_bytes() == candidate_records.read_bytes(),
+            "binary80 candidate records differ from the pinned musl oracle")
+    oracle_link = feature_file(root, work, (work / oracle["link_argv"]).relative_to(root).as_posix(),
+                               "binary80 oracle link argv")
+    oracle_run = feature_file(root, work, (work / oracle["run_argv"]).relative_to(root).as_posix(),
+                              "binary80 oracle run argv")
+    consumer_link = feature_file(root, work, (work / consumer["link_argv"]).relative_to(root).as_posix(),
+                                 "binary80 consumer link argv")
+    consumer_run = feature_file(root, work, (work / consumer["run_argv"]).relative_to(root).as_posix(),
+                                "binary80 consumer run argv")
+    def argv(path: Path, label: str) -> list[str]:
+        try:
+            value = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError) as error:
+            raise ReceiptError(f"cannot read {label}") from error
+        require(isinstance(value, list) and all(isinstance(item, str) for item in value),
+                f"{label} is not a raw argv list")
+        return value
+
+    feature_archive = archive_paths["feature"][0]
+    expected_oracle_link = [
+        str(ORACLE_CC), "-std=c11", "-D_GNU_SOURCE", f"-I{root / 'include'}", "-fno-builtin",
+        "-frounding-math", "-fno-stack-protector",
+        "compat/x86_64/libc_math_long_double_completion_probe.c", "-lm", "-o", str(oracle_binary),
+    ]
+    expected_consumer_link = [
+        str(ORACLE_CC), "-std=c11", "-D_GNU_SOURCE",
+        "-DCRABC_MATH_LONG_DOUBLE_COMPLETION_FREESTANDING", f"-I{root / 'include'}",
+        "-nostdlib", "-static", "-fno-pie", "-no-pie", "-ffreestanding", "-fno-builtin",
+        "-frounding-math", "-fno-stack-protector", "-Wl,-e,_start", "-Wl,--no-undefined",
+        "-Wl,--gc-sections", "compat/x86_64/libc_math_long_double_completion_probe.c",
+        "compat/x86_64/libc_math_long_double_completion_start.S", str(feature_archive),
+        "-o", str(consumer_binary),
+    ]
+    require(argv(oracle_link, "binary80 oracle link argv") == expected_oracle_link
+            and argv(oracle_run, "binary80 oracle run argv") == [str(oracle_binary)]
+            and argv(consumer_link, "binary80 consumer link argv") == expected_consumer_link
+            and argv(consumer_run, "binary80 consumer run argv") == [str(consumer_binary)],
+            "binary80 retained raw argv differs from the feature workload")
+    candidate_symbols = feature_file(root, work, (work / consumer["symbols"]).relative_to(root).as_posix(),
+                                     "binary80 consumer symbols")
+    completed = subprocess.run(["/usr/bin/readelf", "--symbols", "--wide", str(consumer_binary)],
+                               stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+                               stderr=subprocess.PIPE, check=False)
+    require(completed.returncode == 0 and not completed.stderr
+            and candidate_symbols.read_bytes() == completed.stdout,
+            "binary80 final consumer symbol table differs")
+    consumer_rows = archive_symbol_rows(completed.stdout.decode(),
+                                        {"fdiml", "exp10l", "pow10l"}, "binary80 consumer",
+                                        require_member=False)
+    for name, binding in (("fdiml", "GLOBAL"), ("exp10l", "GLOBAL"), ("pow10l", "WEAK")):
+        rows = consumer_rows.get(name, [])
+        require(len(rows) == 1 and rows[0]["type"] == "FUNC" and rows[0]["binding"] == binding
+                and rows[0]["visibility"] == "DEFAULT",
+                f"binary80 final consumer definition differs for {name}")
+    require(consumer_rows["exp10l"][0]["value"] == consumer_rows["pow10l"][0]["value"],
+            "binary80 final consumer does not preserve the exp10l/pow10l address alias")
+    return {
+        "work": work.relative_to(root).as_posix(),
+        "baseline_features": [],
+        "enabled_features": [LONG_DOUBLE_FEATURE],
+        "additions": list(LONG_DOUBLE_ADDITIONS),
+        "baseline_archive": expected_archive_paths["baseline"].relative_to(root).as_posix(),
+        "feature_archive": expected_archive_paths["feature"].relative_to(root).as_posix(),
+        "archive_symbols": {name: rows[0] for name, rows in alias_rows.items()},
+        "consumer_symbols": {name: rows[0] for name, rows in consumer_rows.items()},
+    }
 
 
 def source_identity(root: Path, path: Path) -> dict[str, object]:
@@ -583,7 +955,7 @@ def main() -> int:
                          sort_keys=True, separators=(",", ":")))
     except (OSError, ReceiptError, contract.ContractError, providers.EvidenceError,
             family.ExecutionError, product_evidence.ProductEvidenceError,
-            payload_evidence.CryptRuntimeEvidenceError) as error:
+            payload_evidence.CryptRuntimeEvidenceError, source_runtime.ClosureError) as error:
         print(f"owned math/fenv receipt: {error}", file=sys.stderr)
         return 1
     return 0

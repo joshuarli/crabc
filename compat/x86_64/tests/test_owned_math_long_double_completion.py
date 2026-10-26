@@ -3,7 +3,6 @@
 
 from __future__ import annotations
 
-import os
 from pathlib import Path
 import stat
 import subprocess
@@ -13,6 +12,7 @@ import unittest
 
 ROOT = Path(__file__).resolve().parents[3]
 RUNNER = ROOT / "compat/x86_64/run_owned_math_long_double_completion.sh"
+FEATURE_RUNNER = ROOT / "compat/x86_64/run_libc_math_long_double_completion.sh"
 PROBE = ROOT / "compat/x86_64/libc_math_long_double_completion_probe.c"
 VALIDATOR = ROOT / "compat/x86_64/validate_libc_math_long_double_completion.py"
 MODULE = ROOT / "libc/src/c_abi/x86_64/math_long_double_completion.rs"
@@ -20,6 +20,40 @@ ASSEMBLY = ROOT / "libc/src/c_abi/x86_64/math_long_double_completion_musl_x86_64
 
 
 class OwnedMathLongDoubleCompletionTests(unittest.TestCase):
+    def test_runner_retention_output_requires_a_new_physical_work_directory(self) -> None:
+        scratch_root = ROOT / ".work/x86_64/tmp"
+        scratch_root.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(prefix="long-double-retention.", dir=scratch_root) as temporary:
+            parent = Path(temporary)
+            outside = ROOT / "Cargo.toml"
+            existing = parent / "existing"
+            existing.mkdir()
+            target = parent / "target"
+            target.mkdir()
+            alias = parent / "alias"
+            alias.symlink_to(target, target_is_directory=True)
+
+            for output in (outside, existing, alias, parent / "missing" / "child"):
+                with self.subTest(output=output):
+                    result = subprocess.run(
+                        ["bash", str(FEATURE_RUNNER), "--retain-output", str(output)], cwd=ROOT,
+                        env={"PATH": "/usr/bin:/bin", "BASH_ENV": ""},
+                        capture_output=True, text=True, check=False,
+                    )
+                    self.assertNotEqual(result.returncode, 0)
+                    self.assertEqual(result.stdout, "")
+                    self.assertIn("retained output", result.stderr)
+            self.assertEqual(set(parent.iterdir()), {existing, target, alias})
+
+    def test_runner_usage_lists_its_optional_retained_output(self) -> None:
+        result = subprocess.run(["bash", str(FEATURE_RUNNER), "--unknown"], cwd=ROOT,
+                                env={"PATH": "/usr/bin:/bin", "BASH_ENV": ""},
+                                capture_output=True, text=True, check=False)
+        self.assertEqual(result.returncode, 2)
+        self.assertEqual(result.stdout, "")
+        self.assertEqual(result.stderr,
+                         f"usage: {FEATURE_RUNNER} [--retain-output RETAINED_OUTPUT]\n")
+
     def test_fixed_musl_binary80_source_covers_the_missing_public_spelling_contract(self) -> None:
         source = PROBE.read_text(encoding="utf-8")
         validator = VALIDATOR.read_text(encoding="utf-8")
@@ -95,7 +129,7 @@ class OwnedMathLongDoubleCompletionTests(unittest.TestCase):
             with self.subTest(arguments=arguments), tempfile.TemporaryDirectory(dir=scratch_root) as temporary:
                 result = subprocess.run(
                     ["bash", str(RUNNER), *arguments], cwd=ROOT,
-                    env={"PATH": os.environ["PATH"], "TMPDIR": temporary},
+                    env={"PATH": "/usr/bin:/bin", "TMPDIR": temporary},
                     text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False,
                 )
             self.assertEqual(result.returncode, 2)

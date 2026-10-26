@@ -28,7 +28,335 @@ CATALOG = ROOT / "compat/x86_64/owned_dynamic_qualification.py"
 DRIVER = ROOT / "compat/x86_64/owned_math_fenv_all_entry_driver.c"
 
 
+def binary80_feature_fixture(work: Path, *, changed_baseline: bool = False,
+                             extra_symbol: str | None = None,
+                             strong_alias: bool = False,
+                             alias_member: bool = False,
+                             alias_section: bool = False,
+                             duplicate_member_name: bool = False) -> Path:
+    toolchain = ("/usr/bin/cc", "/usr/bin/ld", "/usr/bin/ar", "/usr/bin/nm", "/usr/bin/readelf")
+    if not all(Path(tool).is_file() for tool in toolchain):
+        raise unittest.SkipTest("requires the pinned native archive and ELF tools")
+    work.mkdir(parents=True)
+    root = work.parents[4]
+
+    def file_identity(path: Path) -> dict[str, object]:
+        data = path.read_bytes()
+        return {"path": str(path), "sha256": hashlib.sha256(data).hexdigest(), "size": len(data)}
+
+    baseline_source = work / "baseline.S"
+    baseline_source.write_text(
+        ".text\n.globl fixture_base\n.type fixture_base,@function\nfixture_base:\nret\n",
+        encoding="utf-8",
+    )
+    feature_lines = [
+        ".text", ".globl exp10l", ".type exp10l,@function", "exp10l:", "ret",
+        ".text", ".globl fdiml", ".type fdiml,@function", "fdiml:", "ret",
+    ]
+    if alias_member or duplicate_member_name:
+        alias_source = work / "alias.S"
+        alias_source.write_text(
+            ".text\n.weak pow10l\n.type pow10l,@function\npow10l:\nret\n", encoding="utf-8",
+        )
+    elif alias_section:
+        feature_lines.extend((".section .text.pow10l,\"ax\",@progbits", ".weak pow10l",
+                              ".type pow10l,@function", "pow10l:", "ret"))
+    else:
+        feature_lines.extend((".weak pow10l" if not strong_alias else ".globl pow10l",
+                              ".type pow10l,@function", ".set pow10l,exp10l"))
+    if extra_symbol is not None:
+        feature_lines.extend((f".globl {extra_symbol}", f".type {extra_symbol},@function",
+                              f"{extra_symbol}:", "ret"))
+    feature_source = work / "feature.S"
+    feature_source.write_text("\n".join(feature_lines) + "\n", encoding="utf-8")
+    sources = [baseline_source, feature_source]
+    if alias_member or duplicate_member_name:
+        sources.append(alias_source)
+    objects = []
+    for source in sources:
+        if source == baseline_source:
+            object_directory = work / "baseline-member"
+            object_name = "c.baseline.rcgu.o"
+        elif source == feature_source:
+            object_directory = work / "feature-member"
+            object_name = "c.provider.rcgu.o" if duplicate_member_name else "c.feature.rcgu.o"
+        else:
+            object_directory = work / "alias-member"
+            object_name = "c.provider.rcgu.o" if duplicate_member_name else "c.alias.rcgu.o"
+        object_directory.mkdir()
+        object_path = object_directory / object_name
+        built = subprocess.run([toolchain[0], "-c", str(source), "-o", str(object_path)],
+                               cwd=work, capture_output=True, text=True, check=False)
+        if built.returncode:
+            raise AssertionError(built.stderr)
+        objects.append(object_path)
+
+    feature_objects = list(objects)
+    if changed_baseline:
+        changed_source = work / "changed-baseline.S"
+        changed_source.write_text(
+            ".data\n.globl fixture_base\n.type fixture_base,@object\nfixture_base:\n.quad 1\n",
+            encoding="utf-8",
+        )
+        changed_directory = work / "changed-baseline-member"
+        changed_directory.mkdir()
+        changed_object = changed_directory / "c.changed-baseline.rcgu.o"
+        built = subprocess.run([toolchain[0], "-c", str(changed_source), "-o", str(changed_object)],
+                               cwd=work, capture_output=True, text=True, check=False)
+        if built.returncode:
+            raise AssertionError(built.stderr)
+        feature_objects[0] = changed_object
+
+    archive_paths = {}
+    source_runtime_records = {}
+    audit_paths = {}
+    for name, archive_objects, features in (
+        ("baseline", [objects[0]], ""),
+        ("feature", feature_objects, "x86-math-long-double-completion"),
+    ):
+        target_name = "base-target" if name == "baseline" else "feature-target"
+        archive = work / target_name / "x86_64-unknown-linux-musl" / "debug/libc.a"
+        archive.parent.mkdir(parents=True)
+        mode = "q" if name == "feature" and duplicate_member_name else "rcs"
+        packed = subprocess.run([toolchain[2], mode, str(archive), *(str(path) for path in archive_objects)],
+                                cwd=work, capture_output=True, text=True, check=False)
+        if packed.returncode:
+            raise AssertionError(packed.stderr)
+        if name == "feature" and duplicate_member_name:
+            indexed = subprocess.run([toolchain[2], "s", str(archive)],
+                                     cwd=work, capture_output=True, text=True, check=False)
+            if indexed.returncode:
+                raise AssertionError(indexed.stderr)
+        graph = work / f"source-runtime-{name if name == 'baseline' else 'feature'}"
+        graph_archive = graph / "cargo-target" / "x86_64-unknown-linux-musl" / "debug/libc.a"
+        graph_archive.parent.mkdir(parents=True)
+        shutil.copyfile(archive, graph_archive)
+        stdout = graph / "cargo.stdout.jsonl"
+        stderr = graph / "cargo.stderr.log"
+        stdout.write_bytes(b"{}\n")
+        stderr.write_bytes(b"cargo invocation retained\n")
+        command = [
+            "/opt/cargo/bin/rustup", "run", receipt.source_runtime.TOOLCHAIN, "cargo",
+            "-Zbuild-std=core,alloc,compiler_builtins", "rustc", "--locked", "--offline", "-vv",
+            "--message-format=json-render-diagnostics", "-p", "crabc-libc", "--lib", "--target",
+            "x86_64-unknown-linux-musl",
+        ]
+        if features:
+            command.extend(("--features", features))
+        build_receipt = {
+            "schema": 1,
+            "profile": receipt.source_runtime.source_runtime_profile(features)["name"],
+            "features": features,
+            "cargo_profile": "dev",
+            "libc_rustc_arguments": [],
+            "scope": "private-native-static-source-runtime-closure-not-product-or-dynamic-qualification",
+            "target": "x86_64-unknown-linux-musl",
+            "toolchain": receipt.source_runtime.TOOLCHAIN,
+            "pinned_rustup": {},
+            "cargo_command": command,
+            "cargo_profile_dev_debug": 0,
+            "cargo_profile_dev_codegen_units": 65536,
+            "c_environment": {},
+            "runtime_flags": list(receipt.source_runtime.runtime_flags("static")),
+            "cargo_stdout": file_identity(stdout),
+            "cargo_stderr": file_identity(stderr),
+            "rust_source": "/opt/rustup/toolchains/source",
+            "vendor": {},
+            "source_runtime_artifacts": {},
+            "source_runtime_rustc": {},
+            "primary_rustc": {},
+            "allocator_rustc": None,
+            "staticlib_closure": {"archive": file_identity(graph_archive)},
+            "immediate_abort_semantics": "development-only Rust panics abort immediately instead of using static_c_abi.rs's nonreturning spin panic handler",
+        }
+        graph_receipt = graph / "receipt.json"
+        graph_receipt.write_text(json.dumps(build_receipt, sort_keys=True) + "\n", encoding="utf-8")
+        copied_receipt = Path(f"{archive}.source-runtime.json")
+        shutil.copyfile(graph_receipt, copied_receipt)
+        archive_paths[name] = archive
+        source_runtime_records[name] = (graph, copied_receipt)
+        audit = {}
+        audit_names = {
+            "baseline": {
+                "nm_symbols": "base-archive-symbols",
+                "nm_globals": "base-archive-globals",
+                "readelf_symbols": "base-archive-readelf",
+            },
+            "feature": {
+                "nm_symbols": "archive-symbols",
+                "nm_globals": "archive-globals",
+                "readelf_symbols": "feature-archive-readelf",
+            },
+        }
+        for field, command in (
+            ("nm_symbols", [toolchain[3], "-A", "--defined-only", str(archive)]),
+            ("nm_globals", [toolchain[3], "-A", "-g", "--defined-only", str(archive)]),
+            ("readelf_symbols", [toolchain[4], "--symbols", "--wide", str(archive)]),
+        ):
+            completed = subprocess.run(command, cwd=work, capture_output=True, check=False)
+            if completed.returncode:
+                raise AssertionError(completed.stderr.decode(errors="replace"))
+            output = work / audit_names[name][field]
+            output.write_bytes(completed.stdout)
+            audit[field] = output
+        audit_paths[name] = audit
+
+    consumer_source = work / "consumer.c"
+    consumer_source.write_text(
+        "extern long double exp10l(long double), pow10l(long double);\n"
+        "extern long double fdiml(long double, long double);\n"
+        "void _start(void) { volatile long double (*a)(long double) = exp10l; "
+        "volatile long double (*b)(long double) = pow10l; "
+        "volatile long double (*c)(long double, long double) = fdiml; "
+        "a(1.0L); b(2.0L); c(3.0L, 1.0L); for (;;) {} }\n",
+        encoding="utf-8",
+    )
+    consumer_object = work / "consumer.o"
+    compiled = subprocess.run(
+        [toolchain[0], "-c", "-ffreestanding", "-fno-pie", "-fno-stack-protector", "-fno-builtin",
+         str(consumer_source), "-o", str(consumer_object)],
+        cwd=work, capture_output=True, text=True, check=False,
+    )
+    if compiled.returncode:
+        raise AssertionError(compiled.stderr)
+    candidate = work / "crabc-candidate"
+    linked = subprocess.run(
+        [toolchain[1], "-static", "-e", "_start", "-o", str(candidate),
+         str(consumer_object), str(archive_paths["feature"])],
+        cwd=work, capture_output=True, text=True, check=False,
+    )
+    if linked.returncode:
+        raise AssertionError(linked.stderr)
+    candidate.chmod(0o755)
+    oracle = work / "musl-reference"
+    shutil.copyfile(candidate, oracle)
+    oracle.chmod(0o755)
+
+    for name, archive in archive_paths.items():
+        graph, copied_receipt = source_runtime_records[name]
+        archive_paths[name] = archive
+        audit_paths[name]["archive"] = archive
+        audit_paths[name]["receipt"] = copied_receipt
+        audit_paths[name]["graph"] = graph
+
+    stream = b"\0" * (247 * 42)
+    oracle_records = work / "reference.records"
+    candidate_records = work / "candidate.records"
+    oracle_records.write_bytes(stream)
+    candidate_records.write_bytes(stream)
+    oracle_stderr = work / "reference.stderr"
+    candidate_stderr = work / "candidate.stderr"
+    oracle_stderr.write_bytes(b"")
+    candidate_stderr.write_bytes(b"")
+    oracle_status = work / "reference.status"
+    candidate_status = work / "candidate.status"
+    oracle_status.write_text("0\n", encoding="ascii")
+    candidate_status.write_text("0\n", encoding="ascii")
+    oracle_link_argv = work / "oracle-link.argv.json"
+    oracle_run_argv = work / "oracle-run.argv.json"
+    consumer_link_argv = work / "consumer-link.argv.json"
+    consumer_run_argv = work / "consumer-run.argv.json"
+    oracle_link_argv.write_text(json.dumps([
+        "/usr/local/bin/crabc-x86_64-musl-gcc", "-std=c11", "-D_GNU_SOURCE", f"-I{ROOT / 'include'}",
+        "-fno-builtin", "-frounding-math", "-fno-stack-protector",
+        "compat/x86_64/libc_math_long_double_completion_probe.c", "-lm", "-o", str(oracle),
+    ]) + "\n", encoding="utf-8")
+    oracle_run_argv.write_text(json.dumps([str(oracle)]) + "\n", encoding="utf-8")
+    consumer_link_argv.write_text(json.dumps([
+        "/usr/local/bin/crabc-x86_64-musl-gcc", "-std=c11", "-D_GNU_SOURCE",
+        "-DCRABC_MATH_LONG_DOUBLE_COMPLETION_FREESTANDING", f"-I{ROOT / 'include'}", "-nostdlib", "-static",
+        "-fno-pie", "-no-pie", "-ffreestanding", "-fno-builtin", "-frounding-math",
+        "-fno-stack-protector", "-Wl,-e,_start", "-Wl,--no-undefined", "-Wl,--gc-sections",
+        "compat/x86_64/libc_math_long_double_completion_probe.c",
+        "compat/x86_64/libc_math_long_double_completion_start.S", str(archive_paths["feature"]),
+        "-o", str(candidate),
+    ]) + "\n", encoding="utf-8")
+    consumer_run_argv.write_text(json.dumps([str(candidate)]) + "\n", encoding="utf-8")
+    candidate_symbols = work / "candidate-symbols"
+    symbols = subprocess.run(["/usr/bin/readelf", "--symbols", "--wide", str(candidate)],
+                             cwd=work, capture_output=True, check=False)
+    candidate_symbols.write_bytes(symbols.stdout)
+    return work
+
+
 class OwnedMathFenvAllEntryTests(unittest.TestCase):
+    def test_binary80_feature_roster_adds_only_the_existing_long_double_feature(self) -> None:
+        baseline, feature = receipt.feature_archive_roster(ROOT)
+        self.assertEqual(set(feature) - set(baseline), {"exp10l", "fdiml", "pow10l"})
+        self.assertEqual(set(baseline) - set(feature), set())
+        self.assertEqual(len(feature), len(baseline) + 3)
+
+    def test_binary80_feature_receipt_replays_isolated_archive_and_consumer_evidence(self) -> None:
+        scratch = ROOT / ".work/x86_64/tmp"
+        scratch.mkdir(parents=True, exist_ok=True)
+        expected = tuple(sorted(("fixture_base", "exp10l", "fdiml", "pow10l")))
+
+        def validate(work: Path) -> dict[str, object]:
+            with mock.patch.object(receipt, "feature_archive_roster",
+                                   return_value=(("fixture_base",), expected)), \
+                 mock.patch.object(receipt.binary80_stream, "parse", return_value=[]), \
+                 mock.patch.object(receipt.binary80_stream, "validate"):
+                return receipt.validate_binary80_feature_work(ROOT, work.relative_to(ROOT))
+
+        with tempfile.TemporaryDirectory(prefix="binary80-feature-receipt.", dir=scratch) as temporary:
+            fixture_root = Path(temporary)
+            valid = binary80_feature_fixture(fixture_root / "valid")
+            result = validate(valid)
+            self.assertEqual(set(result), {
+                "work", "baseline_features", "enabled_features", "additions",
+                "baseline_archive", "feature_archive", "archive_symbols", "consumer_symbols",
+            })
+            self.assertEqual(result["baseline_features"], [])
+            self.assertEqual(result["enabled_features"], ["x86-math-long-double-completion"])
+            self.assertEqual(result["additions"], ["exp10l", "fdiml", "pow10l"])
+            archive_symbols = result["archive_symbols"]
+            consumer_symbols = result["consumer_symbols"]
+            self.assertEqual(archive_symbols["fdiml"]["binding"], "GLOBAL")
+            self.assertEqual(archive_symbols["exp10l"]["binding"], "GLOBAL")
+            self.assertEqual(archive_symbols["pow10l"]["binding"], "WEAK")
+            self.assertEqual(archive_symbols["exp10l"]["member_index"],
+                             archive_symbols["pow10l"]["member_index"])
+            self.assertEqual(archive_symbols["exp10l"]["member"], archive_symbols["pow10l"]["member"])
+            self.assertEqual(archive_symbols["exp10l"]["section"], archive_symbols["pow10l"]["section"])
+            self.assertEqual(archive_symbols["exp10l"]["value"], archive_symbols["pow10l"]["value"])
+            self.assertEqual(consumer_symbols["exp10l"]["value"], consumer_symbols["pow10l"]["value"])
+            self.assertEqual(result["work"], valid.relative_to(ROOT).as_posix())
+
+            cases = (
+                ("aggregate-archive-substitution", {"extra_symbol": "sin"}, None),
+                ("changed-baseline-archive", {}, "changed-baseline"),
+                ("extra-enabled-feature", {}, "extra-feature"),
+                ("unexpected-export", {"extra_symbol": "unowned_export"}, None),
+                ("baseline-binding-mutation", {"changed_baseline": True}, None),
+                ("strong-alias", {"strong_alias": True}, None),
+                ("different-alias-member", {"alias_member": True}, None),
+                ("different-alias-section", {"alias_section": True}, None),
+                ("duplicate-member-name", {"duplicate_member_name": True}, None),
+                ("raw-graph-mutation", {}, "raw-graph"),
+            )
+            for name, options, mutation in cases:
+                with self.subTest(name=name):
+                    work = binary80_feature_fixture(fixture_root / name, **options)
+                    if mutation == "changed-baseline":
+                        archive = work / "base-target/x86_64-unknown-linux-musl/debug/libc.a"
+                        archive.write_bytes(archive.read_bytes() + b"changed")
+                    elif mutation == "extra-feature":
+                        for path in (
+                            work / "source-runtime-feature/receipt.json",
+                            work / "feature-target/x86_64-unknown-linux-musl/debug/libc.a.source-runtime.json",
+                        ):
+                            receipt_data = json.loads(path.read_text(encoding="utf-8"))
+                            enabled = "x86-math-long-double-completion,x86-math-complex"
+                            receipt_data["features"] = enabled
+                            command = receipt_data["cargo_command"]
+                            command[command.index("--features") + 1] = enabled
+                            path.write_text(json.dumps(receipt_data, sort_keys=True) + "\n", encoding="utf-8")
+                    elif mutation == "raw-graph":
+                        path = work / "source-runtime-feature/cargo.stderr.log"
+                        path.write_bytes(path.read_bytes() + b"mutated\n")
+                    with self.assertRaises(receipt.ReceiptError):
+                        validate(work)
+
     def test_decimal_logarithms_run_in_parent_and_joined_workers(self) -> None:
         compiler = Path("/usr/local/bin/crabc-x86_64-musl-gcc")
         if not compiler.is_file():
@@ -120,7 +448,7 @@ int main(void) {{
     def assert_usage(self, *arguments: str) -> None:
         result = subprocess.run(
             ["bash", str(RUNNER), *arguments], cwd=ROOT, capture_output=True,
-            text=True, check=False,
+            env={"PATH": "/usr/bin:/bin", "BASH_ENV": ""}, text=True, check=False,
         )
         self.assertEqual(result.returncode, 2)
         self.assertEqual(result.stdout, "")
@@ -294,7 +622,7 @@ int main(void) {{
                 with self.subTest(argument=argument):
                     result = subprocess.run(
                         ["bash", str(RUNNER), str(argument)], cwd=ROOT,
-                        env={**os.environ, "TMPDIR": str(base)}, capture_output=True,
+                        env={**os.environ, "PATH": "/usr/bin:/bin", "TMPDIR": str(base)}, capture_output=True,
                         text=True, check=False,
                     )
                     self.assertNotEqual(result.returncode, 0)

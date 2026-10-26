@@ -32,3 +32,22 @@ strong `fdiml`/`exp10l` and weak same-address `pow10l`; `__fpclassifyl`,
 `modfl`, `exp2l`, and `powl` remain their existing x87 owners. This consumer
 adds no C target provider, dependency, general libm claim, AArch64 change, or
 x86 support/promotion claim.
+
+`compat/x86_64/run_libc_math_long_double_completion.sh` proves the isolated
+static archive feature build. Pass `--retain-output DIR` to keep its baseline
+and feature archives, source-runtime graphs, consumer, raw streams, and
+inspection output under checkout `.work`. The default run uses scratch under
+`.work/x86_64/tmp` and removes it on success.
+
+Pass that retained directory to
+`owned_math_fenv_all_entry_receipt.validate_binary80_feature_work(root, work)`
+to derive its finite feature account. The returned fields identify the empty
+baseline selection, enabled feature, three additions and their bindings,
+archive paths, and the concrete symbol rows from the archive and final
+consumer. Archive alias rows include member occurrence and name, section, and
+value, so duplicate archive member names at different positions remain
+distinct. The
+helper replays the retained source-runtime graphs, archive inspections, raw
+argv, oracle/candidate streams, and final ELF checks. Use the existing
+`validate_report` separately for an installed math product pair; neither
+reader adds a qualification claim.

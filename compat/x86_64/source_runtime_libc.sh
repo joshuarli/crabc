@@ -2,8 +2,11 @@
 #
 # Source this file, then call
 #
-#   build_source_runtime_libc OUTPUT [--features LIST] [--release]
+#   build_source_runtime_libc OUTPUT [--retain-work PATH] [--features LIST] [--release]
 #       [--relocation-model static|pic] [-- LIBC_RUSTC_ARGS...]
+#
+# PATH must be a new child of `.work/x86_64`. The helper builds there directly
+# and leaves the graph in place after copying its archive and receipt.
 #
 # A plain `cargo rustc -p crabc-libc` archive bundles the toolchain's prebuilt
 # `core`, which is compiled for unwinding and references
@@ -25,8 +28,29 @@ build_source_runtime_libc() {
     local output="$1"
     shift
     local root="$_source_runtime_libc_root"
+    local retained_work=""
+    if [ "${1:-}" = "--retain-work" ]; then
+        [ "$#" -ge 2 ] && [ -n "$2" ] || { printf 'build_source_runtime_libc: --retain-work requires a path\n' >&2; return 2; }
+        retained_work="$2"
+        shift 2
+        case "$retained_work" in
+            /*) ;;
+            *) retained_work="$root/.work/x86_64/$retained_work" ;;
+        esac
+    fi
     local private archive
     mkdir -p "$root/.work/x86_64/tmp"
+    if [ -n "$retained_work" ]; then
+        if ! archive="$(python3 "$root/compat/x86_64/native_static_source_runtime_closure.py" build \
+            --work "$retained_work" --print-archive "$@")"; then
+            printf 'source-runtime libc build failed; evidence retained: %s\n' "$retained_work" >&2
+            return 1
+        fi
+        mkdir -p "$(dirname "$output")"
+        cp -- "$archive" "$output"
+        cp -- "$retained_work/receipt.json" "$output.source-runtime.json"
+        return 0
+    fi
     private="$(mktemp -d "$root/.work/x86_64/tmp/source-runtime-libc.XXXXXX")"
     if ! archive="$(python3 "$root/compat/x86_64/native_static_source_runtime_closure.py" build \
         --work "tmp/${private##*/}/graph" --print-archive "$@")"; then

@@ -41,6 +41,45 @@ readonly AGGREGATE_CANDIDATE_FUNCTIONS=(
 
 fail() { printf 'ERROR: x86 binary80 fdiml/exp10l: %s\n' "$*" >&2; exit 1; }
 require_tool() { command -v "$1" >/dev/null 2>&1 || fail "requires $1"; }
+usage() { printf 'usage: %s [--retain-output RETAINED_OUTPUT]\n' "$0" >&2; exit 2; }
+
+retained_output=""
+if [ "$#" -gt 0 ]; then
+	[ "$#" -eq 2 ] && [ "$1" = --retain-output ] && [ -n "$2" ] && [[ "$2" != -* ]] || usage
+	retained_output="$2"
+fi
+
+if [ -n "$retained_output" ]; then
+	case "$retained_output" in
+		/*) ;;
+		*) retained_output="$ROOT_DIR/$retained_output" ;;
+	esac
+	if ! python3 -B - "$ROOT_DIR" "$retained_output" <<'PY'
+from pathlib import Path
+import sys
+
+root = Path(sys.argv[1]).resolve(strict=True)
+candidate = Path(sys.argv[2])
+if any(part == ".." for part in candidate.parts) or not candidate.is_relative_to(root / ".work"):
+    raise SystemExit("retained output must be a new child of checkout .work")
+current = root
+for part in candidate.relative_to(root).parts[:-1]:
+	current = current / part
+	if current.is_symlink() or not current.is_dir() or current.resolve(strict=True) != current:
+		raise SystemExit("retained output parent must be a physical checkout directory")
+if candidate.exists() or candidate.is_symlink():
+	raise SystemExit("retained output already exists")
+PY
+	then
+		fail "retained output must be a new physical directory below checkout .work"
+	fi
+	mkdir -- "$retained_output"
+	work_dir="$(cd -P -- "$retained_output" && pwd)"
+else
+	mkdir -p "$ROOT_DIR/.work/x86_64/tmp"
+	work_dir="$(mktemp -d "$ROOT_DIR/.work/x86_64/tmp/libc-math-long-double-completion.XXXXXX")"
+	trap 'rm -rf -- "$work_dir"' EXIT
+fi
 
 collect_global_surface() {
 	local archive_path="$1" output_path="$2" members_path="$3"
@@ -72,15 +111,17 @@ collect_global_bindings() {
 
 [ "$(uname -s)" = Linux ] || fail "requires native Linux"
 case "$(uname -m)" in x86_64|amd64) ;; *) fail "requires native x86-64" ;; esac
-for tool in ar awk cargo cmp comm diff grep mkdir mktemp nm objdump readelf rustup sort wc python3; do
+for tool in ar awk cargo cmp comm diff grep mkdir mktemp nm objdump readelf realpath sort wc python3; do
 	require_tool "$tool"
 done
 [ -x "$ORACLE_CC" ] || fail "missing pinned musl oracle compiler"
-bash "$ROOT_DIR/compat/x86_64/run_musl_oracle.sh" >/dev/null
-bash "$ROOT_DIR/compat/x86_64/run_math_long_double_completion_header_abi.sh" >/dev/null
-
-work_dir="$(mktemp -d /tmp/crabc-x86-64-libc-math-long-double-completion.XXXXXX)"
-trap 'rm -rf -- "$work_dir"' EXIT
+if ! bash "$ROOT_DIR/compat/x86_64/run_musl_oracle.sh" >"$work_dir/musl-oracle.stdout" 2>"$work_dir/musl-oracle.stderr"; then
+	fail "pinned musl oracle preparation failed; raw output retained in $work_dir"
+fi
+if ! bash "$ROOT_DIR/compat/x86_64/run_math_long_double_completion_header_abi.sh" \
+	>"$work_dir/header-abi.stdout" 2>"$work_dir/header-abi.stderr"; then
+	fail "binary80 header ABI check failed; raw output retained in $work_dir"
+fi
 base_target="$work_dir/base-target"
 feature_target="$work_dir/feature-target"
 base_archive="$base_target/x86_64-unknown-linux-musl/debug/libc.a"
@@ -116,6 +157,30 @@ aggregate_relocs="$work_dir/aggregate-candidate-relocations"
 aggregate_disassembly="$work_dir/aggregate-candidate-disassembly"
 aggregate_functions="$work_dir/aggregate-candidate-functions"
 expected_aggregate_functions="$work_dir/expected-aggregate-functions"
+base_archive_symbols="$work_dir/base-archive-symbols"
+base_archive_globals="$work_dir/base-archive-globals"
+base_archive_readelf="$work_dir/base-archive-readelf"
+feature_archive_readelf="$work_dir/feature-archive-readelf"
+
+record_argv() {
+	local path="$1"
+	shift
+	python3 -B - "$path" "$@" <<'PY'
+import json
+from pathlib import Path
+import sys
+
+Path(sys.argv[1]).write_text(json.dumps(sys.argv[2:]) + "\n", encoding="utf-8")
+PY
+}
+
+run_recorded() {
+	local stdout_path="$1" stderr_path="$2" status_path="$3" label="$4" status=0
+	shift 4
+	"$@" >"$stdout_path" 2>"$stderr_path" || status=$?
+	printf '%s\n' "$status" >"$status_path"
+	[ "$status" -eq 0 ] || fail "$label exited with ${status}; raw output retained in $work_dir"
+}
 
 cd "$ROOT_DIR"
 "$ORACLE_CC" -std=c11 -D_GNU_SOURCE -I"$ROOT_DIR/include" -E -H \
@@ -124,19 +189,27 @@ for header in fenv.h float.h math.h stddef.h stdint.h features.h bits/alltypes.h
 	grep -Fq "$ROOT_DIR/include/$header" "$trace" ||
 		fail "fixture did not use project $header"
 done
-"$ORACLE_CC" -std=c11 -D_GNU_SOURCE -I"$ROOT_DIR/include" -fno-builtin \
-	-frounding-math -fno-stack-protector \
-	compat/x86_64/libc_math_long_double_completion_probe.c -lm -o "$reference"
-"$reference" >"$reference_output" || fail "pinned-musl binary80 fixture failed"
+reference_link=("$ORACLE_CC" -std=c11 -D_GNU_SOURCE -I"$ROOT_DIR/include" -fno-builtin
+	-frounding-math -fno-stack-protector
+	compat/x86_64/libc_math_long_double_completion_probe.c -lm -o "$reference")
+record_argv "$work_dir/oracle-link.argv.json" "${reference_link[@]}"
+"${reference_link[@]}"
+record_argv "$work_dir/oracle-run.argv.json" "$reference"
+run_recorded "$reference_output" "$work_dir/reference.stderr" "$work_dir/reference.status" \
+	"pinned-musl binary80 fixture" "$reference"
 python3 "$ROOT_DIR/compat/x86_64/validate_libc_math_long_double_completion.py" "$reference_output" ||
 	fail "pinned-musl record contract failed"
 
 # The unfeatured archive remains the frozen selected-static surface.  The
 # opt-in archive is allowed to add exactly this private binary80 closure.
-build_source_runtime_libc "$base_target/x86_64-unknown-linux-musl/debug/libc.a"
+build_source_runtime_libc "$base_target/x86_64-unknown-linux-musl/debug/libc.a" \
+	--retain-work "$work_dir/source-runtime-baseline"
 [ -f "$base_archive" ] || fail "cargo did not emit the unfeatured x86 archive"
 collect_global_surface "$base_archive" "$base_surface" "$work_dir/base-members"
 collect_global_bindings "$base_archive" "$base_bindings" "$work_dir/base-binding-members"
+nm -A --defined-only "$base_archive" >"$base_archive_symbols"
+nm -A -g --defined-only "$base_archive" >"$base_archive_globals"
+readelf --symbols --wide "$base_archive" >"$base_archive_readelf"
 grep -Ev '^(#|$)' "$ROOT_DIR/compat/x86_64/static_c_abi_exports.txt" | LC_ALL=C sort -u >"$expected_surface"
 if ! cmp -s "$expected_surface" "$base_surface"; then
 	diff -u "$expected_surface" "$base_surface" >&2 || true
@@ -144,10 +217,11 @@ if ! cmp -s "$expected_surface" "$base_surface"; then
 fi
 
 build_source_runtime_libc "$feature_target/x86_64-unknown-linux-musl/debug/libc.a" \
-    --features "$FEATURE"
+	--retain-work "$work_dir/source-runtime-feature" --features "$FEATURE"
 [ -f "$archive" ] || fail "cargo did not emit the opt-in binary80 archive"
 collect_global_surface "$archive" "$feature_surface" "$work_dir/feature-members"
 collect_global_bindings "$archive" "$feature_bindings" "$work_dir/feature-binding-members"
+readelf --symbols --wide "$archive" >"$feature_archive_readelf"
 comm -13 "$base_surface" "$feature_surface" >"$observed_additions"
 printf '%s\n' "${EXPECTED_ADDITIONS[@]}" | LC_ALL=C sort -u >"$expected_additions"
 if ! cmp -s "$expected_additions" "$observed_additions"; then
@@ -174,12 +248,14 @@ grep -Eq '[[:space:]]T[[:space:]]exp10l$' "$archive_symbols" ||
 grep -Eq '[[:space:]]W[[:space:]]pow10l$' "$archive_symbols" ||
 	fail "archive does not preserve weak pow10l alias"
 
-"$ORACLE_CC" -std=c11 -D_GNU_SOURCE -DCRABC_MATH_LONG_DOUBLE_COMPLETION_FREESTANDING \
+candidate_link=("$ORACLE_CC" -std=c11 -D_GNU_SOURCE -DCRABC_MATH_LONG_DOUBLE_COMPLETION_FREESTANDING \
 	-I"$ROOT_DIR/include" -nostdlib -static -fno-pie -no-pie -ffreestanding \
 	-fno-builtin -frounding-math -fno-stack-protector -Wl,-e,_start \
 	-Wl,--no-undefined -Wl,--gc-sections \
 	compat/x86_64/libc_math_long_double_completion_probe.c \
-	compat/x86_64/libc_math_long_double_completion_start.S "$archive" -o "$candidate"
+	compat/x86_64/libc_math_long_double_completion_start.S "$archive" -o "$candidate")
+record_argv "$work_dir/consumer-link.argv.json" "${candidate_link[@]}"
+"${candidate_link[@]}"
 readelf --symbols --wide "$candidate" >"$candidate_symbols"
 awk '$4 == "FUNC" && ($5 == "GLOBAL" || $5 == "WEAK") { print $8 }' \
 	"$candidate_symbols" | LC_ALL=C sort -u >"$candidate_functions"
@@ -232,7 +308,9 @@ for instruction in fldt fstpt fsubp f2xm1 fscale; do
 		fail "candidate lacks required x87 binary80 ${instruction} path"
 done
 
-"$candidate" >"$candidate_output" || fail "freestanding binary80 fixture failed"
+record_argv "$work_dir/consumer-run.argv.json" "$candidate"
+run_recorded "$candidate_output" "$work_dir/candidate.stderr" "$work_dir/candidate.status" \
+	"freestanding binary80 fixture" "$candidate"
 python3 "$ROOT_DIR/compat/x86_64/validate_libc_math_long_double_completion.py" "$candidate_output" ||
 	fail "candidate record contract failed"
 if ! cmp -s "$reference_output" "$candidate_output"; then
@@ -243,13 +321,15 @@ fi
 # One feature-gated archive must also resolve every selected elementary/fenv
 # provider together. The focused leaf runners retain the behavioral oracle;
 # this aggregate only ratchets the shared static-link closure and ELF ABI.
-"$ORACLE_CC" -std=c11 -D_GNU_SOURCE -DCRABC_MATH_ELEMENTARY_FENV_SENSITIVE_AGGREGATE_FREESTANDING \
+	aggregate_link=("$ORACLE_CC" -std=c11 -D_GNU_SOURCE -DCRABC_MATH_ELEMENTARY_FENV_SENSITIVE_AGGREGATE_FREESTANDING \
 	-I"$ROOT_DIR/include" -nostdlib -static -fno-pie -no-pie -ffreestanding \
 	-fno-builtin -frounding-math -fno-stack-protector -Wl,-e,_start \
 	-Wl,--no-undefined -Wl,--gc-sections \
 	compat/x86_64/libc_math_elementary_fenv_sensitive_aggregate_probe.c \
 	compat/x86_64/libc_math_elementary_fenv_sensitive_aggregate_start.S \
-	"$archive" -o "$aggregate_candidate"
+	"$archive" -o "$aggregate_candidate")
+record_argv "$work_dir/aggregate-link.argv.json" "${aggregate_link[@]}"
+"${aggregate_link[@]}"
 readelf --symbols --wide "$aggregate_candidate" >"$aggregate_symbols"
 readelf --program-headers --wide "$aggregate_candidate" >"$aggregate_headers"
 readelf --dynamic --wide "$aggregate_candidate" >"$aggregate_dynamic" || true
@@ -303,6 +383,9 @@ if grep -Eq 'crabc_core|mimalloc|float_parse|math_compat|libm\.so|libm-' \
 	"$aggregate_symbols" "$aggregate_disassembly"; then
 	fail "aggregate candidate selects an ambient math/runtime dependency"
 fi
-"$aggregate_candidate" || fail "freestanding all-provider aggregate fixture failed"
+record_argv "$work_dir/aggregate-run.argv.json" "$aggregate_candidate"
+run_recorded "$work_dir/aggregate.stdout" "$work_dir/aggregate.stderr" "$work_dir/aggregate.status" \
+	"freestanding all-provider aggregate fixture" "$aggregate_candidate"
+
 printf 'x86 binary80 fdiml/exp10l/pow10l: PASS (%s records)\n' \
 	"$(( $(wc -c < "$candidate_output") / 42 ))"
