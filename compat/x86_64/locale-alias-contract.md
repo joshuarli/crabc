@@ -28,16 +28,24 @@ call back through a public name:
 - `owned_calendar.rs` and `owned_strftime.rs` call the Rust locale-object body
   directly, so an executable replacement of `nl_langinfo[_l]` cannot change
   libc's C-locale calendar/formatting path.
+- `owned_wcsftime.rs` provides `wcsftime` and the global/default
+  `__wcsftime_l`; its public `wcsftime_l` alias is weak and has the same ELF
+  address. The probe supplies a strong application `wcsftime_l`, then checks
+  that `wcsftime` and direct `__wcsftime_l` calls keep their formatting,
+  truncation, and output-buffer behavior.
 - `owned_timezone.rs` retains a direct private Rust timezone refresh body and
   a weak public `tzset`. Musl's `__tzset` is local to its archive member; the
   candidate deliberately does not invent a cross-object `__tzset` or a shared
   dynamic symbol merely to reproduce that unused local spelling.
 
 The default static archive gains the selected locale internals, including
-`__freelocale`, and `__gmtime_r` because they are default-static providers. The owned static
-feature separately adds `asctime_r`, `localtime_r`, and `strftime_l`, each with
-its hidden strong internal spelling. Their feature alias accounting belongs to
-the root-owned feature roster; this document is not that roster.
+`__freelocale`, and `__gmtime_r` because they are default-static providers.
+The owned static feature separately adds `asctime_r`, `localtime_r`, and
+`strftime_l` with hidden strong internal spellings. It also adds
+`wcsftime_l` and its global/default provider. Feature alias accounting
+belongs to the root-owned feature roster; the receipt records the planned
+`x86-owned-static-runtime` source route, not the feature selected by a supplied
+product.
 
 ## Focused installed-product proof
 
@@ -63,8 +71,9 @@ input snapshots, statuses, archive, `.dynsym`, and selected full `.symtab`
 observations, and the exact contract bytes.
 
 The application provides strong replacements for representative public locale
-and time names, including `tzset`. It then verifies the replacements directly
-and exercises high-level libc paths that must retain internal providers:
+and time names, including `tzset` and `wcsftime_l`. It verifies those
+replacements directly and exercises high-level libc paths that must retain
+internal providers:
 `asctime`, `gmtime`, `localtime`, `strftime`, byte/wide collation, and direct
 artifact-observation declarations for the locale internals. Those direct
 internal checks create `C`, `POSIX`, and `C.UTF-8` objects, duplicate the UTF-8
@@ -112,9 +121,9 @@ consumer mode policies are all checked from retained bytes. The receipt also
 retains the compiled object and every linked consumer identity, before/after
 input snapshots, and complete static/dynamic product trees including directory
 and symlink modes. The descendant-tree convention intentionally omits each
-product root, so both receipt versions record the physical static and dynamic
-root modes separately. This preserves a dynamic setgid root such as `02755`
-without inventing a root mode from descendants.
+product root, so the receipt records the physical static and dynamic root modes
+separately. This preserves a dynamic setgid root such as `02755` without
+inventing a root mode from descendants.
 
 To check the current manifest independently of product construction, run
 `python3 -B compat/x86_64/locale_alias_contract_receipt.py image-input-manifest`
@@ -170,7 +179,7 @@ starts no compiler, linker, target executable, shell, or container.
 
 The selected source relation remains deliberately narrow: `locale_narrow.rs`,
 `locale_objects.rs`, `gmtime_r.rs`, `owned_calendar.rs`,
-`owned_strftime.rs`, `owned_timezone.rs`, and their selected
+`owned_strftime.rs`, `owned_wcsftime.rs`, `owned_timezone.rs`, and their selected
 `static_c_abi.rs` composition are byte-bound. The four time internals retain
 the source-specific distinction described above: musl's full table has local
 `DEFAULT` definitions while the candidate's has local `HIDDEN` definitions;
@@ -178,6 +187,6 @@ neither is accepted as a dynamic export. The receipt also retains the
 source-local oracle `tzset`/`__tzset` distinction instead of inferring a
 candidate static placement from a symbol's presence.
 
-This receipt still excludes `wcsftime_l`, native ABI selection, a general
-locale or timezone implementation, dynamic-authority review, runtime
+This receipt still excludes native ABI selection, a general locale or timezone
+implementation, dynamic-authority review, runtime
 qualification, family completion, and public-support promotion.

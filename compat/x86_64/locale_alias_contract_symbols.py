@@ -25,6 +25,11 @@ _TABLE_HEADER = re.compile(r"^Symbol table '([^']+)' contains ([0-9]+) entries:$
 _SYMBOL = re.compile(
     r"^\s*([0-9]+):\s+([0-9a-fA-F]+)\s+([0-9]+)\s+(\S+)\s+(\S+)\s+(\S+)\s+(\S+)(?:\s+(.*?))?\s*$"
 )
+EXECUTABLE_PUBLIC_OVERRIDES = (
+    "newlocale", "duplocale", "uselocale", "nl_langinfo", "nl_langinfo_l",
+    "isalpha_l", "iswalpha_l", "strcasecmp_l", "strcoll_l", "strftime_l",
+    "gmtime_r", "localtime_r", "asctime_r", "tzset", "wcsftime_l",
+)
 
 
 def _fail(message: str) -> None:
@@ -208,7 +213,7 @@ def _load_contract(path: Path) -> dict[str, Any]:
     if (
         not isinstance(visible, dict)
         or not isinstance(hidden, dict)
-        or len(visible) != 43
+        or len(visible) != 44
         or len(hidden) != 4
         or set(visible) & set(hidden)
         or any(
@@ -304,11 +309,7 @@ def _validate_library(
 
 def _validate_executable(records: list[dict[str, str]], label: str) -> dict[str, dict[str, str]]:
     result: dict[str, dict[str, str]] = {}
-    for name in (
-        "newlocale", "duplocale", "uselocale", "nl_langinfo", "nl_langinfo_l",
-        "isalpha_l", "iswalpha_l", "strcasecmp_l", "strcoll_l", "strftime_l",
-        "gmtime_r", "localtime_r", "asctime_r", "tzset",
-    ):
+    for name in EXECUTABLE_PUBLIC_OVERRIDES:
         record = _one(records, name, label)
         _require_metadata(record, ("FUNC", "GLOBAL", "DEFAULT"), f"{label} application override")
         result[name] = record

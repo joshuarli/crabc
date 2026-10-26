@@ -47,7 +47,8 @@
     "strcoll_l": "__strcoll_l",
     "strxfrm_l": "__strxfrm_l",
     "wcscoll_l": "__wcscoll_l",
-    "wcsxfrm_l": "__wcsxfrm_l"
+    "wcsxfrm_l": "__wcsxfrm_l",
+    "wcsftime_l": "__wcsftime_l"
   },
   "hidden_aliases": {
     "asctime_r": "__asctime_r",

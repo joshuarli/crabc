@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import ast
 import hashlib
 import json
 from pathlib import Path
@@ -175,26 +176,110 @@ class LocaleAliasContractReceiptTests(unittest.TestCase):
             )
 
     def test_source_records_bind_current_bytes_not_only_claimed_hashes(self) -> None:
-        source = self.root / "source/owned_calendar.rs"
+        source = self.root / "source/owned_wcsftime.rs"
         source.parent.mkdir(parents=True)
-        source.write_bytes(b"#[export_name = \"__asctime_r\"]\n")
-        records = receipt.source_records(self.root, ("source/owned_calendar.rs",))
+        source.write_bytes((ROOT / "libc/src/c_abi/x86_64/owned_wcsftime.rs").read_bytes())
+        records = receipt.source_records(self.root, ("source/owned_wcsftime.rs",))
         receipt.validate_source_records(self.root, records)
 
-        source.write_bytes(b"#[export_name = \"__forged___\"]\n")
-        with self.assertRaisesRegex(receipt.LocaleAliasReceiptError, "source bytes"):
+        source.write_bytes(source.read_bytes() + b"\n")
+        with self.assertRaisesRegex(receipt.LocaleAliasReceiptError, "source byte"):
             receipt.validate_source_records(self.root, records)
 
     def test_source_contract_keeps_the_full_roster_and_hidden_time_boundary(self) -> None:
-        for relative in (receipt.CONTRACT_PATH, "docker/x86_64-musl-oracle-gcc", *receipt.IMPLEMENTATION_SOURCES):
+        for relative in (
+            receipt.CONTRACT_PATH,
+            "docker/x86_64-musl-oracle-gcc",
+            *receipt.IMPLEMENTATION_SOURCES,
+            *receipt.FEATURE_SELECTION_SOURCES,
+            receipt.STATIC_BUILDER_PATH,
+        ):
             source = ROOT / relative
             copied = self.root / relative
             copied.parent.mkdir(parents=True, exist_ok=True)
             shutil.copyfile(source, copied)
         observed = receipt.validate_source_contract(self.root)
-        self.assertEqual((observed["visible_pairs"], observed["hidden_pairs"]), (43, 4))
-        self.assertFalse(observed["wcsftime_l_in_contract"])
+        self.assertEqual((observed["visible_pairs"], observed["hidden_pairs"]), (44, 4))
+        self.assertTrue(observed["wcsftime_l_in_contract"])
+        self.assertEqual(observed["feature_source"]["feature"], "x86-owned-static-runtime")
+        self.assertEqual(observed["feature_source"]["selection_source"], receipt.STATIC_BUILDER_PATH)
+        self.assertFalse(observed["feature_source"]["product_build_invocation_proven"])
 
+    def test_source_contract_rejects_a_wrong_owned_runtime_builder_route(self) -> None:
+        paths = (
+            receipt.CONTRACT_PATH,
+            "docker/x86_64-musl-oracle-gcc",
+            *receipt.IMPLEMENTATION_SOURCES,
+            "libc/Cargo.toml",
+            "compat/x86_64/parity.toml",
+            "compat/x86_64/feature_archive_roster.py",
+            receipt.STATIC_BUILDER_PATH,
+        )
+        for relative in paths:
+            copied = self.root / relative
+            copied.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(ROOT / relative, copied)
+        parity = self.root / "compat/x86_64/parity.toml"
+        text = parity.read_text(encoding="utf-8")
+        row_start = text.index('id = "x86-owned-static-runtime"')
+        row_start = text.rfind("[[feature_archive]]", 0, row_start)
+        row_end = text.find("[[feature_archive]]", row_start + 1)
+        if row_end == -1:
+            row_end = len(text)
+        row = text[row_start:row_end]
+        original = 'feature_selection_source = "scripts/build_x86_64_owned_sysroot.py"'
+        self.assertIn(original, row)
+        parity.write_text(text[:row_start] + row.replace(
+            original,
+            'feature_selection_source = "scripts/build_x86_64_owned_dynamic_sysroot.py"',
+            1,
+        ) + text[row_end:], encoding="utf-8")
+        with self.assertRaisesRegex(receipt.LocaleAliasReceiptError, "owned runtime builder selection"):
+            receipt.validate_source_contract(self.root)
+
+    def test_source_contract_rejects_a_changed_builder_feature_selection(self) -> None:
+        paths = (
+            receipt.CONTRACT_PATH,
+            "docker/x86_64-musl-oracle-gcc",
+            *receipt.IMPLEMENTATION_SOURCES,
+            *receipt.FEATURE_SELECTION_SOURCES,
+            receipt.STATIC_BUILDER_PATH,
+        )
+        for relative in paths:
+            copied = self.root / relative
+            copied.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(ROOT / relative, copied)
+        builder = self.root / receipt.STATIC_BUILDER_PATH
+        tree = ast.parse(builder.read_text(encoding="utf-8"))
+        assignments = [node for node in ast.walk(tree)
+                       if isinstance(node, ast.Assign)
+                       and any(isinstance(target, ast.Name) and target.id == "selected_feature"
+                               for target in node.targets)]
+        self.assertEqual(len(assignments), 1)
+        assignment = assignments[0]
+        self.assertIsInstance(assignment.value, ast.IfExp)
+        assignment.value.body = ast.Constant("x86-owned-static-native-shadow")
+        ast.fix_missing_locations(tree)
+        builder.write_text(ast.unparse(tree), encoding="utf-8")
+        with self.assertRaisesRegex(receipt.LocaleAliasReceiptError, "builder feature selection changed"):
+            receipt.validate_source_contract(self.root)
+
+    def test_source_roster_retains_wcsftime_leaf_and_feature_selection_authority(self) -> None:
+        self.assertIn("libc/src/c_abi/x86_64/owned_wcsftime.rs", receipt.IMPLEMENTATION_SOURCES)
+        self.assertIn("libc/Cargo.toml", receipt.SELECTED_SOURCES)
+        self.assertIn("compat/x86_64/parity.toml", receipt.SELECTED_SOURCES)
+        self.assertIn("compat/x86_64/feature_archive_roster.py", receipt.SELECTED_SOURCES)
+
+        for relative in (
+            receipt.CONTRACT_PATH,
+            "docker/x86_64-musl-oracle-gcc",
+            *receipt.IMPLEMENTATION_SOURCES,
+            *receipt.FEATURE_SELECTION_SOURCES,
+            receipt.STATIC_BUILDER_PATH,
+        ):
+            copied = self.root / relative
+            copied.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(ROOT / relative, copied)
         timezone = self.root / "libc/src/c_abi/x86_64/owned_timezone.rs"
         timezone.write_text(timezone.read_text(encoding="utf-8").replace('fn refresh_tzset()', 'fn forged_refresh()'), encoding="utf-8")
         with self.assertRaisesRegex(receipt.LocaleAliasReceiptError, "tzset boundary"):
@@ -830,6 +915,13 @@ class LocaleAliasContractReceiptTests(unittest.TestCase):
     def test_validate_report_rejects_the_v2_product_root_omission_schema(self) -> None:
         trusted, report_path, report = self.public_entry_fixture()
         report["schema"] = "crabc.x86_64-locale-alias-contract-receipt/v2"
+        report_path.write_text(json.dumps(report), encoding="utf-8")
+        with self.assertRaisesRegex(receipt.LocaleAliasReceiptError, "status changed"):
+            self.admit_public_entry(trusted, report_path)
+
+    def test_validate_report_rejects_v4_without_wcsftime_source_ownership(self) -> None:
+        trusted, report_path, report = self.public_entry_fixture()
+        report["schema"] = "crabc.x86_64-locale-alias-contract-receipt/v4"
         report_path.write_text(json.dumps(report), encoding="utf-8")
         with self.assertRaisesRegex(receipt.LocaleAliasReceiptError, "status changed"):
             self.admit_public_entry(trusted, report_path)

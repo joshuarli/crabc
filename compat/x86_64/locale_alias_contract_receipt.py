@@ -2,9 +2,9 @@
 """Collect and replay a retained native x86-64 locale/time alias receipt.
 
 ``run_locale_alias_contract.sh`` owns the normal installed-header consumer.  It
-proves the complete existing 98-name selected contract: 43 ordinary
-public/internal pairs, four time pairs, the file-local ``tzset`` distinction,
-the reverse ``freelocale`` spelling, and two direct entries.  This reader does
+proves the complete 100-name selected contract: 44 visible public/internal
+pairs, four hidden time pairs, the file-local ``tzset`` distinction, the reverse
+``freelocale`` spelling, and two direct entries.  This reader does
 not promote that component.  It records the sources, fresh installed products,
 pinned musl bytes, every runner command and all raw streams so a host can later
 replay the finite relation without starting a compiler, linker, target process,
@@ -14,6 +14,7 @@ or container.
 from __future__ import annotations
 
 import argparse
+import ast
 import hashlib
 import json
 import os
@@ -29,11 +30,12 @@ import tomllib
 import zlib
 from typing import Any, Iterable, Mapping, Sequence
 import core_image
+import feature_archive_roster
 
 
 ROOT = Path(__file__).resolve().parents[2]
 SOURCE_MOUNT = "/workspace"
-SCHEMA = "crabc.x86_64-locale-alias-contract-receipt/v4"
+SCHEMA = "crabc.x86_64-locale-alias-contract-receipt/v5"
 COMMAND_SCHEMA = "crabc.x86_64-locale-alias-contract-command/v2"
 PINNED_IMAGE = core_image.CORE_IMAGE_REFERENCE
 IMAGE_MANIFEST_PATH = "compat/x86_64/locale-alias-contract-image-inputs-v2.json"
@@ -121,6 +123,13 @@ RUNNER_PATH = "compat/x86_64/run_locale_alias_contract.sh"
 DOCUMENT_PATH = "compat/x86_64/locale-alias-contract.md"
 STATIC_BUILDER_PATH = "scripts/build_x86_64_owned_sysroot.py"
 DYNAMIC_BUILDER_PATH = "scripts/build_x86_64_owned_dynamic_sysroot.py"
+FEATURE_ID = "x86-owned-static-runtime"
+NATIVE_SHADOW_FEATURE = "x86-owned-static-native-shadow"
+FEATURE_SELECTION_SOURCES = (
+    "libc/Cargo.toml",
+    "compat/x86_64/parity.toml",
+    "compat/x86_64/feature_archive_roster.py",
+)
 PRODUCT_READER_PATH = "compat/x86_64/owned_posix_product_evidence.py"
 STATIC_PREPARATION_OWNER_PATH = "compat/x86_64/owned_posix_static_products.py"
 STATIC_PACKAGE_OWNER_PATH = "compat/x86_64/owned_static_sysroot_package.py"
@@ -138,6 +147,7 @@ IMPLEMENTATION_SOURCES = (
     "libc/src/c_abi/x86_64/gmtime_r.rs",
     "libc/src/c_abi/x86_64/owned_calendar.rs",
     "libc/src/c_abi/x86_64/owned_strftime.rs",
+    "libc/src/c_abi/x86_64/owned_wcsftime.rs",
     "libc/src/c_abi/x86_64/owned_timezone.rs",
     "libc/src/c_abi/x86_64/static_c_abi.rs",
 )
@@ -160,6 +170,7 @@ SELECTED_SOURCES = (
     "compat/x86_64/crabc_cc_owned_dynamic.py",
     "compat/x86_64/owned_dynamic_qualification.py",
     "compat/x86_64/locale_alias_contract_receipt.py",
+    *FEATURE_SELECTION_SOURCES,
     *IMPLEMENTATION_SOURCES,
     "compat/upstreams.toml",
     "docker/Dockerfile.x86_64",
@@ -250,8 +261,8 @@ STATUS = {
 }
 NONCLAIMS = (
     "This receipt retains only the existing selected locale/time alias contract.",
-    "It does not add wcsftime_l, a general locale catalog, legacy encodings, or timezone-data qualification.",
-    "The receipt does not infer selected static feature placement from symbol presence.",
+    "It does not establish a general locale catalog, legacy encodings, or timezone-data qualification.",
+    "The source map names the planned x86-owned-static-runtime builder route; it does not prove which feature a supplied product selected.",
     "It is not native ABI selection, runtime qualification, family completion, or public x86 support.",
 )
 
@@ -487,7 +498,7 @@ def _contract(root: Path) -> dict[str, Any]:
     hidden = record["hidden_aliases"]
     if not isinstance(visible, Mapping) or not isinstance(hidden, Mapping):
         _fail("locale alias pairs are malformed")
-    if len(visible) != 43 or len(hidden) != 4 or set(visible) & set(hidden):
+    if len(visible) != 44 or len(hidden) != 4 or set(visible) & set(hidden):
         _fail("locale alias pair roster changed")
     if any(not isinstance(name, str) or internal != "__" + name
            for aliases in (visible, hidden) for name, internal in aliases.items()):
@@ -503,8 +514,58 @@ def _contract(root: Path) -> dict[str, Any]:
     return dict(record)
 
 
+def _feature_source(root: Path) -> dict[str, object]:
+    try:
+        cargo_features = feature_archive_roster.load_cargo_x86_features(root / "libc/Cargo.toml")
+        with (root / "compat/x86_64/parity.toml").open("rb") as stream:
+            ledger = tomllib.load(stream)
+        rows = feature_archive_roster.parse_feature_archive_roster(
+            ledger.get("feature_archive"), cargo_features
+        )
+    except (OSError, tomllib.TOMLDecodeError, feature_archive_roster.FeatureArchiveRosterError) as error:
+        raise LocaleAliasReceiptError(f"owned runtime feature source is invalid: {error}") from error
+
+    selected = [row for row in rows if row.identifier == FEATURE_ID]
+    if len(selected) != 1:
+        _fail("owned runtime builder selection does not identify one feature")
+    row = selected[0]
+    aliases = {(alias.name, alias.target, alias.binding) for alias in row.aliases}
+    if (row.state != "planned" or row.feature_selection_source != STATIC_BUILDER_PATH
+            or row.enabled_features != (FEATURE_ID,)
+            or ("wcsftime_l", "__wcsftime_l", "weak-same-address") not in aliases):
+        _fail("owned runtime builder selection or wcsftime alias changed")
+    try:
+        builder = ast.parse((root / STATIC_BUILDER_PATH).read_text(encoding="utf-8"))
+    except (OSError, SyntaxError, UnicodeDecodeError) as error:
+        raise LocaleAliasReceiptError(f"owned runtime builder source is invalid: {error}") from error
+    selection = ast.parse(
+        f'selected_feature = "{FEATURE_ID}" if accepted_c else "{NATIVE_SHADOW_FEATURE}"'
+    ).body[0]
+    assignments = [node for node in ast.walk(builder)
+                   if isinstance(node, ast.Assign)
+                   and any(isinstance(target, ast.Name) and target.id == "selected_feature"
+                           for target in node.targets)]
+    if len(assignments) != 1 or ast.dump(assignments[0]) != ast.dump(selection):
+        _fail("owned runtime builder feature selection changed")
+    try:
+        closure = feature_archive_roster.feature_closure(row.enabled_features, cargo_features)
+    except feature_archive_roster.FeatureArchiveRosterError as error:
+        raise LocaleAliasReceiptError(f"owned runtime feature closure is invalid: {error}") from error
+    return {
+        "feature": row.identifier,
+        "selection_source": row.feature_selection_source,
+        "builder_selection": f"accepted-c selects {FEATURE_ID}; native-shadow selects {NATIVE_SHADOW_FEATURE}",
+        "enabled_features": list(row.enabled_features),
+        "feature_closure": list(closure),
+        "aliases": [
+            {"public": "wcsftime_l", "provider": "__wcsftime_l", "binding": "weak-same-address"}
+        ],
+        "product_build_invocation_proven": False,
+    }
+
+
 def validate_source_contract(root: Path) -> dict[str, object]:
-    """Bind source-owned aliases without inventing static feature placement."""
+    """Bind source-owned aliases and the planned static feature route."""
 
     # The public/internal alias pairs, their weak/hidden bindings and the
     # reverse freelocale alias are proven on the installed products' ELF
@@ -530,7 +591,8 @@ def validate_source_contract(root: Path) -> dict[str, object]:
         "file_local_alias": "tzset/__tzset (source-local oracle distinction)",
         "reverse_visible_alias": "freelocale/__freelocale",
         "direct_entries": list(contract["non_alias_locale_entries"]),
-        "wcsftime_l_in_contract": False,
+        "wcsftime_l_in_contract": True,
+        "feature_source": _feature_source(root),
     }
 
 

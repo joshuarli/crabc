@@ -63,8 +63,9 @@ class LocaleAliasContractTests(unittest.TestCase):
         self.assertIsInstance(visible, dict)
         self.assertIsInstance(hidden, dict)
         self.assertIsInstance(reverse, dict)
-        self.assertEqual(len(visible), 43)
+        self.assertEqual(len(visible), 44)
         self.assertEqual(len(hidden), 4)
+        self.assertEqual(visible["wcsftime_l"], "__wcsftime_l")
         self.assertFalse(set(visible) & set(hidden))
         for public, internal in {**visible, **hidden}.items():
             self.assertEqual(internal, "__" + public)
@@ -225,6 +226,75 @@ Symbol table '.symtab' contains 2 entries:
             path.write_text(raw, encoding="utf-8")
             with self.assertRaises(symbols.LocaleAliasError):
                 symbols.parse_symbols(path, archive=False, table=".symtab")
+
+    def test_visible_wcsftime_l_pair_requires_one_default_same_archive_provider(self) -> None:
+        public = {
+            "file": "libc.a(c.wcsftime.o)",
+            "table": ".symtab",
+            "index": "1",
+            "value": "0000000000000050",
+            "size": "256",
+            "type": "FUNC",
+            "binding": "WEAK",
+            "visibility": "DEFAULT",
+            "section": "12",
+            "name": "wcsftime_l",
+        }
+        provider = {
+            **public,
+            "index": "2",
+            "binding": "GLOBAL",
+            "name": "__wcsftime_l",
+        }
+        symbols._require_pair(
+            [public, provider], "wcsftime_l", "__wcsftime_l", "DEFAULT",
+            "candidate static", True,
+        )
+
+        for field, changed in (
+            ("file", "libc.a(c.other.o)"),
+            ("section", "13"),
+            ("value", "0000000000000051"),
+            ("visibility", "HIDDEN"),
+        ):
+            with self.subTest(field=field):
+                invalid_provider = {**provider, field: changed}
+                with self.assertRaises(symbols.LocaleAliasError):
+                    symbols._require_pair(
+                        [public, invalid_provider], "wcsftime_l", "__wcsftime_l", "DEFAULT",
+                        "candidate static", True,
+                    )
+
+        with self.assertRaisesRegex(symbols.LocaleAliasError, "requires exactly one defined __wcsftime_l"):
+            symbols._require_pair(
+                [public], "wcsftime_l", "__wcsftime_l", "DEFAULT", "candidate static", True,
+            )
+
+    def test_wcsftime_l_is_a_required_global_default_executable_override(self) -> None:
+        names = tuple(name for name in symbols.EXECUTABLE_PUBLIC_OVERRIDES
+                      if name != "wcsftime_l") + ("wcsftime_l",)
+        records = [
+            {
+                "file": "",
+                "table": ".symtab",
+                "index": str(index + 1),
+                "value": f"{0x100 + index * 16:016x}",
+                "size": "16",
+                "type": "FUNC",
+                "binding": "GLOBAL",
+                "visibility": "DEFAULT",
+                "section": "14",
+                "name": name,
+            }
+            for index, name in enumerate(names)
+        ]
+        observed = symbols._validate_executable(records, "candidate executable")
+        self.assertEqual(observed["wcsftime_l"]["binding"], "GLOBAL")
+        self.assertEqual(observed["wcsftime_l"]["visibility"], "DEFAULT")
+
+        without_override = [record for record in records if record["name"] != "wcsftime_l"]
+        with self.assertRaisesRegex(symbols.LocaleAliasError, "requires exactly one defined wcsftime_l"):
+            symbols._validate_executable(without_override, "candidate executable")
 
     def test_shared_time_pair_keeps_oracle_and_candidate_localization_distinct(self) -> None:
         public = {
