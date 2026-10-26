@@ -234,6 +234,32 @@ def duplicate_relocation_tag(path: Path, tag: int) -> Path:
     return duplicate
 
 
+def invalid_rela_entry_size(path: Path) -> Path:
+    data, headers = elf_layout(path)
+    dynamic = next(header for header in headers if header[0] == PT_DYNAMIC)
+    entry = next(offset for offset in range(dynamic[2], dynamic[2] + dynamic[5], 16)
+                 if struct.unpack_from("<q", data, offset)[0] == 9)
+    mutable = bytearray(data)
+    struct.pack_into("<Q", mutable, entry + 8, 8)
+    invalid = path.with_name(path.name + ".invalid-relaent")
+    invalid.write_bytes(mutable)
+    invalid.chmod(0o755)
+    return invalid
+
+
+def missing_rela_entry_size(path: Path) -> Path:
+    data, headers = elf_layout(path)
+    dynamic = next(header for header in headers if header[0] == PT_DYNAMIC)
+    entry = next(offset for offset in range(dynamic[2], dynamic[2] + dynamic[5], 16)
+                 if struct.unpack_from("<q", data, offset)[0] == 9)
+    mutable = bytearray(data)
+    struct.pack_into("<qQ", mutable, entry, 21, 0)
+    missing = path.with_name(path.name + ".missing-relaent")
+    missing.write_bytes(mutable)
+    missing.chmod(0o755)
+    return missing
+
+
 def relocation_summary(path: Path) -> list[tuple[int, int, int]]:
     data, program_headers = elf_layout(path)
     tags = dynamic_tags(data, program_headers)
@@ -447,7 +473,7 @@ class X86_64StaticPieTests(unittest.TestCase):
                 self.assertEqual(overlap.stdout, b"")
 
                 tags = dynamic_tags(*elf_layout(executable))
-                for tag in (7, 8, 35, 36, 37):
+                for tag in (7, 8, 9, 35, 36, 37):
                     if tag not in tags:
                         continue
                     duplicate_tag = subprocess.run(
@@ -458,6 +484,20 @@ class X86_64StaticPieTests(unittest.TestCase):
                     self.assertEqual(duplicate_tag.returncode, 127, duplicate_tag.stderr.decode(errors="replace"))
                     self.assertEqual(duplicate_tag.stdout, b"")
                 if not packed_relr:
+                    bad_entry = subprocess.run(
+                        [str(invalid_rela_entry_size(executable))], stdin=subprocess.DEVNULL,
+                        stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False,
+                        preexec_fn=disable_core_dump,
+                    )
+                    self.assertEqual(bad_entry.returncode, 127, bad_entry.stderr.decode(errors="replace"))
+                    self.assertEqual(bad_entry.stdout, b"")
+                    missing_entry = subprocess.run(
+                        [str(missing_rela_entry_size(executable))], stdin=subprocess.DEVNULL,
+                        stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False,
+                        preexec_fn=disable_core_dump,
+                    )
+                    self.assertEqual(missing_entry.returncode, 127, missing_entry.stderr.decode(errors="replace"))
+                    self.assertEqual(missing_entry.stdout, b"")
                     malformed = corrupt_first_relative_relocation(executable)
                     rejected = subprocess.run(
                         [str(malformed)], stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False

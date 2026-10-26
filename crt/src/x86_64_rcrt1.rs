@@ -255,6 +255,14 @@ _start:
     mov QWORD PTR [rsp + 8], rcx
     jmp .Lstatic_pie_dynamic
 .Lstatic_pie_not_relasz:
+    cmp rax, 9
+    jne .Lstatic_pie_not_relaent
+    bts QWORD PTR [rsp + 80], 5
+    jc .Lstatic_pie_fail
+    cmp rcx, 24
+    jne .Lstatic_pie_fail
+    jmp .Lstatic_pie_dynamic
+.Lstatic_pie_not_relaent:
     cmp rax, 36
     jne .Lstatic_pie_not_relr
     bts QWORD PTR [rsp + 80], 2
@@ -281,6 +289,8 @@ _start:
     mov rsi, QWORD PTR [rsp + 8]
     test rsi, rsi
     jz .Lstatic_pie_rela_done
+    bt QWORD PTR [rsp + 80], 5
+    jnc .Lstatic_pie_fail
     mov rdi, QWORD PTR [rsp]
     test rdi, rdi
     jz .Lstatic_pie_fail
