@@ -1,9 +1,20 @@
 # Qualify and promote crabc's native x86-64 runtime
 
-**Status: winding down 2026-10-26.** Owner requested `$campaign-winddown` and `$cleanup`; launch no new campaign work.
-Last accepted main is `4b8e1604f`; verified locale, oracle-companion and receipt changes are being integrated before the clean stop.
-Preserve failed frozen cohorts and raw diagnostic streams. Denied allocator actions stay parked; AArch64 and the Rust nightly stay unchanged.
-Next resume slice: freeze the final repaired source for a fresh native correctness cohort; no qualification or promotion is claimed.
+**Status: paused 2026-10-26.** Owner requested campaign winddown and cleanup; start no campaign work until resumed.
+
+Resume prompt: “Resume plan.md from accepted `775ff60ac`; prepare a fresh source-frozen correctness cohort, then continue qualification and promotion.”
+First command: `git worktree add .work/wt/cohort-resume -b cohort/resume-20261026 main`.
+Accepted source is `775ff60ac`; main and `lane/campaign-integration` are clean. No public-support, allocator-default or qualification flag changed.
+Proof: 150 integrated reader tests pass; the next seven-module check has 134 passes/one receipt-dependent skip. Wordexp passes all 108 cells, independent input capture, companion replay and the exact 20/67 join. Three fresh locale products, the locale leaf/reader and the kache Rust check pass; independent review has no open P1/P2.
+Next: transfer only the prospective ledger/inventory delta from parked `cohort/native-mold-20261026-4` (`e0f103f24`), regenerate digests, prepare the existing pinned inputs and freeze before the 69-step correctness run. Never merge the rehearsal claims.
+Current evidence consumers remain at `.work/wt/campaign-integration`, `.work/wt/cohort-native-mold`, `.work/wt/cohort-native-mold-2`, `.work/wt/cohort-native-mold-3`, `.work/wt/locale-null-base` and `.work/wt/wordexp-oracle-refresh`; retained raw failures and causal artifacts must not be relabelled as current-source qualification.
+The three failed mold cohorts remain frozen at `7eb375e52`, `fd3245f24`, `66d1727f0`. H04 has not begun proof; its prepared inputs are retained. Fresh products are required after the locale fix; the old-product stdio attempt correctly refuses current-source binding.
+Parking commits preserve completed lane source, original fixture locations and pre-parking HEAD context. Historical receipts keep their original identity; reconstruct their recorded source state or regenerate rather than crediting a parking commit.
+Parked source/evidence refs are `archive/*`, `cohort/*`, `integration/os82`, `lane/*`, `parked/*`, `proof/*`, `recovery/*` and `review/*`; Git retains the exact heads. Before integrating any, reconcile `git branch --no-merged main` and per-branch `git cherry main BRANCH`. Unreviewed or obsolete variants remain parked; never merge them merely to delete a checkout.
+All remaining `.work/wt/*` checkouts are retained for committed parked source, physical receipts or ignored artifacts whose disposal is not established; each is clean and explicitly allowed by the closeout guard. Further retirement requires resolving that consumer/data question.
+Cleanup removed only `arena-backing-gap` and `m6-oven-inventory`; no branches or raw failures were deleted. No campaign runner remains. One pre-existing idle bash container is untouched; no push occurred.
+Both POSIX pow and C-ABI admission holds remain reopened. Denied allocator actions remain parked; accepted-C stays selected. Paused AArch64, the released source-port musl pin and Rust nightly remain unchanged; the native oracle stays at approved `7813e911`.
+Known bounded limitation: both the pinned oracle and candidate accept `newlocale(INT_MIN, "C", NULL)`; the accepted default-category repair does not claim POSIX invalid-mask conformance.
 
 ## Goal
 
@@ -609,6 +620,14 @@ Forbidden:
 
 Made so far, each with its commit, for the owner:
 
+- `775ff60ac`: null-base native locale objects use C/POSIX defaults for
+  unselected categories; only selected empty names resolve the environment.
+  The unsafe caller obligations and C regression follow that behavior.
+  Wordexp records the approved oracle's exact observations, including raw
+  failing probe statuses, with one source-policy transcript owner. Private
+  DSO receipts require retained builtins bytes and the source-image linker;
+  archive and public shared bindings remain exact despite localized static
+  executable symbols. One obsolete source-text assertion is removed.
 - `4b8e1604f`: private native receipts bind mold's actual trace and map
   representation, original object extents and retained oracle inputs. The
   oracle compiler suppresses interpreters for shared links; core launches
