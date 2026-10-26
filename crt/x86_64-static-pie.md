@@ -36,6 +36,8 @@ The static evidence consumes exactly these Rust-produced objects:
 
 The static PIE fixture writes to an admitted RELRO word in its first
 constructor and requires a protection fault in both RELA and RELR variants.
+It also rejects a first RELR bitmap, an unaligned address and an overflowing
+address before the constructor runs.
 
 `crt/src/x86_64_startup.rs` is the shared private static-startup path.
 `rcrt1.o` reaches it after relocation and RELRO through an

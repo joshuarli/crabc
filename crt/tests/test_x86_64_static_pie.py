@@ -260,6 +260,18 @@ def missing_relocation_tag(path: Path, tag: int) -> Path:
     return missing
 
 
+def invalid_first_relr(path: Path, value: int) -> Path:
+    data, headers = elf_layout(path)
+    tags = dynamic_tags(data, headers)
+    table = virtual_offset(headers, tags[DT_RELR])
+    mutable = bytearray(data)
+    struct.pack_into("<Q", mutable, table, value)
+    invalid = path.with_name(path.name + f".invalid-relr-{value}")
+    invalid.write_bytes(mutable)
+    invalid.chmod(0o755)
+    return invalid
+
+
 def relocation_summary(path: Path) -> list[tuple[int, int, int]]:
     data, program_headers = elf_layout(path)
     tags = dynamic_tags(data, program_headers)
@@ -491,6 +503,15 @@ class X86_64StaticPieTests(unittest.TestCase):
                     )
                     self.assertEqual(missing_tag.returncode, 127, missing_tag.stderr.decode(errors="replace"))
                     self.assertEqual(missing_tag.stdout, b"")
+                if packed_relr:
+                    for value in (1, 2, 0xfffffffffffffff8):
+                        bad_relr = subprocess.run(
+                            [str(invalid_first_relr(executable, value))], stdin=subprocess.DEVNULL,
+                            stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False,
+                            preexec_fn=disable_core_dump,
+                        )
+                        self.assertEqual(bad_relr.returncode, 127, bad_relr.stderr.decode(errors="replace"))
+                        self.assertEqual(bad_relr.stdout, b"")
                 if not packed_relr:
                     bad_entry = subprocess.run(
                         [str(invalid_rela_entry_size(executable))], stdin=subprocess.DEVNULL,
