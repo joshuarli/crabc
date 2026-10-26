@@ -23,7 +23,7 @@ import stat
 import subprocess
 import sys
 import tomllib
-from typing import Any, Mapping, Sequence
+from typing import Any, Mapping, MutableMapping, Sequence
 
 sys.dont_write_bytecode = True
 ROOT = Path(__file__).resolve().parents[2]
@@ -149,6 +149,7 @@ SUPPORTED_TYPES = {'NOTYPE', 'OBJECT', 'FUNC', 'SECTION', 'FILE', 'COMMON', 'TLS
 SUPPORTED_BINDINGS = {'LOCAL', 'GLOBAL', 'WEAK', 'UNIQUE'}
 SUPPORTED_VISIBILITIES = {'DEFAULT', 'INTERNAL', 'HIDDEN', 'PROTECTED'}
 ORDINARY_IMPORT_REASON = 'exact ordinary import/provider or optional weak/null resolution proof is missing'
+SELECTED_CALLABLE_BOUNDARY_REQUIREMENT = 'selected boundary requires its declaration/consumer/compiler/oracle receipt'
 LOADER_MEMORY_GROUP = 'loader-memory-function-copies'
 LOADER_MEMORY_RECEIPT_NAMES = frozenset({'memmove', 'memcmp', 'bcmp'})
 PUBLIC_DATA_LINKAGE_LIMITS = [
@@ -2521,7 +2522,7 @@ def expand_obligations(contract: Mapping[str, Any], inputs: Mapping[str, Any]) -
         if disposition == 'unresolved':
             record['unresolved'].append('planned provider routing is not closure')
         else:
-            record['unresolved'].append('selected boundary requires its declaration/consumer/compiler/oracle receipt')
+            record['unresolved'].append(SELECTED_CALLABLE_BOUNDARY_REQUIREMENT)
     for group in contract['structural_groups']:
         for name in group['members']:
             record = obtain(name)
@@ -4128,6 +4129,130 @@ def reviewed_cpp_header_linkage_joins(
     return result
 
 
+def selected_callable_boundary_joins(
+    boundaries: Mapping[str, Any] | None,
+    callable_account: Mapping[str, Any],
+) -> list[dict[str, Any]]:
+    if boundaries is None:
+        return []
+    boundaries = exact(boundaries, {
+        'alloca', 'oracle_no_provider', 'products', 'seqbuf_dump',
+    }, 'ordinary declaration selected callable boundaries')
+    deferred = callable_account.get('deferred')
+    require(type(deferred) is list, 'selected callable boundary deferred account is absent')
+    names = set()
+    groups: dict[str, dict[str, list[str]]] = {}
+    for index, row in enumerate(deferred):
+        require(isinstance(row, Mapping), f'selected callable boundary deferred row {index} differs')
+        name = string(row.get('name'), f'selected callable boundary deferred row {index} name')
+        owner = string(row.get('id'), f'selected callable boundary deferred row {index} owner')
+        resolution = string(row.get('resolution'), f'selected callable boundary deferred row {index} resolution')
+        require(name not in names, f'selected callable boundary deferred name repeats: {name}')
+        names.add(name)
+        if resolution in {'compiler-builtin', 'consumer-supplied', 'oracle-declared-no-provider'}:
+            group = groups.setdefault(resolution, {})
+            group.setdefault(owner, []).append(name)
+    require(set(groups) == {'compiler-builtin', 'consumer-supplied', 'oracle-declared-no-provider'}
+            and all(len(owners) == 1 for owners in groups.values()),
+            'selected callable boundary deferred owner partition differs')
+
+    def expected_owner(resolution: str) -> dict[str, Any]:
+        owner, members = next(iter(groups[resolution].items()))
+        return {'id': owner, 'members': sorted(members), 'resolution': resolution}
+
+    def receipt_owner(value: object, expected: Mapping[str, Any], description: str) -> None:
+        owner = exact(value, {'id', 'members', 'resolution'}, description)
+        require(same(owner, expected), f'{description} differs from selected deferred owner')
+
+    compiler_owner = expected_owner('compiler-builtin')
+    consumer_owner = expected_owner('consumer-supplied')
+    no_provider_owner = expected_owner('oracle-declared-no-provider')
+    require(compiler_owner['members'] == ['alloca'] and consumer_owner['members'] == ['seqbuf_dump'],
+            'selected callable boundary builtin or consumer identity differs')
+    alloca = exact(boundaries['alloca'], {'owner'}, 'selected alloca boundary')
+    seqbuf = exact(boundaries['seqbuf_dump'], {'owner'}, 'selected seqbuf_dump boundary')
+    no_provider = exact(boundaries['oracle_no_provider'], {
+        'members', 'owner', 'provider_absence', 'raw_provider_observations',
+    }, 'selected oracle no-provider boundary')
+    receipt_owner(alloca['owner'], compiler_owner, 'selected alloca boundary owner')
+    receipt_owner(seqbuf['owner'], consumer_owner, 'selected seqbuf_dump boundary owner')
+    receipt_owner(no_provider['owner'], no_provider_owner, 'selected oracle no-provider boundary owner')
+    require(no_provider['members'] == no_provider_owner['members'],
+            'selected oracle no-provider boundary members differ')
+    joins = []
+    for boundary, owner in (
+        ('alloca', compiler_owner),
+        ('seqbuf_dump', consumer_owner),
+        ('oracle_no_provider', no_provider_owner),
+    ):
+        joins.extend({
+            'identity': identity(name), 'owner': owner['id'],
+            'resolution': owner['resolution'], 'boundary': boundary,
+        } for name in owner['members'])
+    return sorted(joins, key=lambda row: row['identity']['name'])
+
+
+def attach_selected_callable_boundaries(
+    accounting: MutableMapping[str, Any],
+    joins: Sequence[Mapping[str, Any]],
+) -> list[dict[str, Any]]:
+    require(isinstance(joins, Sequence) and not isinstance(joins, (str, bytes)),
+            'selected callable boundary joins are invalid')
+    if not joins:
+        return []
+    records = accounting.get('identities')
+    require(type(records) is list, 'selected callable boundary accounting is absent')
+    records_by_key = {identity_key(row['identity']): row for row in records}
+    require(len(records_by_key) == len(records), 'selected callable boundary identities repeat')
+    disposition_for_resolution = {
+        'compiler-builtin': 'compiler-builtin',
+        'consumer-supplied': 'consumer-supplied',
+        'oracle-declared-no-provider': 'oracle-no-provider',
+    }
+    boundary_for_resolution = {
+        'compiler-builtin': 'alloca',
+        'consumer-supplied': 'seqbuf_dump',
+        'oracle-declared-no-provider': 'oracle_no_provider',
+    }
+    expected_rows = [
+        row for row in records
+        if isinstance(row.get('selection'), Mapping)
+        and row['selection'].get('disposition') in disposition_for_resolution.values()
+    ]
+    expected = {identity_key(row['identity']): row for row in expected_rows}
+    require(len(expected) == len(expected_rows), 'selected callable boundary identities repeat')
+    require(len(expected) == len(joins), 'selected callable boundary join count differs')
+    joined: set[tuple[str, str | None, bool]] = set()
+    pending: list[dict[str, Any]] = []
+    retained: list[dict[str, Any]] = []
+    for index, raw in enumerate(joins):
+        row = exact(raw, {'boundary', 'identity', 'owner', 'resolution'},
+                    f'selected callable boundary join {index}')
+        key = identity_key(row['identity'])
+        name = key[0]
+        require(key not in joined, f'selected callable boundary join repeats: {name}')
+        joined.add(key)
+        record = records_by_key.get(key)
+        require(record is not None and key in expected,
+                f'selected callable boundary identity is not deferred: {name}')
+        resolution = string(row['resolution'], f'selected callable boundary join {index} resolution')
+        owner = string(row['owner'], f'selected callable boundary join {index} owner')
+        boundary = string(row['boundary'], f'selected callable boundary join {index} boundary')
+        selection = record['selection']
+        require(selection.get('owner') == owner
+                and selection.get('disposition') == disposition_for_resolution.get(resolution)
+                and boundary == boundary_for_resolution.get(resolution),
+                f'selected callable boundary owner or disposition differs: {name}')
+        require(record['unresolved'].count(SELECTED_CALLABLE_BOUNDARY_REQUIREMENT) == 1,
+                f'selected callable boundary requirement differs: {name}')
+        pending.append(record)
+        retained.append(copy.deepcopy(dict(row)))
+    require(joined == set(expected), 'selected callable boundary identity roster differs')
+    for record in pending:
+        record['unresolved'].remove(SELECTED_CALLABLE_BOUNDARY_REQUIREMENT)
+    return retained
+
+
 def ordinary_declaration_abi_adapter(
     report_path: Path | None,
     *,
@@ -4160,7 +4285,8 @@ def ordinary_declaration_abi_adapter(
         raise SelectionError(f'ordinary declaration ABI companion rejected: {error}') from error
     after = {'ordinary_declaration_report': file_identity(report_path), 'header_report': file_identity(header_report)}
     require(same(before, after), 'ordinary declaration ABI input changed during companion replay')
-    exact(replayed, {'callable_plan', 'execution', 'header_declaration_report', 'record_layout_projection', 'report', 'summary'},
+    exact(replayed, {'callable_plan', 'execution', 'header_declaration_report', 'record_layout_projection',
+                     'selected_callable_boundaries', 'report', 'summary'},
           'ordinary declaration ABI reader envelope')
     execution = exact(replayed['execution'], {'collector_output', 'collector_source', 'image_id', 'native_context', 'source_mount', 'timeout_seconds', 'workers'},
                       'ordinary declaration ABI execution')
@@ -4199,6 +4325,9 @@ def ordinary_declaration_abi_adapter(
     require(type(counts) is dict and counts.get('ordinary-linkage-identity-mismatch', 0) == len(mismatches),
             'ordinary declaration ABI mismatch summary differs')
     layouts = _ordinary_declaration_layout_joins(replayed['record_layout_projection'], selected_objects)
+    selected_boundary_joins = selected_callable_boundary_joins(
+        replayed['selected_callable_boundaries'], callable_account,
+    )
     callable_plan_source = report.get('callable_plan_source')
     require(type(callable_plan_source) is dict, 'ordinary declaration ABI callable plan source differs')
     return {
@@ -4217,6 +4346,7 @@ def ordinary_declaration_abi_adapter(
         'reviewed_linkage_boundary': boundary_joins,
         'unaccounted_linkage_mismatches': unaccounted_mismatches,
         'record_layout_joins': layouts,
+        'selected_callable_boundary_joins': selected_boundary_joins,
         'limits': list(DECLARATION_ABI_LIMITS),
     }
 
@@ -13802,6 +13932,16 @@ def _build_report(*, contract_path: Path, paths: Mapping[str, Path], declaration
         expanded, compiler_helper_companion, contract, inputs,
     )
     accounting = account_placements(expanded, facts)
+    ordinary_declaration_abi_companion = (declaration or {}).get('ordinary_declaration_abi')
+    selected_callable_boundary_joins, _ = _attach(
+        rejected, 'ordinary_declaration_abi_selected_callable_boundaries', accounting,
+        ordinary_declaration_abi_companion,
+        lambda: attach_selected_callable_boundaries(
+            accounting,
+            ordinary_declaration_abi_companion['selected_callable_boundary_joins']
+            if ordinary_declaration_abi_companion is not None else [],
+        ),
+    )
     if compiler_helper_companion is not None and compiler_helper_companion['installed_links']['status'] == 'pending':
         accounting['blockers'].append({'code': 'compiler-helper-installed-links-pending',
                                       'owner_group': COMPILER_HELPER_GROUP,

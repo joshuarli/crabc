@@ -1159,8 +1159,92 @@ class ModulePrivateSymbolTests(unittest.TestCase):
 
     def test_an_identity_with_another_open_reason_is_not_owned(self):
         accounting = self.accounting()
-        accounting['identities'][0]['unresolved'].append('selected boundary requires its declaration/consumer/compiler/oracle receipt')
+        accounting['identities'][0]['unresolved'].append(selection.SELECTED_CALLABLE_BOUNDARY_REQUIREMENT)
         self.assertEqual(self.attach(accounting), [])
+
+
+def selected_callable_boundary_fixture():
+    contract = selection.load_contract()
+    inputs = selection.load_source_inputs(contract, selection.CONTRACT_PATH)
+    resolutions = {'compiler-builtin', 'consumer-supplied', 'oracle-declared-no-provider'}
+    deferred = [
+        {'name': name, 'id': owner['id'], 'resolution': owner['resolution']}
+        for name, owner in sorted(inputs['deferred'].items())
+        if owner['resolution'] in resolutions
+    ]
+    groups = {}
+    for row in deferred:
+        group = groups.setdefault((row['id'], row['resolution']), [])
+        group.append(row['name'])
+
+    def owner(resolution):
+        selected = [(group_id, members) for (group_id, kind), members in groups.items()
+                    if kind == resolution]
+        if len(selected) != 1:
+            raise AssertionError(f'expected one {resolution} group')
+        group_id, members = selected[0]
+        return {'id': group_id, 'members': sorted(members), 'resolution': resolution}
+
+    boundaries = {
+        'products': {'static': {}, 'dynamic': {}},
+        'alloca': {'owner': owner('compiler-builtin')},
+        'seqbuf_dump': {'owner': owner('consumer-supplied')},
+        'oracle_no_provider': {
+            'owner': owner('oracle-declared-no-provider'),
+            'members': owner('oracle-declared-no-provider')['members'],
+            'provider_absence': {},
+            'raw_provider_observations': {},
+        },
+    }
+    callable_account = {'deferred': deferred}
+    disposition = {
+        'compiler-builtin': 'compiler-builtin',
+        'consumer-supplied': 'consumer-supplied',
+        'oracle-declared-no-provider': 'oracle-no-provider',
+    }
+    accounting = {'identities': [
+        {
+            'identity': identity(row['name']),
+            'selection': {'disposition': disposition[row['resolution']], 'owner': row['id']},
+            'unresolved': [selection.SELECTED_CALLABLE_BOUNDARY_REQUIREMENT, 'another open condition'],
+        }
+        for row in deferred
+    ]}
+    return boundaries, callable_account, accounting
+
+
+class SelectedCallableBoundaryAttachmentTests(unittest.TestCase):
+    def test_exact_deferred_boundary_owners_clear_only_their_receipt_requirement(self):
+        boundaries, callable_account, accounting = selected_callable_boundary_fixture()
+        joins = selection.selected_callable_boundary_joins(boundaries, callable_account)
+        self.assertEqual(len(joins), 11)
+        self.assertEqual(
+            {row['identity']['name'] for row in joins},
+            {row['identity']['name'] for row in accounting['identities']},
+        )
+        attached = selection.attach_selected_callable_boundaries(accounting, joins)
+        self.assertEqual(attached, joins)
+        self.assertTrue(all(row['unresolved'] == ['another open condition']
+                            for row in accounting['identities']))
+
+    def test_boundary_owner_must_match_the_current_deferred_partition(self):
+        boundaries, callable_account, _ = selected_callable_boundary_fixture()
+        boundaries['oracle_no_provider']['owner']['id'] = 'foreign-owner'
+        with self.assertRaises(selection.SelectionError):
+            selection.selected_callable_boundary_joins(boundaries, callable_account)
+
+    def test_missing_or_wrong_identity_joins_leave_every_reason_open(self):
+        boundaries, callable_account, accounting = selected_callable_boundary_fixture()
+        joins = selection.selected_callable_boundary_joins(boundaries, callable_account)
+        before = copy.deepcopy(accounting)
+        self.assertEqual(selection.attach_selected_callable_boundaries(accounting, []), [])
+        self.assertEqual(accounting, before)
+        for changed in (joins[:-1], copy.deepcopy(joins)):
+            if changed:
+                changed[-1]['owner'] = 'foreign-owner'
+            with self.subTest(count=len(changed)), self.assertRaises(selection.SelectionError):
+                selection.attach_selected_callable_boundaries(accounting, changed)
+            self.assertEqual(accounting, before)
 
 
 class ProcessExitStaticImportTests(unittest.TestCase):
@@ -3355,6 +3439,7 @@ class OrdinaryDeclarationAbiAttachmentTests(unittest.TestCase):
             },
             'header_declaration_report': {'path': 'header-report.json'},
             'record_layout_projection': layout,
+            'selected_callable_boundaries': None,
             'report': report,
             'summary': {
                 'cxx_job_count': 0, 'job_count': 1, 'language_counts': {'c': 1},
@@ -3366,6 +3451,8 @@ class OrdinaryDeclarationAbiAttachmentTests(unittest.TestCase):
     def test_attachment_reuses_the_authenticated_header_envelope_and_retains_a_linkage_mismatch(self):
         plans = self._plan()
         replayed = self._replayed(plans, mismatch=True)
+        boundaries, callable_account, _ = selected_callable_boundary_fixture()
+        replayed['selected_callable_boundaries'] = boundaries
         envelope = {'current_selecting_source': {'matches_retained': True, 'differences': []}, 'report': {'fixture': True}}
         with mock.patch.object(selection, '_common_checkout', return_value=ROOT), \
              mock.patch.object(selection.declaration_abi, 'linkage_jobs_from_callable_account', return_value=plans), \
@@ -3374,13 +3461,14 @@ class OrdinaryDeclarationAbiAttachmentTests(unittest.TestCase):
                 self.ordinary_report,
                 header_report=self.header_report,
                 header_envelope=envelope,
-                callable_account={'groups': ['caller-authenticated']},
+                callable_account={'groups': ['caller-authenticated'], **callable_account},
                 selected_objects=list(self.objects.values()),
             )
         replay.assert_called_once_with(
             self.ordinary_report, header_report=self.header_report, header_envelope=envelope,
         )
         self.assertEqual(result['status'], 'ordinary-object-and-record-layout-observed-with-boundaries')
+        self.assertEqual(len(result['selected_callable_boundary_joins']), 11)
         self.assertEqual(result['linkage_mismatches'][0]['observed_symbol'], '_Z3foov')
         self.assertEqual({row['id'] for row in result['record_layout_joins']}, {
             'object:_ns_flagdata', 'object:in6addr_any', 'object:in6addr_loopback',

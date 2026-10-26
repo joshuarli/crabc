@@ -163,6 +163,14 @@ record facts. They do not select a provider, establish `h_errno` storage
 lifecycle, erase language-linkage differences, or change the aggregate
 completion, family, promotion, or public-support flags.
 
+The replayed selected callable boundary joins the current owner rows for
+`alloca`, `seqbuf_dump`, and the nine oracle-declared no-provider names. The
+selector attaches all 11 identities to the same typed callable account and
+clears only their declaration, consumer, compiler, or oracle receipt blocker.
+Missing or rejected boundary evidence leaves those blockers open. Other
+blockers remain attached, and the join does not supply implementations or
+change runtime, family, or promotion status.
+
 `--prepared-worker-tls-report REPORT` is independently optional. Its owner
 reader authenticates the same selected static preparation, dynamic product,
 complete ELF facts, and current source transaction before the selector joins
