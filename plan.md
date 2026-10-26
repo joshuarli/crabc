@@ -620,9 +620,19 @@ kernel entry. SEC3 must reject a receipt whose profile, source or product bytes
 do not match; the existing `runtime_profile` describes materialization and
 must not be mistaken for this selection.
 
-These are source observations and an implementation decision, not a hardened
-product or qualification result. SEC0 still needs a complete route-by-route
-fixture mapping and exercised mixed-product controls.
+Use the existing fixtures for each admission route:
+
+| Route | Existing fixture | Hardened additions |
+| --- | --- | --- |
+| Kernel and direct main entry | `run_general_dynamic_cli.sh` and `installed_crt_startup_probe.c` | PIE identity, stack and load-page rejection, crossed owned profiles, guard ordering, and no application callback on failure. |
+| Initial dependencies and preloads | `run_general_dynamic_search.sh` and `run_general_dynamic_lifecycle.sh` | Absolute search policy, stack/W^X and RELRO admission for each object, and constructor sentinels for rejected graphs. |
+| Runtime `dlopen` | `run_general_dynamic_dlopen.sh` and `run_general_dynamic_lazy.sh` | Eager binding, malformed or policy-rejected object rollback, and actual RELRO/page-protection observations without reopening committed pages. |
+| Static PIE | `crt/tests/test_x86_64_static_pie.py` and `libc_crt_static_tls_probe.c` | Profile-bound CRT, validated RELRO ranges and write faults, malformed and duplicate rejection, and pre-constructor/worker guard sentinels. |
+| Product and qualification readers | `owned_posix_product_evidence.py`, the static and dynamic product validators, and `qualification_candidate.py` | Matching artifact profile and source identity; crossed or absent profile evidence must fail the existing qualification path. |
+
+These are source observations, fixture assignments and an implementation
+decision, not a hardened product or qualification result. The new behavioral
+controls remain SEC1–SEC3 work.
 
 No core item requires MDWE, irreversible mapping sealing or hardware control
 flow protection. Those need separately scoped future kernel/CPU/ABI and
