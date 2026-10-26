@@ -79,7 +79,6 @@ _start:
     cmp r13, 128
     ja .Lstatic_pie_fail
 
-    // Find the single PT_PHDR and PT_DYNAMIC records in the bounded table.
     mov r8, r12
     xor r9d, r9d
     xor r10d, r10d
@@ -87,6 +86,7 @@ _start:
     xor eax, eax
     mov QWORD PTR [rsp + 40], rax
     mov QWORD PTR [rsp + 48], rax
+    mov QWORD PTR [rsp + 72], rax
 .Lstatic_pie_program_headers:
     cmp r9, r13
     jae .Lstatic_pie_program_headers_done
@@ -99,6 +99,13 @@ _start:
     mov r10d, 1
     jmp .Lstatic_pie_next_program_header
 .Lstatic_pie_not_program_header:
+    cmp eax, 0x6474e552
+    jne .Lstatic_pie_not_relro_header
+    cmp QWORD PTR [rsp + 72], 0
+    jne .Lstatic_pie_fail
+    mov QWORD PTR [rsp + 72], 1
+    jmp .Lstatic_pie_next_program_header
+.Lstatic_pie_not_relro_header:
     cmp eax, 2
     jne .Lstatic_pie_next_program_header
     test r11, r11

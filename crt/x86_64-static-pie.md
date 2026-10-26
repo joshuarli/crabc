@@ -24,7 +24,7 @@ The static evidence consumes exactly these Rust-produced objects:
   `AT_PHNUM`; derives the load bias from `PT_PHDR`; validates dynamic and
   relocation ranges against `PT_LOAD`; applies only symbol-free
   `R_X86_64_RELATIVE` RELA/RELR records to writable mappings; seals
-  `PT_GNU_RELRO`; then calls the static-only lifecycle handoff. Its
+  at most one `PT_GNU_RELRO`; then calls the static-only lifecycle handoff. Its
   pre-relocation assembly never reads TLS or the GOT.
 - `crti.o` and `crtn.o`: ordered `.init`/`.fini` frame fragments consumed by
   the static lifecycle handoff.
