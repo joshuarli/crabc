@@ -167,6 +167,22 @@ class NativeStaticSourceRuntimeClosureTests(unittest.TestCase):
                 with self.assertRaisesRegex(CLOSURE.ClosureError, "libc rustc argument"):
                     CLOSURE.libc_rustc_arguments(rejected)
 
+    def test_process_exec_release_arguments_remain_valid_for_shared_command_records(self) -> None:
+        arguments = [
+            "-C", "debuginfo=0", "-C", "opt-level=2", "-C", "overflow-checks=off",
+            "-C", "debug-assertions=off", "-C", "link-dead-code=no", "-C", "lto=off",
+            "-C", "codegen-units=256",
+        ]
+        self.assertEqual(CLOSURE.libc_rustc_arguments(arguments), arguments)
+        command, target, runtime, artifacts, source = self._command(immediate_abort=True)
+        command.extend(arguments)
+
+        record = CLOSURE.command_record(
+            command, target, runtime, self._emitted(artifacts), "crabc-libc", source,
+        )
+
+        self.assertEqual(record["arguments"][-len(arguments):], arguments)
+
     def test_rustc_cannot_override_runtime_flags_after_the_required_values(self) -> None:
         for trailing in (("-C", "panic=unwind"), ("-C", "panic")):
             with self.subTest(trailing=trailing):

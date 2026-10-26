@@ -618,8 +618,8 @@ def artifact_for_source(records: Sequence[dict[str, Any]], source: pathlib.Path,
     )
 
 
-def validate_cargo_artifact_command(record: dict[str, Any], command: Sequence[str],
-                                    description: str) -> None:
+def validate_retained_math_artifact_command(record: dict[str, Any], command: Sequence[str],
+                                           description: str) -> None:
     target = record.get("target")
     if not isinstance(target, dict):
         fail(f"Cargo {description} artifact has no target metadata")
@@ -1016,14 +1016,14 @@ def replay_cargo_graph(graph: pathlib.Path, features: str) -> RetainedCargoGraph
     source_runtime_rustc = {}
     for name, source in runtime_sources.items():
         command = invocation_for(commands, name)
-        validate_cargo_artifact_command(
+        validate_retained_math_artifact_command(
             artifact_record_for_source(records, source, name), command, name,
         )
         source_runtime_rustc[name] = command_record(
             command, target, {}, emitted, name, source, flags=RUNTIME_FLAGS,
         )
     libc_command = invocation_for(commands, "c")
-    validate_cargo_artifact_command(
+    validate_retained_math_artifact_command(
         artifact_record_for_source(records, libc_source, "c"), libc_command, "crabc-libc",
     )
     libc_externs = profile["libc_externs"]
@@ -1044,7 +1044,7 @@ def replay_cargo_graph(graph: pathlib.Path, features: str) -> RetainedCargoGraph
         allocator_name = option_values(allocator_command, "--crate-name")
         if len(allocator_name) != 1:
             fail("Cargo crabc-mimalloc rustc has ambiguous crate identity")
-        validate_cargo_artifact_command(
+        validate_retained_math_artifact_command(
             artifact_record_for_source(records, allocator_source, allocator_name[0]),
             allocator_command, "crabc-mimalloc",
         )
@@ -1386,16 +1386,10 @@ def build(arguments: argparse.Namespace, *, c_environment: dict[str, str] | None
     source_runtime_rustc = {}
     for name, source in runtime_sources.items():
         command = invocation_for(commands, name)
-        validate_cargo_artifact_command(
-            artifact_record_for_source(records, source, name), command, name,
-        )
         source_runtime_rustc[name] = command_record(
             command, target, {}, emitted, name, source, flags=flags,
         )
     libc_command = invocation_for(commands, "c")
-    validate_cargo_artifact_command(
-        artifact_record_for_source(records, libc_source, "c"), libc_command, "crabc-libc",
-    )
     libc_externs = profile["libc_externs"]
     if libc_externs is None:
         libc_externs = derived_libc_externs(libc_command, "Cargo crabc-libc rustc")
@@ -1409,18 +1403,10 @@ def build(arguments: argparse.Namespace, *, c_environment: dict[str, str] | None
         builds_crabc_mimalloc = emits_crabc_mimalloc
     allocator = None
     if builds_crabc_mimalloc:
-        allocator_source = physical(ROOT / "crabc-mimalloc" / "src" / "lib.rs", "crabc-mimalloc source")
-        allocator_command = invocation_for(commands, "crabc_mimalloc")
-        allocator_name = option_values(allocator_command, "--crate-name")
-        if len(allocator_name) != 1:
-            fail("Cargo crabc-mimalloc rustc has ambiguous crate identity")
-        validate_cargo_artifact_command(
-            artifact_record_for_source(records, allocator_source, allocator_name[0]),
-            allocator_command, "crabc-mimalloc",
-        )
         allocator = command_record(
-            allocator_command, target, expected_runtime_sources, emitted, "crabc-mimalloc",
-            allocator_source, flags=flags,
+            invocation_for(commands, "crabc_mimalloc"), target, expected_runtime_sources, emitted,
+            "crabc-mimalloc", physical(ROOT / "crabc-mimalloc" / "src" / "lib.rs", "crabc-mimalloc source"),
+            flags=flags,
         )
     elif emits_crabc_mimalloc:
         fail("C allocator source-runtime profile unexpectedly emitted crabc-mimalloc")
