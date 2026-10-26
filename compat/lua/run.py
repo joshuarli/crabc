@@ -1617,7 +1617,8 @@ def audit_static_link_receipt(
     direct = {str(library / mode.crt_object), str(library / "crti.o"), str(library / "crtn.o"), *(str(path) for path in resolved_objects)}
     archives = (str(library / "libc.a"), str(library / "libcrabc-builtins.a"))
     seen: set[str] = set()
-    for line in trace_lines:
+    for raw_line in trace_lines:
+        line = raw_line.removeprefix("trace: ")
         if line in direct:
             seen.add(line)
         elif any(line == archive or (line.startswith(f"{archive}(") and line.endswith(")")) for archive in archives):

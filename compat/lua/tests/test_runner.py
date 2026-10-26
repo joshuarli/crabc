@@ -365,6 +365,21 @@ class NativeStaticContracts(unittest.TestCase):
         arguments = self.static_receipt_fixture(RUNNER.STATIC_ET_EXEC, "receipts/program/lua")
         self.assertEqual(RUNNER.audit_static_link_receipt(**arguments)["status"], "passed")
 
+    def test_static_receipt_accepts_mold_trace_and_rejects_foreign_input(self) -> None:
+        arguments = self.static_receipt_fixture(RUNNER.STATIC_ET_EXEC)
+        receipt = arguments["receipt"]
+        trace = receipt.with_suffix(".trace")
+        trace.write_text("".join("trace: " + line + "\n" for line in trace.read_text().splitlines()))
+        record = json.loads(receipt.read_text())
+        record["trace"]["sha256"] = RUNNER.sha256_file(trace)
+        receipt.write_text(json.dumps(record))
+        self.assertEqual(RUNNER.audit_static_link_receipt(**arguments)["status"], "passed")
+        trace.write_text(trace.read_text() + "trace: /foreign/input.o\n")
+        record["trace"]["sha256"] = RUNNER.sha256_file(trace)
+        receipt.write_text(json.dumps(record))
+        with self.assertRaisesRegex(RUNNER.RunnerError, "trace consumed an unowned input"):
+            RUNNER.audit_static_link_receipt(**arguments)
+
     def test_static_receipt_rejects_forged_paths_hashes_and_inputs(self) -> None:
         arguments = self.static_receipt_fixture(RUNNER.STATIC_ET_EXEC)
         receipt = arguments["receipt"]
