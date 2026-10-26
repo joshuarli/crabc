@@ -387,11 +387,23 @@ Historical measurement mode cannot close these current companion joins because
 they require the selecting source to match the measured candidate build.
 The fresh `.work/wt/abi-selector-proof` is frozen at `99cd68019`. Host checks,
 both product preparations and all four collectors pass. Its complete companion
-loop is running once before assembly. No source seal or required role is waived
-to reuse an older cohort. The preceding `f29b75dfb` loop has independently passed
-the repaired pthread, CRT and syscall producers; public-data validation remains
-active. The nine completed mutable worktrees from these two repair groups are
-retired after clean-state and patch-equivalence checks, with branches retained.
+loop passes all twenty producers, binding twenty-one companions and retaining
+the two family-flow requirements. Assembly is active; its single persisted-selection
+replay follows success. No source seal or required role is waived to reuse an
+older cohort. The preceding `f29b75dfb` loop also passes all twenty producers,
+including all four repaired paths. Fifteen completed mutable source worktrees
+are retired after clean-state and patch-equivalence checks, with branches
+retained. Frozen proofs and raw failures remain.
+
+The standard aggregate helper proof does not produce the four installed-driver
+receipts required for complete helper bodies and calls. The existing selector
+API accepts those receipts with this bounded product cohort and CRT anchor.
+An additional proof now uses the existing hosted aggregate fixture, one object
+and the four installed link modes under
+`.work/wt/abi-selector-proof/.work/x86_64/compiler-helper-installed/`. No source
+or existing product/report changes are authorized there. These extra receipts
+are not part of the collected companion manifest and cannot silently
+change its closure claim.
 
 The addrconfig lane's musl scratch remains under its `.work/tmp`: automatic
 review denied its removal with "rm -f style commands are not permitted. Use
