@@ -9,6 +9,7 @@ import io
 import importlib.util
 import json
 import os
+import shutil
 from pathlib import Path
 import struct
 import subprocess
@@ -769,24 +770,70 @@ class PhysicalAccountingTests(unittest.TestCase):
 
 
 class ClosureTests(unittest.TestCase):
-    def test_declaration_headers_must_match_both_installed_product_trees(self):
-        work = ROOT / '.work/x86_64/native-abi-selection-tests'
+    @contextlib.contextmanager
+    def installed_header_products(self):
+        work = ROOT / '.work/tmp'
         work.mkdir(parents=True, exist_ok=True)
         with tempfile.TemporaryDirectory(dir=work) as temporary:
             roots = {kind: Path(temporary) / kind for kind in ('static_product', 'dynamic_product')}
+            kernel = {'linux/example.h': b'#define KERNEL_EXAMPLE 1\n',
+                      'asm/example.h': b'#define ASM_EXAMPLE 2\n'}
+            manifest = ''.join(f'{hashlib.sha256(value).hexdigest()}  ./{name}\n'
+                               for name, value in sorted(kernel.items()))
             for root in roots.values():
                 include = root / 'usr/include'
-                include.mkdir(parents=True)
-                (include / 'example.h').write_text('int selected(void);\n')
-            expected = selection.declaration_inventory.abi_matrix.header_tree_digest(
-                roots['static_product'] / 'usr/include')
+                shutil.copytree(ROOT / 'include', include)
+                for name, value in kernel.items():
+                    path = include / 'crabc-linux-uapi' / name
+                    path.parent.mkdir(parents=True, exist_ok=True)
+                    path.write_bytes(value)
+            expected = selection.header_matrix.header_tree_digest(ROOT / 'include')
             declaration = {'inputs': {'selection_source': {'candidate_include_tree_sha256': expected}}}
+            with mock.patch.object(selection.elf_facts.header_authority, 'LINUX_UAPI_HEADER_MANIFEST_SHA256',
+                                   hashlib.sha256(manifest.encode()).hexdigest()):
+                yield declaration, roots
+
+    def test_declaration_headers_must_match_both_installed_product_trees(self):
+        with self.installed_header_products() as (declaration, roots):
             joins = selection.installed_declaration_header_joins(declaration, roots)
             self.assertEqual({row['product'] for row in joins}, {'static', 'dynamic'})
-            self.assertTrue(all(row['include_tree_sha256'] == expected for row in joins))
+            for row in joins:
+                self.assertEqual(row['include_tree_sha256'],
+                                 selection.header_matrix.header_tree_digest(Path(row['include_root'])))
+                self.assertNotEqual(row['include_tree_sha256'],
+                                    declaration['inputs']['selection_source']['candidate_include_tree_sha256'])
 
-            (roots['dynamic_product'] / 'usr/include/example.h').write_text('int foreign(void);\n')
-            with self.assertRaisesRegex(selection.SelectionError, 'installed dynamic header tree differs'):
+    def test_declaration_headers_reject_composition_drift_in_either_product(self):
+        def replace_with_symlink(path):
+            retained = path.with_name(path.name + '-retained')
+            path.rename(retained)
+            path.symlink_to(retained.name, target_is_directory=retained.is_dir())
+
+        mutations = {
+            'project-bytes': lambda root: (root / 'stdio.h').write_text('int foreign(void);\n'),
+            'kernel-bytes': lambda root: (root / 'crabc-linux-uapi/linux/example.h').write_text('foreign\n'),
+            'project-file': lambda root: (root / 'foreign.h').write_text('foreign\n'),
+            'kernel-file': lambda root: (root / 'crabc-linux-uapi/linux/foreign.h').write_text('foreign\n'),
+            'project-directory': lambda root: (root / 'foreign').mkdir(),
+            'kernel-directory': lambda root: (root / 'crabc-linux-uapi/foreign').mkdir(),
+            'missing-kernel': lambda root: shutil.rmtree(root / 'crabc-linux-uapi'),
+            'project-symlink': lambda root: replace_with_symlink(root / 'stdio.h'),
+            'kernel-symlink': lambda root: replace_with_symlink(root / 'crabc-linux-uapi/linux/example.h'),
+            'kernel-root-symlink': lambda root: replace_with_symlink(root / 'crabc-linux-uapi'),
+            'include-root-symlink': replace_with_symlink,
+            'nonregular-entry': lambda root: os.mkfifo(root / 'foreign'),
+        }
+        for kind in ('static_product', 'dynamic_product'):
+            for name, mutate in mutations.items():
+                with self.subTest(product=kind, mutation=name), self.installed_header_products() as (declaration, roots):
+                    mutate(roots[kind] / 'usr/include')
+                    with self.assertRaises(selection.SelectionError):
+                        selection.installed_declaration_header_joins(declaration, roots)
+
+    def test_declaration_headers_reject_a_different_source_project_digest(self):
+        with self.installed_header_products() as (declaration, roots):
+            declaration['inputs']['selection_source']['candidate_include_tree_sha256'] = '0' * 64
+            with self.assertRaisesRegex(selection.SelectionError, 'public declaration inventory'):
                 selection.installed_declaration_header_joins(declaration, roots)
 
     def test_unresolved_record_blocks_closure_even_if_complete_flag_is_true(self):

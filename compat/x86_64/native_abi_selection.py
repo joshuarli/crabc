@@ -3993,14 +3993,38 @@ def installed_declaration_header_joins(
     require(type(retained) is str and len(retained) == 64
             and all(character in '0123456789abcdef' for character in retained),
             'public declaration include tree digest differs')
+    project_root = ROOT / 'include'
+    try:
+        require(declaration_inventory.abi_matrix.header_tree_digest(project_root) == retained,
+                'project header tree differs from public declaration inventory')
+        project_files = {'usr/' + row['path']: row['sha256']
+                         for row in inventory._header_tree_identity(project_root)['files']}
+        project_directories = {path.relative_to(project_root).as_posix()
+                               for path in project_root.rglob('*') if path.is_dir()}
+    except (ValueError, OSError, inventory.InventoryError) as error:
+        raise SelectionError(f'public declaration project header tree rejected: {error}') from error
     joins = []
+    kernel_prefix = 'usr/include/crabc-linux-uapi/'
     for kind, key in (('static', 'static_product'), ('dynamic', 'dynamic_product')):
         root = paths[key] / 'usr/include'
         try:
             observed = declaration_inventory.abi_matrix.header_tree_digest(root)
-        except (ValueError, OSError) as error:
+            installed_files = {'usr/' + row['path']: row['sha256']
+                               for row in inventory._header_tree_identity(root)['files']}
+            placements = elf_facts._installed_header_placements(installed_files)
+            require(set(installed_files) == placements,
+                    f'installed {kind} header roster differs from public declaration inventory')
+            require({name: installed_files[name] for name in project_files} == project_files,
+                    f'installed {kind} header tree differs from public declaration inventory')
+            directories = set(project_directories)
+            for name in installed_files:
+                if name.startswith(kernel_prefix):
+                    directories.update(parent.as_posix() for parent in Path(name.removeprefix('usr/include/')).parents
+                                       if parent != Path('.'))
+            require({path.relative_to(root).as_posix() for path in root.rglob('*') if path.is_dir()} == directories,
+                    f'installed {kind} header directory roster differs from authenticated composition')
+        except (ValueError, OSError, inventory.InventoryError) as error:
             raise SelectionError(f'installed {kind} header tree rejected: {error}') from error
-        require(observed == retained, f'installed {kind} header tree differs from public declaration inventory')
         joins.append({'product': kind, 'include_root': str(root), 'include_tree_sha256': observed})
     return joins
 
