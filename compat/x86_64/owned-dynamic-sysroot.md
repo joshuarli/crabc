@@ -48,6 +48,10 @@ driver has three explicit modes:
 - `--dynamic-non-pie`: `ET_EXEC`, `crt1.o`, and the canonical `PT_INTERP`.
 - `--dynamic-shared-object`: `ET_DYN`, no executable CRT, and no `PT_INTERP`.
 
+Executable links preserve weak dynamic imports with `-z dynamic-undefined-weak`.
+The owned CRT handoff retains its weak data symbol and dynamic GOT relocation.
+The loader still requires the exact one-slot handoff before relocation.
+
 Every mode names installed `crti.o`, `crtn.o`, `libc.so`, and
 `libcrabc-builtins.a` directly. Source translation may use the pinned
 development environment, but target headers, CRT, libraries, loader, and link

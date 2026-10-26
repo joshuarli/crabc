@@ -931,7 +931,7 @@ def _libc_test_link(reader, phase, *, unit, side, objects, contract, product, ou
         if shared:
             sealed += ['-soname', output.name]
         else:
-            sealed += ['--dynamic-linker', '/lib/ld-crabc-x86_64.so.1', reader.recorded(library / 'Scrt1.o'),
+            sealed += [*receipt_contract.EXECUTABLE_WEAK_IMPORT_FLAGS, '--dynamic-linker', '/lib/ld-crabc-x86_64.so.1', reader.recorded(library / 'Scrt1.o'),
                        reader.recorded(library / 'crabc-dynamic-attach.o')]
         sealed += [reader.recorded(path) for path in [library / 'crti.o', *objects, builtins, *dsos,
                                                        library / 'libc.so', library / 'crtn.o']]
@@ -1481,7 +1481,7 @@ def _os_sealed_link(reader, *, binary, receipt_path, shared, output, workload_pa
     if shared:
         command += ['-soname', Path(output).name]
     else:
-        command += ['--dynamic-linker', '/lib/ld-crabc-x86_64.so.1', reader.recorded(library / 'Scrt1.o'),
+        command += [*receipt_contract.EXECUTABLE_WEAK_IMPORT_FLAGS, '--dynamic-linker', '/lib/ld-crabc-x86_64.so.1', reader.recorded(library / 'Scrt1.o'),
                     reader.recorded(library / 'crabc-dynamic-attach.o')]
     command += [reader.recorded(library / 'crti.o'), workload_path, reader.recorded(builtins),
                 reader.recorded(library / 'libc.so'), reader.recorded(library / 'crtn.o'), '-o', output]

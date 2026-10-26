@@ -885,7 +885,7 @@ class NativeObservationsTests(unittest.TestCase):
                       '-z', 'noexecstack', '-z', 'text', '--no-undefined', '--allow-shlib-undefined', '--enable-new-dtags',
                       '-rpath', '/usr/lib', '--exclude-libs=libcrabc-builtins.a']
             if shared: sealed += ['-soname', output.name]
-            else: sealed += ['--dynamic-linker', '/lib/ld-crabc-x86_64.so.1', self.recorded(product / 'usr/lib/Scrt1.o'), self.recorded(product / 'usr/lib/crabc-dynamic-attach.o')]
+            else: sealed += [*native.receipt_contract.EXECUTABLE_WEAK_IMPORT_FLAGS, '--dynamic-linker', '/lib/ld-crabc-x86_64.so.1', self.recorded(product / 'usr/lib/Scrt1.o'), self.recorded(product / 'usr/lib/crabc-dynamic-attach.o')]
             sealed += [self.recorded(product / 'usr/lib/crti.o'), self.recorded(object_path), self.recorded(builtins),
                        self.recorded(product / 'usr/lib/libc.so'), self.recorded(product / 'usr/lib/crtn.o'),
                        '-o', self.recorded(output)]
@@ -1507,7 +1507,7 @@ class NativeObservationsTests(unittest.TestCase):
                 if shared:
                     sealed += ['-soname', output.name]
                 else:
-                    sealed += ['--dynamic-linker', '/lib/ld-crabc-x86_64.so.1', self.recorded(copied_product / 'usr/lib/Scrt1.o'),
+                    sealed += [*native.receipt_contract.EXECUTABLE_WEAK_IMPORT_FLAGS, '--dynamic-linker', '/lib/ld-crabc-x86_64.so.1', self.recorded(copied_product / 'usr/lib/Scrt1.o'),
                                self.recorded(copied_product / 'usr/lib/crabc-dynamic-attach.o')]
                 sealed += list(map(self.recorded, [copied_product / 'usr/lib/crti.o', *inputs, builtins, *dsos,
                                                    copied_product / 'usr/lib/libc.so', copied_product / 'usr/lib/crtn.o']))

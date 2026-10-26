@@ -401,7 +401,7 @@ def expected_base(product: Path, output: Path, mode: str, object_path: Path, dso
     if mode != "shared":
         entry = library / ("Scrt1.o" if mode == "pie" else "crt1.o")
         runtime += [entry, library / "crabc-dynamic-attach.o"]
-        command += ["--dynamic-linker", INTERPRETER, recorded(entry, replay), recorded(library / "crabc-dynamic-attach.o", replay)]
+        command += [*receipt_contract.EXECUTABLE_WEAK_IMPORT_FLAGS, "--dynamic-linker", INTERPRETER, recorded(entry, replay), recorded(library / "crabc-dynamic-attach.o", replay)]
     else:
         command += ["-soname", output.name]
     command += [recorded(library / "crti.o", replay), recorded(object_path, replay),

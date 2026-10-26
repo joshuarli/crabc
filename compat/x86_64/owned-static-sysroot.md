@@ -107,7 +107,10 @@ The `x86-owned-static-runtime` composition includes the Cargo-locked
 `libmimalloc-sys` 0.1.49 backend, not the incomplete native Rust port. The
 builder verifies its single object against the dependency producer archive,
 binds the crate checksum and compiler identity, and records source/header
-hashes from the actual C compilation. `-nostdinc` permits only project headers
+hashes from the actual C compilation. `-MD` writes the dependency trace beside
+the compiled object in Cargo's `OUT_DIR`. The builder resolves that trace from
+the archive's sole member and validates its header closure on cold and cached
+builds. `-nostdinc` permits only project headers
 and that pinned backend's own sources. Owned `syscall`, `prctl`, `realpath`,
 and `abort` providers remove the earlier musl support-object tail. This is
 an accepted C dependency, not full target-runtime Rust purity.

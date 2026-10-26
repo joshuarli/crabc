@@ -550,6 +550,7 @@ class OwnedPosixProductEvidenceTests(unittest.TestCase):
             "--allow-shlib-undefined", "--enable-new-dtags", "-rpath", "/usr/lib",
             "--exclude-libs=libcrabc-builtins.a",
             *(["--export-dynamic"] if export_dynamic else []),
+            *evidence.receipt_contract.EXECUTABLE_WEAK_IMPORT_FLAGS,
             "--dynamic-linker", "/lib/ld-crabc-x86_64.so.1", str(runtime / entry),
             str(runtime / "crabc-dynamic-attach.o"), str(runtime / "crti.o"),
             *(str(workload) for workload in workload_objects),

@@ -544,6 +544,23 @@ class FixedCMimallocProducerMetadataTests(unittest.TestCase):
         with self.assertRaisesRegex(producer.ProducerMetadataError, "definition source is not pinned"):
             producer._validate_contract(raw)
 
+    def test_allocator_flags_use_cargo_output_dependency_files(self) -> None:
+        import tomllib
+
+        for field, stale_path, message in (
+            ("static_target_flags", "$CRABC_X86_BUILD/allocator.d", "static allocator build flags differ"),
+            ("shared_allocator_flags", "$BUILD/allocator.d", "shared allocator build flags differ"),
+        ):
+            with self.subTest(field=field):
+                raw = tomllib.loads(producer.CONTRACT_PATH.read_text(encoding="utf-8"))
+                flags = raw["build"][field]
+                self.assertEqual(producer._validate_contract(raw)["build"][field], flags)
+
+                raw = tomllib.loads(producer.CONTRACT_PATH.read_text(encoding="utf-8"))
+                raw["build"][field].extend(["-MF", stale_path])
+                with self.assertRaisesRegex(producer.ProducerMetadataError, message):
+                    producer._validate_contract(raw)
+
     def test_accounts_retained_h0_aligned_import_and_owned_providers(self) -> None:
         facts, static_provenance, shared_provenance, shared_manifest = self.fixture()
         retained_import_names = (

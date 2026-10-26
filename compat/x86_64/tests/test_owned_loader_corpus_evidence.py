@@ -362,7 +362,8 @@ class OwnedLoaderCorpusEvidenceTests(unittest.TestCase):
             search_kind, search_path, hash_style, export_dynamic,
         )
         self.assertEqual(command[17], "--exclude-libs=libcrabc-builtins.a")
-        self.assertEqual(command[18:20], ["--dynamic-linker", "/lib/ld-crabc-x86_64.so.1"])
+        self.assertEqual(command[18:22], [*evidence.receipt_contract.EXECUTABLE_WEAK_IMPORT_FLAGS,
+                                        "--dynamic-linker", "/lib/ld-crabc-x86_64.so.1"])
 
     def test_loader_reader_binds_every_sidecar_to_the_sealed_producer_linker(self) -> None:
         report = self._loader_report()

@@ -289,23 +289,57 @@ class BuildX86OwnedSysrootTests(unittest.TestCase):
             package = cargo / "registry/src/test/libmimalloc-sys-0.1.49"
             source = package / "c_src/mimalloc/v3/src/static.c"
             header = checkout / "include/stdint.h"
-            for path in (source, header):
+            archive = checkout / ".work/cargo-target/build/libmimalloc-sys/out/libmimalloc.a"
+            dependencies = archive.parent / "allocator-static.d"
+            for path in (source, header, archive):
                 path.parent.mkdir(parents=True, exist_ok=True)
                 path.write_bytes(b"owned\n")
-            dependencies = checkout / "allocator.d"
-            dependencies.write_text(f"allocator.o: {source} {header}\n", encoding="utf-8")
-            with mock.patch.object(builder, "ROOT", checkout):
-                record = builder.allocator_header_provenance(dependencies, cargo)
+            dependencies.write_text(f"allocator-static.o: {source} {header}\n", encoding="utf-8")
+            with mock.patch.object(builder, "ROOT", checkout), \
+                    mock.patch.object(builder, "run", return_value=b"allocator-static.o\n"):
+                record = builder.allocator_header_provenance(archive, cargo, llvm_ar="llvm-ar")
                 self.assertEqual(record["include/stdint.h"], builder.sha256_file(header))
                 self.assertIn("libmimalloc-sys/c_src/mimalloc/v3/src/static.c", record)
                 foreign = checkout / "ambient.h"
                 foreign.write_bytes(b"ambient\n")
                 dependencies.write_text(f"allocator.o: {source} {header} {foreign}\n", encoding="utf-8")
                 with self.assertRaisesRegex(builder.BuildError, "unowned source/header"):
-                    builder.allocator_header_provenance(dependencies, cargo)
+                    builder.allocator_header_provenance(archive, cargo, llvm_ar="llvm-ar")
                 dependencies.write_text(f"allocator.o: {header}\n", encoding="utf-8")
                 with self.assertRaisesRegex(builder.BuildError, "lacks its source"):
-                    builder.allocator_header_provenance(dependencies, cargo)
+                    builder.allocator_header_provenance(archive, cargo, llvm_ar="llvm-ar")
+
+    def test_allocator_header_trace_comes_from_the_cargo_archive_member(self) -> None:
+        (ROOT / ".work").mkdir(exist_ok=True)
+        with tempfile.TemporaryDirectory(dir=ROOT / ".work") as temporary:
+            checkout = Path(temporary)
+            cargo = checkout / ".work/cargo"
+            package = cargo / "registry/src/test/libmimalloc-sys-0.1.49"
+            source = package / "c_src/mimalloc/v3/src/static.c"
+            header = checkout / "include/stdint.h"
+            archive = checkout / ".work/target/release/build/libmimalloc-sys/out/libmimalloc.a"
+            object_path = archive.parent / "allocator-static.o"
+            dependencies = object_path.with_suffix(".d")
+            external = checkout / ".work/stage/allocator.d"
+            for path in (source, header, object_path, archive):
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_bytes(b"owned\n")
+            record = f"{object_path}: {source} {header}\n"
+            external.parent.mkdir(parents=True, exist_ok=True)
+            external.write_text(record, encoding="utf-8")
+
+            with mock.patch.object(builder, "ROOT", checkout), \
+                    mock.patch.object(builder, "run", return_value=b"allocator-static.o\n"):
+                with self.assertRaisesRegex(builder.BuildError, "dependency trace is missing"):
+                    builder.allocator_header_provenance(archive, cargo, llvm_ar="llvm-ar")
+
+                dependencies.write_text(record, encoding="utf-8")
+                recorded = builder.allocator_header_provenance(archive, cargo, llvm_ar="llvm-ar")
+                self.assertEqual(recorded["include/stdint.h"], builder.sha256_file(header))
+
+                dependencies.unlink()
+                with self.assertRaisesRegex(builder.BuildError, "dependency trace is missing"):
+                    builder.allocator_header_provenance(archive, cargo, llvm_ar="llvm-ar")
 
     def test_owned_mimalloc_lifecycle_profile_rejects_unpaired_or_duplicate_entries(self) -> None:
         """The producer may suppress C hooks only with one Rust replacement pair."""

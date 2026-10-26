@@ -120,6 +120,7 @@ SOURCE_BUILD_RUSTFLAGS = (
     "-C", "target-feature=-crt-static", "-C", "link-arg=-Wl,--eh-frame-hdr",
 )
 SOURCE_INPUTS = (
+    CHECKOUT / "compat/x86_64/owned_dynamic_receipt.py",
     ROOT / "owned_cleanup.py", ROOT / "owned_rust_link.py", ROOT / "cleanup.py",
     ROOT / "build.py", ROOT / "Cargo.toml", ROOT / "Cargo.lock", ROOT / "src/lib.rs",
     ROOT / "patches/gimli-0.34.0-reader-core-remote.rs", ROOT / "patches/unwinding-0.2.10-remote-reader.rs",

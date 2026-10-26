@@ -1092,7 +1092,7 @@ def descriptor_receipt(root,work,inputs,tools,label,mode,workload,output,applica
             '--eh-frame-hdr','-z','relro','-z','now','-z','noexecstack','-z','text','--no-undefined',
             '--allow-shlib-undefined','--enable-new-dtags','-rpath','/usr/lib','--exclude-libs=libcrabc-builtins.a']
     if mode=='shared':common+=['-soname',output.name]
-    else:common+=['--dynamic-linker','/lib/ld-crabc-x86_64.so.1',mounted(library/'Scrt1.o'),
+    else:common+=[*dynamic_receipt.EXECUTABLE_WEAK_IMPORT_FLAGS,'--dynamic-linker','/lib/ld-crabc-x86_64.so.1',mounted(library/'Scrt1.o'),
                   mounted(library/'crabc-dynamic-attach.o')]
     command=[*common,mounted(library/'crti.o'),mounted(workload),mounted(archive),
              *(mounted(path) for path in application_dsos),mounted(library/'libc.so'),mounted(library/'crtn.o'),

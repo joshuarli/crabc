@@ -904,7 +904,7 @@ def _dynamic_link_command_for_workloads(
     ]
     if export_dynamic:
         command.append("--export-dynamic")
-    command.extend(("--dynamic-linker",
+    command.extend((*receipt_contract.EXECUTABLE_WEAK_IMPORT_FLAGS, "--dynamic-linker",
         INTERPRETER, str(library / entry), str(library / "crabc-dynamic-attach.o"),
         str(library / "crti.o"), *(str(workload) for workload in workloads), str(library / "libcrabc-builtins.a"),
         str(library / "libc.so"), str(library / "crtn.o"), "-o", str(executable)))
@@ -1209,7 +1209,7 @@ def _retained_dynamic_command(root: Path, source_mount: str, product: Path, work
     ]
     if export_dynamic:
         command.append("--export-dynamic")
-    command.extend(("--dynamic-linker", INTERPRETER,
+    command.extend((*receipt_contract.EXECUTABLE_WEAK_IMPORT_FLAGS, "--dynamic-linker", INTERPRETER,
         *(recorded(path, "dynamic link input") for path in (
             library / entry, library / "crabc-dynamic-attach.o", library / "crti.o", workload,
             library / "libcrabc-builtins.a", library / "libc.so", library / "crtn.o",

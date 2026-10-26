@@ -19,6 +19,8 @@ import stat
 import sys
 from typing import Any, Iterable, Mapping
 
+import owned_dynamic_receipt as receipt_contract
+
 
 ROOT = Path(__file__).resolve().parents[2]
 SHA256_HEX = frozenset("0123456789abcdef")
@@ -752,7 +754,7 @@ def _loader_sidecar_command(linker: str, root: Path, source_mount: str, product:
     if export_dynamic:
         command.append("--export-dynamic")
     if kind == "executable":
-        command.extend(("--dynamic-linker", "/lib/ld-crabc-x86_64.so.1", recorded(library / "Scrt1.o"),
+        command.extend((*receipt_contract.EXECUTABLE_WEAK_IMPORT_FLAGS, "--dynamic-linker", "/lib/ld-crabc-x86_64.so.1", recorded(library / "Scrt1.o"),
                         recorded(library / "crabc-dynamic-attach.o")))
     if kind == "shared":
         command.extend(("-soname", Path(link["output"]).name))

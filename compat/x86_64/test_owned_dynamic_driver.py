@@ -269,6 +269,27 @@ class InstalledDynamicDriverTests(unittest.TestCase):
                 fail=self._receipt_value_failure, allow_application_dso_closure=True,
             )
 
+    def test_executable_weak_data_import_keeps_its_dynamic_got_relocation(self):
+        root = self._installed_native_driver_fixture()
+        work = Path(self.temporary.name) / "weak-data-import"
+        work.mkdir()
+        source = work / "main.c"
+        source.write_text("extern int fixture_weak_data __attribute__((weak));\n"
+                          "__asm__(\".type fixture_weak_data,@object\");\n"
+                          "int main(void) { return &fixture_weak_data != 0; }\n")
+        workload = work / "main.o"
+        self._run_native(["/usr/bin/gcc", "-fPIC", "-c", str(source), "-o", str(workload)])
+        for mode in ("pie", "non-pie"):
+            with self.subTest(mode=mode):
+                output = work / mode
+                driver.execute(root, ["--dynamic-" + mode, str(workload), "-o", str(output)])
+                facts = driver.elf_inspection.inspect(output)
+                self.assertEqual(facts["weak_undefined_symbols"], ["fixture_weak_data"])
+                symbols = subprocess.check_output(
+                    ["/usr/bin/readelf", "--dyn-syms", "-rW", str(output)], text=True)
+                self.assertRegex(symbols, r"R_X86_64_GLOB_DAT\s+0+ fixture_weak_data \+ 0")
+                self.assertRegex(symbols, r"OBJECT\s+WEAK\s+DEFAULT\s+UND fixture_weak_data")
+
     def test_every_link_output_is_inspected_before_its_receipt_and_rejections_remove_it(self):
         """Real LLD outputs carry a replayable ELF inspection and retained map."""
 

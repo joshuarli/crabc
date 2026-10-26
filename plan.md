@@ -41,17 +41,29 @@ records 669 passes, nine skips and two stale M2 trace-fixture errors; the
 corrected finite trace and all fourteen parser tests pass. No allocator
 workload follows from those parser checks.
 
-Dynamic preparation at that frozen revision stops on mold's synthetic local
-undefined `_PROCEDURE_LINKAGE_TABLE_` row. A minimal linked DSO confirms that
-row has no relocation and is absent from `.dynsym`. The producer now checks
-actual dynamic imports. Its real-link regression still detects a foreign
-import, and all 64 focused linker, driver and provenance tests pass. Fresh
-dynamic preparation remains required.
+Frozen H0 `7eb375e52` in `.work/wt/cohort-native-mold` passes static
+preparation. Its independent declaration collector passes with 54,160
+occurrences retained. Full dynamic preparation stops because kache restores
+the allocator object without an external GCC `-MF` dependency trace. A
+same-root cold/warm reproduction identifies that C compiler cache hit. The
+repair retains the trace beside the Cargo `OUT_DIR` object; both real builds
+pass the unchanged source/header reader.
 
-The correctness runner must collect and seal the complete ABI companion
-manifest before assembly. Freeze the integrated repairs, then run H0 with
-fresh products and the complete companion set. Preserve the older frozen
-evidence below. Skipped native tests do not count as proof.
+Cold dynamic discovery on that same frozen source produces matching installed
+packages, then its first consumer exits 127 with `reloc`. Mold omitted the
+weak CRT handoff's dynamic relocation. Executable links now retain weak imports
+with `-z dynamic-undefined-weak`, owned by the dynamic receipt contract and
+used by both normal readers. The same consumer relinked against unchanged
+loader and libc bytes passes and matches the oracle, including 24 worker
+cycles and stdio. All 169 integrated builder, metadata, driver and receipt
+tests pass. The remaining exact receipt readers consume the same executable
+flags, and all 146 unwinder tests pass. No loader validation or relocation
+rule is relaxed.
+
+The correctness runner now collects and seals the complete ABI companion
+manifest before assembly. Freeze these integrated repairs for a new H0 run.
+Preserve both failed cohorts and their raw output. Skipped native tests do not
+count as proof. Documentation link and router checks report zero errors.
 The accepted-C allocator stays selected. Public x86 support remains false:
 180 of 223 capabilities, nine of 26 families and zero of eight gates.
 
@@ -1641,6 +1653,10 @@ Forbidden:
 
 Made so far, each with its commit, for the owner:
 
+- `f1910e52d`: correctness cohorts collect every ABI companion and replay
+  source, cohort and payload binding before retaining or reusing its manifest.
+  Final runtime imports come from `.dynsym`; private definition and archive
+  audits retain the complete symbol table.
 - `a02498e2d`: native mold layout replaces unsupported LLD layout controls.
   Loader provenance binds the canonical unwind-header flags. Final private
   compiler-helper visibility and native map projections follow mold while

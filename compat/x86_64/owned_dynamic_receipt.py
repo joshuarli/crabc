@@ -16,6 +16,9 @@ from pathlib import Path
 from typing import Any, Callable, Mapping
 
 
+EXECUTABLE_WEAK_IMPORT_FLAGS = ("-z", "dynamic-undefined-weak")
+
+
 V1_FIELDS = frozenset({
     "schema", "format", "mode", "binding", "runtime_imports", "application_runpath", "output_path",
     "output_sha256", "manifest_sha256", "application_dsos", "owned_runtime_inputs", "input_receipts",

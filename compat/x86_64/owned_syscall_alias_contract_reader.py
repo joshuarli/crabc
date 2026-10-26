@@ -501,7 +501,7 @@ def validate_dynamic_link_receipts(output, runner, inputs, command_runner):
             command = [linker["path"], *(["-pie"] if mode == "pie" else []), "--hash-style=sysv",
                        "--eh-frame-hdr", "-z", "relro", "-z", "now", "-z", "noexecstack", "-z", "text", "--no-undefined",
                        "--allow-shlib-undefined", "--enable-new-dtags", "-rpath", "/usr/lib", "--exclude-libs=libcrabc-builtins.a",
-                       *(["--export-dynamic"] if probe == "override" else []), "--dynamic-linker", "/lib/ld-crabc-x86_64.so.1",
+                       *(["--export-dynamic"] if probe == "override" else []), *owned_dynamic_receipt.EXECUTABLE_WEAK_IMPORT_FLAGS, "--dynamic-linker", "/lib/ld-crabc-x86_64.so.1",
                        original(crt), original("crabc-dynamic-attach.o"), original("crti.o"), obj,
                        original("libcrabc-builtins.a"), original("libc.so"), original("crtn.o"), "-o", str(command_runner / stem)]
             require(same(record["input_receipts"], input_rows) and record["owned_runtime_inputs"] == runtime

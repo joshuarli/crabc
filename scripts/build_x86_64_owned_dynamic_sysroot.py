@@ -561,13 +561,12 @@ def build_staged_payload(output: Path, stage: Path, *, allocator_backend: str = 
     shared_compiler_helper_policy = shared_libc_compiler_helper_archive_policy()
     shared_errno_private_aliases = shared_libc_errno_private_aliases(stage)
     run = common.run
-    dependency_file = stage / "allocator.d"
     c_flags = ["-nostdinc", "-isystem", str(ROOT / "include"), "-fPIC",
                "-ftls-model=initial-exec", "-fstack-protector-strong",
                # The Rust libc owns the matching init/fini entries.  Do not
                # let the fixed C backend install a second hidden constructor.
                common.MIMALLOC_LIFECYCLE_C_FLAG, *common.MIMALLOC_INTERNAL_VM_C_FLAGS,
-               f"-ffile-prefix-map={ROOT}=/crabc", "-MD", "-MF", str(dependency_file)]
+               f"-ffile-prefix-map={ROOT}=/crabc", "-MD"]
     if accepted_c:
         environment.update({"CC_x86_64_unknown_linux_musl": "/usr/bin/gcc",
                         "CFLAGS_x86_64_unknown_linux_musl": shlex.join(c_flags),
@@ -755,7 +754,8 @@ def build_staged_payload(output: Path, stage: Path, *, allocator_backend: str = 
                   "native_allocator": (_source_file_identity(ROOT / "crabc-mimalloc/UPSTREAM.md", "fixed native allocator provenance") if allocator_backend == "native-shadow" else None),
                   "dependency_graph": dependency_graph,
                   "excluded_c_allocator": None,
-                  "allocator_headers": (common.allocator_header_provenance(dependency_file, Path(environment["CARGO_HOME"])) if accepted_c else None),
+                  "allocator_headers": (common.allocator_header_provenance(
+                      backend_archive, Path(environment["CARGO_HOME"]), llvm_ar=ar) if accepted_c else None),
                   "allocator_compiler": (common.executable_identity(Path("/usr/bin/gcc"), "pinned allocator C compiler") if accepted_c else None),
                   "allocator_flags": ([flag.replace(str(stage), "$BUILD").replace(str(ROOT), "$SOURCE") for flag in c_flags] if accepted_c else []),
                   "allocator_lifecycle_profile": allocator_lifecycle,

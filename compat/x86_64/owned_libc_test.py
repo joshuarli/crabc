@@ -910,7 +910,7 @@ def verify_candidate_receipt(
     if not shared_object:
         entry = library / "Scrt1.o"
         runtime.extend((entry, library / "crabc-dynamic-attach.o"))
-        link.extend(("--dynamic-linker", CANONICAL_INTERPRETER, str(entry), str(library / "crabc-dynamic-attach.o")))
+        link.extend((*receipt_contract.EXECUTABLE_WEAK_IMPORT_FLAGS, "--dynamic-linker", CANONICAL_INTERPRETER, str(entry), str(library / "crabc-dynamic-attach.o")))
     if shared_object:
         link.extend(("-soname", output.name))
     link.extend((str(library / "crti.o"), *(str(path) for path in objects), str(library / "libcrabc-builtins.a"),

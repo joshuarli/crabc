@@ -23,6 +23,7 @@ import platform
 import re
 import shlex
 import shutil
+import stat
 import subprocess
 import sys
 import tempfile
@@ -877,7 +878,9 @@ def accepted_allocator_pin() -> dict[str, str]:
     return dict(C_ALLOCATOR_PIN)
 
 
-def allocator_header_provenance(dependencies: Path, cargo_home: Path, *, vendor_root: Path | None = None) -> dict[str, str]:
+def allocator_header_provenance(
+    archive: Path, cargo_home: Path, *, llvm_ar: str, vendor_root: Path | None = None,
+) -> dict[str, str]:
     """Reject target headers outside the project and pinned allocator source."""
 
     packages = (list((cargo_home / "registry/src").glob("*/libmimalloc-sys-0.1.49")) if vendor_root is None else list(vendor_root.glob("libmimalloc-sys-0.1.49")))
@@ -887,7 +890,17 @@ def allocator_header_provenance(dependencies: Path, cargo_home: Path, *, vendor_
     source_root = package / "c_src/mimalloc/v3"
     if not package.is_relative_to((cargo_home if vendor_root is None else vendor_root).resolve()):
         raise BuildError("accepted allocator source package escapes the checkout cache")
-    text = dependencies.read_text(encoding="utf-8").replace("\\\n", " ")
+    members = run([llvm_ar, "t", str(archive)]).decode("utf-8", errors="replace").splitlines()
+    if len(members) != 1 or Path(members[0]).name != members[0] or not members[0].endswith(".o"):
+        raise BuildError("accepted allocator archive must have one object member for its dependency trace")
+    dependencies = archive.parent / Path(members[0]).with_suffix(".d")
+    try:
+        details = dependencies.lstat()
+        if not stat.S_ISREG(details.st_mode) or dependencies.is_symlink():
+            raise BuildError(f"allocator compiler dependency trace is not a physical file: {dependencies}")
+        text = dependencies.read_text(encoding="utf-8").replace("\\\n", " ")
+    except OSError as error:
+        raise BuildError(f"allocator compiler dependency trace is missing: {dependencies}") from error
     _, separator, inputs = text.partition(":")
     if not separator:
         raise BuildError("allocator compiler dependency trace has no target")
@@ -1140,10 +1153,9 @@ def build_debug_runtime_inputs(stage: Path, *, allocator_backend: str = DEFAULT_
     ar = producer_tool_path(tools, "llvm-ar")
     nm = producer_tool_path(tools, "llvm-nm")
     objdump = producer_tool_path(tools, "llvm-objdump")
-    dependency_file = stage / "allocator.d"
     flags = ["-nostdinc", "-isystem", str(ROOT / "include"), "-fPIC", "-ftls-model=initial-exec",
              "-fstack-protector-strong", MIMALLOC_LIFECYCLE_C_FLAG, *MIMALLOC_INTERNAL_VM_C_FLAGS,
-             f"-ffile-prefix-map={ROOT}=/crabc", "-MD", "-MF", str(dependency_file)]
+             f"-ffile-prefix-map={ROOT}=/crabc", "-MD"]
     c_environment = ({"CC_x86_64_unknown_linux_musl": "/usr/bin/gcc", "CC_SHELL_ESCAPED_FLAGS": "1",
                       "CFLAGS_x86_64_unknown_linux_musl": shlex.join(flags)} if accepted_c else None)
     graph = stage / "source-runtime"
@@ -1175,7 +1187,6 @@ def collect_debug_runtime_inputs(stage: Path, graph: Path, raw: Path, *, allocat
     ar = producer_tool_path(tools, "llvm-ar")
     nm = producer_tool_path(tools, "llvm-nm")
     objdump = producer_tool_path(tools, "llvm-objdump")
-    dependency_file = stage / "allocator.d"
     receipt = json.loads((graph / "receipt.json").read_text())
     expected_features = f"x86-owned-{'dynamic' if dynamic else 'static'}-{'runtime' if accepted_c else 'native-shadow'}"
     if lifecycle_test_audit:
@@ -1191,7 +1202,8 @@ def collect_debug_runtime_inputs(stage: Path, graph: Path, raw: Path, *, allocat
     core = Path(receipt["source_runtime_artifacts"]["core"]["path"])
     compiler = Path(receipt["source_runtime_artifacts"]["compiler_builtins"]["path"])
     backend = selected_allocator_archive(cargo_root, allocator_backend, profile="debug")
-    headers = allocator_header_provenance(dependency_file, graph / "cargo-home", vendor_root=graph / "cargo-vendor") if accepted_c else None
+    headers = (allocator_header_provenance(backend, graph / "cargo-home", llvm_ar=ar,
+                                           vendor_root=graph / "cargo-vendor") if accepted_c else None)
     environment = deterministic_environment()
     runtime_arguments = ["--profile", "debug", "--runtime-core", str(core.with_suffix(".rmeta")),
                          "--runtime-compiler-builtins", str(compiler.with_suffix(".rmeta"))]
@@ -1294,14 +1306,13 @@ def build_runtime_inputs(stage: Path, *, allocator_backend: str = DEFAULT_ALLOCA
     accepted_c = allocator_backend in C_ALLOCATOR_BACKENDS
     allocator_pin = accepted_allocator_pin() if accepted_c else None
     c_compiler = executable_identity(Path("/usr/bin/gcc"), "pinned-image allocator C compiler") if accepted_c else None
-    dependency_file = stage / "allocator.d"
     c_flags = [
         "-nostdinc", "-isystem", str(ROOT / "include"),
         "-fPIC", "-ftls-model=initial-exec", "-fstack-protector-strong",
         # The Rust libc owns the matching init/fini entries.  Do not let the
         # fixed C backend install a second hidden constructor.
         MIMALLOC_LIFECYCLE_C_FLAG, *MIMALLOC_INTERNAL_VM_C_FLAGS,
-        f"-ffile-prefix-map={ROOT}=/crabc", "-MD", "-MF", str(dependency_file),
+        f"-ffile-prefix-map={ROOT}=/crabc", "-MD",
     ]
     environment = deterministic_environment()
     environment["CARGO_BUILD_JOBS"] = "2"
@@ -1362,7 +1373,8 @@ def build_runtime_inputs(stage: Path, *, allocator_backend: str = DEFAULT_ALLOCA
     if not raw_libc.is_file():
         raise BuildError("Cargo did not produce the x86 crabc-libc static archive")
     allocator_archive = selected_allocator_archive(cargo_root, "accepted-c" if accepted_c else allocator_backend)
-    allocator_headers = (allocator_header_provenance(dependency_file, Path(environment["CARGO_HOME"]))
+    allocator_headers = (allocator_header_provenance(allocator_archive, Path(environment["CARGO_HOME"]),
+                                                     llvm_ar=llvm_ar)
                          if accepted_c else None)
     allocator_lifecycle = (owned_mimalloc_lifecycle_profile(
         c_flags, cargo_command, allocator_archive, raw_libc,

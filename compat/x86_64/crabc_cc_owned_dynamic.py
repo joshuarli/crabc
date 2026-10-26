@@ -754,7 +754,7 @@ def execute(root: Path, arguments: list[str]) -> None:
         link.append("--export-dynamic")
     entry_object = "Scrt1.o" if mode == "pie" else "crt1.o"
     if mode != "shared":
-        link += ["--dynamic-linker", INTERPRETER, str(library / entry_object),
+        link += [*receipt_contract.EXECUTABLE_WEAK_IMPORT_FLAGS, "--dynamic-linker", INTERPRETER, str(library / entry_object),
                  str(library / "crabc-dynamic-attach.o")]
     if invocation.print_link_plan:
         if dsos or transitive_dsos: raise shared.DriverError("link plan accepts no application inputs")

@@ -33,6 +33,7 @@ from typing import Iterable
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from scripts import native_build_tools
+from compat.x86_64 import owned_dynamic_receipt
 
 
 TARGET = "x86_64-unknown-linux-musl"
@@ -794,6 +795,7 @@ def link_command(
     return [
         str(linker), "-pie", "--hash-style=sysv", "--eh-frame-hdr", "--gc-sections", "--no-undefined",
         "--allow-shlib-undefined", "-z", "text", "-z", "noexecstack", "-z", "relro", "-z", "now",
+        *owned_dynamic_receipt.EXECUTABLE_WEAK_IMPORT_FLAGS,
         "--dynamic-linker", INTERPRETER, *( ["--export-dynamic"] if export_dynamic else [] ),
         "--trace", "-o", str(output), str(runtime[0]), str(runtime[1]), str(runtime[2]),
         *map(str, objects), *rust_inputs, str(runtime[3]), str(runtime[4]), str(runtime[5]),
