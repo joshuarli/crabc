@@ -20,11 +20,21 @@ inputs read-only and the required temporary scratch writable.
 `8f96a7404` fixes the helper command recorder's missing import. Its regression
 executes real child commands and preserves exact arguments, streams and both
 successful and failed exit statuses. Both focused modules pass all 52 tests.
-The next native check uses a fresh source-matched product pair and four
-collectors in `.work/wt/abi-helper-proof`. Run only the existing aggregate,
-CRT and installed-helper companion producers, then replay their four links
-through `compiler_helper_adapter`. This bounded component check must pass
-before another full ABI assembly. Preserve both earlier pilots unchanged.
+The bounded native helper pilot passes at frozen `f92fbd803` in
+`.work/wt/abi-helper-proof`. Fresh products, four collectors and exactly the
+aggregate, CRT and installed-helper producers pass. `compiler_helper_adapter`
+replays all four link modes: each has 40 transfers, 44 resolved calls and
+40 complete provider closures. Every call targets its provider. Source seals
+match before and after. This is component proof, without full ABI assembly
+or changed qualification flags. Preserve the earlier pilots unchanged.
+
+The next source group adds exact CRT consumer ownership for `main`, validated
+auxv publication and the absent C-runtime personality. A separate component
+extension adds the visible `wcsftime_l` alias to the existing locale receipt.
+These changes remain provisional until their focused checks and matching
+native proof pass. The existing installed math component is running once on
+the fresh helper-pilot products to establish the next inverse-trig and
+`pow10l` behavior evidence. It does not run the parked POSIX aggregate.
 The remaining structural, consumer-owned and feature-alias identity proofs
 remain implementation work. The parked POSIX aggregate and denied allocator
 diagnostics remain outside the retry scope. No qualification claim changes.
