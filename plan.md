@@ -8,7 +8,22 @@ remain parked and cannot support native promotion. The C
 allocator remains selected. Public x86 support remains false: 180 of 223
 capabilities, nine of 26 families, zero of eight gates.
 
-**Current steering checkpoint:** frozen `ff15ce00d` in
+**Current steering checkpoint:** frozen `a95273254` in
+`.work/wt/abi-component-proof-fixed` passes fresh products, four ABI
+collectors, all five component producers and normal canonical replay.
+The three inverse-trig identities, `fopen64`, `__restore`,
+`__sigsetjmp_tail` and isolated `pow10l` feature proof each join exactly.
+There are zero rejected companions. All 5,168 identities and 41,270 physical
+occurrences remain accounted. The partial set retains 694 closure blockers
+because other companions are absent. This count is not comparable to the
+full baseline. Qualification and public-support flags remain false.
+The replay mounts source, products and evidence read-only. Only fresh scratch
+is writable at both `.work/tmp` and `.work/x86_64/tmp`; source and scratch
+rosters remain unchanged. Preserve
+`.work/tmp/component-canonical-reader-2.stdout` in that worktree, plus the
+earlier failed read-only attempt and its diagnostic output.
+
+**Earlier focused checkpoint:** frozen `ff15ce00d` in
 `.work/wt/abi-crt-locale-proof` passes the four new ABI joins and normal
 canonical replay. Application `main`, auxv, C-profile personality absence and
 the visible wide-time alias each join once with no unresolved reason. Fresh
@@ -135,11 +150,20 @@ math modules pass all 62 tests. The bootstrap integration check passes 93 of
 single regression then passes in the pinned image with both tool effects
 controlled. The worker's full bootstrap module passes all 34 tests.
 
-Freeze the repaired source in the prepared
-`.work/wt/abi-component-proof-fixed`, then repeat bounded component and
-selector proof. Preserve the original pilot and raw failures. The parked
-POSIX aggregate and denied allocator diagnostics remain outside this wave.
-Qualification flags stay unchanged.
+The repaired wave passes at frozen `a95273254` as recorded above. The initial
+canonical attempt omitted the math reader's `.work/tmp` scratch mount and
+therefore rejected only binary80 replay. The diagnostic identifies that exact
+read-only-filesystem error. Mounting fresh scratch at both required paths
+makes the normal reader pass. No product, producer or collector repeats for
+that environment correction.
+
+Next collect the remaining 23 ordinary companions on this same frozen
+cohort. Reuse the five accepted component trees, products and collectors.
+Bind the combined set to exercise the earlier CRT, loader, helper, locale
+and runtime joins alongside the seven new identities. Preserve every
+unresolved requirement and all earlier failures. The parked POSIX aggregate
+and denied allocator diagnostics remain outside this wave. Qualification
+flags stay unchanged.
 
 **Earlier accepted checkpoint:** the frozen `99cd68019` ABI proof passes
 the normal canonical reader: 5,175 identities, 41,307 occurrences and zero
