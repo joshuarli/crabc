@@ -213,8 +213,14 @@ UID/GID 1000 in the pinned image with networking disabled and source, product
 and evidence mounted read-only. Its ordinary latest-report selection validates
 the retained records and owned static product. Image-only compiler paths are
 validated in the image, not treated as host files. Raw logs remain under that
-checkout's `.work/tmp/lua-readable-proof.*`. This is a focused static proof,
-not three-product Lua admission or qualification of current main. It does not
+checkout's `.work/tmp/lua-readable-proof.*`. A fresh accepted-C standalone
+dynamic Lua producer also passes, and host discovery opens its actual
+`run-4yexn4ti/report.json`. The normal default source-build admission reader
+then authenticates both standalone static and dynamic reports and products as
+UID/GID 1000 with networking disabled and read-only source/evidence mounts.
+Source stays clean at `067b9a2bc`; dynamic logs are under
+`.work/tmp/lua-readable-proof.dynamic.*`. These are standalone consumer proofs,
+not three-product Lua admission or qualification of current main. They do not
 alter the running H0 source or its existing artifact.
 
 The addrconfig lane's musl scratch remains under its `.work/tmp`: automatic
