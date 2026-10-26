@@ -340,6 +340,105 @@ class NativeDeclarationAbiTests(unittest.TestCase):
                                                       static_product=roots['static'], dynamic_product=roots['dynamic'],
                                                       timeout_seconds=1, retained=retained)
 
+    def test_selected_callable_candidate_inventory_survives_the_bridge_handoff(self):
+        bridge_provider = {
+            "name": "membarrier", "binding": "GLOBAL", "visibility": "DEFAULT",
+            "section_index": "1", "type": "FUNC", "size_bytes": 16,
+        }
+        candidate_static = [{"name": "candidate-static", "binding": "GLOBAL", "visibility": "DEFAULT",
+                             "section_index": "1", "type": "FUNC"}]
+        reference_static = [{"name": "reference-static", "binding": "GLOBAL", "visibility": "DEFAULT",
+                             "section_index": "1", "type": "FUNC"}]
+        reference_shared = [{"name": "reference-shared", "binding": "GLOBAL", "visibility": "DEFAULT",
+                             "section_index": "1", "type": "FUNC"}]
+        with self.reviewed_header_products() as (output, roots, _retained):
+            boundary_output = output / "reviewed-cpp-linkage"
+            shutil.rmtree(boundary_output)
+            handoff = {}
+
+            def retain_tool(_output, _source, destination, description):
+                name = "ar" if "ar " in description else "ld"
+                digest = "b" * 64 if name == "ar" else "c" * 64
+                return {
+                    "mode": 0o755, "path": f"/tools/{name}", "sha256": digest, "size": 1,
+                    "retained": {"mode": 0o755, "path": destination.name, "sha256": digest, "size": 1},
+                }
+
+            def capture_command(root, directory, label, argv, *, cwd, environment, timeout_seconds):
+                stdout_path = directory / f"{label}.stdout"
+                stdout_path.write_text(label + "\n", encoding="ascii")
+                return {"returncode": 0, "stdout": ABI._artifact_identity(root, stdout_path, label + " stdout")}
+
+            def static_inventory(_members, _headers, _sections, _symbols, archive):
+                return candidate_static if archive.endswith("/usr/lib/libc.a") else reference_static
+
+            def dynamic_inventory(text):
+                return [bridge_provider] if text == "candidate-shared-symbols\n" else reference_shared
+
+            def selected_boundary(*_args, **kwargs):
+                handoff.update(kwargs["provider_rows"])
+                return {"handoff": True}
+
+            with mock.patch.object(ABI, "_cpp_boundary_plans", return_value=[]), \
+                    mock.patch.object(ABI, "_profile_records", return_value={}), \
+                    mock.patch.object(ABI, "_retain_tool_identity", side_effect=retain_tool), \
+                    mock.patch.object(ABI, "_capture_command", side_effect=capture_command), \
+                    mock.patch.object(ABI.elf_facts, "installed_header_tree_digest", return_value="d" * 64), \
+                    mock.patch.object(ABI.abi_inventory, "parse_archive_members", return_value=["member.o"]), \
+                    mock.patch.object(ABI, "oracle_static_provider_rows", side_effect=static_inventory), \
+                    mock.patch.object(ABI.abi_inventory, "parse_dynamic_symbol_rows", side_effect=dynamic_inventory), \
+                    mock.patch.object(ABI, "reviewed_cpp_linkage_boundary", return_value={
+                        "candidate_symbol": "membarrier", "reference_symbol": "_Z10membarrierii",
+                    }), \
+                    mock.patch.object(ABI, "_selected_callable_product_seal", return_value={}), \
+                    mock.patch.object(ABI, "_selected_callable_boundary_evidence", side_effect=selected_boundary):
+                report = ABI._cpp_linkage_evidence(
+                    output, [], tools={"readelf": {"identity": {"path": "/tools/readelf"}}},
+                    resource_include="/tools/resource", static_product=roots["static"],
+                    dynamic_product=roots["dynamic"], timeout_seconds=1,
+                )
+        self.assertEqual(handoff, {
+            "candidate": {"static": candidate_static, "shared": [bridge_provider]},
+            "reference": {"static": reference_static, "shared": reference_shared},
+        })
+        self.assertEqual(report["selected_callable_boundaries"], {"handoff": True})
+
+    def test_selected_callable_alloca_compile_argv_uses_workspace_product_path(self):
+        class CompileCaptured(Exception):
+            pass
+
+        with self.reviewed_header_products() as (output, roots, _retained):
+            boundary_output = output / "alloca-argv"
+            boundary_output.mkdir()
+            recorded_output = Path("/workspace") / boundary_output.relative_to(ROOT)
+            captured = {}
+
+            def capture_compile(_directory, label, argv, _previous=None):
+                if label == "compile":
+                    captured["argv"] = argv
+                    raise CompileCaptured
+                raise AssertionError(f"unexpected selected boundary command: {label}")
+
+            profile = ABI.callable_inventory.Profile("c11-gnu", "c", "c11", ("_GNU_SOURCE=1",))
+            with mock.patch.object(ABI, "_profile_records", return_value={"c11-gnu": profile}), \
+                    self.assertRaises(CompileCaptured):
+                ABI._selected_callable_boundary_evidence(
+                    boundary_output, recorded_output, static_product=roots["static"],
+                    dynamic_product=roots["dynamic"], products={}, deferred={},
+                    tools={"clang": {"identity": {"mode": 0o755, "path": "/tools/clang", "sha256": "a" * 64, "size": 1}},
+                           "readelf": {"identity": {"path": "/tools/readelf"}}},
+                    extra_tools={"ld": {"identity": {"path": "/tools/ld"}}},
+                    resource_include="/tools/resource", timeout_seconds=1, provider_rows={},
+                    raw_provider_observations={}, command=capture_compile, owned_linker={},
+                )
+            expected_header_root = Path("/workspace") / roots["static"].relative_to(ROOT) / "usr/include"
+            argv = captured["argv"]
+            self.assertEqual(argv[argv.index("-I") + 1], str(expected_header_root))
+            with mock.patch.object(ABI, "ROOT", Path("/workspace")), \
+                    mock.patch.object(ABI, "_physical_path", side_effect=lambda path, *_args, **_kwargs: Path(path)):
+                collector_product = Path("/workspace") / roots["static"].relative_to(ROOT)
+                self.assertEqual(ABI._installed_product_header_root(collector_product), expected_header_root)
+
     def test_physical_c_bridge_links_and_pinned_cpp_reference_fails_without_a_provider(self):
         compiler, linker, readelf, archiver, objcopy = (shutil.which(name) for name in ("clang", "ld", "readelf", "ar", "objcopy"))
         if any(tool is None for tool in (compiler, linker, readelf, archiver, objcopy)):

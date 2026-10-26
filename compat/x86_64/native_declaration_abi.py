@@ -2101,6 +2101,12 @@ def _selected_callable_product_seal(static_product: Path, dynamic_product: Path)
     return products
 
 
+def _installed_product_header_root(product: Path) -> Path:
+    product = _physical_path(product, "installed product header root", directory=True)
+    require(product.is_relative_to(ROOT / ".work"), "installed product header root escapes checkout work")
+    return SOURCE_MOUNT / product.relative_to(ROOT) / "usr/include"
+
+
 def physical_reference_join(path: Path, symbol_text: str, section_text: str, *, static: bool) -> dict[str, Any]:
     """Join the probe holder to a provider address or its physical dynamic relocation."""
     tables = abi_inventory.parse_elf_symbol_tables(symbol_text)
@@ -2339,7 +2345,7 @@ def _selected_callable_boundary_evidence(
     profile = profiles["c11-gnu"]
     alloca_argv = [
         str(compiler["path"]), "-x", "c", f"-std={profile.standard}", "-nostdinc",
-        "-I", str(static_product / "usr/include"), "-isystem", resource_include,
+        "-I", str(_installed_product_header_root(static_product)), "-isystem", resource_include,
         "-isystem", "/opt/linux-5.10-uapi/include", *[f"-D{value}" for value in profile.defines],
         "-O0", "-fno-stack-protector", "-fdata-sections", "-c",
         str(alloca_source_recorded), "-o", str(alloca_object_recorded),
@@ -2434,7 +2440,8 @@ def _selected_callable_boundary_evidence(
             "retained seqbuf_dump consumer job roster differs")
     seqbuf_types = _selected_callable_declaration_types()["seqbuf_dump"]
     for tree in ("candidate", "reference"):
-        header_root = static_product / "usr/include" if tree == "candidate" else Path("/opt/musl-1.2.6/include")
+        header_root = (_installed_product_header_root(static_product) if tree == "candidate"
+                       else Path("/opt/musl-1.2.6/include"))
         tree_jobs = {}
         for language_index, (language, profile_name, symbol) in enumerate((
             ("c", "c11-gnu", "seqbuf_dump"),
@@ -2607,6 +2614,8 @@ def _cpp_linkage_evidence(
     if replay:
         retained = _exact_keys(retained, expected_fields, "reviewed linkage evidence")
     profiles = _profile_records()
+    static_product = _physical_path(static_product, "reviewed static product", directory=True)
+    dynamic_product = _physical_path(dynamic_product, "reviewed dynamic product", directory=True)
     products = {}
     for kind, path in (("static", static_product), ("dynamic", dynamic_product)):
         path = _physical_path(path, f"reviewed {kind} product", directory=True)
@@ -2697,13 +2706,19 @@ def _cpp_linkage_evidence(
     def stdout(record: Mapping[str, Any]) -> str:
         return _decode_raw_text(boundary_output / record["stdout"]["path"], "reviewed raw output")
     members = abi_inventory.parse_archive_members(stdout(raw["archive-members"]))
-    providers = {"static": oracle_static_provider_rows(members, stdout(raw["archive-headers"]), stdout(raw["archive-sections"]),
-                                                       stdout(raw["archive-symbols"]),
-                                                       str(recorded_output / "inputs/static")),
-                 "shared": abi_inventory.parse_dynamic_symbol_rows(stdout(raw["shared-symbols"]))}
+    reference_provider_inventory = {
+        "static": oracle_static_provider_rows(
+            members,
+            stdout(raw["archive-headers"]),
+            stdout(raw["archive-sections"]),
+            stdout(raw["archive-symbols"]),
+            str(recorded_output / "inputs/static"),
+        ),
+        "shared": abi_inventory.parse_dynamic_symbol_rows(stdout(raw["shared-symbols"])),
+    }
     candidate_members = abi_inventory.parse_archive_members(stdout(raw["candidate-archive-members"]))
     candidate_archive = products["static"]["root"] + "/usr/lib/libc.a"
-    candidate_providers = {
+    candidate_provider_inventory = {
         "static": oracle_static_provider_rows(
             candidate_members,
             stdout(raw["candidate-archive-headers"]),
@@ -2723,14 +2738,17 @@ def _cpp_linkage_evidence(
         jobs = [_collect_one_object_job(boundary_output, index, plan, tools=tools, profiles=profiles,
                                         resource_include=Path(resource_include), timeout_seconds=timeout_seconds,
                                         executable_probe=True) for index, plan in enumerate(selected)]
-    classification = reviewed_cpp_linkage_boundary(selected, jobs, providers)
-    candidate_providers = [row for row in abi_inventory.parse_dynamic_symbol_rows(stdout(raw["candidate-shared-symbols"]))
-                           if row["name"] == classification["candidate_symbol"] and row["section_index"] != "UND"]
-    require(len(candidate_providers) == 1 and candidate_providers[0]["type"] == "FUNC"
-            and candidate_providers[0]["binding"] in {"GLOBAL", "WEAK"}
-            and candidate_providers[0]["visibility"] == "DEFAULT" and candidate_providers[0]["size_bytes"] > 0,
+    classification = reviewed_cpp_linkage_boundary(selected, jobs, reference_provider_inventory)
+    candidate_bridge_providers = [
+        row for row in candidate_provider_inventory["shared"]
+        if row["name"] == classification["candidate_symbol"] and row["section_index"] != "UND"
+    ]
+    require(len(candidate_bridge_providers) == 1 and candidate_bridge_providers[0]["type"] == "FUNC"
+            and candidate_bridge_providers[0]["binding"] in {"GLOBAL", "WEAK"}
+            and candidate_bridge_providers[0]["visibility"] == "DEFAULT"
+            and candidate_bridge_providers[0]["size_bytes"] > 0,
             "reviewed owned shared C bridge provider differs")
-    classification["candidate_shared_provider"] = candidate_providers[0]
+    classification["candidate_shared_provider"] = candidate_bridge_providers[0]
     if replay:
         require(strict_equal(retained["classification"], classification), "reviewed oracle disposition differs")
     links = []
@@ -2846,7 +2864,7 @@ def _cpp_linkage_evidence(
         extra_tools=extra_tools,
         resource_include=resource_include,
         timeout_seconds=timeout_seconds,
-        provider_rows={"candidate": candidate_providers, "reference": providers},
+        provider_rows={"candidate": candidate_provider_inventory, "reference": reference_provider_inventory},
         raw_provider_observations=raw_provider_observations,
         command=command,
         owned_linker=lld_identity,
