@@ -59,9 +59,21 @@ to the actual `NOTYPE` metadata. `2030a12b4` attaches the visible wide-time pair
 from locale receipt v5. The accepted-C preparation proves its declared
 aggregate feature route. `3ae0e57b8` supplies read-only signal replay while
 preserving the v1 record and producer API. The combined five-module check
-passes 241 tests run: 236 passed and five existing skips. Current selection
-report format is v10. Fresh native admission is pending in the prepared,
-clean `.work/wt/abi-crt-locale-proof`; freeze its source before products.
+passes 241 tests run: 236 passed and five existing skips. `df6ef176f` completes
+the personality absence join after resolving ordinary relative identities to
+the exact CRT physical files, including their modes. Contract v3 and report
+v11 preserve the frozen identity without a C provider or Rust unwind claim.
+The final selector, locale-attachment and ABI-orchestration check passes
+208 tests run: 203 passed and five existing skips.
+
+Freeze the resulting revision in the prepared `.work/wt/abi-crt-locale-proof`.
+Run fresh bounded products and four collectors, the existing six-mode
+signal/process workload and its new read-only replay, then only the CRT and
+locale companion producers. Assemble and canonically replay that partial
+selection once. Require the application-main, auxv, personality-absence and
+visible wide-time joins, with no rejected supplied companions. Preserve all
+remaining blockers. Its smaller companion set is not comparable to the full
+e9 blocker count. Bootstrap and the held math group do not join this wave.
 
 The isolated binary80 leaf passes 247 native records, but `d0b804d83` remains
 unmerged. Review found that its feature account did not reconstruct actual
