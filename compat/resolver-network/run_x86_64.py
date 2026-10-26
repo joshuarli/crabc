@@ -225,6 +225,25 @@ def private_work_root(path: Path) -> Path:
     return physical_directory(resolved, "native resolver-network work root")
 
 
+def allocate_run_root(parent: Path) -> Path:
+    parent = private_work_root(parent)
+    run_root = Path(tempfile.mkdtemp(prefix="run-", dir=parent))
+    try:
+        descriptor = os.open(run_root, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+        try:
+            os.fchmod(descriptor, stat.S_IMODE(os.fstat(descriptor).st_mode) | 0o055)
+        finally:
+            os.close(descriptor)
+    except OSError as error:
+        raise RunnerError(f"cannot make native resolver-network run root host-traversable: {run_root}") from error
+    run_root = physical_directory(run_root, "native resolver-network run root")
+    try:
+        run_root.relative_to(parent)
+    except ValueError as error:
+        raise RunnerError("native resolver-network run root escaped its work root") from error
+    return run_root
+
+
 def command_record(
     arguments: Sequence[str], *, cwd: Path, timeout: float, environment: Mapping[str, str] | None = None
 ) -> dict[str, object]:
@@ -1125,6 +1144,7 @@ def publish_report(source: Path, destination: Path) -> Path:
         raise RunnerError("published resolver report path is a symlink")
     with tempfile.NamedTemporaryFile(prefix=".resolver-network-", dir=destination.parent, delete=False) as stream:
         temporary = Path(stream.name)
+        os.fchmod(stream.fileno(), 0o644)
         stream.write(source.read_bytes())
         stream.flush()
         os.fsync(stream.fileno())
@@ -1294,8 +1314,7 @@ def run(args: argparse.Namespace) -> tuple[dict[str, object], Path, Path | None]
     except component_receipt.ReceiptError as error:
         raise RunnerError(f"resolver image inputs rejected: {error}") from error
     require_native_loopback_container()
-    work_parent = private_work_root(args.work_root)
-    state = Path(tempfile.mkdtemp(prefix="run-", dir=work_parent))
+    state = allocate_run_root(args.work_root)
     report_path = state / "report.json"
     report: dict[str, object] = {"schema_version": 3, "runner": "crabc-resolver-network-native-x86", "result": "fail", "passed": False, "state_root": str(state), "published_report": str(args.report), "contract": {"network_namespace": "Docker --network none: loopback is the only observed interface and no default route is admitted", "conventional_files": "each execution chroot has only runner-written etc/hosts and etc/resolv.conf; the host/container /etc is never written", "source_object": "one workload.c object translated with pinned musl 1.2.6 headers and linked unchanged into every reference/candidate artifact", "product_arms": ["installed", "extracted"], "candidate_modes_per_arm": ["static-et-exec", "static-pie", "dynamic-pie ordinary", "dynamic-pie direct-entry", "dynamic-non-pie ordinary", "dynamic-non-pie direct-entry"], "candidate_execution_count": 12, "comparison": "raw exit status, stdout, and stderr equality; no normalization", "physical_receipt": "raw execution bytes, physical inputs, link products, manifests and per-execution DNS readiness and events are retained below state_root"}}
     try:

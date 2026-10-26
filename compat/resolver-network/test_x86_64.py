@@ -3,11 +3,13 @@
 
 from __future__ import annotations
 
+import argparse
 import contextlib
 import io
 import importlib.util
 import json
 import os
+import stat
 import subprocess
 import struct
 import tempfile
@@ -95,6 +97,31 @@ class NativeResolverNetworkRunnerTests(unittest.TestCase):
     def test_private_work_root_rejects_a_path_outside_checkout_work(self) -> None:
         with self.assertRaisesRegex(runner.RunnerError, "must stay below"):
             runner.private_work_root(Path("/var/tmp/resolver-network"))
+
+    def test_native_run_root_is_traversable_under_restrictive_umask(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="resolver-run-root-", dir=runner.ROOT / ".work") as directory:
+            parent = Path(directory)
+            parent.chmod(0o2755)
+            arguments = argparse.Namespace(work_root=parent, report=Path("latest.json"))
+            patches = (
+                mock.patch.object(runner.component_receipt, "authenticate_image_inputs"),
+                mock.patch.object(runner, "require_native_loopback_container"),
+                mock.patch.object(
+                    runner, "physical_regular", side_effect=runner.RunnerError("stop after run-root creation")
+                ),
+            )
+            previous_umask = os.umask(0o077)
+            try:
+                with patches[0], patches[1], patches[2]:
+                    report, report_path, published = runner.run(arguments)
+            finally:
+                os.umask(previous_umask)
+            run_root = report_path.parent
+            mode = run_root.stat().st_mode
+            self.assertEqual(report["error"], "stop after run-root creation")
+            self.assertIsNone(published)
+            self.assertEqual(mode & 0o777, 0o755)
+            self.assertTrue(mode & stat.S_ISGID)
 
     def test_runner_requires_explicit_prepared_sysroots(self) -> None:
         with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
@@ -232,6 +259,31 @@ class NativeResolverNetworkRunnerTests(unittest.TestCase):
         with mock.patch.object(runner, "publish_report") as publish:
             self.assertIsNone(runner.publish_complete_report({"passed": False}, Path("private.json"), Path("latest.json")))
         publish.assert_not_called()
+
+    def test_published_report_is_readable_and_replaces_atomically(self) -> None:
+        payload = b'{"passed":true}\n'
+        with tempfile.TemporaryDirectory(prefix="resolver-published-report-", dir=runner.ROOT / ".work") as directory:
+            root = Path(directory)
+            root.chmod(0o755)
+            report_directory = root / "compat/reports/resolver-network"
+            report_directory.mkdir(parents=True)
+            report_directory.chmod(0o2755)
+            source = root / "report.json"
+            source.write_bytes(payload)
+            destination = report_directory / "latest.json"
+            destination.write_bytes(b'{"passed":false}\n')
+            previous_umask = os.umask(0o077)
+            try:
+                with mock.patch.object(runner, "ROOT", root):
+                    published = runner.publish_report(source, destination)
+            finally:
+                os.umask(previous_umask)
+            self.assertEqual(published, destination)
+            self.assertEqual(published.stat().st_mode & 0o777, 0o644)
+            self.assertEqual(published.stat().st_gid, report_directory.stat().st_gid)
+            self.assertEqual(published.read_bytes(), payload)
+            self.assertEqual(source.read_bytes(), payload)
+            self.assertEqual({path.name for path in report_directory.iterdir()}, {"latest.json"})
 
     def test_receipt_retention_error_clears_a_previously_passing_summary_before_publication(self) -> None:
         report = {"passed": True, "result": "pass"}
