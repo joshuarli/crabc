@@ -16,6 +16,7 @@ import zlib
 from dataclasses import replace
 from pathlib import Path
 import tomllib
+from contextlib import chdir
 
 
 SOURCE_DIR = Path(__file__).resolve().parents[1]
@@ -197,6 +198,103 @@ class OwnedSyscallAliasContractReaderTests(unittest.TestCase):
         runner = Path(value).parent / receipt["runner"]["path"]
         syscall_reader.validate_runner_placements(runner)
 
+
+
+class OwnedSyscallAliasStaticReceiptTests(unittest.TestCase):
+    def setUp(self) -> None:
+        scratch = SOURCE_DIR.parents[1] / ".work/tmp"
+        scratch.mkdir(parents=True, exist_ok=True)
+        temporary = tempfile.TemporaryDirectory(dir=scratch)
+        self.addCleanup(temporary.cleanup)
+        self.root = Path(temporary.name) / "original"
+        self.product = self.root / ".work/product"
+        self.command_runner = self.root / ".work/runner"
+        library = self.product / "usr/lib"
+        library.mkdir(parents=True)
+        self.command_runner.mkdir(parents=True)
+        for name in ("crt1.o", "rcrt1.o", "crti.o", "crtn.o"):
+            (library / name).write_bytes(name.encode())
+        for name in ("libc.a", "libcrabc-builtins.a"):
+            (library / name).write_bytes(b"!<arch>\n")
+        linker = self.root / "ld.lld"
+        linker.write_bytes(b"selected linker")
+        self.inputs = {
+            "static_driver": {"original": {"path": str(self.product / "bin/crabc-cc")}},
+            "selected_dynamic_list": {"original": {"path": str(self.root / "libc/src/c_abi/x86_64/owned_dynamic.list")}},
+            "dynamic_linker": {"original": {"path": str(linker), "sha256": hashlib.sha256(linker.read_bytes()).hexdigest()}},
+        }
+        driver = syscall_reader.static_driver_contract
+        for probe in ("contract", "override"):
+            (self.command_runner / (probe + ".o")).write_bytes(probe.encode())
+        with chdir(self.root):
+            for linkage in ("static", "static-pie"):
+                mode = driver.static_mode("static-et-exec" if linkage == "static" else linkage)
+                for probe in ("contract", "override"):
+                    stem = f"{linkage}-{probe}"
+                    output = self.command_runner / stem
+                    output.write_bytes(stem.encode())
+                    receipt = (self.command_runner / (stem + ".link.json")).relative_to(self.root)
+                    map_path = receipt.with_suffix(".map")
+                    trace_path = receipt.with_suffix(".trace")
+                    map_path.write_bytes(b"link map")
+                    trace_path.write_text("\n".join(str(path) for path in (
+                        library / mode.crt_object, library / "crti.o", self.command_runner / (probe + ".o"),
+                        library / "libc.a", library / "libcrabc-builtins.a", library / "crtn.o",
+                    )) + "\n")
+                    driver.write_link_receipt(self.product, mode, [self.command_runner / (probe + ".o")],
+                                              output, linker, receipt, map_path, trace_path)
+        self.output = Path(temporary.name) / "retained"
+        self.runner = self.output / "runner"
+        shutil.copytree(self.product, self.output / "products/static")
+        shutil.copytree(self.command_runner, self.runner)
+
+    def validate(self) -> None:
+        with mock.patch.object(syscall_reader.product_evidence, "_audit_retained_elf"), \
+             mock.patch.object(authority, "require_static_function_map"):
+            syscall_reader.validate_static_link_receipts(self.output, self.runner, self.inputs, self.command_runner)
+
+    def test_canonical_driver_receipts_preserve_exact_inputs_after_relocation(self) -> None:
+        record = json.loads((self.runner / "static-contract.link.json").read_text())
+        expected = [
+            {"role": role, "path": path, "sha256": hashlib.sha256(payload).hexdigest()}
+            for role, path, payload in (
+                ("crt-entry", "usr/lib/crt1.o", b"crt1.o"),
+                ("crt-prologue", "usr/lib/crti.o", b"crti.o"),
+                ("libc", "usr/lib/libc.a", b"!<arch>\n"),
+                ("builtins", "usr/lib/libcrabc-builtins.a", b"!<arch>\n"),
+                ("crt-epilogue", "usr/lib/crtn.o", b"crtn.o"),
+                ("application", str(self.command_runner / "contract.o"), b"contract"),
+            )
+        ]
+        self.assertEqual(record["input_receipts"], expected)
+        self.assertEqual(record["map"]["path"], "static-contract.link.map")
+        self.assertEqual(record["trace"]["path"], "static-contract.link.trace")
+        self.validate()
+
+    def test_equal_bytes_at_another_application_path_cannot_replace_the_probe(self) -> None:
+        sibling = self.command_runner / "replacement.o"
+        shutil.copyfile(self.command_runner / "contract.o", sibling)
+        path = self.runner / "static-contract.link.json"
+        record = json.loads(path.read_text())
+        record["input_receipts"][-1]["path"] = str(sibling)
+        path.write_text(json.dumps(record))
+        with self.assertRaisesRegex(ReceiptError, "static sealed link receipt differs: static-contract"):
+            self.validate()
+
+    def test_sidecar_paths_must_remain_relative_to_the_receipt_directory(self) -> None:
+        path = self.runner / "static-contract.link.json"
+        original = path.read_bytes()
+        for kind in ("map", "trace"):
+            filename = f"static-contract.link.{kind}"
+            for replacement in (str(self.command_runner / filename),
+                                str((self.command_runner / filename).relative_to(self.root)),
+                                "other/" + filename):
+                with self.subTest(kind=kind, replacement=replacement):
+                    record = json.loads(original)
+                    record[kind]["path"] = replacement
+                    path.write_text(json.dumps(record))
+                    with self.assertRaisesRegex(ReceiptError, "static sealed link receipt differs: static-contract"):
+                        self.validate()
 
 
 class OwnedSyscallAliasRetainedAuthorityTests(unittest.TestCase):

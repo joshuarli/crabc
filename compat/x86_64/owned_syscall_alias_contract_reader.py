@@ -414,14 +414,14 @@ def validate_static_link_receipts(output, runner, inputs, command_runner):
     """
     original_product = Path(inputs["static_driver"]["original"]["path"]).parents[1]
     retained_product = output / "products/static"
-    original_root = Path(inputs["selected_dynamic_list"]["original"]["path"]).parents[4]
     linker = {key: inputs["dynamic_linker"]["original"][key] for key in ("path", "sha256")}
     for linkage in ("static", "static-pie"):
         mode = static_driver_contract.static_mode(product_evidence.LINKAGES[linkage]["receipt_mode"])
         for probe in ("contract", "override"):
             stem = f"{linkage}-{probe}"
-            receipt = read_json(runner / (stem + ".link.json"), "static link receipt")
-            expected_inputs = static_driver_contract.receipt_input_records(retained_product, mode, [runner / (probe + ".o")])
+            receipt_path = runner / (stem + ".link.json")
+            receipt = read_json(receipt_path, "static link receipt")
+            expected_inputs = static_driver_contract.receipt_input_records(retained_product, mode, [runner / (probe + ".o")], receipt_path)
             expected_inputs[-1]["path"] = str(command_runner / (probe + ".o"))
             expected = {
                 "schema": static_driver_contract.LINK_RECEIPT_SCHEMA,
@@ -432,7 +432,7 @@ def validate_static_link_receipts(output, runner, inputs, command_runner):
                 "owned_link_contract": static_driver_contract.owned_link_plan(original_product, mode),
                 "input_receipts": expected_inputs,
                 "output": {"path": str(command_runner / stem), "sha256": digest(runner / stem)},
-                **{kind: {"path": str((command_runner / f"{stem}.link.{kind}").relative_to(original_root)),
+                **{kind: {"path": f"{stem}.link.{kind}",
                            "sha256": digest(runner / f"{stem}.link.{kind}")} for kind in ("map", "trace")},
             }
             require(same(receipt, expected), f"static sealed link receipt differs: {stem}")
