@@ -145,14 +145,14 @@ meaning. The source translator remains a
 fixed-image development-environment tool; it is not a target runtime input.
 When an admitted source request enables GCC debug information with `-g`, the
 helper passes `-gz=none` unless that exact option is already present. This
-preserves linkable uncompressed DWARF for the pinned LLD; compressed `-gz`
+preserves deterministic uncompressed DWARF; compressed `-gz`
 forms fail at the driver boundary, while `-g0` remains a no-debug request.
 
 The shared helper accepts the exact `-pthread` option for static and dynamic
 invocations. It forwards it to GCC for source translation, including the
 `_REENTRANT` definition. Both owned link plans already select the libc that
 provides pthread symbols, so an object-only link accepts this option without
-adding a library or changing LLD's runtime inputs. `-lpthread`, target-library
+adding a library or changing mold's runtime inputs. `-lpthread`, target-library
 search paths, and unrecognized variants remain rejected.
 
 The private package helper creates a normalized `tar.xz` only from that
@@ -736,3 +736,15 @@ queue, cancellation, notification, close and fork contracts and deliberate
 source corrections are recorded in [owned AIO evidence](../../docs/evidence/x86-owned-aio.md).
 The dynamic qualification catalog replays its installed behavior component
 for each selected product; standalone component passes do not close POSIX.
+
+Native Rust compilation uses the image-owned, checksum-pinned kache release
+from `compat/upstreams.toml`. The producer fixes `KACHE_CONFIG=/dev/null`,
+disables host configuration, and enables local-only caching under
+`.work/x86_64/kache`. Automatic target cleanup, sharing, and seeding are disabled
+to preserve retained build products. Receipts bind the actual wrapper and physical pinned
+compiler bytes. Direct compiler identity probes bypass the wrapper.
+
+Native links use `/usr/bin/mold`. Cargo uses the image-owned
+`crabc-x86_64-mold-gcc` driver, which invokes plain GCC with `-fuse-ld=mold`.
+The installed C drivers invoke mold directly with their owned target inputs.
+The pinned musl oracle compiler remains a separate comparison tool.

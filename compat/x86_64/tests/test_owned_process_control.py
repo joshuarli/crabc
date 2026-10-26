@@ -280,7 +280,7 @@ class StaticProcessReceiptTests(unittest.TestCase):
         self.object.write_text("owned workload")
         self.consumer = self.work / "consumer"
         self.consumer.write_text("owned consumer")
-        self.linker = self.work / "ld.lld"
+        self.linker = self.work / "mold"
         self.linker.write_text("resolved linker")
         self.receipt = self.work / "consumer.receipt.json"
         self.receipt.with_suffix(".map").write_text("owned link map")
@@ -301,13 +301,13 @@ class StaticProcessReceiptTests(unittest.TestCase):
             (self.library / name for name in
              (entry, "crti.o", "libc.a", "libcrabc-builtins.a", "crtn.o")),
         ))
-        # LLD traces direct inputs and extracted archive members. An archive
-        # supplied on the link vector need not provide any referenced member.
-        self.trace = [str(self.library / entry), str(self.library / "crti.o"),
-                      str(self.object), str(self.library / "libc.a") + "(runtime.o)",
-                      str(self.library / "crtn.o")]
+        self.trace = ["trace: " + str(self.library / entry),
+                      "trace: " + str(self.library / "crti.o"),
+                      "trace: " + str(self.object),
+                      "trace: " + str(self.library / "libc.a") + "(runtime.o)",
+                      "trace: " + str(self.library / "crtn.o")]
         if extract_builtins:
-            self.trace.append(str(self.library / "libcrabc-builtins.a") + "(helper.o)")
+            self.trace.append("trace: " + str(self.library / "libcrabc-builtins.a") + "(helper.o)")
         Path(str(self.consumer) + ".header").write_text(
             "Type: " + ("DYN" if pie else "EXEC") + " (owned)\n"
             "Machine: Advanced Micro Devices X86-64\n"
@@ -326,7 +326,7 @@ class StaticProcessReceiptTests(unittest.TestCase):
                   "sha256": self.digest(self.object)}],
             "resolved_linker": {"path": str(self.linker), "sha256": self.digest(self.linker)},
             "owned_link_contract": [
-                "ld.lld", "-static", *(["-pie"] if pie else []),
+                "mold", "-static", *(["-pie"] if pie else []),
                 "--no-dynamic-linker", "--no-undefined", "--eh-frame-hdr", "--gc-sections",
                 "-z", "relro", "-z", "now", "-e", "_start", str(self.library / entry),
                 str(self.library / "crti.o"), "<application-objects>",
@@ -344,7 +344,7 @@ class StaticProcessReceiptTests(unittest.TestCase):
         self.receipt.write_text(json.dumps(record))
         return subprocess.run(
             [sys.executable, "-B", "-", str(self.product), str(self.consumer), mode,
-             str(self.object), str(self.receipt)],
+             str(self.object), str(self.receipt), str(self.linker), str(ROOT)],
             input=self.checker, capture_output=True, text=True, cwd=ROOT,
         )
 
@@ -371,6 +371,13 @@ class StaticProcessReceiptTests(unittest.TestCase):
         result = self.audit("static", record)
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("trace escaped the owned inputs", result.stderr)
+
+    def test_static_receipt_rejects_an_unexpected_linker(self) -> None:
+        record = self.make_receipt("static")
+        record["resolved_linker"]["path"] = str(self.work / "ld.lld")
+        result = self.audit("static", record)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("resolved linker identity drifted", result.stderr)
 
     def test_unused_builtins_still_requires_exact_declaration_and_hash(self) -> None:
         for mutation in ("missing-record", "hash", "vector"):

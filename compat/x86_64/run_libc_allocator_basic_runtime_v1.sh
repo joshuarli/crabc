@@ -21,6 +21,8 @@ set -euo pipefail
 ulimit -c 0
 
 readonly ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+. "$(dirname "${BASH_SOURCE[0]}")/native_build_environment.sh"
+mapfile -d '' -t rustc_command < <(python3 -B "$ROOT_DIR/compat/x86_64/native_rustc.py")
 readonly ORACLE_CC=/usr/local/bin/crabc-x86_64-musl-gcc
 readonly EXIT_MARKER=ALLOCATOR_BASIC_RUNTIME_V1_ATEXIT
 
@@ -109,14 +111,7 @@ for tool in ar awk cargo cmp grep nm objdump python3 readelf rustup sed sort; do
 done
 [ -x "$ORACLE_CC" ] || fail "missing pinned musl oracle compiler"
 
-if command -v ld.lld >/dev/null 2>&1; then
-    link_editor=ld.lld
-else
-    toolchain_rustc="$(rustup which rustc)"
-    toolchain_root="$(dirname "$(dirname "$toolchain_rustc")")"
-    link_editor="$toolchain_root/lib/rustlib/x86_64-unknown-linux-musl/bin/gcc-ld/ld.lld"
-    [ -x "$link_editor" ] || fail "requires the pinned Rust x86-64 linker"
-fi
+readonly LINKER="$(python3 -B "$ROOT_DIR/compat/x86_64/native_rustc.py" mold)"
 
 bash "$ROOT_DIR/compat/x86_64/run_musl_oracle.sh" >/dev/null
 
@@ -172,7 +167,7 @@ cmp -s "$expected_stdout" "$reference_stdout" \
 
 mkdir "$crt_dir"
 for object in crt1 crti crtn; do
-    rustup run "$(python3 "$ROOT_DIR/scripts/rust_toolchain.py")" rustc --edition=2021 --crate-type=lib --emit=obj \
+    "${rustc_command[@]}" --edition=2021 --crate-type=lib --emit=obj \
         --target x86_64-unknown-linux-musl -C panic=abort \
         -C force-unwind-tables=no -C debuginfo=0 -C opt-level=2 \
         -C overflow-checks=off -C debug-assertions=off \
@@ -278,7 +273,7 @@ done
 # This is the closure judge: the candidate sees its CRT, probe, and one
 # feature-composed crabc archive and its bounded owned compiler helpers. The
 # pinned musl archive is used only by the separate reference process above.
-if ! "$link_editor" -static --no-dynamic-linker --no-undefined \
+if ! "$LINKER" -static --no-dynamic-linker --no-undefined \
     -z relro -z now -e _start -Map="$link_map" \
     --trace-symbol=rust_eh_personality \
     "$crt_dir/crt1.o" "$crt_dir/crti.o" "$probe_object" \

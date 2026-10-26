@@ -12,6 +12,7 @@ import stat
 import subprocess
 from typing import Mapping
 
+from installed_allocator_backend import dynamic_backend
 import native_shadow_receipt as shared
 
 
@@ -291,8 +292,7 @@ def read_native_allocator_dso_receipt(
     provenance = json_file(directory / "products/dynamic-libc-provenance")
     require(manifest.get("target") == "x86_64-unknown-linux-musl"
             and isinstance(manifest.get("files"), dict), "dynamic manifest identity differs")
-    require(state.get("allocator_backend") == "native-shadow"
-            and provenance.get("allocator_backend") == "native-shadow", "allocator backend identity differs")
+    dynamic_backend(root, state, provenance)
     require(state.get("schema") == "crabc.x86_64-owned-dynamic-materialization/v1"
             and state.get("status") == "materialized-unqualified"
             and state.get("modes") == ["dynamic-pie", "dynamic-non-pie", "dynamic-shared-object"]

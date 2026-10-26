@@ -9,6 +9,8 @@
 set -euo pipefail
 
 readonly ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+. "$(dirname "${BASH_SOURCE[0]}")/native_build_environment.sh"
+mapfile -d '' -t rustc_command < <(python3 -B "$ROOT_DIR/compat/x86_64/native_rustc.py")
 readonly LOADER_SOURCE_ROOT="$ROOT_DIR/ldso/src/x86_64_dynamic_main_thread_runtime_v1_source_root.rs"
 readonly CONSUMER_SOURCE_ROOT="$ROOT_DIR/libc/src/c_abi/x86_64/loader_tls_runtime_v1_source_root.rs"
 readonly DYNAMIC_LIBC_SOURCE_ROOT="$ROOT_DIR/libc/src/c_abi/x86_64/dynamic_main_thread_runtime_v1_source_root.rs"
@@ -55,7 +57,7 @@ fi
 build_source_loader() {
     local output="$1"
     shift
-    rustc --edition=2021 --crate-type staticlib -C panic=abort -C relocation-model=pic \
+    "${rustc_command[@]}" --edition=2021 --crate-type staticlib -C panic=abort -C relocation-model=pic \
         --cfg crabc_general_initial_graph \
         --cfg crabc_general_initial_tls_materialization_v1 \
         --cfg crabc_general_loader_libc_tls_runtime_v1 \
@@ -78,12 +80,12 @@ build_cargo_loader() {
 }
 
 build_consumer() {
-    rustc --edition=2021 --crate-type staticlib -C panic=abort -C relocation-model=pic \
+    "${rustc_command[@]}" --edition=2021 --crate-type staticlib -C panic=abort -C relocation-model=pic \
         "$CONSUMER_SOURCE_ROOT" -o "$work_dir/main-consumer.a"
 }
 
 build_dynamic_libc() {
-    rustc --edition=2021 --crate-type staticlib -C panic=abort -C relocation-model=pic \
+    "${rustc_command[@]}" --edition=2021 --crate-type staticlib -C panic=abort -C relocation-model=pic \
         "$DYNAMIC_LIBC_SOURCE_ROOT" -o "$work_dir/dynamic-libc.a"
     cc -nostdlib -shared -Wl,--version-script,"$VERSION_SCRIPT" \
         -Wl,--hash-style=sysv -Wl,-z,now -Wl,--allow-shlib-undefined \

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import importlib.util
+import hashlib
 import json
 import os
 import stat
@@ -68,10 +69,31 @@ class OwnedProtocolDatabaseReceiptTests(unittest.TestCase):
         self.assertEqual(receipt.COMPONENT, "protocol-database-product")
         self.assertEqual(receipt.REPORT_NAME, "owned-protocol-database-products.json")
 
-    def test_source_built_musl_archive_matches_the_pinned_image_input(self) -> None:
-        manifest = json.loads((ROOT / "compat/x86_64/owned_resolver_network_image_inputs.json").read_text())
-        archive = manifest["files"][str(producer.PINNED_MUSL_ARCHIVE)]
-        self.assertEqual(archive["sha256"], producer.PINNED_MUSL_ARCHIVE_SHA256)
+    def test_oracle_extracts_current_manifest_archive_and_rejects_changed_bytes(self) -> None:
+        archive = self.work / "libc.a"
+        archive.write_bytes(b"current image archive")
+        compiler = self.work / "musl-gcc"
+        compiler.write_bytes(b"compiler fixture")
+        manifest_path = self.work / "compat/x86_64/owned_resolver_network_image_inputs.json"
+        manifest_path.parent.mkdir(parents=True)
+        manifest_path.write_text(json.dumps({
+            "schema": "crabc.x86_64-owned-resolver-network-image-inputs/v1",
+            "files": {str(archive): {
+                "path": str(archive), "sha256": hashlib.sha256(archive.read_bytes()).hexdigest(),
+                "size": archive.stat().st_size, "mode": stat.S_IMODE(archive.stat().st_mode),
+            }},
+        }))
+        with mock.patch.object(producer, "ROOT", self.work), \
+             mock.patch.object(producer, "MUSL_CC", compiler), \
+             mock.patch.object(producer, "PINNED_MUSL_ARCHIVE", archive), \
+             mock.patch.object(producer, "_run", side_effect=RuntimeError("archive extraction reached")) as run:
+            with self.assertRaisesRegex(RuntimeError, "archive extraction reached"):
+                producer._oracle_object(self.work, 1.0)
+            run.assert_called_once()
+            archive.write_bytes(b"changed image archive")
+            with self.assertRaisesRegex(producer.ProtocolDatabaseError, "archive differs"):
+                producer._oracle_object(self.work, 1.0)
+            run.assert_called_once()
 
     def test_reader_rejects_compiler_reported_alpine_archive_as_proto_oracle(self) -> None:
         oracle = {

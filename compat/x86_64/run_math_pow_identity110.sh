@@ -2,12 +2,14 @@
 # Focused finite-identity proof retaining the independent musl deficiency.
 set -euo pipefail
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+. "$(dirname "${BASH_SOURCE[0]}")/native_build_environment.sh"
+mapfile -d '' -t rustc_command < <(python3 -B "$root/compat/x86_64/native_rustc.py")
 cd "$root"
 mkdir -p .work/x86_64/tmp
 work="$(mktemp -d "$root/.work/x86_64/tmp/math-pow-identity110.XXXXXX")"
 printf 'Retained power identity evidence: %s\n' "$work"
 cc=/usr/local/bin/crabc-x86_64-musl-gcc
-rustc --edition=2021 --crate-type=lib --emit=obj \
+"${rustc_command[@]}" --edition=2021 --crate-type=lib --emit=obj \
     --target x86_64-unknown-linux-musl -C opt-level=0 -C panic=abort \
     -C relocation-model=static compat/x86_64/math_pow_identity110_boundary.rs \
     -o "$work/boundary.o"

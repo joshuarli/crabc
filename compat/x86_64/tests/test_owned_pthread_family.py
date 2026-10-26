@@ -341,8 +341,7 @@ class PthreadFamilyCoverageTests(unittest.TestCase):
         step = ROOT / ".work/x86_64/test-owned-pthread-family/lifecycle-step"
         environment = family._static_lifecycle_environment(ROOT, step, "/workspace")
         self.assertEqual(environment["PATH"].split(":", 1)[0],
-                         "/opt/rustup/toolchains/nightly-2026-09-15-x86_64-unknown-linux-musl"
-                         "/lib/rustlib/x86_64-unknown-linux-musl/bin/gcc-ld")
+                         "/usr/bin")
         self.assertEqual(environment["TMPDIR"],
                          "/workspace/.work/x86_64/test-owned-pthread-family/lifecycle-step/tmp")
 
@@ -379,8 +378,7 @@ class PthreadFamilyCoverageTests(unittest.TestCase):
             },
             "compiler": tool_identity("/opt/rust/bin/gcc", "d" * 64),
             "linker": tool_identity(
-                "/opt/rustup/toolchains/nightly-2026-09-15-x86_64-unknown-linux-musl"
-                "/lib/rustlib/x86_64-unknown-linux-musl/bin/gcc-ld/ld.lld", "e" * 64),
+                "/usr/bin/mold", "e" * 64),
         }
         (leaf / "tools-before.json").write_text(json.dumps(tools), encoding="utf-8")
         (leaf / "tools-after.json").write_text(json.dumps(tools), encoding="utf-8")
@@ -578,7 +576,7 @@ class PthreadFamilyCoverageTests(unittest.TestCase):
                 "executable_sha256": "c" * 64, "receipt_sha256": "d" * 64,
             }
 
-        tools = {"linker": {"path": "/opt/native-tools/ld.lld", "sha256": "e" * 64}}
+        tools = {"linker": {"path": "/usr/bin/mold", "sha256": "e" * 64}}
         with patch.object(product_evidence, "validate_retained_link", side_effect=sealed_link) as validate:
             family._validate_link(self.root, leaf, links, static, dynamic, "/workspace", tools)
         self.assertEqual([call.args[2] for call in validate.call_args_list], [static, static, dynamic, dynamic])
@@ -620,7 +618,7 @@ class PthreadFamilyCoverageTests(unittest.TestCase):
             "static_driver": identity(static / "bin/crabc-cc"),
             "dynamic_driver": identity(dynamic / "bin/crabc-cc-dynamic"),
             "compiler": {"path": "/opt/native-tools/gcc", "sha256": "b" * 64, "size": 2},
-            "linker": {"path": "/opt/native-tools/ld.lld", "sha256": "c" * 64, "size": 3},
+            "linker": {"path": "/usr/bin/mold", "sha256": "c" * 64, "size": 3},
         }
         family._tool_roster(self.root, tools, static, dynamic, "/workspace")
         malformed = copy.deepcopy(tools)
@@ -641,6 +639,9 @@ class PthreadFamilyCoverageTests(unittest.TestCase):
             path = product / relative
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_bytes(relative.encode())
+        (product / "share/crabc/producer-tools.json").write_text(json.dumps({
+            "schema": 1, **product_evidence.source_native_compiler_tool_records(),
+        }))
         (product / "usr/include").mkdir(parents=True)
         (product / "bin/crabc-cc-dynamic").chmod(0o755)
         (product / "lib/ld-crabc-x86_64.so.1").chmod(0o755)

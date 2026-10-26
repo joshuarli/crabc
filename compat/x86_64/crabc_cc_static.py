@@ -45,9 +45,6 @@ COMBINED_STATIC_MANIFEST = "share/crabc/static/manifest.json"
 PRODUCT_METADATA_PREFIX = "share/crabc/"
 COMBINED_UNINSTALLED_STATIC_PATHS = frozenset({"usr/lib/Scrt1.o"})
 
-# Caller-owned ``.o`` inputs cross directly into LLD.  Keep their format
-# boundary explicit instead of allowing suffix-based dispatch to reinterpret a
-# linker script, archive, bitcode file, or foreign ELF as an input graph.
 ELF_MAGIC = b"\x7fELF"
 ELFCLASS64 = 2
 ELFDATA2LSB = 1
@@ -375,11 +372,11 @@ def static_mode(identifier: str) -> StaticMode:
 
 
 def owned_link_plan(root: Path, mode: StaticMode) -> list[str]:
-    """Return the complete explicit LLD plan with only an application hole."""
+    """Return the complete explicit linker plan with only an application hole."""
 
     library = root / "usr" / "lib"
     return [
-        "ld.lld",
+        "mold",
         "-static",
         *mode.linker_flags,
         "--no-dynamic-linker",
@@ -519,21 +516,11 @@ def parse_invocation(arguments: Sequence[str]) -> Invocation:
         elif rejects_runtime_flag(argument):
             raise DriverError(f"unowned target-runtime flag is rejected: {argument}")
         elif argument == "-pthread":
-            # GCC owns the thread-aware translation contract (including
-            # _REENTRANT). Both installed link plans already select the owned
-            # libc containing pthread definitions; no additional library or
-            # search path is necessary, and LLD does not consume this flag.
             compiler_flags.append(argument)
         elif argument.startswith("-gz"):
-            # The pinned Rust-distributed LLD intentionally has no zlib
-            # support.  GCC in this image otherwise emits compressed DWARF
-            # for `-g`, which makes a perfectly valid admitted application
-            # object impossible to link.  Preserve debug information and
-            # make its physical representation part of the sealed driver
-            # contract instead of stripping it or depending on a new decoder.
             if argument != "-gz=none":
                 raise DriverError(
-                    "compressed debug data is unsupported by the installed linker; use -gz=none"
+                    "the sealed driver requires uncompressed debug data; use -gz=none"
                 )
             if explicit_uncompressed_debug:
                 raise DriverError("-gz=none may be specified only once")
@@ -608,30 +595,6 @@ def clean_environment() -> dict[str, str]:
         "SOURCE_DATE_EPOCH": "1",
         "TZ": "UTC",
     }
-
-
-def pinned_rustup_environment() -> tuple[Path, dict[str, str]]:
-    """Locate the pinned Rust producer without admitting a caller tool path.
-
-    The x86 evidence image owns the Rust installation under ``/opt``.  Its
-    immutable toolchain name, rather than a caller-supplied linker setting or
-    PATH lookup, selects the fallback LLD.  The two location variables are
-    retained solely so that the absolute rustup executable can find its own
-    pinned installation after the child environment drops all ambient target
-    include/library/compiler controls.
-    """
-
-    cargo_home = Path("/opt/cargo")
-    rustup_home = Path("/opt/rustup")
-    rustup = cargo_home / "bin" / "rustup"
-    require_regular(rustup.resolve(), "pinned rustup")
-    environment = clean_environment()
-    environment["CARGO_HOME"] = str(cargo_home)
-    environment["RUSTUP_HOME"] = str(rustup_home)
-    # Alpine's installed ``rustup`` frontend is a symlink whose invoked name
-    # selects its command-line mode.  Validate its resolved regular target,
-    # but execute the fixed frontend path rather than flattening that name.
-    return rustup, environment
 
 
 def resolved_path(path: Path, description: str) -> Path:
@@ -714,13 +677,13 @@ def require_application_file(root: Path, path: Path, kind: str) -> Path:
 def require_x86_64_relocatable_object(root: Path, path: Path) -> Path:
     """Admit only a structurally complete Linux/x86-64 ET_REL object.
 
-    LLD dispatches a named input by file contents, not by its ``.o`` suffix.
+    linker dispatches a named input by file contents, not by its ``.o`` suffix.
     In particular, linker scripts and thin archives can make a caller-owned
     path add further ambient inputs.  The two LLVM section types below carry
     linker-control metadata rather than ordinary object payload: dependent
-    libraries make LLD search or open another library, while linker options
+    libraries make linker search or open another library, while linker options
     reserve a second route for embedded linker authority.  Reject both before
-    the fixed plan reaches LLD.
+    the fixed plan reaches linker.
     """
 
     object_path = require_application_file(root, path, "object")
@@ -813,7 +776,7 @@ def receipt_sidecars(root: Path, receipt: Path) -> tuple[Path, Path, Path]:
     """Reserve a regular, relative receipt/map/trace set owned by this driver.
 
     The application may choose where its evidence is written, but it cannot
-    pass that value through to LLD as an arbitrary linker flag.  The map and
+    pass that value through to linker as an arbitrary linker flag.  The map and
     trace names are mechanically derived here, and every sidecar must be new;
     this prevents a link audit request from following or overwriting a
     pre-existing target.
@@ -840,7 +803,7 @@ def receipt_sidecars(root: Path, receipt: Path) -> tuple[Path, Path, Path]:
 def validate_receipt_output_disjoint(root: Path, output: Path, receipt: Path) -> None:
     """Reject a link output which aliases any driver-owned audit sidecar.
 
-    The receipt is created after LLD has written its map and trace.  An output
+    The receipt is created after linker has written its map and trace.  An output
     collision would otherwise make the successful link erase an audit artifact
     or make receipt creation fail after target code was already produced.  Use
     resolved prospective paths so ``./receipt.json``, an absolute spelling,
@@ -858,14 +821,14 @@ def validate_receipt_output_disjoint(root: Path, output: Path, receipt: Path) ->
 def validate_link_trace(
     root: Path, mode: StaticMode, applications: Sequence[Path], trace_path: Path
 ) -> None:
-    """Require LLD's actual inputs to equal the sealed plan plus application objects.
+    """Require linker's actual inputs to equal the sealed plan plus application objects.
 
     The fixed command line is a declaration, while ``--trace`` is the linker
     observation.  A receipt is meaningful only when those agree: the three
     direct CRT objects, selected ``libc.a`` members, and the caller objects
     must all appear, and nothing else may appear.
 
-    LLD traces an archive only when it extracts a member.  ``libc.a`` always
+    linker traces an archive only when it extracts a member.  ``libc.a`` always
     supplies the CRT's startup entry.  The owned compiler-helper archive is
     admitted but conditional: accepted-C mimalloc references
     ``__popcountdi2``, whereas the Rust-only native-shadow ``libc.a``
@@ -890,6 +853,7 @@ def validate_link_trace(
     expected = direct_texts | {str(library / "libc.a")}
     seen: set[str] = set()
     for line in trace_lines:
+        line = line.removeprefix("trace: ")
         if not line:
             continue
         if line in direct_texts:
@@ -966,7 +930,7 @@ def write_link_receipt(
     map_path: Path,
     trace_path: Path,
 ) -> None:
-    """Write a stable receipt after LLD produced the driver-owned sidecars."""
+    """Write a stable receipt after linker produced the driver-owned sidecars."""
 
     require_regular(output, "link output")
     require_regular(linker_path, "resolved linker")
@@ -1007,7 +971,7 @@ def run_link_with_receipt(
     command: Sequence[str],
     receipt: Path,
 ) -> tuple[Path, Path, Path]:
-    """Run LLD with internally-selected trace/map evidence, never user flags."""
+    """Run linker with internally-selected trace/map evidence, never user flags."""
 
     receipt, map_path, trace_path = receipt_sidecars(root, receipt)
     if len(command) < 3 or command[-2] != "-o":
@@ -1047,36 +1011,11 @@ def compiler() -> str:
 
 
 def linker(root: Path) -> str:
-    path = shutil.which("ld.lld", path=clean_environment()["PATH"])
-    if path is not None:
-        return str(Path(path).resolve())
-    try:
-        manifest = json.loads(
-            (root / "share" / "crabc" / "manifest.json").read_text(encoding="utf-8")
-        )
-        toolchain = manifest["toolchain"]
-    except (OSError, json.JSONDecodeError, KeyError, TypeError) as error:
-        raise DriverError("the owned sysroot manifest has no Rust toolchain identity") from error
-    if not isinstance(toolchain, str) or not toolchain:
-        raise DriverError("the owned sysroot manifest has an invalid Rust toolchain identity")
-    rustup, environment = pinned_rustup_environment()
-    completed = subprocess.run(
-        [str(rustup), "run", toolchain, "rustc", "--print", "sysroot"],
-        env=environment,
-        stdin=subprocess.DEVNULL,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=True,
-        check=False,
-    )
-    if completed.returncode != 0:
-        raise DriverError("the manifest-selected Rust toolchain cannot report its sysroot")
-    sysroot = Path(completed.stdout.strip())
-    if not sysroot.is_absolute():
-        raise DriverError("the manifest-selected Rust toolchain reported an unsafe sysroot")
-    bundled = sysroot / "lib" / "rustlib" / TARGET / "bin" / "gcc-ld" / "ld.lld"
-    require_regular(bundled.resolve(), "manifest-selected Rust-toolchain ld.lld")
-    return str(bundled.resolve())
+    path = Path("/usr/bin/mold")
+    require_regular(path, "image-owned mold linker")
+    if not os.access(path, os.X_OK):
+        raise DriverError("the image-owned mold linker is not executable")
+    return str(path)
 
 
 # Installed drivers translate applications as hosted C in the pinned musl
@@ -1115,7 +1054,7 @@ def materialize_link_plan(root: Path, mode: StaticMode, applications: Sequence[P
     plan = owned_link_plan(root, mode)
     result: list[str] = []
     for item in plan:
-        if item == "ld.lld":
+        if item == "mold":
             result.append(linker(root))
         elif item == APPLICATION_OBJECTS:
             result.extend(str(path) for path in applications)

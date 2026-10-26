@@ -18,6 +18,8 @@ set -euo pipefail
 . "$(dirname "${BASH_SOURCE[0]}")/source_runtime_libc.sh"
 
 readonly ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+. "$(dirname "${BASH_SOURCE[0]}")/native_build_environment.sh"
+mapfile -d '' -t rustc_command < <(python3 -B "$ROOT_DIR/compat/x86_64/native_rustc.py")
 readonly ORACLE_CC=/usr/local/bin/crabc-x86_64-musl-gcc
 readonly MUSL_LIBC=/opt/musl-1.2.6/lib/libc.a
 
@@ -92,14 +94,7 @@ done
 [ -x "$ORACLE_CC" ] || fail "missing pinned musl oracle compiler"
 [ -f "$MUSL_LIBC" ] || fail "missing pinned musl static libc"
 
-if command -v ld.lld >/dev/null 2>&1; then
-    link_editor=ld.lld
-else
-    toolchain_rustc="$(rustup which rustc)"
-    toolchain_root="$(dirname "$(dirname "$toolchain_rustc")")"
-    link_editor="$toolchain_root/lib/rustlib/x86_64-unknown-linux-musl/bin/gcc-ld/ld.lld"
-    [ -x "$link_editor" ] || fail "requires the pinned Rust x86-64 linker"
-fi
+readonly LINKER="$(python3 -B "$ROOT_DIR/compat/x86_64/native_rustc.py" mold)"
 
 bash "$ROOT_DIR/compat/x86_64/run_musl_oracle.sh" >/dev/null
 
@@ -158,7 +153,7 @@ env -i "$reference" || fail "pinned-musl observability reference failed"
 
 mkdir "$crt_dir"
 for object in crt1 crti crtn; do
-    rustup run "$(python3 "$ROOT_DIR/scripts/rust_toolchain.py")" rustc --edition=2021 --crate-type=lib --emit=obj \
+    "${rustc_command[@]}" --edition=2021 --crate-type=lib --emit=obj \
         --target x86_64-unknown-linux-musl -C panic=abort \
         -C force-unwind-tables=no -C debuginfo=0 -C opt-level=2 \
         -C overflow-checks=off -C debug-assertions=off \
@@ -251,7 +246,7 @@ mkdir "$musl_patch_dir"
     ar rcs "$backend_musl_libc" libc.lo
 )
 
-"$link_editor" -static --no-dynamic-linker --no-undefined \
+"$LINKER" -static --no-dynamic-linker --no-undefined \
     -z relro -z now -e _start -Map="$link_map" \
     "$crt_dir/crt1.o" "$crt_dir/crti.o" "$probe_object" \
     --start-group "$archive" "$backend_musl_libc" "$builtins_archive" --end-group \

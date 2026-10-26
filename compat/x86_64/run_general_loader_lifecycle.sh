@@ -2,6 +2,9 @@
 # Run inside the pinned native x86 image; all evidence stays in TMPDIR.
 set -euo pipefail
 readonly ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+. "$(dirname "${BASH_SOURCE[0]}")/native_build_environment.sh"
+mapfile -d '' -t rustc_command < <(python3 -B "$ROOT/compat/x86_64/native_rustc.py")
+mapfile -d '' -t rustc_link_command < <(python3 -B "$ROOT/compat/x86_64/native_rustc.py" final-link)
 readonly FIXTURES="$ROOT/compat/x86_64"
 [ "$(uname -sm)" = 'Linux x86_64' ]
 case "${TMPDIR:-}" in "$ROOT"/.work/*) ;; *) exit 2 ;; esac
@@ -33,12 +36,12 @@ if [ "${CRABC_GENERAL_LOADER_LIFECYCLE_TLS:-0}" = 1 ]; then
     # into the freestanding candidate just to satisfy its DSO's reference.
     tls_ldflags=(-Wl,--allow-shlib-undefined)
 fi
-rustc --edition=2021 --test "${cfgs[@]}" \
+"${rustc_link_command[@]}" --edition=2021 --test "${cfgs[@]}" \
     "$ROOT/ldso/src/x86_64_general_initial_graph_source_root.rs" -o "$work/lifecycle-tests"
 timeout 30 "$work/lifecycle-tests"
 case "${CRABC_GENERAL_LOADER_LIFECYCLE_ROOT:-source}" in
 source)
-rustc --edition=2021 --crate-type staticlib -C panic=abort -C relocation-model=pic \
+"${rustc_command[@]}" --edition=2021 --crate-type staticlib -C panic=abort -C relocation-model=pic \
     "${cfgs[@]}" \
     "$ROOT/ldso/src/x86_64_general_initial_graph_source_root.rs" -o "$work/loader.a"
 cc -nostdlib -shared -Wl,-e,_start -Wl,-Bsymbolic -Wl,-z,now -Wl,--no-undefined \

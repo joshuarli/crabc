@@ -216,7 +216,7 @@ def require_linker(record: object, label: str) -> Path:
     if not isinstance(path_text, str) or not isinstance(expected_hash, str):
         fail(f"{label} has malformed linker identity")
     linker = require_resolved_regular(Path(path_text), f"{label} resolved linker")
-    if linker.name != "ld.lld" or digest(linker) != expected_hash:
+    if linker != product_evidence.native_build_tools.MOLD or digest(linker) != expected_hash:
         fail(f"{label} linker identity drifted")
     return linker
 
@@ -269,12 +269,13 @@ def require_trace_order(
 ) -> None:
     """Check every resolved input without inventing an archive-member contract.
 
-    LLD can show an archive as a whole or as one or more selected members.  The
+    Mold can show an archive as a whole or as one or more selected members.  The
     fixed source/object/runtime order is meaningful; member spelling is not.
     """
 
     if not isinstance(trace, list) or not all(isinstance(line, str) for line in trace):
         fail(f"{label} link_trace is malformed")
+    trace = product_evidence.semantic_link_trace(trace)
     expected_order = ["entry"]
     if attach is not None:
         expected_order.append("attach")
@@ -309,7 +310,7 @@ def require_trace_order(
     if not seen["libc"]:
         fail(f"{label} link trace omitted the selected libc input")
     # The fixed driver always names the builtins archive and its receipt binds
-    # that exact file, but LLD need not extract or print a member when this
+    # that exact file, but mold need not extract or print a member when this
     # particular workload uses no compiler helper. Do not invent extraction as
     # a workload contract; if it is printed, the path and order above remain
     # closed to the one installed archive.
@@ -374,7 +375,7 @@ def audit_static_receipt(
     )
     require_record(receipt, "input_receipts", expected_records, "static receipt")
     expected_contract = [
-        "ld.lld", "-static", *(["-pie"] if pie else []), "--no-dynamic-linker",
+        Path(product_evidence.native_build_tools.MOLD).name, "-static", *(["-pie"] if pie else []), "--no-dynamic-linker",
         "--no-undefined", "--eh-frame-hdr", "--gc-sections", "-z", "relro", "-z", "now", "-e",
         "_start", str(library / crt_name), str(library / "crti.o"),
         "<application-objects>", str(library / "libc.a"),

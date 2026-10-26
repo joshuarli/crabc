@@ -62,7 +62,7 @@ DESCRIPTOR_RUNTIME_CONSUMER_BODIES=(
     },
 )
 DESCRIPTOR_RUNTIME_SOURCE_FILES=(
-    'scripts/build_x86_64_owned_dynamic_sysroot.py','ldso/Cargo.toml','ldso/build.rs',
+    'scripts/build_x86_64_owned_dynamic_sysroot.py','scripts/native_build_tools.py','ldso/Cargo.toml','ldso/build.rs',
     'crt/build_x86_64.py','crt/src/x86_64_dynamic_startup.rs',
     'ldso/src/x86_64_general_initial_graph.rs','ldso/src/x86_64_general_initial_tls_state.rs',
     'libc/src/c_abi/x86_64/owned_dynamic_attachment.rs',
@@ -334,11 +334,12 @@ def descriptor_runtime_source_order(sources):
                             '"--features",\n                      LOADER_FEATURE'), 'dynamic builder')
     attachment_compile=_runtime_region(
         builder,
-        'run([rustup, "run", common.PINNED_TOOLCHAIN, "rustc", "--edition=2021",',
+        'run([*common.native_build_tools.compile_command(rust_sysroot / "bin/rustc"),',
         '\n    (library / "crabc-dynamic-attach.o").chmod(0o644)',
         'selected attachment compile route',
     )
     _runtime_order(attachment_compile,(
+        'common.native_build_tools.compile_command(rust_sysroot / "bin/rustc")',
         '"--crate-name", "crabc_dynamic_attachment"', '"--crate-type", "lib"',
         '"--emit=obj"', '"-C", "opt-level=2"',
         '"-C", "relocation-model=pic"',
@@ -413,7 +414,7 @@ def validate_streams(streams):
     expected={cell['label']:expected_stdout(cell) for cell in runtime_cells()}
     require(same(streams,expected),'startup runtime roster, wire owner or transcript differs')
 
-RUNTIME_SOURCES=('crt/src/x86_64_startup.rs','crt/src/x86_64_dynamic_startup.rs','crt/src/x86_64_array_boundaries.rs',
+RUNTIME_SOURCES=('scripts/native_build_tools.py','crt/src/x86_64_startup.rs','crt/src/x86_64_dynamic_startup.rs','crt/src/x86_64_array_boundaries.rs',
     'crt/src/x86_64_crti.rs','crt/src/x86_64_crtn.rs',
     'crt/src/x86_64_crt1.rs','crt/src/x86_64_rcrt1.rs','crt/src/x86_64_Scrt1.rs',
     'crt/src/x86_64_owned_crt_handoff_attachment.rs','crt/build_x86_64.py',
@@ -1101,7 +1102,7 @@ def descriptor_receipt(root,work,inputs,tools,label,mode,workload,output,applica
             [mounted(library/'Scrt1.o'),mounted(library/'crabc-dynamic-attach.o'),
              mounted(library/'crti.o'),mounted(workload)])
     direct += [*(mounted(path) for path in application_dsos),mounted(library/'libc.so'),mounted(library/'crtn.o')]
-    trace=record['link_trace'];require(type(trace) is list and all(type(item) is str for item in trace),
+    trace=products.semantic_link_trace(record['link_trace']);require(type(trace) is list and all(type(item) is str for item in trace),
                                         'descriptor '+label+' link trace differs')
     seen=[]
     for item in trace:
@@ -1176,17 +1177,17 @@ def owned_crt_frame_providers(root,prologue,epilogue,executable,map_path,
     require(all(image.elf_type==1 for image in images.values()),'CRT frame inputs must be relocatable')
     contributions={};mapped_symbols={};output=None;owner=None;section_name=None
     lines=static_authority.physical(map_path).read_text().splitlines()
-    require(lines and lines[0].split()==['VMA','LMA','Size','Align','Out','In','Symbol'],
+    require(lines and lines[0].split()==['VMA','Size','Align','Out','In','Symbol'],
             'CRT frame map header differs')
     for line in lines[1:]:
-        match=re.fullmatch(r'\s*([0-9a-f]+)\s+([0-9a-f]+)\s+([0-9a-f]+)\s+(\d+)\s+(.*)',line)
+        match=re.fullmatch(r'\s*(0x[0-9a-f]+|0)\s+(\d+)\s+(\d+)\s+(.*)',line)
         require(match is not None,'malformed CRT frame map row')
-        address,load,size,alignment,name=match.groups()
-        address,load,size=int(address,16),int(load,16),int(size,16)
+        address,size,alignment,name=match.groups()
+        address,size=int(address,16),int(size)
         if ':(' in name and name.endswith(')'):
             owner,section_name=name.rsplit(':(',1);section_name=section_name[:-1]
             if output in ('.init','.fini') or section_name in ('.init','.fini'):
-                require(output==section_name and owner in images and address==load,
+                require(output==section_name and owner in images,
                         'CRT frame map admits an unselected contribution')
                 contributions.setdefault(output,[]).append((owner,address,size))
         elif name.startswith('.'):
@@ -1216,7 +1217,11 @@ def owned_crt_frame_providers(root,prologue,epilogue,executable,map_path,
         source=opening.symbol(name,dynamic=False);target=final.symbol(name,dynamic=False)
         open_index,open_section=section(opening,label);close_index,close_section=section(closing,label)
         expected_shape={'type':'FUNC','binding':'GLOBAL','visibility':'DEFAULT','size':0}
-        require(all({key:row[key] for key in expected_shape}==expected_shape for row in (source,target))
+        exported=final.symbol(name,dynamic=True,required=False)
+        final_shape={**expected_shape,'binding':'GLOBAL' if exported is not None else 'LOCAL'}
+        require({key:source[key] for key in expected_shape}==expected_shape
+                and {key:target[key] for key in final_shape}==final_shape
+                and (exported is None or all(exported[key]==target[key] for key in (*final_shape,'value','section')))
                 and source['section']==open_index and source['value']==0,
                 'CRT frame opening/final symbol contract differs')
         require(opening.data[open_section[4]:open_section[4]+open_section[5]]==bytes.fromhex('554889e5')
@@ -1277,7 +1282,7 @@ def owned_crt_frame_providers(root,prologue,epilogue,executable,map_path,
                             'CRT application target escapes its source section')
                     resolved=final.symbol(symbol['name'],dynamic=False)
                     mapped=mapped_symbols.get(symbol['name'],[])
-                    require(mapped==[(owner,target_section,resolved['value'],symbol['size'])]
+                    require(mapped==[(owner,target_section,resolved['value'],0)]
                             and resolved['type']=='FUNC' and resolved['size']==symbol['size'],
                             'CRT application target owner/placement differs')
                     displacement=resolved['value']-(address+offset+4)

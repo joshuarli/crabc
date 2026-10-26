@@ -1,13 +1,4 @@
 #!/usr/bin/env bash
-# Installed native-shadow application allocator replacement against pinned musl.
-#
-# The probe defines its own allocator in the executable, replacing either the
-# complete malloc family (`full`) or only malloc/free/realloc (`trio`), and
-# rejects any pointer it did not allocate. Each native-shadow static,
-# static-PIE and dynamic PIE/non-PIE (kernel and direct loader) product mode
-# must link it and reproduce the musl transcript. Dynamic modes also take the
-# replacement from an initial DSO. Without supplied products
-# the runner builds both native-shadow sysroots.
 set -euo pipefail
 ulimit -c 0
 readonly ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
@@ -112,16 +103,11 @@ if [ -z "$dynamic_sysroot" ]; then
         --output "$work/dynamic-sysroot" >"$work/dynamic-build.json"
     dynamic_sysroot="$work/dynamic-sysroot"
 fi
-python3 -B - "$static_sysroot/share/crabc/manifest.json" \
-    "$dynamic_sysroot/share/crabc/libc-shared.provenance.json" <<'PY'
-import json
-import sys
-for path in sys.argv[1:]:
-    with open(path, encoding='utf-8') as stream:
-        backend = json.load(stream).get('allocator_backend')
-    if backend != 'native-shadow':
-        raise SystemExit(f'{path}: allocator_backend is {backend!r}, not native-shadow')
-PY
+allocator_backend="$(python3 -B "$ROOT/compat/x86_64/installed_allocator_backend.py" \
+    "$static_sysroot/share/crabc/manifest.json" \
+    "$static_sysroot/share/crabc/libc-static.provenance.json" \
+    "$dynamic_sysroot/share/crabc/dynamic-product-state.json" \
+    "$dynamic_sysroot/share/crabc/libc-shared.provenance.json")"
 receipt_products+=(
     "static-manifest=$static_sysroot/share/crabc/manifest.json"
     "static-libc-provenance=$static_sysroot/share/crabc/libc-static.provenance.json"
@@ -135,8 +121,6 @@ receipt_products+=(
 if [ -f "$work/static-build.json" ]; then receipt_products+=("static-build=$work/static-build.json"); fi
 if [ -f "$work/dynamic-build.json" ]; then receipt_products+=("dynamic-build=$work/dynamic-build.json"); fi
 
-# Run one mode and scenario; retain stdout, stderr and status, then compare
-# with the oracle transcript for the same scenario.
 run_case() {
     local mode="$1"
     local scenario="$2"
@@ -159,7 +143,6 @@ run_case() {
     }
 }
 
-# `full` also replaces calloc, the aligned entries and malloc_usable_size.
 scenario_flags() { [ "$1" = full ] && printf '%s\n' -DFULL_OVERRIDE || true; }
 
 cp -a "$dynamic_sysroot" "$work/execution-root"
@@ -185,9 +168,6 @@ for scenario in "${scenarios[@]}"; do
     done
 done
 
-# A dynamic process may take its replacement from an initial DSO instead:
-# the allocator alone is a DT_NEEDED library that preempts libc.so, and the
-# executable holds only the client.
 mkdir "$work/oracle-dso"
 for scenario in "${scenarios[@]}"; do
     mapfile -t flags < <(scenario_flags "$scenario")
@@ -213,4 +193,4 @@ for scenario in "${scenarios[@]}"; do
             "/consumer-dso-$mode-$scenario"
     done
 done
-printf 'owned allocator override: PASS (musl + native-shadow static/static-PIE/dynamic PIE/non-PIE kernel/direct; full-family and malloc/free/realloc replacement from the executable, and from an initial DSO in dynamic modes); evidence: %s\n' "$work"
+printf 'owned allocator override: PASS (musl + %s static/static-PIE/dynamic PIE/non-PIE kernel/direct; full-family and malloc/free/realloc replacement from the executable, and from an initial DSO in dynamic modes); evidence: %s\n' "$allocator_backend" "$work"

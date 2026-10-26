@@ -73,7 +73,7 @@ class ResolverNetworkComponentReceiptTests(unittest.TestCase):
         self.assertEqual(set(manifest['files']), {
             '/usr/local/bin/crabc-x86_64-musl-gcc', '/usr/bin/python3', '/usr/bin/readelf', '/usr/sbin/chroot',
             *(str(path) for path in self.reader.COMPILER_ORACLE_INPUTS.values()),
-            str(self.reader.RUSTC), str(self.reader.LLD),
+            str(self.reader.RUSTC),
         })
         self.assertIn(f"{self.reader.pinned_toolchain(ROOT)}-x86_64-", str(self.reader.RUSTC))
 

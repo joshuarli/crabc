@@ -152,6 +152,8 @@ prepare_materialized_runner() {
     mkdir -p "$project_root/compat/x86_64" "$project_root/usr"
     copy_runner_input "$CANDIDATE_CLOSURE_RUNNER" "$runner"
     copy_runner_input "$MUSL_ORACLE_RUNNER" "$project_root/compat/x86_64/run_musl_oracle.sh"
+    copy_runner_input "$ROOT_DIR/compat/x86_64/musl_oracle.py" "$project_root/compat/x86_64/musl_oracle.py"
+    copy_runner_input "$ROOT_DIR/compat/upstreams.toml" "$project_root/compat/upstreams.toml"
     copy_runner_input "$MUSL_ORACLE_PROBE" "$project_root/compat/x86_64/musl_oracle_probe.c"
     copy_runner_input "$LINUX_UAPI_RUNNER" "$project_root/compat/x86_64/run_linux_5_10_uapi.sh"
     copy_runner_input "$INVENTORY" "$project_root/compat/x86_64/public_headers.txt"

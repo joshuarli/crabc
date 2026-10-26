@@ -29,6 +29,7 @@ HERE = Path(__file__).resolve().parent
 ROOT = HERE.parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
 from rust_toolchain import pinned_toolchain
+from native_build_tools import MOLD
 if str(HERE) not in sys.path:
     sys.path.insert(0, str(HERE))
 import core_image
@@ -89,7 +90,7 @@ IMAGE_MARKER = "CRABC_CLASSIC_NETDB_IMAGE_ID"
 IMAGE_MANIFEST = "compat/x86_64/owned_classic_netdb_image_inputs.json"
 TOOLCHAIN = pinned_toolchain(ROOT)
 TOOLCHAIN_ROOT = Path("/opt/rustup/toolchains") / f"{TOOLCHAIN}-x86_64-unknown-linux-musl"
-LINKER_PATH = TOOLCHAIN_ROOT / "lib/rustlib/x86_64-unknown-linux-musl/bin/gcc-ld/ld.lld"
+LINKER_PATH = MOLD
 SOURCE_PATHS = {
     "producer": "compat/x86_64/owned_classic_netdb.py",
     "runner": "compat/x86_64/run_owned_classic_netdb.sh",
@@ -301,7 +302,7 @@ def tool_roster(root: Path, dynamic: Path, static: Path | None) -> dict[str, obj
     tools = {
         "oracle": tool_record(Path("/usr/local/bin/crabc-x86_64-musl-gcc"), "pinned musl compiler"),
         "compiler": tool_record(Path("/usr/bin/gcc"), "pinned header compiler"),
-        "linker": tool_record(LINKER_PATH, "pinned LLVM linker"),
+        "linker": tool_record(LINKER_PATH, "pinned mold linker"),
         "readelf": tool_record(Path("/usr/bin/readelf"), "pinned ELF reader"),
         "nm": tool_record(Path("/usr/bin/nm"), "pinned symbol reader"),
         "dynamic_driver": tool_record(dynamic / "bin/crabc-cc-dynamic", "dynamic driver"),

@@ -53,7 +53,7 @@ class DriverFramingTests(unittest.TestCase):
         self.assertTrue(os.access(ORACLE_CC, os.X_OK), "pinned musl compiler is not executable")
         wrapper = ORACLE_CC.read_text(encoding="utf-8")
         self.assertIn("x86-64 C/POSIX oracle compiler", wrapper)
-        self.assertIn("exec /usr/bin/gcc -specs /opt/musl-1.2.6/lib/musl-gcc.specs", wrapper)
+        self.assertIn("exec /usr/bin/gcc -fuse-ld=mold -specs /opt/musl-1.2.6/lib/musl-gcc.specs", wrapper)
         specs = ORACLE_SPECS.read_text(encoding="utf-8")
         self.assertIn("-isystem /opt/musl-1.2.6/include", specs)
         self.assertIn("-L/opt/musl-1.2.6/lib", specs)

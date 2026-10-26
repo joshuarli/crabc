@@ -160,7 +160,7 @@ class HeadersLayoutsAggregateAttachmentTests(unittest.TestCase):
                          'report': {'inputs': {'origin_roots': {'candidate-header-root': '/workspace/' + headers['static']['path']}},
                                     'summary': {'fixture': True}}}
             pin = json.loads((ROOT / 'compat/x86_64/owned_resolver_network_image_inputs.json').read_text())
-            tool = next(record for path, record in pin['files'].items() if Path(path).name == 'ld.lld')
+            tool = next(record for path, record in pin['files'].items() if Path(path).name == 'mold')
             linker = {key: tool[key] for key in ('path', 'sha256')}
             links = []
             for mode, linkage, kind in (
@@ -248,15 +248,14 @@ class HeadersLayoutsAggregateAttachmentTests(unittest.TestCase):
 
     def test_pinned_linker_anchor_matches_actual_native_tool_bytes(self):
         pin = json.loads((ROOT / 'compat/x86_64/owned_resolver_network_image_inputs.json').read_text())
-        tool = next(record for path, record in pin['files'].items() if Path(path).name == 'ld.lld')
+        tool = next(record for path, record in pin['files'].items() if Path(path).name == 'mold')
         path = Path(tool['path'])
         if not path.is_file():
             self.skipTest('requires the declared pinned native tool image')
         self.assertEqual(hashlib.sha256(path.read_bytes()).hexdigest(), tool['sha256'])
         self.assertEqual(path.stat().st_size, tool['size'])
         self.assertEqual(path.stat().st_mode & 0o777, tool['mode'])
-        sysroot = subprocess.check_output(['rustc', '--print', 'sysroot'], text=True).strip()
-        self.assertEqual(path, Path(sysroot) / 'lib/rustlib/x86_64-unknown-linux-musl/bin/gcc-ld/ld.lld')
+        self.assertEqual(path, Path('/usr/bin/mold'))
 
     def test_supplied_product_pair_receipt_requires_an_actual_selected_pair(self):
         self.assertIsNone(selection.headers_layouts_product_pair_adapter(

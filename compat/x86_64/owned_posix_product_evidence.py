@@ -18,9 +18,19 @@ import re
 import stat
 import struct
 import subprocess
+import sys
 from typing import Any, Mapping, cast
 
 import owned_dynamic_receipt as receipt_contract
+
+ROOT = Path(__file__).resolve().parents[2]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+if str(ROOT / "compat/x86_64") not in sys.path:
+    sys.path.insert(0, str(ROOT / "compat/x86_64"))
+from scripts import native_build_tools
+from scripts.rust_toolchain import pinned_toolchain
+import native_rustc
 
 
 TARGET = "x86_64-unknown-linux-musl"
@@ -35,6 +45,7 @@ DYNAMIC_PRODUCT_FORMAT = "crabc-x86-64-owned-dynamic-sysroot-v1"
 COMBINED_SYSROOT_FORMAT = "crabc-x86-64-owned-sysroot-v1"
 PRODUCT_MANIFEST = "share/crabc/manifest.json"
 PRODUCT_METADATA_PREFIX = "share/crabc/"
+SOURCE_NATIVE_IMAGE_MANIFEST = ROOT / "compat/x86_64/owned_resolver_alias_image_inputs.json"
 COMBINED_UNINSTALLED_PAYLOAD = {"static": frozenset({"usr/lib/Scrt1.o"}), "dynamic": frozenset()}
 INTERPRETER = "/lib/ld-crabc-x86_64.so.1"
 STATIC_DRIVER_STATUS = "planned-owned-static-product-seed-not-family-completion-not-public-support"
@@ -54,6 +65,7 @@ DYNAMIC_REQUIRED = (
     "share/crabc/crabc_cc_static.py",
     "share/crabc/owned_dynamic_receipt.py",
     "share/crabc/owned_dynamic_elf.py",
+    "share/crabc/producer-tools.json",
     "lib/ld-crabc-x86_64.so.1",
     "usr/lib/crt1.o",
     "usr/lib/Scrt1.o",
@@ -167,6 +179,126 @@ def _sha256(path: Path) -> str:
     except OSError as error:
         raise ProductEvidenceError(f"cannot hash artifact: {path}") from error
     return digest.hexdigest()
+
+
+def semantic_link_trace(lines: list[str]) -> list[str]:
+    if not all(isinstance(line, str) for line in lines):
+        _fail("link trace is malformed")
+    return [line.removeprefix("trace: ") for line in lines]
+
+
+def native_compiler_tool_records() -> dict[str, dict[str, str]]:
+    compiler = native_rustc.compiler_path()
+    paths = {
+        "rustc_wrapper": native_build_tools.KACHE,
+        "linker": native_build_tools.MOLD,
+        "cargo_linker": native_build_tools.CARGO_LINKER,
+        "rustc": compiler,
+    }
+    records: dict[str, dict[str, str]] = {}
+    for name, path in paths.items():
+        physical = _physical_executable(path, f"native {name}")
+        if physical != path:
+            _fail(f"native {name} path is not physical")
+        records[name] = {"path": str(path), "sha256": _sha256(path)}
+    records["rustc"]["sysroot"] = str(compiler.parent.parent)
+    _validate_compiler_records_against_source(records)
+    return records
+
+
+def native_compiler_tool_paths() -> dict[str, dict[str, str]]:
+    compiler = Path("/opt/rustup/toolchains") / f"{pinned_toolchain(ROOT)}-{TARGET}/bin/rustc"
+    return {
+        "rustc_wrapper": {"path": str(native_build_tools.KACHE)},
+        "linker": {"path": str(native_build_tools.MOLD)},
+        "cargo_linker": {"path": str(native_build_tools.CARGO_LINKER)},
+        "rustc": {"path": str(compiler), "sysroot": str(compiler.parent.parent)},
+    }
+
+
+def source_native_compiler_tool_records() -> dict[str, dict[str, str]]:
+    paths = native_compiler_tool_paths()
+    try:
+        manifest = json.loads(SOURCE_NATIVE_IMAGE_MANIFEST.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as error:
+        raise ProductEvidenceError("source-native image tool manifest is unreadable") from error
+    files = manifest.get("files") if isinstance(manifest, dict) else None
+    if not isinstance(files, dict):
+        _fail("source-native image tool manifest is malformed")
+    records: dict[str, dict[str, str]] = {}
+    for name, identity in paths.items():
+        image_record = files.get(identity["path"])
+        if (not isinstance(image_record, dict) or image_record.get("path") != identity["path"] or
+                not isinstance(image_record.get("sha256"), str) or
+                not SHA256.fullmatch(image_record["sha256"])):
+            _fail(f"source-native image manifest omits {name}")
+        records[name] = {"path": identity["path"], "sha256": image_record["sha256"]}
+        if name == "rustc":
+            records[name]["sysroot"] = identity["sysroot"]
+    return records
+
+
+def _validate_compiler_records_against_source(records: dict[str, dict[str, str]]) -> None:
+    expected = source_native_compiler_tool_records()
+    for name, identity in expected.items():
+        if records[name] != identity:
+            _fail(f"native producer {name} identity differs from source image manifest")
+
+
+def validate_native_compiler_tool_records(value: object) -> dict[str, dict[str, str]]:
+    if not isinstance(value, dict):
+        _fail("native producer tools are malformed")
+    expected = source_native_compiler_tool_records()
+    for name, path_identity in expected.items():
+        received = value.get(name)
+        keys = ("path", "sha256", "sysroot") if name == "rustc" else ("path", "sha256")
+        if (not isinstance(received, dict) or
+                {key: received.get(key) for key in keys} != {key: path_identity[key] for key in keys}):
+            _fail(f"native producer tools omit {name}")
+    return {name: dict(value[name]) for name in expected}
+
+
+def validate_current_native_compiler_tool_records(value: object) -> dict[str, dict[str, str]]:
+    received = validate_native_compiler_tool_records(value)
+    expected = native_compiler_tool_records()
+    for name, identity in expected.items():
+        keys = ("path", "sha256", "sysroot") if name == "rustc" else ("path", "sha256")
+        if {key: received[name][key] for key in keys} != identity:
+            _fail(f"native producer {name} identity differs")
+    return expected
+
+
+def validate_native_rustc_command(argv: object, producer_tools: object | None = None) -> list[str]:
+    expected = (native_compiler_tool_records() if producer_tools is None else
+                validate_native_compiler_tool_records(producer_tools))
+    if not isinstance(argv, list) or not all(isinstance(argument, str) for argument in argv):
+        _fail("native rustc argv is malformed")
+    prefix = [expected["rustc_wrapper"]["path"], expected["rustc"]["path"]]
+    if argv[:2] != prefix:
+        _fail("native rustc argv does not use the sealed kache/rustc pair")
+    linker_values: list[str] = []
+    index = 2
+    while index < len(argv):
+        argument = argv[index]
+        if argument == "-C":
+            if index + 1 >= len(argv):
+                _fail("native rustc argv has a dangling codegen option")
+            value = argv[index + 1]
+            index += 2
+        elif argument.startswith("-C") and len(argument) > 2:
+            value = argument[2:]
+            index += 1
+        else:
+            index += 1
+            continue
+        name, separator, setting = value.partition("=")
+        if name == "linker":
+            if not separator:
+                _fail("native rustc linker option has no path")
+            linker_values.append(setting)
+    if linker_values and linker_values != [expected["cargo_linker"]["path"]]:
+        _fail("native rustc argv does not select the sealed mold GCC linker")
+    return list(argv)
 
 
 def retained_elf_facts(path: Path) -> dict[str, object]:
@@ -483,6 +615,7 @@ def _validate_static_product(root: Path) -> tuple[Path, dict[str, str]]:
     manifest_path, manifest, combined = _product_manifest(root, "static", STATIC_PRODUCT_FORMAT)
     if (manifest.get("schema"), manifest.get("format"), manifest.get("target")) != (1, STATIC_PRODUCT_FORMAT, TARGET):
         _fail("static product manifest has the wrong product identity")
+    validate_native_compiler_tool_records(manifest.get("producer_tools"))
     installed = manifest.get("installed")
     if not isinstance(installed, dict):
         _fail("static product manifest lacks its installed record")
@@ -523,6 +656,17 @@ def _validate_dynamic_product(root: Path) -> tuple[Path, dict[str, str]]:
         1, DYNAMIC_PRODUCT_FORMAT, TARGET, aliases
     ):
         _fail("dynamic product manifest has the wrong product identity")
+    tool_relative = "share/crabc/producer-tools.json"
+    if combined is not None:
+        product_records = combined.get("products")
+        dynamic_record = product_records.get("dynamic") if isinstance(product_records, dict) else None
+        placements = dynamic_record.get("placements") if isinstance(dynamic_record, dict) else None
+        placed = placements.get(tool_relative) if isinstance(placements, dict) else None
+        if not isinstance(placed, str):
+            _fail("combined dynamic product omits retained producer tools")
+        tool_relative = placed
+    tools_path = _physical_regular(root / tool_relative, "dynamic producer tools")
+    validate_native_compiler_tool_records(_json_object(tools_path, "dynamic producer tools"))
     if manifest.get("build_profile") == "debug":
         source = manifest.get("source_sha256")
         if type(source) is not str or re.fullmatch(r"[0-9a-f]{64}", source) is None:
@@ -618,8 +762,8 @@ def _check_file_record(value: object, receipt: Path, expected: Path, description
 def _check_linker(value: object, receipt: Path) -> str:
     record = _require_keys(value, {"path", "sha256"}, "resolved linker")
     linker = _recorded_file(record["path"], receipt, "resolved linker")
-    if linker.name != "ld.lld":
-        _fail("resolved linker is not ld.lld")
+    if linker != native_build_tools.MOLD:
+        _fail("resolved linker is not the pinned mold")
     _physical_executable(linker, "resolved linker")
     if record["path"] != str(linker):
         _fail("resolved linker path is not physical")
@@ -631,7 +775,7 @@ def _static_link_plan(root: Path, linkage: str) -> list[str]:
     mode = LINKAGES[linkage]
     library = root / "usr/lib"
     return [
-        "ld.lld", "-static", *(["-pie"] if linkage == "static-pie" else []),
+        Path(native_build_tools.MOLD).name, "-static", *(["-pie"] if linkage == "static-pie" else []),
         "--no-dynamic-linker", "--no-undefined", "--eh-frame-hdr", "--gc-sections", "-z", "relro", "-z", "now",
         "-e", "_start", str(library / mode["crt"]), str(library / "crti.o"),
         "<application-objects>", str(library / "libc.a"), str(library / "libcrabc-builtins.a"),
@@ -664,7 +808,7 @@ def _check_static_trace_lines(lines: list[str], contract: list[str], workload: s
     direct, libc, conditional = _declared_static_inputs(contract, workload)
     archives = {libc, *conditional}
     seen: set[str] = set()
-    for line in lines:
+    for line in semantic_link_trace(lines):
         if not line:
             continue
         if line in direct:
@@ -779,7 +923,7 @@ def _validate_dynamic_trace(value: object, root: Path, workloads: tuple[Path, ..
     }
     archive = str(library / "libcrabc-builtins.a")
     seen: set[str] = set()
-    for line in value:
+    for line in semantic_link_trace(value):
         if line in direct:
             seen.add(line)
         elif line == archive or (line.startswith(archive + "(") and line.endswith(")")):
@@ -977,7 +1121,7 @@ def _retained_linker(value: object, tool: object) -> str:
     expected = _require_keys(tool, {"path", "sha256"}, "retained linker")
     path, digest = record["path"], record["sha256"]
     if (not isinstance(path, str) or not Path(path).is_absolute() or ".." in Path(path).parts
-            or Path(path).name != "ld.lld" or not isinstance(digest, str)
+            or Path(path) != native_build_tools.MOLD or not isinstance(digest, str)
             or SHA256.fullmatch(digest) is None):
         _fail("retained linker identity is malformed")
     if record != expected:
@@ -989,7 +1133,7 @@ def _retained_static_plan(root: Path, source_mount: str, product: Path, linkage:
     mode = LINKAGES[linkage]
     library = product / "usr/lib"
     return [
-        "ld.lld", "-static", *(["-pie"] if linkage == "static-pie" else []),
+        native_build_tools.MOLD.name, "-static", *(["-pie"] if linkage == "static-pie" else []),
         "--no-dynamic-linker", "--no-undefined", "--eh-frame-hdr", "--gc-sections", "-z", "relro", "-z", "now",
         "-e", "_start", _retained_recorded(root, source_mount, library / mode["crt"], "static CRT"),
         _retained_recorded(root, source_mount, library / "crti.o", "static CRT"),
@@ -1086,8 +1230,9 @@ def _validate_retained_dynamic_trace(value: object, root: Path, source_mount: st
         recorded(library / "libc.so", "dynamic libc"), recorded(library / "crtn.o", "dynamic CRT"),
     }
     archive = recorded(library / "libcrabc-builtins.a", "dynamic builtins")
+    normalized = semantic_link_trace(value)
     if (any(item not in direct and item != archive and not (item.startswith(archive + "(") and item.endswith(")"))
-            for item in value) or not direct <= set(value)):
+            for item in normalized) or not direct <= set(normalized)):
         _fail("retained dynamic link trace admits foreign or missing inputs")
 
 

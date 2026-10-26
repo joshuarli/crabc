@@ -85,7 +85,8 @@ ARTIFACTS = (
 NON_ELF_REQUIRED = {
     'candidate-static': ('bin/crabc-cc',),
     'candidate-dynamic': ('bin/crabc-cc-dynamic', 'share/crabc/crabc_cc_static.py',
-                          'share/crabc/owned_dynamic_receipt.py', 'share/crabc/owned_dynamic_elf.py'),
+                          'share/crabc/owned_dynamic_receipt.py', 'share/crabc/owned_dynamic_elf.py',
+                          'share/crabc/producer-tools.json'),
 }
 NON_ELF_METADATA = {
     'candidate-static': (
@@ -98,7 +99,6 @@ NON_ELF_METADATA = {
         'share/crabc/crt.provenance.json', 'share/crabc/dynamic-product-state.json',
         'share/crabc/libc-shared.elf.json', 'share/crabc/libc-shared.provenance.json',
         'share/crabc/loader.elf.json', 'share/crabc/loader.provenance.json',
-        'share/crabc/producer-tools.json',
     ),
 }
 

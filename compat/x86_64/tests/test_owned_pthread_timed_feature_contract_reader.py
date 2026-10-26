@@ -1,6 +1,7 @@
 """Contract boundary for the finite pthread timed-feature evidence reader."""
 from __future__ import annotations
 
+import hashlib
 import importlib
 import json
 from pathlib import Path
@@ -65,9 +66,9 @@ class TimedFeatureReceiptBoundaryTests(unittest.TestCase):
 
         self.assertIn(f"/opt/rustup/toolchains/{toolchain}-x86_64-unknown-linux-musl/bin/rustc", current["files"])
         self.assertNotIn("nightly-2026-07-24", "\n".join(current["files"]))
-        self.assertEqual(reader.IMAGE_FIXED_PATHS[-2:], (
+        self.assertEqual(reader.IMAGE_FIXED_PATHS[-4:], (
             f"/opt/rustup/toolchains/{toolchain}-x86_64-unknown-linux-musl/bin/rustc",
-            f"/opt/rustup/toolchains/{toolchain}-x86_64-unknown-linux-musl/lib/rustlib/x86_64-unknown-linux-musl/bin/gcc-ld/ld.lld",
+            "/usr/local/bin/kache", "/usr/bin/mold", "/usr/local/bin/crabc-x86_64-mold-gcc",
         ))
 
     def test_current_product_receipt_needs_no_pre_receipt_ledger(self) -> None:
@@ -164,7 +165,6 @@ class TimedFeatureReceiptBoundaryTests(unittest.TestCase):
         root = "/products/dynamic"
         work = "/workspace/.work/x86_64/timed-driver-command"
         binary = "dynamic-pie-contract"
-        linker = "/tools/ld.lld"
         manifest_name = "retained/products/dynamic-manifest.json"
         runtime_files = (
             "usr/lib/Scrt1.o", "usr/lib/crabc-dynamic-attach.o", "usr/lib/crti.o",
@@ -174,6 +174,14 @@ class TimedFeatureReceiptBoundaryTests(unittest.TestCase):
         scratch_root = ROOT / ".work/x86_64/tmp"
         scratch_root.mkdir(parents=True, exist_ok=True)
         with tempfile.TemporaryDirectory(dir=scratch_root) as temporary:
+            linker_path = Path(temporary) / "mold"
+            linker_path.write_bytes(b"sealed mold fixture")
+            linker_path.chmod(0o755)
+            linker = str(linker_path)
+            linker_digest = hashlib.sha256(linker_path.read_bytes()).hexdigest()
+            linker_patch = mock.patch.object(reader.product_evidence.native_build_tools, "MOLD", linker_path)
+            linker_patch.start()
+            self.addCleanup(linker_patch.stop)
             receipt_path = Path(temporary) / f"{binary}.crabc-link.json"
             manifest_path = Path(temporary) / manifest_name
             manifest_path.parent.mkdir(parents=True)
@@ -197,7 +205,7 @@ class TimedFeatureReceiptBoundaryTests(unittest.TestCase):
                 "link_command": command, "link_trace": trace, "manifest_sha256": "8" * 64, "mode": "pie",
                 "output_path": output, "output_sha256": "9" * 64,
                 "owned_runtime_inputs": sorted(runtime_files),
-                "resolved_linker": {"path": linker, "sha256": "a" * 64},
+                "resolved_linker": {"path": linker, "sha256": linker_digest},
                 "runtime_imports": [], "schema": 2,
             }
             receipt_path.write_text(json.dumps(receipt) + "\n", encoding="utf-8")
@@ -209,7 +217,7 @@ class TimedFeatureReceiptBoundaryTests(unittest.TestCase):
                 "manifest": manifest_name,
                 "original_paths": {"driver": f"{root}/bin/crabc-cc-dynamic"},
             }}
-            image_manifest = {"files": {linker: {"sha256": "a" * 64}}}
+            image_manifest = {"files": {linker: {"sha256": linker_digest}}}
             with mock.patch.object(reader, "_audit_owned_final_elf"):
                 reader._validate_dynamic_link_receipt(
                     receipt_path, work, binary, artifacts, products, image_manifest,

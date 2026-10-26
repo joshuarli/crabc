@@ -54,7 +54,9 @@ IMAGE_INPUTS = {
 TOOLCHAIN_ROOT = Path('/opt/rustup/toolchains') / f'{pinned_toolchain(ROOT)}-x86_64-unknown-linux-musl'
 TOOLCHAIN_INPUTS = {
     str(TOOLCHAIN_ROOT / 'bin/rustc'),
-    str(TOOLCHAIN_ROOT / 'lib/rustlib/x86_64-unknown-linux-musl/bin/gcc-ld/ld.lld'),
+    str(product_evidence.native_build_tools.KACHE),
+    str(product_evidence.native_build_tools.MOLD),
+    str(product_evidence.native_build_tools.CARGO_LINKER),
 }
 
 ALIASES = (

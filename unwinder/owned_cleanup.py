@@ -27,6 +27,11 @@ import tempfile
 import tomllib
 from typing import Any
 
+COMPAT = Path(__file__).resolve().parent.parent / "compat/x86_64"
+if str(COMPAT) not in sys.path:
+    sys.path.insert(0, str(COMPAT))
+import native_rustc
+
 import cleanup
 import build
 import owned_rust_link
@@ -1601,7 +1606,8 @@ def host_build_script_receipts(root: Path, host_build_root: Path, cargo_target_r
         require(
             linker == record_file(HOST_BUILD_LINKER, "pinned Cargo host build-script linker")
             and isinstance(command, list) and all(isinstance(item, str) for item in command)
-            and len(command) > 2 and command[0] == str(HOST_BUILD_LINKER) and command[1] == "-Wl,-t",
+            and len(command) > 3
+            and command[:3] == [str(HOST_BUILD_LINKER), "-fuse-ld=mold", "-Wl,--trace"],
             "Cargo host build-script linker identity drifted",
         )
         link_inputs = record["link_inputs"]
@@ -1661,7 +1667,7 @@ def host_build_script_receipts(root: Path, host_build_root: Path, cargo_target_r
             ),
             "Cargo host build-script receipt output is outside the declared host root or drifted",
         )
-        require(host_build_script_output(command[2:], "Cargo host build-script receipt command") == str(linked),
+        require(host_build_script_output(command[3:], "Cargo host build-script receipt command") == str(linked),
                 "Cargo host build-script receipt command differs from its output")
         expected_name = hashlib.sha256(str(linked).encode()).hexdigest() + ".json"
         require(receipt.name == expected_name,
@@ -2217,7 +2223,7 @@ def compile_mode(
         "CRABC_OWNED_RUST_CHANNEL": channel,
     })
     rust_arguments: list[str | Path] = [
-        "rustup", "run", channel, "rustc", "--edition=2024", "--target", TARGET,
+        *native_rustc.compile_command(), "--edition=2024", "--target", TARGET,
         "-C", "panic=unwind", "-C", "force-unwind-tables=yes",
         # The owned linker selects either static or dynamic crabc inputs.
         # Rust's musl defaults would inject its bundled CRT objects and native

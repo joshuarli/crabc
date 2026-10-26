@@ -6,7 +6,7 @@ different image are not admitted.
 Executing this module prints the immutable Docker ID used for native launches.
 """
 
-CORE_IMAGE_ID = "sha256:003fa69ebb28d18daa88c82ac351126ce1d7ff2c56e191ce720ac3f6bd331cd9"
+CORE_IMAGE_ID = "sha256:9921d35b872cf02f5cb467920c3f219f7008e4468a0b5f486166e77ff65a5bea"
 CORE_IMAGE_REFERENCE = "crabc-core-evidence@" + CORE_IMAGE_ID
 
 

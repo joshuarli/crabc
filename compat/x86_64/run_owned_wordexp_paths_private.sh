@@ -4,11 +4,11 @@
 # disposable archive linked directly with the owned CRT and builtins. The
 # sealed sysroot remains intact; this is separate from installed C ABI evidence.
 set -euo pipefail
+. "$(dirname "${BASH_SOURCE[0]}")/native_build_environment.sh"
 
 readonly ROOT_DIR="$(cd -P "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 readonly TARGET="x86_64-unknown-linux-musl"
-readonly TOOLCHAIN="$(python3 "$ROOT_DIR/scripts/rust_toolchain.py")"
-readonly LLD="/opt/rustup/toolchains/$TOOLCHAIN-x86_64-unknown-linux-musl/lib/rustlib/$TARGET/bin/gcc-ld/ld.lld"
+readonly MOLD="$(python3 -B "$ROOT_DIR/compat/x86_64/native_rustc.py" mold)"
 
 if [ -z "${TMPDIR:-}" ] || [[ "$TMPDIR" != "$ROOT_DIR/.work/x86_64/"* ]]; then
     printf 'ERROR: pinned native execution requires a contained .work/x86_64 TMPDIR\n' >&2
@@ -73,7 +73,7 @@ PY
     "$ROOT_DIR/compat/x86_64/owned_wordexp_paths_private_probe.c" \
     -o "$work/owned-wordexp-paths-private.o" \
     >"$work/consumer-build.stdout" 2>"$work/consumer-build.stderr"
-"$LLD" -static --no-dynamic-linker --no-undefined --gc-sections \
+"$MOLD" -static --no-dynamic-linker --no-undefined --gc-sections \
     -z relro -z now -e _start \
     "$work/static-product/usr/lib/crt1.o" \
     "$work/static-product/usr/lib/crti.o" \

@@ -312,6 +312,8 @@ ensure_image() {
     # Authenticate the same immutable bytes that the producer will execute.
     # No checkout, cache, network or mutable filesystem can supply these tools.
     docker run --rm --read-only --network none --platform "$PLATFORM" \
+        --env RUSTC_WRAPPER=/usr/local/bin/kache \
+        --env CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER=/usr/local/bin/crabc-x86_64-mold-gcc \
         --entrypoint /bin/sh "$ALLOCATOR_IMAGE_ID" -ec '
             test "$(uname -m)" = x86_64
             test "$(rustup show active-toolchain)" = "$1-x86_64-unknown-linux-musl (default)"
@@ -439,6 +441,8 @@ run_in_container() {
     fi
     # Keep allocator aborts from creating core files in the shared checkout.
     docker run --rm --init "${reader_args[@]}" "${capability_args[@]}" "${EXECUTION_BUDGET_ARGS[@]}" \
+        --env RUSTC_WRAPPER=/usr/local/bin/kache \
+        --env CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER=/usr/local/bin/crabc-x86_64-mold-gcc \
         --ulimit core=0:0 \
         --platform "$PLATFORM" \
         --workdir /workspace \

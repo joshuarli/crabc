@@ -273,7 +273,7 @@ def validate_dynamic_product_contract(contract: Mapping[str, Any]) -> None:
     if not isinstance(link_plan, dict):
         raise ProductContractError("dynamic link plan table is required")
     require_exact_keys(link_plan, {"linker", "executable_required", "shared_object_required"}, "link plan")
-    require_equal(link_plan["linker"], "ld.lld", "dynamic linker selection")
+    require_equal(link_plan["linker"], "mold", "dynamic linker selection")
     require_string_list(
         link_plan["executable_required"],
         [

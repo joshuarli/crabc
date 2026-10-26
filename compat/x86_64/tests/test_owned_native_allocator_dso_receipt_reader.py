@@ -27,6 +27,55 @@ def record(path: Path) -> dict[str, object]:
 
 
 class OwnedNativeAllocatorDsoReceiptReaderTests(unittest.TestCase):
+    def test_matching_backend_labels_cannot_replace_allocator_source_proof(self) -> None:
+        variants = [
+            ("accepted-c", {"accepted_allocator": None}, "accepted allocator source"),
+            ("accepted-c", {"accepted_allocator": {"name": "unreviewed"}}, "accepted allocator source"),
+            ("native-shadow", {"native_allocator": None}, "native allocator source"),
+            ("native", {"native_allocator": None}, "native allocator source"),
+            ("native-shadow", {"native_allocator": {
+                "path": "crabc-mimalloc/UPSTREAM.md", "sha256": "0" * 64}}, "native allocator source"),
+            ("native", {"native_allocator": {
+                "path": "crabc-mimalloc/UPSTREAM.md", "sha256": "0" * 64}}, "native allocator source"),
+        ]
+        for backend, identity, reason in variants:
+            with self.subTest(backend=backend, identity=identity), tempfile.TemporaryDirectory() as temporary:
+                root = Path(temporary)
+                upstream = root / "crabc-mimalloc/UPSTREAM.md"
+                upstream.parent.mkdir()
+                upstream.write_bytes(b"reviewed source")
+                latest = shared.receipt_directory(root, reader.RUNNER)
+                logs, products = latest / "logs", latest / "products"
+                logs.mkdir(parents=True)
+                products.mkdir()
+                for name in reader.PRODUCTS:
+                    (products / name).write_bytes(b"retained product")
+                (products / "dynamic-manifest").write_text(json.dumps({
+                    "target": "x86_64-unknown-linux-musl", "files": {},
+                }))
+                (products / "dynamic-product-state").write_text(json.dumps({"allocator_backend": backend}))
+                (products / "dynamic-libc-provenance").write_text(json.dumps({
+                    "allocator_backend": backend, **identity,
+                }))
+                cases = []
+                for name in reader.CASES:
+                    outputs = {f"{name}.status": b"0\n"}
+                    if name != "runner":
+                        outputs |= {f"{name}.stdout": reader.TRANSCRIPT, f"{name}.stderr": b""}
+                    for filename, data in outputs.items():
+                        (logs / filename).write_bytes(data)
+                    cases.append({"id": name, "status": 0,
+                                  "logs": {filename: record(logs / filename) for filename in outputs}})
+                (latest / "receipt.json").write_text(json.dumps({
+                    "schema": shared.SCHEMA, "runner": reader.RUNNER, "source": SEAL,
+                    "canonical": True, "parameters": reader.PARAMETERS,
+                    "work": ".work/x86_64/tmp/owned-native-allocator-dso.source-proof",
+                    "cases": cases, "products": {name: record(products / name) for name in reader.PRODUCTS},
+                }))
+                shared.read_receipt(root, reader.RUNNER, seal=SEAL)
+                with self.assertRaisesRegex(shared.ReceiptError, reason):
+                    reader.read_native_allocator_dso_receipt(root, seal=SEAL)
+
     @unittest.skipUnless(os.environ.get("CRABC_DSO_TEST_NATIVE") == "1", "requires source-built DSO receipt")
     def test_resealed_prior_checkout_product_is_rejected(self) -> None:
         latest = shared.receipt_directory(ROOT, reader.RUNNER)

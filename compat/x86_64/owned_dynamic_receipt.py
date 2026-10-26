@@ -154,6 +154,7 @@ def _application_closure(
              f"{label} schema-3 link command is invalid", fail)
     _require(type(trace) is list and all(type(item) is str for item in trace),
              f"{label} schema-3 link trace is invalid", fail)
+    trace = [line.removeprefix("trace: ") for line in trace]
     closure: list[ApplicationDso] = []
     for name in sorted(names):
         role, path, digest = bound[name]
@@ -193,7 +194,7 @@ def _direct_application_inputs(
                  and selected[0]["sha256"] == digest,
                  f"{label} application DSO input identity differs", fail)
         path = selected[0]["path"]
-        _require(record["link_command"].count(path) == 1 and record["link_trace"].count(path) == 1,
+        _require(record["link_command"].count(path) == 1 and [line.removeprefix("trace: ") for line in record["link_trace"]].count(path) == 1,
                  f"{label} application DSO is not an exact linker input", fail)
 
 

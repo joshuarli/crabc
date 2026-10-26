@@ -50,7 +50,7 @@ PROVIDERS = (
 )
 MUSL_CC = Path("/usr/local/bin/crabc-x86_64-musl-gcc")
 PINNED_MUSL_ARCHIVE = Path("/opt/musl-1.2.6/lib/libc.a")
-PINNED_MUSL_ARCHIVE_SHA256 = "d0400c3754724e89c4185e3388d2e139461aa0cc4029f2ec566c962916852775"
+ORACLE_IMAGE_MANIFEST = Path("compat/x86_64/owned_resolver_network_image_inputs.json")
 PROBE = Path("compat/x86_64/libc_protocol_database_probe.c")
 RUST_PROVIDER = Path("libc/src/c_abi/x86_64/protocol_database.rs")
 PROVIDER_CONTRACT = Path("compat/x86_64/protocol-database-provider.toml")
@@ -60,7 +60,7 @@ DYNAMIC_RECEIPT = Path("compat/x86_64/owned_dynamic_receipt.py")
 POISON_PROTOCOLS = b"poison 253 deliberately-not-selected\n"
 SOURCE_FILES = (
     Path(__file__).relative_to(ROOT), READER, PROBE, RUST_PROVIDER, PROVIDER_CONTRACT,
-    PRODUCT_FIXTURE, DYNAMIC_RECEIPT,
+    PRODUCT_FIXTURE, DYNAMIC_RECEIPT, ORACLE_IMAGE_MANIFEST,
     Path("compat/x86_64/owned_static_link_authority.py"),
     Path("compat/x86_64/loader_debug_abi_evidence.py"),
     Path("compat/x86_64/owned_dynamic_elf.py"),
@@ -74,6 +74,24 @@ class ProtocolDatabaseError(RuntimeError):
 def require(condition: bool, message: str) -> None:
     if not condition:
         raise ProtocolDatabaseError(message)
+
+
+def pinned_musl_archive_identity(root: Path) -> dict[str, object]:
+    try:
+        manifest = json.loads((root / ORACLE_IMAGE_MANIFEST).read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, ValueError) as error:
+        raise ProtocolDatabaseError(f"cannot read native oracle image manifest: {error}") from error
+    require(isinstance(manifest, dict) and manifest.get("schema") == "crabc.x86_64-owned-resolver-network-image-inputs/v1"
+            and isinstance(manifest.get("files"), dict), "native oracle image manifest differs")
+    record = manifest["files"].get(str(PINNED_MUSL_ARCHIVE))
+    require(isinstance(record, dict) and set(record) == {"path", "sha256", "size", "mode"}
+            and record["path"] == str(PINNED_MUSL_ARCHIVE)
+            and isinstance(record["sha256"], str) and len(record["sha256"]) == 64
+            and all(character in "0123456789abcdef" for character in record["sha256"])
+            and type(record["size"]) is int and record["size"] > 0
+            and type(record["mode"]) is int and 0 <= record["mode"] <= 0o777,
+            "native oracle archive identity differs")
+    return dict(record)
 
 
 def _physical(path: Path, description: str, *, directory: bool = False) -> Path:
@@ -185,7 +203,10 @@ def _oracle_object(work: Path, timeout: float) -> dict[str, object]:
     # GCC's archive lookup can select Alpine's bootstrap libc.a even when its
     # specs select the source-built musl tree for compilation and linking.
     archive = _physical(PINNED_MUSL_ARCHIVE, "source-built musl 1.2.6 archive")
-    require(sha256(archive.read_bytes()).hexdigest() == PINNED_MUSL_ARCHIVE_SHA256,
+    expected = pinned_musl_archive_identity(ROOT)
+    require(sha256(archive.read_bytes()).hexdigest() == expected["sha256"]
+            and archive.stat().st_size == expected["size"]
+            and stat.S_IMODE(archive.stat().st_mode) == expected["mode"],
             "source-built musl 1.2.6 archive differs")
     object_file = work / "oracle-proto.lo"
     _status, payload, _stderr = _run(("ar", "p", archive, "proto.lo"), cwd=ROOT, timeout=timeout,

@@ -25,6 +25,61 @@ SPEC.loader.exec_module(CLOSURE)
 
 
 class NativeStaticSourceRuntimeClosureTests(unittest.TestCase):
+    def test_wrapped_compiler_commands_bind_exact_tools_and_fixed_environment(self):
+        scratch = Path(__file__).resolve().parents[3] / ".work/tmp"
+        scratch.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(dir=scratch) as temporary:
+            root = Path(temporary)
+            wrapper, compiler = root / "kache", root / "rustc"
+            wrapper.write_bytes(b"pinned wrapper")
+            compiler.write_bytes(b"pinned compiler")
+            with patch.object(CLOSURE.native_build_tools, "KACHE", wrapper):
+                command = ["CARGO_PKG_NAME=probe", str(wrapper), str(compiler), "--crate-name", "probe"]
+                CLOSURE.validate_wrapped_commands([command], compiler)
+                fixed = CLOSURE.native_build_tools.environment()
+                CLOSURE.validate_wrapped_commands([[f"{key}={value}" for key, value in fixed.items()] + command], compiler)
+                for changed in (
+                    [str(root / "other-wrapper"), *command[2:]],
+                    [str(wrapper), str(root / "other-rustc"), *command[3:]],
+                    [str(compiler), *command[3:]],
+                    ["KACHE_LOCAL_ONLY=0", *command],
+                    ["KACHE_CONFIG=/ambient/config", *command],
+                    ["KACHE_CACHE_DIR=/ambient/cache", *command],
+                    ["KACHE_AUTO_CLEAN_UNUSED_UNITS_DAYS=1", *command],
+                    ["KACHE_AUTO_SHARE_TARGET_FILES=1", *command],
+                    ["KACHE_REMOTE_URL=https://example.invalid", *command],
+                    ["RUSTC_WORKSPACE_WRAPPER=/ambient/wrapper", *command],
+                    [str(wrapper), str(wrapper), str(compiler), *command[3:]],
+                ):
+                    with self.subTest(command=changed), self.assertRaises(CLOSURE.ClosureError):
+                        CLOSURE.validate_wrapped_commands([changed], compiler)
+
+    def test_cargo_parser_retains_wrapped_commands_before_uncached_diagnostics(self):
+        scratch = Path(__file__).resolve().parents[3] / ".work/tmp"
+        scratch.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(dir=scratch) as temporary:
+            log = Path(temporary) / "cargo.stderr.log"
+            raw = ("     Running `/usr/local/bin/kache /opt/rustup/pinned/bin/rustc --crate-name c`\n"
+                   "[kache] Caching is disabled for this build — compilation still succeeds,\n"
+                   "[kache] just without cache hits or stores (everything builds uncached).\n"
+                   "    Finished `dev` profile target(s) in 1s\n")
+            log.write_text(raw, encoding="utf-8")
+            self.assertEqual(CLOSURE.cargo_commands(log), [["/usr/local/bin/kache", "/opt/rustup/pinned/bin/rustc", "--crate-name", "c"]])
+            self.assertEqual(log.read_text(encoding="utf-8"), raw)
+
+    def test_pinned_environment_ignores_ambient_wrapper_cache_and_target_controls(self):
+        injected = {name: "/ambient/control" for name in CLOSURE.native_build_tools.environment()}
+        injected["RUSTC_WORKSPACE_WRAPPER"] = "/ambient/workspace-wrapper"
+        with patch.dict(CLOSURE.os.environ, injected), \
+                patch.object(CLOSURE, "pinned_rustup_frontend", return_value={"argv0": "/opt/cargo/bin/rustup"}), \
+                patch.object(CLOSURE, "physical", side_effect=lambda path, _description, **_kwargs: path):
+            _, environment = CLOSURE.pinned_environment()
+        for name, value in CLOSURE.native_build_tools.environment().items():
+            self.assertEqual(environment[name], value)
+        self.assertNotIn("RUSTC_WORKSPACE_WRAPPER", environment)
+        self.assertEqual(environment["CARGO_HOME"], "/opt/cargo")
+        self.assertEqual(environment["RUSTUP_HOME"], "/opt/rustup")
+
     def _private_vendor_fixture(self, root: Path) -> tuple[Path, Path, Path, Path]:
         repository = root / "repository"
         rust_source = root / "toolchain" / "library"
@@ -487,6 +542,14 @@ class NativeStaticSourceRuntimeClosureTests(unittest.TestCase):
         with self.assertRaisesRegex(CLOSURE.ClosureError, "lexical rustup frontend"):
             CLOSURE.pinned_rustup_frontend(target, target)
 
+    def test_retained_leaf_profiles_keep_exact_empty_dependency_closures(self) -> None:
+        for feature in ('x86-signal-legacy-aliases', 'x86-process-exec', 'x86-netdb-setent'):
+            with self.subTest(feature=feature):
+                self.assertEqual(CLOSURE.retained_package_features(feature), frozenset(('default', feature)))
+        for feature in ('x86-crypt', 'x86-owned-static-runtime', 'x86-process-exec,x86-netdb-setent'):
+            with self.subTest(feature=feature), self.assertRaisesRegex(CLOSURE.ClosureError, 'requested feature profile'):
+                CLOSURE.retained_package_features(feature)
+
     def test_retained_cargo_command_accepts_only_the_fixed_feature_invocation(self) -> None:
         feature = CLOSURE.RETAINED_MATH_FEATURE
         baseline = [
@@ -608,6 +671,8 @@ class NativeStaticSourceRuntimeClosureTests(unittest.TestCase):
                 patch.object(CLOSURE, "emitted_artifacts", return_value={}),
                 patch.object(CLOSURE, "artifact_for_source", side_effect=lambda _records, _source, name, _target, _suffix: artifacts[name]),
                 patch.object(CLOSURE, "cargo_commands", return_value=[]),
+                patch.object(CLOSURE, "validate_wrapped_commands"),
+                patch.object(CLOSURE, "compiler_tools", return_value={}),
                 patch.object(CLOSURE, "invocation_for", side_effect=rustc_invocation),
                 patch.object(CLOSURE, "command_record", return_value={}),
                 patch.object(CLOSURE, "required_tool", return_value=Path("/tool")),

@@ -12,7 +12,6 @@ from pathlib import Path
 import subprocess
 import sys
 import tempfile
-import tomllib
 import unittest
 from unittest.mock import patch
 
@@ -67,8 +66,7 @@ class OwnedDynamicForkRunnerTests(unittest.TestCase):
             shutil.copy2(ROOT / 'rust-toolchain.toml', root / 'rust-toolchain.toml')
             tools={}
             expected_paths = evidence.replay_tool_paths(root)
-            channel = tomllib.loads((root / 'rust-toolchain.toml').read_text())['toolchain']['channel']
-            self.assertEqual(expected_paths['linker'], f"/opt/rustup/toolchains/{channel}-{evidence.TARGET}/lib/rustlib/{evidence.TARGET}/bin/gcc-ld/ld.lld")
+            self.assertEqual(expected_paths['linker'], "/usr/bin/mold")
             for role,path in expected_paths.items():
                 source=root/(role+'-source');source.write_bytes(role.encode());source.chmod(0o755)
                 record=evidence.inventory._snapshot_regular(work,source,'inputs/tools/'+role,path)
@@ -179,9 +177,12 @@ class OwnedDynamicForkRunnerTests(unittest.TestCase):
 
     @staticmethod
     def _write_product(product: Path) -> None:
+        import owned_posix_product_evidence as product_evidence
+
         required = (
             "bin/crabc-cc-dynamic", "share/crabc/crabc_cc_static.py", "usr/include/stdint.h",
             "share/crabc/owned_dynamic_receipt.py", "share/crabc/owned_dynamic_elf.py",
+            "share/crabc/producer-tools.json",
             "lib/ld-crabc-x86_64.so.1", "usr/lib/crt1.o", "usr/lib/Scrt1.o", "usr/lib/crti.o",
             "usr/lib/crtn.o", "usr/lib/crabc-dynamic-attach.o", "usr/lib/libc.so",
             "usr/lib/libcrabc-builtins.a",
@@ -190,6 +191,10 @@ class OwnedDynamicForkRunnerTests(unittest.TestCase):
         for index, relative in enumerate(required):
             payload = (b"HOSTED_TRANSLATION_FLAGS = ('-fstack-protector-strong',)\n"
                        if relative == "share/crabc/crabc_cc_static.py" else f"owned dynamic payload {index}\n".encode())
+            if relative == "share/crabc/producer-tools.json":
+                payload = json.dumps({
+                    "schema": 1, **product_evidence.source_native_compiler_tool_records(),
+                }, sort_keys=True).encode()
             target = product / relative
             target.parent.mkdir(parents=True, exist_ok=True)
             target.write_bytes(payload)

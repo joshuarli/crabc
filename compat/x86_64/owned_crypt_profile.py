@@ -192,12 +192,11 @@ def collect_link(reader, obj, binary, receipt_path, mode):
           'input_receipts': [reader.binding(path) for path in [*runtime,obj,builtins]]}, 'crypt canonical source/product link inputs')
     receipt_contract.require_runpath(search, '/usr/lib', label='crypt sealed link receipt', fail=lambda message: require(False, message))
     linker = keys(receipt['resolved_linker'], ('path', 'sha256'), 'crypt recorded linker')
-    require(isinstance(linker['path'], str) and Path(linker['path']).name == 'ld.lld'
-            and isinstance(linker['sha256'], str) and re.fullmatch('[0-9a-f]{64}', linker['sha256']) is not None, 'crypt linker identity differs')
+    products._check_linker(linker, receipt_path)
     same(receipt['link_command'], link_command(reader, obj, binary, mode, linker['path']), 'crypt sealed linker invocation')
     direct = {reader.recorded(path) for path in [*runtime,obj]}
     archive = reader.recorded(builtins)
-    trace = receipt['link_trace']
+    trace = products.semantic_link_trace(receipt['link_trace'])
     require(isinstance(trace, list) and all(isinstance(item, str) and (item in direct or item == archive or
             (item.startswith(archive+'(') and item.endswith(')'))) for item in trace)
             and direct <= set(trace), 'crypt sealed trace admits foreign or missing inputs')

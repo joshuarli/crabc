@@ -433,7 +433,7 @@ def compiler_identity(receipt: Receipt, compiler: Path, libc_archive: Path, libc
     # wrapper spelling and its checksummed musl-generated specs do establish
     # that path; ``run_musl_oracle.sh`` additionally compiles and executes the
     # selected dynamic product before this audit is invoked.
-    expected_wrapper = 'exec /usr/bin/gcc -specs /opt/musl-1.2.6/lib/musl-gcc.specs "$@"'
+    expected_wrapper = 'exec /usr/bin/gcc -fuse-ld=mold -specs /opt/musl-1.2.6/lib/musl-gcc.specs "$@"'
     require(expected_wrapper in compiler.read_text(encoding="utf-8").splitlines(), "oracle compiler wrapper drifted")
     specs_manifest = safe_file(libc_archive.parent.parent / ".crabc-musl-gcc-specs.sha256", "pinned musl compiler specs manifest")
     receipt.command("compiler-specs-sha256", ["sha256sum", "-c", str(specs_manifest)])

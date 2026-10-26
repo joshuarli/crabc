@@ -4,6 +4,9 @@ set -euo pipefail
 . "$(dirname "${BASH_SOURCE[0]}")/source_runtime_libc.sh"
 
 readonly ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+. "$(dirname "${BASH_SOURCE[0]}")/native_build_environment.sh"
+mapfile -d '' -t rustc_command < <(python3 -B "$ROOT_DIR/compat/x86_64/native_rustc.py")
+mapfile -d '' -t rustc_link_command < <(python3 -B "$ROOT_DIR/compat/x86_64/native_rustc.py" final-link)
 readonly SOURCE="$ROOT_DIR/ldso/src/x86_64_initial_graph_source_root.rs"
 readonly BRIDGE_SOURCE="$ROOT_DIR/libc/src/c_abi/x86_64/fixed_graph_dlfcn_runtime.rs"
 readonly START="$ROOT_DIR/compat/x86_64/ldso_public_dlfcn_start.S"
@@ -33,7 +36,7 @@ archive="$work_dir/libcrabc-public-dlfcn.a"
 
 # The no-TLS source root must retain the readable file-range guard used by
 # unconditional DT_SYMTAB parsing. No TLS or lifecycle cfg is supplied here.
-rustc --edition=2021 --test "$ROOT_DIR/ldso/src/x86_64_initial_graph.rs" \
+"${rustc_link_command[@]}" --edition=2021 --test "$ROOT_DIR/ldso/src/x86_64_initial_graph.rs" \
     -o "$work_dir/readable-file-load-tests"
 "$work_dir/readable-file-load-tests" --exact \
     readable_file_load_tests::dynamic_symbol_record_requires_one_readable_file_backed_load
@@ -41,7 +44,7 @@ rustc --edition=2021 --test "$ROOT_DIR/ldso/src/x86_64_initial_graph.rs" \
 build_interpreter() {
     local output="$1"
     shift
-    rustc --edition=2021 --crate-type staticlib --cfg crabc_fixed_graph_dlfcn "$@" \
+    "${rustc_command[@]}" --edition=2021 --crate-type staticlib --cfg crabc_fixed_graph_dlfcn "$@" \
         -C panic=abort -C relocation-model=pic "$SOURCE" -o "$work_dir/libpublic-dlfcn-ldso.a"
     cc -nostdlib -shared -Wl,-e,_start -Wl,-Bsymbolic -Wl,-z,now -Wl,--no-undefined \
         -Wl,--whole-archive "$work_dir/libpublic-dlfcn-ldso.a" -Wl,--no-whole-archive \
@@ -142,7 +145,7 @@ if readelf -Ws "$members_dir"/*.o | awk \
     fail 'staged static archive made dladdr strong'
 fi
 
-rustc --edition=2021 --crate-type staticlib -C relocation-model=pic \
+"${rustc_command[@]}" --edition=2021 --crate-type staticlib -C relocation-model=pic \
     -C code-model=small -C panic=abort "$BRIDGE_SOURCE" -o "$archive"
 [ -f "$archive" ] || fail 'rustc did not emit isolated PIC public dlfcn bridge'
 

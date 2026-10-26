@@ -10,6 +10,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from unittest.mock import patch
 from pathlib import Path
 
 
@@ -54,6 +55,14 @@ class OwnedPthreadAliasContractReaderTests(unittest.TestCase):
             prefix="owned-pthread-alias-reader-test.", dir=self.scratch_parent
         )
         self.root = Path(self.scratch.name)
+        self.linker = self.root / "tools/mold"
+        self.linker.parent.mkdir()
+        self.linker.write_bytes(b"sealed mold fixture")
+        self.linker.chmod(0o755)
+        self.linker_identity = {"path": str(self.linker), "sha256": hashlib.sha256(self.linker.read_bytes()).hexdigest()}
+        linker_patch = patch.object(product_evidence.native_build_tools, "MOLD", self.linker)
+        linker_patch.start()
+        self.addCleanup(linker_patch.stop)
 
     def tearDown(self) -> None:
         self.scratch.cleanup()
@@ -330,7 +339,7 @@ class OwnedPthreadAliasContractReaderTests(unittest.TestCase):
             {"path": "usr/lib/crtn.o", "role": "crt-epilogue", "sha256": static_files["usr/lib/crtn.o"]},
             {"path": f"{work_path}/contract.o", "role": "application", "sha256": hashes["contract.o"]},
         ]
-        link_contract = ["ld.lld", "-static"]
+        link_contract = ["mold", "-static"]
         if binary == "static-pie-contract":
             link_contract.append("-pie")
         link_contract += [
@@ -351,7 +360,7 @@ class OwnedPthreadAliasContractReaderTests(unittest.TestCase):
             "trace": {"path": f"{binary}.link.trace", "sha256": hashes[f"{binary}.link.trace"]},
             "input_receipts": input_receipts,
             "owned_link_contract": link_contract,
-            "resolved_linker": {"path": "/tools/ld.lld", "sha256": "3" * 64},
+            "resolved_linker": dict(self.linker_identity),
         }
         receipt_path.write_text(json.dumps(receipt) + "\n", encoding="utf-8")
         products = {"static": {
@@ -437,7 +446,7 @@ class OwnedPthreadAliasContractReaderTests(unittest.TestCase):
         ]
         command = product_evidence._dynamic_link_command(
             Path(product_root), Path(f"{work_path}/contract.o"), Path(f"{work_path}/{binary}"),
-            "pie", "/tools/ld.lld", export_dynamic=True,
+            "pie", str(self.linker), export_dynamic=True,
         )
         receipt = {
             "schema": 2, "format": "crabc-x86-64-owned-dynamic-sysroot-v1",
@@ -451,7 +460,7 @@ class OwnedPthreadAliasContractReaderTests(unittest.TestCase):
                 for name, digest in runtime_files.items()
             ] + [{"path": f"{work_path}/contract.o", "sha256": "2" * 64}],
             "link_trace": trace, "link_command": command,
-            "resolved_linker": {"path": "/tools/ld.lld", "sha256": "3" * 64},
+            "resolved_linker": dict(self.linker_identity),
         }
         receipt_path.write_text(__import__("json").dumps(receipt) + "\n", encoding="utf-8")
         artifacts = {

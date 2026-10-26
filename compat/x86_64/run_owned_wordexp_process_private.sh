@@ -6,6 +6,7 @@
 # separate test-cfg libc archive containing the private bridge and links one C
 # consumer directly with the same owned static inputs.
 set -euo pipefail
+. "$(dirname "${BASH_SOURCE[0]}")/native_build_environment.sh"
 ulimit -c 0
 
 readonly ROOT_DIR="$(cd -P "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
@@ -15,7 +16,7 @@ readonly TARGET=x86_64-unknown-linux-musl
 readonly TOOLCHAIN="$(python3 "$ROOT_DIR/scripts/rust_toolchain.py")"
 readonly PRIVATE_CFG=crabc_owned_wordexp_process_private_test
 readonly BRIDGE=crabc_owned_wordexp_process_private_test
-readonly LLD="/opt/rustup/toolchains/$TOOLCHAIN-x86_64-unknown-linux-musl/lib/rustlib/$TARGET/bin/gcc-ld/ld.lld"
+readonly MOLD="$(python3 -B "$ROOT_DIR/compat/x86_64/native_rustc.py" mold)"
 
 fail() {
     printf 'private x86 wordexp process bridge: %s\n' "$*" >&2
@@ -34,7 +35,7 @@ esac
 for tool in awk chroot cmp cp mkdir mktemp nm python3 readelf realpath sha256sum timeout; do
     require_tool "$tool"
 done
-[ -x "$LLD" ] || fail "requires pinned x86 ld.lld"
+[ -x "$MOLD" ] || fail "requires image mold"
 [ -x /usr/bin/gcc ] || fail "requires pinned C compiler"
 [ -f "$BUILDER" ] || fail "missing owned static-sysroot builder"
 [ -f "$PROBE" ] || fail "missing private bridge consumer"
@@ -174,7 +175,7 @@ fi
 [ -f "$OBJECT" ] || fail "private C consumer object is absent"
 
 library="$SYSROOT/usr/lib"
-if ! "$LLD" -static --no-dynamic-linker --no-undefined --gc-sections \
+if ! "$MOLD" -static --no-dynamic-linker --no-undefined --gc-sections \
         -z relro -z now -e _start "$library/crt1.o" "$library/crti.o" "$OBJECT" \
         "$PRIVATE_ARCHIVE" "$library/libcrabc-builtins.a" "$library/crtn.o" \
         --trace -o "$CANDIDATE" >"$WORK_DIR/link.stdout" 2>"$WORK_DIR/link.stderr"; then

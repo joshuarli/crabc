@@ -67,7 +67,9 @@ IMAGE_FIXED_PATHS = (
     "/usr/local/bin/crabc-x86_64-musl-gcc", "/opt/musl-1.2.6/lib/libc.so", "/opt/musl-1.2.6/lib/libc.a",
     "/opt/musl-1.2.6/lib/musl-gcc.specs",
     str(TOOLCHAIN_ROOT / "bin/rustc"),
-    str(TOOLCHAIN_ROOT / "lib/rustlib/x86_64-unknown-linux-musl/bin/gcc-ld/ld.lld"),
+    str(retained_link_reader.native_build_tools.KACHE),
+    str(retained_link_reader.native_build_tools.MOLD),
+    str(retained_link_reader.native_build_tools.CARGO_LINKER),
 )
 
 # These are the eight current source-selected legacy aliases.  ``utmpname`` is
@@ -1297,7 +1299,8 @@ def rebuild_links(workspace: Path, products: Mapping[str, Path], tools: Mapping[
     require(type(linker) is dict and set(linker) == {"native_path", "retained"}, "linker tool seal differs")
     check_identity(workspace, linker["retained"], "retained linker tool")
     native = linker["native_path"]
-    require(type(native) is str and Path(native).name == "ld.lld" and Path(native).is_absolute(), "linker native path differs")
+    require(type(native) is str and Path(native) == retained_link_reader.native_build_tools.MOLD,
+            "linker native path differs")
     raw = workspace / ".work/utmpx-receipt/owned-utmpx-receipt"
     workload = raw / "workload.o"
     rebuilt: dict[str, Any] = {}
@@ -1525,7 +1528,7 @@ def collect(static_preparation: Path, static_product: Path, dynamic_product: Pat
             received = read_json(workspace / ".work/utmpx-receipt/owned-utmpx-receipt" / name, "collected link receipt")
             linker = received.get("resolved_linker")
             require(type(linker) is dict and set(linker) == {"path", "sha256"}
-                    and type(linker["path"]) is str and Path(linker["path"]).name == "ld.lld"
+                    and type(linker["path"]) is str and Path(linker["path"]) == retained_link_reader.native_build_tools.MOLD
                     and type(linker["sha256"]) is str and SHA_RE.fullmatch(linker["sha256"]) is not None,
                     "collected link receipt linker differs")
             receipt_linkers.append(linker)

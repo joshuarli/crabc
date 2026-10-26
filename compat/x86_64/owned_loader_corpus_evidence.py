@@ -841,7 +841,7 @@ def _validate_loader_sidecar(root: Path, source_mount: str, product: Path, name:
     _require(receipt["link_command"] == _loader_sidecar_command(
         linker["path"], root, source_mount, product, link, search_kind, search_path, hash_style, export_dynamic
     ), f"loader case {name} dynamic link sidecar command differs")
-    trace = receipt["link_trace"]
+    trace = _product_reader().semantic_link_trace(receipt["link_trace"])
     direct = {recorded_path(root, source_mount, path) for path in runtime}
     direct.add(link["object"])
     direct.update(item["path"] for item in dependencies)
@@ -1159,10 +1159,13 @@ def _require_case(value: object, name: str, loader: Any) -> dict[str, Any]:
 
 def _loader_producer_linker(value: object) -> dict[str, str]:
     linker = _keys(value, {"path", "sha256"}, "synthetic-loader producer linker")
-    _require(isinstance(linker["path"], str) and Path(linker["path"]).is_absolute()
-             and ".." not in Path(linker["path"]).parts and Path(linker["path"]).name == "ld.lld",
-             "synthetic-loader producer linker path differs")
-    return {"path": linker["path"], "sha256": _digest(linker["sha256"], "synthetic-loader producer linker")}
+    _require(isinstance(linker["path"], str), "synthetic-loader producer linker path differs")
+    product_reader = _product_reader()
+    try:
+        path = product_reader._check_linker(linker, Path(linker["path"]))
+    except product_reader.ProductEvidenceError as error:
+        raise LoaderCorpusEvidenceError(f"synthetic-loader producer linker differs: {error}") from error
+    return {"path": path, "sha256": _digest(linker["sha256"], "synthetic-loader producer linker")}
 
 
 def validate_loader_report(report_path: Path, dynamic_product: Path, *, expected_oracle: Mapping[str, object],

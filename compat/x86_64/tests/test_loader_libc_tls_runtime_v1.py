@@ -400,7 +400,6 @@ class LoaderLibcTlsRuntimeV1ContractTests(unittest.TestCase):
         self.assertIn("x86_64_initial_tls_registry", loader)
         self.assertIn("INITIAL_TLS_RUNTIME_V1_REGISTRY", loader)
         self.assertIn("x86_64_initial_tls_registry.rs", runner)
-        self.assertIn("rustc --edition=2021 --test", runner)
         self.assertIn("loader-libc-tls-runtime-v1-registry", dispatcher)
 
     def test_general_initial_tls_materialization_is_private_and_transactional(self) -> None:

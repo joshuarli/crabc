@@ -44,6 +44,7 @@ while [ "$#" -gt 0 ]; do
             ;;
     esac
 done
+. "$(dirname "${BASH_SOURCE[0]}")/native_build_environment.sh"
 if [ "$static_was_supplied" -eq 1 ]; then
     provided_static="$(python3 -B -c 'import pathlib, sys; print(pathlib.Path(sys.argv[1]).resolve(strict=True))' "$provided_static")"
 fi
@@ -298,7 +299,9 @@ for attempt in range(1, 17):
                 status_file.write_text(f'{status}\n', encoding='utf-8')
 PYTRACE
 
-run_build "$work/tls-reset-build.stdout" rustc --edition=2021 --test \
+mapfile -d '' -t rustc_link_command < <(python3 -B "$ROOT/compat/x86_64/native_rustc.py" final-link)
+wait "$!"
+run_build "$work/tls-reset-build.stdout" "${rustc_link_command[@]}" --edition=2021 --test \
     --cfg 'feature="x86_64-owned-dynamic-runtime"' \
     --cfg crabc_general_initial_graph --cfg crabc_general_initial_lifecycle \
     --cfg crabc_general_initial_tls_materialization_v1 --cfg crabc_general_loader_libc_tls_runtime_v1 \

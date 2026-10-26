@@ -25,9 +25,10 @@
         "native_pointer_first_initial_local_free",
         "native_pointer_first_nonlocal_reallocate",
         "native_pointer_first_usable_size",
-        "native_secure_public_growth"
+        "native_secure_public_growth",
+        "native_secure_page_layout"
       ],
-      "scope": "free, usable-size, and realloc derive page, canonical block, and local/remote/abandoned behavior from PageMap state on the initial and later owners, including aligned, huge, current-owner in-place, nonlocal replacement, and concurrent nonlocal realloc. Secure public heap and guarded aligned growth retain client contents and ownership across joined workers and fork."
+      "scope": "free, usable-size, and realloc derive page, canonical block, and local/remote/abandoned behavior from PageMap state on the initial and later owners, including aligned, huge, current-owner in-place, nonlocal replacement, and concurrent nonlocal realloc. Secure public heap and guarded aligned growth retain client contents and ownership across joined workers and fork. Secure checked-page layout also preserves zero-filled inline clients and offset-mapped aligned ownership through release."
     },
     "native:remote-publication": {
       "native_tests": [
@@ -54,6 +55,7 @@
         "native_initial_persistent_live_transfer",
         "native_initial_persistent_quiescent_fork",
         "native_initial_post_exit_free",
+        "native_dynamic_os_singleton_owner_exit",
         "native_mixed_regular_medium_pre_reclaim_exit",
         "native_multiple_post_exit_completions",
         "native_os_medium_failed_unmap_exit",
@@ -71,7 +73,7 @@
         "native_three_post_exit_lifecycle",
         "native_two_post_exit_lifecycle"
       ],
-      "scope": "One generic owner-exit traversal abandons or releases every page shape, races live publishers, and leaves post-exit clients freeable in any order by independent owners, including across fork gates. A failed final regular OS-page unmap retains its exact terminal owner after the second survivor free. A parked child member finishes after coordinated child destruction without accessing its destroyed child or allocations."
+      "scope": "One generic owner-exit traversal abandons or releases every page shape, races live publishers, and leaves post-exit clients freeable in any order by independent owners, including across fork gates. Dynamic OS singleton pages survive owner exit and are released by joined consumers in their selected order while surviving clients remain mapped. A failed final regular OS-page unmap retains its exact terminal owner after the second survivor free. A parked child member finishes after coordinated child destruction without accessing its destroyed child or allocations."
     },
     "native:abandon-reclaim-release": {
       "native_tests": [
@@ -102,9 +104,10 @@
         "native_pointer_first_nonlocal_reallocate_state_auditor",
         "native_post_exit_claim_page_map_lifetime",
         "native_runtime_first_arena_policy",
-        "native_runtime_startup_regular_arena"
+        "native_runtime_startup_regular_arena",
+        "native_cold_arena_prefix_retry"
       ],
-      "scope": "Scalar audits return PageMap entries (excluding retained metadata pages), arena registrations, abandoned counts, and live thread and Theap counts to baseline, and keep the PageMap live for late same-page producers. Child statistics reset merges the caller's child main heap, and nested subprocess creation preserves parent clients and lifetime."
+      "scope": "Scalar audits return PageMap entries (excluding retained metadata pages), arena registrations, abandoned counts, and live thread and Theap counts to baseline, and keep the PageMap live for late same-page producers. Cold managed arenas retry a refused metadata prefix at the same address and yield owned in-arena clients with intact contents. Child statistics reset merges the caller's child main heap, and nested subprocess creation preserves parent clients and lifetime."
     },
     "native:deterministic-churn": {
       "native_tests": [

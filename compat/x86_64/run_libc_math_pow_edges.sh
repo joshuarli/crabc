@@ -2,6 +2,8 @@
 # Direct production-source object versus pinned source-built musl archive.
 set -euo pipefail
 root="$(cd -P "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+. "$(dirname "${BASH_SOURCE[0]}")/native_build_environment.sh"
+mapfile -d '' -t rustc_command < <(python3 -B "$root/compat/x86_64/native_rustc.py")
 cd "$root"
 [ "$(uname -s)/$(uname -m)" = Linux/x86_64 ]
 [ -n "${TMPDIR:-}" ]
@@ -11,7 +13,7 @@ work="$(mktemp -d "$TMPDIR/libc-math-pow-edges.XXXXXX")"
 chmod a+rx "$work"
 printf 'Retained pow edge evidence: %s\n' "$work"
 cc=/usr/local/bin/crabc-x86_64-musl-gcc
-rustup run "$(python3 "$root/scripts/rust_toolchain.py")" rustc --edition=2021 \
+"${rustc_command[@]}" --edition=2021 \
     --crate-type=lib --emit=obj --target x86_64-unknown-linux-musl \
     -C panic=abort -C opt-level=2 \
     compat/x86_64/math_scalar_corrections_boundary.rs -o "$work/boundary.o"

@@ -589,11 +589,12 @@ class BuildX86OwnedSysrootTests(unittest.TestCase):
                 else:
                     builder.os.environ[name] = value
         for name in names:
-            if name not in {"PATH", "CARGO_HOME", "RUSTUP_HOME"}:
+            if name not in {"PATH", "CARGO_HOME", "RUSTUP_HOME", *builder.native_build_tools.environment()}:
                 self.assertNotIn(name, environment)
         self.assertEqual(
             environment,
             {
+                **builder.native_build_tools.environment(),
                 "CARGO_HOME": str(builder.ROOT / ".work/x86_64/cargo"),
                 "TMPDIR": str(builder.ROOT / ".work/x86_64/tmp"),
                 "RUSTUP_HOME": str(builder.PINNED_RUSTUP_HOME),
@@ -622,6 +623,15 @@ class BuildX86OwnedSysrootTests(unittest.TestCase):
             )
             target_bin = sysroot / "lib" / "rustlib" / builder.TARGET / "bin"
             target_bin.mkdir(parents=True)
+            (sysroot / "bin").mkdir()
+            (sysroot / "bin/rustc").write_text("rustc")
+            (sysroot / "bin/rustc").chmod(0o755)
+            image_tools = {}
+            for name in ("KACHE", "MOLD", "CARGO_LINKER"):
+                path = root / name
+                path.write_text(name)
+                path.chmod(0o755)
+                image_tools[name] = path
             for name in builder.PINNED_TARGET_TOOLS:
                 tool = target_bin / name
                 tool.write_text(f"{name}\n", encoding="utf-8")
@@ -655,6 +665,7 @@ class BuildX86OwnedSysrootTests(unittest.TestCase):
                     },
                     clear=False,
                 ),
+                mock.patch.multiple(builder.native_build_tools, **image_tools),
                 mock.patch.object(builder, "PINNED_CARGO_HOME", cargo_home),
                 mock.patch.object(builder, "PINNED_RUSTUP_HOME", rustup_home),
                 mock.patch.object(builder.subprocess, "run", side_effect=fake_run),
@@ -665,6 +676,7 @@ class BuildX86OwnedSysrootTests(unittest.TestCase):
                 ),
             ):
                 producer_tools = builder.resolve_pinned_producer_tools()
+                fixed_environment = builder.native_build_tools.environment()
 
             self.assertEqual(
                 producer_tools["selection"],
@@ -696,7 +708,8 @@ class BuildX86OwnedSysrootTests(unittest.TestCase):
                 self.assertEqual(
                     kwargs["env"],
                     {
-                        "CARGO_HOME": str(builder.ROOT / ".work/x86_64/cargo"),
+                        **fixed_environment,
+                "CARGO_HOME": str(builder.ROOT / ".work/x86_64/cargo"),
                         "TMPDIR": str(builder.ROOT / ".work/x86_64/tmp"),
                         "RUSTUP_HOME": str(rustup_home),
                         "PATH": f"{cargo_home / 'bin'}:{builder.FIXED_HOST_BUILD_PATH}",
@@ -1197,11 +1210,9 @@ class BuildX86OwnedSysrootTests(unittest.TestCase):
             ]
             trace.write_text("\n".join(expected) + "\n", encoding="utf-8")
             driver.validate_link_trace(root, driver.STATIC_ET_EXEC, (application,), trace)
+            trace.write_text("\n".join("trace: " + line for line in expected) + "\n", encoding="utf-8")
+            driver.validate_link_trace(root, driver.STATIC_ET_EXEC, (application,), trace)
 
-            # LLD traces an archive only when it extracts a member. The
-            # Rust-only native-shadow libc.a references no compiler helper,
-            # so an ordinary application may consume none from the owned
-            # helper archive; that link is still exact and owned.
             without_helper_member = [line for line in expected if "libcrabc-builtins.a" not in line]
             trace.write_text("\n".join(without_helper_member) + "\n", encoding="utf-8")
             driver.validate_link_trace(root, driver.STATIC_ET_EXEC, (application,), trace)

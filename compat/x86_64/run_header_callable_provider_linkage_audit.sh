@@ -8,6 +8,7 @@
 # named crypt/allocator composition is topology-only: its dedicated runner
 # proves the intentionally rejected manual pair and selected allocator route.
 set -euo pipefail
+. "$(dirname "${BASH_SOURCE[0]}")/native_build_environment.sh"
 export LC_ALL=C
 
 readonly ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"

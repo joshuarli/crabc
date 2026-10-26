@@ -17,6 +17,9 @@
 set -euo pipefail
 
 readonly ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+. "$(dirname "${BASH_SOURCE[0]}")/native_build_environment.sh"
+mapfile -d '' -t rustc_command < <(python3 -B "$ROOT_DIR/compat/x86_64/native_rustc.py")
+mapfile -d '' -t rustc_link_command < <(python3 -B "$ROOT_DIR/compat/x86_64/native_rustc.py" final-link)
 readonly SOURCE_ROOT="$ROOT_DIR/ldso/src/x86_64_general_initial_tls_source_root.rs"
 readonly START="$ROOT_DIR/compat/x86_64/ldso_initial_graph_start.S"
 readonly MAIN="$ROOT_DIR/compat/x86_64/ldso_general_initial_tls_main.c"
@@ -55,14 +58,14 @@ fi
 # Run the typed state-machine regressions through the same isolated root.  The
 # test cfg removes only the freestanding entry/panic glue; it leaves the
 # general graph, identity, registry, layout, and rollback types unchanged.
-rustc --edition=2021 --test \
+"${rustc_link_command[@]}" --edition=2021 --test \
     --cfg crabc_general_initial_graph --cfg crabc_general_initial_tls_materialization_v1 \
     "$SOURCE_ROOT" -o "$work_dir/general-initial-tls-state-tests"
 env -i PATH=/usr/bin:/bin "$work_dir/general-initial-tls-state-tests"
 
 case "${CRABC_LDSO_GENERAL_INITIAL_TLS_ROOT:-source}" in
     source)
-        rustc --edition=2021 --crate-type staticlib -C panic=abort -C relocation-model=pic \
+        "${rustc_command[@]}" --edition=2021 --crate-type staticlib -C panic=abort -C relocation-model=pic \
             --cfg crabc_general_initial_graph --cfg crabc_general_initial_tls_materialization_v1 \
             "$SOURCE_ROOT" -o "$work_dir/libgeneral_initial_tls.a"
         cc -nostdlib -shared -Wl,-e,_start -Wl,-Bsymbolic -Wl,-z,now -Wl,--no-undefined \

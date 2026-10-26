@@ -19,6 +19,7 @@ ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(ROOT / "compat/x86_64"))
 import native_shadow_receipt as receipt
 import owned_native_allocator_policy_receipt as policy
+import installed_allocator_backend as allocator
 
 
 def digest(path: Path) -> str:
@@ -90,7 +91,9 @@ class PolicyReceiptTests(unittest.TestCase):
                 bad_archive: bool = False, bad_source_digest: bool = False,
                 wrong_elf_mode: bool = False, bad_link_input: bool = False,
                 bad_dynamic_input: bool = False, bad_oracle_compiler: bool = False,
-                bad_probe_source: bool = False) -> Path:
+                bad_probe_source: bool = False, backend: str = "native-shadow",
+                dynamic_backend: str | None = None, native_identity: bool | None = None,
+                bad_accepted_pin: bool = False) -> Path:
         files: dict[str, Path] = {}
 
         def product(name: str, data: bytes) -> None:
@@ -115,16 +118,22 @@ class PolicyReceiptTests(unittest.TestCase):
         product("dynamic-libc", b"shared-libc")
         product("dynamic-loader", b"loader")
         upstream_hash = digest(self.root / "crabc-mimalloc/UPSTREAM.md")
+        native_identity = backend in allocator.products.NATIVE_ALLOCATOR_BACKENDS if native_identity is None else native_identity
+        pin = dict(allocator.products.C_ALLOCATOR_PIN)
+        if bad_accepted_pin:
+            pin["checksum"] = "0" * 64
         product("static-libc-provenance", json.dumps({
             "archive": {"sha256": "0" * 64 if bad_archive else digest(files["static-libc-archive"])},
-            "allocator_backend": {"upstream_sha256": upstream_hash},
+            "allocator_backend": ({"upstream_sha256": upstream_hash} if native_identity else {"crate": pin}),
         }).encode())
         product("dynamic-libc-provenance", json.dumps({
-            "allocator_backend": "native-shadow",
-            "native_allocator": {"path": "crabc-mimalloc/UPSTREAM.md", "sha256": upstream_hash},
+            "allocator_backend": dynamic_backend or backend,
+            "native_allocator": ({"path": "crabc-mimalloc/UPSTREAM.md", "sha256": upstream_hash}
+                                 if native_identity else None),
+            "accepted_allocator": None if native_identity else pin,
         }).encode())
         product("static-manifest", json.dumps({
-            "allocator_backend": "native-shadow", "installed": {"files": {
+            "allocator_backend": backend, "installed": {"files": {
                 "usr/lib/libc.a": digest(files["static-libc-archive"]),
                 "share/crabc/libc-static.provenance.json": digest(files["static-libc-provenance"]),
                 **{path: digest(files[name]) for name, path in {
@@ -147,7 +156,7 @@ class PolicyReceiptTests(unittest.TestCase):
         }
         product("dynamic-product-state", json.dumps({
             "schema": "crabc.x86_64-owned-dynamic-materialization/v1",
-            "allocator_backend": "native-shadow",
+            "allocator_backend": backend,
             "source_sha256": "0" * 64 if bad_source_digest else policy._product_source_digest(self.root),
             "modes": ["dynamic-pie", "dynamic-non-pie", "dynamic-shared-object"],
             "payload_files": dynamic_files,
@@ -308,6 +317,33 @@ class PolicyReceiptTests(unittest.TestCase):
             "needed": ["libc.so"], "symbol_versioning": False,
         }):
             return policy.read_policy_receipt(self.root)
+
+    def test_accepted_c_retains_the_complete_public_policy_matrix(self) -> None:
+        self.publish(backend="accepted-c")
+        self.assertEqual(len(self.read().cases), 22)
+
+    def test_matching_c_products_with_an_unreviewed_pin_are_rejected(self) -> None:
+        self.publish(backend="accepted-c", bad_accepted_pin=True)
+        with self.assertRaisesRegex(receipt.ReceiptError, "accepted allocator source"):
+            self.read()
+
+    def test_both_rust_backends_require_the_native_source_identity(self) -> None:
+        for backend in allocator.products.NATIVE_ALLOCATOR_BACKENDS:
+            self.publish(backend=backend)
+            self.assertEqual(len(self.read().cases), 22)
+            self.publish(backend=backend, native_identity=False)
+            with self.assertRaisesRegex(receipt.ReceiptError, "native allocator source"):
+                self.read()
+
+    def test_selected_backend_disagreement_is_rejected(self) -> None:
+        self.publish(backend="accepted-c", dynamic_backend="native-shadow")
+        with self.assertRaisesRegex(receipt.ReceiptError, "allocator backend"):
+            self.read()
+
+    def test_c_backend_cannot_claim_native_source_identity(self) -> None:
+        self.publish(backend="accepted-c", native_identity=True)
+        with self.assertRaisesRegex(receipt.ReceiptError, "native allocator"):
+            self.read()
 
     def test_shared_reader_accepts_an_incomplete_policy_matrix(self) -> None:
         self.publish(missing_case="direct-non-pie-policy")

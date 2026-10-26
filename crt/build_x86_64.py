@@ -30,6 +30,7 @@ from typing import Any, Iterable
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 from scripts.rust_toolchain import pinned_toolchain
+from scripts import native_build_tools
 CRT_ROOT = Path(__file__).resolve().parent
 SOURCE_ROOT = CRT_ROOT / "src"
 TARGET = "x86_64-unknown-linux-musl"
@@ -317,9 +318,9 @@ def output_directory(path: Path) -> Path:
 
 
 def default_rustc_command() -> list[str]:
-    rustup = shutil.which("rustup")
-    if rustup is None:
-        raise BuildError("rustup is required to select the pinned nightly toolchain")
+    rustup = "/opt/cargo/bin/rustup"
+    if not Path(rustup).is_file():
+        raise BuildError("image-owned rustup is required to select the pinned nightly toolchain")
     return [rustup, "run", PINNED_TOOLCHAIN, "rustc"]
 
 
@@ -366,14 +367,14 @@ def require_tool(name: str) -> str:
 
 def deterministic_environment() -> dict[str, str]:
     environment = {
-        "PATH": os.environ.get("PATH", ""),
+        **native_build_tools.environment(),
+        "PATH": "/opt/cargo/bin:/usr/local/bin:/usr/bin:/bin",
         "SOURCE_DATE_EPOCH": "0",
         "LC_ALL": "C",
         "TZ": "UTC",
     }
-    for key in ("RUSTUP_HOME", "CARGO_HOME"):
-        if key in os.environ:
-            environment[key] = os.environ[key]
+    environment["RUSTUP_HOME"] = "/opt/rustup"
+    environment["CARGO_HOME"] = str(ROOT / ".work/x86_64/cargo")
     return environment
 
 
@@ -529,7 +530,7 @@ def portable_rustc_command(command: list[str], source: Path, destination: Path) 
     portable: list[str] = []
     for index, argument in enumerate(command):
         if index == 0:
-            portable.append("rustup")
+            portable.append(argument)
         elif argument == str(source):
             portable.append(f"/crabc/crt/src/{source.name}")
         elif argument == str(destination):
@@ -725,7 +726,12 @@ def build(args: argparse.Namespace) -> dict[str, object]:
     sysroot = run_command(rustc + ["--print", "sysroot"], environment)
     records.append({"kind": "sysroot", **sysroot})
     write_json(commands_path, records)
-    selected_nightly_sysroot(version, sysroot, environment)
+    physical_sysroot = selected_nightly_sysroot(version, sysroot, environment)
+    compile_rustc = native_build_tools.compile_command(physical_sysroot / "bin/rustc")
+    compiler_tools = {
+        "wrapper": {"path": compile_rustc[0], "sha256": sha256_file(Path(compile_rustc[0]))},
+        "rustc": {"path": compile_rustc[1], "sha256": sha256_file(Path(compile_rustc[1]))},
+    }
 
     debug = getattr(args, "profile", "release") == "debug"
     runtime_symbols = frozenset()
@@ -745,7 +751,7 @@ def build(args: argparse.Namespace) -> dict[str, object]:
         for spec in selected_objects(args):
             source = source_path(spec.source_name)
             destination = output / spec.name
-            command = rustc + [
+            command = compile_rustc + [
                 "--edition=2021",
                 "--crate-type=lib",
                 "--emit=obj",
@@ -834,6 +840,7 @@ def build(args: argparse.Namespace) -> dict[str, object]:
                 {
                     "source": "/crabc/crt/src/" + spec.source_name,
                     "source_languages": ["Rust"],
+                    "compiler_tools": compiler_tools,
                     "producer": portable_rustc_command(command, source, destination),
                 }
             )

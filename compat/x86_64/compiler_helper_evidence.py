@@ -1719,7 +1719,7 @@ def _expected_command_argv(label: str, *, root: Path, work: Path, source_mount: 
             "-Wl,--no-undefined", "-Wl,-e,_start", mounted("aggregate-start.o"), mounted("aggregate.o"),
             "-o", mounted("without-archive")],
         "candidate-link": [*oracle, "-nostdlib", "-static", "-no-pie", "-Wl,--build-id=none",
-            "-Wl,--no-undefined", "-Wl,-e,_start", "-Wl,-t", mounted("aggregate-start.o"), mounted("aggregate.o"),
+            "-Wl,--no-undefined", "-Wl,-e,_start", "-Wl,--trace", mounted("aggregate-start.o"), mounted("aggregate.o"),
             mounted("libcrabc-builtins.a"), "-o", mounted("candidate")],
         "candidate-definitions": ["nm", "--defined-only", mounted("candidate")],
         "candidate-undefined": ["nm", "--undefined-only", mounted("candidate")],
@@ -1798,7 +1798,8 @@ def _event_bytes(work: Path, events: Sequence[Mapping[str, Any]], label: str, st
 def _ambient_link_input(trace: str) -> bool:
     """Reject a CRT/compiler-runtime input named by the retained link trace."""
 
-    return re.search(r"libgcc|compiler-rt|libc\.a|/[Sr]?crt[^/\s]*\.o", trace) is not None
+    inputs = "\n".join(line.removeprefix("trace: ") for line in trace.splitlines())
+    return re.search(r"libgcc|compiler-rt|libc\.a|/[Sr]?crt[^/\s]*\.o", inputs) is not None
 
 
 def _validate_aggregate_observations(work: Path, contract: Mapping[str, Any], events: Sequence[Mapping[str, Any]],
@@ -1875,7 +1876,9 @@ def _complex_edge_commands(work: Path) -> tuple[tuple[str, list[str]], ...]:
                             str(ROOT / COMPLEX_EDGE_SOURCE), "-o", str(work / "complex-edge-oracle.o")]),
         ("probe-compile", [cc, "-std=c11", "-O2", "-fno-builtin", "-c",
                            str(work / "complex-edge-probe.c"), "-o", str(work / "complex-edge-probe.o")]),
-        ("link", [cc, "-no-pie", "-Wl,--gc-sections", "-Wl,-t", str(work / "complex-edge-probe.o"),
+        ("link", [cc, "-no-pie", "-Wl,--gc-sections", "-Wl,--trace",
+                  "-Wl,--export-dynamic-symbol=__muldc3", "-Wl,--export-dynamic-symbol=crabc_reference_muldc3",
+                  str(work / "complex-edge-probe.o"),
                   str(work / "complex-edge-oracle.o"), archive, "-o", str(work / "complex-edge-candidate")]),
         ("execute", [str(work / "complex-edge-candidate")]),
     )

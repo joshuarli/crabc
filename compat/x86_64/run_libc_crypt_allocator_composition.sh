@@ -6,6 +6,7 @@
 # allocator wrapper/backend. This is a mixed static candidate, not allocator
 # lifecycle, public x86 runtime, or capability-promotion evidence.
 set -euo pipefail
+. "$(dirname "${BASH_SOURCE[0]}")/native_build_environment.sh"
 . "$(dirname "${BASH_SOURCE[0]}")/source_runtime_libc.sh"
 export LC_ALL=C
 

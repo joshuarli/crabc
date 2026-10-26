@@ -27,6 +27,7 @@ SOURCE = ROOT / "src" / "lib.rs"
 CONTRACT = ROOT / "x86_64-helper-contract.toml"
 sys.path.insert(0, str(ROOT.parent))
 from scripts.rust_toolchain import pinned_toolchain
+from scripts import native_build_tools
 TOOLCHAIN = pinned_toolchain(ROOT.parent)
 TARGET = "x86_64-unknown-linux-musl"
 ARCHIVE_NAME = "libcrabc-builtins.a"
@@ -164,6 +165,9 @@ def run(command: list[str], *, cwd: Path = ROOT) -> str:
             command,
             cwd=cwd,
             check=True,
+            env={**native_build_tools.environment(), "PATH": "/opt/cargo/bin:/usr/local/bin:/usr/bin:/bin",
+                 "RUSTUP_HOME": "/opt/rustup", "CARGO_HOME": str(ROOT.parent / ".work/x86_64/cargo"),
+                 "LC_ALL": "C", "TZ": "UTC", "SOURCE_DATE_EPOCH": "0"},
             text=True,
             stdin=subprocess.DEVNULL,
             stdout=subprocess.PIPE,
@@ -216,7 +220,8 @@ def sha256(path: Path) -> str:
 
 
 def rustc() -> list[str]:
-    return [tool("rustup"), "run", TOOLCHAIN, "rustc"]
+    sysroot = Path(run(["/opt/cargo/bin/rustup", "run", TOOLCHAIN, "rustc", "--print", "sysroot"]).strip())
+    return native_build_tools.compile_command(sysroot / "bin/rustc")
 
 
 def compile_object(output: Path, *, profile: str = "release", runtime_core: Path | None = None, runtime_compiler_builtins: Path | None = None) -> list[str]:
@@ -305,7 +310,7 @@ def build(output: Path, *, profile: str = "release", runtime_core: Path | None =
     llvm_ar = tool("llvm-ar")
     llvm_nm = tool("llvm-nm")
     llvm_readelf = tool("llvm-readelf")
-    lld = tool("ld.lld")
+    linker = str(native_build_tools.MOLD)
     with tempfile.TemporaryDirectory(prefix="crabc-builtins-x86_64-", dir=output.parent) as temporary:
         stage = Path(temporary)
         member = stage / MEMBER_NAME
@@ -324,7 +329,7 @@ def build(output: Path, *, profile: str = "release", runtime_core: Path | None =
                 raise BuildError(f"debug helpers request symbols outside source core and libc memset: {sorted(unknown)!r}")
             closed_member = stage / "crabc-builtins-closed.o"
             source_core_link = [
-                lld, "-r", "--gc-sections",
+                linker, "-r", "--gc-sections",
                 *(f"--undefined={name}" for name in sorted(REQUIRED_SYMBOLS)),
                 str(member), "--whole-archive", str(core_archive), "--no-whole-archive",
                 "-o", str(closed_member),
@@ -357,7 +362,7 @@ def build(output: Path, *, profile: str = "release", runtime_core: Path | None =
         if rejected:
             raise BuildError(f"x86 helper archive exports forbidden ambient-runtime symbols: {rejected!r}")
         closure = stage / "closure.o"
-        run([lld, "-r", "--whole-archive", str(staged), "--no-whole-archive", "-o", str(closure)])
+        run([linker, "-r", "--whole-archive", str(staged), "--no-whole-archive", "-o", str(closure)])
         undefined = symbols(llvm_nm, closure, "--undefined-only")
         runtime_dependencies = set()
         if profile == "debug":
@@ -374,21 +379,16 @@ def build(output: Path, *, profile: str = "release", runtime_core: Path | None =
             "source_core_archive_sha256": sha256(runtime_core.with_suffix(".rlib")) if runtime_core is not None else None,
             "source_libc_archive_sha256": sha256(runtime_libc) if runtime_libc is not None else None,
             "compile_command": installed_compile_command,
+            "compiler_tools": {
+                "wrapper": {"path": compile_command[0], "sha256": sha256(Path(compile_command[0]))},
+                "rustc": {"path": compile_command[1], "sha256": sha256(Path(compile_command[1]))},
+            },
             "contract": contract,
             "members": members,
             "defined_symbols": sorted(defined),
             "archive_sha256": sha256(output),
             "portable_compile_command": [argument.replace(str(stage), "$CRABC_BUILTINS_STAGE").replace(str(ROOT), "/crabc/builtins")
-                                         for argument in ["rustup", *compile_command[1:]]] if profile == "debug" else [
-                "rustup", "run", TOOLCHAIN, "rustc", "--crate-name", "crabc_builtins_x86_64",
-                "--crate-type=lib", "--edition=2021", "--target", TARGET, "--emit=obj",
-                "-C", "panic=immediate-abort" if profile == "debug" else "panic=abort", "-C", "force-unwind-tables=no", "-C", "overflow-checks=off",
-                "-C", "opt-level=0" if profile == "debug" else "opt-level=2", "-C", "codegen-units=1", "-C", "debuginfo=0",
-                "-C", "relocation-model=pic", "-C", "embed-bitcode=no", "-C",
-                "metadata=crabc-builtins-x86_64-static-pie-v1", "--remap-path-prefix",
-                "/crabc/builtins=/crabc/builtins", "-o", "$CRABC_BUILTINS_STAGE/crabc-builtins.o",
-                "/crabc/builtins/src/lib.rs",
-            ],
+                                         for argument in compile_command],
         }
 
 

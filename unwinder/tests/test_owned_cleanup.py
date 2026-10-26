@@ -798,7 +798,7 @@ class OwnedCleanupContract(unittest.TestCase):
             "linker": owned_cleanup.record_file(
                 owned_cleanup.HOST_BUILD_LINKER, "pinned Cargo host build-script linker",
             ),
-            "command": [str(owned_cleanup.HOST_BUILD_LINKER), "-Wl,-t", "-o", str(linked)],
+            "command": [str(owned_cleanup.HOST_BUILD_LINKER), "-fuse-ld=mold", "-Wl,--trace", "-o", str(linked)],
             "link_inputs": [],
             "output": owned_cleanup.record_file(linked, "Cargo host build-script linker output"),
         }
@@ -854,7 +854,7 @@ class OwnedCleanupContract(unittest.TestCase):
             "linker": owned_cleanup.record_file(
                 owned_cleanup.HOST_BUILD_LINKER, "pinned Cargo host build-script linker",
             ),
-            "command": [str(owned_cleanup.HOST_BUILD_LINKER), "-Wl,-t", "-o", str(output)],
+            "command": [str(owned_cleanup.HOST_BUILD_LINKER), "-fuse-ld=mold", "-Wl,--trace", "-o", str(output)],
             "link_inputs": [{
                 **owned_cleanup.record_file(output, "resolved linker input"),
                 "retained_path": str(retained),
@@ -901,6 +901,13 @@ class OwnedCleanupContract(unittest.TestCase):
         self.host_build_manifest(fixture)
         retained.write_bytes(b"tampered")
         with self.assertRaisesRegex(owned_cleanup.OwnedCleanupError, "retained Cargo host-link input changed"):
+            self.host_build_manifest(fixture)
+
+    def test_host_build_link_rejects_the_obsolete_gcc_trace_command(self):
+        fixture = self.host_build_fixture()
+        fixture["receipt_record"]["command"][1:3] = ["-Wl,-t"]
+        fixture["receipt"].write_text(json.dumps(fixture["receipt_record"]) + "\n")
+        with self.assertRaisesRegex(owned_cleanup.OwnedCleanupError, "linker identity drifted"):
             self.host_build_manifest(fixture)
 
     def test_host_build_link_rejects_target_input_without_retained_copy(self):

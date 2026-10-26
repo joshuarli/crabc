@@ -124,7 +124,7 @@ assert_no_relocation() {
 # entries remain interposable for copy relocations, while its allocator family
 # is an intentional function exception. This non-executing two-object link
 # preserves the prior missing-policy RED and proves the selected scope with
-# the same pinned LLD recorded by the candidate product.
+# the same mold recorded by the candidate product.
 run shared-dynamic-list-source python3 -B - "$SHARED_DYNAMIC_LIST_SOURCE" \
     "$WORK/shared-dynamic-list-source.json" <<'PY'
 import hashlib
@@ -164,8 +164,6 @@ output.write_text(json.dumps({
 }, sort_keys=True) + '\n', encoding='utf-8')
 PY
 
-# Bind the selected source list to the supplied libc artifact rather than
-# merely proving what a fresh ad-hoc LLD invocation would do.
 run shared-dynamic-list-product-provenance python3 -B - \
     "$DYNAMIC_PRODUCT/share/crabc/libc-shared.provenance.json" \
     "$WORK/shared-dynamic-list-source.json" "$WORK/shared-dynamic-list-product-provenance.json" <<'PY'
@@ -203,20 +201,23 @@ output_path.write_text(json.dumps({
 PY
 
 run shared-dynamic-list-linker-path python3 -B - "$DYNAMIC_PRODUCT/share/crabc/producer-tools.json" \
-    "$WORK/shared-dynamic-list-linker.txt" <<'PY'
+    "$WORK/shared-dynamic-list-linker.txt" "$ROOT" <<'PY'
 import json
 from pathlib import Path
 import sys
 
 record = json.loads(Path(sys.argv[1]).read_text(encoding='utf-8'))
 output = Path(sys.argv[2])
-target = record.get('target')
-sysroot = record.get('rustc', {}).get('sysroot')
-if not isinstance(target, str) or not isinstance(sysroot, str):
-    raise SystemExit('candidate producer tools lack target/sysroot')
-linker = Path(sysroot) / 'lib/rustlib' / target / 'bin/gcc-ld/ld.lld'
-if not linker.is_file() or linker.is_symlink():
-    raise SystemExit(f'candidate pinned LLD is not a physical file: {linker}')
+root = Path(sys.argv[3]).resolve()
+sys.path.insert(0, str(root))
+sys.path.insert(0, str(root / 'compat/x86_64'))
+import owned_posix_product_evidence as product_evidence
+
+try:
+    tools = product_evidence.validate_current_native_compiler_tool_records(record)
+except product_evidence.ProductEvidenceError as error:
+    raise SystemExit(f'candidate native producer tools differ: {error}') from error
+linker = Path(tools['linker']['path'])
 output.write_text(str(linker) + '\n', encoding='utf-8')
 PY
 readonly SHARED_LINKER="$(cat "$WORK/shared-dynamic-list-linker.txt")"

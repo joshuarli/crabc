@@ -102,6 +102,7 @@ SELECTION_COMPANIONS = (
     "signal_process_work",
     "bootstrap_primitives_work",
     "binary80_feature_work",
+    "feature_alias_work",
 )
 DIRECTORY_COMPANIONS = {
     "installed_math_work",
@@ -109,6 +110,7 @@ DIRECTORY_COMPANIONS = {
     "signal_process_work",
     "bootstrap_primitives_work",
     "binary80_feature_work",
+    "feature_alias_work",
     "compiler_helper_installed_links", "fchdir_ordinary_import_work", "provider_link_work",
 }
 # The one companion that is checked-in generated source rather than `.work`
@@ -175,7 +177,7 @@ def _tree_sha256(path: Path, *, allow_symlinks: bool = False,
 
 def _companion_sha256(name: str, path: Path, *, dynamic_product: Path | None = None) -> str:
     copied_loader = None
-    if name in {"installed_math_work", "installed_stdio_work", "signal_process_work", "bootstrap_primitives_work"}:
+    if name in {"installed_math_work", "installed_stdio_work", "signal_process_work", "bootstrap_primitives_work", "feature_alias_work"}:
         require(dynamic_product is not None, "component directory requires its selected dynamic product")
         import owned_posix_product_evidence as products
         try:
@@ -558,6 +560,12 @@ def _p(cohort: Cohort) -> list[str]:
 
 
 PRODUCERS = (
+    CompanionProducer(
+        "feature_alias_work",
+        lambda c, r, o: (["python3", "-B", "compat/x86_64/owned_feature_alias_receipt.py", "collect", str(o),
+                          "--static-product", str(c.static_product), "--dynamic-product", str(c.dynamic_product),
+                          "--static-preparation", str(c.static_preparation)], {}),
+        lambda output: output),
     CompanionProducer(
         "installed_math_work",
         lambda c, r, o: (["bash", "compat/x86_64/run_owned_math_fenv_all_entry.sh",

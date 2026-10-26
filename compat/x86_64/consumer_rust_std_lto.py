@@ -60,10 +60,12 @@ for _path in (ROOT, ROOT / "compat/x86_64", ROOT / "unwinder"):
     if str(_path) not in sys.path:
         sys.path.insert(0, str(_path))
 from scripts.rust_toolchain import pinned_toolchain  # noqa: E402
+from scripts import native_build_tools  # noqa: E402
 import build as provider_build  # noqa: E402  (unwinder/build.py)
 import owned_cleanup  # noqa: E402
 import installed_backtrace  # noqa: E402
 import owned_rust_link  # noqa: E402
+import owned_posix_product_evidence as product_evidence  # noqa: E402
 
 SCHEMA = "crabc.x86_64-consumer-rust-std-lto/v1"
 GATE = "consumer.rust-std-lto"
@@ -191,7 +193,8 @@ def run(argv: Sequence[str | Path], *, env: Mapping[str, str], cwd: Path | None 
 def tool_environment() -> dict[str, str]:
     """Minimal environment for pinned tools; no inherited compiler state."""
 
-    environment = {"PATH": "/opt/cargo/bin:/usr/local/bin:/usr/bin:/bin", "LC_ALL": "C",
+    environment = {**native_build_tools.environment(),
+                   "PATH": "/opt/cargo/bin:/usr/local/bin:/usr/bin:/bin", "LC_ALL": "C",
                    "HOME": os.environ.get("HOME", "/root"), "TMPDIR": os.environ.get("TMPDIR", "/tmp")}
     if "RUSTUP_HOME" in os.environ:
         environment["RUSTUP_HOME"] = os.environ["RUSTUP_HOME"]
@@ -207,8 +210,8 @@ def checked_output(argv: Sequence[str | Path], description: str) -> str:
 def toolchain_identity(retained: Retained) -> dict[str, Any]:
     """Bind the pinned compiler, standard-library sources and LTO linker.
 
-    Linker-plugin LTO in these lanes is LLD's builtin LLVM, so the IR producer
-    (rustc) and IR consumer (the pinned ``ld.lld``) must carry one LLVM version.
+    Linker-plugin LTO materialization uses the pinned LLD from the same LLVM
+    release as rustc. Final target links use the image's mold linker.
     """
 
     rustc = ["rustup", "run", CHANNEL, "rustc"]
@@ -227,6 +230,7 @@ def toolchain_identity(retained: Retained) -> dict[str, Any]:
     lld_llvm = re.search(r"LLD (\d+\.\d+\.\d+)", lld_version)
     require(lld_llvm is not None and llvm.group(1).startswith(lld_llvm.group(1)),
             f"linker-plugin LLD {lld_version!r} does not carry rustc LLVM {llvm.group(1)}")
+    compiler_tools = product_evidence.native_compiler_tool_records()
     library = sysroot / "lib/rustlib/src/rust/library"
     return {
         "channel": CHANNEL,
@@ -236,6 +240,7 @@ def toolchain_identity(retained: Retained) -> dict[str, Any]:
         "target_libdir": str(target_libdir),
         "llvm_version": llvm.group(1),
         "lld": {**retained.record(lld), "version": lld_version},
+        "native_compiler_tools": compiler_tools,
         "channel_manifest": retained.record(sysroot / "lib/rustlib/multirust-channel-manifest.toml"),
         "rust_src_manifest": retained.record(sysroot / "lib/rustlib/manifest-rust-src"),
         "rust_std_manifest": retained.record(sysroot / f"lib/rustlib/manifest-rust-std-{TARGET}"),
@@ -449,6 +454,7 @@ def cargo_consumer(
                     if json.loads(path.read_text())["output"]["sha256"] == digest]
         require(len(receipts) == 1, f"{lane.name}: expected one owned link receipt for the executable")
         receipt = json.loads(receipts[0].read_text())
+        _validate_cargo_link_receipt(context, receipt, receipts[0])
         record["link_receipt"] = context.retained.record(receipts[0])
         record["link_facts"] = {
             "mode": receipt["mode"],
@@ -461,6 +467,101 @@ def cargo_consumer(
         }
     record["status"] = "built"
     return record
+
+
+def _validate_cargo_link_receipt(context: Context, receipt: object, path: Path) -> None:
+    expected = {
+        "schema", "format", "target", "mode", "rust_requested_mode", "std_origin", "cargo_profile",
+        "product", "native_requests", "unwind_requests", "provider_archive", "provider_members_extracted",
+        "application_dsos", "omitted_compiler_builtins", "linker_plugin_options", "lto_materialization",
+        "unused_search_paths", "application_inputs", "resolved_linker", "command", "resolved_input_trace",
+        "dynamic", "segments", "output",
+    }
+    require(isinstance(receipt, dict) and set(receipt) == expected,
+            "owned Rust Cargo link receipt fields differ")
+    require(receipt["schema"] == 1 and receipt["format"] == "crabc-owned-rust-cargo-link/v1"
+            and receipt["target"] == TARGET, "owned Rust Cargo link receipt identity differs")
+    try:
+        compiler_tools = product_evidence.validate_native_compiler_tool_records(
+            context.toolchain["native_compiler_tools"]
+        )
+    except product_evidence.ProductEvidenceError as error:
+        raise GateError(f"owned Rust Cargo compiler tools differ: {error}") from error
+    linker_identity = receipt["resolved_linker"]
+    expected_linker = compiler_tools["linker"]
+    require(isinstance(linker_identity, dict)
+            and {key: linker_identity.get(key) for key in ("path", "sha256")} == {
+                key: expected_linker[key] for key in ("path", "sha256")
+            }, "owned Rust Cargo final linker identity differs")
+
+    def input_path(item: object, label: str) -> Path:
+        require(isinstance(item, dict) and isinstance(item.get("path"), str)
+                and isinstance(item.get("sha256"), str), f"owned Rust Cargo {label} identity is malformed")
+        candidate = Path(item["path"])
+        physical = product_evidence._physical_regular(candidate, f"owned Rust Cargo {label}")
+        require(str(physical) == item["path"] and product_evidence._sha256(physical) == item["sha256"],
+                f"owned Rust Cargo {label} identity changed")
+        return physical
+
+    product = receipt["product"]
+    admitted_products = context.products[CONSUMER_PRODUCT]
+    require(isinstance(product, dict) and product.get("root") in {
+        admitted_products["static"]["root"], admitted_products["dynamic"]["root"],
+    }, "owned Rust Cargo product root differs from the admitted cohort")
+    mode = receipt["mode"]
+    requested_mode = receipt["rust_requested_mode"]
+    require((mode, requested_mode) in {("static", "static-pie"), ("dynamic", "pie")},
+            "owned Rust Cargo product and requested modes differ")
+    app_inputs = receipt["application_inputs"]
+    require(isinstance(app_inputs, list) and all(isinstance(item, dict) for item in app_inputs),
+            "owned Rust Cargo application input records are malformed")
+    objects = [input_path(item, "application object") for item in app_inputs if "kind" in item]
+    archives = [input_path(item, "application archive") for item in app_inputs if "members" in item]
+    require(len(objects) + len(archives) == len(app_inputs),
+            "owned Rust Cargo application inputs have an unknown record kind")
+    dsos = [input_path(item, "application DSO") for item in receipt["application_dsos"]]
+    provider_record = receipt["provider_archive"]
+    provider = None if provider_record is None else input_path(provider_record, "unwind provider")
+    output = input_path(receipt["output"], "final output")
+    require(output == Path(str(receipt["output"]["path"])), "owned Rust Cargo output path is malformed")
+    materialization = receipt["lto_materialization"]
+    if materialization is None:
+        final_objects, final_archives = objects, [*archives, *dsos]
+        audited_archives = frozenset(archives)
+    else:
+        require(isinstance(materialization, dict)
+                and set(materialization) == {"resolved_materializer", "command", "resolved_input_trace", "output"},
+                "owned Rust Cargo LTO materialization record is malformed")
+        materializer = input_path(materialization["resolved_materializer"], "LTO materializer")
+        lto_tool = context.toolchain["lld"]
+        require(isinstance(lto_tool, dict) and materialization["resolved_materializer"] == {
+            key: lto_tool[key] for key in ("path", "sha256")
+        }, "owned Rust Cargo LTO materializer identity differs")
+        lowered = input_path(materialization["output"], "LTO output")
+        require(lowered == Path(str(output) + ".lto.o"), "owned Rust Cargo LTO output path differs")
+        materializer_command = owned_rust_link.lto_materialization_command(
+            materializer, objects, archives, lowered, tuple(receipt["linker_plugin_options"])
+        )
+        require(materialization["command"] == list(map(str, materializer_command)),
+                "owned Rust Cargo LTO materialization argv differs")
+        owned_rust_link.validate_trace(
+            materialization["resolved_input_trace"], {*objects, *archives}, frozenset(archives)
+        )
+        final_objects, final_archives = [lowered], list(dsos)
+        audited_archives = frozenset()
+    expected_command = owned_rust_link.link_command(
+        linker=Path(expected_linker["path"]), root=Path(product["root"]), mode=mode, provider=provider,
+        objects=final_objects, archives=final_archives, output=output, export_dynamic=False,
+        rust_mode=requested_mode,
+    )
+    require(receipt["command"] == list(map(str, expected_command)),
+            "owned Rust Cargo final link argv differs")
+    admitted = {*final_objects, *final_archives,
+                *owned_rust_link._product_inputs(Path(product["root"]), mode,
+                                                 static_pie=requested_mode == "static-pie")}
+    if provider is not None:
+        admitted.add(provider)
+    owned_rust_link.validate_trace(receipt["resolved_input_trace"], admitted, audited_archives)
 
 
 def owned_link_conditions(name: str, build: Mapping[str, Any], *, provider: Mapping[str, Any]) -> list[str]:
@@ -1190,6 +1291,10 @@ def validate_receipt(root: Path, path: Path) -> dict[str, Any]:
     require(isinstance(provider, dict) and isinstance(provider.get("archive"), dict)
             and isinstance(toolchain, dict) and isinstance(toolchain.get("rustc_vv"), str),
             "consumer gate receipt lacks provider or compiler identity")
+    try:
+        product_evidence.validate_native_compiler_tool_records(toolchain.get("native_compiler_tools"))
+    except product_evidence.ProductEvidenceError as error:
+        raise GateError(f"consumer gate native compiler tools differ: {error}") from error
     archive = provider["archive"]
     archive_path = path.parent / "provider/libcrabc-unwind.a"
     require(archive.get("path") == str(archive_path), "consumer gate provider archive is outside its build output")

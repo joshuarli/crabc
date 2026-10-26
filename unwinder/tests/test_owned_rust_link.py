@@ -33,6 +33,42 @@ PINNED_CDYLIB_EXPORT_SCRIPT_SHA256 = "5ffdc0a045a216d75978a24d62fee6494ab9d46936
 
 
 class OwnedRustLinkContract(unittest.TestCase):
+    def test_lto_materialization_preserves_rust_inputs_and_plugin_settings(self):
+        command = linker.lto_materialization_command(
+            Path("/pinned/ld.lld"), [Path("/owned/consumer.o")], [Path("/owned/libstd.rlib")],
+            Path("/owned/consumer.lto.o"), ("--plugin-opt=O3", "--plugin-opt=mcpu=x86-64"),
+        )
+        self.assertEqual(command, ["/pinned/ld.lld", "-r", "--lto-O3", "--plugin-opt=O3",
+                                  "--plugin-opt=mcpu=x86-64", "--trace", "/owned/consumer.o",
+                                  "/owned/libstd.rlib", "-o", "/owned/consumer.lto.o"])
+
+    @unittest.skipUnless(Path("/opt/cargo/bin/rustup").is_file() and Path("/usr/bin/mold").is_file(), "requires pinned native image")
+    def test_bitcode_archive_materializes_before_mold_preserving_call_behavior(self):
+        from scripts.rust_toolchain import pinned_toolchain
+        repository = Path(__file__).resolve().parents[2]
+        sysroot = Path("/opt/rustup/toolchains") / f"{pinned_toolchain(repository)}-x86_64-unknown-linux-musl"
+        scratch = repository / ".work/tmp"
+        scratch.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(dir=scratch) as temporary:
+            work = Path(temporary)
+            source = work / "value.rs"
+            source.write_text('#![no_std]\n#[unsafe(no_mangle)] pub extern "C" fn lto_value(value: i32) -> i32 { value + 1 }\n')
+            bitcode = work / "value.o"
+            subprocess.run([*linker.native_build_tools.compile_command(sysroot / "bin/rustc"),
+                            "--crate-type=lib", "--edition=2021", "-Clinker-plugin-lto", "-Copt-level=3",
+                            "-Cpanic=abort", "--emit=obj", str(source), "-o", str(bitcode)], check=True)
+            archive = work / "libvalues.rlib"
+            subprocess.run([str(sysroot / "lib/rustlib" / linker.TARGET / "bin/llvm-ar"), "rcs", str(archive), str(bitcode)], check=True)
+            caller = work / "caller.c"
+            caller.write_text('extern int lto_value(int); __attribute__((noreturn)) void _start(void) { long status = lto_value(6) == 7 ? 0 : 1; __asm__ volatile("syscall" : : "a"(60L), "D"(status) : "rcx", "r11", "memory"); __builtin_unreachable(); }\n')
+            caller_object = work / "caller.o"
+            subprocess.run(["/usr/bin/gcc", "-fno-pie", "-fno-stack-protector", "-ffreestanding", "-c", str(caller), "-o", str(caller_object)], check=True)
+            executable = work / "consumer"
+            lowered, evidence = linker.materialize_lto(sysroot, [caller_object], [archive], executable, ("--plugin-opt=O3",))
+            self.assertEqual(evidence["output"]["sha256"], linker.sha256(lowered))
+            subprocess.run([str(linker.native_build_tools.MOLD), "-static", "--no-dynamic-linker", "-e", "_start", str(lowered), "-o", str(executable)], check=True)
+            self.assertEqual(subprocess.run([str(executable)]).returncode, 0)
+
     def setUp(self):
         WORK.mkdir(parents=True, exist_ok=True)
         self.temporary = tempfile.TemporaryDirectory(dir=WORK)
@@ -654,11 +690,11 @@ class CargoConsumerLinkContract(unittest.TestCase):
         command = linker.link_command(
             linker=Path("/pinned/ld.lld"), root=root, mode="static", provider=provider,
             objects=parsed["objects"], archives=parsed["archives"], output=parsed["output"],
-            export_dynamic=False, rust_mode="static-pie", plugin_options=("--plugin-opt=O3",),
+            export_dynamic=False, rust_mode="static-pie",
         )
         self.assertEqual(command[1:4], ["-static", "-pie", "--no-dynamic-linker"])
         self.assertNotIn("--whole-archive", command)
-        self.assertIn("--plugin-opt=O3", command)
+        self.assertNotIn("--plugin-opt=O3", command)
         order = [command.index(str(path)) for path in (
             library / "rcrt1.o", self.rlibs["unwind"], provider, library / "libc.a",
             library / "libcrabc-builtins.a", library / "crtn.o",

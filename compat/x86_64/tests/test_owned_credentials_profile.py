@@ -21,6 +21,11 @@ class OwnedCredentialsProfileTests(unittest.TestCase):
         clang = shutil.which("clang")
         if clang is None:
             self.skipTest("Clang ThreadSanitizer is unavailable")
+        runtime = Path(subprocess.check_output(
+            [clang, "-print-file-name=libclang_rt.tsan-x86_64.a"], text=True,
+        ).strip())
+        if not runtime.is_file():
+            self.skipTest("Clang ThreadSanitizer runtime is unavailable")
         temporary_root = ROOT / ".work" / "x86_64" / "tmp"
         temporary_root.mkdir(parents=True, exist_ok=True)
         with tempfile.TemporaryDirectory(

@@ -192,7 +192,7 @@ class OwnedUtmpxReceiptTests(unittest.TestCase):
             files = (
                 "bin/crabc-cc-dynamic", "share/crabc/crabc_cc_static.py",
                 "share/crabc/owned_dynamic_receipt.py", "share/crabc/owned_dynamic_elf.py",
-                "share/crabc/dynamic-product-state.json",
+                "share/crabc/dynamic-product-state.json", "share/crabc/producer-tools.json",
                 "lib/ld-crabc-x86_64.so.1", "usr/lib/crt1.o", "usr/lib/Scrt1.o",
                 "usr/lib/crti.o", "usr/lib/crtn.o", "usr/lib/crabc-dynamic-attach.o",
                 "usr/lib/libc.so", "usr/lib/libcrabc-builtins.a",
@@ -212,11 +212,17 @@ class OwnedUtmpxReceiptTests(unittest.TestCase):
             (product / "lib/ld-crabc-x86_64.so.1").chmod(0o755)
             (product / "usr/lib/libc.so").chmod(0o755)
             (product / "lib/ld-musl-x86_64.so.1").symlink_to("ld-crabc-x86_64.so.1")
+        if family == "dynamic":
+            self.write(product / "share/crabc/producer-tools.json", {
+                "schema": 1, **receipt.retained_link_reader.source_native_compiler_tool_records(),
+            })
         payload = {
             relative: receipt.digest(product / relative)
             for relative in files
         }
+        tools = {"schema": 1, **receipt.retained_link_reader.source_native_compiler_tool_records()}
         if family == "static":
+            manifest["producer_tools"] = tools
             manifest["installed"]["files"] = payload
         else:
             manifest["files"] = payload
@@ -452,13 +458,14 @@ class OwnedUtmpxReceiptTests(unittest.TestCase):
         current = receipt.trusted_image_manifest()
         toolchain = receipt.pinned_toolchain(ROOT)
         rustc = f"/opt/rustup/toolchains/{toolchain}-x86_64-unknown-linux-musl/bin/rustc"
-        linker = (f"/opt/rustup/toolchains/{toolchain}-x86_64-unknown-linux-musl/"
-                  "lib/rustlib/x86_64-unknown-linux-musl/bin/gcc-ld/ld.lld")
+        linker = "/usr/bin/mold"
         self.assertEqual(current["schema"], "crabc.x86_64-owned-utmpx-image-inputs/v2")
         self.assertNotIn("image", current)
         self.assertIn(rustc, current["files"])
         self.assertIn(linker, current["files"])
-        self.assertEqual(set(receipt.IMAGE_FIXED_PATHS[-2:]), {rustc, linker})
+        self.assertEqual(set(receipt.IMAGE_FIXED_PATHS[-4:]), {
+            rustc, linker, "/usr/local/bin/kache", "/usr/local/bin/crabc-x86_64-mold-gcc",
+        })
 
     def test_retained_manifest_cannot_reauthorize_changed_tool_bytes(self) -> None:
         manifest = receipt.trusted_image_manifest()

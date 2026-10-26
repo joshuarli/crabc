@@ -37,14 +37,32 @@ ROSTER = load_module("feature_archive_roster_provider_audit_test", ROSTER_PATH)
 AUDIT = load_module("header_callable_provider_linkage_audit_test", AUDIT_PATH)
 
 
+class SymbolTableSelectionTests(unittest.TestCase):
+    def test_regular_table_selection_keeps_duplicates_and_default_keeps_both_tables(self):
+        authority = sys.modules[AUDIT.global_symbol_details.__module__]
+        row = " 1: 0000000000000010 4 FUNC GLOBAL DEFAULT 1 owner\n"
+        raw = ("Symbol table '.dynsym' contains 2 entries:\n" + row +
+               "Symbol table '.symtab' contains 3 entries:\n" + row + row + "malformed row\n")
+        result = subprocess.CompletedProcess([], 0, raw, "")
+        with patch.object(authority.shutil, "which", return_value="/image/readelf"), \
+                patch.object(authority.subprocess, "run", return_value=result) as execute:
+            self.assertEqual(len(AUDIT.global_symbol_details(Path("image"), "readelf")["owner"]), 3)
+            self.assertEqual(len(AUDIT.global_symbol_details(Path("image"), "readelf", symbol_table=".symtab")["owner"]), 2)
+            self.assertEqual(len(AUDIT.global_symbol_details(Path("image"), "readelf", symbol_table=".dynsym")["owner"]), 1)
+            with self.assertRaisesRegex(authority.LinkageAuditError, "unsupported symbol table"):
+                AUDIT.global_symbol_details(Path("image"), "readelf", symbol_table=".strtab")
+            self.assertEqual(execute.call_count, 3)
+
+
 class SuppliedPlannedProfileTests(unittest.TestCase):
     @unittest.skipUnless(all(shutil.which(t) for t in ("cc", "clang", "ar", "readelf")), "requires native compiler tools")
     def test_binding_receipt_rejects_crossed_source_and_changed_raw_application(self):
+        import core_image
         import header_callable_inventory as inventory_module
         import owned_posix_product_evidence as product_evidence
         import owned_posix_static_products as products
         anchor = json.loads((ROOT / "compat/x86_64/owned_resolver_network_image_inputs.json").read_text())
-        linker = next(p for p in anchor["files"] if p.endswith("/gcc-ld/ld.lld"))
+        linker = next(p for p in anchor["files"] if p == "/usr/bin/mold")
         if not Path(linker).is_file():
             self.skipTest("requires the pinned native image linker")
         work = ROOT / ".work/x86_64/planned-provider-tests"
@@ -74,7 +92,7 @@ class SuppliedPlannedProfileTests(unittest.TestCase):
                 "import sys, subprocess, json\nfrom pathlib import Path\nargs=sys.argv[1:]\n" +
                 "if '-c' in args: raise SystemExit(subprocess.run(['cc',*args]).returncode)\n" +
                 "i=args.index('--link-receipt'); receipt=Path(args[i+1]); del args[i:i+2]\n" +
-                f"status=subprocess.run([{linker!r},'-static','-e','_start',*args,{str(archive)!r}]).returncode\n" +
+                f"status=subprocess.run([{linker!r},'-static','-E','-e','_start',*args,{str(archive)!r}]).returncode\n" +
                 "record={'resolved_linker': " + repr({"path": linker, "sha256": anchor["files"][linker]["sha256"]}) + ", 'map': {'path': str(receipt.with_suffix('.map'))}, 'trace': {'path': str(receipt.with_suffix('.trace'))}}\nreceipt.write_text(json.dumps(record))\n" +
                 "receipt.with_suffix('.map').write_text('fixture map\\n'); receipt.with_suffix('.trace').write_text('fixture trace\\n')\n" +
                 "raise SystemExit(status)\n")
@@ -98,7 +116,7 @@ class SuppliedPlannedProfileTests(unittest.TestCase):
             old_cwd = Path.cwd()
             try:
                 os.chdir(root)
-                with patch.dict(os.environ, {"CRABC_X86_HEADER_DECLARATION_IMAGE_ID": "crabc-core-evidence@" + anchor["image"]}), \
+                with patch.dict(os.environ, {"CRABC_X86_HEADER_DECLARATION_IMAGE_ID": core_image.CORE_IMAGE_REFERENCE}), \
                      patch.object(AUDIT, "ROOT", root), patch.object(AUDIT, "INVENTORY_PATH", inventory_path), \
                      patch.object(AUDIT, "load_feature_archive_roster", return_value=(profile,)), \
                      patch.object(inventory_module, "load_contract", return_value=None), \
@@ -259,7 +277,7 @@ class PlannedDeclarationCompilerTests(unittest.TestCase):
     @unittest.skipUnless(all(shutil.which(t) for t in ("cc", "ar", "readelf")), "requires native ELF tools")
     def test_hidden_archive_alias_target_keeps_its_local_hidden_final_binding(self):
         anchor = json.loads((ROOT / "compat/x86_64/owned_resolver_network_image_inputs.json").read_text())
-        linker = next(p for p in anchor["files"] if p.endswith("/gcc-ld/ld.lld"))
+        linker = next(p for p in anchor["files"] if p == "/usr/bin/mold")
         if not Path(linker).is_file():
             self.skipTest("requires pinned image linker")
         work = ROOT / ".work/x86_64/planned-provider-tests"
@@ -278,13 +296,14 @@ class PlannedDeclarationCompilerTests(unittest.TestCase):
             subprocess.run(["cc", "-c", str(caller), "-o", str(obj)], check=True)
             alias = ROSTER.ArchiveAlias(name="alias_name", target="target", binding="weak-same-address")
             executable = root / "hidden"
-            subprocess.run([linker, "-static", "-e", "_start", str(obj), str(hidden), "-o", str(executable)], check=True)
+            subprocess.run([linker, "-static", "-e", "_start", "-E", str(obj), str(hidden), "-o", str(executable)], check=True)
             result = AUDIT.planned_binding_definitions(hidden, executable, ("alias_name",), (alias,))
             self.assertEqual(result["alias_name"]["target_binding"], "LOCAL")
+            self.assertEqual(result["alias_name"]["archive_target_visibility"], "HIDDEN")
             self.assertEqual(result["alias_name"]["target_visibility"], "HIDDEN")
             self.assertEqual(subprocess.run([str(executable)]).returncode, 0)
             crossed = root / "crossed"
-            subprocess.run([linker, "-static", "-e", "_start", str(obj), str(public), "-o", str(crossed)], check=True)
+            subprocess.run([linker, "-static", "-e", "_start", "-E", str(obj), str(public), "-o", str(crossed)], check=True)
             with self.assertRaises(AUDIT.ProviderLinkageAuditError):
                 AUDIT.planned_binding_definitions(hidden, crossed, ("alias_name",), (alias,))
 
@@ -879,6 +898,7 @@ class HeaderCallableProviderLinkageAuditTests(unittest.TestCase):
                 mock_python = mock_bin / "python3"
                 mock_python.write_text(
                     "#!/bin/bash\n"
+                    "if [ \"${3:-}\" = environment ]; then printf '%s\\0' KACHE_LOCAL_ONLY 1; exit 0; fi\n"
                     "printf 'roster\\n' >>\"$CAPTURE\"\n"
                     "cat >/dev/null\n"
                     "printf '%s\\t%s\\n' x86-alpha ''\n"
@@ -897,6 +917,7 @@ class HeaderCallableProviderLinkageAuditTests(unittest.TestCase):
                 )
                 mock_python.chmod(0o755)
                 mock_bash.chmod(0o755)
+                shutil.copyfile(ROOT / "compat/x86_64/native_build_environment.sh", root / "native_build_environment.sh")
                 harness = root / f"{label}.sh"
                 harness.write_text(
                     prelude

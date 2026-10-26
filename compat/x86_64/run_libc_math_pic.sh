@@ -11,14 +11,14 @@ set -euo pipefail
 
 readonly ROOT_DIR="$(cd -P "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 readonly ORACLE_CC=/usr/local/bin/crabc-x86_64-musl-gcc
-readonly PINNED_TOOLCHAIN="$(python3 "$ROOT_DIR/scripts/rust_toolchain.py")"
+readonly MOLD="$(python3 -B "$ROOT_DIR/compat/x86_64/native_rustc.py" mold)"
 
 fail() { printf 'ERROR: x86 generated math PIC closure: %s\n' "$*" >&2; exit 1; }
 require_tool() { command -v "$1" >/dev/null 2>&1 || fail "requires $1"; }
 
 [ "$(uname -s)" = Linux ] || fail "requires native Linux"
 case "$(uname -m)" in x86_64|amd64) ;; *) fail "requires native x86-64" ;; esac
-for tool in grep mkdir mktemp readelf rustup wc; do require_tool "$tool"; done
+for tool in grep mkdir mktemp readelf wc; do require_tool "$tool"; done
 [ -x "$ORACLE_CC" ] || fail "missing pinned musl oracle compiler"
 
 readonly WORK_ROOT="${CRABC_WORK_DIR:-$ROOT_DIR/.work/x86_64}"
@@ -60,10 +60,6 @@ trap 'interrupted 143' TERM
 
 bash "$ROOT_DIR/compat/x86_64/run_musl_oracle.sh" >/dev/null
 
-rust_sysroot="$(rustup run "$PINNED_TOOLCHAIN" rustc --print sysroot)"
-readonly LLD="$rust_sysroot/lib/rustlib/x86_64-unknown-linux-musl/bin/gcc-ld/ld.lld"
-[ -x "$LLD" ] || fail "missing pinned target ld.lld: $LLD"
-
 shopt -s nullglob
 assemblies=("$ROOT_DIR"/libc/src/c_abi/x86_64/math_*_musl_x86_64.S)
 [ "${#assemblies[@]}" -gt 0 ] || fail "no generated math closures matched the audit roster"
@@ -84,7 +80,7 @@ for assembly in "${assemblies[@]}"; do
         fail "$name retains an absolute 32-bit object relocation"
     fi
 
-    "$LLD" -shared --hash-style=sysv -soname "$name.so" \
+    "$MOLD" -shared --hash-style=sysv -soname "$name.so" \
         -z text -z relro -z now -z noexecstack -o "$shared" "$object"
     readelf --dynamic --wide "$shared" >"$shared_dynamic"
     readelf --relocs --wide "$shared" >"$shared_relocations"

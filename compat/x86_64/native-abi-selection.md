@@ -696,7 +696,25 @@ a retained runtime map, probe, source snapshot, or raw command output cannot
 change after the initial reader replay. A report with only one component stays
 independently optional and leaves both descriptor requirements unresolved.
 
-The selection report schema is `crabc.x86_64-native-abi-selection-report/v12`.
+The selection report schema is `crabc.x86_64-native-abi-selection-report/v13`.
+Version 12 reports must be regenerated before replay. Version 13 adds the
+optional `feature_alias_work` directory companion and `feature_alias_joins`.
+The owning [feature-alias reader](owned-feature-aliases.md) requires five
+complete owner sections before attaching six existing receipt obligations:
+`__sysv_signal`, `bsd_signal`, `endpwent`, `execvpe`, `mkostemps` and `setnetent`.
+The signal pair has standalone component proof. If validated POSIX admission
+already discharged `__sysv_signal`, its exact earlier source, cohort, ELF and
+semantic join must agree. The feature join keeps both provenances with an empty
+second discharge. A missing requirement for any other alias still fails.
+
+Each join matches the receipt's exact static and shared symbol occurrences to
+complete ELF facts. Archive members, table sections, definition sections,
+addresses, function sizes, bindings and visibility must agree. Shared hidden
+targets may be LOCAL. Undefined caller imports stay in the complete accounting.
+The join removes only `FEATURE_ALIAS_REQUIREMENT`. All six
+`function_alias_requirements`, placement blockers and qualification flags stay
+unchanged. The selector replays the owning reader before sealing its report.
+
 Version 11 reports must be regenerated before replay. Version 12 adds five
 optional directory companions and their exact identity joins:
 

@@ -3,6 +3,8 @@
 set -euo pipefail
 
 readonly ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+. "$(dirname "${BASH_SOURCE[0]}")/native_build_environment.sh"
+mapfile -d '' -t rustc_command < <(python3 -B "$ROOT_DIR/compat/x86_64/native_rustc.py")
 readonly SOURCE="$ROOT_DIR/ldso/src/x86_64_initial_graph_source_root.rs"
 readonly BRIDGE_SOURCE="$ROOT_DIR/libc/src/c_abi/x86_64/fixed_graph_dlfcn_runtime.rs"
 readonly START="$ROOT_DIR/compat/x86_64/ldso_public_dlfcn_start.S"
@@ -100,13 +102,13 @@ trap 'rm -rf -- "$work_dir"' EXIT
 interpreter="$work_dir/ld-crabc-x86_64-bounded-dlopen.so"
 archive="$work_dir/libcrabc-bounded-dlopen.a"
 
-rustc --edition=2021 --crate-type staticlib --cfg crabc_fixed_graph_dlfcn \
+"${rustc_command[@]}" --edition=2021 --crate-type staticlib --cfg crabc_fixed_graph_dlfcn \
     --cfg crabc_bounded_runtime_dlopen -C panic=abort -C relocation-model=pic \
     "$SOURCE" -o "$work_dir/libbounded-dlopen-ldso.a"
 cc -nostdlib -shared -Wl,-e,_start -Wl,-Bsymbolic -Wl,-z,now -Wl,--no-undefined \
     -Wl,--whole-archive "$work_dir/libbounded-dlopen-ldso.a" -Wl,--no-whole-archive \
     -o "$interpreter"
-rustc --edition=2021 --crate-type staticlib --cfg crabc_bounded_runtime_dlopen -C relocation-model=pic \
+"${rustc_command[@]}" --edition=2021 --crate-type staticlib --cfg crabc_bounded_runtime_dlopen -C relocation-model=pic \
     -C code-model=small -C panic=abort "$BRIDGE_SOURCE" -o "$archive"
 
 cc -fPIC -shared -nostdlib -Wl,--hash-style=sysv -Wl,-z,now -Wl,-z,pack-relative-relocs \

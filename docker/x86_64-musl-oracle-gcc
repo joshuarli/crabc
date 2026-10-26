@@ -5,4 +5,13 @@
 # copied beneath that pinned tree solely for GCC specs compatibility.
 set -eu
 
-exec /usr/bin/gcc -specs /opt/musl-1.2.6/lib/musl-gcc.specs "$@"
+for argument do
+    case "$argument" in
+        -static|-static-pie)
+            set -- -Wl,--no-dynamic-linker "$@"
+            break
+            ;;
+    esac
+done
+
+exec /usr/bin/gcc -fuse-ld=mold -specs /opt/musl-1.2.6/lib/musl-gcc.specs "$@"

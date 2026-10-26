@@ -68,13 +68,10 @@ def required_tool(name: str) -> str:
 
 
 def oracle_compiler() -> list[str]:
-    wrapper = shutil.which("crabc-x86_64-musl-gcc")
-    if wrapper is not None:
-        return [wrapper]
-    compiler = shutil.which("gcc")
-    if compiler is not None and MUSL_SPECS.is_file():
-        return [compiler, "-specs", str(MUSL_SPECS)]
-    raise unittest.SkipTest("pinned musl oracle compiler is unavailable")
+    wrapper = Path("/usr/local/bin/crabc-x86_64-musl-gcc")
+    if not wrapper.is_file() or not os.access(wrapper, os.X_OK):
+        raise RuntimeError("image-owned native musl oracle compiler is unavailable")
+    return [str(wrapper)]
 
 
 def llvm_objdump() -> str:
@@ -144,7 +141,7 @@ def build_candidate_crt(work: Path) -> Path:
     return output
 
 
-def link_controlled_dynamic_pie(output: Path, *, crt: Path, fixture: Path, link_map: Path) -> None:
+def link_controlled_dynamic_pie(output: Path, *, crt: Path, fixture: Path, link_map: Path) -> str:
     linked = run(
         oracle_compiler()
         + [
@@ -153,6 +150,8 @@ def link_controlled_dynamic_pie(output: Path, *, crt: Path, fixture: Path, link_
             "-pie",
             "-Wl,-e,_start",
             "-Wl,-z,defs",
+            "-Wl,--trace",
+            "-Wl,--export-dynamic-symbol=_start",
             f"-Wl,--dynamic-linker,{MUSL_LOADER}",
             f"-Wl,-rpath,{MUSL_LIB}",
             f"-Wl,-Map,{link_map}",
@@ -169,6 +168,7 @@ def link_controlled_dynamic_pie(output: Path, *, crt: Path, fixture: Path, link_
     )
     if linked.returncode != 0:
         raise AssertionError(linked.stderr.decode(errors="replace"))
+    return linked.stdout.decode("utf-8")
 
 
 def elf_layout(path: Path) -> tuple[bytes, tuple[int, int], list[tuple[int, int, int, int, int, int, int, int]]]:
@@ -216,21 +216,11 @@ def dynamic_text(path: Path) -> str:
     return result.stdout.decode(errors="replace")
 
 
-def assert_exact_controlled_inputs(link_map: Path, *, crt: Path, fixture: Path) -> None:
-    text = link_map.read_text(encoding="utf-8", errors="replace")
-    for required in (crt / "Scrt1.o", crt / "crti.o", fixture, crt / "crtn.o", MUSL_LIB / "libc.so"):
-        if str(required) not in text:
-            raise AssertionError(f"controlled link map omitted explicit input {required}")
-    # `-nostdlib -nostartfiles` is only useful if the emitted map rejects the
-    # host CRT/compiler-runtime paths too. The sole runtime input is pinned
-    # musl libc; `Scrt1.o` must be the Rust-produced object, never musl's.
-    loaded_inputs = "\n".join(
-        line[5:] for line in text.splitlines() if line.startswith("LOAD ")
-    )
-    forbidden = ("crtbegin", "crtend", "libgcc", "libstdc++", "libasan", "libclang_rt", str(MUSL_SCRT1))
-    for token in forbidden:
-        if token in loaded_inputs:
-            raise AssertionError(f"controlled dynamic PIE admitted ambient CRT/compiler input {token!r}")
+def assert_exact_controlled_inputs(trace: str, *, crt: Path, fixture: Path) -> None:
+    expected = {str(path) for path in (crt / "Scrt1.o", crt / "crti.o", fixture, crt / "crtn.o", MUSL_LIB / "libc.so")}
+    observed = {line.removeprefix("trace: ") for line in trace.splitlines()}
+    if observed != expected:
+        raise AssertionError(f"controlled dynamic PIE inputs differ: expected={expected!r}, observed={observed!r}")
 
 
 def assert_elf_contract(path: Path) -> None:
@@ -286,14 +276,16 @@ class X86_64DynamicLinkContractTests(unittest.TestCase):
         for required in (MUSL_LOADER, MUSL_LIB / "libc.so", MUSL_SPECS):
             self.assertTrue(required.is_file(), f"missing pinned musl input: {required}")
 
-        with tempfile.TemporaryDirectory() as temporary:
+        scratch = ROOT / ".work/tmp"
+        scratch.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(dir=scratch) as temporary:
             work = Path(temporary)
             crt = build_candidate_crt(work)
             fixture = build_fixture_object(work)
             candidate = work / "controlled-dynamic-pie"
             link_map = work / "controlled-dynamic-pie.map"
-            link_controlled_dynamic_pie(candidate, crt=crt, fixture=fixture, link_map=link_map)
-            assert_exact_controlled_inputs(link_map, crt=crt, fixture=fixture)
+            trace = link_controlled_dynamic_pie(candidate, crt=crt, fixture=fixture, link_map=link_map)
+            assert_exact_controlled_inputs(trace, crt=crt, fixture=fixture)
             assert_elf_contract(candidate)
 
             launched = run([str(candidate)])

@@ -202,7 +202,7 @@ class InstalledDynamicDriverTests(unittest.TestCase):
         self.assertEqual(set(root_receipt), driver.RECEIPT_V2_FIELDS)
         self.assertEqual(root_receipt["application_dsos"], {leaf.name: hashlib.sha256(leaf.read_bytes()).hexdigest()})
         self.assertEqual(root_receipt["link_command"].count(str(leaf)), 1)
-        self.assertEqual(root_receipt["link_trace"].count(str(leaf)), 1)
+        self.assertEqual(root_receipt["link_trace"].count("trace: " + str(leaf)), 1)
         contract = driver.receipt_contract.validate(
             receipt, format=driver.FORMAT, label="native closure receipt",
             fail=self._receipt_value_failure, allow_application_dso_closure=True,
@@ -218,10 +218,10 @@ class InstalledDynamicDriverTests(unittest.TestCase):
             {root_dso.name: [leaf.name, "libc.so"], leaf.name: ["libc.so"]},
         )
         self.assertEqual(receipt["link_command"].count(str(root_dso)), 1)
-        self.assertEqual(receipt["link_trace"].count(str(root_dso)), 1)
+        self.assertEqual(receipt["link_trace"].count("trace: " + str(root_dso)), 1)
         self.assertNotIn("--as-needed", receipt["link_command"])
         self.assertNotIn(str(leaf), receipt["link_command"])
-        self.assertNotIn(str(leaf), receipt["link_trace"])
+        self.assertNotIn("trace: " + str(leaf), receipt["link_trace"])
 
         missing = subprocess.run(
             [*command, "--dynamic-pie", "--application-dso", str(root_dso),

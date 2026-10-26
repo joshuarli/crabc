@@ -8,8 +8,9 @@ lane does not yet own the installed libc/loader/sysroot required by stock Rust
 ``std``. This runner therefore
 proves only the largest executable consumer those artifacts honestly admit:
 the same cross-crate no-std ``crabc-rs`` source is compiled as native O3 input
-and as LLVM linker-plugin input for LLD full LTO, linked through an explicit
-closed input list, inspected, and executed natively.  It cannot promote
+and as LLVM linker-plugin input for LLD full LTO. The full-LTO objects are
+materialized to native code before the explicit closed input list is linked
+with mold, inspected, and executed natively. It cannot promote
 ``consumer.rust-std-lto``.
 """
 
@@ -31,7 +32,11 @@ from typing import Mapping, Sequence
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
+sys.path.insert(0, str(ROOT / "compat/x86_64"))
+from scripts import native_build_tools
 from scripts.rust_toolchain import pinned_toolchain
+import native_rustc
+import owned_posix_product_evidence as product_evidence
 FIXTURE = ROOT / "compat/x86_64/consumer_static_pie_lto_fixture.rs"
 HELPER_SOURCE = ROOT / "compat/x86_64/consumer_static_pie_lto_helper.rs"
 MEMORY_PROBE = ROOT / "compat/x86_64/libc_memory_probe.rs"
@@ -96,9 +101,12 @@ def command_record(
     cwd: Path = ROOT,
     environment: Mapping[str, str] | None = None,
 ) -> dict[str, object]:
+    command = list(command)
+    if command and command[0] == str(native_build_tools.KACHE):
+        product_evidence.validate_native_rustc_command(command)
     try:
         result = subprocess.run(
-            list(command),
+            command,
             cwd=cwd,
             env=dict(environment) if environment is not None else None,
             stdin=subprocess.DEVNULL,
@@ -144,8 +152,12 @@ def require_tool(name: str) -> str:
     return path
 
 
-def rustc_command() -> list[str]:
+def rustc_probe_command() -> list[str]:
     return [require_tool("rustup"), "run", TOOLCHAIN, "rustc"]
+
+
+def rustc_command() -> list[str]:
+    return native_rustc.compile_command()
 
 
 def deterministic_environment(tool_path: Path) -> dict[str, str]:
@@ -158,13 +170,14 @@ def deterministic_environment(tool_path: Path) -> dict[str, str]:
     for name in ("CARGO_HOME", "RUSTUP_HOME"):
         if name in os.environ:
             allowed[name] = os.environ[name]
+    allowed.update(native_build_tools.environment())
     return allowed
 
 
 def pinned_tools(work: Path) -> tuple[dict[str, str], Path]:
     """Resolve LLVM tools from the pinned Rust toolchain, never ambient GCC."""
 
-    sysroot_record = command_record([*rustc_command(), "--print", "sysroot"])
+    sysroot_record = command_record([*rustc_probe_command(), "--print", "sysroot"])
     require_success(sysroot_record, "pinned rustc sysroot discovery")
     stdout = sysroot_record.get("stdout")
     if not isinstance(stdout, Mapping) or not isinstance(stdout.get("preview"), str):
@@ -174,7 +187,7 @@ def pinned_tools(work: Path) -> tuple[dict[str, str], Path]:
     shims = work / "pinned-tools"
     shims.mkdir()
     required = {
-        "linker": rust_tools / "rust-lld",
+        "lto_linker": rust_tools / "rust-lld",
         "nm": rust_tools / "llvm-nm",
         "objdump": rust_tools / "llvm-objdump",
         "ar": rust_tools / "llvm-ar",
@@ -187,7 +200,7 @@ def pinned_tools(work: Path) -> tuple[dict[str, str], Path]:
     # llvm-tools component ships `rust-lld` and no `llvm-readelf`, so expose
     # exact temporary aliases while retaining their resolved provenance.
     aliases = {
-        "ld.lld": required["linker"],
+        "ld.lld": required["lto_linker"],
         "llvm-ar": required["ar"],
         "llvm-nm": required["nm"],
         "llvm-objdump": required["objdump"],
@@ -196,7 +209,8 @@ def pinned_tools(work: Path) -> tuple[dict[str, str], Path]:
     for name, target in aliases.items():
         (shims / name).symlink_to(target)
     return {
-        "linker": str(shims / "ld.lld"),
+        "linker": str(native_build_tools.CARGO_LINKER),
+        "lto_linker": str(shims / "ld.lld"),
         "nm": str(required["nm"]),
         "readelf": str(system_readelf),
         "objdump": str(required["objdump"]),
@@ -597,6 +611,12 @@ def inspect_executable(path: Path, tools: Mapping[str, str]) -> dict[str, object
         [tools["objdump"], "-d", "--demangle", str(path)],
         "disassembly inspection",
     )
+    comment, comment_record = tool_output(
+        [tools["readelf"], "-p", ".comment", str(path)],
+        "linker identity inspection",
+    )
+    if "mold" not in comment.lower():
+        raise EvidenceError(f"consumer output was not linked by mold: {path}")
     combined = "\n".join((header, programs, dynamic, undefined, defined))
     rejected = forbidden_runtime_markers(combined)
     if "Advanced Micro Devices X86-64" not in header or "DYN" not in header:
@@ -623,6 +643,7 @@ def inspect_executable(path: Path, tools: Mapping[str, str]) -> dict[str, object
             "undefined_symbols": undefined_record,
             "defined_symbols": defined_record,
             "disassembly": disassembly_record,
+            "linker_identity": comment_record,
         },
     }
 
@@ -667,30 +688,63 @@ def build_lane(
         memory=memory,
         builtins=builtins,
     )
+    lto_materialization = None
+    materialized_rust_inputs: list[Path] = []
+    final_inputs = inputs
+    if linker_plugin_lto:
+        materialized_rust_inputs = [
+            application,
+            rust_inputs["helper"],
+            rust_inputs["facade"],
+            rust_inputs["core"],
+            rust_inputs["bitflags"],
+            toolchain_core,
+        ]
+        materialized = work / f"{name}-lto-native.o"
+        materialize_command = [
+            tools["lto_linker"], "-r", "--lto-O3",
+            *(str(path) for path in materialized_rust_inputs),
+            "-o", str(materialized),
+        ]
+        lto_materialization = command_record(materialize_command, environment=environment)
+        require_success(lto_materialization, f"{name} LLVM LTO materialization")
+        if b".llvmbc" in materialized.read_bytes():
+            raise EvidenceError(f"{name} LTO materialization retained LLVM bitcode")
+        final_inputs = [
+            crt / "rcrt1.o",
+            crt / "crti.o",
+            materialized,
+            memory,
+            crt / "crtn.o",
+            builtins,
+        ]
     link_command = [
         tools["linker"],
+        "-nostdlib",
+        "-nostartfiles",
         "-pie",
         "-static",
-        "--no-dynamic-linker",
-        "--gc-sections",
-        "--build-id=none",
-        "-z", "noexecstack",
-        "-z", "relro",
-        "-z", "now",
-        "-e", "_start",
-        f"-Map={link_map}",
-        "--trace-symbol=__udivti3",
+        "-Wl,--no-dynamic-linker",
+        "-Wl,--no-undefined",
+        "-Wl,--gc-sections",
+        "-Wl,--build-id=none",
+        "-Wl,-z,noexecstack",
+        "-Wl,-z,relro",
+        "-Wl,-z,now",
+        "-Wl,-e,_start",
+        f"-Wl,-Map={link_map}",
+        "-Wl,--trace-symbol=__udivti3",
     ]
-    if linker_plugin_lto:
-        link_command.append("--lto-O3")
-    link_command.extend((*(str(path) for path in inputs), "-o", str(executable)))
+    link_command.extend((*(str(path) for path in final_inputs), "-o", str(executable)))
     link_record = command_record(link_command, environment=environment)
     require_success(link_record, f"{name} closed final link")
     link_text = command_text(link_record) + link_map.read_text(encoding="utf-8", errors="replace")
     rejected = forbidden_runtime_markers(link_text)
     if rejected:
         raise EvidenceError(f"{name} link selected a forbidden target runtime: {rejected}")
-    if str(builtins) not in command_text(link_record):
+    if str(builtins) not in command_text(link_record) and str(builtins) not in link_map.read_text(
+        encoding="utf-8", errors="replace"
+    ):
         raise EvidenceError(f"{name} link trace does not attribute __udivti3 to the owned archive")
     inspection = inspect_executable(executable, tools)
     executions: list[dict[str, object]] = []
@@ -719,10 +773,15 @@ def build_lane(
             "sha256": sha256(application),
             "byte_length": application.stat().st_size,
         },
+        "lto_materialization": lto_materialization,
         "link": link_record,
         "closed_inputs": [
             {"path": str(path), "sha256": sha256(path), "byte_length": path.stat().st_size}
-            for path in inputs
+            for path in final_inputs
+        ],
+        "lto_inputs": [
+            {"path": str(path), "sha256": sha256(path), "byte_length": path.stat().st_size}
+            for path in materialized_rust_inputs
         ],
         "link_map": {"sha256": sha256(link_map), "byte_length": link_map.stat().st_size},
         "inspection": inspection,
@@ -742,7 +801,7 @@ def run(report_path: Path) -> dict[str, object]:
         raise EvidenceError(
             f"native Linux/x86-64 is required, got {platform.system()}/{platform.machine()}"
         )
-    version = command_record([*rustc_command(), "-Vv"])
+    version = command_record([*rustc_probe_command(), "-Vv"])
     require_success(version, "pinned rustc identity")
     if f"host: {TARGET}" not in command_text(version):
         raise EvidenceError(f"pinned rustc host is not {TARGET}")
@@ -795,6 +854,7 @@ def run(report_path: Path) -> dict[str, object]:
             raise EvidenceError("full-LTO lane did not internalize the cross-crate helper boundary")
         if control.get("sha256") == optimized.get("sha256"):
             raise EvidenceError("control and full-LTO final artifacts are byte-identical")
+        compiler_tools = product_evidence.native_compiler_tool_records()
         report = {
             "schema": "crabc.x86_64-consumer-static-pie-lto/v1",
             "status": "passed",
@@ -825,9 +885,11 @@ def run(report_path: Path) -> dict[str, object]:
                 "public_support": False,
             },
             "sources": {
+                "compat/x86_64/native_rustc.py": sha256(ROOT / "compat/x86_64/native_rustc.py"),
                 "compat/x86_64/consumer_static_pie_lto.py": sha256(
                     ROOT / "compat/x86_64/consumer_static_pie_lto.py"
                 ),
+                "scripts/native_build_tools.py": sha256(ROOT / "scripts/native_build_tools.py"),
                 str(FIXTURE.relative_to(ROOT)): sha256(FIXTURE),
                 str(HELPER_SOURCE.relative_to(ROOT)): sha256(HELPER_SOURCE),
                 "Cargo.lock": sha256(ROOT / "Cargo.lock"),
@@ -838,12 +900,13 @@ def run(report_path: Path) -> dict[str, object]:
                 },
             },
             "rustc": version,
+            "compiler_tools": compiler_tools,
             "tools": {
                 name: {
                     "path": str(Path(tools[name]).resolve()),
                     "sha256": sha256(Path(tools[name]).resolve()),
                 }
-                for name in ("linker", "nm", "readelf", "objdump", "ar")
+                for name in ("linker", "lto_linker", "nm", "readelf", "objdump", "ar")
             },
             "crt": crt_record,
             "builtins": builtins_record,

@@ -7,6 +7,7 @@
 # pthread boundary. Resolver configuration, DNS, sockets, network databases,
 # and the wider resolver-runtime profile remain outside this artifact.
 set -euo pipefail
+. "$(dirname "${BASH_SOURCE[0]}")/native_build_environment.sh"
 . "$(dirname "${BASH_SOURCE[0]}")/source_runtime_libc.sh"
 export LC_ALL=C
 

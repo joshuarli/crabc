@@ -18,6 +18,11 @@ import tomllib
 
 
 ROOT = Path(__file__).resolve().parent
+COMPAT = ROOT.parent / 'compat/x86_64'
+if str(COMPAT) not in sys.path:
+    sys.path.insert(0, str(COMPAT))
+import native_rustc
+
 TARGET = 'x86_64-unknown-linux-musl'
 EXPECTED_OUTPUT = 'unwind: backtrace cleanup payload main thread\n'
 EXECUTED_UNWIND_ABI = {
@@ -102,7 +107,7 @@ def main() -> None:
     )
     run_logged(
         [
-            'rustup', 'run', channel, 'rustc', '--edition=2024', '--target', TARGET,
+            *native_rustc.compile_command(), '--edition=2024', '--target', TARGET,
             '-C', 'panic=unwind', '-C', 'force-unwind-tables=yes',
             '-C', f'linker={ROOT / "cleanup_link.py"}',
             '-C', 'link-arg=-Wl,--eh-frame-hdr',

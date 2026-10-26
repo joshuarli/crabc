@@ -62,8 +62,6 @@ products = "static-and-dynamic"
 reader = "runner"
 capabilities = ["process.globals"]
 
-# The three allocator runners require the fixed Rust mimalloc port
-# (`native-shadow`) in both products and reject any other selected backend.
 [[component]]
 id = "native-allocator-policy"
 command = "owned-native-allocator-policy"

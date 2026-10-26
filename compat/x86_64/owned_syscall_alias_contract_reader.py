@@ -282,10 +282,13 @@ def _validate_retained_cohort(output: Path, inputs: Mapping[str, object], produc
         require(retained.is_file() and retained.read_bytes() == (product_root / relative).read_bytes(), f"retained product input differs: {name}")
     producer_tools = read_json(output / inputs["dynamic_producer_tools"]["retained"]["path"], "retained dynamic producer tools")
     try:
-        linker = Path(producer_tools["rustc"]["sysroot"]) / "lib/rustlib" / producer_tools["target"] / "bin/gcc-ld/ld.lld"
+        linker = producer_tools["linker"]
     except (KeyError, TypeError) as error:
-        raise ReceiptError("retained dynamic producer tools lack selected LLD") from error
-    require(inputs["dynamic_linker"]["original"].get("path") == str(linker), "retained selected LLD path differs")
+        raise ReceiptError("retained dynamic producer tools lack selected mold") from error
+    require(isinstance(linker, dict) and
+            {key: linker.get(key) for key in ("path", "sha256")} ==
+            {key: inputs["dynamic_linker"]["original"].get(key) for key in ("path", "sha256")},
+            "retained selected mold identity differs")
     require(static_manifest == static_root / "share/crabc/manifest.json" and dynamic_manifest == dynamic_root / "share/crabc/manifest.json", "retained manifest paths differ")
 
 def execution_environment(root: Path, temporary: Path) -> dict[str, str]:
@@ -308,7 +311,7 @@ def expected_commands(work: Path, inputs: Mapping[str, object], root: Path) -> d
     commands = {
         "shared-dynamic-list-source": ["python3", "-B", "-", shared, path("shared-dynamic-list-source.json")],
         "shared-dynamic-list-product-provenance": ["python3", "-B", "-", original("dynamic_shared_provenance"), path("shared-dynamic-list-source.json"), path("shared-dynamic-list-product-provenance.json")],
-        "shared-dynamic-list-linker-path": ["python3", "-B", "-", original("dynamic_producer_tools"), path("shared-dynamic-list-linker.txt")],
+        "shared-dynamic-list-linker-path": ["python3", "-B", "-", original("dynamic_producer_tools"), path("shared-dynamic-list-linker.txt"), str(root)],
         "probe-object-seal": ["python3", "-B", "-", str(work), source("owned_syscall_alias_contract_probe.c"), source("owned_syscall_alias_override_probe.c")],
         "probe-object-link-proof": ["python3", "-B", "-", str(work), str(root / "compat/x86_64")],
     }
@@ -452,6 +455,7 @@ def validate_static_link_receipts(output, runner, inputs, command_runner):
             # than accepting an arbitrary parenthesized archive suffix.
             members = {path: dict(authority.archive_members(artifact.read_bytes())) for path, artifact in archives.items()}
             trace = (runner / (stem + ".link.trace")).read_text().splitlines()
+            trace = product_evidence.semantic_link_trace(trace)
             require(trace and len(trace) == len(set(trace)), f"static trace is empty or repeated: {stem}")
             seen = set()
             admitted = dict(direct)
@@ -507,7 +511,7 @@ def validate_dynamic_link_receipts(output, runner, inputs, command_runner):
                     and record["output_path"] == str(command_runner / stem) and record["link_command"] == command,
                     f"dynamic final link input/output differs: {stem}")
             direct = [original(crt), original("crabc-dynamic-attach.o"), original("crti.o"), obj, original("libc.so"), original("crtn.o")]
-            trace = record["link_trace"]
+            trace = product_evidence.semantic_link_trace(record["link_trace"])
             require(type(trace) is list and [line for line in trace if line in direct] == direct
                     and all(line in direct or line.startswith(original("libcrabc-builtins.a") + "(") and line.endswith(")") for line in trace),
                     f"dynamic final link trace differs: {stem}")
@@ -711,7 +715,7 @@ def validate_runner_work(
     command = list_product.get("libc_shared_link_command")
     expected_flag = "--dynamic-list=$SOURCE/libc/src/c_abi/x86_64/owned_dynamic.list"
     require(isinstance(command, list) and all(isinstance(value, str) for value in command) and command.count(expected_flag) == 1 and not any(value in {"-Bsymbolic", "-Bsymbolic-functions"} for value in command), "dynamic-list final link command differs")
-    require((runner / "shared-dynamic-list-linker.txt").read_text(encoding="utf-8") == inputs["dynamic_linker"]["original"]["path"] + "\n", "dynamic-list selected LLD differs")
+    require((runner / "shared-dynamic-list-linker.txt").read_text(encoding="utf-8") == inputs["dynamic_linker"]["original"]["path"] + "\n", "dynamic-list selected mold differs")
     no_policy = (runner / "shared-dynamic-list-no-policy.relocations.txt").read_text(encoding="utf-8")
     selected = (runner / "shared-dynamic-list-selected.relocations.txt").read_text(encoding="utf-8")
     dynsym = (runner / "shared-dynamic-list-selected.dynsym.txt").read_text(encoding="utf-8")
@@ -743,9 +747,9 @@ def collect_report(*, root: Path, output: Path, static_preparation: Path, static
     }
     producer_tools = read_json(product_inputs["dynamic_producer_tools"], "dynamic producer tools")
     try:
-        linker = Path(producer_tools["rustc"]["sysroot"]) / "lib/rustlib" / producer_tools["target"] / "bin/gcc-ld/ld.lld"
+        linker = Path(producer_tools["linker"]["path"])
     except (KeyError, TypeError) as error:
-        raise ReceiptError("dynamic producer tools lack selected LLD") from error
+        raise ReceiptError("dynamic producer tools lack selected mold") from error
     inputs = {"static_preparation": copy_file(output, static_preparation, "inputs/static-preparation.json"), "elf_facts": copy_file(output, elf_facts, "inputs/full-elf-facts.json"), "base_inventory": copy_file(output, base_inventory, "inputs/base-inventory.json"), "selected_dynamic_list": copy_file(output, root / "libc/src/c_abi/x86_64/owned_dynamic.list", "inputs/selected-dynamic-list"), **{name: copy_file(output, path, f"inputs/products/{name}") for name, path in product_inputs.items()}, "dynamic_linker": copy_file(output, linker, "inputs/tools/dynamic-linker"), **{name: copy_file(output, path, f"inputs/oracle/{name}") for name, path in IMAGE_TOOL_PATHS.items()}}
     image_manifest = read_json(IMAGE_MANIFEST, "trusted image input manifest")
     require(same(authority.image_input_manifest(), image_manifest), "live tools are not the pinned image inputs")
@@ -836,7 +840,7 @@ def _validate_report(report_path: Path) -> dict[str, object]:
         require(same(identity(output / retained["path"], output), retained) and original.get("sha256") == retained.get("sha256") and same(original.get("size"), retained.get("size")) and same(original.get("mode"), retained.get("mode")) and Path(str(original.get("path", ""))).is_absolute(), f"retained input changed: {name}")
     for name, path in IMAGE_TOOL_PATHS.items():
         require(same(inputs[name]["original"], image_manifest["files"][str(path)]), f"pinned image input path differs: {name}")
-    require(same(inputs["dynamic_linker"]["original"], image_manifest["files"].get(inputs["dynamic_linker"]["original"]["path"])), "selected LLD is not the pinned image input")
+    require(same(inputs["dynamic_linker"]["original"], image_manifest["files"].get(inputs["dynamic_linker"]["original"]["path"])), "selected mold is not the pinned image input")
     products = report.get("products", {})
     static_original = Path(products["static"]["original"])
     dynamic_original = Path(products["dynamic"]["original"])

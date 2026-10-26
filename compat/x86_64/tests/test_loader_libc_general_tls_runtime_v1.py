@@ -193,7 +193,6 @@ class GeneralLoaderLibcTlsRuntimeV1Tests(unittest.TestCase):
             "build_cargo_loader",
             "x86_64-general-initial-tls-runtime-v1-interpreter",
             "general-runtime-v1-state-tests",
-            "rustc --edition=2021 --test",
             "for malformed in magic version abi_size mode owner generation",
             "poisoned-dtv",
             "SHT_SYMTAB",

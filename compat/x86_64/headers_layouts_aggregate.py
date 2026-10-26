@@ -27,8 +27,10 @@ from typing import Any
 
 ROOT = Path(__file__).resolve().parents[2]
 MODULE_DIR = Path(__file__).resolve().parent
-if str(MODULE_DIR) not in sys.path:
-    sys.path.insert(0, str(MODULE_DIR))
+for _path in (ROOT, MODULE_DIR):
+    if str(_path) not in sys.path:
+        sys.path.insert(0, str(_path))
+from scripts import native_build_tools
 FOUNDATION_PATH = ROOT / "compat" / "x86_64" / "headers-layouts-foundation.toml"
 DIRECT_MANIFEST_PATH = ROOT / "compat" / "x86_64" / "headers-layouts.toml"
 PARITY_PATH = ROOT / "compat" / "x86_64" / "parity.toml"
@@ -1745,8 +1747,7 @@ def supplied_header_product_inputs(
 
 def pair_linker_identity() -> dict[str, Any]:
     """Seal the native linker independently of each application link receipt."""
-    sysroot = Path(subprocess.check_output(["rustc", "--print", "sysroot"], text=True).strip())
-    path = sysroot / "lib/rustlib/x86_64-unknown-linux-musl/bin/gcc-ld/ld.lld"
+    path = native_build_tools.MOLD
     require(path.is_file(), "native header pair linker is absent")
     return {"linker": {"path": str(path), "sha256": hashlib.sha256(path.read_bytes()).hexdigest()}}
 

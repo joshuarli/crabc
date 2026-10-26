@@ -162,8 +162,14 @@ def _oracle(root: Path, work: Path, value: object) -> None:
     archive_record = value["archive"]
     require(isinstance(archive_record, dict) and set(archive_record) == {"path", "sha256", "byte_length", "mode"},
             "protocol receipt musl archive identity differs")
-    require(archive_record["path"] == str(producer.PINNED_MUSL_ARCHIVE)
-            and archive_record["sha256"] == producer.PINNED_MUSL_ARCHIVE_SHA256,
+    require(archive_record["path"] == str(producer.PINNED_MUSL_ARCHIVE),
+            "protocol receipt does not select the source-built musl 1.2.6 archive")
+    try:
+        expected = producer.pinned_musl_archive_identity(root)
+    except producer.ProtocolDatabaseError as error:
+        raise ReceiptError(str(error)) from error
+    require(archive_record == {"path": expected["path"], "sha256": expected["sha256"],
+                               "byte_length": expected["size"], "mode": expected["mode"]},
             "protocol receipt does not select the source-built musl 1.2.6 archive")
     archive = physical(producer.PINNED_MUSL_ARCHIVE, "source-built musl 1.2.6 archive")
     observed_archive = {"path": str(archive), "sha256": sha256(archive.read_bytes()).hexdigest(),

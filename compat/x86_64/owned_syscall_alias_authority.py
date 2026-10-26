@@ -10,11 +10,17 @@ from pathlib import Path
 import re
 import stat
 import subprocess
+import sys
 import tomllib
 import zlib
 
 from loader_debug_abi_evidence import Elf
 import core_image
+
+ROOT = Path(__file__).resolve().parents[2]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+from scripts import native_build_tools
 
 
 class AuthorityError(ValueError):
@@ -375,7 +381,7 @@ _TOOLCHAIN = tomllib.loads((Path(__file__).resolve().parents[2] / 'rust-toolchai
 IMAGE_FIXED_PATHS = (
     *_IMAGE_FIXED_PREFIXES,
     f'/opt/rustup/toolchains/{_TOOLCHAIN}-x86_64-unknown-linux-musl/bin/rustc',
-    f'/opt/rustup/toolchains/{_TOOLCHAIN}-x86_64-unknown-linux-musl/lib/rustlib/x86_64-unknown-linux-musl/bin/gcc-ld/ld.lld',
+    str(native_build_tools.KACHE), str(native_build_tools.MOLD), str(native_build_tools.CARGO_LINKER),
 )
 IMAGE_PATH = '/opt/cargo/bin:/opt/musl-1.2.6/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin'
 

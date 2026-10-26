@@ -63,7 +63,7 @@ import loader_structural_owner_contract_reader as loader_structural_owner_eviden
 import owned_bsd_random_receipt as bsd_random_evidence
 import runtime_private_facades as runtime_facades
 
-SCHEMA = 'crabc.x86_64-native-abi-selection-report/v12'
+SCHEMA = 'crabc.x86_64-native-abi-selection-report/v13'
 CONTRACT_SCHEMA = 'crabc.x86_64-native-abi-selection/v3'
 TARGET = inventory.TARGET
 CONTRACT_PATH = MODULE_DIR / 'native-abi-selection.toml'
@@ -1224,19 +1224,16 @@ def headers_layouts_product_pair_adapter(
     require(same(tools, receipt['tools_after']), 'header product pair linker changed during collection')
     linker = exact(tools['linker'], {'path', 'sha256'}, 'header product pair linker')
     require(type(linker['path']) is str and Path(linker['path']).is_absolute()
-            and Path(linker['path']).name == 'ld.lld'
+            and linker['path'] == str(product_evidence.native_build_tools.MOLD)
             and type(linker['sha256']) is str and re.fullmatch('[0-9a-f]{64}', linker['sha256']) is not None,
             'header product pair linker identity differs')
-    # This source-qualified image pin supplies an external tool identity. A
-    # matching before/after roster and matching application receipts alone
-    # could all contain the same invented linker digest.
     anchor_path = ROOT / 'compat/x86_64/owned_resolver_network_image_inputs.json'
     anchor_identity = selecting_source_file_identity(anchor_path)
     anchor = read_json(anchor_path)
     require(anchor.get('schema') == 'crabc.x86_64-owned-resolver-network-image-inputs/v1'
             and type(anchor.get('files')) is dict,
             'header product pair pinned linker image anchor differs')
-    linker_pins = [record for path, record in anchor['files'].items() if Path(path).name == 'ld.lld']
+    linker_pins = [record for path, record in anchor['files'].items() if path == str(product_evidence.native_build_tools.MOLD)]
     require(len(linker_pins) == 1 and type(linker_pins[0]) is dict
             and same(linker, {key: linker_pins[0].get(key) for key in ('path', 'sha256')}),
             'header product pair pinned linker identity differs')
@@ -2426,6 +2423,9 @@ def load_source_inputs(contract: Mapping[str, Any], contract_path: Path) -> dict
         'compat/x86_64/tests/test_native_abi_process_private_roles.py',
         'compat/x86_64/tests/test_native_abi_component_attachments.py',
         'compat/x86_64/owned_math_fenv_all_entry_receipt.py',
+        'compat/x86_64/owned_feature_alias_receipt.py',
+        'compat/x86_64/owned_feature_alias_override_probe.c',
+        'compat/x86_64/tests/test_owned_feature_alias_receipt.py',
         'compat/x86_64/owned_stdio_component_receipt.py',
         'compat/x86_64/owned_signal_process_evidence.py',
         'compat/x86_64/owned_posix_native_observations.py',
@@ -14705,6 +14705,134 @@ def attach_binary80_feature(accounting: Mapping[str, Any], companion: Mapping[st
              'requirements_discharged': [FEATURE_ALIAS_REQUIREMENT]}]
 
 
+def feature_alias_adapter(work: Path | None, *, paths: Mapping[str, Path]) -> dict[str, Any] | None:
+    if work is None:
+        return None
+    import owned_feature_alias_receipt as reader
+    work = physical_work_path(work, directory=True, own=True)
+    try:
+        result = reader.validate_report(work / 'report.json', static_product=paths['static_product'],
+                                        dynamic_product=paths['dynamic_product'], static_preparation=paths['static_preparation'])
+    except (OSError, RuntimeError, ValueError, KeyError, TypeError) as error:
+        raise SelectionError(f'feature alias component rejected: {error}') from error
+    require(set(result['owners']) == set(reader.ALIASES) and all(result[name] is False for name in reader.FLAGS),
+            'feature alias component owner roster or qualification flags differ')
+    return {'report': file_identity(work / 'report.json'), 'owners': result['owners'],
+            'source_products': result['source_products_before']}
+
+
+def _feature_alias_prior_posix(accounting: Mapping[str, Any], companion: Mapping[str, Any],
+                               posix_companion: Mapping[str, Any] | None,
+                               posix_joins: Sequence[Mapping[str, Any]], paths: Mapping[str, Path] | None,
+                               matched: Mapping[str, Any]) -> dict[str, Any]:
+    require(posix_companion is not None and paths is not None and len(posix_joins) == 1,
+            'missing __sysv_signal requirement lacks a validated prior POSIX join')
+    evidence = _posix_sysv_signal_evidence(posix_companion, paths=paths)
+    prior = exact(posix_joins[0], {
+        'identity', 'target', 'static_alias_occurrence_index', 'shared_alias_occurrence_index',
+        'static_target_occurrence_index', 'shared_target_occurrence_index', 'static_placement_metadata',
+        'shared_placement_metadata', 'signal_helper_static_cells', 'signal_helper_dynamic_cells',
+        'feature_archive_receipt_proven', 'runtime_semantics_proven', 'requirements_discharged', 'limits',
+    }, 'prior POSIX __sysv_signal join')
+    require(same(evidence['source'], companion['source_products'].get('source'))
+            and same(prior['identity'], identity('__sysv_signal')) and same(prior['target'], identity('signal'))
+            and prior['feature_archive_receipt_proven'] is True and prior['runtime_semantics_proven'] is True
+            and prior['requirements_discharged'] == [FEATURE_ALIAS_REQUIREMENT]
+            and prior['limits'] == POSIX_SYSV_SIGNAL_LIMITS
+            and same(prior['signal_helper_static_cells'], evidence['static']['cells'])
+            and same(prior['signal_helper_dynamic_cells'], evidence['dynamic']['cells']),
+            'prior POSIX __sysv_signal provenance differs')
+    records, placements, occurrences = _accounting_indexes(accounting, description='prior POSIX alias proof')
+    record = records[('__sysv_signal', None, False)]
+    require(record['selection'].get('owner') == POSIX_SYSV_SIGNAL_OWNER
+            and record['selection'].get('group') == POSIX_SYSV_SIGNAL_GROUP,
+            'prior POSIX __sysv_signal selected owner differs')
+    for product, artifact, table in (('static', 'candidate-static', '.symtab'),
+                                      ('shared', 'candidate-shared', '.dynsym')):
+        placement, alias = _selected_placement(placements, occurrences, name='__sysv_signal', artifact_key=artifact,
+            table=table, role='definition', metadata={'type': 'FUNC', 'binding': 'WEAK', 'visibility': 'DEFAULT'},
+            description='prior POSIX __sysv_signal alias')
+        target_index = prior[product + '_target_occurrence_index']
+        require(alias['index'] == prior[product + '_alias_occurrence_index']
+                and same(placement['expected_metadata'], prior[product + '_placement_metadata'])
+                and target_index in occurrences, 'prior POSIX alias occurrence differs')
+        target = occurrences[target_index]
+        require(target['artifact_key'] == artifact and target['table'] == table and target.get('role') == 'definition'
+                and same(row_identity(target['row']), identity('signal'))
+                and target['row']['type'] == 'FUNC' and target['row']['binding'] == 'GLOBAL'
+                and target['row']['visibility'] == 'DEFAULT'
+                and same_definition_domain(alias, target)
+                and same_definition_domain(alias, occurrences[matched[artifact]['alias']])
+                and same_definition_domain(target, occurrences[matched[artifact]['provider']]),
+                'prior POSIX alias definition domain differs')
+    observations = [row for row in accounting.get('function_alias_observations', [])
+                    if same(row.get('identity'), identity('__sysv_signal'))]
+    require(len(observations) == 1 and observations[0].get('feature_archive_receipt_proven') is True
+            and observations[0].get('runtime_semantics_proven') is True
+            and same(observations[0].get('feature_contract'), record['function_alias_requirements'][0])
+            and same(observations[0].get('target'), identity('signal'))
+            and observations[0].get('artifact_key') == 'candidate-static'
+            and observations[0].get('same_domain_pairs') == [[prior['static_alias_occurrence_index'],
+                                                          prior['static_target_occurrence_index']]],
+            'prior POSIX alias semantic observation differs')
+    return {'report': copy.deepcopy(posix_companion['report']), 'join': copy.deepcopy(prior)}
+
+
+def attach_feature_alias_receipt(accounting: Mapping[str, Any], companion: Mapping[str, Any] | None, *,
+                                 posix_companion: Mapping[str, Any] | None = None,
+                                 posix_joins: Sequence[Mapping[str, Any]] = (),
+                                 paths: Mapping[str, Path] | None = None) -> list[dict[str, Any]]:
+    if companion is None:
+        return []
+    import owned_feature_alias_receipt as reader
+    records, _placements, occurrences = _accounting_indexes(accounting, description='feature alias component')
+    requirements = reader.alias_requirements()
+    require(same(companion['source_products']['feature_alias_requirements'], requirements),
+            'feature alias source requirements changed')
+    require(set(companion['owners']) == set(reader.ALIASES), 'feature alias owner roster differs')
+    joins = []
+    for owner, pairs in reader.ALIASES.items():
+        proof = companion['owners'][owner]
+        require(proof['feature_owner'] == reader.FEATURES[owner]
+                and same(proof['owner_source'], file_identity(ROOT / reader.OWNER_SOURCES[owner]) | {
+                    'path': reader.OWNER_SOURCES[owner]}), 'feature alias source owner differs: ' + owner)
+        require(set(proof['aliases']) == {'static', 'shared'}, 'feature alias installed artifact roster differs')
+        for public, target in pairs:
+            record = records.get((public, None, False))
+            require(record is not None and record['selection']['disposition'] == 'public-provider'
+                    and same(record.get('function_alias_requirements'), [requirements[public]]),
+                    'selected feature alias requirement differs: ' + public)
+            matched = {}
+            for product, artifact in (('static', 'candidate-static'), ('shared', 'candidate-shared')):
+                proofs = [row for row in proof['aliases'][product] if row['public'] == public]
+                require(len(proofs) == 1 and proofs[0]['target'] == target, 'feature alias receipt pair differs: ' + public)
+                selected = {}
+                for role, name in (('alias', public), ('provider', target)):
+                    rows = [row for row in occurrences.values() if row['artifact_key'] == artifact
+                            and row['table'] == '.symtab' and row['row']['name'] == name
+                            and row['row']['section_index'] != 'UND']
+                    require(len(rows) == 1, 'feature alias full-facts definition is absent or ambiguous: ' + name)
+                    row = rows[0]
+                    projected = {'member_index': row['member_index'], 'member': row['member_name'],
+                                 'table_section_index': row['table_section_index'], 'row': row['row'],
+                                 'section': row['definition_section']}
+                    require(same(projected, proofs[0][role]), 'feature alias receipt does not match exact ELF occurrence: ' + name)
+                    selected[role] = row
+                require(same_definition_domain(selected['alias'], selected['provider']),
+                        'feature alias selected definitions cross a placement domain: ' + public)
+                matched[artifact] = {role: row['index'] for role, row in selected.items()}
+            prior = None
+            if public == '__sysv_signal' and FEATURE_ALIAS_REQUIREMENT not in record['unresolved']:
+                prior = _feature_alias_prior_posix(accounting, companion, posix_companion, posix_joins, paths, matched)
+            else:
+                _remove_identity_requirements(accounting, record, (FEATURE_ALIAS_REQUIREMENT,), description='feature alias ' + public)
+            joins.append({'identity': copy.deepcopy(record['identity']), 'target': identity(target), 'owner': owner,
+                          'report': copy.deepcopy(companion['report']), 'occurrence_indices': matched,
+                          'requirements_discharged': [] if prior is not None else [FEATURE_ALIAS_REQUIREMENT],
+                          **({'prior_posix_admission': prior} if prior is not None else {})})
+    return joins
+
+
 def _admit(rejected: dict[str, str], keyword: str, adapter: Any) -> Any:
     """Run one companion adapter; a rejection becomes that companion's blocker.
 
@@ -14779,6 +14907,7 @@ def _build_report(*, contract_path: Path, paths: Mapping[str, Path], declaration
                   signal_process_work: Path | None = None,
                   bootstrap_primitives_work: Path | None = None,
                   binary80_feature_work: Path | None = None,
+                  feature_alias_work: Path | None = None,
                   loader_structural_owner_receipt_report: Path | None = None) -> dict[str, Any]:
     if pthread_timed_feature_report is not None:
         require(ordinary_link_report is not None and loader_debug_report is not None,
@@ -14906,6 +15035,8 @@ def _build_report(*, contract_path: Path, paths: Mapping[str, Path], declaration
         lambda: headers_layouts_product_pair_adapter(
             headers_layouts_product_pair_report, paths=paths, source=source_before,
             header_companion=headers_layouts_aggregate_companion))
+    feature_alias_companion = _admit(rejected, 'feature_alias_work', lambda: feature_alias_adapter(
+        feature_alias_work, paths=paths))
     installed_math_companion = _admit(rejected, 'installed_math_work', lambda: installed_math_adapter(
         installed_math_work, paths=paths))
     installed_stdio_companion = _admit(rejected, 'installed_stdio_work', lambda: installed_stdio_adapter(
@@ -15261,6 +15392,11 @@ def _build_report(*, contract_path: Path, paths: Mapping[str, Path], declaration
     bsd_random_receipt_joins, bsd_random_receipt_companion = _attach(
         rejected, 'bsd_random_receipt_report', accounting, bsd_random_receipt_companion,
         lambda: attach_bsd_random_receipt(accounting, bsd_random_receipt_companion))
+    feature_alias_joins, feature_alias_companion = _attach(
+        rejected, 'feature_alias_work', accounting, feature_alias_companion,
+        lambda: attach_feature_alias_receipt(accounting, feature_alias_companion,
+            posix_companion=posix_sysv_signal_admission_companion,
+            posix_joins=posix_sysv_signal_admission_joins, paths=paths))
     family_evidence_blockers, family_semantic_receipts = family_semantic_evidence(
         inputs['families'], headers_layouts_companion=headers_layouts_aggregate_companion,
         text_family_companion=text_family_semantic_companion, paths=paths,
@@ -15302,6 +15438,9 @@ def _build_report(*, contract_path: Path, paths: Mapping[str, Path], declaration
             headers_layouts_product_pair_report, paths=paths, source=source_before,
             header_companion=headers_layouts_aggregate_companion)),
             'header product pair changed during final selection recheck')
+    if feature_alias_companion is not None:
+        require(same(feature_alias_companion, feature_alias_adapter(feature_alias_work, paths=paths)),
+                'feature alias component changed during selection')
     if installed_math_companion is not None:
         require(same(installed_math_companion, installed_math_adapter(installed_math_work, paths=paths)),
                 'installed_math component changed during selection')
@@ -15364,6 +15503,7 @@ def _build_report(*, contract_path: Path, paths: Mapping[str, Path], declaration
         'signal_process_work': signal_process_companion,
         'bootstrap_primitives_work': bootstrap_primitives_companion,
         'binary80_feature_work': binary80_feature_companion,
+        'feature_alias_work': feature_alias_companion,
         'text_family_semantic_report': text_family_semantic_companion,
         'posix_sysv_signal_admission_report': posix_sysv_signal_admission_companion,
         'bsd_random_receipt_report': bsd_random_receipt_companion,
@@ -15466,6 +15606,8 @@ def _build_report(*, contract_path: Path, paths: Mapping[str, Path], declaration
             'bootstrap_primitives_joins': bootstrap_primitives_joins,
             'binary80_feature_companion': binary80_feature_companion,
             'binary80_feature_joins': binary80_feature_joins,
+            'feature_alias_companion': feature_alias_companion,
+            'feature_alias_joins': feature_alias_joins,
             'text_family_semantic_companion': text_family_semantic_companion,
             'text_fopen64_structural_joins': text_fopen64_structural_joins,
             'posix_sysv_signal_admission_companion': posix_sysv_signal_admission_companion,
@@ -15521,6 +15663,7 @@ def build_report(*, output: Path, contract_path: Path = CONTRACT_PATH, declarati
                  signal_process_work: Path | None = None,
                  bootstrap_primitives_work: Path | None = None,
                  binary80_feature_work: Path | None = None,
+                 feature_alias_work: Path | None = None,
                  loader_structural_owner_receipt_report: Path | None = None,
                  **measurement_inputs: Path) -> dict[str, Any]:
     output = physical_work_path(output, directory=True, own=True, fresh=True)
@@ -15566,6 +15709,7 @@ def build_report(*, output: Path, contract_path: Path = CONTRACT_PATH, declarati
                              signal_process_work=signal_process_work,
                              bootstrap_primitives_work=bootstrap_primitives_work,
                              binary80_feature_work=binary80_feature_work,
+                             feature_alias_work=feature_alias_work,
                              loader_structural_owner_receipt_report=loader_structural_owner_receipt_report)
     output.mkdir()
     (output / 'report.json').write_bytes(inventory._stable_json(report))
@@ -15611,6 +15755,7 @@ def validate_report(report_path: Path, *, contract_path: Path = CONTRACT_PATH, d
                     signal_process_work: Path | None = None,
                     bootstrap_primitives_work: Path | None = None,
                     binary80_feature_work: Path | None = None,
+                    feature_alias_work: Path | None = None,
                     loader_structural_owner_receipt_report: Path | None = None,
                     **measurement_inputs: Path) -> dict[str, Any]:
     report_path = physical_work_path(report_path, directory=False, own=True)
@@ -15658,6 +15803,7 @@ def validate_report(report_path: Path, *, contract_path: Path = CONTRACT_PATH, d
                              signal_process_work=signal_process_work,
                              bootstrap_primitives_work=bootstrap_primitives_work,
                              binary80_feature_work=binary80_feature_work,
+                             feature_alias_work=feature_alias_work,
                              loader_structural_owner_receipt_report=loader_structural_owner_receipt_report)
     require(same(report, expected), 'selection report does not reconstruct exactly from source inputs and public measurement replay')
     return report
@@ -15711,6 +15857,7 @@ def main(argv: Sequence[str]) -> int:
     parser.add_argument('--signal-process-work', type=Path)
     parser.add_argument('--bootstrap-primitives-work', type=Path)
     parser.add_argument('--binary80-feature-work', type=Path)
+    parser.add_argument('--feature-alias-work', type=Path)
     parser.add_argument('--loader-structural-owner-receipt-report', type=Path)
     options = [arg.split('=', 1)[0] for arg in argv if arg.startswith('--')
                and arg.split('=', 1)[0] != '--compiler-helper-installed-link']
@@ -15762,6 +15909,7 @@ def main(argv: Sequence[str]) -> int:
                                                 'signal_process_work',
                                                 'bootstrap_primitives_work',
                                                 'binary80_feature_work',
+                                                'feature_alias_work',
                                                 'loader_structural_owner_receipt_report')}
     installed = args.compiler_helper_installed_link
     if installed is not None:

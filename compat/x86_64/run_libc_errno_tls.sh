@@ -8,6 +8,8 @@
 set -euo pipefail
 
 readonly ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+. "$(dirname "${BASH_SOURCE[0]}")/native_build_environment.sh"
+mapfile -d '' -t rustc_command < <(python3 -B "$ROOT_DIR/compat/x86_64/native_rustc.py")
 
 require_native_linux_x86_64_host() {
     if [ "$(uname -s)" != "Linux" ]; then
@@ -60,7 +62,7 @@ grep -Fq "$ROOT_DIR/include/errno.h" "$header_trace" || {
     exit 1
 }
 
-rustup run "$(python3 "$ROOT_DIR/scripts/rust_toolchain.py")" rustc --edition=2021 \
+"${rustc_command[@]}" --edition=2021 \
     --target x86_64-unknown-linux-musl \
     --crate-type=lib \
     --emit=obj \

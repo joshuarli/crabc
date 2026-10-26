@@ -37,6 +37,8 @@ in_image() {
         --ulimit core=0:0 \
         --ulimit memlock=67108864:67108864 \
         --env CARGO_INCREMENTAL=0 \
+        --env RUSTC_WRAPPER=/usr/local/bin/kache \
+        --env CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER=/usr/local/bin/crabc-x86_64-mold-gcc \
         --env CARGO_HOME=/workspace/.work/x86_64/cargo \
         --env CARGO_TARGET_DIR=/workspace/.work/x86_64/target-check \
         --env TMPDIR=/workspace/.work/x86_64/tmp \

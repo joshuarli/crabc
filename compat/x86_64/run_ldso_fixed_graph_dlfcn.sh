@@ -3,6 +3,8 @@
 set -euo pipefail
 
 readonly ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+. "$(dirname "${BASH_SOURCE[0]}")/native_build_environment.sh"
+mapfile -d '' -t rustc_command < <(python3 -B "$ROOT_DIR/compat/x86_64/native_rustc.py")
 readonly SOURCE_ROOT="$ROOT_DIR/ldso/src/x86_64_initial_graph_source_root.rs"
 readonly START="$ROOT_DIR/compat/x86_64/ldso_fixed_graph_dlfcn_start.S"
 readonly MAIN="$ROOT_DIR/compat/x86_64/ldso_fixed_graph_dlfcn_main.c"
@@ -35,7 +37,7 @@ fi
 build_interpreter() {
     local output="$1"
     shift
-    rustc --edition=2021 --crate-type staticlib --cfg crabc_fixed_graph_dlfcn "$@" \
+    "${rustc_command[@]}" --edition=2021 --crate-type staticlib --cfg crabc_fixed_graph_dlfcn "$@" \
         -C panic=abort -C relocation-model=pic "$SOURCE_ROOT" -o "$work_dir/libfixed_graph_dlfcn.a"
     cc -nostdlib -shared -Wl,-e,_start -Wl,-Bsymbolic -Wl,-z,now -Wl,--no-undefined \
         -Wl,--whole-archive "$work_dir/libfixed_graph_dlfcn.a" -Wl,--no-whole-archive \

@@ -31,6 +31,8 @@ class InstalledHeaderTreeClosureTests(unittest.TestCase):
             scratch.mkdir(parents=True)
             runner = harness / RUNNER.name
             shutil.copy2(RUNNER, runner)
+            shutil.copy2(ROOT / "compat/x86_64/musl_oracle.py", harness / "musl_oracle.py")
+            shutil.copy2(ROOT / "compat/upstreams.toml", project / "compat/upstreams.toml")
             for name in ("musl_oracle_probe.c", "public_headers.txt", "header_cxx_closure.cpp"):
                 (harness / name).write_text("")
             oracle = (ROOT / "compat/x86_64/run_musl_oracle.sh").read_text()

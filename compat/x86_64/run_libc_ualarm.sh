@@ -7,6 +7,7 @@
 # and the invalid-field errno/state boundary without assigning a return value
 # to musl's uninitialized-old-record failure path.
 set -euo pipefail
+. "$(dirname "${BASH_SOURCE[0]}")/native_build_environment.sh"
 . "$(dirname "${BASH_SOURCE[0]}")/source_runtime_libc.sh"
 
 readonly ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"

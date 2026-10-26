@@ -725,7 +725,7 @@ def _tool_roster(root: Path, value: object, static_product: Path, dynamic_produc
     require(result["oracle"]["path"] == "/usr/local/bin/crabc-x86_64-musl-gcc",
             "composition oracle compiler tool differs")
     require(Path(result["compiler"]["path"]).name == "gcc"
-            and Path(result["linker"]["path"]).name == "ld.lld",
+            and Path(result["linker"]["path"]) == _pinned_target_linker(root),
             "composition compiler/linker tool differs")
     return result
 
@@ -1004,16 +1004,9 @@ def static_lifecycle_command(root: Path, static_product: Path, roster_entry: dic
 
 
 def _pinned_target_linker(root: Path) -> Path:
-    from generate_qualification_manifest import EXECUTION_CONTRACT, TARGET
+    import owned_posix_product_evidence as products
 
-    with (root / "rust-toolchain.toml").open("rb") as source:
-        toolchain = tomllib.load(source)["toolchain"]["channel"]
-    require(isinstance(toolchain, str) and toolchain.startswith("nightly-")
-            and all(character.isascii() and (character.isalnum() or character in "-._")
-                    for character in toolchain), "static lifecycle Rust toolchain differs")
-    target = TARGET["triple"]
-    return (Path(EXECUTION_CONTRACT["rustup_home"]) / "toolchains" /
-            f"{toolchain}-{target}" / "lib/rustlib" / target / "bin/gcc-ld/ld.lld")
+    return products.native_build_tools.MOLD
 
 
 def _static_lifecycle_environment(root: Path, step: Path, source_mount: str) -> dict[str, str]:

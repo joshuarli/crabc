@@ -32,6 +32,22 @@ class OwnedLoaderCorpusEvidenceTests(unittest.TestCase):
         self.addCleanup(self.temporary.cleanup)
         self.work = Path(self.temporary.name)
         self.product = self.work / "product"
+        product_reader = evidence._product_reader()
+        tools = product_reader.source_native_compiler_tool_records()
+        self.linker = self.work / "tools/mold"
+        self.linker.parent.mkdir()
+        self.linker.write_bytes(b"sealed mold fixture")
+        self.linker.chmod(0o755)
+        self.linker_digest = sha256(self.linker)
+        tools["linker"] = {"path": str(self.linker), "sha256": self.linker_digest}
+        for target, name, value in (
+            (product_reader.native_build_tools, "MOLD", self.linker),
+            (product_reader, "source_native_compiler_tool_records", lambda: tools),
+            (evidence, "_product_reader", lambda: product_reader),
+        ):
+            patcher = mock.patch.object(target, name, value)
+            patcher.start()
+            self.addCleanup(patcher.stop)
         self._make_product()
         self.expected_oracle = {"runtime_sha256": "", "compiler_wrapper_sha256": "a" * 64}
 
@@ -47,6 +63,9 @@ class OwnedLoaderCorpusEvidenceTests(unittest.TestCase):
         product_contract = evidence._product_reader()
         for relative in product_contract.DYNAMIC_REQUIRED:
             self._put(relative, ("sealed " + relative + "\n").encode(), executable=relative == "bin/crabc-cc-dynamic")
+        self._put("share/crabc/producer-tools.json", json.dumps({
+            "schema": 1, **product_contract.source_native_compiler_tool_records(),
+        }).encode())
         # Installed link inputs carry the product reader's source-bound mode
         # policy (for example an executable libc.so), not the writer's umask.
         for relative, mode in product_contract.DYNAMIC_LINK_INPUT_MODES.items():
@@ -154,7 +173,7 @@ class OwnedLoaderCorpusEvidenceTests(unittest.TestCase):
                     *({"path": item["path"], "sha256": item["sha256"]} for item in link["dependencies"]),
                     {"path": evidence.recorded_path(ROOT, "/workspace", archive), "sha256": sha256(archive)},
                 ]
-                linker = {"path": "/opt/toolchain/ld.lld", "sha256": "b" * 64}
+                linker = {"path": str(self.linker), "sha256": self.linker_digest}
                 direct = [*(evidence.recorded_path(ROOT, "/workspace", item) for item in runtime), link["object"],
                           *(item["path"] for item in link["dependencies"])]
                 sidecar.write_text(json.dumps({
@@ -297,8 +316,8 @@ class OwnedLoaderCorpusEvidenceTests(unittest.TestCase):
             "product_after": product_seal,
             "oracle_before": oracle,
             "oracle_after": oracle,
-            "producer_linker_before": {"path": "/opt/toolchain/ld.lld", "sha256": "b" * 64},
-            "producer_linker_after": {"path": "/opt/toolchain/ld.lld", "sha256": "b" * 64},
+            "producer_linker_before": {"path": str(self.linker), "sha256": self.linker_digest},
+            "producer_linker_after": {"path": str(self.linker), "sha256": self.linker_digest},
             "cases": cases,
             "elapsed_seconds": 1.0,
         }
@@ -325,7 +344,7 @@ class OwnedLoaderCorpusEvidenceTests(unittest.TestCase):
             "nested-needed", link["kind"], link["output"]
         )
         command = evidence._loader_sidecar_command(
-            "/opt/toolchain/ld.lld", ROOT, "/workspace", self.product, link,
+            str(self.linker), ROOT, "/workspace", self.product, link,
             search_kind, search_path, hash_style, export_dynamic,
         )
         self.assertEqual(command[17], "--exclude-libs=libcrabc-builtins.a")
@@ -339,7 +358,7 @@ class OwnedLoaderCorpusEvidenceTests(unittest.TestCase):
             "nested-needed", link["kind"], link["output"]
         )
         command = evidence._loader_sidecar_command(
-            "/opt/toolchain/ld.lld", ROOT, "/workspace", self.product, link,
+            str(self.linker), ROOT, "/workspace", self.product, link,
             search_kind, search_path, hash_style, export_dynamic,
         )
         self.assertEqual(command[17], "--exclude-libs=libcrabc-builtins.a")
@@ -347,11 +366,14 @@ class OwnedLoaderCorpusEvidenceTests(unittest.TestCase):
 
     def test_loader_reader_binds_every_sidecar_to_the_sealed_producer_linker(self) -> None:
         report = self._loader_report()
+        candidate_root = report.parent / "cases/visibility/candidate-root"
+        sidecar = candidate_root / "consumer.crabc-link.json"
+        changed = json.loads(sidecar.read_text(encoding="utf-8"))
+        changed["resolved_linker"] = {"path": "/foreign/mold", "sha256": "c" * 64}
+        sidecar.write_text(json.dumps(changed, sort_keys=True), encoding="utf-8")
         value = json.loads(report.read_text(encoding="utf-8"))
-        altered = {"path": "/foreign/ld.lld", "sha256": "c" * 64}
-        value["producer_linker_before"] = altered
-        value["producer_linker_after"] = altered
-        report.write_text(json.dumps(value, sort_keys=True), encoding="utf-8")
+        value["cases"]["visibility"]["execution_roots"]["candidate"] = evidence.loader_tree_seal(candidate_root)
+        self._rewrite_loader_case(report, value, "visibility")
         with self.assertRaisesRegex(evidence.LoaderCorpusEvidenceError, "sidecar linker differs from the sealed producer linker"):
             evidence.validate_loader_report(report, self.product, expected_oracle=self.expected_oracle, root=ROOT)
 

@@ -28,6 +28,7 @@ unset CPATH C_INCLUDE_PATH CPLUS_INCLUDE_PATH OBJC_INCLUDE_PATH LIBRARY_PATH \
 
 readonly ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 readonly ORACLE_CC=/usr/local/bin/crabc-x86_64-musl-gcc
+readonly LINK_EDITOR="$(python3 -c 'import sys; sys.path.insert(0, sys.argv[1]); from scripts import native_build_tools; print(native_build_tools.MOLD)' "$ROOT_DIR")"
 readonly BUILDER="$ROOT_DIR/scripts/build_x86_64_owned_sysroot.py"
 readonly PACKAGE="$ROOT_DIR/compat/x86_64/owned_static_sysroot_package.py"
 readonly CONSUMER_MATRIX="$ROOT_DIR/compat/x86_64/owned_static_consumer_matrix.py"
@@ -235,14 +236,17 @@ audit_static_driver_plan() {
     local plan="$3"
 
     "$root/bin/crabc-cc" --print-link-plan "$mode" >"$plan"
-    python3 - "$root" "$mode" "$plan" <<'PY'
+    python3 - "$ROOT_DIR" "$root" "$mode" "$plan" <<'PY'
 import json
 import sys
 from pathlib import Path
 
-root = Path(sys.argv[1]).resolve()
-mode = sys.argv[2]
-plan = json.loads(Path(sys.argv[3]).read_text(encoding="utf-8"))
+sys.path.insert(0, sys.argv[1])
+from scripts import native_build_tools
+
+root = Path(sys.argv[2]).resolve()
+mode = sys.argv[3]
+plan = json.loads(Path(sys.argv[4]).read_text(encoding="utf-8"))
 expected = {
     "-static": ("ET_EXEC", "crt1.o", False),
     "-static-pie": ("ET_DYN", "rcrt1.o", True),
@@ -255,7 +259,7 @@ if (selected.get("elf_type"), selected.get("crt_object")) != expected[:2]:
 if plan.get("headers") != str(root / "usr" / "include"):
     raise SystemExit("sealed driver selected non-owned headers")
 linker = plan.get("linker")
-if not isinstance(linker, list):
+if not isinstance(linker, list) or not linker or linker[0] != Path(native_build_tools.MOLD).name:
     raise SystemExit("sealed driver plan has no linker argv")
 for runtime in ("crti.o", "libc.a", "libcrabc-builtins.a", "crtn.o"):
     if str(root / "usr" / "lib" / runtime) not in linker:
@@ -310,12 +314,15 @@ audit_link_receipt() {
     local candidate="$4"
     local receipt="$5"
 
-    python3 - "$installed_root" "$consumer_root" "$mode" "$candidate" "$receipt" <<'PY'
+    python3 - "$ROOT_DIR" "$installed_root" "$consumer_root" "$mode" "$candidate" "$receipt" <<'PY'
 import hashlib
 import json
 import re
 import sys
 from pathlib import Path
+
+sys.path.insert(0, sys.argv[1])
+from scripts import native_build_tools
 
 
 def fail(message: str) -> None:
@@ -330,11 +337,11 @@ def digest(path: Path) -> str:
     return value.hexdigest()
 
 
-root = Path(sys.argv[1]).resolve()
-consumer = Path(sys.argv[2]).resolve()
-mode = sys.argv[3]
-candidate = Path(sys.argv[4]).resolve()
-receipt_path = Path(sys.argv[5]).resolve()
+root = Path(sys.argv[2]).resolve()
+consumer = Path(sys.argv[3]).resolve()
+mode = sys.argv[4]
+candidate = Path(sys.argv[5]).resolve()
+receipt_path = Path(sys.argv[6]).resolve()
 expected = {
     "-static": ("static-et-exec", "ET_EXEC", "crt1.o", False),
     "-static-pie": ("static-pie", "ET_DYN", "rcrt1.o", True),
@@ -350,10 +357,10 @@ if receipt.get("schema") != 1 or receipt.get("format") != "crabc-x86-64-sealed-s
 if receipt.get("target") != "x86_64-unknown-linux-musl":
     fail("sealed driver receipt target drifted")
 resolved_linker = receipt.get("resolved_linker")
-if not isinstance(resolved_linker, dict):
+if not isinstance(resolved_linker, dict) or set(resolved_linker) != {"path", "sha256"}:
     fail("sealed driver receipt lacks its resolved linker identity")
 linker_path = Path(resolved_linker.get("path", ""))
-if linker_path.name != "ld.lld" or not linker_path.is_file() or linker_path.is_symlink():
+if linker_path != native_build_tools.MOLD or not linker_path.is_file() or linker_path.is_symlink():
     fail("sealed driver receipt resolved an unsafe linker")
 if resolved_linker.get("sha256") != digest(linker_path):
     fail("sealed driver receipt linker identity hash drifted")
@@ -397,7 +404,7 @@ contract = receipt.get("owned_link_contract")
 if not isinstance(contract, list):
     fail("sealed driver receipt lacks its fixed link contract")
 expected_contract = [
-    "ld.lld",
+    Path(native_build_tools.MOLD).name,
     "-static",
     *( ["-pie"] if expected[3] else [] ),
     "--no-dynamic-linker",
@@ -423,7 +430,7 @@ if contract != expected_contract:
     fail("sealed driver receipt link contract drifted")
 
 trace_path = receipt_path.with_suffix(".trace")
-trace = [line for line in trace_path.read_text(encoding="utf-8").splitlines() if line]
+trace = [line.removeprefix("trace: ") for line in trace_path.read_text(encoding="utf-8").splitlines() if line]
 saw = {"entry": False, "crti": False, "crtn": False, "libc": False, "builtins": False, "builtins_member": False}
 allowed_objects = {str(path) for path in objects}
 for line in trace:
@@ -1657,13 +1664,8 @@ mapfile -t suite_paths < <(python3 -B "$STATIC_PRODUCT_CONTRACT" --suite-paths)
 # The receipt binds the source observed before the first build; collection
 # fails if any nonignored source changed while the product was built or run.
 started_source_sha256="$(python3 -B "$STATIC_PRODUCT_CONTRACT" --source-digest)"
-if command -v ld.lld >/dev/null 2>&1; then
-    link_editor=ld.lld
-else
-    toolchain_root="$(rustup run "$(python3 "$ROOT_DIR/scripts/rust_toolchain.py")" rustc --print sysroot)"
-    link_editor="$toolchain_root/lib/rustlib/x86_64-unknown-linux-musl/bin/gcc-ld/ld.lld"
-    [ -x "$link_editor" ] || fail "requires a pinned Rust-toolchain ld.lld"
-fi
+link_editor="$LINK_EDITOR"
+[ "$link_editor" = /usr/bin/mold ] && [ -x "$link_editor" ] || fail "requires the pinned native mold linker"
 
 bash "$ROOT_DIR/compat/x86_64/run_musl_oracle.sh" >/dev/null
 python3 -B -m unittest -v \

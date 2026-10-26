@@ -413,8 +413,8 @@ def _validate_shared_receipt(
         _fail("timer TLS DSO linker path is malformed")
     if replay is None:
         linker = _physical(Path(linker_record["path"]), "timer TLS DSO linker")
-        if linker.name != "ld.lld" or not linker.lstat().st_mode & 0o111:
-            _fail("timer TLS DSO linker is not the sealed LLD executable")
+        if linker != product_evidence.native_build_tools.MOLD or not linker.lstat().st_mode & 0o111:
+            _fail("timer TLS DSO linker is not the sealed mold executable")
         _recorded_file(linker_record, linker, "timer TLS DSO linker")
     else:
         replay.require_tool("linker", linker_record)
@@ -425,7 +425,7 @@ def _validate_shared_receipt(
         _fail("timer TLS DSO receipt trace is malformed")
     direct = {recorded(path, replay) for path in [*runtime, object_path]}
     seen: set[str] = set()
-    for line in record["link_trace"]:
+    for line in product_evidence.semantic_link_trace(record["link_trace"]):
         if line in direct:
             seen.add(line)
         elif line == recorded(archive, replay) or (line.startswith(recorded(archive, replay) + "(") and line.endswith(")")):

@@ -30,6 +30,7 @@ from typing import Any, NamedTuple
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
 from scripts.rust_toolchain import pinned_toolchain
+from scripts import native_build_tools
 TARGET = "x86_64-unknown-linux-musl"
 TOOLCHAIN = pinned_toolchain(ROOT)
 PINNED_CARGO_BIN = pathlib.Path("/opt/cargo/bin")
@@ -87,7 +88,7 @@ FORBIDDEN_FINAL_SYMBOL = re.compile(r"(?:rust_eh_personality|_Unwind_|panic_(?:a
 # immediately followed by Cargo's next uncoloured progress/diagnostic record.
 # Accept only that current renderer shape, then let shlex parse the command itself.
 CARGO_RUNNING = re.compile(r"(?m)^ {5}Running `")
-CARGO_NEXT_RECORD = re.compile(r"(?: {5}Running `| {3}Compiling |warning: | {4}Finished |error(?:\[|:))")
+CARGO_NEXT_RECORD = re.compile(r"(?: {5}Running `| {3}Compiling |warning: | {4}Finished |error(?:\[|:)|\[kache\] )")
 # These are the only source-runtime --extern spellings retained by the
 # authenticated Cargo stream. The matrix is deliberately per audited rustc
 # edge: accepting a modifier grammar without binding the modifier to its
@@ -221,11 +222,12 @@ def source_runtime_profile(features: str) -> dict[str, object]:
     return SOURCE_RUNTIME_PROFILES.get(normalized_features(features), DERIVED_PROFILE)
 
 
-def retained_math_package_features(features: str) -> frozenset[str]:
+def retained_package_features(features: str) -> frozenset[str]:
     normalized = normalized_features(features)
     requested = normalized.split(",") if normalized else []
-    if requested not in ([], [RETAINED_MATH_FEATURE]):
-        fail("retained math graph does not support this requested feature profile")
+    if requested not in ([], [RETAINED_MATH_FEATURE], ["x86-signal-legacy-aliases"],
+                         ["x86-process-exec"], ["x86-netdb-setent"]):
+        fail("retained graph does not support this requested feature profile")
     try:
         manifest = tomllib.loads(physical(ROOT / "libc" / "Cargo.toml", "crabc-libc Cargo manifest")
                                  .read_text(encoding="utf-8"))
@@ -237,7 +239,7 @@ def retained_math_package_features(features: str) -> frozenset[str]:
     selected = ["default", *requested]
     for name in selected:
         if definitions.get(name) != []:
-            fail(f"retained math Cargo feature has an unreviewed dependency edge: {name}")
+            fail(f"retained Cargo feature has an unreviewed dependency edge: {name}")
     return frozenset(selected)
 
 
@@ -669,7 +671,7 @@ def artifact_for_source(records: Sequence[dict[str, Any]], source: pathlib.Path,
     )
 
 
-def validate_retained_math_artifact_command(record: dict[str, Any], command: Sequence[str],
+def validate_retained_artifact_command(record: dict[str, Any], command: Sequence[str],
                                            description: str) -> None:
     target = record.get("target")
     if not isinstance(target, dict):
@@ -811,6 +813,40 @@ def cargo_commands(stderr_path: pathlib.Path) -> list[list[str]]:
     if not commands:
         fail("Cargo verbose diagnostics retain no rustc commands")
     return commands
+
+
+def validate_wrapped_commands(commands: Sequence[Sequence[str]], compiler: pathlib.Path) -> None:
+    expected = native_build_tools.environment()
+    pinned_compiler = physical(compiler, "pinned rustc executable")
+    pinned_wrapper = physical(native_build_tools.KACHE, "pinned kache executable")
+    for command in commands:
+        index = 0
+        while index < len(command) and re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*=.*", command[index]):
+            name, _, value = command[index].partition("=")
+            if name.startswith("KACHE_") or name in {"RUSTC_WRAPPER", "CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER"}:
+                if name not in expected or value != expected[name]:
+                    fail(f"Cargo command overrides fixed native build environment: {name}")
+            if name == "RUSTC_WORKSPACE_WRAPPER" and value:
+                fail("Cargo command introduces a workspace compiler wrapper")
+            if name == "RUSTC" and value != str(compiler):
+                fail("Cargo command overrides the pinned Rust compiler")
+            index += 1
+        if list(command[index:index + 2]) != [str(native_build_tools.KACHE), str(compiler)]:
+            fail("Cargo command must invoke the exact pinned kache and physical rustc")
+        if physical(pathlib.Path(command[index]), "Cargo kache executable") != pinned_wrapper \
+                or physical(pathlib.Path(command[index + 1]), "Cargo rustc executable") != pinned_compiler:
+            fail("Cargo command compiler tools differ from pinned executables")
+        if index + 2 >= len(command) or command[index + 2] != "--crate-name":
+            fail("Cargo command inserts a token between the pinned compiler and crate arguments")
+
+
+def compiler_tools(sysroot: pathlib.Path) -> dict[str, object]:
+    return {
+        "wrapper": file_record(native_build_tools.KACHE, "pinned kache executable"),
+        "rustc": file_record(sysroot / "bin/rustc", "pinned physical rustc"),
+        "linker": file_record(native_build_tools.MOLD, "image mold"),
+        "cargo_linker": file_record(native_build_tools.CARGO_LINKER, "image mold GCC driver"),
+    }
 
 
 def option_values(command: Sequence[str], option: str) -> list[str]:
@@ -1066,17 +1102,15 @@ def replay_cargo_graph(graph: pathlib.Path, features: str) -> RetainedCargoGraph
 
     commands = cargo_commands(stderr)
     pinned_rustc = physical(toolchain_root / "bin" / "rustc", "pinned rustc executable")
-    for command in commands:
-        executable = next(
-            (item for item in command if re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*=.*", item) is None),
-            None,
-        )
-        if executable is None or physical(pathlib.Path(executable), "Cargo rustc executable") != pinned_rustc:
-            fail("retained Cargo graph invokes a rustc outside the pinned toolchain")
+    validate_wrapped_commands(commands, pinned_rustc)
+    if receipt.get("compiler_tools") != compiler_tools(toolchain_root):
+        fail("retained Cargo graph compiler tool identities differ")
+    if receipt.get("native_build_environment") != native_build_tools.environment():
+        fail("retained Cargo graph native build environment differs")
     source_runtime_rustc = {}
     for name, source in runtime_sources.items():
         command = invocation_for(commands, name)
-        validate_retained_math_artifact_command(
+        validate_retained_artifact_command(
             artifact_record_for_source(records, source, name), command, name,
         )
         source_runtime_rustc[name] = command_record(
@@ -1084,9 +1118,9 @@ def replay_cargo_graph(graph: pathlib.Path, features: str) -> RetainedCargoGraph
         )
     libc_command = invocation_for(commands, "c")
     libc_artifact = artifact_record_for_source(records, libc_source, "c")
-    validate_retained_math_artifact_command(libc_artifact, libc_command, "crabc-libc")
-    if set(libc_artifact["features"]) != retained_math_package_features(features):
-        fail("Cargo crabc-libc feature closure differs from the requested retained math profile")
+    validate_retained_artifact_command(libc_artifact, libc_command, "crabc-libc")
+    if set(libc_artifact["features"]) != retained_package_features(features):
+        fail("Cargo crabc-libc feature closure differs from the requested retained profile")
     libc_externs = profile["libc_externs"]
     if libc_externs is None:
         libc_externs = derived_libc_externs(libc_command, "retained Cargo crabc-libc rustc")
@@ -1105,7 +1139,7 @@ def replay_cargo_graph(graph: pathlib.Path, features: str) -> RetainedCargoGraph
         allocator_name = option_values(allocator_command, "--crate-name")
         if len(allocator_name) != 1:
             fail("Cargo crabc-mimalloc rustc has ambiguous crate identity")
-        validate_retained_math_artifact_command(
+        validate_retained_artifact_command(
             artifact_record_for_source(records, allocator_source, allocator_name[0]),
             allocator_command, "crabc-mimalloc",
         )
@@ -1158,9 +1192,11 @@ def pinned_environment() -> tuple[dict[str, str], dict[str, str]]:
     rustup = pinned_rustup_frontend(PINNED_RUSTUP_FRONTEND, PINNED_RUSTUP_TARGET)
     rustup_root = physical(PINNED_RUSTUP_HOME, "pinned rustup home", directory=True)
     environment = {
+        **native_build_tools.environment(),
         "LC_ALL": "C",
         "PATH": f"{PINNED_CARGO_BIN}:{FIXED_HOST_PATH}",
         "RUSTUP_HOME": str(rustup_root),
+        "CARGO_HOME": str(PINNED_CARGO_BIN.parent),
         "SOURCE_DATE_EPOCH": "1",
         "TZ": "UTC",
     }
@@ -1310,7 +1346,8 @@ def replay_retained_graph(graph: pathlib.Path, features: str, scratch: pathlib.P
     receipt = cargo.receipt
     required_fields = {
         "schema", "profile", "features", "cargo_profile", "libc_rustc_arguments", "scope",
-        "target", "toolchain", "pinned_rustup", "cargo_command", "cargo_profile_dev_debug",
+        "target", "toolchain", "pinned_rustup", "compiler_tools", "native_build_environment",
+        "cargo_command", "cargo_profile_dev_debug",
         "cargo_profile_dev_codegen_units", "c_environment", "runtime_flags", "cargo_stdout",
         "cargo_stderr", "rust_source", "vendor", "source_runtime_artifacts",
         "source_runtime_rustc", "primary_rustc", "allocator_rustc", "staticlib_closure",
@@ -1436,6 +1473,7 @@ def build(arguments: argparse.Namespace, *, c_environment: dict[str, str] | None
     libc_source = physical(ROOT / "libc" / "src" / "lib.rs", "crabc-libc source")
     archive = artifact_for_source(records, libc_source, "c", target, ".a")
     commands = cargo_commands(stderr_path)
+    validate_wrapped_commands(commands, sysroot / "bin/rustc")
     expected_runtime_sources = dict(runtime_sources)
     source_runtime_rustc = {}
     for name, source in runtime_sources.items():
@@ -1478,6 +1516,8 @@ def build(arguments: argparse.Namespace, *, c_environment: dict[str, str] | None
         "target": TARGET,
         "toolchain": TOOLCHAIN,
         "pinned_rustup": rustup,
+        "compiler_tools": compiler_tools(sysroot),
+        "native_build_environment": native_build_tools.environment(),
         "immediate_abort_semantics": "development-only Rust panics abort immediately instead of using static_c_abi.rs's nonreturning spin panic handler",
         "cargo_command": cargo_command,
         "cargo_profile_dev_debug": 0,

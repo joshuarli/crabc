@@ -2,6 +2,8 @@
 # Owned CRT/libc process lifecycle over the general loader, in pinned native Docker.
 set -euo pipefail
 readonly ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+. "$(dirname "${BASH_SOURCE[0]}")/native_build_environment.sh"
+mapfile -d '' -t rustc_command < <(python3 -B "$ROOT/compat/x86_64/native_rustc.py")
 readonly FIXTURES="$ROOT/compat/x86_64"
 [ "$(uname -sm)" = 'Linux x86_64' ]
 python3 -B - "$ROOT" "${TMPDIR:-}" <<'PY'
@@ -29,9 +31,9 @@ RUSTFLAGS='-C link-dead-code -C target-feature=-crt-static -C relocation-model=p
         --no-default-features \
         --features x86_64-general-initial-lifecycle,x86_64-general-initial-tls-runtime-v1-dynamic-main-thread-interpreter
 cp "$work/loader-target/x86_64-unknown-linux-musl/debug/libldso.so" "$work/loader.so"
-rustc --edition=2021 --crate-type staticlib -C panic=abort -C relocation-model=pic \
+"${rustc_command[@]}" --edition=2021 --crate-type staticlib -C panic=abort -C relocation-model=pic \
     "$ROOT/libc/src/c_abi/x86_64/loader_tls_runtime_v1_source_root.rs" -o "$work/consumer.a"
-rustc --edition=2021 --crate-type staticlib -C panic=abort -C relocation-model=pic \
+"${rustc_command[@]}" --edition=2021 --crate-type staticlib -C panic=abort -C relocation-model=pic \
     --cfg crabc_general_dynamic_lifecycle \
     "$ROOT/libc/src/c_abi/x86_64/dynamic_main_thread_runtime_v1_source_root.rs" -o "$work/owned-dynamic-libc.a"
 cc -shared -nostdlib -Wl,--hash-style=sysv -Wl,-z,now -Wl,--allow-shlib-undefined \

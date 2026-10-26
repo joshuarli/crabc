@@ -1,36 +1,37 @@
 # Qualify and promote crabc's native x86-64 runtime
 
-**Status: active 2026-10-26.** The owner explicitly requested unattended
-execution until the campaign is complete. Continue accepted slices through
-H0, qualification, performance, promotion and closeout; do not stop at
-intermediate checkpoints. The remaining ordinary ABI producers pass except
-stdio and the refreshed TZif oracle transcript. Stdio is repaired and accepted at `cefed90c8`: fresh
-static/dynamic products, six runtime modes, ten header profiles and normal
-reader all pass. Fixed-memory overflow now reports `ENOSPC`/stream error,
-retains the fitting prefix and permits recovery; full write-only buffers retain
-the final data byte. Cookie short writes are unchanged. The original fixture
-encoded obsolete oracle behavior; same-object oracle/candidate discrimination
-proved the defect before repair. The ABI ratchet oracle origin is refreshed
-after checking all 1,650 public identities and ABI fields are unchanged; its
-historical candidate floor is preserved. The TZif oracle transcript now matches the exact snapshot observation while
-candidate output still must equal the RFC/POSIX specification; all 44 focused
-calendar/public-data tests pass in the pinned image. The current work is the
-six remaining feature-alias proofs and reopened admission repairs, then fresh
-combined collection and canonical replay.
-The owner explicitly reopened both prior POSIX `math/pow` and C-ABI
-admission decisions, superseding the two 2026-10-25 holds below. The pow admission repair now binds both exact complete streams, the
-unchanged source/all four headers and fourteen independently proved subnormal
-identities. It preserves 24 oracle/10 candidate diagnostics, both zero exits,
-raw comparison failure and `raw_passed: false`. Both full focused modules pass
-38 tests in the pinned image; the expanded identity proof passes 120 identities
-and 40 controls using unchanged production bytes. Independent review found no
-false acceptance. Full native aggregate admission remains to be exercised at
-the next clean integrated revision. C-ABI keeps all three allocation/interposition/DSO runners and all
-public workloads, and binds them to the cohort's actual selected backend;
-native allocator identity checks remain required for native profiles. Denied allocator actions remain parked. The C
-allocator stays selected until its independent promotion proof passes. Public
-x86 support remains false: 180 of 223 capabilities, nine of 26 families,
-zero of eight gates.
+**Status: active 2026-10-26.** The owner requested unattended execution
+through qualification, performance, promotion and closeout. Continue without
+stopping at intermediate checkpoints. Both prior POSIX `math/pow` and C-ABI
+admission holds are reopened; denied allocator actions remain parked.
+
+Main accepts the corrected timer cancellation and fixed-memory stdio behavior,
+the refreshed TZif oracle observation, and the exact finite `pow` disposition.
+The latter preserves both complete diagnostic streams and raw failure status;
+its independent proof covers fourteen subnormal identities. The native oracle
+ratchet preserves all 1,650 public ABI identities and its historical candidate
+floor. Fresh complete POSIX and C-ABI admission still need native execution.
+
+The active integration on `lane/campaign-integration` binds native Rust builds
+to kache and the physical pinned compiler, and final links to mold. LLD remains
+only for intermediate LLVM bitcode materialization. The nightly and paused
+AArch64 inputs are unchanged. Product readers authenticate compiler tools
+against the current image manifest, including during host replay. Six feature
+aliases have a source-bound companion and selector schema v13; their fresh
+native proof remains required. C-ABI admission retains every workload and
+validates the actual selected allocator backend. CRT audits retain source
+bindings, exact bytes and contributor order while accounting for mold's final
+executable symbol bindings and map format. Public alias visibility is unchanged.
+
+Nine Rust profiles and the focused native tool/CRT checks pass. Independent
+review found no P1/P2 in the integrated tool and structural repairs. The
+synthetic tool fixtures now pass their focused checks. Freeze a clean revision
+for batch verification, then run fresh products, combined ABI collection,
+canonical replay and H0. Existing receipt-only
+tests remain unverified until supplied with their actual products; skipped
+native tests do not count as proof. Preserve the older frozen evidence below.
+The accepted-C allocator stays selected. Public x86 support remains false:
+180 of 223 capabilities, nine of 26 families and zero of eight gates.
 
 **Accepted timer/loader checkpoint:** frozen `45b2d052c` in
 `.work/wt/timer-loader-proof` passes fresh accepted-C static and dynamic

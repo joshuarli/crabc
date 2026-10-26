@@ -113,8 +113,10 @@ class NativeObservationsTests(unittest.TestCase):
         product_fixture = PRODUCT_FIXTURE.OwnedPosixProductEvidenceTests(
             'test_accepts_each_sealed_linkage_and_returns_bound_identity')
         product_fixture.root = products
-        product_fixture.linker = product_fixture.put('tools/ld.lld', b'sealed linker bytes\n')
+        product_fixture.linker = product_fixture.put('tools/mold', b'sealed linker bytes\n')
         product_fixture.linker.chmod(0o755)
+        self.addCleanup(product_fixture.doCleanups)
+        product_fixture.initialize_compiler_tools()
         product_fixture.static = product_fixture.install_static()
         product_fixture.dynamic = product_fixture.install_dynamic()
         source_sha256 = dynamic_qualification.source_digest()

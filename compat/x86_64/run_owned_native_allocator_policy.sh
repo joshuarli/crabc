@@ -1,17 +1,4 @@
 #!/usr/bin/env bash
-# Installed native-shadow libc malloc-family policy against pinned musl.
-#
-# Three unmodified C programs define the `memory.allocator-basic` and
-# `memory.allocator-observability` policy: the allocator-basic runtime probe
-# (zero size, natural and explicit alignment, calloc overflow, realloc
-# failure and realloc(p, 0), posix_memalign output preservation, errno,
-# threads, fork/atfork, atexit allocation), the observability fixture
-# (malloc_usable_size), and the size-class policy probe (the same rules
-# across small through huge blocks). Each runs through pinned musl and then
-# through the native-shadow static, static-PIE and dynamic PIE/non-PIE
-# (kernel and direct loader) products, which must reproduce musl's exit
-# status and transcript. Without supplied products the runner builds both
-# native-shadow sysroots.
 set -euo pipefail
 ulimit -c 0
 readonly ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
@@ -123,16 +110,11 @@ if [ -z "$dynamic_sysroot" ]; then
         --output "$work/dynamic-sysroot" >"$work/dynamic-build.json"
     dynamic_sysroot="$work/dynamic-sysroot"
 fi
-python3 -B - "$static_sysroot/share/crabc/manifest.json" \
-    "$dynamic_sysroot/share/crabc/libc-shared.provenance.json" <<'PY'
-import json
-import sys
-for path in sys.argv[1:]:
-    with open(path, encoding='utf-8') as stream:
-        backend = json.load(stream).get('allocator_backend')
-    if backend != 'native-shadow':
-        raise SystemExit(f'{path}: allocator_backend is {backend!r}, not native-shadow')
-PY
+allocator_backend="$(python3 -B "$ROOT/compat/x86_64/installed_allocator_backend.py" \
+    "$static_sysroot/share/crabc/manifest.json" \
+    "$static_sysroot/share/crabc/libc-static.provenance.json" \
+    "$dynamic_sysroot/share/crabc/dynamic-product-state.json" \
+    "$dynamic_sysroot/share/crabc/libc-shared.provenance.json")"
 receipt_products+=(
     "static-manifest=$static_sysroot/share/crabc/manifest.json"
     "static-libc-provenance=$static_sysroot/share/crabc/libc-static.provenance.json"
@@ -180,18 +162,12 @@ receipt_products+=(
 if [ -f "$work/static-build.json" ]; then receipt_products+=("static-build=$work/static-build.json"); fi
 if [ -f "$work/dynamic-build.json" ]; then receipt_products+=("dynamic-build=$work/dynamic-build.json"); fi
 
-# The allocator-basic probe builds a small symlink graph below the relative
-# directory `.work/x86_64` and compares realpath results with getcwd, so
-# every mode runs from a non-root directory that provides it.
 mkdir -p "$work/host-cwd/.work/x86_64"
 cp -a "$dynamic_sysroot" "$work/execution-root"
 mkdir -p "$work/execution-root/run/.work/x86_64"
-# chroot(1) always enters `/`; this enters the execution root at /run.
 readonly enter_root=(python3 -B -c 'import os, sys; os.chroot(sys.argv[1]); os.chdir("/run"); os.execv(sys.argv[2], sys.argv[2:])'
     "$work/execution-root")
 
-# Run one program in one mode; retain stdout, stderr and status, then compare
-# status and stdout with the oracle's for the same program.
 run_case() {
     local mode="$1"
     local program="$2"
@@ -336,4 +312,4 @@ for program in "${programs[@]}"; do
             "/consumer-$mode-$program"
     done
 done
-printf 'owned native-allocator policy: PASS (musl + native-shadow static/static-PIE/dynamic PIE/non-PIE kernel/direct; allocator-basic, observability and size-class policy programs); evidence: %s\n' "$work"
+printf 'owned native-allocator policy: PASS (musl + %s static/static-PIE/dynamic PIE/non-PIE kernel/direct; allocator-basic, observability and size-class policy programs); evidence: %s\n' "$allocator_backend" "$work"

@@ -65,8 +65,15 @@ class AtomicAddressableProfileTests(unittest.TestCase):
             object_path.write_bytes(b'canonical object')
             binary.write_bytes(b'canonical executable')
             reader = native.Reader(work, str(root), product, root)
+            linker = root / 'tools/mold'
+            linker.parent.mkdir()
+            linker.write_bytes(b'sealed mold fixture')
+            linker.chmod(0o755)
             tools = {'compiler': {'path': '/pinned/clang', 'sha256': 'a' * 64},
-                     'linker': {'path': '/pinned/ld.lld', 'sha256': 'b' * 64}}
+                     'linker': {'path': str(linker), 'sha256': native.digest(linker)}}
+            linker_patch = patch.object(atomic.products.native_build_tools, 'MOLD', linker)
+            linker_patch.start()
+            self.addCleanup(linker_patch.stop)
             runtime = [product / 'usr/lib' / name for name in
                        ('crti.o', 'libc.so', 'crtn.o', 'Scrt1.o', 'crabc-dynamic-attach.o')]
             builtins = product / 'usr/lib/libcrabc-builtins.a'
@@ -88,7 +95,7 @@ class AtomicAddressableProfileTests(unittest.TestCase):
                 changed['link_command'] = atomic._link_command(reader, [object_path], binary, 'pie',
                                                                  changed['resolved_linker']['path'])
                 receipt_path.write_bytes((json.dumps(changed, sort_keys=True) + '\n').encode())
-                with self.assertRaises(native.NativeObservationError):
+                with self.assertRaises(atomic.products.ProductEvidenceError):
                     atomic._collect_link(reader, [object_path], binary, 'pie', tools)
 
     def test_execution_payload_reconstructs_only_through_the_sealed_workspace_mount(self):

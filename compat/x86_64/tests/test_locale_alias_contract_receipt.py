@@ -634,7 +634,7 @@ class LocaleAliasContractReceiptTests(unittest.TestCase):
 
     def test_both_product_producer_tool_records_must_match_pinned_image_inputs(self) -> None:
         base = str(Path(receipt.PRODUCER_TOOL_PATHS["llvm-ar"]).parent) + "/"
-        toolchain = receipt.DYNAMIC_LINKER_PATH.split("/toolchains/", 1)[1].split("/", 1)[0]
+        toolchain = receipt.TOOLCHAIN
         tools = {
             "schema": 1,
             "target": "x86_64-unknown-linux-musl",
@@ -649,6 +649,10 @@ class LocaleAliasContractReceiptTests(unittest.TestCase):
             base + name: {"image": {"path": base + name, "sha256": self.digest(name.encode())}}
             for name in ("llvm-ar", "llvm-nm", "llvm-objdump")
         }}
+        for name, invocation in receipt.NATIVE_PRODUCER_TOOL_PATHS.items():
+            tools[name] = {"path": invocation, "resolved_path": invocation, "sha256": self.digest(name.encode())}
+            image["files"][invocation] = {"image": {"path": invocation, "sha256": self.digest(name.encode())}}
+        tools["rustc"]["sysroot"] = receipt.TOOLCHAIN_ROOT
         static = self.root / "products/static/share/crabc"
         dynamic = self.root / "products/dynamic/share/crabc"
         static.mkdir(parents=True)
@@ -663,6 +667,15 @@ class LocaleAliasContractReceiptTests(unittest.TestCase):
             set(receipt._validate_producer_tools(self.root, dynamic.parents[1], "dynamic", image)["llvm_target_tools"]),
             {"llvm-ar", "llvm-nm", "llvm-objdump"},
         )
+        for tool in receipt.NATIVE_PRODUCER_TOOL_PATHS:
+            for name, directory in (("static", static), ("dynamic", dynamic)):
+                with self.subTest(tool=tool, product=name):
+                    forged = json.loads(json.dumps(tools))
+                    forged[tool]["sha256"] = "0" * 64
+                    metadata = directory / ("manifest.json" if name == "static" else "producer-tools.json")
+                    metadata.write_text(json.dumps({"producer_tools": forged} if name == "static" else forged), encoding="utf-8")
+                    with self.assertRaisesRegex(receipt.LocaleAliasReceiptError, f"{tool} producer tool differs"):
+                        receipt._validate_producer_tools(self.root, directory.parents[1], name, image)
         forged = json.loads(json.dumps(tools))
         forged["llvm_target_tools"]["llvm-ar"]["sha256"] = "0" * 64
         (static / "manifest.json").write_text(json.dumps({"producer_tools": forged}), encoding="utf-8")

@@ -227,15 +227,13 @@ def _collect_link(reader, objects, binary, mode, tools):
         search, '/usr/lib', label='atomic sealed link receipt', fail=lambda message: require(False, message)
     )
     linker = keys(receipt['resolved_linker'], ('path', 'sha256'), "atomic linker's identity")
-    require(isinstance(linker['path'], str) and Path(linker['path']).name == 'ld.lld'
-            and isinstance(linker['sha256'], str) and re.fullmatch('[0-9a-f]{64}', linker['sha256']) is not None,
-            'atomic linker differs')
+    products._check_linker(linker, receipt_path)
     same(linker, tools['linker'], 'atomic sealed linker differs from retained tool')
     same(receipt['link_command'], _link_command(reader, objects, binary, mode, linker['path']),
          'atomic sealed linker invocation')
     direct = {reader.recorded(path) for path in [*runtime, *objects]}
     archive = reader.recorded(builtins)
-    trace = receipt['link_trace']
+    trace = products.semantic_link_trace(receipt['link_trace'])
     require(isinstance(trace, list) and all(isinstance(item, str) and (item in direct or item == archive or
             (item.startswith(archive + '(') and item.endswith(')'))) for item in trace) and direct <= set(trace),
             'atomic sealed link trace admits foreign or missing inputs')

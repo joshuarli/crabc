@@ -8,6 +8,9 @@
 set -euo pipefail
 
 readonly ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+. "$(dirname "${BASH_SOURCE[0]}")/native_build_environment.sh"
+mapfile -d '' -t rustc_command < <(python3 -B "$ROOT_DIR/compat/x86_64/native_rustc.py")
+mapfile -d '' -t rustc_link_command < <(python3 -B "$ROOT_DIR/compat/x86_64/native_rustc.py" final-link)
 readonly LOADER_SOURCE_ROOT="$ROOT_DIR/ldso/src/x86_64_general_initial_tls_runtime_v1_source_root.rs"
 readonly CONSUMER_SOURCE_ROOT="$ROOT_DIR/libc/src/c_abi/x86_64/loader_tls_runtime_v1_source_root.rs"
 readonly START="$ROOT_DIR/compat/x86_64/ldso_initial_graph_start.S"
@@ -57,7 +60,7 @@ fi
 # before linking the native graph. The test root omits only freestanding entry
 # glue; it retains the loader graph, sealed registry, descriptor atomics, and
 # rollback transition that must all complete before ARCH_SET_FS.
-rustc --edition=2021 --test \
+"${rustc_link_command[@]}" --edition=2021 --test \
     --cfg crabc_general_initial_graph \
     --cfg crabc_general_initial_tls_materialization_v1 \
     --cfg crabc_general_loader_libc_tls_runtime_v1 \
@@ -67,7 +70,7 @@ env -i PATH=/usr/bin:/bin "$work_dir/general-runtime-v1-state-tests"
 build_source_loader() {
     local output="$1"
     shift
-    rustc --edition=2021 --crate-type staticlib -C panic=abort -C relocation-model=pic \
+    "${rustc_command[@]}" --edition=2021 --crate-type staticlib -C panic=abort -C relocation-model=pic \
         --cfg crabc_general_initial_graph \
         --cfg crabc_general_initial_tls_materialization_v1 \
         --cfg crabc_general_loader_libc_tls_runtime_v1 \
@@ -91,7 +94,7 @@ build_cargo_loader() {
 build_consumer() {
     local output="$1"
     shift
-    rustc --edition=2021 --crate-type staticlib -C panic=abort -C relocation-model=pic \
+    "${rustc_command[@]}" --edition=2021 --crate-type staticlib -C panic=abort -C relocation-model=pic \
         "$@" "$CONSUMER_SOURCE_ROOT" -o "$output"
 }
 

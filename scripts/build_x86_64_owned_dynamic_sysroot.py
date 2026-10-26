@@ -409,7 +409,7 @@ def shared_libc_hot_rodata(objects: list[Path], stage: Path) -> dict[str, object
 
 
 def shared_libc_link_command(
-    lld: Path,
+    linker: Path,
     dynamic_list: Path,
     mimalloc_hidden_exports: Path | None,
     errno_private_aliases: Path,
@@ -427,7 +427,7 @@ def shared_libc_link_command(
         raise common.BuildError("shared libc must consume the exact compiler-helper archive name")
 
     return [
-        str(lld), "-shared", "--hash-style=sysv", "--eh-frame-hdr", "-soname", "libc.so",
+        str(linker), "-shared", "--hash-style=sysv", "--eh-frame-hdr", "-soname", "libc.so",
         f"--dynamic-list={dynamic_list}",
         *([f"--version-script={mimalloc_hidden_exports}"] if mimalloc_hidden_exports is not None else []),
         f"--version-script={errno_private_aliases}",
@@ -678,7 +678,7 @@ def build_staged_payload(output: Path, stage: Path, *, allocator_backend: str = 
     nm = common.producer_tool_path(tools, "llvm-nm")
     objdump = common.producer_tool_path(tools, "llvm-objdump")
     rust_sysroot = common.pinned_rustc_sysroot(Path(rustup))
-    lld = rust_sysroot / "lib/rustlib" / common.TARGET / "bin/gcc-ld/ld.lld"
+    linker = common.native_build_tools.MOLD
     shared_dynamic_list = shared_libc_dynamic_list()
     evidence_c = allocator_backend == common.EVIDENCE_ALLOCATOR_BACKEND
     accepted_c = allocator_backend in common.C_ALLOCATOR_BACKENDS
@@ -779,7 +779,7 @@ def build_staged_payload(output: Path, stage: Path, *, allocator_backend: str = 
         nm, [*(objects / item for item in selected), builtins], stage)
     shared_hot_rodata = shared_libc_hot_rodata([objects / item for item in selected], stage)
     libc_shared_link_command = shared_libc_link_command(
-        lld, SHARED_LIBC_DYNAMIC_LIST, (stage / "libc-mimalloc-hidden.exports" if accepted_c else None),
+        linker, SHARED_LIBC_DYNAMIC_LIST, (stage / "libc-mimalloc-hidden.exports" if accepted_c else None),
         stage / "libc-errno-private.exports", stage / "libc-hot.order", stage / "libc-hot-rodata.ld",
         objects, selected, builtins, library
     )
@@ -814,20 +814,20 @@ def build_staged_payload(output: Path, stage: Path, *, allocator_backend: str = 
     # crt1.o must not import itself because static executables link it too.
     attachment_parts = stage / "dynamic-attachment"
     attachment_parts.mkdir()
-    handoff_reader_command = [rustup, "run", common.PINNED_TOOLCHAIN, "rustc", "--edition=2021",
+    handoff_reader_command = [*common.native_build_tools.compile_command(rust_sysroot / "bin/rustc"), "--edition=2021",
                               "--crate-name", "crabc_owned_crt_handoff_attachment", "--crate-type", "lib",
                               "--emit", "obj", "-C", "opt-level=2", "-C", "panic=abort",
                               "-C", "relocation-model=pic", "--remap-path-prefix", f"{ROOT}=/crabc",
                               str(ROOT / "crt/src/x86_64_owned_crt_handoff_attachment.rs"),
                               "-o", str(attachment_parts / "crt-handoff-reader.o")]
     run(handoff_reader_command)
-    run([rustup, "run", common.PINNED_TOOLCHAIN, "rustc", "--edition=2021",
+    run([*common.native_build_tools.compile_command(rust_sysroot / "bin/rustc"), "--edition=2021",
          "--crate-name", "crabc_dynamic_attachment", "--crate-type", "lib", "--emit=obj",
          "-C", "opt-level=2", "-C", "panic=abort", "-C", "relocation-model=pic",
          "--remap-path-prefix", f"{ROOT}=/crabc",
          str(ROOT / "libc/src/c_abi/x86_64/owned_dynamic_attachment.rs"),
          "-o", str(attachment_parts / "libc-attachment.o")])
-    run([str(lld), "-r", str(attachment_parts / "libc-attachment.o"),
+    run([str(linker), "-r", str(attachment_parts / "libc-attachment.o"),
          str(attachment_parts / "crt-handoff-reader.o"), "-o", str(library / "crabc-dynamic-attach.o")])
     (library / "crabc-dynamic-attach.o").chmod(0o644)
     common.copy_artifact(builtins, library / builtins.name)
@@ -932,7 +932,7 @@ def build_debug_payload(output: Path, stage: Path, *, allocator_backend: str, li
     nm = common.producer_tool_path(tools, "llvm-nm")
     rustup = tools["rustup"]["path"]
     sysroot = common.pinned_rustc_sysroot(Path(rustup))
-    lld = sysroot / "lib/rustlib" / common.TARGET / "bin/gcc-ld/ld.lld"
+    linker = common.native_build_tools.MOLD
     run = common.run
     objects = inputs["source_objects"]
     builtins = inputs["builtins"]
@@ -955,7 +955,7 @@ def build_debug_payload(output: Path, stage: Path, *, allocator_backend: str, li
     allocator_policy = shared_libc_mimalloc_hidden_exports(stage) if accepted_c else {"status": "not-selected-native-shadow"}
     rust_private = stage / "libc-rust-private.exports"
     rust_private.write_text("{ local: _R*; _ZN*; };\n")
-    libc_command = [str(lld), "-shared", "--hash-style=sysv", "--eh-frame-hdr", "-soname", "libc.so",
+    libc_command = [str(linker), "-shared", "--hash-style=sysv", "--eh-frame-hdr", "-soname", "libc.so",
                     f"--dynamic-list={SHARED_LIBC_DYNAMIC_LIST}",
                     f"--version-script={rust_private}",
                     f"--version-script={stage / 'libc-errno-private.exports'}",
@@ -982,7 +982,7 @@ def build_debug_payload(output: Path, stage: Path, *, allocator_backend: str, li
     for name in ("crt1.o", "Scrt1.o", "crti.o", "crtn.o"):
         common.copy_artifact(crt / name, library / name)
     common.copy_artifact(builtins, library / builtins.name)
-    base = [rustup, "run", common.PINNED_TOOLCHAIN, "rustc", "--edition=2021", "--crate-type=lib",
+    base = [*common.native_build_tools.compile_command(sysroot / "bin/rustc"), "--edition=2021", "--crate-type=lib",
             "--target", common.TARGET, "-Zunstable-options", "-Cpanic=immediate-abort", "-Copt-level=0",
             "-Cforce-unwind-tables=no", "-Cdebuginfo=0", "-Coverflow-checks=off", "-Cdebug-assertions=off",
             "-Crelocation-model=pic", "--remap-path-prefix", f"{ROOT}=/crabc",
@@ -1007,10 +1007,10 @@ def build_debug_payload(output: Path, stage: Path, *, allocator_backend: str, li
     for artifact in [*parts, *(crt / name for name in ("crt1.o", "Scrt1.o", "crti.o", "crtn.o")), builtins]:
         dependencies.update(elf_symbols(nm, artifact, "--undefined-only") & definitions)
     support = stage / "main-core-support.o"
-    support_command = [str(lld), "-r", "--gc-sections", *(f"--undefined={name}" for name in sorted(dependencies)),
+    support_command = [str(linker), "-r", "--gc-sections", *(f"--undefined={name}" for name in sorted(dependencies)),
                        str(private_core), "-o", str(support)]
     run(support_command)
-    attachment_command = [str(lld), "-r", *(str(part) for part in parts), str(support),
+    attachment_command = [str(linker), "-r", *(str(part) for part in parts), str(support),
                           "-o", str(library / "crabc-dynamic-attach.o")]
     run(attachment_command)
     loader_object = stage / "loader.o"
@@ -1028,7 +1028,7 @@ def build_debug_payload(output: Path, stage: Path, *, allocator_backend: str, li
     private_exports.write_text("{ local: _R*; _ZN*; };\n")
     interpreter = output / LOADER_ARTIFACT
     interpreter.parent.mkdir()
-    loader_link = [str(lld), "-shared", "-Bsymbolic", "--hash-style=sysv", "-e", "_start", "--no-undefined",
+    loader_link = [str(linker), "-shared", "-Bsymbolic", "--hash-style=sysv", "-e", "_start", "--no-undefined",
                    "-z", "now", "-z", "noexecstack", f"--version-script={private_exports}",
                    f"--exclude-libs={private_core.name},{helper_policy['archive']}", str(loader_object),
                    str(private_core), str(builtins), str(RUNTIME_DISCARD_UNWIND_SCRIPT), str(LOADER_BSS_LAYOUT_SCRIPT),

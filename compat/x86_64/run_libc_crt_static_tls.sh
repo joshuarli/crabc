@@ -10,6 +10,8 @@ set -euo pipefail
 . "$(dirname "${BASH_SOURCE[0]}")/source_runtime_libc.sh"
 
 readonly ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+. "$(dirname "${BASH_SOURCE[0]}")/native_build_environment.sh"
+mapfile -d '' -t rustc_command < <(python3 -B "$ROOT_DIR/compat/x86_64/native_rustc.py")
 readonly ORACLE_CC=/usr/local/bin/crabc-x86_64-musl-gcc
 readonly STATIC_C_ABI_EXPORTS="$ROOT_DIR/compat/x86_64/static_c_abi_exports.txt"
 readonly ELF64_PROGRAM_HEADER_SIZE=56
@@ -130,20 +132,7 @@ for tool in ar awk cargo cmp cp dd diff grep mkdir nm objdump od readelf rustup 
     require_tool "$tool"
 done
 [ -x "$ORACLE_CC" ] || fail "missing pinned musl oracle compiler"
-if command -v ld.lld >/dev/null 2>&1; then
-    link_editor=ld.lld
-else
-    toolchain_rustc="$(rustup which rustc)"
-    toolchain_root="$(dirname "$(dirname "$toolchain_rustc")")"
-    bundled_lld="$toolchain_root/lib/rustlib/x86_64-unknown-linux-musl/bin/gcc-ld/ld.lld"
-    if [ -x "$bundled_lld" ]; then
-        link_editor="$bundled_lld"
-    elif command -v ld >/dev/null 2>&1; then
-        link_editor=ld
-    else
-        fail "requires a native x86-64 linker"
-    fi
-fi
+readonly LINKER="$(python3 -B "$ROOT_DIR/compat/x86_64/native_rustc.py" mold)"
 
 bash "$ROOT_DIR/compat/x86_64/run_musl_oracle.sh" >/dev/null
 bash "$ROOT_DIR/compat/x86_64/run_types_header_abi.sh" >/dev/null
@@ -213,7 +202,7 @@ for object in rcrt1 crti crtn; do
         crti) source_path=crt/src/x86_64_crti.rs ;;
         crtn) source_path=crt/src/x86_64_crtn.rs ;;
     esac
-    rustup run "$(python3 "$ROOT_DIR/scripts/rust_toolchain.py")" rustc --edition=2021 --crate-type=lib --emit=obj \
+    "${rustc_command[@]}" --edition=2021 --crate-type=lib --emit=obj \
         --target x86_64-unknown-linux-musl -C panic=abort -C force-unwind-tables=no \
         -C debuginfo=0 -C opt-level=2 -C overflow-checks=off -C debug-assertions=off \
         -C relocation-model=pic -C code-model=small -C link-dead-code=no \
@@ -278,7 +267,7 @@ fi
     -fno-stack-protector -ftls-model=local-exec -I"$ROOT_DIR/include" \
     -c compat/x86_64/libc_crt_static_tls_peer.c -o "$peer_object"
 
-if "$link_editor" -pie -static --no-dynamic-linker --no-undefined -z relro -z now -e _start \
+if "$LINKER" -pie -static --no-dynamic-linker --no-undefined -z relro -z now -e _start \
     "$crt_dir/rcrt1.o" "$crt_dir/crti.o" "$probe_object" "$peer_object" \
     "$crt_dir/crtn.o" -o "$candidate_without_archive" >"$without_archive_log" 2>&1; then
     fail "rcrt1 static PIE linked without the required libc archive"
@@ -288,13 +277,13 @@ grep -Fq '__crabc_x86_static_tls_bootstrap' "$without_archive_log" ||
 grep -Fq '__libc_start_main' "$without_archive_log" ||
     fail "no-archive link did not fail at the libc startup boundary"
 
-"$link_editor" -pie -static --no-dynamic-linker --no-undefined -z relro -z now -e _start \
+"$LINKER" -pie -static --no-dynamic-linker --no-undefined -z relro -z now -e _start \
     "$crt_dir/rcrt1.o" "$crt_dir/crti.o" "$probe_object" "$peer_object" \
     "$archive" "$crt_dir/crtn.o" -o "$candidate"
-"$link_editor" -pie -static --no-dynamic-linker --no-undefined -z relro -z now -e _start \
+"$LINKER" -pie -static --no-dynamic-linker --no-undefined -z relro -z now -e _start \
     "$crt_dir/rcrt1.o" "$crt_dir/crti.o" "$ssp_override_probe_object" "$peer_object" \
     "$archive" "$crt_dir/crtn.o" -o "$candidate_ssp_override"
-"$link_editor" -pie -static --no-dynamic-linker --no-undefined -z relro -z now -e _start \
+"$LINKER" -pie -static --no-dynamic-linker --no-undefined -z relro -z now -e _start \
     "$crt_dir/rcrt1.o" "$crt_dir/crti.o" "$stdio_exit_override_probe_object" "$peer_object" \
     "$archive" "$crt_dir/crtn.o" -o "$candidate_stdio_exit_override"
 

@@ -3,6 +3,9 @@
 set -euo pipefail
 
 readonly ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+. "$(dirname "${BASH_SOURCE[0]}")/native_build_environment.sh"
+mapfile -d '' -t rustc_command < <(python3 -B "$ROOT_DIR/compat/x86_64/native_rustc.py")
+mapfile -d '' -t rustc_link_command < <(python3 -B "$ROOT_DIR/compat/x86_64/native_rustc.py" final-link)
 readonly SOURCE_ROOT="$ROOT_DIR/ldso/src/x86_64_general_initial_graph_source_root.rs"
 readonly START="$ROOT_DIR/compat/x86_64/ldso_initial_graph_start.S"
 readonly MAIN="$ROOT_DIR/compat/x86_64/ldso_general_initial_graph_main.c"
@@ -23,13 +26,13 @@ trap 'rm -rf "$work_dir"' EXIT
 # Exercise the graph-only lifecycle planner through the same isolated source
 # root. These tests prove the declared-needed diamond postorder and explicit
 # cycle rejection without making either condition depend on fixture layout.
-rustc --edition=2021 --test --cfg crabc_general_initial_graph \
+"${rustc_link_command[@]}" --edition=2021 --test --cfg crabc_general_initial_graph \
     "$SOURCE_ROOT" -o "$work_dir/general-initial-graph-state-tests"
 env -i PATH=/usr/bin:/bin "$work_dir/general-initial-graph-state-tests"
 
 case "${CRABC_LDSO_GENERAL_INITIAL_GRAPH_ROOT:-source}" in
     source)
-        rustc --edition=2021 --crate-type staticlib -C panic=abort -C relocation-model=pic \
+        "${rustc_command[@]}" --edition=2021 --crate-type staticlib -C panic=abort -C relocation-model=pic \
             --cfg crabc_general_initial_graph "$SOURCE_ROOT" -o "$work_dir/libgeneral_initial_graph.a"
         cc -nostdlib -shared -Wl,-e,_start -Wl,-Bsymbolic -Wl,-z,now -Wl,--no-undefined \
             -Wl,--whole-archive "$work_dir/libgeneral_initial_graph.a" -Wl,--no-whole-archive \

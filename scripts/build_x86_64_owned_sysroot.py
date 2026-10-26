@@ -34,6 +34,7 @@ from typing import Sequence
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 from scripts.rust_toolchain import pinned_toolchain
+from scripts import native_build_tools
 from compat.x86_64 import static_product_contract
 TARGET = "x86_64-unknown-linux-musl"
 FORMAT = "crabc-x86-64-owned-static-sysroot-v1"
@@ -198,6 +199,7 @@ def deterministic_environment() -> dict[str, str]:
         path.mkdir(parents=True, exist_ok=True)
 
     return {
+        **native_build_tools.environment(),
         **{name: str(path) for name, path in state_paths.items()},
         "RUSTUP_HOME": str(PINNED_RUSTUP_HOME),
         # Cargo runs a host build script while producing crabc-libc.  Its
@@ -345,7 +347,11 @@ def resolve_pinned_producer_tools() -> dict[str, object]:
             "ambient_rustup_home_inherited": False,
         },
         "rustup": executable_identity(rustup, "pinned rustup"),
+        "rustc_wrapper": executable_identity(native_build_tools.KACHE, "pinned kache"),
+        "linker": executable_identity(native_build_tools.MOLD, "image mold"),
+        "cargo_linker": executable_identity(native_build_tools.CARGO_LINKER, "image mold GCC driver"),
         "rustc": {
+            **executable_identity(sysroot / "bin/rustc", "pinned physical rustc", within=sysroot),
             "sysroot": str(sysroot),
             "version": pinned_rustc_version(rustup),
         },

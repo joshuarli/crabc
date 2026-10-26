@@ -70,7 +70,7 @@ compiler_flag = "-fPIC"
 interpreter = "absent"
 
 [link_plan]
-linker = "ld.lld"
+linker = "mold"
 executable_required = [
   "canonical PT_INTERP",
   "selected installed executable CRT",

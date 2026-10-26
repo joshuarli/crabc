@@ -5,6 +5,9 @@
 set -euo pipefail
 
 readonly ROOT_DIR="$(cd -P "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+. "$(dirname "${BASH_SOURCE[0]}")/native_build_environment.sh"
+mapfile -d '' -t rustc_command < <(python3 -B "$ROOT_DIR/compat/x86_64/native_rustc.py")
+mapfile -d '' -t rustc_link_command < <(python3 -B "$ROOT_DIR/compat/x86_64/native_rustc.py" final-link)
 readonly WORK_DIR="$ROOT_DIR/.work/x86_64/wordexp-process-adapter"
 readonly SOURCE="$ROOT_DIR/compat/x86_64/owned_wordexp_process_adapter_tests.rs"
 readonly BINARY="$WORK_DIR/owned_wordexp_process_adapter_tests"
@@ -14,7 +17,7 @@ readonly BINARY="$WORK_DIR/owned_wordexp_process_adapter_tests"
     exit 1
 }
 mkdir -p "$WORK_DIR"
-TMPDIR="$WORK_DIR" rustc --edition=2021 --test "$SOURCE" -o "$BINARY"
+TMPDIR="$WORK_DIR" "${rustc_link_command[@]}" --edition=2021 --test "$SOURCE" -o "$BINARY"
 # The native SIGCHLD disposition control temporarily changes process-global
 # state, so this boundary suite must remain serial.
 "$BINARY" --test-threads=1

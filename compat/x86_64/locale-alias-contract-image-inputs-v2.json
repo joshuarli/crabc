@@ -69,8 +69,8 @@
     "/opt/musl-1.2.6/lib/libc.so": {
       "mode": 493,
       "path": "/opt/musl-1.2.6/lib/libc.so",
-      "sha256": "f003571aaed56e48e1c32f57b372c8875dd8e8160a78f076f4babe7d48fad433",
-      "size": 798320
+      "sha256": "3473304994689e34a2467283047f5fe19b3012e15e2f1c00fced51a55c97b2f4",
+      "size": 865560
     },
     "/opt/musl-1.2.6/lib/musl-gcc.specs": {
       "mode": 420,
@@ -83,12 +83,6 @@
       "path": "/opt/rustup/toolchains/nightly-2026-09-15-x86_64-unknown-linux-musl/bin/rustc",
       "sha256": "228e24592d38da145ce4064b14e4bcfdd13cd3e2623bdbdcec45f37d16ef7b3b",
       "size": 9528
-    },
-    "/opt/rustup/toolchains/nightly-2026-09-15-x86_64-unknown-linux-musl/lib/rustlib/x86_64-unknown-linux-musl/bin/gcc-ld/ld.lld": {
-      "mode": 493,
-      "path": "/opt/rustup/toolchains/nightly-2026-09-15-x86_64-unknown-linux-musl/lib/rustlib/x86_64-unknown-linux-musl/bin/gcc-ld/ld.lld",
-      "sha256": "dc40fa1b087ed4538d410a08e7314bcc1614dc7ff728b5bbf624a1daa97730bc",
-      "size": 373512
     },
     "/opt/rustup/toolchains/nightly-2026-09-15-x86_64-unknown-linux-musl/lib/rustlib/x86_64-unknown-linux-musl/bin/llvm-ar": {
       "mode": 493,
@@ -144,6 +138,12 @@
       "sha256": "48c952c44302d407c9f8e2944fc2f9291785875494e8fdc5e63b67ad032504af",
       "size": 1555880
     },
+    "/usr/bin/mold": {
+      "mode": 493,
+      "path": "/usr/bin/mold",
+      "sha256": "3cfef61deb864534e48ec37ef22d613a43a8764454bcf852a1181fb588daec2f",
+      "size": 22239920
+    },
     "/usr/bin/python3": {
       "mode": 493,
       "path": "/usr/bin/python3.14",
@@ -192,11 +192,23 @@
       "sha256": "748816b36f25c00d930e1ac38cedf33f784a7dc9e8c807e3596af5fcfa628e08",
       "size": 87904
     },
+    "/usr/local/bin/crabc-x86_64-mold-gcc": {
+      "mode": 493,
+      "path": "/usr/local/bin/crabc-x86_64-mold-gcc",
+      "sha256": "e749b8a2b54742cac6e770ee82bcd647a23cc0e6855a25f1f2c06aabeeaa7127",
+      "size": 47
+    },
     "/usr/local/bin/crabc-x86_64-musl-gcc": {
       "mode": 493,
       "path": "/usr/local/bin/crabc-x86_64-musl-gcc",
-      "sha256": "9b28cac06b7a1f35331ca06e23a1fc3fa7be9a6f85d9c6006363e8185001c90a",
-      "size": 390
+      "sha256": "414207f9700e9c40fbd92483cbcb7e7948b1e698c410df6caae04847bec10d29",
+      "size": 569
+    },
+    "/usr/local/bin/kache": {
+      "mode": 493,
+      "path": "/usr/local/bin/kache",
+      "sha256": "b826e99983057974663d6863eafbee4e1b25ca9373071406b15dd02961b2c37d",
+      "size": 26978672
     },
     "/usr/sbin/chroot": {
       "mode": 493,

@@ -76,7 +76,7 @@ class OwnedCrtFramePhysicalTests(unittest.TestCase):
         from scripts import build_x86_64_owned_sysroot as producer
         sysroot=producer.pinned_rustc_sysroot(producer.pinned_rustup())
         objdump=sysroot/'lib/rustlib'/producer.TARGET/'bin/llvm-objdump'
-        cls.linker=sysroot/'lib/rustlib'/producer.TARGET/'bin/gcc-ld/ld.lld'
+        cls.linker=producer.native_build_tools.MOLD
         subprocess.run([sys.executable,'-B',str(reader.ROOT/'crt/build_x86_64.py'),
                         '--out-dir',str(cls.work/'crt'),'--llvm-objdump',str(objdump)],
                        check=True,capture_output=True)
@@ -122,7 +122,7 @@ legacy_fini: or $2,%ebx
 ''')
         subprocess.run(['gcc','-c',str(source),'-o',str(cls.work/'application.o')],check=True,capture_output=True)
         for mode in ('static','static-pie'):
-            command=[str(sysroot/'lib/rustlib'/producer.TARGET/'bin/gcc-ld/ld.lld'),
+            command=[str(producer.native_build_tools.MOLD),
                      '-static',*(['-pie'] if mode=='static-pie' else []),
                      '--no-dynamic-linker','--no-undefined','--gc-sections','-e','_start',
                      '-Map='+str(cls.work/(mode+'.map')),str(cls.work/'crt/crti.o'),
@@ -174,7 +174,7 @@ _fini: ret
                 inputs=([str(cls.work/'crt/crti.o'),str(cls.work/'empty.o'),str(cls.work/'fallback.a'),
                          str(cls.work/'crt/crtn.o')] if variant=='empty' else
                         [str(cls.work/'empty.o'),str(cls.work/'fallback.a')])
-                command=[str(sysroot/'lib/rustlib'/producer.TARGET/'bin/gcc-ld/ld.lld'),
+                command=[str(producer.native_build_tools.MOLD),
                          '-static',*(['-pie'] if mode=='static-pie' else []),
                          '--no-dynamic-linker','--no-undefined','--gc-sections','-e','_start',
                          '-Map='+str(cls.work/(name+'.map')),*inputs,'-o',str(cls.work/name)]
@@ -237,6 +237,33 @@ _fini: ret
                         application_objects=(application,),source_mount=str(reader.ROOT))
             finally:application.write_bytes(original)
 
+    def test_frame_binding_matches_explicit_exports_and_rejects_unexported_global(self):
+        scratch=reader.ROOT/'.work/tmp';scratch.mkdir(parents=True,exist_ok=True)
+        with tempfile.TemporaryDirectory(dir=scratch) as temporary:
+            work=Path(temporary);binary=work/'exported';mapping=work/'exported.map'
+            subprocess.run([str(self.linker),'-static','-E','--no-dynamic-linker','--no-undefined',
+                            '--gc-sections','-e','_start','-Map='+str(mapping),
+                            str(self.work/'crt/crti.o'),str(self.work/'application.o'),
+                            str(self.work/'crt/crtn.o'),'-o',str(binary)],check=True,capture_output=True)
+            exported=reader.owned_crt_frame_providers(
+                reader.ROOT,self.work/'crt/crti.o',self.work/'crt/crtn.o',binary,mapping,
+                application_objects=(self.work/'application.o',),source_mount=str(reader.ROOT))
+            self.assertTrue(all(row['final_symbol']['binding']=='GLOBAL' for row in exported.values()))
+            self.assertTrue(all(row['final_symbol']['binding']=='LOCAL' for row in self.account().values()))
+            self.assertEqual(subprocess.run([str(binary)],capture_output=True).returncode,0)
+            original=(self.work/'static').read_bytes();data=bytearray(original);elf=reader.Elf(self.work/'static')
+            entries=[]
+            for index,table in enumerate(elf.sections):
+                if table[1]!=2:continue
+                for number in range(table[5]//24):
+                    if elf.symbol_row(index,number)['name']=='_init':entries.append(table[4]+number*24+4)
+            self.assertEqual(len(entries),1)
+            data[entries[0]]=0x12
+            (self.work/'static').write_bytes(data)
+            try:
+                with self.assertRaisesRegex(reader.StartupEvidenceError,'symbol contract differs'):self.account()
+            finally:(self.work/'static').write_bytes(original)
+
     def test_physical_empty_frames_and_archive_fallback_keep_distinct_origins(self):
         for mode in ('static','static-pie'):
             name='empty-'+mode
@@ -250,8 +277,8 @@ _fini: ret
                 self.assertEqual(row['application_relocations'],[])
                 fallback=reader.Elf(self.work/('fallback-'+mode)).symbol(symbol,dynamic=False)
                 source=reader.Elf(self.work/'fallback.o').symbol(symbol,dynamic=False)
-                for item in (source,fallback):
-                    self.assertEqual((item['type'],item['binding'],item['size']),('FUNC','WEAK',1))
+                self.assertEqual((source['type'],source['binding'],source['size']),('FUNC','WEAK',1))
+                self.assertEqual((fallback['type'],fallback['binding'],fallback['size']),('FUNC','LOCAL',1))
                 elf=reader.Elf(self.work/('fallback-'+mode));section=elf.sections[fallback['section']]
                 offset=section[4]+fallback['value']-section[3]
                 self.assertEqual(elf.data[offset:offset+1],b'\xc3')

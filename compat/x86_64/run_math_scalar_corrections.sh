@@ -3,6 +3,8 @@
 set -euo pipefail
 ulimit -c 0
 root="$(cd -P "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+. "$(dirname "${BASH_SOURCE[0]}")/native_build_environment.sh"
+mapfile -d '' -t rustc_command < <(python3 -B "$root/compat/x86_64/native_rustc.py")
 cd "$root"
 [ "$(uname -s)/$(uname -m)" = Linux/x86_64 ]
 [ -n "${TMPDIR:-}" ]
@@ -12,7 +14,7 @@ work="$(mktemp -d "$TMPDIR/math-scalar-corrections.XXXXXX")"
 chmod a+rx "$work"
 printf 'Retained scalar correction evidence: %s\n' "$work"
 cc=/usr/local/bin/crabc-x86_64-musl-gcc
-rustup run "$(python3 "$root/scripts/rust_toolchain.py")" rustc --edition=2021 --crate-type=lib --emit=obj \
+"${rustc_command[@]}" --edition=2021 --crate-type=lib --emit=obj \
     --target x86_64-unknown-linux-musl -C panic=abort -C opt-level=2 \
     compat/x86_64/math_scalar_corrections_boundary.rs -o "$work/boundary.o"
 flags=(-std=c11 -I"$root/include" -nostdlib -static -fno-pie -no-pie -ffreestanding

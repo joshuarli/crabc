@@ -101,9 +101,9 @@ def reserve_receipt(path: Path):
 
 @contextmanager
 def reserve_link_map(path: Path):
-    """Claim LLD's map sidecar name before linking; drop it if the link fails.
+    """Claim linker's map sidecar name before linking; drop it if the link fails.
 
-    LLD writes the map itself, so the claimed empty file is replaced in place
+    linker writes the map itself, so the claimed empty file is replaced in place
     by the successful link. An existing path, symlink or hardlink is rejected
     before any tool runs, exactly like the JSON sidecars.
     """
@@ -133,7 +133,7 @@ def reserve_link_map(path: Path):
 def final_elf_inspection(output: Path, expected: elf_inspection.Expectation, link_map: Path) -> dict:
     """Inspect one just-linked output before any caller can execute it.
 
-    A rejected output is removed: LLD has already replaced the requested path,
+    A rejected output is removed: linker has already replaced the requested path,
     and a runnable artifact without a receipt must not survive the failure.
     """
     try:
@@ -392,7 +392,7 @@ def application_dso_sidecar(
     """Load the normal owned receipt which authorizes one closure DSO.
 
     A schema-3 declaration is an ownership assertion, rather than a route to
-    let LLD discover a file. Every graph node therefore has to bind the
+    let linker discover a file. Every graph node therefore has to bind the
     current installed manifest, its physical DSO bytes, normal shared-output
     mode and observed RUNPATH before the closure can be used.
     """
@@ -465,7 +465,7 @@ def validate_closure_graph(nodes: dict[str, ApplicationDso], direct_names: list[
 
     The shared object being linked is deliberately not an input node. An input
     back-edge to that output therefore needs a separate self-output identity
-    contract and is rejected here before LLD can publish a receipt.
+    contract and is rejected here before linker can publish a receipt.
     """
 
     names = set(nodes)
@@ -498,7 +498,7 @@ def validate_closure_sidecar(
     """Bind a node's normal receipt to the actual graph it was built against.
 
     Direct-only receipts describe only immediate DSO children because every
-    one was an LLD input at that historical boundary. Schema 3 records the
+    one was an linker input at that historical boundary. Schema 3 records the
     full reachable child closure. This relation is checked without assuming a
     DAG for cycles within declared input nodes. The shared output itself is
     absent from that input closure, so a back-edge to it remains rejected at
@@ -514,6 +514,7 @@ def validate_closure_sidecar(
     if (not isinstance(command, list) or not isinstance(trace, list)
             or not all(isinstance(item, str) for item in [*command, *trace])):
         raise shared.DriverError("application DSO closure receipt link evidence is invalid")
+    trace = [line.removeprefix("trace: ") for line in trace]
 
     if node.search.schema in (1, 2):
         if not isinstance(identities, dict) or identities != expected_immediate:
@@ -868,10 +869,9 @@ def execute(root: Path, arguments: list[str]) -> None:
         runtime = [library / name for name in ("crti.o", "libc.so", "crtn.o")]
         if mode != "shared": runtime += [library / entry_object, library / "crabc-dynamic-attach.o"]
         direct = [*runtime, *objects, *direct_dso_paths]
-        # LLD may not extract an archive member. Every other input must appear,
-        # and no ambient startup, library, script or helper input is permitted.
         seen = set()
         for line in trace:
+            line = line.removeprefix("trace: ")
             if line in {str(path) for path in direct}:
                 seen.add(line)
             elif line == str(archive) or (line.startswith(str(archive) + "(") and line.endswith(")")):

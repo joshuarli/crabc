@@ -19,13 +19,14 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import re
 import shutil
 import subprocess
 import sys
 import tempfile
 from collections import Counter
 from pathlib import Path
-from typing import Any, Iterable, Mapping, Sequence
+from typing import Any, Iterable, Literal, Mapping, Sequence
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -193,7 +194,10 @@ def global_defined_symbols(path: Path, nm: str, readelf: str = "readelf") -> set
     }
 
 
-def global_symbol_details(path: Path, readelf: str) -> dict[str, list[dict[str, str]]]:
+def global_symbol_details(path: Path, readelf: str, *, symbol_table: Literal[".symtab", ".dynsym"] | None = None) -> dict[str, list[dict[str, str]]]:
+    """Return function facts from all tables or one explicitly selected table."""
+
+    require(symbol_table in (None, ".symtab", ".dynsym"), "unsupported symbol table selection")
     require(shutil.which(readelf) is not None, f"readelf is unavailable: {readelf}")
     result = subprocess.run(
         [readelf, "--symbols", "--wide", str(path)],
@@ -204,7 +208,14 @@ def global_symbol_details(path: Path, readelf: str) -> dict[str, list[dict[str, 
     )
     require(result.returncode == 0, f"readelf could not read {path}: {result.stderr.strip()}")
     details: dict[str, list[dict[str, str]]] = {}
+    current_table = None
     for line in result.stdout.splitlines():
+        header = re.fullmatch(r"Symbol table '([^']+)' contains [0-9]+ entries:", line.strip())
+        if header is not None:
+            current_table = header[1]
+            continue
+        if symbol_table is not None and current_table != symbol_table:
+            continue
         fields = line.split()
         if len(fields) < 8 or not fields[0].endswith(":"):
             continue

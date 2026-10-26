@@ -1,14 +1,4 @@
 #!/usr/bin/env bash
-# Installed native-shadow allocation across DSOs and dlopen against pinned musl.
-#
-# One executable, one initial DSO and one runtime-loaded plugin allocate,
-# grow and free each other's blocks, compare their malloc family identities
-# and errno contracts, and keep the plugin's blocks and code across dlclose,
-# which musl retains. The native-shadow dynamic product runs the objects
-# compiled once by its driver, as PIE and non-PIE, through the kernel and the
-# direct loader, and must reproduce the musl transcript. libc.so must bind
-# the malloc family exactly as musl's libc.so does. Without a supplied product
-# the runner builds a native-shadow dynamic sysroot.
 set -euo pipefail
 ulimit -c 0
 readonly ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
@@ -91,14 +81,9 @@ if [ -z "$dynamic_sysroot" ]; then
     dynamic_sysroot="$work/dynamic-sysroot"
 fi
 readonly driver="$dynamic_sysroot/bin/crabc-cc-dynamic"
-python3 -B - "$dynamic_sysroot/share/crabc/libc-shared.provenance.json" <<'PY'
-import json
-import sys
-with open(sys.argv[1], encoding='utf-8') as stream:
-    backend = json.load(stream).get('allocator_backend')
-if backend != 'native-shadow':
-    raise SystemExit(f'{sys.argv[1]}: allocator_backend is {backend!r}, not native-shadow')
-PY
+allocator_backend="$(python3 -B "$ROOT/compat/x86_64/installed_allocator_backend.py" \
+    "$dynamic_sysroot/share/crabc/dynamic-product-state.json" \
+    "$dynamic_sysroot/share/crabc/libc-shared.provenance.json")"
 receipt_products+=(
     "dynamic-manifest=$dynamic_sysroot/share/crabc/manifest.json"
     "dynamic-product-state=$dynamic_sysroot/share/crabc/dynamic-product-state.json"
@@ -111,7 +96,6 @@ receipt_products+=(
 )
 if [ -f "$work/dynamic-build.json" ]; then receipt_products+=("dynamic-build=$work/dynamic-build.json"); fi
 
-# The malloc family keeps musl's libc.so type, binding and visibility.
 family='malloc|free|calloc|realloc|reallocarray|aligned_alloc|posix_memalign|memalign|valloc|malloc_usable_size'
 bindings() {
     readelf --dyn-syms -W "$1" | awk -v family="^($family)\$" '$4 == "FUNC" && $7 != "UND" && $8 ~ family { print $8, $4, $5, $6 }' | sort
@@ -128,7 +112,6 @@ cmp "$work/musl-family.bindings" "$work/candidate-family.bindings" || {
     exit 1
 }
 
-# Compile once through the installed driver; link each object for both sides.
 mkdir "$work/objects" "$work/oracle"
 receipt_products+=(
     "source-library=$library"
@@ -203,4 +186,4 @@ for mode in pie non-pie; do
         }
     done
 done
-printf 'owned native-allocator DSO composition: PASS (musl + native-shadow dynamic PIE/non-PIE kernel/direct; executable/initial DSO/plugin transfers, dlclose retention, errno, musl malloc-family bindings); evidence: %s\n' "$work"
+printf 'owned native-allocator DSO composition: PASS (musl + %s dynamic PIE/non-PIE kernel/direct; executable/initial DSO/plugin transfers, dlclose retention, errno, musl malloc-family bindings); evidence: %s\n' "$allocator_backend" "$work"

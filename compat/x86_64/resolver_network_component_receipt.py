@@ -30,6 +30,7 @@ ROOT = HERE.parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 from scripts.rust_toolchain import pinned_toolchain
+from scripts import native_build_tools
 if str(HERE) not in sys.path:
     sys.path.insert(0, str(HERE))
 import core_image
@@ -49,7 +50,7 @@ DYNAMIC_INTERPRETER = "/lib/ld-crabc-x86_64.so.1"
 MUSL_ROOT = Path("/opt/musl-1.2.6")
 TOOLCHAIN_ROOT = Path("/opt/rustup/toolchains") / f"{pinned_toolchain(ROOT)}-x86_64-unknown-linux-musl"
 RUSTC = TOOLCHAIN_ROOT / "bin/rustc"
-LLD = TOOLCHAIN_ROOT / "lib/rustlib/x86_64-unknown-linux-musl/bin/gcc-ld/ld.lld"
+MOLD = native_build_tools.MOLD
 MUSL_INCLUDE = MUSL_ROOT / "include"
 HEADER_TRACE_PATH = re.compile(r"^\.+ (/.+)$")
 COMPILER_ORACLE_INPUTS = {
@@ -59,8 +60,10 @@ COMPILER_ORACLE_INPUTS = {
     "cc1": Path("/usr/libexec/gcc/x86_64-alpine-linux-musl/15.2.0/cc1"),
     "collect2": Path("/usr/libexec/gcc/x86_64-alpine-linux-musl/15.2.0/collect2"),
     "lto_plugin": Path("/usr/libexec/gcc/x86_64-alpine-linux-musl/15.2.0/liblto_plugin.so"),
+    "rustc_wrapper": native_build_tools.KACHE,
+    "cargo_linker": native_build_tools.CARGO_LINKER,
     "rustc": RUSTC,
-    "rust_linker": LLD,
+    "rust_linker": MOLD,
     "specs": MUSL_ROOT / "lib/musl-gcc.specs",
     "libc_archive": MUSL_ROOT / "lib/libc.a",
     "libc_shared": MUSL_ROOT / "lib/libc.so",
@@ -378,7 +381,7 @@ def trusted_image_manifest(root: Path) -> Mapping[str, object]:
     value = read_json_bytes(manifest_path.read_bytes(), "pinned core image manifest")
     required = {
         "/usr/local/bin/crabc-x86_64-musl-gcc", "/usr/bin/python3", "/usr/bin/readelf", "/usr/sbin/chroot",
-        *(str(path) for path in COMPILER_ORACLE_INPUTS.values()), str(RUSTC), str(LLD),
+        *(str(path) for path in COMPILER_ORACLE_INPUTS.values()), str(RUSTC),
     }
     require(isinstance(value, dict) and set(value) == {"schema", "path", "files"} and
             value.get("schema") == "crabc.x86_64-owned-resolver-network-image-inputs/v1" and

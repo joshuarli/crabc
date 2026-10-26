@@ -365,6 +365,7 @@ def native_source_runtime_records(work: Path) -> tuple[Path, Path]:
 
     def rustc_command(crate: str, source: Path, extern_names: tuple[str, ...]) -> list[str]:
         command = [
+            str(receipt.source_runtime.native_build_tools.KACHE),
             str(Path("/opt/rustup/toolchains") / f"{receipt.source_runtime.TOOLCHAIN}-x86_64-unknown-linux-musl" / "bin/rustc"),
             "--crate-name", crate, "--edition=2021", str(source),
             "--crate-type", "lib", "--target", receipt.source_runtime.TARGET,
@@ -419,6 +420,8 @@ def native_source_runtime_records(work: Path) -> tuple[Path, Path]:
         libc_command, target, runtime_sources, emitted, "crabc-libc", ROOT / "libc/src/lib.rs",
         extern_matrix=libc_externs, flags=receipt.source_runtime.RUNTIME_FLAGS,
     )
+    receipt_data["compiler_tools"] = receipt.source_runtime.compiler_tools(toolchain_root)
+    receipt_data["native_build_environment"] = receipt.source_runtime.native_build_tools.environment()
     receipt_data["cargo_stdout"] = identity(stdout)
     receipt_data["cargo_stderr"] = identity(stderr)
     receipt_data["cargo_command"] = receipt.source_runtime.retained_cargo_command(receipt.LONG_DOUBLE_FEATURE)
@@ -456,16 +459,16 @@ class OwnedMathFenvAllEntryTests(unittest.TestCase):
 
     def test_retained_math_feature_profiles_match_current_manifest(self) -> None:
         self.assertEqual(
-            receipt.source_runtime.retained_math_package_features(""), frozenset({"default"}),
+            receipt.source_runtime.retained_package_features(""), frozenset({"default"}),
         )
         self.assertEqual(
-            receipt.source_runtime.retained_math_package_features(receipt.LONG_DOUBLE_FEATURE),
+            receipt.source_runtime.retained_package_features(receipt.LONG_DOUBLE_FEATURE),
             frozenset({"default", receipt.LONG_DOUBLE_FEATURE}),
         )
         with self.assertRaisesRegex(
             receipt.source_runtime.ClosureError, "does not support this requested feature profile",
         ):
-            receipt.source_runtime.retained_math_package_features("x86-owned-allocator-lifecycle-test-audit")
+            receipt.source_runtime.retained_package_features("x86-owned-allocator-lifecycle-test-audit")
 
     def test_binary80_feature_receipt_replays_isolated_archive_and_consumer_evidence(self) -> None:
         scratch = ROOT / ".work/x86_64/tmp"
@@ -580,6 +583,34 @@ class OwnedMathFenvAllEntryTests(unittest.TestCase):
             stderr_path = graph / "cargo.stderr.log"
             original_stdout = stdout_path.read_bytes()
             original_stderr = stderr_path.read_bytes()
+
+            compiler = str(Path("/opt/rustup/toolchains") / f"{receipt.source_runtime.TOOLCHAIN}-x86_64-unknown-linux-musl" / "bin/rustc")
+            for old, new, message in (
+                (b"/usr/local/bin/kache ", b"/ambient/wrapper ", "exact pinned kache"),
+                (compiler.encode(), b"/ambient/rustc", "exact pinned kache"),
+                (b"Running `", b"Running `KACHE_LOCAL_ONLY=0 ", "fixed native build environment"),
+                (b"Running `", b"Running `KACHE_AUTO_SHARE_TARGET_FILES=1 ", "fixed native build environment"),
+            ):
+                with self.subTest(resealed_stream=new):
+                    stderr_path.write_bytes(original_stderr.replace(old, new))
+                    changed = json.loads(json.dumps(original))
+                    changed["cargo_stderr"] = receipt.source_runtime.file_record(stderr_path, "resealed fixture stream")
+                    receipt_path.write_text(json.dumps(changed), encoding="utf-8")
+                    with self.assertRaisesRegex(receipt.source_runtime.ClosureError, message):
+                        receipt.source_runtime.replay_cargo_graph(graph, receipt.LONG_DOUBLE_FEATURE)
+            stderr_path.write_bytes(original_stderr)
+            for field, name in (("compiler_tools", "wrapper"), ("native_build_environment", "KACHE_AUTO_CLEAN_UNUSED_UNITS_DAYS")):
+                changed = json.loads(json.dumps(original))
+                if field == "compiler_tools":
+                    changed[field][name]["sha256"] = "0" * 64
+                    message = "compiler tool identities differ"
+                else:
+                    changed[field][name] = "1"
+                    message = "native build environment differs"
+                receipt_path.write_text(json.dumps(changed), encoding="utf-8")
+                with self.subTest(resealed_receipt=field), self.assertRaisesRegex(receipt.source_runtime.ClosureError, message):
+                    receipt.source_runtime.replay_cargo_graph(graph, receipt.LONG_DOUBLE_FEATURE)
+            receipt_path.write_text(json.dumps(original), encoding="utf-8")
 
             rows = receipt.source_runtime.cargo_records(stdout_path)
             cargo_row = receipt.source_runtime.artifact_record_for_source(

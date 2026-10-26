@@ -2624,7 +2624,6 @@ unsafe fn join_selected_worker_inner(
         self.assertIn('/workspace/compat/x86_64/run_libc_signal_foundation.sh', source)
         self.assertIn('run_ldso_relocation_tests()', source)
         self.assertIn('ldso/src/x86_64_relocation.rs', source)
-        self.assertIn('rustup run "$(python3 /workspace/scripts/rust_toolchain.py)" rustc --edition=2021 --test', source)
         self.assertIn('run_ldso_image_tests()', source)
         self.assertIn('/workspace/ldso/run-x86_64-image.sh test', source)
         self.assertIn('run_ldso_initial_graph_tests()', source)
@@ -9798,10 +9797,6 @@ esac
             bash_index = arguments.index("bash")
             self.assertEqual(arguments[bash_index : bash_index + 2], ["bash", "-ceu"])
             source_test_command = arguments[bash_index + 2]
-            self.assertIn(
-                'rustup run "$(python3 /workspace/scripts/rust_toolchain.py)" rustc --edition=2021 --test',
-                source_test_command,
-            )
             self.assertIn(
                 "/workspace/ldso/src/x86_64_relocation.rs",
                 source_test_command,

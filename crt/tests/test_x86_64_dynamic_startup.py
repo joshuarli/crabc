@@ -61,14 +61,10 @@ def native_x86_64_evidence() -> bool:
 
 
 def oracle_compiler() -> list[str]:
-    wrapper = shutil.which("crabc-x86_64-musl-gcc")
-    if wrapper is not None:
-        return [wrapper]
-    if MUSL_SPECS.is_file():
-        compiler = shutil.which("gcc")
-        if compiler is not None:
-            return [compiler, "-specs", str(MUSL_SPECS)]
-    raise unittest.SkipTest("pinned musl oracle compiler is unavailable")
+    wrapper = Path("/usr/local/bin/crabc-x86_64-musl-gcc")
+    if not wrapper.is_file() or not os.access(wrapper, os.X_OK):
+        raise RuntimeError("image-owned native musl oracle compiler is unavailable")
+    return [str(wrapper)]
 
 
 def required_tool(name: str) -> str:
@@ -214,7 +210,7 @@ def link_dynamic_pie(
         raise AssertionError(linked.stderr.decode(errors="replace"))
 
 
-def link_freestanding_lifecycle_probe(output: Path, *, scrt1: Path, fixture: Path) -> None:
+def link_freestanding_lifecycle_probe(output: Path, *, scrt1: Path, fixture: Path, malformed_init_array: bool = False) -> None:
     linked = run(
         oracle_compiler()
         + [
@@ -224,6 +220,7 @@ def link_freestanding_lifecycle_probe(output: Path, *, scrt1: Path, fixture: Pat
             "-no-pie",
             "-Wl,-e,_start",
             "-Wl,--build-id=none",
+            *(["-Wl,--defsym=__init_array_start=1"] if malformed_init_array else []),
             str(scrt1),
             str(fixture),
             "-o",
@@ -380,7 +377,9 @@ class X86_64DynamicStartupTests(unittest.TestCase):
         for required in (MUSL_SCRT1, MUSL_CRTI, MUSL_CRTN, MUSL_LOADER, MUSL_SPECS):
             self.assertTrue(required.is_file(), f"missing pinned musl input: {required}")
 
-        with tempfile.TemporaryDirectory() as temporary:
+        scratch = ROOT / ".work/tmp"
+        scratch.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(dir=scratch) as temporary:
             work = Path(temporary)
             fixture = build_fixture_object(work)
 
@@ -470,7 +469,7 @@ class X86_64DynamicStartupTests(unittest.TestCase):
             threaded_fixture = build_owned_handoff_fixture_object(work, threaded_rejection=True)
             threaded_probe = work / "candidate-threaded-rejection"
             link_freestanding_lifecycle_probe(
-                threaded_probe, scrt1=output / "Scrt1.o", fixture=threaded_fixture
+                threaded_probe, scrt1=output / "Scrt1.o", fixture=threaded_fixture, malformed_init_array=True
             )
             assert_freestanding_lifecycle_contract(threaded_probe)
             process = subprocess.Popen(

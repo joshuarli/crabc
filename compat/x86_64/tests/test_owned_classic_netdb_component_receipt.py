@@ -90,9 +90,8 @@ class OwnedClassicNetdbComponentReceiptTests(unittest.TestCase):
         runner = (ROOT / "compat/x86_64/run_owned_classic_netdb.sh").read_text(encoding="utf-8")
         self.assertIn('if ! { [ "$#" -eq 1 ] || { [ "$#" -eq 3 ] && [ "$1" = --static-sysroot ]; }; }; then', runner)
 
-    def test_link_replay_uses_the_fixed_pinned_lld_identity(self) -> None:
-        self.assertEqual(self.receipt.LINKER_PATH.name, "ld.lld")
-        self.assertIn(self.receipt.TOOLCHAIN, str(self.receipt.LINKER_PATH))
+    def test_link_replay_uses_the_fixed_pinned_mold_identity(self) -> None:
+        self.assertEqual(str(self.receipt.LINKER_PATH), "/usr/bin/mold")
 
     def test_current_image_manifest_binds_the_selected_toolchain_and_exact_files(self) -> None:
         manifest = self.receipt.trusted_image_manifest(ROOT)
@@ -103,7 +102,7 @@ class OwnedClassicNetdbComponentReceiptTests(unittest.TestCase):
         )
         self.assertEqual(
             files[str(self.receipt.LINKER_PATH)]["sha256"],
-            "dc40fa1b087ed4538d410a08e7314bcc1614dc7ff728b5bbf624a1daa97730bc",
+            "3cfef61deb864534e48ec37ef22d613a43a8764454bcf852a1181fb588daec2f",
         )
 
     def test_collection_admits_only_the_observed_current_image(self) -> None:

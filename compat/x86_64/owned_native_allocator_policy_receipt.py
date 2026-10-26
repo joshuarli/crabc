@@ -15,6 +15,7 @@ import sys
 from typing import Any
 
 import native_shadow_receipt
+from installed_allocator_backend import static_and_dynamic_backend
 import owned_dynamic_elf
 
 
@@ -194,10 +195,7 @@ def _check_products(root: Path, read: native_shadow_receipt.Receipt) -> None:
     dynamic_manifest = _json(product / "dynamic-manifest")
     dynamic_state = _json(product / "dynamic-product-state")
     dynamic_provenance = _json(product / "dynamic-libc-provenance")
-    _require(static_manifest.get("allocator_backend") == "native-shadow" and
-             dynamic_state.get("allocator_backend") == "native-shadow" and
-             dynamic_provenance.get("allocator_backend") == "native-shadow",
-             "installed products do not select the native-shadow allocator")
+    static_and_dynamic_backend(root, static_manifest, static_provenance, dynamic_state, dynamic_provenance)
     installed = static_manifest.get("installed")
     static_files = installed.get("files") if isinstance(installed, dict) else None
     dynamic_files = dynamic_manifest.get("files")
@@ -237,13 +235,6 @@ def _check_products(root: Path, read: native_shadow_receipt.Receipt) -> None:
     archive = static_provenance.get("archive")
     _require(isinstance(archive, dict) and archive.get("sha256") == read.products["static-libc-archive"]["sha256"],
              "static libc provenance does not identify the retained archive")
-    allocator = static_provenance.get("allocator_backend")
-    native = dynamic_provenance.get("native_allocator")
-    _require(isinstance(allocator, dict) and isinstance(native, dict) and
-             native.get("path") == "crabc-mimalloc/UPSTREAM.md" and
-             allocator.get("upstream_sha256") == native.get("sha256") and
-             native.get("sha256") == hashlib.sha256((root / native["path"]).read_bytes()).hexdigest(),
-             "static and dynamic libc provenance disagree on the native allocator source")
     _require(dynamic_state.get("schema") == "crabc.x86_64-owned-dynamic-materialization/v1" and
              dynamic_state.get("modes") == ["dynamic-pie", "dynamic-non-pie", "dynamic-shared-object"],
              "dynamic product state does not identify the installed modes")

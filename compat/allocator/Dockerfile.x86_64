@@ -10,6 +10,16 @@ COPY rust-toolchain.toml /tmp/rust-toolchain.toml
 
 ENV RUSTUP_HOME=/opt/rustup \
     CARGO_HOME=/opt/cargo \
+    RUSTC_WRAPPER=/usr/local/bin/kache \
+    KACHE_CONFIG=/dev/null \
+    KACHE_HOST_CONFIG="" \
+    KACHE_LOCAL_ONLY=1 \
+    KACHE_CACHE_DIR=/workspace/.work/x86_64/kache \
+    KACHE_AUTO_CLEAN_ORPHANED_TARGETS=0 \
+    KACHE_AUTO_CLEAN_UNUSED_UNITS_DAYS=0 \
+    KACHE_AUTO_SHARE_TARGET_FILES=0 \
+    KACHE_SEED_NEW_TARGETS=0 \
+    CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER=/usr/local/bin/crabc-x86_64-mold-gcc \
     PATH=/opt/cargo/bin:/opt/musl-1.2.6/bin:${PATH}
 
 # The launcher independently rejects a foreign host. This build-time check
@@ -33,6 +43,7 @@ RUN apk add --no-cache \
         llvm \
         patch \
         python3 \
+        mold \
         rustup \
         tar \
         xz \
@@ -46,12 +57,16 @@ RUN apk add --no-cache \
 # input for allocator or runtime artifacts.
 
 COPY compat/upstreams.toml /tmp/upstreams.toml
+COPY docker/install-native-build-tools.py /tmp/install-native-build-tools.py
+COPY docker/x86_64-mold-gcc /usr/local/bin/crabc-x86_64-mold-gcc
+RUN python3 -B /tmp/install-native-build-tools.py \
+    && chmod 0755 /usr/local/bin/crabc-x86_64-mold-gcc
 COPY compat/x86_64/musl_oracle.py /tmp/musl_oracle.py
 RUN set -eu \
     && MUSL_VERSION="$(python3 -B /tmp/musl_oracle.py --pins /tmp/upstreams.toml version)" \
     && python3 -B /tmp/musl_oracle.py --pins /tmp/upstreams.toml acquire "/tmp/musl-${MUSL_VERSION}" \
     && cd "/tmp/musl-${MUSL_VERSION}" \
-    && ./configure \
+    && CC=/usr/local/bin/crabc-x86_64-mold-gcc ./configure \
         --prefix="/opt/musl-${MUSL_VERSION}" \
         --syslibdir="/opt/musl-${MUSL_VERSION}/lib" \
     && make -s -j"$(getconf _NPROCESSORS_ONLN)" \
@@ -67,7 +82,7 @@ RUN set -eu \
     && cp /usr/lib/libssp_nonshared.a "/opt/musl-${MUSL_VERSION}/lib/" \
     && rm -rf /tmp/musl.tar.gz "/tmp/musl-${MUSL_VERSION}"
 
-COPY docker/musl-gcc /usr/local/bin/musl-gcc
+COPY docker/x86_64-musl-oracle-gcc /usr/local/bin/musl-gcc
 RUN chmod 0755 /usr/local/bin/musl-gcc
 
 # Check the actual native compiler boundary while the source-authenticated

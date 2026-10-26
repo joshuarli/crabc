@@ -8,6 +8,8 @@
 set -euo pipefail
 
 readonly ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+. "$(dirname "${BASH_SOURCE[0]}")/native_build_environment.sh"
+mapfile -d '' -t rustc_command < <(python3 -B "$ROOT_DIR/compat/x86_64/native_rustc.py")
 readonly ORACLE_CC=/usr/local/bin/crabc-x86_64-musl-gcc
 readonly MUSL_LOADER=/opt/musl-1.2.6/lib/ld-musl-x86_64.so.1
 
@@ -55,7 +57,7 @@ cd "$ROOT_DIR"
     compat/x86_64/libc_thread_pointer_probe.c -o "$reference"
 env -u LD_LIBRARY_PATH -u LD_PRELOAD "$reference"
 
-rustup run "$(python3 "$ROOT_DIR/scripts/rust_toolchain.py")" rustc --edition=2021 \
+"${rustc_command[@]}" --edition=2021 \
     --target x86_64-unknown-linux-musl \
     --crate-type=lib \
     --emit=obj \

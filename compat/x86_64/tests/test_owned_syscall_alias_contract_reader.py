@@ -216,7 +216,7 @@ class OwnedSyscallAliasStaticReceiptTests(unittest.TestCase):
             (library / name).write_bytes(name.encode())
         for name in ("libc.a", "libcrabc-builtins.a"):
             (library / name).write_bytes(b"!<arch>\n")
-        linker = self.root / "ld.lld"
+        linker = self.root / "mold"
         linker.write_bytes(b"selected linker")
         self.inputs = {
             "static_driver": {"original": {"path": str(self.product / "bin/crabc-cc")}},

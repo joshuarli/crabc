@@ -10,6 +10,12 @@ import subprocess
 import sys
 import tomllib
 
+ROOT = Path(__file__).resolve().parent
+COMPAT = ROOT.parent / 'compat/x86_64'
+if str(COMPAT) not in sys.path:
+    sys.path.insert(0, str(COMPAT))
+import native_rustc
+
 from metadata_bounds import assert_patched_provider, digest, run_fixture
 
 
@@ -111,7 +117,7 @@ def run_installed(static_preparation: Path, dynamic_qualification: Path,
             'CRABC_OWNED_RUST_APPLICATION_ROOT': str(application),
             'CRABC_OWNED_RUST_CHANNEL': channel,
         })
-        command = ['rustup', 'run', channel, 'rustc', '--edition=2024', '--target', owned.TARGET,
+        command = [*native_rustc.compile_command(), '--edition=2024', '--target', owned.TARGET,
                    '-C', 'panic=unwind', '-C', 'force-unwind-tables=yes',
                    '-C', 'link-self-contained=no', '-C', 'target-feature=-crt-static',
                    '-C', f'linker={owned.ROOT / "owned_rust_link.py"}',

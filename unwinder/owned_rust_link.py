@@ -31,6 +31,9 @@ import subprocess
 import sys
 from typing import Iterable
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from scripts import native_build_tools
+
 
 TARGET = "x86_64-unknown-linux-musl"
 INTERPRETER = "/lib/ld-crabc-x86_64.so.1"
@@ -652,10 +655,8 @@ def delegate_host_build_script(arguments: list[str], output: Path) -> None:
         raise LinkError("missing owned Rust host build-script linker evidence")
     linker = physical_regular(Path(linker_value), "pinned Cargo host build-script linker")
     receipts = physical_directory(Path(receipts_value), "Cargo host build-script receipt root")
-    # Cargo's build-script products are host tools. Keep GCC's ambient search
-    # environment out of their link and retain the files GNU ld actually read.
     environment = {"PATH": "/usr/bin:/bin", "LC_ALL": "C"}
-    command = [str(linker), "-Wl,-t", *arguments]
+    command = [str(linker), "-fuse-ld=mold", "-Wl,--trace", *arguments]
     completed = subprocess.run(
         command, env=environment, text=True,
         stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
@@ -671,7 +672,7 @@ def delegate_host_build_script(arguments: list[str], output: Path) -> None:
     )
     retained_input_dir = receipts / f"{hashlib.sha256(str(output).encode()).hexdigest()}.json.inputs"
     for line in completed.stdout.splitlines():
-        selected = line.strip()
+        selected = _trace_input(line.strip())
         if not selected:
             continue
         path = Path(selected)
@@ -753,26 +754,21 @@ def _product_inputs(root: Path, mode: str, *, static_pie: bool = False) -> list[
 def link_command(
     *, linker: Path, root: Path, mode: str, provider: Path | None, objects: list[Path], archives: list[Path], output: Path,
     export_dynamic: bool, rust_mode: str = "executable", version_script: Path | None = None,
-    no_undefined_version: bool = False, plugin_options: tuple[str, ...] = (),
+    no_undefined_version: bool = False,
 ) -> list[str]:
     """Return the entire native command; there are no library-search holes."""
 
     runtime = _product_inputs(root, mode, static_pie=rust_mode == "static-pie")
     rust_inputs = [*map(str, archives), *( [str(provider)] if provider is not None else [] )]
-    plugin = list(plugin_options)
     if rust_mode == "static-pie":
         if mode != "static":
             raise LinkError("a Rust static PIE requires the owned static product")
         return [
             str(linker), "-static", "-pie", "--no-dynamic-linker", "--no-undefined", "--eh-frame-hdr",
             "--gc-sections", "-z", "text", "-z", "noexecstack", "-z", "relro", "-z", "now", "-e", "_start",
-            *plugin, "--trace", "-o", str(output), str(runtime[0]), str(runtime[1]),
+            "--trace", "-o", str(output), str(runtime[0]), str(runtime[1]),
             *map(str, objects), *rust_inputs, str(runtime[2]), str(runtime[3]), str(runtime[4]),
         ]
-    if plugin and mode == "static":
-        raise LinkError("linker-plugin options require an owned static PIE or dynamic PIE")
-    if plugin and rust_mode not in {"pie", "static-pie"}:
-        raise LinkError("linker-plugin options are admitted only for Cargo executable links")
     if rust_mode == "shared":
         if mode != "dynamic":
             raise LinkError("a Rust shared object requires the owned dynamic product")
@@ -798,14 +794,14 @@ def link_command(
     return [
         str(linker), "-pie", "--hash-style=sysv", "--eh-frame-hdr", "--gc-sections", "--no-undefined",
         "--allow-shlib-undefined", "-z", "text", "-z", "noexecstack", "-z", "relro", "-z", "now",
-        "--dynamic-linker", INTERPRETER, *( ["--export-dynamic"] if export_dynamic else [] ), *plugin,
+        "--dynamic-linker", INTERPRETER, *( ["--export-dynamic"] if export_dynamic else [] ),
         "--trace", "-o", str(output), str(runtime[0]), str(runtime[1]), str(runtime[2]),
         *map(str, objects), *rust_inputs, str(runtime[3]), str(runtime[4]), str(runtime[5]),
     ]
 
 
 def _trace_input(line: str) -> str:
-    return line.split("(", 1)[0]
+    return line.removeprefix("trace: ").split("(", 1)[0]
 
 
 def validate_trace(trace: str, admitted: set[Path], audited_rust_archives: frozenset[Path] = frozenset()) -> None:
@@ -975,6 +971,27 @@ def _cargo_input_kind(path: Path) -> str:
     raise LinkError(f"Cargo Rust object is neither x86-64 ELF nor LLVM bitcode: {path}")
 
 
+def lto_materialization_command(materializer: Path, objects: list[Path], archives: list[Path],
+                                output: Path, plugin_options: tuple[str, ...]) -> list[str]:
+    return [str(materializer), "-r", "--lto-O3", *plugin_options, "--trace",
+            *map(str, objects), *map(str, archives), "-o", str(output)]
+
+
+def materialize_lto(rust_sysroot: Path, objects: list[Path], archives: list[Path],
+                    output: Path, plugin_options: tuple[str, ...]) -> tuple[Path, dict[str, object]]:
+    materializer = physical_regular(rust_sysroot / "lib/rustlib" / TARGET / "bin/gcc-ld/ld.lld", "pinned Rust LLD materializer")
+    materialized = Path(str(output) + ".lto.o")
+    if materialized.exists() or materialized.is_symlink():
+        raise LinkError(f"LTO materialization output must be fresh: {materialized}")
+    command = lto_materialization_command(materializer, objects, archives, materialized, plugin_options)
+    trace = run(command)
+    validate_trace(trace, {*objects, *archives}, frozenset(archives))
+    if _cargo_input_kind(physical_regular(materialized, "materialized Rust LTO object")) != "elf-x86_64":
+        raise LinkError("LTO materializer did not emit native x86-64 ELF")
+    return materialized, {"resolved_materializer": _record_input(materializer), "command": command,
+                          "resolved_input_trace": trace, "output": _record_input(materialized)}
+
+
 def link_cargo(arguments: list[str]) -> None:
     """Link one Cargo consumer executable through an owned product.
 
@@ -1016,8 +1033,8 @@ def link_cargo(arguments: list[str]) -> None:
         if path.exists() or path.is_symlink():
             raise LinkError(f"owned Rust Cargo output must be fresh: {path}")
     manifest, manifest_files = _read_product(root, mode)
-    rust_sysroot = Path(run(["rustup", "run", os.environ["CRABC_OWNED_RUST_CHANNEL"], "rustc", "--print", "sysroot"]).strip())
-    linker = physical_regular(rust_sysroot / "lib/rustlib" / TARGET / "bin/gcc-ld/ld.lld", "pinned Rust LLD")
+    rust_sysroot = Path(run(["/opt/cargo/bin/rustup", "run", os.environ["CRABC_OWNED_RUST_CHANNEL"], "rustc", "--print", "sysroot"]).strip())
+    linker = physical_regular(native_build_tools.MOLD, "image-owned mold linker")
     ar = physical_regular(rust_sysroot / "lib/rustlib" / TARGET / "bin/llvm-ar", "pinned Rust llvm-ar")
     objects, archives, dsos = parsed["objects"], parsed["archives"], parsed["application_dsos"]
     assert isinstance(objects, list) and isinstance(archives, list) and isinstance(dsos, list)
@@ -1031,18 +1048,22 @@ def link_cargo(arguments: list[str]) -> None:
     input_records = [{**_record_input(path), "kind": kind} for path, kind in zip(objects, kinds)]
     input_records.extend(_record_input(archive, members=audit_rust_archive(archive, ar)) for archive in archives)
     selected_provider = provider if parsed["unwind_requests"] else None
+    lto_materialization = None
+    link_objects, link_archives = objects, archives
+    if plugin_options:
+        lowered, lto_materialization = materialize_lto(rust_sysroot, objects, archives, output, plugin_options)
+        link_objects, link_archives = [lowered], []
     command = link_command(
-        linker=linker, root=root, mode=mode, provider=selected_provider, objects=objects,
-        archives=[*archives, *dsos], output=output, export_dynamic=False, rust_mode=str(rust_mode),
-        plugin_options=plugin_options,
+        linker=linker, root=root, mode=mode, provider=selected_provider, objects=link_objects,
+        archives=[*link_archives, *dsos], output=output, export_dynamic=False, rust_mode=str(rust_mode),
     )
     trace = run(command)
     runtime = _product_inputs(root, mode, static_pie=rust_mode == "static-pie")
-    validate_trace(trace, {*objects, *archives, *dsos, *runtime, *([selected_provider] if selected_provider else [])},
-                   frozenset(archives))
+    validate_trace(trace, {*link_objects, *link_archives, *dsos, *runtime, *([selected_provider] if selected_provider else [])},
+                   frozenset(link_archives))
     provider_members = sorted({
-        line[len(str(provider)) + 1:-1] for line in trace.splitlines()
-        if line.startswith(f"{provider}(") and line.endswith(")")
+        line[len(str(provider)) + 1:-1] for raw_line in trace.splitlines()
+        if (line := raw_line.removeprefix("trace: ")).startswith(f"{provider}(") and line.endswith(")")
     })
     if selected_provider is not None and not provider_members:
         raise LinkError("unwind request did not extract any member of the selected provider archive")
@@ -1065,6 +1086,7 @@ def link_cargo(arguments: list[str]) -> None:
             _record_input(parsed["compiler_builtins"]) if parsed["compiler_builtins"] is not None else None  # type: ignore[arg-type]
         ),
         "linker_plugin_options": list(plugin_options),
+        "lto_materialization": lto_materialization,
         "unused_search_paths": [str(path) for path in parsed["search_paths"]],  # type: ignore[union-attr]
         "application_inputs": input_records,
         "resolved_linker": _record_input(linker),
@@ -1149,8 +1171,8 @@ def link(arguments: list[str]) -> None:
     receipt = Path(str(output) + ".crabc-owned-rust-link.json")
     if receipt.exists() or receipt.is_symlink():
         raise LinkError(f"owned Rust link receipt must be fresh: {receipt}")
-    rust_sysroot = Path(run(["rustup", "run", os.environ["CRABC_OWNED_RUST_CHANNEL"], "rustc", "--print", "sysroot"]).strip())
-    linker = physical_regular(rust_sysroot / "lib/rustlib" / TARGET / "bin/gcc-ld/ld.lld", "pinned Rust LLD")
+    rust_sysroot = Path(run(["/opt/cargo/bin/rustup", "run", os.environ["CRABC_OWNED_RUST_CHANNEL"], "rustc", "--print", "sysroot"]).strip())
+    linker = physical_regular(native_build_tools.MOLD, "image-owned mold linker")
     ar = physical_regular(rust_sysroot / "lib/rustlib" / TARGET / "bin/llvm-ar", "pinned Rust llvm-ar")
     nm = physical_regular(rust_sysroot / "lib/rustlib" / TARGET / "bin/llvm-nm", "pinned Rust llvm-nm")
     objects = parsed["objects"]

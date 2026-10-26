@@ -12,6 +12,7 @@ set -euo pipefail
 ulimit -c 0
 
 readonly ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+readonly MOLD_PATH="$(python3 -B "$ROOT/compat/x86_64/native_rustc.py" mold)"
 readonly ORACLE_CC=/usr/local/bin/crabc-x86_64-musl-gcc
 readonly PROBE="$ROOT/compat/x86_64/owned_process_control_probe.c"
 readonly CHROOT="$(command -v chroot)"
@@ -119,7 +120,7 @@ assert_static_receipt_and_elf() {
     readelf -hW "$consumer" >"${consumer}.header"
     readelf -lW "$consumer" >"${consumer}.segments"
     readelf -dW "$consumer" >"${consumer}.dynamic"
-    python3 -B - "$product" "$consumer" "$mode" "$object" "$receipt" <<'PY_STATIC'
+    python3 -B - "$product" "$consumer" "$mode" "$object" "$receipt" "$MOLD_PATH" "$ROOT" <<'PY_STATIC'
 from hashlib import sha256
 import json
 from pathlib import Path
@@ -139,6 +140,11 @@ consumer = Path(sys.argv[2]).resolve()
 mode = sys.argv[3]
 object_path = Path(sys.argv[4]).resolve()
 receipt_path = Path(sys.argv[5]).resolve()
+mold_path = Path(sys.argv[6])
+source_root = Path(sys.argv[7]).resolve()
+sys.path.insert(0, str(source_root))
+sys.path.insert(0, str(source_root / "compat/x86_64"))
+import owned_posix_product_evidence as product_evidence
 expected = {
     "static": ("static-et-exec", "ET_EXEC", "EXEC", "crt1.o", False),
     "static-pie": ("static-pie", "ET_DYN", "DYN", "rcrt1.o", True),
@@ -196,11 +202,11 @@ linker = receipt.get("resolved_linker")
 if not isinstance(linker, dict):
     fail("lacks resolved linker identity")
 linker_path = Path(linker.get("path", ""))
-if (linker_path.name != "ld.lld" or not linker_path.is_file() or
+if (linker_path != mold_path or linker_path.name != "mold" or not linker_path.is_file() or
         linker_path.is_symlink() or linker.get("sha256") != digest(linker_path)):
     fail("resolved linker identity drifted")
 expected_contract = [
-    "ld.lld", "-static", *(["-pie"] if expected[4] else []),
+    mold_path.name, "-static", *(["-pie"] if expected[4] else []),
     "--no-dynamic-linker", "--no-undefined", "--eh-frame-hdr", "--gc-sections", "-z", "relro",
     "-z", "now", "-e", "_start", str(library / expected[3]),
     str(library / "crti.o"), "<application-objects>", str(library / "libc.a"),
@@ -215,8 +221,9 @@ for field, suffix in (("map", ".map"), ("trace", ".trace")):
     if receipt.get(field) != {"path": sidecar.name, "sha256": digest(sidecar)}:
         fail(f"{field} identity drifted")
 
-trace = [line for line in receipt_path.with_suffix(".trace").read_text(encoding="utf-8").splitlines()
-         if line]
+raw_trace = [line for line in receipt_path.with_suffix(".trace").read_text(encoding="utf-8").splitlines()
+             if line]
+trace = product_evidence.semantic_link_trace(raw_trace)
 direct_inputs = {str(path) for _, path in runtime if path.name not in ("libc.a", "libcrabc-builtins.a")}
 direct_inputs.add(str(object_path))
 archives = {str(library / "libc.a"), str(library / "libcrabc-builtins.a")}
@@ -230,8 +237,6 @@ for line in trace:
                       if line == archive or (line.startswith(archive + "(") and line.endswith(")"))))
     else:
         fail(f"trace escaped the owned inputs: {line}")
-# LLD reports archive members only when extracted. The builtins archive is
-# still bound by the declared link vector and input digest even when unused.
 if not direct_inputs | {str(library / "libc.a")} <= seen:
     fail("trace omitted an owned or workload input")
 map_text = receipt_path.with_suffix(".map").read_text(encoding="utf-8")

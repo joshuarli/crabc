@@ -7,11 +7,12 @@
 # the same x86-owned-static-runtime owner, C allocator, locale, directory
 # traversal, and glob result lifecycle that a later wordexp adapter consumes.
 set -euo pipefail
+. "$(dirname "${BASH_SOURCE[0]}")/native_build_environment.sh"
 
 readonly ROOT_DIR="$(cd -P "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 readonly TARGET="x86_64-unknown-linux-musl"
 readonly TOOLCHAIN="$(python3 "$ROOT_DIR/scripts/rust_toolchain.py")"
-readonly LLD="/opt/rustup/toolchains/$TOOLCHAIN-x86_64-unknown-linux-musl/lib/rustlib/$TARGET/bin/gcc-ld/ld.lld"
+readonly MOLD="$(python3 -B "$ROOT_DIR/compat/x86_64/native_rustc.py" mold)"
 readonly PROBE="$ROOT_DIR/compat/x86_64/owned_pattern_private_probe.c"
 
 if [ -z "${TMPDIR:-}" ] || [[ "$TMPDIR" != "$ROOT_DIR/.work/x86_64/"* ]]; then
@@ -59,7 +60,7 @@ rustup run "$TOOLCHAIN" cargo rustc --locked -p crabc-libc --lib --release \
 /usr/bin/gcc -nostdinc -isystem "$work/static-product/usr/include" \
     -ffreestanding -fno-builtin -fno-stack-protector -fno-pie -std=c11 \
     -c "$PROBE" -o "$work/owned-pattern-private.o"
-"$LLD" -static --no-dynamic-linker --no-undefined --gc-sections \
+"$MOLD" -static --no-dynamic-linker --no-undefined --gc-sections \
     -z relro -z now -e _start \
     "$work/static-product/usr/lib/crt1.o" \
     "$work/static-product/usr/lib/crti.o" \

@@ -64,8 +64,10 @@ identities against the declared pair.
 ## Fixed protocol-table receipt
 
 `owned_protocol_database.py` consumes three independently prepared product
-pairs. It compiles the existing state-machine probe once, verifies the pinned
-musl 1.2.6 `proto.lo` oracle, and records all raw outputs. Every execution
+pairs. It compiles the existing state-machine probe once, verifies the active
+native musl `proto.lo` oracle, and records all raw outputs. The archive hash,
+size and mode come from the current resolver-network image-input manifest,
+which is included in the component's source seal. Every execution
 root contains a deliberately irrelevant `/etc/protocols` fixture: the selected
 C ABI must continue to use its fixed 36-record musl table. The Rust-facing
 snapshot API is not linked or credited here.

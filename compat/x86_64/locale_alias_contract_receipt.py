@@ -34,6 +34,8 @@ import feature_archive_roster
 
 
 ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(ROOT))
+from scripts import native_build_tools
 SOURCE_MOUNT = "/workspace"
 SCHEMA = "crabc.x86_64-locale-alias-contract-receipt/v5"
 COMMAND_SCHEMA = "crabc.x86_64-locale-alias-contract-command/v2"
@@ -63,7 +65,7 @@ IMAGE_INPUTS = (
     f"{TOOLCHAIN_ROOT}/lib/rustlib/x86_64-unknown-linux-musl/bin/llvm-ar",
     f"{TOOLCHAIN_ROOT}/lib/rustlib/x86_64-unknown-linux-musl/bin/llvm-nm",
     f"{TOOLCHAIN_ROOT}/lib/rustlib/x86_64-unknown-linux-musl/bin/llvm-objdump",
-    f"{TOOLCHAIN_ROOT}/lib/rustlib/x86_64-unknown-linux-musl/bin/gcc-ld/ld.lld",
+    str(native_build_tools.KACHE), str(native_build_tools.MOLD), str(native_build_tools.CARGO_LINKER),
     "/usr/bin/as", "/usr/bin/cmp", "/usr/bin/env", "/usr/bin/gcc", "/usr/bin/git", "/usr/bin/ld", "/usr/bin/python3", "/usr/bin/readelf",
     "/usr/bin/realpath", "/usr/bin/sha256sum", "/usr/bin/timeout",
     "/usr/libexec/gcc/x86_64-alpine-linux-musl/15.2.0/cc1", "/usr/libexec/gcc/x86_64-alpine-linux-musl/15.2.0/collect2",
@@ -140,7 +142,13 @@ PRODUCER_TOOL_PATHS = {
     name: f"{TOOLCHAIN_ROOT}/lib/rustlib/x86_64-unknown-linux-musl/bin/{name}"
     for name in ("llvm-ar", "llvm-nm", "llvm-objdump")
 }
-DYNAMIC_LINKER_PATH = f"{TOOLCHAIN_ROOT}/lib/rustlib/x86_64-unknown-linux-musl/bin/gcc-ld/ld.lld"
+DYNAMIC_LINKER_PATH = str(native_build_tools.MOLD)
+NATIVE_PRODUCER_TOOL_PATHS = {
+    "rustc_wrapper": str(native_build_tools.KACHE),
+    "linker": DYNAMIC_LINKER_PATH,
+    "cargo_linker": str(native_build_tools.CARGO_LINKER),
+    "rustc": f"{TOOLCHAIN_ROOT}/bin/rustc",
+}
 IMPLEMENTATION_SOURCES = (
     "libc/src/c_abi/x86_64/locale_narrow.rs",
     "libc/src/c_abi/x86_64/locale_objects.rs",
@@ -231,8 +239,6 @@ DYNAMIC_EXECUTABLE_LINK_SIDECARS = (
     ("candidate-dynamic-non-pie", "candidate-dynamic-non-pie.crabc-link.json", "non-pie"),
 )
 
-# The driver also retains each link's ELF facts and LLD map beside the receipt
-# (`owned_dynamic_elf.py`); they are retained bytes, not additional claims.
 DYNAMIC_EXECUTABLE_DRIVER_EVIDENCE = tuple(
     executable + suffix
     for executable, _sidecar, _linkage in DYNAMIC_EXECUTABLE_LINK_SIDECARS
@@ -583,7 +589,7 @@ def validate_source_contract(root: Path) -> dict[str, object]:
         filename = Path(source).name
         if f'#[path = "{filename}"]' not in static_c_abi:
             _fail(f"selected static source is not composed: {filename}")
-    if not oracle_wrapper.startswith("#!/bin/sh\n") or 'exec /usr/bin/gcc -specs /opt/musl-1.2.6/lib/musl-gcc.specs "$@"' not in oracle_wrapper:
+    if not oracle_wrapper.startswith("#!/bin/sh\n") or 'exec /usr/bin/gcc -fuse-ld=mold -specs /opt/musl-1.2.6/lib/musl-gcc.specs "$@"' not in oracle_wrapper:
         _fail("pinned musl compiler wrapper changed")
     return {
         "visible_pairs": len(contract["visible_aliases"]),
@@ -1053,7 +1059,7 @@ def _validate_producer_tools(
     name: str,
     image: Mapping[str, object],
 ) -> dict[str, object]:
-    """Bind the three target LLVM tools recorded by both product producers."""
+    """Bind the compiler, linker and target LLVM tools to the retained image."""
 
     if name == "static":
         metadata = product / "share/crabc/manifest.json"
@@ -1066,8 +1072,9 @@ def _validate_producer_tools(
         tools = _strict_json(metadata, "dynamic producer tools")
     if not isinstance(tools, Mapping):
         _fail(f"{name} product producer tools are absent")
-    expected_fields = {"schema", "target", "toolchain", "selection", "rustup", "rustc", "llvm_target_tools"}
-    if set(tools) != expected_fields or tools.get("schema") != 1 or tools.get("target") != "x86_64-unknown-linux-musl":
+    expected_fields = {"schema", "target", "toolchain", "selection", "rustup", "rustc", "llvm_target_tools",
+                       "rustc_wrapper", "linker", "cargo_linker"}
+    if set(tools) != expected_fields or tools.get("schema") != 1 or tools.get("target") != "x86_64-unknown-linux-musl" or tools.get("toolchain") != TOOLCHAIN:
         _fail(f"{name} product producer tool record changed")
     llvm = tools.get("llvm_target_tools")
     producer_tool_paths = PRODUCER_TOOL_PATHS
@@ -1076,6 +1083,16 @@ def _validate_producer_tools(
     files = image.get("files")
     if not isinstance(files, Mapping):
         _fail("retained image tool records are absent")
+    for tool, invocation in NATIVE_PRODUCER_TOOL_PATHS.items():
+        received = tools.get(tool)
+        image_record = files.get(invocation)
+        if not isinstance(received, Mapping) or not isinstance(image_record, Mapping) or not isinstance(image_record.get("image"), Mapping):
+            _fail(f"{name} {tool} image authority is absent")
+        trusted = image_record["image"]
+        if (received.get("path"), received.get("resolved_path"), received.get("sha256")) != (
+            invocation, trusted.get("path"), trusted.get("sha256"),
+        ) or (tool == "rustc" and received.get("sysroot") != TOOLCHAIN_ROOT):
+            _fail(f"{name} {tool} producer tool differs from pinned image")
     normalized: dict[str, object] = {}
     for tool, invocation in producer_tool_paths.items():
         received = _exact_mapping(llvm[tool], {"path", "resolved_path", "sha256"}, f"{name} {tool} producer tool")

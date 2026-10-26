@@ -645,6 +645,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   owned-stdio [--static-sysroot STATIC_SYSROOT] [DYNAMIC_SYSROOT]  test installed byte/wide streams, positioning and format/scan
   owned-stdio-file-engine [--static-sysroot STATIC_SYSROOT DYNAMIC_SYSROOT]  replay the installed FILE-engine rows; builds current products without a supplied pair
   owned-numeric-calendar [--static-sysroot STATIC_SYSROOT] [DYNAMIC_SYSROOT]  test installed numeric conversions and clock/calendar behavior
+  owned-feature-aliases collect|validate-report PATH --static-product STATIC --dynamic-product DYNAMIC --static-preparation PREPARATION  prove six feature aliases without family admission
   owned-math-fenv-all-entry [--static-sysroot STATIC_SYSROOT] [DYNAMIC_SYSROOT]  test the installed C math/fenv all-entry component; builds current products without a supplied pair
   owned-calendar-component [--static-sysroot STATIC_SYSROOT DYNAMIC_SYSROOT]  test installed time.clock-calendar rows with fixed IANA TZif fixtures
   owned-text-locale-numeric-component --static-sysroot STATIC_SYSROOT DYNAMIC_SYSROOT  test bounded installed numeric, locale, wide-conversion, and UTF iconv rows
@@ -2802,8 +2803,6 @@ fail() {
     exit 2
 }
 
-# Supplied POSIX products and family receipts remain physical checkout inputs. Translate against
-# the actual bind mounts so a WORK_DIR override cannot select a hidden sibling.
 translate_owned_posix_product() {
     python3 -B - "$ROOT_DIR" "$WORK_DIR" "$CARGO_VOLUME" "$1" "${2:-directory}" \
         "$TARGET_VOLUME" "$TMP_DIR" "$REPORT_DIR" <<'PY_PRODUCT'
@@ -3750,6 +3749,8 @@ run_in_container() {
     # Older fixtures spell /tmp explicitly. This compatibility bind contains
     # their writes too; new runners use the repository-local TMPDIR directly.
     docker run --rm --init \
+        --env RUSTC_WRAPPER=/usr/local/bin/kache \
+        --env CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER=/usr/local/bin/crabc-x86_64-mold-gcc \
         "${GIT_METADATA_MOUNT[@]}" \
         --platform "$PLATFORM" \
         --workdir /workspace \
@@ -3774,6 +3775,8 @@ run_in_promotion_reader_container() {
     local private_directory status=0
     private_directory="$(mktemp -d "$TMP_DIR/.promotion-reader.XXXXXX")"
     docker run --rm --init --read-only --network none \
+        --env RUSTC_WRAPPER=/usr/local/bin/kache \
+        --env CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER=/usr/local/bin/crabc-x86_64-mold-gcc \
         --user "$(id -u):$(id -g)" \
         "${GIT_METADATA_MOUNT[@]}" \
         --platform "$PLATFORM" --workdir /workspace \
@@ -3835,6 +3838,8 @@ run_in_owned_rust_cleanup_container() {
         esac
     done
     docker run --rm --init \
+        --env RUSTC_WRAPPER=/usr/local/bin/kache \
+        --env CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER=/usr/local/bin/crabc-x86_64-mold-gcc \
         --user "$(id -u):$(id -g)" \
         "${GIT_METADATA_MOUNT[@]}" \
         --platform "$PLATFORM" --network none --workdir /workspace \
@@ -3865,6 +3870,8 @@ run_in_native_facade_performance_container() {
     image_id="$(docker image inspect --format '{{.Id}}' "$IMAGE")"
     [ -n "$image_id" ] || fail "cannot resolve native Rust-facade performance image identity"
     docker run --rm --init \
+        --env RUSTC_WRAPPER=/usr/local/bin/kache \
+        --env CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER=/usr/local/bin/crabc-x86_64-mold-gcc \
         --user "$(id -u):$(id -g)" \
         "${GIT_METADATA_MOUNT[@]}" \
         --platform "$PLATFORM" \
@@ -3895,6 +3902,8 @@ run_in_native_abi_elf_facts_container() {
     image_id="$(docker image inspect --format '{{.Id}}' "$IMAGE")"
     [ -n "$image_id" ] || fail "cannot resolve native ABI ELF fact image identity"
     docker run --rm --init \
+        --env RUSTC_WRAPPER=/usr/local/bin/kache \
+        --env CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER=/usr/local/bin/crabc-x86_64-mold-gcc \
         --user "$(id -u):$(id -g)" \
         "${GIT_METADATA_MOUNT[@]}" \
         --platform "$PLATFORM" --network none --workdir /workspace \
@@ -3919,6 +3928,8 @@ run_in_public_data_ordinary_link_container() {
     # Ordinary dynamic entry uses a contained chroot. No mount namespace or
     # relaxed syscall filter is needed for this finite address-taking probe.
     docker run --rm --init \
+        --env RUSTC_WRAPPER=/usr/local/bin/kache \
+        --env CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER=/usr/local/bin/crabc-x86_64-mold-gcc \
         "${GIT_METADATA_MOUNT[@]}" \
         --platform "$PLATFORM" --network none --cap-add=SYS_CHROOT --workdir /workspace \
         --env TMPDIR=/workspace/.work/x86_64/tmp \
@@ -3941,6 +3952,8 @@ run_in_header_declaration_inventory_container() {
     image_id="$(docker image inspect --format '{{.Id}}' "$IMAGE")"
     [ -n "$image_id" ] || fail "cannot resolve header declaration image identity"
     docker run --rm --init \
+        --env RUSTC_WRAPPER=/usr/local/bin/kache \
+        --env CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER=/usr/local/bin/crabc-x86_64-mold-gcc \
         --user "$(id -u):$(id -g)" \
         "${GIT_METADATA_MOUNT[@]}" \
         --platform "$PLATFORM" --network none --workdir /workspace \
@@ -3961,6 +3974,8 @@ run_in_native_abi_inventory_container() {
     image_id="$(docker image inspect --format '{{.Id}}' "$IMAGE")"
     [ -n "$image_id" ] || fail "cannot resolve native ABI inventory image identity"
     docker run --rm --init \
+        --env RUSTC_WRAPPER=/usr/local/bin/kache \
+        --env CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER=/usr/local/bin/crabc-x86_64-mold-gcc \
         --user "$(id -u):$(id -g)" \
         "${GIT_METADATA_MOUNT[@]}" \
         --platform "$PLATFORM" \
@@ -3984,6 +3999,8 @@ run_in_native_abi_inventory_container() {
 run_in_network_none_container() {
     prepare_work_dir
     docker run --rm --init \
+        --env RUSTC_WRAPPER=/usr/local/bin/kache \
+        --env CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER=/usr/local/bin/crabc-x86_64-mold-gcc \
         "${GIT_METADATA_MOUNT[@]}" \
         --platform "$PLATFORM" \
         --network none \
@@ -4011,6 +4028,8 @@ run_in_owned_calendar_container() {
     image_id="$(docker image inspect --format '{{.Id}}' "$IMAGE")"
     [ -n "$image_id" ] || fail "cannot resolve calendar component image identity"
     docker run --rm --init \
+        --env RUSTC_WRAPPER=/usr/local/bin/kache \
+        --env CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER=/usr/local/bin/crabc-x86_64-mold-gcc \
         "${GIT_METADATA_MOUNT[@]}" \
         --platform "$PLATFORM" \
         --cap-add=SYS_CHROOT \
@@ -4051,6 +4070,8 @@ run_in_chroot_cap_container() {
     fi
     prepare_work_dir
     docker run --rm --init \
+        --env RUSTC_WRAPPER=/usr/local/bin/kache \
+        --env CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER=/usr/local/bin/crabc-x86_64-mold-gcc \
         "${GIT_METADATA_MOUNT[@]}" \
         --platform "$PLATFORM" \
         --cap-add=SYS_CHROOT \
@@ -4077,6 +4098,8 @@ run_in_chroot_cap_container() {
 run_in_consumer_rust_std_lto_container() {
     prepare_work_dir
     docker run --rm --init \
+        --env RUSTC_WRAPPER=/usr/local/bin/kache \
+        --env CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER=/usr/local/bin/crabc-x86_64-mold-gcc \
         "${GIT_METADATA_MOUNT[@]}" \
         --platform "$PLATFORM" \
         --cap-add=SYS_CHROOT \
@@ -4105,6 +4128,8 @@ run_in_consumer_rust_std_lto_container() {
 run_in_user_namespace_chroot_container() {
     prepare_work_dir
     docker run --rm --init \
+        --env RUSTC_WRAPPER=/usr/local/bin/kache \
+        --env CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER=/usr/local/bin/crabc-x86_64-mold-gcc \
         "${GIT_METADATA_MOUNT[@]}" \
         --platform "$PLATFORM" \
         --cap-add=SYS_CHROOT \
@@ -4133,6 +4158,8 @@ run_in_resolver_network_container() {
     [ -n "$image_id" ] || fail "cannot resolve resolver network image identity"
     prepare_work_dir
     docker run --rm --init \
+        --env RUSTC_WRAPPER=/usr/local/bin/kache \
+        --env CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER=/usr/local/bin/crabc-x86_64-mold-gcc \
         "${GIT_METADATA_MOUNT[@]}" \
         --platform "$PLATFORM" \
         --cap-add=SYS_CHROOT \
@@ -4177,6 +4204,8 @@ run_in_dynamic_loader_mount_container() {
     [ -n "$image_id" ] || fail "cannot resolve dynamic loader mount image identity"
     prepare_work_dir
     docker run --rm --init \
+        --env RUSTC_WRAPPER=/usr/local/bin/kache \
+        --env CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER=/usr/local/bin/crabc-x86_64-mold-gcc \
         "${GIT_METADATA_MOUNT[@]}" \
         --platform "$PLATFORM" \
         --cap-add=SYS_CHROOT \
@@ -4221,6 +4250,8 @@ run_in_native_c_performance_container() {
     image_id="$(docker image inspect --format '{{.Id}}' "$IMAGE")"
     [ -n "$image_id" ] || fail "cannot resolve native C-performance image identity"
     docker run --rm --init \
+        --env RUSTC_WRAPPER=/usr/local/bin/kache \
+        --env CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER=/usr/local/bin/crabc-x86_64-mold-gcc \
         "${GIT_METADATA_MOUNT[@]}" \
         --platform "$PLATFORM" \
         --cgroupns=private \
@@ -4254,6 +4285,8 @@ run_in_native_c_performance_container() {
 run_in_uts_cap_container() {
     prepare_work_dir
     docker run --rm --init \
+        --env RUSTC_WRAPPER=/usr/local/bin/kache \
+        --env CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER=/usr/local/bin/crabc-x86_64-mold-gcc \
         "${GIT_METADATA_MOUNT[@]}" \
         --platform "$PLATFORM" \
         --cap-add=SYS_ADMIN \
@@ -6210,7 +6243,8 @@ run_fs_credentials_reference() {
 run_libc_syscall_probe() {
     run_in_container bash -ceu '
         probe="$TMPDIR/crabc-x86-libc-syscall-probe"
-        rustc --edition=2021 --target x86_64-unknown-linux-musl \
+        mapfile -d "" -t native_rustc < <(python3 -B /workspace/compat/x86_64/native_rustc.py final-link)
+        "${native_rustc[@]}" --edition=2021 --target x86_64-unknown-linux-musl \
             /workspace/compat/x86_64/libc_syscall_probe.rs -o "$probe"
         "$probe"
     '
@@ -6616,6 +6650,8 @@ run_in_resolver_family_image_container() {
     [ -n "$image_id" ] || fail "cannot resolve resolver family image identity"
     prepare_work_dir
     docker run --rm --init \
+        --env RUSTC_WRAPPER=/usr/local/bin/kache \
+        --env CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER=/usr/local/bin/crabc-x86_64-mold-gcc \
         "${GIT_METADATA_MOUNT[@]}" \
         --platform "$PLATFORM" \
         --cap-add=SYS_CHROOT \
@@ -6647,6 +6683,8 @@ run_in_abi_companion_container() {
     reference="crabc-core-evidence@$image_id"
     prepare_work_dir
     docker run --rm --init \
+        --env RUSTC_WRAPPER=/usr/local/bin/kache \
+        --env CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER=/usr/local/bin/crabc-x86_64-mold-gcc \
         "${GIT_METADATA_MOUNT[@]}" \
         --platform "$PLATFORM" \
         --cap-add=SYS_CHROOT \
@@ -7217,7 +7255,8 @@ run_libc_signal_foundation_probe() {
 run_ldso_relocation_tests() {
     run_in_container bash -ceu '
         test_binary="$TMPDIR/crabc-x86-64-ldso-relocation"
-        rustup run "$(python3 /workspace/scripts/rust_toolchain.py)" rustc --edition=2021 --test \
+        mapfile -d "" -t native_rustc < <(python3 -B /workspace/compat/x86_64/native_rustc.py final-link)
+        "${native_rustc[@]}" --edition=2021 --test \
             /workspace/ldso/src/x86_64_relocation.rs -o "$test_binary"
         "$test_binary" --test-threads=1
     '
@@ -7394,6 +7433,10 @@ case "$command" in
         ;;
     native-abi-elf-facts)
         [ "$#" -ge 1 ] || fail "native-abi-elf-facts requires collect or validate-report"
+        ;;
+    owned-feature-aliases)
+        [ "$#" -ge 1 ] || fail "owned-feature-aliases requires collect or validate-report"
+        case "$1" in collect|validate-report) ;; *) fail "owned-feature-aliases requires collect or validate-report" ;; esac
         ;;
     native-abi-selection)
         [ "$#" -ge 1 ] || fail "native-abi-selection requires build-report, validate-report, require-closure, or require-abi-prerequisite-closure"
@@ -7884,6 +7927,10 @@ case "$command" in
         # reader.  This host-only path deliberately executes no ELF tool or
         # compiler; native collection remains native-abi-inventory collect.
         python3 -B "$ROOT_DIR/compat/x86_64/native_abi_ratchet.py" "$@"
+        ;;
+    owned-feature-aliases)
+        ensure_image
+        run_in_abi_companion_container python3 -B /workspace/compat/x86_64/owned_feature_alias_receipt.py "$@"
         ;;
     native-abi-selection)
         # Selection consumes retained compiler/product facts on the host. Its

@@ -500,8 +500,8 @@ def profile_report(
 def planned_binding_definitions(archive: Path, executable: Path, members: Sequence[str],
                                 aliases: Sequence[ArchiveAlias], *, readelf: str = "readelf") -> dict[str, dict[str, str]]:
     """Require the extracted functions to retain their selected provider binding."""
-    expected = global_symbol_details(archive, readelf)
-    actual = global_symbol_details(executable, readelf)
+    expected = global_symbol_details(archive, readelf, symbol_table=".symtab")
+    actual = global_symbol_details(executable, readelf, symbol_table=".symtab")
     result = {}
     for name in members:
         before = [r for r in expected.get(name, []) if r["section"] != "UND"
@@ -524,9 +524,6 @@ def planned_binding_definitions(archive: Path, executable: Path, members: Sequen
         provider_require(len(before_targets) == len(aliases_found) == len(targets) == 1,
                          f"planned weak alias does not match its provider: {alias.name}")
         before_target, alias_found, target = before_targets[0], aliases_found[0], targets[0]
-        # The sealed static linker localizes hidden global definitions. Public
-        # weak aliases keep their name and default visibility at that same
-        # section/address; the target's privacy is retained from the archive.
         expected_binding = "LOCAL" if before_target["visibility"] == "HIDDEN" else before_target["binding"]
         provider_require(target["binding"] == expected_binding
                          and target["visibility"] == before_target["visibility"]
@@ -683,9 +680,8 @@ def audit_supplied_planned_profile(*, product_root: Path, profile: str, output: 
         product_root.relative_to(ROOT).as_posix().encode()).hexdigest()[:12]
     provider_require(feature.additive_callables, "supplied planned profile has no callable additions")
     anchor = json.loads((ROOT / "compat/x86_64/owned_resolver_network_image_inputs.json").read_text())
-    linker_paths = [p for p in anchor["files"] if p.endswith("/gcc-ld/ld.lld")]
-    provider_require(len(linker_paths) == 1, "fixed image linker anchor is ambiguous")
-    linker_path = linker_paths[0]
+    linker_path = str(product_evidence.native_build_tools.MOLD)
+    provider_require(linker_path in anchor["files"], "fixed image mold anchor is absent")
     linker_record = {"path": linker_path, "sha256": anchor["files"][linker_path]["sha256"]}
     archive = product_root / "usr/lib/libc.a"
     link = output / "link.json"

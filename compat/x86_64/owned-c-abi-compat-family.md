@@ -37,32 +37,23 @@ used (`require_c_abi_compat_family_admission` in
 
 `memory.allocator-basic` and `memory.allocator-observability` are proved by
 `owned-native-allocator-policy`, `owned-allocator-override` and
-`owned-native-allocator-dso`, which require the fixed Rust mimalloc port
-(`allocator_backend = native-shadow`) in both products. They keep that
-requirement: on a cohort built with the currently selected `accepted-c`
-backend they fail closed as `component-run-failed` gaps. The final candidate
-revision flips the x86 default to the native backend (allocator M10) and the
-whole qualification chain, this family included, runs on that one candidate,
-so both capabilities are admitted there and nowhere else.
+`owned-native-allocator-dso` on the actual allocator backend selected by the
+cohort. The selected `accepted-c` runtime can qualify these public capabilities
+before the Rust allocator is promoted. Without supplied products, the runners
+keep their native-shadow development builds. Static and dynamic products must
+name the same supported backend. Evidence-only C products cannot qualify.
 
-A source-bound shadow diagnostic builds its own pair from a clean committed
-revision. Use fresh physical directories under this checkout's ignored
-`.work` tree:
+All three policy programs remain required: the basic runtime probe,
+observability fixture and public malloc-family size-class probe run unchanged
+against pinned musl in all six candidate modes. The policy reader requires
+all 22 retained cases and their source, compile, link and product evidence.
+Application whole-family and malloc/free/realloc interposition, executable,
+initial-DSO and plugin ownership transfers, binding controls, errno and
+`dlclose` behavior remain required on the same cohort products.
 
-```sh
-./scripts/dev-x86_64.sh owned-posix-static-products \
-  .work/x86_64/abi-shadow-static --allocator-backend native-shadow
-./scripts/dev-x86_64.sh materialized-dynamic-sysroot \
-  --work .work/x86_64/abi-shadow-dynamic --allocator-backend native-shadow
-./scripts/dev-x86_64.sh owned-c-abi-compat-family \
-  --static-preparation .work/x86_64/abi-shadow-static/preparation.json \
-  --dynamic-qualification .work/x86_64/abi-shadow-dynamic/qualification.json \
-  --output .work/x86_64/abi-shadow-family
-```
-
-The static preparation and dynamic qualification bind the same source and
-record `allocator_backend = native-shadow` in installed manifests. The family
-assessment remains diagnostic: public admission still requires a promoted
-default backend and the full current-revision qualification chain. The
-selected accepted-C assessment is a separate source-bound result and must not
-be relabeled from shadow evidence.
+Allocator identity follows installed manifests and provenance. Accepted-C
+provenance must identify the pinned C dependency in both products and cannot
+claim Rust-native source evidence. Rust products additionally require their
+`crabc-mimalloc/UPSTREAM.md` source identity. These public libc capability
+proofs do not qualify Rust-private allocator policy or promote the allocator.
+The independent allocator promotion gate owns those proofs.

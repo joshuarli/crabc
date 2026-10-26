@@ -94,6 +94,13 @@ receipts. `collect-companions` runs each companion's runner (`PRODUCERS` in
 `companions.json`; a failed runner, and any companion that consumes its receipt,
 is recorded and never bound, so its selection blockers stay open. The text-family
 and POSIX `__sysv_signal` receipts come only from their family admission flows.
+`feature_alias_work` supplies one standalone companion for the six remaining
+feature aliases. Its five owner sections require isolated signal, exec and
+netdb feature archives, the selected static preparation's owned-runtime feature
+command, and installed behavior and override probes. It does not run the POSIX
+aggregate. Collection retains raw commands, streams, source graphs and link
+receipts. The owning reader reconstructs every section before ABI attachment.
+
 Five bounded component producers also retain directory companions:
 `installed_math_work`, `installed_stdio_work`, `signal_process_work`,
 `bootstrap_primitives_work` and `binary80_feature_work`. The first four use

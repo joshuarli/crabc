@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Native Linux/x86-64 bounded SHA-crypt C ABI evidence.
 set -euo pipefail
+. "$(dirname "${BASH_SOURCE[0]}")/native_build_environment.sh"
 . "$(dirname "${BASH_SOURCE[0]}")/source_runtime_libc.sh"
 export LC_ALL=C
 

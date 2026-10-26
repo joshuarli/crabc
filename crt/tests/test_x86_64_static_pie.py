@@ -7,7 +7,6 @@ import json
 import os
 import platform
 import re
-import shutil
 import struct
 import subprocess
 import sys
@@ -20,6 +19,7 @@ CRT_ROOT = Path(__file__).resolve().parents[1]
 ROOT = CRT_ROOT.parent
 sys.path.insert(0, str(ROOT))
 from scripts.rust_toolchain import pinned_toolchain
+from scripts import native_build_tools
 BUILDER = CRT_ROOT / "build_x86_64.py"
 FIXTURE = CRT_ROOT / "fixtures" / "static_pie_fixture_x86_64.rs"
 BUNDLE_FIXTURE = CRT_ROOT / "fixtures" / "static_pie_builtins_bundle_x86_64.rs"
@@ -53,17 +53,12 @@ def native_x86_64_evidence() -> bool:
 
 
 def toolchain_rustc() -> list[str]:
-    rustup = shutil.which("rustup")
-    if rustup is None:
-        raise unittest.SkipTest("rustup is unavailable")
-    return [rustup, "run", PINNED_TOOLCHAIN, "rustc"]
+    compiler = Path("/opt/rustup/toolchains") / f"{PINNED_TOOLCHAIN}-{TARGET}/bin/rustc"
+    return native_build_tools.compile_command(compiler)
 
 
 def link_editor() -> str:
-    candidate = shutil.which("ld.lld")
-    if candidate is None:
-        raise unittest.SkipTest("ld.lld is unavailable")
-    return candidate
+    return str(native_build_tools.MOLD)
 
 
 def elf_layout(path: Path) -> tuple[bytes, list[tuple[int, int, int, int, int, int, int, int]]]:
@@ -119,8 +114,19 @@ def inspect_static_pie(path: Path, *, packed_relr: bool) -> None:
     if tls_headers:
         raise AssertionError("no-TLS static PIE fixture unexpectedly has PT_TLS")
     tags = dynamic_tags(data, program_headers)
-    if DT_PLTGOT in tags or DT_JMPREL in tags:
-        raise AssertionError("static PIE unexpectedly retains a PLT/GOT dynamic-link surface")
+    if DT_JMPREL in tags:
+        raise AssertionError("static PIE unexpectedly retains dynamic PLT relocations")
+    if DT_PLTGOT in tags:
+        header = struct.unpack_from("<16sHHIQQQIHHHHHH", data)
+        sections = [struct.unpack_from("<IIQQQQIIQQ", data, header[6] + index * header[11])
+                    for index in range(header[12])]
+        strings = sections[header[13]]
+        names = data[strings[4]:strings[4] + strings[5]]
+        reserved = [section for section in sections if names[section[0]:].split(b"\0", 1)[0] == b".got.plt"]
+        dynamic = next(program for program in program_headers if program[0] == PT_DYNAMIC)
+        if len(reserved) != 1 or reserved[0][3] != tags[DT_PLTGOT] or reserved[0][5] != 24 \
+                or reserved[0][2] & 4 or struct.unpack_from("<QQQ", data, reserved[0][4]) != (dynamic[3], 0, 0):
+            raise AssertionError("static PIE GOT/PLT exceeds the three inert reserved entries")
     if packed_relr:
         if DT_RELR not in tags:
             raise AssertionError("packed static PIE lacks DT_RELR")
@@ -209,7 +215,7 @@ def closed_bundle_inputs(crt_output: Path, fixture: Path, builtins: Path, extras
     """Return the only permitted inputs for the private static-PIE bundle.
 
     The closed list is evidence infrastructure, not a compiler driver: adding
-    a CRT object or helper archive is rejected before LLD observes it, so an
+    a CRT object or helper archive is rejected before mold observes it, so an
     ambient `crt1`, libgcc, or compiler-rt cannot silently satisfy the proof.
     """
 
@@ -232,11 +238,14 @@ class X86_64StaticPieTests(unittest.TestCase):
     def test_static_pie_bootstrap_executes_and_rejects_unknown_relocations(self) -> None:
         if os.environ.get("CRABC_CRT_X86_64_EVIDENCE_SLICE") == "bundle":
             self.skipTest("bundle-only runner selects the CRT/builtins consumer")
-        with tempfile.TemporaryDirectory() as temporary:
+        scratch = ROOT / ".work/tmp"
+        scratch.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(dir=scratch) as temporary:
             work = Path(temporary)
             crt_output = work / "crt"
             build = subprocess.run(
-                [sys.executable, str(BUILDER), "--out-dir", str(crt_output)],
+                [sys.executable, str(BUILDER), "--out-dir", str(crt_output), "--llvm-objdump",
+                 str(Path("/opt/rustup/toolchains") / f"{PINNED_TOOLCHAIN}-{TARGET}/lib/rustlib/{TARGET}/bin/llvm-objdump")],
                 stdin=subprocess.DEVNULL,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
@@ -274,7 +283,7 @@ class X86_64StaticPieTests(unittest.TestCase):
 
             relocation_variants = (
                 ("rela", (), False),
-                ("relr", ("--pack-dyn-relocs=relr",), True),
+                ("relr", ("-z", "pack-relative-relocs",), True),
             )
             for name, relocation_arguments, packed_relr in relocation_variants:
                 executable = work / ("static-pie-no-tls-" + name)
@@ -334,11 +343,14 @@ class X86_64StaticPieTests(unittest.TestCase):
     def test_static_pie_bundle_consumes_owned_crt_and_rust_builtins_only(self) -> None:
         if os.environ.get("CRABC_CRT_X86_64_EVIDENCE_SLICE") != "bundle":
             self.skipTest("static-pie runner selects the no-TLS CRT foundation")
-        with tempfile.TemporaryDirectory() as temporary:
+        scratch = ROOT / ".work/tmp"
+        scratch.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(dir=scratch) as temporary:
             work = Path(temporary)
             crt_output = work / "crt"
             build = subprocess.run(
-                [sys.executable, str(BUILDER), "--out-dir", str(crt_output)],
+                [sys.executable, str(BUILDER), "--out-dir", str(crt_output), "--llvm-objdump",
+                 str(Path("/opt/rustup/toolchains") / f"{PINNED_TOOLCHAIN}-{TARGET}/lib/rustlib/{TARGET}/bin/llvm-objdump")],
                 stdin=subprocess.DEVNULL,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
@@ -364,7 +376,7 @@ class X86_64StaticPieTests(unittest.TestCase):
             fixture = work / "static_pie_builtins_bundle_x86_64.o"
             compile_fixture(BUNDLE_FIXTURE, fixture)
             undefined = subprocess.run(
-                ["llvm-nm", "--undefined-only", "--extern-only", str(fixture)],
+                [str(Path("/opt/rustup/toolchains") / f"{PINNED_TOOLCHAIN}-{TARGET}/lib/rustlib/{TARGET}/bin/llvm-nm"), "--undefined-only", "--extern-only", str(fixture)],
                 stdin=subprocess.DEVNULL,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,

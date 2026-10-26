@@ -53,10 +53,9 @@ def replay_tool_paths(checkout: Path) -> dict[str, str]:
     channel = toolchain.get("channel") if isinstance(toolchain, dict) else None
     if not isinstance(channel, str) or re.fullmatch(r"nightly-[0-9]{4}-[0-9]{2}-[0-9]{2}", channel) is None:
         fail("rust-toolchain.toml has no dated nightly channel")
-    rust_toolchain = f"/opt/rustup/toolchains/{channel}-{TARGET}"
     return {
         "compiler": "/usr/bin/gcc",
-        "linker": rust_toolchain + f"/lib/rustlib/{TARGET}/bin/gcc-ld/ld.lld",
+        "linker": str(product_evidence.native_build_tools.MOLD),
         "oracle_compiler": str(ORACLE_COMPILER),
     }
 
@@ -507,8 +506,8 @@ def audit_receipt(product: Path, manifest: Path, output: Path, object_path: Path
     linker_record = require_keys(record.get("resolved_linker"), {"path", "sha256"}, "resolved linker")
     if replay is None:
         linker_path = physical(Path(str(linker_record["path"])), "resolved linker")
-        if linker_path.name != "ld.lld" or not linker_path.stat().st_mode & 0o111:
-            fail("dynamic producer receipt linker is not an executable ld.lld")
+        if linker_path != product_evidence.native_build_tools.MOLD or not linker_path.stat().st_mode & 0o111:
+            fail("dynamic producer receipt linker is not the pinned mold executable")
         require_hash(linker_record["sha256"], digest(linker_path), "dynamic producer linker")
     else:
         replay.require_tool("linker", linker_record)
@@ -537,6 +536,7 @@ def audit_receipt(product: Path, manifest: Path, output: Path, object_path: Path
     if not isinstance(trace, list) or not all(isinstance(item, str) for item in trace):
         fail("dynamic producer receipt link_trace is invalid")
     seen: set[str] = set()
+    trace = product_evidence.semantic_link_trace(trace)
     for line in trace:
         if line in direct:
             seen.add(line)

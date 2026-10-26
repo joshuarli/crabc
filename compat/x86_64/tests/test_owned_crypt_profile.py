@@ -1,5 +1,7 @@
 """The crypt companion retains observations and independently binds ELF inputs."""
 import copy
+from contextlib import redirect_stderr
+import io
 import hashlib
 import json
 from pathlib import Path
@@ -50,6 +52,16 @@ class CryptProfileTests(unittest.TestCase):
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_bytes(value if isinstance(value, bytes) else (json.dumps(value)+'\n').encode())
         return path
+
+    def test_cli_reports_a_product_evidence_failure_without_a_traceback(self):
+        stderr = io.StringIO()
+        arguments = ['owned_crypt_profile.py', 'validate', str(self.leaf / 'crypt-profile.json')]
+        with patch.object(sys, 'argv', arguments), redirect_stderr(stderr), \
+             patch.object(crypt, 'validate_receipt', side_effect=crypt.products.ProductEvidenceError('resolved linker hash differs')):
+            status = crypt.main()
+        self.assertEqual(status, 1)
+        self.assertIn('crypt profile: resolved linker hash differs', stderr.getvalue())
+        self.assertNotIn('Traceback', stderr.getvalue())
 
     def test_generated_observer_keeps_32_original_calls_and_actual_pointer_check(self):
         source = crypt.generated_observer(ROOT)
@@ -213,7 +225,12 @@ class CryptProfileTests(unittest.TestCase):
         receipt_path = Path(str(binary)+'.crabc-link.json')
         runtime = [product / 'usr/lib' / name for name in ('crti.o','libc.so','crtn.o','Scrt1.o','crabc-dynamic-attach.o')]
         builtins = product / 'usr/lib/libcrabc-builtins.a'
-        linker = {'path': '/pinned/ld.lld', 'sha256': 'a'*64}
+        linker_path = self.put(self.root / 'tools/mold', b'sealed mold fixture')
+        linker_path.chmod(0o755)
+        linker = {'path': str(linker_path), 'sha256': native.digest(linker_path)}
+        linker_patch = patch.object(crypt.products.native_build_tools, 'MOLD', linker_path)
+        linker_patch.start()
+        self.addCleanup(linker_patch.stop)
         receipt = {'schema': 1, 'format': native.PRODUCT_FORMAT, 'mode': 'pie', 'binding': 'now',
             'runtime_imports': [], 'application_runpath': '/usr/lib', 'application_dsos': {}, 'campaign_complete': False,
             'output_path': reader.recorded(binary), 'output_sha256': native.digest(binary), 'manifest_sha256': native.digest(manifest),

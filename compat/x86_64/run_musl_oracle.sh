@@ -56,7 +56,7 @@ sha256sum -c "${MUSL_ROOT}/.crabc-musl-gcc-specs.sha256" >/dev/null || {
 }
 
 grep -Fxq \
-    'exec /usr/bin/gcc -specs /opt/musl-1.2.6/lib/musl-gcc.specs "$@"' \
+    'exec /usr/bin/gcc -fuse-ld=mold -specs /opt/musl-1.2.6/lib/musl-gcc.specs "$@"' \
     "$ORACLE_CC" || fail "compiler wrapper does not select the pinned specs"
 
 compiler_target="$(

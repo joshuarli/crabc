@@ -74,7 +74,9 @@ PINNED_TOOLCHAIN = tomllib.loads((ROOT / "rust-toolchain.toml").read_text())["to
 IMAGE_FIXED_PATHS = (
     *_IMAGE_FIXED_PREFIXES,
     f"/opt/rustup/toolchains/{PINNED_TOOLCHAIN}-x86_64-unknown-linux-musl/bin/rustc",
-    f"/opt/rustup/toolchains/{PINNED_TOOLCHAIN}-x86_64-unknown-linux-musl/lib/rustlib/x86_64-unknown-linux-musl/bin/gcc-ld/ld.lld",
+    str(product_evidence.native_build_tools.KACHE),
+    str(product_evidence.native_build_tools.MOLD),
+    str(product_evidence.native_build_tools.CARGO_LINKER),
 )
 IMAGE_MANIFEST_SOURCE = "compat/x86_64/owned_pthread_timed_feature_image_inputs_current.json"
 PREPARATION_RETAINED_ROOT = "retained/products/static-preparation"
@@ -1675,7 +1677,10 @@ def _resolved_linker_path(value: object, label: str) -> str:
             f"{label} resolved linker path changed")
     require(isinstance(digest, str) and re.fullmatch(r"[0-9a-f]{64}", digest) is not None,
             f"{label} resolved linker digest changed")
-    return path
+    try:
+        return product_evidence._check_linker(value, Path(path))
+    except product_evidence.ProductEvidenceError as error:
+        require(False, f"{label} resolved linker differs: {error}")
 
 
 def _dynamic_product_root(products: Mapping[str, object]) -> str:
@@ -1786,7 +1791,7 @@ def _validate_dynamic_link_receipt(
         f"{root}/usr/lib/libc.so",
         f"{root}/usr/lib/crtn.o",
     ]
-    require(receipt["link_trace"] == expected_trace,
+    require(product_evidence.semantic_link_trace(receipt["link_trace"]) == expected_trace,
             f"{binary} dynamic link trace changed")
     linker = _resolved_linker_path(receipt["resolved_linker"], binary)
     files = image_manifest.get("files")
@@ -1950,7 +1955,7 @@ def _validate_static_link_receipt(
     require(observed == expected_inputs,
             f"{binary} static link receipt input binding changed")
 
-    contract = ["ld.lld", "-static"]
+    contract = [Path(product_evidence.native_build_tools.MOLD).name, "-static"]
     if binary == "static-pie-contract":
         contract.append("-pie")
     contract += [
@@ -1967,7 +1972,9 @@ def _validate_static_link_receipt(
         "path": linker, "sha256": files.get(linker, {}).get("sha256"),
     }, f"{binary} static linker is not the trusted pinned LLD")
     trace_name = f"{binary}.link.trace"
-    trace = (work / trace_name).read_text(encoding="utf-8").splitlines()
+    trace = product_evidence.semantic_link_trace(
+        (work / trace_name).read_text(encoding="utf-8").splitlines()
+    )
     require(trace.count(f"{work_path}/contract.o") == 1,
             f"{binary} static trace does not retain one contract object")
     require(any(line.startswith(f"{root}/usr/lib/libc.a(") for line in trace),

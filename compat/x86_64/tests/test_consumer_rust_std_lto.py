@@ -262,7 +262,8 @@ class ReceiptReaderTests(unittest.TestCase):
         self.record = {
             "schema": GATE.SCHEMA, "gate": GATE.GATE, "source_sha256": "a" * 64, "qualifying": True,
             "cohort": self.cohort, "passed": True, "unmet_conditions": [],
-            "toolchain": {"rustc_vv": "test-compiler"}, "provider": self.provider, "products": self.products,
+            "toolchain": {"rustc_vv": "test-compiler",
+                          "native_compiler_tools": GATE.product_evidence.source_native_compiler_tool_records()}, "provider": self.provider, "products": self.products,
             "gates": {
                 gate: {"lanes": {lane: {"unmet": []} for lane in lanes}}
                 for gate, lanes in {

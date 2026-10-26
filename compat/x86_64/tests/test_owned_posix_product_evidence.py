@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import hashlib
+import copy
 import importlib.util
 import json
 import os
@@ -24,6 +25,7 @@ assert SPEC is not None and SPEC.loader is not None
 evidence = importlib.util.module_from_spec(SPEC)
 sys.modules[SPEC.name] = evidence
 SPEC.loader.exec_module(evidence)
+import owned_posix_product_evidence as consumer_evidence
 
 OS_TEST_MODULE_PATH = ROOT / "compat" / "x86_64" / "owned_os_test.py"
 OS_TEST_SPEC = importlib.util.spec_from_file_location("owned_os_test_product_mode_test", OS_TEST_MODULE_PATH)
@@ -216,10 +218,77 @@ class OwnedPosixProductEvidenceTests(unittest.TestCase):
         self.root = Path(self.temporary.name)
         self.workload = self.put("workload.o", b"one owned workload object\n")
         self.executable = self.put("consumer", sealed_elf("pie"))
-        self.linker = self.put("tools/ld.lld", b"sealed linker bytes\n")
+        self.linker = self.put("tools/mold", b"sealed linker bytes\n")
         os.chmod(self.linker, 0o755)
+        self.initialize_compiler_tools()
         self.static = self.install_static()
         self.dynamic = self.install_dynamic()
+
+    def initialize_compiler_tools(self) -> None:
+        original_mold = evidence.native_build_tools.MOLD
+        self.original_mold = original_mold
+        evidence.native_build_tools.MOLD = self.linker
+        self.addCleanup(setattr, evidence.native_build_tools, "MOLD", original_mold)
+        paths = evidence.native_compiler_tool_paths()
+        self.compiler_tools = {
+            name: {**identity, "sha256": hashlib.sha256(name.encode()).hexdigest()}
+            for name, identity in paths.items()
+        }
+        self.source_tools_patch = mock.patch.object(
+            evidence, "source_native_compiler_tool_records", return_value=self.compiler_tools
+        )
+        self.source_tools_patch.start()
+        self.addCleanup(self.source_tools_patch.stop)
+        consumer_tools_patch = mock.patch.object(
+            consumer_evidence, "source_native_compiler_tool_records", return_value=self.compiler_tools
+        )
+        consumer_tools_patch.start()
+        self.addCleanup(consumer_tools_patch.stop)
+
+    def test_mold_trace_normalization_removes_only_its_known_prefix(self) -> None:
+        raw = ["trace: /input/object.o", "trace: trace: /input/archive.a(member.o)", "/input/direct.o"]
+        self.assertEqual(evidence.semantic_link_trace(raw), [
+            "/input/object.o", "trace: /input/archive.a(member.o)", "/input/direct.o",
+        ])
+
+    def test_native_compiler_tool_records_bind_the_known_four_tools(self) -> None:
+        tools = copy.deepcopy(self.compiler_tools)
+        self.assertEqual(set(tools), {"rustc_wrapper", "linker", "cargo_linker", "rustc"})
+        self.assertEqual(evidence.validate_native_compiler_tool_records(tools), tools)
+        with mock.patch.object(evidence, "native_compiler_tool_records", return_value=tools):
+            self.assertEqual(evidence.validate_current_native_compiler_tool_records(tools), tools)
+        command = [tools["rustc_wrapper"]["path"], tools["rustc"]["path"], "--version"]
+        self.assertEqual(evidence.validate_native_rustc_command(command, tools), command)
+        final_link = [*command, "-C", f"linker={tools['cargo_linker']['path']}"]
+        self.assertEqual(evidence.validate_native_rustc_command(final_link, tools), final_link)
+
+    def test_native_compiler_tool_records_reject_wrong_paths_and_hashes(self) -> None:
+        for name in ("rustc_wrapper", "linker", "cargo_linker", "rustc"):
+            for field in ("path", "sha256"):
+                changed = copy.deepcopy(self.compiler_tools)
+                changed[name][field] = "/wrong/tool" if field == "path" else "0" * 64
+                with self.subTest(tool=name, field=field), self.assertRaisesRegex(
+                    evidence.ProductEvidenceError, f"native producer tools omit {name}"
+                ):
+                    evidence.validate_native_compiler_tool_records(changed)
+
+    def test_native_rustc_argv_rejects_wrong_wrapper_and_inner_compiler(self) -> None:
+        tools = self.compiler_tools
+        command = [tools["rustc_wrapper"]["path"], tools["rustc"]["path"], "--version"]
+        for index in (0, 1):
+            changed = list(command)
+            changed[index] = "/wrong/compiler"
+            with self.subTest(index=index), self.assertRaisesRegex(
+                evidence.ProductEvidenceError, "sealed kache/rustc pair"
+            ):
+                evidence.validate_native_rustc_command(changed, tools)
+
+    def test_native_rustc_argv_rejects_a_non_mold_target_linker(self) -> None:
+        tools = self.compiler_tools
+        command = [tools["rustc_wrapper"]["path"], tools["rustc"]["path"],
+                   "--test", "source.rs", "-C", "linker=/usr/bin/ld.lld"]
+        with self.assertRaisesRegex(evidence.ProductEvidenceError, "sealed mold GCC linker"):
+            evidence.validate_native_rustc_command(command, tools)
 
     def test_retained_elf_reader_parses_rehashed_dynamic_metadata_without_a_host_tool(self) -> None:
         path = self.put("shared", sealed_shared_elf("libfixture.so"))
@@ -333,6 +402,7 @@ class OwnedPosixProductEvidenceTests(unittest.TestCase):
             "schema": 1,
             "format": "crabc-x86-64-owned-static-sysroot-v1",
             "target": "x86_64-unknown-linux-musl",
+            "producer_tools": self.compiler_tools,
             "installed": {
                 "headers": "usr/include",
                 "crt_objects": [
@@ -381,6 +451,7 @@ class OwnedPosixProductEvidenceTests(unittest.TestCase):
         os.chmod(product / "usr/lib/libc.so", 0o755)
         alias = product / "lib/ld-musl-x86_64.so.1"
         alias.symlink_to("ld-crabc-x86_64.so.1")
+        self.write_json(product / "share/crabc/producer-tools.json", {"schema": 1, **self.compiler_tools})
         manifest = {
             "schema": 1,
             "format": "crabc-x86-64-owned-dynamic-sysroot-v1",
@@ -454,7 +525,7 @@ class OwnedPosixProductEvidenceTests(unittest.TestCase):
     def static_plan(self, crt: str, pie: bool) -> list[str]:
         library = self.static / "usr/lib"
         return [
-            "ld.lld", "-static", *( ["-pie"] if pie else []), "--no-dynamic-linker",
+            Path(self.linker).name, "-static", *(["-pie"] if pie else []), "--no-dynamic-linker",
             "--no-undefined", "--eh-frame-hdr", "--gc-sections", "-z", "relro", "-z", "now", "-e", "_start",
             str(library / crt), str(library / "crti.o"), "<application-objects>",
             str(library / "libc.a"), str(library / "libcrabc-builtins.a"),
@@ -546,7 +617,7 @@ class OwnedPosixProductEvidenceTests(unittest.TestCase):
 
         record = mounted(record)
         assert isinstance(record, dict)
-        tools = {"path": "/opt/native-tools/ld.lld", "sha256": digest(self.linker)}
+        tools = {"path": str(evidence.native_build_tools.MOLD), "sha256": digest(self.linker)}
         record["resolved_linker"] = dict(tools)
         if "link_command" in record:
             record["link_command"][0] = tools["path"]
@@ -611,7 +682,7 @@ class OwnedPosixProductEvidenceTests(unittest.TestCase):
             with self.assertRaisesRegex(evidence.ProductEvidenceError, "resolved linker"):
                 evidence.validate_retained_link(
                     self.root, "/workspace", self.dynamic, self.workload, self.executable,
-                    receipt, "pie", {"path": "/opt/native-tools/other-ld.lld", "sha256": linker["sha256"]},
+                    receipt, "pie", {"path": "/opt/native-tools/other-mold", "sha256": linker["sha256"]},
                 )
 
     def test_export_dynamic_requires_the_explicit_dynamic_link_contract(self) -> None:
@@ -675,7 +746,7 @@ class OwnedPosixProductEvidenceTests(unittest.TestCase):
     def test_dynamic_link_command_keeps_single_path_and_orders_plural_inputs(self) -> None:
         second = self.root / "fixture.o"
         second.write_bytes(b"fixture object")
-        linker = "/owned/bin/ld.lld"
+        linker = "/owned/bin/mold"
         single = evidence._dynamic_link_command(
             self.root, self.workload, self.executable, "pie", linker,
         )
@@ -805,14 +876,14 @@ class OwnedPosixProductEvidenceTests(unittest.TestCase):
                     self.dynamic, lexical_workload, self.executable, receipt, "pie"
                 )
 
-    def test_receipt_linker_must_be_an_executable_ld_lld(self) -> None:
+    def test_receipt_linker_must_be_an_executable_mold(self) -> None:
         receipt = self.static_receipt()
         record = json.loads(receipt.read_text(encoding="utf-8"))
         other = self.put("tools/not-a-linker", b"not lld\n")
         os.chmod(other, 0o755)
         record["resolved_linker"] = {"path": str(other), "sha256": digest(other)}
         self.write_json(receipt, record)
-        with self.assertRaisesRegex(evidence.ProductEvidenceError, "ld.lld"):
+        with self.assertRaisesRegex(evidence.ProductEvidenceError, "pinned mold"):
             self.validate("static", receipt)
 
         receipt = self.static_receipt("static-pie")

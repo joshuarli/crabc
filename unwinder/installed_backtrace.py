@@ -21,6 +21,7 @@ import owned_cleanup as owned
 COMPAT = owned.CHECKOUT / "compat/x86_64"
 if str(COMPAT) not in sys.path:
     sys.path.insert(0, str(COMPAT))
+import native_rustc
 import owned_dynamic_qualification as dynamic_qualification
 import owned_posix_static_products as static_products
 
@@ -196,7 +197,7 @@ def panic_static_case(product: dict[str, Any], provider: dict[str, Any], output:
         "CRABC_OWNED_RUST_STOCK_LIBDIR": str(libdir),
         "CRABC_OWNED_RUST_CHANNEL": channel,
     }
-    host_command = ["rustup", "run", channel, "rustc", "--edition=2024", "--target", owned.TARGET,
+    host_command = [*native_rustc.compile_command(), "--edition=2024", "--target", owned.TARGET,
                     "-C", "panic=unwind", "-C", "force-unwind-tables=yes", "-C", "link-self-contained=no",
                     "-C", "target-feature=-crt-static", "-C", "relocation-model=static",
                     "-C", f"linker={owned.ROOT / 'owned_rust_link.py'}", "-C", "link-arg=-Wl,--eh-frame-hdr",
@@ -253,7 +254,7 @@ def validate_panic_static_case(record: dict[str, Any], product: dict[str, Any], 
                    "-c", str(PANIC_DSO_FRAME), "-o", str(c_object)]
                   and steps["host"]["extra_environment"] == expected_environment
                   and steps["host"]["command"] ==
-                  ["rustup", "run", channel, "rustc", "--edition=2024", "--target", owned.TARGET,
+                  [*native_rustc.compile_command(), "--edition=2024", "--target", owned.TARGET,
                    "-C", "panic=unwind", "-C", "force-unwind-tables=yes", "-C", "link-self-contained=no",
                    "-C", "target-feature=-crt-static", "-C", "relocation-model=static",
                    "-C", f"linker={owned.ROOT / 'owned_rust_link.py'}", "-C", "link-arg=-Wl,--eh-frame-hdr",
@@ -305,7 +306,7 @@ def panic_dso_case(product: dict[str, Any], provider: dict[str, Any], output: Pa
     for name, command, extra in (
         ("plugin", [str(root / "bin/crabc-cc-dynamic"), "--dynamic-shared-object",
                     str(PANIC_DSO_FRAME), "-o", str(plugin)], None),
-        ("host", ["rustup", "run", channel, "rustc", "--edition=2024", "--target", owned.TARGET,
+        ("host", [*native_rustc.compile_command(), "--edition=2024", "--target", owned.TARGET,
                   "-C", "panic=unwind", "-C", "force-unwind-tables=yes", "-C", "link-self-contained=no",
                   "-C", "target-feature=-crt-static", "-C", f"linker={owned.ROOT / 'owned_rust_link.py'}",
                   "-C", "link-arg=-Wl,--eh-frame-hdr", str(PANIC_DSO_HOST), "-o", str(host)], environment),
@@ -373,7 +374,7 @@ def validate_panic_dso_case(record: dict[str, Any], product: dict[str, Any], pro
                          "--dynamic-shared-object", str(PANIC_DSO_FRAME), "-o", str(plugin)]
                   and steps["host"]["extra_environment"] == expected_environment
                   and steps["phdr"]["command"] == ["readelf", "-lW", str(plugin)]
-                  and steps["host"]["command"] == ["rustup", "run", channel, "rustc", "--edition=2024",
+                  and steps["host"]["command"] == [*native_rustc.compile_command(), "--edition=2024",
                          "--target", owned.TARGET, "-C", "panic=unwind", "-C", "force-unwind-tables=yes",
                          "-C", "link-self-contained=no", "-C", "target-feature=-crt-static", "-C",
                          f"linker={owned.ROOT / 'owned_rust_link.py'}", "-C", "link-arg=-Wl,--eh-frame-hdr",

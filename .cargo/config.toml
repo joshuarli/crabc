@@ -14,3 +14,6 @@ rustflags = ["-C", "link-dead-code"]
 # here and in the sealed sysroot builder is the executable production contract.
 [target.aarch64-unknown-linux-musl]
 rustflags = ["-C", "link-dead-code", "-C", "target-feature=-crt-static", "-Ztls-model=initial-exec"]
+
+[target.x86_64-unknown-linux-musl]
+linker = "/usr/local/bin/crabc-x86_64-mold-gcc"

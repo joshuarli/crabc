@@ -12,6 +12,7 @@ import sys
 import tempfile
 import tomllib
 import unittest
+from unittest import mock
 
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -57,9 +58,12 @@ class OwnedPosixFilesystemTests(unittest.TestCase):
         with tempfile.TemporaryDirectory(dir=scratch) as temporary:
             directory = Path(temporary)
             container_directory = "/workspace/" + directory.relative_to(ROOT).as_posix()
+            launcher = [] if Path("/.dockerenv").is_file() and Path("/usr/local/bin/crabc-x86_64-musl-gcc").is_file() else [
+                str(ROOT / "scripts" / "lanes" / "rust-check.sh"),
+            ]
             result = subprocess.run(
                 [
-                    str(ROOT / "scripts" / "lanes" / "rust-check.sh"),
+                    *launcher,
                     "sh", "-c",
                     '/usr/local/bin/crabc-x86_64-musl-gcc -std=c11 -D_GNU_SOURCE '
                     '-pthread -I/workspace/include '
@@ -81,6 +85,20 @@ class OwnedPosixFilesystemTests(unittest.TestCase):
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_bytes(contents)
         return path
+
+    def _linker_fixture(self, workspace: Path, auditor) -> Path:
+        tools = auditor.product_evidence.source_native_compiler_tool_records()
+        linker = self._write_file(workspace, "tools/mold", b"sealed mold fixture")
+        linker.chmod(0o755)
+        tools["linker"] = {"path": str(linker), "sha256": auditor.digest(linker)}
+        for target, name, value in (
+            (auditor.product_evidence.native_build_tools, "MOLD", linker),
+            (auditor.product_evidence, "source_native_compiler_tool_records", lambda: tools),
+        ):
+            patcher = mock.patch.object(target, name, value)
+            patcher.start()
+            self.addCleanup(patcher.stop)
+        return linker
 
     def _write_static_product(self, root: Path, auditor) -> None:
         self._write_file(root, "bin/crabc-cc", b"static driver\n")
@@ -126,6 +144,9 @@ class OwnedPosixFilesystemTests(unittest.TestCase):
         self._write_file(root, "lib/ld-crabc-x86_64.so.1", b"owned loader\n")
         for module in ("crabc_cc_static.py", "owned_dynamic_receipt.py", "owned_dynamic_elf.py"):
             self._write_file(root, f"share/crabc/{module}", module.encode("ascii"))
+        self._write_file(root, "share/crabc/producer-tools.json", json.dumps({
+            "schema": 1, **auditor.product_evidence.source_native_compiler_tool_records(),
+        }).encode())
         # The installed product's source-bound modes: an executable driver
         # and shared libc, and non-executable link objects.
         for relative in ("bin/crabc-cc-dynamic", "usr/lib/libc.so", "lib/ld-crabc-x86_64.so.1"):
@@ -182,7 +203,7 @@ class OwnedPosixFilesystemTests(unittest.TestCase):
             },
             "resolved_linker": {"path": str(linker), "sha256": auditor.digest(linker)},
             "owned_link_contract": [
-                "ld.lld", "-static", "--no-dynamic-linker", "--no-undefined", "--eh-frame-hdr", "--gc-sections",
+                "mold", "-static", "--no-dynamic-linker", "--no-undefined", "--eh-frame-hdr", "--gc-sections",
                 "-z", "relro", "-z", "now", "-e", "_start", str(library / "crt1.o"),
                 str(library / "crti.o"), "<application-objects>", str(library / "libc.a"),
                 str(library / "libcrabc-builtins.a"), str(library / "crtn.o"), "-o", "<output>",
@@ -268,10 +289,10 @@ class OwnedPosixFilesystemTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary:
             workspace = Path(temporary)
             product = workspace / "static"
+            linker = self._linker_fixture(workspace, auditor)
             self._write_static_product(product, auditor)
             application = self._write_file(workspace, "workload.o", b"object\n")
             candidate = self._write_file(workspace, "consumer", b"consumer\n")
-            linker = self._write_file(workspace, "ld.lld", b"linker\n")
             receipt = workspace / "consumer.receipt.json"
             self._write_static_receipt(auditor, product, application, candidate, receipt, linker)
             auditor.audit_static_receipt(product, "static", application, candidate, receipt)
@@ -303,10 +324,10 @@ class OwnedPosixFilesystemTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary:
             workspace = Path(temporary)
             product = workspace / "dynamic"
+            linker = self._linker_fixture(workspace, auditor)
             self._write_dynamic_product(product, auditor)
             application = self._write_file(workspace, "workload.o", b"object\n")
             candidate = self._write_file(workspace, "consumer", b"consumer\n")
-            linker = self._write_file(workspace, "ld.lld", b"linker\n")
             receipt = workspace / "consumer.crabc-link.json"
             self._write_dynamic_receipt(auditor, product, application, candidate, receipt, linker)
             auditor.audit_dynamic_receipt(product, "pie", application, candidate, receipt)

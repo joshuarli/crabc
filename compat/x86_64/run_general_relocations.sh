@@ -4,6 +4,9 @@ set -euo pipefail
 unset CPATH C_INCLUDE_PATH CPLUS_INCLUDE_PATH LIBRARY_PATH COMPILER_PATH \
     GCC_EXEC_PREFIX LD_LIBRARY_PATH LD_PRELOAD || true
 readonly ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+. "$(dirname "${BASH_SOURCE[0]}")/native_build_environment.sh"
+mapfile -d '' -t rustc_command < <(python3 -B "$ROOT/compat/x86_64/native_rustc.py")
+mapfile -d '' -t rustc_link_command < <(python3 -B "$ROOT/compat/x86_64/native_rustc.py" final-link)
 readonly FIXTURES="$ROOT/compat/x86_64"
 ulimit -c 0
 for pie_model in pic pie; do
@@ -18,7 +21,7 @@ done
 work="${evidence##*evidence: }"
 case "$work" in "$TMPDIR"/general-dynamic-lifecycle.*) ;; *) exit 2 ;; esac
 readonly work
-rustc --edition=2021 --test --cfg crabc_general_initial_graph \
+"${rustc_link_command[@]}" --edition=2021 --test --cfg crabc_general_initial_graph \
     --cfg crabc_general_initial_tls_materialization_v1 --cfg crabc_general_initial_lifecycle \
     "$ROOT/ldso/src/x86_64_general_initial_graph_source_root.rs" -o "$work/relocation-tests"
 timeout 30 "$work/relocation-tests"

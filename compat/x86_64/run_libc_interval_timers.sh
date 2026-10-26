@@ -6,6 +6,7 @@
 # interval-timer control pair; raw syscalls in the fixture provide setup and
 # output comparison, while alarm/ualarm and signal policy remain separate.
 set -euo pipefail
+. "$(dirname "${BASH_SOURCE[0]}")/native_build_environment.sh"
 . "$(dirname "${BASH_SOURCE[0]}")/source_runtime_libc.sh"
 
 readonly ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
