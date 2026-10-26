@@ -103,6 +103,8 @@ _start:
     jne .Lstatic_pie_not_relro_header
     cmp QWORD PTR [rsp + 72], 0
     jne .Lstatic_pie_fail
+    cmp QWORD PTR [r8 + 40], 0
+    je .Lstatic_pie_fail
     mov QWORD PTR [rsp + 72], 1
     jmp .Lstatic_pie_next_program_header
 .Lstatic_pie_not_relro_header:
