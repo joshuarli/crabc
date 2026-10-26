@@ -272,14 +272,14 @@ def invalid_first_relr(path: Path, value: int) -> Path:
     return invalid
 
 
-def textrel_declaration(path: Path, tag: int, value: int) -> Path:
+def dynamic_declaration(path: Path, tag: int, value: int) -> Path:
     data, headers = elf_layout(path)
     dynamic = next(header for header in headers if header[0] == PT_DYNAMIC)
     entry = next(offset for offset in range(dynamic[2], dynamic[2] + dynamic[5], 16)
                  if struct.unpack_from("<q", data, offset)[0] == 21)
     mutable = bytearray(data)
     struct.pack_into("<qQ", mutable, entry, tag, value)
-    invalid = path.with_name(path.name + f".textrel-{tag}")
+    invalid = path.with_name(path.name + f".dynamic-{tag}")
     invalid.write_bytes(mutable)
     invalid.chmod(0o755)
     return invalid
@@ -497,14 +497,14 @@ class X86_64StaticPieTests(unittest.TestCase):
                 self.assertEqual(overlap.returncode, 127, overlap.stderr.decode(errors="replace"))
                 self.assertEqual(overlap.stdout, b"")
 
-                for tag, value in ((22, 0), (30, 4)):
-                    textrel = subprocess.run(
-                        [str(textrel_declaration(executable, tag, value))], stdin=subprocess.DEVNULL,
+                for tag, value in ((1, 0), (22, 0), (23, 0), (30, 4)):
+                    rejected = subprocess.run(
+                        [str(dynamic_declaration(executable, tag, value))], stdin=subprocess.DEVNULL,
                         stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False,
                         preexec_fn=disable_core_dump,
                     )
-                    self.assertEqual(textrel.returncode, 127, textrel.stderr.decode(errors="replace"))
-                    self.assertEqual(textrel.stdout, b"")
+                    self.assertEqual(rejected.returncode, 127, rejected.stderr.decode(errors="replace"))
+                    self.assertEqual(rejected.stdout, b"")
 
                 tags = dynamic_tags(*elf_layout(executable))
                 for tag in (7, 8, 9, 35, 36, 37):

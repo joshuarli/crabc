@@ -241,7 +241,11 @@ _start:
     add r8, 16
     test rax, rax
     jz .Lstatic_pie_dynamic_done
+    cmp rax, 1
+    je .Lstatic_pie_fail
     cmp rax, 22
+    je .Lstatic_pie_fail
+    cmp rax, 23
     je .Lstatic_pie_fail
     cmp rax, 30
     jne .Lstatic_pie_not_flags
