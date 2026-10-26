@@ -348,7 +348,7 @@ class AbiDifferentialEvidenceTests(unittest.TestCase):
                 evidence.load(self.write())
             (work / "workload.o").write_bytes(b"object")
             (work / "escaped").symlink_to(self.reports["native_abi_ratchet"])
-            with self.assertRaisesRegex(evidence.EvidenceError, "bytes changed after assembly"):
+            with self.assertRaisesRegex(evidence.EvidenceError, "non-physical entry"):
                 evidence.load(self.write())
 
     def test_fchdir_work_replays_receipt_against_selected_products(self) -> None:

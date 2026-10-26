@@ -128,8 +128,8 @@ def _sha256(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
-def _tree_sha256(path: Path) -> str:
-    """Seal every physical directory and regular file in a retained work tree."""
+def _tree_sha256(path: Path, *, allow_symlinks: bool = False) -> str:
+    """Seal retained directory entries, optionally recording link targets."""
     digest = hashlib.sha256()
     def raise_walk_error(error: OSError) -> None:
         raise error
@@ -140,7 +140,8 @@ def _tree_sha256(path: Path) -> str:
             child = Path(parent) / name
             relative = child.relative_to(path).as_posix().encode()
             mode = child.lstat().st_mode
-            require(stat.S_ISDIR(mode) or stat.S_ISREG(mode) or stat.S_ISLNK(mode),
+            require(stat.S_ISDIR(mode) or stat.S_ISREG(mode)
+                    or allow_symlinks and stat.S_ISLNK(mode),
                     f"companion work has a non-physical entry: {child}")
             digest.update(b"L" if stat.S_ISLNK(mode) else b"D" if stat.S_ISDIR(mode) else b"F")
             digest.update(len(relative).to_bytes(8, "big"))
@@ -155,7 +156,8 @@ def _tree_sha256(path: Path) -> str:
 
 
 def _companion_sha256(name: str, path: Path) -> str:
-    return _tree_sha256(path) if name in DIRECTORY_COMPANIONS else _sha256(path)
+    return (_tree_sha256(path, allow_symlinks=name == "compiler_helper_installed_links")
+            if name in DIRECTORY_COMPANIONS else _sha256(path))
 
 
 def _validate_fchdir_work(path: Path, *, static_product: Path, dynamic_product: Path) -> None:

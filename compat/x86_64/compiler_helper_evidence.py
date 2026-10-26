@@ -1107,7 +1107,6 @@ def collect_installed_links(*, root: Path, base_inventory: Path, elf_report: Pat
             "compiler-helper installed link products changed during collection")
     require(same(crt, crt_reader.validate_report(root, crt_startup_report)),
             "compiler-helper installed link CRT evidence changed during collection")
-    installed_link_receipts(output)
     return output
 
 
@@ -2260,11 +2259,11 @@ def main(argv: list[str] | None = None) -> int:
                 dynamic_product=args.dynamic_product, aggregate_report=args.aggregate_report,
                 crt_startup_report=args.crt_startup_report, output=args.output,
             )
-            print("compiler-helper installed links collected and replayed")
+            print("compiler-helper installed links collected")
         else:
             validate_fixture_report(args.report)
             print("compiler-helper source fixture receipt valid; product collection remains separate")
-    except (CompilerHelperEvidenceError, EvidenceError, OSError, ValueError, KeyError) as error:
+    except (OSError, ValueError, KeyError, TypeError) as error:
         parser.exit(1, f"compiler-helper evidence failed: {error}\n")
     return 0
 
