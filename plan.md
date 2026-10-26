@@ -261,10 +261,17 @@ standalone `owned-resolver-network` proof; it cannot admit the old H0 artifact.
 The H0 main runner is in OS-test collection; its pthread-family assessment
 runs independently from the completed three-pair POSIX matrix.
 OS-test, signal/process and pinned pthread-stress components then pass; the
-native coordinator reaches its retained 434-unit libc-test report and final
-classification. The independent pthread-family receipt passes for all three
-product pairs with 16 coverage topics. The text channel runs the existing 28
+native coordinator retains all 434 libc-test units: 427 raw passes and seven
+raw runtime failures, including the existing profiled cases. Final admission
+stops at the same unprofiled `math/pow` role/status mismatch: both exits are zero,
+with ten candidate versus 24 oracle diagnostics and empty stderr. The exact
+step is parked without retry or a new disposition; its raw step-08 streams and
+summary remain in the frozen checkout. The independent pthread-family receipt
+passes for all three product pairs with 16 coverage topics. The text channel
+runs the existing 28
 pair-producer/input-seal steps, reusing primary word-expansion evidence.
+All 28 producers and seals pass; final text-family assembly is running against
+their actual reports, the completed matrix, and the pthread receipt.
 
 The first fresh resolver proof confirms readable run and report publication,
 then its independent reader finds `reference.events.json` still private. The
@@ -273,12 +280,21 @@ DNS fixture's atomic event writer also used `mkstemp`'s `0600` mode.
 replacement regression fails before the fix, and all 13 helper tests pass.
 The detached `.work/wt/resolver-complete-readability-proof` at that revision
 passes a fresh standalone `owned-resolver-network` producer. Ordinary host
-glob discovery finds one readable `run-pseboig1/report.json`, whose bytes match
+glob discovery finds exactly one readable network run report, whose bytes match
 the published report. The full existing receipt reader passes as UID/GID 1000
 with read-only source/evidence mounts and networking disabled. No workload is
 replayed or artifact changed after production. Logs remain in that checkout's
 `.work/tmp/resolver-complete-readable-proof.*`. Both earlier failed resolver
 proofs and the original H0 artifact remain unchanged and unadmitted.
+
+The native ABI inventory owner explicitly permits a materialized/unqualified
+dynamic product for ELF inspection without the full 219-case runtime receipt.
+A bounded current-source ABI proof now uses that supported mode at frozen
+`0392fcce3`: fresh static preparation, a same-source dynamic product, and the
+four existing collectors followed by the ordinary assembler. It must not mix
+old `b3a226cce` facts or waive optional-companion selection closure. Its goal is
+to exercise the repaired eight-import account against complete fresh ELF rows,
+not to claim promotion from collector output.
 
 The addrconfig lane's musl scratch remains under its `.work/tmp`: automatic
 review denied its removal with "rm -f style commands are not permitted. Use
