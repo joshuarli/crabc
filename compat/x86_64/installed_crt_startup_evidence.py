@@ -627,9 +627,17 @@ def validate_commands(root,work,inputs,tools,commands):
             require(ordinary.raw_path(work,spec['label'],'stdout').read_bytes()==spec['expected_stdout'],
                     'startup command stdout differs')
 
+def projection_paths(root,work,inputs):
+    return {**product_paths(root,inputs),**{case['name']:work/case['name'] for case in cases()},
+            **{variant+'-object':work/(variant+'.o') for variant in ('normal','empty')}}
+
+def product_account_facts(root,work,inputs,facts):
+    paths=projection_paths(root,work,inputs)
+    require(type(facts) is dict and set(facts)==set(paths),'startup projected ELF fact roster differs')
+    return {key:facts[key] for key in product_paths(root,inputs)}
+
 def projection(root,work,inputs):
-    paths={**product_paths(root,inputs),**{case['name']:work/case['name'] for case in cases()},
-           **{variant+'-object':work/(variant+'.o') for variant in ('normal','empty')}}
+    paths=projection_paths(root,work,inputs)
     facts={}
     for key,path in paths.items():
         rows=[raw(work,key+'-'+part) for part in ('header','sections','symbols')]
@@ -1514,7 +1522,8 @@ def descriptor_runtime_observations(root,work,inputs):
 
 def observations(root,work,inputs,tools):
     require((work/'oracle-link/libc.so').read_bytes()==(work/'qualification-oracle/runtime').read_bytes(),'oracle named link input differs')
-    facts=projection(root,work,inputs);products_account=account_products(facts)
+    facts=projection(root,work,inputs)
+    products_account=account_products(product_account_facts(root,work,inputs,facts))
     for variant in ('normal','empty'):
         failure=exact(facts,variant+'-object','__stack_chk_guard')
         require_import(failure['row'],'NOTYPE','GLOBAL','DEFAULT')

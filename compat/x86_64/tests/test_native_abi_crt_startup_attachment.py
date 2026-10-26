@@ -319,7 +319,11 @@ class NativeCrtStartupAttachmentTests(unittest.TestCase):
         products = {name: {} for name in receipt['inputs_before']['startup_artifacts']}
         self.assertEqual(len(names), 21)
         self.assertEqual(len(products), 9)
-        projected=reader.account_products(receipt['observations']['complete_elf_facts'])['all_named_rows']
+        projected=reader.product_account_facts(
+            ROOT,ROOT/'.work/retained-crt-projection',receipt['inputs_before'],
+            receipt['observations']['complete_elf_facts'],
+        )
+        projected=reader.account_products(projected)['all_named_rows']
         self.assertTrue(set(products)<=set(projected))
         observed = selection._crt_startup_observed_rows(
             {artifact:projected[artifact] for artifact in products}, names, products,

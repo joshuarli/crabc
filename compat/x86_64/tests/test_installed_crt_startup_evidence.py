@@ -1114,6 +1114,36 @@ int main(void) {
         facts=self.fixture();facts['unowned-crt.o']=facts['static-crt1.o']
         with self.assertRaises(reader.StartupEvidenceError):reader.account_products(facts)
 
+    def test_projection_handoff_accounts_only_product_artifacts(self):
+        root=reader.ROOT;work=root/'.work/projection-product-roster'
+        inputs={
+            'static_preparation':{'primary':{'path':'.work/static'}},
+            'dynamic_product':{'path':'.work/dynamic'},
+        }
+        products=self.fixture()
+        paths=reader.projection_paths(root,work,inputs)
+        projected={key:copy.deepcopy(products.get(key,products['static-crt1.o'])) for key in paths}
+        elf_facts=iter(projected[key] for key in paths if key!='candidate-static')
+        with mock.patch.object(reader,'raw',return_value=b''), \
+             mock.patch.object(reader.inventory,'parse_archive_elf_facts',
+                               return_value=projected['candidate-static']), \
+             mock.patch.object(reader.inventory,'parse_elf_facts',side_effect=lambda *args,**kwargs:next(elf_facts)):
+            projected=reader.projection(root,work,inputs)
+        consumer_names={case['name'] for case in reader.cases()}
+        self.assertTrue(consumer_names<=set(projected))
+        self.assertTrue({'normal-object','empty-object'}<=set(projected))
+        product_only=reader.product_account_facts(root,work,inputs,projected)
+        self.assertEqual(set(product_only),set(reader.product_paths(root,inputs)))
+        self.assertFalse((consumer_names|{'normal-object','empty-object'})&set(product_only))
+        self.assertEqual(reader.account_products(product_only)['candidate-static'].keys(),
+                         {'__crabc_x86_static_tls_bootstrap','_GLOBAL_OFFSET_TABLE_'})
+        missing=copy.deepcopy(projected);missing.pop(next(iter(consumer_names)))
+        with self.assertRaisesRegex(reader.StartupEvidenceError,'projected ELF fact roster differs'):
+            reader.product_account_facts(root,work,inputs,missing)
+        extra=copy.deepcopy(projected);extra['unknown-consumer']=copy.deepcopy(products['static-crt1.o'])
+        with self.assertRaisesRegex(reader.StartupEvidenceError,'projected ELF fact roster differs'):
+            reader.product_account_facts(root,work,inputs,extra)
+
     def test_exact_weak_object_requires_defined_table_origin_and_zero_addend(self):
         row={'name':reader.CONVENTIONAL,'binding':'WEAK','visibility':'DEFAULT','type':'OBJECT',
              'section_index':'UND','version':None,'version_default':False,'size_bytes':0}
