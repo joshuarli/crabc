@@ -188,6 +188,17 @@ not proof. No allocator diagnostic ran. Main ledger, inventory and structure
 checks pass without promotion. The third rehearsal is frozen at `b3a226cce`
 with the same provisional claims, five receipt paths, and zero preflight
 blockers across 68 correctness stages.
+On that frozen revision, static products and the complete installed dynamic
+roster pass. The rebuilt roster is running; the extracted roster is pending.
+Independent header-declaration collection succeeds at
+`.work/x86_64/header-declaration-inventory/candidate-cohort/report.json`,
+preserving unresolved-linkage observations rather than claiming ABI completion.
+The independent static-sysroot 72-path suite passes, with its genuine receipt
+at `.work/x86_64/reports/owned-static-product/run.z5hf3j7k/receipt.json` and its
+registered publication at `.work/x86_64/owned-static-qualification.json`.
+Combined-sysroot and static Lua checks run alongside the dynamic roster with
+separate scratch and logs in the checkout's `.work/tmp/`. No synthetic cohort
+completion records are written for these direct H0 commands.
 
 The addrconfig lane's musl scratch remains under its `.work/tmp`: automatic
 review denied its removal with "rm -f style commands are not permitted. Use
