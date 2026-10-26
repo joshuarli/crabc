@@ -115,6 +115,7 @@ def atomic_write_json(path: Path, value: object) -> None:
     temporary_path = Path(temporary_name)
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as output:
+            os.fchmod(output.fileno(), 0o644)
             json.dump(value, output, indent=2, sort_keys=True)
             output.write("\n")
             output.flush()

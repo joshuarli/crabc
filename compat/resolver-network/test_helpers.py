@@ -6,7 +6,9 @@ from __future__ import annotations
 import importlib.util
 import json
 import itertools
+import os
 import socket
+import stat
 import struct
 import tempfile
 import unittest
@@ -132,6 +134,25 @@ class DnsHelperTests(unittest.TestCase):
         self.assertTrue(dns_server.drops_query("valid", "fallback.example.test."))
         self.assertFalse(dns_server.drops_query("valid", "a.example.test."))
         self.assertTrue(dns_server.drops_query("drop", "a.example.test."))
+
+    def test_atomic_event_report_is_readable_when_replacing_existing_file(self) -> None:
+        with tempfile.TemporaryDirectory(
+            prefix="resolver-dns-events-", dir=Path(os.environ["CRABC_PYTHON_TEST_SCRATCH"])
+        ) as directory:
+            parent = Path(directory)
+            path = parent / "reference.events.json"
+            path.write_text('{"old":true}\n', encoding="utf-8")
+            previous_umask = os.umask(0o077)
+            try:
+                dns_server.atomic_write_json(path, {"schema_version": 1, "events": []})
+            finally:
+                os.umask(previous_umask)
+            self.assertEqual(path.stat().st_mode & 0o777, 0o644)
+            self.assertEqual(json.loads(path.read_text(encoding="utf-8")), {
+                "schema_version": 1,
+                "events": [],
+            })
+            self.assertEqual({item.name for item in parent.iterdir()}, {path.name})
 
 
 class RunnerHelperTests(unittest.TestCase):
