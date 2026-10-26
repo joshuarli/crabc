@@ -28,7 +28,7 @@ import owned_dynamic_qualification as dynamic_materialization
 import owned_posix_product_evidence as product_evidence
 
 
-SCHEMA = "crabc.x86_64-owned-pthread-alias-contract/v1"
+SCHEMA = "crabc.x86_64-owned-pthread-alias-contract/v2"
 INPUT_SCHEMA = "owned-pthread-alias-contract-inputs-v2"
 SOURCE_SNAPSHOT_SCHEMA = "crabc.x86_64-owned-pthread-alias-source-snapshot/v1"
 STATUS = "component-verified"
@@ -60,7 +60,7 @@ ALIASES = (
     ("thrd_detach", "__pthread_detach"),
     ("tss_get", "__pthread_getspecific"),
 )
-ARCHIVE_HIDDEN = (
+MUSL_ARCHIVE_HIDDEN = (
     "__pthread_cond_timedwait",
     "__pthread_create",
     "__pthread_exit",
@@ -75,7 +75,17 @@ ARCHIVE_HIDDEN = (
     "__pthread_setcancelstate",
     "__pthread_testcancel",
 )
-ARCHIVE_LOCAL = ("__pthread_detach", "__pthread_getspecific")
+MUSL_ARCHIVE_LOCAL = ("__pthread_detach", "__pthread_getspecific")
+ARCHIVE_PROVIDERS = tuple(dict.fromkeys(provider for _, provider in ALIASES))
+MUSL_ARCHIVE_PROVIDER_SHAPES = {
+    **{provider: ("FUNC", "GLOBAL", "HIDDEN") for provider in MUSL_ARCHIVE_HIDDEN},
+    **{provider: ("FUNC", "LOCAL", "DEFAULT") for provider in MUSL_ARCHIVE_LOCAL},
+}
+CANDIDATE_ARCHIVE_PROVIDER_SHAPES = {
+    **MUSL_ARCHIVE_PROVIDER_SHAPES,
+    "__pthread_detach": ("FUNC", "GLOBAL", "HIDDEN"),
+    "__pthread_getspecific": ("FUNC", "GLOBAL", "HIDDEN"),
+}
 
 # These are the implementation leaves and source-policy caller that the
 # receipt binds.  The full checkout digest is retained separately, so this
@@ -791,17 +801,23 @@ def _shared_symbols(path: Path) -> tuple[dict[str, list[SymbolRow]], dict[str, d
     return table, definitions
 
 
-def _static_symbols(path: Path) -> tuple[dict[str, list[SymbolRow]], dict[str, dict[str, object]]]:
+def _static_symbols(
+    path: Path,
+    provider_shapes: Mapping[str, tuple[str, str, str]],
+    archive_role: str,
+) -> tuple[dict[str, list[SymbolRow]], dict[str, dict[str, object]]]:
     table = _defined_by_name(path, {".symtab"})
+    require(set(provider_shapes) == set(ARCHIVE_PROVIDERS),
+            f"{path}: {archive_role} provider shape roster differs")
     definitions: dict[str, dict[str, object]] = {}
     for name, provider in ALIASES:
         alias = _one(table, name, path)
         target = _one(table, provider, path)
         require(_shape(alias) == ("FUNC", "WEAK", "DEFAULT"),
                 f"{path}: {name} is not FUNC WEAK DEFAULT")
-        expected = ("FUNC", "GLOBAL", "HIDDEN") if provider in ARCHIVE_HIDDEN else ("FUNC", "LOCAL", "DEFAULT")
+        expected = provider_shapes[provider]
         require(_shape(target) == expected,
-                f"{path}: {provider} archive binding differs from musl source form")
+                f"{path}: {provider} archive shape differs from {archive_role} form")
         _require_same_definition(alias, target, path)
         definitions[name] = {"alias": _row_data(alias), "provider": _row_data(target)}
     return table, definitions
@@ -900,8 +916,12 @@ def evaluate_alias_contract(work: Path) -> dict[str, object]:
     candidate_dynamic = _dynamic_symbols(work / "candidate-dynamic-symbols.txt")
     musl_shared, musl_shared_defs = _shared_symbols(work / "musl-shared-symbols.txt")
     candidate_shared, candidate_shared_defs = _shared_symbols(work / "candidate-shared-symbols.txt")
-    musl_static, musl_static_defs = _static_symbols(work / "musl-static-symbols.txt")
-    candidate_static, candidate_static_defs = _static_symbols(work / "candidate-static-symbols.txt")
+    musl_static, musl_static_defs = _static_symbols(
+        work / "musl-static-symbols.txt", MUSL_ARCHIVE_PROVIDER_SHAPES, "musl source"
+    )
+    candidate_static, candidate_static_defs = _static_symbols(
+        work / "candidate-static-symbols.txt", CANDIDATE_ARCHIVE_PROVIDER_SHAPES, "candidate Rust"
+    )
 
     shapes: dict[str, dict[str, list[str]]] = {}
     for placement, left, right in (
@@ -927,8 +947,10 @@ def evaluate_alias_contract(work: Path) -> dict[str, object]:
 
     return {
         "aliases": [{"public": public, "provider": provider} for public, provider in ALIASES],
-        "archive_hidden_providers": list(ARCHIVE_HIDDEN),
-        "archive_local_providers": list(ARCHIVE_LOCAL),
+        "archive_provider_shapes": {
+            "musl": {provider: list(shape) for provider, shape in MUSL_ARCHIVE_PROVIDER_SHAPES.items()},
+            "candidate": {provider: list(shape) for provider, shape in CANDIDATE_ARCHIVE_PROVIDER_SHAPES.items()},
+        },
         "alias_shapes": shapes,
         "same_definition": {
             "shared": candidate_shared_defs,

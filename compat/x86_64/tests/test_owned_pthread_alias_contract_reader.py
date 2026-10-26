@@ -17,12 +17,14 @@ import owned_posix_product_evidence as product_evidence
 
 from owned_pthread_alias_contract_reader import (
     ALIASES,
+    CANDIDATE_ARCHIVE_PROVIDER_SHAPES,
     DYNAMIC_STATE_CONTRACTS,
     DYNAMIC_STATE_MODES,
     DYNAMIC_STATE_PROFILE,
     DYNAMIC_STATE_QUALIFICATION,
     INPUT_NAMES,
     INPUT_SCHEMA,
+    MUSL_ARCHIVE_PROVIDER_SHAPES,
     HISTORICAL_INPUT_COPY,
     ReceiptError,
     SymbolRow,
@@ -30,6 +32,7 @@ from owned_pthread_alias_contract_reader import (
     _parse_args,
     _load_inputs,
     _shared_symbols,
+    _static_symbols,
     _validate_dynamic_link_receipt,
     _validate_dynamic_materialization_state,
     artifact_record,
@@ -310,6 +313,75 @@ class OwnedPthreadAliasContractReaderTests(unittest.TestCase):
         )
 
         self.assertFalse(same_definition(alias, forwarding_body))
+
+    def _static_symbol_stream(self, path: Path, provider_shapes: dict[str, tuple[str, str, str]]) -> None:
+        providers = tuple(dict.fromkeys(provider for _, provider in ALIASES))
+        lines = []
+        for index, provider in enumerate(providers, start=1):
+            aliases = [public for public, target in ALIASES if target == provider]
+            rows = [
+                (public, "FUNC", "WEAK", "DEFAULT")
+                for public in aliases
+            ]
+            rows.append((provider, *provider_shapes[provider]))
+            lines.extend((
+                f"File: libc.a({provider}.o)",
+                f"Symbol table '.symtab' contains {len(rows) + 1} entries:",
+                "   Num:    Value          Size Type    Bind   Vis      Ndx Name",
+                "     0: 0000000000000000     0 NOTYPE  LOCAL  DEFAULT  UND ",
+            ))
+            lines.extend(
+                f"{row_index:6}: {index:016x}     1 {symbol_type:<7} {binding:<6} {visibility:<7} 3 {name}"
+                for row_index, (name, symbol_type, binding, visibility) in enumerate(rows, start=1)
+            )
+        path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+    def test_static_alias_provider_shapes_follow_their_archive_role(self) -> None:
+        providers = tuple(dict.fromkeys(provider for _, provider in ALIASES))
+        musl_path = self.root / "musl-static-symbols.txt"
+        candidate_path = self.root / "candidate-static-symbols.txt"
+        self._static_symbol_stream(musl_path, MUSL_ARCHIVE_PROVIDER_SHAPES)
+        self._static_symbol_stream(candidate_path, CANDIDATE_ARCHIVE_PROVIDER_SHAPES)
+
+        _, musl_definitions = _static_symbols(
+            musl_path, MUSL_ARCHIVE_PROVIDER_SHAPES, "musl source"
+        )
+        _, candidate_definitions = _static_symbols(
+            candidate_path, CANDIDATE_ARCHIVE_PROVIDER_SHAPES, "candidate Rust"
+        )
+
+        self.assertEqual(
+            {provider for provider in providers
+             if MUSL_ARCHIVE_PROVIDER_SHAPES[provider] != CANDIDATE_ARCHIVE_PROVIDER_SHAPES[provider]},
+            {"__pthread_detach", "__pthread_getspecific"},
+        )
+        for public in ("pthread_detach", "thrd_detach", "pthread_getspecific", "tss_get"):
+            source_shape = MUSL_ARCHIVE_PROVIDER_SHAPES[
+                next(provider for alias, provider in ALIASES if alias == public)
+            ]
+            candidate_shape = CANDIDATE_ARCHIVE_PROVIDER_SHAPES[
+                next(provider for alias, provider in ALIASES if alias == public)
+            ]
+            self.assertEqual(tuple(musl_definitions[public]["provider"][key]
+                                   for key in ("type", "binding", "visibility")), source_shape)
+            self.assertEqual(tuple(candidate_definitions[public]["provider"][key]
+                                   for key in ("type", "binding", "visibility")), candidate_shape)
+
+        invalid_candidate_shapes = dict(CANDIDATE_ARCHIVE_PROVIDER_SHAPES)
+        invalid_candidate_shapes["__pthread_detach"] = ("FUNC", "LOCAL", "DEFAULT")
+        invalid_candidate_path = self.root / "invalid-candidate-static-symbols.txt"
+        self._static_symbol_stream(invalid_candidate_path, invalid_candidate_shapes)
+        with self.assertRaisesRegex(ReceiptError, "candidate Rust form"):
+            _static_symbols(
+                invalid_candidate_path, CANDIDATE_ARCHIVE_PROVIDER_SHAPES, "candidate Rust"
+            )
+
+        invalid_musl_shapes = dict(MUSL_ARCHIVE_PROVIDER_SHAPES)
+        invalid_musl_shapes["__pthread_getspecific"] = ("FUNC", "GLOBAL", "HIDDEN")
+        invalid_musl_path = self.root / "invalid-musl-static-symbols.txt"
+        self._static_symbol_stream(invalid_musl_path, invalid_musl_shapes)
+        with self.assertRaisesRegex(ReceiptError, "musl source form"):
+            _static_symbols(invalid_musl_path, MUSL_ARCHIVE_PROVIDER_SHAPES, "musl source")
 
     def _shared_symbol_stream(self, section: str) -> Path:
         """Build the complete finite shared alias roster with one Ndx spelling."""

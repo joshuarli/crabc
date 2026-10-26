@@ -119,22 +119,26 @@ The relevant source files are `src/thread/pthread_cond_timedwait.c`,
 `pthread_mutex_{lock,timedlock,trylock,unlock}.c`, `pthread_once.c`, and
 `pthread_{setcancelstate,testcancel}.c`.
 
-| Source provider form | Public weak aliases |
-| --- | --- |
-| hidden global `__pthread_cond_timedwait` | `pthread_cond_timedwait` |
-| hidden global `__pthread_create`, `__pthread_exit`, `__pthread_join` | `pthread_create`, `pthread_exit`, `pthread_join` |
-| source-local `__pthread_detach` | `pthread_detach`, `thrd_detach` |
-| source-local `__pthread_getspecific` | `pthread_getspecific`, `tss_get` |
-| hidden global `__pthread_key_create`, `__pthread_key_delete` | `pthread_key_create`, `pthread_key_delete` |
-| hidden global `__pthread_mutex_lock`, `__pthread_mutex_timedlock`, `__pthread_mutex_trylock`, `__pthread_mutex_unlock` | matching public mutex name |
-| hidden global `__pthread_once`, `__pthread_setcancelstate`, `__pthread_testcancel` | matching public name |
+| Musl source provider form | Candidate static archive form | Public weak aliases |
+| --- | --- | --- |
+| hidden global `__pthread_cond_timedwait` | hidden global `__pthread_cond_timedwait` | `pthread_cond_timedwait` |
+| hidden global `__pthread_create`, `__pthread_exit`, `__pthread_join` | hidden global `__pthread_create`, `__pthread_exit`, `__pthread_join` | `pthread_create`, `pthread_exit`, `pthread_join` |
+| source-local `__pthread_detach` | hidden global `__pthread_detach` | `pthread_detach`, `thrd_detach` |
+| source-local `__pthread_getspecific` | hidden global `__pthread_getspecific` | `pthread_getspecific`, `tss_get` |
+| hidden global `__pthread_key_create`, `__pthread_key_delete` | hidden global `__pthread_key_create`, `__pthread_key_delete` | `pthread_key_create`, `pthread_key_delete` |
+| hidden global `__pthread_mutex_lock`, `__pthread_mutex_timedlock`, `__pthread_mutex_trylock`, `__pthread_mutex_unlock` | hidden global providers with the same names | matching public mutex name |
+| hidden global `__pthread_once`, `__pthread_setcancelstate`, `__pthread_testcancel` | hidden global providers with the same names | matching public name |
 
 The default static archive preserves the hidden global bodies already selected
 there. `pthread_cond_timedwait` and `pthread_mutex_timedlock` are the
-`x86-owned-static-runtime` additions. The two source-local bodies are retained
-through typed local references because the assembler `.set` alias alone is not
-a compiler reachability edge. `mq_notify` retains musl's public
-`pthread_detach` relocation instead of naming the source-local body, so a
+`x86-owned-static-runtime` additions. Rust keeps the two source-local provider
+spellings as hidden global static-archive symbols so assembler aliases can bind
+across codegen units. The candidate shared link localizes those providers and
+keeps both out of `.dynsym`. All public aliases stay weak default definitions at
+the provider's exact section and address. Typed Rust references keep the
+implementation items reachable because assembler `.set` aliases alone do not
+create compiler reachability edges. `mq_notify` retains musl's public
+`pthread_detach` relocation instead of naming the source-local C body, so a
 static application strong override may receive that source call. The alias
 work does not change its worker, cancellation, synchronization, or lifetime
 logic.
@@ -146,9 +150,10 @@ compare to static musl; each shared candidate kernel/direct-loader execution
 compares to the matching pinned-musl shared mode. `readelf` retains and checks
 `ET_EXEC` for static/non-PIE and PIE `ET_DYN` for static-PIE/shared-PIE before
 checking one definition per public name, `FUNC WEAK DEFAULT` public aliases,
-exact member/value/type/section identity with their provider, archive
-hidden/global or source-local binding, and the shared dynamic export boundary.
-It also checks musl's `mq_notify` archive member and the candidate's
+exact member/value/type/section identity with their provider, the role-specific
+musl and Rust static provider forms, and the shared dynamic export boundary.
+The receipt records both provider-shape maps separately. It also checks musl's
+`mq_notify` archive member and the candidate's
 `notify_start` relocation section: each names public `pthread_detach` and
 neither names the source-local provider. The candidate product builder may
 merge callers and aliases into one object, so this checks the caller relocation
@@ -190,7 +195,7 @@ python3 -B compat/x86_64/owned_pthread_alias_contract_reader.py \
 ```
 
 `owned_pthread_alias_contract_reader.py` writes and replays the closed
-`crabc.x86_64-owned-pthread-alias-contract/v1` component record.  It copies
+`crabc.x86_64-owned-pthread-alias-contract/v2` component record. It copies
 the collector, probe, compact source-contract roster from the selected product
 commit, musl inputs, selected product manifests and payloads, and the supplied
 loader-debug product anchor.  The collector’s clean checkout identity and the
