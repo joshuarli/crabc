@@ -3,6 +3,9 @@ from __future__ import annotations
 
 import copy
 import importlib.util
+import json
+import tempfile
+from unittest import mock
 from pathlib import Path
 import sys
 import tomllib
@@ -31,6 +34,78 @@ class PreparedWorkerTlsEvidenceTests(unittest.TestCase):
                 'candidate-loader': {'symbol_tables': [{'name': '.dynsym', 'rows': []}]}},
                 'artifacts': {'candidate-shared': {'identity': {'sha256': 'a'*64}},
                               'candidate-loader': {'identity': {'sha256': 'b'*64}}}}
+
+    def worker_dso_fixture(self):
+        scratch = ROOT / '.work/tmp'
+        scratch.mkdir(parents=True, exist_ok=True)
+        temporary = tempfile.TemporaryDirectory(dir=scratch)
+        self.addCleanup(temporary.cleanup)
+        root = Path(temporary.name)
+        work, product = root / '.work/evidence', root / '.work/product'
+        work.mkdir(parents=True)
+        library = product / 'usr/lib'
+        library.mkdir(parents=True)
+        for name in ('crti.o', 'libc.so', 'crtn.o'):
+            (library / name).write_bytes(name.encode())
+        body = b'member'
+        (library / 'libcrabc-builtins.a').write_bytes(b'!<arch>\n' +
+            f"{'builtins.o/':<16}{0:<12}{0:<6}{0:<6}{'100644':<8}{len(body):<10}`\n".encode() + body)
+        inputs = {'dynamic_product': {'path': product.relative_to(root).as_posix(), 'manifest_sha256': 'a' * 64}}
+        linker = {'path': '/usr/bin/mold', 'sha256': 'b' * 64}
+        tools = {'linker': {'original': linker}}
+        mounted = lambda path: EVIDENCE.ordinary.mounted(root, path)
+        for generation in (1, 2, 3):
+            obj = work / f'dso-{generation}.o'
+            obj.write_bytes(b'object')
+            for owner in ('candidate', 'oracle'):
+                binary = work / f'{owner}-worker-{generation}.so'
+                binary.write_bytes(b'worker')
+                if owner == 'oracle':
+                    continue
+                owned, command = EVIDENCE.dynamic_links.expected_base(Path(mounted(product)), Path(mounted(binary)),
+                    'shared', Path(mounted(obj)), [], linker['path'])
+                receipt = {'schema': 2, 'format': EVIDENCE.dynamic_links.PRODUCT_FORMAT, 'mode': 'shared',
+                    'binding': 'now', 'runtime_imports': [], 'campaign_complete': False,
+                    'application_dsos': {}, 'application_rpath': None, 'application_runpath': '/usr/lib',
+                    'application_search_kind': 'runpath', 'application_hash_style': 'sysv',
+                    'output_path': mounted(binary), 'output_sha256': EVIDENCE.ordinary.digest(binary),
+                    'manifest_sha256': 'a' * 64, 'resolved_linker': linker, 'link_command': command,
+                    'input_receipts': [{'path': str(path), 'sha256': EVIDENCE.ordinary.digest(root / path.relative_to('/workspace'))}
+                                       for path in owned],
+                    'owned_runtime_inputs': sorted(('usr/lib/crti.o', 'usr/lib/crtn.o', 'usr/lib/libc.so', 'usr/lib/libcrabc-builtins.a')),
+                    'link_trace': ['trace: ' + mounted(path) + ('(builtins.o)' if path.name == 'libcrabc-builtins.a' else '')
+                                   for path in (library / 'crti.o', obj, library / 'libcrabc-builtins.a', library / 'libc.so', library / 'crtn.o')]}
+                Path(str(binary) + '.crabc-link.json').write_text(json.dumps(receipt))
+        facts = {'symbol_tables': [{'name': '.dynsym', 'rows': [
+                    {'name': name, 'type': 'FUNC', 'binding': 'GLOBAL', 'section_index': '1'}
+                    for name in ('prepared_worker_initialized', 'prepared_worker_zero')]}, {'name': '.symtab', 'rows': []}]}
+        def stdout(_work, label):
+            if label.endswith('-program'):
+                return b' TLS '
+            if label.endswith('-dynamic'):
+                return ("(NEEDED) [libc.so]\n(SONAME) [" + label.removesuffix('-dynamic') + ".so]\n").encode()
+            return b'ELF input'
+        return root, work, inputs, tools, facts, stdout
+
+    def test_worker_dso_mold_trace_keeps_members_and_order(self):
+        root, work, inputs, tools, facts, stdout = self.worker_dso_fixture()
+        with mock.patch.object(EVIDENCE.inventory, 'parse_elf_facts', return_value=facts), \
+             mock.patch.object(EVIDENCE, 'raw_stdout', side_effect=stdout):
+            self.assertEqual(len(EVIDENCE.dso_observations(root, work, inputs, tools)), 6)
+            path = work / 'candidate-worker-1.so.crabc-link.json'
+            original = json.loads(path.read_text())
+            for change in ('foreign', 'missing', 'reordered'):
+                with self.subTest(change=change):
+                    changed = copy.deepcopy(original)
+                    if change == 'foreign':
+                        changed['link_trace'][2] = changed['link_trace'][2].replace('builtins.o', 'foreign.o')
+                    elif change == 'missing':
+                        del changed['link_trace'][2]
+                    else:
+                        changed['link_trace'][1:3] = reversed(changed['link_trace'][1:3])
+                    path.write_text(json.dumps(changed))
+                    with self.assertRaisesRegex(EVIDENCE.PreparedWorkerTlsError, 'link trace'):
+                        EVIDENCE.dso_observations(root, work, inputs, tools)
 
     def test_report_schema_requires_the_fork_order_and_growth_receipt_shape(self):
         self.assertEqual(EVIDENCE.SCHEMA,'crabc.x86_64-prepared-worker-tls-evidence/v2')

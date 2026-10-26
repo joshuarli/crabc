@@ -14,6 +14,8 @@ from typing import Mapping
 
 from installed_allocator_backend import dynamic_backend
 import native_shadow_receipt as shared
+import mold_link_trace
+import owned_posix_product_evidence as product_evidence
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -33,6 +35,7 @@ PRODUCT_PATHS = {
     "dynamic-libc": "usr/lib/libc.so",
     "dynamic-loader": "lib/ld-crabc-x86_64.so.1",
     "dynamic-driver": "bin/crabc-cc-dynamic",
+    "dynamic-builtins": "usr/lib/libcrabc-builtins.a",
 }
 PRODUCTS = set(PRODUCT_PATHS) | {
     "musl-libc", "musl-interpreter", "musl-family-bindings", "candidate-family-bindings",
@@ -212,8 +215,10 @@ def check_dso_link(root: Path, directory: Path, receipt: shared.Receipt,
     check_link_identity(record["sidecar"], sidecar_path,
                         products[f"candidate-link-sidecar-{role}"], f"{name} sidecar")
     sidecar = json_file(directory / "products" / f"candidate-link-sidecar-{role}")
-    linker_path = (f"/opt/rustup/toolchains/{manifest['toolchain']}-x86_64-unknown-linux-musl"
-                   "/lib/rustlib/x86_64-unknown-linux-musl/bin/gcc-ld/ld.lld")
+    linker_identity = product_evidence.source_native_compiler_tool_records()["linker"]
+    linker_path = linker_identity["path"]
+    require(products["candidate-linker"]["sha256"] == linker_identity["sha256"],
+            f"{name} linker differs from source image")
     check_link_identity(tools["linker"], linker_path, products["candidate-linker"], f"{name} linker")
     require(sidecar.get("resolved_linker") == {"path": linker_path,
                                                "sha256": products["candidate-linker"]["sha256"]}
@@ -243,9 +248,18 @@ def check_dso_link(root: Path, directory: Path, receipt: shared.Receipt,
     require(all(isinstance(item["sha256"], str) for item in expected_inputs)
             and sidecar.get("input_receipts") == expected_inputs
             and sidecar.get("owned_runtime_inputs") == sorted(("usr/lib/crti.o", "usr/lib/crtn.o",
-                                                                 "usr/lib/libc.so", "usr/lib/libcrabc-builtins.a"))
-            and sidecar.get("link_trace") == [crti, object_path, libc, crtn],
+                                                                 "usr/lib/libc.so", "usr/lib/libcrabc-builtins.a")),
             f"{name} owned link inputs differ")
+    trace = sidecar.get("link_trace")
+    require(type(trace) is list and all(type(line) is str for line in trace), f"{name} owned link trace differs")
+    archive = directory / "products/dynamic-builtins"
+    require(hashlib.sha256(archive.read_bytes()).hexdigest() == products["dynamic-builtins"]["sha256"]
+            == state["payload_files"].get("usr/lib/libcrabc-builtins.a"), f"{name} retained builtins archive differs")
+    try:
+        mold_link_trace.validate_trace(trace, initial_objects=[crti, object_path],
+            archives=[(builtins, archive.read_bytes())], final_objects=[libc, crtn])
+    except ValueError as error:
+        raise shared.ReceiptError(f"{RUNNER}: {name} owned link trace differs: {error}") from error
     command = [linker_path, "-shared", "--hash-style=sysv", "--eh-frame-hdr", "-z", "relro",
                "-z", "now", "-z", "noexecstack", "-z", "text", "--no-undefined",
                "--allow-shlib-undefined", "--enable-new-dtags", "-rpath", "/usr/lib",
@@ -264,6 +278,7 @@ def read_native_allocator_dso_receipt(
     directory = receipt.path.parent
     require(dict(receipt.parameters) == PARAMETERS, "canonical parameters differ")
     require(tuple(case["id"] for case in receipt.cases) == CASES, "case roster is incomplete or reordered")
+    require("dynamic-builtins" in receipt.products, "receipt lacks the retained builtins archive")
     require(set(receipt.products) in (PRODUCTS, PRODUCTS | {"dynamic-build"}), "product roster differs")
     raw = json_file(receipt.path)
     work = raw.get("work")

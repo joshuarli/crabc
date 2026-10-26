@@ -32,18 +32,16 @@ static int environment_precedence(void)
     if (uselocale(old) != inherited || MB_CUR_MAX != 4) return 45;
     freelocale(inherited);
 
-    /* Pinned musl resolves unselected null-base categories from the
-     * environment, including LC_CTYPE when only LC_NUMERIC is selected. */
     locale_t defaults = newlocale(LC_NUMERIC_MASK, "C", (locale_t)0);
     if (!defaults) return 46;
     old = uselocale(defaults);
-    if (!old || MB_CUR_MAX != 4) return 47;
+    if (!old || MB_CUR_MAX != 1) return 47;
     if (uselocale(old) != defaults) return 48;
     freelocale(defaults);
     defaults = newlocale(0, (const char *)0, (locale_t)0);
     if (!defaults) return 49;
     old = uselocale(defaults);
-    if (!old || MB_CUR_MAX != 4) return 50;
+    if (!old || MB_CUR_MAX != 1) return 50;
     if (uselocale(old) != defaults) return 51;
     freelocale(defaults);
     return 0;

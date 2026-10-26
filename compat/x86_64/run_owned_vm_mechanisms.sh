@@ -69,11 +69,16 @@ assert_dynamic_symbols() {
 # retain both mremap spellings; the dynamic provider exports only the public
 # one, so an application may interpose it without seeing the internal body.
 assert_owned_vm_bindings() {
-    local binary="$1" table="$2" output="$3"
+    local binary="$1" table="$2" output="$3" scope="$4"
     readelf --wide "$table" "$binary" >"$output"
-    python3 -B - "$output" "$table" <<'PYTHON'
+    python3 -B - "$output" "$table" "$scope" <<'PYTHON'
 from pathlib import Path
 import sys
+
+assert sys.argv[3] in ("static-final", "archive", "shared"), sys.argv[3]
+assert (sys.argv[3] == "shared" and sys.argv[2] in ("--dyn-syms", "--syms")) or (
+    sys.argv[3] != "shared" and sys.argv[2] == "--syms"
+)
 
 records = {}
 for line in Path(sys.argv[1]).read_text().splitlines():
@@ -92,11 +97,13 @@ for name, entries in records.items():
 
 for name in ("brk", "sbrk", "remap_file_pages"):
     entry = symbols[name]
-    assert entry[3:6] == ["FUNC", "GLOBAL", "DEFAULT"], entry
+    binding = "LOCAL" if sys.argv[3] == "static-final" else "GLOBAL"
+    assert entry[3:6] == ["FUNC", binding, "DEFAULT"], entry
     assert entry[6] != "UND", entry
 
 public = symbols["mremap"]
-assert public[3:6] == ["FUNC", "WEAK", "DEFAULT"], public
+binding = "LOCAL" if sys.argv[3] == "static-final" else "WEAK"
+assert public[3:6] == ["FUNC", binding, "DEFAULT"], public
 assert public[6] != "UND", public
 if sys.argv[2] == "--dyn-syms":
     assert "__mremap" not in symbols, symbols
@@ -161,7 +168,7 @@ readonly owned_symbols='brk mremap remap_file_pages sbrk'
 "$installed/bin/crabc-cc-dynamic" --dynamic-pie -std=c11 -fno-builtin \
     -c "$PROBE" -o "$work/workload.o"
 "$ORACLE_CC" -static -fno-pie -no-pie -pthread "$work/workload.o" -o "$work/oracle"
-assert_owned_vm_bindings "$work/oracle" --syms "$work/oracle-vm-bindings.txt"
+assert_owned_vm_bindings "$work/oracle" --syms "$work/oracle-vm-bindings.txt" static-final
 mkdir -p "$work/oracle-root"
 cp "$work/oracle" "$work/oracle-root/consumer"
 run_in_root "$work/oracle-root" "$work/oracle.stdout" /consumer
@@ -170,10 +177,10 @@ grep -qx owned-vm-mechanisms-ok "$work/oracle.stdout"
 if [ "$#" -eq 0 ]; then
     python3 -B "$ROOT/scripts/build_x86_64_owned_sysroot.py" --output "$work/static-product" >"$work/static-build.json"
     assert_static_symbols "$work/static-product/usr/lib/libc.a" "$owned_symbols"
-    assert_owned_vm_bindings "$work/static-product/usr/lib/libc.a" --syms "$work/static-archive-vm-bindings.txt"
+    assert_owned_vm_bindings "$work/static-product/usr/lib/libc.a" --syms "$work/static-archive-vm-bindings.txt" archive
     for mode in static static-pie; do
         "$work/static-product/bin/crabc-cc" "-$mode" "$work/workload.o" -o "$work/consumer-$mode"
-        assert_owned_vm_bindings "$work/consumer-$mode" --syms "$work/$mode-vm-bindings.txt"
+        assert_owned_vm_bindings "$work/consumer-$mode" --syms "$work/$mode-vm-bindings.txt" static-final
         for symbol in mmap munmap mremap; do
             assert_owned_vm_wait "$work/consumer-$mode" "$symbol"
         done
@@ -185,8 +192,8 @@ if [ "$#" -eq 0 ]; then
 fi
 
 assert_dynamic_symbols "$installed/usr/lib/libc.so" "$owned_symbols"
-assert_owned_vm_bindings "$installed/usr/lib/libc.so" --syms "$work/dynamic-provider-full-vm-bindings.txt"
-assert_owned_vm_bindings "$installed/usr/lib/libc.so" --dyn-syms "$work/dynamic-provider-vm-bindings.txt"
+assert_owned_vm_bindings "$installed/usr/lib/libc.so" --syms "$work/dynamic-provider-full-vm-bindings.txt" shared
+assert_owned_vm_bindings "$installed/usr/lib/libc.so" --dyn-syms "$work/dynamic-provider-vm-bindings.txt" shared
 for mode in pie non-pie; do
     "$installed/bin/crabc-cc-dynamic" "--dynamic-$mode" "$work/workload.o" -o "$work/consumer-$mode"
     assert_dynamic_vm_imports "$work/consumer-$mode" "$work/$mode-vm-imports.txt" "$work/$mode-vm-relocations.txt"

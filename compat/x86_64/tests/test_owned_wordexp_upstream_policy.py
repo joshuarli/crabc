@@ -145,12 +145,18 @@ class WordexpUpstreamPolicyTests(unittest.TestCase):
         self.put(path, data)
         self.report['cells'][mode + '-' + policy.SOURCE_POLICY_CASE][side][stream] = self.mounted_identity(path)
 
+    def test_oracle_companion_tracks_snapshot_positional_parameters_and_stderr(self):
+        rows = policy.oracle_trace().splitlines()
+        self.assertEqual(rows[0], b'owned-wordexp-source-policy: case=01 status=0 count=1 wordhex=1:30 stderrhex=- effect=0 env=0')
+        self.assertTrue(all(b' stderrhex=- ' in row for row in rows))
+        self.assertEqual(rows[14], b'owned-wordexp-source-policy: case=15 status=5 count=0 wordhex=- stderrhex=- effect=1 env=0')
+
     def test_checked_diagnostic_reference_is_byte_exact_and_complete(self):
         observed = policy._reference(self.root)
         self.assertEqual(self.digest(self.root / policy.REFERENCE), policy.REFERENCE_SHA256)
         self.assertEqual(observed['source_sha256'], policy.UPSTREAM_SOURCE_SHA256)
         self.assertEqual(observed['terminal'], 'FAIL /functional/wordexp [status 1]\n')
-        self.assertEqual([len(observed['sides'][side]['diagnostics']) for side in ('candidate', 'oracle')], [20, 104])
+        self.assertEqual([len(observed['sides'][side]['diagnostics']) for side in ('candidate', 'oracle')], [20, 67])
         reference = self.root / policy.REFERENCE
         original = reference.read_bytes()
         for replacement in (original[:-1], original.replace(b'wordexp', b'wordXexp', 1), original + b'\n'):
@@ -165,7 +171,7 @@ class WordexpUpstreamPolicyTests(unittest.TestCase):
         self.assertEqual(observed['status'], 'posix-policy-qualified')
         self.assertEqual(observed['basis'], 'pinned-source-posix-policy')
         self.assertIs(observed['raw_passed'], False)
-        self.assertEqual([observed['candidate_diagnostic_count'], observed['oracle_diagnostic_count']], [20, 104])
+        self.assertEqual([observed['candidate_diagnostic_count'], observed['oracle_diagnostic_count']], [20, 67])
         self.assertEqual(observed['product'], self.direct_companion['product'])
         self.assertEqual(observed['source_policy_probe'], self.direct_companion['source_policy_probe'])
 

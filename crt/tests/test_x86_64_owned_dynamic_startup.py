@@ -61,6 +61,24 @@ class InstalledLinkReceiptTests(unittest.TestCase):
     def test_exact_installed_input_order_and_member_trace_are_admitted(self) -> None:
         self.assertEqual(self.check()["link_trace"], self.receipt["link_trace"])
 
+    def test_mold_trace_prefix_is_normalized_without_changing_raw_receipt(self) -> None:
+        self.receipt["link_trace"] = [f"trace: {line}" for line in self.receipt["link_trace"]]
+        self.assertEqual(self.check()["link_trace"], self.receipt["link_trace"])
+
+    def test_mold_trace_prefix_does_not_admit_wrong_archive_member(self) -> None:
+        self.receipt["link_trace"] = [
+            f"trace: {line.replace('(crabc-builtins.o)', '(foreign.o)')}"
+            for line in self.receipt["link_trace"]
+        ]
+        with self.assertRaisesRegex(startup.EvidenceError, "link trace"):
+            self.check()
+
+    def test_mold_trace_prefix_does_not_admit_foreign_input(self) -> None:
+        self.receipt["link_trace"] = [f"trace: {line}" for line in self.receipt["link_trace"]]
+        self.receipt["link_trace"].insert(1, "trace: /usr/lib/crt1.o")
+        with self.assertRaisesRegex(startup.EvidenceError, "link trace"):
+            self.check()
+
     def test_reordered_crt_inputs_are_rejected(self) -> None:
         command = self.receipt["link_command"]
         crt_entry = command.index(str(self.library / "Scrt1.o"))

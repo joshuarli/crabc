@@ -58,11 +58,17 @@ assert_group_symbols() {
     local binary="$1"
     local table="$2"
     local output="$3"
+    local scope="$4"
 
     readelf --wide "$table" "$binary" >"$output"
-    python3 -B - "$output" <<'PYTHON'
+    python3 -B - "$output" "$table" "$scope" <<'PYTHON'
 from pathlib import Path
 import sys
+
+assert sys.argv[3] in ("archive", "static-final", "shared"), sys.argv[3]
+assert (sys.argv[3] == "shared" and sys.argv[2] == "--dyn-syms") or (
+    sys.argv[3] != "shared" and sys.argv[2] == "--syms"
+)
 
 names = {
     "getgrnam", "getgrgid", "getgrnam_r", "getgrgid_r", "getgrent",
@@ -82,7 +88,9 @@ symbols = {}
 for name, entries in records.items():
     assert len(entries) == 1, (name, entries)
     fields = entries[0]
-    binding = "WEAK" if name == "endgrent" else "GLOBAL"
+    binding = "LOCAL" if sys.argv[3] == "static-final" else (
+        "WEAK" if name == "endgrent" else "GLOBAL"
+    )
     assert fields[3:6] == ["FUNC", binding, "DEFAULT"], fields
     assert fields[6] != "UND", fields
     symbols[name] = fields
@@ -103,14 +111,14 @@ if [ -z "$provided_dynamic" ]; then
     "$work/static-sysroot/bin/crabc-cc" -static-pie -std=c11 -fno-builtin -c \
         "$PROBE" -o "$work/workload.o"
     assert_group_symbols "$work/static-sysroot/usr/lib/libc.a" --syms \
-        "$work/static-archive-symbols.txt"
+        "$work/static-archive-symbols.txt" archive
 else
     "$provided_dynamic/bin/crabc-cc-dynamic" --dynamic-pie -std=c11 -fno-builtin -c \
         "$PROBE" -o "$work/workload.o"
 fi
 
 "$ORACLE_CC" -static -fno-pie -no-pie -pthread "$work/workload.o" -o "$work/oracle"
-assert_group_symbols "$work/oracle" --syms "$work/oracle-symbols.txt"
+assert_group_symbols "$work/oracle" --syms "$work/oracle-symbols.txt" static-final
 cp "$work/oracle" "$work/execution-root/oracle"
 for scenario in "${cases[@]}"; do
     run_in_root "$work/execution-root" "$work/oracle-$scenario.stdout" \
@@ -120,7 +128,7 @@ done
 if [ -z "$provided_dynamic" ]; then
     for mode in static static-pie; do
         "$work/static-sysroot/bin/crabc-cc" "-$mode" "$work/workload.o" -o "$work/$mode"
-        assert_group_symbols "$work/$mode" --syms "$work/$mode-symbols.txt"
+        assert_group_symbols "$work/$mode" --syms "$work/$mode-symbols.txt" static-final
         cp "$work/$mode" "$work/execution-root/consumer-$mode"
         for scenario in "${cases[@]}"; do
             run_in_root "$work/execution-root" "$work/$mode-$scenario.stdout" \
@@ -136,7 +144,7 @@ if [ -z "$provided_dynamic" ]; then
 fi
 
 assert_group_symbols "$provided_dynamic/usr/lib/libc.so" --dyn-syms \
-    "$work/dynamic-provider-symbols.txt"
+    "$work/dynamic-provider-symbols.txt" shared
 cp -a "$provided_dynamic/." "$work/execution-root/"
 for mode in pie non-pie; do
     "$provided_dynamic/bin/crabc-cc-dynamic" "--dynamic-$mode" "$work/workload.o" \

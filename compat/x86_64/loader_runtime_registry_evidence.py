@@ -30,6 +30,7 @@ import owned_dynamic_fork_evidence as fork_evidence
 import owned_dynamic_receipt as dynamic_receipt
 import owned_posix_product_evidence as product_evidence
 import owned_posix_timers_evidence as timer_evidence
+import mold_link_trace
 
 ROOT = inventory.ROOT
 CONTRACT_PATH = ROOT / "compat/x86_64/loader-runtime-registry-private-resolution.toml"
@@ -49,6 +50,8 @@ SOURCE_FILES = (
     "compat/x86_64/owned_dynamic_fork_evidence.py",
     "compat/x86_64/owned_posix_timers_evidence.py",
     "compat/x86_64/owned_posix_product_evidence.py",
+    "compat/x86_64/mold_link_trace.py",
+    "compat/x86_64/owned_syscall_alias_authority.py",
     "rust-toolchain.toml",
     "compat/x86_64/general_dynamic_tls_consumer.c",
     "compat/x86_64/general_dynamic_fork_library.c",
@@ -629,24 +632,20 @@ def _retained_dlfcn_link_record(product: Path, work: Path, output: Path, stem: s
         product, executable, mode, object_path, application_paths, linker, replay=replay,
     )
     require(receipt.get("link_command") == command, f"{stem} retained link command drifted")
-    direct = {replay.recorded(library / "crti.o"), replay.recorded(object_path),
-              *(replay.recorded(path) for path in application_paths), replay.recorded(library / "libc.so"),
-              replay.recorded(library / "crtn.o")}
+    initial = []
     if mode != "shared":
         assert entry is not None
-        direct.update((replay.recorded(entry), replay.recorded(library / "crabc-dynamic-attach.o")))
+        initial.extend((replay.recorded(entry), replay.recorded(library / "crabc-dynamic-attach.o")))
+    initial.extend((replay.recorded(library / "crti.o"), replay.recorded(object_path)))
+    initial.extend(replay.recorded(path) for path in application_paths)
     trace = receipt.get("link_trace")
     require(type(trace) is list and all(type(item) is str for item in trace), f"{stem} retained link trace is invalid")
-    archive_recorded = replay.recorded(archive)
-    seen: set[str] = set()
-    for line in trace:
-        if line in direct:
-            seen.add(line)
-        elif line == archive_recorded or (line.startswith(archive_recorded + "(") and line.endswith(")")):
-            continue
-        else:
-            fail(f"{stem} retained link trace admits an unowned input")
-    require(seen == direct, f"{stem} retained link trace omits an explicit input")
+    try:
+        mold_link_trace.validate_trace(trace, initial_objects=initial,
+            archives=[(replay.recorded(archive), archive.read_bytes())],
+            final_objects=[replay.recorded(library / name) for name in ("libc.so", "crtn.o")])
+    except ValueError as error:
+        raise RuntimeRegistryEvidenceError(f"{stem} retained link trace differs: {error}") from error
 
     facts = product_evidence.retained_elf_facts(executable)
     expected_type = 3 if mode in {"shared", "pie"} else 2

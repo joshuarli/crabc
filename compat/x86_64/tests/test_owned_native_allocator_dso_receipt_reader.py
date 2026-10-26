@@ -11,12 +11,15 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from types import SimpleNamespace
+from unittest import mock
 
 
 ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(ROOT / "compat/x86_64"))
 import native_shadow_receipt as shared  # noqa: E402
 import owned_native_allocator_dso_receipt as reader  # noqa: E402
+import owned_posix_product_evidence as product_evidence
 
 SEAL = {"revision": "a" * 40, "worktree_sha256": "b" * 64}
 
@@ -27,6 +30,125 @@ def record(path: Path) -> dict[str, object]:
 
 
 class OwnedNativeAllocatorDsoReceiptReaderTests(unittest.TestCase):
+    def candidate_link_fixture(self):
+        scratch = ROOT / '.work/tmp'
+        scratch.mkdir(parents=True, exist_ok=True)
+        temporary = tempfile.TemporaryDirectory(dir=scratch)
+        self.addCleanup(temporary.cleanup)
+        directory = Path(temporary.name)
+        retained = directory / 'products'
+        retained.mkdir()
+        products = {}
+        def product(name, data):
+            path = retained / name
+            path.write_bytes(data)
+            products[name] = record(path)
+        product('source-library', (ROOT / 'compat/x86_64/owned_native_allocator_dso_library.c').read_bytes())
+        product('link-producer', (ROOT / 'compat/x86_64/owned_native_allocator_dso.py').read_bytes())
+        for name in ('object-initial', 'candidate-initial-dso', 'dynamic-driver', 'dynamic-libc', 'candidate-linker', 'dynamic-manifest'):
+            product(name, name.encode())
+        body = b'member'
+        product('dynamic-builtins', b'!<arch>\n' +
+                f"{'builtins.o/':<16}{0:<12}{0:<6}{0:<6}{'100644':<8}{len(body):<10}`\n".encode() + body)
+        work, selected = '.work/x86_64/tmp/owned-native-allocator-dso.fixture', '/workspace/.work/dynamic'
+        obj, output = f'/workspace/{work}/objects/initial.o', f'/workspace/{work}/libdso-initial.so'
+        library = selected + '/usr/lib'
+        crti, libc, crtn, builtins = [library + '/' + name for name in ('crti.o', 'libc.so', 'crtn.o', 'libcrabc-builtins.a')]
+        tool = {'path': '/usr/bin/mold', **products['candidate-linker']}
+        source_tools = {'linker': {key: tool[key] for key in ('path', 'sha256')}}
+        identity = lambda name, path: {'path': path, **products[name]}
+        driver = selected + '/bin/crabc-cc-dynamic'
+        state = {'payload_files': {'usr/lib/crti.o': 'a' * 64, 'usr/lib/crtn.o': 'b' * 64,
+                                  'usr/lib/libcrabc-builtins.a': products['dynamic-builtins']['sha256']}}
+        sidecar = {'schema': 2, 'format': 'crabc-x86-64-owned-dynamic-sysroot-v1', 'mode': 'shared',
+            'binding': 'now', 'runtime_imports': [], 'application_dsos': {}, 'application_runpath': '/usr/lib',
+            'application_rpath': None, 'application_search_kind': 'runpath', 'application_hash_style': 'sysv',
+            'campaign_complete': False, 'resolved_linker': source_tools['linker'],
+            'output_path': output, 'output_sha256': products['candidate-initial-dso']['sha256'],
+            'manifest_sha256': products['dynamic-manifest']['sha256'],
+            'input_receipts': [{'path': path, 'sha256': digest} for path, digest in (
+                (crti, 'a' * 64), (libc, products['dynamic-libc']['sha256']), (crtn, 'b' * 64),
+                (obj, products['object-initial']['sha256']), (builtins, products['dynamic-builtins']['sha256']))],
+            'owned_runtime_inputs': sorted(('usr/lib/crti.o', 'usr/lib/crtn.o', 'usr/lib/libc.so', 'usr/lib/libcrabc-builtins.a')),
+            'link_trace': ['trace: ' + row for row in (crti, obj, builtins + '(builtins.o)', libc, crtn)],
+            'link_command': ['/usr/bin/mold', '-shared', '--hash-style=sysv', '--eh-frame-hdr', '-z', 'relro',
+                '-z', 'now', '-z', 'noexecstack', '-z', 'text', '--no-undefined', '--allow-shlib-undefined',
+                '--enable-new-dtags', '-rpath', '/usr/lib', '--exclude-libs=libcrabc-builtins.a', '-soname',
+                'libdso-initial.so', crti, obj, builtins, libc, crtn, '-o', output]}
+        product('candidate-link-sidecar-initial', json.dumps(sidecar).encode())
+        link = {'schema': 'crabc.x86_64-owned-native-allocator-dso-link/v1', 'arm': 'candidate', 'role': 'initial',
+            'cwd': '/workspace', 'product': selected, 'command': [driver, '--dynamic-shared-object', obj, '-o', output],
+            'inputs': {'source': identity('source-library', '/workspace/compat/x86_64/owned_native_allocator_dso_library.c'),
+                'object': identity('object-initial', obj), 'libc': identity('dynamic-libc', libc),
+                'tool': identity('dynamic-driver', driver)},
+            'tools': {'linker': tool}, 'output': identity('candidate-initial-dso', output),
+            'sidecar': identity('candidate-link-sidecar-initial', output + '.crabc-link.json')}
+        product('link-candidate-initial', json.dumps(link).encode())
+        manifest = {'format': sidecar['format'], 'toolchain': 'nightly-2026-09-15'}
+        return directory, SimpleNamespace(products=products), manifest, state, work, source_tools
+
+    def test_candidate_dso_mold_trace_requires_all_retained_archive_members(self):
+        directory, receipt, manifest, state, work, tools = self.candidate_link_fixture()
+        with mock.patch.object(product_evidence, 'source_native_compiler_tool_records', return_value=tools):
+            reader.check_dso_link(ROOT, directory, receipt, manifest, state, work, 'candidate', 'initial')
+            target = directory / 'products/candidate-link-sidecar-initial'
+            original = json.loads(target.read_text())
+            for change in ('foreign', 'missing', 'reordered'):
+                with self.subTest(change=change):
+                    changed = json.loads(json.dumps(original))
+                    if change == 'foreign':
+                        changed['link_trace'][2] = changed['link_trace'][2].replace('builtins.o', 'foreign.o')
+                    elif change == 'missing':
+                        del changed['link_trace'][2]
+                    else:
+                        changed['link_trace'][1:3] = reversed(changed['link_trace'][1:3])
+                    target.write_text(json.dumps(changed))
+                    receipt.products['candidate-link-sidecar-initial'] = record(target)
+                    link_path = directory / 'products/link-candidate-initial'
+                    link = json.loads(link_path.read_text())
+                    link['sidecar'] = {'path': link['sidecar']['path'], **record(target)}
+                    link_path.write_text(json.dumps(link))
+                    receipt.products['link-candidate-initial'] = record(link_path)
+                    with self.assertRaisesRegex(shared.ReceiptError, 'owned link trace'):
+                        reader.check_dso_link(ROOT, directory, receipt, manifest, state, work, 'candidate', 'initial')
+
+    def test_resealed_candidate_linker_cannot_replace_the_source_image_tool(self):
+        directory, receipt, manifest, state, work, tools = self.candidate_link_fixture()
+        target = directory / 'products/candidate-linker'
+        target.write_bytes(b'foreign linker bytes')
+        receipt.products['candidate-linker'] = record(target)
+        link_path = directory / 'products/link-candidate-initial'
+        link = json.loads(link_path.read_text())
+        link['tools']['linker'] = {'path': link['tools']['linker']['path'], **record(target)}
+        sidecar_path = directory / 'products/candidate-link-sidecar-initial'
+        sidecar = json.loads(sidecar_path.read_text())
+        sidecar['resolved_linker'] = {key: link['tools']['linker'][key] for key in ('path', 'sha256')}
+        sidecar_path.write_text(json.dumps(sidecar))
+        receipt.products['candidate-link-sidecar-initial'] = record(sidecar_path)
+        link['sidecar'] = {'path': link['sidecar']['path'], **record(sidecar_path)}
+        link_path.write_text(json.dumps(link))
+        receipt.products['link-candidate-initial'] = record(link_path)
+        with mock.patch.object(product_evidence, 'source_native_compiler_tool_records', return_value=tools):
+            with self.assertRaisesRegex(shared.ReceiptError, 'linker differs from source image'):
+                reader.check_dso_link(ROOT, directory, receipt, manifest, state, work, 'candidate', 'initial')
+
+    def test_resealed_archive_bytes_cannot_replace_the_installed_product_archive(self):
+        directory, receipt, manifest, state, work, tools = self.candidate_link_fixture()
+        target = directory / 'products/dynamic-builtins'
+        target.write_bytes(target.read_bytes().replace(b'member', b'change'))
+        receipt.products['dynamic-builtins'] = record(target)
+        with mock.patch.object(product_evidence, 'source_native_compiler_tool_records', return_value=tools):
+            with self.assertRaisesRegex(shared.ReceiptError, 'retained builtins archive differs'):
+                reader.check_dso_link(ROOT, directory, receipt, manifest, state, work, 'candidate', 'initial')
+
+    def test_receipt_without_retained_builtins_cannot_establish_member_custody(self):
+        receipt = SimpleNamespace(parameters=reader.PARAMETERS, cases=[{'id': name} for name in reader.CASES],
+                                  products={name: {} for name in reader.PRODUCTS if name != 'dynamic-builtins'},
+                                  path=ROOT / '.work/receipt.json')
+        with mock.patch.object(shared, 'read_receipt', return_value=receipt):
+            with self.assertRaisesRegex(shared.ReceiptError, 'retained builtins archive'):
+                reader.read_native_allocator_dso_receipt(ROOT)
+
     def test_matching_backend_labels_cannot_replace_allocator_source_proof(self) -> None:
         variants = [
             ("accepted-c", {"accepted_allocator": None}, "accepted allocator source"),

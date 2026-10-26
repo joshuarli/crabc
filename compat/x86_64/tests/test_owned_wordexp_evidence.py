@@ -405,14 +405,14 @@ class OwnedWordexpCommandBindingTests(unittest.TestCase):
                 result[name] = module._checkout_identity(ROOT, path, f"{prefix} {name}")
             return result
 
-        oracle = record("oracle", b"84\n",
-                        b"owned-wordexp-posix-quiet: SOURCE-RED diagnostic-present\n", b"")
+        oracle = record("oracle", b"0\n", b"owned-wordexp-posix-quiet: PASS\n", b"")
         candidate = record("candidate", b"0\n", b"owned-wordexp-posix-quiet: PASS\n", b"")
         module._assert_case_results(ROOT, "posix-quiet", oracle, candidate, "synthetic quiet cell")
 
-        broken = record("broken", b"0\n", b"owned-wordexp-posix-quiet: PASS\n", b"")
+        broken = record("broken", b"84\n",
+                        b"owned-wordexp-posix-quiet: SOURCE-RED diagnostic-present\n", b"")
         with self.assertRaises(module.EvidenceError):
-            module._assert_case_results(ROOT, "posix-quiet", broken, candidate, "missing source red")
+            module._assert_case_results(ROOT, "posix-quiet", broken, candidate, "released oracle transcript")
 
         comment_oracle = record("comment-oracle", b"244\n",
                                 b"owned-wordexp-posix-nocmd-comment-control: SOURCE-RED command-marker-created\n", b"")
@@ -724,7 +724,19 @@ class OwnedWordexpEngineResultTests(unittest.TestCase):
             f"wordhex={words} stderrhex=- effect=0 env=0\n".encode()
             for index, (status, count, words) in enumerate(outcomes, 1))
         self.assertEqual(module.WORD_EXP_CASES["source-policy"][2], transcript)
-        oracle = (b"0\n", module.SOURCE_POLICY_ORACLE_TRACE, b"")
+        oracle_outcomes = (
+            (0, 1, "1:30"), (5, 0, "-"), (5, 0, "-"), (5, 0, "-"), (5, 0, "-"),
+            (4, 0, "-"), (4, 0, "-"), (4, 0, "-"), (2, 0, "-"),
+            (0, 1, "3:78270a"), (4, 0, "-"), (0, 1, "5:247b41427d"),
+            (2, 0, "-"), (4, 0, "-"), (5, 0, "-"), (2, 0, "-"),
+            (5, 0, "-"), (5, 0, "-"), (2, 0, "-"), (2, 0, "-"),
+        )
+        oracle_transcript = b"".join(
+            f"owned-wordexp-source-policy: case={index:02d} status={status} count={count} "
+            f"wordhex={words} stderrhex=- effect={int(index == 15)} env=0\n".encode()
+            for index, (status, count, words) in enumerate(oracle_outcomes, 1))
+        self.assertEqual(module.SOURCE_POLICY_ORACLE_TRACE, oracle_transcript)
+        oracle = (b"0\n", oracle_transcript, b"")
         candidate = (b"0\n", transcript, b"")
         with unittest.mock.patch.object(module, "_result_streams", side_effect=[oracle, candidate]):
             module._assert_case_results(ROOT, "source-policy", {}, {}, "source-policy")
@@ -773,14 +785,14 @@ class OwnedWordexpEngineResultTests(unittest.TestCase):
                     with self.assertRaises(module.EvidenceError):
                         module._assert_case_results(ROOT, case, {}, {}, case)
 
-    def test_quiet_source_observation_requires_exact_pinned_diagnostic(self) -> None:
+    def test_quiet_source_observation_requires_empty_stderr(self) -> None:
         module = load_module()
         candidate = (b"0\n", b"owned-wordexp: PASS\n", b"")
         diagnostic = b"sh: eval: line 0: syntax error: unterminated quoted string\n"
-        oracle = (b"0\n", b"owned-wordexp: PASS\n", diagnostic)
+        oracle = (b"0\n", b"owned-wordexp: PASS\n", b"")
         with unittest.mock.patch.object(module, "_result_streams", side_effect=[oracle, candidate]):
             module._assert_case_results(ROOT, "normal", {}, {}, "normal")
-        for changed in (b"unrelated failure\n", diagnostic + b"extra\n", diagnostic[:-1], b""):
+        for changed in (b"unrelated failure\n", diagnostic + b"extra\n", diagnostic[:-1], diagnostic):
             with self.subTest(diagnostic=changed), unittest.mock.patch.object(
                     module, "_result_streams", side_effect=[oracle[:2] + (changed,), candidate]):
                 with self.assertRaises(module.EvidenceError):
@@ -797,17 +809,17 @@ class OwnedWordexpEngineResultTests(unittest.TestCase):
     def test_engine_cells_require_positive_candidate_and_exact_source_observation(self) -> None:
         module = load_module()
         observations = {
-            "undef": "wrde-undef-untyped",
-            "append-rollback": "wrde-undef-untyped",
-            "parameter-word": "nocmd-parameter-word-badchar",
-            "diagnostics": "quiet-shell-diagnostic",
-            "sigpipe": "shell-child-no-raw-sigpipe",
+            "undef": (0, "SOURCE-RED wrde-undef-untyped"),
+            "append-rollback": (0, "SOURCE-RED wrde-undef-untyped"),
+            "parameter-word": (0, "SOURCE-RED nocmd-parameter-word-badchar"),
+            "diagnostics": (1, "FAIL 5"),
+            "sigpipe": (1, "FAIL 4"),
         }
-        for name, reason in observations.items():
+        for name, (status, observation) in observations.items():
             with self.subTest(name=name):
                 case = "engine-" + name
                 prefix = "owned-wordexp-" + case + ": "
-                oracle = (b"0\n", (prefix + "SOURCE-RED " + reason + "\n").encode(), b"")
+                oracle = (f"{status}\n".encode(), (prefix + observation + "\n").encode(), b"")
                 candidate = (b"0\n", (prefix + "PASS\n").encode(), b"")
                 with unittest.mock.patch.object(module, "_result_streams", side_effect=[oracle, candidate]):
                     module._assert_case_results(ROOT, case, {}, {}, case)
@@ -816,6 +828,7 @@ class OwnedWordexpEngineResultTests(unittest.TestCase):
                     (oracle, oracle),
                     (oracle, (b"1\n", candidate[1], b"")),
                     (oracle, (b"0\n", candidate[1], b"unexpected diagnostic\n")),
+                    ((f"{1 - status}\n".encode(), oracle[1], b""), candidate),
                     ((b"0\n", oracle[1] + b"extra\n", b""), candidate),
                 ):
                     with unittest.mock.patch.object(module, "_result_streams", side_effect=[changed_oracle, changed_candidate]):

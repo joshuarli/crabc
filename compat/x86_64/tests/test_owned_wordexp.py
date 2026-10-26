@@ -16,7 +16,6 @@ RESULTS = ROOT / "libc/src/c_abi/x86_64/owned_wordexp_results.rs"
 PROBE = ROOT / "compat/x86_64/owned_wordexp_probe.c"
 POSIX_PROBE = ROOT / "compat/x86_64/owned_wordexp_posix_probe.c"
 RUNNER = ROOT / "compat/x86_64/run_libc_owned_wordexp.sh"
-EVIDENCE = ROOT / "compat/x86_64/owned_wordexp_evidence.py"
 DISPATCHER = ROOT / "scripts/dev-x86_64.sh"
 
 
@@ -117,26 +116,6 @@ class OwnedWordexpContracts(unittest.TestCase):
             self.assertIn(boundary, source)
         self.assertNotIn("--wrap=", source)
         self.assertNotIn('env -i CRABC_WORDEXP=\'bar baz\' "$candidate"', source)
-
-    def test_retained_six_mode_evidence_keeps_source_reds_separate_from_positive_cells(self) -> None:
-        source = EVIDENCE.read_text(encoding="utf-8")
-        for boundary in (
-            'crabc.x86_64-owned-wordexp-products/v5', "POSIX_PROBE",
-            "WORD_EXP_CASES", "CELL_ENVIRONMENT", "posix-quiet-source-red",
-            "posix-nocmd-source-red", "posix-nocmd-arithmetic-source-red",
-            "posix-nocmd-continuation-source-red", "posix-nocmd-dollar-single-source-red",
-            "posix-nocmd-comment-source-red", "posix-nocmd-positional-source-red",
-            "fixture_devices", "char-device", "_null_device_identity", "undef-source-observation",
-            "_assert_case_results", "required=False", "SOURCE-RED diagnostic-present",
-            "SOURCE-RED parameter-brace-rejected", "SOURCE-RED positional-parameter-rejected",
-            "MODULE = \"libc/src/c_abi/x86_64/owned_wordexp.rs\"",
-            "ENGINE = \"libc/src/c_abi/x86_64/owned_wordexp_engine.rs\"",
-            "installed header trace omitted the POSIX correction cells",
-            "SOURCE_POLICY_PROBE", "owned-wordexp-upstream-policy.md",
-            "installed header trace omitted the upstream policy observation cells",
-            "SOURCE_POLICY_CANDIDATE_TRACE", "SOURCE_POLICY_ORACLE_TRACE",
-        ):
-            self.assertIn(boundary, source)
 
     def test_dispatcher_exposes_the_dedicated_native_gate(self) -> None:
         source = DISPATCHER.read_text(encoding="utf-8")

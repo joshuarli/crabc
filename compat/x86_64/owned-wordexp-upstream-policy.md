@@ -53,6 +53,15 @@ fixed-musl
 outcome never waives a candidate mismatch, and an oracle trace must not be
 rewritten to make the upstream aggregate pass.
 
+The oracle observation uses native musl snapshot
+`7813e9119eb5fe681b6750b8a033a0490bca0941`. Case 01 expands `$#` to the
+single byte `0`. All twenty rows capture empty stderr. The snapshot clears
+shell positional parameters and redirects quiet calls through `/dev/null`;
+released musl 1.2.6 instead observed `2` and leaked diagnostics in seven rows.
+Statuses, other words, command effects and environment observations remain
+unchanged. `owned_wordexp_evidence.py` owns the exact oracle transcript consumed
+by both the whole-product reader and the upstream disposition.
+
 ## Candidate policy
 
 All candidate rows require `stderrhex=-`, `effect=0`, and `env=0`.  Error rows require a

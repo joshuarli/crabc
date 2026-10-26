@@ -76,10 +76,18 @@ setter outcomes remain exact raw matches.
   `owned_wordexp_upstream_policy_diagnostics.json` reference fixes the
   untouched `functional/wordexp.c` SHA-256
   `e3e310de1a73bc30273ac5f4711492817a2f26a5750795c9a3f0be42645871c9`,
-  all 20 candidate and all 104 musl diagnostics, their order, and the terminal
+  all 20 candidate and all 67 musl diagnostics, their order, and the terminal
   `FAIL /functional/wordexp [status 1]` marker. `owned_wordexp_upstream_policy.py`
   rejects any changed source, status, stderr, missing, extra, altered, or
   reordered diagnostic.
+
+  The oracle stream uses the approved native musl snapshot
+  `7813e9119eb5fe681b6750b8a033a0490bca0941`. Its `wordexp` clears shell
+  positional parameters and redirects stderr through file descriptors. The
+  released 1.2.6 implementation exposed its input and redirection string as
+  positional parameters and recorded 104 diagnostics. Replacing only that
+  source file in released musl reproduces the snapshot's complete 67-diagnostic
+  stream with the unchanged upstream workload, launcher and BusyBox shell.
 
   The nested disposition is `posix-policy-qualified` and still records
   `raw_passed: false`; the enclosing libc-test result is only

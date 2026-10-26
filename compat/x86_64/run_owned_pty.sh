@@ -38,7 +38,9 @@ for line in Path(sys.argv[1]).read_text().splitlines():
     if len(fields) == 8 and fields[7] in ('ptsname_r', '__ptsname_r'):
         symbols[fields[7]] = fields
 alias = symbols['ptsname_r']
-assert alias[3:6] == ['FUNC', 'WEAK', 'DEFAULT'] and alias[6] != 'UND', alias
+assert sys.argv[2] in ('--syms', '--dyn-syms'), sys.argv[2]
+binding = 'WEAK' if sys.argv[2] == '--dyn-syms' else 'LOCAL'
+assert alias[3:6] == ['FUNC', binding, 'DEFAULT'] and alias[6] != 'UND', alias
 if sys.argv[2] == '--dyn-syms':
     assert '__ptsname_r' not in symbols, symbols
 else:

@@ -54,7 +54,7 @@ readonly cases=(actions fork-action-mask interrupt failed-interrupt restart part
 assert_signal_aliases() {
     local binary="$1" table="$2" output="$3"
     readelf --wide "$table" "$binary" >"$output"
-    python3 -B - "$output" <<'PYTHON'
+    python3 -B - "$output" "$table" <<'PYTHON'
 from pathlib import Path
 import sys
 symbols = {}
@@ -64,10 +64,12 @@ for line in Path(sys.argv[1]).read_text().splitlines():
         symbols[fields[7]] = fields
 assert set(symbols) == {'signal', 'bsd_signal', '__sysv_signal'}, symbols
 signal = symbols['signal']
-assert signal[3:6] == ['FUNC', 'GLOBAL', 'DEFAULT'] and signal[6] != 'UND', signal
+assert sys.argv[2] in ('--syms', '--dyn-syms'), sys.argv[2]
+signal_binding, alias_binding = ('GLOBAL', 'WEAK') if sys.argv[2] == '--dyn-syms' else ('LOCAL', 'LOCAL')
+assert signal[3:6] == ['FUNC', signal_binding, 'DEFAULT'] and signal[6] != 'UND', signal
 for name in ('bsd_signal', '__sysv_signal'):
     alias = symbols[name]
-    assert alias[3:6] == ['FUNC', 'WEAK', 'DEFAULT'], alias
+    assert alias[3:6] == ['FUNC', alias_binding, 'DEFAULT'], alias
     assert alias[1:3] == signal[1:3] and alias[6] == signal[6], (signal, alias)
 PYTHON
 }

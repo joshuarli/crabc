@@ -96,11 +96,11 @@ owned-wordexp-source-policy: case=18 status=2 count=0 wordhex=- stderrhex=- effe
 owned-wordexp-source-policy: case=19 status=2 count=0 wordhex=- stderrhex=- effect=0 env=0
 owned-wordexp-source-policy: case=20 status=2 count=0 wordhex=- stderrhex=- effect=0 env=0
 """
-SOURCE_POLICY_ORACLE_TRACE = b"""owned-wordexp-source-policy: case=01 status=0 count=1 wordhex=1:32 stderrhex=- effect=0 env=0
-owned-wordexp-source-policy: case=02 status=5 count=0 wordhex=- stderrhex=73683a206576616c3a206c696e6520303a2073796e746178206572726f723a20756e6578706563746564202229220a effect=0 env=0
-owned-wordexp-source-policy: case=03 status=5 count=0 wordhex=- stderrhex=73683a206576616c3a206c696e6520303a2073796e746178206572726f723a20756e6578706563746564202228220a effect=0 env=0
-owned-wordexp-source-policy: case=04 status=5 count=0 wordhex=- stderrhex=73683a206576616c3a206c696e6520303a2073796e746178206572726f723a20756e6578706563746564202229220a effect=0 env=0
-owned-wordexp-source-policy: case=05 status=5 count=0 wordhex=- stderrhex=73683a206576616c3a206c696e6520303a2073796e746178206572726f723a20756e6578706563746564202228220a effect=0 env=0
+SOURCE_POLICY_ORACLE_TRACE = b"""owned-wordexp-source-policy: case=01 status=0 count=1 wordhex=1:30 stderrhex=- effect=0 env=0
+owned-wordexp-source-policy: case=02 status=5 count=0 wordhex=- stderrhex=- effect=0 env=0
+owned-wordexp-source-policy: case=03 status=5 count=0 wordhex=- stderrhex=- effect=0 env=0
+owned-wordexp-source-policy: case=04 status=5 count=0 wordhex=- stderrhex=- effect=0 env=0
+owned-wordexp-source-policy: case=05 status=5 count=0 wordhex=- stderrhex=- effect=0 env=0
 owned-wordexp-source-policy: case=06 status=4 count=0 wordhex=- stderrhex=- effect=0 env=0
 owned-wordexp-source-policy: case=07 status=4 count=0 wordhex=- stderrhex=- effect=0 env=0
 owned-wordexp-source-policy: case=08 status=4 count=0 wordhex=- stderrhex=- effect=0 env=0
@@ -110,10 +110,10 @@ owned-wordexp-source-policy: case=11 status=4 count=0 wordhex=- stderrhex=- effe
 owned-wordexp-source-policy: case=12 status=0 count=1 wordhex=5:247b41427d stderrhex=- effect=0 env=0
 owned-wordexp-source-policy: case=13 status=2 count=0 wordhex=- stderrhex=- effect=0 env=0
 owned-wordexp-source-policy: case=14 status=4 count=0 wordhex=- stderrhex=- effect=0 env=0
-owned-wordexp-source-policy: case=15 status=5 count=0 wordhex=- stderrhex=73683a206576616c3a206c696e6520303a2061726974686d657469632073796e746178206572726f720a effect=1 env=0
+owned-wordexp-source-policy: case=15 status=5 count=0 wordhex=- stderrhex=- effect=1 env=0
 owned-wordexp-source-policy: case=16 status=2 count=0 wordhex=- stderrhex=- effect=0 env=0
-owned-wordexp-source-policy: case=17 status=5 count=0 wordhex=- stderrhex=73683a206576616c3a206c696e6520313a2073796e746178206572726f723a206d697373696e6720272929270a effect=0 env=0
-owned-wordexp-source-policy: case=18 status=5 count=0 wordhex=- stderrhex=73683a206576616c3a206c696e6520323a2073796e746178206572726f723a206d697373696e6720272929270a effect=0 env=0
+owned-wordexp-source-policy: case=17 status=5 count=0 wordhex=- stderrhex=- effect=0 env=0
+owned-wordexp-source-policy: case=18 status=5 count=0 wordhex=- stderrhex=- effect=0 env=0
 owned-wordexp-source-policy: case=19 status=2 count=0 wordhex=- stderrhex=- effect=0 env=0
 owned-wordexp-source-policy: case=20 status=2 count=0 wordhex=- stderrhex=- effect=0 env=0
 """
@@ -124,12 +124,12 @@ owned-wordexp-source-policy: case=20 status=2 count=0 wordhex=- stderrhex=- effe
 # fixed source defects as red observations instead of claiming them as oracle
 # semantics for the owned product.
 WORD_EXP_CASES = {
-    "normal": ("normal", (), b"owned-wordexp: PASS\n", "quiet-source-red"),
+    "normal": ("normal", (), b"owned-wordexp: PASS\n", "source-match"),
     "missing": ("missing", ("--shell-unavailable",), b"owned-wordexp-shell-unavailable: PASS\n", "ordinary-shell-source-red"),
     "inaccessible": ("inaccessible", ("--shell-unavailable",), b"owned-wordexp-shell-unavailable: PASS\n", "ordinary-shell-source-red"),
     "invalid": ("invalid", ("--shell-unavailable",), b"owned-wordexp-shell-unavailable: PASS\n", "ordinary-shell-source-red"),
     "nocmd-source": ("normal", ("--nocmd-source",), b"owned-wordexp-nocmd-source: PASS\n", "subshell-source-observation"),
-    "posix-quiet": ("normal", ("--posix-quiet",), b"owned-wordexp-posix-quiet: PASS\n", "posix-quiet-source-red"),
+    "posix-quiet": ("normal", ("--posix-quiet",), b"owned-wordexp-posix-quiet: PASS\n", "source-match"),
     "posix-nocmd": ("normal", ("--posix-nocmd",), b"owned-wordexp-posix-nocmd: PASS\n", "posix-nocmd-source-red"),
     "posix-nocmd-escaped-control": ("normal", ("--posix-nocmd-escaped-control",), b"owned-wordexp-posix-nocmd-escaped-control: PASS\n", "source-match"),
     "posix-nocmd-arithmetic-control": ("normal", ("--posix-nocmd-arithmetic-control",), b"owned-wordexp-posix-nocmd-arithmetic-control: PASS\n", "posix-nocmd-arithmetic-source-red"),
@@ -152,19 +152,13 @@ WORD_EXP_CASES = {
     "source-policy": ("normal", ("--source-policy",), SOURCE_POLICY_CANDIDATE_TRACE, "upstream-source-policy"),
     "quote-matrix": ("normal", ("--quote-matrix",), b"owned-wordexp-quote-matrix: PASS\n", "source-match"),
 }
-# Exact source transcripts for the new direct C boundary cases. A source RED
-# never permits the selected candidate to fail, even with the same transcript.
 ENGINE_SOURCE_OBSERVATIONS = {
-    "engine-undef": b"owned-wordexp-engine-undef: SOURCE-RED wrde-undef-untyped\n",
-    "engine-append-rollback": b"owned-wordexp-engine-append-rollback: SOURCE-RED wrde-undef-untyped\n",
-    "engine-parameter-word": b"owned-wordexp-engine-parameter-word: SOURCE-RED nocmd-parameter-word-badchar\n",
-    "engine-diagnostics": b"owned-wordexp-engine-diagnostics: SOURCE-RED quiet-shell-diagnostic\n",
-    "engine-sigpipe": b"owned-wordexp-engine-sigpipe: SOURCE-RED shell-child-no-raw-sigpipe\n",
+    "engine-undef": (b"0\n", b"owned-wordexp-engine-undef: SOURCE-RED wrde-undef-untyped\n"),
+    "engine-append-rollback": (b"0\n", b"owned-wordexp-engine-append-rollback: SOURCE-RED wrde-undef-untyped\n"),
+    "engine-parameter-word": (b"0\n", b"owned-wordexp-engine-parameter-word: SOURCE-RED nocmd-parameter-word-badchar\n"),
+    "engine-diagnostics": (b"1\n", b"owned-wordexp-engine-diagnostics: FAIL 5\n"),
+    "engine-sigpipe": (b"1\n", b"owned-wordexp-engine-sigpipe: FAIL 4\n"),
 }
-# The ordinary unterminated-quote call exposes this exact fixed-shell stderr
-# through musl's whole-input protocol. A different or additional diagnostic
-# is not evidence of the named source defect.
-QUIET_SOURCE_DIAGNOSTIC = b"sh: eval: line 0: syntax error: unterminated quoted string\n"
 CELL_ENVIRONMENT = {"CRABC_WORDEXP": "bar baz", "FOO": "field", "X": "left", "Y": "right", "SET": "1",
                     "TMPDIR": "/wordexp-tmp"}
 MODE_SPECS = {
@@ -938,8 +932,8 @@ def _assert_case_results(root: Path, case: str, oracle: Mapping[str, Any], candi
                 oracle_stderr or candidate_stderr):
             fail(f"{description} source-control result differs")
     elif comparison == "engine-source-red":
-        if (case not in ENGINE_SOURCE_OBSERVATIONS or oracle_status != b"0\n" or
-                oracle_stdout != ENGINE_SOURCE_OBSERVATIONS[case] or oracle_stderr or
+        if (case not in ENGINE_SOURCE_OBSERVATIONS or
+                (oracle_status, oracle_stdout) != ENGINE_SOURCE_OBSERVATIONS[case] or oracle_stderr or
                 candidate_status != b"0\n" or candidate_stdout != expected_candidate_stdout or candidate_stderr):
             fail(f"{description} engine source observation or positive candidate result differs")
     elif comparison == "upstream-source-policy":
@@ -952,20 +946,6 @@ def _assert_case_results(root: Path, case: str, oracle: Mapping[str, Any], candi
                 oracle_stderr or candidate_status != b"0\n" or
                 candidate_stdout != expected_candidate_stdout or candidate_stderr):
             fail(f"{description} fresh BADCHAR count source observation or candidate record differs")
-    elif comparison == "quiet-source-red":
-        # The ordinary source workload carries an unterminated quote through
-        # a no-SHOWERR call. Its pinned-musl stderr is source-control evidence;
-        # POSIX requires the candidate's stream to be empty.
-        if (oracle_status != b"0\n" or candidate_status != b"0\n" or
-                oracle_stdout != expected_candidate_stdout or candidate_stdout != expected_candidate_stdout or
-                oracle_stderr != QUIET_SOURCE_DIAGNOSTIC or candidate_stderr):
-            fail(f"{description} quiet source RED or candidate suppression differs")
-    elif comparison == "posix-quiet-source-red":
-        if (oracle_status != b"84\n" or
-                oracle_stdout != b"owned-wordexp-posix-quiet: SOURCE-RED diagnostic-present\n" or
-                oracle_stderr or candidate_status != b"0\n" or
-                candidate_stdout != expected_candidate_stdout or candidate_stderr):
-            fail(f"{description} POSIX quiet source RED or candidate result differs")
     elif comparison == "posix-nocmd-source-red":
         if (oracle_status != b"113\n" or
                 oracle_stdout != b"owned-wordexp-posix-nocmd: SOURCE-RED parameter-brace-rejected\n" or

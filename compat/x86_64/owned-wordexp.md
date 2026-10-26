@@ -97,12 +97,20 @@ AArch64 implementation and its frozen evidence remain unchanged.
 
 The governing expansion clauses are [POSIX.1-2024 wordexp](https://pubs.opengroup.org/onlinepubs/9799919799.2024edition/functions/wordexp.html)
 and the [Shell Command Language](https://pubs.opengroup.org/onlinepubs/9799919799.2024edition/utilities/V3_chap02.html).
-The quiet-source receipt admits only the finite pinned-musl diagnostic `sh: eval: line 0: syntax error: unterminated quoted string\n`; it rejects any other source diagnostic bytes and requires an empty candidate stream.
+The quiet-source cells require an empty diagnostic stream from both the
+approved native musl snapshot and the candidate.
+The unchanged `engine-diagnostics` and `engine-sigpipe` selectors record
+oracle exit status 1 with exact `FAIL 5` and `FAIL 4` transcripts. The snapshot
+closes an invalid descriptor after a `WRDE_SHOWERR` call, changing the errno
+sentinel from `E2BIG` to `EBADF`. Replacing only `wordexp.c` in released musl
+reproduces both failures. Their candidate cells still require exit status 0,
+the exact `PASS` transcript and empty stderr. Each retained engine observation
+binds its raw oracle status and stdout together.
 The same installed-header object preserves these specific source observations:
 
 | Observation | Pinned musl | Owned candidate |
 | --- | --- | --- |
-| Unterminated quote without SHOWERR | Syntax diagnostic reaches fd 2 | `WRDE_SYNTAX`, empty fd 2 |
+| Unterminated quote without SHOWERR | `WRDE_SYNTAX`, empty fd 2 | `WRDE_SYNTAX`, empty fd 2 |
 | Fresh `WRDE_BADCHAR` record under NOCMD with count sentinel 19 | Returns `WRDE_BADCHAR` while retaining the sentinel | Returns `WRDE_BADCHAR` and publishes count zero |
 | Standard nested/positional parameter syntax under NOCMD | Recorded parameter-brace or positional rejection | Valid expansion without a command |
 | Recorded arithmetic-delimiter, continuation and dollar-single marker controls | Creates the prohibited command marker | Rejects before a command starts |

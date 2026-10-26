@@ -14,12 +14,12 @@ keep the existing serialization and lifetime rules.
 
 `locale_objects::newlocale` follows `src/locale/newlocale.c` for category
 selection: masked categories use the supplied name, unmasked categories
-inherit a supplied base, and a null base resolves unmasked categories from the
-environment. A zero mask does not dereference the name. These built-in objects
-remain immutable and allocation-free; failure reports `ENOENT` and preserves
-the base. A per-thread `uselocale` selection remains independent of global
-changes. Concurrent environment mutation is outside the borrowed `getenv`
-contract.
+inherit a supplied base, and a null base gives unmasked categories the C/POSIX
+default. An empty name resolves only masked categories through the environment.
+A zero mask does not dereference the name. These built-in objects remain
+immutable and allocation-free; failure reports `ENOENT` and preserves the
+base. A per-thread `uselocale` selection remains independent of global changes.
+Concurrent environment mutation is outside the borrowed `getenv` contract.
 
 The composition is gated by `x86-owned-static-runtime` (also selected by the
 owned dynamic runtime). Default freestanding locale artifacts retain their

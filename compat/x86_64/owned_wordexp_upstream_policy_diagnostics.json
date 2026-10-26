@@ -1,5 +1,5 @@
 {
-  "measurement_source_revision": "96a4a847",
+  "measurement_source_revision": "28c7e92e9",
   "schema": "crabc.x86_64-wordexp-upstream-diagnostics/v1",
   "sides": {
     "candidate": {
@@ -91,98 +91,6 @@
     "oracle": {
       "diagnostics": [
         {
-          "diagnostic": "wordexp(\"$1\", 0) gave 1 [$1|], want 0 []\n",
-          "line": 562
-        },
-        {
-          "diagnostic": "wordexp(\"$2\", 0) gave 1 [2>/dev/null|], want 0 []\n",
-          "line": 562
-        },
-        {
-          "diagnostic": "wordexp(\"$*\", 0) gave 2 [$*|2>/dev/null|], want 0 []\n",
-          "line": 562
-        },
-        {
-          "diagnostic": "wordexp(\"$@\", 0) gave 2 [$@|2>/dev/null|], want 0 []\n",
-          "line": 562
-        },
-        {
-          "diagnostic": "wordexp(\"$#\", 0) gave 1 [2|], want 1 [0|]\n",
-          "line": 562
-        },
-        {
-          "diagnostic": "wordexp(\")\", 0) wrote to stderr: sh: eval: line 0: syntax error: unexpected \")\"\n\n",
-          "line": 548
-        },
-        {
-          "diagnostic": "wordexp(\"(\", 0) wrote to stderr: sh: eval: line 0: syntax error: unexpected \"(\"\n\n",
-          "line": 548
-        },
-        {
-          "diagnostic": "wordexp(\"$(\", 0) wrote to stderr: sh: eval: line 0: syntax error: unexpected end of file (expecting \")\")\n\n",
-          "line": 548
-        },
-        {
-          "diagnostic": "wordexp(\"$(echo\", 0) wrote to stderr: sh: eval: line 0: syntax error: unexpected end of file (expecting \")\")\n\n",
-          "line": 548
-        },
-        {
-          "diagnostic": "wordexp(\"${\", 0) wrote to stderr: sh: eval: line 0: syntax error: missing '}'\n\n",
-          "line": 548
-        },
-        {
-          "diagnostic": "wordexp(\"`\", 0) wrote to stderr: sh: eval: line 0: syntax error: EOF in backquote substitution\n\n",
-          "line": 548
-        },
-        {
-          "diagnostic": "wordexp(\"'unterminated\", 0) wrote to stderr: sh: eval: line 0: syntax error: unterminated quoted string\n\n",
-          "line": 548
-        },
-        {
-          "diagnostic": "wordexp(\"\"unterminated\", 0) wrote to stderr: sh: eval: line 0: syntax error: unterminated quoted string\n\n",
-          "line": 548
-        },
-        {
-          "diagnostic": "wordexp(\"$UNSET ) $UNSET\", WRDE_UNDEF) wrote to stderr: sh: eval: line 0: syntax error: unexpected \")\"\n\n",
-          "line": 548
-        },
-        {
-          "diagnostic": "wordexp(\"$UNSET ( $UNSET\", WRDE_UNDEF) wrote to stderr: sh: eval: line 0: syntax error: unexpected \"(\"\n\n",
-          "line": 548
-        },
-        {
-          "diagnostic": "wordexp(\"$UNSET $( $UNSET\", WRDE_UNDEF) wrote to stderr: sh: eval: line 0: syntax error: unexpected end of file (expecting \")\")\n\n",
-          "line": 548
-        },
-        {
-          "diagnostic": "wordexp(\"$UNSET $(echo $UNSET\", WRDE_UNDEF) wrote to stderr: sh: eval: line 0: syntax error: unexpected end of file (expecting \")\")\n\n",
-          "line": 548
-        },
-        {
-          "diagnostic": "wordexp(\"$UNSET ${ $UNSET\", WRDE_UNDEF) wrote to stderr: sh: eval: line 0: syntax error: missing '}'\n\n",
-          "line": 548
-        },
-        {
-          "diagnostic": "wordexp(\"$UNSET ` $UNSET\", WRDE_UNDEF) wrote to stderr: sh: eval: line 0: syntax error: EOF in backquote substitution\n\n",
-          "line": 548
-        },
-        {
-          "diagnostic": "wordexp(\"$UNSET 'unterminated $UNSET\", WRDE_UNDEF) wrote to stderr: sh: eval: line 0: syntax error: unterminated quoted string\n\n",
-          "line": 548
-        },
-        {
-          "diagnostic": "wordexp(\"$UNSET \"unterminated $UNSET\", WRDE_UNDEF) wrote to stderr: sh: eval: line 0: syntax error: unterminated quoted string\n\n",
-          "line": 548
-        },
-        {
-          "diagnostic": "wordexp(\"$UNSET 'unterminated $UNSET\", WRDE_NOCMD|WRDE_UNDEF) wrote to stderr: sh: eval: line 0: syntax error: unterminated quoted string\n\n",
-          "line": 548
-        },
-        {
-          "diagnostic": "wordexp(\"$UNSET \"unterminated $UNSET\", WRDE_NOCMD|WRDE_UNDEF) wrote to stderr: sh: eval: line 0: syntax error: unterminated quoted string\n\n",
-          "line": 548
-        },
-        {
           "diagnostic": "wordexp(\"#!@$^%&*(_+=<<-0>[{`${\", WRDE_NOCMD) returned WRDE_BADCHAR, want 0\n",
           "line": 554
         },
@@ -191,16 +99,8 @@
           "line": 562
         },
         {
-          "diagnostic": "wordexp(\"$((echo foo) )\", WRDE_NOCMD) wrote to stderr: sh: eval: line 0: syntax error: missing '))'\n\n",
-          "line": 548
-        },
-        {
           "diagnostic": "wordexp(\"$((case $A in a) echo x ;; *) echo y ;; esac))\", WRDE_NOCMD) returned WRDE_BADCHAR, want WRDE_CMDSUB\n",
           "line": 554
-        },
-        {
-          "diagnostic": "wordexp(\"$((echo a);(echo b))\", WRDE_NOCMD) wrote to stderr: sh: eval: line 0: syntax error: missing '))'\n\n",
-          "line": 548
         },
         {
           "diagnostic": "wordexp(\"$'\\''$(echo bad)\\'\", WRDE_NOCMD) returned 0, want WRDE_CMDSUB\n",
@@ -287,14 +187,6 @@
           "line": 554
         },
         {
-          "diagnostic": "wordexp(\"$((${X-\"$\"(echo + 2)}))\", WRDE_NOCMD) wrote to stderr: sh: eval: line 0: arithmetic syntax error\n\n",
-          "line": 548
-        },
-        {
-          "diagnostic": "wordexp(\"$((${X-\"$\"((1+1))}))\", WRDE_NOCMD) wrote to stderr: sh: eval: line 0: arithmetic syntax error\n\n",
-          "line": 548
-        },
-        {
           "diagnostic": "wordexp(\"${X} ${Y}\", WRDE_NOCMD) returned WRDE_BADCHAR, want 0\n",
           "line": 554
         },
@@ -309,14 +201,6 @@
         {
           "diagnostic": "wordexp(\"\"${X-$'$(cmd)'y}\"\", WRDE_NOCMD) returned WRDE_CMDSUB, want WRDE_SYNTAX\n",
           "line": 554
-        },
-        {
-          "diagnostic": "wordexp(\"$((${X-$'$(cmd)'y}))\", WRDE_NOCMD) wrote to stderr: sh: eval: line 0: cmd: not found\n\n",
-          "line": 548
-        },
-        {
-          "diagnostic": "wordexp(\"$'\\'\", WRDE_NOCMD) wrote to stderr: sh: eval: line 0: syntax error: unterminated quoted string\n\n",
-          "line": 548
         },
         {
           "diagnostic": "wordexp(\"${X=1} $((${X-'}))\", WRDE_NOCMD) returned WRDE_BADCHAR, want WRDE_SYNTAX\n",
@@ -339,32 +223,8 @@
           "line": 562
         },
         {
-          "diagnostic": "wordexp(\"$((${X-\"$\"((1+1))}))\", WRDE_NOCMD) wrote to stderr: sh: eval: line 0: arithmetic syntax error\n\n",
-          "line": 548
-        },
-        {
-          "diagnostic": "wordexp(\"$((cmd #(\n)\n))\", WRDE_NOCMD) wrote to stderr: sh: eval: line 0: arithmetic syntax error\n\n",
-          "line": 548
-        },
-        {
-          "diagnostic": "wordexp(\"$((cmd #(\n)) )\", WRDE_NOCMD) wrote to stderr: sh: eval: line 1: syntax error: missing '))'\n\n",
-          "line": 548
-        },
-        {
-          "diagnostic": "wordexp(\"$((cmd #(\n))\n)\", WRDE_NOCMD) wrote to stderr: sh: eval: line 2: syntax error: missing '))'\n\n",
-          "line": 548
-        },
-        {
           "diagnostic": "wordexp(\"$((echo + 1 #)\n))\", WRDE_NOCMD) returned WRDE_BADCHAR, want WRDE_SYNTAX\n",
           "line": 554
-        },
-        {
-          "diagnostic": "wordexp(\"$((\"1\"))\", WRDE_NOCMD) wrote to stderr: sh: eval: line 0: arithmetic syntax error\n\n",
-          "line": 548
-        },
-        {
-          "diagnostic": "wordexp(\"$((echo + 1 ) )\", WRDE_NOCMD) wrote to stderr: sh: eval: line 0: syntax error: missing '))'\n\n",
-          "line": 548
         },
         {
           "diagnostic": "wordexp(\"$((echo + 1 ) )\", WRDE_NOCMD) returned WRDE_SYNTAX, want WRDE_CMDSUB\n",
@@ -417,10 +277,6 @@
         {
           "diagnostic": "wordexp(\"${X=2} $((${X-')'}+1))\", WRDE_NOCMD) returned WRDE_BADCHAR, want 0\n",
           "line": 554
-        },
-        {
-          "diagnostic": "wordexp(\"$((cat<<x\n)(\nx\n))\", WRDE_NOCMD) wrote to stderr: sh: eval: line 3: syntax error: missing '))'\n\n",
-          "line": 548
         },
         {
           "diagnostic": "wordexp(\"$((cat<<x\n)(\nx\n))\", WRDE_NOCMD) returned WRDE_SYNTAX, want WRDE_CMDSUB\n",
@@ -500,10 +356,6 @@
         },
         {
           "diagnostic": "wordexp(\"x \"$UNSET y\"\", WRDE_UNDEF) gave 2 [x| y|], want 0 []\n",
-          "line": 562
-        },
-        {
-          "diagnostic": "wordexp(\"$1\", WRDE_UNDEF) gave 1 [$1|], want 0 []\n",
           "line": 562
         }
       ],

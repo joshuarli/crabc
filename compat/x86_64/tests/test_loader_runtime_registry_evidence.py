@@ -22,6 +22,11 @@ sys.modules[SPEC.name] = EVIDENCE
 SPEC.loader.exec_module(EVIDENCE)
 
 
+def builtins_archive() -> bytes:
+    body = b"member"
+    return b"!<arch>\n" + f"{'builtins.o/':<16}{0:<12}{0:<6}{0:<6}{'100644':<8}{len(body):<10}`\n".encode() + body
+
+
 class LoaderRuntimeRegistryEvidenceTests(unittest.TestCase):
     def scope_link_fixture(self):
         scratch = ROOT / '.work/x86_64/loader-runtime-registry-tests'
@@ -39,6 +44,7 @@ class LoaderRuntimeRegistryEvidenceTests(unittest.TestCase):
         manifest.write_bytes(b'{}\n')
         for name in ('crti.o', 'libc.so', 'crtn.o', 'libcrabc-builtins.a'):
             (library / name).write_bytes(name.encode())
+        (library / 'libcrabc-builtins.a').write_bytes(builtins_archive())
         object_path = work / 'crabc-dynamic-link.fixture/source-0.o'
         object_path.parent.mkdir()
         object_path.write_bytes(b'object')
@@ -80,7 +86,9 @@ class LoaderRuntimeRegistryEvidenceTests(unittest.TestCase):
                    'owned_runtime_inputs': sorted(path.relative_to(product).as_posix() for path in [*inputs[:3], inputs[-1]]),
                    'input_receipts': [{'path': replay.recorded(path), 'sha256': digest(path)} for path in inputs],
                    'resolved_linker': {key: tools['linker']['original'][key] for key in ('path', 'sha256')},
-                   'link_command': command, 'link_trace': [replay.recorded(path) for path in inputs if path.name != 'libcrabc-builtins.a'],
+                   'link_command': command, 'link_trace': ['trace: ' + replay.recorded(path) + ('(builtins.o)' if path.name == 'libcrabc-builtins.a' else '')
+                                        for path in (library / 'crti.o', object_path, library / 'libcrabc-builtins.a',
+                                                     library / 'libc.so', library / 'crtn.o')],
                    'campaign_complete': False}
         receipt_path = work / (stem + '.crabc-link.json')
         receipt_path.write_text(json.dumps(receipt), encoding='utf-8')
@@ -101,6 +109,25 @@ class LoaderRuntimeRegistryEvidenceTests(unittest.TestCase):
         self.assertEqual(native['output_transformation'], {'symbol_table': '.dynsym', 'symbol': 'scope_hidden_value',
                          'file_offset': 93, 'before': 0, 'after': 2})
         self.assertNotEqual(native['executable']['sha256'], native['linked_output']['sha256'])
+
+    def test_replayed_mold_trace_rejects_foreign_missing_duplicate_and_reordered_members(self):
+        root, output, work, product, replay, original, _image, facts = self.scope_link_fixture()
+        target = work / 'libscope-second.so.crabc-link.json'
+        for change in ('foreign', 'missing', 'duplicate', 'reordered'):
+            with self.subTest(change=change):
+                receipt = copy.deepcopy(original)
+                if change == 'foreign':
+                    receipt['link_trace'][2] = receipt['link_trace'][2].replace('builtins.o', 'foreign.o')
+                elif change == 'missing':
+                    del receipt['link_trace'][2]
+                elif change == 'duplicate':
+                    receipt['link_trace'].insert(2, receipt['link_trace'][2])
+                else:
+                    receipt['link_trace'][1:3] = reversed(receipt['link_trace'][1:3])
+                target.write_text(json.dumps(receipt))
+                with mock.patch.object(EVIDENCE.product_evidence, 'retained_elf_facts', return_value=facts):
+                    with self.assertRaisesRegex(EVIDENCE.RuntimeRegistryEvidenceError, 'link trace'):
+                        EVIDENCE._link_record(product, work, output, 'libscope-second.so', 'shared', replay=replay)
 
     def test_scope_visibility_edit_rejects_missing_stale_or_extra_changed_bytes_in_both_readers(self):
         for mutation in ('missing-original', 'stale-original', 'extra-byte', 'unchanged', 'wrong-visibility'):
@@ -180,6 +207,7 @@ class LoaderRuntimeRegistryEvidenceTests(unittest.TestCase):
             runtime = product / 'usr/lib'
             for name in ('Scrt1.o', 'crabc-dynamic-attach.o', 'crti.o', 'libc.so', 'libcrabc-builtins.a', 'crtn.o'):
                 (runtime / name).write_bytes(name.encode())
+            (runtime / 'libcrabc-builtins.a').write_bytes(builtins_archive())
             executable = work / 'consumer'; executable.write_bytes(b'linked executable')
             object_path = work / 'crabc-dynamic-link.fixture/source-0.o'; object_path.parent.mkdir(); object_path.write_bytes(b'object')
             tools = {}
@@ -203,8 +231,9 @@ class LoaderRuntimeRegistryEvidenceTests(unittest.TestCase):
                 'input_receipts': [{'path': replay.recorded(path), 'sha256': digest(path)} for path in inputs],
                 'resolved_linker': {key: tools['linker']['original'][key] for key in ('path', 'sha256')},
                 'link_command': command,
-                'link_trace': [replay.recorded(path) for path in (runtime / 'Scrt1.o', runtime / 'crabc-dynamic-attach.o',
-                                                                    runtime / 'crti.o', object_path, runtime / 'libc.so', runtime / 'crtn.o')],
+                'link_trace': ['trace: ' + replay.recorded(path) + ('(builtins.o)' if path.name == 'libcrabc-builtins.a' else '')
+                               for path in (runtime / 'Scrt1.o', runtime / 'crabc-dynamic-attach.o', runtime / 'crti.o',
+                                            object_path, runtime / 'libcrabc-builtins.a', runtime / 'libc.so', runtime / 'crtn.o')],
                 'campaign_complete': False,
             }
             receipt_path = work / 'consumer.crabc-link.json'; receipt_path.write_text(json.dumps(receipt), encoding='utf-8')

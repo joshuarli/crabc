@@ -19,6 +19,7 @@ if str(MODULE_DIR) not in sys.path:
     sys.path.insert(0, str(MODULE_DIR))
 import native_abi_inventory as inventory
 import validate_loader_libc_tls_runtime_v1 as runtime_contract
+import mold_link_trace
 
 ROOT = inventory.ROOT
 CONTRACT = ROOT / 'compat/x86_64/prepared-worker-tls.toml'
@@ -58,7 +59,8 @@ LEGACY = {
 }
 SOURCE_PATHS = (
     'compat/x86_64/prepared_worker_tls_evidence.py', 'compat/x86_64/prepared-worker-tls.toml',
-    'compat/x86_64/loader_debug_abi_evidence.py',
+    'compat/x86_64/loader_debug_abi_evidence.py', 'compat/x86_64/mold_link_trace.py',
+    'compat/x86_64/owned_syscall_alias_authority.py',
     'compat/x86_64/prepared_worker_tls_probe.c', 'compat/x86_64/prepared_worker_tls_dependency.c',
     'compat/x86_64/loader-libc-tls-runtime-v1.toml', 'compat/x86_64/validate_loader_libc_tls_runtime_v1.py',
     WORKER_OWNER, ADAPTER, PTHREAD, PTHREAD_ATFORK, 'libc/src/c_abi/x86_64/static_c_abi.rs',
@@ -661,11 +663,15 @@ def dso_observations(root: Path, work: Path, inputs: Mapping[str,Any], tools: Ma
                         'resolved_linker':linker,'input_receipts':expected_inputs,'link_command':argv,
                         'owned_runtime_inputs':sorted(['usr/lib/crti.o','usr/lib/crtn.o','usr/lib/libc.so','usr/lib/libcrabc-builtins.a'])}
                 require(same({key:receipt.get(key) for key in checks},checks),label+' installed driver binding differs')
-                trace=receipt['link_trace'];archive=ordinary.mounted(root,product/'usr/lib/libcrabc-builtins.a')
-                direct={str(path) for path in owned if str(path)!=archive}
-                require(type(trace) is list and all(type(line) is str and (line in direct or line==archive
-                        or (line.startswith(archive+'(') and line.endswith(')'))) for line in trace)
-                        and direct.issubset(set(trace)),label+' link trace differs')
+                trace=receipt['link_trace'];archive=product/'usr/lib/libcrabc-builtins.a'
+                require(type(trace) is list and all(type(line) is str for line in trace),label+' link trace differs')
+                try:
+                    mold_link_trace.validate_trace(trace,
+                        initial_objects=[ordinary.mounted(root,path) for path in (product/'usr/lib/crti.o',obj)],
+                        archives=[(ordinary.mounted(root,archive),archive.read_bytes())],
+                        final_objects=[ordinary.mounted(root,product/'usr/lib'/name) for name in ('libc.so','crtn.o')])
+                except ValueError as error:
+                    raise PreparedWorkerTlsError('prepared worker TLS: '+label+' link trace differs: '+str(error)) from error
                 record['receipt']=ordinary.work_file_identity(root,receipt_path,label+' driver receipt')
             result[label]=record
     return result

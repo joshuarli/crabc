@@ -30,7 +30,8 @@ rules bound the opaque delimiter scanner. Issue 8 also defines dollar-single-quo
 Musl 1.2.6 release commit `9fa28ece75d8a2191de7c5bb53bed224c5947417`,
 `src/misc/wordexp.c` (MIT; SHA-256
 `018c97c999cb60966a0376b71f2c8c187179ef31cf5ddde47b959e8f440e08f8`) remains
-the compatibility oracle and source provenance for the selected provider. This
+the historical design reference for the selected provider. The active native
+oracle is musl snapshot `7813e9119eb5fe681b6750b8a033a0490bca0941`. This
 implementation is a new private design, rather than a source translation. Existing
 source RED observations in [owned-wordexp.md](owned-wordexp.md) remain
 observations, not equality claims.

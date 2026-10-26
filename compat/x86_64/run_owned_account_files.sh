@@ -196,31 +196,39 @@ prepare_root() {
 }
 
 assert_symbols() {
-    local artifact="$1" selector="$2" report="$3"
+    local artifact="$1" selector="$2" report="$3" scope="$4"
 
-    if [ "$selector" = nm ]; then
+    if [ "$scope" = static-final ]; then
+        nm --defined-only "$artifact" >"$report"
+    elif [ "$selector" = nm ]; then
         nm -g --defined-only "$artifact" >"$report"
     else
         readelf --dyn-syms -W "$artifact" >"$report"
     fi
-    python3 -B - "$report" "$selector" "${ACCOUNT_SYMBOLS[@]}" <<'PY'
+    python3 -B - "$report" "$selector" "$scope" "${ACCOUNT_SYMBOLS[@]}" <<'PY'
 from collections import Counter
 from pathlib import Path
 import sys
 
 report = Path(sys.argv[1]).read_text(encoding='utf-8').splitlines()
 selector = sys.argv[2]
-expected = Counter({name: 1 for name in sys.argv[3:]})
+scope = sys.argv[3]
+assert scope in ('static-final', 'archive', 'shared'), scope
+assert (scope == 'static-final' and selector == 'nm') or (
+    scope == 'archive' and selector == 'nm'
+) or (scope == 'shared' and selector == 'readelf')
+expected = Counter({name: 1 for name in sys.argv[4:]})
 definitions = Counter()
 correct = Counter()
-for name in sys.argv[3:]:
+for name in sys.argv[4:]:
     if selector == 'nm':
         for line in report:
             fields = line.split()
             if len(fields) != 3 or fields[2] != name:
                 continue
             definitions[name] += 1
-            if fields[1] == 'T':
+            expected_type = 't' if scope == 'static-final' else 'T'
+            if fields[1] == expected_type:
                 correct[name] += 1
     else:
         for line in report:
@@ -482,7 +490,7 @@ sha256sum "$HEADER_C" "$HEADER_CXX" "$work"/*-header-*.o >"$work/header-input.sh
 write_compile_receipt "$installed"
 
 "$ORACLE_CC" -static -fno-pie -no-pie -pthread "$work/workload.o" -o "$work/oracle"
-assert_symbols "$work/oracle" nm "$work/oracle-symbols.txt"
+assert_symbols "$work/oracle" nm "$work/oracle-symbols.txt" static-final
 
 if [ "$expect_missing" -eq 1 ]; then
     # The red baseline first proves that this exact installed-header object
@@ -521,7 +529,7 @@ elif [ "$dynamic_was_supplied" -eq 0 ]; then
 fi
 if [ -n "$static_product" ]; then
     validate_product_payload "$static_product" static
-    assert_symbols "$static_product/usr/lib/libc.a" nm "$work/static-symbols.txt"
+    assert_symbols "$static_product/usr/lib/libc.a" nm "$work/static-symbols.txt" archive
     for mode in static static-pie; do
         candidate="$work/static-$mode"
         receipt="$candidate.receipt.json"
@@ -535,7 +543,7 @@ if [ -n "$static_product" ]; then
     done
 fi
 
-assert_symbols "$installed/usr/lib/libc.so" readelf "$work/dynamic-symbols.txt"
+assert_symbols "$installed/usr/lib/libc.so" readelf "$work/dynamic-symbols.txt" shared
 for mode in pie non-pie; do
     candidate="$work/dynamic-$mode"
     "$installed/bin/crabc-cc-dynamic" "--dynamic-$mode" "$work/workload.o" -o "$candidate"

@@ -6,14 +6,17 @@
 //! locale-parameterized form of the selected allocation-free wide-character
 //! core. `POSIX` normalizes to `C`; only LC_CTYPE differs for `C.UTF-8`, while
 //! numeric, time, collation, monetary, and messages data retain fixed C values.
-//! The owned runtime resolves empty names and null-base default categories
-//! through the existing environment owner. Private freestanding artifacts do
-//! not select that composition. No locale map, allocation, refcount, filesystem,
-//! gettext catalog, normalization, legacy encoding, stdio, numeric parser,
-//! syscall, dynamic TLS, loader, or general locale database is selected.
+//! The owned runtime resolves empty selected names through the existing
+//! environment owner. New objects use C/POSIX for unselected categories when
+//! the base is null. Private freestanding artifacts do not select that
+//! composition. No locale map, allocation, refcount, filesystem, gettext
+//! catalog, normalization, legacy encoding, stdio, numeric parser, syscall,
+//! dynamic TLS, loader, or general locale database is selected.
 //!
 //! Translation provenance is pinned musl 1.2.6 release commit
-//! `9fa28ece75d8a2191de7c5bb53bed224c5947417`, under musl's MIT license:
+//! `9fa28ece75d8a2191de7c5bb53bed224c5947417`, under musl's MIT license.
+//! The null-base category selection in `newlocale` follows native oracle
+//! commit `7813e9119eb5fe681b6750b8a033a0490bca0941`.
 //!
 //! - `src/locale/{newlocale,duplocale,uselocale,freelocale,langinfo}.c` maps to
 //!   the immutable built-in tokens, per-thread selection, and fixed C tables.
@@ -257,7 +260,7 @@ static_archive_member! { newlocale_source {
     /// For a nonzero mask, `name` must point to a readable NUL-terminated string.
     /// `base` must be null or a live locale object, never `LC_GLOBAL_LOCALE`.
     /// The caller must exclude concurrent environment mutation when an empty
-    /// name or null base requires default-category selection.
+    /// selected locale name requires environment resolution.
     #[export_name = "__newlocale"]
     pub unsafe extern "C" fn newlocale(mask: c_int, name: *const c_char, base: Locale) -> Locale {
         let mut utf8 = if base.is_null() {
@@ -267,15 +270,14 @@ static_archive_member! { newlocale_source {
         };
         #[cfg(crabc_x86_owned_runtime)]
         {
-            // musl newlocale.c inherits unselected categories from a supplied
-            // base; without a base it resolves their default environment names.
-            // All six names must validate before the immutable token is returned.
             for category in 0..LC_ALL {
                 let selected = mask & (1 << category) != 0;
                 if !selected && !base.is_null() {
                     continue;
                 }
-                let requested = if !selected || unsafe { *name } == 0 {
+                let requested = if !selected {
+                    Some(false)
+                } else if unsafe { *name } == 0 {
                     unsafe { locale_multibyte::environment_locale_mode(category) }
                 } else {
                     unsafe { requested_utf8(name) }

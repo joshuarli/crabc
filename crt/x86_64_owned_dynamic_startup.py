@@ -38,6 +38,11 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
+COMPAT_MODULE_DIR = ROOT / "compat/x86_64"
+if str(COMPAT_MODULE_DIR) not in sys.path:
+    sys.path.insert(0, str(COMPAT_MODULE_DIR))
+import owned_posix_product_evidence as product_evidence
+
 FIXTURES = ROOT / "crt" / "fixtures"
 MAIN_SOURCE = FIXTURES / "owned_dynamic_startup_main.c"
 DEPENDENCY_SOURCE = FIXTURES / "owned_dynamic_startup_dependency.c"
@@ -348,8 +353,8 @@ def check_executable(path: Path, mode: str) -> dict[str, object]:
         values = image.tags(tag)
         require(len(values) == 1 and values[0] != 0, f"{path.name}: lifecycle tag {tag} is absent or empty")
     starts = [item for item in image.symtab if item.name == "_start" and item.section != 0]
-    require(len(starts) == 1 and starts[0].binding == 1 and starts[0].symbol_type == STT_FUNC,
-            f"{path.name}: expected one global installed-CRT _start")
+    require(len(starts) == 1 and starts[0].binding == 0 and starts[0].symbol_type == STT_FUNC,
+            f"{path.name}: expected one local installed-CRT _start")
     require(image.entry == starts[0].value, f"{path.name}: ELF entry is not the installed CRT _start")
     for name in ("_init", "_fini", "__crabc_x86_64_dynamic_start"):
         require(sum(item.name == name and item.section != 0 for item in image.symtab) == 1,
@@ -401,7 +406,10 @@ def check_link_receipt(product: Path, output: Path, mode: str, objects: list[Pat
     trace = receipt.get("link_trace")
     member = f"{archive}(crabc-builtins.o)"
     expected_trace = [member if path == archive else str(path) for path in ordered]
-    require(trace == expected_trace, f"{output.name}: link trace differs: {trace}")
+    require(isinstance(trace, list) and all(type(path) is str for path in trace),
+            f"{output.name}: link trace is malformed")
+    require(product_evidence.semantic_link_trace(trace) == expected_trace,
+            f"{output.name}: link trace differs: {trace}")
     return {"runtime_inputs": receipt["owned_runtime_inputs"], "link_command": command, "link_trace": trace}
 
 

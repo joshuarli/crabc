@@ -28,11 +28,12 @@ mkdir -p "$work/execution-root/etc"
 assert_passwd_symbols() {
     local binary="$1" table="$2" output="$3"
     readelf --wide "$table" "$binary" >"$output"
-    python3 -B - "$output" <<'PYTHON'
+    python3 -B - "$output" "$table" <<'PYTHON'
 from pathlib import Path
 import sys
 names = {'getpwnam', 'getpwuid', 'getpwnam_r', 'getpwuid_r', 'getpwent',
          'setpwent', 'endpwent', 'fgetpwent', 'putpwent'}
+assert sys.argv[2] in ('--syms', '--dyn-syms'), sys.argv[2]
 symbols = {}
 for line in Path(sys.argv[1]).read_text().splitlines():
     fields = line.split()
@@ -40,7 +41,9 @@ for line in Path(sys.argv[1]).read_text().splitlines():
         symbols[fields[7]] = fields
 assert set(symbols) == names, symbols
 for name, fields in symbols.items():
-    binding = 'WEAK' if name == 'endpwent' else 'GLOBAL'
+    binding = 'LOCAL' if sys.argv[2] == '--syms' else (
+        'WEAK' if name == 'endpwent' else 'GLOBAL'
+    )
     assert fields[3:6] == ['FUNC', binding, 'DEFAULT'] and fields[6] != 'UND', fields
 end, start = symbols['endpwent'], symbols['setpwent']
 assert end[1:3] == start[1:3] and end[6] == start[6], (start, end)

@@ -19,9 +19,9 @@ SCHEMA = 'crabc.x86_64-owned-wordexp-upstream-policy/v1'
 UPSTREAM_SOURCE = 'source-prepared/src/functional/wordexp.c'
 UPSTREAM_SOURCE_SHA256 = 'e3e310de1a73bc30273ac5f4711492817a2f26a5750795c9a3f0be42645871c9'
 REFERENCE = 'compat/x86_64/owned_wordexp_upstream_policy_diagnostics.json'
-REFERENCE_SHA256 = '4a18984a01a412185a2e605f1b8964312dd07edefd5522273a0522c89ffb9372'
+REFERENCE_SHA256 = '6f8d30f8dbdc4b9ec360252a5ead074984c323ad91138346971179850340e6b9'
 REFERENCE_SCHEMA = 'crabc.x86_64-wordexp-upstream-diagnostics/v1'
-REFERENCE_MEASUREMENT = '96a4a847'
+REFERENCE_MEASUREMENT = '28c7e92e9'
 SOURCE_POLICY_PROBE = 'compat/x86_64/owned_wordexp_source_policy_probe.c'
 SOURCE_POLICY_CASE = 'source-policy'
 SOURCES = ('compat/x86_64/owned_wordexp_upstream_policy.py', REFERENCE)
@@ -44,26 +44,6 @@ _CANDIDATE_ROWS = (
     (2, 0, '-'), (2, 0, '-'), (2, 0, '-'), (2, 0, '-'),
 )
 
-# The fixed musl C-companion transcript is retained as an observation. It
-# demonstrates why matching or alternate shell behavior cannot waive the
-# twenty candidate obligations.
-_ORACLE_ROWS = (
-    (0, 1, '1:32', '-', 0),
-    (5, 0, '-', '73683a206576616c3a206c696e6520303a2073796e746178206572726f723a20756e6578706563746564202229220a', 0),
-    (5, 0, '-', '73683a206576616c3a206c696e6520303a2073796e746178206572726f723a20756e6578706563746564202228220a', 0),
-    (5, 0, '-', '73683a206576616c3a206c696e6520303a2073796e746178206572726f723a20756e6578706563746564202229220a', 0),
-    (5, 0, '-', '73683a206576616c3a206c696e6520303a2073796e746178206572726f723a20756e6578706563746564202228220a', 0),
-    (4, 0, '-', '-', 0), (4, 0, '-', '-', 0), (4, 0, '-', '-', 0),
-    (2, 0, '-', '-', 0), (0, 1, '3:78270a', '-', 0), (4, 0, '-', '-', 0),
-    (0, 1, '5:247b41427d', '-', 0), (2, 0, '-', '-', 0), (4, 0, '-', '-', 0),
-    (5, 0, '-', '73683a206576616c3a206c696e6520303a2061726974686d657469632073796e746178206572726f720a', 1),
-    (2, 0, '-', '-', 0),
-    (5, 0, '-', '73683a206576616c3a206c696e6520313a2073796e746178206572726f723a206d697373696e6720272929270a', 0),
-    (5, 0, '-', '73683a206576616c3a206c696e6520323a2073796e746178206572726f723a206d697373696e6720272929270a', 0),
-    (2, 0, '-', '-', 0), (2, 0, '-', '-', 0),
-)
-
-
 def _render_rows(rows):
     return ''.join(
         f'owned-wordexp-source-policy: case={index:02d} status={status} count={count} '
@@ -79,7 +59,7 @@ def candidate_trace():
 
 def oracle_trace():
     """The fixed musl observation for the same public-C companion."""
-    return _render_rows(_ORACLE_ROWS)
+    return wordexp.SOURCE_POLICY_ORACLE_TRACE
 
 
 def _reference(root):
@@ -92,7 +72,7 @@ def _reference(root):
                 [REFERENCE_MEASUREMENT, REFERENCE_SCHEMA, UPSTREAM_SOURCE_SHA256,
                  'FAIL /functional/wordexp [status 1]\n'], 'wordexp diagnostic reference contract')
     native.keys(value['sides'], ('candidate', 'oracle'), 'wordexp diagnostic reference sides')
-    for side, count in (('candidate', 20), ('oracle', 104)):
+    for side, count in (('candidate', 20), ('oracle', 67)):
         item = value['sides'][side]
         native.keys(item, ('diagnostics', 'status', 'stderr'), 'wordexp diagnostic reference side')
         native.require(isinstance(item['diagnostics'], list) and len(item['diagnostics']) == count,

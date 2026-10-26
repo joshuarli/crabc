@@ -91,6 +91,7 @@ receipt_products+=(
     "dynamic-libc=$dynamic_sysroot/usr/lib/libc.so"
     "dynamic-loader=$dynamic_sysroot/lib/ld-crabc-x86_64.so.1"
     "dynamic-driver=$driver"
+    "dynamic-builtins=$dynamic_sysroot/usr/lib/libcrabc-builtins.a"
     "musl-libc=/opt/musl-1.2.6/lib/libc.so"
     "musl-interpreter=$musl_interpreter"
 )
