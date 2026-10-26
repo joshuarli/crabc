@@ -55,6 +55,10 @@ static INIT: unsafe extern "C" fn() = constructor;
 #[link_section = ".fini_array"]
 static FINI: unsafe extern "C" fn() = destructor;
 
+#[used]
+#[link_section = ".data.rel.ro"]
+static mut RELRO_WORD: usize = 17;
+
 #[no_mangle]
 pub unsafe extern "C" fn main(
     argc: i32,
@@ -63,6 +67,10 @@ pub unsafe extern "C" fn main(
 ) -> i32 {
     if argc <= 0 || argv.is_null() || unsafe { core::ptr::read(argv) }.is_null() {
         return 81;
+    }
+    if argc > 1 && unsafe { **argv.add(1) } == b'!' {
+        unsafe { core::ptr::write_volatile(core::ptr::addr_of_mut!(RELRO_WORD), 19) };
+        return 83;
     }
 
     let mut output = [0u8; 16];

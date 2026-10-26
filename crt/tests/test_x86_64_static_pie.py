@@ -7,6 +7,7 @@ import json
 import os
 import platform
 import re
+import signal
 import struct
 import subprocess
 import sys
@@ -373,6 +374,13 @@ class X86_64StaticPieTests(unittest.TestCase):
                 self.assertRegex(first.stdout, rb"^I[0-9a-f]{16}F$")
                 self.assertRegex(second.stdout, rb"^I[0-9a-f]{16}F$")
                 self.assertNotEqual(first.stdout, second.stdout, "static PIE did not receive distinct ASLR bases")
+
+                relro_write = subprocess.run(
+                    [str(executable), "!"], stdin=subprocess.DEVNULL,
+                    stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False,
+                )
+                self.assertEqual(relro_write.returncode, -signal.SIGSEGV)
+                self.assertEqual(relro_write.stdout, b"I")
 
                 duplicate = subprocess.run(
                     [str(duplicate_relro_header(executable))], stdin=subprocess.DEVNULL,

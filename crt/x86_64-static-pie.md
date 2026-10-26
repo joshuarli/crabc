@@ -27,8 +27,12 @@ The static evidence consumes exactly these Rust-produced objects:
   at most one nonempty `PT_GNU_RELRO` contained in a page-rounded writable,
   non-executable load; then calls the static-only lifecycle handoff. Its
   pre-relocation assembly never reads TLS or the GOT.
+
 - `crti.o` and `crtn.o`: ordered `.init`/`.fini` frame fragments consumed by
   the static lifecycle handoff.
+
+The static PIE fixture writes to an admitted RELRO word after startup and
+requires a protection fault in both RELA and RELR variants.
 
 `crt/src/x86_64_startup.rs` is the shared private static-startup path.
 `rcrt1.o` reaches it after relocation and RELRO through an
