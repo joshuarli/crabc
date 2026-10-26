@@ -313,18 +313,33 @@ twelve producers pass, seven fail, one dependent producer is blocked, and two
 companions require their existing family flows. Its complete manifest and raw
 logs remain under `.work/x86_64/abi-differential/abi-proof-companions/`.
 
-The next bounded repair group owns the demonstrated failures in separate
-mutable worktrees: `abi-declaration-composition` shares strict installed-header
-composition validation with the ordinary declaration owner;
-`abi-pthread-binding` investigates `__pthread_detach` archive binding;
-`abi-crt-link` investigates the conventional PIE link error; and
-`abi-companion-image-inputs` compares four failed image-input checks. The latter
-has established that all four retained manifests differ from the accepted
-rebuilt image only in the rustup-init executable bytes and size, with matching
-path and mode. No comparison will be relaxed. The coordinator must review the
-corresponding exact manifest refresh before a new same-source native proof.
-Existing frozen products, failed receipts and main qualification claims remain
-unchanged. Performance remains behind correctness.
+The bounded repair group is integrated through `9fbcc1153`. `8877180e6`
+shares one strict installed-header composition validator between declaration
+and selection readers. Its regression rejects project, kernel, directory and
+physical-entry drift. `8ae976fea` refreshes four retained image-input manifests
+to the accepted rebuilt image's rustup-init bytes and size. Their paths, modes,
+tool rosters and exact comparisons remain unchanged. All four owner generators
+match the refreshed manifests in the pinned image.
+
+`9c99f60c7` fixes the conventional CRT link plan's missing owned helper archive.
+Retained stderr identifies unresolved `__udivti3` from the existing probe.
+The plan now consumes the canonical helper archive and exclusion policy before
+candidate `libc.so`. Its receipt regression accepts the corrected command and
+rejects the self-sealed legacy omission. `a67e6ae1c` corrects the pthread alias
+reader's source-form assumption. Musl's two local archive providers and Rust's
+hidden global providers have the same required public alias behavior. The v2
+receipt records exact provider shapes by role instead of shared hidden/local
+lists. Public alias, address, localization and caller-relocation checks remain
+strict. `9fbcc1153` makes the regression's observed rows independent of reader
+policy and checks visibility, binding and address failures.
+
+The affected focused Python suites pass, with existing fixture skips retained
+as unverified. No runtime implementation changed. The prepared
+`.work/wt/abi-companion-proof` will freeze the integrated revision and run fresh
+static preparation, bounded dynamic materialization, the four collectors and
+the standard companion loop. Existing frozen products and failures remain
+unchanged. No qualification claim or publication changes. Performance remains
+behind correctness.
 
 The addrconfig lane's musl scratch remains under its `.work/tmp`: automatic
 review denied its removal with "rm -f style commands are not permitted. Use
