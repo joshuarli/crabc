@@ -54,6 +54,24 @@ The remaining structural, consumer-owned and feature-alias identity proofs
 remain implementation work. The parked POSIX aggregate and denied allocator
 diagnostics remain outside the retry scope. No qualification claim changes.
 
+`0dbdcf1f9` completes the auxv attachment after correcting its consumer import
+to the actual `NOTYPE` metadata. `2030a12b4` attaches the visible wide-time pair
+from locale receipt v5. The accepted-C preparation proves its declared
+aggregate feature route. `3ae0e57b8` supplies read-only signal replay while
+preserving the v1 record and producer API. The combined five-module check
+passes 241 tests run: 236 passed and five existing skips. Current selection
+report format is v10. Fresh native admission is pending in the prepared,
+clean `.work/wt/abi-crt-locale-proof`; freeze its source before products.
+
+The isolated binary80 leaf passes 247 native records, but `d0b804d83` remains
+unmerged. Review found that its feature account did not reconstruct actual
+rustc commands and extern/member closure, and ignored unowned archive globals.
+The graph-replay lane must close both proof gaps. `fb1c214f6` and `bf4127ba3`
+preserve failed default evidence, constrain retained output to `.work/x86_64`
+and remove a source-layout test. Their seven focused tests pass. These fixes
+remain with the held math source group. The existing bootstrap fixture's
+installed-product path is a separate in-flight proof for the local jump tail.
+
 **Earlier accepted checkpoint:** the frozen `99cd68019` ABI proof passes
 the normal canonical reader: 5,175 identities, 41,307 occurrences and zero
 rejected companions. Its 146 closure blockers remain truthful. The first
