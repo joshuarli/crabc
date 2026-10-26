@@ -17,6 +17,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import abi_differential_evidence as evidence  # noqa: E402
 import qualification_gates  # noqa: E402
+import compiler_helper_evidence as compiler_helpers  # noqa: E402
 
 SOURCE = {"revision": "1" * 40, "content_sha256": "2" * 64}
 
@@ -117,6 +118,95 @@ class AbiDifferentialEvidenceTests(unittest.TestCase):
         self.assertEqual(argv[argv.index("--dynamic-product") + 1], str(self.work / "dynamic"))
         self.assertEqual(environment, {})
 
+    def test_installed_helper_producer_uses_the_cohort_aggregate_and_crt_anchor(self) -> None:
+        producer = next(row for row in evidence.PRODUCERS if row.keyword == "compiler_helper_installed_links")
+        aggregate = self.work / "aggregate" / "report.json"
+        crt = self.work / "crt" / "report.json"
+        output = self.work / "installed-links"
+        argv, environment = producer.command(
+            self.cohort(),
+            {"compiler_helper_aggregate_report": aggregate, "crt_startup_report": crt},
+            output,
+        )
+        self.assertEqual(producer.requires, ("compiler_helper_aggregate_report", "crt_startup_report"))
+        self.assertEqual(argv[:4], ["python3", "-B", "compat/x86_64/compiler_helper_evidence.py",
+                                    "collect-installed-links"])
+        for option, expected in (
+            ("--static-product", self.work / "static"),
+            ("--dynamic-product", self.work / "dynamic"),
+            ("--static-preparation", self.work / "preparation.json"),
+            ("--base-inventory", self.reports["native_abi_inventory"]),
+            ("--elf-report", self.reports["native_abi_elf_facts"]),
+            ("--aggregate-report", aggregate),
+            ("--crt-startup-report", crt),
+            ("--output", output),
+        ):
+            self.assertEqual(Path(argv[argv.index(option) + 1]), expected)
+        self.assertEqual(environment, {})
+        self.assertIn("compiler_helper_installed_links", evidence.DIRECTORY_COMPANIONS)
+
+    def test_directory_companion_seal_binds_symbolic_link_target(self) -> None:
+        work = self.work / "symlink-companion"
+        work.mkdir()
+        link = work / "alias"
+        link.symlink_to("first-target")
+        first = evidence._companion_sha256("compiler_helper_installed_links", work)
+        link.unlink()
+        link.symlink_to("second-target")
+        self.assertNotEqual(evidence._companion_sha256("compiler_helper_installed_links", work), first)
+
+    def test_installed_helper_receipts_are_mapped_for_assembly_and_replay(self) -> None:
+        import native_abi_ratchet
+        import native_abi_selection
+
+        links = self.work / "installed-links"
+        links.mkdir()
+        filenames = {"static": "static.json", "static-pie": "static-pie.json",
+                     "pie": "pie.crabc-link.json", "non-pie": "non-pie.crabc-link.json"}
+        for filename in filenames.values():
+            (links / filename).write_text("receipt")
+        crt = self.work / "crt.json"
+        crt.write_text("crt receipt")
+        relative = links.relative_to(evidence.ROOT).as_posix()
+        self.record["selection_companions"] = {
+            "compiler_helper_installed_links": {
+                "path": relative,
+                "sha256": evidence._companion_sha256("compiler_helper_installed_links", links),
+            },
+            "crt_startup_report": {
+                "path": crt.relative_to(evidence.ROOT).as_posix(),
+                "sha256": evidence._sha256(crt),
+            },
+        }
+        expected = {mode: links / filename for mode, filename in filenames.items()}
+        self.assertEqual(compiler_helpers.installed_link_receipts(links), expected)
+
+        output = evidence.OUTPUT_PARENT / f"assemble-helper-test-{self.work.name}"
+        self.addCleanup(lambda: __import__("shutil").rmtree(output, ignore_errors=True))
+        arguments = argparse.Namespace(**self.cohort().__dict__, output=output, companions=None,
+                                       selection_companion=[
+                                           f"compiler_helper_installed_links={links}",
+                                           f"crt_startup_report={crt}",
+                                       ])
+
+        def build_report(*, output, **kwargs):
+            self.assertEqual(kwargs["compiler_helper_installed_links"], expected)
+            self.assertEqual(kwargs["crt_startup_report"], crt)
+            output.mkdir()
+            (output / "report.json").write_text("selection")
+
+        with mock.patch.object(native_abi_ratchet, "check", return_value=self.reports["native_abi_ratchet"]), \
+             mock.patch.object(native_abi_selection, "build_report", side_effect=build_report):
+            loaded = evidence.load(self.write())
+            self.assertEqual(loaded.selection_arguments()["compiler_helper_installed_links"], expected)
+            receipt = evidence.assemble(arguments)
+        evidence_record = json.loads(receipt.read_text())
+        entry = evidence_record["selection_companions"]["compiler_helper_installed_links"]
+        self.assertEqual(entry["path"], relative)
+        self.assertEqual(entry["sha256"], evidence._companion_sha256("compiler_helper_installed_links", links))
+        assembled = evidence.load(receipt)
+        self.assertEqual(assembled.selection_arguments()["compiler_helper_installed_links"], expected)
+
     def producer(self, keyword: str, *, fails: bool = False, requires: tuple[str, ...] = ()) -> "evidence.CompanionProducer":
         def command(_cohort, reports, output):
             for name in requires:
@@ -203,7 +293,7 @@ class AbiDifferentialEvidenceTests(unittest.TestCase):
                 evidence.load(self.write())
             (work / "workload.o").write_bytes(b"object")
             (work / "escaped").symlink_to(self.reports["native_abi_ratchet"])
-            with self.assertRaisesRegex(evidence.EvidenceError, "non-physical entry"):
+            with self.assertRaisesRegex(evidence.EvidenceError, "bytes changed after assembly"):
                 evidence.load(self.write())
 
     def test_fchdir_work_replays_receipt_against_selected_products(self) -> None:

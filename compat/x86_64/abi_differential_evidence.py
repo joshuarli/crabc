@@ -74,6 +74,7 @@ SELECTION_COMPANIONS = (
     "ordinary_declaration_abi_report",
     "loader_debug_report",
     "compiler_helper_aggregate_report",
+    "compiler_helper_installed_links",
     "loader_runtime_registry_report",
     "pthread_alias_contract_report",
     "prepared_worker_tls_report",
@@ -95,7 +96,9 @@ SELECTION_COMPANIONS = (
     "fchdir_ordinary_import_work",
     "provider_link_work",
 )
-DIRECTORY_COMPANIONS = {"fchdir_ordinary_import_work", "provider_link_work"}
+DIRECTORY_COMPANIONS = {
+    "compiler_helper_installed_links", "fchdir_ordinary_import_work", "provider_link_work",
+}
 # The one companion that is checked-in generated source rather than `.work`
 # evidence; the source seal already binds its bytes.
 SOURCE_COMPANIONS = {
@@ -136,11 +139,16 @@ def _tree_sha256(path: Path) -> str:
             child = Path(parent) / name
             relative = child.relative_to(path).as_posix().encode()
             mode = child.lstat().st_mode
-            require(stat.S_ISDIR(mode) or stat.S_ISREG(mode), f"companion work has a non-physical entry: {child}")
-            digest.update(b"D" if stat.S_ISDIR(mode) else b"F")
+            require(stat.S_ISDIR(mode) or stat.S_ISREG(mode) or stat.S_ISLNK(mode),
+                    f"companion work has a non-physical entry: {child}")
+            digest.update(b"L" if stat.S_ISLNK(mode) else b"D" if stat.S_ISDIR(mode) else b"F")
             digest.update(len(relative).to_bytes(8, "big"))
             digest.update(relative)
-            if stat.S_ISREG(mode):
+            if stat.S_ISLNK(mode):
+                target = os.fsencode(os.readlink(child))
+                digest.update(len(target).to_bytes(8, "big"))
+                digest.update(target)
+            elif stat.S_ISREG(mode):
                 digest.update(hashlib.sha256(child.read_bytes()).digest())
     return digest.hexdigest()
 
@@ -243,8 +251,14 @@ class EvidenceSet:
             "base_inventory": self.reports["native_abi_inventory"],
             **self.product_arguments,
             "declaration_report": self.reports["header_declaration_inventory"],
-            **self.companions,
+            **{name: path for name, path in self.companions.items()
+               if name != "compiler_helper_installed_links"},
         }
+        if "compiler_helper_installed_links" in self.companions:
+            import compiler_helper_evidence
+
+            arguments["compiler_helper_installed_links"] = compiler_helper_evidence.installed_link_receipts(
+                self.companions["compiler_helper_installed_links"])
         # Selection admits the ordinary-link receipt only paired with the
         # loader-debug receipt for the shared-only `_dl_debug_addr` pointer.
         if "loader_debug_report" in self.companions:
@@ -556,6 +570,16 @@ PRODUCERS = (
                           "--output", str(o), *_p(c), "--historical-facts", str(c.native_abi_elf_facts)], {}),
         _in),
     CompanionProducer(
+        "compiler_helper_installed_links",
+        lambda c, r, o: (["python3", "-B", "compat/x86_64/compiler_helper_evidence.py",
+                          "collect-installed-links", "--root", str(ROOT),
+                          "--base-inventory", str(c.native_abi_inventory),
+                          "--elf-report", str(c.native_abi_elf_facts), *_p(c),
+                          "--aggregate-report", str(r["compiler_helper_aggregate_report"]),
+                          "--crt-startup-report", str(r["crt_startup_report"]),
+                          "--output", str(o)], {}),
+        lambda output: output, requires=("compiler_helper_aggregate_report", "crt_startup_report")),
+    CompanionProducer(
         "syscall_alias_contract_report",
         lambda c, r, o: (["python3", "-B", "compat/x86_64/owned_syscall_alias_contract_reader.py", "collect",
                           "--output", str(o), *_p(c), "--elf-facts", str(c.native_abi_elf_facts),
@@ -768,8 +792,14 @@ def assemble(arguments: argparse.Namespace) -> Path:
         "base_inventory": reports["native_abi_inventory"],
         **inputs,
         "declaration_report": reports["header_declaration_inventory"],
-        **companions,
+        **{name: path for name, path in companions.items()
+           if name != "compiler_helper_installed_links"},
     }
+    if "compiler_helper_installed_links" in companions:
+        import compiler_helper_evidence
+
+        selection_inputs["compiler_helper_installed_links"] = compiler_helper_evidence.installed_link_receipts(
+            companions["compiler_helper_installed_links"])
     if "loader_debug_report" in companions:
         selection_inputs["ordinary_link_report"] = reports["public_data_ordinary_link"]
     native_abi_selection.build_report(output=output / "selection", **selection_inputs)

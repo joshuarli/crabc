@@ -75,6 +75,20 @@ selection and needs a fresh installed-product proof. The single observed static
 ordinary `__popcountdi2` import is attached only when fresh same-source
 static/dynamic products, complete ELF facts, and the existing public-data
 ordinary-link receipt are supplied.
+
+The ABI-differential `compiler_helper_installed_links` companion uses the
+existing `x86_64_compiler_helper_aggregate_probe.c` fixture. It compiles one
+hosted object with the selected static driver, then links that object as
+static, static PIE, dynamic PIE, and dynamic non-PIE. It runs all four outputs
+and requires `compiler-helper-aggregate-ok\n`. The dynamic runs use a private
+copy of the selected dynamic product under the validated chroot invocation.
+The companion retains each command's argv, streams, and status with the four
+driver receipts. The selection reader passes those receipts through
+`retained_compiler_helper_link`, which checks every owned helper body and
+resolved call. This proves the four installed link modes for the selected
+cohort. It does not complete the compiler-helper family or qualify runtime
+semantics.
+
 The ordinary report seals link receipts relative to the checkout; each driver
 receipt names its map and trace relative to its own directory. The helper
 reader uses the ordinary reader's identity resolver for the outer receipt,
