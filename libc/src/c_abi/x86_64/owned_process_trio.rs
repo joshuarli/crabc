@@ -80,7 +80,6 @@ __crabc_owned_clone_raw:
     );
 }}
 
-// Musl's `src/process/vfork.c` object.
 static_archive_member! { vfork_source {
     core::arch::global_asm!(
         r#"
@@ -99,13 +98,10 @@ vfork:
 .section .note.GNU-stack,"",@progbits
 "#,
     );
-}}
 
-// vfork cannot have a Rust frame spanning syscall58: the child shares and
-// may overwrite the parent's stack. The source assembly removes its return
-// address before entering Linux, then tail-calls only the errno conversion.
-#[no_mangle]
-unsafe extern "C" fn __crabc_owned_vfork_result(result: i64) -> c_int { c_status(result) }
+    #[no_mangle]
+    unsafe extern "C" fn __crabc_owned_vfork_result(result: i64) -> c_int { c_status(result) }
+}}
 
 struct CloneStart {
     function: Option<CloneFunction>,

@@ -31,4 +31,5 @@ assert_provider "$work_dir/oracle-symbols" __tsearch_balance FUNC
 assert_provider "$work_dir/oracle-symbols" __memcpy_fwd NOTYPE
 assert_provider "$work_dir/candidate-symbols" __tsearch_balance FUNC
 assert_provider "$work_dir/candidate-symbols" __memcpy_fwd FUNC
+assert_provider "$work_dir/candidate-symbols" __crabc_owned_vfork_result FUNC
 printf 'x86 libc private archive members: PASS\n'
