@@ -49,6 +49,9 @@ scripts/lanes/rust-check.sh bash compat/x86_64/run_libc_bootstrap_primitives.sh 
   --dynamic-product /workspace/.work/x86_64/DYNAMIC_PRODUCT
 ```
 
+Source checks read a release dynamic product's sealed materialization state.
+Debug dynamic products bind source in their manifest.
+
 It compiles one workload object through the installed driver and headers, then
 links that object to pinned musl and all four candidate modes. It retains the
 object, four sealed links, dynamic ELF inspection and map sidecars, six raw

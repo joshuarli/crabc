@@ -119,10 +119,14 @@ class NativeObservationsTests(unittest.TestCase):
                                 ('installed header ' + name + '\n').encode())
         product_fixture.put('dynamic-product/share/crabc/crabc_cc_static.py',
                             b"HOSTED_TRANSLATION_FLAGS = ('-fno-stack-protector',)\n")
+        self.put(dynamic / 'share/crabc/dynamic-product-state.json', {
+            'schema': 'crabc.x86_64-owned-dynamic-materialization/v1',
+            'source_sha256': source_sha256,
+        })
         product_fixture.refresh_dynamic_manifest()
         dynamic_manifest_path = dynamic / 'share/crabc/manifest.json'
         dynamic_manifest = json.loads(dynamic_manifest_path.read_text())
-        dynamic_manifest['source_sha256'] = source_sha256
+        dynamic_manifest['build_profile'] = 'release'
         product_fixture.write_json(dynamic_manifest_path, dynamic_manifest)
         static_manifest_path = product_fixture.static / 'share/crabc/manifest.json'
         static_manifest = json.loads(static_manifest_path.read_text())
@@ -552,6 +556,21 @@ class NativeObservationsTests(unittest.TestCase):
         self.bootstrap_fixture()
         with self.assertRaises(native.NativeObservationError):
             self.collect_bootstrap(source_digests=(self.bootstrap_source_sha256, '0' * 64))
+
+    def test_bootstrap_primitives_rejects_stale_sealed_dynamic_source(self):
+        self.bootstrap_fixture()
+        product = self.bootstrap_dynamic
+        state_path = product / 'share/crabc/dynamic-product-state.json'
+        state = json.loads(state_path.read_text())
+        state['source_sha256'] = '0' * 64
+        self.put(state_path, state)
+        manifest_path = product / 'share/crabc/manifest.json'
+        manifest = json.loads(manifest_path.read_text())
+        manifest['source_sha256'] = self.bootstrap_source_sha256
+        manifest['files']['share/crabc/dynamic-product-state.json'] = hashlib.sha256(state_path.read_bytes()).hexdigest()
+        self.put(manifest_path, manifest)
+        with self.assertRaisesRegex(native.NativeObservationError, 'source differs'):
+            self.collect_bootstrap()
 
     def test_bootstrap_primitives_rejects_missing_or_changed_dynamic_elf_sidecars(self):
         self.bootstrap_fixture()

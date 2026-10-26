@@ -542,6 +542,26 @@ def _validate_dynamic_product(root: Path) -> tuple[Path, dict[str, str]]:
 
 
 
+def validate_dynamic_product_source(root: Path, source_sha256: str) -> None:
+    _validate_dynamic_product(root)
+    _, manifest, _ = _product_manifest(root, "dynamic", DYNAMIC_PRODUCT_FORMAT)
+    if manifest.get("build_profile") == "debug":
+        validate_debug_product_source(root, source_sha256)
+        return
+    if manifest.get("build_profile") != "release":
+        _fail("dynamic product build profile differs")
+    try:
+        state = json.loads(_physical_regular(root / "share/crabc/dynamic-product-state.json",
+                                            "dynamic materialization state").read_text(),
+                           object_pairs_hook=_no_duplicate_object)
+    except (OSError, UnicodeDecodeError, ValueError) as error:
+        raise ProductEvidenceError("dynamic product source state is not valid JSON") from error
+    if type(state) is not dict or state.get("schema") != "crabc.x86_64-owned-dynamic-materialization/v1":
+        _fail("dynamic product source state schema differs")
+    if state.get("source_sha256") != source_sha256:
+        _fail("dynamic product source differs from current checkout")
+
+
 def validate_debug_product_source(root: Path, source_sha256: str) -> None:
     """Bind an unqualified debug product to live source, without release claims.
 

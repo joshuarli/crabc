@@ -214,8 +214,14 @@ def _bootstrap_product_snapshot(reader, product, kind, source_sha256):
                      else product_evidence.DYNAMIC_PRODUCT_FORMAT)
     manifest_path, files = validator(product)
     _, manifest, _ = product_evidence._product_manifest(product, kind, product_format)
-    require(manifest.get('source_sha256') == source_sha256,
-            'bootstrap ' + kind + ' product source differs from the current checkout')
+    if kind == 'dynamic':
+        try:
+            product_evidence.validate_dynamic_product_source(product, source_sha256)
+        except product_evidence.ProductEvidenceError as error:
+            raise NativeObservationError('bootstrap ' + str(error)) from error
+    else:
+        require(manifest.get('source_sha256') == source_sha256,
+                'bootstrap static product source differs from the current checkout')
     return {
         'root': product.relative_to(reader.root).as_posix(),
         'manifest': reader.identity(manifest_path, source=True),

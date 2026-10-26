@@ -957,6 +957,37 @@ class OwnedPosixProductEvidenceTests(unittest.TestCase):
         evidence.validate_debug_product_source(product, "a" * 64)
         self.assertEqual(driver.validate(product)["source_sha256"], "a" * 64)
 
+    def test_release_product_source_uses_sealed_materialization_state(self) -> None:
+        state_path = self.dynamic / "share/crabc/dynamic-product-state.json"
+        self.write_json(state_path, {
+            "schema": "crabc.x86_64-owned-dynamic-materialization/v1", "source_sha256": "a" * 64,
+        })
+        self.refresh_dynamic_manifest()
+        manifest_path = self.dynamic / "share/crabc/manifest.json"
+        manifest = json.loads(manifest_path.read_text())
+        manifest["build_profile"] = "release"
+        self.write_json(manifest_path, manifest)
+        evidence.validate_dynamic_product_source(self.dynamic, "a" * 64)
+        with self.assertRaisesRegex(evidence.ProductEvidenceError, "source differs"):
+            evidence.validate_dynamic_product_source(self.dynamic, "b" * 64)
+        self.write_json(state_path, {
+            "schema": "crabc.x86_64-owned-dynamic-materialization/v1", "source_sha256": "b" * 64,
+        })
+        with self.assertRaisesRegex(evidence.ProductEvidenceError, "dynamic-product-state.json hash differs"):
+            evidence.validate_dynamic_product_source(self.dynamic, "b" * 64)
+
+    def test_release_product_source_rejects_wrong_materialization_schema(self) -> None:
+        self.write_json(self.dynamic / "share/crabc/dynamic-product-state.json", {
+            "schema": "other", "source_sha256": "a" * 64,
+        })
+        self.refresh_dynamic_manifest()
+        manifest_path = self.dynamic / "share/crabc/manifest.json"
+        manifest = json.loads(manifest_path.read_text())
+        manifest.update(build_profile="release", source_sha256="a" * 64)
+        self.write_json(manifest_path, manifest)
+        with self.assertRaisesRegex(evidence.ProductEvidenceError, "source state schema"):
+            evidence.validate_dynamic_product_source(self.dynamic, "a" * 64)
+
     def test_rehashed_debug_product_stale_source_is_rejected(self) -> None:
         product = self.debug_product()
         with self.assertRaisesRegex(evidence.ProductEvidenceError, "source differs"):

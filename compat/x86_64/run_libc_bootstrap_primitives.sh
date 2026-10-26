@@ -123,7 +123,9 @@ try:
     for kind, path in zip(('static', 'dynamic'), selected):
         product_format = products.STATIC_PRODUCT_FORMAT if kind == 'static' else products.DYNAMIC_PRODUCT_FORMAT
         _, manifest, _ = products._product_manifest(path, kind, product_format)
-        if manifest.get('source_sha256') != source:
+        if kind == 'dynamic':
+            products.validate_dynamic_product_source(path, source)
+        elif manifest.get('source_sha256') != source:
             raise products.ProductEvidenceError(f'{kind} product source differs from the current checkout')
         print(path)
 except (OSError, RuntimeError, ValueError) as error:
