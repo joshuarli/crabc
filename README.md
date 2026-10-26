@@ -32,6 +32,17 @@ no non-Linux libc.
 The allocator is mimalloc: the upstream C implementation today, with a
 source-faithful Rust port of mimalloc v3.5.0 under qualification.
 
+## Runtime hardening
+
+Native x86-64 hardening is a required priority before qualification and public
+promotion: a separately built hardened profile will require PIE, non-executable
+stacks, page-level W^X, effective RELRO, eager binding, and explicit library
+search rules. Existing compatibility products retain their selected behavior.
+This is a completion requirement, not a claim that the profile has shipped.
+The [compatibility profile](COMPATIBILITY-PROFILE.md#runtime-hardening-profiles)
+defines the restrictions; [plan.md](plan.md#runtime-hardening) owns the work and
+the current campaign pause.
+
 ## Compatibility
 
 - [COMPATIBILITY-PROFILE.md](COMPATIBILITY-PROFILE.md) states the intentional

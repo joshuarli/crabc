@@ -19,9 +19,35 @@ A C ABI pass does not prove the Rust-native path, or the reverse.
 | Resolver | Conventional files and bounded netdb behavior end to end: A, AAAA and CNAME, search, UDP and TCP fallback, timeout, retry and failover, reply validation, errors, cancellation, and result lifetime, proven through owned C products on controlled networks. |
 | C compatibility | Selected crypt through approved primitives, allocation, legacy compatibility, process globals, and final provider closure: names, aliases, bindings, visibility, sizes, and static and shared ownership, by ordinary archive extraction or an explicit structural boundary, never a hidden unresolved provider. |
 | Loader | General admitted dependency graphs: self-relocation and entry, search, RPATH and RUNPATH, mapping, protection and RELRO, supported RELA and RELR relocations, symbol scope, RuntimeV1, initial and runtime TLS, DTV growth, constructors and finalizers, and selected `dl*` introspection, including concurrency, reentrancy, fork, retained handles, malformed input, and failed-load rollback. |
-| CRT, builtins, sysroot | Owned static, static-PIE, dynamic PIE and dynamic non-PIE entry, libc handoff, lifecycle arrays, finalization, compiler helpers, and a deterministic link interface. The sysroot owns headers, CRT objects, `libc.a`, shared libc, the interpreter, builtins, allocator selection and link specifications; a pinned host compiler is permitted, ambient target inputs are not. |
+| CRT, builtins, sysroot | Compatibility products retain owned static, static-PIE, dynamic PIE and dynamic non-PIE entry. Hardened products require dynamic PIE or static PIE and reject non-PIE selection. Both require libc handoff, lifecycle arrays, finalization, compiler helpers, and a deterministic link interface. The sysroot owns headers, CRT objects, `libc.a`, shared libc, the interpreter, builtins, allocator selection and link specifications; a pinned host compiler is permitted, ambient target inputs are not. |
+| Runtime hardening | The native x86-64 [hardened profile](../COMPATIBILITY-PROFILE.md#runtime-hardening-profiles) is enforced across kernel/direct loader entry, initial dependencies/preloads, runtime `dlopen`, and applicable owned static-PIE startup. PIE admission, non-executable stacks, page-level W^X, bounded relocation writes, effective RELRO, eager binding, search restrictions and secure startup have positive, negative and failure-path evidence. Product selection cannot silently downgrade. |
 | Consumers | Rust std, dependency-bearing std, build-std, LTO, and the Lua source build through the real `_Unwind_*` ABI, ordinary archive extraction, and shared symbol resolution. Dummy unwind symbols, hidden providers, or C recovery are not implementations. |
 | Rust facade | Every other frozen family and exact semantic mapping, with direct native API, error, ownership, and dependency ownership. |
+
+### Hardening evidence
+
+Hardening is part of native correctness and public-promotion acceptance, not
+post-promotion tuning or a prerequisite that waits on the Rust allocator.
+Use the existing loader, CRT, sysroot and pthread matrices and qualification
+chain, with product identities distinguishing compatibility and hardened runs.
+Historical receipts cannot prove a newly selected contract.
+
+- Execute admitted PIE/DSO/static-PIE controls, and verify policy rejections
+  before constructor sentinels or application entry. Keep non-PIE and lazy
+  binding compatibility controls; do not relabel their failures as security.
+- Prove actual protections with isolated child-process write/execute faults
+  and mapping observations, including static-PIE and post-`dlopen` RELRO.
+  ELF tags and compiler/linker flags alone do not establish protection.
+- Exercise malformed/duplicate/overflowing headers and relocation ranges,
+  conflicting page permissions, missing required metadata, and unresolved
+  imports. A policy rejection and a malformed-input safety defect are distinct.
+- Inject mapping/protection/relocation/publication failures and verify that
+  rejected loads preserve the old graph, handles, TLS state and page
+  permissions, release newly owned resources, and run no rejected constructors.
+  Inability to restore safe protections is a fatal path, never partial success.
+- Verify guard, TLS, secure-state and protection ordering before callbacks
+  for each entry path and new threads, plus environment/command-line attempts
+  to weaken the selected profile. Require Linux 5.10-compatible core behavior.
 
 ## Native allocator
 

@@ -2,11 +2,17 @@
 
 **Status: paused 2026-10-26.** Owner requested campaign winddown and cleanup; start no campaign work until resumed.
 
-Resume prompt: “Resume plan.md from accepted `775ff60ac`; prepare a fresh source-frozen correctness cohort, then continue qualification and promotion.”
+**Priority on resume: runtime hardening (SEC0–SEC3).** The owner requested the
+glibc-style execution/loading defenses for crabc. Implement and qualify an
+explicit hardened native x86-64 product alongside compatibility products before
+the next correctness/public-promotion claim. This documentation change does not
+resume the campaign or credit retained receipts against the new contract.
+
+Resume prompt: “Resume plan.md from accepted `775ff60ac`; start SEC0, integrate SEC1–SEC3 with the existing runtime owners and correctness repairs, then freeze a fresh cohort for qualification and promotion.”
 First command: `git worktree add .work/wt/cohort-resume -b cohort/resume-20261026 main`.
 Accepted source is `775ff60ac`; main and `lane/campaign-integration` are clean. No public-support, allocator-default or qualification flag changed.
 Proof: 150 integrated reader tests pass; the next seven-module check has 134 passes/one receipt-dependent skip. Wordexp passes all 108 cells, independent input capture, companion replay and the exact 20/67 join. Three fresh locale products, the locale leaf/reader and the kache Rust check pass; independent review has no open P1/P2.
-Next: transfer only the prospective ledger/inventory delta from parked `cohort/native-mold-20261026-4` (`e0f103f24`), regenerate digests, prepare the existing pinned inputs and freeze before the 69-step correctness run. Never merge the rehearsal claims.
+Next on resume: audit the accepted source against the hardened contract (SEC0), complete SEC1–SEC3 and the existing correctness prerequisites, then prepare the source-frozen cohort. Bring forward only the prospective ledger/inventory delta from parked `cohort/native-mold-20261026-4` (`e0f103f24`), regenerate digests and prepare the existing pinned inputs before the correctness run. The delta remains prospective until H1; never merge the rehearsal claims or reuse old receipts as hardening proof.
 Current evidence consumers remain at `.work/wt/campaign-integration`, `.work/wt/cohort-native-mold`, `.work/wt/cohort-native-mold-2`, `.work/wt/cohort-native-mold-3`, `.work/wt/locale-null-base` and `.work/wt/wordexp-oracle-refresh`; retained raw failures and causal artifacts must not be relabelled as current-source qualification.
 The three failed mold cohorts remain frozen at `7eb375e52`, `fd3245f24`, `66d1727f0`. H04 has not begun proof; its prepared inputs are retained. Fresh products are required after the locale fix; the old-product stdio attempt correctly refuses current-source binding.
 Parking commits preserve completed lane source, original fixture locations and pre-parking HEAD context. Historical receipts keep their original identity; reconstruct their recorded source state or regenerate rather than crediting a parking commit.
@@ -19,10 +25,11 @@ Known bounded limitation: both the pinned oracle and candidate accept `newlocale
 ## Goal
 
 Make native Linux/x86-64 a publicly supported crabc target, then make the
-Rust port of mimalloc v3.5.0 its default allocator. Correctness comes first:
-every selected capability works through its intended runtime path and one
-revision passes the correctness qualification chain before any performance
-work.
+Rust port of mimalloc v3.5.0 its default allocator. Correctness and runtime
+hardening come first: every selected capability and the explicit hardened
+profile work through their intended paths, and one revision passes their
+correctness qualification before optimization. The accepted-C runtime can be
+hardened without waiting for native-allocator promotion.
 
 Deliverables:
 
@@ -31,7 +38,8 @@ Deliverables:
    allocator failures are tracked tests.
 2. **D2 Correctness qualification.** One revision on `main` at which all 223
    capabilities are `implemented-foundation`, all 25 functional families are
-   `foundation-verified`, and gates 1 to 7 pass.
+   `foundation-verified`, and gates 1 to 7 pass with SEC0–SEC3 requirements
+   exercised through the existing native family matrices and chain.
 3. **D3 Runtime performance.** A fresh scorecard exists and the runtime is no
    worse than pinned musl on every row.
 4. **D4 Public x86 support,** on the accepted C allocator.
@@ -142,6 +150,18 @@ worktree with a fresh `--work` name each time.
 
 ## Decisions
 
+### Owner-directed priority (2026-10-26)
+
+Runtime hardening is required before the next D2/D4 claim, not deferred until
+after public support or native-allocator promotion. The concrete selection is
+a separately built hardened x86-64 profile, preserving the existing
+compatibility products. Its contract is in
+[COMPATIBILITY-PROFILE.md](COMPATIBILITY-PROFILE.md#runtime-hardening-profiles).
+This supersedes the old ceiling that checks beyond musl cannot hold loader
+completion open. It does not resume the campaign, reopen parked diagnostics,
+change pins, alter AArch64, or authorize runtime/qualification claims in this
+documentation change.
+
 ### Owner-decided (2026-10-13)
 
 1. **Parity first.** The two known allocator failures and the correctness
@@ -164,8 +184,9 @@ worktree with a fresh `--work` name each time.
    update their immutable identities and regenerate affected evidence without
    asking for approval. This replaces the image-rebuild hard stop.
 
-Earlier owner decisions that still hold: default behavior matches pinned
-musl's defaults (2026-09-25, see [Reference](#fixed-contracts)); ordinary
+Earlier owner decisions that still hold: compatibility behavior matches pinned
+musl's selected defaults, with the explicit hardening contract above
+(2026-09-25, see [Reference](#fixed-contracts)); ordinary
 baseline promotion may proceed with physical NUMA and explicit 2-MiB and
 1-GiB page modes unqualified (2026-10-02); floor-limited total-memory rows use
 a no-regression check (2026-10-02); qualification bookkeeping is to be reduced
@@ -460,11 +481,18 @@ not and the part that does.
   command in flight and hold, measure, then release them. Diagnosis never
   needs a window: use CPU time and instruction counts.
 
-Launch priority, most urgent first. Every lane has work ready on the first
-day except R6 and R8, which start when G1b lands:
+On resumption, SEC0 is the first discovery/contract task. SEC1 and SEC2 share
+the existing R6/R7 source owners: coordinate one writer per file, not a second
+concurrent loader/CRT lane. Unrelated correctness repairs can proceed while
+their narrow prerequisites land; security does not wait on allocator tuning.
+H0 rehearsals remain useful before SEC3, but no new H1/O2 claim may bypass it.
+
+Launch priority, most urgent first (subject to the campaign pause and the
+dependencies below):
 
 | Lane | Items, in order | Shares files with |
 | --- | --- | --- |
+| Runtime hardening, coordinated with R6/R7 | SEC0, SEC1/SEC2 when ready, SEC3 | Loader, CRT, startup, sysroot and existing native evidence owners |
 | Corpus | G1b | — |
 | Ledger tooling | T0, T5, T1 | The three single-writer files, the cohort runner |
 | Runtime, one lane each | R1 to R8 | — |
@@ -476,8 +504,9 @@ day except R6 and R8, which start when G1b lands:
 | M10 tooling | T4 | — |
 | Dead-code inventory | C0 | — |
 
-That is 17 lanes before the allocator splits into module groups. Width is
-the smaller of 24 (`.claude/settings.json`) and what memory allows.
+The hardening work reuses runtime owners rather than increasing concurrent
+writers. Width is the smaller of 24 (`.claude/settings.json`) and what memory
+allows.
 
 ### Ground and tooling
 
@@ -528,14 +557,47 @@ splits A3 by module group (memory substrate; local engine and allocation;
 Heap, Theap, arena and subprocess APIs; options and statistics) and A5 by
 pinned source file, one lane per group whose files are free.
 
-### Hardening
+### Runtime hardening
+
+SEC0–SEC3 are required work, with no implementation or qualification credited
+by this documentation update. Scope is the native x86-64 hardened product in
+[the profile](COMPATIBILITY-PROFILE.md#runtime-hardening-profiles), using the
+ownership/invariants in
+[architecture](docs/design/architecture.md#native-x86-64-runtime-hardening).
+The build's compatibility/hardened selection is distinct from the cohort
+runner's existing `correctness`/`full` modes. Use existing family cases,
+artifact identities and receipt machinery; do not add a parallel campaign,
+new inventory, receipt schema or status document.
+
+Source inspection at `24a186244ab4875edabaaaae5f8d1a7fdee2dae8` found existing
+textrel rejection, dynamic RELRO, static-PIE RELRO, secure-startup filtering and
+kernel-seeded guards. Deferred binding already has transactional permission
+restoration. These are foundations to preserve and prove, not missing features
+to reimplement. Concrete admission work includes non-PIE policy, executable
+stack declarations, W+X/overlapping loads, required RELRO coverage, eager
+binding and shared search restrictions. Inspection is not runtime evidence.
+
+| ID | Size | Item and owner | Needs | Acceptance |
+| --- | --- | --- | --- | --- |
+| SEC0 | M | Audit the current x86 source and all entry routes against the selected profile. R6/R7 owners map each rule to its owner and existing behavioral fixture, record actual gaps here, and define immutable product identity, mixed-product rejection and existing evidence binding. Keep malformed-input safety distinct from deliberate compatibility restrictions. | Campaign resumed; no allocator milestone | Every profile rule has applicable startup/direct/dependency/preload/`dlopen`/static-PIE coverage or an explicit SEC1/SEC2 implementation gap. Existing defenses and negative cases are identified by source and test; no inspection-only qualification claim. |
+| SEC1 | L | Owned startup and product protection, through R7/CRT/libc owners: hardening selection in sysroot/link specs, PIE/static-PIE output requirements, bounded inherited-image/bootstrap facts, static-PIE relocation/RELRO validation, non-executable stacks, and guard/TLS/secure-state ordering. Preserve all four compatibility link modes. | SEC0; relevant R7 product prerequisites | Hardened PIE/static PIE execute; hardened non-PIE and conflicting owned-product selections fail. Existing static-PIE fixture proves RELRO write faults and malformed/duplicate/overflow/out-of-load rejection. Constructor/thread sentinels prove initialization ordering; compatibility controls pass. |
+| SEC2 | L | Loader admission and transactional protection, through R6 owners: consistent kernel/direct/initial/runtime checks, explicit stack metadata, page-level W^X, complete relocation destinations, required RELRO coverage, eager imports with no deferred RELRO reopening, and all library search input routes. Preserve secure mode and compatibility deferred-binding transactions. | SEC0; relevant R6 dynamic-product prerequisites | Positive DSOs and normal plugin loads work under the contract. Rejected images, unresolved required imports and relative search inputs fail before rejected constructors. Actual mapping/fault probes prove protections, including interpreter and post-`dlopen` RELRO. Injected mapping/protection/relocation/publication failures preserve prior graph/TLS/handles/permissions or take the documented fatal restoration path. |
+| SEC3 | M | Integrate SEC1/SEC2 into existing loader, CRT, sysroot and pthread family acceptance and qualification consumers; bind results to profile and exact source. Coordinate with the existing single-writer tooling owners. | SEC1, SEC2; affected R6/R7 correctness repairs | Focused positive/negative/rollback checks pass for both products. Existing qualification machinery demonstrably refuses missing/failed hardened evidence or mismatched product identity; the next H1 cohort exercises these checks. Old receipts and compatibility-only passes cannot satisfy them. |
+
+No core item requires MDWE, irreversible mapping sealing or hardware control
+flow protection. Those need separately scoped future kernel/CPU/ABI and
+failure-path contracts; Linux 5.10 remains the baseline. Allocator security
+options stay source-faithful to pinned mimalloc and use its existing evidence;
+this work neither substitutes an allocator nor reopens denied diagnostics.
+
+### Correctness qualification
 
 H0 starts as soon as its needs merge, alongside the parity lanes.
 
 | ID | Size | Item | Needs | Acceptance |
 | --- | --- | --- | --- | --- |
 | H0 | L | Rolling rehearsal. On a throwaway branch `cohort/rehearsal`, never merged, commit the ledger exactly as H1 will and run the correctness cohort in `.work/wt/cohort-rehearsal`. Past the first failing step, run the remaining steps' commands directly, as `--dry-run` prints them. Send each failure to the lane that owns it, and repeat on the new `main` whenever routed fixes have merged. | T0, T5, G1a, G1b | A rehearsal passes end to end; its step table with wall times is in the campaign log |
-| H1 | L | The qualification commit, as [Qualifying a revision](#qualifying-a-revision) describes: one commit flips the 16 families (capability state follows family state; regenerate the derived inventory with `python3 scripts/lanes/refresh-parity-digests.py`) and names a receipt on every family row that takes one (posix, pthread, text, resolver, c-abi; static TLS takes the static product publication and no `receipt` key), then the cohort runs under `--profile correctness` at that commit. This is the first time the gate cases themselves execute; a failure is fixed forward in a new commit and the cohort is rerun. | H0 passing | In the cohort worktree, `./scripts/dev-x86_64.sh qualification-manifest --validate-receipt PATH` exits 0 on a receipt whose `qualified_gates` has seven entries, and `python3 compat/x86_64/validate_parity_ledger.py --require-receipts` passes |
+| H1 | L | The qualification commit, as [Qualifying a revision](#qualifying-a-revision) describes: one commit flips the 16 families (capability state follows family state; regenerate the derived inventory with `python3 scripts/lanes/refresh-parity-digests.py`) and names a receipt on every family row that takes one (posix, pthread, text, resolver, c-abi; static TLS takes the static product publication and no `receipt` key), then the cohort runs under `--profile correctness` at that commit, including SEC3's required product cases. A failure is fixed forward in a new commit and the cohort is rerun. | H0 passing, SEC3 | In the cohort worktree, `./scripts/dev-x86_64.sh qualification-manifest --validate-receipt PATH` exits 0 on a receipt whose `qualified_gates` has seven entries, `python3 compat/x86_64/validate_parity_ledger.py --require-receipts` passes, and the bound family evidence proves both compatibility and hardened contracts |
 | H2 | S | Write up: every contract change made so far under [Contract changes](#contract-changes), docs updated for what landed, cases found on the way added as regressions | H1 | `mdtool links` and `mdtool router` report no error |
 
 ### Optimization and promotion
@@ -550,7 +612,7 @@ whose files are disjoint, all measured in the same window.
 | ID | Size | Item | Needs | Acceptance |
 | --- | --- | --- | --- | --- |
 | O1 | L | Runtime scorecard in the cohort worktree at the H1 commit: three `perf-c` attempts and `perf-native --mode full`. Fix any row above 1.00 or over 2R by removing work (syscalls, copies, passes), as `performance-by-mechanism` describes, without changing selected semantics; confirm each fix with a focused development-mode rerun of its rows, since a full run binds to a qualified commit. Log every row against 0.90. Native-allocator lifecycle work is not a prerequisite unless it demonstrates a shared accepted-C runtime defect. | H1, T2, T3 | The full scorecard is in the campaign log, and every row above 1.00 has a merged fix whose focused rerun is at or below 1.00 |
-| O2 | L | The promotion revision (D4). One commit sets `public_support = true` in the ledger, the generator and the manifest, marks `performance.release` verified with its receipt path, and updates `README.md`, `AGENTS.md` and `docs/scope.md`. Then, at that commit, in one work directory: the cohort `--through publish-lua-source-build`, the correctness chain, the performance measurements, then the same cohort resumed with the performance inputs under `--profile full`, and the promotion check. A failure is fixed forward and the revision is requalified. | O1, T1, T5 | In the cohort worktree, `./scripts/dev-x86_64.sh campaign-promotion-check --qualification-receipt PATH` passes |
+| O2 | L | The promotion revision (D4). One commit sets `public_support = true` in the ledger, the generator and the manifest, marks `performance.release` verified with its receipt path, and updates `README.md`, `AGENTS.md` and `docs/scope.md`. Then, at that commit, in one work directory: the cohort `--through publish-lua-source-build`, the correctness chain including SEC3's required product cases, the performance measurements, then the same cohort resumed with the performance inputs under `--profile full`, and the promotion check. A failure is fixed forward and the revision is requalified. | O1, T1, T5, SEC3 | In the cohort worktree, `./scripts/dev-x86_64.sh campaign-promotion-check --qualification-receipt PATH` passes with current-source compatibility and hardened evidence |
 | O3 | L | Allocator performance. First a fresh three-run engine baseline (`allocator-perf-engine --full`) and a profile. Then remove work in the order the profile gives. Each increment is one mechanism with before and after numbers vetted by `benchmark-checklist`. | A4, A5, T1 | In one checkout at one commit, `./compat/allocator/run-x86_64.sh allocator-m9 --profile baseline` exits 0 on three agreeing full reports: suite throughput lower95 at least 0.95, critical rows at least 0.90, critical p99 cost upper95 at most 1.10, peak RSS and PSS upper95 at most 1.05 geomean and 1.10 critical; `architecture_ratchet.py --gate --runtime-evidence FILE` exits 0 |
 | O4 | L | The switch revision (D5): one commit sets `DEFAULT_ALLOCATOR_BACKEND = "native"` in `scripts/build_x86_64_owned_sysroot.py`; then requalify that commit as O2 did | O2, O3, T4 | `./compat/allocator/run-x86_64.sh allocator-m10 --profile baseline --check --performance-receipt PATH --qualification-receipt CHAIN` passes, and the promotion check passes at the switched revision |
 
@@ -567,9 +629,9 @@ whose files are disjoint, all measured in the same window.
 | Deliverable | Proof |
 | --- | --- |
 | D1 | T0 to T5, G1a and G1b acceptance checks pass; G2's tests exist |
-| D2 | H1's acceptance, at the qualification commit |
+| D2 | SEC0–SEC3 and H1 acceptance, with compatibility and hardened evidence bound to the qualification commit |
 | D3 | O1's scorecard, and `python3 compat/x86_64/performance_release_gate.py evaluate ...` passing at the promotion revision |
-| D4 | `./scripts/dev-x86_64.sh campaign-promotion-check --qualification-receipt PATH` passes at a revision with `public_support = true` |
+| D4 | `./scripts/dev-x86_64.sh campaign-promotion-check --qualification-receipt PATH` passes at a revision with `public_support = true` and the required hardened evidence, not a compatibility-only receipt |
 | D5 | O4's acceptance, at the switched revision |
 | D6 | C1 and C2 acceptance; the final report is committed |
 
@@ -584,6 +646,10 @@ page modes stay recorded as unqualified; no proof above depends on them.
 
 Pre-authorized:
 
+- The explicit hardened native x86-64 product and required qualification in
+  SEC0–SEC3. This is a selected contract to implement, not a current support
+  claim; existing compatibility controls and the frozen capability inventory
+  remain required. No environment/command-line downgrade of hardened policy.
 - Receipt binding checked on request instead of at every commit (T0).
 - Promotion no longer requires the native allocator default; allocator
   inputs leave `performance.release` and its table moves to M9 (T1).
@@ -737,11 +803,17 @@ and [compat/allocator/README.md](compat/allocator/README.md).
 | Accepted C backend | `libmimalloc-sys` 0.1.49 bundles mimalloc v3.3.2. It is the selected default and is not the v3.5.0 oracle. Keep candidate, accepted-C comparison, and pinned-v3.5.0 differential inputs separate. |
 | Unwinder | `unwinding = { version = "=0.2.10", default-features = false, features = ["unwinder", "fde-phdr-dl", "dwarf-expr"] }`, source commit `0e2de8fb536b1ca42066024609f58d708cf80e69`, with `gimli 0.34.0` (`read-core`) and `libc 0.2.186` as the reviewed graph. Design in [docs/design/unwinder.md](docs/design/unwinder.md). |
 
-Default behavior matches pinned musl's defaults:
+Compatibility behavior follows pinned musl's selected defaults, with explicit
+owned safety corrections and the separate hardened product contract:
 
-- **Loader validation.** At load time the loader rejects what musl rejects.
-  Up-front checks musl does not perform are not required and must not keep a
-  startup or `dlopen` row open.
+- **Loader validation and hardening.** Preserve compatibility controls and
+  existing safety corrections. Required hardened-profile admission checks
+  apply even where musl accepts the input and must keep the relevant
+  startup/`dlopen` acceptance open until proven. Musl is the ordinary-behavior
+  oracle, not the oracle for intentional policy rejection. Memory-safety fixes
+  apply across profiles where relevant; policy differences are declared in
+  [COMPATIBILITY-PROFILE.md](COMPATIBILITY-PROFILE.md#runtime-hardening-profiles).
+  This replaces the former prohibition on requiring checks beyond musl.
 - **`dlclose`.** A successful `dlclose` validates a handle but does not unmap
   the object or run its destructors. Reopen observes retained state; DSO
   destructors run at process exit. Failed load transactions still release
@@ -799,6 +871,13 @@ Append one line per judgment call a reader would otherwise miss.
   products, and repeats the parked complete libc-test aggregate. Do not change
   backends, trim the roster, or credit an incomplete assessment. Other H0
   producers remain independent of POSIX and C-ABI admission.
+- 2026-10-26: owner requested glibc-style runtime hardening as a priority.
+  Require SEC0–SEC3 before the next D2/D4 claim and implement a separately
+  identified hardened x86-64 product, retaining compatibility controls. The
+  old musl-only load-validation ceiling is superseded. Existing textrel,
+  RELRO (including static PIE), guard and transactional binding mechanisms
+  are foundations, not new completion claims. Campaign pause, retained
+  evidence, pins, AArch64 and allocator-default state remain intact.
 
 ## Campaign log
 

@@ -86,3 +86,101 @@ crate root, which stays a small target and linkage composition boundary.
 The exact native capability classification lives in
 [`compat/crabc-rs/coverage.toml`](../../compat/crabc-rs/coverage.toml), and
 harness-local READMEs describe each evidence runner.
+
+## Native x86-64 runtime hardening
+
+The [selected profiles](../../COMPATIBILITY-PROFILE.md#runtime-hardening-profiles)
+define observable policy; [plan.md](../../plan.md#runtime-hardening) is the
+only implementation sequence. The following ownership and protection
+requirements apply to active native x86-64. They do not change the paused
+AArch64 CRT specification.
+
+**Build on existing mechanisms.** The x86 loader already rejects textrel
+metadata, validates relocation destinations and protects present RELRO.
+[`x86_64_rcrt1.rs`](../../crt/src/x86_64_rcrt1.rs) already applies static-PIE
+RELRO before entering Rust startup. Owned startup already seeds guards from
+kernel `AT_RANDOM` and establishes startup/TLS/secure state before callbacks. The
+hardening requirement is to enforce admission consistently and prove these
+invariants through product behavior, not to infer missing mechanisms from
+another libc's implementation.
+
+| Owner | Required boundary |
+| --- | --- |
+| Installed sysroot and link specifications | Bind the selected profile to owned CRT/interpreter artifacts and existing build provenance. Require PIE/static PIE for hardened executable outputs, retain compatibility modes, and diagnose mixed owned products. |
+| `ldso` | Enforce the same policy at kernel main-image admission, direct entry, initial dependency/preload loading and `dlopen`. Own validated ELF identity, search inputs, mapping, relocation, RELRO, loader TLS and transactional publication. Keep independent bootstrap and the existing private RuntimeV1 boundary. |
+| Owned x86 CRT | Validate applicable static-PIE metadata, complete checked bootstrap relocation and protect RELRO before ordinary startup. Validate inherited main-image facts without relying on ordinary libc, allocation, `/proc` or attacker-chosen argument strings. |
+| `libc` | Preserve loader-owned dynamic TLS while owning libc guard/entropy, cached secure state, thread startup and lifecycle responsibilities. Validate the loader/CRT handoff; no guest callback may precede its required startup state and completed loader/CRT protections. |
+| Existing evidence owners | Extend native loader, CRT, sysroot and pthread fixtures; bind results to the actual product and source revision. Tests observe behavior and failures, not source literals. |
+
+### Admission and protection invariants
+
+1. **Validate the loaded image.** Identify an executable from bounded ELF and
+   auxv facts through both entry routes. A nonzero bias is not a PIE proof.
+   Do not require section headers or trust a supplied filename as image
+   identity. Hardened DSOs need to satisfy the same applicable admission
+   rules; they need not originate from crabc's compiler.
+2. **Protect pages, not just headers.** Reject `PF_W | PF_X` and load-layout
+   conflicts that defeat W^X after rounding at the target's actual page size.
+   Audit overlaps and aliases together with the mapping sequence. Loader-owned
+   transitions must not create RWX mappings, including zero-fill and relocation
+   windows. Validate inherited kernel mappings before guest initialization;
+   userspace cannot claim to have prevented the kernel's earlier mappings.
+   Check stack policy on main and dependencies and preserve non-executable
+   main/worker stacks.
+3. **Bound every write.** Check arithmetic, table shape, destination width and
+   writable-load containment for all supported relocations, including RELR and
+   TLS descriptors. No missing tag may authorize a text relocation. The early
+   assembly path has the same obligations without borrowing unavailable Rust,
+   TLS, stack-protector or allocator facilities.
+4. **Make RELRO effective.** Validate uniqueness, bounds, page rounding and
+   mapped-load containment before changing permissions. Required coverage
+   includes relocation-only GOT/PLT binding storage; derive its extent from
+   validated ABI metadata, not section-name heuristics. Do not make ordinary
+   mutable data read-only or accept an empty token RELRO header as proof.
+   Check every protection syscall and protect the interpreter as well as main
+   and DSOs. Extend the existing
+   [static-PIE fixture](../../crt/tests/test_x86_64_static_pie.py) with write-fault
+   and malformed-range checks. Ordinary `mprotect` is not immutable sealing.
+5. **Keep committed RELRO closed.** Compatibility deferred binding is a real
+   later-`dlopen` retry, with an existing permission/write journal in
+   [`x86_64_deferred_relocations.rs`](../../ldso/src/x86_64_deferred_relocations.rs).
+   Preserve that behavior and its restoration tests. Hardened loads resolve
+   required imports eagerly, have no pending deferred entries, and never use
+   that retry path to reopen committed RELRO. Weak-symbol semantics remain
+   intact. A failed new load still rolls back its own mappings and TLS work.
+6. **Share search enforcement.** Apply the profile to every source consumed by
+   [`x86_64_library_search.rs`](../../ldso/src/x86_64_library_search.rs), including
+   environment, direct-loader options, system configuration, RPATH/RUNPATH,
+   dependency/preload names and explicit `dlopen` paths. Validate absolute
+   origins without current-directory fallbacks. Secure-execution filtering is
+   an additional invariant. Absolute names and `$ORIGIN` do not establish file
+   ownership, safe installation permissions or symlink confinement; document
+   those trust assumptions without promising a filesystem sandbox.
+7. **Fail before publication and callbacks.** Preflight the whole newly admitted
+   graph before guest initialization. Preserve graph visibility, handles, TLS
+   generations, pending compatibility words and permissions on rejected loads.
+   If rollback cannot restore a safe state, terminate. Main startup violations
+   terminate before application entry; `dlopen` policy failures use its normal
+   error interface. Fault injection and constructor sentinels prove the boundary.
+
+### Kernel and allocator boundaries
+
+The mandatory profile works on Linux 5.10 and governs crabc-owned loading and
+startup. Kernel ASLR, unrelated static binaries, other interpreters and later
+application mapping syscalls are outside that guarantee. PIE is necessary for
+main-image randomization, not proof that a host enabled ASLR. Do not enable a
+process-wide JIT restriction implicitly.
+
+MDWE, irreversible mapping sealing and hardware control flow protection require
+separately selected future contracts with kernel/CPU/ABI support, threading,
+signal, failure and compatibility evidence. In particular, irreversible
+sealing must not defeat failed-`dlopen` rollback. They do not raise the baseline
+or delay qualification of the core profile by becoming implicit requirements.
+The glibc hardening discussion is design input, not a shipped feature claim
+or a replacement compatibility oracle.
+
+Allocator hardening remains within the faithful pinned mimalloc port. Audit
+source security options, entropy and metadata protection with their pinned-C
+controls in existing allocator evidence; do not substitute another allocator,
+invent local cryptography, or wait for native-default promotion to harden the
+accepted-C runtime.

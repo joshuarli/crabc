@@ -55,6 +55,19 @@ fork/exec, pthread/C11 threads, TLS, sockets, mappings, time, stdio, resolver,
 dynamic linking, errno, ABI, and their composition. Existing correct
 functionality need not be deleted merely because it exceeds these minimums.
 
+**Runtime hardening.** Native x86-64 qualification and public promotion require
+the hardened execution/loading profile in
+[COMPATIBILITY-PROFILE.md](../COMPATIBILITY-PROFILE.md#runtime-hardening-profiles),
+alongside the existing compatibility products. Musl remains the ordinary
+behavior oracle, not a ceiling on memory-safety checks or explicit hardening
+requirements. Profile restrictions must be named and tested, never used to
+hide a compatibility regression. Enforcement belongs to the existing loader,
+owned CRT and libc startup owners; see
+[architecture](design/architecture.md#native-x86-64-runtime-hardening).
+The core contract must work on Linux 5.10. This does not expand the active
+target, replace the allocator, introduce a policy framework, or resume a
+paused campaign; sequencing remains in `plan.md`.
+
 **Rust facade.** Classify capabilities as OS mechanisms, useful POSIX/runtime
 facilities, C ABI machinery, Rust-subsumed, or deliberately unsupported.
 Expose the first two idiomatically; account for all capabilities in

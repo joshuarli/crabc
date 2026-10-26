@@ -31,6 +31,49 @@ hidden process-CWD traversal policy.
 For native x86-64, `CPU_ISSET` and `CPU_ISSET_S` return zero or one, with
 type `int` in C and `bool` in C++, matching the selected oracle headers.
 
+## Runtime hardening profiles
+
+Native x86-64 has two required product contracts. **Compatibility** preserves
+the selected musl comparison behavior, including existing static and dynamic
+non-PIE products and deferred `RTLD_LAZY` semantics. **Hardened** is an
+explicitly selected, separately built sysroot/interpreter/CRT profile with the
+restrictions below. These are requirements to implement and qualify;
+[plan.md](plan.md#runtime-hardening) records progress. They do not change the
+paused AArch64 profile or claim current hardened-product support.
+
+The hardened selection is fixed in product identity and build provenance.
+Environment variables and direct-interpreter options cannot disable it.
+Installed link specifications select the matching interpreter and CRT; owned
+products must detect a conflicting profile rather than silently downgrade.
+This is one bounded build distinction, not a runtime policy language.
+Product selection is independent of the qualification runner's
+`correctness`/`full` modes.
+
+| Boundary | Hardened contract |
+| --- | --- |
+| Main executable | Admit dynamic PIE (`ET_DYN`); reject dynamic `ET_EXEC` through both kernel-interpreted and direct-loader entry. Owned static executable products use static PIE and its CRT; the hardened link interface rejects non-PIE requests. Determine image identity from validated ELF/auxv facts, not `argv[0]` or a nonzero load address. |
+| Stack and executable mappings | Require one valid `PT_GNU_STACK` without `PF_X` on admitted main images and DSOs; reject missing, duplicate or executable-stack declarations. Enforce W^X at actual page granularity, including overlapping load ranges and relevant aliases, and preserve non-executable main and thread stacks. |
+| Relocation | Preserve existing rejection of `DT_TEXTREL`/`DF_TEXTREL`. Validate every relocation write's full width and writable destination, including RELA, RELR and supported TLS relocations; absence of a textrel tag does not authorize writes to executable/read-only storage. |
+| Binding and RELRO | Resolve required imports before guest initialization, treating `RTLD_LAZY` as eager in this profile. Reject unresolved required symbols; retain normal weak-symbol semantics. Protect all relocation-only binding storage read-only before publication/callbacks and never reopen committed RELRO for deferred binding. Require valid RELRO coverage where that storage exists; an object with none needs an explicit, tested acceptance rule. |
+| Library search | No implicit current-directory search or relative search directories from environment, interpreter options, RPATH/RUNPATH or configured system paths. Slash-containing dependency, preload and `dlopen` paths must be absolute. Bare library names use the admitted search roots. `$ORIGIN` may expand only from a validated absolute origin, subject to existing secure-execution restrictions; it must never fall back to the current directory. An absolute path alone is not a claim of trusted ownership or symlink confinement. |
+| Privileged execution | Preserve auxv/credential-derived secure execution and its environment/preload/origin filtering. The hardened profile cannot weaken these rules, and process-controlled strings cannot override the cached secure state. |
+| Failure | An initial violation terminates before application initialization. A rejected `dlopen` returns the existing failure/error interface without running the rejected graph's constructors or leaving graph/TLS publication, handles, mappings or permissions partially changed. If restoring a safe state is impossible, terminate rather than continue with weakened protection. |
+
+Checks apply to the kernel-mapped main image, direct interpreter entry, startup
+dependencies and preloads, and runtime `dlopen` as appropriate. Owned static
+PIE has no interpreter: its build and CRT must establish the corresponding
+invariants themselves. A loader cannot police unrelated static executables,
+foreign interpreters, arbitrary application syscalls, or host ASLR settings.
+W^X here governs admitted images and loader transitions, not a process-wide
+ban on JITs or later application `mprotect` calls.
+
+Memory-safety and malformed-input fixes apply to both products where relevant.
+Intentional policy rejections use this contract, not an expectation that musl
+must also reject the fixture. Keep positive compatibility controls and report
+both products distinctly in existing evidence. All core requirements retain
+the Linux 5.10 baseline. MDWE, irreversible mapping sealing and hardware control
+flow protections are separate future enhancements, not implicit core gates.
+
 ## Deliberate limits
 
 | Area | Selected profile |
