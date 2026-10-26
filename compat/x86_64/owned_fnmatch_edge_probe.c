@@ -12,6 +12,7 @@ struct fnmatch_edge_case {
 
 static const struct fnmatch_edge_case fnmatch_edge_cases[] = {
     {"empty", "", ""},
+    {"empty-invalid-utf8", "", "\377"},
     {"leading-dir-empty", "", "/child"},
     {"leading-dir-prefix", "a", "a/child"},
     {"leading-dir-trailing-slash", "a/", "a/child"},

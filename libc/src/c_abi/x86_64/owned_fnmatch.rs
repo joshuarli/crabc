@@ -599,7 +599,7 @@ pub(super) unsafe fn fnmatch_internal(
             _ => {
                 let character = unsafe { str_next(string, string_count, &mut string_step) };
                 if character <= 0 {
-                    return if token == END { 0 } else { FNM_NOMATCH };
+                    return if token == END && character == 0 { 0 } else { FNM_NOMATCH };
                 }
                 string = unsafe { string.add(string_step) };
                 string_count -= string_step;
