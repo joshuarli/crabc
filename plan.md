@@ -364,6 +364,28 @@ worktree removal after clean-state and patch-equivalence checks. Their branches
 remain. Existing frozen products and failures remain unchanged. No qualification
 claim or publication changes. Performance remains behind correctness.
 
+The second repair group is integrated through `a2f970fe5`: `aa52a421a` supplies
+owned application helpers across the remaining explicit CRT link modes while
+preserving each CRT and libc role; `91fddf90f` and `7ae64472e` check exact
+receipt-relative pthread sidecar paths without ambient path resolution; and
+the public-data reader now consumes the calendar owner's candidate and oracle
+TZif transcripts. Focused tests preserve path, hash, binding and output rejection
+cases. The clean `.work/wt/abi-companion-proof-final` is frozen at `f29b75dfb`.
+Both product preparations and all four collectors pass there. Its
+standard twenty-producer loop is running once to verify the repaired paths.
+
+The earlier `a438c509b` partial assembly passes with seventeen companions,
+retaining 218 closure blockers and all promotion/public flags false. Three
+successful receipts are rejected by stale selector joins: locale product trees
+have identical entries in different ordering; pthread's collector and selected
+source rosters share a legitimately repeated file; and the resolver selector
+omits three required current input roles. `abi-selector-joins` owns those
+repairs and a bounded inspection of the four repaired producer adapters.
+Historical measurement mode cannot close these current companion joins because
+they require the selecting source to match the measured candidate build.
+After selector integration, a fresh combined proof is required. No source seal
+or required role will be waived to reuse an older cohort.
+
 The addrconfig lane's musl scratch remains under its `.work/tmp`: automatic
 review denied its removal with "rm -f style commands are not permitted. Use
 a safer approach". The cleanup was not retried. The completed
