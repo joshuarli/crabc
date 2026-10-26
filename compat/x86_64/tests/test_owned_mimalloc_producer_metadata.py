@@ -416,6 +416,80 @@ class FixedCMimallocProducerMetadataTests(unittest.TestCase):
         self.assertEqual(layouts["mi_thread_locals"]["shared_symbol_value"]["integer"], 0)
         self.assertEqual(layouts["mi_thread_locals"]["shared_symbol_value"]["modulo_source_required_alignment"], 0)
 
+    def test_accounts_retained_h0_aligned_import_and_owned_providers(self) -> None:
+        facts, static_provenance, shared_provenance, shared_manifest = self.fixture()
+        retained_import_names = (
+            "_mi_auto_process_done",
+            "_mi_auto_process_init",
+            "mi_free",
+            "mi_malloc_aligned",
+            "mi_realloc_aligned",
+            "mi_usable_size",
+            "mi_zalloc",
+            "mi_zalloc_aligned",
+        )
+        retained_data_reference_names = ("_mi_heap_default_key",)
+        rust_rows = facts["facts"]["candidate-static"][0]["symbol_tables"][0]["rows"]
+        rust_rows[:] = [
+            symbol(name, kind="NOTYPE", section="UND", size=0)
+            for name in (*retained_import_names[:-1], *retained_data_reference_names)
+        ]
+        rust_rows.append({
+            **symbol("mi_zalloc_aligned", kind="NOTYPE", section="UND", size=0),
+            "row_index": 7,
+            "raw": "     7: 0000000000000000     0 NOTYPE  GLOBAL DEFAULT  UND mi_zalloc_aligned",
+        })
+
+        static_c_rows = facts["facts"]["candidate-static"][1]["symbol_tables"][0]["rows"]
+        static_provider = next(row for row in static_c_rows if row["name"] == "mi_zalloc_aligned")
+        static_provider.update({
+            "row_index": 1340,
+            "section_index": "777",
+            "size": "131",
+            "size_bytes": 131,
+            "raw": "  1340: 0000000000000000   131 FUNC    GLOBAL DEFAULT  777 mi_zalloc_aligned",
+        })
+        facts["facts"]["candidate-static"][1]["sections"].append({
+            "index": 777,
+            "alignment": 16,
+            "name": ".text.mi_zalloc_aligned",
+            "flags": "AX",
+        })
+        shared_rows = facts["facts"]["candidate-shared"]["symbol_tables"][1]["rows"]
+        shared_provider = next(row for row in shared_rows if row["name"] == "mi_zalloc_aligned")
+        shared_provider.update({
+            "row_index": 1319,
+            "section_index": "9",
+            "value": "0000000000114270",
+            "size": "131",
+            "size_bytes": 131,
+            "raw": "  1319: 0000000000114270   131 FUNC    LOCAL  DEFAULT    9 mi_zalloc_aligned",
+        })
+
+        account = producer.account_producer_metadata(
+            facts, static_provenance, shared_provenance, shared_manifest
+        )
+        aligned_join = next(
+            item for item in account["rust_root_c_import_joins"]
+            if item["name"] == "mi_zalloc_aligned"
+        )
+        self.assertEqual(account["scope"]["rust_root_c_imports"], 8)
+        self.assertEqual(aligned_join, {
+            "name": "mi_zalloc_aligned",
+            "static_rust_import": {
+                "type": "NOTYPE", "binding": "GLOBAL", "visibility": "DEFAULT",
+                "section_index": "UND",
+            },
+            "static_c_provider": {
+                "type": "FUNC", "binding": "GLOBAL", "visibility": "DEFAULT",
+                "size_bytes": 131, "section_index": "777", "definition": "defined",
+            },
+            "shared_c_final_provider": {
+                "type": "FUNC", "binding": "LOCAL", "visibility": "DEFAULT",
+                "size_bytes": 131, "section_index": "9", "definition": "defined",
+            },
+        })
+
     def test_selected_metadata_projects_exact_private_roster_without_observed_values(self) -> None:
         projection = producer.selected_metadata()
         self.assertEqual(list(projection), self.members)
