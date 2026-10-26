@@ -8,7 +8,28 @@ remain parked and cannot support native promotion. The C
 allocator remains selected. Public x86 support remains false: 180 of 223
 capabilities, nine of 26 families, zero of eight gates.
 
-**Current steering checkpoint:** the frozen `99cd68019` ABI proof now passes
+**Current steering checkpoint:** the frozen `e9e83a53b` pilot in
+`.work/wt/abi-owner-proof-fixed` passes fresh product preparation, the four
+collectors, installed process-trio behavior and assembly. Twenty-two companion
+producers pass. The installed-helper producer fails on a missing `os` import.
+Assembly retains 5,168 identities, 41,270 occurrences, zero rejected companions
+and 37 closure blockers. Declaration, CRT, RuntimeV1, AIO and public-data
+runtime attachments pass. One normal canonical replay is running with retained
+inputs read-only and the required temporary scratch writable.
+
+`8f96a7404` fixes the helper command recorder's missing import. Its regression
+executes real child commands and preserves exact arguments, streams and both
+successful and failed exit statuses. Both focused modules pass all 52 tests.
+The next native check uses a fresh source-matched product pair and four
+collectors in `.work/wt/abi-helper-proof`. Run only the existing aggregate,
+CRT and installed-helper companion producers, then replay their four links
+through `compiler_helper_adapter`. This bounded component check must pass
+before another full ABI assembly. Preserve both earlier pilots unchanged.
+The remaining structural, consumer-owned and feature-alias identity proofs
+remain implementation work. The parked POSIX aggregate and denied allocator
+diagnostics remain outside the retry scope. No qualification claim changes.
+
+**Earlier accepted checkpoint:** the frozen `99cd68019` ABI proof passes
 the normal canonical reader: 5,175 identities, 41,307 occurrences and zero
 rejected companions. Its 146 closure blockers remain truthful. The first
 read-only container attempt failed because two existing companion readers
