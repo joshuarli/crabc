@@ -28,6 +28,17 @@ into private scratch and runs the same serial core tests and fenv code-generatio
 check; `core` without the flag does the cold qualification build, which a cached
 result does not replace.
 
+Run the focused installed-archive visibility regression with:
+
+```sh
+scripts/lanes/rust-check.sh bash compat/x86_64/run_libc_private_archive_members.sh
+```
+
+The probe builds the installed debug member layout and requires one strong
+hidden definition for each private tree-balance and forward-copy helper.
+It checks definitions independently of undefined imports. Pinned musl uses a
+`NOTYPE` forward-copy label; crabc's separate forward-copy function uses `FUNC`.
+
 ## Authority
 
 The frozen comparison target is the AArch64 snapshot recorded in

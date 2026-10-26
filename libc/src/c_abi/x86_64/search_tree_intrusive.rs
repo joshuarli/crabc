@@ -121,8 +121,6 @@ const _: () = {
     assert!(offset_of!(Node, height) == 24);
 };
 
-global_asm!(".hidden __tsearch_balance");
-
 #[inline]
 unsafe fn node_key(node: *mut Node) -> *const c_void {
     unsafe { ptr::addr_of!((*node).key).read() }
@@ -261,8 +259,9 @@ unsafe fn rotate(link: *mut *mut Node, node: *mut Node, direction: usize) -> c_i
     unsafe { node_height(middle).wrapping_sub(old_height) }
 }
 
-// Musl's `src/search/tsearch.c` object.
 static_archive_member! { tsearch_source {
+    global_asm!(".hidden __tsearch_balance");
+
     /// Rebalance one internal musl AVL link and report its height change.
     ///
     /// # Safety
