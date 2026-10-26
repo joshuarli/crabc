@@ -26,6 +26,7 @@ import select
 import shutil
 import signal
 import stat
+import struct
 import subprocess
 import sys
 import tarfile
@@ -1439,8 +1440,32 @@ def parallel_static_compiles(
     )
 
 
+def validate_inert_static_pie_pltgot(path: Path, address: int) -> None:
+    try:
+        data = path.read_bytes()
+        header = struct.unpack_from("<16sHHIQQQIHHHHHH", data)
+        if (header[0][:7] != b"\x7fELF\x02\x01\x01" or header[1:3] != (3, 62)
+                or header[8] != 64 or header[9] != 56 or header[11] != 64):
+            raise ValueError
+        programs = [struct.unpack_from("<IIQQQQQQ", data, header[5] + i * 56) for i in range(header[10])]
+        sections = [struct.unpack_from("<IIQQQQIIQQ", data, header[6] + i * 64) for i in range(header[12])]
+        strings = sections[header[13]]
+        if strings[4] + strings[5] > len(data):
+            raise ValueError
+        names = data[strings[4]:strings[4] + strings[5]]
+        dynamic = [program for program in programs if program[0] == 2]
+        got = [section for section in sections if section[0] < len(names)
+               and names[section[0]:].split(b"\0", 1)[0] == b".got.plt"]
+        if (len(dynamic) != 1 or len(got) != 1 or got[0][3] != address or got[0][5] != 24
+                or got[0][2] & 4 or struct.unpack_from("<QQQ", data, got[0][4]) != (dynamic[0][3], 0, 0)):
+            raise ValueError
+    except (OSError, ValueError, IndexError, struct.error) as error:
+        raise RunnerError("static PIE GOT/PLT is not limited to inert reserved entries") from error
+
+
 def validate_static_elf_facts(
-    *, header: str, program_headers: str, dynamic: str, relocations: str, mode: StaticLuaMode, label: str
+    *, header: str, program_headers: str, dynamic: str, relocations: str, mode: StaticLuaMode, label: str,
+    inert_pltgot: bool = False,
 ) -> None:
     """Reject a static source-build result with an interpreter or dynamic import."""
 
@@ -1451,9 +1476,11 @@ def validate_static_elf_facts(
     if "INTERP" in program_headers or "Requesting program interpreter" in program_headers:
         raise RunnerError(f"{label} unexpectedly has PT_INTERP")
     combined = "\n".join((header, program_headers, dynamic, relocations))
-    for marker in ("NEEDED", "TEXTREL", "JMPREL", "PLTGOT", "ld-musl-", "ld-linux", "libc.so"):
+    for marker in ("NEEDED", "TEXTREL", "JMPREL", "ld-musl-", "ld-linux", "libc.so"):
         if marker in combined:
             raise RunnerError(f"{label} leaks a dynamic runtime marker: {marker}")
+    if "PLTGOT" in combined and not (mode is STATIC_PIE and inert_pltgot):
+        raise RunnerError(f"{label} leaks a dynamic runtime marker: PLTGOT")
     relocations_seen = re.findall(r"R_X86_64_[A-Z0-9_]+", relocations)
     if mode is STATIC_PIE:
         if any(relocation != "R_X86_64_RELATIVE" for relocation in relocations_seen):
@@ -1467,6 +1494,11 @@ def static_elf_record(path: Path, mode: StaticLuaMode, label: str) -> dict[str, 
     program_headers = readelf(path, "-lW")
     dynamic = readelf(path, "-dW")
     relocations = readelf(path, "-rW")
+    pltgot = re.findall(r"\(PLTGOT\)\s+(0x[0-9a-fA-F]+)", dynamic)
+    if pltgot:
+        if mode is not STATIC_PIE or len(pltgot) != 1:
+            raise RunnerError(f"{label} has an invalid PLTGOT")
+        validate_inert_static_pie_pltgot(path, int(pltgot[0], 16))
     validate_static_elf_facts(
         header=header,
         program_headers=program_headers,
@@ -1474,6 +1506,7 @@ def static_elf_record(path: Path, mode: StaticLuaMode, label: str) -> dict[str, 
         relocations=relocations,
         mode=mode,
         label=label,
+        inert_pltgot=bool(pltgot),
     )
     return {
         "artifact": artifact_record(path),

@@ -10,6 +10,7 @@ import io
 import json
 import os
 import shutil
+import struct
 import subprocess
 import sys
 import tarfile
@@ -316,6 +317,7 @@ class NativeStaticContracts(unittest.TestCase):
                 mode=RUNNER.STATIC_ET_EXEC,
                 label="fixture",
             )
+
         with self.assertRaises(RUNNER.RunnerError):
             RUNNER.validate_static_elf_facts(
                 header=valid_header,
@@ -325,6 +327,23 @@ class NativeStaticContracts(unittest.TestCase):
                 mode=RUNNER.STATIC_ET_EXEC,
                 label="fixture",
             )
+
+    def test_static_pie_got_plt_must_have_only_inert_reserved_entries(self) -> None:
+        image = bytearray(512)
+        ident = b"\x7fELF\x02\x01\x01" + bytes(9)
+        struct.pack_into("<16sHHIQQQIHHHHHH", image, 0, ident, 3, 62, 1, 0, 64, 256, 0, 64, 56, 1, 64, 3, 2)
+        struct.pack_into("<IIQQQQQQ", image, 64, 2, 6, 128, 0x1080, 0, 16, 16, 8)
+        struct.pack_into("<QQQ", image, 160, 0x1080, 0, 0)
+        image[200:218] = b"\0.got.plt\0.shstr\0\0"
+        struct.pack_into("<IIQQQQIIQQ", image, 320, 1, 1, 3, 0x10a0, 160, 24, 0, 0, 8, 0)
+        struct.pack_into("<IIQQQQIIQQ", image, 384, 10, 3, 0, 0, 200, 18, 0, 0, 1, 0)
+        path = self.temporary / "static-pie"
+        path.write_bytes(image)
+        RUNNER.validate_inert_static_pie_pltgot(path, 0x10a0)
+        struct.pack_into("<Q", image, 168, 1)
+        path.write_bytes(image)
+        with self.assertRaises(RUNNER.RunnerError):
+            RUNNER.validate_inert_static_pie_pltgot(path, 0x10a0)
 
     def static_receipt_fixture(self, mode: RUNNER.StaticLuaMode, output_name: str = "candidate/lua") -> dict[str, object]:
         work = self.temporary / mode.identifier
