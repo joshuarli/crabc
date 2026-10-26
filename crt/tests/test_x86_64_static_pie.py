@@ -183,6 +183,20 @@ def empty_relro_header(path: Path) -> Path:
     return empty
 
 
+def executable_relro_header(path: Path) -> Path:
+    data, headers = elf_layout(path)
+    relro = next(index for index, header in enumerate(headers) if header[0] == 0x6474e552)
+    executable = next(header for header in headers if header[0] == PT_LOAD and header[1] & 1)
+    mutable = bytearray(data)
+    program_offset = struct.unpack_from("<Q", data, 32)[0]
+    struct.pack_into("<Q", mutable, program_offset + relro * 56 + 16, executable[3])
+    struct.pack_into("<Q", mutable, program_offset + relro * 56 + 40, 1)
+    bad = path.with_name(path.name + ".executable-relro")
+    bad.write_bytes(mutable)
+    bad.chmod(0o755)
+    return bad
+
+
 def relocation_summary(path: Path) -> list[tuple[int, int, int]]:
     data, program_headers = elf_layout(path)
     tags = dynamic_tags(data, program_headers)
@@ -373,6 +387,13 @@ class X86_64StaticPieTests(unittest.TestCase):
                 )
                 self.assertEqual(empty.returncode, 127, empty.stderr.decode(errors="replace"))
                 self.assertEqual(empty.stdout, b"")
+
+                executable_relro = subprocess.run(
+                    [str(executable_relro_header(executable))], stdin=subprocess.DEVNULL,
+                    stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False,
+                )
+                self.assertEqual(executable_relro.returncode, 127, executable_relro.stderr.decode(errors="replace"))
+                self.assertEqual(executable_relro.stdout, b"")
 
                 if not packed_relr:
                     malformed = corrupt_first_relative_relocation(executable)
