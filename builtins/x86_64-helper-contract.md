@@ -24,10 +24,12 @@ The installed dynamic driver applies the same archive-only exclusion to each
 application executable and DSO. It places the archive after input objects and
 before application DSOs, so an application's unresolved helper call extracts
 its own archive member before a DSO can satisfy it. Extracted helper definitions
-are absent from the output `.dynsym`; strong definitions from caller object
-files remain public. The installed archive itself keeps its `GLOBAL DEFAULT`
-contract, and the exclusion cannot capture another owner because the archive
-builder rejects every extra external definition.
+become `FUNC LOCAL DEFAULT` entries in the output `.symtab` and are absent from
+the output `.dynsym`. Static links retain the archive's `GLOBAL DEFAULT`
+definitions. Strong definitions from caller object files remain public. The
+installed archive itself keeps its `GLOBAL DEFAULT` contract, and the exclusion
+cannot capture another owner because the archive builder rejects every extra
+external definition.
 
 The named definitions live in [`src/lib.rs`](src/lib.rs): `Uint128` is the
 `#[repr(C)]` low-word/high-word carrier for the native C `__int128` ABI;

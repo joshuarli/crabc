@@ -9,6 +9,7 @@ fresh, source-matched product and complete-ELF receipts to the helpers below.
 from __future__ import annotations
 
 import argparse
+from enum import Enum
 import hashlib
 import json
 from pathlib import Path
@@ -107,6 +108,11 @@ HELPER_ABIS = {
 
 class CompilerHelperEvidenceError(ValueError):
     """A finite compiler-helper receipt or source contract is not exact."""
+
+
+class _HelperFinalSymbolPolicy(Enum):
+    STATIC = "static"
+    DYNAMIC = "dynamic"
 
 
 def require(condition: bool, message: str) -> None:
@@ -689,6 +695,40 @@ def _final_symbol(elf: Elf, name: str, binding: str) -> dict[str, Any]:
     return symbol
 
 
+def _helper_final_policy_for_linkage(linkage: str) -> _HelperFinalSymbolPolicy:
+    if linkage in {"static", "static-pie"}:
+        return _HelperFinalSymbolPolicy.STATIC
+    if linkage in {"pie", "non-pie"}:
+        return _HelperFinalSymbolPolicy.DYNAMIC
+    raise CompilerHelperEvidenceError("compiler-helper retained linkage differs")
+
+
+def _helper_final_binding(archive_binding: str,
+                          policy: _HelperFinalSymbolPolicy) -> str:
+    require(isinstance(policy, _HelperFinalSymbolPolicy),
+            "compiler-helper final symbol policy differs")
+    require(archive_binding in {"GLOBAL", "LOCAL"},
+            "compiler-helper archive symbol binding differs")
+    if policy is _HelperFinalSymbolPolicy.DYNAMIC and archive_binding == "GLOBAL":
+        return "LOCAL"
+    return archive_binding
+
+
+def _require_helpers_absent_from_dynsym(elf: Elf, names: Sequence[str]) -> None:
+    require(names and len(names) == len(set(names)),
+            "compiler-helper dynamic helper roster differs")
+    for section in elf.sections:
+        if section[1] == 11:
+            require(section[9] == 24 and section[5] % 24 == 0,
+                    "compiler-helper dynamic symbol table differs")
+    leaked = sorted({row["name"] for index, section in enumerate(elf.sections)
+                     if section[1] == 11
+                     for row in (elf.symbol_row(index, number)
+                                 for number in range(section[5] // 24))
+                     if row["name"] in names})
+    require(not leaked, "compiler-helper dynamic helper names leaked into dynsym")
+
+
 INT128_CAST_NAMES = ("__fixdfti", "__fixunsdfti", "__floattidf", "__floatuntidf")
 
 
@@ -704,7 +744,8 @@ def _owned_helper_bytes(elf: Elf, address: int, size: int, *, executable: bool) 
 
 def _owned_helper_provider_closure(member: Elf, final: Elf, map_lines: Sequence[str],
                                    archive: str, original: Mapping[str, Any],
-                                   provider: Mapping[str, Any]) -> dict[str, Any]:
+                                   provider: Mapping[str, Any],
+                                   binding_policy: _HelperFinalSymbolPolicy) -> dict[str, Any]:
     """Replay complete owned code and its file-local branch/constant dependencies.
 
     The selected archive has only direct signed-division branches and binary64
@@ -739,7 +780,8 @@ def _owned_helper_provider_closure(member: Elf, final: Elf, map_lines: Sequence[
                 "compiler-helper provider is not one complete owned function section")
         address, size = contribution(index)
         observed = final.symbol(source["name"], dynamic=False) if expected is None else expected
-        require(observed["type"] == "FUNC" and observed["binding"] == source["binding"]
+        require(observed["type"] == "FUNC"
+                and observed["binding"] == _helper_final_binding(source["binding"], binding_policy)
                 and observed["visibility"] == "DEFAULT" and observed["value"] == address
                 and observed["size"] == size == source["size"],
                 "compiler-helper final private provider metadata or contribution differs")
@@ -807,9 +849,13 @@ def _owned_helper_provider_closure(member: Elf, final: Elf, map_lines: Sequence[
 def _compiler_helper_transfers(*, root: Path, archive: Path, workload: Path,
                                executable: Path, map_path: Path, trace_path: Path | None = None,
                                trace_lines: Sequence[str] | None = None, source_mount: str = "/workspace",
-                               names: Sequence[str] | None = None) -> dict[str, Any]:
+                               names: Sequence[str] | None = None,
+                               binding_policy: _HelperFinalSymbolPolicy = _HelperFinalSymbolPolicy.STATIC
+                               ) -> dict[str, Any]:
     """Join emitted object relocations to the exact owned archive and final code."""
 
+    require(isinstance(binding_policy, _HelperFinalSymbolPolicy),
+            "compiler-helper final symbol policy differs")
     root = Path(root).absolute()
     archive, workload, executable, map_path = map(Path, (archive, workload, executable, map_path))
     paths = (archive, workload, executable, map_path, *((Path(trace_path),) if trace_path is not None else ()))
@@ -844,6 +890,8 @@ def _compiler_helper_transfers(*, root: Path, archive: Path, workload: Path,
         require(selected and len(selected) == len(set(selected))
                 and set(selected) <= set(helper_names(load_contract(root))),
                 "compiler-helper selected provider roster differs")
+        if binding_policy is _HelperFinalSymbolPolicy.DYNAMIC:
+            _require_helpers_absent_from_dynsym(final, selected)
         for name in selected:
             imports = [source.symbol_row(index, number)
                        for index, table in enumerate(source.sections) if table[1] == 2
@@ -851,12 +899,15 @@ def _compiler_helper_transfers(*, root: Path, archive: Path, workload: Path,
                        if source.symbol_row(index, number)["name"] == name]
             require(len(imports) == 1 and imports[0]["section"] == 0 and imports[0]["binding"] == "GLOBAL",
                     "compiler-helper compiler object import differs")
-            provider = _final_symbol(final, name, "GLOBAL")
             original = member.symbol(name, dynamic=False)
             require(original["type"] == "FUNC" and original["binding"] == "GLOBAL"
-                    and original["visibility"] == "DEFAULT" and original["size"] == provider["size"]
+                    and original["visibility"] == "DEFAULT" and original["size"] > 0
                     and original["section"] > 0,
                     "compiler-helper owned archive provider metadata differs")
+            provider_binding = _helper_final_binding(original["binding"], binding_policy)
+            provider = _final_symbol(final, name, provider_binding)
+            require(original["size"] == provider["size"],
+                    "compiler-helper owned archive provider size differs")
             section = _elf_section_name(member, original["section"])
             require(section == ".text." + name, "compiler-helper archive source section differs")
             provider_rows = [line for line in map_lines if line.rstrip().endswith(":(" + section + ")")]
@@ -865,7 +916,8 @@ def _compiler_helper_transfers(*, root: Path, archive: Path, workload: Path,
                     and int(provider_rows[0].split()[0], 16) + original["value"] == provider["value"]
                     and int(provider_rows[0].split()[2], 16) == member.sections[original["section"]][5],
                     "compiler-helper final provider does not originate in the owned archive")
-            closure = _owned_helper_provider_closure(member, final, map_lines, recorded_archive, original, provider)
+            closure = _owned_helper_provider_closure(member, final, map_lines, recorded_archive, original,
+                                                      provider, binding_policy)
             calls = _direct_source_calls(workload.read_bytes(), name, root, allow_tail_calls=True)
             addresses = {}
             for source_section in {row["section"] for row in calls}:
@@ -902,6 +954,7 @@ def _retained_compiler_helper_link(*, root: Path, product: Path, workload: Path,
     import owned_posix_product_evidence as products
     identity = products.validate_retained_link(root, "/workspace", product, workload,
                                               executable, receipt, linkage, dict(linker))
+    binding_policy = _helper_final_policy_for_linkage(linkage)
     record = _read_json(receipt, "compiler-helper link receipt")
     if linkage in {"static", "static-pie"}:
         map_path = receipt.parent / record["map"]["path"]
@@ -916,7 +969,8 @@ def _retained_compiler_helper_link(*, root: Path, product: Path, workload: Path,
         trace_arguments = {"trace_lines": record["link_trace"]}
     observations = _compiler_helper_transfers(
         root=root, archive=product / "usr/lib/libcrabc-builtins.a", workload=workload,
-        executable=executable, map_path=map_path, names=names, **trace_arguments)
+        executable=executable, map_path=map_path, names=names,
+        binding_policy=binding_policy, **trace_arguments)
     return {"link": identity, **observations}
 
 

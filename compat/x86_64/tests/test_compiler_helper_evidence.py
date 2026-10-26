@@ -5,6 +5,7 @@ import copy
 import importlib.util
 import json
 import os
+import struct
 from pathlib import Path
 import subprocess
 import sys
@@ -19,6 +20,57 @@ assert SPEC and SPEC.loader
 EVIDENCE = importlib.util.module_from_spec(SPEC)
 sys.modules[SPEC.name] = EVIDENCE
 SPEC.loader.exec_module(EVIDENCE)
+
+
+def _helper_elf(path: Path, binding: str, dynamic_binding: str | None = None,
+                visibility: int = 0) -> Path:
+    strings = b"\0__addoti4\0"
+    section_names = ("", ".text.__addoti4", ".symtab", ".dynsym", ".strtab", ".shstrtab")
+    section_strings = bytearray(b"\0")
+    name_offsets = {}
+    for name in section_names[1:]:
+        name_offsets[name] = len(section_strings)
+        section_strings.extend(name.encode("ascii") + b"\0")
+    text_offset = 64
+    symtab_offset = text_offset + 4
+    dynsym_offset = symtab_offset + 48
+    dynsym_size = 24 if dynamic_binding is None else 48
+    strings_offset = dynsym_offset + dynsym_size
+    section_strings_offset = strings_offset + len(strings)
+    sections_offset = (section_strings_offset + len(section_strings) + 7) & ~7
+
+    def symbol_row(symbol_binding: str) -> bytes:
+        info = ((1 if symbol_binding == "GLOBAL" else 0) << 4) | 2
+        return struct.pack("<IBBHQQ", 1, info, visibility, 1, 0x1000, 4)
+
+    symtab = bytes(24) + symbol_row(binding)
+    dynsym = bytes(24) if dynamic_binding is None else bytes(24) + symbol_row(dynamic_binding)
+    section_rows = [bytes(64)]
+    for name, kind, flags, address, offset, size, link, info, alignment, entry_size in (
+        (".text.__addoti4", 1, 6, 0x1000, text_offset, 4, 0, 0, 16, 0),
+        (".symtab", 2, 0, 0, symtab_offset, len(symtab), 4, 2 if binding == "LOCAL" else 1, 8, 24),
+        (".dynsym", 11, 0, 0, dynsym_offset, len(dynsym), 4,
+         2 if dynamic_binding == "LOCAL" else 1, 8, 24),
+        (".strtab", 3, 0, 0, strings_offset, len(strings), 0, 0, 1, 0),
+        (".shstrtab", 3, 0, 0, section_strings_offset, len(section_strings), 0, 0, 1, 0),
+    ):
+        section_rows.append(struct.pack(
+            "<IIQQQQIIQQ", name_offsets[name], kind, flags, address, offset, size,
+            link, info, alignment, entry_size,
+        ))
+    ident = b"\x7fELF\x02\x01\x01" + bytes(9)
+    header = struct.pack("<16sHHIQQQIHHHHHH", ident, 3, 62, 1, 0, 0, sections_offset,
+                         0, 64, 56, 0, 64, len(section_rows), 5)
+    image = bytearray(header)
+    image.extend(b"\x90" * 4)
+    image.extend(symtab)
+    image.extend(dynsym)
+    image.extend(strings)
+    image.extend(section_strings)
+    image.extend(bytes(sections_offset - len(image)))
+    image.extend(b"".join(section_rows))
+    path.write_bytes(image)
+    return path
 
 
 class CompilerHelperEvidenceTests(unittest.TestCase):
@@ -597,6 +649,44 @@ class CompilerHelperEvidenceTests(unittest.TestCase):
             EVIDENCE._final_direct_calls(elf, source, placement, provider + 1)
         with self.assertRaisesRegex(EVIDENCE.CompilerHelperEvidenceError, "no selected call"):
             EVIDENCE._final_direct_calls(elf, source, {}, provider)
+
+    def test_retained_helper_final_binding_tracks_the_validated_linkage(self) -> None:
+        scratch = ROOT / ".work/x86_64/compiler-helper-evidence-tests"
+        scratch.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(dir=scratch) as temporary:
+            directory = Path(temporary)
+            static = EVIDENCE.Elf(_helper_elf(directory / "static", "GLOBAL"))
+            for mode in ("static", "static-pie"):
+                with self.subTest(mode=mode):
+                    static_policy = EVIDENCE._helper_final_policy_for_linkage(mode)
+                    static_binding = EVIDENCE._helper_final_binding("GLOBAL", static_policy)
+                    self.assertEqual(
+                        EVIDENCE._final_symbol(static, "__addoti4", static_binding)["binding"], "GLOBAL"
+                    )
+                    self.assertEqual(EVIDENCE._helper_final_binding("LOCAL", static_policy), "LOCAL")
+            with self.assertRaisesRegex(EVIDENCE.CompilerHelperEvidenceError, "provider metadata"):
+                EVIDENCE._final_symbol(static, "__addoti4", "LOCAL")
+
+            dynamic = EVIDENCE.Elf(_helper_elf(directory / "dynamic", "LOCAL"))
+            public = EVIDENCE.Elf(_helper_elf(directory / "public", "GLOBAL"))
+            for mode in ("pie", "non-pie"):
+                with self.subTest(mode=mode):
+                    dynamic_policy = EVIDENCE._helper_final_policy_for_linkage(mode)
+                    dynamic_binding = EVIDENCE._helper_final_binding("GLOBAL", dynamic_policy)
+                    self.assertEqual(dynamic_binding, "LOCAL")
+                    self.assertEqual(
+                        EVIDENCE._final_symbol(dynamic, "__addoti4", dynamic_binding)["binding"], "LOCAL"
+                    )
+                    self.assertEqual(EVIDENCE._helper_final_binding("LOCAL", dynamic_policy), "LOCAL")
+                    with self.assertRaisesRegex(EVIDENCE.CompilerHelperEvidenceError, "provider metadata"):
+                        EVIDENCE._final_symbol(public, "__addoti4", dynamic_binding)
+            hidden = EVIDENCE.Elf(_helper_elf(directory / "hidden", "LOCAL", visibility=2))
+            with self.assertRaisesRegex(EVIDENCE.CompilerHelperEvidenceError, "provider metadata"):
+                EVIDENCE._final_symbol(hidden, "__addoti4", "LOCAL")
+
+            leaked = EVIDENCE.Elf(_helper_elf(directory / "leaked", "LOCAL", "GLOBAL"))
+            with self.assertRaisesRegex(EVIDENCE.CompilerHelperEvidenceError, "dynsym"):
+                EVIDENCE._require_helpers_absent_from_dynsym(leaked, ("__addoti4",))
 
     def test_writer_then_reader_rejects_mutated_member_and_source(self) -> None:
         contract = EVIDENCE.load_contract(ROOT)
