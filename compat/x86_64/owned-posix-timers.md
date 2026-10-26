@@ -78,10 +78,14 @@ translation flags,
 and the role's PIE or PIC mode; it admits no compiler-builtin or ambient header
 root.
 
-The shared workload also isolates pending creator cancellation in disposable
-children, containing musl's resulting orphan timer. It requires cancellation
-before output-handle publication, tests disabled cancellation and the
-non-thread branch, and observes kernel-error errno in creator cleanup. A
+The shared workload also isolates pending deferred creator cancellation in
+disposable children. Timer creation returns without consuming that request.
+POSIX does not designate `timer_create` as a cancellation point in its
+[thread cancellation requirements](https://pubs.opengroup.org/onlinepubs/9799919799/functions/V2_chap02.html#tag_16_09_05_02).
+Successful calls publish a usable timer, which the caller queries and deletes
+before an explicit `pthread_testcancel`. Invalid-clock creation returns
+`EINVAL` without changing the output handle. Four modes cover enabled and
+disabled cancellation, the non-thread branch and kernel failure. A
 reserved-signal interruption with no pending request proves that the worker
 wait retries EINTR without changing callback errno.
 
@@ -135,12 +139,12 @@ There is no extra fixed timer or worker ceiling.
 The creator copies attributes, forces detached state and blocks application
 signals plus SIGTIMER (32) around pthread creation. A release/acquire ready
 handshake publishes the kernel ID/TID; its reverse acknowledgement retires the
-creator's stack arguments. Musl's sem2 wait tests cancellation even when its
-token is already available. The candidate delivers deferred creator
-cancellation after acquiring the reverse acknowledgement, before publishing
-the output handle; kernel creation errors have already reached errno for user
-cleanup handlers. This intentionally postpones cleanup until the worker can
-no longer reference the creator's stack. Notifications target this one retained task. An
+creator's stack arguments. The approved native musl snapshot disables
+cancellation during its two-way semaphore handshake. The candidate uses raw
+futex waits and preserves pending deferred cancellation until the caller
+reaches a cancellation point. Timer creation publishes its handle or returns
+the kernel error after the worker stops accessing the creator's stack.
+Notifications target this one retained task. An
 assembly-owned setjmp continuation encloses each callback; its cleanup runs
 TSD destructors, blocks application/SIGTIMER signals, resets cancellation and
 ELF TLS, then longjmps to assembly. Rust never resumes a returns-twice frame.
@@ -168,16 +172,16 @@ a callback with incomplete reset. The exact signature and preconditions live
 in `loader-libc-tls-runtime-v1.toml` and its validator. Production C allocator
 thread teardown runs through the existing TSD phase before its TLS is reset.
 
-## Recorded source difference: creation failure startup race
+## Released musl 1.2.6 creation failure startup race
 
-Musl's `timer_create.c` writes `td->cancel = 1` when the kernel rejects timer
+Released musl 1.2.6's `timer_create.c` writes `td->cancel = 1` when the kernel rejects timer
 creation, posts `sem1`, and waits for `sem2`. Its worker enters `sem_wait(sem1)`;
 `sem_wait.c` delegates to `sem_timedwait.c`, whose first operation is
 `pthread_testcancel()`. If the parent publishes failure before that first
 cancellation check, the worker exits without acknowledging `sem2`. The creator
 then remains in a futex wait after the worker has disappeared.
 
-The runner isolates this in fresh processes using `failure-once`: one invalid
+The runner isolates creation failure in fresh processes using `failure-once`: one invalid
 clock, one SIGEV_THREAD creation, no earlier timer, key or callback state. It
 records the stopped caller's `/proc/PID/task` status, wait channel and syscall
 when the race occurs, then kills and reaps only its own child. These are
@@ -186,10 +190,15 @@ oracle observations, not a weakened success expectation.
 The candidate uses a separate negative creation-result ID after the ready
 handshake, never a pending pthread-cancellation request. The worker always
 acknowledges the arguments before returning on failure. This deliberately
-fixes that source race while preserving positive error translation, detached
+avoids the released source race while preserving positive error translation, detached
 reclamation, the two-way lifetime handshake and every valid callback lifecycle.
 The shared normal/exit/cancel workload remains a direct musl comparison;
 failure stress requires bounded successful reclamation only from the candidate.
+
+The approved native snapshot `7813e9119eb5fe681b6750b8a033a0490bca0941`
+also removes this startup cancellation request. It preserves the kernel error
+across the semaphore handshake and disables creator cancellation during that
+handshake. The released source observations remain historical evidence.
 
 Full three-product receipt production and family qualification remain separate
 integration gates; the component makes no promotion claim.

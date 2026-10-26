@@ -582,11 +582,18 @@ static void *cancelled_creator(void *argument)
     if (mode == 1) CHECK(pthread_setcancelstate(PTHREAD_CANCEL_DISABLE, NULL) == 0);
     errno = 79;
     CHECK(pthread_cancel(pthread_self()) == 0);
-    CHECK(timer_create(mode == 3 ? 0x3fffffff : CLOCK_MONOTONIC, &event, &creator_timer) == 0);
+    if (mode == 3) {
+        CHECK(timer_create(0x3fffffff, &event, &creator_timer) == -1 && errno == EINVAL);
+        CHECK(creator_timer == (timer_t)(uintptr_t)0x1234);
+    } else {
+        CHECK(timer_create(CLOCK_MONOTONIC, &event, &creator_timer) == 0);
+        struct itimerspec remaining;
+        CHECK(timer_gettime(creator_timer, &remaining) == 0);
+        CHECK(timer_delete(creator_timer) == 0);
+    }
     atomic_store(&creator_returned, 1);
-    CHECK(timer_delete(creator_timer) == 0);
     if (mode == 1) CHECK(pthread_setcancelstate(PTHREAD_CANCEL_ENABLE, NULL) == 0);
-    if (mode != 0) pthread_testcancel();
+    pthread_testcancel();
     pthread_cleanup_pop(1);
     return NULL;
 }
@@ -595,20 +602,14 @@ static void creator_cancellation(void)
     for (int mode = 0; mode < 4; ++mode) {
         pid_t child = fork(); CHECK(child >= 0);
         if (!child) {
-            /* Source cancellation can orphan the newly created timer; the
-               disposable process contains that resource and its worker. */
             creator_timer = (timer_t)(uintptr_t)0x1234;
             pthread_t caller;
             void *result = NULL;
             CHECK(pthread_create(&caller, NULL, cancelled_creator, (void *)(intptr_t)mode) == 0);
             CHECK(pthread_join(caller, &result) == 0);
             CHECK(result == PTHREAD_CANCELED && atomic_load(&creator_cleaned) == 1);
-            CHECK(atomic_load(&creator_returned) == (mode == 1 || mode == 2));
-            /* A disabled source sem_wait can leave EAGAIN from an empty
-               sem_trywait; successful timer_create does not promise errno. */
-            if (mode == 1) CHECK(atomic_load(&creator_errno) == 79 || atomic_load(&creator_errno) == EAGAIN);
-            else CHECK(atomic_load(&creator_errno) == (mode == 3 ? EINVAL : 79));
-            if (mode == 0 || mode == 3) CHECK(creator_timer == (timer_t)(uintptr_t)0x1234);
+            CHECK(atomic_load(&creator_returned) == 1);
+            if (mode == 3) CHECK(atomic_load(&creator_errno) == EINVAL);
             _Exit(0);
         }
         int status;
@@ -698,6 +699,7 @@ int main(int argc, char **argv)
      * duration follows host scheduling; its hang bound matches the runner's. */
     if (argc > 1 && !strcmp(argv[1], "failure")) { alarm(120); failure_reclamation(); return 0; }
     alarm(20);
+    if (argc > 1 && !strcmp(argv[1], "creator-cancellation")) { creator_cancellation(); return 0; }
     if (argc > 2) plugin_path = argv[2];
     if (argc > 1 && (!strcmp(argv[1], "ordinary-lifecycle") ||
                     !strcmp(argv[1], "ordinary-dynamic"))) {

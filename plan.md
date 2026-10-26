@@ -55,9 +55,27 @@ fresh installed-product or family qualification.
 Fresh native products and owning component receipts must now be prepared at
 the integrated source revision using the snapshot image. Old clean products
 and reports retain their historical image/source authority and cannot be
-relabelled. The next bounded campaign proof is the loader registry and
-structural owner, whose earlier timer-reset workload exposed the released
-oracle defect. The parked POSIX aggregate and denied allocator diagnostics
+relabelled. The bounded loader-owner proof at frozen `f378dcf1e` in
+`.work/wt/musl-loader-proof` passes fresh accepted-C static/dynamic product
+preparation, all four ABI collectors and their normal readers, and loader-debug
+collection/replay. Its registry producer fails in the new oracle's `ordinary`
+timer run before any candidate timer arm. The fixture expects `timer_create`
+to consume pending deferred cancellation; the new snapshot correctly leaves
+it pending. POSIX does not permit a cancellation point in `timer_create`.
+Our runtime explicitly copied that old early-cancellation behavior too.
+
+The timer repair in `.work/wt/timer-creator-cancellation` retains all four
+pending/disabled/non-thread/invalid-clock cases, requires creation to return,
+queries and deletes every valid timer, preserves invalid-clock errno and output,
+and acts on cancellation only at the explicit caller `pthread_testcancel`.
+The same installed-header application object passes against the snapshot and
+fails against the frozen candidate at the return assertion. Removing the
+runtime's explicit early cancellation check preserves its existing two-way
+worker acknowledgement and output ownership. The focused dynamic-runtime
+Cargo check passes; independent review found no demonstrated defect. Fresh
+installed-product behavioral verification remains pending at the repaired
+source revision. Preserve the failed registry evidence and blocked
+structural owner unchanged under `musl-loader-proof`. The parked POSIX aggregate and denied allocator diagnostics
 remain parked.
 
 The old-oracle combined assembly completed at frozen `a95273254` with 27
@@ -69,7 +87,7 @@ Preserve `.work/x86_64/abi-differential/combined-selection` and
 result has not undergone combined canonical replay and is historical after
 the oracle refresh.
 
-**Current steering checkpoint:** frozen `a95273254` in
+**Earlier component checkpoint:** frozen `a95273254` in
 `.work/wt/abi-component-proof-fixed` passes fresh products, four ABI
 collectors, all five component producers and normal canonical replay.
 The three inverse-trig identities, `fopen64`, `__restore`,
@@ -218,11 +236,11 @@ read-only-filesystem error. Mounting fresh scratch at both required paths
 makes the normal reader pass. No product, producer or collector repeats for
 that environment correction.
 
-Next collect the remaining 23 ordinary companions on this same frozen
-cohort. Reuse the five accepted component trees, products and collectors.
-Bind the combined set to exercise the earlier CRT, loader, helper, locale
-and runtime joins alongside the seven new identities. Preserve every
-unresolved requirement and all earlier failures. The parked POSIX aggregate
+The remaining 23 ordinary companions were collected on this frozen cohort;
+the historical combined result and timer failure are recorded above. The
+snapshot refresh requires fresh products and companions before another
+combined acceptance. Preserve every unresolved requirement and earlier
+failure. The parked POSIX aggregate
 and denied allocator diagnostics remain outside this wave. Qualification
 flags stay unchanged.
 

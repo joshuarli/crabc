@@ -240,17 +240,11 @@ static_archive_member! { timer_create_source {
         let kernel = KernelSigevent { value: Sigval { integer: 0 }, signal: SIGTIMER as c_int, notify: 4, tid, padding: [0; 44] };
         let mut id = -1;
         let result = unsafe { raw_syscall::syscall3(SYS_TIMER_CREATE, clock as i64, &kernel as *const _ as i64, &mut id as *mut c_int as i64) };
-        // Source syscall() publishes a creation error before the sem2
-        // cancellation point, so creator cleanup handlers observe that errno.
         let status = c_status(result);
         if status < 0 { id = -1; }
         unsafe { (*worker).id.store(id, Ordering::Release); }
         unsafe { post(&args.ready); }
         wait(&args.consumed);
-        // sem_wait(sem2) checks cancellation even when its token is available.
-        // Defer that check until the reverse acknowledgement: only now may user
-        // cleanup retire the creator's stack without invalidating worker args.
-        pthread_cancel::test_current_selected_pthread_cancellation();
         if status < 0 { return -1; }
         unsafe { output.write(((1usize << 63) | ((worker as usize) >> 1)) as *mut c_void); }
         0
