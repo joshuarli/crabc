@@ -1703,19 +1703,19 @@ class ApplicationMainImportBindingTests(unittest.TestCase):
         }
 
     @staticmethod
-    def symbol(*, section='UND', kind='NOTYPE', binding='GLOBAL', size=0, row_index=1):
-        return {'name': 'main', 'raw_name': 'main', 'version': None, 'version_default': False,
+    def symbol(*, name='main', section='UND', kind='NOTYPE', binding='GLOBAL', size=0, row_index=1):
+        return {'name': name, 'raw_name': name, 'version': None, 'version_default': False,
                 'version_index': None, 'section_index': section, 'type': kind, 'binding': binding,
                 'visibility': 'DEFAULT', 'value': '0000000000000000', 'size': str(size),
                 'size_bytes': size, 'row_index': row_index}
 
     @classmethod
     def object_fact(cls, row=None, *, elf_type='REL'):
-        rows = [] if row is None else [row]
-        section_index = row['section_index'] if row is not None else '1'
-        sections = ([{'index': int(section_index), 'name': '.text.main', 'type': 'PROGBITS',
-                      'flags': 'AX', 'address': '0000000000001000', 'size': '000040'}]
-                    if row is not None and section_index != 'UND' else [])
+        rows = [] if row is None else row if type(row) is list else [row]
+        section_indices = {item['section_index'] for item in rows if item['section_index'] != 'UND'}
+        sections = [{'index': int(section_index), 'name': '.text.main', 'type': 'PROGBITS',
+                     'flags': 'AX', 'address': '0000000000001000', 'size': '000040'}
+                    for section_index in sorted(section_indices)]
         return {
             'header': {'fields': [{'name': 'Type', 'value': elf_type}]},
             'sections': sections,
@@ -1751,7 +1751,8 @@ class ApplicationMainImportBindingTests(unittest.TestCase):
         products = {name: {'sha256': format(index + 1, '064x')}
                     for index, name in enumerate(self.PRODUCTS)}
         cohort = {'static_manifest': {'sha256': 'a' * 64},
-                  'dynamic_manifest': {'sha256': 'b' * 64}}
+                  'dynamic_manifest': {'sha256': 'b' * 64},
+                  'dynamic_state': {'sha256': 'c' * 64}}
         runtime_labels = [row['label'] for row in reader.runtime_cells()]
         account = {'identity_names': list(reader.NAMES), 'runtime_labels': runtime_labels}
         companion = {'status': 'crt-startup-observed-with-boundaries', 'products': products,
@@ -1761,6 +1762,8 @@ class ApplicationMainImportBindingTests(unittest.TestCase):
                                   **self.object_fact()}],
             'candidate-shared': self.object_fact(), 'candidate-loader': self.object_fact(),
             'dynamic-crabc-dynamic-attach.o': self.object_fact(),
+            'static-crti.o': self.object_fact(), 'static-crtn.o': self.object_fact(),
+            'dynamic-crti.o': self.object_fact(), 'dynamic-crtn.o': self.object_fact(),
         }
         product_relocations = {}
         for index, artifact in enumerate(self.CRT_ARTIFACTS):
@@ -1771,10 +1774,12 @@ class ApplicationMainImportBindingTests(unittest.TestCase):
                  'visibility': 'DEFAULT', 'symbol_section': 0, 'symbol_type': '0', 'symbol_value': 0}
                 for kind, addend in self.RELOCATIONS[artifact]
             ]
-        facts['normal-object'] = self.object_fact(
-            self.symbol(section='1', kind='FUNC', size=343, row_index=1))
-        facts['empty-object'] = self.object_fact(
-            self.symbol(section='1', kind='FUNC', size=343, row_index=1))
+        application_rows = [
+            self.symbol(section='1', kind='FUNC', size=343, row_index=1),
+            self.symbol(name='getauxval', kind='FUNC', row_index=2),
+        ]
+        facts['normal-object'] = self.object_fact(application_rows)
+        facts['empty-object'] = self.object_fact(application_rows)
         executables = {}
         candidate_cases = [row for row in reader.cases() if not row['mode'].startswith('oracle-')]
         linked_executables = {}
@@ -1899,6 +1904,157 @@ class ApplicationMainImportBindingTests(unittest.TestCase):
         before = copy.deepcopy(accounting)
         self.assertEqual(self.bind(accounting, companion, observations), [])
         self.assertEqual(accounting, before)
+
+
+class AuxvObservationAttachmentTests(unittest.TestCase):
+    NAME = '__auxv'
+    GROUP = 'auxv-owner'
+    REQUIREMENT = 'current source-bound owning component and consumer semantics receipt'
+    SOURCE = 'libc/src/c_abi/x86_64/auxv_observation.rs'
+    SOURCE_FILES = (
+        'libc/src/c_abi/x86_64/static_startup.rs',
+        'libc/src/c_abi/x86_64/dynamic_main_thread_runtime_v1_lifecycle.rs',
+        'compat/x86_64/installed_crt_startup_probe.c',
+    )
+    REASON = 'Validated initial auxv is installed before constructors and observed by getauxval; no selected raw-global consumer.'
+
+    def rule(self):
+        return {
+            'id': self.GROUP, 'members': [self.NAME], 'sources': [self.SOURCE],
+            'disposition': 'structural-replacement', 'reason': self.REASON,
+            'requirements': [self.REQUIREMENT],
+        }
+
+    def accounting(self):
+        reference = {
+            'index': 0, 'artifact_key': 'reference-shared', 'artifact_sha256': 'a' * 64,
+            'member_name': None, 'member_index': None, 'member_occurrence': None,
+            'table': '.dynsym', 'row': {'name': self.NAME, 'version': None, 'version_default': False},
+            'role': 'definition', 'accounting': {'disposition': 'unselected-observation', 'owner': 'pinned-musl'},
+        }
+        return {
+            'identities': [{
+                'identity': selection.identity(self.NAME),
+                'origins': [
+                    {'kind': 'frozen-project-dynamic', 'capability': {
+                        'id': 'runtime.loader', 'classification': 'internal-runtime',
+                    }},
+                    {'kind': 'native-structural-contract', 'group': self.GROUP},
+                    {'kind': 'native-reference-occurrence', 'index': 0},
+                ],
+                'selection': {
+                    'disposition': 'structural-replacement', 'owner': self.GROUP,
+                    'sources': [self.SOURCE], 'reason': self.REASON,
+                },
+                'expected_placements': [], 'unresolved': [self.REQUIREMENT],
+            }],
+            'artifacts': {artifact.key: {'occurrence_indices': []}
+                          for artifact in selection.elf_facts.ARTIFACTS},
+            'placement_joins': [], 'occurrences': [reference],
+            'blockers': [{'code': 'identity-unresolved', 'identity': selection.identity(self.NAME),
+                          'reason': self.REQUIREMENT}],
+        }
+
+    def evidence(self):
+        producer = ApplicationMainImportBindingTests()
+        companion, observations, _cases, _linked = producer.component()
+        reader = selection._crt_startup_reader()
+        source = {'revision': 'a' * 40, 'content_sha256': 'b' * 64, 'clean': True}
+        companion.update({
+            'source': copy.deepcopy(source),
+            'reader': selection.file_identity(Path(reader.__file__)),
+            'contract': selection.file_identity(ROOT / 'compat/x86_64/installed-crt-startup.toml'),
+            'source_inputs': {name: selection.file_identity(ROOT / name) for name in self.SOURCE_FILES},
+        })
+        for case in reader.cases():
+            if case['mode'].startswith('oracle-'):
+                row = producer.symbol(name=self.NAME, section='1', kind='OBJECT', size=8)
+                observations['complete_elf_facts'][case['name']] = producer.object_fact(row)
+        source_bindings = {self.SOURCE: selection.file_identity(ROOT / self.SOURCE)}
+        return source, source_bindings, companion, observations
+
+    def attach(self, accounting=None, source=None, source_bindings=None, companion=None, observations=None):
+        if source is None and source_bindings is None and companion is None and observations is None:
+            source, source_bindings, companion, observations = self.evidence()
+        return selection.attach_auxv_observation(
+            accounting or self.accounting(), self.rule(), source, source_bindings, companion, observations,
+        )
+
+    def test_contract_keeps_auxv_as_one_exact_structural_owner(self):
+        contract = selection.load_contract()
+        groups = [row for row in contract['structural_groups'] if row['id'] == self.GROUP]
+        self.assertEqual(groups, [self.rule()])
+
+    def test_auxv_receipt_binds_getauxval_startup_and_absence_without_mutating_oracle_rows(self):
+        accounting = self.accounting()
+        before_occurrences = copy.deepcopy(accounting['occurrences'])
+        source, source_bindings, companion, observations = self.evidence()
+        candidate_fact_names = sorted(
+            set(selection._crt_startup_reader().product_paths(selection._crt_startup_reader().ROOT, {
+                'static_preparation': {'primary': {'path': '.'}}, 'dynamic_product': {'path': '.'},
+            }))
+            | {case['name'] for case in selection._crt_startup_reader().cases()
+               if not case['mode'].startswith('oracle-')}
+            | {'normal-object', 'empty-object'}
+        )
+        joins = self.attach(accounting, source, source_bindings, companion, observations)
+        self.assertEqual(joins, [{
+            'identity': selection.identity(self.NAME), 'owner': self.GROUP,
+            'getauxval_imports': {'normal-object': [2], 'empty-object': [2]},
+            'candidate_elf_facts': candidate_fact_names,
+            'candidate_legacy_occurrences': 0,
+            'oracle_occurrence_indices': [0],
+            'runtime_labels': companion['account']['runtime_labels'],
+            'requirements_discharged': [self.REQUIREMENT],
+        }])
+        self.assertEqual(accounting['occurrences'], before_occurrences)
+        self.assertEqual(accounting['identities'][0]['unresolved'], [])
+        self.assertEqual(accounting['blockers'], [])
+
+    def test_auxv_rejects_stale_source_missing_receipt_candidate_symbol_and_extra_requirement(self):
+        def setup():
+            source, source_bindings, companion, observations = self.evidence()
+            return self.accounting(), source, source_bindings, companion, observations
+
+        def omit_getauxval_import(_accounting, source, source_bindings, _companion, observations):
+            del observations['complete_elf_facts']['normal-object']['symbol_tables'][0]['rows'][1]
+            return source, source_bindings, _companion, observations
+
+        def alter_getauxval_import(_accounting, source, source_bindings, _companion, observations):
+            observations['complete_elf_facts']['normal-object']['symbol_tables'][0]['rows'][1]['type'] = 'NOTYPE'
+            return source, source_bindings, _companion, observations
+
+        cases = {
+            'missing CRT receipt': lambda a, s, b, c, o: (s, b, None, None),
+            'stale auxv source binding': lambda a, s, b, c, o: (s, {self.SOURCE: {'sha256': '0' * 64}}, c, o),
+            'different CRT source publication': lambda a, s, b, c, o: (s, b, {**c, 'source': {'revision': 'c' * 40,
+                'content_sha256': 'd' * 64, 'clean': True}}, o),
+            'missing startup-order source': lambda a, s, b, c, o: (s, b, {**c, 'source_inputs': {
+                self.SOURCE_FILES[0]: c['source_inputs'][self.SOURCE_FILES[0]],
+            }}, o),
+            'normal object omits getauxval import': omit_getauxval_import,
+            'normal object has malformed getauxval import': alter_getauxval_import,
+            'candidate product legacy occurrence': lambda a, s, b, c, o: a['occurrences'].append({
+                'index': 1, 'artifact_key': 'candidate-static', 'row': {'name': self.NAME},
+                'role': 'import',
+            }) or (s, b, c, o),
+            'candidate product complete fact legacy definition': lambda a, s, b, c, o: o['complete_elf_facts']['static-crti.o']['symbol_tables'][0]['rows'].append(
+                ApplicationMainImportBindingTests.symbol(name=self.NAME, section='1', kind='OBJECT', size=8))
+                or (s, b, c, o),
+            'candidate final ELF legacy occurrence': lambda a, s, b, c, o: o['complete_elf_facts']['static-normal']['symbol_tables'][0]['rows'].append(
+                ApplicationMainImportBindingTests.symbol(name=self.NAME, section='UND')) or (s, b, c, o),
+            'unrelated auxv requirement': lambda a, s, b, c, o: a['identities'][0]['unresolved'].append(
+                'unrelated requirement remains') or (s, b, c, o),
+        }
+        for label, alter in cases.items():
+            with self.subTest(label=label):
+                accounting, source, source_bindings, companion, observations = setup()
+                replacement = alter(accounting, source, source_bindings, companion, observations)
+                if isinstance(replacement, tuple):
+                    source, source_bindings, companion, observations = replacement
+                before = copy.deepcopy(accounting)
+                self.assertEqual(self.attach(accounting, source, source_bindings, companion, observations), [])
+                self.assertEqual(accounting, before)
 
 
 class LinkerDynamicTableBindingTests(unittest.TestCase):

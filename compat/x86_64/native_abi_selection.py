@@ -63,7 +63,7 @@ import loader_structural_owner_contract_reader as loader_structural_owner_eviden
 import owned_bsd_random_receipt as bsd_random_evidence
 import runtime_private_facades as runtime_facades
 
-SCHEMA = 'crabc.x86_64-native-abi-selection-report/v9'
+SCHEMA = 'crabc.x86_64-native-abi-selection-report/v10'
 CONTRACT_SCHEMA = 'crabc.x86_64-native-abi-selection/v2'
 TARGET = inventory.TARGET
 CONTRACT_PATH = MODULE_DIR / 'native-abi-selection.toml'
@@ -161,6 +161,21 @@ APPLICATION_MAIN_OWNER_GROUP = {
     'members': ['main'], 'members_file': '', 'delegated_members': [], 'expected_type': '',
     'placement_metadata': {},
     'static_metadata_rule': 'explicit', 'reason': APPLICATION_MAIN_REASON,
+}
+AUXV_OWNER_GROUP = 'auxv-owner'
+AUXV_OWNER_NAME = '__auxv'
+AUXV_OWNER_SOURCE = 'libc/src/c_abi/x86_64/auxv_observation.rs'
+AUXV_OWNER_REASON = 'Validated initial auxv is installed before constructors and observed by getauxval; no selected raw-global consumer.'
+AUXV_OWNER_REQUIREMENT = 'current source-bound owning component and consumer semantics receipt'
+AUXV_CRT_SOURCES = (
+    'libc/src/c_abi/x86_64/static_startup.rs',
+    'libc/src/c_abi/x86_64/dynamic_main_thread_runtime_v1_lifecycle.rs',
+    'compat/x86_64/installed_crt_startup_probe.c',
+)
+AUXV_STRUCTURAL_GROUP = {
+    'id': AUXV_OWNER_GROUP, 'members': [AUXV_OWNER_NAME], 'sources': [AUXV_OWNER_SOURCE],
+    'disposition': 'structural-replacement', 'reason': AUXV_OWNER_REASON,
+    'requirements': [AUXV_OWNER_REQUIREMENT],
 }
 DISPOSITIONS = {'public-provider', 'private-provider', 'application-supplied', 'unresolved'}
 SUPPORTED_TYPES = {'NOTYPE', 'OBJECT', 'FUNC', 'SECTION', 'FILE', 'COMMON', 'TLS', 'IFUNC'}
@@ -875,6 +890,9 @@ def validate_contract(value: Any) -> dict[str, Any]:
             and application_supplied_groups == application_main_groups
             and same(application_main_groups[0], APPLICATION_MAIN_OWNER_GROUP),
             'application-supplied owner group roster differs')
+    auxv_groups = [row for row in result['structural_groups'] if row['id'] == AUXV_OWNER_GROUP]
+    require(len(auxv_groups) == 1 and same(auxv_groups[0], AUXV_STRUCTURAL_GROUP),
+            'auxv structural owner group differs')
     exact(result['requirements'], {'declaration_companion', 'semantic_receipts', 'family_receipts', 'same_source_products'}, 'requirements')
     require(all(value is True for value in result['requirements'].values()), 'selection requirements cannot be disabled')
     explicit_members = [name for row in result['owner_groups'] if row['selector'] == 'explicit' for name in row['members']]
@@ -8708,6 +8726,167 @@ def attach_application_main_imports(accounting: Mapping[str, Any], rule: Mapping
     return [join]
 
 
+def attach_auxv_observation(accounting: Mapping[str, Any], rule: Mapping[str, Any],
+                            source: Mapping[str, Any], source_bindings: Mapping[str, Any],
+                            crt_companion: Mapping[str, Any] | None,
+                            observations: Mapping[str, Any] | None) -> list[dict[str, Any]]:
+    require(same(rule, AUXV_STRUCTURAL_GROUP), 'auxv structural owner rule differs')
+    if crt_companion is None or observations is None:
+        return []
+    if (type(source) is not dict
+            or set(source) != {'revision', 'content_sha256', 'clean'}
+            or source.get('clean') is not True
+            or type(source.get('revision')) is not str
+            or type(source.get('content_sha256')) is not str
+            or not re.fullmatch(r'[0-9a-f]{40}', source['revision'])
+            or not re.fullmatch(r'[0-9a-f]{64}', source['content_sha256'])
+            or type(source_bindings) is not dict
+            or source_bindings.get(AUXV_OWNER_SOURCE) != file_identity(ROOT / AUXV_OWNER_SOURCE)
+            or crt_companion.get('source') != source):
+        return []
+    reader = _crt_startup_reader()
+    if (not set(AUXV_CRT_SOURCES) <= set(reader.COLLECTOR_SOURCES)
+            or crt_companion.get('status') != 'crt-startup-observed-with-boundaries'
+            or crt_companion.get('reader') != file_identity(Path(reader.__file__))
+            or crt_companion.get('contract') != file_identity(ROOT / 'compat/x86_64/installed-crt-startup.toml')):
+        return []
+    expected_products = set(reader.product_paths(reader.ROOT, {
+        'static_preparation': {'primary': {'path': '.'}}, 'dynamic_product': {'path': '.'},
+    }))
+    products = crt_companion.get('products', {})
+    cohort = crt_companion.get('cohort_inputs', {})
+    account = crt_companion.get('account', {})
+    runtime_labels = [cell['label'] for cell in reader.runtime_cells()]
+    source_inputs = crt_companion.get('source_inputs', {})
+    if (type(products) is not dict or set(products) != expected_products
+            or not all(type(products[name]) is dict and type(products[name].get('sha256')) is str
+                       and re.fullmatch(r'[0-9a-f]{64}', products[name]['sha256'])
+                       for name in expected_products)
+            or type(cohort) is not dict or set(cohort) != {'static_manifest', 'dynamic_manifest', 'dynamic_state'}
+            or not all(type(cohort[name]) is dict and type(cohort[name].get('sha256')) is str
+                       and re.fullmatch(r'[0-9a-f]{64}', cohort[name]['sha256'])
+                       for name in cohort)
+            or type(account) is not dict or account.get('identity_names') != list(reader.NAMES)
+            or account.get('runtime_labels') != runtime_labels
+            or observations.get('runtime_labels') != runtime_labels
+            or type(source_inputs) is not dict
+            or not set(AUXV_CRT_SOURCES) <= set(source_inputs)
+            or any(source_inputs[name] != file_identity(ROOT / name) for name in AUXV_CRT_SOURCES)):
+        return []
+    expected_fact_names = expected_products | {case['name'] for case in reader.cases()} | {
+        'normal-object', 'empty-object',
+    }
+    facts = observations.get('complete_elf_facts')
+    if type(facts) is not dict or set(facts) != expected_fact_names:
+        return []
+    candidate_cases = {case['name'] for case in reader.cases()
+                       if not case['mode'].startswith('oracle-')}
+    candidate_fact_names = sorted(expected_products | candidate_cases | {'normal-object', 'empty-object'})
+
+    def named_rows(fact: Any) -> list[tuple[str, Mapping[str, Any]]] | None:
+        members = fact if type(fact) is list else [fact]
+        result = []
+        for member in members:
+            if type(member) is not dict or type(member.get('symbol_tables')) is not list:
+                return None
+            for table in member['symbol_tables']:
+                if type(table) is not dict or type(table.get('rows')) is not list:
+                    return None
+                result.extend((table.get('name'), row) for row in table['rows']
+                              if type(row) is dict and row.get('name') == AUXV_OWNER_NAME)
+        return result
+
+    candidate_fact_rows = []
+    for name in candidate_fact_names:
+        rows = named_rows(facts[name])
+        if rows is None:
+            return []
+        candidate_fact_rows.extend((name, table, row) for table, row in rows)
+    if candidate_fact_rows:
+        return []
+    getauxval_imports = {}
+    for name in ('normal-object', 'empty-object'):
+        members = facts[name] if type(facts[name]) is list else [facts[name]]
+        imports = []
+        for member in members:
+            if type(member) is not dict or type(member.get('symbol_tables')) is not list:
+                return []
+            for table in member['symbol_tables']:
+                if type(table) is not dict or type(table.get('rows')) is not list:
+                    return []
+                imports.extend((table.get('name'), row) for row in table['rows']
+                               if type(row) is dict and row.get('name') == 'getauxval')
+        if len(imports) != 1 or imports[0][0] != '.symtab':
+            return []
+        row = imports[0][1]
+        if ({field: row.get(field) for field in (
+                'type', 'binding', 'visibility', 'section_index', 'version', 'version_index',
+                'version_default', 'size_bytes',
+        )} != {
+                'type': 'FUNC', 'binding': 'GLOBAL', 'visibility': 'DEFAULT', 'section_index': 'UND',
+                'version': None, 'version_index': None, 'version_default': False, 'size_bytes': 0,
+        } or type(row.get('row_index')) is not int):
+            return []
+        getauxval_imports[name] = [row['row_index']]
+
+    records, placements, occurrences = _accounting_indexes(accounting, description='auxv observation owner')
+    if type(accounting.get('artifacts')) is not dict or set(accounting['artifacts']) != {
+        artifact.key for artifact in elf_facts.ARTIFACTS
+    }:
+        return []
+    key = identity_key(identity(AUXV_OWNER_NAME))
+    record = records.get(key)
+    if (record is None
+            or record.get('selection') != {
+                'disposition': 'structural-replacement', 'owner': AUXV_OWNER_GROUP,
+                'sources': [AUXV_OWNER_SOURCE], 'reason': AUXV_OWNER_REASON,
+            }
+            or record.get('expected_placements') != []
+            or record.get('unresolved') != [AUXV_OWNER_REQUIREMENT]
+            or any(placement_identity == key for placement_identity, _artifact in placements)):
+        return []
+    origins = record.get('origins', [])
+    project_origins = [row for row in origins if row.get('kind') == 'frozen-project-dynamic']
+    structural_origins = [row for row in origins if row.get('kind') == 'native-structural-contract']
+    if (project_origins != [{'kind': 'frozen-project-dynamic', 'capability': {
+            'id': 'runtime.loader', 'classification': 'internal-runtime',
+    }}] or structural_origins != [{'kind': 'native-structural-contract', 'group': AUXV_OWNER_GROUP}]
+            or any(row.get('kind') not in {'frozen-musl-dynamic', 'frozen-musl-archive',
+                                          'native-reference-occurrence'}
+                   for row in origins if row not in project_origins and row not in structural_origins)):
+        return []
+    blockers = [row for row in accounting['blockers']
+                if row.get('code') == 'identity-unresolved'
+                and identity_key(row.get('identity', {})) == key]
+    if [row.get('reason') for row in blockers] != [AUXV_OWNER_REQUIREMENT]:
+        return []
+    candidate_artifacts = {artifact.key for artifact in elf_facts.ARTIFACTS
+                           if artifact.owner != 'reference'}
+    candidate_occurrences = [row for row in occurrences.values()
+                             if row.get('artifact_key') in candidate_artifacts
+                             and row.get('row', {}).get('name') == AUXV_OWNER_NAME]
+    if candidate_occurrences:
+        return []
+    occurrence_count = len(occurrences)
+    unnamed_count = sum(type(row.get('row')) is dict and row['row'].get('name') is None
+                        for row in occurrences.values())
+    oracle_indices = sorted(row['index'] for row in occurrences.values()
+                            if row.get('artifact_key') in {'reference-static', 'reference-shared'}
+                            and row.get('row', {}).get('name') == AUXV_OWNER_NAME)
+    _remove_identity_requirements(accounting, record, [AUXV_OWNER_REQUIREMENT],
+                                  description='auxv observation structural owner')
+    require(len(occurrences) == occurrence_count
+            and sum(type(row.get('row')) is dict and row['row'].get('name') is None
+                    for row in occurrences.values()) == unnamed_count,
+            'auxv observation attachment changed complete ELF accounting')
+    return [{
+        'identity': copy.deepcopy(record['identity']), 'owner': AUXV_OWNER_GROUP,
+        'getauxval_imports': getauxval_imports, 'candidate_elf_facts': candidate_fact_names,
+        'candidate_legacy_occurrences': 0, 'oracle_occurrence_indices': oracle_indices,
+        'runtime_labels': runtime_labels, 'requirements_discharged': [AUXV_OWNER_REQUIREMENT],
+    }]
+
+
 def attach_libc_start_main_imports(accounting: Mapping[str, Any],
                                    crt_companion: Mapping[str, Any] | None,
                                    rust_members: Sequence[str],
@@ -14379,6 +14558,10 @@ def _build_report(*, contract_path: Path, paths: Mapping[str, Path], declaration
         empty=([], []))
     crt_observations = (_crt_libc_start_main_observations(crt_startup_companion)
                         if crt_startup_companion is not None else None)
+    auxv_observation_joins = attach_auxv_observation(
+        accounting, next(row for row in contract['structural_groups'] if row['id'] == AUXV_OWNER_GROUP),
+        source_before, inputs['bindings'], crt_startup_companion, crt_observations,
+    )
     application_main_import_joins = attach_application_main_imports(
         accounting, next(row for row in contract['owner_groups'] if row['id'] == APPLICATION_MAIN_GROUP),
         crt_startup_companion, crt_observations,
@@ -14591,6 +14774,7 @@ def _build_report(*, contract_path: Path, paths: Mapping[str, Path], declaration
             'crt_startup_companion': crt_startup_companion,
             'crt_startup_joins': crt_startup_joins,
             'crt_descriptor_handoff_joins': crt_descriptor_handoff_joins,
+            'auxv_observation_joins': auxv_observation_joins,
             'application_main_import_joins': application_main_import_joins,
             'libc_start_main_import_joins': libc_start_main_import_joins,
             'linker_dynamic_table_joins': linker_dynamic_table_joins,

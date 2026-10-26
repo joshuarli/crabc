@@ -696,10 +696,13 @@ a retained runtime map, probe, source snapshot, or raw command output cannot
 change after the initial reader replay. A report with only one component stays
 independently optional and leaves both descriptor requirements unresolved.
 
-The selection report schema is `crabc.x86_64-native-abi-selection-report/v9`.
-Version 9 adds `application_main_import_joins` from the existing CRT v5
-component receipt. It records the exact five import occurrences, application
-objects, candidate executables, and runtime labels. The selection contract is
+The selection report schema is `crabc.x86_64-native-abi-selection-report/v10`.
+Version 10 adds `auxv_observation_joins` from the existing CRT v5 component
+receipt. It records the two application-object `getauxval` imports, all
+candidate ELF fact names checked for legacy `__auxv`, and the complete CRT
+runtime cell roster. Version 9 added `application_main_import_joins`, which
+records the exact five import occurrences, application objects, candidate
+executables, and runtime labels. The selection contract is
 `crabc.x86_64-native-abi-selection/v2`; version 2 adds the exact
 `crt-application-main-consumer` owner group with no expected provider
 placements. Version 8 added the optional closed
@@ -787,7 +790,7 @@ permission to omit double-underscore names.
 | Frozen identity | Native owner and retained requirement |
 | --- | --- |
 | `__dls2b`, `__dls3`, `_dlstart` | Native interpreter entry, self-relocation, TLS setup, and general startup own the real stage transitions. `loader-debug-crt-abi.md` defines the exact entry/ordering proof; returning libc stage probes are not substitutes. |
-| `__auxv` | `auxv_observation.rs::install_initial` receives the validated initial vector from static or dynamic startup before constructors; `getauxval` observes it. No current selected x86 consumer requires the old writable raw global. |
+| `__auxv` | `auxv_observation.rs::install_initial` receives the validated initial vector from static or dynamic startup before constructors; `getauxval` observes it. No current selected x86 consumer requires the old writable raw global. `auxv_observation_joins` clears this owner requirement only with the current source-bound CRT receipt, both application-object `getauxval` imports, all 24 startup cells, and no candidate legacy `__auxv` rows. Reference ELF observations remain intact. |
 | `__ldso_register_dlopen`, `__ldso_register_dlsym`, `__ldso_register_dlclose` | `general_dlfcn.rs` imports the selected direct operations from `x86_64_runtime_registry.rs`. Their loader operation, lifetime, locking, and error contracts replace mutable callback registration. |
 | `__ldso_register_dlerror` | The loader returns operation errors; `general_dlfcn.rs` owns the calling thread's diagnostic state and consumes it through `dlerror`. This is an explicit owner split, not a renamed callback slot. |
 | `__ldso_register_mark_multithreaded` | `x86_64_runtime_lock.rs::RuntimeGuard` uses its atomic graph lock from the first transaction. Worker TLS preparation acquires that lock before clone; there is no native single-thread recursion state to transfer. |
