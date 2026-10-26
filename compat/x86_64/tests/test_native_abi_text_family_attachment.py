@@ -233,14 +233,14 @@ class TextFamilySemanticAttachmentTests(unittest.TestCase):
             "identities": [record], "placement_joins": [], "occurrences": [],
             "blockers": [{
                 "code": "identity-unresolved", "identity": copy.deepcopy(record["identity"]),
-                "reason": selection.TEXT_FOPEN64_STRUCTURAL_REQUIREMENT,
+                "reason": selection.STRUCTURAL_COMPONENT_REQUIREMENT,
             }],
         }
 
     def test_component_receipt_discharges_only_fopen64_structural_requirement(self) -> None:
         accounting = self._fopen64_accounting()
         self.assertEqual(selection.attach_text_family_fopen64_structural(accounting, None, paths=self.paths), [])
-        self.assertEqual(accounting["identities"][0]["unresolved"], [selection.TEXT_FOPEN64_STRUCTURAL_REQUIREMENT])
+        self.assertEqual(accounting["identities"][0]["unresolved"], [selection.STRUCTURAL_COMPONENT_REQUIREMENT])
 
         companion = self._adapter()
         joins = selection.attach_text_family_fopen64_structural(accounting, companion, paths=self.paths)
@@ -248,7 +248,7 @@ class TextFamilySemanticAttachmentTests(unittest.TestCase):
             "identity": {"name": "fopen64", "version": None, "version_default": False},
             "component": "owned-stdio-component-receipt", "product_pairs": list(text_family.PAIRS),
             "row": self._fopen64_row(),
-            "requirements_discharged": [selection.TEXT_FOPEN64_STRUCTURAL_REQUIREMENT],
+            "requirements_discharged": [selection.STRUCTURAL_COMPONENT_REQUIREMENT],
             "limits": list(selection.TEXT_FOPEN64_STRUCTURAL_LIMITS),
         }])
         self.assertEqual(accounting["identities"][0]["unresolved"], [])

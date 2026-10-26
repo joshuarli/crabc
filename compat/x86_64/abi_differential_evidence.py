@@ -97,8 +97,18 @@ SELECTION_COMPANIONS = (
     "loader_structural_owner_receipt_report",
     "fchdir_ordinary_import_work",
     "provider_link_work",
+    "installed_math_work",
+    "installed_stdio_work",
+    "signal_process_work",
+    "bootstrap_primitives_work",
+    "binary80_feature_work",
 )
 DIRECTORY_COMPANIONS = {
+    "installed_math_work",
+    "installed_stdio_work",
+    "signal_process_work",
+    "bootstrap_primitives_work",
+    "binary80_feature_work",
     "compiler_helper_installed_links", "fchdir_ordinary_import_work", "provider_link_work",
 }
 # The one companion that is checked-in generated source rather than `.work`
@@ -129,7 +139,8 @@ def _sha256(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
-def _tree_sha256(path: Path, *, allow_symlinks: bool = False) -> str:
+def _tree_sha256(path: Path, *, allow_symlinks: bool = False,
+                 copied_loader: tuple[str, str, str] | None = None) -> str:
     """Seal retained directory entries, optionally recording link targets."""
     digest = hashlib.sha256()
     def raise_walk_error(error: OSError) -> None:
@@ -141,8 +152,14 @@ def _tree_sha256(path: Path, *, allow_symlinks: bool = False) -> str:
             child = Path(parent) / name
             relative = child.relative_to(path).as_posix().encode()
             mode = child.lstat().st_mode
+            copied_alias = False
+            if stat.S_ISLNK(mode) and copied_loader is not None:
+                alias, target, loader_sha256 = copied_loader
+                copied_alias = (child.as_posix().endswith('/' + alias) and os.readlink(child) == target
+                                and child.with_name(target).is_file() and not child.with_name(target).is_symlink()
+                                and _sha256(child.with_name(target)) == loader_sha256)
             require(stat.S_ISDIR(mode) or stat.S_ISREG(mode)
-                    or allow_symlinks and stat.S_ISLNK(mode),
+                    or (allow_symlinks or copied_alias) and stat.S_ISLNK(mode),
                     f"companion work has a non-physical entry: {child}")
             digest.update(b"L" if stat.S_ISLNK(mode) else b"D" if stat.S_ISDIR(mode) else b"F")
             digest.update(len(relative).to_bytes(8, "big"))
@@ -156,8 +173,21 @@ def _tree_sha256(path: Path, *, allow_symlinks: bool = False) -> str:
     return digest.hexdigest()
 
 
-def _companion_sha256(name: str, path: Path) -> str:
-    return (_tree_sha256(path, allow_symlinks=name == "compiler_helper_installed_links")
+def _companion_sha256(name: str, path: Path, *, dynamic_product: Path | None = None) -> str:
+    copied_loader = None
+    if name in {"installed_math_work", "installed_stdio_work", "signal_process_work", "bootstrap_primitives_work"}:
+        require(dynamic_product is not None, "component directory requires its selected dynamic product")
+        import owned_posix_product_evidence as products
+        try:
+            manifest_path, files = products._validate_dynamic_product(dynamic_product)
+            aliases = json.loads(manifest_path.read_text())["symlinks"]
+            alias = "lib/ld-musl-x86_64.so.1"
+            target = aliases[alias]
+            require(target == "ld-crabc-x86_64.so.1", "selected dynamic loader alias differs")
+            copied_loader = alias, target, files["lib/" + target]
+        except (OSError, RuntimeError, ValueError, KeyError, TypeError) as error:
+            raise EvidenceError(f"component selected loader manifest is invalid: {error}") from error
+    return (_tree_sha256(path, allow_symlinks=name == "compiler_helper_installed_links", copied_loader=copied_loader)
             if name in DIRECTORY_COMPANIONS else _sha256(path))
 
 
@@ -237,7 +267,7 @@ class EvidenceSet:
         self.companions: dict[str, Path] = {}
         for name, entry in record["selection_companions"].items():
             path = _companion_path(name, entry.get("path"))
-            require(_companion_sha256(name, path) == entry.get("sha256"),
+            require(_companion_sha256(name, path, dynamic_product=self.inputs["dynamic_product"]) == entry.get("sha256"),
                     f"selection companion {name} bytes changed after assembly")
             if name == "fchdir_ordinary_import_work":
                 _validate_fchdir_work(path, static_product=self.inputs["static_product"],
@@ -507,6 +537,10 @@ def _only_child_report(output: Path) -> Path:
     return children[0] / "report.json"
 
 
+def _only_child_work(output: Path) -> Path:
+    return _only_child_report(output).parent
+
+
 def _only_owned_aio_report(output: Path) -> Path:
     children = [path for path in output.iterdir() if path.is_dir() and not path.is_symlink()]
     require(len(children) == 1, f"{output} does not hold exactly one owned AIO evidence tree")
@@ -524,6 +558,31 @@ def _p(cohort: Cohort) -> list[str]:
 
 
 PRODUCERS = (
+    CompanionProducer(
+        "installed_math_work",
+        lambda c, r, o: (["bash", "compat/x86_64/run_owned_math_fenv_all_entry.sh",
+                          "--static-sysroot", str(c.static_product), str(c.dynamic_product)], _tmpdir_env(o)),
+        _only_child_work),
+    CompanionProducer(
+        "installed_stdio_work",
+        lambda c, r, o: (["bash", "compat/x86_64/run_owned_stdio.sh",
+                          "--static-sysroot", str(c.static_product), str(c.dynamic_product)], _tmpdir_env(o)),
+        _only_child_work),
+    CompanionProducer(
+        "signal_process_work",
+        lambda c, r, o: (["bash", "compat/x86_64/run_owned_signal_process.sh",
+                          "--static-sysroot", str(c.static_product), str(c.dynamic_product)], _tmpdir_env(o)),
+        _only_child_work),
+    CompanionProducer(
+        "bootstrap_primitives_work",
+        lambda c, r, o: (["bash", "compat/x86_64/run_libc_bootstrap_primitives.sh",
+                          "--static-product", str(c.static_product), "--dynamic-product", str(c.dynamic_product)], _tmpdir_env(o)),
+        _only_child_work),
+    CompanionProducer(
+        "binary80_feature_work",
+        lambda c, r, o: (["bash", "compat/x86_64/run_libc_math_long_double_completion.sh",
+                          "--retain-output", str(o)], {}),
+        lambda output: output, output_parent=".work/x86_64/abi-binary80-feature"),
     CompanionProducer(
         "loader_debug_report",
         lambda c, r, o: (["bash", "compat/x86_64/run_loader_debug_abi.sh", "collect", "--output", str(o),
@@ -740,7 +799,7 @@ def collect_companions(cohort: Cohort, output: Path, *, only: Sequence[str] = ()
         "source": source,
         "cohort": cohort.record(),
         "companions": {
-            name: {"path": _companion_relative(name, path), "sha256": _companion_sha256(name, path)}
+            name: {"path": _companion_relative(name, path), "sha256": _companion_sha256(name, path, dynamic_product=cohort.dynamic_product)}
             for name, path in sorted(reports.items())
         },
         "outcomes": outcomes,
@@ -767,7 +826,7 @@ def load_companions(path: Path, cohort: Cohort) -> dict[str, Path]:
     for name, entry in record["companions"].items():
         require(isinstance(entry, dict) and set(entry) == {"path", "sha256"}, f"companion {name} entry is malformed")
         companion = _companion_path(name, entry["path"])
-        require(_companion_sha256(name, companion) == entry["sha256"], f"companion {name} bytes changed after collection")
+        require(_companion_sha256(name, companion, dynamic_product=cohort.dynamic_product) == entry["sha256"], f"companion {name} bytes changed after collection")
         if name == "fchdir_ordinary_import_work":
             _validate_fchdir_work(companion, static_product=cohort.static_product,
                                   dynamic_product=cohort.dynamic_product)
@@ -797,7 +856,7 @@ def assemble(arguments: argparse.Namespace) -> Path:
     reports = {name: Path(os.path.abspath(getattr(arguments, name))) for name in COLLECTED_REPORTS}
     for name, path in companions.items():
         physical = _companion_path(name, _companion_relative(name, path))
-        _companion_sha256(name, physical)
+        _companion_sha256(name, physical, dynamic_product=inputs["dynamic_product"])
         if name == "fchdir_ordinary_import_work":
             _validate_fchdir_work(physical, static_product=inputs["static_product"],
                                   dynamic_product=inputs["dynamic_product"])
@@ -832,7 +891,7 @@ def assemble(arguments: argparse.Namespace) -> Path:
             name: {"path": _relative(reports[name], name), "sha256": _sha256(reports[name])} for name in REPORTS
         },
         "selection_companions": {
-            name: {"path": _companion_relative(name, path), "sha256": _companion_sha256(name, path)}
+            name: {"path": _companion_relative(name, path), "sha256": _companion_sha256(name, path, dynamic_product=inputs["dynamic_product"])}
             for name, path in sorted(companions.items())
         },
     }

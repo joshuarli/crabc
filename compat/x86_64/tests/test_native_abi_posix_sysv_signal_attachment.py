@@ -240,7 +240,7 @@ class PosixSysvSignalAttachmentTests(unittest.TestCase):
             }],
             'blockers': [{
                 'code': 'identity-unresolved', 'identity': copy.deepcopy(record['identity']),
-                'reason': selection.POSIX_SYSV_SIGNAL_REQUIREMENT,
+                'reason': selection.FEATURE_ALIAS_REQUIREMENT,
             }],
         }
 
@@ -266,7 +266,7 @@ class PosixSysvSignalAttachmentTests(unittest.TestCase):
         self.assertEqual(accounting['blockers'], [])
         self.assertTrue(accounting['function_alias_observations'][0]['feature_archive_receipt_proven'])
         self.assertTrue(accounting['function_alias_observations'][0]['runtime_semantics_proven'])
-        self.assertEqual(joins[0]['requirements_discharged'], [selection.POSIX_SYSV_SIGNAL_REQUIREMENT])
+        self.assertEqual(joins[0]['requirements_discharged'], [selection.FEATURE_ALIAS_REQUIREMENT])
         self.assertEqual(set(joins[0]['signal_helper_static_cells']),
                          set(selection.POSIX_SYSV_SIGNAL_STATIC_CELLS))
         self.assertEqual(joins[0]['shared_target_occurrence_index'], 4)

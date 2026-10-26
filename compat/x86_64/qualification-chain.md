@@ -94,6 +94,14 @@ receipts. `collect-companions` runs each companion's runner (`PRODUCERS` in
 `companions.json`; a failed runner, and any companion that consumes its receipt,
 is recorded and never bound, so its selection blockers stay open. The text-family
 and POSIX `__sysv_signal` receipts come only from their family admission flows.
+Five bounded component producers also retain directory companions:
+`installed_math_work`, `installed_stdio_work`, `signal_process_work`,
+`bootstrap_primitives_work` and `binary80_feature_work`. The first four use
+the cohort's installed products. The binary80 producer retains its isolated
+baseline and feature archives. These producers do not run the POSIX aggregate.
+Directory seals admit copied loader symlinks only at the selected manifest's
+alias path, with its exact target and selected loader bytes. Other directory
+companions retain their existing symlink policy.
 Every product and report must come from the evaluated clean revision, and
 assembly runs in the pinned image because the reports record checkout paths.
 Each of the gate's retained evidence rows reruns its own leaf reader; the last

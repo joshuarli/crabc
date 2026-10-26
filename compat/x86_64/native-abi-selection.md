@@ -696,7 +696,42 @@ a retained runtime map, probe, source snapshot, or raw command output cannot
 change after the initial reader replay. A report with only one component stays
 independently optional and leaves both descriptor requirements unresolved.
 
-The selection report schema is `crabc.x86_64-native-abi-selection-report/v11`.
+The selection report schema is `crabc.x86_64-native-abi-selection-report/v12`.
+Version 11 reports must be regenerated before replay. Version 12 adds five
+optional directory companions and their exact identity joins:
+
+| Input | Owning reader | Discharged obligation |
+| --- | --- | --- |
+| `installed_math_work` | `owned_math_fenv_all_entry_receipt.validate_report` | Structural requirements for `__invtrigl_R`, `__pio2_hi` and `__pio2_lo` |
+| `installed_stdio_work` | `owned_stdio_component_receipt.validate_report` | Structural requirement for `fopen64` |
+| `signal_process_work` | `owned_signal_process_evidence.validate_observations` | Structural requirement for `__restore` |
+| `bootstrap_primitives_work` | `owned_posix_native_observations.collect_bootstrap_primitives` | Structural requirement for `__sigsetjmp_tail` |
+| `binary80_feature_work` | `owned_math_fenv_all_entry_receipt.validate_binary80_feature_work` | Feature-alias receipt requirement for `pow10l` |
+
+The first four readers replay installed behavior against the selected static
+and dynamic products. The math reader requires all 206 entries and six modes.
+The stdio reader requires all ten C/C++ header profiles and six cells. It
+projects the exact `_LARGEFILE64_SOURCE` macro-to-`fopen` row. When the text
+family companion also supplies that row, both readers validate independently
+and the selector discharges `fopen64` once.
+
+The signal reader replays all 72 observations. Its join also requires the
+selected static GLOBAL/HIDDEN and shared LOCAL/HIDDEN restorer definitions
+from complete ELF facts. The bootstrap join binds the jump-tail source owner
+without creating an exported helper. All attached structural identities must have
+no candidate ELF occurrence, including local definitions and imports.
+
+The isolated binary80 reader requires an empty baseline feature set and
+exactly `x86-math-long-double-completion` when enabled. It reconstructs the
+archive additions and the weak same-address `pow10l` alias of `exp10l`.
+The `pow10l` join also requires selected-product installed math proof and
+preserves every current product-placement blocker.
+
+These attachments preserve complete ELF occurrences, unnamed facts, unrelated
+requirements, and false qualification and public-support flags. Each owning
+reader replays again before the selector seals its report. Component receipt
+schemas remain unchanged.
+
 Version 10 reports and v2 contracts must be regenerated before replay.
 Version 11 adds `rust_c_profile_personality_absence_joins`. The join classifies
 the single frozen `rust_eh_personality` origin as an unselected observation.

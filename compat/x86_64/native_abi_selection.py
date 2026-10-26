@@ -63,7 +63,7 @@ import loader_structural_owner_contract_reader as loader_structural_owner_eviden
 import owned_bsd_random_receipt as bsd_random_evidence
 import runtime_private_facades as runtime_facades
 
-SCHEMA = 'crabc.x86_64-native-abi-selection-report/v11'
+SCHEMA = 'crabc.x86_64-native-abi-selection-report/v12'
 CONTRACT_SCHEMA = 'crabc.x86_64-native-abi-selection/v3'
 TARGET = inventory.TARGET
 CONTRACT_PATH = MODULE_DIR / 'native-abi-selection.toml'
@@ -114,14 +114,14 @@ TEXT_FAMILY_LIMITS = [
     'Its sixteen covered capabilities retain their verified component and family completion.',
     'The attachment does not close other ABI obligations, promote the runtime, or establish public support.',
 ]
-TEXT_FOPEN64_STRUCTURAL_REQUIREMENT = 'current source-bound owning component and consumer semantics receipt'
+STRUCTURAL_COMPONENT_REQUIREMENT = 'current source-bound owning component and consumer semantics receipt'
 TEXT_FOPEN64_STRUCTURAL_GROUP = 'largefile-fopen-macro'
 TEXT_FOPEN64_STRUCTURAL_LIMITS = [
     'Only the source-only fopen64 structural replacement is discharged.',
     'The attached stdio component retains the _LARGEFILE64_SOURCE macro-to-fopen route; it does not select an x86 fopen64 ELF provider.',
     'This join does not complete text/math/locale/stdio, runtime qualification, promotion, or public support.',
 ]
-POSIX_SYSV_SIGNAL_REQUIREMENT = 'source-selected alias requires exact feature archive selection and component receipt'
+FEATURE_ALIAS_REQUIREMENT = 'source-selected alias requires exact feature archive selection and component receipt'
 POSIX_SYSV_SIGNAL_OWNER = 'x86-sysv-signal-alias'
 POSIX_SYSV_SIGNAL_GROUP = 'source-owned-sysv-signal-alias'
 POSIX_SYSV_SIGNAL_FEATURE_OWNER = 'x86-signal-legacy-aliases'
@@ -1588,15 +1588,18 @@ def attach_text_family_fopen64_structural(accounting: Mapping[str, Any],
     records, placements, occurrences = _accounting_indexes(
         accounting, description='text family fopen64 structural attachment',
     )
+    require(not any(row['artifact_key'].startswith('candidate-') and row['row']['name'] == 'fopen64'
+                    for row in occurrences.values()), 'text family fopen64 legacy candidate occurrence remains')
     placement_count, occurrence_count = len(placements), len(occurrences)
     record = records.get(('fopen64', None, False))
     require(record is not None and record.get('selection', {}).get('disposition') == 'structural-replacement'
             and record['selection'].get('owner') == TEXT_FOPEN64_STRUCTURAL_GROUP
+            and record['selection'].get('sources') == ['include/stdio.h', 'compat/x86_64/parity.toml']
             and record.get('expected_placements') == []
-            and record.get('unresolved') == [TEXT_FOPEN64_STRUCTURAL_REQUIREMENT],
+            and record.get('unresolved') == [STRUCTURAL_COMPONENT_REQUIREMENT],
             'text family fopen64 selected structural requirement differs')
     _remove_identity_requirements(
-        accounting, record, (TEXT_FOPEN64_STRUCTURAL_REQUIREMENT,),
+        accounting, record, (STRUCTURAL_COMPONENT_REQUIREMENT,),
         description='text family fopen64 structural requirement',
     )
     require(len(placements) == placement_count and len(occurrences) == occurrence_count,
@@ -1604,7 +1607,7 @@ def attach_text_family_fopen64_structural(accounting: Mapping[str, Any],
     return [{
         'identity': copy.deepcopy(record['identity']), 'component': 'owned-stdio-component-receipt',
         'product_pairs': copy.deepcopy(fopen64['pairs']), 'row': copy.deepcopy(fopen64['row']),
-        'requirements_discharged': [TEXT_FOPEN64_STRUCTURAL_REQUIREMENT],
+        'requirements_discharged': [STRUCTURAL_COMPONENT_REQUIREMENT],
         'limits': list(TEXT_FOPEN64_STRUCTURAL_LIMITS),
     }]
 
@@ -1903,7 +1906,7 @@ def attach_posix_sysv_signal_admission(accounting: Mapping[str, Any],
     require(record is not None and record.get('selection', {}).get('disposition') == 'public-provider'
             and record['selection'].get('owner') == POSIX_SYSV_SIGNAL_OWNER
             and record['selection'].get('group') == POSIX_SYSV_SIGNAL_GROUP
-            and record.get('unresolved') == [POSIX_SYSV_SIGNAL_REQUIREMENT]
+            and record.get('unresolved') == [FEATURE_ALIAS_REQUIREMENT]
             and record.get('function_alias_requirements') == [feature_contract],
             'POSIX __sysv_signal selected feature requirement differs')
     static_placement, static_alias = _selected_placement(
@@ -1958,7 +1961,7 @@ def attach_posix_sysv_signal_admission(accounting: Mapping[str, Any],
     matching[0]['feature_archive_receipt_proven'] = True
     matching[0]['runtime_semantics_proven'] = True
     _remove_identity_requirements(
-        accounting, record, (POSIX_SYSV_SIGNAL_REQUIREMENT,),
+        accounting, record, (FEATURE_ALIAS_REQUIREMENT,),
         description='POSIX __sysv_signal feature requirement',
     )
     require(len(occurrences) == occurrence_count,
@@ -1974,7 +1977,7 @@ def attach_posix_sysv_signal_admission(accounting: Mapping[str, Any],
         'signal_helper_static_cells': copy.deepcopy(evidence['static']['cells']),
         'signal_helper_dynamic_cells': copy.deepcopy(evidence['dynamic']['cells']),
         'feature_archive_receipt_proven': True, 'runtime_semantics_proven': True,
-        'requirements_discharged': [POSIX_SYSV_SIGNAL_REQUIREMENT],
+        'requirements_discharged': [FEATURE_ALIAS_REQUIREMENT],
         'limits': list(POSIX_SYSV_SIGNAL_LIMITS),
     }]
 
@@ -2421,6 +2424,11 @@ def load_source_inputs(contract: Mapping[str, Any], contract_path: Path) -> dict
     files = set(contract['inputs'].values()) | {
         'compat/x86_64/native_abi_selection.py', 'compat/x86_64/tests/test_native_abi_selection.py',
         'compat/x86_64/tests/test_native_abi_process_private_roles.py',
+        'compat/x86_64/tests/test_native_abi_component_attachments.py',
+        'compat/x86_64/owned_math_fenv_all_entry_receipt.py',
+        'compat/x86_64/owned_stdio_component_receipt.py',
+        'compat/x86_64/owned_signal_process_evidence.py',
+        'compat/x86_64/owned_posix_native_observations.py',
         'compat/x86_64/owned_process_private_symbols_probe.c',
         'compat/x86_64/run_owned_atfork_registry.sh',
         'compat/x86_64/native_abi_inventory.py', 'compat/x86_64/native_abi_elf_facts.py',
@@ -14496,6 +14504,207 @@ def _recheck_loader_structural_owner(companion: Mapping[str, Any] | None, *, pat
             'loader structural-owner changed during final recheck')
 
 
+def installed_math_adapter(work: Path | None, *, paths: Mapping[str, Path]) -> dict[str, Any] | None:
+    if work is None:
+        return None
+    import owned_math_fenv_all_entry_receipt as reader
+    work = physical_work_path(work, directory=True, own=True)
+    report_path = work / 'owned-math-fenv-all-entry.json'
+    try:
+        report, _objects = reader.validate_report(ROOT, report_path, {
+            'static': paths['static_product'], 'dynamic': paths['dynamic_product'],
+        })
+    except (OSError, RuntimeError, ValueError, KeyError, TypeError) as error:
+        raise SelectionError(f'installed math component rejected: {error}') from error
+    return {'work': work.relative_to(ROOT).as_posix(), 'report': file_identity(report_path),
+            'result': {name: report[name] for name in ('scope', 'products', 'seals', 'source_objects')}}
+
+
+def installed_stdio_adapter(work: Path | None, *, paths: Mapping[str, Path]) -> dict[str, Any] | None:
+    if work is None:
+        return None
+    import owned_stdio_component_receipt as reader
+    work = physical_work_path(work, directory=True, own=True)
+    try:
+        result = reader.validate_report(work / 'report.json', ROOT, require_static=True)
+    except (OSError, RuntimeError, ValueError, KeyError, TypeError) as error:
+        raise SelectionError(f'installed stdio component rejected: {error}') from error
+    require(result['products'] == {'static': str(paths['static_product']), 'dynamic': str(paths['dynamic_product'])},
+            'installed stdio component uses another selected product pair')
+    row = _text_fopen64_row_projection(result['rows']['stdio.fopen64-alias'], _text_family_reader())
+    return {'work': work.relative_to(ROOT).as_posix(), 'report': file_identity(work / 'report.json'),
+            'result': result, 'fopen64_structural': row}
+
+
+def signal_process_adapter(work: Path | None, *, paths: Mapping[str, Path]) -> dict[str, Any] | None:
+    if work is None:
+        return None
+    import owned_signal_process_evidence as reader
+    work = physical_work_path(work, directory=True, own=True)
+    try:
+        result = reader.validate_observations(
+            work=work, report_path=work / 'signal-process-observations.json',
+            static_product=paths['static_product'], dynamic_product_path=paths['dynamic_product'],
+            source=reader.SOURCE, object_path=work / 'workload.o', compile_audit=work / 'compile.json',
+            oracle_cc=Path('/usr/local/bin/crabc-x86_64-musl-gcc'),
+            oracle_binary=work / 'oracle', oracle_record=work / 'oracle.json',
+        )
+    except (OSError, RuntimeError, ValueError, KeyError, TypeError) as error:
+        raise SelectionError(f'signal/process component rejected: {error}') from error
+    require(len(result['observations']) == 72, 'signal/process component lacks six-mode observations')
+    return {'work': work.relative_to(ROOT).as_posix(), 'report': file_identity(work / 'signal-process-observations.json'),
+            'result': result}
+
+
+def bootstrap_primitives_adapter(work: Path | None, *, paths: Mapping[str, Path]) -> dict[str, Any] | None:
+    if work is None:
+        return None
+    import owned_posix_native_observations as reader
+    work = physical_work_path(work, directory=True, own=True)
+    try:
+        result = reader.collect_bootstrap_primitives(
+            work, static_product=paths['static_product'], dynamic_product=paths['dynamic_product'],
+        )
+    except (OSError, RuntimeError, ValueError, KeyError, TypeError) as error:
+        raise SelectionError(f'bootstrap primitives component rejected: {error}') from error
+    return {'work': work.relative_to(ROOT).as_posix(), 'result': result}
+
+
+def binary80_feature_adapter(work: Path | None, *, paths: Mapping[str, Path]) -> dict[str, Any] | None:
+    if work is None:
+        return None
+    import owned_math_fenv_all_entry_receipt as reader
+    work = physical_work_path(work, directory=True, own=True)
+    try:
+        result = reader.validate_binary80_feature_work(ROOT, work.relative_to(ROOT))
+    except (OSError, RuntimeError, ValueError, KeyError, TypeError) as error:
+        raise SelectionError(f'binary80 feature component rejected: {error}') from error
+    require(result['baseline_features'] == []
+            and result['enabled_features'] == ['x86-math-long-double-completion']
+            and result['additions'] == ['exp10l', 'fdiml', 'pow10l'],
+            'binary80 feature profile differs')
+    symbols = result['archive_symbols']
+    alias, target = symbols['pow10l'], symbols['exp10l']
+    require(alias['binding'] == 'WEAK' and target['binding'] == 'GLOBAL'
+            and all(alias[field] == target[field] for field in ('member_index', 'member', 'section', 'value')),
+            'binary80 feature archive alias differs')
+    return {'work': work.relative_to(ROOT).as_posix(), 'result': result}
+
+
+def _component_structural_join(accounting: Mapping[str, Any], *, name: str, owner: str,
+                               sources: Sequence[str], component: str, evidence: Mapping[str, Any]) -> dict[str, Any]:
+    records, _placements, occurrences = _accounting_indexes(accounting, description=component)
+    record = records.get((name, None, False))
+    require(record is not None and record['selection']['disposition'] == 'structural-replacement'
+            and record['selection']['owner'] == owner and record['selection'].get('sources') == list(sources)
+            and record['expected_placements'] == [],
+            f'{component} selected structural identity differs: {name}')
+    require(not any(row['artifact_key'].startswith('candidate-') and row['row']['name'] == name
+                    for row in occurrences.values()), f'{component} legacy candidate occurrence remains: {name}')
+    _remove_identity_requirements(accounting, record, (STRUCTURAL_COMPONENT_REQUIREMENT,), description=component)
+    return {'identity': copy.deepcopy(record['identity']), 'component': component,
+            'evidence': copy.deepcopy(evidence),
+            'requirements_discharged': [STRUCTURAL_COMPONENT_REQUIREMENT]}
+
+
+def attach_installed_math(accounting: Mapping[str, Any], companion: Mapping[str, Any] | None) -> list[dict[str, Any]]:
+    if companion is None:
+        return []
+    return [_component_structural_join(accounting, name=name, owner='native-inverse-trig-owners',
+                                      sources=('libc/src/c_abi/x86_64/math_x87_extended.rs',),
+                                      component='installed-math-all-entry', evidence={'report': companion['report']})
+            for name in ('__invtrigl_R', '__pio2_hi', '__pio2_lo')]
+
+
+def attach_installed_stdio(accounting: Mapping[str, Any], companion: Mapping[str, Any] | None, *,
+                            text_joins: Sequence[Mapping[str, Any]]) -> list[dict[str, Any]]:
+    if companion is None:
+        return []
+    if text_joins:
+        require(len(text_joins) == 1 and text_joins[0]['identity'] == identity('fopen64')
+                and same(text_joins[0]['row'], companion['fopen64_structural']),
+                'installed stdio and text-family fopen64 evidence differ')
+        return []
+    return [_component_structural_join(accounting, name='fopen64', owner=TEXT_FOPEN64_STRUCTURAL_GROUP,
+                                      sources=('include/stdio.h', 'compat/x86_64/parity.toml'),
+                                      component='installed-stdio', evidence={'row': companion['fopen64_structural'],
+                                                                           'report': companion['report']})]
+
+
+def attach_signal_process(accounting: Mapping[str, Any], companion: Mapping[str, Any] | None) -> list[dict[str, Any]]:
+    if companion is None:
+        return []
+    records, placements, occurrences = _accounting_indexes(accounting, description='signal restorer')
+    key = ('crabc_x86_64_signal_restorer', None, False)
+    provider = records.get(key)
+    require(provider is not None and provider['selection']['disposition'] == 'private-provider'
+            and provider['selection'].get('group') == 'private-posix-runtime-bodies'
+            and provider['selection'].get('owner') == 'x86-posix-runtime-private-bodies'
+            and 'libc/src/c_abi/x86_64/signal_foundation.rs' in provider['selection'].get('sources', [])
+            and {row['artifact_key'] for row in provider['expected_placements']} == {'candidate-static', 'candidate-shared'},
+            'signal restorer selected provider differs')
+    observed = []
+    for artifact, binding in (('candidate-static', 'GLOBAL'), ('candidate-shared', 'LOCAL')):
+        placement = placements.get((key, artifact))
+        require(placement is not None and placement['placement_observed'] is True
+                and placement['definition_count'] == 1 and placement['occurrence_indices'],
+                f'signal restorer selected placement differs: {artifact}')
+        for index in placement['occurrence_indices']:
+            row = occurrences[index]
+            require(row['artifact_key'] == artifact and row['table'] == '.symtab'
+                    and row['row']['name'] == key[0] and row['row']['type'] == 'FUNC'
+                    and row['row']['binding'] == binding and row['row']['visibility'] == 'HIDDEN'
+                    and row['row']['section_index'] not in ('UND', 'ABS', 'COM'),
+                    f'signal restorer full-facts occurrence differs: {artifact}')
+            observed.append(index)
+    require({row['index'] for row in occurrences.values()
+             if row['artifact_key'].startswith('candidate-') and row['row']['name'] == key[0]
+             and row['row']['section_index'] != 'UND'}
+            == set(observed), 'signal restorer has an unselected candidate definition')
+    return [_component_structural_join(accounting, name='__restore', owner='native-signal-restorer',
+                                      sources=('libc/src/c_abi/x86_64/signal_foundation.rs',),
+                                      component='signal-process', evidence={'report': companion['report'],
+                                                                          'provider_occurrence_indices': observed})]
+
+
+def attach_bootstrap_primitives(accounting: Mapping[str, Any], companion: Mapping[str, Any] | None) -> list[dict[str, Any]]:
+    if companion is None:
+        return []
+    import owned_posix_native_observations as reader
+    owner = companion['result']['source_owners']['__sigsetjmp_tail']
+    source = ROOT / 'libc/src/c_abi/x86_64/setjmp.rs'
+    require(owner == {'path': source.relative_to(ROOT).as_posix(), 'sha256': reader.digest(source),
+                      'byte_length': source.stat().st_size}, 'bootstrap jump-tail source owner differs')
+    return [_component_structural_join(accounting, name='__sigsetjmp_tail', owner='local-sigsetjmp-tail',
+                                      sources=('libc/src/c_abi/x86_64/setjmp.rs',),
+                                      component='bootstrap-primitives', evidence={'source_owner': owner})]
+
+
+def attach_binary80_feature(accounting: Mapping[str, Any], companion: Mapping[str, Any] | None, *,
+                            installed_math: Mapping[str, Any] | None) -> list[dict[str, Any]]:
+    if companion is None:
+        return []
+    require(installed_math is not None, 'binary80 feature requires current selected-product installed math proof')
+    records, _placements, _occurrences = _accounting_indexes(accounting, description='pow10l feature')
+    record = records.get(('pow10l', None, False))
+    require(record is not None and record['selection']['disposition'] == 'public-provider',
+            'pow10l selected feature identity differs')
+    features = record.get('function_alias_requirements', [])
+    source_features = [_feature_alias_requirement(feature, alias)
+                       for feature in feature_roster.load_feature_archive_roster()
+                       for alias in feature.aliases if alias.name == 'pow10l']
+    require(same(features, source_features), 'pow10l source feature requirement differs')
+    require(len(features) == 1 and features[0]['name'] == 'pow10l' and features[0]['target'] == 'exp10l'
+            and features[0]['binding'] == 'weak-same-address'
+            and features[0]['baseline_features'] == []
+            and features[0]['enabled_features'] == ['x86-math-long-double-completion'],
+            'pow10l source feature requirement differs')
+    _remove_identity_requirements(accounting, record, (FEATURE_ALIAS_REQUIREMENT,), description='pow10l feature')
+    return [{'identity': copy.deepcopy(record['identity']), 'component': 'binary80-feature',
+             'installed_math_report': copy.deepcopy(installed_math['report']), 'feature': copy.deepcopy(companion['result']),
+             'requirements_discharged': [FEATURE_ALIAS_REQUIREMENT]}]
+
+
 def _admit(rejected: dict[str, str], keyword: str, adapter: Any) -> Any:
     """Run one companion adapter; a rejection becomes that companion's blocker.
 
@@ -14565,6 +14774,11 @@ def _build_report(*, contract_path: Path, paths: Mapping[str, Path], declaration
                   posix_sysv_signal_admission_report: Path | None = None,
                   bsd_random_receipt_report: Path | None = None,
                   public_data_declaration_runtime_report: Path | None = None,
+                  installed_math_work: Path | None = None,
+                  installed_stdio_work: Path | None = None,
+                  signal_process_work: Path | None = None,
+                  bootstrap_primitives_work: Path | None = None,
+                  binary80_feature_work: Path | None = None,
                   loader_structural_owner_receipt_report: Path | None = None) -> dict[str, Any]:
     if pthread_timed_feature_report is not None:
         require(ordinary_link_report is not None and loader_debug_report is not None,
@@ -14692,6 +14906,16 @@ def _build_report(*, contract_path: Path, paths: Mapping[str, Path], declaration
         lambda: headers_layouts_product_pair_adapter(
             headers_layouts_product_pair_report, paths=paths, source=source_before,
             header_companion=headers_layouts_aggregate_companion))
+    installed_math_companion = _admit(rejected, 'installed_math_work', lambda: installed_math_adapter(
+        installed_math_work, paths=paths))
+    installed_stdio_companion = _admit(rejected, 'installed_stdio_work', lambda: installed_stdio_adapter(
+        installed_stdio_work, paths=paths))
+    signal_process_companion = _admit(rejected, 'signal_process_work', lambda: signal_process_adapter(
+        signal_process_work, paths=paths))
+    bootstrap_primitives_companion = _admit(rejected, 'bootstrap_primitives_work', lambda: bootstrap_primitives_adapter(
+        bootstrap_primitives_work, paths=paths))
+    binary80_feature_companion = _admit(rejected, 'binary80_feature_work', lambda: binary80_feature_adapter(
+        binary80_feature_work, paths=paths))
     text_family_semantic_companion = _admit(rejected, 'text_family_semantic_report', lambda: text_family_semantic_adapter(
         text_family_semantic_report, paths=paths, source=source_before,
     ))
@@ -15016,6 +15240,21 @@ def _build_report(*, contract_path: Path, paths: Mapping[str, Path], declaration
     text_fopen64_structural_joins, text_family_semantic_companion = _attach(
         rejected, 'text_family_semantic_report', accounting, text_family_semantic_companion,
         lambda: attach_text_family_fopen64_structural(accounting, text_family_semantic_companion, paths=paths))
+    installed_math_joins, installed_math_companion = _attach(
+        rejected, 'installed_math_work', accounting, installed_math_companion,
+        lambda: attach_installed_math(accounting, installed_math_companion))
+    installed_stdio_joins, installed_stdio_companion = _attach(
+        rejected, 'installed_stdio_work', accounting, installed_stdio_companion,
+        lambda: attach_installed_stdio(accounting, installed_stdio_companion, text_joins=text_fopen64_structural_joins))
+    signal_process_joins, signal_process_companion = _attach(
+        rejected, 'signal_process_work', accounting, signal_process_companion,
+        lambda: attach_signal_process(accounting, signal_process_companion))
+    bootstrap_primitives_joins, bootstrap_primitives_companion = _attach(
+        rejected, 'bootstrap_primitives_work', accounting, bootstrap_primitives_companion,
+        lambda: attach_bootstrap_primitives(accounting, bootstrap_primitives_companion))
+    binary80_feature_joins, binary80_feature_companion = _attach(
+        rejected, 'binary80_feature_work', accounting, binary80_feature_companion,
+        lambda: attach_binary80_feature(accounting, binary80_feature_companion, installed_math=installed_math_companion))
     posix_sysv_signal_admission_joins, posix_sysv_signal_admission_companion = _attach(
         rejected, 'posix_sysv_signal_admission_report', accounting, posix_sysv_signal_admission_companion,
         lambda: attach_posix_sysv_signal_admission(accounting, posix_sysv_signal_admission_companion, paths=paths))
@@ -15063,6 +15302,21 @@ def _build_report(*, contract_path: Path, paths: Mapping[str, Path], declaration
             headers_layouts_product_pair_report, paths=paths, source=source_before,
             header_companion=headers_layouts_aggregate_companion)),
             'header product pair changed during final selection recheck')
+    if installed_math_companion is not None:
+        require(same(installed_math_companion, installed_math_adapter(installed_math_work, paths=paths)),
+                'installed_math component changed during selection')
+    if installed_stdio_companion is not None:
+        require(same(installed_stdio_companion, installed_stdio_adapter(installed_stdio_work, paths=paths)),
+                'installed_stdio component changed during selection')
+    if signal_process_companion is not None:
+        require(same(signal_process_companion, signal_process_adapter(signal_process_work, paths=paths)),
+                'signal_process component changed during selection')
+    if bootstrap_primitives_companion is not None:
+        require(same(bootstrap_primitives_companion, bootstrap_primitives_adapter(bootstrap_primitives_work, paths=paths)),
+                'bootstrap_primitives component changed during selection')
+    if binary80_feature_companion is not None:
+        require(same(binary80_feature_companion, binary80_feature_adapter(binary80_feature_work, paths=paths)),
+                'binary80_feature component changed during selection')
     _recheck_text_family_semantics(text_family_semantic_companion, paths=paths, source=source_before)
     _recheck_posix_sysv_signal_admission(
         posix_sysv_signal_admission_companion, paths=paths, source=source_before,
@@ -15105,6 +15359,11 @@ def _build_report(*, contract_path: Path, paths: Mapping[str, Path], declaration
         'headers_layouts_aggregate_report': headers_layouts_aggregate_companion,
         **({'headers_layouts_product_pair_report': headers_layouts_product_pair_companion}
            if headers_layouts_product_pair_report is not None else {}),
+        'installed_math_work': installed_math_companion,
+        'installed_stdio_work': installed_stdio_companion,
+        'signal_process_work': signal_process_companion,
+        'bootstrap_primitives_work': bootstrap_primitives_companion,
+        'binary80_feature_work': binary80_feature_companion,
         'text_family_semantic_report': text_family_semantic_companion,
         'posix_sysv_signal_admission_report': posix_sysv_signal_admission_companion,
         'bsd_random_receipt_report': bsd_random_receipt_companion,
@@ -15197,6 +15456,16 @@ def _build_report(*, contract_path: Path, paths: Mapping[str, Path], declaration
             'headers_layouts_aggregate_companion': headers_layouts_aggregate_companion,
             'headers_layouts_product_pair_companion': headers_layouts_product_pair_companion,
             'headers_layouts_aggregate_evidence': headers_layouts_aggregate_evidence,
+            'installed_math_companion': installed_math_companion,
+            'installed_math_joins': installed_math_joins,
+            'installed_stdio_companion': installed_stdio_companion,
+            'installed_stdio_joins': installed_stdio_joins,
+            'signal_process_companion': signal_process_companion,
+            'signal_process_joins': signal_process_joins,
+            'bootstrap_primitives_companion': bootstrap_primitives_companion,
+            'bootstrap_primitives_joins': bootstrap_primitives_joins,
+            'binary80_feature_companion': binary80_feature_companion,
+            'binary80_feature_joins': binary80_feature_joins,
             'text_family_semantic_companion': text_family_semantic_companion,
             'text_fopen64_structural_joins': text_fopen64_structural_joins,
             'posix_sysv_signal_admission_companion': posix_sysv_signal_admission_companion,
@@ -15247,6 +15516,11 @@ def build_report(*, output: Path, contract_path: Path = CONTRACT_PATH, declarati
                  posix_sysv_signal_admission_report: Path | None = None,
                  bsd_random_receipt_report: Path | None = None,
                  public_data_declaration_runtime_report: Path | None = None,
+                 installed_math_work: Path | None = None,
+                 installed_stdio_work: Path | None = None,
+                 signal_process_work: Path | None = None,
+                 bootstrap_primitives_work: Path | None = None,
+                 binary80_feature_work: Path | None = None,
                  loader_structural_owner_receipt_report: Path | None = None,
                  **measurement_inputs: Path) -> dict[str, Any]:
     output = physical_work_path(output, directory=True, own=True, fresh=True)
@@ -15287,7 +15561,12 @@ def build_report(*, output: Path, contract_path: Path = CONTRACT_PATH, declarati
                            posix_sysv_signal_admission_report=posix_sysv_signal_admission_report,
                            bsd_random_receipt_report=bsd_random_receipt_report,
                            public_data_declaration_runtime_report=public_data_declaration_runtime_report,
-                           loader_structural_owner_receipt_report=loader_structural_owner_receipt_report)
+                           installed_math_work=installed_math_work,
+                             installed_stdio_work=installed_stdio_work,
+                             signal_process_work=signal_process_work,
+                             bootstrap_primitives_work=bootstrap_primitives_work,
+                             binary80_feature_work=binary80_feature_work,
+                             loader_structural_owner_receipt_report=loader_structural_owner_receipt_report)
     output.mkdir()
     (output / 'report.json').write_bytes(inventory._stable_json(report))
     return report
@@ -15327,6 +15606,11 @@ def validate_report(report_path: Path, *, contract_path: Path = CONTRACT_PATH, d
                     posix_sysv_signal_admission_report: Path | None = None,
                     bsd_random_receipt_report: Path | None = None,
                     public_data_declaration_runtime_report: Path | None = None,
+                    installed_math_work: Path | None = None,
+                    installed_stdio_work: Path | None = None,
+                    signal_process_work: Path | None = None,
+                    bootstrap_primitives_work: Path | None = None,
+                    binary80_feature_work: Path | None = None,
                     loader_structural_owner_receipt_report: Path | None = None,
                     **measurement_inputs: Path) -> dict[str, Any]:
     report_path = physical_work_path(report_path, directory=False, own=True)
@@ -15369,6 +15653,11 @@ def validate_report(report_path: Path, *, contract_path: Path = CONTRACT_PATH, d
                              posix_sysv_signal_admission_report=posix_sysv_signal_admission_report,
                              bsd_random_receipt_report=bsd_random_receipt_report,
                              public_data_declaration_runtime_report=public_data_declaration_runtime_report,
+                             installed_math_work=installed_math_work,
+                             installed_stdio_work=installed_stdio_work,
+                             signal_process_work=signal_process_work,
+                             bootstrap_primitives_work=bootstrap_primitives_work,
+                             binary80_feature_work=binary80_feature_work,
                              loader_structural_owner_receipt_report=loader_structural_owner_receipt_report)
     require(same(report, expected), 'selection report does not reconstruct exactly from source inputs and public measurement replay')
     return report
@@ -15417,6 +15706,11 @@ def main(argv: Sequence[str]) -> int:
     parser.add_argument('--posix-sysv-signal-admission-report', type=Path)
     parser.add_argument('--bsd-random-receipt-report', type=Path)
     parser.add_argument('--public-data-declaration-runtime-report', type=Path)
+    parser.add_argument('--installed-math-work', type=Path)
+    parser.add_argument('--installed-stdio-work', type=Path)
+    parser.add_argument('--signal-process-work', type=Path)
+    parser.add_argument('--bootstrap-primitives-work', type=Path)
+    parser.add_argument('--binary80-feature-work', type=Path)
     parser.add_argument('--loader-structural-owner-receipt-report', type=Path)
     options = [arg.split('=', 1)[0] for arg in argv if arg.startswith('--')
                and arg.split('=', 1)[0] != '--compiler-helper-installed-link']
@@ -15463,6 +15757,11 @@ def main(argv: Sequence[str]) -> int:
                                                 'posix_sysv_signal_admission_report',
                                                 'bsd_random_receipt_report',
                                                 'public_data_declaration_runtime_report',
+                                                'installed_math_work',
+                                                'installed_stdio_work',
+                                                'signal_process_work',
+                                                'bootstrap_primitives_work',
+                                                'binary80_feature_work',
                                                 'loader_structural_owner_receipt_report')}
     installed = args.compiler_helper_installed_link
     if installed is not None:
