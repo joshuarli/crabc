@@ -489,8 +489,11 @@ process-free owner reader replays the finite current receipt for
 and `pthread_tryjoin_np`, with their respective implementation spellings
 `__pthread_cond_timedwait`, `__pthread_mutex_timedlock`,
 `__pthread_timedjoin_np`, and `__pthread_tryjoin_np`. The selector seals the
-receipt before and after replay, then binds its collector and selected source,
-the retained loader-debug anchor, full static preparation, static/dynamic
+receipt before and after replay, then binds its collector and selected source.
+A source file used by both roles has one selector identity, while both retained
+role snapshots remain independently checked.
+The selector binds the retained loader-debug anchor, full static preparation,
+static/dynamic
 manifests and dynamic state, drivers, libc archive/shared object, loader, and
 every sealed static/dynamic CRT, builtins, and dynamic-attach input to the
 current product transaction. The six static link inputs and seven dynamic
@@ -522,6 +525,8 @@ the existing public aliases `res_mkquery`, `res_send`, and `res_search`, their
 respective targets `__res_mkquery`, `__res_send`, and `res_query`, and the two
 private resolver bodies. The selector seals the report before owner replay,
 after reading the projection it consumes, and again after every scoped join.
+Its exact v1 input roster includes the core-image authority, pinned toolchain
+contract, and toolchain reader.
 It binds the selected and collector source records, source-owned input files,
 complete facts/base inventory, full static preparation, loader-debug anchor,
 selected manifests/state/drivers/libc/loader, and six static plus seven
@@ -693,8 +698,9 @@ non-promoting `text_family_semantic_companion` and multi-family
 family's ledger status. It admits the locale reader only after
 its complete source contract, every normal consumer command, and
 the receipt-local static/dynamic product trees match the selector's supplied
-cohort by relative bytes, modes, and links. Its retained top-level and dynamic
-product source snapshots must also match the reader projection as complete
+cohort by relative bytes, modes, and links, ordered by complete relative path.
+Its retained top-level and dynamic product source snapshots must also match
+the reader projection as complete
 five-field records, including the ordered per-path byte and mode identities.
 Receipt-local manifest and dynamic-state identities retain their own relative
 paths and `bytes` fields; after reader validation, the selector joins their

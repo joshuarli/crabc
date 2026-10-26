@@ -50,6 +50,44 @@ RECEIPT_SHA256 = 'dabde3568aa8eddb5ca19c690217fbf6e6afd288cc3eb91cf4ad8b6033a38e
 FACTS_SHA256 = 'ffe0db14d7490be9069524c2cc9f7043edfef203db7f36ddf3b5b7b49e23a797'
 
 
+class NativeResolverReaderBoundaryTests(unittest.TestCase):
+    def test_adapter_delegates_the_exact_current_reader_input_roles(self) -> None:
+        class ReaderReplay(Exception):
+            pass
+
+        scratch = ROOT / '.work/tmp'
+        scratch.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(dir=scratch) as temporary:
+            report = Path(temporary) / 'report.json'
+            report.write_text('{}\n')
+            paths = dict.fromkeys(('static_product', 'dynamic_product', 'static_preparation',
+                                   'elf_report', 'base_inventory'), Path(temporary))
+            reader = selection._resolver_alias_reader()
+            with mock.patch.object(reader, 'validate_report', side_effect=ReaderReplay) as replay:
+                with self.assertRaises(ReaderReplay):
+                    selection.native_resolver_alias_adapter(
+                        report, facts={}, measurement={}, paths=paths, source={}, product_report=report,
+                    )
+                self.assertEqual(replay.call_args.kwargs, {
+                    'root': ROOT, 'static_product': paths['static_product'],
+                    'dynamic_product': paths['dynamic_product'], 'product_report': report,
+                    'static_preparation': paths['static_preparation'], 'elf_facts': paths['elf_report'],
+                    'base_inventory': paths['base_inventory'],
+                })
+
+    def test_adapter_rejects_missing_unknown_and_duplicate_current_input_roles(self) -> None:
+        reader = selection._resolver_alias_reader()
+        for roles in (tuple(name for name in reader.INPUT_NAMES if name != 'core_image'),
+                      (*reader.INPUT_NAMES, 'unknown-role'), (*reader.INPUT_NAMES, 'core_image')):
+            with self.subTest(roles=roles), mock.patch.object(reader, 'INPUT_NAMES', roles), \
+                    mock.patch.object(reader, 'validate_report') as replay:
+                with self.assertRaisesRegex(selection.SelectionError, 'current v1 boundary'):
+                    selection.native_resolver_alias_adapter(
+                        Path('/missing'), facts={}, measurement={}, paths={}, source={}, product_report=Path('/missing'),
+                    )
+                replay.assert_not_called()
+
+
 class FrozenResolverReader:
     """Return the real frozen producer payload while recording adapter replay."""
 

@@ -14,6 +14,7 @@ from unittest import mock
 ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(ROOT / 'compat/x86_64'))
 import native_abi_selection as selection
+import owned_pthread_timed_feature_contract_reader as timed_reader
 
 
 ALIASES = (
@@ -22,30 +23,8 @@ ALIASES = (
     ('pthread_timedjoin_np', '__pthread_timedjoin_np'),
     ('pthread_tryjoin_np', '__pthread_tryjoin_np'),
 )
-SOURCE_CONTRACT_PATHS = (
-    'libc/Cargo.toml',
-    'libc/src/c_abi/x86_64/static_c_abi.rs',
-    'libc/src/c_abi/x86_64/owned_pthread_cond.rs',
-    'libc/src/c_abi/x86_64/pthread_cond.rs',
-    'libc/src/c_abi/x86_64/pthread_create_join.rs',
-    'libc/src/c_abi/x86_64/pthread_mutex.rs',
-    'compat/x86_64/parity.toml',
-    'scripts/build_x86_64_owned_sysroot.py',
-)
-COLLECTOR_PATHS = {
-    'probe': 'compat/x86_64/owned_pthread_timed_feature_contract_probe.c',
-    'reader': 'compat/x86_64/owned_pthread_timed_feature_contract_reader.py',
-    'runner': 'compat/x86_64/run_owned_pthread_timed_feature_contract.sh',
-    'syscall_authority': 'compat/x86_64/owned_syscall_alias_authority.py',
-    'static_authority': 'compat/x86_64/owned_static_link_authority.py',
-    'elf_authority': 'compat/x86_64/loader_debug_abi_evidence.py',
-    'static_preparation_owner': 'compat/x86_64/owned_posix_static_products.py',
-    'static_package_owner': 'compat/x86_64/owned_static_sysroot_package.py',
-    'product_validator': 'compat/x86_64/owned_posix_product_evidence.py',
-    'dynamic_probe_authority': 'compat/x86_64/owned_pthread_timed_dynamic_authority.py',
-    'image_manifest': 'compat/x86_64/owned_pthread_timed_feature_image_inputs_current.json',
-    'rust_toolchain': 'rust-toolchain.toml',
-}
+SOURCE_CONTRACT_PATHS = timed_reader.SOURCE_CONTRACT_PATHS
+COLLECTOR_PATHS = timed_reader.COLLECTOR_PATHS
 STATIC_LINK_INPUTS = {
     'static_crt1': 'usr/lib/crt1.o', 'static_rcrt1': 'usr/lib/rcrt1.o',
     'static_crti': 'usr/lib/crti.o', 'static_crtn': 'usr/lib/crtn.o',
@@ -409,6 +388,26 @@ class NativePthreadTimedAttachmentTests(unittest.TestCase):
                 receipt['collector'][phase]['source_sha256'] = '0' * 64
                 with self.assertRaises(selection.SelectionError):
                     self._adapter(receipt)
+
+    def test_shared_selected_and_collector_source_is_verified_in_both_roles(self) -> None:
+        shared = timed_reader.COLLECTOR_PATHS['product_validator']
+        for role in ('selected', 'collector'):
+            with self.subTest(role=role):
+                receipt = self._receipt()
+                row = (receipt['selected_source']['files'][shared] if role == 'selected'
+                       else receipt['collector']['files']['product_validator'])
+                row['sha256'] = '0' * 64
+                with self.assertRaises(selection.SelectionError):
+                    self._adapter(receipt)
+
+    def test_source_roster_rejects_duplicate_paths_inside_each_owner_role(self) -> None:
+        reader = FakeReader(self._receipt())
+        with mock.patch.object(reader, 'SOURCE_CONTRACT_PATHS', (*SOURCE_CONTRACT_PATHS, SOURCE_CONTRACT_PATHS[0])):
+            with self.assertRaisesRegex(selection.SelectionError, 'selected source roster duplicates'):
+                selection._pthread_timed_source_files(reader)
+        with mock.patch.object(reader, 'COLLECTOR_PATHS', {**COLLECTOR_PATHS, 'duplicate': COLLECTOR_PATHS['probe']}):
+            with self.assertRaisesRegex(selection.SelectionError, 'collector source roster duplicates'):
+                selection._pthread_timed_source_files(reader)
 
     def test_valid_receipt_discharges_only_the_four_existing_reasons(self) -> None:
         companion = self._adapter()

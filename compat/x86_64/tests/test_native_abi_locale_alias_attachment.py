@@ -279,6 +279,23 @@ class LocaleAliasAdapterTests(unittest.TestCase):
         }
         return report, _FakeLocaleReader(validated)
 
+    def test_adapter_accepts_product_paths_with_different_component_and_byte_order(self) -> None:
+        for product in (self.static, self.dynamic):
+            for directory in ('asm', 'asm-generic'):
+                path = product / 'usr/include' / directory / 'example.h'
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_bytes(b'unchanged header bytes\n')
+        preparation = selection.read_json(self.preparation)
+        preparation['products']['primary']['tree'] = self._static_owner_tree()
+        self.preparation.write_text(__import__('json').dumps(preparation), encoding='utf-8')
+        report, reader = self._receipt()
+        with mock.patch.object(selection, '_locale_alias_reader', return_value=reader):
+            companion = selection.native_locale_alias_adapter(
+                report, facts=self.facts, measurement=self.measurement, paths=self.paths, source=self.source,
+            )
+        self.assertEqual(companion['products']['static_tree'], selection._locale_alias_tree(self.static, 'static'))
+        self.assertEqual(companion['products']['dynamic_tree'], selection._locale_alias_tree(self.dynamic, 'dynamic'))
+
     def test_adapter_calls_the_public_reader_and_requires_full_tree_identity(self) -> None:
         """Use the receipt-local source, product, and file-identity schemas together."""
 

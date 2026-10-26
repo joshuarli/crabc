@@ -271,6 +271,7 @@ RESOLVER_ALIAS_INPUT_NAMES = (
     'resolv_header', 'feature_roster', 'parity_contract', 'cancellation_contract',
     'header_c_probe', 'header_cpp_probe', 'header_runner', 'legacy_probe', 'legacy_runner',
     'static_authority', 'elf_reader', 'product_authority', 'image_manifest',
+    'core_image', 'toolchain_contract', 'toolchain_reader',
     'header_compiler', 'readelf', 'timeout', 'chroot',
     'oracle_compiler', 'oracle_archive', 'oracle_shared',
     'static_driver', 'static_manifest', 'static_libc', 'static_crt1', 'static_rcrt1',
@@ -7204,7 +7205,13 @@ def _pthread_timed_product_identities(paths: Mapping[str, Path], product_anchor:
 
 
 def _pthread_timed_source_files(reader: Any) -> tuple[str, ...]:
-    names = (*reader.COLLECTOR_PATHS.values(), *reader.SOURCE_CONTRACT_PATHS,
+    collector_paths = tuple(reader.COLLECTOR_PATHS.values())
+    selected_paths = tuple(reader.SOURCE_CONTRACT_PATHS)
+    require(len(collector_paths) == len(set(collector_paths)),
+            'pthread timed collector source roster duplicates a path')
+    require(len(selected_paths) == len(set(selected_paths)),
+            'pthread timed selected source roster duplicates a path')
+    names = (*collector_paths, *(path for path in selected_paths if path not in collector_paths),
              'compat/x86_64/tests/test_native_abi_pthread_timed_attachment.py',
              'compat/x86_64/native-abi-selection.md')
     require(len(names) == len(set(names)), 'pthread timed source roster duplicates a path')
@@ -12031,7 +12038,7 @@ def _locale_alias_tree(path: Path, description: str) -> list[dict[str, Any]]:
     """
     require(path.is_dir() and not path.is_symlink(), f'{description} is not a physical directory')
     records: list[dict[str, Any]] = []
-    for candidate in sorted(path.rglob('*')):
+    for candidate in sorted(path.rglob('*'), key=lambda item: item.relative_to(path).as_posix()):
         metadata = candidate.lstat()
         relative = candidate.relative_to(path).as_posix()
         mode = stat.S_IMODE(metadata.st_mode)
