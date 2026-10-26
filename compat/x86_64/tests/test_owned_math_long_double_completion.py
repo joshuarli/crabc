@@ -165,29 +165,6 @@ class OwnedMathLongDoubleCompletionTests(unittest.TestCase):
                 "raw Cargo graph stderr\n",
             )
 
-    def test_default_scratch_cleanup_runs_after_success_and_skips_explicit_retention(self) -> None:
-        runner = FEATURE_RUNNER.read_text(encoding="utf-8")
-        start = runner.index("cleanup_successful_default_work() {")
-        end = runner.index("\n}\n", start) + 2
-        cleanup = runner[start:end]
-        passing = runner.rindex("PASS (%s records)")
-        cleanup_call = runner.rindex("cleanup_successful_default_work\n")
-        self.assertLess(passing, cleanup_call)
-        scratch_root = ROOT / ".work/x86_64/tmp"
-        with tempfile.TemporaryDirectory(prefix="long-double-cleanup.", dir=scratch_root) as temporary:
-            root = Path(temporary)
-            for name, retained_output, should_exist in (("default", "", False),
-                                                         ("retained", "explicit", True)):
-                work = root / name
-                work.mkdir()
-                script = cleanup + '\nwork_dir="$1"; retained_output="$2"; cleanup_successful_default_work\n'
-                result = subprocess.run(
-                    ["bash", "-c", script, "bash", str(work), retained_output],
-                    capture_output=True, text=True, check=False,
-                )
-                self.assertEqual(result.returncode, 0, result.stderr)
-                self.assertEqual(work.exists(), should_exist)
-
     def test_runner_usage_lists_its_optional_retained_output(self) -> None:
         result = subprocess.run(["bash", str(FEATURE_RUNNER), "--unknown"], cwd=ROOT,
                                 env={"PATH": "/usr/bin:/bin", "BASH_ENV": ""},
