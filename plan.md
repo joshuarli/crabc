@@ -57,6 +57,18 @@ The helper module runs inside the pinned image because an existing root-owned
 scratch directory prevents the invoking host UID from creating test files.
 That normal filesystem error is not an automatic safety rejection.
 
+The next reader group is provisional: `11c4bf8fe`, `152f7d6cf` and
+`47d105a4f` wire the four installed helper modes and existing AIO producer
+into the ordinary companion set. Their focused tests pass; neither new
+producer has run against current products. `ee3251d46` extends the existing
+CRT component to v5 with the exact nine additional source roles. Its four
+owner regressions pass, but its dedicated adapter suite has four retained
+failures at the selector's obsolete twelve-name invariant. That adapter
+correction is assigned to the sole selector writer. RuntimeV1 and declaration
+boundary owners remain under review before integration. The prepared clean
+`.work/wt/abi-owner-proof` contains pinned inputs only; do not produce target
+artifacts until this group is integrated and its source revision is frozen.
+
 The next bounded group binds the four installed helper modes and real
 RuntimeV1 facade component into ordinary ABI evidence, adds physical proof for
 the eleven existing compiler/consumer/oracle-no-provider declaration
