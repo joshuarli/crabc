@@ -499,6 +499,12 @@ def elf_symbols(nm: str, artifact: Path, selector: str) -> set[str]:
             if len(line.split()) >= 2 and not line.endswith(":")}
 
 
+def elf_imports(nm: str, artifact: Path) -> set[str]:
+    return {line.split()[-1]
+            for line in common.run([nm, "--dynamic", "--undefined-only", str(artifact)]).decode().splitlines()
+            if len(line.split()) >= 2 and not line.endswith(":")}
+
+
 def build(output: Path, *, allocator_backend: str = common.DEFAULT_ALLOCATOR_BACKEND, lifecycle_test_audit: bool = False, profile: str = "release") -> None:
     common.assert_native_target()
     if allocator_backend not in ALLOCATOR_BACKENDS:
@@ -647,7 +653,7 @@ def build_staged_payload(output: Path, stage: Path, *, allocator_backend: str = 
     # executable installed mode.  Every other finite link role is materialized
     # as a non-executable regular file below.
     (library / "libc.so").chmod(0o755)
-    undefined = run([nm, "--undefined-only", str(library / "libc.so")]).decode().splitlines()
+    undefined = elf_imports(nm, library / "libc.so")
     allowed = {"__crabc_x86_64_initial_tls_allocate", "__crabc_x86_64_initial_tls_release",
                "__crabc_x86_64_resolve_initial_tls", "__crabc_x86_64_reset_current_tls_v1",
                "__crabc_x86_64_reset_current_tls_v2",
@@ -657,7 +663,7 @@ def build_staged_payload(output: Path, stage: Path, *, allocator_backend: str = 
                "__crabc_x86_64_runtime_open", "__crabc_x86_64_runtime_symbol",
                "__crabc_x86_64_runtime_close", "__crabc_x86_64_runtime_address",
                "__crabc_x86_64_runtime_information", "__crabc_x86_64_runtime_iterate"}
-    unexpected = [line for line in undefined if line.split()[-1] not in allowed]
+    unexpected = sorted(undefined - allowed)
     if unexpected:
         raise common.BuildError(f"shared libc has unexpected unresolved symbols: {unexpected}")
     crt = stage / "crt"
@@ -707,8 +713,8 @@ def build_staged_payload(output: Path, stage: Path, *, allocator_backend: str = 
     interpreter.chmod(0o755)
     if native_allocator_elf_audit_required(recorded_backend):
         native_definitions = elf_symbols(nm, library / "libc.so", "--defined-only")
-        native_imports = elf_symbols(nm, library / "libc.so", "--undefined-only")
-        loader_imports = elf_symbols(nm, interpreter, "--undefined-only")
+        native_imports = elf_imports(nm, library / "libc.so")
+        loader_imports = elf_imports(nm, interpreter)
         loader_definitions = elf_symbols(nm, interpreter, "--defined-only")
         validate_native_allocator_symbols(native_definitions, native_imports, loader_imports | loader_definitions)
         if "__crabc_x86_native_mimalloc_process_finalizer" not in native_definitions:
@@ -829,7 +835,7 @@ def build_debug_payload(output: Path, stage: Path, *, allocator_backend: str, li
                "__crabc_x86_64_runtime_fork_complete", "__crabc_x86_64_runtime_open", "__crabc_x86_64_runtime_symbol",
                "__crabc_x86_64_runtime_close", "__crabc_x86_64_runtime_address", "__crabc_x86_64_runtime_information",
                "__crabc_x86_64_runtime_iterate"}
-    imports = elf_symbols(nm, library / "libc.so", "--undefined-only")
+    imports = elf_imports(nm, library / "libc.so")
     if imports - allowed:
         raise common.BuildError(f"debug shared libc has unexpected unresolved symbols: {sorted(imports - allowed)}")
     crt = inputs["crt_root"]

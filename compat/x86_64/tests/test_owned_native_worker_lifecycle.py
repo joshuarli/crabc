@@ -35,11 +35,11 @@ class OwnedNativeWorkerLifecycleTests(unittest.TestCase):
         result = subprocess.run([str(self.probe), 'tsd-four'], capture_output=True, text=True,
                                 preexec_fn=disable_core_dump)
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual(result.stdout, 'TSD four passes: return and pthread_exit joined clients\n')
+        self.assertEqual(result.stdout, 'TSD four passes: callback key replacement, return and pthread_exit joined clients\n')
         self.assertEqual(result.stderr, '')
 
     def test_existing_main_and_final_transcripts_remain_distinct(self):
-        common = ('attach before user code\nreturn: cleanup 1 destructors 2\n'
+        common = ('loader diagnostic retirement\nattach before user code\nreturn: cleanup 1 destructors 2\n'
                   'pthread_exit: cleanup 1 destructors 2\ncancel: cleanup 1 destructors 2\n'
                   'allocation refusal then valid use\nremote ownership: 12 workers\n'
                   'creation refusal: EAGAIN then success\n')

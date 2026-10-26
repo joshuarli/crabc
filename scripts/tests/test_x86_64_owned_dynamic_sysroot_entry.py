@@ -78,6 +78,8 @@ class DynamicSysrootEntryTests(unittest.TestCase):
             symbols = run(["/usr/bin/readelf", "-sW", str(library / "libc.so")])
             from native_abi_inventory import parse_elf_symbol_tables
             tables = parse_elf_symbol_tables(symbols)
+            self.assertEqual(builder.elf_imports(
+                builder.common.producer_tool_path(tools, "llvm-nm"), library / "libc.so"), set())
             regular = next(table["rows"] for table in tables if table["name"] == ".symtab")
             dynamic = next(table["rows"] for table in tables if table["name"] == ".dynsym")
             names = {"fixture_private_helper_one", "fixture_private_helper_two", "__addoti4"}
@@ -109,6 +111,17 @@ class DynamicSysrootEntryTests(unittest.TestCase):
                     root=ROOT, archive=archive, workload=objects / "libc.o", executable=tampered,
                     map_path=map_path, trace_lines=trace_lines, source_mount=str(ROOT), names=("__addoti4",),
                     binding_policy=helper_evidence._helper_final_policy_for_linkage("pie"))
+
+            missing_source = work / "missing.c"
+            missing_source.write_text("extern int foreign_dependency(void);\n"
+                                      "int bad_entry(void) { return foreign_dependency(); }\n")
+            run(["/usr/bin/gcc", "-O2", "-fPIC", "-fno-plt", "-c", str(missing_source),
+                 "-o", str(objects / "missing.o")])
+            run(builder.shared_libc_link_command(
+                linker, dynamic_list, None, aliases, objects, ("libc.o", "missing.o"), archive, library))
+            self.assertEqual(builder.elf_imports(
+                builder.common.producer_tool_path(tools, "llvm-nm"), library / "libc.so"),
+                {"foreign_dependency"})
 
     def test_shared_helper_policy_and_roots_project_the_current_contract(self):
         spec = importlib.util.spec_from_file_location("dynamic_helper_policy_contract", PRODUCER)

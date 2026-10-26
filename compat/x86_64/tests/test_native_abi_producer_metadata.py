@@ -42,7 +42,8 @@ class NativeAbiProducerMetadataTests(unittest.TestCase):
                 'shared_libc_projection': {
                     name: {'table': '.symtab', 'row_index': index, 'section_index': index + 1,
                            'section': '.text.' + name,
-                           'metadata': {'type': 'FUNC', 'binding': 'LOCAL', 'visibility': 'DEFAULT'}}
+                           'metadata': {field: contract['shared_libc'][field]
+                                        for field in ('type', 'binding', 'visibility')}}
                     for index, name in enumerate(names)
                 },
                 'shared_placement_selected': False,
@@ -366,7 +367,7 @@ class NativeAbiProducerMetadataTests(unittest.TestCase):
                 self.assertEqual(self.placements(name), {
                     'static-builtins': {'type': 'FUNC', 'binding': 'GLOBAL', 'visibility': 'DEFAULT'},
                     'dynamic-builtins': {'type': 'FUNC', 'binding': 'GLOBAL', 'visibility': 'DEFAULT'},
-                    'candidate-shared': {'type': 'FUNC', 'binding': 'LOCAL', 'visibility': 'DEFAULT'},
+                    'candidate-shared': {'type': 'FUNC', 'binding': 'LOCAL', 'visibility': 'HIDDEN'},
                 })
 
     def test_owned_helpers_reject_a_shared_projection_outside_the_exact_source_scope(self):
@@ -395,7 +396,7 @@ class NativeAbiProducerMetadataTests(unittest.TestCase):
         for index, row in enumerate(self.helper_pending):
             with self.subTest(name=row['identity']['name']):
                 self.assertEqual(row['artifact_key'], 'candidate-shared')
-                self.assertEqual(row['metadata'], {'type': 'FUNC', 'binding': 'LOCAL', 'visibility': 'DEFAULT'})
+                self.assertEqual(row['metadata'], {'type': 'FUNC', 'binding': 'LOCAL', 'visibility': 'HIDDEN'})
                 self.assertEqual(row['projection']['table'], '.symtab')
                 self.assertEqual(row['projection']['row_index'], index)
                 self.assertEqual(row['projection']['section'], '.text.' + row['identity']['name'])
@@ -459,7 +460,7 @@ class NativeAbiProducerMetadataTests(unittest.TestCase):
         projection = helper['projection']
         helper_row = {
             'name': helper['identity']['name'], 'raw_name': helper['identity']['name'],
-            'version': None, 'version_default': False, 'binding': 'LOCAL', 'visibility': 'DEFAULT',
+            'version': None, 'version_default': False, 'binding': 'LOCAL', 'visibility': 'HIDDEN',
             'section_index': str(projection['section_index']), 'type': 'FUNC', 'value': '0000000000000000',
             'size_bytes': 0, 'size': '0', 'row_index': projection['row_index'],
             'raw': 'fixture helper producer', 'other': None, 'version_index': None, 'common_alignment': None,

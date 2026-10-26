@@ -320,7 +320,8 @@ class FixedCMimallocProducerMetadataTests(unittest.TestCase):
             rows.append({"name": name, **helpers.HELPER_METADATA, "section_index": str(index)})
             sections.append({"index": index, "name": ".text." + name, "flags": "AX"})
             shared_elf["symbol_tables"][1]["rows"].append({
-                "name": name, **helpers.HELPER_METADATA, "binding": "LOCAL",
+                "name": name, **helpers.HELPER_METADATA,
+                **{field: contract["shared_libc"][field] for field in ("type", "binding", "visibility")},
                 "row_index": 500 + index, "section_index": "301",
             })
         shared_elf["sections"].append({"index": 301, "name": ".text", "flags": "AX"})

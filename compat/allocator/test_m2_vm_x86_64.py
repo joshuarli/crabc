@@ -19,6 +19,9 @@ from m2_vm_x86_64 import (
     ARENA_OWNED_EVENT_FIELD_COUNT,
     ARENA_OWNED_RUST_INLINE_PREFIX,
     CHECK_IDS,
+    CONTROLLED_NUMA_EXPECTED_VALUES,
+    RAW_GETCPU_FAILURE_EXPECTED_VALUES,
+    SOURCE_PAGE_RANGE_EXPECTED_VALUES,
     TRACE_KEYS,
     load_fragment,
     parse_aligned_overmap_trace,
@@ -75,6 +78,9 @@ def valid_trace() -> str:
         "m2.vm.offset.good_size": 69632,
         "m2.vm.policy.first_arena_size": 128 * 1024 * 1024,
     }
+    values.update(CONTROLLED_NUMA_EXPECTED_VALUES)
+    values.update(RAW_GETCPU_FAILURE_EXPECTED_VALUES)
+    values.update(SOURCE_PAGE_RANGE_EXPECTED_VALUES)
     values.update({key: 1 for key in TRACE_KEYS if key not in values})
     return "\n".join(
         ["CRABC_MI_M2_VM_TRACE_BEGIN"]

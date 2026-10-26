@@ -248,7 +248,15 @@ def plan(through: str | None = None, profile: str = "full") -> tuple[Step, ...]:
 
 
 def _plan(profile: str = "full") -> tuple[Step, ...]:
+    import abi_differential_evidence
+
     primary = lambda c: ["--static-sysroot", c.static_pair("primary"), c.dynamic_pair("primary")]  # noqa: E731
+    abi_companion_root = ".work/x86_64/abi-differential/candidate-{name}-companions"
+    abi_companion_fresh = (
+        abi_companion_root,
+        *(f"{producer.output_parent}/candidate-{{name}}-companions"
+          for producer in abi_differential_evidence.PRODUCERS if producer.output_parent is not None),
+    )
     steps: list[Step] = [
         # One product cohort for every family and gate.
         Step("static-products", "cohort",
@@ -363,12 +371,22 @@ def _plan(profile: str = "full") -> tuple[Step, ...]:
                           "--output", c.template(".work/x86_64/public-data-ordinary-link/candidate-{name}")),
              (Output("report", fixed=".work/x86_64/public-data-ordinary-link/candidate-{name}/report.json"),),
              fresh=(".work/x86_64/public-data-ordinary-link/candidate-{name}",)),
+        Step("abi-companions", "compat.abi-differential",
+             lambda c: _d("abi-differential-evidence", "collect-companions", *c.products(),
+                          "--native-abi-inventory", c.out("abi-inventory", "report"),
+                          "--native-abi-elf-facts", c.out("abi-elf-facts", "report"),
+                          "--header-declaration-inventory", c.out("abi-declarations", "report"),
+                          "--public-data-ordinary-link", c.out("abi-public-data", "report"),
+                          "--output", c.template(abi_companion_root)),
+             (Output("manifest", fixed=f"{abi_companion_root}/companions.json"),),
+             fresh=abi_companion_fresh),
         Step("abi-evidence", "compat.abi-differential",
              lambda c: _d("abi-differential-evidence", "assemble", *c.products(),
                           "--native-abi-inventory", c.out("abi-inventory", "report"),
                           "--native-abi-elf-facts", c.out("abi-elf-facts", "report"),
                           "--header-declaration-inventory", c.out("abi-declarations", "report"),
                           "--public-data-ordinary-link", c.out("abi-public-data", "report"),
+                          "--companions", c.out("abi-companions", "manifest"),
                           "--output", c.template(".work/x86_64/abi-differential/candidate-{name}")),
              (Output("receipt", fixed=".work/x86_64/abi-differential/candidate-{name}/abi-evidence.json"),),
              fresh=(".work/x86_64/abi-differential/candidate-{name}",),
@@ -657,8 +675,8 @@ def _completed(root: Path, record_path: Path, source: Mapping[str, str], argv: l
     return {name: identity["path"] for name, identity in record["outputs"].items()}
 
 
-def _validate_products(root: Path, step: Step, found: Mapping[str, str]) -> None:
-    """Replay the existing product readers before retaining or reusing a cohort."""
+def _validate_products(root: Path, step: Step, found: Mapping[str, str], context: Context) -> None:
+    """Replay the existing product and companion readers before reuse."""
 
     try:
         if step.id == "static-products":
@@ -669,6 +687,19 @@ def _validate_products(root: Path, step: Step, found: Mapping[str, str]) -> None
             import owned_dynamic_qualification as dynamic
 
             dynamic.validate_receipt(root / found["qualification"])
+        elif step.id == "abi-companions":
+            import abi_differential_evidence as evidence
+
+            cohort = evidence.Cohort(
+                static_product=root / context.static_pair("primary"),
+                dynamic_product=root / context.dynamic_pair("primary"),
+                static_preparation=root / context.out("static-products", "preparation"),
+                native_abi_inventory=root / context.out("abi-inventory", "report"),
+                native_abi_elf_facts=root / context.out("abi-elf-facts", "report"),
+                header_declaration_inventory=root / context.out("abi-declarations", "report"),
+                public_data_ordinary_link=root / context.out("abi-public-data", "report"),
+            )
+            evidence.load_companions(root / found["manifest"], cohort)
     except Exception as error:
         raise CandidateError(f"{step.id} retained product validation failed: {error}") from error
 
@@ -762,7 +793,7 @@ def execute(root: Path, work: Path, inputs: Mapping[str, Mapping[str, object]], 
                     _write(candidate, retained)
             done = _completed(root, directory / "record.json", source, argv)
             if done is not None:
-                _validate_products(root, step, done)
+                _validate_products(root, step, done, context)
                 context.outputs[step.id] = done
                 records.append({"step": step.id, "family": step.family, "status": "complete", "resumed": True,
                                 "outputs": done})
@@ -800,7 +831,7 @@ def execute(root: Path, work: Path, inputs: Mapping[str, Mapping[str, object]], 
                     raise CandidateError(f"candidate input group {group} changed while {step.id} ran: {error}") from error
                 require(current_group == input_seals[group],
                         f"candidate input group {group} changed while {step.id} ran")
-            _validate_products(root, step, found)
+            _validate_products(root, step, found, context)
             context.outputs[step.id] = found
             _write(directory / "record.json", {
                 "schema": SCHEMA, "step": step.id, "status": "complete", "source": dict(source), "argv": argv,

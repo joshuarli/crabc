@@ -38,8 +38,6 @@ def witness_disassembly(*, public_branch: str = "") -> str:
 
 class NativeFacadeLtoInspectionTests(unittest.TestCase):
     def test_stock_std_runtime_loader_path_fits_the_musl_interpreter_slot(self) -> None:
-        # Construct the small ELF portion `patched_interpreter_bytes` reads:
-        # one 26-byte PT_INTERP slot, as emitted by the stock-std fixture.
         binary = bytearray(160)
         binary[:4] = b"\x7fELF"
         binary[4] = 2
@@ -52,9 +50,8 @@ class NativeFacadeLtoInspectionTests(unittest.TestCase):
         binary[72:80] = (128).to_bytes(8, "little")
         binary[96:104] = (26).to_bytes(8, "little")
 
-        with tempfile.TemporaryDirectory(prefix=RUNNER.STOCK_STD_RUNTIME_PREFIX, dir="/tmp") as name:
-            interpreter = str(Path(name) / "c")
-            patched = RUNNER.patched_interpreter_bytes(bytes(binary), interpreter)
+        interpreter = str(Path("/tmp") / (RUNNER.STOCK_STD_RUNTIME_PREFIX + "abcdefgh") / "c")
+        patched = RUNNER.patched_interpreter_bytes(bytes(binary), interpreter)
 
         expected = interpreter.encode("ascii") + b"\0"
         self.assertEqual(patched[128 : 128 + len(expected)], expected)

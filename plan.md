@@ -30,12 +30,28 @@ localizes unexported static helpers to `LOCAL DEFAULT` and excluded dynamic
 helpers to `LOCAL HIDDEN`, absent from `.dynsym`.
 
 Nine Rust profiles and the focused native tool/CRT checks pass. Independent
-review found no P1/P2 in the integrated tool and structural repairs. The
-synthetic tool fixtures now pass their focused checks. Freeze a clean revision
-for batch verification, then run fresh products, combined ABI collection,
-canonical replay and H0. Existing receipt-only
-tests remain unverified until supplied with their actual products; skipped
-native tests do not count as proof. Preserve the older frozen evidence below.
+review found no P1/P2 in the integrated tool, structural and native layout
+changes. Static three-product preparation passes at frozen `a02498e2d` in
+`.work/wt/campaign-verification`. Its native Python matrix records 3,399
+passes, 75 skips and four failing modules. Three stale metadata/transcript
+fixtures are corrected with focused native proof; the root-only resolver
+chroot check passes when run as root. Eight receipt-only jobs remain
+unverified until supplied with actual installed products. The portable batch
+records 669 passes, nine skips and two stale M2 trace-fixture errors; the
+corrected finite trace and all fourteen parser tests pass. No allocator
+workload follows from those parser checks.
+
+Dynamic preparation at that frozen revision stops on mold's synthetic local
+undefined `_PROCEDURE_LINKAGE_TABLE_` row. A minimal linked DSO confirms that
+row has no relocation and is absent from `.dynsym`. The producer now checks
+actual dynamic imports. Its real-link regression still detects a foreign
+import, and all 64 focused linker, driver and provenance tests pass. Fresh
+dynamic preparation remains required.
+
+The correctness runner must collect and seal the complete ABI companion
+manifest before assembly. Freeze the integrated repairs, then run H0 with
+fresh products and the complete companion set. Preserve the older frozen
+evidence below. Skipped native tests do not count as proof.
 The accepted-C allocator stays selected. Public x86 support remains false:
 180 of 223 capabilities, nine of 26 families and zero of eight gates.
 
@@ -1625,6 +1641,11 @@ Forbidden:
 
 Made so far, each with its commit, for the owner:
 
+- `a02498e2d`: native mold layout replaces unsupported LLD layout controls.
+  Loader provenance binds the canonical unwind-header flags. Final private
+  compiler-helper visibility and native map projections follow mold while
+  preserving archive exports, original contributors and ELF checks. Runtime
+  and memory performance bounds are unchanged and remain unqualified.
 - `aca88c62c`: native builds and receipt readers bind kache, the physical
   pinned rustc, mold, and the refreshed native image inputs. Six selected
   aliases gain an owning companion. C-ABI admission authenticates the actual

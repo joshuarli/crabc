@@ -133,6 +133,53 @@ class PlanTests(unittest.TestCase):
         self.assertEqual(dynamic["outputs"],
                          [".work/x86_64/candidate-durable-cohort-test/out/dynamic/qualification.json"])
 
+    def test_abi_companions_use_the_complete_cohort_and_feed_assembly(self) -> None:
+        work = ROOT / ".work/x86_64/candidate-companion-plan"
+        steps = candidate.plan(profile="correctness")
+        identifiers = [step.id for step in steps]
+        abi_steps = identifiers[identifiers.index("abi-inventory"):identifiers.index("abi-evidence") + 1]
+        self.assertEqual(abi_steps, ["abi-inventory", "abi-elf-facts", "abi-declarations",
+                                     "abi-public-data", "abi-companions", "abi-evidence"])
+
+        context = candidate.Context(ROOT, work, {}, dry_run=True)
+        context.outputs.update({
+            "static-products": {"preparation": ".work/x86_64/candidate-companion-plan/out/static/preparation.json"},
+            "dynamic-products": {"qualification": ".work/x86_64/candidate-companion-plan/out/dynamic/qualification.json"},
+            "abi-inventory": {"report": ".work/x86_64/native-abi-inventory/candidate-candidate-companion-plan/report.json"},
+            "abi-elf-facts": {"report": ".work/x86_64/candidate-companion-plan/out/abi-elf-facts/report.json"},
+            "abi-declarations": {"report": ".work/x86_64/header-declaration-inventory/candidate-candidate-companion-plan/report.json"},
+            "abi-public-data": {"report": ".work/x86_64/public-data-ordinary-link/candidate-candidate-companion-plan/report.json"},
+        })
+        companion_root = ".work/x86_64/abi-differential/candidate-candidate-companion-plan-companions"
+        companion_manifest = f"{companion_root}/companions.json"
+        context.outputs["abi-companions"] = {"manifest": companion_manifest}
+
+        companions = next(step for step in steps if step.id == "abi-companions")
+        reports = ["--native-abi-inventory", context.out("abi-inventory", "report"),
+                   "--native-abi-elf-facts", context.out("abi-elf-facts", "report"),
+                   "--header-declaration-inventory", context.out("abi-declarations", "report"),
+                   "--public-data-ordinary-link", context.out("abi-public-data", "report")]
+        self.assertEqual(companions.argv(context), ["./scripts/dev-x86_64.sh", "abi-differential-evidence",
+                                                    "collect-companions", *context.products(), *reports,
+                                                    "--output", companion_root])
+        self.assertEqual(companions.outputs,
+                         (candidate.Output(
+                             "manifest",
+                             fixed=".work/x86_64/abi-differential/candidate-{name}-companions/companions.json",
+                         ),))
+        import abi_differential_evidence
+
+        self.assertEqual(candidate.fresh_paths(context, companions), [
+            ROOT / companion_root,
+            *(ROOT / producer.output_parent / Path(companion_root).name
+              for producer in abi_differential_evidence.PRODUCERS if producer.output_parent is not None),
+        ])
+
+        assembly = next(step for step in steps if step.id == "abi-evidence")
+        self.assertEqual(assembly.argv(context), ["./scripts/dev-x86_64.sh", "abi-differential-evidence", "assemble",
+                                                  *context.products(), *reports, "--companions", companion_manifest,
+                                                  "--output", ".work/x86_64/abi-differential/candidate-candidate-companion-plan"])
+
 
 class ExecutionTests(unittest.TestCase):
     """Run the real plan against a runner that fakes each producer's outputs."""
@@ -154,6 +201,7 @@ class ExecutionTests(unittest.TestCase):
         patcher = mock.patch.object(candidate, "preflight", return_value=[])
         patcher.start()
         self.addCleanup(patcher.stop)
+        self.real_validate_products = candidate._validate_products
         products = mock.patch.object(candidate, "_validate_products", create=True)
         products.start()
         self.addCleanup(products.stop)
@@ -176,7 +224,43 @@ class ExecutionTests(unittest.TestCase):
             else:
                 path = self.root / ".work/x86_64/tmp" / identifier / (output.printed or "")
             path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_text(json.dumps({"step": identifier}), encoding="utf-8")
+            if identifier == "abi-companions":
+                import abi_differential_evidence as evidence
+
+                def argument(name: str) -> str:
+                    return argv[argv.index(name) + 1]
+
+                static_product = self.root / argument("--static-product")
+                dynamic_product = self.root / argument("--dynamic-product")
+                static_product.mkdir(parents=True, exist_ok=True)
+                dynamic_product.mkdir(parents=True, exist_ok=True)
+                cohort = evidence.Cohort(
+                    static_product=static_product,
+                    dynamic_product=dynamic_product,
+                    static_preparation=self.root / argument("--static-preparation"),
+                    native_abi_inventory=self.root / argument("--native-abi-inventory"),
+                    native_abi_elf_facts=self.root / argument("--native-abi-elf-facts"),
+                    header_declaration_inventory=self.root / argument("--header-declaration-inventory"),
+                    public_data_ordinary_link=self.root / argument("--public-data-ordinary-link"),
+                )
+                companion = self.work / "out/abi-companion/native-c-allocator-boundary.json"
+                companion.parent.mkdir(parents=True, exist_ok=True)
+                companion.write_text("original companion evidence\n", encoding="utf-8")
+                manifest = {
+                    "schema": evidence.COMPANIONS_SCHEMA,
+                    "source": SOURCE,
+                    "cohort": cohort.record(),
+                    "companions": {
+                        "native_c_allocator_boundary_report": {
+                            "path": companion.relative_to(self.root).as_posix(),
+                            "sha256": evidence._sha256(companion),
+                        },
+                    },
+                    "outcomes": {},
+                }
+                path.write_text(json.dumps(manifest), encoding="utf-8")
+            else:
+                path.write_text(json.dumps({"step": identifier}), encoding="utf-8")
             printed.append(f"{identifier} evidence: /workspace/{path.relative_to(self.root).as_posix()}")
         stdout.write_text("\n".join(printed) + "\n", encoding="utf-8")
         stderr.write_text("", encoding="utf-8")
@@ -219,6 +303,26 @@ class ExecutionTests(unittest.TestCase):
         resumed = self._execute(through="dynamic-products")
         self.assertNotIn("error", resumed)
         self.assertEqual(self.calls, [])
+
+    def test_abi_companion_payload_is_revalidated_on_resume(self) -> None:
+        import abi_differential_evidence as evidence
+
+        candidate._validate_products.side_effect = (
+            lambda root, step, found, context: self.real_validate_products(root, step, found, context)
+            if step.id == "abi-companions" else None
+        )
+        with mock.patch.object(evidence, "ROOT", self.root), \
+                mock.patch.object(evidence, "current_source", return_value=SOURCE):
+            summary = self._execute(through="abi-companions")
+            if "error" in summary:
+                raise AssertionError(str(summary["error"]))
+
+            companion = self.work / "out/abi-companion/native-c-allocator-boundary.json"
+            companion.write_text("changed companion evidence\n", encoding="utf-8")
+            self.calls.clear()
+            resumed = self._execute(through="abi-companions")
+            self.assertIn("native_c_allocator_boundary_report bytes changed after collection", resumed["error"])
+            self.assertEqual(self.calls, [])
 
     def test_printed_receipt_is_discovered_after_large_json_diagnostics(self) -> None:
         step = next(step for step in candidate.plan()
