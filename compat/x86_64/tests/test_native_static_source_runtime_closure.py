@@ -5,7 +5,9 @@ from __future__ import annotations
 
 import importlib.util
 import argparse
+import hashlib
 import json
+import sqlite3
 import tempfile
 import unittest
 from pathlib import Path
@@ -23,6 +25,136 @@ SPEC.loader.exec_module(CLOSURE)
 
 
 class NativeStaticSourceRuntimeClosureTests(unittest.TestCase):
+    def _private_vendor_fixture(self, root: Path) -> tuple[Path, Path, Path, Path]:
+        repository = root / "repository"
+        rust_source = root / "toolchain" / "library"
+        project_vendor = repository / ".work" / "x86_64" / "cargo" / "native-static-source-runtime-vendor"
+        work = root / "graph"
+        repository.mkdir()
+        (rust_source / ".cargo").mkdir(parents=True)
+        source_vendor = rust_source / "vendor" / "cache-probe-1.0.0"
+        (source_vendor / "src").mkdir(parents=True)
+        project_vendor.mkdir(parents=True)
+        work.mkdir()
+
+        crate_source = b"pub fn cache_probe() {}\n"
+        crate_file = source_vendor / "src" / "lib.rs"
+        crate_file.write_bytes(crate_source)
+        package_checksum = "0" * 64
+        (source_vendor / ".cargo-checksum.json").write_text(
+            json.dumps({
+                "package": package_checksum,
+                "files": {"src/lib.rs": hashlib.sha256(crate_source).hexdigest()},
+            }),
+            encoding="utf-8",
+        )
+        for lock in (repository / "Cargo.lock", rust_source / "Cargo.lock"):
+            lock.write_text(
+                "version = 4\n\n[[package]]\n"
+                'name = "cache-probe"\nversion = "1.0.0"\n'
+                'source = "registry+https://github.com/rust-lang/crates.io-index"\n'
+                f'checksum = "{package_checksum}"\n',
+                encoding="utf-8",
+            )
+        (rust_source / ".cargo" / "config.toml").write_text(
+            '[source.crates-io]\nreplace-with = "vendored-sources"\n\n'
+            '[source.vendored-sources]\ndirectory = "vendor"\n',
+            encoding="utf-8",
+        )
+        return repository, work, rust_source, project_vendor
+
+    def _populate_post_cargo_cache(self, cargo_home: Path) -> None:
+        with sqlite3.connect(cargo_home / ".global-cache") as database:
+            database.execute("CREATE TABLE global_data (last_auto_gc INTEGER NOT NULL)")
+            database.execute("INSERT INTO global_data VALUES (0)")
+        (cargo_home / ".package-cache").touch()
+        (cargo_home / ".package-cache-mutate").touch()
+        registry = cargo_home / "registry"
+        registry.mkdir()
+        (registry / "CACHEDIR.TAG").write_bytes(
+            b"Signature: 8a477f597d28d172789f06886806bc55\n"
+            b"# This file is a cache directory tag created by cargo.\n"
+            b"# For information about cache directory tags see https://bford.info/cachedir/\n"
+        )
+
+    def test_private_vendor_replay_accepts_pinned_cargo_cache_metadata(self) -> None:
+        work_root = ROOT / ".work" / "tmp"
+        work_root.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(prefix="source-runtime-cache-replay.", dir=work_root) as temporary:
+            repository, work, rust_source, project_vendor = self._private_vendor_fixture(Path(temporary))
+            with patch.object(CLOSURE, "ROOT", repository):
+                produced = CLOSURE.private_vendor(work, rust_source, project_vendor)
+                self.assertEqual(CLOSURE.replay_private_vendor(work, rust_source), produced)
+
+                self._populate_post_cargo_cache(work / "cargo-home")
+                self.assertEqual(CLOSURE.replay_private_vendor(work, rust_source), produced)
+
+                cargo_home = work / "cargo-home"
+                (cargo_home / ".package-cache-mutate").unlink()
+                self.assertEqual(CLOSURE.replay_private_vendor(work, rust_source), produced)
+                (cargo_home / ".package-cache").unlink()
+                self.assertEqual(CLOSURE.replay_private_vendor(work, rust_source), produced)
+                (cargo_home / ".global-cache").unlink()
+                self.assertEqual(CLOSURE.replay_private_vendor(work, rust_source), produced)
+                cache_tag = cargo_home / "registry" / "CACHEDIR.TAG"
+                cache_tag.unlink()
+                cache_tag.parent.rmdir()
+                self.assertEqual(CLOSURE.replay_private_vendor(work, rust_source), produced)
+
+    def test_private_vendor_replay_rejects_cargo_home_inputs_and_substitutions(self) -> None:
+        work_root = ROOT / ".work" / "tmp"
+        work_root.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(prefix="source-runtime-cache-controls.", dir=work_root) as temporary:
+            repository, work, rust_source, project_vendor = self._private_vendor_fixture(Path(temporary))
+            with patch.object(CLOSURE, "ROOT", repository):
+                CLOSURE.private_vendor(work, rust_source, project_vendor)
+                cargo_home = work / "cargo-home"
+                self._populate_post_cargo_cache(cargo_home)
+                config_path = cargo_home / "config.toml"
+                original_config = config_path.read_bytes()
+
+                unknown_input = cargo_home / "credentials.toml"
+                unknown_input.write_text("[registry]\ntoken = 'injected'\n", encoding="utf-8")
+                with self.assertRaisesRegex(CLOSURE.ClosureError, "unrecorded input"):
+                    CLOSURE.replay_private_vendor(work, rust_source)
+                unknown_input.unlink()
+
+                config_path.write_bytes(original_config + b"\n[build]\nrustc-wrapper = 'injected'\n")
+                with self.assertRaisesRegex(CLOSURE.ClosureError, "config differs"):
+                    CLOSURE.replay_private_vendor(work, rust_source)
+                config_path.write_bytes(original_config)
+
+                global_cache = cargo_home / ".global-cache"
+                original_cache = global_cache.read_bytes()
+                global_cache.write_bytes(b"not a SQLite database")
+                with self.assertRaisesRegex(CLOSURE.ClosureError, "not a SQLite database"):
+                    CLOSURE.replay_private_vendor(work, rust_source)
+                global_cache.write_bytes(original_cache)
+
+                lock = cargo_home / ".package-cache-mutate"
+                lock.write_bytes(b"not empty")
+                with self.assertRaisesRegex(CLOSURE.ClosureError, "lock is not empty"):
+                    CLOSURE.replay_private_vendor(work, rust_source)
+                lock.write_bytes(b"")
+
+                registry_input = cargo_home / "registry" / "index"
+                registry_input.mkdir()
+                with self.assertRaisesRegex(CLOSURE.ClosureError, "registry cache contains an unrecorded input"):
+                    CLOSURE.replay_private_vendor(work, rust_source)
+                registry_input.rmdir()
+
+                cache_tag = cargo_home / "registry" / "CACHEDIR.TAG"
+                original_tag = cache_tag.read_bytes()
+                cache_tag.write_bytes(original_tag + b"substitution")
+                with self.assertRaisesRegex(CLOSURE.ClosureError, "cache tag differs"):
+                    CLOSURE.replay_private_vendor(work, rust_source)
+                cache_tag.write_bytes(original_tag)
+
+                global_cache.unlink()
+                global_cache.symlink_to(config_path)
+                with self.assertRaisesRegex(CLOSURE.ClosureError, "not a physical child"):
+                    CLOSURE.replay_private_vendor(work, rust_source)
+
     def test_target_c_environment_rejects_unapproved_overrides_before_building(self) -> None:
         approved = {
             "CC_x86_64_unknown_linux_musl": "/usr/bin/gcc",

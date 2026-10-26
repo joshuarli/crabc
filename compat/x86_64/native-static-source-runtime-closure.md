@@ -53,6 +53,25 @@ package checksums, and selected source files are recorded.  Workspace and
 registry dependencies are resolved from the checked lock through that private
 vendor; Cargo runs `--locked --offline` with a private `CARGO_HOME`, target,
 and `TMPDIR`.
+
+After Cargo exits, `replay_private_vendor()` always requires `config.toml` and
+accepts these optional Cargo outputs when present:
+
+- `config.toml` must contain the exact offline composite-vendor configuration.
+- `.global-cache`, a regular file with the SQLite header.
+- `.package-cache` and `.package-cache-mutate`, empty regular lock files.
+- `registry`, containing only `CACHEDIR.TAG` with Cargo's exact cache-tag bytes.
+
+The replay rejects every other file, directory, or symlink in this tree. Cargo
+uses `.global-cache` for last-use times and sizes used by garbage collection,
+and its package-cache lock files coordinate access to registry and source
+caches. The [global-cache tracker](https://doc.rust-lang.org/stable/nightly-rustc/cargo/workspace/global_cache_tracker/index.html)
+and [cache-lock module](https://doc.rust-lang.org/stable/nightly-rustc/cargo/util/cache_lock/index.html)
+document those roles. Replay checks the SQLite header but does not use database
+contents to identify dependencies or compiler inputs. The lockfiles, exact
+offline configuration, and checksum-verified vendor trees define the source
+set.
+
 The private development graph sets `CARGO_PROFILE_DEV_DEBUG=0`; no debug
 sections are needed for the executable fixture, and the pinned Rust LLD does
 not support compressed debug sections emitted by the image C toolchain. It

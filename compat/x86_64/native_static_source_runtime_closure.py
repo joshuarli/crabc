@@ -42,6 +42,12 @@ PINNED_RUSTUP_TARGET = pathlib.Path("/usr/bin/rustup-init")
 PINNED_RUSTUP_HOME = pathlib.Path("/opt/rustup")
 FIXED_HOST_PATH = "/usr/bin:/bin"
 REGISTRY = "registry+https://github.com/rust-lang/crates.io-index"
+CARGO_CACHE_TAG = (
+    b"Signature: 8a477f597d28d172789f06886806bc55\n"
+    b"# This file is a cache directory tag created by cargo.\n"
+    b"# For information about cache directory tags see https://bford.info/cachedir/\n"
+)
+SQLITE_HEADER = b"SQLite format 3\x00"
 RUNTIME_SOURCES = {
     "core": pathlib.PurePosixPath("core/src/lib.rs"),
     "alloc": pathlib.PurePosixPath("alloc/src/lib.rs"),
@@ -543,9 +549,33 @@ def replay_private_vendor(work: pathlib.Path, rust_source: pathlib.Path) -> dict
             fail(f"private vendor package differs from workspace package {key}")
         records[key] = private_record
     cargo_home = physical_child(work, pathlib.Path("cargo-home"), "private Cargo home", directory=True)
-    config_path = physical_child(cargo_home, pathlib.Path("config.toml"), "private Cargo source config")
-    if {path.name for path in cargo_home.iterdir()} != {"config.toml"}:
+    cargo_home_entries = {path.name for path in cargo_home.iterdir()}
+    if "config.toml" not in cargo_home_entries:
+        fail("private Cargo home is missing its source config")
+    if not cargo_home_entries <= {
+        "config.toml", ".global-cache", ".package-cache", ".package-cache-mutate", "registry",
+    }:
         fail("private Cargo home contains an unrecorded input")
+    if ".global-cache" in cargo_home_entries:
+        global_cache = physical_child(cargo_home, pathlib.Path(".global-cache"), "private Cargo global cache")
+        with global_cache.open("rb") as stream:
+            if stream.read(len(SQLITE_HEADER)) != SQLITE_HEADER:
+                fail("private Cargo global cache is not a SQLite database")
+    for name in (".package-cache", ".package-cache-mutate"):
+        if name in cargo_home_entries:
+            lock = physical_child(cargo_home, pathlib.Path(name), f"private Cargo {name} lock")
+            if lock.stat().st_size != 0:
+                fail(f"private Cargo {name} lock is not empty")
+    if "registry" in cargo_home_entries:
+        registry_cache = physical_child(
+            cargo_home, pathlib.Path("registry"), "private Cargo registry cache", directory=True,
+        )
+        if {path.name for path in registry_cache.iterdir()} != {"CACHEDIR.TAG"}:
+            fail("private Cargo registry cache contains an unrecorded input")
+        cache_tag = physical_child(registry_cache, pathlib.Path("CACHEDIR.TAG"), "private Cargo registry cache tag")
+        if cache_tag.read_bytes() != CARGO_CACHE_TAG:
+            fail("private Cargo registry cache tag differs")
+    config_path = physical_child(cargo_home, pathlib.Path("config.toml"), "private Cargo source config")
     expected_text = (
         "[source.crates-io]\nreplace-with = \"crabc-native-source-runtime\"\n\n"
         "[source.crabc-native-source-runtime]\n"
