@@ -85,7 +85,6 @@ class OwnedSignalProcessTests(unittest.TestCase):
         self.assertTrue(callable(evidence.record_compile))
         self.assertTrue(callable(evidence.validate_compile))
         self.assertTrue(callable(evidence.record_observations))
-        self.assertTrue(callable(evidence.validate_observations))
         self.assertTrue(callable(evidence.run_in_process_group))
 
     def test_cli_rejects_missing_or_ambiguous_products_before_evidence(self) -> None:

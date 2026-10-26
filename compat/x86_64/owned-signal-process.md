@@ -50,8 +50,9 @@ payload copies, and raw observations, then compares the complete JSON object.
 Unknown or missing fields fail. The report must remain the same physical file
 with the same bytes through the replay.
 
-The replay reads retained evidence only. It does not compile, link, launch a
-process, or rewrite the report.
+The replay does not compile, link, execute the target or oracle, or rewrite the
+report. It may run binary-metadata tools such as `readelf` inside the pinned
+image.
 
 There is no documented source difference in this workload. Every retained
 candidate triplet must byte-match its musl oracle triplet. A new mismatch must
