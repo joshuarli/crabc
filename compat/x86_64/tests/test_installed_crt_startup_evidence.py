@@ -2,6 +2,7 @@
 import copy
 import hashlib
 import json
+import os
 import shutil
 import struct
 import subprocess
@@ -1036,7 +1037,7 @@ int main(void) {
         facts['candidate-shared']['symbol_tables'][1]['rows'].append(rogue)
         with self.assertRaises(reader.StartupEvidenceError):reader.account_products(facts)
 
-    def test_final_link_plan_keeps_same_object_and_exact_conventional_crt_owner(self):
+    def test_final_link_plan_keeps_same_object_and_helper_owners(self):
         from unittest.mock import patch
         root=Path('/workspace');work=root/'.work/receipt'
         checkout=reader.ROOT
@@ -1056,6 +1057,8 @@ int main(void) {
         for spec in plan:
             reader.ordinary.raw_path(work,spec['label'],'stdout')
         links=[x for x in plan if x['label'].endswith('-link')]
+        direct_modes=('conventional-pie','conventional-non-pie','default-pie',
+                      'oracle-static','oracle-static-pie','oracle-pie','oracle-non-pie')
         for case in reader.cases():
             row=next(x for x in links if x['label']==case['name']+'-link')
             self.assertEqual(row['argv'].count(str(work/(case['variant']+'.o'))),1)
@@ -1066,44 +1069,77 @@ int main(void) {
                 self.assertIn(str(work/'inputs/oracle-crt'/('Scrt1.o' if case['mode']=='conventional-pie' else 'crt1.o')),row['argv'])
                 self.assertIn(str(root/'.work/dynamic/usr/lib/libc.so'),row['argv'])
                 self.assertNotIn(str(root/'.work/dynamic/usr/lib/crabc-dynamic-attach.o'),row['argv'])
-                archive=str(root/'.work/dynamic/usr/lib'/helper_contract['archive']['name'])
+            if case['mode'] in direct_modes:
+                static_link='static' in case['mode']
+                product=root/('.work/static' if static_link else '.work/dynamic')
+                archive=str(product/'usr/lib'/helper_contract['archive']['name'])
                 self.assertEqual(row['argv'].count(archive),1)
                 exclusion=helper_contract['dynamic_application']['linker_option']
-                self.assertIn(exclusion,row['argv'])
-                self.assertLess(row['argv'].index(exclusion),
-                                row['argv'].index('--dynamic-linker'))
-                self.assertLess(row['argv'].index(str(work/(case['variant']+'.o'))),
-                                row['argv'].index(archive))
-                self.assertLess(row['argv'].index(archive),
-                                row['argv'].index(str(root/'.work/dynamic/usr/lib/libc.so')))
+                if static_link:
+                    runtime=str(work/'inputs/oracle-static/libc_a')
+                    self.assertIn('-static',row['argv'])
+                    self.assertNotIn(exclusion,row['argv'])
+                    self.assertLess(row['argv'].index(runtime),row['argv'].index(archive))
+                    self.assertIn(str(work/'inputs/oracle-crt'/('rcrt1.o' if case['mode']=='oracle-static-pie' else 'crt1.o')),
+                                  row['argv'])
+                else:
+                    runtime=(str(root/'.work/dynamic/usr/lib/libc.so') if case['mode'].startswith('conventional')
+                             else '-l:libc.so')
+                    self.assertIn(exclusion,row['argv'])
+                    self.assertLess(row['argv'].index(exclusion),row['argv'].index('--dynamic-linker'))
+                    self.assertLess(row['argv'].index(str(work/(case['variant']+'.o'))),row['argv'].index(archive))
+                    self.assertLess(row['argv'].index(archive),row['argv'].index(runtime))
 
         parent=checkout/'.work/tmp';parent.mkdir(parents=True,exist_ok=True)
         with tempfile.TemporaryDirectory(dir=parent) as directory:
             work=Path(directory)
             with patch.object(reader.ordinary,'validate_chroot_invocation',return_value='/usr/sbin/chroot'):
-                spec=next(item for item in reader.plan(checkout,work,inputs,tools)
-                          if item['label']=='conventional-pie-normal-link')
-            raw=work/'raw';raw.mkdir()
-            paths={suffix:reader.ordinary.raw_path(work,spec['label'],suffix)
-                   for suffix in ('command.json','stdout','stderr','status')}
-            paths['command.json'].write_text(json.dumps(spec['argv'])+'\n')
-            paths['stdout'].write_bytes(b'')
-            paths['stderr'].write_bytes(b'')
-            paths['status'].write_bytes(b'0\n')
-            row={'label':spec['label'],'argv':list(spec['argv']),'cwd':spec['cwd'],'outcome':'ok',
-                 **{field:reader.ordinary.work_file_identity(checkout,paths[suffix],'startup '+field)
-                    for field,suffix in (('command','command.json'),('stdout','stdout'),
-                                         ('stderr','stderr'),('status','status'))}}
-            with patch.object(reader,'plan',return_value=[spec]):
-                reader.validate_commands(checkout,work,inputs,tools,[row])
-                archive=reader.ordinary.mounted(
-                    checkout,checkout/inputs['dynamic_product']['path']/'usr/lib'/helper_contract['archive']['name'])
-                exclusion=helper_contract['dynamic_application']['linker_option']
-                legacy_argv=[argument for argument in spec['argv'] if argument not in (archive,exclusion)]
-                paths['command.json'].write_text(json.dumps(legacy_argv)+'\n')
-                legacy={**row,'argv':legacy_argv,
-                        'command':reader.ordinary.work_file_identity(checkout,paths['command.json'],'legacy command')}
-                with self.assertRaises(reader.StartupEvidenceError):
-                    reader.validate_commands(checkout,work,inputs,tools,[legacy])
+                replay_plan=reader.plan(checkout,work,inputs,tools)
+            for mode in direct_modes:
+                spec=next(item for item in replay_plan if item['label']==mode+'-normal-link')
+                raw=work/'raw';raw.mkdir(exist_ok=True)
+                paths={suffix:reader.ordinary.raw_path(work,spec['label'],suffix)
+                       for suffix in ('command.json','stdout','stderr','status')}
+                paths['command.json'].write_text(json.dumps(spec['argv'])+'\n')
+                paths['stdout'].write_bytes(b'')
+                paths['stderr'].write_bytes(b'')
+                paths['status'].write_bytes(b'0\n')
+                row={'label':spec['label'],'argv':list(spec['argv']),'cwd':spec['cwd'],'outcome':'ok',
+                     **{field:reader.ordinary.work_file_identity(checkout,paths[suffix],'startup '+field)
+                        for field,suffix in (('command','command.json'),('stdout','stdout'),
+                                             ('stderr','stderr'),('status','status'))}}
+                with patch.object(reader,'plan',return_value=[spec]):
+                    reader.validate_commands(checkout,work,inputs,tools,[row])
+                    static_link='static' in mode
+                    product=inputs['static_preparation']['primary']['path'] if static_link else inputs['dynamic_product']['path']
+                    archive=reader.ordinary.mounted(checkout,checkout/product/'usr/lib'/helper_contract['archive']['name'])
+                    exclusion=helper_contract['dynamic_application']['linker_option']
+                    legacy_argv=[argument for argument in spec['argv']
+                                 if argument!=archive and (static_link or argument!=exclusion)]
+                    paths['command.json'].write_text(json.dumps(legacy_argv)+'\n')
+                    legacy={**row,'argv':legacy_argv,
+                            'command':reader.ordinary.work_file_identity(checkout,paths['command.json'],'legacy command')}
+                    with self.assertRaises(reader.StartupEvidenceError):
+                        reader.validate_commands(checkout,work,inputs,tools,[legacy])
+
+    def test_probe_variants_import_the_unsigned_128_division_helper(self):
+        parent=reader.ROOT/'.work/tmp';parent.mkdir(parents=True,exist_ok=True)
+        with tempfile.TemporaryDirectory(dir=parent) as directory:
+            work=Path(directory)
+            for variant in ('normal','empty'):
+                object_path=work/(variant+'.o')
+                command=['cc','-std=c11','-O2',*(['-DEMPTY_ARRAYS'] if variant=='empty' else []),
+                         '-c',str(reader.ROOT/'compat/x86_64/installed_crt_startup_probe.c'),
+                         '-o',str(object_path)]
+                subprocess.run(command,cwd=reader.ROOT,capture_output=True,text=True,check=True,
+                               env={**os.environ,'TMPDIR':str(parent)})
+                elf=reader.Elf(object_path)
+                symbols=[elf.symbol_row(index,symbol_index)
+                         for index,section in enumerate(elf.sections) if section[1]==2
+                         for symbol_index in range(section[5]//24)]
+                imports=[symbol for symbol in symbols if symbol['name']=='__udivti3']
+                self.assertEqual(len(imports),1)
+                self.assertEqual((imports[0]['binding'],imports[0]['visibility'],imports[0]['section']),
+                                 ('GLOBAL','DEFAULT',0))
 
 if __name__=='__main__':unittest.main()

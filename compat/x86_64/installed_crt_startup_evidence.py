@@ -520,14 +520,17 @@ def plan(root,work,inputs,tools):
             crt=static/entry if mode=='default-pie' else work/'inputs/oracle-crt'/entry
             runtime=library/'libc.so' if mode.startswith('conventional') else work/'inputs/oracle-static/libc_a' if is_static else work/'qualification-oracle/runtime'
             conventional=mode.startswith('conventional')
+            helper_input=m((static if is_static else library)/helper_archive)
+            runtime_inputs=([m(runtime)] if is_static or conventional
+                            else ['-L',p('oracle-link'),'-l:libc.so'])
             argv=[tool('linker'),*(['-static'] if is_static else []),*(['-pie'] if pie else []),
                   '--hash-style=sysv','-z','now','-z','relro','-z','noexecstack','--no-undefined',
-                  *([] if is_static else ['--allow-shlib-undefined',
-                     *([helper_exclusion] if conventional else []),'--dynamic-linker',
+                  *([] if is_static else ['--allow-shlib-undefined',helper_exclusion,'--dynamic-linker',
                      '/lib/ld-crabc-x86_64.so.1' if mode.startswith('conventional') else '/lib/ld-musl-x86_64.so.1']),
                   m(crt),p('inputs/oracle-crt/crti.o'),obj,
-                  *([m(library/helper_archive)] if conventional else []),
-                  *([m(runtime)] if is_static or mode.startswith('conventional') else ['-L',p('oracle-link'),'-l:libc.so']),p('inputs/oracle-crt/crtn.o'),'-Map='+p(name+'.map'),'-o',p(name)]
+                  *([] if is_static else [helper_input]),*runtime_inputs,
+                  *([helper_input] if is_static else []),p('inputs/oracle-crt/crtn.o'),
+                  '-Map='+p(name+'.map'),'-o',p(name)]
             add(name+'-link',argv)
     admission=expected_contract()['descriptor_handoff']['admission'];dso=admission['dso']
     add('descriptor-dso-compile',[tool('dynamic_driver'),'--dynamic-shared-object','-std=c11',
