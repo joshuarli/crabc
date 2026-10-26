@@ -715,8 +715,21 @@ def _validate_static_receipt(
     return _sha256(receipt)
 
 
-def _dynamic_link_command(root: Path, workloads: tuple[Path, ...], executable: Path, linkage: str, linker: str,
+def _dynamic_link_command(root: Path, workload: Path, executable: Path, linkage: str, linker: str,
                           *, export_dynamic: bool = False) -> list[str]:
+    if not isinstance(workload, Path):
+        _fail("single-object dynamic link command requires one path")
+    return _dynamic_link_command_for_workloads(
+        root, (workload,), executable, linkage, linker, export_dynamic=export_dynamic,
+    )
+
+
+def _dynamic_link_command_for_workloads(
+    root: Path, workloads: tuple[Path, ...], executable: Path, linkage: str, linker: str,
+    *, export_dynamic: bool = False,
+) -> list[str]:
+    if type(workloads) is not tuple or not workloads or not all(isinstance(path, Path) for path in workloads):
+        _fail("dynamic link command workloads must be an ordered nonempty path tuple")
     library = root / "usr/lib"
     entry = str(LINKAGES[linkage]["crt"])
     command = [
@@ -758,9 +771,22 @@ def _validate_dynamic_trace(value: object, root: Path, workloads: tuple[Path, ..
 
 
 def _validate_dynamic_receipt(
+    root: Path, workload: Path, executable: Path, receipt: Path, linkage: str, manifest: Path,
+    *, export_dynamic: bool = False,
+) -> str:
+    if not isinstance(workload, Path):
+        _fail("single-object dynamic receipt validation requires one path")
+    return _validate_dynamic_receipt_for_workloads(
+        root, (workload,), executable, receipt, linkage, manifest, export_dynamic=export_dynamic,
+    )
+
+
+def _validate_dynamic_receipt_for_workloads(
     root: Path, workloads: tuple[Path, ...], executable: Path, receipt: Path, linkage: str, manifest: Path,
     *, export_dynamic: bool = False,
 ) -> str:
+    if type(workloads) is not tuple or not workloads or not all(isinstance(path, Path) for path in workloads):
+        _fail("dynamic receipt workloads must be an ordered nonempty path tuple")
     record = _json_object(receipt, "dynamic link receipt")
     search = receipt_contract.validate(
         record, format=DYNAMIC_PRODUCT_FORMAT, label="dynamic link receipt", fail=_fail
@@ -801,7 +827,7 @@ def _validate_dynamic_receipt(
             _fail("dynamic link receipt input path differs from this evidence invocation")
         _require_digest(item["sha256"], _sha256(expected), f"dynamic {role} input")
     linker = _check_linker(record["resolved_linker"], receipt)
-    if record["link_command"] != _dynamic_link_command(
+    if record["link_command"] != _dynamic_link_command_for_workloads(
             root, workloads, executable, linkage, linker, export_dynamic=export_dynamic):
         _fail("dynamic link command differs from the sealed product contract")
     _validate_dynamic_trace(record["link_trace"], root, workloads, linkage)
@@ -1192,7 +1218,7 @@ def _validate_link(
         product_format = STATIC_PRODUCT_FORMAT
     else:
         manifest, _ = _validate_dynamic_product(root)
-        receipt_hash = _validate_dynamic_receipt(
+        receipt_hash = _validate_dynamic_receipt_for_workloads(
             root, workload_paths, executable_path, receipt_path, linkage, manifest,
             export_dynamic=export_dynamic,
         )

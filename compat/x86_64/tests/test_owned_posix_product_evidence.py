@@ -672,6 +672,27 @@ class OwnedPosixProductEvidenceTests(unittest.TestCase):
                     )
         self.assertEqual(identity["workload_sha256s"], [digest(path) for path in workloads])
 
+    def test_dynamic_link_command_keeps_single_path_and_orders_plural_inputs(self) -> None:
+        second = self.root / "fixture.o"
+        second.write_bytes(b"fixture object")
+        linker = "/owned/bin/ld.lld"
+        single = evidence._dynamic_link_command(
+            self.root, self.workload, self.executable, "pie", linker,
+        )
+        plural = evidence._dynamic_link_command_for_workloads(
+            self.root, (self.workload, second), self.executable, "pie", linker,
+        )
+        archive = str(self.root / "usr/lib/libcrabc-builtins.a")
+        crti = str(self.root / "usr/lib/crti.o")
+        workload_args = [str(self.workload), str(second)]
+        self.assertEqual(single[single.index(crti) + 1:single.index(archive)], [str(self.workload)])
+        self.assertLess(plural.index(str(self.workload)), plural.index(str(second)))
+        self.assertEqual(plural[plural.index(crti) + 1:plural.index(archive)], workload_args)
+        with self.assertRaisesRegex(evidence.ProductEvidenceError, "single-object"):
+            evidence._dynamic_link_command(
+                self.root, (self.workload, second), self.executable, "pie", linker,
+            )
+
     def test_multi_object_reader_rejects_ambiguous_inputs_and_linkages(self) -> None:
         second = self.root / "fixture.o"
         second.write_bytes(b"fixture object")
