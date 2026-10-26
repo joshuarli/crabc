@@ -8,6 +8,26 @@ remain parked and cannot support native promotion. The C
 allocator remains selected. Public x86 support remains false: 180 of 223
 capabilities, nine of 26 families, zero of eight gates.
 
+**Accepted timer/loader checkpoint:** frozen `45b2d052c` in
+`.work/wt/timer-loader-proof` passes fresh accepted-C static and dynamic
+preparation, all four ABI collectors and their normal readers, and the three
+selected loader producers: debug, runtime registry and structural owner.
+The runtime registry retains all ten private imports and the full timer
+workload passes, including the corrected four creator-cancellation cases.
+The final structural-owner normal reader passes with source, products and
+evidence mounted read-only and only fresh scratch writable; it invokes the
+normal registry and debug readers. Preserve
+`.work/x86_64/abi-differential/timer-loader-proof` and
+`.work/tmp/final-owner-reader.{stdout,stderr,status}` in that frozen worktree.
+No ABI selection assembly, family qualification, public support or allocator
+promotion is claimed.
+
+Next collect the remaining ordinary companions on this same clean cohort,
+reusing the fresh products, four collectors and three accepted loader trees.
+Then assemble and replay the combined selection before taking the remaining
+feature-alias proofs. The parked POSIX aggregate and denied allocator
+diagnostics remain outside this work.
+
 **Oracle refresh checkpoint:** the owner approved pinning verified upstream
 musl commit `7813e9119eb5fe681b6750b8a033a0490bca0941` for active native
 x86-64. `[musl_native]` selects that exact snapshot; `[musl]` remains the
@@ -52,10 +72,9 @@ dynamic qualification, AIO and wordexp checks pass all 142 tests. The callable
 inventory/audit pair passes all 53 tests. These are component checks, without
 fresh installed-product or family qualification.
 
-Fresh native products and owning component receipts must now be prepared at
-the integrated source revision using the snapshot image. Old clean products
-and reports retain their historical image/source authority and cannot be
-relabelled. The bounded loader-owner proof at frozen `f378dcf1e` in
+Native products and owning component receipts require the integrated source
+revision and snapshot image. Old clean products and reports retain their
+historical image/source authority and cannot be relabelled. The bounded loader-owner proof at frozen `f378dcf1e` in
 `.work/wt/musl-loader-proof` passes fresh accepted-C static/dynamic product
 preparation, all four ABI collectors and their normal readers, and loader-debug
 collection/replay. Its registry producer fails in the new oracle's `ordinary`
@@ -73,10 +92,10 @@ fails against the frozen candidate at the return assertion. Removing the
 runtime's explicit early cancellation check preserves its existing two-way
 worker acknowledgement and output ownership. The focused dynamic-runtime
 Cargo check passes; independent review found no demonstrated defect. Fresh
-installed-product behavioral verification remains pending at the repaired
-source revision. Preserve the failed registry evidence and blocked
-structural owner unchanged under `musl-loader-proof`. The parked POSIX aggregate and denied allocator diagnostics
-remain parked.
+installed-product behavioral verification passes at the accepted checkpoint
+above. Preserve the failed registry evidence and blocked structural owner
+unchanged under `musl-loader-proof`. The parked POSIX aggregate and denied
+allocator diagnostics remain parked.
 
 The old-oracle combined assembly completed at frozen `a95273254` with 27
 companions, all 5,168 identities and 41,270 occurrences, zero rejected
