@@ -28,6 +28,7 @@ from scripts.rust_toolchain import pinned_toolchain
 sys.path.insert(0, str(ROOT / "compat" / "x86_64"))
 import crabc_cc_owned_dynamic as installed_driver
 import owned_dynamic_qualification as qualification
+import dynamic_product_contract
 
 
 SCHEMA = "crabc.x86_64-owned-loader-inventory/v1"
@@ -38,12 +39,6 @@ LOADER_ALIAS_PATH = "lib/ld-musl-x86_64.so.1"
 LIBC_PATH = "usr/lib/libc.so"
 LOADER_PROVENANCE_PATH = "share/crabc/loader.provenance.json"
 LOADER_FEATURE = "x86_64-owned-dynamic-runtime"
-LOADER_RUSTFLAGS = "-C link-dead-code -C target-feature=-crt-static -C relocation-model=pic"
-# Both scripts affect the installed loader and belong to its compiler input roster.
-LOADER_LINKER_SCRIPTS = (
-    "libc/src/c_abi/x86_64/owned_discard_unwind.ld",
-    "ldso/x86_64-owned-bss-layout.ld",
-)
 PINNED_TOOLCHAIN = pinned_toolchain(ROOT)
 CONFIGURATION_PATHS = (
     "scripts/build_x86_64_owned_dynamic_sysroot.py",
@@ -53,7 +48,7 @@ CONFIGURATION_PATHS = (
     "rust-toolchain.toml",
     ".cargo/config.toml",
     "ldso/Cargo.toml",
-    *LOADER_LINKER_SCRIPTS,
+    "compat/x86_64/dynamic_product_contract.py",
 )
 RAW_STREAMS = (
     ("header", ("-hW",)),
@@ -206,14 +201,7 @@ def load_loader_provenance(product: Path) -> tuple[dict[str, Any], dict[str, Any
         "--config", 'profile.release.opt-level="s"',
         "--target", TARGET, "--target-dir", "$BUILD/loader", "--no-default-features", "--features", LOADER_FEATURE,
     ]
-    # The selected build mounts this checkout at /workspace; host replay sees its host path.
-    expected_rustflags = tuple(
-        LOADER_RUSTFLAGS + "".join(
-            f" -C link-arg=-Wl,-T,{source_root / script}" for script in LOADER_LINKER_SCRIPTS
-        )
-        for source_root in (ROOT, Path("/workspace"))
-    )
-    require(cargo["argv"] == expected_argv and cargo["rustflags"] in expected_rustflags,
+    require(cargo["argv"] == expected_argv and cargo["rustflags"] == dynamic_product_contract.LOADER_RUSTFLAGS,
             "loader Cargo command or RUSTFLAGS differ")
 
     dependencies = record["compiler_dependencies"]

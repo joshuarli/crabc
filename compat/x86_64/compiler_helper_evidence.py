@@ -21,7 +21,7 @@ import subprocess
 import sys
 import tempfile
 import tomllib
-from typing import Any, Mapping, Sequence
+from typing import Any, Mapping, NamedTuple, Sequence
 
 MODULE_DIR = Path(__file__).resolve().parent
 if str(MODULE_DIR) not in sys.path:
@@ -86,7 +86,7 @@ SHARED_LIBC_METADATA = {
     "linker_option": "--exclude-libs=libcrabc-builtins.a",
     "type": "FUNC",
     "binding": "LOCAL",
-    "visibility": "DEFAULT",
+    "visibility": "HIDDEN",
     "dynsym": False,
 }
 DYNAMIC_APPLICATION_METADATA = {
@@ -114,6 +114,13 @@ class CompilerHelperEvidenceError(ValueError):
 class _HelperFinalSymbolPolicy(Enum):
     STATIC = "static"
     DYNAMIC = "dynamic"
+
+
+class _LinkMapRow(NamedTuple):
+    vma: int
+    size: int
+    alignment: int
+    owner_section: str
 
 
 def require(condition: bool, message: str) -> None:
@@ -679,10 +686,10 @@ def _final_direct_calls(elf: Elf, source_calls: Sequence[Mapping[str, Any]],
     return {"resolved_calls": resolved, "discarded_calls": discarded}
 
 
-def _final_symbol(elf: Elf, name: str, binding: str) -> dict[str, Any]:
+def _final_symbol(elf: Elf, name: str, binding: str, *, visibility: str = "DEFAULT") -> dict[str, Any]:
     symbol = elf.symbol(name, dynamic=False)
     require(symbol["type"] == "FUNC" and symbol["binding"] == binding
-            and symbol["visibility"] == "DEFAULT" and symbol["value"] > 0
+            and symbol["visibility"] == visibility and symbol["value"] > 0
             and symbol["size"] > 0, "ordinary import final provider metadata differs")
     for relocations in elf.sections:
         if relocations[1] != 4:
@@ -694,6 +701,30 @@ def _final_symbol(elf: Elf, name: str, binding: str) -> dict[str, Any]:
             require(elf.symbol_row(relocations[6], info >> 32)["name"] != name,
                     "ordinary import final ELF retains a named relocation")
     return symbol
+
+
+def _link_map_rows(lines: Sequence[str]) -> list[_LinkMapRow]:
+    require(lines, "compiler-helper link map is empty")
+    header = lines[0].split()
+    mold = header == ["VMA", "Size", "Align", "Out", "In", "Symbol"]
+    lld = header == ["VMA", "LMA", "Size", "Align", "Out", "In", "Symbol"]
+    require(mold or lld, "compiler-helper link map header differs")
+    rows = []
+    for line in lines[1:]:
+        if mold:
+            match = re.fullmatch(r"\s*(0x[0-9a-f]+|0)\s+(\d+)\s+(\d+)\s+(.*)", line)
+        else:
+            match = re.fullmatch(r"\s*([0-9a-f]+)\s+([0-9a-f]+)\s+([0-9a-f]+)\s+(\d+)\s+(.*)",
+                                 line)
+        require(match is not None, "compiler-helper link map row differs")
+        fields = match.groups()
+        if mold:
+            address, size, alignment, name = fields
+            rows.append(_LinkMapRow(int(address, 16), int(size), int(alignment), name))
+        else:
+            address, _load_address, size, alignment, name = fields
+            rows.append(_LinkMapRow(int(address, 16), int(size, 16), int(alignment), name))
+    return rows
 
 
 def _helper_final_policy_for_linkage(linkage: str) -> _HelperFinalSymbolPolicy:
@@ -710,9 +741,22 @@ def _helper_final_binding(archive_binding: str,
             "compiler-helper final symbol policy differs")
     require(archive_binding in {"GLOBAL", "LOCAL"},
             "compiler-helper archive symbol binding differs")
-    if policy is _HelperFinalSymbolPolicy.DYNAMIC and archive_binding == "GLOBAL":
+    if policy is _HelperFinalSymbolPolicy.STATIC:
+        return "LOCAL"
+    if archive_binding == "GLOBAL":
         return "LOCAL"
     return archive_binding
+
+
+def _helper_final_visibility(archive_binding: str,
+                             policy: _HelperFinalSymbolPolicy) -> str:
+    require(isinstance(policy, _HelperFinalSymbolPolicy),
+            "compiler-helper final symbol policy differs")
+    require(archive_binding in {"GLOBAL", "LOCAL"},
+            "compiler-helper archive symbol binding differs")
+    if policy is _HelperFinalSymbolPolicy.DYNAMIC and archive_binding == "GLOBAL":
+        return "HIDDEN"
+    return "DEFAULT"
 
 
 def _require_helpers_absent_from_dynsym(elf: Elf, names: Sequence[str]) -> None:
@@ -743,7 +787,8 @@ def _owned_helper_bytes(elf: Elf, address: int, size: int, *, executable: bool) 
     return matches[0]
 
 
-def _owned_helper_provider_closure(member: Elf, final: Elf, map_lines: Sequence[str],
+def _owned_helper_provider_closure(member: Elf, final: Elf,
+                                   map_rows: Sequence[_LinkMapRow],
                                    archive: str, original: Mapping[str, Any],
                                    provider: Mapping[str, Any],
                                    binding_policy: _HelperFinalSymbolPolicy) -> dict[str, Any]:
@@ -763,11 +808,10 @@ def _owned_helper_provider_closure(member: Elf, final: Elf, map_lines: Sequence[
 
     def contribution(index: int) -> tuple[int, int]:
         section = _elf_section_name(member, index)
-        rows = [line for line in map_lines if line.rstrip().endswith(f"{archive}({ARCHIVE_MEMBER}):({section})")]
+        expected = f"{archive}({ARCHIVE_MEMBER}):({section})"
+        rows = [(row.vma, row.size) for row in map_rows if row.owner_section == expected]
         require(len(rows) == 1, "compiler-helper provider contribution is missing or ambiguous")
-        fields = rows[0].split()
-        require(len(fields) >= 5, "compiler-helper provider contribution fields differ")
-        return int(fields[0], 16), int(fields[2], 16)
+        return rows[0]
 
     def visit(source: Mapping[str, Any], expected: Mapping[str, Any] | None = None) -> None:
         index = source["section"]
@@ -783,7 +827,8 @@ def _owned_helper_provider_closure(member: Elf, final: Elf, map_lines: Sequence[
         observed = final.symbol(source["name"], dynamic=False) if expected is None else expected
         require(observed["type"] == "FUNC"
                 and observed["binding"] == _helper_final_binding(source["binding"], binding_policy)
-                and observed["visibility"] == "DEFAULT" and observed["value"] == address
+                and observed["visibility"] == _helper_final_visibility(source["binding"], binding_policy)
+                and observed["value"] == address
                 and observed["size"] == size == source["size"],
                 "compiler-helper final private provider metadata or contribution differs")
         if index in code:
@@ -866,10 +911,13 @@ def _compiler_helper_transfers(*, root: Path, archive: Path, workload: Path,
     recorded_archive = source_mount + "/" + archive.relative_to(root).as_posix()
     recorded_workload = source_mount + "/" + workload.relative_to(root).as_posix()
     map_lines = map_path.read_text(encoding="utf-8").splitlines()
+    map_rows = _link_map_rows(map_lines)
     require((trace_path is None) != (trace_lines is None), "compiler-helper trace authority is ambiguous")
     trace_lines = Path(trace_path).read_text(encoding="utf-8").splitlines() if trace_path is not None else trace_lines
     require(type(trace_lines) is list and all(type(line) is str for line in trace_lines),
             "compiler-helper trace rows differ")
+    import owned_posix_product_evidence as products
+    trace_lines = products.semantic_link_trace(trace_lines)
     require(trace_lines.count(f"{recorded_archive}({ARCHIVE_MEMBER})") == 1,
             "compiler-helper trace does not extract the exact owned member")
     require(trace_lines.count(recorded_workload) == 1,
@@ -906,26 +954,27 @@ def _compiler_helper_transfers(*, root: Path, archive: Path, workload: Path,
                     and original["section"] > 0,
                     "compiler-helper owned archive provider metadata differs")
             provider_binding = _helper_final_binding(original["binding"], binding_policy)
-            provider = _final_symbol(final, name, provider_binding)
+            provider_visibility = _helper_final_visibility(original["binding"], binding_policy)
+            provider = _final_symbol(final, name, provider_binding, visibility=provider_visibility)
             require(original["size"] == provider["size"],
                     "compiler-helper owned archive provider size differs")
             section = _elf_section_name(member, original["section"])
             require(section == ".text." + name, "compiler-helper archive source section differs")
-            provider_rows = [line for line in map_lines if line.rstrip().endswith(":(" + section + ")")]
-            require(len(provider_rows) == 1
-                    and provider_rows[0].rstrip().endswith(f"{recorded_archive}({ARCHIVE_MEMBER}):({section})")
-                    and int(provider_rows[0].split()[0], 16) + original["value"] == provider["value"]
-                    and int(provider_rows[0].split()[2], 16) == member.sections[original["section"]][5],
+            provider_name = f"{recorded_archive}({ARCHIVE_MEMBER}):({section})"
+            provider_rows = [row for row in map_rows if row.owner_section.endswith(":(" + section + ")")]
+            require(len(provider_rows) == 1 and provider_rows[0].owner_section == provider_name
+                    and provider_rows[0].vma + original["value"] == provider["value"]
+                    and provider_rows[0].size == member.sections[original["section"]][5],
                     "compiler-helper final provider does not originate in the owned archive")
-            closure = _owned_helper_provider_closure(member, final, map_lines, recorded_archive, original,
+            closure = _owned_helper_provider_closure(member, final, map_rows, recorded_archive, original,
                                                       provider, binding_policy)
             calls = _direct_source_calls(workload.read_bytes(), name, root, allow_tail_calls=True)
             addresses = {}
             for source_section in {row["section"] for row in calls}:
-                rows = [line for line in map_lines if line.rstrip().endswith(f"{recorded_workload}:({source_section})")]
+                source_name = f"{recorded_workload}:({source_section})"
+                rows = [row for row in map_rows if row.owner_section == source_name]
                 require(len(rows) == 1, "compiler-helper compiler contribution is missing or ambiguous")
-                fields = rows[0].split()
-                addresses[source_section] = (int(fields[0], 16), int(fields[2], 16))
+                addresses[source_section] = (rows[0].vma, rows[0].size)
             result[name] = {"provider_address": provider["value"], "source_section": section,
                             "provider_closure": closure,
                             **_final_direct_calls(final, calls, addresses, provider["value"])}
@@ -1202,9 +1251,9 @@ def _ordinary_popcount_maps(root: Path, ordinary_report: Path, expected_inputs: 
         require(same(map_identity, _work_identity(work, map_path, f"ordinary-link {mode} map"))
                 and same(trace_identity, _work_identity(work, trace_path, f"ordinary-link {mode} trace")),
                 f"ordinary-link {mode} map/trace changed while reading")
-        provider_rows = [line for line in map_text.splitlines()
-                         if line.rstrip().endswith(":(.text.__popcountdi2)")]
-        require(len(provider_rows) == 1 and expected in provider_rows[0],
+        map_rows = _link_map_rows(map_text.splitlines())
+        provider_rows = [row for row in map_rows if row.owner_section.endswith(":(.text.__popcountdi2)")]
+        require(len(provider_rows) == 1 and provider_rows[0].owner_section.endswith(expected),
                 f"ordinary-link {mode} __popcountdi2 provider map is ambiguous")
         require(f"libcrabc-builtins.a({ARCHIVE_MEMBER})" in trace_text,
                 f"ordinary-link {mode} trace does not extract the builtins member")
@@ -1278,30 +1327,31 @@ def validate_supplied_product_evidence(*, root: Path, base_inventory: Path, elf_
             for mode, elf_type in (("static", 2), ("static-pie", 3)):
                 link = ordinary_links["static_modes"][mode]
                 map_path = _resolve_work_identity(work, link["map"], mode + " final map")
-                map_lines = map_path.read_text(encoding="utf-8").splitlines()
+                map_rows = _link_map_rows(map_path.read_text(encoding="utf-8").splitlines())
                 elf = Elf(work / mode)
                 require(elf.elf_type == elf_type, "ordinary import final executable kind differs")
-                provider = _final_symbol(elf, import_join["identity"], "GLOBAL")
-                provider_rows = [line for line in map_lines
-                                 if line.rstrip().endswith(f"libcrabc-builtins.a({ARCHIVE_MEMBER}):(.text.__popcountdi2)")]
-                require(len(provider_rows) == 1 and int(provider_rows[0].split()[0], 16) == provider["value"],
+                provider = _final_symbol(elf, import_join["identity"], "LOCAL")
+                provider_suffix = f"libcrabc-builtins.a({ARCHIVE_MEMBER}):(.text.__popcountdi2)"
+                provider_rows = [row for row in map_rows
+                                 if row.owner_section.endswith(":(.text.__popcountdi2)")]
+                require(len(provider_rows) == 1 and provider_rows[0].owner_section.endswith(provider_suffix)
+                        and provider_rows[0].vma == provider["value"],
                         "ordinary import final provider map or symbol differs")
                 source_addresses = {}
                 for section in {row["section"] for row in source_calls}:
-                    rows = [line for line in map_lines
-                            if line.rstrip().endswith(f"libc.a({importer}):({section})")]
+                    source_suffix = f"libc.a({importer}):({section})"
+                    rows = [row for row in map_rows if row.owner_section.endswith(source_suffix)]
                     require(len(rows) <= 1, "ordinary import final C source map is ambiguous")
                     if rows:
-                        fields = rows[0].split()
-                        require(len(fields) >= 5, "ordinary import final C source map differs")
-                        source_addresses[section] = (int(fields[0], 16), int(fields[2], 16))
+                        source_addresses[section] = (rows[0].vma, rows[0].size)
                 final_links[mode] = {"provider_address": provider["value"],
                                      **_final_direct_calls(elf, source_calls, source_addresses, provider["value"])}
             shared = Elf(Path(dynamic_product) / "usr/lib/libc.so")
             require(shared.elf_type == 3 and shared.symbol(import_join["identity"],
                                                             dynamic=True, required=False) is None,
                     "ordinary import shared provider is exported or is not ELF DYN")
-            shared_provider = _final_symbol(shared, import_join["identity"], "LOCAL")
+            shared_provider = _final_symbol(shared, import_join["identity"], "LOCAL",
+                                            visibility=SHARED_LIBC_METADATA["visibility"])
             shared_sources = {}
             for section in {row["section"] for row in source_calls}:
                 caller = shared.symbol(section.removeprefix(".text."), dynamic=False, required=False)

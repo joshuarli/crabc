@@ -23,6 +23,12 @@ validates the actual selected allocator backend. CRT audits retain source
 bindings, exact bytes and contributor order while accounting for mold's final
 executable symbol bindings and map format. Public alias visibility is unchanged.
 
+The native linker uses mold's layout with the original classified objects.
+Unsupported LLD ordering and section scripts are retired. Unwind tables retain
+the required reachable header. Archive helpers remain `GLOBAL DEFAULT`; mold
+localizes unexported static helpers to `LOCAL DEFAULT` and excluded dynamic
+helpers to `LOCAL HIDDEN`, absent from `.dynsym`.
+
 Nine Rust profiles and the focused native tool/CRT checks pass. Independent
 review found no P1/P2 in the integrated tool and structural repairs. The
 synthetic tool fixtures now pass their focused checks. Freeze a clean revision
@@ -1618,6 +1624,12 @@ Forbidden:
   making `promotion-rerun` and the build audit evaluable as T4 states.
 
 Made so far, each with its commit, for the owner:
+
+- `aca88c62c`: native builds and receipt readers bind kache, the physical
+  pinned rustc, mold, and the refreshed native image inputs. Six selected
+  aliases gain an owning companion. C-ABI admission authenticates the actual
+  selected backend without reducing its workload. Public ABI and allocator
+  selection stay unchanged.
 
 - `ee4a6b41c` (T0): ledger checks structure by default; qualification and
   promotion explicitly require current physical receipts.

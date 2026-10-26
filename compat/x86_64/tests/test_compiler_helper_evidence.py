@@ -354,7 +354,7 @@ class CompilerHelperEvidenceTests(unittest.TestCase):
         contract = EVIDENCE.load_contract(ROOT)
         full = []
         for index, name in enumerate(EVIDENCE.helper_names(contract), start=1):
-            full.append({"name": name, "type": "FUNC", "binding": "LOCAL", "visibility": "DEFAULT",
+            full.append({"name": name, "type": "FUNC", "binding": "LOCAL", "visibility": "HIDDEN",
                          "version": None, "version_default": False, "row_index": index,
                          "section_index": str(index)})
         facts = {"target": EVIDENCE.TARGET, "facts": {"candidate-shared": {
@@ -370,12 +370,16 @@ class CompilerHelperEvidenceTests(unittest.TestCase):
             "table": ".symtab", "row_index": EVIDENCE.helper_names(contract).index("__popcountdi2") + 1,
             "section_index": EVIDENCE.helper_names(contract).index("__popcountdi2") + 1,
             "section": ".text.__popcountdi2",
-            "metadata": {"type": "FUNC", "binding": "LOCAL", "visibility": "DEFAULT"},
+            "metadata": {"type": "FUNC", "binding": "LOCAL", "visibility": "HIDDEN"},
         })
         leaked = copy.deepcopy(facts)
         leaked["facts"]["candidate-shared"]["symbol_tables"][0]["rows"].append(copy.deepcopy(full[0]))
         with self.assertRaisesRegex(EVIDENCE.CompilerHelperEvidenceError, "leaked"):
             EVIDENCE.shared_libc_placement_from_elf_facts(leaked, contract)
+        visible = copy.deepcopy(facts)
+        visible["facts"]["candidate-shared"]["symbol_tables"][1]["rows"][0]["visibility"] = "DEFAULT"
+        with self.assertRaisesRegex(EVIDENCE.CompilerHelperEvidenceError, "metadata"):
+            EVIDENCE.shared_libc_placement_from_elf_facts(visible, contract)
         for invalid in ("COM", "0", "PRC[0xff00]"):
             malformed = copy.deepcopy(facts)
             malformed["facts"]["candidate-shared"]["symbol_tables"][1]["rows"][0]["section_index"] = invalid
@@ -610,7 +614,10 @@ class CompilerHelperEvidenceTests(unittest.TestCase):
                 links: dict[str, object] = {}
                 for mode in ("static", "static-pie"):
                     map_path, trace_path = work / (mode + ".map"), work / (mode + ".trace")
-                    map_path.write_text("libcrabc-builtins.a(crabc-builtins.o):(.text.__popcountdi2)\n__popcountdi2\n")
+                    map_path.write_text(
+                        "VMA Size Align Out In Symbol\n"
+                        "0x2000 4 4 libcrabc-builtins.a(crabc-builtins.o):(.text.__popcountdi2)\n"
+                        "0x2000 0 0 __popcountdi2\n")
                     trace_path.write_text("libcrabc-builtins.a(crabc-builtins.o)\n")
                     receipt = work / (mode + ".receipt.json")
                     receipt.write_text(EVIDENCE.canonical_json({
@@ -630,7 +637,7 @@ class CompilerHelperEvidenceTests(unittest.TestCase):
                 original_map = static_map.read_bytes()
                 original_receipt = (work / "static.receipt.json").read_bytes()
                 static_map.write_bytes(original_map +
-                    b"libc.a(foreign.o):(.text.__popcountdi2)\n")
+                    b"0x3000 4 4 libc.a(foreign.o):(.text.__popcountdi2)\n")
                 changed_receipt = json.loads(original_receipt)
                 changed_receipt["map"]["sha256"] = EVIDENCE.digest(static_map)
                 (work / "static.receipt.json").write_text(EVIDENCE.canonical_json(changed_receipt))
@@ -696,36 +703,66 @@ class CompilerHelperEvidenceTests(unittest.TestCase):
         with self.assertRaisesRegex(EVIDENCE.CompilerHelperEvidenceError, "no selected call"):
             EVIDENCE._final_direct_calls(elf, source, {}, provider)
 
+    def test_link_map_projection_selects_the_observed_exact_header(self) -> None:
+        name = "libcrabc-builtins.a(crabc-builtins.o):(.text.__addoti4)"
+        mold = EVIDENCE._link_map_rows([
+            "VMA Size Align Out In Symbol",
+            f"0x200160 10 16 {name}",
+        ])
+        lld = EVIDENCE._link_map_rows([
+            "VMA LMA Size Align Out In Symbol",
+            f"200160 200160 0000a 16 {name}",
+        ])
+        expected = EVIDENCE._LinkMapRow(0x200160, 10, 16, name)
+        self.assertEqual(mold, [expected])
+        self.assertEqual(lld, [expected])
+        with self.assertRaisesRegex(EVIDENCE.CompilerHelperEvidenceError, "map header"):
+            EVIDENCE._link_map_rows(["VMA Size Align Out In", f"0x200160 10 16 {name}"])
+
     def test_retained_helper_final_binding_tracks_the_validated_linkage(self) -> None:
         scratch = ROOT / ".work/x86_64/compiler-helper-evidence-tests"
         scratch.mkdir(parents=True, exist_ok=True)
         with tempfile.TemporaryDirectory(dir=scratch) as temporary:
             directory = Path(temporary)
-            static = EVIDENCE.Elf(_helper_elf(directory / "static", "GLOBAL"))
+            static = EVIDENCE.Elf(_helper_elf(directory / "static", "LOCAL"))
+            forged_static_global = EVIDENCE.Elf(_helper_elf(directory / "forged-static-global", "GLOBAL"))
             for mode in ("static", "static-pie"):
                 with self.subTest(mode=mode):
                     static_policy = EVIDENCE._helper_final_policy_for_linkage(mode)
                     static_binding = EVIDENCE._helper_final_binding("GLOBAL", static_policy)
+                    self.assertEqual(static_binding, "LOCAL")
                     self.assertEqual(
-                        EVIDENCE._final_symbol(static, "__addoti4", static_binding)["binding"], "GLOBAL"
+                        EVIDENCE._final_symbol(static, "__addoti4", static_binding)["binding"], "LOCAL"
                     )
                     self.assertEqual(EVIDENCE._helper_final_binding("LOCAL", static_policy), "LOCAL")
-            with self.assertRaisesRegex(EVIDENCE.CompilerHelperEvidenceError, "provider metadata"):
-                EVIDENCE._final_symbol(static, "__addoti4", "LOCAL")
+                    with self.assertRaisesRegex(EVIDENCE.CompilerHelperEvidenceError, "provider metadata"):
+                        EVIDENCE._final_symbol(forged_static_global, "__addoti4", static_binding)
 
-            dynamic = EVIDENCE.Elf(_helper_elf(directory / "dynamic", "LOCAL"))
+            dynamic = EVIDENCE.Elf(_helper_elf(directory / "dynamic", "LOCAL", visibility=2))
             public = EVIDENCE.Elf(_helper_elf(directory / "public", "GLOBAL"))
             for mode in ("pie", "non-pie"):
                 with self.subTest(mode=mode):
                     dynamic_policy = EVIDENCE._helper_final_policy_for_linkage(mode)
                     dynamic_binding = EVIDENCE._helper_final_binding("GLOBAL", dynamic_policy)
+                    dynamic_visibility = EVIDENCE._helper_final_visibility("GLOBAL", dynamic_policy)
                     self.assertEqual(dynamic_binding, "LOCAL")
+                    self.assertEqual(dynamic_visibility, "HIDDEN")
                     self.assertEqual(
-                        EVIDENCE._final_symbol(dynamic, "__addoti4", dynamic_binding)["binding"], "LOCAL"
+                        EVIDENCE._final_symbol(dynamic, "__addoti4", dynamic_binding,
+                                               visibility=dynamic_visibility)["visibility"], "HIDDEN"
                     )
                     self.assertEqual(EVIDENCE._helper_final_binding("LOCAL", dynamic_policy), "LOCAL")
+                    self.assertEqual(EVIDENCE._helper_final_visibility("LOCAL", dynamic_policy), "DEFAULT")
+                    private_local = EVIDENCE.Elf(_helper_elf(directory / (mode + "-local"), "LOCAL"))
+                    self.assertEqual(
+                        EVIDENCE._final_symbol(
+                            private_local, "__addoti4", "LOCAL",
+                            visibility=EVIDENCE._helper_final_visibility("LOCAL", dynamic_policy),
+                        )["visibility"], "DEFAULT"
+                    )
                     with self.assertRaisesRegex(EVIDENCE.CompilerHelperEvidenceError, "provider metadata"):
-                        EVIDENCE._final_symbol(public, "__addoti4", dynamic_binding)
+                        EVIDENCE._final_symbol(public, "__addoti4", dynamic_binding,
+                                               visibility=dynamic_visibility)
             hidden = EVIDENCE.Elf(_helper_elf(directory / "hidden", "LOCAL", visibility=2))
             with self.assertRaisesRegex(EVIDENCE.CompilerHelperEvidenceError, "provider metadata"):
                 EVIDENCE._final_symbol(hidden, "__addoti4", "LOCAL")

@@ -32,12 +32,13 @@ class CompleteHelperOriginPhysicalTests(unittest.TestCase):
             self.assertEqual({line.split()[-1] for line in undefined.splitlines()},names)
             for mode in ('static','pie'):
                 binary=work/mode;map_path=work/(mode+'.map');trace=work/(mode+'.trace')
-                linked=subprocess.run([builder.tool('ld.lld'),'-static',*(['-pie'] if mode=='pie' else []),
-                                       '--no-dynamic-linker','--no-undefined','-Map',str(map_path),'-t',str(start),str(obj),str(archive),'-o',str(binary)],capture_output=True)
+                linked=subprocess.run([str(builder.native_build_tools.MOLD),'-static',*(['-pie'] if mode=='pie' else []),
+                                       '--no-dynamic-linker','--no-undefined','-Map',str(map_path),'--trace',str(start),str(obj),str(archive),'-o',str(binary)],capture_output=True)
                 self.assertEqual(linked.returncode,0,linked.stderr.decode());trace.write_bytes(linked.stdout)
                 executed=subprocess.run([str(binary)],check=True,capture_output=True)
                 self.assertEqual(executed.stdout,b'compiler-helper-aggregate-ok\n')
-                arguments=dict(root=ROOT,archive=archive,workload=obj,executable=binary,map_path=map_path,trace_path=trace)
+                arguments=dict(root=ROOT,archive=archive,workload=obj,executable=binary,map_path=map_path,
+                               trace_path=trace,source_mount=str(ROOT))
                 observed=reader._compiler_helper_transfers(**arguments)
                 self.assertEqual(set(observed['transfers']),names)
                 original_map=map_path.read_text()

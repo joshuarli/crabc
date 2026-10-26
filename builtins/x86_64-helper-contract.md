@@ -17,17 +17,19 @@ The owned dynamic builder passes that exact archive to the `libc.so` link
 because selected Rust libc leaves can need compiler-generated operations.
 `scripts/build_x86_64_owned_dynamic_sysroot.py` uses
 `--exclude-libs=libcrabc-builtins.a` for that link, leaving the extracted
-definitions `FUNC LOCAL DEFAULT` in libc's `.symtab` and absent from its
+definitions `FUNC LOCAL HIDDEN` in libc's `.symtab` and absent from its
 `.dynsym`.
 
 The installed dynamic driver applies the same archive-only exclusion to each
 application executable and DSO. It places the archive after input objects and
 before application DSOs, so an application's unresolved helper call extracts
-its own archive member before a DSO can satisfy it. Extracted helper definitions
-become `FUNC LOCAL DEFAULT` entries in the output `.symtab` and are absent from
-the output `.dynsym`. Static links retain the archive's `GLOBAL DEFAULT`
-definitions. Strong definitions from caller object files remain public. The
-installed archive itself keeps its `GLOBAL DEFAULT` contract, and the exclusion
+its own archive member before a DSO can satisfy it. Extracted global helper
+definitions become `FUNC LOCAL HIDDEN` entries in the output `.symtab` and are
+absent from the output `.dynsym`. Static links retain the archive's `GLOBAL DEFAULT`
+definitions in the installed archive. Mold's final static output records
+selected archive definitions as `LOCAL DEFAULT` in `.symtab`. Strong definitions
+from caller object files remain public. The installed archive itself keeps its
+`GLOBAL DEFAULT` contract, and the exclusion
 cannot capture another owner because the archive builder rejects every extra
 external definition.
 

@@ -28,7 +28,7 @@ artifact = "candidate-shared"
 linker_option = "--exclude-libs=libcrabc-builtins.a"
 type = "FUNC"
 binding = "LOCAL"
-visibility = "DEFAULT"
+visibility = "HIDDEN"
 dynsym = false
 
 [dynamic_application]

@@ -582,10 +582,13 @@ class InstalledDynamicDriverTests(unittest.TestCase):
 
         workload = Path(self.temporary.name) / "workload.o"
         output = Path(self.temporary.name) / "consumer"
-        linker = Path(self.temporary.name) / "ld.lld"
+        linker = Path(self.temporary.name) / "mold"
         workload.write_bytes(b"owned workload object")
         linker.write_bytes(b"owned linker")
         linker.chmod(0o755)
+        selected_linker = patch.object(product_evidence.native_build_tools, "MOLD", linker)
+        selected_linker.start()
+        self.addCleanup(selected_linker.stop)
 
         def link(command, temporary):
             self.assertIn("--trace", command)
@@ -599,8 +602,6 @@ class InstalledDynamicDriverTests(unittest.TestCase):
             ]
             return "\n".join(str(path) for path in trace)
 
-        # The mocked link writes placeholder bytes; real LLD outputs are
-        # inspected by the native ELF-inspection test.
         with patch.object(driver.shared, "linker", return_value=str(linker)), \
              patch.object(driver.shared, "require_x86_64_relocatable_object", return_value=workload), \
              patch.object(driver, "dynamic_symbols", return_value=(set(), set())), \
@@ -1313,7 +1314,7 @@ class InstalledDynamicDriverTests(unittest.TestCase):
         command = producer.shared_libc_link_command(
             Path("/pinned/ld.lld"), producer.SHARED_LIBC_DYNAMIC_LIST,
             Path("/private/mimalloc-hidden.exports"), Path("/private/errno-private.exports"),
-            Path("/private/libc-hot.order"), Path("/private/libc-hot-rodata.ld"), Path("/private/objects"),
+            Path("/private/objects"),
             ("one.o", "two.o"), Path("/private/libcrabc-builtins.a"), Path("/private/usr/lib"),
         )
         self.assertEqual(command, [
@@ -1324,10 +1325,8 @@ class InstalledDynamicDriverTests(unittest.TestCase):
             "--exclude-libs=libcrabc-builtins.a",
             "-z", "relro", "-z", "now", "-z", "noexecstack", "-z", "text",
             "-z", "pack-relative-relocs",
-            "--symbol-ordering-file=/private/libc-hot.order", "--no-warn-symbol-ordering",
             "/private/objects/one.o", "/private/objects/two.o",
             "--whole-archive", "/private/libcrabc-builtins.a", "--no-whole-archive",
-            str(producer.RUNTIME_DISCARD_UNWIND_SCRIPT), "/private/libc-hot-rodata.ld",
             "-o", "/private/usr/lib/libc.so",
         ])
         self.assertNotIn("-Bsymbolic", command)
@@ -1339,7 +1338,7 @@ class InstalledDynamicDriverTests(unittest.TestCase):
         command = producer.shared_libc_link_command(
             Path("/pinned/ld.lld"), producer.SHARED_LIBC_DYNAMIC_LIST,
             Path("/private/mimalloc-hidden.exports"), Path("/private/errno-private.exports"),
-            Path("/private/libc-hot.order"), Path("/private/libc-hot-rodata.ld"), Path("/private/objects"),
+            Path("/private/objects"),
             ("one.o",), Path("/private/libcrabc-builtins.a"), Path("/private/usr/lib"),
         )
         self.assertIn("--exclude-libs=libcrabc-builtins.a", command)

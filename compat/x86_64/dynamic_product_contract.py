@@ -26,6 +26,7 @@ CONTRACT_SCHEMA = "crabc.x86_64-owned-dynamic-product/v1"
 STATE_SCHEMA = "crabc.x86_64-owned-dynamic-product-state/v1"
 OWNER_FAMILY = "sysroot.owned-artifact"
 TARGET = "x86_64-unknown-linux-musl"
+LOADER_RUSTFLAGS = "-C link-dead-code -C target-feature=-crt-static -C relocation-model=pic -C link-arg=-Wl,--eh-frame-hdr"
 CANONICAL_INTERPRETER = "/lib/ld-crabc-x86_64.so.1"
 COMPATIBILITY_INTERPRETER_ALIAS = "lib/ld-musl-x86_64.so.1"
 class ProductContractError(RuntimeError):

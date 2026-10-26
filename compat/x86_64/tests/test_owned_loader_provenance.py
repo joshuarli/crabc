@@ -66,11 +66,10 @@ class OwnedLoaderProvenanceTests(unittest.TestCase):
             "rust-toolchain.toml",
             ".cargo/config.toml",
             "ldso/Cargo.toml",
+            "compat/x86_64/dynamic_product_contract.py",
             "ldso/build.rs",
             "ldso/src/lib.rs",
             "ldso/src/x86_64_initial_graph.rs",
-            "libc/src/c_abi/x86_64/owned_discard_unwind.ld",
-            "ldso/x86_64-owned-bss-layout.ld",
         )
         for relative in self.sources:
             path = self.root / relative
@@ -138,8 +137,7 @@ class OwnedLoaderProvenanceTests(unittest.TestCase):
             stage,
             command,
             "-C link-dead-code -C target-feature=-crt-static -C relocation-model=pic"
-            f" -C link-arg=-Wl,-T,{self.root / 'libc/src/c_abi/x86_64/owned_discard_unwind.ld'}"
-            f" -C link-arg=-Wl,-T,{self.root / 'ldso/x86_64-owned-bss-layout.ld'}",
+            " -C link-arg=-Wl,--eh-frame-hdr",
             compiler_artifact,
             installed_artifact,
         )
@@ -161,8 +159,7 @@ class OwnedLoaderProvenanceTests(unittest.TestCase):
         self.assertEqual(
             cargo["rustflags"],
             "-C link-dead-code -C target-feature=-crt-static -C relocation-model=pic"
-            f" -C link-arg=-Wl,-T,{self.root / 'libc/src/c_abi/x86_64/owned_discard_unwind.ld'}"
-            f" -C link-arg=-Wl,-T,{self.root / 'ldso/x86_64-owned-bss-layout.ld'}",
+            " -C link-arg=-Wl,--eh-frame-hdr",
         )
         dependencies = record["compiler_dependencies"]
         self.assertEqual([entry["path"] for entry in dependencies], [
@@ -181,8 +178,7 @@ class OwnedLoaderProvenanceTests(unittest.TestCase):
                 "rust-toolchain.toml",
                 ".cargo/config.toml",
                 "ldso/Cargo.toml",
-                "libc/src/c_abi/x86_64/owned_discard_unwind.ld",
-                "ldso/x86_64-owned-bss-layout.ld",
+                "compat/x86_64/dynamic_product_contract.py",
             ],
         )
 
@@ -290,9 +286,8 @@ class OwnedLoaderProvenanceTests(unittest.TestCase):
                 for arg in argv
             ], rustflags),
             ("extra Cargo option", argv + ["--offline"], rustflags),
-            ("missing linker script", argv, rustflags.split(" -C link-arg=")[0]),
-            ("changed linker script", argv, rustflags.replace("x86_64-owned-bss-layout.ld", "other.ld")),
-            ("foreign linker root", argv, container_flags.replace("/workspace/", "/tmp/workspace/")),
+            ("missing unwind-table header policy", argv, rustflags.split(" -C link-arg=")[0]),
+            ("disabled unwind-table header policy", argv, rustflags.replace("--eh-frame-hdr", "--no-eh-frame-hdr")),
             ("changed container Cargo command", argv + ["--offline"], container_flags),
         )
         for name, command, flags in tampered:

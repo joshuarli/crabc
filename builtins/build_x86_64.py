@@ -47,7 +47,7 @@ SHARED_LIBC_METADATA = {
     "linker_option": "--exclude-libs=libcrabc-builtins.a",
     "type": "FUNC",
     "binding": "LOCAL",
-    "visibility": "DEFAULT",
+    "visibility": "HIDDEN",
     "dynsym": False,
 }
 DYNAMIC_APPLICATION_METADATA = {

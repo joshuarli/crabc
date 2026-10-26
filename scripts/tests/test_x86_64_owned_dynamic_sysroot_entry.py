@@ -24,8 +24,7 @@ class DynamicSysrootEntryTests(unittest.TestCase):
         builder = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(builder)
         tools = builder.common.resolve_pinned_producer_tools()
-        sysroot = builder.common.pinned_rustc_sysroot(Path(tools["rustup"]["path"]))
-        lld = sysroot / "lib/rustlib" / builder.common.TARGET / "bin/gcc-ld/ld.lld"
+        linker = builder.common.native_build_tools.MOLD
         ar = builder.common.producer_tool_path(tools, "llvm-ar")
         with tempfile.TemporaryDirectory(dir=ROOT / ".work") as temporary:
             work = Path(temporary)
@@ -33,6 +32,7 @@ class DynamicSysrootEntryTests(unittest.TestCase):
             objects.mkdir()
             library = work / "library"
             library.mkdir()
+            map_path = work / "libc.map"
 
             def run(command):
                 completed = subprocess.run(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
@@ -40,48 +40,75 @@ class DynamicSysrootEntryTests(unittest.TestCase):
                 return completed.stdout.decode()
 
             for name, source in {
-                "libc": "int owned_entry(void) { return 7; }\nint fixture_private_errno;\n",
-                "helpers": "int fixture_private_helper_one(unsigned long v) { return !!v; }\n"
-                           "unsigned long fixture_private_helper_two(unsigned long a, unsigned long b) { return a / b; }\n",
+                "libc": "extern unsigned __int128 __addoti4(unsigned __int128, unsigned __int128, int *);\n"
+                        "int owned_entry(void) { int overflow; return (int)__addoti4(1, 2, &overflow); }\n"
+                        "int fixture_private_errno;\n",
+                "crabc-builtins": "int fixture_private_helper_one(unsigned long v) { return !!v; }\n"
+                                  "unsigned long fixture_private_helper_two(unsigned long a, unsigned long b) { return a / b; }\n"
+                                  "unsigned __int128 __addoti4(unsigned __int128 left, unsigned __int128 right, int *overflow) {\n"
+                                  "unsigned __int128 result = left + right; *overflow = result < left; return result; }\n",
                 "unrelated": "int unrelated_archive_entry(void) { return 9; }\n",
             }.items():
                 path = work / (name + ".c")
                 path.write_text(source)
                 run(["/usr/bin/gcc", "-O2", "-fPIC", "-ffreestanding", "-nostdinc",
-                     "-fno-stack-protector", "-c", str(path), "-o", str(objects / (name + ".o"))])
+                     "-fno-stack-protector", "-ffunction-sections", "-c", str(path), "-o",
+                     str(objects / (name + ".o"))])
             archive = work / "libcrabc-builtins.a"
             unrelated = objects / "unrelated.a"
-            run([ar, "rcs", str(archive), str(objects / "helpers.o")])
+            run([ar, "rcs", str(archive), str(objects / "crabc-builtins.o")])
             run([ar, "rcs", str(unrelated), str(objects / "unrelated.o")])
             dynamic_list = work / "exports.list"
             dynamic_list.write_text("{ owned_entry; };\n")
             aliases = work / "aliases.map"
             aliases.write_text("{ local: fixture_private_errno; };\n")
-            order = work / "order"
-            order.write_text("owned_entry\n")
-            rodata = work / "rodata.ld"
-            rodata.write_text("SECTIONS {}\n")
             command = builder.shared_libc_link_command(
-                lld, dynamic_list, None, aliases, order, rodata, objects,
-                ("libc.o", "unrelated.a"), archive, library)
+                linker, dynamic_list, None, aliases, objects, ("libc.o", "unrelated.a"), archive, library)
+            command[1:1] = ["--trace", "-Map", str(map_path)]
             command.append(str(unrelated))
-            run(command)
+            trace_lines = run(command).splitlines()
+            sys.path.insert(0, str(ROOT / "compat/x86_64"))
+            import compiler_helper_evidence as helper_evidence
+            transfer = helper_evidence._compiler_helper_transfers(
+                root=ROOT, archive=archive, workload=objects / "libc.o",
+                executable=library / "libc.so", map_path=map_path, trace_lines=trace_lines,
+                source_mount=str(ROOT), names=("__addoti4",),
+                binding_policy=helper_evidence._helper_final_policy_for_linkage("pie"))
+            self.assertEqual(set(transfer["transfers"]), {"__addoti4"})
             symbols = run(["/usr/bin/readelf", "-sW", str(library / "libc.so")])
             from native_abi_inventory import parse_elf_symbol_tables
             tables = parse_elf_symbol_tables(symbols)
             regular = next(table["rows"] for table in tables if table["name"] == ".symtab")
             dynamic = next(table["rows"] for table in tables if table["name"] == ".dynsym")
-            names = {"fixture_private_helper_one", "fixture_private_helper_two"}
+            names = {"fixture_private_helper_one", "fixture_private_helper_two", "__addoti4"}
             selected = [row for row in regular if row["name"] in names]
             self.assertEqual({row["name"] for row in selected}, names)
             for row in selected:
                 self.assertEqual((row["type"], row["binding"], row["visibility"]),
-                                 ("FUNC", "LOCAL", "DEFAULT"))
+                                 ("FUNC", "LOCAL", "HIDDEN"))
                 self.assertTrue(row["section_index"].isdigit())
             self.assertFalse(any(row["name"] in names for row in dynamic))
             self.assertFalse(any(row["name"] == "unrelated_archive_entry" for row in regular))
             self.assertTrue(any(row["name"] == "owned_entry" and row["section_index"].isdigit()
                                 for row in dynamic))
+            elf = helper_evidence.Elf(library / "libc.so")
+            helper_rows = [(section_index, section, row_index)
+                           for section_index, section in enumerate(elf.sections) if section[1] == 2
+                           for row_index in range(section[5] // 24)
+                           if elf.symbol_row(section_index, row_index)["name"] == "__addoti4"]
+            self.assertEqual(len(helper_rows), 1)
+            _, symbol_table, row_index = helper_rows[0]
+            tampered_bytes = bytearray(elf.data)
+            visibility_offset = symbol_table[4] + row_index * 24 + 5
+            self.assertEqual(tampered_bytes[visibility_offset] & 3, 2)
+            tampered_bytes[visibility_offset] &= 0xfc
+            tampered = library / "libc-tampered.so"
+            tampered.write_bytes(tampered_bytes)
+            with self.assertRaisesRegex(helper_evidence.CompilerHelperEvidenceError, "provider metadata"):
+                helper_evidence._compiler_helper_transfers(
+                    root=ROOT, archive=archive, workload=objects / "libc.o", executable=tampered,
+                    map_path=map_path, trace_lines=trace_lines, source_mount=str(ROOT), names=("__addoti4",),
+                    binding_policy=helper_evidence._helper_final_policy_for_linkage("pie"))
 
     def test_shared_helper_policy_and_roots_project_the_current_contract(self):
         spec = importlib.util.spec_from_file_location("dynamic_helper_policy_contract", PRODUCER)

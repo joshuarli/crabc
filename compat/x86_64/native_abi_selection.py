@@ -14061,7 +14061,7 @@ def _compiler_helper_shared_contract(contract: Mapping[str, Any], inputs: Mappin
     require(same(shared, compiler_helpers.SHARED_LIBC_METADATA),
             'compiler-helper source shared-libc contract differs')
     shared_metadata = {key: shared[key] for key in ('type', 'binding', 'visibility')}
-    require(shared_metadata == {'type': 'FUNC', 'binding': 'LOCAL', 'visibility': 'DEFAULT'},
+    require(shared_metadata == {'type': 'FUNC', 'binding': 'LOCAL', 'visibility': 'HIDDEN'},
             'compiler-helper source shared-libc metadata differs')
     return helper_contract, source_inputs, shared_metadata
 

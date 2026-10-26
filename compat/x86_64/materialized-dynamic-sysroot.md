@@ -90,12 +90,12 @@ path without adding ambient link inputs. Nondefault DSO paths require a
 matching output receipt.
 
 `--application-dso PATH` names an executable-direct application DSO. It is an
-actual LLD input and becomes an executable `DT_NEEDED` entry. A direct-only
+actual mold input and becomes an executable `DT_NEEDED` entry. A direct-only
 invocation retains the established schema-2 receipt and its direct-link
 behavior. `--transitive-application-dso PATH` names a DSO that is reachable
 through a direct DSO's own `DT_NEEDED`, so it is a validation input only: the
 driver reads and hashes it, verifies its SONAME, sidecar and imports, but never
-passes it to LLD or permits it in the LLD trace. At least one direct DSO is
+passes it to mold or permits it in the mold trace. At least one direct DSO is
 required when this spelling is used. Together the declarations must name the
 complete graph: every edge is to another declared SONAME or `libc.so`, every
 node is reachable from a direct root, and duplicate, missing or extra nodes
@@ -161,7 +161,7 @@ compiler/runtime archive members are excluded. Allocator header dependency
 traces, source pin, flags, object hashes and exact tool identities are retained.
 PIC generated math remains source-oracle machinery, not an ambient runtime.
 For that link alone, `libc/src/c_abi/x86_64/owned_dynamic.list` is the checked
-byte-identical musl 1.2.6 `dynamic.list` input. It gives LLD musl's finite
+byte-identical musl 1.2.6 `dynamic.list` input. It gives mold musl's finite
 exception scope: public data remains interposable for copy relocations, and
 the listed allocator functions remain interposable by design. Ordinary shared
 libc calls bind locally without rewriting their source public spellings. The
@@ -172,17 +172,22 @@ not apply to the loader, application DSOs, or static archives and is not a
 blanket `-Bsymbolic` policy.
 The actual shared libc and loader must have no NEEDED, PT_INTERP, TEXTREL or
 absolute 32-bit dynamic relocations, and must have RELRO and an NX stack.
+Both images use mold's native layout with their original classified object inputs.
+The producer retains unwind tables and requires a reachable `PT_GNU_EH_FRAME`
+header whenever those tables exist. The loader compiler policy comes from
+`dynamic_product_contract.LOADER_RUSTFLAGS` and is authenticated in its provenance.
+Runtime and memory qualification apply to the resulting layout.
 The exact one-member `libcrabc-builtins.a` is also linked into libc only for
 private compiler-generated calls. Its bounded helper definitions (the roster in
 [`builtins/x86_64-helper-contract.toml`](../../builtins/x86_64-helper-contract.toml)) are made
-local with `--exclude-libs=libcrabc-builtins.a`; the separately installed
+`LOCAL HIDDEN` with `--exclude-libs=libcrabc-builtins.a`; the separately installed
 archive retains its `GLOBAL DEFAULT` provider contract. The dynamic driver uses
 the same exact archive exclusion for application executables and DSOs. It puts
 the archive after application objects and before application DSOs, so each
 image extracts its own helpers before a DSO can satisfy an unresolved call.
 Those extracted helpers stay out of that image's `.dynsym`; public definitions
 from caller object files remain eligible for ordinary interposition. Every
-application link records hashed inputs, exact command and checked LLD
+application link records hashed inputs, exact command and checked mold
 input trace; undeclared target inputs fail. The driver disables Python bytecode
 publication itself, so importing its shared checks cannot dirty the install.
 An output-derived receipt is exclusively reserved before compilation or
@@ -267,9 +272,8 @@ oracles whose runtime-rounding checks require GCC to preserve dynamic rounding;
 it does not authorize arbitrary `-f` controls.
 
 The shared installed helper preserves an admitted `-g` request, but appends
-`-gz=none` unless the caller already supplied that exact spelling. The pinned
-Rust-distributed LLD cannot read GCC's compressed DWARF, so this keeps source
-debug information linkable without stripping it. Explicit compressed forms
+`-gz=none` unless the caller already supplied that exact spelling. The installed translation contract requires uncompressed DWARF and keeps source
+debug information without stripping it. Explicit compressed forms
 such as `-gz`, `-gz=zlib`, and `-gz=zstd` fail before translation. `-g0`
 retains GCC's ordinary no-debug behavior and receives no injected flag.
 
@@ -286,13 +290,13 @@ compares this language mode with the oracle in all four executable modes.
 The exact `-pthread` option passes through the shared helper to every C
 translation, preserving GCC's `_REENTRANT` contract. It is also admitted on
 object-only links: the installed libc already owns pthread definitions, so
-the fixed LLD command needs no additional runtime input. This admits neither
+the fixed mold command needs no additional runtime input. This admits neither
 `-lpthread` nor new library search paths. `run_owned_driver_pthread.sh` checks
 the definition and real create/join behavior in all four installed executable
 modes, using the same compiled object for each candidate/musl comparison.
 
 `-rdynamic` may occur once on an executable dynamic link only. The driver
-turns it into the fixed LLD `--export-dynamic` option, which permits a
+turns it into the fixed mold `--export-dynamic` option, which permits a
 `dlopen(0)` consumer to resolve executable definitions. Shared-object and
 compile-only invocations reject it. The ordinary POSIX link validator retains
 its exact conventional command contract; a workload using this additional

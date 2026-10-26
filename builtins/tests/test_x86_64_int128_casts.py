@@ -31,7 +31,7 @@ class Int128CastPhysicalTests(unittest.TestCase):
                              .replace('crabc_x86_64_compiler_helper_aggregate_probe','crabc_x86_64_int128_casts_probe'))
             start_obj=work/'start.o'
             subprocess.run([compiler,'-c',str(start),'-o',str(start_obj)],check=True,capture_output=True)
-            linker=builder.tool('ld.lld')
+            linker=builder.native_build_tools.MOLD
             import sys
             sys.path.insert(0,str(ROOT/'compat/x86_64'))
             import compiler_helper_evidence as reader
@@ -39,13 +39,13 @@ class Int128CastPhysicalTests(unittest.TestCase):
                 binary=work/mode
                 map_path=work/(mode+'.map');trace_path=work/(mode+'.trace')
                 linked=subprocess.run([linker,'-static',*(['-pie'] if mode=='pie' else []),'--no-dynamic-linker',
-                                '--no-undefined','-Map',str(map_path),'-t','-e','_start',str(start_obj),str(obj),str(archive),'-o',str(binary)],capture_output=True)
+                                '--no-undefined','-Map',str(map_path),'--trace','-e','_start',str(start_obj),str(obj),str(archive),'-o',str(binary)],capture_output=True)
                 self.assertEqual(linked.returncode,0,linked.stderr.decode())
                 trace_path.write_bytes(linked.stdout)
                 result=subprocess.run([str(binary)],check=True,capture_output=True)
                 self.assertEqual(result.stdout,b'compiler-helper-aggregate-ok\n')
                 arguments=dict(root=ROOT,archive=archive,workload=obj,executable=binary,
-                               map_path=map_path,trace_path=trace_path)
+                               map_path=map_path,trace_path=trace_path,source_mount=str(ROOT))
                 observations=reader._integer128_cast_transfers(**arguments)
                 self.assertEqual(set(observations['transfers']),set(reader.INT128_CAST_NAMES))
                 original_map=map_path.read_text()

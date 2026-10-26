@@ -24,6 +24,7 @@ sys.dont_write_bytecode = True
 # directory from sys.path; name it so sibling imports still resolve.
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import build_x86_64_owned_sysroot as common  # noqa: E402
+from compat.x86_64 import dynamic_product_contract
 
 ROOT = common.ROOT
 FORMAT = "crabc-x86-64-owned-dynamic-sysroot-v1"
@@ -50,17 +51,6 @@ SHARED_LIBC_ERRNO_PRIVATE_ALIASES = ROOT / "libc/src/c_abi/x86_64/owned_errno_pr
 # upstream `mimalloc.h` declarations and 252 non-header implementation names;
 # it is not a prefix rule and does not select a different object or backend.
 SHARED_LIBC_MIMALLOC_HIDDEN_LIST = ROOT / "libc/src/c_abi/x86_64/owned_mimalloc_hidden.list"
-# Layout-only input for the same shared link: the functions startup and the
-# native C performance rows execute are placed together so a process maps
-# few 64 KiB fault-around windows of libc text. See the file's header.
-SHARED_LIBC_SYMBOL_ORDER = ROOT / "libc/src/c_abi/x86_64/owned_dynamic_hot.order"
-# Both runtime images discard their unused unwind tables, as musl's do.
-# Import-time root; provenance re-roots these through ROOT so a relocated
-# checkout records them like every other configuration input.
-_IMPORT_ROOT = ROOT
-RUNTIME_DISCARD_UNWIND_SCRIPT = ROOT / "libc/src/c_abi/x86_64/owned_discard_unwind.ld"
-# The interpreter packs small mutable statics into the last .data page.
-LOADER_BSS_LAYOUT_SCRIPT = ROOT / "ldso/x86_64-owned-bss-layout.ld"
 COMPILER_HELPER_CONTRACT = ROOT / "builtins/x86_64-helper-contract.toml"
 MUSL_1_2_6_DYNAMIC_LIST_SHA256 = "264ae3bf630a7f6d894a51f91f9acae45b89a5f639537353d03af1a04e9da0f9"
 ERRNO_PRIVATE_ALIAS_LIST_SHA256 = "2e69ec5346002fa183b51dbbbef2f24744bd89093b5cfac6329337c1b3d240dd"
@@ -146,7 +136,7 @@ def _source_file_identity(path: Path, description: str) -> dict[str, object]:
 def _normalized_loader_argument(argument: str, stage: Path) -> str:
     """Replace build-local prefixes without changing an arbitrary argument."""
 
-    for option in ("--dynamic-list=", "--version-script=", "--symbol-ordering-file="):
+    for option in ("--dynamic-list=", "--version-script="):
         if argument.startswith(option):
             return option + _normalized_loader_argument(argument.removeprefix(option), stage)
     for physical, replacement in ((stage.resolve(), "$BUILD"), (ROOT.resolve(), "$SOURCE")):
@@ -296,125 +286,11 @@ def shared_libc_errno_private_aliases(stage: Path) -> dict[str, object]:
     }
 
 
-def shared_libc_symbol_order(nm: str, inputs: list[Path], stage: Path) -> dict[str, object]:
-    """Resolve the hot-text order to this link's actual symbol spellings.
-
-    Entries name C symbols or hash-free demangled Rust paths, so crate
-    disambiguators may change without editing the list. An entry that no
-    longer names a defined symbol costs only layout; it is recorded, not fatal.
-    """
-
-    identity = _source_file_identity(SHARED_LIBC_SYMBOL_ORDER, "native libc hot text order")
-    try:
-        text = SHARED_LIBC_SYMBOL_ORDER.read_text(encoding="utf-8")
-    except (OSError, UnicodeDecodeError) as error:
-        raise common.BuildError("native libc hot text order cannot be read") from error
-    entries = [line for line in text.splitlines() if line and not line.startswith("#")]
-    if len(set(entries)) != len(entries) or any(line != line.strip() for line in entries):
-        raise common.BuildError("native libc hot text order repeats or pads an entry")
-    spellings: dict[str, list[str]] = {}
-    for path in inputs:
-        listing = [common.run([nm, "--defined-only", *demangle, "--format=just-symbols", str(path)])
-                   .decode().splitlines() for demangle in ([], ["--demangle"])]
-        if len(listing[0]) != len(listing[1]):
-            raise common.BuildError(f"demangled symbol listing does not align: {path}")
-        for raw, readable in zip(*listing):
-            if raw and not raw.endswith(":") and raw not in spellings.setdefault(readable, []):
-                spellings[readable].append(raw)
-    resolved = [raw for entry in entries for raw in spellings.get(entry, [])]
-    unresolved = [entry for entry in entries if entry not in spellings]
-    script = stage / "libc-hot.order"
-    script.write_text("".join(f"{name}\n" for name in resolved), encoding="utf-8")
-    script.chmod(0o600)
-    return {
-        "source": identity,
-        "entry_count": len(entries),
-        "resolved_symbol_count": len(resolved),
-        "unresolved_entries": unresolved,
-        "ordering_file_sha256": common.sha256_file(script),
-    }
-
-
-HOT_RODATA_OUTPUT_SECTION = ".rodata.crabc.hot"
-_ELF_SECTION_ROW = re.compile(r"\s*\[\s*(\d+)\]\s+(\S+)\s+\S+\s+[0-9a-f]+\s+[0-9a-f]+\s+([0-9a-f]+)")
-_LINKER_SCRIPT_NAME = re.compile(r"[A-Za-z0-9_.$]+")
-
-
-def shared_libc_hot_rodata(objects: list[Path], stage: Path) -> dict[str, object]:
-    """Place the read-only data of the ordered hot functions beside the headers.
-
-    Every process touches libc.so's dynamic symbol, hash and string tables at
-    load. The constants its hot text reads were scattered over the following
-    148 KiB of .rodata, so their fault-around windows kept most of it
-    resident. This follows each hot function's relocations (through the data
-    sections it points at, up to three levels) to the .rodata input sections
-    they reach and emits an INSERT script that gathers exactly those inputs
-    into one output section in front of .rodata. It changes only layout.
-    """
-
-    hot = set((stage / "libc-hot.order").read_text(encoding="utf-8").split())
-    chosen: dict[str, int] = {}
-    for path in objects:
-        sections: dict[int, tuple[str, int]] = {}
-        for line in common.run(["/usr/bin/readelf", "-SW", str(path)]).decode().splitlines():
-            match = _ELF_SECTION_ROW.match(line)
-            if match:
-                sections[int(match.group(1))] = (match.group(2), int(match.group(3), 16))
-        sizes = dict(sections.values())
-        symbol_section: dict[str, str] = {}
-        roots: set[str] = set()
-        for line in common.run(["/usr/bin/readelf", "-sW", str(path)]).decode().splitlines():
-            fields = line.split()
-            if len(fields) >= 8 and fields[6].isdigit() and int(fields[6]) in sections:
-                section = sections[int(fields[6])][0]
-                symbol_section.setdefault(fields[7], section)
-                if fields[3] == "FUNC" and fields[7] in hot:
-                    roots.add(section)
-        references: dict[str, list[str]] = {}
-        current = None
-        for line in common.run(["/usr/bin/readelf", "-rW", str(path)]).decode().splitlines():
-            header = re.match(r"Relocation section '\.rela([^']+)'", line)
-            if header:
-                current = header.group(1)
-                continue
-            fields = line.split()
-            if current is not None and len(fields) >= 5 and fields[2].startswith("R_X86_64_"):
-                target = fields[4] if fields[4] in sizes else symbol_section.get(fields[4])
-                if target:
-                    references.setdefault(current, []).append(target)
-        frontier, seen = sorted(roots), set(roots)
-        for _ in range(3):
-            following = []
-            for section in frontier:
-                for target in references.get(section, []):
-                    if target in seen:
-                        continue
-                    seen.add(target)
-                    if target.startswith(".rodata") and _LINKER_SCRIPT_NAME.fullmatch(target):
-                        chosen.setdefault(target, sizes.get(target, 0))
-                        following.append(target)
-                    elif target.startswith((".data", ".tdata")):
-                        following.append(target)
-            frontier = following
-    script = stage / "libc-hot-rodata.ld"
-    script.write_text(f"SECTIONS {{ {HOT_RODATA_OUTPUT_SECTION} : {{\n"
-                      + "".join(f"  *({name})\n" for name in chosen)
-                      + "} } INSERT BEFORE .rodata;\n", encoding="utf-8")
-    script.chmod(0o600)
-    return {
-        "input_section_count": len(chosen),
-        "input_section_bytes": sum(chosen.values()),
-        "linker_script_sha256": common.sha256_file(script),
-    }
-
-
 def shared_libc_link_command(
     linker: Path,
     dynamic_list: Path,
     mimalloc_hidden_exports: Path | None,
     errno_private_aliases: Path,
-    symbol_order: Path,
-    hot_rodata: Path,
     objects: Path,
     selected: tuple[str, ...],
     builtins: Path,
@@ -433,16 +309,9 @@ def shared_libc_link_command(
         f"--version-script={errno_private_aliases}",
         helper_policy["linker_option"],
         "-z", "relro", "-z", "now", "-z", "noexecstack", "-z", "text",
-        # Packed DT_RELR relative relocations: 849 RELA records (21 KiB the
-        # loader reads at every start) become a 264-byte bitmap stream.
         "-z", "pack-relative-relocs",
-        f"--symbol-ordering-file={symbol_order}", "--no-warn-symbol-ordering",
         *(str(objects / item) for item in selected),
-        # The shared libc owns the complete private helper member even when
-        # its selected allocator emits no helper imports. Force only this
-        # archive's extraction; subsequent inputs retain ordinary lazy policy.
         "--whole-archive", str(builtins), "--no-whole-archive",
-        str(RUNTIME_DISCARD_UNWIND_SCRIPT), str(hot_rodata),
         "-o", str(library / "libc.so"),
     ]
 
@@ -561,8 +430,7 @@ def loader_provenance(
         _source_file_identity(ROOT / "rust-toolchain.toml", "pinned Rust toolchain configuration"),
         _source_file_identity(ROOT / ".cargo/config.toml", "workspace Cargo configuration"),
         _source_file_identity(ROOT / "ldso/Cargo.toml", "loader Cargo configuration"),
-        _source_file_identity(ROOT / RUNTIME_DISCARD_UNWIND_SCRIPT.relative_to(_IMPORT_ROOT), "runtime unwind-table discard script"),
-        _source_file_identity(ROOT / LOADER_BSS_LAYOUT_SCRIPT.relative_to(_IMPORT_ROOT), "loader .bss layout script"),
+        _source_file_identity(ROOT / "compat/x86_64/dynamic_product_contract.py", "loader compiler policy"),
     ]
     installed = {
         "path": LOADER_ARTIFACT,
@@ -769,18 +637,9 @@ def build_staged_payload(output: Path, stage: Path, *, allocator_backend: str = 
     library = output / "usr/lib"
     library.mkdir(parents=True)
     headers = common.install_header_tree(output / "usr/include")
-    # Musl's configure applies its dynamic list to libc.so only. It binds
-    # ordinary internal libc calls locally while retaining its data and
-    # allocation interposition scope. The two exact version scripts remain
-    # separate: mimalloc names are fixed-C private metadata, while errno's
-    # one weak alias needs LLD localization after its allocator object edge
-    # has resolved.
-    shared_symbol_order = shared_libc_symbol_order(
-        nm, [*(objects / item for item in selected), builtins], stage)
-    shared_hot_rodata = shared_libc_hot_rodata([objects / item for item in selected], stage)
     libc_shared_link_command = shared_libc_link_command(
         linker, SHARED_LIBC_DYNAMIC_LIST, (stage / "libc-mimalloc-hidden.exports" if accepted_c else None),
-        stage / "libc-errno-private.exports", stage / "libc-hot.order", stage / "libc-hot-rodata.ld",
+        stage / "libc-errno-private.exports",
         objects, selected, builtins, library
     )
     run(libc_shared_link_command)
@@ -833,9 +692,7 @@ def build_staged_payload(output: Path, stage: Path, *, allocator_backend: str = 
     common.copy_artifact(builtins, library / builtins.name)
     loader_env = common.deterministic_environment()
     loader_env["CARGO_BUILD_JOBS"] = "2"
-    loader_env["RUSTFLAGS"] = ("-C link-dead-code -C target-feature=-crt-static -C relocation-model=pic"
-                              f" -C link-arg=-Wl,-T,{RUNTIME_DISCARD_UNWIND_SCRIPT}"
-                              f" -C link-arg=-Wl,-T,{LOADER_BSS_LAYOUT_SCRIPT}")
+    loader_env["RUSTFLAGS"] = dynamic_product_contract.LOADER_RUSTFLAGS
     # Every process touches nearly all interpreter text, so it is optimized
     # for size: opt-level s cuts it from 135 to 81 KiB (54 KiB of PSS per
     # process) for about 2% more fork+exec CPU and 8% slower dlsym.
@@ -902,9 +759,6 @@ def build_staged_payload(output: Path, stage: Path, *, allocator_backend: str = 
                   "shared_mimalloc_hidden_exports": shared_mimalloc_hidden_exports,
                   "shared_compiler_helper_archive": shared_compiler_helper_policy,
                   "shared_errno_private_aliases": shared_errno_private_aliases,
-                  "shared_symbol_order": shared_symbol_order,
-                  "shared_hot_rodata": shared_hot_rodata,
-                  "discard_unwind_script": _source_file_identity(RUNTIME_DISCARD_UNWIND_SCRIPT, "runtime unwind-table discard script"),
                   "loader_imports": sorted(allowed)}
     common.write_json(metadata / "libc-shared.provenance.json", provenance)
     payload_files = {path.relative_to(output).as_posix(): common.sha256_file(path)
@@ -965,7 +819,7 @@ def build_debug_payload(output: Path, stage: Path, *, allocator_backend: str, li
                     "-z", "relro", "-z", "now", "-z", "noexecstack", "-z", "text",
                     *(str(objects / name) for name in selected), str(private_core),
                     "--whole-archive", str(builtins), "--no-whole-archive",
-                    str(RUNTIME_DISCARD_UNWIND_SCRIPT), "-o", str(library / "libc.so")]
+                    "-o", str(library / "libc.so")]
     run(libc_command)
     (library / "libc.so").chmod(0o755)
     allowed = {"__crabc_x86_64_initial_tls_allocate", "__crabc_x86_64_initial_tls_release",
@@ -1028,10 +882,10 @@ def build_debug_payload(output: Path, stage: Path, *, allocator_backend: str, li
     private_exports.write_text("{ local: _R*; _ZN*; };\n")
     interpreter = output / LOADER_ARTIFACT
     interpreter.parent.mkdir()
-    loader_link = [str(linker), "-shared", "-Bsymbolic", "--hash-style=sysv", "-e", "_start", "--no-undefined",
+    loader_link = [str(linker), "-shared", "-Bsymbolic", "--hash-style=sysv", "--eh-frame-hdr", "-e", "_start", "--no-undefined",
                    "-z", "now", "-z", "noexecstack", f"--version-script={private_exports}",
                    f"--exclude-libs={private_core.name},{helper_policy['archive']}", str(loader_object),
-                   str(private_core), str(builtins), str(RUNTIME_DISCARD_UNWIND_SCRIPT), str(LOADER_BSS_LAYOUT_SCRIPT),
+                   str(private_core), str(builtins),
                    "-o", str(interpreter)]
     run(loader_link)
     interpreter.chmod(0o755)

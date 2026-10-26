@@ -1,5 +1,6 @@
 """Ordinary compiler-emitted binary80 calls through the owned helper archive."""
 from pathlib import Path
+import importlib.util
 import subprocess
 import tempfile
 import unittest
@@ -15,6 +16,9 @@ class Binary80CompilerCalls(unittest.TestCase):
         parent.mkdir(parents=True, exist_ok=True)
         with tempfile.TemporaryDirectory(dir=parent) as directory:
             work = Path(directory)
+            spec = importlib.util.spec_from_file_location('owned_builder_binary80', ROOT/'builtins/build_x86_64.py')
+            builder = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(builder)
             archive = work/'libcrabc-builtins.a'
             subprocess.run(['python3', '-B', str(ROOT/'builtins/build_x86_64.py'), '--output', str(archive)],
                            check=True, capture_output=True)
@@ -28,13 +32,13 @@ class Binary80CompilerCalls(unittest.TestCase):
             start = work/'start.S'
             start.write_text('.text\n.globl _start\n_start:\nandq $-16,%rsp\ncall main\nmovl %eax,%edi\nmovl $60,%eax\nsyscall\n.section .note.GNU-stack,"",@progbits\n')
             subprocess.run([cc, '-c', str(start), '-o', str(work/'start.o')], check=True, capture_output=True)
-            lld = PINNED/'lib/rustlib/x86_64-unknown-linux-musl/bin/gcc-ld/ld.lld'
+            linker = builder.native_build_tools.MOLD
             for mode in ('static', 'pie'):
                 output = work/mode
                 map_path = work/(mode+'.map')
                 trace_path = work/(mode+'.trace')
-                result = subprocess.run([str(lld), '-static', *(['-pie'] if mode=='pie' else []),
-                                         '--no-dynamic-linker', '--no-undefined', '--gc-sections', '-Map', str(map_path), '-t',
+                result = subprocess.run([str(linker), '-static', *(['-pie'] if mode=='pie' else []),
+                                         '--no-dynamic-linker', '--no-undefined', '--gc-sections', '-Map', str(map_path), '--trace',
                                          str(work/'start.o'), str(obj), str(archive), '-o', str(output)], capture_output=True)
                 self.assertEqual(result.returncode, 0, result.stderr.decode())
                 subprocess.run([str(output)], check=True, capture_output=True)
@@ -43,7 +47,8 @@ class Binary80CompilerCalls(unittest.TestCase):
                 sys.path.insert(0, str(ROOT/'compat/x86_64'))
                 import compiler_helper_evidence as evidence
                 observed = evidence._compiler_helper_transfers(root=ROOT, archive=archive, workload=obj,
-                    executable=output, map_path=map_path, trace_path=trace_path, names=sorted(HELPERS))
+                    executable=output, map_path=map_path, trace_path=trace_path, names=sorted(HELPERS),
+                    source_mount=str(ROOT))
                 self.assertEqual(set(observed['transfers']), HELPERS)
 
     def test_pinned_kernels_match_defined_conversions_complex_results_and_fenv(self):
