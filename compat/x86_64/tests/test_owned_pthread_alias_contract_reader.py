@@ -3,6 +3,8 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
 import os
 import subprocess
 import sys
@@ -35,6 +37,7 @@ from owned_pthread_alias_contract_reader import (
     _static_symbols,
     _validate_dynamic_link_receipt,
     _validate_dynamic_materialization_state,
+    _validate_static_link_receipt,
     artifact_record,
     load_json_object,
     same_definition,
@@ -228,6 +231,154 @@ class OwnedPthreadAliasContractReaderTests(unittest.TestCase):
             f"{work}/contract.o", "-o", f"{work}/dynamic-non-pie-contract",
         ]
         validate_command_argv("dynamic-non-pie-link", non_pie, work, inputs)
+
+    def _static_link_receipt_fixture(
+        self, binary: str
+    ) -> tuple[Path, str, dict[str, object], dict[str, object], dict[str, object]]:
+        work_path = "/workspace/.work/x86_64/pthread-alias-receipt"
+        product_root = "/products/static"
+        crt = "rcrt1.o" if binary == "static-pie-contract" else "crt1.o"
+        work = self.root / binary
+        retained = work / "retained/products"
+        retained.mkdir(parents=True)
+
+        contents = {
+            binary: b"linked static ELF\n",
+            f"{binary}.link.map": b"sealed static link map\n",
+            f"{binary}.link.trace": (
+                f"{work_path}/contract.o\n"
+                f"{product_root}/usr/lib/libc.a(fixture.o)\n"
+            ).encode(),
+            "contract.o": b"compiled contract object\n",
+            "retained/products/static-libc.a": b"retained static libc archive\n",
+        }
+        hashes = {
+            name: hashlib.sha256(content).hexdigest()
+            for name, content in contents.items()
+        }
+        for name, content in contents.items():
+            path = work / name
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(content)
+
+        static_files = {
+            f"usr/lib/{crt}": hashlib.sha256(crt.encode()).hexdigest(),
+            "usr/lib/crti.o": hashlib.sha256(b"crti.o").hexdigest(),
+            "usr/lib/libc.a": hashes["retained/products/static-libc.a"],
+            "usr/lib/libcrabc-builtins.a": hashlib.sha256(b"libcrabc-builtins.a").hexdigest(),
+            "usr/lib/crtn.o": hashlib.sha256(b"crtn.o").hexdigest(),
+        }
+        manifest_path = retained / "static-manifest.json"
+        manifest_path.write_text(
+            json.dumps({"installed": {"files": static_files}}) + "\n",
+            encoding="utf-8",
+        )
+        hashes["retained/products/static-manifest.json"] = hashlib.sha256(
+            manifest_path.read_bytes()
+        ).hexdigest()
+        artifacts: dict[str, object] = {
+            name: {"sha256": digest} for name, digest in hashes.items()
+        }
+        receipt_path = work / f"{binary}.link.json"
+        expected_mode = {
+            "static-contract": {
+                "id": "static-et-exec", "elf_type": "ET_EXEC",
+                "crt_object": "crt1.o", "interpreter": "absent",
+            },
+            "static-pie-contract": {
+                "id": "static-pie", "elf_type": "ET_DYN",
+                "crt_object": "rcrt1.o", "interpreter": "absent",
+            },
+        }[binary]
+        input_receipts = [
+            {"path": f"usr/lib/{crt}", "role": "crt-entry", "sha256": static_files[f"usr/lib/{crt}"]},
+            {"path": "usr/lib/crti.o", "role": "crt-prologue", "sha256": static_files["usr/lib/crti.o"]},
+            {"path": "usr/lib/libc.a", "role": "libc", "sha256": static_files["usr/lib/libc.a"]},
+            {"path": "usr/lib/libcrabc-builtins.a", "role": "builtins", "sha256": static_files["usr/lib/libcrabc-builtins.a"]},
+            {"path": "usr/lib/crtn.o", "role": "crt-epilogue", "sha256": static_files["usr/lib/crtn.o"]},
+            {"path": f"{work_path}/contract.o", "role": "application", "sha256": hashes["contract.o"]},
+        ]
+        link_contract = ["ld.lld", "-static"]
+        if binary == "static-pie-contract":
+            link_contract.append("-pie")
+        link_contract += [
+            "--no-dynamic-linker", "--no-undefined", "--eh-frame-hdr", "--gc-sections",
+            "-z", "relro", "-z", "now", "-e", "_start",
+            f"{product_root}/usr/lib/{crt}", f"{product_root}/usr/lib/crti.o",
+            "<application-objects>", f"{product_root}/usr/lib/libc.a",
+            f"{product_root}/usr/lib/libcrabc-builtins.a", f"{product_root}/usr/lib/crtn.o",
+            "-o", "<output>",
+        ]
+        receipt: dict[str, object] = {
+            "schema": 1,
+            "format": "crabc-x86-64-sealed-static-driver-v1",
+            "target": "x86_64-unknown-linux-musl",
+            "mode": expected_mode,
+            "output": {"path": f"{work_path}/{binary}", "sha256": hashes[binary]},
+            "map": {"path": f"{binary}.link.map", "sha256": hashes[f"{binary}.link.map"]},
+            "trace": {"path": f"{binary}.link.trace", "sha256": hashes[f"{binary}.link.trace"]},
+            "input_receipts": input_receipts,
+            "owned_link_contract": link_contract,
+            "resolved_linker": {"path": "/tools/ld.lld", "sha256": "3" * 64},
+        }
+        receipt_path.write_text(json.dumps(receipt) + "\n", encoding="utf-8")
+        products = {"static": {
+            "manifest": "retained/products/static-manifest.json",
+            "libc": "retained/products/static-libc.a",
+            "original_paths": {"driver": f"{product_root}/bin/crabc-cc"},
+        }}
+        return work, work_path, artifacts, products, receipt
+
+    def test_static_link_receipt_uses_driver_relative_sidecar_paths(self) -> None:
+        for binary in ("static-contract", "static-pie-contract"):
+            with self.subTest(binary=binary):
+                work, work_path, artifacts, products, receipt = self._static_link_receipt_fixture(binary)
+                receipt_path = work / f"{binary}.link.json"
+
+                def replay() -> None:
+                    receipt_path.write_text(json.dumps(receipt) + "\n", encoding="utf-8")
+                    _validate_static_link_receipt(work, work_path, binary, artifacts, products)
+
+                replay()
+                for kind in ("map", "trace"):
+                    expected_name = f"{binary}.link.{kind}"
+                    invalid_paths = (
+                        f".work/x86_64/pthread-alias-receipt/{expected_name}",
+                        f"{work_path}/{expected_name}",
+                        f"../{expected_name}",
+                        f"wrong-{expected_name}",
+                    )
+                    for invalid_path in invalid_paths:
+                        receipt[kind]["path"] = invalid_path
+                        with self.subTest(binary=binary, kind=kind, path=invalid_path):
+                            with self.assertRaisesRegex(ReceiptError, f"static link {kind} identity changed"):
+                                replay()
+                        receipt[kind]["path"] = expected_name
+                    receipt[kind]["sha256"] = "0" * 64
+                    with self.subTest(binary=binary, kind=kind, hash="wrong"):
+                        with self.assertRaisesRegex(ReceiptError, f"static link {kind} identity changed"):
+                            replay()
+                    receipt[kind]["sha256"] = artifacts[expected_name]["sha256"]
+
+                receipt["output"]["path"] = f"{work_path}/forged-{binary}"
+                with self.assertRaisesRegex(ReceiptError, "does not bind its ELF"):
+                    replay()
+                receipt["output"]["path"] = f"{work_path}/{binary}"
+                receipt["output"]["sha256"] = "0" * 64
+                with self.assertRaisesRegex(ReceiptError, "does not bind its ELF"):
+                    replay()
+                receipt["output"]["sha256"] = artifacts[binary]["sha256"]
+
+                application_input = next(
+                    item for item in receipt["input_receipts"] if item["role"] == "application"
+                )
+                application_input["path"] = f"{work_path}/forged-contract.o"
+                with self.assertRaisesRegex(ReceiptError, "static link receipt input binding changed"):
+                    replay()
+                application_input["path"] = f"{work_path}/contract.o"
+                application_input["sha256"] = "0" * 64
+                with self.assertRaisesRegex(ReceiptError, "static link receipt input binding changed"):
+                    replay()
 
     def test_dynamic_sidecar_reconstructs_its_linker_command(self) -> None:
         """A changed dynamic-driver linker argv cannot be made self-consistent."""

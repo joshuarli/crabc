@@ -215,6 +215,10 @@ recomputes the same-definition aliases and `mq_notify` public-detach source
 policy, and verifies the runtime transcripts and executable modes.  It runs no
 compiler, linker, or ELF tool.
 
+The static driver's map and trace receipt paths are exact basenames relative
+to the link receipt's directory. Replay checks those recorded paths against the
+driver's sidecar naming rule while retaining exact output and input identities.
+
 Before it creates any evidence, the runner resolves `TMPDIR`, an optional
 receipt directory, and both supplied product roots physically and rejects any
 overlap. Alias and provider rows must also name a positive ELF section index;

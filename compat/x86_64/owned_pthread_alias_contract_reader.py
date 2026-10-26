@@ -24,6 +24,7 @@ import stat
 import subprocess
 import sys
 from typing import Any, NamedTuple
+import crabc_cc_static as static_driver
 import owned_dynamic_qualification as dynamic_materialization
 import owned_posix_product_evidence as product_evidence
 
@@ -1335,10 +1336,12 @@ def _validate_static_link_receipt(
             and output["path"] == f"{work_path}/{binary}"
             and output["sha256"] == artifacts[binary]["sha256"],
             f"{binary} static link receipt does not bind its ELF")
+    receipt_path = Path(receipt_name)
     for kind in ("map", "trace"):
         item = receipt[kind]
-        expected_name = f"{binary}.link.{kind}" if kind == "trace" else f"{binary}.link.map"
-        expected_path = work_path.removeprefix("/workspace/") + "/" + expected_name
+        sidecar_path = receipt_path.with_suffix(f".{kind}")
+        expected_name = sidecar_path.name
+        expected_path = static_driver.receipt_file_path(sidecar_path, receipt_path)
         require(isinstance(item, dict) and set(item) == {"path", "sha256"}
                 and item["path"] == expected_path
                 and item["sha256"] == artifacts[expected_name]["sha256"],
