@@ -8,7 +8,19 @@ remain parked and cannot support native promotion. The C
 allocator remains selected. Public x86 support remains false: 180 of 223
 capabilities, nine of 26 families, zero of eight gates.
 
-**Current steering checkpoint:** the frozen `e9e83a53b` pilot in
+**Current steering checkpoint:** frozen `ff15ce00d` in
+`.work/wt/abi-crt-locale-proof` passes the four new ABI joins and normal
+canonical replay. Application `main`, auxv, C-profile personality absence and
+the visible wide-time alias each join once with no unresolved reason. Fresh
+products, four collectors, 72 signal observations and signal replay pass.
+Three native companions and the checked-in header aggregate are bound. Source,
+product trees and modes, reports, both manifests, original partial output,
+signal evidence and scratch rosters remain unchanged. The focused receipt
+retains 644 blockers because other companions are absent. Qualification and
+public-support flags remain false. Preserve `abi-crt-locale-proof-2` and the
+normal reader output under that worktree's `.work/tmp`.
+
+**Full companion baseline:** the frozen `e9e83a53b` pilot in
 `.work/wt/abi-owner-proof-fixed` passes fresh product preparation, the four
 collectors, installed process-trio behavior and assembly. Twenty-two companion
 producers pass. The installed-helper producer fails on a missing `os` import.
@@ -35,20 +47,17 @@ or changed qualification flags. Preserve the earlier pilots unchanged.
 five CRT imports to the application objects, eleven executables and 24 runtime
 labels. Selection contract v2 and report v9 record the new join without a
 libc provider. Independent review found no defect. The full selector module
-passes 155 tests run: 150 passed and five existing skips. Matching native
-admission remains pending. The next CRT attachments cover validated auxv
-publication and the absent C-runtime personality. A separate component
-extension adds the visible `wcsftime_l` alias to the existing locale receipt.
-These changes remain provisional until their focused checks and matching
-native proof pass. The existing installed math component passes all 206 entries
+passes 155 tests run: 150 passed and five existing skips. The later ff15 wave
+supplies native proof for this join, validated auxv publication, personality
+absence and locale receipt v5. The existing installed math component passes all 206 entries
 and six modes on the fresh helper-pilot products. Its owning retained reader
 also passes. The existing stdio component and its owning reader pass all ten
 C/C++ header profiles and six modes, including the `fopen64` macro row.
 These reports support later exact identity joins while the full text-family
 receipt remains absent. The math report proves installed `pow10l` behavior,
-but not its isolated feature archive. The math lane is extending the existing
-leaf collection to retain that distinct proof. The existing signal/process
-component is running once against the same product pair for restorer evidence.
+but not its isolated feature archive. Its retained feature proof is described
+below. The signal/process component and reader pass all 72 observations for
+restorer evidence.
 None of these components runs the parked POSIX aggregate.
 The remaining structural, consumer-owned and feature-alias identity proofs
 remain implementation work. The parked POSIX aggregate and denied allocator
@@ -66,23 +75,33 @@ v11 preserve the frozen identity without a C provider or Rust unwind claim.
 The final selector, locale-attachment and ABI-orchestration check passes
 208 tests run: 203 passed and five existing skips.
 
-Freeze the resulting revision in the prepared `.work/wt/abi-crt-locale-proof`.
-Run fresh bounded products and four collectors, the existing six-mode
-signal/process workload and its new read-only replay, then only the CRT and
-locale companion producers. Assemble and canonically replay that partial
-selection once. Require the application-main, auxv, personality-absence and
-visible wide-time joins, with no rejected supplied companions. Preserve all
-remaining blockers. Its smaller companion set is not comparable to the full
-e9 blocker count. Bootstrap and the held math group do not join this wave.
+The original two-companion ff15 assembly lacked the loader-debug anchor needed
+to supply the ordinary-link report. It remains unchanged. Collecting only that
+existing anchor and adding it through `--selection-companion` makes all four
+joins pass in assembly-2. No product, collector or successful workload repeats.
+The smaller companion set is not comparable to the full e9 blocker count.
 
-The isolated binary80 leaf passes 247 native records, but `d0b804d83` remains
-unmerged. Review found that its feature account did not reconstruct actual
-rustc commands and extern/member closure, and ignored unowned archive globals.
-The graph-replay lane must close both proof gaps. `fb1c214f6` and `bf4127ba3`
-preserve failed default evidence, constrain retained output to `.work/x86_64`
-and remove a source-layout test. Their seven focused tests pass. These fixes
-remain with the held math source group. The existing bootstrap fixture's
-installed-product path is a separate in-flight proof for the local jump tail.
+`2e062b7d2` integrates the reviewed math retention and graph replay group.
+The isolated leaf's earlier 247 native records remain behavior evidence.
+The new reader reconstructs actual Cargo/rustc settings, externs, vendor and
+every archive member. It binds actual features to the finite requested
+profile and leaves shared release builds on their original path. Failed
+default runs retain evidence; explicit output stays within `.work/x86_64`.
+The merged three-module check passes all 58 tests. Fresh native proof of this
+final reader remains pending.
+
+`adebbf36b` completes the installed bootstrap path and its replay API. One
+installed-header object links to musl and all four candidate modes. The
+collector validates real dynamic sidecars; malformed product arguments cannot
+select the default archive gate. Focused checks and independent review pass.
+Its six-mode native proof remains pending.
+
+Next freeze the resulting source in `.work/wt/abi-bootstrap-math-proof`,
+prepare fresh bounded products and run only the installed bootstrap component
+and retained binary80 leaf with their owning readers. Preserve failed attempts.
+These are component checks, without ABI assembly or a qualification claim.
+Then attach the existing math, stdio, signal and bootstrap proofs to their
+exact remaining identities using the current source/product cohort.
 
 **Earlier accepted checkpoint:** the frozen `99cd68019` ABI proof passes
 the normal canonical reader: 5,175 identities, 41,307 occurrences and zero
