@@ -21,10 +21,14 @@ usage() {
     exit 2
 }
 
-if [ "$#" -eq 4 ] && [ "$1" = --static-product ] && [ "$3" = --dynamic-product ]; then
+if [ "$#" -eq 0 ]; then
+    :
+elif [ "$#" -eq 4 ] && [ "$1" = --static-product ] && [ "$3" = --dynamic-product ]; then
+    case "$2" in ''|-*) usage ;; esac
+    case "$4" in ''|-*) usage ;; esac
     static_input="$2"
     dynamic_input="$4"
-elif [ "$#" -ne 0 ]; then
+else
     usage
 fi
 

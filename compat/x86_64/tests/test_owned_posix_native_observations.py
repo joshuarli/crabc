@@ -5,6 +5,7 @@ import importlib.util
 import json
 from pathlib import Path
 import shutil
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -569,6 +570,33 @@ class NativeObservationsTests(unittest.TestCase):
         _, link_map_path = native.dynamic_elf.sidecar_paths(self.bootstrap_leaf / 'dynamic-non-pie')
         link_map_path.write_bytes(b'changed link map\n')
         with self.assertRaises(native.NativeObservationError): self.collect_bootstrap()
+
+    def test_bootstrap_runner_rejects_incomplete_product_selection_before_evidence(self):
+        runner = HERE / 'run_libc_bootstrap_primitives.sh'
+        restricted_path = self.root / 'invalid-run-path'
+        restricted_path.mkdir()
+        (restricted_path / 'dirname').symlink_to('/usr/bin/dirname')
+        scratch = self.root / '.work/invalid-run-tmp'
+        scratch.mkdir(parents=True)
+        cases = (
+            ('--static-product', '', '--dynamic-product', '/workspace/.work/static'),
+            ('--static-product', '/workspace/.work/static', '--dynamic-product', ''),
+            ('--static-product', '', '--dynamic-product', ''),
+            ('--static-product', '/workspace/.work/static'),
+            ('--dynamic-product', '/workspace/.work/dynamic'),
+            ('--static-product', '--dynamic-product', '--dynamic-product', '/workspace/.work/dynamic'),
+            ('--static-product', '/workspace/.work/static', '--dynamic-product', '--other'),
+        )
+        environment = {'PATH': str(restricted_path), 'TMPDIR': str(scratch)}
+        for arguments in cases:
+            with self.subTest(arguments=arguments):
+                result = subprocess.run(
+                    ['/bin/bash', str(runner), *arguments], cwd=ROOT, env=environment,
+                    stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False,
+                )
+                self.assertEqual(result.returncode, 2, result.stderr.decode(errors='replace'))
+                self.assertIn(b'usage:', result.stderr)
+                self.assertEqual(list(scratch.iterdir()), [])
 
     def test_bootstrap_primitives_rejects_product_and_payload_mutation_during_replay(self):
         self.bootstrap_fixture()
