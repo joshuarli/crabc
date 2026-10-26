@@ -193,6 +193,12 @@ for installed, rebuilt and extracted products. Its 219-case receipt matches
 the candidate source digest, retains all promotion/public flags false, and
 passes the outer host replay. The runner records `dynamic-products` complete
 and proceeds to its registered publication and the POSIX prefix.
+Dynamic publication, the complete three-pair POSIX matrix, crypt, atomic and
+word-expansion companions pass. The main runner enters POSIX native admission;
+the known raw `pow` condition remains parked. The independent combined-sysroot
+producer passes all supplied static/dynamic suites across installed, rebuilt
+and extracted composed products. Rust std/LTO and resolver-family assessments
+run independently against the qualified cohort.
 Independent header-declaration collection succeeds at
 `.work/x86_64/header-declaration-inventory/candidate-cohort/report.json`,
 preserving unresolved-linkage observations rather than claiming ABI completion.
@@ -225,6 +231,20 @@ Source stays clean at `067b9a2bc`; dynamic logs are under
 `.work/tmp/lua-readable-proof.dynamic.*`. These are standalone consumer proofs,
 not three-product Lua admission or qualification of current main. They do not
 alter the running H0 source or its existing artifact.
+
+The four independent ABI collectors pass, preserving measurement-only and
+unresolved-header observations. Their assembler stops with `Rust-root import
+roster differs`; its raw `.work/tmp/abi-evidence.stderr` is retained without a
+publication or retry. The current tiny-calloc path already imports
+`mi_zalloc_aligned`, giving eight function imports plus `_mi_heap_default_key`.
+Retained ELF facts show its strong static C provider and private shared
+provider, absent from dynamic exports. `9dfcf56fb` and `39bb087d8` update the
+producer and selected installed-boundary contracts and add an independent
+retained-row regression. All 81 focused tests pass, including rejection of
+unknown imports; the positive case fails with the old seven-name contract.
+The running `b3a226cce` checkout and its failed ABI assembly remain unchanged.
+Three source-stable loader inventories are complete; their runtime flags
+remain false until the separate loader-family assessment succeeds.
 
 The addrconfig lane's musl scratch remains under its `.work/tmp`: automatic
 review denied its removal with "rm -f style commands are not permitted. Use
