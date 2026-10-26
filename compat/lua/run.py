@@ -2021,7 +2021,7 @@ def run_x86_static(args: argparse.Namespace) -> dict[str, object]:
         raise RunnerError("debug Lua requires an explicitly debug-built owned sysroot")
     oracle = require_pinned_x86_musl_compiler()
     modes = selected_static_modes(args.mode)
-    run_root = allocate_x86_static_dispatch_state(work_root)
+    run_root = allocate_native_run_root(work_root)
     report: dict[str, object] = {
         "schema_version": 2,
         "runner": "crabc-lua-native-x86-static-source-build" + ("-debug" if build_profile == "debug" else ""),
@@ -2089,25 +2089,25 @@ def run_x86_static(args: argparse.Namespace) -> dict[str, object]:
     return report
 
 
-def allocate_x86_static_dispatch_state(parent: Path = DEFAULT_X86_STATIC_WORK_ROOT) -> Path:
+def allocate_native_run_root(parent: Path) -> Path:
     """Allocate one physical native run root below ``.work``."""
 
     parent = native_work_root(parent)
-    state = Path(tempfile.mkdtemp(prefix="run-", dir=parent))
+    run_root = Path(tempfile.mkdtemp(prefix="run-", dir=parent))
     try:
-        descriptor = os.open(state, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+        descriptor = os.open(run_root, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
         try:
             os.fchmod(descriptor, stat.S_IMODE(os.fstat(descriptor).st_mode) | 0o055)
         finally:
             os.close(descriptor)
     except OSError as error:
-        raise RunnerError(f"native Lua result root is not host-traversable: {state}") from error
-    state = require_physical_directory(state, "native Lua static dispatcher invocation root")
+        raise RunnerError(f"native Lua run root is not host-traversable: {run_root}") from error
+    run_root = require_physical_directory(run_root, "native Lua run root")
     try:
-        state.relative_to(parent)
+        run_root.relative_to(parent)
     except ValueError as error:
-        raise RunnerError("native Lua static dispatcher invocation root escaped its parent") from error
-    return state
+        raise RunnerError("native Lua run root escaped its parent") from error
+    return run_root
 
 
 def publish_x86_static_dispatch_report(
@@ -2172,7 +2172,7 @@ def run_x86_static_dispatch(
     if latest_report is not None:
         latest_report = Path(os.path.abspath(latest_report))
     disable_core_dump_inheritance()
-    state = allocate_x86_static_dispatch_state(state_parent)
+    state = allocate_native_run_root(state_parent)
     report_path = state / "report.json"
     sysroot = state / "sysroot"
     source_identity = current_source_identity()

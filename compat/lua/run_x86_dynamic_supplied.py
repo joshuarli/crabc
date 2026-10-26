@@ -276,7 +276,7 @@ def run_supplied_dynamic(
     require(math.isfinite(timeout) and 0 < timeout <= 300,
             "supplied Lua timeout must be > 0 and <= 300")
     LUA.disable_core_dump_inheritance()
-    state = LUA.allocate_x86_static_dispatch_state(state_parent)
+    state = LUA.allocate_native_run_root(state_parent)
     report_path = state / "report.json"
     report: dict[str, object] = {
         "schema_version": 1,

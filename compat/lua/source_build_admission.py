@@ -345,7 +345,7 @@ def admit_supplied(static_report: Path, dynamic_report: Path) -> dict[str, objec
     validate_report_records(dynamic)
     cohort = dispatcher["cohort"]
     require(cohort["checkout"] == context["checkout"], "Lua consumers use different cohort checkouts")
-    state = LUA.allocate_x86_static_dispatch_state(state_parent / "dynamic")
+    state = LUA.allocate_native_run_root(state_parent / "dynamic")
     current, _validation = SUPPLIED.validate_cohort(
         checkout=Path(cohort["checkout"]), receipt=Path(cohort["receipt"]["path"]),
         installed=Path(cohort["roots"]["installed"]["path"]),

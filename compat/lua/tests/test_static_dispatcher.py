@@ -96,7 +96,7 @@ class NativeStaticDispatcherTests(unittest.TestCase):
         self.parent.chmod(0o2755)
         previous_umask = os.umask(0o077)
         try:
-            state = RUNNER.allocate_x86_static_dispatch_state(self.parent)
+            state = RUNNER.allocate_native_run_root(self.parent)
         finally:
             os.umask(previous_umask)
 

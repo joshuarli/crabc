@@ -1683,7 +1683,7 @@ def run_dynamic_lane(
     sysroot, wrapper, runtime, installed_manifest = owned_dynamic_sysroot(sysroot_path)
     if build_profile == "debug" and installed_manifest.get("build_profile") != "debug":
         raise LUA.RunnerError("debug Lua requires an explicitly debug-built owned sysroot")
-    lane = LUA.allocate_x86_static_dispatch_state(root)
+    lane = LUA.allocate_native_run_root(root)
     report: dict[str, object] = {
         "schema_version": 1,
         "runner": "crabc-lua-native-x86-dynamic-source-build" + ("-debug" if build_profile == "debug" else ""),
@@ -1796,7 +1796,7 @@ def run_dynamic_dispatch(
         raise LUA.RunnerError(
             f"native Lua dynamic dispatcher allocator backend must be one of {LUA.X86_ALLOCATOR_BACKENDS}")
     LUA.disable_core_dump_inheritance()
-    state = LUA.allocate_x86_static_dispatch_state(state_parent)
+    state = LUA.allocate_native_run_root(state_parent)
     report_path = state / "report.json"
     installed = state / "sysroot"
     package = state / "runtime.tar"

@@ -64,7 +64,7 @@ def supplied_products(args: argparse.Namespace, state: Path) -> tuple[dict, dict
 def run_supplied(args: argparse.Namespace) -> tuple[dict, Path]:
     """Run the unchanged complete static Lua workloads through all supplied roots."""
     LUA.disable_core_dump_inheritance()
-    state = LUA.allocate_x86_static_dispatch_state(args.work_root)
+    state = LUA.allocate_native_run_root(args.work_root)
     report_path = state / "report.json"
     report = {"schema_version": 2, "runner": "crabc-lua-native-x86-static-source-build",
               "passed": False, "result": "fail", "supplied": {"state_root": str(state)}, "products": {}}
@@ -120,7 +120,7 @@ def read_supplied(args: argparse.Namespace) -> tuple[dict, Path]:
         raise LUA.RunnerError("Lua supplied static report has not passed all three products")
     if report.get("consumer_source") != LUA.current_source_identity():
         raise LUA.RunnerError("Lua supplied static report uses stale consumer source")
-    state = LUA.allocate_x86_static_dispatch_state(args.work_root)
+    state = LUA.allocate_native_run_root(args.work_root)
     payload, roots, validation = supplied_products(args, state)
     if (report["supplied"].get("source") != payload["source"]
             or report["supplied"].get("preparation") != LUA.artifact_record(args.static_preparation)):
