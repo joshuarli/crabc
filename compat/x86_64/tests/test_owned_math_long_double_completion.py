@@ -19,6 +19,79 @@ MODULE = ROOT / "libc/src/c_abi/x86_64/math_long_double_completion.rs"
 ASSEMBLY = ROOT / "libc/src/c_abi/x86_64/math_long_double_completion_musl_x86_64.S"
 
 
+def simulated_feature_runner(root: Path) -> Path:
+    runner = root / "compat/x86_64/run_libc_math_long_double_completion.sh"
+    runner.parent.mkdir(parents=True)
+    fake_compiler = root / "tools/crabc-x86_64-musl-gcc"
+    fake_compiler.parent.mkdir(parents=True)
+    fake_compiler.write_text(f'''#!/bin/sh
+set -eu
+root='{root}'
+preprocessor=0
+for argument in "$@"; do
+    [ "$argument" != -E ] || preprocessor=1
+done
+if [ "$preprocessor" -eq 1 ]; then
+    for header in fenv.h float.h math.h stddef.h stdint.h features.h bits/alltypes.h; do
+        printf '#include "%s/include/%s"\\n' "$root" "$header" >&2
+    done
+    exit 0
+fi
+output=''
+while [ "$#" -gt 0 ]; do
+    if [ "$1" = -o ]; then
+        output="$2"
+        shift 2
+    else
+        shift
+    fi
+done
+cat > "$output" <<'SH'
+#!/bin/sh
+printf 'fixture records\\n'
+SH
+chmod +x "$output"
+''', encoding="utf-8")
+    fake_compiler.chmod(0o755)
+    original = FEATURE_RUNNER.read_text(encoding="utf-8")
+    runner_text = original.replace("/usr/local/bin/crabc-x86_64-musl-gcc", str(fake_compiler))
+    if runner_text == original:
+        raise AssertionError("feature runner does not use its pinned musl compiler")
+    runner.write_text(runner_text, encoding="utf-8")
+    runner.chmod(0o755)
+    fake_cargo = root / "tools/cargo"
+    fake_cargo.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    fake_cargo.chmod(0o755)
+    (runner.parent / "source_runtime_libc.sh").write_text('''build_source_runtime_libc() {
+    local output="$1"
+    shift
+    local retained_work=''
+    while [ "$#" -gt 0 ]; do
+        if [ "$1" = --retain-work ]; then
+            retained_work="$2"
+            shift 2
+        else
+            shift
+        fi
+    done
+    mkdir -p "$retained_work"
+    printf '{"reason":"simulated cargo invocation"}\\n' > "$retained_work/cargo.stdout.jsonl"
+    printf 'raw Cargo graph stderr\\n' > "$retained_work/cargo.stderr.log"
+    printf 'source-runtime libc build failed; evidence retained: %s\\n' "$retained_work" >&2
+    return 1
+}
+''', encoding="utf-8")
+    for path in (
+        runner.parent / "run_musl_oracle.sh",
+        runner.parent / "run_math_long_double_completion_header_abi.sh",
+    ):
+        path.write_text("exit 0\n", encoding="utf-8")
+    (runner.parent / "validate_libc_math_long_double_completion.py").write_text("pass\n", encoding="utf-8")
+    (runner.parent / "libc_math_long_double_completion_probe.c").write_text("", encoding="utf-8")
+    (root / "include").mkdir()
+    return runner
+
+
 class OwnedMathLongDoubleCompletionTests(unittest.TestCase):
     def test_runner_retention_output_requires_a_new_physical_work_directory(self) -> None:
         scratch_root = ROOT / ".work/x86_64/tmp"
@@ -33,17 +106,87 @@ class OwnedMathLongDoubleCompletionTests(unittest.TestCase):
             alias = parent / "alias"
             alias.symlink_to(target, target_is_directory=True)
 
-            for output in (outside, existing, alias, parent / "missing" / "child"):
-                with self.subTest(output=output):
-                    result = subprocess.run(
-                        ["bash", str(FEATURE_RUNNER), "--retain-output", str(output)], cwd=ROOT,
-                        env={"PATH": "/usr/bin:/bin", "BASH_ENV": ""},
-                        capture_output=True, text=True, check=False,
-                    )
-                    self.assertNotEqual(result.returncode, 0)
-                    self.assertEqual(result.stdout, "")
-                    self.assertIn("retained output", result.stderr)
+            tmp_root = ROOT / ".work/tmp"
+            tmp_root.mkdir(parents=True, exist_ok=True)
+            with tempfile.TemporaryDirectory(prefix="long-double-outside-profile.", dir=tmp_root) as outside_profile:
+                for output in (outside, existing, alias, parent / "missing" / "child",
+                               Path(outside_profile) / "child"):
+                    with self.subTest(output=output):
+                        result = subprocess.run(
+                            ["bash", str(FEATURE_RUNNER), "--retain-output", str(output)], cwd=ROOT,
+                            env={"PATH": "/usr/bin:/bin", "BASH_ENV": ""},
+                            capture_output=True, text=True, check=False,
+                        )
+                        self.assertNotEqual(result.returncode, 0)
+                        self.assertEqual(result.stdout, "")
+                        self.assertIn("retained output", result.stderr)
+                        self.assertNotIn("requires cargo", result.stderr)
+                self.assertFalse((Path(outside_profile) / "child").exists())
             self.assertEqual(set(parent.iterdir()), {existing, target, alias})
+
+    def test_default_failure_keeps_raw_build_graph_and_explicit_retention_keeps_its_path(self) -> None:
+        scratch_root = ROOT / ".work/x86_64/tmp"
+        scratch_root.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(prefix="long-double-default-failure.", dir=scratch_root) as temporary:
+            root = Path(temporary)
+            runner = simulated_feature_runner(root)
+            environment = {"PATH": f"{root}/tools:/usr/bin:/bin", "BASH_ENV": ""}
+            result = subprocess.run(["bash", str(runner)], cwd=root, env=environment,
+                                    capture_output=True, text=True, check=False)
+            self.assertNotEqual(result.returncode, 0)
+            retained = result.stderr.split("source-runtime libc build failed; evidence retained: ", 1)[1].splitlines()[0]
+            graph = Path(retained)
+            self.assertTrue(graph.is_dir())
+            self.assertEqual((graph / "cargo.stdout.jsonl").read_text(encoding="utf-8"),
+                             '{"reason":"simulated cargo invocation"}\n')
+            self.assertEqual((graph / "cargo.stderr.log").read_text(encoding="utf-8"),
+                             "raw Cargo graph stderr\n")
+            self.assertTrue(graph.parent.is_dir())
+            self.assertIn(str(graph), result.stderr)
+
+        with tempfile.TemporaryDirectory(prefix="long-double-explicit-failure.", dir=scratch_root) as temporary:
+            root = Path(temporary)
+            runner = simulated_feature_runner(root)
+            environment = {"PATH": f"{root}/tools:/usr/bin:/bin", "BASH_ENV": ""}
+            retained = root / ".work/x86_64/tmp/retained"
+            retained.parent.mkdir(parents=True)
+            result = subprocess.run(
+                ["bash", str(runner), "--retain-output", str(retained)], cwd=root, env=environment,
+                capture_output=True, text=True, check=False,
+            )
+            self.assertNotEqual(result.returncode, 0)
+            self.assertTrue(retained.is_dir())
+            self.assertEqual(
+                (retained / "source-runtime-baseline/cargo.stdout.jsonl").read_text(encoding="utf-8"),
+                '{"reason":"simulated cargo invocation"}\n',
+            )
+            self.assertEqual(
+                (retained / "source-runtime-baseline/cargo.stderr.log").read_text(encoding="utf-8"),
+                "raw Cargo graph stderr\n",
+            )
+
+    def test_default_scratch_cleanup_runs_after_success_and_skips_explicit_retention(self) -> None:
+        runner = FEATURE_RUNNER.read_text(encoding="utf-8")
+        start = runner.index("cleanup_successful_default_work() {")
+        end = runner.index("\n}\n", start) + 2
+        cleanup = runner[start:end]
+        passing = runner.rindex("PASS (%s records)")
+        cleanup_call = runner.rindex("cleanup_successful_default_work\n")
+        self.assertLess(passing, cleanup_call)
+        scratch_root = ROOT / ".work/x86_64/tmp"
+        with tempfile.TemporaryDirectory(prefix="long-double-cleanup.", dir=scratch_root) as temporary:
+            root = Path(temporary)
+            for name, retained_output, should_exist in (("default", "", False),
+                                                         ("retained", "explicit", True)):
+                work = root / name
+                work.mkdir()
+                script = cleanup + '\nwork_dir="$1"; retained_output="$2"; cleanup_successful_default_work\n'
+                result = subprocess.run(
+                    ["bash", "-c", script, "bash", str(work), retained_output],
+                    capture_output=True, text=True, check=False,
+                )
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual(work.exists(), should_exist)
 
     def test_runner_usage_lists_its_optional_retained_output(self) -> None:
         result = subprocess.run(["bash", str(FEATURE_RUNNER), "--unknown"], cwd=ROOT,

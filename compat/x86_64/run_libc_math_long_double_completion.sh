@@ -39,7 +39,13 @@ readonly AGGREGATE_CANDIDATE_FUNCTIONS=(
 	pow10 pow10f pow10l powl rint rintf rintl scalbnl
 )
 
-fail() { printf 'ERROR: x86 binary80 fdiml/exp10l: %s\n' "$*" >&2; exit 1; }
+fail() {
+	printf 'ERROR: x86 binary80 fdiml/exp10l: %s\n' "$*" >&2
+	if [ -n "${work_dir:-}" ] && [ -d "$work_dir" ]; then
+		printf 'work directory retained at %s\n' "$work_dir" >&2
+	fi
+	exit 1
+}
 require_tool() { command -v "$1" >/dev/null 2>&1 || fail "requires $1"; }
 usage() { printf 'usage: %s [--retain-output RETAINED_OUTPUT]\n' "$0" >&2; exit 2; }
 
@@ -60,8 +66,8 @@ import sys
 
 root = Path(sys.argv[1]).resolve(strict=True)
 candidate = Path(sys.argv[2])
-if any(part == ".." for part in candidate.parts) or not candidate.is_relative_to(root / ".work"):
-    raise SystemExit("retained output must be a new child of checkout .work")
+if any(part == ".." for part in candidate.parts) or not candidate.is_relative_to(root / ".work/x86_64"):
+    raise SystemExit("retained output must be a new child of checkout .work/x86_64")
 current = root
 for part in candidate.relative_to(root).parts[:-1]:
 	current = current / part
@@ -71,14 +77,13 @@ if candidate.exists() or candidate.is_symlink():
 	raise SystemExit("retained output already exists")
 PY
 	then
-		fail "retained output must be a new physical directory below checkout .work"
+		fail "retained output must be a new physical directory below checkout .work/x86_64"
 	fi
 	mkdir -- "$retained_output"
 	work_dir="$(cd -P -- "$retained_output" && pwd)"
 else
 	mkdir -p "$ROOT_DIR/.work/x86_64/tmp"
 	work_dir="$(mktemp -d "$ROOT_DIR/.work/x86_64/tmp/libc-math-long-double-completion.XXXXXX")"
-	trap 'rm -rf -- "$work_dir"' EXIT
 fi
 
 collect_global_surface() {
@@ -116,11 +121,11 @@ for tool in ar awk cargo cmp comm diff grep mkdir mktemp nm objdump readelf real
 done
 [ -x "$ORACLE_CC" ] || fail "missing pinned musl oracle compiler"
 if ! bash "$ROOT_DIR/compat/x86_64/run_musl_oracle.sh" >"$work_dir/musl-oracle.stdout" 2>"$work_dir/musl-oracle.stderr"; then
-	fail "pinned musl oracle preparation failed; raw output retained in $work_dir"
+	fail "pinned musl oracle preparation failed"
 fi
 if ! bash "$ROOT_DIR/compat/x86_64/run_math_long_double_completion_header_abi.sh" \
 	>"$work_dir/header-abi.stdout" 2>"$work_dir/header-abi.stderr"; then
-	fail "binary80 header ABI check failed; raw output retained in $work_dir"
+	fail "binary80 header ABI check failed"
 fi
 base_target="$work_dir/base-target"
 feature_target="$work_dir/feature-target"
@@ -179,7 +184,17 @@ run_recorded() {
 	shift 4
 	"$@" >"$stdout_path" 2>"$stderr_path" || status=$?
 	printf '%s\n' "$status" >"$status_path"
-	[ "$status" -eq 0 ] || fail "$label exited with ${status}; raw output retained in $work_dir"
+	[ "$status" -eq 0 ] || fail "$label exited with ${status}"
+}
+
+cleanup_successful_default_work() {
+	if [ -z "$retained_output" ]; then
+		if ! rm -rf -- "$work_dir"; then
+			printf 'ERROR: x86 binary80 fdiml/exp10l: successful scratch cleanup failed at %s\n' \
+				"$work_dir" >&2
+			exit 1
+		fi
+	fi
 }
 
 cd "$ROOT_DIR"
@@ -389,3 +404,4 @@ run_recorded "$work_dir/aggregate.stdout" "$work_dir/aggregate.stderr" "$work_di
 
 printf 'x86 binary80 fdiml/exp10l/pow10l: PASS (%s records)\n' \
 	"$(( $(wc -c < "$candidate_output") / 42 ))"
+cleanup_successful_default_work
