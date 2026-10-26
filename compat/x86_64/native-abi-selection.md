@@ -920,8 +920,9 @@ spellings. These spellings exist because Rust `export_name`/`no_mangle` bodies
 and global assembly labels cross module boundaries inside the single libc
 object. Each group lists exact names and the source files that define them. It
 selects `candidate-static` as `GLOBAL HIDDEN` and `candidate-shared` as the
-localized `.symtab` definition, `LOCAL HIDDEN`. The four NOTYPE code labels
-(`__memcpy_fwd` and the three cancellable-syscall window labels) use NOTYPE.
+localized `.symtab` definition, `LOCAL HIDDEN`. The three cancellable-syscall
+window labels use NOTYPE. `__memcpy_fwd` is a hidden, sized function used by
+forward-overlap `memmove`.
 The static-only `__crabc_x86_fixed_graph_dlfcn_record` trampoline has no shared
 placement. The source-faithful `weak_alias(__stack_chk_fail,
 __stack_chk_fail_local)` companion keeps its `WEAK HIDDEN` archive binding. The musl-named bodies among them (`__pthread_*`, `__stpcpy`,

@@ -945,7 +945,7 @@ reason = "Hidden string and memory bodies behind their public weak aliases, as i
 static_metadata_rule = "explicit"
 
 [[owner_groups]]
-id = "private-memory-forward-copy-label"
+id = "private-memory-forward-copy-function"
 selector = "explicit"
 disposition = "private-provider"
 owner = "x86-string-memory-private-bodies"
@@ -954,10 +954,10 @@ artifacts = ["candidate-static", "candidate-shared"]
 sources = ["libc/src/c_abi/x86_64/memory.rs"]
 members = ["__memcpy_fwd"]
 members_file = ""
-expected_type = ""
+expected_type = "FUNC"
 delegated_members = []
-placement_metadata = {"candidate-static" = {"type" = "NOTYPE", "binding" = "GLOBAL", "visibility" = "HIDDEN"}, "candidate-shared" = {"type" = "NOTYPE", "binding" = "LOCAL", "visibility" = "HIDDEN"}}
-reason = "Hidden NOTYPE same-address label for the memcpy body, used by forward-copy callers as in pinned musl memcpy.s. It is not an installed C identity."
+placement_metadata = {"candidate-static" = {"type" = "FUNC", "binding" = "GLOBAL", "visibility" = "HIDDEN"}, "candidate-shared" = {"type" = "FUNC", "binding" = "LOCAL", "visibility" = "HIDDEN"}}
+reason = "Hidden forward-copy function reached by forward-overlap memmove; its selected body remains private."
 static_metadata_rule = "explicit"
 
 [[owner_groups]]
