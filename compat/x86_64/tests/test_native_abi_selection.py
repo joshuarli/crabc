@@ -353,6 +353,32 @@ class RuntimePrivateFacadeAttachmentTests(unittest.TestCase):
                 'accounting': {'disposition': 'private-provider', 'owner': selection.RUNTIME_PRIVATE_FACADE_OWNER,
                                'scope': 'candidate-shared'},
             })
+        null_row = symbol('', kind='NOTYPE', binding='LOCAL', section='UND', size=0)
+        null_row.update(name=None, raw_name=None)
+        observations = [
+            ('candidate-shared', '.dynsym', 'unnamed', null_row),
+            ('candidate-shared', '.symtab', 'unnamed', copy.deepcopy(null_row)),
+            ('candidate-shared', '.symtab', 'local-definition', symbol(
+                '.text', kind='SECTION', binding='LOCAL', section='1', size=0)),
+            ('candidate-shared', '.symtab', 'local-definition', symbol(
+                'allocator.c', kind='FILE', binding='LOCAL', section='ABS', size=0)),
+            ('candidate-shared', '.symtab', 'definition', symbol(
+                'unrelated_function', section='7')),
+            ('candidate-static', '.symtab', 'unnamed', copy.deepcopy(null_row)),
+            ('candidate-static', '.symtab', 'local-definition', symbol(
+                '.text', kind='SECTION', binding='LOCAL', section='1', size=0)),
+            ('candidate-static', '.symtab', 'local-definition', symbol(
+                'allocator.c', kind='FILE', binding='LOCAL', section='ABS', size=0)),
+            ('candidate-static', '.symtab', 'definition', symbol(
+                'unrelated_function', section='7')),
+        ]
+        for index, (artifact, table, role, row) in enumerate(observations, start=3):
+            occurrences.append({
+                'index': index, 'artifact_key': artifact, 'table': table, 'role': role,
+                'row': row,
+                'accounting': {'disposition': 'unowned-observation', 'owner': 'ELF inventory',
+                               'scope': artifact},
+            })
         return {
             'identities': [record],
             'placement_joins': [{
@@ -395,9 +421,11 @@ class RuntimePrivateFacadeAttachmentTests(unittest.TestCase):
             lambda value: value['occurrences'][1]['row'].__setitem__('size_bytes', 18),
             lambda value: value['occurrences'][1]['row'].__setitem__('value', '0000000000000810'),
             lambda value: value['occurrences'][1]['row'].__setitem__('section_index', '2'),
+            lambda value: value['occurrences'][0]['row'].__setitem__('version', 'FOREIGN_1'),
             zero_shared_sizes,
             lambda value: value['occurrences'].append({
-                'index': 3, 'artifact_key': 'candidate-static', 'table': 'member', 'role': 'definition',
+                'index': max(row['index'] for row in value['occurrences']) + 1,
+                'artifact_key': 'candidate-static', 'table': 'member', 'role': 'definition',
                 'row': symbol('__crabc_runtime_v1', size=8),
                 'accounting': {'disposition': 'private-provider', 'owner': selection.RUNTIME_PRIVATE_FACADE_OWNER,
                                'scope': 'candidate-static'},

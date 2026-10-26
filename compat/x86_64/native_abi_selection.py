@@ -9882,7 +9882,10 @@ def attach_runtime_private_facades(accounting: Mapping[str, Any],
             'RuntimeV1 shared getter placement differs')
     shared_rows = [row for row in occurrences.values()
                    if row.get('artifact_key') == 'candidate-shared'
-                   and identity_key(row_identity(row['row'])) == key and row.get('role') == 'definition']
+                   and row.get('role') == 'definition'
+                   and isinstance(row.get('row'), Mapping)
+                   and row['row'].get('name') == runtime_facades.PRIVATE_RUNTIME
+                   and identity_key(row_identity(row['row'])) == key]
     by_table = {row.get('table'): row for row in shared_rows}
     require(len(shared_rows) == 2 and len(by_table) == 2 and set(by_table) == {'.dynsym', '.symtab'}
             and type(placement.get('occurrence_indices')) is list
@@ -9914,8 +9917,10 @@ def attach_runtime_private_facades(accounting: Mapping[str, Any],
             'RuntimeV1 shared getter tables disagree on address, section, or positive size')
     static_definitions = [row for row in occurrences.values()
                           if row.get('artifact_key') == 'candidate-static'
-                          and identity_key(row_identity(row['row'])) == key
-                          and row.get('role') in {'definition', 'local-definition'}]
+                          and row.get('role') in {'definition', 'local-definition'}
+                          and isinstance(row.get('row'), Mapping)
+                          and row['row'].get('name') == runtime_facades.PRIVATE_RUNTIME
+                          and identity_key(row_identity(row['row'])) == key]
     require(not static_definitions, 'RuntimeV1 getter unexpectedly has a static provider')
     indices = [by_table[table]['index'] for table in ('.dynsym', '.symtab')]
     require(set(placement['occurrence_indices']) == set(indices),
