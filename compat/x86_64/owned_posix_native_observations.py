@@ -1,11 +1,13 @@
-"""Read the five finite native POSIX component results without executing tools.
+"""Read finite native POSIX component results without executing workloads.
 
 The source-bound component runner owns compiler, header, ELF and sealed-link
 validation. This reader independently checks its canonical source/object/product
 bindings and every required raw observation. The aggregate owner additionally
 seals the complete immutable leaf tree and validates the supplied product.
 Recorded absolute paths are compared through one explicit checkout mount; no
-receipt is rewritten and no compiler or target executable is launched.
+receipt is rewritten and no compiler, linker, oracle or target executable is
+launched. Bootstrap link replay runs binary-metadata readers through the shared
+link validator.
 """
 from __future__ import annotations
 
@@ -25,6 +27,9 @@ import owned_differential_evidence as differential
 import owned_signal_process_evidence as signals
 import owned_pthread_stress_source as stress_source
 import owned_os_test_aio_suspend_source as aio_suspend_source
+import owned_posix_product_evidence as product_evidence
+import owned_dynamic_qualification as dynamic_qualification
+import owned_crypt_runtime_evidence as payload_evidence
 
 ROOT = Path(__file__).resolve().parents[2]
 MODES = ('pie-kernel', 'pie-direct', 'non-pie-kernel', 'non-pie-direct')
@@ -35,6 +40,29 @@ LIBC_TEST_TREE = '4f7a5373652c6534b0fbafb58fe3fed1489f3b3b'
 OS_TEST_REVISION = '5e9456d510612f83b6ec8b1a0c06d6b1303a2512'
 OS_TEST_TREE = '68fd4eef88d0e52b55c7cc2a73659b1e439d33fe'
 OS_TEST_SUITES = ('include', 'namespace', 'basic', 'io', 'limits', 'malloc', 'process', 'pty', 'signal', 'stdio')
+BOOTSTRAP_SOURCE = ROOT / 'compat/x86_64/libc_bootstrap_primitives_probe.c'
+BOOTSTRAP_JUMP_SOURCE = ROOT / 'libc/src/c_abi/x86_64/setjmp.rs'
+BOOTSTRAP_SOURCE_MOUNT = '/workspace'
+BOOTSTRAP_ORACLE_COMPILER = '/usr/local/bin/crabc-x86_64-musl-gcc'
+BOOTSTRAP_HEADERS = (
+    'errno.h', 'fenv.h', 'setjmp.h', 'bits/setjmp.h', 'features.h', 'signal.h',
+    'bits/alltypes.h', 'bits/signal.h', 'string.h', 'strings.h', 'sys/mman.h',
+    'sys/syscall.h', 'bits/syscall.h',
+)
+BOOTSTRAP_LINKAGES = {
+    'static': ('static', 'static.receipt.json', 'static'),
+    'static-pie': ('static-pie', 'static-pie.receipt.json', 'static-pie'),
+    'dynamic-pie': ('pie', 'dynamic-pie.crabc-link.json', 'dynamic-pie'),
+    'dynamic-non-pie': ('non-pie', 'dynamic-non-pie.crabc-link.json', 'dynamic-non-pie'),
+}
+BOOTSTRAP_RUNS = (
+    'run-oracle', 'run-static', 'run-static-pie', 'run-dynamic-pie-kernel',
+    'run-dynamic-pie-direct', 'run-dynamic-non-pie-kernel', 'run-dynamic-non-pie-direct',
+)
+BOOTSTRAP_COMMANDS = (
+    'compile-candidate', 'compile-oracle', 'link-static', 'link-static-pie',
+    'link-dynamic-pie', 'link-dynamic-non-pie', *BOOTSTRAP_RUNS,
+)
 
 
 class NativeObservationError(ValueError):
@@ -176,6 +204,252 @@ class Reader:
                 'product': {'path': self.product.relative_to(self.root).as_posix(),
                             'manifest': self.identity(self.manifest, source=True)},
                 'objects': objects, 'observations': observations, **extra}
+
+
+def _bootstrap_product_snapshot(reader, product, kind, source_sha256):
+    validator = (product_evidence._validate_static_product if kind == 'static'
+                 else product_evidence._validate_dynamic_product)
+    product_format = (product_evidence.STATIC_PRODUCT_FORMAT if kind == 'static'
+                     else product_evidence.DYNAMIC_PRODUCT_FORMAT)
+    manifest_path, files = validator(product)
+    _, manifest, _ = product_evidence._product_manifest(product, kind, product_format)
+    require(manifest.get('source_sha256') == source_sha256,
+            'bootstrap ' + kind + ' product source differs from the current checkout')
+    return {
+        'root': product.relative_to(reader.root).as_posix(),
+        'manifest': reader.identity(manifest_path, source=True),
+        'source_sha256': source_sha256,
+        'files': dict(sorted(files.items())),
+    }
+
+
+def _bootstrap_expected_commands(reader, static_product, dynamic_product):
+    leaf = reader.leaf
+    source = reader.recorded(BOOTSTRAP_SOURCE)
+    object_path = leaf / 'workload.o'
+    oracle = leaf / 'oracle'
+    output_paths = {
+        'static': leaf / 'static', 'static-pie': leaf / 'static-pie',
+        'dynamic-pie': leaf / 'dynamic-pie', 'dynamic-non-pie': leaf / 'dynamic-non-pie',
+    }
+    env = ['/usr/bin/env', '-i', 'PATH=/usr/bin:/bin',
+           'TMPDIR=' + reader.recorded(leaf.parent), '/usr/bin/timeout', '60s']
+    runtime_env = ['/usr/bin/env', '-i', 'PATH=/usr/bin:/bin', '/usr/bin/timeout', '10s']
+    dynamic_driver = reader.recorded(dynamic_product / 'bin/crabc-cc-dynamic')
+    static_driver = reader.recorded(static_product / 'bin/crabc-cc')
+    mounted_object = reader.recorded(object_path)
+    mounted_oracle = reader.recorded(oracle)
+    commands = {
+        'compile-candidate': [*env, dynamic_driver, '--dynamic-pie', '-std=c11', '-D_GNU_SOURCE',
+            '-fno-builtin', '-fno-stack-protector', '-H', '-c', source, '-o', mounted_object],
+        'compile-oracle': [*env, BOOTSTRAP_ORACLE_COMPILER, '-std=c11', '-D_GNU_SOURCE',
+            '-fno-builtin', '-fno-stack-protector', source, '-o', mounted_oracle],
+        'link-static': [*env, static_driver, '-static', '--link-receipt', 'static.receipt.json',
+            mounted_object, '-o', reader.recorded(output_paths['static'])],
+        'link-static-pie': [*env, static_driver, '-static-pie', '--link-receipt', 'static-pie.receipt.json',
+            mounted_object, '-o', reader.recorded(output_paths['static-pie'])],
+        'link-dynamic-pie': [*env, dynamic_driver, '--dynamic-pie', mounted_object, '-o',
+            reader.recorded(output_paths['dynamic-pie'])],
+        'link-dynamic-non-pie': [*env, dynamic_driver, '--dynamic-non-pie', mounted_object, '-o',
+            reader.recorded(output_paths['dynamic-non-pie'])],
+        'run-oracle': [*runtime_env, mounted_oracle],
+        'run-static': [*runtime_env, reader.recorded(output_paths['static'])],
+        'run-static-pie': [*runtime_env, reader.recorded(output_paths['static-pie'])],
+    }
+    for mode in ('dynamic-pie', 'dynamic-non-pie'):
+        execution_root = leaf / (mode + '-root')
+        for route in ('kernel', 'direct'):
+            argv = [*runtime_env, '/usr/sbin/chroot', reader.recorded(execution_root)]
+            if route == 'direct':
+                argv.extend(('/lib/ld-crabc-x86_64.so.1', '/consumer'))
+            else:
+                argv.append('/consumer')
+            commands['run-' + mode + '-' + route] = argv
+    return commands, output_paths
+
+
+def _bootstrap_top_level_snapshot(reader):
+    result = {}
+    for path in reader.leaf.iterdir():
+        if path.is_file():
+            result[path.name] = {'sha256': digest(path), 'mode': path.stat().st_mode}
+    return result
+
+
+def _bootstrap_exact_roster(reader):
+    files = {
+        'workload.o', 'oracle', 'static', 'static-pie', 'dynamic-pie', 'dynamic-non-pie',
+        'static.receipt.json', 'static-pie.receipt.json',
+        'static.receipt.map', 'static.receipt.trace',
+        'static-pie.receipt.map', 'static-pie.receipt.trace',
+        'dynamic-pie.crabc-link.json', 'dynamic-non-pie.crabc-link.json',
+        'dynamic-pie-payload.json', 'dynamic-non-pie-payload.json',
+    }
+    files.update(label + '.command.json' for label in BOOTSTRAP_COMMANDS)
+    files.update(label + '.' + stream for label in BOOTSTRAP_COMMANDS
+                 for stream in ('status', 'stdout', 'stderr'))
+    directories = {'dynamic-pie-root', 'dynamic-non-pie-root'}
+    entries = list(reader.leaf.iterdir())
+    observed_files = {path.name for path in entries if path.is_file()}
+    observed_directories = {path.name for path in entries if path.is_dir()}
+    require(len(entries) == len(observed_files) + len(observed_directories)
+            and observed_files == files and observed_directories == directories,
+            'bootstrap retained work roster differs')
+    for name in files:
+        physical(reader.leaf / name)
+    for name in directories:
+        physical(reader.leaf / name, directory=True)
+
+
+def _bootstrap_command(reader, label, argv, output_path):
+    output = None if output_path is None else {
+        'path': reader.recorded(output_path), 'sha256': digest(output_path),
+    }
+    same(read_json(reader.leaf / (label + '.command.json')),
+         {'argv': argv, 'cwd': reader.recorded(reader.leaf), 'status': 0, 'output': output},
+         'bootstrap ' + label + ' command and output')
+    data, identities = reader.raw(label)
+    return {'argv': argv, 'cwd': reader.recorded(reader.leaf), 'output': output,
+            'streams': identities}, data, identities
+
+
+def _bootstrap_payload(reader, dynamic_product, mode, executable):
+    execution_root = reader.leaf / (mode + '-root')
+    copied_consumer = execution_root / 'consumer'
+    record_path = reader.leaf / (mode + '-payload.json')
+    try:
+        record = payload_evidence.audit_execution_payload(
+            dynamic_product, execution_root, executable, copied_consumer, record_path,
+        )
+    except payload_evidence.CryptRuntimeEvidenceError as error:
+        raise NativeObservationError('bootstrap ' + mode + ' payload differs: ' + str(error)) from error
+    return record
+
+
+def collect_bootstrap_primitives(leaf_root, *, static_product, dynamic_product):
+    """Reconstruct the installed bootstrap jump and memory evidence read-only.
+
+    The selected source and checkout are fixed by this reader. Both installed
+    products must carry the current source digest, and their sealed links are
+    revalidated with the shared ELF metadata reader. The retained work is never
+    rewritten; no oracle, compiler, linker, or candidate executable is run.
+    Invoke it under the pinned ``/workspace`` mount used to record copied
+    payload paths.
+    """
+    reader = Reader(leaf_root, BOOTSTRAP_SOURCE_MOUNT, dynamic_product, ROOT)
+    source = physical(BOOTSTRAP_SOURCE)
+    static = physical(static_product, directory=True)
+    require(static.is_relative_to(ROOT / '.work') and static != ROOT / '.work',
+            'bootstrap static product must be a physical checkout .work child')
+    require(static != reader.product and not static.is_relative_to(reader.leaf)
+            and not reader.product.is_relative_to(static),
+            'bootstrap static and dynamic products must be separate from evidence and each other')
+    _bootstrap_exact_roster(reader)
+    try:
+        source_sha256 = dynamic_qualification.source_digest()
+        source_identity = reader.identity(source, source=True)
+        jump_source_identity = reader.identity(physical(BOOTSTRAP_JUMP_SOURCE), source=True)
+        products_before = {
+            'static': _bootstrap_product_snapshot(reader, static, 'static', source_sha256),
+            'dynamic': _bootstrap_product_snapshot(reader, reader.product, 'dynamic', source_sha256),
+        }
+        commands, outputs = _bootstrap_expected_commands(reader, static, reader.product)
+        top_level_before = _bootstrap_top_level_snapshot(reader)
+        payload_before = {
+            mode: _bootstrap_payload(reader, reader.product, mode, outputs[mode])
+            for mode in ('dynamic-pie', 'dynamic-non-pie')
+        }
+
+        command_records, raw_commands = {}, {}
+        for label in BOOTSTRAP_COMMANDS:
+            output = (outputs['static'] if label == 'link-static' else
+                      outputs['static-pie'] if label == 'link-static-pie' else
+                      outputs['dynamic-pie'] if label == 'link-dynamic-pie' else
+                      outputs['dynamic-non-pie'] if label == 'link-dynamic-non-pie' else
+                      reader.leaf / 'workload.o' if label == 'compile-candidate' else
+                      reader.leaf / 'oracle' if label == 'compile-oracle' else None)
+            command_records[label], raw_commands[label], _ = _bootstrap_command(
+                reader, label, commands[label], output,
+            )
+
+        header_trace = raw_commands['compile-candidate']['stderr']
+        for header in BOOTSTRAP_HEADERS:
+            expected = reader.recorded(reader.product / 'usr/include' / header).encode()
+            require(expected in header_trace, 'bootstrap compile did not use installed header: ' + header)
+        translation_flags = translation_contract.hosted_translation_flags(reader.product)
+
+        links = {}
+        for mode, (linkage, receipt_name, executable_name) in BOOTSTRAP_LINKAGES.items():
+            executable = reader.leaf / executable_name
+            receipt = reader.leaf / receipt_name
+            product = static if mode.startswith('static') else reader.product
+            manifest_path = product_evidence._product_manifest(
+                product, 'static' if mode.startswith('static') else 'dynamic',
+                product_evidence.STATIC_PRODUCT_FORMAT if mode.startswith('static')
+                else product_evidence.DYNAMIC_PRODUCT_FORMAT,
+            )[0]
+            expected_link = {
+                'linkage': linkage, 'product': str(product),
+                'product_format': (product_evidence.STATIC_PRODUCT_FORMAT if mode.startswith('static')
+                                   else product_evidence.DYNAMIC_PRODUCT_FORMAT),
+                'product_manifest_sha256': digest(manifest_path),
+                'workload_sha256': digest(reader.leaf / 'workload.o'),
+                'executable_sha256': digest(executable), 'receipt_sha256': digest(receipt),
+            }
+            observed_link = product_evidence.validate_link(
+                product, reader.leaf / 'workload.o', executable, receipt, linkage,
+            )
+            same(observed_link, expected_link, 'bootstrap ' + mode + ' sealed link')
+            links[mode] = observed_link
+
+        oracle_data = raw_commands['run-oracle']
+        observations = {}
+        for mode in BOOTSTRAP_RUNS[1:]:
+            candidate_data = raw_commands[mode]
+            require(candidate_data == oracle_data, 'bootstrap raw streams differ: ' + mode)
+            observations[mode.removeprefix('run-')] = {
+                'reference': command_records['run-oracle']['streams'],
+                'candidate': command_records[mode]['streams'],
+            }
+        payload_after = {
+            mode: _bootstrap_payload(reader, reader.product, mode, outputs[mode])
+            for mode in ('dynamic-pie', 'dynamic-non-pie')
+        }
+        same(payload_after, payload_before, 'bootstrap copied dynamic payload during replay')
+        products_after = {
+            'static': _bootstrap_product_snapshot(reader, static, 'static', source_sha256),
+            'dynamic': _bootstrap_product_snapshot(reader, reader.product, 'dynamic', source_sha256),
+        }
+        same(products_after, products_before, 'bootstrap selected products during replay')
+        same(dynamic_qualification.source_digest(), source_sha256, 'bootstrap checkout source during replay')
+        same(reader.identity(source, source=True), source_identity, 'bootstrap source during replay')
+        same(reader.identity(BOOTSTRAP_JUMP_SOURCE, source=True), jump_source_identity,
+             'bootstrap jump-tail owner source during replay')
+        same(_bootstrap_top_level_snapshot(reader), top_level_before,
+             'bootstrap retained command and raw evidence during replay')
+        return {
+            'component': 'bootstrap-primitives',
+            'source': source_identity,
+            'source_owners': {'__sigsetjmp_tail': jump_source_identity},
+            'object': reader.identity(reader.leaf / 'workload.o'),
+            'products': products_before,
+            'tools': {
+                'oracle_compiler': BOOTSTRAP_ORACLE_COMPILER,
+                'static_driver': reader.identity(static / 'bin/crabc-cc', source=True),
+                'dynamic_driver': reader.identity(reader.product / 'bin/crabc-cc-dynamic', source=True),
+                'environment': '/usr/bin/env', 'timeout': '/usr/bin/timeout', 'chroot': '/usr/sbin/chroot',
+            },
+            'translation_flags': list(translation_flags),
+            'commands': command_records,
+            'links': links,
+            'observations': observations,
+            'payloads': {'before': payload_before, 'after': payload_after},
+            'qualification': {'status': 'passed', 'raw_passed': True, 'dispositions': []},
+        }
+    except NativeObservationError:
+        raise
+    except (KeyError, TypeError, IndexError, OSError, RuntimeError, ImportError) as error:
+        raise NativeObservationError('incomplete or malformed bootstrap primitives evidence: ' + str(error)) from error
 
 
 def exact_files(directory, expected, description):

@@ -1,6 +1,7 @@
 """Finite native component evidence, with independent physical raw fixtures."""
 import copy
 import hashlib
+import importlib.util
 import json
 from pathlib import Path
 import shutil
@@ -19,6 +20,13 @@ import owned_differential_evidence as differential
 import owned_signal_process_evidence as signals
 import owned_pthread_stress_source as profile
 import owned_os_test_aio_suspend_source as aio_suspend_source
+import owned_dynamic_qualification as dynamic_qualification
+import owned_crypt_runtime_evidence as payload_evidence
+
+PRODUCT_FIXTURE_SPEC = importlib.util.spec_from_file_location(
+    'owned_posix_product_evidence_fixtures', HERE / 'tests/test_owned_posix_product_evidence.py')
+PRODUCT_FIXTURE = importlib.util.module_from_spec(PRODUCT_FIXTURE_SPEC)
+PRODUCT_FIXTURE_SPEC.loader.exec_module(PRODUCT_FIXTURE)
 
 MODES = ('pie-kernel', 'pie-direct', 'non-pie-kernel', 'non-pie-direct')
 
@@ -72,6 +80,164 @@ class NativeObservationsTests(unittest.TestCase):
     def collect(self, component):
         return native.collect(component, self.leaf, source_mount=self.mount,
                               dynamic_product=self.product, root=self.root)
+
+    def bootstrap_recorded(self, path):
+        return self.mount + '/' + path.relative_to(ROOT).as_posix()
+
+    def bootstrap_fixture(self):
+        self.bootstrap_fixture_count = getattr(self, 'bootstrap_fixture_count', 0) + 1
+        suffix = str(self.bootstrap_fixture_count)
+        leaf = self.root / ('.work/bootstrap-' + suffix)
+        products = self.root / ('.work/bootstrap-products-' + suffix)
+        leaf.mkdir(parents=True)
+        products.mkdir(parents=True)
+        product_fixture = PRODUCT_FIXTURE.OwnedPosixProductEvidenceTests(
+            'test_accepts_each_sealed_linkage_and_returns_bound_identity')
+        product_fixture.root = products
+        product_fixture.linker = product_fixture.put('tools/ld.lld', b'sealed linker bytes\n')
+        product_fixture.linker.chmod(0o755)
+        product_fixture.static = product_fixture.install_static()
+        product_fixture.dynamic = product_fixture.install_dynamic()
+        source_sha256 = dynamic_qualification.source_digest()
+        self.bootstrap_source_sha256 = source_sha256
+        self.bootstrap_leaf = leaf
+        self.bootstrap_product_fixture = product_fixture
+        self.bootstrap_static = product_fixture.static
+        self.bootstrap_dynamic = product_fixture.dynamic
+        static = product_fixture.static
+        headers = ('errno.h', 'fenv.h', 'setjmp.h', 'bits/setjmp.h', 'features.h', 'signal.h',
+                   'bits/alltypes.h', 'bits/signal.h', 'string.h', 'strings.h', 'sys/mman.h',
+                   'sys/syscall.h', 'bits/syscall.h')
+        dynamic = product_fixture.dynamic
+        for name in headers:
+            product_fixture.put(str((dynamic / 'usr/include' / name).relative_to(product_fixture.root)),
+                                ('installed header ' + name + '\n').encode())
+        product_fixture.put('dynamic-product/share/crabc/crabc_cc_static.py',
+                            b"HOSTED_TRANSLATION_FLAGS = ('-fno-stack-protector',)\n")
+        product_fixture.refresh_dynamic_manifest()
+        dynamic_manifest_path = dynamic / 'share/crabc/manifest.json'
+        dynamic_manifest = json.loads(dynamic_manifest_path.read_text())
+        dynamic_manifest['source_sha256'] = source_sha256
+        product_fixture.write_json(dynamic_manifest_path, dynamic_manifest)
+        static_manifest_path = product_fixture.static / 'share/crabc/manifest.json'
+        static_manifest = json.loads(static_manifest_path.read_text())
+        static_manifest['source_sha256'] = source_sha256
+        product_fixture.write_json(static_manifest_path, static_manifest)
+
+        object_path = self.put(leaf / 'workload.o', b'bootstrap-object')
+        oracle = self.put(leaf / 'oracle', b'musl-oracle')
+        oracle.chmod(0o755)
+        product_fixture.workload = object_path
+        product_fixture.root = leaf
+        binaries = {}
+        for mode in ('static', 'static-pie', 'dynamic-pie', 'dynamic-non-pie'):
+            linkage = mode if mode in ('static', 'static-pie') else mode.removeprefix('dynamic-')
+            executable = self.put(leaf / mode, PRODUCT_FIXTURE.sealed_elf(linkage))
+            executable.chmod(0o755)
+            product_fixture.executable = executable
+            if mode.startswith('static'):
+                receipt = product_fixture.static_receipt(linkage)
+            else:
+                receipt = product_fixture.dynamic_receipt(linkage)
+                receipt.rename(leaf / (mode + '.crabc-link.json'))
+                receipt = leaf / (mode + '.crabc-link.json')
+            product = product_fixture.static if mode.startswith('static') else dynamic
+            binaries[mode] = (executable, receipt, linkage, product)
+
+        for mode in ('dynamic-pie', 'dynamic-non-pie'):
+            executable, _, _, _ = binaries[mode]
+            execution_root = leaf / (mode + '-root')
+            shutil.copytree(dynamic, execution_root, symlinks=True)
+            consumer = self.put(execution_root / 'consumer', executable.read_bytes())
+            consumer.chmod(0o755)
+            record_path = leaf / (mode + '-payload.json')
+            payload_evidence.record_execution_payload(dynamic, execution_root, executable, consumer, record_path)
+
+        mount_work = self.bootstrap_recorded(leaf)
+        mount_parent = self.bootstrap_recorded(leaf.parent)
+        source = self.mount + '/compat/x86_64/libc_bootstrap_primitives_probe.c'
+        object_record = self.bootstrap_recorded(object_path)
+        oracle_record = self.bootstrap_recorded(oracle)
+        dynamic_driver = self.bootstrap_recorded(dynamic / 'bin/crabc-cc-dynamic')
+        static_driver = self.bootstrap_recorded(static / 'bin/crabc-cc')
+        oracle_prefix = ['/usr/bin/env', '-i', 'PATH=/usr/bin:/bin', 'TMPDIR=' + mount_parent,
+                         '/usr/bin/timeout', '60s']
+        commands = {
+            'compile-candidate': (oracle_prefix + [dynamic_driver,
+                '--dynamic-pie', '-std=c11', '-D_GNU_SOURCE', '-fno-builtin', '-fno-stack-protector',
+                '-H', '-c', source, '-o', object_record], object_path),
+            'compile-oracle': (oracle_prefix + ['/usr/local/bin/crabc-x86_64-musl-gcc', '-std=c11',
+                '-D_GNU_SOURCE', '-fno-builtin', '-fno-stack-protector', source, '-o', oracle_record], oracle),
+            'link-static': (oracle_prefix + [static_driver, '-static', '--link-receipt', 'static.receipt.json',
+                object_record, '-o', self.bootstrap_recorded(binaries['static'][0])], binaries['static'][0]),
+            'link-static-pie': (oracle_prefix + [static_driver, '-static-pie', '--link-receipt',
+                'static-pie.receipt.json', object_record, '-o', self.bootstrap_recorded(binaries['static-pie'][0])],
+                binaries['static-pie'][0]),
+            'link-dynamic-pie': (oracle_prefix + [dynamic_driver, '--dynamic-pie', object_record, '-o',
+                self.bootstrap_recorded(binaries['dynamic-pie'][0])], binaries['dynamic-pie'][0]),
+            'link-dynamic-non-pie': (oracle_prefix + [dynamic_driver, '--dynamic-non-pie', object_record,
+                '-o', self.bootstrap_recorded(binaries['dynamic-non-pie'][0])], binaries['dynamic-non-pie'][0]),
+        }
+        env_prefix = ['/usr/bin/env', '-i', 'PATH=/usr/bin:/bin', '/usr/bin/timeout', '10s']
+        commands.update({
+            'run-oracle': (env_prefix + [oracle_record], None),
+            'run-static': (env_prefix + [self.bootstrap_recorded(binaries['static'][0])], None),
+            'run-static-pie': (env_prefix + [self.bootstrap_recorded(binaries['static-pie'][0])], None),
+        })
+        for mode in ('dynamic-pie', 'dynamic-non-pie'):
+            root_path = leaf / (mode + '-root')
+            for route in ('kernel', 'direct'):
+                argv = env_prefix + ['/usr/sbin/chroot', self.bootstrap_recorded(root_path)]
+                if route == 'direct':
+                    argv.extend(('/lib/ld-crabc-x86_64.so.1', '/consumer'))
+                else:
+                    argv.append('/consumer')
+                commands[f'run-{mode}-{route}'] = (argv, None)
+        headers_trace = b''.join(b'. ' + self.bootstrap_recorded(dynamic / 'usr/include' / name).encode() + b'\n'
+                                 for name in headers)
+        for label, (argv, output) in commands.items():
+            stdout = b''
+            stderr = headers_trace if label == 'compile-candidate' else b''
+            self.put(leaf / (label + '.stdout'), stdout)
+            self.put(leaf / (label + '.stderr'), stderr)
+            self.put(leaf / (label + '.status'), b'0\n')
+            self.put(leaf / (label + '.command.json'), {
+                'argv': argv, 'cwd': mount_work, 'status': 0,
+                'output': None if output is None else {
+                    'path': self.bootstrap_recorded(output), 'sha256': hashlib.sha256(output.read_bytes()).hexdigest()},
+            })
+
+    def collect_bootstrap(self, link_validator=None, source_digests=None):
+        source_patch = (patch.object(native.dynamic_qualification, 'source_digest',
+                                     return_value=self.bootstrap_source_sha256)
+                        if source_digests is None else
+                        patch.object(native.dynamic_qualification, 'source_digest', side_effect=source_digests))
+        def readelf(path):
+            linkage = {
+                'static': 'static', 'static-pie': 'static-pie',
+                'dynamic-pie': 'pie', 'dynamic-non-pie': 'non-pie',
+            }[Path(path).name]
+            return self.bootstrap_product_fixture.readelf(linkage)
+
+        actual_link = native.product_evidence.validate_link
+
+        def run_link(*arguments, **keywords):
+            with patch.object(native.product_evidence, '_readelf', side_effect=readelf):
+                return actual_link(*arguments, **keywords)
+
+        with source_patch:
+            if link_validator is not None:
+                with patch.object(native.product_evidence, 'validate_link',
+                                  side_effect=lambda *arguments, **keywords:
+                                  link_validator(run_link, *arguments, **keywords)):
+                    return native.collect_bootstrap_primitives(
+                        self.bootstrap_leaf, static_product=self.bootstrap_static,
+                        dynamic_product=self.bootstrap_dynamic,
+                    )
+            return native.collect_bootstrap_primitives(
+                self.bootstrap_leaf, static_product=self.bootstrap_static,
+                dynamic_product=self.bootstrap_dynamic,
+            )
 
     def differential_fixture(self):
         matrix = differential.frozen_matrix(False)
@@ -288,6 +454,101 @@ class NativeObservationsTests(unittest.TestCase):
         manifest = json.loads((self.product / 'share/crabc/manifest.json').read_text())
         self.put(self.product / 'share/crabc/manifest.json', {**manifest, 'changed': True})
         with self.assertRaises(native.NativeObservationError): self.collect('signal-process')
+
+    def test_bootstrap_primitives_reconstructs_six_modes_without_rewriting_raw_evidence(self):
+        self.bootstrap_fixture()
+        retained = {path: path.read_bytes() for path in self.bootstrap_leaf.rglob('*') if path.is_file()}
+        with patch.object(signals, 'run_in_process_group',
+                          side_effect=AssertionError('reader attempted workload execution')):
+            result = self.collect_bootstrap()
+        self.assertEqual(set(result['observations']), {
+            'static', 'static-pie', 'dynamic-pie-kernel', 'dynamic-pie-direct',
+            'dynamic-non-pie-kernel', 'dynamic-non-pie-direct',
+        })
+        self.assertEqual(set(result['links']), {'static', 'static-pie', 'dynamic-pie', 'dynamic-non-pie'})
+        self.assertEqual(result['observations']['dynamic-pie-direct']['candidate']['stdout']['base64'], '')
+        self.assertEqual(result['source']['path'], 'compat/x86_64/libc_bootstrap_primitives_probe.c')
+        self.assertEqual(result['source_owners']['__sigsetjmp_tail']['path'], 'libc/src/c_abi/x86_64/setjmp.rs')
+        self.assertEqual({path: path.read_bytes() for path in retained}, retained)
+
+    def test_bootstrap_primitives_rejects_missing_modes_and_wrong_source_or_headers(self):
+        self.bootstrap_fixture()
+        (self.bootstrap_leaf / 'link-static-pie.command.json').unlink()
+        with self.assertRaises(native.NativeObservationError): self.collect_bootstrap()
+        self.bootstrap_fixture()
+        (self.bootstrap_leaf / 'run-dynamic-pie-direct.command.json').unlink()
+        with self.assertRaises(native.NativeObservationError): self.collect_bootstrap()
+        self.bootstrap_fixture()
+        path = self.bootstrap_leaf / 'link-static.command.json'
+        command = json.loads(path.read_text())
+        command['argv'][command['argv'].index('-static')] = '-static-pie'
+        self.put(path, command)
+        with self.assertRaises(native.NativeObservationError): self.collect_bootstrap()
+        self.bootstrap_fixture()
+        path = self.bootstrap_leaf / 'compile-candidate.command.json'
+        command = json.loads(path.read_text())
+        command['argv'][command['argv'].index(self.mount + '/compat/x86_64/libc_bootstrap_primitives_probe.c')] = '/workspace/foreign.c'
+        self.put(path, command)
+        with self.assertRaises(native.NativeObservationError): self.collect_bootstrap()
+        self.bootstrap_fixture()
+        self.put(self.bootstrap_leaf / 'compile-candidate.stderr', b'. /usr/include/errno.h\n')
+        with self.assertRaises(native.NativeObservationError): self.collect_bootstrap()
+
+    def test_bootstrap_primitives_rejects_changed_object_product_payload_and_raw_result(self):
+        self.bootstrap_fixture()
+        object_path = self.bootstrap_leaf / 'workload.o'
+        object_path.write_bytes(b'changed object')
+        with self.assertRaises(native.NativeObservationError): self.collect_bootstrap()
+        self.bootstrap_fixture()
+        manifest_path = self.bootstrap_static / 'share/crabc/manifest.json'
+        manifest = json.loads(manifest_path.read_text())
+        manifest['source_sha256'] = '0' * 64
+        self.put(manifest_path, manifest)
+        with self.assertRaises(native.NativeObservationError): self.collect_bootstrap()
+        self.bootstrap_fixture()
+        copied_payload = self.bootstrap_leaf / 'dynamic-pie-root/usr/lib/libc.so'
+        copied_payload.write_bytes(b'changed payload')
+        with self.assertRaises(native.NativeObservationError): self.collect_bootstrap()
+        self.bootstrap_fixture()
+        self.put(self.bootstrap_leaf / 'run-static.stdout', b'changed output\n')
+        with self.assertRaises(native.NativeObservationError): self.collect_bootstrap()
+        self.bootstrap_fixture()
+        self.put(self.bootstrap_leaf / 'run-dynamic-pie-direct.status', b'67\n')
+        with self.assertRaises(native.NativeObservationError): self.collect_bootstrap()
+
+    def test_bootstrap_primitives_rejects_checkout_source_change_during_replay(self):
+        self.bootstrap_fixture()
+        with self.assertRaises(native.NativeObservationError):
+            self.collect_bootstrap(source_digests=(self.bootstrap_source_sha256, '0' * 64))
+
+    def test_bootstrap_primitives_rejects_product_and_payload_mutation_during_replay(self):
+        self.bootstrap_fixture()
+        mutated = False
+
+        def alter_product(validate, product, workload, executable, receipt, linkage):
+            nonlocal mutated
+            result = validate(product, workload, executable, receipt, linkage)
+            if not mutated:
+                (self.bootstrap_static / 'usr/lib/libc.a').write_bytes(b'changed product')
+                mutated = True
+            return result
+
+        with self.assertRaises(native.NativeObservationError):
+            self.collect_bootstrap(alter_product)
+
+        self.bootstrap_fixture()
+        mutated = False
+
+        def alter_payload(validate, product, workload, executable, receipt, linkage):
+            nonlocal mutated
+            result = validate(product, workload, executable, receipt, linkage)
+            if not mutated:
+                (self.bootstrap_leaf / 'dynamic-pie-root/usr/lib/libc.so').write_bytes(b'changed payload')
+                mutated = True
+            return result
+
+        with self.assertRaises(native.NativeObservationError):
+            self.collect_bootstrap(alter_payload)
 
     def test_stress_reconstructs_native_source_profile_and_requires_replacement(self):
         self.stress_fixture()

@@ -39,6 +39,30 @@ hidden definition for each private tree-balance, forward-copy, and vfork-result 
 It checks definitions independently of undefined imports. Pinned musl uses a
 `NOTYPE` forward-copy label; crabc's separate forward-copy function uses `FUNC`.
 
+The no-argument bootstrap-primitives command remains the selected static-archive
+gate. Its installed-product branch accepts source-matched static and dynamic
+products without rebuilding them:
+
+```sh
+scripts/lanes/rust-check.sh bash compat/x86_64/run_libc_bootstrap_primitives.sh \
+  --static-product /workspace/.work/x86_64/STATIC_PRODUCT \
+  --dynamic-product /workspace/.work/x86_64/DYNAMIC_PRODUCT
+```
+
+It retains one unchanged workload object, the pinned-musl oracle, four sealed
+links, six raw execution modes, and pre/post custody checks for both copied
+dynamic payloads under the pinned `TMPDIR`. Compilation and links are bounded
+to 60 seconds; each execution is bounded to 10 seconds. The replay API is
+to 60 seconds; each execution is bounded to 10 seconds. The replay API is
+`owned_posix_native_observations.collect_bootstrap_primitives`. It takes named
+`static_product` and `dynamic_product` arguments. It reads the fixed checkout
+source and product identities, names the local `__sigsetjmp_tail` source
+owner, compares raw executions, audits copied payloads, and revalidates the
+retained links. Invoke replay from the pinned `/workspace` container because
+the copied-payload records retain paths from that mount. Replay does not launch
+an oracle, compiler, linker, or workload. The shared link validator may run
+`readelf` to inspect ELF metadata.
+
 ## Authority
 
 The frozen comparison target is the AArch64 snapshot recorded in

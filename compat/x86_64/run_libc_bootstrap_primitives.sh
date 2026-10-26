@@ -12,6 +12,21 @@ set -euo pipefail
 readonly ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 readonly ORACLE_CC=/usr/local/bin/crabc-x86_64-musl-gcc
 readonly STATIC_C_ABI_EXPORTS="$ROOT_DIR/compat/x86_64/static_c_abi_exports.txt"
+readonly SOURCE="$ROOT_DIR/compat/x86_64/libc_bootstrap_primitives_probe.c"
+static_input=''
+dynamic_input=''
+
+usage() {
+    printf 'usage: %s [--static-product STATIC_PRODUCT --dynamic-product DYNAMIC_PRODUCT]\n' "$0" >&2
+    exit 2
+}
+
+if [ "$#" -eq 4 ] && [ "$1" = --static-product ] && [ "$3" = --dynamic-product ]; then
+    static_input="$2"
+    dynamic_input="$4"
+elif [ "$#" -ne 0 ]; then
+    usage
+fi
 
 fail() {
     printf 'ERROR: x86 static libc bootstrap primitives: %s\n' "$*" >&2
@@ -28,6 +43,16 @@ require_native_linux_x86_64() {
 
 require_tool() {
     command -v "$1" >/dev/null 2>&1 || fail "requires $1"
+}
+
+require_scratch_root() {
+    local scratch="${TMPDIR:-}"
+    case "$scratch" in
+        "$ROOT_DIR"/.work/x86_64/*) ;;
+        *) fail "TMPDIR must be a physical checkout .work/x86_64 directory" ;;
+    esac
+    [ -d "$scratch" ] && [ "$(realpath "$scratch")" = "$scratch" ] \
+        || fail "TMPDIR must be a physical checkout .work/x86_64 directory"
 }
 
 assert_selected_c_abi_surface() {
@@ -60,15 +85,69 @@ assert_selected_c_abi_surface() {
 }
 
 require_native_linux_x86_64
-for tool in ar cargo cmp diff nm objdump readelf rustup; do
+for tool in ar cargo cmp diff nm objdump readelf realpath rustup; do
     require_tool "$tool"
 done
 [ -x "$ORACLE_CC" ] || fail "missing pinned musl oracle compiler"
+require_scratch_root
+
+validate_installed_products() {
+    local checked
+    checked="$(python3 -B - "$ROOT_DIR" "$static_input" "$dynamic_input" <<'PY'
+from pathlib import Path
+import sys
+
+root = Path(sys.argv[1]).resolve(strict=True)
+sys.path.insert(0, str(root / 'compat/x86_64'))
+import owned_dynamic_qualification as dynamic
+import owned_posix_product_evidence as products
+
+try:
+    selected = []
+    for kind, raw in (('static', sys.argv[2]), ('dynamic', sys.argv[3])):
+        path = products._physical_directory(Path(raw).absolute(), f'{kind} product')
+        if not path.is_relative_to(root / '.work') or path == root / '.work':
+            raise products.ProductEvidenceError(f'{kind} product must be a physical checkout .work child')
+        if kind == 'static':
+            products._validate_static_product(path)
+        else:
+            products._validate_dynamic_product(path)
+        selected.append(path)
+    if selected[0] == selected[1]:
+        raise products.ProductEvidenceError('static and dynamic products must be separate')
+    source = dynamic.source_digest()
+    for kind, path in zip(('static', 'dynamic'), selected):
+        product_format = products.STATIC_PRODUCT_FORMAT if kind == 'static' else products.DYNAMIC_PRODUCT_FORMAT
+        _, manifest, _ = products._product_manifest(path, kind, product_format)
+        if manifest.get('source_sha256') != source:
+            raise products.ProductEvidenceError(f'{kind} product source differs from the current checkout')
+        print(path)
+except (OSError, RuntimeError, ValueError) as error:
+    raise SystemExit(str(error))
+PY
+)" || exit 1
+    mapfile -t checked_products <<<"$checked"
+    [ "${#checked_products[@]}" -eq 2 ] || fail "installed product selection is incomplete"
+    static_input="${checked_products[0]}"
+    dynamic_input="${checked_products[1]}"
+}
+
+if [ -n "$static_input" ]; then
+    for tool in cp env python3 timeout; do
+        require_tool "$tool"
+    done
+    validate_installed_products
+fi
 
 bash "$ROOT_DIR/compat/x86_64/run_musl_oracle.sh" >/dev/null
 
-work_dir="$(mktemp -d /tmp/crabc-x86-64-libc-bootstrap-primitives.XXXXXX)"
-trap 'rm -rf -- "$work_dir"' EXIT
+work_dir="$(mktemp -d "$TMPDIR/crabc-x86-64-libc-bootstrap-primitives.XXXXXX")"
+if [ -n "$static_input" ]; then
+    chmod a+rx "$work_dir"
+    trap 'status=$?; if [ "$status" -ne 0 ]; then printf "x86 static crabc-libc bootstrap primitives failed; evidence: %s\\n" "$work_dir" >&2; fi' EXIT
+else
+    trap 'rm -rf -- "$work_dir"' EXIT
+fi
 cargo_target="$work_dir/cargo-target"
 reference="$work_dir/musl-bootstrap-primitives-reference"
 candidate="$work_dir/crabc-static-bootstrap-primitives-candidate"
@@ -84,6 +163,146 @@ candidate_dynamic="$work_dir/candidate-dynamic"
 candidate_relocations="$work_dir/candidate-relocations"
 candidate_disassembly="$work_dir/candidate-disassembly"
 errno_disassembly="$work_dir/errno-disassembly"
+
+if [ -n "$static_input" ]; then
+    umask 022
+    ulimit -c 0
+    readonly static_product="$static_input"
+    readonly dynamic_product="$dynamic_input"
+    readonly candidate_object="$work_dir/workload.o"
+    readonly oracle_binary="$work_dir/oracle"
+    readonly candidate_env=(/usr/bin/env -i PATH=/usr/bin:/bin "TMPDIR=$TMPDIR" /usr/bin/timeout 60s)
+    readonly runtime_env=(/usr/bin/env -i PATH=/usr/bin:/bin /usr/bin/timeout 10s)
+    readonly dynamic_pie_root="$work_dir/dynamic-pie-root"
+    readonly dynamic_non_pie_root="$work_dir/dynamic-non-pie-root"
+    cd "$work_dir"
+
+    run_recorded() {
+        local label="$1"
+        local output="$2"
+        local status=0
+        shift 2
+        "$@" >"$work_dir/$label.stdout" 2>"$work_dir/$label.stderr" || status=$?
+        printf '%s\n' "$status" >"$work_dir/$label.status"
+        python3 -B - "$work_dir/$label.command.json" "$work_dir" "$status" "$output" "$@" <<'PY'
+import hashlib
+import json
+from pathlib import Path
+import sys
+
+record_path = Path(sys.argv[1])
+cwd = sys.argv[2]
+status = int(sys.argv[3])
+output = sys.argv[4]
+argv = sys.argv[5:]
+identity = None
+if output != '-' and Path(output).is_file() and not Path(output).is_symlink():
+    data = Path(output).read_bytes()
+    identity = {'path': output, 'sha256': hashlib.sha256(data).hexdigest()}
+with record_path.open('x', encoding='utf-8', newline='\n') as stream:
+    json.dump({'argv': argv, 'cwd': cwd, 'status': status, 'output': identity},
+              stream, sort_keys=True, separators=(',', ':'))
+    stream.write('\n')
+PY
+        [ "$status" -eq 0 ] || fail "$label exited with status $status; raw evidence retained"
+    }
+
+    compare_bootstrap_run() {
+        local candidate="$1"
+        local stream
+        for stream in status stdout stderr; do
+            cmp "$work_dir/run-oracle.$stream" "$work_dir/$candidate.$stream" \
+                || fail "$candidate differs from pinned musl in $stream"
+        done
+    }
+
+    step=installed-candidate-compile
+    run_recorded compile-candidate "$candidate_object" "${candidate_env[@]}" \
+        "$dynamic_product/bin/crabc-cc-dynamic" --dynamic-pie -std=c11 -D_GNU_SOURCE \
+        -fno-builtin -fno-stack-protector -H -c "$SOURCE" -o "$candidate_object"
+
+    step=installed-musl-compile
+    run_recorded compile-oracle "$oracle_binary" "${candidate_env[@]}" "$ORACLE_CC" \
+        -std=c11 -D_GNU_SOURCE -fno-builtin -fno-stack-protector "$SOURCE" -o "$oracle_binary"
+
+    step=installed-musl-oracle
+    run_recorded run-oracle - "${runtime_env[@]}" "$oracle_binary"
+
+    for mode in static static-pie; do
+        step="installed-$mode-link"
+        run_recorded "link-$mode" "$work_dir/$mode" "${candidate_env[@]}" \
+            "$static_product/bin/crabc-cc" "-$mode" --link-receipt "$mode.receipt.json" \
+            "$candidate_object" -o "$work_dir/$mode"
+    done
+    for mode in dynamic-pie dynamic-non-pie; do
+        step="installed-$mode-link"
+        run_recorded "link-$mode" "$work_dir/$mode" "${candidate_env[@]}" \
+            "$dynamic_product/bin/crabc-cc-dynamic" "--$mode" "$candidate_object" \
+            -o "$work_dir/$mode"
+    done
+
+    step=dynamic-pie-payload-copy
+    cp -a "$dynamic_product" "$dynamic_pie_root"
+    cp "$work_dir/dynamic-pie" "$dynamic_pie_root/consumer"
+    step=dynamic-non-pie-payload-copy
+    cp -a "$dynamic_product" "$dynamic_non_pie_root"
+    cp "$work_dir/dynamic-non-pie" "$dynamic_non_pie_root/consumer"
+    for mode in dynamic-pie dynamic-non-pie; do
+        root="$work_dir/$mode-root"
+        step="$mode-payload-record"
+        python3 -B "$ROOT_DIR/compat/x86_64/owned_crypt_runtime_evidence.py" record \
+            --product "$dynamic_product" --execution-root "$root" \
+            --source-consumer "$work_dir/$mode" --execution-consumer "$root/consumer" \
+            --record "$work_dir/$mode-payload.json"
+        step="$mode-payload-before-audit"
+        python3 -B "$ROOT_DIR/compat/x86_64/owned_crypt_runtime_evidence.py" audit \
+            --product "$dynamic_product" --execution-root "$root" \
+            --source-consumer "$work_dir/$mode" --execution-consumer "$root/consumer" \
+            --record "$work_dir/$mode-payload.json" >/dev/null
+    done
+
+    step=run-static
+    run_recorded run-static - "${runtime_env[@]}" "$work_dir/static"
+    compare_bootstrap_run run-static
+    step=run-static-pie
+    run_recorded run-static-pie - "${runtime_env[@]}" "$work_dir/static-pie"
+    compare_bootstrap_run run-static-pie
+    for mode in dynamic-pie dynamic-non-pie; do
+        root="$work_dir/$mode-root"
+        step="run-$mode-kernel"
+        run_recorded "run-$mode-kernel" - "${runtime_env[@]}" /usr/sbin/chroot "$root" /consumer
+        compare_bootstrap_run "run-$mode-kernel"
+        step="run-$mode-direct"
+        run_recorded "run-$mode-direct" - "${runtime_env[@]}" /usr/sbin/chroot "$root" \
+            /lib/ld-crabc-x86_64.so.1 /consumer
+        compare_bootstrap_run "run-$mode-direct"
+    done
+
+    for mode in dynamic-pie dynamic-non-pie; do
+        root="$work_dir/$mode-root"
+        step="$mode-payload-after-audit"
+        python3 -B "$ROOT_DIR/compat/x86_64/owned_crypt_runtime_evidence.py" audit \
+            --product "$dynamic_product" --execution-root "$root" \
+            --source-consumer "$work_dir/$mode" --execution-consumer "$root/consumer" \
+            --record "$work_dir/$mode-payload.json" >/dev/null
+    done
+
+    step=installed-bootstrap-replay
+    python3 -B - "$ROOT_DIR" "$work_dir" "$static_product" "$dynamic_product" <<'PY'
+from pathlib import Path
+import sys
+
+root, work, static, dynamic = map(Path, sys.argv[1:])
+sys.path.insert(0, str(root / 'compat/x86_64'))
+import owned_posix_native_observations as observations
+
+observations.collect_bootstrap_primitives(
+    work, static_product=static, dynamic_product=dynamic,
+)
+PY
+    printf 'x86 installed crabc-libc bootstrap primitives: PASS (four sealed links, six execution modes); evidence: %s\n' "$work_dir"
+    exit 0
+fi
 
 cd "$ROOT_DIR"
 "$ORACLE_CC" -std=c11 -D_GNU_SOURCE -I"$ROOT_DIR/include" -E -H \
