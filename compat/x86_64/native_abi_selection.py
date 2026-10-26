@@ -8905,6 +8905,15 @@ def attach_auxv_observation(accounting: Mapping[str, Any], rule: Mapping[str, An
     }]
 
 
+def _ordinary_crt_cohort_identity_matches(ordinary_identity: object, crt_identity: object,
+                                          description: str) -> bool:
+    try:
+        path = ordinary_link_evidence.resolve_work_identity(ROOT, ordinary_identity, description)
+        return same(file_identity(path), crt_identity)
+    except (ValueError, OSError, inventory.InventoryError):
+        return False
+
+
 def attach_rust_c_profile_personality_absence(accounting: Mapping[str, Any], rule: Mapping[str, Any],
                                               source: Mapping[str, Any], paths: Mapping[str, Path],
                                               crt_companion: Mapping[str, Any] | None,
@@ -9009,10 +9018,16 @@ def attach_rust_c_profile_personality_absence(accounting: Mapping[str, Any], rul
                 'revision': source['revision'], 'content_sha256': source['content_sha256'],
             }
             or type(static_primary) is not dict
-            or static_primary.get('manifest') != cohort['static_manifest']
+            or not _ordinary_crt_cohort_identity_matches(
+                static_primary.get('manifest'), cohort['static_manifest'], 'CRT static manifest cohort input',
+            )
             or type(dynamic_inputs) is not dict
-            or dynamic_inputs.get('manifest') != cohort['dynamic_manifest']
-            or dynamic_inputs.get('state') != cohort['dynamic_state']
+            or not _ordinary_crt_cohort_identity_matches(
+                dynamic_inputs.get('manifest'), cohort['dynamic_manifest'], 'CRT dynamic manifest cohort input',
+            )
+            or not _ordinary_crt_cohort_identity_matches(
+                dynamic_inputs.get('state'), cohort['dynamic_state'], 'CRT dynamic state cohort input',
+            )
             or type(ordinary_report.get('links')) is not dict
             or set(ordinary_report['links']) != set(ordinary_link_evidence.CANDIDATE_MODES)
             or type(ordinary_report.get('commands')) is not list):

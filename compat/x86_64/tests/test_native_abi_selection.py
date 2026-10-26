@@ -2110,13 +2110,30 @@ class RustCProfilePersonalityAbsenceTests(unittest.TestCase):
         root = Path(directory)
         raw_root = root / 'raw'
         raw_root.mkdir()
+        cohort_root = root / 'cohort'
+        cohort_root.mkdir()
+        cohort_paths = {
+            'static_manifest': cohort_root / 'static-manifest.json',
+            'dynamic_manifest': cohort_root / 'dynamic-manifest.json',
+            'dynamic_state': cohort_root / 'dynamic-state.json',
+        }
+        for name, path in cohort_paths.items():
+            path.write_text(name)
+        companion['cohort_inputs'] = {
+            name: selection.file_identity(path) for name, path in cohort_paths.items()
+        }
+        ordinary_cohort = {
+            name: selection.ordinary_link_evidence.work_file_identity(
+                selection.ROOT, path, name.replace('_', ' '),
+            ) for name, path in cohort_paths.items()
+        }
         expected_inputs = {'source': {
             'revision': source['revision'], 'content_sha256': source['content_sha256'],
-        }, 'static_preparation': {'primary': {'manifest': companion['cohort_inputs']['static_manifest']},
+        }, 'static_preparation': {'primary': {'manifest': ordinary_cohort['static_manifest']},
                                   'source': {'revision': source['revision'],
                                              'content_sha256': source['content_sha256']}},
-            'dynamic_product': {'manifest': companion['cohort_inputs']['dynamic_manifest'],
-                                'state': companion['cohort_inputs']['dynamic_state']}}
+            'dynamic_product': {'manifest': ordinary_cohort['dynamic_manifest'],
+                                'state': ordinary_cohort['dynamic_state']}}
         if product_mismatch:
             expected_inputs['static_preparation']['primary']['manifest'] = {
                 **expected_inputs['static_preparation']['primary']['manifest'], 'sha256': 'f' * 64,
@@ -2179,6 +2196,20 @@ class RustCProfilePersonalityAbsenceTests(unittest.TestCase):
         scratch.mkdir(parents=True, exist_ok=True)
         with tempfile.TemporaryDirectory(dir=scratch) as directory:
             report_path, expected_inputs, replay = self.ordinary_evidence(directory, source, companion)
+            identities = (
+                ('static manifest', expected_inputs['static_preparation']['primary']['manifest'],
+                 companion['cohort_inputs']['static_manifest']),
+                ('dynamic manifest', expected_inputs['dynamic_product']['manifest'],
+                 companion['cohort_inputs']['dynamic_manifest']),
+                ('dynamic state', expected_inputs['dynamic_product']['state'],
+                 companion['cohort_inputs']['dynamic_state']),
+            )
+            for description, ordinary_identity, crt_identity in identities:
+                self.assertNotEqual(ordinary_identity, crt_identity)
+                physical = selection.ordinary_link_evidence.resolve_work_identity(
+                    selection.ROOT, ordinary_identity, description,
+                )
+                self.assertEqual(selection.file_identity(physical), crt_identity)
             paths = {'static_preparation': Path('static-preparation'),
                      'static_product': Path('static-product'), 'dynamic_product': Path('dynamic-product')}
             accounting = self.accounting()
@@ -2216,7 +2247,8 @@ class RustCProfilePersonalityAbsenceTests(unittest.TestCase):
                  'unrelated requirement', 'candidate product fact', 'candidate occurrence',
                  'ordinary C final ELF import', 'ordinary C final ELF definition', 'ordinary C source differs',
                  'ordinary product cohort differs', 'ordinary C report misses a mode',
-                 'CRT runtime roster differs', 'missing ordinary C receipt')
+                 'CRT runtime roster differs', 'ordinary CRT mode differs',
+                 'ordinary CRT identity points elsewhere', 'missing ordinary C receipt')
         scratch = ROOT / '.work/tmp'
         scratch.mkdir(parents=True, exist_ok=True)
         for label in cases:
@@ -2254,6 +2286,14 @@ class RustCProfilePersonalityAbsenceTests(unittest.TestCase):
                     })
                 elif label == 'CRT runtime roster differs':
                     observations['runtime_labels'].pop()
+                elif label == 'ordinary CRT mode differs':
+                    companion['cohort_inputs']['dynamic_state']['mode'] ^= 0o100
+                elif label == 'ordinary CRT identity points elsewhere':
+                    current = Path(companion['cohort_inputs']['static_manifest']['path'])
+                    duplicate = Path(directory) / 'cohort' / 'copied-static-manifest.json'
+                    duplicate.write_bytes(current.read_bytes())
+                    os.chmod(duplicate, current.stat().st_mode & 0o7777)
+                    companion['cohort_inputs']['static_manifest'] = selection.file_identity(duplicate)
                 before = copy.deepcopy(accounting)
                 self.assertEqual(self.attach(accounting, source, companion, observations, paths,
                                              None if label in {'missing CRT receipt', 'missing ordinary C receipt'}
