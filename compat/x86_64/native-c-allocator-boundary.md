@@ -5,11 +5,11 @@ implementation (C mimalloc v3.3.2) to the installed x86 allocator wrappers. It
 consumes supplied static and dynamic products; it never builds a product or
 selects a general allocator policy.
 
-The fixed-C producer account remains the authority for the exact C member and
-the seven Rust-root imports. This component adds the consumer side: the static
-Rust members import exactly `_mi_auto_process_init`, `_mi_auto_process_done`,
-`mi_free`, `mi_malloc_aligned`, `mi_realloc_aligned`, `mi_usable_size`, and
-`mi_zalloc`; the same final shared C definitions remain local. Its source
+The fixed-C producer account owns the exact C member and eight Rust-root
+imports. This component validates the consumer side. The static Rust members
+import exactly `_mi_auto_process_init`, `_mi_auto_process_done`, `mi_free`,
+`mi_malloc_aligned`, `mi_realloc_aligned`, `mi_usable_size`, `mi_zalloc`, and
+`mi_zalloc_aligned`. Their final shared C definitions remain local. The source
 check binds the C ABI wrappers for `malloc`, `calloc`, `realloc`,
 `reallocarray`, `free`, `aligned_alloc`, `posix_memalign`, `memalign`,
 `valloc`, and `malloc_usable_size`, and binds the process initializer/finalizer

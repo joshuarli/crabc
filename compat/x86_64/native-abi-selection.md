@@ -212,17 +212,16 @@ bounded wrapper/lifecycle and interposition transcripts. The selector seals
 the report before and after that replay, binds its manifests, libc bytes,
 static and shared provenance, dynamic materialization state, and ELF report to
 the same current transaction, then rechecks them after placement joins. It
-discharges the ordinary-import reason only for the seven unversioned
-`NOTYPE GLOBAL DEFAULT` candidate-static `.symtab` imports in the authenticated
-static Rust archive members (the installed archive has one per Rust module;
-each member that calls the backend imports it once): `_mi_auto_process_done`,
-`_mi_auto_process_init`, `mi_free`, `mi_malloc_aligned`,
-`mi_realloc_aligned`, `mi_usable_size`, and `mi_zalloc`. The fixed-C producer
-account must also supply the matching selected static and shared provider
-metadata. An import of the same name from any other member or artifact
-remains an unresolved ordinary consumer. This does not make the C v3.3.2 backend an
-allocator-family, general allocation semantics, promotion, or public-support
-claim.
+discharges the ordinary-import reason for eight unversioned
+`NOTYPE GLOBAL DEFAULT` imports in authenticated candidate-static Rust members.
+The installed archive has one member per Rust module. Each member that calls
+the backend imports it once. The imports are `_mi_auto_process_done`,
+`_mi_auto_process_init`, `mi_free`, `mi_malloc_aligned`, `mi_realloc_aligned`,
+`mi_usable_size`, `mi_zalloc`, and `mi_zalloc_aligned`. The fixed-C producer
+account must supply matching static and shared provider metadata. The same
+name in another member or artifact remains unresolved. This evidence does not
+claim allocator-family completion, general allocation semantics, promotion,
+or public support for the C v3.3.2 backend.
 
 `--stdio-alias-contract-report REPORT` is independently optional. Its owner
 reader replays the current selected source, static preparation, static and
@@ -981,7 +980,7 @@ requires their absence from dynsym, their LOCAL shared symtab definitions, and
 preserved static providers and public allocation metadata. This fixed-C
 attachment supplies metadata only for that exact list. It neither selects an
 unrelated private owner. The separate native C allocator-boundary receipt can
-prove its seven exact static Rust-root imports and the selected C member's
+prove its eight exact static Rust-root imports and the selected C member's
 three private VM calls; allocator semantics,
 lifecycle beyond that bounded receipt, family completion, promotion, and
 public support remain open.

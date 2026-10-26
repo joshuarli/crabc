@@ -516,7 +516,7 @@ class NativeCAllocatorBoundaryAttachmentTests(unittest.TestCase):
                 fixed_c_companion=self.fixed_c_companion,
             )
 
-    def test_exact_seven_static_root_imports_clear_only_their_ordinary_reasons(self) -> None:
+    def test_exact_eight_static_root_imports_clear_only_their_ordinary_reasons(self) -> None:
         accounting = self.accounting()
         companion = self._adapter(self.boundary_report())
         joins = selection.attach_native_c_allocator_boundary(accounting, companion)

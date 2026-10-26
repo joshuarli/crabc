@@ -318,7 +318,7 @@ class FixedCMimallocProducerMetadataTests(unittest.TestCase):
     def test_exact_authenticated_helper_archive_policy_composes_with_c_localization(self):
         result = producer.account_producer_metadata(*self.helper_composition_fixture())
         self.assertEqual(result["scope"]["member_count"], 424)
-        self.assertEqual(result["scope"]["rust_root_c_imports"], 7)
+        self.assertEqual(result["scope"]["rust_root_c_imports"], 8)
         self.assertFalse(result["status_flags"]["family_completion"])
 
     def test_helper_composition_rejects_broad_or_duplicate_exclusion(self):
@@ -362,7 +362,7 @@ class FixedCMimallocProducerMetadataTests(unittest.TestCase):
                 with self.assertRaises(producer.ProducerMetadataError):
                     producer.account_producer_metadata(facts, static, shared, manifest)
 
-    def test_accounts_exact_four_metadata_buckets_and_seven_rust_root_joins(self) -> None:
+    def test_accounts_exact_four_metadata_buckets_and_eight_rust_root_joins(self) -> None:
         account = self.account()
         self.assertEqual(account["status"], "component-pass-not-qualification")
         self.assertEqual(account["scope"]["member_count"], 424)
@@ -372,7 +372,7 @@ class FixedCMimallocProducerMetadataTests(unittest.TestCase):
             "data-objects": 3,
             "initial-exec-tls": 1,
         })
-        self.assertEqual(account["scope"]["rust_root_c_imports"], 7)
+        self.assertEqual(account["scope"]["rust_root_c_imports"], 8)
         self.assertEqual(account["archive_map"]["raw_cargo_allocator_archive_sha256"], "e" * 64)
         self.assertEqual(account["archive_map"]["reconstructed_static_libc_archive_sha256"], "a" * 64)
         self.assertEqual(
@@ -589,11 +589,13 @@ class FixedCMimallocProducerMetadataTests(unittest.TestCase):
             producer.account_producer_metadata(facts, static_provenance, shared_provenance, shared_manifest)
 
     def test_rejects_missing_rust_import_provider_or_final_shared_provider_join(self) -> None:
-        facts, static_provenance, shared_provenance, shared_manifest = self.fixture()
-        rust_rows = facts["facts"]["candidate-static"][0]["symbol_tables"][0]["rows"]
-        rust_rows.pop()
-        with self.assertRaisesRegex(producer.ProducerMetadataError, "Rust-root import roster"):
-            producer.account_producer_metadata(facts, static_provenance, shared_provenance, shared_manifest)
+        for missing_name in ("mi_zalloc_aligned", "_mi_heap_default_key"):
+            with self.subTest(missing_name=missing_name):
+                facts, static_provenance, shared_provenance, shared_manifest = self.fixture()
+                rust_rows = facts["facts"]["candidate-static"][0]["symbol_tables"][0]["rows"]
+                rust_rows.remove(next(row for row in rust_rows if row["name"] == missing_name))
+                with self.assertRaisesRegex(producer.ProducerMetadataError, "Rust-root import roster"):
+                    producer.account_producer_metadata(facts, static_provenance, shared_provenance, shared_manifest)
 
         facts, static_provenance, shared_provenance, shared_manifest = self.fixture()
         rust_rows = facts["facts"]["candidate-static"][0]["symbol_tables"][0]["rows"]

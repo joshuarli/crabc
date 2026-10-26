@@ -247,7 +247,7 @@ def validate_contract(value: object) -> None:
     scope = exact(record["scope"], {"weak_entries", "global_entries", "rust_c_imports", "c_runtime_imports", "lifecycle_entries", "interposition_scenarios", "dynamic_modes", "dynamic_entries", "static_modes"}, "allocator boundary scope")
     require(scope["weak_entries"] == ["malloc"], "weak allocator entry roster drifted")
     require(scope["global_entries"] == ["calloc", "realloc", "reallocarray", "free", "aligned_alloc", "posix_memalign", "memalign", "valloc", "malloc_usable_size"], "global allocator entry roster drifted")
-    require(scope["rust_c_imports"] == ["_mi_auto_process_done", "_mi_auto_process_init", "mi_free", "mi_malloc_aligned", "mi_realloc_aligned", "mi_usable_size", "mi_zalloc"], "Rust C import roster drifted")
+    require(scope["rust_c_imports"] == ["_mi_auto_process_done", "_mi_auto_process_init", "mi_free", "mi_malloc_aligned", "mi_realloc_aligned", "mi_usable_size", "mi_zalloc", "mi_zalloc_aligned"], "Rust C import roster drifted")
     require(scope["c_runtime_imports"] == [
         {"name": name, "binding": binding} for name, binding in C_RUNTIME_IMPORTS
     ], "C runtime import roster drifted")
@@ -688,7 +688,7 @@ def validate_supplied_products(*, root: Path, static_preparation: Path, static_p
             json_object(shared_provenance, "shared allocator provenance"), json_object(dynamic_manifest, "dynamic manifest"))
     except producer.ProducerMetadataError as error:
         raise AllocatorBoundaryError(str(error)) from error
-    expected = ["_mi_auto_process_done", "_mi_auto_process_init", "mi_free", "mi_malloc_aligned", "mi_realloc_aligned", "mi_usable_size", "mi_zalloc"]
+    expected = ["_mi_auto_process_done", "_mi_auto_process_init", "mi_free", "mi_malloc_aligned", "mi_realloc_aligned", "mi_usable_size", "mi_zalloc", "mi_zalloc_aligned"]
     joins = account.get("rust_root_c_import_joins")
     require(isinstance(joins, list) and [item.get("name") for item in joins if isinstance(item, dict)] == expected,
             "fixed-C producer import joins drifted")

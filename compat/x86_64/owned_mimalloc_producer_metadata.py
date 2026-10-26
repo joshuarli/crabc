@@ -52,6 +52,7 @@ EXPECTED_RUST_ROOT_IMPORTS = (
     "mi_realloc_aligned",
     "mi_usable_size",
     "mi_zalloc",
+    "mi_zalloc_aligned",
 )
 # The Rust root takes the address of one C allocator data object:
 # `pthread_tsd.rs` recognizes `_mi_heap_default_key` as the storage of the C
@@ -1292,7 +1293,7 @@ def account_producer_metadata(
         "limits": [
             "Consumes already authenticated ELF facts and owned-product provenance; it does not replay either source receipt.",
             "Public malloc ABI, interposition, and runtime behavior are separate components.",
-            "The seven Rust-root C joins are retained producer observations; their separate selection closure needs an installed consumer/map component.",
+            "The eight Rust-root C joins are retained producer observations; their separate selection closure needs an installed consumer/map component.",
             "The fixed mimalloc v3.5.0 Rust-port oracle is distinct from this selected v3.3.2 C backend.",
             "A qualified Rust-backend promotion removes this C producer contract instead of transferring its metadata to Rust.",
         ],

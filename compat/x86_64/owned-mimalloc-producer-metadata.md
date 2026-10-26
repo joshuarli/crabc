@@ -70,16 +70,17 @@ The reader requires these finite producer facts:
 - None of the 424 identities has a shared `.dynsym` row.
 - The archive map retains the raw Cargo allocator archive identity, the
   reconstructed `libc.a` identity, exactly one C `*-static.o` member, and the
-  static Rust members (`static_rust_members`; the installed archive emits one
-  per Rust module) and the one shared Rust object. The Rust members' seven C
-  imports — `_mi_auto_process_done`, `_mi_auto_process_init`, `mi_free`,
-  `mi_malloc_aligned`, `mi_realloc_aligned`, `mi_usable_size`, and
-  `mi_zalloc` — each have at least one importing member, and no member
-  imports another producer name; they resolve through that static C member
-  and through the final local shared definition. The
-  shared-link provenance must select the same C-member bytes. Those generic
-  Rust-to-C import obligations remain separate from the metadata/layout
-  projection until their installed consumer/map proof is selected.
+  static Rust members (`static_rust_members`), and one shared Rust object. The
+  installed archive emits one static member per Rust module. The static Rust
+  members import exactly eight C names: `_mi_auto_process_done`,
+  `_mi_auto_process_init`, `mi_free`, `mi_malloc_aligned`,
+  `mi_realloc_aligned`, `mi_usable_size`, `mi_zalloc`, and
+  `mi_zalloc_aligned`. Each import has an importing member, and no member
+  imports another producer name. The imports resolve through the selected
+  static C member and final local shared definitions. Shared-link provenance
+  must select the same C-member bytes. These import obligations remain
+  separate from the metadata/layout projection until an installed
+  consumer/map proof is selected.
 - The final shared ELF identity must equal the `usr/lib/libc.so` entry in the
   authenticated dynamic-product manifest. Matching source or archive-member
   bytes alone never identify a final linked DSO.
@@ -100,6 +101,6 @@ The receipt seals the ELF facts, both provenance records, and dynamic manifest
 before and after accounting, then records their identities. It remains
 `component-pass-not-qualification`: its family-completion, promotion, and
 public-support flags are all false. A qualified Rust-backend promotion removes
-this fixed-C producer contract, its 424-name localization list, and its seven
+this fixed-C producer contract, its 424-name localization list, and its eight
 Rust-to-C joins. It does not transfer this private metadata to Rust or change
 the separate public allocation boundary.

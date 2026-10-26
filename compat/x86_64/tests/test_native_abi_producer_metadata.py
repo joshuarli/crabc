@@ -223,7 +223,7 @@ class NativeAbiProducerMetadataTests(unittest.TestCase):
                     'strong-functions': 419, 'weak-null-fallback': 1,
                     'data-objects': 3, 'initial-exec-tls': 1,
                 },
-                'rust_root_c_imports': 7,
+                'rust_root_c_imports': 8,
                 'shared_dynsym_private_names': 'absent',
             },
         }

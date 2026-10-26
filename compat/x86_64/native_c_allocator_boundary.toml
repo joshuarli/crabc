@@ -11,7 +11,7 @@ mimalloc_version = "3.3.2"
 [scope]
 weak_entries = ["malloc"]
 global_entries = ["calloc", "realloc", "reallocarray", "free", "aligned_alloc", "posix_memalign", "memalign", "valloc", "malloc_usable_size"]
-rust_c_imports = ["_mi_auto_process_done", "_mi_auto_process_init", "mi_free", "mi_malloc_aligned", "mi_realloc_aligned", "mi_usable_size", "mi_zalloc"]
+rust_c_imports = ["_mi_auto_process_done", "_mi_auto_process_init", "mi_free", "mi_malloc_aligned", "mi_realloc_aligned", "mi_usable_size", "mi_zalloc", "mi_zalloc_aligned"]
 # The selected C static translation unit imports these public Rust libc
 # providers.  This is a finite installed link boundary, not an allocator API
 # behavior or source-semantics claim. Its mmap, madvise and mprotect calls

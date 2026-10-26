@@ -221,7 +221,7 @@ ERRNO_STORAGE_LIFECYCLE_LIMITS = [
     'h_errno declaration/macro and accessor-to-storage agreement, broad TLS/TCB semantics, loader evidence, family completion, promotion and public support remain open.',
 ]
 C_ALLOCATOR_BOUNDARY_LIMITS = [
-    'Only the seven authenticated candidate-static Rust-root imports are joined to the fixed-C mimalloc provider account.',
+    'Only the eight authenticated candidate-static Rust-root imports are joined to the fixed-C mimalloc provider account.',
     'The finite selected C static-member imports are joined only to their authenticated public Rust providers and ordinary installed links.',
     'The C v3.3.2 wrapper/lifecycle receipt does not select other imports or complete allocator behavior, family, promotion or public support.',
 ]
@@ -3374,7 +3374,7 @@ def fixed_c_producer_metadata_adapter(facts: Mapping[str, Any], measurement: Map
                 'metadata_buckets': {
                     'strong-functions': 419, 'weak-null-fallback': 1, 'data-objects': 3, 'initial-exec-tls': 1,
                 },
-                'rust_root_c_imports': 7,
+                'rust_root_c_imports': 8,
                 'shared_dynsym_private_names': 'absent',
             }),
             'fixed-C producer account scope differs')
@@ -5815,7 +5815,7 @@ def errno_storage_lifecycle_adapter(report_path: Path | None, *, facts: Mapping[
 
 
 def _c_allocator_boundary_contract() -> tuple[dict[str, Any], list[str]]:
-    """Load the one source-owned seven-import boundary without a name rule.
+    """Load the one source-owned eight-import boundary without a name rule.
 
     The C component's TOML is the authority for this finite list.  This
     selector deliberately consumes it as an exact contract rather than
@@ -5831,7 +5831,7 @@ def _c_allocator_boundary_contract() -> tuple[dict[str, Any], list[str]]:
     }, 'native C allocator boundary scope')
     imports = scope['rust_c_imports']
     require(type(imports) is list and all(type(name) is str and name for name in imports)
-            and len(imports) == 7 and len(set(imports)) == len(imports),
+            and len(imports) == 8 and len(set(imports)) == len(imports),
             'native C allocator boundary Rust import roster differs')
     return contract, list(imports)
 
@@ -5986,7 +5986,7 @@ def native_c_allocator_boundary_adapter(report_path: Path | None, *, facts: Mapp
     The public component reader owns its product validation and runtime
     transcripts.  This adapter seals the report before and after that replay,
     joins its exact product identities to the already replayed ELF cohort, and
-    exposes the separate seven Rust-root C and finite selected-C-to-Rust import
+    exposes the separate eight Rust-root C and finite selected-C-to-Rust import
     claims for later placement accounting.  It does not turn the C backend into
     allocator-family proof.
     """
@@ -10548,7 +10548,7 @@ def _c_allocator_provider_metadata(value: object, description: str) -> dict[str,
 
 def attach_native_c_allocator_boundary(accounting: Mapping[str, Any],
                                        companion: Mapping[str, Any] | None) -> list[dict[str, Any]]:
-    """Discharge only the seven exact static Rust-root C imports.
+    """Discharge only the eight exact static Rust-root C imports.
 
     A spelling match is deliberately insufficient.  Each import must remain a
     single unversioned NOTYPE GLOBAL DEFAULT ``.symtab`` undefined row in the
