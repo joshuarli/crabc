@@ -38,6 +38,21 @@ identities. It audits that record before execution, after execution,
 and during the final seal alongside oracle compiler/archive/object/binary and
 all raw `.status`, `.stdout`, and `.stderr` files.
 
+## Replay a retained report
+
+Call `validate_observations` in `owned_signal_process_evidence.py` with these
+keyword arguments: `work`, `report_path`, `static_product`,
+`dynamic_product_path`, `source`, `object_path`, `compile_audit`, `oracle_cc`,
+`oracle_binary`, and `oracle_record`. Set `static_product` to `None` for an
+existing four-mode report. Supply the static product for a six-mode report.
+The reader rebuilds the v1 record from the current source, products, receipts,
+payload copies, and raw observations, then compares the complete JSON object.
+Unknown or missing fields fail. The report must remain the same physical file
+with the same bytes through the replay.
+
+The replay reads retained evidence only. It does not compile, link, launch a
+process, or rewrite the report.
+
 There is no documented source difference in this workload. Every retained
 candidate triplet must byte-match its musl oracle triplet. A new mismatch must
 be reported and classified before it can be admitted as a source-contract

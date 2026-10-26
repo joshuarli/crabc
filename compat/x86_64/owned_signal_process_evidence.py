@@ -664,7 +664,7 @@ def validated_execution_audit(path: Path, current: dict[str, Any], description: 
         fail(f"{description} drifted")
     return recorded
 
-def record_observations(
+def _observation_record(
     work: Path,
     static_product: Path | None,
     dynamic_product_path: Path,
@@ -675,7 +675,7 @@ def record_observations(
     oracle_binary: Path,
     oracle_record: Path,
 ) -> dict[str, Any]:
-    """Revalidate every boundary and preserve all 12 raw oracle/product triples."""
+    """Reconstruct the v1 observation record from retained physical evidence."""
 
     work = physical(work, "signal-process evidence work", directory=True)
     source = require_within(source, work, "signal-process source") if Path(source).is_relative_to(work) else physical(source, "signal-process source")
@@ -740,8 +740,73 @@ def record_observations(
         "comparison": "exact raw status/stdout/stderr bytes; no documented source difference",
         "process_group_isolation": True,
     }
-    write_new_json(work / "signal-process-observations.json", record)
     return record
+
+
+def record_observations(
+    work: Path,
+    static_product: Path | None,
+    dynamic_product_path: Path,
+    source: Path,
+    object_path: Path,
+    compile_audit: Path,
+    oracle_cc: Path,
+    oracle_binary: Path,
+    oracle_record: Path,
+) -> dict[str, Any]:
+    """Revalidate every boundary, preserve raw triples, and write the v1 record."""
+
+    record = _observation_record(
+        work, static_product, dynamic_product_path, source, object_path, compile_audit,
+        oracle_cc, oracle_binary, oracle_record,
+    )
+    write_new_json(Path(os.path.abspath(work)) / "signal-process-observations.json", record)
+    return record
+
+
+def _observation_report_identity(path: Path) -> tuple[str, int, int, int, int, int, int, str]:
+    path = physical(path, "signal-process observation report")
+    try:
+        identity = path.stat()
+    except OSError as error:
+        raise SignalProcessEvidenceError(f"signal-process observation report is unreadable: {path}") from error
+    return (
+        str(path), identity.st_dev, identity.st_ino, identity.st_mode, identity.st_size,
+        identity.st_mtime_ns, identity.st_ctime_ns, sha256(path),
+    )
+
+
+def validate_observations(
+    *,
+    work: Path,
+    report_path: Path,
+    static_product: Path | None,
+    dynamic_product_path: Path,
+    source: Path,
+    object_path: Path,
+    compile_audit: Path,
+    oracle_cc: Path,
+    oracle_binary: Path,
+    oracle_record: Path,
+) -> dict[str, Any]:
+    """Read-only replay of one retained four-mode or six-mode observation record."""
+
+    work = physical(work, "signal-process evidence work", directory=True)
+    report_path = require_within(report_path, work, "signal-process observation report")
+    report_identity_before = _observation_report_identity(report_path)
+    recorded = read_json(report_path, "signal-process observation report")
+    expected = _observation_record(
+        work, static_product, dynamic_product_path, source, object_path, compile_audit,
+        oracle_cc, oracle_binary, oracle_record,
+    )
+    report_identity_after = _observation_report_identity(report_path)
+    if report_identity_after != report_identity_before:
+        fail("signal-process observation report changed during replay")
+    recorded_json = json.dumps(recorded, sort_keys=True, separators=(",", ":"))
+    expected_json = json.dumps(expected, sort_keys=True, separators=(",", ":"))
+    if recorded_json != expected_json:
+        fail("signal-process observation report does not reconstruct from retained inputs")
+    return expected
 
 
 def main(arguments: Sequence[str]) -> int:
