@@ -197,8 +197,11 @@ Dynamic publication, the complete three-pair POSIX matrix, crypt, atomic and
 word-expansion companions pass. The main runner enters POSIX native admission;
 the known raw `pow` condition remains parked. The independent combined-sysroot
 producer passes all supplied static/dynamic suites across installed, rebuilt
-and extracted composed products. Rust std/LTO and resolver-family assessments
-run independently against the qualified cohort.
+and extracted composed products. Rust std/LTO passes with no unmet conditions
+and its registered publication succeeds. The separate CRT startup check passes
+all 52 musl differential cells across PIE and non-PIE modes. The loader-family
+assessment and registered publication also pass. These are frozen-H0 results;
+main's family and gate claims remain unchanged.
 Independent header-declaration collection succeeds at
 `.work/x86_64/header-declaration-inventory/candidate-cohort/report.json`,
 preserving unresolved-linkage observations rather than claiming ABI completion.
@@ -243,8 +246,20 @@ producer and selected installed-boundary contracts and add an independent
 retained-row regression. All 81 focused tests pass, including rejection of
 unknown imports; the positive case fails with the old seven-name contract.
 The running `b3a226cce` checkout and its failed ABI assembly remain unchanged.
-Three source-stable loader inventories are complete; their runtime flags
-remain false until the separate loader-family assessment succeeds.
+The three source-stable loader inventories retain their collection-only flags;
+the separate loader-family receipt establishes its component result.
+
+Resolver-family computation and assessment pass, but host network-report
+discovery fails: `network/run-l4yrnkup` is root-owned `2700`, and its public
+report copy is `0600`. The output glob is valid; no path fallback or frozen
+artifact permission change is made. `0a5d02bde` fixes fresh network run-root
+traversal while preserving setgid, and publishes new report files as `0644`.
+Both real-filesystem regressions fail before the fix. Focused checks pass
+37 tests, with four fixture-dependent skips left unverified. The detached
+`.work/wt/resolver-readability-proof` at that revision prepares a fresh
+standalone `owned-resolver-network` proof; it cannot admit the old H0 artifact.
+The H0 main runner is in OS-test collection; its pthread-family assessment
+runs independently from the completed three-pair POSIX matrix.
 
 The addrconfig lane's musl scratch remains under its `.work/tmp`: automatic
 review denied its removal with "rm -f style commands are not permitted. Use
