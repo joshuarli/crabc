@@ -109,8 +109,9 @@ for arm in oracle candidate; do
             "$unique_source" -Wl,-soname,libelf_unique.so -o "$root/usr/lib/libelf_unique.so"
     fi
     readelf --dyn-syms -W "$root/usr/lib/libelf_unique.so" >"$work/$arm-unique.symbols"
-    awk '$5 == "UNIQUE" && $7 != "UND" && $8 == "elf_unique" { found = 1 }
-        END { exit !found }' "$work/$arm-unique.symbols"
+    nm --dynamic --defined-only --format=posix "$root/usr/lib/libelf_unique.so" >"$work/$arm-unique.nm"
+    awk '$1 == "elf_unique" && $2 == "u" { found = 1 }
+        END { exit !found }' "$work/$arm-unique.nm"
     readelf -rW "$root/usr/lib/libelf_unique.so" >"$work/$arm-unique.relocations"
     awk '$3 == "R_X86_64_GLOB_DAT" && $5 == "elf_unique" { found = 1 }
         END { exit !found }' "$work/$arm-unique.relocations"
