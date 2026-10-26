@@ -793,8 +793,8 @@ a fabricated native helper export.
 `__crabc_runtime_v1` is a private dynamic provider owned by
 `runtime_facade_v1.rs`. The `crabc-rs` `cfile`, `dl`, and `runtime_thread`
 facades import it on x86-64. The owner group selects one `FUNC GLOBAL DEFAULT`
-definition of size 8 in the shared libc `.dynsym` and `.symtab`. A static
-provider is rejected.
+definition in the shared libc `.dynsym` and `.symtab`; both entries must agree
+on address, section, and positive size. A static provider is rejected.
 
 `runtime_private_facades.py` retains the six Rust probe objects, the C input
 objects, the three DSO and twelve executable link receipts, the linked
@@ -803,11 +803,11 @@ object's symbols and revalidates each installed-driver receipt against the
 ordered input objects and selected product. The single-object link reader
 remains strict; the scoped RuntimeV1 path uses its exact ordered multi-object
 reader. The report binds the current clean source and dynamic product
-manifest. Pass the report with
-`--runtime-private-facades-report` to attach the getter and facade evidence to
-the same selected source and dynamic product. This closes only the RuntimeV1
-facade consumer requirement. It does not qualify the dynamic runtime family,
-the dynamic product, or public support.
+manifest. Attach it through `native-abi-selection build-report` launched by
+`./scripts/dev-x86_64.sh` inside the pinned image, with the matching source,
+inventory, ELF facts, declarations, products, and preparation inputs. This
+closes only the RuntimeV1 facade consumer requirement. It does not qualify the
+dynamic runtime family, the dynamic product, or public support.
 
 ## Runtime component attachments
 

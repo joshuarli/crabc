@@ -769,12 +769,9 @@ def validate_contract(value: Any) -> dict[str, Any]:
                     require(record['disposition'] == 'public-provider' and record['expected_type'] == 'FUNC' and 'candidate-static' in record['artifacts'], 'oracle metadata requires an already selected public static function')
                 require(type(record['placement_metadata']) is dict and set(record['placement_metadata']) <= set(record['artifacts']), 'placement metadata artifact differs')
                 for metadata in record['placement_metadata'].values():
-                    require(type(metadata) is dict and set(metadata) <= {'type', 'binding', 'visibility', 'size_bytes'}, 'placement metadata fields differ')
+                    require(type(metadata) is dict and set(metadata) <= {'type', 'binding', 'visibility'}, 'placement metadata fields differ')
                     for key, values in (('type', SUPPORTED_TYPES), ('binding', SUPPORTED_BINDINGS), ('visibility', SUPPORTED_VISIBILITIES)):
                         require(key not in metadata or metadata[key] in values, f'placement {key} invalid')
-                    require('size_bytes' not in metadata or type(metadata['size_bytes']) is int
-                            and not isinstance(metadata['size_bytes'], bool) and metadata['size_bytes'] >= 0,
-                            'placement size_bytes invalid')
             elif field == 'structural_groups':
                 exact(record, {'id', 'members', 'sources', 'disposition', 'reason', 'requirements'}, 'structural group')
                 strings(record['members'], 'structural members', empty=False)
@@ -9739,7 +9736,7 @@ def attach_runtime_private_facades(accounting: Mapping[str, Any],
             and record['selection'].get('group') == RUNTIME_PRIVATE_FACADE_GROUP
             and record.get('unresolved') == [RUNTIME_PRIVATE_FACADE_REQUIREMENT],
             'RuntimeV1 getter selected requirement differs')
-    expected_metadata = {'type': 'FUNC', 'binding': 'GLOBAL', 'visibility': 'DEFAULT', 'size_bytes': 8}
+    expected_metadata = {'type': 'FUNC', 'binding': 'GLOBAL', 'visibility': 'DEFAULT'}
     placement = placements.get((key, 'candidate-shared'))
     require(type(placement) is dict and placement.get('placement_observed') is True
             and placement.get('definition_count') == 1 and placement.get('expected_metadata') == expected_metadata
@@ -9757,9 +9754,9 @@ def attach_runtime_private_facades(accounting: Mapping[str, Any],
     for table, occurrence in by_table.items():
         row = occurrence['row']
         require({field: row.get(field) for field in (
-            'type', 'binding', 'visibility', 'size_bytes', 'version', 'version_default',
+            'type', 'binding', 'visibility', 'version', 'version_default',
         )} == {
-            'type': 'FUNC', 'binding': 'GLOBAL', 'visibility': 'DEFAULT', 'size_bytes': 8,
+            'type': 'FUNC', 'binding': 'GLOBAL', 'visibility': 'DEFAULT',
             'version': None, 'version_default': False,
         } and row.get('section_index') != 'UND'
                 and occurrence.get('accounting') == {
@@ -9767,6 +9764,17 @@ def attach_runtime_private_facades(accounting: Mapping[str, Any],
                     'scope': 'candidate-shared',
                 },
                 f'RuntimeV1 shared getter metadata differs: {table}')
+    dynamic_row = by_table['.dynsym']['row']
+    static_row = by_table['.symtab']['row']
+    require(type(dynamic_row.get('size_bytes')) is int and dynamic_row['size_bytes'] > 0
+            and type(static_row.get('size_bytes')) is int
+            and static_row['size_bytes'] == dynamic_row['size_bytes']
+            and type(dynamic_row.get('value')) is str and bool(dynamic_row['value'])
+            and static_row.get('value') == dynamic_row['value']
+            and type(dynamic_row.get('section_index')) is str
+            and dynamic_row['section_index'] != 'UND'
+            and static_row.get('section_index') == dynamic_row['section_index'],
+            'RuntimeV1 shared getter tables disagree on address, section, or positive size')
     static_definitions = [row for row in occurrences.values()
                           if row.get('artifact_key') == 'candidate-static'
                           and identity_key(row_identity(row['row'])) == key

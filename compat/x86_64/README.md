@@ -433,9 +433,12 @@ The report binds the clean source and dynamic product manifest. It retains the
 six probe objects and twelve linked executables. It records each execution's
 stdout, stderr, and status bytes.
 The selector replays those retained files when you pass the report with
-`--runtime-private-facades-report`. The attachment selects the shared getter
-provider and closes only this consumer requirement. It does not qualify the
-dynamic product or `ldso.dynamic-runtime`.
+`--runtime-private-facades-report` to `native-abi-selection build-report`
+through `./scripts/dev-x86_64.sh` inside the pinned image, alongside the
+matching source, inventory, ELF facts, declaration, product, and preparation
+inputs. The attachment selects the shared getter provider and closes only this
+consumer requirement. It does not qualify the dynamic product or
+`ldso.dynamic-runtime`.
 
 ## Installed descriptor control
 

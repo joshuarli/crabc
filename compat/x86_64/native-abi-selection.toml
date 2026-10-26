@@ -1155,7 +1155,7 @@ members = ["__crabc_runtime_v1"]
 members_file = ""
 expected_type = "FUNC"
 delegated_members = []
-placement_metadata = {"candidate-shared" = {"type" = "FUNC", "binding" = "GLOBAL", "visibility" = "DEFAULT", "size_bytes" = 8}}
+placement_metadata = {"candidate-shared" = {"type" = "FUNC", "binding" = "GLOBAL", "visibility" = "DEFAULT"}}
 reason = "The six source-bound RuntimeV1 probes use one immutable process table getter supplied by dynamic libc."
 static_metadata_rule = "explicit"
 

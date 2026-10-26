@@ -97,7 +97,7 @@ class SelectionContractTests(unittest.TestCase):
         self.assertEqual(group['expected_type'], 'FUNC')
         self.assertEqual(group['placement_metadata'], {
             'candidate-shared': {
-                'type': 'FUNC', 'binding': 'GLOBAL', 'visibility': 'DEFAULT', 'size_bytes': 8,
+                'type': 'FUNC', 'binding': 'GLOBAL', 'visibility': 'DEFAULT',
             },
         })
         self.assertNotIn('__crabc_runtime_v1', {
@@ -106,7 +106,8 @@ class SelectionContractTests(unittest.TestCase):
         changed = copy.deepcopy(contract)
         selected = next(row for row in changed['owner_groups'] if row['id'] == group['id'])
         selected['placement_metadata']['candidate-shared']['size_bytes'] = 7
-        self.assertEqual(selection.validate_contract(changed)['owner_groups'], changed['owner_groups'])
+        with self.assertRaisesRegex(selection.SelectionError, 'placement metadata fields differ'):
+            selection.validate_contract(changed)
 
     def test_initial_tid_operation_has_exact_source_abi_and_shared_only_endpoint(self):
         contract = selection.load_contract()
@@ -319,7 +320,7 @@ class RuntimePrivateFacadeAttachmentTests(unittest.TestCase):
         for index, table in ((1, '.dynsym'), (2, '.symtab')):
             occurrences.append({
                 'index': index, 'artifact_key': 'candidate-shared', 'table': table, 'role': 'definition',
-                'row': symbol(name, value='0000000000000800', size=8),
+                'row': symbol(name, value='0000000000000800', size=17),
                 'accounting': {'disposition': 'private-provider', 'owner': selection.RUNTIME_PRIVATE_FACADE_OWNER,
                                'scope': 'candidate-shared'},
             })
@@ -327,7 +328,7 @@ class RuntimePrivateFacadeAttachmentTests(unittest.TestCase):
             'identities': [record],
             'placement_joins': [{
                 'identity': ident, 'artifact_key': 'candidate-shared',
-                'expected_metadata': {'type': 'FUNC', 'binding': 'GLOBAL', 'visibility': 'DEFAULT', 'size_bytes': 8},
+                'expected_metadata': {'type': 'FUNC', 'binding': 'GLOBAL', 'visibility': 'DEFAULT'},
                 'placement_observed': True, 'definition_count': 1,
                 'metadata_differences': [{'occurrence_index': 1, 'fields': []},
                                          {'occurrence_index': 2, 'fields': []}],
@@ -354,8 +355,18 @@ class RuntimePrivateFacadeAttachmentTests(unittest.TestCase):
         self.assertEqual(len(accounting['blockers']), 1)
 
     def test_rejects_wrong_shared_metadata_and_any_static_provider(self):
+        def zero_shared_sizes(value):
+            for occurrence in value['occurrences']:
+                if occurrence['artifact_key'] == 'candidate-shared':
+                    occurrence['row']['size_bytes'] = 0
+
         for mutate in (
             lambda value: value['occurrences'][0]['row'].__setitem__('size_bytes', 7),
+            lambda value: value['occurrences'][1]['row'].__setitem__('size_bytes', 0),
+            lambda value: value['occurrences'][1]['row'].__setitem__('size_bytes', 18),
+            lambda value: value['occurrences'][1]['row'].__setitem__('value', '0000000000000810'),
+            lambda value: value['occurrences'][1]['row'].__setitem__('section_index', '2'),
+            zero_shared_sizes,
             lambda value: value['occurrences'].append({
                 'index': 3, 'artifact_key': 'candidate-static', 'table': 'member', 'role': 'definition',
                 'row': symbol('__crabc_runtime_v1', size=8),
