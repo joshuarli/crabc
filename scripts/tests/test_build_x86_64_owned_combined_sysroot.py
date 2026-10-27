@@ -63,7 +63,7 @@ class CombinedSysrootCompositionTests(unittest.TestCase):
             (root / relative).symlink_to(target)
         files = {relative: digest for relative, (digest, _) in combined.tree(root)[0].items()}
         manifest = {"schema": 1, "format": combined.PRODUCT_FORMATS[name], "target": combined.TARGET,
-                    "toolchain": "nightly-pinned"}
+                    "toolchain": "nightly-pinned", "hardening_profile": "compatibility"}
         if name == "static":
             manifest["installed"] = {"files": files}
             manifest["source_sha256"] = self.source_sha256
@@ -185,8 +185,9 @@ class CombinedSysrootCompositionTests(unittest.TestCase):
         configuration = {"build_profile": "debug", "allocator_backend": "accepted-c",
                          "allocator_lifecycle_test_audit": False}
         state = {**configuration, "status": "materialized-unqualified"}
-        static = {**configuration, "source_sha256": self.source_sha256}
-        dynamic = {"build_profile": "debug", "source_sha256": self.source_sha256}
+        static = {**configuration, "source_sha256": self.source_sha256, "hardening_profile": "compatibility"}
+        dynamic = {"build_profile": "debug", "source_sha256": self.source_sha256,
+                   "hardening_profile": "compatibility"}
         combined.require_matching_source_seals(static, dynamic, json.dumps(state).encode())
         malformed = (
             ("missing-audit", {key: value for key, value in state.items()
@@ -215,6 +216,14 @@ class CombinedSysrootCompositionTests(unittest.TestCase):
             combined.require_matching_source_seals(selected, dynamic, json.dumps(selected_state).encode())
             with self.assertRaisesRegex(combined.CompositionError, "product configuration differs"):
                 combined.require_matching_source_seals(static, dynamic, json.dumps(selected_state).encode())
+
+    def test_product_profiles_must_match_before_composition(self):
+        path = self.static / combined.MANIFEST
+        manifest = json.loads(path.read_text())
+        manifest["hardening_profile"] = "hardened"
+        path.write_text(json.dumps(manifest))
+        with self.assertRaisesRegex(combined.CompositionError, "hardening profiles differ"):
+            self.compose()
 
     def test_source_seals_must_match_before_composition(self):
         manifest_path = self.static / combined.MANIFEST

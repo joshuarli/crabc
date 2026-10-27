@@ -36,6 +36,38 @@ import build_x86_64_owned_combined_sysroot as combined  # noqa: E402
 
 
 class BuildX86OwnedSysrootTests(unittest.TestCase):
+    def test_crt_profile_and_object_must_match_product(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            (root / "rcrt1.o").write_bytes(b"hardened crt")
+            receipt = {"hardening_profile": "hardened", "objects": {
+                "rcrt1.o": {"sha256": builder.sha256_file(root / "rcrt1.o")},
+            }}
+            (root / "objects.json").write_text(json.dumps(receipt))
+            builder.validate_crt_profile(root, builder.NativeRuntimeProfile.HARDENED)
+            with self.assertRaises(builder.BuildError):
+                builder.validate_crt_profile(root, builder.NativeRuntimeProfile.COMPATIBILITY)
+            (root / "rcrt1.o").write_bytes(b"different crt")
+            with self.assertRaises(builder.BuildError):
+                builder.validate_crt_profile(root, builder.NativeRuntimeProfile.HARDENED)
+
+    def test_hardened_static_product_selects_only_static_pie(self) -> None:
+        profile = builder.NativeRuntimeProfile.HARDENED
+        manifest = builder.installed_manifest({}, {}, source_sha256="a" * 64, hardening_profile=profile)
+        self.assertEqual(manifest["hardening_profile"], "hardened")
+        self.assertEqual(manifest["sealed_static_driver"]["modes"], [
+            {"id": "static-pie", "elf_type": "ET_DYN", "crt_object": "rcrt1.o"},
+        ])
+        invocation = driver.parse_invocation(["--print-link-plan"], hardening_profile=profile)
+        self.assertEqual(invocation.mode, driver.STATIC_PIE)
+        with self.assertRaises(driver.DriverError):
+            driver.parse_invocation(["--static-et-exec", "--print-link-plan"], hardening_profile=profile)
+        self.assertIs(driver.profile_from_manifest(manifest), profile)
+        for value in (None, "unknown", "", 1):
+            altered = dict(manifest, hardening_profile=value)
+            with self.assertRaises(driver.DriverError):
+                driver.profile_from_manifest(altered)
+
     def test_debug_profile_is_explicit_and_keeps_release_as_the_default(self) -> None:
         self.assertEqual(builder.parse_args(["--profile", "debug"]).profile, "debug")
         self.assertEqual(builder.parse_args([]).profile, "release")

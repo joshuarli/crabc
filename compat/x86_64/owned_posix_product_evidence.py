@@ -31,6 +31,7 @@ if str(ROOT / "compat/x86_64") not in sys.path:
 from scripts import native_build_tools
 from scripts.rust_toolchain import pinned_toolchain
 import native_rustc
+from native_runtime_profile import NativeRuntimeProfile
 
 
 TARGET = "x86_64-unknown-linux-musl"
@@ -52,6 +53,7 @@ STATIC_DRIVER_STATUS = "planned-owned-static-product-seed-not-family-completion-
 STATIC_CRT_OBJECTS = ("crt1.o", "Scrt1.o", "rcrt1.o", "crti.o", "crtn.o")
 STATIC_REQUIRED = (
     "bin/crabc-cc",
+    "share/crabc/native_runtime_profile.py",
     "usr/lib/crt1.o",
     "usr/lib/Scrt1.o",
     "usr/lib/rcrt1.o",
@@ -63,6 +65,7 @@ STATIC_REQUIRED = (
 DYNAMIC_REQUIRED = (
     "bin/crabc-cc-dynamic",
     "share/crabc/crabc_cc_static.py",
+    "share/crabc/native_runtime_profile.py",
     "share/crabc/owned_dynamic_receipt.py",
     "share/crabc/owned_dynamic_elf.py",
     "share/crabc/producer-tools.json",
@@ -615,6 +618,10 @@ def _validate_static_product(root: Path) -> tuple[Path, dict[str, str]]:
     manifest_path, manifest, combined = _product_manifest(root, "static", STATIC_PRODUCT_FORMAT)
     if (manifest.get("schema"), manifest.get("format"), manifest.get("target")) != (1, STATIC_PRODUCT_FORMAT, TARGET):
         _fail("static product manifest has the wrong product identity")
+    try:
+        hardening_profile = NativeRuntimeProfile(manifest["hardening_profile"])
+    except (KeyError, TypeError, ValueError):
+        _fail("static product has an invalid native runtime profile")
     validate_native_compiler_tool_records(manifest.get("producer_tools"))
     installed = manifest.get("installed")
     if not isinstance(installed, dict):
@@ -633,10 +640,10 @@ def _validate_static_product(root: Path) -> tuple[Path, dict[str, str]]:
         driver.get("format"), driver.get("path"), driver.get("status")
     ) != (STATIC_FORMAT, "bin/crabc-cc", STATIC_DRIVER_STATUS):
         _fail("static product sealed driver record drifted")
-    if driver.get("modes") != [
-        {"id": "static-et-exec", "elf_type": "ET_EXEC", "crt_object": "crt1.o"},
-        {"id": "static-pie", "elf_type": "ET_DYN", "crt_object": "rcrt1.o"},
-    ]:
+    modes = ([{"id": "static-et-exec", "elf_type": "ET_EXEC", "crt_object": "crt1.o"}]
+             if hardening_profile is NativeRuntimeProfile.COMPATIBILITY else [])
+    modes += [{"id": "static-pie", "elf_type": "ET_DYN", "crt_object": "rcrt1.o"}]
+    if driver.get("modes") != modes:
         _fail("static product sealed driver modes drifted")
     files = _payload_files(installed.get("files"), "static product manifest")
     missing = sorted(set(STATIC_REQUIRED) - set(files))

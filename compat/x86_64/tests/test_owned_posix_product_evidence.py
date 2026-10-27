@@ -387,6 +387,7 @@ class OwnedPosixProductEvidenceTests(unittest.TestCase):
         product = self.root / "static-product"
         for relative in (
             "bin/crabc-cc",
+            "share/crabc/native_runtime_profile.py",
             "usr/include/fixture.h",
             "usr/lib/crt1.o",
             "usr/lib/Scrt1.o",
@@ -402,6 +403,7 @@ class OwnedPosixProductEvidenceTests(unittest.TestCase):
             "schema": 1,
             "format": "crabc-x86-64-owned-static-sysroot-v1",
             "target": "x86_64-unknown-linux-musl",
+            "hardening_profile": "compatibility",
             "producer_tools": self.compiler_tools,
             "installed": {
                 "headers": "usr/include",
@@ -432,6 +434,7 @@ class OwnedPosixProductEvidenceTests(unittest.TestCase):
         for relative in (
             "bin/crabc-cc-dynamic",
             "share/crabc/crabc_cc_static.py",
+            "share/crabc/native_runtime_profile.py",
             "share/crabc/owned_dynamic_receipt.py",
             "share/crabc/owned_dynamic_elf.py",
             "share/crabc/dynamic-product-state.json",

@@ -741,6 +741,7 @@ def build_staged_payload(output: Path, stage: Path, *, allocator_backend: str = 
     )
     for source, name in ((ROOT / "compat/x86_64/crabc_cc_owned_dynamic.py", "bin/crabc-cc-dynamic"),
                          (ROOT / "compat/x86_64/crabc_cc_static.py", "share/crabc/crabc_cc_static.py"),
+                         (ROOT / "compat/x86_64/native_runtime_profile.py", "share/crabc/native_runtime_profile.py"),
                          (ROOT / "compat/x86_64/owned_dynamic_receipt.py", "share/crabc/owned_dynamic_receipt.py"),
                          (ROOT / "compat/x86_64/owned_dynamic_elf.py", "share/crabc/owned_dynamic_elf.py")):
         common.copy_artifact(source, output / name)
@@ -920,6 +921,7 @@ def build_debug_payload(output: Path, stage: Path, *, allocator_backend: str, li
         "artifact": {"path": LOADER_ARTIFACT, "sha256": common.sha256_file(interpreter)}})
     for source, name in ((ROOT / "compat/x86_64/crabc_cc_owned_dynamic.py", "bin/crabc-cc-dynamic"),
                          (ROOT / "compat/x86_64/crabc_cc_static.py", "share/crabc/crabc_cc_static.py"),
+                         (ROOT / "compat/x86_64/native_runtime_profile.py", "share/crabc/native_runtime_profile.py"),
                          (ROOT / "compat/x86_64/owned_dynamic_receipt.py", "share/crabc/owned_dynamic_receipt.py"),
                          (ROOT / "compat/x86_64/owned_dynamic_elf.py", "share/crabc/owned_dynamic_elf.py")):
         common.copy_artifact(source, output / name)
@@ -935,6 +937,7 @@ def write_product_manifest(output: Path, metadata: Path, *, profile: str = "rele
              for path in sorted(output.rglob("*")) if path.is_file() and not path.is_symlink()}
     manifest = {"schema": 1, "format": FORMAT,
         "target": common.TARGET, "toolchain": common.PINNED_TOOLCHAIN, "files": files, "build_profile": profile,
+        "hardening_profile": common.NativeRuntimeProfile.COMPATIBILITY.value,
         "symlinks": {"lib/ld-musl-x86_64.so.1": "ld-crabc-x86_64.so.1"}}
     if profile == "debug":
         # Debug state describes only the unqualified backend selection. Bind

@@ -40,6 +40,7 @@ from typing import Mapping
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "compat/x86_64"))
 import owned_static_sysroot_package as shared_package
+from native_runtime_profile import NativeRuntimeProfile
 
 FORMAT = "crabc-x86-64-owned-sysroot-v1"
 TARGET = "x86_64-unknown-linux-musl"
@@ -60,6 +61,7 @@ PRODUCT_FORMATS = {
 # not relocatable metadata, even though they live below share/crabc/.
 DRIVER_MODULES = frozenset({
     "share/crabc/crabc_cc_static.py",
+    "share/crabc/native_runtime_profile.py",
     "share/crabc/owned_dynamic_receipt.py",
     "share/crabc/owned_dynamic_elf.py",
 })
@@ -120,6 +122,9 @@ def product_manifest(root: Path, product: str) -> dict:
 def require_matching_source_seals(static_manifest: dict, dynamic_manifest: dict, dynamic_state_payload: bytes) -> None:
     """Require the two embedded products to claim the same complete source tree."""
 
+    require(static_manifest.get("hardening_profile") == NativeRuntimeProfile.COMPATIBILITY.value
+            and dynamic_manifest.get("hardening_profile") == NativeRuntimeProfile.COMPATIBILITY.value,
+            "static and dynamic hardening profiles differ or are not yet supported")
     static_source = static_manifest.get("source_sha256")
     require(isinstance(static_source, str) and len(static_source) == 64
             and all(character in "0123456789abcdef" for character in static_source),
