@@ -81,8 +81,7 @@ pub(super) unsafe fn initialize(sp: usize) {
 /// Direct loader entry names its main object by the opened program path.
 pub(super) unsafe fn application_name() -> *const u8 { unsafe { APPLICATION_NAME } }
 
-/// Command options are explicit input, independent of environment filtering.
-pub(super) unsafe fn command_interpreter(name: *const u8) { unsafe { INTERPRETER_NAME = name; } }
+pub(super) unsafe fn command_interpreter(name: *const u8) { unsafe { if !SECURE { INTERPRETER_NAME = name; } } }
 pub(super) unsafe fn interpreter_name() -> &'static [u8] {
     unsafe { c_string(INTERPRETER_NAME) }
 }
