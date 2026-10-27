@@ -98,6 +98,37 @@ static int failed_syscall_preserves_graph(int number, int (*initialized)(void), 
     return child > 0 && waitpid(child, &status, 0) == child && WIFEXITED(status) && WEXITSTATUS(status) == 0;
 }
 
+static int failed_tls_preparation_preserves_graph(int (*initialized)(void), unsigned long before,
+                                                   const struct image_view *image)
+{
+    pid_t child = fork();
+    if (child == 0) {
+        struct syscall_filter_instruction instructions[] = {
+            {0x20, 0, 0, 0},
+            {0x15, 0, 3, SYS_mmap},
+            {0x20, 0, 0, 24},
+            {0x35, 1, 0, 4096},
+            {0x06, 0, 0, 0x00050000 | EPERM},
+            {0x06, 0, 0, 0x7fff0000},
+        };
+        struct syscall_filter_program program = {6, instructions};
+        if (prctl(PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0) || prctl(PR_SET_SECCOMP, 2, &program, 0, 0)) _exit(2);
+        errno = 0;
+        if (syscall(SYS_mmap, 0, 95, 3, 0x22, -1, 0) != -1 || errno != EPERM) _exit(3);
+        long page = syscall(SYS_mmap, 0, 4096, 3, 0x22, -1, 0);
+        if (page == -1 || syscall(SYS_munmap, page, 4096) != 0) _exit(4);
+        void *rejected = dlopen("/usr/lib/tls-fault.so", RTLD_NOW);
+        const char *error = dlerror();
+        unsigned long after = 0;
+        dl_iterate_phdr(count_dso, &after);
+        _exit(!rejected && error && after == before && initialized() == 7
+              && access("/tls-rejected-marker", F_OK) != 0
+              && check_relro(image->base, image->headers, image->count) ? 0 : 1);
+    }
+    int status = 0;
+    return child > 0 && waitpid(child, &status, 0) == child && WIFEXITED(status) && WEXITSTATUS(status) == 0;
+}
+
 static int check_loaded_dso(void)
 {
     void *handle = dlopen("/usr/lib/hardened-relro-fixture.so", RTLD_NOW);
@@ -120,10 +151,21 @@ static int check_loaded_dso(void)
     if (child < 0 || waitpid(child, &child_status, 0) != child
         || !WIFEXITED(child_status) || WEXITSTATUS(child_status) != 0
         || unlink("/rejected-marker") != 0) valid = 0;
+    child = fork();
+    if (child == 0) {
+        void *control = dlopen("/usr/lib/tls-fault.so", RTLD_NOW);
+        int *value = control ? dlsym(control, "hardened_fault_tls") : 0;
+        _exit(value && *value == 41 && access("/tls-rejected-marker", F_OK) == 0 ? 0 : 1);
+    }
+    child_status = 0;
+    if (child < 0 || waitpid(child, &child_status, 0) != child
+        || !WIFEXITED(child_status) || WEXITSTATUS(child_status) != 0
+        || unlink("/tls-rejected-marker") != 0) valid = 0;
     unsigned long before = 0;
     dl_iterate_phdr(count_dso, &before);
     if (valid && (!failed_syscall_preserves_graph(SYS_mprotect, initialized, before, &image)
-                  || !failed_syscall_preserves_graph(SYS_mmap, initialized, before, &image))) valid = 0;
+                  || !failed_syscall_preserves_graph(SYS_mmap, initialized, before, &image)
+                  || !failed_tls_preparation_preserves_graph(initialized, before, &image))) valid = 0;
     const char *rejected[] = {"/usr/lib/rejected-stack.so", "/usr/lib/rejected-wx.so", "/usr/lib/rejected-relro.so"};
     for (unsigned long i = 0; valid && i < sizeof rejected / sizeof rejected[0]; i++) {
         if (access(rejected[i], F_OK) != 0) { valid = 0; break; }
