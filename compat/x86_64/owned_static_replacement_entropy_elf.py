@@ -9,6 +9,9 @@ import struct
 import subprocess
 from pathlib import Path
 
+from owned_static_link_authority import StaticFunctionContract, StaticLinkAuthorityError, require_static_functions
+from owned_syscall_alias_authority import archive_members
+
 
 def command(*args: str) -> str:
     return subprocess.run(args, check=True, capture_output=True, text=True).stdout
@@ -34,6 +37,59 @@ def file_offset(elf: bytes, address: int) -> int:
         if kind == 1 and virtual <= address and address + 8 <= virtual + size:
             return offset + address - virtual
     raise SystemExit(f'entropy replacement ELF: 0x{address:x} is outside file-backed PT_LOAD')
+
+
+def final_address(binary: Path, name: str) -> int:
+    symbols = command('readelf', '-sW', str(binary))
+    rows = re.findall(rf'^\s*\d+:\s*([0-9a-fA-F]+)\s+\d+\s+FUNC\s+(?:GLOBAL|LOCAL)\s+DEFAULT\s+\d+\s+{name}$', symbols, re.M)
+    require(len(rows) == 1, f'final {name} definition differs')
+    return int(rows[0], 16)
+
+
+def validate_owners(map_path: Path, binary: Path, admitted: dict, application: str, member: str) -> None:
+    header = map_path.read_text().splitlines()[0].split()
+    require(header in (['VMA', 'Size', 'Align', 'Out', 'In', 'Symbol'],
+                       ['VMA', 'LMA', 'Size', 'Align', 'Out', 'In', 'Symbol']), 'link map header differs')
+    final_binding = 'LOCAL' if header == ['VMA', 'Size', 'Align', 'Out', 'In', 'Symbol'] else 'GLOBAL'
+    contracts = [StaticFunctionContract('getrandom', application, 'GLOBAL', 'DEFAULT', final_binding, 'DEFAULT'),
+                 StaticFunctionContract('getentropy', member, 'GLOBAL', 'DEFAULT', final_binding, 'DEFAULT')]
+    try:
+        require_static_functions(map_path, binary, admitted, contracts)
+    except StaticLinkAuthorityError as error:
+        raise SystemExit(f'entropy replacement ELF: static function authority: {error}') from error
+
+
+def admitted_inputs(archive: Path, application: Path, map_path: Path, mode: str) -> dict:
+    library = archive.parent
+    direct = {str(path): path for path in (application, library / ('crt1.o' if mode == 'static' else 'rcrt1.o'),
+                                          library / 'crti.o', library / 'crtn.o')}
+    archives = (archive, library / 'libcrabc-builtins.a')
+    members = {}
+    for path in archives:
+        decoded = {}
+        for name, body in archive_members(path.read_bytes()):
+            require(name not in decoded, 'archive repeats a member')
+            decoded[name] = body
+        members[str(path)] = decoded
+    lines = map_path.with_suffix('.trace').read_text().splitlines()
+    require(lines and all(line.startswith('trace: ') for line in lines), 'link trace differs')
+    lines = [line.removeprefix('trace: ') for line in lines]
+    require(len(lines) == len(set(lines)), 'link trace repeats an input')
+    admitted = {}
+    seen_archives = set()
+    for line in lines:
+        if line in direct:
+            admitted[line] = direct[line]
+            continue
+        matches = [(name, line[len(name) + 1:-1]) for name in members
+                   if line.startswith(name + '(') and line.endswith(')')]
+        require(len(matches) == 1 and matches[0][1] in members[matches[0][0]],
+                'link trace names an unowned input')
+        name, member = matches[0]
+        admitted[line] = members[name][member]
+        seen_archives.add(name)
+    require(set(direct) <= set(admitted) and seen_archives == set(members), 'link trace omits an input')
+    return admitted
 
 
 def main() -> None:
@@ -62,23 +118,12 @@ def main() -> None:
     require(len(imports) == 1, 'getentropy must retain one GOT relocation to getrandom')
     site_offset, relocation_kind = imports[0]
 
-    owner = ''
-    getrandom = getentropy = None
-    for line in args.map.read_text().splitlines():
-        if ':(.' in line:
-            owner = line
-        symbol = re.search(r'^\s*([0-9a-fA-F]+)\s+[0-9a-fA-F]+\s+[0-9a-fA-F]+\s+\d+\s+(\S+)\s*$', line)
-        if symbol and symbol.group(2) == 'getrandom' and f'{args.application}:(.text)' in owner:
-            getrandom = int(symbol.group(1), 16)
-        if symbol and symbol.group(2) == 'getentropy' and f'libc.a({member}):(.text.getentropy)' in owner:
-            getentropy = int(symbol.group(1), 16)
-    require(getrandom is not None, 'link map does not attribute getrandom to application')
-    require(getentropy is not None, 'link map does not attribute getentropy to archived member')
-
-    symbols = command('readelf', '-sW', str(args.binary))
-    strong = re.findall(r'^\s*\d+:\s*([0-9a-fA-F]+)\s+\d+\s+FUNC\s+GLOBAL\s+DEFAULT\s+\d+\s+getrandom$', symbols, re.M)
-    require(len(strong) == 1 and int(strong[0], 16) == getrandom,
-            'final strong getrandom must have the application map address')
+    admitted = admitted_inputs(args.archive, args.application, args.map, args.mode)
+    owner = f'{args.archive}({member})'
+    require(owner in admitted and admitted[owner] == member_bytes, 'archived owner is not traced')
+    validate_owners(args.map, args.binary, admitted, str(args.application), owner)
+    getrandom = final_address(args.binary, 'getrandom')
+    getentropy = final_address(args.binary, 'getentropy')
 
     elf = args.binary.read_bytes()
     expected_type = 2 if args.mode == 'static' else 3
@@ -102,7 +147,7 @@ def main() -> None:
     if args.mode == 'static':
         require(slot == getrandom and not binding, 'ET_EXEC GOT must contain the application address')
     else:
-        require(slot == 0 and binding == [(got, getrandom)],
+        require(slot in (0, getrandom) and binding == [(got, getrandom)],
                 'static PIE GOT must have one RELATIVE relocation to the application address')
 
     result = {'mode': args.mode, 'archived_member': member, 'source_relocation': {

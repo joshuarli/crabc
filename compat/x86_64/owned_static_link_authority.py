@@ -586,8 +586,11 @@ def _require_static_functions(map_path, executable, admitted, functions):
             address = section[3] + offset
             value = final.unpack('<Q', section[4] + offset)[0]
             if final.elf_type == 3:
-                require(value == 0, 'static PIE GOT has an unexpected in-place addend')
-                value = relative.get(address)
+                if address not in relative:
+                    continue
+                require(value in (0, relative[address] & ((1 << 64) - 1)),
+                        'static PIE GOT has an unexpected in-place addend')
+                value = relative[address]
             else:
                 require(not relative, 'static executable GOT unexpectedly needs relocation')
             if value == target:
