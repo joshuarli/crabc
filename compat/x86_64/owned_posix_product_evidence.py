@@ -714,7 +714,8 @@ def _validate_dynamic_product(root: Path) -> tuple[Path, dict[str, str]]:
     import crabc_cc_owned_dynamic
     try:
         crabc_cc_owned_dynamic.validate_loader_provenance(root, loader_receipt,
-                                                         crabc_cc_owned_dynamic.shared.NativeRuntimeProfile.COMPATIBILITY)
+                                                         crabc_cc_owned_dynamic.shared.NativeRuntimeProfile.COMPATIBILITY,
+                                                         manifest.get("build_profile"))
     except crabc_cc_static.DriverError as error:
         raise ProductEvidenceError(str(error)) from error
     _validate_link_input_modes(root, DYNAMIC_LINK_INPUT_MODES, "dynamic link input")

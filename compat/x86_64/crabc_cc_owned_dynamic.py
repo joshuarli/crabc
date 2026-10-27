@@ -180,21 +180,24 @@ def link_evidence_workspace(parent: Path, *, retain: bool):
         yield Path(temporary)
 
 
-def validate_loader_provenance(root: Path, receipt_path: str, profile: shared.NativeRuntimeProfile) -> None:
+def validate_loader_provenance(root: Path, receipt_path: str, profile: shared.NativeRuntimeProfile,
+                               build_profile: str) -> None:
     receipt = shared.load_manifest(root / receipt_path, "loader provenance")
     artifact = receipt.get("artifact")
     if (not isinstance(artifact, dict) or artifact.get("path") != profile.interpreter.lstrip("/")
             or artifact.get("sha256") != shared.sha256_file(root / profile.interpreter.lstrip("/"))):
         raise shared.DriverError("installed loader does not match its provenance")
-    if receipt.get("build_profile") == "debug":
+    if build_profile == "debug" and receipt.get("build_profile") == "debug":
         arguments = receipt.get("compiler_command")
-    else:
+    elif build_profile == "release" and receipt.get("build_profile") is None:
         cargo = receipt.get("cargo")
         flags = cargo.get("rustflags") if isinstance(cargo, dict) else None
         try:
             arguments = shlex.split(flags) if isinstance(flags, str) else None
         except ValueError as error:
             raise shared.DriverError("invalid loader compiler flags") from error
+    else:
+        raise shared.DriverError("installed loader build profile does not match product")
     if not isinstance(arguments, list) or not all(isinstance(argument, str) for argument in arguments):
         raise shared.DriverError("invalid loader compiler provenance")
     selected = sum(argument == "--cfg=crabc_hardened" or
@@ -244,7 +247,7 @@ def validate(root: Path) -> dict:
         if shared.sha256_file(root / relative) != digest:
             raise shared.DriverError(f"installed payload hash mismatch: {relative}")
     shared.validate_crt_provenance(root, "share/crabc/crt.provenance.json", profile, "Scrt1.o")
-    validate_loader_provenance(root, "share/crabc/loader.provenance.json", profile)
+    validate_loader_provenance(root, "share/crabc/loader.provenance.json", profile, record.get("build_profile"))
     return record
 
 
@@ -314,7 +317,7 @@ def validate_combined(root: Path) -> dict:
             raise shared.DriverError(f"combined sysroot does not install dynamic payload unchanged: {relative}")
     receipt = placements["share/crabc/crt.provenance.json"]
     shared.validate_crt_provenance(root, receipt, profile, "Scrt1.o")
-    validate_loader_provenance(root, placements["share/crabc/loader.provenance.json"], profile)
+    validate_loader_provenance(root, placements["share/crabc/loader.provenance.json"], profile, embedded.get("build_profile"))
     return record
 
 

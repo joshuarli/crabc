@@ -500,7 +500,7 @@ class OwnedPosixProductEvidenceTests(unittest.TestCase):
             "objects": {"Scrt1.o": {"sha256": digest(product / "usr/lib/Scrt1.o")}},
         })
         self.write_json(product / "share/crabc/loader.provenance.json", {
-            "build_profile": "debug", "compiler_command": [],
+            "cargo": {"rustflags": "-C panic=abort"},
             "artifact": {"path": "lib/ld-crabc-x86_64.so.1", "sha256": digest(product / "lib/ld-crabc-x86_64.so.1")},
         })
         alias = product / "lib/ld-musl-x86_64.so.1"
@@ -511,6 +511,7 @@ class OwnedPosixProductEvidenceTests(unittest.TestCase):
             "format": "crabc-x86-64-owned-dynamic-sysroot-v1",
             "target": "x86_64-unknown-linux-musl",
             "hardening_profile": "compatibility",
+            "build_profile": "release",
             "files": self.payload_manifest(product),
             "symlinks": {"lib/ld-musl-x86_64.so.1": "ld-crabc-x86_64.so.1"},
         }
@@ -529,7 +530,7 @@ class OwnedPosixProductEvidenceTests(unittest.TestCase):
     def test_dynamic_product_reader_rejects_a_mismatched_loader_profile(self) -> None:
         path = self.dynamic / "share/crabc/loader.provenance.json"
         receipt = json.loads(path.read_text())
-        receipt["compiler_command"] = ["--cfg", "crabc_hardened"]
+        receipt["cargo"]["rustflags"] += " --cfg crabc_hardened"
         self.write_json(path, receipt)
         self.refresh_dynamic_manifest()
         with self.assertRaises(evidence.ProductEvidenceError):
@@ -1089,6 +1090,11 @@ class OwnedPosixProductEvidenceTests(unittest.TestCase):
         self.write_json(self.dynamic / "share/crabc/dynamic-product-state.json", state)
         self.write_json(self.dynamic / "share/crabc/libc-shared.provenance.json",
                         {key: state[key] for key in ("build_profile", "allocator_backend", "allocator_lifecycle_test_audit")})
+        loader_path = self.dynamic / "share/crabc/loader.provenance.json"
+        loader = json.loads(loader_path.read_text())
+        loader.pop("cargo")
+        loader.update(build_profile="debug", compiler_command=[])
+        self.write_json(loader_path, loader)
         manifest_path = self.dynamic / "share/crabc/manifest.json"
         manifest = json.loads(manifest_path.read_text())
         manifest.update(build_profile="debug", source_sha256="a" * 64, files={name: value for name, value in self.payload_manifest(self.dynamic).items() if name != "share/crabc/manifest.json"})
@@ -1101,6 +1107,15 @@ class OwnedPosixProductEvidenceTests(unittest.TestCase):
         evidence._validate_dynamic_product(product)
         evidence.validate_debug_product_source(product, "a" * 64)
         self.assertEqual(driver.validate(product)["source_sha256"], "a" * 64)
+
+    def test_dynamic_product_reader_rejects_debug_loader_labelled_release(self) -> None:
+        product = self.debug_product()
+        path = product / "share/crabc/manifest.json"
+        manifest = json.loads(path.read_text())
+        manifest["build_profile"] = "release"
+        self.write_json(path, manifest)
+        with self.assertRaises(evidence.ProductEvidenceError):
+            evidence._validate_dynamic_product(product)
 
     def test_release_product_source_uses_sealed_materialization_state(self) -> None:
         state_path = self.dynamic / "share/crabc/dynamic-product-state.json"

@@ -48,6 +48,7 @@ class InstalledDynamicDriverTests(unittest.TestCase):
         (self.root / "share/crabc").mkdir(parents=True, exist_ok=True)
         self.manifest = {"schema": 1, "format": driver.FORMAT, "target": driver.shared.TARGET,
                          "hardening_profile": "compatibility",
+                         "build_profile": "debug", "source_sha256": "a" * 64,
                          "toolchain": PINNED_TOOLCHAIN,
                          "files": {**{relative: hashlib.sha256(b"owned test payload").hexdigest()
                                    for relative in driver.REQUIRED},
@@ -114,6 +115,12 @@ class InstalledDynamicDriverTests(unittest.TestCase):
         with self.assertRaises(driver.shared.DriverError):
             driver.validate_installation(self.root)
 
+    def test_installed_driver_rejects_debug_loader_relabelled_as_release(self):
+        self.manifest["build_profile"] = "release"
+        self.write_manifest()
+        with self.assertRaises(driver.shared.DriverError):
+            driver.validate_installation(self.root)
+
     def test_release_loader_provenance_binds_flags_and_artifact(self):
         path = self.root / "share/crabc/loader.provenance.json"
         receipt = json.loads(path.read_text())
@@ -122,22 +129,30 @@ class InstalledDynamicDriverTests(unittest.TestCase):
         receipt["cargo"] = {"rustflags": "-C panic=abort"}
         path.write_text(json.dumps(receipt))
         profile = driver.shared.NativeRuntimeProfile.COMPATIBILITY
-        driver.validate_loader_provenance(self.root, "share/crabc/loader.provenance.json", profile)
+        driver.validate_loader_provenance(self.root, "share/crabc/loader.provenance.json", profile, "release")
         receipt["cargo"]["rustflags"] += " --cfg crabc_hardened"
         path.write_text(json.dumps(receipt))
         with self.assertRaises(driver.shared.DriverError):
-            driver.validate_loader_provenance(self.root, "share/crabc/loader.provenance.json", profile)
+            driver.validate_loader_provenance(self.root, "share/crabc/loader.provenance.json", profile, "release")
         receipt["cargo"]["rustflags"] = "-C panic=abort"
         receipt["artifact"]["sha256"] = "b" * 64
         path.write_text(json.dumps(receipt))
         with self.assertRaises(driver.shared.DriverError):
-            driver.validate_loader_provenance(self.root, "share/crabc/loader.provenance.json", profile)
+            driver.validate_loader_provenance(self.root, "share/crabc/loader.provenance.json", profile, "release")
 
     def _seal_materialized_fixture(self, root: Path) -> str:
         """Give the selected fixture payload one source-bound materialization state."""
 
         manifest_path = root / "share/crabc/manifest.json"
         manifest = json.loads(manifest_path.read_text())
+        loader_path = root / "share/crabc/loader.provenance.json"
+        loader = json.loads(loader_path.read_text())
+        loader.pop("build_profile")
+        loader.pop("compiler_command")
+        loader["cargo"] = {"rustflags": "-C panic=abort"}
+        loader_path.write_text(json.dumps(loader))
+        manifest["files"]["share/crabc/loader.provenance.json"] = hashlib.sha256(loader_path.read_bytes()).hexdigest()
+        manifest["build_profile"] = "release"
         source = qualification.source_digest()
         provenance_path = root / "share/crabc/libc-shared.provenance.json"
         provenance_path.write_text(json.dumps({
@@ -252,6 +267,7 @@ class InstalledDynamicDriverTests(unittest.TestCase):
         (root / "share/crabc/manifest.json").write_text(json.dumps({
             "schema": 1, "format": driver.FORMAT, "target": driver.shared.TARGET,
             "hardening_profile": "compatibility",
+            "build_profile": "debug", "source_sha256": "a" * 64,
             "toolchain": PINNED_TOOLCHAIN, "files": files, "symlinks": driver.ALIASES,
         }))
         return root
