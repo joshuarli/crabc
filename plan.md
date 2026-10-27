@@ -1385,7 +1385,11 @@ Append one line per merge batch, per parked item, and per contract change.
   At `092f0f796`, fresh release development products pass the unwind and
   both cross-DSO cases. The partial receipt is non-qualifying because other
   sections and the installed/extracted cohort were not selected. A qualifying
-  release cohort remains required. The independent math/fenv component passes
+  release cohort remains required. The facade LTO reader initially counted
+  rustc temporary rlib copies as Cargo artifacts; `e06ed8d9f` binds the
+  unique actual Cargo outputs. All three selected facade LTO lanes pass at
+  that revision, including embedded bitcode and the direct syscall witness;
+  the partial receipt remains non-qualifying. The independent math/fenv component passes
   206 selected C ABI entries at `4630b7407`. The text/locale/numeric component
   then exposed two nonspacing Unicode endpoints and wide-format error mapping;
   `be8d2a437` and `b06edf693` fix them. The complete Unicode fingerprint and
