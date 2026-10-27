@@ -234,6 +234,7 @@ pub(super) const UNSET_ERRNO: i32 = -1;
 
 unsafe fn direct(name: &[u8]) -> Result<Opened, i32> {
     if name.is_empty() { return Err(22); }
+    if cfg!(crabc_hardened) && !name.starts_with(b"/") { return Err(22); }
     // The name is stored as given; the kernel alone limits its length.
     let path = LoadedName::new(name).ok_or(12)?;
     let fd = unsafe { syscall4(SYS_OPENAT, AT_FDCWD, path.view().as_ptr() as i64, 0x80000, 0) };
@@ -246,6 +247,7 @@ unsafe fn path_open(paths: &[u8], name: &[u8]) -> Result<Option<Opened>, i32> {
     let mut path = [core::mem::MaybeUninit::<u8>::uninit(); SEARCH_BUFFER];
     let path_ptr = path.as_mut_ptr().cast::<u8>();
     for directory in paths.split(|byte| matches!(byte, b':' | b'\n')).filter(|part| !part.is_empty()) {
+        if cfg!(crabc_hardened) && !directory.starts_with(b"/") { continue; }
         // snprintf(buf, sizeof buf, "%.*s/%s") < sizeof buf: skip what does not fit.
         let length = directory.len().saturating_add(1).saturating_add(name.len());
         if length >= SEARCH_BUFFER { continue; }
@@ -296,11 +298,12 @@ unsafe fn object_paths(object: &Object) -> Result<ObjectPaths<'_>, i32> {
     if !paths.contains(&b'$') { return Ok(ObjectPaths::Borrowed(paths)); }
     // Musl ignores the whole path on any unrecognized expansion.
     let mut remaining = paths;
-    let (mut expansions, mut token_bytes) = (0usize, 0usize);
+    let (mut expansions, mut token_bytes, mut root_slashes) = (0usize, 0usize, 0usize);
     while let Some(index) = remaining.iter().position(|byte| *byte == b'$') {
         remaining = &remaining[index..];
         let skip = if remaining.starts_with(b"${ORIGIN}") { 9 }
             else if remaining.starts_with(b"$ORIGIN") { 7 } else { return Ok(ObjectPaths::None); };
+        if remaining.get(skip) == Some(&b'/') { root_slashes += 1; }
         remaining = &remaining[skip..];
         expansions += 1;
         token_bytes += skip;
@@ -317,11 +320,15 @@ unsafe fn object_paths(object: &Object) -> Result<ObjectPaths<'_>, i32> {
     } else {
         unsafe { object.search_name.bytes() }
     };
-    let origin = name.iter().rposition(|byte| *byte == b'/').map_or(b".".as_slice(), |index| &name[..index]);
+    let origin = name.iter().rposition(|byte| *byte == b'/').map_or(b".".as_slice(), |index| {
+        if cfg!(crabc_hardened) && index == 0 { b"/".as_slice() } else { &name[..index] }
+    });
     // Musl disallows a non-absolute origin name for AT_SECURE.
-    if unsafe { SECURE } && !name.starts_with(b"/") { return Ok(ObjectPaths::None); }
+    if (cfg!(crabc_hardened) || unsafe { SECURE }) && !name.starts_with(b"/") { return Ok(ObjectPaths::None); }
     let length = expansions.checked_mul(origin.len())
-        .and_then(|bytes| bytes.checked_add(paths.len() - token_bytes)).ok_or(12)?;
+        .and_then(|bytes| bytes.checked_add(paths.len() - token_bytes))
+        .and_then(|bytes| bytes.checked_sub(if cfg!(crabc_hardened) && origin == b"/" { root_slashes } else { 0 }))
+        .ok_or(12)?;
     let mut output = LoaderBuffer::new(length, 0u8).ok_or(12)?;
     let bytes = output.as_mut_slice();
     let mut count = 0;
@@ -329,6 +336,9 @@ unsafe fn object_paths(object: &Object) -> Result<ObjectPaths<'_>, i32> {
     while !input.is_empty() {
         let (part, skip) = if input.starts_with(b"${ORIGIN}") { (origin, 9) }
             else if input.starts_with(b"$ORIGIN") { (origin, 7) } else { (&input[..1], 1) };
+        let part = if cfg!(crabc_hardened) && part == b"/" && skip > 1 && input.get(skip) == Some(&b'/') {
+            b"".as_slice()
+        } else { part };
         bytes[count..count + part.len()].copy_from_slice(part);
         count += part.len();
         input = &input[skip..];
