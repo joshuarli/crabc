@@ -36,6 +36,7 @@ class NativeStaticSourceRuntimeClosureTests(unittest.TestCase):
             with patch.object(CLOSURE.native_build_tools, "KACHE", wrapper):
                 command = ["CARGO_PKG_NAME=probe", str(wrapper), str(compiler), "--crate-name", "probe"]
                 CLOSURE.validate_wrapped_commands([command], compiler)
+                CLOSURE.validate_wrapped_commands([["CARGO_PKG_DESCRIPTION=first line\nsecond line", *command]], compiler)
                 fixed = CLOSURE.native_build_tools.environment()
                 CLOSURE.validate_wrapped_commands([[f"{key}={value}" for key, value in fixed.items()] + command], compiler)
                 for changed in (
