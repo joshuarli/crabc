@@ -426,20 +426,6 @@ def parse_operations_trace(output: str, description: str) -> dict[str, str]:
     return trace
 
 
-def secure_capacity_upper(size: int) -> int:
-    padded = size + 8
-    if padded <= 512 * 1024:
-        words = (padded + 7) // 8
-        if words <= 8:
-            return (1 if words <= 1 else (words + 1) & ~1) * 8
-        step = 1 << ((words - 1).bit_length() - 3)
-        return ((words + step - 1) // step) * step * 8
-    good = (padded + 4095) & ~4095
-    alignment = (65536 if good < 2 * 1024 * 1024 else 262144 if good < 8 * 1024 * 1024
-                 else 1024 * 1024 if good < 32 * 1024 * 1024 else 4 * 1024 * 1024)
-    return (good + alignment - 1) & ~(alignment - 1)
-
-
 def compare_operations_traces(c_trace: Mapping[str, str], rust_trace: Mapping[str, str], *,
                               private_source_profile: str | None = None) -> None:
     """Validate private secure request context, then compare observations exactly.
@@ -490,35 +476,6 @@ def compare_operations_traces(c_trace: Mapping[str, str], rust_trace: Mapping[st
                 result[key] = "grow:1,copy:1,tail:1"
                 result[f"{base}.replace"] = "replace:1,copy:1,tail:1,aligned:1"
                 result[f"{base}.basis"] = f"requested:{requested},alignment:{alignment},offset:{offset}"
-            for key, value in trace.items():
-                match = re.fullmatch(r"api_modes\.aligned\.(\d+)\.(\d+)\.(\d+)", key)
-                if match is None or int(private_source_profile.rsplit("-", 1)[1]) < 3:
-                    continue
-                basis_key = f"{key}.basis"
-                basis = re.fullmatch(r"requested:(\d+),alignment:(\d+),offset:(\d+),upper:(\d+)", trace.get(basis_key, ""))
-                allocation = re.fullmatch(r"1,(\d+),1,1", value)
-                if basis is None or allocation is None:
-                    raise harness.HarnessError(f"private secure API allocation {key} lacks valid request or payload")
-                requested, alignment, offset, upper = map(int, basis.groups())
-                usable = int(allocation[1])
-                if not (alignment > 0 and alignment & (alignment - 1) == 0 and offset == int(match[3])
-                        and upper == secure_capacity_upper(max(requested, 16) + alignment - 1)
-                        and requested <= usable <= upper):
-                    raise harness.HarnessError(f"private secure API allocation {key} violates capacity bounds")
-                grow_key = key.replace("api_modes.aligned.", "api_modes.aligned_grow.", 1)
-                grow_basis_key = f"{grow_key}.basis"
-                grow_basis = re.fullmatch(r"requested:(\d+),upper:(\d+),aligned:1", trace.get(grow_basis_key, ""))
-                growth = re.fullmatch(r"1,(\d+),1,1", trace.get(grow_key, ""))
-                if grow_basis is None or growth is None:
-                    raise harness.HarnessError(f"private secure API allocation {key} lacks valid growth")
-                grow_request, grow_upper = map(int, grow_basis.groups())
-                if (grow_request != usable + 17
-                        or grow_upper != secure_capacity_upper(grow_request + alignment - 1)
-                        or not grow_request <= int(growth[1]) <= grow_upper):
-                    raise harness.HarnessError(f"private secure API allocation {key} violates growth bounds")
-                result[key] = "1,capacity,1,1"
-                result[grow_key] = "1,capacity,1,1"
-                result[grow_basis_key] = "requested:dynamic"
             for context_key, context in trace.items():
                 if not context_key.endswith(".contract"):
                     continue

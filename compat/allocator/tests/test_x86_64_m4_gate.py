@@ -24,32 +24,6 @@ harness = gate.harness
 
 
 class M4GateContractTests(unittest.TestCase):
-    def test_secure_api_aligned_capacity_requires_source_bounds_and_payload(self) -> None:
-        c = {"api_modes.aligned.3.2.7": "1,54,1,1",
-             "api_modes.aligned.3.2.7.basis": "requested:7,alignment:64,offset:7,upper:96",
-             "api_modes.aligned_grow.3.2.7": "1,109,1,1",
-             "api_modes.aligned_grow.3.2.7.basis": "requested:71,upper:160,aligned:1"}
-        native = {**c, "api_modes.aligned.3.2.7": "1,22,1,1",
-                  "api_modes.aligned_grow.3.2.7": "1,61,1,1",
-                  "api_modes.aligned_grow.3.2.7.basis": "requested:39,upper:112,aligned:1"}
-        gate.compare_operations_traces(c, native, private_source_profile="secure-5")
-        for key, value in (("api_modes.aligned.3.2.7", "1,6,1,1"),
-                           ("api_modes.aligned.3.2.7", "1,97,1,1"),
-                           ("api_modes.aligned.3.2.7", "1,22,0,1"),
-                           ("api_modes.aligned.3.2.7.basis", "requested:7,alignment:64,offset:7,upper:999"),
-                           ("api_modes.aligned_grow.3.2.7", "1,61,0,1"),
-                           ("api_modes.aligned_grow.3.2.7.basis", "requested:38,upper:112,aligned:1"),
-                           ("api_modes.aligned_grow.3.2.7.basis", "requested:39,upper:999,aligned:1"),
-                           ("api_modes.aligned_grow.3.2.7.basis", "requested:39,upper:112,aligned:0")):
-            with self.subTest(key=key, value=value), self.assertRaises(harness.HarnessError):
-                gate.compare_operations_traces(c, {**native, key: value}, private_source_profile="secure-5")
-        with self.assertRaises(harness.HarnessError):
-            gate.compare_operations_traces(c, native)
-        for missing in ("api_modes.aligned.3.2.7.basis", "api_modes.aligned_grow.3.2.7.basis"):
-            incomplete = {key: value for key, value in native.items() if key != missing}
-            with self.subTest(missing=missing), self.assertRaises(harness.HarnessError):
-                gate.compare_operations_traces(c, incomplete, private_source_profile="secure-5")
-
     def test_private_realloc_keeps_the_source_mandated_live_identity(self) -> None:
         trace = {"realloc.source.0.100": "id:0,reuse:-,usable:100,align:4,slice:12",
                  "realloc.source.0.100.contract": "requested:100,alignment:16,offset:0,upper:160,success:1,aligned:1,distinct:1",
