@@ -58,7 +58,9 @@ default release dispatcher and supplied-cohort consumer remain unchanged.
 `run_x86_dynamic_supplied.py` is the separate consumer entry point for an
 already sealed dynamic cohort. It takes the frozen cohort checkout and its
 `qualification.json`, the exact installed and extracted roots declared by that
-receipt, and a physical verified `lua-5.4.8.tar.gz` seed. It first runs the
+receipt, and a physical verified `lua-5.4.8.tar.gz` seed. The dispatcher uses
+the active checkout, including a linked campaign worktree under `.work/wt`.
+It first runs the
 originating checkout's qualification reader with its matching standalone-clone
 or linked-worktree Git metadata exposed read-only through explicit `GIT_DIR`
 and `GIT_WORK_TREE`, then copies that seed into a new private cache and invokes
