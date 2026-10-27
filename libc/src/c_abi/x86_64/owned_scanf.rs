@@ -1,7 +1,7 @@
 //! Owned byte scanf: pinned grammar, numerical conversion and allocation.
 //!
-//! `owned_scanf_musl_x86_64.S` translates musl 1.2.6 release commit
-//! 9fa28ece75d8a2191de7c5bb53bed224c5947417 (MIT; full license in assembly).
+//! `owned_scanf_musl_x86_64.S` translates the pinned native musl snapshot
+//! 7813e9119eb5fe681b6750b8a033a0490bca0941 (MIT; full license in assembly).
 //! The digest-checked `compat/x86_64/generate_owned_scanf.py` maps
 //! `src/stdio/vfscanf.c` to the byte grammar, positional pointer arguments,
 //! widths, suppression, count stores, scansets and malloc/realloc cleanup;

@@ -23,9 +23,9 @@ EXPECTED_MUSL_TREE_DIGEST = (
 )
 EXPECTED_COMPILER_VERSION = "gcc (Alpine 15.2.0) 15.2.0"
 EXPECTED_COMPILER_TARGET = "x86_64-alpine-linux-musl"
-EXPECTED_COMPILER_WRAPPER_DIGEST = (
-    "9b28cac06b7a1f35331ca06e23a1fc3fa7be9a6f85d9c6006363e8185001c90a"
-)
+EXPECTED_COMPILER_WRAPPER_DIGEST = hashlib.sha256(
+    (ROOT / "docker/x86_64-musl-oracle-gcc").read_bytes()
+).hexdigest()
 SOURCES = (
     "src/math/fdiml.c",
     "src/math/exp10l.c",
