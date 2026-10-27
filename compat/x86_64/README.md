@@ -461,8 +461,10 @@ providers or close pthread lifecycle, family, or public-support evidence.
 ## Hardened kernel entry prototype
 
 Inside the pinned native image, `compat/x86_64/run_hardened_entry.sh DYNAMIC STATIC COMPATIBILITY`
-tests hardened debug products in a disposable root. A matching PIE must run
-its constructor; a non-PIE, an executable stack, and an RWX load must fail
+tests hardened debug products in a disposable root. A conventional pinned-musl
+CRT PIE runs through kernel and direct entry without an owned CRT note. A
+matching owned PIE must run its constructor; a non-PIE, an executable stack,
+and an RWX load must fail
 before it through kernel and direct interpreter entry. A dynamic PIE's executable file-page alias must remain unchanged
 when its writable view changes. The static PIE is checked for the same property
 when its selected data byte has such an alias; otherwise the fixture reports

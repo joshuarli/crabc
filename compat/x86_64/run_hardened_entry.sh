@@ -35,6 +35,9 @@ cp "$installed/usr/lib/libc.so" "$image/usr/lib/"
 /usr/local/bin/crabc-x86_64-musl-gcc -fno-pie -no-pie \
     -Wl,--dynamic-linker=/lib/ld-crabc-x86_64-hardened.so.1 \
     "$root/compat/x86_64/hardened_entry_probe.c" -o "$image/nonpie"
+/usr/local/bin/crabc-x86_64-musl-gcc -fPIE -pie -Wl,-z,relro,-z,now,-z,noexecstack \
+    -Wl,--dynamic-linker=/lib/ld-crabc-x86_64-hardened.so.1 \
+    "$root/compat/x86_64/hardened_entry_probe.c" -o "$image/foreign-pie"
 python3 -B - "$image" <<'PYTHON'
 from pathlib import Path
 import struct
@@ -168,6 +171,12 @@ for name, kind in (("symbol-pc32.so", 2), ("symbol-glob.so", 6), ("symbol-jump.s
     struct.pack_into("<Q", variant, matches[0] + 8, (info & ~0xffffffff) | kind)
     (root / "usr/lib" / name).write_bytes(variant)
 PYTHON
+timeout 20 chroot "$image" /foreign-pie
+test -f "$image/marker"
+rm "$image/marker"
+timeout 20 chroot "$image" /lib/ld-crabc-x86_64-hardened.so.1 /foreign-pie
+test -f "$image/marker"
+rm "$image/marker"
 timeout 20 chroot "$image" /pie
 timeout 20 chroot "$image" /alias
 timeout 20 chroot "$image" /import-control
