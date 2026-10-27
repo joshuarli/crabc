@@ -928,11 +928,13 @@ Append one line per judgment call a reader would otherwise miss.
   No additional native diagnostic or aggregate-policy change is authorized
   by that reconfirmation. Continue independent H0 commands when it blocks.
 - 2026-10-25: hold C-ABI family admission under the current accepted-C
-  cohort. Its fixed roster requires three explicitly native-shadow allocator
-  runners (policy, override and DSO composition), each rejecting accepted-C
-  products, and repeats the parked complete libc-test aggregate. Do not change
-  backends, trim the roster, or credit an incomplete assessment. Other H0
-  producers remain independent of POSIX and C-ABI admission.
+  cohort. The fixed roster repeats the parked complete libc-test aggregate.
+  The former native-shadow-only runner premise is superseded: current policy,
+  override and DSO runners accept matched accepted-C products, and their
+  receipts pass on that backend at `dac3a6f34`. Do not change backends, trim
+  the roster, or credit an incomplete assessment; POSIX admission and the
+  complete libc-test aggregate remain required. Other H0 producers remain
+  independent of POSIX and C-ABI admission.
 - 2026-10-26: owner requested glibc-style runtime hardening as a priority.
   Require SEC0–SEC3 before the next D2/D4 claim and implement a separately
   identified hardened x86-64 product, retaining compatibility controls. The
@@ -1404,7 +1406,11 @@ Append one line per merge batch, per parked item, and per contract change.
   and the entropy GOT proofs pass in static and static-PIE at that revision.
   At `542953531`, the installed and extracted static product passes its
   declared 72-path suite and publishes a static-product receipt; the larger
-  qualification chain remains open. The
+  qualification chain remains open. At `dac3a6f34`, the three-product
+  dynamic gate passes all 219 cases and publishes its qualification receipt.
+  Its earlier attempt stopped on missing package inputs; the original failure
+  is retained, the 59 pinned archives were restored from cache, and a fresh
+  cohort completed. The
   independent math/fenv component passes
   206 selected C ABI entries at `4630b7407`. The text/locale/numeric component
   then exposed two nonspacing Unicode endpoints and wide-format error mapping;
