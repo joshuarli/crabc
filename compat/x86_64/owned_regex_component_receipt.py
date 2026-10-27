@@ -273,7 +273,7 @@ def command_plan(paths: Mapping[str, object], tools: Mapping[str, object], mode:
         "compile": [tool("dynamic_driver"), "--dynamic-pie", "-std=c11", "-fno-builtin",
                     "-c", m(probe), "-o", m(workload)],
         "object-imports": symbols("nm", "-g", "--undefined-only", "--format=posix", m(workload)),
-        "oracle-link": [tool("oracle"), "-static", "-fno-pie", "-no-pie", m(workload), "-o", m(oracle)],
+        "oracle-link": [tool("oracle"), "-static", "-fno-pie", "-no-pie", "-Wl,--export-dynamic", m(workload), "-o", m(oracle)],
         "oracle-providers": symbols("nm", "-g", "--defined-only", "--format=posix", m(oracle)),
         "oracle-run": ["env", "-i", "LC_ALL=C", "LANG=C", "TZ=UTC", m(oracle)],
         "oracle-bounded": ["env", "-i", "LC_ALL=C", "LANG=C", "TZ=UTC", m(oracle), BOUNDED_ARGUMENT],
