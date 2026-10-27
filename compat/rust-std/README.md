@@ -82,6 +82,9 @@ the leaf of the `consumer.rust-std-lto` qualification gate (it also covers the
   --output .work/x86_64/RUN/consumer
 ```
 
+Owned Cargo builds retain rustc's temporary link inputs so receipt replay can
+check the same objects after the compiler exits.
+
 The only networked step vendors the dependency-bearing and native-facade
 fixtures' locked crates; `dependency_vendor` rehashes every vendored file
 against those locks. The build itself is `--offline`, with Rust's own

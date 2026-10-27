@@ -405,7 +405,7 @@ def cargo_consumer(
         mode = {"owned-static": "static", "owned-dynamic": "dynamic"}[link]
         require(product is not None, "owned consumer link requires a product")
         pair = context.products[product]
-        rustflags += ["-C", "link-self-contained=no", "-C", f"linker={LINKER}"]
+        rustflags += ["-C", "save-temps", "-C", "link-self-contained=no", "-C", f"linker={LINKER}"]
         environment.update({
             "CRABC_OWNED_RUST_LINK_MODE": mode,
             "CRABC_OWNED_RUST_PRODUCT": pair[mode]["root"],

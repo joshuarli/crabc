@@ -7,6 +7,8 @@ import copy
 import importlib.util
 import json
 from pathlib import Path
+import shlex
+import subprocess
 import sys
 import tempfile
 from types import SimpleNamespace
@@ -30,6 +32,35 @@ def execution(status: object, stdout: bytes, stderr: bytes = b"") -> dict[str, o
 
 
 class DebugRouteTests(unittest.TestCase):
+    @unittest.skipUnless(Path('/opt/musl-1.2.6/.crabc-oracle').is_file(), 'requires the pinned native image')
+    def test_owned_cargo_link_inputs_survive_compiler_exit(self):
+        WORK.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(dir=WORK) as temporary:
+            output = Path(temporary)
+            source, linker, arguments = (output / name for name in ('probe.rs', 'linker', 'arguments'))
+            source.write_text('fn main() {}\n')
+            linker.write_text('#!/bin/sh\nprintf "%s\\n" "$@" > "$PROBE_ARGUMENTS"\n')
+            linker.chmod(0o755)
+            context = GATE.Context(output=output, retained=GATE.Retained(output),
+                                   toolchain={"target_libdir": "stock"},
+                                   provider={"archive": {"path": "provider"}}, cargo_home=output / "cargo",
+                                   products={"development": {"static": {"root": "static"}}},
+                                   consumer="development", debug=False)
+            def compile_probe(_command, *, env, cwd):
+                environment = {**env, "PROBE_ARGUMENTS": str(arguments)}
+                result = subprocess.run(['rustc', str(source), *shlex.split(env['RUSTFLAGS']),
+                                         '-o', str(output / 'probe')], cwd=cwd, env=environment,
+                                        stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False)
+                self.assertEqual(result.returncode, 0, result.stderr.decode())
+                return SimpleNamespace(returncode=1, stdout=b'', stderr=b'')
+            with mock.patch.object(GATE, 'LINKER', linker), mock.patch.object(GATE, 'run', side_effect=compile_probe):
+                GATE.cargo_consumer(context, output / 'consumer', fixture='rust-std', build_std=False,
+                                    flags=('-C', 'target-feature=+crt-static'),
+                                    link='owned-static', product='development')
+            objects = [Path(line) for line in arguments.read_text().splitlines() if line.endswith('/symbols.o')]
+            self.assertEqual(len(objects), 1)
+            self.assertTrue(objects[0].is_file())
+
     def test_debug_cargo_invocation_is_opt0_and_declares_debug_link_roots(self):
         WORK.mkdir(parents=True, exist_ok=True)
         with tempfile.TemporaryDirectory(dir=WORK) as temporary:
