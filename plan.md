@@ -1382,8 +1382,10 @@ Append one line per merge batch, per parked item, and per contract change.
   the release LTO cases pass; unwind reaches a shared-library GOT relocation
   that the reader did not admit. `9e04832d8` verifies its selected dynamic
   symbol and slot; 86 focused tests and the retained plugin inspection pass.
-  Fresh product-bound unwind execution and a qualifying release cohort remain
-  required.
+  At `092f0f796`, fresh release development products pass the unwind and
+  both cross-DSO cases. The partial receipt is non-qualifying because other
+  sections and the installed/extracted cohort were not selected. A qualifying
+  release cohort remains required.
   M7 baseline discovery at `55dd89a3a` passed four gates and left six unmet:
   visitation producers rejected an unsupported `--offline` flag and five
   gates were blocked. `aeb87087d` removes the flag; the producers already
