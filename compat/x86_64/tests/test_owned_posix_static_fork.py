@@ -127,6 +127,8 @@ class OwnedPosixStaticForkTests(unittest.TestCase):
         helper.parent.mkdir(parents=True)
         shutil.copyfile(EVIDENCE, helper)
         shutil.copyfile(STATIC_DRIVER, driver)
+        shutil.copyfile(ROOT / "compat/x86_64/native_runtime_profile.py",
+                        checkout / "compat/x86_64/native_runtime_profile.py")
         for relative in evidence.ROLE_SOURCES.values():
             target = checkout / relative
             target.parent.mkdir(parents=True, exist_ok=True)

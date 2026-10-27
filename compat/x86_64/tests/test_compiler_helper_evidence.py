@@ -12,6 +12,7 @@ import sys
 import tempfile
 import tomllib
 import unittest
+from product_fixture import write_compatibility_provenance
 
 ROOT = Path(__file__).resolve().parents[3]
 PATH = ROOT / "compat/x86_64/compiler_helper_evidence.py"
@@ -110,6 +111,9 @@ class CompilerHelperEvidenceTests(unittest.TestCase):
         files = (
             "bin/crabc-cc-dynamic",
             "share/crabc/crabc_cc_static.py",
+            "share/crabc/native_runtime_profile.py",
+            "share/crabc/crt.provenance.json",
+            "share/crabc/loader.provenance.json",
             "share/crabc/owned_dynamic_receipt.py",
             "share/crabc/owned_dynamic_elf.py",
             "share/crabc/dynamic-product-state.json",
@@ -130,6 +134,12 @@ class CompilerHelperEvidenceTests(unittest.TestCase):
             path.write_bytes((relative + "\n").encode())
         for relative in ("bin/crabc-cc-dynamic", "lib/ld-crabc-x86_64.so.1", "usr/lib/libc.so"):
             (product / relative).chmod(0o755)
+        write_compatibility_provenance(product, dynamic=True)
+        loader_receipt = product / "share/crabc/loader.provenance.json"
+        loader = json.loads(loader_receipt.read_text())
+        loader["build_profile"] = "debug"
+        loader["compiler_command"] = []
+        loader_receipt.write_text(json.dumps(loader))
         (product / "lib/ld-musl-x86_64.so.1").symlink_to("ld-crabc-x86_64.so.1")
         state = {
             "build_profile": "debug",
@@ -153,6 +163,7 @@ class CompilerHelperEvidenceTests(unittest.TestCase):
             "toolchain": "pinned",
             "files": payload,
             "build_profile": "debug",
+            "hardening_profile": "compatibility",
             "source_sha256": self._current_source_digest(),
             "symlinks": {"lib/ld-musl-x86_64.so.1": "ld-crabc-x86_64.so.1"},
         }

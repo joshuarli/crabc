@@ -277,7 +277,7 @@ class PublicDataVariableRuntimeContractTests(unittest.TestCase):
             self.assertEqual(len(capture.commands), len(reader.execution_plan()))
             for scenario, command in zip(reader.execution_plan(), capture.commands):
                 with self.subTest(scenario=scenario['id']), \
-                     mock.patch.object(dynamic_driver, 'validate'), \
+                     mock.patch.object(dynamic_driver, 'validate', return_value={'hardening_profile': 'compatibility'}), \
                      mock.patch.object(static_driver, 'linker', return_value='/tools/ld.lld'), \
                      mock.patch.object(dynamic_driver, 'run', return_value='') as run:
                     dynamic_driver.execute(installed, command[1:])

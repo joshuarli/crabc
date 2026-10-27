@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import importlib.util
 import os
 from pathlib import Path
 import re
@@ -71,16 +72,22 @@ def product_record(root, product):
 def live_tools(product):
     helper = product / 'share/crabc/crabc_cc_static.py'
     require(native.physical(helper) == helper, 'atomic installed compiler helper is not physical')
+    original_path = sys.path[:]
     sys.path.insert(0, str(helper.parent))
+    module_name = 'atomic_installed_compiler'
     try:
-        import crabc_cc_static as compiler
+        spec = importlib.util.spec_from_file_location(module_name, helper)
+        require(spec is not None and spec.loader is not None, 'atomic installed compiler helper cannot be loaded')
+        compiler = importlib.util.module_from_spec(spec)
+        sys.modules[module_name] = compiler
+        spec.loader.exec_module(compiler)
         require(Path(compiler.__file__).resolve() == helper, 'atomic installed compiler helper import drifted')
         result = {role: {'path': str(path), 'sha256': native.digest(path)} for role, path in
                   (('compiler', Path(compiler.compiler()).resolve(strict=True)),
                    ('linker', Path(compiler.linker(product)).resolve(strict=True)))}
     finally:
-        sys.path.pop(0)
-        sys.modules.pop('crabc_cc_static', None)
+        sys.path[:] = original_path
+        sys.modules.pop(module_name, None)
     return result
 
 
