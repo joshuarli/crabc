@@ -1412,8 +1412,11 @@ Append one line per merge batch, per parked item, and per contract change.
   is retained, the 59 pinned archives were restored from cache, and a fresh
   cohort completed. At `5da3f719b`, the independent controlled resolver
   network component and PTY lifecycle differential pass against pinned musl.
-  The
-  independent math/fenv component passes
+  At `289955638`, `_Fork` and process-trio differentials pass. `a99b5cf1e`
+  proves the selected weak syslog alias through the shared static authority;
+  syslog then passes static, static PIE and dynamic entry modes. The crypt
+  runtime also passes its 32-vector static and dynamic comparison at that
+  revision. The independent math/fenv component passes
   206 selected C ABI entries at `4630b7407`. The text/locale/numeric component
   then exposed two nonspacing Unicode endpoints and wide-format error mapping;
   `be8d2a437` and `b06edf693` fix them. The complete Unicode fingerprint and
@@ -1436,11 +1439,12 @@ Append one line per merge batch, per parked item, and per contract change.
   syscall comparisons. At `1aa53776c`, the numeric/calendar component and
   receipt replay pass all six entry modes; wide-calendar formatting passes
   its six-entry pinned-musl comparison at `04c9ff934`. Read-only review of upstream Heap
-  lifetime fixes found owner-exit ordering already represented; the destroy
-  path resets used counts without upstream's immediate remote-free collect.
-  Existing tests do not establish a queued remote free at that transition,
-  and the Rust terminal path differs from the upstream underflow trigger, so
-  observable impact remains unproven. The denied diagnostic was not rerun.
+  lifetime fixes found owner-exit ordering already represented. The pinned C
+  destroy path and Rust both reset used counts before terminal release; Rust
+  clears the remote-free pointer without the later upstream collection that
+  motivated its subsequent fix. No valid-client defect was demonstrated by
+  this source comparison; other schedules remain unproven. The denied
+  diagnostic was not rerun.
   M7 baseline discovery at `55dd89a3a` passed four gates and left six unmet:
   visitation producers rejected an unsupported `--offline` flag and five
   gates were blocked. `aeb87087d` removes the flag; the producers already
