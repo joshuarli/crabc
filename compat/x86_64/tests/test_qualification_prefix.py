@@ -219,10 +219,23 @@ class QualificationPrefixTests(unittest.TestCase):
                     self.fail("unreachable")
         self.assertEqual(runner.child_subreaper_enabled(), before)
 
+    def test_completed_runner_cleanup_never_signals_its_reused_pid(self):
+        with patch.object(runner, "direct_child_processes", return_value=set()):
+            boundary = runner.PrivateAdmissionDescendantBoundary()
+        process = unittest.mock.Mock(pid=731, returncode=0)
+        boundary.register_private_runner(process)
+        with patch.object(runner.os, "killpg") as killpg, patch.object(
+            boundary, "kill_process"
+        ) as kill, patch.object(boundary, "reap_adopted_descendants") as drain:
+            boundary.terminate_and_reap(process)
+        killpg.assert_not_called()
+        kill.assert_not_called()
+        drain.assert_called_once_with()
+
     def test_timeout_waits_for_runner_death_before_draining_late_child_publication(self):
         with patch.object(runner, "direct_child_processes", return_value=set()):
             boundary = runner.PrivateAdmissionDescendantBoundary()
-        process = unittest.mock.Mock(pid=731)
+        process = unittest.mock.Mock(pid=731, returncode=None)
         boundary.register_private_runner(process)
         published = []
 

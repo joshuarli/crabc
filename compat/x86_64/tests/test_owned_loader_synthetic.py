@@ -107,6 +107,37 @@ print('completed', flush=True)
             self.assertEqual(result.returncode, 0)
             self.assertEqual(result.stdout, b"completed\n")
 
+    def test_normal_exit_reaps_a_finishing_orphan(self) -> None:
+        module = runner()
+        with tempfile.TemporaryDirectory(dir=ROOT / ".work") as directory:
+            work = pathlib.Path(directory)
+            pid_path = work / "finishing.pid"
+            program = """\
+import os
+import pathlib
+import sys
+import time
+parent = os.getpid()
+child = os.fork()
+if child == 0:
+    os.close(1)
+    os.close(2)
+    pathlib.Path(sys.argv[1]).write_text(str(os.getpid()))
+    while os.getppid() == parent:
+        time.sleep(0.001)
+    time.sleep(0.05)
+    os._exit(0)
+while not pathlib.Path(sys.argv[1]).exists():
+    time.sleep(0.001)
+print('completed', flush=True)
+"""
+            result = module.Recorder(work, 2).run(
+                "finishing-orphan", [sys.executable, "-c", program, pid_path], cwd=work
+            )
+            self.assertEqual(result.returncode, 0)
+            self.assertEqual(result.stdout, b"completed\n")
+            self.assertFalse(pathlib.Path(f"/proc/{int(pid_path.read_text())}").exists())
+
     def test_recorder_children_disable_core_dumps(self) -> None:
         module = runner()
         with tempfile.TemporaryDirectory(dir=ROOT / ".work") as directory:

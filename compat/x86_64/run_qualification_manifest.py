@@ -230,6 +230,9 @@ class PrivateAdmissionDescendantBoundary:
         """
         if self._private_runner_pid != process.pid:
             raise QualificationRunError("private admission descendant boundary lost its runner")
+        if process.returncode is not None:
+            self.reap_adopted_descendants()
+            return
         try:
             os.killpg(process.pid, signal.SIGKILL)
         except ProcessLookupError:
@@ -276,6 +279,7 @@ class PrivateAdmissionDescendantBoundary:
 
     def reject_unexpected_descendants(self) -> None:
         """Fail closed if a nominally completed prefix left a daemon behind."""
+        deadline = time.monotonic() + 0.25
         while adopted := self.adopted_children():
             alive = False
             for child in adopted:
@@ -285,6 +289,9 @@ class PrivateAdmissionDescendantBoundary:
                     continue
                 alive |= reaped == 0
             if alive:
+                if time.monotonic() < deadline:
+                    time.sleep(0.01)
+                    continue
                 self.reap_adopted_descendants()
                 raise QualificationRunError("private admission left descendant processes after completion")
 
