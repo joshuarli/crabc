@@ -149,6 +149,16 @@ static int check_loaded_dso(void)
         else if (!dlerror()) valid = 0;
         if (access("/tls-mutable-marker", F_OK) == 0) valid = 0;
     }
+    unsigned long graph_before = 0;
+    dl_iterate_phdr(count_dso, &graph_before);
+    void *unresolved = dlopen("/usr/lib/import-probe.so", RTLD_LAZY);
+    if (unresolved) { dlclose(unresolved); valid = 0; }
+    else if (!dlerror()) valid = 0;
+    if (access("/import-marker", F_OK) == 0) valid = 0;
+    unsigned long graph_after = 0;
+    dl_iterate_phdr(count_dso, &graph_after);
+    if (graph_before != graph_after || initialized() != 7
+        || !check_relro(image.base, image.headers, image.count)) valid = 0;
     pid_t child = fork();
     if (child == 0) {
         void *control = dlopen("/usr/lib/rejected-source.so", RTLD_NOW);

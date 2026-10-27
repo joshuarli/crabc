@@ -18,6 +18,9 @@ cp "$installed/usr/lib/libc.so" "$image/usr/lib/"
 "$installed/bin/crabc-cc-dynamic" --dynamic-shared-object -DCRABC_BAD_DSO "$root/compat/x86_64/hardened_relro_dso.c" -o "$image/usr/lib/rejected-source.so"
 "$installed/bin/crabc-cc-dynamic" --dynamic-shared-object "$root/compat/x86_64/hardened_tls_mutable_dso.c" -o "$image/usr/lib/tls-mutable.so"
 "$installed/bin/crabc-cc-dynamic" --dynamic-shared-object "$root/compat/x86_64/hardened_tls_failure_dso.c" -o "$image/usr/lib/tls-fault.so"
+"$installed/bin/crabc-cc-dynamic" --dynamic-shared-object "$root/compat/x86_64/hardened_import_provider.c" -o "$image/usr/lib/import-provider.so"
+"$installed/bin/crabc-cc-dynamic" --dynamic-shared-object --application-dso "$image/usr/lib/import-provider.so" "$root/compat/x86_64/hardened_import_probe.c" -o "$image/usr/lib/import-probe.so"
+"$installed/bin/crabc-cc-dynamic" --dynamic-pie --application-dso "$image/usr/lib/import-probe.so" --transitive-application-dso "$image/usr/lib/import-provider.so" "$root/compat/x86_64/hardened_entry_probe.c" -o "$image/import-control"
 "$installed/bin/crabc-cc-dynamic" --dynamic-shared-object "$root/compat/x86_64/hardened_relro_dso.c" -o "$image/plugins/relative-only.so"
 "$installed/bin/crabc-cc-dynamic" --dynamic-pie --application-dso "$image/usr/lib/rejected-source.so" "$root/compat/x86_64/hardened_entry_probe.c" -o "$image/dependency"
 "$installed/bin/crabc-cc-dynamic" --dynamic-pie --application-dso "$image/plugins/relative-only.so" "$root/compat/x86_64/hardened_entry_probe.c" -o "$image/search-env"
@@ -107,6 +110,33 @@ for name, kind in (("tls-module.so", 16), ("tls-thread.so", 18)):
 PYTHON
 timeout 20 chroot "$image" /pie
 timeout 20 chroot "$image" /alias
+timeout 20 chroot "$image" /import-control
+test -f "$image/import-marker"
+rm "$image/import-marker"
+python3 -B - "$image/usr/lib/import-provider.so" <<'PYTHON'
+from pathlib import Path
+import struct
+import sys
+path = Path(sys.argv[1])
+data = bytearray(path.read_bytes())
+phoff = struct.unpack_from("<Q", data, 32)[0]
+phnum = struct.unpack_from("<H", data, 56)[0]
+headers = [struct.unpack_from("<IIQQQQQQ", data, phoff + index * 56) for index in range(phnum)]
+dynamic = next(header for header in headers if header[0] == 2)
+entries = dict(struct.unpack_from("<QQ", data, offset) for offset in range(dynamic[2], dynamic[2] + dynamic[5], 16))
+def file_offset(address):
+    return next(header[2] + address - header[3] for header in headers
+                if header[0] == 1 and header[3] <= address < header[3] + header[5])
+strings = file_offset(entries[5])
+symbols = file_offset(entries[6])
+count = struct.unpack_from("<I", data, file_offset(entries[4]) + 4)[0]
+matches = [symbols + index * 24 for index in range(count)
+           if data[strings + struct.unpack_from("<I", data, symbols + index * 24)[0]:].startswith(b"hardened_supplied\0")]
+assert len(matches) == 1 and struct.unpack_from("<H", data, matches[0] + 6)[0] != 0
+struct.pack_into("<H", data, matches[0] + 6, 0)
+struct.pack_into("<QQ", data, matches[0] + 8, 0, 0)
+path.write_bytes(data)
+PYTHON
 timeout 20 chroot "$image" /relro
 timeout 20 chroot "$image" /static-relro
 CRABC_STARTUP=yes timeout 20 chroot "$image" /startup owned >"$work/startup.stdout"
