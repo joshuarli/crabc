@@ -191,7 +191,7 @@ contract. Lanes whose driver is a `.c` plus `.py` pair in this directory are:
   valid-client parity claim. Other public API lanes include
   `allocator-public-heap-alignment`,
   `allocator-heap-convenience [--read|--replay]`,
-  `allocator-public-theap [--matrix|--profile release|debug-1|stat-1|stat-2]`,
+  `allocator-public-theap [--matrix|--profile release|debug-1|stat-1|stat-2|guarded]`,
   `allocator-upstream-heap-stress [--case WORKERS SCALE ITERATIONS]`,
   `allocator-upstream-subprocess-stress`. Heap stress accepts one tuple from
   its existing matrix for a focused run; without `--case` it runs the full
