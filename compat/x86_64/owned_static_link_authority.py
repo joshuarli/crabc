@@ -2,7 +2,7 @@
 
 Components own the function roster, exact admitted owners, source/final metadata,
 link-mode audit, and all source/tool/product admission. This reader only joins
-those admitted inputs through the LLD map to their fully relocated final bytes.
+those admitted inputs through the linker map to their fully relocated final bytes.
 It supports the reviewed PC32, PLT32, GOTPCREL, GOTTPOFF and REX_GOTPCRELX forms;
 an unclassified input form fails instead of widening the byte relation. A static
 link may be TLS-free only when the selected mapped inputs and final ELF contain
@@ -262,13 +262,7 @@ def _static_undefined_bindings(executable):
 
 
 def _require_static_functions(map_path, executable, admitted, functions):
-    """Join ordinary static extraction to the explicitly contracted definitions.
-
-    LLD's map must name an actually traced input member, and each finite
-    function keeps its source section, size and fully relocated bytes. The
-    finite x86-64 relocations below derive their values from selected input
-    definitions and ELF placement; no output instruction field is a mask.
-    """
+    """Join ordinary static extraction to the explicitly contracted definitions."""
     images = {name: elf_bytes(value) if isinstance(value, bytes) else Elf(value)
               for name, value in admitted.items()}
     final = Elf(executable)
@@ -280,13 +274,22 @@ def _require_static_functions(map_path, executable, admitted, functions):
     owner = None
     contribution = None
     lines = physical(map_path).read_text().splitlines()
-    require(lines and lines[0].split() == ['VMA', 'LMA', 'Size', 'Align', 'Out', 'In', 'Symbol'],
+    require(lines, 'static link map header differs')
+    mold = lines[0].split() == ['VMA', 'Size', 'Align', 'Out', 'In', 'Symbol']
+    require(mold or lines[0].split() == ['VMA', 'LMA', 'Size', 'Align', 'Out', 'In', 'Symbol'],
             'static link map header differs')
     for line in lines[1:]:
-        match = re.fullmatch(r'\s*([0-9a-f]+)\s+([0-9a-f]+)\s+([0-9a-f]+)\s+(\d+)\s+(.*)', line)
+        pattern = (r'\s*(0x[0-9a-f]+|0)\s+(\d+)\s+(\d+)\s+(.*)' if mold else
+                   r'\s*([0-9a-f]+)\s+([0-9a-f]+)\s+([0-9a-f]+)\s+(\d+)\s+(.*)')
+        match = re.fullmatch(pattern, line)
         require(match is not None, 'malformed static link map row')
-        address, load, size, _alignment, name = match.groups()
-        address, load, size = int(address, 16), int(load, 16), int(size, 16)
+        if mold:
+            address, size, _alignment, name = match.groups()
+            address, size = int(address, 16), int(size)
+            load = address
+        else:
+            address, load, size, _alignment, name = match.groups()
+            address, load, size = int(address, 16), int(load, 16), int(size, 16)
         if ':(' in name and name.endswith(')'):
             owner, section = name.rsplit(':(', 1)
             section = section[:-1]
@@ -442,7 +445,7 @@ def _require_static_functions(map_path, executable, admitted, functions):
                 resolved_map = rows[0]
                 owner, _part, _address, extent = resolved_map
                 symbol = input_symbol(owner, symbol['name'])
-                require(symbol['size'] == extent, 'static relocation target map size differs')
+                require((extent == 0 if mold else symbol['size'] == extent), 'static relocation target map size differs')
         source = images[owner]
         require(0 < symbol['section'] < len(source.sections), 'unresolved static relocation target')
         section = source.sections[symbol['section']]
@@ -594,6 +597,32 @@ def _require_static_functions(map_path, executable, admitted, functions):
         # that exact target (or its static-PIE RELATIVE addend).
         require(matches, 'static target lacks a correctly initialized GOT slot')
         return matches
+
+    def tls_got_addresses(offset):
+        require(final.elf_type in (2, 3), 'unrelaxed static TLS GOT requires an executable')
+        sections = [section for section in final.sections if section_name(final, section) == '.got']
+        require(len(sections) == 1, 'static output lacks a unique GOT')
+        section = sections[0]
+        require(section[5] % 8 == 0 and section[3] % 8 == 0, 'invalid static GOT geometry')
+        require(not any(s[1] in (9, 19) and s[2] & 2 for s in final.sections), 'unclassified static REL relocations')
+        relocated = set()
+        for relocations in final.sections:
+            if relocations[1] != 4 or not relocations[2] & 2:
+                continue
+            require(relocations[9] == 24 and relocations[5] % 24 == 0, 'invalid static dynamic relocations')
+            for position in range(0, relocations[5], 24):
+                address, _info, _addend = final.unpack('<QQq', relocations[4] + position)
+                relocated.add(address)
+        matches = []
+        for position in range(0, section[5], 8):
+            address = section[3] + position
+            if final.unpack('<Q', section[4] + position)[0] == offset & ((1 << 64) - 1):
+                require(not any(address - 7 <= row < address + 8 for row in relocated),
+                        'static TLS GOT slot requires relocation')
+                matches.append(address)
+        require(matches, 'static TLS target lacks a correctly initialized GOT slot')
+        return matches
+
     for name, (owner, contribution, address, size) in mapped.items():
         contract = contracts[name]
         require(owner == contract.input_owner, 'static function came from the wrong selected object/archive')
@@ -608,8 +637,10 @@ def _require_static_functions(map_path, executable, admitted, functions):
                 'static function definition/binding differs')
         base, extent, section = contribution
         source_section = source.sections[before['section']]
+        require((size == 0 if mold else size == before['size']), 'static map function size differs')
+        size = before['size']
         require(section == section_name(source, source_section)
-                and address == base + before['value'] and size == before['size'] == after['size']
+                and address == base + before['value'] and size == after['size']
                 and size > 0 and address == after['value'] and before['value'] + size <= extent,
                 'static map/source/final function location differs')
         source_offset = source_section[4] + before['value']
@@ -640,9 +671,17 @@ def _require_static_functions(map_path, executable, admitted, functions):
                     require(symbol['type'] == '6', 'GOTTPOFF target is not selected TLS')
                     require(tls is not None and tls_size is not None,
                             'GOTTPOFF target lacks TLS geometry')
-                    value = target - tls[3] - tls_size
-                    original[position - 3:position] = bytes([0x48 | ((rex >> 2) & 1), 0xc7,
-                                                           0xc0 | ((modrm >> 3) & 7)])
+                    offset = target - tls[3] - tls_size
+                    if linked[position - 3:position] == original[position - 3:position]:
+                        values = [slot + addend - (address + position) for slot in tls_got_addresses(offset)]
+                        matches = [v for v in values if -(1 << 31) <= v < 1 << 31
+                                   and v.to_bytes(4, 'little', signed=True) == linked[position:position + 4]]
+                        require(len(matches) == 1, 'static TLS GOT displacement does not address the selected target')
+                        value = matches[0]
+                    else:
+                        value = offset
+                        original[position - 3:position] = bytes([0x48 | ((rex >> 2) & 1), 0xc7,
+                                                               0xc0 | ((modrm >> 3) & 7)])
                 else:
                     require(symbol['binding'] == 'LOCAL' and symbol['type'] == 'FUNC',
                             'unclassified static GOTPCRELX target')

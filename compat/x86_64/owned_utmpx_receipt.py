@@ -1278,11 +1278,11 @@ def validate_static_function_authority(workspace: Path, product: Path, raw: Path
     admitted, workload, crt, libc_archive = retained_static_admitted_inputs(workspace, product, raw, linkage)
     providers = static_archive_function_owners(admitted, libc_archive)
     contracts = [
-        StaticFunctionContract("main", workload, "GLOBAL", "DEFAULT", "GLOBAL", "DEFAULT"),
-        StaticFunctionContract("_start", crt, "GLOBAL", "DEFAULT", "GLOBAL", "DEFAULT"),
-        *(StaticFunctionContract(name, providers[name], "GLOBAL", "DEFAULT", "GLOBAL", "DEFAULT")
+        StaticFunctionContract("main", workload, "GLOBAL", "DEFAULT", "LOCAL", "DEFAULT"),
+        StaticFunctionContract("_start", crt, "GLOBAL", "DEFAULT", "LOCAL", "DEFAULT"),
+        *(StaticFunctionContract(name, providers[name], "GLOBAL", "DEFAULT", "LOCAL", "DEFAULT")
           for name in STRONG),
-        *(StaticFunctionContract(name, providers[name], "WEAK", "DEFAULT", "WEAK", "DEFAULT")
+        *(StaticFunctionContract(name, providers[name], "WEAK", "DEFAULT", "LOCAL", "DEFAULT")
           for name in WEAK),
     ]
     executable = raw / ("static-" + linkage)

@@ -13,6 +13,7 @@ import hashlib
 import json
 from pathlib import Path
 import re
+import shutil
 import struct
 import subprocess
 import sys
@@ -32,8 +33,60 @@ from owned_static_link_authority import (
     StaticLinkAuthorityError,
     elf_bytes,
     require_static_functions,
+    section_name,
     static_undefined_bindings,
 )
+
+
+@unittest.skipUnless(Path('/opt/musl-1.2.6/.crabc-oracle').is_file(), 'requires the pinned native image')
+class MoldStaticFunctionTests(unittest.TestCase):
+    def test_mold_map_binds_source_and_final_function_bytes(self):
+        compiler, linker = shutil.which('cc'), shutil.which('mold')
+        if compiler is None or linker is None:
+            self.skipTest('native compiler and mold are required')
+        parent = SOURCE_DIR.parents[1] / '.work/x86_64/tmp'
+        parent.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(dir=parent) as temporary:
+            root = Path(temporary)
+            source, obj, executable, link_map = (root / name for name in ('probe.s', 'probe.o', 'probe', 'probe.map'))
+            source.write_text('.text\n.globl selected\n.type selected,@function\nselected: ret\n.size selected,.-selected\n'
+                              '.globl _start\n.type _start,@function\n_start: ret\n.size _start,.-_start\n')
+            subprocess.run([compiler, '-c', str(source), '-o', str(obj)], check=True, capture_output=True)
+            subprocess.run([linker, '-static', '-e', '_start', '-Map=' + str(link_map), str(obj), '-o', str(executable)],
+                           check=True, capture_output=True)
+            contract = StaticFunctionContract('selected', str(obj), 'GLOBAL', 'DEFAULT', 'LOCAL', 'DEFAULT')
+            require_static_functions(link_map, executable, {str(obj): obj}, [contract])
+
+            link_map.write_text(link_map.read_text().replace(str(obj) + ':(.text)', '/foreign.o:(.text)'))
+            with self.assertRaisesRegex(StaticLinkAuthorityError, 'untraced input'):
+                require_static_functions(link_map, executable, {str(obj): obj}, [contract])
+
+    def test_mold_unrelaxed_initial_exec_tls_uses_the_selected_got_value(self):
+        compiler, linker = shutil.which('cc'), shutil.which('mold')
+        if compiler is None or linker is None:
+            self.skipTest('native compiler and mold are required')
+        parent = SOURCE_DIR.parents[1] / '.work/x86_64/tmp'
+        parent.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(dir=parent) as temporary:
+            root = Path(temporary)
+            source, obj, executable, link_map = (root / name for name in ('tls.s', 'tls.o', 'tls', 'tls.map'))
+            source.write_text('.section .tdata,"awT",@progbits\n.globl fixture_tls\n.type fixture_tls,@tls_object\n'
+                              'fixture_tls: .quad 1\n.size fixture_tls,8\n.text\n.globl selected\n'
+                              '.type selected,@function\nselected: mov fixture_tls@gottpoff(%rip),%rax\nret\n'
+                              '.size selected,.-selected\n.globl _start\n.type _start,@function\n_start: ret\n'
+                              '.size _start,.-_start\n')
+            subprocess.run([compiler, '-c', str(source), '-o', str(obj)], check=True, capture_output=True)
+            subprocess.run([linker, '-static', '--no-relax', '-e', '_start', '-Map=' + str(link_map), str(obj), '-o', str(executable)],
+                           check=True, capture_output=True)
+            contract = StaticFunctionContract('selected', str(obj), 'GLOBAL', 'DEFAULT', 'LOCAL', 'DEFAULT')
+            require_static_functions(link_map, executable, {str(obj): obj}, [contract])
+            image = Elf(executable)
+            got = next(section for section in image.sections if section_name(image, section) == '.got')
+            data = bytearray(executable.read_bytes())
+            data[got[4]:got[4] + got[5]] = bytes(got[5])
+            executable.write_bytes(data)
+            with self.assertRaisesRegex(StaticLinkAuthorityError, 'static TLS target lacks'):
+                require_static_functions(link_map, executable, {str(obj): obj}, [contract])
 
 
 @unittest.skipUnless(Path('/opt/rustup/toolchains/nightly-2026-09-15-x86_64-unknown-linux-musl/bin/rustc').is_file(),
