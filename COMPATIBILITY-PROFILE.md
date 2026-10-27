@@ -31,6 +31,9 @@ hidden process-CWD traversal policy.
 For native x86-64, `CPU_ISSET` and `CPU_ISSET_S` return zero or one, with
 type `int` in C and `bool` in C++, matching the selected oracle headers.
 
+Basic regular expressions reject a backreference until its referenced group
+has closed, matching the native musl parser.
+
 ## Runtime hardening profiles
 
 Native x86-64 has two required product contracts. **Compatibility** preserves

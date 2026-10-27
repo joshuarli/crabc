@@ -344,6 +344,7 @@ struct TreParseContext {
     submatch_id: c_int,
     position: c_int,
     max_backref: c_int,
+    backref_ok: c_int,
     cflags: c_int,
 }
 
@@ -822,6 +823,9 @@ unsafe fn marksub(
         (*node).submatch_id = submatch_id;
         (*node).num_submatches += 1;
         (*context).node = node;
+        if submatch_id < 10 {
+            (*context).backref_ok |= 1 << submatch_id;
+        }
     }
     REG_OK
 }
@@ -930,6 +934,9 @@ unsafe fn parse_atom(context: *mut TreParseContext, mut string: *const c_char) -
                 }
                 value if !extended && value.wrapping_sub(b'1') < 9 => {
                     let backreference = (value - b'0') as c_int;
+                    if unsafe { (*context).backref_ok } & (1 << backreference) == 0 {
+                        return REG_ESUBREG;
+                    }
                     node = unsafe {
                         tre_ast_new_literal(
                             (*context).memory,

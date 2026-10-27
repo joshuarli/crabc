@@ -117,6 +117,8 @@ static void check_selected_boundaries(void)
         {"unclosed-group", "(", REG_EXTENDED, REG_EPAREN},
         {"trailing-escape", "\\", REG_EXTENDED, REG_EESCAPE},
         {"unknown-backreference", "\\(a\\)\\2", 0, REG_ESUBREG},
+        {"forward-backreference-before-bracket", "\\1[", 0, REG_ESUBREG},
+        {"open-group-backreference", "\\(\\1\\)", 0, REG_ESUBREG},
         {"unknown-class", "[[:foo:]]", REG_EXTENDED, REG_ECTYPE},
         {"descending-range", "[z-a]", REG_EXTENDED, REG_ERANGE},
         {"descending-repeat", "a{3,2}", REG_EXTENDED, REG_BADBR},
