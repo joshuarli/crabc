@@ -62,6 +62,14 @@ static int wide_formats(const char *path) {
         int result=swprintf(out,size,L"a\u20ac/%d",12345);
         printf("wbound %d %d ",result,errno); bytes(out,48);
     }
+    errno=ENOSPC;
+    CHECK(swprintf(out,4,L"%lc",(wint_t)0xd800)==-1 && errno==EOVERFLOW);
+    errno=ENOSPC;
+    CHECK(forwarded_output(out,4,L"%s","\xff")==-1 && errno==EOVERFLOW);
+    errno=ENOSPC;
+    CHECK(swprintf(out,4,L"%q")==-1 && errno==EOVERFLOW);
+    errno=ENOSPC;
+    CHECK(swprintf(out,0,L"%lc",(wint_t)0xd800)==-1 && errno==ENOSPC);
     int number=0, used=-1; long double value=0; wchar_t *allocated=NULL;
     CHECK(forwarded_input(L"17 0x1.8p+2 \u20acword",L"%d %La %mls%n",&number,&value,&allocated,&used)==3);
     CHECK(number==17 && value==6 && allocated && !wcscmp(allocated,L"\u20acword"));
