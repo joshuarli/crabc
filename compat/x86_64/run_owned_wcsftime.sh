@@ -47,14 +47,17 @@ assert_symbols() {
     local artifact="$1" selector="$2" report="$3"
     if [ "$selector" = nm ]; then
         nm -g --defined-only "$artifact" >"$report"
+    elif [ "$selector" = nm-local ]; then
+        nm --defined-only "$artifact" >"$report"
     else
         readelf --dyn-syms --wide "$artifact" >"$report"
     fi
-    python3 -B - "$report" <<'PY'
+    python3 -B - "$report" "$selector" <<'PY'
 from pathlib import Path
 import sys
 
 report = Path(sys.argv[1]).read_text().splitlines()
+local = sys.argv[2] == 'nm-local'
 names = {'wcsftime', '__wcsftime_l', 'wcsftime_l'}
 observed = {name: [] for name in names}
 for line in report:
@@ -63,13 +66,13 @@ for line in report:
         observed[fields[-1]].append(fields)
 for name in ('wcsftime', '__wcsftime_l'):
     matches = [fields for fields in observed[name]
-        if ('T' in fields or (len(fields) == 8 and fields[3:6] == ['FUNC', 'GLOBAL', 'DEFAULT'] and fields[6] != 'UND'))]
+        if ('T' in fields or (local and 't' in fields) or (len(fields) == 8 and fields[3:6] == ['FUNC', 'GLOBAL', 'DEFAULT'] and fields[6] != 'UND'))]
 assert len(matches) == 1, (name, observed[name])
 matches = [fields for fields in observed['wcsftime_l']
-    if ('W' in fields or (len(fields) == 8 and fields[3:6] == ['FUNC', 'WEAK', 'DEFAULT'] and fields[6] != 'UND'))]
+    if ('W' in fields or (local and 't' in fields) or (len(fields) == 8 and fields[3:6] == ['FUNC', 'WEAK', 'DEFAULT'] and fields[6] != 'UND'))]
 assert len(matches) == 1, ('wcsftime_l', observed['wcsftime_l'])
 internal = [fields for fields in observed['__wcsftime_l']
-    if ('T' in fields or (len(fields) == 8 and fields[3:6] == ['FUNC', 'GLOBAL', 'DEFAULT'] and fields[6] != 'UND'))][0]
+    if ('T' in fields or (local and 't' in fields) or (len(fields) == 8 and fields[3:6] == ['FUNC', 'GLOBAL', 'DEFAULT'] and fields[6] != 'UND'))][0]
 alias = matches[0]
 def symbol_value(fields):
     return fields[0] if len(fields) == 3 else fields[1]
@@ -89,7 +92,7 @@ compare() {
     cmp "$work/oracle.stderr" "$work/$label.stderr"
 }
 
-"$ORACLE_CC" -static -fno-pie -no-pie "$work/workload.o" -o "$work/root/oracle"
+"$ORACLE_CC" -static -fno-pie -no-pie -Wl,--export-dynamic "$work/workload.o" -o "$work/root/oracle"
 assert_symbols "$work/root/oracle" nm "$work/oracle-symbols.txt"
 run_probe /oracle >"$work/oracle.stdout" 2>"$work/oracle.stderr"
 
@@ -97,7 +100,7 @@ if [ "$build_static" -eq 1 ]; then
     assert_symbols "$work/static-sysroot/usr/lib/libc.a" nm "$work/archive-symbols.txt"
     for mode in static static-pie; do
         "$work/static-sysroot/bin/crabc-cc" "-$mode" "$work/workload.o" -o "$work/root/$mode"
-        assert_symbols "$work/root/$mode" nm "$work/$mode-symbols.txt"
+        assert_symbols "$work/root/$mode" nm-local "$work/$mode-symbols.txt"
         compare "$mode" "/$mode"
     done
 fi
