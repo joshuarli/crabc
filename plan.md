@@ -1389,7 +1389,10 @@ Append one line per merge batch, per parked item, and per contract change.
   rustc temporary rlib copies as Cargo artifacts; `e06ed8d9f` binds the
   unique actual Cargo outputs. All three selected facade LTO lanes pass at
   that revision, including embedded bitcode and the direct syscall witness;
-  the partial receipt remains non-qualifying. The independent math/fenv component passes
+  the partial receipt remains non-qualifying. All six standalone unwinder
+  bounds regressions and their selected consumer-runner lanes pass at
+  `9cd99c204`; their partial receipt also remains non-qualifying. The
+  independent math/fenv component passes
   206 selected C ABI entries at `4630b7407`. The text/locale/numeric component
   then exposed two nonspacing Unicode endpoints and wide-format error mapping;
   `be8d2a437` and `b06edf693` fix them. The complete Unicode fingerprint and
