@@ -1297,7 +1297,7 @@ mod tests {
                     let mut client_address = 0usize;
                     let mut reserved_before_free = 0i64;
                     let mut committed_before_free = 0i64;
-                    let ranges = fault.capture_unmap_ranges();
+                    let mut ranges = None;
                     let owner: *mut ChildThreadOwner = member.owner_mut();
                     let child_pointer: *mut ChildMainHeapContextOwner<'_> = child;
                     // SAFETY: the admitted thread's own Theap; nothing else runs.
@@ -1311,12 +1311,14 @@ mod tests {
                             let before = unsafe { identity.as_ref() }.vm_statistics().snapshot();
                             reserved_before_free = before.reserved_current;
                             committed_before_free = before.committed_current;
+                            ranges = Some(fault.capture_unmap_ranges());
                             fault.set(crate::os::fault::Plan::at(crate::os::fault::Point::Unmap, 1, crabc_core::Errno::NOMEM));
                             unsafe { engine.free(block) }.expect("source free consumes the client despite failed unmap");
                         })
                     };
                     assert_eq!(released, Ok(()));
                     assert_eq!(fault.observed(), 1);
+                    let ranges = ranges.expect("the terminal release capture started");
                     let (attempts, count) = ranges.all().expect("the bounded terminal release trace");
                     assert_eq!(count, 1);
                     let failed_range = attempts[0];
