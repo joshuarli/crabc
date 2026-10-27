@@ -1352,7 +1352,10 @@ Append one line per merge batch, per parked item, and per contract change.
   undefined bookkeeping symbols; the CRT startup companion and native
   allocator symbol-visibility contract remain unresolved. Prospective cohort
   claims stay off main, and the POSIX, C-ABI and denied M6 diagnostic holds
-  remain in force.
+  remain in force. The `f5d235d36` H0 rehearsal passed its static and dynamic
+  products, then stopped at primary I/O cancellation: mold emitted the same
+  three local undefined bookkeeping symbols rejected by that gate. Independent
+  ELF inspection found no required bindings; the existing gate is unchanged.
 
 ## For the owner afterwards
 
