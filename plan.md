@@ -1411,7 +1411,8 @@ Append one line per merge batch, per parked item, and per contract change.
   Its earlier attempt stopped on missing package inputs; the original failure
   is retained, the 59 pinned archives were restored from cache, and a fresh
   cohort completed. At `5da3f719b`, the independent controlled resolver
-  network component passes on installed and extracted products. The
+  network component and PTY lifecycle differential pass against pinned musl.
+  The
   independent math/fenv component passes
   206 selected C ABI entries at `4630b7407`. The text/locale/numeric component
   then exposed two nonspacing Unicode endpoints and wide-format error mapping;
