@@ -143,6 +143,7 @@ cp "$image/usr/lib/tls-mutable.so" "$compatible_root/usr/lib/"
 cp "$image/plugins/relative-only.so" "$compatible_root/plugins/"
 "$compatibility/bin/crabc-cc-dynamic" --dynamic-pie "$root/compat/x86_64/compat_tls_mutable_probe.c" -o "$compatible_root/tls-mutable"
 timeout 20 chroot "$compatible_root" /tls-mutable
+test -f "$compatible_root/tls-mutable-marker"
 "$compatibility/bin/crabc-cc-dynamic" --dynamic-pie "$root/compat/x86_64/hardened_entry_probe.c" -o "$compatible_root/pie"
 "$compatibility/bin/crabc-cc-dynamic" --dynamic-pie --application-runpath plugins --application-dso "$compatible_root/plugins/relative-only.so" "$root/compat/x86_64/hardened_entry_probe.c" -o "$compatible_root/search-relative"
 "$compatibility/bin/crabc-cc-dynamic" --dynamic-pie --application-dso "$compatible_root/plugins/relative-only.so" "$root/compat/x86_64/hardened_entry_probe.c" -o "$compatible_root/search-env"

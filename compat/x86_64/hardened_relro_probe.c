@@ -147,6 +147,7 @@ static int check_loaded_dso(void)
         void *tls = dlopen(ambiguous[i], RTLD_NOW);
         if (tls) { dlclose(tls); valid = 0; }
         else if (!dlerror()) valid = 0;
+        if (access("/tls-mutable-marker", F_OK) == 0) valid = 0;
     }
     pid_t child = fork();
     if (child == 0) {
