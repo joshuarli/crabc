@@ -232,10 +232,12 @@ def validate_combined(root: Path) -> dict:
     path; only product metadata may move within ``share/crabc/``.
     """
     record = json.loads((root / MANIFEST).read_text())
+    profile = shared.profile_from_manifest(record)
+    required = (REQUIRED - {INTERPRETER.lstrip("/")}) | {profile.interpreter.lstrip("/")}
     files, links = record.get("files"), record.get("symlinks")
     products = record.get("products")
     if (type(record.get("schema")) is not int or record.get("schema") != 1 or record.get("target") != shared.TARGET
-            or not isinstance(files, dict) or links != ALIASES or not isinstance(products, dict)
+            or not isinstance(files, dict) or links != profile.aliases or record.get("modes") != list(profile.combined_modes) or not isinstance(products, dict)
             or not isinstance(products.get("dynamic"), dict)):
         raise shared.DriverError("wrong installed combined sysroot contract")
     product = products["dynamic"]
@@ -253,7 +255,7 @@ def validate_combined(root: Path) -> dict:
                 observed.add(relative)
         elif not path.is_dir():
             raise shared.DriverError(f"nonregular installed payload: {relative}")
-    if observed != files.keys() or aliases != ALIASES:
+    if observed != files.keys() or aliases != profile.aliases:
         raise shared.DriverError("installed payload differs from exact combined manifest roster")
     for relative, digest in files.items():
         if Path(relative).is_absolute() or ".." in Path(relative).parts or not re.fullmatch("[0-9a-f]{64}", str(digest)):
@@ -266,13 +268,16 @@ def validate_combined(root: Path) -> dict:
         raise shared.DriverError(f"invalid embedded dynamic manifest: {error}") from error
     embedded_files = embedded.get("files") if isinstance(embedded, dict) else None
     if (not isinstance(embedded_files, dict) or embedded.get("format") != FORMAT
-            or embedded.get("symlinks") != ALIASES or not REQUIRED <= embedded_files.keys()
-            or shared.profile_from_manifest(embedded) is not shared.NativeRuntimeProfile.COMPATIBILITY):
+            or embedded.get("symlinks") != profile.aliases or not required <= embedded_files.keys()
+            or shared.profile_from_manifest(embedded) is not profile):
         raise shared.DriverError("wrong embedded dynamic product contract")
+    static = shared.load_manifest(root / shared.COMBINED_STATIC_MANIFEST, "embedded static manifest")
+    if shared.profile_from_manifest(static) is not profile:
+        raise shared.DriverError("combined product profiles differ")
     for relative, digest in embedded_files.items():
         placed = placements.get(relative)
         # Only product metadata may move, and only within share/crabc/.
-        movable = (relative not in REQUIRED and relative.startswith(shared.PRODUCT_METADATA_PREFIX)
+        movable = (relative not in required and relative.startswith(shared.PRODUCT_METADATA_PREFIX)
                    and isinstance(placed, str) and placed.startswith(shared.PRODUCT_METADATA_PREFIX))
         if placed != relative and not movable:
             raise shared.DriverError(f"combined sysroot moved dynamic payload: {relative}")

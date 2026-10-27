@@ -16,3 +16,9 @@ class NativeRuntimeProfile(str, Enum):
         if self is NativeRuntimeProfile.HARDENED:
             return {}
         return {"lib/ld-musl-x86_64.so.1": "ld-crabc-x86_64.so.1"}
+
+    @property
+    def combined_modes(self) -> tuple[str, ...]:
+        if self is NativeRuntimeProfile.HARDENED:
+            return ("static-pie", "dynamic-pie", "dynamic-shared-object")
+        return ("static-et-exec", "static-pie", "dynamic-pie", "dynamic-non-pie", "dynamic-shared-object")

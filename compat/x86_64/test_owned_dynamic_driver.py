@@ -542,6 +542,19 @@ class InstalledDynamicDriverTests(unittest.TestCase):
                                                       output_format=driver.FORMAT,
                                                       fail=self._receipt_value_failure)
 
+    def test_combined_driver_rejects_resealed_mixed_profiles(self):
+        root = self._combined_native_fixture()
+        embedded_path = root / "share/crabc/static/manifest.json"
+        embedded = json.loads(embedded_path.read_text())
+        embedded["hardening_profile"] = "hardened"
+        embedded_path.write_text(json.dumps(embedded))
+        manifest_path = root / driver.MANIFEST
+        manifest = json.loads(manifest_path.read_text())
+        manifest["files"]["share/crabc/static/manifest.json"] = driver.shared.sha256_file(embedded_path)
+        manifest_path.write_text(json.dumps(manifest))
+        with self.assertRaisesRegex(driver.shared.DriverError, "combined product profiles differ"):
+            driver.validate_installation(root)
+
     def test_combined_sysroot_rejects_drift_from_its_roster_or_embedded_product(self):
         root = self._combined_native_fixture()
         manifest_path = root / driver.MANIFEST

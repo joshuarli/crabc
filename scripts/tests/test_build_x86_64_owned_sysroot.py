@@ -1012,6 +1012,13 @@ class BuildX86OwnedSysrootTests(unittest.TestCase):
         def foreign_product(root: Path, record: dict) -> None:
             record["products"]["static"]["format"] = "other"
 
+        def foreign_profile(root: Path, record: dict) -> None:
+            path = root / "share/crabc/dynamic/manifest.json"
+            embedded = json.loads(path.read_text())
+            embedded["hardening_profile"] = "hardened"
+            path.write_text(json.dumps(embedded))
+            record["files"]["share/crabc/dynamic/manifest.json"] = builder.sha256_file(path)
+
         for label, edit, expected_error in (
             ("substitute", substitute_libc, "does not install static payload unchanged: usr/lib/libc.a"),
             ("move", move_crt1, "moved static payload: usr/lib/crt1.o"),
@@ -1019,6 +1026,7 @@ class BuildX86OwnedSysrootTests(unittest.TestCase):
             ("link", stray_link, "contains a symlink: usr/include/extra.h"),
             ("alias", retarget_alias, "aliases differ"),
             ("product", foreign_product, "does not embed this static product"),
+            ("profile", foreign_profile, "combined product profiles differ"),
         ):
             with self.subTest(label=label), tempfile.TemporaryDirectory() as temporary:
                 root = self.materialize_combined_static_driver_sysroot(Path(temporary))

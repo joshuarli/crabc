@@ -67,7 +67,7 @@ DRIVER_MODULES = frozenset({
 })
 # One product owns a runtime path that the other installs but never links.
 ENTRY_OWNERS = {"usr/lib/Scrt1.o": "dynamic"}
-MODES = ("static-et-exec", "static-pie", "dynamic-pie", "dynamic-non-pie", "dynamic-shared-object")
+MODES = NativeRuntimeProfile.COMPATIBILITY.combined_modes
 MAX_ARCHIVE_MEMBERS = shared_package.MAX_ARCHIVE_MEMBER_COUNT
 
 
@@ -122,9 +122,12 @@ def product_manifest(root: Path, product: str) -> dict:
 def require_matching_source_seals(static_manifest: dict, dynamic_manifest: dict, dynamic_state_payload: bytes) -> None:
     """Require the two embedded products to claim the same complete source tree."""
 
-    require(static_manifest.get("hardening_profile") == NativeRuntimeProfile.COMPATIBILITY.value
-            and dynamic_manifest.get("hardening_profile") == NativeRuntimeProfile.COMPATIBILITY.value,
-            "static and dynamic hardening profiles differ or are not yet supported")
+    try:
+        profile = NativeRuntimeProfile(static_manifest["hardening_profile"])
+    except (KeyError, TypeError, ValueError) as error:
+        raise CompositionError("static product hardening profile is invalid") from error
+    require(dynamic_manifest.get("hardening_profile") == profile.value,
+            "static and dynamic hardening profiles differ")
     static_source = static_manifest.get("source_sha256")
     require(isinstance(static_source, str) and len(static_source) == 64
             and all(character in "0123456789abcdef" for character in static_source),
@@ -238,6 +241,7 @@ def plan(products: Mapping[str, Path]) -> dict:
         "symlinks": dict(sorted(links.items())),
         "placements": {name: dict(sorted(placement.items())) for name, placement in placements.items()},
         "toolchain": next(iter(toolchains)),
+        "hardening_profile": manifests["static"]["hardening_profile"],
     }
 
 
@@ -247,7 +251,8 @@ def manifest_record(decision: Mapping) -> dict:
         "format": FORMAT,
         "target": TARGET,
         "toolchain": decision["toolchain"],
-        "modes": list(MODES),
+        "hardening_profile": decision["hardening_profile"],
+        "modes": list(NativeRuntimeProfile(decision["hardening_profile"]).combined_modes),
         "files": decision["files"],
         "executables": decision["executables"],
         "symlinks": decision["symlinks"],
@@ -287,8 +292,12 @@ def validate_component_claims(record: dict, embedded_payloads: Mapping[str, byte
     products = record.get("products")
     require(isinstance(products, dict) and set(products) == set(PRODUCTS),
             "combined package component roster differs")
+    try:
+        profile = NativeRuntimeProfile(record["hardening_profile"])
+    except (KeyError, TypeError, ValueError) as error:
+        raise CompositionError("combined package hardening profile is invalid") from error
     require(record.get("schema") == 1 and record.get("target") == TARGET
-            and isinstance(record.get("toolchain"), str) and record.get("modes") == list(MODES),
+            and isinstance(record.get("toolchain"), str) and record.get("modes") == list(profile.combined_modes),
             "combined package identity differs")
     claims: dict[str, str] = {}
     manifests: dict[str, dict] = {}
@@ -309,6 +318,7 @@ def validate_component_claims(record: dict, embedded_payloads: Mapping[str, byte
         require(isinstance(embedded, dict) and embedded.get("schema") == 1
                 and embedded.get("format") == PRODUCT_FORMATS[name]
                 and embedded.get("target") == TARGET
+                and embedded.get("hardening_profile") == profile.value
                 and embedded.get("toolchain") == record["toolchain"],
                 f"combined package {name} manifest identity differs")
         manifests[name] = embedded
@@ -355,7 +365,7 @@ def validate(root: Path) -> dict:
     except (OSError, ValueError) as error:
         raise CompositionError("combined manifest is unreadable") from error
     require(isinstance(record, dict) and record.get("schema") == 1 and record.get("format") == FORMAT
-            and record.get("target") == TARGET and record.get("modes") == list(MODES),
+            and record.get("target") == TARGET,
             "combined manifest identity differs")
     files, links = tree(root)
     manifest_identity = files.pop(MANIFEST, None)
@@ -481,9 +491,10 @@ def compare(first: Path, second: Path) -> None:
     require(first_record == second_record, "independent combined builds differ")
 
 
-def build(output: Path) -> dict:
+def build(output: Path, *, hardening_profile: NativeRuntimeProfile = NativeRuntimeProfile.COMPATIBILITY) -> dict:
     """Build both products privately from live source, then compose one tree."""
 
+    require(isinstance(hardening_profile, NativeRuntimeProfile), "unknown combined product hardening profile")
     output = output.absolute()
     require(output.resolve() == output and output.is_relative_to(ROOT / ".work"),
             "combined output must be a physical path below checkout .work")
@@ -496,7 +507,8 @@ def build(output: Path) -> dict:
     products = {name: stage / name for name in PRODUCTS}
     for name, builder in PRODUCT_BUILDERS.items():
         with (stage / f"{name}.log").open("xb") as log:
-            completed = subprocess.run([sys.executable, "-B", str(ROOT / builder), "--output", str(products[name])],
+            completed = subprocess.run([sys.executable, "-B", str(ROOT / builder), "--output", str(products[name]),
+                                        "--hardening-profile", hardening_profile.value],
                                        cwd=ROOT, stdout=log, stderr=subprocess.STDOUT, check=False)
         require(completed.returncode == 0, f"{name} product build failed; log: {stage / (name + '.log')}")
     composed = stage / "installed"
@@ -508,7 +520,9 @@ def build(output: Path) -> dict:
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     commands = parser.add_subparsers(dest="command", required=True)
-    commands.add_parser("build").add_argument("output", type=Path)
+    build_parser = commands.add_parser("build")
+    build_parser.add_argument("output", type=Path)
+    build_parser.add_argument("--hardening-profile", type=NativeRuntimeProfile, choices=tuple(NativeRuntimeProfile), default=NativeRuntimeProfile.COMPATIBILITY)
     for name in ("package", "extract", "compare"):
         command = commands.add_parser(name)
         command.add_argument("source", type=Path)
@@ -517,7 +531,7 @@ def main() -> int:
     arguments = parser.parse_args()
     try:
         if arguments.command == "build":
-            build(arguments.output)
+            build(arguments.output, hardening_profile=arguments.hardening_profile)
         elif arguments.command == "package":
             package(arguments.source, arguments.output)
         elif arguments.command == "extract":

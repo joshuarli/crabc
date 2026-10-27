@@ -225,6 +225,29 @@ class CombinedSysrootCompositionTests(unittest.TestCase):
         with self.assertRaisesRegex(combined.CompositionError, "hardening profiles differ"):
             self.compose()
 
+    def test_hardened_products_compose_only_their_supported_modes(self):
+        for product in (self.static, self.dynamic):
+            path = product / combined.MANIFEST
+            manifest = json.loads(path.read_text())
+            manifest["hardening_profile"] = "hardened"
+            if product == self.dynamic:
+                old = "lib/ld-crabc-x86_64.so.1"
+                new = "lib/ld-crabc-x86_64-hardened.so.1"
+                (product / old).rename(product / new)
+                (product / "lib/ld-musl-x86_64.so.1").unlink()
+                manifest["files"][new] = manifest["files"].pop(old)
+                manifest["symlinks"] = {}
+            path.write_text(json.dumps(manifest))
+        installed = self.compose()
+        result = combined.validate(installed)
+        self.assertEqual(result["hardening_profile"], "hardened")
+        self.assertEqual(result["modes"], ["static-pie", "dynamic-pie", "dynamic-shared-object"])
+        archive = self.root / "hardened.tar"
+        extracted = self.root / "extracted"
+        combined.package(installed, archive)
+        combined.extract(archive, extracted)
+        self.assertEqual(combined.validate(extracted), result)
+
     def test_source_seals_must_match_before_composition(self):
         manifest_path = self.static / combined.MANIFEST
         manifest = json.loads(manifest_path.read_text())

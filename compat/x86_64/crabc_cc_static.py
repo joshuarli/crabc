@@ -295,10 +295,13 @@ def combined_manifest_payload(root: Path, manifest: dict) -> tuple[dict[str, str
 
     if manifest.get("schema") != 1 or manifest.get("target") != TARGET:
         raise DriverError("owned manifest does not identify an x86 combined sysroot")
+    profile = profile_from_manifest(manifest)
+    if manifest.get("modes") != list(profile.combined_modes):
+        raise DriverError("owned combined manifest modes differ from its profile")
     files = payload_hashes(manifest.get("files"), "combined manifest")
     links = manifest.get("symlinks")
     products = manifest.get("products")
-    if not isinstance(links, dict) or not isinstance(products, dict) or not isinstance(products.get("static"), dict):
+    if links != profile.aliases or not isinstance(products, dict) or not isinstance(products.get("static"), dict):
         raise DriverError("owned combined manifest has no alias or product record")
     for link, target in links.items():
         if (not isinstance(link, str) or not isinstance(target, str) or "/" in target
@@ -309,7 +312,11 @@ def combined_manifest_payload(root: Path, manifest: dict) -> tuple[dict[str, str
     if (product.get("format") != SYSROOT_FORMAT or product.get("manifest") != COMBINED_STATIC_MANIFEST
             or COMBINED_STATIC_MANIFEST not in files or not isinstance(placements, dict)):
         raise DriverError("owned combined sysroot does not embed this static product")
-    embedded = static_product_payload_files(load_manifest(root / COMBINED_STATIC_MANIFEST, "embedded static manifest"))
+    static_manifest = load_manifest(root / COMBINED_STATIC_MANIFEST, "embedded static manifest")
+    dynamic_manifest = load_manifest(root / "share/crabc/dynamic/manifest.json", "embedded dynamic manifest")
+    if profile_from_manifest(static_manifest) is not profile or profile_from_manifest(dynamic_manifest) is not profile:
+        raise DriverError("owned combined product profiles differ")
+    embedded = static_product_payload_files(static_manifest)
     for relative, expected_hash in embedded.items():
         if relative not in placements:
             raise DriverError(f"owned combined sysroot does not place static payload: {relative}")
