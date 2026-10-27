@@ -18,6 +18,7 @@ ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(ROOT / "compat/x86_64"))
 
 import owned_loader_corpus_evidence as evidence
+from product_fixture import write_compatibility_provenance
 
 
 def sha256(path: Path) -> str:
@@ -66,6 +67,7 @@ class OwnedLoaderCorpusEvidenceTests(unittest.TestCase):
         self._put("share/crabc/producer-tools.json", json.dumps({
             "schema": 1, **product_contract.source_native_compiler_tool_records(),
         }).encode())
+        write_compatibility_provenance(self.product, dynamic=True)
         # Installed link inputs carry the product reader's source-bound mode
         # policy (for example an executable libc.so), not the writer's umask.
         for relative, mode in product_contract.DYNAMIC_LINK_INPUT_MODES.items():
@@ -82,6 +84,7 @@ class OwnedLoaderCorpusEvidenceTests(unittest.TestCase):
             "schema": 1,
             "format": product_contract.DYNAMIC_PRODUCT_FORMAT,
             "target": product_contract.TARGET,
+            "hardening_profile": "compatibility", "build_profile": "release",
             "files": files,
             "symlinks": {"lib/ld-musl-x86_64.so.1": "ld-crabc-x86_64.so.1"},
         }

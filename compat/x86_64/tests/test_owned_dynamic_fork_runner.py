@@ -13,6 +13,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from product_fixture import write_compatibility_provenance
 from unittest.mock import patch
 
 
@@ -183,6 +184,8 @@ class OwnedDynamicForkRunnerTests(unittest.TestCase):
             "bin/crabc-cc-dynamic", "share/crabc/crabc_cc_static.py", "usr/include/stdint.h",
             "share/crabc/owned_dynamic_receipt.py", "share/crabc/owned_dynamic_elf.py",
             "share/crabc/producer-tools.json",
+            "share/crabc/native_runtime_profile.py", "share/crabc/crt.provenance.json",
+            "share/crabc/loader.provenance.json",
             "lib/ld-crabc-x86_64.so.1", "usr/lib/crt1.o", "usr/lib/Scrt1.o", "usr/lib/crti.o",
             "usr/lib/crtn.o", "usr/lib/crabc-dynamic-attach.o", "usr/lib/libc.so",
             "usr/lib/libcrabc-builtins.a",
@@ -199,6 +202,9 @@ class OwnedDynamicForkRunnerTests(unittest.TestCase):
             target.parent.mkdir(parents=True, exist_ok=True)
             target.write_bytes(payload)
             files[relative] = hashlib.sha256(payload).hexdigest()
+        write_compatibility_provenance(product, dynamic=True)
+        for relative in ("share/crabc/crt.provenance.json", "share/crabc/loader.provenance.json"):
+            files[relative] = hashlib.sha256((product / relative).read_bytes()).hexdigest()
         # The installed product's source-bound modes.
         for relative in required:
             (product / relative).chmod(0o644)
@@ -209,6 +215,7 @@ class OwnedDynamicForkRunnerTests(unittest.TestCase):
             "schema": 1,
             "format": "crabc-x86-64-owned-dynamic-sysroot-v1",
             "target": "x86_64-unknown-linux-musl",
+            "hardening_profile": "compatibility", "build_profile": "release",
             "symlinks": {"lib/ld-musl-x86_64.so.1": "ld-crabc-x86_64.so.1"},
             "files": files,
         }

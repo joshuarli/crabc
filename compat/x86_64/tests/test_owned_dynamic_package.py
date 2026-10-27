@@ -11,6 +11,7 @@ import sys
 import tarfile
 import tempfile
 import unittest
+from product_fixture import write_compatibility_provenance
 from pathlib import Path
 from unittest import mock
 
@@ -46,6 +47,9 @@ class OwnedDynamicPackageTests(unittest.TestCase):
                 path.write_bytes(relative.encode())
                 path.chmod(0o755 if relative in package.EXECUTABLE_PAYLOADS else 0o644)
                 files[relative] = hashlib.sha256(path.read_bytes()).hexdigest()
+            write_compatibility_provenance(source, dynamic=True)
+            for relative in ("share/crabc/crt.provenance.json", "share/crabc/loader.provenance.json"):
+                files[relative] = hashlib.sha256((source / relative).read_bytes()).hexdigest()
             provenance_path = source / "share/crabc/libc-shared.provenance.json"
             provenance_path.write_text(json.dumps({"allocator_backend": "accepted-c"}), encoding="utf-8")
             files["share/crabc/libc-shared.provenance.json"] = hashlib.sha256(
@@ -68,6 +72,7 @@ class OwnedDynamicPackageTests(unittest.TestCase):
             manifest_path = source / "share/crabc/manifest.json"
             manifest = {"schema": 1, "format": package.driver.FORMAT,
                         "target": package.driver.shared.TARGET,
+                        "hardening_profile": "compatibility", "build_profile": "release",
                         "symlinks": package.driver.ALIASES, "files": files}
             manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
             for relative, target in package.driver.ALIASES.items():
@@ -105,6 +110,9 @@ class OwnedDynamicPackageTests(unittest.TestCase):
             "usr/lib/crabc-dynamic-attach.o": 0o644,
             "usr/lib/libcrabc-builtins.a": 0o644,
             "share/crabc/crabc_cc_static.py": 0o644,
+            "share/crabc/native_runtime_profile.py": 0o644,
+            "share/crabc/crt.provenance.json": 0o644,
+            "share/crabc/loader.provenance.json": 0o644,
             "share/crabc/owned_dynamic_receipt.py": 0o644,
             "share/crabc/owned_dynamic_elf.py": 0o644,
         }
@@ -130,10 +138,14 @@ class OwnedDynamicPackageTests(unittest.TestCase):
                 path.write_bytes(payload)
                 path.chmod(mode)
                 files[relative] = hashlib.sha256(payload).hexdigest()
+            write_compatibility_provenance(source, dynamic=True)
+            for relative in ("share/crabc/crt.provenance.json", "share/crabc/loader.provenance.json"):
+                files[relative] = hashlib.sha256((source / relative).read_bytes()).hexdigest()
             manifest = {
                 "schema": 1,
                 "format": package.driver.FORMAT,
                 "target": package.driver.shared.TARGET,
+                "hardening_profile": "compatibility", "build_profile": "release",
                 "symlinks": package.driver.ALIASES,
                 "files": files,
             }

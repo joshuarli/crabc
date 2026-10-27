@@ -10,6 +10,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from product_fixture import write_compatibility_provenance
 from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -165,10 +166,12 @@ class OwnedUtmpxReceiptTests(unittest.TestCase):
             files = (
                 "bin/crabc-cc", "usr/lib/crt1.o", "usr/lib/Scrt1.o", "usr/lib/rcrt1.o",
                 "usr/lib/crti.o", "usr/lib/crtn.o", "usr/lib/libc.a", "usr/lib/libcrabc-builtins.a",
+                "share/crabc/native_runtime_profile.py", "share/crabc/crt.provenance.json",
             )
             driver, manifest = "bin/crabc-cc", {
                 "schema": 1, "format": "crabc-x86-64-owned-static-sysroot-v1",
                 "target": "x86_64-unknown-linux-musl",
+                "hardening_profile": "compatibility",
                 "installed": {
                     "headers": "usr/include",
                     "crt_objects": [
@@ -193,6 +196,8 @@ class OwnedUtmpxReceiptTests(unittest.TestCase):
                 "bin/crabc-cc-dynamic", "share/crabc/crabc_cc_static.py",
                 "share/crabc/owned_dynamic_receipt.py", "share/crabc/owned_dynamic_elf.py",
                 "share/crabc/dynamic-product-state.json", "share/crabc/producer-tools.json",
+                "share/crabc/native_runtime_profile.py", "share/crabc/crt.provenance.json",
+                "share/crabc/loader.provenance.json",
                 "lib/ld-crabc-x86_64.so.1", "usr/lib/crt1.o", "usr/lib/Scrt1.o",
                 "usr/lib/crti.o", "usr/lib/crtn.o", "usr/lib/crabc-dynamic-attach.o",
                 "usr/lib/libc.so", "usr/lib/libcrabc-builtins.a",
@@ -200,12 +205,14 @@ class OwnedUtmpxReceiptTests(unittest.TestCase):
             driver, manifest = "bin/crabc-cc-dynamic", {
                 "schema": 1, "format": "crabc-x86-64-owned-dynamic-sysroot-v1",
                 "target": "x86_64-unknown-linux-musl",
+                "hardening_profile": "compatibility", "build_profile": "release",
                 "symlinks": {"lib/ld-musl-x86_64.so.1": "ld-crabc-x86_64.so.1"},
             }
         else:
             raise ValueError(family)
         for relative in files:
             self.write(product / relative, relative.encode("ascii"))
+        write_compatibility_provenance(product, dynamic=family == "dynamic")
         (product / "usr/include").mkdir(parents=True)
         (product / driver).chmod(0o755)
         if family == "dynamic":

@@ -12,6 +12,7 @@ import shutil
 import sys
 import tempfile
 import unittest
+from product_fixture import write_compatibility_provenance
 from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -642,6 +643,7 @@ class PthreadFamilyCoverageTests(unittest.TestCase):
         (product / "share/crabc/producer-tools.json").write_text(json.dumps({
             "schema": 1, **product_evidence.source_native_compiler_tool_records(),
         }))
+        write_compatibility_provenance(product, dynamic=True)
         (product / "usr/include").mkdir(parents=True)
         (product / "bin/crabc-cc-dynamic").chmod(0o755)
         (product / "lib/ld-crabc-x86_64.so.1").chmod(0o755)
@@ -656,6 +658,7 @@ class PthreadFamilyCoverageTests(unittest.TestCase):
         }
         manifest = {
             "schema": 1, "format": product_evidence.DYNAMIC_PRODUCT_FORMAT,
+            "hardening_profile": "compatibility", "build_profile": "release",
             "target": product_evidence.TARGET, "files": files,
             "symlinks": {"lib/ld-musl-x86_64.so.1": "ld-crabc-x86_64.so.1"},
         }
