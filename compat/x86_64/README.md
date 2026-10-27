@@ -472,6 +472,8 @@ interpreter's RELRO and a runtime-loaded DSO's RELRO. This focused test does not
 hardened product.
 It also rejects runtime-loaded DSOs with executable stacks, RWX loads or no
 required RELRO, while checking constructor absence and the retained graph.
+Disposable child processes deny mapping or protection syscalls and check that
+failed loads preserve the existing graph and RELRO.
 The same malformed images fail as startup dependencies or preloads; the
 compatibility product admits the executable-stack preload and runs its
 constructor. Missing optional preloads remain optional. The existing CRT
