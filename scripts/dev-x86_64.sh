@@ -10362,29 +10362,37 @@ PY
         run_in_container bash /workspace/compat/x86_64/run_owned_pthread_mutex.sh "$@"
         ;;
     owned-posix-timers)
+        ensure_image
         run_in_container bash /workspace/compat/x86_64/run_owned_posix_timers.sh "$@"
         ;;
     owned-pthread-scheduling)
+        ensure_image
         run_in_container bash /workspace/compat/x86_64/run_owned_pthread_scheduling.sh "$@"
         ;;
     owned-pthread-cpuclock)
+        ensure_image
         run_in_container bash /workspace/compat/x86_64/run_owned_pthread_cpuclock.sh "$@"
         ;;
     owned-message-queues)
+        ensure_image
         run_in_chroot_cap_container bash /workspace/compat/x86_64/run_owned_message_queues.sh "$@"
         ;;
     owned-named-ipc)
+        ensure_image
         run_in_chroot_cap_container bash /workspace/compat/x86_64/run_owned_named_ipc.sh "$@"
         ;;
     owned-fcntl)
+        ensure_image
         run_in_container bash /workspace/compat/x86_64/run_owned_fcntl.sh "$@"
         ;;
     owned-static-dl-iterate-phdr)
         [ "$#" -eq 0 ] || fail "owned-static-dl-iterate-phdr takes no arguments"
+        ensure_image
         run_in_container bash /workspace/compat/x86_64/run_owned_static_dl_iterate_phdr.sh
         ;;
     owned-pthread-getattr)
         [ "$#" -eq 0 ] || fail "owned-pthread-getattr takes no arguments"
+        ensure_image
         run_in_container bash /workspace/compat/x86_64/run_owned_pthread_getattr.sh
         ;;
     owned-pthread-lifecycle)
