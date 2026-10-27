@@ -1391,7 +1391,13 @@ Append one line per merge batch, per parked item, and per contract change.
   that revision, including embedded bitcode and the direct syscall witness;
   the partial receipt remains non-qualifying. All six standalone unwinder
   bounds regressions and their selected consumer-runner lanes pass at
-  `9cd99c204`; their partial receipt also remains non-qualifying. The
+  `9cd99c204`; their partial receipt also remains non-qualifying. At
+  `eb7afd868`, classic netdb passes 23 scenarios and seven entry arms;
+  named IPC, message queues, pthread CPU clocks and scheduling also pass
+  their pinned-musl product comparisons. `dee61d906` repairs empty pinned
+  image selection for eight native commands. The static dl-iterate-phdr
+  check reaches a weak-symbol assertion; its retained directory is not
+  readable by the host and remains untouched. The
   independent math/fenv component passes
   206 selected C ABI entries at `4630b7407`. The text/locale/numeric component
   then exposed two nonspacing Unicode endpoints and wide-format error mapping;
