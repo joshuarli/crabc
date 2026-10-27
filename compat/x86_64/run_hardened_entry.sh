@@ -69,6 +69,22 @@ for name, kind, flag in (("rejected-stack.so", 0x6474e551, 1),
     else:
         struct.pack_into("<I", result, eligible[0], 0)
     (root / "usr/lib" / name).write_bytes(result)
+provider = bytearray((root / "usr/lib/import-provider.so").read_bytes())
+phoff = struct.unpack_from("<Q", provider, 32)[0]
+phnum = struct.unpack_from("<H", provider, 56)[0]
+headers = [phoff + index * 56 for index in range(phnum)]
+relro = [offset for offset in headers if struct.unpack_from("<I", provider, offset)[0] == 0x6474e552]
+assert len(relro) == 1
+struct.pack_into("<I", provider, relro[0], 0)
+dynamic = next(struct.unpack_from("<IIQQQQQQ", provider, offset) for offset in headers
+               if struct.unpack_from("<I", provider, offset)[0] == 2)
+entries = [(offset, *struct.unpack_from("<QQ", provider, offset))
+           for offset in range(dynamic[2], dynamic[2] + dynamic[5], 16)]
+assert not any(tag in (2, 8, 35) and value for _, tag, value in entries)
+pltgot = [offset for offset, tag, _ in entries if tag == 3]
+assert len(pltgot) == 1
+struct.pack_into("<Q", provider, pltgot[0], 21)
+(root / "usr/lib/no-binding.so").write_bytes(provider)
 tls_path = root / "usr/lib/tls-mutable.so"
 tls = bytearray(tls_path.read_bytes())
 phoff = struct.unpack_from("<Q", tls, 32)[0]

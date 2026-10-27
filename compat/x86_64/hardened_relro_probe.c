@@ -142,6 +142,9 @@ static int check_loaded_dso(void)
     if (relative) { dlclose(relative); valid = 0; }
     void *absolute = dlopen("/plugins/relative-only.so", RTLD_NOW);
     if (!absolute || dlclose(absolute) != 0) valid = 0;
+    void *unbound = dlopen("/usr/lib/no-binding.so", RTLD_NOW);
+    int (*unbound_value)(void) = unbound ? (int (*)(void))dlsym(unbound, "hardened_supplied") : 0;
+    if (!unbound_value || unbound_value() != 7 || dlclose(unbound) != 0) valid = 0;
     const char *ambiguous[] = {"/usr/lib/tls-mutable.so", "/usr/lib/tls-module.so", "/usr/lib/tls-thread.so"};
     for (unsigned long i = 0; i < sizeof ambiguous / sizeof ambiguous[0]; i++) {
         void *tls = dlopen(ambiguous[i], RTLD_NOW);
