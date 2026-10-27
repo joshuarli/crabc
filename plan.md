@@ -1378,9 +1378,12 @@ Append one line per merge batch, per parked item, and per contract change.
   and missing qualifying cohort. The release LTO and unwind consumers then
   exposed mold trace-prefix parsing and kache build-script launcher drift;
   `e13e2d8dd` and `65f199998` address those causes. The 83 focused reader
-  tests and five retained host build-script receipts pass; fresh product-bound
-  release LTO and unwind consumers remain to be run. A qualifying release
-  cohort is still required.
+  tests and five retained host build-script receipts pass. At `341ee92a5`,
+  the release LTO cases pass; unwind reaches a shared-library GOT relocation
+  that the reader did not admit. `9e04832d8` verifies its selected dynamic
+  symbol and slot; 86 focused tests and the retained plugin inspection pass.
+  Fresh product-bound unwind execution and a qualifying release cohort remain
+  required.
   M7 baseline discovery at `55dd89a3a` passed four gates and left six unmet:
   visitation producers rejected an unsupported `--offline` flag and five
   gates were blocked. `aeb87087d` removes the flag; the producers already
