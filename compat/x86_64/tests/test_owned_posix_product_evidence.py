@@ -451,6 +451,27 @@ class OwnedPosixProductEvidenceTests(unittest.TestCase):
                 with self.assertRaises(evidence.ProductEvidenceError):
                     evidence._validate_static_product(self.static)
 
+    def test_hardened_static_product_rejects_non_pie_link_evidence(self) -> None:
+        path = self.static / "share/crabc/crt.provenance.json"
+        crt = json.loads(path.read_text())
+        crt["hardening_profile"] = "hardened"
+        self.write_json(path, crt)
+        manifest_path = self.static / "share/crabc/manifest.json"
+        manifest = json.loads(manifest_path.read_text())
+        manifest["hardening_profile"] = "hardened"
+        manifest["sealed_static_driver"]["modes"] = evidence.NativeRuntimeProfile.HARDENED.static_modes
+        manifest["installed"]["files"]["share/crabc/crt.provenance.json"] = digest(path)
+        self.write_json(manifest_path, manifest)
+        receipt = self.static_receipt("static")
+        with self.assertRaises(evidence.ProductEvidenceError):
+            evidence.validate_link(self.static, self.workload, self.executable, receipt, "static")
+        retained, linker = self.retained_receipt_from(receipt)
+        with self.assertRaises(evidence.ProductEvidenceError):
+            evidence.validate_retained_link(self.root, "/workspace", self.static, self.workload,
+                                            self.executable, retained, "static", linker)
+        receipt = self.static_receipt("static-pie")
+        evidence.validate_link(self.static, self.workload, self.executable, receipt, "static-pie")
+
     def install_dynamic(self) -> Path:
         product = self.root / "dynamic-product"
         for relative in (

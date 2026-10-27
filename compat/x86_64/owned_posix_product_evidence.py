@@ -711,6 +711,13 @@ def _validate_dynamic_product(root: Path) -> tuple[Path, dict[str, str]]:
     return manifest_path, files
 
 
+def _validate_static_link_mode(root: Path, linkage: str) -> None:
+    _, manifest, _ = _product_manifest(root, "static", STATIC_PRODUCT_FORMAT)
+    mode = "static-et-exec" if linkage == "static" else "static-pie"
+    if mode not in {item["id"] for item in manifest["sealed_static_driver"]["modes"]}:
+        _fail("static link mode differs from product profile")
+
+
 
 def validate_dynamic_product_source(root: Path, source_sha256: str) -> None:
     _validate_dynamic_product(root)
@@ -1334,6 +1341,7 @@ def validate_retained_link(root: Path, source_mount: str, product: Path, workloa
         _fail("retained link evidence escapes checkout root")
     if linkage in {"static", "static-pie"}:
         manifest, _ = _validate_static_product(product_path)
+        _validate_static_link_mode(product_path, linkage)
         receipt_hash = _validate_retained_static_receipt(
             checkout, source_mount, product_path, workload_path, executable_path, receipt_path, linkage, linker
         )
@@ -1403,6 +1411,7 @@ def _validate_link(
         if len(workload_paths) != 1:
             _fail("static links require exactly one workload object")
         manifest, _ = _validate_static_product(root)
+        _validate_static_link_mode(root, linkage)
         receipt_hash = _validate_static_receipt(
             root, workload_paths[0], executable_path, receipt_path, linkage
         )
