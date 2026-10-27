@@ -217,7 +217,8 @@ static int check_loaded_dso(void)
     if (valid && (!failed_syscall_preserves_graph(SYS_mprotect, initialized, before, &image)
                   || !failed_syscall_preserves_graph(SYS_mmap, initialized, before, &image)
                   || !failed_tls_preparation_preserves_graph(initialized, before, &image))) valid = 0;
-    const char *rejected[] = {"/usr/lib/rejected-stack.so", "/usr/lib/rejected-wx.so", "/usr/lib/rejected-relro.so"};
+    const char *rejected[] = {"/usr/lib/rejected-stack.so", "/usr/lib/rejected-wx.so", "/usr/lib/rejected-relro.so",
+                              "/usr/lib/rejected-pltgot-duplicate.so", "/usr/lib/rejected-pltgot-outside.so"};
     for (unsigned long i = 0; valid && i < sizeof rejected / sizeof rejected[0]; i++) {
         if (access(rejected[i], F_OK) != 0) { valid = 0; break; }
         void *bad = dlopen(rejected[i], RTLD_LAZY);

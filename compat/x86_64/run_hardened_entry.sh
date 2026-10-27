@@ -115,6 +115,27 @@ for name, kind, flag in (("rejected-stack.so", 0x6474e551, 1),
     else:
         struct.pack_into("<I", result, eligible[0], 0)
     (root / "usr/lib" / name).write_bytes(result)
+source_headers = [struct.unpack_from("<IIQQQQQQ", source, offset) for offset in headers]
+dynamic = next(header for header in source_headers if header[0] == 2)
+entries = [(offset, *struct.unpack_from("<QQ", source, offset))
+           for offset in range(dynamic[2], dynamic[2] + dynamic[5], 16)]
+got = [offset for offset, tag, _ in entries if tag == 3]
+flags = [offset for offset, tag, _ in entries if tag == 0x6ffffffb]
+assert len(got) == 1 and len(flags) == 1
+duplicate = bytearray(source)
+struct.pack_into("<QQ", duplicate, flags[0], 3, struct.unpack_from("<Q", source, got[0] + 8)[0])
+(root / "usr/lib/rejected-pltgot-duplicate.so").write_bytes(duplicate)
+relro = next(header for header in source_headers if header[0] == 0x6474e552)
+relro_start = relro[3] & ~4095
+relro_end = (relro[3] + relro[6] + 4095) & ~4095
+outside = [((header[3] + 7) & ~7) for header in source_headers
+           if header[0] == 1 and header[1] & 2 and header[6] >= 24
+           and ((header[3] + 7) & ~7) + 24 <= header[3] + header[6]
+           and (((header[3] + 7) & ~7) >= relro_end or ((header[3] + 7) & ~7) + 24 <= relro_start)]
+assert outside
+unprotected = bytearray(source)
+struct.pack_into("<Q", unprotected, got[0] + 8, outside[0])
+(root / "usr/lib/rejected-pltgot-outside.so").write_bytes(unprotected)
 provider = bytearray((root / "usr/lib/import-provider.so").read_bytes())
 phoff = struct.unpack_from("<Q", provider, 32)[0]
 phnum = struct.unpack_from("<H", provider, 56)[0]
@@ -289,6 +310,7 @@ mkdir -p "$compatible_root/lib" "$compatible_root/usr/lib" "$compatible_root/plu
 cp "$compatibility/lib/ld-crabc-x86_64.so.1" "$compatible_root/lib/"
 cp "$compatibility/usr/lib/libc.so" "$compatible_root/usr/lib/"
 cp "$image/usr/lib/rejected-stack.so" "$compatible_root/usr/lib/"
+cp "$image/usr/lib/rejected-pltgot-outside.so" "$compatible_root/usr/lib/"
 cp "$image/usr/lib/tls-mutable.so" "$compatible_root/usr/lib/"
 cp "$image/usr/lib/symbol-mutable.so" "$compatible_root/usr/lib/"
 cp "$image/usr/lib/symbol-pc32.so" "$compatible_root/usr/lib/"
@@ -373,6 +395,7 @@ for name, original, foreign, interpreter in (
             (directory / "marker").unlink(missing_ok=True)
 
 for name in ("rejected-source.so", "rejected-stack.so", "rejected-wx.so", "rejected-relro.so",
+             "rejected-pltgot-duplicate.so", "rejected-pltgot-outside.so",
              "tls-mutable.so", "tls-module.so", "tls-thread.so", "symbol-mutable.so", "symbol-pc32.so",
              "symbol-glob.so", "symbol-jump.so", "import-probe.so"):
     result = subprocess.run(["/pie"], env={"LD_PRELOAD": "/usr/lib/" + name},
@@ -397,6 +420,7 @@ for preload, status, marker in (("/usr/lib/missing.so", 0, True), ("usr/lib/reje
 source = root / "usr/lib/rejected-source.so"
 original = source.read_bytes()
 for candidate in (None, "rejected-stack.so", "rejected-wx.so", "rejected-relro.so",
+                  "rejected-pltgot-duplicate.so", "rejected-pltgot-outside.so",
                   "tls-mutable.so", "tls-module.so", "tls-thread.so", "symbol-mutable.so", "symbol-pc32.so",
                   "symbol-glob.so", "symbol-jump.so"):
     source.write_bytes(original if candidate is None else (root / "usr/lib" / candidate).read_bytes())
@@ -435,11 +459,13 @@ for paths, status in (("plugins", 127), ("/plugins", 0)):
     assert (root / "marker").exists() == (status == 0)
     (root / "marker").unlink(missing_ok=True)
 (root / "etc/ld-musl-x86_64.path").unlink()
-result = subprocess.run(["/pie"], env={"LD_PRELOAD": "/usr/lib/rejected-stack.so"},
-                        preexec_fn=lambda: enter(compatible), capture_output=True, timeout=20, check=False)
-assert result.returncode == 0, result.stderr
-assert (compatible / "marker").exists() and (compatible / "rejected-marker").exists()
-(compatible / "marker").unlink()
+for name in ("rejected-stack.so", "rejected-pltgot-outside.so"):
+    result = subprocess.run(["/pie"], env={"LD_PRELOAD": "/usr/lib/" + name},
+                            preexec_fn=lambda: enter(compatible), capture_output=True, timeout=20, check=False)
+    assert result.returncode == 0, (name, result.stderr)
+    assert (compatible / "marker").exists() and (compatible / "rejected-marker").exists()
+    (compatible / "marker").unlink()
+    (compatible / "rejected-marker").unlink()
 result = subprocess.run(["/search-relative"], env={}, preexec_fn=lambda: enter(compatible),
                         capture_output=True, timeout=20, check=False)
 assert result.returncode == 0 and (compatible / "marker").exists(), result.stderr

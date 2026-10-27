@@ -3,6 +3,7 @@ static int initialized;
 #ifdef CRABC_BAD_DSO
 #include <fcntl.h>
 #include <unistd.h>
+unsigned char hardened_bad_storage[32] = {1};
 #endif
 
 __attribute__((constructor)) static void initialize(void)
