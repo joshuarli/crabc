@@ -1401,7 +1401,9 @@ Append one line per merge batch, per parked item, and per contract change.
   component passes. `2632d383d`, `4963baf52` and `249b62415` prove mold
   allocator PLT/GOT bindings and reject non-preemptible symbols; the full
   FILE-engine component and receipt pass at `249b62415`. Each result is
-  non-promoting and later source revisions require fresh cohort evidence.
+  non-promoting and later source revisions require fresh cohort evidence. At
+  `c68c2cdf4`, word expansion passes 162 retained case records; independent
+  native input capture and receipt replay also pass.
   M7 baseline discovery at `55dd89a3a` passed four gates and left six unmet:
   visitation producers rejected an unsupported `--offline` flag and five
   gates were blocked. `aeb87087d` removes the flag; the producers already
