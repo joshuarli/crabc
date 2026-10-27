@@ -220,7 +220,7 @@ class LtoExecutionTests(unittest.TestCase):
 
             build = {"status": "built", "executable": {"path": str(output / "consumer")},
                      "link_facts": {"input_kinds": ["llvm-bitcode"], "linker_plugin_options": ["lto"],
-                                    "resolved_input_trace": str(output / "static/usr/lib/libc.a") + "(code.o)"}}
+                                    "resolved_input_trace": "trace: " + str(output / "static/usr/lib/libc.a") + "(code.o)"}}
             with mock.patch.object(GATE, "static_c_lane", return_value={"unmet": []}), \
                     mock.patch.object(GATE, "cargo_consumer", return_value=build), \
                     mock.patch.object(GATE, "owned_link_conditions", return_value=[]), \
@@ -231,6 +231,7 @@ class LtoExecutionTests(unittest.TestCase):
                 report = GATE.gate_lto(context)
             self.assertEqual(len(report["lanes"]["C"]["execution"]["runtime_files"]), 2)
             self.assertEqual(report["lanes"]["D"]["execution"]["runtime_files"], [])
+            self.assertTrue(report["lanes"]["D"]["ir"]["installed_libc_selected"])
             static_root = output / "gates/lto/D/root-run"
             self.assertFalse((static_root / "lib/ld-crabc-x86_64.so.1").exists())
             self.assertFalse((static_root / "usr/lib/libc.so").exists())

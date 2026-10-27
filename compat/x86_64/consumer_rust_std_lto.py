@@ -876,7 +876,8 @@ def gate_lto(context: Context) -> dict[str, Any]:
                     "rust_input_kinds": facts["input_kinds"],
                     "linker_plugin_options": facts["linker_plugin_options"],
                     "installed_libc_selected": any(line.startswith(libc + "(")
-                                                   for line in facts["resolved_input_trace"].splitlines()),
+                                                   for line in product_evidence.semantic_link_trace(
+                                                       facts["resolved_input_trace"].splitlines())),
                     # As in the frozen gate, the installed native libc.a
                     # carries no bitcode; no whole-program claim follows.
                     "whole_program_lto_proven": False,
