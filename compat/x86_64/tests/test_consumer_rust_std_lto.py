@@ -32,6 +32,35 @@ def execution(status: object, stdout: bytes, stderr: bytes = b"") -> dict[str, o
 
 
 class DebugRouteTests(unittest.TestCase):
+    def test_cargo_link_receipt_binds_the_selected_development_product(self):
+        WORK.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(dir=WORK) as temporary:
+            root = Path(temporary)
+            output = root / 'consumer'
+            output.write_bytes(b'linked')
+            linker = {'path': '/tool/mold', 'sha256': 'a' * 64}
+            fields = ('schema format target mode rust_requested_mode std_origin cargo_profile product '
+                      'native_requests unwind_requests provider_archive provider_members_extracted '
+                      'application_dsos omitted_compiler_builtins linker_plugin_options lto_materialization '
+                      'unused_search_paths application_inputs resolved_linker command resolved_input_trace '
+                      'dynamic segments output').split()
+            receipt = dict.fromkeys(fields)
+            receipt.update(schema=1, format='crabc-owned-rust-cargo-link/v1', target=GATE.TARGET,
+                           mode='dynamic', rust_requested_mode='pie', product={'root': '/selected/dynamic'},
+                           resolved_linker=linker, application_inputs=[], application_dsos=[],
+                           provider_archive=None, lto_materialization=None, command=[], resolved_input_trace=[],
+                           output={'path': str(output), 'sha256': GATE.hashlib.sha256(b'linked').hexdigest()})
+            context = SimpleNamespace(toolchain={'native_compiler_tools': {}}, products={
+                'development': {'static': {'root': '/selected/static'}, 'dynamic': {'root': '/selected/dynamic'}}})
+            with mock.patch.object(GATE.product_evidence, 'validate_native_compiler_tool_records', return_value={'linker': linker}), \
+                 mock.patch.object(GATE.owned_rust_link, 'link_command', return_value=[]), \
+                 mock.patch.object(GATE.owned_rust_link, '_product_inputs', return_value=[]), \
+                 mock.patch.object(GATE.owned_rust_link, 'validate_trace'):
+                GATE._validate_cargo_link_receipt(context, receipt, root / 'receipt', selected_product='development')
+                receipt['product']['root'] = '/other/dynamic'
+                with self.assertRaises(GATE.GateError):
+                    GATE._validate_cargo_link_receipt(context, receipt, root / 'receipt', selected_product='development')
+
     @unittest.skipUnless(Path('/opt/musl-1.2.6/.crabc-oracle').is_file(), 'requires the pinned native image')
     def test_owned_cargo_link_inputs_survive_compiler_exit(self):
         WORK.mkdir(parents=True, exist_ok=True)

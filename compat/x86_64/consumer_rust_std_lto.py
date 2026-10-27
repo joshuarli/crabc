@@ -455,7 +455,7 @@ def cargo_consumer(
                     if json.loads(path.read_text())["output"]["sha256"] == digest]
         require(len(receipts) == 1, f"{lane.name}: expected one owned link receipt for the executable")
         receipt = json.loads(receipts[0].read_text())
-        _validate_cargo_link_receipt(context, receipt, receipts[0])
+        _validate_cargo_link_receipt(context, receipt, receipts[0], selected_product=product)
         record["link_receipt"] = context.retained.record(receipts[0])
         record["link_facts"] = {
             "mode": receipt["mode"],
@@ -470,7 +470,7 @@ def cargo_consumer(
     return record
 
 
-def _validate_cargo_link_receipt(context: Context, receipt: object, path: Path) -> None:
+def _validate_cargo_link_receipt(context: Context, receipt: object, path: Path, *, selected_product: str) -> None:
     expected = {
         "schema", "format", "target", "mode", "rust_requested_mode", "std_origin", "cargo_profile",
         "product", "native_requests", "unwind_requests", "provider_archive", "provider_members_extracted",
@@ -505,14 +505,14 @@ def _validate_cargo_link_receipt(context: Context, receipt: object, path: Path) 
         return physical
 
     product = receipt["product"]
-    admitted_products = context.products[CONSUMER_PRODUCT]
-    require(isinstance(product, dict) and product.get("root") in {
-        admitted_products["static"]["root"], admitted_products["dynamic"]["root"],
-    }, "owned Rust Cargo product root differs from the admitted cohort")
     mode = receipt["mode"]
     requested_mode = receipt["rust_requested_mode"]
     require((mode, requested_mode) in {("static", "static-pie"), ("dynamic", "pie")},
             "owned Rust Cargo product and requested modes differ")
+    require(selected_product in context.products, "owned Rust Cargo product is not admitted")
+    admitted_products = context.products[selected_product]
+    require(isinstance(product, dict) and product.get("root") == admitted_products[mode]["root"],
+            "owned Rust Cargo product root differs from the admitted cohort")
     app_inputs = receipt["application_inputs"]
     require(isinstance(app_inputs, list) and all(isinstance(item, dict) for item in app_inputs),
             "owned Rust Cargo application input records are malformed")
