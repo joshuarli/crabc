@@ -437,7 +437,7 @@ def installed_owner(commands: Commands, owner: str, static: Path, dynamic: Path,
                 receipt = executable.with_name(executable.name + '.link.json') if mode.startswith('static') else Path(str(executable) + '.crabc-link.json')
                 product = static if mode.startswith('static') else dynamic
                 links[probe + '-' + mode] = products.validate_link(product, obj, executable, receipt, mode)
-            final = inspect_elf(commands, name + '-final', executable, elf_type='DYN' if mode in ('static-pie', 'pie') else 'EXEC')
+            final = inspect_elf(commands, name + '-final', executable, elf_type='PIE' if mode in ('static-pie', 'pie') else 'EXEC')
             if probe == 'override':
                 require_override_definitions(final, owner, OverrideBinding.LOCAL if mode in ('oracle', 'static', 'static-pie') else OverrideBinding.GLOBAL)
             elif mode in ('static', 'static-pie'):
