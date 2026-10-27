@@ -83,8 +83,10 @@ ARTIFACTS = (
 # remaining regular payloads installed by their builders/materializer. An
 # unknown name cannot be ignored because it lacks a familiar ELF suffix.
 NON_ELF_REQUIRED = {
-    'candidate-static': ('bin/crabc-cc',),
+    'candidate-static': ('bin/crabc-cc', 'share/crabc/native_runtime_profile.py'),
     'candidate-dynamic': ('bin/crabc-cc-dynamic', 'share/crabc/crabc_cc_static.py',
+                          'share/crabc/native_runtime_profile.py',
+                          'share/crabc/crt.provenance.json', 'share/crabc/loader.provenance.json',
                           'share/crabc/owned_dynamic_receipt.py', 'share/crabc/owned_dynamic_elf.py',
                           'share/crabc/producer-tools.json'),
 }
@@ -96,9 +98,9 @@ NON_ELF_METADATA = {
     ),
     'candidate-dynamic': (
         'share/crabc/builtins.provenance.json', 'share/crabc/crt.commands.json',
-        'share/crabc/crt.provenance.json', 'share/crabc/dynamic-product-state.json',
+        'share/crabc/dynamic-product-state.json',
         'share/crabc/libc-shared.elf.json', 'share/crabc/libc-shared.provenance.json',
-        'share/crabc/loader.elf.json', 'share/crabc/loader.provenance.json',
+        'share/crabc/loader.elf.json',
     ),
 }
 
