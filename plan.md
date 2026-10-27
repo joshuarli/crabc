@@ -1405,7 +1405,13 @@ Append one line per merge batch, per parked item, and per contract change.
   `c68c2cdf4`, word expansion passes 162 retained case records; independent
   native input capture and receipt replay also pass. At `6cf7d549a`, pattern
   passes the pinned oracle and six owned entry modes, including filesystem and
-  syscall comparisons.
+  syscall comparisons. At `1aa53776c`, the numeric/calendar component and
+  receipt replay pass all six entry modes. Read-only review of upstream Heap
+  lifetime fixes found owner-exit ordering already represented; the destroy
+  path resets used counts without upstream's immediate remote-free collect.
+  Existing tests do not establish a queued remote free at that transition,
+  and the Rust terminal path differs from the upstream underflow trigger, so
+  observable impact remains unproven. The denied diagnostic was not rerun.
   M7 baseline discovery at `55dd89a3a` passed four gates and left six unmet:
   visitation producers rejected an unsupported `--offline` flag and five
   gates were blocked. `aeb87087d` removes the flag; the producers already
