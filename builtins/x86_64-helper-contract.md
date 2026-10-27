@@ -12,7 +12,9 @@ rlibs into that same object, then localize every non-helper definition. The arch
 supplies its `core::ub_checks` calls to application links without exporting
 Rust runtime symbols. The final debug object may retain the source libc's
 `memcmp`, `memcpy`, and `memset` imports. The builder verifies that libc
-defines those symbols and rejects any other unresolved symbol.
+defines those symbols and rejects any other unresolved symbol. The intermediate
+relocatable link uses GNU ld to preserve mergeable constant references; final
+native product links use mold.
 
 The owned dynamic builder passes that exact archive to the `libc.so` link
 because selected Rust libc leaves can need compiler-generated operations.

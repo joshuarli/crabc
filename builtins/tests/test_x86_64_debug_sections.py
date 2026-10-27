@@ -16,6 +16,20 @@ SPEC.loader.exec_module(builder)
 
 
 class DebugSectionTests(unittest.TestCase):
+    def test_partial_link_keeps_binary80_constant_relocations(self) -> None:
+        with tempfile.TemporaryDirectory(dir=ROOT / ".work/tmp") as temporary:
+            root = Path(temporary)
+            obj, partial, shared = (root / name for name in ("helper.o", "partial.o", "helper.so"))
+            command = [*builder.rustc(), "--crate-name", "binary80_partial_fixture", "--crate-type=lib",
+                       "--edition=2021", "--target", builder.TARGET, "--emit=obj", "-C", "panic=abort",
+                       "-C", "force-unwind-tables=no", "-C", "opt-level=0", "-C", "relocation-model=pic",
+                       str(builder.SOURCE), "-o", str(obj)]
+            builder.run(command)
+            builder.run([builder.tool("ld.bfd"), "-r", "--gc-sections",
+                         *(f"--undefined={name}" for name in sorted(builder.REQUIRED_SYMBOLS)), str(obj), "-o", str(partial)])
+            builder.run([str(builder.native_build_tools.MOLD), "-shared", "-z", "text",
+                         "--unresolved-symbols=ignore-all", str(partial), "-o", str(shared)])
+
     def test_debug_helper_closes_core_calls_with_source_compiler_builtins(self) -> None:
         with tempfile.TemporaryDirectory(dir=ROOT / ".work/tmp") as temporary:
             root = Path(temporary)
@@ -49,19 +63,14 @@ class DebugSectionTests(unittest.TestCase):
             undefined = builder.symbols(builder.tool("llvm-nm"), root / "libcrabc-builtins.a", "--undefined-only")
             self.assertEqual(undefined, {"memcmp", "memcpy", "memset"})
 
-    def test_only_empty_unwind_terminator_is_removed(self) -> None:
+    def test_unwind_sections_are_rejected(self) -> None:
         with tempfile.TemporaryDirectory(dir=ROOT / ".work/tmp") as temporary:
             root = Path(temporary)
             source = root / "fixture.s"
             obj = root / "fixture.o"
-            objcopy = builder.tool("llvm-objcopy")
             readelf = builder.tool("llvm-readelf")
             for content in (".long 0", ".long 1"):
                 source.write_text(f'.section .eh_frame,"a",@progbits\n{content}\n')
                 subprocess.run(["/usr/bin/gcc", "-c", str(source), "-o", str(obj)], check=True)
-                builder.remove_empty_unwind_terminator(obj, root, objcopy)
-                if content == ".long 0":
+                with self.assertRaises(builder.BuildError):
                     builder.audit_object(readelf, obj)
-                else:
-                    with self.assertRaises(builder.BuildError):
-                        builder.audit_object(readelf, obj)
