@@ -1383,7 +1383,7 @@ unsafe fn hardened_main_identity(base: u64, phdr: *const u8, phnum: usize) -> bo
     for index in 0..phnum {
         let load = phdr.add(index * 56);
         if read_u32(load) != PT_LOAD || read_u32(load.add(4)) & PF_R == 0
-            || read_u64(load.add(8)) != 0 || read_u64(load.add(32)) < 64 { continue; }
+            || read_u64(load.add(8)) != 0 || read_u64(load.add(32)) < 64 || read_u64(load.add(40)) < 64 { continue; }
         let Some(address) = base.checked_add(read_u64(load.add(16))) else { return false; };
         let header = address as *const u8;
         if core::slice::from_raw_parts(header, 7) != b"\x7fELF\x02\x01\x01"
@@ -1392,7 +1392,17 @@ unsafe fn hardened_main_identity(base: u64, phdr: *const u8, phnum: usize) -> bo
             || read_u16(header.add(54)) != 56 || read_u16(header.add(56)) as usize != phnum { return false; }
         let offset = read_u64(header.add(32));
         let Some(end) = (phnum as u64).checked_mul(56).and_then(|size| offset.checked_add(size)) else { return false; };
-        return end <= read_u64(load.add(32)) && address.checked_add(offset) == Some(phdr as u64);
+        for table_index in 0..phnum {
+            let table = phdr.add(table_index * 56);
+            if read_u32(table) != PT_LOAD || read_u32(table.add(4)) & PF_R == 0 { continue; }
+            let file_offset = read_u64(table.add(8));
+            let Some(file_end) = file_offset.checked_add(read_u64(table.add(32))) else { return false; };
+            if offset < file_offset || end > file_end || end - file_offset > read_u64(table.add(40)) { continue; }
+            let Some(mapped) = base.checked_add(read_u64(table.add(16)))
+                .and_then(|start| start.checked_add(offset - file_offset)) else { return false; };
+            if mapped == phdr as u64 { return true; }
+        }
+        return false;
     }
     false
 }
@@ -5880,6 +5890,12 @@ mod readable_file_load_tests {
         image[32..40].copy_from_slice(&64u64.to_le_bytes());
         image[68..72].copy_from_slice(&PF_W.to_le_bytes());
         assert!(!check(&image));
+        image[68..72].copy_from_slice(&PF_R.to_le_bytes());
+        image[56..58].copy_from_slice(&2u16.to_le_bytes());
+        load(&mut image[64..], 0, PF_R, 0, 64, 64);
+        load(&mut image[64..], 1, PF_R, 64, 112, 112);
+        image[128..136].copy_from_slice(&64u64.to_le_bytes());
+        assert!(unsafe { hardened_main_identity(image.as_ptr() as u64, image.as_ptr().add(64), 2) });
     }
 
     #[test]
