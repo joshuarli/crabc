@@ -1397,7 +1397,12 @@ Append one line per merge batch, per parked item, and per contract change.
   their pinned-musl product comparisons. `dee61d906` repairs empty pinned
   image selection for eight native commands. The static dl-iterate-phdr
   check reaches a weak-symbol assertion; its retained directory is not
-  readable by the host and remains untouched. The
+  readable by the host and remains untouched. Descriptor control and pthread
+  attribute components pass at `0d26c5b2d`. Static replacement initially
+  rejected mold map attribution; `b60c2a552` binds application and archive
+  owners through the shared static authority. All 831 replacement functions
+  and the entropy GOT proofs pass in static and static-PIE at that revision.
+  The
   independent math/fenv component passes
   206 selected C ABI entries at `4630b7407`. The text/locale/numeric component
   then exposed two nonspacing Unicode endpoints and wide-format error mapping;
