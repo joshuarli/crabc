@@ -32,6 +32,29 @@ def execution(status: object, stdout: bytes, stderr: bytes = b"") -> dict[str, o
 
 
 class DebugRouteTests(unittest.TestCase):
+    @unittest.skipUnless(Path('/opt/musl-1.2.6/.crabc-oracle').is_file(), 'requires the pinned native image')
+    def test_unwind_got_label_requires_the_selected_function_relocation(self):
+        WORK.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(dir=WORK) as temporary:
+            root = Path(temporary)
+            source, obj, executable = (root / name for name in ('probe.s', 'probe.o', 'probe'))
+            source.write_text('.text\n.globl _Unwind_Backtrace\n.type _Unwind_Backtrace,@function\n'
+                              '_Unwind_Backtrace: ret\n.size _Unwind_Backtrace,.-_Unwind_Backtrace\n'
+                              '.globl _start\n.type _start,@function\n'
+                              '_start: mov _Unwind_Backtrace@GOTPCREL(%rip),%rax\nret\n.size _start,.-_start\n')
+            subprocess.run(['cc', '-c', str(source), '-o', str(obj)], check=True, capture_output=True)
+            subprocess.run(['mold', '-pie', '--no-dynamic-linker', '--no-relax', '-e', '_start', str(obj),
+                            '-o', str(executable)], check=True, capture_output=True)
+            defined = subprocess.check_output(['nm', '--defined-only', str(executable)], text=True)
+            self.assertEqual(GATE.unwind_symbols(executable, defined), ['_Unwind_Backtrace'])
+            image = GATE.Elf(executable)
+            label = image.symbol('_Unwind_Backtrace$got', dynamic=False)
+            section = image.sections[label['section']]
+            data = bytearray(executable.read_bytes())
+            data[section[4] + label['value'] - section[3]] ^= 1
+            executable.write_bytes(data)
+            self.assertIn('_Unwind_Backtrace$got', GATE.unwind_symbols(executable, defined))
+
     def test_cargo_link_receipt_binds_the_selected_development_product(self):
         WORK.mkdir(parents=True, exist_ok=True)
         with tempfile.TemporaryDirectory(dir=WORK) as temporary:
