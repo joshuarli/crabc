@@ -87,7 +87,8 @@ def _unwind_symbols(path: Path, defined: str, provider_symbols: set[str]) -> lis
                 and target['type'] == 'FUNC' and target['size'] > 0 and target_section[2] & 6 == 6
                 and target_section[3] <= target['value']
                 and target['value'] + target['size'] <= target_section[3] + target_section[5]
-                and nearby == [(address, 8, target['value'])]
+                and (image.elf_type == 2 and not nearby
+                     or image.elf_type == 3 and nearby == [(address, 8, target['value'])])
                 and image.unpack('<Q', section[4] + address - section[3])[0] == target['value']):
             names.remove(name)
     return sorted(names)

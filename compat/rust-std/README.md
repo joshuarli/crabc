@@ -84,8 +84,8 @@ the leaf of the `consumer.rust-std-lto` qualification gate (it also covers the
 
 Owned Cargo builds retain rustc's temporary link inputs so receipt replay can
 check the same objects after the compiler exits. The unwind audit admits a
-local GOT label only when its slot relocates to the corresponding selected
-provider function.
+local GOT label only when its slot contains the selected provider function's
+address and any required relative relocation names that address.
 
 The only networked step vendors the dependency-bearing and native-facade
 fixtures' locked crates; `dependency_vendor` rehashes every vendored file
