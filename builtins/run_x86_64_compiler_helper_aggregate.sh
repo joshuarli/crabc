@@ -124,7 +124,7 @@ if missing:
 PY
 record_command candidate-link env -u CPATH -u C_INCLUDE_PATH -u CPLUS_INCLUDE_PATH -u LIBRARY_PATH \
     -u GCC_EXEC_PREFIX -u COMPILER_PATH "$ORACLE_CC" -nostdlib -static -no-pie -Wl,--build-id=none \
-    -Wl,--no-undefined -Wl,-e,_start -Wl,-t "$start_object" "$object" "$archive" -o "$candidate"
+    -Wl,--no-undefined -Wl,-e,_start -Wl,--trace "$start_object" "$object" "$archive" -o "$candidate"
 if grep -Eq 'libgcc|compiler-rt|libc\.a|/[Sr]?crt[^/[:space:]]*\.o' "$WORK_DIR/raw/candidate-link.stdout"; then
     fail "candidate link admitted an ambient CRT or compiler runtime"
 fi
