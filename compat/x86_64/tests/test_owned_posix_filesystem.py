@@ -142,7 +142,16 @@ class OwnedPosixFilesystemTests(unittest.TestCase):
         ):
             self._write_file(root, f"usr/lib/{name}", name.encode("ascii"))
         self._write_file(root, "lib/ld-crabc-x86_64.so.1", b"owned loader\n")
-        for module in ("crabc_cc_static.py", "owned_dynamic_receipt.py", "owned_dynamic_elf.py"):
+        self._write_file(root, "share/crabc/crt.provenance.json", json.dumps({
+            "hardening_profile": "compatibility",
+            "objects": {"Scrt1.o": {"sha256": auditor.digest(root / "usr/lib/Scrt1.o")}},
+        }).encode())
+        self._write_file(root, "share/crabc/loader.provenance.json", json.dumps({
+            "cargo": {"rustflags": "-C panic=abort"},
+            "artifact": {"path": "lib/ld-crabc-x86_64.so.1",
+                         "sha256": auditor.digest(root / "lib/ld-crabc-x86_64.so.1")},
+        }).encode())
+        for module in ("crabc_cc_static.py", "native_runtime_profile.py", "owned_dynamic_receipt.py", "owned_dynamic_elf.py"):
             self._write_file(root, f"share/crabc/{module}", module.encode("ascii"))
         self._write_file(root, "share/crabc/producer-tools.json", json.dumps({
             "schema": 1, **auditor.product_evidence.source_native_compiler_tool_records(),
@@ -163,6 +172,8 @@ class OwnedPosixFilesystemTests(unittest.TestCase):
             "schema": 1,
             "format": auditor.DYNAMIC_FORMAT,
             "target": auditor.TARGET,
+            "hardening_profile": "compatibility",
+            "build_profile": "release",
             "files": files,
             "symlinks": {"lib/ld-musl-x86_64.so.1": "ld-crabc-x86_64.so.1"},
         }
@@ -255,8 +266,8 @@ class OwnedPosixFilesystemTests(unittest.TestCase):
                 product, application, candidate, "pie", str(linker)
             ),
             "link_trace": [
-                str(entry), str(attach), str(prologue), str(application), str(libc) + "(member.o)",
-                str(builtins) + "(member.o)", str(epilogue),
+                str(entry), str(attach), str(prologue), str(application), str(builtins) + "(member.o)",
+                str(libc) + "(member.o)", str(epilogue),
             ],
         }
         receipt.write_text(json.dumps(record), encoding="utf-8")

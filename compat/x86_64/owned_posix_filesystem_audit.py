@@ -281,6 +281,7 @@ def require_trace_order(
         expected_order.append("attach")
     expected_order.extend(["prologue", "application", "libc", "builtins", "epilogue"])
     order = {name: index for index, name in enumerate(expected_order)}
+    order["builtins"] = order["libc"]
     fixed = {"entry", "attach", "prologue", "application", "epilogue"}
     seen: dict[str, int] = {name: 0 for name in expected_order}
     previous = -1

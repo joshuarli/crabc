@@ -97,7 +97,7 @@ assert_posix_filesystem_symbols() {
     local binary="$1" table="$2" output="$3"
 
     readelf --wide "$table" "$binary" >"$output"
-    python3 -B - "$output" <<'PYTHON'
+    python3 -B - "$output" "${4:-global}" "$table" <<'PYTHON'
 from pathlib import Path
 import sys
 
@@ -108,7 +108,14 @@ names = {
     "tempnam", "tmpnam", "versionsort",
 }
 records = {}
+active = False
+wanted = ".dynsym" if sys.argv[3] == "--dyn-syms" else ".symtab"
 for line in Path(sys.argv[1]).read_text(encoding="utf-8").splitlines():
+    if line.startswith("Symbol table '"):
+        active = line.startswith("Symbol table '" + wanted + "'")
+        continue
+    if not active:
+        continue
     fields = line.split()
     if len(fields) == 8 and fields[7] in names:
         records.setdefault(fields[7], []).append(fields)
@@ -118,7 +125,7 @@ for name, entries in records.items():
     if len(entries) != 1:
         raise SystemExit(f"owned POSIX filesystem duplicate provider: {name}: {entries}")
     fields = entries[0]
-    if fields[3:6] != ["FUNC", "GLOBAL", "DEFAULT"] or fields[6] == "UND":
+    if (fields[3:6] != ["FUNC", "GLOBAL", "DEFAULT"] and not (sys.argv[2] == "local" and fields[3:6] == ["FUNC", "LOCAL", "DEFAULT"])) or fields[6] == "UND":
         raise SystemExit(f"owned POSIX filesystem provider binding: {name}: {fields}")
 PYTHON
 }
@@ -197,7 +204,7 @@ step=compile-installed-object
     -c "$PROBE" -o "$work/workload.o"
 
 step=link-oracle
-"$ORACLE_CC" -static -fno-pie -no-pie -pthread "$work/workload.o" -o "$work/oracle"
+"$ORACLE_CC" -static -fno-pie -no-pie -pthread -Wl,--export-dynamic "$work/workload.o" -o "$work/oracle"
 assert_posix_filesystem_symbols "$work/oracle" --syms "$work/oracle-symbols.txt"
 mkdir -p "$work/oracle-root/tmp"
 cp "$work/oracle" "$work/oracle-root/consumer"
@@ -232,7 +239,7 @@ if [ -n "$static_product" ]; then
                 "$work/workload.o" -o "$candidate"
         )
         audit_consumer static "$mode" "$candidate" "$receipt" "$static_product" "$work/workload.o"
-        assert_posix_filesystem_symbols "$candidate" --syms "$candidate-symbols.txt"
+        assert_posix_filesystem_symbols "$candidate" --syms "$candidate-symbols.txt" local
         root="$work/static-$mode-root"
         mkdir -p "$root/tmp"
         cp "$candidate" "$root/consumer"

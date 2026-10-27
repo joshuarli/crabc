@@ -85,6 +85,8 @@ assert_symbols() {
     local artifact="$1" selector="$2" report="$3"
     if [ "$selector" = nm ]; then
         nm -g --defined-only "$artifact" >"$report"
+    elif [ "$selector" = nm-local ]; then
+        nm --defined-only "$artifact" >"$report"
     else
         readelf --dyn-syms --wide "$artifact" >"$report"
     fi
@@ -95,9 +97,9 @@ import sys
 lines = Path(sys.argv[1]).read_text().splitlines()
 selector = sys.argv[2]
 for name in ('strfmon', 'strfmon_l'):
-    if selector == 'nm':
+    if selector in ('nm', 'nm-local'):
         matches = [line.split() for line in lines
-                   if len(line.split()) == 3 and line.split()[1] == 'T'
+                   if len(line.split()) == 3 and (line.split()[1] == 'T' or (selector == 'nm-local' and line.split()[1] == 't'))
                    and line.split()[2] == name]
     else:
         matches = [line.split() for line in lines
@@ -120,7 +122,7 @@ compare() {
     cmp "$work/oracle.stderr" "$work/$label.stderr"
 }
 
-"$ORACLE_CC" -static -fno-pie -no-pie "$work/workload.o" -o "$work/root/oracle"
+"$ORACLE_CC" -static -fno-pie -no-pie -Wl,--export-dynamic "$work/workload.o" -o "$work/root/oracle"
 assert_symbols "$work/root/oracle" nm "$work/oracle-symbols.txt"
 run_probe /oracle >"$work/oracle.stdout" 2>"$work/oracle.stderr"
 
@@ -129,7 +131,7 @@ if [ "$build_static" -eq 1 ]; then
     # is the intended installed-header common-object link-red regression.
     for mode in static static-pie; do
         "$work/static-sysroot/bin/crabc-cc" "-$mode" "$work/workload.o" -o "$work/root/$mode"
-        assert_symbols "$work/root/$mode" nm "$work/$mode-symbols.txt"
+        assert_symbols "$work/root/$mode" nm-local "$work/$mode-symbols.txt"
         compare "$mode" "/$mode"
     done
     assert_symbols "$work/static-sysroot/usr/lib/libc.a" nm "$work/archive-symbols.txt"

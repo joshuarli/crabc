@@ -53,7 +53,7 @@ assert_mechanism_symbols() {
     local output="$3"
 
     readelf --wide "$table" "$binary" >"$output"
-    python3 -B - "$output" <<'PYTHON'
+    python3 -B - "$output" "${4:-global}" "$table" <<'PYTHON'
 from pathlib import Path
 import sys
 
@@ -62,7 +62,14 @@ names = {
     "umount2", "vhangup", "vmsplice",
 }
 records = {}
+active = False
+wanted = ".dynsym" if sys.argv[3] == "--dyn-syms" else ".symtab"
 for line in Path(sys.argv[1]).read_text(encoding="utf-8").splitlines():
+    if line.startswith("Symbol table '"):
+        active = line.startswith("Symbol table '" + wanted + "'")
+        continue
+    if not active:
+        continue
     fields = line.split()
     if len(fields) == 8 and fields[7] in names:
         records.setdefault(fields[7], []).append(fields)
@@ -71,7 +78,7 @@ assert set(records) == names, records
 for name, entries in records.items():
     assert len(entries) == 1, (name, entries)
     fields = entries[0]
-    assert fields[3:6] == ["FUNC", "GLOBAL", "DEFAULT"], fields
+    assert fields[3:6] == ["FUNC", "GLOBAL", "DEFAULT"] or (sys.argv[2] == "local" and fields[3:6] == ["FUNC", "LOCAL", "DEFAULT"]), fields
     assert fields[6] != "UND", fields
 PYTHON
 }
@@ -116,7 +123,7 @@ fi
 sha256sum -c "$work/source-before.sha256" >"$work/source-after-compile.txt"
 sha256sum "$work/workload.o" >"$work/object-before.sha256"
 
-"$ORACLE_CC" -static -fno-pie -no-pie -pthread "$work/workload.o" -o "$work/oracle"
+"$ORACLE_CC" -static -fno-pie -no-pie -pthread -Wl,--export-dynamic "$work/workload.o" -o "$work/oracle"
 assert_mechanism_symbols "$work/oracle" --syms "$work/oracle-symbols.txt"
 cp "$work/oracle" "$execution_root/oracle"
 for scenario in "${cases[@]}"; do
@@ -131,7 +138,7 @@ if [ "${1:-}" = "" ]; then
         "$work/static-archive-symbols.txt"
     for mode in static static-pie; do
         "$work/static-sysroot/bin/crabc-cc" "-$mode" "$work/workload.o" -o "$work/$mode"
-        assert_mechanism_symbols "$work/$mode" --syms "$work/$mode-symbols.txt"
+        assert_mechanism_symbols "$work/$mode" --syms "$work/$mode-symbols.txt" local
         cp "$work/$mode" "$execution_root/consumer-$mode"
         for scenario in "${cases[@]}"; do
             run_in_root "$execution_root" "$work/$mode-$scenario.stdout" \
