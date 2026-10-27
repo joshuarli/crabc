@@ -406,9 +406,14 @@ def loader_provenance(
     rustflags: str,
     compiler_artifact: Path,
     installed_artifact: Path,
+    hardening_profile: common.NativeRuntimeProfile = common.NativeRuntimeProfile.COMPATIBILITY,
 ) -> dict[str, object]:
     """Bind the installed loader to Cargo's selected source closure and config."""
 
+    if (not isinstance(hardening_profile, common.NativeRuntimeProfile)
+            or rustflags != loader_rustflags(hardening_profile)
+            or installed_artifact.name != Path(hardening_profile.interpreter).name):
+        raise common.BuildError("loader profile, flags and interpreter path differ")
     dependencies = stage / "loader" / common.TARGET / "release" / "libldso.d"
     expected_dependency_artifact = dependencies.with_name(LOADER_DEPENDENCY_ARTIFACT)
     if compiler_artifact != expected_dependency_artifact:
@@ -433,7 +438,7 @@ def loader_provenance(
         _source_file_identity(ROOT / "compat/x86_64/dynamic_product_contract.py", "loader compiler policy"),
     ]
     installed = {
-        "path": LOADER_ARTIFACT,
+        "path": hardening_profile.interpreter.lstrip("/"),
         "sha256": common.sha256_file(installed_artifact),
         "mode": stat.S_IMODE(installed_details.st_mode),
     }
@@ -448,6 +453,13 @@ def loader_provenance(
         "compiler_dependencies": loader_dependency_provenance(dependencies, compiler_artifact),
         "configuration": configuration,
     }
+
+
+def loader_rustflags(profile: common.NativeRuntimeProfile) -> str:
+    if not isinstance(profile, common.NativeRuntimeProfile):
+        raise common.BuildError("unknown dynamic hardening profile")
+    flags = dynamic_product_contract.LOADER_RUSTFLAGS
+    return flags + " --cfg crabc_hardened" if profile is common.NativeRuntimeProfile.HARDENED else flags
 
 
 ALLOCATOR_BACKENDS = common.ALLOCATOR_BACKENDS
@@ -507,6 +519,8 @@ def elf_imports(nm: str, artifact: Path) -> set[str]:
 
 def build(output: Path, *, allocator_backend: str = common.DEFAULT_ALLOCATOR_BACKEND, lifecycle_test_audit: bool = False, profile: str = "release", hardening_profile: common.NativeRuntimeProfile = common.NativeRuntimeProfile.COMPATIBILITY) -> None:
     common.assert_native_target()
+    if not isinstance(hardening_profile, common.NativeRuntimeProfile):
+        raise common.BuildError("unknown dynamic hardening profile")
     if allocator_backend not in ALLOCATOR_BACKENDS:
         raise common.BuildError("unknown dynamic allocator backend")
     source_before_build = qualification.source_digest()
@@ -540,8 +554,6 @@ def build_staged_payload(output: Path, stage: Path, *, allocator_backend: str = 
     if profile == "debug":
         build_debug_payload(output, stage, allocator_backend=allocator_backend, lifecycle_test_audit=lifecycle_test_audit, hardening_profile=hardening_profile)
         return
-    if hardening_profile is not common.NativeRuntimeProfile.COMPATIBILITY:
-        raise common.BuildError("hardened release dynamic product is not implemented")
     if profile != "release":
         raise common.BuildError("unknown owned runtime build profile")
     recorded_backend = allocator_backend
@@ -669,7 +681,7 @@ def build_staged_payload(output: Path, stage: Path, *, allocator_backend: str = 
         raise common.BuildError(f"shared libc has unexpected unresolved symbols: {unexpected}")
     crt = stage / "crt"
     run([sys.executable, str(ROOT / "crt/build_x86_64.py"), "--owned-dynamic-sysroot",
-         "--out-dir", str(crt), "--llvm-objdump", objdump])
+         "--hardening-profile", hardening_profile.value, "--out-dir", str(crt), "--llvm-objdump", objdump])
     # This explicit CRT mode selects the authenticated dynamic-PIE Scrt1.o.
     # Its crt1.o, crti.o and crtn.o are byte-identical to the static
     # product's: one crt1.o serves static ET_EXEC and dynamic non-PIE.
@@ -699,7 +711,7 @@ def build_staged_payload(output: Path, stage: Path, *, allocator_backend: str = 
     common.copy_artifact(builtins, library / builtins.name)
     loader_env = common.deterministic_environment()
     loader_env["CARGO_BUILD_JOBS"] = "2"
-    loader_env["RUSTFLAGS"] = dynamic_product_contract.LOADER_RUSTFLAGS
+    loader_env["RUSTFLAGS"] = loader_rustflags(hardening_profile)
     # Every process touches nearly all interpreter text, so it is optimized
     # for size: opt-level s cuts it from 135 to 81 KiB (54 KiB of PSS per
     # process) for about 2% more fork+exec CPU and 8% slower dlsym.
@@ -708,7 +720,7 @@ def build_staged_payload(output: Path, stage: Path, *, allocator_backend: str = 
                       "--target-dir", str(stage / "loader"), "--no-default-features", "--features",
                       LOADER_FEATURE]
     run(loader_command, environment=loader_env)
-    interpreter = output / "lib/ld-crabc-x86_64.so.1"
+    interpreter = output / hardening_profile.interpreter.lstrip("/")
     loader_artifact = stage / "loader" / common.TARGET / "release/libldso.so"
     common.copy_artifact(loader_artifact, interpreter)
     interpreter.chmod(0o755)
@@ -726,7 +738,8 @@ def build_staged_payload(output: Path, stage: Path, *, allocator_backend: str = 
         })
     libc_elf = audit_shared_elf(library / "libc.so")
     loader_elf = audit_shared_elf(interpreter)
-    (interpreter.parent / "ld-musl-x86_64.so.1").symlink_to(interpreter.name)
+    for alias, target in hardening_profile.aliases.items():
+        (output / alias).symlink_to(target)
     metadata = output / "share/crabc"
     metadata.mkdir(parents=True)
     if native_allocator_elf_audit_required(recorded_backend):
@@ -739,7 +752,7 @@ def build_staged_payload(output: Path, stage: Path, *, allocator_backend: str = 
     common.write_json(metadata / "loader.elf.json", loader_elf)
     common.write_json(
         metadata / "loader.provenance.json",
-        loader_provenance(stage, loader_command, loader_env["RUSTFLAGS"], loader_artifact, interpreter),
+        loader_provenance(stage, loader_command, loader_env["RUSTFLAGS"], loader_artifact, interpreter, hardening_profile),
     )
     for source, name in ((ROOT / "compat/x86_64/crabc_cc_owned_dynamic.py", "bin/crabc-cc-dynamic"),
                          (ROOT / "compat/x86_64/crabc_cc_static.py", "share/crabc/crabc_cc_static.py"),
@@ -779,10 +792,11 @@ def build_staged_payload(output: Path, stage: Path, *, allocator_backend: str = 
         "allocator_promoted": False,
         "contracts": qualification.contract_digests(), "payload_files": payload_files,
         "runtime_v1_published": False, "campaign_complete": False, "public_support": False,
-        "modes": ["dynamic-pie", "dynamic-non-pie", "dynamic-shared-object"],
+        "modes": (["dynamic-pie", "dynamic-non-pie", "dynamic-shared-object"]
+                  if hardening_profile is common.NativeRuntimeProfile.COMPATIBILITY else ["dynamic-pie", "dynamic-shared-object"]),
         "runtime_profile": qualification.MATERIALIZATION_PROFILE,
         "qualification": qualification.MATERIALIZATION_QUALIFICATION})
-    write_product_manifest(output, metadata)
+    write_product_manifest(output, metadata, hardening_profile=hardening_profile)
 
 
 def build_debug_payload(output: Path, stage: Path, *, allocator_backend: str, lifecycle_test_audit: bool, hardening_profile: common.NativeRuntimeProfile = common.NativeRuntimeProfile.COMPATIBILITY) -> None:

@@ -154,6 +154,7 @@ class OwnedLoaderProvenanceTests(unittest.TestCase):
                 "mode": 0o755,
             },
         )
+
         cargo = record["cargo"]
         self.assertEqual(cargo["argv"][cargo["argv"].index("--target-dir") + 1], "$BUILD/loader")
         self.assertEqual(
@@ -181,6 +182,22 @@ class OwnedLoaderProvenanceTests(unittest.TestCase):
                 "compat/x86_64/dynamic_product_contract.py",
             ],
         )
+
+    def test_hardened_loader_provenance_requires_matching_flags_and_path(self) -> None:
+        profile = producer.common.NativeRuntimeProfile.HARDENED
+        target = self.installed_artifact.with_name(Path(profile.interpreter).name)
+        target.write_bytes(self.compiler_artifact.read_bytes())
+        target.chmod(0o755)
+        flags = producer.loader_rustflags(profile)
+        command = ["cargo", "build", "--target-dir", str(self.stage / "loader")]
+        record = producer.loader_provenance(self.stage, command, flags, self.compiler_artifact, target, profile)
+        self.assertEqual(record["artifact"]["path"], profile.interpreter.lstrip("/"))
+        self.assertEqual(record["cargo"]["rustflags"], flags)
+        with self.assertRaises(producer.common.BuildError):
+            producer.loader_provenance(self.stage, command, producer.loader_rustflags(producer.common.NativeRuntimeProfile.COMPATIBILITY),
+                                       self.compiler_artifact, target, profile)
+        with self.assertRaises(producer.common.BuildError):
+            producer.loader_provenance(self.stage, command, flags, self.compiler_artifact, self.installed_artifact, profile)
 
     def test_different_private_stage_paths_produce_identical_provenance(self) -> None:
         other_stage = self.root / ".work" / "other-loader-product.build"
