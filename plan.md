@@ -1370,7 +1370,10 @@ Append one line per merge batch, per parked item, and per contract change.
   those inputs. `83201440c` binds Cargo receipts to the selected product, and
   `b4a0992cc` verifies mold's local unwind GOT labels against their selected
   functions. The pinned compiler regression, kache probe and debug Rust std
-  consumer pass at `d03b6dd31`; a fresh release cohort is still required.
+  consumer pass at `d03b6dd31`. `df8674052` shares the GOT proof with the
+  unwind consumers, and `31a5f8dc7` covers fixed-address executables. At
+  `58697417a`, the debug dependency and valid-unwind consumers also pass;
+  a fresh release cohort is still required.
   M7 baseline discovery at `55dd89a3a` passed four gates and left six unmet:
   visitation producers rejected an unsupported `--offline` flag and five
   gates were blocked. `aeb87087d` removes the flag; the producers already
