@@ -20,6 +20,8 @@ After the static CRT RELRO repairs, a fresh compatibility static-product and Lua
 
 After the relocation metadata repairs, the same static-product and Lua run passed at `16b127899`. Its receipt is in `.work/wt/lua-static-metadata/.work/x86_64/lua-proof/lua/run-al3qcv69/report.json`.
 
+`lane/hardened-profile` at `1007c50fb` holds a private static CRT prototype. Native fixtures reject missing, duplicate or executable stack declarations, RWX loads and overlapping writable/executable pages in its hardened build; compatibility controls retain those modes. Product identity, actual alias analysis, image identity, loader policy and qualification binding remain open. This branch is not an installed hardened product.
+
 Previous accepted source was `775ff60ac`. No public-support, allocator-default or qualification flag changed.
 Proof: 150 integrated reader tests pass; the next seven-module check has 134 passes/one receipt-dependent skip. Wordexp passes all 108 cells, independent input capture, companion replay and the exact 20/67 join. Three fresh locale products, the locale leaf/reader and the kache Rust check pass; independent review has no open P1/P2.
 Next: audit the accepted source against the hardened contract (SEC0), complete SEC1–SEC3 and the existing correctness prerequisites, then prepare the source-frozen cohort. Bring forward only the prospective ledger/inventory delta from parked `cohort/native-mold-20261026-4` (`e0f103f24`), regenerate digests and prepare the existing pinned inputs before the correctness run. The delta remains prospective until H1; never merge the rehearsal claims or reuse old receipts as hardening proof.
