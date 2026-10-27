@@ -294,6 +294,12 @@
         },
         {
           "expected_passed_test_count": 1,
+          "id": "arena-clock-fallback-c-rust-differential",
+          "kind": "c-rust-arena-delayed-purge-failure-differential",
+          "target": "compat/allocator/m2_arena_clock_fallback_x86_64.py"
+        },
+        {
+          "expected_passed_test_count": 1,
           "id": "arena-delayed-purge-expiry-decommit-failure-c-rust-differential",
           "kind": "c-rust-arena-delayed-purge-failure-differential",
           "target": "compat/allocator/medium_pressure_delayed_purge_fault.py"
@@ -315,7 +321,6 @@
       "native_status": "partial",
       "remaining_conditions": [
         "Qualify arena page abandonment, abandoned-page search/claim/unabandon, cross-thread reclamation, and arena purge beyond the process-purge differential's three-regular-arena delayed-purge, two-slice whole-range-claim-fallback, and selected scheduled-expiry decommit EIO consumption/reuse relations, through native C/Rust lifecycle and failure evidence.",
-        "The source-defined clock fallback during arena expiry lacks a paired C/R trace. Pinned Linux src/prim/unix/prim.c:762-775 falls back to mi_prim_clock_now_lowres when the CLOCK_MONOTONIC query fails. That function converts clock() using CLOCKS_PER_SEC. In the pinned musl profile, clock() reads CLOCK_PROCESS_CPUTIME_ID at one million ticks per second. Rust source_clock_now uses the same clock and conversion. The Rust-only process_arena_purge_uses_process_cpu_clock_after_monotonic_fault test forces the preferred query to fail and observes purge scheduling. The current C/R trace does not exercise this failure path.",
         "Qualify large/huge-page arena reservation against pinned C (see the VM huge-page/NUMA condition). Automatic reservation and count scaling, commit and eager-commit policy, disallow_os_alloc, requested and exclusive arenas including an exclusive sub-arena span, oversized requests, clean primary failure with and without the 128-MiB fallback, NUMA second-pass search, registry exhaustion, the interleaving-independent relations of eight-worker concurrent fresh reservation after exhausting the only arena, sub-arena publication and metadata-commit failure after a published parent, requested-arena `_mi_arenas_alloc(_aligned)` with its refusing OS fallback, and the `_mi_theap_alloc` exclusive-arena arm's disallow_arena_alloc gate and commit-failure NUMA second pass are covered by the arena-reservation lifecycle differential. The failed-reservation `show_errors` output (the `mi_os_prim_alloc_at` allocation warnings around the aligned over-allocation fallback for committed and uncommitted requests, and the `mi_manage_os_memory_ex2` not-large-enough warning) is covered by the reservation warning differential."
       ],
       "source_map_records": [

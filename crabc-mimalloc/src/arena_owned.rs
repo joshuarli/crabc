@@ -5232,9 +5232,11 @@ mod tests {
         fault.set(fault::Plan::at(fault::Point::Clock, 1, Errno::NOMEM));
         assert!(claim.release());
         assert_eq!(fault.observed(), 1);
-        assert_eq!(unsafe { view.slices_purge() }.unwrap().is_set_range(start, 1), Some(true));
-        assert!(crate::atomic::i64_load_relaxed(&view.arena().purge_expire) > 0);
-        assert!(crate::atomic::i64_load_relaxed(&backing.purge_expire) > 0);
+        let scheduled = unsafe { view.slices_purge() }.unwrap().is_set_range(start, 1) == Some(true)
+            && crate::atomic::i64_load_relaxed(&view.arena().purge_expire) > 0
+            && crate::atomic::i64_load_relaxed(&backing.purge_expire) > 0;
+        assert!(scheduled);
+        let schedule_clock = fault.observed();
 
         crate::atomic::i64_store_release(&view.arena().purge_expire, -1);
         crate::atomic::i64_store_release(&backing.purge_expire, -1);
@@ -5242,9 +5244,16 @@ mod tests {
         fault.set(fault::Plan::at(fault::Point::Clock, 1, Errno::NOMEM));
         assert!(unsafe { backing.collect_purge(process, config(), false, true, 0) });
         assert_eq!(fault.observed(), 1);
-        assert_eq!(unsafe { view.slices_purge() }.unwrap().is_clear_range(start, 1), Some(true));
-        assert_eq!(unsafe { view.slices_free() }.unwrap().is_set_range(start, 1), Some(true));
+        let cleared = unsafe { view.slices_purge() }.unwrap().is_clear_range(start, 1) == Some(true)
+            && unsafe { view.slices_free() }.unwrap().is_set_range(start, 1) == Some(true);
+        assert!(cleared);
         assert_eq!(process.subprocess().arena_statistics().snapshot().arena_purges, before_purges + 1);
+        std::println!("m2.arena_clock.schedule_clock={schedule_clock}");
+        std::println!("m2.arena_clock.scheduled={}", u8::from(scheduled));
+        std::println!("m2.arena_clock.purge_clock={}", fault.observed());
+        std::println!("m2.arena_clock.cleared={}", u8::from(cleared));
+        std::println!("m2.arena_clock.purges={}",
+            process.subprocess().arena_statistics().snapshot().arena_purges - before_purges);
     }
 
     #[test]

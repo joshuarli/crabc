@@ -565,6 +565,12 @@ M2_X86_64_ARENA_CHECKS = (
     },
     {
         "expected_passed_test_count": 1,
+        "id": "arena-clock-fallback-c-rust-differential",
+        "kind": "c-rust-arena-delayed-purge-failure-differential",
+        "target": "compat/allocator/m2_arena_clock_fallback_x86_64.py",
+    },
+    {
+        "expected_passed_test_count": 1,
         "id": "arena-delayed-purge-expiry-decommit-failure-c-rust-differential",
         "kind": "c-rust-arena-delayed-purge-failure-differential",
         "target": "compat/allocator/medium_pressure_delayed_purge_fault.py",
@@ -583,6 +589,16 @@ M2_X86_64_ARENA_CHECKS = (
     },
 )
 M2_X86_64_ARENA_DIRECT_RECEIVERS = {
+    "arena-clock-fallback-c-rust-differential": {
+        "artifact": "m2-arena-clock-fallback",
+        "kind": "c-rust-arena-delayed-purge-failure-differential",
+        "target": "compat/allocator/m2_arena_clock_fallback_x86_64.py",
+        "fixture": "compat/allocator/m2_arena_clock_fallback_x86_64.c",
+        "rust_test": "arena::owned::tests::process_arena_purge_uses_process_cpu_clock_after_monotonic_fault",
+        "trace_prefix": "m2.arena_clock.",
+        "trace": {"schedule_clock": 1, "scheduled": 1, "purge_clock": 1, "cleared": 1, "purges": 1},
+        "scope": "pinned-c-rust-arena-purge-scheduling-and-expiry-after-monotonic-clock-failure",
+    },
     "arena-startup-huge-failure-warning-c-rust-differential": {
         "artifact": "m2-startup-huge-failure",
         "kind": "c-rust-arena-startup-huge-failure-differential",
