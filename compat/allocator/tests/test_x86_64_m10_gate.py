@@ -151,6 +151,17 @@ class NativeArtifactCustodyTests(unittest.TestCase):
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_bytes((relative + "\n").encode())
         metadata = product / "share/crabc"
+        (metadata / "crt.provenance.json").write_text(json.dumps({
+            "hardening_profile": "compatibility",
+            "objects": {"Scrt1.o": {"sha256": hashlib.sha256(
+                (product / "usr/lib/Scrt1.o").read_bytes()).hexdigest()}},
+        }) + "\n", encoding="utf-8")
+        (metadata / "loader.provenance.json").write_text(json.dumps({
+            "build_profile": "debug",
+            "compiler_command": [],
+            "artifact": {"path": "lib/ld-crabc-x86_64.so.1", "sha256": hashlib.sha256(
+                (product / "lib/ld-crabc-x86_64.so.1").read_bytes()).hexdigest()},
+        }) + "\n", encoding="utf-8")
         (metadata / "libc-shared.provenance.json").write_text(
             json.dumps({"allocator_backend": "native-shadow"}) + "\n", encoding="utf-8")
         payload_files = {path.relative_to(product).as_posix(): hashlib.sha256(path.read_bytes()).hexdigest()
@@ -176,6 +187,7 @@ class NativeArtifactCustodyTests(unittest.TestCase):
             (metadata / "dynamic-product-state.json").read_bytes()).hexdigest()
         manifest = {"schema": 1, "format": driver.FORMAT, "target": driver.shared.TARGET,
                     "toolchain": "pinned-test-toolchain", "build_profile": "debug",
+                    "hardening_profile": "compatibility",
                     "source_sha256": qualification.source_digest(), "files": payload_files,
                     "symlinks": driver.ALIASES}
         (metadata / "manifest.json").write_text(json.dumps(manifest, sort_keys=True) + "\n")
