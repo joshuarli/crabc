@@ -39,11 +39,11 @@ def digest(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
-def sealed_elf(linkage: str) -> bytes:
+def sealed_elf(linkage: str, interpreter_path: str = "/lib/ld-crabc-x86_64.so.1") -> bytes:
     """Minimal ELF64 byte fixture for the replay reader, never executable."""
     dynamic = linkage in {"pie", "non-pie"}
     elf_type = 3 if linkage in {"static-pie", "pie"} else 2
-    interpreter = b"/lib/ld-crabc-x86_64.so.1\0" if dynamic else b""
+    interpreter = interpreter_path.encode() + b"\0" if dynamic else b""
     strings = b"\0libc.so\0/usr/lib\0" if dynamic else b""
     dynamic_entries = (
         struct.pack("<qQ", 5, 0x400040)
@@ -536,6 +536,63 @@ class OwnedPosixProductEvidenceTests(unittest.TestCase):
         with self.assertRaises(evidence.ProductEvidenceError):
             evidence._validate_dynamic_product(self.dynamic)
 
+    def hardened_dynamic_product(self) -> Path:
+        product = self.dynamic
+        profile = evidence.NativeRuntimeProfile.HARDENED
+        old = product / "lib/ld-crabc-x86_64.so.1"
+        new = product / profile.interpreter.lstrip("/")
+        old.rename(new)
+        (product / "lib/ld-musl-x86_64.so.1").unlink()
+        crt_path = product / "share/crabc/crt.provenance.json"
+        crt = json.loads(crt_path.read_text())
+        crt["hardening_profile"] = profile.value
+        self.write_json(crt_path, crt)
+        loader_path = product / "share/crabc/loader.provenance.json"
+        loader = json.loads(loader_path.read_text())
+        loader["cargo"]["rustflags"] += " --cfg crabc_hardened"
+        loader["artifact"]["path"] = profile.interpreter.lstrip("/")
+        self.write_json(loader_path, loader)
+        manifest_path = product / "share/crabc/manifest.json"
+        manifest = json.loads(manifest_path.read_text())
+        manifest.update(hardening_profile=profile.value, symlinks=profile.aliases)
+        self.write_json(manifest_path, manifest)
+        self.refresh_dynamic_manifest()
+        return product
+
+    def test_dynamic_product_reader_accepts_profile_bound_hardened_product(self) -> None:
+        product = self.hardened_dynamic_product()
+        evidence._validate_dynamic_product(product)
+
+    def test_hardened_dynamic_link_evidence_uses_hardened_interpreter_and_pie(self) -> None:
+        product = self.hardened_dynamic_product()
+        receipt = self.dynamic_receipt("pie")
+        inspection = self.readelf("pie")
+        inspection["program"] = inspection["program"].replace(
+            "/lib/ld-crabc-x86_64.so.1", evidence.NativeRuntimeProfile.HARDENED.interpreter)
+        with mock.patch.object(evidence, "_readelf", return_value=inspection):
+            evidence.validate_link(product, self.workload, self.executable, receipt, "pie")
+        retained, linker = self.retained_receipt_from(receipt)
+        evidence.validate_retained_link(self.root, "/workspace", product, self.workload,
+                                        self.executable, retained, "pie", linker)
+        self.executable.write_bytes(sealed_elf("pie"))
+        record = json.loads(receipt.read_text())
+        record["output_sha256"] = digest(self.executable)
+        self.write_json(receipt, record)
+        with mock.patch.object(evidence, "_readelf", return_value=self.readelf("pie")):
+            with self.assertRaises(evidence.ProductEvidenceError):
+                evidence.validate_link(product, self.workload, self.executable, receipt, "pie")
+        retained, linker = self.retained_receipt_from(receipt)
+        with self.assertRaises(evidence.ProductEvidenceError):
+            evidence.validate_retained_link(self.root, "/workspace", product, self.workload,
+                                            self.executable, retained, "pie", linker)
+        receipt = self.dynamic_receipt("non-pie")
+        with self.assertRaises(evidence.ProductEvidenceError):
+            evidence.validate_link(product, self.workload, self.executable, receipt, "non-pie")
+        retained, linker = self.retained_receipt_from(receipt)
+        with self.assertRaises(evidence.ProductEvidenceError):
+            evidence.validate_retained_link(self.root, "/workspace", product, self.workload,
+                                            self.executable, retained, "non-pie", linker)
+
     def refresh_dynamic_manifest(self) -> None:
         manifest_path = self.dynamic / "share/crabc/manifest.json"
         manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
@@ -608,7 +665,9 @@ class OwnedPosixProductEvidenceTests(unittest.TestCase):
 
     def dynamic_receipt(self, linkage: str = "pie", *, export_dynamic: bool = False,
                         workloads: tuple[Path, ...] | None = None) -> Path:
-        self.executable.write_bytes(sealed_elf(linkage))
+        manifest = self.dynamic / "share/crabc/manifest.json"
+        profile = evidence.NativeRuntimeProfile(json.loads(manifest.read_text())["hardening_profile"])
+        self.executable.write_bytes(sealed_elf(linkage, profile.interpreter))
         mode, entry = {"pie": ("pie", "Scrt1.o"), "non-pie": ("exec", "crt1.o")}[linkage]
         receipt = self.root / f"{linkage}.crabc-link.json"
         runtime = self.dynamic / "usr/lib"
@@ -625,7 +684,7 @@ class OwnedPosixProductEvidenceTests(unittest.TestCase):
             "--exclude-libs=libcrabc-builtins.a",
             *(["--export-dynamic"] if export_dynamic else []),
             *evidence.receipt_contract.EXECUTABLE_WEAK_IMPORT_FLAGS,
-            "--dynamic-linker", "/lib/ld-crabc-x86_64.so.1", str(runtime / entry),
+            "--dynamic-linker", profile.interpreter, str(runtime / entry),
             str(runtime / "crabc-dynamic-attach.o"), str(runtime / "crti.o"),
             *(str(workload) for workload in workload_objects),
             str(runtime / "libcrabc-builtins.a"), str(runtime / "libc.so"), str(runtime / "crtn.o"),
@@ -1016,6 +1075,21 @@ class OwnedPosixProductEvidenceTests(unittest.TestCase):
                 # The installed roster is the whole combined tree.
                 self.assertEqual(files, json.loads(manifest.read_text(encoding="utf-8"))["files"])
 
+    def test_combined_product_reader_rejects_resealed_crossed_profiles(self) -> None:
+        root = self.combined_product()
+        path = root / "share/crabc/dynamic/manifest.json"
+        embedded = json.loads(path.read_text())
+        embedded["hardening_profile"] = "hardened"
+        self.write_json(path, embedded)
+        manifest_path = root / "share/crabc/manifest.json"
+        manifest = json.loads(manifest_path.read_text())
+        manifest["files"]["share/crabc/dynamic/manifest.json"] = digest(path)
+        self.write_json(manifest_path, manifest)
+        for validate in (evidence._validate_static_product, evidence._validate_dynamic_product):
+            with self.subTest(validate=validate.__name__), self.assertRaisesRegex(
+                    evidence.ProductEvidenceError, "combined product profiles differ"):
+                validate(root)
+
     def test_dynamic_product_consumers_accept_a_combined_sysroot(self) -> None:
         # The fork workload compiles against the product's own stdint.h.
         (self.dynamic / "usr/include/stdint.h").write_bytes(b"/* owned stdint */\n")
@@ -1107,6 +1181,24 @@ class OwnedPosixProductEvidenceTests(unittest.TestCase):
         evidence._validate_dynamic_product(product)
         evidence.validate_debug_product_source(product, "a" * 64)
         self.assertEqual(driver.validate(product)["source_sha256"], "a" * 64)
+
+    def test_combined_debug_product_source_uses_embedded_dynamic_manifest(self) -> None:
+        sys.path.insert(0, str(ROOT / "scripts"))
+        import build_x86_64_owned_combined_sysroot as combined
+        self.debug_product()
+        for product in (self.static, self.dynamic):
+            path = product / "share/crabc/manifest.json"
+            manifest = json.loads(path.read_text())
+            manifest["toolchain"] = "pinned"
+            if product == self.static:
+                manifest.update(source_sha256="a" * 64, build_profile="debug", allocator_backend="native-shadow",
+                                allocator_lifecycle_test_audit=False)
+            self.write_json(path, manifest)
+        root = self.root / "combined-debug"
+        combined.compose({"static": self.static, "dynamic": self.dynamic}, root)
+        evidence.validate_dynamic_product_source(root, "a" * 64)
+        with self.assertRaises(evidence.ProductEvidenceError):
+            evidence.validate_dynamic_product_source(root, "b" * 64)
 
     def test_dynamic_product_reader_rejects_debug_loader_labelled_release(self) -> None:
         product = self.debug_product()
