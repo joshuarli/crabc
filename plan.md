@@ -1399,7 +1399,13 @@ Append one line per merge batch, per parked item, and per contract change.
   contexts, and the native Theap contract passes. The full invocation was
   interrupted after five minutes while compiling supplementary controls; raw
   traces remain in `.work/wt/guarded-campaign`. M7 remains blocked on broader
-  secure and guarded behavior; no milestone qualification is claimed.
+  secure and guarded behavior; no milestone qualification is claimed. A
+  secure-5 operations differential matched 4,314 C/R keys. The API-modes
+  capacity comparison in `814d6e0f7` admitted incorrect naturally aligned
+  extents and was reverted by `5610cf3d0`; its apparent pass is not accepted.
+  The first failing API trace was overwritten during lane rerun; subsequent
+  traces remain under `.work/wt/secure-profile-campaign`. Source-client
+  controls and receipt replay still require source-derived secure semantics.
   Cleanup removed nine integrated test-only worktrees and cleared about 8.1 GiB
   of disposable kache entries across seven campaign checkouts. M5 discovery
   has a malformed cache database; M7, M4, hardened and visitation discovery
