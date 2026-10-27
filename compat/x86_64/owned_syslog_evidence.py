@@ -368,6 +368,96 @@ def bind_workload_object(
         _fail("owned syslog workload object binding drifted")
 
 
+def validate_static_vsyslog_binding(
+    archive_path: Path,
+    executable_path: Path,
+    link_map_path: Path,
+    workload_path: Path,
+    mode: str,
+) -> None:
+    from owned_static_link_authority import (
+        StaticFunctionContract,
+        StaticLinkAuthorityError,
+        admit_static_inputs,
+        elf_bytes,
+        require_static_functions,
+    )
+    from owned_syscall_alias_authority import archive_members
+
+    archive = _regular(Path(archive_path), "static libc archive")
+    executable = _regular(Path(executable_path), "static executable")
+    link_map = _regular(Path(link_map_path), "static link map")
+    workload = _regular(Path(workload_path), "static workload object")
+    if mode not in ("static", "static-pie"):
+        _fail("owned syslog static link mode differs")
+
+    library = archive.parent
+    direct = {
+        str(path): path
+        for path in (
+            workload,
+            library / ("crt1.o" if mode == "static" else "rcrt1.o"),
+            library / "crti.o",
+            library / "crtn.o",
+        )
+    }
+    weak_aliases = []
+    try:
+        for name, body in archive_members(archive.read_bytes()):
+            source = elf_bytes(body)
+            for index, table in enumerate(source.sections):
+                if table[1] != 2:
+                    continue
+                if table[9] != 24 or table[5] % 24:
+                    _fail("owned syslog static archive symbol table differs")
+                for number in range(table[5] // 24):
+                    row = source.symbol_row(index, number)
+                    if row["name"] == "vsyslog" and row["section"]:
+                        weak_aliases.append((name, row))
+    except (StaticLinkAuthorityError, OSError, UnicodeError, ValueError) as error:
+        raise WorkloadBindingError(f"owned syslog static link inputs differ: {error}") from error
+
+    if len(weak_aliases) != 1:
+        _fail("owned syslog static archive does not have one vsyslog definition")
+    member, source_symbol = weak_aliases[0]
+    if (
+        source_symbol["type"] != "FUNC"
+        or source_symbol["binding"] != "WEAK"
+        or source_symbol["visibility"] != "DEFAULT"
+    ):
+        _fail("owned syslog static archive vsyslog definition is not a weak alias")
+
+    try:
+        admitted = admit_static_inputs(
+            link_map.with_suffix(".trace"),
+            direct,
+            (archive, library / "libcrabc-builtins.a"),
+        )
+    except StaticLinkAuthorityError as error:
+        raise WorkloadBindingError(
+            f"owned syslog static input admission differs: {error}"
+        ) from error
+
+    header = link_map.read_text().splitlines()[0].split()
+    if header == ["VMA", "Size", "Align", "Out", "In", "Symbol"]:
+        final_binding = "LOCAL"
+    elif header == ["VMA", "LMA", "Size", "Align", "Out", "In", "Symbol"]:
+        final_binding = "GLOBAL"
+    else:
+        _fail("owned syslog static link map header differs")
+
+    owner = f"{archive}({member})"
+    contract = StaticFunctionContract(
+        "vsyslog", owner, "WEAK", "DEFAULT", final_binding, "DEFAULT"
+    )
+    try:
+        require_static_functions(link_map, executable, admitted, [contract])
+    except StaticLinkAuthorityError as error:
+        raise WorkloadBindingError(
+            f"owned syslog static function authority: {error}"
+        ) from error
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     commands = parser.add_subparsers(dest="command", required=True)

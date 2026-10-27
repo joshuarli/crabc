@@ -130,15 +130,18 @@ audit_consumer() {
     readelf -lW "$candidate" >"$candidate.segments"
     readelf -dW "$candidate" >"$candidate.dynamic"
     readelf -sW "$candidate" >"$candidate.symbols"
-    readelf -sW "$provider" >"$candidate.provider-symbols"
-    python3 -B - "$ROOT" "$family" "$mode" "$candidate" "$receipt" "$candidate.provider-symbols" <<'PY'
+    if [ "$family" = dynamic ]; then
+        readelf -sW "$provider" >"$candidate.provider-symbols"
+    fi
+    python3 -B - "$ROOT" "$family" "$mode" "$candidate" "$receipt" \
+        "$candidate.provider-symbols" "$provider" <<'PY'
 import hashlib
 import json
 import re
 import sys
 from pathlib import Path
 
-source_root, family, mode, candidate_text, receipt_text, provider_symbols_text = sys.argv[1:]
+source_root, family, mode, candidate_text, receipt_text, provider_symbols_text, provider_text = sys.argv[1:]
 if family == 'dynamic':
     sys.path.insert(0, str(Path(source_root) / 'compat/x86_64'))
     import owned_dynamic_receipt as receipt_contract
@@ -185,12 +188,23 @@ require('(TEXTREL)' not in dynamic, 'text relocations')
 symbols = Path(str(candidate) + '.symbols').read_text()
 for name in ('closelog', 'openlog', 'setlogmask', 'syslog', 'vsyslog'):
     require(re.search(r'\b' + name + r'$', symbols, re.M), 'linked provider ' + name)
-# A static consumer incorporates the weak definition. A dynamic consumer
-# correctly retains an undefined import, so inspect its installed libc
-# provider rather than incorrectly requiring the executable to define it.
-provider_symbols = Path(provider_symbols_text).read_text()
-require(re.search(r'\bWEAK\s+\w+\s+\w+\s+vsyslog$', provider_symbols, re.M),
-        'weak vsyslog alias')
+if family == 'static':
+    sys.path.insert(0, str(Path(source_root) / 'compat/x86_64'))
+    import owned_syslog_evidence
+    try:
+        owned_syslog_evidence.validate_static_vsyslog_binding(
+            Path(provider_text),
+            candidate,
+            Path(str(candidate) + '.receipt.map'),
+            candidate.parent / 'workload.o',
+            mode,
+        )
+    except owned_syslog_evidence.WorkloadBindingError as error:
+        require(False, str(error))
+else:
+    provider_symbols = Path(provider_symbols_text).read_text()
+    require(re.search(r'\bWEAK\s+\w+\s+\w+\s+vsyslog$', provider_symbols, re.M),
+            'weak vsyslog alias')
 PY
 }
 
@@ -251,7 +265,7 @@ link_product() {
         (cd "$work" && "$driver" "$entry" "$work/workload.o" -o "$candidate")
     fi
     if [ "$family" = static ]; then
-        audit_consumer "$family" "$mode" "$candidate" "$receipt" "$candidate"
+        audit_consumer "$family" "$mode" "$candidate" "$receipt" "$product/usr/lib/libc.a"
     else
         audit_consumer "$family" "$mode" "$candidate" "$receipt" "$product/usr/lib/libc.so"
     fi

@@ -71,6 +71,62 @@ def elf_bytes(data):
     return elf
 
 
+def admit_static_inputs(
+    trace_path: Path,
+    direct_inputs: Mapping[str, Path],
+    archives: Sequence[Path],
+) -> dict[str, Path | bytes]:
+    from owned_syscall_alias_authority import archive_members
+
+    trace = physical(trace_path)
+    direct = {name: physical(path) for name, path in direct_inputs.items()}
+    require(direct and all(isinstance(name, str) and name for name in direct),
+            'static input admission has invalid direct inputs')
+    archive_paths = [physical(path) for path in archives]
+    require(archive_paths and len(archive_paths) == len(set(archive_paths)),
+            'static input admission has invalid or duplicate archives')
+    require(not set(direct).intersection(str(path) for path in archive_paths),
+            'static input admission aliases a direct input and archive')
+
+    try:
+        lines = trace.read_text(encoding='utf-8').splitlines()
+        require(lines and all(line.startswith('trace: ') for line in lines),
+                'static link trace differs')
+        inputs = [line.removeprefix('trace: ') for line in lines]
+        require(len(inputs) == len(set(inputs)), 'static link trace repeats an input')
+        members = {}
+        for archive in archive_paths:
+            decoded = {}
+            for name, body in archive_members(archive.read_bytes()):
+                require(name not in decoded, 'static archive repeats a member')
+                decoded[name] = body
+            members[str(archive)] = decoded
+        admitted = {}
+        seen_archives = set()
+        for name in inputs:
+            if name in direct:
+                admitted[name] = direct[name]
+                continue
+            matches = [
+                (archive, name[len(archive) + 1 : -1])
+                for archive, contents in members.items()
+                if name.startswith(archive + '(')
+                and name.endswith(')')
+                and name[len(archive) + 1 : -1] in contents
+            ]
+            require(len(matches) == 1, 'static link trace names an unowned input')
+            archive, member = matches[0]
+            admitted[name] = members[archive][member]
+            seen_archives.add(archive)
+        require(set(direct) <= set(admitted) and seen_archives == set(members),
+                'static link trace omits an input')
+        return admitted
+    except StaticLinkAuthorityError:
+        raise
+    except (OSError, UnicodeError, ValueError) as error:
+        raise StaticLinkAuthorityError(f'static input admission differs: {error}') from error
+
+
 def section_name(elf, section):
     strings = elf.sections[elf.unpack('<H', 62)[0]]
     start = strings[4] + section[0]

@@ -16,6 +16,7 @@ spec = importlib.util.spec_from_file_location('entropy_elf', ROOT / 'compat/x86_
 assert spec is not None and spec.loader is not None
 entropy = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(entropy)
+from owned_static_link_authority import StaticLinkAuthorityError, admit_static_inputs
 
 
 class EntropyOwnerTests(unittest.TestCase):
@@ -30,7 +31,15 @@ class EntropyOwnerTests(unittest.TestCase):
             subprocess.run(['cc', '-Wa,-mrelax-relocations=no', '-c', str(source), '-o', str(member)], check=True)
             subprocess.run(['ar', 'rcs', str(archive), str(member)], check=True)
             subprocess.run(['mold', '-static', '-e', '_start', '-Map=' + str(link_map), str(app), str(archive), '-o', str(binary)], check=True)
-            admitted = {str(app): app, str(archive) + '(entropy.o)': member.read_bytes()}
+            trace = link_map.with_suffix('.trace')
+            trace.write_text(f'trace: {app}\ntrace: {archive}(entropy.o)\n')
+            direct = {str(app): app}
+            admitted = admit_static_inputs(trace, direct, (archive,))
+            self.assertEqual(admitted, {str(app): app, str(archive) + '(entropy.o)': member.read_bytes()})
+            trace.write_text(f'trace: {app}\ntrace: {archive}(missing.o)\n')
+            with self.assertRaisesRegex(StaticLinkAuthorityError, 'unowned input'):
+                admit_static_inputs(trace, direct, (archive,))
+            trace.write_text(f'trace: {app}\ntrace: {archive}(entropy.o)\n')
             entropy.validate_owners(link_map, binary, admitted, str(app), str(archive) + '(entropy.o)')
             original = link_map.read_text()
             link_map.write_text(original.replace(str(app) + ':(.text)', '/foreign.o:(.text)'))
@@ -55,7 +64,9 @@ class EntropyOwnerTests(unittest.TestCase):
             subprocess.run(['cc', '-Wa,-mrelax-relocations=no', '-c', str(root / 'entropy.s'), '-o', str(member)], check=True)
             subprocess.run(['ar', 'rcs', str(archive), str(member)], check=True)
             subprocess.run(['mold', '-pie', '--no-dynamic-linker', '--no-relax', '-e', '_start', '-Map=' + str(link_map), str(app), str(archive), '-o', str(binary)], check=True)
-            admitted = {str(app): app, str(archive) + '(entropy.o)': member.read_bytes()}
+            trace = link_map.with_suffix('.trace')
+            trace.write_text(f'trace: {app}\ntrace: {archive}(entropy.o)\n')
+            admitted = admit_static_inputs(trace, {str(app): app}, (archive,))
             entropy.validate_owners(link_map, binary, admitted, str(app), str(archive) + '(entropy.o)')
             disassembly = subprocess.check_output(['objdump', '-d', '--disassemble=getentropy', str(binary)], text=True)
             got = re.search(r'mov\s+.*\(%rip\),%rax\s+#\s*([0-9a-f]+)', disassembly)

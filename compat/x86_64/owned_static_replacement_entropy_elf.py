@@ -9,8 +9,12 @@ import struct
 import subprocess
 from pathlib import Path
 
-from owned_static_link_authority import StaticFunctionContract, StaticLinkAuthorityError, require_static_functions
-from owned_syscall_alias_authority import archive_members
+from owned_static_link_authority import (
+    StaticFunctionContract,
+    StaticLinkAuthorityError,
+    admit_static_inputs,
+    require_static_functions,
+)
 
 
 def command(*args: str) -> str:
@@ -63,33 +67,14 @@ def admitted_inputs(archive: Path, application: Path, map_path: Path, mode: str)
     library = archive.parent
     direct = {str(path): path for path in (application, library / ('crt1.o' if mode == 'static' else 'rcrt1.o'),
                                           library / 'crti.o', library / 'crtn.o')}
-    archives = (archive, library / 'libcrabc-builtins.a')
-    members = {}
-    for path in archives:
-        decoded = {}
-        for name, body in archive_members(path.read_bytes()):
-            require(name not in decoded, 'archive repeats a member')
-            decoded[name] = body
-        members[str(path)] = decoded
-    lines = map_path.with_suffix('.trace').read_text().splitlines()
-    require(lines and all(line.startswith('trace: ') for line in lines), 'link trace differs')
-    lines = [line.removeprefix('trace: ') for line in lines]
-    require(len(lines) == len(set(lines)), 'link trace repeats an input')
-    admitted = {}
-    seen_archives = set()
-    for line in lines:
-        if line in direct:
-            admitted[line] = direct[line]
-            continue
-        matches = [(name, line[len(name) + 1:-1]) for name in members
-                   if line.startswith(name + '(') and line.endswith(')')]
-        require(len(matches) == 1 and matches[0][1] in members[matches[0][0]],
-                'link trace names an unowned input')
-        name, member = matches[0]
-        admitted[line] = members[name][member]
-        seen_archives.add(name)
-    require(set(direct) <= set(admitted) and seen_archives == set(members), 'link trace omits an input')
-    return admitted
+    try:
+        return admit_static_inputs(
+            map_path.with_suffix('.trace'),
+            direct,
+            (archive, library / 'libcrabc-builtins.a'),
+        )
+    except StaticLinkAuthorityError as error:
+        raise SystemExit(f'entropy replacement ELF: static input admission: {error}') from error
 
 
 def main() -> None:

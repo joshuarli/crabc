@@ -6,6 +6,7 @@ from __future__ import annotations
 import json
 import os
 from pathlib import Path
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -80,6 +81,109 @@ class OwnedSyslogTests(unittest.TestCase):
         self.assertIn("workload-object-binding.json", runner)
         self.assertIn("oracle-kernel-$scenario.status", runner)
         self.assertIn("provided static/static-PIE plus provided dynamic", runner)
+
+    @unittest.skipUnless(
+        Path("/opt/musl-1.2.6/.crabc-oracle").is_file(),
+        "requires the pinned native image",
+    )
+    def test_static_authority_rejects_unselected_weak_vsyslog(self) -> None:
+        compiler, linker, archiver = (
+            shutil.which("cc"),
+            shutil.which("mold"),
+            shutil.which("ar"),
+        )
+        if compiler is None or linker is None or archiver is None:
+            self.skipTest("native compiler, mold, and ar are required")
+        scratch = ROOT / ".work" / "x86_64" / "tmp"
+        scratch.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(
+            prefix="owned-syslog-static-authority.", dir=scratch
+        ) as temporary:
+            root = Path(temporary)
+            start_source = root / "start.s"
+            weak_source = root / "weak.s"
+            strong_source = root / "strong.s"
+            start_object = root / "start.o"
+            weak_object = root / "weak.o"
+            strong_object = root / "strong.o"
+            archive = root / "libc.a"
+            executable = root / "probe"
+            link_map = root / "link.map"
+            start_source.write_text(
+                ".text\n.globl _start\n.type _start,@function\n_start:\n"
+                "call vsyslog\nmov $60,%eax\nxor %edi,%edi\nsyscall\n"
+                ".size _start,.-_start\n",
+                encoding="utf-8",
+            )
+            weak_source.write_text(
+                ".text\n.weak vsyslog\n.type vsyslog,@function\nvsyslog:\n"
+                "ret\n.size vsyslog,.-vsyslog\n",
+                encoding="utf-8",
+            )
+            strong_source.write_text(
+                ".text\n.globl vsyslog\n.type vsyslog,@function\nvsyslog:\n"
+                "ret\n.size vsyslog,.-vsyslog\n",
+                encoding="utf-8",
+            )
+            for source, target in (
+                (start_source, start_object),
+                (weak_source, weak_object),
+                (strong_source, strong_object),
+            ):
+                subprocess.run(
+                    [compiler, "-c", str(source), "-o", str(target)],
+                    check=True,
+                    capture_output=True,
+                )
+            subprocess.run(
+                [archiver, "rcs", str(archive), str(weak_object)],
+                check=True,
+                capture_output=True,
+            )
+            subprocess.run(
+                [
+                    linker,
+                    "-static",
+                    "-e",
+                    "_start",
+                    "-Map=" + str(link_map),
+                    str(start_object),
+                    str(strong_object),
+                    str(archive),
+                    "-o",
+                    str(executable),
+                ],
+                check=True,
+                capture_output=True,
+            )
+
+            sys.path.insert(0, str(ROOT / "compat" / "x86_64"))
+            from owned_static_link_authority import (
+                StaticFunctionContract,
+                StaticLinkAuthorityError,
+                require_static_functions,
+            )
+            from owned_syscall_alias_authority import archive_members
+
+            weak_member = dict(archive_members(archive.read_bytes()))["weak.o"]
+            owner = f"{archive}(weak.o)"
+            with self.assertRaisesRegex(
+                StaticLinkAuthorityError, "wrong selected object/archive"
+            ):
+                require_static_functions(
+                    link_map,
+                    executable,
+                    {
+                        str(start_object): start_object,
+                        str(strong_object): strong_object,
+                        owner: weak_member,
+                    },
+                    [
+                        StaticFunctionContract(
+                            "vsyslog", owner, "WEAK", "DEFAULT", "LOCAL", "DEFAULT"
+                        )
+                    ],
+                )
 
     def test_relocation_audit_captures_before_matching_to_survive_sigpipe(self) -> None:
         """A matching grep can close a pipe before a large readelf stream ends."""
