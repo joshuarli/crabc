@@ -152,6 +152,14 @@ for offset in range(dynamic[2], dynamic[2] + dynamic[5], 16):
 assert cleared
 path.write_bytes(data)
 PYTHON
+status=0
+timeout 20 chroot "$image" /import-control >"$work/import-control.stdout" 2>"$work/import-control.stderr" || status=$?
+[ "$status" -eq 127 ]
+test ! -e "$image/import-marker"
+status=0
+timeout 20 chroot "$image" /lib/ld-crabc-x86_64-hardened.so.1 /import-control >"$work/import-direct.stdout" 2>"$work/import-direct.stderr" || status=$?
+[ "$status" -eq 127 ]
+test ! -e "$image/import-marker"
 timeout 20 chroot "$image" /relro
 timeout 20 chroot "$image" /static-relro
 CRABC_STARTUP=yes timeout 20 chroot "$image" /startup owned >"$work/startup.stdout"
@@ -233,7 +241,7 @@ def enter(directory=root):
     os.chdir("/")
 
 for name in ("rejected-source.so", "rejected-stack.so", "rejected-wx.so", "rejected-relro.so",
-             "tls-mutable.so", "tls-module.so", "tls-thread.so"):
+             "tls-mutable.so", "tls-module.so", "tls-thread.so", "import-probe.so"):
     result = subprocess.run(["/pie"], env={"LD_PRELOAD": "/usr/lib/" + name},
                             preexec_fn=enter, capture_output=True, timeout=20, check=False)
     (work / (name + ".stderr")).write_bytes(result.stderr)
@@ -242,6 +250,7 @@ for name in ("rejected-source.so", "rejected-stack.so", "rejected-wx.so", "rejec
     assert (root / "marker").exists() == good
     assert (root / "rejected-marker").exists() == good
     assert not (root / "tls-mutable-marker").exists()
+    assert not (root / "import-marker").exists()
     (root / "marker").unlink(missing_ok=True)
     (root / "rejected-marker").unlink(missing_ok=True)
 for preload, status, marker in (("/usr/lib/missing.so", 0, True), ("usr/lib/rejected-source.so", 127, False)):
