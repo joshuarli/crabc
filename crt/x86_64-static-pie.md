@@ -39,6 +39,10 @@ constructor and requires a protection fault in both RELA and RELR variants.
 It also rejects a first RELR bitmap, an unaligned address and an overflowing
 address before the constructor runs.
 
+The private CRT builder accepts `--hardening-profile hardened` to exercise
+static PIE stack-header and virtual-page W^X admission. This prototype does
+not yet establish a hardened installed product or loader profile.
+
 `crt/src/x86_64_startup.rs` is the shared private static-startup path.
 `rcrt1.o` reaches it after relocation and RELRO through an
 `R_X86_64_RELATIVE` slot; `crt1.o` reaches it through the final static link.

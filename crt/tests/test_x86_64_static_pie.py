@@ -219,6 +219,33 @@ def overlapping_executable_load(path: Path) -> Path:
     return overlap
 
 
+def mutate_program_header(path: Path, kind: int, replacement: int, flags: int) -> Path:
+    data, headers = elf_layout(path)
+    index = next(index for index, header in enumerate(headers) if header[0] == kind)
+    mutable = bytearray(data)
+    program_offset = struct.unpack_from("<Q", data, 32)[0]
+    struct.pack_into("<II", mutable, program_offset + index * 56, replacement, flags)
+    changed = path.with_name(path.name + f".header-{kind}-{replacement}-{flags}")
+    changed.write_bytes(mutable)
+    changed.chmod(0o755)
+    return changed
+
+
+def duplicate_stack_header(path: Path) -> Path:
+    data, headers = elf_layout(path)
+    source_index = next(index for index, header in enumerate(headers) if header[0] == 0x6474e551)
+    target_index = next(index for index, header in enumerate(headers) if header[0] == 0x6474e552)
+    mutable = bytearray(data)
+    program_offset = struct.unpack_from("<Q", data, 32)[0]
+    source = program_offset + source_index * 56
+    target = program_offset + target_index * 56
+    mutable[target:target + 56] = data[source:source + 56]
+    changed = path.with_name(path.name + ".duplicate-stack")
+    changed.write_bytes(mutable)
+    changed.chmod(0o755)
+    return changed
+
+
 def duplicate_relocation_tag(path: Path, tag: int) -> Path:
     data, headers = elf_layout(path)
     dynamic = next(header for header in headers if header[0] == PT_DYNAMIC)
@@ -364,6 +391,66 @@ def closed_bundle_inputs(crt_output: Path, fixture: Path, builtins: Path, extras
     "requires the dedicated native Linux/x86-64 CRT evidence runner",
 )
 class X86_64StaticPieTests(unittest.TestCase):
+    def test_hardened_static_pie_rejects_executable_or_missing_stack_and_wx_load(self) -> None:
+        scratch = ROOT / ".work/tmp"
+        scratch.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(dir=scratch) as temporary:
+            work = Path(temporary)
+            crt_output = work / "crt"
+            build = subprocess.run(
+                [sys.executable, str(BUILDER), "--out-dir", str(crt_output), "--hardening-profile", "hardened",
+                 "--llvm-objdump", str(Path("/opt/rustup/toolchains") / f"{PINNED_TOOLCHAIN}-{TARGET}/lib/rustlib/{TARGET}/bin/llvm-objdump")],
+                stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False,
+            )
+            self.assertEqual(build.returncode, 0, build.stderr.decode(errors="replace"))
+            fixture = work / "fixture.o"
+            compile = subprocess.run(
+                toolchain_rustc() + ["--edition=2021", "--crate-type=lib", "--emit=obj", "--target", TARGET,
+                                    "-C", "panic=abort", "-C", "opt-level=2", "-C", "relocation-model=pic",
+                                    str(FIXTURE), "-o", str(fixture)],
+                stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False,
+            )
+            self.assertEqual(compile.returncode, 0, compile.stderr.decode(errors="replace"))
+            executable = work / "hardened-static-pie"
+            link = subprocess.run(
+                [link_editor(), "-pie", "-static", "--no-dynamic-linker", "-e", "_start", str(crt_output / "rcrt1.o"),
+                 str(crt_output / "crti.o"), str(fixture), str(crt_output / "crtn.o"), "-o", str(executable)],
+                stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False,
+            )
+            self.assertEqual(link.returncode, 0, link.stderr.decode(errors="replace"))
+            normal = subprocess.run([str(executable)], stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False)
+            self.assertEqual(normal.returncode, 0, normal.stderr.decode(errors="replace"))
+            for source, replacement, flags in ((0x6474e551, 0, 0), (0x6474e551, 0x6474e551, 7), (PT_LOAD, PT_LOAD, 7)):
+                invalid = mutate_program_header(executable, source, replacement, flags)
+                result = subprocess.run([str(invalid)], stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False,
+                                        preexec_fn=disable_core_dump)
+                self.assertEqual(result.returncode, 127, result.stderr.decode(errors="replace"))
+                self.assertEqual(result.stdout, b"")
+            duplicate = subprocess.run([str(duplicate_stack_header(executable))], stdout=subprocess.PIPE,
+                                       stderr=subprocess.PIPE, check=False, preexec_fn=disable_core_dump)
+            self.assertEqual(duplicate.returncode, 127, duplicate.stderr.decode(errors="replace"))
+            self.assertEqual(duplicate.stdout, b"")
+            compatible_crt = work / "compatible-crt"
+            compatible_build = subprocess.run(
+                [sys.executable, str(BUILDER), "--out-dir", str(compatible_crt), "--hardening-profile", "compatibility",
+                 "--llvm-objdump", str(Path("/opt/rustup/toolchains") / f"{PINNED_TOOLCHAIN}-{TARGET}/lib/rustlib/{TARGET}/bin/llvm-objdump")],
+                stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False,
+            )
+            self.assertEqual(compatible_build.returncode, 0, compatible_build.stderr.decode(errors="replace"))
+            compatible = work / "compatible-static-pie"
+            compatible_link = subprocess.run(
+                [link_editor(), "-pie", "-static", "--no-dynamic-linker", "-e", "_start", str(compatible_crt / "rcrt1.o"),
+                 str(compatible_crt / "crti.o"), str(fixture), str(compatible_crt / "crtn.o"), "-o", str(compatible)],
+                stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False,
+            )
+            self.assertEqual(compatible_link.returncode, 0, compatible_link.stderr.decode(errors="replace"))
+            for source, replacement, flags in ((0x6474e551, 0, 0), (0x6474e551, 0x6474e551, 7), (PT_LOAD, PT_LOAD, 7)):
+                valid = mutate_program_header(compatible, source, replacement, flags)
+                result = subprocess.run([str(valid)], stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False,
+                                        preexec_fn=disable_core_dump)
+                self.assertEqual(result.returncode, 0, result.stderr.decode(errors="replace"))
+                self.assertRegex(result.stdout, rb"^I[0-9a-f]{16}F$")
+
     def test_static_pie_bootstrap_executes_and_rejects_unknown_relocations(self) -> None:
         if os.environ.get("CRABC_CRT_X86_64_EVIDENCE_SLICE") == "bundle":
             self.skipTest("bundle-only runner selects the CRT/builtins consumer")

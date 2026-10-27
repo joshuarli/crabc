@@ -131,6 +131,79 @@ _start:
     mov rbx, r12
     sub rbx, r14
 
+    mov eax, {hardened}
+    test eax, eax
+    jz .Lstatic_pie_hardened_done
+    mov r8, r12
+    xor r9d, r9d
+    xor r10d, r10d
+.Lstatic_pie_hardened_headers:
+    cmp r9, r13
+    jae .Lstatic_pie_hardened_headers_done
+    mov eax, DWORD PTR [r8]
+    cmp eax, 0x6474e551
+    jne .Lstatic_pie_hardened_not_stack
+    test r10, r10
+    jnz .Lstatic_pie_fail
+    test DWORD PTR [r8 + 4], 1
+    jnz .Lstatic_pie_fail
+    mov r10d, 1
+    jmp .Lstatic_pie_hardened_advance
+.Lstatic_pie_hardened_not_stack:
+    cmp eax, 1
+    jne .Lstatic_pie_hardened_advance
+    mov eax, DWORD PTR [r8 + 4]
+    and eax, 3
+    cmp eax, 3
+    je .Lstatic_pie_fail
+    test eax, 2
+    jz .Lstatic_pie_hardened_advance
+    cmp QWORD PTR [r8 + 40], 0
+    je .Lstatic_pie_hardened_advance
+    mov rdi, QWORD PTR [r8 + 16]
+    mov rsi, rdi
+    add rsi, QWORD PTR [r8 + 40]
+    jc .Lstatic_pie_fail
+    add rsi, 4095
+    jc .Lstatic_pie_fail
+    and rsi, -4096
+    and rdi, -4096
+    mov r11, r12
+    xor edx, edx
+.Lstatic_pie_hardened_overlap:
+    cmp rdx, r13
+    jae .Lstatic_pie_hardened_advance
+    cmp DWORD PTR [r11], 1
+    jne .Lstatic_pie_hardened_overlap_next
+    test DWORD PTR [r11 + 4], 1
+    jz .Lstatic_pie_hardened_overlap_next
+    cmp QWORD PTR [r11 + 40], 0
+    je .Lstatic_pie_hardened_overlap_next
+    mov rax, QWORD PTR [r11 + 16]
+    mov rcx, rax
+    add rcx, QWORD PTR [r11 + 40]
+    jc .Lstatic_pie_fail
+    add rcx, 4095
+    jc .Lstatic_pie_fail
+    and rcx, -4096
+    and rax, -4096
+    cmp rdi, rcx
+    jae .Lstatic_pie_hardened_overlap_next
+    cmp rax, rsi
+    jb .Lstatic_pie_fail
+.Lstatic_pie_hardened_overlap_next:
+    add r11, 56
+    inc rdx
+    jmp .Lstatic_pie_hardened_overlap
+.Lstatic_pie_hardened_advance:
+    add r8, 56
+    inc r9
+    jmp .Lstatic_pie_hardened_headers
+.Lstatic_pie_hardened_headers_done:
+    test r10, r10
+    jz .Lstatic_pie_fail
+.Lstatic_pie_hardened_done:
+
     mov r8, QWORD PTR [rsp + 72]
     test r8, r8
     jz .Lstatic_pie_relro_range_done
@@ -573,4 +646,5 @@ _start:
     .section .note.GNU-stack,"",@progbits
 "#,
     startup = sym __crabc_x86_64_static_pie_start,
+    hardened = const cfg!(crabc_hardened) as u8,
 );

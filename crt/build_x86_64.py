@@ -240,6 +240,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--out-dir", type=Path, default=DEFAULT_OUTPUT)
     parser.add_argument("--llvm-objdump", default="llvm-objdump")
     parser.add_argument("--profile", choices=("release", "debug"), default="release")
+    parser.add_argument("--hardening-profile", choices=("compatibility", "hardened"), default="compatibility")
     parser.add_argument("--runtime-core", type=Path)
     parser.add_argument("--runtime-compiler-builtins", type=Path)
     parser.add_argument(
@@ -779,6 +780,8 @@ def build(args: argparse.Namespace) -> dict[str, object]:
                 f"{ROOT}=/crabc",
                 "--crate-name",
                 "crabc_x86_64_" + spec.name.removesuffix(".o").replace(".", "_"),
+                *(["--cfg", "crabc_hardened"]
+                  if args.hardening_profile == "hardened" and spec.name == "rcrt1.o" else []),
                 *(
                     ["--cfg", "crabc_dynamic_main_thread_runtime_v1"]
                     if spec.entry_contract == "owned-dynamic-pie-entry"
@@ -858,6 +861,7 @@ def build(args: argparse.Namespace) -> dict[str, object]:
         "target": TARGET,
         "scope": "bounded-static-and-private-dynamic-startup",
         "profile": getattr(args, "profile", "release"),
+        "hardening_profile": args.hardening_profile,
         "dynamic_main_thread_runtime_v1": args.dynamic_main_thread_runtime_v1,
         "general_dynamic_lifecycle": args.general_dynamic_lifecycle,
         "owned_dynamic_sysroot": args.owned_dynamic_sysroot,
