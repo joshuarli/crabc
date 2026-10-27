@@ -261,6 +261,37 @@ def overlapping_executable_bss(path: Path) -> Path:
     return changed
 
 
+def fixed_address_executable(path: Path) -> Path:
+    data, headers = elf_layout(path)
+    tags = dynamic_tags(data, headers)
+    mutable = bytearray(data)
+    base = 0x400000
+    struct.pack_into("<H", mutable, 16, 2)
+    struct.pack_into("<Q", mutable, 24, struct.unpack_from("<Q", data, 24)[0] + base)
+    program_offset = struct.unpack_from("<Q", data, 32)[0]
+    for index, header in enumerate(headers):
+        if header[0] in (PT_LOAD, PT_DYNAMIC, 6, 0x6474e550, 0x6474e552):
+            offset = program_offset + index * 56
+            struct.pack_into("<Q", mutable, offset + 16, header[3] + base)
+            struct.pack_into("<Q", mutable, offset + 24, header[4] + base)
+    dynamic = next(header for header in headers if header[0] == PT_DYNAMIC)
+    for offset in range(dynamic[2], dynamic[2] + dynamic[5], 16):
+        tag, value = struct.unpack_from("<qQ", data, offset)
+        if tag == DT_NULL:
+            break
+        if tag in (3, 4, 5, 6, 7, 12, 13, 25, 26, 0x6ffffef5):
+            struct.pack_into("<Q", mutable, offset + 8, value + base)
+    rela = virtual_offset(headers, tags[DT_RELA])
+    for offset in range(rela, rela + tags[DT_RELASZ], 24):
+        target, info, addend = struct.unpack_from("<QQq", data, offset)
+        if info & 0xffffffff == R_X86_64_RELATIVE:
+            struct.pack_into("<QQq", mutable, offset, target + base, info, addend + base)
+    changed = path.with_name(path.name + ".fixed-executable")
+    changed.write_bytes(mutable)
+    changed.chmod(0o755)
+    return changed
+
+
 def duplicate_relocation_tag(path: Path, tag: int) -> Path:
     data, headers = elf_layout(path)
     dynamic = next(header for header in headers if header[0] == PT_DYNAMIC)
@@ -435,6 +466,10 @@ class X86_64StaticPieTests(unittest.TestCase):
             self.assertEqual(link.returncode, 0, link.stderr.decode(errors="replace"))
             normal = subprocess.run([str(executable)], stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False)
             self.assertEqual(normal.returncode, 0, normal.stderr.decode(errors="replace"))
+            fixed = subprocess.run([str(fixed_address_executable(executable))], stdout=subprocess.PIPE,
+                                   stderr=subprocess.PIPE, check=False, preexec_fn=disable_core_dump)
+            self.assertEqual(fixed.returncode, 127, fixed.stderr.decode(errors="replace"))
+            self.assertEqual(fixed.stdout, b"")
             for source, replacement, flags in ((0x6474e551, 0, 0), (0x6474e551, 0x6474e551, 7), (PT_LOAD, PT_LOAD, 7)):
                 invalid = mutate_program_header(executable, source, replacement, flags)
                 result = subprocess.run([str(invalid)], stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False,
@@ -463,6 +498,10 @@ class X86_64StaticPieTests(unittest.TestCase):
                 stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False,
             )
             self.assertEqual(compatible_link.returncode, 0, compatible_link.stderr.decode(errors="replace"))
+            compatible_fixed = subprocess.run([str(fixed_address_executable(compatible))], stdout=subprocess.PIPE,
+                                              stderr=subprocess.PIPE, check=False, preexec_fn=disable_core_dump)
+            self.assertEqual(compatible_fixed.returncode, 0, compatible_fixed.stderr.decode(errors="replace"))
+            self.assertRegex(compatible_fixed.stdout, rb"^I[0-9a-f]{16}F$")
             for source, replacement, flags in ((0x6474e551, 0, 0), (0x6474e551, 0x6474e551, 7), (PT_LOAD, PT_LOAD, 7)):
                 valid = mutate_program_header(compatible, source, replacement, flags)
                 result = subprocess.run([str(valid)], stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False,

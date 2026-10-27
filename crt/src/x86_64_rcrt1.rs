@@ -130,10 +130,61 @@ _start:
     je .Lstatic_pie_fail
     mov rbx, r12
     sub rbx, r14
+    jc .Lstatic_pie_fail
 
     mov eax, {hardened}
     test eax, eax
     jz .Lstatic_pie_hardened_done
+    mov r8, r12
+    xor r9d, r9d
+.Lstatic_pie_hardened_elf_header:
+    cmp r9, r13
+    jae .Lstatic_pie_fail
+    cmp DWORD PTR [r8], 1
+    jne .Lstatic_pie_hardened_elf_next
+    cmp QWORD PTR [r8 + 8], 0
+    jne .Lstatic_pie_hardened_elf_next
+    test DWORD PTR [r8 + 4], 4
+    jz .Lstatic_pie_hardened_elf_next
+    cmp QWORD PTR [r8 + 32], 64
+    jb .Lstatic_pie_hardened_elf_next
+    cmp QWORD PTR [r8 + 40], 64
+    jb .Lstatic_pie_hardened_elf_next
+    mov rax, QWORD PTR [r8 + 16]
+    add rax, rbx
+    jc .Lstatic_pie_fail
+    mov rdx, rax
+    add rdx, 64
+    jc .Lstatic_pie_fail
+    cmp DWORD PTR [rax], 0x464c457f
+    jne .Lstatic_pie_fail
+    cmp WORD PTR [rax + 4], 0x0102
+    jne .Lstatic_pie_fail
+    cmp BYTE PTR [rax + 6], 1
+    jne .Lstatic_pie_fail
+    cmp WORD PTR [rax + 16], 3
+    jne .Lstatic_pie_fail
+    cmp WORD PTR [rax + 18], 62
+    jne .Lstatic_pie_fail
+    cmp DWORD PTR [rax + 20], 1
+    jne .Lstatic_pie_fail
+    cmp WORD PTR [rax + 52], 64
+    jne .Lstatic_pie_fail
+    cmp WORD PTR [rax + 54], 56
+    jne .Lstatic_pie_fail
+    movzx ecx, WORD PTR [rax + 56]
+    cmp rcx, r13
+    jne .Lstatic_pie_fail
+    add rax, QWORD PTR [rax + 32]
+    jc .Lstatic_pie_fail
+    cmp rax, r12
+    jne .Lstatic_pie_fail
+    jmp .Lstatic_pie_hardened_elf_done
+.Lstatic_pie_hardened_elf_next:
+    add r8, 56
+    inc r9
+    jmp .Lstatic_pie_hardened_elf_header
+.Lstatic_pie_hardened_elf_done:
     mov r8, r12
     xor r9d, r9d
     xor r10d, r10d
