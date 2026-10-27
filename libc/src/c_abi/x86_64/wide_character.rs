@@ -847,8 +847,8 @@ static_archive_member! { wcwidth_source {
             return 2;
         }
         if character == 0xe0001
-            || character.wrapping_sub(0xe0020) < 0x5f
-            || character.wrapping_sub(0xe0100) < 0xef
+            || character.wrapping_sub(0xe0020) < 0x60
+            || character.wrapping_sub(0xe0100) < 0xf0
         {
             return 0;
         }

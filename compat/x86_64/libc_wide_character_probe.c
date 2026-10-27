@@ -218,7 +218,9 @@ static int check_collation_case_and_width(void)
         return 4;
     if (wcwidth(0) != 0 || wcwidth('A') != 1 || wcwidth('\n') != -1 ||
         wcwidth(0x0301) != 0 || wcwidth(0x4e00) != 2 ||
-        wcwidth(0xd800) != 1 || wcwidth(0x110000) != 1)
+        wcwidth(0xd800) != 1 || wcwidth(0x110000) != 1 ||
+        wcwidth(0xe007e) != 0 || wcwidth(0xe007f) != 0 || wcwidth(0xe0080) != 1 ||
+        wcwidth(0xe01ee) != 0 || wcwidth(0xe01ef) != 0 || wcwidth(0xe01f0) != 1)
         return 5;
     if (wcswidth(widths, 4) != 3 || wcswidth(widths, 2) != 1 ||
         wcswidth((const wchar_t[]){ 'A', '\n', 0 }, 3) != -1)
