@@ -1164,7 +1164,8 @@ def _loader_producer_linker(value: object) -> dict[str, str]:
     _require(isinstance(linker["path"], str), "synthetic-loader producer linker path differs")
     product_reader = _product_reader()
     try:
-        path = product_reader._check_linker(linker, Path(linker["path"]))
+        expected = product_reader.source_native_compiler_tool_records()["linker"]
+        path = product_reader._retained_linker(linker, expected)
     except product_reader.ProductEvidenceError as error:
         raise LoaderCorpusEvidenceError(f"synthetic-loader producer linker differs: {error}") from error
     return {"path": path, "sha256": _digest(linker["sha256"], "synthetic-loader producer linker")}

@@ -381,6 +381,23 @@ class OwnedLoaderCorpusEvidenceTests(unittest.TestCase):
         with self.assertRaisesRegex(evidence.LoaderCorpusEvidenceError, "sidecar linker differs from the sealed producer linker"):
             evidence.validate_loader_report(report, self.product, expected_oracle=self.expected_oracle, root=ROOT)
 
+    def test_loader_reader_replays_without_the_producer_linker_on_the_host(self) -> None:
+        report = self._loader_report()
+        self.linker.unlink()
+        self.assertEqual(
+            evidence.validate_loader_report(report, self.product, expected_oracle=self.expected_oracle, root=ROOT)["case_count"],
+            len(evidence.LOADER_CASES),
+        )
+
+    def test_loader_reader_rejects_a_replaced_producer_linker_seal(self) -> None:
+        report = self._loader_report()
+        value = json.loads(report.read_text(encoding="utf-8"))
+        for field in ("producer_linker_before", "producer_linker_after"):
+            value[field]["sha256"] = "c" * 64
+        report.write_text(json.dumps(value, sort_keys=True), encoding="utf-8")
+        with self.assertRaisesRegex(evidence.LoaderCorpusEvidenceError, "producer linker"):
+            evidence.validate_loader_report(report, self.product, expected_oracle=self.expected_oracle, root=ROOT)
+
     def test_loader_hash_format_oracle_link_receipts_are_consumed_once(self) -> None:
         report = self._loader_report()
         value = json.loads(report.read_text(encoding="utf-8"))
