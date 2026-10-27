@@ -326,8 +326,8 @@ if [ -n "$STATIC_PRODUCT" ]; then
         capture "$mode-bounded" env -i LC_ALL=C LANG=C TZ=UTC "$WORK/$mode" --bounded-backreference
         check_bounded "$mode-bounded" "$BOUNDED_OWNED"
         capture "$mode-providers" /usr/bin/env -i LC_ALL=C LANG=C TZ=UTC PATH=/usr/bin:/bin \
-            /usr/bin/nm -g --defined-only --format=posix "$WORK/$mode"
-        check_nm_api_rows "$WORK/$mode-providers.stdout" T "$mode provider"
+            /usr/bin/nm --defined-only --format=posix "$WORK/$mode"
+        check_nm_api_rows "$WORK/$mode-providers.stdout" t "$mode provider"
     done
 fi
 

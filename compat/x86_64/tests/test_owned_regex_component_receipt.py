@@ -38,6 +38,12 @@ class OwnedRegexComponentReceiptTests(unittest.TestCase):
     def setUpClass(cls) -> None:
         cls.module = load_module()
 
+    def test_static_product_symbols_are_local_while_archive_symbols_stay_public(self) -> None:
+        local = b"regcomp t 100 10\nregexec t 200 10\nregerror t 300 10\nregfree t 400 10\n"
+        self.module.check_nm_api_rows(local, "t", "static executable")
+        with self.assertRaises(self.module.RegexReceiptError):
+            self.module.check_nm_api_rows(local, "T", "static archive")
+
     def setUp(self) -> None:
         (ROOT / ".work/x86_64/tmp").mkdir(parents=True, exist_ok=True)
         self.temporary = tempfile.TemporaryDirectory(prefix="owned-regex-reader.", dir=ROOT / ".work/x86_64/tmp")
@@ -153,7 +159,8 @@ class OwnedRegexComponentReceiptTests(unittest.TestCase):
             if label == "object-imports":
                 stdout = b"".join(f"{name} U\n".encode() for name in module.API)
             if label in {"oracle-providers", "static-archive-providers", "static-providers", "static-pie-providers"}:
-                stdout = b"".join(f"{name} T 0000000000000000\n".encode() for name in module.API)
+                kind = "t" if label in {"static-providers", "static-pie-providers"} else "T"
+                stdout = b"".join(f"{name} {kind} 0000000000000000\n".encode() for name in module.API)
             if label == "dynamic-providers":
                 stdout = b"".join(f"  1: 0000000000000000 0 FUNC GLOBAL DEFAULT 1 {name}\n".encode()
                                   for name in module.API)

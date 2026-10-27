@@ -289,7 +289,7 @@ def command_plan(paths: Mapping[str, object], tools: Mapping[str, object], mode:
                                           m(executable), m(receipt), linkage]
             plan[f"{name}-run"] = ["env", "-i", "LC_ALL=C", "LANG=C", "TZ=UTC", m(executable)]
             plan[f"{name}-bounded"] = [*plan[f"{name}-run"], BOUNDED_ARGUMENT]
-            plan[f"{name}-providers"] = symbols("nm", "-g", "--defined-only", "--format=posix", m(executable))
+            plan[f"{name}-providers"] = symbols("nm", "--defined-only", "--format=posix", m(executable))
         plan["static-archive-providers"] = symbols("nm", "-g", "--defined-only", "--format=posix",
                                                      m(static / "usr/lib/libc.a"))
     for name, linkage in (("dynamic-pie", "pie"), ("dynamic-non-pie", "non-pie")):
@@ -369,7 +369,7 @@ def header_trace_paths(stderr: bytes) -> tuple[str, ...]:
 
 
 def check_nm_api_rows(output: bytes, kind: str, description: str) -> None:
-    """Require one public POSIX-nm row for every selected regex entry.
+    """Require one POSIX-nm row of the expected binding for each regex entry.
 
     The installed-header object must import these declarations, while the
     pinned oracle and each static owned provider must define them.  Other
@@ -378,7 +378,7 @@ def check_nm_api_rows(output: bytes, kind: str, description: str) -> None:
     retained object/provider boundary exactly once.
     """
 
-    require(kind in {"U", "T"}, "regex symbol kind differs")
+    require(kind in {"U", "T", "t"}, "regex symbol kind differs")
     try:
         rows = [line.split() for line in output.decode("utf-8").splitlines()]
     except UnicodeDecodeError as error:
@@ -556,7 +556,7 @@ def validate_report(root: Path, report_path: Path, *, require_static: bool = Fal
             require(raw[label]["stderr"] == b"", f"{label} emitted stderr")
             require(replay_symbol_reader(root, label, plan[label]) == raw[label]["stdout"],
                     f"{label} retained output differs from sealed symbol replay")
-            check_nm_api_rows(raw[label]["stdout"], "T", label)
+            check_nm_api_rows(raw[label]["stdout"], "T" if label == "static-archive-providers" else "t", label)
 
     links = report["links"]
     expected_links = ("static", "static-pie", "dynamic-pie", "dynamic-non-pie") if mode == FULL_MODE else ("dynamic-pie", "dynamic-non-pie")
