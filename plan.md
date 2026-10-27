@@ -1361,6 +1361,9 @@ Append one line per merge batch, per parked item, and per contract change.
   The independent dynamic Lua consumer initially rejected the active linked
   checkout before running; `26d528238` fixes its Git metadata binding. A
   source-frozen cohort at the repaired revision is needed to rerun Lua.
+  The three-product dynamic cohort at `1d6f0c91c` completed its 219 case
+  records and produced a non-promoting qualification receipt; later source
+  revisions require a fresh cohort.
   M7 baseline discovery at `55dd89a3a` passed four gates and left six unmet:
   visitation producers rejected an unsupported `--offline` flag and five
   gates were blocked. `aeb87087d` removes the flag; the producers already
