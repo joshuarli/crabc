@@ -458,6 +458,13 @@ only with the same selected static/dynamic products and public ELF cohort; it
 does not turn the private implementation spellings into new installed ABI
 providers or close pthread lifecycle, family, or public-support evidence.
 
+## Hardened kernel entry prototype
+
+Inside the pinned native image, `compat/x86_64/run_hardened_entry.sh SYSROOT`
+tests a hardened debug product in a disposable root. A matching PIE must run
+its constructor; a non-PIE, an executable stack, and an RWX load must fail
+before it. This focused test does not qualify the hardened product.
+
 ## Rust RuntimeV1 facades
 
 `./scripts/dev-x86_64.sh runtime-private-facades [DYNAMIC_SYSROOT]` proves the
