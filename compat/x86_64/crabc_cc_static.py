@@ -389,9 +389,21 @@ def validate_installed_runtime(root: Path) -> NativeRuntimeProfile:
     for relative in REQUIRED_RUNTIME_PATHS:
         require_regular(root / relative, relative)
     manifest = load_manifest(root / MANIFEST_RELATIVE_PATH, "manifest")
+    receipt_path = "share/crabc/crt.provenance.json"
     if manifest.get("format") == COMBINED_SYSROOT_FORMAT:
+        receipt_path = manifest["products"]["static"]["placements"].get(receipt_path)
         manifest = load_manifest(root / COMBINED_STATIC_MANIFEST, "embedded static manifest")
-    return profile_from_manifest(manifest)
+    if not isinstance(receipt_path, str) or "share/crabc/crt.provenance.json" not in static_product_payload_files(manifest):
+        raise DriverError("installed CRT provenance is not bound to the static product")
+    profile = profile_from_manifest(manifest)
+    receipt = load_manifest(root / receipt_path, "CRT provenance")
+    try:
+        if (receipt["hardening_profile"] != profile.value
+                or receipt["objects"]["rcrt1.o"]["sha256"] != sha256_file(root / "usr/lib/rcrt1.o")):
+            raise DriverError("installed CRT profile or static PIE object does not match product")
+    except (KeyError, TypeError) as error:
+        raise DriverError("invalid installed CRT provenance") from error
+    return profile
 
 
 def static_mode(identifier: str) -> StaticMode:

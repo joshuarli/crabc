@@ -51,6 +51,25 @@ class BuildX86OwnedSysrootTests(unittest.TestCase):
             with self.assertRaises(builder.BuildError):
                 builder.validate_crt_profile(root, builder.NativeRuntimeProfile.HARDENED)
 
+    def test_installed_driver_rejects_a_mismatched_crt_receipt(self) -> None:
+        for field in ("profile", "object"):
+            with self.subTest(field=field), tempfile.TemporaryDirectory() as temporary:
+                root = Path(temporary)
+                self.materialize_static_driver_sysroot(root)
+                path = root / "share/crabc/crt.provenance.json"
+                receipt = json.loads(path.read_text())
+                if field == "profile":
+                    receipt["hardening_profile"] = "hardened"
+                else:
+                    receipt["objects"]["rcrt1.o"]["sha256"] = "b" * 64
+                builder.write_json(path, receipt)
+                manifest_path = root / driver.MANIFEST_RELATIVE_PATH
+                manifest = json.loads(manifest_path.read_text())
+                manifest["installed"]["files"]["share/crabc/crt.provenance.json"] = builder.sha256_file(path)
+                builder.write_json(manifest_path, manifest)
+                with self.assertRaises(driver.DriverError):
+                    driver.validate_installed_runtime(root)
+
     def test_hardened_static_product_selects_only_static_pie(self) -> None:
         profile = builder.NativeRuntimeProfile.HARDENED
         manifest = builder.installed_manifest({"usr/lib/rcrt1.o": "b" * 64}, {}, source_sha256="a" * 64, hardening_profile=profile)
@@ -189,6 +208,10 @@ class BuildX86OwnedSysrootTests(unittest.TestCase):
             artifact = root / relative
             artifact.parent.mkdir(parents=True, exist_ok=True)
             artifact.write_bytes(b"owned\n")
+        builder.write_json(root / "share/crabc/crt.provenance.json", {
+            "hardening_profile": "compatibility",
+            "objects": {"rcrt1.o": {"sha256": builder.sha256_file(root / "usr/lib/rcrt1.o")}},
+        })
         installed = root / "bin" / "crabc-cc"
         builder.install_static_driver(installed)
         payload_hashes = builder.regular_file_hashes(root)
