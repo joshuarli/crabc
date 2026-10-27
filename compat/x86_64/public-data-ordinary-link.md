@@ -10,6 +10,9 @@ ELF type/binding/visibility/size/alignment, source references, and ten named
 source aliases from that file. It does not consume the historical ignored
 selection audit. A policy update that changes the static/shared selection,
 alias roster, or fixed probe ABI-only declarations fails before collection.
+The static archive must define each selected object with the specified binding.
+Final static executables may keep that binding or localize the definition;
+their type, visibility, size, alignment, and alias storage remain checked.
 
 _dl_debug_addr is deliberately excluded: it is typed as shared-only and
 continues to belong to loader_debug_abi_evidence.py. The component does not

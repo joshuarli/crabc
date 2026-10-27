@@ -671,10 +671,20 @@ class PublicDataOrdinaryLinkEvidenceTests(unittest.TestCase):
             return list(rows.values())
 
         current = static_rows()
+        archive = static_rows()
+        for item in current:
+            item["binding"] = "LOCAL"
         with mock.patch.object(evidence, "rows_for", side_effect=lambda _work, label:
-                               imports if label == "object-symbols" else current):
+                               imports if label == "object-symbols" else archive if label == "static-archive-symbols" else current):
             observations = evidence.observe(self.root, self.root / ".work", policy)
             self.assertEqual(len(observations["imports"]), 33)
+
+        bad_archive = static_rows()
+        next(item for item in bad_archive if item["name"] == "___environ")["binding"] = "GLOBAL"
+        with mock.patch.object(evidence, "rows_for", side_effect=lambda _work, label:
+                               imports if label == "object-symbols" else bad_archive if label == "static-archive-symbols" else current):
+            with self.assertRaisesRegex(evidence.PublicDataEvidenceError, "archive.*binding"):
+                evidence.observe(self.root, self.root / ".work", policy)
 
         misaligned = static_rows()
         next(item for item in misaligned if item["name"] == "__environ")["value"] = "3"

@@ -917,6 +917,7 @@ class Collector:
                              "-fno-stack-protector", "-c", str(probe), "-o", str(object_path)])
         readelf = tools["readelf"]["original"]["path"]
         self.run("object-symbols", [readelf, "-sW", str(object_path)])
+        self.run("static-archive-symbols", [readelf, "-sW", str(self.static_product / "usr/lib/libc.a")])
         oracle_cc = tools["oracle_wrapper"]["original"]["path"]
         self.run("oracle-static-link", [oracle_cc, "-static", "-no-pie", str(object_path),
                                         "-o", str(self.output / "oracle-static")])
@@ -999,8 +1000,14 @@ class Collector:
 
 def rows_for(work: Path, label: str) -> list[dict[str, Any]]:
     path = raw_path(work, label, "stdout")
-    tables = inventory.parse_elf_symbol_tables(path.read_text(encoding="utf-8"))
+    raw = path.read_text(encoding="utf-8")
+    if label == "static-archive-symbols":
+        raw = "\n".join(line for line in raw.splitlines() if not line.startswith("File: "))
+    tables = inventory.parse_elf_symbol_tables(raw)
     matching = [table for table in tables if table["name"] == ".symtab"]
+    if label == "static-archive-symbols":
+        require(matching, f"{label} lacks a .symtab")
+        return [row for table in matching for row in table["rows"]]
     require(len(matching) == 1, f"{label} lacks exactly one .symtab")
     return matching[0]["rows"]
 
@@ -1022,6 +1029,16 @@ def observe(root: Path, work: Path, policy: Mapping[str, Any]) -> dict[str, Any]
                 ("NOTYPE", "GLOBAL", "DEFAULT", None, False),
                 "ordinary-link probe import metadata differs")
     contracts = {item["name"]: item for item in selected_objects()[0]}
+    archive_rows = rows_for(work, "static-archive-symbols")
+    for name in names:
+        matches = [row for row in archive_rows if row["name"] == name and row["section_index"].isdigit()]
+        require(len(matches) == 1, f"static archive has missing or duplicate selected definition: {name}")
+        row = matches[0]
+        contract = contracts[name]
+        for key in ("type", "binding", "visibility", "size_bytes"):
+            require(row[key] == contract[key], f"static archive selected object metadata differs: {name}/{key}")
+        require(row["version"] is None and row["version_default"] is False,
+                f"static archive selected object version differs: {name}")
     definitions: dict[str, dict[str, dict[str, Any]]] = {}
     aliases_observed: dict[str, dict[str, dict[str, Any]]] = {}
     for mode in STATIC_MODES:
@@ -1033,8 +1050,10 @@ def observe(root: Path, work: Path, policy: Mapping[str, Any]) -> dict[str, Any]
             row = matches[0]
             contract = contracts[name]
             require(row["section_index"].isdigit(), f"{mode} selected object is not defined: {name}")
-            for key in ("type", "binding", "visibility"):
+            for key in ("type", "visibility"):
                 require(row[key] == contract[key], f"{mode} selected object metadata differs: {name}/{key}")
+            require(row["binding"] in ("LOCAL", contract["binding"]),
+                    f"{mode} selected object metadata differs: {name}/binding")
             require(row["version"] is None and row["version_default"] is False,
                     f"{mode} selected object version differs: {name}")
             require(row["size_bytes"] == contract["size_bytes"], f"{mode} selected object size differs: {name}")
@@ -1094,7 +1113,7 @@ def candidate_links(root: Path, work: Path, inputs: Mapping[str, Any], tools: Ma
 
 
 def expected_command_labels() -> tuple[str, ...]:
-    labels = ["compile", "object-symbols", "oracle-static-link", "static-link", "static-pie-link"]
+    labels = ["compile", "object-symbols", "static-archive-symbols", "oracle-static-link", "static-link", "static-pie-link"]
     for mode in ("pie", "non-pie"):
         labels.extend(("oracle-dynamic-" + mode + "-link", "dynamic-" + mode + "-link"))
     for name in ALL_EXECUTABLES:
@@ -1131,6 +1150,7 @@ def expected_commands(root: Path, work: Path, inputs: Mapping[str, Any],
             "-c", output("public_data_ordinary_link_probe.c"), "-o", output("probe.o"),
         ]},
         "object-symbols": {"cwd": SOURCE_MOUNT, "argv": [readelf, "-sW", output("probe.o")]},
+        "static-archive-symbols": {"cwd": SOURCE_MOUNT, "argv": [readelf, "-sW", mounted(root, static_product / "usr/lib/libc.a")]},
         "oracle-static-link": {"cwd": SOURCE_MOUNT, "argv": [
             oracle_wrapper, "-static", "-no-pie", object_path,
             "-o", output("oracle-static"),
