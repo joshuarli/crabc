@@ -113,7 +113,7 @@ timeout 20 chroot "$image" /alias
 timeout 20 chroot "$image" /import-control
 test -f "$image/import-marker"
 rm "$image/import-marker"
-python3 -B - "$image/usr/lib/import-provider.so" <<'PYTHON'
+python3 -B - "$image/usr/lib/import-provider.so" "$image/usr/lib/import-probe.so" <<'PYTHON'
 from pathlib import Path
 import struct
 import sys
@@ -135,6 +135,21 @@ matches = [symbols + index * 24 for index in range(count)
 assert len(matches) == 1 and struct.unpack_from("<H", data, matches[0] + 6)[0] != 0
 struct.pack_into("<H", data, matches[0] + 6, 0)
 struct.pack_into("<QQ", data, matches[0] + 8, 0, 0)
+path.write_bytes(data)
+path = Path(sys.argv[2])
+data = bytearray(path.read_bytes())
+phoff = struct.unpack_from("<Q", data, 32)[0]
+phnum = struct.unpack_from("<H", data, 56)[0]
+headers = [struct.unpack_from("<IIQQQQQQ", data, phoff + index * 56) for index in range(phnum)]
+dynamic = next(header for header in headers if header[0] == 2)
+cleared = False
+for offset in range(dynamic[2], dynamic[2] + dynamic[5], 16):
+    tag, value = struct.unpack_from("<QQ", data, offset)
+    mask = 8 if tag == 30 else 1 if tag == 0x6ffffffb else 0
+    if value & mask:
+        struct.pack_into("<Q", data, offset + 8, value & ~mask)
+        cleared = True
+assert cleared
 path.write_bytes(data)
 PYTHON
 timeout 20 chroot "$image" /relro
@@ -170,10 +185,13 @@ cp "$compatibility/lib/ld-crabc-x86_64.so.1" "$compatible_root/lib/"
 cp "$compatibility/usr/lib/libc.so" "$compatible_root/usr/lib/"
 cp "$image/usr/lib/rejected-stack.so" "$compatible_root/usr/lib/"
 cp "$image/usr/lib/tls-mutable.so" "$compatible_root/usr/lib/"
+cp "$image/usr/lib/import-probe.so" "$image/usr/lib/import-provider.so" "$compatible_root/usr/lib/"
 cp "$image/plugins/relative-only.so" "$compatible_root/plugins/"
 "$compatibility/bin/crabc-cc-dynamic" --dynamic-pie "$root/compat/x86_64/compat_tls_mutable_probe.c" -o "$compatible_root/tls-mutable"
 timeout 20 chroot "$compatible_root" /tls-mutable
 test -f "$compatible_root/tls-mutable-marker"
+"$compatibility/bin/crabc-cc-dynamic" --dynamic-pie "$root/compat/x86_64/compat_lazy_import_probe.c" -o "$compatible_root/lazy-import"
+timeout 20 chroot "$compatible_root" /lazy-import
 "$compatibility/bin/crabc-cc-dynamic" --dynamic-pie "$root/compat/x86_64/hardened_entry_probe.c" -o "$compatible_root/pie"
 "$compatibility/bin/crabc-cc-dynamic" --dynamic-pie --application-runpath plugins --application-dso "$compatible_root/plugins/relative-only.so" "$root/compat/x86_64/hardened_entry_probe.c" -o "$compatible_root/search-relative"
 "$compatibility/bin/crabc-cc-dynamic" --dynamic-pie --application-dso "$compatible_root/plugins/relative-only.so" "$root/compat/x86_64/hardened_entry_probe.c" -o "$compatible_root/search-env"
