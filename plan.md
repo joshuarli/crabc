@@ -1359,8 +1359,9 @@ Append one line per merge batch, per parked item, and per contract change.
   three local undefined bookkeeping symbols rejected by that gate. Independent
   ELF inspection found no required bindings; the existing gate is unchanged.
   The independent dynamic Lua consumer initially rejected the active linked
-  checkout before running; `26d528238` fixes its Git metadata binding. A
-  source-frozen cohort at the repaired revision is needed to rerun Lua.
+  checkout before running; `26d528238` fixes its Git metadata binding. At
+  `5ecdac80c`, the source-frozen three-product dynamic cohort and supplied
+  Lua consumer passed, including both product roots and final receipt replay.
   The three-product dynamic cohorts at `1d6f0c91c` and `ea4ae3bdd` each
   completed 219 case records and produced non-promoting qualification
   receipts; later source revisions require a fresh cohort.
