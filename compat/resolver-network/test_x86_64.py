@@ -403,7 +403,7 @@ class NativeResolverNetworkRunnerTests(unittest.TestCase):
                 lines.append(f"{runtime[3]}(helper.o)")
             lines.append(str(runtime[4]))
             trace = receipt.with_suffix(".trace")
-            trace.write_text("\n".join(lines) + "\n", encoding="ascii")
+            trace.write_text("\n".join("trace: " + line for line in lines) + "\n", encoding="ascii")
             record = {
                 "schema": 1, "format": runner.STATIC_FORMAT,
                 "mode": {"id": "static-pie" if pie else "static-et-exec",
@@ -417,7 +417,7 @@ class NativeResolverNetworkRunnerTests(unittest.TestCase):
                       "sha256": runner.sha256_file(application)}],
                 "output": {"path": str(output), "sha256": runner.sha256_file(output)},
                 "owned_link_contract": [
-                    "ld.lld", "-static", *(["-pie"] if pie else []),
+                    "mold", "-static", *(["-pie"] if pie else []),
                     "--no-dynamic-linker", "--no-undefined", "--eh-frame-hdr", "--gc-sections",
                     "-z", "relro", "-z", "now", "-e", "_start",
                     str(runtime[0]), str(runtime[1]), "<application-objects>",

@@ -79,7 +79,7 @@ def fixture_module():
     return module
 
 
-def symbols(binary: Path, dynamic: bool, destination: Path, journal: CommandJournal, label: str) -> None:
+def symbols(binary: Path, dynamic: bool, destination: Path, journal: CommandJournal, label: str, *, local: bool = False) -> None:
     checked(['/usr/bin/readelf', '--wide', '--dyn-syms' if dynamic else '--syms', binary], destination,
             journal=journal, label=label)
     found = {}
@@ -90,7 +90,7 @@ def symbols(binary: Path, dynamic: bool, destination: Path, journal: CommandJour
     if set(found) != PROVIDERS:
         raise RuntimeError(f'missing classic netdb providers: {sorted(PROVIDERS - set(found))}')
     for name, fields in found.items():
-        if fields[3:6] != ['FUNC', 'GLOBAL', 'DEFAULT'] or fields[6] == 'UND':
+        if (fields[3:6] != ['FUNC', 'GLOBAL', 'DEFAULT'] and not (local and fields[3:6] == ['FUNC', 'LOCAL', 'DEFAULT'])) or fields[6] == 'UND':
             raise RuntimeError(f'incorrect classic netdb provider binding: {name}: {fields}')
 
 
@@ -131,7 +131,7 @@ def run(work: Path, static: Path | None, dynamic: Path) -> None:
             journal=journal, label='header-trace')
     checked([compiler, *flags, '-std=c11', '-fno-builtin', '-c', source, '-o', obj], work / 'compile.log',
             journal=journal, label='compile')
-    checked(['/usr/local/bin/crabc-x86_64-musl-gcc', '-static', '-fno-pie', '-no-pie', '-pthread', obj, '-o', work / 'oracle'],
+    checked(['/usr/local/bin/crabc-x86_64-musl-gcc', '-static', '-fno-pie', '-no-pie', '-pthread', '-Wl,--export-dynamic', obj, '-o', work / 'oracle'],
             work / 'oracle-link.log', journal=journal, label='oracle-link')
     symbols(work / 'oracle', False, work / 'oracle-symbols.txt', journal, 'oracle-symbols')
     root = work / 'execution-root'
@@ -179,6 +179,7 @@ def run(work: Path, static: Path | None, dynamic: Path) -> None:
     try:
         execute(root, 'oracle', ['/oracle'])
         if static is not None:
+            receipt.validate_provider_symbols(static / 'usr/lib/libc.a', 'static classic-netdb archive', dynamic=False)
             for static_mode in ('static', 'static-pie'):
                 binary = work / static_mode
                 option = '--static-et-exec' if static_mode == 'static' else '--static-pie'
@@ -188,7 +189,7 @@ def run(work: Path, static: Path | None, dynamic: Path) -> None:
                 audits['artifacts'][static_mode] = {
                     'receipt': fixture.static_receipt_audit(static, option, obj, binary, link_receipt),
                     'elf': fixture.elf_audit(binary, mode=static_mode, dynamic=False)}
-                symbols(binary, False, work / f'{static_mode}-symbols.txt', journal, f'{static_mode}-symbols')
+                symbols(binary, False, work / f'{static_mode}-symbols.txt', journal, f'{static_mode}-symbols', local=True)
                 shutil.copy2(binary, root / static_mode)
                 execute(root, static_mode, ['/' + static_mode])
         symbols(dynamic / 'usr/lib/libc.so', True, work / 'dynamic-provider-symbols.txt', journal, 'dynamic-provider-symbols')

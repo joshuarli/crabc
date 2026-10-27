@@ -349,7 +349,7 @@ def replay_readelf(path: Path, *, dynamic: bool) -> bytes:
     return completed.stdout
 
 
-def validate_provider_symbols(path: Path, description: str, names: tuple[str, ...] = PROVIDERS, *, dynamic: bool = True) -> None:
+def validate_provider_symbols(path: Path, description: str, names: tuple[str, ...] = PROVIDERS, *, dynamic: bool = True, local: bool = False) -> None:
     """Bind exported-provider assertions to current ELF, never retained text."""
     raw = replay_readelf(path, dynamic=dynamic)
     try:
@@ -357,7 +357,9 @@ def validate_provider_symbols(path: Path, description: str, names: tuple[str, ..
     except UnicodeDecodeError as error:
         raise ReceiptError(f"{description} readelf output is not UTF-8") from error
     for name in names:
-        matches = [row for row in rows if len(row) == 8 and row[3:6] == ["FUNC", "GLOBAL", "DEFAULT"] and
+        matches = [row for row in rows if len(row) == 8 and
+                   (row[3:6] == ["FUNC", "GLOBAL", "DEFAULT"] or
+                    (local and row[3:6] == ["FUNC", "LOCAL", "DEFAULT"])) and
                    row[6] != "UND" and row[7] == name]
         require(len(matches) == 1, f"{description} lacks one public defined {name}")
 
@@ -459,7 +461,7 @@ def command_plan(root: Path, work: Path, static: Path | None, dynamic: Path,
                          "-E", "-H", mounted_path(source)],
         "compile": ([tool("static_driver"), "-static-pie"] if static is not None else [tool("dynamic_driver"), "--dynamic-pie"])
                    + ["-std=c11", "-fno-builtin", "-c", mounted_path(source), "-o", mounted_path(workload)],
-        "oracle-link": [tool("oracle"), "-static", "-fno-pie", "-no-pie", "-pthread", mounted_path(workload), "-o", mounted_path(oracle)],
+        "oracle-link": [tool("oracle"), "-static", "-fno-pie", "-no-pie", "-pthread", "-Wl,--export-dynamic", mounted_path(workload), "-o", mounted_path(oracle)],
         "oracle-symbols": [tool("readelf"), "--wide", "--syms", mounted_path(oracle)],
         "dynamic-provider-symbols": [tool("readelf"), "--wide", "--dyn-syms", mounted_path(dynamic / "usr/lib/libc.so")],
     }
@@ -598,6 +600,9 @@ def validate_report(root: Path, report_path: Path, *, require_static: bool = Fal
     # Re-run the sealed reader against the physical ELF bytes.  The retained
     # readelf output is provenance only and cannot be rehashed into a claim.
     validate_provider_symbols(dynamic / "usr/lib/libc.so", "dynamic classic-netdb provider")
+    if mode == FULL_MODE:
+        assert static_product is not None
+        validate_provider_symbols(static_product / "usr/lib/libc.a", "static classic-netdb archive", dynamic=False)
     links = report["links"]
     expected_links = {"dynamic-pie", "dynamic-non-pie"} | ({"static", "static-pie"} if mode == FULL_MODE else set())
     require(isinstance(links, dict) and set(links) == expected_links, "classic-netdb link roster differs")
@@ -619,7 +624,7 @@ def validate_report(root: Path, report_path: Path, *, require_static: bool = Fal
                 f"{name} retained link reconstruction differs")
     for name in ("static", "static-pie"):
         if mode == FULL_MODE:
-            validate_provider_symbols(work / name, f"{name} classic-netdb executable", dynamic=False)
+            validate_provider_symbols(work / name, f"{name} classic-netdb executable", dynamic=False, local=True)
     payloads = report["payloads"]
     require(isinstance(payloads, dict) and set(payloads) == {"pie", "non-pie"}, "classic-netdb payload roster differs")
     for link_mode in ("pie", "non-pie"):

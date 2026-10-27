@@ -289,32 +289,47 @@ def _verify_dns_fixture(work: Path) -> None:
             "cancellation isolated hosts fixture differs")
 
 
-def _provider_rows(raw: bytes, providers: frozenset[str]) -> dict[str, list[str]]:
+def _provider_rows(raw: bytes, providers: frozenset[str], *, local: bool = False, dynamic: bool = False) -> dict[str, list[str]]:
     try:
         lines = raw.decode("utf-8").splitlines()
     except UnicodeDecodeError as error:
         raise ReceiptError("provider symbol audit is not UTF-8") from error
     found: dict[str, list[str]] = {}
+    has_tables = any(line.startswith("Symbol table '") for line in lines)
+    active = not has_tables
+    wanted = ".dynsym" if dynamic else ".symtab"
     for line in lines:
+        if line.startswith("Symbol table '"):
+            active = line.startswith("Symbol table '" + wanted + "'")
+            continue
+        if not active:
+            continue
         fields = line.split()
-        if len(fields) == 8 and fields[7] in providers:
+        if len(fields) == 8 and fields[6] != "UND" and fields[7] in providers:
             require(fields[7] not in found, f"provider symbol audit duplicates {fields[7]}")
             found[fields[7]] = fields
     require(set(found) == providers, f"provider symbol audit misses {sorted(providers-set(found))}")
     for name, fields in found.items():
-        require(fields[3] == "FUNC" and fields[4] in {"GLOBAL", "WEAK"} and
+        require(fields[3] == "FUNC" and fields[4] in ({"GLOBAL", "WEAK", "LOCAL"} if local else {"GLOBAL", "WEAK"}) and
                 fields[5] == "DEFAULT" and fields[6] != "UND",
                 f"provider symbol audit has incorrect binding: {name}: {fields}")
     return found
 
 
-def _replay_provider_symbols(work: Path, dynamic: Path, cancellation: Any) -> None:
+def _replay_provider_symbols(work: Path, static: Path, dynamic: Path, cancellation: Any) -> None:
     binaries = {
         "oracle": work / "oracle",
         "static-et-exec": work / "static-et-exec",
         "static-pie": work / "static-pie",
         "dynamic-product": dynamic / "usr/lib/libc.so",
     }
+    try:
+        archive = subprocess.run(["readelf", "--wide", "--syms", str(static / "usr/lib/libc.a")],
+                                 stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False)
+    except OSError as error:
+        raise ReceiptError("cannot replay static provider archive") from error
+    require(archive.returncode == 0 and not archive.stderr, "static provider archive audit failed")
+    _provider_rows(archive.stdout, cancellation.PROVIDERS)
     for raw_name, binary_name, is_dynamic in PROVIDER_FILES:
         binary = physical_file(binaries[binary_name], f"provider binary {binary_name}")
         recorded = _raw(work, raw_name, f"provider raw audit {binary_name}").read_bytes()
@@ -327,7 +342,8 @@ def _replay_provider_symbols(work: Path, dynamic: Path, cancellation: Any) -> No
             raise ReceiptError("cannot replay pinned provider symbol audit") from error
         require(replay.returncode == 0 and replay.stdout + replay.stderr == recorded,
                 f"provider symbol audit bytes differ: {binary_name}")
-        _provider_rows(recorded, cancellation.PROVIDERS)
+        _provider_rows(recorded, cancellation.PROVIDERS,
+                       local=binary_name in {"static-et-exec", "static-pie"}, dynamic=is_dynamic)
 
 
 def _replay_artifact_audits(root: Path, work: Path, static: Path, dynamic: Path,
@@ -478,7 +494,7 @@ def validate_report(root: Path, work: Path, *, static_product: Path, dynamic_pro
             "cancellation receipt source identity differs")
     _replay_artifact_audits(root, work, static, dynamic, audit, fixture)
     _recompile_workload(root, work, static)
-    _replay_provider_symbols(work, dynamic, cancellation)
+    _replay_provider_symbols(work, static, dynamic, cancellation)
     namespace = _verify_namespace(work)
     _replay_network_observations(work)
     _verify_dns_fixture(work)

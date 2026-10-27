@@ -180,7 +180,7 @@ class OwnedResolverCancellationReceiptTests(unittest.TestCase):
         with patch.object(receipt, "_fixture", return_value=self.fixture), \
              patch.object(receipt, "_replay_provider_symbols") as providers:
             result = receipt.validate_report(ROOT, self.work, static_product=self.static, dynamic_product=self.dynamic)
-        providers.assert_called_once_with(self.work, self.dynamic, cancellation)
+        providers.assert_called_once_with(self.work, self.static, self.dynamic, cancellation)
         return result
 
     def test_retained_readable_fixture_replays_without_changing_contents(self) -> None:
@@ -296,6 +296,17 @@ class OwnedResolverCancellationReceiptTests(unittest.TestCase):
             for index, name in enumerate(sorted(cancellation.PROVIDERS), start=1)
         ) + b"\n"
         self.assertEqual(set(receipt._provider_rows(rows, cancellation.PROVIDERS)), cancellation.PROVIDERS)
+
+        localized = rows.replace(b" GLOBAL ", b" LOCAL ")
+        with self.assertRaisesRegex(receipt.ReceiptError, "incorrect binding"):
+            receipt._provider_rows(localized, cancellation.PROVIDERS)
+        self.assertEqual(set(receipt._provider_rows(localized, cancellation.PROVIDERS, local=True)), cancellation.PROVIDERS)
+        tables = b"Symbol table '.dynsym' contains entries:\n" + rows + b"Symbol table '.symtab' contains entries:\n" + rows
+        self.assertEqual(set(receipt._provider_rows(tables, cancellation.PROVIDERS)), cancellation.PROVIDERS)
+
+        undefined = rows.replace(b"DEFAULT 1 res_query", b"DEFAULT UND res_query")
+        with self.assertRaisesRegex(receipt.ReceiptError, "misses"):
+            receipt._provider_rows(undefined, cancellation.PROVIDERS)
 
         duplicate = rows + b"9: 0000000000000000 0 FUNC GLOBAL DEFAULT 1 res_query\n"
         with self.assertRaisesRegex(receipt.ReceiptError, "duplicates res_query"):

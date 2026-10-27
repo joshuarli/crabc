@@ -49,17 +49,17 @@ def prepare(work: Path) -> None:
         checked([sys.executable, '-B', ROOT / 'scripts' / builder, '--output', work / f'{kind}-sysroot'], work / f'{kind}-build.log')
 
 
-def providers(binary: Path, dynamic: bool, output: Path) -> None:
+def providers(binary: Path, dynamic: bool, output: Path, *, local: bool = False) -> None:
     checked(['readelf', '--wide', '--dyn-syms' if dynamic else '--syms', binary], output)
     found = {}
     for line in output.read_text().splitlines():
         fields = line.split()
-        if len(fields) == 8 and fields[7] in PROVIDERS:
+        if len(fields) == 8 and fields[6] != 'UND' and fields[7] in PROVIDERS:
             found[fields[7]] = fields
     if set(found) != PROVIDERS:
         raise RuntimeError(f'missing DNS cancellation providers: {sorted(PROVIDERS-set(found))}')
     for name, fields in found.items():
-        if fields[3] != 'FUNC' or fields[4] not in ('GLOBAL', 'WEAK') or fields[5] != 'DEFAULT' or fields[6] == 'UND':
+        if fields[3] != 'FUNC' or fields[4] not in (('GLOBAL', 'WEAK', 'LOCAL') if local else ('GLOBAL', 'WEAK')) or fields[5] != 'DEFAULT' or fields[6] == 'UND':
             raise RuntimeError(f'incorrect DNS cancellation provider: {name}: {fields}')
 
 
@@ -113,7 +113,7 @@ def run(work: Path, static: Path | None, dynamic: Path | None) -> None:
     compile_mode = '--static-pie' if static is not None else '--dynamic-pie'
     checked([compiler, compile_mode, '-std=c11', '-fno-builtin', '-c', source, '-o', obj], work / 'compile.log')
     object_record = fixture.artifact_record(obj)
-    checked(['/usr/local/bin/crabc-x86_64-musl-gcc', '-static', '-fno-pie', '-no-pie', '-pthread', obj, '-o', work / 'oracle'], work / 'oracle-link.log')
+    checked(['/usr/local/bin/crabc-x86_64-musl-gcc', '-static', '-fno-pie', '-no-pie', '-pthread', '-Wl,--export-dynamic', obj, '-o', work / 'oracle'], work / 'oracle-link.log')
     providers(work / 'oracle', False, work / 'oracle-symbols.txt')
     execution = work / 'execution-root'
     (execution / 'etc').mkdir(parents=True)
@@ -177,13 +177,14 @@ def run(work: Path, static: Path | None, dynamic: Path | None) -> None:
             raise RuntimeError(f'TCP source transition differs: {label}: {result.returncode}: {lines}')
     execute('oracle', ['/oracle'])
     if static is not None:
+        providers(static / 'usr/lib/libc.a', False, work / 'static-archive-symbols.txt')
         for mode in ('static-et-exec', 'static-pie'):
             binary = work / mode
             receipt = work / (mode+'.receipt.json')
             checked([static / 'bin/crabc-cc', '--'+mode, '--link-receipt', receipt.name, obj, '-o', binary], work / (mode+'-link.log'), cwd=work)
             audits['artifacts'][mode] = {'receipt': fixture.static_receipt_audit(static, '--'+mode, obj, binary, receipt),
                                          'elf': fixture.elf_audit(binary, mode='static' if mode == 'static-et-exec' else mode, dynamic=False)}
-            providers(binary, False, work / (mode+'-symbols.txt'))
+            providers(binary, False, work / (mode+'-symbols.txt'), local=True)
             shutil.copy2(binary, execution / mode)
             execute(mode, ['/'+mode])
     if dynamic is not None:

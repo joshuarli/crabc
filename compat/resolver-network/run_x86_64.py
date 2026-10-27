@@ -719,13 +719,8 @@ def static_receipt_audit(sysroot: Path, mode: str, object_file: Path, output: Pa
     expected.append({"role": "application", "path": str(object_file.resolve()), "sha256": sha256_file(object_file)})
     if data.get("input_receipts") != expected:
         raise RunnerError(f"static {mode} receipt does not bind the exact owned runtime and shared object")
-    expected_plan = [
-        "ld.lld", "-static", *(["-pie"] if mode == "--static-pie" else []),
-        "--no-dynamic-linker", "--no-undefined", "--eh-frame-hdr", "--gc-sections",
-        "-z", "relro", "-z", "now", "-e", "_start",
-        str(runtime[0][1]), str(runtime[1][1]), "<application-objects>",
-        str(runtime[2][1]), str(runtime[3][1]), str(runtime[4][1]), "-o", "<output>",
-    ]
+    expected_plan = product_evidence._static_link_plan(
+        sysroot, "static-pie" if mode == "--static-pie" else "static")
     if data.get("owned_link_contract") != expected_plan:
         raise RunnerError(f"static {mode} receipt owned link contract drifted")
     output_record = {"path": str(output), "sha256": sha256_file(output)}
@@ -738,7 +733,7 @@ def static_receipt_audit(sysroot: Path, mode: str, object_file: Path, output: Pa
     direct = {str(object_file.resolve()), *(str(path) for role, path in runtime if role not in {"libc", "builtins"})}
     archives = {str(path) for role, path in runtime if role in {"libc", "builtins"}}
     seen_direct: set[str] = set()
-    for line in (line.strip() for line in trace.splitlines() if line.strip()):
+    for line in (line.strip().removeprefix("trace: ") for line in trace.splitlines() if line.strip()):
         if line in direct:
             seen_direct.add(line)
         elif line in archives or any(line.startswith(archive + "(") and line.endswith(")") for archive in archives):
