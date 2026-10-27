@@ -329,6 +329,31 @@ def enter(directory=root):
     os.chroot(directory)
     os.chdir("/")
 
+for name, original, foreign, interpreter in (
+    ("cross-hardened", root, compatible, "ld-crabc-x86_64-hardened.so.1"),
+    ("cross-compatibility", compatible, root, "ld-crabc-x86_64.so.1"),
+):
+    directory = work / name
+    (directory / "lib").mkdir(parents=True)
+    (directory / "usr/lib").mkdir(parents=True)
+    shutil.copyfile(original / "pie", directory / "pie")
+    (directory / "pie").chmod(0o755)
+    shutil.copyfile(original / "usr/lib/libc.so", directory / "usr/lib/libc.so")
+    path = directory / "lib" / interpreter
+    shutil.copyfile(original / "lib" / interpreter, path)
+    path.chmod(0o755)
+    other = "ld-crabc-x86_64.so.1" if "hardened" in interpreter else "ld-crabc-x86_64-hardened.so.1"
+    for matched in (True, False):
+        if not matched:
+            shutil.copyfile(foreign / "lib" / other, path)
+            path.chmod(0o755)
+        for arguments in (["/pie"], ["/lib/" + interpreter, "/pie"]):
+            result = subprocess.run(arguments, env={}, preexec_fn=lambda: enter(directory),
+                                    capture_output=True, timeout=20, check=False)
+            assert (result.returncode == 0 if matched else result.returncode in (1, 127)), (name, arguments, result.stderr)
+            assert (directory / "marker").exists() == matched
+            (directory / "marker").unlink(missing_ok=True)
+
 for name in ("rejected-source.so", "rejected-stack.so", "rejected-wx.so", "rejected-relro.so",
              "tls-mutable.so", "tls-module.so", "tls-thread.so", "symbol-mutable.so", "symbol-pc32.so",
              "symbol-glob.so", "symbol-jump.so", "import-probe.so"):
