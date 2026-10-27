@@ -339,6 +339,7 @@ def build(output: Path, *, profile: str = "release", runtime_core: Path | None =
                 linker, "-r", "--gc-sections",
                 *(f"--undefined={name}" for name in sorted(REQUIRED_SYMBOLS)),
                 str(member), "--whole-archive", str(core_archive), "--no-whole-archive",
+                str(runtime_compiler_builtins.with_suffix(".rlib")),
                 "-o", str(closed_member),
             ]
             run(source_core_link)
@@ -352,7 +353,8 @@ def build(output: Path, *, profile: str = "release", runtime_core: Path | None =
                 raise BuildError(f"source-core helper dependencies did not enter the owned archive: {missing!r}")
             shutil.move(closed_member, member)
             private = symbols(llvm_nm, member, "--defined-only") - REQUIRED_SYMBOLS
-            if any(not name.startswith(("_R", "_ZN")) for name in private):
+            compiler_symbols = symbols(llvm_nm, runtime_compiler_builtins.with_suffix(".rlib"), "--defined-only")
+            if any(not name.startswith(("_R", "_ZN")) and name not in compiler_symbols for name in private):
                 raise BuildError("debug helpers contain an unexpected non-Rust definition")
             if private:
                 localize = stage / "private-symbols.txt"
@@ -374,9 +376,9 @@ def build(output: Path, *, profile: str = "release", runtime_core: Path | None =
         undefined = symbols(llvm_nm, closure, "--undefined-only")
         runtime_dependencies = set()
         if profile == "debug":
-            if runtime_libc is None or "memset" not in symbols(llvm_nm, runtime_libc, "--defined-only"):
-                raise BuildError("debug helpers require the source-built libc memset provider")
-            runtime_dependencies.add("memset")
+            runtime_dependencies = {"memset", "memcpy", "memcmp"}
+            if runtime_libc is None or not runtime_dependencies <= symbols(llvm_nm, runtime_libc, "--defined-only"):
+                raise BuildError("debug helpers require source-built libc memory providers")
         if undefined - runtime_dependencies:
             raise BuildError(f"x86 helper archive lacks source-owned closure: {sorted(undefined - runtime_dependencies)!r}")
         shutil.copyfile(staged, output)
@@ -385,6 +387,7 @@ def build(output: Path, *, profile: str = "release", runtime_core: Path | None =
             "source_core_support_symbols": sorted(source_core_support_symbols),
             "source_core_link_command": installed_source_core_link_command,
             "source_core_archive_sha256": sha256(runtime_core.with_suffix(".rlib")) if runtime_core is not None else None,
+            "source_compiler_builtins_archive_sha256": sha256(runtime_compiler_builtins.with_suffix(".rlib")) if runtime_compiler_builtins is not None else None,
             "source_libc_archive_sha256": sha256(runtime_libc) if runtime_libc is not None else None,
             "compile_command": installed_compile_command,
             "compiler_tools": {
