@@ -491,7 +491,8 @@ def validate_static_symbols(payload: str, description: str) -> dict[str, object]
     }
 
 
-def validate_shared_symbols(symtab_payload: str, dynsym_payload: str, description: str) -> dict[str, object]:
+def validate_shared_symbols(symtab_payload: str, dynsym_payload: str, description: str, *,
+                            alias_visibility: str) -> dict[str, object]:
     symtab = parse_symbols(symtab_payload, f"{description} symtab")
     dynsym = parse_symbols(dynsym_payload, f"{description} dynsym")
     errno = one_defined(symtab, "__errno_location", description, table=".symtab")
@@ -499,7 +500,7 @@ def validate_shared_symbols(symtab_payload: str, dynsym_payload: str, descriptio
     h_errno = one_defined(symtab, "h_errno", description, table=".symtab")
     h_accessor = one_defined(symtab, "__h_errno_location", description, table=".symtab")
     require_symbol(errno, name="__errno_location", symbol_type="FUNC", binding="GLOBAL", visibility="DEFAULT", description=description)
-    require_symbol(alias, name=ALIAS, symbol_type="FUNC", binding="LOCAL", visibility="DEFAULT", description=description)
+    require_symbol(alias, name=ALIAS, symbol_type="FUNC", binding="LOCAL", visibility=alias_visibility, description=description)
     require_symbol(h_errno, name="h_errno", symbol_type="OBJECT", binding="GLOBAL", visibility="DEFAULT", size=4, description=description)
     require_symbol(h_accessor, name="__h_errno_location", symbol_type="FUNC", binding="GLOBAL", visibility="DEFAULT", description=description)
     if (alias["value"], alias["section"]) != (errno["value"], errno["section"]):
@@ -889,12 +890,12 @@ def validate_symbol_artifacts(
     validate_shared_symbols(
         read_text(paths["oracle-shared-symbols.txt"], "oracle shared symbols"),
         read_text(paths["oracle-dynamic-symbols.txt"], "oracle dynamic symbols"),
-        "pinned musl shared library",
+        "pinned musl shared library", alias_visibility="HIDDEN",
     )
     validate_shared_symbols(
         read_text(paths["candidate-shared-symbols.txt"], "candidate shared symbols"),
         read_text(paths["candidate-dynamic-symbols.txt"], "candidate dynamic symbols"),
-        "candidate shared library",
+        "candidate shared library", alias_visibility="DEFAULT",
     )
     return paths
 

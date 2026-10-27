@@ -212,13 +212,17 @@ class ErrnoStorageLifecycleTests(unittest.TestCase):
 
     def test_shared_alias_is_local_and_not_in_dynsym(self) -> None:
         symtab, dynsym = SHARED_GOOD
-        reader.validate_shared_symbols(symtab, dynsym, "fixture shared")
+        reader.validate_shared_symbols(symtab, dynsym, "fixture shared", alias_visibility="DEFAULT")
+        hidden = symtab.replace("LOCAL  DEFAULT    9 ___errno_location", "LOCAL  HIDDEN     9 ___errno_location")
+        reader.validate_shared_symbols(hidden, dynsym, "fixture oracle", alias_visibility="HIDDEN")
+        with self.assertRaisesRegex(reader.ErrnoStorageEvidenceError, "wrong ELF shape"):
+            reader.validate_shared_symbols(hidden, dynsym, "fixture candidate", alias_visibility="DEFAULT")
         exposed = dynsym.replace(
             "     3:",
             "     2: 0000000000001010    17 FUNC    GLOBAL DEFAULT    9 ___errno_location\n     3:",
         )
         with self.assertRaisesRegex(reader.ErrnoStorageEvidenceError, "dynsym"):
-            reader.validate_shared_symbols(symtab, exposed, "exposed shared")
+            reader.validate_shared_symbols(symtab, exposed, "exposed shared", alias_visibility="DEFAULT")
 
     def test_h_errno_layout_requires_its_defining_section_and_offset_to_meet_int_alignment(self) -> None:
         static = reader.validate_static_h_errno_layout(
