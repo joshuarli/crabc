@@ -1364,7 +1364,8 @@ Append one line per merge batch, per parked item, and per contract change.
   M7 baseline discovery at `55dd89a3a` passed four gates and left six unmet:
   visitation producers rejected an unsupported `--offline` flag and five
   gates were blocked. `aeb87087d` removes the flag; the producers already
-  require cached inputs. The corrected visitation gate needs a fresh run.
+  require cached inputs. All three visitation differentials pass at
+  `4936c803f`; the gate remains blocked on secure and guarded profiles.
   Cleanup removed nine integrated test-only worktrees. An attempted ordinary
   removal of the integrated `r4-addrconfig` worktree failed on permissions;
   Git removed its registration but left its directory and branch. Automatic review
