@@ -1410,7 +1410,8 @@ Append one line per merge batch, per parked item, and per contract change.
   dynamic gate passes all 219 cases and publishes its qualification receipt.
   Its earlier attempt stopped on missing package inputs; the original failure
   is retained, the 59 pinned archives were restored from cache, and a fresh
-  cohort completed. The
+  cohort completed. At `5da3f719b`, the independent controlled resolver
+  network component passes on installed and extracted products. The
   independent math/fenv component passes
   206 selected C ABI entries at `4630b7407`. The text/locale/numeric component
   then exposed two nonspacing Unicode endpoints and wide-format error mapping;
