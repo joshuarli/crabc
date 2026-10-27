@@ -821,7 +821,7 @@ def validate_wrapped_commands(commands: Sequence[Sequence[str]], compiler: pathl
     pinned_wrapper = physical(native_build_tools.KACHE, "pinned kache executable")
     for command in commands:
         index = 0
-        while index < len(command) and re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*=.*", command[index]):
+        while index < len(command) and re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*=[\s\S]*", command[index]):
             name, _, value = command[index].partition("=")
             if name.startswith("KACHE_") or name in {"RUSTC_WRAPPER", "CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER"}:
                 if name not in expected or value != expected[name]:
