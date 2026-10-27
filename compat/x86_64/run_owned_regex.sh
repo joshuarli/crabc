@@ -296,7 +296,7 @@ capture object-imports /usr/bin/env -i LC_ALL=C LANG=C TZ=UTC PATH=/usr/bin:/bin
 check_nm_api_rows "$WORK/object-imports.stdout" U 'installed-header object imports'
 sha256sum "$PROBE" "$RUNNER" "$RECEIPT_READER" "$WORK/workload.o" >"$WORK/source-object-before.sha256"
 
-capture oracle-link "$ORACLE_CC" -static -fno-pie -no-pie "$WORK/workload.o" -o "$WORK/oracle"
+capture oracle-link "$ORACLE_CC" -static -fno-pie -no-pie -Wl,--export-dynamic "$WORK/workload.o" -o "$WORK/oracle"
 capture oracle-providers /usr/bin/env -i LC_ALL=C LANG=C TZ=UTC PATH=/usr/bin:/bin \
     /usr/bin/nm -g --defined-only --format=posix "$WORK/oracle"
 check_nm_api_rows "$WORK/oracle-providers.stdout" T 'pinned musl provider'
