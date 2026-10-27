@@ -19,8 +19,9 @@
  //! `d585fd3b613c66151fc3249e8ed44f77020cb5e6c1e635a616d3f9f82460512a`.
  //! The relevant musl sources carry musl's MIT license; the repository's
  //! pinned musl provenance in `compat/upstreams.toml` is authoritative.
- //! The translated assembly retains the applicable musl source behavior, not
- //! an ambient libc or a foreign linked object.
+ //! The floating scanner is regenerated from the native musl snapshot
+ //! `7813e9119eb5fe681b6750b8a033a0490bca0941`; its support and entry
+ //! translations retain the release source. No foreign object is linked.
  //!
  //! | Pinned source | Owned target-local translation |
  //! | --- | --- |

@@ -396,6 +396,10 @@ static int check_range_and_boundary(strtof_fn parse_float, strtod_fn parse_doubl
         UINT64_C(0x7ff0000000000000), TEXT_END("0x1p+1105"), EDOM, ERANGE);
     if (status != 0)
         return 25 + status;
+    status = expect_double(parse_double, "4.94065645841246544176568792868221372e-324",
+        UINT64_C(1), TEXT_END("4.94065645841246544176568792868221372e-324"), EDOM, ERANGE);
+    if (status != 0)
+        return 28 + status;
     status = expect_double(parse_double, "0x1p-1074", UINT64_C(1),
         TEXT_END("0x1p-1074"), EDOM, EDOM);
     if (status != 0)
@@ -757,14 +761,14 @@ static const struct float_underflow_case float_underflow_cases[] = {
         "1e-45",
         { UINT32_C(0x00000001), UINT32_C(0x80000000),
           UINT32_C(0x00000001), UINT32_C(0x00000000) },
-        { EINTR, ERANGE, EINTR, ERANGE },
+        { ERANGE, ERANGE, ERANGE, ERANGE },
         { FE_INEXACT, FE_INEXACT, FE_INEXACT, FE_INEXACT },
     },
     {
         "-1e-45",
         { UINT32_C(0x80000001), UINT32_C(0x80000001),
           UINT32_C(0x00000000), UINT32_C(0x00000000) },
-        { EINTR, EINTR, ERANGE, ERANGE },
+        { ERANGE, ERANGE, ERANGE, ERANGE },
         { FE_INEXACT, FE_INEXACT, FE_INEXACT, FE_INEXACT },
     },
     {
