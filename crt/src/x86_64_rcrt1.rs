@@ -243,6 +243,13 @@ _start:
     jz .Lstatic_pie_dynamic_done
     cmp rax, 1
     je .Lstatic_pie_fail
+    cmp rax, 2
+    je .Lstatic_pie_fail
+    cmp rax, 17
+    jb .Lstatic_pie_not_rel
+    cmp rax, 20
+    jbe .Lstatic_pie_fail
+.Lstatic_pie_not_rel:
     cmp rax, 22
     je .Lstatic_pie_fail
     cmp rax, 23

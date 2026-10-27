@@ -24,7 +24,7 @@ The static evidence consumes exactly these Rust-produced objects:
   `AT_PHNUM`; derives the load bias from `PT_PHDR`; validates dynamic and
   relocation ranges against `PT_LOAD`; applies only symbol-free
   `R_X86_64_RELATIVE` RELA/RELR records to writable mappings; rejects
-  dynamic dependencies, PLT relocation tables, text-relocation declarations,
+  dynamic dependencies, REL and PLT relocation metadata, text-relocation declarations,
   repeated RELA/RELR address, size or entry-size
   tags, incomplete table descriptors, and invalid entry sizes for nonempty tables; seals
   at most one nonempty `PT_GNU_RELRO` contained in a page-rounded writable,

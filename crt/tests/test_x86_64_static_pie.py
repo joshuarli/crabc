@@ -497,13 +497,13 @@ class X86_64StaticPieTests(unittest.TestCase):
                 self.assertEqual(overlap.returncode, 127, overlap.stderr.decode(errors="replace"))
                 self.assertEqual(overlap.stdout, b"")
 
-                for tag, value in ((1, 0), (22, 0), (23, 0), (30, 4)):
+                for tag, value in ((1, 0), (2, 8), (17, 8), (18, 8), (19, 16), (20, 7), (22, 0), (23, 0), (30, 4)):
                     rejected = subprocess.run(
                         [str(dynamic_declaration(executable, tag, value))], stdin=subprocess.DEVNULL,
                         stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False,
                         preexec_fn=disable_core_dump,
                     )
-                    self.assertEqual(rejected.returncode, 127, rejected.stderr.decode(errors="replace"))
+                    self.assertEqual(rejected.returncode, 127, f"tag {tag}: {rejected.stderr.decode(errors='replace')}")
                     self.assertEqual(rejected.stdout, b"")
 
                 tags = dynamic_tags(*elf_layout(executable))
