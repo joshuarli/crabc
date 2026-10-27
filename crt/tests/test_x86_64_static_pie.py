@@ -246,6 +246,21 @@ def duplicate_stack_header(path: Path) -> Path:
     return changed
 
 
+def overlapping_executable_bss(path: Path) -> Path:
+    data, headers = elf_layout(path)
+    writable = [header for header in headers if header[0] == PT_LOAD and header[1] & 2][-1]
+    target_index = next(index for index, header in enumerate(headers) if header[0] == 0x6474e550)
+    address = (writable[3] + writable[6] - 1) & -4096
+    mutable = bytearray(data)
+    program_offset = struct.unpack_from("<Q", data, 32)[0]
+    struct.pack_into("<IIQQQQQQ", mutable, program_offset + target_index * 56,
+                     PT_LOAD, 5, 0, address, address, 0, 4096, 4096)
+    changed = path.with_name(path.name + ".executable-bss-overlap")
+    changed.write_bytes(mutable)
+    changed.chmod(0o755)
+    return changed
+
+
 def duplicate_relocation_tag(path: Path, tag: int) -> Path:
     data, headers = elf_layout(path)
     dynamic = next(header for header in headers if header[0] == PT_DYNAMIC)
@@ -430,6 +445,10 @@ class X86_64StaticPieTests(unittest.TestCase):
                                        stderr=subprocess.PIPE, check=False, preexec_fn=disable_core_dump)
             self.assertEqual(duplicate.returncode, 127, duplicate.stderr.decode(errors="replace"))
             self.assertEqual(duplicate.stdout, b"")
+            overlap = subprocess.run([str(overlapping_executable_bss(executable))], stdout=subprocess.PIPE,
+                                     stderr=subprocess.PIPE, check=False, preexec_fn=disable_core_dump)
+            self.assertEqual(overlap.returncode, 127, overlap.stderr.decode(errors="replace"))
+            self.assertEqual(overlap.stdout, b"")
             compatible_crt = work / "compatible-crt"
             compatible_build = subprocess.run(
                 [sys.executable, str(BUILDER), "--out-dir", str(compatible_crt), "--hardening-profile", "compatibility",
@@ -450,6 +469,9 @@ class X86_64StaticPieTests(unittest.TestCase):
                                         preexec_fn=disable_core_dump)
                 self.assertEqual(result.returncode, 0, result.stderr.decode(errors="replace"))
                 self.assertRegex(result.stdout, rb"^I[0-9a-f]{16}F$")
+            compatible_overlap = subprocess.run([str(overlapping_executable_bss(compatible))], stdout=subprocess.PIPE,
+                                                stderr=subprocess.PIPE, check=False, preexec_fn=disable_core_dump)
+            self.assertNotEqual(compatible_overlap.returncode, 127)
 
     def test_static_pie_bootstrap_executes_and_rejects_unknown_relocations(self) -> None:
         if os.environ.get("CRABC_CRT_X86_64_EVIDENCE_SLICE") == "bundle":
