@@ -36,22 +36,123 @@ class InstalledDynamicDriverTests(unittest.TestCase):
             path = self.root / relative
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_bytes(b"owned test payload")
+        receipt = self.root / "share/crabc/crt.provenance.json"
+        receipt.write_text(json.dumps({"hardening_profile": "compatibility", "objects": {
+            "Scrt1.o": {"sha256": hashlib.sha256(b"owned test payload").hexdigest()},
+        }}))
+        loader_receipt = self.root / "share/crabc/loader.provenance.json"
+        loader_receipt.write_text(json.dumps({"build_profile": "debug", "compiler_command": [], "artifact": {
+            "path": driver.INTERPRETER.lstrip("/"), "sha256": hashlib.sha256(b"owned test payload").hexdigest(),
+        }}))
         (self.root / "lib/ld-musl-x86_64.so.1").symlink_to("ld-crabc-x86_64.so.1")
         (self.root / "share/crabc").mkdir(parents=True, exist_ok=True)
         self.manifest = {"schema": 1, "format": driver.FORMAT, "target": driver.shared.TARGET,
+                         "hardening_profile": "compatibility",
+                         "build_profile": "debug", "source_sha256": "a" * 64,
                          "toolchain": PINNED_TOOLCHAIN,
-                         "files": {relative: hashlib.sha256(b"owned test payload").hexdigest()
-                                   for relative in driver.REQUIRED}, "symlinks": driver.ALIASES}
+                         "files": {**{relative: hashlib.sha256(b"owned test payload").hexdigest()
+                                   for relative in driver.REQUIRED},
+                                   "share/crabc/crt.provenance.json": hashlib.sha256(receipt.read_bytes()).hexdigest()},
+                         "symlinks": driver.ALIASES}
+        self.manifest["files"]["share/crabc/loader.provenance.json"] = hashlib.sha256(loader_receipt.read_bytes()).hexdigest()
         self.write_manifest()
 
     def write_manifest(self):
         (self.root / "share/crabc/manifest.json").write_text(json.dumps(self.manifest))
+
+    def test_hardened_product_selects_distinct_interpreter_and_rejects_non_pie(self):
+        profile = driver.shared.NativeRuntimeProfile.HARDENED
+        old = driver.INTERPRETER.lstrip("/")
+        new = profile.interpreter.lstrip("/")
+        (self.root / old).rename(self.root / new)
+        (self.root / "lib/ld-musl-x86_64.so.1").unlink()
+        self.manifest["files"][new] = self.manifest["files"].pop(old)
+        self.manifest["hardening_profile"] = profile.value
+        self.manifest["symlinks"] = profile.aliases
+        receipt = self.root / "share/crabc/crt.provenance.json"
+        provenance = json.loads(receipt.read_text())
+        provenance["hardening_profile"] = profile.value
+        receipt.write_text(json.dumps(provenance))
+        self.manifest["files"]["share/crabc/crt.provenance.json"] = hashlib.sha256(receipt.read_bytes()).hexdigest()
+        loader_receipt = self.root / "share/crabc/loader.provenance.json"
+        provenance = json.loads(loader_receipt.read_text())
+        provenance["artifact"]["path"] = new
+        provenance["compiler_command"] = ["--cfg", "crabc_hardened"]
+        loader_receipt.write_text(json.dumps(provenance))
+        self.manifest["files"]["share/crabc/loader.provenance.json"] = hashlib.sha256(loader_receipt.read_bytes()).hexdigest()
+        self.write_manifest()
+        with self.assertRaisesRegex(driver.shared.DriverError, "require PIE"):
+            driver.execute(self.root, ["--dynamic-non-pie", "--print-link-plan"])
+        with self.assertRaisesRegex(driver.shared.DriverError, "eager binding"):
+            driver.execute(self.root, ["--dynamic-shared-object", "--binding", "lazy", "--print-link-plan"])
+        with patch("sys.stdout", new_callable=io.StringIO) as output:
+            driver.execute(self.root, ["--dynamic-pie", "--print-link-plan"])
+        self.assertIn(profile.interpreter, json.loads(output.getvalue())["linker"])
+
+    def test_installed_driver_rejects_a_mismatched_dynamic_crt_receipt(self):
+        path = self.root / "share/crabc/crt.provenance.json"
+        original = json.loads(path.read_text())
+        for field in ("profile", "object"):
+            with self.subTest(field=field):
+                receipt = json.loads(json.dumps(original))
+                if field == "profile":
+                    receipt["hardening_profile"] = "hardened"
+                else:
+                    receipt["objects"]["Scrt1.o"]["sha256"] = "b" * 64
+                path.write_text(json.dumps(receipt))
+                self.manifest["files"]["share/crabc/crt.provenance.json"] = hashlib.sha256(path.read_bytes()).hexdigest()
+                self.write_manifest()
+                with self.assertRaises(driver.shared.DriverError):
+                    driver.validate_installation(self.root)
+
+    def test_installed_driver_rejects_mismatched_loader_profile(self):
+        path = self.root / "share/crabc/loader.provenance.json"
+        receipt = json.loads(path.read_text())
+        receipt["compiler_command"] = ["--cfg", "crabc_hardened"]
+        path.write_text(json.dumps(receipt))
+        self.manifest["files"]["share/crabc/loader.provenance.json"] = hashlib.sha256(path.read_bytes()).hexdigest()
+        self.write_manifest()
+        with self.assertRaises(driver.shared.DriverError):
+            driver.validate_installation(self.root)
+
+    def test_installed_driver_rejects_debug_loader_relabelled_as_release(self):
+        self.manifest["build_profile"] = "release"
+        self.write_manifest()
+        with self.assertRaises(driver.shared.DriverError):
+            driver.validate_installation(self.root)
+
+    def test_release_loader_provenance_binds_flags_and_artifact(self):
+        path = self.root / "share/crabc/loader.provenance.json"
+        receipt = json.loads(path.read_text())
+        del receipt["build_profile"]
+        del receipt["compiler_command"]
+        receipt["cargo"] = {"rustflags": "-C panic=abort"}
+        path.write_text(json.dumps(receipt))
+        profile = driver.shared.NativeRuntimeProfile.COMPATIBILITY
+        driver.validate_loader_provenance(self.root, "share/crabc/loader.provenance.json", profile, "release")
+        receipt["cargo"]["rustflags"] += " --cfg crabc_hardened"
+        path.write_text(json.dumps(receipt))
+        with self.assertRaises(driver.shared.DriverError):
+            driver.validate_loader_provenance(self.root, "share/crabc/loader.provenance.json", profile, "release")
+        receipt["cargo"]["rustflags"] = "-C panic=abort"
+        receipt["artifact"]["sha256"] = "b" * 64
+        path.write_text(json.dumps(receipt))
+        with self.assertRaises(driver.shared.DriverError):
+            driver.validate_loader_provenance(self.root, "share/crabc/loader.provenance.json", profile, "release")
 
     def _seal_materialized_fixture(self, root: Path) -> str:
         """Give the selected fixture payload one source-bound materialization state."""
 
         manifest_path = root / "share/crabc/manifest.json"
         manifest = json.loads(manifest_path.read_text())
+        loader_path = root / "share/crabc/loader.provenance.json"
+        loader = json.loads(loader_path.read_text())
+        loader.pop("build_profile")
+        loader.pop("compiler_command")
+        loader["cargo"] = {"rustflags": "-C panic=abort"}
+        loader_path.write_text(json.dumps(loader))
+        manifest["files"]["share/crabc/loader.provenance.json"] = hashlib.sha256(loader_path.read_bytes()).hexdigest()
+        manifest["build_profile"] = "release"
         source = qualification.source_digest()
         provenance_path = root / "share/crabc/libc-shared.provenance.json"
         provenance_path.write_text(json.dumps({
@@ -122,6 +223,7 @@ class InstalledDynamicDriverTests(unittest.TestCase):
         for source, relative in (
             (Path(driver.__file__), "bin/crabc-cc-dynamic"),
             (Path(driver.shared.__file__), "share/crabc/crabc_cc_static.py"),
+            (REPOSITORY_ROOT / "compat/x86_64/native_runtime_profile.py", "share/crabc/native_runtime_profile.py"),
             (Path(driver.receipt_contract.__file__), "share/crabc/owned_dynamic_receipt.py"),
             (Path(driver.elf_inspection.__file__), "share/crabc/owned_dynamic_elf.py"),
         ):
@@ -146,6 +248,15 @@ class InstalledDynamicDriverTests(unittest.TestCase):
         self._run_native(["/usr/bin/ar", "rcs", str(library / "libcrabc-builtins.a"), str(library / "empty.o")])
         (root / "lib/ld-crabc-x86_64.so.1").write_bytes(b"fixture interpreter\n")
         (root / "lib/ld-musl-x86_64.so.1").symlink_to("ld-crabc-x86_64.so.1")
+        (root / "share/crabc/crt.provenance.json").write_text(json.dumps({
+            "hardening_profile": "compatibility",
+            "objects": {"Scrt1.o": {"sha256": hashlib.sha256((library / "Scrt1.o").read_bytes()).hexdigest()}},
+        }))
+        (root / "share/crabc/loader.provenance.json").write_text(json.dumps({
+            "build_profile": "debug", "compiler_command": [],
+            "artifact": {"path": "lib/ld-crabc-x86_64.so.1",
+                         "sha256": hashlib.sha256((root / "lib/ld-crabc-x86_64.so.1").read_bytes()).hexdigest()},
+        }))
 
         files = {
             path.relative_to(root).as_posix(): hashlib.sha256(path.read_bytes()).hexdigest()
@@ -155,6 +266,8 @@ class InstalledDynamicDriverTests(unittest.TestCase):
         }
         (root / "share/crabc/manifest.json").write_text(json.dumps({
             "schema": 1, "format": driver.FORMAT, "target": driver.shared.TARGET,
+            "hardening_profile": "compatibility",
+            "build_profile": "debug", "source_sha256": "a" * 64,
             "toolchain": PINNED_TOOLCHAIN, "files": files, "symlinks": driver.ALIASES,
         }))
         return root
@@ -476,7 +589,7 @@ class InstalledDynamicDriverTests(unittest.TestCase):
         (static / "share/crabc").mkdir(parents=True)
         (static / "share/crabc/manifest.json").write_text(json.dumps({
             "schema": 1, "format": combined.PRODUCT_FORMATS["static"], "target": combined.TARGET,
-            "toolchain": PINNED_TOOLCHAIN, "source_sha256": source,
+            "toolchain": PINNED_TOOLCHAIN, "source_sha256": source, "hardening_profile": "compatibility",
             "installed": {"files": {
                 path.relative_to(static).as_posix(): hashlib.sha256(path.read_bytes()).hexdigest()
                 for path in static.rglob("*") if path.is_file() and path != static / "share/crabc/manifest.json"
@@ -520,6 +633,19 @@ class InstalledDynamicDriverTests(unittest.TestCase):
                 driver.elf_inspection.validate_record(json.loads(inspection_path.read_text()), output,
                                                       output_format=driver.FORMAT,
                                                       fail=self._receipt_value_failure)
+
+    def test_combined_driver_rejects_resealed_mixed_profiles(self):
+        root = self._combined_native_fixture()
+        embedded_path = root / "share/crabc/static/manifest.json"
+        embedded = json.loads(embedded_path.read_text())
+        embedded["hardening_profile"] = "hardened"
+        embedded_path.write_text(json.dumps(embedded))
+        manifest_path = root / driver.MANIFEST
+        manifest = json.loads(manifest_path.read_text())
+        manifest["files"]["share/crabc/static/manifest.json"] = driver.shared.sha256_file(embedded_path)
+        manifest_path.write_text(json.dumps(manifest))
+        with self.assertRaisesRegex(driver.shared.DriverError, "combined product profiles differ"):
+            driver.validate_installation(root)
 
     def test_combined_sysroot_rejects_drift_from_its_roster_or_embedded_product(self):
         root = self._combined_native_fixture()
@@ -937,6 +1063,7 @@ class InstalledDynamicDriverTests(unittest.TestCase):
     def test_installed_driver_import_does_not_mutate_payload_without_python_environment(self):
         for relative, source in (("bin/crabc-cc-dynamic", Path(driver.__file__)),
                                  ("share/crabc/crabc_cc_static.py", Path(driver.shared.__file__)),
+                                 ("share/crabc/native_runtime_profile.py", REPOSITORY_ROOT / "compat/x86_64/native_runtime_profile.py"),
                                  ("share/crabc/owned_dynamic_receipt.py", Path(driver.receipt_contract.__file__)),
                                  ("share/crabc/owned_dynamic_elf.py", Path(driver.elf_inspection.__file__))):
             destination = self.root / relative
@@ -1302,7 +1429,7 @@ class InstalledDynamicDriverTests(unittest.TestCase):
 
     def test_producer_failure_keeps_partial_payload_private(self):
         output = Path(self.temporary.name) / "produced"
-        def fail(staged, build, *, allocator_backend, lifecycle_test_audit, profile):
+        def fail(staged, build, *, allocator_backend, lifecycle_test_audit, profile, hardening_profile):
             self.assertEqual(allocator_backend, "accepted-c")
             self.assertFalse(lifecycle_test_audit)
             self.assertEqual(profile, "release")
@@ -1400,7 +1527,7 @@ class InstalledDynamicDriverTests(unittest.TestCase):
         for failure in ("invalid-payload", "competing-publication"):
             with self.subTest(failure=failure):
                 output = Path(self.temporary.name) / failure
-                def finish(staged, build, *, allocator_backend, lifecycle_test_audit, profile):
+                def finish(staged, build, *, allocator_backend, lifecycle_test_audit, profile, hardening_profile):
                     self.assertEqual(allocator_backend, "accepted-c")
                     self.assertFalse(lifecycle_test_audit)
                     self.assertEqual(profile, "release")

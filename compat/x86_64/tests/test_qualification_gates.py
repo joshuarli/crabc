@@ -56,6 +56,81 @@ CLEAN = {"revision": "a" * 40, "uncommitted": []}
 
 
 class GateConditionTests(unittest.TestCase):
+    def test_hardened_product_replay_rejects_changed_bytes_and_profiles(self):
+        with tempfile.TemporaryDirectory(dir=ROOT / ".work/tmp") as temporary:
+            root = Path(temporary)
+            source = "a" * 64
+            products = {}
+            paths = {}
+            for name in ("static", "dynamic", "compatibility"):
+                path = root / ".work" / name / "share/crabc/manifest.json"
+                path.parent.mkdir(parents=True)
+                path.write_text(json.dumps({"hardening_profile": "compatibility" if name == "compatibility" else "hardened",
+                                            "build_profile": "release", "source_sha256": source}))
+                paths[name] = path
+                products[name] = {"manifest": path.relative_to(root).as_posix(),
+                                  "sha256": hashlib.sha256(path.read_bytes()).hexdigest()}
+            qualification = SimpleNamespace(source_digest=Mock(return_value=source), product_identity=Mock())
+            evidence = SimpleNamespace(_validate_static_product=Mock(), validate_dynamic_product_source=Mock())
+            modules = {"owned_dynamic_qualification": qualification, "owned_posix_product_evidence": evidence}
+            with patch.object(gates, "ROOT", root), patch.object(gates, "_import_compat", side_effect=modules.__getitem__):
+                self.assertEqual(gates.validate_hardened_products(products), products)
+                evidence._validate_static_product.assert_called_once_with(paths["static"].parents[2])
+                evidence.validate_dynamic_product_source.assert_called_once_with(paths["dynamic"].parents[2], source)
+                qualification.product_identity.assert_called_once_with(paths["compatibility"].parents[2])
+                paths["dynamic"].write_text("{}")
+                with self.assertRaises(gates.EvidenceUnmet):
+                    gates.validate_hardened_products(products)
+                products["dynamic"]["sha256"] = hashlib.sha256(paths["dynamic"].read_bytes()).hexdigest()
+                with self.assertRaises(gates.EvidenceUnmet):
+                    gates.validate_hardened_products(products)
+                with self.assertRaises(gates.EvidenceUnmet):
+                    gates.validate_hardened_products({"static": products["static"]})
+
+    def test_loader_gate_rejects_missing_or_duplicate_hardened_requirement(self):
+        gate = "compat.loader-corpus"
+        families = complete_chain_families()
+        ordinary = f"./scripts/dev-x86_64.sh {gate}"
+        readers = {(gate, ordinary): reader(gate, ordinary)}
+        checks = {gate: (gates._hardened_runtime_requirement,)}
+        with patch.object(self, "gate", gate):
+            missing = self.evaluate(families, readers, checks=checks)
+            self.assertFalse(missing["passed"])
+            self.assertIn("hardened-runtime-required", missing["unmet"])
+            families[gate]["native_evidence"].extend([
+                {"state": "required", "command": gates.HARDENED_RUNTIME_COMMAND, "scope": "fixture"},
+                {"state": "required", "command": gates.HARDENED_RUNTIME_COMMAND, "scope": "fixture"},
+            ])
+            readers[(gate, gates.HARDENED_RUNTIME_COMMAND)] = reader(gate, gates.HARDENED_RUNTIME_COMMAND)
+            duplicate = self.evaluate(families, readers, checks=checks)
+            self.assertFalse(duplicate["passed"])
+            self.assertIn("hardened-runtime-required", duplicate["unmet"])
+            families[gate]["native_evidence"].pop()
+            passing = self.evaluate(families, readers, checks=checks)
+            self.assertTrue(passing["passed"])
+
+    def test_hardened_execution_requires_qualified_compatibility_and_passing_run(self):
+        evaluation = Mock()
+        evaluation.published.return_value = {
+            "status": "installed-loader-component-verified", "component_complete": True,
+            "inputs": {"before": {"qualification": {"path": ".work/cohort/qualification.json"}}},
+        }
+        qualification = Path("/workspace/.work/cohort/qualification.json")
+        with patch.object(gates, "_physical_work_file", return_value=qualification), \
+             patch.object(gates.subprocess, "run") as run, \
+             patch.object(gates, "validate_hardened_products", side_effect=lambda value: value):
+            run.return_value = SimpleNamespace(returncode=0, stdout=b"{}\nhardened runtime: PASS\n", stderr=b"")
+            self.assertEqual(gates._execute_hardened_runtime(evaluation), {})
+            self.assertEqual(run.call_args.args[0][-1], str(qualification.parent / "installed"))
+            for status, stdout in ((1, b"{}\nhardened runtime: PASS\n"), (0, b"incomplete\n"),
+                                   (0, b"not-json\nhardened runtime: PASS\n")):
+                run.return_value = SimpleNamespace(returncode=status, stdout=stdout, stderr=b"failure")
+                with self.subTest(status=status, stdout=stdout), self.assertRaises(gates.EvidenceUnmet):
+                    gates._execute_hardened_runtime(evaluation)
+        evaluation.published.side_effect = gates.EvidenceUnmet("missing compatibility qualification")
+        with self.assertRaises(gates.EvidenceUnmet):
+            gates._execute_hardened_runtime(evaluation)
+
     gate = gates.CHAIN[2]
 
     def test_performance_release_command_has_no_allocator_report_inputs(self):

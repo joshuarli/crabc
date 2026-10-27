@@ -12,6 +12,7 @@ import json
 import os
 from pathlib import Path
 import re
+import shlex
 import subprocess
 import sys
 import tempfile
@@ -34,6 +35,8 @@ ALIASES = {"lib/ld-musl-x86_64.so.1": "ld-crabc-x86_64.so.1"}
 COMPILER_HELPER_ARCHIVE = "libcrabc-builtins.a"
 REQUIRED = {"usr/lib/libc.so", "usr/lib/crt1.o", "usr/lib/Scrt1.o", "usr/lib/crti.o", "usr/lib/crtn.o",
             "usr/lib/crabc-dynamic-attach.o", "usr/lib/" + COMPILER_HELPER_ARCHIVE, "lib/ld-crabc-x86_64.so.1",
+            "share/crabc/crabc_cc_static.py", "share/crabc/native_runtime_profile.py",
+            "share/crabc/crt.provenance.json", "share/crabc/loader.provenance.json",
             "share/crabc/owned_dynamic_receipt.py", "share/crabc/owned_dynamic_elf.py"}
 APPLICATION_DSO_BASENAME = re.compile(r"[^/\x00]+\.so(?:\.[0-9]+)*\Z")
 RECEIPT_V1_FIELDS = receipt_contract.V1_FIELDS
@@ -177,6 +180,33 @@ def link_evidence_workspace(parent: Path, *, retain: bool):
         yield Path(temporary)
 
 
+def validate_loader_provenance(root: Path, receipt_path: str, profile: shared.NativeRuntimeProfile,
+                               build_profile: str) -> None:
+    receipt = shared.load_manifest(root / receipt_path, "loader provenance")
+    artifact = receipt.get("artifact")
+    if (not isinstance(artifact, dict) or artifact.get("path") != profile.interpreter.lstrip("/")
+            or artifact.get("sha256") != shared.sha256_file(root / profile.interpreter.lstrip("/"))):
+        raise shared.DriverError("installed loader does not match its provenance")
+    if build_profile == "debug" and receipt.get("build_profile") == "debug":
+        arguments = receipt.get("compiler_command")
+    elif build_profile == "release" and receipt.get("build_profile") is None:
+        cargo = receipt.get("cargo")
+        flags = cargo.get("rustflags") if isinstance(cargo, dict) else None
+        try:
+            arguments = shlex.split(flags) if isinstance(flags, str) else None
+        except ValueError as error:
+            raise shared.DriverError("invalid loader compiler flags") from error
+    else:
+        raise shared.DriverError("installed loader build profile does not match product")
+    if not isinstance(arguments, list) or not all(isinstance(argument, str) for argument in arguments):
+        raise shared.DriverError("invalid loader compiler provenance")
+    selected = sum(argument == "--cfg=crabc_hardened" or
+                   (argument == "--cfg" and index + 1 < len(arguments) and arguments[index + 1] == "crabc_hardened")
+                   for index, argument in enumerate(arguments))
+    if selected != (1 if profile is shared.NativeRuntimeProfile.HARDENED else 0):
+        raise shared.DriverError("installed loader profile does not match its provenance")
+
+
 def validate(root: Path) -> dict:
     manifest = root / "share/crabc/manifest.json"
     shared.require_regular(manifest, "dynamic manifest")
@@ -184,7 +214,9 @@ def validate(root: Path) -> dict:
         record = json.loads(manifest.read_text())
     except (ValueError, OSError) as error:
         raise shared.DriverError(f"invalid dynamic manifest: {error}") from error
-    if not isinstance(record, dict) or type(record.get("schema")) is not int or record.get("schema") != 1 or record.get("format") != FORMAT or record.get("target") != shared.TARGET or record.get("symlinks") != ALIASES:
+    profile = shared.profile_from_manifest(record)
+    required = (REQUIRED - {INTERPRETER.lstrip("/")}) | {profile.interpreter.lstrip("/")}
+    if not isinstance(record, dict) or type(record.get("schema")) is not int or record.get("schema") != 1 or record.get("format") != FORMAT or record.get("target") != shared.TARGET or record.get("symlinks") != profile.aliases:
         raise shared.DriverError("wrong installed dynamic product contract")
     # Debug products keep their input fingerprint in the manifest; their
     # unqualified state contains only backend selection. Installed drivers
@@ -194,7 +226,7 @@ def validate(root: Path) -> dict:
         if type(source) is not str or re.fullmatch(r"[0-9a-f]{64}", source) is None:
             raise shared.DriverError("debug dynamic product source digest is invalid")
     files = record.get("files")
-    if not isinstance(files, dict) or not REQUIRED <= files.keys():
+    if not isinstance(files, dict) or not required <= files.keys():
         raise shared.DriverError("incomplete installed dynamic payload")
     observed = set()
     aliases = {}
@@ -207,13 +239,15 @@ def validate(root: Path) -> dict:
                 observed.add(relative)
         elif not path.is_dir():
             raise shared.DriverError(f"nonregular installed payload: {relative}")
-    if observed != files.keys() or aliases != ALIASES:
+    if observed != files.keys() or aliases != profile.aliases:
         raise shared.DriverError("installed payload differs from exact manifest roster")
     for relative, digest in files.items():
         if Path(relative).is_absolute() or ".." in Path(relative).parts or not re.fullmatch("[0-9a-f]{64}", str(digest)):
             raise shared.DriverError("unsafe manifest payload entry")
         if shared.sha256_file(root / relative) != digest:
             raise shared.DriverError(f"installed payload hash mismatch: {relative}")
+    shared.validate_crt_provenance(root, "share/crabc/crt.provenance.json", profile, "Scrt1.o")
+    validate_loader_provenance(root, "share/crabc/loader.provenance.json", profile, record.get("build_profile"))
     return record
 
 
@@ -229,10 +263,12 @@ def validate_combined(root: Path) -> dict:
     path; only product metadata may move within ``share/crabc/``.
     """
     record = json.loads((root / MANIFEST).read_text())
+    profile = shared.profile_from_manifest(record)
+    required = (REQUIRED - {INTERPRETER.lstrip("/")}) | {profile.interpreter.lstrip("/")}
     files, links = record.get("files"), record.get("symlinks")
     products = record.get("products")
     if (type(record.get("schema")) is not int or record.get("schema") != 1 or record.get("target") != shared.TARGET
-            or not isinstance(files, dict) or links != ALIASES or not isinstance(products, dict)
+            or not isinstance(files, dict) or links != profile.aliases or record.get("modes") != list(profile.combined_modes) or not isinstance(products, dict)
             or not isinstance(products.get("dynamic"), dict)):
         raise shared.DriverError("wrong installed combined sysroot contract")
     product = products["dynamic"]
@@ -250,7 +286,7 @@ def validate_combined(root: Path) -> dict:
                 observed.add(relative)
         elif not path.is_dir():
             raise shared.DriverError(f"nonregular installed payload: {relative}")
-    if observed != files.keys() or aliases != ALIASES:
+    if observed != files.keys() or aliases != profile.aliases:
         raise shared.DriverError("installed payload differs from exact combined manifest roster")
     for relative, digest in files.items():
         if Path(relative).is_absolute() or ".." in Path(relative).parts or not re.fullmatch("[0-9a-f]{64}", str(digest)):
@@ -263,17 +299,25 @@ def validate_combined(root: Path) -> dict:
         raise shared.DriverError(f"invalid embedded dynamic manifest: {error}") from error
     embedded_files = embedded.get("files") if isinstance(embedded, dict) else None
     if (not isinstance(embedded_files, dict) or embedded.get("format") != FORMAT
-            or embedded.get("symlinks") != ALIASES or not REQUIRED <= embedded_files.keys()):
+            or embedded.get("symlinks") != profile.aliases or not required <= embedded_files.keys()
+            or shared.profile_from_manifest(embedded) is not profile):
         raise shared.DriverError("wrong embedded dynamic product contract")
+    static = shared.load_manifest(root / shared.COMBINED_STATIC_MANIFEST, "embedded static manifest")
+    if shared.profile_from_manifest(static) is not profile:
+        raise shared.DriverError("combined product profiles differ")
     for relative, digest in embedded_files.items():
         placed = placements.get(relative)
         # Only product metadata may move, and only within share/crabc/.
-        movable = (relative not in REQUIRED and relative.startswith(shared.PRODUCT_METADATA_PREFIX)
+        movable = ((relative not in required or relative in {"share/crabc/crt.provenance.json", "share/crabc/loader.provenance.json"})
+                   and relative.startswith(shared.PRODUCT_METADATA_PREFIX)
                    and isinstance(placed, str) and placed.startswith(shared.PRODUCT_METADATA_PREFIX))
         if placed != relative and not movable:
             raise shared.DriverError(f"combined sysroot moved dynamic payload: {relative}")
         if files.get(placed) != digest:
             raise shared.DriverError(f"combined sysroot does not install dynamic payload unchanged: {relative}")
+    receipt = placements["share/crabc/crt.provenance.json"]
+    shared.validate_crt_provenance(root, receipt, profile, "Scrt1.o")
+    validate_loader_provenance(root, placements["share/crabc/loader.provenance.json"], profile, embedded.get("build_profile"))
     return record
 
 
@@ -615,7 +659,11 @@ def application_quote_include_dir(root: Path, path: Path) -> Path:
 
 
 def execute(root: Path, arguments: list[str]) -> None:
-    validate_installation(root)
+    record = validate_installation(root)
+    if record.get("format") == COMBINED_FORMAT:
+        record = shared.load_manifest(root / COMBINED_PRODUCT_MANIFEST, "embedded dynamic manifest")
+    profile = shared.profile_from_manifest(record)
+    interpreter = profile.interpreter
     retain_evidence = retain_link_evidence()
     mode = None
     binding = None
@@ -710,11 +758,15 @@ def execute(root: Path, arguments: list[str]) -> None:
             common.append(argument)
         index += 1
     if mode is None: raise shared.DriverError("select --dynamic-pie, --dynamic-non-pie or --dynamic-shared-object")
+    if profile is shared.NativeRuntimeProfile.HARDENED and mode == "exec":
+        raise shared.DriverError("hardened dynamic products require PIE executables")
     application_search_kind = "rpath" if application_rpath is not None else "runpath"
     if application_search_kind == "runpath":
         application_runpath = application_runpath if application_runpath is not None else "/usr/lib"
     application_search_path = application_rpath if application_search_kind == "rpath" else application_runpath
     binding = binding or "now"
+    if profile is shared.NativeRuntimeProfile.HARDENED and binding != "now":
+        raise shared.DriverError("hardened dynamic products require eager binding")
     if runtime_imports and (mode != "shared" or binding != "lazy"):
         raise shared.DriverError("runtime imports require a lazy shared object")
     invocation = shared.parse_invocation(common)
@@ -754,7 +806,7 @@ def execute(root: Path, arguments: list[str]) -> None:
         link.append("--export-dynamic")
     entry_object = "Scrt1.o" if mode == "pie" else "crt1.o"
     if mode != "shared":
-        link += [*receipt_contract.EXECUTABLE_WEAK_IMPORT_FLAGS, "--dynamic-linker", INTERPRETER, str(library / entry_object),
+        link += [*receipt_contract.EXECUTABLE_WEAK_IMPORT_FLAGS, "--dynamic-linker", interpreter, str(library / entry_object),
                  str(library / "crabc-dynamic-attach.o")]
     if invocation.print_link_plan:
         if dsos or transitive_dsos: raise shared.DriverError("link plan accepts no application inputs")
@@ -894,7 +946,7 @@ def execute(root: Path, arguments: list[str]) -> None:
         # this link never uses --as-needed: DT_NEEDED is their link order then
         # libc.so. The inspection is complete before any receipt exists.
         inspection = final_elf_inspection(output, elf_inspection.Expectation(
-            mode=mode, interpreter=INTERPRETER,
+            mode=mode, interpreter=interpreter,
             needed=(*(path.name for path in direct_dso_paths), "libc.so"),
             soname=output.name if mode == "shared" else None,
             search_kind=application_search_kind, search_path=application_search_path,

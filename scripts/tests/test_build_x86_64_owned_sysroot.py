@@ -36,6 +36,62 @@ import build_x86_64_owned_combined_sysroot as combined  # noqa: E402
 
 
 class BuildX86OwnedSysrootTests(unittest.TestCase):
+    def test_crt_profile_and_object_must_match_product(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            (root / "rcrt1.o").write_bytes(b"hardened crt")
+            receipt = {"hardening_profile": "hardened", "objects": {
+                "rcrt1.o": {"sha256": builder.sha256_file(root / "rcrt1.o")},
+            }}
+            (root / "objects.json").write_text(json.dumps(receipt))
+            builder.validate_crt_profile(root, builder.NativeRuntimeProfile.HARDENED)
+            with self.assertRaises(builder.BuildError):
+                builder.validate_crt_profile(root, builder.NativeRuntimeProfile.COMPATIBILITY)
+            (root / "rcrt1.o").write_bytes(b"different crt")
+            with self.assertRaises(builder.BuildError):
+                builder.validate_crt_profile(root, builder.NativeRuntimeProfile.HARDENED)
+
+    def test_installed_driver_rejects_a_mismatched_crt_receipt(self) -> None:
+        for field in ("profile", "object"):
+            with self.subTest(field=field), tempfile.TemporaryDirectory() as temporary:
+                root = Path(temporary)
+                self.materialize_static_driver_sysroot(root)
+                path = root / "share/crabc/crt.provenance.json"
+                receipt = json.loads(path.read_text())
+                if field == "profile":
+                    receipt["hardening_profile"] = "hardened"
+                else:
+                    receipt["objects"]["rcrt1.o"]["sha256"] = "b" * 64
+                builder.write_json(path, receipt)
+                manifest_path = root / driver.MANIFEST_RELATIVE_PATH
+                manifest = json.loads(manifest_path.read_text())
+                manifest["installed"]["files"]["share/crabc/crt.provenance.json"] = builder.sha256_file(path)
+                builder.write_json(manifest_path, manifest)
+                with self.assertRaises(driver.DriverError):
+                    driver.validate_installed_runtime(root)
+
+    def test_hardened_static_product_selects_only_static_pie(self) -> None:
+        profile = builder.NativeRuntimeProfile.HARDENED
+        manifest = builder.installed_manifest({"usr/lib/rcrt1.o": "b" * 64}, {}, source_sha256="a" * 64, hardening_profile=profile)
+        self.assertEqual(manifest["hardening_profile"], "hardened")
+        self.assertEqual(manifest["sealed_static_driver"]["modes"], [
+            {"id": "static-pie", "elf_type": "ET_DYN", "crt_object": "rcrt1.o"},
+        ])
+        invocation = driver.parse_invocation(["--print-link-plan"], hardening_profile=profile)
+        self.assertEqual(invocation.mode, driver.STATIC_PIE)
+        with self.assertRaises(driver.DriverError):
+            driver.parse_invocation(["--static-et-exec", "--print-link-plan"], hardening_profile=profile)
+        self.assertIs(driver.profile_from_manifest(manifest), profile)
+        driver.static_product_payload_files(manifest)
+        altered_modes = dict(manifest, sealed_static_driver={**manifest["sealed_static_driver"],
+                             "modes": builder.NativeRuntimeProfile.COMPATIBILITY.static_modes})
+        with self.assertRaises(driver.DriverError):
+            driver.static_product_payload_files(altered_modes)
+        for value in (None, "unknown", "", 1):
+            altered = dict(manifest, hardening_profile=value)
+            with self.assertRaises(driver.DriverError):
+                driver.profile_from_manifest(altered)
+
     def test_debug_profile_is_explicit_and_keeps_release_as_the_default(self) -> None:
         self.assertEqual(builder.parse_args(["--profile", "debug"]).profile, "debug")
         self.assertEqual(builder.parse_args([]).profile, "release")
@@ -152,6 +208,10 @@ class BuildX86OwnedSysrootTests(unittest.TestCase):
             artifact = root / relative
             artifact.parent.mkdir(parents=True, exist_ok=True)
             artifact.write_bytes(b"owned\n")
+        builder.write_json(root / "share/crabc/crt.provenance.json", {
+            "hardening_profile": "compatibility",
+            "objects": {"rcrt1.o": {"sha256": builder.sha256_file(root / "usr/lib/rcrt1.o")}},
+        })
         installed = root / "bin" / "crabc-cc"
         builder.install_static_driver(installed)
         payload_hashes = builder.regular_file_hashes(root)
@@ -926,6 +986,7 @@ class BuildX86OwnedSysrootTests(unittest.TestCase):
         builder.write_json(dynamic / "share" / "crabc" / "manifest.json", {
             "schema": 1,
             "format": combined.PRODUCT_FORMATS["dynamic"], "target": builder.TARGET,
+            "hardening_profile": "compatibility",
             "toolchain": builder.PINNED_TOOLCHAIN,
             "files": {path: digest for path, (digest, _) in combined.tree(dynamic)[0].items()},
             "symlinks": {"lib/ld-musl-x86_64.so.1": "ld-crabc-x86_64.so.1"},
@@ -979,6 +1040,13 @@ class BuildX86OwnedSysrootTests(unittest.TestCase):
         def foreign_product(root: Path, record: dict) -> None:
             record["products"]["static"]["format"] = "other"
 
+        def foreign_profile(root: Path, record: dict) -> None:
+            path = root / "share/crabc/dynamic/manifest.json"
+            embedded = json.loads(path.read_text())
+            embedded["hardening_profile"] = "hardened"
+            path.write_text(json.dumps(embedded))
+            record["files"]["share/crabc/dynamic/manifest.json"] = builder.sha256_file(path)
+
         for label, edit, expected_error in (
             ("substitute", substitute_libc, "does not install static payload unchanged: usr/lib/libc.a"),
             ("move", move_crt1, "moved static payload: usr/lib/crt1.o"),
@@ -986,6 +1054,7 @@ class BuildX86OwnedSysrootTests(unittest.TestCase):
             ("link", stray_link, "contains a symlink: usr/include/extra.h"),
             ("alias", retarget_alias, "aliases differ"),
             ("product", foreign_product, "does not embed this static product"),
+            ("profile", foreign_profile, "combined product profiles differ"),
         ):
             with self.subTest(label=label), tempfile.TemporaryDirectory() as temporary:
                 root = self.materialize_combined_static_driver_sysroot(Path(temporary))

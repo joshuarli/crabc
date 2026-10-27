@@ -27,6 +27,15 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Sequence
 
+sys.dont_write_bytecode = True
+if Path(__file__).resolve().parent.name in ("bin", "crabc"):
+    directory = Path(__file__).resolve().parent
+    sys.path.insert(0, str(directory.parent / "share/crabc" if directory.name == "bin" else directory))
+    from native_runtime_profile import NativeRuntimeProfile
+else:
+    sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+    from compat.x86_64.native_runtime_profile import NativeRuntimeProfile
+
 
 TARGET = "x86_64-unknown-linux-musl"
 DRIVER_FORMAT = "crabc-x86-64-sealed-static-driver-v1"
@@ -237,6 +246,13 @@ def payload_hashes(files: object, description: str) -> dict[str, str]:
     return result
 
 
+def profile_from_manifest(manifest: dict) -> NativeRuntimeProfile:
+    try:
+        return NativeRuntimeProfile(manifest["hardening_profile"])
+    except (KeyError, TypeError, ValueError) as error:
+        raise DriverError("owned manifest has an invalid native runtime profile") from error
+
+
 def static_product_payload_files(manifest: dict) -> dict[str, str]:
     """Validate one static product manifest record and return its payload.
 
@@ -246,6 +262,7 @@ def static_product_payload_files(manifest: dict) -> dict[str, str]:
 
     if manifest.get("format") != SYSROOT_FORMAT or manifest.get("target") != TARGET:
         raise DriverError("owned manifest does not identify this x86 static sysroot")
+    profile = profile_from_manifest(manifest)
     source_sha256 = manifest.get("source_sha256")
     if (not isinstance(source_sha256, str) or len(source_sha256) != 64
             or any(character not in "0123456789abcdef" for character in source_sha256)):
@@ -258,6 +275,8 @@ def static_product_payload_files(manifest: dict) -> dict[str, str]:
         raise DriverError("owned manifest sealed static driver record drifted")
     if driver.get("status") != "planned-owned-static-product-seed-not-family-completion-not-public-support":
         raise DriverError("owned manifest sealed static driver status drifted")
+    if driver.get("modes") != profile.static_modes:
+        raise DriverError("owned manifest static modes differ from its profile")
     return payload_hashes(installed.get("files"), "manifest")
 
 
@@ -278,10 +297,13 @@ def combined_manifest_payload(root: Path, manifest: dict) -> tuple[dict[str, str
 
     if manifest.get("schema") != 1 or manifest.get("target") != TARGET:
         raise DriverError("owned manifest does not identify an x86 combined sysroot")
+    profile = profile_from_manifest(manifest)
+    if manifest.get("modes") != list(profile.combined_modes):
+        raise DriverError("owned combined manifest modes differ from its profile")
     files = payload_hashes(manifest.get("files"), "combined manifest")
     links = manifest.get("symlinks")
     products = manifest.get("products")
-    if not isinstance(links, dict) or not isinstance(products, dict) or not isinstance(products.get("static"), dict):
+    if links != profile.aliases or not isinstance(products, dict) or not isinstance(products.get("static"), dict):
         raise DriverError("owned combined manifest has no alias or product record")
     for link, target in links.items():
         if (not isinstance(link, str) or not isinstance(target, str) or "/" in target
@@ -292,7 +314,11 @@ def combined_manifest_payload(root: Path, manifest: dict) -> tuple[dict[str, str
     if (product.get("format") != SYSROOT_FORMAT or product.get("manifest") != COMBINED_STATIC_MANIFEST
             or COMBINED_STATIC_MANIFEST not in files or not isinstance(placements, dict)):
         raise DriverError("owned combined sysroot does not embed this static product")
-    embedded = static_product_payload_files(load_manifest(root / COMBINED_STATIC_MANIFEST, "embedded static manifest"))
+    static_manifest = load_manifest(root / COMBINED_STATIC_MANIFEST, "embedded static manifest")
+    dynamic_manifest = load_manifest(root / "share/crabc/dynamic/manifest.json", "embedded dynamic manifest")
+    if profile_from_manifest(static_manifest) is not profile or profile_from_manifest(dynamic_manifest) is not profile:
+        raise DriverError("owned combined product profiles differ")
+    embedded = static_product_payload_files(static_manifest)
     for relative, expected_hash in embedded.items():
         if relative not in placements:
             raise DriverError(f"owned combined sysroot does not place static payload: {relative}")
@@ -353,7 +379,18 @@ def validate_manifest_payload(root: Path) -> None:
             raise DriverError(f"owned manifest payload hash mismatch: {relative}")
 
 
-def validate_installed_runtime(root: Path) -> None:
+def validate_crt_provenance(root: Path, receipt_path: str, profile: NativeRuntimeProfile,
+                            entry: str = "rcrt1.o") -> None:
+    receipt = load_manifest(root / receipt_path, "CRT provenance")
+    try:
+        if (receipt["hardening_profile"] != profile.value
+                or receipt["objects"][entry]["sha256"] != sha256_file(root / "usr/lib" / entry)):
+            raise DriverError("installed CRT profile or PIE entry object does not match product")
+    except (KeyError, TypeError) as error:
+        raise DriverError("invalid installed CRT provenance") from error
+
+
+def validate_installed_runtime(root: Path) -> NativeRuntimeProfile:
     """Fail before source translation if the installed static boundary is absent."""
 
     validate_manifest_payload(root)
@@ -362,6 +399,16 @@ def validate_installed_runtime(root: Path) -> None:
         raise DriverError(f"owned installed headers are missing or unsafe: {include}")
     for relative in REQUIRED_RUNTIME_PATHS:
         require_regular(root / relative, relative)
+    manifest = load_manifest(root / MANIFEST_RELATIVE_PATH, "manifest")
+    receipt_path = "share/crabc/crt.provenance.json"
+    if manifest.get("format") == COMBINED_SYSROOT_FORMAT:
+        receipt_path = manifest["products"]["static"]["placements"].get(receipt_path)
+        manifest = load_manifest(root / COMBINED_STATIC_MANIFEST, "embedded static manifest")
+    if not isinstance(receipt_path, str) or "share/crabc/crt.provenance.json" not in static_product_payload_files(manifest):
+        raise DriverError("installed CRT provenance is not bound to the static product")
+    profile = profile_from_manifest(manifest)
+    validate_crt_provenance(root, receipt_path, profile)
+    return profile
 
 
 def static_mode(identifier: str) -> StaticMode:
@@ -469,10 +516,13 @@ def rejects_runtime_object(path: Path) -> bool:
     )
 
 
-def parse_invocation(arguments: Sequence[str]) -> Invocation:
+def parse_invocation(arguments: Sequence[str], *,
+                     hardening_profile: NativeRuntimeProfile = NativeRuntimeProfile.COMPATIBILITY) -> Invocation:
     """Parse a deliberately narrow application surface without fallback flags."""
 
-    mode = STATIC_ET_EXEC
+    if not isinstance(hardening_profile, NativeRuntimeProfile):
+        raise DriverError("unknown native runtime profile")
+    mode = STATIC_PIE if hardening_profile is NativeRuntimeProfile.HARDENED else STATIC_ET_EXEC
     mode_selected = False
     compile_only = False
     print_link_plan = False
@@ -554,6 +604,8 @@ def parse_invocation(arguments: Sequence[str]) -> Invocation:
                 raise DriverError(f"only admitted application .c and .o inputs are supported: {argument}")
         index += 1
 
+    if hardening_profile is NativeRuntimeProfile.HARDENED and mode is STATIC_ET_EXEC:
+        raise DriverError("hardened static products require static PIE")
     if print_link_plan:
         if compile_only or link_receipt is not None or output is not None or sources or objects or compiler_flags:
             raise DriverError("--print-link-plan accepts only one optional static mode")
@@ -1121,8 +1173,9 @@ def execute(root: Path, invocation: Invocation) -> None:
 def main(arguments: Sequence[str] | None = None) -> int:
     try:
         root = installed_root()
-        validate_installed_runtime(root)
-        execute(root, parse_invocation(sys.argv[1:] if arguments is None else arguments))
+        profile = validate_installed_runtime(root)
+        execute(root, parse_invocation(sys.argv[1:] if arguments is None else arguments,
+                                       hardening_profile=profile))
     except DriverError as error:
         print(f"crabc-cc: {error}", file=sys.stderr)
         return 1

@@ -249,6 +249,7 @@ const AT_ENTRY: u64 = 9;
 const AT_NULL: u64 = 0;
 
 const PT_LOAD: u32 = 1;
+const PT_GNU_STACK: u32 = 0x6474_e551;
 const PT_DYNAMIC: u32 = 2;
 const PT_PHDR: u32 = 6;
 const PT_TLS: u32 = 7;
@@ -259,6 +260,7 @@ const PF_W: u32 = 2;
 const PF_R: u32 = 4;
 
 const DT_NULL: i64 = 0;
+const DT_PLTGOT: i64 = 3;
 const DT_NEEDED: i64 = 1;
 const DT_PLTRELSZ: i64 = 2;
 const DT_HASH: i64 = 4;
@@ -397,7 +399,7 @@ const ELF64_RELR_BITMAP_BITS: u64 = 63;
 // not who must execute them.  Normal musl crt1 has no CRABC note.
 const OWNED_CRT_NOTE_NAME: &[u8] = b"CRABC\0";
 const OWNED_CRT_NOTE_TYPE: u32 = 0x4352_5401;
-const OWNED_CRT_NOTE_REVISION: u32 = 1;
+const OWNED_CRT_NOTE_REVISION: u32 = if cfg!(crabc_hardened) { 2 } else { 1 };
 const MAX_OWNED_CRT_NOTE_BYTES: usize = 64 * 1024;
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
@@ -589,7 +591,7 @@ const OWNED_CRT_HANDOFF_MAGIC: u64 = if cfg!(crabc_owned_crt_handoff_malformed) 
     0x4352_4142_435f_4831
 };
 #[cfg(any(crabc_owned_crt_handoff, all(crabc_general_initial_lifecycle, crabc_dynamic_main_thread_runtime_v1)))]
-const OWNED_CRT_HANDOFF_VERSION: u32 = 1;
+const OWNED_CRT_HANDOFF_VERSION: u32 = if cfg!(crabc_hardened) { 2 } else { 1 };
 #[cfg(crabc_owned_crt_handoff)]
 const OWNED_CRT_STATE_UNPUBLISHED: u8 = 0;
 #[cfg(crabc_owned_crt_handoff)]
@@ -1377,6 +1379,95 @@ unsafe fn main_load_bias(phdr: *const u8, phnum: usize) -> Option<u64> {
     (phdr as u64).checked_sub(virtual_address)
 }
 
+unsafe fn hardened_main_identity(base: u64, phdr: *const u8, phnum: usize) -> bool {
+    for index in 0..phnum {
+        let load = phdr.add(index * 56);
+        if read_u32(load) != PT_LOAD || read_u32(load.add(4)) & PF_R == 0
+            || read_u64(load.add(8)) != 0 || read_u64(load.add(32)) < 64 || read_u64(load.add(40)) < 64 { continue; }
+        let Some(address) = base.checked_add(read_u64(load.add(16))) else { return false; };
+        let header = address as *const u8;
+        if core::slice::from_raw_parts(header, 7) != b"\x7fELF\x02\x01\x01"
+            || read_u16(header.add(16)) != 3 || read_u16(header.add(18)) != 62
+            || read_u32(header.add(20)) != 1 || read_u16(header.add(52)) != 64
+            || read_u16(header.add(54)) != 56 || read_u16(header.add(56)) as usize != phnum { return false; }
+        let offset = read_u64(header.add(32));
+        let Some(end) = (phnum as u64).checked_mul(56).and_then(|size| offset.checked_add(size)) else { return false; };
+        for table_index in 0..phnum {
+            let table = phdr.add(table_index * 56);
+            if read_u32(table) != PT_LOAD || read_u32(table.add(4)) & PF_R == 0 { continue; }
+            let file_offset = read_u64(table.add(8));
+            let Some(file_end) = file_offset.checked_add(read_u64(table.add(32))) else { return false; };
+            if offset < file_offset || end > file_end || end - file_offset > read_u64(table.add(40)) { continue; }
+            let Some(mapped) = base.checked_add(read_u64(table.add(16)))
+                .and_then(|start| start.checked_add(offset - file_offset)) else { return false; };
+            if mapped == phdr as u64 { return true; }
+        }
+        return false;
+    }
+    false
+}
+
+unsafe fn hardened_program_headers(phdr: *const u8, phnum: usize) -> bool {
+    let mut stack = false;
+    for index in 0..phnum {
+        let header = phdr.add(index * 56);
+        let kind = read_u32(header);
+        let flags = read_u32(header.add(4));
+        if kind == PT_GNU_STACK {
+            if stack || flags & PF_X != 0 { return false; }
+            stack = true;
+        }
+        if kind != PT_LOAD { continue; }
+        if flags & (PF_W | PF_X) == (PF_W | PF_X) { return false; }
+        let start = read_u64(header.add(16));
+        let size = read_u64(header.add(40));
+        let Some(end) = start.checked_add(size).and_then(|end| end.checked_add(PAGE - 1)) else { return false; };
+        if size == 0 { continue; }
+        let start = align_down(start);
+        let end = align_down(end);
+        for prior_index in 0..index {
+            let prior = phdr.add(prior_index * 56);
+            if read_u32(prior) != PT_LOAD { continue; }
+            let prior_flags = read_u32(prior.add(4));
+            if !((flags & PF_W != 0 && prior_flags & PF_X != 0)
+                || (flags & PF_X != 0 && prior_flags & PF_W != 0)) { continue; }
+            let prior_start = read_u64(prior.add(16));
+            let prior_size = read_u64(prior.add(40));
+            if prior_size == 0 { continue; }
+            let Some(prior_end) = prior_start.checked_add(prior_size).and_then(|end| end.checked_add(PAGE - 1)) else { return false; };
+            if start < align_down(prior_end) && align_down(prior_start) < end { return false; }
+        }
+    }
+    stack
+}
+
+unsafe fn hardened_relro_pages(phdr: *const u8, phnum: usize, address: u64, length: u64) -> bool {
+    if length == 0 { return false; }
+    let start = align_down(address);
+    let Some(end) = address.checked_add(length).and_then(|end| end.checked_add(PAGE - 1)).map(align_down) else { return false; };
+    let mut writable = false;
+    for index in 0..phnum {
+        let header = phdr.add(index * 56);
+        if read_u32(header) != PT_LOAD { continue; }
+        let flags = read_u32(header.add(4));
+        let address = read_u64(header.add(16));
+        let length = read_u64(header.add(40));
+        if length == 0 { continue; }
+        let Some(load_end) = address.checked_add(length).and_then(|end| end.checked_add(PAGE - 1)).map(align_down) else { return false; };
+        let load_start = align_down(address);
+        if flags & PF_X != 0 && start < load_end && load_start < end { return false; }
+        if flags & PF_W != 0 && flags & PF_X == 0 && start >= load_start && end <= load_end { writable = true; }
+    }
+    writable
+}
+
+fn relro_covers(object: &Object, address: u64, length: u64) -> bool {
+    let Some(end) = object.relro_virtual_address.checked_add(object.relro_byte_len)
+        .and_then(|value| value.checked_add(PAGE - 1)).map(align_down) else { return false; };
+    object.relro_byte_len != 0 && address >= align_down(object.relro_virtual_address)
+        && address.checked_add(length).is_some_and(|last| last <= end)
+}
+
 unsafe fn parse_mapped(
     base: u64,
     phdr: *const u8,
@@ -1385,6 +1476,7 @@ unsafe fn parse_mapped(
     allow_bounded_runtime_legacy_tags: bool,
     general_initial_graph: bool,
 ) -> Option<Object> {
+    if cfg!(crabc_hardened) && !hardened_program_headers(phdr, phnum) { return None; }
     let mapped = role == ObjectRole::Library;
     // Legacy DT_INIT/DT_FINI are not general mapped-object features. The only
     // caller that may opt in is the one-slot runtime transaction below; it
@@ -1429,7 +1521,8 @@ unsafe fn parse_mapped(
                 // that owns a writable PT_LOAD prefix. Validate against the
                 // actual page-rounded mapping rather than raw p_memsz, but do
                 // not accept an arbitrary span beyond that mapping.
-                if byte_len == 0 || !virtual_range_in_page_mapped_load(phdr, phnum, address, byte_len) { return None; }
+                if byte_len == 0 || !virtual_range_in_page_mapped_load(phdr, phnum, address, byte_len)
+                    || (cfg!(crabc_hardened) && !hardened_relro_pages(phdr, phnum, address, byte_len)) { return None; }
                 relro = Some((address, byte_len));
             }
             // The original graph is intentionally a no-TLS artifact and its
@@ -1596,6 +1689,7 @@ unsafe fn parse_mapped(
     let mut relr_byte_len = None;
     let mut relr_entry_len = None;
     let mut jmprel_virtual_address = None;
+    let mut pltgot_virtual_address = None;
     let mut pltrel_byte_len = None;
     let mut plt_is_rela = None;
     let mut terminated = false;
@@ -1650,6 +1744,7 @@ unsafe fn parse_mapped(
                 symbolic_tag = true;
             }
             DT_JMPREL => { if jmprel_virtual_address.replace(value).is_some() { return None; } }
+            DT_PLTGOT => { if cfg!(crabc_hardened) && pltgot_virtual_address.replace(value).is_some() { return None; } }
             DT_PLTRELSZ => { if pltrel_byte_len.replace(value).is_some() { return None; } }
             DT_PLTREL => { if plt_is_rela.replace(value == ELF64_RELA).is_some() { return None; } }
             #[cfg(all(not(feature = "x86_64-owned-dynamic-runtime"), any(crabc_owned_crt_handoff, crabc_dynamic_main_thread_runtime_v1)))]
@@ -1994,6 +2089,14 @@ unsafe fn parse_mapped(
             object.pltrelsz = usize::try_from(byte_len).ok()?;
         }
         _ => return None,
+    }
+    if cfg!(crabc_hardened) {
+        if let Some(address) = pltgot_virtual_address {
+            if address & 7 != 0 || !virtual_range_in_writable_load(phdr, phnum, address, 24)
+                || !relro_covers(&object, address, 24) { return None; }
+        } else if object.pltrelsz != 0 {
+            return None;
+        }
     }
     match (relr_virtual_address, relr_byte_len, relr_entry_len) {
         (None, None, None) => {}
@@ -2394,8 +2497,9 @@ unsafe fn map_elf_with_status(
     let header = header_bytes.as_ptr();
     let elf_type = read_u16(header.add(16));
     let valid = *header == 0x7f && *header.add(1) == b'E' && *header.add(2) == b'L' && *header.add(3) == b'F'
-        && *header.add(4) == 2 && *header.add(5) == 1 && (elf_type == 3 || (role == ObjectRole::Main && elf_type == 2)) && read_u16(header.add(18)) == 62
-        && read_u16(header.add(54)) == 56;
+        && *header.add(4) == 2 && *header.add(5) == 1 && (elf_type == 3 || (!cfg!(crabc_hardened) && role == ObjectRole::Main && elf_type == 2)) && read_u16(header.add(18)) == 62
+        && read_u16(header.add(54)) == 56 && (!cfg!(crabc_hardened)
+            || (*header.add(6) == 1 && read_u32(header.add(20)) == 1 && read_u16(header.add(52)) == 64));
     let phoff = usize::try_from(read_u64(header.add(32))).map_err(|_| ENOEXEC)?;
     let phnum = read_u16(header.add(56)) as usize;
     let ph_table_len = phnum.checked_mul(56).ok_or(ENOEXEC)?;
@@ -2418,6 +2522,7 @@ unsafe fn map_elf_with_status(
         (Some(MappingLease { address, byte_len: map_len }),
             (address as *const u8).add(usize::try_from(phoff_u64 - page_offset).map_err(|_| ENOEXEC)?))
     };
+    if cfg!(crabc_hardened) && !hardened_program_headers(phdr, phnum) { return Err(ENOEXEC); }
     let mut min = u64::MAX;
     let mut max = 0u64;
     let mut phdr_load = None;
@@ -4026,6 +4131,7 @@ unsafe fn apply_self_relro(base: u64) -> Option<()> {
         return None;
     }
     let phdr = header.add(phoff);
+    if cfg!(crabc_hardened) && !hardened_program_headers(phdr, phnum) { return None; }
     let mut relro = None;
     for index in 0..phnum {
         let program_header = phdr.add(index * 56);
@@ -4034,6 +4140,7 @@ unsafe fn apply_self_relro(base: u64) -> Option<()> {
         let byte_len = read_u64(program_header.add(40));
         if relro.replace((address, byte_len)).is_some() || byte_len == 0
             || !virtual_range_in_page_mapped_load(phdr, phnum, address, byte_len)
+            || (cfg!(crabc_hardened) && !hardened_relro_pages(phdr, phnum, address, byte_len))
         {
             return None;
         }
@@ -5524,6 +5631,7 @@ unsafe fn die(message: &[u8]) -> ! { let _ = syscall3(SYS_WRITE, 2, message.as_p
 // cfg so its unconditional null-symbol check cannot lose its bounds helper.
 #[cfg(test)]
 mod readable_file_load_tests {
+    extern crate std;
     use super::*;
 
     #[test]
@@ -5535,9 +5643,12 @@ mod readable_file_load_tests {
         image[..4].copy_from_slice(b"\x7fELF");
         image[4] = 2;
         image[5] = 1;
+        image[6] = 1;
         image[16..18].copy_from_slice(&3u16.to_le_bytes());
         image[18..20].copy_from_slice(&62u16.to_le_bytes());
+        image[20..24].copy_from_slice(&1u32.to_le_bytes());
         image[32..40].copy_from_slice(&64u64.to_le_bytes());
+        image[52..54].copy_from_slice(&64u16.to_le_bytes());
         image[54..56].copy_from_slice(&56u16.to_le_bytes());
         image[56..58].copy_from_slice(&1u16.to_le_bytes());
         let phdr = &mut image[64..120];
@@ -5564,15 +5675,19 @@ mod readable_file_load_tests {
         image[..4].copy_from_slice(b"\x7fELF");
         image[4] = 2;
         image[5] = 1;
+        image[6] = 1;
         image[16..18].copy_from_slice(&3u16.to_le_bytes());
         image[18..20].copy_from_slice(&62u16.to_le_bytes());
+        image[20..24].copy_from_slice(&1u32.to_le_bytes());
         image[32..40].copy_from_slice(&64u64.to_le_bytes());
+        image[52..54].copy_from_slice(&64u16.to_le_bytes());
         image[54..56].copy_from_slice(&56u16.to_le_bytes());
-        image[56..58].copy_from_slice(&3u16.to_le_bytes());
+        image[56..58].copy_from_slice(&4u16.to_le_bytes());
         for (index, vaddr) in [(0, 0x2000u64), (1, 0)] {
             let load = &mut image[64 + index * 56..][..56];
             load[..4].copy_from_slice(&PT_LOAD.to_le_bytes());
-            load[4..8].copy_from_slice(&PF_R.to_le_bytes());
+            let flags = if index == 0 { PF_R | PF_X } else { PF_R | PF_W };
+            load[4..8].copy_from_slice(&flags.to_le_bytes());
             load[16..24].copy_from_slice(&vaddr.to_le_bytes());
             load[32..40].copy_from_slice(&0x380u64.to_le_bytes());
             load[40..48].copy_from_slice(&0x380u64.to_le_bytes());
@@ -5583,6 +5698,8 @@ mod readable_file_load_tests {
         dynamic[16..24].copy_from_slice(&0x2200u64.to_le_bytes());
         dynamic[32..40].copy_from_slice(&96u64.to_le_bytes());
         dynamic[40..48].copy_from_slice(&96u64.to_le_bytes());
+        image[232..236].copy_from_slice(&PT_GNU_STACK.to_le_bytes());
+        image[236..240].copy_from_slice(&(PF_R | PF_W).to_le_bytes());
         for (index, (tag, value)) in [
             (DT_STRTAB, 0x2300u64), (DT_STRSZ, 1), (DT_SYMTAB, 0x2320),
             (DT_SYMENT, 24), (DT_HASH, 0x2340), (DT_NULL, 0),
@@ -5592,12 +5709,60 @@ mod readable_file_load_tests {
             entry[8..16].copy_from_slice(&value.to_le_bytes());
         }
         image[0x340..0x348].copy_from_slice(&[1, 0, 0, 0, 1, 0, 0, 0]);
+        image[0x370] = 0x5a;
         assert_eq!(unsafe { syscall3(SYS_WRITE, fd, image.as_ptr() as i64, PAGE as i64) }, PAGE as i64);
         let status = unsafe { FileStatus::of_fd(fd) }.unwrap();
         let object = unsafe { map_elf_with_status(fd, &status, false, true, ObjectRole::Library) }.unwrap();
         assert_eq!(object.phdr as u64, object.base + 0x2000 + 64);
+        assert!(unsafe { protect_segments(&object) }.is_some());
+        let writable = (object.base + 0x370) as *mut u8;
+        let executable = (object.base + 0x2370) as *const u8;
+        let maps = std::fs::read_to_string("/proc/self/maps").unwrap();
+        let permissions = |address: usize| {
+            maps.lines().find_map(|line| {
+                let mut parts = line.split_whitespace();
+                let (start, end) = parts.next()?.split_once('-')?;
+                let start = usize::from_str_radix(start, 16).ok()?;
+                let end = usize::from_str_radix(end, 16).ok()?;
+                (start <= address && address < end).then(|| parts.next()).flatten()
+            }).unwrap()
+        };
+        assert_eq!(permissions(writable as usize), "rw-p");
+        assert_eq!(permissions(executable as usize), "r-xp");
+        assert_eq!(unsafe { *executable }, 0x5a);
+        unsafe { *writable = 0x23; }
+        assert_eq!(unsafe { *executable }, 0x5a);
+        let mut original = 0u8;
+        assert_eq!(unsafe { syscall4(SYS_PREAD64, fd, &mut original as *mut u8 as i64, 1, 0x370) }, 1);
+        assert_eq!(original, 0x5a);
         assert_eq!(unsafe { syscall2(SYS_MUNMAP, object.map_span_start as i64,
             object.map_span_byte_len as i64) }, 0);
+        let executable_stack = (PF_R | PF_W | PF_X).to_le_bytes();
+        assert_eq!(unsafe { syscall4(SYS_PWRITE64, fd, executable_stack.as_ptr() as i64,
+            executable_stack.len() as i64, 236) }, executable_stack.len() as i64);
+        let executable = unsafe { map_elf_with_status(fd, &status, false, true, ObjectRole::Library) };
+        if cfg!(crabc_hardened) {
+            assert!(matches!(executable, Err(ENOEXEC)));
+        } else {
+            let object = executable.unwrap();
+            assert_eq!(unsafe { syscall2(SYS_MUNMAP, object.map_span_start as i64,
+                object.map_span_byte_len as i64) }, 0);
+        }
+        let writable_stack = (PF_R | PF_W).to_le_bytes();
+        assert_eq!(unsafe { syscall4(SYS_PWRITE64, fd, writable_stack.as_ptr() as i64,
+            writable_stack.len() as i64, 236) }, writable_stack.len() as i64);
+        let bad_version = 0u32.to_le_bytes();
+        assert_eq!(unsafe { syscall4(SYS_PWRITE64, fd, bad_version.as_ptr() as i64, 4, 20) }, 4);
+        let versioned = unsafe { map_elf_with_status(fd, &status, false, true, ObjectRole::Library) };
+        if cfg!(crabc_hardened) {
+            assert!(matches!(versioned, Err(ENOEXEC)));
+        } else {
+            let object = versioned.unwrap();
+            assert_eq!(unsafe { syscall2(SYS_MUNMAP, object.map_span_start as i64,
+                object.map_span_byte_len as i64) }, 0);
+        }
+        let correct_version = 1u32.to_le_bytes();
+        assert_eq!(unsafe { syscall4(SYS_PWRITE64, fd, correct_version.as_ptr() as i64, 4, 20) }, 4);
         let overflowing_offset = u64::MAX.to_le_bytes();
         assert_eq!(unsafe { syscall4(SYS_PWRITE64, fd, overflowing_offset.as_ptr() as i64,
             overflowing_offset.len() as i64, 64 + 56 + 8) }, overflowing_offset.len() as i64);
@@ -5674,6 +5839,105 @@ mod readable_file_load_tests {
         header[16..24].copy_from_slice(&start.to_le_bytes());
         header[32..40].copy_from_slice(&filesz.to_le_bytes());
         header[40..48].copy_from_slice(&memsz.to_le_bytes());
+    }
+
+    #[test]
+    fn hardened_headers_require_nonexecutable_stack_and_disjoint_writable_executable_pages() {
+        let mut headers = [0u8; 168];
+        load(&mut headers, 0, PF_R | PF_X, 0x1000, 0x100, 0x100);
+        load(&mut headers, 1, PF_R | PF_W, 0x2000, 0x100, 0x100);
+        headers[112..116].copy_from_slice(&PT_GNU_STACK.to_le_bytes());
+        headers[116..120].copy_from_slice(&(PF_R | PF_W).to_le_bytes());
+        let valid = |headers: &[u8]| unsafe { hardened_program_headers(headers.as_ptr(), 3) };
+        assert!(valid(&headers));
+        headers[116..120].copy_from_slice(&(PF_R | PF_W | PF_X).to_le_bytes());
+        assert!(!valid(&headers));
+        headers[112..116].copy_from_slice(&0u32.to_le_bytes());
+        assert!(!valid(&headers));
+        headers[112..116].copy_from_slice(&PT_GNU_STACK.to_le_bytes());
+        headers[116..120].copy_from_slice(&(PF_R | PF_W).to_le_bytes());
+        let mut duplicate = headers;
+        duplicate[56..60].copy_from_slice(&PT_GNU_STACK.to_le_bytes());
+        assert!(!valid(&duplicate));
+        load(&mut headers, 1, PF_R | PF_W, 0x1800, 0x100, 0x100);
+        assert!(!valid(&headers));
+        load(&mut headers, 1, PF_R | PF_W | PF_X, 0x2000, 0x100, 0x100);
+        assert!(!valid(&headers));
+        load(&mut headers, 1, PF_R | PF_W, u64::MAX - 10, 1, 32);
+        assert!(!valid(&headers));
+    }
+
+    #[test]
+    fn hardened_main_identity_requires_a_mapped_pie_header_matching_auxv() {
+        let mut image = [0u8; 512];
+        image[..4].copy_from_slice(b"\x7fELF");
+        image[4..7].copy_from_slice(&[2, 1, 1]);
+        image[16..18].copy_from_slice(&3u16.to_le_bytes());
+        image[18..20].copy_from_slice(&62u16.to_le_bytes());
+        image[20..24].copy_from_slice(&1u32.to_le_bytes());
+        image[32..40].copy_from_slice(&64u64.to_le_bytes());
+        image[52..54].copy_from_slice(&64u16.to_le_bytes());
+        image[54..56].copy_from_slice(&56u16.to_le_bytes());
+        image[56..58].copy_from_slice(&1u16.to_le_bytes());
+        load(&mut image[64..], 0, PF_R, 0, 512, 512);
+        let check = |image: &[u8]| unsafe { hardened_main_identity(image.as_ptr() as u64, image.as_ptr().add(64), 1) };
+        assert!(check(&image));
+        image[16..18].copy_from_slice(&2u16.to_le_bytes());
+        assert!(!check(&image));
+        image[16..18].copy_from_slice(&3u16.to_le_bytes());
+        image[32..40].copy_from_slice(&65u64.to_le_bytes());
+        assert!(!check(&image));
+        image[32..40].copy_from_slice(&64u64.to_le_bytes());
+        image[68..72].copy_from_slice(&PF_W.to_le_bytes());
+        assert!(!check(&image));
+        image[68..72].copy_from_slice(&PF_R.to_le_bytes());
+        image[56..58].copy_from_slice(&2u16.to_le_bytes());
+        load(&mut image[64..], 0, PF_R, 0, 64, 64);
+        load(&mut image[64..], 1, PF_R, 64, 112, 112);
+        image[128..136].copy_from_slice(&64u64.to_le_bytes());
+        assert!(unsafe { hardened_main_identity(image.as_ptr() as u64, image.as_ptr().add(64), 2) });
+    }
+
+    #[test]
+    fn hardened_relro_requires_writable_nonexecutable_pages() {
+        let mut headers = [0u8; 112];
+        load(&mut headers, 0, PF_R | PF_X, 0x1000, 0x100, 0x100);
+        load(&mut headers, 1, PF_R | PF_W, 0x2000, 0x100, 0x100);
+        let valid = |headers: &[u8], address, size| unsafe { hardened_relro_pages(headers.as_ptr(), 2, address, size) };
+        assert!(valid(&headers, 0x2000, 0x100));
+        assert!(!valid(&headers, 0x1000, 0x100));
+        assert!(!valid(&headers, 0x2000, 0));
+        assert!(!valid(&headers, 0x2000, 0x1001));
+        assert!(!valid(&headers, u64::MAX - 5, 16));
+        load(&mut headers, 0, PF_R | PF_X, 0x2800, 0x100, 0x100);
+        assert!(!valid(&headers, 0x2000, 0x100));
+    }
+
+    #[test]
+    fn hardened_interpreter_rejects_invalid_self_pages_before_relro() {
+        let mapping = unsafe { syscall6(SYS_MMAP, 0, (PAGE * 2) as i64, PROT_READ | PROT_WRITE,
+            MAP_PRIVATE | MAP_ANONYMOUS, -1, 0) };
+        assert!(!is_linux_error(mapping));
+        let image = unsafe { core::slice::from_raw_parts_mut(mapping as *mut u8, (PAGE * 2) as usize) };
+        image[..4].copy_from_slice(b"\x7fELF");
+        image[4..6].copy_from_slice(&[2, 1]);
+        image[16..18].copy_from_slice(&3u16.to_le_bytes());
+        image[18..20].copy_from_slice(&62u16.to_le_bytes());
+        image[32..40].copy_from_slice(&64u64.to_le_bytes());
+        image[54..56].copy_from_slice(&56u16.to_le_bytes());
+        image[56..58].copy_from_slice(&4u16.to_le_bytes());
+        load(&mut image[64..], 0, PF_R | PF_X, 0, PAGE, PAGE);
+        load(&mut image[64..], 1, PF_R | PF_W, PAGE, PAGE, PAGE);
+        image[176..180].copy_from_slice(&PT_GNU_STACK.to_le_bytes());
+        image[180..184].copy_from_slice(&(PF_R | PF_W).to_le_bytes());
+        image[232..236].copy_from_slice(&PT_GNU_RELRO.to_le_bytes());
+        image[248..256].copy_from_slice(&PAGE.to_le_bytes());
+        image[272..280].copy_from_slice(&PAGE.to_le_bytes());
+        image[180..184].copy_from_slice(&(PF_R | PF_W | PF_X).to_le_bytes());
+        assert_eq!(unsafe { apply_self_relro(mapping as u64) }.is_some(), !cfg!(crabc_hardened));
+        image[180..184].copy_from_slice(&(PF_R | PF_W).to_le_bytes());
+        assert!(unsafe { apply_self_relro(mapping as u64) }.is_some());
+        assert_eq!(unsafe { syscall2(SYS_MUNMAP, mapping, (PAGE * 2) as i64) }, 0);
     }
 
     #[test]
@@ -5880,12 +6144,24 @@ mod owned_crt_note_tests {
     #[test]
     fn owned_crt_note_selects_only_the_exact_marker() {
         let (mut headers, mut bytes) = headers(24);
-        let length = note(&mut bytes, 0, b"CRABC\0", OWNED_CRT_NOTE_TYPE, &1u32.to_le_bytes());
+        let length = note(&mut bytes, 0, b"CRABC\0", OWNED_CRT_NOTE_TYPE, &OWNED_CRT_NOTE_REVISION.to_le_bytes());
         put_u64(&mut headers, 56 + 32, length as u64);
         assert_eq!(
             unsafe { owned_crt_note_mode(headers.as_ptr(), 2, bytes.as_ptr() as u64) },
             Some(MainCrtMode::Owned),
         );
+    }
+
+    #[test]
+    fn owned_crt_note_matches_the_compiled_profile() {
+        let (mut headers, mut bytes) = headers(24);
+        let selected = if cfg!(crabc_hardened) { 2u32 } else { 1u32 };
+        let other = if cfg!(crabc_hardened) { 1u32 } else { 2u32 };
+        let length = note(&mut bytes, 0, b"CRABC\0", OWNED_CRT_NOTE_TYPE, &selected.to_le_bytes());
+        put_u64(&mut headers, 56 + 32, length as u64);
+        assert_eq!(unsafe { owned_crt_note_mode(headers.as_ptr(), 2, bytes.as_ptr() as u64) }, Some(MainCrtMode::Owned));
+        note(&mut bytes, 0, b"CRABC\0", OWNED_CRT_NOTE_TYPE, &other.to_le_bytes());
+        assert_eq!(unsafe { owned_crt_note_mode(headers.as_ptr(), 2, bytes.as_ptr() as u64) }, None);
     }
 
     #[test]
@@ -5902,8 +6178,8 @@ mod owned_crt_note_tests {
     #[test]
     fn malformed_or_duplicate_owned_markers_fail_closed() {
         let (mut duplicate_headers, mut duplicate_bytes) = headers(48);
-        let first = note(&mut duplicate_bytes, 0, b"CRABC\0", OWNED_CRT_NOTE_TYPE, &1u32.to_le_bytes());
-        let length = note(&mut duplicate_bytes, first, b"CRABC\0", OWNED_CRT_NOTE_TYPE, &1u32.to_le_bytes());
+        let first = note(&mut duplicate_bytes, 0, b"CRABC\0", OWNED_CRT_NOTE_TYPE, &OWNED_CRT_NOTE_REVISION.to_le_bytes());
+        let length = note(&mut duplicate_bytes, first, b"CRABC\0", OWNED_CRT_NOTE_TYPE, &OWNED_CRT_NOTE_REVISION.to_le_bytes());
         put_u64(&mut duplicate_headers, 56 + 32, length as u64);
         assert_eq!(unsafe { owned_crt_note_mode(duplicate_headers.as_ptr(), 2, duplicate_bytes.as_ptr() as u64) }, None);
 
@@ -6003,6 +6279,28 @@ mod owned_dynamic_symbolic_tag_tests {
                 )
             }
         }
+    }
+
+    #[test]
+    fn hardened_pltgot_requires_one_writable_relro_span() {
+        let mut image = ParserImage::new(&[(DT_PLTGOT, 0x380)]);
+        image.put_u32(112, PT_GNU_STACK);
+        image.put_u32(116, PF_R | PF_W);
+        image.put_u32(168, PT_GNU_RELRO);
+        image.put_u64(168 + 16, 0x300);
+        image.put_u64(168 + 40, 0x100);
+        let parse = |image: &ParserImage| unsafe {
+            parse_mapped(image.bytes.as_ptr() as u64, image.bytes.as_ptr(), 4,
+                         ObjectRole::Library, false, true)
+        };
+        assert!(parse(&image).is_some());
+        image.put_u64(DYNAMIC + 5 * 16 + 8, 0x1000);
+        assert_eq!(parse(&image).is_some(), !cfg!(crabc_hardened));
+        image.put_u64(DYNAMIC + 5 * 16 + 8, 0x380);
+        image.dynamic_count -= 1;
+        image.dynamic(DT_PLTGOT, 0x380);
+        image.dynamic(DT_NULL, 0);
+        assert_eq!(parse(&image).is_some(), !cfg!(crabc_hardened));
     }
 
     #[test]

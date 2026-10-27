@@ -31,6 +31,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 from scripts.rust_toolchain import pinned_toolchain
 from scripts import native_build_tools
+from compat.x86_64.native_runtime_profile import NativeRuntimeProfile
 CRT_ROOT = Path(__file__).resolve().parent
 SOURCE_ROOT = CRT_ROOT / "src"
 TARGET = "x86_64-unknown-linux-musl"
@@ -240,6 +241,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--out-dir", type=Path, default=DEFAULT_OUTPUT)
     parser.add_argument("--llvm-objdump", default="llvm-objdump")
     parser.add_argument("--profile", choices=("release", "debug"), default="release")
+    parser.add_argument("--hardening-profile", type=NativeRuntimeProfile, choices=tuple(NativeRuntimeProfile),
+                        default=NativeRuntimeProfile.COMPATIBILITY)
     parser.add_argument("--runtime-core", type=Path)
     parser.add_argument("--runtime-compiler-builtins", type=Path)
     parser.add_argument(
@@ -542,7 +545,8 @@ def portable_rustc_command(command: list[str], source: Path, destination: Path) 
     return portable
 
 
-def inspect_object(spec: ObjectSpec, path: Path, runtime_symbols: frozenset[str] = frozenset()) -> dict[str, object]:
+def inspect_object(spec: ObjectSpec, path: Path, runtime_symbols: frozenset[str] = frozenset(),
+                   *, hardening_profile: NativeRuntimeProfile = NativeRuntimeProfile.COMPATIBILITY) -> dict[str, object]:
     elf = parse_elf_object(path)
     sections = {section.name: section for section in elf.sections}
     metadata_sections = sorted(section.name for section in elf.sections if section.name.startswith(".rustc"))
@@ -580,7 +584,9 @@ def inspect_object(spec: ObjectSpec, path: Path, runtime_symbols: frozenset[str]
             owned_note.size,
             f"{path}: owned-CRT ELF note",
         )
-        if actual_note != OWNED_CRT_NOTE:
+        expected_note = (OWNED_CRT_NOTE[:-4] + struct.pack("<I", 2)
+                         if spec.name == "Scrt1.o" and hardening_profile is NativeRuntimeProfile.HARDENED else OWNED_CRT_NOTE)
+        if actual_note != expected_note:
             raise BuildError(f"{path}: owned-CRT ELF note has an unexpected wire value")
     return {
         "path": path.name,
@@ -779,6 +785,8 @@ def build(args: argparse.Namespace) -> dict[str, object]:
                 f"{ROOT}=/crabc",
                 "--crate-name",
                 "crabc_x86_64_" + spec.name.removesuffix(".o").replace(".", "_"),
+                *(["--cfg", "crabc_hardened"]
+                  if args.hardening_profile is NativeRuntimeProfile.HARDENED and spec.name in ("rcrt1.o", "Scrt1.o") else []),
                 *(
                     ["--cfg", "crabc_dynamic_main_thread_runtime_v1"]
                     if spec.entry_contract == "owned-dynamic-pie-entry"
@@ -823,7 +831,7 @@ def build(args: argparse.Namespace) -> dict[str, object]:
                 raise BuildError(f"rustc failed while building {spec.name}: {record['stderr']}")
             if not destination.is_file():
                 raise BuildError(f"rustc reported success but did not create {destination}")
-            inspection = inspect_object(spec, destination, runtime_symbols)
+            inspection = inspect_object(spec, destination, runtime_symbols, hardening_profile=args.hardening_profile)
             if spec.entry_contract in {
                 "conventional-exec-entry",
                 "static-pie-entry",
@@ -858,6 +866,7 @@ def build(args: argparse.Namespace) -> dict[str, object]:
         "target": TARGET,
         "scope": "bounded-static-and-private-dynamic-startup",
         "profile": getattr(args, "profile", "release"),
+        "hardening_profile": args.hardening_profile.value,
         "dynamic_main_thread_runtime_v1": args.dynamic_main_thread_runtime_v1,
         "general_dynamic_lifecycle": args.general_dynamic_lifecycle,
         "owned_dynamic_sysroot": args.owned_dynamic_sysroot,

@@ -188,6 +188,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   campaign-static  run the owned-static product gate when its prerequisites close
   campaign-dynamic  run the owned-dynamic product gate when its prerequisites close
   campaign-qualification  run the ordered qualification gate when it is ready
+  hardened-runtime DYNAMIC_SYSROOT  build and exercise current-source hardened release products
   qualification-manifest [--profile correctness|full] [--through GATE|--status|--publish GATE PUBLICATION RECEIPT|--validate-receipt PATH [--json]|--private-admission]  execute the ordered qualification chain (or a prefix) into a source-bound receipt, report gate conditions, or select gate evidence in the native container
   promotion-closure --qualification-receipt PATH  reread current complete qualification and native-default products
   campaign-promotion-check [--qualification-receipt PATH]  run the final promotion gate when it is ready
@@ -7592,7 +7593,7 @@ case "$command" in
     owned-io-cancellation) ;;
     owned-resolver-network|owned-classic-netdb|owned-resolver-cancellation|owned-protocol-database|owned-resolver-family) ;;
     owned-c-abi-compat-family) ;;
-    owned-package-corpus|owned-package-corpus-input|owned-loader-synthetic|owned-loader-inventory|owned-loader-libc-identity|owned-loader-family) ;;
+    owned-package-corpus|owned-package-corpus-input|owned-loader-synthetic|owned-loader-inventory|owned-loader-libc-identity|owned-loader-family|hardened-runtime) ;;
     owned-dynamic-io-cancellation) ;;
     owned-posix-timers|owned-pthread-scheduling|owned-pthread-cpuclock|owned-message-queues|owned-named-ipc|owned-fcntl|owned-static-dl-iterate-phdr|owned-pthread-getattr|owned-pthread-join-cancel|owned-pthread-cond-cancel|owned-pthread-cond-timed|owned-pthread-mutex) ;;
     owned-pthread-lifecycle) ;;
@@ -10130,6 +10131,12 @@ case "$command" in
         fi
         ensure_image
         run_in_container python3 -B /workspace/compat/x86_64/owned_loader_family.py "${loader_family_arguments[@]}"
+        ;;
+    hardened-runtime)
+        [ "$#" -eq 1 ] || fail "hardened-runtime requires one current-source compatibility dynamic sysroot"
+        hardened_compatibility_product="$(translate_owned_posix_product "$1")" || exit 2
+        ensure_image
+        run_in_container bash /workspace/compat/x86_64/run_hardened_qualification.sh "$hardened_compatibility_product"
         ;;
     owned-posix-composition)
         ensure_image

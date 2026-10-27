@@ -54,6 +54,17 @@ def native_x86_64_evidence() -> bool:
     )
 
 
+def owned_crt_note(path: Path) -> bytes:
+    data = path.read_bytes()
+    header = struct.unpack_from("<16sHHIQQQIHHHHHH", data)
+    sections = [struct.unpack_from("<IIQQQQIIQQ", data, header[6] + index * header[11])
+                for index in range(header[12])]
+    strings = sections[header[13]]
+    names = data[strings[4]:strings[4] + strings[5]]
+    note = next(section for section in sections if names[section[0]:].split(b"\0", 1)[0] == b".note.crabc.owned-crt")
+    return data[note[4]:note[4] + note[5]]
+
+
 def disable_core_dump() -> None:
     resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
 
@@ -142,6 +153,30 @@ def inspect_static_pie(path: Path, *, packed_relr: bool) -> None:
         raise AssertionError("static PIE unexpectedly retains a non-relative dynamic relocation")
 
 
+def split_program_header_mapping(path: Path) -> Path:
+    data = bytearray(path.read_bytes())
+    header_offset = struct.unpack_from("<Q", data, 32)[0]
+    count = struct.unpack_from("<H", data, 56)[0]
+    headers = [struct.unpack_from("<IIQQQQQQ", data, header_offset + index * 56) for index in range(count)]
+    phdr = next(index for index, header in enumerate(headers) if header[0] == 6)
+    file_offset = (len(data) + 4095) & ~4095
+    virtual_address = (max(header[3] + header[6] for header in headers if header[0] == PT_LOAD) + 0x1ffff) & ~4095
+    table = bytearray(data[header_offset:header_offset + count * 56])
+    table.extend(bytes(56))
+    struct.pack_into("<IIQQQQQQ", table, phdr * 56, 6, 4, file_offset, virtual_address, virtual_address,
+                     len(table), len(table), 8)
+    struct.pack_into("<IIQQQQQQ", table, count * 56, PT_LOAD, 4, file_offset, virtual_address, virtual_address,
+                     4096, 4096, 4096)
+    data.extend(bytes(file_offset + 4096 - len(data)))
+    data[file_offset:file_offset + len(table)] = table
+    struct.pack_into("<Q", data, 32, file_offset)
+    struct.pack_into("<H", data, 56, count + 1)
+    result = path.with_name(path.name + ".split-phdr")
+    result.write_bytes(data)
+    result.chmod(0o755)
+    return result
+
+
 def corrupt_first_relative_relocation(path: Path) -> Path:
     data, program_headers = elf_layout(path)
     tags = dynamic_tags(data, program_headers)
@@ -217,6 +252,79 @@ def overlapping_executable_load(path: Path) -> Path:
     overlap.write_bytes(mutable)
     overlap.chmod(0o755)
     return overlap
+
+
+def mutate_program_header(path: Path, kind: int, replacement: int, flags: int) -> Path:
+    data, headers = elf_layout(path)
+    index = next(index for index, header in enumerate(headers) if header[0] == kind)
+    mutable = bytearray(data)
+    program_offset = struct.unpack_from("<Q", data, 32)[0]
+    struct.pack_into("<II", mutable, program_offset + index * 56, replacement, flags)
+    changed = path.with_name(path.name + f".header-{kind}-{replacement}-{flags}")
+    changed.write_bytes(mutable)
+    changed.chmod(0o755)
+    return changed
+
+
+def duplicate_stack_header(path: Path) -> Path:
+    data, headers = elf_layout(path)
+    source_index = next(index for index, header in enumerate(headers) if header[0] == 0x6474e551)
+    target_index = next(index for index, header in enumerate(headers) if header[0] == 0x6474e552)
+    mutable = bytearray(data)
+    program_offset = struct.unpack_from("<Q", data, 32)[0]
+    source = program_offset + source_index * 56
+    target = program_offset + target_index * 56
+    mutable[target:target + 56] = data[source:source + 56]
+    changed = path.with_name(path.name + ".duplicate-stack")
+    changed.write_bytes(mutable)
+    changed.chmod(0o755)
+    return changed
+
+
+def overlapping_executable_bss(path: Path) -> Path:
+    data, headers = elf_layout(path)
+    writable = [header for header in headers if header[0] == PT_LOAD and header[1] & 2][-1]
+    target_index = next(index for index, header in enumerate(headers) if header[0] == 0x6474e550)
+    address = (writable[3] + writable[6] - 1) & -4096
+    mutable = bytearray(data)
+    program_offset = struct.unpack_from("<Q", data, 32)[0]
+    struct.pack_into("<IIQQQQQQ", mutable, program_offset + target_index * 56,
+                     PT_LOAD, 5, 0, address, address, 0, 4096, 4096)
+    changed = path.with_name(path.name + ".executable-bss-overlap")
+    changed.write_bytes(mutable)
+    changed.chmod(0o755)
+    return changed
+
+
+def fixed_address_executable(path: Path) -> Path:
+    data, headers = elf_layout(path)
+    tags = dynamic_tags(data, headers)
+    mutable = bytearray(data)
+    base = 0x400000
+    struct.pack_into("<H", mutable, 16, 2)
+    struct.pack_into("<Q", mutable, 24, struct.unpack_from("<Q", data, 24)[0] + base)
+    program_offset = struct.unpack_from("<Q", data, 32)[0]
+    for index, header in enumerate(headers):
+        if header[0] in (PT_LOAD, PT_DYNAMIC, 6, 0x6474e550, 0x6474e552):
+            offset = program_offset + index * 56
+            struct.pack_into("<Q", mutable, offset + 16, header[3] + base)
+            struct.pack_into("<Q", mutable, offset + 24, header[4] + base)
+    dynamic = next(header for header in headers if header[0] == PT_DYNAMIC)
+    for offset in range(dynamic[2], dynamic[2] + dynamic[5], 16):
+        tag, value = struct.unpack_from("<qQ", data, offset)
+        if tag == DT_NULL:
+            break
+        if tag in (3, 4, 5, 6, 7, 12, 13, 25, 26, 0x6ffffef5):
+            struct.pack_into("<Q", mutable, offset + 8, value + base)
+    rela = virtual_offset(headers, tags[DT_RELA])
+    for offset in range(rela, rela + tags[DT_RELASZ], 24):
+        target, info, addend = struct.unpack_from("<QQq", data, offset)
+        if info & 0xffffffff == R_X86_64_RELATIVE:
+            struct.pack_into("<QQq", mutable, offset, target + base, info, addend + base)
+    changed = path.with_name(path.name + ".fixed-executable")
+    changed.write_bytes(mutable)
+    changed.chmod(0o755)
+    return changed
 
 
 def duplicate_relocation_tag(path: Path, tag: int) -> Path:
@@ -364,7 +472,113 @@ def closed_bundle_inputs(crt_output: Path, fixture: Path, builtins: Path, extras
     "requires the dedicated native Linux/x86-64 CRT evidence runner",
 )
 class X86_64StaticPieTests(unittest.TestCase):
+    def test_hardened_static_pie_rejects_executable_or_missing_stack_and_wx_load(self) -> None:
+        scratch = ROOT / ".work/tmp"
+        scratch.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(dir=scratch) as temporary:
+            work = Path(temporary)
+            crt_output = work / "crt"
+            build = subprocess.run(
+                [sys.executable, str(BUILDER), "--out-dir", str(crt_output), "--hardening-profile", "hardened",
+                 "--llvm-objdump", str(Path("/opt/rustup/toolchains") / f"{PINNED_TOOLCHAIN}-{TARGET}/lib/rustlib/{TARGET}/bin/llvm-objdump")],
+                stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False,
+            )
+            self.assertEqual(build.returncode, 0, build.stderr.decode(errors="replace"))
+            expected_note = struct.pack("<III", 6, 4, 0x43525401) + b"CRABC\0\0\0" + struct.pack("<I", 2)
+            self.assertEqual(owned_crt_note(crt_output / "Scrt1.o"), expected_note)
+            fixture = work / "fixture.o"
+            compile = subprocess.run(
+                toolchain_rustc() + ["--edition=2021", "--crate-type=lib", "--emit=obj", "--target", TARGET,
+                                    "-C", "panic=abort", "-C", "opt-level=2", "-C", "relocation-model=pic",
+                                    str(FIXTURE), "-o", str(fixture)],
+                stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False,
+            )
+            self.assertEqual(compile.returncode, 0, compile.stderr.decode(errors="replace"))
+            executable = work / "hardened-static-pie"
+            link = subprocess.run(
+                [link_editor(), "-pie", "-static", "--no-dynamic-linker", "-z", "now", "-e", "_start", str(crt_output / "rcrt1.o"),
+                 str(crt_output / "crti.o"), str(fixture), str(crt_output / "crtn.o"), "-o", str(executable)],
+                stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False,
+            )
+            self.assertEqual(link.returncode, 0, link.stderr.decode(errors="replace"))
+            normal = subprocess.run([str(executable)], stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False)
+            self.assertEqual(normal.returncode, 0, normal.stderr.decode(errors="replace"))
+            split = subprocess.run([str(split_program_header_mapping(executable))], stdout=subprocess.PIPE,
+                                   stderr=subprocess.PIPE, check=False, preexec_fn=disable_core_dump)
+            self.assertEqual(split.returncode, 0, split.stderr.decode(errors="replace"))
+            self.assertRegex(split.stdout, rb"^I[0-9a-f]{16}F$")
+            self.assertIn(DT_PLTGOT, dynamic_tags(*elf_layout(executable)))
+            without_relro = mutate_program_header(executable, 0x6474e552, 0, 0)
+            unprotected = subprocess.run([str(without_relro)], stdout=subprocess.PIPE,
+                                         stderr=subprocess.PIPE, check=False, preexec_fn=disable_core_dump)
+            self.assertEqual(unprotected.returncode, 127, unprotected.stderr.decode(errors="replace"))
+            self.assertEqual(unprotected.stdout, b"")
+            lazy = work / "hardened-static-pie-lazy"
+            lazy_link = subprocess.run(
+                [link_editor(), "-pie", "-static", "--no-dynamic-linker", "-e", "_start", str(crt_output / "rcrt1.o"),
+                 str(crt_output / "crti.o"), str(fixture), str(crt_output / "crtn.o"), "-o", str(lazy)],
+                stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False,
+            )
+            self.assertEqual(lazy_link.returncode, 0, lazy_link.stderr.decode(errors="replace"))
+            lazy_result = subprocess.run([str(lazy)], stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                         check=False, preexec_fn=disable_core_dump)
+            self.assertEqual(lazy_result.returncode, 127, lazy_result.stderr.decode(errors="replace"))
+            self.assertEqual(lazy_result.stdout, b"")
+            fixed = subprocess.run([str(fixed_address_executable(executable))], stdout=subprocess.PIPE,
+                                   stderr=subprocess.PIPE, check=False, preexec_fn=disable_core_dump)
+            self.assertEqual(fixed.returncode, 127, fixed.stderr.decode(errors="replace"))
+            self.assertEqual(fixed.stdout, b"")
+            for source, replacement, flags in ((0x6474e551, 0, 0), (0x6474e551, 0x6474e551, 7), (PT_LOAD, PT_LOAD, 7)):
+                invalid = mutate_program_header(executable, source, replacement, flags)
+                result = subprocess.run([str(invalid)], stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False,
+                                        preexec_fn=disable_core_dump)
+                self.assertEqual(result.returncode, 127, result.stderr.decode(errors="replace"))
+                self.assertEqual(result.stdout, b"")
+            duplicate = subprocess.run([str(duplicate_stack_header(executable))], stdout=subprocess.PIPE,
+                                       stderr=subprocess.PIPE, check=False, preexec_fn=disable_core_dump)
+            self.assertEqual(duplicate.returncode, 127, duplicate.stderr.decode(errors="replace"))
+            self.assertEqual(duplicate.stdout, b"")
+            overlap = subprocess.run([str(overlapping_executable_bss(executable))], stdout=subprocess.PIPE,
+                                     stderr=subprocess.PIPE, check=False, preexec_fn=disable_core_dump)
+            self.assertEqual(overlap.returncode, 127, overlap.stderr.decode(errors="replace"))
+            self.assertEqual(overlap.stdout, b"")
+            compatible_crt = work / "compatible-crt"
+            compatible_build = subprocess.run(
+                [sys.executable, str(BUILDER), "--out-dir", str(compatible_crt), "--hardening-profile", "compatibility",
+                 "--llvm-objdump", str(Path("/opt/rustup/toolchains") / f"{PINNED_TOOLCHAIN}-{TARGET}/lib/rustlib/{TARGET}/bin/llvm-objdump")],
+                stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False,
+            )
+            self.assertEqual(compatible_build.returncode, 0, compatible_build.stderr.decode(errors="replace"))
+            expected_note = struct.pack("<III", 6, 4, 0x43525401) + b"CRABC\0\0\0" + struct.pack("<I", 1)
+            self.assertEqual(owned_crt_note(compatible_crt / "Scrt1.o"), expected_note)
+            compatible = work / "compatible-static-pie"
+            compatible_link = subprocess.run(
+                [link_editor(), "-pie", "-static", "--no-dynamic-linker", "-e", "_start", str(compatible_crt / "rcrt1.o"),
+                 str(compatible_crt / "crti.o"), str(fixture), str(compatible_crt / "crtn.o"), "-o", str(compatible)],
+                stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False,
+            )
+            self.assertEqual(compatible_link.returncode, 0, compatible_link.stderr.decode(errors="replace"))
+            compatible_fixed = subprocess.run([str(fixed_address_executable(compatible))], stdout=subprocess.PIPE,
+                                              stderr=subprocess.PIPE, check=False, preexec_fn=disable_core_dump)
+            self.assertEqual(compatible_fixed.returncode, 0, compatible_fixed.stderr.decode(errors="replace"))
+            self.assertRegex(compatible_fixed.stdout, rb"^I[0-9a-f]{16}F$")
+            for source, replacement, flags in ((0x6474e551, 0, 0), (0x6474e551, 0x6474e551, 7), (PT_LOAD, PT_LOAD, 7)):
+                valid = mutate_program_header(compatible, source, replacement, flags)
+                result = subprocess.run([str(valid)], stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False,
+                                        preexec_fn=disable_core_dump)
+                self.assertEqual(result.returncode, 0, result.stderr.decode(errors="replace"))
+                self.assertRegex(result.stdout, rb"^I[0-9a-f]{16}F$")
+            compatible_overlap = subprocess.run([str(overlapping_executable_bss(compatible))], stdout=subprocess.PIPE,
+                                                stderr=subprocess.PIPE, check=False, preexec_fn=disable_core_dump)
+            self.assertNotEqual(compatible_overlap.returncode, 127)
+
+    def test_hardened_static_pie_bootstrap_executes_and_rejects_unknown_relocations(self) -> None:
+        self.exercise_static_pie_bootstrap("hardened")
+
     def test_static_pie_bootstrap_executes_and_rejects_unknown_relocations(self) -> None:
+        self.exercise_static_pie_bootstrap("compatibility")
+
+    def exercise_static_pie_bootstrap(self, profile: str) -> None:
         if os.environ.get("CRABC_CRT_X86_64_EVIDENCE_SLICE") == "bundle":
             self.skipTest("bundle-only runner selects the CRT/builtins consumer")
         scratch = ROOT / ".work/tmp"
@@ -373,7 +587,7 @@ class X86_64StaticPieTests(unittest.TestCase):
             work = Path(temporary)
             crt_output = work / "crt"
             build = subprocess.run(
-                [sys.executable, str(BUILDER), "--out-dir", str(crt_output), "--llvm-objdump",
+                [sys.executable, str(BUILDER), "--out-dir", str(crt_output), "--hardening-profile", profile, "--llvm-objdump",
                  str(Path("/opt/rustup/toolchains") / f"{PINNED_TOOLCHAIN}-{TARGET}/lib/rustlib/{TARGET}/bin/llvm-objdump")],
                 stdin=subprocess.DEVNULL,
                 stdout=subprocess.PIPE,
@@ -422,6 +636,7 @@ class X86_64StaticPieTests(unittest.TestCase):
                         "-pie",
                         "-static",
                         "--no-dynamic-linker",
+                        *(["-z", "now"] if profile == "hardened" else []),
                         "-e",
                         "_start",
                         *relocation_arguments,
@@ -461,6 +676,11 @@ class X86_64StaticPieTests(unittest.TestCase):
                 self.assertRegex(first.stdout, rb"^I[0-9a-f]{16}F$")
                 self.assertRegex(second.stdout, rb"^I[0-9a-f]{16}F$")
                 self.assertNotEqual(first.stdout, second.stdout, "static PIE did not receive distinct ASLR bases")
+                split = subprocess.run([str(split_program_header_mapping(executable))], stdin=subprocess.DEVNULL,
+                                       stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False,
+                                       preexec_fn=disable_core_dump)
+                self.assertEqual(split.returncode, 0, split.stderr.decode(errors="replace"))
+                self.assertRegex(split.stdout, rb"^I[0-9a-f]{16}F$")
 
                 relro_write = subprocess.run(
                     [str(executable), "!"], stdin=subprocess.DEVNULL,

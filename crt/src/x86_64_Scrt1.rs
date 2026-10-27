@@ -29,9 +29,10 @@ core::arch::global_asm!(
     .long 0x43525401
     .asciz "CRABC"
     .balign 4
-    .long 1
+    .long {revision}
     .balign 4
 "#,
+    revision = const if cfg!(crabc_hardened) { 2 } else { 1 },
 );
 
 #[cfg(not(crabc_general_dynamic_lifecycle))]

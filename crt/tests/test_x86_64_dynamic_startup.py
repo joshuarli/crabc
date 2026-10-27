@@ -150,12 +150,12 @@ def build_lifecycle_fixture_object(work: Path) -> Path:
 
 
 def build_owned_handoff_fixture_object(
-    work: Path, *, malformed: bool = False, threaded_rejection: bool = False
+    work: Path, *, malformed: bool = False, threaded_rejection: bool = False, version: int = 1
 ) -> Path:
     object_path = work / (
         "dynamic_startup_owned_handoff_fixture_"
         + ("bad" if malformed else "threaded" if threaded_rejection else "normal")
-        + "_x86_64.o"
+        + f"_v{version}_x86_64.o"
     )
     compile_result = run(
         oracle_compiler()
@@ -165,6 +165,7 @@ def build_owned_handoff_fixture_object(
             "-fno-stack-protector",
             "-fno-pie",
             "-fno-asynchronous-unwind-tables",
+            f"-DCRABC_HANDOFF_VERSION={version}",
             *( ["-DCRABC_BAD_OWNED_HANDOFF=1"] if malformed else [] ),
             *( ["-DCRABC_BAD_INIT_ARRAY_WITH_WORKER=1"] if threaded_rejection else [] ),
             "-c",
@@ -373,6 +374,29 @@ def load_builder_module():
     "requires the dedicated native Linux/x86-64 dynamic CRT evidence runner",
 )
 class X86_64DynamicStartupTests(unittest.TestCase):
+    def test_hardened_entry_requires_matching_owned_handoff(self) -> None:
+        scratch = ROOT / ".work/tmp"
+        scratch.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(dir=scratch) as temporary:
+            work = Path(temporary)
+            output = work / "crt"
+            built = run([sys.executable, str(BUILDER), "--out-dir", str(output),
+                         "--hardening-profile", "hardened", "--llvm-objdump", llvm_objdump()])
+            self.assertEqual(built.returncode, 0, built.stderr.decode(errors="replace"))
+            for version, expected in ((2, 0), (1, 127)):
+                fixture = build_owned_handoff_fixture_object(work, version=version)
+                executable = work / f"handoff-v{version}"
+                link_freestanding_lifecycle_probe(executable, scrt1=output / "Scrt1.o", fixture=fixture)
+                result = run([str(executable)])
+                self.assertEqual(result.returncode, expected, result.stderr.decode(errors="replace"))
+                self.assertEqual(result.stdout, b"PDiIMFfL" if version == 2 else b"")
+            fixture = build_lifecycle_fixture_object(work)
+            missing = work / "missing-handoff"
+            link_freestanding_lifecycle_probe(missing, scrt1=output / "Scrt1.o", fixture=fixture)
+            result = run([str(missing)])
+            self.assertEqual(result.returncode, 127, result.stderr.decode(errors="replace"))
+            self.assertEqual(result.stdout, b"")
+
     def test_scrt1_launches_under_musl_and_proves_private_lifecycle_bridge(self) -> None:
         for required in (MUSL_SCRT1, MUSL_CRTI, MUSL_CRTN, MUSL_LOADER, MUSL_SPECS):
             self.assertTrue(required.is_file(), f"missing pinned musl input: {required}")
@@ -455,6 +479,15 @@ class X86_64DynamicStartupTests(unittest.TestCase):
                 owned_handoff_run.stderr.decode(errors="replace"),
             )
             self.assertEqual(owned_handoff_run.stdout, b"PDiIMFfL")
+
+            hardened_handoff_fixture = build_owned_handoff_fixture_object(work, version=2)
+            hardened_handoff_probe = work / "candidate-hardened-owned-handoff"
+            link_freestanding_lifecycle_probe(
+                hardened_handoff_probe, scrt1=output / "Scrt1.o", fixture=hardened_handoff_fixture,
+            )
+            hardened_handoff_run = run([str(hardened_handoff_probe)])
+            self.assertEqual(hardened_handoff_run.returncode, 127)
+            self.assertEqual(hardened_handoff_run.stdout, b"")
 
             malformed_handoff_fixture = build_owned_handoff_fixture_object(work, malformed=True)
             malformed_handoff_probe = work / "candidate-malformed-owned-handoff"

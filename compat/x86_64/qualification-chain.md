@@ -10,7 +10,7 @@ Nothing here is a pass until a receipt revalidates (see Receipts).
 | 1 | `compat.abi-differential` | one current-source cohort of ABI inventory, ELF facts, declaration inventory, public-data link report and selection companions (`abi-evidence`) | `abi-differential-evidence assemble` |
 | 2 | `compat.posix-process` | the native POSIX aggregate receipt (`posix-native`) | `owned-posix-native` |
 | 3 | `compat.resolver-network` | the retained resolver-network report (`resolver-network`) | `owned-resolver-network`, or the network step of `owned-resolver-family` |
-| 4 | `compat.loader-corpus` | the loader family receipt (`loader-family`) | `owned-loader-family --work DIR` |
+| 4 | `compat.loader-corpus` | the loader family receipt (`loader-family`) and a current-source hardened runtime execution | `owned-loader-family --work DIR`; `hardened-runtime DYNAMIC_SYSROOT` |
 | 5 | `consumer.rust-std-lto` | the Rust std/LTO consumer receipt (`rust-std-lto`) | `consumer-rust-std-lto run` |
 | 6 | `consumer.source-build` | the Lua source-build admission (`lua-source-build`) | `lua-source-build-admission --output DIR` after `lua-static-source-build` and `lua-dynamic-source-build` |
 | 7 | `capability.accounting` | `parity.toml` and the frozen baseline; no publication | `python3 compat/x86_64/validate_parity_ledger.py` |
@@ -60,6 +60,12 @@ result (`complete_profile` is true only when the profile's last gate passed).
   met).
 - `capability.accounting` adds `capability-completion`, naming every frozen
   capability not yet `implemented-foundation`.
+- `compat.loader-corpus` requires exactly one hardened runtime execution. It
+  uses the compatibility product bound to the published loader family, builds
+  hardened release products from the same source, and runs the static CRT and
+  native entry, protection, search and rollback checks. Missing or failed
+  hardened evidence cannot be replaced by compatibility-only receipts. Receipt
+  replay revalidates the three reached product manifests and their payloads.
 
 The gate case prints the condition record and exits 1 with
 `x86 qualification gate GATE: UNMET (...)`; only a native evaluation with every

@@ -8,6 +8,11 @@
 #include <string.h>
 #include <sys/auxv.h>
 #include <unistd.h>
+#ifdef CRABC_HARDENED_PROBE
+#include <pthread.h>
+#include <signal.h>
+#include <sys/wait.h>
+#endif
 
 /* The same installed-header object is linked in every mode. Dynamic entry
  * leaves main preinit uncalled; owned static entry still dispatches it. */
@@ -18,6 +23,15 @@ static int phase, preinitialized;
  * The pinned freestanding GCC specs disable generated stack protectors. */
 extern uintptr_t __stack_chk_guard;
 static void emit(char c) { if (write(1,&c,1)!=1) _Exit(90); }
+#ifdef CRABC_HARDENED_PROBE
+static int stack_is_nonexecutable(void) {
+    volatile unsigned char code[]={0xc3};
+    pid_t child=fork();
+    if (!child) { ((void (*)(void))(uintptr_t)code)(); _Exit(0); }
+    int status=0;
+    return child>0 && waitpid(child,&status,0)==child && WIFSIGNALED(status) && WTERMSIG(status)==SIGSEGV;
+}
+#endif
 static void state(void) {
     const unsigned char *random=(const unsigned char *)getauxval(AT_RANDOM);
     uintptr_t guard, expected=0;
@@ -26,7 +40,13 @@ static void state(void) {
     expected&=~(uintptr_t)0xff00;
     __asm__ volatile("mov %%fs:40,%0":"=r"(guard));
     if (!guard || guard!=expected || __stack_chk_guard!=expected || initial!=17 || zero!=0 || errno!=0) _Exit(92);
+#ifdef CRABC_HARDENED_PROBE
+    if (!stack_is_nonexecutable()) _Exit(114);
+#endif
 }
+#ifdef CRABC_HARDENED_PROBE
+static void *worker(void *argument) { state(); return argument; }
+#endif
 #ifndef EMPTY_ARRAYS
 static void preinit(void) { state(); if (phase) _Exit(93); preinitialized=1; emit('P'); }
 static void init(void) { state(); if (phase!=1) _Exit(94); phase=2; emit('C'); }
@@ -146,7 +166,12 @@ static void observe(const char *mode) {
         if (s.handoffs!=1 || !s.handoff || s.conventional!=1 || s.snapshot
             || s.descriptors!=1 || !s.descriptor) _Exit(105);
         const uint64_t *q=(const uint64_t *)s.handoff;
-        if (q[0]!=UINT64_C(0x43524142435f4831) || ((const uint32_t *)q)[2]!=1
+        if (q[0]!=UINT64_C(0x43524142435f4831) || ((const uint32_t *)q)[2]!=
+#ifdef CRABC_HARDENED_PROBE
+            2
+#else
+            1
+#endif
             || ((const uint32_t *)q)[3]!=32 || !q[2] || !q[3]) _Exit(106);
         const struct loader_tls_descriptor *d=(const struct loader_tls_descriptor *)s.descriptor;
         uintptr_t tp,dtv;
@@ -189,6 +214,10 @@ int main(int argc,char **argv) {
     volatile unsigned __int128 denominator=3;
     if (numerator/denominator!=((((unsigned __int128)1<<100)|7)/3)) _Exit(112);
     void *allocation=malloc(31); if (!allocation) _Exit(109); free(allocation);
+#ifdef CRABC_HARDENED_PROBE
+    pthread_t thread; void *result=0; int token=7;
+    if (pthread_create(&thread,0,worker,&token) || pthread_join(thread,&result) || result!=&token) _Exit(113);
+#endif
     if (strcmp(argv[1],"static")) observe(argv[1]); else emit('S');
     if (atexit(handler)) _Exit(110);
     phase=3; emit('M'); return 0;

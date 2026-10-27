@@ -458,6 +458,48 @@ only with the same selected static/dynamic products and public ELF cohort; it
 does not turn the private implementation spellings into new installed ABI
 providers or close pthread lifecycle, family, or public-support evidence.
 
+## Hardened kernel entry prototype
+
+Inside the pinned native image, `compat/x86_64/run_hardened_entry.sh DYNAMIC STATIC COMPATIBILITY`
+tests hardened debug products in a disposable root. A conventional pinned-musl
+CRT PIE runs through kernel and direct entry without an owned CRT note. A
+matching owned PIE must run its constructor; a non-PIE, an executable stack,
+and an RWX load must fail before it through kernel and direct interpreter
+entry. Crossed owned CRT and interpreter profiles fail before constructors on
+both routes, while matching pairs run. A dynamic PIE's executable file-page alias must remain unchanged
+when its writable view changes. The static PIE is checked for the same property
+when its selected data byte has such an alias; otherwise the fixture reports
+that byte's lack of an alias. A second static PIE explicitly maps the same
+file page writable and executable at separate addresses, checks isolation,
+and verifies the file remains unchanged. During the first constructor, forked children
+must fault when writing the main image's RELRO and, for dynamic PIE, the
+interpreter's RELRO and a runtime-loaded DSO's RELRO. This focused test does not qualify the
+hardened product.
+In a disposable root, set-user-ID fixtures verify the kernel's `AT_SECURE`
+and prove that preload and library-path environment inputs and direct-loader
+options are ignored in both profiles; nonsecure controls use those inputs.
+It also rejects runtime-loaded DSOs with executable stacks, RWX loads or no
+required RELRO, while checking constructor absence and the retained graph.
+Disposable child processes deny mapping or protection syscalls and check that
+failed loads preserve the existing graph and RELRO.
+The TLS preparation failure also preserves distinct existing TLS values on
+the calling thread and a live worker.
+An ELF fixture redirects a TLS offset relocation to ordinary writable data;
+the hardened loader rejects this ambiguous relocation outside RELRO, while
+the compatibility loader preserves the relocation and subsequent mutation.
+The same policy rejects a symbol address initialized into writable data;
+the compatibility control calls and then clears that function pointer.
+An object without a declared PLTGOT or binding relocations loads without
+RELRO and its exported function remains callable.
+The same malformed images fail as startup dependencies or preloads; the
+compatibility product admits the executable-stack preload and runs its
+constructor. Missing optional preloads remain optional. The existing CRT
+startup probe checks kernel-seeded guards and initial TLS in constructors and
+a worker for both hardened products, including direct dynamic entry.
+Real dependency and `dlopen` cases check relative versus absolute environment,
+interpreter, RUNPATH, system-path, `$ORIGIN`, and slash-containing inputs,
+with compatibility controls for relative RUNPATH and dependency names.
+
 ## Rust RuntimeV1 facades
 
 `./scripts/dev-x86_64.sh runtime-private-facades [DYNAMIC_SYSROOT]` proves the

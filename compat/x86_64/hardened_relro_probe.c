@@ -1,0 +1,269 @@
+#include <elf.h>
+#include <signal.h>
+#include <stdint.h>
+#include <sys/auxv.h>
+#include <sys/wait.h>
+#include <unistd.h>
+#ifdef CRABC_DSO_PROBE
+#include <dlfcn.h>
+#include <errno.h>
+#include <link.h>
+#include <pthread.h>
+#include <stdatomic.h>
+#include <string.h>
+#include <sys/prctl.h>
+#include <sys/syscall.h>
+#endif
+
+static int protected_before_main;
+
+static int check_relro(uintptr_t base, const Elf64_Phdr *headers, unsigned long count)
+{
+    for (unsigned long i = 0; i < count; i++) {
+        if (headers[i].p_type != PT_GNU_RELRO || !headers[i].p_memsz) continue;
+        volatile unsigned char *target = (volatile unsigned char *)(base + headers[i].p_vaddr);
+        pid_t child = fork();
+        if (child == 0) {
+            *target ^= 1;
+            _exit(0);
+        }
+        if (child < 0) return 0;
+        int status = 0;
+        return waitpid(child, &status, 0) == child && WIFSIGNALED(status) && WTERMSIG(status) == SIGSEGV;
+    }
+    return 0;
+}
+
+#ifdef CRABC_DSO_PROBE
+struct image_view {
+    uintptr_t base;
+    const Elf64_Phdr *headers;
+    unsigned long count;
+};
+
+static int find_dso(struct dl_phdr_info *info, size_t size, void *context)
+{
+    (void)size;
+    if (!strstr(info->dlpi_name, "hardened-relro-fixture.so")) return 0;
+    struct image_view *image = context;
+    image->base = info->dlpi_addr;
+    image->headers = info->dlpi_phdr;
+    image->count = info->dlpi_phnum;
+    return 1;
+}
+
+static int count_dso(struct dl_phdr_info *info, size_t size, void *context)
+{
+    (void)info;
+    (void)size;
+    (*(unsigned long *)context)++;
+    return 0;
+}
+
+struct syscall_filter_instruction {
+    unsigned short code;
+    unsigned char yes, no;
+    unsigned int value;
+};
+
+struct syscall_filter_program {
+    unsigned short length;
+    struct syscall_filter_instruction *instructions;
+};
+
+static _Thread_local int retained_tls = 19;
+static atomic_int worker_phase;
+
+static void *observe_retained_tls(void *unused)
+{
+    (void)unused;
+    retained_tls = 37;
+    atomic_store_explicit(&worker_phase, 1, memory_order_release);
+    while (atomic_load_explicit(&worker_phase, memory_order_acquire) == 1) { }
+    return (void *)(uintptr_t)(retained_tls == 37);
+}
+
+static int failed_syscall_preserves_graph(int number, int (*initialized)(void), unsigned long before,
+                                          const struct image_view *image)
+{
+    pid_t child = fork();
+    if (child == 0) {
+        struct syscall_filter_instruction instructions[] = {
+            {0x20, 0, 0, 0},
+            {0x15, 0, 1, (unsigned int)number},
+            {0x06, 0, 0, 0x00050000 | EPERM},
+            {0x06, 0, 0, 0x7fff0000},
+        };
+        struct syscall_filter_program program = {4, instructions};
+        if (prctl(PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0) || prctl(PR_SET_SECCOMP, 2, &program, 0, 0)) _exit(2);
+        errno = 0;
+        long injected = number == SYS_mprotect ? syscall(SYS_mprotect, 0, 4096, 1)
+            : syscall(SYS_mmap, 0, 4096, 3, 0x22, -1, 0);
+        if (injected != -1 || errno != EPERM) _exit(3);
+        void *rejected = dlopen("/usr/lib/rejected-source.so", RTLD_NOW);
+        const char *error = dlerror();
+        unsigned long after = 0;
+        dl_iterate_phdr(count_dso, &after);
+        _exit(!rejected && error && (number != SYS_mprotect || strstr(error, "RELRO protection failed"))
+              && after == before && initialized() == 7 && access("/rejected-marker", F_OK) != 0
+              && check_relro(image->base, image->headers, image->count) ? 0 : 1);
+    }
+    int status = 0;
+    return child > 0 && waitpid(child, &status, 0) == child && WIFEXITED(status) && WEXITSTATUS(status) == 0;
+}
+
+static int failed_tls_preparation_preserves_graph(int (*initialized)(void), unsigned long before,
+                                                   const struct image_view *image)
+{
+    pid_t child = fork();
+    if (child == 0) {
+        pthread_t worker;
+        retained_tls = 31;
+        atomic_store_explicit(&worker_phase, 0, memory_order_relaxed);
+        if (pthread_create(&worker, 0, observe_retained_tls, 0) != 0) _exit(5);
+        while (atomic_load_explicit(&worker_phase, memory_order_acquire) != 1) { }
+        struct syscall_filter_instruction instructions[] = {
+            {0x20, 0, 0, 0},
+            {0x15, 0, 3, SYS_mmap},
+            {0x20, 0, 0, 24},
+            {0x35, 1, 0, 4096},
+            {0x06, 0, 0, 0x00050000 | EPERM},
+            {0x06, 0, 0, 0x7fff0000},
+        };
+        struct syscall_filter_program program = {6, instructions};
+        if (prctl(PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0) || prctl(PR_SET_SECCOMP, 2, &program, 0, 0)) _exit(2);
+        errno = 0;
+        if (syscall(SYS_mmap, 0, 95, 3, 0x22, -1, 0) != -1 || errno != EPERM) _exit(3);
+        long page = syscall(SYS_mmap, 0, 4096, 3, 0x22, -1, 0);
+        if (page == -1 || syscall(SYS_munmap, page, 4096) != 0) _exit(4);
+        void *rejected = dlopen("/usr/lib/tls-fault.so", RTLD_NOW);
+        const char *error = dlerror();
+        unsigned long after = 0;
+        dl_iterate_phdr(count_dso, &after);
+        atomic_store_explicit(&worker_phase, 2, memory_order_release);
+        void *worker_result = 0;
+        if (pthread_join(worker, &worker_result) != 0 || worker_result != (void *)(uintptr_t)1
+            || retained_tls != 31) _exit(6);
+        _exit(!rejected && error && after == before && initialized() == 7
+              && access("/tls-rejected-marker", F_OK) != 0
+              && check_relro(image->base, image->headers, image->count) ? 0 : 1);
+    }
+    int status = 0;
+    return child > 0 && waitpid(child, &status, 0) == child && WIFEXITED(status) && WEXITSTATUS(status) == 0;
+}
+
+static int check_loaded_dso(void)
+{
+    void *handle = dlopen("/usr/lib/hardened-relro-fixture.so", RTLD_NOW);
+    if (!handle) return 0;
+    int (*initialized)(void) = (int (*)(void))dlsym(handle, "hardened_fixture_initialized");
+    struct image_view image = {0};
+    int found = dl_iterate_phdr(find_dso, &image);
+    int valid = initialized && initialized() == 7 && found == 1
+        && check_relro(image.base, image.headers, image.count);
+    void *relative = dlopen("plugins/relative-only.so", RTLD_NOW);
+    if (relative) { dlclose(relative); valid = 0; }
+    void *absolute = dlopen("/plugins/relative-only.so", RTLD_NOW);
+    if (!absolute || dlclose(absolute) != 0) valid = 0;
+    void *unbound = dlopen("/usr/lib/no-binding.so", RTLD_NOW);
+    int (*unbound_value)(void) = unbound ? (int (*)(void))dlsym(unbound, "hardened_supplied") : 0;
+    if (!unbound_value || unbound_value() != 7 || dlclose(unbound) != 0) valid = 0;
+    const char *ambiguous[] = {"/usr/lib/tls-mutable.so", "/usr/lib/tls-module.so", "/usr/lib/tls-thread.so"};
+    for (unsigned long i = 0; i < sizeof ambiguous / sizeof ambiguous[0]; i++) {
+        void *tls = dlopen(ambiguous[i], RTLD_NOW);
+        if (tls) { dlclose(tls); valid = 0; }
+        else if (!dlerror()) valid = 0;
+        if (access("/tls-mutable-marker", F_OK) == 0) valid = 0;
+    }
+    const char *symbols[] = {"/usr/lib/symbol-mutable.so", "/usr/lib/symbol-pc32.so",
+                             "/usr/lib/symbol-glob.so", "/usr/lib/symbol-jump.so"};
+    for (unsigned long i = 0; i < sizeof symbols / sizeof symbols[0]; i++) {
+        void *symbol = dlopen(symbols[i], RTLD_NOW);
+        if (symbol) { dlclose(symbol); valid = 0; }
+        else if (!dlerror()) valid = 0;
+        if (access("/symbol-mutable-marker", F_OK) == 0) valid = 0;
+    }
+    unsigned long graph_before = 0;
+    dl_iterate_phdr(count_dso, &graph_before);
+    void *unresolved = dlopen("/usr/lib/import-probe.so", RTLD_LAZY);
+    if (unresolved) { dlclose(unresolved); valid = 0; }
+    else if (!dlerror()) valid = 0;
+    if (access("/import-marker", F_OK) == 0) valid = 0;
+    unsigned long graph_after = 0;
+    dl_iterate_phdr(count_dso, &graph_after);
+    if (graph_before != graph_after || initialized() != 7
+        || !check_relro(image.base, image.headers, image.count)) valid = 0;
+    pid_t child = fork();
+    if (child == 0) {
+        void *control = dlopen("/usr/lib/rejected-source.so", RTLD_NOW);
+        _exit(control && access("/rejected-marker", F_OK) == 0 ? 0 : 1);
+    }
+    int child_status = 0;
+    if (child < 0 || waitpid(child, &child_status, 0) != child
+        || !WIFEXITED(child_status) || WEXITSTATUS(child_status) != 0
+        || unlink("/rejected-marker") != 0) valid = 0;
+    child = fork();
+    if (child == 0) {
+        void *control = dlopen("/usr/lib/tls-fault.so", RTLD_NOW);
+        int *value = control ? dlsym(control, "hardened_fault_tls") : 0;
+        _exit(value && *value == 41 && access("/tls-rejected-marker", F_OK) == 0 ? 0 : 1);
+    }
+    child_status = 0;
+    if (child < 0 || waitpid(child, &child_status, 0) != child
+        || !WIFEXITED(child_status) || WEXITSTATUS(child_status) != 0
+        || unlink("/tls-rejected-marker") != 0) valid = 0;
+    unsigned long before = 0;
+    dl_iterate_phdr(count_dso, &before);
+    if (valid && (!failed_syscall_preserves_graph(SYS_mprotect, initialized, before, &image)
+                  || !failed_syscall_preserves_graph(SYS_mmap, initialized, before, &image)
+                  || !failed_tls_preparation_preserves_graph(initialized, before, &image))) valid = 0;
+    const char *rejected[] = {"/usr/lib/rejected-stack.so", "/usr/lib/rejected-wx.so", "/usr/lib/rejected-relro.so",
+                              "/usr/lib/rejected-pltgot-duplicate.so", "/usr/lib/rejected-pltgot-outside.so"};
+    for (unsigned long i = 0; valid && i < sizeof rejected / sizeof rejected[0]; i++) {
+        if (access(rejected[i], F_OK) != 0) { valid = 0; break; }
+        void *bad = dlopen(rejected[i], RTLD_LAZY);
+        if (bad) {
+            dlclose(bad);
+            valid = 0;
+            break;
+        }
+        unsigned long after = 0;
+        dl_iterate_phdr(count_dso, &after);
+        if (before != after || initialized() != 7 || access("/rejected-marker", F_OK) == 0) valid = 0;
+    }
+    return dlclose(handle) == 0 && valid;
+}
+#endif
+
+__attribute__((constructor)) static void observe_relro(void)
+{
+    const Elf64_Phdr *headers = (const Elf64_Phdr *)getauxval(AT_PHDR);
+    unsigned long count = getauxval(AT_PHNUM);
+    uintptr_t base = 0;
+    int found = 0;
+    for (unsigned long i = 0; i < count; i++) {
+        if (headers[i].p_type == PT_PHDR) {
+            base = (uintptr_t)headers - headers[i].p_vaddr;
+            found = 1;
+        }
+    }
+    if (!found) return;
+    if (!check_relro(base, headers, count)) return;
+    for (unsigned long i = 0; i < count; i++) {
+        if (headers[i].p_type != PT_INTERP) continue;
+        uintptr_t interpreter = getauxval(AT_BASE);
+        if (!interpreter) return;
+        const Elf64_Ehdr *elf = (const Elf64_Ehdr *)interpreter;
+        const Elf64_Phdr *programs = (const Elf64_Phdr *)(interpreter + elf->e_phoff);
+        if (!check_relro(interpreter, programs, elf->e_phnum)) return;
+    }
+#ifdef CRABC_DSO_PROBE
+    if (!check_loaded_dso()) return;
+#endif
+    protected_before_main = 1;
+}
+
+int main(void)
+{
+    return protected_before_main ? 0 : 1;
+}

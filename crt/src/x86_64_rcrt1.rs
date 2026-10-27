@@ -130,6 +130,163 @@ _start:
     je .Lstatic_pie_fail
     mov rbx, r12
     sub rbx, r14
+    jc .Lstatic_pie_fail
+
+    mov eax, {hardened}
+    test eax, eax
+    jz .Lstatic_pie_hardened_done
+    mov r8, r12
+    xor r9d, r9d
+.Lstatic_pie_hardened_elf_header:
+    cmp r9, r13
+    jae .Lstatic_pie_fail
+    cmp DWORD PTR [r8], 1
+    jne .Lstatic_pie_hardened_elf_next
+    cmp QWORD PTR [r8 + 8], 0
+    jne .Lstatic_pie_hardened_elf_next
+    test DWORD PTR [r8 + 4], 4
+    jz .Lstatic_pie_hardened_elf_next
+    cmp QWORD PTR [r8 + 32], 64
+    jb .Lstatic_pie_hardened_elf_next
+    cmp QWORD PTR [r8 + 40], 64
+    jb .Lstatic_pie_hardened_elf_next
+    mov rax, QWORD PTR [r8 + 16]
+    add rax, rbx
+    jc .Lstatic_pie_fail
+    mov rdx, rax
+    add rdx, 64
+    jc .Lstatic_pie_fail
+    cmp DWORD PTR [rax], 0x464c457f
+    jne .Lstatic_pie_fail
+    cmp WORD PTR [rax + 4], 0x0102
+    jne .Lstatic_pie_fail
+    cmp BYTE PTR [rax + 6], 1
+    jne .Lstatic_pie_fail
+    cmp WORD PTR [rax + 16], 3
+    jne .Lstatic_pie_fail
+    cmp WORD PTR [rax + 18], 62
+    jne .Lstatic_pie_fail
+    cmp DWORD PTR [rax + 20], 1
+    jne .Lstatic_pie_fail
+    cmp WORD PTR [rax + 52], 64
+    jne .Lstatic_pie_fail
+    cmp WORD PTR [rax + 54], 56
+    jne .Lstatic_pie_fail
+    movzx ecx, WORD PTR [rax + 56]
+    cmp rcx, r13
+    jne .Lstatic_pie_fail
+    mov rsi, QWORD PTR [rax + 32]
+    mov rdi, r13
+    imul rdi, 56
+    add rdi, rsi
+    jc .Lstatic_pie_fail
+    mov r11, r12
+    xor ecx, ecx
+.Lstatic_pie_hardened_phdr_mapping:
+    cmp rcx, r13
+    jae .Lstatic_pie_fail
+    cmp DWORD PTR [r11], 1
+    jne .Lstatic_pie_hardened_phdr_next
+    test DWORD PTR [r11 + 4], 4
+    jz .Lstatic_pie_hardened_phdr_next
+    mov rdx, QWORD PTR [r11 + 8]
+    cmp rsi, rdx
+    jb .Lstatic_pie_hardened_phdr_next
+    mov rax, rdx
+    add rax, QWORD PTR [r11 + 32]
+    jc .Lstatic_pie_fail
+    cmp rdi, rax
+    ja .Lstatic_pie_hardened_phdr_next
+    mov rax, rdi
+    sub rax, rdx
+    cmp rax, QWORD PTR [r11 + 40]
+    ja .Lstatic_pie_hardened_phdr_next
+    mov rax, rsi
+    sub rax, rdx
+    add rax, QWORD PTR [r11 + 16]
+    jc .Lstatic_pie_fail
+    add rax, rbx
+    jc .Lstatic_pie_fail
+    cmp rax, r12
+    je .Lstatic_pie_hardened_elf_done
+.Lstatic_pie_hardened_phdr_next:
+    add r11, 56
+    inc rcx
+    jmp .Lstatic_pie_hardened_phdr_mapping
+.Lstatic_pie_hardened_elf_next:
+    add r8, 56
+    inc r9
+    jmp .Lstatic_pie_hardened_elf_header
+.Lstatic_pie_hardened_elf_done:
+    mov r8, r12
+    xor r9d, r9d
+    xor r10d, r10d
+.Lstatic_pie_hardened_headers:
+    cmp r9, r13
+    jae .Lstatic_pie_hardened_headers_done
+    mov eax, DWORD PTR [r8]
+    cmp eax, 0x6474e551
+    jne .Lstatic_pie_hardened_not_stack
+    test r10, r10
+    jnz .Lstatic_pie_fail
+    test DWORD PTR [r8 + 4], 1
+    jnz .Lstatic_pie_fail
+    mov r10d, 1
+    jmp .Lstatic_pie_hardened_advance
+.Lstatic_pie_hardened_not_stack:
+    cmp eax, 1
+    jne .Lstatic_pie_hardened_advance
+    mov eax, DWORD PTR [r8 + 4]
+    and eax, 3
+    cmp eax, 3
+    je .Lstatic_pie_fail
+    test eax, 2
+    jz .Lstatic_pie_hardened_advance
+    cmp QWORD PTR [r8 + 40], 0
+    je .Lstatic_pie_hardened_advance
+    mov rdi, QWORD PTR [r8 + 16]
+    mov rsi, rdi
+    add rsi, QWORD PTR [r8 + 40]
+    jc .Lstatic_pie_fail
+    add rsi, 4095
+    jc .Lstatic_pie_fail
+    and rsi, -4096
+    and rdi, -4096
+    mov r11, r12
+    xor edx, edx
+.Lstatic_pie_hardened_overlap:
+    cmp rdx, r13
+    jae .Lstatic_pie_hardened_advance
+    cmp DWORD PTR [r11], 1
+    jne .Lstatic_pie_hardened_overlap_next
+    test DWORD PTR [r11 + 4], 1
+    jz .Lstatic_pie_hardened_overlap_next
+    cmp QWORD PTR [r11 + 40], 0
+    je .Lstatic_pie_hardened_overlap_next
+    mov rax, QWORD PTR [r11 + 16]
+    mov rcx, rax
+    add rcx, QWORD PTR [r11 + 40]
+    jc .Lstatic_pie_fail
+    add rcx, 4095
+    jc .Lstatic_pie_fail
+    and rcx, -4096
+    and rax, -4096
+    cmp rdi, rcx
+    jae .Lstatic_pie_hardened_overlap_next
+    cmp rax, rsi
+    jb .Lstatic_pie_fail
+.Lstatic_pie_hardened_overlap_next:
+    add r11, 56
+    inc rdx
+    jmp .Lstatic_pie_hardened_overlap
+.Lstatic_pie_hardened_advance:
+    add r8, 56
+    inc r9
+    jmp .Lstatic_pie_hardened_headers
+.Lstatic_pie_hardened_headers_done:
+    test r10, r10
+    jz .Lstatic_pie_fail
+.Lstatic_pie_hardened_done:
 
     mov r8, QWORD PTR [rsp + 72]
     test r8, r8
@@ -232,6 +389,7 @@ _start:
     mov QWORD PTR [rsp + 24], rax
     mov QWORD PTR [rsp + 32], rax
     mov QWORD PTR [rsp + 80], rax
+    mov QWORD PTR [rsp + 88], rax
 .Lstatic_pie_dynamic:
     lea rax, [r8 + 16]
     cmp rax, r9
@@ -260,6 +418,13 @@ _start:
     jnz .Lstatic_pie_fail
     jmp .Lstatic_pie_dynamic
 .Lstatic_pie_not_flags:
+    cmp rax, 3
+    jne .Lstatic_pie_not_pltgot
+    bts QWORD PTR [rsp + 80], 6
+    jc .Lstatic_pie_fail
+    mov QWORD PTR [rsp + 88], rcx
+    jmp .Lstatic_pie_dynamic
+.Lstatic_pie_not_pltgot:
     cmp rax, 7
     jne .Lstatic_pie_not_rela
     bts QWORD PTR [rsp + 80], 0
@@ -315,6 +480,41 @@ _start:
     cmp eax, 28
     jne .Lstatic_pie_fail
 .Lstatic_pie_relr_tags_done:
+    mov eax, {hardened}
+    test eax, eax
+    jz .Lstatic_pie_got_done
+    bt QWORD PTR [rsp + 80], 6
+    jnc .Lstatic_pie_got_done
+    mov r8, QWORD PTR [rsp + 72]
+    test r8, r8
+    jz .Lstatic_pie_fail
+    mov rdi, QWORD PTR [rsp + 88]
+    test rdi, rdi
+    jz .Lstatic_pie_fail
+    add rdi, rbx
+    jc .Lstatic_pie_fail
+    mov rdx, rdi
+    add rdx, 24
+    jc .Lstatic_pie_fail
+    mov rax, QWORD PTR [r8 + 16]
+    add rax, rbx
+    jc .Lstatic_pie_fail
+    mov rcx, rax
+    add rcx, QWORD PTR [r8 + 40]
+    jc .Lstatic_pie_fail
+    add rcx, 4095
+    jc .Lstatic_pie_fail
+    and rcx, -4096
+    and rax, -4096
+    cmp rdi, rax
+    jb .Lstatic_pie_fail
+    cmp rdx, rcx
+    ja .Lstatic_pie_fail
+    mov esi, 24
+    mov edx, 1
+    lea r11, [rip + .Lstatic_pie_got_done]
+    jmp .Lstatic_pie_require_load_range
+.Lstatic_pie_got_done:
 
     // Only symbol-free R_X86_64_RELATIVE RELA records are valid here.
     mov rsi, QWORD PTR [rsp + 8]
@@ -573,4 +773,5 @@ _start:
     .section .note.GNU-stack,"",@progbits
 "#,
     startup = sym __crabc_x86_64_static_pie_start,
+    hardened = const cfg!(crabc_hardened) as u8,
 );

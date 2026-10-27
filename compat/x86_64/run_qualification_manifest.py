@@ -1449,6 +1449,31 @@ def run_chain(report: Mapping[str, object], through: str, *, profile: str | None
     return receipt, value
 
 
+def validate_hardened_gate_output(stdout: bytes) -> None:
+    lines = stdout.splitlines()
+    try:
+        record = json.loads(b"\n".join(lines[:-1]))
+    except (UnicodeDecodeError, ValueError) as error:
+        raise QualificationRunError("loader gate conditions are invalid") from error
+    gates = gate_conditions_module()
+    if not isinstance(record, dict) or record.get("family") != "compat.loader-corpus" or "hardened_products" not in record:
+        raise QualificationRunError("loader gate lacks hardened runtime evidence")
+    try:
+        family_path = gates._physical_work_file(record.get("loader_family_receipt"), "loader family receipt")
+        family = gates._validate_loader_family(family_path)
+        cohort = record.get("cohort")
+        if family["inputs"]["before"]["qualification"]["path"] != cohort:
+            raise QualificationRunError("loader family and hardened compatibility cohort differ")
+        cohort_path = gates._physical_work_file(cohort, "dynamic qualification receipt")
+        compatibility = record["hardened_products"]["compatibility"]["manifest"]
+        compatibility_path = gates._physical_work_file(compatibility, "compatibility product manifest")
+        if compatibility_path != cohort_path.parent / "installed/share/crabc/manifest.json":
+            raise QualificationRunError("hardened compatibility product differs from the qualified cohort")
+        gates.validate_hardened_products(record["hardened_products"])
+    except (RuntimeError, OSError, ValueError, KeyError, TypeError) as error:
+        raise QualificationRunError(f"hardened runtime product evidence is invalid: {error}") from error
+
+
 def validate_chain_case(
     transaction: Path,
     order: int,
@@ -1489,6 +1514,8 @@ def validate_chain_case(
         raise QualificationRunError(f"qualification chain case outcome differs from its raw result: {label}")
     if not passed and not (isinstance(record["error"], str) and record["error"]):
         raise QualificationRunError(f"qualification chain failed case has no error: {label}")
+    if passed and gate["id"] == "compat.loader-corpus":
+        validate_hardened_gate_output(raw["stdout"])
     return passed
 
 

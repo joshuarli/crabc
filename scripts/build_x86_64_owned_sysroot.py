@@ -37,6 +37,7 @@ sys.path.insert(0, str(ROOT))
 from scripts.rust_toolchain import pinned_toolchain
 from scripts import native_build_tools
 from compat.x86_64 import static_product_contract
+from compat.x86_64.native_runtime_profile import NativeRuntimeProfile
 TARGET = "x86_64-unknown-linux-musl"
 FORMAT = "crabc-x86-64-owned-static-sysroot-v1"
 PINNED_TOOLCHAIN = pinned_toolchain(ROOT)
@@ -48,6 +49,8 @@ DEFAULT_OUTPUT = ROOT / ".work" / "x86_64" / "owned-static-sysroot"
 CRT_OBJECTS = ("crt1.o", "Scrt1.o", "rcrt1.o", "crti.o", "crtn.o")
 STATIC_DRIVER_SOURCE = ROOT / "compat" / "x86_64" / "crabc_cc_static.py"
 STATIC_DRIVER_PATH = "bin/crabc-cc"
+NATIVE_PROFILE_SOURCE = ROOT / "compat" / "x86_64" / "native_runtime_profile.py"
+NATIVE_PROFILE_PATH = "share/crabc/native_runtime_profile.py"
 PACKAGE_FORMAT = "crabc-x86-64-owned-static-sysroot-package/v1"
 PACKAGE_ARCHIVE_ROOT = "crabc-x86_64-owned-static-sysroot"
 LIBC_MEMBER = re.compile(r"^c\..+\.rcgu\.o$")
@@ -777,6 +780,7 @@ def install_static_driver(destination: Path) -> None:
 
     copy_artifact(STATIC_DRIVER_SOURCE, destination)
     destination.chmod(0o755)
+    copy_artifact(NATIVE_PROFILE_SOURCE, destination.parent.parent / NATIVE_PROFILE_PATH)
 
 
 def regular_file_hashes(root: Path, *, exclude: frozenset[str] = frozenset()) -> dict[str, str]:
@@ -797,9 +801,12 @@ def installed_manifest(
     payload_hashes: dict[str, str], producer_tools: dict[str, object],
     *, allocator_backend: str = "accepted-c", source_sha256: str | None = None,
     lifecycle_test_audit: bool = False,
+    hardening_profile: NativeRuntimeProfile = NativeRuntimeProfile.COMPATIBILITY,
 ) -> dict[str, object]:
     """Describe the bounded installed contract without promoting either family."""
 
+    if not isinstance(hardening_profile, NativeRuntimeProfile):
+        raise BuildError("unknown native runtime profile")
     if allocator_backend not in ALLOCATOR_BACKENDS:
         raise BuildError("unknown owned allocator backend")
     if source_sha256 is None:
@@ -820,6 +827,7 @@ def installed_manifest(
         "producer_tools": producer_tools,
         "scope": EVIDENCE_SCOPE if allocator_backend == EVIDENCE_ALLOCATOR_BACKEND else SCOPE,
         "allocator_backend": allocator_backend,
+        "hardening_profile": hardening_profile.value,
         "allocator_lifecycle_test_audit": lifecycle_test_audit,
         "package": {
             "format": PACKAGE_FORMAT,
@@ -837,10 +845,7 @@ def installed_manifest(
             "format": "crabc-x86-64-sealed-static-driver-v1",
             "path": STATIC_DRIVER_PATH,
             "status": "planned-owned-static-product-seed-not-family-completion-not-public-support",
-            "modes": [
-                {"id": "static-et-exec", "elf_type": "ET_EXEC", "crt_object": "crt1.o"},
-                {"id": "static-pie", "elf_type": "ET_DYN", "crt_object": "rcrt1.o"},
-            ],
+            "modes": hardening_profile.static_modes,
             "rejected_ambient_target_inputs": [
                 "headers",
                 "CRT",
@@ -1138,7 +1143,8 @@ def replace_allocator_member(
 
 
 def build_debug_runtime_inputs(stage: Path, *, allocator_backend: str = DEFAULT_ALLOCATOR_BACKEND,
-                               lifecycle_test_audit: bool = False, dynamic: bool = False) -> dict[str, object]:
+                               lifecycle_test_audit: bool = False, dynamic: bool = False,
+                               hardening_profile: NativeRuntimeProfile = NativeRuntimeProfile.COMPATIBILITY) -> dict[str, object]:
     from compat.x86_64 import native_static_source_runtime_closure as closure
     recorded_backend = allocator_backend
     allocator_backend = backend_selection(allocator_backend, lifecycle_test_audit)
@@ -1173,11 +1179,13 @@ def build_debug_runtime_inputs(stage: Path, *, allocator_backend: str = DEFAULT_
         else:
             os.environ["CARGO_PROFILE_DEV_OPT_LEVEL"] = previous
     return collect_debug_runtime_inputs(stage, graph, raw, allocator_backend=recorded_backend,
-                                        lifecycle_test_audit=lifecycle_test_audit, dynamic=dynamic)
+                                        lifecycle_test_audit=lifecycle_test_audit, dynamic=dynamic,
+                                        hardening_profile=hardening_profile)
 
 
 def collect_debug_runtime_inputs(stage: Path, graph: Path, raw: Path, *, allocator_backend: str,
-                                 lifecycle_test_audit: bool = False, dynamic: bool = False) -> dict[str, object]:
+                                 lifecycle_test_audit: bool = False, dynamic: bool = False,
+                                 hardening_profile: NativeRuntimeProfile = NativeRuntimeProfile.COMPATIBILITY) -> dict[str, object]:
     """Assemble installed inputs from the producer's recorded source-built graph."""
     from compat.x86_64 import native_static_source_runtime_closure as closure
     recorded_backend = allocator_backend
@@ -1209,7 +1217,8 @@ def collect_debug_runtime_inputs(stage: Path, graph: Path, raw: Path, *, allocat
                          "--runtime-compiler-builtins", str(compiler.with_suffix(".rmeta"))]
     crt = stage / "crt"
     run([sys.executable, str(ROOT / "crt/build_x86_64.py"), "--out-dir", str(crt), "--llvm-objdump", objdump,
-         *runtime_arguments, *(["--owned-dynamic-sysroot"] if dynamic else [])], environment=environment)
+         "--hardening-profile", hardening_profile.value, *runtime_arguments,
+         *(["--owned-dynamic-sysroot"] if dynamic else [])], environment=environment)
     builtins = stage / "builtins/libcrabc-builtins.a"
     builtins.parent.mkdir()
     builtins_provenance = builtins.parent / "provenance.json"
@@ -1267,16 +1276,19 @@ def collect_debug_runtime_inputs(stage: Path, graph: Path, raw: Path, *, allocat
                   "selected_members": [{"name": name, "sha256": sha256_file(objects / name)} for name in selected],
                   "excluded_members": [name for name in members if name in compiler_members]}
     provenance["rust_private_runtime_bindings"] = private_runtime
-    return {"build_profile": "debug", "allocator_backend": recorded_backend, "cargo_command": receipt["cargo_command"],
+    return {"build_profile": "debug", "allocator_backend": recorded_backend, "hardening_profile": hardening_profile,
+            "cargo_command": receipt["cargo_command"],
             "crt_root": crt, "builtins": builtins, "builtins_provenance": builtins_provenance,
             "libc": libc, "libc_provenance": provenance, "producer_tools": tools,
             "source_core": core, "source_compiler_builtins": compiler, "source_objects": objects, "source_libc": raw}
 
 
 def build_runtime_inputs(stage: Path, *, allocator_backend: str = DEFAULT_ALLOCATOR_BACKEND,
-                         lifecycle_test_audit: bool = False, profile: str = "release") -> dict[str, object]:
+                         lifecycle_test_audit: bool = False, profile: str = "release",
+                         hardening_profile: NativeRuntimeProfile = NativeRuntimeProfile.COMPATIBILITY) -> dict[str, object]:
     if profile == "debug":
-        return build_debug_runtime_inputs(stage, allocator_backend=allocator_backend, lifecycle_test_audit=lifecycle_test_audit)
+        return build_debug_runtime_inputs(stage, allocator_backend=allocator_backend, lifecycle_test_audit=lifecycle_test_audit,
+                                          hardening_profile=hardening_profile)
     if profile != "release":
         raise BuildError("unknown owned runtime build profile")
     recorded_backend = allocator_backend
@@ -1393,6 +1405,8 @@ def build_runtime_inputs(stage: Path, *, allocator_backend: str = DEFAULT_ALLOCA
             str(crt_root),
             "--llvm-objdump",
             llvm_objdump,
+            "--hardening-profile",
+            hardening_profile.value,
         ]
     )
     builtins_root = stage / "builtins"
@@ -1489,6 +1503,7 @@ def build_runtime_inputs(stage: Path, *, allocator_backend: str = DEFAULT_ALLOCA
             "$CRABC_SOURCE=/crabc",
         ],
         "allocator_backend": recorded_backend,
+        "hardening_profile": hardening_profile,
         "allocator_lifecycle_test_audit": lifecycle_test_audit,
         "crt_root": crt_root,
         "builtins": builtins,
@@ -1501,6 +1516,7 @@ def build_runtime_inputs(stage: Path, *, allocator_backend: str = DEFAULT_ALLOCA
 
 def build_commands_record(
     cargo_command: list[str], producer_tools: dict[str, object], *, profile: str = "release",
+    hardening_profile: NativeRuntimeProfile = NativeRuntimeProfile.COMPATIBILITY,
     source_core: Path | None = None, source_compiler_builtins: Path | None = None,
     source_libc: Path | None = None,
 ) -> dict[str, object]:
@@ -1517,6 +1533,8 @@ def build_commands_record(
                 "crt/build_x86_64.py",
                 "--out-dir",
                 "$CRABC_X86_BUILD/crt",
+                "--hardening-profile",
+                hardening_profile.value,
             ],
             "builtins": [
                 "python3",
@@ -1540,7 +1558,21 @@ def build_commands_record(
     return record
 
 
+def validate_crt_profile(crt_root: Path, profile: NativeRuntimeProfile) -> None:
+    try:
+        receipt = json.loads((crt_root / "objects.json").read_text(encoding="utf-8"))
+        if (not isinstance(profile, NativeRuntimeProfile)
+                or receipt["hardening_profile"] != profile.value
+                or receipt["objects"]["rcrt1.o"]["sha256"] != sha256_file(crt_root / "rcrt1.o")):
+            raise BuildError("CRT profile or static PIE object does not match product")
+    except (OSError, ValueError, KeyError, TypeError) as error:
+        raise BuildError("invalid CRT profile receipt") from error
+
+
 def assemble(output: Path, inputs: dict[str, object], source_sha256: str) -> dict[str, object]:
+    crt_root = inputs["crt_root"]
+    assert isinstance(crt_root, Path)
+    validate_crt_profile(crt_root, inputs["hardening_profile"])
     remove_owned_output(output)
     output.mkdir(parents=True)
     output.chmod(0o755)
@@ -1549,8 +1581,6 @@ def assemble(output: Path, inputs: dict[str, object], source_sha256: str) -> dic
     library_root = output / "usr" / "lib"
     library_root.mkdir(parents=True)
     library_root.chmod(0o755)
-    crt_root = inputs["crt_root"]
-    assert isinstance(crt_root, Path)
     for name in CRT_OBJECTS:
         copy_artifact(crt_root / name, library_root / name)
     libc = inputs["libc"]
@@ -1581,6 +1611,7 @@ def assemble(output: Path, inputs: dict[str, object], source_sha256: str) -> dic
     write_json(
         metadata_root / "build.commands.json",
         build_commands_record(cargo_command, producer_tools, profile=inputs.get("build_profile", "release"),
+                              hardening_profile=inputs["hardening_profile"],
                               source_core=inputs.get("source_core"), source_compiler_builtins=inputs.get("source_compiler_builtins"),
                               source_libc=inputs.get("source_libc")),
     )
@@ -1592,6 +1623,7 @@ def assemble(output: Path, inputs: dict[str, object], source_sha256: str) -> dic
     )
     manifest = installed_manifest(payload_hashes, producer_tools,
                                   allocator_backend=inputs.get("allocator_backend", DEFAULT_ALLOCATOR_BACKEND),
+                                  hardening_profile=inputs["hardening_profile"],
                                   source_sha256=source_sha256,
                                   lifecycle_test_audit=inputs["libc_provenance"].get("allocator_lifecycle_test_audit", False))
     manifest["build_profile"] = inputs.get("build_profile", "release")
@@ -1604,7 +1636,8 @@ def assemble(output: Path, inputs: dict[str, object], source_sha256: str) -> dic
 
 
 def build(output: Path, *, allocator_backend: str = DEFAULT_ALLOCATOR_BACKEND,
-          lifecycle_test_audit: bool = False, profile: str = "release") -> dict[str, object]:
+          lifecycle_test_audit: bool = False, profile: str = "release",
+          hardening_profile: NativeRuntimeProfile = NativeRuntimeProfile.COMPATIBILITY) -> dict[str, object]:
     assert_native_target()
     source_before_build = static_product_contract.source_digest()
     output = validate_output_path(output)
@@ -1618,7 +1651,8 @@ def build(output: Path, *, allocator_backend: str = DEFAULT_ALLOCATOR_BACKEND,
     with stage_context as temporary:
         temporary_root = Path(temporary)
         inputs = build_runtime_inputs(temporary_root, allocator_backend=allocator_backend,
-                                      lifecycle_test_audit=lifecycle_test_audit, profile=profile)
+                                      lifecycle_test_audit=lifecycle_test_audit, profile=profile,
+                                      hardening_profile=hardening_profile)
         staged_output = temporary_root / "installed"
         manifest = assemble(staged_output, inputs, source_before_build)
         if static_product_contract.source_digest() != source_before_build:
@@ -1634,6 +1668,8 @@ def parse_args(arguments: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--allocator-backend", choices=ALLOCATOR_BACKENDS, default=DEFAULT_ALLOCATOR_BACKEND)
     parser.add_argument("--allocator-lifecycle-test-audit", action="store_true")
     parser.add_argument("--profile", choices=("release", "debug"), default="release")
+    parser.add_argument("--hardening-profile", type=NativeRuntimeProfile, choices=tuple(NativeRuntimeProfile),
+                        default=NativeRuntimeProfile.COMPATIBILITY)
     return parser.parse_args(arguments)
 
 
@@ -1641,7 +1677,8 @@ def main(arguments: Sequence[str] | None = None) -> int:
     try:
         parsed = parse_args(arguments)
         manifest = build(parsed.output, allocator_backend=parsed.allocator_backend,
-                         lifecycle_test_audit=parsed.allocator_lifecycle_test_audit, profile=parsed.profile)
+                         lifecycle_test_audit=parsed.allocator_lifecycle_test_audit, profile=parsed.profile,
+                         hardening_profile=parsed.hardening_profile)
     except BuildError as error:
         print(f"x86 owned static sysroot failed: {error}", file=sys.stderr)
         return 1

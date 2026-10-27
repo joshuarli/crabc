@@ -7,9 +7,7 @@
 //! `rtld_fini`. Pinned musl owns and invokes its own executable lifecycle; a
 //! freestanding native fixture separately exercises the callback arguments
 //! below. An owned crabc interpreter may instead resolve the weak data symbol
-//! `__crabc_x86_64_owned_crt_handoff` after relocation. That is an explicit
-//! versioned post-relocation wire, never `%rdx`; foreign loaders leave it null
-//! and retain the musl-shaped null-finalizer call.
+//! `__crabc_x86_64_owned_crt_handoff` after relocation.
 //!
 //! This is not the static startup path. In particular, it must not install
 //! static TLS itself or call `__crabc_x86_static_tls_bootstrap`: an interpreter
@@ -36,12 +34,8 @@ type LifecycleHook = unsafe extern "C" fn();
 type LinkerArrayEntry = *const ();
 
 const OWNED_CRT_HANDOFF_MAGIC: u64 = 0x4352_4142_435f_4831;
-const OWNED_CRT_HANDOFF_VERSION: u32 = 1;
+const OWNED_CRT_HANDOFF_VERSION: u32 = if cfg!(crabc_hardened) { 2 } else { 1 };
 
-/// Private x86 post-relocation loader-to-CRT handoff, revision one.
-///
-/// The interpreter owns this immutable record. Its weak data-symbol transport
-/// is intentionally read only after `_start` entered normal Rust code.
 #[repr(C)]
 struct OwnedCrtHandoffV1 {
     magic: u64,
@@ -82,7 +76,6 @@ struct InitialProcess {
     argc: i32,
     argv: *const *const u8,
 }
-
 unsafe extern "C" {
     fn main(argc: i32, argv: *const *const u8, envp: *const *const u8) -> i32;
     #[cfg(not(crabc_owned_dynamic_runtime))]
@@ -282,6 +275,9 @@ pub unsafe extern "C" fn __crabc_x86_64_dynamic_executable_init() {
 /// implicit ABI.
 unsafe fn configure_owned_loader_handoff(handoff: *const OwnedCrtHandoffV1) -> Option<LifecycleHook> {
     if handoff.is_null() {
+        if cfg!(crabc_hardened) {
+            startup_reject();
+        }
         return None;
     }
     let magic = unsafe { core::ptr::read_unaligned(core::ptr::addr_of!((*handoff).magic)) };

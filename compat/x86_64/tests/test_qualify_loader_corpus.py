@@ -152,6 +152,11 @@ class LoaderCorpusCaseTests(unittest.TestCase):
             calls.append("replay")
             return {}
 
+        def hardened(record: dict[str, object]) -> dict[str, object]:
+            self.assertEqual(record, {})
+            calls.append("hardened")
+            return {"static": "fixture", "dynamic": "fixture", "compatibility": "fixture"}
+
         publication = {"work": cohort_work.relative_to(ROOT).as_posix(), "products": {p: "0" * 64 for p in qualify.LOADER_FAMILY.PRODUCTS}}
         with (
             self.closed(),
@@ -160,16 +165,18 @@ class LoaderCorpusCaseTests(unittest.TestCase):
             mock.patch.object(qualify.INVENTORY, "collect", side_effect=collect),
             mock.patch.object(qualify.LOADER_FAMILY, "execute", side_effect=execute),
             mock.patch.object(qualify.LOADER_FAMILY, "validate_receipt", side_effect=validate),
+            mock.patch.object(qualify.GATES, "execute_hardened_runtime", side_effect=hardened),
         ):
             status, stdout, stderr = self.run_main()
         self.assertEqual(status, 0, stderr)
-        self.assertEqual(calls, [("inventory", "installed"), ("inventory", "second"), ("inventory", "extracted"), "family", "replay"])
+        self.assertEqual(calls, [("inventory", "installed"), ("inventory", "second"), ("inventory", "extracted"), "family", "replay", "hardened"])
         lines = [line for line in stdout.splitlines() if line]
         self.assertEqual(lines.count(qualify.PASS_MARKER), 1)
         self.assertEqual(lines[-1], qualify.PASS_MARKER)
         summary = json.loads(lines[0])
         self.assertEqual(summary["rosters"]["synthetic_cases"], 21)
         self.assertEqual(summary["rosters"]["package_cases"], 34)
+        self.assertIn("hardened_products", summary)
 
     def test_source_change_during_the_case_is_rejected(self) -> None:
         identities = iter((SOURCE, {**SOURCE, "source_sha256": "c" * 64}))
@@ -182,11 +189,28 @@ class LoaderCorpusCaseTests(unittest.TestCase):
             mock.patch.object(qualify.INVENTORY, "collect", return_value={}),
             mock.patch.object(qualify.LOADER_FAMILY, "execute", side_effect=lambda root, run: run / "receipt.json"),
             mock.patch.object(qualify.LOADER_FAMILY, "validate_receipt", return_value={}),
+            mock.patch.object(qualify.GATES, "execute_hardened_runtime", return_value={}),
         ):
             status, stdout, stderr = self.run_main()
         self.assertEqual(status, 1)
         self.assertNotIn(qualify.PASS_MARKER, stdout)
         self.assertIn("source changed", stderr)
+
+    def test_failed_hardened_execution_cannot_pass_the_loader_case(self) -> None:
+        publication = {"work": ".work/x86_64/cohort", "products": {p: "0" * 64 for p in qualify.LOADER_FAMILY.PRODUCTS}}
+        with (
+            self.closed(),
+            mock.patch.object(qualify, "WORK_PARENT", self.scratch / "runs"),
+            mock.patch.object(qualify.PRODUCT, "load_publication", return_value=publication),
+            mock.patch.object(qualify.INVENTORY, "collect", return_value={}),
+            mock.patch.object(qualify.LOADER_FAMILY, "execute", side_effect=lambda root, run: run / "receipt.json"),
+            mock.patch.object(qualify.LOADER_FAMILY, "validate_receipt", return_value={}),
+            mock.patch.object(qualify.GATES, "execute_hardened_runtime", side_effect=qualify.GATES.EvidenceUnmet("hardened failed")),
+        ):
+            status, stdout, stderr = self.run_main()
+        self.assertEqual(status, 1)
+        self.assertNotIn(qualify.PASS_MARKER, stdout)
+        self.assertIn("hardened failed", stderr)
 
     def test_frozen_synthetic_roster_is_the_frozen_ldso_gate_choice_list(self) -> None:
         source = subprocess.run(

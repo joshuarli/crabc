@@ -112,6 +112,12 @@ another libc's implementation.
 | `libc` | Preserve loader-owned dynamic TLS while owning libc guard/entropy, cached secure state, thread startup and lifecycle responsibilities. Validate the loader/CRT handoff; no guest callback may precede its required startup state and completed loader/CRT protections. |
 | Existing evidence owners | Extend native loader, CRT, sysroot and pthread fixtures; bind results to the actual product and source revision. Tests observe behavior and failures, not source literals. |
 
+Combined sysroots record one hardening profile in the outer manifest and in
+both embedded product manifests. Composition and installed drivers require
+those identities to agree. The hardened combined mode roster contains static
+PIE, dynamic PIE and dynamic shared objects; compatibility retains its
+non-PIE modes and interpreter alias.
+
 ### Admission and protection invariants
 
 1. **Validate the loaded image.** Identify an executable from bounded ELF and

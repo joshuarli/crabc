@@ -13,9 +13,11 @@ gates on native x86-64 through one qualified three-product dynamic cohort:
 * this case collects a fresh loader ELF inventory for each cohort product;
 * the loader-family collector then joins the cohort and inventories, checks
   the complete synthetic and package catalogs and every retained case tree,
-  and this case replays that receipt.
+  and this case replays that receipt;
+* current-source hardened release products run the native entry, protection,
+  search and rollback cases alongside the qualified compatibility product.
 
-The case never builds or publishes a product. It fails closed before any
+The case does not publish a product. It fails closed before any
 work unless the checkout is clean committed source, every transitive family
 prerequisite of `compat.loader-corpus` is `foundation-verified`, and a
 current cohort publication exists. It also refuses a changed frozen roster,
@@ -43,6 +45,7 @@ import owned_loader_corpus_evidence as CORPUS  # noqa: E402
 import owned_loader_family as LOADER_FAMILY  # noqa: E402
 import owned_loader_inventory as INVENTORY  # noqa: E402
 import qualification_case as CASE  # noqa: E402
+import qualification_gates as GATES  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[2]
 FAMILY = "compat.loader-corpus"
@@ -154,7 +157,8 @@ def qualify() -> dict[str, Any]:
     }
     (run / "request.json").write_text(json.dumps(request, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     receipt = LOADER_FAMILY.execute(ROOT, run)
-    LOADER_FAMILY.validate_receipt(ROOT, receipt)
+    loader_family = LOADER_FAMILY.validate_receipt(ROOT, receipt)
+    hardened_products = GATES.execute_hardened_runtime(loader_family)
     require(CASE.clean_source_identity() == source, "source changed during the loader/corpus qualification case")
     return {
         "family": FAMILY,
@@ -162,6 +166,7 @@ def qualify() -> dict[str, Any]:
         "rosters": rosters,
         "cohort": request["qualification"],
         "loader_family_receipt": receipt.relative_to(ROOT).as_posix(),
+        "hardened_products": hardened_products,
     }
 
 
@@ -177,6 +182,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         INVENTORY.InventoryError,
         LOADER_FAMILY.LoaderFamilyError,
         CORPUS.LoaderCorpusEvidenceError,
+        GATES.EvidenceUnmet,
         subprocess.CalledProcessError,
         tarfile.TarError,
         OSError,

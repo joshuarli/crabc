@@ -53,6 +53,7 @@ pub(super) unsafe fn run(sp: usize, ldso_base: usize) -> ! {
             let entry = main.entry;
             (main, sp, entry)
         } else {
+            if cfg!(crabc_hardened) && !hardened_main_identity(main_base, main_phdr, main_phnum) { fail(b"mainelf\n"); }
             (parse_mapped(main_base, main_phdr, main_phnum, ObjectRole::Main, false, true)
                 .unwrap_or_else(|| fail(b"mainelf\n")), sp, main_entry)
         };
@@ -765,6 +766,7 @@ unsafe fn load_initial_library(
     requester: Option<usize>,
     name: &[u8],
 ) -> Result<Option<usize>, ()> {
+    if cfg!(crabc_hardened) && name.contains(&b'/') && !name.starts_with(b"/") { return Err(()); }
     let short_name = !name.contains(&b'/');
     if short_name {
         if let Some(index) = objects[..graph.object_count()].iter().position(|object| {
@@ -793,7 +795,9 @@ unsafe fn load_initial_library(
     }
     let object = map_elf_with_status(fd, &status, false, true, ObjectRole::Library).ok();
     syscall1(SYS_CLOSE, fd);
-    let Some(mut object) = object else { return Ok(None); };
+    let Some(mut object) = object else {
+        return if cfg!(crabc_hardened) { Err(()) } else { Ok(None) };
+    };
     let index = match graph.admit_mapped(identity) {
         Ok(ObjectAdmission::New { index }) => index,
         Ok(ObjectAdmission::Existing { .. }) | Err(_) => {

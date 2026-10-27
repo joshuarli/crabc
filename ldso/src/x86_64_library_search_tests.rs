@@ -2,6 +2,42 @@ use super::*;
 use super::super::x86_64_runtime_lock::{isolated_mapping_probe, RuntimeGuard};
 
 #[test]
+fn library_search_profile_controls_relative_paths_and_origins() {
+    unsafe fn probe(_: &RuntimeGuard) -> bool {
+        unsafe { SECURE = false; }
+        let opened = unsafe { path_open(b"../dev:/dev", b"null") };
+        let Ok(Some((fd, name))) = opened else { return false; };
+        let expected = if cfg!(crabc_hardened) { b"/dev/null".as_slice() } else { b"../dev/null".as_slice() };
+        let matched = unsafe { name.view().bytes() } == expected;
+        unsafe { syscall1(SYS_CLOSE, fd); }
+        let direct = unsafe { direct(b"../dev/null") };
+        let direct_matches = match direct {
+            Ok((fd, _)) => { unsafe { syscall1(SYS_CLOSE, fd); } !cfg!(crabc_hardened) }
+            Err(_) => cfg!(crabc_hardened),
+        };
+        let Some(name) = LoadedName::new(b"relative/app.so") else { return false; };
+        let path = b"$ORIGIN/plugins";
+        let object = Object { role: ObjectRole::Library, runpath: path.as_ptr(), runpath_len: path.len(),
+            search_name: name.view(), ..EMPTY_OBJECT };
+        let origin_matches = match unsafe { object_paths(&object) } {
+            Ok(ObjectPaths::None) => cfg!(crabc_hardened),
+            Ok(paths) => !cfg!(crabc_hardened) && paths.bytes() == b"relative/plugins",
+            Err(_) => false,
+        };
+        let Some(root_name) = LoadedName::new(b"/app.so") else { return false; };
+        let root_path = b"$ORIGIN";
+        let root = Object { role: ObjectRole::Library, runpath: root_path.as_ptr(), runpath_len: root_path.len(),
+            search_name: root_name.view(), ..EMPTY_OBJECT };
+        let root_matches = match unsafe { object_paths(&root) } {
+            Ok(paths) => paths.bytes() == if cfg!(crabc_hardened) { b"/".as_slice() } else { b"".as_slice() },
+            Err(_) => false,
+        };
+        matched && direct_matches && origin_matches && root_matches
+    }
+    unsafe { isolated_mapping_probe(probe); }
+}
+
+#[test]
 fn library_search_reused_path_buffer_terminates_shorter_successful_candidate() {
     unsafe fn probe(_: &RuntimeGuard) -> bool {
         let opened = unsafe { path_open(b"/dev/null/long-component:/dev", b"null") };
