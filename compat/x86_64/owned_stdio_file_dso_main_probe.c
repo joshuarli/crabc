@@ -385,9 +385,10 @@ static int fixed_dso_roundtrip(void)
         return 60;
     errno = EDOM;
     result = crabc_fixed_dso_step(stream, CRABC_FIXED_DSO_SHORT_WRITE, &errno);
-    if (result != 0 || errno != ERANGE ||
+    if (result != 0 || errno != ERANGE || !ferror(stream) ||
         memcmp(fixed, "abcDEFGH", capacity) != 0)
         return 70 + result;
+    clearerr(stream);
     errno = EDOM;
     if (fflush(stream) != 0 || errno != EDOM || ferror(stream) != 0 ||
         fseek(stream, 0, SEEK_SET) != 0 ||

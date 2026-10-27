@@ -324,7 +324,7 @@ int crabc_fixed_dso_step(FILE *stream, enum crabc_fixed_dso_stage stage,
     } else if (stage == CRABC_FIXED_DSO_SHORT_WRITE) {
         memset(large, 'H', sizeof(large));
         if (ftell(stream) != 7 || fwrite(large, 1, sizeof(large), stream) != 1 ||
-            errno != EDOM || ferror(stream) != 0 || ftell(stream) != 8 ||
+            errno != ENOSPC || ferror(stream) == 0 || ftell(stream) != 8 ||
             memcmp(fixed_buffer, "abcDEFGH", sizeof(fixed_buffer)) != 0)
             return 6;
     } else {
