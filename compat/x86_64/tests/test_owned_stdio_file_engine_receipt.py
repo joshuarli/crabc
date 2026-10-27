@@ -913,7 +913,14 @@ free: ret
             self.assertIsNotNone(match)
             instruction = bytes.fromhex(match.group(2))
             body = libc.read_bytes()
-            self.assertEqual(body.count(instruction), 1)
+            sections = subprocess.check_output(['readelf', '-SW', str(libc)], text=True)
+            plt = re.search(r'\]\s+\.plt\.got\s+PROGBITS\s+([0-9a-f]+)\s+([0-9a-f]+)\s+([0-9a-f]+)', sections)
+            self.assertIsNotNone(plt)
+            relative = int(match.group(1), 16) - int(plt.group(1), 16)
+            self.assertGreaterEqual(relative, 0)
+            self.assertLessEqual(relative + len(instruction), int(plt.group(3), 16))
+            instruction_offset = int(plt.group(2), 16) + relative
+            self.assertEqual(body[instruction_offset:instruction_offset + len(instruction)], instruction)
             changed = instruction[:2] + struct.pack('<i', struct.unpack('<i', instruction[2:])[0] + 8)
             relocations = subprocess.check_output(['readelf', '-rW', '--use-dynamic', str(libc)], text=True)
             row = re.search(r'^([0-9a-f]{16})\s+([0-9a-f]{16})\s+R_X86_64_GLOB_DAT\s+\S+\s+malloc\s+\+ 0$', relocations, re.MULTILINE)
@@ -928,10 +935,11 @@ free: ret
             libc.write_bytes(body.replace(record, wrong_symbol, 1))
             with self.assertRaises(receipt.ReceiptError):
                 receipt.validate_allocator_plt(libc)
-            libc.write_bytes(body.replace(instruction, changed, 1))
+            changed_body = bytearray(body)
+            changed_body[instruction_offset:instruction_offset + len(instruction)] = changed
+            libc.write_bytes(changed_body)
             with self.assertRaises(receipt.ReceiptError):
                 receipt.validate_allocator_plt(libc)
-            sections = subprocess.check_output(['readelf', '-SW', str(libc)], text=True)
             dynsym = re.search(r'\]\s+\.dynsym\s+DYNSYM\s+\S+\s+([0-9a-f]+)', sections)
             symbols = subprocess.check_output(['readelf', '--dyn-syms', '-W', str(libc)], text=True)
             symbol = re.search(r'^\s*(\d+):\s+\S+\s+\d+\s+FUNC\s+GLOBAL\s+DEFAULT\s+\d+\s+malloc$', symbols, re.MULTILINE)
