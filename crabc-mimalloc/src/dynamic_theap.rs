@@ -11981,7 +11981,7 @@ mod tests {
     }
 
     #[test]
-    fn dynamic_thread_exit_os_aligned_singleton_handoff_retains_failed_unmap_terminally() {
+    fn dynamic_thread_exit_os_singleton_consumes_failed_unmap_once() {
         with_non_abandoning_dynamic_page_fixture(|owner, arena, page_map| {
             let session = owner
                 .page_session()
@@ -12000,6 +12000,7 @@ mod tests {
                 .expect("the OS singleton remains PageMap-published before thread exit");
             let published = unsafe { PublishedOsAlignedPage::from_page(memory_config(), page) }
                 .expect("the OS singleton retains its complete terminal-release token");
+            let span = published.memory_id().os_memory().unwrap();
             let drain = match allocator.begin_thread_exit_drain() {
                 Ok(drain) => drain,
                 Err(DynamicThreadExitDrainFailure::Retained { engine, error }) => {
@@ -12025,53 +12026,27 @@ mod tests {
                 1,
                 crabc_core::Errno::NOMEM,
             ));
-            // SAFETY: this remains the handoff's exact once-live client
-            // block. The source TLS-detach proof still makes the one reclaim
-            // attempt fail before terminal release.
-            let handoff = match unsafe { handoff.remote_free_after_failed_reclaim(block) } {
-                Err(DynamicThreadExitSingletonRemoteFreeFailure::Terminal {
-                    handoff,
-                    error: DynamicThreadExitSingletonRemoteFreeError::Release,
-                }) => handoff,
-                Err(DynamicThreadExitSingletonRemoteFreeFailure::Terminal { handoff, error }) => {
+            // SAFETY: this is the handoff's exact once-live client.
+            let drain = match unsafe { handoff.remote_free_after_failed_reclaim(block) } {
+                Err(DynamicThreadExitSingletonRemoteFreeFailure::Rejected { handoff, error })
+                | Err(DynamicThreadExitSingletonRemoteFreeFailure::Terminal { handoff, error }) => {
                     core::mem::forget(handoff);
-                    panic!("failed OS unmap retains the exact release terminal: {error:?}");
+                    panic!("source free consumes the singleton: {error:?}");
                 }
-                Err(DynamicThreadExitSingletonRemoteFreeFailure::Rejected { handoff, error }) => {
-                    core::mem::forget(handoff);
-                    panic!("the exact OS singleton final free is not rejected: {error:?}");
-                }
-                Ok(drain) => {
-                    core::mem::forget(drain);
-                    panic!("the configured OS unmap failure must retain its handoff");
-                }
+                Ok(drain) => drain,
             };
-            assert_eq!(
-                fault.observed(),
-                1,
-                "the terminal OS release attempts exactly one source unmap"
-            );
-            fault.set(fault::Plan::disabled());
-            assert!(
-                handoff.test_has_pending_os_release(),
-                "failed unmap retains the unique published mapping owner in the handoff engine"
-            );
-            assert!(
-                handoff.test_os_abandoned_page_head().is_null(),
-                "the source list removal precedes the failed terminal unmap"
-            );
-            assert!(handoff.test_os_page_map_entries_are_clear(&published));
-
-            // Dropping the terminal handoff moves the raw published mapping
-            // owner into the dynamic attachment and latches it. This slice
-            // deliberately exposes no retry lifecycle for that owner.
-            drop(handoff);
-            assert_eq!(owner.teardown(), Err(DynamicTheapError::Poisoned));
-            assert!(
-                owner.terminal_os_release.is_some(),
-                "terminal Drop transfers the unique OS release owner into the retained attachment"
-            );
-            DynamicPageFixtureOutcome::RetainTerminal
+            assert_eq!(fault.observed(), 1);
+            assert!(drain.test_os_abandoned_page_head().is_null());
+            assert!(unsafe { drain.test_page_for_block(block) }.is_null());
+            assert!(drain.finish());
+            assert_eq!(fault.observed(), 1);
+            let mut resident = 0u8;
+            // SAFETY: the consumed mapping is observed and cleaned up without accessing its former client.
+            unsafe {
+                assert!(crabc_core::mm::mincore_raw(span.base, 4096, &mut resident).is_ok());
+                crabc_core::mm::munmap_raw(span.base, span.size).unwrap();
+            }
+            DynamicPageFixtureOutcome::TearDown
         });
     }
 
@@ -12341,7 +12316,7 @@ mod tests {
     }
 
     #[test]
-    fn dynamic_thread_exit_full_os_singleton_pages_route_retains_failed_unmap_terminally() {
+    fn dynamic_thread_exit_full_os_singleton_pages_consume_failed_unmap_once() {
         with_non_abandoning_dynamic_page_fixture(|owner, arena, page_map| {
             let session = owner
                 .page_session()
@@ -12360,6 +12335,7 @@ mod tests {
                 .expect("the first OS singleton remains PageMap-published");
             let first_published = unsafe { PublishedOsAlignedPage::from_page(memory_config(), first_page) }
                 .expect("the first OS singleton retains its clipped release token");
+            let first_span = first_published.memory_id().os_memory().unwrap();
             let second = allocator
                 .allocate_aligned(8 * crate::config::KIB + 1, 128 * crate::config::KIB)
                 .expect("the fixture creates its second OS singleton");
@@ -12391,57 +12367,56 @@ mod tests {
                 1,
                 crabc_core::Errno::NOMEM,
             ));
-            // SAFETY: `first` remains one exact aggregate allocation. Its
-            // failed mapping reclaim must terminalize the whole linear route
-            // before the second member can be released.
+            // SAFETY: `first` remains one exact aggregate allocation.
             let route = match unsafe { route.remote_free_after_thread_exit(first) } {
                 Err(DynamicThreadExitFullOsSingletonPagesRemoteFreeFailure::Terminal {
                     route,
-                    error: DynamicThreadExitFullOsSingletonPagesRemoteFreeError::Release,
-                }) => route,
-                Err(DynamicThreadExitFullOsSingletonPagesRemoteFreeFailure::Terminal {
+                    error,
+                }) | Err(DynamicThreadExitFullOsSingletonPagesRemoteFreeFailure::Rejected {
                     route,
                     error,
                 }) => {
                     core::mem::forget(route);
-                    panic!("failed OS aggregate unmap retains its release terminal: {error:?}");
+                    panic!("source free consumes the first aggregate member: {error:?}");
                 }
-                Err(DynamicThreadExitFullOsSingletonPagesRemoteFreeFailure::Rejected {
-                    route,
-                    error,
-                }) => {
-                    core::mem::forget(route);
-                    panic!("the exact first OS aggregate member is not rejected: {error:?}");
-                }
-                Ok(DynamicThreadExitFullOsSingletonPagesFreeResult::ReleasedPage(route)) => {
-                    core::mem::forget(route);
-                    panic!("the configured first OS aggregate unmap must not release a route");
-                }
+                Ok(DynamicThreadExitFullOsSingletonPagesFreeResult::ReleasedPage(route)) => route,
                 Ok(DynamicThreadExitFullOsSingletonPagesFreeResult::Released(drain)) => {
                     core::mem::forget(drain);
-                    panic!("the configured first OS aggregate unmap must not finish the route");
+                    panic!("the second aggregate member remains live");
                 }
             };
             assert_eq!(fault.observed(), 1);
-            fault.set(fault::Plan::disabled());
-            assert!(route.test_has_pending_os_release());
+            assert!(!route.test_has_pending_os_release());
             assert_eq!(
                 route.test_os_abandoned_page_head(),
                 second_page.as_ptr(),
-                "the failed first release unlinks only its exact member before parking the mapping owner"
+                "the first release unlinks only its exact member"
             );
             assert!(route.test_os_page_map_entries_are_clear(&first_published));
             assert!(unsafe { route.test_page_for_block(first) }.is_null());
             assert_eq!(
                 unsafe { route.test_page_for_block(second) },
                 second_page.as_ptr(),
-                "the second aggregate member remains PageMap-routable after the first terminal failure"
+                "the second aggregate member remains PageMap-routable"
             );
-
-            drop(route);
-            assert_eq!(owner.teardown(), Err(DynamicTheapError::Poisoned));
-            assert!(owner.terminal_os_release.is_some());
-            DynamicPageFixtureOutcome::RetainTerminal
+            // SAFETY: `second` is the remaining live aggregate client.
+            let drain = match unsafe { route.remote_free_after_thread_exit(second) } {
+                Ok(DynamicThreadExitFullOsSingletonPagesFreeResult::Released(drain)) => drain,
+                Ok(DynamicThreadExitFullOsSingletonPagesFreeResult::ReleasedPage(route)) => {
+                    core::mem::forget(route);
+                    panic!("the final aggregate member must finish the route");
+                }
+                Err(_) => panic!("the final aggregate member must release"),
+            };
+            assert!(drain.finish());
+            assert_eq!(fault.observed(), 2);
+            let mut resident = 0u8;
+            // SAFETY: the consumed mapping is observed and cleaned up without accessing its former client.
+            unsafe {
+                assert!(crabc_core::mm::mincore_raw(first_span.base, 4096, &mut resident).is_ok());
+                crabc_core::mm::munmap_raw(first_span.base, first_span.size).unwrap();
+            }
+            DynamicPageFixtureOutcome::TearDown
         });
     }
 
@@ -23129,7 +23104,7 @@ mod tests {
     }
 
     #[test]
-    fn dynamic_pending_os_release_makes_finish_retain_then_drop_latch_attachment() {
+    fn dynamic_source_os_free_consumes_failed_unmap_without_retry() {
         with_non_abandoning_dynamic_page_fixture(|owner, arena, page_map| {
             let session = owner.page_session().expect("non-abandoning page session");
             let mut allocator = DynamicTheapAllocator::activate_dynamic(
@@ -23142,37 +23117,27 @@ mod tests {
             let block = allocator
                 .allocate_aligned(7, 128 * crate::config::KIB)
                 .expect("dynamic OS-aligned singleton");
+            let page = unsafe { allocator.page_for_block(block).as_ref() }.unwrap();
+            let span = page.memid().os_memory().unwrap();
             fault.set(fault::Plan::at(
                 fault::Point::Unmap,
                 1,
                 crabc_core::Errno::NOMEM,
             ));
-            // SAFETY: `block` is the singleton's sole live allocation; the
-            // injected unmap failure clears its page metadata but retains the
-            // unique mapping owner in the engine.
-            unsafe { allocator.free(block) }.expect("semantic free parks its OS owner");
-            assert!(allocator.has_pending_os_release());
-            let allocator = match allocator.finish() {
-                Ok(()) => panic!("a pending OS release cannot finish"),
-                Err(allocator) => allocator,
-            };
-            drop(allocator);
-            assert_eq!(owner.teardown(), Err(DynamicTheapError::Poisoned));
-            assert!(
-                owner.terminal_os_release.is_some(),
-                "terminal Drop transfers the unique OS release owner into the retained attachment"
-            );
-            assert_eq!(
-                owner
-                    .theap
-                    .as_mut()
-                    .and_then(DynamicTheapStorage::dynamic_theap_mut)
-                    .unwrap()
-                    .page_count(),
-                0,
-                "the retained terminal state is the engine's pending OS owner, not a live page"
-            );
-            DynamicPageFixtureOutcome::RetainTerminal
+            // SAFETY: this is the singleton's sole live allocation.
+            unsafe { allocator.free(block) }.expect("source free consumes the client");
+            assert_eq!(fault.observed(), 1);
+            assert!(!allocator.has_pending_os_release());
+            assert!(allocator.finish().is_ok());
+            assert!(unsafe { page_map.checked_lookup(block.as_ptr()) }.is_null());
+            assert_eq!(fault.observed(), 1);
+            let mut resident = 0u8;
+            // SAFETY: the consumed mapping is observed and cleaned up without accessing its former client.
+            unsafe {
+                assert!(crabc_core::mm::mincore_raw(span.base, 4096, &mut resident).is_ok());
+                crabc_core::mm::munmap_raw(span.base, span.size).unwrap();
+            }
+            DynamicPageFixtureOutcome::TearDown
         });
     }
 
