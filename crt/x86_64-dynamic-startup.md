@@ -33,6 +33,10 @@ is a CRT acceptance wire only. The separate private
 `ldso-owned-crt-handoff` artifact publishes it to one fixed graph; that
 does not select a general x86 interpreter or dynamic-CRT path.
 
+The private hardened CRT prototype requires a non-null handoff with version
+two. It rejects version one or a missing handoff before callbacks. The
+compatibility CRT continues to accept version one and a missing handoff.
+
 The callback arguments retain the conventional executable order: preinit
 array, `_init`, init array; then reverse fini array and `_fini`. Pinned musl's
 dynamic `__libc_start_main` owns that lifecycle internally and does not use
@@ -42,13 +46,11 @@ test-local six-argument boundary, requires a null finalizer, invokes the
 callbacks, and proves `PQIJKMYXF` for two forward preinit/init entries, main,
 two reverse fini entries, and `_fini`.
 
-The private `.note.crabc.owned-crt` marker is exact `CRABC` type
-`0x43525401`, revision one. The builder rejects a forged object marker, and
-the linked candidate PIE retains its exact allocated `SHT_NOTE` inside a
-`PT_NOTE` range. That is final-note retention only: no current x86 loader
-consumes the marker or admits the process through it. GNU-property/CET/ISA
-metadata parity with pinned musl's `Scrt1.o` is also deliberately outside this
-private artifact.
+The private `.note.crabc.owned-crt` marker is `CRABC` type `0x43525401`,
+with revision one for compatibility and two for the hardened prototype. The
+loader parser admits the marker matching its compiled profile and rejects the
+other. The builder rejects a forged object marker. GNU-property/CET/ISA
+metadata parity with pinned musl's `Scrt1.o` remains outside this artifact.
 
 Run the native evidence on Linux/x86-64:
 

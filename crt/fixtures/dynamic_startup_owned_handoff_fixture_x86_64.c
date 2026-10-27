@@ -7,6 +7,10 @@
  * unresolved and therefore preserves the pinned-musl null-finalizer path.
  */
 
+#ifndef CRABC_HANDOFF_VERSION
+#define CRABC_HANDOFF_VERSION 1
+#endif
+
 typedef unsigned int u32;
 typedef unsigned long u64;
 typedef unsigned long size_t;
@@ -96,7 +100,7 @@ __crabc_x86_64_owned_crt_handoff = {
 #else
 	0x43524142435f4831UL,
 #endif
-	1, sizeof(struct crabc_x86_64_owned_crt_handoff_v1), dependency, loader_fini,
+	CRABC_HANDOFF_VERSION, sizeof(struct crabc_x86_64_owned_crt_handoff_v1), dependency, loader_fini,
 };
 
 int main(int argc, char **argv, char **envp)

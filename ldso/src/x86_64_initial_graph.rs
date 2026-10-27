@@ -397,7 +397,7 @@ const ELF64_RELR_BITMAP_BITS: u64 = 63;
 // not who must execute them.  Normal musl crt1 has no CRABC note.
 const OWNED_CRT_NOTE_NAME: &[u8] = b"CRABC\0";
 const OWNED_CRT_NOTE_TYPE: u32 = 0x4352_5401;
-const OWNED_CRT_NOTE_REVISION: u32 = 1;
+const OWNED_CRT_NOTE_REVISION: u32 = if cfg!(crabc_hardened) { 2 } else { 1 };
 const MAX_OWNED_CRT_NOTE_BYTES: usize = 64 * 1024;
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
@@ -589,7 +589,7 @@ const OWNED_CRT_HANDOFF_MAGIC: u64 = if cfg!(crabc_owned_crt_handoff_malformed) 
     0x4352_4142_435f_4831
 };
 #[cfg(any(crabc_owned_crt_handoff, all(crabc_general_initial_lifecycle, crabc_dynamic_main_thread_runtime_v1)))]
-const OWNED_CRT_HANDOFF_VERSION: u32 = 1;
+const OWNED_CRT_HANDOFF_VERSION: u32 = if cfg!(crabc_hardened) { 2 } else { 1 };
 #[cfg(crabc_owned_crt_handoff)]
 const OWNED_CRT_STATE_UNPUBLISHED: u8 = 0;
 #[cfg(crabc_owned_crt_handoff)]
@@ -5880,12 +5880,24 @@ mod owned_crt_note_tests {
     #[test]
     fn owned_crt_note_selects_only_the_exact_marker() {
         let (mut headers, mut bytes) = headers(24);
-        let length = note(&mut bytes, 0, b"CRABC\0", OWNED_CRT_NOTE_TYPE, &1u32.to_le_bytes());
+        let length = note(&mut bytes, 0, b"CRABC\0", OWNED_CRT_NOTE_TYPE, &OWNED_CRT_NOTE_REVISION.to_le_bytes());
         put_u64(&mut headers, 56 + 32, length as u64);
         assert_eq!(
             unsafe { owned_crt_note_mode(headers.as_ptr(), 2, bytes.as_ptr() as u64) },
             Some(MainCrtMode::Owned),
         );
+    }
+
+    #[test]
+    fn owned_crt_note_matches_the_compiled_profile() {
+        let (mut headers, mut bytes) = headers(24);
+        let selected = if cfg!(crabc_hardened) { 2u32 } else { 1u32 };
+        let other = if cfg!(crabc_hardened) { 1u32 } else { 2u32 };
+        let length = note(&mut bytes, 0, b"CRABC\0", OWNED_CRT_NOTE_TYPE, &selected.to_le_bytes());
+        put_u64(&mut headers, 56 + 32, length as u64);
+        assert_eq!(unsafe { owned_crt_note_mode(headers.as_ptr(), 2, bytes.as_ptr() as u64) }, Some(MainCrtMode::Owned));
+        note(&mut bytes, 0, b"CRABC\0", OWNED_CRT_NOTE_TYPE, &other.to_le_bytes());
+        assert_eq!(unsafe { owned_crt_note_mode(headers.as_ptr(), 2, bytes.as_ptr() as u64) }, None);
     }
 
     #[test]
@@ -5902,8 +5914,8 @@ mod owned_crt_note_tests {
     #[test]
     fn malformed_or_duplicate_owned_markers_fail_closed() {
         let (mut duplicate_headers, mut duplicate_bytes) = headers(48);
-        let first = note(&mut duplicate_bytes, 0, b"CRABC\0", OWNED_CRT_NOTE_TYPE, &1u32.to_le_bytes());
-        let length = note(&mut duplicate_bytes, first, b"CRABC\0", OWNED_CRT_NOTE_TYPE, &1u32.to_le_bytes());
+        let first = note(&mut duplicate_bytes, 0, b"CRABC\0", OWNED_CRT_NOTE_TYPE, &OWNED_CRT_NOTE_REVISION.to_le_bytes());
+        let length = note(&mut duplicate_bytes, first, b"CRABC\0", OWNED_CRT_NOTE_TYPE, &OWNED_CRT_NOTE_REVISION.to_le_bytes());
         put_u64(&mut duplicate_headers, 56 + 32, length as u64);
         assert_eq!(unsafe { owned_crt_note_mode(duplicate_headers.as_ptr(), 2, duplicate_bytes.as_ptr() as u64) }, None);
 
