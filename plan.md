@@ -1315,6 +1315,23 @@ Append one line per merge batch, per parked item, and per contract change.
   at 180/223 capabilities, 9/26 families, and 0/8 gates. No AArch64 execution,
   formatter, push, promotion, or performance qualification occurred.
 
+- 2026-10-27: resolved the hardening integration conflicts and merged the
+  compatibility and hardened runtime profiles. The hardened loader rejects
+  ambiguous TLS and symbol-address relocations outside RELRO, as directed;
+  compatibility retains its existing behavior. Hardened qualification passed
+  at `f1f06af47`, including entry, rollback, protection, and product-identity
+  checks; a final-source cohort is still required. Native differential fixes
+  aligned regex backreferences, float and scanf underflow, `asprintf`, and
+  wide formatting with the pinned native oracle. Mold-aware product and
+  receipt checks now preserve symbol and link-trace identity. The combined
+  corpus reader binds the runtime profile, and the ABI and atomic collectors
+  now classify the profile inputs and load the installed compiler helper.
+  Focused regressions, the native Rust profiles, structure, and the nonpromoting
+  ledger passed. H0 and combined-product rehearsals continue on earlier
+  source revisions; the POSIX aggregate, C-ABI admission, and denied allocator
+  crash diagnostic remain parked under their existing decisions. No promotion
+  or performance gate is claimed.
+
 ## For the owner afterwards
 
 - The contract changes list, and the commits it names.
