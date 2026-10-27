@@ -410,7 +410,7 @@ def account_aliases(facts):
             require_function_shape(left['row'],'WEAK','DEFAULT')
             if target in HIDDEN:
                 require_function_shape(right['row'],'GLOBAL' if key.endswith('static') else 'LOCAL',
-                                       'HIDDEN' if key.endswith('static') or key=='candidate-shared' else 'DEFAULT')
+                                       'HIDDEN')
             else:require_function_shape(right['row'],'GLOBAL','DEFAULT')
             require(same_physical_definition(left,right),'named FILE alias crosses definition domain: '+alias)
             pairs[alias]={'target':target,'alias_occurrence':left,'target_occurrence':right}

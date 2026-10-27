@@ -111,7 +111,7 @@ coverage, or claim promotion or public x86 support.
 ## ELF alias and interposition contract
 
 `run_owned_stdio_alias_contract.sh STATIC_SYSROOT DYNAMIC_SYSROOT` is the
-focused companion for musl 1.2.6's stdio linkage shape. It verifies weak,
+focused companion for the pinned native musl stdio linkage shape. It verifies weak,
 same-address public aliases in both archive and shared artifacts; hidden
 internal `__fdopen`, `__fseeko`, and `__ftello` bodies; and protected
 `__uflow`/`__overflow` visibility in both selected PIC artifacts. The pinned
@@ -123,11 +123,10 @@ callbacks synchronously join a `ftrylockfile` contender, proving that
 `fread_unlocked`, `fwrite_unlocked`, `fgetws_unlocked`, and `fputws_unlocked`
 still lock because musl aliases them to locking source bodies.
 
-The shared linkers localize the hidden source bodies in their full symbol
-tables: pinned musl records `LOCAL DEFAULT`, while the owned linker records
-`LOCAL HIDDEN`. Both omit those names from `.dynsym`; the runner treats the
-localization as a toolchain detail and proves the public weak alias shares the
-same defining section and value. The archive contract remains `GLOBAL HIDDEN`.
+Both shared products record the hidden source bodies as `LOCAL HIDDEN` in their
+full symbol tables and omit those names from `.dynsym`. The runner proves each
+public weak alias shares the same defining section and value. The archive
+contract remains `GLOBAL HIDDEN`.
 
 The legacy default archive's single pathname-stream slot preserves this same
 `fseeko`/`ftello` boundary. Its existing `libc-stdio-path-stream` runner checks

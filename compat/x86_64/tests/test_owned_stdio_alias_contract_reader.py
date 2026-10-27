@@ -141,7 +141,7 @@ class SuppliedStdioReceiptTests(unittest.TestCase):
                 visibility='PROTECTED' if name in reader.PROTECTED else 'DEFAULT'
                 if name in reader.HIDDEN:
                     binding='GLOBAL' if key.endswith('static') else 'LOCAL'
-                    visibility='DEFAULT' if key=='reference-shared' else 'HIDDEN'
+                    visibility='HIDDEN'
                 rows.append({'row_index':len(rows)+1,'name':name,'type':'FUNC','binding':binding,'visibility':visibility,
                              'section_index':str(indexes[targets[name]]),'value':'0','size_bytes':16,'version':None,'version_default':False})
             member={'sections':sections,'symbol_tables':[{'name':'.symtab','section_index':90,'rows':rows}]}
@@ -158,6 +158,12 @@ class SuppliedStdioReceiptTests(unittest.TestCase):
         self.assertEqual(set(result),{'candidate-static','reference-static','candidate-shared','reference-shared'})
         self.assertEqual(len(result['candidate-static']['aliases']),42)
         self.assertEqual(result['candidate-shared']['aliases']['fdopen']['target_occurrence']['row']['visibility'],'HIDDEN')
+        self.assertEqual(result['reference-shared']['aliases']['fdopen']['target_occurrence']['row']['visibility'],'HIDDEN')
+        facts=self.fixture()
+        rows=facts['reference-shared']['symbol_tables'][0]['rows']
+        next(row for row in rows if row['name']=='__fdopen')['visibility']='DEFAULT'
+        with self.assertRaisesRegex(reader.StdioAliasEvidenceError,'metadata differs'):
+            reader.account_aliases(facts)
 
     def test_full_file_and_scan_alias_roster_is_partitioned_by_source_owner(self):
         import owned_stdio_alias_contract_reader as reader
