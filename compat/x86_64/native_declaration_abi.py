@@ -2110,6 +2110,15 @@ def _installed_product_header_root(product: Path) -> Path:
     return SOURCE_MOUNT / product.relative_to(ROOT) / "usr/include"
 
 
+def _candidate_bridge_provider(rows: Sequence[Mapping[str, Any]], name: str, form: str) -> Mapping[str, Any]:
+    providers = [row for row in rows if row["name"] == name and row["section_index"] != "UND"]
+    require(len(providers) == 1 and providers[0]["type"] == "FUNC"
+            and providers[0]["binding"] in {"GLOBAL", "WEAK"}
+            and providers[0]["visibility"] == "DEFAULT" and providers[0]["size_bytes"] > 0,
+            f"reviewed owned {form} C bridge provider differs")
+    return providers[0]
+
+
 def physical_reference_join(path: Path, symbol_text: str, section_text: str, *, static: bool) -> dict[str, Any]:
     """Join the probe holder to a provider address or its physical dynamic relocation."""
     tables = abi_inventory.parse_elf_symbol_tables(symbol_text)
@@ -2149,7 +2158,7 @@ def physical_reference_join(path: Path, symbol_text: str, section_text: str, *, 
     if static:
         providers = [row for row in symtabs[0]["rows"] if row["name"] == name and row["section_index"] != "UND"]
         require(len(providers) == 1 and providers[0]["type"] == "FUNC" and providers[0]["size_bytes"] > 0
-                and providers[0]["binding"] in {"GLOBAL", "WEAK"}, "linked static C provider differs")
+                and providers[0]["binding"] in {"LOCAL", "GLOBAL", "WEAK"}, "linked static C provider differs")
         provider = int(providers[0]["value"], 16)
         if relocations:
             require(relocations == [{"type": 8, "symbol_index": 0, "addend": provider,
@@ -2742,16 +2751,9 @@ def _cpp_linkage_evidence(
                                         resource_include=Path(resource_include), timeout_seconds=timeout_seconds,
                                         executable_probe=True) for index, plan in enumerate(selected)]
     classification = reviewed_cpp_linkage_boundary(selected, jobs, reference_provider_inventory)
-    candidate_bridge_providers = [
-        row for row in candidate_provider_inventory["shared"]
-        if row["name"] == classification["candidate_symbol"] and row["section_index"] != "UND"
-    ]
-    require(len(candidate_bridge_providers) == 1 and candidate_bridge_providers[0]["type"] == "FUNC"
-            and candidate_bridge_providers[0]["binding"] in {"GLOBAL", "WEAK"}
-            and candidate_bridge_providers[0]["visibility"] == "DEFAULT"
-            and candidate_bridge_providers[0]["size_bytes"] > 0,
-            "reviewed owned shared C bridge provider differs")
-    classification["candidate_shared_provider"] = candidate_bridge_providers[0]
+    _candidate_bridge_provider(candidate_provider_inventory["static"], classification["candidate_symbol"], "static")
+    classification["candidate_shared_provider"] = _candidate_bridge_provider(
+        candidate_provider_inventory["shared"], classification["candidate_symbol"], "shared")
     if replay:
         require(strict_equal(retained["classification"], classification), "reviewed oracle disposition differs")
     links = []

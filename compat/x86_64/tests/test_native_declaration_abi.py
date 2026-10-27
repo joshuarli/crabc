@@ -346,7 +346,7 @@ class NativeDeclarationAbiTests(unittest.TestCase):
             "section_index": "1", "type": "FUNC", "size_bytes": 16,
         }
         candidate_static = [{"name": "candidate-static", "binding": "GLOBAL", "visibility": "DEFAULT",
-                             "section_index": "1", "type": "FUNC"}]
+                             "section_index": "1", "type": "FUNC"}, bridge_provider]
         reference_static = [{"name": "reference-static", "binding": "GLOBAL", "visibility": "DEFAULT",
                              "section_index": "1", "type": "FUNC"}]
         reference_shared = [{"name": "reference-shared", "binding": "GLOBAL", "visibility": "DEFAULT",
@@ -561,6 +561,12 @@ class NativeDeclarationAbiTests(unittest.TestCase):
                      for flag in ("-hW", "-SW", "-sW")]
             provider_rows = ABI.oracle_static_provider_rows(members, *facts, str(archive))
             self.assertTrue(any(row["name"] == "membarrier" and row["section_index"] != "UND" for row in provider_rows))
+            selected_provider = ABI._candidate_bridge_provider(provider_rows, "membarrier", "static")
+            self.assertEqual(selected_provider["binding"], "GLOBAL")
+            hidden_rows = copy.deepcopy(provider_rows)
+            next(row for row in hidden_rows if row["name"] == "membarrier")["binding"] = "LOCAL"
+            with self.assertRaisesRegex(ABI.NativeDeclarationAbiError, "static C bridge provider"):
+                ABI._candidate_bridge_provider(hidden_rows, "membarrier", "static")
             omitted_symbols = "".join(f"File: {archive}({member})\n\n" for member in members)
             with self.assertRaisesRegex(ABI.abi_inventory.InventoryError, "symbol/section table counts"):
                 ABI.oracle_static_provider_rows(members, facts[0], facts[1], omitted_symbols, str(archive))
@@ -606,6 +612,15 @@ class NativeDeclarationAbiTests(unittest.TestCase):
                             self.assertEqual(joined["symbol"], "membarrier")
                             self.assertEqual(joined["kind"], "static-provider-address" if static else "dynamic-provider-reference")
                             if form == "static":
+                                localized = output.with_name(output.name + "-localized")
+                                subprocess.run([objcopy, "--localize-symbol=membarrier", str(output), str(localized)],
+                                               capture_output=True, check=True)
+                                localized_symbols = subprocess.run([readelf, "-sW", str(localized)],
+                                                                   capture_output=True, text=True, check=True).stdout
+                                localized_sections = subprocess.run([readelf, "-SW", str(localized)],
+                                                                    capture_output=True, text=True, check=True).stdout
+                                self.assertEqual(ABI.physical_reference_join(localized, localized_symbols,
+                                                                             localized_sections, static=True), joined)
                                 table = ABI.abi_inventory.parse_elf_symbol_tables(symbols)[0]
                                 holder = next(row for row in table["rows"] if row["name"] == "crabc_native_declaration_abi_reference_0")
                                 section = next(row for row in ABI.abi_inventory.parse_elf_sections(sections)["sections"]
