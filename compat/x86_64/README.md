@@ -466,7 +466,9 @@ its constructor; a non-PIE, an executable stack, and an RWX load must fail
 before it through kernel and direct interpreter entry. A dynamic PIE's executable file-page alias must remain unchanged
 when its writable view changes. The static PIE is checked for the same property
 when its selected data byte has such an alias; otherwise the fixture reports
-that byte's lack of an alias. During the first constructor, forked children
+that byte's lack of an alias. A second static PIE explicitly maps the same
+file page writable and executable at separate addresses, checks isolation,
+and verifies the file remains unchanged. During the first constructor, forked children
 must fault when writing the main image's RELRO and, for dynamic PIE, the
 interpreter's RELRO and a runtime-loaded DSO's RELRO. This focused test does not qualify the
 hardened product.

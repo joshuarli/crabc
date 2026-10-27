@@ -41,6 +41,30 @@ import struct
 import sys
 
 root = Path(sys.argv[1])
+static = bytearray((root / "static-alias").read_bytes())
+phoff = struct.unpack_from("<Q", static, 32)[0]
+phnum = struct.unpack_from("<H", static, 56)[0]
+phdrs = [struct.unpack_from("<IIQQQQQQ", static, phoff + index * 56) for index in range(phnum)]
+shoff = struct.unpack_from("<Q", static, 40)[0]
+shnum = struct.unpack_from("<H", static, 60)[0]
+sections = [struct.unpack_from("<IIQQQQIIQQ", static, shoff + index * 64) for index in range(shnum)]
+symtab = next(section for section in sections if section[1] == 2)
+strings = sections[symtab[6]][4]
+symbols = [struct.unpack_from("<IBBHQQ", static, offset)
+           for offset in range(symtab[4], symtab[4] + symtab[5], symtab[9])]
+values = [value for name, _, _, _, value, _ in symbols
+          if static[strings + name:].startswith(b"writable_value\0")]
+assert len(values) == 1
+value = values[0]
+loads = [header for header in phdrs if header[0] == 1]
+writer = next(header for header in loads if header[1] & 2 and header[3] <= value < header[3] + header[5])
+file_page = (writer[2] + value - writer[3]) & ~4095
+address = (max(header[3] + header[6] for header in loads) + 0x1ffff) & ~4095
+replace = [index for index, header in enumerate(phdrs) if header[0] == 0x6474e550]
+assert len(replace) == 1 and file_page + 4096 <= len(static)
+struct.pack_into("<IIQQQQQQ", static, phoff + replace[0] * 56, 1, 5, file_page, address, address, 4096, 4096, 4096)
+(root / "static-alias-forced").write_bytes(static)
+(root / "static-alias-forced").chmod(0o755)
 original = (root / "pie").read_bytes()
 phoff = struct.unpack_from("<Q", original, 32)[0]
 phnum = struct.unpack_from("<H", original, 56)[0]
@@ -211,6 +235,16 @@ if [ "$static_status" -eq 4 ]; then
 else
     [ "$static_status" -eq 0 ]
 fi
+python3 -B - "$image" <<'PYTHON'
+from pathlib import Path
+import subprocess
+import sys
+root = Path(sys.argv[1])
+image = root / "static-alias-forced"
+before = image.read_bytes()
+subprocess.run(["timeout", "20", "chroot", str(root), "/static-alias-forced"], check=True)
+assert image.read_bytes() == before
+PYTHON
 test -f "$image/marker"
 rm "$image/marker"
 for case in nonpie bad-stack bad-wx; do
