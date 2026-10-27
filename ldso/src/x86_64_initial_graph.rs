@@ -4120,6 +4120,7 @@ unsafe fn apply_self_relro(base: u64) -> Option<()> {
         return None;
     }
     let phdr = header.add(phoff);
+    if cfg!(crabc_hardened) && !hardened_program_headers(phdr, phnum) { return None; }
     let mut relro = None;
     for index in 0..phnum {
         let program_header = phdr.add(index * 56);
@@ -4128,6 +4129,7 @@ unsafe fn apply_self_relro(base: u64) -> Option<()> {
         let byte_len = read_u64(program_header.add(40));
         if relro.replace((address, byte_len)).is_some() || byte_len == 0
             || !virtual_range_in_page_mapped_load(phdr, phnum, address, byte_len)
+            || (cfg!(crabc_hardened) && !hardened_relro_pages(phdr, phnum, address, byte_len))
         {
             return None;
         }
@@ -5850,6 +5852,33 @@ mod readable_file_load_tests {
         assert!(!valid(&headers, u64::MAX - 5, 16));
         load(&mut headers, 0, PF_R | PF_X, 0x2800, 0x100, 0x100);
         assert!(!valid(&headers, 0x2000, 0x100));
+    }
+
+    #[test]
+    fn hardened_interpreter_rejects_invalid_self_pages_before_relro() {
+        let mapping = unsafe { syscall6(SYS_MMAP, 0, (PAGE * 2) as i64, PROT_READ | PROT_WRITE,
+            MAP_PRIVATE | MAP_ANONYMOUS, -1, 0) };
+        assert!(!is_linux_error(mapping));
+        let image = unsafe { core::slice::from_raw_parts_mut(mapping as *mut u8, (PAGE * 2) as usize) };
+        image[..4].copy_from_slice(b"\x7fELF");
+        image[4..6].copy_from_slice(&[2, 1]);
+        image[16..18].copy_from_slice(&3u16.to_le_bytes());
+        image[18..20].copy_from_slice(&62u16.to_le_bytes());
+        image[32..40].copy_from_slice(&64u64.to_le_bytes());
+        image[54..56].copy_from_slice(&56u16.to_le_bytes());
+        image[56..58].copy_from_slice(&4u16.to_le_bytes());
+        load(&mut image[64..], 0, PF_R | PF_X, 0, PAGE, PAGE);
+        load(&mut image[64..], 1, PF_R | PF_W, PAGE, PAGE, PAGE);
+        image[176..180].copy_from_slice(&PT_GNU_STACK.to_le_bytes());
+        image[180..184].copy_from_slice(&(PF_R | PF_W).to_le_bytes());
+        image[232..236].copy_from_slice(&PT_GNU_RELRO.to_le_bytes());
+        image[248..256].copy_from_slice(&PAGE.to_le_bytes());
+        image[272..280].copy_from_slice(&PAGE.to_le_bytes());
+        image[180..184].copy_from_slice(&(PF_R | PF_W | PF_X).to_le_bytes());
+        assert_eq!(unsafe { apply_self_relro(mapping as u64) }.is_some(), !cfg!(crabc_hardened));
+        image[180..184].copy_from_slice(&(PF_R | PF_W).to_le_bytes());
+        assert!(unsafe { apply_self_relro(mapping as u64) }.is_some());
+        assert_eq!(unsafe { syscall2(SYS_MUNMAP, mapping, (PAGE * 2) as i64) }, 0);
     }
 
     #[test]
