@@ -607,6 +607,12 @@ def _validate_product_tree(root: Path, product: str, files: dict[str, str], alia
     links = combined.get("symlinks")
     if not isinstance(links, dict) or not set(aliases.items()) <= set(links.items()):
         _fail(f"combined sysroot aliases omit the {product} product aliases")
+    try:
+        profile = NativeRuntimeProfile(combined["hardening_profile"])
+    except (KeyError, TypeError, ValueError):
+        _fail("combined product has an invalid native runtime profile")
+    if links != profile.aliases or combined.get("modes") != list(profile.combined_modes):
+        _fail("combined sysroot aliases or modes differ from its profile")
     _validate_payload_tree(root, installed, aliases=links)
     placements = combined["products"][product]["placements"]
     for relative, expected in files.items():

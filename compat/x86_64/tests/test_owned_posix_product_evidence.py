@@ -1090,6 +1090,27 @@ class OwnedPosixProductEvidenceTests(unittest.TestCase):
                     evidence.ProductEvidenceError, "combined product profiles differ"):
                 validate(root)
 
+    def test_combined_product_reader_rejects_extra_profile_alias(self) -> None:
+        root = self.combined_product()
+        (root / "lib/extra-loader.so").symlink_to("ld-crabc-x86_64.so.1")
+        path = root / "share/crabc/manifest.json"
+        manifest = json.loads(path.read_text())
+        manifest["symlinks"]["lib/extra-loader.so"] = "ld-crabc-x86_64.so.1"
+        self.write_json(path, manifest)
+        for validate in (evidence._validate_static_product, evidence._validate_dynamic_product):
+            with self.subTest(validate=validate.__name__), self.assertRaises(evidence.ProductEvidenceError):
+                validate(root)
+
+    def test_combined_product_reader_rejects_modes_from_another_profile(self) -> None:
+        root = self.combined_product()
+        path = root / "share/crabc/manifest.json"
+        manifest = json.loads(path.read_text())
+        manifest["modes"] = list(evidence.NativeRuntimeProfile.HARDENED.combined_modes)
+        self.write_json(path, manifest)
+        for validate in (evidence._validate_static_product, evidence._validate_dynamic_product):
+            with self.subTest(validate=validate.__name__), self.assertRaises(evidence.ProductEvidenceError):
+                validate(root)
+
     def test_dynamic_product_consumers_accept_a_combined_sysroot(self) -> None:
         # The fork workload compiles against the product's own stdint.h.
         (self.dynamic / "usr/include/stdint.h").write_bytes(b"/* owned stdint */\n")
