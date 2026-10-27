@@ -4,6 +4,11 @@
 #include <sys/auxv.h>
 #include <sys/wait.h>
 #include <unistd.h>
+#ifdef CRABC_DSO_PROBE
+#include <dlfcn.h>
+#include <link.h>
+#include <string.h>
+#endif
 
 static int protected_before_main;
 
@@ -23,6 +28,37 @@ static int check_relro(uintptr_t base, const Elf64_Phdr *headers, unsigned long 
     }
     return 0;
 }
+
+#ifdef CRABC_DSO_PROBE
+struct image_view {
+    uintptr_t base;
+    const Elf64_Phdr *headers;
+    unsigned long count;
+};
+
+static int find_dso(struct dl_phdr_info *info, size_t size, void *context)
+{
+    (void)size;
+    if (!strstr(info->dlpi_name, "hardened-relro-fixture.so")) return 0;
+    struct image_view *image = context;
+    image->base = info->dlpi_addr;
+    image->headers = info->dlpi_phdr;
+    image->count = info->dlpi_phnum;
+    return 1;
+}
+
+static int check_loaded_dso(void)
+{
+    void *handle = dlopen("/usr/lib/hardened-relro-fixture.so", RTLD_NOW);
+    if (!handle) return 0;
+    int (*initialized)(void) = (int (*)(void))dlsym(handle, "hardened_fixture_initialized");
+    struct image_view image = {0};
+    int found = dl_iterate_phdr(find_dso, &image);
+    int valid = initialized && initialized() == 7 && found == 1
+        && check_relro(image.base, image.headers, image.count);
+    return dlclose(handle) == 0 && valid;
+}
+#endif
 
 __attribute__((constructor)) static void observe_relro(void)
 {
@@ -46,6 +82,9 @@ __attribute__((constructor)) static void observe_relro(void)
         const Elf64_Phdr *programs = (const Elf64_Phdr *)(interpreter + elf->e_phoff);
         if (!check_relro(interpreter, programs, elf->e_phnum)) return;
     }
+#ifdef CRABC_DSO_PROBE
+    if (!check_loaded_dso()) return;
+#endif
     protected_before_main = 1;
 }
 
