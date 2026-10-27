@@ -1406,7 +1406,8 @@ Append one line per merge batch, per parked item, and per contract change.
   native input capture and receipt replay also pass. At `6cf7d549a`, pattern
   passes the pinned oracle and six owned entry modes, including filesystem and
   syscall comparisons. At `1aa53776c`, the numeric/calendar component and
-  receipt replay pass all six entry modes. Read-only review of upstream Heap
+  receipt replay pass all six entry modes; wide-calendar formatting passes
+  its six-entry pinned-musl comparison at `04c9ff934`. Read-only review of upstream Heap
   lifetime fixes found owner-exit ordering already represented; the destroy
   path resets used counts without upstream's immediate remote-free collect.
   Existing tests do not establish a queued remote free at that transition,
