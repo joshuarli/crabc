@@ -1101,7 +1101,12 @@ pub(crate) unsafe fn with_wide_output_buffer(destination: *mut c_int, capacity: 
         let _guard = StreamGuard::acquire(stream);
         let result = format(stream);
         write_backend_held(stream, ptr::null(), 0);
-        if result >= 0 && result as usize >= capacity { -1 } else { result }
+        if result >= 0 && result as usize >= capacity {
+            errno::set_errno(EOVERFLOW);
+            -1
+        } else {
+            result
+        }
     }
 }
 pub(crate) unsafe fn with_wide_input_string(source: *const c_int,

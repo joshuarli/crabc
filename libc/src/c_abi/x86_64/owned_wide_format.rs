@@ -96,7 +96,7 @@ static_archive_member! { wprintf_source {
 }}
 // Musl's `src/stdio/vswprintf.c` object.
 static_archive_member! { vswprintf_source {
-    /// Format to bounded caller wide storage; insufficient capacity returns -1.
+    /// Format to bounded caller wide storage; insufficient nonzero capacity returns -1/EOVERFLOW.
     /// # Safety
     /// Destination has capacity writable wchar_t elements, disjoint from format
     /// and readable argument sources. Format/arguments satisfy vfwprintf; zero

@@ -34,6 +34,9 @@ type `int` in C and `bool` in C++, matching the selected oracle headers.
 Basic regular expressions reject a backreference until its referenced group
 has closed, matching the native musl parser.
 
+With a nonzero output capacity, `swprintf` and `vswprintf` report
+`EOVERFLOW` when the formatted result does not fit.
+
 ## Runtime hardening profiles
 
 Native x86-64 has two required product contracts. **Compatibility** preserves

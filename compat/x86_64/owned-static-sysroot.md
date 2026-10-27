@@ -276,7 +276,9 @@ descriptor, allocated, and caller-buffer destinations with private scratch.
 Each formatting job also runs a separately receipted
 `owned_static_scanf_probe.c` binary: its fixed records compare byte grammar,
 scansets, widths, suppression, positional arguments, integer and binary32/64/80
-conversion, errno, fenv, and stream lookahead/EOF/error state. The decimal
+conversion, errno, fenv, and stream lookahead/EOF/error state. The scanner
+uses the pinned native musl snapshot, including subnormal range errors and
+wide allocation bounds. The decimal
 records identify their input, conversion format, and rounding mode in their
 payload and cover signed zero, malformed exponents, subnormal and overflow
 boundaries, and field widths in string and FILE scans. Allocation checks
