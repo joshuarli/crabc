@@ -2495,10 +2495,7 @@ def compile_source_built_mode(
 
 def binary_unwind_symbols(binary: Path, environment: dict[str, str], log: Path, description: str) -> list[str]:
     symbols = run_logged(["nm", "--defined-only", binary], environment, log, description)
-    return sorted({
-        line.split()[-1] for line in symbols.splitlines()
-        if len(line.split()) >= 3 and line.split()[-1].startswith("_Unwind_")
-    })
+    return cleanup._unwind_symbols(binary, symbols, build.UNWIND_ABI)
 
 
 BACKTRACE_LINE = re.compile(

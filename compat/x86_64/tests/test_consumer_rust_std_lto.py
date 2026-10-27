@@ -46,14 +46,19 @@ class DebugRouteTests(unittest.TestCase):
             subprocess.run(['mold', '-pie', '--no-dynamic-linker', '--no-relax', '-e', '_start', str(obj),
                             '-o', str(executable)], check=True, capture_output=True)
             defined = subprocess.check_output(['nm', '--defined-only', str(executable)], text=True)
-            self.assertEqual(GATE.unwind_symbols(executable, defined), ['_Unwind_Backtrace'])
-            image = GATE.Elf(executable)
+            self.assertEqual(GATE.owned_cleanup.cleanup._unwind_symbols(executable, defined, GATE.provider_build.UNWIND_ABI),
+                             ['_Unwind_Backtrace'])
+            with mock.patch.object(GATE.owned_cleanup, 'run_logged', return_value=defined):
+                self.assertEqual(GATE.owned_cleanup.binary_unwind_symbols(executable, {}, root / 'nm.log', 'probe'),
+                                 ['_Unwind_Backtrace'])
+            image = GATE.owned_cleanup.cleanup.Elf(executable)
             label = image.symbol('_Unwind_Backtrace$got', dynamic=False)
             section = image.sections[label['section']]
             data = bytearray(executable.read_bytes())
             data[section[4] + label['value'] - section[3]] ^= 1
             executable.write_bytes(data)
-            self.assertIn('_Unwind_Backtrace$got', GATE.unwind_symbols(executable, defined))
+            self.assertIn('_Unwind_Backtrace$got',
+                          GATE.owned_cleanup.cleanup._unwind_symbols(executable, defined, GATE.provider_build.UNWIND_ABI))
 
     def test_cargo_link_receipt_binds_the_selected_development_product(self):
         WORK.mkdir(parents=True, exist_ok=True)

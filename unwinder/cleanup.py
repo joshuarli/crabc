@@ -22,6 +22,8 @@ COMPAT = ROOT.parent / 'compat/x86_64'
 if str(COMPAT) not in sys.path:
     sys.path.insert(0, str(COMPAT))
 import native_rustc
+from loader_debug_abi_evidence import Elf
+from owned_static_link_authority import section_name
 
 TARGET = 'x86_64-unknown-linux-musl'
 EXPECTED_OUTPUT = 'unwind: backtrace cleanup payload main thread\n'
@@ -51,6 +53,44 @@ def assert_execution(status: int, output: str) -> None:
         raise RuntimeError(f'cleanup fixture exited with status {status}')
     if output != EXPECTED_OUTPUT:
         raise RuntimeError(f'unexpected cleanup fixture output: {output!r}')
+
+
+def _unwind_symbols(path: Path, defined: str, provider_symbols: set[str]) -> list[str]:
+    names = {line.split()[-1] for line in defined.splitlines()
+             if len(line.split()) >= 3 and line.split()[-1].startswith('_Unwind_')}
+    labels = {name for name in names if name.endswith('$got') and name[:-4] in provider_symbols}
+    if not labels:
+        return sorted(names)
+    image = Elf(path)
+    relocations = []
+    unsupported = any(section[1] in (9, 19) and section[2] & 2 and section[5] for section in image.sections)
+    for section in image.sections:
+        if section[1] != 4 or not section[2] & 2:
+            continue
+        if section[9] != 24 or section[5] % 24:
+            raise ValueError('invalid unwind GOT relocations')
+        relocations.extend(image.unpack('<QQq', section[4] + offset) for offset in range(0, section[5], 24))
+    for name in labels:
+        label = image.symbol(name, dynamic=False, required=False)
+        target = image.symbol(name[:-4], dynamic=False, required=False)
+        if (label is None or target is None or unsupported or not 0 < label['section'] < len(image.sections)
+                or not 0 < target['section'] < len(image.sections)):
+            continue
+        section = image.sections[label['section']]
+        target_section = image.sections[target['section']]
+        address = label['value']
+        nearby = [row for row in relocations if address - 7 <= row[0] < address + 8]
+        if (label['type'] == 'OBJECT' and label['binding'] == 'LOCAL' and label['visibility'] == 'DEFAULT'
+                and label['size'] == 0 and section_name(image, section) == '.got'
+                and section[1] == 1 and section[2] & 3 == 3 and address % 8 == 0
+                and section[3] <= address and address + 8 <= section[3] + section[5]
+                and target['type'] == 'FUNC' and target['size'] > 0 and target_section[2] & 6 == 6
+                and target_section[3] <= target['value']
+                and target['value'] + target['size'] <= target_section[3] + target_section[5]
+                and nearby == [(address, 8, target['value'])]
+                and image.unpack('<Q', section[4] + address - section[3])[0] == target['value']):
+            names.remove(name)
+    return sorted(names)
 
 
 def assert_binary_unwind_symbols(symbols: set[str], provider_symbols: set[str]) -> None:
@@ -125,10 +165,7 @@ def main() -> None:
     if str(archive) not in trace:
         raise RuntimeError('link trace did not extract the selected unwind archive')
     symbols = run_logged(['nm', '--defined-only', binary], fixture_environment, output / 'cleanup-symbols.log')
-    binary_symbols = {
-        line.split()[-1] for line in symbols.splitlines()
-        if len(line.split()) >= 3 and line.split()[-1].startswith('_Unwind_')
-    }
+    binary_symbols = set(_unwind_symbols(binary, symbols, provider_symbols))
     assert_binary_unwind_symbols(binary_symbols, provider_symbols)
     segments = run_logged(['readelf', '-lW', binary], fixture_environment, output / 'cleanup-segments.log')
     if 'GNU_EH_FRAME' not in segments:

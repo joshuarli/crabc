@@ -67,8 +67,6 @@ import installed_backtrace  # noqa: E402
 import owned_rust_link  # noqa: E402
 import owned_posix_product_evidence as product_evidence  # noqa: E402
 import mold_link_trace
-from loader_debug_abi_evidence import Elf
-from owned_static_link_authority import section_name
 
 SCHEMA = "crabc.x86_64-consumer-rust-std-lto/v1"
 GATE = "consumer.rust-std-lto"
@@ -585,43 +583,6 @@ def owned_link_conditions(name: str, build: Mapping[str, Any], *, provider: Mapp
 # ELF inspection and execution
 
 
-def unwind_symbols(path: Path, defined: str) -> list[str]:
-    names = {line.split()[-1] for line in defined.splitlines()
-             if len(line.split()) >= 3 and line.split()[-1].startswith("_Unwind_")}
-    labels = {name for name in names if name.endswith("$got") and name[:-4] in provider_build.UNWIND_ABI}
-    if not labels:
-        return sorted(names)
-    image = Elf(path)
-    relocations = []
-    unsupported = any(section[1] in (9, 19) and section[2] & 2 and section[5] for section in image.sections)
-    for section in image.sections:
-        if section[1] != 4 or not section[2] & 2:
-            continue
-        require(section[9] == 24 and section[5] % 24 == 0, "invalid unwind GOT relocations")
-        relocations.extend(image.unpack('<QQq', section[4] + offset) for offset in range(0, section[5], 24))
-    for name in labels:
-        label = image.symbol(name, dynamic=False, required=False)
-        target = image.symbol(name[:-4], dynamic=False, required=False)
-        if (label is None or target is None or unsupported or not 0 < label['section'] < len(image.sections)
-                or not 0 < target['section'] < len(image.sections)):
-            continue
-        section = image.sections[label['section']]
-        target_section = image.sections[target['section']]
-        address = label['value']
-        nearby = [row for row in relocations if address - 7 <= row[0] < address + 8]
-        if (label['type'] == 'OBJECT' and label['binding'] == 'LOCAL' and label['visibility'] == 'DEFAULT'
-                and label['size'] == 0 and section_name(image, section) == '.got'
-                and section[1] == 1 and section[2] & 3 == 3 and address % 8 == 0
-                and section[3] <= address and address + 8 <= section[3] + section[5]
-                and target['type'] == 'FUNC' and target['size'] > 0 and target_section[2] & 6 == 6
-                and target_section[3] <= target['value']
-                and target['value'] + target['size'] <= target_section[3] + target_section[5]
-                and nearby == [(address, 8, target['value'])]
-                and image.unpack('<Q', section[4] + address - section[3])[0] == target['value']):
-            names.remove(name)
-    return sorted(names)
-
-
 def inspect_elf(context: Context, path: Path, *, dynamic: bool, needed_dsos: Sequence[str] = ()) -> dict[str, Any]:
     header = checked_output(["readelf", "-hW", path], "readelf -h")
     segments = checked_output(["readelf", "-lW", path], "readelf -l")
@@ -629,7 +590,7 @@ def inspect_elf(context: Context, path: Path, *, dynamic: bool, needed_dsos: Seq
     defined = checked_output([context.tool("llvm-nm"), "--defined-only", path], "llvm-nm defined")
     needed = re.findall(r"\(NEEDED\)\s+Shared library: \[([^]]+)\]", dynamic_section)
     interpreter = re.search(r"Requesting program interpreter: ([^]]+)\]", segments)
-    unwind = unwind_symbols(path, defined)
+    unwind = owned_cleanup.cleanup._unwind_symbols(path, defined, provider_build.UNWIND_ABI)
     problems = []
     if "Advanced Micro Devices X86-64" not in header or not re.search(r"Type:\s+DYN", header):
         problems.append("image is not an x86-64 ET_DYN")
