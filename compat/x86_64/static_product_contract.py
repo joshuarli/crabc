@@ -97,6 +97,27 @@ def require(condition: bool, message: str) -> None:
         raise StaticProductError(message)
 
 
+
+def validate_static_dynamic_tags(dynamic: str, rows: list[list[str]], pie: bool, label: str) -> None:
+    require(re.search(r"\((NEEDED|JMPREL|PLTRELSZ|PLTREL)\)", dynamic) is None,
+            f"{label} has dynamic dependencies or PLT relocations")
+    entries = re.findall(r"\(PLTGOT\)\s+(0x[0-9a-fA-F]+)", dynamic)
+    require(dynamic.count("(PLTGOT)") == len(entries) and len(entries) <= 1,
+            f"{label} has invalid PLTGOT metadata")
+    if not entries:
+        return
+    require(pie, f"{label} has PLTGOT metadata outside static PIE")
+    relro = [row for row in rows if row and row[0] == "GNU_RELRO" and len(row) >= 7]
+    require(len(relro) == 1, f"{label} lacks one GNU_RELRO segment")
+    try:
+        address = int(entries[0], 16)
+        start, size = int(relro[0][2], 16), int(relro[0][5], 16)
+    except ValueError as error:
+        raise StaticProductError(f"{label} has invalid GNU_RELRO metadata") from error
+    require(address <= (1 << 64) - 24 and start <= address and address + 24 <= start + size <= (1 << 64),
+            f"{label} has PLTGOT storage outside GNU_RELRO")
+
+
 def digest(path: Path) -> str:
     require(path.is_file() and not path.is_symlink(), f"missing or unsafe evidence file: {path}")
     value = hashlib.sha256()
@@ -476,7 +497,7 @@ def inspect_case(report: Path, product: str, mode: str, case_path: str,
     if pie:
         require("PHDR" in kinds, f"{label} static PIE lacks PT_PHDR")
     dynamic = (base / "dynamic").read_text(encoding="utf-8")
-    require(re.search(r"\((NEEDED|JMPREL|PLTGOT)\)", dynamic) is None, f"{label} has dynamic dependencies")
+    validate_static_dynamic_tags(dynamic, rows, pie, label)
     relocations = (base / "relocations").read_text(encoding="utf-8")
     kinds = set(re.findall(r"\bR_X86_64_[A-Z0-9_]+", relocations))
     require(kinds <= ({"R_X86_64_RELATIVE"} if pie else set()),

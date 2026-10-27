@@ -42,6 +42,16 @@ class StaticProductSuiteTests(unittest.TestCase):
     def contract(self) -> dict:
         return copy.deepcopy(PRODUCT.load_contract())
 
+    def test_static_pie_reserved_got_requires_relro_and_no_plt_relocations(self) -> None:
+        rows = [["GNU_RELRO", "0x0", "0x1000", "0x1000", "0x100", "0x100", "R", "0x1"]]
+        got = " 0x0000000000000003 (PLTGOT) 0x1080\n"
+        PRODUCT.validate_static_dynamic_tags(got, rows, True, "fixture")
+        for dynamic, pie in ((got.replace("0x1080", "0x10f0"), True),
+                             (got + got, True), (got, False),
+                             (got + " (JMPREL) 0x1200\n", True)):
+            with self.subTest(dynamic=dynamic, pie=pie), self.assertRaises(PRODUCT.StaticProductError):
+                PRODUCT.validate_static_dynamic_tags(dynamic, rows, pie, "fixture")
+
     def test_checked_in_contract_maps_every_obligation_to_executed_cases(self) -> None:
         summary = PRODUCT.validate_contract(self.contract())
         self.assertEqual(summary["status"], "implemented-unqualified")
