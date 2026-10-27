@@ -1390,7 +1390,9 @@ Append one line per merge batch, per parked item, and per contract change.
   visitation producers rejected an unsupported `--offline` flag and five
   gates were blocked. `aeb87087d` removes the flag; the producers already
   require cached inputs. All three visitation differentials pass at
-  `4936c803f`; the gate remains blocked on secure and guarded profiles.
+  `4936c803f`; secure-5 configuration matches 19 pinned C keys at
+  `3706c1e67`. The gate remains blocked on broader secure and guarded
+  behavior, so this is not milestone qualification.
   Cleanup removed nine integrated test-only worktrees and cleared about 8.1 GiB
   of disposable kache entries across seven campaign checkouts. M5 discovery
   has a malformed cache database; M7, M4, hardened and visitation discovery
