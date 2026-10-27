@@ -7,11 +7,12 @@ installed archive placement: `static-builtins` and `dynamic-builtins`. Equal
 archive bytes do not merge those placements.
 
 Release builds contain only the helper object. Debug builds partially link
-the reachable sections from the source-built `core` rlib into that same
-object, then localize every non-helper Rust definition. The archive therefore
+the reachable sections from the source-built `core` and compiler-builtins
+rlibs into that same object, then localize every non-helper definition. The archive therefore
 supplies its `core::ub_checks` calls to application links without exporting
 Rust runtime symbols. The final debug object may retain the source libc's
-`memset` import. The builder rejects any other unresolved symbol.
+`memcmp`, `memcpy`, and `memset` imports. The builder verifies that libc
+defines those symbols and rejects any other unresolved symbol.
 
 The owned dynamic builder passes that exact archive to the `libc.so` link
 because selected Rust libc leaves can need compiler-generated operations.
