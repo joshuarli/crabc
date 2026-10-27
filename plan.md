@@ -1391,7 +1391,17 @@ Append one line per merge batch, per parked item, and per contract change.
   `be8d2a437` and `b06edf693` fix them. The complete Unicode fingerprint and
   focused wide-format regression match pinned musl, and all 19 bounded
   text/locale/numeric rows and receipt replay pass at `b06edf693`. These
-  component receipts do not qualify the family.
+  component receipts do not qualify the family. At `8ea41207b`, the stdio
+  and locale components pass six modes. The FILE-engine oracle then rejected
+  a stale fmemopen short-write expectation; `0bedbb0bc` matches the native
+  oracle. Calendar zone parsing likewise matches the native oracle rather
+  than the old crash expectation; `c3b5f0a21` corrects the reader and the
+  calendar component passes at `7d91cf0b2`. Regex static outputs localize
+  their providers; `3c0bda012` verifies those bindings and its six-mode
+  component passes. `2632d383d`, `4963baf52` and `249b62415` prove mold
+  allocator PLT/GOT bindings and reject non-preemptible symbols; the full
+  FILE-engine component and receipt pass at `249b62415`. Each result is
+  non-promoting and later source revisions require fresh cohort evidence.
   M7 baseline discovery at `55dd89a3a` passed four gates and left six unmet:
   visitation producers rejected an unsupported `--offline` flag and five
   gates were blocked. `aeb87087d` removes the flag; the producers already
