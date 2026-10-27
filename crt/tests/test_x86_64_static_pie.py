@@ -153,6 +153,30 @@ def inspect_static_pie(path: Path, *, packed_relr: bool) -> None:
         raise AssertionError("static PIE unexpectedly retains a non-relative dynamic relocation")
 
 
+def split_program_header_mapping(path: Path) -> Path:
+    data = bytearray(path.read_bytes())
+    header_offset = struct.unpack_from("<Q", data, 32)[0]
+    count = struct.unpack_from("<H", data, 56)[0]
+    headers = [struct.unpack_from("<IIQQQQQQ", data, header_offset + index * 56) for index in range(count)]
+    phdr = next(index for index, header in enumerate(headers) if header[0] == 6)
+    file_offset = (len(data) + 4095) & ~4095
+    virtual_address = (max(header[3] + header[6] for header in headers if header[0] == PT_LOAD) + 0x1ffff) & ~4095
+    table = bytearray(data[header_offset:header_offset + count * 56])
+    table.extend(bytes(56))
+    struct.pack_into("<IIQQQQQQ", table, phdr * 56, 6, 4, file_offset, virtual_address, virtual_address,
+                     len(table), len(table), 8)
+    struct.pack_into("<IIQQQQQQ", table, count * 56, PT_LOAD, 4, file_offset, virtual_address, virtual_address,
+                     4096, 4096, 4096)
+    data.extend(bytes(file_offset + 4096 - len(data)))
+    data[file_offset:file_offset + len(table)] = table
+    struct.pack_into("<Q", data, 32, file_offset)
+    struct.pack_into("<H", data, 56, count + 1)
+    result = path.with_name(path.name + ".split-phdr")
+    result.write_bytes(data)
+    result.chmod(0o755)
+    return result
+
+
 def corrupt_first_relative_relocation(path: Path) -> Path:
     data, program_headers = elf_layout(path)
     tags = dynamic_tags(data, program_headers)
@@ -479,6 +503,10 @@ class X86_64StaticPieTests(unittest.TestCase):
             self.assertEqual(link.returncode, 0, link.stderr.decode(errors="replace"))
             normal = subprocess.run([str(executable)], stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False)
             self.assertEqual(normal.returncode, 0, normal.stderr.decode(errors="replace"))
+            split = subprocess.run([str(split_program_header_mapping(executable))], stdout=subprocess.PIPE,
+                                   stderr=subprocess.PIPE, check=False, preexec_fn=disable_core_dump)
+            self.assertEqual(split.returncode, 0, split.stderr.decode(errors="replace"))
+            self.assertRegex(split.stdout, rb"^I[0-9a-f]{16}F$")
             self.assertIn(DT_PLTGOT, dynamic_tags(*elf_layout(executable)))
             without_relro = mutate_program_header(executable, 0x6474e552, 0, 0)
             unprotected = subprocess.run([str(without_relro)], stdout=subprocess.PIPE,
@@ -648,6 +676,11 @@ class X86_64StaticPieTests(unittest.TestCase):
                 self.assertRegex(first.stdout, rb"^I[0-9a-f]{16}F$")
                 self.assertRegex(second.stdout, rb"^I[0-9a-f]{16}F$")
                 self.assertNotEqual(first.stdout, second.stdout, "static PIE did not receive distinct ASLR bases")
+                split = subprocess.run([str(split_program_header_mapping(executable))], stdin=subprocess.DEVNULL,
+                                       stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False,
+                                       preexec_fn=disable_core_dump)
+                self.assertEqual(split.returncode, 0, split.stderr.decode(errors="replace"))
+                self.assertRegex(split.stdout, rb"^I[0-9a-f]{16}F$")
 
                 relro_write = subprocess.run(
                     [str(executable), "!"], stdin=subprocess.DEVNULL,

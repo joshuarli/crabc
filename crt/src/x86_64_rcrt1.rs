@@ -175,11 +175,44 @@ _start:
     movzx ecx, WORD PTR [rax + 56]
     cmp rcx, r13
     jne .Lstatic_pie_fail
-    add rax, QWORD PTR [rax + 32]
+    mov rsi, QWORD PTR [rax + 32]
+    mov rdi, r13
+    imul rdi, 56
+    add rdi, rsi
+    jc .Lstatic_pie_fail
+    mov r11, r12
+    xor ecx, ecx
+.Lstatic_pie_hardened_phdr_mapping:
+    cmp rcx, r13
+    jae .Lstatic_pie_fail
+    cmp DWORD PTR [r11], 1
+    jne .Lstatic_pie_hardened_phdr_next
+    test DWORD PTR [r11 + 4], 4
+    jz .Lstatic_pie_hardened_phdr_next
+    mov rdx, QWORD PTR [r11 + 8]
+    cmp rsi, rdx
+    jb .Lstatic_pie_hardened_phdr_next
+    mov rax, rdx
+    add rax, QWORD PTR [r11 + 32]
+    jc .Lstatic_pie_fail
+    cmp rdi, rax
+    ja .Lstatic_pie_hardened_phdr_next
+    mov rax, rdi
+    sub rax, rdx
+    cmp rax, QWORD PTR [r11 + 40]
+    ja .Lstatic_pie_hardened_phdr_next
+    mov rax, rsi
+    sub rax, rdx
+    add rax, QWORD PTR [r11 + 16]
+    jc .Lstatic_pie_fail
+    add rax, rbx
     jc .Lstatic_pie_fail
     cmp rax, r12
-    jne .Lstatic_pie_fail
-    jmp .Lstatic_pie_hardened_elf_done
+    je .Lstatic_pie_hardened_elf_done
+.Lstatic_pie_hardened_phdr_next:
+    add r11, 56
+    inc rcx
+    jmp .Lstatic_pie_hardened_phdr_mapping
 .Lstatic_pie_hardened_elf_next:
     add r8, 56
     inc r9

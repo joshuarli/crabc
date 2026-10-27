@@ -42,7 +42,8 @@ address before the constructor runs.
 The private CRT builder accepts `--hardening-profile hardened` to exercise
 static PIE ELF identity, stack-header and virtual-page W^X admission. The
 identity check uses the mapped ELF header and auxiliary-vector program-header
-address, not the load bias. When `DT_PLTGOT` is present, the prototype requires
+address, including a program-header table mapped by a separate readable load.
+When `DT_PLTGOT` is present, the prototype requires
 its three reserved entries to be writable load bytes covered by RELRO. This
 prototype does not establish binding-storage coverage when that tag is absent,
 a hardened installed product, or a loader profile. Its dynamic `Scrt1.o`
