@@ -1578,6 +1578,43 @@ def cargo_custom_build_artifacts(
     return artifacts
 
 
+def _host_link_output_matches(output: dict[str, str], linked: Path, host_build_root: Path) -> bool:
+    if output == record_file(linked, "Cargo host build-script linker output"):
+        return True
+    real = linked.with_name(linked.name + ".kache-real")
+    launch = linked.parent / ".kache-launch"
+    if not real.exists() or not launch.exists():
+        return False
+    real = physical(real, "preserved Cargo host build script", executable=True)
+    launch = physical(launch, "Cargo host build-script launcher record")
+    if output != {"path": str(linked), "sha256": digest(real)}:
+        return False
+    fields = launch.read_bytes().split(b"\0")
+    if len(fields) != 4 or fields[3] != b"" or fields[0] != real.name.encode():
+        return False
+    if re.fullmatch(rb"\.kache-build-script-shims/[0-9a-f]{32}/kache", fields[1]) is None:
+        return False
+    profile = host_build_root.parent
+    if fields[2] != (os.path.relpath(profile, linked.parent) + "/").encode():
+        return False
+    pinned = physical(profile / fields[1].decode("ascii"), "Cargo host build-script pinned kache", executable=True)
+    trusted = physical(native_rustc.native_build_tools.KACHE, "pinned kache", executable=True)
+    trusted_bytes = trusted.read_bytes()
+    launcher = linked.read_bytes()
+    try:
+        image = cleanup.Elf._from_bytes(launcher)
+    except ValueError:
+        return False
+    section_end = image.unpack("<Q", 40)[0] + len(image.sections) * 64
+    executable_entry = any(
+        kind == 1 and flags & 1 and address <= image.entry < address + size
+        for kind, flags, _offset, address, _physical, _file_size, size, _align in image.programs
+    )
+    return (digest(pinned) == hashlib.sha256(trusted_bytes).hexdigest()
+            and image.elf_type == 3 and section_end == len(launcher) and executable_entry
+            and trusted_bytes.count(launcher) == 1)
+
+
 def host_build_script_receipts(root: Path, host_build_root: Path, cargo_target_root: Path) -> list[dict[str, Any]]:
     """Read one exclusive receipt for every provisional host linker output."""
 
@@ -1663,9 +1700,7 @@ def host_build_script_receipts(root: Path, host_build_root: Path, cargo_target_r
         require(
             linked.is_relative_to(host_build_root)
             and owned_rust_link.admitted_host_build_script_path(linked, host_build_root)
-            and output == record_file(
-                linked, "Cargo host build-script linker output",
-            ),
+            and _host_link_output_matches(output, linked, host_build_root),
             "Cargo host build-script receipt output is outside the declared host root or drifted",
         )
         require(host_build_script_output(command[3:], "Cargo host build-script receipt command") == str(linked),

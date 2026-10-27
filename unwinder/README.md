@@ -194,6 +194,8 @@ Source-built link constraints, enforced by the wrapper and its receipt reader:
   Cargo can erase them, GNU ld's resolved files hashed). Receipts bind by
   hard-link identity to Cargo's custom-build records and the pinned `rust-src`
   lock; unmatched, duplicate, forged or target-lookalike records are rejected.
+  When kache replaces a linked script with its embedded launcher, the receipt
+  authenticates the pinned launcher, launch record and preserved linked script.
   The only extra provider build executable is the `libc` cfg script. Host tools
   never become target inputs.
 

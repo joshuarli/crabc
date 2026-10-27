@@ -903,6 +903,43 @@ class OwnedCleanupContract(unittest.TestCase):
         with self.assertRaisesRegex(owned_cleanup.OwnedCleanupError, "retained Cargo host-link input changed"):
             self.host_build_manifest(fixture)
 
+    def test_host_build_receipt_accepts_only_the_pinned_kache_launcher_and_linked_script(self):
+        fixture = self.host_build_fixture()
+        linked = fixture['linked']
+        real = linked.with_name(linked.name + '.kache-real')
+        real.write_bytes(linked.read_bytes())
+        real.chmod(0o755)
+        launcher = Path('/bin/true').read_bytes()
+        linked.write_bytes(launcher)
+        kache = Path(self.temporary.name) / 'kache'
+        kache.write_bytes(b'prefix' + launcher + b'suffix')
+        kache.chmod(0o755)
+        pinned = fixture['host_root'].parent / '.kache-build-script-shims' / ('a' * 32) / 'kache'
+        pinned.parent.mkdir(parents=True)
+        pinned.write_bytes(kache.read_bytes())
+        pinned.chmod(0o755)
+        record = linked.parent / '.kache-launch'
+        record.write_bytes((real.name + '\0.kache-build-script-shims/' + 'a' * 32 + '/kache\0../../\0').encode())
+        with mock.patch.object(owned_cleanup.native_rustc.native_build_tools, 'KACHE', kache):
+            owned_cleanup.host_build_script_receipts(fixture['receipts'], fixture['host_root'], fixture['target_root'])
+            linked.write_bytes(b'forged launcher')
+            with self.assertRaises(owned_cleanup.OwnedCleanupError):
+                owned_cleanup.host_build_script_receipts(fixture['receipts'], fixture['host_root'], fixture['target_root'])
+            linked.write_bytes(launcher)
+            original = real.read_bytes()
+            real.write_bytes(b'forged script')
+            with self.assertRaises(owned_cleanup.OwnedCleanupError):
+                owned_cleanup.host_build_script_receipts(fixture['receipts'], fixture['host_root'], fixture['target_root'])
+            real.write_bytes(original)
+            original_record = record.read_bytes()
+            record.write_bytes(original_record.replace(b'../../', b'../'))
+            with self.assertRaises(owned_cleanup.OwnedCleanupError):
+                owned_cleanup.host_build_script_receipts(fixture['receipts'], fixture['host_root'], fixture['target_root'])
+            record.write_bytes(original_record)
+            pinned.write_bytes(b'forged kache')
+            with self.assertRaises(owned_cleanup.OwnedCleanupError):
+                owned_cleanup.host_build_script_receipts(fixture['receipts'], fixture['host_root'], fixture['target_root'])
+
     def test_host_build_link_rejects_the_obsolete_gcc_trace_command(self):
         fixture = self.host_build_fixture()
         fixture["receipt_record"]["command"][1:3] = ["-Wl,-t"]
