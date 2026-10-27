@@ -186,6 +186,14 @@ fi
         limit = args.index(b"--ulimit")
         self.assertEqual(args[limit + 1], b"core=0:0")
 
+    def test_allocator_containers_allow_the_locked_arena_fixture(self):
+        for command in ("allocator-m1", "allocator-unit"):
+            with self.subTest(command=command):
+                result = self.launch(command)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                args = self.capture.read_bytes().split(b"\0")
+                self.assertIn(b"memlock=67108864:67108864", args)
+
     def test_m3_queue_reorder_mode_reaches_its_existing_receiver(self):
         result = self.launch("allocator-m3", "--queue-reorder-only")
         self.assertEqual(result.returncode, 0, result.stderr)

@@ -444,6 +444,7 @@ run_in_container() {
         --env RUSTC_WRAPPER=/usr/local/bin/kache \
         --env CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER=/usr/local/bin/crabc-x86_64-mold-gcc \
         --ulimit core=0:0 \
+        --ulimit memlock=67108864:67108864 \
         --platform "$PLATFORM" \
         --workdir /workspace \
         "${context_args[@]}" \

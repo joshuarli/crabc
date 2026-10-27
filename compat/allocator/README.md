@@ -21,7 +21,8 @@ inputs.
 
 All commands run through `./compat/allocator/run-x86_64.sh`, which starts the
 pinned allocator container image (`image` builds it; every other command builds
-it on first use).
+it on first use). The container permits up to 64 MiB of locked memory for the
+32 MiB locked-arena fixture.
 
 ```sh
 # One Rust unit test. The name must be fully qualified (contain `::`) and is run
