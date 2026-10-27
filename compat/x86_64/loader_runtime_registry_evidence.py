@@ -637,13 +637,13 @@ def _retained_dlfcn_link_record(product: Path, work: Path, output: Path, stem: s
         assert entry is not None
         initial.extend((replay.recorded(entry), replay.recorded(library / "crabc-dynamic-attach.o")))
     initial.extend((replay.recorded(library / "crti.o"), replay.recorded(object_path)))
-    initial.extend(replay.recorded(path) for path in application_paths)
     trace = receipt.get("link_trace")
     require(type(trace) is list and all(type(item) is str for item in trace), f"{stem} retained link trace is invalid")
     try:
         mold_link_trace.validate_trace(trace, initial_objects=initial,
             archives=[(replay.recorded(archive), archive.read_bytes())],
-            final_objects=[replay.recorded(library / name) for name in ("libc.so", "crtn.o")])
+            final_objects=[*(replay.recorded(path) for path in application_paths),
+                           *(replay.recorded(library / name) for name in ("libc.so", "crtn.o"))])
     except ValueError as error:
         raise RuntimeRegistryEvidenceError(f"{stem} retained link trace differs: {error}") from error
 

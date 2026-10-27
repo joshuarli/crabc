@@ -129,6 +129,28 @@ class LoaderRuntimeRegistryEvidenceTests(unittest.TestCase):
                     with self.assertRaisesRegex(EVIDENCE.RuntimeRegistryEvidenceError, 'link trace'):
                         EVIDENCE._link_record(product, work, output, 'libscope-second.so', 'shared', replay=replay)
 
+    def test_replayed_mold_trace_places_application_dso_after_archive(self):
+        _root, output, work, product, replay, receipt, _image, facts = self.scope_link_fixture()
+        dependency = work / 'libdependency.so'
+        dependency.write_bytes(b'application DSO')
+        digest = hashlib.sha256(dependency.read_bytes()).hexdigest()
+        receipt['application_dsos'] = {dependency.name: digest}
+        receipt['input_receipts'].insert(-1, {'path': replay.recorded(dependency), 'sha256': digest})
+        executable = work / 'libscope-second.so'
+        object_path = work / 'crabc-dynamic-link.fixture/source-0.o'
+        _, receipt['link_command'] = EVIDENCE.fork_evidence.expected_base(
+            product, executable, 'shared', object_path, [dependency], str(replay.tool_path('linker')), replay=replay)
+        receipt['link_trace'].insert(3, 'trace: ' + replay.recorded(dependency))
+        target = work / 'libscope-second.so.crabc-link.json'
+        target.write_text(json.dumps(receipt))
+        facts['needed'] = [dependency.name, 'libc.so']
+        with mock.patch.object(EVIDENCE.product_evidence, 'retained_elf_facts', return_value=facts):
+            EVIDENCE._link_record(product, work, output, 'libscope-second.so', 'shared', replay=replay)
+            receipt['link_trace'][2:4] = reversed(receipt['link_trace'][2:4])
+            target.write_text(json.dumps(receipt))
+            with self.assertRaisesRegex(EVIDENCE.RuntimeRegistryEvidenceError, 'link trace'):
+                EVIDENCE._link_record(product, work, output, 'libscope-second.so', 'shared', replay=replay)
+
     def test_scope_visibility_edit_rejects_missing_stale_or_extra_changed_bytes_in_both_readers(self):
         for mutation in ('missing-original', 'stale-original', 'extra-byte', 'unchanged', 'wrong-visibility'):
             with self.subTest(mutation=mutation):
