@@ -9,14 +9,18 @@ readonly compatibility="$3"
 case "${TMPDIR:-}" in "$root"/.work/*) ;; *) exit 2;; esac
 readonly work="$(mktemp -d "$TMPDIR/hardened-entry.XXXXXX")"
 readonly image="$work/root"
-mkdir -p "$image/lib" "$image/usr/lib"
+mkdir -p "$image/lib" "$image/usr/lib" "$image/plugins"
 cp "$installed/lib/ld-crabc-x86_64-hardened.so.1" "$image/lib/"
 cp "$installed/usr/lib/libc.so" "$image/usr/lib/"
 "$installed/bin/crabc-cc-dynamic" --dynamic-pie "$root/compat/x86_64/hardened_entry_probe.c" -o "$image/pie"
 "$installed/bin/crabc-cc-dynamic" --dynamic-pie "$root/compat/x86_64/hardened_alias_probe.c" -o "$image/alias"
 "$installed/bin/crabc-cc-dynamic" --dynamic-shared-object "$root/compat/x86_64/hardened_relro_dso.c" -o "$image/usr/lib/hardened-relro-fixture.so"
 "$installed/bin/crabc-cc-dynamic" --dynamic-shared-object -DCRABC_BAD_DSO "$root/compat/x86_64/hardened_relro_dso.c" -o "$image/usr/lib/rejected-source.so"
+"$installed/bin/crabc-cc-dynamic" --dynamic-shared-object "$root/compat/x86_64/hardened_relro_dso.c" -o "$image/plugins/relative-only.so"
 "$installed/bin/crabc-cc-dynamic" --dynamic-pie --application-dso "$image/usr/lib/rejected-source.so" "$root/compat/x86_64/hardened_entry_probe.c" -o "$image/dependency"
+"$installed/bin/crabc-cc-dynamic" --dynamic-pie --application-dso "$image/plugins/relative-only.so" "$root/compat/x86_64/hardened_entry_probe.c" -o "$image/search-env"
+"$installed/bin/crabc-cc-dynamic" --dynamic-pie --application-runpath plugins --application-dso "$image/plugins/relative-only.so" "$root/compat/x86_64/hardened_entry_probe.c" -o "$image/search-relative"
+"$installed/bin/crabc-cc-dynamic" --dynamic-pie --application-runpath '$ORIGIN/plugins' --application-dso "$image/plugins/relative-only.so" "$root/compat/x86_64/hardened_entry_probe.c" -o "$image/search-origin"
 "$installed/bin/crabc-cc-dynamic" --dynamic-pie -DCRABC_DSO_PROBE "$root/compat/x86_64/hardened_relro_probe.c" -o "$image/relro"
 "$installed/bin/crabc-cc-dynamic" --dynamic-pie -DCRABC_HARDENED_PROBE "$root/compat/x86_64/installed_crt_startup_probe.c" -o "$image/startup"
 "$static/bin/crabc-cc" "$root/compat/x86_64/hardened_alias_probe.c" -o "$image/static-alias"
@@ -91,18 +95,47 @@ for case in nonpie bad-stack bad-wx; do
     test ! -e "$image/marker"
 done
 readonly compatible_root="$work/compatibility"
-mkdir -p "$compatible_root/lib" "$compatible_root/usr/lib"
+mkdir -p "$compatible_root/lib" "$compatible_root/usr/lib" "$compatible_root/plugins"
 cp "$compatibility/lib/ld-crabc-x86_64.so.1" "$compatible_root/lib/"
 cp "$compatibility/usr/lib/libc.so" "$compatible_root/usr/lib/"
 cp "$image/usr/lib/rejected-stack.so" "$compatible_root/usr/lib/"
+cp "$image/plugins/relative-only.so" "$compatible_root/plugins/"
 "$compatibility/bin/crabc-cc-dynamic" --dynamic-pie "$root/compat/x86_64/hardened_entry_probe.c" -o "$compatible_root/pie"
+"$compatibility/bin/crabc-cc-dynamic" --dynamic-pie --application-runpath plugins --application-dso "$compatible_root/plugins/relative-only.so" "$root/compat/x86_64/hardened_entry_probe.c" -o "$compatible_root/search-relative"
+"$compatibility/bin/crabc-cc-dynamic" --dynamic-pie --application-dso "$compatible_root/plugins/relative-only.so" "$root/compat/x86_64/hardened_entry_probe.c" -o "$compatible_root/search-env"
 python3 -B - "$image" "$work" "$compatible_root" <<'PYTHON'
 from pathlib import Path
 import os
+import shutil
+import struct
 import subprocess
 import sys
 
 root, work, compatible = map(Path, sys.argv[1:])
+def pathname_dependencies(directory):
+    original = (directory / "search-env").read_bytes()
+    phoff = struct.unpack_from("<Q", original, 32)[0]
+    phnum = struct.unpack_from("<H", original, 56)[0]
+    headers = [struct.unpack_from("<IIQQQQQQ", original, phoff + index * 56) for index in range(phnum)]
+    dynamic = next(header for header in headers if header[0] == 2)
+    entries = [struct.unpack_from("<QQ", original, offset)
+               for offset in range(dynamic[2], dynamic[2] + dynamic[5], 16)]
+    string_address = next(value for tag, value in entries if tag == 5)
+    strings = next(header[2] + string_address - header[3] for header in headers
+                   if header[0] == 1 and header[3] <= string_address < header[3] + header[5])
+    name = b"relative-only.so\0"
+    offsets = [strings + value for tag, value in entries if tag == 1
+               and original[strings + value:strings + value + len(name)] == name]
+    assert len(offsets) == 1
+    shutil.copyfile(directory / "plugins/relative-only.so", directory / "plugins/x.so")
+    for filename, value in (("needed-relative", b"plugins/x.so\0"), ("needed-absolute", b"/plugins/x.so\0")):
+        result = bytearray(original)
+        result[offsets[0]:offsets[0] + len(name)] = value.ljust(len(name), b"\0")
+        (directory / filename).write_bytes(result)
+        (directory / filename).chmod(0o755)
+
+pathname_dependencies(root)
+pathname_dependencies(compatible)
 def enter(directory=root):
     os.chroot(directory)
     os.chdir("/")
@@ -136,9 +169,48 @@ for candidate in (None, "rejected-stack.so", "rejected-wx.so", "rejected-relro.s
     (root / "marker").unlink(missing_ok=True)
     (root / "rejected-marker").unlink(missing_ok=True)
 source.write_bytes(original)
+loader = "/lib/ld-crabc-x86_64-hardened.so.1"
+searches = (
+    (["/search-env"], {"LD_LIBRARY_PATH": "plugins"}, 127),
+    (["/search-env"], {"LD_LIBRARY_PATH": "/plugins"}, 0),
+    (["/search-relative"], {}, 127),
+    ([loader, "--library-path", "plugins", "/search-env"], {}, 127),
+    ([loader, "--library-path", "/plugins", "/search-env"], {}, 0),
+    ([loader, "search-origin"], {}, 127),
+    ([loader, "/search-origin"], {}, 0),
+    (["/needed-relative"], {}, 127),
+    (["/needed-absolute"], {}, 0),
+)
+for arguments, environment, status in searches:
+    result = subprocess.run(arguments, env=environment, preexec_fn=enter, capture_output=True, timeout=20, check=False)
+    assert result.returncode == status, (arguments, result.returncode, result.stderr)
+    assert (root / "marker").exists() == (status == 0)
+    (root / "marker").unlink(missing_ok=True)
+for paths, status in (("plugins", 127), ("/plugins", 0)):
+    (root / "etc").mkdir(exist_ok=True)
+    (root / "etc/ld-musl-x86_64.path").write_text(paths)
+    result = subprocess.run(["/search-env"], env={}, preexec_fn=enter, capture_output=True, timeout=20, check=False)
+    assert result.returncode == status, (paths, result.returncode, result.stderr)
+    assert (root / "marker").exists() == (status == 0)
+    (root / "marker").unlink(missing_ok=True)
+(root / "etc/ld-musl-x86_64.path").unlink()
 result = subprocess.run(["/pie"], env={"LD_PRELOAD": "/usr/lib/rejected-stack.so"},
                         preexec_fn=lambda: enter(compatible), capture_output=True, timeout=20, check=False)
 assert result.returncode == 0, result.stderr
 assert (compatible / "marker").exists() and (compatible / "rejected-marker").exists()
+(compatible / "marker").unlink()
+result = subprocess.run(["/search-relative"], env={}, preexec_fn=lambda: enter(compatible),
+                        capture_output=True, timeout=20, check=False)
+assert result.returncode == 0 and (compatible / "marker").exists(), result.stderr
+(compatible / "marker").unlink()
+(compatible / "etc").mkdir(exist_ok=True)
+(compatible / "etc/ld-musl-x86_64.path").write_text("plugins")
+result = subprocess.run(["/search-env"], env={}, preexec_fn=lambda: enter(compatible),
+                        capture_output=True, timeout=20, check=False)
+assert result.returncode == 0 and (compatible / "marker").exists(), result.stderr
+(compatible / "marker").unlink()
+result = subprocess.run(["/needed-relative"], env={}, preexec_fn=lambda: enter(compatible),
+                        capture_output=True, timeout=20, check=False)
+assert result.returncode == 0 and (compatible / "marker").exists(), result.stderr
 PYTHON
 printf 'hardened kernel entry: PASS; evidence: %s\n' "$work"

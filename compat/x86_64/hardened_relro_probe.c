@@ -64,6 +64,10 @@ static int check_loaded_dso(void)
     int found = dl_iterate_phdr(find_dso, &image);
     int valid = initialized && initialized() == 7 && found == 1
         && check_relro(image.base, image.headers, image.count);
+    void *relative = dlopen("plugins/relative-only.so", RTLD_NOW);
+    if (relative) { dlclose(relative); valid = 0; }
+    void *absolute = dlopen("/plugins/relative-only.so", RTLD_NOW);
+    if (!absolute || dlclose(absolute) != 0) valid = 0;
     pid_t child = fork();
     if (child == 0) {
         void *control = dlopen("/usr/lib/rejected-source.so", RTLD_NOW);

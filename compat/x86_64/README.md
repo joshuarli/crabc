@@ -477,6 +477,9 @@ compatibility product admits the executable-stack preload and runs its
 constructor. Missing optional preloads remain optional. The existing CRT
 startup probe checks kernel-seeded guards and initial TLS in constructors and
 a worker for both hardened products, including direct dynamic entry.
+Real dependency and `dlopen` cases check relative versus absolute environment,
+interpreter, RUNPATH, system-path, `$ORIGIN`, and slash-containing inputs,
+with compatibility controls for relative RUNPATH and dependency names.
 
 ## Rust RuntimeV1 facades
 
