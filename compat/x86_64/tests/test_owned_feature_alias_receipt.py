@@ -305,6 +305,15 @@ class FeatureAliasReceiptTests(unittest.TestCase):
         self.assertEqual(len(receipt.PASSWD_CASES), 16)
         self.assertEqual(receipt.probe_specs('temporary')[1][1], 'compat/x86_64/owned_string_temporary_alias_override_probe.c')
 
+    def test_passwd_range_transcript_preserves_bounded_capacity(self):
+        expected = b'owned passwd scenario passed\n'
+        receipt.require_runtime_transcript(b'matching allocation capacity 41\n' + expected, expected, passwd_ranges=True)
+        for observed in (expected, b'matching allocation capacity 0\n' + expected,
+                         b'matching allocation capacity 4096\n' + expected,
+                         b'matching allocation capacity 41\nextra\n' + expected):
+            with self.assertRaises(receipt.FeatureAliasError):
+                receipt.require_runtime_transcript(observed, expected, passwd_ranges=True)
+
 
 class FeatureAliasSelectionTests(unittest.TestCase):
     @classmethod

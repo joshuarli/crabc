@@ -7,6 +7,7 @@ from enum import Enum
 import json
 import os
 from pathlib import Path
+import re
 import shutil
 import stat
 import subprocess
@@ -208,10 +209,22 @@ class Commands:
                              'streams': {name: identity(path) for name, path in files.items()}})
         return files['stdout'].read_bytes()
 
-    def runtime(self, label: str, argv: list[str], expected: bytes) -> None:
-        require(self.run(label, argv) == expected, 'runtime transcript differs: ' + label)
+    def runtime(self, label: str, argv: list[str], expected: bytes, *, passwd_ranges: bool = False) -> None:
+        observed = self.run(label, argv)
+        try:
+            require_runtime_transcript(observed, expected, passwd_ranges=passwd_ranges)
+        except FeatureAliasError as error:
+            raise FeatureAliasError('runtime transcript differs: ' + label) from error
         require((self.work / 'commands' / (label + '.stderr')).read_bytes() == b'',
                 'runtime diagnostic differs: ' + label)
+
+
+def require_runtime_transcript(observed: bytes, expected: bytes, *, passwd_ranges: bool = False) -> None:
+    if passwd_ranges:
+        match = re.fullmatch(rb'matching allocation capacity ([1-9][0-9]*)\n' + re.escape(expected), observed)
+        require(match is not None and int(match.group(1)) < 4096, 'runtime transcript differs: passwd ranges')
+    else:
+        require(observed == expected, 'runtime transcript differs')
 
 
 def inspect_elf(commands: Commands, label: str, path: Path, *, archive: bool = False, elf_type: str = 'DYN') -> Any:
@@ -462,7 +475,8 @@ def installed_owner(commands: Commands, owner: str, static: Path, dynamic: Path,
                     label = name + '-' + entry + '-' + scenario
                     commands.runtime(label, ['/usr/bin/timeout', '60', '/usr/bin/env', '-i', 'PATH=/', 'EXEC_TOKEN=parent',
                                              'LC_ALL=C', '/usr/sbin/chroot', str(root), *launch, *args],
-                                     expected_transcript(owner, probe, mode == 'oracle'))
+                                     expected_transcript(owner, probe, mode == 'oracle'),
+                                     passwd_ranges=owner == 'passwd' and probe == 'behavior' and scenario == 'ranges')
                     runs.append(label)
                 consumer_after = copied_consumer(executable, root / 'consumer')
                 require(same(consumer_before, consumer_after), 'copied consumer changed during workload')
