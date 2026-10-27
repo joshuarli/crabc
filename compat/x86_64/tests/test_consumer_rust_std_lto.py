@@ -102,6 +102,39 @@ class DebugRouteTests(unittest.TestCase):
                 shared.write_bytes(data)
                 self.assertIn('_Unwind_Backtrace$got', symbols(shared, defined, GATE.provider_build.UNWIND_ABI))
 
+    def test_facade_bitcode_uses_cargo_artifact_not_rustc_temporary_copy(self):
+        WORK.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(dir=WORK) as temporary:
+            root = Path(temporary)
+            target = root / 'target'
+            target.mkdir()
+            original = target / 'libcrabc_core-original.rlib'
+            original.write_bytes(b'cargo')
+            copied = target / 'rustc-temp' / original.name
+            copied.parent.mkdir()
+            copied.write_bytes(b'temporary')
+            cargo = root / 'cargo.jsonl'
+            cargo.write_text(json.dumps({'reason': 'compiler-artifact',
+                'manifest_path': str(ROOT / 'crabc-core/Cargo.toml'),
+                'target': {'name': 'crabc_core', 'kind': ['lib']},
+                'filenames': [str(original)]}) + '\n')
+            context = SimpleNamespace(tool=lambda name: name)
+            def sections(command, description):
+                return '.llvmbc' if command[-1] == original else ''
+            with mock.patch.object(GATE, 'checked_output', side_effect=sections):
+                self.assertTrue(GATE.rlib_bitcode(context, target, 'crabc_core', cargo))
+                original.write_bytes(b'changed')
+                with mock.patch.object(GATE, 'checked_output', return_value=''):
+                    self.assertFalse(GATE.rlib_bitcode(context, target, 'crabc_core', cargo))
+                artifact = json.loads(cargo.read_text())
+                cargo.write_text(cargo.read_text() * 2)
+                self.assertFalse(GATE.rlib_bitcode(context, target, 'crabc_core', cargo))
+                foreign = root / original.name
+                foreign.write_bytes(b'foreign')
+                artifact['filenames'] = [str(foreign)]
+                cargo.write_text(json.dumps(artifact) + '\n')
+                self.assertFalse(GATE.rlib_bitcode(context, target, 'crabc_core', cargo))
+
     def test_cargo_link_receipt_binds_the_selected_development_product(self):
         WORK.mkdir(parents=True, exist_ok=True)
         with tempfile.TemporaryDirectory(dir=WORK) as temporary:

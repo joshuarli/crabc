@@ -937,17 +937,28 @@ def inspect_native_route(disassembly: str) -> dict[str, Any]:
     }
 
 
-def rlib_bitcode(context: Context, target: Path, crate: str) -> bool:
-    """Whether every ``crate`` rlib in one lane carries embedded LLVM bitcode."""
+def rlib_bitcode(context: Context, target: Path, crate: str, cargo_output: Path) -> bool:
+    """Check the unique Cargo-produced facade archive for embedded LLVM bitcode."""
 
-    rlibs = sorted(target.rglob(f"lib{crate}-*.rlib"))
-    if not rlibs:
+    package = {"crabc_core": "crabc-core", "crabc_rs": "crabc-rs"}[crate]
+    artifacts = []
+    for line in cargo_output.read_text(encoding="utf-8").splitlines():
+        if not line.startswith("{"):
+            continue
+        message = json.loads(line)
+        if (message.get("reason") == "compiler-artifact"
+                and message.get("manifest_path") == str(ROOT / package / "Cargo.toml")
+                and message.get("target", {}).get("name") == crate
+                and message.get("target", {}).get("kind") == ["lib"]):
+            artifacts.extend(Path(name) for name in message.get("filenames", [])
+                             if Path(name).name.startswith(f"lib{crate}-") and name.endswith(".rlib"))
+    if len(artifacts) != 1:
         return False
-    for rlib in rlibs:
-        sections = checked_output([context.tool("llvm-objdump"), "--section-headers", rlib], "llvm-objdump -h")
-        if ".llvmbc" not in sections:
-            return False
-    return True
+    rlib = artifacts[0]
+    if not rlib.is_file() or rlib.is_symlink() or not rlib.resolve().is_relative_to(target.resolve()):
+        return False
+    sections = checked_output([context.tool("llvm-objdump"), "--section-headers", rlib], "llvm-objdump -h")
+    return ".llvmbc" in sections
 
 
 def gate_native_facade(context: Context) -> dict[str, Any]:
@@ -971,7 +982,7 @@ def gate_native_facade(context: Context) -> dict[str, Any]:
             if not report["route"]["direct_route_proven"]:
                 unmet.append(f"lto-native-facade/{key}: direct x86 getpid/write route not proven")
             if lto == "fat":
-                report["crabc_rlib_bitcode"] = {crate: rlib_bitcode(context, lane / "target", crate)
+                report["crabc_rlib_bitcode"] = {crate: rlib_bitcode(context, lane / "target", crate, Path(build["stdout"]["path"]))
                                                 for crate in ("crabc_rs", "crabc_core")}
                 if not all(report["crabc_rlib_bitcode"].values()):
                     unmet.append("lto-native-facade/fat-lto: crabc-rs/crabc-core rlibs lack LLVM bitcode")
