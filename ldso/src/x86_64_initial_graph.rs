@@ -2488,7 +2488,8 @@ unsafe fn map_elf_with_status(
     let elf_type = read_u16(header.add(16));
     let valid = *header == 0x7f && *header.add(1) == b'E' && *header.add(2) == b'L' && *header.add(3) == b'F'
         && *header.add(4) == 2 && *header.add(5) == 1 && (elf_type == 3 || (!cfg!(crabc_hardened) && role == ObjectRole::Main && elf_type == 2)) && read_u16(header.add(18)) == 62
-        && read_u16(header.add(54)) == 56;
+        && read_u16(header.add(54)) == 56 && (!cfg!(crabc_hardened)
+            || (*header.add(6) == 1 && read_u32(header.add(20)) == 1 && read_u16(header.add(52)) == 64));
     let phoff = usize::try_from(read_u64(header.add(32))).map_err(|_| ENOEXEC)?;
     let phnum = read_u16(header.add(56)) as usize;
     let ph_table_len = phnum.checked_mul(56).ok_or(ENOEXEC)?;
@@ -5632,9 +5633,12 @@ mod readable_file_load_tests {
         image[..4].copy_from_slice(b"\x7fELF");
         image[4] = 2;
         image[5] = 1;
+        image[6] = 1;
         image[16..18].copy_from_slice(&3u16.to_le_bytes());
         image[18..20].copy_from_slice(&62u16.to_le_bytes());
+        image[20..24].copy_from_slice(&1u32.to_le_bytes());
         image[32..40].copy_from_slice(&64u64.to_le_bytes());
+        image[52..54].copy_from_slice(&64u16.to_le_bytes());
         image[54..56].copy_from_slice(&56u16.to_le_bytes());
         image[56..58].copy_from_slice(&1u16.to_le_bytes());
         let phdr = &mut image[64..120];
@@ -5661,9 +5665,12 @@ mod readable_file_load_tests {
         image[..4].copy_from_slice(b"\x7fELF");
         image[4] = 2;
         image[5] = 1;
+        image[6] = 1;
         image[16..18].copy_from_slice(&3u16.to_le_bytes());
         image[18..20].copy_from_slice(&62u16.to_le_bytes());
+        image[20..24].copy_from_slice(&1u32.to_le_bytes());
         image[32..40].copy_from_slice(&64u64.to_le_bytes());
+        image[52..54].copy_from_slice(&64u16.to_le_bytes());
         image[54..56].copy_from_slice(&56u16.to_le_bytes());
         image[56..58].copy_from_slice(&4u16.to_le_bytes());
         for (index, vaddr) in [(0, 0x2000u64), (1, 0)] {
@@ -5734,6 +5741,18 @@ mod readable_file_load_tests {
         let writable_stack = (PF_R | PF_W).to_le_bytes();
         assert_eq!(unsafe { syscall4(SYS_PWRITE64, fd, writable_stack.as_ptr() as i64,
             writable_stack.len() as i64, 236) }, writable_stack.len() as i64);
+        let bad_version = 0u32.to_le_bytes();
+        assert_eq!(unsafe { syscall4(SYS_PWRITE64, fd, bad_version.as_ptr() as i64, 4, 20) }, 4);
+        let versioned = unsafe { map_elf_with_status(fd, &status, false, true, ObjectRole::Library) };
+        if cfg!(crabc_hardened) {
+            assert!(matches!(versioned, Err(ENOEXEC)));
+        } else {
+            let object = versioned.unwrap();
+            assert_eq!(unsafe { syscall2(SYS_MUNMAP, object.map_span_start as i64,
+                object.map_span_byte_len as i64) }, 0);
+        }
+        let correct_version = 1u32.to_le_bytes();
+        assert_eq!(unsafe { syscall4(SYS_PWRITE64, fd, correct_version.as_ptr() as i64, 4, 20) }, 4);
         let overflowing_offset = u64::MAX.to_le_bytes();
         assert_eq!(unsafe { syscall4(SYS_PWRITE64, fd, overflowing_offset.as_ptr() as i64,
             overflowing_offset.len() as i64, 64 + 56 + 8) }, overflowing_offset.len() as i64);
