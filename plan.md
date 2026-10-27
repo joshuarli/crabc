@@ -1391,8 +1391,15 @@ Append one line per merge batch, per parked item, and per contract change.
   gates were blocked. `aeb87087d` removes the flag; the producers already
   require cached inputs. All three visitation differentials pass at
   `4936c803f`; secure-5 configuration matches 19 pinned C keys at
-  `3706c1e67`. The gate remains blocked on broader secure and guarded
-  behavior, so this is not milestone qualification.
+  `3706c1e67`. The hardening runner passes compatibility, hardened static,
+  hardened dynamic and kernel-entry checks at `5aacdfdfe`; its qualification
+  reader tests also pass. `f5885ded2` exposes the existing guarded Theap
+  differential. At `5aacdfdfe`, its pinned-C and Rust traces match allocation,
+  protection, ownership, realloc and release in main, worker, fork and child
+  contexts, and the native Theap contract passes. The full invocation was
+  interrupted after five minutes while compiling supplementary controls; raw
+  traces remain in `.work/wt/guarded-campaign`. M7 remains blocked on broader
+  secure and guarded behavior; no milestone qualification is claimed.
   Cleanup removed nine integrated test-only worktrees and cleared about 8.1 GiB
   of disposable kache entries across seven campaign checkouts. M5 discovery
   has a malformed cache database; M7, M4, hardened and visitation discovery
