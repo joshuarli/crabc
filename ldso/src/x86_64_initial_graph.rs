@@ -5620,6 +5620,7 @@ unsafe fn die(message: &[u8]) -> ! { let _ = syscall3(SYS_WRITE, 2, message.as_p
 // cfg so its unconditional null-symbol check cannot lose its bounds helper.
 #[cfg(test)]
 mod readable_file_load_tests {
+    extern crate std;
     use super::*;
 
     #[test]
@@ -5668,7 +5669,8 @@ mod readable_file_load_tests {
         for (index, vaddr) in [(0, 0x2000u64), (1, 0)] {
             let load = &mut image[64 + index * 56..][..56];
             load[..4].copy_from_slice(&PT_LOAD.to_le_bytes());
-            load[4..8].copy_from_slice(&PF_R.to_le_bytes());
+            let flags = if index == 0 { PF_R | PF_X } else { PF_R | PF_W };
+            load[4..8].copy_from_slice(&flags.to_le_bytes());
             load[16..24].copy_from_slice(&vaddr.to_le_bytes());
             load[32..40].copy_from_slice(&0x380u64.to_le_bytes());
             load[40..48].copy_from_slice(&0x380u64.to_le_bytes());
@@ -5690,10 +5692,32 @@ mod readable_file_load_tests {
             entry[8..16].copy_from_slice(&value.to_le_bytes());
         }
         image[0x340..0x348].copy_from_slice(&[1, 0, 0, 0, 1, 0, 0, 0]);
+        image[0x370] = 0x5a;
         assert_eq!(unsafe { syscall3(SYS_WRITE, fd, image.as_ptr() as i64, PAGE as i64) }, PAGE as i64);
         let status = unsafe { FileStatus::of_fd(fd) }.unwrap();
         let object = unsafe { map_elf_with_status(fd, &status, false, true, ObjectRole::Library) }.unwrap();
         assert_eq!(object.phdr as u64, object.base + 0x2000 + 64);
+        assert!(unsafe { protect_segments(&object) }.is_some());
+        let writable = (object.base + 0x370) as *mut u8;
+        let executable = (object.base + 0x2370) as *const u8;
+        let maps = std::fs::read_to_string("/proc/self/maps").unwrap();
+        let permissions = |address: usize| {
+            maps.lines().find_map(|line| {
+                let mut parts = line.split_whitespace();
+                let (start, end) = parts.next()?.split_once('-')?;
+                let start = usize::from_str_radix(start, 16).ok()?;
+                let end = usize::from_str_radix(end, 16).ok()?;
+                (start <= address && address < end).then(|| parts.next()).flatten()
+            }).unwrap()
+        };
+        assert_eq!(permissions(writable as usize), "rw-p");
+        assert_eq!(permissions(executable as usize), "r-xp");
+        assert_eq!(unsafe { *executable }, 0x5a);
+        unsafe { *writable = 0x23; }
+        assert_eq!(unsafe { *executable }, 0x5a);
+        let mut original = 0u8;
+        assert_eq!(unsafe { syscall4(SYS_PREAD64, fd, &mut original as *mut u8 as i64, 1, 0x370) }, 1);
+        assert_eq!(original, 0x5a);
         assert_eq!(unsafe { syscall2(SYS_MUNMAP, object.map_span_start as i64,
             object.map_span_byte_len as i64) }, 0);
         let executable_stack = (PF_R | PF_W | PF_X).to_le_bytes();
