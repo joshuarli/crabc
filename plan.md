@@ -1340,8 +1340,9 @@ Append one line per merge batch, per parked item, and per contract change.
   lacked native-shadow receipts; some differential fixtures had an empty
   offline Cargo registry, and native builds falsely reported adopted zombie
   children as live. The process cleanup repair preserves live-child failure;
-  its pinned reader suite and focused pointer-dispatch gate passed at
-  `5c909a968`. These are not milestone promotion claims.
+  its pinned reader suite and focused pointer-dispatch and remote-publication
+  gates passed at `5c909a968` with the offline registry populated. These are
+  not milestone promotion claims.
   Integrated mold-aware ABI readers, archive and executable alias placement,
   trace handling, and static function provenance, including unrelaxed TLS GOT
   loads. The complete utmpx collector passed at `1d6f0c91c`; its receipt and
@@ -1357,6 +1358,9 @@ Append one line per merge batch, per parked item, and per contract change.
   products, then stopped at primary I/O cancellation: mold emitted the same
   three local undefined bookkeeping symbols rejected by that gate. Independent
   ELF inspection found no required bindings; the existing gate is unchanged.
+  The independent dynamic Lua consumer initially rejected the active linked
+  checkout before running; `26d528238` fixes its Git metadata binding. A
+  source-frozen cohort at the repaired revision is needed to rerun Lua.
 
 ## For the owner afterwards
 
