@@ -867,7 +867,7 @@ def build_debug_payload(output: Path, stage: Path, *, allocator_backend: str, li
     for artifact in [*parts, *(crt / name for name in ("crt1.o", "Scrt1.o", "crti.o", "crtn.o")), builtins]:
         dependencies.update(elf_symbols(nm, artifact, "--undefined-only") & definitions)
     support = stage / "main-core-support.o"
-    support_command = [str(linker), "-r", "--gc-sections", *(f"--undefined={name}" for name in sorted(dependencies)),
+    support_command = ["/usr/bin/ld.bfd", "-r", "--gc-sections", *(f"--undefined={name}" for name in sorted(dependencies)),
                        str(private_core), "-o", str(support)]
     run(support_command)
     attachment_command = [str(linker), "-r", *(str(part) for part in parts), str(support),
