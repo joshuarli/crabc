@@ -140,12 +140,11 @@ def source_product_seal(static: Path, dynamic: Path, preparation: Path) -> dict[
 
 
 def owned_runtime_command(commands: dict[str, Any]) -> list[str]:
-    require(commands['build_profile'] == 'release' and type(commands['commands']) is list,
+    require(commands['build_profile'] == 'release' and type(commands['commands']) is dict,
             'selected static producer command profile differs')
-    libc_commands = [argv for argv in commands['commands']
-                     if isinstance(argv, list) and '-p' in argv and 'crabc-libc' in argv]
-    require(len(libc_commands) == 1, 'selected static libc command is ambiguous')
-    command = libc_commands[0]
+    command = commands['commands'].get('libc')
+    require(type(command) is list and '-p' in command and 'crabc-libc' in command,
+            'selected static libc command differs')
     require(command.count('--features') == 1 and command[command.index('--features') + 1] == 'x86-owned-static-runtime'
             and '--no-default-features' in command and '--release' in command,
             'selected owned-runtime feature activation differs')

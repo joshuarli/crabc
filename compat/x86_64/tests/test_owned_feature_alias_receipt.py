@@ -88,12 +88,15 @@ class FeatureAliasReceiptTests(unittest.TestCase):
     def test_owned_runtime_reuses_only_exact_prepared_release_feature_command(self):
         command = ['rustup', 'run', 'pinned', 'cargo', 'rustc', '-p', 'crabc-libc',
                    '--no-default-features', '--features', 'x86-owned-static-runtime', '--release']
-        record = {'build_profile': 'release', 'commands': [command]}
+        record = {'build_profile': 'release', 'commands': {'libc': command}}
         self.assertEqual(receipt.owned_runtime_command(record), command)
         for changed in (command[:-1], command + ['--features', 'x86-crypt'],
-                        [arg.replace('x86-owned-static-runtime', 'x86-owned-static-native-shadow') for arg in command]):
+                        [arg.replace('x86-owned-static-runtime', 'x86-owned-static-native-shadow') for arg in command],
+                        [arg.replace('crabc-libc', 'crabc-builtins') for arg in command]):
             with self.subTest(changed=changed), self.assertRaises(receipt.FeatureAliasError):
-                receipt.owned_runtime_command({'build_profile': 'release', 'commands': [changed]})
+                receipt.owned_runtime_command({'build_profile': 'release', 'commands': {'libc': changed}})
+        with self.assertRaises(receipt.FeatureAliasError):
+            receipt.owned_runtime_command({'build_profile': 'release', 'commands': {}})
 
     def test_dynamic_product_requires_the_accepted_backend_and_its_exact_feature_route(self):
         command = ['cargo', 'rustc', '--no-default-features', '--release', '--features', 'x86-owned-dynamic-runtime']
