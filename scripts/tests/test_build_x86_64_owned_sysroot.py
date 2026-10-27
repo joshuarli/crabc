@@ -53,7 +53,7 @@ class BuildX86OwnedSysrootTests(unittest.TestCase):
 
     def test_hardened_static_product_selects_only_static_pie(self) -> None:
         profile = builder.NativeRuntimeProfile.HARDENED
-        manifest = builder.installed_manifest({}, {}, source_sha256="a" * 64, hardening_profile=profile)
+        manifest = builder.installed_manifest({"usr/lib/rcrt1.o": "b" * 64}, {}, source_sha256="a" * 64, hardening_profile=profile)
         self.assertEqual(manifest["hardening_profile"], "hardened")
         self.assertEqual(manifest["sealed_static_driver"]["modes"], [
             {"id": "static-pie", "elf_type": "ET_DYN", "crt_object": "rcrt1.o"},
@@ -63,6 +63,11 @@ class BuildX86OwnedSysrootTests(unittest.TestCase):
         with self.assertRaises(driver.DriverError):
             driver.parse_invocation(["--static-et-exec", "--print-link-plan"], hardening_profile=profile)
         self.assertIs(driver.profile_from_manifest(manifest), profile)
+        driver.static_product_payload_files(manifest)
+        altered_modes = dict(manifest, sealed_static_driver={**manifest["sealed_static_driver"],
+                             "modes": builder.NativeRuntimeProfile.COMPATIBILITY.static_modes})
+        with self.assertRaises(driver.DriverError):
+            driver.static_product_payload_files(altered_modes)
         for value in (None, "unknown", "", 1):
             altered = dict(manifest, hardening_profile=value)
             with self.assertRaises(driver.DriverError):

@@ -262,7 +262,7 @@ def static_product_payload_files(manifest: dict) -> dict[str, str]:
 
     if manifest.get("format") != SYSROOT_FORMAT or manifest.get("target") != TARGET:
         raise DriverError("owned manifest does not identify this x86 static sysroot")
-    profile_from_manifest(manifest)
+    profile = profile_from_manifest(manifest)
     source_sha256 = manifest.get("source_sha256")
     if (not isinstance(source_sha256, str) or len(source_sha256) != 64
             or any(character not in "0123456789abcdef" for character in source_sha256)):
@@ -275,6 +275,8 @@ def static_product_payload_files(manifest: dict) -> dict[str, str]:
         raise DriverError("owned manifest sealed static driver record drifted")
     if driver.get("status") != "planned-owned-static-product-seed-not-family-completion-not-public-support":
         raise DriverError("owned manifest sealed static driver status drifted")
+    if driver.get("modes") != profile.static_modes:
+        raise DriverError("owned manifest static modes differ from its profile")
     return payload_hashes(installed.get("files"), "manifest")
 
 

@@ -845,9 +845,7 @@ def installed_manifest(
             "format": "crabc-x86-64-sealed-static-driver-v1",
             "path": STATIC_DRIVER_PATH,
             "status": "planned-owned-static-product-seed-not-family-completion-not-public-support",
-            "modes": ([{"id": "static-et-exec", "elf_type": "ET_EXEC", "crt_object": "crt1.o"}]
-                      if hardening_profile is NativeRuntimeProfile.COMPATIBILITY else [])
-                     + [{"id": "static-pie", "elf_type": "ET_DYN", "crt_object": "rcrt1.o"}],
+            "modes": hardening_profile.static_modes,
             "rejected_ambient_target_inputs": [
                 "headers",
                 "CRT",

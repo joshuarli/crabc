@@ -640,9 +640,7 @@ def _validate_static_product(root: Path) -> tuple[Path, dict[str, str]]:
         driver.get("format"), driver.get("path"), driver.get("status")
     ) != (STATIC_FORMAT, "bin/crabc-cc", STATIC_DRIVER_STATUS):
         _fail("static product sealed driver record drifted")
-    modes = ([{"id": "static-et-exec", "elf_type": "ET_EXEC", "crt_object": "crt1.o"}]
-             if hardening_profile is NativeRuntimeProfile.COMPATIBILITY else [])
-    modes += [{"id": "static-pie", "elf_type": "ET_DYN", "crt_object": "rcrt1.o"}]
+    modes = hardening_profile.static_modes
     if driver.get("modes") != modes:
         _fail("static product sealed driver modes drifted")
     files = _payload_files(installed.get("files"), "static product manifest")
