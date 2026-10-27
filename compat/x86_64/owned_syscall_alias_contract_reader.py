@@ -354,6 +354,15 @@ def _validate_command_argv(stem, argv, command_runner, inputs, root=None):
             f"exact command argv differs: {stem}")
 
 
+def require_no_public_alias_relocations(relocations: str) -> None:
+    symbols = {public for _caller, public in PUBLIC_ALIAS_SOURCE_CALLERS}
+    for line in relocations.splitlines():
+        fields = line.split()
+        if len(fields) >= 5 and fields[2].startswith("R_X86_64_"):
+            symbol = fields[4].split("@", 1)[0]
+            require(symbol not in symbols, f"candidate shared retains public relocation {symbol}")
+
+
 def _require_symbol_observations(runner: Path) -> None:
     """Replay the runner's finite same-definition and visibility predicates."""
     def rows(path: Path, wanted: set[str]) -> dict[str, list[SymbolRow]]:
@@ -408,8 +417,7 @@ def _require_symbol_observations(runner: Path) -> None:
             require(shape(one(table, public, path.name)) == ("FUNC", "GLOBAL", "DEFAULT"),
                     f"{path.name}: application override shape differs")
     relocations = (runner / "candidate-shared-relocations.txt").read_text(encoding="utf-8")
-    for _caller, public in PUBLIC_ALIAS_SOURCE_CALLERS:
-        require(re.search(r"\b" + re.escape(public) + r"(?:@[^\s]+)?\b", relocations) is None, f"candidate shared retains public relocation {public}")
+    require_no_public_alias_relocations(relocations)
 
 def validate_static_link_receipts(output, runner, inputs, command_runner):
     """Bind all four static outputs to the installed driver's sealed link plan.

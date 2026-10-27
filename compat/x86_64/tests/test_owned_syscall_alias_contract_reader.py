@@ -46,6 +46,14 @@ import owned_syscall_alias_contract_reader as syscall_reader
 
 
 class OwnedSyscallAliasContractReaderTests(unittest.TestCase):
+    def test_public_alias_check_distinguishes_relr_labels_from_symbol_relocations(self) -> None:
+        relr = "Relocation section '.relr.dyn' contains 1 entry:\n                        000000000013b608  clock_gettime$got\n"
+        syscall_reader.require_no_public_alias_relocations(relr)
+        for symbol in ("clock_gettime", "clock_gettime@VERSION", "fstat"):
+            rela = f"000000000013b570  0000001500000006 R_X86_64_GLOB_DAT  0000000000000000 {symbol} + 0\n"
+            with self.subTest(symbol=symbol), self.assertRaises(syscall_reader.ReceiptError):
+                syscall_reader.require_no_public_alias_relocations(rela)
+
     def test_symbol_stream_matches_readelf_for_a_section_name_past_its_buffer(self) -> None:
         # Per-module Rust archive members carry function sections whose names
         # exceed readelf's printable section-name buffer.

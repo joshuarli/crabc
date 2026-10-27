@@ -548,13 +548,12 @@ PY
 python3 -B - "$WORK/candidate-shared-relocations.txt" "$WORK" "$(dirname "$READER")" <<'PY'
 import json
 from pathlib import Path
-import re
 import sys
 
 relocations = Path(sys.argv[1]).read_text(encoding='utf-8')
 work = Path(sys.argv[2])
 sys.path.insert(0, sys.argv[3])
-from owned_syscall_alias_contract_reader import PUBLIC_ALIAS_SOURCE_CALLERS
+from owned_syscall_alias_contract_reader import PUBLIC_ALIAS_SOURCE_CALLERS, require_no_public_alias_relocations
 # These seven musl callers name ordinary public aliases in source. The selected
 # shared link must bind those calls locally; explicit hidden source callers
 # are checked by the override workload above instead. Preserve the caller
@@ -564,9 +563,7 @@ from owned_syscall_alias_contract_reader import PUBLIC_ALIAS_SOURCE_CALLERS
     {'caller': caller, 'public_alias': public_alias}
     for caller, public_alias in PUBLIC_ALIAS_SOURCE_CALLERS
 ], sort_keys=True) + '\n', encoding='utf-8')
-for symbol in sorted({public_alias for _, public_alias in PUBLIC_ALIAS_SOURCE_CALLERS}):
-    if re.search(r'\b' + re.escape(symbol) + r'(?:@[^\s]+)?\b', relocations):
-        raise SystemExit(f'candidate shared libc retains a dynamic relocation for source-public {symbol}')
+require_no_public_alias_relocations(relocations)
 PY
 
 printf 'owned syscall alias contract: PASS (pinned musl archive/shared aliases, static/static-PIE and shared PIE/non-PIE public overrides, source-shaped internal call paths); evidence: %s\n' "$WORK"
