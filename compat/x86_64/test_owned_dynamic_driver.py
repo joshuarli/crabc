@@ -114,6 +114,25 @@ class InstalledDynamicDriverTests(unittest.TestCase):
         with self.assertRaises(driver.shared.DriverError):
             driver.validate_installation(self.root)
 
+    def test_release_loader_provenance_binds_flags_and_artifact(self):
+        path = self.root / "share/crabc/loader.provenance.json"
+        receipt = json.loads(path.read_text())
+        del receipt["build_profile"]
+        del receipt["compiler_command"]
+        receipt["cargo"] = {"rustflags": "-C panic=abort"}
+        path.write_text(json.dumps(receipt))
+        profile = driver.shared.NativeRuntimeProfile.COMPATIBILITY
+        driver.validate_loader_provenance(self.root, "share/crabc/loader.provenance.json", profile)
+        receipt["cargo"]["rustflags"] += " --cfg crabc_hardened"
+        path.write_text(json.dumps(receipt))
+        with self.assertRaises(driver.shared.DriverError):
+            driver.validate_loader_provenance(self.root, "share/crabc/loader.provenance.json", profile)
+        receipt["cargo"]["rustflags"] = "-C panic=abort"
+        receipt["artifact"]["sha256"] = "b" * 64
+        path.write_text(json.dumps(receipt))
+        with self.assertRaises(driver.shared.DriverError):
+            driver.validate_loader_provenance(self.root, "share/crabc/loader.provenance.json", profile)
+
     def _seal_materialized_fixture(self, root: Path) -> str:
         """Give the selected fixture payload one source-bound materialization state."""
 
