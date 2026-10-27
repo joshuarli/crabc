@@ -249,6 +249,7 @@ const AT_ENTRY: u64 = 9;
 const AT_NULL: u64 = 0;
 
 const PT_LOAD: u32 = 1;
+const PT_GNU_STACK: u32 = 0x6474_e551;
 const PT_DYNAMIC: u32 = 2;
 const PT_PHDR: u32 = 6;
 const PT_TLS: u32 = 7;
@@ -1377,6 +1378,40 @@ unsafe fn main_load_bias(phdr: *const u8, phnum: usize) -> Option<u64> {
     (phdr as u64).checked_sub(virtual_address)
 }
 
+unsafe fn hardened_program_headers(phdr: *const u8, phnum: usize) -> bool {
+    let mut stack = false;
+    for index in 0..phnum {
+        let header = phdr.add(index * 56);
+        let kind = read_u32(header);
+        let flags = read_u32(header.add(4));
+        if kind == PT_GNU_STACK {
+            if stack || flags & PF_X != 0 { return false; }
+            stack = true;
+        }
+        if kind != PT_LOAD { continue; }
+        if flags & (PF_W | PF_X) == (PF_W | PF_X) { return false; }
+        let start = read_u64(header.add(16));
+        let size = read_u64(header.add(40));
+        let Some(end) = start.checked_add(size).and_then(|end| end.checked_add(PAGE - 1)) else { return false; };
+        if size == 0 { continue; }
+        let start = align_down(start);
+        let end = align_down(end);
+        for prior_index in 0..index {
+            let prior = phdr.add(prior_index * 56);
+            if read_u32(prior) != PT_LOAD { continue; }
+            let prior_flags = read_u32(prior.add(4));
+            if !((flags & PF_W != 0 && prior_flags & PF_X != 0)
+                || (flags & PF_X != 0 && prior_flags & PF_W != 0)) { continue; }
+            let prior_start = read_u64(prior.add(16));
+            let prior_size = read_u64(prior.add(40));
+            if prior_size == 0 { continue; }
+            let Some(prior_end) = prior_start.checked_add(prior_size).and_then(|end| end.checked_add(PAGE - 1)) else { return false; };
+            if start < align_down(prior_end) && align_down(prior_start) < end { return false; }
+        }
+    }
+    stack
+}
+
 unsafe fn parse_mapped(
     base: u64,
     phdr: *const u8,
@@ -1385,6 +1420,7 @@ unsafe fn parse_mapped(
     allow_bounded_runtime_legacy_tags: bool,
     general_initial_graph: bool,
 ) -> Option<Object> {
+    if cfg!(crabc_hardened) && !hardened_program_headers(phdr, phnum) { return None; }
     let mapped = role == ObjectRole::Library;
     // Legacy DT_INIT/DT_FINI are not general mapped-object features. The only
     // caller that may opt in is the one-slot runtime transaction below; it
@@ -2418,6 +2454,7 @@ unsafe fn map_elf_with_status(
         (Some(MappingLease { address, byte_len: map_len }),
             (address as *const u8).add(usize::try_from(phoff_u64 - page_offset).map_err(|_| ENOEXEC)?))
     };
+    if cfg!(crabc_hardened) && !hardened_program_headers(phdr, phnum) { return Err(ENOEXEC); }
     let mut min = u64::MAX;
     let mut max = 0u64;
     let mut phdr_load = None;
@@ -5568,7 +5605,7 @@ mod readable_file_load_tests {
         image[18..20].copy_from_slice(&62u16.to_le_bytes());
         image[32..40].copy_from_slice(&64u64.to_le_bytes());
         image[54..56].copy_from_slice(&56u16.to_le_bytes());
-        image[56..58].copy_from_slice(&3u16.to_le_bytes());
+        image[56..58].copy_from_slice(&4u16.to_le_bytes());
         for (index, vaddr) in [(0, 0x2000u64), (1, 0)] {
             let load = &mut image[64 + index * 56..][..56];
             load[..4].copy_from_slice(&PT_LOAD.to_le_bytes());
@@ -5583,6 +5620,8 @@ mod readable_file_load_tests {
         dynamic[16..24].copy_from_slice(&0x2200u64.to_le_bytes());
         dynamic[32..40].copy_from_slice(&96u64.to_le_bytes());
         dynamic[40..48].copy_from_slice(&96u64.to_le_bytes());
+        image[232..236].copy_from_slice(&PT_GNU_STACK.to_le_bytes());
+        image[236..240].copy_from_slice(&(PF_R | PF_W).to_le_bytes());
         for (index, (tag, value)) in [
             (DT_STRTAB, 0x2300u64), (DT_STRSZ, 1), (DT_SYMTAB, 0x2320),
             (DT_SYMENT, 24), (DT_HASH, 0x2340), (DT_NULL, 0),
@@ -5598,6 +5637,20 @@ mod readable_file_load_tests {
         assert_eq!(object.phdr as u64, object.base + 0x2000 + 64);
         assert_eq!(unsafe { syscall2(SYS_MUNMAP, object.map_span_start as i64,
             object.map_span_byte_len as i64) }, 0);
+        let executable_stack = (PF_R | PF_W | PF_X).to_le_bytes();
+        assert_eq!(unsafe { syscall4(SYS_PWRITE64, fd, executable_stack.as_ptr() as i64,
+            executable_stack.len() as i64, 236) }, executable_stack.len() as i64);
+        let executable = unsafe { map_elf_with_status(fd, &status, false, true, ObjectRole::Library) };
+        if cfg!(crabc_hardened) {
+            assert!(matches!(executable, Err(ENOEXEC)));
+        } else {
+            let object = executable.unwrap();
+            assert_eq!(unsafe { syscall2(SYS_MUNMAP, object.map_span_start as i64,
+                object.map_span_byte_len as i64) }, 0);
+        }
+        let writable_stack = (PF_R | PF_W).to_le_bytes();
+        assert_eq!(unsafe { syscall4(SYS_PWRITE64, fd, writable_stack.as_ptr() as i64,
+            writable_stack.len() as i64, 236) }, writable_stack.len() as i64);
         let overflowing_offset = u64::MAX.to_le_bytes();
         assert_eq!(unsafe { syscall4(SYS_PWRITE64, fd, overflowing_offset.as_ptr() as i64,
             overflowing_offset.len() as i64, 64 + 56 + 8) }, overflowing_offset.len() as i64);
@@ -5674,6 +5727,32 @@ mod readable_file_load_tests {
         header[16..24].copy_from_slice(&start.to_le_bytes());
         header[32..40].copy_from_slice(&filesz.to_le_bytes());
         header[40..48].copy_from_slice(&memsz.to_le_bytes());
+    }
+
+    #[test]
+    fn hardened_headers_require_nonexecutable_stack_and_disjoint_writable_executable_pages() {
+        let mut headers = [0u8; 168];
+        load(&mut headers, 0, PF_R | PF_X, 0x1000, 0x100, 0x100);
+        load(&mut headers, 1, PF_R | PF_W, 0x2000, 0x100, 0x100);
+        headers[112..116].copy_from_slice(&PT_GNU_STACK.to_le_bytes());
+        headers[116..120].copy_from_slice(&(PF_R | PF_W).to_le_bytes());
+        let valid = |headers: &[u8]| unsafe { hardened_program_headers(headers.as_ptr(), 3) };
+        assert!(valid(&headers));
+        headers[116..120].copy_from_slice(&(PF_R | PF_W | PF_X).to_le_bytes());
+        assert!(!valid(&headers));
+        headers[112..116].copy_from_slice(&0u32.to_le_bytes());
+        assert!(!valid(&headers));
+        headers[112..116].copy_from_slice(&PT_GNU_STACK.to_le_bytes());
+        headers[116..120].copy_from_slice(&(PF_R | PF_W).to_le_bytes());
+        let mut duplicate = headers;
+        duplicate[56..60].copy_from_slice(&PT_GNU_STACK.to_le_bytes());
+        assert!(!valid(&duplicate));
+        load(&mut headers, 1, PF_R | PF_W, 0x1800, 0x100, 0x100);
+        assert!(!valid(&headers));
+        load(&mut headers, 1, PF_R | PF_W | PF_X, 0x2000, 0x100, 0x100);
+        assert!(!valid(&headers));
+        load(&mut headers, 1, PF_R | PF_W, u64::MAX - 10, 1, 32);
+        assert!(!valid(&headers));
     }
 
     #[test]
