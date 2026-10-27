@@ -1385,7 +1385,13 @@ Append one line per merge batch, per parked item, and per contract change.
   At `092f0f796`, fresh release development products pass the unwind and
   both cross-DSO cases. The partial receipt is non-qualifying because other
   sections and the installed/extracted cohort were not selected. A qualifying
-  release cohort remains required.
+  release cohort remains required. The independent math/fenv component passes
+  206 selected C ABI entries at `4630b7407`. The text/locale/numeric component
+  then exposed two nonspacing Unicode endpoints and wide-format error mapping;
+  `be8d2a437` and `b06edf693` fix them. The complete Unicode fingerprint and
+  focused wide-format regression match pinned musl, and all 19 bounded
+  text/locale/numeric rows and receipt replay pass at `b06edf693`. These
+  component receipts do not qualify the family.
   M7 baseline discovery at `55dd89a3a` passed four gates and left six unmet:
   visitation producers rejected an unsupported `--offline` flag and five
   gates were blocked. `aeb87087d` removes the flag; the producers already
