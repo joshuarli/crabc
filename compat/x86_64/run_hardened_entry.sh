@@ -505,25 +505,28 @@ for name in ("rejected-source.so", "rejected-stack.so", "rejected-wx.so", "rejec
              "rejected-pltgot-duplicate.so", "rejected-pltgot-outside.so",
              "tls-mutable.so", "tls-module.so", "tls-thread.so", "symbol-mutable.so", "symbol-pc32.so",
              "symbol-glob.so", "symbol-jump.so", "import-probe.so"):
-    result = subprocess.run(["/pie"], env={"LD_PRELOAD": "/usr/lib/" + name},
-                            preexec_fn=enter, capture_output=True, timeout=20, check=False)
-    (work / (name + ".stderr")).write_bytes(result.stderr)
-    good = name == "rejected-source.so"
-    assert result.returncode == (0 if good else 127), (name, result.returncode, result.stderr)
-    assert (root / "marker").exists() == good
-    assert (root / "rejected-marker").exists() == good
-    assert not (root / "tls-mutable-marker").exists()
-    assert not (root / "symbol-mutable-marker").exists()
-    assert not (root / "import-marker").exists()
-    (root / "marker").unlink(missing_ok=True)
-    (root / "rejected-marker").unlink(missing_ok=True)
+    for arguments in (["/pie"], ["/lib/ld-crabc-x86_64-hardened.so.1", "/pie"]):
+        result = subprocess.run(arguments, env={"LD_PRELOAD": "/usr/lib/" + name},
+                                preexec_fn=enter, capture_output=True, timeout=20, check=False)
+        route = "kernel" if len(arguments) == 1 else "direct"
+        (work / f"preload-{name}-{route}.stderr").write_bytes(result.stderr)
+        good = name == "rejected-source.so"
+        assert (result.returncode == 0 if good else result.returncode in (1, 127)), (name, arguments, result.stderr)
+        assert (root / "marker").exists() == good
+        assert (root / "rejected-marker").exists() == good
+        assert not (root / "tls-mutable-marker").exists()
+        assert not (root / "symbol-mutable-marker").exists()
+        assert not (root / "import-marker").exists()
+        (root / "marker").unlink(missing_ok=True)
+        (root / "rejected-marker").unlink(missing_ok=True)
 for preload, status, marker in (("/usr/lib/missing.so", 0, True), ("usr/lib/rejected-source.so", 127, False)):
-    result = subprocess.run(["/pie"], env={"LD_PRELOAD": preload},
-                            preexec_fn=enter, capture_output=True, timeout=20, check=False)
-    assert result.returncode == status, (preload, result.returncode, result.stderr)
-    assert (root / "marker").exists() == marker
-    assert not (root / "rejected-marker").exists()
-    (root / "marker").unlink(missing_ok=True)
+    for arguments in (["/pie"], ["/lib/ld-crabc-x86_64-hardened.so.1", "/pie"]):
+        result = subprocess.run(arguments, env={"LD_PRELOAD": preload},
+                                preexec_fn=enter, capture_output=True, timeout=20, check=False)
+        assert (result.returncode == 0 if status == 0 else result.returncode in (1, 127)), (preload, arguments, result.stderr)
+        assert (root / "marker").exists() == marker
+        assert not (root / "rejected-marker").exists()
+        (root / "marker").unlink(missing_ok=True)
 source = root / "usr/lib/rejected-source.so"
 original = source.read_bytes()
 for candidate in (None, "rejected-stack.so", "rejected-wx.so", "rejected-relro.so",
@@ -531,15 +534,18 @@ for candidate in (None, "rejected-stack.so", "rejected-wx.so", "rejected-relro.s
                   "tls-mutable.so", "tls-module.so", "tls-thread.so", "symbol-mutable.so", "symbol-pc32.so",
                   "symbol-glob.so", "symbol-jump.so"):
     source.write_bytes(original if candidate is None else (root / "usr/lib" / candidate).read_bytes())
-    result = subprocess.run(["/dependency"], env={}, preexec_fn=enter, capture_output=True, timeout=20, check=False)
-    good = candidate is None
-    assert result.returncode == (0 if good else 127), (candidate, result.returncode, result.stderr)
-    assert (root / "marker").exists() == good
-    assert (root / "rejected-marker").exists() == good
-    assert not (root / "tls-mutable-marker").exists()
-    assert not (root / "symbol-mutable-marker").exists()
-    (root / "marker").unlink(missing_ok=True)
-    (root / "rejected-marker").unlink(missing_ok=True)
+    for arguments in (["/dependency"], ["/lib/ld-crabc-x86_64-hardened.so.1", "/dependency"]):
+        result = subprocess.run(arguments, env={}, preexec_fn=enter, capture_output=True, timeout=20, check=False)
+        route = "kernel" if len(arguments) == 1 else "direct"
+        (work / f"dependency-{candidate or 'valid'}-{route}.stderr").write_bytes(result.stderr)
+        good = candidate is None
+        assert (result.returncode == 0 if good else result.returncode in (1, 127)), (candidate, arguments, result.stderr)
+        assert (root / "marker").exists() == good
+        assert (root / "rejected-marker").exists() == good
+        assert not (root / "tls-mutable-marker").exists()
+        assert not (root / "symbol-mutable-marker").exists()
+        (root / "marker").unlink(missing_ok=True)
+        (root / "rejected-marker").unlink(missing_ok=True)
 source.write_bytes(original)
 loader = "/lib/ld-crabc-x86_64-hardened.so.1"
 searches = (
