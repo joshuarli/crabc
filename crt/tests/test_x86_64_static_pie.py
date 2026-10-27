@@ -544,7 +544,13 @@ class X86_64StaticPieTests(unittest.TestCase):
                                                 stderr=subprocess.PIPE, check=False, preexec_fn=disable_core_dump)
             self.assertNotEqual(compatible_overlap.returncode, 127)
 
+    def test_hardened_static_pie_bootstrap_executes_and_rejects_unknown_relocations(self) -> None:
+        self.exercise_static_pie_bootstrap("hardened")
+
     def test_static_pie_bootstrap_executes_and_rejects_unknown_relocations(self) -> None:
+        self.exercise_static_pie_bootstrap("compatibility")
+
+    def exercise_static_pie_bootstrap(self, profile: str) -> None:
         if os.environ.get("CRABC_CRT_X86_64_EVIDENCE_SLICE") == "bundle":
             self.skipTest("bundle-only runner selects the CRT/builtins consumer")
         scratch = ROOT / ".work/tmp"
@@ -553,7 +559,7 @@ class X86_64StaticPieTests(unittest.TestCase):
             work = Path(temporary)
             crt_output = work / "crt"
             build = subprocess.run(
-                [sys.executable, str(BUILDER), "--out-dir", str(crt_output), "--llvm-objdump",
+                [sys.executable, str(BUILDER), "--out-dir", str(crt_output), "--hardening-profile", profile, "--llvm-objdump",
                  str(Path("/opt/rustup/toolchains") / f"{PINNED_TOOLCHAIN}-{TARGET}/lib/rustlib/{TARGET}/bin/llvm-objdump")],
                 stdin=subprocess.DEVNULL,
                 stdout=subprocess.PIPE,
@@ -602,6 +608,7 @@ class X86_64StaticPieTests(unittest.TestCase):
                         "-pie",
                         "-static",
                         "--no-dynamic-linker",
+                        *(["-z", "now"] if profile == "hardened" else []),
                         "-e",
                         "_start",
                         *relocation_arguments,

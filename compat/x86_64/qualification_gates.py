@@ -484,6 +484,70 @@ def _read_loader_family(evaluation: Evaluation) -> str:
     return "published loader-family receipt: complete three-product component"
 
 
+HARDENED_RUNTIME_COMMAND = "./scripts/dev-x86_64.sh hardened-runtime DYNAMIC_SYSROOT"
+HARDENED_RUNTIME_RUNNER = "compat/x86_64/run_hardened_qualification.sh"
+HARDENED_RUNTIME_MARKER = b"hardened runtime: PASS"
+
+
+def validate_hardened_products(value: object) -> dict[str, object]:
+    unmet_unless(isinstance(value, dict) and set(value) == {"static", "dynamic", "compatibility"},
+                 "hardened runtime product roster differs")
+    qualification = _import_compat("owned_dynamic_qualification")
+    evidence = _import_compat("owned_posix_product_evidence")
+    source = qualification.source_digest()
+    for name in ("static", "dynamic", "compatibility"):
+        record = value[name]
+        unmet_unless(isinstance(record, dict) and set(record) == {"manifest", "sha256"},
+                     f"{name} product identity differs")
+        path = _physical_work_file(record["manifest"], f"{name} product manifest")
+        unmet_unless(path.name == "manifest.json" and path.parent.name == "crabc" and path.parent.parent.name == "share",
+                     f"{name} product manifest placement differs")
+        unmet_unless(record["sha256"] == _sha256(path), f"{name} product manifest changed")
+        root = path.parents[2]
+        try:
+            manifest = json.loads(path.read_text(encoding="utf-8"))
+            if name == "static":
+                evidence._validate_static_product(root)
+                unmet_unless(manifest.get("source_sha256") == source, "hardened static source differs")
+            elif name == "dynamic":
+                evidence.validate_dynamic_product_source(root, source)
+            else:
+                qualification.product_identity(root)
+        except (OSError, ValueError, RuntimeError) as error:
+            raise EvidenceUnmet(f"{name} product validation failed: {error}") from error
+        expected = "compatibility" if name == "compatibility" else "hardened"
+        unmet_unless(isinstance(manifest, dict) and manifest.get("hardening_profile") == expected
+                     and manifest.get("build_profile") == "release", f"{name} product profile differs")
+    return value
+
+
+def execute_hardened_runtime(record: Mapping[str, Any]) -> dict[str, object]:
+    inputs = record.get("inputs")
+    before = inputs.get("before") if isinstance(inputs, Mapping) else None
+    qualification = before.get("qualification") if isinstance(before, Mapping) else None
+    path = _physical_work_file(qualification.get("path") if isinstance(qualification, Mapping) else None,
+                               "dynamic qualification receipt")
+    try:
+        completed = subprocess.run(["bash", HARDENED_RUNTIME_RUNNER, str(path.parent / "installed")],
+                                   cwd=ROOT, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+                                   stderr=subprocess.PIPE, timeout=EXECUTION_TIMEOUT_SECONDS, check=False)
+    except subprocess.TimeoutExpired as error:
+        raise EvidenceUnmet("hardened runtime qualification timed out") from error
+    lines = [line for line in completed.stdout.splitlines() if line]
+    if completed.returncode != 0 or len(lines) < 2 or lines[-1] != HARDENED_RUNTIME_MARKER:
+        tail = (completed.stderr or completed.stdout).decode("utf-8", errors="replace").strip().splitlines()[-5:]
+        raise EvidenceUnmet(f"hardened runtime qualification failed ({completed.returncode}): " + " | ".join(tail))
+    try:
+        products = json.loads(lines[-2])
+    except (UnicodeDecodeError, ValueError) as error:
+        raise EvidenceUnmet("hardened runtime product identities are invalid") from error
+    return validate_hardened_products(products)
+
+
+def _execute_hardened_runtime(evaluation: Evaluation) -> dict[str, object]:
+    return execute_hardened_runtime(_loader_family_record(evaluation))
+
+
 def _read_rust_std_lto(evaluation: Evaluation) -> str:
     # The leaf reader already requires every frozen gate, both unwind pairs
     # and the provider regressions to pass on the current-source cohort.
@@ -621,6 +685,8 @@ READERS: dict[tuple[str, str], EvidenceReader] = {
             "loader-family",
             _read_loader_family,
         ),
+        EvidenceReader("compat.loader-corpus", HARDENED_RUNTIME_COMMAND, "execution",
+                       HARDENED_RUNTIME_RUNNER, _execute_hardened_runtime),
         EvidenceReader(
             "consumer.rust-std-lto",
             RUST_STD_LTO_COMMAND,
@@ -678,7 +744,17 @@ def _capability_completion(families: Mapping[str, Mapping[str, Any]]) -> dict[st
     }
 
 
+def _hardened_runtime_requirement(families: Mapping[str, Mapping[str, Any]]) -> dict[str, Any]:
+    evidence = families["compat.loader-corpus"].get("native_evidence")
+    count = sum(isinstance(item, Mapping) and item.get("command") == HARDENED_RUNTIME_COMMAND
+                for item in evidence) if isinstance(evidence, list) else 0
+    return {"id": "hardened-runtime-required", "met": count == 1,
+            "detail": "one hardened runtime execution is required" if count == 1 else
+                      f"expected one hardened runtime execution, found {count}"}
+
+
 GATE_CHECKS: dict[str, tuple[Callable[[Mapping[str, Mapping[str, Any]]], dict[str, Any]], ...]] = {
+    "compat.loader-corpus": (_hardened_runtime_requirement,),
     "capability.accounting": (_capability_completion,),
 }
 

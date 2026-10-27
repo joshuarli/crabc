@@ -30,6 +30,30 @@ manifest = module('generate_qualification_manifest', 'generate_qualification_man
 runner = module('qualification_prefix_runner', 'run_qualification_manifest.py')
 
 class QualificationPrefixTests(unittest.TestCase):
+    def test_loader_gate_replay_requires_and_revalidates_hardened_products(self):
+        validator = unittest.mock.Mock()
+        family = {"inputs": {"before": {"qualification": {"path": ".work/cohort/qualification.json"}}}}
+        gate_module = SimpleNamespace(validate_hardened_products=validator,
+                                      _physical_work_file=lambda value, description: Path("/workspace") / value,
+                                      _validate_loader_family=unittest.mock.Mock(return_value=family))
+        marker = b"x86 qualification gate compat.loader-corpus: PASS\n"
+        with patch.object(runner, "gate_conditions_module", return_value=gate_module):
+            with self.assertRaises(runner.QualificationRunError):
+                runner.validate_hardened_gate_output(b'{"conditions": []}\n' + marker)
+            products = {"compatibility": {"manifest": ".work/cohort/installed/share/crabc/manifest.json"}}
+            record = {"family": "compat.loader-corpus", "hardened_products": products,
+                      "cohort": ".work/cohort/qualification.json", "loader_family_receipt": ".work/loader/receipt.json"}
+            output = json.dumps(record).encode() + b"\n" + marker
+            runner.validate_hardened_gate_output(output)
+            validator.assert_called_once_with(products)
+            record["cohort"] = ".work/other/qualification.json"
+            with self.assertRaises(runner.QualificationRunError):
+                runner.validate_hardened_gate_output(json.dumps(record).encode() + b"\n" + marker)
+            record["cohort"] = ".work/cohort/qualification.json"
+            validator.side_effect = RuntimeError("changed product")
+            with self.assertRaises(runner.QualificationRunError):
+                runner.validate_hardened_gate_output(output)
+
     def test_claim_only_receipt_cannot_declare_a_completed_gate(self):
         document = json.loads(manifest.CONTRACT_PATH.read_text())
         with tempfile.TemporaryDirectory() as directory:
@@ -547,6 +571,9 @@ class ChainReceiptRoundTripTests(unittest.TestCase):
             patcher = patch.object(runner, name, side_effect=lambda attribute=attribute: getattr(self, attribute))
             patcher.start()
             self.addCleanup(patcher.stop)
+        patcher = patch.object(runner, 'validate_hardened_gate_output')
+        patcher.start()
+        self.addCleanup(patcher.stop)
 
     def run_chain(self, through=manifest.CHAIN[-1]):
         return runner.run_chain(manifest.load_contract(), through, profile="full")
@@ -572,6 +599,14 @@ class ChainReceiptRoundTripTests(unittest.TestCase):
         self.assertNotIn('performance.release', [case['gate'] for case in receipt['cases']])
         self.assertEqual(receipt['deferred_gate_ids'], ['performance.release'])
         self.assertEqual(runner.validate_chain_receipt(path), receipt)
+
+    def test_loader_receipt_replay_requires_hardened_product_validation(self):
+        path, _ = self.run_chain('compat.loader-corpus')
+        with patch.object(runner, 'validate_hardened_gate_output',
+                          side_effect=runner.QualificationRunError('hardened product changed')) as validate:
+            with self.assertRaisesRegex(runner.QualificationRunError, 'hardened product changed'):
+                runner.validate_chain_receipt(path)
+        validate.assert_called_once()
 
     def test_owner_json_output_contains_the_validated_receipt(self):
         path, receipt = runner.run_chain(manifest.load_contract(), 'capability.accounting', profile='correctness')

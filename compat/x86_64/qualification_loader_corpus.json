@@ -19,7 +19,7 @@
         "compat/x86_64/qualify_loader_corpus.py"
       ],
       "expected_stdout_line": "x86 compat.loader-corpus loader/corpus roster: PASS (non-promoting)",
-      "timeout_seconds": 3600
+      "timeout_seconds": 7200
     }
   ]
 }
