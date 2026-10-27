@@ -133,7 +133,7 @@ class OwnedUtmpxReceiptTests(unittest.TestCase):
         static = receipt.SOURCE_MOUNT + "/.work/utmpx-receipt/inputs/static/usr/lib"
         workload = receipt.SOURCE_MOUNT + "/.work/utmpx-receipt/owned-utmpx-receipt/workload.o"
         trace = raw / "static-static.receipt.trace"
-        trace.write_text("\n".join((
+        trace.write_text("\n".join("trace: " + line for line in (
             static + "/crt1.o", static + "/crti.o", workload,
             static + "/libc.a(owned.o)", static + "/libcrabc-builtins.a(builtins.o)",
             static + "/crtn.o",

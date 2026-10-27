@@ -1222,7 +1222,7 @@ def retained_static_admitted_inputs(workspace: Path, product: Path, raw: Path,
     trace = raw / ("static-" + linkage + ".receipt.trace")
     regular(no_links(workspace, trace, "static function trace"), "static function trace")
     try:
-        lines = trace.read_text(encoding="utf-8").splitlines()
+        lines = retained_link_reader.semantic_link_trace(trace.read_text(encoding="utf-8").splitlines())
     except (OSError, UnicodeDecodeError) as error:
         raise ReceiptError("static function trace is unreadable") from error
     require(lines and len(lines) == len(set(lines)), "static function trace is empty or repeated")
