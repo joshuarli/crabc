@@ -73,6 +73,35 @@ class DebugRouteTests(unittest.TestCase):
             self.assertIn('_Unwind_Backtrace$got',
                           GATE.owned_cleanup.cleanup._unwind_symbols(executable, defined, GATE.provider_build.UNWIND_ABI))
 
+    @unittest.skipUnless(Path('/opt/musl-1.2.6/.crabc-oracle').is_file(), 'requires the pinned native image')
+    def test_shared_unwind_got_requires_the_selected_dynamic_symbol(self):
+        WORK.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(dir=WORK) as temporary:
+            root = Path(temporary)
+            source, obj, shared = (root / name for name in ('probe.s', 'probe.o', 'probe.so'))
+            source.write_text('.text\n.globl _Unwind_Backtrace\n.type _Unwind_Backtrace,@function\n'
+                              '_Unwind_Backtrace: ret\n.size _Unwind_Backtrace,.-_Unwind_Backtrace\n'
+                              '.globl probe\nprobe: mov _Unwind_Backtrace@GOTPCREL(%rip),%rax\nret\n')
+            subprocess.run(['cc', '-c', str(source), '-o', str(obj)], check=True, capture_output=True)
+            subprocess.run(['mold', '-shared', '--no-relax', str(obj), '-o', str(shared)],
+                           check=True, capture_output=True)
+            defined = subprocess.check_output(['nm', '--defined-only', str(shared)], text=True)
+            symbols = GATE.owned_cleanup.cleanup._unwind_symbols
+            self.assertEqual(symbols(shared, defined, GATE.provider_build.UNWIND_ABI), ['_Unwind_Backtrace'])
+            image = GATE.owned_cleanup.cleanup.Elf(shared)
+            label = image.symbol('_Unwind_Backtrace$got', dynamic=False)
+            section = next(section for section in image.sections if section[1] == 4 and section[2] & 2
+                           and any(image.unpack('<Q', section[4] + offset)[0] == label['value']
+                                   for offset in range(0, section[5], 24)))
+            offset = next(section[4] + offset for offset in range(0, section[5], 24)
+                          if image.unpack('<Q', section[4] + offset)[0] == label['value'])
+            original = shared.read_bytes()
+            for index in (offset + 8, offset + 12):
+                data = bytearray(original)
+                data[index] ^= 1
+                shared.write_bytes(data)
+                self.assertIn('_Unwind_Backtrace$got', symbols(shared, defined, GATE.provider_build.UNWIND_ABI))
+
     def test_cargo_link_receipt_binds_the_selected_development_product(self):
         WORK.mkdir(parents=True, exist_ok=True)
         with tempfile.TemporaryDirectory(dir=WORK) as temporary:

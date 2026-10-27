@@ -69,7 +69,8 @@ def _unwind_symbols(path: Path, defined: str, provider_symbols: set[str]) -> lis
             continue
         if section[9] != 24 or section[5] % 24:
             raise ValueError('invalid unwind GOT relocations')
-        relocations.extend(image.unpack('<QQq', section[4] + offset) for offset in range(0, section[5], 24))
+        relocations.extend((*image.unpack('<QQq', section[4] + offset), section[6])
+                           for offset in range(0, section[5], 24))
     for name in labels:
         label = image.symbol(name, dynamic=False, required=False)
         target = image.symbol(name[:-4], dynamic=False, required=False)
@@ -80,6 +81,20 @@ def _unwind_symbols(path: Path, defined: str, provider_symbols: set[str]) -> lis
         target_section = image.sections[target['section']]
         address = label['value']
         nearby = [row for row in relocations if address - 7 <= row[0] < address + 8]
+        slot = image.unpack('<Q', section[4] + address - section[3])[0] if (
+            section[3] <= address and address + 8 <= section[3] + section[5]) else None
+        relocation_matches = image.elf_type == 2 and not nearby and slot == target['value']
+        if image.elf_type == 3 and len(nearby) == 1:
+            destination, info, addend, symbols = nearby[0]
+            if (destination, info, addend, slot) == (address, 8, target['value'], target['value']):
+                relocation_matches = True
+            elif (destination == address and info & 0xffffffff == 6 and info >> 32 and addend == 0
+                  and slot == 0 and 0 <= symbols < len(image.sections) and image.sections[symbols][1] == 11):
+                dynamic_target = image.symbol_row(symbols, info >> 32)
+                relocation_matches = (dynamic_target['name'] == name[:-4] and dynamic_target['type'] == 'FUNC'
+                                      and dynamic_target['binding'] == 'GLOBAL'
+                                      and dynamic_target['visibility'] == 'DEFAULT'
+                                      and all(dynamic_target[key] == target[key] for key in ('section', 'value', 'size')))
         if (label['type'] == 'OBJECT' and label['binding'] == 'LOCAL' and label['visibility'] == 'DEFAULT'
                 and label['size'] == 0 and section_name(image, section) == '.got'
                 and section[1] == 1 and section[2] & 3 == 3 and address % 8 == 0
@@ -87,9 +102,7 @@ def _unwind_symbols(path: Path, defined: str, provider_symbols: set[str]) -> lis
                 and target['type'] == 'FUNC' and target['size'] > 0 and target_section[2] & 6 == 6
                 and target_section[3] <= target['value']
                 and target['value'] + target['size'] <= target_section[3] + target_section[5]
-                and (image.elf_type == 2 and not nearby
-                     or image.elf_type == 3 and nearby == [(address, 8, target['value'])])
-                and image.unpack('<Q', section[4] + address - section[3])[0] == target['value']):
+                and relocation_matches):
             names.remove(name)
     return sorted(names)
 
