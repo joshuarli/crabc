@@ -184,7 +184,8 @@ def enter(directory=root):
     os.chroot(directory)
     os.chdir("/")
 
-for name in ("rejected-source.so", "rejected-stack.so", "rejected-wx.so", "rejected-relro.so"):
+for name in ("rejected-source.so", "rejected-stack.so", "rejected-wx.so", "rejected-relro.so",
+             "tls-mutable.so", "tls-module.so", "tls-thread.so"):
     result = subprocess.run(["/pie"], env={"LD_PRELOAD": "/usr/lib/" + name},
                             preexec_fn=enter, capture_output=True, timeout=20, check=False)
     (work / (name + ".stderr")).write_bytes(result.stderr)
@@ -192,6 +193,7 @@ for name in ("rejected-source.so", "rejected-stack.so", "rejected-wx.so", "rejec
     assert result.returncode == (0 if good else 127), (name, result.returncode, result.stderr)
     assert (root / "marker").exists() == good
     assert (root / "rejected-marker").exists() == good
+    assert not (root / "tls-mutable-marker").exists()
     (root / "marker").unlink(missing_ok=True)
     (root / "rejected-marker").unlink(missing_ok=True)
 for preload, status, marker in (("/usr/lib/missing.so", 0, True), ("usr/lib/rejected-source.so", 127, False)):
@@ -203,13 +205,15 @@ for preload, status, marker in (("/usr/lib/missing.so", 0, True), ("usr/lib/reje
     (root / "marker").unlink(missing_ok=True)
 source = root / "usr/lib/rejected-source.so"
 original = source.read_bytes()
-for candidate in (None, "rejected-stack.so", "rejected-wx.so", "rejected-relro.so"):
+for candidate in (None, "rejected-stack.so", "rejected-wx.so", "rejected-relro.so",
+                  "tls-mutable.so", "tls-module.so", "tls-thread.so"):
     source.write_bytes(original if candidate is None else (root / "usr/lib" / candidate).read_bytes())
     result = subprocess.run(["/dependency"], env={}, preexec_fn=enter, capture_output=True, timeout=20, check=False)
     good = candidate is None
     assert result.returncode == (0 if good else 127), (candidate, result.returncode, result.stderr)
     assert (root / "marker").exists() == good
     assert (root / "rejected-marker").exists() == good
+    assert not (root / "tls-mutable-marker").exists()
     (root / "marker").unlink(missing_ok=True)
     (root / "rejected-marker").unlink(missing_ok=True)
 source.write_bytes(original)
