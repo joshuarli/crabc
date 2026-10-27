@@ -47,6 +47,14 @@ static int find_dso(struct dl_phdr_info *info, size_t size, void *context)
     return 1;
 }
 
+static int count_dso(struct dl_phdr_info *info, size_t size, void *context)
+{
+    (void)info;
+    (void)size;
+    (*(unsigned long *)context)++;
+    return 0;
+}
+
 static int check_loaded_dso(void)
 {
     void *handle = dlopen("/usr/lib/hardened-relro-fixture.so", RTLD_NOW);
@@ -56,6 +64,30 @@ static int check_loaded_dso(void)
     int found = dl_iterate_phdr(find_dso, &image);
     int valid = initialized && initialized() == 7 && found == 1
         && check_relro(image.base, image.headers, image.count);
+    pid_t child = fork();
+    if (child == 0) {
+        void *control = dlopen("/usr/lib/rejected-source.so", RTLD_NOW);
+        _exit(control && access("/rejected-marker", F_OK) == 0 ? 0 : 1);
+    }
+    int child_status = 0;
+    if (child < 0 || waitpid(child, &child_status, 0) != child
+        || !WIFEXITED(child_status) || WEXITSTATUS(child_status) != 0
+        || unlink("/rejected-marker") != 0) valid = 0;
+    unsigned long before = 0;
+    dl_iterate_phdr(count_dso, &before);
+    const char *rejected[] = {"/usr/lib/rejected-stack.so", "/usr/lib/rejected-wx.so", "/usr/lib/rejected-relro.so"};
+    for (unsigned long i = 0; valid && i < sizeof rejected / sizeof rejected[0]; i++) {
+        if (access(rejected[i], F_OK) != 0) { valid = 0; break; }
+        void *bad = dlopen(rejected[i], RTLD_LAZY);
+        if (bad) {
+            dlclose(bad);
+            valid = 0;
+            break;
+        }
+        unsigned long after = 0;
+        dl_iterate_phdr(count_dso, &after);
+        if (before != after || initialized() != 7 || access("/rejected-marker", F_OK) == 0) valid = 0;
+    }
     return dlclose(handle) == 0 && valid;
 }
 #endif

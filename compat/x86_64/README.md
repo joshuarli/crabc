@@ -470,6 +470,8 @@ that byte's lack of an alias. During the first constructor, forked children
 must fault when writing the main image's RELRO and, for dynamic PIE, the
 interpreter's RELRO and a runtime-loaded DSO's RELRO. This focused test does not qualify the
 hardened product.
+It also rejects runtime-loaded DSOs with executable stacks, RWX loads or no
+required RELRO, while checking constructor absence and the retained graph.
 
 ## Rust RuntimeV1 facades
 

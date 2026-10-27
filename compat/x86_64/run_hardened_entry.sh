@@ -14,6 +14,7 @@ cp "$installed/usr/lib/libc.so" "$image/usr/lib/"
 "$installed/bin/crabc-cc-dynamic" --dynamic-pie "$root/compat/x86_64/hardened_entry_probe.c" -o "$image/pie"
 "$installed/bin/crabc-cc-dynamic" --dynamic-pie "$root/compat/x86_64/hardened_alias_probe.c" -o "$image/alias"
 "$installed/bin/crabc-cc-dynamic" --dynamic-shared-object "$root/compat/x86_64/hardened_relro_dso.c" -o "$image/usr/lib/hardened-relro-fixture.so"
+"$installed/bin/crabc-cc-dynamic" --dynamic-shared-object -DCRABC_BAD_DSO "$root/compat/x86_64/hardened_relro_dso.c" -o "$image/usr/lib/rejected-source.so"
 "$installed/bin/crabc-cc-dynamic" --dynamic-pie -DCRABC_DSO_PROBE "$root/compat/x86_64/hardened_relro_probe.c" -o "$image/relro"
 "$static/bin/crabc-cc" "$root/compat/x86_64/hardened_alias_probe.c" -o "$image/static-alias"
 "$static/bin/crabc-cc" "$root/compat/x86_64/hardened_relro_probe.c" -o "$image/static-relro"
@@ -39,6 +40,22 @@ for name, kind, flag in (("bad-stack", 0x6474e551, 1), ("bad-wx", 1, 2)):
     struct.pack_into("<I", result, eligible[0] + 4, flags | flag)
     (root / name).write_bytes(result)
     (root / name).chmod(0o755)
+source = (root / "usr/lib/rejected-source.so").read_bytes()
+phoff = struct.unpack_from("<Q", source, 32)[0]
+phnum = struct.unpack_from("<H", source, 56)[0]
+headers = [phoff + index * 56 for index in range(phnum)]
+for name, kind, flag in (("rejected-stack.so", 0x6474e551, 1),
+                         ("rejected-wx.so", 1, 2), ("rejected-relro.so", 0x6474e552, 0)):
+    eligible = [offset for offset in headers if struct.unpack_from("<I", source, offset)[0] == kind
+                and (kind != 1 or struct.unpack_from("<I", source, offset + 4)[0] & 1)]
+    assert len(eligible) == 1
+    result = bytearray(source)
+    if flag:
+        flags = struct.unpack_from("<I", result, eligible[0] + 4)[0]
+        struct.pack_into("<I", result, eligible[0] + 4, flags | flag)
+    else:
+        struct.pack_into("<I", result, eligible[0], 0)
+    (root / "usr/lib" / name).write_bytes(result)
 PYTHON
 timeout 20 chroot "$image" /pie
 timeout 20 chroot "$image" /alias
