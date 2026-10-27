@@ -2,9 +2,10 @@
 set -euo pipefail
 ulimit -c 0
 readonly root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-[ "$#" -eq 2 ] || exit 2
+[ "$#" -eq 3 ] || exit 2
 readonly installed="$1"
 readonly static="$2"
+readonly compatibility="$3"
 case "${TMPDIR:-}" in "$root"/.work/*) ;; *) exit 2;; esac
 readonly work="$(mktemp -d "$TMPDIR/hardened-entry.XXXXXX")"
 readonly image="$work/root"
@@ -15,6 +16,7 @@ cp "$installed/usr/lib/libc.so" "$image/usr/lib/"
 "$installed/bin/crabc-cc-dynamic" --dynamic-pie "$root/compat/x86_64/hardened_alias_probe.c" -o "$image/alias"
 "$installed/bin/crabc-cc-dynamic" --dynamic-shared-object "$root/compat/x86_64/hardened_relro_dso.c" -o "$image/usr/lib/hardened-relro-fixture.so"
 "$installed/bin/crabc-cc-dynamic" --dynamic-shared-object -DCRABC_BAD_DSO "$root/compat/x86_64/hardened_relro_dso.c" -o "$image/usr/lib/rejected-source.so"
+"$installed/bin/crabc-cc-dynamic" --dynamic-pie --application-dso "$image/usr/lib/rejected-source.so" "$root/compat/x86_64/hardened_entry_probe.c" -o "$image/dependency"
 "$installed/bin/crabc-cc-dynamic" --dynamic-pie -DCRABC_DSO_PROBE "$root/compat/x86_64/hardened_relro_probe.c" -o "$image/relro"
 "$static/bin/crabc-cc" "$root/compat/x86_64/hardened_alias_probe.c" -o "$image/static-alias"
 "$static/bin/crabc-cc" "$root/compat/x86_64/hardened_relro_probe.c" -o "$image/static-relro"
@@ -76,4 +78,55 @@ for case in nonpie bad-stack bad-wx; do
     [ "$status" -eq 127 ]
     test ! -e "$image/marker"
 done
+readonly compatible_root="$work/compatibility"
+mkdir -p "$compatible_root/lib" "$compatible_root/usr/lib"
+cp "$compatibility/lib/ld-crabc-x86_64.so.1" "$compatible_root/lib/"
+cp "$compatibility/usr/lib/libc.so" "$compatible_root/usr/lib/"
+cp "$image/usr/lib/rejected-stack.so" "$compatible_root/usr/lib/"
+"$compatibility/bin/crabc-cc-dynamic" --dynamic-pie "$root/compat/x86_64/hardened_entry_probe.c" -o "$compatible_root/pie"
+python3 -B - "$image" "$work" "$compatible_root" <<'PYTHON'
+from pathlib import Path
+import os
+import subprocess
+import sys
+
+root, work, compatible = map(Path, sys.argv[1:])
+def enter(directory=root):
+    os.chroot(directory)
+    os.chdir("/")
+
+for name in ("rejected-source.so", "rejected-stack.so", "rejected-wx.so", "rejected-relro.so"):
+    result = subprocess.run(["/pie"], env={"LD_PRELOAD": "/usr/lib/" + name},
+                            preexec_fn=enter, capture_output=True, timeout=20, check=False)
+    (work / (name + ".stderr")).write_bytes(result.stderr)
+    good = name == "rejected-source.so"
+    assert result.returncode == (0 if good else 127), (name, result.returncode, result.stderr)
+    assert (root / "marker").exists() == good
+    assert (root / "rejected-marker").exists() == good
+    (root / "marker").unlink(missing_ok=True)
+    (root / "rejected-marker").unlink(missing_ok=True)
+for preload, status, marker in (("/usr/lib/missing.so", 0, True), ("usr/lib/rejected-source.so", 127, False)):
+    result = subprocess.run(["/pie"], env={"LD_PRELOAD": preload},
+                            preexec_fn=enter, capture_output=True, timeout=20, check=False)
+    assert result.returncode == status, (preload, result.returncode, result.stderr)
+    assert (root / "marker").exists() == marker
+    assert not (root / "rejected-marker").exists()
+    (root / "marker").unlink(missing_ok=True)
+source = root / "usr/lib/rejected-source.so"
+original = source.read_bytes()
+for candidate in (None, "rejected-stack.so", "rejected-wx.so", "rejected-relro.so"):
+    source.write_bytes(original if candidate is None else (root / "usr/lib" / candidate).read_bytes())
+    result = subprocess.run(["/dependency"], env={}, preexec_fn=enter, capture_output=True, timeout=20, check=False)
+    good = candidate is None
+    assert result.returncode == (0 if good else 127), (candidate, result.returncode, result.stderr)
+    assert (root / "marker").exists() == good
+    assert (root / "rejected-marker").exists() == good
+    (root / "marker").unlink(missing_ok=True)
+    (root / "rejected-marker").unlink(missing_ok=True)
+source.write_bytes(original)
+result = subprocess.run(["/pie"], env={"LD_PRELOAD": "/usr/lib/rejected-stack.so"},
+                        preexec_fn=lambda: enter(compatible), capture_output=True, timeout=20, check=False)
+assert result.returncode == 0, result.stderr
+assert (compatible / "marker").exists() and (compatible / "rejected-marker").exists()
+PYTHON
 printf 'hardened kernel entry: PASS; evidence: %s\n' "$work"

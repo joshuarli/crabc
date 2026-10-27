@@ -766,6 +766,7 @@ unsafe fn load_initial_library(
     requester: Option<usize>,
     name: &[u8],
 ) -> Result<Option<usize>, ()> {
+    if cfg!(crabc_hardened) && name.contains(&b'/') && !name.starts_with(b"/") { return Err(()); }
     let short_name = !name.contains(&b'/');
     if short_name {
         if let Some(index) = objects[..graph.object_count()].iter().position(|object| {
@@ -794,7 +795,9 @@ unsafe fn load_initial_library(
     }
     let object = map_elf_with_status(fd, &status, false, true, ObjectRole::Library).ok();
     syscall1(SYS_CLOSE, fd);
-    let Some(mut object) = object else { return Ok(None); };
+    let Some(mut object) = object else {
+        return if cfg!(crabc_hardened) { Err(()) } else { Ok(None) };
+    };
     let index = match graph.admit_mapped(identity) {
         Ok(ObjectAdmission::New { index }) => index,
         Ok(ObjectAdmission::Existing { .. }) | Err(_) => {

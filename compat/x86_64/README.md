@@ -460,7 +460,7 @@ providers or close pthread lifecycle, family, or public-support evidence.
 
 ## Hardened kernel entry prototype
 
-Inside the pinned native image, `compat/x86_64/run_hardened_entry.sh DYNAMIC STATIC`
+Inside the pinned native image, `compat/x86_64/run_hardened_entry.sh DYNAMIC STATIC COMPATIBILITY`
 tests hardened debug products in a disposable root. A matching PIE must run
 its constructor; a non-PIE, an executable stack, and an RWX load must fail
 before it. A dynamic PIE's executable file-page alias must remain unchanged
@@ -472,6 +472,9 @@ interpreter's RELRO and a runtime-loaded DSO's RELRO. This focused test does not
 hardened product.
 It also rejects runtime-loaded DSOs with executable stacks, RWX loads or no
 required RELRO, while checking constructor absence and the retained graph.
+The same malformed images fail as startup dependencies or preloads; the
+compatibility product admits the executable-stack preload and runs its
+constructor. Missing optional preloads remain optional.
 
 ## Rust RuntimeV1 facades
 
