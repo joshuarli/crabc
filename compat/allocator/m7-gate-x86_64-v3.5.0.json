@@ -246,15 +246,15 @@
       "scope": "Pinned C and native Rust MI_STAT=2 public snapshots compare 8 KiB regular-page extension count, touched bytes, page and page-bin lifetime, normal bytes, allocation bin, and retained requested bytes at 1, 8, 16, 32, and 48 live blocks and after all frees. Every eight blocks fill a page, and the source retains one empty page after the final free."
     },
     "differential:visitation-profiles": {
-      "command": ["python3", "compat/allocator/x86_64_m6_heap_visit_profiles.py", "--offline"],
+      "command": ["python3", "compat/allocator/x86_64_m6_heap_visit_profiles.py"],
       "scope": "Pinned-C/Rust public Heap area/block visitation under release, debug-padding, statistics level one, and statistics level two. The existing owning reader physically replays each retained C/native product. Secure and guarded profile visitation remain required separately."
     },
     "differential:child-main-visitation-profiles": {
-      "command": ["python3", "compat/allocator/x86_64_m6_child_main_heap_visitor.py", "--offline", "--matrix"],
+      "command": ["python3", "compat/allocator/x86_64_m6_child_main_heap_visitor.py", "--matrix"],
       "scope": "Pinned-C/Rust child main-Heap area/block visitation under the four implemented profiles, including callback behavior; the owning reader physically replays all retained C/native products."
     },
     "differential:child-abandoned-visitation-profiles": {
-      "command": ["python3", "compat/allocator/x86_64_m6_child_abandoned_visitor.py", "--offline", "--matrix"],
+      "command": ["python3", "compat/allocator/x86_64_m6_child_abandoned_visitor.py", "--matrix"],
       "scope": "Pinned-C/Rust abandoned child-page area/block visitation under the four implemented profiles, including callback behavior; the owning reader physically replays all retained C/native products."
     },
     "differential:xmalloc-profile": {
