@@ -1365,6 +1365,10 @@ Append one line per merge batch, per parked item, and per contract change.
   The three-product dynamic cohorts at `1d6f0c91c` and `ea4ae3bdd` each
   completed 219 case records and produced non-promoting qualification
   receipts; later source revisions require a fresh cohort.
+  The Rust std/LTO consumer at `f5d235d36` failed when rustc deleted a
+  recorded temporary link object before receipt replay. `72a119a4f` retains
+  those inputs; the pinned compiler regression and kache probe pass. A fresh
+  source-bound consumer run is still required.
   M7 baseline discovery at `55dd89a3a` passed four gates and left six unmet:
   visitation producers rejected an unsupported `--offline` flag and five
   gates were blocked. `aeb87087d` removes the flag; the producers already
