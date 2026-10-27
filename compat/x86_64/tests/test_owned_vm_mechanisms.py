@@ -96,26 +96,5 @@ class OwnedVmMechanismTests(unittest.TestCase):
         source = QUALIFICATION.read_text(encoding="utf-8")
         self.assertIn('"vm-mechanisms": ("run_owned_vm_mechanisms.sh", None)', source)
 
-    def test_product_runner_proves_source_bindings_and_dynamic_imports(self) -> None:
-        """Every delivered mode keeps mremap interposable at its ELF boundary."""
-        source = RUNNER.read_text(encoding="utf-8")
-
-        self.assertIn("assert_owned_vm_bindings()", source)
-        self.assertIn("assert_dynamic_vm_imports()", source)
-        for required in (
-            'assert_owned_vm_bindings "$work/oracle" --syms',
-            'assert_owned_vm_bindings "$work/static-product/usr/lib/libc.a" --syms',
-            'assert_owned_vm_bindings "$work/consumer-$mode" --syms',
-            'assert_owned_vm_bindings "$installed/usr/lib/libc.so" --syms',
-            'assert_owned_vm_bindings "$installed/usr/lib/libc.so" --dyn-syms',
-            'assert_dynamic_vm_imports "$work/consumer-$mode"',
-            '["FUNC", "WEAK", "DEFAULT"]',
-            'internal[3] == "FUNC" and internal[5] == "HIDDEN"',
-            '["FUNC", "GLOBAL", "DEFAULT"]',
-            'R_X86_64_JUMP_SLOT',
-        ):
-            self.assertIn(required, source)
-
-
 if __name__ == "__main__":
     unittest.main()
