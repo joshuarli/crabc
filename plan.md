@@ -1367,8 +1367,10 @@ Append one line per merge batch, per parked item, and per contract change.
   receipts; later source revisions require a fresh cohort.
   The Rust std/LTO consumer at `f5d235d36` failed when rustc deleted a
   recorded temporary link object before receipt replay. `72a119a4f` retains
-  those inputs; the pinned compiler regression and kache probe pass. A fresh
-  source-bound consumer run is still required.
+  those inputs. `83201440c` binds Cargo receipts to the selected product, and
+  `b4a0992cc` verifies mold's local unwind GOT labels against their selected
+  functions. The pinned compiler regression, kache probe and debug Rust std
+  consumer pass at `d03b6dd31`; a fresh release cohort is still required.
   M7 baseline discovery at `55dd89a3a` passed four gates and left six unmet:
   visitation producers rejected an unsupported `--offline` flag and five
   gates were blocked. `aeb87087d` removes the flag; the producers already
