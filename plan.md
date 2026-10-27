@@ -1402,7 +1402,9 @@ Append one line per merge batch, per parked item, and per contract change.
   rejected mold map attribution; `b60c2a552` binds application and archive
   owners through the shared static authority. All 831 replacement functions
   and the entropy GOT proofs pass in static and static-PIE at that revision.
-  The
+  At `542953531`, the installed and extracted static product passes its
+  declared 72-path suite and publishes a static-product receipt; the larger
+  qualification chain remains open. The
   independent math/fenv component passes
   206 selected C ABI entries at `4630b7407`. The text/locale/numeric component
   then exposed two nonspacing Unicode endpoints and wide-format error mapping;
