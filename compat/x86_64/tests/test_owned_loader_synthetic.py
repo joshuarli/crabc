@@ -87,6 +87,26 @@ print('parent observation', flush=True)
             self.assertEqual(observation["returncode"], 0)
             self.assertFalse(observation["timed_out"])
 
+    def test_normal_exit_reaps_an_already_exited_orphan(self) -> None:
+        module = runner()
+        with tempfile.TemporaryDirectory(dir=ROOT / ".work") as directory:
+            work = pathlib.Path(directory)
+            program = """\
+import os
+import time
+child = os.fork()
+if child == 0:
+    os._exit(0)
+while os.waitid(os.P_PID, child, os.WEXITED | os.WNOHANG | os.WNOWAIT) is None:
+    time.sleep(0.001)
+print('completed', flush=True)
+"""
+            result = module.Recorder(work, 2).run(
+                "exited-orphan", [sys.executable, "-c", program], cwd=work
+            )
+            self.assertEqual(result.returncode, 0)
+            self.assertEqual(result.stdout, b"completed\n")
+
     def test_recorder_children_disable_core_dumps(self) -> None:
         module = runner()
         with tempfile.TemporaryDirectory(dir=ROOT / ".work") as directory:
@@ -196,11 +216,11 @@ time.sleep(30)
             with self.subTest(timeout=value), self.assertRaises(module.LoaderSyntheticError):
                 module.checked_timeout(value)
 
-    def test_installed_driver_linker_identity_seals_selected_physical_lld(self) -> None:
+    def test_installed_driver_linker_identity_seals_selected_physical_mold(self) -> None:
         module = runner()
         with tempfile.TemporaryDirectory(dir=ROOT / ".work") as directory:
             root = pathlib.Path(directory)
-            linker = root / "ld.lld"
+            linker = root / "mold"
             linker.write_bytes(b"pinned linker bytes\n")
             linker.chmod(0o755)
             selected_roots = []

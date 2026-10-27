@@ -276,10 +276,17 @@ class PrivateAdmissionDescendantBoundary:
 
     def reject_unexpected_descendants(self) -> None:
         """Fail closed if a nominally completed prefix left a daemon behind."""
-        if not self.adopted_children():
-            return
-        self.reap_adopted_descendants()
-        raise QualificationRunError("private admission left descendant processes after completion")
+        while adopted := self.adopted_children():
+            alive = False
+            for child in adopted:
+                try:
+                    reaped, _ = os.waitpid(child, os.WNOHANG)
+                except ChildProcessError:
+                    continue
+                alive |= reaped == 0
+            if alive:
+                self.reap_adopted_descendants()
+                raise QualificationRunError("private admission left descendant processes after completion")
 
 
 @contextmanager

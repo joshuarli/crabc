@@ -270,7 +270,7 @@ def installed_driver_shared(product: pathlib.Path):
 
 
 def producer_linker_seal(product: pathlib.Path) -> dict[str, str]:
-    """Seal the exact pinned LLD selected by the installed dynamic driver."""
+    """Seal the pinned mold selected by the installed dynamic driver."""
 
     shared = installed_driver_shared(product)
     try:
@@ -281,8 +281,8 @@ def producer_linker_seal(product: pathlib.Path) -> dict[str, str]:
         raise LoaderSyntheticError("installed dynamic driver linker is unavailable") from error
     if not selected.is_absolute() or resolved.is_symlink() or not stat.S_ISREG(metadata.st_mode) or not metadata.st_mode & 0o111:
         raise LoaderSyntheticError("installed dynamic driver linker is not a physical executable")
-    if resolved.name != "ld.lld":
-        raise LoaderSyntheticError("installed dynamic driver selected a non-LLD linker")
+    if resolved.name != "mold":
+        raise LoaderSyntheticError("installed dynamic driver selected a non-mold linker")
     return {"path": str(resolved), "sha256": sha256(resolved)}
 
 
