@@ -1365,7 +1365,9 @@ Append one line per merge batch, per parked item, and per contract change.
   visitation producers rejected an unsupported `--offline` flag and five
   gates were blocked. `aeb87087d` removes the flag; the producers already
   require cached inputs. The corrected visitation gate needs a fresh run.
-  Cleanup removed three integrated test-only worktrees. Automatic review
+  Cleanup removed six integrated test-only worktrees. An attempted ordinary
+  removal of the integrated `r4-addrconfig` worktree failed on permissions;
+  Git removed its registration but left its directory and branch. Automatic review
   rejected removal of selected build and Cargo caches under `combined-profile`
   and `abi-owner-proof-fixed` because “rm -f style commands are not permitted”;
   those paths remain untouched. Their retained receipt inputs remain in place.
