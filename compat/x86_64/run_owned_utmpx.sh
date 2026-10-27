@@ -442,7 +442,7 @@ retain_executable_symbol_bytes() {
 
 assert_executable_symbols() {
     local label="$1" executable="$2" symbols="$3"
-    record_command "executable-symbols-$label" nm -g --defined-only "$executable" >"$symbols"
+    record_command "executable-symbols-$label" nm --defined-only "$executable" >"$symbols"
     retain_executable_symbol_bytes "$label" "$executable"
     record_stdin_command "executable-symbol-judge-$label" python3 -B - "$symbols" <<'PY'
 from collections import Counter
@@ -457,7 +457,7 @@ expected = {
 seen = Counter()
 for line in Path(sys.argv[1]).read_text().splitlines():
     fields = line.split()
-    if len(fields) == 3 and fields[2] in expected and fields[1] in {'T', 'W'}:
+    if len(fields) == 3 and fields[2] in expected and fields[1] == 't':
         seen[fields[2]] += 1
 if seen != Counter({name: 1 for name in expected}):
     raise SystemExit(f'executable provider multiplicity mismatch: {seen!r}')

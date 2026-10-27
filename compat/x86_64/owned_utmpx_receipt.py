@@ -149,8 +149,8 @@ INLINE_STDIN = {
     "header-project-undefined-judge": ("17044b1c9d9ba8db6576c36250f3bf0dd2bde124ebcd3116bc5ad41262fba824", 597),
     "archive-symbol-judge": ("adabc529f7e06a1e10454d4dcec9bbdbc9e0222b4872833f76470710613b7674", 1272),
     "shared-symbol-judge": ("4f9061172203c41820cb71ca78d4dfe3868de47f182090f6908a1a90acccea11", 1395),
-    "executable-symbol-judge-static-static": ("0aa7d54377a0342b0a3a08d2d7b921731c7d7d20f757022fda2a3c4ba8d25105", 632),
-    "executable-symbol-judge-static-static-pie": ("0aa7d54377a0342b0a3a08d2d7b921731c7d7d20f757022fda2a3c4ba8d25105", 632),
+    "executable-symbol-judge-static-static": ("4249778a489a5230d34efc22933a02afbdf71c1394162d93b8912679fc17ba7f", 625),
+    "executable-symbol-judge-static-static-pie": ("4249778a489a5230d34efc22933a02afbdf71c1394162d93b8912679fc17ba7f", 625),
     "sealed-link-static": ("b08d052e5837a11b54f3347c61a58d263750a90c84276c206ef55e2d94a08d16", 574),
     "sealed-link-static-pie": ("b08d052e5837a11b54f3347c61a58d263750a90c84276c206ef55e2d94a08d16", 574),
     "sealed-link-pie": ("b08d052e5837a11b54f3347c61a58d263750a90c84276c206ef55e2d94a08d16", 574),
@@ -677,8 +677,9 @@ def elf_provider_rows(artifact: Path, logical_path: str, tables: frozenset[str],
         matches = [row for row in rows if row[-1] == name]
         require(len(matches) == 1, label + " ELF provider roster differs: " + name)
         row = matches[0]
-        binding = "T" if name in STRONG else "W"
-        require(row[5] == "FUNC" and row[6] == ("GLOBAL" if binding == "T" else "WEAK")
+        binding = ("T" if name in STRONG else "W") if archive else "t"
+        expected_binding = ("GLOBAL" if binding == "T" else "WEAK") if archive else "LOCAL"
+        require(row[5] == "FUNC" and row[6] == expected_binding
                 and row[7] == "DEFAULT" and row[8] != "UND", label + " ELF provider differs: " + name)
         member = row[0]
         if archive:
@@ -753,7 +754,7 @@ def validate_symbol_bytes(workspace: Path, products: Mapping[str, Path] | None =
     executables: dict[str, Any] = {}
     for label, name in STATIC_EXECUTABLE_SYMBOLS:
         symbols = _nm_symbols(regular(raw / name, label + " executable symbols"), label + " executable symbols")
-        require(set(symbols) == {*STRONG, *WEAK} and all(binding in {"T", "W"} for _, binding, _ in symbols.values()),
+        require(set(symbols) == {*STRONG, *WEAK} and all(binding == "t" for _, binding, _ in symbols.values()),
                 label + " executable provider roster differs")
         for alias, target in ALIASES:
             require(symbols[alias][0] == symbols[target][0], label + " executable alias address differs: " + alias)
@@ -853,7 +854,7 @@ def command_plan() -> dict[str, tuple[str, list[str]]]:
         plan["sealed-link-" + linkage] = (SOURCE_MOUNT, ["python3", "-B", "-", SOURCE_MOUNT, static, raw + "/workload.o",
                                                             executable, receipt, linkage])
         role_label = "static-" + linkage
-        plan["executable-symbols-" + role_label] = (SOURCE_MOUNT, ["nm", "-g", "--defined-only", executable])
+        plan["executable-symbols-" + role_label] = (SOURCE_MOUNT, ["nm", "--defined-only", executable])
         plan["executable-symbol-bytes-" + role_label] = (SOURCE_MOUNT, ["readelf", "--symbols", "--wide", executable])
         plan["executable-symbol-judge-" + role_label] = (SOURCE_MOUNT, ["python3", "-B", "-", raw + "/" + linkage + "-symbols.txt"])
     for linkage in ("pie", "non-pie"):

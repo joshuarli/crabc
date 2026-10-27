@@ -79,7 +79,7 @@ class OwnedUtmpxReceiptTests(unittest.TestCase):
         ).encode())
         for _, name in receipt.STATIC_EXECUTABLE_SYMBOLS:
             self.write(raw / name, "".join(
-                f"{addresses[symbol]} {'T' if symbol in receipt.STRONG else 'W'} {symbol}\n"
+                f"{addresses[symbol]} t {symbol}\n"
                 for symbol in (*receipt.STRONG, *receipt.WEAK)
             ).encode())
 
@@ -409,6 +409,19 @@ class OwnedUtmpxReceiptTests(unittest.TestCase):
         raw.write_text(raw.read_text(encoding="utf-8").replace("0000000000000001 W endutent", "00000000000000ff W endutent"), encoding="utf-8")
         with self.assertRaisesRegex(receipt.ReceiptError, "alias address"):
             receipt.validate_symbol_bytes(self.workspace)
+
+    def test_static_executable_rejects_changed_binding_or_alias_address(self) -> None:
+        for change in ("binding", "address"):
+            with self.subTest(change=change):
+                self.symbol_fixture()
+                raw = self.workspace / ".work/utmpx-receipt/owned-utmpx-receipt/static-symbols.txt"
+                text = raw.read_text(encoding="utf-8")
+                text = text.replace("0000000000000001 t endutent",
+                                    "0000000000000001 T endutent" if change == "binding"
+                                    else "00000000000000ff t endutent")
+                raw.write_text(text, encoding="utf-8")
+                with self.assertRaises(receipt.ReceiptError):
+                    receipt.validate_symbol_bytes(self.workspace)
 
     def test_oracle_executable_bytes_are_bound_to_the_runtime_projection(self) -> None:
         oracle = self.runtime_fixture()
