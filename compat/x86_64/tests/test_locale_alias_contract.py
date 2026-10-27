@@ -296,7 +296,7 @@ Symbol table '.symtab' contains 2 entries:
         with self.assertRaisesRegex(symbols.LocaleAliasError, "requires exactly one defined wcsftime_l"):
             symbols._validate_executable(without_override, "candidate executable")
 
-    def test_shared_time_pair_keeps_oracle_and_candidate_localization_distinct(self) -> None:
+    def test_shared_time_pair_requires_local_hidden_implementations(self) -> None:
         public = {
             "file": "",
             "table": ".symtab",
@@ -309,13 +309,13 @@ Symbol table '.symtab' contains 2 entries:
             "section": "9",
             "name": "gmtime_r",
         }
-        oracle_internal = {**public, "index": "2", "binding": "LOCAL", "name": "__gmtime_r"}
-        candidate_internal = {**oracle_internal, "visibility": "HIDDEN"}
+        oracle_internal = {**public, "index": "2", "binding": "LOCAL", "visibility": "HIDDEN", "name": "__gmtime_r"}
+        candidate_internal = dict(oracle_internal)
         symbols.validate_shared_hidden_pair([public, oracle_internal], "gmtime_r", "__gmtime_r", "oracle")
         symbols.validate_shared_hidden_pair([public, candidate_internal], "gmtime_r", "__gmtime_r", "candidate")
         with self.assertRaises(symbols.LocaleAliasError):
             symbols.validate_shared_hidden_pair(
-                [public, oracle_internal], "gmtime_r", "__gmtime_r", "candidate"
+                [public, {**oracle_internal, "visibility": "DEFAULT"}], "gmtime_r", "__gmtime_r", "oracle"
             )
 
 

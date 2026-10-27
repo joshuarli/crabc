@@ -175,9 +175,8 @@ def validate_shared_hidden_pair(
     public_record = _one(records, public, f"{role} shared symtab")
     internal_record = _one(records, internal, f"{role} shared symtab")
     _require_metadata(public_record, ("FUNC", "WEAK", "DEFAULT"), f"{role} shared public alias")
-    internal_visibility = "DEFAULT" if role == "oracle" else "HIDDEN"
     _require_metadata(
-        internal_record, ("FUNC", "LOCAL", internal_visibility), f"{role} shared internal alias"
+        internal_record, ("FUNC", "LOCAL", "HIDDEN"), f"{role} shared internal alias"
     )
     _same_definition(
         public_record,

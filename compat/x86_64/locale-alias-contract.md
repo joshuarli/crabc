@@ -22,9 +22,8 @@ call back through a public name:
   hidden strong time spellings. The static archive retains the hidden internal
   symbol; `libc.so` exposes only the public weak alias in `.dynsym`. Its full
   `.symtab` retains one local definition at the same section, value, and type
-  as that public alias. Musl records those local definitions as `LOCAL DEFAULT`;
-  the candidate records them as `LOCAL HIDDEN`, which is a permitted linker
-  localization difference and not a dynamic export.
+  as that public alias. Both shared products record those definitions as
+  `LOCAL HIDDEN` and omit them from dynamic exports.
 - `owned_calendar.rs` and `owned_strftime.rs` call the Rust locale-object body
   directly, so an executable replacement of `nl_langinfo[_l]` cannot change
   libc's C-locale calendar/formatting path.
