@@ -76,6 +76,8 @@ fn library_search_secure_auxv_disables_environment_and_untrusted_origin() {
         stack[13] = 1;
         unsafe { initialize(stack.as_ptr() as usize); }
         if unsafe { !SECURE || !ENVIRONMENT_PATH.is_null() } { return false; }
+        unsafe { command_path(b"/untrusted\0".as_ptr()); command_preload(b"/untrusted.so\0".as_ptr()); }
+        if unsafe { !ENVIRONMENT_PATH.is_null() || !ENVIRONMENT_PRELOAD.is_null() } { return false; }
         stack[13] = 0;
         stack[7] = 0;
         unsafe { initialize(stack.as_ptr() as usize); }

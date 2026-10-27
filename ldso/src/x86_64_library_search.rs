@@ -116,8 +116,8 @@ pub(super) unsafe fn installation_prefix() -> &'static [u8] {
     if length >= PATH_CAPACITY { return b""; }
     &name[..length]
 }
-pub(super) unsafe fn command_path(path: *const u8) { unsafe { ENVIRONMENT_PATH = path; } }
-pub(super) unsafe fn command_preload(path: *const u8) { unsafe { ENVIRONMENT_PRELOAD = path; } }
+pub(super) unsafe fn command_path(path: *const u8) { unsafe { if !SECURE { ENVIRONMENT_PATH = path; } } }
+pub(super) unsafe fn command_preload(path: *const u8) { unsafe { if !SECURE { ENVIRONMENT_PRELOAD = path; } } }
 
 /// A missing or malformed optional preload is ignored by musl load_preload;
 /// successful admissions still participate in the complete initial graph.
