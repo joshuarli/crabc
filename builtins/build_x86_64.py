@@ -275,6 +275,13 @@ def require_exact_defined_symbols(defined: set[str]) -> None:
         raise BuildError(f"x86 helper archive definition roster differs: missing={missing!r} unexpected={unexpected!r}")
 
 
+def remove_empty_unwind_terminator(object_path: Path, stage: Path, objcopy: str) -> None:
+    section = stage / "unwind-section.bin"
+    run([objcopy, f"--dump-section=.eh_frame={section}", str(object_path)])
+    if section.exists() and section.read_bytes() == b"\0\0\0\0":
+        run([objcopy, "--remove-section=.eh_frame", str(object_path)])
+
+
 def audit_object(llvm_readelf: str, object_path: Path) -> None:
     header = run([llvm_readelf, "--file-header", str(object_path)])
     for line in (
@@ -335,6 +342,7 @@ def build(output: Path, *, profile: str = "release", runtime_core: Path | None =
                 "-o", str(closed_member),
             ]
             run(source_core_link)
+            remove_empty_unwind_terminator(closed_member, stage, tool("llvm-objcopy"))
             installed_source_core_link_command = list(source_core_link)
             installed_source_core_link_command[installed_source_core_link_command.index(str(member))] = f"$CRABC_BUILTINS_STAGE/{MEMBER_NAME}"
             installed_source_core_link_command[installed_source_core_link_command.index("-o") + 1] = "$CRABC_BUILTINS_STAGE/crabc-builtins-closed.o"
