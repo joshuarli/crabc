@@ -644,12 +644,22 @@ def _validate_static_product(root: Path) -> tuple[Path, dict[str, str]]:
     if driver.get("modes") != modes:
         _fail("static product sealed driver modes drifted")
     files = _payload_files(installed.get("files"), "static product manifest")
+    receipt = "share/crabc/crt.provenance.json"
+    if receipt not in files:
+        _fail("static product omits CRT provenance")
     missing = sorted(set(STATIC_REQUIRED) - set(files))
     if missing:
         _fail(f"static product manifest omits required runtime payload: {missing[0]}")
     _physical_executable(root / "bin/crabc-cc", "static product sealed driver")
     _physical_directory(root / "usr/include", "static product headers")
     files = _validate_product_tree(root, "static", files, {}, combined)
+    if combined is not None:
+        receipt = combined["products"]["static"]["placements"][receipt]
+    import crabc_cc_static
+    try:
+        crabc_cc_static.validate_crt_provenance(root, receipt, hardening_profile)
+    except crabc_cc_static.DriverError as error:
+        raise ProductEvidenceError(str(error)) from error
     _validate_link_input_modes(root, STATIC_LINK_INPUT_MODES, "static link input")
     return manifest_path, files
 

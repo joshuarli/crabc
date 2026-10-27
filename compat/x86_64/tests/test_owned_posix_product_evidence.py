@@ -399,6 +399,10 @@ class OwnedPosixProductEvidenceTests(unittest.TestCase):
         ):
             self.put(str(product.relative_to(self.root) / relative), relative.encode())
         os.chmod(product / "bin/crabc-cc", 0o755)
+        self.write_json(product / "share/crabc/crt.provenance.json", {
+            "hardening_profile": "compatibility",
+            "objects": {"rcrt1.o": {"sha256": digest(product / "usr/lib/rcrt1.o")}},
+        })
         manifest = {
             "schema": 1,
             "format": "crabc-x86-64-owned-static-sysroot-v1",
@@ -428,6 +432,24 @@ class OwnedPosixProductEvidenceTests(unittest.TestCase):
         }
         self.write_json(product / "share/crabc/manifest.json", manifest)
         return product
+
+    def test_static_product_reader_rejects_a_mismatched_crt_profile(self) -> None:
+        path = self.static / "share/crabc/crt.provenance.json"
+        manifest_path = self.static / "share/crabc/manifest.json"
+        manifest = json.loads(manifest_path.read_text())
+        original = json.loads(path.read_text())
+        for field in ("profile", "object"):
+            with self.subTest(field=field):
+                receipt = json.loads(json.dumps(original))
+                if field == "profile":
+                    receipt["hardening_profile"] = "hardened"
+                else:
+                    receipt["objects"]["rcrt1.o"]["sha256"] = "b" * 64
+                self.write_json(path, receipt)
+                manifest["installed"]["files"]["share/crabc/crt.provenance.json"] = digest(path)
+                self.write_json(manifest_path, manifest)
+                with self.assertRaises(evidence.ProductEvidenceError):
+                    evidence._validate_static_product(self.static)
 
     def install_dynamic(self) -> Path:
         product = self.root / "dynamic-product"
