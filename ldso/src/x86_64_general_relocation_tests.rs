@@ -32,6 +32,21 @@ fn binding_slots_require_relro_in_hardened_profile() {
     }
 }
 
+#[test]
+fn symbol_address_slots_require_relro_in_hardened_profile() {
+    for kind in [R_64, R_X86_64_PC32] {
+        let mut image = Image::new();
+        image.symbol(1, 1, 2, 0, 1, IMAGE_DATA as u64, 8);
+        image.rela(IMAGE_DATA as u64, kind, 1, 0);
+        let mut object = image.object(false);
+        let scope = SymbolScope { indices: &[0], module_count: 0, static_tls_count: 0, initial: true };
+        assert_eq!(unsafe { preflight_object(&scope, &[object], 0) }.is_some(), !cfg!(crabc_hardened));
+        object.relro_virtual_address = IMAGE_DATA as u64;
+        object.relro_byte_len = IMAGE_DATA_BYTES as u64;
+        assert!(unsafe { preflight_object(&scope, &[object], 0) }.is_some());
+    }
+}
+
 // The structural relocation tests mutate words and records after borrowing
 // `Object`s. Keep those convenient views, but point every view into one
 // declared PT_LOAD rather than putting dynsym, strings and RELA records in
