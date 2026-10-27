@@ -72,6 +72,24 @@ original = (root / "pie").read_bytes()
 phoff = struct.unpack_from("<Q", original, 32)[0]
 phnum = struct.unpack_from("<H", original, 56)[0]
 headers = [phoff + index * 56 for index in range(phnum)]
+notes = []
+for offset in headers:
+    if struct.unpack_from("<I", original, offset)[0] != 4: continue
+    start, size = struct.unpack_from("<Q", original, offset + 8)[0], struct.unpack_from("<Q", original, offset + 32)[0]
+    end = start + size
+    while start + 12 <= end:
+        namesz, descsz, kind = struct.unpack_from("<III", original, start)
+        name = start + 12
+        desc = name + ((namesz + 3) & ~3)
+        if original[name:name + namesz] == b"CRABC\0" and kind == 0x43525401:
+            assert descsz == 4 and desc + descsz <= end
+            notes.append(start)
+        start = desc + ((descsz + 3) & ~3)
+assert len(notes) == 1
+malformed = bytearray(original)
+struct.pack_into("<I", malformed, notes[0] + 4, 3)
+(root / "bad-owned-note").write_bytes(malformed)
+(root / "bad-owned-note").chmod(0o755)
 for name, kind, flag in (("bad-stack", 0x6474e551, 1), ("bad-wx", 1, 2)):
     eligible = [offset for offset in headers if struct.unpack_from("<I", original, offset)[0] == kind
                 and (kind != 1 or struct.unpack_from("<I", original, offset + 4)[0] & 1)]
@@ -256,7 +274,7 @@ assert image.read_bytes() == before
 PYTHON
 test -f "$image/marker"
 rm "$image/marker"
-for case in nonpie bad-stack bad-wx; do
+for case in nonpie bad-stack bad-wx bad-owned-note; do
     status=0
     timeout 20 chroot "$image" "/$case" >"$work/$case.stdout" 2>"$work/$case.stderr" || status=$?
     [ "$status" -eq 127 ]
