@@ -1290,6 +1290,13 @@ static void section_api_modes(void) {
         line(key, "%d,%zu,%d,%d", p != NULL, usable,
              p != NULL && (((uintptr_t)p + offset) & (alignments[a] - 1)) == 0,
              p != NULL && is_zero(p, usable));
+        if (valid_domain) {
+          char basis[128];
+          snprintf(basis, sizeof basis, "%s.basis", key);
+          const size_t request = sizes[s] < 16 ? 16 : sizes[s];
+          line(basis, "requested:%zu,alignment:%zu,offset:%zu,upper:%zu", sizes[s], alignments[a], offset,
+               allocation_capacity_upper(request + alignments[a] - 1));
+        }
         if (p == NULL) { continue; }
         fill(p, usable, 0x51);
         errno = 29;
@@ -1308,6 +1315,13 @@ static void section_api_modes(void) {
         line(key, "%d,%zu,%d,%d", q != NULL, grown,
              q != NULL && has_fill(q, usable, 0x51),
              q != NULL && grown >= usable && is_zero((char*)q + usable, grown - usable));
+        if (valid_domain) {
+          char basis[128];
+          snprintf(basis, sizeof basis, "%s.basis", key);
+          line(basis, "requested:%zu,upper:%zu,aligned:%d", usable + 17,
+               allocation_capacity_upper(usable + 17 + alignments[a] - 1),
+               q != NULL && (((uintptr_t)q + offset) & (alignments[a] - 1)) == 0);
+        }
         if (q == NULL) { mi_free(p); continue; }
         const size_t half = (alignments[a] <= sizeof(void*) && offset == 0)
                             ? grown / 2 : grown - grown / 2;
