@@ -1375,7 +1375,12 @@ Append one line per merge batch, per parked item, and per contract change.
   `58697417a`, the debug dependency and valid-unwind consumers also pass.
   Its selected release-mode Rust std consumer matches the pinned musl
   control; the development receipt remains unmet for the unselected sections
-  and missing qualifying cohort. A fresh release cohort is still required.
+  and missing qualifying cohort. The release LTO and unwind consumers then
+  exposed mold trace-prefix parsing and kache build-script launcher drift;
+  `e13e2d8dd` and `65f199998` address those causes. The 83 focused reader
+  tests and five retained host build-script receipts pass; fresh product-bound
+  release LTO and unwind consumers remain to be run. A qualifying release
+  cohort is still required.
   M7 baseline discovery at `55dd89a3a` passed four gates and left six unmet:
   visitation producers rejected an unsupported `--offline` flag and five
   gates were blocked. `aeb87087d` removes the flag; the producers already
