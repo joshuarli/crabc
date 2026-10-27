@@ -135,8 +135,6 @@ TZIF_MUSL_DEFECT_STDOUT = (
     b"5 offset=3600 timezone=-3600 dst=0 name=TWO\n"
     b"6 offset=3600 timezone=0 dst=0 name=ONE\n"
 )
-# These fixed delimiter boundaries are independent of the pinned-musl
-# guard-page fault on malformed input.
 STRPTIME_DELIMITERS_STDOUT = (
     b"0 end=3 isdst=0\n1 end=3 isdst=1\n2 end=7 isdst=-1\n"
     b"3 end=7 isdst=-1\n4 end=7 isdst=-1\n5 end=7 isdst=-1\n"
@@ -378,8 +376,8 @@ def action_specs() -> tuple[tuple[str, str, tuple[str, ...], str], ...]:
         ("tzif-check", "tzif-specification", ("/fixture/tzif-private.tzif", "check"), "tzif-specification"),
         ("tzif-observe", "tzif-specification", ("/fixture/tzif-private.tzif", "observe"), "musl-defect"),
         ("strptime", "strptime", (), "differential"),
-        ("strptime-zone-guard", "strptime", ("zone-guard",), "musl-fault-correction"),
-        ("strptime-zone-delimiters", "strptime", ("zone-delimiters",), "musl-delimiter-correction"),
+        ("strptime-zone-guard", "strptime", ("zone-guard",), "differential"),
+        ("strptime-zone-delimiters", "strptime", ("zone-delimiters",), "differential"),
         ("getdate", "getdate", (), "differential"),
         ("adjustment-query", "legacy-clock-control", ("adjustment-query",), "differential"),
         ("adjustment-guards", "legacy-clock-control", ("adjustment-guards",), "differential-capability-absent"),
@@ -800,8 +798,7 @@ def validate_report(root: Path, report_path: Path, *, require_static: bool = Tru
     for action, _role, _args, classification in action_specs():
         if classification not in {"candidate-only", "tzif-specification"}:
             oracle = raw[f"oracle-{action}"]
-            expected_status = b"139\n" if classification == "musl-fault-correction" else \
-                b"1\n" if classification == "fixture-required" else b"0\n"
+            expected_status = b"1\n" if classification == "fixture-required" else b"0\n"
             require(oracle["status"] == expected_status,
                     f"pinned-musl {action} outcome differs")
         if classification == "musl-defect":
@@ -815,6 +812,12 @@ def validate_report(root: Path, report_path: Path, *, require_static: bool = Tru
                 oracle = raw[f"oracle-{action}"]
                 require(candidate["stdout"] == oracle["stdout"] and candidate["stderr"] == oracle["stderr"],
                         f"{cell}/{action} transcript differs from pinned musl")
+                if action == "strptime-zone-guard":
+                    require(candidate["stdout"] == b"" and candidate["stderr"] == b"",
+                            f"{cell}/{action} guard transcript differs")
+                if action == "strptime-zone-delimiters":
+                    require(candidate["stdout"] == STRPTIME_DELIMITERS_STDOUT and candidate["stderr"] == b"",
+                            f"{cell}/{action} delimiter transcript differs")
                 if action == "calendar-real-zones":
                     require(candidate["stdout"] == REAL_ZONE_SUCCESS_STDOUT and candidate["stderr"] == b"",
                             f"{cell}/{action} did not prove known named-zone transitions")
@@ -825,11 +828,6 @@ def validate_report(root: Path, report_path: Path, *, require_static: bool = Tru
             elif classification == "tzif-specification":
                 classify_tzif_streams(candidate["stdout"], raw["oracle-tzif-observe"]["stdout"])
                 require(candidate["stderr"] == b"", f"{cell}/{action} wrote stderr")
-            elif classification == "musl-fault-correction":
-                require(candidate["stdout"] == b"" and candidate["stderr"] == b"", f"{cell}/{action} correction transcript differs")
-            elif classification == "musl-delimiter-correction":
-                require(candidate["stdout"] == STRPTIME_DELIMITERS_STDOUT and candidate["stderr"] == b"",
-                        f"{cell}/{action} delimiter correction transcript differs")
             elif classification == "fixture-required":
                 oracle = raw[f"oracle-{action}"]
                 require(candidate["status"] == b"1\n" and candidate["stdout"] == b"" and

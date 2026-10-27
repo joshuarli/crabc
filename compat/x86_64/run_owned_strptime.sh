@@ -54,15 +54,12 @@ compare() {
 }
 /usr/local/bin/crabc-x86_64-musl-gcc -static -fno-pie -no-pie "$work/workload.o" -o "$work/root/oracle"
 observe oracle 0 /oracle
-printf '0 end=3 isdst=0\n1 end=3 isdst=1\n2 end=8 isdst=-1\n3 end=8 isdst=-1\n4 end=8 isdst=-1\n5 end=8 isdst=-1\n' >"$work/oracle-zone-delimiters.expected"
 printf '0 end=3 isdst=0\n1 end=3 isdst=1\n2 end=7 isdst=-1\n3 end=7 isdst=-1\n4 end=7 isdst=-1\n5 end=7 isdst=-1\n' >"$work/candidate-zone-delimiters.expected"
 observe oracle-zone-delimiters 0 /oracle zone-delimiters
-cmp "$work/oracle-zone-delimiters.expected" "$work/oracle-zone-delimiters.stdout"
+cmp "$work/candidate-zone-delimiters.expected" "$work/oracle-zone-delimiters.stdout"
 [ ! -s "$work/oracle-zone-delimiters.stderr" ]
-# This is a retained oracle defect, never a passing differential cell. Its
-# signed-character loop admits NUL after unknown names when both TZ names are
-# nonempty. Candidate acceptance is the explicit bounded-read assertion.
-observe oracle-zone-guard 139 /oracle zone-guard
+observe oracle-zone-guard 0 /oracle zone-guard
+[ ! -s "$work/oracle-zone-guard.stdout" ] && [ ! -s "$work/oracle-zone-guard.stderr" ]
 observe oracle-tzif-last 0 /oracle tzif-last observe
 # The pinned oracle treats an empty TZif footer as an empty rule; the owned
 # runtime keeps the final transition type in force and reuses it after TZ changes.

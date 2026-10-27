@@ -262,8 +262,10 @@ class OwnedCalendarComponentReceiptTests(unittest.TestCase):
                 role, kind = actions[action]
                 if kind == "musl-defect":
                     stdout = module.TZIF_MUSL_DEFECT_STDOUT
-                elif kind == "musl-fault-correction":
-                    status = 139
+                elif action == "strptime-zone-guard":
+                    stdout = b""
+                elif action == "strptime-zone-delimiters":
+                    stdout = module.STRPTIME_DELIMITERS_STDOUT
                 elif kind == "fixture-required":
                     status = 1
                     stderr = module.REAL_ZONE_MISSING_LORD_HOWE_STDERR
@@ -278,9 +280,9 @@ class OwnedCalendarComponentReceiptTests(unittest.TestCase):
                 _role, kind = actions[action]
                 if kind == "tzif-specification":
                     stdout = module.TZIF_SPECIFICATION_STDOUT
-                elif kind == "musl-fault-correction":
+                elif action == "strptime-zone-guard":
                     stdout = b""
-                elif kind == "musl-delimiter-correction":
+                elif action == "strptime-zone-delimiters":
                     stdout = module.STRPTIME_DELIMITERS_STDOUT
                 elif kind == "fixture-required":
                     status = 1
@@ -577,6 +579,26 @@ class OwnedCalendarComponentReceiptTests(unittest.TestCase):
         self.rewrite_report(record)
         with self.assertRaisesRegex(self.module.CalendarReceiptError, "did not prove known named-zone transitions"):
             self.validate()
+
+    def test_zone_guard_and_delimiters_reject_shared_incorrect_outputs(self) -> None:
+        for action in ("strptime-zone-guard", "strptime-zone-delimiters"):
+            with self.subTest(action=action):
+                record = self.report_value()
+                originals = []
+                for label, command in record["commands"].items():
+                    if label == "oracle-" + action or (label.startswith("candidate-") and label.endswith("-" + action)):
+                        stdout = command["stdout"]
+                        path = self.root / stdout["path"]
+                        originals.append((stdout, path.read_bytes()))
+                        path.write_bytes(b"incorrect\n")
+                        self.rewrite_identity(stdout)
+                self.rewrite_report(record)
+                with self.assertRaisesRegex(self.module.CalendarReceiptError, action + ".* transcript differs"):
+                    self.validate()
+                for identity, original in originals:
+                    (self.root / identity["path"]).write_bytes(original)
+                    self.rewrite_identity(identity)
+                self.rewrite_report(record)
 
     def test_rehashed_capability_proof_cannot_admit_sys_time(self) -> None:
         record = self.report_value()
