@@ -13,6 +13,8 @@ mkdir -p "$image/lib" "$image/usr/lib" "$image/plugins"
 cp "$installed/lib/ld-crabc-x86_64-hardened.so.1" "$image/lib/"
 cp "$installed/usr/lib/libc.so" "$image/usr/lib/"
 "$installed/bin/crabc-cc-dynamic" --dynamic-pie "$root/compat/x86_64/hardened_entry_probe.c" -o "$image/pie"
+"$installed/bin/crabc-cc-dynamic" --dynamic-pie "$root/compat/x86_64/hardened_secure_probe.c" -o "$image/secure"
+chmod 4755 "$image/secure"
 "$installed/bin/crabc-cc-dynamic" --dynamic-pie "$root/compat/x86_64/hardened_alias_probe.c" -o "$image/alias"
 "$installed/bin/crabc-cc-dynamic" --dynamic-shared-object "$root/compat/x86_64/hardened_relro_dso.c" -o "$image/usr/lib/hardened-relro-fixture.so"
 "$installed/bin/crabc-cc-dynamic" --dynamic-shared-object -DCRABC_BAD_DSO "$root/compat/x86_64/hardened_relro_dso.c" -o "$image/usr/lib/rejected-source.so"
@@ -368,6 +370,24 @@ pathname_dependencies(compatible)
 def enter(directory=root):
     os.chroot(directory)
     os.chdir("/")
+
+def enter_unprivileged():
+    enter()
+    os.setgroups([])
+    os.setgid(65534)
+    os.setuid(65534)
+
+result = subprocess.run(["/secure"], env={"LD_PRELOAD": "/usr/lib/rejected-source.so"},
+                        preexec_fn=enter_unprivileged, capture_output=True, timeout=20, check=False)
+assert result.returncode == 0, (result.returncode, result.stderr)
+assert not (root / "rejected-marker").exists()
+secure_search = root / "secure-search"
+shutil.copyfile(root / "search-env", secure_search)
+secure_search.chmod(0o4755)
+result = subprocess.run(["/secure-search"], env={"LD_LIBRARY_PATH": "/plugins"},
+                        preexec_fn=enter_unprivileged, capture_output=True, timeout=20, check=False)
+assert result.returncode == 127, (result.returncode, result.stderr)
+assert not (root / "marker").exists()
 
 for name, original, foreign, interpreter in (
     ("cross-hardened", root, compatible, "ld-crabc-x86_64-hardened.so.1"),
