@@ -1340,9 +1340,9 @@ Append one line per merge batch, per parked item, and per contract change.
   lacked native-shadow receipts; some differential fixtures had an empty
   offline Cargo registry, and native builds falsely reported adopted zombie
   children as live. The process cleanup repair preserves live-child failure;
-  its pinned reader suite and focused pointer-dispatch and remote-publication
-  gates passed at `5c909a968` with the offline registry populated. These are
-  not milestone promotion claims.
+  its pinned reader suite and focused pointer-dispatch, remote-publication,
+  and generic-exit gates passed at `5c909a968` with the offline registry
+  populated. These are not milestone promotion claims.
   Integrated mold-aware ABI readers, archive and executable alias placement,
   trace handling, and static function provenance, including unrelaxed TLS GOT
   loads. The complete utmpx collector passed at `1d6f0c91c`; its receipt and
@@ -1361,6 +1361,10 @@ Append one line per merge batch, per parked item, and per contract change.
   The independent dynamic Lua consumer initially rejected the active linked
   checkout before running; `26d528238` fixes its Git metadata binding. A
   source-frozen cohort at the repaired revision is needed to rerun Lua.
+  M7 baseline discovery at `55dd89a3a` passed four gates and left six unmet:
+  visitation producers rejected an unsupported `--offline` flag and five
+  gates were blocked. `aeb87087d` removes the flag; the producers already
+  require cached inputs. The corrected visitation gate needs a fresh run.
 
 ## For the owner afterwards
 
