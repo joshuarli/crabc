@@ -8,6 +8,8 @@
 #include <dlfcn.h>
 #include <errno.h>
 #include <link.h>
+#include <pthread.h>
+#include <stdatomic.h>
 #include <string.h>
 #include <sys/prctl.h>
 #include <sys/syscall.h>
@@ -69,6 +71,18 @@ struct syscall_filter_program {
     struct syscall_filter_instruction *instructions;
 };
 
+static _Thread_local int retained_tls = 19;
+static atomic_int worker_phase;
+
+static void *observe_retained_tls(void *unused)
+{
+    (void)unused;
+    retained_tls = 37;
+    atomic_store_explicit(&worker_phase, 1, memory_order_release);
+    while (atomic_load_explicit(&worker_phase, memory_order_acquire) == 1) { }
+    return (void *)(uintptr_t)(retained_tls == 37);
+}
+
 static int failed_syscall_preserves_graph(int number, int (*initialized)(void), unsigned long before,
                                           const struct image_view *image)
 {
@@ -103,6 +117,11 @@ static int failed_tls_preparation_preserves_graph(int (*initialized)(void), unsi
 {
     pid_t child = fork();
     if (child == 0) {
+        pthread_t worker;
+        retained_tls = 31;
+        atomic_store_explicit(&worker_phase, 0, memory_order_relaxed);
+        if (pthread_create(&worker, 0, observe_retained_tls, 0) != 0) _exit(5);
+        while (atomic_load_explicit(&worker_phase, memory_order_acquire) != 1) { }
         struct syscall_filter_instruction instructions[] = {
             {0x20, 0, 0, 0},
             {0x15, 0, 3, SYS_mmap},
@@ -121,6 +140,10 @@ static int failed_tls_preparation_preserves_graph(int (*initialized)(void), unsi
         const char *error = dlerror();
         unsigned long after = 0;
         dl_iterate_phdr(count_dso, &after);
+        atomic_store_explicit(&worker_phase, 2, memory_order_release);
+        void *worker_result = 0;
+        if (pthread_join(worker, &worker_result) != 0 || worker_result != (void *)(uintptr_t)1
+            || retained_tls != 31) _exit(6);
         _exit(!rejected && error && after == before && initialized() == 7
               && access("/tls-rejected-marker", F_OK) != 0
               && check_relro(image->base, image->headers, image->count) ? 0 : 1);

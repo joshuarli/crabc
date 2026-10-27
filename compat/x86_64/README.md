@@ -474,6 +474,8 @@ It also rejects runtime-loaded DSOs with executable stacks, RWX loads or no
 required RELRO, while checking constructor absence and the retained graph.
 Disposable child processes deny mapping or protection syscalls and check that
 failed loads preserve the existing graph and RELRO.
+The TLS preparation failure also preserves distinct existing TLS values on
+the calling thread and a live worker.
 An ELF fixture redirects a TLS offset relocation to ordinary writable data;
 the hardened loader rejects this ambiguous relocation outside RELRO, while
 the compatibility loader preserves the relocation and subsequent mutation.
