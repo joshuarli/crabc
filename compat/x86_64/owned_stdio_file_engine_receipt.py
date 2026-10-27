@@ -1039,17 +1039,7 @@ def validate_commands(checkout: Path, work: Path, report: Mapping[str, Any], sou
     require({"tmpfile", "flockfile", "funlockfile", "fclose"} <= undefined_symbols(workload),
             "allocator interposition workload omits FILE lifetime calls")
     libc = regular(dynamic / "usr/lib/libc.so", "installed shared libc")
-    relocations = _elf_output("readelf", "-rW", str(libc))
-    symbols = _elf_output("readelf", "-sW", str(libc))
-    for name in ("malloc", "realloc", "free"):
-        require(re.search(rf"R_X86_64_JUMP_SLOT\s+[^\n]*\b{name} \+ 0", relocations) is not None,
-                f"FILE allocator {name} lacks public PLT relocation")
-        tail = "__crabc_x86_stdio_cabi_" + name
-        require(re.search(rf"\bFUNC\s+LOCAL\s+HIDDEN\s+\d+\s+{tail}$", symbols, re.MULTILINE)
-                is not None, f"FILE allocator {name} tail is not hidden")
-        assembly = _elf_output("objdump", "-d", "--disassemble=" + tail, str(libc))
-        require(re.search(rf"\bjmp\s+[0-9a-f]+ <{name}@plt>", assembly) is not None,
-                f"FILE allocator {name} tail does not select public PLT")
+    validate_allocator_plt(libc)
 
     for mode in ("pie", "non-pie"):
         candidate = files[f"candidate-{mode}"]
@@ -1082,6 +1072,45 @@ def validate_commands(checkout: Path, work: Path, report: Mapping[str, Any], sou
 
     expected_stems.add(INTERPOSITION_ROLE + "-run")
     require(set(commands) == expected_stems, "command roster differs")
+
+
+def validate_allocator_plt(libc: Path) -> None:
+    relocations = _elf_output("readelf", "-rW", "--use-dynamic", str(libc))
+    symbols = _elf_output("readelf", "-sW", str(libc))
+    for name in ("malloc", "realloc", "free"):
+        tail = "__crabc_x86_stdio_cabi_" + name
+        definitions = re.findall(rf"^\s*\d+:\s+([0-9a-f]+)\s+\d+\s+FUNC\s+LOCAL\s+HIDDEN\s+\d+\s+{tail}$", symbols, re.MULTILINE)
+        require(len(definitions) == 1, f"FILE allocator {name} tail is not hidden")
+        assembly = _elf_output("objdump", "-d", "--disassemble=" + tail, str(libc))
+        jump = re.search(r"^\s*([0-9a-f]+):\s+e9 ((?:[0-9a-f]{2} ){3}[0-9a-f]{2})\s+jmp\s+([0-9a-f]+)\b", assembly, re.MULTILINE)
+        require(jump is not None, f"FILE allocator {name} tail does not select public PLT")
+        origin = int(jump.group(1), 16)
+        require(origin == int(definitions[0], 16), f"FILE allocator {name} tail entry differs")
+        target = origin + 5 + struct.unpack("<i", bytes.fromhex(jump.group(2)))[0]
+        require(target == int(jump.group(3), 16), f"FILE allocator {name} tail target differs")
+        stub = _elf_output("objdump", "-d", "-j", ".plt", "-j", ".plt.got", f"--start-address={target}",
+                           f"--stop-address={target + 12}", str(libc))
+        prefix = re.search(r"^\s*([0-9a-f]+):\s+41 bb ((?:[0-9a-f]{2} ){3}[0-9a-f]{2})\s+mov\s+", stub, re.MULTILINE)
+        indirect_address = target
+        if prefix is not None:
+            require(int(prefix.group(1), 16) == target, f"FILE allocator {name} PLT prefix differs")
+            indirect_address += 6
+        indirect = re.search(r"^\s*([0-9a-f]+):\s+ff 25 ((?:[0-9a-f]{2} ){3}[0-9a-f]{2})\s+jmp\s+\*", stub, re.MULTILINE)
+        require(indirect is not None and int(indirect.group(1), 16) == indirect_address,
+                f"FILE allocator {name} PLT stub differs")
+        slot = indirect_address + 6 + struct.unpack("<i", bytes.fromhex(indirect.group(2)))[0]
+        rows = re.findall(rf"^\s*{slot:016x}\s+\S+\s+(R_X86_64_\S+)\s+\S+\s+(\S+)\s+\+\s+(\S+)\s*$", relocations, re.MULTILINE)
+        require(len(rows) == 1 and rows[0] in (("R_X86_64_JUMP_SLOT", name, "0"),
+                                                ("R_X86_64_GLOB_DAT", name, "0")),
+                f"FILE allocator {name} PLT relocation differs")
+        if prefix is not None:
+            require(rows[0][0] == "R_X86_64_JUMP_SLOT", f"FILE allocator {name} PLT prefix relocation differs")
+            plt = relocations.split("'PLT' relocation section", 1)
+            require(len(plt) == 2, f"FILE allocator {name} PLT relocation table missing")
+            entries = re.findall(r"^\s*([0-9a-f]{16})\s+\S+\s+R_X86_64_\S+", plt[1], re.MULTILINE)
+            index = struct.unpack("<I", bytes.fromhex(prefix.group(2)))[0]
+            require(index < len(entries) and int(entries[index], 16) == slot,
+                    f"FILE allocator {name} PLT index differs")
 
 
 def _elf_output(*arguments: str) -> str:

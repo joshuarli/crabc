@@ -4,6 +4,7 @@ from __future__ import annotations
 import hashlib
 import importlib.util
 import json
+import re
 from pathlib import Path
 import stat
 import struct
@@ -800,44 +801,34 @@ class OwnedStdioFileEngineReceiptTests(unittest.TestCase):
 
     @staticmethod
     def allocator_elf(*arguments: str) -> str:
+        names = ("malloc", "realloc", "free")
         if arguments[0] == "objdump":
-            name = arguments[2].split("=")[-1].removeprefix("__crabc_x86_stdio_cabi_")
-            return f"jmp 11a920 <{name}@plt>\n"
+            if arguments[2].startswith("--disassemble="):
+                name = arguments[2].split("=")[-1].removeprefix("__crabc_x86_stdio_cabi_")
+                address = 0x100 + names.index(name) * 0x20
+                return f"{address:x}: e9 0b 00 00 00 jmp {address + 16:x} <{name}@plt>\n"
+            address = int(arguments[6].split("=")[-1])
+            index = (address - 0x110) // 0x20
+            displacement = 0x1000 + index * 8 - address - 6
+            encoded = " ".join(f"{b:02x}" for b in struct.pack("<i", displacement))
+            return f"{address:x}: ff 25 {encoded} jmp *0x0(%rip)\n"
         if arguments[1] == "-rW":
-            return "".join(f"R_X86_64_JUMP_SLOT 00000000 {name} + 0\n"
-                           for name in ("malloc", "realloc", "free"))
+            return "".join(f"{0x1000 + index * 8:016x} 00000001 R_X86_64_JUMP_SLOT 00000000 {name} + 0\n"
+                           for index, name in enumerate(names))
         if arguments[1] == "-sW":
-            return "".join(f"FUNC LOCAL HIDDEN 9 __crabc_x86_stdio_cabi_{name}\n"
-                           for name in ("malloc", "realloc", "free"))
-        return "".join(f"FUNC GLOBAL DEFAULT 10 {name}\n" for name in ("malloc", "realloc", "free"))
+            return "".join(f"{index}: {0x100 + index * 0x20:016x} 5 FUNC LOCAL HIDDEN 9 __crabc_x86_stdio_cabi_{name}\n" for index, name in enumerate(names))
+        return "".join(f"FUNC GLOBAL DEFAULT 10 {name}\n" for name in names)
 
     def test_allocator_row_rejects_foreign_provider_tail_after_rehash(self) -> None:
-        cohort = self.fixture.work / "owned-stdio-allocator-interposition.fixture"
-        report = self.fixture.report
-        libc = self.fixture.dynamic / "usr/lib/libc.so"
-        for provider in ("malloc", "realloc", "free"):
-            with self.subTest(provider=provider):
-                libc.write_bytes(("foreign " + provider + "\n").encode())
-                for mode in ("pie", "non-pie"):
-                    for entry in ("kernel", "direct"):
-                        name = f"candidate-{mode}-{entry}-root/usr/lib/libc.so"
-                        path = cohort / name
-                        path.write_bytes(libc.read_bytes())
-                        report["allocator_interposition"]["artifacts"][name] = identity(self.fixture.work, path)
-                self.fixture._write_seals()
-                for phase in ("source-product-before", "source-product-after"):
-                    report["seals"][phase] = identity(self.fixture.work, self.fixture.work / (phase + ".json"))
-                self.fixture.write_report()
-                def foreign(*arguments: str) -> str:
-                    value = self.allocator_elf(*arguments)
-                    if arguments[0] == "objdump" and arguments[2].endswith("_" + provider) \
-                            and libc.read_bytes() == ("foreign " + provider + "\n").encode():
-                        return value.replace(f"<{provider}@plt>", f"<mi_{provider}@plt>")
-                    return value
-                with mock.patch.object(receipt, "_elf_output", side_effect=foreign):
-                    with self.assertRaisesRegex(receipt.ReceiptError,
-                                                provider + " tail does not select public PLT"):
-                        self.validate()
+        original = self.allocator_elf
+        def foreign(*arguments: str) -> str:
+            value = original(*arguments)
+            if arguments[0] == "objdump" and arguments[2].endswith("_malloc"):
+                return value.replace("e9 0b", "e9 0a")
+            return value
+        with mock.patch.object(receipt, "_elf_output", side_effect=foreign):
+            with self.assertRaisesRegex(receipt.ReceiptError, "malloc tail target differs"):
+                self.validate()
 
     def test_allocator_row_reconstructs_dynamic_ownership(self) -> None:
         report = self.validate()
@@ -881,3 +872,70 @@ class OwnedStdioFileEngineReceiptTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+class AllocatorPltProofTests(unittest.TestCase):
+    def test_real_mold_plt_and_wrong_slot(self) -> None:
+        import subprocess
+        with tempfile.TemporaryDirectory(dir=ROOT / '.work') as directory:
+            root = Path(directory)
+            source = root / 'fixture.s'
+            source.write_text('''
+.text
+.globl __crabc_x86_stdio_cabi_malloc
+.hidden __crabc_x86_stdio_cabi_malloc
+.type __crabc_x86_stdio_cabi_malloc,@function
+__crabc_x86_stdio_cabi_malloc: jmp malloc@PLT
+.globl __crabc_x86_stdio_cabi_realloc
+.hidden __crabc_x86_stdio_cabi_realloc
+.type __crabc_x86_stdio_cabi_realloc,@function
+__crabc_x86_stdio_cabi_realloc: jmp realloc@PLT
+.globl __crabc_x86_stdio_cabi_free
+.hidden __crabc_x86_stdio_cabi_free
+.type __crabc_x86_stdio_cabi_free,@function
+__crabc_x86_stdio_cabi_free: jmp free@PLT
+mov malloc@GOTPCREL(%rip), %rax
+mov realloc@GOTPCREL(%rip), %rax
+mov free@GOTPCREL(%rip), %rax
+''')
+            libc = root / 'libc.so'
+            subprocess.run(['cc', '-shared', '-fuse-ld=mold', '-o', str(libc), str(source)], check=True)
+            receipt.validate_allocator_plt(libc)
+            assembly = subprocess.check_output(['objdump', '-d', '-j', '.plt.got', str(libc)], text=True)
+            match = re.search(r'^[ ]*([0-9a-f]+):\s+(ff 25 (?:[0-9a-f]{2} ){3}[0-9a-f]{2})\s+jmp.*#\s*([0-9a-f]+)', assembly, re.MULTILINE)
+            self.assertIsNotNone(match)
+            instruction = bytes.fromhex(match.group(2))
+            body = libc.read_bytes()
+            self.assertEqual(body.count(instruction), 1)
+            changed = instruction[:2] + struct.pack('<i', struct.unpack('<i', instruction[2:])[0] + 8)
+            relocations = subprocess.check_output(['readelf', '-rW', '--use-dynamic', str(libc)], text=True)
+            row = re.search(r'^([0-9a-f]{16})\s+([0-9a-f]{16})\s+R_X86_64_GLOB_DAT\s+\S+\s+malloc\s+\+ 0$', relocations, re.MULTILINE)
+            self.assertIsNotNone(row)
+            record = struct.pack('<QQq', int(row.group(1), 16), int(row.group(2), 16), 0)
+            self.assertEqual(body.count(record), 1)
+            unsupported = struct.pack('<QQq', int(row.group(1), 16), (int(row.group(2), 16) & ~0xffffffff) | 1, 0)
+            libc.write_bytes(body.replace(record, unsupported, 1))
+            with self.assertRaises(receipt.ReceiptError):
+                receipt.validate_allocator_plt(libc)
+            libc.write_bytes(body.replace(instruction, changed, 1))
+            with self.assertRaises(receipt.ReceiptError):
+                receipt.validate_allocator_plt(libc)
+
+    def test_real_mold_jump_slot(self) -> None:
+        import subprocess
+        with tempfile.TemporaryDirectory(dir=ROOT / '.work') as directory:
+            root = Path(directory)
+            source = root / 'fixture.s'
+            source.write_text('\n'.join(
+                f'.globl __crabc_x86_stdio_cabi_{name}\n.hidden __crabc_x86_stdio_cabi_{name}\n'
+                f'.type __crabc_x86_stdio_cabi_{name},@function\n'
+                f'__crabc_x86_stdio_cabi_{name}: jmp {name}@PLT'
+                for name in ('malloc', 'realloc', 'free')) + '\n')
+            libc = root / 'libc.so'
+            subprocess.run(['cc', '-shared', '-fuse-ld=mold', '-o', str(libc), str(source)], check=True)
+            receipt.validate_allocator_plt(libc)
+            body = libc.read_bytes()
+            instruction = bytes.fromhex('41 bb 00 00 00 00')
+            self.assertEqual(body.count(instruction), 1)
+            libc.write_bytes(body.replace(instruction, bytes.fromhex('41 bb ff ff ff ff'), 1))
+            with self.assertRaises(receipt.ReceiptError):
+                receipt.validate_allocator_plt(libc)
