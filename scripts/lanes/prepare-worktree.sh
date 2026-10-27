@@ -126,14 +126,16 @@ def ensure_source(record, path, label):
     if source.exists() or source.is_symlink():
         verify_source(source, revision, f"primary {label}")
         clone_source = str(source)
+        clone_git = ["git", "-c", f"safe.directory={source / '.git'}"]
     else:
         clone_source = record["repository"]
+        clone_git = ["git"]
 
     destination.parent.mkdir(parents=True, exist_ok=True)
     staging = Path(tempfile.mkdtemp(prefix=f".{destination.name}.clone-", dir=destination.parent))
     checkout = staging / "checkout"
     try:
-        result = subprocess.run(["git", "clone", "--no-checkout", "--no-hardlinks", clone_source, str(checkout)],
+        result = subprocess.run([*clone_git, "clone", "--no-checkout", "--no-hardlinks", clone_source, str(checkout)],
                                 cwd=root, stdin=subprocess.DEVNULL, check=False)
         require(result.returncode == 0, f"cannot fetch pinned {label} from {clone_source}")
         result = subprocess.run(["git", "-C", str(checkout), "checkout", "--detach", revision],

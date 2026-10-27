@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import shutil
 import subprocess
 import tempfile
@@ -178,6 +179,32 @@ class PrepareWorktreeTests(unittest.TestCase):
         self.assertTrue(allocator_manifest.is_file(),
                         "fetched core registry was not copied into allocator Cargo home")
         self.assertEqual(allocator_manifest.read_text(encoding="utf-8"), "locked base64ct fixture\n")
+
+    def test_clones_verified_primary_oracle_with_different_owner(self) -> None:
+        repository = self.scratch / "libc-test"
+        revision = self._git(repository, "rev-parse", "HEAD")
+        primary_oracle = self.primary / f".work/x86_64/source-oracles/laputa-libc-test-{revision}"
+        shutil.copytree(repository, primary_oracle)
+        environment = os.environ.copy()
+        environment.update({
+            "GIT_TEST_ASSUME_DIFFERENT_OWNER": "1",
+            "GIT_CONFIG_COUNT": "4",
+            "GIT_CONFIG_KEY_0": "safe.directory",
+            "GIT_CONFIG_VALUE_0": str(self.primary),
+            "GIT_CONFIG_KEY_1": "safe.directory",
+            "GIT_CONFIG_VALUE_1": str(self.lane),
+            "GIT_CONFIG_KEY_2": "safe.directory",
+            "GIT_CONFIG_VALUE_2": f"{self.lane}/*",
+            "GIT_CONFIG_KEY_3": "safe.directory",
+            "GIT_CONFIG_VALUE_3": str(self.scratch / "os-test" / ".git"),
+        })
+        prepared = subprocess.run(
+            ["sh", str(self.lane / "scripts/lanes/prepare-worktree.sh")],
+            cwd=self.lane, env=environment, capture_output=True, text=True, check=False,
+        )
+        self.assertEqual(prepared.returncode, 0, prepared.stderr)
+        cloned = self.lane / f".work/x86_64/source-oracles/laputa-libc-test-{revision}"
+        self.assertEqual(self._git(cloned, "rev-parse", "HEAD"), revision)
 
     def test_allocator_cargo_home_symlink_is_rejected_without_writing_through_it(self) -> None:
         allocator_home = self.lane / ".work/allocator-x86_64"
