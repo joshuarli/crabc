@@ -60,10 +60,31 @@ fn lazy_request_keeps_unresolved_import_only_in_compatibility_profile() {
     std::fs::create_dir_all(directory).unwrap();
     let output = directory.join("plugin.so");
     let status = std::process::Command::new("/usr/local/bin/crabc-x86_64-musl-gcc")
-        .args(["-O0", "-nostdlib", "-fPIC", "-shared", "-Wl,--hash-style=sysv,-z,lazy,-z,noexecstack",
+        .args(["-O0", "-nostdlib", "-fPIC", "-shared", "-Wl,--hash-style=sysv,-z,now,-z,noexecstack",
                "compat/x86_64/general_dynamic_lazy_plugin.c", "-o"])
         .arg(&output).status().unwrap();
     assert!(status.success());
+    let mut bytes = std::fs::read(&output).unwrap();
+    let read64 = |bytes: &[u8], offset: usize| u64::from_le_bytes(bytes[offset..offset + 8].try_into().unwrap());
+    let phoff = read64(&bytes, 32) as usize;
+    let phnum = u16::from_le_bytes(bytes[56..58].try_into().unwrap()) as usize;
+    let mut cleared = false;
+    for index in 0..phnum {
+        let header = phoff + index * 56;
+        if u32::from_le_bytes(bytes[header..header + 4].try_into().unwrap()) != PT_DYNAMIC { continue; }
+        let start = read64(&bytes, header + 8) as usize;
+        let end = start + read64(&bytes, header + 32) as usize;
+        for offset in (start..end).step_by(16) {
+            let tag = read64(&bytes, offset);
+            let flag = if tag == DT_FLAGS as u64 { DF_BIND_NOW }
+                else if tag == DT_FLAGS_1 as u64 { DF_1_NOW } else { continue; };
+            let value = read64(&bytes, offset + 8);
+            if value & flag != 0 { cleared = true; }
+            bytes[offset + 8..offset + 16].copy_from_slice(&(value & !flag).to_le_bytes());
+        }
+    }
+    assert!(cleared);
+    std::fs::write(&output, bytes).unwrap();
     let path = std::ffi::CString::new(std::fs::canonicalize(output).unwrap().as_os_str().as_encoded_bytes()).unwrap();
     PATH.store(path.as_ptr().cast_mut().cast(), Ordering::Release);
     unsafe { super::super::x86_64_runtime_lock::isolated_mapping_probe(probe); }

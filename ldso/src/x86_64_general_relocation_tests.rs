@@ -14,6 +14,24 @@ const IMAGE_DATA: usize = 0x1000;
 const IMAGE_METADATA_BYTES: usize = 0x800;
 const IMAGE_DATA_BYTES: usize = 512;
 
+#[test]
+fn binding_slots_require_relro_in_hardened_profile() {
+    for kind in [R_X86_64_GLOB_DAT, R_X86_64_JUMP_SLOT] {
+        let mut image = Image::new();
+        image.symbol(1, 1, 2, 0, 0, 0, 0);
+        image.rela(IMAGE_DATA as u64, kind, 1, 0);
+        let mut object = image.object(false);
+        let scope = SymbolScope { indices: &[0], module_count: 0, static_tls_count: 0, initial: true };
+        let without = unsafe { preflight_object(&scope, &[object], 0) };
+        assert_eq!(without.is_some(), !cfg!(crabc_hardened));
+        object.relro_virtual_address = IMAGE_DATA as u64;
+        object.relro_byte_len = IMAGE_DATA_BYTES as u64;
+        assert!(unsafe { preflight_object(&scope, &[object], 0) }.is_some());
+        object.relro_virtual_address = (IMAGE_DATA + 4096) as u64;
+        assert_eq!(unsafe { preflight_object(&scope, &[object], 0) }.is_some(), !cfg!(crabc_hardened));
+    }
+}
+
 // The structural relocation tests mutate words and records after borrowing
 // `Object`s. Keep those convenient views, but point every view into one
 // declared PT_LOAD rather than putting dynsym, strings and RELA records in

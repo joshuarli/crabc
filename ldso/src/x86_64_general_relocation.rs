@@ -779,6 +779,12 @@ unsafe fn preflight_object_resolved(
             let info = unsafe { read_u64(entry.add(8)) };
             let kind = info as u32;
             if kind == R_NONE { continue; }
+            if cfg!(crabc_hardened) && matches!(kind, R_X86_64_GLOB_DAT | R_X86_64_JUMP_SLOT) {
+                let relro_end = object.relro_virtual_address.checked_add(object.relro_byte_len)?
+                    .checked_add(PAGE - 1).map(align_down)?;
+                if object.relro_byte_len == 0 || offset < align_down(object.relro_virtual_address)
+                    || offset.checked_add(8)? > relro_end { return None; }
+            }
             let symbol = (info >> 32) as usize;
             // Reserved runtime wires are imports only through their exact
             // word-relocation admissions. A COPY relocation would otherwise
