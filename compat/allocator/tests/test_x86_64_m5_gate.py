@@ -360,6 +360,48 @@ signal.pause()
             self.assertEqual(marker.read_text(), "handled")
 
     @unittest.skipUnless(sys.platform.startswith("linux"), "native process cleanup uses Linux subreaping")
+    def test_completed_adopted_child_does_not_fail_native_command(self) -> None:
+        libc = ctypes.CDLL(None, use_errno=True)
+        previous = ctypes.c_int()
+        self.assertEqual(libc.prctl(37, ctypes.byref(previous), 0, 0, 0), 0)
+        gate._enable_child_subreaper()
+        try:
+            command = [sys.executable, "-c", """
+import os
+child = os.fork()
+if child == 0:
+    os.close(1)
+    os.close(2)
+    os._exit(0)
+os.waitid(os.P_PID, child, os.WEXITED | os.WNOWAIT)
+"""]
+            result = gate.NativeProcessHelper().run(command, timeout_seconds=10)
+            self.assertEqual(result["status"], 0, result["stderr"])
+        finally:
+            self.assertEqual(libc.prctl(gate.PR_SET_CHILD_SUBREAPER, ctypes.c_ulong(previous.value), 0, 0, 0), 0)
+
+    @unittest.skipUnless(sys.platform.startswith("linux"), "native process cleanup uses Linux subreaping")
+    def test_live_adopted_child_still_fails_native_command(self) -> None:
+        libc = ctypes.CDLL(None, use_errno=True)
+        previous = ctypes.c_int()
+        self.assertEqual(libc.prctl(37, ctypes.byref(previous), 0, 0, 0), 0)
+        gate._enable_child_subreaper()
+        try:
+            command = [sys.executable, "-c", """
+import os, signal
+child = os.fork()
+if child == 0:
+    os.close(1)
+    os.close(2)
+    signal.pause()
+"""]
+            result = gate.NativeProcessHelper().run(command, timeout_seconds=10)
+            self.assertEqual(result["status"], 1)
+            self.assertIn("native command left child processes running", result["stderr"])
+        finally:
+            self.assertEqual(libc.prctl(gate.PR_SET_CHILD_SUBREAPER, ctypes.c_ulong(previous.value), 0, 0, 0), 0)
+
+    @unittest.skipUnless(sys.platform.startswith("linux"), "native process cleanup uses Linux subreaping")
     def test_native_helper_signal_reaps_active_descendants_and_keeps_completed_records(self) -> None:
         scratch = ROOT / ".work/tmp"
         scratch.mkdir(parents=True, exist_ok=True)

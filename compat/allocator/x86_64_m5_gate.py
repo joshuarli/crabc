@@ -214,6 +214,18 @@ class NativeProcessHelper:
             except ChildProcessError:
                 return
 
+    @staticmethod
+    def _reap_exited_group_children(pgid: int) -> None:
+        while True:
+            try:
+                pid, _status = os.waitpid(-pgid, os.WNOHANG)
+                if pid == 0:
+                    return
+            except InterruptedError:
+                continue
+            except ChildProcessError:
+                return
+
     def _stop_active(self) -> tuple[str, str]:
         process = self._active
         if process is None:
@@ -269,6 +281,7 @@ class NativeProcessHelper:
                 }
             if process.returncode is None:
                 raise harness.HarnessError("native Cargo process returned without an exit status")
+            self._reap_exited_group_children(process.pid)
             if self._group_exists(process.pid):
                 self._stop_active()
                 return {
