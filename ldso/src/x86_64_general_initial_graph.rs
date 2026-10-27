@@ -53,6 +53,7 @@ pub(super) unsafe fn run(sp: usize, ldso_base: usize) -> ! {
             let entry = main.entry;
             (main, sp, entry)
         } else {
+            if cfg!(crabc_hardened) && !hardened_main_identity(main_base, main_phdr, main_phnum) { fail(b"mainelf\n"); }
             (parse_mapped(main_base, main_phdr, main_phnum, ObjectRole::Main, false, true)
                 .unwrap_or_else(|| fail(b"mainelf\n")), sp, main_entry)
         };

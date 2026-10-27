@@ -1378,6 +1378,24 @@ unsafe fn main_load_bias(phdr: *const u8, phnum: usize) -> Option<u64> {
     (phdr as u64).checked_sub(virtual_address)
 }
 
+unsafe fn hardened_main_identity(base: u64, phdr: *const u8, phnum: usize) -> bool {
+    for index in 0..phnum {
+        let load = phdr.add(index * 56);
+        if read_u32(load) != PT_LOAD || read_u32(load.add(4)) & PF_R == 0
+            || read_u64(load.add(8)) != 0 || read_u64(load.add(32)) < 64 { continue; }
+        let Some(address) = base.checked_add(read_u64(load.add(16))) else { return false; };
+        let header = address as *const u8;
+        if core::slice::from_raw_parts(header, 7) != b"\x7fELF\x02\x01\x01"
+            || read_u16(header.add(16)) != 3 || read_u16(header.add(18)) != 62
+            || read_u32(header.add(20)) != 1 || read_u16(header.add(52)) != 64
+            || read_u16(header.add(54)) != 56 || read_u16(header.add(56)) as usize != phnum { return false; }
+        let offset = read_u64(header.add(32));
+        let Some(end) = (phnum as u64).checked_mul(56).and_then(|size| offset.checked_add(size)) else { return false; };
+        return end <= read_u64(load.add(32)) && address.checked_add(offset) == Some(phdr as u64);
+    }
+    false
+}
+
 unsafe fn hardened_program_headers(phdr: *const u8, phnum: usize) -> bool {
     let mut stack = false;
     for index in 0..phnum {
@@ -2430,7 +2448,7 @@ unsafe fn map_elf_with_status(
     let header = header_bytes.as_ptr();
     let elf_type = read_u16(header.add(16));
     let valid = *header == 0x7f && *header.add(1) == b'E' && *header.add(2) == b'L' && *header.add(3) == b'F'
-        && *header.add(4) == 2 && *header.add(5) == 1 && (elf_type == 3 || (role == ObjectRole::Main && elf_type == 2)) && read_u16(header.add(18)) == 62
+        && *header.add(4) == 2 && *header.add(5) == 1 && (elf_type == 3 || (!cfg!(crabc_hardened) && role == ObjectRole::Main && elf_type == 2)) && read_u16(header.add(18)) == 62
         && read_u16(header.add(54)) == 56;
     let phoff = usize::try_from(read_u64(header.add(32))).map_err(|_| ENOEXEC)?;
     let phnum = read_u16(header.add(56)) as usize;
@@ -5753,6 +5771,31 @@ mod readable_file_load_tests {
         assert!(!valid(&headers));
         load(&mut headers, 1, PF_R | PF_W, u64::MAX - 10, 1, 32);
         assert!(!valid(&headers));
+    }
+
+    #[test]
+    fn hardened_main_identity_requires_a_mapped_pie_header_matching_auxv() {
+        let mut image = [0u8; 512];
+        image[..4].copy_from_slice(b"\x7fELF");
+        image[4..7].copy_from_slice(&[2, 1, 1]);
+        image[16..18].copy_from_slice(&3u16.to_le_bytes());
+        image[18..20].copy_from_slice(&62u16.to_le_bytes());
+        image[20..24].copy_from_slice(&1u32.to_le_bytes());
+        image[32..40].copy_from_slice(&64u64.to_le_bytes());
+        image[52..54].copy_from_slice(&64u16.to_le_bytes());
+        image[54..56].copy_from_slice(&56u16.to_le_bytes());
+        image[56..58].copy_from_slice(&1u16.to_le_bytes());
+        load(&mut image[64..], 0, PF_R, 0, 512, 512);
+        let check = |image: &[u8]| unsafe { hardened_main_identity(image.as_ptr() as u64, image.as_ptr().add(64), 1) };
+        assert!(check(&image));
+        image[16..18].copy_from_slice(&2u16.to_le_bytes());
+        assert!(!check(&image));
+        image[16..18].copy_from_slice(&3u16.to_le_bytes());
+        image[32..40].copy_from_slice(&65u64.to_le_bytes());
+        assert!(!check(&image));
+        image[32..40].copy_from_slice(&64u64.to_le_bytes());
+        image[68..72].copy_from_slice(&PF_W.to_le_bytes());
+        assert!(!check(&image));
     }
 
     #[test]
