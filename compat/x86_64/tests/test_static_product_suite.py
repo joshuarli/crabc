@@ -203,6 +203,8 @@ class StaticProductSuiteTests(unittest.TestCase):
             f"{consumer}/builtins.o", f"{lib}/libc.a(c.c.0-cgu.0.rcgu.o)",
             f"{lib}/libcrabc-builtins.a(crabc-builtins.o)", f"{lib}/crtn.o",
         ]
+        if trace_lines is None:
+            trace = ["trace: " + line for line in trace]
         (base / "link.receipt.trace").write_text("\n".join(trace) + "\n", encoding="utf-8")
         link = {
             "format": "crabc-x86-64-sealed-static-driver-v1",

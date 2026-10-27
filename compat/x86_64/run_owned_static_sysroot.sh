@@ -561,8 +561,7 @@ assert_final_static_image() {
     if grep -Eq 'Requesting program interpreter|INTERP' "$program_headers"; then
         fail "${mode} candidate selected an interpreter"
     fi
-    python3 -B - "$ROOT_DIR/compat/x86_64" "$dynamic" "$program_headers" "$mode" <<'PYCODE' ||
-        fail "${mode} candidate has invalid dynamic metadata"
+    if ! python3 -B - "$ROOT_DIR/compat/x86_64" "$dynamic" "$program_headers" "$mode" <<'PYCODE'
 import sys
 from pathlib import Path
 sys.path.insert(0, sys.argv[1])
@@ -571,6 +570,9 @@ validate_static_dynamic_tags(Path(sys.argv[2]).read_text(),
     [line.split() for line in Path(sys.argv[3]).read_text().splitlines()],
     sys.argv[4] == "-static-pie", sys.argv[4])
 PYCODE
+    then
+        fail "${mode} candidate has invalid dynamic metadata"
+    fi
     awk '$1 == "GNU_RELRO" { count += 1 } END { exit count != 1 }' "$program_headers" ||
         fail "${mode} candidate must have exactly one GNU_RELRO segment"
     # The same rule as the dynamic product's final-ELF inspection: a static
@@ -1264,8 +1266,7 @@ run_static_mode() {
     if [ "$consumer_kind" = stdio ]; then
         nm --defined-only "$candidate" >"$mode_root/defined-symbols"
         nm -A --defined-only "$installed_root/usr/lib/libc.a" >"$mode_root/archive-defined-symbols"
-        python3 -B - "$mode_root/defined-symbols" "$mode_root/archive-defined-symbols" "$mode_root/link.receipt.map" <<'PYCODE' ||
-            fail "${label} lacks the strong owned stdio exit hook"
+        if ! python3 -B - "$mode_root/defined-symbols" "$mode_root/archive-defined-symbols" "$mode_root/link.receipt.map" <<'PYCODE'
 from pathlib import Path
 import re, sys
 candidate, archive, link_map = (Path(path).read_text() for path in sys.argv[1:])
@@ -1273,6 +1274,9 @@ assert len(re.findall(r"(?m)^\S+ [tT] __stdio_exit$", candidate)) == 1
 assert len(re.findall(r"(?m)^.+/libc\.a:[^:]+:\S+ T __stdio_exit$", archive)) == 1
 assert len(re.findall(r"(?m)^.*libc\.a\([^()]+\):\(\.text\.__stdio_exit\)$", link_map)) == 1
 PYCODE
+        then
+            fail "${label} lacks the strong owned stdio exit hook"
+        fi
         printf 'exit-flushed\n' >"$mode_root/expected-exit-data"
         cmp "$mode_root/expected-exit-data" "$mode_root/exit-data" ||
             fail "${label} did not flush its dynamic stream at ordinary exit"

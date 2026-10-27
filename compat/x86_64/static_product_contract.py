@@ -467,7 +467,7 @@ def inspect_case(report: Path, product: str, mode: str, case_path: str,
     # Every resolved runtime input must come from this product's own installed
     # root inside the runner's private work tree; application objects must
     # come from this case's own consumer directory.
-    trace = [line for line in (base / "link.receipt.trace").read_text(encoding="utf-8").splitlines() if line]
+    trace = [line.removeprefix("trace: ") for line in (base / "link.receipt.trace").read_text(encoding="utf-8").splitlines() if line]
     tree = r"primary" if product == "primary" else r"extracted-tree/crabc-x86_64-owned-static-sysroot"
     work = r"/[^()]*/crabc-x86-64-owned-static-sysroot\.[A-Za-z0-9]+"
     runtime = re.compile(work + "/" + tree + r"/usr/lib/(" + re.escape(entry)
