@@ -1386,7 +1386,11 @@ Append one line per merge batch, per parked item, and per contract change.
   gates were blocked. `aeb87087d` removes the flag; the producers already
   require cached inputs. All three visitation differentials pass at
   `4936c803f`; the gate remains blocked on secure and guarded profiles.
-  Cleanup removed nine integrated test-only worktrees. An attempted ordinary
+  Cleanup removed nine integrated test-only worktrees and cleared about 8.1 GiB
+  of disposable kache entries across seven campaign checkouts. M5 discovery
+  has a malformed cache database; M7, M4, hardened and visitation discovery
+  reported filesystem permission errors. Those caches were left in place.
+  An attempted ordinary
   removal of the integrated `r4-addrconfig` worktree failed on permissions;
   Git removed its registration but left its directory and branch. Automatic review
   rejected removal of selected build and Cargo caches under `combined-profile`
