@@ -477,6 +477,8 @@ failed loads preserve the existing graph and RELRO.
 An ELF fixture redirects a TLS offset relocation to ordinary writable data;
 the hardened loader rejects this ambiguous relocation outside RELRO, while
 the compatibility loader preserves the relocation and subsequent mutation.
+The same policy rejects a symbol address initialized into writable data;
+the compatibility control calls and then clears that function pointer.
 An object without a declared PLTGOT or binding relocations loads without
 RELRO and its exported function remains callable.
 The same malformed images fail as startup dependencies or preloads; the

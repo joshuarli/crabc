@@ -17,6 +17,7 @@ cp "$installed/usr/lib/libc.so" "$image/usr/lib/"
 "$installed/bin/crabc-cc-dynamic" --dynamic-shared-object "$root/compat/x86_64/hardened_relro_dso.c" -o "$image/usr/lib/hardened-relro-fixture.so"
 "$installed/bin/crabc-cc-dynamic" --dynamic-shared-object -DCRABC_BAD_DSO "$root/compat/x86_64/hardened_relro_dso.c" -o "$image/usr/lib/rejected-source.so"
 "$installed/bin/crabc-cc-dynamic" --dynamic-shared-object "$root/compat/x86_64/hardened_tls_mutable_dso.c" -o "$image/usr/lib/tls-mutable.so"
+"$installed/bin/crabc-cc-dynamic" --dynamic-shared-object "$root/compat/x86_64/hardened_mutable_symbol_dso.c" -o "$image/usr/lib/symbol-mutable.so"
 "$installed/bin/crabc-cc-dynamic" --dynamic-shared-object "$root/compat/x86_64/hardened_tls_failure_dso.c" -o "$image/usr/lib/tls-fault.so"
 "$installed/bin/crabc-cc-dynamic" --dynamic-shared-object "$root/compat/x86_64/hardened_import_provider.c" -o "$image/usr/lib/import-provider.so"
 "$installed/bin/crabc-cc-dynamic" --dynamic-shared-object --application-dso "$image/usr/lib/import-provider.so" "$root/compat/x86_64/hardened_import_probe.c" -o "$image/usr/lib/import-probe.so"
@@ -123,6 +124,19 @@ for name, kind in (("tls-module.so", 16), ("tls-thread.so", 18)):
     variant = bytearray(tls)
     struct.pack_into("<Q", variant, matches[0] + 8, (tls_symbol << 32) | kind)
     (root / "usr/lib" / name).write_bytes(variant)
+symbol = (root / "usr/lib/symbol-mutable.so").read_bytes()
+phoff = struct.unpack_from("<Q", symbol, 32)[0]
+phnum = struct.unpack_from("<H", symbol, 56)[0]
+headers = [struct.unpack_from("<IIQQQQQQ", symbol, phoff + index * 56) for index in range(phnum)]
+dynamic = next(header for header in headers if header[0] == 2)
+entries = dict(struct.unpack_from("<QQ", symbol, offset) for offset in range(dynamic[2], dynamic[2] + dynamic[5], 16))
+rela = file_offset(entries[7])
+targets = [struct.unpack_from("<Q", symbol, offset)[0] for offset in range(rela, rela + entries[8], 24)
+           if struct.unpack_from("<Q", symbol, offset + 8)[0] & 0xffffffff == 1
+           and struct.unpack_from("<Q", symbol, offset + 8)[0] >> 32 != 0]
+assert any(all(header[0] != 0x6474e552 or target < (header[3] & ~4095)
+               or target + 8 > ((header[3] + header[6] + 4095) & ~4095) for header in headers)
+           for target in targets)
 PYTHON
 timeout 20 chroot "$image" /pie
 timeout 20 chroot "$image" /alias
@@ -209,11 +223,14 @@ cp "$compatibility/lib/ld-crabc-x86_64.so.1" "$compatible_root/lib/"
 cp "$compatibility/usr/lib/libc.so" "$compatible_root/usr/lib/"
 cp "$image/usr/lib/rejected-stack.so" "$compatible_root/usr/lib/"
 cp "$image/usr/lib/tls-mutable.so" "$compatible_root/usr/lib/"
+cp "$image/usr/lib/symbol-mutable.so" "$compatible_root/usr/lib/"
 cp "$image/usr/lib/import-probe.so" "$image/usr/lib/import-provider.so" "$compatible_root/usr/lib/"
 cp "$image/plugins/relative-only.so" "$compatible_root/plugins/"
 "$compatibility/bin/crabc-cc-dynamic" --dynamic-pie "$root/compat/x86_64/compat_tls_mutable_probe.c" -o "$compatible_root/tls-mutable"
 timeout 20 chroot "$compatible_root" /tls-mutable
 test -f "$compatible_root/tls-mutable-marker"
+"$compatibility/bin/crabc-cc-dynamic" --dynamic-pie "$root/compat/x86_64/compat_mutable_symbol_probe.c" -o "$compatible_root/symbol-mutable"
+timeout 20 chroot "$compatible_root" /symbol-mutable
 "$compatibility/bin/crabc-cc-dynamic" --dynamic-pie "$root/compat/x86_64/compat_lazy_import_probe.c" -o "$compatible_root/lazy-import"
 timeout 20 chroot "$compatible_root" /lazy-import
 "$compatibility/bin/crabc-cc-dynamic" --dynamic-pie "$root/compat/x86_64/hardened_entry_probe.c" -o "$compatible_root/pie"
@@ -257,7 +274,7 @@ def enter(directory=root):
     os.chdir("/")
 
 for name in ("rejected-source.so", "rejected-stack.so", "rejected-wx.so", "rejected-relro.so",
-             "tls-mutable.so", "tls-module.so", "tls-thread.so", "import-probe.so"):
+             "tls-mutable.so", "tls-module.so", "tls-thread.so", "symbol-mutable.so", "import-probe.so"):
     result = subprocess.run(["/pie"], env={"LD_PRELOAD": "/usr/lib/" + name},
                             preexec_fn=enter, capture_output=True, timeout=20, check=False)
     (work / (name + ".stderr")).write_bytes(result.stderr)
@@ -266,6 +283,7 @@ for name in ("rejected-source.so", "rejected-stack.so", "rejected-wx.so", "rejec
     assert (root / "marker").exists() == good
     assert (root / "rejected-marker").exists() == good
     assert not (root / "tls-mutable-marker").exists()
+    assert not (root / "symbol-mutable-marker").exists()
     assert not (root / "import-marker").exists()
     (root / "marker").unlink(missing_ok=True)
     (root / "rejected-marker").unlink(missing_ok=True)
@@ -279,7 +297,7 @@ for preload, status, marker in (("/usr/lib/missing.so", 0, True), ("usr/lib/reje
 source = root / "usr/lib/rejected-source.so"
 original = source.read_bytes()
 for candidate in (None, "rejected-stack.so", "rejected-wx.so", "rejected-relro.so",
-                  "tls-mutable.so", "tls-module.so", "tls-thread.so"):
+                  "tls-mutable.so", "tls-module.so", "tls-thread.so", "symbol-mutable.so"):
     source.write_bytes(original if candidate is None else (root / "usr/lib" / candidate).read_bytes())
     result = subprocess.run(["/dependency"], env={}, preexec_fn=enter, capture_output=True, timeout=20, check=False)
     good = candidate is None
@@ -287,6 +305,7 @@ for candidate in (None, "rejected-stack.so", "rejected-wx.so", "rejected-relro.s
     assert (root / "marker").exists() == good
     assert (root / "rejected-marker").exists() == good
     assert not (root / "tls-mutable-marker").exists()
+    assert not (root / "symbol-mutable-marker").exists()
     (root / "marker").unlink(missing_ok=True)
     (root / "rejected-marker").unlink(missing_ok=True)
 source.write_bytes(original)
