@@ -475,8 +475,9 @@ and verifies the file remains unchanged. During the first constructor, forked ch
 must fault when writing the main image's RELRO and, for dynamic PIE, the
 interpreter's RELRO and a runtime-loaded DSO's RELRO. This focused test does not qualify the
 hardened product.
-In a disposable root, a set-user-ID fixture verifies the kernel's `AT_SECURE`
-and proves that preload and library-path environment inputs are ignored.
+In a disposable root, set-user-ID fixtures verify the kernel's `AT_SECURE`
+and prove that preload and library-path environment inputs and direct-loader
+options are ignored in both profiles; nonsecure controls use those inputs.
 It also rejects runtime-loaded DSOs with executable stacks, RWX loads or no
 required RELRO, while checking constructor absence and the retained graph.
 Disposable child processes deny mapping or protection syscalls and check that

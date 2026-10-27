@@ -312,6 +312,7 @@ mkdir -p "$compatible_root/lib" "$compatible_root/usr/lib" "$compatible_root/plu
 cp "$compatibility/lib/ld-crabc-x86_64.so.1" "$compatible_root/lib/"
 cp "$compatibility/usr/lib/libc.so" "$compatible_root/usr/lib/"
 cp "$image/usr/lib/rejected-stack.so" "$compatible_root/usr/lib/"
+cp "$image/usr/lib/rejected-source.so" "$compatible_root/usr/lib/"
 cp "$image/usr/lib/rejected-pltgot-outside.so" "$compatible_root/usr/lib/"
 cp "$image/usr/lib/tls-mutable.so" "$compatible_root/usr/lib/"
 cp "$image/usr/lib/symbol-mutable.so" "$compatible_root/usr/lib/"
@@ -332,6 +333,8 @@ timeout 20 chroot "$compatible_root" /symbol-pc32
 "$compatibility/bin/crabc-cc-dynamic" --dynamic-pie "$root/compat/x86_64/compat_lazy_import_probe.c" -o "$compatible_root/lazy-import"
 timeout 20 chroot "$compatible_root" /lazy-import
 "$compatibility/bin/crabc-cc-dynamic" --dynamic-pie "$root/compat/x86_64/hardened_entry_probe.c" -o "$compatible_root/pie"
+"$compatibility/bin/crabc-cc-dynamic" --dynamic-pie "$root/compat/x86_64/hardened_secure_probe.c" -o "$compatible_root/secure"
+chmod 4755 "$compatible_root/secure"
 "$compatibility/bin/crabc-cc-dynamic" --dynamic-pie --application-runpath plugins --application-dso "$compatible_root/plugins/relative-only.so" "$root/compat/x86_64/hardened_entry_probe.c" -o "$compatible_root/search-relative"
 "$compatibility/bin/crabc-cc-dynamic" --dynamic-pie --application-dso "$compatible_root/plugins/relative-only.so" "$root/compat/x86_64/hardened_entry_probe.c" -o "$compatible_root/search-env"
 python3 -B - "$image" "$work" "$compatible_root" <<'PYTHON'
@@ -371,8 +374,8 @@ def enter(directory=root):
     os.chroot(directory)
     os.chdir("/")
 
-def enter_unprivileged():
-    enter()
+def enter_unprivileged(directory=root):
+    enter(directory)
     os.setgroups([])
     os.setgid(65534)
     os.setuid(65534)
@@ -388,6 +391,68 @@ result = subprocess.run(["/secure-search"], env={"LD_LIBRARY_PATH": "/plugins"},
                         preexec_fn=enter_unprivileged, capture_output=True, timeout=20, check=False)
 assert result.returncode == 127, (result.returncode, result.stderr)
 assert not (root / "marker").exists()
+secure_loader = root / "lib/secure-loader"
+shutil.copyfile(root / "lib/ld-crabc-x86_64-hardened.so.1", secure_loader)
+secure_loader.chmod(0o755)
+result = subprocess.run(["/lib/secure-loader", "--library-path", "/plugins", "/search-env"],
+                        env={}, preexec_fn=enter, capture_output=True, timeout=20, check=False)
+assert result.returncode == 0 and (root / "marker").exists(), result.stderr
+(root / "marker").unlink()
+result = subprocess.run(["/lib/secure-loader", "--preload", "/usr/lib/rejected-source.so", "/pie"],
+                        env={}, preexec_fn=enter, capture_output=True, timeout=20, check=False)
+assert result.returncode == 0 and (root / "marker").exists() and (root / "rejected-marker").exists(), result.stderr
+(root / "marker").unlink()
+(root / "rejected-marker").unlink()
+secure_loader.chmod(0o4755)
+result = subprocess.run(["/lib/secure-loader", "/secure"], env={}, preexec_fn=enter_unprivileged,
+                        capture_output=True, timeout=20, check=False)
+assert result.returncode == 0, (result.returncode, result.stderr)
+result = subprocess.run(["/lib/secure-loader", "--library-path", "/plugins", "/search-env"],
+                        env={}, preexec_fn=enter_unprivileged, capture_output=True, timeout=20, check=False)
+assert result.returncode in (1, 127), (result.returncode, result.stderr)
+assert not (root / "marker").exists()
+result = subprocess.run(["/lib/secure-loader", "--preload", "/usr/lib/rejected-source.so", "/pie"],
+                        env={}, preexec_fn=enter_unprivileged, capture_output=True, timeout=20, check=False)
+assert result.returncode == 0 and (root / "marker").exists(), (result.returncode, result.stderr)
+assert not (root / "rejected-marker").exists()
+(root / "marker").unlink()
+
+result = subprocess.run(["/secure"], env={"LD_PRELOAD": "/usr/lib/rejected-source.so"},
+                        preexec_fn=lambda: enter_unprivileged(compatible), capture_output=True, timeout=20, check=False)
+assert result.returncode == 0, (result.returncode, result.stderr)
+assert not (compatible / "rejected-marker").exists()
+secure_search = compatible / "secure-search"
+shutil.copyfile(compatible / "search-env", secure_search)
+secure_search.chmod(0o4755)
+result = subprocess.run(["/secure-search"], env={"LD_LIBRARY_PATH": "/plugins"},
+                        preexec_fn=lambda: enter_unprivileged(compatible), capture_output=True, timeout=20, check=False)
+assert result.returncode == 127, (result.returncode, result.stderr)
+assert not (compatible / "marker").exists()
+secure_loader = compatible / "lib/secure-loader"
+shutil.copyfile(compatible / "lib/ld-crabc-x86_64.so.1", secure_loader)
+secure_loader.chmod(0o755)
+result = subprocess.run(["/lib/secure-loader", "--library-path", "/plugins", "/search-env"], env={},
+                        preexec_fn=lambda: enter(compatible), capture_output=True, timeout=20, check=False)
+assert result.returncode == 0 and (compatible / "marker").exists(), result.stderr
+(compatible / "marker").unlink()
+result = subprocess.run(["/lib/secure-loader", "--preload", "/usr/lib/rejected-source.so", "/pie"], env={},
+                        preexec_fn=lambda: enter(compatible), capture_output=True, timeout=20, check=False)
+assert result.returncode == 0 and (compatible / "marker").exists() and (compatible / "rejected-marker").exists(), result.stderr
+(compatible / "marker").unlink()
+(compatible / "rejected-marker").unlink()
+secure_loader.chmod(0o4755)
+result = subprocess.run(["/lib/secure-loader", "/secure"], env={}, preexec_fn=lambda: enter_unprivileged(compatible),
+                        capture_output=True, timeout=20, check=False)
+assert result.returncode == 0, (result.returncode, result.stderr)
+result = subprocess.run(["/lib/secure-loader", "--library-path", "/plugins", "/search-env"], env={},
+                        preexec_fn=lambda: enter_unprivileged(compatible), capture_output=True, timeout=20, check=False)
+assert result.returncode in (1, 127), (result.returncode, result.stderr)
+assert not (compatible / "marker").exists()
+result = subprocess.run(["/lib/secure-loader", "--preload", "/usr/lib/rejected-source.so", "/pie"], env={},
+                        preexec_fn=lambda: enter_unprivileged(compatible), capture_output=True, timeout=20, check=False)
+assert result.returncode == 0 and (compatible / "marker").exists(), (result.returncode, result.stderr)
+assert not (compatible / "rejected-marker").exists()
+(compatible / "marker").unlink()
 
 for name, original, foreign, interpreter in (
     ("cross-hardened", root, compatible, "ld-crabc-x86_64-hardened.so.1"),
