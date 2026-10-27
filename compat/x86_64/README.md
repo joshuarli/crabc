@@ -466,7 +466,9 @@ its constructor; a non-PIE, an executable stack, and an RWX load must fail
 before it. A dynamic PIE's executable file-page alias must remain unchanged
 when its writable view changes. The static PIE is checked for the same property
 when its selected data byte has such an alias; otherwise the fixture reports
-that byte's lack of an alias. This focused test does not qualify the
+that byte's lack of an alias. During the first constructor, forked children
+must fault when writing the main image's RELRO and, for dynamic PIE, the
+interpreter's RELRO. This focused test does not qualify the
 hardened product.
 
 ## Rust RuntimeV1 facades

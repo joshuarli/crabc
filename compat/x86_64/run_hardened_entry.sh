@@ -13,7 +13,9 @@ cp "$installed/lib/ld-crabc-x86_64-hardened.so.1" "$image/lib/"
 cp "$installed/usr/lib/libc.so" "$image/usr/lib/"
 "$installed/bin/crabc-cc-dynamic" --dynamic-pie "$root/compat/x86_64/hardened_entry_probe.c" -o "$image/pie"
 "$installed/bin/crabc-cc-dynamic" --dynamic-pie "$root/compat/x86_64/hardened_alias_probe.c" -o "$image/alias"
+"$installed/bin/crabc-cc-dynamic" --dynamic-pie "$root/compat/x86_64/hardened_relro_probe.c" -o "$image/relro"
 "$static/bin/crabc-cc" "$root/compat/x86_64/hardened_alias_probe.c" -o "$image/static-alias"
+"$static/bin/crabc-cc" "$root/compat/x86_64/hardened_relro_probe.c" -o "$image/static-relro"
 /usr/local/bin/crabc-x86_64-musl-gcc -fno-pie -no-pie \
     -Wl,--dynamic-linker=/lib/ld-crabc-x86_64-hardened.so.1 \
     "$root/compat/x86_64/hardened_entry_probe.c" -o "$image/nonpie"
@@ -39,6 +41,8 @@ for name, kind, flag in (("bad-stack", 0x6474e551, 1), ("bad-wx", 1, 2)):
 PYTHON
 timeout 20 chroot "$image" /pie
 timeout 20 chroot "$image" /alias
+timeout 20 chroot "$image" /relro
+timeout 20 chroot "$image" /static-relro
 static_status=0
 timeout 20 chroot "$image" /static-alias || static_status=$?
 if [ "$static_status" -eq 4 ]; then
