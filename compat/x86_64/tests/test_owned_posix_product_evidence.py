@@ -459,6 +459,7 @@ class OwnedPosixProductEvidenceTests(unittest.TestCase):
             "schema": 1,
             "format": "crabc-x86-64-owned-dynamic-sysroot-v1",
             "target": "x86_64-unknown-linux-musl",
+            "hardening_profile": "compatibility",
             "files": self.payload_manifest(product),
             "symlinks": {"lib/ld-musl-x86_64.so.1": "ld-crabc-x86_64.so.1"},
         }

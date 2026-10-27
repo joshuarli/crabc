@@ -33,6 +33,7 @@ if Path(__file__).resolve().parent.name in ("bin", "crabc"):
     sys.path.insert(0, str(directory.parent / "share/crabc" if directory.name == "bin" else directory))
     from native_runtime_profile import NativeRuntimeProfile
 else:
+    sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
     from compat.x86_64.native_runtime_profile import NativeRuntimeProfile
 
 

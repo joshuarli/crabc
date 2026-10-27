@@ -505,7 +505,7 @@ def elf_imports(nm: str, artifact: Path) -> set[str]:
             if len(line.split()) >= 2 and not line.endswith(":")}
 
 
-def build(output: Path, *, allocator_backend: str = common.DEFAULT_ALLOCATOR_BACKEND, lifecycle_test_audit: bool = False, profile: str = "release") -> None:
+def build(output: Path, *, allocator_backend: str = common.DEFAULT_ALLOCATOR_BACKEND, lifecycle_test_audit: bool = False, profile: str = "release", hardening_profile: common.NativeRuntimeProfile = common.NativeRuntimeProfile.COMPATIBILITY) -> None:
     common.assert_native_target()
     if allocator_backend not in ALLOCATOR_BACKENDS:
         raise common.BuildError("unknown dynamic allocator backend")
@@ -520,7 +520,7 @@ def build(output: Path, *, allocator_backend: str = common.DEFAULT_ALLOCATOR_BAC
         raise common.BuildError("dynamic build state already exists; choose a fresh owned output")
     stage.mkdir(parents=True, mode=0o700)
     staged_output = stage / "installed"
-    build_staged_payload(staged_output, stage, allocator_backend=allocator_backend, lifecycle_test_audit=lifecycle_test_audit, profile=profile)
+    build_staged_payload(staged_output, stage, allocator_backend=allocator_backend, lifecycle_test_audit=lifecycle_test_audit, profile=profile, hardening_profile=hardening_profile)
     if qualification.source_digest() != source_before_build:
         raise common.BuildError("source changed during dynamic product build")
     try:
@@ -530,7 +530,7 @@ def build(output: Path, *, allocator_backend: str = common.DEFAULT_ALLOCATOR_BAC
         raise common.BuildError(str(error)) from error
 
 
-def build_staged_payload(output: Path, stage: Path, *, allocator_backend: str = common.DEFAULT_ALLOCATOR_BACKEND, lifecycle_test_audit: bool = False, profile: str = "release") -> None:
+def build_staged_payload(output: Path, stage: Path, *, allocator_backend: str = common.DEFAULT_ALLOCATOR_BACKEND, lifecycle_test_audit: bool = False, profile: str = "release", hardening_profile: common.NativeRuntimeProfile = common.NativeRuntimeProfile.COMPATIBILITY) -> None:
     """Build the complete candidate privately; only build() may publish it.
 
     Failure retains diagnostic/build state under the dedicated .build owner,
@@ -538,8 +538,10 @@ def build_staged_payload(output: Path, stage: Path, *, allocator_backend: str = 
     the installed driver's exact validation before atomic no-replace rename.
     """
     if profile == "debug":
-        build_debug_payload(output, stage, allocator_backend=allocator_backend, lifecycle_test_audit=lifecycle_test_audit)
+        build_debug_payload(output, stage, allocator_backend=allocator_backend, lifecycle_test_audit=lifecycle_test_audit, hardening_profile=hardening_profile)
         return
+    if hardening_profile is not common.NativeRuntimeProfile.COMPATIBILITY:
+        raise common.BuildError("hardened release dynamic product is not implemented")
     if profile != "release":
         raise common.BuildError("unknown owned runtime build profile")
     recorded_backend = allocator_backend
@@ -783,10 +785,10 @@ def build_staged_payload(output: Path, stage: Path, *, allocator_backend: str = 
     write_product_manifest(output, metadata)
 
 
-def build_debug_payload(output: Path, stage: Path, *, allocator_backend: str, lifecycle_test_audit: bool) -> None:
+def build_debug_payload(output: Path, stage: Path, *, allocator_backend: str, lifecycle_test_audit: bool, hardening_profile: common.NativeRuntimeProfile = common.NativeRuntimeProfile.COMPATIBILITY) -> None:
     """Link opt0 source-built runtime objects without using installed Rust runtimes."""
     inputs = common.build_debug_runtime_inputs(stage, allocator_backend=allocator_backend,
-                                               lifecycle_test_audit=lifecycle_test_audit, dynamic=True)
+                                               lifecycle_test_audit=lifecycle_test_audit, dynamic=True, hardening_profile=hardening_profile)
     helper_policy = shared_libc_compiler_helper_archive_policy()
     tools = inputs["producer_tools"]
     ar = common.producer_tool_path(tools, "llvm-ar")
@@ -881,13 +883,16 @@ def build_debug_payload(output: Path, stage: Path, *, allocator_backend: str, li
     cfgs.extend(("crabc_general_initial_graph", "crabc_general_initial_lifecycle",
                  "crabc_general_initial_tls_materialization_v1", "crabc_general_loader_libc_tls_runtime_v1",
                  "crabc_dynamic_main_thread_runtime_v1"))
+    if hardening_profile is common.NativeRuntimeProfile.HARDENED:
+        cfgs.append("crabc_hardened")
     loader_command = [*base, "--crate-name", "crabc_owned_debug_loader", f"--emit=obj,dep-info={loader_dependencies}",
                       *(argument for cfg in cfgs for argument in ("--cfg", cfg)),
                       str(ROOT / "ldso/src/lib.rs"), "-o", str(loader_object)]
     run(loader_command)
     private_exports = stage / "loader-private.exports"
     private_exports.write_text("{ local: _R*; _ZN*; };\n")
-    interpreter = output / LOADER_ARTIFACT
+    loader_artifact = hardening_profile.interpreter.lstrip("/")
+    interpreter = output / loader_artifact
     interpreter.parent.mkdir()
     loader_link = [str(linker), "-shared", "-Bsymbolic", "--hash-style=sysv", "--eh-frame-hdr", "-e", "_start", "--no-undefined",
                    "-z", "now", "-z", "noexecstack", f"--version-script={private_exports}",
@@ -896,7 +901,8 @@ def build_debug_payload(output: Path, stage: Path, *, allocator_backend: str, li
                    "-o", str(interpreter)]
     run(loader_link)
     interpreter.chmod(0o755)
-    (interpreter.parent / "ld-musl-x86_64.so.1").symlink_to(interpreter.name)
+    for alias, target in hardening_profile.aliases.items():
+        (output / alias).symlink_to(target)
     metadata = output / "share/crabc"
     metadata.mkdir(parents=True)
     common.write_json(metadata / "headers.provenance.json", headers)
@@ -918,7 +924,7 @@ def build_debug_payload(output: Path, stage: Path, *, allocator_backend: str, li
         "compiler_dependencies": loader_dependency_provenance(loader_dependencies, loader_object, object_dependencies=True),
         "feature_configuration": _source_file_identity(ROOT / "ldso/build.rs", "loader feature configuration"),
         "source_core_archive_sha256": common.sha256_file(core), "source_helper_archive_sha256": common.sha256_file(builtins),
-        "artifact": {"path": LOADER_ARTIFACT, "sha256": common.sha256_file(interpreter)}})
+        "artifact": {"path": loader_artifact, "sha256": common.sha256_file(interpreter)}})
     for source, name in ((ROOT / "compat/x86_64/crabc_cc_owned_dynamic.py", "bin/crabc-cc-dynamic"),
                          (ROOT / "compat/x86_64/crabc_cc_static.py", "share/crabc/crabc_cc_static.py"),
                          (ROOT / "compat/x86_64/native_runtime_profile.py", "share/crabc/native_runtime_profile.py"),
@@ -928,17 +934,17 @@ def build_debug_payload(output: Path, stage: Path, *, allocator_backend: str, li
     (output / "bin/crabc-cc-dynamic").chmod(0o755)
     common.write_json(metadata / "dynamic-product-state.json", {"build_profile": "debug", "allocator_backend": allocator_backend,
         "allocator_lifecycle_test_audit": lifecycle_test_audit, "status": "materialized-unqualified"})
-    write_product_manifest(output, metadata, profile="debug")
+    write_product_manifest(output, metadata, profile="debug", hardening_profile=hardening_profile)
 
 
-def write_product_manifest(output: Path, metadata: Path, *, profile: str = "release") -> None:
+def write_product_manifest(output: Path, metadata: Path, *, profile: str = "release", hardening_profile: common.NativeRuntimeProfile = common.NativeRuntimeProfile.COMPATIBILITY) -> None:
     """Seal installed payload bytes together with their selected Rust toolchain."""
     files = {path.relative_to(output).as_posix(): common.sha256_file(path)
              for path in sorted(output.rglob("*")) if path.is_file() and not path.is_symlink()}
     manifest = {"schema": 1, "format": FORMAT,
         "target": common.TARGET, "toolchain": common.PINNED_TOOLCHAIN, "files": files, "build_profile": profile,
-        "hardening_profile": common.NativeRuntimeProfile.COMPATIBILITY.value,
-        "symlinks": {"lib/ld-musl-x86_64.so.1": "ld-crabc-x86_64.so.1"}}
+        "hardening_profile": hardening_profile.value,
+        "symlinks": hardening_profile.aliases}
     if profile == "debug":
         # Debug state describes only the unqualified backend selection. Bind
         # its installed payload to source content in the manifest; build()
@@ -953,9 +959,10 @@ def main() -> int:
     parser.add_argument("--allocator-backend", choices=ALLOCATOR_BACKENDS, default=common.DEFAULT_ALLOCATOR_BACKEND)
     parser.add_argument("--allocator-lifecycle-test-audit", action="store_true")
     parser.add_argument("--profile", choices=("release", "debug"), default="release")
+    parser.add_argument("--hardening-profile", type=common.NativeRuntimeProfile, choices=tuple(common.NativeRuntimeProfile), default=common.NativeRuntimeProfile.COMPATIBILITY)
     args = parser.parse_args()
     try:
-        build(args.output, allocator_backend=args.allocator_backend, lifecycle_test_audit=args.allocator_lifecycle_test_audit, profile=args.profile)
+        build(args.output, allocator_backend=args.allocator_backend, lifecycle_test_audit=args.allocator_lifecycle_test_audit, profile=args.profile, hardening_profile=args.hardening_profile)
     except (common.BuildError, OSError) as error:
         print(f"owned dynamic sysroot: {error}", file=sys.stderr)
         return 1
