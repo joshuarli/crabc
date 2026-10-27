@@ -11,6 +11,7 @@ mkdir -p "$image/lib" "$image/usr/lib"
 cp "$installed/lib/ld-crabc-x86_64-hardened.so.1" "$image/lib/"
 cp "$installed/usr/lib/libc.so" "$image/usr/lib/"
 "$installed/bin/crabc-cc-dynamic" --dynamic-pie "$root/compat/x86_64/hardened_entry_probe.c" -o "$image/pie"
+"$installed/bin/crabc-cc-dynamic" --dynamic-pie "$root/compat/x86_64/hardened_alias_probe.c" -o "$image/alias"
 /usr/local/bin/crabc-x86_64-musl-gcc -fno-pie -no-pie \
     -Wl,--dynamic-linker=/lib/ld-crabc-x86_64-hardened.so.1 \
     "$root/compat/x86_64/hardened_entry_probe.c" -o "$image/nonpie"
@@ -35,6 +36,7 @@ for name, kind, flag in (("bad-stack", 0x6474e551, 1), ("bad-wx", 1, 2)):
     (root / name).chmod(0o755)
 PYTHON
 timeout 20 chroot "$image" /pie
+timeout 20 chroot "$image" /alias
 test -f "$image/marker"
 rm "$image/marker"
 for case in nonpie bad-stack bad-wx; do
