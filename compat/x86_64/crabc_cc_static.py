@@ -379,12 +379,13 @@ def validate_manifest_payload(root: Path) -> None:
             raise DriverError(f"owned manifest payload hash mismatch: {relative}")
 
 
-def validate_crt_provenance(root: Path, receipt_path: str, profile: NativeRuntimeProfile) -> None:
+def validate_crt_provenance(root: Path, receipt_path: str, profile: NativeRuntimeProfile,
+                            entry: str = "rcrt1.o") -> None:
     receipt = load_manifest(root / receipt_path, "CRT provenance")
     try:
         if (receipt["hardening_profile"] != profile.value
-                or receipt["objects"]["rcrt1.o"]["sha256"] != sha256_file(root / "usr/lib/rcrt1.o")):
-            raise DriverError("installed CRT profile or static PIE object does not match product")
+                or receipt["objects"][entry]["sha256"] != sha256_file(root / "usr/lib" / entry)):
+            raise DriverError("installed CRT profile or PIE entry object does not match product")
     except (KeyError, TypeError) as error:
         raise DriverError("invalid installed CRT provenance") from error
 

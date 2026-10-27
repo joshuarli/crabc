@@ -35,6 +35,7 @@ COMPILER_HELPER_ARCHIVE = "libcrabc-builtins.a"
 REQUIRED = {"usr/lib/libc.so", "usr/lib/crt1.o", "usr/lib/Scrt1.o", "usr/lib/crti.o", "usr/lib/crtn.o",
             "usr/lib/crabc-dynamic-attach.o", "usr/lib/" + COMPILER_HELPER_ARCHIVE, "lib/ld-crabc-x86_64.so.1",
             "share/crabc/crabc_cc_static.py", "share/crabc/native_runtime_profile.py",
+            "share/crabc/crt.provenance.json",
             "share/crabc/owned_dynamic_receipt.py", "share/crabc/owned_dynamic_elf.py"}
 APPLICATION_DSO_BASENAME = re.compile(r"[^/\x00]+\.so(?:\.[0-9]+)*\Z")
 RECEIPT_V1_FIELDS = receipt_contract.V1_FIELDS
@@ -217,6 +218,7 @@ def validate(root: Path) -> dict:
             raise shared.DriverError("unsafe manifest payload entry")
         if shared.sha256_file(root / relative) != digest:
             raise shared.DriverError(f"installed payload hash mismatch: {relative}")
+    shared.validate_crt_provenance(root, "share/crabc/crt.provenance.json", profile, "Scrt1.o")
     return record
 
 
@@ -277,12 +279,15 @@ def validate_combined(root: Path) -> dict:
     for relative, digest in embedded_files.items():
         placed = placements.get(relative)
         # Only product metadata may move, and only within share/crabc/.
-        movable = (relative not in required and relative.startswith(shared.PRODUCT_METADATA_PREFIX)
+        movable = ((relative not in required or relative == "share/crabc/crt.provenance.json")
+                   and relative.startswith(shared.PRODUCT_METADATA_PREFIX)
                    and isinstance(placed, str) and placed.startswith(shared.PRODUCT_METADATA_PREFIX))
         if placed != relative and not movable:
             raise shared.DriverError(f"combined sysroot moved dynamic payload: {relative}")
         if files.get(placed) != digest:
             raise shared.DriverError(f"combined sysroot does not install dynamic payload unchanged: {relative}")
+    receipt = placements["share/crabc/crt.provenance.json"]
+    shared.validate_crt_provenance(root, receipt, profile, "Scrt1.o")
     return record
 
 

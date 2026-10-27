@@ -36,13 +36,19 @@ class InstalledDynamicDriverTests(unittest.TestCase):
             path = self.root / relative
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_bytes(b"owned test payload")
+        receipt = self.root / "share/crabc/crt.provenance.json"
+        receipt.write_text(json.dumps({"hardening_profile": "compatibility", "objects": {
+            "Scrt1.o": {"sha256": hashlib.sha256(b"owned test payload").hexdigest()},
+        }}))
         (self.root / "lib/ld-musl-x86_64.so.1").symlink_to("ld-crabc-x86_64.so.1")
         (self.root / "share/crabc").mkdir(parents=True, exist_ok=True)
         self.manifest = {"schema": 1, "format": driver.FORMAT, "target": driver.shared.TARGET,
                          "hardening_profile": "compatibility",
                          "toolchain": PINNED_TOOLCHAIN,
-                         "files": {relative: hashlib.sha256(b"owned test payload").hexdigest()
-                                   for relative in driver.REQUIRED}, "symlinks": driver.ALIASES}
+                         "files": {**{relative: hashlib.sha256(b"owned test payload").hexdigest()
+                                   for relative in driver.REQUIRED},
+                                   "share/crabc/crt.provenance.json": hashlib.sha256(receipt.read_bytes()).hexdigest()},
+                         "symlinks": driver.ALIASES}
         self.write_manifest()
 
     def write_manifest(self):
@@ -57,6 +63,11 @@ class InstalledDynamicDriverTests(unittest.TestCase):
         self.manifest["files"][new] = self.manifest["files"].pop(old)
         self.manifest["hardening_profile"] = profile.value
         self.manifest["symlinks"] = profile.aliases
+        receipt = self.root / "share/crabc/crt.provenance.json"
+        provenance = json.loads(receipt.read_text())
+        provenance["hardening_profile"] = profile.value
+        receipt.write_text(json.dumps(provenance))
+        self.manifest["files"]["share/crabc/crt.provenance.json"] = hashlib.sha256(receipt.read_bytes()).hexdigest()
         self.write_manifest()
         with self.assertRaisesRegex(driver.shared.DriverError, "require PIE"):
             driver.execute(self.root, ["--dynamic-non-pie", "--print-link-plan"])
@@ -65,6 +76,22 @@ class InstalledDynamicDriverTests(unittest.TestCase):
         with patch("sys.stdout", new_callable=io.StringIO) as output:
             driver.execute(self.root, ["--dynamic-pie", "--print-link-plan"])
         self.assertIn(profile.interpreter, json.loads(output.getvalue())["linker"])
+
+    def test_installed_driver_rejects_a_mismatched_dynamic_crt_receipt(self):
+        path = self.root / "share/crabc/crt.provenance.json"
+        original = json.loads(path.read_text())
+        for field in ("profile", "object"):
+            with self.subTest(field=field):
+                receipt = json.loads(json.dumps(original))
+                if field == "profile":
+                    receipt["hardening_profile"] = "hardened"
+                else:
+                    receipt["objects"]["Scrt1.o"]["sha256"] = "b" * 64
+                path.write_text(json.dumps(receipt))
+                self.manifest["files"]["share/crabc/crt.provenance.json"] = hashlib.sha256(path.read_bytes()).hexdigest()
+                self.write_manifest()
+                with self.assertRaises(driver.shared.DriverError):
+                    driver.validate_installation(self.root)
 
     def _seal_materialized_fixture(self, root: Path) -> str:
         """Give the selected fixture payload one source-bound materialization state."""
@@ -166,6 +193,10 @@ class InstalledDynamicDriverTests(unittest.TestCase):
         self._run_native(["/usr/bin/ar", "rcs", str(library / "libcrabc-builtins.a"), str(library / "empty.o")])
         (root / "lib/ld-crabc-x86_64.so.1").write_bytes(b"fixture interpreter\n")
         (root / "lib/ld-musl-x86_64.so.1").symlink_to("ld-crabc-x86_64.so.1")
+        (root / "share/crabc/crt.provenance.json").write_text(json.dumps({
+            "hardening_profile": "compatibility",
+            "objects": {"Scrt1.o": {"sha256": hashlib.sha256((library / "Scrt1.o").read_bytes()).hexdigest()}},
+        }))
 
         files = {
             path.relative_to(root).as_posix(): hashlib.sha256(path.read_bytes()).hexdigest()

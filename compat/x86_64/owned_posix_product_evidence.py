@@ -66,6 +66,7 @@ DYNAMIC_REQUIRED = (
     "bin/crabc-cc-dynamic",
     "share/crabc/crabc_cc_static.py",
     "share/crabc/native_runtime_profile.py",
+    "share/crabc/crt.provenance.json",
     "share/crabc/owned_dynamic_receipt.py",
     "share/crabc/owned_dynamic_elf.py",
     "share/crabc/producer-tools.json",
@@ -671,6 +672,8 @@ def _validate_dynamic_product(root: Path) -> tuple[Path, dict[str, str]]:
         1, DYNAMIC_PRODUCT_FORMAT, TARGET, aliases
     ):
         _fail("dynamic product manifest has the wrong product identity")
+    if manifest.get("hardening_profile") != NativeRuntimeProfile.COMPATIBILITY.value:
+        _fail("dynamic product has the wrong native runtime profile")
     tool_relative = "share/crabc/producer-tools.json"
     if combined is not None:
         product_records = combined.get("products")
@@ -696,6 +699,14 @@ def _validate_dynamic_product(root: Path) -> tuple[Path, dict[str, str]]:
     )
     _physical_directory(root / "usr/include", "dynamic product headers")
     files = _validate_product_tree(root, "dynamic", files, aliases, combined)
+    receipt = "share/crabc/crt.provenance.json"
+    if combined is not None:
+        receipt = combined["products"]["dynamic"]["placements"][receipt]
+    import crabc_cc_static
+    try:
+        crabc_cc_static.validate_crt_provenance(root, receipt, NativeRuntimeProfile.COMPATIBILITY, "Scrt1.o")
+    except crabc_cc_static.DriverError as error:
+        raise ProductEvidenceError(str(error)) from error
     _validate_link_input_modes(root, DYNAMIC_LINK_INPUT_MODES, "dynamic link input")
     return manifest_path, files
 

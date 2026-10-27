@@ -474,6 +474,10 @@ class OwnedPosixProductEvidenceTests(unittest.TestCase):
         os.chmod(product / "bin/crabc-cc-dynamic", 0o755)
         os.chmod(product / "lib/ld-crabc-x86_64.so.1", 0o755)
         os.chmod(product / "usr/lib/libc.so", 0o755)
+        self.write_json(product / "share/crabc/crt.provenance.json", {
+            "hardening_profile": "compatibility",
+            "objects": {"Scrt1.o": {"sha256": digest(product / "usr/lib/Scrt1.o")}},
+        })
         alias = product / "lib/ld-musl-x86_64.so.1"
         alias.symlink_to("ld-crabc-x86_64.so.1")
         self.write_json(product / "share/crabc/producer-tools.json", {"schema": 1, **self.compiler_tools})
@@ -487,6 +491,15 @@ class OwnedPosixProductEvidenceTests(unittest.TestCase):
         }
         self.write_json(product / "share/crabc/manifest.json", manifest)
         return product
+
+    def test_dynamic_product_reader_rejects_a_mismatched_crt_profile(self) -> None:
+        path = self.dynamic / "share/crabc/crt.provenance.json"
+        receipt = json.loads(path.read_text())
+        receipt["hardening_profile"] = "hardened"
+        self.write_json(path, receipt)
+        self.refresh_dynamic_manifest()
+        with self.assertRaises(evidence.ProductEvidenceError):
+            evidence._validate_dynamic_product(self.dynamic)
 
     def refresh_dynamic_manifest(self) -> None:
         manifest_path = self.dynamic / "share/crabc/manifest.json"
