@@ -5033,9 +5033,12 @@ mod tests {
     #[cfg(all(target_arch = "x86_64", not(miri)))]
     #[test]
     fn x86_64_cross_thread_arena_retention_attribution_once() {
+        crate::test_process::run_in_fresh_process(
+            "dynamic_theap::tests::x86_64_cross_thread_arena_retention_attribution_once", || {
         prepare_cross_thread_managed_abandoned_lifecycle();
         let control = CrossThreadAbandonedControl::new();
         thread::scope(|scope| retention_attribution_cycle(scope, &control, 0, None));
+        });
     }
 
     /// Reports actual same-process mappings after joined child teardown. Source
@@ -5044,6 +5047,8 @@ mod tests {
     #[cfg(all(target_arch = "x86_64", not(miri)))]
     #[test]
     fn x86_64_cross_thread_arena_retention_trace() {
+        crate::test_process::run_in_fresh_process(
+            "dynamic_theap::tests::x86_64_cross_thread_arena_retention_trace", || {
         // The embedding runtime prepares the first owner once, before any
         // public child operation. Repeating this integration transition after
         // child Heap allocations retires an active initial-owner engine; it is
@@ -5068,6 +5073,7 @@ mod tests {
                 #[cfg(not(target_env = "musl"))]
                 assert!(!observe_ambient, "ambient observation requires the authenticated musl target");
             }
+        });
         });
     }
 

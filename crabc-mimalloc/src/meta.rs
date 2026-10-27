@@ -9406,6 +9406,8 @@ mod tests {
     #[cfg(target_arch = "x86_64")]
     #[test]
     fn main_heap_last_reference_recovers_exact_transferred_metadata_once() {
+        crate::test_process::run_in_fresh_process(
+            "meta::tests::main_heap_last_reference_recovers_exact_transferred_metadata_once", || {
         use crate::subproc::main_heaps::MainHeapTheapMetadataOwnership;
         let allocator = MetaAllocator::global();
         allocator.prepare_for_main_subprocess(config(), MainSubprocess::global()).unwrap();
@@ -9432,6 +9434,7 @@ mod tests {
         // No Heap was ever published: this recovered capability returns the
         // ordinary metadata allocation through its exact original owner.
         allocator.free(&mut recovered).unwrap();
+        });
     }
 
     #[test]
@@ -11497,6 +11500,8 @@ mod tests {
 
     #[test]
     fn static_global_metadata_allocation_leaves_compiler_tls_roots_unchanged() {
+        crate::test_process::run_in_fresh_process(
+            "meta::tests::static_global_metadata_allocation_leaves_compiler_tls_roots_unchanged", || {
         let dynamic_before = crate::compiler_tls::dynamic_backing_peek();
         let fast_before = crate::compiler_tls::fast_slot_peek();
         let default_before = crate::compiler_tls::default_theap();
@@ -11513,6 +11518,7 @@ mod tests {
         assert_eq!(crate::compiler_tls::fast_slot_peek(), fast_before);
         assert_eq!(crate::compiler_tls::default_theap(), default_before);
         assert_eq!(crate::compiler_tls::cached_theap(), cached_before);
+        });
     }
 }
 
