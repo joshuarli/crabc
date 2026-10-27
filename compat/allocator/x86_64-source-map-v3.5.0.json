@@ -1660,9 +1660,9 @@
       "evidence": [
         "compat/allocator/m1_clock_fallback_x86_64.c",
         "compat/allocator/m1_clock_fallback_x86_64.py",
+        "compat/allocator/m2-vm-x86_64-v3.5.0.fragment.json",
         "compat/allocator/m2_arena_clock_fallback_x86_64.c",
         "compat/allocator/m2_arena_clock_fallback_x86_64.py",
-        "compat/allocator/m2-vm-x86_64-v3.5.0.fragment.json",
         "compat/allocator/m2_vm_x86_64.c",
         "compat/allocator/m2_vm_x86_64.py",
         "compat/allocator/test_m2_vm_x86_64.py",
@@ -1685,6 +1685,6 @@
     "unfinished_unit_count": 28,
     "unit_count": 34,
     "unit_ids_sha256": "dca679d8587cb38bcf6e6c62379284ed35a55d1b7991d07b0d30eac767670052",
-    "units_sha256": "5a5e4f0c314171aed2d1716fe349efb878bc20563db7f9223261ac65c539c8d6"
+    "units_sha256": "03aa9449c9287accea5d298397b6aa49e5cb8e9001e78b3c01007cac0054d735"
   }
 }
