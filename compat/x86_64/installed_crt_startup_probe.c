@@ -10,6 +10,8 @@
 #include <unistd.h>
 #ifdef CRABC_HARDENED_PROBE
 #include <pthread.h>
+#include <signal.h>
+#include <sys/wait.h>
 #endif
 
 /* The same installed-header object is linked in every mode. Dynamic entry
@@ -21,6 +23,15 @@ static int phase, preinitialized;
  * The pinned freestanding GCC specs disable generated stack protectors. */
 extern uintptr_t __stack_chk_guard;
 static void emit(char c) { if (write(1,&c,1)!=1) _Exit(90); }
+#ifdef CRABC_HARDENED_PROBE
+static int stack_is_nonexecutable(void) {
+    volatile unsigned char code[]={0xc3};
+    pid_t child=fork();
+    if (!child) { ((void (*)(void))(uintptr_t)code)(); _Exit(0); }
+    int status=0;
+    return child>0 && waitpid(child,&status,0)==child && WIFSIGNALED(status) && WTERMSIG(status)==SIGSEGV;
+}
+#endif
 static void state(void) {
     const unsigned char *random=(const unsigned char *)getauxval(AT_RANDOM);
     uintptr_t guard, expected=0;
@@ -29,6 +40,9 @@ static void state(void) {
     expected&=~(uintptr_t)0xff00;
     __asm__ volatile("mov %%fs:40,%0":"=r"(guard));
     if (!guard || guard!=expected || __stack_chk_guard!=expected || initial!=17 || zero!=0 || errno!=0) _Exit(92);
+#ifdef CRABC_HARDENED_PROBE
+    if (!stack_is_nonexecutable()) _Exit(114);
+#endif
 }
 #ifdef CRABC_HARDENED_PROBE
 static void *worker(void *argument) { state(); return argument; }
