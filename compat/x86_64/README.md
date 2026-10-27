@@ -460,11 +460,13 @@ providers or close pthread lifecycle, family, or public-support evidence.
 
 ## Hardened kernel entry prototype
 
-Inside the pinned native image, `compat/x86_64/run_hardened_entry.sh SYSROOT`
-tests a hardened debug product in a disposable root. A matching PIE must run
+Inside the pinned native image, `compat/x86_64/run_hardened_entry.sh DYNAMIC STATIC`
+tests hardened debug products in a disposable root. A matching PIE must run
 its constructor; a non-PIE, an executable stack, and an RWX load must fail
-before it. A linker-produced executable/file-page alias must remain unchanged
-when its writable view changes. This focused test does not qualify the
+before it. A dynamic PIE's executable file-page alias must remain unchanged
+when its writable view changes. The static PIE is checked for the same property
+when its selected data byte has such an alias; otherwise the fixture reports
+that byte's lack of an alias. This focused test does not qualify the
 hardened product.
 
 ## Rust RuntimeV1 facades

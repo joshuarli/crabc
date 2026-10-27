@@ -2,8 +2,9 @@
 set -euo pipefail
 ulimit -c 0
 readonly root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-[ "$#" -eq 1 ] || exit 2
+[ "$#" -eq 2 ] || exit 2
 readonly installed="$1"
+readonly static="$2"
 case "${TMPDIR:-}" in "$root"/.work/*) ;; *) exit 2;; esac
 readonly work="$(mktemp -d "$TMPDIR/hardened-entry.XXXXXX")"
 readonly image="$work/root"
@@ -12,6 +13,7 @@ cp "$installed/lib/ld-crabc-x86_64-hardened.so.1" "$image/lib/"
 cp "$installed/usr/lib/libc.so" "$image/usr/lib/"
 "$installed/bin/crabc-cc-dynamic" --dynamic-pie "$root/compat/x86_64/hardened_entry_probe.c" -o "$image/pie"
 "$installed/bin/crabc-cc-dynamic" --dynamic-pie "$root/compat/x86_64/hardened_alias_probe.c" -o "$image/alias"
+"$static/bin/crabc-cc" "$root/compat/x86_64/hardened_alias_probe.c" -o "$image/static-alias"
 /usr/local/bin/crabc-x86_64-musl-gcc -fno-pie -no-pie \
     -Wl,--dynamic-linker=/lib/ld-crabc-x86_64-hardened.so.1 \
     "$root/compat/x86_64/hardened_entry_probe.c" -o "$image/nonpie"
@@ -37,6 +39,13 @@ for name, kind, flag in (("bad-stack", 0x6474e551, 1), ("bad-wx", 1, 2)):
 PYTHON
 timeout 20 chroot "$image" /pie
 timeout 20 chroot "$image" /alias
+static_status=0
+timeout 20 chroot "$image" /static-alias || static_status=$?
+if [ "$static_status" -eq 4 ]; then
+    printf 'selected static data byte has no executable file-page alias\n'
+else
+    [ "$static_status" -eq 0 ]
+fi
 test -f "$image/marker"
 rm "$image/marker"
 for case in nonpie bad-stack bad-wx; do
