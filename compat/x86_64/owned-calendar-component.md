@@ -18,7 +18,7 @@ entry.
 | --- | --- |
 | `calendar-posix-tz-format` | The ordinary `owned_calendar_probe.c` object plus `owned_calendar_real_zone_probe.c`: POSIX strings, named New York/Berlin/Lord Howe zones, explicit `/etc/localtime`, local conversion, fold/gap/normalization, extended-format/locale behavior, overflow, concurrent `_r` calls, and fixed named-zone transitions. |
 | `calendar-tzif-specification` | `owned_timezone_tzif_probe.c check`, which requires the RFC 9636/POSIX result. Its separate pinned-musl `observe` transcript is retained as the documented six-case oracle defect and never treated as parity. |
-| `calendar-strptime` | The ordinary parsing matrix plus the separately classified guard-page and delimiter corrections in `owned_strptime_probe.c`. The pinned-musl guard fault is an oracle defect; it is not converted into a passing differential. |
+| `calendar-strptime` | The ordinary parsing matrix and the guard-page and timezone delimiter cases in `owned_strptime_probe.c`. The pinned native musl and candidate must agree on bounded unknown-name parsing and the selected delimiter results. |
 | `calendar-getdate-global` | `owned_getdate_probe.c` with a private `DATEMSK` root, including `getdate_err`, retained state, cancellation state, and final template cleanup. |
 | `calendar-clock-adjustment-safe` | Query-only adjustment, local invalid-input validation, null `settimeofday`, the in-process seccomp-contained nonnull attempts in `owned_legacy_time_probe.c`, and the independent rejected-ID/zero-`timex` `libc_clock_adjtime_probe.c`. |
 
