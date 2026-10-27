@@ -454,6 +454,28 @@ assert result.returncode == 0 and (compatible / "marker").exists(), (result.retu
 assert not (compatible / "rejected-marker").exists()
 (compatible / "marker").unlink()
 
+for directory, interpreter in ((root, "ld-crabc-x86_64-hardened.so.1"),
+                               (compatible, "ld-crabc-x86_64.so.1")):
+    prefix = directory / "plugins/fake"
+    (prefix / "lib").mkdir(parents=True)
+    (prefix / "etc").mkdir()
+    (prefix / "etc/ld-musl-x86_64.path").write_text("/plugins")
+    loader = prefix / "lib/ld.so"
+    shutil.copyfile(directory / "lib" / interpreter, loader)
+    loader.chmod(0o755)
+    result = subprocess.run(["/plugins/fake/lib/ld.so", "/search-env"], env={},
+                            preexec_fn=lambda: enter(directory), capture_output=True, timeout=20, check=False)
+    assert result.returncode == 0 and (directory / "marker").exists(), result.stderr
+    (directory / "marker").unlink()
+    loader.chmod(0o4755)
+    result = subprocess.run(["/plugins/fake/lib/ld.so", "/secure"], env={},
+                            preexec_fn=lambda: enter_unprivileged(directory), capture_output=True, timeout=20, check=False)
+    assert result.returncode == 0, (result.returncode, result.stderr)
+    result = subprocess.run(["/plugins/fake/lib/ld.so", "/search-env"], env={},
+                            preexec_fn=lambda: enter_unprivileged(directory), capture_output=True, timeout=20, check=False)
+    assert result.returncode in (1, 127), (result.returncode, result.stderr)
+    assert not (directory / "marker").exists()
+
 for name, original, foreign, interpreter in (
     ("cross-hardened", root, compatible, "ld-crabc-x86_64-hardened.so.1"),
     ("cross-compatibility", compatible, root, "ld-crabc-x86_64.so.1"),
