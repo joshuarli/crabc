@@ -221,7 +221,7 @@ class ProductIdentityTests(unittest.TestCase):
             dynamic_manifest = {
                 "schema": 1, "format": RUNNER.PRODUCT_FORMAT,
                 "target": "x86_64-unknown-linux-musl", "toolchain": "pinned-test",
-                "files": selected,
+                "hardening_profile": "compatibility", "files": selected,
                 "symlinks": {"lib/ld-musl-x86_64.so.1": "ld-crabc-x86_64.so.1"},
             }
             (dynamic / "share/crabc/manifest.json").write_text(json.dumps(dynamic_manifest))
@@ -235,7 +235,7 @@ class ProductIdentityTests(unittest.TestCase):
             static_manifest.write_text(json.dumps({
                 "schema": 1, "format": "crabc-x86-64-owned-static-sysroot-v1",
                 "target": "x86_64-unknown-linux-musl", "toolchain": "pinned-test",
-                "installed": {"files": {"usr/lib/libc.a": RUNNER.sha256_file(static_archive, "static archive")}},
+                "hardening_profile": "compatibility", "installed": {"files": {"usr/lib/libc.a": RUNNER.sha256_file(static_archive, "static archive")}},
             }))
             files = dict(selected)
             files["share/crabc/dynamic/manifest.json"] = RUNNER.sha256_file(embedded, "embedded manifest")
@@ -244,7 +244,7 @@ class ProductIdentityTests(unittest.TestCase):
             combined_manifest = {
                 "schema": 1, "format": "crabc-x86-64-owned-sysroot-v1",
                 "target": "x86_64-unknown-linux-musl", "toolchain": "pinned-test",
-                "modes": ["static-et-exec", "static-pie", "dynamic-pie", "dynamic-non-pie", "dynamic-shared-object"],
+                "hardening_profile": "compatibility", "modes": ["static-et-exec", "static-pie", "dynamic-pie", "dynamic-non-pie", "dynamic-shared-object"],
                 "files": files, "executables": sorted(selected), "symlinks": dynamic_manifest["symlinks"],
                 "products": {
                     "dynamic": {"format": RUNNER.PRODUCT_FORMAT,
@@ -262,6 +262,13 @@ class ProductIdentityTests(unittest.TestCase):
 
             self.assertEqual(RUNNER.validate_product(dynamic)["files"], selected)
             self.assertEqual(RUNNER.validate_product(combined)["files"], files)
+
+            combined_manifest["hardening_profile"] = "hardened"
+            combined_manifest_path.write_text(json.dumps(combined_manifest))
+            with self.assertRaisesRegex(RUNNER.CorpusError, "identity drifted"):
+                RUNNER.validate_product(combined)
+            combined_manifest["hardening_profile"] = "compatibility"
+            combined_manifest_path.write_text(json.dumps(combined_manifest))
 
             combined_manifest_path.chmod(0o755)
             with self.assertRaisesRegex(RUNNER.CorpusError, "manifest mode differs"):

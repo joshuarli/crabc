@@ -1039,8 +1039,9 @@ def validate_combined_product(product: Path, manifest_path: Path, raw: dict[str,
     manifest_mode = manifest_path.lstat().st_mode
     if not stat.S_ISREG(manifest_mode) or manifest_mode & 0o111:
         fail("supplied combined product manifest mode differs")
-    if (set(raw) != {"schema", "format", "target", "toolchain", "modes", "files",
+    if (set(raw) != {"schema", "format", "target", "toolchain", "hardening_profile", "modes", "files",
                      "executables", "symlinks", "products"}
+            or raw["hardening_profile"] != "compatibility"
             or type(raw["schema"]) is not int or raw["schema"] != 1
             or raw["target"] != "x86_64-unknown-linux-musl"
             or not isinstance(raw["toolchain"], str) or not raw["toolchain"]
@@ -1096,6 +1097,7 @@ def validate_combined_product(product: Path, manifest_path: Path, raw: dict[str,
                 or embedded.get("schema") != 1
                 or embedded.get("format") != identity
                 or embedded.get("target") != raw["target"]
+                or embedded.get("hardening_profile") != raw["hardening_profile"]
                 or embedded.get("toolchain") != raw["toolchain"]):
             fail(f"supplied combined product {name} manifest identity drifted")
         if name == "static":
@@ -1152,7 +1154,7 @@ def validate_product(product: Path) -> dict[str, object]:
         fail("supplied owned dynamic product identity drifted")
     if raw.get("format") == COMBINED_PRODUCT_FORMAT:
         return validate_combined_product(product, manifest_path, raw)
-    if (raw.get("schema"), raw.get("format"), raw.get("target")) != (1, PRODUCT_FORMAT, "x86_64-unknown-linux-musl"):
+    if (raw.get("schema"), raw.get("format"), raw.get("target"), raw.get("hardening_profile")) != (1, PRODUCT_FORMAT, "x86_64-unknown-linux-musl", "compatibility"):
         fail("supplied owned dynamic product identity drifted")
     files, aliases = raw.get("files"), raw.get("symlinks")
     if not isinstance(files, dict) or aliases != PRODUCT_ALIAS:
