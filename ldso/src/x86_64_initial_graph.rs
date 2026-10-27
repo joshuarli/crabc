@@ -1430,6 +1430,26 @@ unsafe fn hardened_program_headers(phdr: *const u8, phnum: usize) -> bool {
     stack
 }
 
+unsafe fn hardened_relro_pages(phdr: *const u8, phnum: usize, address: u64, length: u64) -> bool {
+    if length == 0 { return false; }
+    let start = align_down(address);
+    let Some(end) = address.checked_add(length).and_then(|end| end.checked_add(PAGE - 1)).map(align_down) else { return false; };
+    let mut writable = false;
+    for index in 0..phnum {
+        let header = phdr.add(index * 56);
+        if read_u32(header) != PT_LOAD { continue; }
+        let flags = read_u32(header.add(4));
+        let address = read_u64(header.add(16));
+        let length = read_u64(header.add(40));
+        if length == 0 { continue; }
+        let Some(load_end) = address.checked_add(length).and_then(|end| end.checked_add(PAGE - 1)).map(align_down) else { return false; };
+        let load_start = align_down(address);
+        if flags & PF_X != 0 && start < load_end && load_start < end { return false; }
+        if flags & PF_W != 0 && flags & PF_X == 0 && start >= load_start && end <= load_end { writable = true; }
+    }
+    writable
+}
+
 unsafe fn parse_mapped(
     base: u64,
     phdr: *const u8,
@@ -1483,7 +1503,8 @@ unsafe fn parse_mapped(
                 // that owns a writable PT_LOAD prefix. Validate against the
                 // actual page-rounded mapping rather than raw p_memsz, but do
                 // not accept an arbitrary span beyond that mapping.
-                if byte_len == 0 || !virtual_range_in_page_mapped_load(phdr, phnum, address, byte_len) { return None; }
+                if byte_len == 0 || !virtual_range_in_page_mapped_load(phdr, phnum, address, byte_len)
+                    || (cfg!(crabc_hardened) && !hardened_relro_pages(phdr, phnum, address, byte_len)) { return None; }
                 relro = Some((address, byte_len));
             }
             // The original graph is intentionally a no-TLS artifact and its
@@ -5796,6 +5817,21 @@ mod readable_file_load_tests {
         image[32..40].copy_from_slice(&64u64.to_le_bytes());
         image[68..72].copy_from_slice(&PF_W.to_le_bytes());
         assert!(!check(&image));
+    }
+
+    #[test]
+    fn hardened_relro_requires_writable_nonexecutable_pages() {
+        let mut headers = [0u8; 112];
+        load(&mut headers, 0, PF_R | PF_X, 0x1000, 0x100, 0x100);
+        load(&mut headers, 1, PF_R | PF_W, 0x2000, 0x100, 0x100);
+        let valid = |headers: &[u8], address, size| unsafe { hardened_relro_pages(headers.as_ptr(), 2, address, size) };
+        assert!(valid(&headers, 0x2000, 0x100));
+        assert!(!valid(&headers, 0x1000, 0x100));
+        assert!(!valid(&headers, 0x2000, 0));
+        assert!(!valid(&headers, 0x2000, 0x1001));
+        assert!(!valid(&headers, u64::MAX - 5, 16));
+        load(&mut headers, 0, PF_R | PF_X, 0x2800, 0x100, 0x100);
+        assert!(!valid(&headers, 0x2000, 0x100));
     }
 
     #[test]
