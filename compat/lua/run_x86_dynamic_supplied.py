@@ -93,13 +93,9 @@ def _cohort_path(checkout: Path, path: Path, description: str, *, directory: boo
 def _cohort_git_context(checkout: Path, state: Path) -> tuple[dict[str, str], dict[str, object]]:
     """Bind the frozen checkout reader to its mounted Git metadata.
 
-    A linked worktree stores host-absolute paths in both of its Git pointer
-    files.  The supplied consumer runs in a container where the primary
-    checkout is mounted at a different absolute path, so invoking the frozen
-    reader without an explicit worktree context makes its source seal fail
-    before it reaches the retained receipt.  Derive the matching metadata
-    beneath this consumer checkout's ``.git/worktrees`` directory, preserve
-    the frozen pointer files, and let Git use that read-only context.
+    Linked worktree pointers use host paths, while the consumer runs under a
+    container mount. Bind the reader to matching, read-only Git metadata and
+    the physical checkout without changing either pointer.
     """
 
     git_directory = checkout / ".git"
@@ -113,14 +109,17 @@ def _cohort_git_context(checkout: Path, state: Path) -> tuple[dict[str, str], di
             "git_head": LUA.artifact_record(head),
         }
 
-    try:
-        relative_checkout = checkout.relative_to(ROOT)
-    except ValueError as error:
-        raise LUA.RunnerError("supplied Lua cohort checkout is not beneath this checkout") from error
-    require(
-        len(relative_checkout.parts) == 3 and relative_checkout.parts[:2] == (".work", "worktrees"),
-        "supplied Lua cohort checkout is not a linked worktree",
-    )
+    current_checkout = checkout == ROOT
+    if not current_checkout:
+        try:
+            relative_checkout = checkout.relative_to(ROOT)
+        except ValueError as error:
+            raise LUA.RunnerError("supplied Lua cohort checkout is not beneath this checkout") from error
+        require(
+            len(relative_checkout.parts) == 3 and relative_checkout.parts[:2] in
+            ((".work", "worktrees"), (".work", "wt")),
+            "supplied Lua cohort checkout is not a linked worktree",
+        )
     pointer = LUA.require_physical_regular_file(checkout / ".git", "supplied Lua cohort Git pointer")
     try:
         pointer_text = pointer.read_text(encoding="utf-8")
@@ -132,10 +131,11 @@ def _cohort_git_context(checkout: Path, state: Path) -> tuple[dict[str, str], di
     require(recorded_git_dir.is_absolute() and recorded_git_dir.parent.name == "worktrees",
             "supplied Lua cohort Git pointer is not a linked-worktree reference")
     name = recorded_git_dir.name
-    require(name == relative_checkout.name and name not in {"", ".", ".."},
+    require(name not in {"", ".", ".."} and (current_checkout or name == relative_checkout.name),
             "supplied Lua cohort Git pointer names a different worktree")
     metadata = LUA.require_physical_directory(
-        ROOT / ".git/worktrees" / name, "supplied Lua cohort Git metadata"
+        recorded_git_dir if current_checkout else ROOT / ".git/worktrees" / name,
+        "supplied Lua cohort Git metadata"
     )
     metadata_pointer = LUA.require_physical_regular_file(
         metadata / "gitdir", "supplied Lua cohort Git metadata pointer"
@@ -144,11 +144,9 @@ def _cohort_git_context(checkout: Path, state: Path) -> tuple[dict[str, str], di
         metadata_text = metadata_pointer.read_text(encoding="utf-8").strip()
     except OSError as error:
         raise LUA.RunnerError("cannot read supplied Lua cohort Git metadata pointer") from error
-    expected_tail = (*relative_checkout.parts, ".git")
-    require(
-        tuple(Path(metadata_text).parts[-len(expected_tail):]) == expected_tail,
-        "supplied Lua cohort Git metadata names a different checkout",
-    )
+    expected_tail = (".work", "wt", name, ".git") if current_checkout else (*relative_checkout.parts, ".git")
+    require(tuple(Path(metadata_text).parts[-len(expected_tail):]) == expected_tail,
+            "supplied Lua cohort Git metadata names a different checkout")
     environment = DYNAMIC.dynamic_environment(state)
     environment.update({"GIT_DIR": str(metadata), "GIT_WORK_TREE": str(checkout)})
     return environment, {

@@ -252,6 +252,36 @@ class SuppliedDynamicCohortIdentityTests(unittest.TestCase):
         self.assertEqual(context["worktree_pointer"]["sha256"], RUNNER.LUA.sha256_file(pointer))
         self.assertEqual(context["metadata_pointer"]["sha256"], RUNNER.LUA.sha256_file(metadata_pointer))
 
+    def test_nested_campaign_worktree_uses_matching_git_metadata(self) -> None:
+        checkout = self.temporary / ".work/wt/frozen-cohort"
+        checkout.mkdir(parents=True)
+        metadata = self.temporary / ".git/worktrees/frozen-cohort"
+        metadata.mkdir(parents=True)
+        (checkout / ".git").write_text("gitdir: /host/crabc/.git/worktrees/frozen-cohort\n", encoding="utf-8")
+        (metadata / "gitdir").write_text("/host/crabc/.work/wt/frozen-cohort/.git\n", encoding="utf-8")
+        with mock.patch.object(RUNNER, "ROOT", self.temporary):
+            environment, _context = RUNNER._cohort_git_context(checkout, self.temporary / "state")
+        self.assertEqual(environment["GIT_DIR"], str(metadata))
+
+    def test_current_linked_cohort_uses_its_mounted_git_metadata(self) -> None:
+        checkout = self.temporary / ".work/wt/frozen-cohort"
+        checkout.mkdir(parents=True)
+        metadata = self.temporary / ".git/worktrees/frozen-cohort"
+        metadata.mkdir(parents=True)
+        (checkout / ".git").write_text(f"gitdir: {metadata}\n", encoding="utf-8")
+        (metadata / "gitdir").write_text(f"{checkout / '.git'}\n", encoding="utf-8")
+        with mock.patch.object(RUNNER, "ROOT", checkout):
+            environment, context = RUNNER._cohort_git_context(checkout, self.temporary / "state")
+        self.assertEqual(environment["GIT_DIR"], str(metadata))
+        self.assertEqual(environment["GIT_WORK_TREE"], str(checkout))
+        self.assertEqual(context["git_dir"], str(metadata))
+        other = self.temporary / ".work/wt/other-cohort"
+        other.mkdir()
+        (metadata / "gitdir").write_text(f"{other / '.git'}\n", encoding="utf-8")
+        with mock.patch.object(RUNNER, "ROOT", checkout):
+            with self.assertRaisesRegex(RUNNER.LUA.RunnerError, "names a different checkout"):
+                RUNNER._cohort_git_context(checkout, self.temporary / "state")
+
     def test_failed_cohort_reader_keeps_its_actual_command_and_raw_status(self) -> None:
         checkout = self.temporary / "cohort"
         (checkout / "compat/x86_64").mkdir(parents=True)
