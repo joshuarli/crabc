@@ -474,7 +474,9 @@ It also rejects runtime-loaded DSOs with executable stacks, RWX loads or no
 required RELRO, while checking constructor absence and the retained graph.
 The same malformed images fail as startup dependencies or preloads; the
 compatibility product admits the executable-stack preload and runs its
-constructor. Missing optional preloads remain optional.
+constructor. Missing optional preloads remain optional. The existing CRT
+startup probe checks kernel-seeded guards and initial TLS in constructors and
+a worker for both hardened products.
 
 ## Rust RuntimeV1 facades
 

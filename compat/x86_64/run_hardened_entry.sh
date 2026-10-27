@@ -18,8 +18,10 @@ cp "$installed/usr/lib/libc.so" "$image/usr/lib/"
 "$installed/bin/crabc-cc-dynamic" --dynamic-shared-object -DCRABC_BAD_DSO "$root/compat/x86_64/hardened_relro_dso.c" -o "$image/usr/lib/rejected-source.so"
 "$installed/bin/crabc-cc-dynamic" --dynamic-pie --application-dso "$image/usr/lib/rejected-source.so" "$root/compat/x86_64/hardened_entry_probe.c" -o "$image/dependency"
 "$installed/bin/crabc-cc-dynamic" --dynamic-pie -DCRABC_DSO_PROBE "$root/compat/x86_64/hardened_relro_probe.c" -o "$image/relro"
+"$installed/bin/crabc-cc-dynamic" --dynamic-pie -DCRABC_HARDENED_PROBE "$root/compat/x86_64/installed_crt_startup_probe.c" -o "$image/startup"
 "$static/bin/crabc-cc" "$root/compat/x86_64/hardened_alias_probe.c" -o "$image/static-alias"
 "$static/bin/crabc-cc" "$root/compat/x86_64/hardened_relro_probe.c" -o "$image/static-relro"
+"$static/bin/crabc-cc" -DCRABC_HARDENED_PROBE "$root/compat/x86_64/installed_crt_startup_probe.c" -o "$image/static-startup"
 /usr/local/bin/crabc-x86_64-musl-gcc -fno-pie -no-pie \
     -Wl,--dynamic-linker=/lib/ld-crabc-x86_64-hardened.so.1 \
     "$root/compat/x86_64/hardened_entry_probe.c" -o "$image/nonpie"
@@ -63,6 +65,10 @@ timeout 20 chroot "$image" /pie
 timeout 20 chroot "$image" /alias
 timeout 20 chroot "$image" /relro
 timeout 20 chroot "$image" /static-relro
+CRABC_STARTUP=yes timeout 20 chroot "$image" /startup owned >"$work/startup.stdout"
+CRABC_STARTUP=yes timeout 20 chroot "$image" /static-startup static >"$work/static-startup.stdout"
+[ "$(cat "$work/startup.stdout")" = ICOMAFL ]
+[ "$(cat "$work/static-startup.stdout")" = PICSMAFL ]
 static_status=0
 timeout 20 chroot "$image" /static-alias || static_status=$?
 if [ "$static_status" -eq 4 ]; then
