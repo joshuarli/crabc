@@ -356,6 +356,7 @@ _start:
     mov QWORD PTR [rsp + 24], rax
     mov QWORD PTR [rsp + 32], rax
     mov QWORD PTR [rsp + 80], rax
+    mov QWORD PTR [rsp + 88], rax
 .Lstatic_pie_dynamic:
     lea rax, [r8 + 16]
     cmp rax, r9
@@ -384,6 +385,13 @@ _start:
     jnz .Lstatic_pie_fail
     jmp .Lstatic_pie_dynamic
 .Lstatic_pie_not_flags:
+    cmp rax, 3
+    jne .Lstatic_pie_not_pltgot
+    bts QWORD PTR [rsp + 80], 6
+    jc .Lstatic_pie_fail
+    mov QWORD PTR [rsp + 88], rcx
+    jmp .Lstatic_pie_dynamic
+.Lstatic_pie_not_pltgot:
     cmp rax, 7
     jne .Lstatic_pie_not_rela
     bts QWORD PTR [rsp + 80], 0
@@ -439,6 +447,41 @@ _start:
     cmp eax, 28
     jne .Lstatic_pie_fail
 .Lstatic_pie_relr_tags_done:
+    mov eax, {hardened}
+    test eax, eax
+    jz .Lstatic_pie_got_done
+    bt QWORD PTR [rsp + 80], 6
+    jnc .Lstatic_pie_got_done
+    mov r8, QWORD PTR [rsp + 72]
+    test r8, r8
+    jz .Lstatic_pie_fail
+    mov rdi, QWORD PTR [rsp + 88]
+    test rdi, rdi
+    jz .Lstatic_pie_fail
+    add rdi, rbx
+    jc .Lstatic_pie_fail
+    mov rdx, rdi
+    add rdx, 24
+    jc .Lstatic_pie_fail
+    mov rax, QWORD PTR [r8 + 16]
+    add rax, rbx
+    jc .Lstatic_pie_fail
+    mov rcx, rax
+    add rcx, QWORD PTR [r8 + 40]
+    jc .Lstatic_pie_fail
+    add rcx, 4095
+    jc .Lstatic_pie_fail
+    and rcx, -4096
+    and rax, -4096
+    cmp rdi, rax
+    jb .Lstatic_pie_fail
+    cmp rdx, rcx
+    ja .Lstatic_pie_fail
+    mov esi, 24
+    mov edx, 1
+    lea r11, [rip + .Lstatic_pie_got_done]
+    jmp .Lstatic_pie_require_load_range
+.Lstatic_pie_got_done:
 
     // Only symbol-free R_X86_64_RELATIVE RELA records are valid here.
     mov rsi, QWORD PTR [rsp + 8]

@@ -459,13 +459,30 @@ class X86_64StaticPieTests(unittest.TestCase):
             self.assertEqual(compile.returncode, 0, compile.stderr.decode(errors="replace"))
             executable = work / "hardened-static-pie"
             link = subprocess.run(
-                [link_editor(), "-pie", "-static", "--no-dynamic-linker", "-e", "_start", str(crt_output / "rcrt1.o"),
+                [link_editor(), "-pie", "-static", "--no-dynamic-linker", "-z", "now", "-e", "_start", str(crt_output / "rcrt1.o"),
                  str(crt_output / "crti.o"), str(fixture), str(crt_output / "crtn.o"), "-o", str(executable)],
                 stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False,
             )
             self.assertEqual(link.returncode, 0, link.stderr.decode(errors="replace"))
             normal = subprocess.run([str(executable)], stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False)
             self.assertEqual(normal.returncode, 0, normal.stderr.decode(errors="replace"))
+            self.assertIn(DT_PLTGOT, dynamic_tags(*elf_layout(executable)))
+            without_relro = mutate_program_header(executable, 0x6474e552, 0, 0)
+            unprotected = subprocess.run([str(without_relro)], stdout=subprocess.PIPE,
+                                         stderr=subprocess.PIPE, check=False, preexec_fn=disable_core_dump)
+            self.assertEqual(unprotected.returncode, 127, unprotected.stderr.decode(errors="replace"))
+            self.assertEqual(unprotected.stdout, b"")
+            lazy = work / "hardened-static-pie-lazy"
+            lazy_link = subprocess.run(
+                [link_editor(), "-pie", "-static", "--no-dynamic-linker", "-e", "_start", str(crt_output / "rcrt1.o"),
+                 str(crt_output / "crti.o"), str(fixture), str(crt_output / "crtn.o"), "-o", str(lazy)],
+                stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False,
+            )
+            self.assertEqual(lazy_link.returncode, 0, lazy_link.stderr.decode(errors="replace"))
+            lazy_result = subprocess.run([str(lazy)], stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                         check=False, preexec_fn=disable_core_dump)
+            self.assertEqual(lazy_result.returncode, 127, lazy_result.stderr.decode(errors="replace"))
+            self.assertEqual(lazy_result.stdout, b"")
             fixed = subprocess.run([str(fixed_address_executable(executable))], stdout=subprocess.PIPE,
                                    stderr=subprocess.PIPE, check=False, preexec_fn=disable_core_dump)
             self.assertEqual(fixed.returncode, 127, fixed.stderr.decode(errors="replace"))

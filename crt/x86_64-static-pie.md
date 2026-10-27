@@ -42,8 +42,10 @@ address before the constructor runs.
 The private CRT builder accepts `--hardening-profile hardened` to exercise
 static PIE ELF identity, stack-header and virtual-page W^X admission. The
 identity check uses the mapped ELF header and auxiliary-vector program-header
-address, not the load bias. This prototype does not yet establish a hardened
-installed product or loader profile.
+address, not the load bias. When `DT_PLTGOT` is present, the prototype requires
+its three reserved entries to be writable load bytes covered by RELRO. This
+prototype does not establish binding-storage coverage when that tag is absent,
+a hardened installed product, or a loader profile.
 
 `crt/src/x86_64_startup.rs` is the shared private static-startup path.
 `rcrt1.o` reaches it after relocation and RELRO through an
