@@ -1077,6 +1077,14 @@ def validate_commands(checkout: Path, work: Path, report: Mapping[str, Any], sou
 def validate_allocator_plt(libc: Path) -> None:
     relocations = _elf_output("readelf", "-rW", "--use-dynamic", str(libc))
     symbols = _elf_output("readelf", "-sW", str(libc))
+    dynamic_symbols = _elf_output("readelf", "--dyn-syms", "-W", "--use-dynamic", str(libc))
+    dynamic = _elf_output("readelf", "-dW", str(libc))
+    require(re.search(r"\((?:SYMBOLIC|SYMINFO|SYMINSZ|SYMINENT|VERSYM|VERDEF|VERDEFNUM|VERNEED|VERNEEDNUM)\)", dynamic) is None,
+            "FILE allocator dynamic binding metadata differs")
+    for flags in re.findall(r"\(FLAGS\)\s+(.*)$", dynamic, re.MULTILINE):
+        require(set(flags.split()) <= {"BIND_NOW", "STATIC_TLS"}, "FILE allocator dynamic flags differ")
+    for flags in re.findall(r"\(FLAGS_1\)\s+Flags:\s*(.*)$", dynamic, re.MULTILINE):
+        require(set(flags.split()) <= {"NOW"}, "FILE allocator dynamic flags differ")
     for name in ("malloc", "realloc", "free"):
         tail = "__crabc_x86_stdio_cabi_" + name
         definitions = re.findall(rf"^\s*\d+:\s+([0-9a-f]+)\s+\d+\s+FUNC\s+LOCAL\s+HIDDEN\s+\d+\s+{tail}$", symbols, re.MULTILINE)
@@ -1099,12 +1107,15 @@ def validate_allocator_plt(libc: Path) -> None:
         require(indirect is not None and int(indirect.group(1), 16) == indirect_address,
                 f"FILE allocator {name} PLT stub differs")
         slot = indirect_address + 6 + struct.unpack("<i", bytes.fromhex(indirect.group(2)))[0]
-        rows = re.findall(rf"^\s*{slot:016x}\s+\S+\s+(R_X86_64_\S+)\s+\S+\s+(\S+)\s+\+\s+(\S+)\s*$", relocations, re.MULTILINE)
-        require(len(rows) == 1 and rows[0] in (("R_X86_64_JUMP_SLOT", name, "0"),
-                                                ("R_X86_64_GLOB_DAT", name, "0")),
+        rows = re.findall(rf"^\s*{slot:016x}\s+([0-9a-f]{{16}})\s+(R_X86_64_\S+)\s+\S+\s+(\S+)\s+\+\s+(\S+)\s*$", relocations, re.MULTILINE)
+        require(len(rows) == 1 and rows[0][1:] in (("R_X86_64_JUMP_SLOT", name, "0"),
+                                                   ("R_X86_64_GLOB_DAT", name, "0")),
                 f"FILE allocator {name} PLT relocation differs")
+        symbol_index = int(rows[0][0], 16) >> 32
+        definition = re.findall(rf"^\s*{symbol_index}:\s+[0-9a-f]+\s+\d+\s+FUNC\s+(?:GLOBAL|WEAK)\s+DEFAULT\s+\d+\s+{name}$", dynamic_symbols, re.MULTILINE)
+        require(len(definition) == 1, f"FILE allocator {name} dynamic symbol is not preemptible")
         if prefix is not None:
-            require(rows[0][0] == "R_X86_64_JUMP_SLOT", f"FILE allocator {name} PLT prefix relocation differs")
+            require(rows[0][1] == "R_X86_64_JUMP_SLOT", f"FILE allocator {name} PLT prefix relocation differs")
             plt = relocations.split("'PLT' relocation section", 1)
             require(len(plt) == 2, f"FILE allocator {name} PLT relocation table missing")
             entries = re.findall(r"^\s*([0-9a-f]{16})\s+\S+\s+R_X86_64_\S+", plt[1], re.MULTILINE)

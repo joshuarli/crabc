@@ -812,8 +812,12 @@ class OwnedStdioFileEngineReceiptTests(unittest.TestCase):
             displacement = 0x1000 + index * 8 - address - 6
             encoded = " ".join(f"{b:02x}" for b in struct.pack("<i", displacement))
             return f"{address:x}: ff 25 {encoded} jmp *0x0(%rip)\n"
+        if arguments[1] == "-dW":
+            return ""
+        if arguments[1] == "--dyn-syms" and "--use-dynamic" in arguments:
+            return "".join(f"{index + 1}: 0000000000001234 5 FUNC GLOBAL DEFAULT 10 {name}\n" for index, name in enumerate(names))
         if arguments[1] == "-rW":
-            return "".join(f"{0x1000 + index * 8:016x} 00000001 R_X86_64_JUMP_SLOT 00000000 {name} + 0\n"
+            return "".join(f"{0x1000 + index * 8:016x} {((index + 1) << 32) | 7:016x} R_X86_64_JUMP_SLOT 00000000 {name} + 0\n"
                            for index, name in enumerate(names))
         if arguments[1] == "-sW":
             return "".join(f"{index}: {0x100 + index * 0x20:016x} 5 FUNC LOCAL HIDDEN 9 __crabc_x86_stdio_cabi_{name}\n" for index, name in enumerate(names))
@@ -870,9 +874,6 @@ class OwnedStdioFileEngineReceiptTests(unittest.TestCase):
                 DSO_VALIDATOR(self.fixture.checkout, self.fixture.work, self.fixture.report)
 
 
-if __name__ == "__main__":
-    unittest.main()
-
 class AllocatorPltProofTests(unittest.TestCase):
     def test_real_mold_plt_and_wrong_slot(self) -> None:
         import subprocess
@@ -896,9 +897,16 @@ __crabc_x86_stdio_cabi_free: jmp free@PLT
 mov malloc@GOTPCREL(%rip), %rax
 mov realloc@GOTPCREL(%rip), %rax
 mov free@GOTPCREL(%rip), %rax
+.globl malloc, realloc, free
+.type malloc,@function
+.type realloc,@function
+.type free,@function
+malloc: ret
+realloc: ret
+free: ret
 ''')
             libc = root / 'libc.so'
-            subprocess.run(['cc', '-shared', '-fuse-ld=mold', '-o', str(libc), str(source)], check=True)
+            subprocess.run(['cc', '-shared', '-fuse-ld=mold', '-nostdlib', '-Wl,-z,now', '-o', str(libc), str(source)], check=True)
             receipt.validate_allocator_plt(libc)
             assembly = subprocess.check_output(['objdump', '-d', '-j', '.plt.got', str(libc)], text=True)
             match = re.search(r'^[ ]*([0-9a-f]+):\s+(ff 25 (?:[0-9a-f]{2} ){3}[0-9a-f]{2})\s+jmp.*#\s*([0-9a-f]+)', assembly, re.MULTILINE)
@@ -916,7 +924,31 @@ mov free@GOTPCREL(%rip), %rax
             libc.write_bytes(body.replace(record, unsupported, 1))
             with self.assertRaises(receipt.ReceiptError):
                 receipt.validate_allocator_plt(libc)
+            wrong_symbol = struct.pack('<QQq', int(row.group(1), 16), (int(row.group(2), 16) ^ (1 << 32)), 0)
+            libc.write_bytes(body.replace(record, wrong_symbol, 1))
+            with self.assertRaises(receipt.ReceiptError):
+                receipt.validate_allocator_plt(libc)
             libc.write_bytes(body.replace(instruction, changed, 1))
+            with self.assertRaises(receipt.ReceiptError):
+                receipt.validate_allocator_plt(libc)
+            sections = subprocess.check_output(['readelf', '-SW', str(libc)], text=True)
+            dynsym = re.search(r'\]\s+\.dynsym\s+DYNSYM\s+\S+\s+([0-9a-f]+)', sections)
+            symbols = subprocess.check_output(['readelf', '--dyn-syms', '-W', str(libc)], text=True)
+            symbol = re.search(r'^\s*(\d+):\s+\S+\s+\d+\s+FUNC\s+GLOBAL\s+DEFAULT\s+\d+\s+malloc$', symbols, re.MULTILINE)
+            self.assertIsNotNone(dynsym)
+            self.assertIsNotNone(symbol)
+            visibility = int(dynsym.group(1), 16) + int(symbol.group(1)) * 24 + 5
+            changed_body = bytearray(body)
+            changed_body[visibility] = 3
+            libc.write_bytes(changed_body)
+            with self.assertRaises(receipt.ReceiptError):
+                receipt.validate_allocator_plt(libc)
+            flags = struct.pack('<QQ', 30, 8)
+            self.assertEqual(body.count(flags), 1)
+            libc.write_bytes(body.replace(flags, struct.pack('<QQ', 30, 10), 1))
+            with self.assertRaises(receipt.ReceiptError):
+                receipt.validate_allocator_plt(libc)
+            libc.write_bytes(body.replace(flags, struct.pack('<QQ', 16, 0), 1))
             with self.assertRaises(receipt.ReceiptError):
                 receipt.validate_allocator_plt(libc)
 
@@ -929,9 +961,11 @@ mov free@GOTPCREL(%rip), %rax
                 f'.globl __crabc_x86_stdio_cabi_{name}\n.hidden __crabc_x86_stdio_cabi_{name}\n'
                 f'.type __crabc_x86_stdio_cabi_{name},@function\n'
                 f'__crabc_x86_stdio_cabi_{name}: jmp {name}@PLT'
+                for name in ('malloc', 'realloc', 'free')) + '\n' + '\n'.join(
+                f'.globl {name}\n.type {name},@function\n{name}: ret'
                 for name in ('malloc', 'realloc', 'free')) + '\n')
             libc = root / 'libc.so'
-            subprocess.run(['cc', '-shared', '-fuse-ld=mold', '-o', str(libc), str(source)], check=True)
+            subprocess.run(['cc', '-shared', '-fuse-ld=mold', '-nostdlib', '-Wl,-z,now', '-o', str(libc), str(source)], check=True)
             receipt.validate_allocator_plt(libc)
             body = libc.read_bytes()
             instruction = bytes.fromhex('41 bb 00 00 00 00')
@@ -939,3 +973,7 @@ mov free@GOTPCREL(%rip), %rax
             libc.write_bytes(body.replace(instruction, bytes.fromhex('41 bb ff ff ff ff'), 1))
             with self.assertRaises(receipt.ReceiptError):
                 receipt.validate_allocator_plt(libc)
+
+
+if __name__ == "__main__":
+    unittest.main()
