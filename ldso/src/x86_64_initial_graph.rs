@@ -260,6 +260,7 @@ const PF_W: u32 = 2;
 const PF_R: u32 = 4;
 
 const DT_NULL: i64 = 0;
+const DT_PLTGOT: i64 = 3;
 const DT_NEEDED: i64 = 1;
 const DT_PLTRELSZ: i64 = 2;
 const DT_HASH: i64 = 4;
@@ -1450,6 +1451,13 @@ unsafe fn hardened_relro_pages(phdr: *const u8, phnum: usize, address: u64, leng
     writable
 }
 
+fn relro_covers(object: &Object, address: u64, length: u64) -> bool {
+    let Some(end) = object.relro_virtual_address.checked_add(object.relro_byte_len)
+        .and_then(|value| value.checked_add(PAGE - 1)).map(align_down) else { return false; };
+    object.relro_byte_len != 0 && address >= align_down(object.relro_virtual_address)
+        && address.checked_add(length).is_some_and(|last| last <= end)
+}
+
 unsafe fn parse_mapped(
     base: u64,
     phdr: *const u8,
@@ -1671,6 +1679,7 @@ unsafe fn parse_mapped(
     let mut relr_byte_len = None;
     let mut relr_entry_len = None;
     let mut jmprel_virtual_address = None;
+    let mut pltgot_virtual_address = None;
     let mut pltrel_byte_len = None;
     let mut plt_is_rela = None;
     let mut terminated = false;
@@ -1725,6 +1734,7 @@ unsafe fn parse_mapped(
                 symbolic_tag = true;
             }
             DT_JMPREL => { if jmprel_virtual_address.replace(value).is_some() { return None; } }
+            DT_PLTGOT => { if cfg!(crabc_hardened) && pltgot_virtual_address.replace(value).is_some() { return None; } }
             DT_PLTRELSZ => { if pltrel_byte_len.replace(value).is_some() { return None; } }
             DT_PLTREL => { if plt_is_rela.replace(value == ELF64_RELA).is_some() { return None; } }
             #[cfg(all(not(feature = "x86_64-owned-dynamic-runtime"), any(crabc_owned_crt_handoff, crabc_dynamic_main_thread_runtime_v1)))]
@@ -2069,6 +2079,14 @@ unsafe fn parse_mapped(
             object.pltrelsz = usize::try_from(byte_len).ok()?;
         }
         _ => return None,
+    }
+    if cfg!(crabc_hardened) {
+        if let Some(address) = pltgot_virtual_address {
+            if address & 7 != 0 || !virtual_range_in_writable_load(phdr, phnum, address, 24)
+                || !relro_covers(&object, address, 24) { return None; }
+        } else if object.pltrelsz != 0 {
+            return None;
+        }
     }
     match (relr_virtual_address, relr_byte_len, relr_entry_len) {
         (None, None, None) => {}
@@ -6173,6 +6191,28 @@ mod owned_dynamic_symbolic_tag_tests {
                 )
             }
         }
+    }
+
+    #[test]
+    fn hardened_pltgot_requires_one_writable_relro_span() {
+        let mut image = ParserImage::new(&[(DT_PLTGOT, 0x380)]);
+        image.put_u32(112, PT_GNU_STACK);
+        image.put_u32(116, PF_R | PF_W);
+        image.put_u32(168, PT_GNU_RELRO);
+        image.put_u64(168 + 16, 0x300);
+        image.put_u64(168 + 40, 0x100);
+        let parse = |image: &ParserImage| unsafe {
+            parse_mapped(image.bytes.as_ptr() as u64, image.bytes.as_ptr(), 4,
+                         ObjectRole::Library, false, true)
+        };
+        assert!(parse(&image).is_some());
+        image.put_u64(DYNAMIC + 5 * 16 + 8, 0x1000);
+        assert_eq!(parse(&image).is_some(), !cfg!(crabc_hardened));
+        image.put_u64(DYNAMIC + 5 * 16 + 8, 0x380);
+        image.dynamic_count -= 1;
+        image.dynamic(DT_PLTGOT, 0x380);
+        image.dynamic(DT_NULL, 0);
+        assert_eq!(parse(&image).is_some(), !cfg!(crabc_hardened));
     }
 
     #[test]
