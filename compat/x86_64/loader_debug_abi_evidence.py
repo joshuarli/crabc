@@ -53,7 +53,16 @@ def digest(path):
 class Elf:
     """Read selected symbol/relocation facts directly from retained ELF bytes."""
     def __init__(self, path):
-        self.data = Path(path).read_bytes()
+        self._load(Path(path).read_bytes())
+
+    @classmethod
+    def _from_bytes(cls, data):
+        elf = cls.__new__(cls)
+        elf._load(data)
+        return elf
+
+    def _load(self, data):
+        self.data = data
         require(self.data[:7] == b'\x7fELF\x02\x01\x01', 'expected ELF64 little endian')
         self.elf_type = self.unpack('<H', 16)[0]
         require(self.unpack('<H', 18)[0] == 62, 'expected native x86-64 ELF')
@@ -128,6 +137,31 @@ def public_metadata(path):
                 f'public ABI metadata differs: {name}')
         result[name] = row
     return result
+
+
+def _archive_hook_bindings(archive, override):
+    from owned_syscall_alias_authority import AuthorityError, archive_members
+
+    hooks = {'_init': [], '_fini': []}
+    try:
+        for _name, data in archive_members(Path(archive).read_bytes()):
+            require(data.startswith(b'\x7fELF'), 'archive member is not ELF')
+            names = [name for name in hooks if name.encode() + b'\0' in data]
+            if names:
+                member = Elf._from_bytes(data)
+                for name in names:
+                    row = member.symbol(name, dynamic=False, required=False)
+                    if row is not None:
+                        hooks[name].append(row)
+    except AuthorityError as error:
+        raise EvidenceError(f'archive hook metadata rejected: {error}') from error
+    override_elf = Elf(override)
+    for name, rows in hooks.items():
+        require(len(rows) == 1 and rows[0]['type'] == 'FUNC' and rows[0]['binding'] == 'WEAK'
+                and rows[0]['visibility'] == 'DEFAULT', 'archive provider binding changed')
+        row = override_elf.symbol(name, dynamic=False)
+        require(row['type'] == 'FUNC' and row['binding'] == 'GLOBAL' and row['visibility'] == 'DEFAULT',
+                'archive override binding changed')
 
 
 def trace_events(text):
@@ -293,6 +327,10 @@ def validate_report(path):
         else:
             probe = next(key for key in OUTPUTS if name.endswith('-' + key))
             require(stdout == OUTPUTS[probe] and stderr == '', f'changed observable result: {name}')
+    static_root = artifact(report['artifacts']['static-manifest']).parents[2]
+    override_object = artifact(report['artifacts']['override-object'])
+    for archive in (static_root / 'usr/lib/libc.a', artifact(report['artifacts']['oracle-libc.a'])):
+        _archive_hook_bindings(archive, override_object)
     for name, item in report['artifacts'].items():
         if name.endswith('-elf'):
             binary_name = name.removesuffix('-elf')
@@ -325,10 +363,9 @@ def validate_report(path):
             copies = Elf(artifact(item)).copy_relocations('_dl_debug_addr')
             require(len(copies) == 1 and copies[0]['addend'] == 0, 'missing exact debugger COPY relocation')
         if name.endswith('-archive-default-elf') or name.endswith('-archive-override-elf'):
-            binding = 'WEAK' if '-default-' in name else 'GLOBAL'
             for hook in ('_init', '_fini'):
                 row = Elf(artifact(item)).symbol(hook, dynamic=False)
-                require(row['type'] == 'FUNC' and row['binding'] == binding, 'archive provider binding changed')
+                require(row['type'] == 'FUNC' and row['binding'] == 'LOCAL', 'linked archive provider differs')
     require(report['oracle_trace_events'] == report['executions']['oracle-pie-kernel-trace']['events'], 'oracle trace changed')
     for name, execution in report['executions'].items():
         if name.endswith('-trace'):

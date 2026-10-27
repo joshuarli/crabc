@@ -1,7 +1,9 @@
 """Behavioral integrity of the focused debugger/CRT evidence reader."""
 import importlib.util
 from pathlib import Path
+import shutil
 import struct
+import subprocess
 import sys
 import tempfile
 import types
@@ -9,6 +11,7 @@ import unittest
 from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(ROOT / 'compat/x86_64'))
 SPEC = importlib.util.spec_from_file_location('loader_debug_abi_evidence', ROOT / 'compat/x86_64/loader_debug_abi_evidence.py')
 evidence = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(evidence)
@@ -92,6 +95,24 @@ class ElfMetadataTests(unittest.TestCase):
         item = {'path': 'AGENTS.md', 'sha256': evidence.digest(outside), 'size': outside.stat().st_size}
         with self.assertRaises(evidence.EvidenceError):
             evidence.artifact(item)
+
+    def test_archive_hooks_require_weak_providers_and_strong_override(self):
+        compiler, archiver = shutil.which('cc'), shutil.which('ar')
+        if compiler is None or archiver is None:
+            self.skipTest('native compiler and archiver are required')
+        directory = Path(self.directory.name)
+        weak = directory / 'weak.o'
+        override = directory / 'override.o'
+        archive = directory / 'libc.a'
+        for target, source in ((weak, '__attribute__((weak)) void _init(void) {}\n__attribute__((weak)) void _fini(void) {}\n'),
+                               (override, 'void _init(void) {}\nvoid _fini(void) {}\n')):
+            subprocess.run([compiler, '-x', 'c', '-c', '-o', str(target), '-'], input=source,
+                           text=True, capture_output=True, check=True)
+        subprocess.run([archiver, 'rcs', str(archive), str(weak)], capture_output=True, check=True)
+        evidence._archive_hook_bindings(archive, override)
+        subprocess.run([archiver, 'rcs', str(archive), str(override)], capture_output=True, check=True)
+        with self.assertRaises(evidence.EvidenceError):
+            evidence._archive_hook_bindings(archive, override)
 
 
 class SuppliedProductModeTests(unittest.TestCase):
