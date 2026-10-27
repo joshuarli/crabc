@@ -864,10 +864,7 @@ unsafe fn open_transaction(guard: &RuntimeGuard, filename: &[u8], flags: i32, di
     let load_failure = |diagnostic: &mut RuntimeDiagnostic, errno: i32| report(diagnostic, DIAGNOSTIC_LOAD, errno, &[]);
     if registry.head.is_null() { load_failure(diagnostic, EINVAL); return Err(()); }
     if registry.shutting_down { report(diagnostic, DIAGNOSTIC_EXITING, 0, &[]); return Err(()); }
-    // Musl dlopen interprets only RTLD_LAZY, RTLD_NOLOAD and RTLD_GLOBAL. A
-    // mode without RTLD_LAZY binds now; RTLD_NODELETE and unknown bits have no
-    // effect because successful objects are never unloaded.
-    let lazy = flags & 1 != 0;
+    let lazy = !cfg!(crabc_hardened) && flags & 1 != 0;
     let no_load = flags & 4 != 0;
     let mut new = UnpublishedObjects::new();
     let mut tls_count = registry.tls_count;
