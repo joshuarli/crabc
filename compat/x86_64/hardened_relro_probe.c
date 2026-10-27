@@ -142,6 +142,12 @@ static int check_loaded_dso(void)
     if (relative) { dlclose(relative); valid = 0; }
     void *absolute = dlopen("/plugins/relative-only.so", RTLD_NOW);
     if (!absolute || dlclose(absolute) != 0) valid = 0;
+    const char *ambiguous[] = {"/usr/lib/tls-mutable.so", "/usr/lib/tls-module.so", "/usr/lib/tls-thread.so"};
+    for (unsigned long i = 0; i < sizeof ambiguous / sizeof ambiguous[0]; i++) {
+        void *tls = dlopen(ambiguous[i], RTLD_NOW);
+        if (tls) { dlclose(tls); valid = 0; }
+        else if (!dlerror()) valid = 0;
+    }
     pid_t child = fork();
     if (child == 0) {
         void *control = dlopen("/usr/lib/rejected-source.so", RTLD_NOW);

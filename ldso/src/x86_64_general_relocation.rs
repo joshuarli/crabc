@@ -779,7 +779,8 @@ unsafe fn preflight_object_resolved(
             let info = unsafe { read_u64(entry.add(8)) };
             let kind = info as u32;
             if kind == R_NONE { continue; }
-            if cfg!(crabc_hardened) && matches!(kind, R_X86_64_GLOB_DAT | R_X86_64_JUMP_SLOT) {
+            if cfg!(crabc_hardened) && matches!(kind, R_X86_64_GLOB_DAT | R_X86_64_JUMP_SLOT
+                | R_X86_64_DTPMOD64 | R_X86_64_DTPOFF64 | R_X86_64_TPOFF64) {
                 if !relro_covers(object, offset, 8) { return None; }
             }
             let symbol = (info >> 32) as usize;

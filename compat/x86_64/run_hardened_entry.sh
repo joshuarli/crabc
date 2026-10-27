@@ -16,6 +16,7 @@ cp "$installed/usr/lib/libc.so" "$image/usr/lib/"
 "$installed/bin/crabc-cc-dynamic" --dynamic-pie "$root/compat/x86_64/hardened_alias_probe.c" -o "$image/alias"
 "$installed/bin/crabc-cc-dynamic" --dynamic-shared-object "$root/compat/x86_64/hardened_relro_dso.c" -o "$image/usr/lib/hardened-relro-fixture.so"
 "$installed/bin/crabc-cc-dynamic" --dynamic-shared-object -DCRABC_BAD_DSO "$root/compat/x86_64/hardened_relro_dso.c" -o "$image/usr/lib/rejected-source.so"
+"$installed/bin/crabc-cc-dynamic" --dynamic-shared-object "$root/compat/x86_64/hardened_tls_mutable_dso.c" -o "$image/usr/lib/tls-mutable.so"
 "$installed/bin/crabc-cc-dynamic" --dynamic-shared-object "$root/compat/x86_64/hardened_tls_failure_dso.c" -o "$image/usr/lib/tls-fault.so"
 "$installed/bin/crabc-cc-dynamic" --dynamic-shared-object "$root/compat/x86_64/hardened_relro_dso.c" -o "$image/plugins/relative-only.so"
 "$installed/bin/crabc-cc-dynamic" --dynamic-pie --application-dso "$image/usr/lib/rejected-source.so" "$root/compat/x86_64/hardened_entry_probe.c" -o "$image/dependency"
@@ -65,6 +66,44 @@ for name, kind, flag in (("rejected-stack.so", 0x6474e551, 1),
     else:
         struct.pack_into("<I", result, eligible[0], 0)
     (root / "usr/lib" / name).write_bytes(result)
+tls_path = root / "usr/lib/tls-mutable.so"
+tls = bytearray(tls_path.read_bytes())
+phoff = struct.unpack_from("<Q", tls, 32)[0]
+phnum = struct.unpack_from("<H", tls, 56)[0]
+headers = [struct.unpack_from("<IIQQQQQQ", tls, phoff + index * 56) for index in range(phnum)]
+dynamic = next(header for header in headers if header[0] == 2)
+entries = dict(struct.unpack_from("<QQ", tls, offset) for offset in range(dynamic[2], dynamic[2] + dynamic[5], 16))
+def file_offset(address):
+    return next(header[2] + address - header[3] for header in headers
+                if header[0] == 1 and header[3] <= address < header[3] + header[5])
+strings = file_offset(entries[5])
+symbols = file_offset(entries[6])
+symbol_count = struct.unpack_from("<I", tls, file_offset(entries[4]) + 4)[0]
+target = None
+tls_symbol = None
+for index in range(symbol_count):
+    name_offset, info, other, section, value, size = struct.unpack_from("<IBBHQQ", tls, symbols + index * 24)
+    end = tls.index(0, strings + name_offset)
+    name = bytes(tls[strings + name_offset:end])
+    if name == b"mutable_tls_offset": target = value
+    if name == b"tls_value":
+        assert value == 0
+        tls_symbol = index
+assert target is not None and tls_symbol is not None
+assert any(header[0] == 1 and header[1] & 2 and header[3] <= target and target + 8 <= header[3] + header[6]
+           for header in headers)
+assert all(header[0] != 0x6474e552 or target < (header[3] & ~4095)
+           or target + 8 > ((header[3] + header[6] + 4095) & ~4095) for header in headers)
+rela = file_offset(entries[7])
+matches = [offset for offset in range(rela, rela + entries[8], 24)
+           if struct.unpack_from("<Q", tls, offset + 8)[0] == (tls_symbol << 32) | 17]
+assert len(matches) == 1 and struct.unpack_from("<q", tls, matches[0] + 16)[0] == 0
+struct.pack_into("<Q", tls, matches[0], target)
+tls_path.write_bytes(tls)
+for name, kind in (("tls-module.so", 16), ("tls-thread.so", 18)):
+    variant = bytearray(tls)
+    struct.pack_into("<Q", variant, matches[0] + 8, (tls_symbol << 32) | kind)
+    (root / "usr/lib" / name).write_bytes(variant)
 PYTHON
 timeout 20 chroot "$image" /pie
 timeout 20 chroot "$image" /alias
@@ -100,7 +139,10 @@ mkdir -p "$compatible_root/lib" "$compatible_root/usr/lib" "$compatible_root/plu
 cp "$compatibility/lib/ld-crabc-x86_64.so.1" "$compatible_root/lib/"
 cp "$compatibility/usr/lib/libc.so" "$compatible_root/usr/lib/"
 cp "$image/usr/lib/rejected-stack.so" "$compatible_root/usr/lib/"
+cp "$image/usr/lib/tls-mutable.so" "$compatible_root/usr/lib/"
 cp "$image/plugins/relative-only.so" "$compatible_root/plugins/"
+"$compatibility/bin/crabc-cc-dynamic" --dynamic-pie "$root/compat/x86_64/compat_tls_mutable_probe.c" -o "$compatible_root/tls-mutable"
+timeout 20 chroot "$compatible_root" /tls-mutable
 "$compatibility/bin/crabc-cc-dynamic" --dynamic-pie "$root/compat/x86_64/hardened_entry_probe.c" -o "$compatible_root/pie"
 "$compatibility/bin/crabc-cc-dynamic" --dynamic-pie --application-runpath plugins --application-dso "$compatible_root/plugins/relative-only.so" "$root/compat/x86_64/hardened_entry_probe.c" -o "$compatible_root/search-relative"
 "$compatibility/bin/crabc-cc-dynamic" --dynamic-pie --application-dso "$compatible_root/plugins/relative-only.so" "$root/compat/x86_64/hardened_entry_probe.c" -o "$compatible_root/search-env"
