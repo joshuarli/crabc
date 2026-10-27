@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+from enum import Enum
 import json
 import os
 from pathlib import Path
@@ -237,13 +238,28 @@ def definitions(facts: Any, name: str, *, table_name: str = '.symtab') -> list[d
     return result
 
 
-def alias_pair(facts: Any, public: str, target: str, *, shared: bool = False) -> dict[str, Any]:
+class AliasPlacement(Enum):
+    ARCHIVE = 'archive'
+    SHARED = 'shared'
+    EXECUTABLE = 'executable'
+
+
+class OverrideBinding(Enum):
+    GLOBAL = 'GLOBAL'
+    LOCAL = 'LOCAL'
+
+
+def alias_pair(facts: Any, public: str, target: str, *,
+               placement: AliasPlacement = AliasPlacement.ARCHIVE) -> dict[str, Any]:
+    require(isinstance(placement, AliasPlacement), 'unknown alias placement')
     left, right = definitions(facts, public), definitions(facts, target)
     require(len(left) == len(right) == 1, 'missing or ambiguous alias definitions: ' + public)
     left, right = left[0], right[0]
     hidden = target in {'__execvpe', '__mkostemps'}
-    for item, binding, visibility in ((left, 'WEAK', 'DEFAULT'),
-                                      (right, 'LOCAL' if shared and hidden else 'GLOBAL', 'HIDDEN' if hidden else 'DEFAULT')):
+    left_binding = 'LOCAL' if placement is AliasPlacement.EXECUTABLE else 'WEAK'
+    right_binding = 'LOCAL' if placement is AliasPlacement.EXECUTABLE or (placement is AliasPlacement.SHARED and hidden) else 'GLOBAL'
+    for item, binding, visibility in ((left, left_binding, 'DEFAULT'),
+                                      (right, right_binding, 'HIDDEN' if hidden else 'DEFAULT')):
         row, section = item['row'], item['section']
         require(row['type'] == 'FUNC' and row['binding'] == binding and row['visibility'] == visibility
                 and row['version'] is None and row['version_default'] is False
@@ -253,7 +269,7 @@ def alias_pair(facts: Any, public: str, target: str, *, shared: bool = False) ->
             and left['table_section_index'] == right['table_section_index']
             and all(left['row'][name] == right['row'][name] for name in ('section_index', 'value', 'type', 'size_bytes')),
             'alias crosses its definition domain: ' + public)
-    if shared:
+    if placement is AliasPlacement.SHARED:
         dyn = definitions(facts, public, table_name='.dynsym')
         require(len(dyn) == 1 and all(dyn[0]['row'][name] == left['row'][name]
                                     for name in ('value', 'section_index', 'type', 'binding', 'visibility')),
@@ -261,6 +277,15 @@ def alias_pair(facts: Any, public: str, target: str, *, shared: bool = False) ->
         require(not hidden or not definitions(facts, target, table_name='.dynsym'),
                 'hidden alias target is dynamically exported: ' + target)
     return {'public': public, 'target': target, 'alias': left, 'provider': right}
+
+
+def require_override_definitions(facts: Any, owner: str, binding: OverrideBinding) -> None:
+    for public, _target in ALIASES[owner]:
+        rows = definitions(facts, public)
+        require(len(rows) == 1 and rows[0]['row']['type'] == 'FUNC'
+                and rows[0]['row']['binding'] == binding.value and rows[0]['row']['visibility'] == 'DEFAULT'
+                and rows[0]['section'] is not None and 'X' in rows[0]['section']['flags'],
+                'caller strong override definition differs: ' + public)
 
 
 def feature_proofs(commands: Commands) -> dict[str, Any]:
@@ -383,7 +408,7 @@ def installed_owner(commands: Commands, owner: str, static: Path, dynamic: Path,
     work = commands.work / owner
     if commands.capture:
         work.mkdir()
-    pairs = {key: [alias_pair(facts, public, target, shared=key == 'shared') for public, target in ALIASES[owner]]
+    pairs = {key: [alias_pair(facts, public, target, placement=AliasPlacement.SHARED if key == 'shared' else AliasPlacement.ARCHIVE) for public, target in ALIASES[owner]]
              for key, facts in installed_facts.items()}
     binaries, links, runs, payloads, objects, dependencies = {}, {}, [], {}, {}, {}
     for probe, source, defines in probe_specs(owner):
@@ -394,6 +419,8 @@ def installed_owner(commands: Commands, owner: str, static: Path, dynamic: Path,
                      '-c', str(ROOT / source), '-o', str(obj)])
         dependencies[probe] = probe_dependencies(work / (probe + '.d'), ROOT / source, obj, dynamic)
         objects[probe] = identity(obj)
+        if probe == 'override':
+            require_override_definitions(inspect_elf(commands, owner + '-override-object', obj, elf_type='REL'), owner, OverrideBinding.GLOBAL)
         for mode in ('oracle', *MODES):
             name = owner + '-' + probe + '-' + mode
             executable = work / (probe + '-' + mode)
@@ -412,13 +439,10 @@ def installed_owner(commands: Commands, owner: str, static: Path, dynamic: Path,
                 links[probe + '-' + mode] = products.validate_link(product, obj, executable, receipt, mode)
             final = inspect_elf(commands, name + '-final', executable, elf_type='DYN' if mode in ('static-pie', 'pie') else 'EXEC')
             if probe == 'override':
-                for public, _target in ALIASES[owner]:
-                    rows = definitions(final, public)
-                    require(len(rows) == 1 and rows[0]['row']['binding'] == 'GLOBAL',
-                            'caller strong override definition differs: ' + public)
+                require_override_definitions(final, owner, OverrideBinding.LOCAL if mode in ('oracle', 'static', 'static-pie') else OverrideBinding.GLOBAL)
             elif mode in ('static', 'static-pie'):
                 for public, target in ALIASES[owner]:
-                    alias_pair(final, public, target)
+                    alias_pair(final, public, target, placement=AliasPlacement.EXECUTABLE)
             entries = ('kernel', 'direct') if mode in ('pie', 'non-pie') else ('process',)
             for entry in entries:
                 root = work / (probe + '-' + mode + '-' + entry + '-root')

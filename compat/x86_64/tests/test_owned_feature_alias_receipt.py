@@ -41,6 +41,24 @@ def facts(public='execvpe', target='__execvpe', *, shared=False):
 
 
 class FeatureAliasReceiptTests(unittest.TestCase):
+    def test_linked_aliases_are_local_and_keep_their_input_visibility(self):
+        observed = facts(shared=True)
+        observed['symbol_tables'][0]['rows'][0]['binding'] = 'LOCAL'
+        receipt.alias_pair(observed, 'execvpe', '__execvpe', placement=receipt.AliasPlacement.EXECUTABLE)
+        observed['symbol_tables'][0]['rows'][1]['visibility'] = 'DEFAULT'
+        with self.assertRaises(receipt.FeatureAliasError):
+            receipt.alias_pair(observed, 'execvpe', '__execvpe', placement=receipt.AliasPlacement.EXECUTABLE)
+
+    def test_override_requires_strong_input_and_local_static_output(self):
+        observed = facts()
+        override = observed[0]['symbol_tables'][0]['rows'][0]
+        override['binding'] = 'GLOBAL'
+        receipt.require_override_definitions(observed, 'exec', receipt.OverrideBinding.GLOBAL)
+        override['binding'] = 'LOCAL'
+        receipt.require_override_definitions(observed, 'exec', receipt.OverrideBinding.LOCAL)
+        with self.assertRaises(receipt.FeatureAliasError):
+            receipt.require_override_definitions(observed, 'exec', receipt.OverrideBinding.GLOBAL)
+
     def test_each_current_alias_requirement_retains_its_complete_source_contract(self):
         contract = selection.load_contract()
         expanded = selection.expand_obligations(contract, selection.load_source_inputs(contract, selection.CONTRACT_PATH))
@@ -68,11 +86,11 @@ class FeatureAliasReceiptTests(unittest.TestCase):
 
     def test_shared_local_hidden_target_is_valid_but_dynamic_leak_is_rejected(self):
         observed = facts(shared=True)
-        pair = receipt.alias_pair(observed, 'execvpe', '__execvpe', shared=True)
+        pair = receipt.alias_pair(observed, 'execvpe', '__execvpe', placement=receipt.AliasPlacement.SHARED)
         self.assertEqual(pair['provider']['row']['binding'], 'LOCAL')
         observed['symbol_tables'][1]['rows'].append(copy.deepcopy(observed['symbol_tables'][0]['rows'][1]))
         with self.assertRaisesRegex(receipt.FeatureAliasError, 'dynamically exported'):
-            receipt.alias_pair(observed, 'execvpe', '__execvpe', shared=True)
+            receipt.alias_pair(observed, 'execvpe', '__execvpe', placement=receipt.AliasPlacement.SHARED)
 
     def test_alias_metadata_duplicate_and_forwarding_drift_fail(self):
         for field, value in (('binding', 'GLOBAL'), ('visibility', 'HIDDEN'), ('type', 'NOTYPE'), ('value', '0000000000000001')):
