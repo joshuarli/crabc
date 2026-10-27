@@ -478,6 +478,9 @@ and ephemeral loopback TCP endpoints with poll/epoll, scatter/gather I/O,
 half-close, and error cleanup. It uses no external service or fixed port and
 does not establish syscall cancellation behavior.
 
+The positional printf probe checks that `asprintf` clears its output pointer
+when the initial formatting pass fails, matching the pinned native musl.
+
 Each POSIX job also links the calendar and TZif probes described in
 [`owned_calendar.md`](owned_calendar.md). Local conversion, normalization,
 formatting, cache changes, and concurrent caller-buffer conversions compare

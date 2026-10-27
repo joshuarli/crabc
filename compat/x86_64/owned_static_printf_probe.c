@@ -146,7 +146,7 @@ int main(int argc, char **argv)
         || lseek(fileno(stream), 0, SEEK_CUR) != 5 || fclose(stream)) return 24;
     allocated = (char *)(uintptr_t)1;
     errno = 0;
-    if (asprintf(&allocated, "%Q") != -1 || errno != EINVAL || allocated != (char *)(uintptr_t)1) return 14;
+    if (asprintf(&allocated, "%Q") != -1 || errno != EINVAL || allocated != NULL) return 14;
     if (asprintf(&allocated, "%cTAIL", 0) != 5 || !allocated || memcmp(allocated, "\0TAIL\0", 6)) return 15;
     free(allocated);
     stored = 123;

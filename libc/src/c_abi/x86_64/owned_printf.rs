@@ -502,15 +502,15 @@ unsafe extern "C" { fn malloc(size: usize) -> *mut c_void; }
 static_archive_member! { vasprintf_source {
     /// # Safety
     /// `destination` is writable pointer storage; format and arguments satisfy
-    /// vsnprintf's type/extent contract. On allocation success the caller owns the
-    /// malloc-family allocation, including a possible second-pass failure.
+    /// vsnprintf's type/extent contract. The output is null on a first-pass or
+    /// allocation failure. After allocation the caller owns the malloc-family
+    /// allocation, including a possible second-pass failure.
     #[no_mangle]
     #[inline(never)]
     pub unsafe extern "C" fn vasprintf(destination: *mut *mut c_char, format: *const c_char, args: VaList) -> c_int {
-        // Musl measures and formats through the public `vsnprintf`, so an
-        // application definition of it reaches `asprintf` too.
         unsafe {
             let length = vsnprintf(ptr::null_mut(), 0, format, args.clone());
+            *destination = ptr::null_mut();
             if length < 0 { return -1; }
             *destination = malloc(length as usize + 1).cast();
             if (*destination).is_null() { return -1; }
