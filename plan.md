@@ -1332,6 +1332,28 @@ Append one line per merge batch, per parked item, and per contract change.
   crash diagnostic remain parked under their existing decisions. No promotion
   or performance gate is claimed.
 
+- 2026-10-27: resumed native checks at `55dd89a3a`. M2 remains partial in
+  vm-primitives, arenas, initialization, and fault-injection. M3 passed all
+  direct differentials, both Rust batches, and all four Miri profiles, but
+  remains unmet because M1's receipt is from an older source and M2 is
+  partial. M4 passed all 11 gates at that revision. M5's correctness run
+  lacked native-shadow receipts; some differential fixtures had an empty
+  offline Cargo registry, and native builds falsely reported adopted zombie
+  children as live. The process cleanup repair preserves live-child failure;
+  its pinned reader suite and focused pointer-dispatch gate passed at
+  `5c909a968`. These are not milestone promotion claims.
+  Integrated mold-aware ABI readers, archive and executable alias placement,
+  trace handling, and static function provenance, including unrelaxed TLS GOT
+  loads. The complete utmpx collector passed at `1d6f0c91c`; its receipt and
+  selected command roster must be regenerated for any later source. The
+  feature-alias collector reached the passwd range workload, whose recorded
+  capacity now has a bounded transcript check. A source-frozen replay remains
+  necessary. The compiler-helper aggregate is held on mold's three local
+  undefined bookkeeping symbols; the CRT startup companion and native
+  allocator symbol-visibility contract remain unresolved. Prospective cohort
+  claims stay off main, and the POSIX, C-ABI and denied M6 diagnostic holds
+  remain in force.
+
 ## For the owner afterwards
 
 - The contract changes list, and the commits it names.
