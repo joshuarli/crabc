@@ -543,7 +543,8 @@ def portable_rustc_command(command: list[str], source: Path, destination: Path) 
     return portable
 
 
-def inspect_object(spec: ObjectSpec, path: Path, runtime_symbols: frozenset[str] = frozenset()) -> dict[str, object]:
+def inspect_object(spec: ObjectSpec, path: Path, runtime_symbols: frozenset[str] = frozenset(),
+                   *, hardening_profile: str = "compatibility") -> dict[str, object]:
     elf = parse_elf_object(path)
     sections = {section.name: section for section in elf.sections}
     metadata_sections = sorted(section.name for section in elf.sections if section.name.startswith(".rustc"))
@@ -581,7 +582,9 @@ def inspect_object(spec: ObjectSpec, path: Path, runtime_symbols: frozenset[str]
             owned_note.size,
             f"{path}: owned-CRT ELF note",
         )
-        if actual_note != OWNED_CRT_NOTE:
+        expected_note = (OWNED_CRT_NOTE[:-4] + struct.pack("<I", 2)
+                         if spec.name == "Scrt1.o" and hardening_profile == "hardened" else OWNED_CRT_NOTE)
+        if actual_note != expected_note:
             raise BuildError(f"{path}: owned-CRT ELF note has an unexpected wire value")
     return {
         "path": path.name,
@@ -781,7 +784,7 @@ def build(args: argparse.Namespace) -> dict[str, object]:
                 "--crate-name",
                 "crabc_x86_64_" + spec.name.removesuffix(".o").replace(".", "_"),
                 *(["--cfg", "crabc_hardened"]
-                  if args.hardening_profile == "hardened" and spec.name == "rcrt1.o" else []),
+                  if args.hardening_profile == "hardened" and spec.name in ("rcrt1.o", "Scrt1.o") else []),
                 *(
                     ["--cfg", "crabc_dynamic_main_thread_runtime_v1"]
                     if spec.entry_contract == "owned-dynamic-pie-entry"
@@ -826,7 +829,7 @@ def build(args: argparse.Namespace) -> dict[str, object]:
                 raise BuildError(f"rustc failed while building {spec.name}: {record['stderr']}")
             if not destination.is_file():
                 raise BuildError(f"rustc reported success but did not create {destination}")
-            inspection = inspect_object(spec, destination, runtime_symbols)
+            inspection = inspect_object(spec, destination, runtime_symbols, hardening_profile=args.hardening_profile)
             if spec.entry_contract in {
                 "conventional-exec-entry",
                 "static-pie-entry",

@@ -54,6 +54,17 @@ def native_x86_64_evidence() -> bool:
     )
 
 
+def owned_crt_note(path: Path) -> bytes:
+    data = path.read_bytes()
+    header = struct.unpack_from("<16sHHIQQQIHHHHHH", data)
+    sections = [struct.unpack_from("<IIQQQQIIQQ", data, header[6] + index * header[11])
+                for index in range(header[12])]
+    strings = sections[header[13]]
+    names = data[strings[4]:strings[4] + strings[5]]
+    note = next(section for section in sections if names[section[0]:].split(b"\0", 1)[0] == b".note.crabc.owned-crt")
+    return data[note[4]:note[4] + note[5]]
+
+
 def disable_core_dump() -> None:
     resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
 
@@ -449,6 +460,8 @@ class X86_64StaticPieTests(unittest.TestCase):
                 stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False,
             )
             self.assertEqual(build.returncode, 0, build.stderr.decode(errors="replace"))
+            expected_note = struct.pack("<III", 6, 4, 0x43525401) + b"CRABC\0\0\0" + struct.pack("<I", 2)
+            self.assertEqual(owned_crt_note(crt_output / "Scrt1.o"), expected_note)
             fixture = work / "fixture.o"
             compile = subprocess.run(
                 toolchain_rustc() + ["--edition=2021", "--crate-type=lib", "--emit=obj", "--target", TARGET,
@@ -508,6 +521,8 @@ class X86_64StaticPieTests(unittest.TestCase):
                 stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False,
             )
             self.assertEqual(compatible_build.returncode, 0, compatible_build.stderr.decode(errors="replace"))
+            expected_note = struct.pack("<III", 6, 4, 0x43525401) + b"CRABC\0\0\0" + struct.pack("<I", 1)
+            self.assertEqual(owned_crt_note(compatible_crt / "Scrt1.o"), expected_note)
             compatible = work / "compatible-static-pie"
             compatible_link = subprocess.run(
                 [link_editor(), "-pie", "-static", "--no-dynamic-linker", "-e", "_start", str(compatible_crt / "rcrt1.o"),

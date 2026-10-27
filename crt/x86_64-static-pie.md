@@ -45,7 +45,8 @@ identity check uses the mapped ELF header and auxiliary-vector program-header
 address, not the load bias. When `DT_PLTGOT` is present, the prototype requires
 its three reserved entries to be writable load bytes covered by RELRO. This
 prototype does not establish binding-storage coverage when that tag is absent,
-a hardened installed product, or a loader profile.
+a hardened installed product, or a loader profile. Its dynamic `Scrt1.o`
+emits owned-CRT note revision 2; compatibility entries retain revision 1.
 
 `crt/src/x86_64_startup.rs` is the shared private static-startup path.
 `rcrt1.o` reaches it after relocation and RELRO through an
