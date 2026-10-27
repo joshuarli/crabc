@@ -152,10 +152,13 @@ static int check_loaded_dso(void)
         else if (!dlerror()) valid = 0;
         if (access("/tls-mutable-marker", F_OK) == 0) valid = 0;
     }
-    void *symbol = dlopen("/usr/lib/symbol-mutable.so", RTLD_NOW);
-    if (symbol) { dlclose(symbol); valid = 0; }
-    else if (!dlerror()) valid = 0;
-    if (access("/symbol-mutable-marker", F_OK) == 0) valid = 0;
+    const char *symbols[] = {"/usr/lib/symbol-mutable.so", "/usr/lib/symbol-pc32.so"};
+    for (unsigned long i = 0; i < sizeof symbols / sizeof symbols[0]; i++) {
+        void *symbol = dlopen(symbols[i], RTLD_NOW);
+        if (symbol) { dlclose(symbol); valid = 0; }
+        else if (!dlerror()) valid = 0;
+        if (access("/symbol-mutable-marker", F_OK) == 0) valid = 0;
+    }
     unsigned long graph_before = 0;
     dl_iterate_phdr(count_dso, &graph_before);
     void *unresolved = dlopen("/usr/lib/import-probe.so", RTLD_LAZY);
