@@ -67,6 +67,7 @@ DYNAMIC_REQUIRED = (
     "share/crabc/crabc_cc_static.py",
     "share/crabc/native_runtime_profile.py",
     "share/crabc/crt.provenance.json",
+    "share/crabc/loader.provenance.json",
     "share/crabc/owned_dynamic_receipt.py",
     "share/crabc/owned_dynamic_elf.py",
     "share/crabc/producer-tools.json",
@@ -705,6 +706,15 @@ def _validate_dynamic_product(root: Path) -> tuple[Path, dict[str, str]]:
     import crabc_cc_static
     try:
         crabc_cc_static.validate_crt_provenance(root, receipt, NativeRuntimeProfile.COMPATIBILITY, "Scrt1.o")
+    except crabc_cc_static.DriverError as error:
+        raise ProductEvidenceError(str(error)) from error
+    loader_receipt = "share/crabc/loader.provenance.json"
+    if combined is not None:
+        loader_receipt = combined["products"]["dynamic"]["placements"][loader_receipt]
+    import crabc_cc_owned_dynamic
+    try:
+        crabc_cc_owned_dynamic.validate_loader_provenance(root, loader_receipt,
+                                                         crabc_cc_owned_dynamic.shared.NativeRuntimeProfile.COMPATIBILITY)
     except crabc_cc_static.DriverError as error:
         raise ProductEvidenceError(str(error)) from error
     _validate_link_input_modes(root, DYNAMIC_LINK_INPUT_MODES, "dynamic link input")

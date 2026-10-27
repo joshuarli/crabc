@@ -12,6 +12,7 @@ import json
 import os
 from pathlib import Path
 import re
+import shlex
 import subprocess
 import sys
 import tempfile
@@ -35,7 +36,7 @@ COMPILER_HELPER_ARCHIVE = "libcrabc-builtins.a"
 REQUIRED = {"usr/lib/libc.so", "usr/lib/crt1.o", "usr/lib/Scrt1.o", "usr/lib/crti.o", "usr/lib/crtn.o",
             "usr/lib/crabc-dynamic-attach.o", "usr/lib/" + COMPILER_HELPER_ARCHIVE, "lib/ld-crabc-x86_64.so.1",
             "share/crabc/crabc_cc_static.py", "share/crabc/native_runtime_profile.py",
-            "share/crabc/crt.provenance.json",
+            "share/crabc/crt.provenance.json", "share/crabc/loader.provenance.json",
             "share/crabc/owned_dynamic_receipt.py", "share/crabc/owned_dynamic_elf.py"}
 APPLICATION_DSO_BASENAME = re.compile(r"[^/\x00]+\.so(?:\.[0-9]+)*\Z")
 RECEIPT_V1_FIELDS = receipt_contract.V1_FIELDS
@@ -179,6 +180,30 @@ def link_evidence_workspace(parent: Path, *, retain: bool):
         yield Path(temporary)
 
 
+def validate_loader_provenance(root: Path, receipt_path: str, profile: shared.NativeRuntimeProfile) -> None:
+    receipt = shared.load_manifest(root / receipt_path, "loader provenance")
+    artifact = receipt.get("artifact")
+    if (not isinstance(artifact, dict) or artifact.get("path") != profile.interpreter.lstrip("/")
+            or artifact.get("sha256") != shared.sha256_file(root / profile.interpreter.lstrip("/"))):
+        raise shared.DriverError("installed loader does not match its provenance")
+    if receipt.get("build_profile") == "debug":
+        arguments = receipt.get("compiler_command")
+    else:
+        cargo = receipt.get("cargo")
+        flags = cargo.get("rustflags") if isinstance(cargo, dict) else None
+        try:
+            arguments = shlex.split(flags) if isinstance(flags, str) else None
+        except ValueError as error:
+            raise shared.DriverError("invalid loader compiler flags") from error
+    if not isinstance(arguments, list) or not all(isinstance(argument, str) for argument in arguments):
+        raise shared.DriverError("invalid loader compiler provenance")
+    selected = sum(argument == "--cfg=crabc_hardened" or
+                   (argument == "--cfg" and index + 1 < len(arguments) and arguments[index + 1] == "crabc_hardened")
+                   for index, argument in enumerate(arguments))
+    if selected != (1 if profile is shared.NativeRuntimeProfile.HARDENED else 0):
+        raise shared.DriverError("installed loader profile does not match its provenance")
+
+
 def validate(root: Path) -> dict:
     manifest = root / "share/crabc/manifest.json"
     shared.require_regular(manifest, "dynamic manifest")
@@ -219,6 +244,7 @@ def validate(root: Path) -> dict:
         if shared.sha256_file(root / relative) != digest:
             raise shared.DriverError(f"installed payload hash mismatch: {relative}")
     shared.validate_crt_provenance(root, "share/crabc/crt.provenance.json", profile, "Scrt1.o")
+    validate_loader_provenance(root, "share/crabc/loader.provenance.json", profile)
     return record
 
 
@@ -279,7 +305,7 @@ def validate_combined(root: Path) -> dict:
     for relative, digest in embedded_files.items():
         placed = placements.get(relative)
         # Only product metadata may move, and only within share/crabc/.
-        movable = ((relative not in required or relative == "share/crabc/crt.provenance.json")
+        movable = ((relative not in required or relative in {"share/crabc/crt.provenance.json", "share/crabc/loader.provenance.json"})
                    and relative.startswith(shared.PRODUCT_METADATA_PREFIX)
                    and isinstance(placed, str) and placed.startswith(shared.PRODUCT_METADATA_PREFIX))
         if placed != relative and not movable:
@@ -288,6 +314,7 @@ def validate_combined(root: Path) -> dict:
             raise shared.DriverError(f"combined sysroot does not install dynamic payload unchanged: {relative}")
     receipt = placements["share/crabc/crt.provenance.json"]
     shared.validate_crt_provenance(root, receipt, profile, "Scrt1.o")
+    validate_loader_provenance(root, placements["share/crabc/loader.provenance.json"], profile)
     return record
 
 

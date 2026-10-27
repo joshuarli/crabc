@@ -499,6 +499,10 @@ class OwnedPosixProductEvidenceTests(unittest.TestCase):
             "hardening_profile": "compatibility",
             "objects": {"Scrt1.o": {"sha256": digest(product / "usr/lib/Scrt1.o")}},
         })
+        self.write_json(product / "share/crabc/loader.provenance.json", {
+            "build_profile": "debug", "compiler_command": [],
+            "artifact": {"path": "lib/ld-crabc-x86_64.so.1", "sha256": digest(product / "lib/ld-crabc-x86_64.so.1")},
+        })
         alias = product / "lib/ld-musl-x86_64.so.1"
         alias.symlink_to("ld-crabc-x86_64.so.1")
         self.write_json(product / "share/crabc/producer-tools.json", {"schema": 1, **self.compiler_tools})
@@ -517,6 +521,15 @@ class OwnedPosixProductEvidenceTests(unittest.TestCase):
         path = self.dynamic / "share/crabc/crt.provenance.json"
         receipt = json.loads(path.read_text())
         receipt["hardening_profile"] = "hardened"
+        self.write_json(path, receipt)
+        self.refresh_dynamic_manifest()
+        with self.assertRaises(evidence.ProductEvidenceError):
+            evidence._validate_dynamic_product(self.dynamic)
+
+    def test_dynamic_product_reader_rejects_a_mismatched_loader_profile(self) -> None:
+        path = self.dynamic / "share/crabc/loader.provenance.json"
+        receipt = json.loads(path.read_text())
+        receipt["compiler_command"] = ["--cfg", "crabc_hardened"]
         self.write_json(path, receipt)
         self.refresh_dynamic_manifest()
         with self.assertRaises(evidence.ProductEvidenceError):
