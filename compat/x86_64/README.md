@@ -463,7 +463,7 @@ providers or close pthread lifecycle, family, or public-support evidence.
 Inside the pinned native image, `compat/x86_64/run_hardened_entry.sh DYNAMIC STATIC COMPATIBILITY`
 tests hardened debug products in a disposable root. A matching PIE must run
 its constructor; a non-PIE, an executable stack, and an RWX load must fail
-before it. A dynamic PIE's executable file-page alias must remain unchanged
+before it through kernel and direct interpreter entry. A dynamic PIE's executable file-page alias must remain unchanged
 when its writable view changes. The static PIE is checked for the same property
 when its selected data byte has such an alias; otherwise the fixture reports
 that byte's lack of an alias. During the first constructor, forked children
@@ -476,7 +476,7 @@ The same malformed images fail as startup dependencies or preloads; the
 compatibility product admits the executable-stack preload and runs its
 constructor. Missing optional preloads remain optional. The existing CRT
 startup probe checks kernel-seeded guards and initial TLS in constructors and
-a worker for both hardened products.
+a worker for both hardened products, including direct dynamic entry.
 
 ## Rust RuntimeV1 facades
 

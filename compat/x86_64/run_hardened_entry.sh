@@ -66,8 +66,10 @@ timeout 20 chroot "$image" /alias
 timeout 20 chroot "$image" /relro
 timeout 20 chroot "$image" /static-relro
 CRABC_STARTUP=yes timeout 20 chroot "$image" /startup owned >"$work/startup.stdout"
+CRABC_STARTUP=yes timeout 20 chroot "$image" /lib/ld-crabc-x86_64-hardened.so.1 /startup owned >"$work/startup-direct.stdout"
 CRABC_STARTUP=yes timeout 20 chroot "$image" /static-startup static >"$work/static-startup.stdout"
 [ "$(cat "$work/startup.stdout")" = ICOMAFL ]
+[ "$(cat "$work/startup-direct.stdout")" = ICOMAFL ]
 [ "$(cat "$work/static-startup.stdout")" = PICSMAFL ]
 static_status=0
 timeout 20 chroot "$image" /static-alias || static_status=$?
@@ -82,6 +84,10 @@ for case in nonpie bad-stack bad-wx; do
     status=0
     timeout 20 chroot "$image" "/$case" >"$work/$case.stdout" 2>"$work/$case.stderr" || status=$?
     [ "$status" -eq 127 ]
+    test ! -e "$image/marker"
+    status=0
+    timeout 20 chroot "$image" /lib/ld-crabc-x86_64-hardened.so.1 "/$case" >"$work/$case-direct.stdout" 2>"$work/$case-direct.stderr" || status=$?
+    [ "$status" -eq 1 ]
     test ! -e "$image/marker"
 done
 readonly compatible_root="$work/compatibility"
