@@ -1347,8 +1347,9 @@ Append one line per merge batch, per parked item, and per contract change.
   loads. The complete utmpx collector passed at `1d6f0c91c`; its receipt and
   selected command roster must be regenerated for any later source. The
   feature-alias collector reached the passwd range workload, whose recorded
-  capacity now has a bounded transcript check. A source-frozen replay remains
-  necessary. The compiler-helper aggregate is held on mold's three local
+  capacity now has a bounded transcript check. Collection and receipt replay
+  pass at `ea4ae3bdd`; later revisions need fresh source-bound evidence. The
+  compiler-helper aggregate is held on mold's three local
   undefined bookkeeping symbols; the CRT startup companion and native
   allocator symbol-visibility contract remain unresolved. Prospective cohort
   claims stay off main, and the POSIX, C-ABI and denied M6 diagnostic holds
