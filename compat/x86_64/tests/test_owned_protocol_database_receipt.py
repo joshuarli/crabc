@@ -20,6 +20,11 @@ ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(ROOT / "compat/x86_64"))
 import owned_protocol_database as producer  # noqa: E402
 import owned_protocol_database_receipt as receipt  # noqa: E402
+from loader_debug_abi_evidence import Elf  # noqa: E402
+from owned_static_link_authority import (  # noqa: E402
+    StaticLinkAuthorityError,
+    require_static_functions,
+)
 
 
 class OwnedProtocolDatabaseReceiptTests(unittest.TestCase):
@@ -64,8 +69,167 @@ class OwnedProtocolDatabaseReceiptTests(unittest.TestCase):
         with self.assertRaisesRegex(producer.ProtocolDatabaseError, "invalid provider binding"):
             producer.provider_rows(undefined, "undefined provider")
 
+    def test_provider_projection_requires_local_binding_only_for_static_final_images(self) -> None:
+        global_rows = b"\n".join(
+            f"{index}: 0000000000000000 0 FUNC GLOBAL DEFAULT 1 {name}".encode()
+            for index, name in enumerate(producer.PROVIDERS, start=1)
+        ) + b"\n"
+        local_rows = global_rows.replace(b"GLOBAL", b"LOCAL")
+
+        with self.assertRaisesRegex(producer.ProtocolDatabaseError, "invalid provider binding"):
+            producer.provider_rows(local_rows, "static final provider")
+        self.assertEqual(set(producer.provider_rows(local_rows, "static final provider", binding="LOCAL")),
+                         set(producer.PROVIDERS))
+        self.assertEqual(set(producer.provider_rows(global_rows, "oracle object")), set(producer.PROVIDERS))
+
+    def test_oracle_trace_normalization_allows_only_pinned_group_revisits(self) -> None:
+        archive = Path("/opt/musl-1.2.6/lib/libc.a")
+        rows = [
+            "trace: /workspace/workload.o",
+            f"trace: {archive}(clone.lo)",
+            f"trace: {archive}(free.lo)",
+            f"trace: {archive}(realloc.lo)",
+            f"trace: {archive}(clone.lo)",
+            f"trace: {archive}(free.lo)",
+            f"trace: {archive}(realloc.lo)",
+            f"trace: {archive}(proto.lo)",
+        ]
+        normalized = producer.normalize_pinned_musl_link_trace("\n".join(rows).encode(), archive)
+        self.assertEqual(normalized.decode().splitlines(), list(dict.fromkeys(rows)))
+
+        unexpected_member = rows + [f"trace: {archive}(proto.lo)"]
+        with self.assertRaisesRegex(producer.ProtocolDatabaseError, "repeats an unexpected input"):
+            producer.normalize_pinned_musl_link_trace("\n".join(unexpected_member).encode(), archive)
+        unexpected_direct = rows + ["trace: /workspace/workload.o"]
+        with self.assertRaisesRegex(producer.ProtocolDatabaseError, "repeats an unexpected input"):
+            producer.normalize_pinned_musl_link_trace("\n".join(unexpected_direct).encode(), archive)
+        missing_revisit = rows[:-2]
+        with self.assertRaisesRegex(producer.ProtocolDatabaseError, "repeats an unexpected input"):
+            producer.normalize_pinned_musl_link_trace("\n".join(missing_revisit).encode(), archive)
+
+    def test_oracle_map_projection_requires_unique_exact_provider_owners(self) -> None:
+        provider_owner = "/opt/musl-1.2.6/lib/libc.a(proto.lo)"
+        owners = {name: provider_owner for name in producer.PROVIDERS}
+        owners.update({
+            "strcmp": "/opt/musl-1.2.6/lib/libc.a(strcmp.lo)",
+            "strlen": "/opt/musl-1.2.6/lib/libc.a(strlen.lo)",
+        })
+        rows = ["VMA       Size Align Out In Symbol"]
+        for index, (name, owner) in enumerate(owners.items(), start=1):
+            rows.extend((f"0x{index * 16:x} 16 1 {owner}:(.text.{name})",
+                         f"0x{index * 16:x} 0 0 {name}"))
+        link_map = self.work / "oracle.map"
+        link_map.write_text("\n".join(rows) + "\n", encoding="utf-8")
+
+        self.assertEqual(producer._oracle_provider_map(link_map, owners), link_map.read_bytes())
+        duplicate = rows + [rows[1]]
+        link_map.write_text("\n".join(duplicate) + "\n", encoding="utf-8")
+        with self.assertRaisesRegex(producer.ProtocolDatabaseError, "does not select one endprotoent input"):
+            producer._oracle_provider_map(link_map, owners)
+
+    def test_oracle_provider_authority_keeps_temporary_map_outside_report_tree(self) -> None:
+        evidence = self.work / "evidence"
+        evidence.mkdir()
+        archive = Path("/opt/musl-1.2.6/lib/libc.a")
+        compiler_root = Path("/usr/lib/gcc/x86_64-alpine-linux-musl/15.2.0")
+        owner_members = {name: "proto.lo" for name in producer.PROVIDERS}
+        owner_members.update({"strcmp": "strcmp.lo", "strlen": "strlen.lo"})
+        owners = {name: f"{archive}({member})" for name, member in owner_members.items()}
+        sources = {name: (member, f"source:{name}".encode(), {}) for name, member in owner_members.items()}
+        trace_rows = [
+            "trace: /workspace/workload.o",
+            f"trace: {archive.parent / 'Scrt1.o'}",
+            f"trace: {archive.parent / 'crti.o'}",
+            f"trace: {archive.parent / 'crtn.o'}",
+            f"trace: {compiler_root}/crtbeginS.o",
+            f"trace: {compiler_root}/crtendS.o",
+            f"trace: {archive}(clone.lo)",
+            f"trace: {archive}(free.lo)",
+            f"trace: {archive}(realloc.lo)",
+            f"trace: {archive}(clone.lo)",
+            f"trace: {archive}(free.lo)",
+            f"trace: {archive}(realloc.lo)",
+            *(f"trace: {owner}" for owner in dict.fromkeys(owners.values())),
+        ]
+        trace = evidence / "oracle.trace"
+        trace.write_text("\n".join(trace_rows) + "\n", encoding="utf-8")
+        scratch_root = self.work / ".work/x86_64/tmp"
+        evidence.chmod(0o555)
+
+        def check_scratch(path: Path, _executable: Path, admitted: object, _contracts: object) -> None:
+            self.assertTrue(path.is_relative_to(scratch_root))
+            self.assertFalse(path.is_relative_to(evidence))
+            self.assertEqual(path.read_bytes(), b"selected map\n")
+
+        try:
+            with mock.patch.object(producer, "ROOT", self.work), \
+                 mock.patch.object(producer, "_archive_functions", return_value=sources), \
+                 mock.patch.object(producer, "_audit_oracle_trace_inputs"), \
+                 mock.patch.object(producer, "_oracle_provider_map", return_value=b"selected map\n"), \
+                 mock.patch.object(producer, "require_static_functions", side_effect=check_scratch):
+                owner = producer.oracle_static_provider_authority(
+                    archive, self.work / "workload.o", self.work / "oracle", evidence / "oracle.map", trace)
+        finally:
+            evidence.chmod(0o755)
+
+        self.assertEqual(owner, owners[producer.PROVIDERS[0]])
+        self.assertEqual([path.name for path in evidence.iterdir()], ["oracle.trace"])
+
+    @unittest.skipUnless(Path("/opt/musl-1.2.6/.crabc-oracle").is_file(), "requires the pinned native image")
+    def test_patched_static_import_target_bytes_fail_authority(self) -> None:
+        compiler, linker = shutil.which("cc"), shutil.which("mold")
+        if compiler is None or linker is None:
+            self.skipTest("native compiler and mold are required")
+        root = self.work / "import-authority"
+        root.mkdir()
+        provider_source = root / "provider.s"
+        target_source = root / "target.s"
+        provider_object = root / "provider.o"
+        target_object = root / "target.o"
+        archive = root / "libtarget.a"
+        executable = root / "probe"
+        link_map = root / "probe.map"
+        provider_lines = [".text"]
+        for name in producer.PROVIDERS:
+            provider_lines.extend((f".globl {name}", f".type {name},@function", f"{name}:",
+                                   "call strcmp", "call strlen", "ret", f".size {name},.-{name}"))
+        provider_lines.extend((".globl _start", ".type _start,@function", "_start: ret", ".size _start,.-_start"))
+        provider_source.write_text("\n".join(provider_lines) + "\n", encoding="utf-8")
+        target_source.write_text(
+            ".text\n.globl strcmp\n.type strcmp,@function\nstrcmp: mov $7,%eax\nret\n"
+            ".size strcmp,.-strcmp\n.globl strlen\n.type strlen,@function\nstrlen: mov $9,%eax\nret\n"
+            ".size strlen,.-strlen\n",
+            encoding="utf-8",
+        )
+        subprocess.run((compiler, "-c", provider_source, "-o", provider_object), check=True,
+                       capture_output=True)
+        subprocess.run((compiler, "-c", target_source, "-o", target_object), check=True,
+                       capture_output=True)
+        subprocess.run(("ar", "rcs", archive, target_object), check=True, capture_output=True)
+        linked = subprocess.run((linker, "-static", "-e", "_start", "--trace", "-Map=" + str(link_map),
+                                 provider_object, archive, "-o", executable), check=True,
+                                capture_output=True, text=True)
+        owner = f"{archive}(target.o)"
+        self.assertEqual(linked.stdout.count("trace: " + owner), 1)
+        member = subprocess.run(("ar", "p", archive, "target.o"), check=True, capture_output=True).stdout
+        owners = {name: str(provider_object) for name in producer.PROVIDERS}
+        owners.update({name: owner for name in producer.ORACLE_PROTO_IMPORTS})
+        contracts = producer._oracle_static_contracts(owners)
+        admitted = {str(provider_object): provider_object, owner: member}
+        require_static_functions(link_map, executable, admitted, contracts)
+
+        image = Elf(executable)
+        symbol = image.symbol("strcmp", dynamic=False)
+        section = image.sections[symbol["section"]]
+        offset = section[4] + symbol["value"] - section[3]
+        patched = bytearray(executable.read_bytes())
+        patched[offset] ^= 1
+        executable.write_bytes(patched)
+        with self.assertRaisesRegex(StaticLinkAuthorityError, "linked static function bytes differ from selected input: strcmp"):
+            require_static_functions(link_map, executable, admitted, contracts)
+
     def test_reader_has_a_fixed_nonpromoting_component_identity(self) -> None:
-        self.assertEqual(receipt.SCHEMA, "crabc.x86_64-owned-protocol-database-products/v1")
+        self.assertEqual(receipt.SCHEMA, "crabc.x86_64-owned-protocol-database-products/v2")
         self.assertEqual(receipt.COMPONENT, "protocol-database-product")
         self.assertEqual(receipt.REPORT_NAME, "owned-protocol-database-products.json")
 

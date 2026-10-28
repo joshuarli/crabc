@@ -18,19 +18,31 @@ resolver family or x86 support.
 from __future__ import annotations
 
 import argparse
+from collections import Counter
 from hashlib import sha256
 import importlib.util
 import json
 import os
 from pathlib import Path
+import re
 import stat
 import subprocess
 import sys
+import tempfile
 from typing import Any, Mapping, Sequence
+
+from owned_static_link_authority import (
+    StaticFunctionContract,
+    StaticLinkAuthorityError,
+    admit_static_inputs,
+    elf_bytes,
+    require_static_functions,
+)
+from owned_syscall_alias_authority import archive_members
 
 
 ROOT = Path(__file__).resolve().parents[2]
-SCHEMA = "crabc.x86_64-owned-protocol-database-products/v1"
+SCHEMA = "crabc.x86_64-owned-protocol-database-products/v2"
 COMPONENT = "protocol-database-product"
 ARMS = ("installed", "reproduction", "extracted")
 ENTRY_MODES = (
@@ -48,6 +60,7 @@ PROVIDERS = (
     "getprotoent",
     "setprotoent",
 )
+ORACLE_PROTO_IMPORTS = ("strcmp", "strlen")
 MUSL_CC = Path("/usr/local/bin/crabc-x86_64-musl-gcc")
 PINNED_MUSL_ARCHIVE = Path("/opt/musl-1.2.6/lib/libc.a")
 ORACLE_IMAGE_MANIFEST = Path("compat/x86_64/owned_resolver_network_image_inputs.json")
@@ -62,6 +75,7 @@ SOURCE_FILES = (
     Path(__file__).relative_to(ROOT), READER, PROBE, RUST_PROVIDER, PROVIDER_CONTRACT,
     PRODUCT_FIXTURE, DYNAMIC_RECEIPT, ORACLE_IMAGE_MANIFEST,
     Path("compat/x86_64/owned_static_link_authority.py"),
+    Path("compat/x86_64/owned_syscall_alias_authority.py"),
     Path("compat/x86_64/loader_debug_abi_evidence.py"),
     Path("compat/x86_64/owned_dynamic_elf.py"),
 )
@@ -114,6 +128,15 @@ def _below_work(path: Path, description: str, *, directory: bool) -> Path:
     value = _physical(path, description, directory=directory)
     require(value.is_relative_to(ROOT / ".work"), f"{description} must be below checkout .work")
     return value
+
+
+def _verifier_scratch_root(root: Path) -> Path:
+    path = root / ".work/x86_64/tmp"
+    try:
+        path.mkdir(parents=True, exist_ok=True)
+    except OSError as error:
+        raise ProtocolDatabaseError(f"cannot prepare protocol verifier scratch: {error}") from error
+    return _physical(path, "protocol verifier scratch", directory=True)
 
 
 def artifact(root: Path, path: Path) -> dict[str, object]:
@@ -181,7 +204,8 @@ def _readelf(path: Path, *, dynamic: bool, destination: Path, timeout: float) ->
     return stdout
 
 
-def provider_rows(raw: bytes, description: str) -> dict[str, list[list[str]]]:
+def provider_rows(raw: bytes, description: str, *, binding: str = "GLOBAL") -> dict[str, list[list[str]]]:
+    require(binding in {"GLOBAL", "LOCAL"}, f"{description} has an invalid expected provider binding")
     try:
         lines = raw.decode("utf-8").splitlines()
     except UnicodeDecodeError as error:
@@ -193,9 +217,222 @@ def provider_rows(raw: bytes, description: str) -> dict[str, list[list[str]]]:
             found[fields[7]].append(fields)
     for name, rows in found.items():
         require(rows, f"{description} lacks {name}")
-        require(all(row[3:6] == ["FUNC", "GLOBAL", "DEFAULT"] and row[6] != "UND" for row in rows),
+        require(all(row[3:6] == ["FUNC", binding, "DEFAULT"] and row[6] != "UND" for row in rows),
                 f"{description} has an invalid provider binding for {name}")
     return found
+
+
+def _archive_functions(archive: Path, names: Sequence[str], description: str
+                       ) -> dict[str, tuple[str, bytes, dict[str, object]]]:
+    definitions: dict[str, list[tuple[str, bytes, dict[str, object]]]] = {name: [] for name in names}
+    try:
+        for member, body in archive_members(archive.read_bytes()):
+            source = elf_bytes(body)
+            found: dict[str, dict[str, object]] = {}
+            for index, table in enumerate(source.sections):
+                if table[1] != 2:
+                    continue
+                require(table[9] == 24 and table[5] % 24 == 0,
+                        f"{description} has an invalid ELF symbol table")
+                for number in range(table[5] // 24):
+                    row = source.symbol_row(index, number)
+                    if row["name"] in definitions and row["section"]:
+                        require(row["name"] not in found,
+                                f"{description} repeats a requested function in {member}")
+                        found[row["name"]] = row
+            for name, row in found.items():
+                definitions[name].append((member, body, row))
+    except (OSError, StaticLinkAuthorityError, ValueError, UnicodeError) as error:
+        raise ProtocolDatabaseError(f"cannot inspect {description}: {error}") from error
+    result: dict[str, tuple[str, bytes, dict[str, object]]] = {}
+    for name, rows in definitions.items():
+        require(len(rows) == 1, f"{description} does not have one archive definition for {name}")
+        member, body, row = rows[0]
+        require(row["type"] == "FUNC" and row["binding"] == "GLOBAL" and row["visibility"] == "DEFAULT",
+                f"{description} archive function differs for {name}")
+        result[name] = (member, body, row)
+    return result
+
+
+def _archive_provider_member(archive: Path, description: str) -> tuple[str, bytes]:
+    definitions = _archive_functions(archive, PROVIDERS, description)
+    owners = {definitions[name][0] for name in PROVIDERS}
+    require(len(owners) == 1, f"{description} protocol providers have different archive owners")
+    member = next(iter(owners))
+    body = definitions[PROVIDERS[0]][1]
+    require(all(definitions[name][1] == body for name in PROVIDERS),
+            f"{description} protocol providers have different source bytes")
+    return member, body
+
+
+def _static_provider_contracts(owner: str) -> list[StaticFunctionContract]:
+    return [StaticFunctionContract(name, owner, "GLOBAL", "DEFAULT", "LOCAL", "DEFAULT")
+            for name in PROVIDERS]
+
+
+def _oracle_static_contracts(owners: Mapping[str, str]) -> list[StaticFunctionContract]:
+    return [StaticFunctionContract(name, owners[name], "GLOBAL", "DEFAULT", "LOCAL", "DEFAULT")
+            for name in (*PROVIDERS, *ORACLE_PROTO_IMPORTS)]
+
+
+def normalize_pinned_musl_link_trace(raw: bytes, archive: Path) -> bytes:
+    try:
+        lines = raw.decode("utf-8").splitlines()
+    except UnicodeDecodeError as error:
+        raise ProtocolDatabaseError("pinned musl link trace is not UTF-8") from error
+    require(lines and all(line.startswith("trace: ") for line in lines),
+            "pinned musl link trace format differs")
+    repeated = {f"trace: {archive}({member})": 2 for member in ("clone.lo", "free.lo", "realloc.lo")}
+    counts = Counter(lines)
+    require(all(counts[line] == expected_count for line, expected_count in repeated.items())
+            and all(count == 1 or repeated.get(line) == count for line, count in counts.items()),
+            "pinned musl link trace repeats an unexpected input")
+    return ("\n".join(dict.fromkeys(lines)) + "\n").encode("utf-8")
+
+
+def _oracle_provider_map(map_path: Path, owners: Mapping[str, str]) -> bytes:
+    try:
+        lines = map_path.read_text(encoding="utf-8").splitlines()
+    except (OSError, UnicodeError) as error:
+        raise ProtocolDatabaseError(f"cannot read pinned musl link map: {error}") from error
+    require(lines and lines[0].split() in (
+        ["VMA", "Size", "Align", "Out", "In", "Symbol"],
+        ["VMA", "LMA", "Size", "Align", "Out", "In", "Symbol"],
+    ), "pinned musl link map format differs")
+    selected_indices: set[int] = set()
+    for owner in set(owners.values()):
+        owner_rows = [index for index, line in enumerate(lines[1:], start=1)
+                      if line.split() and line.split()[-1].startswith(owner + ":(")
+                      and line.split()[-1].endswith(")")]
+        require(owner_rows, f"pinned musl link map lacks selected input owner {owner}")
+        for index in owner_rows:
+            selected_indices.add(index)
+            for following in range(index + 1, len(lines)):
+                fields = lines[following].split()
+                if not fields:
+                    continue
+                name = fields[-1]
+                if name.startswith(".") or ":(" in name and name.endswith(")"):
+                    break
+                selected_indices.add(following)
+    for name, owner in owners.items():
+        input_row = f"{owner}:(.text.{name})"
+        matches = [index for index, line in enumerate(lines[1:], start=1)
+                   if line.split() and line.split()[-1] == input_row]
+        require(len(matches) == 1, f"pinned musl link map does not select one {name} input")
+        index = matches[0]
+        require(index + 1 < len(lines) and lines[index + 1].split()
+                and lines[index + 1].split()[-1] == name,
+                f"pinned musl link map does not bind {name} to its selected input")
+        require(index in selected_indices and index + 1 in selected_indices,
+                f"pinned musl link map omits the selected {name} rows")
+    selected = [lines[0], *(lines[index] for index in sorted(selected_indices))]
+    return ("\n".join(selected) + "\n").encode("utf-8")
+
+
+def _audit_oracle_trace_inputs(trace_path: Path, archive: Path, workload: Path,
+                               compiler_root: Path) -> None:
+    try:
+        raw = trace_path.read_bytes()
+        normalized = normalize_pinned_musl_link_trace(raw, archive)
+        lines = normalized.decode("utf-8").splitlines()
+    except (OSError, UnicodeError) as error:
+        raise ProtocolDatabaseError(f"cannot inspect pinned musl link trace: {error}") from error
+    direct_names = [line.removeprefix("trace: ") for line in lines if "(" not in line]
+    compiler_crts = [Path(name) for name in direct_names
+                     if Path(name).name in {"crtbeginS.o", "crtendS.o"}]
+    require(len(compiler_crts) == 2 and {path.name for path in compiler_crts} ==
+            {"crtbeginS.o", "crtendS.o"}, "pinned musl link trace compiler CRT inputs differ")
+    require(compiler_crts[0].parent == compiler_root == compiler_crts[1].parent,
+            "pinned musl link trace compiler CRT root differs")
+    direct_paths = (workload, archive.parent / "Scrt1.o", archive.parent / "crti.o",
+                    archive.parent / "crtn.o", *compiler_crts)
+    require(set(direct_names) == {str(path) for path in direct_paths}
+            and len(direct_names) == len(direct_paths), "pinned musl link trace direct inputs differ")
+    direct = {str(_physical(path, "pinned musl direct link input")): path for path in direct_paths}
+    archives = (archive, archive.parent / "libssp_nonshared.a", compiler_root / "libgcc.a",
+                compiler_root / "libgcc_eh.a")
+    archive_members_by_path: dict[str, set[str]] = {}
+    for path in archives:
+        selected = _physical(path, "pinned musl static link archive")
+        try:
+            members = list(archive_members(selected.read_bytes()))
+        except (OSError, ValueError, UnicodeError) as error:
+            raise ProtocolDatabaseError(f"cannot inspect pinned musl static archive: {error}") from error
+        counts = Counter(name for name, _body in members)
+        repeats = {name: count for name, count in counts.items() if count > 1}
+        expected = {"clone.lo": 2, "free.lo": 2, "realloc.lo": 2} if selected == archive else {}
+        require(repeats == expected, f"pinned musl static archive member roster differs: {selected}")
+        archive_members_by_path[str(selected)] = set(counts)
+    for line in lines:
+        selected = line.removeprefix("trace: ")
+        if selected in direct:
+            continue
+        owners = [path for path in archive_members_by_path
+                  if selected.startswith(path + "(") and selected.endswith(")")]
+        require(len(owners) == 1, "pinned musl link trace names an unowned input")
+        member = selected[len(owners[0]) + 1:-1]
+        require(member in archive_members_by_path[owners[0]],
+                "pinned musl link trace names a missing archive member")
+
+
+def oracle_static_provider_authority(archive: Path, workload: Path, executable: Path, map_path: Path,
+                                    trace_path: Path) -> str:
+    sources = _archive_functions(archive, (*PROVIDERS, *ORACLE_PROTO_IMPORTS), "pinned musl protocol archive")
+    member = sources[PROVIDERS[0]][0]
+    require(member == "proto.lo", "pinned musl protocol providers are not owned by proto.lo")
+    owners = {name: f"{archive}({sources[name][0]})" for name in sources}
+    owner = owners[PROVIDERS[0]]
+    try:
+        trace = trace_path.read_text(encoding="utf-8").splitlines()
+    except (OSError, UnicodeError) as error:
+        raise ProtocolDatabaseError(f"cannot read pinned musl link trace: {error}") from error
+    require(trace and all(line.startswith("trace: ") for line in trace)
+            and all(trace.count(f"trace: {owners[name]}") == 1 for name in owners),
+            "pinned musl link trace does not select proto.lo exactly once")
+    try:
+        direct_names = [line.removeprefix("trace: ") for line in trace if "(" not in line]
+        compiler_crts = [Path(name) for name in direct_names
+                         if Path(name).name in {"crtbeginS.o", "crtendS.o"}]
+        require(len(compiler_crts) == 2 and compiler_crts[0].parent == compiler_crts[1].parent,
+                "pinned musl link trace compiler CRT root differs")
+        compiler_root = compiler_crts[0].parent
+        compiler_base = Path("/usr/lib/gcc/x86_64-alpine-linux-musl")
+        require(compiler_root.parent == compiler_base
+                and re.fullmatch(r"[0-9]+(?:\.[0-9]+)*", compiler_root.name) is not None,
+                "pinned musl link trace compiler CRT root differs")
+        _audit_oracle_trace_inputs(trace_path, archive, workload, compiler_root)
+        selected_map = _oracle_provider_map(map_path, owners)
+        with tempfile.TemporaryDirectory(prefix="oracle-static-inputs.", dir=_verifier_scratch_root(ROOT)) as scratch:
+            selected_map_path = Path(scratch) / "map"
+            selected_map_path.write_bytes(selected_map)
+            admitted = {owners[name]: sources[name][1] for name in sources}
+            contracts = _oracle_static_contracts(owners)
+            require_static_functions(selected_map_path, executable, admitted, contracts)
+    except StaticLinkAuthorityError as error:
+        raise ProtocolDatabaseError(f"pinned musl static provider authority differs: {error}") from error
+    return owner
+
+
+def product_static_provider_authority(static_root: Path, workload: Path, executable: Path,
+                                      mode: str, map_path: Path, trace_path: Path) -> str:
+    library = static_root / "usr/lib"
+    archive = _physical(library / "libc.a", "static product libc archive")
+    builtins = _physical(library / "libcrabc-builtins.a", "static product builtins archive")
+    crt = "crt1.o" if mode == "static-et-exec" else "rcrt1.o"
+    require(mode in {"static-et-exec", "static-pie"}, "static protocol provider mode differs")
+    direct_paths = (workload, library / crt, library / "crti.o", library / "crtn.o")
+    direct = {str(path.resolve()): path for path in direct_paths}
+    try:
+        admitted = admit_static_inputs(trace_path, direct, (archive, builtins))
+        member, body = _archive_provider_member(archive, "static product libc archive")
+        owner = f"{archive}({member})"
+        require(owner in admitted and admitted[owner] == body,
+                "static product protocol archive member is not selected by the link trace")
+        require_static_functions(map_path, executable, admitted, _static_provider_contracts(owner))
+    except StaticLinkAuthorityError as error:
+        raise ProtocolDatabaseError(f"static product provider authority differs: {error}") from error
+    return owner
 
 
 def _oracle_object(work: Path, timeout: float) -> dict[str, object]:
@@ -221,7 +458,7 @@ def _oracle_object(work: Path, timeout: float) -> dict[str, object]:
                                             timeout=timeout, description="pinned musl proto import audit")
     _write_new(undefined, raw_undefined)
     imports = sorted(line.split()[0] for line in raw_undefined.decode("utf-8").splitlines() if line.split())
-    require(imports == ["strcmp", "strlen"], "pinned musl proto object import surface differs")
+    require(imports == list(ORACLE_PROTO_IMPORTS), "pinned musl proto object import surface differs")
     return {
         "archive": artifact(ROOT, archive) if archive.is_relative_to(ROOT) else {
             "path": str(archive), "sha256": sha256(archive.read_bytes()).hexdigest(),
@@ -312,8 +549,13 @@ def _compile(work: Path, timeout: float) -> tuple[Path, dict[str, object]]:
 
 def _link_oracle(work: Path, object_file: Path, timeout: float) -> Path:
     output = work / "oracle"
-    _run((MUSL_CC, "-static", "-fno-pie", "-no-pie", object_file, "-o", output), cwd=ROOT,
-         timeout=timeout, description="pinned musl fixed-table oracle link")
+    map_path, trace_path = work / "oracle.map", work / "oracle.trace"
+    _status, trace, _stderr = _run(
+        (MUSL_CC, "-static", "-fno-pie", "-no-pie", "-Wl,-Map," + str(map_path), "-Wl,--trace",
+         object_file, "-o", output),
+        cwd=ROOT, timeout=timeout, description="pinned musl fixed-table oracle link")
+    require(trace.startswith(b"trace: "), "pinned musl fixed-table oracle link lacks a linker trace")
+    _write_new(trace_path, trace)
     return output
 
 
@@ -421,7 +663,7 @@ def _executions(fixture: Any, work: Path, roots: Mapping[str, Path], timeout: fl
 
 
 def _provider_audits(work: Path, oracle: Path, binaries: Mapping[str, Path], roots: Mapping[str, Path],
-                     timeout: float) -> dict[str, dict[str, object]]:
+                     object_file: Path, timeout: float) -> dict[str, dict[str, object]]:
     result: dict[str, dict[str, object]] = {}
     targets: dict[str, tuple[Path, bool]] = {"oracle": (oracle, False)}
     for arm in ARMS:
@@ -430,9 +672,20 @@ def _provider_audits(work: Path, oracle: Path, binaries: Mapping[str, Path], roo
         targets[f"{arm}-dynamic-provider"] = (roots[f"{arm}-dynamic"] / "usr/lib/libc.so", True)
     for label, (binary, dynamic) in targets.items():
         raw = _readelf(binary, dynamic=dynamic, destination=work / "providers" / f"{label}.symbols", timeout=timeout)
-        provider_rows(raw, label)
-        result[label] = {"binary": artifact(ROOT, binary), "dynamic": dynamic,
-                         "symbols": artifact(ROOT, work / "providers" / f"{label}.symbols")}
+        provider_rows(raw, label, binding="GLOBAL" if dynamic else "LOCAL")
+        row = {"binary": artifact(ROOT, binary), "dynamic": dynamic,
+               "symbols": artifact(ROOT, work / "providers" / f"{label}.symbols")}
+        if label == "oracle":
+            map_path, trace_path = work / "oracle.map", work / "oracle.trace"
+            oracle_static_provider_authority(PINNED_MUSL_ARCHIVE, object_file, oracle, map_path, trace_path)
+            row["link"] = {"map": artifact(ROOT, map_path), "trace": artifact(ROOT, trace_path)}
+        elif not dynamic:
+            arm, mode = label.split("-", 1)
+            static_root = roots[f"{arm}-static"]
+            static_map = binary.parent / "link.receipt.map"
+            static_trace = binary.parent / "link.receipt.trace"
+            product_static_provider_authority(static_root, object_file, binary, mode, static_map, static_trace)
+        result[label] = row
     return result
 
 
@@ -459,7 +712,7 @@ def run(args: argparse.Namespace) -> Path:
     candidates, binaries = _link_candidates(fixture, work, roots, object_file, args.timeout)
     layouts, execution_roots = _chroots(fixture, work, roots, oracle, binaries)
     executions = _executions(fixture, work, execution_roots, args.timeout)
-    providers = _provider_audits(work, oracle, binaries, roots, args.timeout)
+    providers = _provider_audits(work, oracle, binaries, roots, object_file, args.timeout)
     source_after, products_after = source_records(), _products(fixture, roots)
     require(source_before == source_after, "protocol receipt source changed during execution")
     require(products_before == products_after, "protocol receipt product changed during execution")

@@ -200,7 +200,7 @@ def _oracle(root: Path, work: Path, value: object) -> None:
     except producer.ProtocolDatabaseError as error:
         raise ReceiptError(str(error)) from error
     imports = sorted(line.split()[0] for line in replay_imports.stdout.decode("utf-8").splitlines() if line.split())
-    require(imports == ["strcmp", "strlen"], "protocol receipt musl proto imports differ")
+    require(imports == list(producer.ORACLE_PROTO_IMPORTS), "protocol receipt musl proto imports differ")
 
 
 def _source_object(root: Path, work: Path, workload: Path) -> None:
@@ -210,9 +210,10 @@ def _source_object(root: Path, work: Path, workload: Path) -> None:
     source = physical(root / producer.PROBE, "protocol probe source")
     physical(root / "include", "project headers", directory=True)
     # Retained artifacts may be mounted read-only.
-    scratch_root = root / ".work/x86_64/tmp"
-    scratch_root.mkdir(parents=True, exist_ok=True)
-    scratch_root = physical(scratch_root, "protocol verifier scratch", directory=True)
+    try:
+        scratch_root = producer._verifier_scratch_root(root)
+    except producer.ProtocolDatabaseError as error:
+        raise ReceiptError(str(error)) from error
     with tempfile.TemporaryDirectory(prefix="protocol-source-recompile-", dir=scratch_root) as scratch:
         rebuilt = Path(scratch) / "workload.o"
         argv = (compiler, "-std=c11", "-fno-builtin", "-fno-stack-protector", "-I", root / "include",
@@ -253,6 +254,10 @@ def _candidate_paths(root: Path, value: object, workload: Path, products: Mappin
                          helper.static_receipt_audit(static_root, option, workload, binary,
                                                      binary.parent / "link.receipt.json"))
                 elf = helper.elf_audit(binary, mode=elf_mode, dynamic=dynamic)
+                if not dynamic:
+                    producer.product_static_provider_authority(
+                        static_root, workload, binary, mode,
+                        binary.parent / "link.receipt.map", binary.parent / "link.receipt.trace")
             except (OSError, RuntimeError, ValueError) as error:
                 raise ReceiptError(f"cannot replay {arm} {mode} link evidence: {error}") from error
             require(row["receipt"] == audit and row["elf"] == elf,
@@ -261,14 +266,17 @@ def _candidate_paths(root: Path, value: object, workload: Path, products: Mappin
     return result
 
 
-def _providers(root: Path, value: object, oracle: Path, candidates: Mapping[str, Path],
+def _providers(root: Path, work: Path, value: object, oracle: Path, workload: Path, candidates: Mapping[str, Path],
                products: Mapping[str, Mapping[str, object]]) -> None:
     expected = {"oracle", *(f"{arm}-{mode}" for arm in ARMS for mode in ("static-et-exec", "static-pie")),
                 *(f"{arm}-dynamic-provider" for arm in ARMS)}
     require(isinstance(value, dict) and set(value) == expected, "protocol receipt provider roster differs")
     for label in sorted(expected):
         row = value[label]
-        require(isinstance(row, dict) and set(row) == {"binary", "dynamic", "symbols"},
+        expected_fields = {"binary", "dynamic", "symbols", "link"} if label == "oracle" else {
+            "binary", "dynamic", "symbols"
+        }
+        require(isinstance(row, dict) and set(row) == expected_fields,
                 f"protocol receipt provider shape differs: {label}")
         dynamic = label.endswith("dynamic-provider")
         require(row["dynamic"] is dynamic, f"protocol receipt provider dynamic form differs: {label}")
@@ -287,9 +295,22 @@ def _providers(root: Path, value: object, oracle: Path, candidates: Mapping[str,
         require(replay.returncode == 0 and not replay.stderr and replay.stdout == symbols.read_bytes(),
                 f"protocol receipt provider symbols differ: {label}")
         try:
-            producer.provider_rows(replay.stdout, label)
+            producer.provider_rows(replay.stdout, label, binding="GLOBAL" if dynamic else "LOCAL")
         except producer.ProtocolDatabaseError as error:
             raise ReceiptError(str(error)) from error
+        if label == "oracle":
+            link = row["link"]
+            require(isinstance(link, dict) and set(link) == {"map", "trace"},
+                    "protocol receipt oracle static link shape differs")
+            map_path = resolve_identity(root, link["map"], "protocol receipt oracle link map")
+            trace_path = resolve_identity(root, link["trace"], "protocol receipt oracle link trace")
+            require(map_path.is_relative_to(work) and trace_path.is_relative_to(work),
+                    "protocol receipt oracle link evidence escapes report work root")
+            try:
+                producer.oracle_static_provider_authority(
+                    producer.PINNED_MUSL_ARCHIVE, workload, oracle, map_path, trace_path)
+            except producer.ProtocolDatabaseError as error:
+                raise ReceiptError(str(error)) from error
 
 
 def _isolation(root: Path, value: object) -> dict[str, Path]:
@@ -363,7 +384,7 @@ def validate_report(root: Path, report_path: Path) -> dict[str, object]:
     _source_object(root, work, workload)
     oracle_binary = resolve_identity(root, report["oracle_binary"], "protocol receipt oracle binary")
     candidates = _candidate_paths(root, report["candidates"], workload, products_before, helper)
-    _providers(root, report["providers"], oracle_binary, candidates, products_before)
+    _providers(root, work, report["providers"], oracle_binary, workload, candidates, products_before)
     isolation = _isolation(root, report["isolation"])
     _executions(root, report["executions"], isolation)
     require(producer.source_records(root) == source_before, "protocol receipt source changed during replay")

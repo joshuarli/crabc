@@ -72,6 +72,16 @@ root contains a deliberately irrelevant `/etc/protocols` fixture: the selected
 C ABI must continue to use its fixed 36-record musl table. The Rust-facing
 snapshot API is not linked or credited here.
 
+The v2 receipt binds the oracle's raw link map and trace. It verifies that the
+pinned archive's unique `proto.lo` provider and its `strcmp`/`strlen` targets
+own the mapped code bytes in the final oracle. All three product pairs receive
+the same archive-to-map-to-final-byte check. Source-object and dynamic-symbol
+providers must be `GLOBAL DEFAULT`; static executables must retain them as
+`LOCAL DEFAULT` after linking. The reader replays these checks from the bound
+raw artifacts. The oracle trace admits only the three exact musl archive-member
+revisits (`clone.lo`, `free.lo`, `realloc.lo`) produced by the pinned grouped
+link; other repeated inputs fail.
+
 The three products must match in every regular payload byte and mode, every
 alias, and every directory access mode. Dynamic archive extraction creates
 parent directories locally, so the comparison normalizes only an inherited
