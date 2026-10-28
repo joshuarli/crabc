@@ -1,6 +1,6 @@
 # Qualify and promote crabc's native x86-64 runtime
 
-**Status: active 2026-10-26.** Native correctness qualification remains incomplete.
+**Status: winding down 2026-10-28.** Native correctness qualification remains incomplete.
 
 **Priority: runtime hardening (SEC0–SEC3).** The owner requested the
 glibc-style execution/loading defenses for crabc. Implement and qualify an
