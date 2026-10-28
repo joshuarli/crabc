@@ -10,6 +10,8 @@ All unmerged branches shown by `git branch --no-merged main`, including `archive
 
 The remaining registered `.work/wt/*` checkouts retain parked work, physical evidence, or ignored data whose consumer has not been resolved. They need individual reconciliation before retirement; the reboot cleanup audit is incomplete. The previously denied cache removal in `combined-profile` and `abi-owner-proof-fixed` stays parked. Automatic review also rejected removal of `.work/allocator-x86_64/target/x86_64-unknown-linux-musl`, `.work/allocator-x86_64/target/miri`, and `.work/allocator-x86_64/target/debug`; the filesystem denied removal of `.work/x86_64/kache`. Do not retry or reroute those denied actions.
 
+Ordinary worktree removal was refused for `abi-component-proof`, `abi-crt-locale-proof`, `abi-declaration-symbol-rows`, `abi-main-consumer`, `abi-math-graph-replay`, `abi-math-feature-proof`, `abi-bootstrap-math-proof`, and `abi-private-member-visibility` under `.work/wt/`. Preserve those paths without retrying or routing around the refusals.
+
 Next: resolve the Lua replay timeout and continue independent correctness prerequisites; regenerate source-bound evidence before counting any gate. Keep AArch64 paused, the accepted-C allocator selected, and existing pins unchanged.
 
 ## Goal
