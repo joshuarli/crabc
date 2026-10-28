@@ -46,8 +46,9 @@ redefined by this component.
 The complete ELF facts stay intact. The receipt joins only these 19 candidate
 rows across seven names:
 
-- static `.symtab`: private bodies are `FUNC GLOBAL HIDDEN`; aliases are
-  `FUNC WEAK DEFAULT`; controls are `FUNC GLOBAL DEFAULT`;
+- selected static archive member `.symtab`: private bodies are
+  `FUNC GLOBAL HIDDEN`; aliases are `FUNC WEAK DEFAULT`; controls are
+  `FUNC GLOBAL DEFAULT`;
 - shared `.dynsym`: aliases and controls only, with the same public metadata;
 - shared `.symtab`: private bodies are `FUNC LOCAL HIDDEN`, aliases are weak
   default, and controls are global default.
@@ -57,6 +58,15 @@ The private bodies must have no non-undefined shared `dynsym` definition.
 `res_search`/`res_query` retain same-definition identity in their respective
 static/shared domains. Unrelated and unnamed facts remain observations and are
 never converted into logical identities.
+
+The final static ET_EXEC and static PIE links localize their selected function
+symbols in `.symtab`. The byte proof keeps each input binding exact, including
+the archive aliases' `WEAK DEFAULT` source rows, and requires final `LOCAL`
+bindings with the same visibility. The linker map must still select the
+recorded owner and place each alias at the target address. `res_query` has its
+own source-to-final contract, so `res_search` cannot pass if that target moves
+in the linked executable. The proof also checks the linked function bytes
+after applying the selected input relocations.
 
 ## Product and replay boundary
 

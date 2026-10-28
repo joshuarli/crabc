@@ -10,7 +10,9 @@ import hashlib
 import json
 import os
 import re
+import shutil
 import stat
+import struct
 import subprocess
 from pathlib import Path
 
@@ -41,12 +43,15 @@ from owned_resolver_alias_contract_reader import (  # noqa: E402
     _validate_runtime_roots,
     _validate_runtime,
     _validate_generated_resolv_conf,
+    _static_function_contracts,
     capture_runtime_root,
     FIXTURE_FILES,
     RUNTIME_ROOT_SPECS,
     ReceiptError,
     validate_candidate_occurrences,
 )
+from loader_debug_abi_evidence import Elf
+from owned_static_link_authority import StaticFunctionContract, StaticLinkAuthorityError, require_static_functions
 
 
 def setUpModule() -> None:
@@ -800,6 +805,133 @@ class ResolverAliasRuntimeStatusTests(unittest.TestCase):
             runtime['oracle'] = dict(runtime['oracle'], status=commands['static-normal-et-exec-runtime']['status'])
             with self.assertRaisesRegex(ReceiptError, 'command status binding differs: oracle'):
                 _validate_runtime(runtime, root, commands)
+
+
+@unittest.skipUnless(Path('/opt/musl-1.2.6/.crabc-oracle').is_file(), 'requires the pinned native image')
+class ResolverStaticFunctionAuthorityTests(unittest.TestCase):
+    def test_static_executable_localizes_selected_weak_aliases_after_source_proof(self) -> None:
+        compiler, archiver, linker = shutil.which('cc'), shutil.which('ar'), shutil.which('mold')
+        if compiler is None or archiver is None or linker is None:
+            self.skipTest('native compiler, archiver, and mold are required')
+        parent = ROOT / '.work/x86_64/tmp'
+        parent.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(dir=parent) as temporary:
+            work = Path(temporary)
+            application_source = work / 'probe.c'
+            application_object = work / 'probe.o'
+            entry_source = work / 'start.s'
+            entry_object = work / 'start.o'
+            resolver_source = work / 'resolver.s'
+            resolver_object = work / 'resolver.o'
+            archive = work / 'libresolver.a'
+            executable = work / 'probe'
+            link_map = work / 'probe.map'
+            application_source.write_text('''
+int res_mkquery(void);
+int res_send(void);
+int res_search(void);
+int res_querydomain(void);
+int main(void) {
+    return res_mkquery() + res_send() + res_search() + res_querydomain();
+}
+''')
+            entry_source.write_text('''.text
+.globl _start
+.type _start,@function
+_start:
+call main
+ud2
+.size _start,.-_start
+''')
+            resolver_source.write_text('''.text
+.globl __res_mkquery
+.hidden __res_mkquery
+.type __res_mkquery,@function
+__res_mkquery:
+mov $1,%eax
+ret
+.size __res_mkquery,.-__res_mkquery
+.weak res_mkquery
+.type res_mkquery,@function
+.set res_mkquery,__res_mkquery
+.size res_mkquery,.-res_mkquery
+.globl __res_send
+.hidden __res_send
+.type __res_send,@function
+__res_send:
+mov $2,%eax
+ret
+.size __res_send,.-__res_send
+.weak res_send
+.type res_send,@function
+.set res_send,__res_send
+.size res_send,.-res_send
+.globl res_query
+.type res_query,@function
+res_query:
+mov $3,%eax
+ret
+.size res_query,.-res_query
+.weak res_search
+.type res_search,@function
+.set res_search,res_query
+.size res_search,.-res_search
+.globl res_querydomain
+.type res_querydomain,@function
+res_querydomain:
+mov $4,%eax
+ret
+.size res_querydomain,.-res_querydomain
+''')
+            subprocess.run([compiler, '-c', '-fno-pie', '-fno-stack-protector', '-ffunction-sections',
+                            '-fdata-sections', str(application_source), '-o', str(application_object)],
+                           check=True, capture_output=True)
+            subprocess.run([compiler, '-c', '-fno-pie', str(entry_source), '-o', str(entry_object)],
+                           check=True, capture_output=True)
+            subprocess.run([compiler, '-c', '-fno-pie', str(resolver_source), '-o', str(resolver_object)],
+                           check=True, capture_output=True)
+            subprocess.run([archiver, 'rcs', str(archive), str(resolver_object)], check=True, capture_output=True)
+            subprocess.run([linker, '--static', '--no-dynamic-linker', '--no-undefined', '--eh-frame-hdr',
+                            '--gc-sections', '-z', 'relro', '-z', 'now', '-e', '_start',
+                            '-Map=' + str(link_map), str(entry_object), str(application_object), str(archive),
+                            '-o', str(executable)], check=True, capture_output=True)
+            member = dict(resolver_reader._archive_members(archive.read_bytes()))['resolver.o']
+            archive_owner = f'{archive}(resolver.o)'
+            admitted = {
+                str(application_object): application_object,
+                str(entry_object): entry_object,
+                archive_owner: member,
+            }
+            providers = resolver_reader._static_provider_owners(admitted, str(archive))
+            contracts = _static_function_contracts(str(application_object), str(entry_object), providers)
+            require_static_functions(link_map, executable, admitted, contracts)
+            image = Elf(executable)
+            res_search = image.symbol('res_search', dynamic=False)
+            res_query = image.symbol('res_query', dynamic=False)
+            self.assertEqual(res_search['value'], res_query['value'])
+            query_value_offsets = []
+            for table_index, table in enumerate(image.sections):
+                if table[1] != 2:
+                    continue
+                for number in range(table[5] // 24):
+                    row = image.symbol_row(table_index, number)
+                    if row['name'] == 'res_query' and row['section']:
+                        query_value_offsets.append(table[4] + number * 24 + 8)
+            self.assertEqual(len(query_value_offsets), 1)
+            divergent = work / 'probe-diverged-target'
+            contents = bytearray(executable.read_bytes())
+            struct.pack_into('<Q', contents, query_value_offsets[0], res_query['value'] + 1)
+            divergent.write_bytes(contents)
+            with self.assertRaisesRegex(StaticLinkAuthorityError, 'static map/source/final function location differs'):
+                require_static_functions(link_map, divergent, admitted, contracts)
+            changed_source = [
+                StaticFunctionContract(contract.name, contract.input_owner,
+                                       'GLOBAL' if contract.name == 'res_send' else contract.source_binding,
+                                       contract.source_visibility, contract.final_binding, contract.final_visibility)
+                for contract in contracts
+            ]
+            with self.assertRaisesRegex(StaticLinkAuthorityError, 'static function definition/binding differs'):
+                require_static_functions(link_map, executable, admitted, changed_source)
 
 
 if __name__ == '__main__':

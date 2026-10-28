@@ -1351,6 +1351,22 @@ def _static_provider_owners(admitted: Mapping[str, Path | bytes], static_archive
     return owners
 
 
+def _static_function_contracts(application_owner: str, entry_owner: str,
+                               providers: Mapping[str, str]) -> list[Any]:
+    from owned_static_link_authority import StaticFunctionContract
+
+    contracts = [
+        StaticFunctionContract('main', application_owner, 'GLOBAL', 'DEFAULT', 'LOCAL', 'DEFAULT'),
+        StaticFunctionContract('_start', entry_owner, 'GLOBAL', 'DEFAULT', 'LOCAL', 'DEFAULT'),
+    ]
+    for alias, target in ALIASES:
+        contracts.append(StaticFunctionContract(alias, providers[alias], 'WEAK', 'DEFAULT', 'LOCAL', 'DEFAULT'))
+        if target in PRIVATE_BODIES:
+            contracts.append(StaticFunctionContract(target, providers[target], 'GLOBAL', 'HIDDEN', 'LOCAL', 'HIDDEN'))
+    contracts.append(StaticFunctionContract('res_query', providers['res_query'], 'GLOBAL', 'DEFAULT', 'LOCAL', 'DEFAULT'))
+    return contracts
+
+
 def _validate_static_link_authority(receipt_root: Path, origin_work: Path, artifacts: Mapping[str, Any],
                                     inputs: Mapping[str, Any]) -> None:
     """Replay the existing finite static byte authority for the two normal links."""
@@ -1384,15 +1400,8 @@ def _validate_static_link_authority(receipt_root: Path, origin_work: Path, artif
                 f'{mode} static link sidecar differs')
         admitted = _static_admitted_inputs(receipt_root, origin_work, artifacts, inputs, entry)
         providers = _static_provider_owners(admitted, inputs['static_libc']['path'])
-        contracts = [
-            StaticFunctionContract('main', str(origin_work / 'objects/public-probe.o'),
-                                   'GLOBAL', 'DEFAULT', 'GLOBAL', 'DEFAULT'),
-            StaticFunctionContract('_start', inputs[entry]['path'], 'GLOBAL', 'DEFAULT', 'GLOBAL', 'DEFAULT'),
-        ]
-        for alias, target in ALIASES:
-            contracts.append(StaticFunctionContract(alias, providers[alias], 'WEAK', 'DEFAULT', 'WEAK', 'DEFAULT'))
-            if target in PRIVATE_BODIES:
-                contracts.append(StaticFunctionContract(target, providers[target], 'GLOBAL', 'HIDDEN', 'LOCAL', 'HIDDEN'))
+        contracts = _static_function_contracts(
+            str(origin_work / 'objects/public-probe.o'), inputs[entry]['path'], providers)
         try:
             require_static_functions(map_path, executable, admitted, contracts)
         except StaticLinkAuthorityError as error:
