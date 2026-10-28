@@ -1444,7 +1444,13 @@ Append one line per merge batch, per parked item, and per contract change.
   family reader rejects the network receipt's stale compiler-tool roster.
   `44451281a` shares the current roster and seals its source; the controlled
   network component and v4 physical receipt replay pass at that revision.
-  The old v3 receipt is invalid and the family requires a fresh cohort.
+  The old v3 receipt is invalid. At `4d3b9091a`, a fresh matched cohort
+  passes all 219 dynamic cases, the complete non-promoting resolver family
+  assessment and its replay, and the full Rust std/LTO consumer across
+  installed and extracted products. The supplied static Lua consumer passes;
+  its dynamic companion stops when the cohort reader exceeds its fixed
+  300-second timeout, without a consumer result. These receipts bind that
+  revision; POSIX admission and the qualification chain remain open.
   A minimal
   pinned-mold static link also reproduces the three inert undefined rows
   behind the POSIX hold without any runtime input; ordinary relaxation and
