@@ -1439,6 +1439,12 @@ Append one line per merge batch, per parked item, and per contract change.
   and dynamic Lua source builds and their admission reader pass; their
   source-bound receipts require regeneration after later changes. A new
   cohort and complete family assessment remain required.
+  At `8bb65db1e`, the matched static and dynamic products pass; all resolver
+  components pass collection, including protocol and alias replay, but the
+  family reader rejects the network receipt's stale compiler-tool roster.
+  `44451281a` shares the current roster and seals its source; the controlled
+  network component and v4 physical receipt replay pass at that revision.
+  The old v3 receipt is invalid and the family requires a fresh cohort.
   A minimal
   pinned-mold static link also reproduces the three inert undefined rows
   behind the POSIX hold without any runtime input; ordinary relaxation and
