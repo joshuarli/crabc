@@ -1422,7 +1422,13 @@ Append one line per merge batch, per parked item, and per contract change.
   static providers. `820104ccf` proves their selected source and relocated
   bytes, including oracle imports, and upgrades protocol receipts to v2;
   its three-product protocol differential and read-only replay pass. A fresh
-  matched cohort and complete family assessment remain required. A minimal
+  matched cohort and complete family assessment remain required. The fresh
+  `2d958ffb4` cohort passes both product preparations; its family run passes
+  protocol and loader-debug, then rejects localized static resolver aliases.
+  `11f43f451` proves their source bindings and final localized ownership,
+  including the public `res_query` target; 35 pinned reader tests and both
+  retained static-link authority replays pass. A new cohort and complete
+  family assessment remain required. A minimal
   pinned-mold static link also reproduces the three inert undefined rows
   behind the POSIX hold without any runtime input; ordinary relaxation and
   section-GC options do not remove them. The independent math/fenv component passes
