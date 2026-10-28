@@ -1451,6 +1451,11 @@ Append one line per merge batch, per parked item, and per contract change.
   its dynamic companion stops when the cohort reader exceeds its fixed
   300-second timeout, without a consumer result. These receipts bind that
   revision; POSIX admission and the qualification chain remain open.
+  A read-only profile of the retained installed wordexp case reproduced its
+  exact artifact snapshot: it rereads and hashes 128,783 regular files. This
+  identifies substantial replay work but does not establish the full timeout's
+  cause or justify changing the receipt contract. The host was busy and the
+  performance gate was deferred.
   A minimal
   pinned-mold static link also reproduces the three inert undefined rows
   behind the POSIX hold without any runtime input; ordinary relaxation and
