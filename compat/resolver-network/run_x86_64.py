@@ -34,8 +34,6 @@ from typing import Any, Iterable, Mapping, Sequence
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "compat/x86_64"))
-from scripts.rust_toolchain import pinned_toolchain
-
 import core_image
 import resolver_network_component_receipt as component_receipt
 
@@ -45,9 +43,6 @@ import owned_static_link_authority as static_authority
 
 MUSL_ROOT = Path("/opt/musl-1.2.6")
 MUSL_COMPILER = Path("/usr/local/bin/crabc-x86_64-musl-gcc")
-TOOLCHAIN_ROOT = Path("/opt/rustup/toolchains") / f"{pinned_toolchain(ROOT)}-x86_64-unknown-linux-musl"
-RUSTC = TOOLCHAIN_ROOT / "bin/rustc"
-LLD = TOOLCHAIN_ROOT / "lib/rustlib/x86_64-unknown-linux-musl/bin/gcc-ld/ld.lld"
 SOURCE = ROOT / "compat/resolver-network/workload.c"
 DNS_SERVER = ROOT / "compat/resolver-network/dns_server.py"
 DEFAULT_WORK_ROOT = ROOT / ".work/x86_64/resolver-network"
@@ -57,8 +52,9 @@ DYNAMIC_FORMAT = "crabc-x86-64-owned-dynamic-sysroot-v1"
 DYNAMIC_INTERPRETER = "/lib/ld-crabc-x86_64.so.1"
 PINNED_IMAGE = core_image.CORE_IMAGE_REFERENCE
 IMAGE_MANIFEST = ROOT / "compat/x86_64/owned_resolver_network_image_inputs.json"
-PHYSICAL_RECEIPT_SCHEMA = "crabc.x86_64-resolver-network-physical/v3"
+PHYSICAL_RECEIPT_SCHEMA = "crabc.x86_64-resolver-network-physical/v4"
 COMPONENT_SCOPE = ["libc.resolver"]
+COMPILER_ORACLE_INPUTS = component_receipt.COMPILER_ORACLE_INPUTS
 RECEIPT_SOURCE_FILES = {
     "runner": ROOT / "compat/resolver-network/run_x86_64.py",
     "workload": ROOT / "compat/resolver-network/workload.c",
@@ -72,20 +68,8 @@ RECEIPT_SOURCE_FILES = {
     "image_manifest": IMAGE_MANIFEST,
     "toolchain_config": ROOT / "rust-toolchain.toml",
     "toolchain_reader": ROOT / "scripts/rust_toolchain.py",
+    "native_build_tools": ROOT / "scripts/native_build_tools.py",
     "core_image": ROOT / "compat/x86_64/core_image.py",
-}
-COMPILER_ORACLE_INPUTS = {
-    "gcc": Path("/usr/bin/gcc"),
-    "assembler": Path("/usr/bin/as"),
-    "linker": Path("/usr/bin/ld"),
-    "cc1": Path("/usr/libexec/gcc/x86_64-alpine-linux-musl/15.2.0/cc1"),
-    "collect2": Path("/usr/libexec/gcc/x86_64-alpine-linux-musl/15.2.0/collect2"),
-    "lto_plugin": Path("/usr/libexec/gcc/x86_64-alpine-linux-musl/15.2.0/liblto_plugin.so"),
-    "rustc": RUSTC,
-    "rust_linker": LLD,
-    "specs": MUSL_ROOT / "lib/musl-gcc.specs",
-    "libc_archive": MUSL_ROOT / "lib/libc.a",
-    "libc_shared": MUSL_ROOT / "lib/libc.so",
 }
 DNS_PORT = 53
 ROLE_ADDRESSES = {"valid": "127.0.0.1", "drop": "127.0.0.2", "fallback": "127.0.0.3"}

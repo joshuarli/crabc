@@ -39,7 +39,7 @@ import owned_static_link_authority as static_authority
 SOURCE_MOUNT = "/workspace"
 PINNED_IMAGE = core_image.CORE_IMAGE_REFERENCE
 IMAGE_MANIFEST = "compat/x86_64/owned_resolver_network_image_inputs.json"
-RECEIPT_SCHEMA = "crabc.x86_64-resolver-network-physical/v3"
+RECEIPT_SCHEMA = "crabc.x86_64-resolver-network-physical/v4"
 SCOPE = ("libc.resolver",)
 EXECUTION_MODE = "two-arms-twelve-candidate-modes"
 ROLE_ADDRESSES = {"valid": "127.0.0.1", "drop": "127.0.0.2", "fallback": "127.0.0.3"}
@@ -114,6 +114,7 @@ SOURCE_PATHS = {
     "image_manifest": IMAGE_MANIFEST,
     "toolchain_config": "rust-toolchain.toml",
     "toolchain_reader": "scripts/rust_toolchain.py",
+    "native_build_tools": "scripts/native_build_tools.py",
     "core_image": "compat/x86_64/core_image.py",
 }
 

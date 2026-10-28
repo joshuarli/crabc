@@ -68,6 +68,54 @@ class ResolverNetworkComponentReceiptTests(unittest.TestCase):
             "extracted-dynamic-non-pie-ordinary", "extracted-dynamic-non-pie-direct-entry",
         })
 
+    def test_collector_and_reader_use_the_same_compiler_oracle_inputs(self) -> None:
+        runner = self.reader.load_runner(ROOT)
+        self.assertIs(runner.COMPILER_ORACLE_INPUTS, runner.component_receipt.COMPILER_ORACLE_INPUTS)
+        self.assertEqual(runner.COMPILER_ORACLE_INPUTS, self.reader.COMPILER_ORACLE_INPUTS)
+
+    def test_collector_and_reader_seal_the_same_source_roster(self) -> None:
+        runner = self.reader.load_runner(ROOT)
+        collector_sources = {
+            name: path.relative_to(ROOT).as_posix()
+            for name, path in runner.RECEIPT_SOURCE_FILES.items()
+        }
+        self.assertEqual(collector_sources, self.reader.SOURCE_PATHS)
+        self.assertEqual(self.reader.SOURCE_PATHS["native_build_tools"], "scripts/native_build_tools.py")
+        self.assertEqual(runner.PHYSICAL_RECEIPT_SCHEMA, self.reader.RECEIPT_SCHEMA)
+
+    def test_previous_physical_receipt_schema_is_rejected(self) -> None:
+        receipt_fields = {
+            "schema", "component", "source_mount", "scope", "execution_mode", "image", "sources", "tools",
+            "products", "workload", "links", "commands", "headers", "executions", "dns", "execution_root",
+            "family_completion", "promotion_ready", "public_support",
+        }
+        report = {
+            "schema_version": 3,
+            "runner": self.reader.RUNNER,
+            "result": "pass",
+            "passed": True,
+            "state_root": "/workspace/state",
+            "published_report": "/workspace/report.json",
+            "contract": self.reader.expected_contract(),
+            "products": {},
+            "product_identity": {},
+            "translation": {},
+            "reference": {},
+            "candidates": {},
+            "chroots": {},
+            "execution": {},
+            "receipt": {
+                **dict.fromkeys(receipt_fields),
+                "schema": "crabc.x86_64-resolver-network-physical/v3",
+                "component": "resolver-network",
+                "source_mount": self.reader.SOURCE_MOUNT,
+                "scope": list(self.reader.SCOPE),
+                "execution_mode": self.reader.EXECUTION_MODE,
+            },
+        }
+        with self.assertRaisesRegex(self.reader.ReceiptError, "physical receipt contract differs"):
+            self.reader.validate_report_document(report)
+
     def test_current_image_manifest_tracks_the_repository_toolchain_and_exact_roster(self) -> None:
         manifest = self.reader.trusted_image_manifest(ROOT)
         self.assertEqual(set(manifest['files']), {

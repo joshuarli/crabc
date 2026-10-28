@@ -92,7 +92,9 @@ Run the two phases through the pinned dispatcher:
 ### Native x86 physical component receipt
 
 The native runner publishes `schema_version: 3` only after it has retained a
-physical receipt below that run's `state_root`. The receipt keeps the exact
+physical receipt below that run's `state_root`. Physical receipt schema v4
+binds the collector and reader source rosters, including the shared native
+build tool closure used to identify compiler inputs. The receipt keeps the exact
 source and tool identities before and after collection; each supplied static
 and dynamic product's manifest and complete tree identity; the one workload
 object; the reference and each product link output (one per linkage mode: static ET_EXEC, static PIE, dynamic PIE, dynamic non-PIE) and link sidecars; every
