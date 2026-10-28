@@ -8,7 +8,7 @@ POSIX `math/pow` and C-ABI admission remain held under the decision log; the all
 
 All unmerged branches shown by `git branch --no-merged main`, including `archive/*`, `cohort/*`, `integration/*`, `lane/*`, `parked/*`, `proof/*`, `recovery/*`, and `review/*`, remain parked: reconcile each with `git cherry main BRANCH`, its tests, and the campaign log before integrating. Parking commits and old receipts are not qualification.
 
-The remaining registered `.work/wt/*` checkouts retain parked work, physical evidence, or ignored data whose consumer has not been resolved. They need individual reconciliation before retirement; the reboot cleanup audit is incomplete. The previously denied cache removal in `combined-profile` and `abi-owner-proof-fixed` stays parked. A separate Codex session was observed running a read-only worktree inventory; its ownership and completion were not established.
+The remaining registered `.work/wt/*` checkouts retain parked work, physical evidence, or ignored data whose consumer has not been resolved. They need individual reconciliation before retirement; the reboot cleanup audit is incomplete. The previously denied cache removal in `combined-profile` and `abi-owner-proof-fixed` stays parked. Automatic review also rejected removal of `.work/allocator-x86_64/target/x86_64-unknown-linux-musl`, `.work/allocator-x86_64/target/miri`, and `.work/allocator-x86_64/target/debug`; the filesystem denied removal of `.work/x86_64/kache`. Do not retry or reroute those denied actions.
 
 Next: resolve the Lua replay timeout and continue independent correctness prerequisites; regenerate source-bound evidence before counting any gate. Keep AArch64 paused, the accepted-C allocator selected, and existing pins unchanged.
 
