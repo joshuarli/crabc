@@ -1433,7 +1433,12 @@ Append one line per merge batch, per parked item, and per contract change.
   any candidate execution. The combined stage does not identify the failing
   operation or establish a cause. The retained case log and scratch remain
   untouched after the filesystem denied moving that log for the supported
-  resume path. A new cohort and complete family assessment remain required.
+  resume path. `fa1521423` distinguishes the sync-stage failure operations;
+  its pinned fault-injection controls and fresh full AIO component pass, but
+  do not establish the earlier failure's cause. At `026694cd2`, fresh static
+  and dynamic Lua source builds and their admission reader pass; their
+  source-bound receipts require regeneration after later changes. A new
+  cohort and complete family assessment remain required.
   A minimal
   pinned-mold static link also reproduces the three inert undefined rows
   behind the POSIX hold without any runtime input; ordinary relaxation and
