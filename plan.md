@@ -1416,7 +1416,16 @@ Append one line per merge batch, per parked item, and per contract change.
   proves the selected weak syslog alias through the shared static authority;
   syslog then passes static, static PIE and dynamic entry modes. The crypt
   runtime also passes its 32-vector static and dynamic comparison at that
-  revision. The independent math/fenv component passes
+  revision. At `1a8d45a45`, the matched static preparation and 219-case
+  dynamic qualification pass; the resolver family passes network, classic
+  netdb and cancellation before its protocol reader rejects mold-localized
+  static providers. `820104ccf` proves their selected source and relocated
+  bytes, including oracle imports, and upgrades protocol receipts to v2;
+  its three-product protocol differential and read-only replay pass. A fresh
+  matched cohort and complete family assessment remain required. A minimal
+  pinned-mold static link also reproduces the three inert undefined rows
+  behind the POSIX hold without any runtime input; ordinary relaxation and
+  section-GC options do not remove them. The independent math/fenv component passes
   206 selected C ABI entries at `4630b7407`. The text/locale/numeric component
   then exposed two nonspacing Unicode endpoints and wide-format error mapping;
   `be8d2a437` and `b06edf693` fix them. The complete Unicode fingerprint and
