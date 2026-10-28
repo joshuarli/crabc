@@ -1427,8 +1427,14 @@ Append one line per merge batch, per parked item, and per contract change.
   protocol and loader-debug, then rejects localized static resolver aliases.
   `11f43f451` proves their source bindings and final localized ownership,
   including the public `res_query` target; 35 pinned reader tests and both
-  retained static-link authority replays pass. A new cohort and complete
-  family assessment remain required. A minimal
+  retained static-link authority replays pass. At `49ad5831c`, static
+  preparation passes, but the dynamic cohort stops at the second product's
+  AIO oracle: the positioned sync stage returns status 1 with errno 11 before
+  any candidate execution. The combined stage does not identify the failing
+  operation or establish a cause. The retained case log and scratch remain
+  untouched after the filesystem denied moving that log for the supported
+  resume path. A new cohort and complete family assessment remain required.
+  A minimal
   pinned-mold static link also reproduces the three inert undefined rows
   behind the POSIX hold without any runtime input; ordinary relaxation and
   section-GC options do not remove them. The independent math/fenv component passes
