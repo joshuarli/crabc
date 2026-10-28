@@ -154,9 +154,41 @@ static int positioned_append_nonseekable(void)
 	stage = 4;
 	sync_control.aio_fildes = descriptor;
 	sync_control.aio_sigevent.sigev_notify = SIGEV_NONE;
-	if (aio_fsync(O_DSYNC, &sync_control) || !completed(&sync_control, 0)
-		|| close(descriptor) || unlink("/state/owned-aio-positioned"))
+	if (aio_fsync(O_DSYNC, &sync_control)) {
+		int error = errno;
+		fprintf(stderr, "owned-aio-positioned-operation=fsync-submit result=-1 errno=%d\n", error);
 		goto failure;
+	}
+	if (wait_control(&sync_control)) {
+		int error = errno;
+		int status = aio_error(&sync_control);
+		fprintf(stderr, "owned-aio-positioned-operation=fsync-wait result=-1 errno=%d aio_error=%d\n",
+			error, status);
+		goto failure;
+	}
+	int sync_error = aio_error(&sync_control);
+	if (sync_error != 0) {
+		fprintf(stderr, "owned-aio-positioned-operation=fsync-completion aio_error=%d\n",
+			sync_error);
+		goto failure;
+	}
+	ssize_t sync_result = aio_return(&sync_control);
+	if (sync_result != 0) {
+		int error = errno;
+		fprintf(stderr, "owned-aio-positioned-operation=fsync-return result=%zd errno=%d\n",
+			sync_result, error);
+		goto failure;
+	}
+	if (close(descriptor)) {
+		int error = errno;
+		fprintf(stderr, "owned-aio-positioned-operation=close result=-1 errno=%d\n", error);
+		goto failure;
+	}
+	if (unlink("/state/owned-aio-positioned")) {
+		int error = errno;
+		fprintf(stderr, "owned-aio-positioned-operation=unlink result=-1 errno=%d\n", error);
+		goto failure;
+	}
 
 	stage = 5;
 	append_descriptor = fresh_descriptor(open("/state/owned-aio-append",
