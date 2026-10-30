@@ -178,6 +178,11 @@ Rules:
    digests. Never run `scripts/dev.sh`.
 6. **Pins stay.** Do not change `rust-toolchain.toml`, `compat/upstreams.toml`
    pins or the Alpine base digest. S1.1 may add packages to the image.
+   **Never run `./scripts/dev-x86_64.sh image` unless your step says so.**
+   Rebuilding retags `crabc-core-evidence:x86_64`; with Docker's containerd
+   store the previously pinned image is deleted, and every native command fails
+   until `CORE_IMAGE_ID` in `compat/x86_64/core_image.py` is re-pinned. The
+   step that rebuilds the image owns that re-pin, in its own commit.
 7. **Nothing outside the repository.** No sysctl, host package, reboot, push,
    release or publication. Container flags on a single `docker run` invocation,
    such as `--cap-add=PERFMON`, are allowed where a step says so.
@@ -332,8 +337,9 @@ are committed except as S0.7 allows.
 `.work/s0/**` scratch.
 
 1. **Build the HEAD products** with the accepted C backend, recording the
-   commit SHA:
-   - `./scripts/dev-x86_64.sh image`
+   commit SHA. First check that the pinned image exists:
+   `docker image inspect "$(python3 -B compat/x86_64/core_image.py)" >/dev/null`.
+   If it does not, stop (P5); do not rebuild it. Then:
    - `./scripts/dev-x86_64.sh materialized-dynamic-sysroot --work .work/s0/dynamic --prepare`
    - `./scripts/dev-x86_64.sh owned-static-sysroot`
 
@@ -362,7 +368,8 @@ are committed except as S0.7 allows.
 4. **Count mechanisms.** One row per kind:
    - Cargo features per crate: lines under `[features]` in each `Cargo.toml`.
    - Dispatcher subcommands: `./scripts/dev-x86_64.sh --help | rg -c '^  [a-z0-9-]+'`.
-   - Python entry points: `git ls-files 'compat/**/*.py' | xargs rg -l '__main__'`.
+   - Python entry points:
+     `git ls-files -z 'compat/*.py' ':(exclude)compat/allocator' | xargs -0 rg -l '^if __name__ == .__main__.:' | wc -l`.
    - Generators: `git ls-files 'compat/**/generate_*.py'`.
    - Report/receipt formats: `rg -o --no-filename '"format": *"[^"]+"|FORMAT = "[^"]+"' compat scripts | sort -u`.
    - Runtime bridges: `RuntimeV1` table entries and every symbol `libc.so`
@@ -419,25 +426,36 @@ S1.4. **Requires:** S0. **Allowed files:** `docker/Dockerfile.x86_64`,
 `compat/x86_64/tests/test_performance_release_gate.py`, the `perf-c` arms of
 `scripts/dev-x86_64.sh`, `compat/perf/README.md`, `docs/design/performance.md`.
 
-**S1.1 — Image tools.**
-1. In `docker/Dockerfile.x86_64` add the Alpine packages that provide a clang
-   and lld whose LLVM **major** version equals `rustc -vV`'s `LLVM version`
-   major (currently 23), and `perf`. Check what the pinned Alpine offers with
-   `docker run --rm alpine@<pinned digest from the Dockerfile> sh -c 'apk update -q && apk search -x clang23 lld23 perf'`. Do not change the base digest.
-2. If the pinned Alpine has no matching clang, stop (P5). Do not upgrade the
-   base image or build LLVM from source without an owner decision.
-3. Rebuild with `./scripts/dev-x86_64.sh image`. In the image, check
+**S1.1 — Image tools.** S1.1 and S1.2 are one lane; the image is rebuilt once.
+1. Add `perf` (Alpine 3.24 ships `perf-7.1.5`) to the main `apk add` list.
+2. The pinned Alpine 3.24.1 has only clang 22, but rustc uses LLVM 23
+   (checked 2026-10-30). Apply [D5](#owner-decisions): add a builder stage at
+   the top of `docker/Dockerfile.x86_64`,
+   `FROM alpine:edge@sha256:<digest> AS musl-clang`, pinned by digest, that
+   installs `clang` and `make`, then asserts that `clang --version` reports
+   LLVM major 23 and fails the build otherwise. S1.2 runs in this stage.
+   The main stage's base digest does not change. Do not build LLVM from source.
+3. Rebuild with `./scripts/dev-x86_64.sh image`, then re-pin `CORE_IMAGE_ID`
+   in `compat/x86_64/core_image.py` to
+   `docker image inspect --format '{{.Id}}' crabc-core-evidence:x86_64` in a
+   separate `build(x86)!` commit and run
+   `python3 -B scripts/test_python.py --module compat/x86_64/tests/test_core_image_dispatch.py`
+   and `./scripts/dev-x86_64.sh musl-oracle`. In the image, check
    `perf stat -e instructions:u true`. If it is denied, add
    `--cap-add=PERFMON` to the docker invocation used by the counts route only
    (S1.3). Never change `perf_event_paranoid`.
 4. Done when both checks print versions/counts inside the image.
 
 **S1.2 — Matched reference build.**
-1. In the image, build musl from the `[musl_native]` tarball (verify its
-   sha256 against `compat/upstreams.toml`) with
-   `CC=<matched clang> ./configure --prefix=<.work path> --target=x86_64-linux-musl`
-   and no extra `CFLAGS`, so musl's own optimization defaults apply. Then
-   `make` and `make install`.
+1. In the `musl-clang` stage, acquire the `[musl_native]` tarball exactly as
+   the existing GCC oracle `RUN` does (`compat/x86_64/musl_oracle.py acquire`,
+   which checks the pinned sha256). Configure with
+   `CC=clang ./configure --prefix=/opt/musl-clang-${MUSL_VERSION} --syslibdir=/opt/musl-clang-${MUSL_VERSION}/lib`
+   and no extra `CFLAGS`, so musl's own optimization defaults apply; `make`,
+   `make install`; copy `config.mak` into the prefix. Repeat the existing
+   `test -f` checks for `lib/libc.so` and `lib/ld-musl-x86_64.so.1`.
+   In the main stage, `COPY --from=musl-clang /opt/musl-clang-<version> /opt/musl-clang-<version>`.
+   Leave the existing GCC oracle `RUN` unchanged.
 2. Record `config.mak`'s `CFLAGS_AUTO`/`CFLAGS`, the clang version and
    `rustc -vV` in the counts report header.
 3. Keep the existing GCC-built reference for the existing timing rows. Label
@@ -690,6 +708,13 @@ Decided by the owner on 2026-10-30. Reopening one needs a new owner decision.
   rule is not waived for the split.
 - **D4 — Matched backend: same LLVM major version** as the pinned rustc, as
   defined in the [cost contract](#cost-contract).
+- **D5 — Where the matched clang comes from. Open; recommended default in
+  bold.** The pinned Alpine 3.24.1 ships clang 22; LLVM 23 clang is only in
+  Alpine edge until the next stable release. Options: **(a) a digest-pinned
+  `alpine:edge` builder stage used only to compile the reference musl, which
+  asserts the LLVM major and is copied into the unchanged main image**;
+  (b) wait for the next stable Alpine and move the whole image to it; (c)
+  accept clang 22, making every counts row `unmatched` until (b).
 
 ## Runtime hardening
 
@@ -769,6 +794,10 @@ and the reviewed unwinder dependency graph.
 - 2026-10-30: owner decided D1–D4: keep the allocator start-up calls frozen
   and attributed; leave generated musl assembly out of scope; unify the
   loader/libc image with no waiver; matched backend means same LLVM major.
+- 2026-10-30: the first S0 run rebuilt the core image, which deleted the
+  pinned image; it was re-pinned in `180bbaaae`. Rebuilds are now forbidden
+  unless a step requires them. S1.4 landed (R and 1.10 in the release gate).
+  S1.1 stopped because Alpine 3.24.1 has no LLVM 23 clang; D5 opened.
 
 ## S0 baseline table
 

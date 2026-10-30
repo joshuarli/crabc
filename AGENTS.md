@@ -65,7 +65,6 @@ Builds and native tests run inside the pinned native x86 images. Use targeted
 non-allocator checks; do not launch the old allocator qualification commands.
 
 ```sh
-./scripts/dev-x86_64.sh image
 scripts/lanes/rust-check.sh cargo check -q --locked -p <non-allocator-crate>
 python3 -B scripts/test_python.py --module <path/to/test_file.py>
 python3 compat/x86_64/validate_parity_ledger.py
@@ -77,6 +76,9 @@ The placeholders above require the actual touched crate/test. Full legacy
 profile checks are regression tools, not permission to run allocator campaigns.
 Performance commands/availability are in [compat/perf/README.md](compat/perf/README.md);
 S1 owns the focused development route. Do not invent command support.
+Do not run `./scripts/dev-x86_64.sh image` unless a plan step says so: a
+rebuild deletes the pinned image and must be followed by a re-pin of
+`compat/x86_64/core_image.py`.
 
 ## Invariants
 
