@@ -177,6 +177,38 @@ done
 ./scripts/dev-x86_64.sh perf-c check "$W/collector/collector.json"
 ```
 
+`perf-c counts` is the S1 development instruction/syscall route (P2). It
+reuses the same compile-once/dual-link/stage path, then counts retired user
+instructions (`perf stat -e instructions:u`, three separate trials) and
+syscalls (`strace -f -qq -o`, separate runs) around the existing static timing
+launcher command. N1 scales so the reference loop covers at least 10^6
+instructions; N2=2*N1, N3=3*N1; per-operation values are difference quotients.
+A static exit-only calibrator is subtracted for startup rows only. Reference
+selection prefers `/opt/musl-clang-*` whose `.clang-version` major matches the
+`rustc -vV` LLVM major (`matched-llvm-<major>`), else the GCC musl
+(`unmatched (gcc musl)`). One JSON report per invocation carries a
+`kind: development` header (never release evidence) with source revision,
+image ID, compiler versions, reference label, CPU model and kernel; each row
+records raw counts, per-op/startup values, the per-syscall breakdown,
+`instructions:{ratio_insn,delta_insn}`, `reference_label` and `status`.
+
+Whole-process traces run through the launcher, so both lanes equally include
+the launcher parent's post-execve wait/poll/write/exit lines; per-op
+quotients cancel them and the per-name diff still isolates the runtime delta.
+
+```bash
+P=$PWD/.work/s1/dynamic/installed
+W=$PWD/.work/x86_64/<fresh-counts>
+./scripts/dev-x86_64.sh perf-c counts \
+  --dynamic-product "$P" --work "$W" --row getpid --row clock_gettime
+```
+
+Seed run (`matched-llvm-23`, report `.work/x86_64/s1-counts5/counts.json`):
+`getpid` per-op 13.0 ref vs 14.0 cand instructions (ratio 1.077), whole-process
+syscalls 200016 vs 200030 → `fail` on the split-loader/allocator startup
+delta; `clock_gettime` per-op 110.0 vs 111.0 (ratio 1.009), whole-process 16
+vs 30 → `fail` on the same delta. Both rows deterministic and linear.
+
 Object receipt replay compares the complete compile invocation with the fixed
 profile, including its final input/output operands. Additional compiler inputs
 or overriding flags cannot be appended to an otherwise matching recipe.
