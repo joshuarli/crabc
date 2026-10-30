@@ -841,9 +841,9 @@ class CountsPureHelpersTests(unittest.TestCase):
             runner.select_counts_reference({}, "no version here\n")
 
     def test_perf_stat_csv_parses_one_count_per_repeat(self) -> None:
-        text = ("1234567;;instructions:u;1000000;100.00;;;\n"
-                "1234580;;instructions:u;1001000;100.00;;;\n"
-                "1234550;;instructions:u;999000;100.00;;;\n")
+        text = ("1234567,,instructions:u,1000000,100.00,,,\n"
+                "1234580,,instructions:u,1001000,100.00,,,\n"
+                "1234550,,instructions:u,999000,100.00,,,\n")
         self.assertEqual(runner.parse_perf_counts(text), [1234567, 1234580, 1234550])
         self.assertEqual(runner.parse_perf_counts("garbage\n"), [])
 
