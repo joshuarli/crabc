@@ -18,6 +18,7 @@ from __future__ import annotations
 import argparse
 import ctypes
 import errno
+import glob
 import hashlib
 import json
 import os
@@ -33,7 +34,7 @@ import stat
 import subprocess
 import sys
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any, Iterable, Mapping, Sequence
 
@@ -3727,6 +3728,165 @@ def check(args: argparse.Namespace) -> evidence.CheckedReport:
         result = evidence.validate_attempt_report(root, report)
     print_check(result)
     return result
+
+
+# ---------------------------------------------------------------------------
+# S1.3 development counts route (P2).
+#
+# The same compile-once/dual-link/stage path as every attempt, but the
+# measurement is retired instructions (`perf stat -x, -r 3 -e instructions:u`
+# around the existing static timing launcher) and syscalls (`strace -f -qq -o`
+# in a separate run around the same launcher command). The report says
+# `kind: development` and is never release evidence. Gate field names
+# (`status`, `reference_label`, `instructions.ratio_insn`) match
+# `compat/x86_64/performance_release_gate.py`; the limits are imported from
+# `x86_64_evidence`, never redefined here.
+
+COUNTS_KIND = KIND + "-counts"
+COUNTS_MIN_REF_LOOP_INSNS = 1_000_000
+COUNTS_DETERMINISM_TOLERANCE = 0.0001
+COUNTS_LINEARITY_TOLERANCE = 0.005
+COUNTS_PERF_REPEATS = 3
+COUNTS_NOP_SOURCE = (
+    "void _start(void) {\n"
+    "    __asm__ volatile (\"mov $60,%%eax; xor %%edi,%%edi; syscall\" ::: \"memory\");\n"
+    "}\n"
+)
+_STRACE_CALL = re.compile(r"^(?:\d+\s+)?([a-z_][a-z0-9_]*)\(")
+
+
+def select_counts_reference(candidates: Mapping[str, str | None], rustc_text: str) -> tuple[str, str]:
+    """Pick the counts reference root and its release-gate label.
+
+    `candidates` maps a musl install root to its `.clang-version` contents
+    (None when the file is absent). A clang musl whose major matches the
+    rustc LLVM major is `matched-llvm-<major>`; anything else is the
+    diagnostic GCC fallback.
+    """
+
+    match = re.search(r"LLVM version:\s*(\d+)", rustc_text)
+    require(match is not None, "rustc -vV reports no LLVM version for counts reference selection")
+    major = match.group(1)
+    for root in sorted(candidates):
+        text = candidates[root]
+        clang = re.search(r"clang version (\d+)", text) if text else None
+        if clang is not None and clang.group(1) == major:
+            return root, f"matched-llvm-{major}"
+    return str(DEFAULT_MUSL_ROOT), "unmatched (gcc musl)"
+
+
+def default_counts_reference() -> tuple[Path, str]:
+    """Read the live image roots and compiler for counts reference selection."""
+
+    candidates: dict[str, str | None] = {}
+    for root in sorted(glob.glob("/opt/musl-clang-*")):
+        marker = Path(root) / ".clang-version"
+        candidates[root] = marker.read_text(encoding="utf-8", errors="replace") if marker.is_file() else None
+    completed = subprocess.run(["rustc", "-vV"], stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False, text=True)
+    require(completed.returncode == 0, "rustc -vV failed for counts reference selection")
+    root, label = select_counts_reference(candidates, completed.stdout)
+    return Path(root), label
+
+
+def counts_per_op(value_hi: float, value_lo: float, n_hi: int, n_lo: int) -> float:
+    require(n_hi != n_lo, "counts N values must differ for a per-op quotient")
+    return (value_hi - value_lo) / (n_hi - n_lo)
+
+
+def counts_subtract(value: int, wrapper: int) -> int:
+    return value - wrapper
+
+
+def counts_runs_agree(runs: Sequence[int]) -> bool:
+    values = list(runs)
+    require(values, "counts determinism needs at least one run")
+    mean = sum(values) / len(values)
+    if mean == 0:
+        return all(value == 0 for value in values)
+    return (max(values) - min(values)) / mean <= COUNTS_DETERMINISM_TOLERANCE
+
+
+def counts_linear(first: float, second: float, third: float) -> bool:
+    step_one, step_two = second - first, third - second
+    if step_one == 0:
+        return step_two == 0
+    return abs(step_two - step_one) / abs(step_one) <= COUNTS_LINEARITY_TOLERANCE
+
+
+def scale_counts_n1(n0: int, total_at_n0: int, wrapper: int) -> int:
+    require(n0 > 0, "counts probe N must be positive")
+    loop = total_at_n0 - wrapper
+    if loop >= COUNTS_MIN_REF_LOOP_INSNS:
+        return n0
+    require(loop > 0, "reference loop cost is not positive; cannot size counts N1")
+    return -(-n0 * COUNTS_MIN_REF_LOOP_INSNS // loop)
+
+
+def parse_perf_counts(text: str) -> list[int]:
+    """Parse one `perf stat -x,` stderr into one instructions:u count per repeat."""
+
+    counts: list[int] = []
+    for line in text.splitlines():
+        fields = line.split(";")
+        if len(fields) >= 3 and fields[2].strip().startswith("instructions"):
+            counts.append(int(fields[0].strip()))
+    return counts
+
+
+def parse_strace_whole(text: str, binary: str) -> dict[str, Any]:
+    """Count whole-process calls after the last client execve of `binary`.
+
+    Lines shaped `<...> resumed` carry no call name and are skipped; the
+    matching `<unfinished ...>` line already counted the call once.
+    """
+
+    lines = text.splitlines()
+    boundary: int | None = None
+    for index, line in enumerate(lines):
+        if f'execve("{binary}"' in line:
+            boundary = index
+    require(boundary is not None, f"strace trace has no client execve for {binary}")
+    calls: dict[str, int] = {}
+    for line in lines[boundary:]:
+        match = _STRACE_CALL.match(line)
+        if match is not None:
+            calls[match.group(1)] = calls.get(match.group(1), 0) + 1
+    return {"total": sum(calls.values()), "calls": calls}
+
+
+def classify_counts_row(
+    *,
+    has_counts: bool,
+    deterministic: bool,
+    linear: bool,
+    matched: bool,
+    ref_sys_perop: float,
+    cand_sys_perop: float,
+    ref_sys_whole: float,
+    cand_sys_whole: float,
+    ratio_insn: float | None,
+    allocator_attributed: bool = False,
+) -> str:
+    """Apply the S1 cost contract to one counted row, in plan order."""
+
+    if allocator_attributed:
+        return "allocator-attributed"
+    if not has_counts:
+        return "unavailable"
+    if not deterministic:
+        return "nondeterministic"
+    if not linear:
+        return "nonlinear"
+    if ratio_insn is None:
+        return "unavailable"
+    if not matched:
+        return "fail"
+    limit = evidence.SYSCALL_LIMIT_FACTOR
+    if cand_sys_perop > limit * ref_sys_perop or cand_sys_whole > limit * ref_sys_whole:
+        return "fail"
+    if ratio_insn > evidence.INSTRUCTION_LIMIT_RATIO:
+        return "fail"
+    return "pass"
 
 
 def parser() -> argparse.ArgumentParser:

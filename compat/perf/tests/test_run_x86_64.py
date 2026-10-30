@@ -796,5 +796,93 @@ class MemoryCollectorSmokeTests(unittest.TestCase):
             self.assertEqual(result["cleanup"], cleanup)
 
 
+class CountsPureHelpersTests(unittest.TestCase):
+    def test_per_op_arithmetic_is_a_plain_difference_quotient(self) -> None:
+        self.assertAlmostEqual(runner.counts_per_op(3_000_000, 1_000_000, 400_000, 200_000), 10.0)
+        self.assertAlmostEqual(runner.counts_per_op(50, 30, 3, 1), 10.0)
+
+    def test_wrapper_subtraction_is_exact(self) -> None:
+        self.assertEqual(runner.counts_subtract(36_170, 2_000), 34_170)
+
+    def test_cost_contract_constants_come_from_evidence_without_copies(self) -> None:
+        self.assertEqual(runner.evidence.SYSCALL_LIMIT_FACTOR, 1)
+        self.assertEqual(runner.evidence.INSTRUCTION_LIMIT_RATIO, 1.10)
+        self.assertFalse(hasattr(runner, "SYSCALL_LIMIT_FACTOR"))
+        self.assertFalse(hasattr(runner, "INSTRUCTION_LIMIT_RATIO"))
+
+    def test_three_runs_agree_within_point_zero_one_percent(self) -> None:
+        self.assertTrue(runner.counts_runs_agree([1_000_000, 1_000_050, 999_950]))
+        self.assertFalse(runner.counts_runs_agree([1_000_000, 1_000_000, 1_000_201]))
+        self.assertTrue(runner.counts_runs_agree([0, 0, 0]))
+        self.assertFalse(runner.counts_runs_agree([0, 0, 1]))
+
+    def test_linearity_requires_half_percent_step_agreement(self) -> None:
+        self.assertTrue(runner.counts_linear(1_000_000, 2_000_000, 3_000_000))
+        self.assertFalse(runner.counts_linear(1_000_000, 2_000_000, 3_020_000))
+        self.assertTrue(runner.counts_linear(5, 5, 5))
+        self.assertFalse(runner.counts_linear(5, 5, 6))
+
+    def test_n1_scales_the_reference_loop_to_one_million_instructions(self) -> None:
+        self.assertEqual(runner.scale_counts_n1(200_000, 10_000_000, 2_000), 200_000)
+        self.assertEqual(runner.scale_counts_n1(1_000, 500_000, 0), 2_000)
+        with self.assertRaisesRegex(runner.AdapterError, "not positive"):
+            runner.scale_counts_n1(1_000, 0, 0)
+
+    def test_reference_selection_prefers_matched_llvm_major(self) -> None:
+        matched, label = runner.select_counts_reference(
+            {"/opt/musl-clang-1.2.6": "Alpine clang version 23.1.4\n"}, "LLVM version: 23.1.1\n")
+        self.assertEqual((matched, label), ("/opt/musl-clang-1.2.6", "matched-llvm-23"))
+        fallback, fallback_label = runner.select_counts_reference(
+            {"/opt/musl-clang-1.2.6": "Alpine clang version 22.1.3\n"}, "LLVM version: 23.1.1\n")
+        self.assertEqual((fallback, fallback_label), (str(runner.DEFAULT_MUSL_ROOT), "unmatched (gcc musl)"))
+        missing, missing_label = runner.select_counts_reference({}, "LLVM version: 23.1.1\n")
+        self.assertEqual((missing, missing_label), (str(runner.DEFAULT_MUSL_ROOT), "unmatched (gcc musl)"))
+        with self.assertRaisesRegex(runner.AdapterError, "LLVM version"):
+            runner.select_counts_reference({}, "no version here\n")
+
+    def test_perf_stat_csv_parses_one_count_per_repeat(self) -> None:
+        text = ("1234567;;instructions:u;1000000;100.00;;;\n"
+                "1234580;;instructions:u;1001000;100.00;;;\n"
+                "1234550;;instructions:u;999000;100.00;;;\n")
+        self.assertEqual(runner.parse_perf_counts(text), [1234567, 1234580, 1234550])
+        self.assertEqual(runner.parse_perf_counts("garbage\n"), [])
+
+    def test_strace_parse_counts_calls_after_the_client_execve(self) -> None:
+        text = ("100 execve(\"/app/bin/other\", [\"x\"], 0x1) = 0\n"
+                "100 execve(\"/app/bin/workload\", [\"/app/bin/workload\", \"getpid\", \"3\"], 0x1) = 0\n"
+                "100 getpid() = 42\n"
+                "100 getpid() = 43\n"
+                "100 +++ exited with 0 +++\n")
+        parsed = runner.parse_strace_whole(text, "/app/bin/workload")
+        self.assertEqual(parsed["total"], 3)
+        self.assertEqual(parsed["calls"], {"execve": 1, "getpid": 2})
+        with self.assertRaisesRegex(runner.AdapterError, "no client execve"):
+            runner.parse_strace_whole("100 getpid() = 1\n", "/app/bin/workload")
+
+    def base_kwargs(self, **changes: object) -> dict[str, object]:
+        kwargs: dict[str, object] = {
+            "has_counts": True, "deterministic": True, "linear": True, "matched": True,
+            "ref_sys_perop": 1, "cand_sys_perop": 1,
+            "ref_sys_whole": 40, "cand_sys_whole": 40, "ratio_insn": 1.0,
+        }
+        kwargs.update(changes)
+        return kwargs
+
+    def test_status_pass_and_every_failure_shape(self) -> None:
+        self.assertEqual(runner.classify_counts_row(**self.base_kwargs()), "pass")
+        self.assertEqual(runner.classify_counts_row(**self.base_kwargs(has_counts=False)), "unavailable")
+        self.assertEqual(runner.classify_counts_row(**self.base_kwargs(ratio_insn=None)), "unavailable")
+        self.assertEqual(runner.classify_counts_row(**self.base_kwargs(deterministic=False)), "nondeterministic")
+        self.assertEqual(runner.classify_counts_row(**self.base_kwargs(linear=False)), "nonlinear")
+        self.assertEqual(runner.classify_counts_row(**self.base_kwargs(matched=False)), "fail")
+        self.assertEqual(runner.classify_counts_row(**self.base_kwargs(cand_sys_perop=2)), "fail")
+        self.assertEqual(runner.classify_counts_row(**self.base_kwargs(cand_sys_whole=41)), "fail")
+        self.assertEqual(runner.classify_counts_row(**self.base_kwargs(ratio_insn=1.1001)), "fail")
+        self.assertEqual(runner.classify_counts_row(**self.base_kwargs(ratio_insn=1.10)), "pass")
+        self.assertEqual(runner.classify_counts_row(**self.base_kwargs(
+            ref_sys_perop=0, cand_sys_perop=1)), "fail")
+        self.assertEqual(runner.classify_counts_row(**self.base_kwargs(allocator_attributed=True)), "allocator-attributed")
+
+
 if __name__ == "__main__":
     unittest.main()
