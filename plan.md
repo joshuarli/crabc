@@ -182,7 +182,9 @@ Rules:
    Rebuilding retags `crabc-core-evidence:x86_64`; with Docker's containerd
    store the previously pinned image is deleted, and every native command fails
    until `CORE_IMAGE_ID` in `compat/x86_64/core_image.py` is re-pinned. The
-   step that rebuilds the image owns that re-pin, in its own commit.
+   step that rebuilds the image owns that re-pin, in its own commit. Until that
+   commit reaches `main`, create every new worktree from it, not from `main`:
+   a checkout with the old pin cannot run native commands.
 7. **Nothing outside the repository.** No sysctl, host package, reboot, push,
    release or publication. Container flags on a single `docker run` invocation,
    such as `--cap-add=PERFMON`, are allowed where a step says so.
@@ -708,13 +710,11 @@ Decided by the owner on 2026-10-30. Reopening one needs a new owner decision.
   rule is not waived for the split.
 - **D4 — Matched backend: same LLVM major version** as the pinned rustc, as
   defined in the [cost contract](#cost-contract).
-- **D5 — Where the matched clang comes from. Open; recommended default in
-  bold.** The pinned Alpine 3.24.1 ships clang 22; LLVM 23 clang is only in
-  Alpine edge until the next stable release. Options: **(a) a digest-pinned
-  `alpine:edge` builder stage used only to compile the reference musl, which
-  asserts the LLVM major and is copied into the unchanged main image**;
-  (b) wait for the next stable Alpine and move the whole image to it; (c)
-  accept clang 22, making every counts row `unmatched` until (b).
+- **D5 — Matched clang source: a builder stage.** The pinned Alpine 3.24.1
+  ships clang 22; LLVM 23 clang is only in Alpine edge. A digest-pinned
+  `alpine:edge` builder stage compiles only the reference musl, asserts the
+  LLVM major, and is copied into the unchanged main image (S1.1/S1.2). When
+  the next stable Alpine ships the matching clang, the stage moves to it.
 
 ## Runtime hardening
 
@@ -797,7 +797,8 @@ and the reviewed unwinder dependency graph.
 - 2026-10-30: the first S0 run rebuilt the core image, which deleted the
   pinned image; it was re-pinned in `180bbaaae`. Rebuilds are now forbidden
   unless a step requires them. S1.4 landed (R and 1.10 in the release gate).
-  S1.1 stopped because Alpine 3.24.1 has no LLVM 23 clang; D5 opened.
+  S1.1 stopped because Alpine 3.24.1 has no LLVM 23 clang; D5 opened and
+  decided: a digest-pinned `alpine:edge` builder stage for the reference musl.
 
 ## S0 baseline table
 
