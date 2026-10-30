@@ -167,28 +167,30 @@ class RawTraceReplayTests(unittest.TestCase):
         self.assertEqual(gate["whole_process"]["status"], "fail")
         self.assertEqual(gate["status"], "fail")
         self.assertEqual(gate["whole_process"]["total_calls"]["release_gate"], "fail")
-        self.assertTrue(any("whole_process: total calls: candidate 41 exceeds 2R=20" == item for item in gate["violations"]))
+        self.assertTrue(any("whole_process: total calls: candidate 41 exceeds R=10" == item for item in gate["violations"]))
 
-        # A candidate can remain below 2R and still cannot pass until a
-        # workload-contract owner classifies the nonzero lifecycle difference.
-        candidate["whole_process"]["calls"]["openat"]["calls"] = 11
+        # A candidate can match R with a redistributed total and still cannot
+        # pass until a workload-contract owner classifies the nonzero
+        # lifecycle difference.
+        candidate["whole_process"]["calls"]["openat"]["calls"] = 9
+        candidate["whole_process"]["calls"]["close"] = {"calls": 1, "errors": 0}
         unresolved = evidence.scorecard_syscall_gate(reference, candidate, operations=1)
         self.assertEqual(unresolved["whole_process"]["status"], "fail")
         self.assertEqual(unresolved["whole_process"]["total_calls"]["release_gate"], "pass")
         self.assertTrue(any("unclassified" in item for item in unresolved["violations"]))
 
         # Per-name redistribution is visible for review but does not replace
-        # the scorecard's total-call 2R rule with a stricter per-name rule.
+        # the scorecard's total-call R rule with a stricter per-name rule.
         reference["whole_process"]["calls"] = {
             "openat": {"calls": 8, "errors": 0}, "close": {"calls": 2, "errors": 0},
         }
         candidate["whole_process"]["calls"] = {
-            "openat": {"calls": 3, "errors": 0}, "close": {"calls": 17, "errors": 0},
+            "openat": {"calls": 3, "errors": 0}, "close": {"calls": 7, "errors": 0},
         }
         redistributed = evidence.scorecard_syscall_gate(reference, candidate, operations=1)
         self.assertEqual(redistributed["whole_process"]["total_calls"], {
-            "reference": 10, "candidate": 20, "threshold_numerator": 2,
-            "threshold_denominator": 1, "rule": "at-most-2R", "release_gate": "pass",
+            "reference": 10, "candidate": 10, "threshold_numerator": 1,
+            "threshold_denominator": 1, "rule": "at-most-R", "release_gate": "pass",
         })
         self.assertEqual(redistributed["status"], "fail")
         self.assertTrue(any("unclassified" in item for item in redistributed["violations"]))
@@ -782,7 +784,7 @@ class ScorecardDerivationTests(unittest.TestCase):
         failing = {
             "cpu": (_row_workload(**{**PASSING_ROW, "cpu_upper": 1.02}), _row_observer(**PASSING_MEMORY)),
             "marked syscalls": (_row_workload(**{**PASSING_ROW, "marked": (0, 1)}), _row_observer(**PASSING_MEMORY)),
-            "whole-process syscalls above 2R": (_row_workload(**{**PASSING_ROW, "whole": (20, 41)}), _row_observer(**PASSING_MEMORY)),
+            "whole-process syscalls above R": (_row_workload(**{**PASSING_ROW, "whole": (20, 41)}), _row_observer(**PASSING_MEMORY)),
             # No native classification owner exists, so an in-bound difference
             # is still an explicit unresolved failure.
             "unclassified whole-process difference": (

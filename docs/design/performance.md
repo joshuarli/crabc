@@ -24,9 +24,9 @@ contracts remain preserved, not waived or activated by this document.
 
 The owner now requires syscall ceiling **R**, not 2R, and retired-user-instruction
 ceiling **1.10R** under a matched LLVM backend. S1 must implement collection,
-producer/reader checks and release gates together. At the reset baseline the
-code still contains the old numerical 2R syscall ceiling and lacks the mandatory
-instruction gate. Per-syscall classification already rejects unresolved
+producer/reader checks and release gates together. The release gate and the
+syscall reader now enforce R and 1.10; no producer writes instruction fields
+yet, so every runtime row reads as unavailable until S1.3 lands. Per-syscall classification already rejects unresolved
 differences, but that is not the permanent numerical no-extra-calls contract.
 An old passing report therefore cannot establish the new requirements.
 

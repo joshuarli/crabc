@@ -192,7 +192,7 @@ EXPECTED_PERFORMANCE_RELEASE_SCOPE = (
     "Read-only gate over retained receipts; it never measures. Requires the three-attempt runtime C scorecard "
     "(`perf-c check` reader) to be release-qualified with every attempt within CPU one-sided 95% upper bound "
     "<= 1.00 and "
-    "2R syscall rules, and every row within PSS/memory.peak one-sided 95% upper bounds <= 1.00; the "
+    "R syscall and 1.10x retired-instruction rules, and every row within PSS/memory.peak one-sided 95% upper bounds <= 1.00; the "
     "reported 0.90 memory target does not gate. It also requires a "
     "complete `perf-native --mode full` report; each receipt carries an uncontended-host record. "
     "Allocator promotion is separately owned by M9. Performance evidence cannot substitute for correctness "

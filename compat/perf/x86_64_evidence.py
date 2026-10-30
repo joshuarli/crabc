@@ -60,6 +60,8 @@ FULL_WARMUP_COUNT = 3
 SMOKE_SAMPLE_COUNT = 1
 SMOKE_WARMUP_COUNT = 0
 COLLECTOR_ATTEMPTS = 3
+SYSCALL_LIMIT_FACTOR = 1
+INSTRUCTION_LIMIT_RATIO = 1.10
 # One attempt budget is one immutable process roster.  ``full`` is the release
 # statistical protocol; ``implementation-smoke`` runs the identical 114-row
 # build, timing, syscall, live-probe, and observer/cgroup route with one paired
@@ -1385,9 +1387,9 @@ def syscall_gate(
 ) -> dict[str, Any]:
     """Judge exact total calls while retaining per-syscall diagnostics.
 
-    The 2R/reference-zero release rule applies to the summed calls in the
+    The R/reference-zero release rule applies to the summed calls in the
     selected scope.  Per-syscall records remain necessary to expose errors and
-    unexplained redistribution, but they are not a hidden stricter 2R gate.
+    unexplained redistribution, but they are not a hidden stricter R gate.
     When supplied, the operation denominator is an exact marked-region
     diagnostic, not a replacement for the total-call comparison.
     """
@@ -1434,7 +1436,7 @@ def syscall_gate(
         total_gate = {
             "reference": 0,
             "candidate": candidate_total,
-            "threshold_numerator": 2,
+            "threshold_numerator": SYSCALL_LIMIT_FACTOR,
             "threshold_denominator": 1,
             "rule": "reference-zero",
             "release_gate": "pass" if candidate_total == 0 else "fail",
@@ -1445,13 +1447,13 @@ def syscall_gate(
         total_gate = {
             "reference": reference_total,
             "candidate": candidate_total,
-            "threshold_numerator": 2,
+            "threshold_numerator": SYSCALL_LIMIT_FACTOR,
             "threshold_denominator": 1,
-            "rule": "at-most-2R",
-            "release_gate": "pass" if candidate_total <= 2 * reference_total else "fail",
+            "rule": "at-most-R",
+            "release_gate": "pass" if candidate_total <= SYSCALL_LIMIT_FACTOR * reference_total else "fail",
         }
-        if candidate_total > 2 * reference_total:
-            violations.append(f"total calls: candidate {candidate_total} exceeds 2R={2 * reference_total}")
+        if candidate_total > SYSCALL_LIMIT_FACTOR * reference_total:
+            violations.append(f"total calls: candidate {candidate_total} exceeds R={reference_total}")
     result: dict[str, Any] = {
         "status": "pass" if not violations else "fail",
         "violations": violations,

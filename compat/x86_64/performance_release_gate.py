@@ -13,8 +13,9 @@ receipt. The inputs are:
   by ``compat/perf/x86_64_evidence.validate_collector_report`` (the
   ``perf-c check`` reader). Its release decision must be qualified with no
   blocker. Every attempt is rechecked for CPU one-sided 95% upper bound
-  <= 1.00 and marked-region and whole-process syscalls <= 2R (zero when R is
-  zero); each row's paired PSS and ``memory.peak`` one-sided 95% upper bounds
+  <= 1.00, marked-region and whole-process syscalls <= R (zero when R is
+  zero), and retired instructions <= 1.10 x R; each row's paired PSS and
+  ``memory.peak`` one-sided 95% upper bounds
   across all three attempts must also be <= 1.00. The 0.90 memory target is
   reported but does not gate;
 * the native Rust-facade companion: one ``perf-native --mode full`` report
@@ -51,7 +52,8 @@ RECEIPT_NAME = "receipt.json"
 # Runtime C scorecard bounds.
 RUNTIME_CPU_UPPER_MAX = 1.00
 RUNTIME_MEMORY_UPPER_MAX = 1.00
-RUNTIME_SYSCALL_FACTOR = 2
+SYSCALL_LIMIT_FACTOR = runtime_evidence.SYSCALL_LIMIT_FACTOR
+INSTRUCTION_LIMIT_RATIO = runtime_evidence.INSTRUCTION_LIMIT_RATIO
 
 
 class GateInputError(RuntimeError):
@@ -137,8 +139,8 @@ def runtime_attempt_unmet(name: str, attempt: int, row: Mapping[str, Any]) -> li
         if not all(isinstance(value, int) and not isinstance(value, bool) and value >= 0
                    for value in (reference, candidate)):
             unmet.append(f"{label}: {scope} syscall totals are absent")
-        elif candidate > RUNTIME_SYSCALL_FACTOR * reference:
-            unmet.append(f"{label}: {scope} syscalls {candidate} > {RUNTIME_SYSCALL_FACTOR}R={RUNTIME_SYSCALL_FACTOR * reference}")
+        elif candidate > SYSCALL_LIMIT_FACTOR * reference:
+            unmet.append(f"{label}: {scope} syscalls {candidate} > R={reference}")
     for metric, gate in (("cpu", row.get("cpu", {}).get("gate")),
                          ("syscalls", row.get("syscalls", {}).get("gate"))):
         if gate != "pass":
@@ -177,6 +179,36 @@ def runtime_row_unmet(name: str, row: Mapping[str, Any]) -> list[str]:
             unmet.append(f"{name}: {label} one-sided 95% upper bound {upper} > {RUNTIME_MEMORY_UPPER_MAX}")
         if summary.get("release_gate") != "pass":
             unmet.append(f"{name}: {label} release gate is {summary.get('release_gate')}")
+    unmet.extend(runtime_cost_contract_unmet(name, row))
+    return unmet
+
+
+def runtime_cost_contract_unmet(name: str, row: Mapping[str, Any]) -> list[str]:
+    """Recheck the S1 cost contract: syscalls <= R and instructions <= 1.10 x R.
+
+    Absent instruction, reference-label or status fields mean the report
+    predates the contract and is read as unavailable, never as pass.
+    """
+    unmet: list[str] = []
+    status = row.get("status")
+    if "status" not in row:
+        unmet.append(f"{name}: status is unavailable")
+    elif status != "pass":
+        unmet.append(f"{name}: status {status} cannot pass")
+    label = row.get("reference_label")
+    if "reference_label" not in row:
+        unmet.append(f"{name}: reference label is unavailable")
+    elif not isinstance(label, str) or not label.startswith("matched-llvm-"):
+        unmet.append(f"{name}: reference {label!r} cannot pass")
+    instructions = row.get("instructions")
+    if not isinstance(instructions, Mapping):
+        unmet.append(f"{name}: instruction fields are unavailable")
+    else:
+        ratio = _number(instructions.get("ratio_insn"))
+        if ratio is None:
+            unmet.append(f"{name}: instruction fields are unavailable")
+        elif ratio > INSTRUCTION_LIMIT_RATIO:
+            unmet.append(f"{name}: ratio_insn {ratio} > {INSTRUCTION_LIMIT_RATIO}")
     return unmet
 
 

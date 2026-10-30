@@ -30,7 +30,7 @@ def runtime_attempt(**changes: object) -> dict[str, object]:
         "memory_peak_bytes": {"reference": 1000, "candidate": 950},
         "syscalls": {
             "marked_region": {"reference": 0, "candidate": 0, "gate": "pass"},
-            "whole_process": {"reference": 40, "candidate": 80, "gate": "pass"},
+            "whole_process": {"reference": 40, "candidate": 40, "gate": "pass"},
             "gate": "pass",
         },
     }
@@ -54,6 +54,9 @@ def memory_summary(*, seed: int = 0x43524142, upper: float | None = 0.95,
 def runtime_row(**changes: object) -> dict[str, object]:
     row: dict[str, object] = {
         "gate": "pass",
+        "status": "pass",
+        "reference_label": "matched-llvm-23",
+        "instructions": {"ratio_insn": 1.0},
         "memory": {
             "pss_kib": memory_summary(),
             "memory_peak_bytes": memory_summary(seed=0x43524143),
@@ -62,6 +65,76 @@ def runtime_row(**changes: object) -> dict[str, object]:
     }
     row.update(changes)
     return row
+
+
+class CostContractTests(unittest.TestCase):
+    def test_syscall_equal_passes(self) -> None:
+        attempts = [runtime_attempt() for _ in range(gate.runtime_evidence.COLLECTOR_ATTEMPTS)]
+        attempts[0] = runtime_attempt(syscalls={
+            "marked_region": {"reference": 10, "candidate": 10},
+            "whole_process": {"reference": 40, "candidate": 40},
+            "gate": "pass"})
+        self.assertEqual(gate.runtime_row_unmet("row", runtime_row(attempts=attempts)), [])
+
+    def test_syscall_fewer_passes(self) -> None:
+        attempts = [runtime_attempt() for _ in range(gate.runtime_evidence.COLLECTOR_ATTEMPTS)]
+        attempts[0] = runtime_attempt(syscalls={
+            "marked_region": {"reference": 10, "candidate": 5},
+            "whole_process": {"reference": 40, "candidate": 30},
+            "gate": "pass"})
+        self.assertEqual(gate.runtime_row_unmet("row", runtime_row(attempts=attempts)), [])
+
+    def test_syscall_one_over_nonzero_r_fails(self) -> None:
+        attempts = [runtime_attempt() for _ in range(gate.runtime_evidence.COLLECTOR_ATTEMPTS)]
+        attempts[0] = runtime_attempt(syscalls={
+            "marked_region": {"reference": 10, "candidate": 10},
+            "whole_process": {"reference": 40, "candidate": 41},
+            "gate": "pass"})
+        unmet = gate.runtime_row_unmet("row", runtime_row(attempts=attempts))
+        self.assertTrue(any("whole_process syscalls 41 > R=40" in item for item in unmet), unmet)
+
+    def test_syscall_r_zero_candidate_one_fails(self) -> None:
+        attempts = [runtime_attempt() for _ in range(gate.runtime_evidence.COLLECTOR_ATTEMPTS)]
+        attempts[0] = runtime_attempt(syscalls={
+            "marked_region": {"reference": 0, "candidate": 1},
+            "whole_process": {"reference": 1, "candidate": 1},
+            "gate": "pass"})
+        unmet = gate.runtime_row_unmet("row", runtime_row(attempts=attempts))
+        self.assertTrue(any("marked_region syscalls 1 > R=0" in item for item in unmet), unmet)
+
+    def test_instruction_ratio_1_10_passes(self) -> None:
+        self.assertEqual(gate.runtime_row_unmet("row", runtime_row(instructions={"ratio_insn": 1.10})), [])
+
+    def test_instruction_ratio_1_1001_fails(self) -> None:
+        unmet = gate.runtime_row_unmet("row", runtime_row(instructions={"ratio_insn": 1.1001}))
+        self.assertTrue(any("ratio_insn 1.1001 > 1.1" in item for item in unmet), unmet)
+
+    def test_instruction_ratio_0_5_passes(self) -> None:
+        self.assertEqual(gate.runtime_row_unmet("row", runtime_row(instructions={"ratio_insn": 0.5})), [])
+
+    def test_absent_instruction_fields_are_unavailable(self) -> None:
+        row = runtime_row()
+        del row["instructions"]
+        unmet = gate.runtime_row_unmet("row", row)
+        self.assertTrue(any("unavailable" in item for item in unmet), unmet)
+
+    def test_unmatched_reference_cannot_pass(self) -> None:
+        unmet = gate.runtime_row_unmet("row", runtime_row(reference_label="unmatched (host musl)"))
+        self.assertTrue(any("cannot pass" in item for item in unmet), unmet)
+
+    def test_nondeterministic_and_nonlinear_cannot_pass(self) -> None:
+        for status in ("nondeterministic", "nonlinear"):
+            with self.subTest(status=status):
+                unmet = gate.runtime_row_unmet("row", runtime_row(status=status))
+                self.assertTrue(any("cannot pass" in item for item in unmet), unmet)
+
+    def test_old_version_without_new_fields_is_unavailable(self) -> None:
+        row = {"gate": "pass",
+               "memory": runtime_row()["memory"],
+               "attempts": runtime_row()["attempts"]}
+        unmet = gate.runtime_row_unmet("row", row)
+        self.assertTrue(any("unavailable" in item for item in unmet), unmet)
+        self.assertTrue(unmet)
 
 
 class RuntimeThresholdTests(unittest.TestCase):
@@ -107,10 +180,10 @@ class RuntimeThresholdTests(unittest.TestCase):
     def test_runtime_row_names_each_violated_scorecard_rule(self) -> None:
         cases = {
             "CPU one-sided 95% upper bound 1.01": {"cpu": {"one_sided_95_upper": 1.01, "gate": "pass"}},
-            "marked_region syscalls 1 > 2R=0": {"syscalls": {
-                "marked_region": {"reference": 0, "candidate": 1}, "whole_process": {"reference": 1, "candidate": 2},
+            "marked_region syscalls 1 > R=0": {"syscalls": {
+                "marked_region": {"reference": 0, "candidate": 1}, "whole_process": {"reference": 1, "candidate": 1},
                 "gate": "pass"}},
-            "whole_process syscalls 81 > 2R=80": {"syscalls": {
+            "whole_process syscalls 81 > R=40": {"syscalls": {
                 "marked_region": {"reference": 1, "candidate": 1}, "whole_process": {"reference": 40, "candidate": 81},
                 "gate": "pass"}},
             "syscalls release gate is fail": {"syscalls": {

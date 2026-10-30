@@ -194,7 +194,7 @@ use a paired one-sided 95% upper bound over the three collector attempts and
 also gate at `1.00`; each row reports `0.90` as a non-gating target. Schema 2
 collector rows retain the derived memory bounds, seeds, and resample count so
 the reader can reconstruct them from the three attempt totals. Marked-route
-and whole-process syscall totals must also be at most `2R` candidate calls
+and whole-process syscall totals must also be at most `R` candidate calls
 (or zero when the reference is zero), with no unexplained error, retry,
 fallback, or unclassified per-syscall difference. No native syscall-difference
 classification exists, so every per-syscall difference is currently an
@@ -357,7 +357,7 @@ marker protocol: every C fixture writes `CRABC_PERF_BEGIN` immediately before
 its selected route and `CRABC_PERF_END` immediately after it. The report retains
 both non-marker whole-process totals and the calls strictly between those
 markers, including exact calls/errors per completed operation. Each scope
-keeps a summed-total `2R`/reference-zero verdict; per-syscall records are
+keeps a summed-total `R`/reference-zero verdict; per-syscall records are
 diagnostics that must still explain every call or error difference. Marker
 writes are excluded from the whole-process totals. The protocol is absent
 from timed children and the diagnostic remains explicitly marked `timing:
