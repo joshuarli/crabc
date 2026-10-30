@@ -396,8 +396,9 @@ are committed except as S0.7 allows.
       and their `compat/x86_64` runners/readers;
    4. per-artifact readers/validators that duplicate a shared one;
    5. the split loader/libc images (S3b);
-   6. the Python receipt-validating installed C driver;
-   7. the generated-assembly mechanism (only if the owner chooses it; see [D2](#owner-decisions)).
+   6. the Python receipt-validating installed C driver.
+
+   The generated musl assembly is excluded by [D2](#owner-decisions).
 9. **Propose budgets** using this rule: for each selected area,
    `budget = baseline − 0.8 × (sum of the deletions you identified)`, rounded
    to two significant figures. Give budgets for: ldso features (target: one
@@ -584,7 +585,7 @@ builders. Never the allocator.
 Why this is not optional: the reconnaissance shows the split costs about 12
 startup syscalls that musl does not make. No search-path tweak removes the
 `openat`/`mmap` pairs for a second image, so the dynamic startup rows cannot
-meet R while the split stays. The only alternative is an owner waiver ([D3](#owner-decisions)).
+meet R while the split stays. The owner has ruled out a waiver ([D3](#owner-decisions)).
 
 1. **Design note first** (in the lane, ≤ 1 page, given to the reviewer): how
    one ELF serves as both `PT_INTERP` and `libc.so` (musl's model:
@@ -606,8 +607,9 @@ meet R while the split stays. The only alternative is an owner waiver ([D3](#own
    drops.
 5. **If any proof fails** in a way that needs an allocator change, or the
    unified product is not smaller in bridges and startup cost, stop. Report
-   the specific invariant that forces the split; the owner then decides
-   between a waiver and another design. Do not keep both arrangements.
+   the specific invariant that blocks unification and a proposed design that
+   satisfies it; the owner decides the next attempt. Do not keep both
+   arrangements, and do not treat the blocker as a waiver.
 
 **Done:** one installed runtime ELF; `RuntimeV1` reduced to the facade's needs
 (or removed); dynamic startup syscalls ≤ R plus only the `allocator-attributed`
@@ -673,27 +675,21 @@ details; this table is the acceptance rule.
 
 ## Owner decisions
 
-The coordinator applies the default in **bold** until the owner answers.
+Decided by the owner on 2026-10-30. Reopening one needs a new owner decision.
 
-- **D1 — Eager allocator start-up syscalls.** The accepted C backend makes
-  about 5 syscalls at start-up even when a program never allocates. Under the
-  freeze nobody may change that, so dynamic and static startup rows cannot
-  reach R. Options: **(a) keep the freeze; those calls stay
-  `allocator-attributed` and startup is judged on the remainder**; (b) allow
-  one narrow exception: libc defers its allocator initialization call to first
-  use, with no change inside the backend.
-- **D2 — Generated musl assembly.** `libc/src` ships ≈81k lines of `.S`
-  compiled from musl C by ≈35 generator scripts (math, scanf, float parsing,
-  …), with hash/provenance headers. Options: **(a) leave the mechanism alone in
-  this campaign**; (b) replace it by compiling the pinned musl C sources with
-  the pinned clang at build time, which deletes the generators and checked-in
-  output but adds a C compile step to the product build; (c) port to Rust.
-- **D3 — Split images.** **Unified image required (S3b).** The owner may
-  instead waive the dynamic-startup syscall rule for the image split, in which
-  case S3b is skipped and the waiver is written into the cost contract.
-- **D4 — Matched backend definition.** **Same LLVM major version** (above),
-  instead of the earlier "rustc's exact revision/configuration", which no clang
-  release can satisfy.
+- **D1 — Eager allocator start-up syscalls: keep the freeze.** The accepted C
+  backend makes about 5 syscalls at start-up even when a program never
+  allocates. Nobody changes that during this campaign, including by moving
+  libc's initialization call. Those calls are labeled `allocator-attributed`;
+  startup rows are judged on the remaining calls and instructions.
+- **D2 — Generated musl assembly: leave it alone.** The ≈81k lines of `.S`
+  compiled from musl C and their ≈35 generator scripts are out of scope for
+  S0–S5. S0 counts them as their own category; no step edits, regenerates or
+  replaces them.
+- **D3 — Split images: unify.** S3b is required. The dynamic-startup syscall
+  rule is not waived for the split.
+- **D4 — Matched backend: same LLVM major version** as the pinned rustc, as
+  defined in the [cost contract](#cost-contract).
 
 ## Runtime hardening
 
@@ -769,7 +765,10 @@ and the reviewed unwinder dependency graph.
   syscalls, ≈7.6× instructions for dynamic hello). Matched backend defined as
   same LLVM major. Single-image loader/libc becomes the default S3b outcome.
   S2/S3a may run in parallel with S1. Instruction parity for single-threaded
-  rows uses exact counts instead of bootstrap statistics. D1–D4 opened.
+  rows uses exact counts instead of bootstrap statistics.
+- 2026-10-30: owner decided D1–D4: keep the allocator start-up calls frozen
+  and attributed; leave generated musl assembly out of scope; unify the
+  loader/libc image with no waiver; matched backend means same LLVM major.
 
 ## S0 baseline table
 
