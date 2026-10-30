@@ -55,13 +55,10 @@ not disposable merely because the lane is parked. No bulk cleanup on stop.
 
 ## Development loop
 
-1. Reproduce the relevant behavior and record the selected mechanism's baseline.
-2. Remove one source of duplication/work without adding a replacement framework.
-3. Run the smallest relevant behavioral checks and S1's focused cost route when
-   available. Record missing counters or other unavailable evidence honestly.
-4. Review correctness, retained case coverage, emitted/linked cost and the actual
-   reduction in mechanisms; do not count moved code or deleted comments as wins.
-5. Integrate and rerun the affected checks on the merged revision.
+Follow the standard procedures in [plan.md](../plan.md#standard-procedures):
+P1 for branches and commits, P2 to measure a row, P3 to delete or consolidate a
+mechanism, P4 for runtime code, P5 to stop, and P6 for the report. Each step's
+**Allowed files** list is binding.
 
 Use the pinned native x86 environment. Never run `scripts/dev.sh`, emulate
 AArch64, or invoke the allocator runner directly. Examples for in-scope work:

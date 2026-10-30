@@ -102,9 +102,11 @@ reports, but do not make native allocator milestones prerequisites for S5.
 
 ## Matched compiler backend
 
-Build **musl itself** with pinned Clang using an LLVM backend matched to rustc's
-revision/configuration. Matching the application's compiler, matching only LLVM's
-major version, or using a musl GCC wrapper is insufficient. Record rustc verbose
+Build **musl itself** with a clang whose LLVM major version equals the pinned
+rustc's (`rustc -vV`), using musl's own `configure` optimization defaults.
+Exact revision equality is not required: rustc ships its own LLVM fork and no
+clang release is built from it. A different major, or a musl GCC wrapper, makes
+the comparison `unmatched` and diagnostic only. Record rustc verbose
 version, Clang/LLVM versions and source revisions/patches, linker identity,
 target triple/CPU/ISA features, optimization/LTO, TLS and relocation models,
 visibility/interposition, panic/unwind, hardening and final link settings.
@@ -138,12 +140,19 @@ Retain the event identity, privilege scope, CPU affinity, availability,
 `time_enabled`, `time_running` and raw samples. Unsupported PMUs, denied access,
 counter loss, uncontrolled multiplexing or mismatched scope do not establish
 parity. Do not silently substitute simulated counts. Run counter collection
-separately from syscall tracing and normal timing. Preserve stable repeated
-paired observations and uncertainty; use the one-sided 95% upper ratio for
-acceptance, not the lowest observed sample.
+separately from syscall tracing and normal timing.
 
-Measure the selected operation directly with bounded counters or multiple
-iteration counts:
+User-mode instruction counts of a single-threaded row are deterministic: on the
+reference host, repeated runs agree to within a few instructions. Require three
+runs within 0.01 % and compare them directly; a row outside that spread is
+`nondeterministic` and cannot pass. Multi-threaded or scheduling-dependent rows
+use repeated paired observations and the one-sided 95 % upper ratio. Never use
+the lowest observed sample. When a wrapper (`unshare`, `chroot`, the harness
+launcher) runs inside the counted process, subtract the count of the same
+wrapper executing a static exit-only binary.
+
+Measure the selected operation with three iteration counts `N1`, `2·N1` and
+`3·N1` (the step procedure is P2 in [`plan.md`](../../plan.md#p2--measure-a-row)):
 
 ```text
 I(N) = I_fixed + N * I_operation
