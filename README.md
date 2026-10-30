@@ -10,6 +10,15 @@ nor a fallback. Filesystem, process, signal, thread/TLS, socket, memory,
 stdio, resolver and loader semantics are meant to be rigorous. The Rust facade
 exposes useful OS capabilities rather than a wrapper for every C symbol.
 
+## Current work
+
+The [campaign](plan.md) prioritizes radical non-allocator simplification.
+All allocator development and native-mimalloc promotion are frozen; the accepted
+C backend remains unchanged. The cost targets are no extra syscalls and at most
+10% more retired user instructions than musl under a matched LLVM backend,
+without weakening correctness or hardening. These are acceptance requirements,
+not achieved performance claims or already-implemented gates.
+
 ## Support
 
 | Target | Status |
@@ -29,19 +38,20 @@ no non-Linux libc.
   to the same mechanisms, independent of the C ABI. Its `std` and `alloc`
   features add standard-library integration.
 
-The allocator is mimalloc: the upstream C implementation today, with a
-source-faithful Rust port of mimalloc v3.5.0 under qualification.
+The allocator is the upstream C mimalloc implementation. The source-faithful
+Rust port of mimalloc v3.5.0 is retained but its development and qualification
+are paused under the [allocator freeze](plan.md#allocator-freeze).
 
 ## Runtime hardening
 
-Native x86-64 hardening is a required priority before qualification and public
+Native x86-64 hardening remains required before qualification and public
 promotion: a separately built hardened profile will require PIE, non-executable
 stacks, page-level W^X, effective RELRO, eager binding, and explicit library
 search rules. Existing compatibility products retain their selected behavior.
 This is a completion requirement, not a claim that the profile has shipped.
 The [compatibility profile](COMPATIBILITY-PROFILE.md#runtime-hardening-profiles)
-defines the restrictions; [plan.md](plan.md#runtime-hardening) owns the work and
-the current campaign pause.
+defines the restrictions; [plan.md](plan.md#runtime-hardening) owns sequencing.
+Simplification does not waive this requirement or resume release qualification.
 
 ## Compatibility
 

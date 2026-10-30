@@ -1,220 +1,236 @@
 # Performance methodology
 
-This document owns the measurement policy and optimization doctrine. Harness
-commands, workload rosters and report layout live in
-[`compat/perf/README.md`](../../compat/perf/README.md); the numeric acceptance
-bounds live in code (see [Acceptance bounds](#acceptance-bounds)). Results are
-local, ignored reports, never a universal performance claim for crabc or musl.
-Musl 1.2.6 is the C runtime oracle; Rustix 1.1.4 is the native-facade
-comparison input. Glibc is not measured or used as a fallback. Native x86-64 is
-the active target and uses the supplied-product adapter; the AArch64 lane is
-paused.
+This document owns measurement policy and optimization doctrine. Harness
+commands and report layout live in
+[`compat/perf/README.md`](../../compat/perf/README.md); active sequencing and
+work authorization live in [`plan.md`](../../plan.md). Results are local
+evidence, never a universal performance claim for crabc or musl.
+
+Native Linux/x86-64 is active. Use the exact `[musl_native]` snapshot in
+`compat/upstreams.toml` for its C runtime oracle. The paused AArch64 route
+retains `[musl]` 1.2.6 and its historical contract; do not run or alter that
+lane for this campaign. Rustix is the separate native-facade comparison input,
+not a substitute for a musl C-libc comparison. Glibc is neither an oracle nor
+a fallback.
+
+## Current authorization and implementation status
+
+**2026-10-30: non-allocator simplification first; all allocator work frozen.**
+Do not launch allocator engine benchmarks, port qualification, tuning or
+promotion. Whole-runtime tests may use the unchanged accepted C backend and
+must report, not hide, its contribution. Frozen allocator failures are recorded
+without opening a development campaign. Existing allocator design/milestone
+contracts remain preserved, not waived or activated by this document.
+
+The owner now requires syscall ceiling **R**, not 2R, and retired-user-instruction
+ceiling **1.10R** under a matched LLVM backend. S1 must implement collection,
+producer/reader checks and release gates together. At the reset baseline the
+code still contains the old numerical 2R syscall ceiling and lacks the mandatory
+instruction gate. Per-syscall classification already rejects unresolved
+differences, but that is not the permanent numerical no-extra-calls contract.
+An old passing report therefore cannot establish the new requirements.
+
+Focused development checks are required early, with the relevant behavioral
+checks, rather than after complete qualification. Full release evidence still
+requires its correctness admission. Missing PMU access or a blocked qualification
+chain is reported explicitly; neither becomes a passing instruction result.
 
 ## Measurement contract
 
-The commands in this section are the paused AArch64 route; the active x86-64
-equivalents are `./scripts/dev-x86_64.sh perf-c` and `perf-native`. The
-contract itself applies to both.
+The existing active entry points are `./scripts/dev-x86_64.sh perf-c` and
+`perf-native`; see the harness README for actual flags. S1 supplies the focused
+development path through existing machinery. Do not invent command support or
+relax a smoke's budget label to make it appear qualified.
 
-`./scripts/dev.sh perf --label NAME` builds the current release C runtime and
-runs one musl-compiled application under staged musl and crabc loaders/libcs.
-Only `PT_INTERP` and staged runtime bytes differ. Every timed process is fresh:
-the parent captures elapsed wall time and isolated `wait4(2)` user/system CPU,
-peak RSS, faults, and context switches. RSS/PSS plus grouped `smaps` mapping
-attribution are separately sampled while a 32-MiB allocation set is live. A
-fresh delegated cgroup-v2 leaf records `memory.peak` after exit and a second
-after-ready probe proves its high-water collector sees post-barrier allocation;
-without that delegation the memory row is explicitly unsupported. `strace` is
-a separate `timing: false` diagnostic, never a timed sample. Schema-5 reports
-keep non-marker whole-process calls separate from calls between the
-descriptor-only `CRABC_PERF_BEGIN`/`CRABC_PERF_END` markers; only the latter
-describes the selected hot region, with exact calls/errors per operation.
+For the x86 C supplied-product adapter, compile each unchanged C application/DSO
+source into an object **once**, then link those exact objects through each
+provider's driver/CRT/runtime with equivalent link mode and inputs. Keep the
+object, headers, command, source hash, linker trace, build ID, `PT_INTERP`,
+`DT_NEEDED` and complete staged runtime identity. Provider CRT/runtime bytes
+may differ by design; their cost must not disappear from whole-process results.
+Do not confuse this with the paused AArch64 interpreter-patching route.
 
-`./scripts/dev.sh perf-native --label NAME` runs the same Rustybench fixture
-against direct `crabc-rs` and Rustix routes. It records Rustybench timing,
-allocation, `getrusage`, and procfs resource data. It batches 1,000 operations
-per sample and repeats five complete runner invocations. This is a direct
-native-facade comparison, not a musl C-libc benchmark.
+`perf-native` compares direct `crabc-rs` and Rustix operations. Keep its compiler,
+feature/dependency graph and shared fixture recorded. It proves neither C ABI
+parity nor whole-runtime performance against musl. Do not use facade wins to
+compensate for failing C runtime rows.
 
-Full x86-64 performance runs require a passing correctness-profile chain
-receipt for the current source through `capability.accounting`. Host admission
-invokes `qualification-manifest --validate-receipt PATH --json`, which runs the
-owning validator in the pinned image and returns its verified receipt object.
-That validator rechecks tool/runtime identities, source runners, markers, and
-raw logs and returns the verified record. The host reads the selected receipt
-through no-follow directory handles and requires its parsed content to match
-that record before binding admission to its file identity, source identity,
-and seven-gate prefix. In-image runners call the strict validator directly.
-Admission selects the correctness-profile receipt, so a later full-profile
-receipt does not change earlier performance evidence. Smoke runs remain
-available without that admission.
+Full x86 performance runs require the current source's validated correctness
+profile through `capability.accounting`, not a status assertion or a receipt
+for another revision. Retain source/product/artifact identities and raw logs,
+recompute derived results, and distinguish development, smoke and release runs.
+A later full-profile receipt must not silently replace the correctness receipt
+that admitted an earlier measurement. Preserve these properties while S2
+consolidates duplicated readers and bookkeeping.
 
-Reports are ignored local evidence under `compat/reports/perf/`; compare only
-runs with matching host provenance, fixture hash, sample contract, and runtime
-artifact hashes. The detailed harness contract lives in
-[`compat/perf/README.md`](../../compat/perf/README.md).
+Reports and raw samples remain ignored local evidence in the existing work/report
+locations. Compare only matching fixture, host, product and sampling contracts.
+Keep one shared result format per genuine measurement boundary, not a new schema
+or receipt reader for each symbol.
 
 ## Acceptance bounds
 
-Workload-specific rows and open work are tracked in [`plan.md`](../../plan.md).
-The numeric bounds are owned by code, not restated here:
+These are required active-x86 bounds. They must be implemented and tested in S1
+before a report can claim compliance; the AArch64 contract remains unchanged.
 
-- Active x86-64 C scorecard CPU and memory bounds, syscall limits, the
-  31-sample/3-warm-up
-  protocol, the 10,000-resample bootstrap, the three-attempt collector and the
-  host-load policy: `compat/perf/x86_64_evidence.py` (`CPU_RELEASE_BOUND`,
-  `CPU_TARGET_BOUND`, `MEMORY_RELEASE_BOUND`, `MEMORY_TARGET_BOUND`,
-  `CPU_RESAMPLES`, `FULL_SAMPLE_COUNT`, `COLLECTOR_ATTEMPTS`,
-  `HOST_LOAD_POLICY`) and `compat/x86_64/performance_release_gate.py`
-  (`RUNTIME_CPU_UPPER_MAX`, `RUNTIME_MEMORY_UPPER_MAX`,
-  `RUNTIME_SYSCALL_FACTOR`).
-- Allocator promotion bounds: `compat/allocator/x86_64_m9_gate.py`
-  (`SUITE_THROUGHPUT_LOWER_MIN`, `CRITICAL_THROUGHPUT_LOWER_MIN`,
-  `CRITICAL_P99_UPPER_MAX`, `MEMORY_GEOMEAN_UPPER_MAX`,
-  `CRITICAL_MEMORY_UPPER_MAX`). Sample comparison and bootstrap methodology:
-  `compat/allocator/perf_engine_x86_64.py`.
+| Metric | Requirement |
+| --- | --- |
+| Syscalls | Candidate <= reference for each equivalent deterministic marked region and whole-process workload. Reference zero requires candidate zero. Retain per-syscall calls/errors and explain every difference. |
+| Retired user instructions | Candidate/reference <= 1.10 for the actual measured operation and separately for startup/first-use. Lower is better; there is no 0.90 lower acceptance floor. |
+| CPU | Retain per-row one-sided 95% upper ratio <= 1.00, with 0.90 reported only as a non-gating target. |
+| PSS and `memory.peak` | Retain per-row one-sided 95% upper ratio <= 1.00, with raw totals and the existing collection protocol. |
+| Linked footprint/structure | Report final linked sections and all runtime images; meet the explicit S0 simplification budgets independently of instruction/CPU results. |
 
-For the active x86-64 C scorecard, CPU, PSS, and `memory.peak` one-sided 95%
-upper bounds gate at `1.00` for every row. Each row reports `0.90` as a target;
-it does not affect qualification. Memory bounds derive from the three
-collector attempts using the same deterministic paired bootstrap as CPU.
-Reference and candidate memory values remain raw totals, and a zero reference
-or nonpositive candidate refuses qualification. The paused AArch64 contract
-remains unchanged.
+No geomean offsets a failing selected runtime row. Reference/candidate error
+or behavior differences need semantic investigation; fewer calls are accepted
+only with retained semantics. Classifying an extra call does not exempt it from
+the R ceiling. Policy/hardening mismatches are separate labeled comparisons,
+never a silent relaxation of the compatibility target.
 
-## Release measurement rules
+Gate ownership remains the existing `compat/perf/x86_64_evidence.py`,
+`compat/x86_64/performance_release_gate.py`, producer and their tests. Consolidate
+limits into shared definitions rather than duplicating constants. Migrate old
+report versions explicitly; absent instruction data is unavailable, not zero.
+Required regressions include zero-to-one syscall failure, an extra nonzero call,
+a ratio above 1.10, missing/unreliable counters and backend mismatch, plus valid
+reductions and boundary values. Preserve raw rejected inputs.
 
-### Fixed allocator-port measurements
+Frozen allocator promotion bounds and source-fidelity obligations remain in
+`compat/allocator/`; do not modify them while implementing runtime bounds.
+Allocator-only failures cannot be presented as passes or erased from full-runtime
+reports, but do not make native allocator milestones prerequisites for S5.
 
-Allocator design remains out of scope. The narrow exception is a
-provenance-preserving Rust semantic port of pinned mimalloc v3.5.0;
-[`allocator.md`](allocator.md) owns that boundary. The C `libmimalloc-sys`
-0.1.49 backend (bundling mimalloc v3.3.2) remains the runtime default until
-promotion; it is not the exact v3.5.0 oracle. The separately built exact pinned
-C v3.5.0 archive is the mandatory differential and performance baseline for
-the port.
+## Matched compiler backend
 
-The ordinary musl–crabc rows continue to measure the runtime as users receive
-it. They do not establish Rust-port parity. A port candidate must instead be
-compared with the exact pinned C v3.5.0 archive under the same configuration,
-fixture, build profile, machine provenance, and measurement contract. Compare
-throughput, latency, resident memory, virtual mappings, and startup cost; do
-not change a configuration, allocation policy, or fixture to make the Rust
-translation look better. `compat/allocator/` owns the detailed differential
-evidence and known-difference record.
+Build **musl itself** with pinned Clang using an LLVM backend matched to rustc's
+revision/configuration. Matching the application's compiler, matching only LLVM's
+major version, or using a musl GCC wrapper is insufficient. Record rustc verbose
+version, Clang/LLVM versions and source revisions/patches, linker identity,
+target triple/CPU/ISA features, optimization/LTO, TLS and relocation models,
+visibility/interposition, panic/unwind, hardening and final link settings.
+The frontends remain different: common LLVM does not guarantee identical IR or
+machine code. Unresolved backend differences make the result diagnostic only.
 
-Only a measured Rust/C divergence is an optimization lead. Preserve the
-upstream algorithm until a written design note, deterministic differential
-evidence, and performance evidence justify a change. The C implementation
-remains the oracle even after it leaves the production dependency graph.
+Keep production Rust/upstream pins unchanged. A separately pinned comparator
+compiler/image may be added under S1; do not silently update the runtime or
+start a whole-toolchain project. Record any unavoidable backend limitation.
+Compare equivalent product configurations and algorithms; whole-runtime musl
+comparisons and same-algorithm C/Rust studies answer different questions.
 
-### Isolation, equivalence, and statistical decision
+For C microbenchmarks, retain external-call/no-builtin controls so the compiler
+cannot fold away the libc operation. Keep fixture LTO from selectively absorbing
+one backend. Measure ordinary optimized application builds separately. The fixed
+Rust release choices are O3, fat LTO, one codegen unit, panic abort and stripping;
+record the actual artifact settings and equivalent C settings, not just intended
+Cargo profiles. Build choices cannot compensate for redundant kernel calls or
+state machines. Never apply blanket inlining/unchecked access for a score.
 
-- Compile each C fixture exactly once. The lanes may differ only in staged
-  interpreter and runtime bytes, and record SHA-256, `PT_INTERP`, dynamic
-  dependencies, and build ID.
-- Pin the benchmark process to one available CPU. Record CPU model, kernel,
-  Docker image digest, governor/frequency information when readable,
-  toolchain versions, revision, command line, environment allowlist, fixture
-  inputs, and runtime artifact hashes.
-- Interleave reference and candidate sample order from a recorded seed. Use at
-  least 31 valid fresh-process C samples per lane after warm-up, retain every
-  rejected sample and reason, and never represent a warm run as cold unless a
-  controlled host actually evicted the relevant cache.
-- Keep `strace`, `perf`, allocation profilers, and memory polling outside
-  timed samples. They are diagnostics with `timing: false`; observable fixture
-  results remain validated independently of black-box/volatile anti-DCE sinks.
-- Publish raw samples plus median, p05, p95, maximum, and deterministic
-  bootstrap seed. The release decision is the 10,000-resample one-sided 95%
-  upper bound of the median CPU ratio, not a rounded table cell.
-- Run the full suite in at least three clean Docker invocations. Every run
-  must pass; variance is a failed gate, not permission to select a favorable
-  run. Machine-readable reports are versioned, atomically written, and reject
-  mismatched fixture, toolchain, host, or artifact provenance unless explicitly
-  diagnostic.
+## Retired-instruction accounting
 
-### Syscall and memory accounting
+Use hardware retired-instruction counters (`perf_event_open`/perf), not static
+disassembly length, LLVM IR counts, wall time or source lines. The primary
+comparison is **user-mode** work; include vDSO execution and every participating
+thread in the selected region. For process/worker cases, define inheritance and
+aggregation explicitly. Kernel instructions, when available, are a separately
+labeled diagnostic rather than mixed into the user count.
 
-- A separate fresh `strace -f -qq` process records per-syscall calls and
-  errors. Whole-process totals remain useful for startup; marked steady-state
-  regions report both total and calls per completed operation. A reference
-  zero in a marked loop remains candidate zero.
-- Every nonzero syscall difference is classified as required kernel behavior,
-  required compatibility behavior, or removable work. Only the former two may
-  remain, with proof beside the workload contract.
-- High-water memory uses the ready/high-water/continue barrier, concurrent
-  PSS/RSS/private-page sampling, and a fresh delegated cgroup-v2
-  `memory.peak` leaf with a self-test showing a post-barrier allocation changes
-  the result. PSS-only evidence is diagnostic when cgroup collection is
-  unsupported; it is never silently promoted to a release memory result.
-- Preserve `ru_maxrss`, faults, context switches, runtime image sizes, and
-  virtual mappings as diagnostics. They do not substitute for the peak-memory
-  boundary.
+Retain the event identity, privilege scope, CPU affinity, availability,
+`time_enabled`, `time_running` and raw samples. Unsupported PMUs, denied access,
+counter loss, uncontrolled multiplexing or mismatched scope do not establish
+parity. Do not silently substitute simulated counts. Run counter collection
+separately from syscall tracing and normal timing. Preserve stable repeated
+paired observations and uncertainty; use the one-sided 95% upper ratio for
+acceptance, not the lowest observed sample.
 
-### Native measurements and build profile
+Measure the selected operation directly with bounded counters or multiple
+iteration counts:
 
-Rustybench is a reusable native benchmark component rather than an uncontrolled
-shell timer. Its reports retain `getrusage` CPU, faults, context switches,
-RSS/PSS, allocation metrics, and separate syscall diagnostics. Its remaining
-methodology work is deterministic raw-sample/provenance comparison, an explicit
-process/cgroup high-water adapter, marker-bounded syscall diagnostics, and
-optional unsupported-when-unavailable hardware counters. Counters guide work;
-they never replace CPU time or disappear silently.
-
-The C candidate uses the fixed root release profile (also set as
-`[profile.bench]` in the isolated Rust-native fixture, because `cargo bench`
-does not consume the root release profile):
-
-```toml
-[profile.release]
-opt-level = 3
-lto = "fat"
-codegen-units = 1
-panic = "abort"
-strip = true
+```text
+I(N) = I_fixed + N * I_operation
 ```
 
-Compare a proposed win with the immediately prior profile under identical
-source, fixture, toolchain, and measurement conditions. Fat LTO, one codegen
-unit, and stripping are build choices, not replacements for removing a syscall
-or fixing an algorithm. For standard-library-aware applications, record exact
-`-Z build-std=std -Z build-std-features=` invocations and artifacts. The
-dependency-free native-facade LTO proof is bounded evidence only; the
-Rustybench dependency-bearing route uses the same unwind-capable build-std
-closure and records it as a separate measurement lane.
+Keep raw counts, validate the fit and account for common loop/harness overhead
+symmetrically. A large common application workload must not dilute a libc
+regression. Measure minimal startup, first use and teardown independently.
+For tiny functions, inspect absolute deltas and emitted assembly as well as
+ratios; no implicit rounding allowance waives the 1.10 requirement.
+
+## Syscall accounting
+
+Run a separate fresh `strace -f -qq` process and retain raw calls/errors.
+Account for marker operations symmetrically, with distinct whole-process and
+marked-region totals and completed-operation denominators. A zero-syscall vDSO
+or uncontended synchronization path must stay zero. Startup/loader/finalizer
+calls cannot be hidden by reporting only a hot loop.
+
+Use deterministic inputs and controlled schedules for retries, failures,
+signals, resolver traffic and synchronization. Uncontrolled contended futex
+counts fluctuate with scheduling; keep those runs as stress diagnostics rather
+than fabricating an exact equality test. Preserve deterministic uncontended and
+controlled-path coverage. Missing or nondeterministic evidence is explicitly
+unavailable for exact-count claims, not an excuse to remove inconvenient rows.
+
+## Timing and memory
+
+- Pin a process to an appropriate CPU and record CPU model, kernel, image digest,
+  governor/frequency information when available, tool versions, revision,
+  commands, environment allowlist, inputs and artifact hashes. Use quiet windows;
+  CPU time and instruction counts under load are not automatically clean proof.
+- Interleave reference/candidate sample order from a recorded seed. Retain the
+  existing full C protocol: at least 31 valid fresh-process pairs after three
+  warm-ups, deterministic 10,000-resample one-sided 95% bounds, and three clean
+  collector attempts. Keep rejected samples and reasons. Warm is not cold unless
+  cache eviction was actually controlled.
+- Retain wall time, `wait4` user/system CPU, peak RSS, faults and context switches.
+  Keep strace, perf, allocation profiling and memory polling outside timed samples.
+  Validate fixture outputs independently of anti-DCE sinks.
+- Preserve ready/high-water/continue memory barriers, concurrent RSS/PSS/private
+  mapping attribution, a fresh delegated cgroup-v2 `memory.peak`, and its
+  post-ready-allocation self-test. No cgroup delegation means unsupported memory
+  qualification, not a PSS substitute or a zero value.
+- Compare raw PSS/peak totals without subtracting payload, image bytes, page-cache
+  charge or accounting batches. Zero reference or nonpositive candidate memory
+  cannot qualify. Preserve deterministic paired-bootstrap reconstruction of
+  memory bounds and exact raw values.
+
+The existing host-load policy and release protocol remain implemented in the
+shared evidence module. S1/S2 may simplify their implementation, not loosen them
+to select favorable outcomes. Three clean invocations must pass; a budget label,
+report field or green reader test does not substitute for the actual execution.
+
+## Source and linked-footprint accounting
+
+Report shipping implementation, inline/external tests, generated assembly/tables,
+third-party code, build/evidence machinery and frozen allocator/AArch64 separately.
+Count final `.text`, `.rodata`, `.data`, `.bss`, mapped images and minimal consumer
+closure, not just an archive or a stripped ELF. Include startup/helpers actually
+linked. Check section GC, archive granularity, exports and LTO boundaries with
+link maps. Moving code, renaming modules or deleting tests/comments is not less
+runtime complexity. Treat historical deleted-raw-data measurements as leads only.
 
 ## Optimization doctrine
 
-For each failing row, first remove redundant syscalls, allocation, locking,
-conversion, scanning, mapping, indirection, and C-ABI round trips. Then choose
-and prove the best scalar representation and algorithm, including boundary,
-error, alignment, and guard-page evidence and AArch64 assembly inspection.
-Only a measured residual gap may justify a narrow SIMD path, which must earn
-its complexity across the full size, alignment, and page-boundary matrix.
+For each failing in-scope row, remove redundant syscalls, allocations, locking,
+conversion, scanning, mapping, indirection and C-ABI round trips first. Then
+choose and prove the simplest scalar representation/algorithm with boundary,
+error, alignment and guard-page evidence and active-x86 assembly inspection.
+Only a measured residual gap justifies a narrowly scoped specialization/SIMD
+path. Do not build a dispatch framework or remove cancellation/errno semantics.
 
-This makes vDSO dispatch and indexed loader lookup structural work rather than
-SIMD candidates. Crabc has one AArch64 baseline: it does not inherit an x86
-ifunc hierarchy. ASIMD is a later option; SVE needs separate capability,
-fallback, and dispatch-cost evidence. Any optimized NUL-string load must be
-proved not to cross an unmapped page, and guard-page regressions are mandatory.
+Preserve established math contracts: NaNs, infinities, signed zero, subnormals,
+rounding, exceptions, errno and ABI. Cryptographic primitives remain focused
+reviewed dependencies; never hand-roll them for performance. Hardening and
+ownership/aliasing invariants cannot be weakened to meet a cost budget.
 
-Math may use an established vector kernel earlier only when its numerical
-contract is fully proved; musl edge behavior, bits, rounding, exceptions,
-`errno`, and ABI remain acceptance criteria. Cryptography is never hand-rolled
-for performance. A supported crypto primitive uses an approved focused,
-audited dependency after the `AGENTS.md` review, never an improvised vector
-implementation.
+## Standard-library and paused comparisons
 
-## Standard-library builds
+Rust-native stock-std, build-std and external dynamic-libc boundaries must be
+labeled accurately. Record exact `-Z build-std` invocations, panic strategy,
+feature graph and artifacts; a facade LTO witness does not prove optimization
+through an opaque dynamic libc. Cargo bench's unwind-capable standard-library
+closure is distinct from dependency-free `std,panic_abort` experiments.
 
-The dependency-free native-facade stock-`std` fixture is the paused AArch64
-`std,panic_abort` fat-LTO proof (`opt-level=3`, one codegen unit, embedded
-bitcode, dynamic crabc runtime): `./scripts/dev.sh lto-native-facade`.
-
-Rustybench’s proc-macro Cargo benchmark graph supports `-Z build-std` when the fixture leaves `profile.bench.panic` unset. A bench
-profile `panic = "abort"` is ignored for the benchmark executable but caused
-Cargo to compile both abort and unwind `core` units for the dependency graph,
-which then failed with duplicate `core` lang items. `perf-native --build-std`
-therefore records dependency-bearing build-std timing with the benchmark
-profile's default unwind strategy. This is tooling configuration evidence, not
-a crabc runtime compatibility result.
+The paused AArch64 commands and earlier results remain documented in the
+existing harnesses and
+[the pre-reset methodology](https://github.com/joshuarli/crabc/blob/fe7f1874289d7f54ef27af4fb639cf307104540f/docs/design/performance.md).
+They are preserved history, not work authorized by this x86 simplification phase.
