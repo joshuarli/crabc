@@ -496,23 +496,44 @@ unsafe fn write_number(
     flags: u8,
 ) {
     let nonzero = value != 0;
-    let mut reversed = [0u8; 64];
+    let mut buffer = [0u8; 24];
     let mut digit_count = 0usize;
     if value != 0 {
-        while value != 0 {
-            let digit = (value % base as u64) as u8;
-            reversed[digit_count] = match digit {
-                0..=9 => b'0' + digit,
-                _ if uppercase => b'A' + digit - 10,
-                _ => b'a' + digit - 10,
-            };
-            digit_count += 1;
-            value /= base as u64;
+        // One backward pass per base writes each digit once, already in the
+        // order it is emitted. The largest u64 octal has 22 digits.
+        match base {
+            10 => {
+                for slot in buffer.iter_mut().rev() {
+                    *slot = b'0' + (value % 10) as u8;
+                    digit_count += 1;
+                    value /= 10;
+                    if value == 0 { break; }
+                }
+            }
+            8 => {
+                for slot in buffer.iter_mut().rev() {
+                    *slot = b'0' + (value & 7) as u8;
+                    digit_count += 1;
+                    value >>= 3;
+                    if value == 0 { break; }
+                }
+            }
+            _ => {
+                let letters = if uppercase { b'A' - 10 } else { b'a' - 10 };
+                for slot in buffer.iter_mut().rev() {
+                    let digit = (value & 15) as u8;
+                    *slot = if digit < 10 { b'0' + digit } else { letters + digit };
+                    digit_count += 1;
+                    value >>= 4;
+                    if value == 0 { break; }
+                }
+            }
         }
     } else if precision != Some(0) {
-        reversed[0] = b'0';
+        buffer[23] = b'0';
         digit_count = 1;
     }
+    let digits_start = buffer.len() - digit_count;
 
     let mut prefix = [0u8; 3];
     let mut prefix_count = 0usize;
@@ -532,7 +553,7 @@ unsafe fn write_number(
     let octal_zero = alternate
         && base == 8
         && (digit_count == 0
-            || (nonzero && zero_precision == 0 && reversed[digit_count - 1] != b'0'));
+            || (nonzero && zero_precision == 0 && buffer[digits_start] != b'0'));
     let digits_with_precision = digit_count
         .saturating_add(zero_precision)
         .saturating_add(octal_zero as usize);
@@ -544,28 +565,25 @@ unsafe fn write_number(
         return;
     }
 
-    if flags & FLAG_MINUS == 0 && !zero_width {
+    if flags & FLAG_MINUS == 0 && !zero_width && padding != 0 {
         unsafe { output.repeated(b' ', padding) };
     }
-    unsafe { output.bytes(prefix.as_ptr(), prefix_count) };
-    if flags & FLAG_MINUS == 0 && zero_width {
+    if prefix_count != 0 {
+        unsafe { output.bytes(prefix.as_ptr(), prefix_count) };
+    }
+    if flags & FLAG_MINUS == 0 && zero_width && padding != 0 {
         unsafe { output.repeated(b'0', padding) };
     }
     if octal_zero {
         unsafe { output.byte(b'0') };
     }
-    unsafe { output.repeated(b'0', zero_precision) };
-    #[cfg(crabc_x86_owned_runtime)]
-    {
-        reversed[..digit_count].reverse();
-        unsafe { output.bytes(reversed.as_ptr(), digit_count) };
+    if zero_precision != 0 {
+        unsafe { output.repeated(b'0', zero_precision) };
     }
-    #[cfg(not(crabc_x86_owned_runtime))]
-    while digit_count != 0 {
-        digit_count -= 1;
-        unsafe { output.byte(reversed[digit_count]) };
+    if digit_count != 0 {
+        unsafe { output.bytes(buffer[digits_start..].as_ptr(), digit_count) };
     }
-    if flags & FLAG_MINUS != 0 {
+    if flags & FLAG_MINUS != 0 && padding != 0 {
         unsafe { output.repeated(b' ', padding) };
     }
 }
@@ -601,11 +619,13 @@ unsafe fn write_string(
         output.set_overflowed();
         return;
     }
-    if flags & FLAG_MINUS == 0 {
+    if flags & FLAG_MINUS == 0 && padding != 0 {
         unsafe { output.repeated(b' ', padding) };
     }
-    unsafe { output.bytes(source, length) };
-    if flags & FLAG_MINUS != 0 {
+    if length != 0 {
+        unsafe { output.bytes(source, length) };
+    }
+    if flags & FLAG_MINUS != 0 && padding != 0 {
         unsafe { output.repeated(b' ', padding) };
     }
 }
@@ -616,11 +636,11 @@ unsafe fn write_character(output: &mut impl FormatSink, character: u8, width: us
         output.set_overflowed();
         return;
     }
-    if flags & FLAG_MINUS == 0 {
+    if flags & FLAG_MINUS == 0 && padding != 0 {
         unsafe { output.repeated(b' ', padding) };
     }
     unsafe { output.byte(character) };
-    if flags & FLAG_MINUS != 0 {
+    if flags & FLAG_MINUS != 0 && padding != 0 {
         unsafe { output.repeated(b' ', padding) };
     }
 }
