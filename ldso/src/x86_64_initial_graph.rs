@@ -1204,6 +1204,17 @@ global_asm!(
     "movq $0, 40(%r12)",
     "movq $0, 56(%r12)",
     "movq $0, 64(%r12)",
+    "cmp %r9, %r8",
+    "jae .Lself_fail",
+    "mov %r8, 72(%r12)",
+    "mov %r9, 80(%r12)",
+    "mov %r8, %rdx",
+    "mov %r9, %rsi",
+    "call .Lself_check_read",
+    "test %eax, %eax",
+    "jne .Lself_fail",
+    "mov 72(%r12), %r8",
+    "mov 80(%r12), %r9",
     ".Lself_parse:",
     "cmp %r9, %r8",
     "jae .Lself_parsed",
@@ -1238,16 +1249,24 @@ global_asm!(
     "jmp .Lself_p_next",
     ".Lself_p_relrent:",
     "cmp $0x25, %rax",
-    "jne .Lself_p_next",
+    "jne .Lself_p_relaent",
     "mov %rsi, 32(%r12)",
+    "jmp .Lself_p_next",
+    ".Lself_p_relaent:",
+    "cmp $9, %rax",
+    "jne .Lself_p_next",
+    "mov %rsi, 48(%r12)",
     ".Lself_p_next:",
     "add $16, %r8",
     "jmp .Lself_parse",
     ".Lself_parsed:",
-    "mov 0(%r12), %r10",
     "mov 8(%r12), %r11",
     "test %r11, %r11",
     "je .Lself_relr_validate",
+    "cmpq $24, 48(%r12)",
+    "jne .Lself_fail",
+    "mov 0(%r12), %r10",
+    "mov 8(%r12), %r11",
     "test %r10, %r10",
     "je .Lself_fail",
     "mov %r11, %rax",
@@ -1288,17 +1307,38 @@ global_asm!(
     ".Lself_relr_absent:",
     "mov 0(%r12), %rax",
     "test %rax, %rax",
-    "je .Lself_apply_rela",
+    "je .Lself_rela_preflight",
     "mov 16(%r12), %rcx",
     "test %rcx, %rcx",
-    "je .Lself_apply_rela",
+    "je .Lself_rela_preflight",
     "mov 8(%r12), %rdx",
     "cmp %rcx, %rdx",
-    "jbe .Lself_apply_rela",
+    "jbe .Lself_rela_preflight",
     "mov 24(%r12), %rsi",
     "cmp %rax, %rsi",
-    "jbe .Lself_apply_rela",
+    "jbe .Lself_rela_preflight",
     "jmp .Lself_fail",
+    ".Lself_rela_preflight:",
+    "mov 0(%r12), %r8",
+    "mov 8(%r12), %r9",
+    "test %r8, %r8",
+    "je .Lself_apply_rela",
+    ".Lself_rela_preflight_outer:",
+    "cmp %r9, %r8",
+    "jae .Lself_apply_rela",
+    "mov (%r8), %r11",
+    "mov %r8, %r10",
+    "add $24, %r10",
+    ".Lself_rela_preflight_inner:",
+    "cmp %r9, %r10",
+    "jae .Lself_rela_preflight_next",
+    "cmp (%r10), %r11",
+    "je .Lself_fail",
+    "add $24, %r10",
+    "jmp .Lself_rela_preflight_inner",
+    ".Lself_rela_preflight_next:",
+    "add $24, %r8",
+    "jmp .Lself_rela_preflight_outer",
     ".Lself_apply_rela:",
     "mov 0(%r12), %r8",
     "mov 8(%r12), %r9",
@@ -1309,12 +1349,14 @@ global_asm!(
     "jae .Lself_relr_setup",
     "mov (%r8), %rdx",
     "mov 8(%r8), %rax",
-    "cmp $8, %eax",
+    "cmp $8, %rax",
     "jne .Lself_rela_next",
     "test $7, %dl",
     "jne .Lself_fail",
     "add %r13, %rdx",
-    "jc .Lself_fail",
+    "jo .Lself_fail",
+    "test %rdx, %rdx",
+    "js .Lself_fail",
     "mov %rdx, %rsi",
     "add $8, %rsi",
     "jc .Lself_fail",
@@ -1341,7 +1383,9 @@ global_asm!(
     ".Lself_rela_write:",
     "mov 16(%r8), %rax",
     "add %r13, %rax",
-    "jc .Lself_fail",
+    "jo .Lself_fail",
+    "test %rax, %rax",
+    "js .Lself_fail",
     "mov %rax, (%rdx)",
     ".Lself_rela_next:",
     "add $24, %r8",
@@ -6943,9 +6987,13 @@ mod self_relocate_tests {
         }
 
         fn rela(&mut self, offset: u64, addend: i64) {
-            let at = RELA_OFF / 8;
+            self.rela_at(0, offset, 8, addend);
+        }
+
+        fn rela_at(&mut self, index: usize, offset: u64, info: u64, addend: i64) {
+            let at = RELA_OFF / 8 + index * 3;
             self.words[at] = offset;
-            self.words[at + 1] = 8;
+            self.words[at + 1] = info;
             self.words[at + 2] = addend as u64;
         }
 
@@ -6963,6 +7011,8 @@ mod self_relocate_tests {
                 entries.push(RELA_OFF as u64);
                 entries.push(8); // DT_RELASZ
                 entries.push(size);
+                entries.push(9); // DT_RELAENT
+                entries.push(24);
             }
             if let Some((size, ent)) = relr {
                 entries.push(0x24); // DT_RELR
@@ -6980,9 +7030,13 @@ mod self_relocate_tests {
         }
 
         fn run(&self) -> u32 {
-            let base = self.words.as_ptr() as usize;
             let dynamic = unsafe { self.words.as_ptr().add(DYNAMIC_OFF / 8) } as *const u8;
             let dynamic_end = unsafe { dynamic.add(self.dynamic.len() * 8) };
+            self.run_with_dynamic(dynamic, dynamic_end)
+        }
+
+        fn run_with_dynamic(&self, dynamic: *const u8, dynamic_end: *const u8) -> u32 {
+            let base = self.words.as_ptr() as usize;
             unsafe {
                 __crabc_x86_64_self_relocate(
                     base,
@@ -6991,6 +7045,15 @@ mod self_relocate_tests {
                     dynamic,
                     dynamic_end,
                 )
+            }
+        }
+
+        fn set_dynamic_value(&mut self, tag: u64, value: u64) {
+            let at = DYNAMIC_OFF / 8;
+            for index in (0..self.dynamic.len()).step_by(2) {
+                if self.words[at + index] == tag {
+                    self.words[at + index + 1] = value;
+                }
             }
         }
 
@@ -7106,6 +7169,73 @@ mod self_relocate_tests {
         let mut fixture = Fixture::new();
         fixture.rela(RELA_OFF as u64, 0x20);
         fixture.dynamic(Some(24), None);
+        assert_eq!(fixture.run(), 1);
+    }
+
+    #[test]
+    fn dynamic_table_outside_a_readable_load_is_rejected() {
+        let mut fixture = Fixture::new();
+        fixture.rela(TARGET_OFF as u64, 0x20);
+        fixture.dynamic(Some(24), None);
+        let outside = unsafe { fixture.words.as_ptr().add(IMAGE_BYTES / 8) } as *const u8;
+        assert_eq!(fixture.run_with_dynamic(outside, unsafe { outside.add(16) }), 1);
+        assert_eq!(fixture.word(TARGET_OFF), 0);
+    }
+
+    #[test]
+    fn wrong_rela_entry_size_is_rejected() {
+        let mut fixture = Fixture::new();
+        fixture.rela(TARGET_OFF as u64, 0x20);
+        fixture.dynamic(Some(24), None);
+        fixture.set_dynamic_value(9, 8);
+        assert_eq!(fixture.run(), 1);
+        assert_eq!(fixture.word(TARGET_OFF), 0);
+    }
+
+    #[test]
+    fn duplicate_rela_target_is_rejected_before_writing() {
+        let mut fixture = Fixture::new();
+        fixture.rela_at(0, TARGET_OFF as u64, 8, 0x20);
+        fixture.rela_at(1, TARGET_OFF as u64, 8, 0x30);
+        fixture.dynamic(Some(48), None);
+        assert_eq!(fixture.word(RELA_OFF), TARGET_OFF as u64);
+        assert_eq!(fixture.word(RELA_OFF + 24), TARGET_OFF as u64);
+        assert_eq!(fixture.run(), 1);
+        assert_eq!(fixture.word(TARGET_OFF), 0);
+    }
+
+    #[test]
+    fn negative_rela_addend_is_applied() {
+        let mut fixture = Fixture::new();
+        fixture.rela(TARGET_OFF as u64, -0x20);
+        fixture.dynamic(Some(24), None);
+        let base = fixture.words.as_ptr() as usize;
+        assert_eq!(fixture.run(), 0);
+        assert_eq!(fixture.word(TARGET_OFF), (base as u64).wrapping_sub(0x20));
+    }
+
+    #[test]
+    fn relative_rela_with_a_symbol_index_is_rejected() {
+        let mut fixture = Fixture::new();
+        fixture.rela_at(0, TARGET_OFF as u64, 8 | (1u64 << 32), 0x20);
+        fixture.dynamic(Some(24), None);
+        assert_eq!(fixture.run(), 0);
+        assert_eq!(fixture.word(TARGET_OFF), 0);
+    }
+
+    #[test]
+    fn relr_size_not_multiple_of_eight_is_rejected() {
+        let mut fixture = Fixture::new();
+        fixture.relr(&[TARGET_OFF as u64, 3]);
+        fixture.dynamic(None, Some((12, 8)));
+        assert_eq!(fixture.run(), 1);
+    }
+
+    #[test]
+    fn relr_bitmap_target_outside_writable_load_is_rejected() {
+        let mut fixture = Fixture::new();
+        fixture.relr(&[0xfe0, 1 | (1 << 5)]);
+        fixture.dynamic(None, Some((16, 8)));
         assert_eq!(fixture.run(), 1);
     }
 }
