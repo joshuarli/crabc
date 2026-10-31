@@ -5,6 +5,24 @@
 # never become an emulated substitute for the AArch64 development image.
 # The Rust channel comes from rust-toolchain.toml; external source pins remain
 # in compat/upstreams.toml.
+FROM alpine@sha256:020dfcbaaf4cc1078bf2d9c7ba31a8466e334061dcd2f248001d68f79e52c000 AS musl-clang
+RUN apk add --no-cache clang binutils make python3 curl git
+COPY compat/upstreams.toml /tmp/upstreams.toml
+COPY compat/x86_64/musl_oracle.py /tmp/musl_oracle.py
+RUN set -eu \
+    && MUSL_VERSION="$(python3 -B /tmp/musl_oracle.py --pins /tmp/upstreams.toml version)" \
+    && python3 -B /tmp/musl_oracle.py --pins /tmp/upstreams.toml acquire "/tmp/musl-${MUSL_VERSION}" \
+    && test "$(clang --version | sed -n 's/.*clang version \([0-9]*\)\..*/\1/p' | head -1)" = "23" \
+    && cd "/tmp/musl-${MUSL_VERSION}" \
+    && CC=clang ./configure --prefix="/opt/musl-clang-${MUSL_VERSION}" --syslibdir="/opt/musl-clang-${MUSL_VERSION}/lib" \
+    && make -s -j"$(getconf _NPROCESSORS_ONLN)" \
+    && make -s install \
+    && cp config.mak "/opt/musl-clang-${MUSL_VERSION}/config.mak" \
+    && clang --version | head -1 > "/opt/musl-clang-${MUSL_VERSION}/.clang-version" \
+    && test -f "/opt/musl-clang-${MUSL_VERSION}/lib/libc.so" \
+    && test -f "/opt/musl-clang-${MUSL_VERSION}/lib/ld-musl-x86_64.so.1" \
+    && test "$(readlink -f "/opt/musl-clang-${MUSL_VERSION}/lib/ld-musl-x86_64.so.1")" = "/opt/musl-clang-${MUSL_VERSION}/lib/libc.so" \
+    && rm -rf /tmp/musl.tar.gz "/tmp/musl-${MUSL_VERSION}"
 FROM alpine:3.24.1@sha256:79ff19e9084a00eece421b2523fb93e22d730e2c0e525905de047e848e56d95f
 
 COPY rust-toolchain.toml /tmp/rust-toolchain.toml
@@ -45,6 +63,7 @@ RUN test "$(uname -m)" = "x86_64" \
         coreutils \
         curl \
         git \
+        perf \
         python3 \
         mold \
         rsync \
@@ -94,6 +113,7 @@ RUN set -eu \
         > "/opt/musl-${MUSL_VERSION}/.crabc-musl-gcc-specs.sha256" \
     && rm -rf /tmp/musl.tar.gz "/tmp/musl-${MUSL_VERSION}"
 
+COPY --from=musl-clang /opt/musl-clang-1.2.6 /opt/musl-clang-1.2.6
 COPY docker/x86_64-musl-oracle-gcc /usr/local/bin/crabc-x86_64-musl-gcc
 RUN chmod 0755 /usr/local/bin/crabc-x86_64-musl-gcc
 
