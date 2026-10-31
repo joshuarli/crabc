@@ -533,8 +533,6 @@ struct Object {
     // not retain or dispatch it: pinned musl makes that tag inert on dlclose.
     // Startup objects remain on the established init-array-only boundary,
     // and runtime finalization remains deliberately unsupported.
-    #[cfg(crabc_bounded_runtime_dlopen)]
-    init: usize,
     init_array: *const usize,
     init_count: usize,
     #[cfg(crabc_general_initial_lifecycle)]
@@ -574,8 +572,6 @@ struct Object {
     symtab_file_record_limit: usize,
     // The installed runtime reads DT_NEEDED name offsets from `dynamic`
     // through `needed_name_offset`, so an object has no DT_NEEDED bound.
-    #[cfg(not(feature = "x86_64-owned-dynamic-runtime"))]
-    needed: [usize; MAX_NEEDED],
     needed_count: usize,
     role: ObjectRole,
     map_provenance: ObjectMapProvenance,
@@ -594,8 +590,6 @@ struct Object {
     // note, never from callback-shaped dynamic tags.
     #[cfg(feature = "x86_64-owned-dynamic-runtime")]
     main_crt_mode: MainCrtMode,
-    #[cfg(crabc_initial_exec_tls_graph)]
-    static_tls: bool,
 }
 
 const EMPTY_OBJECT: Object = Object {
@@ -619,8 +613,6 @@ const EMPTY_OBJECT: Object = Object {
     pltrelsz: 0,
     relr: core::ptr::null(),
     relrsz: 0,
-    #[cfg(crabc_bounded_runtime_dlopen)]
-    init: 0,
     init_array: core::ptr::null(),
     init_count: 0,
     #[cfg(crabc_general_initial_lifecycle)]
@@ -649,8 +641,6 @@ const EMPTY_OBJECT: Object = Object {
     interpreter_self: false,
     #[cfg(feature = "x86_64-owned-dynamic-runtime")]
     symtab_file_record_limit: 0,
-    #[cfg(not(feature = "x86_64-owned-dynamic-runtime"))]
-    needed: [0; MAX_NEEDED],
     needed_count: 0,
     role: ObjectRole::Main,
     map_provenance: ObjectMapProvenance::None,
@@ -666,8 +656,6 @@ const EMPTY_OBJECT: Object = Object {
     bind_now: false,
     #[cfg(feature = "x86_64-owned-dynamic-runtime")]
     main_crt_mode: MainCrtMode::Conventional,
-    #[cfg(crabc_initial_exec_tls_graph)]
-    static_tls: false,
 };
 
 // The record itself is immutable RELRO data.  The two dynamic values it needs
