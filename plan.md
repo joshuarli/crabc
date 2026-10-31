@@ -799,19 +799,231 @@ and the reviewed unwinder dependency graph.
   unless a step requires them. S1.4 landed (R and 1.10 in the release gate).
   S1.1 stopped because Alpine 3.24.1 has no LLVM 23 clang; D5 opened and
   decided: a digest-pinned `alpine:edge` builder stage for the reference musl.
+- 2026-10-31: S1.1–S1.3 and the S1.5 seed rows landed and merged; S0 was then
+  completed on the merged tip. S0 budgets are fixed above. The S0.8 test for
+  chain-only dispatcher subcommands finds none: the dispatcher is behavioural
+  coverage, so its reduction lever is the 314-case `*-header-abi`
+  consolidation, not deletion of the receipt chain.
 
 ## S0 baseline table
 
-**Not yet measured.** The coordinator fills this from S0 with: SHA; product
-commands; one row per S0.3 category (files, non-comment lines); one row per
-S0.4 mechanism kind; S0.5 sections per image; S0.6 startup rows and
-attribution; the S0.8 ranked list; the S0.9 budgets.
+**Measured 2026-10-31 at `0780439b3`** (coordinator). Product sources are
+byte-identical to the `90dd65bee` build used for the startup/footprint rows
+(`git diff --stat 90dd65bee..0780439b3 -- libc ldso crt builtins crabc-core
+crabc-rs unwinder` is empty), so those rows carry over unchanged. Image pin
+`sha256:6e35810928ea…a0129a`; reference `matched-llvm-23` (clang 23.1.4, musl
+1.2.6 `[musl_native]`). Raw data: `.work/s0/report.md` (Run 2),
+`.work/s3a/`, `.work/campaign/lanes/s1-counts/`.
+
+Products: `materialized-dynamic-sysroot --work … --prepare` (PASS; installed
+root has `lib/ld-crabc-x86_64.so.1`, `usr/lib/libc.so`, `usr/lib/Scrt1.o`) and
+`owned-static-sysroot` (PASS, 72-path suite).
+
+### Source (files / non-comment lines; `git ls-files`, `loc()` from S0.3)
+
+| Category | Files | Lines |
+| --- | --- | --- |
+| `libc/src/*.rs` minus `*_tests.rs` | 555 | 122,697 |
+| `libc/src/*.S` (generated musl asm, D2) | 37 | 80,215 |
+| `ldso/src/*.rs` minus `*_tests.rs` | 28 | 18,293 |
+| `*_tests.rs` + `tests/**` | 457 | 36,079 |
+| `crt/` | 47 | 7,786 |
+| `builtins/` | 125 | 12,550 |
+| `crabc-core/src` | 36 | 9,026 |
+| `crabc-rs/src` | 55 | 23,392 |
+| `unwinder/` | 57 | 12,387 |
+| `scripts/` | 37 | 27,711 |
+| `compat/x86_64/*.py` | 571 | 271,054 |
+| `compat/perf/` | 60 | 26,552 |
+| other `compat/` (excl. allocator, x86_64, perf) | 294 | 127,943 |
+| frozen `crabc-mimalloc/` + `compat/allocator/` (count only) | 922 | 533,552 |
+| third-party vendored source | 0 | 0 |
+
+Paths are git pathspecs: `*` matches `/`, so `libc/src/*.rs` is every depth.
+`libc-test-harness/` (10 files, 1,618 lines) is outside the plan's category
+list and is not counted above.
+Inline `#[cfg(test)]` sites (`rg -c` summed): libc 13, ldso 33, crabc-core 9,
+crabc-rs 14, builtins 1, unwinder 1.
+
+### Mechanisms
+
+| Kind | Baseline |
+| --- | --- |
+| Cargo features: libc / ldso / crabc-core / crabc-rs / perf-native | 40 / 7 / 2 / 7 / 3 |
+| Dispatcher subcommands (`--help \| rg -c '^  [a-z0-9-]+'`) | 942 (940 distinct; 314 `*-header-abi` arms, 273 documented) |
+| `scripts/dev-x86_64.sh` lines | 12,817 |
+| Python entry points (plan's corrected command) | 647 |
+| `compat/**/generate_*.py` | 35 |
+| Distinct report formats | 22 |
+| `RuntimeV1` fields | 30 |
+| Symbols `libc.so` imports from the loader | 14 (13 undefined + 1 weak object) |
+| Process-state owners | **not enumerated** (retained gap; see Needs owner) |
+
+### Linked footprint (`llvm-size -A`)
+
+| Section | `ld-crabc` | `libc.so` | musl `libc.so` |
+| --- | --- | --- | --- |
+| `.text` | 83,737 | 938,821 | 360,954 |
+| `.rodata` (incl. `.cst*`/`.str*`) | 1,118 | 148,972 | 219,542 |
+| `.data.rel.ro` | 480 | 19,296 | 760 |
+| `.data` | 192 | 18,616 | 1,048 |
+| `.bss` | 78,433 | 35,848 | 11,568 |
+| total | 176,353 | 1,361,890 | — |
+
+Static hello (crabc `ld.lld -static` from owned objects): `.text` 368,488,
+total 590,820. Host-musl static hello: `.text` 2,824, total 34,165.
+
+### Startup (hand P2, wrapper subtracted, `unmatched` host musl)
+
+| Row | musl syscalls | crabc syscalls | musl insn | crabc insn | ratio |
+| --- | --- | --- | --- | --- | --- |
+| dynamic hello | 9 | 25 | 35,095 | 238,681 | 6.80× |
+| static hello | 4 | 10 | 856 | 173,432 | 202.6× |
+
+Crabc dynamic +16 syscalls: split image 11 (`openat`×4, `fstat`, `pread64`,
+`mmap`×4, `close`), allocator-attributed 5 (`sysinfo`, `open`×2, 2 MiB `mmap`,
+`getrandom`), redundant 3 (`arch_prctl(ARCH_GET_FS)`, `gettid`, extra
+`mprotect`), offset by musl-only `brk`×2 + `set_tid_address` (−3).
+Static +6: allocator-attributed 5, thread-stack `mmap` 759 B, `gettid`
+replacing `set_tid_address` (net 0).
+Attribution. Run 2's `perf record` split (`ld-crabc` 82.6 %, `libc.so` 13.0 %)
+rests on 46 samples and is not quantitative. A deterministic static probe
+(`hello-static` built from this baseline) measured with `perf stat`:
+173,930 instructions with the normal 41-variable environment, 118,862 with
+`env -i`, 122,564 with one variable. Environment-dependent startup work
+alone is therefore **55,068 instructions** (31.7 % of startup), and mimalloc
+symbols (`_mi_strnicmp`, `_mi_prim_getenv`, `_mi_toupper`, `_mi_strlcpy`)
+dominate the symbol samples. Sampling cannot quantify the rest: the kernel
+rate-limits a short-lived process to about nine samples per exec, so a
+3,000-exec loop gives shares, not counts. The allocator share stays
+unseparated. The empty-environment total (118,862) is an upper bound on
+allocator-free startup: it is still 139 × musl's 856 before any allocator
+cost is counted. Run 2's 173,432 differs from this reprobe by 0.3 %, which is
+the same environment term moving.
+
+### Seed rows (S1.5, `matched-llvm-23`, dynamic PIE)
+
+58 rows: **0 pass**, 46 fail, 11 nondeterministic, 1 unavailable
+(`loader_dynamic_tls_growth` client failure). 43 of the 46 deterministic fails
+are syscall-only: instructions are at or below musl and the row fails solely on
+the whole-process +13/+14 startup delta. Instruction regressions:
+`memcpy_16k_aligned` 1.4375, `stdio_format_parse` 1.4778,
+`memcpy_64_aligned` 1.1875. The `startup` row reads `nondeterministic`: its
+musl trials were 85,712 / 85,731 / 85,730 (a 19-instruction spread, 0.022 %,
+over the 0.01 % allowance) while crabc's were 266,432 / 266,431 / 266,432. A
+direct musl hello is deterministic (35,147 ×3, and 35,148 ×3 under
+`setarch -R`), so the spread enters through the counts route's launcher, not
+musl's initialisation. That row cannot be judged until the route is fixed.
+
+### Ranked deletion list (S0.8)
+
+1. **314 `*-header-abi` dispatcher arms (273 documented).** 244
+   `compat/x86_64/run_*_header_abi*.sh` (34,461 lines) plus 179 three-line
+   inline wrappers and 314 five-line arms. The scripts follow one template but
+   differ per case in header, symbol, probe, `CRABC_EXPECT_*` and profile set,
+   so the reduction is a declarative case table plus one runner, not a rename.
+   Consumers: `tests/test_runner.py` (84 commands), `docs/evidence/**`, the
+   dispatcher. Risk: medium (per-case data must be extracted verbatim).
+   Checks: every case's `PASS` line unchanged; `test_runner`; parity ledger.
+2. **ldso six private milestone features, source roots, fixed/general
+   duplicates.** 6 features, 12 files, 9,626 lines. Consumers: 3 runner
+   scripts, 2 test modules, `parity.toml`, and 71 behavioural cases with no
+   product equivalent (`.work/s3a/migration.md`). Risk: high. Checks: loader
+   product cases, static suite, export identity.
+3. **19 libc per-family leaf features** enabled by both owned aggregates.
+   Consumer evidence: `.work/s3a/5.2-skips.md` — folding makes them
+   unconditional in the frozen default archive too, changing its export
+   surface and deleting the absence proofs. Risk: contract. Needs owner.
+4. **Seven per-symbol `native_abi_*_import_receipt.py` modules** (1,782 lines
+   + 7 fixtures / 98 lines) reproduced from one template. Consumers:
+   `native_abi_selection.py`, `abi_differential_evidence.py`, 4 test modules.
+   Risk: low. Checks: identical receipt JSON, same 4 link modes.
+5. **Split loader/libc images (S3b).** 1 image, 14 imports, 30 `RuntimeV1`
+   fields, 11 startup syscalls.
+6. **Python receipt-validating installed C driver.** 4 files, 2,505 lines
+   (`crabc_cc_owned_dynamic.py`, `crabc_cc_static.py`,
+   `owned_dynamic_receipt.py`, `owned_dynamic_elf.py`).
+
+The S0.8 test for item 3 of the candidate list (subcommands consumed only by
+the plan/receipt chain) is **empty**: of 940 distinct subcommands, 720 are
+referenced by a real runner, 116 by nothing outside the dispatcher (107 of
+them behavioural header matrices), 84 only by test tables, 20 only by docs.
+The dispatcher is a behavioural surface, not chain scaffolding; its reduction
+lever is the item-1 consolidation.
+
+### Budgets (S0.9, fixed; rule: baseline − 0.8 × identified deletions)
+
+| Area | Baseline | Identified | Budget |
+| --- | --- | --- | --- |
+| ldso features | 7 | 6 | **2** |
+| ldso lines | 18,293 | 9,626 | **11,000** |
+| libc features | 40 | 19 | **25** |
+| dispatcher subcommands | 942 | 272 | **720** |
+| `scripts/dev-x86_64.sh` lines | 12,817 | 2,380 | **11,000** |
+| `compat/x86_64` Python files | 571 | 6 | **566** |
+| `compat/x86_64` Python lines | 271,054 | 1,482 | **270,000** |
+| dynamic startup syscalls | 25 | 14 (11 split + 3 redundant) | **14** (≤5 allocator-attributed) |
+| static startup syscalls | 10 | 1 | **9** |
+| dynamic startup instructions | 238,681 | none identified | **cost contract only** |
+| static startup instructions | 173,432 | none identified | **cost contract only** |
+
+The two instruction rows have no itemised deletion. The measured costs are
+environment-dependent startup work dominated by the frozen allocator's option
+scan (55,068 instructions, D1) and a loader/CRT/TLS remainder that the harness cannot yet separate; a 3,000-exec
+loop shows mimalloc symbols dominating but is rate-limited to about nine
+samples per exec. They are budgeted against the cost contract (≤ 1.10 × R)
+rather than a fabricated deletion count, and they are the rows S3b/S4 must
+move. `libc` features are budgeted on the identified 19 but cannot be
+executed until the default-archive export question is decided (Needs owner).
 
 ## Result table
 
-**No S0–S5 results yet.** One row per completed step: step, merged SHA, the
-numbers against budget, checks run, blockers. Replace rows; do not append
-narrative.
+**S0 is measured; S1 is merged; no S2–S5 step has landed.** Numbers are against
+the budgets above. `allocator-attributed` costs are listed, never passed.
+
+| Step | Merged at | Numbers vs budget | Checks | Blockers |
+| --- | --- | --- | --- | --- |
+| S0 | `0780439b3` | table above; nothing measured against it yet | both sysroot builds PASS; counts reproducible ≤0.0017 %, linear ≤0.0026 % | process-state owners not enumerated |
+| S1.1/S1.2 | `0aef1d890` (`90dd65bee`) | perf 7.1.5 in image; clang 23.1.4 matches rustc LLVM 23.1.1; matched musl installed at `/opt/musl-clang-1.2.6` | image build; `test_core_image_dispatch` 11 pass; `musl-oracle` PASS | none |
+| S1.3 | `ac87382e8` (`0780439b3`) | `perf-c counts` development route; object-once/dual-link reused; no new runner | `test_run_x86_64` 41 pass 1 skip; `test_x86_64_evidence` 46 pass | static-PIE has no counts path; `startup` row nondeterministic (musl trials 85,712/85,731/85,730 = 0.022 %, direct musl is deterministic, so the launcher path is implicated) |
+| S1.4 | `10de7c2d9` | `SYSCALL_LIMIT_FACTOR = 1`, `INSTRUCTION_LIMIT_RATIO = 1.10`; one definition | `test_performance_release_gate` 23 pass | none |
+| S1.5 | (runs, no commit) | 58 dynamic-PIE rows: 0 pass, 46 fail, 11 nondeterministic, 1 unavailable; 43 fails are syscall-only | 4 `counts` invocations exit 0 | static-PIE rows unavailable; `startup` row nondeterministic |
+| S2 | — | budget 690 / 11,000 / 566 / 270,000; nothing deleted | — | not started; item 1 is the lever |
+| S3a | — | nothing deleted; ldso 28/18,293 lines and 7 features unchanged | product baselines recorded; exports identical | 71 ldso cases and the libc export-surface question |
+| S3b | — | — | — | requires S3a-ldso |
+| S4 | — | — | — | requires S3b for loader/startup rows |
+| S5 | — | — | — | requires S0–S4 |
+
+### Needs owner
+
+1. **libc leaf features change the frozen default archive.** Folding the 19
+   leaves that both owned aggregates enable makes them unconditional in the
+   dependency-free default archive as well, changing its exported surface and
+   deleting its absence proofs (`.work/s3a/5.2-skips.md`,
+   `libc/src/c_abi/x86_64/static_c_abi.rs`). Accept the new default export
+   surface, or drop the libc-feature budget back to 40. Recommendation: accept
+   it only for the families the default archive no longer needs to prove
+   absent, and keep the ratchet for the rest.
+2. **ldso private milestone features have no product equivalents.** Deleting
+   `x86_64-initial-interpreter`,
+   `x86_64-general-initial-tls-interpreter` and
+   `x86_64-general-initial-tls-runtime-v1-interpreter` needs 71 behavioural
+   cases (malformed ELF, TLS, lifecycle) moved into the installed product's
+   case table first (`.work/s3a/migration.md`). That is real test work, not a
+   deletion. Option: keep the three features (ldso feature budget becomes 7)
+   until the migration is scheduled.
+3. **Startup instructions are dominated by the frozen allocator, and D1's
+   exclusion is not executable.** A deterministic static probe measures
+   173,930 startup instructions, 118,862 with `env -i`; environment-dependent
+   startup is 55,068 of them, dominated by the allocator's option scan
+   (D1-frozen), and mimalloc symbols dominate the samples. The harness has no
+   way to report "the remaining instructions" that D1 says startup rows are
+   judged on, and sampling is rate-limited to about nine samples per exec. Decide: extend the counts
+   route to attribute startup instructions by symbol and subtract only
+   `allocator-attributed` ones, or judge startup rows on the total. Until then
+   the startup-instruction rows cannot be judged at all, and the allocator-free
+   static remainder (≤ 118,862 against musl's 856) still fails 1.10 × before
+   any allocator cost is counted.
 
 ## Non-goals
 
