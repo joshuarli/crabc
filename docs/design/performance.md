@@ -187,24 +187,30 @@ than fabricating an exact equality test. Preserve deterministic uncontended and
 controlled-path coverage. Missing or nondeterministic evidence is explicitly
 unavailable for exact-count claims, not an excuse to remove inconvenient rows.
 
-Startup rows count the client process only. The launcher parent's own
+Counts rows trace the client process only. The launcher parent's own
 post-execve `poll`/`wait4`/`write`/exit lines are harness overhead, and their
 in-flight `poll` start can interleave on either side of the client's `execve`
-line; including them would move a raw total by one between runs without any
-runtime change. Loop rows keep the whole-process trace, where the per-op
-quotients cancel the same parent lines.
+line; including them would move a whole total by one, and a per-op quotient by
+one over the N2-N1 step, between runs without any runtime change.
 
-Startup rows also separate the frozen C backend's allocator-attributed calls
-(D1) from the judged comparison. The counts route recognises exactly five
+Every counts row also separates the frozen C backend's allocator-attributed
+calls (D1) from the judged comparison. The counts route recognises these
 signatures by name and identifying arguments: `sysinfo`; the two allocator
 option probes (`/proc/sys/vm/overcommit_memory` and
 `/sys/kernel/mm/transparent_hugepage/enabled`); the backend's 2.25 MiB
-`MAP_NORESERVE` reservation; and its 32-byte `GRND_NONBLOCK` `getrandom`. The
-record lists them under `allocator_attributed` and judges the remaining
-per-name calls, and their total, against the reference. A same-name call with a
-different argument is not attributed and remains an extra judged call.
-Instructions stay on the total (D8): the allocator calls are reported, not
-subtracted from `ratio_insn`.
+`MAP_NORESERVE` reservation; its 32-byte `GRND_NONBLOCK` `getrandom`; the 1 GiB
+`MADV_HUGEPAGE` `madvise` at the base of its 1 GiB `MAP_NORESERVE` arena
+`mmap`; and the 65536-byte `MADV_DONTNEED` `madvise` inside that marked arena.
+The record lists them under `allocator_attributed` and judges the remaining
+per-name calls, and their total, against the reference. The per-name check
+treats `open` and `openat` as one family; the raw breakdown is retained and
+`explanations` records the family totals, and an extra call beyond the family
+sum still fails. A loop row judges its N1 whole count this way; its per-op
+comparison stays on the raw per-op counts, where the constant start-up calls
+cancel. An allocator call with any other argument, advice, length or address
+is not attributed and remains an extra judged call. Instructions stay on the
+total (D8): the allocator calls are reported, not subtracted from
+`ratio_insn`.
 
 ## Timing and memory
 

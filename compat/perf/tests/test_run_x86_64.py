@@ -889,7 +889,7 @@ class CountsPureHelpersTests(unittest.TestCase):
         self.assertEqual(client["calls"], {"execve": 1, "arch_prctl": 1, "exit_group": 1})
         self.assertEqual(client["total"], 3)
 
-    def startup_calls(self) -> list[runner.TracedCall]:
+    def allocator_calls(self) -> list[runner.TracedCall]:
         return [
             runner.TracedCall("sysinfo", "{uptime=1, loads=[1, 2, 3]}"),
             runner.TracedCall("open", '"/proc/sys/vm/overcommit_memory", O_RDONLY'),
@@ -917,7 +917,7 @@ class CountsPureHelpersTests(unittest.TestCase):
 
     def startup_status(self, candidate: Sequence[runner.TracedCall], reference: Mapping[str, int],
                        ratio_insn: float = 1.0) -> tuple[str, dict[str, Any]]:
-        judgement = runner.judge_startup_syscalls(reference, candidate)
+        judgement = runner.judge_allocator_syscalls(reference, candidate)
         status = runner.classify_counts_row(
             has_counts=True, deterministic=True, linear=True, matched=True,
             ref_sys_perop=judgement["reference"]["total"], cand_sys_perop=judgement["judged"]["total"],
@@ -926,7 +926,7 @@ class CountsPureHelpersTests(unittest.TestCase):
         return status, judgement
 
     def test_startup_classifies_exactly_the_five_allocator_calls_by_arguments(self) -> None:
-        signatures = [runner.allocator_startup_signature(call) for call in self.startup_calls()]
+        signatures = [runner.allocator_startup_signature(call) for call in self.allocator_calls()]
         self.assertEqual(signatures, [
             "sysinfo",
             'open("/proc/sys/vm/overcommit_memory")',
@@ -934,7 +934,9 @@ class CountsPureHelpersTests(unittest.TestCase):
             "mmap(2359296, MAP_NORESERVE)",
             "getrandom(32, GRND_NONBLOCK)",
         ])
-        self.assertEqual(set(signatures), set(runner.ALLOCATOR_STARTUP_SIGNATURES))
+        self.assertEqual(set(signatures), set(runner.ALLOCATOR_STARTUP_SIGNATURES[:5]))
+        self.assertIn("madvise(1073741824, MADV_HUGEPAGE)", runner.ALLOCATOR_STARTUP_SIGNATURES)
+        self.assertIn("madvise(65536, MADV_DONTNEED within arena)", runner.ALLOCATOR_STARTUP_SIGNATURES)
         self.assertIsNone(runner.allocator_startup_signature(
             runner.TracedCall("getrandom", '"\\x01", 64, GRND_NONBLOCK')))
         self.assertIsNone(runner.allocator_startup_signature(
@@ -946,34 +948,34 @@ class CountsPureHelpersTests(unittest.TestCase):
         self.assertIsNone(runner.allocator_startup_signature(runner.TracedCall("gettid", "")))
 
     def test_startup_judges_only_the_remaining_calls_against_the_reference(self) -> None:
-        status, judgement = self.startup_status(self.startup_calls() + self.startup_others(),
+        status, judgement = self.startup_status(self.allocator_calls() + self.startup_others(),
                                                 self.startup_reference())
         self.assertEqual(judgement["allocator_attributed"]["total"], 5)
         self.assertEqual(judgement["allocator_attributed"]["signatures"],
-                         list(runner.ALLOCATOR_STARTUP_SIGNATURES))
+                         list(runner.ALLOCATOR_STARTUP_SIGNATURES[:5]))
         self.assertEqual(judgement["judged"]["total"], 7)
         self.assertEqual(judgement["reference"]["total"], 9)
         self.assertEqual(judgement["excess"], {})
         self.assertEqual(status, "pass")
-        kinds = list((call.name, call.arguments) for call in self.startup_calls())
+        kinds = list((call.name, call.arguments) for call in self.allocator_calls())
         self.assertEqual(len(kinds), 5)
 
     def test_startup_fails_on_a_sixth_non_allocator_call(self) -> None:
         status, judgement = self.startup_status(
-            self.startup_calls() + self.startup_others() + [runner.TracedCall("gettid", "")],
+            self.allocator_calls() + self.startup_others() + [runner.TracedCall("gettid", "")],
             self.startup_reference())
         self.assertEqual(judgement["judged"]["total"], 8)
         self.assertEqual(judgement["excess"], {"gettid": 1})
         self.assertEqual(status, "fail")
 
     def test_startup_fails_on_an_allocator_call_with_an_unexpected_argument(self) -> None:
-        calls = self.startup_calls()
+        calls = self.allocator_calls()
         calls[-1] = runner.TracedCall("getrandom", '"\\x01", 64, GRND_NONBLOCK')
         status, judgement = self.startup_status(calls + self.startup_others(), self.startup_reference())
         self.assertEqual(judgement["allocator_attributed"]["total"], 4)
         self.assertEqual(judgement["excess"], {"getrandom": 1})
         self.assertEqual(status, "fail")
-        missing_mmap = self.startup_calls()
+        missing_mmap = self.allocator_calls()
         missing_mmap[3] = runner.TracedCall(
             "mmap", "NULL, 2359296, PROT_READ|PROT_WRITE, MAP_PRIVATE|MAP_ANONYMOUS, -1, 0")
         status, judgement = self.startup_status(missing_mmap + self.startup_others(),
@@ -983,12 +985,196 @@ class CountsPureHelpersTests(unittest.TestCase):
         self.assertEqual(status, "fail")
 
     def test_startup_instruction_ratio_still_judges_the_total(self) -> None:
-        status, _judgement = self.startup_status(self.startup_calls() + self.startup_others(),
+        status, _judgement = self.startup_status(self.allocator_calls() + self.startup_others(),
                                                  self.startup_reference(), ratio_insn=1.1001)
         self.assertEqual(status, "fail")
-        status, _judgement = self.startup_status(self.startup_calls() + self.startup_others(),
+        status, _judgement = self.startup_status(self.allocator_calls() + self.startup_others(),
                                                  self.startup_reference(), ratio_insn=1.10)
         self.assertEqual(status, "pass")
+
+    def loop_reference(self) -> dict[str, int]:
+        return {"execve": 1, "arch_prctl": 1, "set_tid_address": 1, "brk": 2,
+                "mmap": 1, "mprotect": 2, "ioctl": 1, "writev": 1, "exit_group": 1,
+                "getpid": 1000}
+
+    def loop_others(self) -> list[runner.TracedCall]:
+        return [
+            runner.TracedCall("execve", '"/app/bin/workload", ["/app/bin/workload", "getpid", "1000"], 0x1'),
+            runner.TracedCall("arch_prctl", "ARCH_SET_FS, 0x7f00"),
+            runner.TracedCall("set_tid_address", "0x7f01"),
+            runner.TracedCall("mmap", "0x7f02, 4096, PROT_READ, MAP_PRIVATE|MAP_FIXED, 3, 0"),
+            runner.TracedCall("mprotect", "0x7f03, 4096, PROT_READ"),
+            runner.TracedCall("mprotect", "0x7f04, 4096, PROT_READ"),
+            runner.TracedCall("ioctl", "1, TIOCGWINSZ, 0x7fff"),
+            runner.TracedCall("writev", '1, [{iov_base="ok", iov_len=2}], 1'),
+            runner.TracedCall("exit_group", "0"),
+        ] + [runner.TracedCall("getpid", "")] * 1000
+
+    def loop_status(self, candidate: Sequence[runner.TracedCall], reference: Mapping[str, int],
+                    *, ref_perop: float = 1.0, cand_perop: float = 1.0,
+                    ratio_insn: float = 1.0) -> tuple[str, dict[str, Any]]:
+        judgement = runner.judge_allocator_syscalls(reference, candidate)
+        status = runner.classify_counts_row(
+            has_counts=True, deterministic=True, linear=True, matched=True,
+            ref_sys_perop=ref_perop, cand_sys_perop=cand_perop,
+            ref_sys_whole=judgement["reference"]["total"],
+            cand_sys_whole=judgement["judged"]["total"],
+            ratio_insn=ratio_insn, syscall_excess=judgement["excess"])
+        return status, judgement
+
+    def test_loop_row_subtracts_the_five_allocator_calls_from_its_whole_count(self) -> None:
+        status, judgement = self.loop_status(self.allocator_calls() + self.loop_others(),
+                                             self.loop_reference())
+        self.assertEqual(judgement["allocator_attributed"]["total"], 5)
+        self.assertEqual(judgement["allocator_attributed"]["signatures"],
+                         list(runner.ALLOCATOR_STARTUP_SIGNATURES[:5]))
+        self.assertEqual(judgement["judged"]["total"], 1009)
+        self.assertEqual(judgement["reference"]["total"], 1011)
+        self.assertEqual(judgement["excess"], {})
+        self.assertEqual(status, "pass")
+
+    def test_loop_row_fails_on_a_sixth_non_allocator_startup_call(self) -> None:
+        status, judgement = self.loop_status(
+            self.allocator_calls() + self.loop_others() + [runner.TracedCall("gettid", "")],
+            self.loop_reference())
+        self.assertEqual(judgement["excess"], {"gettid": 1})
+        self.assertEqual(status, "fail")
+
+    def test_loop_row_does_not_exempt_an_allocator_call_outside_the_signature(self) -> None:
+        cases = [
+            (1, runner.TracedCall("open", '"/proc/sys/vm/overcommit_memory.bak", O_RDONLY')),
+            (1, runner.TracedCall("openat", 'AT_FDCWD, "/proc/sys/vm/overcommit_memory", O_RDONLY')),
+            (3, runner.TracedCall(
+                "mmap", "NULL, 2359296, PROT_READ|PROT_WRITE, MAP_PRIVATE|MAP_ANONYMOUS, -1, 0")),
+            (3, runner.TracedCall(
+                "mmap", "NULL, 4096, PROT_READ|PROT_WRITE, "
+                        "MAP_PRIVATE|MAP_ANONYMOUS|MAP_NORESERVE, -1, 0")),
+            (4, runner.TracedCall("getrandom", '"\\x01", 31, GRND_NONBLOCK')),
+            (4, runner.TracedCall("getrandom", '"\\x01", 32, GRND_RANDOM')),
+        ]
+        for index, replacement in cases:
+            self.assertIsNone(runner.allocator_startup_signature(replacement))
+            calls = list(self.allocator_calls())
+            calls[index] = replacement
+            status, judgement = self.loop_status(calls + self.loop_others(), self.loop_reference())
+            self.assertEqual(judgement["allocator_attributed"]["total"], 4)
+            self.assertNotEqual(judgement["excess"], {})
+            self.assertEqual(status, "fail")
+
+    def test_loop_row_still_fails_an_extra_per_op_call(self) -> None:
+        status, judgement = self.loop_status(self.allocator_calls() + self.loop_others(),
+                                             self.loop_reference(), ref_perop=3.0, cand_perop=4.0)
+        self.assertEqual(judgement["excess"], {})
+        self.assertEqual(status, "fail")
+        status, judgement = self.loop_status(
+            self.allocator_calls() + self.loop_others() + [runner.TracedCall("getpid", "")],
+            self.loop_reference())
+        self.assertEqual(judgement["excess"], {"getpid": 1})
+        self.assertEqual(status, "fail")
+
+    def test_strace_parses_the_mmap_result_address(self) -> None:
+        text = ("200 execve(\"/app/bin/workload\", [\"x\"], 0x1) = 0\n"
+                "200 mmap(NULL, 1073741824, PROT_READ|PROT_WRITE, "
+                "MAP_PRIVATE|MAP_ANONYMOUS|MAP_NORESERVE, -1, 0) = 0x47ae4c00000\n")
+        parsed = runner.parse_strace_whole(text, "/app/bin/workload")
+        self.assertEqual(parsed["entries"][1].name, "mmap")
+        self.assertEqual(parsed["entries"][1].result, "0x47ae4c00000")
+
+    def open_family_reference(self) -> dict[str, int]:
+        return {"execve": 1, "open": 1000, "read": 1000, "close": 1000}
+
+    def open_family_candidate(self) -> list[runner.TracedCall]:
+        return [
+            runner.TracedCall("execve", '"/app/bin/workload", ["x"], 0x1'),
+        ] + [
+            runner.TracedCall("openat", 'AT_FDCWD, "/app/input/format-parse.txt", '
+                                        "O_RDWR|O_CREAT|O_TRUNC, 0666"),
+        ] * 1000 + [runner.TracedCall("read", "3, \"-257 100 f0 alpha tail\", 1024")] * 1000 + \
+            [runner.TracedCall("close", "3")] * 1000
+
+    def test_open_family_sum_passes_when_open_and_openat_match(self) -> None:
+        status, judgement = self.loop_status(self.open_family_candidate(), self.open_family_reference())
+        self.assertEqual(judgement["judged"]["calls"], {"execve": 1, "openat": 1000, "read": 1000, "close": 1000})
+        self.assertEqual(judgement["excess"], {})
+        self.assertEqual(status, "pass")
+        self.assertEqual(judgement["explanations"],
+                         ["open family: candidate open+openat 1000 vs reference open+openat 1000"])
+
+    def test_open_family_extra_call_fails_beyond_the_sum(self) -> None:
+        candidate = self.open_family_candidate() + [
+            runner.TracedCall("open", '"/app/input/extra", O_RDONLY'),
+        ]
+        status, judgement = self.loop_status(candidate, self.open_family_reference())
+        self.assertEqual(judgement["excess"], {"open+openat": 1})
+        self.assertEqual(status, "fail")
+
+    def allocator_arena_calls(self) -> list[runner.TracedCall]:
+        base = "0x47ae4c00000"
+        return [
+            runner.TracedCall("mmap", "0x47ae4c00000, 1073741824, PROT_READ|PROT_WRITE, "
+                              "MAP_PRIVATE|MAP_ANONYMOUS|MAP_NORESERVE, -1, 0", base),
+            runner.TracedCall("madvise", f"{base}, 1073741824, MADV_HUGEPAGE"),
+            runner.TracedCall("madvise", "0x47ae4e10000, 65536, MADV_DONTNEED"),
+        ]
+
+    def arena_reference(self) -> dict[str, int]:
+        reference = dict(self.loop_reference())
+        reference["mmap"] = 2
+        return reference
+
+    def test_allocator_arena_madvise_calls_are_attributed(self) -> None:
+        status, judgement = self.loop_status(
+            self.allocator_calls() + self.allocator_arena_calls() + self.loop_others(),
+            self.arena_reference())
+        self.assertEqual(judgement["allocator_attributed"]["total"], 7)
+        self.assertEqual(judgement["allocator_attributed"]["calls"]["madvise"], 2)
+        self.assertIn("madvise(1073741824, MADV_HUGEPAGE)",
+                      judgement["allocator_attributed"]["signatures"])
+        self.assertIn("madvise(65536, MADV_DONTNEED within arena)",
+                      judgement["allocator_attributed"]["signatures"])
+        self.assertNotIn("madvise", judgement["judged"]["calls"])
+        self.assertEqual(judgement["excess"], {})
+        self.assertEqual(status, "pass")
+
+    def test_madvise_outside_the_arena_is_not_attributed(self) -> None:
+        arena = self.allocator_arena_calls()
+        arena[2] = runner.TracedCall("madvise", "0x47b24c00000, 65536, MADV_DONTNEED")
+        status, judgement = self.loop_status(
+            self.allocator_calls() + arena + self.loop_others(), self.arena_reference())
+        self.assertEqual(judgement["allocator_attributed"]["total"], 6)
+        self.assertEqual(judgement["excess"], {"madvise": 1})
+        self.assertEqual(status, "fail")
+
+    def test_madvise_with_other_arguments_is_not_attributed(self) -> None:
+        cases = [
+            (1, runner.TracedCall("madvise", "0x47ae4c00000, 65536, MADV_HUGEPAGE")),
+            (1, runner.TracedCall("madvise", "0x47ae4c00000, 1073741824, MADV_WILLNEED")),
+            (1, runner.TracedCall("madvise", "0x47ae4c01000, 1073741824, MADV_HUGEPAGE")),
+            (2, runner.TracedCall("madvise", "0x47ae4e10000, 4096, MADV_DONTNEED")),
+            (2, runner.TracedCall("madvise", "0x47ae4e10000, 65536, MADV_WILLNEED")),
+        ]
+        for index, replacement in cases:
+            arena = self.allocator_arena_calls()
+            arena[index] = replacement
+            status, judgement = self.loop_status(
+                self.allocator_calls() + arena + self.loop_others(), self.arena_reference())
+            self.assertLess(judgement["allocator_attributed"]["total"], 7)
+            self.assertNotEqual(judgement["excess"], {})
+            self.assertEqual(status, "fail")
+
+    def test_madvise_without_a_marked_arena_is_not_attributed(self) -> None:
+        missing_mark = [self.allocator_arena_calls()[0], self.allocator_arena_calls()[2]]
+        status, judgement = self.loop_status(
+            self.allocator_calls() + missing_mark + self.loop_others(), self.arena_reference())
+        self.assertEqual(judgement["allocator_attributed"]["total"], 5)
+        self.assertEqual(judgement["excess"], {"madvise": 1})
+        self.assertEqual(status, "fail")
+        standalone = runner.TracedCall("madvise", "0x47ae4e10000, 65536, MADV_DONTNEED")
+        status, judgement = self.loop_status(
+            self.allocator_calls() + [standalone] + self.loop_others(), self.arena_reference())
+        self.assertEqual(judgement["allocator_attributed"]["total"], 5)
+        self.assertEqual(judgement["excess"], {"madvise": 1})
+        self.assertEqual(status, "fail")
 
     def base_kwargs(self, **changes: object) -> dict[str, object]:
         kwargs: dict[str, object] = {

@@ -3775,11 +3775,16 @@ ALLOCATOR_STARTUP_OPEN_PATHS = (
 )
 ALLOCATOR_STARTUP_MMAP_BYTES = 2_359_296
 ALLOCATOR_STARTUP_GETRANDOM_BYTES = 32
+ALLOCATOR_STARTUP_ARENA_BYTES = 1_073_741_824
+ALLOCATOR_STARTUP_DONTNEED_BYTES = 65_536
+OPEN_CALL_FAMILY = ("open", "openat")
 ALLOCATOR_STARTUP_SIGNATURES = (
     "sysinfo",
     *tuple(f'open("{path}")' for path in ALLOCATOR_STARTUP_OPEN_PATHS),
     f"mmap({ALLOCATOR_STARTUP_MMAP_BYTES}, MAP_NORESERVE)",
     f"getrandom({ALLOCATOR_STARTUP_GETRANDOM_BYTES}, GRND_NONBLOCK)",
+    f"madvise({ALLOCATOR_STARTUP_ARENA_BYTES}, MADV_HUGEPAGE)",
+    f"madvise({ALLOCATOR_STARTUP_DONTNEED_BYTES}, MADV_DONTNEED within arena)",
 )
 _STRACE_CALL = re.compile(r"^(?:\d+\s+)?([a-z_][a-z0-9_]*)\(")
 
@@ -3788,6 +3793,7 @@ _STRACE_CALL = re.compile(r"^(?:\d+\s+)?([a-z_][a-z0-9_]*)\(")
 class TracedCall:
     name: str
     arguments: str
+    result: str = ""
 
 
 def select_counts_reference(candidates: Mapping[str, str | None], rustc_text: str) -> tuple[str, str]:
@@ -3881,8 +3887,9 @@ def parse_strace_whole(text: str, binary: str, *, client_only: bool = False) -> 
             start = match.end()
             separator = line.find(") = ", start)
             end = separator if separator >= 0 else len(line)
+            result = line[separator + 4:].strip() if separator >= 0 else ""
             calls[name] = calls.get(name, 0) + 1
-            entries.append(TracedCall(name, line[start:end]))
+            entries.append(TracedCall(name, line[start:end], result))
     return {"total": sum(calls.values()), "calls": calls, "entries": entries}
 
 
@@ -3891,6 +3898,56 @@ def strace_string_argument(arguments: str) -> str | None:
         return None
     end = arguments.find('"', 1)
     return None if end < 0 else arguments[1:end]
+
+
+def parse_address(text: str) -> int | None:
+    if not text.startswith("0x"):
+        return None
+    try:
+        return int(text, 16)
+    except ValueError:
+        return None
+
+
+def allocator_arena_base(call: TracedCall) -> int | None:
+    if call.name != "mmap":
+        return None
+    fields = [field.strip() for field in call.arguments.split(",")]
+    if len(fields) < 6:
+        return None
+    if fields[1] != str(ALLOCATOR_STARTUP_ARENA_BYTES):
+        return None
+    if "MAP_NORESERVE" not in fields[3] or "MAP_ANONYMOUS" not in fields[3]:
+        return None
+    return parse_address(call.result.split(" ", 1)[0] if call.result else "")
+
+
+def allocator_madvise_signature(call: TracedCall, arenas: list[tuple[int, int]],
+                                marked: list[tuple[int, int]]) -> str | None:
+    if call.name != "madvise":
+        return None
+    fields = [field.strip() for field in call.arguments.split(",")]
+    if len(fields) < 3:
+        return None
+    address = parse_address(fields[0])
+    if address is None:
+        return None
+    try:
+        length = int(fields[1])
+    except ValueError:
+        return None
+    advice = fields[2]
+    if advice == "MADV_HUGEPAGE" and length == ALLOCATOR_STARTUP_ARENA_BYTES:
+        for arena in arenas:
+            if arena[0] == address and arena[1] == address + length:
+                if arena not in marked:
+                    marked.append(arena)
+                return f"madvise({length}, MADV_HUGEPAGE)"
+        return None
+    if advice == "MADV_DONTNEED" and length == ALLOCATOR_STARTUP_DONTNEED_BYTES:
+        if any(start <= address and address + length <= end for start, end in marked):
+            return f"madvise({length}, MADV_DONTNEED within arena)"
+    return None
 
 
 def allocator_startup_signature(call: TracedCall) -> str | None:
@@ -3910,19 +3967,34 @@ def allocator_startup_signature(call: TracedCall) -> str | None:
     return None
 
 
-def judge_startup_syscalls(reference: Mapping[str, int], candidate: Sequence[TracedCall]) -> dict[str, Any]:
+def judge_allocator_syscalls(reference: Mapping[str, int], candidate: Sequence[TracedCall]) -> dict[str, Any]:
     judged: dict[str, int] = {}
     attributed: dict[str, int] = {}
     signatures: list[str] = []
+    arenas: list[tuple[int, int]] = []
+    marked: list[tuple[int, int]] = []
     for call in candidate:
+        arena = allocator_arena_base(call)
+        if arena is not None:
+            arenas.append((arena, arena + ALLOCATOR_STARTUP_ARENA_BYTES))
         signature = allocator_startup_signature(call)
+        if signature is None:
+            signature = allocator_madvise_signature(call, arenas, marked)
         if signature is None:
             judged[call.name] = judged.get(call.name, 0) + 1
         else:
             attributed[call.name] = attributed.get(call.name, 0) + 1
             signatures.append(signature)
+    candidate_open = sum(judged.get(name, 0) for name in OPEN_CALL_FAMILY)
+    reference_open = sum(reference.get(name, 0) for name in OPEN_CALL_FAMILY)
     excess = {name: count - reference.get(name, 0) for name, count in judged.items()
-              if count > reference.get(name, 0)}
+              if name not in OPEN_CALL_FAMILY and count > reference.get(name, 0)}
+    if candidate_open > reference_open:
+        excess["open+openat"] = candidate_open - reference_open
+    explanations = []
+    if candidate_open or reference_open:
+        explanations.append(
+            f"open family: candidate open+openat {candidate_open} vs reference open+openat {reference_open}")
     return {
         "reference": {"total": sum(reference.values()), "calls": dict(reference)},
         "allocator_attributed": {"total": sum(attributed.values()), "calls": attributed,
@@ -3930,6 +4002,7 @@ def judge_startup_syscalls(reference: Mapping[str, int], candidate: Sequence[Tra
                                  "expected": list(ALLOCATOR_STARTUP_SIGNATURES)},
         "judged": {"total": sum(judged.values()), "calls": judged},
         "excess": excess,
+        "explanations": explanations,
     }
 
 
@@ -4106,20 +4179,23 @@ def measure_counts_loop(
             lane_insn.append(counts_trial("perf", root, launcher, lane.root, binary, arguments,
                                                out_root / f"{lane_name}-n{n}-perf", timeout))
             lane_sys.append(counts_trial("strace", root, launcher, lane.root, binary, arguments,
-                                                out_root / f"{lane_name}-n{n}-strace", timeout))
+                                                out_root / f"{lane_name}-n{n}-strace", timeout,
+                                                client_only=True))
         insn[lane_name], syscalls[lane_name] = lane_insn, lane_sys
     means = {lane: [sum(triple) / len(triple) for triple in triples] for lane, triples in insn.items()}
     ref_perop = counts_per_op(means["musl"][1], means["musl"][0], n_values[1], n_values[0])
     cand_perop = counts_per_op(means["crabc"][1], means["crabc"][0], n_values[1], n_values[0])
     ref_sys = counts_per_op(syscalls["musl"][1]["total"], syscalls["musl"][0]["total"], n_values[1], n_values[0])
     cand_sys = counts_per_op(syscalls["crabc"][1]["total"], syscalls["crabc"][0]["total"], n_values[1], n_values[0])
+    judgement = judge_allocator_syscalls(syscalls["musl"][0]["calls"], syscalls["crabc"][0]["entries"])
     ratio = cand_perop / ref_perop if ref_perop > 0 else None
     status = classify_counts_row(
         has_counts=True, deterministic=all(counts_runs_agree(t) for triples in insn.values() for t in triples),
         linear=all(counts_linear(*m) for m in means.values()), matched=matched,
         ref_sys_perop=ref_sys, cand_sys_perop=cand_sys,
-        ref_sys_whole=syscalls["musl"][0]["total"], cand_sys_whole=syscalls["crabc"][0]["total"],
-        ratio_insn=ratio, allocator_attributed="allocator" in row.name)
+        ref_sys_whole=judgement["reference"]["total"], cand_sys_whole=judgement["judged"]["total"],
+        ratio_insn=ratio, allocator_attributed="allocator" in row.name,
+        syscall_excess=judgement["excess"])
     scaled_n1 = counts_scaled_row(row, n1)
     return {
         "args": virtual_arguments(scaled_n1, lanes["musl"]),
@@ -4129,9 +4205,17 @@ def measure_counts_loop(
                          "ratio_insn": ratio, "delta_insn": cand_perop - ref_perop},
         "syscalls": {
             "ref": {"per_op": ref_sys, "whole": {"total": syscalls["musl"][0]["total"],
-                                                 "calls": syscalls["musl"][0]["calls"]}},
+                                                 "calls": syscalls["musl"][0]["calls"]},
+                    "allocator_attributed": {"total": 0, "calls": {}, "signatures": []},
+                    "judged": judgement["reference"]},
             "cand": {"per_op": cand_sys, "whole": {"total": syscalls["crabc"][0]["total"],
-                                                   "calls": syscalls["crabc"][0]["calls"]}}},
+                                                   "calls": syscalls["crabc"][0]["calls"]},
+                     "allocator_attributed": judgement["allocator_attributed"],
+                     "judged": judgement["judged"]},
+            "judged": {"reference_total": judgement["reference"]["total"],
+                       "candidate_total": judgement["judged"]["total"],
+                       "excess": judgement["excess"],
+                       "explanations": judgement["explanations"]}},
         "status": status,
     }
 
@@ -4149,7 +4233,7 @@ def measure_counts_startup(
                                     out_root / f"{lane_name}-strace", timeout, client_only=True)
         insn[lane_name], syscalls[lane_name] = runs, trace
         startup[lane_name] = counts_subtract(sum(runs) // len(runs), wrapper[lane_name])
-    judgement = judge_startup_syscalls(syscalls["musl"]["calls"], syscalls["crabc"]["entries"])
+    judgement = judge_allocator_syscalls(syscalls["musl"]["calls"], syscalls["crabc"]["entries"])
     ratio = startup["crabc"] / startup["musl"] if startup["musl"] > 0 else None
     status = classify_counts_row(
         has_counts=True, deterministic=all(counts_runs_agree(t) for t in insn.values()),
@@ -4176,7 +4260,8 @@ def measure_counts_startup(
                      "judged": judgement["judged"]},
             "judged": {"reference_total": judgement["reference"]["total"],
                        "candidate_total": judgement["judged"]["total"],
-                       "excess": judgement["excess"]}},
+                       "excess": judgement["excess"],
+                       "explanations": judgement["explanations"]}},
         "status": status,
     }
 
