@@ -8,6 +8,8 @@ import subprocess
 import unittest
 from pathlib import Path
 
+from header_abi_dispatch import assert_header_abi_dispatches
+
 
 ROOT = Path(__file__).resolve().parents[3]
 HEADER = ROOT / "include" / "sys" / "time.h"
@@ -85,14 +87,9 @@ class SysTimeDirectHeaderAbiTests(unittest.TestCase):
             self.assertIn(phrase, runner)
 
     def test_dispatcher_exposes_the_direct_sys_time_header_gate(self) -> None:
-        dispatcher = DISPATCHER.read_text(encoding="utf-8")
-        for phrase in (
-            "sys-time-direct-header-abi)",
-            "run_sys_time_direct_header_abi()",
-            "run_sys_time_direct_header_abi.sh",
-            "sys-time-direct-header-abi takes no arguments",
-        ):
-            self.assertIn(phrase, dispatcher)
+        assert_header_abi_dispatches(
+            self, ROOT, "sys-time-direct", "run_sys_time_direct_header_abi.sh"
+        )
 
 
 if __name__ == "__main__":

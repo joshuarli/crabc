@@ -214,6 +214,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   native-abi-ratchet-test  run focused native ABI-ratchet policy and dispatcher tests
   musl-oracle  verify the pinned musl-1.2.6 x86 C/POSIX oracle toolchain
   linux-5-10-uapi  verify the fixed Linux 5.10 x86 exported-UAPI input
+  header-abi CASE  run one selected x86 header C/C++ ABI case
   header-abi-reference  verify the pinned x86 SysV LP64/x87 header baseline
   public-header-surface  inventory all pinned x86 public headers for C consumability
   candidate-header-closure  require isolated C11/C++17 public-header include closure
@@ -225,203 +226,28 @@ Native Linux/x86-64 staged-foundation evidence commands:
   header-abi-matrix  check all-header callable and named noncallable ABI evidence
   header-record-layout-matrix  check all-header record byte-layout evidence
   header-declaration-macro-visibility-matrix  check all-header declaration/macro feature-visibility evidence
-  feature-profile-control-plane-header-abi  verify pinned-musl feature-selector declaration boundaries
   header-callable-linkage-audit  audit declared x86 header callables against the static archive
   header-callable-provider-linkage-audit  audit selected default/feature callable archive providers
   uapi-wrapper-matrix  verify the selected Linux 5.10 UAPI wrapper C/C++ ABI profile matrix
-  epoll-header-abi  verify the selected x86 packed sys/epoll.h C/C++ ABI profile matrix
-  event-descriptors-header-abi  verify selected x86 eventfd/inotify C/C++ ABI profiles
-  fanotify-header-abi  verify selected x86 fanotify record-traversal C/C++ ABI profiles
-  dirent-header-abi  verify selected x86 dirent C/C++ ABI and feature profiles
-  ftw-header-abi  verify selected x86 ftw C/C++ ABI and feature profiles
   stat-ftw-header-source-form  verify x86 sys/stat.h through ftw.h pinned-musl source forms
   param-header-source-form  verify x86 sys/param.h and sys/resource.h pinned-musl source forms
-  pathname-lifecycle-header-abi  verify selected x86 pathname-lifecycle C/C++ ABI profiles
-  ioctl-header-abi  verify selected direct sys/ioctl.h C/C++ ABI profile matrix
   ioctl-header-source-form  verify x86 ioctl header forms and frozen AArch64 arm
   link-header-source-form  verify x86 <link.h> pinned-musl include topology
   reboot-header-source-form  verify x86 <sys/reboot.h> pinned-musl macro form
   mount-header-source-form  verify x86 <sys/mount.h> pinned-musl source form
   klog-header-source-form  verify x86 <sys/klog.h> pinned-musl macro surface
   cachectl-header-source-form  verify x86 <sys/cachectl.h> pinned-musl macro forms
-  syslog-header-abi  verify syslog profiles, C linkage, and SYSLOG_NAMES consumers
   sysmacros-header-source-form  verify x86 <sys/sysmacros.h> macro forms and frozen AArch64 arm
   fcntl-event-header-topology  verify x86 fcntl/event direct-header topology
   math-tgmath-source-form  verify x86 math/tgmath source forms and frozen AArch64 arm
   mman-mcl-onfault-header-source-form  verify x86 MCL_ONFAULT header form and frozen AArch64 arm
-  sys-io-header-abi  verify x86 sys/io.h inline port-I/O C/C++ ABI and object code
-  timeval-transitive-header-abi  verify selected timeval-dependent header layouts across C/C++ profiles
-  sys-time-direct-header-abi  verify selected direct sys/time.h C/C++ ABI profiles and C linkage
-  access-header-abi  verify selected direct unistd/fcntl access C/C++ ABI profiles and C linkage
-  xattr-header-abi  verify selected direct sys/xattr.h C/C++ ABI profiles and C linkage
   header-abi-project  compile the staged crabc x86 fenv/float header slice
-  math-complex-header-abi  verify x86 math/complex/tgmath C/C++ header semantics
-  math-complex-complete-header-abi  verify complete x86 math.complex C++ ABI/linkage
-  math-elementary-long-double-header-abi  verify complete x86 math.elementary-long-double C++ ABI/linkage
-  math-special-header-abi  verify complete x86 math.special C++ ABI/linkage
-  math-exp2-header-abi  verify x86 exp2/exp2f C++ ABI/linkage
-  math-expm1-header-abi  verify x86 expm1/expm1f C++ ABI/linkage
-  math-log10-header-abi  verify x86 log10/log10f C++ ABI/linkage
-  sys-reg-header-abi  compile the staged crabc x86 ptrace-register header slice
-  machine-context-header-abi  verify staged x86 machine/context C/C++ header ABI profiles
-  types-header-abi  compile the staged crabc x86 C/C++ type-layout header slice
-  stddef-header-abi  verify staged x86 stddef.h C/C++ request-boundary layouts
-  stat-header-abi  compile the staged x86 C/C++ sys/stat header layouts
-  utime-header-abi  compile the staged x86 C/C++ utime header ABI/linkage slice
-  pthread-c11-header-abi  verify staged x86 pthread/C11-thread C/C++ header ABI profiles
   pthread-header-source-form  verify x86 <pthread.h> pinned-musl direct source forms
   atomic-addressable-abi  verify addressable C11 atomic flag/fence symbols
-  pthread-cancellation-header-abi  verify staged x86 deferred pthread-cancellation C/C++ header ABI profiles
-  pthread-spin-destroy-header-abi  verify x86 pthread_spin_destroy C/C++ declaration and linkage
-  pthread-spin-operations-header-abi  verify x86 pthread spin-operation C/C++ declarations and linkage
-  stdlib-header-abi  compare x86 <stdlib.h> strict/POSIX/XOPEN/GNU/BSD/LFS profiles with musl
-  getloadavg-header-abi  verify x86 GNU/BSD <stdlib.h> getloadavg C/C++ declaration and linkage
-  stdio-standard-header-abi  compare selected x86 <stdio.h> standard-stream C/C++ profiles with musl
   stdio-header-source-form  verify x86 <stdio.h>/<stdio_ext.h> pinned-musl declaration form
-  fopen64-header-abi  verify x86 _LARGEFILE64_SOURCE fopen64 C/C++ macro-alias profiles
-  stdio-permanent-line-io-header-abi  verify x86 <stdio.h> permanent line-I/O C/C++ declarations and linkage
-  stdio-permanent-byte-io-header-abi  verify x86 <stdio.h> permanent byte-I/O C/C++ declarations and linkage
-  stdio-permanent-status-header-abi  verify x86 <stdio.h> permanent stream-status C/C++ declarations and linkage
-  stdio-permanent-freading-stdin-header-abi  verify x86 <stdio_ext.h> permanent stdin __freading C/C++ declaration and linkage
-  stdio-permanent-fsetlocking-stdin-header-abi  verify x86 <stdio_ext.h> permanent stdin __fsetlocking C/C++ declaration and linkage
-  stdio-permanent-fseterr-stdin-header-abi  verify x86 <stdio_ext.h> permanent stdin __fseterr C/C++ declaration and linkage
-  stdio-permanent-freadable-stdin-header-abi  verify x86 <stdio_ext.h> permanent stdin __freadable C/C++ declaration and linkage
-  stdio-permanent-fwritable-stderr-header-abi  verify x86 <stdio_ext.h> permanent stderr __fwritable C/C++ declaration and linkage
-  stdio-permanent-fbufsize-stderr-header-abi  verify x86 <stdio_ext.h> permanent stderr __fbufsize C/C++ declaration and linkage
-  stdio-permanent-flbf-stderr-header-abi  verify x86 <stdio_ext.h> permanent stderr __flbf C/C++ declaration and linkage
-  stdio-permanent-fileno-header-abi  verify x86 <stdio.h> permanent fileno C/C++ declarations and linkage
-  stdio-permanent-fileno-unlocked-header-abi  verify x86 GNU/BSD permanent fileno_unlocked C/C++ declarations and linkage
-  stdio-permanent-feof-unlocked-header-abi  verify x86 GNU/BSD permanent feof_unlocked C/C++ declarations and linkage
-  stdio-permanent-ferror-unlocked-header-abi  verify x86 GNU/BSD permanent ferror_unlocked C/C++ declarations and linkage
-  ctype-header-abi  compile staged x86 C/C++ ctype declarations and feature-gated macros
-  locale-profile-header-abi  verify x86 fixed setlocale/localeconv C/C++ declarations and linkage
-  locale-multibyte-header-abi  verify x86 named-locale/multibyte C/C++ declarations and linkage
-  iconv-header-abi  verify x86 selected UTF/ASCII iconv C/C++ declarations and linkage
-  wide-character-header-abi  verify x86 selected wide-character C/C++ declarations and linkage
-  wcswcs-header-abi  verify x86 wchar.h wcswcs C/C++ declaration and linkage
-  locale-object-wide-header-abi  verify x86 built-in locale-object/localized-wide C/C++ ABI
-  locale-narrow-header-abi  verify x86 fixed-locale narrow text C/C++ ABI
-  integer-arithmetic-header-abi  compile the staged x86 C/C++ stdlib integer-arithmetic declarations
-  integer-parse-header-abi  compile the staged x86 C/C++ integer-parsing declarations
-  float-parse-header-abi  verify complete x86 numeric.parse-float-locale declarations and linkage
-  crypt-header-abi  verify x86 crypt.h C/C++ declaration, layout, and linkage
-  getsubopt-header-abi  verify x86 getsubopt C/C++ feature visibility and linkage
-  l64a-header-abi  verify x86 X/Open/GNU/BSD a64l/l64a C/C++ feature visibility and linkage
-  intmax-arithmetic-header-abi  compile the staged x86 C/C++ inttypes intmax-arithmetic declarations
-  credential-observation-header-abi  compile the staged x86 C/C++ unistd credential-observation declarations
-  login-name-header-abi  compile the staged x86 C/C++ unistd login-name declarations
-  child-reaping-header-abi  compile the staged x86 C/C++ sys/wait child-reaping declarations
-  wait-extensions-header-abi  verify x86 GNU/BSD wait3/wait4 header feature profiles
-  immediate-termination-header-abi  compile the staged x86 C/C++ stdlib immediate-termination declaration
-  posix-exit-header-abi  compile the staged x86 C/C++ unistd POSIX _exit declaration
-  sched-cpucount-header-abi  verify selected x86 GNU sched CPU-count C/C++ ABI profiles
-  sched-cpu-macros-header-abi  verify x86 GNU sched CPU-set construction C/C++ header macros
   sched-cpu-set-source-form  verify x86 sched cpu_set_t pinned-musl source form and C/C++ profiles
-  sched-getcpu-header-abi  verify selected x86 GNU sched_getcpu C/C++ ABI profiles
-  sched-priority-bounds-header-abi  verify selected x86 sched priority-bounds C/C++ ABI profiles
-  sched-yield-header-abi  verify selected x86 sched_yield C/C++ ABI profiles
-  sched-get-priority-max-header-abi  verify selected x86 sched_get_priority_max C/C++ ABI profiles
-  sched-get-priority-min-header-abi  verify selected x86 sched_get_priority_min C/C++ ABI profiles
-  bsearch-header-abi  verify staged x86 C/C++ stdlib bsearch declaration and linkage
-  linear-search-header-abi  verify staged x86 C/C++ search.h lfind/lsearch declarations and linkage
-  intrusive-queue-header-abi  verify staged x86 C/C++ search.h insque/remque declarations and linkage
-  qsort-header-abi  verify staged x86 C/C++ stdlib qsort declaration and linkage
-  callback-algorithms-header-abi  compile the staged x86 C/C++ stdlib callback-algorithm declarations
-  ffs-header-abi  compile the staged x86 C/C++ strings.h find-first-set declarations
-  memory-special-header-abi  compile x86 explicit_bzero/swab C/C++ declarations
-  memccpy-header-abi  compile the staged x86 C/C++ string.h memccpy declarations
-  aio-error-header-abi  verify x86 <aio.h> aio_error C/C++ declaration and layout
-  byte-strings-header-abi  compile the staged x86 C/C++ string.h byte-string declarations
-  memory-search-header-abi  compile the staged x86 C/C++ memory-search declarations
-  mempcpy-header-abi  compile the staged x86 C/C++ string.h mempcpy declaration
-  strsep-header-abi  compile the staged x86 C/C++ string.h strsep declaration
-  strtok-header-abi  verify staged x86 C/C++ string.h strtok declaration and linkage
-  stateful-byte-strings-header-abi  verify x86 C/C++ dirname/strcasestr/strtok_r declarations
-  string-copy-header-abi  compile the staged x86 C/C++ C-string-copy declarations
-  string-duplication-header-abi  compile the staged x86 C/C++ C-string-duplication declarations
-  error-strings-header-abi  compile the staged x86 C/C++ error-string declarations
-  strsignal-header-abi  compile the staged x86 C/C++ strsignal declarations
-  gettext-catalog-header-abi  verify staged x86 libintl/nl_types C/C++ declarations and linkage
-  random-entropy-header-abi  compile the staged x86 C/C++ random-source declarations
-  time-header-abi  compile the staged x86 C/C++ time header layouts
-  clock-adjtime-header-abi  verify x86 sys/timex.h clock_adjtime C/C++ ABI profiles
-  clock-settime-header-abi  verify x86 POSIX clock_settime C/C++ ABI profiles
-  timer-getoverrun-header-abi  verify x86 POSIX timer_getoverrun C/C++ ABI profiles
-  timer-delete-header-abi  verify x86 POSIX timer_delete C/C++ ABI profiles
-  timer-gettime-header-abi  verify x86 POSIX timer_gettime C/C++ ABI profiles
-  timer-settime-header-abi  verify x86 POSIX timer_settime C/C++ ABI profiles
-  sleep-header-abi  compile the staged x86 C/C++ POSIX sleep declaration
-  timerfd-header-abi  verify the selected x86 sys/timerfd.h C/C++ ABI profiles
-  signalfd-header-abi  verify the selected x86 sys/signalfd.h C/C++ ABI profiles
-  poll-header-abi  compile the staged x86 C/C++ poll header layouts
-  select-header-abi  compile the staged x86 C/C++ sys/select header layouts
-  fcntl-header-abi compile the staged x86 C/C++ fcntl header layouts
-  file-handles-header-abi verify x86 GNU <fcntl.h> file-handle C/C++ ABI
-  posix-spawn-file-actions-header-abi verify x86 C/C++ POSIX spawn file-actions ABI
-  process-exec-header-abi verify x86 C/C++ process-exec declarations and linkage
-  descriptor-advice-header-abi verify x86 C/C++ descriptor-advice header profiles
-  filesystem-capacity-header-abi verify x86 C/C++ filesystem-capacity header profiles
-  vector-io-header-abi verify x86 C/C++ vector-I/O header profiles
   libc-uio-cxx-linkage  link a freestanding C++ sys/uio consumer to static x86 crabc-libc
-  flock-header-abi compile the staged x86 C/C++ sys/file.h header layouts
-  sendfile-header-abi compile the staged x86 C/C++ sys/sendfile.h header layouts
-  tee-header-abi      compile the staged x86 C/C++ GNU fcntl.h tee declaration
-  splice-header-abi   compile the staged x86 C/C++ GNU fcntl.h splice declaration
-  sync-file-range-header-abi compile the staged x86 C/C++ GNU fcntl.h sync_file_range declaration
-  copy-file-range-header-abi compile the staged x86 C/C++ GNU unistd.h copy_file_range declaration
-  unistd-header-abi  compile the staged x86 C/C++ unistd header declarations
-  getpagesize-header-abi  compile the staged x86 C/C++ GNU/BSD getpagesize declaration
-  system-header-abi  compile the staged x86 C/C++ system header layouts
-  syscall-header-abi  compare the staged x86 syscall macro surface with musl
-  signal-header-abi  compile the staged x86 GNU/POSIX signal-header layouts
-  psignal-header-abi  verify x86 POSIX-or-later psignal/psiginfo C/C++ declarations
-  signal-legacy-aliases-header-abi  verify GNU bsd_signal C/C++ declaration/linkage
-  signal-sysv-helpers-header-abi  verify historical SysV signal helper C/C++ declaration/linkage
-  sched-getscheduler-header-abi  compile x86 sched_getscheduler C/C++ declarations
-  sched-rr-interval-header-abi  compile x86 sched_rr_get_interval C/C++ declarations
-  termios-header-abi  compile the staged x86 C/C++ GNU termios-header layouts
   terminal-streams-header-topology  verify x86 terminal and STREAMS direct-header topology
-  ctermid-header-abi  compile the staged x86 C/C++ POSIX/XSI ctermid declaration
-  grantpt-header-abi  compile the staged x86 C/C++ XSI grantpt declaration
-  unlockpt-header-abi  compile the staged x86 C/C++ XSI unlockpt declaration
-  gethostid-header-abi  compile the staged x86 C/C++ X/Open gethostid declaration
-  issetugid-header-abi  compile the staged x86 C/C++ GNU/BSD issetugid declaration
-  legacy-misc-header-abi  verify the frozen x86 legacy.misc C/C++ declaration matrix
-  endhostent-header-abi  compile the staged x86 C/C++ stateless legacy netdb declarations
-  gettid-header-abi  compile the staged x86 C/C++ GNU gettid declaration
-  posix-close-header-abi  compile the staged x86 C/C++ POSIX posix_close declaration
-  isatty-header-abi  compile the staged x86 C/C++ isatty declaration
-  ttyname-r-header-abi  compile the staged x86 C/C++ ttyname_r declaration
-  tcgetpgrp-header-abi  compile the staged x86 C/C++ tcgetpgrp declaration
-  tcsetpgrp-header-abi  compile the staged x86 C/C++ tcsetpgrp declaration
-  getpass-header-abi  compile the staged x86 C/C++ getpass declaration
-  mkfifo-header-abi  verify selected x86 mkfifo C/C++ declarations
-  mkdirat-header-abi  verify selected x86 mkdirat C/C++ declarations
-  mkfifoat-header-abi  verify selected x86 mkfifoat C/C++ declarations
-  readlinkat-header-abi  verify selected x86 POSIX readlinkat C/C++ declarations
-  linkat-header-abi  verify selected x86 POSIX linkat C/C++ declarations
-  renameat2-header-abi  verify selected x86 GNU renameat2 C/C++ declarations
-  lchown-header-abi  verify selected x86 POSIX lchown C/C++ declarations
-  hasmntopt-header-abi  verify selected x86 mntent hasmntopt C/C++ declarations
-  mktemp-header-abi  compile the staged x86 C/C++ mktemp declaration
-  temporary-names-header-abi  verify x86 C/C++ tmpnam/tempnam declarations
-  mman-header-abi  compile the staged x86 C/C++ mapping-header declarations
-  memory-sync-header-abi  verify selected x86 msync C/C++ declarations
-  memory-locking-header-abi  verify selected x86 per-range mlock C/C++ declarations
-  memfd-create-header-abi  verify selected x86 GNU memfd_create C/C++ declarations
-  resource-header-abi  compile the staged x86 C/C++ resource-header layouts
-  socket-header-abi  verify staged x86 base socket C/C++ declarations/layouts plus IPv4/IPv6 and source-filter macros
-  tcp-header-abi  verify staged x86 netinet/tcp.h C/C++ feature-profile layouts
-  nameser-header-abi  verify staged x86 resolv.h C/C++ dn_skipname/dn_expand/_ns_flagdata/ns_get16/ns_get32/ns_put16 declarations
-  quota-header-abi  verify the complete x86 sys/quota.h through C/C++ profiles
-  endservent-header-abi  verify staged x86 legacy service-terminator C/C++ declaration
-  service-lifecycle-header-abi  verify staged x86 no-op/null service lifecycle C/C++ declarations
-  inet-address-header-abi  verify selected x86 arpa/inet C/C++ numeric-address declarations
-  socket-messages-header-abi  verify staged x86 socket-message/options C/C++ declarations/layouts
-  sysv-semaphore-header-abi  verify staged x86 SysV semaphore C/C++ declarations/layouts
-  posix-semaphore-header-abi  verify staged x86 POSIX semaphore C/C++ declarations/layouts
-  sysv-message-shared-memory-header-abi  verify staged x86 SysV message/shared-memory C/C++ declarations/layouts
-  mq-setattr-header-abi  compile the staged x86 C/C++ mqueue.h mq_setattr declaration
   libc-event-descriptors  run the static x86 crabc-libc epoll/eventfd/inotify slice
   libc-mq-setattr  run the static x86 crabc-libc mq_setattr slice
   libc-timerfd  run the static x86 crabc-libc timer-descriptor slice
@@ -435,17 +261,9 @@ Native Linux/x86-64 staged-foundation evidence commands:
   libc-sched-getscheduler  run the static x86 musl-ENOSYS scheduler observation slice
   libc-sched-rr-interval  run the opt-in static x86 scheduler-interval observation slice
   libc-alarm  run the static x86 crabc-libc historical SIGALRM timer slice
-  ualarm-header-abi  run the x86 musl/project ualarm C/C++ declaration matrix
   libc-ualarm  run the opt-in static x86 crabc-libc ualarm timer slice
   libc-interval-timers  run the opt-in static x86 crabc-libc getitimer/setitimer slice
-  usleep-header-abi  run the x86 musl/project usleep C/C++ declaration matrix
   libc-usleep  run the static x86 crabc-libc usleep nanosleep-adapter slice
-  basename-header-abi  run the x86 musl/project basename C/C++ declaration matrix
-  siginterrupt-header-abi  run the x86 musl/project siginterrupt C/C++ declaration matrix
-  mlockall-header-abi  run the x86 musl/project mlockall C/C++ declaration matrix
-  munlockall-header-abi  run the x86 musl/project munlockall C/C++ declaration matrix
-  ftime-header-abi  run the x86 musl/project ftime C/C++ declaration matrix
-  clock-getcpuclockid-header-abi  run the x86 musl/project clock_getcpuclockid C/C++ declaration matrix
   libc-basename  run the static x86 crabc-libc basename slice
   libc-siginterrupt  run the static x86 crabc-libc siginterrupt slice
   libc-mlockall  run the static x86 crabc-libc mlockall slice
@@ -873,23 +691,14 @@ Native Linux/x86-64 staged-foundation evidence commands:
   libc-stdio-format-scan  run the static x86 crabc-libc byte-string format/scan slice
   libc-stdio-permanent-format-scan  run the opt-in permanent-stream formatted-I/O slice
   libc-stdio-integer-scan  run the static x86 crabc-libc bounded integer-source scan slice
-  stdio-octal-hex-scan-header-abi  compile C11/C++17 scanf declaration/linkage evidence
   libc-stdio-octal-hex-scan  run the static x86 crabc-libc bounded octal/uppercase-hex scan slice
-  stdio-fixed-percent-scan-header-abi  compile C11/C++17 literal-percent scanf declaration/linkage evidence
   libc-stdio-fixed-percent-scan  run the static x86 crabc-libc sealed literal-percent scan slice
-  stdio-fixed-format-whitespace-scan-header-abi  compile C11/C++17 format-whitespace scanf declaration/linkage evidence
   libc-stdio-fixed-format-whitespace-scan  run the static x86 crabc-libc sealed format-whitespace scan slice
-  stdio-fixed-literal-scan-header-abi  compile C11/C++17 raw-literal scanf declaration/linkage evidence
   libc-stdio-fixed-literal-scan  run the static x86 crabc-libc sealed raw-literal scan slice
-  stdio-fixed-empty-format-scan-header-abi  compile C11/C++17 empty-format scanf declaration/linkage evidence
   libc-stdio-fixed-empty-format-scan  run the static x86 crabc-libc sealed empty-format scan slice
-  stdio-fixed-suppressed-character-scan-header-abi  compile C11/C++17 suppressed-character scanf declaration/linkage evidence
   libc-stdio-fixed-suppressed-character-scan  run the static x86 crabc-libc sealed suppressed-character scan slice
-  stdio-fixed-suppressed-string-scan-header-abi  compile C11/C++17 suppressed-string scanf declaration/linkage evidence
   libc-stdio-fixed-suppressed-string-scan  run the static x86 crabc-libc sealed suppressed-string scan slice
-  stdio-fixed-suppressed-scanset-scan-header-abi  compile C11/C++17 suppressed-scanset scanf declaration/linkage evidence
   libc-stdio-fixed-suppressed-scanset-scan  run the static x86 crabc-libc sealed suppressed-scanset scan slice
-  stdio-fixed-suppressed-count-scan-header-abi  compile C11/C++17 suppressed-count scanf declaration/linkage evidence
   libc-stdio-fixed-suppressed-count-scan  run the static x86 crabc-libc sealed suppressed-count scan slice
   libc-stdio-float-hex-output  run the static x86 crabc-libc binary64 hexadecimal-output slice
   libc-stdio-errno-output  run the static x86 crabc-libc errno-message format slice
@@ -1406,7 +1215,7 @@ retained prefix and zero-filled extension, direct positive POSIX errors, and
 unchanged `errno`. It does not select general fallocate flags, pathname or
 filesystem policy, durability, cancellation, dynamic libc, or application
 startup.
-`descriptor-advice-header-abi` proves only the project and pinned-musl C/C++
+`header-abi descriptor-advice` proves only the project and pinned-musl C/C++
 declaration profiles for unconditional `posix_fadvise`, the six
 `POSIX_FADV_*` values, the `_LARGEFILE64_SOURCE` macro alias, and GNU-only
 `readahead`; it does not select a runtime C API. `libc-descriptor-advice`
@@ -1416,7 +1225,7 @@ unlinked regular file: all six advice words, stable descriptor position,
 direct POSIX versus `-1`/`errno` error conventions, and no cache-effect claim.
 It does not select cache policy, pathname behavior, allocation, durability,
 cancellation, dynamic libc, or application startup.
-`filesystem-capacity-header-abi` proves only the project and pinned-musl
+`header-abi filesystem-capacity` proves only the project and pinned-musl
 C/C++ declaration, LP64 layout, feature-selection, and C++ C-linkage profiles
 for `statfs`, `fstatfs`, `statvfs`, and `fstatvfs`, including their
 `_LARGEFILE64_SOURCE` macro aliases. It does not select a runtime C API.
@@ -1427,7 +1236,7 @@ selects only direct `statfs`/`fstatfs` records and musl's derived
 stale-`errno` success and missing-path/closed-fd errors. It does not select
 filesystem policy, pathname behavior, allocation, durability, cancellation,
 dynamic libc, or application startup.
-`vector-io-header-abi` proves only the project and pinned-musl C/C++
+`header-abi vector-io` proves only the project and pinned-musl C/C++
 `sys/uio.h` declarations, x86 iovec layout, feature visibility, LF64 aliases,
 and C++ C-linkage profiles. `libc-vector-io` exercises a separate freestanding
 project-header C fixture after its equivalent pinned-musl run. It selects only
@@ -1556,48 +1365,48 @@ mntent, or public x86 runtime support.
 `header-abi-reference` proves only its pinned reference baseline.
 `header-abi-project` compiles only the staged public fenv/float/fundamental
 type declarations and does not link an x86 libc artifact.
-`math-complex-header-abi` executes pinned-musl and project-header-first C
+`header-abi math-complex` executes pinned-musl and project-header-first C
 consumers in SSE and x87 modes, then checks C++ references retain unmangled C
 linkage. It proves only the named math/complex/tgmath header semantics; both
 C consumers intentionally link pinned musl's math runtime, not crabc-libc.
-`math-complex-complete-header-abi` type-checks all 66 `math.complex` function
+`header-abi math-complex-complete` type-checks all 66 `math.complex` function
 addresses against project headers and pinned musl in SSE and x87 modes,
 including 16-byte binary80 and 32-byte complex-binary80 storage. It is a
 declaration/linkage gate; the separate complete static differential owns
 runtime behavior.
-`math-elementary-long-double-header-abi` type-checks all 35 exact
+`header-abi math-elementary-long-double` type-checks all 35 exact
 `math.elementary-long-double` function addresses against project headers and
 pinned musl in SSE and x87 modes. It ratchets the SysV 16-byte binary80
 storage and unmangled C++ linkage; the separate static differential owns
 runtime behavior.
-`math-special-header-abi` compile-checks every `math.special` function-pointer
+`header-abi math-special` compile-checks every `math.special` function-pointer
 type and unmangled C++ reference in SSE and x87 modes. It records declarations
 and ABI spelling only; the separate static differential owns runtime behavior.
-`sys-reg-header-abi` compiles only the staged ptrace register-index header.
-`machine-context-header-abi` compares only selected x86 aux-vector, ptrace,
+`header-abi sys-reg` compiles only the staged ptrace register-index header.
+`header-abi machine-context` compares only selected x86 aux-vector, ptrace,
 user-register, procfs, and ucontext declaration/layout profiles against pinned
 musl. It rejects AArch64 HWCAP/register leaks and does not select runtime,
 archive linkage, header-family completion, or public x86 support.
-`types-header-abi` compiles only staged C/C++ type declarations and opaque
-pthread object layouts. `stat-header-abi`, `time-header-abi`, `poll-header-abi`,
-`select-header-abi`, `fcntl-header-abi`, `flock-header-abi`, `sendfile-header-abi`, `tee-header-abi`, `splice-header-abi`, `sync-file-range-header-abi`, `copy-file-range-header-abi`, `ioctl-header-abi`, `unistd-header-abi`, and
-`system-header-abi` compile only their named C/C++ layout/declaration slices.
-`stddef-header-abi` separately compares project-first and pinned-musl strict,
+`header-abi types` compiles only staged C/C++ type declarations and opaque
+pthread object layouts. `header-abi stat`, `header-abi time`, `header-abi poll`,
+`header-abi select`, `header-abi fcntl`, `header-abi flock`, `header-abi sendfile`, `header-abi tee`, `header-abi splice`, `header-abi sync-file-range`, `header-abi copy-file-range`, `header-abi ioctl`, `header-abi unistd`, and
+`header-abi system` compile only their named C/C++ layout/declaration slices.
+`header-abi stddef` separately compares project-first and pinned-musl strict,
 POSIX, XOPEN, GNU, and BSD C/C++ `<stddef.h>` profiles for its `_STDDEF_H`
 guard, `NULL` spelling, alltypes request boundary, fundamental LP64 types,
 `max_align_t`, and `offsetof`. It is compile-only header evidence; it does not
 select archive linkage, allocation behavior, installed-header completion,
 family completion, or public x86 support.
-`syscall-header-abi` compares only staged syscall number macros.
-`signal-header-abi`, `termios-header-abi`, `mman-header-abi`,
-`memory-sync-header-abi`, `memory-locking-header-abi`,
-`memfd-create-header-abi`, and `resource-header-abi` compile only their named
+`header-abi syscall` compares only staged syscall number macros.
+`header-abi signal`, `header-abi termios`, `header-abi mman`,
+`header-abi memory-sync`, `header-abi memory-locking`,
+`header-abi memfd-create`, and `header-abi resource` compile only their named
 staged signal-frame, GNU termios, mapping, no-cancellation msync, per-range
 memory-locking, GNU memfd_create, and strict/GNU/LFS resource declarations.
-`termios-header-abi` remains a header-only C/C++ layout/declaration gate, not
-a general C terminal/runtime claim. `resource-header-abi` is likewise
+`header-abi termios` remains a header-only C/C++ layout/declaration gate, not
+a general C terminal/runtime claim. `header-abi resource` is likewise
 header-only and does not select process-resource behavior or a C runtime.
-`socket-header-abi` compile-checks only staged C/C++ base transport
+`header-abi socket` compile-checks only staged C/C++ base transport
 declarations, `socklen_t` and generic/IPv4/IPv6 socket-address layouts, and
 creation, shutdown, and basic send/receive constants, then executes installed
 IPv4/IPv6 address-equality/classification macros and checks GNU/BSD multicast
@@ -1605,14 +1414,14 @@ source-filter layouts/size macros through project and pinned-musl headers. It
 does not select socket membership, packet I/O, socket options, vectored or
 ancillary-message APIs, address-conversion or socket behavior, a C runtime,
 or a general socket capability.
-`tcp-header-abi` separately compares project-first and pinned-musl strict,
+`header-abi tcp` separately compares project-first and pinned-musl strict,
 POSIX, XOPEN, GNU, and BSD C/C++ `<netinet/tcp.h>` feature profiles for
 unconditional TCP option/state and netlink vocabulary, GNU/BSD option parsing
 and `struct tcphdr`, and GNU-only TCP information, MD5, repair, and zero-copy
 record layouts. It is compile-only header evidence; it does not select TCP
 socket-option or transport behavior, archive linkage, installed-header
 completion, family completion, or public x86 support.
-`socket-messages-header-abi` separately compares project-first and pinned-musl
+`header-abi socket-messages` separately compares project-first and pinned-musl
 C/C++ profiles for the bounded `<sys/socket.h>` message/options declarations,
 their LP64 `msghdr`/`cmsghdr`/GNU `mmsghdr` layouts and visibility, CMSG macro
 boundaries, and unmangled C++ linkage. It is declaration/layout evidence only,
@@ -2348,7 +2157,7 @@ prefix, zero-filled range, stable position, positive direct error returns, and
 unchanged `errno`. It does not provide general fallocate flags, pathname or
 filesystem policy, durability, cancellation, dynamic libc, CRT/TLS lifecycle,
 loader, sysroot, or public x86 support.
-`descriptor-advice-header-abi` proves only the project and pinned-musl C/C++
+`header-abi descriptor-advice` proves only the project and pinned-musl C/C++
 declaration profiles for unconditional `posix_fadvise`, the six
 `POSIX_FADV_*` values, the `_LARGEFILE64_SOURCE` macro alias, and GNU-only
 `readahead`; it does not select a runtime C API. `libc-descriptor-advice`
@@ -2359,7 +2168,7 @@ descriptor position, direct POSIX versus `-1`/`errno` error conventions, and
 no cache-effect claim. It does not provide cache policy, pathname behavior,
 allocation, durability, cancellation, dynamic libc, CRT/TLS lifecycle, loader,
 sysroot, or public x86 support.
-`filesystem-capacity-header-abi` proves only the project and pinned-musl
+`header-abi filesystem-capacity` proves only the project and pinned-musl
 C/C++ declaration, LP64 layout, feature-selection, and C++ C-linkage profiles
 for `statfs`, `fstatfs`, `statvfs`, and `fstatvfs`, including their
 `_LARGEFILE64_SOURCE` macro aliases. It does not select a runtime C API.
@@ -2370,7 +2179,7 @@ runs. It selects only direct `statfs`/`fstatfs` records and musl's derived
 stale-`errno` success and missing-path/closed-fd errors. It does not provide
 filesystem policy, pathname behavior, allocation, durability, cancellation,
 dynamic libc, CRT/TLS lifecycle, loader, sysroot, or public x86 support.
-`vector-io-header-abi` proves only the project and pinned-musl C/C++
+`header-abi vector-io` proves only the project and pinned-musl C/C++
 `sys/uio.h` declarations, x86 iovec layout, feature visibility, LF64 aliases,
 and C++ C-linkage profiles. `libc-vector-io` links that archive into a separate
 freestanding project-header C fixture after an equivalent pinned-musl run. It
@@ -2665,11 +2474,8 @@ public dlfcn, runtime mapping/search, dynamic CRT/sysroot, or public-support
 claim.
 None of the other C-runtime commands is a crabc-libc or crabc-ldso build,
 general facade admission, or C ABI support claim.
-  ether-line-header-abi  compile the staged x86 C/C++ legacy Ethernet-line declaration
   libc-ether-line  run the static x86 crabc-libc legacy Ethernet-line slice
-  ether-header-abi  compile the staged x86 C/C++ complete musl ether.c declarations
   libc-ether  run the static x86 crabc-libc complete musl ether.c provider slice
-  protocol-database-header-abi  compile the staged x86 C/C++ musl proto.c declarations
   libc-protocol-database  run the static x86 crabc-libc musl proto.c provider slice
   libc-posix-spawn-file-actions-init  run the static x86 crabc-libc POSIX spawn file-actions init slice
   libc-posix-spawnattr-destroy  run the static x86 crabc-libc POSIX spawn-attribute destroy slice
@@ -2678,25 +2484,11 @@ general facade admission, or C ABI support claim.
   libc-posix-spawnattr-setschedparam  run the static x86 crabc-libc POSIX spawn-attribute setschedparam slice
   libc-posix-spawnattr-setschedpolicy  run the static x86 crabc-libc POSIX spawn-attribute setschedpolicy slice
   libc-res-init  run the static x86 crabc-libc legacy resolver-initializer slice
-  posix-spawn-file-actions-init-header-abi  compile the staged x86 C/C++ POSIX spawn file-actions init declaration
-  posix-spawnattr-destroy-header-abi  compile the staged x86 C/C++ POSIX spawn-attribute destroy declaration
-  posix-spawnattr-getflags-header-abi  compile the staged x86 C/C++ POSIX spawn-attribute getflags declaration
-  posix-spawnattr-setpgroup-header-abi  compile the staged x86 C/C++ POSIX spawn-attribute setpgroup declaration
-  posix-spawnattr-setschedparam-header-abi  compile the staged x86 C/C++ POSIX spawn-attribute setschedparam declaration
-  posix-spawnattr-setschedpolicy-header-abi  compile the staged x86 C/C++ POSIX spawn-attribute setschedpolicy declaration
-  res-init-header-abi  compile the staged x86 C/C++ legacy resolver-initializer declaration
-  h-errno-header-abi  verify x86 <netdb.h> h_errno C/C++ feature visibility and linkage
-  resolver-runtime-header-abi  verify x86 C/C++ resolver-state and legacy resolver ABI
-  c32rtomb-header-abi  verify x86 C11 UTF-32 encoder C/C++ declarations and linkage
-  uchar-stateful-header-abi  verify x86 C11 stateful uchar C/C++ declarations and linkage
-  chown-header-abi  verify selected x86 POSIX chown C/C++ declarations
   libc-c32rtomb  run the static x86 crabc-libc C11 UTF-32 encoder adapter
   libc-uchar-stateful  run the static x86 crabc-libc stateful uchar conversion block
   libc-chown  run the static x86 crabc-libc chown leaf
   libc-sync  run the static x86 crabc-libc void sync leaf
   libc-unlinkat  run the static x86 crabc-libc unlinkat leaf
-  sync-header-abi  verify selected x86 X/Open/GNU/BSD sync C/C++ declarations
-  unlinkat-header-abi  verify selected x86 POSIX unlinkat C/C++ declarations
   libc-math-asinh  run the static x86 asinh/asinhf scalar slice
   libc-math-cos  run the static x86 cos/cosf scalar slice
   libc-math-cosh  run the static x86 cosh/coshf scalar slice
@@ -2704,13 +2496,9 @@ general facade admission, or C ABI support claim.
   libc-math-exp10f  run the static x86 GNU exp10f/pow10f scalar slice
   libc-math-sinh  run the static x86 sinh/sinhf scalar slice
   libc-pthread-spin-init  run the static x86 crabc-libc bounded pthread spin-init record slice
-  pthread-spin-init-header-abi  verify x86 pthread_spin_init C/C++ ABI/linkage
   libc-math-log  run the static x86 log/logf scalar natural-logarithm slice
   libc-math-sin  run the static x86 sin/sinf scalar trigonometric slice
   libc-math-tan  run the static x86 tan/tanf scalar trigonometric slice
-  math-log-header-abi  verify x86 log/logf C++ ABI/linkage
-  math-sin-header-abi  verify x86 sin/sinf C++ ABI/linkage
-  math-tan-header-abi  verify x86 tan/tanf C++ ABI/linkage
   libc-inet-netof  run the archive-free static x86 crabc-libc classful IPv4 network-part slice
   libc-inet-network  run the static x86 crabc-libc inet_network parser-composition slice
   libc-ns-put32  run the archive-free static x86 crabc-libc DNS 32-bit wire-write slice
@@ -2726,19 +2514,6 @@ general facade admission, or C ABI support claim.
   libc-sched-setscheduler  run the static x86 musl-ENOSYS scheduler-policy compatibility slice
   libc-setfsgid  run the static x86 filesystem-credential setfsgid slice
   libc-setfsuid  run the static x86 filesystem-credential setfsuid slice
-  personality-header-abi  compile x86 sys/personality.h C/C++ declarations
-  posix-spawnattr-getpgroup-header-abi  verify x86 C/C++ spawn-attribute process-group ABI
-  posix-spawnattr-signal-fields-header-abi  verify x86 C/C++ spawn-attribute signal-field ABI
-  posix-spawnattr-getschedparam-header-abi  verify x86 C/C++ spawn-attribute scheduler-parameter ABI
-  posix-spawnattr-getschedpolicy-header-abi  verify x86 C/C++ spawn-attribute scheduler-policy ABI
-  posix-spawnattr-init-header-abi  verify x86 C/C++ spawn-attribute initialization ABI
-  sched-getaffinity-header-abi  compile x86 GNU sched_getaffinity C/C++ declarations
-  sched-setaffinity-header-abi  compile x86 GNU sched_setaffinity C/C++ declarations
-  sched-getparam-header-abi  compile x86 sched_getparam C/C++ declarations
-  sched-setparam-header-abi  compile x86 sched_setparam C/C++ declarations
-  sched-setscheduler-header-abi  compile x86 sched_setscheduler C/C++ declarations
-  setfsgid-header-abi  compile x86 sys/fsuid.h setfsgid C/C++ declarations
-  setfsuid-header-abi  compile x86 sys/fsuid.h setfsuid C/C++ declarations
   libc-pthread-condattr-clock  run the static x86 crabc-libc condition-attribute clock record slice
   libc-pthread-condattr-pshared  run the static x86 crabc-libc condition-attribute pshared record slice
   libc-pthread-getconcurrency  run the static x86 crabc-libc fixed pthread concurrency-query slice
@@ -2752,10 +2527,6 @@ general facade admission, or C ABI support claim.
   libc-lrand48  run the static x86 crabc-libc legacy rand48 provider slice
   libc-rand-r  run the static x86 crabc-libc caller-state rand_r slice
   libc-bsd-random [--expect-missing]  run the static x86 BSD random-state provider slice
-  confstr-header-abi  verify selected x86 C/C++ declarations for confstr
-  fchdir-header-abi  verify selected x86 C/C++ declarations for fchdir
-  fpathconf-header-abi  verify selected x86 C/C++ declarations for fpathconf
-  getdtablesize-header-abi  verify selected x86 C/C++ declarations for getdtablesize
   libc-confstr  run the static x86 crabc-libc confstr leaf
   libc-fpathconf  run the static x86 crabc-libc fpathconf leaf
   libc-getdtablesize  run the static x86 crabc-libc getdtablesize leaf
@@ -2784,18 +2555,6 @@ general facade admission, or C ABI support claim.
   libc-syncfs  run the static x86 crabc-libc syncfs leaf
   libc-sysconf  run the static x86 crabc-libc sysconf leaf
   libc-umask  run the static x86 crabc-libc umask leaf
-  math-acosh-header-abi  verify selected x86 math C/C++ declarations for acosh
-  math-atanh-header-abi  verify selected x86 math C/C++ declarations for atanh
-  math-exp10-header-abi  verify selected x86 math C/C++ declarations for exp10
-  math-pow-header-abi  verify selected x86 math C/C++ declarations for pow
-  math-sincos-header-abi  verify selected x86 math C/C++ declarations for sincos
-  math-tanh-header-abi  verify selected x86 math C/C++ declarations for tanh
-  membarrier-header-abi  verify selected x86 C/C++ declarations for membarrier
-  pathconf-header-abi  verify selected x86 C/C++ declarations for pathconf
-  syncfs-header-abi  verify selected x86 C/C++ declarations for syncfs
-  sysconf-header-abi  verify selected x86 C/C++ declarations for sysconf
-  ulimit-header-abi  verify selected x86 C/C++ declarations for ulimit
-  umask-header-abi  verify selected x86 C/C++ declarations for umask
 EOF
 }
 
@@ -4404,10 +4163,6 @@ run_header_declaration_macro_visibility_matrix() {
     run_in_container bash /workspace/compat/x86_64/run_header_declaration_macro_visibility_matrix.sh
 }
 
-run_feature_profile_control_plane_header_abi() {
-    run_in_container bash /workspace/compat/x86_64/run_feature_profile_control_plane_header_abi.sh
-}
-
 run_header_callable_linkage_audit() {
     run_in_container bash /workspace/compat/x86_64/run_header_callable_linkage_audit.sh
 }
@@ -4420,40 +4175,12 @@ run_uapi_wrapper_matrix() {
     run_in_container bash /workspace/compat/x86_64/run_uapi_wrapper_matrix.sh
 }
 
-run_epoll_header_abi() {
-    run_in_container bash /workspace/compat/x86_64/run_epoll_header_abi.sh
-}
-
-run_event_descriptors_header_abi() {
-    run_in_container bash /workspace/compat/x86_64/run_event_descriptors_header_abi.sh
-}
-
-run_fanotify_header_abi() {
-    run_in_container bash /workspace/compat/x86_64/run_fanotify_header_abi.sh
-}
-
-run_dirent_header_abi() {
-    run_in_container bash /workspace/compat/x86_64/run_dirent_header_abi.sh
-}
-
-run_ftw_header_abi() {
-    run_in_container bash /workspace/compat/x86_64/run_ftw_header_abi.sh
-}
-
 run_stat_ftw_header_source_form() {
     run_in_container bash /workspace/compat/x86_64/run_stat_ftw_header_source_form.sh
 }
 
 run_param_header_source_form() {
     run_in_container bash /workspace/compat/x86_64/run_param_header_source_form.sh
-}
-
-run_pathname_lifecycle_header_abi() {
-    run_in_container bash /workspace/compat/x86_64/run_pathname_lifecycle_header_abi.sh
-}
-
-run_ioctl_header_abi() {
-    run_in_container bash /workspace/compat/x86_64/run_ioctl_header_abi.sh
 }
 
 run_ioctl_header_source_form() {
@@ -4496,84 +4223,8 @@ run_fcntl_event_header_topology() {
     run_in_container bash /workspace/compat/x86_64/run_fcntl_event_header_topology.sh
 }
 
-run_sys_io_header_abi() {
-    run_in_container bash /workspace/compat/x86_64/run_sys_io_header_abi.sh
-}
-
-run_timeval_transitive_header_abi() {
-    run_in_container bash /workspace/compat/x86_64/run_timeval_transitive_header_abi.sh
-}
-
-run_sys_time_direct_header_abi() {
-    run_in_container bash /workspace/compat/x86_64/run_sys_time_direct_header_abi.sh
-}
-
-run_access_header_abi() {
-    run_in_container bash /workspace/compat/x86_64/run_access_header_abi.sh
-}
-
-run_xattr_header_abi() {
-    run_in_container bash /workspace/compat/x86_64/run_xattr_header_abi.sh
-}
-
 run_header_abi_project() {
     run_in_container bash /workspace/compat/x86_64/run_project_header_abi.sh
-}
-
-run_math_complex_header_abi() {
-    run_in_container bash /workspace/compat/x86_64/run_math_complex_header_abi.sh
-}
-
-run_math_complex_complete_header_abi() {
-    run_in_container bash /workspace/compat/x86_64/run_math_complex_complete_header_abi.sh
-}
-
-run_math_elementary_long_double_header_abi() {
-    run_in_container bash /workspace/compat/x86_64/run_math_elementary_long_double_header_abi.sh
-}
-
-run_math_special_header_abi() {
-    run_in_container bash /workspace/compat/x86_64/run_math_special_header_abi.sh
-}
-
-run_math_exp2_header_abi() {
-    run_in_container bash /workspace/compat/x86_64/run_math_exp2_header_abi.sh
-}
-
-run_math_expm1_header_abi() {
-    run_in_container bash /workspace/compat/x86_64/run_math_expm1_header_abi.sh
-}
-
-run_math_log10_header_abi() {
-    run_in_container bash /workspace/compat/x86_64/run_math_log10_header_abi.sh
-}
-
-run_sys_reg_header_abi() {
-    run_in_container bash /workspace/compat/x86_64/run_sys_reg_header_abi.sh
-}
-
-run_machine_context_header_abi() {
-    run_in_container bash /workspace/compat/x86_64/run_machine_context_header_abi.sh
-}
-
-run_types_header_abi() {
-    run_in_container bash /workspace/compat/x86_64/run_types_header_abi.sh
-}
-
-run_stddef_header_abi() {
-    run_in_container bash /workspace/compat/x86_64/run_stddef_header_abi.sh
-}
-
-run_stat_header_abi() {
-    run_in_container bash /workspace/compat/x86_64/run_stat_header_abi.sh
-}
-
-run_utime_header_abi() {
-    run_in_container bash /workspace/compat/x86_64/run_utime_header_abi.sh
-}
-
-run_pthread_c11_header_abi() {
-    run_in_container bash /workspace/compat/x86_64/run_pthread_c11_header_abi.sh
 }
 
 run_pthread_header_source_form() {
@@ -4584,176 +4235,16 @@ run_atomic_addressable_abi() {
     run_in_container bash /workspace/compat/x86_64/run_atomic_addressable_abi.sh
 }
 
-run_pthread_cancellation_header_abi() {
-    run_in_container bash /workspace/compat/x86_64/run_pthread_cancellation_header_abi.sh
-}
-
-run_pthread_spin_destroy_header_abi() {
-    run_in_container bash /workspace/compat/x86_64/run_pthread_spin_destroy_header_abi.sh
-}
-
-run_pthread_spin_operations_header_abi() {
-    run_in_container bash /workspace/compat/x86_64/run_pthread_spin_operations_header_abi.sh
-}
-
-run_stdlib_header_abi() {
-    run_in_container bash /workspace/compat/x86_64/run_stdlib_header_abi.sh
-}
-
-run_syslog_header_abi() {
-    run_in_container bash /workspace/compat/x86_64/run_syslog_header_abi.sh
-}
-
-run_stdio_standard_header_abi() {
-    run_in_container bash /workspace/compat/x86_64/run_stdio_standard_header_abi.sh
-}
-
 run_stdio_header_source_form() {
     run_in_container bash /workspace/compat/x86_64/run_stdio_header_source_form.sh
-}
-
-run_fopen64_header_abi() {
-    run_in_container bash /workspace/compat/x86_64/run_fopen64_header_abi.sh
-}
-
-run_ctype_header_abi() {
-    run_in_container bash /workspace/compat/x86_64/run_ctype_header_abi.sh
-}
-
-run_locale_profile_header_abi() {
-    run_in_container bash /workspace/compat/x86_64/run_locale_profile_header_abi.sh
-}
-
-run_locale_multibyte_header_abi() {
-    run_in_container bash /workspace/compat/x86_64/run_locale_multibyte_header_abi.sh
-}
-
-run_iconv_header_abi() {
-    run_in_container bash /workspace/compat/x86_64/run_iconv_header_abi.sh
-}
-
-run_wide_character_header_abi() {
-    run_in_container bash /workspace/compat/x86_64/run_wide_character_header_abi.sh
-}
-
-run_locale_object_wide_header_abi() {
-    run_in_container bash /workspace/compat/x86_64/run_locale_object_wide_header_abi.sh
-}
-
-run_locale_narrow_header_abi() {
-    run_in_container bash /workspace/compat/x86_64/run_locale_narrow_header_abi.sh
-}
-
-run_integer_arithmetic_header_abi() {
-    run_in_container bash /workspace/compat/x86_64/run_integer_arithmetic_header_abi.sh
-}
-
-run_integer_parse_header_abi() {
-    run_in_container bash /workspace/compat/x86_64/run_integer_parse_header_abi.sh
-}
-
-run_float_parse_header_abi() {
-    run_in_container bash /workspace/compat/x86_64/run_float_parse_header_abi.sh
-}
-
-run_intmax_arithmetic_header_abi() {
-    run_in_container bash /workspace/compat/x86_64/run_intmax_arithmetic_header_abi.sh
 }
 
 run_libc_intmax_arithmetic() {
     run_in_container bash /workspace/compat/x86_64/run_libc_intmax_arithmetic.sh
 }
 
-run_credential_observation_header_abi() {
-    run_in_container bash /workspace/compat/x86_64/run_credential_observation_header_abi.sh
-}
-
-run_login_name_header_abi() {
-    run_in_container bash /workspace/compat/x86_64/run_login_name_header_abi.sh
-}
-
-run_child_reaping_header_abi() {
-    run_in_container bash /workspace/compat/x86_64/run_child_reaping_header_abi.sh
-}
-
-run_wait_extensions_header_abi() {
-    run_in_container bash /workspace/compat/x86_64/run_wait_extensions_header_abi.sh
-}
-
-run_immediate_termination_header_abi() {
-    run_in_container bash /workspace/compat/x86_64/run_immediate_termination_header_abi.sh
-}
-
-run_posix_exit_header_abi() {
-    run_in_container bash /workspace/compat/x86_64/run_posix_exit_header_abi.sh
-}
-
-run_posix_spawnattr_init_header_abi() {
-    run_in_container bash /workspace/compat/x86_64/run_posix_spawnattr_init_header_abi.sh
-}
-
-run_posix_spawnattr_getpgroup_header_abi() {
-    run_in_container bash /workspace/compat/x86_64/run_posix_spawnattr_getpgroup_header_abi.sh
-}
-
-run_posix_spawnattr_signal_fields_header_abi() {
-    run_in_container bash /workspace/compat/x86_64/run_posix_spawnattr_signal_fields_header_abi.sh
-}
-
-run_posix_spawnattr_getschedpolicy_header_abi() {
-    run_in_container bash /workspace/compat/x86_64/run_posix_spawnattr_getschedpolicy_header_abi.sh
-}
-
-run_posix_spawnattr_getschedparam_header_abi() {
-    run_in_container bash /workspace/compat/x86_64/run_posix_spawnattr_getschedparam_header_abi.sh
-}
-
-run_bsearch_header_abi() {
-    run_in_container bash /workspace/compat/x86_64/run_bsearch_header_abi.sh
-}
-
-run_linear_search_header_abi() {
-    run_in_container bash /workspace/compat/x86_64/run_linear_search_header_abi.sh
-}
-
-run_intrusive_queue_header_abi() {
-    run_in_container bash /workspace/compat/x86_64/run_intrusive_queue_header_abi.sh
-}
-
-run_wcswcs_header_abi() {
-    run_in_container bash /workspace/compat/x86_64/run_wcswcs_header_abi.sh
-}
-
-run_qsort_header_abi() {
-    run_in_container bash /workspace/compat/x86_64/run_qsort_header_abi.sh
-}
-
-run_sched_yield_header_abi() {
-    run_in_container bash /workspace/compat/x86_64/run_sched_yield_header_abi.sh
-}
-
-run_sched_cpucount_header_abi() {
-    run_in_container bash /workspace/compat/x86_64/run_sched_cpucount_header_abi.sh
-}
-
-run_sched_cpu_macros_header_abi() {
-    run_in_container bash /workspace/compat/x86_64/run_sched_cpu_macros_header_abi.sh
-}
-
 run_sched_cpu_set_source_form() {
     run_in_container bash /workspace/compat/x86_64/run_sched_cpu_set_source_form.sh
-}
-
-run_sched_getcpu_header_abi() {
-    run_in_container bash /workspace/compat/x86_64/run_sched_getcpu_header_abi.sh
-}
-
-run_sched_priority_bounds_header_abi() {
-    run_in_container bash /workspace/compat/x86_64/run_sched_priority_bounds_header_abi.sh
-}
-
-run_callback_algorithms_header_abi() {
-    run_in_container bash /workspace/compat/x86_64/run_callback_algorithms_header_abi.sh
 }
 
 run_libc_credential_observation() {
@@ -5112,10 +4603,6 @@ run_libc_alarm_probe() {
     run_in_container bash /workspace/compat/x86_64/run_libc_alarm.sh
 }
 
-run_ualarm_header_abi() {
-    run_in_container bash /workspace/compat/x86_64/run_ualarm_header_abi.sh
-}
-
 run_libc_ualarm_probe() {
     run_in_container bash /workspace/compat/x86_64/run_libc_ualarm.sh
 }
@@ -5126,10 +4613,6 @@ run_libc_interval_timers_probe() {
 
 run_libc_pthread_spin_operations_probe() {
     run_in_container bash /workspace/compat/x86_64/run_libc_pthread_spin_operations.sh
-}
-
-run_usleep_header_abi() {
-    run_in_container bash /workspace/compat/x86_64/run_usleep_header_abi.sh
 }
 
 run_libc_usleep_probe() {
@@ -5176,416 +4659,8 @@ run_libc_ulimit() {
     run_in_container bash /workspace/compat/x86_64/run_libc_ulimit.sh
 }
 
-run_ffs_header_abi() {
-    run_in_container bash /workspace/compat/x86_64/run_ffs_header_abi.sh
-}
-
-run_memccpy_header_abi() {
-    run_in_container bash /workspace/compat/x86_64/run_memccpy_header_abi.sh
-}
-
-run_memory_special_header_abi() {
-    run_in_container bash /workspace/compat/x86_64/run_memory_special_header_abi.sh
-}
-
-run_aio_error_header_abi() {
-    run_in_container bash /workspace/compat/x86_64/run_aio_error_header_abi.sh
-}
-
-run_byte_strings_header_abi() {
-    run_in_container bash /workspace/compat/x86_64/run_byte_strings_header_abi.sh
-}
-
-run_memory_search_header_abi() {
-    run_in_container bash /workspace/compat/x86_64/run_memory_search_header_abi.sh
-}
-
-run_memccpy_header_abi() {
-    run_in_container bash /workspace/compat/x86_64/run_memccpy_header_abi.sh
-}
-
-run_mempcpy_header_abi() {
-    run_in_container bash /workspace/compat/x86_64/run_mempcpy_header_abi.sh
-}
-
-run_strsep_header_abi() {
-    run_in_container bash /workspace/compat/x86_64/run_strsep_header_abi.sh
-}
-
-run_strtok_header_abi() {
-    run_in_container bash /workspace/compat/x86_64/run_strtok_header_abi.sh
-}
-
-run_stateful_byte_strings_header_abi() {
-    run_in_container bash /workspace/compat/x86_64/run_stateful_byte_strings_header_abi.sh
-}
-
-run_string_copy_header_abi() {
-    run_in_container bash /workspace/compat/x86_64/run_string_copy_header_abi.sh
-}
-
-run_error_strings_header_abi() {
-    run_in_container bash /workspace/compat/x86_64/run_error_strings_header_abi.sh
-}
-
-run_strsignal_header_abi() {
-    run_in_container bash /workspace/compat/x86_64/run_strsignal_header_abi.sh
-}
-
-run_gettext_catalog_header_abi() {
-    run_in_container bash /workspace/compat/x86_64/run_gettext_catalog_header_abi.sh
-}
-
-run_string_duplication_header_abi() {
-    run_in_container bash /workspace/compat/x86_64/run_string_duplication_header_abi.sh
-}
-
-run_random_entropy_header_abi() {
-    run_in_container bash /workspace/compat/x86_64/run_random_entropy_header_abi.sh
-}
-
-run_time_header_abi() {
-    run_in_container bash /workspace/compat/x86_64/run_time_header_abi.sh
-}
-
-run_clock_adjtime_header_abi() {
-    run_in_container bash /workspace/compat/x86_64/run_clock_adjtime_header_abi.sh
-}
-
-run_clock_settime_header_abi() {
-    run_in_container bash /workspace/compat/x86_64/run_clock_settime_header_abi.sh
-}
-
-run_timer_getoverrun_header_abi() {
-    run_in_container bash /workspace/compat/x86_64/run_timer_getoverrun_header_abi.sh
-}
-
-run_timer_delete_header_abi() {
-    run_in_container bash /workspace/compat/x86_64/run_timer_delete_header_abi.sh
-}
-
-run_timer_gettime_header_abi() {
-    run_in_container bash /workspace/compat/x86_64/run_timer_gettime_header_abi.sh
-}
-
-run_timer_settime_header_abi() {
-    run_in_container bash /workspace/compat/x86_64/run_timer_settime_header_abi.sh
-}
-
-run_sleep_header_abi() {
-    run_in_container bash /workspace/compat/x86_64/run_sleep_header_abi.sh
-}
-
-run_timerfd_header_abi() {
-    run_in_container bash /workspace/compat/x86_64/run_timerfd_header_abi.sh
-}
-
-run_mq_setattr_header_abi() {
-    run_in_container bash /workspace/compat/x86_64/run_mq_setattr_header_abi.sh
-}
-
-run_signalfd_header_abi() {
-    run_in_container bash /workspace/compat/x86_64/run_signalfd_header_abi.sh
-}
-
-run_poll_header_abi() {
-    run_in_container bash /workspace/compat/x86_64/run_poll_header_abi.sh
-}
-
-run_select_header_abi() {
-    run_in_container bash /workspace/compat/x86_64/run_select_header_abi.sh
-}
-
-run_fcntl_header_abi() {
-    run_in_container bash /workspace/compat/x86_64/run_fcntl_header_abi.sh
-}
-
-run_file_handles_header_abi() {
-    run_in_container bash /workspace/compat/x86_64/run_file_handles_header_abi.sh
-}
-
-run_posix_spawn_file_actions_header_abi() {
-    run_in_container bash /workspace/compat/x86_64/run_posix_spawn_file_actions_header_abi.sh
-}
-
-run_process_exec_header_abi() {
-    run_in_container bash /workspace/compat/x86_64/run_process_exec_header_abi.sh
-}
-
-run_flock_header_abi() {
-    run_in_container bash /workspace/compat/x86_64/run_flock_header_abi.sh
-}
-
-run_sendfile_header_abi() {
-    run_in_container bash /workspace/compat/x86_64/run_sendfile_header_abi.sh
-}
-
-run_tee_header_abi() {
-    run_in_container bash /workspace/compat/x86_64/run_tee_header_abi.sh
-}
-
-run_splice_header_abi() {
-    run_in_container bash /workspace/compat/x86_64/run_splice_header_abi.sh
-}
-
-run_sync_file_range_header_abi() {
-    run_in_container bash /workspace/compat/x86_64/run_sync_file_range_header_abi.sh
-}
-
-run_copy_file_range_header_abi() {
-    run_in_container bash /workspace/compat/x86_64/run_copy_file_range_header_abi.sh
-}
-
-run_unistd_header_abi() {
-    run_in_container bash /workspace/compat/x86_64/run_unistd_header_abi.sh
-}
-
-run_getpagesize_header_abi() {
-    run_in_container bash /workspace/compat/x86_64/run_getpagesize_header_abi.sh
-}
-
-run_system_header_abi() {
-    run_in_container bash /workspace/compat/x86_64/run_system_header_abi.sh
-}
-
-run_getloadavg_header_abi() {
-    run_in_container bash /workspace/compat/x86_64/run_getloadavg_header_abi.sh
-}
-
-run_syscall_header_abi() {
-    run_in_container bash /workspace/compat/x86_64/run_x86_syscall_header.sh
-}
-
-run_signal_header_abi() {
-    run_in_container bash /workspace/compat/x86_64/run_signal_header_abi.sh
-}
-
-run_psignal_header_abi() {
-    run_in_container bash /workspace/compat/x86_64/run_psignal_header_abi.sh
-}
-
-run_signal_legacy_aliases_header_abi() {
-    run_in_container bash /workspace/compat/x86_64/run_signal_legacy_aliases_header_abi.sh
-}
-
-run_signal_sysv_helpers_header_abi() {
-    run_in_container bash /workspace/compat/x86_64/run_signal_sysv_helpers_header_abi.sh
-}
-
-run_sched_getscheduler_header_abi() {
-    run_in_container bash /workspace/compat/x86_64/run_sched_getscheduler_header_abi.sh
-}
-
-run_sched_rr_interval_header_abi() {
-    run_in_container bash /workspace/compat/x86_64/run_sched_rr_interval_header_abi.sh
-}
-
-run_sched_getparam_header_abi() {
-    run_in_container bash /workspace/compat/x86_64/run_sched_getparam_header_abi.sh
-}
-
-run_sched_setparam_header_abi() {
-    run_in_container bash /workspace/compat/x86_64/run_sched_setparam_header_abi.sh
-}
-
-run_sched_setscheduler_header_abi() {
-    run_in_container bash /workspace/compat/x86_64/run_sched_setscheduler_header_abi.sh
-}
-
-run_sched_getaffinity_header_abi() {
-    run_in_container bash /workspace/compat/x86_64/run_sched_getaffinity_header_abi.sh
-}
-
-run_sched_setaffinity_header_abi() {
-    run_in_container bash /workspace/compat/x86_64/run_sched_setaffinity_header_abi.sh
-}
-
-run_setfsuid_header_abi() {
-    run_in_container bash /workspace/compat/x86_64/run_setfsuid_header_abi.sh
-}
-
-run_setfsgid_header_abi() {
-    run_in_container bash /workspace/compat/x86_64/run_setfsgid_header_abi.sh
-}
-
-run_personality_header_abi() {
-    run_in_container bash /workspace/compat/x86_64/run_personality_header_abi.sh
-}
-
-run_termios_header_abi() {
-    run_in_container bash /workspace/compat/x86_64/run_termios_header_abi.sh
-}
-
 run_terminal_streams_header_topology() {
     run_in_container bash /workspace/compat/x86_64/run_terminal_streams_header_topology.sh
-}
-
-run_ctermid_header_abi() {
-    run_in_container bash /workspace/compat/x86_64/run_ctermid_header_abi.sh
-}
-
-run_grantpt_header_abi() {
-    run_in_container bash /workspace/compat/x86_64/run_grantpt_header_abi.sh
-}
-
-run_unlockpt_header_abi() {
-    run_in_container bash /workspace/compat/x86_64/run_unlockpt_header_abi.sh
-}
-
-run_gethostid_header_abi() {
-    run_in_container bash /workspace/compat/x86_64/run_gethostid_header_abi.sh
-}
-
-run_issetugid_header_abi() {
-    run_in_container bash /workspace/compat/x86_64/run_issetugid_header_abi.sh
-}
-
-run_legacy_misc_header_abi() {
-    run_in_container bash /workspace/compat/x86_64/run_legacy_misc_header_abi.sh
-}
-
-run_endhostent_header_abi() {
-    run_in_container bash /workspace/compat/x86_64/run_endhostent_header_abi.sh
-}
-
-run_gettid_header_abi() {
-    run_in_container bash /workspace/compat/x86_64/run_gettid_header_abi.sh
-}
-
-run_posix_close_header_abi() {
-    run_in_container bash /workspace/compat/x86_64/run_posix_close_header_abi.sh
-}
-
-run_isatty_header_abi() {
-    run_in_container bash /workspace/compat/x86_64/run_isatty_header_abi.sh
-}
-
-run_ttyname_r_header_abi() {
-    run_in_container bash /workspace/compat/x86_64/run_ttyname_r_header_abi.sh
-}
-
-run_tcgetpgrp_header_abi() {
-    run_in_container bash /workspace/compat/x86_64/run_tcgetpgrp_header_abi.sh
-}
-
-run_tcsetpgrp_header_abi() {
-    run_in_container bash /workspace/compat/x86_64/run_tcsetpgrp_header_abi.sh
-}
-
-run_getpass_header_abi() {
-    run_in_container bash /workspace/compat/x86_64/run_getpass_header_abi.sh
-}
-
-run_mktemp_header_abi() {
-    run_in_container bash /workspace/compat/x86_64/run_mktemp_header_abi.sh
-}
-
-run_temporary_names_header_abi() {
-    run_in_container bash /workspace/compat/x86_64/run_temporary_names_header_abi.sh
-}
-
-run_mkfifo_header_abi() {
-    run_in_container bash /workspace/compat/x86_64/run_mkfifo_header_abi.sh
-}
-
-run_mkdirat_header_abi() {
-    run_in_container bash /workspace/compat/x86_64/run_mkdirat_header_abi.sh
-}
-
-run_mkfifoat_header_abi() {
-    run_in_container bash /workspace/compat/x86_64/run_mkfifoat_header_abi.sh
-}
-
-run_readlinkat_header_abi() {
-    run_in_container bash /workspace/compat/x86_64/run_readlinkat_header_abi.sh
-}
-run_linkat_header_abi() {
-    run_in_container bash /workspace/compat/x86_64/run_linkat_header_abi.sh
-}
-run_renameat2_header_abi() {
-    run_in_container bash /workspace/compat/x86_64/run_renameat2_header_abi.sh
-}
-run_lchown_header_abi() {
-    run_in_container bash /workspace/compat/x86_64/run_lchown_header_abi.sh
-}
-run_hasmntopt_header_abi() {
-    run_in_container bash /workspace/compat/x86_64/run_hasmntopt_header_abi.sh
-}
-
-run_fchdir_header_abi() {
-    run_in_container bash /workspace/compat/x86_64/run_fchdir_header_abi.sh
-}
-
-run_ulimit_header_abi() {
-    run_in_container bash /workspace/compat/x86_64/run_ulimit_header_abi.sh
-}
-
-run_mman_header_abi() {
-    run_in_container bash /workspace/compat/x86_64/run_mman_header_abi.sh
-}
-
-run_memory_locking_header_abi() {
-    run_in_container bash /workspace/compat/x86_64/run_memory_locking_header_abi.sh
-}
-
-run_memory_sync_header_abi() {
-    run_in_container bash /workspace/compat/x86_64/run_memory_sync_header_abi.sh
-}
-
-run_memfd_create_header_abi() {
-    run_in_container bash /workspace/compat/x86_64/run_memfd_create_header_abi.sh
-}
-
-run_resource_header_abi() {
-    run_in_container bash /workspace/compat/x86_64/run_resource_header_abi.sh
-}
-
-run_socket_header_abi() {
-    run_in_container bash /workspace/compat/x86_64/run_socket_header_abi.sh
-}
-
-run_tcp_header_abi() {
-    run_in_container bash /workspace/compat/x86_64/run_tcp_header_abi.sh
-}
-
-run_nameser_header_abi() {
-    run_in_container bash /workspace/compat/x86_64/run_nameser_header_abi.sh
-}
-
-run_quota_header_abi() {
-    run_in_container bash /workspace/compat/x86_64/run_quota_header_abi.sh
-}
-
-run_endservent_header_abi() {
-    run_in_container bash /workspace/compat/x86_64/run_endservent_header_abi.sh
-}
-
-run_service_lifecycle_header_abi() {
-    run_in_container bash /workspace/compat/x86_64/run_service_lifecycle_header_abi.sh
-}
-
-run_protocol_database_header_abi() {
-    run_in_container bash /workspace/compat/x86_64/run_protocol_database_header_abi.sh
-}
-
-run_inet_address_header_abi() {
-    run_in_container bash /workspace/compat/x86_64/run_inet_address_header_abi.sh
-}
-
-run_socket_messages_header_abi() {
-    run_in_container bash /workspace/compat/x86_64/run_socket_messages_header_abi.sh
-}
-
-run_sysv_semaphore_header_abi() {
-    run_in_container bash /workspace/compat/x86_64/run_sysv_semaphore_header_abi.sh
-}
-
-run_posix_semaphore_header_abi() {
-    run_in_container bash /workspace/compat/x86_64/run_posix_semaphore_header_abi.sh
-}
-
-run_sysv_message_shared_memory_header_abi() {
-    run_in_container bash /workspace/compat/x86_64/run_sysv_message_shared_memory_header_abi.sh
 }
 
 run_mm_abi_reference() {
@@ -6414,10 +5489,6 @@ run_libc_pthread_setconcurrency_probe() {
     run_in_container bash /workspace/compat/x86_64/run_libc_pthread_setconcurrency.sh
 }
 
-run_pthread_spin_init_header_abi() {
-    run_in_container bash /workspace/compat/x86_64/run_pthread_spin_init_header_abi.sh
-}
-
 run_libc_pthread_spin_init_probe() {
     run_in_container bash /workspace/compat/x86_64/run_libc_pthread_spin_init.sh
 }
@@ -7116,24 +6187,12 @@ run_libc_posix_fallocate_probe() {
     run_in_container bash /workspace/compat/x86_64/run_libc_posix_fallocate.sh
 }
 
-run_descriptor_advice_header_abi() {
-    run_in_container bash /workspace/compat/x86_64/run_descriptor_advice_header_abi.sh
-}
-
 run_libc_descriptor_advice_probe() {
     run_in_container bash /workspace/compat/x86_64/run_libc_descriptor_advice.sh
 }
 
-run_filesystem_capacity_header_abi() {
-    run_in_container bash /workspace/compat/x86_64/run_filesystem_capacity_header_abi.sh
-}
-
 run_libc_filesystem_capacity_probe() {
     run_in_container bash /workspace/compat/x86_64/run_libc_filesystem_capacity.sh
-}
-
-run_vector_io_header_abi() {
-    run_in_container bash /workspace/compat/x86_64/run_vector_io_header_abi.sh
 }
 
 run_libc_vector_io_probe() {
@@ -7385,6 +6444,9 @@ command="$1"
 shift
 
 case "$command" in
+    header-abi)
+        [ "$#" -eq 1 ] || fail "header-abi requires exactly one case"
+        ;;
     campaign-status)
         [ "$#" -eq 0 ] || fail "campaign-status takes no arguments"
         python3 "$ROOT_DIR/compat/x86_64/campaign_report.py"
@@ -7496,58 +6558,27 @@ case "$command" in
         run_in_container python3 /workspace/compat/x86_64/generate_c_abi_evidence_matrix.py --run-family "$1"
         ;;
     libc-native-mimalloc-shadow-pthread-teardown) ;;
-    getloadavg-header-abi) ;;
     libc-getloadavg) ;;
-    sleep-header-abi) ;;
     libc-sleep) ;;
-    mq-setattr-header-abi|libc-mq-setattr) ;;
-    timerfd-header-abi|signalfd-header-abi) ;;
-    signal-legacy-aliases-header-abi|libc-signal-legacy-aliases|signal-sysv-helpers-header-abi|libc-signal-sysv-helpers) ;;
-    psignal-header-abi|libc-psignal|libc-process-signal) ;;
-    h-errno-header-abi|libc-h-errno|resolver-runtime-header-abi|libc-resolver-runtime) ;;
-    legacy-misc-header-abi|libc-legacy-des-compat|libc-legacy-misc) ;;
-    ualarm-header-abi|usleep-header-abi|libc-timerfd|libc-signalfd|libc-sigpause|libc-sigisemptyset|libc-sigandset-sigorset|libc-sigpending|libc-sigrtmax|libc-sigrtmin|libc-sched-getscheduler|libc-sched-rr-interval|libc-alarm|libc-ualarm|libc-interval-timers|libc-usleep|libc-sigaddset-sigdelset-sigfillset|libc-sched-getparam|libc-sched-setparam|libc-sched-setscheduler|libc-sched-getaffinity|libc-sched-setaffinity|libc-setfsuid|libc-setfsgid|libc-personality|libc-io-permissions) ;;
+    libc-mq-setattr) ;;
+    libc-signal-legacy-aliases|libc-signal-sysv-helpers) ;;
+    libc-psignal|libc-process-signal) ;;
+    libc-h-errno|libc-resolver-runtime) ;;
+    libc-legacy-des-compat|libc-legacy-misc) ;;
+    libc-timerfd|libc-signalfd|libc-sigpause|libc-sigisemptyset|libc-sigandset-sigorset|libc-sigpending|libc-sigrtmax|libc-sigrtmin|libc-sched-getscheduler|libc-sched-rr-interval|libc-alarm|libc-ualarm|libc-interval-timers|libc-usleep|libc-sigaddset-sigdelset-sigfillset|libc-sched-getparam|libc-sched-setparam|libc-sched-setscheduler|libc-sched-getaffinity|libc-sched-setaffinity|libc-setfsuid|libc-setfsgid|libc-personality|libc-io-permissions) ;;
     libc-sched-cpucount|libc-sched-getcpu|libc-sched-priority-bounds|libc-sched-yield|libc-sched-get-priority-max|libc-sched-get-priority-min) ;;
-    sched-cpucount-header-abi|sched-cpu-macros-header-abi|sched-getscheduler-header-abi|sched-rr-interval-header-abi|sched-priority-bounds-header-abi|sched-get-priority-max-header-abi|sched-get-priority-min-header-abi|sched-getparam-header-abi|sched-setparam-header-abi|sched-setscheduler-header-abi|sched-getaffinity-header-abi|sched-setaffinity-header-abi|setfsuid-header-abi|setfsgid-header-abi|personality-header-abi) ;;
     sched-cpu-set-source-form) ;;
-    ctermid-header-abi|grantpt-header-abi|unlockpt-header-abi|gethostid-header-abi|issetugid-header-abi|endhostent-header-abi|protocol-database-header-abi|ether-line-header-abi|ether-header-abi|res-init-header-abi|posix-spawnattr-destroy-header-abi|posix-spawnattr-getflags-header-abi|posix-spawnattr-setpgroup-header-abi|posix-spawnattr-setschedparam-header-abi|posix-spawnattr-setschedpolicy-header-abi|posix-spawn-file-actions-init-header-abi|getpagesize-header-abi|gettid-header-abi|posix-close-header-abi|isatty-header-abi|ttyname-r-header-abi|tcgetpgrp-header-abi|tcsetpgrp-header-abi|getpass-header-abi|fchdir-header-abi|ulimit-header-abi|libc-ctermid|libc-grantpt|libc-unlockpt|libc-gethostid|libc-issetugid|libc-endhostent|libc-sethostent|libc-protocol-database|libc-ether-line|libc-ether|libc-res-init|libc-posix-spawnattr-destroy|libc-posix-spawnattr-getflags|libc-posix-spawnattr-setpgroup|libc-posix-spawnattr-setschedparam|libc-posix-spawnattr-setschedpolicy|libc-posix-spawn-file-actions-init|libc-getpagesize|libc-gettid|libc-posix-close|libc-isatty|libc-ttyname-r|libc-tcgetpgrp|libc-tcsetpgrp|libc-getpass|libc-fchdir|libc-ulimit|mkfifo-header-abi|mkdirat-header-abi|mkfifoat-header-abi|libc-mkfifo|libc-mkdirat|libc-mkfifoat|mktemp-header-abi|libc-mktemp) ;;
-    temporary-names-header-abi|libc-temporary-names|libc-temporary-objects) ;;
-    file-handles-header-abi|libc-file-handles) ;;
-    posix-spawn-file-actions-header-abi|libc-posix-spawn-file-actions|process-exec-header-abi|libc-process-exec) ;;
-    readlinkat-header-abi|libc-readlinkat|linkat-header-abi|libc-linkat|renameat2-header-abi|libc-renameat2|lchown-header-abi|libc-lchown|hasmntopt-header-abi|libc-hasmntopt|unlinkat-header-abi|libc-unlinkat|chown-header-abi|libc-chown|sync-header-abi|libc-sync) ;;
-    tee-header-abi|splice-header-abi) ;;
-    sync-file-range-header-abi|copy-file-range-header-abi) ;;
-    stdio-permanent-line-io-header-abi|stdio-octal-hex-scan-header-abi|stdio-fixed-percent-scan-header-abi|stdio-fixed-format-whitespace-scan-header-abi|stdio-fixed-literal-scan-header-abi|stdio-fixed-empty-format-scan-header-abi|stdio-fixed-suppressed-character-scan-header-abi|stdio-fixed-suppressed-string-scan-header-abi|stdio-fixed-suppressed-scanset-scan-header-abi|stdio-fixed-suppressed-count-scan-header-abi) ;;
-    math-complex-complete-header-abi|libc-math-complex-complete) ;;
-    stdio-permanent-byte-io-header-abi) ;;
-    stdio-permanent-status-header-abi) ;;
-    stdio-permanent-freading-stdin-header-abi) ;;
-    stdio-permanent-fsetlocking-stdin-header-abi) ;;
-    stdio-permanent-fseterr-stdin-header-abi) ;;
-    stdio-permanent-freadable-stdin-header-abi) ;;
-    stdio-permanent-fwritable-stderr-header-abi) ;;
-    stdio-permanent-fbufsize-stderr-header-abi) ;;
-    stdio-permanent-flbf-stderr-header-abi) ;;
-    stdio-permanent-fileno-header-abi) ;;
-    stdio-permanent-fileno-unlocked-header-abi) ;;
-    stdio-permanent-feof-unlocked-header-abi) ;;
-    stdio-permanent-ferror-unlocked-header-abi) ;;
-    clock-adjtime-header-abi) ;;
-    clock-settime-header-abi) ;;
-    timer-getoverrun-header-abi) ;;
-    timer-delete-header-abi) ;;
-    timer-gettime-header-abi) ;;
-    timer-settime-header-abi) ;;
-    fopen64-header-abi) ;;
-    pthread-spin-destroy-header-abi|pthread-spin-operations-header-abi) ;;
+    libc-ctermid|libc-grantpt|libc-unlockpt|libc-gethostid|libc-issetugid|libc-endhostent|libc-sethostent|libc-protocol-database|libc-ether-line|libc-ether|libc-res-init|libc-posix-spawnattr-destroy|libc-posix-spawnattr-getflags|libc-posix-spawnattr-setpgroup|libc-posix-spawnattr-setschedparam|libc-posix-spawnattr-setschedpolicy|libc-posix-spawn-file-actions-init|libc-getpagesize|libc-gettid|libc-posix-close|libc-isatty|libc-ttyname-r|libc-tcgetpgrp|libc-tcsetpgrp|libc-getpass|libc-fchdir|libc-ulimit|libc-mkfifo|libc-mkdirat|libc-mkfifoat|libc-mktemp) ;;
+    libc-temporary-names|libc-temporary-objects) ;;
+    libc-file-handles) ;;
+    libc-posix-spawn-file-actions|libc-process-exec) ;;
+    libc-readlinkat|libc-linkat|libc-renameat2|libc-lchown|libc-hasmntopt|libc-unlinkat|libc-chown|libc-sync) ;;
+    libc-math-complex-complete) ;;
     pthread-header-source-form) ;;
-    sys-io-header-abi) ;;
-    tcp-header-abi) ;;
-    stddef-header-abi) ;;
     atomic-addressable-abi) ;;
     project-header-extension-policy) ;;
-    image|musl-oracle|header-abi-reference|public-header-surface|header-abi-project|math-complex-header-abi|sys-reg-header-abi|types-header-abi|stat-header-abi|utime-header-abi|pthread-c11-header-abi|pthread-cancellation-header-abi|stdlib-header-abi|stdio-standard-header-abi|time-header-abi|poll-header-abi|select-header-abi|fcntl-header-abi|descriptor-advice-header-abi|filesystem-capacity-header-abi|flock-header-abi|sendfile-header-abi|ioctl-header-abi|unistd-header-abi|system-header-abi|syscall-header-abi|signal-header-abi|termios-header-abi|mman-header-abi|resource-header-abi|socket-header-abi|socket-messages-header-abi|random-entropy-header-abi|mm-abi-reference|mapping-reference|memory-vm-reference|pty-basic-reference|terminal-reference|mlock-reference|msync-reference|mincore-reference|fs-advice-reference|memfd-reference|ftruncate-reference|statfs-reference|timestamp-reference|path-lifecycle-reference|namespace-reference|path-core-reference|xattr-reference|directory-reference|temporary-object-reference|statx-reference|cwd-canonicalize-reference|root-change-reference|mount-reference|thread-kill-reference|signal-altstack-reference|signal-thread-queue-reference|ipc-reference|shm-reference|inotify-reference|socket-transport-reference|interface-device-reference|resolver-transport-reference|resolver-facade-reference|netdb-reference|users-databases-reference|posix-fallocate-reference|fallocate-reference|file-position-reference|sync-reference|syncfs-reference|sync-file-range-reference|rand-reference|time-abi-reference|time-observation-reference|calendar-time-reference|advanced-time-reference|relative-sleep-reference|clock-nanosleep-reference|getitimer-reference|setitimer-reference|timerfd-reference|pselect-reference|poll-reference|ppoll-reference|epoll-reference|process-identity-reference|child-ownership-reference|getgroups-reference|process-session-reference|pidfd-open-reference|fcntl-getlk-reference|fcntl-status-reference|flock-reference|sendfile-reference|copy-file-range-reference|scheduler-priority-bounds-reference|rr-interval-reference|sched-affinity-reference|sched-affinity-set-reference|priority-reference|setpriority-reference|rlimit-reference|rlimit-targeted-reference|setrlimit-reference|umask-reference|rusage-reference|times-reference|fstat-reference|statat-reference|getcwd-reference|readlinkat-reference|access-reference|system-reference|thread-reference|thread-credentials-reference|fs-credentials-reference|core|facade|facade-record-owning|libc-syscall|libc-errno-tls|libc-stat-compat|libc-credentials|libc-bootstrap-primitives|libc-signal-control|libc-signal-execution|libc-static-tls-v1|libc-crt-static-tls|libc-pthread-create-join-tls|libc-c11-lifecycle|libc-c11-plain-sync|libc-pthread-c11-once|libc-pthread-c11-tsd|libc-pthread-tls-aggregate|libc-pthread-cancel-deferred|libc-pthread-atfork|libc-thrd-sleep|libc-pthread-mutex-normal|libc-pthread-rwlock|libc-pthread-cond-private|libc-termios-control|libc-process-context|libc-environment|libc-descriptor-io|libc-descriptor-lifecycle|libc-timestamp-updates|libc-process-resources|libc-socket-transport|libc-socket-messages|libc-thread-pointer|libc-foundation|libc-fenv|libc-math-complex|libc-elementary-sqrt-fenv|libc-math-x87-extended|libc-math-long-double-completion|libc-math-elementary-fenv-sensitive|libc-memory|libc-setjmp|libc-atomic|libc-clone-raw|libc-signal-altstack|libc-signal-foundation|ldso-relocation|ldso-image|ldso-initial-graph|ldso-general-initial-graph|ldso-general-initial-target-root|ldso-general-initial-tls|ldso-general-initial-tls-target-root|ldso-initial-tls|ldso-initial-exec-tls|ldso-owned-crt-handoff|ldso-fixed-graph-introspection|ldso-dynamic-admission|libc-stack-chk-fail|pthread-spin-init-header-abi) ;;
-    math-elementary-long-double-header-abi|libc-math-elementary-long-double) ;;
+    image|musl-oracle|header-abi-reference|public-header-surface|header-abi-project|mm-abi-reference|mapping-reference|memory-vm-reference|pty-basic-reference|terminal-reference|mlock-reference|msync-reference|mincore-reference|fs-advice-reference|memfd-reference|ftruncate-reference|statfs-reference|timestamp-reference|path-lifecycle-reference|namespace-reference|path-core-reference|xattr-reference|directory-reference|temporary-object-reference|statx-reference|cwd-canonicalize-reference|root-change-reference|mount-reference|thread-kill-reference|signal-altstack-reference|signal-thread-queue-reference|ipc-reference|shm-reference|inotify-reference|socket-transport-reference|interface-device-reference|resolver-transport-reference|resolver-facade-reference|netdb-reference|users-databases-reference|posix-fallocate-reference|fallocate-reference|file-position-reference|sync-reference|syncfs-reference|sync-file-range-reference|rand-reference|time-abi-reference|time-observation-reference|calendar-time-reference|advanced-time-reference|relative-sleep-reference|clock-nanosleep-reference|getitimer-reference|setitimer-reference|timerfd-reference|pselect-reference|poll-reference|ppoll-reference|epoll-reference|process-identity-reference|child-ownership-reference|getgroups-reference|process-session-reference|pidfd-open-reference|fcntl-getlk-reference|fcntl-status-reference|flock-reference|sendfile-reference|copy-file-range-reference|scheduler-priority-bounds-reference|rr-interval-reference|sched-affinity-reference|sched-affinity-set-reference|priority-reference|setpriority-reference|rlimit-reference|rlimit-targeted-reference|setrlimit-reference|umask-reference|rusage-reference|times-reference|fstat-reference|statat-reference|getcwd-reference|readlinkat-reference|access-reference|system-reference|thread-reference|thread-credentials-reference|fs-credentials-reference|core|facade|facade-record-owning|libc-syscall|libc-errno-tls|libc-stat-compat|libc-credentials|libc-bootstrap-primitives|libc-signal-control|libc-signal-execution|libc-static-tls-v1|libc-crt-static-tls|libc-pthread-create-join-tls|libc-c11-lifecycle|libc-c11-plain-sync|libc-pthread-c11-once|libc-pthread-c11-tsd|libc-pthread-tls-aggregate|libc-pthread-cancel-deferred|libc-pthread-atfork|libc-thrd-sleep|libc-pthread-mutex-normal|libc-pthread-rwlock|libc-pthread-cond-private|libc-termios-control|libc-process-context|libc-environment|libc-descriptor-io|libc-descriptor-lifecycle|libc-timestamp-updates|libc-process-resources|libc-socket-transport|libc-socket-messages|libc-thread-pointer|libc-foundation|libc-fenv|libc-math-complex|libc-elementary-sqrt-fenv|libc-math-x87-extended|libc-math-long-double-completion|libc-math-elementary-fenv-sensitive|libc-memory|libc-setjmp|libc-atomic|libc-clone-raw|libc-signal-altstack|libc-signal-foundation|ldso-relocation|ldso-image|ldso-initial-graph|ldso-general-initial-graph|ldso-general-initial-target-root|ldso-general-initial-tls|ldso-general-initial-tls-target-root|ldso-initial-tls|ldso-initial-exec-tls|ldso-owned-crt-handoff|ldso-fixed-graph-introspection|ldso-dynamic-admission|libc-stack-chk-fail) ;;
+    libc-math-elementary-long-double) ;;
     ldso-fixed-graph-dlfcn) ;;
     ldso-public-dlfcn|ldso-dladdr-symbol-bounds) ;;
     ldso-static-dlfcn) ;;
@@ -7562,9 +6593,8 @@ case "$command" in
     general-dynamic-dlopen) ;;
     general-dynamic-failed-open) ;;
     general-relocations) ;;
-    math-special-header-abi|libc-math-special) ;;
-    math-exp2-header-abi|math-expm1-header-abi|math-log10-header-abi|libc-math-exp2|libc-math-expm1|libc-math-log10|math-exp10-header-abi|math-log-header-abi|math-sin-header-abi|math-tan-header-abi|math-tanh-header-abi|math-atanh-header-abi|math-acosh-header-abi|math-sincos-header-abi|math-pow-header-abi|libc-math-exp10|libc-math-log|libc-math-sin|libc-math-tan|libc-math-tanh|libc-math-atanh|libc-math-acosh|libc-math-sincos|libc-math-pow) ;;
-    inet-address-header-abi|nameser-header-abi|quota-header-abi|endservent-header-abi|service-lifecycle-header-abi) ;;
+    libc-math-special) ;;
+    libc-math-exp2|libc-math-expm1|libc-math-log10|libc-math-exp10|libc-math-log|libc-math-sin|libc-math-tan|libc-math-tanh|libc-math-atanh|libc-math-acosh|libc-math-sincos|libc-math-pow) ;;
     libc-network-byte-order|libc-dn-skipname|libc-dn-expand|libc-ns-flagdata|libc-ns-get16|libc-ns-get32|libc-ns-put16|libc-ns-put32|libc-ns-skiprr|libc-nameser-wire-aggregate|libc-nameser-message-parser) ;;
     ldso-target-root) ;;
     libc-fenv-rounding) ;;
@@ -7581,11 +6611,6 @@ case "$command" in
     libc-math-round) ;;
     libc-math-log2) ;;
     libc-fdim) ;;
-    machine-context-header-abi) ;;
-    memory-sync-header-abi) ;;
-    memory-locking-header-abi) ;;
-    memfd-create-header-abi) ;;
-    vector-io-header-abi) ;;
     libc-crt1-static-tls) ;;
     owned-crypt-runtime|owned-atomic-addressable-profile|owned-bsd-random|owned-bsd-random-receipt) ;;
     native-thread-signal-abi) ;;
@@ -7633,40 +6658,11 @@ case "$command" in
     header-callable-linkage-audit) ;;
     header-callable-provider-linkage-audit) ;;
     uapi-wrapper-matrix) ;;
-    epoll-header-abi) ;;
-    event-descriptors-header-abi) ;;
-    fanotify-header-abi) ;;
-    dirent-header-abi) ;;
-    ftw-header-abi) ;;
     stat-ftw-header-source-form) ;;
     param-header-source-form) ;;
-    pathname-lifecycle-header-abi) ;;
-    timeval-transitive-header-abi) ;;
-    sys-time-direct-header-abi) ;;
-    access-header-abi) ;;
-    xattr-header-abi) ;;
     madvise-reference) ;;
-    basename-header-abi|siginterrupt-header-abi|mlockall-header-abi|munlockall-header-abi|ftime-header-abi|clock-getcpuclockid-header-abi|libc-basename|libc-siginterrupt|libc-mlockall|libc-munlockall|libc-ftime|libc-clock-getcpuclockid) ;;
-    umask-header-abi|intrusive-queue-header-abi|getdtablesize-header-abi|membarrier-header-abi|syncfs-header-abi|confstr-header-abi|fpathconf-header-abi|pathconf-header-abi|sysconf-header-abi|libc-umask|libc-intrusive-queue|libc-getdtablesize|libc-membarrier|libc-syncfs|libc-confstr|libc-fpathconf|libc-pathconf|libc-sysconf) ;;
-    ctype-header-abi|locale-profile-header-abi|locale-multibyte-header-abi|iconv-header-abi|wide-character-header-abi|wcswcs-header-abi|locale-object-wide-header-abi|locale-narrow-header-abi|c32rtomb-header-abi|uchar-stateful-header-abi) ;;
-    integer-arithmetic-header-abi|integer-parse-header-abi|float-parse-header-abi|crypt-header-abi|getsubopt-header-abi|l64a-header-abi|intmax-arithmetic-header-abi|credential-observation-header-abi|login-name-header-abi|child-reaping-header-abi|wait-extensions-header-abi|immediate-termination-header-abi|sched-getcpu-header-abi|sched-yield-header-abi|bsearch-header-abi|linear-search-header-abi|intrusive-queue-header-abi|qsort-header-abi|callback-algorithms-header-abi) ;;
-    posix-exit-header-abi|posix-spawnattr-init-header-abi|posix-spawnattr-getpgroup-header-abi|posix-spawnattr-signal-fields-header-abi|posix-spawnattr-getschedparam-header-abi|posix-spawnattr-getschedpolicy-header-abi) ;;
-    ffs-header-abi) ;;
-    memory-special-header-abi) ;;
-    memccpy-header-abi) ;;
-    aio-error-header-abi) ;;
-    byte-strings-header-abi) ;;
-    memory-search-header-abi) ;;
-    memccpy-header-abi) ;;
-    mempcpy-header-abi) ;;
-    strsep-header-abi) ;;
-    strtok-header-abi|stateful-byte-strings-header-abi) ;;
-    string-copy-header-abi) ;;
-    error-strings-header-abi|strsignal-header-abi|gettext-catalog-header-abi) ;;
-    string-duplication-header-abi) ;;
-    random-entropy-header-abi) ;;
-    sysv-semaphore-header-abi|posix-semaphore-header-abi) ;;
-    sysv-message-shared-memory-header-abi) ;;
+    libc-basename|libc-siginterrupt|libc-mlockall|libc-munlockall|libc-ftime|libc-clock-getcpuclockid) ;;
+    libc-umask|libc-intrusive-queue|libc-getdtablesize|libc-membarrier|libc-syncfs|libc-confstr|libc-fpathconf|libc-pathconf|libc-sysconf) ;;
     libc-event-descriptors) ;;
     libc-extended-attributes) ;;
     libc-pathname-lifecycle) ;;
@@ -7738,7 +6734,6 @@ case "$command" in
         [ "$#" -le 1 ] || fail "libc-bsd-random takes no more than --expect-missing"
         [ "$#" -eq 0 ] || [ "$1" = --expect-missing ] || fail "libc-bsd-random only accepts --expect-missing"
         ;;
-    feature-profile-control-plane-header-abi) ;;
     terminal-streams-header-topology) ;;
     link-header-source-form) ;;
     reboot-header-source-form) ;;
@@ -7748,7 +6743,6 @@ case "$command" in
     mount-header-source-form) ;;
     klog-header-source-form) ;;
     cachectl-header-source-form) ;;
-    syslog-header-abi) ;;
     sysmacros-header-source-form) ;;
     ioctl-header-source-form) ;;
     fcntl-event-header-topology) ;;
@@ -8058,6 +7052,13 @@ case "$command" in
         ensure_image
         run_linux_5_10_uapi
         ;;
+    header-abi)
+        [ "$#" -eq 1 ] || fail "header-abi requires exactly one case"
+        header_abi_runner="$(awk -F '\t' -v case_name="$1" '$1 == case_name { print $2; exit }' "$ROOT_DIR/compat/x86_64/header_abi_cases.txt")"
+        [ -n "$header_abi_runner" ] || fail "header-abi: unknown case $1"
+        ensure_image
+        run_in_container bash "/workspace/compat/x86_64/$header_abi_runner"
+        ;;
     header-abi-reference)
         [ "$#" -eq 0 ] || fail "header-abi-reference takes no arguments"
         ensure_image
@@ -8116,11 +7117,6 @@ case "$command" in
         ensure_image
         run_header_declaration_macro_visibility_matrix
         ;;
-    feature-profile-control-plane-header-abi)
-        [ "$#" -eq 0 ] || fail "feature-profile-control-plane-header-abi takes no arguments"
-        ensure_image
-        run_feature_profile_control_plane_header_abi
-        ;;
     header-callable-linkage-audit)
         [ "$#" -eq 0 ] || fail "header-callable-linkage-audit takes no arguments"
         ensure_image
@@ -8136,31 +7132,6 @@ case "$command" in
         ensure_image
         run_uapi_wrapper_matrix
         ;;
-    epoll-header-abi)
-        [ "$#" -eq 0 ] || fail "epoll-header-abi takes no arguments"
-        ensure_image
-        run_epoll_header_abi
-        ;;
-    event-descriptors-header-abi)
-        [ "$#" -eq 0 ] || fail "event-descriptors-header-abi takes no arguments"
-        ensure_image
-        run_event_descriptors_header_abi
-        ;;
-    fanotify-header-abi)
-        [ "$#" -eq 0 ] || fail "fanotify-header-abi takes no arguments"
-        ensure_image
-        run_fanotify_header_abi
-        ;;
-    dirent-header-abi)
-        [ "$#" -eq 0 ] || fail "dirent-header-abi takes no arguments"
-        ensure_image
-        run_dirent_header_abi
-        ;;
-    ftw-header-abi)
-        [ "$#" -eq 0 ] || fail "ftw-header-abi takes no arguments"
-        ensure_image
-        run_ftw_header_abi
-        ;;
     stat-ftw-header-source-form)
         [ "$#" -eq 0 ] || fail "stat-ftw-header-source-form takes no arguments"
         ensure_image
@@ -8170,16 +7141,6 @@ case "$command" in
         [ "$#" -eq 0 ] || fail "param-header-source-form takes no arguments"
         ensure_image
         run_param_header_source_form
-        ;;
-    pathname-lifecycle-header-abi)
-        [ "$#" -eq 0 ] || fail "pathname-lifecycle-header-abi takes no arguments"
-        ensure_image
-        run_pathname_lifecycle_header_abi
-        ;;
-    ioctl-header-abi)
-        [ "$#" -eq 0 ] || fail "ioctl-header-abi takes no arguments"
-        ensure_image
-        run_ioctl_header_abi
         ;;
     ioctl-header-source-form)
         [ "$#" -eq 0 ] || fail "ioctl-header-source-form takes no arguments"
@@ -8231,105 +7192,10 @@ case "$command" in
         ensure_image
         run_fcntl_event_header_topology
         ;;
-    sys-io-header-abi)
-        [ "$#" -eq 0 ] || fail "sys-io-header-abi takes no arguments"
-        ensure_image
-        run_sys_io_header_abi
-        ;;
-    timeval-transitive-header-abi)
-        [ "$#" -eq 0 ] || fail "timeval-transitive-header-abi takes no arguments"
-        ensure_image
-        run_timeval_transitive_header_abi
-        ;;
-    sys-time-direct-header-abi)
-        [ "$#" -eq 0 ] || fail "sys-time-direct-header-abi takes no arguments"
-        ensure_image
-        run_sys_time_direct_header_abi
-        ;;
-    access-header-abi)
-        [ "$#" -eq 0 ] || fail "access-header-abi takes no arguments"
-        ensure_image
-        run_access_header_abi
-        ;;
-    xattr-header-abi)
-        [ "$#" -eq 0 ] || fail "xattr-header-abi takes no arguments"
-        ensure_image
-        run_xattr_header_abi
-        ;;
     header-abi-project)
         [ "$#" -eq 0 ] || fail "header-abi-project takes no arguments"
         ensure_image
         run_header_abi_project
-        ;;
-    math-complex-header-abi)
-        [ "$#" -eq 0 ] || fail "math-complex-header-abi takes no arguments"
-        ensure_image
-        run_math_complex_header_abi
-        ;;
-    math-complex-complete-header-abi)
-        [ "$#" -eq 0 ] || fail "math-complex-complete-header-abi takes no arguments"
-        ensure_image
-        run_math_complex_complete_header_abi
-        ;;
-    math-elementary-long-double-header-abi)
-        [ "$#" -eq 0 ] || fail "math-elementary-long-double-header-abi takes no arguments"
-        ensure_image
-        run_math_elementary_long_double_header_abi
-        ;;
-    math-special-header-abi)
-        [ "$#" -eq 0 ] || fail "math-special-header-abi takes no arguments"
-        ensure_image
-        run_math_special_header_abi
-        ;;
-    math-exp2-header-abi)
-        [ "$#" -eq 0 ] || fail "math-exp2-header-abi takes no arguments"
-        ensure_image
-        run_math_exp2_header_abi
-        ;;
-    math-expm1-header-abi)
-        [ "$#" -eq 0 ] || fail "math-expm1-header-abi takes no arguments"
-        ensure_image
-        run_math_expm1_header_abi
-        ;;
-    math-log10-header-abi)
-        [ "$#" -eq 0 ] || fail "math-log10-header-abi takes no arguments"
-        ensure_image
-        run_math_log10_header_abi
-        ;;
-    sys-reg-header-abi)
-        [ "$#" -eq 0 ] || fail "sys-reg-header-abi takes no arguments"
-        ensure_image
-        run_sys_reg_header_abi
-        ;;
-    machine-context-header-abi)
-        [ "$#" -eq 0 ] || fail "machine-context-header-abi takes no arguments"
-        ensure_image
-        run_machine_context_header_abi
-        ;;
-    types-header-abi)
-        [ "$#" -eq 0 ] || fail "types-header-abi takes no arguments"
-        ensure_image
-        run_types_header_abi
-        ;;
-    stddef-header-abi)
-        [ "$#" -eq 0 ] || fail "stddef-header-abi takes no arguments"
-        ensure_image
-        run_stddef_header_abi
-        ;;
-    stat-header-abi)
-        [ "$#" -eq 0 ] || fail "stat-header-abi takes no arguments"
-        ensure_image
-        run_stat_header_abi
-        ;;
-    utime-header-abi)
-        [ "$#" -eq 0 ] || fail "utime-header-abi takes no arguments"
-        ensure_image
-        run_utime_header_abi
-        ;;
-    pthread-c11-header-abi)
-        [ "$#" -eq 0 ] || fail "pthread-c11-header-abi takes no arguments"
-        ensure_image
-        run_pthread_c11_header_abi
         ;;
     pthread-header-source-form)
         [ "$#" -eq 0 ] || fail "pthread-header-source-form takes no arguments"
@@ -8341,835 +7207,25 @@ case "$command" in
         ensure_image
         run_atomic_addressable_abi
         ;;
-    pthread-cancellation-header-abi)
-        [ "$#" -eq 0 ] || fail "pthread-cancellation-header-abi takes no arguments"
-        ensure_image
-        run_pthread_cancellation_header_abi
-        ;;
-    pthread-spin-destroy-header-abi)
-        [ "$#" -eq 0 ] || fail "pthread-spin-destroy-header-abi takes no arguments"
-        ensure_image
-        run_pthread_spin_destroy_header_abi
-        ;;
-    pthread-spin-operations-header-abi)
-        [ "$#" -eq 0 ] || fail "pthread-spin-operations-header-abi takes no arguments"
-        ensure_image
-        run_pthread_spin_operations_header_abi
-        ;;
-    stdlib-header-abi)
-        [ "$#" -eq 0 ] || fail "stdlib-header-abi takes no arguments"
-        ensure_image
-        run_stdlib_header_abi
-        ;;
-    syslog-header-abi)
-        [ "$#" -eq 0 ] || fail "syslog-header-abi takes no arguments"
-        ensure_image
-        run_syslog_header_abi
-        ;;
-    getloadavg-header-abi)
-        [ "$#" -eq 0 ] || fail "getloadavg-header-abi takes no arguments"
-        ensure_image
-        run_getloadavg_header_abi
-        ;;
-    stdio-standard-header-abi)
-        [ "$#" -eq 0 ] || fail "stdio-standard-header-abi takes no arguments"
-        ensure_image
-        run_stdio_standard_header_abi
-        ;;
     stdio-header-source-form)
         [ "$#" -eq 0 ] || fail "stdio-header-source-form takes no arguments"
         ensure_image
         run_stdio_header_source_form
-        ;;
-    fopen64-header-abi)
-        [ "$#" -eq 0 ] || fail "fopen64-header-abi takes no arguments"
-        ensure_image
-        run_fopen64_header_abi
-        ;;
-    stdio-permanent-line-io-header-abi)
-        [ "$#" -eq 0 ] || fail "stdio-permanent-line-io-header-abi takes no arguments"
-        ensure_image
-        run_in_container bash /workspace/compat/x86_64/run_stdio_permanent_line_io_header_abi.sh
-        ;;
-    stdio-permanent-byte-io-header-abi)
-        [ "$#" -eq 0 ] || fail "stdio-permanent-byte-io-header-abi takes no arguments"
-        ensure_image
-        run_in_container bash /workspace/compat/x86_64/run_stdio_permanent_byte_io_header_abi.sh
-        ;;
-    stdio-octal-hex-scan-header-abi)
-        [ "$#" -eq 0 ] || fail "stdio-octal-hex-scan-header-abi takes no arguments"
-        ensure_image
-        run_in_container bash /workspace/compat/x86_64/run_stdio_octal_hex_scan_header_abi.sh
-        ;;
-    stdio-fixed-percent-scan-header-abi)
-        [ "$#" -eq 0 ] || fail "stdio-fixed-percent-scan-header-abi takes no arguments"
-        ensure_image
-        run_in_container bash /workspace/compat/x86_64/run_stdio_fixed_percent_scan_header_abi.sh
-        ;;
-    stdio-fixed-format-whitespace-scan-header-abi)
-        [ "$#" -eq 0 ] || fail "stdio-fixed-format-whitespace-scan-header-abi takes no arguments"
-        ensure_image
-        run_in_container bash /workspace/compat/x86_64/run_stdio_fixed_format_whitespace_scan_header_abi.sh
-        ;;
-    stdio-fixed-literal-scan-header-abi)
-        [ "$#" -eq 0 ] || fail "stdio-fixed-literal-scan-header-abi takes no arguments"
-        ensure_image
-        run_in_container bash /workspace/compat/x86_64/run_stdio_fixed_literal_scan_header_abi.sh
-        ;;
-    stdio-fixed-empty-format-scan-header-abi)
-        [ "$#" -eq 0 ] || fail "stdio-fixed-empty-format-scan-header-abi takes no arguments"
-        ensure_image
-        run_in_container bash /workspace/compat/x86_64/run_stdio_fixed_empty_format_scan_header_abi.sh
-        ;;
-    stdio-fixed-suppressed-character-scan-header-abi)
-        [ "$#" -eq 0 ] || fail "stdio-fixed-suppressed-character-scan-header-abi takes no arguments"
-        ensure_image
-        run_in_container bash /workspace/compat/x86_64/run_stdio_fixed_suppressed_character_scan_header_abi.sh
-        ;;
-    stdio-fixed-suppressed-string-scan-header-abi)
-        [ "$#" -eq 0 ] || fail "stdio-fixed-suppressed-string-scan-header-abi takes no arguments"
-        ensure_image
-        run_in_container bash /workspace/compat/x86_64/run_stdio_fixed_suppressed_string_scan_header_abi.sh
-        ;;
-    stdio-fixed-suppressed-scanset-scan-header-abi)
-        [ "$#" -eq 0 ] || fail "stdio-fixed-suppressed-scanset-scan-header-abi takes no arguments"
-        ensure_image
-        run_in_container bash /workspace/compat/x86_64/run_stdio_fixed_suppressed_scanset_scan_header_abi.sh
-        ;;
-    stdio-fixed-suppressed-count-scan-header-abi)
-        [ "$#" -eq 0 ] || fail "stdio-fixed-suppressed-count-scan-header-abi takes no arguments"
-        ensure_image
-        run_in_container bash /workspace/compat/x86_64/run_stdio_fixed_suppressed_count_scan_header_abi.sh
-        ;;
-    stdio-permanent-status-header-abi)
-        [ "$#" -eq 0 ] || fail "stdio-permanent-status-header-abi takes no arguments"
-        ensure_image
-        run_in_container bash /workspace/compat/x86_64/run_stdio_permanent_status_header_abi.sh
-        ;;
-    stdio-permanent-freading-stdin-header-abi)
-        [ "$#" -eq 0 ] || fail "stdio-permanent-freading-stdin-header-abi takes no arguments"
-        ensure_image
-        run_in_container bash /workspace/compat/x86_64/run_stdio_permanent_freading_stdin_header_abi.sh
-        ;;
-    stdio-permanent-fsetlocking-stdin-header-abi)
-        [ "$#" -eq 0 ] || fail "stdio-permanent-fsetlocking-stdin-header-abi takes no arguments"
-        ensure_image
-        run_in_container bash /workspace/compat/x86_64/run_stdio_permanent_fsetlocking_stdin_header_abi.sh
-        ;;
-    stdio-permanent-fseterr-stdin-header-abi)
-        [ "$#" -eq 0 ] || fail "stdio-permanent-fseterr-stdin-header-abi takes no arguments"
-        ensure_image
-        run_in_container bash /workspace/compat/x86_64/run_stdio_permanent_fseterr_stdin_header_abi.sh
-        ;;
-    stdio-permanent-freadable-stdin-header-abi)
-        [ "$#" -eq 0 ] || fail "stdio-permanent-freadable-stdin-header-abi takes no arguments"
-        ensure_image
-        run_in_container bash /workspace/compat/x86_64/run_stdio_permanent_freadable_stdin_header_abi.sh
-        ;;
-    stdio-permanent-fwritable-stderr-header-abi)
-        [ "$#" -eq 0 ] || fail "stdio-permanent-fwritable-stderr-header-abi takes no arguments"
-        ensure_image
-        run_in_container bash /workspace/compat/x86_64/run_stdio_permanent_fwritable_stderr_header_abi.sh
-        ;;
-    stdio-permanent-fbufsize-stderr-header-abi)
-        [ "$#" -eq 0 ] || fail "stdio-permanent-fbufsize-stderr-header-abi takes no arguments"
-        ensure_image
-        run_in_container bash /workspace/compat/x86_64/run_stdio_permanent_fbufsize_stderr_header_abi.sh
-        ;;
-    stdio-permanent-flbf-stderr-header-abi)
-        [ "$#" -eq 0 ] || fail "stdio-permanent-flbf-stderr-header-abi takes no arguments"
-        ensure_image
-        run_in_container bash /workspace/compat/x86_64/run_stdio_permanent_flbf_stderr_header_abi.sh
-        ;;
-    stdio-permanent-fileno-header-abi)
-        [ "$#" -eq 0 ] || fail "stdio-permanent-fileno-header-abi takes no arguments"
-        ensure_image
-        run_in_container bash /workspace/compat/x86_64/run_stdio_permanent_fileno_header_abi.sh
-        ;;
-    stdio-permanent-fileno-unlocked-header-abi)
-        [ "$#" -eq 0 ] || fail "stdio-permanent-fileno-unlocked-header-abi takes no arguments"
-        ensure_image
-        run_in_container bash /workspace/compat/x86_64/run_stdio_permanent_fileno_unlocked_header_abi.sh
-        ;;
-    stdio-permanent-feof-unlocked-header-abi)
-        [ "$#" -eq 0 ] || fail "stdio-permanent-feof-unlocked-header-abi takes no arguments"
-        ensure_image
-        run_in_container bash /workspace/compat/x86_64/run_stdio_permanent_feof_unlocked_header_abi.sh
-        ;;
-    stdio-permanent-ferror-unlocked-header-abi)
-        [ "$#" -eq 0 ] || fail "stdio-permanent-ferror-unlocked-header-abi takes no arguments"
-        ensure_image
-        run_in_container bash /workspace/compat/x86_64/run_stdio_permanent_ferror_unlocked_header_abi.sh
-        ;;
-    ctype-header-abi)
-        [ "$#" -eq 0 ] || fail "ctype-header-abi takes no arguments"
-        ensure_image
-        run_ctype_header_abi
-        ;;
-    locale-profile-header-abi)
-        [ "$#" -eq 0 ] || fail "locale-profile-header-abi takes no arguments"
-        ensure_image
-        run_locale_profile_header_abi
-        ;;
-    locale-multibyte-header-abi)
-        [ "$#" -eq 0 ] || fail "locale-multibyte-header-abi takes no arguments"
-        ensure_image
-        run_locale_multibyte_header_abi
-        ;;
-    iconv-header-abi)
-        [ "$#" -eq 0 ] || fail "iconv-header-abi takes no arguments"
-        ensure_image
-        run_iconv_header_abi
-        ;;
-    wide-character-header-abi)
-        [ "$#" -eq 0 ] || fail "wide-character-header-abi takes no arguments"
-        ensure_image
-        run_wide_character_header_abi
-        ;;
-    locale-object-wide-header-abi)
-        [ "$#" -eq 0 ] || fail "locale-object-wide-header-abi takes no arguments"
-        ensure_image
-        run_locale_object_wide_header_abi
-        ;;
-    locale-narrow-header-abi)
-        [ "$#" -eq 0 ] || fail "locale-narrow-header-abi takes no arguments"
-        ensure_image
-        run_locale_narrow_header_abi
-        ;;
-    integer-arithmetic-header-abi)
-        [ "$#" -eq 0 ] || fail "integer-arithmetic-header-abi takes no arguments"
-        ensure_image
-        run_integer_arithmetic_header_abi
-        ;;
-    integer-parse-header-abi)
-        [ "$#" -eq 0 ] || fail "integer-parse-header-abi takes no arguments"
-        ensure_image
-        run_integer_parse_header_abi
-        ;;
-    float-parse-header-abi)
-        [ "$#" -eq 0 ] || fail "float-parse-header-abi takes no arguments"
-        ensure_image
-        run_float_parse_header_abi
-        ;;
-    crypt-header-abi)
-        [ "$#" -eq 0 ] || fail "crypt-header-abi takes no arguments"
-        ensure_image
-        run_in_container bash /workspace/compat/x86_64/run_crypt_header_abi.sh
-        ;;
-    getsubopt-header-abi)
-        [ "$#" -eq 0 ] || fail "getsubopt-header-abi takes no arguments"
-        ensure_image
-        run_in_container bash /workspace/compat/x86_64/run_getsubopt_header_abi.sh
-        ;;
-    l64a-header-abi)
-        [ "$#" -eq 0 ] || fail "l64a-header-abi takes no arguments"
-        ensure_image
-        run_in_container bash /workspace/compat/x86_64/run_l64a_header_abi.sh
         ;;
     libc-intmax-arithmetic)
         [ "$#" -eq 0 ] || fail "libc-intmax-arithmetic takes no arguments"
         ensure_image
         run_libc_intmax_arithmetic
         ;;
-    intmax-arithmetic-header-abi)
-        [ "$#" -eq 0 ] || fail "intmax-arithmetic-header-abi takes no arguments"
-        ensure_image
-        run_intmax_arithmetic_header_abi
-        ;;
-    credential-observation-header-abi)
-        [ "$#" -eq 0 ] || fail "credential-observation-header-abi takes no arguments"
-        ensure_image
-        run_credential_observation_header_abi
-        ;;
-    login-name-header-abi)
-        [ "$#" -eq 0 ] || fail "login-name-header-abi takes no arguments"
-        ensure_image
-        run_login_name_header_abi
-        ;;
-    child-reaping-header-abi)
-        [ "$#" -eq 0 ] || fail "child-reaping-header-abi takes no arguments"
-        ensure_image
-        run_child_reaping_header_abi
-        ;;
-    wait-extensions-header-abi)
-        [ "$#" -eq 0 ] || fail "wait-extensions-header-abi takes no arguments"
-        ensure_image
-        run_wait_extensions_header_abi
-        ;;
-    immediate-termination-header-abi)
-        [ "$#" -eq 0 ] || fail "immediate-termination-header-abi takes no arguments"
-        ensure_image
-        run_immediate_termination_header_abi
-        ;;
-    posix-exit-header-abi)
-        [ "$#" -eq 0 ] || fail "posix-exit-header-abi takes no arguments"
-        ensure_image
-        run_posix_exit_header_abi
-        ;;
-    posix-spawnattr-init-header-abi)
-        [ "$#" -eq 0 ] || fail "posix-spawnattr-init-header-abi takes no arguments"
-        ensure_image
-        run_posix_spawnattr_init_header_abi
-        ;;
-    posix-spawnattr-getpgroup-header-abi)
-        [ "$#" -eq 0 ] || fail "posix-spawnattr-getpgroup-header-abi takes no arguments"
-        ensure_image
-        run_posix_spawnattr_getpgroup_header_abi
-        ;;
-    posix-spawnattr-signal-fields-header-abi)
-        [ "$#" -eq 0 ] || fail "posix-spawnattr-signal-fields-header-abi takes no arguments"
-        ensure_image
-        run_posix_spawnattr_signal_fields_header_abi
-        ;;
-    posix-spawnattr-getschedpolicy-header-abi)
-        [ "$#" -eq 0 ] || fail "posix-spawnattr-getschedpolicy-header-abi takes no arguments"
-        ensure_image
-        run_posix_spawnattr_getschedpolicy_header_abi
-        ;;
-    posix-spawnattr-getschedparam-header-abi)
-        [ "$#" -eq 0 ] || fail "posix-spawnattr-getschedparam-header-abi takes no arguments"
-        ensure_image
-        run_posix_spawnattr_getschedparam_header_abi
-        ;;
-    bsearch-header-abi)
-        [ "$#" -eq 0 ] || fail "bsearch-header-abi takes no arguments"
-        ensure_image
-        run_bsearch_header_abi
-        ;;
-    linear-search-header-abi)
-        [ "$#" -eq 0 ] || fail "linear-search-header-abi takes no arguments"
-        ensure_image
-        run_linear_search_header_abi
-        ;;
-    intrusive-queue-header-abi)
-        [ "$#" -eq 0 ] || fail "intrusive-queue-header-abi takes no arguments"
-        ensure_image
-        run_intrusive_queue_header_abi
-        ;;
-    wcswcs-header-abi)
-        [ "$#" -eq 0 ] || fail "wcswcs-header-abi takes no arguments"
-        ensure_image
-        run_wcswcs_header_abi
-        ;;
-    qsort-header-abi)
-        [ "$#" -eq 0 ] || fail "qsort-header-abi takes no arguments"
-        ensure_image
-        run_qsort_header_abi
-        ;;
-    sched-yield-header-abi)
-        [ "$#" -eq 0 ] || fail "sched-yield-header-abi takes no arguments"
-        ensure_image
-        run_sched_yield_header_abi
-        ;;
-    sched-cpucount-header-abi)
-        [ "$#" -eq 0 ] || fail "sched-cpucount-header-abi takes no arguments"
-        ensure_image
-        run_sched_cpucount_header_abi
-        ;;
-    sched-cpu-macros-header-abi)
-        [ "$#" -eq 0 ] || fail "sched-cpu-macros-header-abi takes no arguments"
-        ensure_image
-        run_sched_cpu_macros_header_abi
-        ;;
     sched-cpu-set-source-form)
         [ "$#" -eq 0 ] || fail "sched-cpu-set-source-form takes no arguments"
         ensure_image
         run_sched_cpu_set_source_form
         ;;
-    sched-getcpu-header-abi)
-        [ "$#" -eq 0 ] || fail "sched-getcpu-header-abi takes no arguments"
-        ensure_image
-        run_sched_getcpu_header_abi
-        ;;
-    sched-priority-bounds-header-abi)
-        [ "$#" -eq 0 ] || fail "sched-priority-bounds-header-abi takes no arguments"
-        ensure_image
-        run_sched_priority_bounds_header_abi
-        ;;
-    sched-get-priority-max-header-abi)
-        [ "$#" -eq 0 ] || fail "sched-get-priority-max-header-abi takes no arguments"
-        ensure_image
-        run_sched_get_priority_max_header_abi
-        ;;
-    sched-get-priority-min-header-abi)
-        [ "$#" -eq 0 ] || fail "sched-get-priority-min-header-abi takes no arguments"
-        ensure_image
-        run_sched_get_priority_min_header_abi
-        ;;
-    callback-algorithms-header-abi)
-        [ "$#" -eq 0 ] || fail "callback-algorithms-header-abi takes no arguments"
-        ensure_image
-        run_callback_algorithms_header_abi
-        ;;
-    ffs-header-abi)
-        [ "$#" -eq 0 ] || fail "ffs-header-abi takes no arguments"
-        ensure_image
-        run_ffs_header_abi
-        ;;
-    memory-special-header-abi)
-        [ "$#" -eq 0 ] || fail "memory-special-header-abi takes no arguments"
-        ensure_image
-        run_memory_special_header_abi
-        ;;
-    memccpy-header-abi)
-        [ "$#" -eq 0 ] || fail "memccpy-header-abi takes no arguments"
-        ensure_image
-        run_memccpy_header_abi
-        ;;
-    aio-error-header-abi)
-        [ "$#" -eq 0 ] || fail "aio-error-header-abi takes no arguments"
-        ensure_image
-        run_aio_error_header_abi
-        ;;
-    byte-strings-header-abi)
-        [ "$#" -eq 0 ] || fail "byte-strings-header-abi takes no arguments"
-        ensure_image
-        run_byte_strings_header_abi
-        ;;
-    memory-search-header-abi)
-        [ "$#" -eq 0 ] || fail "memory-search-header-abi takes no arguments"
-        ensure_image
-        run_memory_search_header_abi
-        ;;
-    memccpy-header-abi)
-        [ "$#" -eq 0 ] || fail "memccpy-header-abi takes no arguments"
-        ensure_image
-        run_memccpy_header_abi
-        ;;
-    mempcpy-header-abi)
-        [ "$#" -eq 0 ] || fail "mempcpy-header-abi takes no arguments"
-        ensure_image
-        run_mempcpy_header_abi
-        ;;
-    strsep-header-abi)
-        [ "$#" -eq 0 ] || fail "strsep-header-abi takes no arguments"
-        ensure_image
-        run_strsep_header_abi
-        ;;
-    strtok-header-abi)
-        [ "$#" -eq 0 ] || fail "strtok-header-abi takes no arguments"
-        ensure_image
-        run_strtok_header_abi
-        ;;
-    stateful-byte-strings-header-abi)
-        [ "$#" -eq 0 ] || fail "stateful-byte-strings-header-abi takes no arguments"
-        ensure_image
-        run_stateful_byte_strings_header_abi
-        ;;
-    string-copy-header-abi)
-        [ "$#" -eq 0 ] || fail "string-copy-header-abi takes no arguments"
-        ensure_image
-        run_string_copy_header_abi
-        ;;
-    error-strings-header-abi)
-        [ "$#" -eq 0 ] || fail "error-strings-header-abi takes no arguments"
-        ensure_image
-        run_error_strings_header_abi
-        ;;
-    strsignal-header-abi)
-        [ "$#" -eq 0 ] || fail "strsignal-header-abi takes no arguments"
-        ensure_image
-        run_strsignal_header_abi
-        ;;
-    gettext-catalog-header-abi)
-        [ "$#" -eq 0 ] || fail "gettext-catalog-header-abi takes no arguments"
-        ensure_image
-        run_gettext_catalog_header_abi
-        ;;
-    random-entropy-header-abi)
-        [ "$#" -eq 0 ] || fail "random-entropy-header-abi takes no arguments"
-        ensure_image
-        run_random_entropy_header_abi
-        ;;
-    time-header-abi)
-        [ "$#" -eq 0 ] || fail "time-header-abi takes no arguments"
-        ensure_image
-        run_time_header_abi
-        ;;
-    clock-adjtime-header-abi)
-        [ "$#" -eq 0 ] || fail "clock-adjtime-header-abi takes no arguments"
-        ensure_image
-        run_clock_adjtime_header_abi
-        ;;
-    clock-settime-header-abi)
-        [ "$#" -eq 0 ] || fail "clock-settime-header-abi takes no arguments"
-        ensure_image
-        run_clock_settime_header_abi
-        ;;
-    timer-getoverrun-header-abi)
-        [ "$#" -eq 0 ] || fail "timer-getoverrun-header-abi takes no arguments"
-        ensure_image
-        run_timer_getoverrun_header_abi
-        ;;
-    timer-delete-header-abi)
-        [ "$#" -eq 0 ] || fail "timer-delete-header-abi takes no arguments"
-        ensure_image
-        run_timer_delete_header_abi
-        ;;
-    timer-gettime-header-abi)
-        [ "$#" -eq 0 ] || fail "timer-gettime-header-abi takes no arguments"
-        ensure_image
-        run_timer_gettime_header_abi
-        ;;
-    timer-settime-header-abi)
-        [ "$#" -eq 0 ] || fail "timer-settime-header-abi takes no arguments"
-        ensure_image
-        run_timer_settime_header_abi
-        ;;
-    sleep-header-abi)
-        [ "$#" -eq 0 ] || fail "sleep-header-abi takes no arguments"
-        ensure_image
-        run_sleep_header_abi
-        ;;
-    timerfd-header-abi)
-        [ "$#" -eq 0 ] || fail "timerfd-header-abi takes no arguments"
-        ensure_image
-        run_timerfd_header_abi
-        ;;
-    mq-setattr-header-abi)
-        [ "$#" -eq 0 ] || fail "mq-setattr-header-abi takes no arguments"
-        ensure_image
-        run_mq_setattr_header_abi
-        ;;
-    signalfd-header-abi)
-        [ "$#" -eq 0 ] || fail "signalfd-header-abi takes no arguments"
-        ensure_image
-        run_signalfd_header_abi
-        ;;
-    poll-header-abi)
-        [ "$#" -eq 0 ] || fail "poll-header-abi takes no arguments"
-        ensure_image
-        run_poll_header_abi
-        ;;
-    select-header-abi)
-        [ "$#" -eq 0 ] || fail "select-header-abi takes no arguments"
-        ensure_image
-        run_select_header_abi
-        ;;
-    fcntl-header-abi)
-        [ "$#" -eq 0 ] || fail "fcntl-header-abi takes no arguments"
-        ensure_image
-        run_fcntl_header_abi
-        ;;
-    file-handles-header-abi)
-        [ "$#" -eq 0 ] || fail "file-handles-header-abi takes no arguments"
-        ensure_image
-        run_file_handles_header_abi
-        ;;
-    posix-spawn-file-actions-header-abi)
-        [ "$#" -eq 0 ] || fail "posix-spawn-file-actions-header-abi takes no arguments"
-        ensure_image
-        run_posix_spawn_file_actions_header_abi
-        ;;
-    process-exec-header-abi)
-        [ "$#" -eq 0 ] || fail "process-exec-header-abi takes no arguments"
-        ensure_image
-        run_process_exec_header_abi
-        ;;
-    flock-header-abi)
-        [ "$#" -eq 0 ] || fail "flock-header-abi takes no arguments"
-        ensure_image
-        run_flock_header_abi
-        ;;
-    sendfile-header-abi)
-        [ "$#" -eq 0 ] || fail "sendfile-header-abi takes no arguments"
-        ensure_image
-        run_sendfile_header_abi
-        ;;
-    tee-header-abi)
-        [ "$#" -eq 0 ] || fail "tee-header-abi takes no arguments"
-        ensure_image
-        run_tee_header_abi
-        ;;
-    splice-header-abi)
-        [ "$#" -eq 0 ] || fail "splice-header-abi takes no arguments"
-        ensure_image
-        run_splice_header_abi
-        ;;
-    sync-file-range-header-abi)
-        [ "$#" -eq 0 ] || fail "sync-file-range-header-abi takes no arguments"
-        ensure_image
-        run_sync_file_range_header_abi
-        ;;
-    copy-file-range-header-abi)
-        [ "$#" -eq 0 ] || fail "copy-file-range-header-abi takes no arguments"
-        ensure_image
-        run_copy_file_range_header_abi
-        ;;
-    unistd-header-abi)
-        [ "$#" -eq 0 ] || fail "unistd-header-abi takes no arguments"
-        ensure_image
-        run_unistd_header_abi
-        ;;
-    getpagesize-header-abi)
-        [ "$#" -eq 0 ] || fail "getpagesize-header-abi takes no arguments"
-        ensure_image
-        run_getpagesize_header_abi
-        ;;
-    system-header-abi)
-        [ "$#" -eq 0 ] || fail "system-header-abi takes no arguments"
-        ensure_image
-        run_system_header_abi
-        ;;
-    syscall-header-abi)
-        [ "$#" -eq 0 ] || fail "syscall-header-abi takes no arguments"
-        ensure_image
-        run_syscall_header_abi
-        ;;
-    signal-header-abi)
-        [ "$#" -eq 0 ] || fail "signal-header-abi takes no arguments"
-        ensure_image
-        run_signal_header_abi
-        ;;
-    psignal-header-abi)
-        [ "$#" -eq 0 ] || fail "psignal-header-abi takes no arguments"
-        ensure_image
-        run_psignal_header_abi
-        ;;
-    signal-legacy-aliases-header-abi)
-        [ "$#" -eq 0 ] || fail "signal-legacy-aliases-header-abi takes no arguments"
-        ensure_image
-        run_signal_legacy_aliases_header_abi
-        ;;
-    signal-sysv-helpers-header-abi)
-        [ "$#" -eq 0 ] || fail "signal-sysv-helpers-header-abi takes no arguments"
-        ensure_image
-        run_signal_sysv_helpers_header_abi
-        ;;
-    sched-getscheduler-header-abi)
-        [ "$#" -eq 0 ] || fail "sched-getscheduler-header-abi takes no arguments"
-        ensure_image
-        run_sched_getscheduler_header_abi
-        ;;
-    sched-rr-interval-header-abi)
-        [ "$#" -eq 0 ] || fail "sched-rr-interval-header-abi takes no arguments"
-        ensure_image
-        run_sched_rr_interval_header_abi
-        ;;
-    termios-header-abi)
-        [ "$#" -eq 0 ] || fail "termios-header-abi takes no arguments"
-        ensure_image
-        run_termios_header_abi
-        ;;
     terminal-streams-header-topology)
         [ "$#" -eq 0 ] || fail "terminal-streams-header-topology takes no arguments"
         ensure_image
         run_terminal_streams_header_topology
-        ;;
-    ctermid-header-abi)
-        [ "$#" -eq 0 ] || fail "ctermid-header-abi takes no arguments"
-        ensure_image
-        run_ctermid_header_abi
-        ;;
-    grantpt-header-abi)
-        [ "$#" -eq 0 ] || fail "grantpt-header-abi takes no arguments"
-        ensure_image
-        run_grantpt_header_abi
-        ;;
-    unlockpt-header-abi)
-        [ "$#" -eq 0 ] || fail "unlockpt-header-abi takes no arguments"
-        ensure_image
-        run_unlockpt_header_abi
-        ;;
-    gethostid-header-abi)
-        [ "$#" -eq 0 ] || fail "gethostid-header-abi takes no arguments"
-        ensure_image
-        run_gethostid_header_abi
-        ;;
-    issetugid-header-abi)
-        [ "$#" -eq 0 ] || fail "issetugid-header-abi takes no arguments"
-        ensure_image
-        run_issetugid_header_abi
-        ;;
-    legacy-misc-header-abi)
-        [ "$#" -eq 0 ] || fail "legacy-misc-header-abi takes no arguments"
-        ensure_image
-        run_legacy_misc_header_abi
-        ;;
-    endhostent-header-abi)
-        [ "$#" -eq 0 ] || fail "endhostent-header-abi takes no arguments"
-        ensure_image
-        run_endhostent_header_abi
-        ;;
-    gettid-header-abi)
-        [ "$#" -eq 0 ] || fail "gettid-header-abi takes no arguments"
-        ensure_image
-        run_gettid_header_abi
-        ;;
-    posix-close-header-abi)
-        [ "$#" -eq 0 ] || fail "posix-close-header-abi takes no arguments"
-        ensure_image
-        run_posix_close_header_abi
-        ;;
-    isatty-header-abi)
-        [ "$#" -eq 0 ] || fail "isatty-header-abi takes no arguments"
-        ensure_image
-        run_isatty_header_abi
-        ;;
-    ttyname-r-header-abi)
-        [ "$#" -eq 0 ] || fail "ttyname-r-header-abi takes no arguments"
-        ensure_image
-        run_ttyname_r_header_abi
-        ;;
-    tcgetpgrp-header-abi)
-        [ "$#" -eq 0 ] || fail "tcgetpgrp-header-abi takes no arguments"
-        ensure_image
-        run_tcgetpgrp_header_abi
-        ;;
-    tcsetpgrp-header-abi)
-        [ "$#" -eq 0 ] || fail "tcsetpgrp-header-abi takes no arguments"
-        ensure_image
-        run_tcsetpgrp_header_abi
-        ;;
-    getpass-header-abi)
-        [ "$#" -eq 0 ] || fail "getpass-header-abi takes no arguments"
-        ensure_image
-        run_getpass_header_abi
-        ;;
-    mkfifo-header-abi)
-        [ "$#" -eq 0 ] || fail "mkfifo-header-abi takes no arguments"
-        ensure_image
-        run_mkfifo_header_abi
-        ;;
-    mkdirat-header-abi)
-        [ "$#" -eq 0 ] || fail "mkdirat-header-abi takes no arguments"
-        ensure_image
-        run_mkdirat_header_abi
-        ;;
-    mkfifoat-header-abi)
-        [ "$#" -eq 0 ] || fail "mkfifoat-header-abi takes no arguments"
-        ensure_image
-        run_mkfifoat_header_abi
-        ;;
-    readlinkat-header-abi)
-        [ "$#" -eq 0 ] || fail "readlinkat-header-abi takes no arguments"
-        ensure_image
-        run_readlinkat_header_abi
-        ;;
-    linkat-header-abi)
-        [ "$#" -eq 0 ] || fail "linkat-header-abi takes no arguments"
-        ensure_image
-        run_linkat_header_abi
-        ;;
-    renameat2-header-abi)
-        [ "$#" -eq 0 ] || fail "renameat2-header-abi takes no arguments"
-        ensure_image
-        run_renameat2_header_abi
-        ;;
-    lchown-header-abi)
-        [ "$#" -eq 0 ] || fail "lchown-header-abi takes no arguments"
-        ensure_image
-        run_lchown_header_abi
-        ;;
-    hasmntopt-header-abi)
-        [ "$#" -eq 0 ] || fail "hasmntopt-header-abi takes no arguments"
-        ensure_image
-        run_hasmntopt_header_abi
-        ;;
-    fchdir-header-abi)
-        [ "$#" -eq 0 ] || fail "fchdir-header-abi takes no arguments"
-        ensure_image
-        run_fchdir_header_abi
-        ;;
-    ulimit-header-abi)
-        [ "$#" -eq 0 ] || fail "ulimit-header-abi takes no arguments"
-        ensure_image
-        run_ulimit_header_abi
-        ;;
-    mktemp-header-abi)
-        [ "$#" -eq 0 ] || fail "mktemp-header-abi takes no arguments"
-        ensure_image
-        run_mktemp_header_abi
-        ;;
-    temporary-names-header-abi)
-        [ "$#" -eq 0 ] || fail "temporary-names-header-abi takes no arguments"
-        ensure_image
-        run_temporary_names_header_abi
-        ;;
-    mman-header-abi)
-        [ "$#" -eq 0 ] || fail "mman-header-abi takes no arguments"
-        ensure_image
-        run_mman_header_abi
-        ;;
-    memory-sync-header-abi)
-        [ "$#" -eq 0 ] || fail "memory-sync-header-abi takes no arguments"
-        ensure_image
-        run_memory_sync_header_abi
-        ;;
-    memory-locking-header-abi)
-        [ "$#" -eq 0 ] || fail "memory-locking-header-abi takes no arguments"
-        ensure_image
-        run_memory_locking_header_abi
-        ;;
-    memfd-create-header-abi)
-        [ "$#" -eq 0 ] || fail "memfd-create-header-abi takes no arguments"
-        ensure_image
-        run_memfd_create_header_abi
-        ;;
-    resource-header-abi)
-        [ "$#" -eq 0 ] || fail "resource-header-abi takes no arguments"
-        ensure_image
-        run_resource_header_abi
-        ;;
-    socket-header-abi)
-        [ "$#" -eq 0 ] || fail "socket-header-abi takes no arguments"
-        ensure_image
-        run_socket_header_abi
-        ;;
-    tcp-header-abi)
-        [ "$#" -eq 0 ] || fail "tcp-header-abi takes no arguments"
-        ensure_image
-        run_tcp_header_abi
-        ;;
-    nameser-header-abi)
-        [ "$#" -eq 0 ] || fail "nameser-header-abi takes no arguments"
-        ensure_image
-        run_nameser_header_abi
-        ;;
-    quota-header-abi)
-        [ "$#" -eq 0 ] || fail "quota-header-abi takes no arguments"
-        ensure_image
-        run_quota_header_abi
-        ;;
-    endservent-header-abi)
-        [ "$#" -eq 0 ] || fail "endservent-header-abi takes no arguments"
-        ensure_image
-        run_endservent_header_abi
-        ;;
-    service-lifecycle-header-abi)
-        [ "$#" -eq 0 ] || fail "service-lifecycle-header-abi takes no arguments"
-        ensure_image
-        run_service_lifecycle_header_abi
-        ;;
-    protocol-database-header-abi)
-        [ "$#" -eq 0 ] || fail "protocol-database-header-abi takes no arguments"
-        ensure_image
-        run_protocol_database_header_abi
-        ;;
-    inet-address-header-abi)
-        [ "$#" -eq 0 ] || fail "inet-address-header-abi takes no arguments"
-        ensure_image
-        run_inet_address_header_abi
-        ;;
-    socket-messages-header-abi)
-        [ "$#" -eq 0 ] || fail "socket-messages-header-abi takes no arguments"
-        ensure_image
-        run_socket_messages_header_abi
-        ;;
-    sysv-semaphore-header-abi)
-        [ "$#" -eq 0 ] || fail "sysv-semaphore-header-abi takes no arguments"
-        ensure_image
-        run_sysv_semaphore_header_abi
-        ;;
-    posix-semaphore-header-abi)
-        [ "$#" -eq 0 ] || fail "posix-semaphore-header-abi takes no arguments"
-        ensure_image
-        run_posix_semaphore_header_abi
-        ;;
-    sysv-message-shared-memory-header-abi)
-        [ "$#" -eq 0 ] || fail "sysv-message-shared-memory-header-abi takes no arguments"
-        ensure_image
-        run_sysv_message_shared_memory_header_abi
         ;;
     mm-abi-reference)
         [ "$#" -eq 0 ] || fail "mm-abi-reference takes no arguments"
@@ -11024,21 +9080,6 @@ PY
         ensure_image
         run_libc_posix_fallocate_probe
         ;;
-    descriptor-advice-header-abi)
-        [ "$#" -eq 0 ] || fail "descriptor-advice-header-abi takes no arguments"
-        ensure_image
-        run_descriptor_advice_header_abi
-        ;;
-    filesystem-capacity-header-abi)
-        [ "$#" -eq 0 ] || fail "filesystem-capacity-header-abi takes no arguments"
-        ensure_image
-        run_filesystem_capacity_header_abi
-        ;;
-    vector-io-header-abi)
-        [ "$#" -eq 0 ] || fail "vector-io-header-abi takes no arguments"
-        ensure_image
-        run_vector_io_header_abi
-        ;;
     libc-descriptor-advice)
         [ "$#" -eq 0 ] || fail "libc-descriptor-advice takes no arguments"
         ensure_image
@@ -11678,11 +9719,6 @@ PY
         ensure_image
         run_libc_alarm_probe
         ;;
-    ualarm-header-abi)
-        [ "$#" -eq 0 ] || fail "ualarm-header-abi takes no arguments"
-        ensure_image
-        run_ualarm_header_abi
-        ;;
     libc-ualarm)
         [ "$#" -eq 0 ] || fail "libc-ualarm takes no arguments"
         ensure_image
@@ -11693,45 +9729,10 @@ PY
         ensure_image
         run_libc_interval_timers_probe
         ;;
-    usleep-header-abi)
-        [ "$#" -eq 0 ] || fail "usleep-header-abi takes no arguments"
-        ensure_image
-        run_usleep_header_abi
-        ;;
     libc-usleep)
         [ "$#" -eq 0 ] || fail "libc-usleep takes no arguments"
         ensure_image
         run_libc_usleep_probe
-        ;;
-    basename-header-abi)
-        [ "$#" -eq 0 ] || fail "basename-header-abi takes no arguments"
-        ensure_image
-        run_in_container bash /workspace/compat/x86_64/run_basename_header_abi.sh
-        ;;
-    siginterrupt-header-abi)
-        [ "$#" -eq 0 ] || fail "siginterrupt-header-abi takes no arguments"
-        ensure_image
-        run_in_container bash /workspace/compat/x86_64/run_siginterrupt_header_abi.sh
-        ;;
-    mlockall-header-abi)
-        [ "$#" -eq 0 ] || fail "mlockall-header-abi takes no arguments"
-        ensure_image
-        run_in_container bash /workspace/compat/x86_64/run_mlockall_header_abi.sh
-        ;;
-    munlockall-header-abi)
-        [ "$#" -eq 0 ] || fail "munlockall-header-abi takes no arguments"
-        ensure_image
-        run_in_container bash /workspace/compat/x86_64/run_munlockall_header_abi.sh
-        ;;
-    ftime-header-abi)
-        [ "$#" -eq 0 ] || fail "ftime-header-abi takes no arguments"
-        ensure_image
-        run_in_container bash /workspace/compat/x86_64/run_ftime_header_abi.sh
-        ;;
-    clock-getcpuclockid-header-abi)
-        [ "$#" -eq 0 ] || fail "clock-getcpuclockid-header-abi takes no arguments"
-        ensure_image
-        run_in_container bash /workspace/compat/x86_64/run_clock_getcpuclockid_header_abi.sh
         ;;
     libc-basename)
         [ "$#" -eq 0 ] || fail "libc-basename takes no arguments"
@@ -12001,11 +10002,6 @@ PY
         [ "$#" -eq 0 ] || fail "libc-error-strings takes no arguments"
         ensure_image
         run_in_container bash /workspace/compat/x86_64/run_libc_error_strings.sh
-        ;;
-    string-duplication-header-abi)
-        [ "$#" -eq 0 ] || fail "string-duplication-header-abi takes no arguments"
-        ensure_image
-        run_string_duplication_header_abi
         ;;
     libc-strsignal)
         [ "$#" -eq 0 ] || fail "libc-strsignal takes no arguments"
@@ -12319,51 +10315,6 @@ PY
         ensure_image
         run_ldso_dynamic_admission_tests
         ;;
-    umask-header-abi)
-        [ "$#" -eq 0 ] || fail "umask-header-abi takes no arguments"
-        ensure_image
-        run_in_container bash /workspace/compat/x86_64/run_umask_header_abi.sh
-        ;;
-    intrusive-queue-header-abi)
-        [ "$#" -eq 0 ] || fail "intrusive-queue-header-abi takes no arguments"
-        ensure_image
-        run_in_container bash /workspace/compat/x86_64/run_intrusive_queue_header_abi.sh
-        ;;
-    getdtablesize-header-abi)
-        [ "$#" -eq 0 ] || fail "getdtablesize-header-abi takes no arguments"
-        ensure_image
-        run_in_container bash /workspace/compat/x86_64/run_getdtablesize_header_abi.sh
-        ;;
-    membarrier-header-abi)
-        [ "$#" -eq 0 ] || fail "membarrier-header-abi takes no arguments"
-        ensure_image
-        run_in_container bash /workspace/compat/x86_64/run_membarrier_header_abi.sh
-        ;;
-    syncfs-header-abi)
-        [ "$#" -eq 0 ] || fail "syncfs-header-abi takes no arguments"
-        ensure_image
-        run_in_container bash /workspace/compat/x86_64/run_syncfs_header_abi.sh
-        ;;
-    confstr-header-abi)
-        [ "$#" -eq 0 ] || fail "confstr-header-abi takes no arguments"
-        ensure_image
-        run_in_container bash /workspace/compat/x86_64/run_confstr_header_abi.sh
-        ;;
-    fpathconf-header-abi)
-        [ "$#" -eq 0 ] || fail "fpathconf-header-abi takes no arguments"
-        ensure_image
-        run_in_container bash /workspace/compat/x86_64/run_fpathconf_header_abi.sh
-        ;;
-    pathconf-header-abi)
-        [ "$#" -eq 0 ] || fail "pathconf-header-abi takes no arguments"
-        ensure_image
-        run_in_container bash /workspace/compat/x86_64/run_pathconf_header_abi.sh
-        ;;
-    sysconf-header-abi)
-        [ "$#" -eq 0 ] || fail "sysconf-header-abi takes no arguments"
-        ensure_image
-        run_in_container bash /workspace/compat/x86_64/run_sysconf_header_abi.sh
-        ;;
     libc-umask)
         [ "$#" -eq 0 ] || fail "libc-umask takes no arguments"
         ensure_image
@@ -12408,16 +10359,6 @@ PY
         [ "$#" -eq 0 ] || fail "libc-sysconf takes no arguments"
         ensure_image
         run_in_container bash /workspace/compat/x86_64/run_libc_sysconf.sh
-        ;;
-    ether-line-header-abi)
-        [ "$#" -eq 0 ] || fail "ether-line-header-abi takes no arguments"
-        ensure_image
-        run_in_container bash /workspace/compat/x86_64/run_ether_line_header_abi.sh
-        ;;
-    ether-header-abi)
-        [ "$#" -eq 0 ] || fail "ether-header-abi takes no arguments"
-        ensure_image
-        run_in_container bash /workspace/compat/x86_64/run_ether_header_abi.sh
         ;;
     libc-ether-line)
         [ "$#" -eq 0 ] || fail "libc-ether-line takes no arguments"
@@ -12464,66 +10405,6 @@ PY
         ensure_image
         run_in_container bash /workspace/compat/x86_64/run_libc_res_init.sh
         ;;
-    posix-spawn-file-actions-init-header-abi)
-        [ "$#" -eq 0 ] || fail "posix-spawn-file-actions-init-header-abi takes no arguments"
-        ensure_image
-        run_in_container bash /workspace/compat/x86_64/run_posix_spawn_file_actions_init_header_abi.sh
-        ;;
-    posix-spawnattr-destroy-header-abi)
-        [ "$#" -eq 0 ] || fail "posix-spawnattr-destroy-header-abi takes no arguments"
-        ensure_image
-        run_in_container bash /workspace/compat/x86_64/run_posix_spawnattr_destroy_header_abi.sh
-        ;;
-    posix-spawnattr-getflags-header-abi)
-        [ "$#" -eq 0 ] || fail "posix-spawnattr-getflags-header-abi takes no arguments"
-        ensure_image
-        run_in_container bash /workspace/compat/x86_64/run_posix_spawnattr_getflags_header_abi.sh
-        ;;
-    posix-spawnattr-setpgroup-header-abi)
-        [ "$#" -eq 0 ] || fail "posix-spawnattr-setpgroup-header-abi takes no arguments"
-        ensure_image
-        run_in_container bash /workspace/compat/x86_64/run_posix_spawnattr_setpgroup_header_abi.sh
-        ;;
-    posix-spawnattr-setschedparam-header-abi)
-        [ "$#" -eq 0 ] || fail "posix-spawnattr-setschedparam-header-abi takes no arguments"
-        ensure_image
-        run_in_container bash /workspace/compat/x86_64/run_posix_spawnattr_setschedparam_header_abi.sh
-        ;;
-    posix-spawnattr-setschedpolicy-header-abi)
-        [ "$#" -eq 0 ] || fail "posix-spawnattr-setschedpolicy-header-abi takes no arguments"
-        ensure_image
-        run_in_container bash /workspace/compat/x86_64/run_posix_spawnattr_setschedpolicy_header_abi.sh
-        ;;
-    res-init-header-abi)
-        [ "$#" -eq 0 ] || fail "res-init-header-abi takes no arguments"
-        ensure_image
-        run_in_container bash /workspace/compat/x86_64/run_res_init_header_abi.sh
-        ;;
-    h-errno-header-abi)
-        [ "$#" -eq 0 ] || fail "h-errno-header-abi takes no arguments"
-        ensure_image
-        run_in_container bash /workspace/compat/x86_64/run_h_errno_header_abi.sh
-        ;;
-    resolver-runtime-header-abi)
-        [ "$#" -eq 0 ] || fail "resolver-runtime-header-abi takes no arguments"
-        ensure_image
-        run_in_container bash /workspace/compat/x86_64/run_resolver_runtime_header_abi.sh
-        ;;
-    c32rtomb-header-abi)
-        [ "$#" -eq 0 ] || fail "c32rtomb-header-abi takes no arguments"
-        ensure_image
-        run_in_container bash /workspace/compat/x86_64/run_c32rtomb_header_abi.sh
-        ;;
-    uchar-stateful-header-abi)
-        [ "$#" -eq 0 ] || fail "uchar-stateful-header-abi takes no arguments"
-        ensure_image
-        run_in_container bash /workspace/compat/x86_64/run_uchar_stateful_header_abi.sh
-        ;;
-    chown-header-abi)
-        [ "$#" -eq 0 ] || fail "chown-header-abi takes no arguments"
-        ensure_image
-        run_in_container bash /workspace/compat/x86_64/run_chown_header_abi.sh
-        ;;
     libc-c32rtomb)
         [ "$#" -eq 0 ] || fail "libc-c32rtomb takes no arguments"
         ensure_image
@@ -12553,21 +10434,6 @@ PY
         [ "$#" -eq 0 ] || fail "libc-unlinkat takes no arguments"
         ensure_image
         run_in_container bash /workspace/compat/x86_64/run_libc_unlinkat.sh
-        ;;
-    sync-file-range-header-abi)
-        [ "$#" -eq 0 ] || fail "sync-file-range-header-abi takes no arguments"
-        ensure_image
-        run_in_container bash /workspace/compat/x86_64/run_sync_file_range_header_abi.sh
-        ;;
-    sync-header-abi)
-        [ "$#" -eq 0 ] || fail "sync-header-abi takes no arguments"
-        ensure_image
-        run_in_container bash /workspace/compat/x86_64/run_sync_header_abi.sh
-        ;;
-    unlinkat-header-abi)
-        [ "$#" -eq 0 ] || fail "unlinkat-header-abi takes no arguments"
-        ensure_image
-        run_in_container bash /workspace/compat/x86_64/run_unlinkat_header_abi.sh
         ;;
     libc-math-exp)
         [ "$#" -eq 0 ] || fail "libc-math-exp takes no arguments"
@@ -12603,11 +10469,6 @@ PY
         [ "$#" -eq 0 ] || fail "libc-pthread-spin-init takes no arguments"
         ensure_image
         run_in_container bash /workspace/compat/x86_64/run_libc_pthread_spin_init.sh
-        ;;
-    pthread-spin-init-header-abi)
-        [ "$#" -eq 0 ] || fail "pthread-spin-init-header-abi takes no arguments"
-        ensure_image
-        run_in_container bash /workspace/compat/x86_64/run_pthread_spin_init_header_abi.sh
         ;;
     libc-math-acosh)
         [ "$#" -eq 0 ] || fail "libc-math-acosh takes no arguments"
@@ -12653,51 +10514,6 @@ PY
         [ "$#" -eq 0 ] || fail "libc-math-tanh takes no arguments"
         ensure_image
         run_in_container bash /workspace/compat/x86_64/run_libc_math_tanh.sh
-        ;;
-    math-acosh-header-abi)
-        [ "$#" -eq 0 ] || fail "math-acosh-header-abi takes no arguments"
-        ensure_image
-        run_in_container bash /workspace/compat/x86_64/run_math_acosh_header_abi.sh
-        ;;
-    math-atanh-header-abi)
-        [ "$#" -eq 0 ] || fail "math-atanh-header-abi takes no arguments"
-        ensure_image
-        run_in_container bash /workspace/compat/x86_64/run_math_atanh_header_abi.sh
-        ;;
-    math-exp10-header-abi)
-        [ "$#" -eq 0 ] || fail "math-exp10-header-abi takes no arguments"
-        ensure_image
-        run_in_container bash /workspace/compat/x86_64/run_math_exp10_header_abi.sh
-        ;;
-    math-log-header-abi)
-        [ "$#" -eq 0 ] || fail "math-log-header-abi takes no arguments"
-        ensure_image
-        run_in_container bash /workspace/compat/x86_64/run_math_log_header_abi.sh
-        ;;
-    math-pow-header-abi)
-        [ "$#" -eq 0 ] || fail "math-pow-header-abi takes no arguments"
-        ensure_image
-        run_in_container bash /workspace/compat/x86_64/run_math_pow_header_abi.sh
-        ;;
-    math-sin-header-abi)
-        [ "$#" -eq 0 ] || fail "math-sin-header-abi takes no arguments"
-        ensure_image
-        run_in_container bash /workspace/compat/x86_64/run_math_sin_header_abi.sh
-        ;;
-    math-sincos-header-abi)
-        [ "$#" -eq 0 ] || fail "math-sincos-header-abi takes no arguments"
-        ensure_image
-        run_in_container bash /workspace/compat/x86_64/run_math_sincos_header_abi.sh
-        ;;
-    math-tan-header-abi)
-        [ "$#" -eq 0 ] || fail "math-tan-header-abi takes no arguments"
-        ensure_image
-        run_in_container bash /workspace/compat/x86_64/run_math_tan_header_abi.sh
-        ;;
-    math-tanh-header-abi)
-        [ "$#" -eq 0 ] || fail "math-tanh-header-abi takes no arguments"
-        ensure_image
-        run_in_container bash /workspace/compat/x86_64/run_math_tanh_header_abi.sh
         ;;
     libc-inet-netof)
         [ "$#" -eq 0 ] || fail "libc-inet-netof takes no arguments"
@@ -12773,45 +10589,5 @@ PY
         [ "$#" -eq 0 ] || fail "libc-setfsuid takes no arguments"
         ensure_image
         run_libc_setfsuid_probe
-        ;;
-    personality-header-abi)
-        [ "$#" -eq 0 ] || fail "personality-header-abi takes no arguments"
-        ensure_image
-        run_personality_header_abi
-        ;;
-    sched-getaffinity-header-abi)
-        [ "$#" -eq 0 ] || fail "sched-getaffinity-header-abi takes no arguments"
-        ensure_image
-        run_sched_getaffinity_header_abi
-        ;;
-    sched-setaffinity-header-abi)
-        [ "$#" -eq 0 ] || fail "sched-setaffinity-header-abi takes no arguments"
-        ensure_image
-        run_sched_setaffinity_header_abi
-        ;;
-    sched-getparam-header-abi)
-        [ "$#" -eq 0 ] || fail "sched-getparam-header-abi takes no arguments"
-        ensure_image
-        run_sched_getparam_header_abi
-        ;;
-    sched-setparam-header-abi)
-        [ "$#" -eq 0 ] || fail "sched-setparam-header-abi takes no arguments"
-        ensure_image
-        run_sched_setparam_header_abi
-        ;;
-    sched-setscheduler-header-abi)
-        [ "$#" -eq 0 ] || fail "sched-setscheduler-header-abi takes no arguments"
-        ensure_image
-        run_sched_setscheduler_header_abi
-        ;;
-    setfsgid-header-abi)
-        [ "$#" -eq 0 ] || fail "setfsgid-header-abi takes no arguments"
-        ensure_image
-        run_setfsgid_header_abi
-        ;;
-    setfsuid-header-abi)
-        [ "$#" -eq 0 ] || fail "setfsuid-header-abi takes no arguments"
-        ensure_image
-        run_setfsuid_header_abi
         ;;
 esac

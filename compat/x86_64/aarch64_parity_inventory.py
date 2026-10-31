@@ -32,6 +32,7 @@ X86_PUBLIC_HEADERS_PATH = ROOT / "compat" / "x86_64" / "public_headers.txt"
 X86_STATIC_EXPORTS_PATH = ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
 X86_EVIDENCE_DISPATCHER_PATH = ROOT / "scripts" / "dev-x86_64.sh"
 CRT_EVIDENCE_DISPATCHER_PATH = ROOT / "crt" / "run-x86_64.sh"
+X86_HEADER_ABI_CASES_PATH = ROOT / "compat" / "x86_64" / "header_abi_cases.txt"
 
 SCHEMA = "crabc.x86_64-aarch64-parity-inventory/v1"
 FROZEN_BASELINE_SCHEMA = "crabc.x86_64-frozen-aarch64-baseline/v1"
@@ -187,6 +188,25 @@ def family_state(family: Mapping[str, Any]) -> str:
     return STATE_SELECTED if family.get("verified_slice") or family.get("verified_artifact") else STATE_MISSING
 
 
+def header_abi_case_scripts() -> dict[str, str]:
+    cases: dict[str, str] = {}
+    for line in X86_HEADER_ABI_CASES_PATH.read_text(encoding="utf-8").splitlines():
+        require(
+            line.count("\t") == 1,
+            f"header-abi case row is malformed: {line!r}",
+        )
+        case, script = line.split("\t")
+        require(bool(case) and bool(script), f"header-abi case row is empty: {line!r}")
+        require(case not in cases, f"duplicate header-abi case: {case}")
+        require(
+            script.startswith("run_") and script.endswith(".sh"),
+            f"header-abi case {case} has an invalid runner: {script}",
+        )
+        cases[case] = script
+    require(bool(cases), "header-abi case table is empty")
+    return cases
+
+
 def evidence_commands_from_dispatcher(path: Path, marker: str) -> set[str]:
     """Return final-dispatch commands that run a native verifier."""
     try:
@@ -209,7 +229,10 @@ def evidence_commands_from_dispatcher(path: Path, marker: str) -> set[str]:
     commands = {
         command
         for match in handler_pattern.finditer(handlers)
-        if re.search(r"(?m)^\s+run_[a-z0-9_]+(?:\s|$)", match["body"])
+        if (
+            re.search(r"(?m)^\s+run_[a-z0-9_]+(?:\s|$)", match["body"])
+            or "header_abi_cases.txt" in match["body"]
+        )
         for command in match["commands"].split("|")
     }
     require(
@@ -268,13 +291,33 @@ def require_verified_native_evidence(
             raise InventoryError(
                 f"{evidence_location}.command is not a registered native evidence command: {error}"
             ) from error
-        require(
-            len(words) == 2
-            and command == " ".join(words)
-            and words[0] in registered_commands
-            and words[1] in registered_commands[words[0]],
-            f"{evidence_location}.command is not a registered native evidence command",
-        )
+        if (
+            len(words) == 3
+            and words[0] == "./scripts/dev-x86_64.sh"
+            and words[1] == "header-abi"
+        ):
+            cases = header_abi_case_scripts()
+            require(
+                command == " ".join(words)
+                and "header-abi" in registered_commands.get(words[0], set()),
+                f"{evidence_location}.command is not a registered native evidence command",
+            )
+            require(
+                words[2] in cases,
+                f"{evidence_location}.command names unknown header-abi case {words[2]}",
+            )
+            require(
+                (ROOT / "compat" / "x86_64" / cases[words[2]]).is_file(),
+                f"{evidence_location}.command maps to missing runner {cases[words[2]]}",
+            )
+        else:
+            require(
+                len(words) == 2
+                and command == " ".join(words)
+                and words[0] in registered_commands
+                and words[1] in registered_commands[words[0]],
+                f"{evidence_location}.command is not a registered native evidence command",
+            )
         if unique_commands:
             require(
                 command not in commands,

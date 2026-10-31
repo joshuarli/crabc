@@ -9,6 +9,8 @@ import tomllib
 import unittest
 from pathlib import Path
 
+from header_abi_dispatch import assert_header_abi_dispatches
+
 
 ROOT = Path(__file__).resolve().parents[3]
 MANIFEST = ROOT / "libc" / "Cargo.toml"
@@ -135,10 +137,11 @@ class MemorySpecialTests(unittest.TestCase):
         self.assertNotIn("--whole-archive", runner)
         self.assertNotIn("explicit_bzero", static_exports)
         self.assertNotIn("swab", static_exports)
+        assert_header_abi_dispatches(
+            self, ROOT, "memory-special", "run_memory_special_header_abi.sh"
+        )
         for required in (
-            "run_memory_special_header_abi()",
             "run_libc_memory_special_probe()",
-            "memory-special-header-abi)",
             "libc-memory-special)",
             "libc-memory-special takes no arguments",
         ):

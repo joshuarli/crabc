@@ -170,43 +170,43 @@ command = "./scripts/dev-x86_64.sh uapi-wrapper-matrix"
 script = "compat/x86_64/run_uapi_wrapper_matrix.sh"
 
 [[aggregate_control.runner]]
-command = "./scripts/dev-x86_64.sh ioctl-header-abi"
+command = "./scripts/dev-x86_64.sh header-abi ioctl"
 script = "compat/x86_64/run_ioctl_header_abi.sh"
 
 [[aggregate_control.runner]]
-command = "./scripts/dev-x86_64.sh sys-io-header-abi"
+command = "./scripts/dev-x86_64.sh header-abi sys-io"
 script = "compat/x86_64/run_sys_io_header_abi.sh"
 
 [[aggregate_control.runner]]
-command = "./scripts/dev-x86_64.sh epoll-header-abi"
+command = "./scripts/dev-x86_64.sh header-abi epoll"
 script = "compat/x86_64/run_epoll_header_abi.sh"
 
 [[aggregate_control.runner]]
-command = "./scripts/dev-x86_64.sh event-descriptors-header-abi"
+command = "./scripts/dev-x86_64.sh header-abi event-descriptors"
 script = "compat/x86_64/run_event_descriptors_header_abi.sh"
 
 [[aggregate_control.runner]]
-command = "./scripts/dev-x86_64.sh dirent-header-abi"
+command = "./scripts/dev-x86_64.sh header-abi dirent"
 script = "compat/x86_64/run_dirent_header_abi.sh"
 
 [[aggregate_control.runner]]
-command = "./scripts/dev-x86_64.sh stdlib-header-abi"
+command = "./scripts/dev-x86_64.sh header-abi stdlib"
 script = "compat/x86_64/run_stdlib_header_abi.sh"
 
 [[aggregate_control.runner]]
-command = "./scripts/dev-x86_64.sh timeval-transitive-header-abi"
+command = "./scripts/dev-x86_64.sh header-abi timeval-transitive"
 script = "compat/x86_64/run_timeval_transitive_header_abi.sh"
 
 [[aggregate_control.runner]]
-command = "./scripts/dev-x86_64.sh sys-time-direct-header-abi"
+command = "./scripts/dev-x86_64.sh header-abi sys-time-direct"
 script = "compat/x86_64/run_sys_time_direct_header_abi.sh"
 
 [[aggregate_control.runner]]
-command = "./scripts/dev-x86_64.sh access-header-abi"
+command = "./scripts/dev-x86_64.sh header-abi access"
 script = "compat/x86_64/run_access_header_abi.sh"
 
 [[aggregate_control.runner]]
-command = "./scripts/dev-x86_64.sh xattr-header-abi"
+command = "./scripts/dev-x86_64.sh header-abi xattr"
 script = "compat/x86_64/run_xattr_header_abi.sh"
 
 [[aggregate_control.runner]]
@@ -510,7 +510,7 @@ applicability = "applicable"
 [ioctl_header_profile_matrix]
 id = "x86-ioctl-header-profile-matrix"
 state = "partial-verified"
-command = "./scripts/dev-x86_64.sh ioctl-header-abi"
+command = "./scripts/dev-x86_64.sh header-abi ioctl"
 required_result = "pass"
 header_class = "pinned-non-uapi"
 subject_header = "sys/ioctl.h"
@@ -567,7 +567,7 @@ applicability = "applicable"
 [sys_io_header_profile_matrix]
 id = "x86-sys-io-header-profile-matrix"
 state = "partial-verified"
-command = "./scripts/dev-x86_64.sh sys-io-header-abi"
+command = "./scripts/dev-x86_64.sh header-abi sys-io"
 required_result = "pass"
 header_class = "pinned-non-uapi"
 subject_headers = ["sys/io.h", "bits/io.h"]
@@ -624,7 +624,7 @@ applicability = "applicable"
 [epoll_header_profile_matrix]
 id = "x86-epoll-header-profile-matrix"
 state = "partial-verified"
-command = "./scripts/dev-x86_64.sh epoll-header-abi"
+command = "./scripts/dev-x86_64.sh header-abi epoll"
 required_result = "pass"
 header_class = "pinned-non-uapi"
 subject_header = "sys/epoll.h"
@@ -686,7 +686,7 @@ applicability = "applicable"
 [event_descriptors_header_profile_matrix]
 id = "x86-event-descriptors-header-profile-matrix"
 state = "partial-verified"
-command = "./scripts/dev-x86_64.sh event-descriptors-header-abi"
+command = "./scripts/dev-x86_64.sh header-abi event-descriptors"
 required_result = "pass"
 header_class = "pinned-non-uapi"
 subject_headers = ["sys/eventfd.h", "sys/inotify.h"]
@@ -818,7 +818,7 @@ applicability = "applicable"
 [dirent_header_profile_matrix]
 id = "x86-dirent-header-profile-matrix"
 state = "partial-verified"
-command = "./scripts/dev-x86_64.sh dirent-header-abi"
+command = "./scripts/dev-x86_64.sh header-abi dirent"
 required_result = "pass"
 header_class = "pinned-non-uapi"
 subject_header = "dirent.h"
@@ -904,7 +904,7 @@ applicability = "applicable"
 [stdlib_header_profile_matrix]
 id = "x86-stdlib-header-profile-matrix"
 state = "partial-verified"
-command = "./scripts/dev-x86_64.sh stdlib-header-abi"
+command = "./scripts/dev-x86_64.sh header-abi stdlib"
 required_result = "pass"
 header_class = "pinned-non-uapi"
 subject_header = "stdlib.h"
@@ -991,7 +991,7 @@ applicability = "applicable"
 [timeval_transitive_header_profile_matrix]
 id = "x86-timeval-transitive-header-profile-matrix"
 state = "partial-verified"
-command = "./scripts/dev-x86_64.sh timeval-transitive-header-abi"
+command = "./scripts/dev-x86_64.sh header-abi timeval-transitive"
 required_result = "pass"
 header_class = "pinned-non-uapi"
 subject_headers = ["sys/time.h", "utmpx.h", "utmp.h", "lastlog.h", "sys/timex.h"]
@@ -1252,7 +1252,7 @@ applicability = "applicable"
 [sys_time_direct_header_profile_matrix]
 id = "x86-sys-time-direct-header-profile-matrix"
 state = "partial-verified"
-command = "./scripts/dev-x86_64.sh sys-time-direct-header-abi"
+command = "./scripts/dev-x86_64.sh header-abi sys-time-direct"
 required_result = "pass"
 header_class = "pinned-non-uapi"
 subject_header = "sys/time.h"
@@ -1308,7 +1308,7 @@ applicability = "applicable"
 [access_header_profile_matrix]
 id = "x86-access-header-profile-matrix"
 state = "partial-verified"
-command = "./scripts/dev-x86_64.sh access-header-abi"
+command = "./scripts/dev-x86_64.sh header-abi access"
 required_result = "pass"
 header_class = "pinned-non-uapi"
 subject_headers = ["fcntl.h", "unistd.h"]
@@ -1372,7 +1372,7 @@ applicability = "applicable"
 [xattr_header_profile_matrix]
 id = "x86-xattr-header-profile-matrix"
 state = "partial-verified"
-command = "./scripts/dev-x86_64.sh xattr-header-abi"
+command = "./scripts/dev-x86_64.sh header-abi xattr"
 required_result = "pass"
 header_class = "pinned-non-uapi"
 subject_header = "sys/xattr.h"

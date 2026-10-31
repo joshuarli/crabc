@@ -37,6 +37,8 @@ PARITY_PATH = ROOT / "compat" / "x86_64" / "parity.toml"
 REPORT_PATH = ROOT / "compat" / "x86_64" / "generated" / "headers_layouts_aggregate" / "report.json"
 HEADER_CALLABLE_INVENTORY_PATH = ROOT / "compat" / "x86_64" / "header_callable_inventory.json"
 STATIC_C_ABI_EXPORTS_PATH = ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+DISPATCHER_PATH = ROOT / "scripts" / "dev-x86_64.sh"
+HEADER_ABI_CASES_PATH = ROOT / "compat" / "x86_64" / "header_abi_cases.txt"
 ACCOUNTED_INCOMPLETE_LINKAGE_AUDIT_RUNNER = "compat/x86_64/run_header_callable_linkage_audit.sh"
 ACCOUNTED_INCOMPLETE_LINKAGE_AUDIT_REPORT = (
     ROOT / "compat" / "reports" / "x86_64" / "header-callable-linkage-audit" / "latest.json"
@@ -297,12 +299,28 @@ def mapping_list(value: object, location: str) -> list[Mapping[str, Any]]:
     return result
 
 
-def command_tokens(value: object, location: str) -> tuple[str, str]:
+def command_tokens(value: object, location: str) -> tuple[str, ...]:
     require(isinstance(value, str) and value, f"{location} must be a nonempty command")
     try:
         tokens = shlex.split(value)
     except ValueError as error:
         raise AggregateError(f"{location} is not parseable: {error}") from error
+    if len(tokens) == 3 and tokens[0] == DISPATCHER and tokens[1] == "header-abi":
+        dispatcher = DISPATCHER_PATH.read_text(encoding="utf-8")
+        require("    header-abi)" in dispatcher, f"{location} header-abi is absent from the dispatcher")
+        cases: dict[str, str] = {}
+        for line in HEADER_ABI_CASES_PATH.read_text(encoding="utf-8").splitlines():
+            require(line.count("\t") == 1, f"header-abi case row is malformed: {line!r}")
+            case, script = line.split("\t")
+            require(bool(case) and bool(script), f"header-abi case row is empty: {line!r}")
+            require(case not in cases, f"duplicate header-abi case: {case}")
+            cases[case] = script
+        require(tokens[2] in cases, f"{location} names unknown header-abi case {tokens[2]}")
+        require(
+            (ROOT / "compat" / "x86_64" / cases[tokens[2]]).is_file(),
+            f"{location} maps to missing runner {cases[tokens[2]]}",
+        )
+        return tuple(tokens)
     require(len(tokens) == 2 and tokens[0] == DISPATCHER, f"{location} must be one direct x86 dispatcher command")
     require(
         tokens[1]

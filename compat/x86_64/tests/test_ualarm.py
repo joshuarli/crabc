@@ -9,6 +9,8 @@ import tomllib
 import unittest
 from pathlib import Path
 
+from header_abi_dispatch import assert_header_abi_dispatches
+
 
 ROOT = Path(__file__).resolve().parents[3]
 MANIFEST = ROOT / "libc" / "Cargo.toml"
@@ -125,10 +127,11 @@ class UalarmTests(unittest.TestCase):
             self.assertIn(required, runner)
         self.assertNotIn("--whole-archive", runner)
         self.assertNotIn("ualarm", static_exports)
+        assert_header_abi_dispatches(
+            self, ROOT, "ualarm", "run_ualarm_header_abi.sh"
+        )
         for required in (
-            "ualarm-header-abi)",
             "libc-ualarm)",
-            "run_ualarm_header_abi.sh",
             "run_libc_ualarm.sh",
         ):
             self.assertIn(required, dispatcher)

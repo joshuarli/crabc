@@ -8,6 +8,8 @@ import subprocess
 import unittest
 from pathlib import Path
 
+from header_abi_dispatch import assert_header_abi_dispatches
+
 
 ROOT = Path(__file__).resolve().parents[3]
 EVENTFD_HEADER = ROOT / "include" / "sys" / "eventfd.h"
@@ -103,14 +105,12 @@ class EventDescriptorsHeaderAbiTests(unittest.TestCase):
             self.assertIn(phrase, runner)
 
     def test_dispatcher_exposes_the_event_descriptor_header_gate(self) -> None:
-        dispatcher = DISPATCHER.read_text(encoding="utf-8")
-        for phrase in (
-            "event-descriptors-header-abi)",
-            "run_event_descriptors_header_abi()",
+        assert_header_abi_dispatches(
+            self,
+            ROOT,
+            "event-descriptors",
             "run_event_descriptors_header_abi.sh",
-            "event-descriptors-header-abi takes no arguments",
-        ):
-            self.assertIn(phrase, dispatcher)
+        )
 
 
 if __name__ == "__main__":

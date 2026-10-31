@@ -8,6 +8,8 @@ import subprocess
 import unittest
 from pathlib import Path
 
+from header_abi_dispatch import assert_header_abi_dispatches
+
 
 ROOT = Path(__file__).resolve().parents[3]
 HEADER = ROOT / "include" / "sys" / "ioctl.h"
@@ -160,11 +162,10 @@ class IoctlHeaderAbiTests(unittest.TestCase):
 
     def test_dispatcher_exposes_all_ioctl_gates(self) -> None:
         dispatcher = DISPATCHER.read_text(encoding="utf-8")
+        assert_header_abi_dispatches(
+            self, ROOT, "ioctl", "run_ioctl_header_abi.sh"
+        )
         for phrase in (
-            "ioctl-header-abi)",
-            "run_ioctl_header_abi()",
-            "run_ioctl_header_abi.sh",
-            "ioctl-header-abi takes no arguments",
             "ioctl-header-source-form)",
             "run_ioctl_header_source_form()",
             "run_ioctl_header_source_form.sh",
