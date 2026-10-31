@@ -757,10 +757,6 @@ unsafe fn node_name(node: *mut RuntimeObject) -> &'static [u8] {
 }
 
 unsafe fn find_identity(registry: &RuntimeRegistry, new: &UnpublishedObjects, identity: ObjectIdentity) -> *mut RuntimeObject {
-    let self_node = unsafe { find_interpreter_self(registry, new) };
-    if !self_node.is_null() && unsafe { super::x86_64_general_initial_graph::self_identity_matches(identity) } {
-        return self_node;
-    }
     for head in [registry.head, new.head] {
         let mut node = head;
         while !node.is_null() {
@@ -854,13 +850,17 @@ unsafe fn load_one(
     let mapped = unsafe { map_elf_with_status(fd, &status, false, true, ObjectRole::Library) };
     unsafe { syscall1(SYS_CLOSE, fd); }
     let mut object = mapped?;
+    // A second copy of the interpreter (a hardlink under a non-alias name or
+    // any file carrying its libc SONAME) must not become a second libc. Only
+    // this rare candidate needs the interpreter's file identity; ordinary
+    // DSOs never stat it, as musl resolves its own aliases by name.
     let self_node = unsafe { find_interpreter_self(registry, new) };
-    if !self_node.is_null()
-        && !unsafe { super::x86_64_general_initial_graph::self_identity_matches(identity) }
-        && unsafe { super::mapped_soname_is_libc(&object) }
-    {
+    if !self_node.is_null() && unsafe { super::mapped_soname_is_libc(&object) } {
+        let is_self = unsafe { super::x86_64_general_initial_graph::self_identity_matches(identity) };
         unsafe { syscall2(SYS_MUNMAP, object.map_span_start as i64, object.map_span_byte_len as i64); }
-        return Err(EINVAL);
+        if !is_self { return Err(EINVAL); }
+        if short_name { unsafe { (*self_node).short_name = true; } }
+        return Ok(self_node);
     }
     object.search_name = path.view();
     object.search_short_name = short_name;
