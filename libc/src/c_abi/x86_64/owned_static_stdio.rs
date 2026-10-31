@@ -1450,7 +1450,7 @@ pub(crate) unsafe fn with_formatted_stream(stream: *mut StandardStream, format: 
 /// The caller holds the live stream's lock through with_formatted_stream.
 pub(crate) unsafe fn write_formatted_byte(stream: *mut StandardStream, byte: u8) -> c_int {
     unsafe {
-        fwrite_held((&byte as *const u8).cast(), 1, 1, stream);
+        fwrite_held(ptr::addr_of!(byte), 1, stream);
         if (*stream).flags & F_ERR != 0 { EOF } else { byte as c_int }
     }
 }
@@ -1461,7 +1461,7 @@ pub(crate) unsafe fn write_formatted_byte(stream: *mut StandardStream, byte: u8)
 pub(crate) unsafe fn write_formatted_bytes(stream: *mut StandardStream, source: *const u8, length: usize) -> c_int {
     unsafe {
         // vfprintf out observes F_ERR, not a backend's non-error short count.
-        fwrite_held(source.cast(), 1, length, stream);
+        fwrite_held(source, length, stream);
         if (*stream).flags & F_ERR != 0 { EOF } else { 0 }
     }
 }
@@ -1698,42 +1698,40 @@ static_archive_member! { fwrite_source {
         stream: *mut StandardStream,
     ) -> usize {
         let _guard = unsafe { StreamGuard::acquire(stream) };
-        unsafe { fwrite_held(source, size, count, stream) }
+        unsafe {
+            orient_byte(stream);
+            if !is_selected_stream(stream) {
+                reject_stream();
+                return 0;
+            }
+            let Some(total) = size.checked_mul(count) else {
+                mark_error(stream);
+                return 0;
+            };
+            if !is_writable(stream) {
+                mark_error(stream);
+                return 0;
+            }
+            if !prepare_write(stream) {
+                return 0;
+            }
+            mark_io_started(stream);
+            if total == 0 { return if size == 0 { 0 } else { count }; }
+            let written = fwrite_held(source.cast(), total, stream);
+            if written == total { count } else { written / size }
+        }
     }
 
     core::arch::global_asm!(".weak fwrite_unlocked", ".set fwrite_unlocked, fwrite");
 }}
 
-// The caller exclusively owns the initialized stream through the transfer.
-unsafe fn fwrite_held(source: *const c_void, size: usize, count: usize, stream: *mut StandardStream) -> usize {
-    unsafe { orient_byte(stream); }
-    let Some(total) = size.checked_mul(count) else {
-        unsafe {
-            mark_error(stream);
-        }
-        return 0;
-    };
-    if !unsafe { is_selected_stream(stream) } {
-        unsafe { reject_stream() };
-        return 0;
-    }
-    if !unsafe { is_writable(stream) } {
-        unsafe { mark_error(stream) };
-        return 0;
-    }
-    if !unsafe { prepare_write(stream) } {
-        return 0;
-    }
-    unsafe { mark_io_started(stream) };
-
-    // musl fwrite.c::__fwritex: a span that does not fit bypasses the
-    // ordinary byte loop, preserving partial caller-byte counts after any
-    // pending output. Line buffering emits through the last newline.
+// The caller owns the stream lock, has admitted the live writable stream, and
+// has oriented and marked it for output. `total` is the complete span length.
+unsafe fn fwrite_held(source: *const u8, total: usize, stream: *mut StandardStream) -> usize {
     unsafe {
-        if total == 0 { return if size == 0 { 0 } else { count }; }
-        let source = source.cast::<u8>();
+        if total == 0 { return 0; }
         let available = (*stream).write_end.offset_from((*stream).write_position) as usize;
-        if total > available { return write_backend_held(stream, source, total) / size; }
+        if total > available { return write_backend_held(stream, source, total); }
         let mut prefix = 0;
         // musl __fwritex scans for '\n' whenever lbf >= 0.
         if (*stream).line_break >= 0 {
@@ -1741,12 +1739,12 @@ unsafe fn fwrite_held(source: *const c_void, size: usize, count: usize, stream: 
             while prefix != 0 && *source.add(prefix-1) != b'\n' { prefix -= 1; }
             if prefix != 0 {
                 let written = write_backend_held(stream, source, prefix);
-                if written < prefix { return written / size; }
+                if written < prefix { return written; }
             }
         }
         ptr::copy_nonoverlapping(source.add(prefix), (*stream).write_position, total-prefix);
         (*stream).write_position = (*stream).write_position.add(total-prefix);
-        count
+        total
     }
 }
 
