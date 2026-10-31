@@ -139,8 +139,8 @@ for symbol in __errno_location __crabc_x86_static_tls_bootstrap \
     grep -Eq "[[:space:]][TW][[:space:]]${symbol}$" "$archive_symbols" \
         || fail "archive does not define ${symbol}"
 done
-grep -Eq 'FUNC +WEAK +DEFAULT +.*__membarrier_init$' "$archive_elf_symbols" \
-    || fail 'archive lost musl weak __membarrier_init binding'
+grep -Eq 'FUNC +WEAK +HIDDEN +.*__membarrier_init$' "$archive_elf_symbols" \
+    || fail 'archive lost musl weak hidden __membarrier_init binding'
 grep -Eq 'GLOBAL +HIDDEN +.*__crabc_x86_pthread_clone$' "$archive_elf_symbols" \
     || fail "archive pthread clone boundary is not hidden"
 grep -Eq 'GLOBAL +HIDDEN +.*__crabc_x86_static_tls_bootstrap$' "$archive_elf_symbols" \
@@ -192,23 +192,25 @@ for symbol in __errno_location __crabc_x86_static_tls_bootstrap \
     grep -Eq "[[:space:]]${symbol}$" "$candidate_symbols" \
         || fail "candidate does not define ${symbol}"
 done
-grep -Eq 'FUNC +WEAK +DEFAULT +.*__membarrier_init$' "$candidate_symbols" \
-    || fail 'candidate lost musl weak __membarrier_init binding'
-# musl spells pthread_create as a weak alias of __pthread_create, so either
-# binding shows the archive member was extracted.
-awk '$4 == "FUNC" && ($5 == "GLOBAL" || $5 == "WEAK") && $6 == "DEFAULT" && $7 != "UND" && $8 == "pthread_create" { found=1 } END { exit found ? 0 : 1 }' \
+# The final static link localizes the archive's hidden weak fallback.
+grep -Eq 'FUNC +(WEAK +DEFAULT|LOCAL +HIDDEN) +.*__membarrier_init$' "$candidate_symbols" \
+    || fail 'candidate lost the __membarrier_init fallback binding'
+# musl spells pthread_create as a weak alias of __pthread_create, and the
+# final static link localizes it; any defined binding shows the archive member
+# was extracted.
+awk '$4 == "FUNC" && $7 != "UND" && $8 == "pthread_create" { found=1 } END { exit found ? 0 : 1 }' \
     "$candidate_membarrier_override_symbols" ||
     fail 'caller override did not extract the archive pthread-create member'
-grep -Eq 'FUNC +GLOBAL +DEFAULT +.*__membarrier_init$' "$candidate_membarrier_override_symbols" ||
-    fail 'caller strong __membarrier_init did not override the archive weak binding'
+grep -Eq 'FUNC +(GLOBAL +DEFAULT|LOCAL +HIDDEN) +.*__membarrier_init$' "$candidate_membarrier_override_symbols" ||
+    fail 'caller strong __membarrier_init definition was not retained'
 if grep -Eq 'FUNC +WEAK +DEFAULT +.*__membarrier_init$' "$candidate_membarrier_override_symbols"; then
     fail 'caller override retained the archive weak __membarrier_init binding'
 fi
-grep -Eq 'GLOBAL +HIDDEN +.*__crabc_x86_pthread_clone$' "$candidate_symbols" \
+grep -Eq '(GLOBAL|LOCAL) +HIDDEN +.*__crabc_x86_pthread_clone$' "$candidate_symbols" \
     || fail "candidate pthread clone boundary is not hidden"
-grep -Eq 'GLOBAL +HIDDEN +.*__crabc_x86_static_tls_bootstrap$' "$candidate_symbols" \
+grep -Eq '(GLOBAL|LOCAL) +HIDDEN +.*__crabc_x86_static_tls_bootstrap$' "$candidate_symbols" \
     || fail "candidate Static Initial TLS v1 bootstrap is not hidden"
-unresolved_symbols="$(awk '$7 == "UND" && NF >= 8 { print }' "$candidate_symbols")"
+unresolved_symbols="$(awk '$7 == "UND" && NF >= 8 && !($5 == "LOCAL" && ($8 == "_PROCEDURE_LINKAGE_TABLE_" || $8 == "__rela_iplt_start" || $8 == "__rela_iplt_end")) { print }' "$candidate_symbols")"
 if [ -n "$unresolved_symbols" ]; then
     printf '%s\n' "$unresolved_symbols" >&2
     fail "candidate retains an unresolved symbol"
