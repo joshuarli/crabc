@@ -18,6 +18,7 @@ from __future__ import annotations
 import argparse
 import ctypes
 import errno
+import glob
 import hashlib
 import json
 import os
@@ -33,7 +34,7 @@ import stat
 import subprocess
 import sys
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any, Iterable, Mapping, Sequence
 
@@ -1094,9 +1095,13 @@ def musl_link(
     direct: Sequence[Path] = (),
     closure: Sequence[Path] = (),
     link_flags: Sequence[str] = (),
+    musl_root: Path | None = None,
 ) -> BuiltProvider:
+    """Link the shared objects against one musl root (GCC default or clang)."""
+
     output = state.work / "build/musl" / ("lib" if shared else "bin") / name
     output.parent.mkdir(parents=True, exist_ok=True)
+    root = Path(musl_root) if musl_root is not None else DEFAULT_MUSL_ROOT
     linker_flags = [
         "-Wl,--hash-style=sysv", "-Wl,-z,relro", "-Wl,-z,now", "-Wl,-z,noexecstack", "-Wl,-z,text",
         "-Wl,--enable-new-dtags", f"-Wl,-rpath,{APP_RUNPATH}", "-Wl,--no-as-needed",
@@ -1109,9 +1114,24 @@ def musl_link(
         f"-Wl,-rpath-link,{directory}"
         for directory in sorted({str(path.parent) for path in closure})
     )
-    command = [str(state.musl_cc), *( ["-shared", f"-Wl,-soname,{name}"] if shared else ["-pie"] ), *linker_flags,
-               *link_flags,
-               *(str(item.object) for item in objects), *(str(path) for path in direct), "-o", str(output)]
+    if root == DEFAULT_MUSL_ROOT:
+        command = [str(state.musl_cc), *( ["-shared", f"-Wl,-soname,{name}"] if shared else ["-pie"] ), *linker_flags,
+                   *link_flags,
+                   *(str(item.object) for item in objects), *(str(path) for path in direct), "-o", str(output)]
+    else:
+        crt = root / "lib"
+        require((crt / "Scrt1.o").is_file() and (crt / "crti.o").is_file()
+                and (crt / "crtn.o").is_file() and (crt / "libc.so").is_file(),
+                f"clang musl root lacks its own CRT/libc: {root}")
+        mode: list[str] = ["-shared", f"-Wl,-soname,{name}"] if shared else [
+            "-pie", f"-Wl,--dynamic-linker,{crt}/ld-musl-x86_64.so.1",
+            str(crt / "Scrt1.o"), str(crt / "crti.o"),
+        ]
+        command = ["/usr/bin/clang", "-nostdlib", *mode, *linker_flags,
+                   *link_flags,
+                   *(str(item.object) for item in objects), *(str(path) for path in direct),
+                   f"-L{crt}", "-lc", *([] if shared else [str(crt / "crtn.o")]),
+                   "-o", str(output)]
     capture = command_capture(command, state.root, state.raw_root / f"musl-link-{name}", f"musl link {name}")
     require(output.is_file(), f"pinned musl compiler did not produce output: {name}")
     raw = readelf_capture("/usr/bin/readelf", output, state.raw_root, f"musl-{name}", state.root)
@@ -1141,14 +1161,14 @@ def assert_provider_dynamic(provider: BuiltProvider, root: Path, expected_needed
     require(parsed["hashes"] == ["sysv"], f"{label} hash style differs")
 
 
-def link_required_artifacts(state: BuildState, rows: Sequence[performance_profile.PerformanceRow]) -> None:
+def link_required_artifacts(state: BuildState, rows: Sequence[performance_profile.PerformanceRow], musl_root: Path | None = None) -> None:
     names = {row.name for row in rows if row.legacy}
     # Link application-owned DSOs before their users.  Every matching pair
     # receives the same installed-header object; only provider closures vary.
     for dso_name, object_name in (("libsymbols_1.so", "symbols_1"), ("libsymbols_128.so", "symbols_128"), ("libsymbols_1024.so", "symbols_1024")):
         if object_name in state.objects:
             candidate_link(state, dso_name, [state.objects[object_name]], shared=True)
-            musl_link(state, dso_name, [state.objects[object_name]], shared=True)
+            musl_link(state, dso_name, [state.objects[object_name]], shared=True, musl_root=musl_root)
             assert_provider_dynamic(state.candidate[dso_name], state.root, ["libc.so"], f"candidate {dso_name}")
             assert_provider_dynamic(state.musl[dso_name], state.root, ["libc.so"], f"musl {dso_name}")
     for index in range(8):
@@ -1156,7 +1176,7 @@ def link_required_artifacts(state: BuildState, rows: Sequence[performance_profil
         if object_name in state.objects:
             name = f"libbench_tls_growth_{index}.so"
             candidate_link(state, name, [state.objects[object_name]], shared=True)
-            musl_link(state, name, [state.objects[object_name]], shared=True)
+            musl_link(state, name, [state.objects[object_name]], shared=True, musl_root=musl_root)
             assert_provider_dynamic(state.candidate[name], state.root, ["libc.so"], f"candidate {name}")
             assert_provider_dynamic(state.musl[name], state.root, ["libc.so"], f"musl {name}")
     graph_needed = any(name.startswith("graph:") for name in state.objects)
@@ -1167,7 +1187,7 @@ def link_required_artifacts(state: BuildState, rows: Sequence[performance_profil
         for name in leaves:
             object_record = state.objects[f"graph:{name}"]
             candidate_link(state, name, [object_record], shared=True)
-            musl_link(state, name, [object_record], shared=True)
+            musl_link(state, name, [object_record], shared=True, musl_root=musl_root)
             assert_provider_dynamic(state.candidate[name], state.root, GRAPH_NEEDED[name], f"candidate {name}")
             assert_provider_dynamic(state.musl[name], state.root, GRAPH_NEEDED[name], f"musl {name}")
         direct_leaf = {
@@ -1178,7 +1198,7 @@ def link_required_artifacts(state: BuildState, rows: Sequence[performance_profil
             leaf = direct_leaf[name]
             object_record = state.objects[f"graph:{name}"]
             candidate_link(state, name, [object_record], shared=True, direct=[state.candidate[leaf].output])
-            musl_link(state, name, [object_record], shared=True, direct=[state.musl[leaf].output])
+            musl_link(state, name, [object_record], shared=True, direct=[state.musl[leaf].output], musl_root=musl_root)
             assert_provider_dynamic(state.candidate[name], state.root, GRAPH_NEEDED[name], f"candidate {name}")
             assert_provider_dynamic(state.musl[name], state.root, GRAPH_NEEDED[name], f"musl {name}")
         root_name = "libbench_graph_root.so"
@@ -1192,6 +1212,7 @@ def link_required_artifacts(state: BuildState, rows: Sequence[performance_profil
             state, root_name, [root_object], shared=True,
             direct=[state.musl[name].output for name in middles],
             closure=[state.musl[name].output for name in leaves],
+            musl_root=musl_root,
         )
         assert_provider_dynamic(state.candidate[root_name], state.root, GRAPH_NEEDED[root_name], f"candidate {root_name}")
         assert_provider_dynamic(state.musl[root_name], state.root, GRAPH_NEEDED[root_name], f"musl {root_name}")
@@ -1217,7 +1238,7 @@ def link_required_artifacts(state: BuildState, rows: Sequence[performance_profil
         )
         musl_link(
             state, name, [state.objects[object_name]], shared=False,
-            link_flags=link_flags,
+            link_flags=link_flags, musl_root=musl_root,
         )
         assert_provider_dynamic(state.candidate[name], state.root, ["libc.so"], f"candidate {name}")
         assert_provider_dynamic(state.musl[name], state.root, ["libc.so"], f"musl {name}")
@@ -1239,6 +1260,7 @@ def link_required_artifacts(state: BuildState, rows: Sequence[performance_profil
             state, name, [state.objects[object_name]], shared=False,
             direct=[state.musl[root_name].output],
             closure=[state.musl[item].output for item in closure],
+            musl_root=musl_root,
         )
         assert_provider_dynamic(state.candidate[name], state.root, [root_name, "libc.so"], f"candidate {name}")
         assert_provider_dynamic(state.musl[name], state.root, [root_name, "libc.so"], f"musl {name}")
@@ -1390,7 +1412,10 @@ def stage_musl_runtime(root: Path, musl_root: Path) -> None:
     for name, destination in staged.items():
         copy_file(musl_root / "lib" / name, destination)
     copy_file(musl_root / "lib/libc.so", root / "usr/lib/libc.so")
-    canonical = root / evidence.FIXED_MUSL_LOADER.lstrip("/")
+    loader = evidence.FIXED_MUSL_LOADER
+    if musl_root != DEFAULT_MUSL_ROOT and musl_root.parent == Path("/opt") and musl_root.name.startswith("musl-clang-"):
+        loader = f"/opt/{musl_root.name}/lib/ld-musl-x86_64.so.1"
+    canonical = root / loader.lstrip("/")
     canonical.parent.mkdir(parents=True, exist_ok=True)
     for name, destination in staged.items():
         alias = canonical.parent / name
@@ -3729,6 +3754,398 @@ def check(args: argparse.Namespace) -> evidence.CheckedReport:
     return result
 
 
+# S1.3 development counts (P2). Same compile-once/dual-link/stage path as every
+# attempt; perf counters and strace run around the existing timing launcher.
+# `kind: development` is never release evidence. Field names match the release
+# gate reader; limits import from x86_64_evidence and are never redefined.
+
+COUNTS_KIND = KIND + "-counts"
+COUNTS_MIN_REF_LOOP_INSNS = 1_000_000
+COUNTS_DETERMINISM_TOLERANCE = 0.0001
+COUNTS_LINEARITY_TOLERANCE = 0.005
+COUNTS_PERF_REPEATS = 3
+COUNTS_NOP_SOURCE = (
+    "void _start(void) {\n"
+    "    __asm__ volatile (\"mov $60,%%eax; xor %%edi,%%edi; syscall\" ::: \"memory\");\n"
+    "}\n"
+)
+_STRACE_CALL = re.compile(r"^(?:\d+\s+)?([a-z_][a-z0-9_]*)\(")
+
+
+def select_counts_reference(candidates: Mapping[str, str | None], rustc_text: str) -> tuple[str, str]:
+    match = re.search(r"LLVM version:\s*(\d+)", rustc_text)
+    require(match is not None, "rustc -vV reports no LLVM version for counts reference selection")
+    major = match.group(1)
+    for root in sorted(candidates):
+        text = candidates[root]
+        clang = re.search(r"clang version (\d+)", text) if text else None
+        if clang is not None and clang.group(1) == major:
+            return root, f"matched-llvm-{major}"
+    return str(DEFAULT_MUSL_ROOT), "unmatched (gcc musl)"
+
+
+def default_counts_reference() -> tuple[Path, str]:
+    """Read the live image roots and compiler for counts reference selection."""
+
+    candidates: dict[str, str | None] = {}
+    for root in sorted(glob.glob("/opt/musl-clang-*")):
+        marker = Path(root) / ".clang-version"
+        candidates[root] = marker.read_text(encoding="utf-8", errors="replace") if marker.is_file() else None
+    completed = subprocess.run(["rustc", "-vV"], stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False, text=True)
+    require(completed.returncode == 0, "rustc -vV failed for counts reference selection")
+    root, label = select_counts_reference(candidates, completed.stdout)
+    return Path(root), label
+
+
+def counts_per_op(value_hi: float, value_lo: float, n_hi: int, n_lo: int) -> float:
+    require(n_hi != n_lo, "counts N values must differ for a per-op quotient")
+    return (value_hi - value_lo) / (n_hi - n_lo)
+
+
+def counts_subtract(value: int, wrapper: int) -> int:
+    return value - wrapper
+
+
+def counts_runs_agree(runs: Sequence[int]) -> bool:
+    values = list(runs)
+    require(values, "counts determinism needs at least one run")
+    mean = sum(values) / len(values)
+    if mean == 0:
+        return all(value == 0 for value in values)
+    return (max(values) - min(values)) / mean <= COUNTS_DETERMINISM_TOLERANCE
+
+
+def counts_linear(first: float, second: float, third: float) -> bool:
+    step_one, step_two = second - first, third - second
+    if step_one == 0:
+        return step_two == 0
+    return abs(step_two - step_one) / abs(step_one) <= COUNTS_LINEARITY_TOLERANCE
+
+
+def scale_counts_n1(n0: int, total_at_n0: int, wrapper: int) -> int:
+    require(n0 > 0, "counts probe N must be positive")
+    loop = total_at_n0 - wrapper
+    if loop >= COUNTS_MIN_REF_LOOP_INSNS:
+        return n0
+    require(loop > 0, "reference loop cost is not positive; cannot size counts N1")
+    return -(-n0 * COUNTS_MIN_REF_LOOP_INSNS // loop)
+
+
+def parse_perf_counts(text: str) -> list[int]:
+    counts: list[int] = []
+    for line in text.splitlines():
+        fields = line.split(",")
+        if len(fields) >= 3 and fields[2].strip().startswith("instructions"):
+            counts.append(int(fields[0].strip()))
+    return counts
+
+
+def parse_strace_whole(text: str, binary: str) -> dict[str, Any]:
+    lines = text.splitlines()
+    boundary: int | None = None
+    for index, line in enumerate(lines):
+        if f'execve("{binary}"' in line:
+            boundary = index
+    require(boundary is not None, f"strace trace has no client execve for {binary}")
+    calls: dict[str, int] = {}
+    for line in lines[boundary:]:
+        match = _STRACE_CALL.match(line)
+        if match is not None:
+            calls[match.group(1)] = calls.get(match.group(1), 0) + 1
+    return {"total": sum(calls.values()), "calls": calls}
+
+
+def classify_counts_row(
+    *,
+    has_counts: bool,
+    deterministic: bool,
+    linear: bool,
+    matched: bool,
+    ref_sys_perop: float,
+    cand_sys_perop: float,
+    ref_sys_whole: float,
+    cand_sys_whole: float,
+    ratio_insn: float | None,
+    allocator_attributed: bool = False,
+) -> str:
+    if allocator_attributed:
+        return "allocator-attributed"
+    if not has_counts:
+        return "unavailable"
+    if not deterministic:
+        return "nondeterministic"
+    if not linear:
+        return "nonlinear"
+    if ratio_insn is None:
+        return "unavailable"
+    if not matched:
+        return "fail"
+    limit = evidence.SYSCALL_LIMIT_FACTOR
+    if cand_sys_perop > limit * ref_sys_perop or cand_sys_whole > limit * ref_sys_whole:
+        return "fail"
+    if ratio_insn > evidence.INSTRUCTION_LIMIT_RATIO:
+        return "fail"
+    return "pass"
+
+
+def counts_cpu_model() -> str:
+    try:
+        for line in Path("/proc/cpuinfo").read_text(encoding="utf-8", errors="replace").splitlines():
+            if line.startswith("model name"):
+                return line.split(":", 1)[1].strip()
+    except OSError:
+        pass
+    return "unknown"
+
+
+def counts_scaled_row(row: performance_profile.PerformanceRow, n: int) -> performance_profile.PerformanceRow:
+    require(n > 0, "counts N must be positive")
+    if row.legacy:
+        return replace(row, iterations=n, operations=n, legacy_workload=replace(row.legacy_workload, iterations=n))
+    return replace(row, iterations=n, operations=n, arguments=(row.arguments[0], str(n), *row.arguments[2:]))
+
+
+def counts_launcher_command(
+    launcher: TimingLauncher, lane_root: Path, outdir: Path, timeout: float, binary: str, arguments: Sequence[str],
+) -> list[str]:
+    outdir.mkdir(parents=True, exist_ok=True)
+    return [
+        str(launcher.output.resolve(strict=True)), str(lane_root.resolve(strict=True)),
+        str(outdir / "stdout"), str(outdir / "stderr"), str(outdir / "result.json"),
+        timeout_milliseconds(timeout), binary, *arguments,
+    ]
+
+
+def counts_trial_result(root: Path, outdir: Path, label: str, expect_stdout: bool = True) -> None:
+    result = evidence.validate_timing_launcher_result(
+        evidence.load_json(outdir / "result.json", f"counts {label} launcher result"))
+    require(evidence.timing_launcher_status(result) == {"kind": "exit", "code": 0},
+            f"counts {label} client failed")
+    if expect_stdout:
+        require((outdir / "stdout").read_bytes() == EXPECTED_STDOUT, f"counts {label} stdout differs")
+
+
+def counts_trial(
+    tool: str, root: Path, launcher: TimingLauncher, lane_root: Path, binary: str,
+    arguments: Sequence[str], outdir: Path, timeout: float, expect_stdout: bool = True,
+) -> Any:
+    command = counts_launcher_command(launcher, lane_root, outdir, timeout, binary, arguments)
+    if tool == "perf":
+        runs = []
+        for index in range(COUNTS_PERF_REPEATS):
+            trial = outdir / f"trial-{index}"
+            completed = run_counts_tool(
+                ["perf", "stat", "-x,", "-e", "instructions:u",
+                 *counts_launcher_command(launcher, lane_root, trial, timeout, binary, arguments)],
+                root, timeout, tool)
+            parsed = parse_perf_counts(completed)
+            require(len(parsed) == 1, f"counts perf trial returned {len(parsed)} counts")
+            counts_trial_result(root, trial, f"perf {binary} {arguments}", expect_stdout)
+            runs.append(parsed[0])
+        return runs
+    completed = run_counts_tool(
+        [evidence.FIXED_STRACE, "-f", "-qq", "-o", str(outdir / "trace.raw"), *command],
+        root, timeout, tool)
+    counts_trial_result(root, outdir, f"strace {binary} {arguments}", expect_stdout)
+    return parse_strace_whole((outdir / "trace.raw").read_text(encoding="utf-8", errors="replace"), binary)
+
+
+def run_counts_tool(argv: Sequence[str], root: Path, timeout: float, tool: str) -> str:
+    try:
+        completed = subprocess.run(
+            list(argv), cwd=root, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            text=True, timeout=timeout, check=False,
+        )
+    except FileNotFoundError as error:
+        raise AdapterError(f"counts {tool} is not installed in this image: {error}") from error
+    except subprocess.TimeoutExpired as error:
+        raise AdapterError(f"counts {tool} trial timed out: {error}") from error
+    if completed.returncode != 0:
+        hint = "; perf instructions:u is denied, rerun counts with --cap-add=PERFMON" \
+            if tool == "perf" and "permission" in (completed.stderr or "").lower() else ""
+        raise AdapterError(f"counts {tool} failed ({completed.returncode}): {(completed.stderr or '')[-400:]}{hint}")
+    return completed.stderr or ""
+
+
+def counts_calibrate_wrapper(
+    state: BuildState, launcher: TimingLauncher, lanes: Mapping[str, Lane], timeout: float,
+) -> dict[str, int]:
+    source, output = state.work / "build/counts-nop.c", state.work / "build/counts-nop"
+    if not output.is_file():
+        source.write_text(COUNTS_NOP_SOURCE, encoding="utf-8")
+        command_capture([str(state.musl_cc), "-O2", "-static", "-nostdlib", "-fno-pic",
+                         str(source), "-o", str(output)],
+                        state.root, state.raw_root / "counts-nop-compile", "counts nop compile")
+        require(output.is_file(), "counts nop calibration binary was not produced")
+    wrapper: dict[str, int] = {}
+    for name, lane in lanes.items():
+        staged = lane.root / "app/bin/counts-nop"
+        if not staged.is_file():
+            copy_file(output, staged)
+        runs = counts_trial("perf", state.root, launcher, lane.root, "/app/bin/counts-nop", [],
+                                 state.work / f"counts-nop-{name}", timeout, expect_stdout=False)
+        wrapper[name] = sum(runs) // len(runs)
+    return wrapper
+
+
+def measure_counts_row(
+    root: Path, launcher: TimingLauncher, lanes: Mapping[str, Lane], row: performance_profile.PerformanceRow,
+    out_root: Path, timeout: float, matched: bool, reference_label: str, wrapper: Mapping[str, int],
+) -> dict[str, Any]:
+    record: dict[str, Any] = {"row": row.name, "mode": row.fixture_mode or row.name,
+                              "reference_label": reference_label}
+    if row_uses_private_peer(row):
+        return {**record, "status": "unavailable", "reason": "counts has no peer harness for this row"}
+    try:
+        if row.iterations > 1:
+            return {**record, **measure_counts_loop(root, launcher, lanes, row, out_root, timeout, matched, wrapper)}
+        return {**record, **measure_counts_startup(root, launcher, lanes, row, out_root, timeout, matched, wrapper)}
+    except (AdapterError, evidence.EvidenceError, OSError) as error:
+        return {**record, "status": "unavailable", "reason": str(error)}
+
+
+def measure_counts_loop(
+    root: Path, launcher: TimingLauncher, lanes: Mapping[str, Lane], row: performance_profile.PerformanceRow,
+    out_root: Path, timeout: float, matched: bool, wrapper: Mapping[str, int],
+) -> dict[str, Any]:
+    probe_row = counts_scaled_row(row, row.iterations)
+    probe = counts_trial("perf", root, launcher, lanes["musl"].root, virtual_binary(probe_row, lanes["musl"]),
+                              virtual_arguments(probe_row, lanes["musl"]), out_root / "probe", timeout)
+    n1 = scale_counts_n1(row.iterations, sum(probe) // len(probe), wrapper["musl"])
+    n_values = (n1, 2 * n1, 3 * n1)
+    insn: dict[str, list[list[int]]] = {}
+    syscalls: dict[str, list[dict[str, Any]]] = {}
+    for lane_name, lane in (("musl", lanes["musl"]), ("crabc", lanes["crabc"])):
+        lane_insn, lane_sys = [], []
+        for n in n_values:
+            scaled = counts_scaled_row(row, n)
+            binary, arguments = virtual_binary(scaled, lane), virtual_arguments(scaled, lane)
+            lane_insn.append(counts_trial("perf", root, launcher, lane.root, binary, arguments,
+                                               out_root / f"{lane_name}-n{n}-perf", timeout))
+            lane_sys.append(counts_trial("strace", root, launcher, lane.root, binary, arguments,
+                                                out_root / f"{lane_name}-n{n}-strace", timeout))
+        insn[lane_name], syscalls[lane_name] = lane_insn, lane_sys
+    means = {lane: [sum(triple) / len(triple) for triple in triples] for lane, triples in insn.items()}
+    ref_perop = counts_per_op(means["musl"][1], means["musl"][0], n_values[1], n_values[0])
+    cand_perop = counts_per_op(means["crabc"][1], means["crabc"][0], n_values[1], n_values[0])
+    ref_sys = counts_per_op(syscalls["musl"][1]["total"], syscalls["musl"][0]["total"], n_values[1], n_values[0])
+    cand_sys = counts_per_op(syscalls["crabc"][1]["total"], syscalls["crabc"][0]["total"], n_values[1], n_values[0])
+    ratio = cand_perop / ref_perop if ref_perop > 0 else None
+    status = classify_counts_row(
+        has_counts=True, deterministic=all(counts_runs_agree(t) for triples in insn.values() for t in triples),
+        linear=all(counts_linear(*m) for m in means.values()), matched=matched,
+        ref_sys_perop=ref_sys, cand_sys_perop=cand_sys,
+        ref_sys_whole=syscalls["musl"][0]["total"], cand_sys_whole=syscalls["crabc"][0]["total"],
+        ratio_insn=ratio, allocator_attributed="allocator" in row.name)
+    scaled_n1 = counts_scaled_row(row, n1)
+    return {
+        "args": virtual_arguments(scaled_n1, lanes["musl"]),
+        "n": {"n1": n_values[0], "n2": n_values[1], "n3": n_values[2]},
+        "instructions": {"ref_runs": insn["musl"], "cand_runs": insn["crabc"],
+                         "per_op": {"ref": ref_perop, "cand": cand_perop},
+                         "ratio_insn": ratio, "delta_insn": cand_perop - ref_perop},
+        "syscalls": {
+            "ref": {"per_op": ref_sys, "whole": {"total": syscalls["musl"][0]["total"],
+                                                 "calls": syscalls["musl"][0]["calls"]}},
+            "cand": {"per_op": cand_sys, "whole": {"total": syscalls["crabc"][0]["total"],
+                                                   "calls": syscalls["crabc"][0]["calls"]}}},
+        "status": status,
+    }
+
+
+def measure_counts_startup(
+    root: Path, launcher: TimingLauncher, lanes: Mapping[str, Lane], row: performance_profile.PerformanceRow,
+    out_root: Path, timeout: float, matched: bool, wrapper: Mapping[str, int],
+) -> dict[str, Any]:
+    insn, syscalls, startup = {}, {}, {}
+    for lane_name, lane in (("musl", lanes["musl"]), ("crabc", lanes["crabc"])):
+        binary, arguments = virtual_binary(row, lane), virtual_arguments(row, lane)
+        runs = counts_trial("perf", root, launcher, lane.root, binary, arguments,
+                                 out_root / f"{lane_name}-perf", timeout)
+        trace = counts_trial("strace", root, launcher, lane.root, binary, arguments,
+                                    out_root / f"{lane_name}-strace", timeout)
+        insn[lane_name], syscalls[lane_name] = runs, trace
+        startup[lane_name] = counts_subtract(sum(runs) // len(runs), wrapper[lane_name])
+    ratio = startup["crabc"] / startup["musl"] if startup["musl"] > 0 else None
+    status = classify_counts_row(
+        has_counts=True, deterministic=all(counts_runs_agree(t) for t in insn.values()),
+        linear=True, matched=matched,
+        ref_sys_perop=syscalls["musl"]["total"], cand_sys_perop=syscalls["crabc"]["total"],
+        ref_sys_whole=syscalls["musl"]["total"], cand_sys_whole=syscalls["crabc"]["total"],
+        ratio_insn=ratio, allocator_attributed="allocator" in row.name)
+    return {
+        "args": virtual_arguments(row, lanes["musl"]),
+        "n": {"n1": row.iterations, "n2": row.iterations, "n3": row.iterations},
+        "instructions": {"ref_runs": insn["musl"], "cand_runs": insn["crabc"],
+                         "startup": {"ref": startup["musl"], "cand": startup["crabc"],
+                                     "wrapper": dict(wrapper)},
+                         "ratio_insn": ratio, "delta_insn": startup["crabc"] - startup["musl"]},
+        "syscalls": {
+            "ref": {"per_op": syscalls["musl"]["total"],
+                    "whole": {"total": syscalls["musl"]["total"], "calls": syscalls["musl"]["calls"]}},
+            "cand": {"per_op": syscalls["crabc"]["total"],
+                     "whole": {"total": syscalls["crabc"]["total"], "calls": syscalls["crabc"]["calls"]}}},
+        "status": status,
+    }
+
+
+def counts(args: argparse.Namespace) -> tuple[Path, dict[str, Any]]:
+    root = repository_root()
+    require(getattr(args, "work_dir", None) is not None, "counts requires --work-dir or --work NEW_DIR")
+    work = fresh_work_directory(root, args.work_dir)
+    raw_root = work / "raw"
+    raw_root.mkdir()
+    musl_root, reference_label = default_counts_reference()
+    matched = reference_label.startswith("matched-llvm-")
+    product = physical_path(args.dynamic_product, "supplied dynamic product", directory=True)
+    evidence.dynamic_product_identity(root, product)
+    selected = selected_rows(root, args.row)
+    state = BuildState(root=root, work=work, product=product, musl_cc=Path(DEFAULT_MUSL_CC), raw_root=raw_root / "build")
+    make_generated_sources(state, selected)
+    sources, _headers = source_roster(root, state, selected, include_memory_observers=False)
+    for generated in state.local_sources.values():
+        normalize_retained_path(root, generated)
+    compile_required_objects(state, sources, selected)
+    compile_timing_launcher(state, sources["timing_launcher"])
+    link_required_artifacts(state, selected, musl_root=musl_root)
+    lanes = {
+        "musl": stage_lane(work, state, name="musl", selected=selected, product=product, musl_root=musl_root),
+        "crabc": stage_lane(work, state, name="crabc", selected=selected, product=product, musl_root=musl_root),
+    }
+    cpu, _allowed_affinity = pin_cpu(args.cpu)
+    launcher = state.timing_launcher
+    require(launcher is not None, "counts timing launcher build is absent")
+    rustc = subprocess.run(["rustc", "-vV"], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, check=False)
+    clang_marker = musl_root / ".clang-version"
+    rows: dict[str, Any] = {}
+    wrapper = counts_calibrate_wrapper(state, launcher, lanes, args.timeout)
+    for row in selected:
+        rows[row.name] = measure_counts_row(root, launcher, lanes, row, work / "counts" / row.name,
+                                             args.timeout, matched, reference_label, wrapper)
+    report = {
+        "schema": SCHEMA, "kind": COUNTS_KIND,
+        "status": "complete" if all(item["status"] != "unavailable" for item in rows.values()) else "partial",
+        "header": {
+            "kind": "development",
+            "source_revision": git_revision(root),
+            "source_clean": git_clean(root),
+            "image_id": os.environ.get("CRABC_PERF_DOCKER_IMAGE_ID"),
+            "reference_label": reference_label,
+            "reference_root": str(musl_root),
+            "rustc": rustc.stdout if rustc.returncode == 0 else "unknown",
+            "clang_version": clang_marker.read_text(encoding="utf-8", errors="replace").strip()
+            if clang_marker.is_file() else "absent",
+            "cpu_model": counts_cpu_model(),
+            "kernel": platform.release(),
+            "benchmark_cpu": cpu,
+        },
+        "rows": rows,
+    }
+    path = work / "counts.json"
+    write_json(path, report)
+    return path, report
+
+
 def parser() -> argparse.ArgumentParser:
     result = argparse.ArgumentParser(description=__doc__)
     commands = result.add_subparsers(dest="command", required=True)
@@ -3767,6 +4184,13 @@ def parser() -> argparse.ArgumentParser:
     collect_parser.add_argument("--attempt-roster", type=Path, required=True)
     check_parser = commands.add_parser("check", help="host-safe replay of a retained collector or single-attempt report")
     check_parser.add_argument("report", type=Path)
+    counts_parser = commands.add_parser("counts", help="development P2 instruction/syscall counts for selected rows")
+    counts_parser.add_argument("--dynamic-product", type=Path, required=True, help="physical installed or extracted dynamic product")
+    counts_parser.add_argument("--work-dir", dest="work_dir", type=Path, required=False, default=None, help="fresh .work/x86_64 directory")
+    counts_parser.add_argument("--work", dest="work_dir", type=Path, required=False, default=None, help="alias for --work-dir")
+    counts_parser.add_argument("--row", dest="row", action="append", default=None, metavar="NAME", help="count one row; repeatable")
+    counts_parser.add_argument("--cpu", type=int, default=None)
+    counts_parser.add_argument("--timeout", type=float, default=20.0)
     return result
 
 
@@ -3788,6 +4212,10 @@ def main() -> int:
         if args.command == "check":
             check(args)
             return 0
+        if args.command == "counts":
+            report_path, report = counts(args)
+            print(report_path)
+            return 0 if report.get("status") == "complete" else 1
         raise AssertionError("unknown command")
     except (AdapterError, evidence.EvidenceError, OSError) as error:
         print(f"native x86 C performance: {error}", file=sys.stderr)

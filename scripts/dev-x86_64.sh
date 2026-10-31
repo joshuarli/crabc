@@ -197,7 +197,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   routine-c-abi-matrix <family-id>  run checked routine C ABI evidence for one family
   headers-layouts-aggregate  run finite non-promoting header accounting evidence
   image  build the pinned Linux/amd64 core-evidence image
-  perf-c {plan|run|collect|check} ...  native supplied-product C performance adapter in the pinned core image
+  perf-c {plan|run|collect|check|counts} ...  native supplied-product C performance adapter in the pinned core image
   perf-c-test  run focused native C-performance adapter and supplemental-fixture smoke tests in that image
   perf-c-memory-smoke <dynamic-product> <work-dir>  run the bounded native observer/cgroup collector smoke; never a scorecard result
   perf-native {--prepare|--mode smoke|--mode full|--validate-report REPORT} ...  pinned native Rust-facade performance companion; full waits for the ordered qualification chain
@@ -2869,7 +2869,7 @@ PY_PRODUCT
 # host path after this validation because replay must not need Docker or native
 # tools.
 prepare_native_c_performance_arguments() {
-    [ "$#" -ge 1 ] || fail "usage: ./scripts/dev-x86_64.sh perf-c {plan|run|collect|check} ..."
+    [ "$#" -ge 1 ] || fail "usage: ./scripts/dev-x86_64.sh perf-c {plan|run|collect|check|counts} ..."
     local mode="$1"
     shift
     NATIVE_C_PERFORMANCE_ARGUMENTS=("$mode")
@@ -2880,9 +2880,9 @@ prepare_native_c_performance_arguments() {
             NATIVE_C_PERFORMANCE_ARGUMENTS+=("$(readlink -f -- "$1")")
             return
             ;;
-        plan|run|collect)
+        plan|run|collect|counts)
             ;;
-        *) fail "usage: ./scripts/dev-x86_64.sh perf-c {plan|run|collect|check} ..." ;;
+        *) fail "usage: ./scripts/dev-x86_64.sh perf-c {plan|run|collect|check|counts} ..." ;;
     esac
 
     local dynamic_seen=0 work_seen=0 value translated
@@ -2896,9 +2896,9 @@ prepare_native_c_performance_arguments() {
                 dynamic_seen=1
                 shift 2
                 ;;
-            --work-dir)
-                [ "$#" -ge 2 ] && [ -n "$2" ] && [[ "$2" != -* ]] || fail "--work-dir requires a fresh .work directory"
-                [ "$work_seen" -eq 0 ] || fail "--work-dir may appear once"
+            --work-dir|--work)
+                [ "$#" -ge 2 ] && [ -n "$2" ] && [[ "$2" != -* ]] || fail "$1 requires a fresh .work directory"
+                [ "$work_seen" -eq 0 ] || fail "--work-dir/--work may appear once"
                 translated="$(translate_owned_posix_product "$2" fresh-output)" || exit 2
                 NATIVE_C_PERFORMANCE_ARGUMENTS+=("$1" "$translated")
                 work_seen=1
@@ -2910,7 +2910,7 @@ prepare_native_c_performance_arguments() {
                 NATIVE_C_PERFORMANCE_ARGUMENTS+=("$1" "$translated")
                 shift 2
                 ;;
-            --samples|--warmup|--cpu|--timeout|--seed|--label|--workload|--attempt-index)
+            --samples|--warmup|--cpu|--timeout|--seed|--label|--workload|--attempt-index|--row)
                 [ "$#" -ge 2 ] && [ -n "$2" ] || fail "$1 requires a value"
                 NATIVE_C_PERFORMANCE_ARGUMENTS+=("$1" "$2")
                 shift 2
@@ -2925,7 +2925,7 @@ prepare_native_c_performance_arguments() {
             *) fail "unknown native C-performance argument: $1" ;;
         esac
     done
-    [ "$dynamic_seen" -eq 1 ] && [ "$work_seen" -eq 1 ] || fail "native C-performance plan/run/collect requires --dynamic-product and --work-dir"
+    [ "$dynamic_seen" -eq 1 ] && [ "$work_seen" -eq 1 ] || fail "native C-performance plan/run/collect/counts requires --dynamic-product and --work-dir (or --work)"
 }
 
 # Convert a path already admitted by translate_owned_posix_product back to its
@@ -4250,6 +4250,12 @@ run_in_native_c_performance_container() {
     local image_id
     image_id="$(docker image inspect --format '{{.Id}}' "$IMAGE")"
     [ -n "$image_id" ] || fail "cannot resolve native C-performance image identity"
+    # The counts route reads instructions:u counters, which need PERFMON;
+    # run/collect keep the existing capability set.
+    local perfmon_cap=()
+    if [ "${NATIVE_C_PERFMON:-}" = 1 ]; then
+        perfmon_cap=(--cap-add=PERFMON)
+    fi
     docker run --rm --init \
         --env RUSTC_WRAPPER=/usr/local/bin/kache \
         --env CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER=/usr/local/bin/crabc-x86_64-mold-gcc \
@@ -4260,6 +4266,7 @@ run_in_native_c_performance_container() {
         --cap-add=SYS_CHROOT \
         --cap-add=SYS_ADMIN \
         --cap-add=SYS_PTRACE \
+        "${perfmon_cap[@]}" \
         --security-opt=seccomp=unconfined \
         --workdir /workspace \
         --env CARGO_HOME=/workspace/.work/x86_64/cargo \
@@ -7986,6 +7993,13 @@ case "$command" in
             # stays outside Docker and asks for no host compiler, musl, or
             # binutils installation.
             python3 -B "$ROOT_DIR/compat/perf/run_x86_64.py" check "$@"
+        elif [ "$1" = counts ]; then
+            shift
+            require_native_c_performance_image
+            ensure_image
+            # Counts read instructions:u counters, which are denied without
+            # PERFMON; no other perf-c mode gains the capability.
+            NATIVE_C_PERFMON=1 run_in_native_c_performance_container python3 -B /workspace/compat/perf/run_x86_64.py counts "$@"
         else
             require_native_c_performance_image
             ensure_image
