@@ -539,6 +539,10 @@ unsafe fn write_number(
     let content = prefix_count.saturating_add(digits_with_precision);
     let padding = width.saturating_sub(content);
     let zero_width = flags & FLAG_ZERO != 0 && flags & FLAG_MINUS == 0 && precision.is_none();
+    if output.count().checked_add(width.max(content)).is_none_or(|total| total > c_int::MAX as usize) {
+        output.set_overflowed();
+        return;
+    }
 
     if flags & FLAG_MINUS == 0 && !zero_width {
         unsafe { output.repeated(b' ', padding) };
@@ -593,6 +597,10 @@ unsafe fn write_string(
     #[cfg(not(crabc_x86_owned_runtime))]
     let length = unsafe { c_string_length(source.cast::<c_char>(), precision) };
     let padding = width.saturating_sub(length);
+    if output.count().checked_add(width.max(length)).is_none_or(|total| total > c_int::MAX as usize) {
+        output.set_overflowed();
+        return;
+    }
     if flags & FLAG_MINUS == 0 {
         unsafe { output.repeated(b' ', padding) };
     }
@@ -604,6 +612,10 @@ unsafe fn write_string(
 
 unsafe fn write_character(output: &mut impl FormatSink, character: u8, width: usize, flags: u8) {
     let padding = width.saturating_sub(1);
+    if output.count().checked_add(width.max(1)).is_none_or(|total| total > c_int::MAX as usize) {
+        output.set_overflowed();
+        return;
+    }
     if flags & FLAG_MINUS == 0 {
         unsafe { output.repeated(b' ', padding) };
     }

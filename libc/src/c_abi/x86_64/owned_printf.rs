@@ -375,14 +375,12 @@ unsafe fn render(output: &mut impl FormatSink, format: *const c_char,
                 emit_wide(output, value, width, precision, flags)?;
                 continue;
             }
-            // Measure before emitting padding. This is printf_core's INT_MAX
-            // gate, including prefixes and current count, without iterating
-            // over impossible billion-byte stream results or modifying %n.
-            let mut measured = Output::new(ptr::null_mut(), 0);
-            measured.count = output.count();
-            emit(&mut measured, &item, value, width, precision, flags);
-            if measured.overflowed || measured.count > c_int::MAX as usize { return Err(EOVERFLOW); }
+            // printf_core's INT_MAX gate: each emitter rejects a directive whose
+            // complete width would push the count past INT_MAX before writing
+            // any of it, so no impossible billion-byte stream result is iterated
+            // and %n is still not modified.
             emit(output, &item, value, width, precision, flags);
+            if output.overflowed() { return Err(EOVERFLOW); }
         }
         if output.failed() { Ok(-1) } else { Ok(output.count() as c_int) }
     }
