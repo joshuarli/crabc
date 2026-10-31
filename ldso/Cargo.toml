@@ -13,32 +13,6 @@ crate-type = ["cdylib"]
 test = false
 
 [features]
-# Private x86-64 ET_DYN interpreter target.  This is intentionally separate
-# from the AArch64 loader root and is enabled only by the native x86 runner.
-x86_64-initial-interpreter = []
-# Private general-initial-graph target. It is separate from the fixed-graph
-# root and deliberately excludes TLS, dlfcn, lifecycle, CRT, and
-# installed-product integration.
-x86_64-general-initial-interpreter = []
-# Process dependency lifecycle over the same arbitrary admitted initial graph.
-# This feature retains per-object callback ownership and
-# passes the conventional x86 rtld_fini address; main lifecycle stays CRT-owned.
-x86_64-general-initial-lifecycle = ["x86_64-general-initial-interpreter"]
-# Private x86 general initial-TLS materialization target. It retains only one
-# initial generation in loader-owned state and explicitly excludes RuntimeV1
-# publication, pthread/new-thread state, runtime DSO admission, DTV growth,
-# lifecycle, CRT, and installed-product integration.
-x86_64-general-initial-tls-interpreter = []
-# Private x86 general initial-TLS RuntimeV1 handoff target. It is a distinct
-# loader-owned descriptor wire over the arbitrary initial graph; it does not
-# select the older fixed-graph RuntimeV1 seam, CRT lifecycle, dlfcn, runtime
-# mapping, worker TLS, or DTV growth.
-x86_64-general-initial-tls-runtime-v1-interpreter = []
-# Private general RuntimeV1 bridge for one Rust-produced Scrt1.o and one
-# main-thread dynamic-libc startup call. It validates only Scrt1's ordinary
-# null-owned-handoff shape; it does not select the fixed owned-CRT carrier,
-# loader finalizers, or a dynamic product.
-x86_64-general-initial-tls-runtime-v1-dynamic-main-thread-interpreter = []
-# Installed initial-graph product: same graph/lifecycle and RuntimeV1, plus
-# loader-owned worker materialization (no runtime module growth or unload).
-x86_64-owned-dynamic-runtime = ["x86_64-general-initial-lifecycle", "x86_64-general-initial-tls-runtime-v1-dynamic-main-thread-interpreter"]
+# The installed x86-64 product: general initial graph, lifecycle, initial TLS
+# and RuntimeV1 handoff, plus loader-owned worker materialization.
+x86_64-owned-dynamic-runtime = []

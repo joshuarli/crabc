@@ -355,7 +355,7 @@ def descriptor_runtime_source_order(sources):
         '"-o", str(attachment_parts / "libc-attachment.o")',
         '"-o", str(library / "crabc-dynamic-attach.o")',
     ), 'selected attachment compile route')
-    require(cargo.count('x86_64-owned-dynamic-runtime = ["x86_64-general-initial-lifecycle", "x86_64-general-initial-tls-runtime-v1-dynamic-main-thread-interpreter"]')==1,
+    require(cargo.count('x86_64-owned-dynamic-runtime = []')==1,
             'dynamic loader feature route differs')
     dynamic_build=_runtime_region(
         build,

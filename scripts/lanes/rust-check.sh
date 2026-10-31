@@ -64,7 +64,7 @@ check -p crabc-libc --features x86-owned-dynamic-runtime
 check -p crabc-libc --features x86-owned-static-native-shadow
 check -p crabc-libc --features x86-owned-dynamic-native-shadow
 check -p crabc-mimalloc --all-targets
-check -p crabc-ldso --features x86_64-general-initial-tls-runtime-v1-dynamic-main-thread-interpreter
+check -p crabc-ldso --features x86_64-owned-dynamic-runtime
 check -p crabc-core
 check -p crabc-rs
 exit $status

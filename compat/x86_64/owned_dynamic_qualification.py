@@ -335,7 +335,7 @@ def prepare(work: Path) -> None:
          "--cfg", "crabc_general_initial_tls_materialization_v1", "--cfg", "crabc_general_loader_libc_tls_runtime_v1",
          "--cfg", "crabc_general_initial_lifecycle", "--cfg", "crabc_dynamic_main_thread_runtime_v1",
          "--cfg", 'feature="x86_64-owned-dynamic-runtime"',
-         str(ROOT / "ldso/src/x86_64_general_initial_tls_runtime_v1_source_root.rs"), "-o", str(work / "loader-tests")],
+         str(ROOT / "ldso/src/lib.rs"), "-o", str(work / "loader-tests")],
         [str(work / "loader-tests")],
         ["bash", str(ROOT / "compat/x86_64/run_musl_oracle.sh")],
     ]

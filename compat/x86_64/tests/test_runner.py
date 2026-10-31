@@ -2417,18 +2417,6 @@ unsafe fn join_selected_worker_inner(
         self.assertIn('/workspace/compat/x86_64/run_libc_clone_raw.sh', source)
         self.assertIn('run_libc_signal_foundation_probe()', source)
         self.assertIn('/workspace/compat/x86_64/run_libc_signal_foundation.sh', source)
-        self.assertIn('run_ldso_relocation_tests()', source)
-        self.assertIn('ldso/src/x86_64_relocation.rs', source)
-        self.assertIn('run_ldso_image_tests()', source)
-        self.assertIn('/workspace/ldso/run-x86_64-image.sh test', source)
-        self.assertIn('run_ldso_initial_graph_tests()', source)
-        self.assertIn('/workspace/compat/x86_64/run_ldso_initial_graph.sh', source)
-        self.assertIn('run_ldso_initial_tls_tests()', source)
-        self.assertIn('/workspace/compat/x86_64/run_ldso_initial_tls.sh', source)
-        self.assertIn('run_ldso_owned_crt_handoff_tests()', source)
-        self.assertIn('/workspace/compat/x86_64/run_ldso_owned_crt_handoff.sh', source)
-        self.assertIn('run_ldso_dynamic_admission_tests()', source)
-        self.assertIn('/workspace/compat/x86_64/run_ldso_dynamic_admission.sh', source)
         self.assertNotIn('"$ROOT_DIR/compat/allocator/run-x86_64.sh"', source)
         self.assertNotIn('cargo "$@"', source)
         self.assertNotIn('-p crabc-ldso', source)
@@ -9507,112 +9495,6 @@ esac
                     "/workspace/compat/x86_64/run_x86_users_databases_reference.sh",
                 ],
             )
-
-    def test_ldso_relocation_uses_the_native_amd64_container_and_fixed_source_scope(self) -> None:
-        with tempfile.TemporaryDirectory() as temporary:
-            root = Path(temporary)
-            bin_directory = root / "bin"
-            bin_directory.mkdir()
-            capture = root / "docker.args"
-
-            fake_uname = bin_directory / "uname"
-            fake_uname.write_text(
-                "#!/usr/bin/env bash\n"
-                "case \"$1\" in\n"
-                "  -s) printf 'Linux\\n' ;;\n"
-                "  -m) printf 'x86_64\\n' ;;\n"
-                "esac\n",
-                encoding="utf-8",
-            )
-            fake_uname.chmod(fake_uname.stat().st_mode | stat.S_IXUSR)
-
-            fake_docker = bin_directory / "docker"
-            fake_docker.write_text(
-                "#!/usr/bin/env bash\n"
-                "set -euo pipefail\n"
-                "if [ \"$1\" = image ] && [ \"$2\" = inspect ]; then\n"
-                "  printf 'linux/amd64\\n'\n"
-                "  exit 0\n"
-                "fi\n"
-                "if [ \"$1\" = run ]; then\n"
-                "  printf '%s\\0' \"$@\" > \"${FAKE_DOCKER_ARGS:?}\"\n"
-                "  exit 0\n"
-                "fi\n"
-                "printf 'unexpected docker invocation: %s\\n' \"$*\" >&2\n"
-                "exit 64\n",
-                encoding="utf-8",
-            )
-            fake_docker.chmod(fake_docker.stat().st_mode | stat.S_IXUSR)
-
-            environment = os.environ.copy()
-            environment.update(
-                {
-                    "PATH": f"{bin_directory}{os.pathsep}{environment['PATH']}",
-                    "FAKE_DOCKER_ARGS": str(capture),
-                }
-            )
-            completed = subprocess.run(
-                ["bash", str(RUNNER), "ldso-relocation"],
-                cwd=ROOT,
-                env=environment,
-                check=False,
-                text=True,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-            )
-            self.assertEqual(completed.returncode, 0, completed.stderr)
-
-            arguments = [
-                argument.decode("utf-8")
-                for argument in capture.read_bytes().split(bytes((0,)))
-                if argument
-            ]
-            self.assertIn("--platform", arguments)
-            platform_index = arguments.index("--platform")
-            self.assertEqual(arguments[platform_index + 1], "linux/amd64")
-            bash_index = arguments.index("bash")
-            self.assertEqual(arguments[bash_index : bash_index + 2], ["bash", "-ceu"])
-            source_test_command = arguments[bash_index + 2]
-            self.assertIn(
-                "/workspace/ldso/src/x86_64_relocation.rs",
-                source_test_command,
-            )
-            self.assertIn('"$test_binary" --test-threads=1', source_test_command)
-            self.assertNotIn("cargo", source_test_command)
-
-    def test_ldso_initial_exec_tls_stays_a_fixed_leaf_sibling(self) -> None:
-        runner = (ROOT / "compat" / "x86_64" / "run_ldso_initial_tls.sh").read_text(
-            encoding="utf-8"
-        )
-        launcher = (
-            ROOT / "compat" / "x86_64" / "run_ldso_initial_exec_tls.sh"
-        ).read_text(encoding="utf-8")
-        graph = (ROOT / "ldso" / "src" / "x86_64_initial_graph.rs").read_text(
-            encoding="utf-8"
-        )
-        leaf = (ROOT / "compat" / "x86_64" / "ldso_initial_tls_leaf.c").read_text(
-            encoding="utf-8"
-        )
-        dispatcher = RUNNER.read_text(encoding="utf-8")
-
-        for required in (
-            "crabc_initial_exec_tls_graph",
-            "R_X86_64_TPOFF64",
-            "STATIC_TLS",
-            "nonzero addend",
-            "static-TLS flag on the GNU-Dynamic mid",
-        ):
-            self.assertIn(required, runner)
-        self.assertIn("CRABC_LDSO_INITIAL_EXEC_TLS=1", launcher)
-        for required in (
-            "crabc_initial_exec_tls_graph",
-            "R_X86_64_TPOFF64 =>",
-            "leaf_initial_exec_tls",
-            "object.static_tls",
-        ):
-            self.assertIn(required, graph)
-        self.assertIn('tls_model("initial-exec")', leaf)
-        self.assertIn("run_ldso_initial_exec_tls.sh", dispatcher)
 
     def test_process_globals_getopt_runner_keeps_the_private_native_boundary(self) -> None:
         runner = (

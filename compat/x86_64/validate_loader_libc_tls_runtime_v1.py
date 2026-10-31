@@ -76,7 +76,7 @@ INITIAL_TLS_FOUNDATION = {
     "pthread_or_clone_settls": "not-implemented-and-not-implied",
     "general_dynamic_product": False,
     "capability_or_family_promotion": False,
-    "native_evidence": "compat/x86_64/run_loader_libc_tls_runtime_v1.sh",
+    "native_evidence": "compat/x86_64/run_owned_ldso_runtime_v1_cases.sh",
 }
 
 INITIAL_TLS_REGISTRY_FOUNDATION = {
@@ -89,15 +89,13 @@ INITIAL_TLS_REGISTRY_FOUNDATION = {
     "general_initial_graph": "integrated-ordinary-general-initial-tls-materialization-and-separate-general-runtimev1-private-publication-only-no-runtime-growth",
     "general_dynamic_product": False,
     "capability_or_family_promotion": False,
-    "native_evidence": "compat/x86_64/run_loader_libc_tls_runtime_v1_registry.sh",
+    "native_evidence": "compat/x86_64/run_owned_ldso_runtime_v1_cases.sh",
 }
 
 GENERAL_INITIAL_TLS_RUNTIME_V1_FOUNDATION = {
     "state": "implemented-private-evidence-only",
     "producer": (
-        "ldso/src/x86_64_general_initial_tls_runtime_v1_source_root.rs:"
-        "crabc_general_initial_graph+crabc_general_initial_tls_materialization_v1+"
-        "crabc_general_loader_libc_tls_runtime_v1"
+        "ldso/src/lib.rs:feature=x86_64-owned-dynamic-runtime"
     ),
     "consumer": "libc/src/c_abi/x86_64/loader_tls_runtime_v1_source_root.rs",
     "record": "__crabc_x86_64_loader_tls_runtime_v1",
@@ -112,17 +110,15 @@ GENERAL_INITIAL_TLS_RUNTIME_V1_FOUNDATION = {
     "general_dynamic_product": False,
     "capability_or_family_promotion": False,
     "native_evidence": (
-        "compat/x86_64/run_loader_libc_general_tls_runtime_v1.sh+"
-        "compat/x86_64/run_loader_libc_general_tls_runtime_v1_target_root.sh"
+        "compat/x86_64/run_owned_ldso_runtime_v1_cases.sh+"
+        "compat/x86_64/run_owned_ldso_runtime_v1_cases.sh"
     ),
 }
 
 DYNAMIC_MAIN_THREAD_RUNTIME_V1_BRIDGE = {
     "state": "implemented-private-evidence-only",
     "producer": (
-        "ldso/src/x86_64_dynamic_main_thread_runtime_v1_source_root.rs:"
-        "crabc_general_initial_graph+crabc_general_initial_tls_materialization_v1+"
-        "crabc_general_loader_libc_tls_runtime_v1+crabc_dynamic_main_thread_runtime_v1"
+        "ldso/src/lib.rs:feature=x86_64-owned-dynamic-runtime"
     ),
     "scrt1": (
         "crt/build_x86_64.py:--dynamic-main-thread-runtime-v1->"
@@ -156,7 +152,7 @@ DYNAMIC_MAIN_THREAD_RUNTIME_V1_BRIDGE = {
     "general_dynamic_product": False,
     "capability_or_family_promotion": False,
     "native_evidence": (
-        "compat/x86_64/run_dynamic_main_thread_runtime_v1.sh+"
+        "compat/x86_64/run_owned_ldso_runtime_v1_cases.sh+"
         "compat/x86_64/run_dynamic_main_thread_runtime_v1_target_root.sh"
     ),
 }
@@ -202,13 +198,13 @@ CURRENT_ARTIFACTS = [
     },
     {
         "id": "ldso-general-initial-tls-runtime-v1",
-        "path": "ldso/src/x86_64_general_initial_tls_runtime_v1_source_root.rs",
+        "path": "ldso/src/lib.rs",
         "state": "implemented-private-evidence-only",
         "runtime_v1_producer": True,
     },
     {
         "id": "ldso-dynamic-main-thread-runtime-v1",
-        "path": "ldso/src/x86_64_dynamic_main_thread_runtime_v1_source_root.rs",
+        "path": "ldso/src/lib.rs",
         "state": "implemented-private-evidence-only",
         "runtime_v1_producer": True,
     },
@@ -231,20 +227,20 @@ INTEGRATION = [
     },
     {
         "id": "ldso-x86-main-thread-materialization",
-        "path": "ldso/src/x86_64_general_initial_tls_source_root.rs",
+        "path": "ldso/src/lib.rs",
         "boundary": "loader-owned-general-initial-only-pt-tls-layout-before-dtpmod64-dtpoff64-relocations-reserve-publication-before-arch-set-fs-and-nonfallibly-commit-in-the-ordinary-no-runtimev1-or-crt-handoff-root",
         "state": "implemented-private-evidence-only",
-        "native_evidence": "compat/x86_64/run_ldso_general_initial_tls.sh+compat/x86_64/run_ldso_general_initial_tls_target_root.sh",
+        "native_evidence": "compat/x86_64/run_owned_ldso_initial_tls_cases.sh+compat/x86_64/run_owned_ldso_initial_tls_cases.sh",
         "scope": "bounded-general-initial-graph-generation-one-only-no-libc-descriptor-pthread-new-thread-dtv-growth-runtime-map-dlopen-crt-or-product-promotion",
     },
     {
         "id": "ldso-x86-general-runtime-v1-publication",
-        "path": "ldso/src/x86_64_general_initial_tls_runtime_v1_source_root.rs",
+        "path": "ldso/src/lib.rs",
         "boundary": "bounded-arbitrary-initial-pt-tls-graph-runtimev1-paired-pre-arch-set-fs-state-and-descriptor-reservation-nonfallible-retained-state-commit-72-byte-loader-owned-descriptor-ready-last-and-dependency-callbacks-only-after-ready",
         "state": "implemented-private-evidence-only",
         "native_evidence": (
-            "compat/x86_64/run_loader_libc_general_tls_runtime_v1.sh+"
-            "compat/x86_64/run_loader_libc_general_tls_runtime_v1_target_root.sh"
+            "compat/x86_64/run_owned_ldso_runtime_v1_cases.sh+"
+            "compat/x86_64/run_owned_ldso_runtime_v1_cases.sh"
         ),
         "scope": "bounded-general-initial-graph-generation-one-only-local-hidden-72-byte-record-no-crt-handoff-installed-dynamic-product-pthread-new-thread-dtv-growth-replacement-runtime-map-dlopen-unload-or-product-family-capability-promotion",
     },
@@ -268,7 +264,7 @@ INTEGRATION = [
     },
     {
         "id": "dynamic-tls-regression-to-product",
-        "path": "compat/x86_64/run_ldso_initial_tls.sh",
+        "path": "compat/x86_64/run_owned_ldso_initial_tls_cases.sh",
         "boundary": "retain-fixed-graph-tls-as-regression-while-installed-dynamic-product-gains-runtimev1-evidence",
         "state": "implemented-unqualified",
     },
@@ -441,24 +437,24 @@ def validate_contract(document: Mapping[str, object]) -> dict[str, object]:
         ROOT / "ldso" / "src" / "x86_64_initial_graph.rs",
         ROOT / "libc" / "src" / "c_abi" / "x86_64" / "loader_tls_runtime_v1.rs",
         ROOT / "libc" / "src" / "c_abi" / "x86_64" / "loader_tls_runtime_v1_source_root.rs",
-        ROOT / "compat" / "x86_64" / "run_loader_libc_tls_runtime_v1.sh",
+        ROOT / "compat" / "x86_64" / "run_owned_ldso_runtime_v1_cases.sh",
         ROOT / "ldso" / "src" / "x86_64_initial_tls_registry.rs",
-        ROOT / "compat" / "x86_64" / "run_loader_libc_tls_runtime_v1_registry.sh",
+        ROOT / "compat" / "x86_64" / "run_owned_ldso_runtime_v1_cases.sh",
         ROOT / "ldso" / "src" / "x86_64_general_initial_loader_state.rs",
         ROOT / "ldso" / "src" / "x86_64_general_initial_tls_state.rs",
-        ROOT / "ldso" / "src" / "x86_64_general_initial_tls_source_root.rs",
-        ROOT / "ldso" / "src" / "x86_64_general_initial_tls_runtime_v1_source_root.rs",
-        ROOT / "compat" / "x86_64" / "run_ldso_general_initial_tls.sh",
-        ROOT / "compat" / "x86_64" / "run_ldso_general_initial_tls_target_root.sh",
-        ROOT / "compat" / "x86_64" / "run_loader_libc_general_tls_runtime_v1.sh",
-        ROOT / "compat" / "x86_64" / "run_loader_libc_general_tls_runtime_v1_target_root.sh",
-        ROOT / "ldso" / "src" / "x86_64_dynamic_main_thread_runtime_v1_source_root.rs",
+        ROOT / "ldso" / "src" / "lib.rs",
+        ROOT / "ldso" / "src" / "lib.rs",
+        ROOT / "compat" / "x86_64" / "run_owned_ldso_initial_tls_cases.sh",
+        ROOT / "compat" / "x86_64" / "run_owned_ldso_initial_tls_cases.sh",
+        ROOT / "compat" / "x86_64" / "run_owned_ldso_runtime_v1_cases.sh",
+        ROOT / "compat" / "x86_64" / "run_owned_ldso_runtime_v1_cases.sh",
+        ROOT / "ldso" / "src" / "lib.rs",
         ROOT / "crt" / "build_x86_64.py",
         ROOT / "crt" / "src" / "x86_64_dynamic_startup.rs",
         ROOT / "libc" / "src" / "c_abi" / "x86_64" / "dynamic_main_thread_runtime_v1_source_root.rs",
         ROOT / "libc" / "src" / "c_abi" / "x86_64" / "dynamic_main_thread_runtime_v1.rs",
-        ROOT / "compat" / "x86_64" / "run_dynamic_main_thread_runtime_v1.sh",
-        ROOT / "compat" / "x86_64" / "run_dynamic_main_thread_runtime_v1_target_root.sh",
+        ROOT / "compat" / "x86_64" / "run_owned_ldso_runtime_v1_cases.sh",
+        ROOT / "compat" / "x86_64" / "run_owned_ldso_runtime_v1_cases.sh",
     ):
         if not path.is_file():
             raise TlsRuntimeContractError(f"initial-TLS foundation path is missing: {path.relative_to(ROOT)}")
