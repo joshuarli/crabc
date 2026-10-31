@@ -3926,6 +3926,23 @@ class PublicDataLinkageAdapterTests(unittest.TestCase):
         ])
 
 
+class ImportAdapterSpecTests(unittest.TestCase):
+    def test_duplicated_swapped_and_unbound_specs_fail(self):
+        specs = selection.IMPORT_ADAPTER_SPECS
+        entries = tuple(specs.items())
+        with self.assertRaisesRegex(selection.SelectionError, 'duplicate adapter spec memcmp'):
+            selection.build_adapter_specs((*entries, ('memcmp', specs['memcmp'])))
+        with self.assertRaisesRegex(selection.SelectionError, 'memcmp shared_key differs'):
+            selection.build_adapter_specs(tuple((s, specs['memmove'] if s == 'memcmp' else p) for s, p in entries))
+        for key, value, message in (
+                ('loader_key', 'bcmp_loader_occurrence', 'memmove loader_key differs'),
+                ('extra_symbol', 'bcmp', 'memmove extra symbol differs'),
+                ('mixed_call_forms', 'mixed_memcmp_call_forms', 'memmove mixed_call_forms differs')):
+            with self.subTest(key=key), self.assertRaisesRegex(selection.SelectionError, message):
+                selection.build_adapter_specs(tuple((s, {**p, key: value} if s == 'memmove' else p)
+                                                    for s, p in entries))
+
+
 class SelectedCallableDeclarationIntegrationTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):

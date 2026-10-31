@@ -51,6 +51,10 @@ class Row:
     loader_checks: tuple[tuple[str, str], ...] = ()
     tail_call: TailCall | None = None
 
+    @property
+    def loader_symbols(self) -> frozenset[str]:
+        return frozenset(symbol for _, symbol in self.loader_checks)
+
 
 def require(condition: bool, message: str) -> None:
     if not condition:
@@ -138,7 +142,9 @@ def workload_rows(path: Path, symbol: str) -> dict[str, Any]:
     return rows
 
 
-def loader_occurrence(dynamic_product: Path, symbol: str) -> dict[str, Any]:
+def loader_occurrence(dynamic_product: Path, row: Row, symbol: str) -> dict[str, Any]:
+    message = "comparison loader symbol differs" if row.name == "memcmp" else f"{row.name} loader symbol differs"
+    require(symbol in row.loader_symbols, message)
     loader = regular(dynamic_product / "lib/ld-crabc-x86_64.so.1", f"{symbol} loader")
     symbols = subprocess.run(("/usr/bin/readelf", "--dyn-syms", "-W", str(loader)),
                              capture_output=True, text=True, check=False)
@@ -220,7 +226,7 @@ def capture(command: list[str], work: Path, label: str, symbol: str) -> dict[str
 
 
 def observations(row: Row, dynamic_product: Path) -> dict[str, Any]:
-    found = {key: loader_occurrence(dynamic_product, symbol) for key, symbol in row.loader_checks}
+    found = {key: loader_occurrence(dynamic_product, row, symbol) for key, symbol in row.loader_checks}
     if row.tail_call is not None:
         found[row.tail_call.key] = shared_tail_call(dynamic_product, row.name)
     return found
@@ -233,12 +239,11 @@ def collect(static_product: Path, dynamic_product: Path, output: Path, symbol: s
             and output.parent.resolve() == output.parent, f"{row.name} output must be a fresh physical .work child")
     static_product = directory(static_product.absolute(), f"{row.name} static product")
     dynamic_product = directory(dynamic_product.absolute(), f"{row.name} dynamic product")
-    source = MODULE_DIR / row.fixture
-    source_before = digest(source)
+    source_before = digest(MODULE_DIR / row.fixture)
     output.mkdir(mode=0o700)
     commands = {"compile": capture(compile_command(dynamic_product, output, row.name),
                                    output, "compile", row.name)}
-    require(digest(source) == source_before, f"{row.name} source changed during compilation")
+    require(digest(MODULE_DIR / row.fixture) == source_before, f"{row.name} source changed during compilation")
     rows = workload_rows(output / "workload.o", row.name)
     for mode in MODES:
         commands[mode] = capture(link_command(mode, static_product, dynamic_product, output),
@@ -255,7 +260,7 @@ def collect(static_product: Path, dynamic_product: Path, output: Path, symbol: s
                   static_product if mode.startswith("static") else dynamic_product,
                   output / "workload.o", output / mode, link_receipt(mode, output),
                   mode.removeprefix("dynamic-")) for mode in MODES}}
-    require(digest(source) == source_before, f"{row.name} source changed during linking")
+    require(digest(MODULE_DIR / row.fixture) == source_before, f"{row.name} source changed during linking")
     (output / "report.json").write_text(json.dumps(report, sort_keys=True, indent=2) + "\n", encoding="utf-8")
     return report
 

@@ -39,14 +39,16 @@ class MemmoveImportReceiptTests(unittest.TestCase):
                 mock.patch.object(receipt, "digest", return_value="a" * 64), \
                 mock.patch.object(receipt.subprocess, "run", side_effect=(
                     completed(symbol), completed(""))):
-            self.assertEqual(receipt.loader_occurrence(product, "memmove"), {
+            self.assertEqual(receipt.loader_occurrence(product, receipt.ROWS["memmove"], "memmove"), {
                 "loader_sha256": "a" * 64, "address": 0x153f5,
                 "size_bytes": 40, "section_index": "6"})
         with mock.patch.object(receipt, "regular", return_value=Path("loader")), \
                 mock.patch.object(receipt.subprocess, "run", side_effect=(
                     completed(symbol), completed("R_X86_64_JUMP_SLOT memmove\n"))):
             with self.assertRaisesRegex(receipt.ImportReceiptError, "loader occurrence differs"):
-                receipt.loader_occurrence(product, "memmove")
+                receipt.loader_occurrence(product, receipt.ROWS["memmove"], "memmove")
+        with self.assertRaisesRegex(receipt.ImportReceiptError, "memmove loader symbol differs"):
+            receipt.loader_occurrence(product, receipt.ROWS["memmove"], "bcmp")
 
     def test_shared_bcopy_tail_branch_targets_the_shared_provider(self):
         symbols = "\n".join(

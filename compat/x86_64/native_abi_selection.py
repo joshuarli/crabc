@@ -11501,22 +11501,41 @@ def attach_ordinary_import_from_retained_links(
         accounting, companion, name, projection_override=projection)
 
 
-IMPORT_ADAPTER_SPECS = {
-    'strlen': {'shared_call_inventory': True, 'all_defined_shared_callers': True},
-    'memmove': {'expected_importers': 2, 'shared_call_inventory': True,
-                'all_defined_shared_callers': True, 'mixed_call_forms': 'mixed_memmove_call_forms',
-                'loader_key': 'loader_occurrence', 'shared_key': 'shared_bcopy_direct_call'},
-    'memcmp': {'shared_call_inventory': True, 'all_defined_shared_callers': True,
-               'mixed_call_forms': 'mixed_memcmp_call_forms', 'extra_symbol': 'bcmp',
-               'loader_key': 'loader_occurrence', 'bcmp_loader_key': 'bcmp_loader_occurrence',
-               'shared_key': 'shared_bcmp_direct_call'},
-    'fchdir': {'expected_importers': 1, 'shared_call_inventory': True,
-               'all_defined_shared_callers': True},
-    'btowc': {'expected_importers': 1,
-              'importer_section': '.text.crabc_owned_wprint_wprintf_core'},
-    'wctomb': {'expected_importers': 1, 'importer_section': '.text.crabc_owned_vfwscanf'},
-    'wcsrtombs': {'expected_importers': 1},
-}
+def build_adapter_specs(
+        entries: tuple[tuple[str, dict[str, Any]], ...]) -> dict[str, dict[str, Any]]:
+    table: dict[str, dict[str, Any]] = {}
+    for symbol, spec in entries:
+        require(symbol not in table, f'duplicate adapter spec {symbol}')
+        require(symbol in import_receipt.ROWS, f'adapter spec {symbol} has no receipt row')
+        row = import_receipt.ROWS[symbol]
+        for key, names in (
+                ('loader_key', {key for key, _ in row.loader_checks}),
+                ('bcmp_loader_key', {key for key, _ in row.loader_checks}),
+                ('shared_key', {row.tail_call.key} if row.tail_call is not None else set()),
+                ('mixed_call_forms', {f'mixed_{symbol}_call_forms'})):
+            if key in spec:
+                require(spec[key] in names, f'{symbol} {key} differs')
+        if 'extra_symbol' in spec:
+            require(spec['extra_symbol'] in row.imports, f'{symbol} extra symbol differs')
+        table[symbol] = spec
+    require(set(table) == set(import_receipt.ROWS), 'adapter spec roster differs')
+    return table
+
+
+IMPORT_ADAPTER_SPECS = build_adapter_specs((
+    ('strlen', {'shared_call_inventory': True, 'all_defined_shared_callers': True}),
+    ('memmove', {'expected_importers': 2, 'shared_call_inventory': True, 'all_defined_shared_callers': True,
+                 'mixed_call_forms': 'mixed_memmove_call_forms', 'loader_key': 'loader_occurrence', 'shared_key': 'shared_bcopy_direct_call'}),
+    ('memcmp', {'shared_call_inventory': True, 'all_defined_shared_callers': True,
+                'mixed_call_forms': 'mixed_memcmp_call_forms', 'extra_symbol': 'bcmp', 'loader_key': 'loader_occurrence',
+                'bcmp_loader_key': 'bcmp_loader_occurrence', 'shared_key': 'shared_bcmp_direct_call'}),
+    ('fchdir', {'expected_importers': 1, 'shared_call_inventory': True,
+                'all_defined_shared_callers': True}),
+    ('btowc', {'expected_importers': 1,
+               'importer_section': '.text.crabc_owned_wprint_wprintf_core'}),
+    ('wctomb', {'expected_importers': 1, 'importer_section': '.text.crabc_owned_vfwscanf'}),
+    ('wcsrtombs', {'expected_importers': 1}),
+))
 
 
 def ordinary_import_adapter(
