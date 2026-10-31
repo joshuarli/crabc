@@ -715,6 +715,22 @@ Decided by the owner on 2026-10-30. Reopening one needs a new owner decision.
   `alpine:edge` builder stage compiles only the reference musl, asserts the
   LLVM major, and is copied into the unchanged main image (S1.1/S1.2). When
   the next stable Alpine ships the matching clang, the stage moves to it.
+- **D6 — libc leaf folding may change the default archive.** The shipped
+  static archive is built from `x86-owned-static-runtime` and already exports
+  the 19 leaves; the no-feature archive is a test artifact only. Folding the
+  leaves into unconditional code may therefore widen that test artifact's
+  export surface. Accepted: update the absence-proof runners to presence tests
+  for the folded families, and keep the shipped `libc.so`/`libc.a` export
+  lists identical. The libc-feature budget stays 25.
+- **D7 — migrate the ldso cases rather than keep the features.** The 71
+  behavioural cases of the three non-product loader features move into the
+  installed product's case table before those features and their source roots
+  are deleted. The ldso-feature budget stays 2.
+- **D8 — startup instructions are judged on the total.** D1's allocator
+  exemption covers the start-up syscalls it names; it does not create an
+  instruction exemption that the harness cannot measure. Startup rows report
+  the allocator-attributed share as evidence, and the gate compares the total
+  against 1.10 × R. No sample-based subtraction is added.
 
 ## Runtime hardening
 
@@ -799,6 +815,11 @@ and the reviewed unwinder dependency graph.
   unless a step requires them. S1.4 landed (R and 1.10 in the release gate).
   S1.1 stopped because Alpine 3.24.1 has no LLVM 23 clang; D5 opened and
   decided: a digest-pinned `alpine:edge` builder stage for the reference musl.
+- 2026-10-31: owner delegated the three open S0 questions and they are decided:
+  D6 accepts the default-archive export change for the 19 folded leaves, D7
+  funds moving the 71 ldso cases and deleting all six private features, and D8
+  judges startup instructions on the total while reporting the allocator share
+  as evidence. The libc (25) and ldso (2) feature budgets stand.
 - 2026-10-31: S1.1–S1.3 and the S1.5 seed rows landed and merged; S0 was then
   completed on the merged tip. S0 budgets are fixed above. The S0.8 test for
   chain-only dispatcher subcommands finds none: the dispatcher is behavioural
@@ -857,7 +878,7 @@ crabc-rs 14, builtins 1, unwinder 1.
 | Distinct report formats | 22 |
 | `RuntimeV1` fields | 30 |
 | Symbols `libc.so` imports from the loader | 14 (13 undefined + 1 weak object) |
-| Process-state owners | **not enumerated** (retained gap; see Needs owner) |
+| Process-state owners | **not enumerated** (S0.4 open; see Next) |
 
 ### Linked footprint (`llvm-size -A`)
 
@@ -933,7 +954,7 @@ musl's initialisation. That row cannot be judged until the route is fixed.
 3. **19 libc per-family leaf features** enabled by both owned aggregates.
    Consumer evidence: `.work/s3a/5.2-skips.md` — folding makes them
    unconditional in the frozen default archive too, changing its export
-   surface and deleting the absence proofs. Risk: contract. Needs owner.
+   surface and deleting the absence proofs. Risk: contract; accepted by D6.
 4. **Seven per-symbol `native_abi_*_import_receipt.py` modules** (1,782 lines
    + 7 fixtures / 98 lines) reproduced from one template. Consumers:
    `native_abi_selection.py`, `abi_differential_evidence.py`, 4 test modules.
@@ -974,7 +995,7 @@ loop shows mimalloc symbols dominating but is rate-limited to about nine
 samples per exec. They are budgeted against the cost contract (≤ 1.10 × R)
 rather than a fabricated deletion count, and they are the rows S3b/S4 must
 move. `libc` features are budgeted on the identified 19 but cannot be
-executed until the default-archive export question is decided (Needs owner).
+executed now that D6 accepts the default-archive change.
 
 ## Result table
 
@@ -996,34 +1017,29 @@ the budgets above. `allocator-attributed` costs are listed, never passed.
 
 ### Needs owner
 
-1. **libc leaf features change the frozen default archive.** Folding the 19
-   leaves that both owned aggregates enable makes them unconditional in the
-   dependency-free default archive as well, changing its exported surface and
+None open. The three questions raised while fixing the S0 budgets were answered
+on 2026-10-31 and recorded as D6-D8: accept the default-archive export change
+(D6), migrate the 71 ldso cases and delete the features (D7), and judge startup
+instructions on the total while reporting the allocator share as evidence
+(D8). The evidence that motivated them:
+
+1. **libc leaf features.** Folding the 19 leaves makes them unconditional in
+   the dependency-free test archive as well, changing its export surface and
    deleting its absence proofs (`.work/s3a/5.2-skips.md`,
-   `libc/src/c_abi/x86_64/static_c_abi.rs`). Accept the new default export
-   surface, or drop the libc-feature budget back to 40. Recommendation: accept
-   it only for the families the default archive no longer needs to prove
-   absent, and keep the ratchet for the rest.
-2. **ldso private milestone features have no product equivalents.** Deleting
+   `libc/src/c_abi/x86_64/static_c_abi.rs`). The shipped owned archive already
+   exports `ualarm`, `getitimer`, `tmpnam`, `scandir` and `setenv`.
+2. **ldso private milestone features.** Deleting
    `x86_64-initial-interpreter`,
    `x86_64-general-initial-tls-interpreter` and
    `x86_64-general-initial-tls-runtime-v1-interpreter` needs 71 behavioural
    cases (malformed ELF, TLS, lifecycle) moved into the installed product's
-   case table first (`.work/s3a/migration.md`). That is real test work, not a
-   deletion. Option: keep the three features (ldso feature budget becomes 7)
-   until the migration is scheduled.
-3. **Startup instructions are dominated by the frozen allocator, and D1's
-   exclusion is not executable.** A deterministic static probe measures
-   173,930 startup instructions, 118,862 with `env -i`; environment-dependent
-   startup is 55,068 of them, dominated by the allocator's option scan
-   (D1-frozen), and mimalloc symbols dominate the samples. The harness has no
-   way to report "the remaining instructions" that D1 says startup rows are
-   judged on, and sampling is rate-limited to about nine samples per exec. Decide: extend the counts
-   route to attribute startup instructions by symbol and subtract only
-   `allocator-attributed` ones, or judge startup rows on the total. Until then
-   the startup-instruction rows cannot be judged at all, and the allocator-free
-   static remainder (≤ 118,862 against musl's 856) still fails 1.10 × before
-   any allocator cost is counted.
+   case table first (`.work/s3a/migration.md`).
+3. **Startup instructions.** A deterministic static probe measures 173,930
+   startup instructions, 118,862 with `env -i`; environment-dependent startup
+   is 55,068, dominated by the frozen allocator's option scan. Sampling is
+   rate-limited to about nine samples per exec, so an allocator-only
+   subtraction is not measurable; the empty-environment remainder already
+   fails 1.10 x by 139 x.
 
 ## Non-goals
 
