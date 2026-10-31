@@ -8,7 +8,9 @@
 //! bootstrap validates the final executable's live `AT_PHDR` program-header table,
 //! derives its one optional `PT_TLS` image, materializes that image below an
 //! x86 Variant-II thread pointer, and installs the main thread's `%fs` base.
-//! It retains the immutable template so the bounded pthread worker can
+//! The process-main copy uses this module's in-image storage when the template
+//! fits it and one private mapping otherwise, as musl's static startup does.
+//! The bootstrap retains the immutable template so the bounded pthread worker can
 //! materialize the exact same initialized and TBSS image before it supplies
 //! `CLONE_SETTLS` to Linux.
 //!
@@ -122,15 +124,69 @@ impl StaticInitialTlsPlan {
     };
 }
 
-/// One privately owned materialization of [`StaticInitialTlsPlan`].
+/// In-image capacity for the process-main thread's initial TLS block.
+///
+/// Musl's `src/env/__init_tls.c` installs the static main thread from its
+/// `builtin_tls` object and maps only when the template does not fit. This
+/// same rule covers the owned archive's own initial TLS (the resolver, locale,
+/// errno and allocator words, 712 bytes in the current product) plus a small
+/// application allowance. A plan that does not fit keeps the equivalent
+/// private mapping, so no template shape loses support or changes its `%fs`
+/// layout.
+const INITIAL_THREAD_TLS_STORAGE_SIZE: usize = 1024;
+
+#[repr(C, align(16))]
+struct InitialThreadTlsStorage {
+    bytes: [u8; INITIAL_THREAD_TLS_STORAGE_SIZE],
+}
+
+/// The process-main thread's in-image copy of the final executable's template.
+///
+/// The bootstrap state machine admits one writer, before any other thread
+/// exists, so this storage is never concurrently materialized.
+static mut INITIAL_THREAD_TLS_STORAGE: InitialThreadTlsStorage =
+    InitialThreadTlsStorage { bytes: [0; INITIAL_THREAD_TLS_STORAGE_SIZE] };
+
+/// Where one materialization of [`StaticInitialTlsPlan`] lives.
+///
+/// The process-main thread copies into this module's image storage; every
+/// selected worker owns a private anonymous mapping that the bounded pthread
+/// leaf releases only after `CLONE_CHILD_CLEARTID` proves the child cannot
+/// access it.
+#[derive(Clone, Copy)]
+enum InitialTlsPlacement {
+    /// This module's image storage, retained for the process lifetime.
+    ExecutableImage,
+    /// One anonymous mapping owned by this block.
+    AnonymousMapping { address: *mut u8, size: usize },
+}
+
+impl InitialTlsPlacement {
+    /// Return the writable span one copy is placed in.
+    ///
+    /// # Safety
+    ///
+    /// The caller must be the only materialization that touches this span:
+    /// the bootstrap state machine supplies that proof for the executable
+    /// image, and the block owns a fresh mapping for the other arm.
+    unsafe fn region(self) -> (*mut u8, usize) {
+        match self {
+            Self::ExecutableImage => (
+                core::ptr::addr_of_mut!(INITIAL_THREAD_TLS_STORAGE.bytes).cast::<u8>(),
+                INITIAL_THREAD_TLS_STORAGE_SIZE,
+            ),
+            Self::AnonymousMapping { address, size } => (address, size),
+        }
+    }
+}
+
+/// One materialization of [`StaticInitialTlsPlan`].
 ///
 /// The bounded pthread leaf gives `thread_pointer` to Linux through its
-/// private clone seam and may release the mapping only after
-/// `CLONE_CHILD_CLEARTID` proves the child cannot access it.
+/// private clone seam.
 #[derive(Clone, Copy)]
 pub(super) struct StaticInitialTlsBlock {
-    mapping: *mut u8,
-    mapping_size: usize,
+    placement: InitialTlsPlacement,
     thread_pointer: *mut u8,
 }
 
@@ -198,7 +254,7 @@ pub(super) unsafe fn bootstrap_initial_thread(initial_stack: *const usize) -> bo
         STATIC_INITIAL_TLS_STATE.store(TLS_STATE_FAILED, Ordering::Release);
         return false;
     };
-    let Some(block) = (unsafe { plan.materialize() }) else {
+    let Some(block) = (unsafe { plan.materialize_initial_thread() }) else {
         STATIC_INITIAL_TLS_STATE.store(TLS_STATE_FAILED, Ordering::Release);
         return false;
     };
@@ -346,7 +402,7 @@ pub(super) unsafe fn allocate_thread() -> Option<StaticInitialTlsBlock> {
     // SAFETY: bootstrap writes this immutable plain-Copy plan before the
     // release that `is_ready` acquired.  There is no later writer.
     let plan = unsafe { core::ptr::read_volatile(core::ptr::addr_of!(STATIC_INITIAL_TLS_PLAN)) };
-    unsafe { plan.materialize() }
+    unsafe { plan.materialize_mapping() }
 }
 
 /// Release one completed selected-child TLS mapping without changing `errno`.
@@ -357,12 +413,9 @@ pub(super) unsafe fn allocate_thread() -> Option<StaticInitialTlsBlock> {
 /// For the selected pthread artifact that proof is the observed zero
 /// `CLONE_CHILD_CLEARTID` word plus registry withdrawal before reclamation.
 pub(super) unsafe fn release_thread(block: StaticInitialTlsBlock) -> i64 {
-    unsafe {
-        raw_syscall::syscall2(
-            raw_syscall::SYS_MUNMAP,
-            block.mapping as usize as i64,
-            block.mapping_size as i64,
-        )
+    match block.placement {
+        InitialTlsPlacement::ExecutableImage => 0,
+        InitialTlsPlacement::AnonymousMapping { address, size } => unsafe { unmap(address, size) },
     }
 }
 
@@ -513,50 +566,21 @@ impl StaticInitialTlsPlan {
         })
     }
 
-    /// Allocate one exact image copy and the static compiler ABI TCB.
-    unsafe fn materialize(self) -> Option<StaticInitialTlsBlock> {
-        let mapping = unsafe { map_anonymous(self.allocation_size) }?;
-        let mapping_address = mapping as usize;
-        let mapping_end = match mapping_address.checked_add(self.allocation_size) {
-            Some(value) => value,
-            None => {
-                let _ = unsafe { unmap(mapping, self.allocation_size) };
-                return None;
-            }
-        };
-        let tp = match mapping_address
+    /// Place one exact image copy and the static compiler ABI TCB.
+    ///
+    /// Every bound is checked against `placement`; the caller owns reclamation
+    /// of a failed mapping.
+    unsafe fn materialize(self, placement: InitialTlsPlacement) -> Option<StaticInitialTlsBlock> {
+        let (region, region_size) = unsafe { placement.region() };
+        let region_address = region as usize;
+        let region_end = region_address.checked_add(region_size)?;
+        let tp = region_address
             .checked_add(self.image_offset_below_tp)
-            .and_then(|address| align_up(address, self.tp_alignment))
-        {
-            Some(value) => value,
-            None => {
-                let _ = unsafe { unmap(mapping, self.allocation_size) };
-                return None;
-            }
-        };
-        let image_destination = match tp.checked_sub(self.image_offset_below_tp) {
-            Some(value) => value,
-            None => {
-                let _ = unsafe { unmap(mapping, self.allocation_size) };
-                return None;
-            }
-        };
-        let image_end = match image_destination.checked_add(self.memsz) {
-            Some(value) => value,
-            None => {
-                let _ = unsafe { unmap(mapping, self.allocation_size) };
-                return None;
-            }
-        };
-        let tcb_end = match tp.checked_add(core::mem::size_of::<StaticThreadControlBlock>()) {
-            Some(value) => value,
-            None => {
-                let _ = unsafe { unmap(mapping, self.allocation_size) };
-                return None;
-            }
-        };
-        if image_destination < mapping_address || image_end > mapping_end || tcb_end > mapping_end {
-            let _ = unsafe { unmap(mapping, self.allocation_size) };
+            .and_then(|address| align_up(address, self.tp_alignment))?;
+        let image_destination = tp.checked_sub(self.image_offset_below_tp)?;
+        let image_end = image_destination.checked_add(self.memsz)?;
+        let tcb_end = tp.checked_add(core::mem::size_of::<StaticThreadControlBlock>())?;
+        if image_destination < region_address || image_end > region_end || tcb_end > region_end {
             return None;
         }
 
@@ -587,10 +611,36 @@ impl StaticInitialTlsPlan {
         };
 
         Some(StaticInitialTlsBlock {
-            mapping,
-            mapping_size: self.allocation_size,
+            placement,
             thread_pointer: tp as *mut u8,
         })
+    }
+
+    /// Materialize the process-main thread without a fresh mapping when the
+    /// plan fits this module's in-image storage.
+    unsafe fn materialize_initial_thread(self) -> Option<StaticInitialTlsBlock> {
+        if self.allocation_size <= INITIAL_THREAD_TLS_STORAGE_SIZE {
+            if let Some(block) = unsafe { self.materialize(InitialTlsPlacement::ExecutableImage) } {
+                return Some(block);
+            }
+        }
+        unsafe { self.materialize_mapping() }
+    }
+
+    unsafe fn materialize_mapping(self) -> Option<StaticInitialTlsBlock> {
+        let mapping = unsafe { map_anonymous(self.allocation_size) }?;
+        match unsafe {
+            self.materialize(InitialTlsPlacement::AnonymousMapping {
+                address: mapping,
+                size: self.allocation_size,
+            })
+        } {
+            Some(block) => Some(block),
+            None => {
+                let _ = unsafe { unmap(mapping, self.allocation_size) };
+                None
+            }
+        }
     }
 }
 

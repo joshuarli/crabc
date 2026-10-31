@@ -276,6 +276,57 @@ if "declared static-product coverage suite" not in plan.get("not_proven_by_this_
 PY
 }
 
+audit_static_initial_tls_installation() {
+    local installed_root="$1"
+    local mode="$2"
+    local startup_root="$work_dir/static-tls-startup${mode}"
+    local candidate="$startup_root/candidate"
+    local program_headers="$startup_root/program-headers"
+    local trace="$startup_root/startup.trace"
+    local output status
+
+    mkdir "$startup_root"
+    "$installed_root/bin/crabc-cc" "$mode" -std=c11 -O2 \
+        "$ROOT_DIR/compat/x86_64/owned_static_startup_tls_probe.c" -o "$candidate"
+    readelf --program-headers --wide "$candidate" >"$program_headers"
+    if output="$(env -i strace -f -qq -e trace=mmap,mremap,brk,arch_prctl \
+        -o "$trace" "$candidate")"; then
+        :
+    else
+        status=$?
+        fail "static initial TLS startup candidate (${mode}) exited ${status}"
+    fi
+    [ "$output" = hi ] || fail "static initial TLS startup candidate (${mode}) output drifted: $output"
+    python3 - "$mode" "$program_headers" "$trace" <<'PY'
+import re
+import sys
+from pathlib import Path
+
+mode, program_headers, trace_path = sys.argv[1:]
+load = re.compile(
+    r"^\s*LOAD\s+(0x[0-9a-f]+)\s+(0x[0-9a-f]+)\s+(0x[0-9a-f]+)\s+"
+    r"(0x[0-9a-f]+)\s+(0x[0-9a-f]+)\s+([RWE ]+?)\s+(0x[0-9a-f]+)$")
+writable = []
+for line in Path(program_headers).read_text(encoding="utf-8", errors="replace").splitlines():
+    match = load.match(line)
+    if match and "W" in match.group(6):
+        start = int(match.group(2), 16)
+        writable.append((start, start + int(match.group(5), 16)))
+trace = Path(trace_path).read_text(encoding="utf-8", errors="replace").splitlines()
+installed = [index for index, line in enumerate(trace) if "arch_prctl(ARCH_SET_FS," in line]
+if len(installed) != 1:
+    raise SystemExit(f"{mode} static TLS install count is {len(installed)}, not 1")
+for line in trace[:installed[0]]:
+    if re.search(r"\b(mmap|mremap|brk)\(", line):
+        raise SystemExit(f"{mode} static TLS install mapped memory first: {line.strip()}")
+thread_pointer = int(
+    re.search(r"ARCH_SET_FS, (0x[0-9a-f]+)", trace[installed[0]]).group(1), 16)
+if mode == "-static" and not any(start <= thread_pointer < end for start, end in writable):
+    raise SystemExit(
+        f"{mode} static TLS thread pointer {thread_pointer:#x} is outside a writable PT_LOAD")
+PY
+}
+
 audit_header_dependencies() {
     local dependency_file="$1"
     local installed_root="$2"
@@ -1670,7 +1721,7 @@ fi
 require_native_linux_x86_64
 consumer_workers="$(selected_consumer_workers)"
 consumer_benchmark="$(selected_consumer_benchmark "$consumer_workers")"
-for tool in awk cmp cp dd env find gcc grep id mkdir nm od python3 readelf rustup sha256sum sort tr xargs; do
+for tool in awk cmp cp dd env find gcc grep id mkdir nm od python3 readelf rustup sha256sum sort strace tr xargs; do
     require_tool "$tool"
 done
 [ "$(id -u)" -eq 0 ] || fail "requires root for the resolver fixture chroot"
@@ -1733,6 +1784,8 @@ cmp "$work_dir/primary-tree.sha256" "$work_dir/extracted-tree.sha256" ||
 audit_installed_tree "$extracted"
 audit_static_driver_plan "$extracted" -static "$work_dir/extracted-et-exec-plan.json"
 audit_static_driver_plan "$extracted" -static-pie "$work_dir/extracted-static-pie-plan.json"
+audit_static_initial_tls_installation "$primary" -static
+audit_static_initial_tls_installation "$primary" -static-pie
 
 header_consumer="$work_dir/header-consumer"
 mkdir "$header_consumer"
