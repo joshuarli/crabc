@@ -808,16 +808,16 @@ owner decision.
   (90 symbolic). Musl's bare eager PLT relocation costs 349 instructions per
   relocation; crabc additionally enforces writable-target bounds, RELRO
   coverage and full symbol-extent validation, so the remaining gap cannot be
-  removed by P4 deletion or inlining. `dlopen_graph` also retains its
-  unchanged per-name syscall excess (`gettid` 1, `mmap` 4, `newfstatat` 1,
-  `pread64` 5), part of the same loader-startup path. The formerly unavailable
-  `loader_dynamic_tls_growth` row is now measured at its fixed eight-module
-  cap: 421,415 vs 174,244 instructions (2.5703) with per-name excess
-  `gettid` 8, `mmap` 23, `munmap` 9, `newfstatat` 1, `pread64` 8; that is a
-  real loader/TLS-growth residual, not missing evidence. S5 is not accepted
-  on the startup instruction dimension; the CPU/memory gate is also deferred
-  under D14. Reopening this needs a separate owner decision and a
-  semantics-preserving resolver design.
+  removed by P4 deletion or inlining. The loader-syscall lane removed the
+  `dlopen_graph` per-name excess (`gettid`, `mmap`, `newfstatat`, `pread64`
+  now match the reference; judged 53 vs 61). The formerly unavailable
+  `loader_dynamic_tls_growth` row is measured at its fixed eight-module cap:
+  421,415→421,411 vs 174,244 instructions (2.5703→2.5666); its loader calls
+  now match except one required worker-TCB `munmap` (2 vs 1), which belongs to
+  the libc/pthread TCB contract and remains a reported call, not a new lane.
+  S5 is not accepted on the startup instruction dimension; the CPU/memory gate
+  is also deferred under D14. Reopening this needs a separate owner decision
+  and a semantics-preserving resolver design.
 
 ## Runtime hardening
 
@@ -1153,7 +1153,8 @@ passed.
 | S5 (attempt) | `d398d3ec0` rejected | **FAILED.** 58-row counts: 49 pass, 2 fail (`dlopen_graph` 2.639; `startup` 3.585 with judged syscalls 8 vs 11), 6 nondeterministic, 1 unavailable. Structure 5/7: libc 25, dispatcher 701, dispatcher lines 10,593, Python 566 / 269,998; ldso 7 features and 19,442 lines unmet. Static startup syscalls 10 vs 9. | products rebuilt at the acceptance commit; dynamic prepare, static 72-path, identity, dlopen, owned-stdio and memory suites PASS; counts report; hardened was a harness gap fixed in `02d7ffed4` | budgets unmet; startup instructions under D10; `dlopen_graph` under D11; ldso under D7; static 759-byte mmap under D12; CPU/memory under D14 (host load 20-27) |
 
 | Counts TLS-growth | `e141118b5` | `loader_dynamic_tls_growth` unavailable→fail at fixed N=8; 421,415 vs 174,244 instructions (2.5703); per-name excess `gettid` 8, `mmap` 23, `munmap` 9, `newfstatat` 1, `pread64` 8 | single-row counts reproduced twice; `test_run_x86_64` 63 pass/1 skip; `test_x86_64_profile` 11 pass; development report | exposes a real loader/TLS-growth residual; not forced to pass |
-| S5 (second attempt) | `b255ccf2e` rejected | **NOT ACCEPTED.** 58 selected rows: 50 pass, 3 fail (`startup` 1.8886, `dlopen_graph` 1.6073, `loader_dynamic_tls_growth` 2.5703 after the fixed-N counts fix), 5 nondeterministic (128m matrices and `pthread_create_join_tls` under load), 0 unavailable. Structure 7/7: libc 25, ldso 1, ldso x86 10,941, dispatcher 678, dispatcher lines 10,357, Python 557 files / 266,174 lines. Dynamic startup syscalls 8 vs 11; static 9. | final-tip prepare, four installed-product case families, static 72-path, hardened, counts, parity, campaign-status, structure all PASS | D16 startup/dlopen/loader-TLS-growth instruction standing blockers; per-name syscall excess on `dlopen_graph` and `loader_dynamic_tls_growth`; D14 CPU/memory deferred (host load 26.9); 5 load-dependent nondeterministic rows |
+| S4 loader syscalls | `a0ad25ead` | `dlopen_graph` judged 60→53 vs 61, per-name excess gone (`pread64` 5→0, `read` 0→5, `newfstatat` 1→0, `gettid` 1→0, `mmap` 25→20 vs 21); TLS-growth judged 133→92 vs 128 (`mmap` 58→34, `munmap` 10→2, `gettid` 8→0, `newfstatat` 1→0, `pread64` 8→0); only the required worker-TCB `munmap` 2 vs 1 remains; `ratio_insn` 1.6073→1.5977 and 2.5703→2.5666 | prepare 161 loader tests; four installed-product cases; hardened; static 72-path; parity; exports 1628 identical | `dlopen_graph` syscall dimension passes; TLS-growth retains one required `munmap`; instruction rows remain D16 |
+| S5 (second attempt) | `b255ccf2e` rejected | **NOT ACCEPTED.** 58 selected rows: 50 pass, 3 fail (`startup` 1.8886, `dlopen_graph` 1.6073, `loader_dynamic_tls_growth` 2.5703 after the fixed-N counts fix), 5 nondeterministic (128m matrices and `pthread_create_join_tls` under load), 0 unavailable. Structure 7/7: libc 25, ldso 1, ldso x86 10,941, dispatcher 678, dispatcher lines 10,357, Python 557 files / 266,174 lines. Dynamic startup syscalls 8 vs 11; static 9. | final-tip prepare, four installed-product case families, static 72-path, hardened, counts, parity, campaign-status, structure all PASS | D16 startup/dlopen/loader-TLS-growth instruction standing blockers; TLS-growth retains one required worker-TCB `munmap`; D14 CPU/memory deferred (host load 26.9); 5 load-dependent nondeterministic rows |
 
 Follow-up rows S3a-ldso, D10, S4 static TLS and S4 stdio are landed, and the
 hardened gap is fixed. The remaining S5 failures are the D16 startup
