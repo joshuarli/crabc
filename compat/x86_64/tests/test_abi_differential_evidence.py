@@ -405,11 +405,11 @@ class AbiDifferentialEvidenceTests(unittest.TestCase):
             "path": work.relative_to(evidence.ROOT).as_posix(),
             "sha256": evidence._companion_sha256("fchdir_ordinary_import_work", work),
         }
-        with mock.patch.object(evidence.fchdir_import_receipt, "validate_report", side_effect=ValueError("foreign products")) as reader:
+        with mock.patch.object(evidence.import_receipt, "validate_report", side_effect=ValueError("foreign products")) as reader:
             with self.assertRaisesRegex(evidence.EvidenceError, "foreign products"):
                 evidence.load(self.write())
         reader.assert_called_once_with(work / "report.json", static_product=self.work / "static",
-                                       dynamic_product=self.work / "dynamic")
+                                       dynamic_product=self.work / "dynamic", symbol="fchdir")
 
     def test_assembly_forwards_fchdir_work_and_seals_it(self) -> None:
         import native_abi_ratchet

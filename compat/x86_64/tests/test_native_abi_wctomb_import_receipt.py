@@ -10,7 +10,7 @@ from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(ROOT / "compat/x86_64"))
-import native_abi_wctomb_import_receipt as receipt
+import native_abi_import_receipt as receipt
 import native_abi_selection as selection
 
 
@@ -23,16 +23,16 @@ class WctombImportReceiptTests(unittest.TestCase):
         completed = lambda output: mock.Mock(stdout=output, returncode=0)
         with mock.patch.object(receipt.subprocess, "run", side_effect=(
                 completed(symbols), completed(relocations))):
-            self.assertEqual(set(receipt.workload_rows(Path("workload.o"))), {"fwscanf", "wctomb"})
+            self.assertEqual(set(receipt.workload_rows(Path("workload.o"), "wctomb")), {"fwscanf", "wctomb"})
         with mock.patch.object(receipt.subprocess, "run", side_effect=(
                 completed(symbols), completed(""))):
-            with self.assertRaisesRegex(receipt.WctombImportError, "workload fwscanf"):
-                receipt.workload_rows(Path("workload.o"))
+            with self.assertRaisesRegex(receipt.ImportReceiptError, "workload fwscanf"):
+                receipt.workload_rows(Path("workload.o"), "wctomb")
         with mock.patch.object(receipt.subprocess, "run", side_effect=(
                 completed(symbols),
                 completed(relocations.splitlines(keepends=True)[0]))):
-            with self.assertRaisesRegex(receipt.WctombImportError, "workload wctomb"):
-                receipt.workload_rows(Path("workload.o"))
+            with self.assertRaisesRegex(receipt.ImportReceiptError, "workload wctomb"):
+                receipt.workload_rows(Path("workload.o"), "wctomb")
 
     def test_source_bound_receipt_rejects_mutated_workload(self):
         work_name = os.environ.get("CRABC_WCTOMB_ORDINARY_IMPORT_WORK")
@@ -42,13 +42,15 @@ class WctombImportReceiptTests(unittest.TestCase):
         report = json.loads((work / "report.json").read_text())
         static = Path(report["static_product"])
         dynamic = Path(report["dynamic_product"])
-        receipt.validate_report(work / "report.json", static_product=static, dynamic_product=dynamic)
+        receipt.validate_report(work / "report.json", static_product=static,
+                                dynamic_product=dynamic, symbol="wctomb")
         original_digest = receipt.digest
         def changed_workload(path):
             return "0" * 64 if Path(path) == work / "workload.o" else original_digest(path)
         with mock.patch.object(receipt, "digest", side_effect=changed_workload):
-            with self.assertRaisesRegex(receipt.WctombImportError, "source, products, or workload changed"):
-                receipt.validate_report(work / "report.json", static_product=static, dynamic_product=dynamic)
+            with self.assertRaisesRegex(receipt.ImportReceiptError, "source, products, or workload changed"):
+                receipt.validate_report(work / "report.json", static_product=static,
+                                        dynamic_product=dynamic, symbol="wctomb")
 
     def test_selector_removes_only_wctomb_ordinary_import_reason(self):
         before_name = os.environ.get("CRABC_WCTOMB_SELECTION_BASELINE")

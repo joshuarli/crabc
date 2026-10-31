@@ -8,7 +8,7 @@ from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(ROOT / "compat/x86_64"))
-import native_abi_btowc_import_receipt as receipt
+import native_abi_import_receipt as receipt
 
 
 class BtowcImportReceiptTests(unittest.TestCase):
@@ -18,11 +18,11 @@ class BtowcImportReceiptTests(unittest.TestCase):
         completed = lambda output: mock.Mock(stdout=output, returncode=0)
         with mock.patch.object(receipt.subprocess, "run", side_effect=(
                 completed(symbols), completed(relocations))):
-            self.assertEqual(set(receipt.workload_rows(Path("workload.o"))), {"btowc"})
+            self.assertEqual(set(receipt.workload_rows(Path("workload.o"), "btowc")), {"btowc"})
         with mock.patch.object(receipt.subprocess, "run", side_effect=(
                 completed(symbols), completed(""))):
-            with self.assertRaisesRegex(receipt.BtowcImportError, "workload btowc"):
-                receipt.workload_rows(Path("workload.o"))
+            with self.assertRaisesRegex(receipt.ImportReceiptError, "workload btowc"):
+                receipt.workload_rows(Path("workload.o"), "btowc")
 
 
 if __name__ == "__main__":

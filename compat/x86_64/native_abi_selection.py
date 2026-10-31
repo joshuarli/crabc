@@ -49,13 +49,7 @@ import owned_pthread_alias_contract_reader as pthread_alias_evidence
 import prepared_worker_tls_evidence as prepared_worker_evidence
 import owned_errno_storage_lifecycle as errno_storage_evidence
 import native_c_allocator_boundary
-import native_abi_strlen_import_receipt as strlen_import_receipt
-import native_abi_memmove_import_receipt as memmove_import_receipt
-import native_abi_memcmp_import_receipt as memcmp_import_receipt
-import native_abi_fchdir_import_receipt as fchdir_import_receipt
-import native_abi_btowc_import_receipt as btowc_import_receipt
-import native_abi_wctomb_import_receipt as wctomb_import_receipt
-import native_abi_wcsrtombs_import_receipt as wcsrtombs_import_receipt
+import native_abi_import_receipt as import_receipt
 import owned_posix_product_evidence as product_evidence
 import headers_layouts_aggregate
 import owned_public_data_variable_runtime as public_data_variable_runtime
@@ -11507,250 +11501,102 @@ def attach_ordinary_import_from_retained_links(
         accounting, companion, name, projection_override=projection)
 
 
-def strlen_ordinary_import_adapter(
-        work_path: Path | None, *, boundary_report_path: Path | None,
+def build_adapter_specs(
+        entries: tuple[tuple[str, dict[str, Any]], ...]) -> dict[str, dict[str, Any]]:
+    table: dict[str, dict[str, Any]] = {}
+    for symbol, spec in entries:
+        require(symbol not in table, f'duplicate adapter spec {symbol}')
+        require(symbol in import_receipt.ROWS, f'adapter spec {symbol} has no receipt row')
+        row = import_receipt.ROWS[symbol]
+        for key, names in (
+                ('loader_key', {key for key, _ in row.loader_checks}),
+                ('bcmp_loader_key', {key for key, _ in row.loader_checks}),
+                ('shared_key', {row.tail_call.key} if row.tail_call is not None else set()),
+                ('mixed_call_forms', {f'mixed_{symbol}_call_forms'})):
+            if key in spec:
+                require(spec[key] in names, f'{symbol} {key} differs')
+        if 'extra_symbol' in spec:
+            require(spec['extra_symbol'] in row.imports, f'{symbol} extra symbol differs')
+        table[symbol] = spec
+    require(set(table) == set(import_receipt.ROWS), 'adapter spec roster differs')
+    return table
+
+
+IMPORT_ADAPTER_SPECS = build_adapter_specs((
+    ('strlen', {'shared_call_inventory': True, 'all_defined_shared_callers': True}),
+    ('memmove', {'expected_importers': 2, 'shared_call_inventory': True, 'all_defined_shared_callers': True,
+                 'mixed_call_forms': 'mixed_memmove_call_forms', 'loader_key': 'loader_occurrence', 'shared_key': 'shared_bcopy_direct_call'}),
+    ('memcmp', {'shared_call_inventory': True, 'all_defined_shared_callers': True,
+                'mixed_call_forms': 'mixed_memcmp_call_forms', 'extra_symbol': 'bcmp', 'loader_key': 'loader_occurrence',
+                'bcmp_loader_key': 'bcmp_loader_occurrence', 'shared_key': 'shared_bcmp_direct_call'}),
+    ('fchdir', {'expected_importers': 1, 'shared_call_inventory': True,
+                'all_defined_shared_callers': True}),
+    ('btowc', {'expected_importers': 1,
+               'importer_section': '.text.crabc_owned_wprint_wprintf_core'}),
+    ('wctomb', {'expected_importers': 1, 'importer_section': '.text.crabc_owned_vfwscanf'}),
+    ('wcsrtombs', {'expected_importers': 1}),
+))
+
+
+def ordinary_import_adapter(
+        symbol: str, work_path: Path | None, *, boundary_report_path: Path | None,
         paths: Mapping[str, Path]) -> dict[str, Any] | None:
-    """Replay every strlen archive edge and its selected final-image provider."""
+    """Replay one retained installed-header object against its selected providers."""
+    spec = IMPORT_ADAPTER_SPECS[symbol]
     if work_path is None:
         return None
     require(boundary_report_path is not None,
-            'strlen import requires the installed C boundary account')
+            f'{symbol} import requires the installed C boundary account')
     work = physical_work_path(work_path, directory=True, own=True)
     receipt_path = physical_work_path(work / 'report.json', directory=False, own=True)
+    resolution = {
+        'report_path': boundary_report_path,
+        'static_product': paths['static_product'],
+        'dynamic_product': paths['dynamic_product'],
+        'elf_facts_report': paths['elf_report'],
+        'independent_retained_work': work,
+    }
+    if 'importer_section' in spec:
+        resolution['required_importer_section'] = spec['importer_section']
+        resolution['required_source_call_count'] = 1
+    for key in ('expected_importers', 'shared_call_inventory', 'all_defined_shared_callers'):
+        if key in spec:
+            resolution[key] = spec[key]
+    if 'mixed_call_forms' in spec:
+        resolution[spec['mixed_call_forms']] = True
     try:
-        receipt = strlen_import_receipt.validate_report(
+        receipt = import_receipt.validate_report(
             receipt_path, static_product=paths['static_product'],
-            dynamic_product=paths['dynamic_product'])
+            dynamic_product=paths['dynamic_product'], symbol=symbol)
         boundary = native_c_allocator_boundary.json_object(
-            boundary_report_path, 'strlen boundary account')
+            boundary_report_path, f'{symbol} boundary account')
         projection = native_c_allocator_boundary.ordinary_import_resolution(
+            boundary, **resolution, name=symbol)
+        extra = (native_c_allocator_boundary.ordinary_import_resolution(
             boundary, report_path=boundary_report_path,
             static_product=paths['static_product'],
             dynamic_product=paths['dynamic_product'],
-            elf_facts_report=paths['elf_report'], name='strlen',
-            independent_retained_work=work, shared_call_inventory=True,
-            all_defined_shared_callers=True)
-    except (KeyError, TypeError, ValueError, OSError,
-            strlen_import_receipt.StrlenImportError,
-            product_evidence.ProductEvidenceError,
-            native_c_allocator_boundary.AllocatorBoundaryError) as error:
-        raise SelectionError(f'strlen ordinary import rejected: {error}') from error
-    require(receipt['source']['revision'] == selection_source()['revision'],
-            'strlen import selects another source revision')
-    return {'report': file_identity(receipt_path), 'projection': projection}
-
-
-def memmove_ordinary_import_adapter(
-        work_path: Path | None, *, boundary_report_path: Path | None,
-        paths: Mapping[str, Path]) -> dict[str, Any] | None:
-    """Replay memmove archive calls and retain the loader's separate definition."""
-    if work_path is None:
-        return None
-    require(boundary_report_path is not None,
-            'memmove import requires the installed C boundary account')
-    work = physical_work_path(work_path, directory=True, own=True)
-    receipt_path = physical_work_path(work / 'report.json', directory=False, own=True)
-    try:
-        receipt = memmove_import_receipt.validate_report(
-            receipt_path, static_product=paths['static_product'],
-            dynamic_product=paths['dynamic_product'])
-        boundary = native_c_allocator_boundary.json_object(
-            boundary_report_path, 'memmove boundary account')
-        projection = native_c_allocator_boundary.ordinary_import_resolution(
-            boundary, report_path=boundary_report_path,
-            static_product=paths['static_product'],
-            dynamic_product=paths['dynamic_product'],
-            elf_facts_report=paths['elf_report'], name='memmove',
-            independent_retained_work=work, expected_importers=2,
-            shared_call_inventory=True, all_defined_shared_callers=True,
-            mixed_memmove_call_forms=True)
-    except (KeyError, TypeError, ValueError, OSError,
-            memmove_import_receipt.MemmoveImportError,
-            product_evidence.ProductEvidenceError,
-            native_c_allocator_boundary.AllocatorBoundaryError) as error:
-        raise SelectionError(f'memmove ordinary import rejected: {error}') from error
-    require(receipt['source']['revision'] == selection_source()['revision'],
-            'memmove import selects another source revision')
-    return {'report': file_identity(receipt_path), 'projection': projection,
-            'loader_occurrence': receipt['loader_occurrence'],
-            'shared_direct_call': receipt['shared_bcopy_direct_call']}
-
-def memcmp_ordinary_import_adapter(
-        work_path: Path | None, *, boundary_report_path: Path | None,
-        paths: Mapping[str, Path]) -> dict[str, Any] | None:
-    """Replay memcmp archive calls and retain the loader's separate definition."""
-    if work_path is None:
-        return None
-    require(boundary_report_path is not None,
-            'memcmp import requires the installed C boundary account')
-    work = physical_work_path(work_path, directory=True, own=True)
-    receipt_path = physical_work_path(work / 'report.json', directory=False, own=True)
-    try:
-        receipt = memcmp_import_receipt.validate_report(
-            receipt_path, static_product=paths['static_product'],
-            dynamic_product=paths['dynamic_product'])
-        boundary = native_c_allocator_boundary.json_object(
-            boundary_report_path, 'memcmp boundary account')
-        projection = native_c_allocator_boundary.ordinary_import_resolution(
-            boundary, report_path=boundary_report_path,
-            static_product=paths['static_product'],
-            dynamic_product=paths['dynamic_product'],
-            elf_facts_report=paths['elf_report'], name='memcmp',
-            independent_retained_work=work,
-            shared_call_inventory=True, all_defined_shared_callers=True,
-            mixed_memcmp_call_forms=True)
-        bcmp_projection = native_c_allocator_boundary.ordinary_import_resolution(
-            boundary, report_path=boundary_report_path,
-            static_product=paths['static_product'],
-            dynamic_product=paths['dynamic_product'],
-            elf_facts_report=paths['elf_report'], name='bcmp',
+            elf_facts_report=paths['elf_report'], name=spec['extra_symbol'],
             independent_retained_work=work,
             shared_call_inventory=True, all_defined_shared_callers=True)
+            if 'extra_symbol' in spec else None)
     except (KeyError, TypeError, ValueError, OSError,
-            memcmp_import_receipt.MemcmpImportError,
+            import_receipt.ImportReceiptError,
             product_evidence.ProductEvidenceError,
             native_c_allocator_boundary.AllocatorBoundaryError) as error:
-        raise SelectionError(f'memcmp ordinary import rejected: {error}') from error
+        raise SelectionError(f'{symbol} ordinary import rejected: {error}') from error
     require(receipt['source']['revision'] == selection_source()['revision'],
-            'memcmp import selects another source revision')
-    return {'report': file_identity(receipt_path), 'projection': projection,
-            'bcmp_projection': bcmp_projection,
-            'loader_occurrence': receipt['loader_occurrence'],
-            'bcmp_loader_occurrence': receipt['bcmp_loader_occurrence'],
-            'shared_direct_call': receipt['shared_bcmp_direct_call']}
-
-
-def fchdir_ordinary_import_adapter(
-        work_path: Path | None, *, boundary_report_path: Path | None,
-        paths: Mapping[str, Path]) -> dict[str, Any] | None:
-    """Replay the traversal archive's seven calls in owned final images."""
-    if work_path is None:
-        return None
-    require(boundary_report_path is not None,
-            'fchdir import requires the installed C boundary account')
-    work = physical_work_path(work_path, directory=True, own=True)
-    receipt_path = physical_work_path(work / 'report.json', directory=False, own=True)
-    try:
-        receipt = fchdir_import_receipt.validate_report(
-            receipt_path, static_product=paths['static_product'],
-            dynamic_product=paths['dynamic_product'])
-        boundary = native_c_allocator_boundary.json_object(
-            boundary_report_path, 'fchdir boundary account')
-        projection = native_c_allocator_boundary.ordinary_import_resolution(
-            boundary, report_path=boundary_report_path,
-            static_product=paths['static_product'],
-            dynamic_product=paths['dynamic_product'],
-            elf_facts_report=paths['elf_report'], name='fchdir',
-            independent_retained_work=work, expected_importers=1,
-            shared_call_inventory=True, all_defined_shared_callers=True)
-    except (KeyError, TypeError, ValueError, OSError,
-            fchdir_import_receipt.FchdirImportError,
-            product_evidence.ProductEvidenceError,
-            native_c_allocator_boundary.AllocatorBoundaryError) as error:
-        raise SelectionError(f'fchdir ordinary import rejected: {error}') from error
-    require(receipt['source']['revision'] == selection_source()['revision'],
-            'fchdir import selects another source revision')
-    return {'report': file_identity(receipt_path), 'projection': projection}
-
-
-def btowc_ordinary_import_adapter(
-        work_path: Path | None, *, boundary_report_path: Path | None,
-        paths: Mapping[str, Path]) -> dict[str, Any] | None:
-    """Replay the wide printer's archive call to the selected btowc provider."""
-    if work_path is None:
-        return None
-    require(boundary_report_path is not None,
-            'btowc import requires the installed C boundary account')
-    work = physical_work_path(work_path, directory=True, own=True)
-    receipt_path = physical_work_path(work / 'report.json', directory=False, own=True)
-    try:
-        receipt = btowc_import_receipt.validate_report(
-            receipt_path, static_product=paths['static_product'],
-            dynamic_product=paths['dynamic_product'])
-        boundary = native_c_allocator_boundary.json_object(
-            boundary_report_path, 'btowc boundary account')
-        projection = native_c_allocator_boundary.ordinary_import_resolution(
-            boundary, report_path=boundary_report_path,
-            static_product=paths['static_product'],
-            dynamic_product=paths['dynamic_product'],
-            elf_facts_report=paths['elf_report'], name='btowc',
-            required_importer_section='.text.crabc_owned_wprint_wprintf_core',
-            required_source_call_count=1, independent_retained_work=work,
-            expected_importers=1)
-    except (KeyError, TypeError, ValueError, OSError,
-            btowc_import_receipt.BtowcImportError,
-            product_evidence.ProductEvidenceError,
-            native_c_allocator_boundary.AllocatorBoundaryError) as error:
-        raise SelectionError(f'btowc ordinary import rejected: {error}') from error
-    require(receipt['source']['revision'] == selection_source()['revision'],
-            'btowc import selects another source revision')
-    return {'report': file_identity(receipt_path), 'projection': projection}
-
-
-def wctomb_ordinary_import_adapter(
-        work_path: Path | None, *, boundary_report_path: Path | None,
-        paths: Mapping[str, Path]) -> dict[str, Any] | None:
-    """Bind the wide scanner's retained wctomb call to its final provider."""
-    if work_path is None:
-        return None
-    require(boundary_report_path is not None,
-            'wctomb import requires the installed C boundary account')
-    work = physical_work_path(work_path, directory=True, own=True)
-    receipt_path = physical_work_path(work / 'report.json', directory=False, own=True)
-    try:
-        receipt = wctomb_import_receipt.validate_report(
-            receipt_path, static_product=paths['static_product'],
-            dynamic_product=paths['dynamic_product'])
-        boundary = native_c_allocator_boundary.json_object(
-            boundary_report_path, 'wctomb boundary account')
-        projection = native_c_allocator_boundary.ordinary_import_resolution(
-            boundary, report_path=boundary_report_path,
-            static_product=paths['static_product'],
-            dynamic_product=paths['dynamic_product'],
-            elf_facts_report=paths['elf_report'], name='wctomb',
-            required_importer_section='.text.crabc_owned_vfwscanf',
-            required_source_call_count=1, independent_retained_work=work,
-            expected_importers=1)
-    except (KeyError, TypeError, ValueError, OSError,
-            wctomb_import_receipt.WctombImportError,
-            product_evidence.ProductEvidenceError,
-            native_c_allocator_boundary.AllocatorBoundaryError) as error:
-        raise SelectionError(f'wctomb ordinary import rejected: {error}') from error
-    require(receipt['source']['revision'] == selection_source()['revision'],
-            'wctomb import selects another source revision')
-    return {'report': file_identity(receipt_path), 'projection': projection}
-
-
-def wcsrtombs_ordinary_import_adapter(
-        work_path: Path | None, *, boundary_report_path: Path | None,
-        paths: Mapping[str, Path]) -> dict[str, Any] | None:
-    """Bind the wcstombs archive call to the installed wcsrtombs provider."""
-    if work_path is None:
-        return None
-    require(boundary_report_path is not None,
-            'wcsrtombs import requires the installed C boundary account')
-    work = physical_work_path(work_path, directory=True, own=True)
-    receipt_path = physical_work_path(work / 'report.json', directory=False, own=True)
-    try:
-        receipt = wcsrtombs_import_receipt.validate_report(
-            receipt_path, static_product=paths['static_product'],
-            dynamic_product=paths['dynamic_product'])
-        boundary = native_c_allocator_boundary.json_object(
-            boundary_report_path, 'wcsrtombs boundary account')
-        projection = native_c_allocator_boundary.ordinary_import_resolution(
-            boundary, report_path=boundary_report_path,
-            static_product=paths['static_product'],
-            dynamic_product=paths['dynamic_product'],
-            elf_facts_report=paths['elf_report'], name='wcsrtombs',
-            independent_retained_work=work, expected_importers=1)
-    except (KeyError, TypeError, ValueError, OSError,
-            wcsrtombs_import_receipt.WcsrtombsImportError,
-            product_evidence.ProductEvidenceError,
-            native_c_allocator_boundary.AllocatorBoundaryError) as error:
-        raise SelectionError(f'wcsrtombs ordinary import rejected: {error}') from error
-    require(receipt['source']['revision'] == selection_source()['revision'],
-            'wcsrtombs import selects another source revision')
-    return {'report': file_identity(receipt_path), 'projection': projection}
+            f'{symbol} import selects another source revision')
+    result = {'report': file_identity(receipt_path), 'projection': projection}
+    if extra is not None:
+        result['bcmp_projection'] = extra
+    for output_key, receipt_key in (
+            ('loader_occurrence', spec.get('loader_key')),
+            ('bcmp_loader_occurrence', spec.get('bcmp_loader_key')),
+            ('shared_direct_call', spec.get('shared_key'))):
+        if receipt_key is not None:
+            result[output_key] = receipt[receipt_key]
+    return result
 
 
 def owned_aio_ordinary_import_adapter(
@@ -15052,41 +14898,27 @@ def _build_report(*, contract_path: Path, paths: Mapping[str, Path], declaration
         native_c_allocator_boundary_report, facts=facts, measurement=measurement, paths=paths, source=source_before,
         fixed_c_companion=fixed_c_producer_metadata_companion,
     ))
-    strlen_ordinary_import_companion = _admit(
-        rejected, 'strlen_ordinary_import_work',
-        lambda: strlen_ordinary_import_adapter(
-            strlen_ordinary_import_work,
-            boundary_report_path=native_c_allocator_boundary_report, paths=paths))
-    memmove_ordinary_import_companion = _admit(
-        rejected, 'memmove_ordinary_import_work',
-        lambda: memmove_ordinary_import_adapter(
-            memmove_ordinary_import_work,
-            boundary_report_path=native_c_allocator_boundary_report, paths=paths))
-    memcmp_ordinary_import_companion = _admit(
-        rejected, 'memcmp_ordinary_import_work',
-        lambda: memcmp_ordinary_import_adapter(
-            memcmp_ordinary_import_work,
-            boundary_report_path=native_c_allocator_boundary_report, paths=paths))
-    fchdir_ordinary_import_companion = _admit(
-        rejected, 'fchdir_ordinary_import_work',
-        lambda: fchdir_ordinary_import_adapter(
-            fchdir_ordinary_import_work,
-            boundary_report_path=native_c_allocator_boundary_report, paths=paths))
-    btowc_ordinary_import_companion = _admit(
-        rejected, 'btowc_ordinary_import_work',
-        lambda: btowc_ordinary_import_adapter(
-            btowc_ordinary_import_work,
-            boundary_report_path=native_c_allocator_boundary_report, paths=paths))
-    wctomb_ordinary_import_companion = _admit(
-        rejected, 'wctomb_ordinary_import_work',
-        lambda: wctomb_ordinary_import_adapter(
-            wctomb_ordinary_import_work,
-            boundary_report_path=native_c_allocator_boundary_report, paths=paths))
-    wcsrtombs_ordinary_import_companion = _admit(
-        rejected, 'wcsrtombs_ordinary_import_work',
-        lambda: wcsrtombs_ordinary_import_adapter(
-            wcsrtombs_ordinary_import_work,
-            boundary_report_path=native_c_allocator_boundary_report, paths=paths))
+    import_companions = {
+        symbol: _admit(rejected, f'{symbol}_ordinary_import_work',
+                       lambda symbol=symbol, work=work: ordinary_import_adapter(
+                           symbol, work, boundary_report_path=native_c_allocator_boundary_report,
+                           paths=paths))
+        for symbol, work in (
+            ('strlen', strlen_ordinary_import_work),
+            ('memmove', memmove_ordinary_import_work),
+            ('memcmp', memcmp_ordinary_import_work),
+            ('fchdir', fchdir_ordinary_import_work),
+            ('btowc', btowc_ordinary_import_work),
+            ('wctomb', wctomb_ordinary_import_work),
+            ('wcsrtombs', wcsrtombs_ordinary_import_work),
+        )
+    }
+    (strlen_ordinary_import_companion, memmove_ordinary_import_companion,
+     memcmp_ordinary_import_companion, fchdir_ordinary_import_companion,
+     btowc_ordinary_import_companion, wctomb_ordinary_import_companion,
+     wcsrtombs_ordinary_import_companion) = (
+        import_companions[symbol] for symbol in (
+            'strlen', 'memmove', 'memcmp', 'fchdir', 'btowc', 'wctomb', 'wcsrtombs'))
     owned_aio_ordinary_import_companion = _admit(
         rejected, 'owned_aio_report',
         lambda: owned_aio_ordinary_import_adapter(
@@ -15274,75 +15106,23 @@ def _build_report(*, contract_path: Path, paths: Mapping[str, Path], declaration
         rejected, 'native_c_allocator_ordinary_import_resolution', accounting,
         native_c_allocator_boundary_companion,
         lambda: attach_ordinary_static_imports(accounting, native_c_allocator_boundary_companion))
-    strlen_import_joins, _ = _attach(
-        rejected, 'strlen_ordinary_import_resolution', accounting,
-        strlen_ordinary_import_companion,
-        lambda: [] if strlen_ordinary_import_companion is None else
-        _attach_ordinary_static_import(
-            accounting, native_c_allocator_boundary_companion, 'strlen',
-            projection_override=strlen_ordinary_import_companion['projection']))
-    ordinary_static_import_joins.extend(strlen_import_joins)
-    memmove_import_joins, _ = _attach(
-        rejected, 'memmove_ordinary_import_resolution', accounting,
-        memmove_ordinary_import_companion,
-        lambda: [] if memmove_ordinary_import_companion is None else
-        _attach_ordinary_static_import(
-            accounting, native_c_allocator_boundary_companion, 'memmove',
-            projection_override=memmove_ordinary_import_companion['projection'],
-            loader_occurrence=memmove_ordinary_import_companion['loader_occurrence'],
-            shared_direct_call=memmove_ordinary_import_companion['shared_direct_call']))
-    ordinary_static_import_joins.extend(memmove_import_joins)
-    memcmp_import_joins, _ = _attach(
-        rejected, 'memcmp_ordinary_import_resolution', accounting,
-        memcmp_ordinary_import_companion,
-        lambda: [] if memcmp_ordinary_import_companion is None else
-        _attach_ordinary_static_import(
-            accounting, native_c_allocator_boundary_companion, 'memcmp',
-            projection_override=memcmp_ordinary_import_companion['projection'],
-            loader_occurrence=memcmp_ordinary_import_companion['loader_occurrence'],
-            shared_direct_call=memcmp_ordinary_import_companion['shared_direct_call']))
-    ordinary_static_import_joins.extend(memcmp_import_joins)
-    bcmp_import_joins, _ = _attach(
-        rejected, 'bcmp_ordinary_import_resolution', accounting,
-        memcmp_ordinary_import_companion,
-        lambda: [] if memcmp_ordinary_import_companion is None else
-        _attach_ordinary_static_import(
-            accounting, native_c_allocator_boundary_companion, 'bcmp',
-            projection_override=memcmp_ordinary_import_companion['bcmp_projection'],
-            loader_occurrence=memcmp_ordinary_import_companion['bcmp_loader_occurrence']))
-    ordinary_static_import_joins.extend(bcmp_import_joins)
-    fchdir_import_joins, _ = _attach(
-        rejected, 'fchdir_ordinary_import_resolution', accounting,
-        fchdir_ordinary_import_companion,
-        lambda: [] if fchdir_ordinary_import_companion is None else
-        _attach_ordinary_static_import(
-            accounting, native_c_allocator_boundary_companion, 'fchdir',
-            projection_override=fchdir_ordinary_import_companion['projection']))
-    ordinary_static_import_joins.extend(fchdir_import_joins)
-    btowc_import_joins, _ = _attach(
-        rejected, 'btowc_ordinary_import_resolution', accounting,
-        btowc_ordinary_import_companion,
-        lambda: [] if btowc_ordinary_import_companion is None else
-        _attach_ordinary_static_import(
-            accounting, native_c_allocator_boundary_companion, 'btowc',
-            projection_override=btowc_ordinary_import_companion['projection']))
-    ordinary_static_import_joins.extend(btowc_import_joins)
-    wctomb_import_joins, _ = _attach(
-        rejected, 'wctomb_ordinary_import_resolution', accounting,
-        wctomb_ordinary_import_companion,
-        lambda: [] if wctomb_ordinary_import_companion is None else
-        _attach_ordinary_static_import(
-            accounting, native_c_allocator_boundary_companion, 'wctomb',
-            projection_override=wctomb_ordinary_import_companion['projection']))
-    ordinary_static_import_joins.extend(wctomb_import_joins)
-    wcsrtombs_import_joins, _ = _attach(
-        rejected, 'wcsrtombs_ordinary_import_resolution', accounting,
-        wcsrtombs_ordinary_import_companion,
-        lambda: [] if wcsrtombs_ordinary_import_companion is None else
-        _attach_ordinary_static_import(
-            accounting, native_c_allocator_boundary_companion, 'wcsrtombs',
-            projection_override=wcsrtombs_ordinary_import_companion['projection']))
-    ordinary_static_import_joins.extend(wcsrtombs_import_joins)
+    for symbol, companion, projection_key, loader_key, shared_key in (
+            ('strlen', strlen_ordinary_import_companion, 'projection', None, None),
+            ('memmove', memmove_ordinary_import_companion, 'projection', 'loader_occurrence', 'shared_direct_call'),
+            ('memcmp', memcmp_ordinary_import_companion, 'projection', 'loader_occurrence', 'shared_direct_call'),
+            ('bcmp', memcmp_ordinary_import_companion, 'bcmp_projection', 'bcmp_loader_occurrence', None),
+            ('fchdir', fchdir_ordinary_import_companion, 'projection', None, None),
+            ('btowc', btowc_ordinary_import_companion, 'projection', None, None),
+            ('wctomb', wctomb_ordinary_import_companion, 'projection', None, None),
+            ('wcsrtombs', wcsrtombs_ordinary_import_companion, 'projection', None, None)):
+        import_joins, _ = _attach(
+            rejected, f'{symbol}_ordinary_import_resolution', accounting, companion,
+            lambda: [] if companion is None else _attach_ordinary_static_import(
+                accounting, native_c_allocator_boundary_companion, symbol,
+                projection_override=companion[projection_key],
+                **({'loader_occurrence': companion[loader_key]} if loader_key else {}),
+                **({'shared_direct_call': companion[shared_key]} if shared_key else {})))
+        ordinary_static_import_joins.extend(import_joins)
     for scan_import, caller, call_count in (
             ('mbrtowc', 'crabc_owned_scan_vfscanf', 1),
             ('mbsinit', 'crabc_owned_scan_vfscanf', 1),

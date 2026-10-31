@@ -28,7 +28,7 @@ if str(ROOT / 'compat/x86_64') not in sys.path:
     sys.path.insert(0, str(ROOT / 'compat/x86_64'))
 import validate_parity_ledger as parity_ledger
 import native_data_declarations as data_declarations
-import native_abi_fchdir_import_receipt as fchdir_import_receipt
+import native_abi_import_receipt as import_receipt
 
 
 def identity(name, version=None, default=False):
@@ -52,16 +52,16 @@ class FchdirOrdinaryImportTests(unittest.TestCase):
         report = json.loads((work / 'report.json').read_text())
         static = Path(report['static_product'])
         dynamic = Path(report['dynamic_product'])
-        fchdir_import_receipt.validate_report(work / 'report.json',
-                                              static_product=static, dynamic_product=dynamic)
-        original_digest = fchdir_import_receipt.digest
+        import_receipt.validate_report(work / 'report.json', static_product=static,
+                                       dynamic_product=dynamic, symbol='fchdir')
+        original_digest = import_receipt.digest
         def changed_workload(path):
             return '0' * 64 if Path(path) == work / 'workload.o' else original_digest(path)
-        with mock.patch.object(fchdir_import_receipt, 'digest', side_effect=changed_workload):
-            with self.assertRaisesRegex(fchdir_import_receipt.FchdirImportError,
+        with mock.patch.object(import_receipt, 'digest', side_effect=changed_workload):
+            with self.assertRaisesRegex(import_receipt.ImportReceiptError,
                                         'source, products, or workload changed'):
-                fchdir_import_receipt.validate_report(work / 'report.json',
-                                                      static_product=static, dynamic_product=dynamic)
+                import_receipt.validate_report(work / 'report.json', static_product=static,
+                                               dynamic_product=dynamic, symbol='fchdir')
 
     def test_selector_discharge_is_exactly_the_sealed_fchdir_reason(self):
         baseline_name = os.environ.get('CRABC_FCHDIR_SELECTION_BASELINE')
@@ -3924,6 +3924,23 @@ class PublicDataLinkageAdapterTests(unittest.TestCase):
         self.assertEqual(accounting['blockers'], [
             {'code': 'identity-unresolved', 'identity': identity('environ'), 'reason': ordinary_reason},
         ])
+
+
+class ImportAdapterSpecTests(unittest.TestCase):
+    def test_duplicated_swapped_and_unbound_specs_fail(self):
+        specs = selection.IMPORT_ADAPTER_SPECS
+        entries = tuple(specs.items())
+        with self.assertRaisesRegex(selection.SelectionError, 'duplicate adapter spec memcmp'):
+            selection.build_adapter_specs((*entries, ('memcmp', specs['memcmp'])))
+        with self.assertRaisesRegex(selection.SelectionError, 'memcmp shared_key differs'):
+            selection.build_adapter_specs(tuple((s, specs['memmove'] if s == 'memcmp' else p) for s, p in entries))
+        for key, value, message in (
+                ('loader_key', 'bcmp_loader_occurrence', 'memmove loader_key differs'),
+                ('extra_symbol', 'bcmp', 'memmove extra symbol differs'),
+                ('mixed_call_forms', 'mixed_memcmp_call_forms', 'memmove mixed_call_forms differs')):
+            with self.subTest(key=key), self.assertRaisesRegex(selection.SelectionError, message):
+                selection.build_adapter_specs(tuple((s, {**p, key: value} if s == 'memmove' else p)
+                                                    for s, p in entries))
 
 
 class SelectedCallableDeclarationIntegrationTests(unittest.TestCase):
