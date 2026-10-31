@@ -363,7 +363,7 @@ def _lifecycle_c_abi(lifecycle: str) -> dict[str, object]:
     require(names == ["_mi_auto_process_init", "_mi_auto_process_done"],
             "allocator lifecycle import declaration differs")
     callbacks = (
-        ("initialize", "_mi_auto_process_init", "__crabc_x86_owned_mimalloc_process_initializer", None),
+        ("initialize", "initialize_slow", "__crabc_x86_owned_mimalloc_process_initializer", None),
         ("finalize", "_mi_auto_process_done", "__crabc_x86_owned_mimalloc_process_finalizer", ".fini_array"),
     )
     observations: list[dict[str, object]] = []
@@ -373,8 +373,19 @@ def _lifecycle_c_abi(lifecycle: str) -> dict[str, object]:
             lifecycle,
             re.MULTILINE,
         )
-        require(body is not None and re.search(rf'unsafe\s*\{{\s*{target}\s*\(\s*\)\s*\}}', body.group("body")) is not None,
-                f"allocator lifecycle callback differs for {callback}")
+        if target == "initialize_slow":
+            require(body is not None and re.search(r'\binitialize_slow\s*\(\s*\)', body.group("body")) is not None,
+                    f"allocator lifecycle callback differs for {callback}")
+            slow = re.search(
+                r'(?s)unsafe\s+fn\s+initialize_slow\s*\(\s*\)\s*\{(?P<body>.*?)^\}',
+                lifecycle,
+                re.MULTILINE,
+            )
+            require(slow is not None and re.search(r'unsafe\s*\{\s*_mi_auto_process_init\s*\(\s*\)\s*\}', slow.group("body")) is not None,
+                    "allocator lifecycle slow callback differs for initialize")
+        else:
+            require(body is not None and re.search(rf'unsafe\s*\{{\s*{target}\s*\(\s*\)\s*\}}', body.group("body")) is not None,
+                    f"allocator lifecycle callback differs for {callback}")
         array = (
             rf'#\[link_section\s*=\s*"{re.escape(section)}"\]\s*'
             if section is not None

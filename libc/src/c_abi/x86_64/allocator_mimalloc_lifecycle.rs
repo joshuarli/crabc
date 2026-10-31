@@ -42,18 +42,32 @@ const PROCESS_INIT_COMPLETE: u8 = 2;
 
 static PROCESS_INIT_STATE: AtomicU8 = AtomicU8::new(PROCESS_INIT_UNSTARTED);
 
+#[inline]
+fn process_init_complete() -> bool {
+    PROCESS_INIT_STATE.load(Ordering::Acquire) == PROCESS_INIT_COMPLETE
+}
+
 /// Run the upstream automatic process initialization exactly once.
 ///
-/// `_mi_auto_process_init` is not idempotent: it sets up the automatic thread
-/// done key, thread-local storage, option post-initialization, allocator
-/// initialization, and random reseeding, none of which are once-guarded
-/// upstream.  Every allocating C entry reaches this function before its first
-/// backend call.  The losing side waits for the winning thread to publish the
-/// completed sequence.
+/// The completed-state check is the allocation fast path; the one-shot
+/// sequence is cold.  `_mi_auto_process_init` is not idempotent: it sets up
+/// the automatic thread done key, thread-local storage, option
+/// post-initialization, allocator initialization, and random reseeding, none
+/// of which are once-guarded upstream.  Every allocating C entry reaches this
+/// function before its first backend call.  The losing side waits for the
+/// winning thread to publish the completed sequence.
+#[inline]
 pub(super) unsafe extern "C" fn initialize() {
-    if PROCESS_INIT_STATE.load(Ordering::Acquire) == PROCESS_INIT_COMPLETE {
+    if process_init_complete() {
         return;
     }
+    // SAFETY: the cold path owns the one-shot and the upstream sequence.
+    unsafe { initialize_slow() };
+}
+
+#[cold]
+#[inline(never)]
+unsafe fn initialize_slow() {
     if PROCESS_INIT_STATE
         .compare_exchange(
             PROCESS_INIT_UNSTARTED,
@@ -63,7 +77,7 @@ pub(super) unsafe extern "C" fn initialize() {
         )
         .is_err()
     {
-        while PROCESS_INIT_STATE.load(Ordering::Acquire) != PROCESS_INIT_COMPLETE {
+        while !process_init_complete() {
             core::hint::spin_loop();
         }
         return;
