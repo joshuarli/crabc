@@ -119,6 +119,7 @@ CASES = {
     "ldso-initial-graph": ("run_owned_ldso_initial_graph_cases.sh", None),
     "ldso-general-initial-tls": ("run_owned_ldso_initial_tls_cases.sh", None),
     "ldso-general-loader-lifecycle": ("run_owned_ldso_lifecycle_cases.sh", None),
+    "ldso-loader-libc-tls-runtime-v1": ("run_owned_ldso_runtime_v1_cases.sh", None),
     "package-corpus": ("run_owned_package_corpus.sh", None),
     "cross-dso": ("run_owned_dynamic_cross_dso.sh", None),
 }
