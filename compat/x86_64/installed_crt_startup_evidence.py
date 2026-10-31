@@ -357,7 +357,7 @@ def descriptor_runtime_source_order(sources):
             'dynamic loader feature route differs')
     dynamic_build=_runtime_region(
         build,
-        'if std::env::var_os(\n        "CARGO_FEATURE_X86_64_GENERAL_INITIAL_TLS_RUNTIME_V1_DYNAMIC_MAIN_THREAD_INTERPRETER",',
+        'if std::env::var_os("CARGO_FEATURE_X86_64_OWNED_DYNAMIC_RUNTIME").is_some() {',
         '\n    println!("cargo:rustc-cdylib-link-arg=-nostartfiles");',
         'dynamic loader build route',
     )
@@ -392,10 +392,10 @@ def descriptor_runtime_source_order(sources):
     route=_runtime_region(graph,'fn run_with_initial_tls(','\n\n/// The complete prevalidated constructor call list','RuntimeV1 graph route')
     _runtime_order(route,('state.materialize_initial_tls()','let conventional_startup = unsafe { state.commit_runtime_v1(installed) };','runtime_registry.publish(ldso_base);'),
                    'RuntimeV1 graph route')
-    validate=_runtime_region(consumer,"unsafe fn validate_loader_tls_runtime_v1() -> Option<&'static LoaderLibcTlsRuntimeV1> {",'\n\n/// Obtain the current x86-64 `%fs` base','RuntimeV1 consumer validation')
+    validate=_runtime_region(consumer,"unsafe fn validate_record<'a>(record: *const u8) -> Option<&'a LoaderLibcTlsRuntimeV1> {",'\n\n/// Obtain the current x86-64 `%fs` base','RuntimeV1 consumer validation')
     _runtime_order(validate,('record.state.load(Ordering::Acquire)','record.thread_pointer.is_null()',
                              'record.dtv.is_null()','record.module_count.checked_add(1)?'), 'RuntimeV1 consumer validation')
-    attach_body=_runtime_region(consumer,'pub unsafe extern "C" fn __crabc_x86_loader_tls_runtime_v1_attach() -> c_int {','\n}',
+    attach_body=_runtime_region(consumer,'pub unsafe extern "C" fn __crabc_x86_loader_tls_runtime_v1_attach() -> c_int {','\n\n#[cfg(test)]\nmod record_validation_tests {',
                                   'RuntimeV1 consumer attachment')
     _runtime_order(attach_body,('validate_loader_tls_runtime_v1()','observe_validated_loader_tls(record)'),
                    'RuntimeV1 consumer attachment')
@@ -431,7 +431,6 @@ RUNTIME_SOURCES=('scripts/native_build_tools.py','crt/src/x86_64_startup.rs','cr
     'libc/src/c_abi/x86_64/allocator_mimalloc_lifecycle.rs',
     'ldso/src/x86_64_initial_graph.rs','ldso/src/x86_64_general_relocation.rs','ldso/src/x86_64_general_initial_graph.rs',
     'ldso/src/x86_64_general_initial_lifecycle.rs','ldso/src/x86_64_general_initial_tls_state.rs',
-    'ldso/src/x86_64_dynamic_main_thread_runtime_v1_source_root.rs',
     'libc/src/c_abi/x86_64/dynamic_main_thread_runtime_v1_source_root.rs',
     'ldso/src/x86_64_conventional_startup_v1.rs','compat/x86_64/loader-libc-tls-runtime-v1.toml')
 COLLECTOR_SOURCES=tuple(dict.fromkeys((*substrate.COLLECTOR_SOURCES,*RUNTIME_SOURCES,

@@ -87,7 +87,6 @@ class NativeAbiSelectionDispatcherTests(unittest.TestCase):
             "--text-family-semantic-report", ".work/x86_64/text family/receipt.json",
             "--posix-sysv-signal-admission-report", ".work/x86_64/posix signal/family-admission.json",
             "--public-data-declaration-runtime-report", ".work/x86_64/public data declaration runtime/report.json",
-            "--loader-structural-owner-receipt-report", ".work/x86_64/loader structural/report.json",
         ]
         for mode in ("build-report", "validate-report", "require-closure"):
             with self.subTest(mode=mode):

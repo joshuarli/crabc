@@ -197,7 +197,6 @@ def _sources(root, layout):
         paths += ['compat/x86_64/owned_posix_signals.py', 'compat/x86_64/owned-posix-signals.toml']
     if layout.runner == 'posix_timers':
         paths += ['compat/x86_64/owned_posix_timers_probe.c', 'compat/x86_64/owned_posix_timers_tls.c',
-                  'ldso/src/x86_64_general_initial_tls_runtime_v1_source_root.rs',
                   'ldso/src/x86_64_runtime_tls_view.rs', 'ldso/src/x86_64_general_relocation_tests.rs']
     if layout.runner == 'dynamic_fork':
         paths += ['compat/x86_64/owned_dynamic_fork_evidence.py',

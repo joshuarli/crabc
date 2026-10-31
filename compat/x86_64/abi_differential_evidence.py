@@ -94,7 +94,6 @@ SELECTION_COMPANIONS = (
     "posix_sysv_signal_admission_report",
     "bsd_random_receipt_report",
     "public_data_declaration_runtime_report",
-    "loader_structural_owner_receipt_report",
     "fchdir_ordinary_import_work",
     "provider_link_work",
     "installed_math_work",
@@ -712,15 +711,6 @@ PRODUCERS = (
                           "--ordinary-link-report", str(c.public_data_ordinary_link),
                           "--errno-report", str(r["errno_storage_lifecycle_report"]), "--output", str(o)], {}),
         _in, requires=("ordinary_declaration_abi_report", "errno_storage_lifecycle_report")),
-    CompanionProducer(
-        "loader_structural_owner_receipt_report",
-        lambda c, r, o: (["bash", "compat/x86_64/run_loader_structural_owner_contract.sh", "--output", str(o),
-                          "--static-product", str(c.static_product), "--dynamic-product", str(c.dynamic_product),
-                          "--static-preparation", str(c.static_preparation),
-                          "--base-inventory", str(c.native_abi_inventory), "--full-facts", str(c.native_abi_elf_facts),
-                          "--loader-debug-report", str(r["loader_debug_report"]),
-                          "--loader-runtime-registry-report", str(r["loader_runtime_registry_report"])], {}),
-        _in, requires=("loader_debug_report", "loader_runtime_registry_report")),
     CompanionProducer(
         "provider_link_work",
         lambda c, r, o: (["python3", "-B", "compat/x86_64/native_abi_provider_links.py", "collect",
