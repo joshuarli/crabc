@@ -1426,12 +1426,6 @@ unsafe fn parse_mapped(
         crabc_general_initial_tls_materialization_v1
     ))]
     let mut tls: Option<(u64, u64, u64, usize)> = None;
-    #[cfg(not(any(
-        crabc_initial_tls_graph,
-        crabc_initial_exec_tls_graph,
-        crabc_general_initial_tls_materialization_v1
-    )))]
-    let tls: Option<(u64, u64, u64, usize)> = None;
     for index in 0..phnum {
         let header = phdr.add(index * 56);
         match read_u32(header) {
@@ -1543,21 +1537,11 @@ unsafe fn parse_mapped(
             object.tls_image = runtime_address(base, virtual_address)? as *const u8;
         }
     }
-    #[cfg(not(feature = "x86_64-owned-dynamic-runtime"))]
-    let mut needed_offsets = [0usize; MAX_NEEDED];
     let mut runpath_offset = None;
     #[cfg(feature = "x86_64-owned-dynamic-runtime")]
     let mut rpath_offset = None;
     let mut init_array_virtual_address = None;
     let mut init_array_byte_len = None;
-    #[cfg(crabc_bounded_runtime_dlopen)]
-    let mut bounded_runtime_init_virtual_address = None;
-    #[cfg(crabc_bounded_runtime_dlopen)]
-    let mut bounded_runtime_fini_virtual_address = None;
-    #[cfg(crabc_bounded_runtime_dlopen)]
-    let mut bounded_runtime_preinit_array_virtual_address = None;
-    #[cfg(crabc_bounded_runtime_dlopen)]
-    let mut bounded_runtime_preinit_array_byte_len = None;
     // Neither existing Scrt1-admitting sibling executes main-image lifecycle
     // entries. The installed product has a separately classified conventional
     // musl main path below; it never infers that path from these tags.
@@ -1565,22 +1549,6 @@ unsafe fn parse_mapped(
     // takes over; the dynamic-main-thread bridge validates the same shape
     // before Scrt1 makes its direct libc startup call. The two established
     // general siblings retain the old reject-only main-image rule below.
-    #[cfg(all(not(feature = "x86_64-owned-dynamic-runtime"), any(crabc_owned_crt_handoff, crabc_dynamic_main_thread_runtime_v1)))]
-    let mut owned_crt_main_init = None;
-    #[cfg(all(not(feature = "x86_64-owned-dynamic-runtime"), any(crabc_owned_crt_handoff, crabc_dynamic_main_thread_runtime_v1)))]
-    let mut owned_crt_main_fini = None;
-    #[cfg(all(not(feature = "x86_64-owned-dynamic-runtime"), any(crabc_owned_crt_handoff, crabc_dynamic_main_thread_runtime_v1)))]
-    let mut owned_crt_main_preinit_array = None;
-    #[cfg(all(not(feature = "x86_64-owned-dynamic-runtime"), any(crabc_owned_crt_handoff, crabc_dynamic_main_thread_runtime_v1)))]
-    let mut owned_crt_main_preinit_array_len = None;
-    #[cfg(all(not(feature = "x86_64-owned-dynamic-runtime"), any(crabc_owned_crt_handoff, crabc_dynamic_main_thread_runtime_v1)))]
-    let mut owned_crt_main_init_array = None;
-    #[cfg(all(not(feature = "x86_64-owned-dynamic-runtime"), any(crabc_owned_crt_handoff, crabc_dynamic_main_thread_runtime_v1)))]
-    let mut owned_crt_main_init_array_len = None;
-    #[cfg(all(not(feature = "x86_64-owned-dynamic-runtime"), any(crabc_owned_crt_handoff, crabc_dynamic_main_thread_runtime_v1)))]
-    let mut owned_crt_main_fini_array = None;
-    #[cfg(all(not(feature = "x86_64-owned-dynamic-runtime"), any(crabc_owned_crt_handoff, crabc_dynamic_main_thread_runtime_v1)))]
-    let mut owned_crt_main_fini_array_len = None;
     #[cfg(feature = "x86_64-owned-dynamic-runtime")]
     let (
         mut main_init,
@@ -2069,15 +2037,11 @@ unsafe fn parse_mapped(
     // those ordinary no-op shapes.
     #[cfg(feature = "x86_64-owned-dynamic-runtime")]
     let registry_main = !mapped;
-    #[cfg(not(feature = "x86_64-owned-dynamic-runtime"))]
-    let registry_main = false;
     // The owned main's direct callbacks and array shapes were checked before
     // relocation metadata. The registry can retain those load-range proofs.
     #[cfg(feature = "x86_64-owned-dynamic-runtime")]
     let owned_main_lifecycle_checked = general_initial_graph
         && registry_main && object.main_crt_mode == MainCrtMode::Owned;
-    #[cfg(not(feature = "x86_64-owned-dynamic-runtime"))]
-    let owned_main_lifecycle_checked = false;
     match (init_array_virtual_address, init_array_byte_len) {
         (None, None) => {}
         (Some(address), Some(byte_len))
@@ -2616,11 +2580,6 @@ unsafe fn plan_initial_tls(objects: &mut [Object]) -> Option<bool> {
     let mut offset_below_tp = 0usize;
     let mut module_count = 0usize;
     let mut has_tls = false;
-    #[cfg(crabc_loader_libc_tls_runtime_v1)]
-    // SAFETY: this fixed interpreter has one startup transaction before it
-    // transfers to application code or can create a thread. The registry is
-    // mutated here once, then sealed before any shared reference is returned.
-    let registry = unsafe { &mut *core::ptr::addr_of_mut!(INITIAL_TLS_RUNTIME_V1_REGISTRY) };
     for (_object_index, object) in objects.iter_mut().enumerate() {
         object.tls_module_id = 0;
         object.tls_offset_below_tp = 0;
@@ -2645,8 +2604,6 @@ unsafe fn plan_initial_tls(objects: &mut [Object]) -> Option<bool> {
         if offset_below_tp < object.tls_memsz {
             return None;
         }
-        #[cfg(crabc_loader_libc_tls_runtime_v1)]
-        let module_id = registry.assign_initial(_object_index).ok()?.get();
         #[cfg(not(crabc_loader_libc_tls_runtime_v1))]
         let module_id = module_count.checked_add(1)?;
         if module_id >= TLS_DTV_WORDS {
@@ -2750,8 +2707,6 @@ unsafe fn materialize_tls_in(
     // planned population, as musl sizes its initial DTV from the module count.
     #[cfg(crabc_general_initial_graph)]
     let dtv_words = module_count.checked_add(1)?;
-    #[cfg(not(crabc_general_initial_graph))]
-    let dtv_words = TLS_DTV_WORDS;
     let dtv_byte_len = dtv_words.checked_mul(core::mem::size_of::<usize>())?;
 
     let reserved_after_tp = TLS_TCB_PREFIX_SIZE
@@ -3429,16 +3384,6 @@ unsafe fn relocation_value(
     // different relocation form could accidentally become loader policy.
     #[cfg(crabc_dynamic_main_thread_runtime_v1)]
     if symbol != 0 {
-        #[cfg(not(feature = "x86_64-owned-dynamic-runtime"))]
-        let requested = (symbol < requestor.symcount)
-            .then(|| unsafe { requestor.symtab.add(symbol * 24) });
-        #[cfg(not(feature = "x86_64-owned-dynamic-runtime"))]
-        let private_name = requested.and_then(|requested| {
-            let offset = read_u32(requested) as usize;
-            let available = requestor.strsz.checked_sub(offset)?;
-            let name = requestor.strtab.add(offset);
-            bounded_nul(name, available).map(|length| (name, length))
-        });
         if let (Some(requested), Some((name, length))) = (requested, private_name) {
             if length == b"__crabc_x86_64_owned_crt_handoff".len()
                 && bytes_eq(name, b"__crabc_x86_64_owned_crt_handoff".as_ptr(), length)
@@ -3464,8 +3409,6 @@ unsafe fn relocation_value(
                 {
                     #[cfg(crabc_general_initial_lifecycle)]
                     return Some(x86_64_general_initial_lifecycle::owned_crt_handoff_address());
-                    #[cfg(not(crabc_general_initial_lifecycle))]
-                    return Some(0);
                 }
                 return None;
             }
