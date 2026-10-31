@@ -163,7 +163,7 @@ static void observe(const char *mode) {
     struct wire_state s={0};
     if (dl_iterate_phdr(wires,&s) || s.main_images!=1) _Exit(104);
     if (!strcmp(mode,"owned")) {
-        if (s.handoffs!=1 || !s.handoff || s.conventional!=1 || s.snapshot
+        if (s.handoffs!=1 || !s.handoff || s.conventional!=0 || s.snapshot
             || s.descriptors!=1 || !s.descriptor) _Exit(105);
         const uint64_t *q=(const uint64_t *)s.handoff;
         if (q[0]!=UINT64_C(0x43524142435f4831) || ((const uint32_t *)q)[2]!=
