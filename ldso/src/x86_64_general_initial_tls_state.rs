@@ -413,14 +413,11 @@ fn release_loader_tls_runtime_v1_descriptor_reservation() {
 /// Performs the descriptor half of the non-fallible post-FS commit.
 ///
 /// All graph/registry/DTV-shape validation and both publication CASes happened
-/// before ARCH_SET_FS. The malformed test cfgs alter only static metadata or
-/// the final DTV pointer so the libc observer can independently reject them;
-/// this function intentionally has no validation, allocation, CAS, or error
-/// path after the thread pointer changed.
+/// before ARCH_SET_FS. This function intentionally has no validation,
+/// allocation, CAS, or error path after the thread pointer changed.
 #[cfg(crabc_general_loader_libc_tls_runtime_v1)]
 unsafe fn publish_reserved_loader_tls_runtime_v1(installed: InstalledInitialTls) {
     let record = core::ptr::addr_of_mut!(__crabc_x86_64_loader_tls_runtime_v1);
-    #[cfg(not(crabc_general_loader_libc_tls_runtime_v1_poisoned_dtv))]
     let descriptor_dtv = installed.dtv.cast_const();
     // SAFETY: the descriptor's PUBLISHING ownership was reserved before the
     // sole ARCH_SET_FS transition. `installed` is its successful immutable

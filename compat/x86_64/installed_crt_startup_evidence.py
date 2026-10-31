@@ -284,9 +284,6 @@ def _runtime_source_text(sources,name):
 PUBLISHER_SOURCE_TEMPLATE=(
     'unsafefnpublish_reserved_loader_tls_runtime_v1(installed:InstalledInitialTls){'
     'letrecord=core::ptr::addr_of_mut!(__crabc_x86_64_loader_tls_runtime_v1);'
-    '#[cfg(crabc_general_loader_libc_tls_runtime_v1_poisoned_dtv)]'
-    'letdescriptor_dtv=1usizeas*constusize;'
-    '#[cfg(not(crabc_general_loader_libc_tls_runtime_v1_poisoned_dtv))]'
     'letdescriptor_dtv=installed.dtv.cast_const();unsafe{'
     '(*record).thread_pointer=installed.thread_pointer.cast_const();'
     '(*record).dtv=descriptor_dtv;(*record).dtv_words=installed.dtv_words;'
