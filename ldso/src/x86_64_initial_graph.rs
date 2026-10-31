@@ -105,10 +105,6 @@ mod x86_64_library_search;
 mod x86_64_direct_entry;
 #[cfg(crabc_general_initial_graph)]
 use x86_64_initial_graph_state::ObjectIdentity;
-#[cfg(any(crabc_fixed_graph_introspection, crabc_fixed_graph_dlfcn))]
-use core::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
-#[cfg(crabc_loader_libc_tls_runtime_v1)]
-use core::sync::atomic::{AtomicU8, Ordering};
 
 // The RuntimeV1 record is addressed only by the loader's exact relocation
 // exception below; it is never a dynamic-linker lookup/export.  Keep the
@@ -270,19 +266,9 @@ const INITIAL_OBJECT_COUNT: usize = 3;
 // objects and edges live in loader mappings sized from the admitted graph
 // (see `x86_64_initial_graph_state`): the installed runtime has no object or
 // DT_NEEDED bound, and the private source roots keep their fixed ceilings.
-#[cfg(not(crabc_general_initial_graph))]
-#[cfg(crabc_bounded_runtime_dlopen)]
-const MAX_OBJECTS: usize = INITIAL_OBJECT_COUNT + 1;
-#[cfg(not(crabc_general_initial_graph))]
-#[cfg(not(crabc_bounded_runtime_dlopen))]
-const MAX_OBJECTS: usize = INITIAL_OBJECT_COUNT;
 const MAX_PHDRS: usize = 32;
 // The installed runtime reads DT_NEEDED names from the validated dynamic
 // table; the private source roots retain their small inline table.
-#[cfg(all(crabc_general_initial_graph, not(feature = "x86_64-owned-dynamic-runtime")))]
-const MAX_NEEDED: usize = 16;
-#[cfg(not(crabc_general_initial_graph))]
-const MAX_NEEDED: usize = 2;
 const MAX_PATH: usize = 512;
 // The general initial graph owns one startup-only dependency constructor
 // transition, not a reusable DSO lifecycle. Keep each admitted dependency
@@ -292,10 +278,6 @@ const MAX_PATH: usize = 512;
 const MAX_GENERAL_INITIAL_DEPENDENCY_INIT_ARRAY_ENTRIES: usize = 16;
 // The runtime mapper retains no allocator or general lifecycle owner. Keep
 // every runtime array-shaped tag at the existing small constructor ceiling.
-#[cfg(crabc_bounded_runtime_dlopen)]
-const MAX_BOUNDED_RUNTIME_ARRAY_ENTRIES: usize = 16;
-#[cfg(any(crabc_fixed_graph_introspection, crabc_fixed_graph_dlfcn))]
-const FIXED_GRAPH_TEXT_CAPACITY: usize = 256;
 // This private fixed graph has no allocation owner. Bound both packed-RELR
 // records and relocation destinations before reads or writes: an otherwise
 // empty bitmap record has no destination, so a destination-only cap would let
@@ -334,8 +316,6 @@ const TLS_TCB_MODULE_SIZE_TABLE_OFFSET: usize = core::mem::size_of::<usize>() * 
 // never dereferences, copies from another thread, or rewrites it during growth.
 #[cfg(feature = "x86_64-owned-dynamic-runtime")]
 const TLS_TCB_LIBC_CANCELLATION_STATE_OFFSET: usize = 32;
-#[cfg(not(crabc_general_initial_graph))]
-const TLS_DTV_WORDS: usize = MAX_OBJECTS + 1;
 // General graphs size each initial DTV from its module count (see
 // `materialize_initial_tls`). This fixed geometry remains only for the
 // fixed-graph helpers compiled beside them.
@@ -346,12 +326,6 @@ const TLS_DTV_WORDS: usize = 33;
 // capacity. This state is private to the loader and remains separate from
 // libc's static TLS owner; a future general loader must replace it only with
 // a real registry/DTV-growth lifecycle, not a larger constant.
-#[cfg(crabc_loader_libc_tls_runtime_v1)]
-type LoaderInitialTlsRegistry =
-    x86_64_initial_tls_registry::InitialTlsRegistry<MAX_OBJECTS, MAX_OBJECTS>;
-#[cfg(crabc_loader_libc_tls_runtime_v1)]
-static mut INITIAL_TLS_RUNTIME_V1_REGISTRY: LoaderInitialTlsRegistry =
-    LoaderInitialTlsRegistry::new();
 
 // -------------------------------------------------------------------------
 // Private loader/libc RuntimeV1 initial-TLS handoff
@@ -368,42 +342,6 @@ static mut INITIAL_TLS_RUNTIME_V1_REGISTRY: LoaderInitialTlsRegistry =
 // ldso remains a standalone no_std interpreter. Keep every field and the
 // exact 72-byte LP64 layout synchronized with
 // `libc/src/c_abi/x86_64/loader_tls_runtime_v1.rs`.
-#[cfg(crabc_loader_libc_tls_runtime_v1)]
-const LOADER_TLS_RUNTIME_V1_MAGIC: u64 = if cfg!(crabc_loader_libc_tls_runtime_v1_bad_magic) {
-    0
-} else {
-    0x4352_4142_435f_5451
-};
-#[cfg(crabc_loader_libc_tls_runtime_v1)]
-const LOADER_TLS_RUNTIME_V1_VERSION: u32 = if cfg!(crabc_loader_libc_tls_runtime_v1_bad_version) {
-    0
-} else {
-    1
-};
-#[cfg(crabc_loader_libc_tls_runtime_v1)]
-const LOADER_TLS_RUNTIME_V1_PROCESS_MODE_DYNAMIC: u32 = if cfg!(crabc_loader_libc_tls_runtime_v1_bad_mode) {
-    0
-} else {
-    2
-};
-#[cfg(crabc_loader_libc_tls_runtime_v1)]
-const LOADER_TLS_RUNTIME_V1_OWNER_LDSO: u32 = if cfg!(crabc_loader_libc_tls_runtime_v1_bad_owner) {
-    0
-} else {
-    1
-};
-#[cfg(crabc_loader_libc_tls_runtime_v1)]
-const LOADER_TLS_RUNTIME_V1_GENERATION_INITIAL: u64 = if cfg!(crabc_loader_libc_tls_runtime_v1_bad_generation) {
-    0
-} else {
-    1
-};
-#[cfg(crabc_loader_libc_tls_runtime_v1)]
-const LOADER_TLS_RUNTIME_V1_STATE_UNPUBLISHED: u8 = 0;
-#[cfg(crabc_loader_libc_tls_runtime_v1)]
-const LOADER_TLS_RUNTIME_V1_STATE_PUBLISHING: u8 = 1;
-#[cfg(crabc_loader_libc_tls_runtime_v1)]
-const LOADER_TLS_RUNTIME_V1_STATE_READY: u8 = 2;
 
 /// Loader-owned, private RuntimeV1 coordinates for one initial TLS graph.
 ///
@@ -414,25 +352,7 @@ const LOADER_TLS_RUNTIME_V1_STATE_READY: u8 = 2;
 /// only read the pointed-to TCB/DTV after that check succeeds. The record is
 /// intentionally not an installed header declaration or a general dynamic
 /// linker API.
-#[cfg(crabc_loader_libc_tls_runtime_v1)]
-#[repr(C)]
-pub struct LoaderLibcTlsRuntimeV1 {
-    magic: u64,
-    version: u32,
-    abi_size: u32,
-    process_mode: u32,
-    owner: u32,
-    state: AtomicU8,
-    reserved: [u8; 7],
-    thread_pointer: *const u8,
-    dtv: *const usize,
-    dtv_words: usize,
-    module_count: usize,
-    generation: u64,
-}
 
-#[cfg(crabc_loader_libc_tls_runtime_v1)]
-const _: () = assert!(core::mem::size_of::<LoaderLibcTlsRuntimeV1>() == 72);
 
 /// The one private loader record imported weakly by the freestanding libc
 /// consumer. The dynamic linker itself fills its coordinates only after
@@ -440,28 +360,6 @@ const _: () = assert!(core::mem::size_of::<LoaderLibcTlsRuntimeV1>() == 72);
 /// coordinates, so each required metadata check is independently observable.
 /// The separate poisoned-DTV fixture has valid metadata but an unusable DTV
 /// pointer, proving pointer validation remains before a DTV read.
-#[cfg(crabc_loader_libc_tls_runtime_v1)]
-#[used]
-#[no_mangle]
-pub static mut __crabc_x86_64_loader_tls_runtime_v1: LoaderLibcTlsRuntimeV1 =
-    LoaderLibcTlsRuntimeV1 {
-        magic: LOADER_TLS_RUNTIME_V1_MAGIC,
-        version: LOADER_TLS_RUNTIME_V1_VERSION,
-        abi_size: if cfg!(crabc_loader_libc_tls_runtime_v1_bad_abi_size) {
-            0
-        } else {
-            core::mem::size_of::<LoaderLibcTlsRuntimeV1>() as u32
-        },
-        process_mode: LOADER_TLS_RUNTIME_V1_PROCESS_MODE_DYNAMIC,
-        owner: LOADER_TLS_RUNTIME_V1_OWNER_LDSO,
-        state: AtomicU8::new(LOADER_TLS_RUNTIME_V1_STATE_UNPUBLISHED),
-        reserved: [0; 7],
-        thread_pointer: core::ptr::null(),
-        dtv: core::ptr::null(),
-        dtv_words: 0,
-        module_count: 0,
-        generation: LOADER_TLS_RUNTIME_V1_GENERATION_INITIAL,
-    };
 
 /// The transient result of one successful initial TLS install.
 ///
@@ -505,14 +403,6 @@ const OWNED_CRT_HANDOFF_MAGIC: u64 = if cfg!(crabc_owned_crt_handoff_malformed) 
 };
 #[cfg(any(crabc_owned_crt_handoff, all(crabc_general_initial_lifecycle, crabc_dynamic_main_thread_runtime_v1)))]
 const OWNED_CRT_HANDOFF_VERSION: u32 = if cfg!(crabc_hardened) { 2 } else { 1 };
-#[cfg(crabc_owned_crt_handoff)]
-const OWNED_CRT_STATE_UNPUBLISHED: u8 = 0;
-#[cfg(crabc_owned_crt_handoff)]
-const OWNED_CRT_STATE_READY: u8 = 1;
-#[cfg(crabc_owned_crt_handoff)]
-const OWNED_CRT_STATE_CONSTRUCTORS_COMPLETE: u8 = 2;
-#[cfg(crabc_owned_crt_handoff)]
-const OWNED_CRT_STATE_FINALIZED: u8 = 3;
 
 #[cfg(any(crabc_owned_crt_handoff, all(crabc_general_initial_lifecycle, crabc_dynamic_main_thread_runtime_v1)))]
 type OwnedCrtLifecycleHook = unsafe extern "C" fn();
@@ -532,180 +422,30 @@ pub struct OwnedCrtHandoffV1 {
     process_fini: OwnedCrtLifecycleHook,
 }
 
-#[cfg(crabc_owned_crt_handoff)]
-#[used]
-#[no_mangle]
-pub static __crabc_x86_64_owned_crt_handoff: OwnedCrtHandoffV1 = OwnedCrtHandoffV1 {
-    magic: OWNED_CRT_HANDOFF_MAGIC,
-    version: OWNED_CRT_HANDOFF_VERSION,
-    abi_size: core::mem::size_of::<OwnedCrtHandoffV1>() as u32,
-    dependency_constructors: owned_crt_dependency_constructors,
-    process_fini: owned_crt_process_fini,
-};
 
-#[cfg(crabc_fixed_graph_introspection)]
-const FIXED_GRAPH_INTROSPECTION_MAGIC: u64 = if cfg!(crabc_fixed_graph_introspection_malformed) {
-    0
-} else {
-    0x4352_4142_435f_5849
-};
-#[cfg(crabc_fixed_graph_introspection)]
-const FIXED_GRAPH_INTROSPECTION_VERSION: u32 = 1;
 
-#[cfg(crabc_fixed_graph_dlfcn)]
-const FIXED_GRAPH_DLFCN_MAGIC: u64 = if cfg!(crabc_fixed_graph_dlfcn_malformed) {
-    0
-} else {
-    0x4352_4142_435f_5844
-};
-#[cfg(crabc_fixed_graph_dlfcn)]
-const FIXED_GRAPH_DLFCN_VERSION: u32 = 1;
-#[cfg(crabc_fixed_graph_dlfcn)]
-const FIXED_GRAPH_RTLD_LAZY: i32 = 1;
-#[cfg(crabc_fixed_graph_dlfcn)]
-const FIXED_GRAPH_RTLD_NOW: i32 = 2;
-#[cfg(crabc_fixed_graph_dlfcn)]
-const FIXED_GRAPH_RTLD_NOLOAD: i32 = 4;
-#[cfg(crabc_fixed_graph_dlfcn)]
-const FIXED_GRAPH_RTLD_GLOBAL: i32 = 0x100;
-#[cfg(crabc_fixed_graph_dlfcn)]
-const FIXED_GRAPH_RTLD_NODELETE: i32 = 4096;
-#[cfg(all(crabc_fixed_graph_dlfcn, crabc_bounded_runtime_dlopen))]
-const FIXED_GRAPH_ALLOWED_OPEN_FLAGS: i32 = FIXED_GRAPH_RTLD_LAZY
-    | FIXED_GRAPH_RTLD_NOW
-    | FIXED_GRAPH_RTLD_NOLOAD
-    | FIXED_GRAPH_RTLD_NODELETE;
-#[cfg(all(crabc_fixed_graph_dlfcn, not(crabc_bounded_runtime_dlopen)))]
-const FIXED_GRAPH_ALLOWED_OPEN_FLAGS: i32 =
-    FIXED_GRAPH_RTLD_LAZY | FIXED_GRAPH_RTLD_NOW | FIXED_GRAPH_RTLD_NOLOAD;
 
 /// Caller-owned bounded text on the fixed-graph introspection wire.
 ///
 /// This layout deliberately matches `crabc_core::runtime::TextV1` without
 /// making the private interpreter depend on crabc-core or publishing that
 /// larger process-singleton runtime contract.
-#[cfg(any(crabc_fixed_graph_introspection, crabc_fixed_graph_dlfcn))]
-#[repr(C)]
-#[derive(Copy, Clone)]
-pub struct FixedGraphTextV1 {
-    len: u16,
-    flags: u16,
-    bytes: [u8; FIXED_GRAPH_TEXT_CAPACITY],
-}
 
-#[cfg(any(crabc_fixed_graph_introspection, crabc_fixed_graph_dlfcn))]
-const EMPTY_FIXED_GRAPH_TEXT: FixedGraphTextV1 = FixedGraphTextV1 {
-    len: 0,
-    flags: 0,
-    bytes: [0; FIXED_GRAPH_TEXT_CAPACITY],
-};
 
 /// One caller-owned image record copied from the immutable three-object graph.
-#[cfg(any(crabc_fixed_graph_introspection, crabc_fixed_graph_dlfcn))]
-#[repr(C)]
-pub struct FixedGraphImageV1 {
-    image_base: *mut c_void,
-    program_headers: *const c_void,
-    program_header_count: u16,
-    reserved: u16,
-    additions: u64,
-    removals: u64,
-    tls_module: usize,
-    tls_data: *mut c_void,
-    image_name: FixedGraphTextV1,
-}
 
 /// Caller-owned `dladdr`-shaped values with both names copied.
-#[cfg(any(crabc_fixed_graph_introspection, crabc_fixed_graph_dlfcn))]
-#[repr(C)]
-pub struct FixedGraphAddressV1 {
-    image_base: *mut c_void,
-    symbol_address: *mut c_void,
-    image_name: FixedGraphTextV1,
-    symbol_name: FixedGraphTextV1,
-}
 
 /// Caller-owned useful `RTLD_DI_LINKMAP`-shaped values for one graph object.
-#[cfg(any(crabc_fixed_graph_introspection, crabc_fixed_graph_dlfcn))]
-#[repr(C)]
-pub struct FixedGraphInformationV1 {
-    image_base: *mut c_void,
-    dynamic_address: *mut c_void,
-    image_name: FixedGraphTextV1,
-}
 
-#[cfg(any(crabc_fixed_graph_introspection, crabc_fixed_graph_dlfcn))]
-type FixedGraphSnapshotFn = unsafe extern "C" fn(
-    *mut FixedGraphImageV1,
-    usize,
-    *mut usize,
-    *mut u64,
-    *mut FixedGraphTextV1,
-) -> i32;
-#[cfg(any(crabc_fixed_graph_introspection, crabc_fixed_graph_dlfcn))]
-type FixedGraphAddressFn = unsafe extern "C" fn(
-    *const c_void,
-    *mut FixedGraphAddressV1,
-    *mut FixedGraphTextV1,
-) -> i32;
-#[cfg(crabc_fixed_graph_introspection)]
-type FixedGraphInformationFn = unsafe extern "C" fn(
-    usize,
-    *mut FixedGraphInformationV1,
-    *mut FixedGraphTextV1,
-) -> i32;
 
-#[cfg(crabc_fixed_graph_dlfcn)]
-type FixedGraphOpenFn = unsafe extern "C" fn(
-    *const u8,
-    i32,
-    *mut *mut c_void,
-    *mut FixedGraphTextV1,
-) -> i32;
-#[cfg(crabc_fixed_graph_dlfcn)]
-type FixedGraphSymbolFn = unsafe extern "C" fn(
-    *mut c_void,
-    *const u8,
-    *mut *mut c_void,
-    *mut FixedGraphTextV1,
-) -> i32;
-#[cfg(crabc_fixed_graph_dlfcn)]
-type FixedGraphCloseFn = unsafe extern "C" fn(*mut c_void, *mut FixedGraphTextV1) -> i32;
-#[cfg(crabc_fixed_graph_dlfcn)]
-type FixedGraphHandleInformationFn = unsafe extern "C" fn(
-    *mut c_void,
-    *mut FixedGraphInformationV1,
-    *mut FixedGraphTextV1,
-) -> i32;
 
 /// Exact immutable callback record imported weakly by the private main image.
 ///
 /// The callbacks return copied values from loader-owned state. No callback
 /// returns a `link_map *`, borrowed name, ordinary `dlopen` handle, or a route
 /// for changing the fixed graph.
-#[cfg(crabc_fixed_graph_introspection)]
-#[repr(C)]
-pub struct FixedGraphIntrospectionV1 {
-    magic: u64,
-    version: u32,
-    abi_size: u32,
-    snapshot: FixedGraphSnapshotFn,
-    address: FixedGraphAddressFn,
-    information: FixedGraphInformationFn,
-}
 
-#[cfg(crabc_fixed_graph_introspection)]
-#[used]
-#[no_mangle]
-pub static __crabc_x86_64_fixed_graph_introspection_v1: FixedGraphIntrospectionV1 =
-    FixedGraphIntrospectionV1 {
-        magic: FIXED_GRAPH_INTROSPECTION_MAGIC,
-        version: FIXED_GRAPH_INTROSPECTION_VERSION,
-        abi_size: core::mem::size_of::<FixedGraphIntrospectionV1>() as u32,
-        snapshot: fixed_graph_snapshot,
-        address: fixed_graph_address,
-        information: fixed_graph_information,
-    };
 
 /// RuntimeV1-shaped loader prefix for the already-loaded fixed graph.
 ///
@@ -716,34 +456,7 @@ pub static __crabc_x86_64_fixed_graph_introspection_v1: FixedGraphIntrospectionV
 /// flag to the one runtime object it can map. It cannot search the filesystem,
 /// add an object beyond that one bounded transaction, mutate global scope, or
 /// make mappings unloadable.
-#[cfg(crabc_fixed_graph_dlfcn)]
-#[repr(C)]
-pub struct FixedGraphDlfcnV1 {
-    magic: u64,
-    version: u32,
-    abi_size: u32,
-    open: FixedGraphOpenFn,
-    symbol: FixedGraphSymbolFn,
-    close: FixedGraphCloseFn,
-    address: FixedGraphAddressFn,
-    snapshot: FixedGraphSnapshotFn,
-    information: FixedGraphHandleInformationFn,
-}
 
-#[cfg(crabc_fixed_graph_dlfcn)]
-#[used]
-#[no_mangle]
-pub static __crabc_x86_64_fixed_graph_dlfcn_v1: FixedGraphDlfcnV1 = FixedGraphDlfcnV1 {
-    magic: FIXED_GRAPH_DLFCN_MAGIC,
-    version: FIXED_GRAPH_DLFCN_VERSION,
-    abi_size: core::mem::size_of::<FixedGraphDlfcnV1>() as u32,
-    open: fixed_graph_open,
-    symbol: fixed_graph_symbol,
-    close: fixed_graph_close,
-    address: fixed_graph_address,
-    snapshot: fixed_graph_snapshot,
-    information: fixed_graph_handle_information,
-};
 
 /// How an object mapping entered the one initial loader transaction.
 ///
@@ -963,73 +676,24 @@ const EMPTY_OBJECT: Object = Object {
 // the constructor callback exactly once before the process finalizer is
 // admissible.  This is neither a pthread-safe registry nor a general loader
 // lifecycle model.
-#[cfg(crabc_owned_crt_handoff)]
-#[derive(Copy, Clone)]
-struct OwnedCrtInitializerRange {
-    base: u64,
-    phdr: *const u8,
-    phnum: usize,
-    init_array: *const usize,
-    init_count: usize,
-}
 
-#[cfg(crabc_owned_crt_handoff)]
-const EMPTY_OWNED_CRT_INITIALIZER_RANGE: OwnedCrtInitializerRange = OwnedCrtInitializerRange {
-    base: 0,
-    phdr: core::ptr::null(),
-    phnum: 0,
-    init_array: core::ptr::null(),
-    init_count: 0,
-};
 
-#[cfg(crabc_owned_crt_handoff)]
-static mut OWNED_CRT_INITIALIZER_RANGES: [OwnedCrtInitializerRange; MAX_OBJECTS - 1] =
-    [EMPTY_OWNED_CRT_INITIALIZER_RANGE; MAX_OBJECTS - 1];
-#[cfg(crabc_owned_crt_handoff)]
-static mut OWNED_CRT_HANDOFF_STATE: u8 = OWNED_CRT_STATE_UNPUBLISHED;
 
 // This state is written once after the fixed graph's relocation, protection,
 // and dependency constructors complete, then is immutable for process life.
 // The release/acquire publication flag makes concurrent object-state readers
 // well-defined. The dlfcn sibling's separate reference counters are atomics;
 // neither sibling invents a mutable graph registry or loader lock.
-#[cfg(any(crabc_fixed_graph_introspection, crabc_fixed_graph_dlfcn))]
-static FIXED_GRAPH_RUNTIME_PUBLISHED: AtomicBool = AtomicBool::new(false);
-#[cfg(any(crabc_fixed_graph_introspection, crabc_fixed_graph_dlfcn))]
-static FIXED_GRAPH_RUNTIME_COUNT: AtomicUsize = AtomicUsize::new(0);
-#[cfg(any(crabc_fixed_graph_introspection, crabc_fixed_graph_dlfcn))]
-static FIXED_GRAPH_RUNTIME_ADDITIONS: AtomicU64 = AtomicU64::new(0);
-#[cfg(any(crabc_fixed_graph_introspection, crabc_fixed_graph_dlfcn))]
-static FIXED_GRAPH_RUNTIME_LOCK: AtomicBool = AtomicBool::new(false);
-#[cfg(any(crabc_fixed_graph_introspection, crabc_fixed_graph_dlfcn))]
-static mut FIXED_GRAPH_RUNTIME_OBJECTS: [Object; MAX_OBJECTS] = [EMPTY_OBJECT; MAX_OBJECTS];
-#[cfg(any(crabc_fixed_graph_introspection, crabc_fixed_graph_dlfcn))]
-static mut FIXED_GRAPH_RUNTIME_NAMES: [[u8; FIXED_GRAPH_TEXT_CAPACITY]; MAX_OBJECTS] =
-    [[0; FIXED_GRAPH_TEXT_CAPACITY]; MAX_OBJECTS];
 
-#[cfg(crabc_fixed_graph_dlfcn)]
-#[repr(C)]
-#[derive(Copy, Clone)]
-struct FixedGraphHandleToken {
-    identity: u8,
-}
 
-#[cfg(crabc_fixed_graph_dlfcn)]
-static FIXED_GRAPH_HANDLE_TOKENS: [FixedGraphHandleToken; MAX_OBJECTS] =
-    [FixedGraphHandleToken { identity: 0 }; MAX_OBJECTS];
 
 // Startup mappings own one permanent graph reference. These counters cover
 // only explicit dlfcn acquisitions, so the last `close` invalidates a token
 // without pretending that the image was finalized or unmapped.
-#[cfg(crabc_fixed_graph_dlfcn)]
-static FIXED_GRAPH_HANDLE_REFERENCES: [AtomicUsize; MAX_OBJECTS] =
-    [const { AtomicUsize::new(0) }; MAX_OBJECTS];
 
 /// Serializes the copied graph view with the one admitted runtime mapping
 /// transaction. The immutable siblings still use the same guard so the
 /// callback contract has one race-free implementation.
-#[cfg(any(crabc_fixed_graph_introspection, crabc_fixed_graph_dlfcn))]
-struct FixedGraphRuntimeGuard;
 
 
 
