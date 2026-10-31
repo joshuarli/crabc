@@ -546,9 +546,27 @@ def descriptor_runtime_plan(root,work,inputs,tools):
         ))
     return specs
 
+def conventional_record_offset(root,inputs):
+    """Read the merged conventional record's virtual address from libc bytes.
+
+    The installed link localizes the record, so it has no dynamic symbol for a
+    probe to resolve. The in-image offset is derived from the same `.symtab`
+    definition that `account_products` independently requires to be a private
+    88-byte writable object, and the live probe still validates every field.
+    """
+    path=product_paths(root,inputs)['candidate-shared']
+    found=Elf(path).symbols(CONVENTIONAL,dynamic=False)
+    require(len(found)==1,'merged conventional record symbol differs')
+    row=found[0]
+    require(row['type']=='OBJECT' and row['binding']=='LOCAL' and row['visibility']=='HIDDEN'
+            and row['size']==88 and row['section']>0 and row['value']>0,
+            'merged conventional record offset is not a private defined object')
+    return row['value']
+
 def plan(root,work,inputs,tools):
     m=lambda path:ordinary.mounted(root,path);p=lambda name:m(work/name)
     tool=lambda name:tools[name]['original']['path']; specs=[]
+    record_offset='%x'%conventional_record_offset(root,inputs)
     def add(label,argv,cwd='/workspace',**expected):
         specs.append({'label':label.replace('.','-').lower(),'argv':argv,'cwd':cwd,**expected})
     library=root/inputs['dynamic_product']['path']/'usr/lib';static=root/inputs['static_preparation']['primary']['path']/'usr/lib'
@@ -601,6 +619,8 @@ def plan(root,work,inputs,tools):
         if key!='candidate-static':add(key+'-relocations',[tool('readelf'),'-rW',m(path)])
     for cell in runtime_cells():
         mode=cell['mode'];argv=[tool('env'),'-i','CRABC_STARTUP=yes']
+        if mode_owner(mode)=='candidate' and 'static' not in mode:
+            argv.append('CRABC_CONVENTIONAL_RECORD_OFFSET='+record_offset)
         if cell['entry']=='process':argv.append(p(cell['name']))
         else:
             owner=mode_owner(mode)

@@ -450,6 +450,66 @@ int main(void) {
                            cwd=reader.ROOT,check=True,capture_output=True,text=True)
             subprocess.run([str(binary)],cwd=reader.ROOT,check=True,capture_output=True,text=True)
 
+    def test_probe_rejects_each_corrupted_conventional_record_field(self):
+        """The live conventional path must reject every mutated record field."""
+        parent=reader.ROOT/'.work/x86_64/crt-startup-development';parent.mkdir(parents=True,exist_ok=True)
+        with tempfile.TemporaryDirectory(dir=parent) as directory:
+            work=Path(directory);source=work/'conventional-record.c';binary=work/'conventional-record'
+            source.write_text(r'''
+#define CRABC_STARTUP_PROBE_WIRE_HARNESS 1
+#define EMPTY_ARRAYS 1
+#define main installed_crt_startup_probe_main
+#include "compat/x86_64/installed_crt_startup_probe.c"
+#undef main
+uintptr_t __stack_chk_guard;
+static const uintptr_t dtv[]={2,0,0};
+static struct conventional_snapshot record;
+static void valid(void) {
+    memset(&record,0,sizeof record);
+    record.magic=UINT64_C(0x43524142435f4331);
+    record.version=1; record.abi_size=88; record.process_mode=2; record.owner=1;
+    record.state=2; record.thread_pointer=(const unsigned char *)(uintptr_t)0x1000;
+    record.dtv=dtv; record.dtv_words=3; record.module_count=2; record.generation=1;
+    record.run_initial=0x2000; record.process_fini=0x3000;
+}
+static int valid_owned(void) {
+    valid(); record.process_mode=3; record.state=3;
+    record.thread_pointer=0; record.dtv=0; record.module_count=0; record.dtv_words=0;
+    record.run_initial=0; record.process_fini=0;
+    return conventional_record_valid(&record,0,0,1);
+}
+static int rejects(void) {
+    return !conventional_record_valid(&record,(uintptr_t)record.thread_pointer,(uintptr_t)record.dtv,0);
+}
+int main(void) {
+    valid();
+    if (!conventional_record_valid(&record,(uintptr_t)record.thread_pointer,(uintptr_t)record.dtv,0)) return 1;
+    valid(); record.magic=0; if (!rejects()) return 2;
+    valid(); record.version=2; if (!rejects()) return 3;
+    valid(); record.abi_size=72; if (!rejects()) return 4;
+    valid(); record.process_mode=3; if (!rejects()) return 5;
+    valid(); record.owner=2; if (!rejects()) return 6;
+    valid(); record.state=1; if (!rejects()) return 7;
+    valid(); record.reserved[0]=1; if (!rejects()) return 8;
+    valid(); record.generation=2; if (!rejects()) return 9;
+    valid(); record.thread_pointer=(const unsigned char *)0; if (!rejects()) return 10;
+    valid(); if (conventional_record_valid(&record,(uintptr_t)record.thread_pointer+8,(uintptr_t)record.dtv,0)) return 11;
+    valid(); record.dtv=0; if (!rejects()) return 12;
+    valid(); record.module_count=0; if (!rejects()) return 13;
+    valid(); record.run_initial=0; if (!rejects()) return 14;
+    valid(); record.process_fini=0; if (!rejects()) return 15;
+    if (!valid_owned()) return 16;
+    valid(); record.process_mode=3; record.state=2;
+    if (conventional_record_valid(&record,(uintptr_t)record.thread_pointer,(uintptr_t)record.dtv,1)) return 17;
+    valid(); record.state=2;
+    if (conventional_record_valid(&record,(uintptr_t)record.thread_pointer,(uintptr_t)record.dtv,1)) return 18;
+    return 0;
+}
+''',encoding='utf-8')
+            subprocess.run(['cc','-std=c11','-I',str(reader.ROOT),str(source),'-o',str(binary)],
+                           cwd=reader.ROOT,check=True,capture_output=True,text=True)
+            subprocess.run([str(binary)],cwd=reader.ROOT,check=True,capture_output=True,text=True)
+
     def test_probe_identifies_the_named_direct_main_by_its_own_code_load(self):
         """The source object anchors the direct main without auxv or name fallback."""
         parent=reader.ROOT/'.work/x86_64/crt-startup-development';parent.mkdir(parents=True,exist_ok=True)
@@ -1304,7 +1364,8 @@ int main(void) {
         tools={name:{'original':{'path':'/tool/'+name}} for name in (*reader.ordinary.TOOL_ROLES,'ar')}
         tools['chroot']['invocation']={}
         with patch.object(reader.ordinary,'validate_chroot_invocation',return_value='/usr/sbin/chroot'), \
-             patch.object(reader.compiler_helpers,'load_contract',return_value=helper_contract):
+             patch.object(reader.compiler_helpers,'load_contract',return_value=helper_contract), \
+             patch.object(reader,'conventional_record_offset',return_value=0x2a8):
             plan=reader.plan(root,work,inputs,tools)
         for compilation in [x for x in plan if x['label'].endswith('-compile')]:
             self.assertNotIn('-fPIC',compilation['argv'])
@@ -1351,8 +1412,18 @@ int main(void) {
         parent=checkout/'.work/tmp';parent.mkdir(parents=True,exist_ok=True)
         with tempfile.TemporaryDirectory(dir=parent) as directory:
             work=Path(directory)
-            with patch.object(reader.ordinary,'validate_chroot_invocation',return_value='/usr/sbin/chroot'):
+            with patch.object(reader.ordinary,'validate_chroot_invocation',return_value='/usr/sbin/chroot'), \
+                 patch.object(reader,'conventional_record_offset',return_value=0x2a8):
                 replay_plan=reader.plan(checkout,work,inputs,tools)
+            for mode in ('owned-pie','owned-non-pie','conventional-pie','conventional-non-pie'):
+                for entry in ('kernel','direct'):
+                    spec=next(item for item in replay_plan if item['label']==mode+'-normal-'+entry)
+                    self.assertIn('CRABC_CONVENTIONAL_RECORD_OFFSET=2a8',spec['argv'])
+            for mode in ('static','static-pie','default-pie','oracle-pie','oracle-non-pie'):
+                spec=next(item for item in replay_plan if item['label']==mode+'-normal-'+
+                          ('process' if 'static' in mode else 'kernel'))
+                self.assertFalse(any(argument.startswith('CRABC_CONVENTIONAL_RECORD_OFFSET=')
+                                     for argument in spec['argv']))
             for mode in direct_modes:
                 spec=next(item for item in replay_plan if item['label']==mode+'-normal-link')
                 raw=work/'raw';raw.mkdir(exist_ok=True)

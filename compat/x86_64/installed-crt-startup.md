@@ -63,9 +63,11 @@ checks that absence for both PIE and non-PIE, normal and empty arrays. At main,
 `dl_iterate_phdr` observes the exact main-image slots: owned handoff non-null
 and descriptor present, conventional and owned mains without an executable
 conventional slot, default CRT weak-null handoff, oracle neither. The merged
-libc binds the 88-byte conventional record in-image. Reaching the conventional
-transcript proves libc accepted the loader's READY record and ran its initial
-lifecycle; an owned transcript proves the loader published the owned state.
+libc binds the 88-byte conventional record in-image. The probe locates it by
+the loader object's symtab offset, then requires magic, version, ABI size,
+owner, generation, and zero reserved bytes. The conventional transcript also
+requires READY, non-null callbacks, and live `%fs:0`/DTV equality; an owned
+transcript proves only the decision was published as `STATE_OWNED`.
 The 32-byte owned carrier and in-image conventional snapshot preserve
 source-defined roles. Schema v3 added a separate private descriptor-handoff
 account: `dynamic-crabc-dynamic-attach.o` has exactly one weak, undefined
