@@ -26,6 +26,21 @@ use super::x86_64_general_initial_tls_state::{
     GeneralInitialTlsState, GeneralInitialTlsTransaction,
 };
 
+/// Adopt the main image's PT_INTERP path as the installed interpreter name.
+unsafe fn set_main_interpreter(base: u64, phdr: *const u8, phnum: usize) {
+    for index in 0..phnum {
+        let header = unsafe { phdr.add(index * 56) };
+        if unsafe { read_u32(header) } != 3 { continue; }
+        let address = unsafe { read_u64(header.add(16)) };
+        let size = unsafe { read_u64(header.add(32)) };
+        if size < 2 || !unsafe { virtual_range_in_load(phdr, phnum, address, size) } { return; }
+        let name = (base + address) as *const u8;
+        if unsafe { *name.add(size as usize - 1) } != 0 { return; }
+        unsafe { x86_64_library_search::main_interpreter(name); }
+        return;
+    }
+}
+
 /// Starts the topology-independent initial dependency transaction.
 ///
 /// # Safety
@@ -56,8 +71,10 @@ pub(super) unsafe fn run(sp: usize, ldso_base: usize) -> ! {
             (main, sp, entry)
         } else {
             if cfg!(crabc_hardened) && !hardened_main_identity(main_base, main_phdr, main_phnum) { fail(b"mainelf\n"); }
-            (parse_mapped(main_base, main_phdr, main_phnum, ObjectRole::Main, false, true)
-                .unwrap_or_else(|| fail(b"mainelf\n")), sp, main_entry)
+            let main = parse_mapped(main_base, main_phdr, main_phnum, ObjectRole::Main, false, true)
+                .unwrap_or_else(|| fail(b"mainelf\n"));
+            set_main_interpreter(main.base, main.phdr, main.phnum);
+            (main, sp, main_entry)
         };
         #[cfg(not(feature = "x86_64-owned-dynamic-runtime"))]
         let main = parse_mapped(main_base, main_phdr, main_phnum, ObjectRole::Main, false, true)
@@ -271,15 +288,20 @@ unsafe fn run_with_initial_tls(
             }
         };
         #[cfg(feature = "x86_64-owned-dynamic-runtime")]
-        let relocation = unsafe { super::x86_64_debugger::PreparedInitialDebugger::prepare(
-            &objects[..graph.object_count()]) }.and_then(|debugger| unsafe {
-                super::x86_64_general_relocation::relocate_initial_graph_with_debugger(graph, objects, &debugger)
-            });
+        let debugger = match unsafe { super::x86_64_debugger::PreparedInitialDebugger::prepare(
+            &objects[..graph.object_count()]) } {
+            Some(debugger) => debugger,
+            None => fail(b"debugger\n"),
+        };
+        #[cfg(feature = "x86_64-owned-dynamic-runtime")]
+        let relocation = unsafe {
+            super::x86_64_general_relocation::relocate_initial_graph_with_debugger(graph, objects, &debugger)
+        };
         #[cfg(not(feature = "x86_64-owned-dynamic-runtime"))]
         let relocation = unsafe { super::x86_64_general_relocation::relocate_initial_graph(graph, objects) };
         if relocation.is_none() {
             rollback_initial_tls_state(&mut state, GeneralInitialPreparationStage::Relocation);
-            return Err(b"reloc\n");
+            return Err(b"relocgraph\n");
         }
     }
     if state.mark_relocated().is_err() {
@@ -866,26 +888,29 @@ unsafe fn admit_interpreter_self(
         return Ok(Some(index));
     }
     if !unsafe { interpreter_soname_is_libc() } { return Ok(None); }
-    let interpreter = unsafe { x86_64_library_search::interpreter_name() };
-    let identity = match unsafe { FileStatus::of_path(interpreter.as_ptr()) } {
-        Ok(status) => status.identity().ok_or(())?,
-        Err(_) => return Err(()),
+    let interpreter = unsafe { x86_64_library_search::self_path() };
+    let identity = match unsafe { FileStatus::of_path(interpreter) } {
+        Ok(status) => match status.identity() { Some(identity) => identity, None => fail(b"selfstat\n") },
+        Err(_) => fail(b"selfstat\n"),
     };
     let base = super::interpreter_base();
     let header = base as *const u8;
     let phoff = usize::try_from(unsafe { read_u64(header.add(32)) }).ok().ok_or(())?;
     let phnum = unsafe { read_u16(header.add(56)) } as usize;
     let phdr = base.checked_add(phoff).ok_or(())? as *const u8;
-    let mut object = unsafe {
+    let mut object = match unsafe {
         parse_mapped(base as u64, phdr, phnum, ObjectRole::Library, false, true)
-    }.ok_or(())?;
+    } {
+        Some(object) => object,
+        None => fail(b"selfparse\n"),
+    };
     object.interpreter_self = true;
     // `_start` has already applied the merged image's packed RELR records.
     object.relr = core::ptr::null();
     object.relrsz = 0;
     let index = match unsafe { graph.admit_interpreter(identity) } {
         Ok(ObjectAdmission::New { index }) => index,
-        Ok(ObjectAdmission::Existing { .. }) | Err(_) => return Err(()),
+        Ok(ObjectAdmission::Existing { .. }) | Err(_) => fail(b"selfadmit\n"),
     };
     let fallback = super::x86_64_library_search::LoadedName::new(name);
     let Some(search_name) = canonical_self_name(identity).or(fallback) else { return Err(()); };
@@ -979,7 +1004,7 @@ unsafe fn load_initial_library(
                         let self_identity = graph.identity(index).ok_or(())?;
                         let canonical = canonical_libc_path(path.view().bytes());
                         if probe != self_identity && !canonical {
-                            return Err(());
+                            fail(b"libcidentity\n");
                         }
                         if canonical {
                             if let Some(retained) = objects.retain_name(path) {
@@ -1019,11 +1044,11 @@ unsafe fn load_initial_library(
         if let Some(self_index) = objects[..graph.object_count()].iter().position(|object| object.interpreter_self) {
             if graph.identity(self_index) != Some(identity) {
                 unmap_object(&object);
-                return Err(());
+                fail(b"libcidentity\n");
             }
         } else if unsafe { interpreter_soname_is_libc() } {
             unmap_object(&object);
-            return Err(());
+            fail(b"libcidentity\n");
         }
     }
     let index = match graph.admit_mapped(identity) {

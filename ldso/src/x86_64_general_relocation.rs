@@ -1053,7 +1053,10 @@ unsafe fn validate_initial_private_imports(
         && objects.get(canonical)?.interpreter_self
         && objects[0].main_crt_mode == MainCrtMode::Owned
         && super::x86_64_conventional_startup_v1::reserved();
-    (imports == 1 || merged_self).then_some(())
+    // A foreign conventional CRT has no private import; it reaches the
+    // loader's legacy dlsym constructor callback instead of the record.
+    let foreign_conventional = imports == 0 && objects[0].main_crt_mode == MainCrtMode::Conventional;
+    (imports == 1 || merged_self || foreign_conventional).then_some(())
 }
 
 /// Relocate only this transaction's runtime-new suffix. Existing mappings
