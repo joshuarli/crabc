@@ -1,9 +1,10 @@
 //! Linkage adapter from the shared pthread owner to retained loader TLS.
 //!
 //! The loader alone owns module templates, Variant-II placement, DTV and
-//! module-size tables. Libc owns only an opaque allocation token, released
-//! after the pthread owner proves CLONE_CHILD_CLEARTID and withdraws its
-//! registry entry. No FS installation or module discovery occurs here.
+//! module-size tables. Libc owns the enclosing worker mapping and an opaque
+//! allocation token, released after the pthread owner proves
+//! CLONE_CHILD_CLEARTID and withdraws its registry entry. No FS installation
+//! or module discovery occurs here.
 
 use core::ffi::c_int;
 use core::sync::atomic::{AtomicI32, AtomicUsize, Ordering};
@@ -117,9 +118,61 @@ pub(super) fn selected_initial_thread_id(pointer: *mut u8) -> Option<c_int> {
 
 pub(super) unsafe fn allocate_thread() -> Option<StaticInitialTlsBlock> {
     if !is_ready() { return None; }
-    let mut block = core::mem::MaybeUninit::uninit();
-    if unsafe { __crabc_x86_64_initial_tls_allocate(block.as_mut_ptr()) } != 0 { return None; }
-    Some(unsafe { block.assume_init() })
+    let mut block = StaticInitialTlsBlock {
+        mapping: core::ptr::null_mut(),
+        mapping_size: 0,
+        thread_pointer: core::ptr::null_mut(),
+        allocation_id: 0,
+    };
+    if unsafe { __crabc_x86_64_initial_tls_allocate(&mut block) } != 0 { return None; }
+    Some(block)
+}
+
+/// Reserved request span asking the loader for the exact page span of the
+/// current worker block. A live mapping span is always below `isize::MAX`.
+const WORKER_TLS_BLOCK_SIZE_QUERY: usize = usize::MAX;
+// The initial module population is immutable after startup, so one query per
+// process is sufficient. Later `dlopen` TLS lives in loader generation views,
+// never in a worker's initial block.
+static WORKER_TLS_BLOCK_SIZE: AtomicUsize = AtomicUsize::new(0);
+
+/// Return the page-rounded span one worker's initial TLS block needs.
+///
+/// The pthread owner reserves this span in its guarded worker mapping before
+/// the loader materializes the block there. A later `dlopen` cannot grow it.
+/// The span is always nonzero and page-rounded.
+pub(super) fn worker_allocation_size() -> Option<usize> {
+    let cached = WORKER_TLS_BLOCK_SIZE.load(Ordering::Acquire);
+    if cached != 0 { return Some(cached); }
+    if !is_ready() { return None; }
+    let mut request = StaticInitialTlsBlock {
+        mapping: core::ptr::null_mut(),
+        mapping_size: WORKER_TLS_BLOCK_SIZE_QUERY,
+        thread_pointer: core::ptr::null_mut(),
+        allocation_id: 0,
+    };
+    if unsafe { __crabc_x86_64_initial_tls_allocate(&mut request) } != 0 { return None; }
+    let size = request.mapping_size;
+    if size == 0 { return None; }
+    WORKER_TLS_BLOCK_SIZE.store(size, Ordering::Release);
+    Some(size)
+}
+
+/// Materialize one worker's initial TLS block inside a caller-owned span.
+///
+/// # Safety
+/// `region` must be readable/writable, page-aligned, at least `size` bytes,
+/// and released only after this token's exact-once release.
+pub(super) unsafe fn allocate_thread_in(region: *mut u8, size: usize) -> Option<StaticInitialTlsBlock> {
+    if region.is_null() || size == 0 { return None; }
+    let mut block = StaticInitialTlsBlock {
+        mapping: region,
+        mapping_size: size,
+        thread_pointer: core::ptr::null_mut(),
+        allocation_id: 0,
+    };
+    if unsafe { __crabc_x86_64_initial_tls_allocate(&mut block) } != 0 { return None; }
+    Some(block)
 }
 
 /// Caller must prove no thread retains this allocation (clear-child-TID and
