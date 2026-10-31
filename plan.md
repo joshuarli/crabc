@@ -765,12 +765,17 @@ owner decision.
   allocator-free remainder is still above 1.10 × musl, so the change may land
   only with an S4 startup-instruction lane and only if the combined startup
   rows meet 1.10 ×. Otherwise record the measured floor as a standing blocker.
-  D8's total judgement and D1's syscall attribution are unchanged. A
-  diagnostic profile of the allocator-free dynamic floor puts 58.7 % of sampled
-  loader instructions in `__crabc_x86_64_self_relocate` (300-exec run, one
-  merged DSO); the static floor is dominated by the static-TLS bootstrap
-  (`from_auxv`, `materialize`, `bootstrap_initial_thread`). Those are the S4
-  startup targets, subject to the same 1.10 × gate.
+  D8's total judgement and D1's syscall attribution are unchanged. The counts
+  route measures a 118,966-instruction drop, not the direct 169,278; the
+  post-change `startup` remainder is 132,328, which is the S4 budget basis.
+  A thread-creating no-allocation program initializes at its first
+  `pthread_create`, so a worker cannot become mimalloc's process main and free
+  the static main theap. A diagnostic profile of the allocator-free dynamic
+  floor puts 58.7 % of sampled loader instructions in
+  `__crabc_x86_64_self_relocate` (300-exec run, one merged DSO); the static
+  floor is dominated by the static-TLS bootstrap (`from_auxv`, `materialize`,
+  `bootstrap_initial_thread`). Those are the S4 startup targets, subject to the
+  same 1.10 × gate.
 - **D11 — `dlopen_graph`: attribute before opening a loader lane.** S5's
   2.6403× row is 303,603 startup instructions against musl's 114,988, while
   the dlopen operation itself is 15,582 against 15,592. The gap is the eager
@@ -1117,14 +1122,20 @@ passed.
 | S1.4 | `10de7c2d9` | `SYSCALL_LIMIT_FACTOR = 1`, `INSTRUCTION_LIMIT_RATIO = 1.10`; one definition | `test_performance_release_gate` 23 pass | none |
 | S1.5 | (runs, no commit) | 58 dynamic-PIE rows: 0 pass, 46 fail, 11 nondeterministic, 1 unavailable; 43 fails are syscall-only | 4 `counts` invocations exit 0 | static-PIE rows unavailable; `startup` row nondeterministic |
 | S2 | `e5118b5da`, `124606078` | 942→701 commands (budget 720); 12,817→10,593 dispatcher lines (budget 11,000); Python files 572→566 (budget 566); lines 271,148→269,998 (budget 270,000) | parity ledger PASS; test_runner 92 pass; 12 dependent header modules pass; receipts byte-identical for all seven symbols; CLI replayed on the installed product | none |
-| S3a (libc) | `d6cf5c2ab` | libc features 40→25 (budget 25); shipped `libc.a` 2488 names / 1,540,483 section bytes identical; `libc.so` 1661 exports and section sizes identical; default-archive ratchet +44, exactly the folded names | 15 folded-family commands pass; legacy-misc/des-compat pass; both product suites pass; parity ledger PASS | ldso half in `lane/s3a-ldso-migrate` under D7 |
+| S3a (libc) | `d6cf5c2ab` | libc features 40→25 (budget 25); shipped `libc.a` 2488 names / 1,540,483 section bytes identical; `libc.so` 1661 exports and section sizes identical; default-archive ratchet +44, exactly the folded names | 15 folded-family commands pass; legacy-misc/des-compat pass; both product suites pass; parity ledger PASS | none |
+| S3a (ldso) | `b7c9ab7ad` | features 7→1 (budget 2); x86 product lines 12,175→10,941 (budget 11,000, D15); total 15,377 with AArch64 4,436 preserved separately; dispatcher 678 (budget 720); 71/71 cases on the installed product; `libc.so`/loader exports 1661 identical | prepare PASS (160 loader tests); four installed-product case families PASS; static 72-path PASS; parity PASS; campaign-status 0; cargo check; structure PASS | none; full counts pending |
 | S3b | `f7dcaafb5` | one ELF (same inode at both paths); startup syscalls 25→12 = 7 non-allocator (musl 9) + 5 allocator-attributed, budget 14; instructions 238,686→237,541 (empty env 116,582, so 120,350 is environment-dependent allocator work); bridges 44→30; 1661 exports, 0 undefined, 0 loader imports | full F roster PASS: loader, static 72-path, dlopen/TLS, both interposition suites, cancellation, hardened, identity 5 cases, CRT evidence, loader debug; debug payload merged | startup instruction ratio still ~6.8× musl (dominated by the frozen allocator), so the instruction dimension is not met |
 | S4 instructions | `b704eec12` | memcpy_16k_aligned 1.4375→0.8750; memcpy_64_aligned 1.1875→0.8750; stdio_format_parse 1.4778→1.0997 (pass); no measured row worse | libc-memory PASS; owned-stdio PASS; counts route on the merged product; rust-check | 256k rows read nondeterministic (unchanged); stdio margin 2.4 instructions |
 | S4 startup syscalls | `4b897c553` | judged startup syscalls 14→8 against musl's 11 with no per-name excess; whole 19→13; allocator-attributed 5 unchanged | prepare, identity 5 cases, dlopen PIE/non-PIE, hardened, pthread-exit, CRT evidence tests | none; startup row still fails on instructions (D8) |
 | S4 static TLS | `b9f9554df` | static startup syscalls 10→9 (budget 9): the 767-byte initial-TLS `mmap` is gone, the main thread installs from 1,024 bytes of in-image `.bss`; judged non-allocator 5→4 (musl 4); startup instructions 55,184→55,171 (env -i); `.bss` +1,024 | new in-image TLS audit fails on the old product and passes on installed ET_EXEC and static-PIE; merged-tip `owned-static-sysroot` 72-path PASS; rust-check libc/crt; parity ledger PASS | focused `libc-*-static-tls` runners fail identically on the unchanged base (pre-existing mold/PLT harness rot), so the static product suite is the evidence |
-| D10 lazy allocator | `27ee8384c` (lane) | `startup` 251,294→132,326 instructions, 3.5852→1.8879; `dlopen_graph` 303,601→184,634 startup, 2.6403→1.6057; allocator-attributed syscalls 5→0; static no-malloc hello 104,030→2,751 instructions and 14→5 syscalls | counts route matched-LLVM-23 on the lane product; lazy-init probe matrix across static/static-PIE/dynamic PIE and non-PIE; no row measured worse | neither startup instruction row meets 1.10; the residual non-allocator path is the S4 startup lane |
+| D10 lazy allocator | `26a2cb0cb` | `startup` 251,294→132,328 instructions, 3.5852→1.8879 (measured drop 118,966); `dlopen_graph` 303,601→184,635 startup, 2.6403→1.6057; allocator-attributed syscalls 5→0; static no-malloc hello 104,030→2,751 instructions and 14→5 syscalls | counts route matched-LLVM-23; lazy-init probe matrix across static/static-PIE/dynamic PIE and non-PIE; static 28-job and 72-path suite PASS; startup-errno 72 lazy cases PASS | neither startup instruction row meets 1.10; the residual 132,328/184,635 is the S4 startup lane |
 | S5 hardened evidence | `02d7ffed4` | harness gap: the probe has required `CRABC_CONVENTIONAL_RECORD_OFFSET` since `1469f9e51`; the hardened runner omitted it, so the owned startup exited 116 before emitting output | `hardened-runtime` PASS on a fresh current-source compatibility product; startup probe tests 37 pass / 11 skip | none |
 | S5 (attempt) | `d398d3ec0` rejected | **FAILED.** 58-row counts: 49 pass, 2 fail (`dlopen_graph` 2.639; `startup` 3.585 with judged syscalls 8 vs 11), 6 nondeterministic, 1 unavailable. Structure 5/7: libc 25, dispatcher 701, dispatcher lines 10,593, Python 566 / 269,998; ldso 7 features and 19,442 lines unmet. Static startup syscalls 10 vs 9. | products rebuilt at the acceptance commit; dynamic prepare, static 72-path, identity, dlopen, owned-stdio and memory suites PASS; counts report; hardened was a harness gap fixed in `02d7ffed4` | budgets unmet; startup instructions under D10; `dlopen_graph` under D11; ldso under D7; static 759-byte mmap under D12; CPU/memory under D14 (host load 20-27) |
+
+Follow-up rows S3a-ldso, D10 and S4 static TLS are landed, and the hardened
+gap is fixed. The remaining S5 failures are the startup instruction ratio and
+`dlopen_graph`, both waiting on the S4 startup lane, plus the quiet-host CPU
+and memory rerun.
 
 ### Owner decisions after S5 (2026-10-31, resumed)
 
@@ -1138,11 +1149,11 @@ and a lane:
    cannot pass; it lands with an S4 startup-instruction lane and the combined
    rows decide S5. No instruction exemption is taken. The lazy-init lane
    measures `startup` 3.5852→1.8879 and `dlopen_graph` 2.6403→1.6057; the
-   remaining 62,231/69,644 instructions are the S4 target, led by
+   remaining 132,328/184,635 instructions are the S4 target, led by
    `__crabc_x86_64_self_relocate`.
-2. **ldso — D7 unchanged.** Migrate the 71 cases to the installed product, then
-   delete the three non-product features. No budget relaxation. Lane
-   `lane/s3a-ldso-migrate`.
+2. **ldso — D7 done at `b7c9ab7ad`.** 71/71 cases run through the installed
+   product; features 7→1; x86 product lines 10,941 against the D15 budget of
+   11,000; parity and campaign-status pass.
 3. **`dlopen_graph` — D11.** Attribute first: its operation delta is already
    at parity (15,582 vs 15,592 instructions) and the 2.64× row is startup.
    Re-run after D10; open a loader lane only for a residual >1.10 ×, with the
@@ -1151,10 +1162,10 @@ and a lane:
    installs from in-image `.bss`; static startup is 9 calls against the 9
    budget, with the allocator-attributed five unchanged. Oversized templates
    and workers retain the private mapping.
-5. **Hardened exit 116 — D13.** Fixed as a harness gap in `02d7ffed4`: the
-   evidence probe had required `CRABC_CONVENTIONAL_RECORD_OFFSET` since
-   `1469f9e51` and the hardened runner never passed it. `hardened-runtime`
-   passes on a fresh current-source compatibility product.
+5. **Hardened exit 116 — D13 done in `02d7ffed4`.** The evidence probe had
+   required `CRABC_CONVENTIONAL_RECORD_OFFSET` since `1469f9e51` and the
+   hardened runner never passed it. `hardened-runtime` passes on a fresh
+   current-source compatibility product.
 
 CPU and memory remain deferred under D14 until the host satisfies the existing
 load policy. The 2026-10-29 S0 questions were already answered as D6–D8; their
