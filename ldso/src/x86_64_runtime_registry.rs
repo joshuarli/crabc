@@ -479,7 +479,7 @@ static INITIAL_CONSTRUCTOR_TID: InitialConstructorTid = InitialConstructorTid::n
 /// The private libc startup attachment publishes its validated initial-task
 /// TID before any constructor can run. Reject a duplicate or late handoff so
 /// no later caller can rewrite the ownership token used by this queue.
-#[no_mangle]
+#[export_name = "__crabc_x86_64_runtime_publish_initial_tid"]
 pub unsafe extern "C" fn runtime_publish_initial_tid(tid: i32) -> i32 {
     if INITIAL_CONSTRUCTOR_TID.publish(tid) { 0 } else { -1 }
 }
@@ -626,7 +626,7 @@ pub(super) unsafe fn finalize_process() {
 /// Acquire musl's graph -> init/fini lock order before libc's internal fork
 /// owners. No callback runs under the graph lock. A successful positive TID
 /// is the private transaction token; exactly one completion must follow.
-#[no_mangle]
+#[export_name = "__crabc_x86_64_runtime_fork_prepare"]
 pub unsafe extern "C" fn runtime_fork_prepare(callback_lock: i32) -> i32 {
     let guard = RuntimeGuard::acquire();
     let thread_pointer = unsafe { read_thread_pointer() } as *mut u8;
@@ -643,7 +643,7 @@ pub unsafe extern "C" fn runtime_fork_prepare(callback_lock: i32) -> i32 {
 /// Complete the exact lock pair retained by runtime_fork_prepare. Child repair
 /// changes only copied process ownership: immutable graph/TLS provenance and
 /// every surviving FS-relative field remain untouched.
-#[no_mangle]
+#[export_name = "__crabc_x86_64_runtime_fork_complete"]
 pub unsafe extern "C" fn runtime_fork_complete(parent_tid: i32, child: i32, callback_lock: i32) {
     unsafe { super::x86_64_runtime_lock::AllocationGuard::complete_fork(); }
     if child != 0 {
@@ -1080,7 +1080,7 @@ pub(super) fn runtime_function(name: &[u8]) -> Option<u64> {
 /// Private libc calls provide valid C strings, a writable diagnostic record and
 /// disable deferred cancellation over loader mutation and callback execution.
 /// A null result with a zero diagnostic kind cannot occur for a named file.
-#[no_mangle]
+#[export_name = "__crabc_x86_64_runtime_open"]
 pub unsafe extern "C" fn runtime_open(filename: *const u8, flags: i32, diagnostic: *mut RuntimeDiagnostic) -> *mut c_void {
     if diagnostic.is_null() { return core::ptr::null_mut(); }
     let diagnostic = unsafe { &mut *diagnostic };
@@ -1119,7 +1119,7 @@ unsafe fn validated_handle(registry: &RuntimeRegistry, handle: *mut c_void) -> O
     None
 }
 
-#[no_mangle]
+#[export_name = "__crabc_x86_64_runtime_close"]
 pub unsafe extern "C" fn runtime_close(handle: *mut c_void) -> i32 {
     let _guard = RuntimeGuard::acquire();
     let registry = unsafe { &*REGISTRY.0.get() };
@@ -1144,7 +1144,7 @@ unsafe fn dependency_scope<'a>(registry: &RuntimeRegistry, root: *mut RuntimeObj
     unsafe { (*root).dependency_scope.as_ref() }.map(LoaderBuffer::as_slice)
 }
 
-#[no_mangle]
+#[export_name = "__crabc_x86_64_runtime_symbol"]
 pub unsafe extern "C" fn runtime_symbol(handle: *mut c_void, name: *const u8, caller: usize, error: *mut i32) -> *mut c_void {
     if error.is_null() || name.is_null() { return core::ptr::null_mut(); }
     unsafe { *error = 0; }
@@ -1265,7 +1265,7 @@ pub unsafe extern "C" fn runtime_address_info(address: usize, output: *mut Addre
     1
 }
 
-#[no_mangle]
+#[export_name = "__crabc_x86_64_runtime_information"]
 pub unsafe extern "C" fn runtime_information(handle: *mut c_void, output: *mut *mut c_void) -> i32 {
     if output.is_null() { return ERROR_HANDLE; }
     let _guard = RuntimeGuard::acquire();
@@ -1283,7 +1283,7 @@ pub unsafe extern "C" fn runtime_information(handle: *mut c_void, output: *mut *
 /// and runtime_close never unlinks, unmaps, or rewrites their names. Initial
 /// objects borrow the permanent GeneralInitialLoaderState. The stack info is
 /// callback-local; its thread-owned TLS pointer has a separate lifetime.
-#[no_mangle]
+#[export_name = "__crabc_x86_64_runtime_iterate"]
 pub unsafe extern "C" fn runtime_iterate(callback: ProgramHeaderCallback, data: *mut c_void) -> i32 {
     let mut node = {
         let _guard = RuntimeGuard::acquire();
