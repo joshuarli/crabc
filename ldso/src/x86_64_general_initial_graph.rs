@@ -113,17 +113,10 @@ pub(crate) unsafe fn self_identity_matches(candidate: ObjectIdentity) -> bool {
 /// A copied loader under another basename falls back to identity resolution.
 #[cfg(feature = "x86_64-owned-dynamic-runtime")]
 unsafe fn installed_self_canonical_name() -> Option<super::x86_64_library_search::LoadedName> {
-    let name = unsafe { x86_64_library_search::self_name() };
-    let prefix = unsafe { x86_64_library_search::installation_prefix() };
-    let lib = b"/lib/";
-    if name.len() <= prefix.len() + lib.len()
-        || !name.starts_with(prefix)
-        || &name[prefix.len()..prefix.len() + lib.len()] != lib
-    { return None; }
-    let basename = &name[prefix.len() + lib.len()..];
-    if basename != b"ld-crabc-x86_64.so.1" && basename != b"ld-crabc-x86_64-hardened.so.1" {
+    if !unsafe { installed_self_name_is_canonical() } {
         return None;
     }
+    let prefix = unsafe { x86_64_library_search::installation_prefix() };
     let suffix = b"/usr/lib/libc.so";
     let length = prefix.len().checked_add(suffix.len())?;
     let mut path = [0u8; 4096];
@@ -131,6 +124,24 @@ unsafe fn installed_self_canonical_name() -> Option<super::x86_64_library_search
     path[..prefix.len()].copy_from_slice(prefix);
     path[prefix.len()..length].copy_from_slice(suffix);
     super::x86_64_library_search::LoadedName::new(&path[..length])
+}
+
+/// Whether the interpreter's own name is the installed canonical one, so its
+/// libc alias needs no stat and no search. A copied or renamed loader fails
+/// this structural proof and keeps the conservative override probe below.
+#[cfg(feature = "x86_64-owned-dynamic-runtime")]
+unsafe fn installed_self_name_is_canonical() -> bool {
+    let name = unsafe { x86_64_library_search::self_name() };
+    let prefix = unsafe { x86_64_library_search::installation_prefix() };
+    let lib = b"/lib/";
+    if name.len() <= prefix.len() + lib.len()
+        || !name.starts_with(prefix)
+        || &name[prefix.len()..prefix.len() + lib.len()] != lib
+    { return false; }
+    let basename = &name[prefix.len() + lib.len()..];
+    basename == b"ld-crabc-x86_64.so.1"
+        || basename == b"ld-crabc-x86_64-hardened.so.1"
+        || basename == b"ld-musl-x86_64.so.1"
 }
 
 /// Starts the topology-independent initial dependency transaction.
@@ -1079,27 +1090,35 @@ unsafe fn load_initial_library(
         || name == unsafe { x86_64_library_search::interpreter_name() }
         || unsafe { canonical_libc_path(name) };
     if self_name {
+        // Reserved names, the interpreter's own path and the installed libc
+        // aliases name this image by construction. The installed product's
+        // canonical path is its structural identity, so startup admits it
+        // without a search or a stat, as musl's load_library returns `ldso`
+        // for a reserved name. A copied or renamed interpreter has no such
+        // proof and keeps the conservative override probe.
         if let Some(index) = unsafe { admit_interpreter_self(graph, objects, requester, name, short_name) }? {
-            let override_active = x86_64_library_search::search_path_override()
-                || objects.get(0).is_some_and(|object| !object.runpath.is_null());
-            if override_active {
-                let mut ancestor = requester;
-                let chain = core::iter::from_fn(|| {
-                    let object = objects.get(ancestor?)?;
-                    ancestor = object.needed_by;
-                    Some(object)
-                });
-                if let Ok((fd, path)) = x86_64_library_search::open(name, chain) {
-                    let status = FileStatus::of_fd(fd).ok();
-                    syscall1(SYS_CLOSE, fd);
-                    if let Some(probe) = status.and_then(|status| status.identity()) {
-                        let canonical = canonical_libc_path(path.view().bytes());
-                        if !unsafe { self_identity_matches(probe) } && !canonical {
-                            fail(b"libcidentity\n");
-                        }
-                        if canonical {
-                            if let Some(retained) = objects.retain_name(path) {
-                                objects[index].search_name = retained;
+            if !unsafe { installed_self_name_is_canonical() } {
+                let override_active = x86_64_library_search::search_path_override()
+                    || objects.get(0).is_some_and(|object| !object.runpath.is_null());
+                if override_active {
+                    let mut ancestor = requester;
+                    let chain = core::iter::from_fn(|| {
+                        let object = objects.get(ancestor?)?;
+                        ancestor = object.needed_by;
+                        Some(object)
+                    });
+                    if let Ok((fd, path)) = x86_64_library_search::open(name, chain) {
+                        let status = FileStatus::of_fd(fd).ok();
+                        syscall1(SYS_CLOSE, fd);
+                        if let Some(probe) = status.and_then(|status| status.identity()) {
+                            let canonical = canonical_libc_path(path.view().bytes());
+                            if !unsafe { self_identity_matches(probe) } && !canonical {
+                                fail(b"libcidentity\n");
+                            }
+                            if canonical {
+                                if let Some(retained) = objects.retain_name(path) {
+                                    objects[index].search_name = retained;
+                                }
                             }
                         }
                     }
