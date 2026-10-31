@@ -1279,11 +1279,16 @@ unsafe fn read_byte_held(stream: *mut StandardStream) -> c_int {
         return EOF;
     }
     unsafe { orient_byte(stream); }
-    if !unsafe { prepare_read(stream) } {
-        return EOF;
-    }
-    unsafe { mark_io_started(stream) };
     unsafe {
+        // musl's getc_unlocked fast path: a byte already in the read region
+        // needs neither the direction transition nor the pending-output flush
+        // that __toread performs before a refill.
+        let buffered = (*stream).direction == BufferDirection::Read
+            && (*stream).read_position < (*stream).read_end;
+        if !buffered && !prepare_read(stream) {
+            return EOF;
+        }
+        mark_io_started(stream);
         if (*stream).read_position < (*stream).read_end {
             let byte = (*stream).read_position.read();
             (*stream).read_position = (*stream).read_position.add(1);
