@@ -542,9 +542,11 @@ class Collector:
                                      'chroot', execution_root, *call], probe, binary)
                         if probe in ('debug', 'interpose'):
                             suffix = 'trace' if probe == 'debug' else 'interpose-trace'
+                            trace_provider = loader if lane == 'candidate' else provider
                             self.execute(f'{lane}-{mode}-{entry}-{suffix}', ['timeout', '25', observer, execution_root,
                                 'kernel' if entry == 'kernel' else interpreter, '/consumer', str(Elf(loader).entry),
-                                str(hook['value']), provider, str(Elf(provider).symbol('_dl_debug_addr')['value'])], 'debug', binary)
+                                str(hook['value']), trace_provider,
+                                str(Elf(trace_provider).symbol('_dl_debug_addr')['value'])], 'debug', binary)
                     require(digest(binary) == digest(execution_root / 'consumer'), 'execution changed the retained consumer copy')
             for mode in ('static', 'static-pie'):
                 binary = self.output / f'{lane}-{mode}-lifecycle'
