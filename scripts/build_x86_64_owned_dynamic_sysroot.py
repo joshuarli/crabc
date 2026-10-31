@@ -928,21 +928,10 @@ def build_debug_payload(output: Path, stage: Path, *, allocator_backend: str, li
                     f"{helper_policy['linker_option']},{private_core.name}", "--gc-sections",
                     *debug_shared_libc_compiler_helper_root_arguments(),
                     "-z", "relro", "-z", "now", "-z", "noexecstack", "-z", "text",
+                    "-z", "pack-relative-relocs",
                     *(str(objects / name) for name in selected), str(private_core),
                     "--whole-archive", str(builtins), "--no-whole-archive",
                     "-o", str(library / "libc.so")]
-    run(libc_command)
-    (library / "libc.so").chmod(0o755)
-    allowed = {"__crabc_x86_64_initial_tls_allocate", "__crabc_x86_64_initial_tls_release",
-               "__crabc_x86_64_resolve_initial_tls", "__crabc_x86_64_reset_current_tls_v1",
-               "__crabc_x86_64_reset_current_tls_v2", "__crabc_x86_64_loader_conventional_startup_v1",
-               "__crabc_x86_64_runtime_publish_initial_tid", "__crabc_x86_64_runtime_fork_prepare",
-               "__crabc_x86_64_runtime_fork_complete", "__crabc_x86_64_runtime_open", "__crabc_x86_64_runtime_symbol",
-               "__crabc_x86_64_runtime_close", "__crabc_x86_64_runtime_address", "__crabc_x86_64_runtime_information",
-               "__crabc_x86_64_runtime_iterate"}
-    imports = elf_imports(nm, library / "libc.so")
-    if imports - allowed:
-        raise common.BuildError(f"debug shared libc has unexpected unresolved symbols: {sorted(imports - allowed)}")
     crt = inputs["crt_root"]
     for name in ("crt1.o", "Scrt1.o", "crti.o", "crtn.o"):
         common.copy_artifact(crt / name, library / name)
@@ -991,18 +980,32 @@ def build_debug_payload(output: Path, stage: Path, *, allocator_backend: str, li
                       *(argument for cfg in cfgs for argument in ("--cfg", cfg)),
                       str(ROOT / "ldso/src/lib.rs"), "-o", str(loader_object)]
     run(loader_command)
-    private_exports = stage / "loader-private.exports"
-    private_exports.write_text("{ local: _R*; _ZN*; };\n")
+    localized_loader = stage / "debug-loader-localized.o"
+    common.copy_artifact(loader_object, localized_loader)
+    run(["/usr/bin/objcopy", "--localize-symbol=memcpy", "--localize-symbol=memset",
+         "--localize-symbol=memmove", "--localize-symbol=memcmp", "--localize-symbol=bcmp",
+         "--localize-symbol=__tls_get_addr", "--localize-symbol=_dl_debug_state",
+         str(localized_loader)])
+    private_exports = stage / "debug-merged-private.exports"
+    private_exports.write_text("{\n  local:\n    __crabc_x86_64_*;\n};\n", encoding="utf-8")
+    insert_at = libc_command.index("-o")
+    libc_command[insert_at:insert_at] = [
+        str(localized_loader), "-e", "_start", "--no-undefined",
+        f"--version-script={private_exports}",
+    ]
+    run(libc_command)
+    (library / "libc.so").chmod(0o755)
+    imports = elf_imports(nm, library / "libc.so")
+    if imports:
+        raise common.BuildError(f"debug shared libc has unresolved symbols: {sorted(imports)}")
     loader_artifact = hardening_profile.interpreter.lstrip("/")
     interpreter = output / loader_artifact
-    interpreter.parent.mkdir()
-    loader_link = [str(linker), "-shared", "-Bsymbolic", "--hash-style=sysv", "--eh-frame-hdr", "-e", "_start", "--no-undefined",
-                   "-z", "now", "-z", "noexecstack", f"--version-script={private_exports}",
-                   f"--exclude-libs={private_core.name},{helper_policy['archive']}", str(loader_object),
-                   str(private_core), str(builtins),
-                   "-o", str(interpreter)]
-    run(loader_link)
+    interpreter.parent.mkdir(parents=True, exist_ok=True)
+    os.link(library / "libc.so", interpreter)
     interpreter.chmod(0o755)
+    interpreter_details = interpreter.lstat()
+    if not stat.S_ISREG(interpreter_details.st_mode) or interpreter_details.st_ino != (library / "libc.so").lstat().st_ino:
+        raise common.BuildError("debug installed interpreter is not the merged libc inode")
     for alias, target in hardening_profile.aliases.items():
         (output / alias).symlink_to(target)
     metadata = output / "share/crabc"
@@ -1022,7 +1025,11 @@ def build_debug_payload(output: Path, stage: Path, *, allocator_backend: str, li
         "main_source_core_dependencies": sorted(dependencies), "main_source_core_link_command": support_command,
         "attachment_compile_commands": attachment_commands, "attachment_link_command": attachment_command})
     common.write_json(metadata / "loader.provenance.json", {"build_profile": "debug", "target": common.TARGET,
-        "compiler_command": loader_command, "link_command": loader_link,
+        "compiler_command": loader_command, "link_command": libc_command,
+        "merged_link": {"argv": libc_command, "output_sha256": common.sha256_file(interpreter)},
+        "compiler_object": {"path": "$BUILD/debug-loader-localized.o",
+                            "sha256": common.sha256_file(localized_loader),
+                            "size": localized_loader.lstat().st_size},
         "compiler_dependencies": loader_dependency_provenance(loader_dependencies, loader_object, object_dependencies=True),
         "feature_configuration": _source_file_identity(ROOT / "ldso/build.rs", "loader feature configuration"),
         "source_core_archive_sha256": common.sha256_file(core), "source_helper_archive_sha256": common.sha256_file(builtins),
