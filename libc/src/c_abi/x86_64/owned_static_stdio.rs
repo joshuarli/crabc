@@ -370,10 +370,12 @@ impl StreamGuard {
     pub(crate) unsafe fn acquire(stream: *mut StandardStream) -> Self {
         // musl __fopen_rb_ca assigns lock=-1 to its exclusively borrowed
         // stack FILE. This sentinel is never set on a public stream.
-        let private_reader = !stream.is_null()
-            && unsafe { (*stream).holder.load(Ordering::Relaxed) == NEVER_LOCKED };
-        let acquired = !private_reader && unsafe { lock_internal(stream) };
-        Self(stream, acquired)
+        let holder = unsafe { (*stream).holder.load(Ordering::Relaxed) };
+        if holder == NEVER_LOCKED { return Self(stream, false); }
+        let current = current_holder();
+        if holder == current { return Self(stream, false); }
+        unsafe { lock_stream(stream, current); }
+        Self(stream, true)
     }
 }
 impl Drop for StreamGuard {
@@ -385,15 +387,21 @@ fn current_holder() -> usize {
     super::pthread_identity::current_thread_pointer() as usize
 }
 
+unsafe fn lock_stream(stream: *mut StandardStream, holder: usize) {
+    unsafe {
+        futex_lock(&(*stream).lock);
+        (*stream).holder.store(holder, Ordering::Relaxed);
+        initialize_buffer(stream);
+    }
+}
+
 // Returns false when the calling task already holds the lock (musl's
 // recursive __lockfile result 0); the caller must then not unlock.
 unsafe fn lock_internal(stream: *mut StandardStream) -> bool {
     unsafe {
         let holder = current_holder();
         if (*stream).holder.load(Ordering::Relaxed) == holder { return false; }
-        futex_lock(&(*stream).lock);
-        (*stream).holder.store(holder, Ordering::Relaxed);
-        initialize_buffer(stream);
+        lock_stream(stream, holder);
         true
     }
 }
