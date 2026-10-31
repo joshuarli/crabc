@@ -878,7 +878,26 @@ crabc-rs 14, builtins 1, unwinder 1.
 | Distinct report formats | 22 |
 | `RuntimeV1` fields | 30 |
 | Symbols `libc.so` imports from the loader | 14 (13 undefined + 1 weak object) |
-| Process-state owners | **not enumerated** (S0.4 open; see Next) |
+| Process-state owners | see below |
+
+Process-state owners (S0.4; x86-64 roots):
+
+| State | Defining file |
+| --- | --- |
+| errno | `libc/src/c_abi/x86_64/errno.rs` (`%fs` slot) |
+| initial TLS block / DTV | `ldso/src/x86_64_general_initial_tls_state.rs`, `ldso/src/x86_64_initial_worker_tls.rs` allocate; `libc/src/c_abi/x86_64/dynamic_tls.rs` views the DTV; `libc/src/c_abi/x86_64/static_tls.rs` bootstraps the static form |
+| thread identity | `libc/src/c_abi/x86_64/pthread_identity.rs` (`%fs:0`), `pthread_create_join.rs` (worker state) |
+| stdio | `libc/src/c_abi/x86_64/stdio_standard.rs` (+ `owned_static_stdio.rs`) |
+| loader graph / runtime DSOs | `ldso/src/x86_64_general_initial_loader_state.rs`, `ldso/src/x86_64_runtime_registry.rs` |
+| environment | `libc/src/c_abi/x86_64/environment.rs`; `environment_runtime.rs` behind `x86-environment-runtime` |
+| atexit / exit | `libc/src/c_abi/x86_64/process_exit.rs` |
+| locale | `libc/src/c_abi/x86_64/locale_objects.rs`, `locale_multibyte.rs` |
+| signal | `libc/src/c_abi/x86_64/signal_control.rs` |
+
+Two states have two live definitions: the initial TLS generation (loader-owned
+block) is mirrored by libc's DTV view, and loader graph state is mirrored in
+`RuntimeV1` (`loader_snapshot`, `loader_information`). Both are S3b's target.
+The environment pair is feature-selected, so only one is live per product.
 
 ### Linked footprint (`llvm-size -A`)
 
@@ -1004,7 +1023,7 @@ the budgets above. `allocator-attributed` costs are listed, never passed.
 
 | Step | Merged at | Numbers vs budget | Checks | Blockers |
 | --- | --- | --- | --- | --- |
-| S0 | `0780439b3` | table above; nothing measured against it yet | both sysroot builds PASS; counts reproducible ≤0.0017 %, linear ≤0.0026 % | process-state owners not enumerated |
+| S0 | `0780439b3` | table above; nothing measured against it yet | both sysroot builds PASS; counts reproducible ≤0.0017 %, linear ≤0.0026 % | none |
 | S1.1/S1.2 | `0aef1d890` (`90dd65bee`) | perf 7.1.5 in image; clang 23.1.4 matches rustc LLVM 23.1.1; matched musl installed at `/opt/musl-clang-1.2.6` | image build; `test_core_image_dispatch` 11 pass; `musl-oracle` PASS | none |
 | S1.3 | `ac87382e8` (`0780439b3`) | `perf-c counts` development route; object-once/dual-link reused; no new runner | `test_run_x86_64` 41 pass 1 skip; `test_x86_64_evidence` 46 pass | static-PIE has no counts path; `startup` row nondeterministic (musl trials 85,712/85,731/85,730 = 0.022 %, direct musl is deterministic, so the launcher path is implicated) |
 | S1.4 | `10de7c2d9` | `SYSCALL_LIMIT_FACTOR = 1`, `INSTRUCTION_LIMIT_RATIO = 1.10`; one definition | `test_performance_release_gate` 23 pass | none |
