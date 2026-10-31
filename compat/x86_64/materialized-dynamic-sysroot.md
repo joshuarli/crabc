@@ -326,10 +326,13 @@ buffered file I/O and ordinary-exit flushing. Its stdout equals pinned musl
 1.2.6. The paired static and dynamic builders compile the accepted
 `libmimalloc-sys` 0.1.49 mimalloc v3.3.2 backend with
 `MI_PRIM_HAS_PROCESS_ATTACH=1`. That suppresses its C-owned implicit
-attach/detach entries only because the same Cargo build selects exactly one
-private local-data Rust `.init_array` and `.fini_array` entry in the libc image. Each
-entry calls the matching upstream automatic process operation and restores the
-incoming application `errno`: allocator probes of
+attach/detach entries only because the same Cargo build selects one private
+local-data Rust initializer anchor and one `.fini_array` finalizer entry in the
+libc image. The initializer runs on the first allocating entry, or on the
+initial thread's first `pthread_create`, calls the matching upstream automatic
+process operation, and restores the incoming application `errno`; the
+finalizer does the matching done operation. A single-threaded program that
+never allocates performs no allocator work at startup: allocator probes of
 `/proc/sys/vm/overcommit_memory` or sysfs can otherwise leave `ENOENT` in an
 intentionally empty chroot. The builder rejects a missing or duplicate C/Rust
 profile or lifecycle entry and attests the resulting profile in libc

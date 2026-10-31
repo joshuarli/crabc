@@ -45,9 +45,9 @@ weak/global binding.
 
 The lifecycle source check keeps `_mi_auto_process_init` and
 `_mi_auto_process_done` private. It binds their zero-argument `extern "C"`
-declarations, the corresponding zero-argument callbacks, and the typed
-`unsafe extern "C" fn()` `.init_array`/`.fini_array` entries. It does not make
-either upstream name a public C ABI symbol.
+declarations, the corresponding zero-argument callbacks, the typed
+`unsafe extern "C" fn()` local-data initializer anchor, and the `.fini_array`
+finalizer entry. It does not make either upstream name a public C ABI symbol.
 
 The source check binds the C lifecycle, allocation, and observation modules
 to their existing feature gates together with `not(feature =

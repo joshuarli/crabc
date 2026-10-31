@@ -118,9 +118,13 @@ an accepted C dependency, not full target-runtime Rust purity.
 Both owned-sysroot builders define `MI_PRIM_HAS_PROCESS_ATTACH=1` for that
 backend and pass the paired `crabc_owned_mimalloc_lifecycle` Rust cfg. The
 define suppresses mimalloc's private C implicit attach/detach entries; the cfg
-installs exactly one private local-data same-image `.init_array` entry and one
-`.fini_array` entry that invoke the matching upstream automatic process
-operation while preserving the application's incoming `errno`. The builder
+keeps one private local-data same-image initializer anchor and one
+`.fini_array` finalizer entry. The first allocating entry, or the initial
+thread's first `pthread_create`, runs the upstream automatic process
+initialization exactly once; the finalizer invokes the matching upstream done
+operation, and both preserve the application's incoming `errno`. A
+single-threaded program that never allocates performs no allocator work at
+startup. The builder
 rejects either half of the pair, a duplicate Rust entry, or a backend object
 that still carries a C lifecycle hook, then records the profile in allocator
 provenance. `compat/x86_64/run_owned_mimalloc_startup_errno.sh` compares musl
