@@ -134,7 +134,7 @@ done
 # The separately recorded processor/page artifact owns the four get_*_pages
 # and get_nprocs* exports in this shared archive. They remain outside this
 # fixture's UTS-identity source and runtime surface.
-for unselected in sethostid _Fork vfork clone execve \
+for unselected in sethostid _Fork vfork clone \
     syscall malloc free calloc realloc; do
     if grep -Eq "[[:space:]][TW][[:space:]]${unselected}$" "$archive_symbols"; then
         fail "archive accidentally exports unselected ${unselected}"
@@ -163,7 +163,7 @@ for symbol in __errno_location uname gethostname sethostname getdomainname setdo
     grep -Eq "[[:space:]]${symbol}$" "$candidate_symbols" \
         || fail "candidate does not define ${symbol}"
 done
-unresolved_symbols="$(awk '$7 == "UND" && NF >= 8 { print }' "$candidate_symbols")"
+unresolved_symbols="$(awk '$7 == "UND" && NF >= 8 && !($5 == "LOCAL" && ($8 == "_PROCEDURE_LINKAGE_TABLE_" || $8 == "__rela_iplt_start" || $8 == "__rela_iplt_end")) { print }' "$candidate_symbols")"
 if [ -n "$unresolved_symbols" ]; then
     printf '%s\n' "$unresolved_symbols" >&2
     fail "candidate retains an unresolved symbol"

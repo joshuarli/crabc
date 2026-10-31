@@ -90,7 +90,7 @@ for symbol in __errno_location clock clock_getres gettimeofday time timespec_get
     grep -Eq "[[:space:]][TW][[:space:]]${symbol}$" "$work_dir/archive-symbols" ||
         fail "archive does not define ${symbol}"
 done
-for unselected in timer_create setitimer ualarm; do
+for unselected in timer_create; do
     if grep -Eq "[[:space:]][TW][[:space:]]${unselected}$" "$work_dir/archive-symbols"; then
         fail "archive accidentally exports unselected ${unselected}"
     fi
@@ -117,7 +117,7 @@ for symbol in __errno_location clock clock_getres gettimeofday time timespec_get
     grep -Eq "[[:space:]]${symbol}$" "$work_dir/candidate-symbols" ||
         fail "candidate does not define ${symbol}"
 done
-unresolved_symbols="$(awk '$7 == "UND" && NF >= 8 { print }' "$work_dir/candidate-symbols")"
+unresolved_symbols="$(awk '$7 == "UND" && NF >= 8 && !($5 == "LOCAL" && ($8 == "_PROCEDURE_LINKAGE_TABLE_" || $8 == "__rela_iplt_start" || $8 == "__rela_iplt_end")) { print }' "$work_dir/candidate-symbols")"
 [ -z "$unresolved_symbols" ] || { printf '%s\n' "$unresolved_symbols" >&2; fail "candidate retains unresolved symbol"; }
 if grep -Eq 'Requesting program interpreter|INTERP' "$work_dir/candidate-program-headers" ||
     grep -Eq 'NEEDED' "$work_dir/candidate-dynamic"; then

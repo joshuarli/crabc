@@ -105,7 +105,7 @@ for symbol in __errno_location __strtod_l __strtof_l __strtold_l atof ecvt fcvt 
         fail "archive does not define ${symbol}"
 done
 for unselected in __floatscan __intscan __strtod_internal __strtof_internal __strtold_internal \
-    malloc calloc realloc free printf fprintf \
+    malloc calloc realloc free \
     rand srand; do
     if grep -Eq "[[:space:]][TW][[:space:]]${unselected}$" "$archive_symbols"; then
         fail "archive accidentally exports unselected ${unselected}"

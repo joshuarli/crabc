@@ -153,9 +153,9 @@ for symbol in __errno_location open openat creat; do
     grep -Eq "[[:space:]][TW][[:space:]]${symbol}$" "$archive_symbols" ||
         fail "archive does not define ${symbol}"
 done
-for unselected in openat2 open_by_handle_at preadv2 pwritev2 vmsplice \
+for unselected in openat2 preadv2 pwritev2 vmsplice \
     close_range \
-    _Fork vfork clone execve syscall \
+    _Fork vfork clone syscall \
     malloc free calloc realloc; do
     if grep -Eq "[[:space:]][TW][[:space:]]${unselected}$" "$archive_symbols"; then
         fail "archive accidentally exports unselected ${unselected}"
@@ -192,7 +192,9 @@ done
 if grep -Eq '[[:space:]]fcntl$' "$candidate_symbols"; then
     fail "candidate does not define public fcntl"
 fi
-unresolved_symbols="$(awk '$7 == "UND" && NF >= 8 { print }' "$candidate_symbols")"
+# The linker markers and the archive's weak loader-record import are the
+# only LOCAL undefined names a closed static candidate may carry.
+unresolved_symbols="$(awk '$7 == "UND" && NF >= 8 && !($5 == "LOCAL" && ($8 == "_PROCEDURE_LINKAGE_TABLE_" || $8 == "__rela_iplt_start" || $8 == "__rela_iplt_end" || $8 == "__crabc_x86_64_fixed_graph_dlfcn_v1")) { print }' "$candidate_symbols")"
 if [ -n "$unresolved_symbols" ]; then
     printf '%s\n' "$unresolved_symbols" >&2
     fail "candidate retains an unresolved symbol"

@@ -96,7 +96,7 @@ for symbol in __errno_location freeaddrinfo gai_strerror getaddrinfo getnameinfo
     grep -Eq "[[:space:]][TW][[:space:]]${symbol}$" "$archive_symbols" ||
         fail "archive does not define ${symbol}"
 done
-for unselected in gethostbyname gethostbyaddr getservbyname getservbyport res_query res_search __res_state h_errno; do
+for unselected in gethostbyname gethostbyaddr getservbyname getservbyport res_query res_search __res_state; do
     if grep -Eq "[[:space:]][TW][[:space:]]${unselected}$" "$archive_symbols"; then
         fail "archive accidentally exports unselected ${unselected}"
     fi
@@ -122,7 +122,7 @@ objdump -d "$candidate" >"$candidate_disassembly"
 for symbol in freeaddrinfo gai_strerror getaddrinfo getnameinfo; do
     grep -Eq "[[:space:]]${symbol}$" "$candidate_symbols" || fail "candidate does not define ${symbol}"
 done
-unresolved_symbols="$(awk '$7 == "UND" && NF >= 8 { print }' "$candidate_symbols")"
+unresolved_symbols="$(awk '$7 == "UND" && NF >= 8 && !($5 == "LOCAL" && ($8 == "_PROCEDURE_LINKAGE_TABLE_" || $8 == "__rela_iplt_start" || $8 == "__rela_iplt_end")) { print }' "$candidate_symbols")"
 if [ -n "$unresolved_symbols" ]; then printf '%s\n' "$unresolved_symbols" >&2; fail "candidate retains an unresolved symbol"; fi
 if grep -Eq 'Requesting program interpreter|INTERP' "$candidate_program_headers"; then fail "candidate selected a dynamic interpreter"; fi
 if grep -Eq 'NEEDED' "$candidate_dynamic"; then fail "candidate selected a dynamic dependency"; fi

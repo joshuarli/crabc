@@ -25,10 +25,12 @@
 # output, while the closed `errno-output` profile adds only bare GNU/musl `%m` C-locale
 # errno-message output through that same formatter. None selects a general
 # error-reporting, stream, locale, or ambient-formatting boundary, FILE
-# streams, printf/fprintf, scanf/fscanf, decimal or long-double floats, wide
-# text, scanset grammar outside the separate sealed profile, positional
-# arguments, pointer-valued %p, allocation, a
-# dynamic libc, CRT, loader, sysroot, or public x86 support.
+# streams, decimal or long-double floats, wide text, scanset grammar outside
+# the separate sealed profile, positional arguments, pointer-valued %p,
+# allocation, a dynamic libc, CRT, loader, sysroot, or public x86 support.
+# The default archive owns the permanent-stream printf/fprintf and
+# scanf/fscanf entries; the selected profiles below own only their byte-buffer
+# grammar.
 set -euo pipefail
 . "$(dirname "${BASH_SOURCE[0]}")/source_runtime_libc.sh"
 
@@ -240,8 +242,14 @@ for symbol in __errno_location "${REQUIRED_C_ABI_SYMBOLS[@]}"; do
     grep -Eq "[[:space:]][TW][[:space:]]${symbol}$" "$archive_symbols" ||
         fail "archive does not define ${symbol}"
 done
-for unselected in printf fprintf vprintf vfprintf dprintf vdprintf scanf fscanf vscanf vfscanf \
-    asprintf vasprintf fwprintf swprintf fwide fgetwc fputwc; do
+for symbol in printf fprintf vprintf vfprintf scanf fscanf vscanf vfscanf \
+    __isoc99_scanf __isoc99_fscanf __isoc99_vscanf __isoc99_vfscanf; do
+    definitions="$(awk -v symbol="$symbol" '$(NF - 1) ~ /^[TW]$/ && $NF == symbol { count++ }
+        END { print count + 0 }' "$archive_symbols")"
+    [ "$definitions" -eq 1 ] ||
+        fail "archive does not bind the permanent-stream ${symbol} exactly once"
+done
+for unselected in dprintf vdprintf asprintf vasprintf fwprintf swprintf fwide fgetwc fputwc; do
     if grep -Eq "[[:space:]][TW][[:space:]]${unselected}$" "$archive_symbols"; then
         fail "archive accidentally exports unselected ${unselected}"
     fi
@@ -266,7 +274,7 @@ objdump -d "$candidate" >"$disassembly"
 for symbol in "${REQUIRED_C_ABI_SYMBOLS[@]}"; do
     grep -Eq "[[:space:]]${symbol}$" "$symbols" || fail "candidate lacks ${symbol}"
 done
-if awk '$7 == "UND" && NF >= 8 { print }' "$symbols" | grep . >/dev/null; then
+if awk '$7 == "UND" && NF >= 8 && !($5 == "LOCAL" && ($8 == "_PROCEDURE_LINKAGE_TABLE_" || $8 == "__rela_iplt_start" || $8 == "__rela_iplt_end")) { print }' "$symbols" | grep . >/dev/null; then
     fail "candidate has unresolved symbols"
 fi
 if grep -Eq 'Requesting program interpreter|INTERP|NEEDED' "$headers" "$dynamic"; then

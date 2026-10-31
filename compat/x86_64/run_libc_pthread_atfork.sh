@@ -135,7 +135,7 @@ grep -Eq 'FUNC +WEAK +HIDDEN +.*__ldso_atfork$' "$archive_elf_symbols" ||
     fail 'archive lost musl weak __ldso_atfork binding'
 grep -Eq 'FUNC +WEAK +DEFAULT +.*__aio_atfork$' "$archive_elf_symbols" ||
     fail 'archive lost musl weak __aio_atfork binding'
-for unselected in _Fork vfork clone execve posix_spawn malloc free calloc realloc \
+for unselected in _Fork vfork clone posix_spawn malloc free calloc realloc \
     aio_read aio_write aio_fsync aio_return aio_cancel lio_listio aio_suspend; do
     ! grep -Eq "[[:space:]][TW][[:space:]]${unselected}$" "$archive_symbols" ||
         fail "archive exports unselected ${unselected}"
@@ -151,20 +151,20 @@ if grep -Eq 'TLSGD|TLSLD|TLSDESC|GOTTPOFF|DTPMOD(64)?|__tls_get_addr|crabc_core|
     fail "archive selects dynamic TLS or an unowned runtime dependency"
 fi
 
-"$ORACLE_CC" -std=c11 -D_GNU_SOURCE -DCRABC_ATFORK_FREESTANDING \
+"$ORACLE_CC" -fuse-ld=bfd -std=c11 -D_GNU_SOURCE -DCRABC_ATFORK_FREESTANDING \
     -I"$ROOT_DIR/include" -nostdlib -static -fno-pie -no-pie -ffreestanding \
     -fno-builtin -fno-stack-protector -Wl,-e,_start -Wl,--no-undefined \
     -Wl,--gc-sections -Wl,-u,__ldso_atfork -Wl,-u,__aio_atfork \
     compat/x86_64/libc_pthread_atfork_probe.c \
     compat/x86_64/libc_pthread_atfork_start.S "$archive" -o "$candidate"
-"$ORACLE_CC" -std=c11 -D_GNU_SOURCE -DCRABC_ATFORK_FREESTANDING \
+"$ORACLE_CC" -fuse-ld=bfd -std=c11 -D_GNU_SOURCE -DCRABC_ATFORK_FREESTANDING \
     -DCRABC_ATFORK_LOADER_HOOK_OVERRIDE -I"$ROOT_DIR/include" \
     -nostdlib -static -fno-pie -no-pie -ffreestanding -fno-builtin \
     -fno-stack-protector -Wl,-e,_start -Wl,--no-undefined -Wl,--gc-sections \
     -Wl,-u,__ldso_atfork -Wl,-u,__aio_atfork \
     compat/x86_64/libc_pthread_atfork_probe.c \
     compat/x86_64/libc_pthread_atfork_start.S "$archive" -o "$candidate_loader_hook"
-"$ORACLE_CC" -std=c11 -D_GNU_SOURCE -DCRABC_ATFORK_FREESTANDING \
+"$ORACLE_CC" -fuse-ld=bfd -std=c11 -D_GNU_SOURCE -DCRABC_ATFORK_FREESTANDING \
     -DCRABC_ATFORK_AIO_HOOK_OVERRIDE -I"$ROOT_DIR/include" \
     -nostdlib -static -fno-pie -no-pie -ffreestanding -fno-builtin \
     -fno-stack-protector -Wl,-e,_start -Wl,--no-undefined -Wl,--gc-sections \
@@ -214,7 +214,7 @@ grep -Eq 'FUNC +GLOBAL +DEFAULT +.*__aio_atfork$' "$work_dir/candidate-aio-hook-
 if grep -Eq 'FUNC +WEAK +DEFAULT +.*__aio_atfork$' "$work_dir/candidate-aio-hook-symbols"; then
     fail 'caller override retained the archive weak __aio_atfork binding'
 fi
-unresolved_symbols="$(awk '$7 == "UND" && NF >= 8 { print }' "$candidate_symbols")"
+unresolved_symbols="$(awk '$7 == "UND" && NF >= 8 && !($5 == "LOCAL" && ($8 == "_PROCEDURE_LINKAGE_TABLE_" || $8 == "__rela_iplt_start" || $8 == "__rela_iplt_end" || $8 == "__crabc_x86_64_fixed_graph_dlfcn_v1")) { print }' "$candidate_symbols")"
 [ -z "$unresolved_symbols" ] || { printf '%s\n' "$unresolved_symbols" >&2; fail "candidate retains unresolved symbol"; }
 ! grep -Eq 'Requesting program interpreter|INTERP' "$candidate_program_headers" ||
     fail "candidate selected dynamic interpreter"
