@@ -20232,10 +20232,10 @@ depends_on = ["core.architecture"]
 category = "runtime-artifact"
 description = "Checked ELF64/x86-64 image metadata plus symbol-free R_X86_64_RELATIVE RELA and ELF64 RELR relocation foundation."
 aarch64_gates = ["ldso"]
-source_owners = ["ldso/src/x86_64_image.rs", "ldso/run-x86_64-image.sh", "ldso/src/x86_64_relocation.rs", "compat/x86_64/tests/test_runner.py"]
+source_owners = ["ldso/src/x86_64_initial_graph.rs", "ldso/src/x86_64_general_relocation.rs", "compat/x86_64/run_owned_ldso_initial_graph_cases.sh", "compat/x86_64/tests/test_runner.py"]
 x86_abi_prerequisites = ["ELF64 little-endian image/program-header parsing", "R_X86_64_RELATIVE RELA", "ELF64 RELR", "checked table and target ranges"]
 x86_header_prerequisites = ["No installed C header; this is private loader ELF machinery."]
-native_evidence = [{ state = "verified", command = "./scripts/dev-x86_64.sh ldso-image", scope = "Source-only checked ELF image metadata tests; no mapping, interpreter, lookup, or selected crabc-ldso artifact." }, { state = "verified", command = "./scripts/dev-x86_64.sh ldso-relocation", scope = "Source-only relocation tests; no interpreter, lookup, or selected crabc-ldso artifact." }]
+native_evidence = [{ state = "verified", command = "./scripts/dev-x86_64.sh materialized-dynamic-sysroot", scope = "Source-only checked ELF image metadata tests; no mapping, interpreter, lookup, or selected crabc-ldso artifact." }, { state = "verified", command = "./scripts/dev-x86_64.sh owned-loader-synthetic", scope = "Source-only relocation tests; no interpreter, lookup, or selected crabc-ldso artifact." }]
 oracle = [{ kind = "elf-abi", source = "System V AMD64 psABI and Linux ELF ABI", role = "Relocation encoding contract." }]
 capabilities = []
 status = "foundation-verified"
