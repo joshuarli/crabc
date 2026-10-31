@@ -4250,11 +4250,11 @@ def measure_counts_startup(
                                      "wrapper": dict(wrapper)},
                          "ratio_insn": ratio, "delta_insn": startup["crabc"] - startup["musl"]},
         "syscalls": {
-            "ref": {"per_op": syscalls["musl"]["total"],
+            "ref": {"per_op": judgement["reference"]["total"],
                     "whole": {"total": syscalls["musl"]["total"], "calls": syscalls["musl"]["calls"]},
                     "allocator_attributed": {"total": 0, "calls": {}, "signatures": []},
                     "judged": judgement["reference"]},
-            "cand": {"per_op": syscalls["crabc"]["total"],
+            "cand": {"per_op": judgement["judged"]["total"],
                      "whole": {"total": syscalls["crabc"]["total"], "calls": syscalls["crabc"]["calls"]},
                      "allocator_attributed": judgement["allocator_attributed"],
                      "judged": judgement["judged"]},

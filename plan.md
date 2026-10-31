@@ -833,6 +833,11 @@ and the reviewed unwinder dependency graph.
   unless a step requires them. S1.4 landed (R and 1.10 in the release gate).
   S1.1 stopped because Alpine 3.24.1 has no LLVM 23 clang; D5 opened and
   decided: a digest-pinned `alpine:edge` builder stage for the reference musl.
+- 2026-10-31: **D9 — D1's allocator label applies to every row.** A row's
+  whole-process count includes the process start-up, so the five frozen
+  allocator calls (plus its own arena `madvise` pair) are labeled and removed
+  from the judged total for loop rows as well as startup rows. Per-name excess
+  on the remaining calls still fails; per-operation counts are unchanged.
 - 2026-10-31: S3a (libc leaves) and S3b (one image) landed. S3b ran before the
   blocked S3a-ldso; the installed product is one ELF with 7 non-allocator
   startup syscalls against musl's 9. Startup instructions are still 237,541
@@ -1041,8 +1046,10 @@ executed now that D6 accepts the default-archive change.
 
 ## Result table
 
-**S0 is measured; S1 is merged; no S2–S5 step has landed.** Numbers are against
-the budgets above. `allocator-attributed` costs are listed, never passed.
+**S0–S4 landed. S5 acceptance was attempted and rejected by the independent
+review; its result is recorded below as a failure, not a pass.** Numbers are
+against the budgets above. `allocator-attributed` costs are listed, never
+passed.
 
 | Step | Merged at | Numbers vs budget | Checks | Blockers |
 | --- | --- | --- | --- | --- |
@@ -1056,18 +1063,19 @@ the budgets above. `allocator-attributed` costs are listed, never passed.
 | S3b | `f7dcaafb5` | one ELF (same inode at both paths); startup syscalls 25→12 = 7 non-allocator (musl 9) + 5 allocator-attributed, budget 14; instructions 238,686→237,541 (empty env 116,582, so 120,350 is environment-dependent allocator work); bridges 44→30; 1661 exports, 0 undefined, 0 loader imports | full F roster PASS: loader, static 72-path, dlopen/TLS, both interposition suites, cancellation, hardened, identity 5 cases, CRT evidence, loader debug; debug payload merged | startup instruction ratio still ~6.8× musl (dominated by the frozen allocator), so the instruction dimension is not met |
 | S4 instructions | `b704eec12` | memcpy_16k_aligned 1.4375→0.8750; memcpy_64_aligned 1.1875→0.8750; stdio_format_parse 1.4778→1.0997 (pass); no measured row worse | libc-memory PASS; owned-stdio PASS; counts route on the merged product; rust-check | 256k rows read nondeterministic (unchanged); stdio margin 2.4 instructions |
 | S4 startup syscalls | `4b897c553` | judged startup syscalls 14→8 against musl's 11 with no per-name excess; whole 19→13; allocator-attributed 5 unchanged | prepare, identity 5 cases, dlopen PIE/non-PIE, hardened, pthread-exit, CRT evidence tests | none; startup row still fails on instructions (D8) |
-| S5 | `3efdb2df0` (acceptance tip) | counts: 20/23 rows pass; `dlopen_graph` 2.6403 fail; `startup` 3.5853 fail (its syscalls pass: 8 judged against 11); `pthread_create_join_tls` nondeterministic (1.0949). Structure 5/7: libc 25, dispatcher 701, dispatcher lines 10,593, Python 566 files / 269,998 lines. Static startup syscalls 10 against 9. | final-tip dynamic product prepare, static 72-path suite, hardened, identity, dlopen, ldso suites, counts report | startup instructions blocked by the allocator freeze under D8; `dlopen_graph`; ldso structure budget; static 759-byte mmap; CPU/memory gate deferred (host busy) |
+| S5 (attempt) | `3efdb2df0` rejected | **FAILED.** Counts covered 23 of 58 rows: 20 pass, `dlopen_graph` 2.6403 fail, `startup` 3.5853 fail (syscalls 8 judged vs 11), `pthread_create_join_tls` nondeterministic. Structure 5/7: libc 25, dispatcher 701, dispatcher lines 10,593, Python 566 / 269,998; ldso 7 features and 19,442 lines unmet. Static startup syscalls 10 vs 9. | counts report; prepare; static 72-path; identity; dlopen; ldso; memory/stdio suites | independent review rejected: budgets unmet, product evidence bound to a pre-tip tree, `hardened` failed on a stale seal, 35 rows missing, startup `per_op` contradicted its judged total, the conventional record probe had lost its field checks |
 
 ### Needs owner
 
 Four questions are open after acceptance:
 
 1. **Startup instructions cannot meet 1.10 under the allocator freeze.** The
-   merged product's startup is 3.585× musl; even with an empty environment it
-   is 116,582 against musl's 35,106 (3.3×). D8 judges the total, and D1 freezes
-   the allocator whose start-up dominates. Decide: accept the row as a standing
-   blocker while the freeze holds, define a measured allocator-attributed
-   instruction exemption (it needs allocator work), or reopen the freeze.
+   dynamic counts row is 3.585× musl (251,616 vs 70,141); the static probe is
+   173,432 vs 856 (202.6×) and its empty-environment form, 118,862, is still
+   136× musl. D8 judges the total, and D1 freezes the allocator whose start-up
+   dominates. Decide: accept the row as a standing blocker while the freeze
+   holds, define a measured allocator-attributed instruction exemption (it
+   needs allocator work), or reopen the freeze.
 2. **ldso structure budget is unmet.** 7 features against 2, and 19,442 lines
    against 11,000, because the 71 behavioural cases of the three non-product
    features have not been migrated to the installed product.
