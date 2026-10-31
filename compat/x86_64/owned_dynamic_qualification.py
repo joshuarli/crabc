@@ -116,6 +116,9 @@ CASES = {
     "posix-composition": ("run_owned_posix_composition.sh", None),
     "resolver-cancellation": ("run_owned_resolver_cancellation.sh", None),
     "loader-synthetic": ("run_owned_loader_synthetic.sh", None),
+    "ldso-initial-graph": ("run_owned_ldso_initial_graph_cases.sh", None),
+    "ldso-general-initial-tls": ("run_owned_ldso_initial_tls_cases.sh", None),
+    "ldso-general-loader-lifecycle": ("run_owned_ldso_lifecycle_cases.sh", None),
     "package-corpus": ("run_owned_package_corpus.sh", None),
     "cross-dso": ("run_owned_dynamic_cross_dso.sh", None),
 }

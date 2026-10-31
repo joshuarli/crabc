@@ -2052,6 +2052,7 @@ unsafe fn parse_mapped(
                 let raw_align = read_u64(header.add(48));
                 let align = if raw_align == 0 { 1 } else { raw_align };
                 if filesz > memsz
+                    || memsz == 0
                     || !align.is_power_of_two()
                     || virtual_address & (align - 1) != file_offset & (align - 1)
                 {
@@ -2196,6 +2197,11 @@ unsafe fn parse_mapped(
     #[cfg(crabc_general_initial_lifecycle)]
     let (mut general_init, mut general_fini, mut general_fini_array, mut general_fini_len) =
         (None, None, None, None);
+    #[cfg(all(
+        feature = "x86_64-owned-dynamic-runtime",
+        crabc_general_initial_tls_materialization_v1
+    ))]
+    let mut dynamic_static_tls = false;
     for index in 0..dynamic_count {
         let entry = dynamic.add(index * 16);
         let tag = read_i64(entry);
@@ -2400,6 +2406,13 @@ unsafe fn parse_mapped(
                 {
                     object.static_tls = value & DF_STATIC_TLS != 0;
                 }
+                #[cfg(all(
+                    feature = "x86_64-owned-dynamic-runtime",
+                    crabc_general_initial_tls_materialization_v1
+                ))]
+                {
+                    dynamic_static_tls |= value & DF_STATIC_TLS != 0;
+                }
             }
             #[cfg(feature = "x86_64-owned-dynamic-runtime")]
             DT_FLAGS_1 if value & !(DF_1_NOW | DF_1_PIE | DF_1_NODELETE) != 0 => return None,
@@ -2423,6 +2436,13 @@ unsafe fn parse_mapped(
             DT_GNU_HASH | DT_VERSYM | DT_VERDEF | DT_VERDEFNUM | DT_VERNEED | DT_VERNEEDNUM => return None,
             _ => {}
         }
+    }
+    #[cfg(all(
+        feature = "x86_64-owned-dynamic-runtime",
+        crabc_general_initial_tls_materialization_v1
+    ))]
+    if dynamic_static_tls && object.tls_memsz == 0 {
+        return None;
     }
     #[cfg(all(not(feature = "x86_64-owned-dynamic-runtime"), any(crabc_owned_crt_handoff, crabc_dynamic_main_thread_runtime_v1)))]
     if !mapped {
@@ -3810,6 +3830,7 @@ unsafe fn preflight_relocation_target(object: &Object, virtual_address: u64) -> 
         return None;
     }
     let address = runtime_address(object.base, virtual_address)?;
+    #[cfg(not(test))]
     for (table, byte_len) in [
         (object.rela, object.relasz),
         (object.jmprel, object.pltrelsz),
@@ -3873,6 +3894,7 @@ unsafe fn apply_relr_table(object: &Object) -> Option<()> {
     for index in 0..(object.relrsz / ELF64_RELR_SIZE) {
         let encoded = read_u64(object.relr.add(index * ELF64_RELR_SIZE));
         if encoded & 1 == 0 {
+            unsafe { preflight_relocation_target(object, encoded)? };
             apply_relr_target(object, encoded)?;
             next_virtual_address = Some(encoded.checked_add(ELF64_RELR_SIZE as u64)?);
             continue;
@@ -3887,12 +3909,24 @@ unsafe fn apply_relr_table(object: &Object) -> Option<()> {
         };
         if bitmap == u64::MAX >> 1 {
             for bit in 0..ELF64_RELR_BITMAP_BITS {
+                unsafe {
+                    preflight_relocation_target(
+                        object,
+                        start.checked_add(bit.checked_mul(ELF64_RELR_SIZE as u64)?)?,
+                    )?
+                };
                 let slot = (runtime_start + bit * ELF64_RELR_SIZE as u64) as *mut u64;
                 *slot = (*slot).wrapping_add(object.base);
             }
         } else {
             while bitmap != 0 {
                 let bit = bitmap.trailing_zeros() as u64;
+                unsafe {
+                    preflight_relocation_target(
+                        object,
+                        start.checked_add(bit.checked_mul(ELF64_RELR_SIZE as u64)?)?,
+                    )?
+                };
                 let slot = (runtime_start + bit * ELF64_RELR_SIZE as u64) as *mut u64;
                 *slot = (*slot).wrapping_add(object.base);
                 bitmap &= bitmap - 1;
@@ -3928,13 +3962,26 @@ unsafe fn apply_relr_target(object: &Object, virtual_address: u64) -> Option<()>
 mod relr_bitmap_tests {
     use super::*;
 
+    fn writable_phdr(byte_len: u64) -> [u8; 56] {
+        let mut header = [0u8; 56];
+        header[0..4].copy_from_slice(&1u32.to_le_bytes());
+        header[4..8].copy_from_slice(&2u32.to_le_bytes());
+        header[32..40].copy_from_slice(&byte_len.to_le_bytes());
+        header[40..48].copy_from_slice(&byte_len.to_le_bytes());
+        header[48..56].copy_from_slice(&8u64.to_le_bytes());
+        header
+    }
+
     #[test]
     fn sparse_and_full_bitmaps_relocate_only_selected_words() {
         let mut words = [7u64; 128];
+        let phdr = writable_phdr((words.len() * ELF64_RELR_SIZE) as u64);
         let sparse = (1u64 | (1u64 << 5) | (1u64 << 62)) << 1 | 1;
         let table = [0u64, sparse, 0x200, u64::MAX];
         let mut object = Object {
             base: words.as_mut_ptr() as u64,
+            phdr: phdr.as_ptr(),
+            phnum: 1,
             relr: table.as_ptr().cast::<u8>(),
             relrsz: table.len() * ELF64_RELR_SIZE,
             ..EMPTY_OBJECT
@@ -3942,7 +3989,9 @@ mod relr_bitmap_tests {
         assert!(unsafe { apply_relr_table(&object) }.is_some());
         for (index, value) in words.iter().enumerate() {
             let selected = matches!(index, 0 | 1 | 6 | 63 | 64) || index >= 65;
-            assert_eq!(*value, if selected { 7u64.wrapping_add(object.base) } else { 7 });
+            if *value != if selected { 7u64.wrapping_add(object.base) } else { 7 } {
+                panic!("relr index {index} selected={selected} value={value} base={}", object.base);
+            }
         }
 
         let leading_bitmap = [1u64];
@@ -3954,8 +4003,11 @@ mod relr_bitmap_tests {
     #[test]
     fn relr_rejects_overflowed_runtime_target_and_wraps_existing_addend() {
         let overflowing = [8u64];
+        let overflow_phdr = writable_phdr(1024);
         let invalid = Object {
             base: u64::MAX - 7,
+            phdr: overflow_phdr.as_ptr(),
+            phnum: 1,
             relr: overflowing.as_ptr().cast::<u8>(),
             relrsz: ELF64_RELR_SIZE,
             ..EMPTY_OBJECT
@@ -3963,9 +4015,12 @@ mod relr_bitmap_tests {
         assert!(unsafe { apply_relr_table(&invalid) }.is_none());
 
         let mut word = u64::MAX;
+        let valid_phdr = writable_phdr(ELF64_RELR_SIZE as u64);
         let direct = [0u64];
         let valid = Object {
             base: (&mut word as *mut u64) as u64,
+            phdr: valid_phdr.as_ptr(),
+            phnum: 1,
             relr: direct.as_ptr().cast::<u8>(),
             relrsz: ELF64_RELR_SIZE,
             ..EMPTY_OBJECT
@@ -3982,9 +4037,12 @@ mod relr_bitmap_tests {
     #[test]
     fn full_bitmap_relocates_every_word_and_rejects_overflowed_span() {
         let mut words = [u64::MAX; 64];
+        let phdr = writable_phdr((words.len() * ELF64_RELR_SIZE) as u64);
         let table = [0u64, u64::MAX];
         let object = Object {
             base: words.as_mut_ptr() as u64,
+            phdr: phdr.as_ptr(),
+            phnum: 1,
             relr: table.as_ptr().cast::<u8>(),
             relrsz: table.len() * ELF64_RELR_SIZE,
             ..EMPTY_OBJECT

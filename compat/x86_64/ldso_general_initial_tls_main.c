@@ -18,7 +18,7 @@ __thread int general_main_tls
     __attribute__((tls_model("global-dynamic"), aligned(512))) = 4;
 __thread int general_main_tbss __attribute__((tls_model("global-dynamic")));
 
-#if defined(CRABC_GENERAL_INITIAL_TLS_CANDIDATE)
+#if defined(CRABC_GENERAL_INITIAL_TLS_CANDIDATE) || defined(CRABC_PRODUCT_TLS_LAYOUT)
 struct crabc_tls_index {
     unsigned long module;
     unsigned long offset;
@@ -80,6 +80,39 @@ static int candidate_dtv_has_one_loader_order_slot_per_tls_image(void) {
         || __tls_get_addr(&outside_shared) != 0) {
         return 0;
     }
+#endif
+#if defined(CRABC_PRODUCT_TLS_LAYOUT)
+    unsigned long fs_base = 0;
+    unsigned long *dtv = fs_dtv();
+    void *images[4] = {
+        (void *)&general_main_tls,
+        general_left_tls_address(),
+        general_shared_tls_address(),
+        general_right_tls_address(),
+    };
+    if (syscall2(158, 0x1003, (long)&fs_base) != 0) return 60;
+    if (fs_base == 0 || fs_base != fs_self()) return 61;
+    if (dtv == 0) return 62;
+    if (dtv[0] < 5) return 63;
+    unsigned long modules[4] = { 0, 0, 0, 0 };
+    for (int image = 0; image < 4; image++) {
+        for (unsigned long slot = 1; slot < dtv[0]; slot++) {
+            if ((void *)dtv[slot] == images[image]) {
+                modules[image] = slot;
+                break;
+            }
+        }
+        if (modules[image] == 0) return 64 + image;
+        for (int other = 0; other < image; other++) {
+            if (modules[other] == modules[image]) return 68 + image;
+        }
+        const struct crabc_tls_index index = { modules[image], 0 };
+        if (__tls_get_addr(&index) != images[image]) return 72 + image;
+    }
+    const struct crabc_tls_index zero_module = { 0, 0 };
+    const struct crabc_tls_index absent_module = { dtv[0], 0 };
+    if (__tls_get_addr(&zero_module) != 0) return 76;
+    if (__tls_get_addr(&absent_module) != 0) return 77;
 #endif
     return 1;
 }
