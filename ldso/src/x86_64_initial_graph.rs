@@ -47,8 +47,32 @@
 
 #![allow(clippy::missing_safety_doc)]
 
-#[cfg(not(test))]
 use core::arch::global_asm;
+
+/// The kernel-mapped interpreter base for the current initial transaction.
+/// `_start` supplies it before any dependency discovery; zero means direct
+/// entry without `AT_BASE`.
+#[cfg(feature = "x86_64-owned-dynamic-runtime")]
+static mut INTERPRETER_BASE: usize = 0;
+
+#[cfg(feature = "x86_64-owned-dynamic-runtime")]
+pub(crate) fn interpreter_base() -> usize { unsafe { INTERPRETER_BASE } }
+
+#[cfg(feature = "x86_64-owned-dynamic-runtime")]
+pub(crate) fn set_interpreter_base(base: usize) { unsafe { INTERPRETER_BASE = base; } }
+
+/// musl's reserved runtime names always denote the interpreter itself. One
+/// installed merged image is `libc.so`; the other names keep the same rule so
+/// a preload or dependency can never map a second copy of the runtime.
+#[cfg(feature = "x86_64-owned-dynamic-runtime")]
+pub(crate) fn reserved_runtime_name(name: &[u8]) -> bool {
+    const RESERVED: [&[u8]; 7] = [
+        b"libc.", b"libpthread.", b"librt.", b"libm.", b"libdl.", b"libutil.",
+        b"libxnet.",
+    ];
+    RESERVED.iter().any(|prefix| name.starts_with(prefix))
+}
+
 use core::ffi::c_void;
 #[cfg(crabc_general_initial_graph)]
 #[path = "x86_64_initial_graph_state.rs"]
@@ -940,6 +964,8 @@ struct Object {
     canonical_libc_identity: Option<ObjectIdentity>,
     #[cfg(feature = "x86_64-owned-dynamic-runtime")]
     needed_by: Option<usize>,
+    #[cfg(feature = "x86_64-owned-dynamic-runtime")]
+    interpreter_self: bool,
     // Complete dynsym records in the first readable file-backed PT_LOAD
     // containing its null entry. Later overlapping loads may hold more.
     #[cfg(feature = "x86_64-owned-dynamic-runtime")]
@@ -1017,6 +1043,8 @@ const EMPTY_OBJECT: Object = Object {
     canonical_libc_identity: None,
     #[cfg(feature = "x86_64-owned-dynamic-runtime")]
     needed_by: None,
+    #[cfg(feature = "x86_64-owned-dynamic-runtime")]
+    interpreter_self: false,
     #[cfg(feature = "x86_64-owned-dynamic-runtime")]
     symtab_file_record_limit: 0,
     #[cfg(not(feature = "x86_64-owned-dynamic-runtime"))]
@@ -1147,10 +1175,418 @@ fn panic(_: &core::panic::PanicInfo) -> ! {
 // The interpreter cannot rely on any relocated Rust address before this
 // sequence. Linux supplies AT_BASE for PT_INTERP; direct entry uses the
 // link-time ELF-header symbol through RIP-relative addressing instead. The
-// loop finds this object's PT_DYNAMIC and applies its self-relative records.
+// validated routine below performs the complete self-relocation transaction;
+// `_start` only decodes the initial stack, AT_BASE and PT_DYNAMIC.
+global_asm!(
+    ".text",
+    ".global __crabc_x86_64_self_relocate",
+    ".hidden __crabc_x86_64_self_relocate",
+    ".type __crabc_x86_64_self_relocate,@function",
+    "__crabc_x86_64_self_relocate:",
+    "push %rbx",
+    "push %rbp",
+    "push %r12",
+    "push %r13",
+    "push %r14",
+    "push %r15",
+    "mov %rdi, %r13",
+    "mov %rsi, %r14",
+    "mov %rdx, %r15",
+    "mov %r8, %r9",
+    "mov %rcx, %r8",
+    "sub $96, %rsp",
+    "mov %rsp, %r12",
+    "movq $0, 0(%r12)",
+    "movq $0, 8(%r12)",
+    "movq $0, 16(%r12)",
+    "movq $0, 24(%r12)",
+    "movq $0, 32(%r12)",
+    "movq $0, 40(%r12)",
+    "movq $0, 56(%r12)",
+    "movq $0, 64(%r12)",
+    ".Lself_parse:",
+    "cmp %r9, %r8",
+    "jae .Lself_parsed",
+    "mov (%r8), %rax",
+    "mov 8(%r8), %rsi",
+    "test %rax, %rax",
+    "je .Lself_parsed",
+    "cmp $7, %rax",
+    "jne .Lself_p_relasz",
+    "mov %r13, %rdx",
+    "add %rsi, %rdx",
+    "jc .Lself_fail",
+    "mov %rdx, 0(%r12)",
+    "jmp .Lself_p_next",
+    ".Lself_p_relasz:",
+    "cmp $8, %rax",
+    "jne .Lself_p_relrsz",
+    "mov %rsi, 8(%r12)",
+    "jmp .Lself_p_next",
+    ".Lself_p_relrsz:",
+    "cmp $0x23, %rax",
+    "jne .Lself_p_relr",
+    "mov %rsi, 24(%r12)",
+    "jmp .Lself_p_next",
+    ".Lself_p_relr:",
+    "cmp $0x24, %rax",
+    "jne .Lself_p_relrent",
+    "mov %r13, %rdx",
+    "add %rsi, %rdx",
+    "jc .Lself_fail",
+    "mov %rdx, 16(%r12)",
+    "jmp .Lself_p_next",
+    ".Lself_p_relrent:",
+    "cmp $0x25, %rax",
+    "jne .Lself_p_next",
+    "mov %rsi, 32(%r12)",
+    ".Lself_p_next:",
+    "add $16, %r8",
+    "jmp .Lself_parse",
+    ".Lself_parsed:",
+    "mov 0(%r12), %r10",
+    "mov 8(%r12), %r11",
+    "test %r11, %r11",
+    "je .Lself_relr_validate",
+    "test %r10, %r10",
+    "je .Lself_fail",
+    "mov %r11, %rax",
+    "xor %rdx, %rdx",
+    "mov $24, %rcx",
+    "div %rcx",
+    "test %rdx, %rdx",
+    "jne .Lself_fail",
+    "mov %r10, %rsi",
+    "add %r11, %rsi",
+    "jc .Lself_fail",
+    "mov %r10, %rdx",
+    "call .Lself_check_read",
+    "test %eax, %eax",
+    "jne .Lself_fail",
+    "mov %r10, 0(%r12)",
+    "mov %rsi, 8(%r12)",
+    ".Lself_relr_validate:",
+    "mov 16(%r12), %r10",
+    "mov 24(%r12), %r11",
+    "test %r11, %r11",
+    "je .Lself_relr_absent",
+    "test %r10, %r10",
+    "je .Lself_fail",
+    "test $7, %r11",
+    "jne .Lself_fail",
+    "cmpq $8, 32(%r12)",
+    "jne .Lself_fail",
+    "mov %r10, %rsi",
+    "add %r11, %rsi",
+    "jc .Lself_fail",
+    "mov %r10, %rdx",
+    "call .Lself_check_read",
+    "test %eax, %eax",
+    "jne .Lself_fail",
+    "mov %r10, 16(%r12)",
+    "mov %rsi, 24(%r12)",
+    ".Lself_relr_absent:",
+    "mov 0(%r12), %rax",
+    "test %rax, %rax",
+    "je .Lself_apply_rela",
+    "mov 16(%r12), %rcx",
+    "test %rcx, %rcx",
+    "je .Lself_apply_rela",
+    "mov 8(%r12), %rdx",
+    "cmp %rcx, %rdx",
+    "jbe .Lself_apply_rela",
+    "mov 24(%r12), %rsi",
+    "cmp %rax, %rsi",
+    "jbe .Lself_apply_rela",
+    "jmp .Lself_fail",
+    ".Lself_apply_rela:",
+    "mov 0(%r12), %r8",
+    "mov 8(%r12), %r9",
+    "test %r8, %r8",
+    "je .Lself_relr_setup",
+    ".Lself_rela_loop:",
+    "cmp %r9, %r8",
+    "jae .Lself_relr_setup",
+    "mov (%r8), %rdx",
+    "mov 8(%r8), %rax",
+    "cmp $8, %eax",
+    "jne .Lself_rela_next",
+    "test $7, %dl",
+    "jne .Lself_fail",
+    "add %r13, %rdx",
+    "jc .Lself_fail",
+    "mov %rdx, %rsi",
+    "add $8, %rsi",
+    "jc .Lself_fail",
+    "call .Lself_check_w",
+    "test %eax, %eax",
+    "jne .Lself_fail",
+    "mov 0(%r12), %rax",
+    "test %rax, %rax",
+    "je .Lself_rela_chk_relr",
+    "cmp 8(%r12), %rdx",
+    "jae .Lself_rela_chk_relr",
+    "cmp %rax, %rsi",
+    "jbe .Lself_rela_chk_relr",
+    "jmp .Lself_fail",
+    ".Lself_rela_chk_relr:",
+    "mov 16(%r12), %rax",
+    "test %rax, %rax",
+    "je .Lself_rela_write",
+    "cmp 24(%r12), %rdx",
+    "jae .Lself_rela_write",
+    "cmp %rax, %rsi",
+    "jbe .Lself_rela_write",
+    "jmp .Lself_fail",
+    ".Lself_rela_write:",
+    "mov 16(%r8), %rax",
+    "add %r13, %rax",
+    "jc .Lself_fail",
+    "mov %rax, (%rdx)",
+    ".Lself_rela_next:",
+    "add $24, %r8",
+    "jmp .Lself_rela_loop",
+    ".Lself_relr_setup:",
+    "mov 16(%r12), %r8",
+    "test %r8, %r8",
+    "je .Lself_success",
+    "mov 24(%r12), %r9",
+    "xor %rbx, %rbx",
+    "xor %rbp, %rbp",
+    ".Lself_relr_loop:",
+    "cmp %r9, %r8",
+    "jae .Lself_success",
+    "mov (%r8), %rax",
+    "add $8, %r8",
+    "test $1, %al",
+    "jne .Lself_relr_bitmap",
+    "mov %rax, %r10",
+    "call .Lself_relr_target",
+    "mov %r10, %rbp",
+    "add $8, %rbp",
+    "jc .Lself_fail",
+    "jmp .Lself_relr_loop",
+    ".Lself_relr_bitmap:",
+    "cmpq $0, 40(%r12)",
+    "je .Lself_fail",
+    "shr $1, %rax",
+    "test %rax, %rax",
+    "je .Lself_relr_advance",
+    "mov %rax, %r11",
+    "bsr %r11, %rcx",
+    "cmp %rbx, %rbp",
+    "jbe .Lself_fail",
+    "inc %rcx",
+    "shl $3, %rcx",
+    "mov %rbp, %rdx",
+    "mov %rbp, %rsi",
+    "add %rcx, %rsi",
+    "jc .Lself_fail",
+    "add %r13, %rdx",
+    "jc .Lself_fail",
+    "add %r13, %rsi",
+    "jc .Lself_fail",
+    "call .Lself_check_w",
+    "test %eax, %eax",
+    "jne .Lself_fail",
+    "mov 0(%r12), %rax",
+    "test %rax, %rax",
+    "je .Lself_relr_bitmap_chk_relr",
+    "cmp 8(%r12), %rdx",
+    "jae .Lself_relr_bitmap_chk_relr",
+    "cmp %rax, %rsi",
+    "jbe .Lself_relr_bitmap_chk_relr",
+    "jmp .Lself_fail",
+    ".Lself_relr_bitmap_chk_relr:",
+    "mov 16(%r12), %rax",
+    "test %rax, %rax",
+    "je .Lself_relr_bitmap_apply",
+    "cmp 24(%r12), %rdx",
+    "jae .Lself_relr_bitmap_apply",
+    "cmp %rax, %rsi",
+    "jbe .Lself_relr_bitmap_apply",
+    "jmp .Lself_fail",
+    ".Lself_relr_bitmap_apply:",
+    "mov %r11, %r10",
+    ".Lself_relr_bitmap_bit:",
+    "test %r10, %r10",
+    "je .Lself_relr_bitmap_done",
+    "bsf %r10, %rcx",
+    "lea (%rbp,%rcx,8), %rax",
+    "lea (%r13,%rax), %rdx",
+    "mov (%rdx), %rax",
+    "add %r13, %rax",
+    "jc .Lself_fail",
+    "mov %rax, (%rdx)",
+    "mov %r10, %rax",
+    "dec %rax",
+    "and %rax, %r10",
+    "jmp .Lself_relr_bitmap_bit",
+    ".Lself_relr_bitmap_done:",
+    "bsr %r11, %rcx",
+    "mov %rcx, %rax",
+    "shl $3, %rax",
+    "add %rbp, %rax",
+    "jc .Lself_fail",
+    "mov %rax, %rbx",
+    "jmp .Lself_relr_advance",
+    ".Lself_relr_advance:",
+    "add $504, %rbp",
+    "jc .Lself_fail",
+    "jmp .Lself_relr_loop",
+    ".Lself_relr_target:",
+    "test $7, %r10b",
+    "jne .Lself_fail",
+    "cmpq $0, 40(%r12)",
+    "je .Lself_relr_target_first",
+    "cmp %rbx, %r10",
+    "jbe .Lself_fail",
+    ".Lself_relr_target_first:",
+    "mov %r10, %rbx",
+    "movq $1, 40(%r12)",
+    "mov %r13, %rdx",
+    "add %r10, %rdx",
+    "jc .Lself_fail",
+    "mov %rdx, %rsi",
+    "add $8, %rsi",
+    "jc .Lself_fail",
+    "call .Lself_check_w",
+    "test %eax, %eax",
+    "jne .Lself_fail",
+    "mov 0(%r12), %rax",
+    "test %rax, %rax",
+    "je .Lself_relr_chk_relr",
+    "cmp 8(%r12), %rdx",
+    "jae .Lself_relr_chk_relr",
+    "cmp %rax, %rsi",
+    "jbe .Lself_relr_chk_relr",
+    "jmp .Lself_fail",
+    ".Lself_relr_chk_relr:",
+    "mov 16(%r12), %rax",
+    "test %rax, %rax",
+    "je .Lself_relr_write",
+    "cmp 24(%r12), %rdx",
+    "jae .Lself_relr_write",
+    "cmp %rax, %rsi",
+    "jbe .Lself_relr_write",
+    "jmp .Lself_fail",
+    ".Lself_relr_write:",
+    "mov (%rdx), %rax",
+    "add %r13, %rax",
+    "jc .Lself_fail",
+    "mov %rax, (%rdx)",
+    "ret",
+    ".Lself_check_w:",
+    "mov 56(%r12), %rax",
+    "test %rax, %rax",
+    "je .Lself_cw_scan",
+    "cmp %rax, %rdx",
+    "jb .Lself_cw_scan",
+    "mov 64(%r12), %rax",
+    "cmp %rax, %rsi",
+    "jbe .Lself_cw_ok",
+    ".Lself_cw_scan:",
+    "mov %r15, %rdi",
+    "imul $56, %rdi",
+    "jc .Lself_cw_fail",
+    "add %r14, %rdi",
+    "jc .Lself_cw_fail",
+    "mov %r14, %rcx",
+    ".Lself_cw_loop:",
+    "cmp %rdi, %rcx",
+    "jae .Lself_cw_loop_end",
+    "cmpl $1, (%rcx)",
+    "jne .Lself_cw_next",
+    "testl $2, 4(%rcx)",
+    "je .Lself_cw_next",
+    "mov 16(%rcx), %rax",
+    "add %r13, %rax",
+    "jc .Lself_cw_fail",
+    "cmp %rax, %rdx",
+    "jb .Lself_cw_next",
+    "mov %rax, 56(%r12)",
+    "add 40(%rcx), %rax",
+    "jc .Lself_cw_fail",
+    "cmp %rax, %rsi",
+    "jbe .Lself_cw_hit",
+    "movq $0, 56(%r12)",
+    "jmp .Lself_cw_next",
+    ".Lself_cw_hit:",
+    "mov %rax, 64(%r12)",
+    "jmp .Lself_cw_ok",
+    ".Lself_cw_next:",
+    "add $56, %rcx",
+    "jmp .Lself_cw_loop",
+    ".Lself_cw_loop_end:",
+    "jmp .Lself_cw_fail",
+    ".Lself_cw_ok:",
+    "xor %eax, %eax",
+    "ret",
+    ".Lself_cw_fail:",
+    "mov $1, %eax",
+    "ret",
+    ".Lself_check_read:",
+    "mov %r15, %rdi",
+    "imul $56, %rdi",
+    "jc .Lself_cr_fail",
+    "add %r14, %rdi",
+    "jc .Lself_cr_fail",
+    "mov %r14, %rcx",
+    ".Lself_cr_loop:",
+    "cmp %rdi, %rcx",
+    "jae .Lself_cr_fail",
+    "cmpl $1, (%rcx)",
+    "jne .Lself_cr_next",
+    "testl $4, 4(%rcx)",
+    "je .Lself_cr_next",
+    "mov 16(%rcx), %rax",
+    "add %r13, %rax",
+    "jc .Lself_cr_fail",
+    "cmp %rax, %rdx",
+    "jb .Lself_cr_next",
+    "add 40(%rcx), %rax",
+    "jc .Lself_cr_fail",
+    "cmp %rax, %rsi",
+    "jbe .Lself_cr_ok",
+    ".Lself_cr_next:",
+    "add $56, %rcx",
+    "jmp .Lself_cr_loop",
+    ".Lself_cr_ok:",
+    "xor %eax, %eax",
+    "ret",
+    ".Lself_cr_fail:",
+    "mov $1, %eax",
+    "ret",
+    ".Lself_success:",
+    "xor %eax, %eax",
+    "mov %r12, %rsp",
+    "add $96, %rsp",
+    "pop %r15",
+    "pop %r14",
+    "pop %r13",
+    "pop %r12",
+    "pop %rbp",
+    "pop %rbx",
+    "ret",
+    ".Lself_fail:",
+    "mov $1, %eax",
+    "mov %r12, %rsp",
+    "add $96, %rsp",
+    "pop %r15",
+    "pop %r14",
+    "pop %r13",
+    "pop %r12",
+    "pop %rbp",
+    "pop %rbx",
+    "ret",
+    ".size __crabc_x86_64_self_relocate, .-__crabc_x86_64_self_relocate",
+    options(att_syntax),
+);
+
 #[cfg(not(test))]
 global_asm!(
     ".global _start",
+    ".hidden _start",
     ".type _start,@function",
     "_start:",
     "mov %rsp, %r12",
@@ -1180,7 +1616,11 @@ global_asm!(
     ".Lx86_self_base:",
     "mov 32(%r13), %rax",
     "movzwl 56(%r13), %ecx",
-    "lea (%r13,%rax), %rdi",
+    "mov %r13, %rdi",
+    "add %rax, %rdi",
+    "jc .Lx86_setup_fail",
+    "mov %rdi, %r14",
+    "mov %ecx, %r15d",
     ".Lx86_find_dynamic:",
     "test %ecx, %ecx",
     "je .Lx86_call_rust",
@@ -1191,52 +1631,43 @@ global_asm!(
     "jmp .Lx86_find_dynamic",
     ".Lx86_dynamic_found:",
     "mov 16(%rdi), %rax",
-    "mov 40(%rdi), %rcx",
-    "lea (%r13,%rax), %rdi",
-    "add %rdi, %rcx",
-    "xor %r8, %r8",
-    "xor %r9, %r9",
-    ".Lx86_dynamic_scan:",
-    "cmp %rcx, %rdi",
-    "jae .Lx86_apply_self",
-    "mov (%rdi), %rax",
-    "test %rax, %rax",
-    "je .Lx86_apply_self",
-    "cmp $7, %rax",
-    "jne .Lx86_check_relasz",
-    "mov 8(%rdi), %r8",
-    "add %r13, %r8",
-    ".Lx86_check_relasz:",
-    "cmp $8, %rax",
-    "jne .Lx86_next_dynamic",
-    "mov 8(%rdi), %r9",
-    ".Lx86_next_dynamic:",
-    "add $16, %rdi",
-    "jmp .Lx86_dynamic_scan",
-    ".Lx86_apply_self:",
-    "test %r8, %r8",
-    "je .Lx86_call_rust",
-    "lea (%r8,%r9), %rcx",
-    ".Lx86_rela_loop:",
-    "cmp %rcx, %r8",
-    "jae .Lx86_call_rust",
-    "mov 8(%r8), %rax",
-    "cmp $8, %rax",
-    "jne .Lx86_next_rela",
-    "mov (%r8), %rdx",
-    "add %r13, %rdx",
-    "mov 16(%r8), %rax",
-    "add %r13, %rax",
-    "mov %rax, (%rdx)",
-    ".Lx86_next_rela:",
-    "add $24, %r8",
-    "jmp .Lx86_rela_loop",
+    "mov 40(%rdi), %r8",
+    "mov %r13, %rcx",
+    "add %rax, %rcx",
+    "jc .Lx86_setup_fail",
+    "add %rcx, %r8",
+    "jc .Lx86_setup_fail",
+    "mov %r13, %rdi",
+    "mov %r14, %rsi",
+    "mov %r15, %rdx",
+    "call __crabc_x86_64_self_relocate",
+    "test %eax, %eax",
+    "jne .Lx86_self_fail",
     ".Lx86_call_rust:",
     ".hidden x86_64_initial_graph_run",
     "mov %r12, %rdi",
     "mov %r13, %rsi",
     "call x86_64_initial_graph_run",
     "ud2",
+    ".Lx86_setup_fail:",
+    "mov $126, %edi",
+    "mov $60, %eax",
+    "syscall",
+    "ud2",
+    ".Lx86_self_fail:",
+    "mov $1, %eax",
+    "mov $2, %edi",
+    "lea .Lx86_reloc_msg(%rip), %rsi",
+    "mov $6, %edx",
+    "syscall",
+    "mov $60, %eax",
+    "mov $127, %edi",
+    "syscall",
+    "ud2",
+    ".pushsection .rodata",
+    ".Lx86_reloc_msg:",
+    ".ascii \"reloc\\n\"",
+    ".popsection",
     options(att_syntax),
 );
 
@@ -3134,6 +3565,11 @@ pub unsafe extern "C" fn __tls_get_addr(index: *const TlsIndex) -> *mut c_void {
         Some(address) if module_base != 0 => address as *mut c_void,
         _ => core::ptr::null_mut(),
     }
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn __crabc_x86_64_resolve_initial_tls(index: *const TlsIndex) -> *mut c_void {
+    unsafe { __tls_get_addr(index) }
 }
 
 unsafe fn relocate(object: &Object, objects: &[Object]) -> Option<()> {
@@ -6447,3 +6883,209 @@ pub unsafe extern "C" fn memmove(destination: *mut c_void, source: *const c_void
 pub unsafe extern "C" fn bcmp(left: *const c_void, right: *const c_void, length: usize) -> i32 { memcmp(left, right, length) }
 #[no_mangle]
 pub unsafe extern "C" fn memcmp(left: *const c_void, right: *const c_void, length: usize) -> i32 { let left = left as *const u8; let right = right as *const u8; for index in 0..length { let delta = *left.add(index) as i32 - *right.add(index) as i32; if delta != 0 { return delta; } } 0 }
+
+#[cfg(test)]
+mod self_relocate_tests {
+    extern crate std;
+
+    use std::vec;
+    use std::vec::Vec;
+
+    const RELA_OFF: usize = 0x100;
+    const RELR_OFF: usize = 0x300;
+    const DYNAMIC_OFF: usize = 0x500;
+    const TARGET_OFF: usize = 0x800;
+    const IMAGE_BYTES: usize = 0x1000;
+
+    unsafe extern "C" {
+        fn __crabc_x86_64_self_relocate(
+            base: usize,
+            phdr: *const u8,
+            phnum: usize,
+            dynamic: *const u8,
+            dynamic_end: *const u8,
+        ) -> u32;
+    }
+
+    struct Fixture {
+        words: Vec<u64>,
+        phdr: Vec<u8>,
+        dynamic: Vec<u64>,
+    }
+
+    impl Fixture {
+        fn new() -> Self {
+            Self {
+                words: vec![0u64; IMAGE_BYTES / 8],
+                phdr: load_phdr(0, IMAGE_BYTES as u64, 6),
+                dynamic: Vec::new(),
+            }
+        }
+
+        fn rela(&mut self, offset: u64, addend: i64) {
+            let at = RELA_OFF / 8;
+            self.words[at] = offset;
+            self.words[at + 1] = 8;
+            self.words[at + 2] = addend as u64;
+        }
+
+        fn relr(&mut self, entries: &[u64]) {
+            let at = RELR_OFF / 8;
+            for (index, entry) in entries.iter().enumerate() {
+                self.words[at + index] = *entry;
+            }
+        }
+
+        fn dynamic(&mut self, rela: Option<u64>, relr: Option<(u64, u64)>) {
+            let mut entries = Vec::new();
+            if let Some(size) = rela {
+                entries.push(7); // DT_RELA
+                entries.push(RELA_OFF as u64);
+                entries.push(8); // DT_RELASZ
+                entries.push(size);
+            }
+            if let Some((size, ent)) = relr {
+                entries.push(0x24); // DT_RELR
+                entries.push(RELR_OFF as u64);
+                entries.push(0x23); // DT_RELRSZ
+                entries.push(size);
+                entries.push(0x25); // DT_RELRENT
+                entries.push(ent);
+            }
+            entries.push(0);
+            entries.push(0);
+            let at = DYNAMIC_OFF / 8;
+            self.words[at..at + entries.len()].copy_from_slice(&entries);
+            self.dynamic = entries;
+        }
+
+        fn run(&self) -> u32 {
+            let base = self.words.as_ptr() as usize;
+            let dynamic = unsafe { self.words.as_ptr().add(DYNAMIC_OFF / 8) } as *const u8;
+            let dynamic_end = unsafe { dynamic.add(self.dynamic.len() * 8) };
+            unsafe {
+                __crabc_x86_64_self_relocate(
+                    base,
+                    self.phdr.as_ptr(),
+                    1,
+                    dynamic,
+                    dynamic_end,
+                )
+            }
+        }
+
+        fn word(&self, offset: usize) -> u64 {
+            self.words[offset / 8]
+        }
+    }
+
+    fn load_phdr(start: u64, memsz: u64, flags: u32) -> Vec<u8> {
+        let mut phdr = vec![0u8; 56];
+        phdr[0..4].copy_from_slice(&1u32.to_le_bytes());
+        phdr[4..8].copy_from_slice(&flags.to_le_bytes());
+        phdr[16..24].copy_from_slice(&start.to_le_bytes());
+        phdr[40..48].copy_from_slice(&memsz.to_le_bytes());
+        phdr[48..56].copy_from_slice(&8u64.to_le_bytes());
+        phdr
+    }
+
+    #[test]
+    fn valid_rela_and_relr_apply_the_load_bias() {
+        let mut fixture = Fixture::new();
+        fixture.rela(TARGET_OFF as u64, 0x20);
+        fixture.relr(&[0x810, 3]);
+        fixture.dynamic(Some(24), Some((16, 8)));
+        let base = fixture.words.as_ptr() as usize;
+        let result = fixture.run();
+        assert_eq!(result, 0);
+        assert_eq!(fixture.word(TARGET_OFF), (base as u64).wrapping_add(0x20));
+        assert_eq!(fixture.word(0x810), base as u64);
+        assert_eq!(fixture.word(0x818), base as u64);
+    }
+
+    #[test]
+    fn bitmap_first_relr_is_rejected() {
+        let mut fixture = Fixture::new();
+        fixture.relr(&[1]);
+        fixture.dynamic(None, Some((8, 8)));
+        assert_eq!(fixture.run(), 1);
+    }
+
+    #[test]
+    fn bad_relrent_is_rejected() {
+        let mut fixture = Fixture::new();
+        fixture.relr(&[TARGET_OFF as u64]);
+        fixture.dynamic(None, Some((8, 4)));
+        assert_eq!(fixture.run(), 1);
+    }
+
+    #[test]
+    fn target_outside_writable_load_is_rejected() {
+        let mut fixture = Fixture::new();
+        fixture.rela(0x1200, 0x20);
+        fixture.dynamic(Some(24), None);
+        assert_eq!(fixture.run(), 1);
+        assert_eq!(fixture.word(TARGET_OFF), 0);
+    }
+
+    #[test]
+    fn target_overflow_is_rejected() {
+        let mut fixture = Fixture::new();
+        fixture.rela(u64::MAX - 7, 0x20);
+        fixture.dynamic(Some(24), None);
+        assert_eq!(fixture.run(), 1);
+    }
+
+    #[test]
+    fn unaligned_target_is_rejected() {
+        let mut fixture = Fixture::new();
+        fixture.rela(TARGET_OFF as u64 + 1, 0x20);
+        fixture.dynamic(Some(24), None);
+        assert_eq!(fixture.run(), 1);
+        assert_eq!(fixture.word(TARGET_OFF), 0);
+    }
+
+    #[test]
+    fn duplicate_relr_target_is_rejected() {
+        let mut fixture = Fixture::new();
+        fixture.relr(&[TARGET_OFF as u64, TARGET_OFF as u64]);
+        fixture.dynamic(None, Some((16, 8)));
+        assert_eq!(fixture.run(), 1);
+    }
+
+    #[test]
+    fn overlapping_tables_are_rejected() {
+        let mut fixture = Fixture::new();
+        fixture.dynamic(Some(24), Some((16, 8)));
+        // Move DT_RELR onto DT_RELA.
+        let at = DYNAMIC_OFF / 8;
+        for index in 0..fixture.dynamic.len() / 2 {
+            if fixture.words[at + index * 2] == 0x24 {
+                fixture.words[at + index * 2 + 1] = RELA_OFF as u64;
+            }
+        }
+        let entries = fixture.dynamic.clone();
+        fixture.dynamic = entries;
+        assert_eq!(fixture.run(), 1);
+    }
+
+    #[test]
+    fn table_outside_load_is_rejected() {
+        let mut fixture = Fixture::new();
+        fixture.rela(TARGET_OFF as u64, 0x20);
+        fixture.dynamic(Some(24), None);
+        // Point DT_RELA past the only PT_LOAD.
+        let at = DYNAMIC_OFF / 8;
+        fixture.words[at + 1] = 0x2000;
+        assert_eq!(fixture.run(), 1);
+        assert_eq!(fixture.word(TARGET_OFF), 0);
+    }
+
+    #[test]
+    fn target_overlapping_a_table_is_rejected() {
+        let mut fixture = Fixture::new();
+        fixture.rela(RELA_OFF as u64, 0x20);
+        fixture.dynamic(Some(24), None);
+        assert_eq!(fixture.run(), 1);
+    }
+}

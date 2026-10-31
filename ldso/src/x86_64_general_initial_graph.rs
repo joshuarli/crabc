@@ -34,6 +34,8 @@ use super::x86_64_general_initial_tls_state::{
 /// interpreter's already self-relocated base. A successful initial graph is
 /// moved into the private process-lifetime owner before any constructor runs.
 pub(super) unsafe fn run(sp: usize, ldso_base: usize) -> ! {
+    #[cfg(feature = "x86_64-owned-dynamic-runtime")]
+    super::set_interpreter_base(ldso_base);
     // SAFETY: `_start` supplies the unchanged kernel stack and a self-relocated
     // interpreter base. Every object pointer below comes from a checked
     // program-header/dynamic-table parse or a successfully mapped ET_DYN.
@@ -275,6 +277,7 @@ unsafe fn run_with_initial_tls(
                 return Err(b"tlsstate\n");
             }
         };
+        if objects[index].interpreter_self { continue; }
         if unsafe { protect_segments(&objects[index]) }.is_none() {
             rollback_initial_tls_state(&mut state, GeneralInitialPreparationStage::Protection);
             return Err(b"protect\n");
@@ -288,6 +291,7 @@ unsafe fn run_with_initial_tls(
                 return Err(b"tlsstate\n");
             }
         };
+        if objects[index].interpreter_self { continue; }
         if unsafe { apply_relro(&objects[index]) }.is_none() {
             rollback_initial_tls_state(&mut state, GeneralInitialPreparationStage::Relro);
             return Err(b"relro\n");
@@ -569,6 +573,21 @@ unsafe fn select_canonical_initial_libc(
     graph: &InitialGraphState,
     objects: &mut ObjectTable,
 ) -> Option<CanonicalInitialLibc> {
+    // A merged interpreter/libc image is the canonical libc by construction:
+    // its identity is the interpreter's own kernel mapping, not an opened
+    // pathname. Mark that one object and skip every alias open/stat.
+    if let Some(index) = objects[..graph.object_count()]
+        .iter()
+        .position(|object| object.interpreter_self)
+    {
+        let object = objects.get_mut(index)?;
+        if object.role != ObjectRole::Library || object.canonical_libc_identity.is_some() {
+            return None;
+        }
+        let identity = graph.identity(index)?;
+        object.canonical_libc_identity = Some(identity);
+        return Some(CanonicalInitialLibc { index, identity });
+    }
     let invocation_prefix = unsafe { x86_64_library_search::installation_prefix() };
     let selected = if let Some(selected) = single_library_opened_canonical_alias(graph, objects, invocation_prefix) {
         selected
@@ -756,6 +775,102 @@ unsafe fn discover_object_needed(
     Some(())
 }
 
+/// Whether this interpreter is also the libc half: the merged link carries
+/// `SONAME libc.so`. The split loader has no SONAME, so the same source keeps
+/// its existing open-a-second-image path.
+#[cfg(feature = "x86_64-owned-dynamic-runtime")]
+unsafe fn interpreter_soname_is_libc() -> bool {
+    let base = super::interpreter_base();
+    if base == 0 { return false; }
+    let header = base as *const u8;
+    let Some(phoff) = usize::try_from(unsafe { read_u64(header.add(32)) }).ok() else { return false; };
+    let phnum = unsafe { read_u16(header.add(56)) } as usize;
+    let Some(phdr_base) = base.checked_add(phoff) else { return false; };
+    let mut dynamic = core::ptr::null::<u8>();
+    let mut dynamic_bytes = 0usize;
+    for index in 0..phnum {
+        let phdr = (phdr_base + index * 56) as *const u8;
+        if unsafe { read_u32(phdr) } != 2 { continue; }
+        let Some(address) = usize::try_from(unsafe { read_u64(phdr.add(16)) }).ok() else { return false; };
+        let Some(bytes) = usize::try_from(unsafe { read_u64(phdr.add(40)) }).ok() else { return false; };
+        let Some(pointer) = base.checked_add(address) else { return false; };
+        dynamic = pointer as *const u8;
+        dynamic_bytes = bytes;
+        break;
+    }
+    if dynamic.is_null() || dynamic_bytes % 16 != 0 { return false; }
+    let (mut strtab, mut strsz, mut soname) = (0usize, 0usize, None);
+    for index in 0..dynamic_bytes / 16 {
+        let entry = unsafe { dynamic.add(index * 16) };
+        let tag = unsafe { read_i64(entry) };
+        if tag == 0 { break; }
+        let Some(value) = usize::try_from(unsafe { read_u64(entry.add(8)) }).ok() else { return false; };
+        match tag {
+            5 => strtab = value,
+            10 => strsz = value,
+            14 => soname = Some(value),
+            _ => {}
+        }
+    }
+    let Some(offset) = soname else { return false; };
+    let Some(start) = base.checked_add(strtab).and_then(|table| table.checked_add(offset)) else { return false; };
+    let Some(available) = strsz.checked_sub(offset) else { return false; };
+    let name = start as *const u8;
+    let Some(length) = (unsafe { bounded_nul(name, available) }) else { return false; };
+    let found = unsafe { core::slice::from_raw_parts(name, length) };
+    found == b"libc.so"
+}
+
+/// Admit the kernel-mapped interpreter as graph object 1 for its own
+/// `DT_NEEDED` name. The image is already mapped at `AT_BASE`; discovery must
+/// not open, stat, pread or map a second copy of it.
+#[cfg(feature = "x86_64-owned-dynamic-runtime")]
+unsafe fn admit_interpreter_self(
+    graph: &mut InitialGraphState,
+    objects: &mut ObjectTable,
+    requester: Option<usize>,
+    name: &[u8],
+    short_name: bool,
+) -> Result<Option<usize>, ()> {
+    const IDENTITY: ObjectIdentity = ObjectIdentity {
+        device: u64::MAX,
+        inode: u64::MAX - 1,
+    };
+    if let Some(index) = objects[..graph.object_count()]
+        .iter()
+        .position(|object| object.interpreter_self)
+    {
+        objects[index].search_short_name |= short_name;
+        return Ok(Some(index));
+    }
+    if !unsafe { interpreter_soname_is_libc() } { return Ok(None); }
+    let base = super::interpreter_base();
+    let header = base as *const u8;
+    let phoff = usize::try_from(unsafe { read_u64(header.add(32)) }).ok().ok_or(())?;
+    let phnum = unsafe { read_u16(header.add(56)) } as usize;
+    let phdr = base.checked_add(phoff).ok_or(())? as *const u8;
+    let mut object = unsafe {
+        parse_mapped(base as u64, phdr, phnum, ObjectRole::Library, false, true)
+    }.ok_or(())?;
+    object.interpreter_self = true;
+    // `_start` has already applied the merged image's packed RELR records.
+    object.relr = core::ptr::null();
+    object.relrsz = 0;
+    let index = match unsafe { graph.admit_interpreter(IDENTITY) } {
+        Ok(ObjectAdmission::New { index }) => index,
+        Ok(ObjectAdmission::Existing { .. }) | Err(_) => return Err(()),
+    };
+    let Some(search_name) = objects.retain_name(super::x86_64_library_search::LoadedName::new(name).ok_or(())?) else {
+        return Err(());
+    };
+    object.search_name = search_name;
+    object.search_short_name = short_name;
+    object.initial_load_name_is_short = short_name;
+    object.needed_by = requester;
+    if objects.set(index, object).is_none() { return Err(()); }
+    Ok(Some(index))
+}
+
 /// A missing/unmappable library is optional only for load_preload. Structural
 /// transaction failures cannot be mistaken for an ignored preload. Every
 /// admitted map immediately enters the common rollback owner before more I/O.
@@ -774,6 +889,11 @@ unsafe fn load_initial_library(
             let stored = object.search_name.bytes();
             loaded_path_matches_short_name(stored, name)
         }) { return Ok(Some(index)); }
+    }
+    if reserved_runtime_name(name) {
+        if let Some(index) = unsafe { admit_interpreter_self(graph, objects, requester, name, short_name) }? {
+            return Ok(Some(index));
+        }
     }
     let mut ancestor = requester;
     let chain = core::iter::from_fn(|| {

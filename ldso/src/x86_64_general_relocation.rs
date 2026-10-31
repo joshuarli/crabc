@@ -1049,7 +1049,8 @@ unsafe fn validate_initial_private_imports(
             }
         }
     }
-    (imports == 1).then_some(())
+    let merged_self = imports == 0 && objects.get(canonical)?.interpreter_self;
+    (imports == 1 || merged_self).then_some(())
 }
 
 /// Relocate only this transaction's runtime-new suffix. Existing mappings

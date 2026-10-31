@@ -164,6 +164,23 @@ impl InitialGraphState {
         &mut self,
         identity: ObjectIdentity,
     ) -> Result<ObjectAdmission, GraphStateError> {
+        self.admit_with_provenance(identity, true)
+    }
+
+    /// Records the kernel-mapped interpreter as a dependency. Rollback must
+    /// never unmap it; the process is executing from it.
+    pub(crate) fn admit_interpreter(
+        &mut self,
+        identity: ObjectIdentity,
+    ) -> Result<ObjectAdmission, GraphStateError> {
+        self.admit_with_provenance(identity, false)
+    }
+
+    fn admit_with_provenance(
+        &mut self,
+        identity: ObjectIdentity,
+        mapped_by_transaction: bool,
+    ) -> Result<ObjectAdmission, GraphStateError> {
         if let Some(index) = self.find(identity) {
             return Ok(ObjectAdmission::Existing {
                 index,
@@ -179,7 +196,7 @@ impl InitialGraphState {
             .push(ObjectSlot {
                 identity,
                 state: ObjectState::Discovering,
-                mapped_by_transaction: true,
+                mapped_by_transaction,
                 edge_start: 0,
                 edge_count: 0,
             })
