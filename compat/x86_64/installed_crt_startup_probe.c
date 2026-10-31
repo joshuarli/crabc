@@ -92,6 +92,67 @@ struct loader_tls_descriptor {
 _Static_assert(sizeof(struct loader_tls_descriptor)==72,"descriptor size");
 _Static_assert(_Alignof(struct loader_tls_descriptor)==8,"descriptor alignment");
 
+/* The merged link binds the conventional record in-image. Its 88-byte
+ * payload is the private loader contract; validate every field rather than
+ * accepting a transcript as proof that select() did not fall back. */
+struct conventional_snapshot {
+    uint64_t magic;
+    uint32_t version, abi_size, process_mode, owner;
+    _Atomic unsigned char state;
+    unsigned char reserved[7];
+    const unsigned char *thread_pointer;
+    const uintptr_t *dtv;
+    size_t dtv_words, module_count;
+    uint64_t generation;
+    uintptr_t run_initial, process_fini;
+};
+_Static_assert(sizeof(struct conventional_snapshot)==88,"conventional size");
+_Static_assert(_Alignof(struct conventional_snapshot)==8,"conventional alignment");
+
+static int conventional_record_valid(const struct conventional_snapshot *q,
+                                     uintptr_t thread_pointer, uintptr_t dtv, int owned) {
+    if (!q || (uintptr_t)q%_Alignof(struct conventional_snapshot)) return 0;
+    unsigned char state=atomic_load_explicit(&q->state,memory_order_acquire);
+    if (q->magic!=UINT64_C(0x43524142435f4331) || q->version!=1 || q->abi_size!=88
+        || q->owner!=1 || memcmp(q->reserved,(unsigned char[7]){0},7) || q->generation!=1) return 0;
+    /* An owned main publishes only the decision, so the conventional
+     * coordinates legitimately stay zero until select() takes that path. */
+    if (owned) return q->process_mode==3 && state==3;
+    if (q->process_mode!=2 || state!=2 || !q->run_initial || !q->process_fini
+        || !q->thread_pointer || (uintptr_t)q->thread_pointer%sizeof(uintptr_t)
+        || !q->dtv || (uintptr_t)q->dtv%sizeof(uintptr_t)
+        || !q->module_count || q->module_count==SIZE_MAX
+        || q->dtv_words<q->module_count+1 || q->dtv[0]!=q->module_count) return 0;
+    return (uintptr_t)q->thread_pointer==thread_pointer && (uintptr_t)q->dtv==dtv;
+}
+
+static int conventional_record_base(struct dl_phdr_info *info,size_t size,void *opaque) {
+    (void)size;
+    uintptr_t *base=opaque;
+    if (!info->dlpi_name || !info->dlpi_name[0]) return 0;
+    size_t length=strlen(info->dlpi_name);
+    if (length<7 || strcmp(info->dlpi_name+length-7,"libc.so")) return 0;
+    if (*base && *base!=(uintptr_t)info->dlpi_addr) _Exit(115);
+    *base=(uintptr_t)info->dlpi_addr;
+    return 0;
+}
+
+static const struct conventional_snapshot *conventional_record(void) {
+    const char *text=getenv("CRABC_CONVENTIONAL_RECORD_OFFSET");
+    if (!text || !*text) return 0;
+    uintptr_t offset=0;
+    for (const char *p=text;*p;++p) {
+        int digit=*p>='0' && *p<='9' ? *p-'0' : *p>='a' && *p<='f' ? *p-'a'+10 : -1;
+        if (digit<0) _Exit(115);
+        offset=(offset<<4)|(uintptr_t)digit;
+    }
+    uintptr_t base=0;
+    if (dl_iterate_phdr(conventional_record_base,&base) || !base) _Exit(115);
+    const struct conventional_snapshot *record=(const void *)(base+offset);
+    if ((uintptr_t)record % _Alignof(struct conventional_snapshot)) _Exit(115);
+    return record;
+}
+
 struct wire_state {
     unsigned main_images, handoffs, conventional, descriptors;
     uintptr_t handoff, snapshot, descriptor;
@@ -189,9 +250,14 @@ static void observe(const char *mode) {
             || d->module_count==SIZE_MAX || d->dtv_words<d->module_count+1
             || (uintptr_t)d->thread_pointer!=tp || (uintptr_t)d->dtv!=dtv
             || d->dtv[0]!=d->module_count) _Exit(107);
+        if (!conventional_record_valid(conventional_record(),tp,dtv,1)) _Exit(116);
         emit('O');
     } else if (!strcmp(mode,"conventional")) {
         if (s.handoffs || s.conventional || s.descriptors) _Exit(108);
+        uintptr_t tp,dtv;
+        __asm__ volatile("mov %%fs:0,%0":"=r"(tp));
+        __asm__ volatile("mov %%fs:8,%0":"=r"(dtv));
+        if (!conventional_record_valid(conventional_record(),tp,dtv,0)) _Exit(117);
         emit('V');
     } else if (!strcmp(mode,"default")) {
         if (s.handoffs!=1 || s.handoff || s.conventional || s.descriptors) _Exit(110);
