@@ -207,6 +207,14 @@ def require_handoff_relocation(row,name):
     expected={'name':name,'kind':6,'addend':0,'symbol_type':'OBJECT','binding':'WEAK','visibility':'DEFAULT','symbol_section':0}
     require(same({k:row.get(k) for k in expected},expected),'private handoff relocation differs')
 
+def require_private_merged_definition(row,size,description):
+    expected={'type':'OBJECT','binding':'LOCAL','visibility':'HIDDEN',
+              'version':None,'version_default':False,'size_bytes':size}
+    require(same({k:row.get(k) for k in expected},expected),description+' differs')
+    section=row.get('section_index')
+    require(type(section) is str and section.isdigit() and int(section)>0,
+            description+' lacks a defining section')
+
 def require_array_bounds(start,end,section):
     require(type(start) is int and type(end) is int and 0<=start<=end and start%8==end%8==0,'invalid linker array bounds')
     if section is None:require(start==end,'nonempty linker array has no section')
@@ -683,11 +691,18 @@ def account_products(facts):
     for name,visibility in ((ATTACH,'DEFAULT'),(RECORD,'HIDDEN')):
         item=exact(facts,'dynamic-crabc-dynamic-attach.o',name);require_function(item['row'],item['section'],visibility);result['dynamic-crabc-dynamic-attach.o'][name]=item
     result['candidate-shared']={}
-    for table in ('.dynsym','.symtab'):
-        item=exact(facts,'candidate-shared',CONVENTIONAL,table);require_import(item['row'],'OBJECT','WEAK','DEFAULT');result['candidate-shared'][table]=item
-    for key,allowed in (('candidate-shared',{CONVENTIONAL}),('candidate-loader',set())):
-        require(all(x['row']['name'] not in NAMES or x['row']['name'] in allowed
-                    for x in rows(facts,key,'.dynsym')),'unexpected public startup identity: '+key)
+    for key in ('candidate-shared','candidate-loader'):
+        result.setdefault(key,{})
+        for name,size in ((CONVENTIONAL,88),(DESCRIPTOR,72)):
+            item=exact(facts,key,name)
+            require_private_merged_definition(item['row'],size,'merged private definition '+key+'/'+name)
+            require(item['section'] is not None and 'W' in item['section']['flags'],
+                    'merged private definition is not writable data: '+key+'/'+name)
+            require(not any(x['row']['name']==name for x in rows(facts,key,'.dynsym')),
+                    'merged private definition is publicly exported: '+key+'/'+name)
+            result[key][name]=item
+        require(not any(x['row']['name'] in NAMES for x in rows(facts,key,'.dynsym')),
+                'unexpected public startup identity: '+key)
     for name,placements in expected_contract()['source_crt_definitions'].items():
         for key in artifact_names:
             symtab=[item for item in rows(facts,key,'.symtab') if item['row']['name']==name]
@@ -772,8 +787,8 @@ def artifact_relocations(root,work,inputs):
     for key,path in paths.items():
         if key=='candidate-static':continue
         result[key]=relocations(path)
-    shared=[x for x in result['candidate-shared'] if x['name']==CONVENTIONAL]
-    require(len(shared)==1,'canonical libc startup relocation count differs');require_handoff_relocation(shared[0],CONVENTIONAL)
+    shared=[x for x in result['candidate-shared'] if x['name'] in (CONVENTIONAL,DESCRIPTOR)]
+    require(not shared,'merged libc retained a private handoff relocation')
     require_crt_caller_relocations(result)
     return result
 

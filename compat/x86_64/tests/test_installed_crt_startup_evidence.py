@@ -695,6 +695,13 @@ int main(void) {
             with mock.patch.object(reader,'product_paths',return_value=paths), \
                  mock.patch.object(reader,'relocations',side_effect=lambda path:copy.deepcopy(value[str(path)])):
                 return reader.artifact_relocations(reader.ROOT,Path('.'),{})
+        # The retained split-product row is now the rejected shape: the merged
+        # image defines both private records in place instead of importing the
+        # conventional handoff from the loader.
+        with self.assertRaises(reader.StartupEvidenceError):observe(rows)
+        rows=copy.deepcopy(rows)
+        rows['candidate-shared']=[row for row in rows['candidate-shared']
+                                  if row['name'] not in (reader.CONVENTIONAL,reader.DESCRIPTOR)]
         observe(rows)
         for role,values in rows.items():
             if not role.endswith('.o'):
@@ -1223,8 +1230,9 @@ int main(void) {
             return {'row_index':1,'name':name,'type':kind,'binding':binding,'visibility':visibility,
                     'section_index':section,'version':None,'version_default':False,'size_bytes':0,'value':'0000000000000000'}
         def member(values):
-            return {'sections':[{'index':0,'type':'NULL','flags':''},{'index':1,'type':'PROGBITS','flags':'AX'}],
-                    'symbol_tables':[{'name':'.symtab','section_index':2,'rows':values}]}
+            return {'sections':[{'index':0,'type':'NULL','flags':''},{'index':1,'type':'PROGBITS','flags':'AX'},
+                                {'index':2,'type':'PROGBITS','flags':'WA'}],
+                    'symbol_tables':[{'name':'.symtab','section_index':3,'rows':values}]}
         facts={}
         for key in ('static-crt1.o','static-Scrt1.o','static-rcrt1.o','dynamic-crt1.o','dynamic-Scrt1.o'):
             values=[row(x) for x in reader.ARRAYS]
@@ -1241,9 +1249,10 @@ int main(void) {
             facts[key]=member(values)
         facts['candidate-static']=[{**member([row(reader.BOOTSTRAP,'FUNC',visibility='HIDDEN',section='1')]),'member':'runtime.o','member_index':0,'member_occurrence':0},
                                   {**member([row('_GLOBAL_OFFSET_TABLE_')]),'member':'producer.o','member_index':1,'member_occurrence':0}]
-        facts['candidate-shared']=member([row(reader.CONVENTIONAL,'OBJECT','WEAK')])
-        facts['candidate-shared']['symbol_tables'].append({'name':'.dynsym','section_index':3,'rows':[row(reader.CONVENTIONAL,'OBJECT','WEAK')]})
-        facts['candidate-loader']=member([])
+        def private(name,size):
+            return {**row(name,'OBJECT','LOCAL','HIDDEN',section='2'),'size_bytes':size}
+        facts['candidate-shared']=member([private(reader.CONVENTIONAL,88),private(reader.DESCRIPTOR,72)])
+        facts['candidate-loader']=member([private(reader.CONVENTIONAL,88),private(reader.DESCRIPTOR,72)])
         facts['dynamic-crabc-dynamic-attach.o']=member([row(reader.ATTACH,'FUNC',section='1'),row(reader.RECORD,'FUNC',visibility='HIDDEN',section='1'),
                                                         row(reader.HANDOFF,'OBJECT','WEAK')])
         for name,artifacts in SOURCE_CRT_DEFINITIONS.items():
@@ -1259,9 +1268,10 @@ int main(void) {
 
     def test_actual_shaped_product_tables_cannot_collapse_import_origins(self):
         facts=self.fixture();result=reader.account_products(facts)
-        self.assertEqual(set(result['candidate-shared']),{'.dynsym','.symtab'})
+        self.assertEqual(set(result['candidate-shared']),{reader.CONVENTIONAL,reader.DESCRIPTOR})
         facts['candidate-shared']['symbol_tables'][0]['rows']=[]
-        facts['candidate-shared']['symbol_tables'][1]['rows']*=2
+        with self.assertRaises(reader.StartupEvidenceError):reader.account_products(facts)
+        facts=self.fixture();facts['candidate-shared']['symbol_tables'][0]['rows']*=2
         with self.assertRaises(reader.StartupEvidenceError):reader.account_products(facts)
 
     def test_actual_shaped_crt_roster_cannot_omit_hidden_bootstrap_or_replace_it_with_common(self):
@@ -1280,7 +1290,8 @@ int main(void) {
         facts['candidate-loader']['symbol_tables'].append({'name':'.dynsym','section_index':3,'rows':[rogue]})
         with self.assertRaises(reader.StartupEvidenceError):reader.account_products(facts)
         facts=self.fixture()
-        facts['candidate-shared']['symbol_tables'][1]['rows'].append(rogue)
+        facts['candidate-shared']['symbol_tables'].append(
+            {'name':'.dynsym','section_index':3,'rows':[rogue]})
         with self.assertRaises(reader.StartupEvidenceError):reader.account_products(facts)
 
     def test_final_link_plan_keeps_same_object_and_helper_owners(self):
