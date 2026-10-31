@@ -294,39 +294,19 @@ unsafe fn publish_initial_tls_attachment(
 // retained graph state and descriptor with no fallible successor.
 #[cfg(crabc_general_loader_libc_tls_runtime_v1)]
 const GENERAL_LOADER_TLS_RUNTIME_V1_MAGIC: u64 =
-    if cfg!(crabc_general_loader_libc_tls_runtime_v1_bad_magic) {
-        0
-    } else {
-        0x4352_4142_435f_5451
-    };
+    0x4352_4142_435f_5451;
 #[cfg(crabc_general_loader_libc_tls_runtime_v1)]
 const GENERAL_LOADER_TLS_RUNTIME_V1_VERSION: u32 =
-    if cfg!(crabc_general_loader_libc_tls_runtime_v1_bad_version) {
-        0
-    } else {
-        1
-    };
+    1;
 #[cfg(crabc_general_loader_libc_tls_runtime_v1)]
 const GENERAL_LOADER_TLS_RUNTIME_V1_PROCESS_MODE_DYNAMIC: u32 =
-    if cfg!(crabc_general_loader_libc_tls_runtime_v1_bad_mode) {
-        0
-    } else {
-        2
-    };
+    2;
 #[cfg(crabc_general_loader_libc_tls_runtime_v1)]
 const GENERAL_LOADER_TLS_RUNTIME_V1_OWNER_LDSO: u32 =
-    if cfg!(crabc_general_loader_libc_tls_runtime_v1_bad_owner) {
-        0
-    } else {
-        1
-    };
+    1;
 #[cfg(crabc_general_loader_libc_tls_runtime_v1)]
 const GENERAL_LOADER_TLS_RUNTIME_V1_GENERATION_INITIAL: u64 =
-    if cfg!(crabc_general_loader_libc_tls_runtime_v1_bad_generation) {
-        0
-    } else {
-        1
-    };
+    1;
 #[cfg(crabc_general_loader_libc_tls_runtime_v1)]
 const GENERAL_LOADER_TLS_RUNTIME_V1_STATE_UNPUBLISHED: u8 = 0;
 #[cfg(crabc_general_loader_libc_tls_runtime_v1)]
@@ -373,11 +353,7 @@ static mut __crabc_x86_64_loader_tls_runtime_v1: GeneralLoaderLibcTlsRuntimeV1 =
     GeneralLoaderLibcTlsRuntimeV1 {
         magic: GENERAL_LOADER_TLS_RUNTIME_V1_MAGIC,
         version: GENERAL_LOADER_TLS_RUNTIME_V1_VERSION,
-        abi_size: if cfg!(crabc_general_loader_libc_tls_runtime_v1_bad_abi_size) {
-            0
-        } else {
-            core::mem::size_of::<GeneralLoaderLibcTlsRuntimeV1>() as u32
-        },
+        abi_size: core::mem::size_of::<GeneralLoaderLibcTlsRuntimeV1>() as u32,
         process_mode: GENERAL_LOADER_TLS_RUNTIME_V1_PROCESS_MODE_DYNAMIC,
         owner: GENERAL_LOADER_TLS_RUNTIME_V1_OWNER_LDSO,
         state: AtomicU8::new(GENERAL_LOADER_TLS_RUNTIME_V1_STATE_UNPUBLISHED),

@@ -384,11 +384,7 @@ const MAX_OWNED_CRT_MAIN_ARRAY_ENTRIES: usize = 16;
 // The fixed owned-CRT sibling and general owned lifecycle composition share
 // this record layout, not graph algorithms or state. Older fixed no-TLS and
 // GNU-Dynamic-TLS direct-main artifacts retain their no-handoff boundary.
-const OWNED_CRT_HANDOFF_MAGIC: u64 = if cfg!(crabc_owned_crt_handoff_malformed) {
-    0
-} else {
-    0x4352_4142_435f_4831
-};
+const OWNED_CRT_HANDOFF_MAGIC: u64 = 0x4352_4142_435f_4831;
 const OWNED_CRT_HANDOFF_VERSION: u32 = if cfg!(crabc_hardened) { 2 } else { 1 };
 
 type OwnedCrtLifecycleHook = unsafe extern "C" fn();
@@ -2665,7 +2661,6 @@ unsafe fn apply_relr_table(object: &Object) -> Option<()> {
     }
     if object.relr.is_null()
         || object.relrsz % ELF64_RELR_SIZE != 0
-        || (!cfg!(crabc_general_initial_graph) && object.relrsz > MAX_RELR_BYTE_LEN)
     {
         return None;
     }
