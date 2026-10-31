@@ -515,16 +515,6 @@ unsafe fn preflight_dependency_initializers(
 /// currently retained graph. Its entries then designate executable addresses
 /// in mapped dependencies, and the caller must be in the single initial
 /// startup transaction before application control transfers.
-unsafe fn dispatch_dependency_initializers(plan: &DependencyInitializerPlan) {
-    #[cfg(crabc_general_initial_lifecycle)]
-    {
-        let _ = plan;
-        // Both initial transaction routes attach the complete lifecycle
-        // before reserving publication. No mapped callback runs until the
-        // canonical owner (and any initial TLS attachment) is retained.
-        unsafe { GeneralInitialLoaderState::retained().unwrap().lifecycle().unwrap().initialize() };
-    }
-}
 
 #[cfg(crabc_general_initial_tls_materialization_v1)]
 unsafe fn rollback_initial_tls_state(
@@ -1071,27 +1061,7 @@ mod short_name_tests {
 // Legacy source roots retain their original depth-first, explicit-RUNPATH
 // graph proof. They do not capture preload or system policy from the host.
 
-unsafe fn selected_needed_name(name: *const u8, name_len: usize) -> bool {
-    if name_len == 0 {
-        return false;
-    }
-    for index in 0..name_len {
-        let byte = *name.add(index);
-        // A slash changes DT_NEEDED from a RUNPATH lookup into a pathname
-        // policy. That policy (and `$ORIGIN`) has not been selected here.
-        if byte == b'/' || byte == 0 {
-            return false;
-        }
-    }
-    true
-}
 
-unsafe fn rollback_general_initial_state(
-    state: &mut GeneralInitialLoaderState,
-    stage: GeneralInitialPreparationStage,
-) {
-    state.abort(stage, |object| unsafe { unmap_object(object) });
-}
 
 unsafe fn unmap_object(object: &Object) {
     if object.map_provenance != ObjectMapProvenance::Transaction

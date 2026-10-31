@@ -263,7 +263,6 @@ const X86_64_STAT_SIZE_OFFSET: usize = 48;
 const MAX_PHDRS: usize = 32;
 // The installed runtime reads DT_NEEDED names from the validated dynamic
 // table; the private source roots retain their small inline table.
-const MAX_PATH: usize = 512;
 // The general initial graph owns one startup-only dependency constructor
 // transition, not a reusable DSO lifecycle. Keep each admitted dependency
 // array small enough to preflight every relocated entry before the first
@@ -307,7 +306,6 @@ const TLS_TCB_MODULE_SIZE_TABLE_OFFSET: usize = core::mem::size_of::<usize>() * 
 // pointer. Fresh main/worker allocations leave it zero; libc publishes before
 // callbacks/handler unmask and clears before state reclamation. The loader
 // never dereferences, copies from another thread, or rewrites it during growth.
-const TLS_TCB_LIBC_CANCELLATION_STATE_OFFSET: usize = 32;
 // General graphs size each initial DTV from its module count (see
 // `materialize_initial_tls`). This fixed geometry remains only for the
 // fixed-graph helpers compiled beside them.
@@ -1919,35 +1917,7 @@ unsafe fn needed_name_offset(object: &Object, slot: usize) -> Option<usize> {
 }
 
 
-unsafe fn load_needed(parent: &Object, needed_index: usize) -> Option<Object> {
-    if needed_index >= parent.needed_count || parent.runpath.is_null() { return None; }
-    let offset = needed_name_offset(parent, needed_index)?;
-    let name = parent.strtab.add(offset);
-    let name_len = bounded_nul(name, parent.strsz - offset)?;
-    let fd = open_from_runpath(parent.runpath, parent.runpath_len, name, name_len)?;
-    let result = map_elf(fd, false, false);
-    let _ = syscall1(SYS_CLOSE, fd);
-    result
-}
 
-unsafe fn open_from_runpath(runpath: *const u8, runpath_len: usize, name: *const u8, name_len: usize) -> Option<i64> {
-    let mut start = 0;
-    while start < runpath_len {
-        let mut end = start;
-        while end < runpath_len && *runpath.add(end) != b':' { end += 1; }
-        let directory_len = end - start;
-        if directory_len != 0 && directory_len + 1 + name_len + 1 <= MAX_PATH {
-            let mut path = [0u8; MAX_PATH];
-            core::ptr::copy_nonoverlapping(runpath.add(start), path.as_mut_ptr(), directory_len);
-            path[directory_len] = b'/';
-            core::ptr::copy_nonoverlapping(name, path.as_mut_ptr().add(directory_len + 1), name_len);
-            let fd = syscall4(SYS_OPENAT, AT_FDCWD, path.as_ptr() as i64, 0, 0);
-            if fd >= 0 { return Some(fd); }
-        }
-        start = end + 1;
-    }
-    None
-}
 
 /// This artifact owns only fixture-style absolute directories.  In
 /// particular, an empty component, a relative directory, and `$ORIGIN` are
@@ -1968,25 +1938,6 @@ unsafe fn is_fixture_absolute_runpath(runpath: *const u8, runpath_len: usize) ->
 /// environment paths, the cache, and default directories remain outside this
 /// first transaction package, so a failed lookup cannot fall through to an
 /// ambient host loader decision.
-unsafe fn is_selected_absolute_runpath(runpath: *const u8, runpath_len: usize) -> bool {
-    if runpath_len == 0 || *runpath != b'/' {
-        return false;
-    }
-    let mut component_start = 0;
-    for index in 0..=runpath_len {
-        if index != runpath_len && *runpath.add(index) != b':' {
-            if *runpath.add(index) == b'$' {
-                return false;
-            }
-            continue;
-        }
-        if index == component_start || *runpath.add(component_start) != b'/' {
-            return false;
-        }
-        component_start = index + 1;
-    }
-    true
-}
 
 unsafe fn file_size_from_fd(fd: i64) -> Option<u64> {
     let mut stat = [0u8; X86_64_STAT_BYTE_LEN];
@@ -2031,9 +1982,6 @@ impl FileStatus {
     fn size(&self) -> i64 { unsafe { read_i64(self.0.as_ptr().add(X86_64_STAT_SIZE_OFFSET)) } }
 }
 
-unsafe fn file_identity_from_fd(fd: i64) -> Option<ObjectIdentity> {
-    unsafe { FileStatus::of_fd(fd) }.ok()?.identity()
-}
 
 struct MappingLease {
     address: i64,
@@ -2050,13 +1998,6 @@ impl Drop for MappingLease {
     }
 }
 
-unsafe fn map_elf(
-    fd: i64,
-    allow_bounded_runtime_legacy_tags: bool,
-    general_initial_graph: bool,
-) -> Option<Object> {
-    map_elf_for_role(fd, allow_bounded_runtime_legacy_tags, general_initial_graph, ObjectRole::Library)
-}
 
 unsafe fn map_elf_for_role(
     fd: i64,
@@ -3367,46 +3308,7 @@ unsafe fn apply_relro_span(base: u64, virtual_address: u64, byte_len: u64) -> Op
 
 
 
-unsafe fn run_initializers(objects: &[Object]) -> Option<()> {
-    // The closed dependency graph has already been mapped and relocated.
-    // Walking this suffix in reverse produces leaf then mid. Main-image
-    // constructor dispatch remains a future CRT handoff boundary.
-    for object in objects.iter().rev() {
-        invoke_initializer_range(
-            object.base,
-            object.phdr,
-            object.phnum,
-            object.init_array,
-            object.init_count,
-        )?;
-    }
-    Some(())
-}
 
-unsafe fn invoke_initializer_range(
-    base: u64,
-    phdr: *const u8,
-    phnum: usize,
-    init_array: *const usize,
-    init_count: usize,
-) -> Option<()> {
-    if init_count != 0 && init_array.is_null() {
-        return None;
-    }
-    for index in 0..init_count {
-        let initializer = *init_array.add(index);
-        if initializer == 0 {
-            return None;
-        }
-        let initializer_virtual_address = initializer.checked_sub(base as usize)? as u64;
-        if !virtual_range_in_executable_load(phdr, phnum, initializer_virtual_address, 1) {
-            return None;
-        }
-        let initializer: unsafe extern "C" fn() = core::mem::transmute(initializer);
-        initializer();
-    }
-    Some(())
-}
 
 /// Publish the two fixed dependency initializer ranges for the checked
 /// post-relocation record.  This runs after every object is relocated and
