@@ -21,6 +21,7 @@ use super::x86_64_general_initial_loader_state::{
     GeneralInitialLoaderState, GeneralInitialPreparationStage, ObjectTable,
 };
 use super::x86_64_initial_graph_state::{InitialGraphState, ObjectAdmission, ObjectIdentity};
+use core::sync::atomic::{AtomicU8, AtomicU64, Ordering};
 #[cfg(crabc_general_initial_tls_materialization_v1)]
 use super::x86_64_general_initial_tls_state::{
     GeneralInitialTlsState, GeneralInitialTlsTransaction,
@@ -39,6 +40,85 @@ unsafe fn set_main_interpreter(base: u64, phdr: *const u8, phnum: usize) {
         unsafe { x86_64_library_search::main_interpreter(name); }
         return;
     }
+}
+
+/// A deferred placeholder for the kernel-mapped interpreter's file identity.
+/// No real file has both fields maximized; the identity is resolved on the
+/// first opened duplicate candidate, not during the startup fast path.
+const DEFERRED_SELF_IDENTITY: ObjectIdentity =
+    ObjectIdentity { device: u64::MAX, inode: u64::MAX - 1 };
+
+const SELF_IDENTITY_UNKNOWN: u8 = 0;
+const SELF_IDENTITY_RESOLVING: u8 = 1;
+const SELF_IDENTITY_READY: u8 = 2;
+static SELF_IDENTITY_DEVICE: AtomicU64 = AtomicU64::new(0);
+static SELF_IDENTITY_INODE: AtomicU64 = AtomicU64::new(0);
+static SELF_IDENTITY_STATE: AtomicU8 = AtomicU8::new(SELF_IDENTITY_UNKNOWN);
+
+/// Resolve the interpreter's file identity only when a duplicate candidate is
+/// actually opened. The installed fast path recognizes self by PT_INTERP,
+/// reserved names or the canonical alias and never stats its own file.
+pub(crate) unsafe fn lazy_self_identity() -> Option<ObjectIdentity> {
+    loop {
+        match SELF_IDENTITY_STATE.load(Ordering::Acquire) {
+            SELF_IDENTITY_READY => {
+                return Some(ObjectIdentity {
+                    device: SELF_IDENTITY_DEVICE.load(Ordering::Relaxed),
+                    inode: SELF_IDENTITY_INODE.load(Ordering::Relaxed),
+                });
+            }
+            SELF_IDENTITY_UNKNOWN => {
+                if SELF_IDENTITY_STATE.compare_exchange(
+                    SELF_IDENTITY_UNKNOWN, SELF_IDENTITY_RESOLVING,
+                    Ordering::AcqRel, Ordering::Acquire,
+                ).is_ok() {
+                    let interpreter = unsafe { x86_64_library_search::self_path() };
+                    let identity = match unsafe { FileStatus::of_path(interpreter) } {
+                        Ok(status) => status.identity(),
+                        Err(_) => None,
+                    };
+                    if let Some(identity) = identity {
+                        SELF_IDENTITY_DEVICE.store(identity.device, Ordering::Relaxed);
+                        SELF_IDENTITY_INODE.store(identity.inode, Ordering::Relaxed);
+                        SELF_IDENTITY_STATE.store(SELF_IDENTITY_READY, Ordering::Release);
+                        return Some(identity);
+                    }
+                    SELF_IDENTITY_STATE.store(SELF_IDENTITY_UNKNOWN, Ordering::Release);
+                    return None;
+                }
+            }
+            SELF_IDENTITY_RESOLVING => core::hint::spin_loop(),
+            _ => return None,
+        }
+    }
+}
+
+/// Compare one opened candidate identity to the lazily resolved self identity.
+pub(crate) unsafe fn self_identity_matches(candidate: ObjectIdentity) -> bool {
+    unsafe { lazy_self_identity() == Some(candidate) }
+}
+
+/// The installed interpreter's canonical libc alias without a startup stat.
+/// A copied loader under another basename falls back to identity resolution.
+unsafe fn installed_self_canonical_name() -> Option<super::x86_64_library_search::LoadedName> {
+    let name = unsafe { x86_64_library_search::self_name() };
+    let prefix = unsafe { x86_64_library_search::installation_prefix() };
+    let lib = b"/lib/";
+    if name.len() <= prefix.len() + lib.len()
+        || !name.starts_with(prefix)
+        || &name[prefix.len()..prefix.len() + lib.len()] != lib
+    { return None; }
+    let basename = &name[prefix.len() + lib.len()..];
+    if basename != b"ld-crabc-x86_64.so.1" && basename != b"ld-crabc-x86_64-hardened.so.1" {
+        return None;
+    }
+    let suffix = b"/usr/lib/libc.so";
+    let length = prefix.len().checked_add(suffix.len())?;
+    let mut path = [0u8; 4096];
+    if length >= path.len() { return None; }
+    path[..prefix.len()].copy_from_slice(prefix);
+    path[prefix.len()..length].copy_from_slice(suffix);
+    super::x86_64_library_search::LoadedName::new(&path[..length])
 }
 
 /// Starts the topology-independent initial dependency transaction.
@@ -888,11 +968,6 @@ unsafe fn admit_interpreter_self(
         return Ok(Some(index));
     }
     if !unsafe { interpreter_soname_is_libc() } { return Ok(None); }
-    let interpreter = unsafe { x86_64_library_search::self_path() };
-    let identity = match unsafe { FileStatus::of_path(interpreter) } {
-        Ok(status) => match status.identity() { Some(identity) => identity, None => fail(b"selfstat\n") },
-        Err(_) => fail(b"selfstat\n"),
-    };
     let base = super::interpreter_base();
     let header = base as *const u8;
     let phoff = usize::try_from(unsafe { read_u64(header.add(32)) }).ok().ok_or(())?;
@@ -908,12 +983,15 @@ unsafe fn admit_interpreter_self(
     // `_start` has already applied the merged image's packed RELR records.
     object.relr = core::ptr::null();
     object.relrsz = 0;
-    let index = match unsafe { graph.admit_interpreter(identity) } {
+    let index = match unsafe { graph.admit_interpreter(DEFERRED_SELF_IDENTITY) } {
         Ok(ObjectAdmission::New { index }) => index,
         Ok(ObjectAdmission::Existing { .. }) | Err(_) => fail(b"selfadmit\n"),
     };
     let fallback = super::x86_64_library_search::LoadedName::new(name);
-    let Some(search_name) = canonical_self_name(identity).or(fallback) else { return Err(()); };
+    let Some(search_name) = unsafe { installed_self_canonical_name() }
+        .or_else(|| unsafe { lazy_self_identity().and_then(|identity| canonical_self_name(identity)) })
+        .or(fallback)
+    else { return Err(()); };
     let Some(search_name) = objects.retain_name(search_name) else { return Err(()); };
     object.search_name = search_name;
     object.search_short_name = true;
@@ -1001,9 +1079,8 @@ unsafe fn load_initial_library(
                     let status = FileStatus::of_fd(fd).ok();
                     syscall1(SYS_CLOSE, fd);
                     if let Some(probe) = status.and_then(|status| status.identity()) {
-                        let self_identity = graph.identity(index).ok_or(())?;
                         let canonical = canonical_libc_path(path.view().bytes());
-                        if probe != self_identity && !canonical {
+                        if !unsafe { self_identity_matches(probe) } && !canonical {
                             fail(b"libcidentity\n");
                         }
                         if canonical {
@@ -1030,6 +1107,15 @@ unsafe fn load_initial_library(
     let Some((status, identity)) = FileStatus::of_fd(fd).ok()
         .and_then(|status| status.identity().map(|identity| (status, identity)))
     else { syscall1(SYS_CLOSE, fd); return Ok(None); };
+    if let Some(self_index) = objects[..graph.object_count()]
+        .iter().position(|object| object.interpreter_self)
+    {
+        if unsafe { self_identity_matches(identity) } {
+            syscall1(SYS_CLOSE, fd);
+            objects[self_index].search_short_name |= short_name;
+            return Ok(Some(self_index));
+        }
+    }
     if let Some(index) = graph.find(identity) {
         syscall1(SYS_CLOSE, fd);
         objects[index].search_short_name |= short_name;
@@ -1041,8 +1127,8 @@ unsafe fn load_initial_library(
         return if cfg!(crabc_hardened) { Err(()) } else { Ok(None) };
     };
     if unsafe { mapped_soname_is_libc(&object) } {
-        if let Some(self_index) = objects[..graph.object_count()].iter().position(|object| object.interpreter_self) {
-            if graph.identity(self_index) != Some(identity) {
+        if objects[..graph.object_count()].iter().any(|object| object.interpreter_self) {
+            if !unsafe { self_identity_matches(identity) } {
                 unmap_object(&object);
                 fail(b"libcidentity\n");
             }

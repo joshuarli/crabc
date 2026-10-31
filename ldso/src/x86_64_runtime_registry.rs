@@ -738,6 +738,10 @@ unsafe fn node_name(node: *mut RuntimeObject) -> &'static [u8] {
 }
 
 unsafe fn find_identity(registry: &RuntimeRegistry, new: &UnpublishedObjects, identity: ObjectIdentity) -> *mut RuntimeObject {
+    let self_node = unsafe { find_interpreter_self(registry, new) };
+    if !self_node.is_null() && unsafe { super::x86_64_general_initial_graph::self_identity_matches(identity) } {
+        return self_node;
+    }
     for head in [registry.head, new.head] {
         let mut node = head;
         while !node.is_null() {
@@ -779,7 +783,8 @@ unsafe fn find_interpreter_self(registry: &RuntimeRegistry, new: &UnpublishedObj
 /// The two installed runtime names, as `scripts/build_x86_64_owned_dynamic_sysroot.py`
 /// declares them, plus the bare DT_NEEDED spelling.
 fn interpreter_self_alias(name: &[u8]) -> bool {
-    reserved_runtime_name(name)
+    let slash = name.contains(&b'/');
+    (!slash && reserved_runtime_name(name))
         || name == unsafe { x86_64_library_search::interpreter_name() }
         || unsafe { super::x86_64_general_initial_graph::canonical_libc_path(name) }
 }
@@ -806,16 +811,7 @@ unsafe fn load_one(
     }
     if interpreter_self_alias(name) {
         let existing = unsafe { find_interpreter_self(registry, new) };
-        if !existing.is_null() {
-            if let Ok((fd, _)) = unsafe { open_runtime_file(parent, name) } {
-                let identity = unsafe { FileStatus::of_fd(fd) }.ok().and_then(|status| status.identity());
-                unsafe { syscall1(SYS_CLOSE, fd); }
-                if identity.is_some_and(|identity| identity != unsafe { (*existing).identity }) {
-                    return Err(EINVAL);
-                }
-            }
-            return Ok(existing);
-        }
+        if !existing.is_null() { return Ok(existing); }
     }
     let (fd, path) = unsafe { open_runtime_file(parent, name) }?;
     // Report fstat's errno as musl load_library does; a zero identity has no
@@ -841,20 +837,11 @@ unsafe fn load_one(
     let mut object = mapped?;
     let self_node = unsafe { find_interpreter_self(registry, new) };
     if !self_node.is_null()
-        && identity != unsafe { (*self_node).identity }
+        && !unsafe { super::x86_64_general_initial_graph::self_identity_matches(identity) }
         && unsafe { super::mapped_soname_is_libc(&object) }
     {
         unsafe { syscall2(SYS_MUNMAP, object.map_span_start as i64, object.map_span_byte_len as i64); }
         return Err(EINVAL);
-    }
-    let stored = path.view().bytes();
-    let basename = stored.iter().rposition(|byte| *byte == b'/').map_or(stored, |at| &stored[at + 1..]);
-    if (reserved_runtime_name(basename) || basename == b"libc.so")
-        && !self_node.is_null()
-        && identity != unsafe { (*self_node).identity }
-    {
-        unsafe { syscall2(SYS_MUNMAP, object.map_span_start as i64, object.map_span_byte_len as i64); }
-        return Err(22);
     }
     object.search_name = path.view();
     object.search_short_name = short_name;
@@ -928,6 +915,19 @@ unsafe fn open_transaction(guard: &RuntimeGuard, filename: &[u8], flags: i32, di
         Err(_) if no_load => { report(diagnostic, DIAGNOSTIC_NOT_LOADED, 0, &[]); return Err(()); }
         Err(errno) => { load_failure(diagnostic, errno); return Err(()); }
     };
+    // A self-name request adds no object and has no new constructors. Return
+    // the retained interpreter without rebuilding/relocating a graph snapshot;
+    // RTLD_GLOBAL still falls through to the scope-promotion path below.
+    if new.head.is_null() && flags & 256 == 0 {
+        if unsafe { (*root).object() }.is_some_and(|object| object.interpreter_self) {
+            let snapshot = ObjectSnapshot {
+                objects: LoaderBuffer::new(0, EMPTY_OBJECT).ok_or(())?,
+                nodes: LoaderBuffer::new(0, core::ptr::null_mut()).ok_or(())?,
+            };
+            let order = ObjectOrder { indices: LoaderBuffer::new(0, 0).ok_or(())?, count: 0 };
+            return Ok((root, snapshot, order));
+        }
+    }
     let mut node = new.head;
     while !node.is_null() {
         let Some(object) = (unsafe { (*node).object() }).copied() else { load_failure(diagnostic, ENOEXEC); return Err(()); };

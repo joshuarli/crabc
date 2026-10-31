@@ -100,6 +100,10 @@ pub(super) unsafe fn command_interpreter(name: *const u8) {
 pub(super) fn self_path() -> *const u8 {
     unsafe { if SELF_PATH.is_null() { INTERPRETER_NAME } else { SELF_PATH } }
 }
+/// The trusted self pathname as bytes, for installed-path recognition.
+pub(super) unsafe fn self_name() -> &'static [u8] {
+    unsafe { c_string(self_path()) }
+}
 /// The main image's kernel-supplied PT_INTERP path is trusted regardless of
 /// secure mode. This is the installed interpreter's real pathname.
 pub(super) unsafe fn main_interpreter(name: *const u8) {
