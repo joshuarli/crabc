@@ -21,6 +21,7 @@ use super::x86_64_general_initial_loader_state::{
     GeneralInitialLoaderState, GeneralInitialPreparationStage, ObjectTable,
 };
 use super::x86_64_initial_graph_state::{InitialGraphState, ObjectAdmission, ObjectIdentity};
+#[cfg(feature = "x86_64-owned-dynamic-runtime")]
 use core::sync::atomic::{AtomicU8, AtomicU64, Ordering};
 #[cfg(crabc_general_initial_tls_materialization_v1)]
 use super::x86_64_general_initial_tls_state::{
@@ -28,6 +29,7 @@ use super::x86_64_general_initial_tls_state::{
 };
 
 /// Adopt the main image's PT_INTERP path as the installed interpreter name.
+#[cfg(feature = "x86_64-owned-dynamic-runtime")]
 unsafe fn set_main_interpreter(base: u64, phdr: *const u8, phnum: usize) {
     for index in 0..phnum {
         let header = unsafe { phdr.add(index * 56) };
@@ -45,19 +47,27 @@ unsafe fn set_main_interpreter(base: u64, phdr: *const u8, phnum: usize) {
 /// A deferred placeholder for the kernel-mapped interpreter's file identity.
 /// No real file has both fields maximized; the identity is resolved on the
 /// first opened duplicate candidate, not during the startup fast path.
+#[cfg(feature = "x86_64-owned-dynamic-runtime")]
 const DEFERRED_SELF_IDENTITY: ObjectIdentity =
     ObjectIdentity { device: u64::MAX, inode: u64::MAX - 1 };
 
+#[cfg(feature = "x86_64-owned-dynamic-runtime")]
 const SELF_IDENTITY_UNKNOWN: u8 = 0;
+#[cfg(feature = "x86_64-owned-dynamic-runtime")]
 const SELF_IDENTITY_RESOLVING: u8 = 1;
+#[cfg(feature = "x86_64-owned-dynamic-runtime")]
 const SELF_IDENTITY_READY: u8 = 2;
+#[cfg(feature = "x86_64-owned-dynamic-runtime")]
 static SELF_IDENTITY_DEVICE: AtomicU64 = AtomicU64::new(0);
+#[cfg(feature = "x86_64-owned-dynamic-runtime")]
 static SELF_IDENTITY_INODE: AtomicU64 = AtomicU64::new(0);
+#[cfg(feature = "x86_64-owned-dynamic-runtime")]
 static SELF_IDENTITY_STATE: AtomicU8 = AtomicU8::new(SELF_IDENTITY_UNKNOWN);
 
 /// Resolve the interpreter's file identity only when a duplicate candidate is
 /// actually opened. The installed fast path recognizes self by PT_INTERP,
 /// reserved names or the canonical alias and never stats its own file.
+#[cfg(feature = "x86_64-owned-dynamic-runtime")]
 pub(crate) unsafe fn lazy_self_identity() -> Option<ObjectIdentity> {
     loop {
         match SELF_IDENTITY_STATE.load(Ordering::Acquire) {
@@ -94,12 +104,14 @@ pub(crate) unsafe fn lazy_self_identity() -> Option<ObjectIdentity> {
 }
 
 /// Compare one opened candidate identity to the lazily resolved self identity.
+#[cfg(feature = "x86_64-owned-dynamic-runtime")]
 pub(crate) unsafe fn self_identity_matches(candidate: ObjectIdentity) -> bool {
     unsafe { lazy_self_identity() == Some(candidate) }
 }
 
 /// The installed interpreter's canonical libc alias without a startup stat.
 /// A copied loader under another basename falls back to identity resolution.
+#[cfg(feature = "x86_64-owned-dynamic-runtime")]
 unsafe fn installed_self_canonical_name() -> Option<super::x86_64_library_search::LoadedName> {
     let name = unsafe { x86_64_library_search::self_name() };
     let prefix = unsafe { x86_64_library_search::installation_prefix() };
@@ -396,6 +408,7 @@ unsafe fn run_with_initial_tls(
                 return Err(b"tlsstate\n");
             }
         };
+        #[cfg(feature = "x86_64-owned-dynamic-runtime")]
         if objects[index].interpreter_self { continue; }
         if unsafe { protect_segments(&objects[index]) }.is_none() {
             rollback_initial_tls_state(&mut state, GeneralInitialPreparationStage::Protection);
@@ -410,6 +423,7 @@ unsafe fn run_with_initial_tls(
                 return Err(b"tlsstate\n");
             }
         };
+        #[cfg(feature = "x86_64-owned-dynamic-runtime")]
         if objects[index].interpreter_self { continue; }
         if unsafe { apply_relro(&objects[index]) }.is_none() {
             rollback_initial_tls_state(&mut state, GeneralInitialPreparationStage::Relro);

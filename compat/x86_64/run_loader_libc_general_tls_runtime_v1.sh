@@ -207,7 +207,10 @@ for section in sections:
 if len(regular) != 1:
     fail("private RuntimeV1 record is not exactly one regular symbol")
 info, other, section_index, record_value, record_size = regular[0]
-if (info >> 4) != 0 or (info & 0x0F) != 1 or (other & 0x03) != 0:
+# The source-root link leaves the private static DEFAULT; Cargo's cdylib
+# link localizes the same local object as HIDDEN. Both spellings stay out of
+# SHT_DYNSYM and remain non-exported.
+if (info >> 4) != 0 or (info & 0x0F) != 1 or (other & 0x03) not in (0, 2):
     fail("private RuntimeV1 record is not a static local OBJECT")
 if section_index == 0 or section_index >= len(sections) or record_size != 72:
     fail("private RuntimeV1 record layout drifted")

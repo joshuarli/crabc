@@ -1172,6 +1172,12 @@ fn panic(_: &core::panic::PanicInfo) -> ! {
     unsafe { die(b"panic\n") }
 }
 
+// The selected nightly core object names this symbol even under panic=abort.
+// Private roots provide the inert owner rather than selecting an ambient runtime.
+#[cfg(all(not(test), not(feature = "x86_64-owned-dynamic-runtime")))]
+#[no_mangle]
+pub extern "C" fn rust_eh_personality() {}
+
 // The interpreter cannot rely on any relocated Rust address before this
 // sequence. Linux supplies AT_BASE for PT_INTERP; direct entry uses the
 // link-time ELF-header symbol through RIP-relative addressing instead. The
