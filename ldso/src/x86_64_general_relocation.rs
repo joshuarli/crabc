@@ -119,19 +119,6 @@ pub(super) unsafe fn find_runtime_symbol<'a>(
         };
         #[cfg(feature = "x86_64-owned-dynamic-runtime")]
         let symbol = unsafe { definition_at(0, record) };
-        #[cfg(not(feature = "x86_64-owned-dynamic-runtime"))]
-        let Some(symbol) = (|| -> Option<Option<Definition>> {
-            for index in 1..objects[0].symcount {
-                let symbol = unsafe { definition(objects, 0, index) }?;
-                if !symbol_address_candidate(symbol, false) || !matches!(symbol.binding, 1 | 2 | STB_GNU_UNIQUE)
-                    || !matches!(symbol.kind, 0 | 1 | 2 | 5 | 6)
-                { continue; }
-                if unsafe { symbol_name(&objects[0], index) }? == name { return Some(Some(symbol)); }
-            }
-            Some(None)
-        })()? else {
-            continue;
-        };
         // A retained dynamic symbol remains findable by name even when its
         // st_other visibility is INTERNAL or HIDDEN. The ELF hash lookup and
         // binding/type tests decide dlsym eligibility.
@@ -161,11 +148,6 @@ unsafe fn symbol_record(object: &Object, index: usize) -> Option<*const u8> {
     if index == 0 { return None; }
     #[cfg(feature = "x86_64-owned-dynamic-runtime")]
     let symbol = unsafe { direct_symbol(object, index) }?;
-    #[cfg(not(feature = "x86_64-owned-dynamic-runtime"))]
-    let symbol = {
-        if index >= object.symcount { return None; }
-        unsafe { object.symtab.add(index * 24) }
-    };
     Some(symbol)
 }
 
@@ -466,22 +448,6 @@ unsafe fn lookup_result_at(
                 || (requested.kind == 2 && matches!(found.kind, 1 | 5))
             { return None; }
             return Some(SymbolLookup::Defined(found));
-        }
-        #[cfg(not(feature = "x86_64-owned-dynamic-runtime"))]
-        for candidate in 1..objects[owner].symcount {
-            let found = unsafe { definition(objects, owner, candidate) }?;
-            if !symbol_address_candidate(found, require_definition || tls || copy)
-                || !matches!(found.binding, 1 | 2 | STB_GNU_UNIQUE)
-                || !matches!(found.visibility, 0 | 3)
-                || (tls && found.kind != 6)
-                || (!tls && !matches!(found.kind, 0 | 1 | 2 | 5))
-            { continue; }
-            if unsafe { symbol_name(&objects[owner], candidate) }? == name {
-                if (matches!(requested.kind, 1 | 5) && found.kind == 2)
-                    || (requested.kind == 2 && matches!(found.kind, 1 | 5))
-                { return None; }
-                return Some(SymbolLookup::Defined(found));
-            }
         }
     }
     // Undefined weak data/function references become null. A defined COPY

@@ -36,8 +36,6 @@ use core::sync::atomic::{AtomicU8, Ordering};
 type GeneralInitialTlsRegistry = InitialTlsRegistry<{ usize::MAX }, { usize::MAX }>;
 #[cfg(feature = "x86_64-owned-dynamic-runtime")]
 type ConventionalStartupReservation = Option<super::x86_64_conventional_startup_v1::Reservation>;
-#[cfg(not(feature = "x86_64-owned-dynamic-runtime"))]
-type ConventionalStartupReservation = ();
 
 /// The one-way lifecycle of a general initial TLS transaction.
 ///
@@ -185,11 +183,6 @@ impl GeneralInitialTlsTransaction {
     /// The wrapped state must have completed the matching pre-FS reservation
     /// and TLS installation. No reference obtained through this transaction
     /// may be retained after the call.
-    #[cfg(not(crabc_general_loader_libc_tls_runtime_v1))]
-    pub(crate) unsafe fn commit(mut self, installed: InstalledInitialTls) {
-        unsafe { core::ptr::read(self.state).commit(installed) };
-        self.release();
-    }
 
     /// Moves the RuntimeV1 transaction into its paired durable owners, then
     /// drops only its temporary raw mapping.
@@ -301,39 +294,19 @@ unsafe fn publish_initial_tls_attachment(
 // retained graph state and descriptor with no fallible successor.
 #[cfg(crabc_general_loader_libc_tls_runtime_v1)]
 const GENERAL_LOADER_TLS_RUNTIME_V1_MAGIC: u64 =
-    if cfg!(crabc_general_loader_libc_tls_runtime_v1_bad_magic) {
-        0
-    } else {
-        0x4352_4142_435f_5451
-    };
+    0x4352_4142_435f_5451;
 #[cfg(crabc_general_loader_libc_tls_runtime_v1)]
 const GENERAL_LOADER_TLS_RUNTIME_V1_VERSION: u32 =
-    if cfg!(crabc_general_loader_libc_tls_runtime_v1_bad_version) {
-        0
-    } else {
-        1
-    };
+    1;
 #[cfg(crabc_general_loader_libc_tls_runtime_v1)]
 const GENERAL_LOADER_TLS_RUNTIME_V1_PROCESS_MODE_DYNAMIC: u32 =
-    if cfg!(crabc_general_loader_libc_tls_runtime_v1_bad_mode) {
-        0
-    } else {
-        2
-    };
+    2;
 #[cfg(crabc_general_loader_libc_tls_runtime_v1)]
 const GENERAL_LOADER_TLS_RUNTIME_V1_OWNER_LDSO: u32 =
-    if cfg!(crabc_general_loader_libc_tls_runtime_v1_bad_owner) {
-        0
-    } else {
-        1
-    };
+    1;
 #[cfg(crabc_general_loader_libc_tls_runtime_v1)]
 const GENERAL_LOADER_TLS_RUNTIME_V1_GENERATION_INITIAL: u64 =
-    if cfg!(crabc_general_loader_libc_tls_runtime_v1_bad_generation) {
-        0
-    } else {
-        1
-    };
+    1;
 #[cfg(crabc_general_loader_libc_tls_runtime_v1)]
 const GENERAL_LOADER_TLS_RUNTIME_V1_STATE_UNPUBLISHED: u8 = 0;
 #[cfg(crabc_general_loader_libc_tls_runtime_v1)]
@@ -380,11 +353,7 @@ static mut __crabc_x86_64_loader_tls_runtime_v1: GeneralLoaderLibcTlsRuntimeV1 =
     GeneralLoaderLibcTlsRuntimeV1 {
         magic: GENERAL_LOADER_TLS_RUNTIME_V1_MAGIC,
         version: GENERAL_LOADER_TLS_RUNTIME_V1_VERSION,
-        abi_size: if cfg!(crabc_general_loader_libc_tls_runtime_v1_bad_abi_size) {
-            0
-        } else {
-            core::mem::size_of::<GeneralLoaderLibcTlsRuntimeV1>() as u32
-        },
+        abi_size: core::mem::size_of::<GeneralLoaderLibcTlsRuntimeV1>() as u32,
         process_mode: GENERAL_LOADER_TLS_RUNTIME_V1_PROCESS_MODE_DYNAMIC,
         owner: GENERAL_LOADER_TLS_RUNTIME_V1_OWNER_LDSO,
         state: AtomicU8::new(GENERAL_LOADER_TLS_RUNTIME_V1_STATE_UNPUBLISHED),
@@ -451,8 +420,6 @@ fn release_loader_tls_runtime_v1_descriptor_reservation() {
 #[cfg(crabc_general_loader_libc_tls_runtime_v1)]
 unsafe fn publish_reserved_loader_tls_runtime_v1(installed: InstalledInitialTls) {
     let record = core::ptr::addr_of_mut!(__crabc_x86_64_loader_tls_runtime_v1);
-    #[cfg(crabc_general_loader_libc_tls_runtime_v1_poisoned_dtv)]
-    let descriptor_dtv = 1usize as *const usize;
     #[cfg(not(crabc_general_loader_libc_tls_runtime_v1_poisoned_dtv))]
     let descriptor_dtv = installed.dtv.cast_const();
     // SAFETY: the descriptor's PUBLISHING ownership was reserved before the
@@ -761,10 +728,6 @@ impl GeneralInitialTlsState {
     pub(crate) unsafe fn materialize_initial_tls(
         &mut self,
     ) -> Result<InstalledInitialTls, GeneralInitialTlsStateError> {
-        #[cfg(not(crabc_general_loader_libc_tls_runtime_v1))]
-        if self.phase != GeneralInitialTlsPhase::PublicationReserved {
-            return Err(GeneralInitialTlsStateError::InvalidPhase);
-        }
         #[cfg(crabc_general_loader_libc_tls_runtime_v1)]
         if self.phase != GeneralInitialTlsPhase::RuntimeV1PublicationReserved {
             return Err(GeneralInitialTlsStateError::InvalidPhase);
@@ -811,23 +774,6 @@ impl GeneralInitialTlsState {
     /// committed object mappings and initial TLS allocation become
     /// process-lifetime state until a separately designed loader lifecycle
     /// exists.
-    #[cfg(not(crabc_general_loader_libc_tls_runtime_v1))]
-    pub(crate) unsafe fn commit(mut self, installed: InstalledInitialTls) {
-        // SAFETY: `run_with_initial_tls` obtains the common loader owner's
-        // `PublicationReserved` state before it invokes the sole
-        // `ARCH_SET_FS` path. `materialize_initial_tls` moves this exact
-        // state to `Materialized` only after successful installation, so all
-        // input validation and publication arbitration have already
-        // completed. This method intentionally contains no branch or
-        // fallible operation after `%fs` changes.
-        self.phase = GeneralInitialTlsPhase::Committed;
-        // SAFETY: the common loader owner is still Reserved, so this sidecar
-        // is initialized before the release-published graph/object state.
-        unsafe { publish_initial_tls_attachment(self.registry, installed) };
-        // SAFETY: all fallible work and the sole FS transition completed; the
-        // shared state is now the immutable graph/object/TLS attachment owner.
-        unsafe { self.loader.commit() };
-    }
 
     /// Completes the paired general RuntimeV1 handoff after `ARCH_SET_FS`.
     ///
@@ -857,8 +803,6 @@ impl GeneralInitialTlsState {
         unsafe { publish_reserved_loader_tls_runtime_v1(installed) };
         #[cfg(feature = "x86_64-owned-dynamic-runtime")]
         return conventional_startup;
-        #[cfg(not(feature = "x86_64-owned-dynamic-runtime"))]
-        ()
     }
 
     /// Rolls back the map-owned portion of an unsuccessful transaction.
@@ -1120,8 +1064,6 @@ mod tests {
             first.phase(),
             GeneralInitialTlsPhase::RuntimeV1PublicationReserved
         );
-        #[cfg(not(crabc_general_loader_libc_tls_runtime_v1))]
-        assert_eq!(first.phase(), GeneralInitialTlsPhase::PublicationReserved);
 
         let mut retry = relocated_single_tls_state(&image);
         assert_eq!(
@@ -1150,8 +1092,6 @@ mod tests {
             retry.phase(),
             GeneralInitialTlsPhase::RuntimeV1PublicationReserved
         );
-        #[cfg(not(crabc_general_loader_libc_tls_runtime_v1))]
-        assert_eq!(retry.phase(), GeneralInitialTlsPhase::PublicationReserved);
         retry.rollback(|_| panic!("single-object retry has no DSO map"));
         assert!(GeneralInitialLoaderState::retained().is_none());
         #[cfg(crabc_general_loader_libc_tls_runtime_v1)]

@@ -56,8 +56,6 @@ pub(super) fn owned_crt_handoff_address() -> u64 {
 unsafe extern "C" fn owned_dependency_constructors() {
     #[cfg(feature = "x86_64-owned-dynamic-runtime")]
     unsafe { super::x86_64_runtime_registry::initialize_initial(); }
-    #[cfg(not(feature = "x86_64-owned-dynamic-runtime"))]
-    unsafe { GeneralInitialLoaderState::retained().unwrap().lifecycle().unwrap().initialize() };
 }
 
 /// Conventional musl CRT dispatches this only after libc has acquired the
@@ -129,8 +127,6 @@ impl GeneralInitialLifecycle {
         // and DT_FINI in both CRT modes; the owned CRT runs only preinit.
         #[cfg(feature = "x86_64-owned-dynamic-runtime")]
         let main = Some(0);
-        #[cfg(not(feature = "x86_64-owned-dynamic-runtime"))]
-        let main = None;
         let planned = || order.indices().iter().map(|&index| (index, false)).chain(main.map(|index| (index, true)));
         // Validate every callback and size the copy before writing any of it.
         let mut length = 0usize;
@@ -204,12 +200,6 @@ unsafe fn object_callback_counts(object: &Object, index: usize, main: bool) -> O
         || (main && (object.role != ObjectRole::Main || index != 0))
         || (object.init_count != 0 && object.init_array.is_null())
         || (object.general_fini_count != 0 && object.general_fini_array.is_null())
-    {
-        return None;
-    }
-    #[cfg(not(feature = "x86_64-owned-dynamic-runtime"))]
-    if object.init_count > MAX_GENERAL_INITIAL_DEPENDENCY_INIT_ARRAY_ENTRIES
-        || object.general_fini_count > MAX_GENERAL_INITIAL_DEPENDENCY_INIT_ARRAY_ENTRIES
     {
         return None;
     }
@@ -297,10 +287,6 @@ unsafe fn invoke(address: usize) {
 pub(super) unsafe extern "C" fn process_finalizer() {
     #[cfg(feature = "x86_64-owned-dynamic-runtime")]
     unsafe { super::x86_64_runtime_registry::finalize_process(); }
-    #[cfg(not(feature = "x86_64-owned-dynamic-runtime"))]
-    if let Some(lifecycle) = GeneralInitialLoaderState::retained().and_then(|state| state.lifecycle()) {
-        lifecycle.finalize_with(|address| unsafe { invoke(address) });
-    }
 }
 
 #[cfg(test)]
@@ -372,8 +358,6 @@ mod tests {
         let mut fini = [0x1030usize, 0x1040];
         // Legacy private roots keep main callbacks CRT-owned and outside this
         // plan; the invalid main fini count proves they are never copied.
-        #[cfg(not(feature = "x86_64-owned-dynamic-runtime"))]
-        let main = Object { general_fini_count: usize::MAX, ..EMPTY_OBJECT };
         // The installed runtime queues the owned-CRT main last, exactly like
         // the conventional CRT, so it is finalized before its dependencies.
         #[cfg(feature = "x86_64-owned-dynamic-runtime")]
@@ -421,8 +405,6 @@ mod tests {
             state.objects_during_transaction().unwrap(),
         ) }.unwrap();
         assert_eq!(plan.objects[0].object_index, 1);
-        #[cfg(not(feature = "x86_64-owned-dynamic-runtime"))]
-        assert_eq!(plan.objects.len(), 1);
         #[cfg(feature = "x86_64-owned-dynamic-runtime")]
         {
             assert_eq!(plan.objects.len(), 2);
@@ -450,8 +432,6 @@ mod tests {
         let mut observed = Vec::new();
         plan.initialize_with(|address| observed.push(address));
         plan.finalize_with(|address| observed.push(address));
-        #[cfg(not(feature = "x86_64-owned-dynamic-runtime"))]
-        assert_eq!(observed, [0x1001, 0x1010, 0x1020, 0x1040, 0x1030, 0x1050]);
         #[cfg(feature = "x86_64-owned-dynamic-runtime")]
         assert_eq!(observed, [
             0x1001, 0x1010, 0x1020, 0x1002, 0x1060,
