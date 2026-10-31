@@ -52,7 +52,6 @@ use core::arch::global_asm;
 /// The kernel-mapped interpreter base for the current initial transaction.
 /// `_start` supplies it before any dependency discovery; zero means direct
 /// entry without `AT_BASE`.
-#[cfg(feature = "x86_64-owned-dynamic-runtime")]
 static mut INTERPRETER_BASE: usize = 0;
 
 pub(crate) fn interpreter_base() -> usize { unsafe { INTERPRETER_BASE } }
@@ -103,7 +102,6 @@ mod x86_64_debugger;
 mod x86_64_library_search;
 #[path = "x86_64_direct_entry.rs"]
 mod x86_64_direct_entry;
-#[cfg(crabc_general_initial_graph)]
 use x86_64_initial_graph_state::ObjectIdentity;
 
 // The RuntimeV1 record is addressed only by the loader's exact relocation
@@ -211,11 +209,9 @@ const DT_FLAGS_1: i64 = 0x6fff_fffb;
 
 const DF_BIND_NOW: u64 = 0x8;
 const DF_STATIC_TLS: u64 = 0x10;
-#[cfg(feature = "x86_64-owned-dynamic-runtime")]
 const DF_SYMBOLIC: u64 = 0x2;
 const DF_1_NOW: u64 = 0x1;
 const DF_1_PIE: u64 = 0x0800_0000;
-#[cfg(feature = "x86_64-owned-dynamic-runtime")]
 const DF_1_NODELETE: u64 = 0x8;
 
 const ELF64_RELA: u64 = 7;
@@ -235,7 +231,6 @@ const SYS_WRITE: i64 = 1;
 const SYS_CLOSE: i64 = 3;
 const SYS_FSTAT: i64 = 5;
 const SYS_PREAD64: i64 = 17;
-#[cfg(feature = "x86_64-owned-dynamic-runtime")]
 const SYS_NEWFSTATAT: i64 = 262;
 const SYS_MMAP: i64 = 9;
 const SYS_MPROTECT: i64 = 10;
@@ -314,12 +309,10 @@ const TLS_TCB_MODULE_SIZE_TABLE_OFFSET: usize = core::mem::size_of::<usize>() * 
 // pointer. Fresh main/worker allocations leave it zero; libc publishes before
 // callbacks/handler unmask and clears before state reclamation. The loader
 // never dereferences, copies from another thread, or rewrites it during growth.
-#[cfg(feature = "x86_64-owned-dynamic-runtime")]
 const TLS_TCB_LIBC_CANCELLATION_STATE_OFFSET: usize = 32;
 // General graphs size each initial DTV from its module count (see
 // `materialize_initial_tls`). This fixed geometry remains only for the
 // fixed-graph helpers compiled beside them.
-#[cfg(crabc_general_initial_graph)]
 const TLS_DTV_WORDS: usize = 33;
 
 // The initial RuntimeV1 graph has the same fixed object and nonzero-DTV-slot
@@ -389,22 +382,18 @@ struct InstalledInitialTls {
 // lifecycle shape. This caps every executable array before the handoff without
 // pretending to be a general constructor-array policy; the installed runtime
 // admits arrays of any valid length (see `callback_array_entries_admitted`).
-#[cfg(any(crabc_owned_crt_handoff, crabc_dynamic_main_thread_runtime_v1))]
 const MAX_OWNED_CRT_MAIN_ARRAY_ENTRIES: usize = 16;
 
 // The fixed owned-CRT sibling and general owned lifecycle composition share
 // this record layout, not graph algorithms or state. Older fixed no-TLS and
 // GNU-Dynamic-TLS direct-main artifacts retain their no-handoff boundary.
-#[cfg(any(crabc_owned_crt_handoff, all(crabc_general_initial_lifecycle, crabc_dynamic_main_thread_runtime_v1)))]
 const OWNED_CRT_HANDOFF_MAGIC: u64 = if cfg!(crabc_owned_crt_handoff_malformed) {
     0
 } else {
     0x4352_4142_435f_4831
 };
-#[cfg(any(crabc_owned_crt_handoff, all(crabc_general_initial_lifecycle, crabc_dynamic_main_thread_runtime_v1)))]
 const OWNED_CRT_HANDOFF_VERSION: u32 = if cfg!(crabc_hardened) { 2 } else { 1 };
 
-#[cfg(any(crabc_owned_crt_handoff, all(crabc_general_initial_lifecycle, crabc_dynamic_main_thread_runtime_v1)))]
 type OwnedCrtLifecycleHook = unsafe extern "C" fn();
 
 /// Exact post-relocation wire consumed by the Rust-produced private Scrt1.o.
@@ -412,7 +401,6 @@ type OwnedCrtLifecycleHook = unsafe extern "C" fn();
 /// This data record authenticates the general composition's rdx address. It
 /// is self-relocated before the interpreter enters Rust and sealed with this
 /// interpreter's final RELRO transition before the executable can read it.
-#[cfg(any(crabc_owned_crt_handoff, all(crabc_general_initial_lifecycle, crabc_dynamic_main_thread_runtime_v1)))]
 #[repr(C)]
 pub struct OwnedCrtHandoffV1 {
     magic: u64,
@@ -477,7 +465,6 @@ enum ObjectRole { Main, Library }
 /// One validated export-name index.  This deliberately is not a dynsym
 /// length: relocation records may name an undefined symbol beyond GNU hash
 /// exports, so their indexed reads are checked independently at use.
-#[cfg(feature = "x86_64-owned-dynamic-runtime")]
 #[derive(Copy, Clone)]
 enum SymbolLookupTable {
     Sysv {
@@ -498,7 +485,6 @@ enum SymbolLookupTable {
     },
 }
 
-#[cfg(feature = "x86_64-owned-dynamic-runtime")]
 const EMPTY_SYMBOL_LOOKUP_TABLE: SymbolLookupTable = SymbolLookupTable::Sysv {
     bucket_count: 0,
     buckets: core::ptr::null(),
@@ -512,15 +498,12 @@ struct Object {
     entry: u64,
     phdr: *const u8,
     phnum: usize,
-    #[cfg(any(crabc_fixed_graph_introspection, crabc_fixed_graph_dlfcn, feature = "x86_64-owned-dynamic-runtime"))]
     dynamic: *const u8,
     strtab: *const u8,
     strsz: usize,
     symtab: *const u8,
     symcount: usize,
-    #[cfg(feature = "x86_64-owned-dynamic-runtime")]
     symbol_lookup: SymbolLookupTable,
-    #[cfg(feature = "x86_64-owned-dynamic-runtime")]
     versym: *const u8,
     rela: *const u8,
     relasz: usize,
@@ -535,13 +518,9 @@ struct Object {
     // and runtime finalization remains deliberately unsupported.
     init_array: *const usize,
     init_count: usize,
-    #[cfg(crabc_general_initial_lifecycle)]
     general_init: usize,
-    #[cfg(crabc_general_initial_lifecycle)]
     general_fini: usize,
-    #[cfg(crabc_general_initial_lifecycle)]
     general_fini_array: *const usize,
-    #[cfg(crabc_general_initial_lifecycle)]
     general_fini_count: usize,
     relro_virtual_address: u64,
     relro_byte_len: u64,
@@ -549,26 +528,19 @@ struct Object {
     runpath_len: usize,
     // The admitted pathname, owned by the initial object table, a runtime
     // registry node or (direct entry's program) the initial stack.
-    #[cfg(feature = "x86_64-owned-dynamic-runtime")]
     search_name: x86_64_library_search::ObjectName,
-    #[cfg(feature = "x86_64-owned-dynamic-runtime")]
     search_short_name: bool,
     // Listing preserves the first admission's name. Later inode matches may
     // enable short-name search aliases, but cannot rewrite that original name.
-    #[cfg(feature = "x86_64-owned-dynamic-runtime")]
     initial_load_name_is_short: bool,
     // This bit is assigned only after an exact declared-installation alias is
     // opened and compared by `(st_dev, st_ino)` to the retained initial graph.
     // It is not a pathname, SONAME, or importer-based authority decision.
-    #[cfg(feature = "x86_64-owned-dynamic-runtime")]
     canonical_libc_identity: Option<ObjectIdentity>,
-    #[cfg(feature = "x86_64-owned-dynamic-runtime")]
     needed_by: Option<usize>,
-    #[cfg(feature = "x86_64-owned-dynamic-runtime")]
     interpreter_self: bool,
     // Complete dynsym records in the first readable file-backed PT_LOAD
     // containing its null entry. Later overlapping loads may hold more.
-    #[cfg(feature = "x86_64-owned-dynamic-runtime")]
     symtab_file_record_limit: usize,
     // The installed runtime reads DT_NEEDED name offsets from `dynamic`
     // through `needed_name_offset`, so an object has no DT_NEEDED bound.
@@ -583,12 +555,10 @@ struct Object {
     tls_align: usize,
     tls_offset_below_tp: usize,
     tls_module_id: usize,
-    #[cfg(feature = "x86_64-owned-dynamic-runtime")]
     bind_now: bool,
     // Only the installed runtime accepts both the established owned Scrt1
     // and a conventional musl CRT. The mode comes from the bounded CRABC
     // note, never from callback-shaped dynamic tags.
-    #[cfg(feature = "x86_64-owned-dynamic-runtime")]
     main_crt_mode: MainCrtMode,
 }
 
@@ -597,15 +567,12 @@ const EMPTY_OBJECT: Object = Object {
     entry: 0,
     phdr: core::ptr::null(),
     phnum: 0,
-    #[cfg(any(crabc_fixed_graph_introspection, crabc_fixed_graph_dlfcn, feature = "x86_64-owned-dynamic-runtime"))]
     dynamic: core::ptr::null(),
     strtab: core::ptr::null(),
     strsz: 0,
     symtab: core::ptr::null(),
     symcount: 0,
-    #[cfg(feature = "x86_64-owned-dynamic-runtime")]
     symbol_lookup: EMPTY_SYMBOL_LOOKUP_TABLE,
-    #[cfg(feature = "x86_64-owned-dynamic-runtime")]
     versym: core::ptr::null(),
     rela: core::ptr::null(),
     relasz: 0,
@@ -615,31 +582,20 @@ const EMPTY_OBJECT: Object = Object {
     relrsz: 0,
     init_array: core::ptr::null(),
     init_count: 0,
-    #[cfg(crabc_general_initial_lifecycle)]
     general_init: 0,
-    #[cfg(crabc_general_initial_lifecycle)]
     general_fini: 0,
-    #[cfg(crabc_general_initial_lifecycle)]
     general_fini_array: core::ptr::null(),
-    #[cfg(crabc_general_initial_lifecycle)]
     general_fini_count: 0,
     relro_virtual_address: 0,
     relro_byte_len: 0,
     runpath: core::ptr::null(),
     runpath_len: 0,
-    #[cfg(feature = "x86_64-owned-dynamic-runtime")]
     search_name: x86_64_library_search::ObjectName::EMPTY,
-    #[cfg(feature = "x86_64-owned-dynamic-runtime")]
     search_short_name: false,
-    #[cfg(feature = "x86_64-owned-dynamic-runtime")]
     initial_load_name_is_short: false,
-    #[cfg(feature = "x86_64-owned-dynamic-runtime")]
     canonical_libc_identity: None,
-    #[cfg(feature = "x86_64-owned-dynamic-runtime")]
     needed_by: None,
-    #[cfg(feature = "x86_64-owned-dynamic-runtime")]
     interpreter_self: false,
-    #[cfg(feature = "x86_64-owned-dynamic-runtime")]
     symtab_file_record_limit: 0,
     needed_count: 0,
     role: ObjectRole::Main,
@@ -652,9 +608,7 @@ const EMPTY_OBJECT: Object = Object {
     tls_align: 1,
     tls_offset_below_tp: 0,
     tls_module_id: 0,
-    #[cfg(feature = "x86_64-owned-dynamic-runtime")]
     bind_now: false,
-    #[cfg(feature = "x86_64-owned-dynamic-runtime")]
     main_crt_mode: MainCrtMode::Conventional,
 };
 
@@ -1420,11 +1374,6 @@ unsafe fn parse_mapped(
     let mut dynamic_virtual_address = None;
     let mut dynamic_byte_len = None;
     let mut relro = None;
-    #[cfg(any(
-        crabc_initial_tls_graph,
-        crabc_initial_exec_tls_graph,
-        crabc_general_initial_tls_materialization_v1
-    ))]
     let mut tls: Option<(u64, u64, u64, usize)> = None;
     for index in 0..phnum {
         let header = phdr.add(index * 56);
@@ -1454,17 +1403,6 @@ unsafe fn parse_mapped(
             // Compile the sibling initial-TLS graph with the explicit cfg so
             // this shared bootstrap source cannot silently widen the older
             // fixture's contract.
-            #[cfg(not(any(
-                crabc_initial_tls_graph,
-                crabc_initial_exec_tls_graph,
-                crabc_general_initial_tls_materialization_v1
-            )))]
-            PT_TLS => return None,
-            #[cfg(any(
-                crabc_initial_tls_graph,
-                crabc_initial_exec_tls_graph,
-                crabc_general_initial_tls_materialization_v1
-            ))]
             PT_TLS => {
                 if tls.is_some() {
                     return None;
@@ -1518,14 +1456,12 @@ unsafe fn parse_mapped(
         base,
         phdr,
         phnum,
-        #[cfg(any(crabc_fixed_graph_introspection, crabc_fixed_graph_dlfcn, feature = "x86_64-owned-dynamic-runtime"))]
         dynamic,
         role,
         relro_virtual_address,
         relro_byte_len,
         ..EMPTY_OBJECT
     };
-    #[cfg(feature = "x86_64-owned-dynamic-runtime")]
     if general_initial_graph && role == ObjectRole::Main {
         object.main_crt_mode = unsafe { owned_crt_note_mode(phdr, phnum, base) }?;
     }
@@ -1538,7 +1474,6 @@ unsafe fn parse_mapped(
         }
     }
     let mut runpath_offset = None;
-    #[cfg(feature = "x86_64-owned-dynamic-runtime")]
     let mut rpath_offset = None;
     let mut init_array_virtual_address = None;
     let mut init_array_byte_len = None;
@@ -1549,7 +1484,6 @@ unsafe fn parse_mapped(
     // takes over; the dynamic-main-thread bridge validates the same shape
     // before Scrt1 makes its direct libc startup call. The two established
     // general siblings retain the old reject-only main-image rule below.
-    #[cfg(feature = "x86_64-owned-dynamic-runtime")]
     let (
         mut main_init,
         mut main_fini,
@@ -1565,21 +1499,16 @@ unsafe fn parse_mapped(
     let mut symtab_virtual_address = None;
     let mut symtab_entry_len = None;
     let mut hash_virtual_address = None;
-    #[cfg(feature = "x86_64-owned-dynamic-runtime")]
     let mut gnu_hash_virtual_address = None;
-    #[cfg(feature = "x86_64-owned-dynamic-runtime")]
     let mut versym_virtual_address = None;
     // Musl's `decode_dyn` and relocation path do not consume DT_SYMBOLIC.
     // Keep the one ordinary-DSO spelling structurally exact instead of
     // turning its presence into a self-first lookup mode.
-    #[cfg(feature = "x86_64-owned-dynamic-runtime")]
     let mut symbolic_tag = false;
     // Pinned musl records and uses VERSYM but does not dereference version
     // definition/requirement chains. Retain singleton/pair integrity for
     // those source-inert tags without inventing a glibc version resolver.
-    #[cfg(feature = "x86_64-owned-dynamic-runtime")]
     let (mut verdef_virtual_address, mut verdef_count) = (None, None);
-    #[cfg(feature = "x86_64-owned-dynamic-runtime")]
     let (mut verneed_virtual_address, mut verneed_count) = (None, None);
     let mut rela_virtual_address = None;
     let mut rela_byte_len = None;
@@ -1592,13 +1521,8 @@ unsafe fn parse_mapped(
     let mut pltrel_byte_len = None;
     let mut plt_is_rela = None;
     let mut terminated = false;
-    #[cfg(crabc_general_initial_lifecycle)]
     let (mut general_init, mut general_fini, mut general_fini_array, mut general_fini_len) =
         (None, None, None, None);
-    #[cfg(all(
-        feature = "x86_64-owned-dynamic-runtime",
-        crabc_general_initial_tls_materialization_v1
-    ))]
     let mut dynamic_static_tls = false;
     for index in 0..dynamic_count {
         let entry = dynamic.add(index * 16);
@@ -1608,7 +1532,6 @@ unsafe fn parse_mapped(
             DT_NULL => { terminated = true; break; }
             DT_NEEDED => {
                 let offset = usize::try_from(value).ok()?;
-                #[cfg(feature = "x86_64-owned-dynamic-runtime")]
                 let _ = offset;
                 object.needed_count = object.needed_count.checked_add(1)?;
             }
@@ -1617,17 +1540,11 @@ unsafe fn parse_mapped(
             DT_SYMTAB => { if symtab_virtual_address.replace(value).is_some() { return None; } }
             DT_SYMENT => { if symtab_entry_len.replace(value).is_some() { return None; } }
             DT_HASH => { if hash_virtual_address.replace(value).is_some() { return None; } }
-            #[cfg(feature = "x86_64-owned-dynamic-runtime")]
             DT_GNU_HASH => { if gnu_hash_virtual_address.replace(value).is_some() { return None; } }
-            #[cfg(feature = "x86_64-owned-dynamic-runtime")]
             DT_VERSYM => { if versym_virtual_address.replace(value).is_some() { return None; } }
-            #[cfg(feature = "x86_64-owned-dynamic-runtime")]
             DT_VERDEF => { if verdef_virtual_address.replace(value).is_some() { return None; } }
-            #[cfg(feature = "x86_64-owned-dynamic-runtime")]
             DT_VERDEFNUM => { if verdef_count.replace(value).is_some() { return None; } }
-            #[cfg(feature = "x86_64-owned-dynamic-runtime")]
             DT_VERNEED => { if verneed_virtual_address.replace(value).is_some() { return None; } }
-            #[cfg(feature = "x86_64-owned-dynamic-runtime")]
             DT_VERNEEDNUM => { if verneed_count.replace(value).is_some() { return None; } }
             DT_RELA => { if rela_virtual_address.replace(value).is_some() { return None; } }
             DT_RELASZ => { if rela_byte_len.replace(value).is_some() { return None; } }
@@ -1635,7 +1552,6 @@ unsafe fn parse_mapped(
             DT_RELR => { if relr_virtual_address.replace(value).is_some() { return None; } }
             DT_RELRSZ => { if relr_byte_len.replace(value).is_some() { return None; } }
             DT_RELRENT => { if relr_entry_len.replace(value).is_some() { return None; } }
-            #[cfg(feature = "x86_64-owned-dynamic-runtime")]
             DT_SYMBOLIC if general_initial_graph && mapped => {
                 if value != 0 || symbolic_tag {
                     return None;
@@ -1646,106 +1562,42 @@ unsafe fn parse_mapped(
             DT_PLTGOT => { if cfg!(crabc_hardened) && pltgot_virtual_address.replace(value).is_some() { return None; } }
             DT_PLTRELSZ => { if pltrel_byte_len.replace(value).is_some() { return None; } }
             DT_PLTREL => { if plt_is_rela.replace(value == ELF64_RELA).is_some() { return None; } }
-            #[cfg(all(not(feature = "x86_64-owned-dynamic-runtime"), any(crabc_owned_crt_handoff, crabc_dynamic_main_thread_runtime_v1)))]
-            DT_INIT if !mapped => { if owned_crt_main_init.replace(value).is_some() { return None; } }
-            #[cfg(feature = "x86_64-owned-dynamic-runtime")]
             DT_INIT if general_initial_graph && !mapped => {
                 if main_init.replace(value).is_some() { return None; }
-            }
-            #[cfg(crabc_bounded_runtime_dlopen)]
-            DT_INIT if mapped && allow_bounded_runtime_legacy_tags => {
-                if bounded_runtime_init_virtual_address.replace(value).is_some() {
-                    return None;
-                }
             }
             // Musl does not dispatch a DSO's preinit array during dlopen.
             // This one-slot mapper records only bounded structural metadata;
             // it neither retains nor dereferences the entry pointers below.
-            #[cfg(crabc_bounded_runtime_dlopen)]
-            DT_PREINIT_ARRAY if mapped && allow_bounded_runtime_legacy_tags => {
-                if bounded_runtime_preinit_array_virtual_address.replace(value).is_some() {
-                    return None;
-                }
-            }
-            #[cfg(crabc_bounded_runtime_dlopen)]
-            DT_PREINIT_ARRAYSZ if mapped && allow_bounded_runtime_legacy_tags => {
-                if bounded_runtime_preinit_array_byte_len.replace(value).is_some() {
-                    return None;
-                }
-            }
-            #[cfg(all(not(feature = "x86_64-owned-dynamic-runtime"), any(crabc_owned_crt_handoff, crabc_dynamic_main_thread_runtime_v1)))]
-            DT_FINI if !mapped => { if owned_crt_main_fini.replace(value).is_some() { return None; } }
-            #[cfg(feature = "x86_64-owned-dynamic-runtime")]
             DT_FINI if general_initial_graph && !mapped => {
                 if main_fini.replace(value).is_some() { return None; }
             }
-            #[cfg(crabc_bounded_runtime_dlopen)]
-            DT_FINI if mapped && allow_bounded_runtime_legacy_tags => {
-                if bounded_runtime_fini_virtual_address.replace(value).is_some() {
-                    return None;
-                }
-            }
-            #[cfg(all(not(feature = "x86_64-owned-dynamic-runtime"), any(crabc_owned_crt_handoff, crabc_dynamic_main_thread_runtime_v1)))]
-            DT_PREINIT_ARRAY if !mapped => {
-                if owned_crt_main_preinit_array.replace(value).is_some() { return None; }
-            }
-            #[cfg(all(not(feature = "x86_64-owned-dynamic-runtime"), any(crabc_owned_crt_handoff, crabc_dynamic_main_thread_runtime_v1)))]
-            DT_PREINIT_ARRAYSZ if !mapped => {
-                if owned_crt_main_preinit_array_len.replace(value).is_some() { return None; }
-            }
-            #[cfg(all(not(feature = "x86_64-owned-dynamic-runtime"), any(crabc_owned_crt_handoff, crabc_dynamic_main_thread_runtime_v1)))]
-            DT_INIT_ARRAY if !mapped => {
-                if owned_crt_main_init_array.replace(value).is_some() { return None; }
-            }
-            #[cfg(all(not(feature = "x86_64-owned-dynamic-runtime"), any(crabc_owned_crt_handoff, crabc_dynamic_main_thread_runtime_v1)))]
-            DT_INIT_ARRAYSZ if !mapped => {
-                if owned_crt_main_init_array_len.replace(value).is_some() { return None; }
-            }
-            #[cfg(all(not(feature = "x86_64-owned-dynamic-runtime"), any(crabc_owned_crt_handoff, crabc_dynamic_main_thread_runtime_v1)))]
-            DT_FINI_ARRAY if !mapped => {
-                if owned_crt_main_fini_array.replace(value).is_some() { return None; }
-            }
-            #[cfg(all(not(feature = "x86_64-owned-dynamic-runtime"), any(crabc_owned_crt_handoff, crabc_dynamic_main_thread_runtime_v1)))]
-            DT_FINI_ARRAYSZ if !mapped => {
-                if owned_crt_main_fini_array_len.replace(value).is_some() { return None; }
-            }
-            #[cfg(feature = "x86_64-owned-dynamic-runtime")]
             DT_PREINIT_ARRAY if general_initial_graph && !mapped => {
                 if main_preinit_array.replace(value).is_some() { return None; }
             }
-            #[cfg(feature = "x86_64-owned-dynamic-runtime")]
             DT_PREINIT_ARRAYSZ if general_initial_graph && !mapped => {
                 if main_preinit_array_len.replace(value).is_some() { return None; }
             }
-            #[cfg(feature = "x86_64-owned-dynamic-runtime")]
             DT_INIT_ARRAY if general_initial_graph && !mapped => {
                 if main_init_array.replace(value).is_some() { return None; }
             }
-            #[cfg(feature = "x86_64-owned-dynamic-runtime")]
             DT_INIT_ARRAYSZ if general_initial_graph && !mapped => {
                 if main_init_array_len.replace(value).is_some() { return None; }
             }
-            #[cfg(feature = "x86_64-owned-dynamic-runtime")]
             DT_FINI_ARRAY if general_initial_graph && !mapped => {
                 if main_fini_array.replace(value).is_some() { return None; }
             }
-            #[cfg(feature = "x86_64-owned-dynamic-runtime")]
             DT_FINI_ARRAYSZ if general_initial_graph && !mapped => {
                 if main_fini_array_len.replace(value).is_some() { return None; }
             }
-            #[cfg(crabc_general_initial_lifecycle)]
             DT_INIT if general_initial_graph && mapped => {
                 if general_init.replace(value).is_some() { return None; }
             }
-            #[cfg(crabc_general_initial_lifecycle)]
             DT_FINI if general_initial_graph && mapped => {
                 if general_fini.replace(value).is_some() { return None; }
             }
-            #[cfg(crabc_general_initial_lifecycle)]
             DT_FINI_ARRAY if general_initial_graph && mapped => {
                 if general_fini_array.replace(value).is_some() { return None; }
             }
-            #[cfg(crabc_general_initial_lifecycle)]
             DT_FINI_ARRAYSZ if general_initial_graph && mapped => {
                 if general_fini_len.replace(value).is_some() { return None; }
             }
@@ -1769,7 +1621,6 @@ unsafe fn parse_mapped(
                 if general_initial_graph => return None,
             DT_INIT_ARRAY => { if init_array_virtual_address.replace(value).is_some() { return None; } }
             DT_INIT_ARRAYSZ => { if init_array_byte_len.replace(value).is_some() { return None; } }
-            #[cfg(feature = "x86_64-owned-dynamic-runtime")]
             DT_RPATH if general_initial_graph => { if rpath_offset.replace(usize::try_from(value).ok()?).is_some() { return None; } }
             DT_RUNPATH => { if runpath_offset.replace(usize::try_from(value).ok()?).is_some() { return None; } }
             // DF_STATIC_TLS denotes a consumer's initial-exec requirement,
@@ -1777,55 +1628,36 @@ unsafe fn parse_mapped(
             // General initial TLS assigns all modules retained placements;
             // the older fixed IE sibling keeps its one-leaf restriction.
             DT_FLAGS => {
-                #[cfg(feature = "x86_64-owned-dynamic-runtime")]
                 { object.bind_now |= value & DF_BIND_NOW != 0; }
-                #[cfg(feature = "x86_64-owned-dynamic-runtime")]
                 if value & DF_SYMBOLIC != 0 && (!general_initial_graph || !mapped) {
                     return None;
                 }
-                #[cfg(feature = "x86_64-owned-dynamic-runtime")]
                 if value & !(DF_BIND_NOW | DF_STATIC_TLS | DF_SYMBOLIC) != 0 {
                     return None;
                 }
-                #[cfg(all(
-                    feature = "x86_64-owned-dynamic-runtime",
-                    crabc_general_initial_tls_materialization_v1
-                ))]
                 {
                     dynamic_static_tls |= value & DF_STATIC_TLS != 0;
                 }
             }
-            #[cfg(feature = "x86_64-owned-dynamic-runtime")]
             DT_FLAGS_1 if value & !(DF_1_NOW | DF_1_PIE | DF_1_NODELETE) != 0 => return None,
-            #[cfg(not(feature = "x86_64-owned-dynamic-runtime"))]
-            DT_FLAGS_1 if value & !(DF_1_NOW | DF_1_PIE) != 0 => return None,
-            #[cfg(feature = "x86_64-owned-dynamic-runtime")]
             DT_FLAGS_1 => {
                 if value & DF_1_NODELETE != 0 && (!general_initial_graph || !mapped) {
                     return None;
                 }
                 object.bind_now |= value & DF_1_NOW != 0;
             }
-            #[cfg(feature = "x86_64-owned-dynamic-runtime")]
             24 => { object.bind_now = true; } // DT_BIND_NOW has no value.
             // These imply relocation, finalization, hash, or initialization
             // semantics outside the closed fixture ABI.  Reject before any
             // corresponding pointer can be used.
             DT_INIT | DT_FINI | DT_RPATH | DT_REL | DT_RELSZ | DT_RELENT | DT_FINI_ARRAY | DT_FINI_ARRAYSZ
             | DT_PREINIT_ARRAY | DT_PREINIT_ARRAYSZ | DT_TEXTREL => return None,
-            #[cfg(not(feature = "x86_64-owned-dynamic-runtime"))]
-            DT_GNU_HASH | DT_VERSYM | DT_VERDEF | DT_VERDEFNUM | DT_VERNEED | DT_VERNEEDNUM => return None,
             _ => {}
         }
     }
-    #[cfg(all(
-        feature = "x86_64-owned-dynamic-runtime",
-        crabc_general_initial_tls_materialization_v1
-    ))]
     if dynamic_static_tls && object.tls_memsz == 0 {
         return None;
     }
-    #[cfg(feature = "x86_64-owned-dynamic-runtime")]
     if general_initial_graph && !mapped {
         match object.main_crt_mode {
             MainCrtMode::Owned => {
@@ -1891,7 +1723,6 @@ unsafe fn parse_mapped(
     // The null entry is the only unconditional dynsym range. GNU tables may
     // have no export buckets while relocations still name undefined imports;
     // later direct indexed access validates exactly the named record.
-    #[cfg(feature = "x86_64-owned-dynamic-runtime")]
     {
         // The null entry's segment proves all complete records through this
         // limit. A later overlapping segment is checked when an index exceeds it.
@@ -1899,7 +1730,6 @@ unsafe fn parse_mapped(
         object.symtab_file_record_limit = usize::try_from((file_end - symtab_address) / 24).ok()?;
     }
     object.symtab = runtime_address(base, symtab_address)? as *const u8;
-    #[cfg(feature = "x86_64-owned-dynamic-runtime")]
     {
         let sysv = match hash_virtual_address {
             Some(address) => Some(unsafe { decode_sysv_hash(phdr, phnum, base, address,
@@ -1980,11 +1810,9 @@ unsafe fn parse_mapped(
     // image's init/fini tags. The owned CRT mode has already rejected a
     // zero-length array or legacy tag above; the conventional mode admits
     // those ordinary no-op shapes.
-    #[cfg(feature = "x86_64-owned-dynamic-runtime")]
     let registry_main = !mapped;
     // The owned main's direct callbacks and array shapes were checked before
     // relocation metadata. The registry can retain those load-range proofs.
-    #[cfg(feature = "x86_64-owned-dynamic-runtime")]
     let owned_main_lifecycle_checked = general_initial_graph
         && registry_main && object.main_crt_mode == MainCrtMode::Owned;
     match (init_array_virtual_address, init_array_byte_len) {
@@ -2010,7 +1838,6 @@ unsafe fn parse_mapped(
                 object.init_array = runtime_address(base, address)? as *const usize;
                 object.init_count = usize::try_from(byte_len / pointer_size).ok()?;
             }
-            #[cfg(crabc_general_initial_lifecycle)]
             if byte_len != 0 && !virtual_range_in_readable_file_load(phdr, phnum, address, byte_len) {
                 return None;
             }
@@ -2025,7 +1852,6 @@ unsafe fn parse_mapped(
         }
         _ => return None,
     }
-    #[cfg(crabc_general_initial_lifecycle)]
     {
         // Direct legacy callbacks are validated before relocation. Array
         // storage is bounded here; relocated targets are all preflighted
@@ -2059,7 +1885,6 @@ unsafe fn parse_mapped(
             _ => return None,
         }
     }
-    #[cfg(feature = "x86_64-owned-dynamic-runtime")]
     let runpath_offset = runpath_offset.or(rpath_offset);
     if let Some(offset) = runpath_offset {
         if offset >= object.strsz { return None; }
@@ -2191,14 +2016,12 @@ impl FileStatus {
     }
 
     /// `stat(path)` (following symlinks, as `open` does), or the Linux errno.
-    #[cfg(feature = "x86_64-owned-dynamic-runtime")]
     unsafe fn of_path(path: *const u8) -> Result<Self, i32> {
         let mut stat = [0u8; X86_64_STAT_BYTE_LEN];
         syscall_error(syscall4(SYS_NEWFSTATAT, AT_FDCWD, path as i64, stat.as_mut_ptr() as i64, 0))?;
         Ok(Self(stat))
     }
 
-    #[cfg(crabc_general_initial_graph)]
     fn identity(&self) -> Option<ObjectIdentity> {
         let identity = ObjectIdentity {
             // Linux x86-64's selected 144-byte `struct stat` places `st_dev`
@@ -2504,7 +2327,6 @@ unsafe fn plan_initial_tls(objects: &mut [Object]) -> Option<bool> {
         if offset_below_tp < object.tls_memsz {
             return None;
         }
-        #[cfg(not(crabc_loader_libc_tls_runtime_v1))]
         let module_id = module_count.checked_add(1)?;
         if module_id >= TLS_DTV_WORDS {
             return None;
@@ -2594,7 +2416,6 @@ unsafe fn materialize_tls_in(
     }
     // The general graph sizes its initial DTV and module-size table from the
     // planned population, as musl sizes its initial DTV from the module count.
-    #[cfg(crabc_general_initial_graph)]
     let dtv_words = module_count.checked_add(1)?;
     let dtv_byte_len = dtv_words.checked_mul(core::mem::size_of::<usize>())?;
 
@@ -2772,7 +2593,6 @@ pub unsafe extern "C" fn __tls_get_addr(index: *const TlsIndex) -> *mut c_void {
     if thread_pointer == 0 {
         return core::ptr::null_mut();
     }
-    #[cfg(feature = "x86_64-owned-dynamic-runtime")]
     {
         let view = unsafe { x86_64_runtime_tls_view::current(thread_pointer as *mut u8) };
         if !view.is_null() {
@@ -3224,11 +3044,9 @@ unsafe fn relocation_value(
     // The same libc is present in the owned-CRT product, where this exact
     // weak slot deliberately remains null and cannot select conventional
     // lifecycle ownership.
-    #[cfg(feature = "x86_64-owned-dynamic-runtime")]
     let requested = if symbol == 0 { None } else { Some(unsafe { direct_symbol(requestor, symbol) }?) };
     // Both private imports begin with two underscores. Ordinary names are
     // validated by the general resolver; do not scan them a second time here.
-    #[cfg(feature = "x86_64-owned-dynamic-runtime")]
     let private_name = requested.and_then(|requested| {
         let offset = unsafe { read_u32(requested) } as usize;
         let available = requestor.strsz.checked_sub(offset)?;
@@ -3237,7 +3055,6 @@ unsafe fn relocation_value(
         if unsafe { *name != b'_' || *name.add(1) != b'_' } { return None; }
         unsafe { bounded_nul(name, available) }.map(|length| (name, length))
     });
-    #[cfg(feature = "x86_64-owned-dynamic-runtime")]
     if let (Some(requested), Some((name, length))) = (requested, private_name) {
         if length == b"__crabc_x86_64_loader_conventional_startup_v1".len()
             && unsafe { bytes_eq(name, b"__crabc_x86_64_loader_conventional_startup_v1".as_ptr(), length) }
@@ -3267,7 +3084,6 @@ unsafe fn relocation_value(
     // form so Scrt1 preserves its musl-shaped null finalizer. Classify it
     // before generic lookup, otherwise a DSO definition could interpose or a
     // different relocation form could accidentally become loader policy.
-    #[cfg(crabc_dynamic_main_thread_runtime_v1)]
     if symbol != 0 {
         if let (Some(requested), Some((name, length))) = (requested, private_name) {
             if length == b"__crabc_x86_64_owned_crt_handoff".len()
@@ -3276,7 +3092,6 @@ unsafe fn relocation_value(
                 let is_main = requestor.role == ObjectRole::Main
                     && requestor.base == objects[0].base
                     && requestor.phdr == objects[0].phdr;
-                #[cfg(feature = "x86_64-owned-dynamic-runtime")]
                 if !is_main || objects[0].main_crt_mode != MainCrtMode::Owned {
                     return None;
                 }
@@ -3292,7 +3107,6 @@ unsafe fn relocation_value(
                     && visibility == 0
                     && section == 0
                 {
-                    #[cfg(crabc_general_initial_lifecycle)]
                     return Some(x86_64_general_initial_lifecycle::owned_crt_handoff_address());
                 }
                 return None;
@@ -3304,11 +3118,6 @@ unsafe fn relocation_value(
         R_X86_64_GLOB_DAT | R_X86_64_JUMP_SLOT => {
             add_signed(resolve_symbol(requestor, objects, symbol)?, addend)
         }
-        #[cfg(any(
-            crabc_initial_tls_graph,
-            crabc_initial_exec_tls_graph,
-            crabc_general_initial_tls_materialization_v1
-        ))]
         R_X86_64_DTPMOD64 => {
             if addend != 0 {
                 return None;
@@ -3316,11 +3125,6 @@ unsafe fn relocation_value(
             let (module_id, _, _) = resolve_tls_symbol(requestor, objects, symbol)?;
             u64::try_from(module_id).ok()
         }
-        #[cfg(any(
-            crabc_initial_tls_graph,
-            crabc_initial_exec_tls_graph,
-            crabc_general_initial_tls_materialization_v1
-        ))]
         R_X86_64_DTPOFF64 => {
             let (_, symbol_offset, module_memsz) = resolve_tls_symbol(requestor, objects, symbol)?;
             let offset = add_signed(symbol_offset, addend)?;
@@ -3329,45 +3133,9 @@ unsafe fn relocation_value(
             }
             Some(offset)
         }
-        #[cfg(not(any(
-            crabc_initial_tls_graph,
-            crabc_initial_exec_tls_graph,
-            crabc_general_initial_tls_materialization_v1
-        )))]
-        R_X86_64_DTPMOD64 | R_X86_64_DTPOFF64 => None,
-        #[cfg(crabc_initial_exec_tls_graph)]
-        R_X86_64_TPOFF64 => {
-            // The admitted initial-exec relocation is intentionally more
-            // constrained than a generic static-TLS policy: it must be the
-            // fixed leaf's local definition and uses no addend.  That keeps
-            // the established GNU-Dynamic graph and every other TPOFF route
-            // on the fail-closed side of the boundary.
-            if addend != 0
-                || !requestor.static_tls
-                || !relocation_symbol_name_is(requestor, symbol, b"leaf_initial_exec_tls")
-            {
-                return None;
-            }
-            let (module_id, symbol_offset, module_memsz) =
-                resolve_tls_symbol(requestor, objects, symbol)?;
-            let owner = objects
-                .iter()
-                .find(|object| object.tls_module_id == module_id)?;
-            if !owner.static_tls
-                || module_id != requestor.tls_module_id
-                || symbol_offset >= module_memsz as u64
-                || owner.tls_offset_below_tp < owner.tls_memsz
-            {
-                return None;
-            }
-            let symbol_offset = i64::try_from(symbol_offset).ok()?;
-            let placement = i64::try_from(owner.tls_offset_below_tp).ok()?;
-            Some(symbol_offset.checked_sub(placement)? as u64)
-        }
         // Naming these rejected forms makes this source's boundary auditable:
         // no GOTTPOFF/TPOFF32 admission and no TLSDESC resolver are implied
         // by the GNU-Dynamic DTV implementation or its fixed-TPOFF sibling.
-        #[cfg(not(crabc_initial_exec_tls_graph))]
         R_X86_64_TPOFF64
         | R_X86_64_GOTTPOFF
         | R_X86_64_TPOFF32
@@ -3484,11 +3252,6 @@ unsafe fn resolve_symbol(requestor: &Object, objects: &[Object], index: usize) -
     // import is resolved by that interpreter only; compile this special scope
     // out of the older no-TLS artifact so it cannot silently widen its
     // ordinary GLOB_DAT/JUMP_SLOT lookup contract.
-    #[cfg(any(
-        crabc_initial_tls_graph,
-        crabc_initial_exec_tls_graph,
-        crabc_general_initial_tls_materialization_v1
-    ))]
     if len == b"__tls_get_addr".len() && bytes_eq(name, b"__tls_get_addr".as_ptr(), len) {
         return Some(__tls_get_addr as *const () as usize as u64);
     }
@@ -3497,7 +3260,6 @@ unsafe fn resolve_symbol(requestor: &Object, objects: &[Object], index: usize) -
     // its publication reservation occurs before ARCH_SET_FS in the retained
     // general TLS state. This remains one exact weak main-image data import,
     // never an ambient loader symbol-resolution rule.
-    #[cfg(crabc_general_loader_libc_tls_runtime_v1)]
     if len == b"__crabc_x86_64_loader_tls_runtime_v1".len()
         && bytes_eq(
             name,
@@ -3977,7 +3739,6 @@ unsafe fn virtual_range_in_writable_load(phdr: *const u8, phnum: usize, address:
 /// without meeting an overflowing writable load before it, so any range it
 /// contains gets the same `true` the full scan would return; every miss runs
 /// the full scan.
-#[cfg(crabc_general_initial_graph)]
 #[derive(Clone, Copy, Default)]
 pub(super) struct WritableLoadCache { hit: Option<(u64, u64)> }
 
@@ -4264,7 +4025,6 @@ unsafe fn scrt1_array_in_load(
 // Some private roots parse no callback array at all.
 #[allow(dead_code)]
 fn callback_array_entries_admitted(byte_len: u64, legacy_entries: usize) -> bool {
-    #[cfg(feature = "x86_64-owned-dynamic-runtime")]
     {
         let _ = legacy_entries;
         usize::try_from(byte_len / core::mem::size_of::<usize>() as u64).is_ok()
@@ -4339,7 +4099,6 @@ unsafe fn syscall4(number: i64, one: i64, two: i64, three: i64, four: i64) -> i6
 unsafe fn syscall6(number: i64, one: i64, two: i64, three: i64, four: i64, five: i64, six: i64) -> i64 { let result: i64; core::arch::asm!("syscall", inlateout("rax") number => result, in("rdi") one, in("rsi") two, in("rdx") three, in("r10") four, in("r8") five, in("r9") six, lateout("rcx") _, lateout("r11") _, options(nostack)); result }
 
 unsafe fn jump(entry: usize, sp: usize) -> ! {
-    #[cfg(crabc_general_initial_lifecycle)]
     core::arch::asm!("mov rsp, {stack}", "jmp {target}", stack = in(reg) sp,
         target = in(reg) entry,
         in("rdx") x86_64_general_initial_lifecycle::process_finalizer as *const () as usize,
@@ -4537,7 +4296,6 @@ mod readable_file_load_tests {
         assert_eq!(unsafe { syscall3(SYS_WRITE, fd, image.as_ptr() as i64, PAGE as i64) }, PAGE as i64);
         let status = unsafe { FileStatus::of_fd(fd) }.unwrap();
         let object = unsafe { map_elf_with_status(fd, &status, false, true, ObjectRole::Library) }.unwrap();
-        #[cfg(feature = "x86_64-owned-dynamic-runtime")]
         assert_eq!(object.symtab_file_record_limit, 4);
         let mapped = object.base as *const u8;
         assert_eq!(unsafe { *mapped.add(0x37f) }, 0xa5);
@@ -4672,40 +4430,31 @@ mod readable_file_load_tests {
         let fits = |address, size| unsafe {
             virtual_range_in_readable_file_load(headers.as_ptr(), 2, address, size)
         };
-        #[cfg(feature = "x86_64-owned-dynamic-runtime")]
         let selected = |address, size| unsafe {
             readable_file_load_segment(headers.as_ptr(), 2, address, size)
         };
         assert!(fits(0x1000, 24));
-        #[cfg(feature = "x86_64-owned-dynamic-runtime")]
         assert_eq!(selected(0x1000, 24), Some((0x1000, 0x1030)));
         assert!(fits(0x1018, 24));
-        #[cfg(feature = "x86_64-owned-dynamic-runtime")]
         assert_eq!(selected(0x1030, 24), Some((0x1030, 0x1060)));
         assert!(!fits(0x0fff, 24));
         // Adjacent mapped segments cannot jointly back one symbol record.
         assert!(!fits(0x1020, 24));
-        #[cfg(feature = "x86_64-owned-dynamic-runtime")]
         assert_eq!(selected(0x1020, 24), None);
         // Mapped zero-fill is not initialized symbol-table storage.
         assert!(!fits(0x1070, 24));
-        #[cfg(feature = "x86_64-owned-dynamic-runtime")]
         assert_eq!(selected(0x1070, 24), None);
         assert!(!fits(u64::MAX - 12, 24));
-        #[cfg(feature = "x86_64-owned-dynamic-runtime")]
         assert_eq!(selected(u64::MAX - 12, 24), None);
 
         load(&mut headers, 0, PF_W, 0x1000, 48, 128);
         assert!(!unsafe { virtual_range_in_readable_file_load(headers.as_ptr(), 2, 0x1000, 24) });
-        #[cfg(feature = "x86_64-owned-dynamic-runtime")]
         assert_eq!(unsafe { readable_file_load_segment(headers.as_ptr(), 2, 0x1000, 24) }, None);
         load(&mut headers, 0, PF_R, u64::MAX - 12, 48, 48);
         assert!(!unsafe { virtual_range_in_readable_file_load(headers.as_ptr(), 2, u64::MAX - 12, 1) });
-        #[cfg(feature = "x86_64-owned-dynamic-runtime")]
         assert_eq!(unsafe { readable_file_load_segment(headers.as_ptr(), 2, u64::MAX - 12, 1) }, None);
     }
 
-    #[cfg(feature = "x86_64-owned-dynamic-runtime")]
     #[test]
     fn direct_symbol_uses_retained_load_then_checks_later_overlapping_load() {
         let mut headers = [0u8; 112];
@@ -4748,7 +4497,6 @@ mod readable_file_load_tests {
         assert!(!unsafe { virtual_range_in_load(headers.as_ptr(), 2, 0x1080, 16) });
     }
 
-    #[cfg(feature = "x86_64-owned-dynamic-runtime")]
     #[test]
     fn sysv_hash_full_dynsym_range_may_use_an_overlapping_readable_load() {
         let mut headers = [0u8; 112];
@@ -4766,7 +4514,6 @@ mod readable_file_load_tests {
         assert!(unsafe { decode_sysv_hash(headers.as_ptr(), 2, base, 0x80, 0x100, record_limit) }.is_none());
     }
 
-    #[cfg(feature = "x86_64-owned-dynamic-runtime")]
     #[test]
     fn sysv_hash_full_table_may_use_a_later_overlapping_readable_load() {
         let mut headers = [0u8; 112];
@@ -4783,7 +4530,6 @@ mod readable_file_load_tests {
         assert!(unsafe { decode_sysv_hash(headers.as_ptr(), 2, base, 0x80, 0x100, record_limit) }.is_none());
     }
 
-    #[cfg(feature = "x86_64-owned-dynamic-runtime")]
     #[test]
     fn gnu_hash_preserves_bucket_order_and_checks_overlapping_symbol_records() {
         let mut headers = [0u8; 112];
@@ -5052,7 +4798,6 @@ mod owned_dynamic_symbolic_tag_tests {
         assert!(unapproved_flags_one.parse().is_none());
     }
 
-    #[cfg(crabc_general_initial_lifecycle)]
     #[test]
     fn main_callbacks_and_array_keep_overlapping_and_malformed_boundaries() {
         const NOTE: usize = 0x280;

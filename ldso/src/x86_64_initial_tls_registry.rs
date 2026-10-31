@@ -96,7 +96,6 @@ pub(crate) enum RuntimeTlsGrowthError {
 pub(crate) struct InitialTlsRegistry<const OBJECT_CAPACITY: usize, const MODULE_CAPACITY: usize> {
     // Object index of module `id - 1`. The general graph sizes this from its
     // TLS-bearing objects; the fixed private roots keep inline slots.
-    #[cfg(crabc_general_initial_graph)]
     module_objects: super::x86_64_runtime_memory::LoaderVec<usize>,
     #[cfg(not(crabc_general_initial_graph))]
     module_objects: [usize; MODULE_CAPACITY],
@@ -111,7 +110,6 @@ impl<const OBJECT_CAPACITY: usize, const MODULE_CAPACITY: usize>
     /// Starts an empty generation-one initial population.
     pub(crate) const fn new() -> Self {
         Self {
-            #[cfg(crabc_general_initial_graph)]
             module_objects: super::x86_64_runtime_memory::LoaderVec::new(),
             #[cfg(not(crabc_general_initial_graph))]
             module_objects: [0; MODULE_CAPACITY],
@@ -147,7 +145,6 @@ impl<const OBJECT_CAPACITY: usize, const MODULE_CAPACITY: usize>
             .ok_or(InitialTlsRegistryError::InitialModuleCapacityExhausted)?;
         let module_id = TlsModuleId::from_one_based(next)
             .ok_or(InitialTlsRegistryError::InitialModuleCapacityExhausted)?;
-        #[cfg(crabc_general_initial_graph)]
         self.module_objects
             .push(object_index)
             .ok_or(InitialTlsRegistryError::InitialModuleCapacityExhausted)?;
