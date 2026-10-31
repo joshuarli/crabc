@@ -797,6 +797,10 @@ class NativeCAllocatorBoundaryHarnessTests(unittest.TestCase):
             BOUNDARY._lifecycle_c_abi(lifecycle)["imports"],
             ["_mi_auto_process_init", "_mi_auto_process_done"],
         )
+        self.assertEqual(
+            [callback["target"] for callback in BOUNDARY._lifecycle_c_abi(lifecycle)["callbacks"]],
+            ["initialize_slow", "_mi_auto_process_done"],
+        )
         with self.assertRaisesRegex(BOUNDARY.AllocatorBoundaryError, "lifecycle import declaration"):
             BOUNDARY._lifecycle_c_abi(lifecycle.replace("fn _mi_auto_process_done();", "fn _mi_auto_process_done(value: usize);"))
         with self.assertRaisesRegex(BOUNDARY.AllocatorBoundaryError, "callback differs for initialize"):
