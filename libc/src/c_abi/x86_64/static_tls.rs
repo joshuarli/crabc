@@ -152,13 +152,16 @@ static mut INITIAL_THREAD_TLS_STORAGE: InitialThreadTlsStorage =
 /// The process-main thread copies into this module's image storage; every
 /// selected worker owns a private anonymous mapping that the bounded pthread
 /// leaf releases only after `CLONE_CHILD_CLEARTID` proves the child cannot
-/// access it.
+/// access it, or a span inside that worker's own guarded stack mapping.
 #[derive(Clone, Copy)]
 enum InitialTlsPlacement {
     /// This module's image storage, retained for the process lifetime.
     ExecutableImage,
     /// One anonymous mapping owned by this block.
     AnonymousMapping { address: *mut u8, size: usize },
+    /// A span in the selected worker's guarded stack mapping, which that
+    /// mapping's owner releases after this block's exact release.
+    BorrowedRegion { address: *mut u8, size: usize },
 }
 
 impl InitialTlsPlacement {
@@ -168,7 +171,8 @@ impl InitialTlsPlacement {
     ///
     /// The caller must be the only materialization that touches this span:
     /// the bootstrap state machine supplies that proof for the executable
-    /// image, and the block owns a fresh mapping for the other arm.
+    /// image, and the block owns a fresh mapping or the enclosing worker
+    /// mapping for the other arms.
     unsafe fn region(self) -> (*mut u8, usize) {
         match self {
             Self::ExecutableImage => (
@@ -176,6 +180,7 @@ impl InitialTlsPlacement {
                 INITIAL_THREAD_TLS_STORAGE_SIZE,
             ),
             Self::AnonymousMapping { address, size } => (address, size),
+            Self::BorrowedRegion { address, size } => (address, size),
         }
     }
 }
@@ -405,6 +410,41 @@ pub(super) unsafe fn allocate_thread() -> Option<StaticInitialTlsBlock> {
     unsafe { plan.materialize_mapping() }
 }
 
+/// Return the exact byte span one selected worker's initial TLS block needs.
+///
+/// The pthread owner rounds this to the Linux page boundary and reserves it in
+/// the worker's guarded stack mapping.
+pub(super) fn worker_allocation_size() -> Option<usize> {
+    if !is_ready() {
+        return None;
+    }
+    let plan = unsafe { core::ptr::read_volatile(core::ptr::addr_of!(STATIC_INITIAL_TLS_PLAN)) };
+    Some(plan.allocation_size)
+}
+
+/// Materialize one selected worker block inside the worker's own stack span.
+///
+/// # Safety
+///
+/// `region` must be readable/writable, at least `size` bytes, and remain
+/// mapped until after this block's exact release; the pthread owner supplies
+/// that proof by unmapping the enclosing stack mapping last.
+pub(super) unsafe fn allocate_thread_in(
+    region: *mut u8,
+    size: usize,
+) -> Option<StaticInitialTlsBlock> {
+    if !is_ready() || region.is_null() || size == 0 {
+        return None;
+    }
+    let plan = unsafe { core::ptr::read_volatile(core::ptr::addr_of!(STATIC_INITIAL_TLS_PLAN)) };
+    unsafe {
+        plan.materialize(InitialTlsPlacement::BorrowedRegion {
+            address: region,
+            size,
+        })
+    }
+}
+
 /// Release one completed selected-child TLS mapping without changing `errno`.
 ///
 /// # Safety
@@ -414,7 +454,7 @@ pub(super) unsafe fn allocate_thread() -> Option<StaticInitialTlsBlock> {
 /// `CLONE_CHILD_CLEARTID` word plus registry withdrawal before reclamation.
 pub(super) unsafe fn release_thread(block: StaticInitialTlsBlock) -> i64 {
     match block.placement {
-        InitialTlsPlacement::ExecutableImage => 0,
+        InitialTlsPlacement::ExecutableImage | InitialTlsPlacement::BorrowedRegion { .. } => 0,
         InitialTlsPlacement::AnonymousMapping { address, size } => unsafe { unmap(address, size) },
     }
 }

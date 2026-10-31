@@ -710,9 +710,10 @@ static_archive_member! { pthread_getattr_np_source {
     ///
     /// Musl 1.2.6 `src/thread/pthread_getattr_np.c` starts with a zero public
     /// record and copies actual stack/guard metadata, not the creation request.
-    /// Our TLS/control allocations are separate from the application stack; its
-    /// reported bounds therefore exclude those mappings rather than inventing
-    /// musl's coallocated-TLS overhead. Unknown or withdrawn owned handles return
+    /// Our initial TLS block and control page share the private worker stack
+    /// mapping above its usable range; the reported bounds therefore exclude
+    /// that coallocated TLS/control storage rather than charging it to the
+    /// application stack. Unknown or withdrawn owned handles return
     /// ESRCH without touching output or errno; musl leaves such handles undefined.
     ///
     /// The original main stack has no fixed pthread allocation record. Preserve

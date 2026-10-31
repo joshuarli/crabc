@@ -69,10 +69,11 @@
 //! intentionally neither signal-safe nor reentrant. A successful selected
 //! detach is prompt: it changes ownership to detached without waiting for the
 //! child. A later selected create/join boundary reclaims the detached
-//! TLS/control mappings only after `CLONE_CHILD_CLEARTID` has cleared the
-//! child TID. This follows the existing AArch64 runtime's safe external
-//! reaping shape; it is not a claim of general detached-thread reclamation or
-//! full pthread behavior. It provides selected initial-thread `pthread_exit`
+//! worker's single guard/stack/TLS/control mapping only after
+//! `CLONE_CHILD_CLEARTID` has cleared the child TID. This follows the existing
+//! AArch64 runtime's safe external reaping shape; it is not a claim of general
+//! detached-thread reclamation or full pthread behavior. It provides selected
+//! initial-thread `pthread_exit`
 //! in both owned products and static fork child-list/TLS/TSD repair. Owned
 //! builds additionally provide scheduler application, GNU default attributes
 //! and live-thread inspection through their corresponding leaves. Dynamic
@@ -250,9 +251,10 @@ const PTHREAD_CLONE_FLAGS: i32 = CLONE_VM
 pub unsafe extern "C" fn __membarrier_init() {}
 core::arch::global_asm!(".hidden __membarrier_init");
 
-// Keep the control record in a private page-aligned anonymous mapping. Static
-// Initial TLS v1 owns a second exact PT_TLS materialization. A private worker
-// stack is a third mapping with an optional inaccessible lower guard; a
+// Keep the control record in the worker's own stack mapping when the stack is
+// private; a caller stack keeps one private control page. Static Initial TLS
+// v1 or the loader-owned initial block is materialized in that same stack
+// mapping, so an owned worker is one guard/stack/TLS/control map. A
 // caller-provided stack remains caller-owned. None of these mappings guesses
 // an errno offset or overlays user TLS.
 const CONTROL_REGION_SIZE: usize = 4_096;
@@ -584,9 +586,10 @@ struct ThreadControl {
     // retry must not unmap the TLS image twice.
     tls_released: AtomicU8,
     // A private worker stack has a lower guard, and its mapping also holds
-    // this control page above the usable stack, released last with it. A
-    // caller-owned stack (null mapping/zero length) is never unmapped by this
-    // lifecycle owner and its control has its own mapping.
+    // this control page and the worker's initial TLS block above the usable
+    // stack, released last as one unit. A caller-owned stack (null
+    // mapping/zero length) is never unmapped by this lifecycle owner and its
+    // control has its own mapping.
     stack_released: AtomicU8,
     stack_mapping: *mut u8,
     stack_mapping_size: usize,
@@ -595,10 +598,6 @@ struct ThreadControl {
     stack_bounds: SelectedThreadStackBounds,
     control_mapping: *mut u8,
     tls_block: static_tls::StaticInitialTlsBlock,
-    // The selected TSD leaf owns its values in this private worker mapping,
-    // not in the Static Initial TLS v1 `%fs:0` self word. The mapping remains
-    // live through the destructor phase and clear-child-tid handoff.
-    tsd: pthread_tsd::SelectedTsdValues,
     // Musl's current-thread robust-list record stays in the same private
     // control mapping as this worker's cancellation/TSD state. It remains
     // valid through selected exit's owner-death walk and the later
@@ -617,6 +616,12 @@ struct ThreadControl {
     cancellation: pthread_cancel::SelectedWorkerCancellation,
     start: SelectedWorkerStart,
     argument: *mut c_void,
+    // The selected TSD leaf owns its values in this private worker mapping,
+    // not in the Static Initial TLS v1 `%fs:0` self word. The mapping remains
+    // live through the destructor phase and clear-child-tid handoff. The
+    // creation path zeroes this table in place after the record write so the
+    // control initializer never stages a second copy of the whole table.
+    tsd: core::mem::MaybeUninit<pthread_tsd::SelectedTsdValues>,
 }
 
 #[cfg(feature = "native-mimalloc-shadow")]
@@ -630,14 +635,14 @@ const NATIVE_MIMALLOC_ATTACH_FATAL: i32 = 3;
 
 // This is an external audit witness because the reclaimed control page is no
 // longer readable after its final munmap. It counts only descriptor-bearing
-// workers whose TLS, stack, and control mappings all released successfully.
+// workers whose TLS, stack and control storage all released successfully.
 #[cfg(any(
     feature = "native-mimalloc-shadow-test-audit",
     all(feature = "native-mimalloc-shadow", feature = "x86-owned-allocator-lifecycle-test-audit"),
 ))]
 static NATIVE_MIMALLOC_RECLAIMED_WORKER_DESCRIPTOR_COUNT: AtomicUsize = AtomicUsize::new(0);
 
-/// Descriptor-bearing workers whose TLS, stack and control mappings were all
+/// Descriptor-bearing workers whose TLS, stack and control storage all
 /// released, for the installed lifecycle audit. A scalar only.
 #[cfg(all(feature = "native-mimalloc-shadow", feature = "x86-owned-allocator-lifecycle-test-audit"))]
 pub(super) fn native_mimalloc_reclaimed_worker_descriptor_count() -> usize {
@@ -1321,7 +1326,7 @@ pub(super) unsafe fn prepare_process_child_caller(
     caller: ProcessChildCaller,
 ) -> DeferredProcessChildRegistryReset {
     let tid = unsafe { register_fork_child_kernel_tid() };
-    let values = caller.0.map(|control| unsafe { core::ptr::addr_of!((*control).tsd) });
+    let values = caller.0.map(|control| unsafe { core::ptr::addr_of!((*control).tsd).cast::<pthread_tsd::SelectedTsdValues>() });
     unsafe { pthread_tsd::adopt_process_child_values(values) };
     if !static_tls::adopt_current_thread_after_fork() {
         super::immediate_termination::_Exit(127);
@@ -1357,7 +1362,7 @@ pub(super) fn current_selected_worker_tsd_values_after_fork(
     let control = selected_worker_by_thread_pointer_locked(thread_pointer as usize)?;
     // SAFETY: the fork coordinator owns the list lock, and this linked control
     // remains mapped until it clears the head in `pthread_fork_child`.
-    Some(unsafe { core::ptr::addr_of!((*control).tsd) })
+    Some(unsafe { core::ptr::addr_of!((*control).tsd).cast::<pthread_tsd::SelectedTsdValues>() })
 }
 
 /// Link a fully initialized selected control before the child can run.
@@ -2028,8 +2033,9 @@ unsafe fn reclaim_withdrawn_selected_worker(control: *mut ThreadControl) -> Resu
     let stack_mapping = unsafe { (*control).stack_mapping };
     let stack_mapping_size = unsafe { (*control).stack_mapping_size };
     let control_mapping = unsafe { (*control).control_mapping };
-    // An owned stack's mapping also holds this control page (see
-    // allocate_selected_worker_stack); it is released last, as one unit.
+    // An owned stack's mapping also holds this control page and the worker's
+    // initial TLS block (see allocate_selected_worker_stack); the whole
+    // guard/stack/TLS/control span is released last as one unit.
     let control_in_stack = !stack_mapping.is_null()
         && control_mapping == stack_mapping.wrapping_add(stack_mapping_size - CONTROL_REGION_SIZE);
     if unsafe { (*control).stack_released.load(Ordering::Acquire) } == 0 {
@@ -2217,7 +2223,7 @@ pub(super) fn current_selected_worker_tsd_values(
     // SAFETY: current-worker resolution proves the control mapping is live
     // until this current task exits; the TSD leaf retains no pointer after its
     // current get/set/destructor operation completes.
-    Some(unsafe { core::ptr::addr_of!((*control).tsd) })
+    Some(unsafe { core::ptr::addr_of!((*control).tsd).cast::<pthread_tsd::SelectedTsdValues>() })
 }
 
 /// Return the current selected worker's task-local robust-list record.
@@ -2271,7 +2277,7 @@ pub(super) fn clear_selected_worker_tsd_key(key: usize) {
     while !control.is_null() {
         // SAFETY: a linked control stays mapped under this lock. The TSD
         // metadata lock excludes a concurrent selected set/get for this key.
-        unsafe { (*control).tsd.clear_key(key) };
+        unsafe { (*control).tsd.assume_init_mut().clear_key(key) };
         control = unsafe { (*control).registry_next };
     }
     unlock_selected_worker_registry();
@@ -2303,12 +2309,18 @@ unsafe fn publish_selected_worker_result(
 /// The bounds' `top` is passed to clone. `mapping`/`mapping_size`
 /// are null/zero for a caller-owned stack and otherwise retain the exact
 /// private guard-plus-stack map that a later join or reaper must release.
+/// That mapping also holds the initial TLS block and the control page, as
+/// musl's thread stack mapping holds its TLS/pthread record.
 #[derive(Clone, Copy)]
 struct SelectedWorkerStack {
     bounds: SelectedThreadStackBounds,
     mapping: *mut u8,
     mapping_size: usize,
-    // For an owned stack, the control page directly above the usable stack in
+    // Reserved span above the usable stack where the TLS owner materializes
+    // this worker's Variant-II block; null for a caller-owned stack.
+    tls_region: *mut u8,
+    tls_size: usize,
+    // For an owned stack, the control page directly above the TLS span in
     // the same mapping (null for a caller stack, which needs its own).
     control: *mut u8,
 }
@@ -2349,11 +2361,12 @@ unsafe fn map_private_range(length: usize, protection: i64) -> *mut u8 {
 /// This preserves musl's creation choices relevant to an initialized attr
 /// record: a caller stack receives no private guard/map ownership; an owned
 /// stack rounds both its requested stack and its guard to the Linux page
-/// boundary before only the stack portion becomes read/write. The selected
-/// static TLS block remains a separate exact final-image allocation in both
-/// cases.
+/// boundary before only the stack portion becomes read/write, and reserves the
+/// page-rounded initial-TLS span plus the control page above it in that same
+/// mapping. A caller stack keeps its separate exact TLS block.
 unsafe fn allocate_selected_worker_stack(
     attributes: super::pthread_attr::SelectedWorkerAttributes,
+    tls_size: usize,
 ) -> Option<SelectedWorkerStack> {
     if let Some(requested_top) = attributes.caller_stack_top {
         let stack_base = requested_top.checked_sub(attributes.stack_size)?;
@@ -2366,17 +2379,25 @@ unsafe fn allocate_selected_worker_stack(
             bounds: SelectedThreadStackBounds { top: stack_top, size: stack_size, guard_size: 0 },
             mapping: core::ptr::null_mut(),
             mapping_size: 0,
+            tls_region: core::ptr::null_mut(),
+            tls_size: 0,
             control: core::ptr::null_mut(),
         });
+    }
+    if tls_size == 0 || tls_size % PAGE_SIZE != 0 {
+        return None;
     }
 
     let guard_size = round_up_to_page(attributes.guard_size)?;
     let stack_size = round_up_to_page(attributes.stack_size)?;
-    // Like musl's one guard/stack/TLS/pthread mapping, the control page sits
-    // directly above the usable stack in the same mapping: one mmap and one
-    // mprotect per owned stack instead of a second private mapping. The
-    // usable bounds below still end at the stack top, below the control.
-    let mapping_size = guard_size.checked_add(stack_size)?.checked_add(CONTROL_REGION_SIZE)?;
+    // Like musl's one guard/stack/TLS/pthread mapping, the TLS block and the
+    // control page sit directly above the usable stack in the same mapping:
+    // one mmap and one mprotect per owned stack instead of separate private
+    // mappings. The usable bounds below still end at the stack top.
+    let mapping_size = guard_size
+        .checked_add(stack_size)?
+        .checked_add(tls_size)?
+        .checked_add(CONTROL_REGION_SIZE)?;
     // SAFETY: this lifecycle owns the newly mapped anonymous range until a
     // failed create or later join/reaper releases it.
     let mapping = unsafe { map_private_range(mapping_size, PROT_NONE) };
@@ -2389,7 +2410,7 @@ unsafe fn allocate_selected_worker_stack(
         raw_syscall::syscall3(
             raw_syscall::SYS_MPROTECT,
             mapping.add(guard_size) as usize as i64,
-            (stack_size + CONTROL_REGION_SIZE) as i64,
+            (stack_size + tls_size + CONTROL_REGION_SIZE) as i64,
             PROT_READ_WRITE,
         )
     };
@@ -2398,15 +2419,17 @@ unsafe fn allocate_selected_worker_stack(
         return None;
     }
     // `mapping_size` has already checked the sum, so the stack top is one
-    // byte past the owned writable stack and the control page starts there.
-    // The clone assembly realigns the top before reserving its one callback
-    // argument word.
+    // byte past the owned writable stack, the TLS span starts there, and the
+    // control page starts one TLS reservation above it. The clone assembly
+    // realigns the top before reserving its one callback argument word.
     let stack_top = unsafe { mapping.add(guard_size + stack_size) };
     Some(SelectedWorkerStack {
         bounds: SelectedThreadStackBounds { top: stack_top as usize, size: stack_size, guard_size },
         mapping,
         mapping_size,
-        control: stack_top,
+        tls_region: stack_top,
+        tls_size,
+        control: unsafe { stack_top.add(tls_size) },
     })
 }
 
@@ -2690,7 +2713,7 @@ unsafe extern "C" fn worker_entry(opaque: *mut c_void) -> c_int {
         // its selected cancellation state before any later exit transition;
         // the helper leaves C11 state untouched.
         pthread_cancel::disable_current_selected_pthread_cancellation_for_exit();
-        pthread_tsd::run_selected_worker_tsd_destructors(core::ptr::addr_of!((*control).tsd));
+        pthread_tsd::run_selected_worker_tsd_destructors(core::ptr::addr_of!((*control).tsd).cast::<pthread_tsd::SelectedTsdValues>());
         #[cfg(feature = "native-mimalloc-shadow")]
         {
             native_finish =
@@ -2889,18 +2912,46 @@ unsafe fn create_selected_worker_with_attributes(
     // clear-child-tid write proves any selected detached child has stopped
     // using them. Each remaining live control carries its own list node.
     reap_finished_detached_selected_workers();
-    let tls_block = match unsafe { static_tls::allocate_thread() } {
-        Some(block) => block,
-        // The retained template stays immutable after `is_ready`; a later
-        // failure therefore means allocation pressure, not an unselected TLS
-        // fallback or an attempt to derive an errno-only image.
+    // Musl includes `libc.tls_size` in the one stack mapping it maps for a
+    // default-attribute thread. Query this process's immutable initial
+    // population once, round it to the page boundary, and reserve that exact
+    // span above the usable stack so the TLS owner writes only inside the
+    // worker's own mapping. An application-provided stack cannot be extended;
+    // those workers keep their separate TLS block, as musl does for a stack
+    // whose remaining space cannot hold TLS.
+    let owned_stack = attributes.caller_stack_top.is_none();
+    let tls_size = if owned_stack {
+        let Some(requested) = static_tls::worker_allocation_size() else {
+            return EAGAIN;
+        };
+        // The TLS owner returns a nonzero exact span; reserve its page-rounded
+        // upper bound in the worker mapping.
+        let Some(size) = round_up_to_page(requested) else {
+            return EAGAIN;
+        };
+        size
+    } else {
+        0
+    };
+    let worker_stack = match unsafe { allocate_selected_worker_stack(attributes, tls_size) } {
+        Some(stack) => stack,
         None => return EAGAIN,
     };
-    let worker_stack = match unsafe { allocate_selected_worker_stack(attributes) } {
-        Some(stack) => stack,
-        None => {
-            let _ = unsafe { static_tls::release_thread(tls_block) };
-            return EAGAIN;
+    let tls_block = if owned_stack {
+        match unsafe { static_tls::allocate_thread_in(worker_stack.tls_region, worker_stack.tls_size) } {
+            Some(block) => block,
+            None => {
+                let _ = unsafe { unmap_worker(worker_stack.mapping, worker_stack.mapping_size) };
+                return EAGAIN;
+            }
+        }
+    } else {
+        match unsafe { static_tls::allocate_thread() } {
+            Some(block) => block,
+            // The retained template stays immutable after `is_ready`; a later
+            // failure therefore means allocation pressure, not an unselected
+            // TLS fallback or an attempt to derive an errno-only image.
+            None => return EAGAIN,
         }
     };
     // An owned stack carries its control page; a caller stack needs one.
@@ -2962,7 +3013,7 @@ unsafe fn create_selected_worker_with_attributes(
                 stack_bounds: worker_stack.bounds,
                 control_mapping,
                 tls_block,
-                tsd: pthread_tsd::SelectedTsdValues::empty(),
+                tsd: core::mem::MaybeUninit::uninit(),
                 robust_list: pthread_mutex::SelectedRobustList::empty(),
                 condition_waiter: pthread_cond::SelectedPthreadConditionWaiter::new(),
                 registry_previous: core::ptr::null_mut(),
@@ -2974,6 +3025,11 @@ unsafe fn create_selected_worker_with_attributes(
                 start,
                 argument,
             },
+        );
+        core::ptr::write_bytes(
+            core::ptr::addr_of_mut!((*control).tsd).cast::<u8>(),
+            0,
+            core::mem::size_of::<pthread_tsd::SelectedTsdValues>(),
         );
         // The self-referential robust-list sentinel must be established only
         // after this control has its final mapping address, before the child
@@ -3107,13 +3163,21 @@ unsafe fn create_selected_worker_with_attributes(
             // dangling list pointer.
             return EAGAIN;
         }
+        // An embedded TLS block and the loader's exact-token registry node
+        // live inside the owned stack mapping. Release TLS first; a failed
+        // loader release leaves that mapping mapped so no reachable node or
+        // TLS pointer names freed storage. A caller-owned stack keeps its
+        // separate TLS mapping, which this release owns.
+        let tls_release = unsafe { static_tls::release_thread(tls_block) };
+        if is_linux_error(tls_release) {
+            return EAGAIN;
+        }
         if !worker_stack.mapping.is_null() {
             let _ = unsafe { unmap_worker(worker_stack.mapping, worker_stack.mapping_size) };
         }
         if worker_stack.control.is_null() {
             let _ = unsafe { unmap_worker(control_mapping, CONTROL_REGION_SIZE) };
         }
-        let _ = unsafe { static_tls::release_thread(tls_block) };
         // Musl intentionally translates every clone failure to EAGAIN.
         return EAGAIN;
     }
@@ -3261,7 +3325,7 @@ unsafe fn exit_selected_worker(result: SelectedWorkerResult) -> ! {
                 pthread_cancel::disable_current_selected_pthread_cancellation_for_exit();
             }
             pthread_cancel::run_current_selected_thread_cleanup_handlers();
-            pthread_tsd::run_selected_worker_tsd_destructors(core::ptr::addr_of!((*control).tsd));
+            pthread_tsd::run_selected_worker_tsd_destructors(core::ptr::addr_of!((*control).tsd).cast::<pthread_tsd::SelectedTsdValues>());
             #[cfg(feature = "native-mimalloc-shadow")]
             {
                 native_finish =

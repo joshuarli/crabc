@@ -1069,10 +1069,17 @@ unsafe fn report_relocation_failure(diagnostic: &mut RuntimeDiagnostic, snapshot
     }
 }
 
+#[inline]
 pub(super) unsafe fn attach_worker_tls(guard: &RuntimeGuard, tp: *mut u8) -> Option<()> {
     let registry = unsafe { &*REGISTRY.0.get() };
     if registry.head.is_null() { return None; }
     if registry.tls_count == registry.initial_tls_count { return Some(()); }
+    unsafe { attach_grown_worker_tls(guard, tp) }
+}
+
+/// Slow path for a worker attach after runtime TLS growth.
+unsafe fn attach_grown_worker_tls(guard: &RuntimeGuard, tp: *mut u8) -> Option<()> {
+    let registry = unsafe { &*REGISTRY.0.get() };
     let snapshot = unsafe { ObjectSnapshot::collect(registry, &UnpublishedObjects::new()) }?;
     unsafe { x86_64_runtime_tls_view::PreparedTlsView::prepare(tp, snapshot.objects.as_slice())?.publish(tp); }
     let _ = guard;

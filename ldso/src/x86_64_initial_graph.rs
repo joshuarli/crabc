@@ -2289,13 +2289,25 @@ unsafe fn materialize_initial_tls(objects: &[Object], ownership_prefix: usize) -
     unsafe { materialize_tls_in(objects, ownership_prefix, None) }
 }
 
-/// [`materialize_initial_tls`], placing the block in `builtin` (zeroed,
-/// page-aligned, `(pointer, bytes)`) when it fits, else in a fresh mapping.
-unsafe fn materialize_tls_in(
+/// One validated page-rounded initial TLS block layout.
+///
+/// Startup and worker construction consume the same layout so the caller can
+/// reserve an exact page span before this owner writes the TCB, DTV, size
+/// table or images into it.
+#[derive(Clone, Copy)]
+struct InitialTlsBlockLayout {
+    total_tls_size: usize,
+    tp_alignment: usize,
+    module_count: usize,
+    dtv_words: usize,
+    mapping_size: usize,
+}
+
+/// Validate one initial TLS population and compute its complete page span.
+unsafe fn initial_tls_block_layout(
     objects: &[Object],
     ownership_prefix: usize,
-    builtin: Option<(*mut u8, usize)>,
-) -> Option<InstalledInitialTls> {
+) -> Option<InitialTlsBlockLayout> {
     let mut total_tls_size = 0usize;
     let mut tp_alignment = core::mem::align_of::<usize>();
     let mut module_count = 0usize;
@@ -2332,7 +2344,48 @@ unsafe fn materialize_tls_in(
         .checked_add(reserved_after_tp)?
         // `align_down` may discard almost one complete TP-alignment unit.
         .checked_add(tp_alignment)?;
-    let mapping_size = align_up_usize(raw_mapping_size, PAGE as usize)?;
+    Some(InitialTlsBlockLayout {
+        total_tls_size,
+        tp_alignment,
+        module_count,
+        dtv_words,
+        mapping_size: align_up_usize(raw_mapping_size, PAGE as usize)?,
+    })
+}
+
+/// [`materialize_initial_tls`], placing the block in `builtin` (page-aligned,
+/// `(pointer, bytes)`) when it fits, else in a fresh mapping.
+unsafe fn materialize_tls_in(
+    objects: &[Object],
+    ownership_prefix: usize,
+    builtin: Option<(*mut u8, usize)>,
+) -> Option<InstalledInitialTls> {
+    let layout = unsafe { initial_tls_block_layout(objects, ownership_prefix) }?;
+    unsafe {
+        materialize_tls_in_layout(objects, ownership_prefix, core::ptr::addr_of!(layout), builtin)
+    }
+}
+
+/// Materialize one already validated layout and its ELF templates.
+///
+/// A caller that owns a long-lived immutable population may reuse the layout
+/// across allocations instead of validating every object again. `layout` must
+/// designate one readable layout for the whole call.
+unsafe fn materialize_tls_in_layout(
+    objects: &[Object],
+    ownership_prefix: usize,
+    layout: *const InitialTlsBlockLayout,
+    builtin: Option<(*mut u8, usize)>,
+) -> Option<InstalledInitialTls> {
+    let total_tls_size = unsafe { (*layout).total_tls_size };
+    let tp_alignment = unsafe { (*layout).tp_alignment };
+    let module_count = unsafe { (*layout).module_count };
+    let dtv_words = unsafe { (*layout).dtv_words };
+    let dtv_byte_len = dtv_words.checked_mul(core::mem::size_of::<usize>())?;
+    let reserved_after_tp = TLS_TCB_PREFIX_SIZE
+        .checked_add(dtv_byte_len)?
+        .checked_add(dtv_byte_len)?;
+    let mapping_size = unsafe { (*layout).mapping_size };
     let builtin = builtin.filter(|&(_, bytes)| mapping_size <= bytes);
     let mapping = match builtin {
         Some((pointer, _)) => pointer as i64,
