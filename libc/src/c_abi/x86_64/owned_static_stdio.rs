@@ -1247,8 +1247,23 @@ pub(crate) unsafe fn with_scanned_stream(stream: *mut StandardStream, scan: impl
 }
 
 // Only the above scoped adapter may invoke this initialized, held-lock read.
+// The adapter already performed orientation, direction admission and the
+// I/O-started mark for the whole scan, so a scanned byte only reads the
+// current region or refills it.
 pub(crate) unsafe fn read_scanned_byte(stream: *mut StandardStream) -> c_int {
-    unsafe { read_byte_held(stream) }
+    unsafe {
+        if (*stream).read_position < (*stream).read_end {
+            let byte = (*stream).read_position.read();
+            (*stream).read_position = (*stream).read_position.add(1);
+            return c_int::from(byte);
+        }
+        let mut byte = 0u8;
+        if refill_into(stream, ptr::addr_of_mut!(byte), 1) == 0 {
+            EOF
+        } else {
+            c_int::from(byte)
+        }
+    }
 }
 
 // musl shgetc.h `shunget`: the scanner steps its lookahead back into the
