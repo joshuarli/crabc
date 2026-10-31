@@ -236,10 +236,10 @@ Startup row (`matched-llvm-23`, installed merged product). Before the
 fixed-cost supervisor encoder, the three `perf` trials read 85,712 / 85,731 /
 85,730 for musl (19 instructions, 0.022 %, over the 0.01 % allowance) and
 266,432 / 266,431 / 266,432 for crabc; the shift tracks the child's rusage
-digit split, not the runtime. With the encoder the trials read 87,056 / 87,057
-/ 87,056 (musl, spread 1) and 268,599 / 268,602 / 268,601 (crabc, spread 3).
-The wrapper grew by about 1,470 instructions and is subtracted, so the startup
-values stay at 70,093 vs 251,617 and `ratio_insn` stays 3.5898 (before:
+digit split, not the runtime. With the encoder the trials read 87,087 / 87,088
+/ 87,087 (musl, spread 1) and 268,633 / 268,633 / 268,631 (crabc, spread 2).
+The wrapper grew by about 1,500 instructions and is subtracted, so the startup
+values stay at 70,092 vs 251,616 and `ratio_insn` stays 3.5898 (before:
 3.5897). The client trace has 11 musl calls and 19 crabc calls; the five
 attributed calls are `sysinfo`, two `open` probes, the 2359296-byte
 `MAP_NORESERVE` `mmap`, and the 32-byte `GRND_NONBLOCK` `getrandom`. The
