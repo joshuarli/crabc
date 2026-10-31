@@ -1056,11 +1056,30 @@ the budgets above. `allocator-attributed` costs are listed, never passed.
 | S3b | `f7dcaafb5` | one ELF (same inode at both paths); startup syscalls 25→12 = 7 non-allocator (musl 9) + 5 allocator-attributed, budget 14; instructions 238,686→237,541 (empty env 116,582, so 120,350 is environment-dependent allocator work); bridges 44→30; 1661 exports, 0 undefined, 0 loader imports | full F roster PASS: loader, static 72-path, dlopen/TLS, both interposition suites, cancellation, hardened, identity 5 cases, CRT evidence, loader debug; debug payload merged | startup instruction ratio still ~6.8× musl (dominated by the frozen allocator), so the instruction dimension is not met |
 | S4 instructions | `b704eec12` | memcpy_16k_aligned 1.4375→0.8750; memcpy_64_aligned 1.1875→0.8750; stdio_format_parse 1.4778→1.0997 (pass); no measured row worse | libc-memory PASS; owned-stdio PASS; counts route on the merged product; rust-check | 256k rows read nondeterministic (unchanged); stdio margin 2.4 instructions |
 | S4 startup syscalls | `4b897c553` | judged startup syscalls 14→8 against musl's 11 with no per-name excess; whole 19→13; allocator-attributed 5 unchanged | prepare, identity 5 cases, dlopen PIE/non-PIE, hardened, pthread-exit, CRT evidence tests | none; startup row still fails on instructions (D8) |
-| S5 | — | — | — | requires S4 and the remaining structure budgets |
+| S5 | `3efdb2df0` (acceptance tip) | counts: 20/23 rows pass; `dlopen_graph` 2.6403 fail; `startup` 3.5853 fail (its syscalls pass: 8 judged against 11); `pthread_create_join_tls` nondeterministic (1.0949). Structure 5/7: libc 25, dispatcher 701, dispatcher lines 10,593, Python 566 files / 269,998 lines. Static startup syscalls 10 against 9. | final-tip dynamic product prepare, static 72-path suite, hardened, identity, dlopen, ldso suites, counts report | startup instructions blocked by the allocator freeze under D8; `dlopen_graph`; ldso structure budget; static 759-byte mmap; CPU/memory gate deferred (host busy) |
 
 ### Needs owner
 
-None open. The three questions raised while fixing the S0 budgets were answered
+Four questions are open after acceptance:
+
+1. **Startup instructions cannot meet 1.10 under the allocator freeze.** The
+   merged product's startup is 3.585× musl; even with an empty environment it
+   is 116,582 against musl's 35,106 (3.3×). D8 judges the total, and D1 freezes
+   the allocator whose start-up dominates. Decide: accept the row as a standing
+   blocker while the freeze holds, define a measured allocator-attributed
+   instruction exemption (it needs allocator work), or reopen the freeze.
+2. **ldso structure budget is unmet.** 7 features against 2, and 19,442 lines
+   against 11,000, because the 71 behavioural cases of the three non-product
+   features have not been migrated to the installed product.
+3. **`dlopen_graph` is 2.6403× musl.** It was already above the ceiling before
+   S3b; the loader's symbol-resolution path needs an S4 lane.
+4. **Static startup makes one extra call.** 10 against the budget of 9: the
+   759-byte initial-thread `mmap`, which musl does not make.
+
+CPU and memory were not measured: the host stayed at load 20–27 on 32 cores,
+so the perf gate is deferred and S5 is not done for that dimension.
+
+The three questions raised while fixing the S0 budgets were answered
 on 2026-10-31 and recorded as D6-D8: accept the default-archive export change
 (D6), migrate the 71 ldso cases and delete the features (D7), and judge startup
 instructions on the total while reporting the allocator share as evidence
