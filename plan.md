@@ -766,9 +766,13 @@ owner decision.
   only with an S4 startup-instruction lane and only if the combined startup
   rows meet 1.10 ×. Otherwise record the measured floor as a standing blocker.
   D8's total judgement and D1's syscall attribution are unchanged.
-- **D11 — `dlopen_graph`: S4 lane with a hard stop.** The loader's symbol-
-  resolution path is non-allocator work. It must reach ≤1.10 × musl with no
-  semantic change, or report the exact mechanism that blocks it.
+- **D11 — `dlopen_graph`: attribute before opening a loader lane.** S5's
+  2.6403× row is 303,603 startup instructions against musl's 114,988, while
+  the dlopen operation itself is 15,582 against 15,592. The gap is the eager
+  allocator startup D10 removes, not the symbol-resolution path; the judged
+  syscall total is 60 against 61. Re-run the row after D10 and open a loader
+  lane only for a residual over 1.10×, with the same hard stop: no semantic
+  change, or report the exact blocking mechanism.
 - **D12 — static startup 759-byte `mmap`: remove the preallocation.** Do not
   relax the static syscall budget from 9 to 10. The mapping is static TLS
   (`StaticInitialTlsPlan::materialize`), not allocator lifecycle, so it is not
@@ -1122,8 +1126,10 @@ and a lane:
 2. **ldso — D7 unchanged.** Migrate the 71 cases to the installed product, then
    delete the three non-product features. No budget relaxation. Lane
    `lane/s3a-ldso-migrate`.
-3. **`dlopen_graph` — D11.** S4 loader lane; hard stop at ≤1.10 × musl with no
-   semantic change, or report the blocking mechanism.
+3. **`dlopen_graph` — D11.** Attribute first: its operation delta is already
+   at parity (15,582 vs 15,592 instructions) and the 2.64× row is startup.
+   Re-run after D10; open a loader lane only for a residual >1.10 ×, with the
+   same hard stop.
 4. **Static 759-byte `mmap` — D12.** Remove the `StaticInitialTlsPlan`
    preallocation; do not relax the 9-call budget. Lane `lane/s4-static-tls`.
 5. **Hardened exit 116 — D13.** Fixed as a harness gap in `02d7ffed4`: the
