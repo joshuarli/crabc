@@ -69,7 +69,6 @@ SOURCE_PATHS = (
     'ldso/src/x86_64_general_initial_tls_state.rs', 'ldso/src/x86_64_initial_graph.rs',
     'ldso/src/x86_64_runtime_tls_view.rs', 'ldso/src/x86_64_runtime_registry.rs',
     'ldso/src/x86_64_general_relocation.rs', 'ldso/src/x86_64_runtime_lock.rs',
-    'ldso/src/x86_64_general_initial_tls_runtime_v1_source_root.rs',
     'ldso/src/x86_64_general_initial_loader_state.rs', 'rust-toolchain.toml',
     'compat/x86_64/public_data_ordinary_link_evidence.py', 'compat/x86_64/owned_dynamic_fork_evidence.py',
     'compat/x86_64/owned_dynamic_receipt.py', 'compat/x86_64/native_abi_elf_facts.py',

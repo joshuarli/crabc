@@ -785,8 +785,9 @@ paths and `bytes` fields; after reader validation, the selector joins their
 bytes and modes to the selected cohort's `size` identities. The static
 preparation keeps its
 own path-bearing transaction and is revalidated by its owner; only its
-authenticated primary tree is compared to the selected static product. v6 adds the closed `loader_structural_owner_companion` and
-`loader_structural_owner_joins` fields. v5 added the closed
+authenticated primary tree is compared to the selected static product. v6 added the closed `loader_structural_owner_companion` and
+`loader_structural_owner_joins` fields; the current selector no longer admits
+that retired companion. v5 added the closed
 `public_data_declaration_runtime_companion` and
 `public_data_declaration_runtime_joins` fields. v4 added the closed
 `headers_layouts_aggregate_companion` and `headers_layouts_aggregate_evidence`
@@ -939,15 +940,6 @@ replaying the header declaration envelope.
   exact current-source and full product-tree joins, then replays the public
   reader after the join. It does not infer a provider from a symbol name or
   complete locale behavior.
-- `loader_structural_owner_contract_reader.py` owns retained replay for the
-  eight existing structural replacements in `loader-entry-stages`,
-  `loader-registration-operations`, and `loader-always-atomic-guard`.  The
-  optional `--loader-structural-owner-receipt-report` binds its current clean
-  source, complete facts, static preparation, loader-debug and loader-registry
-  receipts, and finite installed input modes before it can discharge only the
-  matching component-and-consumer receipt requirement. It creates no old
-  provider placement or registration-reference row and leaves family,
-  qualification, promotion, and public-support flags false.
 
 Each receipt must name the current selected source and product cohort. Their
 status flags remain false; header, semantic, family, and public-support gates
