@@ -3910,7 +3910,7 @@ def allocator_startup_signature(call: TracedCall) -> str | None:
     return None
 
 
-def judge_startup_syscalls(reference: Mapping[str, int], candidate: Sequence[TracedCall]) -> dict[str, Any]:
+def judge_allocator_syscalls(reference: Mapping[str, int], candidate: Sequence[TracedCall]) -> dict[str, Any]:
     judged: dict[str, int] = {}
     attributed: dict[str, int] = {}
     signatures: list[str] = []
@@ -4106,20 +4106,23 @@ def measure_counts_loop(
             lane_insn.append(counts_trial("perf", root, launcher, lane.root, binary, arguments,
                                                out_root / f"{lane_name}-n{n}-perf", timeout))
             lane_sys.append(counts_trial("strace", root, launcher, lane.root, binary, arguments,
-                                                out_root / f"{lane_name}-n{n}-strace", timeout))
+                                                out_root / f"{lane_name}-n{n}-strace", timeout,
+                                                client_only=True))
         insn[lane_name], syscalls[lane_name] = lane_insn, lane_sys
     means = {lane: [sum(triple) / len(triple) for triple in triples] for lane, triples in insn.items()}
     ref_perop = counts_per_op(means["musl"][1], means["musl"][0], n_values[1], n_values[0])
     cand_perop = counts_per_op(means["crabc"][1], means["crabc"][0], n_values[1], n_values[0])
     ref_sys = counts_per_op(syscalls["musl"][1]["total"], syscalls["musl"][0]["total"], n_values[1], n_values[0])
     cand_sys = counts_per_op(syscalls["crabc"][1]["total"], syscalls["crabc"][0]["total"], n_values[1], n_values[0])
+    judgement = judge_allocator_syscalls(syscalls["musl"][0]["calls"], syscalls["crabc"][0]["entries"])
     ratio = cand_perop / ref_perop if ref_perop > 0 else None
     status = classify_counts_row(
         has_counts=True, deterministic=all(counts_runs_agree(t) for triples in insn.values() for t in triples),
         linear=all(counts_linear(*m) for m in means.values()), matched=matched,
         ref_sys_perop=ref_sys, cand_sys_perop=cand_sys,
-        ref_sys_whole=syscalls["musl"][0]["total"], cand_sys_whole=syscalls["crabc"][0]["total"],
-        ratio_insn=ratio, allocator_attributed="allocator" in row.name)
+        ref_sys_whole=judgement["reference"]["total"], cand_sys_whole=judgement["judged"]["total"],
+        ratio_insn=ratio, allocator_attributed="allocator" in row.name,
+        syscall_excess=judgement["excess"])
     scaled_n1 = counts_scaled_row(row, n1)
     return {
         "args": virtual_arguments(scaled_n1, lanes["musl"]),
@@ -4129,9 +4132,16 @@ def measure_counts_loop(
                          "ratio_insn": ratio, "delta_insn": cand_perop - ref_perop},
         "syscalls": {
             "ref": {"per_op": ref_sys, "whole": {"total": syscalls["musl"][0]["total"],
-                                                 "calls": syscalls["musl"][0]["calls"]}},
+                                                 "calls": syscalls["musl"][0]["calls"]},
+                    "allocator_attributed": {"total": 0, "calls": {}, "signatures": []},
+                    "judged": judgement["reference"]},
             "cand": {"per_op": cand_sys, "whole": {"total": syscalls["crabc"][0]["total"],
-                                                   "calls": syscalls["crabc"][0]["calls"]}}},
+                                                   "calls": syscalls["crabc"][0]["calls"]},
+                     "allocator_attributed": judgement["allocator_attributed"],
+                     "judged": judgement["judged"]},
+            "judged": {"reference_total": judgement["reference"]["total"],
+                       "candidate_total": judgement["judged"]["total"],
+                       "excess": judgement["excess"]}},
         "status": status,
     }
 
@@ -4149,7 +4159,7 @@ def measure_counts_startup(
                                     out_root / f"{lane_name}-strace", timeout, client_only=True)
         insn[lane_name], syscalls[lane_name] = runs, trace
         startup[lane_name] = counts_subtract(sum(runs) // len(runs), wrapper[lane_name])
-    judgement = judge_startup_syscalls(syscalls["musl"]["calls"], syscalls["crabc"]["entries"])
+    judgement = judge_allocator_syscalls(syscalls["musl"]["calls"], syscalls["crabc"]["entries"])
     ratio = startup["crabc"] / startup["musl"] if startup["musl"] > 0 else None
     status = classify_counts_row(
         has_counts=True, deterministic=all(counts_runs_agree(t) for t in insn.values()),

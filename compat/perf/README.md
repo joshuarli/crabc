@@ -198,26 +198,27 @@ field is zero, three digits, or six, so the launcher, the fixture and the
 static `nop` calibrator binaries contribute a constant to each of the three
 trials.
 
-Startup rows separate the accepted C backend's five allocator-attributed calls
-from the judged remainder. A call is attributed only when it matches the exact
-name and identifying arguments: `sysinfo`; `open` of
+Every counts row separates the accepted C backend's five allocator-attributed
+calls from its judged whole-process remainder. A call is attributed only when
+it matches the exact name and identifying arguments: `sysinfo`; `open` of
 `/proc/sys/vm/overcommit_memory`; `open` of
 `/sys/kernel/mm/transparent_hugepage/enabled`; the frozen backend's 2.25 MiB
 (2359296-byte) `MAP_NORESERVE` `mmap`; and a 32-byte `GRND_NONBLOCK`
 `getrandom`. The record keeps `syscalls.cand.whole`, lists the attributed
 signatures under `syscalls.cand.allocator_attributed`, and judges
-`syscalls.cand.judged` against `syscalls.ref` by name and total. An allocator
-call with any other argument, or any additional non-allocator call, stays in
-the judged set and fails when it exceeds the reference. `ratio_insn` stays on
-the total startup instructions (D8); the attributed calls have no instruction
-exemption the harness cannot measure.
+`syscalls.cand.judged` against `syscalls.ref` by name and total. Loop rows
+judge the N1 whole count this way; their per-op comparison stays on the raw
+per-op counts, where the constant start-up calls cancel. An allocator call
+with any other argument, or any additional non-allocator call, stays in the
+judged set and fails when it exceeds the reference. `ratio_insn` stays on the
+total instructions (D8); the attributed calls have no instruction exemption
+the harness cannot measure.
 
-Whole-process traces run through the launcher. Loop rows count the launcher
-parent's post-execve wait/poll/write/exit lines in both lanes; the per-op
-quotients cancel them and the per-name diff still isolates the runtime delta.
-Startup rows count only the client process: the parent's lines are harness
-overhead, and their in-flight `poll` start can interleave before or after the
-client's `execve` line, which would move the raw total by one between runs.
+Counts traces include only the client process. The launcher parent's
+post-execve wait/poll/write/exit lines are harness overhead, and their
+in-flight `poll` start can interleave before or after the client's `execve`
+line; including them would move a whole total by one between runs and a
+per-op quotient by one over the N2-N1 step.
 
 ```bash
 P=$PWD/.work/s1/dynamic/installed
@@ -232,20 +233,26 @@ syscalls 200016 vs 200030 → `fail` on the split-loader/allocator startup
 delta; `clock_gettime` per-op 110.0 vs 111.0 (ratio 1.009), whole-process 16
 vs 30 → `fail` on the same delta. Both rows deterministic and linear.
 
-Startup row (`matched-llvm-23`, installed merged product). Before the
-fixed-cost supervisor encoder, the three `perf` trials read 85,712 / 85,731 /
-85,730 for musl (19 instructions, 0.022 %, over the 0.01 % allowance) and
-266,432 / 266,431 / 266,432 for crabc; the shift tracks the child's rusage
-digit split, not the runtime. With the encoder the trials read 87,087 / 87,088
-/ 87,087 (musl, spread 1) and 268,633 / 268,633 / 268,631 (crabc, spread 2).
-The wrapper grew by about 1,500 instructions and is subtracted, so the startup
-values stay at 70,092 vs 251,616 and `ratio_insn` stays 3.5898 (before:
-3.5897). The client trace has 11 musl calls and 19 crabc calls; the five
-attributed calls are `sysinfo`, two `open` probes, the 2359296-byte
+Startup row (`matched-llvm-23`). Before the fixed-cost supervisor encoder, the
+three `perf` trials read 85,712 / 85,731 / 85,730 for musl (19 instructions,
+0.022 %, over the 0.01 % allowance) and 266,432 / 266,431 / 266,432 for crabc;
+the shift tracks the child's rusage digit split, not the runtime. The S5 tip
+reads 86,934 / 86,934 / 86,934 (musl) and 268,159 / 268,159 / 268,156 (crabc)
+with the encoder. The client trace is 11 musl calls and 13 crabc calls; the
+five attributed calls are `sysinfo`, two `open` probes, the 2359296-byte
 `MAP_NORESERVE` `mmap`, and the 32-byte `GRND_NONBLOCK` `getrandom`. The
-judged remainder is 14 vs 11 and fails on the image's own five file probes and
-the redundant `arch_prctl`/`gettid`; the spike's 7-vs-9 target needs that
-loader search removed (S4).
+judged remainder is 8 vs 11 with no excess, so the syscall comparison passes;
+the row still fails on `ratio_insn` 3.585 (D8, S4 instruction work).
+
+Loop-row acceptance (`matched-llvm-23`, report `.work/x86_64/s5-counts2/counts.json`):
+`getpid` judged whole 200008 vs 200011, `open_close` 75008 vs 75011,
+`memcpy_16k_aligned` 8 vs 11 and `strlen_64_aligned` 8 vs 11 each carry five
+attributed calls, no per-name excess, and pass; their per-op values are 1.0 vs
+1.0, 3.0 vs 3.0, 0.0 vs 0.0 and 0.0 vs 0.0. `stdio_format_parse` totals pass
+(6012 vs 6222, per-op 6.0 vs 6.014) but the per-name check fails on the
+runtime's `openat` 1000 and `madvise` 2, which the reference does not make; the
+row reports `fail` with those names. The `startup` row passes its syscall
+comparison and still fails on `ratio_insn` 3.585.
 
 Object receipt replay compares the complete compile invocation with the fixed
 profile, including its final input/output operands. Additional compiler inputs
