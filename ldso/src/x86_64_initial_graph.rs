@@ -1608,11 +1608,6 @@ unsafe fn parse_mapped(
             DT_NULL => { terminated = true; break; }
             DT_NEEDED => {
                 let offset = usize::try_from(value).ok()?;
-                #[cfg(not(feature = "x86_64-owned-dynamic-runtime"))]
-                {
-                    if object.needed_count == MAX_NEEDED { return None; }
-                    needed_offsets[object.needed_count] = offset;
-                }
                 #[cfg(feature = "x86_64-owned-dynamic-runtime")]
                 let _ = offset;
                 object.needed_count = object.needed_count.checked_add(1)?;
@@ -1788,21 +1783,9 @@ unsafe fn parse_mapped(
                 if value & DF_SYMBOLIC != 0 && (!general_initial_graph || !mapped) {
                     return None;
                 }
-                #[cfg(not(any(crabc_initial_exec_tls_graph, crabc_general_initial_tls_materialization_v1)))]
-                if value & DF_STATIC_TLS != 0 {
-                    return None;
-                }
                 #[cfg(feature = "x86_64-owned-dynamic-runtime")]
                 if value & !(DF_BIND_NOW | DF_STATIC_TLS | DF_SYMBOLIC) != 0 {
                     return None;
-                }
-                #[cfg(not(feature = "x86_64-owned-dynamic-runtime"))]
-                if value & !(DF_BIND_NOW | DF_STATIC_TLS) != 0 {
-                    return None;
-                }
-                #[cfg(crabc_initial_exec_tls_graph)]
-                {
-                    object.static_tls = value & DF_STATIC_TLS != 0;
                 }
                 #[cfg(all(
                     feature = "x86_64-owned-dynamic-runtime",
@@ -1841,32 +1824,6 @@ unsafe fn parse_mapped(
     ))]
     if dynamic_static_tls && object.tls_memsz == 0 {
         return None;
-    }
-    #[cfg(all(not(feature = "x86_64-owned-dynamic-runtime"), any(crabc_owned_crt_handoff, crabc_dynamic_main_thread_runtime_v1)))]
-    if !mapped {
-        // Scrt1's private `__crabc_*_array_*_address` bridges own dispatch;
-        // the interpreter does not execute main entries or retain their
-        // pointers. Legacy private modes require all three nonempty arrays.
-        // General owned startup also admits a normal executable with no
-        // callbacks; absent tag pairs do not select another CRT convention.
-        let init = owned_crt_main_init?;
-        let fini = owned_crt_main_fini?;
-        if !virtual_range_in_executable_load(phdr, phnum, init, 1)
-            || !virtual_range_in_executable_load(phdr, phnum, fini, 1)
-        {
-            return None;
-        }
-        for pair in [
-            (owned_crt_main_preinit_array, owned_crt_main_preinit_array_len),
-            (owned_crt_main_init_array, owned_crt_main_init_array_len),
-            (owned_crt_main_fini_array, owned_crt_main_fini_array_len),
-        ] {
-            match pair {
-                (None, None) if cfg!(all(crabc_general_initial_lifecycle, crabc_dynamic_main_thread_runtime_v1)) => {},
-                (Some(address), Some(length)) if scrt1_array_in_load(phdr, phnum, address, length) => {},
-                _ => return None,
-            }
-        }
     }
     #[cfg(feature = "x86_64-owned-dynamic-runtime")]
     if general_initial_graph && !mapped {
@@ -1941,19 +1898,7 @@ unsafe fn parse_mapped(
         let (_, file_end) = readable_file_load_segment(phdr, phnum, symtab_address, 24)?;
         object.symtab_file_record_limit = usize::try_from((file_end - symtab_address) / 24).ok()?;
     }
-    #[cfg(not(feature = "x86_64-owned-dynamic-runtime"))]
-    if !virtual_range_in_readable_file_load(phdr, phnum, symtab_address, 24) { return None; }
     object.symtab = runtime_address(base, symtab_address)? as *const u8;
-    #[cfg(not(feature = "x86_64-owned-dynamic-runtime"))]
-    {
-        let hash_address = hash_virtual_address?;
-        if !virtual_range_in_load(phdr, phnum, hash_address, 8) { return None; }
-        let hash = runtime_address(base, hash_address)? as *const u8;
-        object.symcount = usize::try_from(read_u32(hash.add(4))).ok()?;
-        if object.symcount == 0 { return None; }
-        let symtab_len = u64::try_from(object.symcount).ok()?.checked_mul(24)?;
-        if !virtual_range_in_load(phdr, phnum, symtab_address, symtab_len) { return None; }
-    }
     #[cfg(feature = "x86_64-owned-dynamic-runtime")]
     {
         let sysv = match hash_virtual_address {
@@ -2114,47 +2059,6 @@ unsafe fn parse_mapped(
             _ => return None,
         }
     }
-    #[cfg(crabc_bounded_runtime_dlopen)]
-    match (
-        bounded_runtime_preinit_array_virtual_address,
-        bounded_runtime_preinit_array_byte_len,
-    ) {
-        (None, None) => {}
-        // A runtime DSO preinit array is intentionally inert, matching musl's
-        // dlopen behavior. Validate the tag pair's bounded storage only: do
-        // not inspect or dispatch the function-pointer entries.
-        (Some(address), Some(byte_len))
-            if byte_len != 0
-                && byte_len % core::mem::size_of::<usize>() as u64 == 0
-                && byte_len
-                    <= (MAX_BOUNDED_RUNTIME_ARRAY_ENTRIES * core::mem::size_of::<usize>())
-                        as u64
-                && address & (core::mem::size_of::<usize>() as u64 - 1) == 0
-                && virtual_range_in_load(phdr, phnum, address, byte_len) => {}
-        _ => return None,
-    }
-    #[cfg(crabc_bounded_runtime_dlopen)]
-    if mapped && allow_bounded_runtime_legacy_tags {
-        if let Some(address) = bounded_runtime_init_virtual_address {
-            // DT_INIT is a direct code pointer, not an array pointer. Make
-            // its one permitted runtime use executable-load-contained before
-            // relocation or any constructor can observe the mapping.
-            if address == 0 || !virtual_range_in_executable_load(phdr, phnum, address, 1) {
-                return None;
-            }
-            object.init = runtime_address(base, address)? as usize;
-        }
-        if let Some(address) = bounded_runtime_fini_virtual_address {
-            // Pinned musl preserves a legacy DT_FINI tag but does not dispatch
-            // it on the dlclose path. Admit only the one-slot runtime shape
-            // after proving its direct code target; do not retain it or infer
-            // a DT_FINI_ARRAY/unload lifecycle from its presence.
-            if address == 0 || !virtual_range_in_executable_load(phdr, phnum, address, 1) {
-                return None;
-            }
-            let _ = runtime_address(base, address)?;
-        }
-    }
     #[cfg(feature = "x86_64-owned-dynamic-runtime")]
     let runpath_offset = runpath_offset.or(rpath_offset);
     if let Some(offset) = runpath_offset {
@@ -2162,10 +2066,6 @@ unsafe fn parse_mapped(
         object.runpath = object.strtab.add(offset);
         object.runpath_len = bounded_nul(object.runpath, object.strsz - offset)?;
         if general_initial_graph {
-            #[cfg(not(feature = "x86_64-owned-dynamic-runtime"))]
-            if !is_selected_absolute_runpath(object.runpath, object.runpath_len) {
-                return None;
-            }
         } else if !is_fixture_absolute_runpath(object.runpath, object.runpath_len) {
             return None;
         }
@@ -2613,13 +2513,6 @@ unsafe fn plan_initial_tls(objects: &mut [Object]) -> Option<bool> {
         object.tls_module_id = module_id;
         object.tls_offset_below_tp = offset_below_tp;
     }
-    #[cfg(crabc_loader_libc_tls_runtime_v1)]
-    {
-        registry.seal().ok()?;
-        if registry.module_count() != module_count || registry.generation().get() != 1 {
-            return None;
-        }
-    }
     Some(has_tls)
 }
 
@@ -2692,10 +2585,6 @@ unsafe fn materialize_tls_in(
         total_tls_size = total_tls_size.max(object.tls_offset_below_tp);
         tp_alignment = tp_alignment.max(object.tls_align);
         module_count = module_count.checked_add(1)?;
-        #[cfg(not(crabc_general_initial_graph))]
-        if module_count >= TLS_DTV_WORDS {
-            return None;
-        }
         if object.tls_module_id != module_count {
             return None;
         }
@@ -2904,10 +2793,6 @@ pub unsafe extern "C" fn __tls_get_addr(index: *const TlsIndex) -> *mut c_void {
     }
     let module_count = core::ptr::read_unaligned(dtv);
     // A general DTV holds exactly its count word plus one slot per module.
-    #[cfg(not(crabc_general_initial_graph))]
-    if module_id >= TLS_DTV_WORDS {
-        return core::ptr::null_mut();
-    }
     if module_id == 0 || module_id > module_count {
         return core::ptr::null_mut();
     }
@@ -3607,32 +3492,6 @@ unsafe fn resolve_symbol(requestor: &Object, objects: &[Object], index: usize) -
     if len == b"__tls_get_addr".len() && bytes_eq(name, b"__tls_get_addr".as_ptr(), len) {
         return Some(__tls_get_addr as *const () as usize as u64);
     }
-    // The first RuntimeV1 handoff is one explicit weak data import from the
-    // freestanding libc-side consumer in the main image. It is not normal
-    // global lookup: a DSO request, a defined main symbol, or a strong import
-    // is rejected before this loader-owned TLS descriptor can cross into
-    // libc. That keeps static mode outside this private initial-TLS seam. A
-    // separately cfg-selected general RuntimeV1 wire reaches the same private
-    // symbol only through its own loader-owned descriptor record below; it
-    // does not make this fixed special case into general symbol lookup.
-    #[cfg(crabc_loader_libc_tls_runtime_v1)]
-    if len == b"__crabc_x86_64_loader_tls_runtime_v1".len()
-        && bytes_eq(
-            name,
-            b"__crabc_x86_64_loader_tls_runtime_v1".as_ptr(),
-            len,
-        )
-    {
-        let is_main = requestor.role == ObjectRole::Main
-            && requestor.base == objects[0].base
-            && requestor.phdr == objects[0].phdr;
-        let binding = *symbol.add(4) >> 4;
-        let section = read_u16(symbol.add(6));
-        if !is_main || binding != 2 || section != 0 {
-            return None;
-        }
-        return Some(core::ptr::addr_of!(__crabc_x86_64_loader_tls_runtime_v1) as usize as u64);
-    }
     // The arbitrary initial-TLS graph has a distinct producer with the same
     // private 72-byte ABI. Its cfg is disjoint from the fixed seam above, and
     // its publication reservation occurs before ARCH_SET_FS in the retained
@@ -3664,69 +3523,13 @@ unsafe fn resolve_symbol(requestor: &Object, objects: &[Object], index: usize) -
     // Rust-Scrt1 main image.  It is not a normal global lookup: accepting a
     // DSO request, a defined main symbol, or a strong import would turn this
     // private post-relocation wire into ambient loader policy.
-    #[cfg(crabc_owned_crt_handoff)]
-    if len == b"__crabc_x86_64_owned_crt_handoff".len()
-        && bytes_eq(
-            name,
-            b"__crabc_x86_64_owned_crt_handoff".as_ptr(),
-            len,
-        )
-    {
-        let is_main = requestor.role == ObjectRole::Main
-            && requestor.base == objects[0].base
-            && requestor.phdr == objects[0].phdr;
-        let binding = *symbol.add(4) >> 4;
-        let section = read_u16(symbol.add(6));
-        if !is_main || binding != 2 || section != 0 {
-            return None;
-        }
-        return Some(core::ptr::addr_of!(__crabc_x86_64_owned_crt_handoff) as usize as u64);
-    }
     // The introspection sibling has one explicit weak record import from its
     // fixed main image. Like the owned-CRT record above, this is not ambient
     // global lookup policy: DSOs, strong imports, and definitions are rejected
     // before the interpreter address can cross the relocation boundary.
-    #[cfg(crabc_fixed_graph_introspection)]
-    if len == b"__crabc_x86_64_fixed_graph_introspection_v1".len()
-        && bytes_eq(
-            name,
-            b"__crabc_x86_64_fixed_graph_introspection_v1".as_ptr(),
-            len,
-        )
-    {
-        let is_main = requestor.role == ObjectRole::Main
-            && requestor.base == objects[0].base
-            && requestor.phdr == objects[0].phdr;
-        let binding = *symbol.add(4) >> 4;
-        let section = read_u16(symbol.add(6));
-        if !is_main || binding != 2 || section != 0 {
-            return None;
-        }
-        return Some(
-            core::ptr::addr_of!(__crabc_x86_64_fixed_graph_introspection_v1) as usize as u64,
-        );
-    }
     // The dlfcn sibling exposes a different exact weak record only to its
     // fixed main image. It cannot be imported strongly, defined by the main,
     // or requested by either DSO.
-    #[cfg(crabc_fixed_graph_dlfcn)]
-    if len == b"__crabc_x86_64_fixed_graph_dlfcn_v1".len()
-        && bytes_eq(
-            name,
-            b"__crabc_x86_64_fixed_graph_dlfcn_v1".as_ptr(),
-            len,
-        )
-    {
-        let is_main = requestor.role == ObjectRole::Main
-            && requestor.base == objects[0].base
-            && requestor.phdr == objects[0].phdr;
-        let binding = *symbol.add(4) >> 4;
-        let section = read_u16(symbol.add(6));
-        if !is_main || binding != 2 || section != 0 {
-            return None;
-        }
-        return Some(core::ptr::addr_of!(__crabc_x86_64_fixed_graph_dlfcn_v1) as usize as u64);
-    }
     for object in objects {
         for candidate in 1..object.symcount {
             let symbol = object.symtab.add(candidate * 24);
@@ -4465,10 +4268,6 @@ fn callback_array_entries_admitted(byte_len: u64, legacy_entries: usize) -> bool
     {
         let _ = legacy_entries;
         usize::try_from(byte_len / core::mem::size_of::<usize>() as u64).is_ok()
-    }
-    #[cfg(not(feature = "x86_64-owned-dynamic-runtime"))]
-    {
-        byte_len <= (legacy_entries * core::mem::size_of::<usize>()) as u64
     }
 }
 
