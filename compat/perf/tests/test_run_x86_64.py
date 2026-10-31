@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import importlib.util
 from contextlib import ExitStack
+from typing import Any, Mapping, Sequence
 import json
 import errno
 import os
@@ -856,8 +857,138 @@ class CountsPureHelpersTests(unittest.TestCase):
         parsed = runner.parse_strace_whole(text, "/app/bin/workload")
         self.assertEqual(parsed["total"], 3)
         self.assertEqual(parsed["calls"], {"execve": 1, "getpid": 2})
+        self.assertEqual([(entry.name, entry.arguments) for entry in parsed["entries"]],
+                         [("execve", '"/app/bin/workload", ["/app/bin/workload", "getpid", "3"], 0x1'),
+                          ("getpid", ""), ("getpid", "")])
         with self.assertRaisesRegex(runner.AdapterError, "no client execve"):
             runner.parse_strace_whole("100 getpid() = 1\n", "/app/bin/workload")
+
+    def test_strace_arguments_stop_at_the_syscall_close(self) -> None:
+        text = ("200 execve(\"/app/bin/workload\", [\"/app/bin/workload\", \"startup\", \"1\"], 0x1) = 0\n"
+                "200 open(\"/proc/sys/vm/overcommit_memory\", O_RDONLY) = -1 ENOENT "
+                "(No such file or directory)\n"
+                "200 mmap(NULL, 2359296, PROT_READ|PROT_WRITE, "
+                "MAP_PRIVATE|MAP_ANONYMOUS|MAP_NORESERVE, -1, 0) = 0x7f00\n")
+        parsed = runner.parse_strace_whole(text, "/app/bin/workload")
+        self.assertEqual(parsed["entries"][1].arguments, '"/proc/sys/vm/overcommit_memory", O_RDONLY')
+        self.assertEqual(runner.allocator_startup_signature(parsed["entries"][1]),
+                         'open("/proc/sys/vm/overcommit_memory")')
+        self.assertEqual(runner.allocator_startup_signature(parsed["entries"][2]),
+                         "mmap(2359296, MAP_NORESERVE)")
+
+    def test_client_only_startup_trace_excludes_the_launcher_parent(self) -> None:
+        text = ("144 poll([{fd=4, events=POLLIN}], 1, 20000) = 1\n"
+                "145 execve(\"/app/bin/workload\", [\"/app/bin/workload\", \"startup\", \"1\"], 0x1) = 0\n"
+                "145 arch_prctl(ARCH_SET_FS, 0x1) = 0\n"
+                "144 poll([{fd=4, events=POLLIN}], 1, 20000) = 1\n"
+                "145 exit_group(0) = ?\n"
+                "144 wait4(145, [{WIFEXITED(s)}], 0, {}) = 145\n")
+        whole = runner.parse_strace_whole(text, "/app/bin/workload")
+        client = runner.parse_strace_whole(text, "/app/bin/workload", client_only=True)
+        self.assertEqual(whole["calls"], {"execve": 1, "arch_prctl": 1, "poll": 1, "exit_group": 1, "wait4": 1})
+        self.assertEqual(client["calls"], {"execve": 1, "arch_prctl": 1, "exit_group": 1})
+        self.assertEqual(client["total"], 3)
+
+    def startup_calls(self) -> list[runner.TracedCall]:
+        return [
+            runner.TracedCall("sysinfo", "{uptime=1, loads=[1, 2, 3]}"),
+            runner.TracedCall("open", '"/proc/sys/vm/overcommit_memory", O_RDONLY'),
+            runner.TracedCall("open", '"/sys/kernel/mm/transparent_hugepage/enabled", O_RDONLY'),
+            runner.TracedCall(
+                "mmap", "NULL, 2359296, PROT_READ|PROT_WRITE, "
+                        "MAP_PRIVATE|MAP_ANONYMOUS|MAP_NORESERVE, -1, 0"),
+            runner.TracedCall("getrandom", '"\\x01\\x02", 32, GRND_NONBLOCK'),
+        ]
+
+    def startup_reference(self) -> dict[str, int]:
+        return {"execve": 1, "arch_prctl": 1, "set_tid_address": 1, "brk": 2,
+                "mmap": 1, "mprotect": 2, "exit_group": 1}
+
+    def startup_others(self) -> list[runner.TracedCall]:
+        return [
+            runner.TracedCall("execve", '"/app/bin/workload", ["/app/bin/workload", "startup", "1"], 0x1'),
+            runner.TracedCall("arch_prctl", "ARCH_SET_FS, 0x7f00"),
+            runner.TracedCall("set_tid_address", "0x7f01"),
+            runner.TracedCall("mmap", "0x7f02, 4096, PROT_READ, MAP_PRIVATE|MAP_FIXED, 3, 0"),
+            runner.TracedCall("mprotect", "0x7f03, 4096, PROT_READ"),
+            runner.TracedCall("mprotect", "0x7f04, 4096, PROT_READ"),
+            runner.TracedCall("exit_group", "0"),
+        ]
+
+    def startup_status(self, candidate: Sequence[runner.TracedCall], reference: Mapping[str, int],
+                       ratio_insn: float = 1.0) -> tuple[str, dict[str, Any]]:
+        judgement = runner.judge_startup_syscalls(reference, candidate)
+        status = runner.classify_counts_row(
+            has_counts=True, deterministic=True, linear=True, matched=True,
+            ref_sys_perop=judgement["reference"]["total"], cand_sys_perop=judgement["judged"]["total"],
+            ref_sys_whole=judgement["reference"]["total"], cand_sys_whole=judgement["judged"]["total"],
+            ratio_insn=ratio_insn, syscall_excess=judgement["excess"])
+        return status, judgement
+
+    def test_startup_classifies_exactly_the_five_allocator_calls_by_arguments(self) -> None:
+        signatures = [runner.allocator_startup_signature(call) for call in self.startup_calls()]
+        self.assertEqual(signatures, [
+            "sysinfo",
+            'open("/proc/sys/vm/overcommit_memory")',
+            'open("/sys/kernel/mm/transparent_hugepage/enabled")',
+            "mmap(2359296, MAP_NORESERVE)",
+            "getrandom(32, GRND_NONBLOCK)",
+        ])
+        self.assertEqual(set(signatures), set(runner.ALLOCATOR_STARTUP_SIGNATURES))
+        self.assertIsNone(runner.allocator_startup_signature(
+            runner.TracedCall("getrandom", '"\\x01", 64, GRND_NONBLOCK')))
+        self.assertIsNone(runner.allocator_startup_signature(
+            runner.TracedCall("mmap", "NULL, 2359296, PROT_READ|PROT_WRITE, MAP_PRIVATE|MAP_ANONYMOUS, -1, 0")))
+        self.assertIsNone(runner.allocator_startup_signature(
+            runner.TracedCall("open", '"/proc/sys/vm/overcommit_memory.bak", O_RDONLY')))
+        self.assertIsNone(runner.allocator_startup_signature(
+            runner.TracedCall("openat", 'AT_FDCWD, "/proc/sys/vm/overcommit_memory", O_RDONLY')))
+        self.assertIsNone(runner.allocator_startup_signature(runner.TracedCall("gettid", "")))
+
+    def test_startup_judges_only_the_remaining_calls_against_the_reference(self) -> None:
+        status, judgement = self.startup_status(self.startup_calls() + self.startup_others(),
+                                                self.startup_reference())
+        self.assertEqual(judgement["allocator_attributed"]["total"], 5)
+        self.assertEqual(judgement["allocator_attributed"]["signatures"],
+                         list(runner.ALLOCATOR_STARTUP_SIGNATURES))
+        self.assertEqual(judgement["judged"]["total"], 7)
+        self.assertEqual(judgement["reference"]["total"], 9)
+        self.assertEqual(judgement["excess"], {})
+        self.assertEqual(status, "pass")
+        kinds = list((call.name, call.arguments) for call in self.startup_calls())
+        self.assertEqual(len(kinds), 5)
+
+    def test_startup_fails_on_a_sixth_non_allocator_call(self) -> None:
+        status, judgement = self.startup_status(
+            self.startup_calls() + self.startup_others() + [runner.TracedCall("gettid", "")],
+            self.startup_reference())
+        self.assertEqual(judgement["judged"]["total"], 8)
+        self.assertEqual(judgement["excess"], {"gettid": 1})
+        self.assertEqual(status, "fail")
+
+    def test_startup_fails_on_an_allocator_call_with_an_unexpected_argument(self) -> None:
+        calls = self.startup_calls()
+        calls[-1] = runner.TracedCall("getrandom", '"\\x01", 64, GRND_NONBLOCK')
+        status, judgement = self.startup_status(calls + self.startup_others(), self.startup_reference())
+        self.assertEqual(judgement["allocator_attributed"]["total"], 4)
+        self.assertEqual(judgement["excess"], {"getrandom": 1})
+        self.assertEqual(status, "fail")
+        missing_mmap = self.startup_calls()
+        missing_mmap[3] = runner.TracedCall(
+            "mmap", "NULL, 2359296, PROT_READ|PROT_WRITE, MAP_PRIVATE|MAP_ANONYMOUS, -1, 0")
+        status, judgement = self.startup_status(missing_mmap + self.startup_others(),
+                                                self.startup_reference())
+        self.assertEqual(judgement["allocator_attributed"]["total"], 4)
+        self.assertEqual(judgement["excess"], {"mmap": 1})
+        self.assertEqual(status, "fail")
+
+    def test_startup_instruction_ratio_still_judges_the_total(self) -> None:
+        status, _judgement = self.startup_status(self.startup_calls() + self.startup_others(),
+                                                 self.startup_reference(), ratio_insn=1.1001)
+        self.assertEqual(status, "fail")
+        status, _judgement = self.startup_status(self.startup_calls() + self.startup_others(),
+                                                 self.startup_reference(), ratio_insn=1.10)
+        self.assertEqual(status, "pass")
 
     def base_kwargs(self, **changes: object) -> dict[str, object]:
         kwargs: dict[str, object] = {

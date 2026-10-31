@@ -11,13 +11,11 @@
 
 #include <errno.h>
 #include <fcntl.h>
-#include <inttypes.h>
 #include <limits.h>
 #include <poll.h>
 #include <signal.h>
 #include <stdbool.h>
 #include <stdint.h>
-#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/resource.h>
@@ -399,6 +397,50 @@ static int write_all(int descriptor, const char *buffer, size_t length) {
 }
 
 
+/* A byte-at-a-time volatile copy keeps the retired count independent of the
+ * source and destination alignment; the library memcpy head loop is not. */
+static size_t copy_text(char *out, const char *text, size_t length) {
+    size_t index;
+
+    for (index = 0; index < length; ++index) {
+        out[index] = (char)*(const volatile unsigned char *)(text + index);
+    }
+    return length;
+}
+
+
+/* Fixed-cost decimal: every value takes the same 20 extraction, 20 selection
+ * and 20 store iterations, and the leading zeros become JSON whitespace. */
+static size_t encode_measurement(char *out, uint64_t value) {
+    char digits[20];
+    size_t first = 20;
+    size_t index;
+
+    for (index = 0; index < 20; ++index) {
+        digits[19 - index] = (char)('0' + (unsigned)(value % UINT64_C(10)));
+        value /= UINT64_C(10);
+    }
+    for (index = 0; index < 20; ++index) {
+        size_t take = (size_t)((first == 20) & (unsigned)(digits[index] != '0'));
+        size_t mask = (size_t)0 - take;
+
+        first = (first & ~mask) | (index & mask);
+    }
+    {
+        size_t mask = (size_t)0 - (size_t)(first == 20);
+
+        first = (first & ~mask) | (19 & mask);
+    }
+    for (index = 0; index < 20; ++index) {
+        unsigned blank = 0u - (unsigned)(index < first);
+        unsigned digit = (unsigned char)digits[index];
+
+        out[index] = (char)((digit & ~blank) | ((unsigned)' ' & blank));
+    }
+    return 20;
+}
+
+
 static int write_result(int descriptor, pid_t child, int status, bool timed_out,
                         uint64_t elapsed_ns, const struct rusage *usage) {
     uint64_t user_cpu_ns;
@@ -409,7 +451,7 @@ static int write_result(int descriptor, pid_t child, int status, bool timed_out,
     uint64_t voluntary_switches;
     uint64_t involuntary_switches;
     char encoded[1024];
-    int length;
+    size_t length = 0;
 
     if (child <= 0 || status < 0 || timeval_to_ns(&usage->ru_utime, &user_cpu_ns) != 0 ||
         timeval_to_ns(&usage->ru_stime, &system_cpu_ns) != 0 ||
@@ -420,21 +462,35 @@ static int write_result(int descriptor, pid_t child, int status, bool timed_out,
         nonnegative_long(usage->ru_nivcsw, &involuntary_switches) != 0) {
         return -1;
     }
-    length = snprintf(
-        encoded, sizeof(encoded),
-        "{\"schema\":\"%s\",\"child_pid\":%ld,\"wait_status\":%d,\"timed_out\":%s,"
-        "\"elapsed_wall_ns\":%" PRIu64 ",\"resources\":{\"user_cpu_ns\":%" PRIu64
-        ",\"system_cpu_ns\":%" PRIu64 ",\"max_rss_kib\":%" PRIu64
-        ",\"minor_faults\":%" PRIu64 ",\"major_faults\":%" PRIu64
-        ",\"voluntary_context_switches\":%" PRIu64
-        ",\"involuntary_context_switches\":%" PRIu64 "}}\n",
-        RESULT_SCHEMA, (long)child, status, timed_out ? "true" : "false", elapsed_ns,
-        user_cpu_ns, system_cpu_ns, max_rss_kib, minor_faults, major_faults,
-        voluntary_switches, involuntary_switches);
-    if (length < 0 || (size_t)length >= sizeof(encoded)) {
+    length += copy_text(encoded + length, "{\"schema\":\"", 11);
+    length += copy_text(encoded + length, RESULT_SCHEMA, sizeof(RESULT_SCHEMA) - 1);
+    length += copy_text(encoded + length, "\",\"child_pid\":", 14);
+    length += encode_measurement(encoded + length, (uint64_t)child);
+    length += copy_text(encoded + length, ",\"wait_status\":", 15);
+    length += encode_measurement(encoded + length, (uint64_t)status);
+    length += copy_text(encoded + length, ",\"timed_out\":", 13);
+    length += copy_text(encoded + length, timed_out ? "true" : "false", timed_out ? 4 : 5);
+    length += copy_text(encoded + length, ",\"elapsed_wall_ns\":", 19);
+    length += encode_measurement(encoded + length, elapsed_ns);
+    length += copy_text(encoded + length, ",\"resources\":{\"user_cpu_ns\":", 28);
+    length += encode_measurement(encoded + length, user_cpu_ns);
+    length += copy_text(encoded + length, ",\"system_cpu_ns\":", 17);
+    length += encode_measurement(encoded + length, system_cpu_ns);
+    length += copy_text(encoded + length, ",\"max_rss_kib\":", 15);
+    length += encode_measurement(encoded + length, max_rss_kib);
+    length += copy_text(encoded + length, ",\"minor_faults\":", 16);
+    length += encode_measurement(encoded + length, minor_faults);
+    length += copy_text(encoded + length, ",\"major_faults\":", 16);
+    length += encode_measurement(encoded + length, major_faults);
+    length += copy_text(encoded + length, ",\"voluntary_context_switches\":", 30);
+    length += encode_measurement(encoded + length, voluntary_switches);
+    length += copy_text(encoded + length, ",\"involuntary_context_switches\":", 32);
+    length += encode_measurement(encoded + length, involuntary_switches);
+    length += copy_text(encoded + length, "}}\n", 3);
+    if (length >= sizeof(encoded)) {
         return -1;
     }
-    return write_all(descriptor, encoded, (size_t)length);
+    return write_all(descriptor, encoded, length);
 }
 
 

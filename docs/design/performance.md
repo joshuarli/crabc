@@ -151,6 +151,14 @@ the lowest observed sample. When a wrapper (`unshare`, `chroot`, the harness
 launcher) runs inside the counted process, subtract the count of the same
 wrapper executing a static exit-only binary.
 
+The wrapper and the target must not add value-dependent work to the counted
+process. The native timing launcher therefore encodes its raw `wait4(2)` record
+with a fixed-cost decimal writer instead of `snprintf`: the same instruction
+count is retired whether a field is zero, three digits, or six. Formatting the
+child's variable rusage digits inside the counted supervisor moved a trial by
+about 20 instructions, more than the 0.01 % allowance. That cost is harness
+behaviour, not runtime behaviour; removing it is not a tolerance change.
+
 Measure the selected operation with three iteration counts `N1`, `2·N1` and
 `3·N1` (the step procedure is P2 in [`plan.md`](../../plan.md#p2--measure-a-row)):
 
@@ -178,6 +186,25 @@ counts fluctuate with scheduling; keep those runs as stress diagnostics rather
 than fabricating an exact equality test. Preserve deterministic uncontended and
 controlled-path coverage. Missing or nondeterministic evidence is explicitly
 unavailable for exact-count claims, not an excuse to remove inconvenient rows.
+
+Startup rows count the client process only. The launcher parent's own
+post-execve `poll`/`wait4`/`write`/exit lines are harness overhead, and their
+in-flight `poll` start can interleave on either side of the client's `execve`
+line; including them would move a raw total by one between runs without any
+runtime change. Loop rows keep the whole-process trace, where the per-op
+quotients cancel the same parent lines.
+
+Startup rows also separate the frozen C backend's allocator-attributed calls
+(D1) from the judged comparison. The counts route recognises exactly five
+signatures by name and identifying arguments: `sysinfo`; the two allocator
+option probes (`/proc/sys/vm/overcommit_memory` and
+`/sys/kernel/mm/transparent_hugepage/enabled`); the backend's 2.25 MiB
+`MAP_NORESERVE` reservation; and its 32-byte `GRND_NONBLOCK` `getrandom`. The
+record lists them under `allocator_attributed` and judges the remaining
+per-name calls, and their total, against the reference. A same-name call with a
+different argument is not attributed and remains an extra judged call.
+Instructions stay on the total (D8): the allocator calls are reported, not
+subtracted from `ratio_insn`.
 
 ## Timing and memory
 
