@@ -1063,7 +1063,7 @@ passed.
 | S3b | `f7dcaafb5` | one ELF (same inode at both paths); startup syscalls 25→12 = 7 non-allocator (musl 9) + 5 allocator-attributed, budget 14; instructions 238,686→237,541 (empty env 116,582, so 120,350 is environment-dependent allocator work); bridges 44→30; 1661 exports, 0 undefined, 0 loader imports | full F roster PASS: loader, static 72-path, dlopen/TLS, both interposition suites, cancellation, hardened, identity 5 cases, CRT evidence, loader debug; debug payload merged | startup instruction ratio still ~6.8× musl (dominated by the frozen allocator), so the instruction dimension is not met |
 | S4 instructions | `b704eec12` | memcpy_16k_aligned 1.4375→0.8750; memcpy_64_aligned 1.1875→0.8750; stdio_format_parse 1.4778→1.0997 (pass); no measured row worse | libc-memory PASS; owned-stdio PASS; counts route on the merged product; rust-check | 256k rows read nondeterministic (unchanged); stdio margin 2.4 instructions |
 | S4 startup syscalls | `4b897c553` | judged startup syscalls 14→8 against musl's 11 with no per-name excess; whole 19→13; allocator-attributed 5 unchanged | prepare, identity 5 cases, dlopen PIE/non-PIE, hardened, pthread-exit, CRT evidence tests | none; startup row still fails on instructions (D8) |
-| S5 (attempt) | `3efdb2df0` rejected | **FAILED.** Counts covered 23 of 58 rows: 20 pass, `dlopen_graph` 2.6403 fail, `startup` 3.5853 fail (syscalls 8 judged vs 11), `pthread_create_join_tls` nondeterministic. Structure 5/7: libc 25, dispatcher 701, dispatcher lines 10,593, Python 566 / 269,998; ldso 7 features and 19,442 lines unmet. Static startup syscalls 10 vs 9. | counts report; prepare; static 72-path; identity; dlopen; ldso; memory/stdio suites | independent review rejected: budgets unmet, product evidence bound to a pre-tip tree, `hardened` failed on a stale seal, 35 rows missing, startup `per_op` contradicted its judged total, the conventional record probe had lost its field checks |
+| S5 (attempt) | `d398d3ec0` rejected | **FAILED.** 58-row counts: 49 pass, 2 fail (`dlopen_graph` 2.639; `startup` 3.585 with judged syscalls 8 vs 11), 6 nondeterministic, 1 unavailable. Structure 5/7: libc 25, dispatcher 701, dispatcher lines 10,593, Python 566 / 269,998; ldso 7 features and 19,442 lines unmet. Static startup syscalls 10 vs 9. | products rebuilt at the acceptance commit; dynamic prepare, static 72-path, identity, dlopen, owned-stdio and memory suites PASS; counts report; hardened could not be reproduced (harness exit 116 with no output; the identical product sources passed at `44dc21ddb`) | budgets unmet; startup instructions under D8; `dlopen_graph`; ldso; static 759-byte mmap; hardened unverified at the final tip; CPU/memory gate deferred (host load 20-27) |
 
 ### Needs owner
 
@@ -1083,6 +1083,11 @@ Four questions are open after acceptance:
    S3b; the loader's symbol-resolution path needs an S4 lane.
 4. **Static startup makes one extra call.** 10 against the budget of 9: the
    759-byte initial-thread `mmap`, which musl does not make.
+
+5. **Hardened runtime could not be reproduced at the acceptance commit.** The
+   runner exits 116 with no output on `d398d3ec0`; the identical product
+   sources passed at `44dc21ddb`. That is an evidence gap, not a runtime
+   finding, and it needs a harness diagnosis before S5 can claim the suite.
 
 CPU and memory were not measured: the host stayed at load 20–27 on 32 cores,
 so the perf gate is deferred and S5 is not done for that dimension.
