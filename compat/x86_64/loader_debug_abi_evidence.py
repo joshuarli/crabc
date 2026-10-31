@@ -101,7 +101,7 @@ class Elf:
                 'visibility': {0: 'DEFAULT', 2: 'HIDDEN', 3: 'PROTECTED'}.get(other & 3, str(other & 3)),
                 'section': owner, 'value': value, 'size': size, 'version_index': version}
 
-    def symbol(self, name, dynamic=True, required=True):
+    def symbols(self, name, dynamic=True):
         found = []
         for index, section in enumerate(self.sections):
             if section[1] != (11 if dynamic else 2):
@@ -111,6 +111,10 @@ class Elf:
                 row = self.symbol_row(index, number)
                 if row['name'] == name and row['section'] != 0:
                     found.append(row)
+        return found
+
+    def symbol(self, name, dynamic=True, required=True):
+        found = self.symbols(name, dynamic)
         require(len(found) <= 1 and (bool(found) or not required), f'missing/duplicate {name}')
         return found[0] if found else None
 
@@ -125,6 +129,25 @@ class Elf:
                 if info & 0xffffffff == 5 and self.symbol_row(section[6], info >> 32)['name'] == name:
                     rows.append({'destination': destination, 'addend': addend})
         return rows
+
+
+def loader_hook_metadata(dynamic_product):
+    """Read the public libc hook and, for the merged image, the loader's local hook."""
+    libc_path = dynamic_product / 'usr/lib/libc.so'
+    loader_path = dynamic_product / 'lib/ld-crabc-x86_64.so.1'
+    public = Elf(libc_path).symbol('_dl_debug_state')
+    require(public['type'] == 'FUNC' and public['binding'] == 'WEAK'
+            and public['visibility'] == 'DEFAULT' and public['version_index'] in (0, 1),
+            'public libc debugger hook metadata differs')
+    local = None
+    if os.path.samefile(libc_path, loader_path):
+        rows = [row for row in Elf(loader_path).symbols('_dl_debug_state', dynamic=False)
+                if row['binding'] == 'LOCAL' and row['visibility'] in ('DEFAULT', 'HIDDEN')]
+        require(len(rows) == 1, 'merged loader local debugger hook metadata differs')
+        local = rows[0]
+        require(local['type'] == 'FUNC' and local['value'] != public['value'],
+                'merged loader hook must differ from the libc weak export')
+    return {'libc_public': public, 'loader_local': local, 'distinct': local is not None}
 
 
 def public_metadata(path):
@@ -274,10 +297,8 @@ def validate_report(path):
     metadata = public_metadata(artifact(report['artifacts']['candidate-libc']))
     require(report['public_metadata'] == metadata, 'changed public metadata result')
     loader_elf = Elf(artifact(report['artifacts']['candidate-loader']))
-    loader_hook = loader_elf.symbol('_dl_debug_state')
-    require(loader_hook['type'] == 'FUNC' and loader_hook['binding'] == 'WEAK'
-            and loader_hook['visibility'] == 'DEFAULT' and loader_hook['version_index'] in (0, 1),
-            'loader breakpoint export metadata changed')
+    loader_hook = loader_hook_metadata(
+        artifact(report['artifacts']['dynamic-manifest']).parents[2])
     require(report['loader_hook_metadata'] == loader_hook, 'changed loader hook result')
     require(public_metadata(artifact(report['artifacts']['oracle-libc'])), 'invalid oracle metadata')
     qualification.validate_oracle(Path(path).resolve().parent, report['oracle'])
@@ -318,10 +339,12 @@ def validate_report(path):
             observed_loader = loader_elf if lane == 'candidate' else provider_elf
             command = execution['command']
             observer_path = report['artifacts']['observer']['path']
+            trace_hook = (report['loader_hook_metadata']['loader_local']['value']
+                          if lane == 'candidate' and report['loader_hook_metadata']['loader_local'] is not None
+                          else observed_loader.symbol('_dl_debug_state')['value'])
             require(len(command) == 10 and command[:2] == ['timeout', '25']
                     and command[2] in (str(ROOT / observer_path), '/workspace/' + observer_path)
-                    and command[5:8] == ['/consumer', str(observed_loader.entry),
-                                             str(observed_loader.symbol('_dl_debug_state')['value'])]
+                    and command[5:8] == ['/consumer', str(observed_loader.entry), str(trace_hook)]
                     and command[9] == str(provider_elf.symbol('_dl_debug_addr')['value']),
                     'trace does not observe the inspected loader export and libc pointer')
         else:
@@ -480,8 +503,8 @@ class Collector:
                 provider = execution_root / 'usr/lib/libc.so'
                 loader = execution_root / INTERPRETER.lstrip('/')
                 interpreter = INTERPRETER
-                hook = Elf(loader).symbol('_dl_debug_state')
-                require(hook['binding'] == 'WEAK' and hook['type'] == 'FUNC' and hook['visibility'] == 'DEFAULT', 'loader debugger hook metadata differs')
+                hook_account = loader_hook_metadata(dynamic)
+                hook = hook_account['loader_local'] or hook_account['libc_public']
                 driver = dynamic / 'bin/crabc-cc-dynamic'
                 plugin = self.output / 'candidate-plugin.so'
                 self.run('link-candidate-plugin', [driver, '--dynamic-shared-object', objects['plugin'], '-o', plugin])
@@ -554,7 +577,7 @@ class Collector:
                   'products': products,
                   'artifacts': self.artifacts,
                   'public_metadata': public_metadata(dynamic / 'usr/lib/libc.so'),
-                  'loader_hook_metadata': Elf(dynamic / 'lib/ld-crabc-x86_64.so.1').symbol('_dl_debug_state'),
+                  'loader_hook_metadata': loader_hook_metadata(dynamic),
                   'executions': self.executions,
                   'oracle_trace_events': self.executions['oracle-pie-kernel-trace']['events']}
         self.keep('commands', self.output / 'commands.json')
