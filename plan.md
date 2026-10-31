@@ -1159,15 +1159,19 @@ passed.
 
 | Counts TLS-growth | `e141118b5` | `loader_dynamic_tls_growth` unavailable→fail at fixed N=8; 421,415 vs 174,244 instructions (2.5703); per-name excess `gettid` 8, `mmap` 23, `munmap` 9, `newfstatat` 1, `pread64` 8 | single-row counts reproduced twice; `test_run_x86_64` 63 pass/1 skip; `test_x86_64_profile` 11 pass; development report | exposes a real loader/TLS-growth residual; not forced to pass |
 | S4 loader syscalls | `a0ad25ead` | `dlopen_graph` judged 60→53 vs 61, per-name excess gone (`pread64` 5→0, `read` 0→5, `newfstatat` 1→0, `gettid` 1→0, `mmap` 25→20 vs 21); TLS-growth judged 133→92 vs 128 (`mmap` 58→34, `munmap` 10→2, `gettid` 8→0, `newfstatat` 1→0, `pread64` 8→0); only the required worker-TCB `munmap` 2 vs 1 remains; `ratio_insn` 1.6073→1.5977 and 2.5703→2.5666 | prepare 161 loader tests; four installed-product cases; hardened; static 72-path; parity; exports 1628 identical | `dlopen_graph` syscall dimension passes; TLS-growth retains one required `munmap`; instruction rows remain D16 |
-| S4 TCB fold | `025e104b2` | worker TCB/initial TLS embedded in the guarded stack mapping, one `mmap`/`munmap` per owned worker; TLS-growth judged 92→90 vs 128 with no per-name excess, `munmap` 2→1 vs 1; instructions 421,411→421,075 vs 174,307 (2.5682); pthread row 2320.99 vs 2127.27 (1.09106), 7009 vs 7187 judged, no excess | rust-check both features; prepare 163 loader tests; cycle/dlopen-pie/dlopen-non-pie/pthread-exit/ldso-general-initial-tls PASS; hardened PASS; static 72-path PASS; parity PASS; campaign-status; `check_structure` PASS | startup/dlopen/TLS-growth ratios remain D16; pthread row nondeterministic under host load; four focused static suites red identically at base; ldso x86 product 11,161 non-comment lines, within the adjusted D17 budget (structure 7/7); D14 deferred |
+| S4 TCB fold | `025e104b2` | worker TCB/initial TLS embedded in the guarded stack mapping, one `mmap`/`munmap` per owned worker; TLS-growth judged 92→90 vs 128 with no per-name excess, `munmap` 2→1 vs 1; instructions 421,411→421,075 vs 174,307 (2.5682); pthread row 2320.99 vs 2127.27 (1.09106), 7009 vs 7187 judged, no excess | rust-check both features; prepare 163 loader tests; cycle/dlopen-pie/dlopen-non-pie/pthread-exit/ldso-general-initial-tls PASS; hardened PASS; static 72-path PASS; parity PASS; campaign-status; `check_structure` PASS | startup/dlopen/TLS-growth ratios remain D16; pthread row nondeterministic under host load; four focused static suites were red at base, repaired by `015ef85a9`; ldso x86 product 11,161 non-comment lines, within the adjusted D17 budget (structure 7/7); D14 deferred |
+| Static pthread harness | `015ef85a9` | four pre-existing red suites now PASS: create-join, cancel-deferred, detach, identity. Final static links localize weak aliases (`pthread_self`/`thrd_current`, `pthread_equal`/`thrd_equal`) and the deliberately hidden `__membarrier_init`; the archive weak bindings, same-address pairs and caller STB_GLOBAL override execution remain checked | all four suites exit 0 on the merged tip; parity validator PASS; `bash -n`; `git diff --check` | `test_runner` and `test_parity_ledger` still fail at base on unrelated command/evidence drift; separate lane needed |
 | S5 (second attempt) | `b255ccf2e` rejected | **NOT ACCEPTED.** 58 selected rows: 50 pass, 3 fail (`startup` 1.8886, `dlopen_graph` 1.6073, `loader_dynamic_tls_growth` 2.5703 after the fixed-N counts fix), 5 nondeterministic (128m matrices and `pthread_create_join_tls` under load), 0 unavailable. Structure 7/7: libc 25, ldso 1, ldso x86 10,941, dispatcher 678, dispatcher lines 10,357, Python 557 files / 266,174 lines. Dynamic startup syscalls 8 vs 11; static 9. | final-tip prepare, four installed-product case families, static 72-path, hardened, counts, parity, campaign-status, structure all PASS | D16 startup/dlopen/loader-TLS-growth instruction standing blockers; TLS-growth retains one required worker-TCB `munmap`; D14 CPU/memory deferred (host load 26.9); 5 load-dependent nondeterministic rows |
 
-Follow-up rows S3a-ldso, D10, S4 static TLS, S4 stdio and the TCB fold are
-landed, and the hardened gap is fixed. The remaining S5 failures are the D16
-startup/dlopen/TLS-growth instruction rows and the D14 quiet-host CPU/memory
-rerun. The loader-syscall and TCB-fold additions take ldso x86 to 11,161
-non-comment lines, within the D17 budget, so structure is 7/7. The loader
-syscall excess and the last required TCB `munmap` are gone.
+Follow-up rows S3a-ldso, D10, S4 static TLS, S4 stdio, the TCB fold and the
+static pthread harness are landed, and the hardened gap is fixed. The remaining
+S5 failures are the D16 startup/dlopen/TLS-growth instruction rows and the D14
+quiet-host CPU/memory rerun. The loader-syscall and TCB-fold additions take
+ldso x86 to 11,161 non-comment lines, within the D17 budget, so structure is
+7/7. The loader syscall excess, the last required TCB `munmap`, and the four
+focused static pthread failures are gone. The `test_runner` and
+`test_parity_ledger` modules still fail at base on unrelated command/evidence
+drift; they need a separate lane.
 
 ### Owner decisions after S5 (2026-10-31, resumed)
 
