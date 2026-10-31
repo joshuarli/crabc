@@ -198,21 +198,25 @@ field is zero, three digits, or six, so the launcher, the fixture and the
 static `nop` calibrator binaries contribute a constant to each of the three
 trials.
 
-Every counts row separates the accepted C backend's five allocator-attributed
-calls from its judged whole-process remainder. A call is attributed only when
-it matches the exact name and identifying arguments: `sysinfo`; `open` of
-`/proc/sys/vm/overcommit_memory`; `open` of
-`/sys/kernel/mm/transparent_hugepage/enabled`; the frozen backend's 2.25 MiB
-(2359296-byte) `MAP_NORESERVE` `mmap`; and a 32-byte `GRND_NONBLOCK`
-`getrandom`. The record keeps `syscalls.cand.whole`, lists the attributed
-signatures under `syscalls.cand.allocator_attributed`, and judges
-`syscalls.cand.judged` against `syscalls.ref` by name and total. Loop rows
-judge the N1 whole count this way; their per-op comparison stays on the raw
-per-op counts, where the constant start-up calls cancel. An allocator call
-with any other argument, or any additional non-allocator call, stays in the
-judged set and fails when it exceeds the reference. `ratio_insn` stays on the
-total instructions (D8); the attributed calls have no instruction exemption
-the harness cannot measure.
+Every counts row separates the frozen C backend's allocator-attributed calls
+from its judged whole-process remainder. A call is attributed only when it
+matches the exact name and identifying arguments: `sysinfo`; `open` of the two
+option paths; the 2.25 MiB (2359296-byte) `MAP_NORESERVE` `mmap`; a 32-byte
+`GRND_NONBLOCK` `getrandom`; the 1 GiB `MADV_HUGEPAGE` `madvise` at the base
+of the 1 GiB `MAP_NORESERVE` arena `mmap`; and the 65536-byte `MADV_DONTNEED`
+`madvise` inside that marked arena. The record keeps `syscalls.cand.whole`,
+lists the attributed signatures under `syscalls.cand.allocator_attributed`,
+and judges `syscalls.cand.judged` against `syscalls.ref` by name and total.
+The per-name check treats `open` and `openat` as one family: the raw per-name
+breakdown stays in the record and `syscalls.judged.explanations` records the
+family totals, so the same operation under either name is not an extra call.
+An extra call beyond the family sum still fails. Loop rows judge the N1 whole
+count this way; their per-op comparison stays on the raw per-op counts, where
+the constant start-up calls cancel. An allocator call with any other
+argument, advice, length or address, or any additional non-allocator call,
+stays in the judged set and fails when it exceeds the reference. `ratio_insn`
+stays on the total instructions (D8); the attributed calls have no
+instruction exemption the harness cannot measure.
 
 Counts traces include only the client process. The launcher parent's
 post-execve wait/poll/write/exit lines are harness overhead, and their
@@ -248,11 +252,14 @@ Loop-row acceptance (`matched-llvm-23`, report `.work/x86_64/s5-counts3/counts.j
 `getpid` judged whole 200008 vs 200011, `open_close` 75008 vs 75011,
 `memcpy_16k_aligned` 8 vs 11 and `strlen_64_aligned` 8 vs 11 each carry five
 attributed calls, no per-name excess, and pass; their per-op values are 1.0 vs
-1.0, 3.0 vs 3.0, 0.0 vs 0.0 and 0.0 vs 0.0. `stdio_format_parse` totals pass
-(6012 vs 6222, per-op 6.0 vs 6.014) but the per-name check fails on the
-runtime's `openat` 1000 and `madvise` 2, which the reference does not make; the
-row reports `fail` with those names. The `startup` row passes its syscall
-comparison and still fails on `ratio_insn` 3.585.
+1.0, 3.0 vs 3.0, 0.0 vs 0.0 and 0.0 vs 0.0. The `s5-counts4` rerun adds
+`stdio_format_parse`: seven attributed calls, the five plus the arena's
+`MADV_HUGEPAGE` and inside-arena `MADV_DONTNEED`, judged 6010 vs 6222, per-op
+6.0 vs 6.014, no excess and `ratio_insn` 1.0997, so the row passes. Its record
+keeps the raw `openat` 1000 breakdown and adds the explanation line
+`open family: candidate open+openat 1000 vs reference open+openat 1000`. The
+`startup` row passes its syscall comparison and still fails on `ratio_insn`
+3.585 (D8, S4 instruction work).
 
 Object receipt replay compares the complete compile invocation with the fixed
 profile, including its final input/output operands. Additional compiler inputs

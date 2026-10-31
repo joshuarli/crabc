@@ -194,17 +194,22 @@ line; including them would move a whole total by one, and a per-op quotient by
 one over the N2-N1 step, between runs without any runtime change.
 
 Every counts row also separates the frozen C backend's allocator-attributed
-calls (D1) from the judged comparison. The counts route recognises exactly five
+calls (D1) from the judged comparison. The counts route recognises these
 signatures by name and identifying arguments: `sysinfo`; the two allocator
 option probes (`/proc/sys/vm/overcommit_memory` and
 `/sys/kernel/mm/transparent_hugepage/enabled`); the backend's 2.25 MiB
-`MAP_NORESERVE` reservation; and its 32-byte `GRND_NONBLOCK` `getrandom`. The
-record lists them under `allocator_attributed` and judges the remaining
-per-name calls, and their total, against the reference. A loop row judges its
-N1 whole count this way; its per-op comparison stays on the raw per-op counts,
-where the constant start-up calls cancel. A same-name call with a different
-argument is not attributed and remains an extra judged call. Instructions stay
-on the total (D8): the allocator calls are reported, not subtracted from
+`MAP_NORESERVE` reservation; its 32-byte `GRND_NONBLOCK` `getrandom`; the 1 GiB
+`MADV_HUGEPAGE` `madvise` at the base of its 1 GiB `MAP_NORESERVE` arena
+`mmap`; and the 65536-byte `MADV_DONTNEED` `madvise` inside that marked arena.
+The record lists them under `allocator_attributed` and judges the remaining
+per-name calls, and their total, against the reference. The per-name check
+treats `open` and `openat` as one family; the raw breakdown is retained and
+`explanations` records the family totals, and an extra call beyond the family
+sum still fails. A loop row judges its N1 whole count this way; its per-op
+comparison stays on the raw per-op counts, where the constant start-up calls
+cancel. An allocator call with any other argument, advice, length or address
+is not attributed and remains an extra judged call. Instructions stay on the
+total (D8): the allocator calls are reported, not subtracted from
 `ratio_insn`.
 
 ## Timing and memory
