@@ -17,10 +17,6 @@ const OWNER_LDSO: u32 = 1;
 const GENERATION_INITIAL: u64 = 1;
 const STATE_OWNED: u8 = 3;
 const STATE_READY: u8 = 2;
-const SYS_ARCH_PRCTL: i64 = 158;
-const ARCH_GET_FS: i64 = 0x1003;
-const LINUX_ERRNO_MAX: i64 = 4_095;
-
 type LifecycleFunction = unsafe extern "C" fn();
 
 #[repr(C)]
@@ -148,8 +144,9 @@ pub(super) unsafe fn select() -> Option<Selection> {
     }
     let dtv_slot = thread_pointer.checked_add(core::mem::size_of::<usize>())? as *const usize;
     // Both volatile reads remain below the complete metadata/READY gate. The
-    // exact loader record and ARCH_GET_FS match now make this TCB/DTV prefix
-    // safe to observe before dynamic_tls::attach_initial_thread reads FS:0.
+    // exact loader record and `%fs:0` self pointer now make this TCB/DTV
+    // prefix safe to observe before dynamic_tls::attach_initial_thread reads
+    // FS:0.
     if unsafe { core::ptr::read_volatile(record.thread_pointer.cast::<usize>()) } != thread_pointer
         || unsafe { core::ptr::read_volatile(dtv_slot) } != record.dtv as usize
         || unsafe { core::ptr::read_volatile(record.dtv) } != record.module_count
@@ -162,25 +159,13 @@ pub(super) unsafe fn select() -> Option<Selection> {
     }))
 }
 
-/// Read `%fs` only after the record's metadata and READY gate accepted the
-/// loader's durable snapshot.
+/// Read `%fs:0` only after the record's metadata and READY gate accepted the
+/// loader's durable snapshot. The loader writes the self pointer before it
+/// publishes READY, so the register is the same word `ARCH_GET_FS` reported.
 unsafe fn current_thread_pointer() -> Option<usize> {
-    let mut thread_pointer = 0usize;
-    let result: i64;
+    let thread_pointer: usize;
     unsafe {
-        asm!(
-            "syscall",
-            inlateout("rax") SYS_ARCH_PRCTL => result,
-            in("rdi") ARCH_GET_FS,
-            in("rsi") core::ptr::addr_of_mut!(thread_pointer),
-            lateout("rcx") _,
-            lateout("r11") _,
-            options(nostack),
-        );
+        asm!("mov {}, fs:[0]", out(reg) thread_pointer, options(nostack, readonly));
     }
-    if result < 0 && result >= -LINUX_ERRNO_MAX || thread_pointer == 0 {
-        None
-    } else {
-        Some(thread_pointer)
-    }
+    (thread_pointer != 0).then_some(thread_pointer)
 }

@@ -44,6 +44,12 @@ pub unsafe extern "C" fn __tls_get_addr(index: *const core::ffi::c_void) -> *mut
 static MAIN_POINTER: AtomicUsize = AtomicUsize::new(0);
 static MAIN_ID: AtomicI32 = AtomicI32::new(0);
 const ATTACHING_POINTER: usize = usize::MAX;
+/// The initial task's kernel clear-child-tid word. Musl keeps the equivalent
+/// word in the main TCB; this private runtime keeps the loader's TCB prefix
+/// minimal, so publication uses a libc-owned word instead. The kernel returns
+/// the TID from `set_tid_address`, which is the only place the startup path
+/// learns it; the word is never read by libc.
+static INITIAL_TASK_EXIT_WORD: AtomicI32 = AtomicI32::new(0);
 
 fn attach_with_tid_handoff(
     main_pointer: &AtomicUsize,
@@ -69,7 +75,12 @@ fn attach_with_tid_handoff(
 pub(super) unsafe fn attach_initial_thread() -> bool {
     let pointer: usize;
     unsafe { core::arch::asm!("mov {}, fs:[0]", out(reg) pointer, options(nostack, readonly)); }
-    let tid = unsafe { raw_syscall::syscall0(raw_syscall::SYS_GETTID) };
+    let tid = unsafe {
+        raw_syscall::syscall1(
+            raw_syscall::SYS_SET_TID_ADDRESS,
+            core::ptr::addr_of!(INITIAL_TASK_EXIT_WORD) as usize as i64,
+        )
+    };
     if pointer == 0 || tid <= 0 || tid > i32::MAX as i64 { return false; }
     attach_with_tid_handoff(&MAIN_POINTER, &MAIN_ID, pointer, tid as i32,
         |tid| unsafe { __crabc_x86_64_runtime_publish_initial_tid(tid) })

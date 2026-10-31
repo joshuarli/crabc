@@ -25,9 +25,6 @@ const PROCESS_MODE_DYNAMIC: u32 = 2;
 const OWNER_LDSO: u32 = 1;
 const GENERATION_INITIAL: u64 = 1;
 const STATE_READY: u8 = 2;
-const SYS_ARCH_PRCTL: i64 = 158;
-const ARCH_GET_FS: i64 = 0x1003;
-const LINUX_ERRNO_MAX: i64 = 4_095;
 
 /// Exact `repr(C)` mirror of ldso's private one-shot initial-TLS record.
 ///
@@ -66,8 +63,8 @@ const _: () = {
 };
 
 // The static-mode variant must contain no weak loader import at all. It is
-// used only by the no-PT_INTERP negative fixture and returns null before an
-// `ARCH_GET_FS` syscall or any `%fs`-relative memory access can occur.
+// used only by the no-PT_INTERP negative fixture and returns null before any
+// `%fs`-relative memory access can occur.
 #[cfg(crabc_loader_libc_tls_runtime_v1_static_mode)]
 global_asm!(
     ".section .text.__crabc_x86_loader_tls_runtime_v1_record,\"ax\",@progbits",
@@ -107,7 +104,7 @@ unsafe extern "C" {
 /// public pointer: the dedicated x86 loader resolves it only from its own
 /// record into the main image's GOT. Still, null, wrong-revision, wrong-mode,
 /// wrong-owner, and internally inconsistent records are all rejected before
-/// `ARCH_GET_FS`, `%fs:0`, `%fs:8`, or either descriptor pointer is read.
+/// `%fs:0`, `%fs:8`, or either descriptor pointer is read.
 #[inline(never)]
 unsafe fn validate_loader_tls_runtime_v1() -> Option<&'static LoaderLibcTlsRuntimeV1> {
     let record = unsafe { __crabc_x86_loader_tls_runtime_v1_record() };
@@ -152,30 +149,16 @@ unsafe fn validate_loader_tls_runtime_v1() -> Option<&'static LoaderLibcTlsRunti
 
 /// Obtain the current x86-64 `%fs` base without assuming a libc TLS layout.
 ///
-/// This raw syscall is intentionally below the consumer's C ABI: it is used
-/// only after descriptor validation to compare the loader's declared thread
-/// pointer with the kernel register state. It neither installs nor changes
-/// `%fs`.
+/// The loader writes the self pointer at `%fs:0` before it publishes READY,
+/// so this register read reports the same word `ARCH_GET_FS` did and costs no
+/// syscall. It neither installs nor changes `%fs`.
 #[inline(never)]
 unsafe fn current_thread_pointer() -> Option<usize> {
-    let mut thread_pointer = 0usize;
-    let result: i64;
+    let thread_pointer: usize;
     unsafe {
-        asm!(
-            "syscall",
-            inlateout("rax") SYS_ARCH_PRCTL => result,
-            in("rdi") ARCH_GET_FS,
-            in("rsi") core::ptr::addr_of_mut!(thread_pointer),
-            lateout("rcx") _,
-            lateout("r11") _,
-            options(nostack),
-        );
+        asm!("mov {}, fs:[0]", out(reg) thread_pointer, options(nostack, readonly));
     }
-    if result < 0 && result >= -LINUX_ERRNO_MAX || thread_pointer == 0 {
-        None
-    } else {
-        Some(thread_pointer)
-    }
+    (thread_pointer != 0).then_some(thread_pointer)
 }
 
 /// Observe the already-validated minimal Variant-II prefix.
