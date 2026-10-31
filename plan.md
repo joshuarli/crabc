@@ -793,7 +793,9 @@ owner decision.
   acceptance suite must pass at the final tip before S5 can claim it.
 - **D14 — CPU and memory are re-accepted only on a quiet host.** The S5
   attempt was deferred at load 20–27; a re-acceptance run must satisfy the
-  existing host-load policy. Counter runs under load remain diagnostic.
+  existing host-load policy. Counter runs under load remain diagnostic. The
+  owner deferred the gate again on 2026-10-31 because the host stayed noisy;
+  this is not permission to record a smoke run as acceptance.
 - **D15 — the ldso line budget is x86-product-only.** The 11,000 budget
   counts x86 product lines; the paused AArch64 `loader.rs`/`aarch64.rs`
   (4,436 non-comment lines) is preserved and reported separately. At
