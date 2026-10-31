@@ -256,7 +256,6 @@ const PAGE: u64 = 4096;
 const X86_64_STAT_BYTE_LEN: usize = 144;
 const X86_64_STAT_SIZE_OFFSET: usize = 48;
 
-const INITIAL_OBJECT_COUNT: usize = 3;
 // The fixed-graph roots own exactly their fixture graph. General graph
 // objects and edges live in loader mappings sized from the admitted graph
 // (see `x86_64_initial_graph_state`): the installed runtime has no object or
@@ -279,7 +278,6 @@ const MAX_GENERAL_INITIAL_DEPENDENCY_INIT_ARRAY_ENTRIES: usize = 16;
 // a malformed table consume unbounded loader time. The valid main -> mid ->
 // leaf graph is intentionally far below both ceilings.
 // General graph preflight instead owns checked ELF-sized anonymous scratch.
-const MAX_RELOCATION_TARGETS: usize = 512;
 const ELF64_RELA_SIZE: usize = 24;
 const ELF64_RELR_SIZE: usize = 8;
 const ELF64_RELR_BITMAP_BITS: u64 = 63;
@@ -313,7 +311,6 @@ const TLS_TCB_LIBC_CANCELLATION_STATE_OFFSET: usize = 32;
 // General graphs size each initial DTV from its module count (see
 // `materialize_initial_tls`). This fixed geometry remains only for the
 // fixed-graph helpers compiled beside them.
-const TLS_DTV_WORDS: usize = 33;
 
 // The initial RuntimeV1 graph has the same fixed object and nonzero-DTV-slot
 // capacity. This state is private to the loader and remains separate from
@@ -2299,44 +2296,6 @@ unsafe fn map_elf_with_status(
 /// `align_up(p_memsz)` block. The fixture fixes loader order to main, mid,
 /// leaf; as in musl, only TLS-bearing images receive one-based module IDs, so
 /// the TLS-free main image consumes neither an ID nor a DTV slot.
-unsafe fn plan_initial_tls(objects: &mut [Object]) -> Option<bool> {
-    let mut offset_below_tp = 0usize;
-    let mut module_count = 0usize;
-    let mut has_tls = false;
-    for (_object_index, object) in objects.iter_mut().enumerate() {
-        object.tls_module_id = 0;
-        object.tls_offset_below_tp = 0;
-        if object.tls_memsz == 0 {
-            continue;
-        }
-        has_tls = true;
-        if object.tls_image.is_null()
-            || object.tls_filesz > object.tls_memsz
-            || object.tls_align == 0
-            || !object.tls_align.is_power_of_two()
-        {
-            return None;
-        }
-        let with_alignment_slack = offset_below_tp
-            .checked_add(object.tls_memsz)?
-            .checked_add(object.tls_align - 1)?;
-        let source_phase = object.tls_image as usize & (object.tls_align - 1);
-        let placement_phase = with_alignment_slack.checked_add(source_phase)?
-            & (object.tls_align - 1);
-        offset_below_tp = with_alignment_slack.checked_sub(placement_phase)?;
-        if offset_below_tp < object.tls_memsz {
-            return None;
-        }
-        let module_id = module_count.checked_add(1)?;
-        if module_id >= TLS_DTV_WORDS {
-            return None;
-        }
-        module_count = module_id;
-        object.tls_module_id = module_id;
-        object.tls_offset_below_tp = offset_below_tp;
-    }
-    Some(has_tls)
-}
 
 /// Returns the sealed, loader-owned initial RuntimeV1 registry.
 ///
@@ -2699,27 +2658,6 @@ unsafe fn preflight_relocation_target(object: &Object, virtual_address: u64) -> 
 }
 
 
-unsafe fn apply_rela_table(
-    object: &Object,
-    objects: &[Object],
-    table: *const u8,
-    length: usize,
-) -> Option<()> {
-    if length == 0 { return Some(()); }
-    if table.is_null() || length % ELF64_RELA_SIZE != 0 { return None; }
-    for index in 0..(length / ELF64_RELA_SIZE) {
-        let rela = table.add(index * ELF64_RELA_SIZE);
-        let relocation_offset = read_u64(rela);
-        let slot = runtime_address(object.base, relocation_offset)? as *mut u64;
-        let info = read_u64(rela.add(8));
-        let kind = info as u32;
-        let symbol = (info >> 32) as usize;
-        let addend = read_i64(rela.add(16));
-        let value = relocation_value(kind, object, objects, symbol, addend)?;
-        *slot = value;
-    }
-    Some(())
-}
 
 unsafe fn apply_relr_table(object: &Object) -> Option<()> {
     if object.relrsz == 0 {
