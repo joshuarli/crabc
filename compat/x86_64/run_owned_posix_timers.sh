@@ -306,7 +306,7 @@ run_build "$work/tls-reset-build.stdout" "${rustc_link_command[@]}" --edition=20
     --cfg crabc_general_initial_graph --cfg crabc_general_initial_lifecycle \
     --cfg crabc_general_initial_tls_materialization_v1 --cfg crabc_general_loader_libc_tls_runtime_v1 \
     --cfg crabc_dynamic_main_thread_runtime_v1 \
-    "$ROOT/ldso/src/x86_64_general_initial_tls_runtime_v1_source_root.rs" -o "$work/tls-reset-tests"
+    "$ROOT/ldso/src/lib.rs" -o "$work/tls-reset-tests"
 run_capture "$work/tls-reset-tests.stdout" "$work/tls-reset-tests" timer_reset
 run_capture "$work/tls-import-tests.stdout" "$work/tls-reset-tests" installed_runtime_function_imports_validate_shape
 
