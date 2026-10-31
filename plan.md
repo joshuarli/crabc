@@ -796,8 +796,9 @@ owner decision.
   existing host-load policy. Counter runs under load remain diagnostic. The
   owner deferred the gate again on 2026-10-31 because the host stayed noisy;
   this is not permission to record a smoke run as acceptance.
-- **D15 — the ldso line budget is x86-product-only.** The 11,000 budget
-  counts x86 product lines; the paused AArch64 `loader.rs`/`aarch64.rs`
+- **D15 — the ldso line budget is x86-product-only.** The budget counts x86
+  product lines (11,000 at D15, raised to 11,161 by D17); the paused AArch64
+  `loader.rs`/`aarch64.rs`
   (4,436 non-comment lines) is preserved and reported separately. At
   `b28cb221d` the x86 product is 12,175 lines and the total is 16,611, so the
   lane must remove about 1,175 dead or fixed-graph-only x86 lines. It must not
@@ -819,6 +820,9 @@ owner decision.
   worker-TCB `munmap` is gone. S5 is not accepted on the startup instruction
   dimension; the CPU/memory gate is also deferred under D14. Reopening this
   needs a separate owner decision and a semantics-preserving resolver design.
+- **D17 — the ldso x86 budget is 11,161.** The owner accepted the 161-line
+  increase on 2026-10-31 to retain the loader-syscall and worker-TCB wins; the
+  other budgets are not waived.
 
 ## Runtime hardening
 
@@ -1105,7 +1109,7 @@ lever is the item-1 consolidation.
 | Area | Baseline | Identified | Budget |
 | --- | --- | --- | --- |
 | ldso features | 7 | 6 | **2** |
-| ldso x86 product lines (AArch64 4,436 preserved separately, D15) | 13,857 | 9,626 | **11,000** |
+| ldso x86 product lines (AArch64 4,436 preserved separately, D15/D17) | 13,857 | 9,626 | **11,161** |
 | libc features | 40 | 19 | **25** |
 | dispatcher subcommands | 942 | 272 | **720** |
 | `scripts/dev-x86_64.sh` lines | 12,817 | 2,380 | **11,000** |
@@ -1155,15 +1159,15 @@ passed.
 
 | Counts TLS-growth | `e141118b5` | `loader_dynamic_tls_growth` unavailable→fail at fixed N=8; 421,415 vs 174,244 instructions (2.5703); per-name excess `gettid` 8, `mmap` 23, `munmap` 9, `newfstatat` 1, `pread64` 8 | single-row counts reproduced twice; `test_run_x86_64` 63 pass/1 skip; `test_x86_64_profile` 11 pass; development report | exposes a real loader/TLS-growth residual; not forced to pass |
 | S4 loader syscalls | `a0ad25ead` | `dlopen_graph` judged 60→53 vs 61, per-name excess gone (`pread64` 5→0, `read` 0→5, `newfstatat` 1→0, `gettid` 1→0, `mmap` 25→20 vs 21); TLS-growth judged 133→92 vs 128 (`mmap` 58→34, `munmap` 10→2, `gettid` 8→0, `newfstatat` 1→0, `pread64` 8→0); only the required worker-TCB `munmap` 2 vs 1 remains; `ratio_insn` 1.6073→1.5977 and 2.5703→2.5666 | prepare 161 loader tests; four installed-product cases; hardened; static 72-path; parity; exports 1628 identical | `dlopen_graph` syscall dimension passes; TLS-growth retains one required `munmap`; instruction rows remain D16 |
-| S4 TCB fold | `025e104b2` | worker TCB/initial TLS embedded in the guarded stack mapping, one `mmap`/`munmap` per owned worker; TLS-growth judged 92→90 vs 128 with no per-name excess, `munmap` 2→1 vs 1; instructions 421,411→421,075 vs 174,307 (2.5682); pthread row 2320.99 vs 2127.27 (1.09106), 7009 vs 7187 judged, no excess | rust-check both features; prepare 163 loader tests; cycle/dlopen-pie/dlopen-non-pie/pthread-exit/ldso-general-initial-tls PASS; hardened PASS; static 72-path PASS; parity PASS; campaign-status; `check_structure` PASS | startup/dlopen/TLS-growth ratios remain D16; pthread row nondeterministic under host load; four focused static suites red identically at base; ldso x86 product 11,161 non-comment lines, 161 over the D15 11,000 budget (structure 6/7); D14 deferred |
+| S4 TCB fold | `025e104b2` | worker TCB/initial TLS embedded in the guarded stack mapping, one `mmap`/`munmap` per owned worker; TLS-growth judged 92→90 vs 128 with no per-name excess, `munmap` 2→1 vs 1; instructions 421,411→421,075 vs 174,307 (2.5682); pthread row 2320.99 vs 2127.27 (1.09106), 7009 vs 7187 judged, no excess | rust-check both features; prepare 163 loader tests; cycle/dlopen-pie/dlopen-non-pie/pthread-exit/ldso-general-initial-tls PASS; hardened PASS; static 72-path PASS; parity PASS; campaign-status; `check_structure` PASS | startup/dlopen/TLS-growth ratios remain D16; pthread row nondeterministic under host load; four focused static suites red identically at base; ldso x86 product 11,161 non-comment lines, within the adjusted D17 budget (structure 7/7); D14 deferred |
 | S5 (second attempt) | `b255ccf2e` rejected | **NOT ACCEPTED.** 58 selected rows: 50 pass, 3 fail (`startup` 1.8886, `dlopen_graph` 1.6073, `loader_dynamic_tls_growth` 2.5703 after the fixed-N counts fix), 5 nondeterministic (128m matrices and `pthread_create_join_tls` under load), 0 unavailable. Structure 7/7: libc 25, ldso 1, ldso x86 10,941, dispatcher 678, dispatcher lines 10,357, Python 557 files / 266,174 lines. Dynamic startup syscalls 8 vs 11; static 9. | final-tip prepare, four installed-product case families, static 72-path, hardened, counts, parity, campaign-status, structure all PASS | D16 startup/dlopen/loader-TLS-growth instruction standing blockers; TLS-growth retains one required worker-TCB `munmap`; D14 CPU/memory deferred (host load 26.9); 5 load-dependent nondeterministic rows |
 
 Follow-up rows S3a-ldso, D10, S4 static TLS, S4 stdio and the TCB fold are
 landed, and the hardened gap is fixed. The remaining S5 failures are the D16
-startup/dlopen/TLS-growth instruction rows, the D14 quiet-host CPU/memory
-rerun, and the ldso x86 line budget: the loader-syscall and TCB-fold additions
-take it to 11,161 non-comment lines against 11,000, so structure is 6/7. The
-loader syscall excess and the last required TCB `munmap` are gone.
+startup/dlopen/TLS-growth instruction rows and the D14 quiet-host CPU/memory
+rerun. The loader-syscall and TCB-fold additions take ldso x86 to 11,161
+non-comment lines, within the D17 budget, so structure is 7/7. The loader
+syscall excess and the last required TCB `munmap` are gone.
 
 ### Owner decisions after S5 (2026-10-31, resumed)
 
@@ -1180,8 +1184,9 @@ and a lane:
    remaining 132,328/184,635 instructions are the S4 target, led by
    `__crabc_x86_64_self_relocate`.
 2. **ldso — D7 done at `b7c9ab7ad`.** 71/71 cases run through the installed
-   product; features 7→1; x86 product lines 10,941 against the D15 budget of
-   11,000; parity and campaign-status pass.
+   product; features 7→1; x86 product lines 10,941 against the then-D15
+   budget of 11,000 (D17 later raises it to 11,161); parity and
+   campaign-status pass.
 3. **`dlopen_graph` — D11/D16.** Its operation delta is already at parity
    (15,582 vs 15,592 instructions); the post-D10 row is startup-bound at
    184,845 against 126,490 and shares D16's standing blocker. No separate
@@ -1207,7 +1212,7 @@ nondeterministic rows left. Structure, loader, static-TLS, stdio, hardened
 evidence and the remaining selected rows are addressed. The later
 loader-syscall and TCB-fold lanes removed the per-name syscall excess and the
 last required `munmap`; the three instruction ratios remain, and ldso x86 is
-161 non-comment lines over the D15 budget, so S5 is still not accepted.
+11,161 non-comment lines within the D17 budget, so S5 is still not accepted.
 
 ## Non-goals
 
