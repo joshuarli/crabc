@@ -880,7 +880,7 @@
       "summary": {
         "candidate_external_callable_count": 1526,
         "declared_unverified_feature_callable_count": 314,
-        "default_static_callable_count": 1123,
+        "default_static_callable_count": 1160,
         "deferred_resolution_counts": {
           "compiler-builtin": 1,
           "consumer-supplied": 1,
@@ -897,7 +897,7 @@
         "undispositioned_candidate_callable_count": 0,
         "undispositioned_missing_reference_name_count": 0,
         "unprovided_callable_count": 11,
-        "verified_feature_callable_count": 78
+        "verified_feature_callable_count": 41
       },
       "table": "callable_disposition"
     }

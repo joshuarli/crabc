@@ -2,19 +2,17 @@
 
 `owned_feature_alias_receipt.py` collects and replays one fixed native x86-64
 component for accepted-C release products. Both installed feature routes must
-match their selected static and dynamic producer commands. Its five owner sections cover these six source-selected aliases:
+match their selected static and dynamic producer commands. Its three owner sections cover these four source-selected aliases:
 
 | Owner | Public spelling | Target | Feature proof |
 | --- | --- | --- | --- |
 | signal | `__sysv_signal`, `bsd_signal` | `signal` | Isolated `x86-signal-legacy-aliases` archive |
 | passwd | `endpwent` | `setpwent` | Selected static preparation's `x86-owned-static-runtime` command |
-| exec | `execvpe` | `__execvpe` | Isolated `x86-process-exec` archive |
 | temporary | `mkostemps` | `__mkostemps` | Selected static preparation's `x86-owned-static-runtime` command |
-| netdb | `setnetent` | `sethostent` | Isolated `x86-netdb-setent` archive |
 
 The feature roster supplies each complete `function_alias_requirements`
-record. The receipt preserves those records unchanged. Isolated archives use
-one shared unfeatured baseline and three retained source-runtime Cargo graphs.
+record. The receipt preserves those records unchanged. The receipt uses one shared unfeatured baseline and one retained source-runtime
+Cargo graph for `x86-signal-legacy-aliases`.
 Replay checks the actual Cargo and rustc feature profiles, dependency closure,
 source-built runtime members and complete public archive deltas. Unknown or
 combined retained profiles fail. The broad owned-runtime route reuses the

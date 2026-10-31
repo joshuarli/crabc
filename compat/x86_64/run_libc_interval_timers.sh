@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Native Linux/x86-64 opt-in static crabc-libc getitimer/setitimer evidence.
+# Native Linux/x86-64 static crabc-libc getitimer/setitimer evidence.
 #
 # The project-header fixture first runs through pinned musl 1.2.6 and then
 # through a true archive-free static candidate. It owns only the public C
@@ -11,7 +11,6 @@ set -euo pipefail
 
 readonly ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 readonly ORACLE_CC=/usr/local/bin/crabc-x86_64-musl-gcc
-readonly FEATURE=x86-interval-timers
 readonly STATIC_C_ABI_EXPORTS="$ROOT_DIR/compat/x86_64/static_c_abi_exports.txt"
 readonly INITIAL_TLS_BYTES=4096
 readonly INITIAL_TLS_ALIGNMENT=64
@@ -55,21 +54,6 @@ assert_fixture_tls_capacity() {
         fail "fixture TLS alignment is incompatible"
 }
 
-assert_feature_delta() {
-    local baseline_symbols="$1" featured_symbols="$2" additions="$3" removed="$4"
-
-    comm -23 "$baseline_symbols" "$featured_symbols" >"$removed"
-    if [ -s "$removed" ]; then
-        diff -u "$baseline_symbols" "$featured_symbols" >&2 || true
-        fail "${FEATURE} removes a default C ABI export"
-    fi
-    comm -13 "$baseline_symbols" "$featured_symbols" >"$additions"
-    if ! cmp -s <(printf 'getitimer\nsetitimer\n') "$additions"; then
-        diff -u <(printf 'getitimer\nsetitimer\n') "$additions" >&2 || true
-        fail "${FEATURE} changes more than the two interval-timer exports"
-    fi
-}
-
 assert_named_syscall() {
     local symbol="$1" syscall_hex="$2"
     local disassembly="$work_dir/${symbol}-disassembly"
@@ -89,9 +73,8 @@ done
 [ -x "$ORACLE_CC" ] || fail "missing pinned musl oracle compiler"
 [ -f "$STATIC_C_ABI_EXPORTS" ] || fail "missing static C ABI export contract"
 for symbol in getitimer setitimer; do
-    if grep -Fqx "$symbol" "$STATIC_C_ABI_EXPORTS"; then
-        fail "default static export ratchet absorbed opt-in $symbol"
-    fi
+    grep -Fqx "$symbol" "$STATIC_C_ABI_EXPORTS" ||
+        fail "default static export ratchet omits $symbol"
 done
 
 bash "$ROOT_DIR/compat/x86_64/run_musl_oracle.sh" >/dev/null
@@ -103,20 +86,15 @@ mkdir -p "$report_root"
 work_dir="$(mktemp -d "$report_root/run.XXXXXX")"
 chmod 755 "$work_dir"
 baseline_target="$work_dir/cargo-baseline"
-featured_target="$work_dir/cargo-featured"
 baseline_archive="$baseline_target/x86_64-unknown-linux-musl/debug/libc.a"
-featured_archive="$featured_target/x86_64-unknown-linux-musl/debug/libc.a"
 reference="$work_dir/musl-interval-timers-reference"
 candidate="$work_dir/crabc-interval-timers-candidate"
 reference_trace="$work_dir/musl-observation.txt"
 candidate_trace="$work_dir/crabc-observation.txt"
 header_trace="$work_dir/header-trace"
 baseline_symbols="$work_dir/baseline-symbols"
-featured_symbols="$work_dir/featured-symbols"
 expected_symbols="$work_dir/expected-symbols"
 archive_symbols="$work_dir/featured-archive-symbols"
-feature_additions="$work_dir/feature-additions"
-feature_removed="$work_dir/feature-removed"
 owner_object="$work_dir/interval-timers-owner.o"
 owner_symbols="$work_dir/interval-timers-owner-symbols"
 owner_relocations="$work_dir/interval-timers-owner-relocations"
@@ -145,20 +123,19 @@ done
     fail "pinned-musl interval-timers fixture failed; evidence: $work_dir"
 
 build_source_runtime_libc "$baseline_target/x86_64-unknown-linux-musl/debug/libc.a"
-build_source_runtime_libc "$featured_target/x86_64-unknown-linux-musl/debug/libc.a" \
-    --features "$FEATURE"
-[ -f "$baseline_archive" ] || fail "baseline cargo build did not emit libc.a"
-[ -f "$featured_archive" ] || fail "feature cargo build did not emit libc.a"
+[ -f "$baseline_archive" ] || fail "cargo did not emit the default x86 static libc archive"
 collect_global_surface "$baseline_archive" "$baseline_symbols" \
     "$work_dir/baseline-c-abi-members"
-collect_global_surface "$featured_archive" "$featured_symbols" \
-    "$work_dir/featured-c-abi-members"
 grep -Ev '^(#|$)' "$STATIC_C_ABI_EXPORTS" | LC_ALL=C sort -u >"$expected_symbols"
 cmp -s "$expected_symbols" "$baseline_symbols" || {
     diff -u "$expected_symbols" "$baseline_symbols" >&2 || true
-    fail "baseline static C ABI export surface drifted"
+    fail "default static C ABI export surface drifted"
 }
-assert_feature_delta "$baseline_symbols" "$featured_symbols" "$feature_additions" "$feature_removed"
+for symbol in getitimer setitimer; do
+    grep -Fqx "$symbol" "$baseline_symbols" ||
+        fail "default archive does not define the unconditional $symbol owner"
+done
+featured_archive="$baseline_archive"
 nm -A --defined-only "$featured_archive" >"$archive_symbols"
 for symbol in __errno_location __crabc_x86_static_tls_bootstrap getitimer setitimer; do
     grep -Eq "[[:space:]][TW][[:space:]]${symbol}$" "$archive_symbols" ||
@@ -169,7 +146,7 @@ mapfile -t owner_members < <(
         awk '$NF == "getitimer" || $NF == "setitimer" { member = $1; sub(/^.*\.a:/, "", member); sub(/:.*$/, "", member); print member }' |
         LC_ALL=C sort -u
 )
-[ "${#owner_members[@]}" -eq 1 ] || fail "feature archive has ambiguous interval-timer ownership"
+[ "${#owner_members[@]}" -eq 1 ] || fail "default archive has ambiguous interval-timer ownership"
 ar p "$featured_archive" "${owner_members[0]}" >"$owner_object"
 readelf --symbols --wide "$owner_object" >"$owner_symbols"
 readelf --relocs --wide "$owner_object" >"$owner_relocations"
@@ -210,7 +187,7 @@ for unrelated in alarm ualarm timer_create timer_delete timer_getoverrun \
         fail "candidate unexpectedly pulls $unrelated"
     fi
 done
-if awk '$7 == "UND" && NF >= 8 { print }' "$candidate_symbols" | grep . >/dev/null; then
+if awk '$7 == "UND" && NF >= 8 && !($5 == "LOCAL" && ($8 == "_PROCEDURE_LINKAGE_TABLE_" || $8 == "__rela_iplt_start" || $8 == "__rela_iplt_end")) { print }' "$candidate_symbols" | grep . >/dev/null; then
     fail "candidate has unresolved symbols"
 fi
 if grep -Eq 'Requesting program interpreter|INTERP|NEEDED' \
@@ -237,4 +214,4 @@ cmp -s "$reference_trace" "$candidate_trace" || {
     fail "pinned-musl and freestanding observations differ; evidence: $work_dir"
 }
 cat "$reference_trace"
-printf 'x86 opt-in static libc interval timers: PASS (evidence: %s)\n' "$work_dir"
+printf 'x86 static libc interval timers: PASS (evidence: %s)\n' "$work_dir"

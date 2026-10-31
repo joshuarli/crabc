@@ -71,11 +71,9 @@ TMPDIR="$PWD/.work/x86_64/tmp" \
 
 The default static surface gains the eight aliases already selected by its
 existing scanner/integer owners: `__isoc99_{sscanf,vsscanf}` and all six
-`__strto*_internal` names. The existing
-`x86-stdio-permanent-format-scan` feature archive already selects the next
-four aliases, `__isoc99_{scanf,vscanf,fscanf,vfscanf}`; they are inherited by
-the owned aggregate and must be accounted as aliases of that feature rather
-than as a new aggregate delta. The only new owned-static/runtime providers in
+`__strto*_internal` names. The unconditional permanent-stream owner already selects the next four
+aliases, `__isoc99_{scanf,vscanf,fscanf,vfscanf}`; they are default-static
+aliases rather than a new aggregate delta. The only new owned-static/runtime providers in
 this component are the two strong `__xmknod*` wrappers. Export-roster and
 ledger accounting remain a separate integration action; this component does
 not modify them.

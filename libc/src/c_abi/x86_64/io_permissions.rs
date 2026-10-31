@@ -8,9 +8,9 @@
 //!   `syscall(SYS_ioperm, from, count, turn_on)` request.
 //!
 //! It intentionally contributes no policy, validation, port instruction, or
-//! privilege fallback. `x86-kernel-admin` selects this leaf for owned static
-//! and dynamic products; `x86-io-permissions` remains the narrow standalone
-//! feature so the frozen default archive does not gain either symbol.
+//! privilege fallback. The owned static and dynamic products and the
+//! dependency-free default archive all compose this leaf; it adds exactly
+//! `iopl` and `ioperm`.
 //! The bounded native fixture calls only invalid arguments
 //! that Linux rejects with `EINVAL` or, when its authority check comes first,
 //! `EPERM`; it does not test or authorize successful permission changes or

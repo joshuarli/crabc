@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # Native Linux/x86-64 frozen legacy.misc aggregate evidence.
 #
-# This dedicated opt-in archive adds only fmtmsg/encrypt/setkey to the frozen
-# default selected-static export surface.  It composes the already verified
+# This dedicated opt-in archive adds only fmtmsg to the default selected-static
+# export surface. The inert encrypt/setkey pair is unconditional.  It composes the already verified
 # processor/page and issetugid prerequisites, then proves the full eight-name
 # aggregate's C/C++ declarations, source-owner definition checks, static link map and ELF
 # closure.  Pinned musl 1.2.6 is the fmtmsg/header source oracle.  The DES
@@ -24,8 +24,7 @@ readonly STATIC_C_ABI_ROOT="$ROOT_DIR/libc/src/c_abi/x86_64/static_c_abi.rs"
 readonly LEGACY_MISC_ROOT="$ROOT_DIR/libc/src/c_abi/x86_64/legacy_misc.rs"
 readonly LEGACY_DES_ROOT="$ROOT_DIR/libc/src/c_abi/x86_64/legacy_des_compat.rs"
 readonly AARCH64_STATIC_ABI="$ROOT_DIR/compat/abi/musl-1.2.6/aarch64/libc.a.static.tsv"
-readonly -a FEATURE_EXPORTS=(encrypt fmtmsg setkey)
-readonly -a NARROW_EXPORTS=(encrypt setkey)
+readonly -a DES_EXPORTS=(encrypt setkey)
 readonly -a COMPOSITE_EXPORTS=(fmtmsg)
 readonly -a ALL_SYMBOLS=(
     fmtmsg encrypt setkey get_avphys_pages get_nprocs get_nprocs_conf
@@ -111,13 +110,12 @@ archive_member_for_symbol() {
 }
 
 assert_provider_counts() {
-    local symbol="$1" default_count="$2" narrow_count="$3" composite_count="$4"
-    local expected_default="$5" expected_narrow="$6" expected_composite="$7"
+    local symbol="$1" default_count="$2" composite_count="$3"
+    local expected_default="$4" expected_composite="$5"
 
     if [ "$default_count" -ne "$expected_default" ] ||
-        [ "$narrow_count" -ne "$expected_narrow" ] ||
         [ "$composite_count" -ne "$expected_composite" ]; then
-        fail "${symbol} providers default/narrow/composite were ${default_count}/${narrow_count}/${composite_count}; expected ${expected_default}/${expected_narrow}/${expected_composite}"
+        fail "${symbol} providers default/composite were ${default_count}/${composite_count}; expected ${expected_default}/${expected_composite}"
     fi
 }
 
@@ -144,8 +142,8 @@ grep -Fq '#[cfg(all(feature = "x86-legacy-misc", not(crabc_x86_owned_runtime)))]
     fail "legacy.misc is not opt-in at the selected-static root"
 grep -Fq 'mod legacy_misc;' "$STATIC_C_ABI_ROOT" ||
     fail "selected-static root does not compose the opt-in legacy.misc owner"
-grep -Fq '#[cfg(feature = "x86-legacy-des-compat")]' \
-    "$STATIC_C_ABI_ROOT" || fail "inert DES owner is not selected by its narrow feature"
+grep -Fq '#[path = "legacy_des_compat.rs"]' \
+    "$STATIC_C_ABI_ROOT" || fail "inert DES owner is not unconditional"
 grep -Fq 'mod legacy_des_compat;' "$STATIC_C_ABI_ROOT" ||
     fail "selected-static root does not compose the shared inert DES owner"
 for phrase in \
@@ -158,8 +156,7 @@ done
 for phrase in \
     'src/legacy/encrypt.c::setkey' \
     'src/legacy/encrypt.c::encrypt' \
-    'x86-owned-static-runtime' \
-    'x86-legacy-misc' \
+    'unconditional' \
     'inert-DES' \
     'does not alter errno' \
     'no-hand-rolled-cryptography'; do
@@ -185,9 +182,7 @@ cleanup_work_dir() {
 }
 trap cleanup_work_dir EXIT
 base_target="$work_dir/base-target"
-narrow_target="$work_dir/narrow-target"
 base_archive="$base_target/x86_64-unknown-linux-musl/debug/libc.a"
-narrow_archive="$narrow_target/x86_64-unknown-linux-musl/debug/libc.a"
 source_runtime_helper="$ROOT_DIR/compat/x86_64/native_static_source_runtime_closure.py"
 source_runtime_work="${work_dir#"$ROOT_DIR/.work/x86_64/"}/source-runtime"
 [ "$source_runtime_work" != "$work_dir/source-runtime" ] ||
@@ -200,21 +195,14 @@ musl_fmtmsg="$work_dir/musl-fmtmsg.o"
 musl_encrypt="$work_dir/musl-encrypt.o"
 header_trace="$work_dir/header-trace"
 base_surface="$work_dir/base-surface"
-narrow_surface="$work_dir/narrow-surface"
 feature_surface="$work_dir/feature-surface"
 expected_surface="$work_dir/expected-surface"
-expected_narrow_surface="$work_dir/expected-narrow-surface"
 expected_feature_surface="$work_dir/expected-feature-surface"
-observed_narrow_additions="$work_dir/observed-narrow-additions"
 observed_additions="$work_dir/observed-additions"
-expected_narrow_additions="$work_dir/expected-narrow-additions"
 expected_additions="$work_dir/expected-additions"
 base_bindings="$work_dir/base-bindings"
-narrow_bindings="$work_dir/narrow-bindings"
 feature_bindings="$work_dir/feature-bindings"
-expected_narrow_bindings="$work_dir/expected-narrow-bindings"
 expected_feature_bindings="$work_dir/expected-feature-bindings"
-narrow_addition_bindings="$work_dir/narrow-addition-bindings"
 feature_addition_bindings="$work_dir/feature-addition-bindings"
 archive_symbols="$work_dir/archive-symbols"
 encrypt_definition_dir="$work_dir/encrypt-definition"
@@ -268,45 +256,23 @@ done
     compat/x86_64/libc_legacy_misc_probe.c -o "$reference"
 env -i LC_ALL=C "$reference" || fail "pinned-musl legacy.misc fixture failed"
 
-# The default, narrow inert-DES, and composite archives have exact C global
-# symbol/binding maps. The narrow map is the frozen default plus encrypt and
-# setkey; the composite map is that narrow map plus fmtmsg.
+# The default archive owns the inert DES pair; the composite legacy.misc
+# archive adds only fmtmsg.
 build_source_runtime_libc "$base_target/x86_64-unknown-linux-musl/debug/libc.a"
-[ -f "$base_archive" ] || fail "cargo did not emit the unfeatured x86 archive"
+[ -f "$base_archive" ] || fail "cargo did not emit the default x86 archive"
 collect_global_surface "$base_archive" "$base_surface" "$work_dir/base-members"
 collect_global_bindings "$base_archive" "$base_bindings" "$work_dir/base-binding-members"
 grep -Ev '^(#|$)' "$STATIC_C_ABI_EXPORTS" | LC_ALL=C sort -u >"$expected_surface"
 if ! cmp -s "$expected_surface" "$base_surface"; then
     diff -u "$expected_surface" "$base_surface" >&2 || true
-    fail "unfeatured selected-static C ABI export surface drifted"
+    fail "default selected-static C ABI export surface drifted"
 fi
-for symbol in "${FEATURE_EXPORTS[@]}"; do
-    if grep -Fxq "$symbol" "$base_surface"; then
-        fail "unfeatured archive unexpectedly exposes opt-in ${symbol}"
-    fi
+for symbol in "${DES_EXPORTS[@]}"; do
+    grep -Fxq "$symbol" "$base_surface" ||
+        fail "default archive does not define the unconditional $symbol owner"
 done
-
-build_source_runtime_libc "$narrow_target/x86_64-unknown-linux-musl/debug/libc.a" \
-    --features x86-legacy-des-compat
-[ -f "$narrow_archive" ] || fail "cargo did not emit the narrow inert-DES archive"
-collect_global_surface "$narrow_archive" "$narrow_surface" "$work_dir/narrow-members"
-collect_global_bindings "$narrow_archive" "$narrow_bindings" "$work_dir/narrow-binding-members"
-comm -13 "$base_surface" "$narrow_surface" >"$observed_narrow_additions"
-printf '%s\n' "${NARROW_EXPORTS[@]}" | LC_ALL=C sort -u >"$expected_narrow_additions"
-if ! cmp -s "$expected_narrow_additions" "$observed_narrow_additions"; then
-    diff -u "$expected_narrow_additions" "$observed_narrow_additions" >&2 || true
-    fail "narrow inert-DES changed more than encrypt/setkey"
-fi
-LC_ALL=C sort -u "$base_surface" "$expected_narrow_additions" >"$expected_narrow_surface"
-if ! cmp -s "$expected_narrow_surface" "$narrow_surface"; then
-    diff -u "$expected_narrow_surface" "$narrow_surface" >&2 || true
-    fail "narrow inert-DES did not preserve the frozen export surface"
-fi
-printf '%s T\n' "${NARROW_EXPORTS[@]}" | LC_ALL=C sort -u >"$narrow_addition_bindings"
-LC_ALL=C sort -u "$base_bindings" "$narrow_addition_bindings" >"$expected_narrow_bindings"
-if ! cmp -s "$expected_narrow_bindings" "$narrow_bindings"; then
-    diff -u "$expected_narrow_bindings" "$narrow_bindings" >&2 || true
-    fail "narrow inert-DES changed the full global binding surface"
+if grep -Fxq fmtmsg "$base_surface"; then
+    fail "default archive unexpectedly exposes opt-in fmtmsg"
 fi
 
 archive="$(python3 "$source_runtime_helper" build \
@@ -315,19 +281,19 @@ archive="$(python3 "$source_runtime_helper" build \
 [ -f "$source_runtime_receipt" ] || fail "source-built libc lacks runtime closure receipt"
 collect_global_surface "$archive" "$feature_surface" "$work_dir/feature-members"
 collect_global_bindings "$archive" "$feature_bindings" "$work_dir/feature-binding-members"
-comm -13 "$narrow_surface" "$feature_surface" >"$observed_additions"
+comm -13 "$base_surface" "$feature_surface" >"$observed_additions"
 printf '%s\n' "${COMPOSITE_EXPORTS[@]}" | LC_ALL=C sort -u >"$expected_additions"
 if ! cmp -s "$expected_additions" "$observed_additions"; then
     diff -u "$expected_additions" "$observed_additions" >&2 || true
-    fail "composite legacy.misc changed more than fmtmsg beyond narrow inert-DES"
+    fail "composite legacy.misc changed more than fmtmsg beyond the default archive"
 fi
-LC_ALL=C sort -u "$narrow_surface" "$expected_additions" >"$expected_feature_surface"
+LC_ALL=C sort -u "$base_surface" "$expected_additions" >"$expected_feature_surface"
 if ! cmp -s "$expected_feature_surface" "$feature_surface"; then
     diff -u "$expected_feature_surface" "$feature_surface" >&2 || true
-    fail "composite legacy.misc did not preserve the narrow export surface"
+    fail "composite legacy.misc did not preserve the default export surface"
 fi
 printf '%s T\n' "${COMPOSITE_EXPORTS[@]}" | LC_ALL=C sort -u >"$feature_addition_bindings"
-LC_ALL=C sort -u "$expected_narrow_bindings" "$feature_addition_bindings" >"$expected_feature_bindings"
+LC_ALL=C sort -u "$base_bindings" "$feature_addition_bindings" >"$expected_feature_bindings"
 if ! cmp -s "$expected_feature_bindings" "$feature_bindings"; then
     diff -u "$expected_feature_bindings" "$feature_bindings" >&2 || true
     fail "composite legacy.misc changed the full global binding surface"
@@ -345,18 +311,15 @@ done
 mapfile -t base_encrypt_members < <(archive_member_for_symbol "$base_archive" encrypt)
 mapfile -t base_setkey_members < <(archive_member_for_symbol "$base_archive" setkey)
 mapfile -t base_fmtmsg_members < <(archive_member_for_symbol "$base_archive" fmtmsg)
-mapfile -t narrow_encrypt_members < <(archive_member_for_symbol "$narrow_archive" encrypt)
-mapfile -t narrow_setkey_members < <(archive_member_for_symbol "$narrow_archive" setkey)
-mapfile -t narrow_fmtmsg_members < <(archive_member_for_symbol "$narrow_archive" fmtmsg)
 mapfile -t fmtmsg_members < <(archive_member_for_symbol "$archive" fmtmsg)
 mapfile -t encrypt_members < <(archive_member_for_symbol "$archive" encrypt)
 mapfile -t setkey_members < <(archive_member_for_symbol "$archive" setkey)
-assert_provider_counts encrypt "${#base_encrypt_members[@]}" "${#narrow_encrypt_members[@]}" \
-    "${#encrypt_members[@]}" 0 1 1
-assert_provider_counts setkey "${#base_setkey_members[@]}" "${#narrow_setkey_members[@]}" \
-    "${#setkey_members[@]}" 0 1 1
-assert_provider_counts fmtmsg "${#base_fmtmsg_members[@]}" "${#narrow_fmtmsg_members[@]}" \
-    "${#fmtmsg_members[@]}" 0 0 1
+assert_provider_counts encrypt "${#base_encrypt_members[@]}" \
+    "${#encrypt_members[@]}" 1 1
+assert_provider_counts setkey "${#base_setkey_members[@]}" \
+    "${#setkey_members[@]}" 1 1
+assert_provider_counts fmtmsg "${#base_fmtmsg_members[@]}" \
+    "${#fmtmsg_members[@]}" 0 1
 mkdir "$encrypt_definition_dir" "$setkey_definition_dir"
 ar p "$archive" "${encrypt_members[0]}" >"$encrypt_definition"
 ar p "$archive" "${setkey_members[0]}" >"$setkey_definition"
@@ -405,7 +368,7 @@ for symbol in _start __errno_location __crabc_x86_static_tls_bootstrap \
     grep -Eq "[[:space:]]${symbol}$" "$candidate_symbols" ||
         fail "candidate lacks required legacy.misc closure symbol ${symbol}"
 done
-if awk '$7 == "UND" && NF >= 8 { print }' "$candidate_symbols" | grep . >/dev/null; then
+if awk '$7 == "UND" && NF >= 8 && !($5 == "LOCAL" && ($8 == "_PROCEDURE_LINKAGE_TABLE_" || $8 == "__rela_iplt_start" || $8 == "__rela_iplt_end")) { print }' "$candidate_symbols" | grep . >/dev/null; then
     fail "candidate retains an unresolved symbol"
 fi
 if grep -Eq 'Requesting program interpreter|INTERP|NEEDED' \

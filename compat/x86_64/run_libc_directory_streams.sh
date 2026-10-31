@@ -14,6 +14,8 @@ readonly ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 readonly ORACLE_CC=/usr/local/bin/crabc-x86_64-musl-gcc
 readonly STATIC_C_ABI_EXPORTS="$ROOT_DIR/compat/x86_64/static_c_abi_exports.txt"
 readonly EXECUTION_TIMEOUT=20s
+# Weak compiler/personality symbols that stay LOCAL undefined in static links.
+readonly TOOLCHAIN_LOCAL_UNDEFINED="_ITM_deregisterTMCloneTable _ITM_registerTMCloneTable __cxa_finalize __deregister_frame_info __register_frame_info"
 
 fail() {
     printf 'ERROR: x86 static libc directory streams: %s\n' "$*" >&2
@@ -165,7 +167,7 @@ for symbol in __errno_location __crabc_x86_static_tls_bootstrap opendir fdopendi
     grep -Eq "[[:space:]]${symbol}$" "$candidate_symbols" ||
         fail "candidate does not define $symbol"
 done
-unresolved_symbols="$(awk '$7 == "UND" && NF >= 8 { print }' "$candidate_symbols")"
+unresolved_symbols="$(awk -v allow="$TOOLCHAIN_LOCAL_UNDEFINED" '$7 == "UND" && NF >= 8 && !($5 == "LOCAL" && ($8 == "_PROCEDURE_LINKAGE_TABLE_" || $8 == "__rela_iplt_start" || $8 == "__rela_iplt_end" || index(" " allow " ", " " $8 " ") > 0)) { print }' "$candidate_symbols")"
 if [ -n "$unresolved_symbols" ]; then
     printf '%s\n' "$unresolved_symbols" >&2
     fail "candidate retains an unresolved symbol"

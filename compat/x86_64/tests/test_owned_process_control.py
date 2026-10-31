@@ -33,7 +33,7 @@ DISPATCHER = ROOT / "scripts" / "dev-x86_64.sh"
 class OwnedProcessControlTests(unittest.TestCase):
     def test_owned_runtime_selects_the_residual_provider_leaves(self) -> None:
         cargo = CARGO.read_text(encoding="utf-8")
-        self.assertIn('"x86-process-exec",', cargo)
+        self.assertNotIn("x86-process-exec", cargo)
 
         static_root = STATIC_ROOT.read_text(encoding="utf-8")
         for module in (

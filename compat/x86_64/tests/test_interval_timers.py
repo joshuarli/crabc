@@ -46,9 +46,8 @@ class IntervalTimerTests(unittest.TestCase):
             if line and not line.startswith("#")
         }
 
-        self.assertIn("x86-interval-timers = []", manifest)
+        self.assertNotIn("x86-interval-timers", manifest)
         self.assertIn(
-            '#[cfg(feature = "x86-interval-timers")]\n'
             '#[path = "interval_timers.rs"]\n'
             "mod interval_timers;",
             static_root,
@@ -67,7 +66,7 @@ class IntervalTimerTests(unittest.TestCase):
         ):
             with self.subTest(required=required):
                 self.assertIn(required, source)
-        self.assertEqual(exports & {"getitimer", "setitimer"}, set())
+        self.assertTrue({"getitimer", "setitimer"} <= exports)
 
         for required in (
             "SYS_getitimer == 36",
@@ -84,9 +83,8 @@ class IntervalTimerTests(unittest.TestCase):
         self.assertIn("crabc_x86_64_interval_timers_probe", start)
 
         for required in (
-            "x86-interval-timers",
-            "assert_feature_delta",
-            "--features \"$FEATURE\"",
+            "default static C ABI export surface",
+            "default archive does not define the unconditional",
             "-nostdlib -static",
             "assert_named_syscall getitimer 24",
             "assert_named_syscall setitimer 26",

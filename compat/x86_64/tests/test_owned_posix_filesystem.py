@@ -366,11 +366,11 @@ class OwnedPosixFilesystemTests(unittest.TestCase):
     def test_owned_runtime_selects_existing_file_handle_and_temporary_name_leaves(self) -> None:
         manifest = CARGO.read_text(encoding="utf-8")
         aggregate = {f'"{name}",' for name in enabled_features(tomllib.loads(manifest)["features"], "x86-owned-static-runtime")}
-        self.assertIn('"x86-file-handles",', aggregate)
+        self.assertNotIn("x86-file-handles", manifest)
         self.assertIn('"x86-temporary-names",', aggregate)
 
         root = STATIC_ROOT.read_text(encoding="utf-8")
-        self.assertIn('#[cfg(feature = "x86-file-handles")]\n#[path = "file_handles.rs"]', root)
+        self.assertIn('#[path = "file_handles.rs"]\nmod file_handles;', root)
         self.assertIn('#[cfg(crabc_x86_temporary_names)]\n#[path = "temporary_names.rs"]', root)
 
     def test_source_owners_retain_the_pinned_musl_boundaries(self) -> None:

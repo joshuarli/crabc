@@ -75,7 +75,7 @@ sources = ["compat/x86_64/feature_archive_roster.py", "compat/x86_64/parity.toml
 members = []
 members_file = ""
 expected_type = "FUNC"
-delegated_members = ["_dl_debug_state", "_fini", "_init", "arch_prctl"]
+delegated_members = ["_dl_debug_state", "_fini", "_init"]
 placement_metadata = {}
 reason = "Exact ABI-only FUNC provider members from the selected feature roster; no OBJECT inference."
 static_metadata_rule = "selected-native-oracle-function"
@@ -756,7 +756,7 @@ static_metadata_rule = "selected-native-oracle-function"
 id = "source-owned-pivot-root-direct-syscall"
 selector = "explicit"
 disposition = "public-provider"
-owner = "x86-kernel-admin"
+owner = "x86-arch-prctl-control"
 family = "libc.c-abi-compat"
 artifacts = ["candidate-static", "candidate-shared"]
 sources = ["libc/src/c_abi/x86_64/owned_linux_control.rs", "libc/src/c_abi/x86_64/static_c_abi.rs"]
@@ -765,7 +765,7 @@ members_file = ""
 expected_type = "FUNC"
 delegated_members = []
 placement_metadata = {}
-reason = "Direct Linux pivot_root syscall wrapper selected by the kernel-admin feature root; capability/error behavior remains component-scoped."
+reason = "Direct Linux pivot_root syscall wrapper selected by the owned kernel-administration owner; capability/error behavior remains component-scoped."
 static_metadata_rule = "selected-native-oracle-function"
 
 [[owner_groups]]

@@ -126,9 +126,7 @@ macro_rules! isoc99_alias {
 // with `snprintf` calls `vsnprintf`; `scanf`, `vscanf` and `fscanf` call
 // `vfscanf`; `sscanf` calls `vsscanf`. The `v` forms are never inlined, so an
 // application definition of one reaches every caller as it does in musl.
-#[cfg(feature = "x86-stdio-permanent-format-scan")]
 use super::stdio_standard;
-#[cfg(feature = "x86-stdio-permanent-format-scan")]
 use stdio_standard::StandardStream;
 
 #[cfg(crabc_x86_owned_runtime)]
@@ -332,7 +330,6 @@ impl FormatSink for Output {
     fn allow_errno_message(&self) -> bool { true }
 }
 
-#[cfg(feature = "x86-stdio-permanent-format-scan")]
 struct StreamOutput {
     stream: *mut StandardStream,
     count: usize,
@@ -340,14 +337,12 @@ struct StreamOutput {
     failed: bool,
 }
 
-#[cfg(feature = "x86-stdio-permanent-format-scan")]
 impl StreamOutput {
     const fn new(stream: *mut StandardStream) -> Self {
         Self { stream, count: 0, overflowed: false, failed: false }
     }
 }
 
-#[cfg(feature = "x86-stdio-permanent-format-scan")]
 impl FormatSink for StreamOutput {
     unsafe fn byte(&mut self, byte: u8) {
         #[cfg(crabc_x86_owned_runtime)]
@@ -1145,7 +1140,6 @@ static_archive_member! { sprintf_source {
     }
 }}
 
-#[cfg(feature = "x86-stdio-permanent-format-scan")]
 #[cfg(not(crabc_x86_owned_runtime))]
 unsafe fn format_to_stream(
     stream: *mut StandardStream,
@@ -1176,7 +1170,6 @@ unsafe fn format_to_stream(stream: *mut StandardStream, format: *const c_char, a
 }
 
 // Musl's `src/stdio/printf.c` object.
-#[cfg(feature = "x86-stdio-permanent-format-scan")]
 static_archive_member! { printf_source {
     /// Format to the permanently owned standard output stream.
     ///
@@ -1184,7 +1177,6 @@ static_archive_member! { printf_source {
     /// owned by `stdio_standard`; it does not construct or inspect a public FILE
     /// layout, and it leaves stdout buffered until an explicit `fflush`.
     #[no_mangle]
-    #[cfg(feature = "x86-stdio-permanent-format-scan")]
     /// # Safety
     ///
     /// `format` must be a readable NUL-terminated string and each variadic
@@ -1198,10 +1190,8 @@ static_archive_member! { printf_source {
 }}
 
 // Musl's `src/stdio/vprintf.c` object.
-#[cfg(feature = "x86-stdio-permanent-format-scan")]
 static_archive_member! { vprintf_source {
     #[no_mangle]
-    #[cfg(feature = "x86-stdio-permanent-format-scan")]
     /// # Safety
     ///
     /// `format` must be a readable NUL-terminated string and `args` must contain
@@ -1217,11 +1207,9 @@ static_archive_member! { vprintf_source {
 }}
 
 // Musl's `src/stdio/fprintf.c` object.
-#[cfg(feature = "x86-stdio-permanent-format-scan")]
 static_archive_member! { fprintf_source {
     /// Format to a stream admitted by the selected stdio engine.
     #[no_mangle]
-    #[cfg(feature = "x86-stdio-permanent-format-scan")]
     /// # Safety
     ///
     /// With `x86-owned-static-runtime`, `stream` must be a live owned FILE;
@@ -1238,10 +1226,8 @@ static_archive_member! { fprintf_source {
 }}
 
 // Musl's `src/stdio/vfprintf.c` object.
-#[cfg(feature = "x86-stdio-permanent-format-scan")]
 static_archive_member! { vfprintf_source {
     #[no_mangle]
-    #[cfg(feature = "x86-stdio-permanent-format-scan")]
     /// # Safety
     ///
     /// With `x86-owned-static-runtime`, `stream` must be a live owned FILE;
@@ -1791,14 +1777,12 @@ static_archive_member! { sscanf_source {
 /// One-byte-lookahead reader used by the permanent-stream scanner. A peeked
 /// byte is not part of the consumed count and is returned through `ungetc` on
 /// exit, so conversion delimiters remain available to later `fgetc` calls.
-#[cfg(feature = "x86-stdio-permanent-format-scan")]
 struct StreamReader {
     stream: *mut StandardStream,
     pending: Option<u8>,
     consumed: usize,
 }
 
-#[cfg(feature = "x86-stdio-permanent-format-scan")]
 impl StreamReader {
     const fn new(stream: *mut StandardStream) -> Self {
         Self { stream, pending: None, consumed: 0 }
@@ -1834,7 +1818,6 @@ impl StreamReader {
     }
 }
 
-#[cfg(feature = "x86-stdio-permanent-format-scan")]
 unsafe fn scan_integer_stream(
     reader: &mut StreamReader,
     width: usize,
@@ -1917,7 +1900,7 @@ unsafe fn scan_from_stream(stream: *mut StandardStream, format: *const c_char, a
     unsafe { owned_scanf::stream(stream, format, args) }
 }
 
-#[cfg(all(feature = "x86-stdio-permanent-format-scan", not(crabc_x86_owned_runtime)))]
+#[cfg(not(crabc_x86_owned_runtime))]
 unsafe fn scan_from_stream(
     stream: *mut StandardStream,
     format: *const c_char,
@@ -2095,13 +2078,11 @@ unsafe fn scan_from_stream(
 }
 
 // Musl's `src/stdio/scanf.c` object.
-#[cfg(feature = "x86-stdio-permanent-format-scan")]
 static_archive_member! { scanf_source {
     isoc99_alias!("scanf");
 
     /// Scan from the permanently owned standard input stream.
     #[no_mangle]
-    #[cfg(feature = "x86-stdio-permanent-format-scan")]
     /// # Safety
     ///
     /// `format` must be a readable NUL-terminated string and each destination
@@ -2115,12 +2096,10 @@ static_archive_member! { scanf_source {
 }}
 
 // Musl's `src/stdio/vscanf.c` object.
-#[cfg(feature = "x86-stdio-permanent-format-scan")]
 static_archive_member! { vscanf_source {
     isoc99_alias!("vscanf");
 
     #[no_mangle]
-    #[cfg(feature = "x86-stdio-permanent-format-scan")]
     /// # Safety
     ///
     /// `format` must be NUL-terminated; every destination in the forwarded list
@@ -2137,12 +2116,10 @@ static_archive_member! { vscanf_source {
 }}
 
 // Musl's `src/stdio/fscanf.c` object.
-#[cfg(feature = "x86-stdio-permanent-format-scan")]
 static_archive_member! { fscanf_source {
     isoc99_alias!("fscanf");
 
     #[no_mangle]
-    #[cfg(feature = "x86-stdio-permanent-format-scan")]
     /// # Safety
     ///
     /// With `x86-owned-static-runtime`, `stream` must be a live owned FILE;
@@ -2161,12 +2138,10 @@ static_archive_member! { fscanf_source {
 }}
 
 // Musl's `src/stdio/vfscanf.c` object.
-#[cfg(feature = "x86-stdio-permanent-format-scan")]
 static_archive_member! { vfscanf_source {
     isoc99_alias!("vfscanf");
 
     #[no_mangle]
-    #[cfg(feature = "x86-stdio-permanent-format-scan")]
     /// # Safety
     ///
     /// With `x86-owned-static-runtime`, `stream` must be a live owned FILE;

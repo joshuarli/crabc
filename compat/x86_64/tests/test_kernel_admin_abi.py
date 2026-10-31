@@ -71,18 +71,14 @@ class KernelAdminAbiTests(unittest.TestCase):
         probe = PROBE.read_text(encoding="utf-8")
         runner = RUNNER.read_text(encoding="utf-8")
 
-        self.assertIn('x86-kernel-admin = ["x86-io-permissions"]', manifest)
-        owned_start = manifest.index("x86-owned-static-runtime = [")
-        owned_end = manifest.index("]\n# Share the owned leaf roster", owned_start)
-        self.assertIn("x86-kernel-admin", manifest[owned_start:owned_end])
+        self.assertNotIn("x86-kernel-admin", manifest)
+        self.assertNotIn("x86-io-permissions", manifest)
         self.assertIn(
-            '#[cfg(feature = "x86-kernel-admin")]\n'
             '#[path = "arch_prctl.rs"]\n'
             "mod arch_prctl;",
             static_root,
         )
         self.assertIn(
-            '#[cfg(any(feature = "x86-io-permissions", feature = "x86-kernel-admin"))]\n'
             '#[path = "io_permissions.rs"]\n'
             "mod io_permissions;",
             static_root,

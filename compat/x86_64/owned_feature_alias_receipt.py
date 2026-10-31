@@ -34,12 +34,10 @@ SCHEMA = 'crabc.x86_64-owned-feature-alias-receipt/v1'
 ALIASES = {
     'signal': (('__sysv_signal', 'signal'), ('bsd_signal', 'signal')),
     'passwd': (('endpwent', 'setpwent'),),
-    'exec': (('execvpe', '__execvpe'),),
     'temporary': (('mkostemps', '__mkostemps'),),
-    'netdb': (('setnetent', 'sethostent'),),
 }
 FEATURES = {'signal': 'x86-signal-legacy-aliases', 'passwd': 'x86-owned-static-runtime',
-            'exec': 'x86-process-exec', 'temporary': 'x86-owned-static-runtime', 'netdb': 'x86-netdb-setent'}
+            'temporary': 'x86-owned-static-runtime'}
 OWNER_SOURCES = {'signal': 'libc/src/c_abi/x86_64/signal_control.rs',
                  'passwd': 'libc/src/c_abi/x86_64/owned_passwd.rs',
                  'exec': 'libc/src/c_abi/x86_64/process_exec_path.rs',
@@ -306,7 +304,7 @@ def feature_proofs(commands: Commands) -> dict[str, Any]:
     result = {}
     features = {row.identifier: row for row in feature_roster.load_feature_archive_roster()}
     baseline = None
-    for owner, feature in (('baseline', ''), ('signal', FEATURES['signal']), ('exec', FEATURES['exec']), ('netdb', FEATURES['netdb'])):
+    for owner, feature in (('baseline', ''), ('signal', FEATURES['signal'])):
         graph = work / ('source-runtime-' + owner)
         argv = ['/usr/bin/python3', '-B', str(HERE / 'native_static_source_runtime_closure.py'), 'build', '--work', str(graph)]
         if feature:

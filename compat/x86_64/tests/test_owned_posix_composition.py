@@ -113,14 +113,13 @@ class OwnedPosixCompositionTests(unittest.TestCase):
 
         self.assertEqual(features["default"], [])
         self.assertEqual(features["x86-owned-dynamic-runtime"], ["x86-owned-static-runtime"])
-        self.assertIn("x86-sched-rr-interval", aggregate)
-        self.assertIn("x86-netdb-setent", aggregate)
-        self.assertEqual(features["x86-sched-rr-interval"], [])
-        self.assertEqual(features["x86-netdb-setent"], [])
+        self.assertNotIn("x86-sched-rr-interval", aggregate)
+        self.assertNotIn("x86-netdb-setent", aggregate)
+        self.assertNotIn("x86-sched-rr-interval", features)
+        self.assertNotIn("x86-netdb-setent", features)
         self.assertTrue(
-            {"sched_rr_get_interval", "sethostent", "setnetent"}.isdisjoint(
-                set(STATIC_EXPORTS.read_text(encoding="utf-8").splitlines())
-            )
+            {"sched_rr_get_interval", "sethostent", "setnetent"} <=
+            set(STATIC_EXPORTS.read_text(encoding="utf-8").splitlines())
         )
 
         probe = PROBE.read_text(encoding="utf-8")

@@ -54,14 +54,11 @@ class A64lTests(unittest.TestCase):
         static_exports = STATIC_EXPORTS.read_text(encoding="utf-8").splitlines()
         ledger = tomllib.loads(PARITY.read_text(encoding="utf-8"))
 
-        self.assertIn("x86-a64l = []", manifest)
-        self.assertIn("no byte-string", manifest)
-        self.assertNotIn("needs the selected byte-string strchr owner", manifest)
+        self.assertNotIn("x86-a64l", manifest)
         self.assertIn(
-            '#[cfg(feature = "x86-a64l")]\n#[path = "a64l.rs"]\nmod a64l;',
+            '#[path = "a64l.rs"]\nmod a64l;',
             static_root,
         )
-        self.assertIn("no\n// byte-string archive dependency", static_root)
         self.assertNotIn("composes the selected byte-string `strchr` owner", static_root)
         for required in (
             "Pinned musl 1.2.6",
@@ -115,10 +112,8 @@ class A64lTests(unittest.TestCase):
         self.assertNotIn("ARCH_SET_FS", start)
 
         for required in (
-            "x86-a64l",
-            "assert_feature_delta",
+            "assert_unconditional_symbol",
             "run_l64a_header_abi.sh",
-            "a64l\\n",
             "a64l owner has an unexpected direct dependency",
             "l64a|strchr|index|memchr",
             "-nostdlib -static",
@@ -127,7 +122,7 @@ class A64lTests(unittest.TestCase):
         ):
             self.assertIn(required, runner)
         self.assertNotIn("--whole-archive", runner)
-        self.assertNotIn("a64l", static_exports)
+        self.assertIn("a64l", static_exports)
         for required in (
             "libc-a64l)",
             "libc-a64l takes no arguments",
@@ -143,7 +138,7 @@ class A64lTests(unittest.TestCase):
             record for record in family["verified_artifact"] if record["id"] == "static-c-a64l"
         )
         self.assertNotIn("capabilities", artifact)
-        self.assertIn("x86-a64l", artifact["description"])
+        self.assertIn("unconditional `a64l` owner", artifact["description"])
         self.assertIn("does not complete", artifact["description"])
         self.assertIn("libc/src/c_abi/x86_64/a64l.rs", artifact["source_owners"])
         self.assertIn("scripts/check_structure.py", artifact["source_owners"])
@@ -153,7 +148,7 @@ class A64lTests(unittest.TestCase):
         self.assertEqual("verified", evidence["state"])
         self.assertEqual("./scripts/dev-x86_64.sh libc-a64l", evidence["command"])
         for boundary in (
-            "exactly a64l",
+            "default surface",
             "does not complete",
             "public x86 support",
         ):

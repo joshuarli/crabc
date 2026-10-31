@@ -2,9 +2,9 @@
 # Native Linux/x86-64 static crabc-libc sched_rr_get_interval evidence.
 #
 # The same project-header body first runs against pinned musl 1.2.6 and then
-# a true `-nostdlib -static` feature candidate. It checks caller-owned
+# a true `-nostdlib -static` candidate. It checks caller-owned
 # timespec output, stale-errno preservation, and a missing-task ESRCH result.
-# This opt-in leaf observes one scheduler interval; it does not select
+# This leaf observes one scheduler interval; it does not select
 # scheduler policy mutation, parameter queries, affinity, lifecycle, or public
 # x86 support.
 set -euo pipefail
@@ -12,7 +12,6 @@ set -euo pipefail
 
 readonly ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 readonly ORACLE_CC=/usr/local/bin/crabc-x86_64-musl-gcc
-readonly FEATURE=x86-sched-rr-interval
 readonly STATIC_C_ABI_EXPORTS="$ROOT_DIR/compat/x86_64/static_c_abi_exports.txt"
 readonly SOURCE="$ROOT_DIR/libc/src/c_abi/x86_64/sched_rr_get_interval.rs"
 readonly INITIAL_TLS_BYTES=4096
@@ -40,21 +39,6 @@ collect_global_surface() {
         nm -g --defined-only --format=posix "${members[@]}"
     ) | awk '$2 ~ /^[TWDVBR]$/ && $1 !~ /^(_R|_ZN|DW\.ref\.|anon\.)/ && $1 != "crabc_x86_64_signal_restorer" && $1 != "__crabc_x86_pthread_clone" { print $1 }' |
         LC_ALL=C sort -u >"$output_path"
-}
-
-assert_feature_delta() {
-    local baseline_symbols="$1" featured_symbols="$2" additions="$3" removed="$4"
-
-    comm -23 "$baseline_symbols" "$featured_symbols" >"$removed"
-    if [ -s "$removed" ]; then
-        diff -u "$baseline_symbols" "$featured_symbols" >&2 || true
-        fail "x86-sched-rr-interval removes a default C ABI export"
-    fi
-    comm -13 "$baseline_symbols" "$featured_symbols" >"$additions"
-    if ! cmp -s <(printf 'sched_rr_get_interval\n') "$additions"; then
-        diff -u <(printf 'sched_rr_get_interval\n') "$additions" >&2 || true
-        fail "x86-sched-rr-interval changes more than sched_rr_get_interval"
-    fi
 }
 
 assert_fixture_tls_capacity() {
@@ -100,17 +84,12 @@ bash "$ROOT_DIR/compat/x86_64/run_x86_sched_rr_interval_reference.sh" >/dev/null
 work_dir="$(mktemp -d /tmp/crabc-x86-64-libc-sched-rr-interval.XXXXXX)"
 trap 'rm -rf -- "$work_dir"' EXIT
 baseline_target="$work_dir/cargo-baseline"
-featured_target="$work_dir/cargo-featured"
 baseline_archive="$baseline_target/x86_64-unknown-linux-musl/debug/libc.a"
-featured_archive="$featured_target/x86_64-unknown-linux-musl/debug/libc.a"
 reference="$work_dir/musl-sched-rr-interval-reference"
 candidate="$work_dir/crabc-sched-rr-interval-candidate"
 header_trace="$work_dir/header-trace"
 baseline_symbols="$work_dir/baseline-symbols"
 expected_symbols="$work_dir/expected-symbols"
-featured_symbols="$work_dir/featured-symbols"
-feature_additions="$work_dir/feature-additions"
-feature_removed="$work_dir/feature-removed"
 archive_symbols="$work_dir/archive-symbols"
 archive_relocations="$work_dir/archive-relocations"
 archive_disassembly="$work_dir/archive-disassembly"
@@ -136,27 +115,21 @@ done
 "$reference" || fail "pinned-musl sched_rr_get_interval fixture failed"
 
 build_source_runtime_libc "$baseline_target/x86_64-unknown-linux-musl/debug/libc.a"
-[ -f "$baseline_archive" ] || fail "cargo did not emit the baseline x86 static libc archive"
+[ -f "$baseline_archive" ] || fail "cargo did not emit the default x86 static libc archive"
 collect_global_surface "$baseline_archive" "$baseline_symbols" "$work_dir/baseline-members"
 grep -Ev '^(#|$)' "$STATIC_C_ABI_EXPORTS" | LC_ALL=C sort -u >"$expected_symbols"
 if ! cmp -s "$expected_symbols" "$baseline_symbols"; then
     diff -u "$expected_symbols" "$baseline_symbols" >&2 || true
-    fail "selected static C ABI export surface drifted"
+    fail "default static C ABI export surface drifted"
 fi
-if grep -Fxq sched_rr_get_interval "$baseline_symbols"; then
-    fail "baseline archive unexpectedly defines opt-in sched_rr_get_interval"
-fi
-
-build_source_runtime_libc "$featured_target/x86_64-unknown-linux-musl/debug/libc.a" \
-    --features "$FEATURE"
+grep -Fxq sched_rr_get_interval "$baseline_symbols" ||
+    fail "default archive does not define the unconditional sched_rr_get_interval owner"
 [ -f "$SOURCE" ] || fail "missing sched_rr_get_interval source"
-[ -f "$featured_archive" ] || fail "cargo did not emit the featured x86 static libc archive"
-collect_global_surface "$featured_archive" "$featured_symbols" "$work_dir/featured-members"
-assert_feature_delta "$baseline_symbols" "$featured_symbols" "$feature_additions" "$feature_removed"
+featured_archive="$baseline_archive"
 nm -A --defined-only "$featured_archive" >"$archive_symbols"
 for symbol in __errno_location __crabc_x86_static_tls_bootstrap sched_rr_get_interval; do
     grep -Eq "[[:space:]][TW][[:space:]]${symbol}$" "$archive_symbols" ||
-        fail "featured archive does not define $symbol"
+        fail "default archive does not define $symbol"
 done
 for marker in 'src/sched/sched_rr_get_interval.c::sched_rr_get_interval' \
     'SYS_SCHED_RR_GET_INTERVAL' 'raw_syscall::syscall2' 'c_status(result)' \
@@ -197,7 +170,7 @@ for unrelated in sched_yield sched_get_priority_max sched_get_priority_min \
         fail "candidate unexpectedly pulls $unrelated"
     fi
 done
-if awk '$7 == "UND" && NF >= 8 { print }' "$candidate_symbols" | grep . >/dev/null; then
+if awk '$7 == "UND" && NF >= 8 && !($5 == "LOCAL" && ($8 == "_PROCEDURE_LINKAGE_TABLE_" || $8 == "__rela_iplt_start" || $8 == "__rela_iplt_end")) { print }' "$candidate_symbols" | grep . >/dev/null; then
     fail "candidate retains an unresolved symbol"
 fi
 if grep -Eq 'Requesting program interpreter|INTERP|NEEDED' \

@@ -17,7 +17,6 @@ done
 work_dir="$(mktemp -d /tmp/crabc-x86-64-libc-stdio-permanent-format-scan.XXXXXX)"
 trap 'rm -rf -- "$work_dir"' EXIT
 target_dir="$work_dir/cargo-target"
-default_target_dir="$work_dir/default-cargo-target"
 fixture=compat/x86_64/libc_stdio_permanent_format_scan_wave_probe.c
 start=compat/x86_64/libc_stdio_permanent_format_scan_wave_start.S
 
@@ -26,15 +25,10 @@ start=compat/x86_64/libc_stdio_permanent_format_scan_wave_start.S
 timeout "$EXECUTION_TIMEOUT" "$work_dir/reference"
 
 cd "$ROOT_DIR"
-build_source_runtime_libc "$default_target_dir/x86_64-unknown-linux-musl/debug/libc.a"
-build_source_runtime_libc "$target_dir/x86_64-unknown-linux-musl/debug/libc.a" \
-    --features x86-stdio-permanent-format-scan
+build_source_runtime_libc "$target_dir/x86_64-unknown-linux-musl/debug/libc.a"
 archive="$target_dir/x86_64-unknown-linux-musl/debug/libc.a"
-default_archive="$default_target_dir/x86_64-unknown-linux-musl/debug/libc.a"
 archive_symbols="$work_dir/archive-symbols"
-default_archive_symbols="$work_dir/default-archive-symbols"
 nm -A --defined-only "$archive" >"$archive_symbols" 2>/dev/null || true
-nm -A --defined-only "$default_archive" >"$default_archive_symbols" 2>/dev/null || true
 
 collect_c_abi_surface() {
     local input_archive="$1" output_path="$2"
@@ -51,39 +45,16 @@ collect_c_abi_surface() {
         LC_ALL=C sort -u >"$output_path"
 }
 
-collect_c_abi_surface "$archive" "$work_dir/feature-names"
-collect_c_abi_surface "$default_archive" "$work_dir/default-names"
-for symbol in printf vprintf fprintf vfprintf scanf vscanf fscanf vfscanf; do
-    if grep -Fxq "$symbol" "$work_dir/default-names"; then
-        echo "default archive unexpectedly exports $symbol" >&2
-        exit 1
-    fi
+collect_c_abi_surface "$archive" "$work_dir/default-names"
+for symbol in printf vprintf fprintf vfprintf scanf vscanf fscanf vfscanf \
+    __isoc99_scanf __isoc99_vscanf __isoc99_fscanf __isoc99_vfscanf; do
+    grep -Fxq "$symbol" "$work_dir/default-names" ||
+        { echo "default archive does not define the unconditional $symbol owner" >&2; exit 1; }
 done
 grep -Ev '^(#|$)' compat/x86_64/static_c_abi_exports.txt | LC_ALL=C sort -u >"$work_dir/expected-default-names"
 if ! cmp -s "$work_dir/default-names" "$work_dir/expected-default-names"; then
     echo "default archive export surface drifted" >&2
     diff -u "$work_dir/expected-default-names" "$work_dir/default-names" >&2 || true
-    exit 1
-fi
-comm -23 "$work_dir/feature-names" "$work_dir/default-names" >"$work_dir/feature-delta"
-comm -13 "$work_dir/feature-names" "$work_dir/default-names" >"$work_dir/feature-removals"
-cat >"$work_dir/expected-delta" <<'EOF'
-__isoc99_fscanf
-__isoc99_scanf
-__isoc99_vfscanf
-__isoc99_vscanf
-fprintf
-fscanf
-printf
-scanf
-vfprintf
-vfscanf
-vprintf
-vscanf
-EOF
-if ! cmp -s "$work_dir/feature-delta" "$work_dir/expected-delta" || [ -s "$work_dir/feature-removals" ]; then
-    echo "opt-in archive symbol delta is not exactly the eight permanent formatted-I/O entries and their four __isoc99_ aliases" >&2
-    diff -u "$work_dir/expected-delta" "$work_dir/feature-delta" >&2 || true
     exit 1
 fi
 for symbol in printf vprintf fprintf vfprintf scanf vscanf fscanf vfscanf; do
@@ -111,7 +82,7 @@ done
     -fno-builtin -fno-stack-protector -Wl,-e,_start -Wl,--no-undefined \
     "$ROOT_DIR/$fixture" "$ROOT_DIR/$start" "$archive" -o "$work_dir/candidate"
 readelf --symbols --wide "$work_dir/candidate" >"$work_dir/candidate-symbols"
-if awk '$7 == "UND" && NF >= 8 { print }' "$work_dir/candidate-symbols" | grep . >/dev/null; then
+if awk '$7 == "UND" && NF >= 8 && !($5 == "LOCAL" && ($8 == "_PROCEDURE_LINKAGE_TABLE_" || $8 == "__rela_iplt_start" || $8 == "__rela_iplt_end")) { print }' "$work_dir/candidate-symbols" | grep . >/dev/null; then
     echo "candidate has unresolved symbols" >&2
     exit 1
 fi

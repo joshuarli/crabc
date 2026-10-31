@@ -26,9 +26,9 @@ rule.
 DES crypt, BSDI extended DES, MD5-crypt (`$1$`), and bcrypt
 (`$2a$`/`$2y$`) remain intentionally unsupported crypt semantics. The shared
 x86 `libc/src/c_abi/x86_64/legacy_des_compat.rs` owner supplies inert link-compatible
-`encrypt`/`setkey` names through the narrow `x86-legacy-des-compat` feature.
-The owned-static runtime selects that feature directly, while selected-private
-`legacy.misc` depends on it and contributes its separate `fmtmsg` owner. They
+`encrypt`/`setkey` names through the unconditional inert DES owner. The
+default archive and owned-static runtime export that pair, while
+selected-private `legacy.misc` contributes its separate `fmtmsg` owner. They
 neither implement nor imply DES, a cipher, PRNG, or any cryptographic service. The private
 `__crypt_*` symbols remain exported where the existing ABI inventory requires
 them, but unsupported formats return the conventional `*` marker.

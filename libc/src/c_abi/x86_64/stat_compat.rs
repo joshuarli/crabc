@@ -75,12 +75,10 @@ pub struct Stat {
 /// the mode/device/inode observations needed by a bounded path operation.
 /// The public C record remains owned by this module and is borrowed only for
 /// the duration of a sibling callback.
-#[cfg(feature = "x86-filesystem-traversal")]
 pub(super) struct PathMetadata {
     record: Stat,
 }
 
-#[cfg(feature = "x86-filesystem-traversal")]
 impl PathMetadata {
     #[inline]
     pub(super) fn zeroed() -> Self {
@@ -256,7 +254,6 @@ unsafe fn newfstatat(
 /// syscall duration. The boolean selects ordinary following `stat` versus a
 /// final-symlink-preserving `lstat` lookup.
 #[inline(always)]
-#[cfg(feature = "x86-filesystem-traversal")]
 pub(super) unsafe fn path_metadata(
     path: *const c_char,
     follow_final_symlink: bool,

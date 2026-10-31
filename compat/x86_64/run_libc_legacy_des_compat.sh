@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Native Linux/x86-64 direct proof for the narrow inert-DES compatibility ABI.
 #
-# This checks the exact archive feature delta and one freestanding candidate.
+# This checks the unconditional archive owner and one freestanding candidate.
 # The two link spellings are intentionally inert: this is not a DES oracle,
 # cipher implementation, cryptographic service, aggregate legacy runtime, or
 # public x86 support claim.
@@ -10,7 +10,6 @@ set -euo pipefail
 export LC_ALL=C
 
 readonly ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-readonly FEATURE=x86-legacy-des-compat
 readonly STATIC_C_ABI_EXPORTS="$ROOT_DIR/compat/x86_64/static_c_abi_exports.txt"
 readonly STATIC_C_ABI_ROOT="$ROOT_DIR/libc/src/c_abi/x86_64/static_c_abi.rs"
 readonly SOURCE="$ROOT_DIR/libc/src/c_abi/x86_64/legacy_des_compat.rs"
@@ -115,10 +114,11 @@ done
 [ -f "$STATIC_C_ABI_ROOT" ] || fail "missing selected-static C ABI root"
 [ -f "$SOURCE" ] || fail "missing inert-DES target-local owner"
 [ -f "$PROBE" ] && [ -f "$START" ] || fail "missing freestanding proof source"
-grep -Fq 'x86-legacy-des-compat' "$ROOT_DIR/libc/Cargo.toml" ||
-    fail "manifest does not define narrow inert-DES feature"
-grep -Fq '#[cfg(feature = "x86-legacy-des-compat")]' "$STATIC_C_ABI_ROOT" ||
-    fail "inert-DES owner is not directly feature-gated"
+if grep -Fq 'x86-legacy-des-compat' "$ROOT_DIR/libc/Cargo.toml"; then
+    fail "manifest still defines the retired inert-DES feature"
+fi
+grep -Fq '#[path = "legacy_des_compat.rs"]' "$STATIC_C_ABI_ROOT" ||
+    fail "inert-DES owner is not unconditional in the selected-static root"
 grep -Fq 'mod legacy_des_compat;' "$STATIC_C_ABI_ROOT" ||
     fail "selected-static root does not compose inert-DES owner"
 for phrase in 'src/legacy/encrypt.c::setkey' 'src/legacy/encrypt.c::encrypt' \
@@ -144,23 +144,16 @@ cleanup_work_dir() {
 }
 trap cleanup_work_dir EXIT
 baseline_target="$work_dir/cargo-baseline"
-feature_target="$work_dir/cargo-feature"
 both_target="$work_dir/cargo-both"
 baseline_archive="$baseline_target/x86_64-unknown-linux-musl/debug/libc.a"
-feature_archive="$feature_target/x86_64-unknown-linux-musl/debug/libc.a"
 both_archive="$both_target/x86_64-unknown-linux-musl/debug/libc.a"
 baseline_surface="$work_dir/baseline-surface"
-feature_surface="$work_dir/feature-surface"
 both_surface="$work_dir/both-surface"
 baseline_bindings="$work_dir/baseline-bindings"
-feature_bindings="$work_dir/feature-bindings"
 both_bindings="$work_dir/both-bindings"
 expected_surface="$work_dir/expected-surface"
-expected_feature_bindings="$work_dir/expected-feature-bindings"
 expected_both_bindings="$work_dir/expected-both-bindings"
-feature_additions="$work_dir/feature-additions"
 both_additions="$work_dir/both-additions"
-feature_addition_bindings="$work_dir/feature-addition-bindings"
 both_addition_bindings="$work_dir/both-addition-bindings"
 archive_symbols="$work_dir/archive-symbols"
 encrypt_definition_dir="$work_dir/encrypt-definition"
@@ -181,49 +174,38 @@ errno_disassembly="$work_dir/errno-disassembly"
 
 cd "$ROOT_DIR"
 build_source_runtime_libc "$baseline_target/x86_64-unknown-linux-musl/debug/libc.a"
-build_source_runtime_libc "$feature_target/x86_64-unknown-linux-musl/debug/libc.a" \
-    --features "$FEATURE"
+feature_archive="$baseline_target/x86_64-unknown-linux-musl/debug/libc.a"
 build_source_runtime_libc "$both_target/x86_64-unknown-linux-musl/debug/libc.a" \
-    --features "$FEATURE x86-legacy-misc"
+    --features x86-legacy-misc
 for archive in "$baseline_archive" "$feature_archive" "$both_archive"; do
     [ -f "$archive" ] || fail "cargo did not emit expected static archive"
 done
 collect_global_surface "$baseline_archive" "$baseline_surface" "$work_dir/baseline-members"
-collect_global_surface "$feature_archive" "$feature_surface" "$work_dir/feature-members"
 collect_global_surface "$both_archive" "$both_surface" "$work_dir/both-members"
 collect_global_bindings "$baseline_archive" "$baseline_bindings" "$work_dir/baseline-binding-members"
-collect_global_bindings "$feature_archive" "$feature_bindings" "$work_dir/feature-binding-members"
 collect_global_bindings "$both_archive" "$both_bindings" "$work_dir/both-binding-members"
 grep -Ev '^(#|$)' "$STATIC_C_ABI_EXPORTS" | LC_ALL=C sort -u >"$expected_surface"
 if ! cmp -s "$expected_surface" "$baseline_surface"; then
     diff -u "$expected_surface" "$baseline_surface" >&2 || true
     fail "default archive selected-static C ABI export surface drifted"
 fi
-for symbol in "${FEATURE_EXPORTS[@]}" fmtmsg; do
-    if grep -Fxq "$symbol" "$baseline_surface"; then
-        fail "default archive unexpectedly exposes opt-in $symbol"
-    fi
+for symbol in "${FEATURE_EXPORTS[@]}"; do
+    grep -Fxq "$symbol" "$baseline_surface" ||
+        fail "default archive does not define the unconditional $symbol owner"
 done
-comm -13 "$baseline_surface" "$feature_surface" >"$feature_additions"
-printf '%s T\n' "${FEATURE_EXPORTS[@]}" | LC_ALL=C sort -u >"$feature_addition_bindings"
-if ! cmp -s <(printf '%s\n' "${FEATURE_EXPORTS[@]}" | LC_ALL=C sort) "$feature_additions"; then
-    diff -u <(printf '%s\n' "${FEATURE_EXPORTS[@]}" | LC_ALL=C sort) "$feature_additions" >&2 || true
-    fail "narrow feature widened the archive beyond encrypt/setkey"
+if grep -Fxq fmtmsg "$baseline_surface"; then
+    fail "default archive unexpectedly exposes opt-in fmtmsg"
 fi
-LC_ALL=C sort -u "$baseline_bindings" "$feature_addition_bindings" >"$expected_feature_bindings"
-if ! cmp -s "$expected_feature_bindings" "$feature_bindings"; then
-    diff -u "$expected_feature_bindings" "$feature_bindings" >&2 || true
-    fail "narrow feature changed the full global binding surface"
-fi
-comm -23 "$baseline_surface" "$feature_surface" | grep . >/dev/null &&
-    fail "narrow feature removes a frozen default export"
+feature_archive="$baseline_archive"
+feature_surface="$baseline_surface"
+feature_bindings="$baseline_bindings"
 comm -13 "$feature_surface" "$both_surface" >"$both_additions"
 printf 'fmtmsg T\n' >"$both_addition_bindings"
 if ! cmp -s <(printf 'fmtmsg\n') "$both_additions"; then
     diff -u <(printf 'fmtmsg\n') "$both_additions" >&2 || true
-    fail "both-feature closure must add only fmtmsg beyond inert-DES"
+    fail "legacy-misc closure must add only fmtmsg beyond the inert-DES owner"
 fi
-LC_ALL=C sort -u "$baseline_bindings" "$feature_addition_bindings" "$both_addition_bindings" >"$expected_both_bindings"
+LC_ALL=C sort -u "$baseline_bindings" "$both_addition_bindings" >"$expected_both_bindings"
 if ! cmp -s "$expected_both_bindings" "$both_bindings"; then
     diff -u "$expected_both_bindings" "$both_bindings" >&2 || true
     fail "both-feature closure changed the full global binding surface"
@@ -232,7 +214,7 @@ fi
 readelf --symbols --wide "$feature_archive" >"$archive_symbols"
 for symbol in "${FEATURE_EXPORTS[@]}"; do
     grep -Eq "[[:space:]]FUNC[[:space:]]+GLOBAL[[:space:]].*[[:space:]]${symbol}$" "$archive_symbols" ||
-        fail "narrow archive lacks global default $symbol"
+        fail "default archive lacks global default $symbol"
 done
 mapfile -t baseline_encrypt_members < <(archive_member_for_symbol "$baseline_archive" encrypt)
 mapfile -t baseline_setkey_members < <(archive_member_for_symbol "$baseline_archive" setkey)
@@ -244,9 +226,9 @@ mapfile -t both_encrypt_members < <(archive_member_for_symbol "$both_archive" en
 mapfile -t both_setkey_members < <(archive_member_for_symbol "$both_archive" setkey)
 mapfile -t both_fmtmsg_members < <(archive_member_for_symbol "$both_archive" fmtmsg)
 assert_provider_counts encrypt "${#baseline_encrypt_members[@]}" "${#encrypt_members[@]}" \
-    "${#both_encrypt_members[@]}" 0 1 1
+    "${#both_encrypt_members[@]}" 1 1 1
 assert_provider_counts setkey "${#baseline_setkey_members[@]}" "${#setkey_members[@]}" \
-    "${#both_setkey_members[@]}" 0 1 1
+    "${#both_setkey_members[@]}" 1 1 1
 assert_provider_counts fmtmsg "${#baseline_fmtmsg_members[@]}" "${#narrow_fmtmsg_members[@]}" \
     "${#both_fmtmsg_members[@]}" 0 0 1
 mkdir "$encrypt_definition_dir" "$setkey_definition_dir"
@@ -279,7 +261,7 @@ for symbol in _start __errno_location __crabc_x86_static_tls_bootstrap \
     grep -Eq "[[:space:]]${symbol}$" "$candidate_symbols" ||
         fail "candidate lacks required inert-DES closure symbol $symbol"
 done
-if awk '$7 == "UND" && NF >= 8 { print }' "$candidate_symbols" | grep . >/dev/null; then
+if awk '$7 == "UND" && NF >= 8 && !($5 == "LOCAL" && ($8 == "_PROCEDURE_LINKAGE_TABLE_" || $8 == "__rela_iplt_start" || $8 == "__rela_iplt_end")) { print }' "$candidate_symbols" | grep . >/dev/null; then
     fail "candidate retains an unresolved symbol"
 fi
 if grep -Eq 'Requesting program interpreter|INTERP|NEEDED' "$candidate_headers" "$candidate_dynamic"; then

@@ -989,8 +989,8 @@ class RuntimeReceiptAttachmentTests(unittest.TestCase):
             )
         inputs = {
             'provider_disposition': {
-                'default_static': {'members': ['__errno_location']},
-                'verified_feature_archives': [{'id': 'x86-h-errno', 'members': ['__h_errno_location']}],
+                'default_static': {'members': ['__errno_location', '__h_errno_location']},
+                'verified_feature_archives': [],
             },
         }
         accounting = self.errno_storage_accounting()
@@ -998,10 +998,9 @@ class RuntimeReceiptAttachmentTests(unittest.TestCase):
         self.assertEqual(len(joins), 1)
         self.assertEqual([row['identity']['name'] for row in joins[0]['public_identities']],
                          ['__errno_location', '__h_errno_location', 'h_errno'])
-        self.assertEqual(
+        self.assertIsNone(
             next(row for row in joins[0]['public_identities']
                  if row['identity']['name'] == '__h_errno_location')['feature_owner'],
-            'x86-h-errno',
         )
         self.assertTrue(joins[0]['private_alias']['shared_dynsym_absent'])
         self.assertEqual(joins[0]['private_alias']['identity']['name'], '___errno_location')
@@ -1056,11 +1055,11 @@ class RuntimeReceiptAttachmentTests(unittest.TestCase):
         joins = selection.attach_errno_storage_lifecycle(accounting, companion, inputs)
         rows = {row['identity']['name']: row for row in joins[0]['public_identities']}
         self.assertEqual(rows['__h_errno_location']['owner'], 'checked-header-provider-routing')
-        self.assertEqual(rows['__h_errno_location']['feature_owner'], 'x86-h-errno')
+        self.assertIsNone(rows['__h_errno_location']['feature_owner'])
         missing_feature = copy.deepcopy(inputs)
-        missing_feature['provider_disposition']['verified_feature_archives'] = [
-            row for row in missing_feature['provider_disposition']['verified_feature_archives']
-            if row.get('id') != 'x86-h-errno'
+        missing_feature['provider_disposition']['default_static']['members'] = [
+            member for member in missing_feature['provider_disposition']['default_static']['members']
+            if member != '__h_errno_location'
         ]
         fresh_accounting = {
             'identities': copy.deepcopy(selected['identities']),

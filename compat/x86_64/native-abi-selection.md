@@ -209,8 +209,8 @@ private `___errno_location` same-definition alias. The alias remains a static
 dynamic export; it is never selected as a public callable. The runtime receipt
 proves main/live-worker accessor behavior and pointer lifetime within its own
 contract. `__h_errno_location` keeps the assembled
-`checked-header-provider-routing` owner while the exact `x86-h-errno` feature
-roster remains a required receipt precondition; the feature membership does not
+`checked-header-provider-routing` owner while the default-static provider
+partition records `__h_errno_location` as a required receipt precondition; the feature membership does not
 rewrite that selected provider route. Without that receipt, the private alias retains its own unresolved
 component requirement even when its static and shared metadata match. It also
 retains the source-required four-byte `h_errno` alignment in each static
@@ -257,8 +257,7 @@ completion, promotion, or public support.
 
 The expanded FILE receipt observes 42 aliases across its five exact source
 owners. `attach_native_stdio_alias` binds the 39 aliases with outstanding
-feature-receipt obligations: four narrow scan aliases belong to
-`x86-stdio-permanent-format-scan`; the other 35 belong to
+feature-receipt obligations: all 39 aliases with outstanding receipt obligations belong to
 `x86-owned-static-runtime`. `__getdelim`, `__isoc99_sscanf`, and
 `__isoc99_vsscanf` remain observed in the owning receipt but acquire no
 invented selector obligation or discharge. The three hidden bodies and two
@@ -739,9 +738,9 @@ from complete ELF facts. The bootstrap join binds the jump-tail source owner
 without creating an exported helper. All attached structural identities must have
 no candidate ELF occurrence, including local definitions and imports.
 
-The isolated binary80 reader requires an empty baseline feature set and
-exactly `x86-math-long-double-completion` when enabled. It reconstructs the
-archive additions and the weak same-address `pow10l` alias of `exp10l`.
+The isolated binary80 reader requires an empty feature set. It reconstructs
+the unconditional archive additions and the weak same-address `pow10l` alias
+of `exp10l`.
 The `pow10l` join also requires selected-product installed math proof and
 preserves every current product-placement blocker.
 

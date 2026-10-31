@@ -181,8 +181,8 @@ class ComponentAttachmentTests(unittest.TestCase):
     def feature(self):
         symbol = {'member_index': 1, 'member': 'math.o', 'section': '4', 'value': '0000000000000000',
                   'binding': 'GLOBAL', 'type': 'FUNC', 'visibility': 'DEFAULT'}
-        return {'baseline_features': [], 'enabled_features': ['x86-math-long-double-completion'],
-                'additions': ['exp10l', 'fdiml', 'pow10l'],
+        return {'baseline_features': [], 'enabled_features': [],
+                'additions': [],
                 'archive_symbols': {'exp10l': symbol, 'pow10l': {**symbol, 'binding': 'WEAK'}}}
 
     def test_pow10l_keeps_current_product_placement_blockers(self):
@@ -196,7 +196,8 @@ class ComponentAttachmentTests(unittest.TestCase):
 
     def test_binary80_reader_rejects_profile_or_same_address_alias_drift(self):
         for field, value in (('baseline_features', ['x86-owned-static-runtime']),
-                             ('enabled_features', []), ('additions', ['pow10l'])):
+                             ('enabled_features', ['x86-math-long-double-completion']),
+                             ('additions', ['pow10l'])):
             feature = self.feature()
             feature[field] = value
             with mock.patch.object(math, 'validate_binary80_feature_work', return_value=feature):

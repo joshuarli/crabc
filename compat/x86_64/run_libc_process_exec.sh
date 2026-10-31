@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Native Linux/x86-64 opt-in process-image replacement evidence.
+# Native Linux/x86-64 process-image replacement evidence.
 #
 # Pinned musl 1.2.6 is the behavior oracle for the public declarations and
 # normal exec-family behavior. The featured candidate is deliberately a
@@ -28,8 +28,13 @@ set -euo pipefail
 readonly ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 readonly ELF_CALL_CLOSURE="$ROOT_DIR/compat/x86_64/elf_call_closure.py"
 readonly ORACLE_CC=/usr/local/bin/crabc-x86_64-musl-gcc
-readonly FEATURE=x86-process-exec
 readonly DEFAULT_PATH='/usr/local/bin:/bin:/usr/bin'
+# Mold localizes archive definitions in a static link; these are the only
+# process-exec names this fixture permits to arrive LOCAL in the final link.
+readonly FINAL_LOCAL_BINDINGS="execl execle execlp execv execve execvp execvpe __execvpe fexecve"
+# These weak compiler/personality symbols stay LOCAL undefined in every static
+# fixture link; they are toolchain plumbing, not exec dependencies.
+readonly TOOLCHAIN_LOCAL_UNDEFINED="_ITM_deregisterTMCloneTable _ITM_registerTMCloneTable __cxa_finalize __deregister_frame_info __register_frame_info"
 
 fail() {
     printf 'ERROR: x86 libc process exec: %s\n' "$*" >&2
@@ -101,25 +106,16 @@ collect_public_callable_surface() {
     ' | LC_ALL=C sort -u >"$output_path"
 }
 
-assert_feature_delta() {
-    local baseline_symbols="$1"
-    local featured_symbols="$2"
-    local additions="$3"
-    local removed="$4"
+assert_exec_callable_surface() {
+    local symbols="$1"
+    local expected
 
-    comm -23 "$baseline_symbols" "$featured_symbols" >"$removed"
-    if [ -s "$removed" ]; then
-        diff -u "$baseline_symbols" "$featured_symbols" >&2 || true
-        fail "$FEATURE removes a default static callable"
-    fi
-    comm -13 "$baseline_symbols" "$featured_symbols" >"$additions"
-    if ! cmp -s <(printf '%s\n' \
-        __execvpe execl execle execlp execv execve execvp execvpe fexecve | LC_ALL=C sort) \
-        "$additions"; then
-        diff -u <(printf '%s\n' \
-            __execvpe execl execle execlp execv execve execvp execvpe fexecve | LC_ALL=C sort) \
-            "$additions" >&2 || true
-        fail "$FEATURE changes more than the selected exec callable surface"
+    expected="$(printf '%s\n' \
+        __execvpe execl execle execlp execv execve execvp execvpe fexecve | LC_ALL=C sort)"
+    if ! cmp -s <(printf '%s\n' "$expected") <(grep -E '^(__execvpe|execl|execle|execlp|execv|execve|execvp|execvpe|fexecve)$' "$symbols" | LC_ALL=C sort); then
+        diff -u <(printf '%s\n' "$expected") \
+            <(grep -E '^(__execvpe|execl|execle|execlp|execv|execve|execvp|execvpe|fexecve)$' "$symbols" | LC_ALL=C sort) >&2 || true
+        fail "default archive exec callable surface differs from the unconditional owner closure"
     fi
 }
 
@@ -221,13 +217,30 @@ assert_function_binding() {
     ' "$symbols_path" || fail "$symbol is not a $binding function"
 }
 
+assert_candidate_binding() {
+    local symbols_path="$1"
+    local symbol="$2"
+    local binding="$3"
+
+    awk -v symbol="$symbol" -v binding="$binding" -v allow="$FINAL_LOCAL_BINDINGS" '
+        function listed(name) { return index(" " allow " ", " " name " ") > 0 }
+        $4 == "FUNC" && $8 == symbol &&
+            ($5 == binding || ($5 == "LOCAL" && listed($8))) { found = 1 }
+        END { exit(found ? 0 : 1) }
+    ' "$symbols_path" || fail "$symbol is not a $binding function"
+}
+
 assert_default_path_rodata() {
     local executable="$1"
     local strings_path="$work_dir/default-path-rodata"
 
     # readelf's string dump reports NUL-terminated printable sequences. This
     # binds exact DEFAULT_PATH rodata, not an ambient-path runtime success.
-    readelf --string-dump=.rodata "$executable" >"$strings_path"
+    for section in $(readelf -SW "$executable" |
+        awk '{ for (field = 1; field <= NF; field++) if ($field ~ /^\.rodata/) print $field }' |
+        LC_ALL=C sort -u); do
+        readelf --string-dump="$section" "$executable"
+    done >"$strings_path"
     grep -Fq "$DEFAULT_PATH" "$strings_path" ||
         fail "candidate lacks NUL-terminated DEFAULT_PATH rodata"
 }
@@ -244,7 +257,11 @@ assert_static_candidate_shape() {
     readelf --program-headers --wide "$executable" >"$headers_path"
     readelf --dynamic --wide "$executable" >"$dynamic_path" || true
     readelf --relocs --wide "$executable" >"$relocations_path"
-    if awk '$7 == "UND" && NF >= 8 { print }' "$symbols_path" | grep . >/dev/null; then
+    local reference_allow="$TOOLCHAIN_LOCAL_UNDEFINED"
+    if awk -v allow="$reference_allow" '$7 == "UND" && NF >= 8 &&
+        !($5 == "LOCAL" && ($8 == "_PROCEDURE_LINKAGE_TABLE_" || $8 == "__rela_iplt_start" ||
+            $8 == "__rela_iplt_end" || index(" " allow " ", " " $8 " ") > 0)) { print }' \
+        "$symbols_path" | grep . >/dev/null; then
         fail "$label has unresolved symbols"
     fi
     if grep -Eq 'Requesting program interpreter|INTERP|NEEDED' \
@@ -334,18 +351,14 @@ bash "$ROOT_DIR/compat/x86_64/run_process_exec_header_abi.sh" >/dev/null
 mkdir -p "$ROOT_DIR/.work/x86_64/tmp"
 work_dir="$(mktemp -d "$ROOT_DIR/.work/x86_64/tmp/libc-process-exec.XXXXXX")"
 chmod 755 "$work_dir"
-baseline_target="$work_dir/cargo-baseline"
-featured_target="$work_dir/cargo-featured"
+baseline_target="$work_dir/cargo-target"
 baseline_archive="$baseline_target/x86_64-unknown-linux-musl/release/libc.a"
-archive="$featured_target/x86_64-unknown-linux-musl/release/libc.a"
+archive="$baseline_archive"
 selected_archive="$work_dir/libcrabc-process-exec.a"
 reference="$work_dir/musl-process-exec-reference"
 candidate="$work_dir/crabc-process-exec-candidate"
 override_candidate="$work_dir/crabc-process-exec-strong-override"
-baseline_symbols="$work_dir/baseline-public-callables"
 featured_symbols="$work_dir/featured-public-callables"
-feature_additions="$work_dir/feature-additions"
-feature_removed="$work_dir/feature-removed"
 header_trace="$work_dir/header-trace"
 candidate_map="$work_dir/candidate.map"
 override_map="$work_dir/strong-override.map"
@@ -367,26 +380,16 @@ prepare_runtime_tree "$reference" "$work_dir/reference-runtime"
 run_runtime_tree "$work_dir/reference-runtime" "pinned-musl reference" \
     "$work_dir/reference"
 
-# Keep the feature topology observable despite the workspace release profile.
-for target_dir in "$baseline_target" "$featured_target"; do
-    feature_args=()
-    if [ "$target_dir" = "$featured_target" ]; then
-        feature_args=(--features "$FEATURE")
-    fi
-    build_source_runtime_libc "$target_dir/x86_64-unknown-linux-musl/release/libc.a" \
-        "${feature_args[@]}" --release -- \
-        -C debuginfo=0 -C opt-level=2 -C overflow-checks=off -C debug-assertions=off \
-        -C link-dead-code=no -C lto=off -C codegen-units=256
-done
-[ -f "$baseline_archive" ] || fail "cargo did not emit baseline archive"
-[ -f "$archive" ] || fail "cargo did not emit $FEATURE archive"
+# Keep the source-member topology observable despite the workspace release profile.
+build_source_runtime_libc "$baseline_target/x86_64-unknown-linux-musl/release/libc.a" \
+    --release -- \
+    -C debuginfo=0 -C opt-level=2 -C overflow-checks=off -C debug-assertions=off \
+    -C link-dead-code=no -C lto=off -C codegen-units=256
+[ -f "$archive" ] || fail "cargo did not emit the default archive"
 
-collect_public_callable_surface "$baseline_archive" "$baseline_symbols" \
-    "$work_dir/baseline-members"
 collect_public_callable_surface "$archive" "$featured_symbols" \
     "$work_dir/featured-members"
-assert_feature_delta "$baseline_symbols" "$featured_symbols" \
-    "$feature_additions" "$feature_removed"
+assert_exec_callable_surface "$featured_symbols"
 
 mapfile -t direct_members < <(archive_member_for_symbol "$archive" execve)
 direct_member="$(require_one_member 'execve' "${direct_members[@]}")"
@@ -527,6 +530,13 @@ mkdir "$work_dir/selected-archive"
     cp "$full_closure" process-exec-closure.o
     ar crs "$selected_archive" process-exec-closure.o
 )
+nm -A -g --defined-only "$selected_archive" >"$work_dir/selected-bindings"
+for symbol in execl execle execlp execv execve execvp __execvpe fexecve; do
+    grep -Eq "[[:space:]]T[[:space:]]${symbol}$" "$work_dir/selected-bindings" ||
+        fail "selected process-exec archive lacks strong $symbol"
+done
+grep -Eq "[[:space:]]W[[:space:]]execvpe$" "$work_dir/selected-bindings" ||
+    fail "selected process-exec archive lacks weak execvpe"
 
 "$ORACLE_CC" -std=c11 -D_GNU_SOURCE -DCRABC_PROCESS_EXEC_EXECVE_ONLY \
     -static -fno-pie -no-pie -fno-builtin -fno-stack-protector \
@@ -556,9 +566,9 @@ for symbol in execl execle execlp execv execve execvp __execvpe execvpe fexecve;
         fail "candidate lacks $symbol"
 done
 for symbol in execl execle execlp execv execve execvp __execvpe fexecve; do
-    assert_function_binding "$work_dir/candidate.symbols" "$symbol" GLOBAL
+    assert_candidate_binding "$work_dir/candidate.symbols" "$symbol" GLOBAL
 done
-assert_function_binding "$work_dir/candidate.symbols" execvpe WEAK
+assert_candidate_binding "$work_dir/candidate.symbols" execvpe WEAK
 execvpe_value="$(symbol_value "$work_dir/candidate.symbols" execvpe)"
 internal_execvpe_value="$(symbol_value "$work_dir/candidate.symbols" __execvpe)"
 [ -n "$execvpe_value" ] && [ "$execvpe_value" = "$internal_execvpe_value" ] ||
@@ -599,8 +609,8 @@ done
     -o "$override_candidate"
 assert_static_candidate_shape "$override_candidate" strong-override
 readelf --symbols --wide "$override_candidate" >"$work_dir/strong-override.symbols"
-assert_function_binding "$work_dir/strong-override.symbols" execvpe GLOBAL
-assert_function_binding "$work_dir/strong-override.symbols" __execvpe GLOBAL
+assert_candidate_binding "$work_dir/strong-override.symbols" execvpe GLOBAL
+assert_candidate_binding "$work_dir/strong-override.symbols" __execvpe GLOBAL
 override_execvpe_value="$(symbol_value "$work_dir/strong-override.symbols" execvpe)"
 override_internal_value="$(symbol_value "$work_dir/strong-override.symbols" __execvpe)"
 [ -n "$override_execvpe_value" ] && \

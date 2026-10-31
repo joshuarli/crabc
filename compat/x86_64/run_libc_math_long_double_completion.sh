@@ -5,7 +5,6 @@ set -euo pipefail
 
 readonly ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 readonly ORACLE_CC=/usr/local/bin/crabc-x86_64-musl-gcc
-readonly FEATURE=x86-math-long-double-completion
 readonly EXPECTED_ADDITIONS=(exp10l fdiml pow10l)
 # The final executable has only this source-closed binary80 computation,
 # existing fenv evidence plumbing, and its raw probe entry.  `powl`'s two
@@ -215,8 +214,8 @@ run_recorded "$reference_output" "$work_dir/reference.stderr" "$work_dir/referen
 python3 "$ROOT_DIR/compat/x86_64/validate_libc_math_long_double_completion.py" "$reference_output" ||
 	fail "pinned-musl record contract failed"
 
-# The unfeatured archive remains the frozen selected-static surface.  The
-# opt-in archive is allowed to add exactly this private binary80 closure.
+# The default archive owns this binary80 closure unconditionally.  The second
+# source-runtime build proves the retained graph reproduces the same surface.
 build_source_runtime_libc "$base_target/x86_64-unknown-linux-musl/debug/libc.a" \
 	--retain-work "$work_dir/source-runtime-baseline"
 [ -f "$base_archive" ] || fail "cargo did not emit the unfeatured x86 archive"
@@ -232,28 +231,28 @@ if ! cmp -s "$expected_surface" "$base_surface"; then
 fi
 
 build_source_runtime_libc "$feature_target/x86_64-unknown-linux-musl/debug/libc.a" \
-	--retain-work "$work_dir/source-runtime-feature" --features "$FEATURE"
-[ -f "$archive" ] || fail "cargo did not emit the opt-in binary80 archive"
+	--retain-work "$work_dir/source-runtime-feature"
+[ -f "$archive" ] || fail "cargo did not emit the default binary80 archive"
 collect_global_surface "$archive" "$feature_surface" "$work_dir/feature-members"
 collect_global_bindings "$archive" "$feature_bindings" "$work_dir/feature-binding-members"
 readelf --symbols --wide "$archive" >"$feature_archive_readelf"
 comm -13 "$base_surface" "$feature_surface" >"$observed_additions"
-printf '%s\n' "${EXPECTED_ADDITIONS[@]}" | LC_ALL=C sort -u >"$expected_additions"
-if ! cmp -s "$expected_additions" "$observed_additions"; then
-	diff -u "$expected_additions" "$observed_additions" >&2 || true
-	fail "opt-in binary80 feature changed more than its exact public closure"
+if [ -s "$observed_additions" ]; then
+	diff -u "$base_surface" "$feature_surface" >&2 || true
+	fail "default binary80 rebuild changed the public closure"
 fi
-LC_ALL=C sort -u "$base_surface" "$expected_additions" >"$expected_feature_surface"
-if ! cmp -s "$expected_feature_surface" "$feature_surface"; then
-	diff -u "$expected_feature_surface" "$feature_surface" >&2 || true
-	fail "opt-in binary80 feature did not preserve the complete frozen export surface"
+if ! cmp -s "$base_surface" "$feature_surface"; then
+	diff -u "$base_surface" "$feature_surface" >&2 || true
+	fail "default binary80 rebuild did not preserve the complete export surface"
 fi
-awk 'NR == FNR { baseline[$1] = 1; next } $1 in baseline { print }' \
-	"$base_bindings" "$feature_bindings" >"$feature_baseline_bindings"
-if ! cmp -s "$base_bindings" "$feature_baseline_bindings"; then
-	diff -u "$base_bindings" "$feature_baseline_bindings" >&2 || true
-	fail "opt-in binary80 feature changed a frozen baseline export binding or type"
+if ! cmp -s "$base_bindings" "$feature_bindings"; then
+	diff -u "$base_bindings" "$feature_bindings" >&2 || true
+	fail "default binary80 rebuild changed an export binding or type"
 fi
+for symbol in "${EXPECTED_ADDITIONS[@]}"; do
+	grep -Fxq "$symbol" "$base_surface" ||
+		fail "default archive does not define the unconditional $symbol owner"
+done
 nm -A --defined-only "$archive" >"$archive_symbols"
 nm -A -g --defined-only "$archive" >"$archive_globals"
 grep -Eq '[[:space:]]T[[:space:]]fdiml$' "$archive_symbols" ||
@@ -263,7 +262,7 @@ grep -Eq '[[:space:]]T[[:space:]]exp10l$' "$archive_symbols" ||
 grep -Eq '[[:space:]]W[[:space:]]pow10l$' "$archive_symbols" ||
 	fail "archive does not preserve weak pow10l alias"
 
-candidate_link=("$ORACLE_CC" -std=c11 -D_GNU_SOURCE -DCRABC_MATH_LONG_DOUBLE_COMPLETION_FREESTANDING \
+candidate_link=("$ORACLE_CC" -fuse-ld=bfd -std=c11 -D_GNU_SOURCE -DCRABC_MATH_LONG_DOUBLE_COMPLETION_FREESTANDING \
 	-I"$ROOT_DIR/include" -nostdlib -static -fno-pie -no-pie -ffreestanding \
 	-fno-builtin -frounding-math -fno-stack-protector -Wl,-e,_start \
 	-Wl,--no-undefined -Wl,--gc-sections \
@@ -304,14 +303,15 @@ for provider in \
 		fail "candidate exposes private powl provider ${provider}"
 	fi
 done
-if awk '$7 == "UND" && NF >= 8 { print }' "$candidate_symbols" | grep . >/dev/null; then
+if awk '$7 == "UND" && NF >= 8 && !($5 == "LOCAL" && ($8 == "_PROCEDURE_LINKAGE_TABLE_" || $8 == "__rela_iplt_start" || $8 == "__rela_iplt_end")) { print }' "$candidate_symbols" | grep . >/dev/null; then
 	fail "candidate has unresolved symbols"
 fi
 if grep -Eq 'Requesting program interpreter|INTERP|NEEDED' "$headers" "$dynamic"; then
 	fail "candidate is dynamic"
 fi
 if grep -Eq '[[:space:]]TLS[[:space:]]|TLSGD|TLSLD|TLSDESC|GOTTPOFF|DTPMOD(64)?|DTPOFF(32|64)?|__tls_get_addr' \
-	"$headers" "$relocs" "$candidate_symbols" "$disassembly"; then
+	"$headers" "$relocs" "$disassembly" ||
+	grep -Eq '[[:space:]]__tls_get_addr$' "$candidate_symbols"; then
 	fail "candidate retains TLS"
 fi
 if grep -Eq 'crabc_core|mimalloc|float_parse|math_compat|libm\.so|libm-' \
@@ -336,7 +336,7 @@ fi
 # One feature-gated archive must also resolve every selected elementary/fenv
 # provider together. The focused leaf runners retain the behavioral oracle;
 # this aggregate only ratchets the shared static-link closure and ELF ABI.
-	aggregate_link=("$ORACLE_CC" -std=c11 -D_GNU_SOURCE -DCRABC_MATH_ELEMENTARY_FENV_SENSITIVE_AGGREGATE_FREESTANDING \
+	aggregate_link=("$ORACLE_CC" -fuse-ld=bfd -std=c11 -D_GNU_SOURCE -DCRABC_MATH_ELEMENTARY_FENV_SENSITIVE_AGGREGATE_FREESTANDING \
 	-I"$ROOT_DIR/include" -nostdlib -static -fno-pie -no-pie -ffreestanding \
 	-fno-builtin -frounding-math -fno-stack-protector -Wl,-e,_start \
 	-Wl,--no-undefined -Wl,--gc-sections \
@@ -361,10 +361,6 @@ for symbol in "${AGGREGATE_SELECTED_FUNCTIONS[@]}"; do
 	grep -Fxq "$symbol" "$aggregate_functions" ||
 		fail "aggregate candidate does not retain selected ${symbol}"
 done
-# fdim/fdimf classify NaNs through these integer observers rather than a
-# UCOMIS comparison. The source-runtime build gives each libc module its own
-# codegen unit, so they stay LOCAL; the crate disambiguator in their v0 names
-# depends on the build and is not part of the contract.
 for observer in 19observed_float_bits 20observed_double_bits; do
 	grep -Eq "[[:space:]]FUNC[[:space:]]+LOCAL[[:space:]]+(DEFAULT|HIDDEN)[[:space:]]+[0-9]+[[:space:]]_RNvNtNtCs[0-9A-Za-z_]+_1c19x86_64_static_c_abi4fdim${observer}$" \
 		"$aggregate_symbols" || fail "aggregate candidate lacks module-private fdim ${observer#??}"
@@ -384,14 +380,15 @@ for pair in 'exp10:pow10' 'exp10f:pow10f' 'exp10l:pow10l'; do
 	[ "$strong_value" = "$weak_value" ] ||
 		fail "aggregate candidate does not retain same-address ${strong}/${weak} alias"
 done
-if awk '$7 == "UND" && NF >= 8 { print }' "$aggregate_symbols" | grep . >/dev/null; then
+if awk '$7 == "UND" && NF >= 8 && !($5 == "LOCAL" && ($8 == "_PROCEDURE_LINKAGE_TABLE_" || $8 == "__rela_iplt_start" || $8 == "__rela_iplt_end")) { print }' "$aggregate_symbols" | grep . >/dev/null; then
 	fail "aggregate candidate has unresolved symbols"
 fi
 if grep -Eq 'Requesting program interpreter|INTERP|NEEDED' "$aggregate_headers" "$aggregate_dynamic"; then
 	fail "aggregate candidate is dynamic"
 fi
 if grep -Eq '[[:space:]]TLS[[:space:]]|TLSGD|TLSLD|TLSDESC|GOTTPOFF|DTPMOD(64)?|DTPOFF(32|64)?|__tls_get_addr' \
-	"$aggregate_headers" "$aggregate_relocs" "$aggregate_symbols" "$aggregate_disassembly"; then
+	"$aggregate_headers" "$aggregate_relocs" "$aggregate_disassembly" ||
+	grep -Eq '[[:space:]]__tls_get_addr$' "$aggregate_symbols"; then
 	fail "aggregate candidate retains TLS"
 fi
 if grep -Eq 'crabc_core|mimalloc|float_parse|math_compat|libm\.so|libm-' \

@@ -521,7 +521,7 @@ class HeaderCallableInventoryTests(unittest.TestCase):
         self.assertEqual(
             set(planned),
             {
-                "x86-owned-static-runtime", "x86-owned-dynamic-runtime", "x86-kernel-admin",
+                "x86-owned-static-runtime", "x86-owned-dynamic-runtime",
                 "x86-owned-static-native-shadow", "x86-owned-dynamic-native-shadow",
                 "x86-owned-allocator-lifecycle-test-audit",
             },
@@ -531,7 +531,6 @@ class HeaderCallableInventoryTests(unittest.TestCase):
             "x86-owned-allocator-lifecycle-test-audit",
         ):
             self.assertEqual(planned[feature], set())
-        self.assertEqual(planned["x86-kernel-admin"], set())
         # The partition is derived from the ledger roster; spot-check owned members
         # instead of restating the whole generated set.
         for name in ("abort", "asctime", "aio_read", "__fpending", "random", "srandom"):
@@ -543,28 +542,23 @@ class HeaderCallableInventoryTests(unittest.TestCase):
             "the dynamic product profile inherits its owned-static callable provider; "
             "it must not promote an additional header-callable surface",
         )
-        self.assertEqual(
-            verified["x86-filesystem-traversal"],
-            {"ftw", "nftw"},
-        )
+        for retired, members in (
+            ("x86-filesystem-traversal", {"ftw", "nftw"}),
+            ("x86-legacy-des-compat", {"encrypt", "setkey"}),
+            ("x86-h-errno", {"__h_errno_location"}),
+            ("x86-ualarm", {"ualarm"}),
+            ("x86-interval-timers", {"getitimer", "setitimer"}),
+            ("x86-file-handles", {"name_to_handle_at", "open_by_handle_at"}),
+            ("x86-process-exec", {"execl", "execve", "fexecve"}),
+            ("x86-stdio-permanent-format-scan", {"printf", "scanf"}),
+        ):
+            with self.subTest(retired=retired):
+                self.assertNotIn(retired, verified)
+                self.assertEqual(members - default_static, set())
         self.assertEqual(verified["x86-scandir"], {"scandir"})
-        self.assertEqual(
-            verified["x86-legacy-des-compat"],
-            {"encrypt", "setkey"},
-        )
         self.assertEqual(
             verified["x86-legacy-misc"],
             {"fmtmsg"},
-        )
-        self.assertEqual(
-            verified["x86-h-errno"],
-            {"__h_errno_location"},
-        )
-        self.assertEqual(verified["x86-ualarm"], {"ualarm"})
-        self.assertEqual(verified["x86-interval-timers"], {"getitimer", "setitimer"})
-        self.assertEqual(
-            verified["x86-file-handles"],
-            {"name_to_handle_at", "open_by_handle_at"},
         )
         self.assertEqual(verified["x86-temporary-names"], {"tempnam", "tmpnam"})
         self.assertEqual(
@@ -577,10 +571,6 @@ class HeaderCallableInventoryTests(unittest.TestCase):
                 "posix_spawn_file_actions_addopen",
                 "posix_spawn_file_actions_destroy",
             },
-        )
-        self.assertEqual(
-            verified["x86-process-exec"],
-            {"execl", "execle", "execlp", "execv", "execve", "execvp", "execvpe", "fexecve"},
         )
         self.assertEqual(
             verified["x86-pthread-spin-operations"],

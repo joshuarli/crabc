@@ -10,6 +10,7 @@ import unittest
 
 ROOT = Path(__file__).resolve().parents[3]
 LEDGER = ROOT / "compat/x86_64/parity.toml"
+STATIC_EXPORTS = ROOT / "compat/x86_64/static_c_abi_exports.txt"
 DISPOSITION = ROOT / "compat/x86_64/header_callable_disposition.toml"
 QUALIFICATION = ROOT / "compat/x86_64/owned_dynamic_qualification.py"
 PRODUCT = ROOT / "compat/x86_64/dynamic-product.toml"
@@ -37,8 +38,10 @@ class OwnedLegacyTimeTests(unittest.TestCase):
         }
 
         self.assertTrue({"times", "adjtime", "adjtimex", "settimeofday", "stime"} <= set(owned_static["additive_callables"]))
-        self.assertTrue({"getitimer", "setitimer"} <= verified["x86-interval-timers"])
-        self.assertIn("ualarm", verified["x86-ualarm"])
+        exports = set(STATIC_EXPORTS.read_text(encoding="utf-8").splitlines())
+        self.assertTrue({"getitimer", "setitimer", "ualarm"} <= exports)
+        self.assertNotIn("x86-interval-timers", verified)
+        self.assertNotIn("x86-ualarm", verified)
         self.assertFalse({"times", "adjtime", "adjtimex", "settimeofday", "stime"} & deferred)
 
         for path in (QUALIFICATION, PRODUCT, DISPATCHER):

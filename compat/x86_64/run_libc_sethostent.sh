@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
-# Native Linux/x86-64 opt-in static crabc-libc sethostent/setnetent evidence.
+# Native Linux/x86-64 static crabc-libc sethostent/setnetent evidence.
 #
 # One project-header C fixture first executes through pinned musl 1.2.6 and
-# then through one extracted `-nostdlib -static` candidate. The opt-in owner
+# then through one extracted `-nostdlib -static` candidate. The owner
 # maps musl's empty stayopen-ignoring setter and its same-address weak alias;
 # it does not select host/network enumeration, files, resolver behavior, or
 # legacy netdb state.
@@ -12,13 +12,15 @@ export LC_ALL=C
 
 readonly ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 readonly ORACLE_CC=/usr/local/bin/crabc-x86_64-musl-gcc
-readonly FEATURE=x86-netdb-setent
 readonly STATIC_C_ABI_EXPORTS="$ROOT_DIR/compat/x86_64/static_c_abi_exports.txt"
 readonly AARCH64_STATIC_ABI="$ROOT_DIR/compat/abi/musl-1.2.6/aarch64/libc.a.static.tsv"
 readonly SOURCE="$ROOT_DIR/libc/src/c_abi/x86_64/sethostent.rs"
 readonly HEADER_RUNNER="$ROOT_DIR/compat/x86_64/run_endhostent_header_abi.sh"
 readonly PROBE="$ROOT_DIR/compat/x86_64/libc_sethostent_probe.c"
 readonly START="$ROOT_DIR/compat/x86_64/libc_sethostent_start.S"
+# Mold localizes archive definitions in a static link; these are the only two
+# symbols this fixture permits to arrive LOCAL in the final candidate.
+readonly FINAL_LOCAL_BINDINGS="sethostent setnetent"
 
 fail() {
     printf 'ERROR: x86 static libc sethostent: %s\n' "$*" >&2
@@ -58,21 +60,6 @@ collect_global_surface() {
         LC_ALL=C sort -u >"$output_path"
 }
 
-assert_feature_delta() {
-    local baseline_symbols="$1" featured_symbols="$2" additions="$3" removed="$4"
-
-    comm -23 "$baseline_symbols" "$featured_symbols" >"$removed"
-    if [ -s "$removed" ]; then
-        diff -u "$baseline_symbols" "$featured_symbols" >&2 || true
-        fail "x86-netdb-setent removes a default C ABI export"
-    fi
-    comm -13 "$baseline_symbols" "$featured_symbols" >"$additions"
-    if ! cmp -s <(printf 'sethostent\nsetnetent\n') "$additions"; then
-        diff -u <(printf 'sethostent\nsetnetent\n') "$additions" >&2 || true
-        fail "x86-netdb-setent changes more than sethostent/setnetent"
-    fi
-}
-
 assert_static_candidate_closure() {
     local candidate_path="$1" label="$2"
     local symbols="$work_dir/$label-symbols"
@@ -88,7 +75,7 @@ assert_static_candidate_closure() {
     readelf --dynamic --wide "$candidate_path" >"$dynamic" || true
     readelf --relocs --wide "$candidate_path" >"$relocations"
     objdump -d "$candidate_path" >"$disassembly"
-    if awk '$7 == "UND" && NF >= 8 { print }' "$symbols" | grep . >/dev/null; then
+    if awk '$7 == "UND" && NF >= 8 && !($5 == "LOCAL" && ($8 == "_PROCEDURE_LINKAGE_TABLE_" || $8 == "__rela_iplt_start" || $8 == "__rela_iplt_end")) { print }' "$symbols" | grep . >/dev/null; then
         fail "$label candidate retains an unresolved symbol"
     fi
     if grep -Eq 'Requesting program interpreter|INTERP|NEEDED' "$headers" "$dynamic"; then
@@ -140,9 +127,7 @@ grep -Fqx $'setnetent\tent.lo\tW\tWEAK\t0\t4' "$AARCH64_STATIC_ABI" ||
 work_dir="$(mktemp -d /tmp/crabc-x86-64-libc-sethostent.XXXXXX)"
 trap 'rm -rf -- "$work_dir"' EXIT
 baseline_target="$work_dir/cargo-baseline"
-featured_target="$work_dir/cargo-featured"
 baseline_archive="$baseline_target/x86_64-unknown-linux-musl/debug/libc.a"
-featured_archive="$featured_target/x86_64-unknown-linux-musl/debug/libc.a"
 selected_archive="$work_dir/libcrabc-sethostent.a"
 reference="$work_dir/musl-sethostent-reference"
 candidate="$work_dir/crabc-static-sethostent-candidate"
@@ -152,9 +137,6 @@ musl_object="$work_dir/musl-ent.o"
 header_trace="$work_dir/header-trace"
 baseline_symbols="$work_dir/baseline-symbols"
 expected_symbols="$work_dir/expected-symbols"
-featured_symbols="$work_dir/featured-symbols"
-feature_additions="$work_dir/feature-additions"
-feature_removed="$work_dir/feature-removed"
 archive_symbols="$work_dir/archive-symbols"
 owner_relocations="$work_dir/sethostent-relocations"
 owner_disassembly="$work_dir/sethostent-disassembly"
@@ -186,28 +168,24 @@ done
 "$reference" || fail "pinned-musl sethostent fixture failed"
 
 build_source_runtime_libc "$baseline_target/x86_64-unknown-linux-musl/debug/libc.a"
-[ -f "$baseline_archive" ] || fail "cargo did not emit the baseline x86 static libc archive"
+[ -f "$baseline_archive" ] || fail "cargo did not emit the default x86 static libc archive"
 collect_global_surface "$baseline_archive" "$baseline_symbols" "$work_dir/baseline-members"
 grep -Ev '^(#|$)' "$STATIC_C_ABI_EXPORTS" | LC_ALL=C sort -u >"$expected_symbols"
 if ! cmp -s "$expected_symbols" "$baseline_symbols"; then
     diff -u "$expected_symbols" "$baseline_symbols" >&2 || true
-    fail "selected static C ABI export surface drifted"
+    fail "default static C ABI export surface drifted"
 fi
-if grep -Eq '^(sethostent|setnetent)$' "$baseline_symbols"; then
-    fail "baseline archive unexpectedly defines opt-in netdb setter symbols"
-fi
-
-build_source_runtime_libc "$featured_target/x86_64-unknown-linux-musl/debug/libc.a" \
-    --features "$FEATURE"
+for symbol in sethostent setnetent; do
+    grep -Fxq "$symbol" "$baseline_symbols" ||
+        fail "default archive does not define the unconditional $symbol owner"
+done
 [ -f "$SOURCE" ] || fail "missing sethostent source"
-[ -f "$featured_archive" ] || fail "cargo did not emit the featured x86 static libc archive"
-collect_global_surface "$featured_archive" "$featured_symbols" "$work_dir/featured-members"
-assert_feature_delta "$baseline_symbols" "$featured_symbols" "$feature_additions" "$feature_removed"
+featured_archive="$baseline_archive"
 nm -A --defined-only "$featured_archive" >"$archive_symbols"
 grep -Eq '[[:space:]]T[[:space:]]sethostent$' "$archive_symbols" ||
-    fail "featured archive does not define strong sethostent"
+    fail "default archive does not define strong sethostent"
 grep -Eq '[[:space:]]W[[:space:]]setnetent$' "$archive_symbols" ||
-    fail "featured archive does not define weak setnetent"
+    fail "default archive does not define weak setnetent"
 for marker in 'src/network/ent.c::sethostent' 'weak_alias(sethostent, setnetent)' \
     '.weak setnetent' '.set setnetent, sethostent'; do
     grep -Fq "$marker" "$SOURCE" || fail "source lacks $marker"
@@ -243,8 +221,8 @@ fi
     -Wl,--gc-sections -Wl,-Map,"$candidate_link_map" "$PROBE" "$START" \
     "$selected_archive" -o "$candidate"
 assert_static_candidate_closure "$candidate" candidate
-host_address="$(nm -g --defined-only --format=posix "$candidate" | awk '$1 == "sethostent" && $2 == "T" { print $3; exit }')"
-net_address="$(nm -g --defined-only --format=posix "$candidate" | awk '$1 == "setnetent" && $2 == "W" { print $3; exit }')"
+host_address="$(nm --defined-only --format=posix "$candidate" | awk -v allow="$FINAL_LOCAL_BINDINGS" 'function listed(n){return index(" " allow " ", " " n " ")} $1 == "sethostent" && ($2 == "T" || ($2 == "t" && listed($1))) { print $3; exit }')"
+net_address="$(nm --defined-only --format=posix "$candidate" | awk -v allow="$FINAL_LOCAL_BINDINGS" 'function listed(n){return index(" " allow " ", " " n " ")} $1 == "setnetent" && ($2 == "W" || ($2 != "T" && $2 != "W" && listed($1))) { print $3; exit }')"
 [ -n "$host_address" ] || fail "candidate lacks strong sethostent"
 [ -n "$net_address" ] || fail "candidate lacks weak setnetent"
 [ "$host_address" = "$net_address" ] ||
@@ -266,14 +244,14 @@ fi
     -Wl,-Map,"$candidate_link_map" "$PROBE" "$START" "$selected_archive" \
     -o "$override_candidate"
 assert_static_candidate_closure "$override_candidate" override
-override_host_address="$(nm -g --defined-only --format=posix "$override_candidate" | awk '$1 == "sethostent" && $2 == "T" { print $3; exit }')"
-override_net_address="$(nm -g --defined-only --format=posix "$override_candidate" | awk '$1 == "setnetent" && $2 == "T" { print $3; exit }')"
+override_host_address="$(nm --defined-only --format=posix "$override_candidate" | awk -v allow="$FINAL_LOCAL_BINDINGS" 'function listed(n){return index(" " allow " ", " " n " ")} $1 == "sethostent" && ($2 == "T" || ($2 == "t" && listed($1))) { print $3; exit }')"
+override_net_address="$(nm --defined-only --format=posix "$override_candidate" | awk -v allow="$FINAL_LOCAL_BINDINGS" 'function listed(n){return index(" " allow " ", " " n " ")} $1 == "setnetent" && ($2 == "T" || ($2 == "t" && listed($1))) { print $3; exit }')"
 [ -n "$override_host_address" ] || fail "override candidate lacks archive sethostent"
 [ -n "$override_net_address" ] || fail "caller strong setnetent did not override the archive weak binding"
 [ "$override_host_address" != "$override_net_address" ] ||
     fail "caller strong setnetent still has the archive alias address"
-if nm -g --defined-only --format=posix "$override_candidate" |
-    awk '$1 == "setnetent" && $2 == "W" { found = 1 } END { exit found ? 0 : 1 }'; then
+if nm --defined-only --format=posix "$override_candidate" |
+    awk '$1 == "setnetent" && ($2 == "W" || $2 == "w") { found = 1 } END { exit found ? 0 : 1 }'; then
     fail "caller override retained the archive weak setnetent binding"
 fi
 "$override_candidate" || fail "freestanding setnetent override fixture failed"

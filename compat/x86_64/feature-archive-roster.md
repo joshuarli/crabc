@@ -45,12 +45,11 @@ only the archive provider and selection closure.
 
 ## Current integration assignments
 
-The canonical ledger assigns each non-header provider to its direct feature:
+The canonical ledger assigns each non-header feature provider to its direct
+feature. `arch_prctl` is a default-static ABI-only provider and the
+unconditional `ioperm`/`iopl` pair is public; no feature row carries them.
 
 ```toml
-# x86-kernel-admin
-abi_only_callables = ["arch_prctl"]
-
 # x86-owned-static-runtime
 abi_only_callables = ["__xmknod", "__xmknodat", "_fini", "_init"]
 
@@ -58,12 +57,10 @@ abi_only_callables = ["__xmknod", "__xmknodat", "_fini", "_init"]
 abi_only_callables = ["_dl_debug_state"]
 ```
 
-`x86-owned-static-runtime` selects `x86-kernel-admin` through its Cargo
-dependency graph and inherits `arch_prctl` in its baseline. The kernel feature
-in turn inherits `ioperm` and `iopl` from `x86-io-permissions`; their existing
-header-callable owner remains that I/O feature. The named component runners
-prove the exact `GLOBAL` binding. The three ABI-only functions gain no header
-declaration, alias row, or default-static ratchet entry.
+`arch_prctl`, `ioperm`, and `iopl` are unconditional x86-64 owners. The
+default-static ratchet records all three, and `arch_prctl` has no installed
+header declaration or alias row. The named component runners prove the exact
+`GLOBAL` binding.
 
 The owned-static `_init` and `_fini` defaults and shared-libc `_dl_debug_state`
 view are real `WEAK DEFAULT FUNC` definitions. Their component contract in

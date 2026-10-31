@@ -1,4 +1,4 @@
-//! Linux/x86-64 opt-in static C `a64l` decoder.
+//! Linux/x86-64 static C `a64l` decoder.
 //!
 //! Pinned musl 1.2.6 provenance is fixed to
 //! (`9fa28ece75d8a2191de7c5bb53bed224c5947417`) under musl's MIT license
@@ -9,7 +9,7 @@
 //!
 //! Musl's same source file and `a64l.lo` also define the mutable-storage
 //! `l64a` encoder. The default x86 static root keeps that distinct owner in
-//! `l64a.rs`; this opt-in owner selects only the state-free decoder. It
+//! `l64a.rs`; this owner selects only the state-free decoder. It
 //! introduces no result buffer, errno/TLS, locale, allocation, syscall, or
 //! runtime state.
 //!

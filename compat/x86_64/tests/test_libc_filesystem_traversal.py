@@ -25,11 +25,11 @@ class X86LibcFilesystemTraversalTests(unittest.TestCase):
             ROOT / "libc" / "src" / "c_abi" / "x86_64" / "filesystem_traversal.rs"
         ).read_text(encoding="utf-8")
 
-        self.assertIn('x86-filesystem-traversal = []', manifest)
-        self.assertIn('#[cfg(feature = "x86-filesystem-traversal")]', static_root)
+        self.assertNotIn("x86-filesystem-traversal", manifest)
+        self.assertIn('#[path = "filesystem_traversal.rs"]', static_root)
         self.assertIn('mod filesystem_traversal;', static_root)
-        self.assertNotIn("\nftw\n", static_exports)
-        self.assertNotIn("\nnftw\n", static_exports)
+        self.assertIn("\nftw\n", static_exports)
+        self.assertIn("\nnftw\n", static_exports)
         for required in (
             "src/legacy/ftw.c",
             "src/misc/nftw.c",
@@ -73,7 +73,7 @@ class X86LibcFilesystemTraversalTests(unittest.TestCase):
         ):
             self.assertIn(required, probe)
         for required in (
-            "x86-filesystem-traversal",
+            "default archive does not define the unconditional",
             "run_ftw_header_abi.sh",
             "pinned-musl ordinary traversal reference",
             "frozen FTW_CHDIR profile",

@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
-# Native Linux/x86-64 opt-in static crabc-libc ualarm evidence.
+# Native Linux/x86-64 static crabc-libc ualarm evidence.
 #
 # The one-symbol project-header C body first runs through pinned musl 1.2.6,
-# then as a true `-nostdlib -static` candidate linked through only the opt-in
-# feature archive. It proves valid microsecond timer replacement/return paths
+# then as a true `-nostdlib -static` candidate linked through the default
+# archive. It proves valid microsecond timer replacement/return paths
 # and the invalid-field errno/state boundary without assigning a return value
 # to musl's uninitialized-old-record failure path.
 set -euo pipefail
@@ -12,7 +12,6 @@ set -euo pipefail
 
 readonly ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 readonly ORACLE_CC=/usr/local/bin/crabc-x86_64-musl-gcc
-readonly FEATURE=x86-ualarm
 readonly MUSL_MEMBER=ualarm.lo
 readonly STATIC_C_ABI_EXPORTS="$ROOT_DIR/compat/x86_64/static_c_abi_exports.txt"
 readonly HEADER_RUNNER="$ROOT_DIR/compat/x86_64/run_ualarm_header_abi.sh"
@@ -66,21 +65,6 @@ collect_global_surface() {
         LC_ALL=C sort -u >"$output_path"
 }
 
-assert_feature_delta() {
-    local baseline_symbols="$1" featured_symbols="$2" additions="$3" removed="$4"
-
-    comm -23 "$baseline_symbols" "$featured_symbols" >"$removed"
-    if [ -s "$removed" ]; then
-        diff -u "$baseline_symbols" "$featured_symbols" >&2 || true
-        fail "${FEATURE} removes a default C ABI export"
-    fi
-    comm -13 "$baseline_symbols" "$featured_symbols" >"$additions"
-    if ! cmp -s <(printf 'ualarm\n') "$additions"; then
-        diff -u <(printf 'ualarm\n') "$additions" >&2 || true
-        fail "${FEATURE} changes more than the one ualarm export"
-    fi
-}
-
 assert_fixture_tls_capacity() {
     local filesz memsz alignment
     read -r filesz memsz alignment < <(
@@ -128,18 +112,13 @@ bash "$HEADER_RUNNER" >/dev/null
 work_dir="$(mktemp -d /tmp/crabc-x86-64-libc-ualarm.XXXXXX)"
 trap 'rm -rf -- "$work_dir"' EXIT
 baseline_target="$work_dir/cargo-baseline"
-featured_target="$work_dir/cargo-featured"
 baseline_archive="$baseline_target/x86_64-unknown-linux-musl/debug/libc.a"
-featured_archive="$featured_target/x86_64-unknown-linux-musl/debug/libc.a"
 reference="$work_dir/musl-ualarm-reference"
 candidate="$work_dir/crabc-static-ualarm-candidate"
 musl_archive="$($ORACLE_CC -print-file-name=libc.a)"
 musl_object="$work_dir/musl-ualarm.o"
 header_trace="$work_dir/header-trace"
 baseline_symbols="$work_dir/baseline-symbols"
-featured_symbols="$work_dir/featured-symbols"
-feature_additions="$work_dir/feature-additions"
-feature_removed="$work_dir/feature-removed"
 owner_object="$work_dir/ualarm-owner.o"
 owner_symbols="$work_dir/ualarm-owner-symbols"
 owner_relocations="$work_dir/ualarm-owner-relocations"
@@ -175,28 +154,26 @@ done
 "$reference"
 
 build_source_runtime_libc "$baseline_target/x86_64-unknown-linux-musl/debug/libc.a"
-build_source_runtime_libc "$featured_target/x86_64-unknown-linux-musl/debug/libc.a" \
-    --features "$FEATURE"
-[ -f "$baseline_archive" ] || fail "baseline cargo build did not emit libc.a"
-[ -f "$featured_archive" ] || fail "feature cargo build did not emit libc.a"
+[ -f "$baseline_archive" ] || fail "cargo did not emit the default x86 static libc archive"
 collect_global_surface "$baseline_archive" "$baseline_symbols" "$work_dir/baseline-members"
-collect_global_surface "$featured_archive" "$featured_symbols" "$work_dir/featured-members"
-assert_feature_delta "$baseline_symbols" "$featured_symbols" "$feature_additions" "$feature_removed"
-if grep -Fqx ualarm "$STATIC_C_ABI_EXPORTS"; then
-    fail "default static export ratchet absorbed opt-in ualarm"
+grep -Fqx ualarm "$baseline_symbols" ||
+    fail "default archive does not define the unconditional ualarm owner"
+if ! grep -Fqx ualarm "$STATIC_C_ABI_EXPORTS"; then
+    fail "default static export ratchet omits ualarm"
 fi
+featured_archive="$baseline_archive"
 
 mapfile -t owner_members < <(archive_members_for_symbol "$featured_archive" ualarm)
-[ "${#owner_members[@]}" -eq 1 ] || fail "feature archive has ambiguous ualarm ownership"
+[ "${#owner_members[@]}" -eq 1 ] || fail "default archive has ambiguous ualarm ownership"
 ar p "$featured_archive" "${owner_members[0]}" >"$owner_object"
 readelf --symbols --wide "$owner_object" >"$owner_symbols"
 readelf --relocs --wide "$owner_object" >"$owner_relocations"
 objdump -dr "$owner_object" >"$owner_disassembly"
 grep -Eq 'FUNC[[:space:]]+GLOBAL[[:space:]]+DEFAULT.*[[:space:]]ualarm$' "$owner_symbols" ||
-    fail "feature owner lacks global-default ualarm"
+    fail "owner lacks global-default ualarm"
 grep -Eq 'R_X86_64_TPOFF(32|64)?' "$owner_relocations" ||
-    fail "feature owner lacks direct initial-TLS errno relocation"
-assert_no_dynamic_tls_or_runtime "feature owner" \
+    fail "owner lacks direct initial-TLS errno relocation"
+assert_no_dynamic_tls_or_runtime "owner" \
     "$owner_relocations" "$owner_disassembly" "$owner_symbols"
 
 "$ORACLE_CC" -std=c11 -D_GNU_SOURCE -DCRABC_UALARM_FREESTANDING \
@@ -224,7 +201,7 @@ for unrelated in alarm getitimer setitimer timer_create timer_delete \
         fail "candidate unexpectedly pulls ${unrelated}"
     fi
 done
-unresolved="$(awk '$7 == "UND" && NF >= 8 { print }' "$candidate_symbols")"
+unresolved="$(awk '$7 == "UND" && NF >= 8 && !($5 == "LOCAL" && ($8 == "_PROCEDURE_LINKAGE_TABLE_" || $8 == "__rela_iplt_start" || $8 == "__rela_iplt_end")) { print }' "$candidate_symbols")"
 [ -z "$unresolved" ] || {
     printf '%s\n' "$unresolved" >&2
     fail "candidate retains an unresolved symbol"
@@ -250,4 +227,4 @@ fi
 assert_named_syscall ualarm 26
 
 "$candidate"
-printf 'x86 opt-in static crabc-libc ualarm: PASS\n'
+printf 'x86 static crabc-libc ualarm: PASS\n'

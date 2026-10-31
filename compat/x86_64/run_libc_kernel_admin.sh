@@ -277,9 +277,9 @@ for marker in \
         fail "kernel-administration inputs omit $marker"
 done
 
-# Both product builders select the owned runtime. Its dependency graph in
-# libc/Cargo.toml includes x86-kernel-admin and the retained x86-io-permissions
-# leaf; the standalone I/O-only archive remains a separate selected profile.
+# Both product builders select the owned runtime. Its dependency graph makes
+# arch_prctl, iopl, and ioperm unconditional x86-64 owners; the focused
+# I/O-only archive remains a separate selected profile.
 if [ -n "$provided_static" ]; then
     readonly static_product="$provided_static"
     readonly dynamic_product="$provided_dynamic"

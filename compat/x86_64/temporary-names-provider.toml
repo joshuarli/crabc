@@ -21,7 +21,7 @@ musl_source_mapping = [
   "src/linux/name_to_handle_at.c::name_to_handle_at",
   "src/linux/open_by_handle_at.c::open_by_handle_at",
 ]
-baseline_contract = "The aggregate owns exactly mktemp, name_to_handle_at, open_by_handle_at, tempnam, and tmpnam. The default archive retains only the already selected mktemp leaf. The opt-in x86-file-handles feature supplies the two caller-owned Linux 5.10 handle syscalls, while x86-temporary-names composes over x86-allocator-string-duplication and supplies the racy tmpnam/tempnam pathname generators. tmpnam preserves musl's caller-buffer or process-global 20-byte result storage; tempnam returns a strdup-owned result. All three historical pathname generators only observe current absence and never create, reserve, open, unlink, or confer authority for a pathname."
+baseline_contract = "The aggregate owns exactly mktemp, name_to_handle_at, open_by_handle_at, tempnam, and tmpnam. The default archive retains mktemp and the unconditional caller-owned Linux 5.10 handle syscalls. x86-temporary-names composes over x86-allocator-string-duplication and supplies the racy tmpnam/tempnam pathname generators. tmpnam preserves musl's caller-buffer or process-global 20-byte result storage; tempnam returns a strdup-owned result. All three historical pathname generators only observe current absence and never create, reserve, open, unlink, or confer authority for a pathname."
 prerequisites = [
   "oracle.musl-toolchain",
   "static-c-mktemp",
@@ -82,6 +82,6 @@ expected_transition = "The aggregate changes only frozen filesystem.extensions f
 evidence = [
   "pinned-musl/project stdio.h and fcntl.h C/C++ feature-visibility, declaration, and linkage matrices",
   "pinned-musl versus selected feature/default C temporary-name and Linux file-handle differentials",
-  "exact default and x86-file-handles,x86-temporary-names archive feature-closure, owner, and ELF-link evidence",
+  "default and x86-temporary-names archive feature-closure, owner, and ELF-link evidence",
   "five-symbol filesystem.extensions aggregate roster and parity-ledger validation",
 ]

@@ -1,4 +1,4 @@
-//! Linux/x86-64 opt-in static C `sethostent`/`setnetent` ABI boundary.
+//! Linux/x86-64 static C `sethostent`/`setnetent` ABI boundary.
 //!
 //! Pinned musl 1.2.6 provenance is fixed to release commit
 //! `9fa28ece75d8a2191de7c5bb53bed224c5947417` under musl's MIT license
@@ -9,7 +9,7 @@
 //!
 //! The default x86 static root owns the source file's distinct
 //! `endhostent`/`endnetent` no-argument terminator pair in `endhostent.rs`.
-//! This separate opt-in owner adds only the setter pair; it does not open or
+//! This separate owner adds only the setter pair; it does not open or
 //! close a database, retain an enumeration cursor, consult `/etc/hosts` or
 //! `/etc/networks`, or select resolver, NSS, filesystem, errno/TLS,
 //! allocation, syscall, locale, or runtime state.

@@ -28,12 +28,10 @@ class OwnedStaticFilesystemConsumerTests(unittest.TestCase):
         features = tomllib.loads(manifest)["features"]
         aggregate = {f'"{name}",' for name in enabled_features(features, "x86-owned-static-runtime")}
         self.assertIn('"x86-scandir",', aggregate)
-        self.assertIn('"x86-filesystem-traversal",', aggregate)
-        self.assertIn('"x86-file-handles",', aggregate)
         self.assertIn('"x86-temporary-names",', aggregate)
+        self.assertNotIn("x86-filesystem-traversal", manifest)
+        self.assertNotIn("x86-file-handles", manifest)
         self.assertIn('x86-scandir = ["x86-allocator-runtime"]', manifest)
-        self.assertIn("x86-filesystem-traversal = []", manifest)
-        self.assertIn("x86-file-handles = []", manifest)
         self.assertIn('x86-temporary-names = ["x86-allocator-string-duplication"]', manifest)
 
     def test_owned_runtime_preserves_scandir_and_nftw_cancellation_source_forms(self) -> None:

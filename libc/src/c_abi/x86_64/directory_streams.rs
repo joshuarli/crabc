@@ -143,7 +143,6 @@ pub(super) struct DirectoryStream {
 /// next operation on that same stream or `closedir`. Keeping the public
 /// `dirent` layout private prevents another x86 leaf from recapitulating its
 /// raw-record offsets merely to consume a name immediately.
-#[cfg(feature = "x86-filesystem-traversal")]
 pub(super) struct DirectoryEntryName {
     pub(super) bytes: *const c_char,
     pub(super) length: usize,
@@ -614,7 +613,6 @@ static_archive_member! { readdir_source {
 /// `stream` must be a live, exclusively accessible `DIR *` returned by this
 /// leaf. A returned name borrows its private buffer until the next operation
 /// on `stream` or `closedir`.
-#[cfg(feature = "x86-filesystem-traversal")]
 pub(super) unsafe fn next_entry_name(
     stream: *mut DirectoryStream,
 ) -> Result<Option<DirectoryEntryName>, c_int> {

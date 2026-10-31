@@ -28,6 +28,7 @@ __dup3
 __duplocale
 __environ
 __errno_location
+__execvpe
 __fbufsize
 __fesetround
 __flbf
@@ -52,6 +53,7 @@ __fxstat
 __fxstatat
 __getauxval
 __gmtime_r
+__h_errno_location
 __inet_aton
 __init_ssp
 __isalnum_l
@@ -61,7 +63,11 @@ __iscntrl_l
 __isdigit_l
 __isgraph_l
 __islower_l
+__isoc99_fscanf
+__isoc99_scanf
 __isoc99_sscanf
+__isoc99_vfscanf
+__isoc99_vscanf
 __isoc99_vsscanf
 __isprint_l
 __ispunct_l
@@ -175,6 +181,7 @@ _ns_flagdata
 _pthread_cleanup_pop
 _pthread_cleanup_push
 _setjmp
+a64l
 abs
 accept
 accept4
@@ -186,6 +193,7 @@ acosl
 aio_error
 alarm
 alphasort
+arch_prctl
 asinh
 asinhf
 asinhl
@@ -358,6 +366,7 @@ dup3
 duplocale
 eaccess
 ecvt
+encrypt
 endhostent
 endnetent
 endprotoent
@@ -386,15 +395,24 @@ euidaccess
 eventfd
 eventfd_read
 eventfd_write
+execl
+execle
+execlp
+execv
+execve
+execvp
+execvpe
 exit
 exp
 exp10
 exp10f
+exp10l
 exp2
 exp2f
 exp2l
 expf
 expl
+explicit_bzero
 expm1
 expm1f
 expm1l
@@ -410,6 +428,7 @@ fcvt
 fdatasync
 fdim
 fdimf
+fdiml
 fdopendir
 feclearexcept
 fegetenv
@@ -426,6 +445,7 @@ fesetexceptflag
 fesetround
 fetestexcept
 feupdateenv
+fexecve
 fflush
 ffs
 ffsl
@@ -456,6 +476,7 @@ fmodl
 fopen
 fork
 fpathconf
+fprintf
 fputc
 fputs
 fread
@@ -466,6 +487,7 @@ fremovexattr
 frexp
 frexpf
 frexpl
+fscanf
 fseek
 fseeko
 fsetpos
@@ -480,6 +502,7 @@ ftello
 ftime
 ftok
 ftruncate
+ftw
 futimens
 futimes
 futimesat
@@ -507,6 +530,7 @@ getgroups
 gethostid
 gethostname
 getifaddrs
+getitimer
 getloadavg
 getlogin
 getlogin_r
@@ -542,6 +566,7 @@ getuid
 getxattr
 gmtime_r
 grantpt
+h_errno
 hasmntopt
 hcreate
 hcreate_r
@@ -583,6 +608,8 @@ inotify_init1
 inotify_rm_watch
 insque
 ioctl
+ioperm
+iopl
 isalnum
 isalnum_l
 isalpha
@@ -753,6 +780,7 @@ mtx_unlock
 munlock
 munlockall
 munmap
+name_to_handle_at
 nan
 nanf
 nanl
@@ -767,6 +795,7 @@ nextafterl
 nexttoward
 nexttowardf
 nexttowardl
+nftw
 ngettext
 nice
 nl_langinfo
@@ -783,6 +812,7 @@ ns_skiprr
 ntohl
 ntohs
 open
+open_by_handle_at
 openat
 opendir
 optarg
@@ -819,11 +849,13 @@ posix_spawnattr_setsigmask
 pow
 pow10
 pow10f
+pow10l
 powf
 powl
 ppoll
 pread
 preadv
+printf
 prlimit
 program_invocation_name
 program_invocation_short_name
@@ -973,12 +1005,14 @@ scalblnl
 scalbn
 scalbnf
 scalbnl
+scanf
 sched_get_priority_max
 sched_get_priority_min
 sched_getaffinity
 sched_getcpu
 sched_getparam
 sched_getscheduler
+sched_rr_get_interval
 sched_setaffinity
 sched_setparam
 sched_setscheduler
@@ -1010,9 +1044,13 @@ setfsgid
 setfsuid
 setgid
 setgroups
+sethostent
 sethostname
+setitimer
 setjmp
+setkey
 setlocale
+setnetent
 setpgid
 setpgrp
 setpriority
@@ -1134,6 +1172,7 @@ strtoumax
 strverscmp
 strxfrm
 strxfrm_l
+swab
 symlink
 sync
 sync_file_range
@@ -1206,6 +1245,7 @@ tss_get
 tss_set
 ttyname_r
 twalk
+ualarm
 ulimit
 umask
 uname
@@ -1220,6 +1260,10 @@ utime
 utimensat
 utimes
 versionsort
+vfprintf
+vfscanf
+vprintf
+vscanf
 vsnprintf
 vsprintf
 vsscanf

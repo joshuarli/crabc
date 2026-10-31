@@ -50,20 +50,20 @@ class FeatureAliasReceiptTests(unittest.TestCase):
             receipt.alias_pair(observed, 'execvpe', '__execvpe', placement=receipt.AliasPlacement.EXECUTABLE)
 
     def test_override_requires_strong_input_and_local_static_output(self):
-        observed = facts()
+        observed = facts(public='mkostemps', target='__mkostemps')
         override = observed[0]['symbol_tables'][0]['rows'][0]
         override['binding'] = 'GLOBAL'
-        receipt.require_override_definitions(observed, 'exec', receipt.OverrideBinding.GLOBAL)
+        receipt.require_override_definitions(observed, 'temporary', receipt.OverrideBinding.GLOBAL)
         override['binding'] = 'LOCAL'
-        receipt.require_override_definitions(observed, 'exec', receipt.OverrideBinding.LOCAL)
+        receipt.require_override_definitions(observed, 'temporary', receipt.OverrideBinding.LOCAL)
         with self.assertRaises(receipt.FeatureAliasError):
-            receipt.require_override_definitions(observed, 'exec', receipt.OverrideBinding.GLOBAL)
+            receipt.require_override_definitions(observed, 'temporary', receipt.OverrideBinding.GLOBAL)
 
     def test_each_current_alias_requirement_retains_its_complete_source_contract(self):
         contract = selection.load_contract()
         expanded = selection.expand_obligations(contract, selection.load_source_inputs(contract, selection.CONTRACT_PATH))
         requirements = receipt.alias_requirements()
-        self.assertEqual(set(requirements), {'__sysv_signal', 'bsd_signal', 'endpwent', 'execvpe', 'mkostemps', 'setnetent'})
+        self.assertEqual(set(requirements), {'__sysv_signal', 'bsd_signal', 'endpwent', 'mkostemps'})
         for row in expanded:
             name = row['identity']['name']
             if name in requirements:
@@ -207,7 +207,7 @@ class FeatureAliasReceiptTests(unittest.TestCase):
                      mock.patch.object(dynamic_driver, 'run', side_effect=compile_fixture):
                     with self.assertRaises(ReachedLink):
                         receipt.installed_owner(commands, owner, fixture.static, fixture.dynamic, {})
-        self.assertEqual(len(calls), 10)
+        self.assertEqual(len(calls), 6)
 
     def test_dependency_file_rejects_wrong_source_target_and_installed_header_closure(self):
         (ROOT / '.work/tmp').mkdir(parents=True, exist_ok=True)
@@ -361,13 +361,13 @@ class FeatureAliasSelectionTests(unittest.TestCase):
         companion = {'report': {}, 'owners': owners, 'source_products': {'feature_alias_requirements': requirements}}
         return accounting, companion
 
-    def test_six_feature_receipt_joins_preserve_raw_facts_requirements_and_placement_blockers(self):
+    def test_four_feature_receipt_joins_preserve_raw_facts_requirements_and_placement_blockers(self):
         accounting, companion = self.fixtures()
         accounting['occurrences'].append({'index': len(accounting['occurrences']), 'artifact_key': 'candidate-static',
                                          'row': {'name': 'signal', 'section_index': 'UND'}, 'table': '.symtab'})
         before = copy.deepcopy(accounting)
         joins = selection.attach_feature_alias_receipt(accounting, companion)
-        self.assertEqual(len(joins), 6)
+        self.assertEqual(len(joins), 4)
         self.assertEqual(accounting['occurrences'], before['occurrences'])
         self.assertEqual(accounting['placement_joins'], before['placement_joins'])
         for old, new in zip(before['identities'], accounting['identities']):
@@ -379,12 +379,12 @@ class FeatureAliasSelectionTests(unittest.TestCase):
         for change in ('owner', 'occurrence', 'profile'):
             accounting, companion = self.fixtures()
             if change == 'owner':
-                companion['owners']['netdb']['owner_source']['sha256'] = '0' * 64
+                companion['owners']['temporary']['owner_source']['sha256'] = '0' * 64
             elif change == 'occurrence':
-                companion['owners']['netdb']['aliases']['shared'][0]['alias'] = copy.deepcopy(companion['owners']['netdb']['aliases']['shared'][0]['alias'])
-                companion['owners']['netdb']['aliases']['shared'][0]['alias']['row']['value'] = '1'
+                companion['owners']['temporary']['aliases']['shared'][0]['alias'] = copy.deepcopy(companion['owners']['temporary']['aliases']['shared'][0]['alias'])
+                companion['owners']['temporary']['aliases']['shared'][0]['alias']['row']['value'] = '1'
             else:
-                companion['source_products']['feature_alias_requirements']['setnetent']['enabled_features'] = []
+                companion['source_products']['feature_alias_requirements']['mkostemps']['enabled_features'] = []
             before = copy.deepcopy(accounting)
             rejected = {}
             joins, admitted = selection._attach(rejected, 'feature_alias_work', accounting, companion,
@@ -430,25 +430,25 @@ class FeatureAliasSelectionTests(unittest.TestCase):
             joins = selection.attach_posix_sysv_signal_admission(accounting, prior, paths=fixture.paths)
         return fixture, prior, joins
 
-    def test_valid_prior_posix_join_keeps_six_unique_feature_proofs_without_double_discharge(self):
+    def test_valid_prior_posix_join_keeps_four_unique_feature_proofs_without_double_discharge(self):
         accounting, companion = self.fixtures()
         fixture, prior, prior_joins = self.prior_posix(accounting, companion)
         before = copy.deepcopy(accounting)
         with mock.patch.object(selection, '_posix_sysv_signal_reader', return_value=fixture._reader()):
             joins = selection.attach_feature_alias_receipt(accounting, companion,
                 posix_companion=prior, posix_joins=prior_joins, paths=fixture.paths)
-        self.assertEqual(len({row['identity']['name'] for row in joins}), 6)
+        self.assertEqual(len({row['identity']['name'] for row in joins}), 4)
         sysv = next(row for row in joins if row['identity']['name'] == '__sysv_signal')
         self.assertEqual(sysv['requirements_discharged'], [])
         self.assertEqual(sysv['prior_posix_admission'], {'report': prior['report'], 'join': prior_joins[0]})
-        self.assertEqual(sum(bool(row['requirements_discharged']) for row in joins), 5)
+        self.assertEqual(sum(bool(row['requirements_discharged']) for row in joins), 3)
         self.assertEqual(accounting['occurrences'], before['occurrences'])
         self.assertEqual(accounting['function_alias_observations'], before['function_alias_observations'])
 
     def test_prior_posix_overlap_does_not_hide_an_unexpected_missing_other_requirement(self):
         accounting, companion = self.fixtures()
         fixture, prior, prior_joins = self.prior_posix(accounting, companion)
-        record = next(row for row in accounting['identities'] if row['identity']['name'] == 'setnetent')
+        record = next(row for row in accounting['identities'] if row['identity']['name'] == 'mkostemps')
         record['unresolved'].remove(selection.FEATURE_ALIAS_REQUIREMENT)
         before = copy.deepcopy(accounting)
         rejected = {}

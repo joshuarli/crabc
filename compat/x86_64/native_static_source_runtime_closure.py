@@ -175,7 +175,6 @@ DERIVED_PROFILE: dict[str, object] = {
 SUPPORTED_EXTERN_MODIFIERS = {(), ("priv",), ("noprelude", "nounused")}
 # Unmerged codegen-unit ceiling for the dev profile; see build().
 DEV_CODEGEN_UNITS = 65536
-RETAINED_MATH_FEATURE = "x86-math-long-double-completion"
 
 
 class ClosureError(RuntimeError):
@@ -225,8 +224,7 @@ def source_runtime_profile(features: str) -> dict[str, object]:
 def retained_package_features(features: str) -> frozenset[str]:
     normalized = normalized_features(features)
     requested = normalized.split(",") if normalized else []
-    if requested not in ([], [RETAINED_MATH_FEATURE], ["x86-signal-legacy-aliases"],
-                         ["x86-process-exec"], ["x86-netdb-setent"]):
+    if requested not in ([], ["x86-signal-legacy-aliases"]):
         fail("retained graph does not support this requested feature profile")
     try:
         manifest = tomllib.loads(physical(ROOT / "libc" / "Cargo.toml", "crabc-libc Cargo manifest")

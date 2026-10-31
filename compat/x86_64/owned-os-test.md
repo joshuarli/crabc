@@ -15,9 +15,8 @@ The frozen `basic` and `include` X/Open cases for `setkey` and `encrypt` are
 ordinary product observations. `libc/src/c_abi/x86_64/legacy_des_compat.rs`
 exports the project’s explicit inert compatibility contract: both calls return
 without reading or writing their arguments or changing `errno`. This closes
-those call/link observations through the owned runtime’s narrow
-`x86-legacy-des-compat` feature without adding DES, a cipher, a PRNG, or a
-cryptographic service; the runner continues to report every other source
+those call/link observations through the unconditional inert DES owner without
+adding DES, a cipher, a PRNG, or a cryptographic service; the runner continues to report every other source
 outcome independently.
 
 Each fresh source copy first runs through pinned musl 1.2.6, then the supplied
