@@ -546,7 +546,7 @@ def descriptor_runtime_plan(root,work,inputs,tools):
         ))
     return specs
 
-def conventional_record_offset(root,inputs):
+def conventional_record_offset_from(path):
     """Read the merged conventional record's virtual address from libc bytes.
 
     The installed link localizes the record, so it has no dynamic symbol for a
@@ -554,7 +554,6 @@ def conventional_record_offset(root,inputs):
     definition that `account_products` independently requires to be a private
     88-byte writable object, and the live probe still validates every field.
     """
-    path=product_paths(root,inputs)['candidate-shared']
     found=Elf(path).symbols(CONVENTIONAL,dynamic=False)
     require(len(found)==1,'merged conventional record symbol differs')
     row=found[0]
@@ -562,6 +561,9 @@ def conventional_record_offset(root,inputs):
             and row['size']==88 and row['section']>0 and row['value']>0,
             'merged conventional record offset is not a private defined object')
     return row['value']
+
+def conventional_record_offset(root,inputs):
+    return conventional_record_offset_from(product_paths(root,inputs)['candidate-shared'])
 
 def plan(root,work,inputs,tools):
     m=lambda path:ordinary.mounted(root,path);p=lambda name:m(work/name)

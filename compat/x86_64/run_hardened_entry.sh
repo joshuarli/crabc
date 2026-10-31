@@ -12,6 +12,12 @@ readonly image="$work/root"
 mkdir -p "$image/lib" "$image/usr/lib" "$image/plugins"
 cp "$installed/lib/ld-crabc-x86_64-hardened.so.1" "$image/lib/"
 cp "$installed/usr/lib/libc.so" "$image/usr/lib/"
+conventional_offset="$(python3 -B -c '
+import sys
+sys.path.insert(0, sys.argv[1] + "/compat/x86_64")
+import installed_crt_startup_evidence as evidence
+print("%x" % evidence.conventional_record_offset_from(sys.argv[2]))
+' "$root" "$image/usr/lib/libc.so")"
 "$installed/bin/crabc-cc-dynamic" --dynamic-pie "$root/compat/x86_64/hardened_entry_probe.c" -o "$image/pie"
 "$installed/bin/crabc-cc-dynamic" --dynamic-pie "$root/compat/x86_64/hardened_secure_probe.c" -o "$image/secure"
 chmod 4755 "$image/secure"
@@ -272,8 +278,8 @@ timeout 20 chroot "$image" /lib/ld-crabc-x86_64-hardened.so.1 /import-control >"
 test ! -e "$image/import-marker"
 timeout 20 chroot "$image" /relro
 timeout 20 chroot "$image" /static-relro
-CRABC_STARTUP=yes timeout 20 chroot "$image" /startup owned >"$work/startup.stdout"
-CRABC_STARTUP=yes timeout 20 chroot "$image" /lib/ld-crabc-x86_64-hardened.so.1 /startup owned >"$work/startup-direct.stdout"
+CRABC_STARTUP=yes CRABC_CONVENTIONAL_RECORD_OFFSET="$conventional_offset" timeout 20 chroot "$image" /startup owned >"$work/startup.stdout"
+CRABC_STARTUP=yes CRABC_CONVENTIONAL_RECORD_OFFSET="$conventional_offset" timeout 20 chroot "$image" /lib/ld-crabc-x86_64-hardened.so.1 /startup owned >"$work/startup-direct.stdout"
 CRABC_STARTUP=yes timeout 20 chroot "$image" /static-startup static >"$work/static-startup.stdout"
 [ "$(cat "$work/startup.stdout")" = ICOMAFL ]
 [ "$(cat "$work/startup-direct.stdout")" = ICOMAFL ]
