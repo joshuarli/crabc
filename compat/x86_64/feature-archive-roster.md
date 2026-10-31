@@ -45,12 +45,11 @@ only the archive provider and selection closure.
 
 ## Current integration assignments
 
-The canonical ledger assigns each non-header provider to its direct feature:
+The canonical ledger assigns each non-header feature provider to its direct
+feature. `arch_prctl` is a default-static ABI-only provider and the
+unconditional `ioperm`/`iopl` pair is public; no feature row carries them.
 
 ```toml
-# x86-kernel-admin
-abi_only_callables = ["arch_prctl"]
-
 # x86-owned-static-runtime
 abi_only_callables = ["__xmknod", "__xmknodat", "_fini", "_init"]
 
