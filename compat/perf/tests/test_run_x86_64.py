@@ -1201,5 +1201,76 @@ class CountsPureHelpersTests(unittest.TestCase):
         self.assertEqual(runner.classify_counts_row(**self.base_kwargs(allocator_attributed=True)), "allocator-attributed")
 
 
+class CountsRouteTests(unittest.TestCase):
+    def fixed_n_row(self) -> Any:
+        return next(item for item in runner.performance_rows(ROOT) if item.name == "loader_dynamic_tls_growth")
+
+    def test_dynamic_tls_growth_counts_row_is_one_shot_fixed_n_stress(self) -> None:
+        row = self.fixed_n_row()
+        self.assertEqual(row.iterations, 8)
+        with patch.object(runner, "measure_counts_startup",
+                          return_value={"status": "nondeterministic"}) as startup, \
+             patch.object(runner, "measure_counts_loop",
+                          side_effect=AssertionError("scaled loop route reached")):
+            record = runner.measure_counts_row(
+                ROOT, Mock(), {}, row, ROOT / ".work/x86_64/tmp/counts-route", 1.0, True,
+                "matched-llvm-23", {"musl": 100, "crabc": 100})
+        self.assertEqual(record["status"], "nondeterministic")
+        startup.assert_called_once()
+        self.assertEqual(startup.call_args.args[3].iterations, 8)
+        self.assertTrue(startup.call_args.kwargs["stress_diagnostic"])
+
+    def test_dynamic_tls_growth_refuses_to_scale_past_its_fixture_count(self) -> None:
+        row = self.fixed_n_row()
+        self.assertEqual(runner.counts_scaled_row(row, 8).iterations, 8)
+        for n in (9, 51):
+            with self.assertRaisesRegex(runner.AdapterError, "fixes N at 8"):
+                runner.counts_scaled_row(row, n)
+
+    def test_repeatable_counts_row_keeps_the_scaled_loop_route(self) -> None:
+        row = next(item for item in runner.performance_rows(ROOT) if item.name == "getpid")
+        with patch.object(runner, "measure_counts_startup",
+                          side_effect=AssertionError("startup route reached")), \
+             patch.object(runner, "measure_counts_loop", return_value={"status": "pass"}) as loop:
+            record = runner.measure_counts_row(
+                ROOT, Mock(), {}, row, ROOT / ".work/x86_64/tmp/counts-route", 1.0, True,
+                "matched-llvm-23", {"musl": 100, "crabc": 100})
+        self.assertEqual(record["status"], "pass")
+        loop.assert_called_once()
+
+    def test_fixed_n_stress_status_is_a_diagnostic_not_a_parity_pass(self) -> None:
+        row = self.fixed_n_row()
+        lanes = {"musl": Mock(root=Path("/musl")), "crabc": Mock(root=Path("/crabc"))}
+        judgement = {
+            "reference": {"total": 9, "calls": {"execve": 1}},
+            "allocator_attributed": {"total": 0, "calls": {}, "signatures": [], "expected": []},
+            "judged": {"total": 9, "calls": {"execve": 1}},
+            "excess": {},
+            "explanations": [],
+        }
+        trace = {"total": 9, "calls": {"execve": 1}, "entries": []}
+
+        def trial(tool: str, *_args: object, **_kwargs: object) -> object:
+            return [1_000] * 3 if tool == "perf" else trace
+
+        with patch.object(runner, "virtual_binary", return_value="/app/bin/workload"), \
+             patch.object(runner, "virtual_arguments",
+                          return_value=["loader_dynamic_tls_growth", "8", "/app/lib"]), \
+             patch.object(runner, "counts_trial", side_effect=trial), \
+             patch.object(runner, "judge_allocator_syscalls", return_value=judgement):
+            stress = runner.measure_counts_startup(
+                ROOT, Mock(), lanes, row, ROOT / ".work/x86_64/tmp/counts-route", 1.0, True,
+                {"musl": 0, "crabc": 0}, stress_diagnostic=True)
+            parity = runner.measure_counts_startup(
+                ROOT, Mock(), lanes, row, ROOT / ".work/x86_64/tmp/counts-route", 1.0, True,
+                {"musl": 0, "crabc": 0})
+        self.assertEqual(stress["status"], "nondeterministic")
+        self.assertTrue(stress["stress_diagnostic"])
+        self.assertTrue(stress["deterministic"])
+        self.assertIn("diagnostic, not an exact parity pass", stress["reason"])
+        self.assertEqual(stress["n"], {"n1": 8, "n2": 8, "n3": 8})
+        self.assertEqual(parity["status"], "pass")
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -3764,6 +3764,7 @@ COUNTS_MIN_REF_LOOP_INSNS = 1_000_000
 COUNTS_DETERMINISM_TOLERANCE = 0.0001
 COUNTS_LINEARITY_TOLERANCE = 0.005
 COUNTS_PERF_REPEATS = 3
+COUNTS_FIXED_N_STRESS_ROWS = frozenset({"loader_dynamic_tls_growth"})
 COUNTS_NOP_SOURCE = (
     "void _start(void) {\n"
     "    __asm__ volatile (\"mov $60,%%eax; xor %%edi,%%edi; syscall\" ::: \"memory\");\n"
@@ -4054,6 +4055,9 @@ def counts_cpu_model() -> str:
 
 def counts_scaled_row(row: performance_profile.PerformanceRow, n: int) -> performance_profile.PerformanceRow:
     require(n > 0, "counts N must be positive")
+    if row.name in COUNTS_FIXED_N_STRESS_ROWS:
+        require(n == row.iterations,
+                f"counts row {row.name} fixes N at {row.iterations}; refusing to scale to {n}")
     if row.legacy:
         return replace(row, iterations=n, operations=n, legacy_workload=replace(row.legacy_workload, iterations=n))
     return replace(row, iterations=n, operations=n, arguments=(row.arguments[0], str(n), *row.arguments[2:]))
@@ -4153,6 +4157,10 @@ def measure_counts_row(
     if row_uses_private_peer(row):
         return {**record, "status": "unavailable", "reason": "counts has no peer harness for this row"}
     try:
+        if row.name in COUNTS_FIXED_N_STRESS_ROWS:
+            return {**record, **measure_counts_startup(
+                root, launcher, lanes, row, out_root, timeout, matched, wrapper,
+                stress_diagnostic=True)}
         if row.iterations > 1:
             return {**record, **measure_counts_loop(root, launcher, lanes, row, out_root, timeout, matched, wrapper)}
         return {**record, **measure_counts_startup(root, launcher, lanes, row, out_root, timeout, matched, wrapper)}
@@ -4223,6 +4231,7 @@ def measure_counts_loop(
 def measure_counts_startup(
     root: Path, launcher: TimingLauncher, lanes: Mapping[str, Lane], row: performance_profile.PerformanceRow,
     out_root: Path, timeout: float, matched: bool, wrapper: Mapping[str, int],
+    *, stress_diagnostic: bool = False,
 ) -> dict[str, Any]:
     insn, syscalls, startup = {}, {}, {}
     for lane_name, lane in (("musl", lanes["musl"]), ("crabc", lanes["crabc"])):
@@ -4235,14 +4244,17 @@ def measure_counts_startup(
         startup[lane_name] = counts_subtract(sum(runs) // len(runs), wrapper[lane_name])
     judgement = judge_allocator_syscalls(syscalls["musl"]["calls"], syscalls["crabc"]["entries"])
     ratio = startup["crabc"] / startup["musl"] if startup["musl"] > 0 else None
+    deterministic = all(counts_runs_agree(t) for t in insn.values())
     status = classify_counts_row(
-        has_counts=True, deterministic=all(counts_runs_agree(t) for t in insn.values()),
+        has_counts=True, deterministic=deterministic,
         linear=True, matched=matched,
         ref_sys_perop=judgement["reference"]["total"], cand_sys_perop=judgement["judged"]["total"],
         ref_sys_whole=judgement["reference"]["total"], cand_sys_whole=judgement["judged"]["total"],
         ratio_insn=ratio, allocator_attributed="allocator" in row.name,
         syscall_excess=judgement["excess"])
-    return {
+    if stress_diagnostic and status == "pass":
+        status = "nondeterministic"
+    record = {
         "args": virtual_arguments(row, lanes["musl"]),
         "n": {"n1": row.iterations, "n2": row.iterations, "n3": row.iterations},
         "instructions": {"ref_runs": insn["musl"], "cand_runs": insn["crabc"],
@@ -4264,6 +4276,13 @@ def measure_counts_startup(
                        "explanations": judgement["explanations"]}},
         "status": status,
     }
+    if stress_diagnostic:
+        record["stress_diagnostic"] = True
+        record["deterministic"] = deterministic
+        record["reason"] = (
+            "fixed-N one-shot multi-threaded stress; whole-process counts are diagnostic, "
+            "not an exact parity pass")
+    return record
 
 
 def counts(args: argparse.Namespace) -> tuple[Path, dict[str, Any]]:
