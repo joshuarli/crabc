@@ -3769,7 +3769,25 @@ COUNTS_NOP_SOURCE = (
     "    __asm__ volatile (\"mov $60,%%eax; xor %%edi,%%edi; syscall\" ::: \"memory\");\n"
     "}\n"
 )
+ALLOCATOR_STARTUP_OPEN_PATHS = (
+    "/proc/sys/vm/overcommit_memory",
+    "/sys/kernel/mm/transparent_hugepage/enabled",
+)
+ALLOCATOR_STARTUP_MMAP_BYTES = 2_359_296
+ALLOCATOR_STARTUP_GETRANDOM_BYTES = 32
+ALLOCATOR_STARTUP_SIGNATURES = (
+    "sysinfo",
+    *tuple(f'open("{path}")' for path in ALLOCATOR_STARTUP_OPEN_PATHS),
+    f"mmap({ALLOCATOR_STARTUP_MMAP_BYTES}, MAP_NORESERVE)",
+    f"getrandom({ALLOCATOR_STARTUP_GETRANDOM_BYTES}, GRND_NONBLOCK)",
+)
 _STRACE_CALL = re.compile(r"^(?:\d+\s+)?([a-z_][a-z0-9_]*)\(")
+
+
+@dataclass(frozen=True)
+class TracedCall:
+    name: str
+    arguments: str
 
 
 def select_counts_reference(candidates: Mapping[str, str | None], rustc_text: str) -> tuple[str, str]:
@@ -3840,19 +3858,79 @@ def parse_perf_counts(text: str) -> list[int]:
     return counts
 
 
-def parse_strace_whole(text: str, binary: str) -> dict[str, Any]:
+def parse_strace_whole(text: str, binary: str, *, client_only: bool = False) -> dict[str, Any]:
     lines = text.splitlines()
     boundary: int | None = None
     for index, line in enumerate(lines):
         if f'execve("{binary}"' in line:
             boundary = index
     require(boundary is not None, f"strace trace has no client execve for {binary}")
+    identity = re.match(r"^(\d+)\s+", lines[boundary])
+    client_pid = identity.group(1) if identity is not None else None
+    require(not client_only or client_pid is not None, f"strace trace has no client pid for {binary}")
     calls: dict[str, int] = {}
+    entries: list[TracedCall] = []
     for line in lines[boundary:]:
+        if client_only:
+            identity = re.match(r"^(\d+)\s+", line)
+            if identity is None or identity.group(1) != client_pid:
+                continue
         match = _STRACE_CALL.match(line)
         if match is not None:
-            calls[match.group(1)] = calls.get(match.group(1), 0) + 1
-    return {"total": sum(calls.values()), "calls": calls}
+            name = match.group(1)
+            start = match.end()
+            separator = line.find(") = ", start)
+            end = separator if separator >= 0 else len(line)
+            calls[name] = calls.get(name, 0) + 1
+            entries.append(TracedCall(name, line[start:end]))
+    return {"total": sum(calls.values()), "calls": calls, "entries": entries}
+
+
+def strace_string_argument(arguments: str) -> str | None:
+    if not arguments.startswith('"'):
+        return None
+    end = arguments.find('"', 1)
+    return None if end < 0 else arguments[1:end]
+
+
+def allocator_startup_signature(call: TracedCall) -> str | None:
+    if call.name == "sysinfo":
+        return "sysinfo"
+    if call.name == "open":
+        path = strace_string_argument(call.arguments)
+        return f'open("{path}")' if path in ALLOCATOR_STARTUP_OPEN_PATHS else None
+    fields = [field.strip() for field in call.arguments.split(",")]
+    if call.name == "mmap" and len(fields) >= 6:
+        if fields[1] == str(ALLOCATOR_STARTUP_MMAP_BYTES) and "MAP_NORESERVE" in fields[3]:
+            return f"mmap({ALLOCATOR_STARTUP_MMAP_BYTES}, MAP_NORESERVE)"
+        return None
+    if call.name == "getrandom" and len(fields) >= 3:
+        if fields[1] == str(ALLOCATOR_STARTUP_GETRANDOM_BYTES) and "GRND_NONBLOCK" in fields[2]:
+            return f"getrandom({ALLOCATOR_STARTUP_GETRANDOM_BYTES}, GRND_NONBLOCK)"
+    return None
+
+
+def judge_startup_syscalls(reference: Mapping[str, int], candidate: Sequence[TracedCall]) -> dict[str, Any]:
+    judged: dict[str, int] = {}
+    attributed: dict[str, int] = {}
+    signatures: list[str] = []
+    for call in candidate:
+        signature = allocator_startup_signature(call)
+        if signature is None:
+            judged[call.name] = judged.get(call.name, 0) + 1
+        else:
+            attributed[call.name] = attributed.get(call.name, 0) + 1
+            signatures.append(signature)
+    excess = {name: count - reference.get(name, 0) for name, count in judged.items()
+              if count > reference.get(name, 0)}
+    return {
+        "reference": {"total": sum(reference.values()), "calls": dict(reference)},
+        "allocator_attributed": {"total": sum(attributed.values()), "calls": attributed,
+                                 "signatures": signatures,
+                                 "expected": list(ALLOCATOR_STARTUP_SIGNATURES)},
+        "judged": {"total": sum(judged.values()), "calls": judged},
+        "excess": excess,
+    }
 
 
 def classify_counts_row(
@@ -3867,6 +3945,7 @@ def classify_counts_row(
     cand_sys_whole: float,
     ratio_insn: float | None,
     allocator_attributed: bool = False,
+    syscall_excess: Mapping[str, int] | None = None,
 ) -> str:
     if allocator_attributed:
         return "allocator-attributed"
@@ -3879,6 +3958,8 @@ def classify_counts_row(
     if ratio_insn is None:
         return "unavailable"
     if not matched:
+        return "fail"
+    if syscall_excess:
         return "fail"
     limit = evidence.SYSCALL_LIMIT_FACTOR
     if cand_sys_perop > limit * ref_sys_perop or cand_sys_whole > limit * ref_sys_whole:
@@ -3928,6 +4009,7 @@ def counts_trial_result(root: Path, outdir: Path, label: str, expect_stdout: boo
 def counts_trial(
     tool: str, root: Path, launcher: TimingLauncher, lane_root: Path, binary: str,
     arguments: Sequence[str], outdir: Path, timeout: float, expect_stdout: bool = True,
+    client_only: bool = False,
 ) -> Any:
     command = counts_launcher_command(launcher, lane_root, outdir, timeout, binary, arguments)
     if tool == "perf":
@@ -3947,7 +4029,8 @@ def counts_trial(
         [evidence.FIXED_STRACE, "-f", "-qq", "-o", str(outdir / "trace.raw"), *command],
         root, timeout, tool)
     counts_trial_result(root, outdir, f"strace {binary} {arguments}", expect_stdout)
-    return parse_strace_whole((outdir / "trace.raw").read_text(encoding="utf-8", errors="replace"), binary)
+    return parse_strace_whole((outdir / "trace.raw").read_text(encoding="utf-8", errors="replace"), binary,
+                              client_only=client_only)
 
 
 def run_counts_tool(argv: Sequence[str], root: Path, timeout: float, tool: str) -> str:
@@ -4063,16 +4146,18 @@ def measure_counts_startup(
         runs = counts_trial("perf", root, launcher, lane.root, binary, arguments,
                                  out_root / f"{lane_name}-perf", timeout)
         trace = counts_trial("strace", root, launcher, lane.root, binary, arguments,
-                                    out_root / f"{lane_name}-strace", timeout)
+                                    out_root / f"{lane_name}-strace", timeout, client_only=True)
         insn[lane_name], syscalls[lane_name] = runs, trace
         startup[lane_name] = counts_subtract(sum(runs) // len(runs), wrapper[lane_name])
+    judgement = judge_startup_syscalls(syscalls["musl"]["calls"], syscalls["crabc"]["entries"])
     ratio = startup["crabc"] / startup["musl"] if startup["musl"] > 0 else None
     status = classify_counts_row(
         has_counts=True, deterministic=all(counts_runs_agree(t) for t in insn.values()),
         linear=True, matched=matched,
-        ref_sys_perop=syscalls["musl"]["total"], cand_sys_perop=syscalls["crabc"]["total"],
-        ref_sys_whole=syscalls["musl"]["total"], cand_sys_whole=syscalls["crabc"]["total"],
-        ratio_insn=ratio, allocator_attributed="allocator" in row.name)
+        ref_sys_perop=judgement["reference"]["total"], cand_sys_perop=judgement["judged"]["total"],
+        ref_sys_whole=judgement["reference"]["total"], cand_sys_whole=judgement["judged"]["total"],
+        ratio_insn=ratio, allocator_attributed="allocator" in row.name,
+        syscall_excess=judgement["excess"])
     return {
         "args": virtual_arguments(row, lanes["musl"]),
         "n": {"n1": row.iterations, "n2": row.iterations, "n3": row.iterations},
@@ -4082,9 +4167,16 @@ def measure_counts_startup(
                          "ratio_insn": ratio, "delta_insn": startup["crabc"] - startup["musl"]},
         "syscalls": {
             "ref": {"per_op": syscalls["musl"]["total"],
-                    "whole": {"total": syscalls["musl"]["total"], "calls": syscalls["musl"]["calls"]}},
+                    "whole": {"total": syscalls["musl"]["total"], "calls": syscalls["musl"]["calls"]},
+                    "allocator_attributed": {"total": 0, "calls": {}, "signatures": []},
+                    "judged": judgement["reference"]},
             "cand": {"per_op": syscalls["crabc"]["total"],
-                     "whole": {"total": syscalls["crabc"]["total"], "calls": syscalls["crabc"]["calls"]}}},
+                     "whole": {"total": syscalls["crabc"]["total"], "calls": syscalls["crabc"]["calls"]},
+                     "allocator_attributed": judgement["allocator_attributed"],
+                     "judged": judgement["judged"]},
+            "judged": {"reference_total": judgement["reference"]["total"],
+                       "candidate_total": judgement["judged"]["total"],
+                       "excess": judgement["excess"]}},
         "status": status,
     }
 
