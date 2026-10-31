@@ -598,9 +598,27 @@ cases pass as before (same failures, none new).
 ### S3b — Single loader/libc image
 
 **Owner:** one `god`-tier implementer and one independent `expert` reviewer.
-**Requires:** S1 done, S3a done for ldso. **Allowed files:** `ldso/**`,
-`libc/**` outside allocator integration modules, `crt/**`, the product
-builders. Never the allocator.
+**Requires:** S1 done, S3a done for ldso. S3a-ldso is blocked on 71 cases;
+because the merged image is the better migration target, S3b proceeds first
+and S3a-ldso is revisited after it (coordinator decision, 2026-10-31).
+**Allowed files:** `ldso/**`, `libc/**` outside allocator integration modules,
+`crt/**`, the product builders, and the evidence consumers of the startup and
+identity contract that the merge changes
+(`compat/x86_64/installed_crt_startup_probe.c`,
+`compat/x86_64/installed_crt_startup_evidence.py`,
+`compat/x86_64/native_abi_selection.py`,
+`compat/x86_64/run_owned_loader_libc_identity.sh`,
+`compat/x86_64/owned_loader_libc_identity_receipt.py` and their tests).
+Never the allocator.
+
+Spike result (2026-10-31, uncommitted lane): one `mold -shared` image with
+`SONAME libc.so` and `_start` as entry booted `hello`, a malloc/TLS probe and
+`dlopen("/usr/lib/libc.so")`; 12 startup syscalls against 25 split (musl 9),
+7 non-allocator against musl's 9, 0 libc→loader imports, 229,617 vs 238,686
+startup instructions. Reviewer rejected the design as-is: early `_start`
+relocation writes are unvalidated, identity loses `(st_dev,st_ino)` and
+`ldso.name`, and the weak-slot ownership check fails open. Those three, the
+product builder, and the evidence consumers above are the remaining work.
 
 Why this is not optional: the reconnaissance shows the split costs about 12
 startup syscalls that musl does not make. No search-path tweak removes the
@@ -1028,7 +1046,7 @@ the budgets above. `allocator-attributed` costs are listed, never passed.
 | S1.3 | `ac87382e8` (`0780439b3`) | `perf-c counts` development route; object-once/dual-link reused; no new runner | `test_run_x86_64` 41 pass 1 skip; `test_x86_64_evidence` 46 pass | static-PIE has no counts path; `startup` row nondeterministic (musl trials 85,712/85,731/85,730 = 0.022 %, direct musl is deterministic, so the launcher path is implicated) |
 | S1.4 | `10de7c2d9` | `SYSCALL_LIMIT_FACTOR = 1`, `INSTRUCTION_LIMIT_RATIO = 1.10`; one definition | `test_performance_release_gate` 23 pass | none |
 | S1.5 | (runs, no commit) | 58 dynamic-PIE rows: 0 pass, 46 fail, 11 nondeterministic, 1 unavailable; 43 fails are syscall-only | 4 `counts` invocations exit 0 | static-PIE rows unavailable; `startup` row nondeterministic |
-| S2 | — | budget 690 / 11,000 / 566 / 270,000; nothing deleted | — | not started; item 1 is the lever |
+| S2 | `e5118b5da` | 942→701 commands (budget 720); 12,817→10,593 dispatcher lines (budget 11,000); 242 cases on one table | parity ledger PASS; test_runner 92 pass; 12 dependent modules pass; 240/242 old-vs-new byte-identical | Python files 566 / lines 270,000 budgets still open |
 | S3a | — | nothing deleted; ldso 28/18,293 lines and 7 features unchanged | product baselines recorded; exports identical | 71 ldso cases and the libc export-surface question |
 | S3b | — | — | — | requires S3a-ldso |
 | S4 | — | — | — | requires S3b for loader/startup rows |
