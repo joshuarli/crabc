@@ -15,6 +15,20 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
 RUNNER = ROOT / "scripts" / "dev-x86_64.sh"
+HEADER_ABI_CASES = ROOT / "compat" / "x86_64" / "header_abi_cases.txt"
+
+
+def _header_abi_cases() -> dict[str, str]:
+    cases: dict[str, str] = {}
+    for line in HEADER_ABI_CASES.read_text(encoding="utf-8").splitlines():
+        case, script = line.split("\t")
+        if case in cases:
+            raise ValueError(f"duplicate header-abi case: {case}")
+        if not script.startswith("run_") or not script.endswith(".sh"):
+            raise ValueError(f"invalid header-abi script: {script}")
+        cases[case] = script
+    return cases
+
 
 _SELECTED_JOIN_INNER_SIGNATURE = "unsafe fn join_selected_worker_inner("
 _SELECTED_JOIN_CLAIM = re.compile(
@@ -99,6 +113,9 @@ class X86_64CoreRunnerTests(unittest.TestCase):
                 or f"{member!r} is unexpectedly present in a {len(container)}-byte source contract"
             )
         super().assertNotIn(member, container, msg)
+
+    def assertHeaderAbiCase(self, case: str, script: str) -> None:
+        self.assertEqual(_header_abi_cases().get(case), script)
 
     def test_selected_join_source_judge_rejects_unclaimed_control_dereference(
         self,
@@ -206,7 +223,9 @@ unsafe fn join_selected_worker_inner(
             self.assertIn(required, runner)
         self.assertNotIn("-nostdlib", runner)
         self.assertNotIn("sched_setaffinity", runner)
-        self.assertIn("sched-cpu-macros-header-abi", dispatcher)
+        self.assertHeaderAbiCase(
+            "sched-cpu-macros-header-abi", "run_sched_cpu_macros_header_abi.sh"
+        )
 
     def test_fanotify_event_traversal_macros_stay_header_only(self) -> None:
         """Pin record traversal syntax without selecting a watcher runtime."""
@@ -262,7 +281,7 @@ unsafe fn join_selected_worker_inner(
         self.assertNotIn("-nostdlib", runner)
         self.assertNotIn("fanotify_init", runner)
         self.assertNotIn("fanotify_mark", runner)
-        self.assertIn("fanotify-header-abi", dispatcher)
+        self.assertHeaderAbiCase("fanotify-header-abi", "run_fanotify_header_abi.sh")
 
     def test_wide_character_artifact_stays_exact_and_non_promoting(self) -> None:
         static_root = (
@@ -335,7 +354,9 @@ unsafe fn join_selected_worker_inner(
         self.assertIn(
             'command = "./scripts/dev-x86_64.sh libc-wide-character"', parity
         )
-        self.assertIn("wide-character-header-abi)", dispatcher)
+        self.assertHeaderAbiCase(
+            "wide-character-header-abi", "run_wide_character_header_abi.sh"
+        )
         self.assertIn("libc-wide-character)", dispatcher)
 
     def test_locale_object_wide_artifact_stays_exact_and_non_promoting(self) -> None:
@@ -398,7 +419,9 @@ unsafe fn join_selected_worker_inner(
         self.assertIn(
             'command = "./scripts/dev-x86_64.sh libc-locale-object-wide"', parity
         )
-        self.assertIn("locale-object-wide-header-abi)", dispatcher)
+        self.assertHeaderAbiCase(
+            "locale-object-wide-header-abi", "run_locale_object_wide_header_abi.sh"
+        )
         self.assertIn("libc-locale-object-wide)", dispatcher)
 
     def test_locale_narrow_artifact_stays_exact_and_non_promoting(self) -> None:
@@ -475,7 +498,9 @@ unsafe fn join_selected_worker_inner(
         self.assertIn(
             'command = "./scripts/dev-x86_64.sh libc-locale-narrow"', parity
         )
-        self.assertIn("locale-narrow-header-abi)", dispatcher)
+        self.assertHeaderAbiCase(
+            "locale-narrow-header-abi", "run_locale_narrow_header_abi.sh"
+        )
         self.assertIn("libc-locale-narrow)", dispatcher)
 
     def test_locale_ctype_locator_artifact_stays_abi_only_and_non_promoting(
@@ -552,16 +577,29 @@ unsafe fn join_selected_worker_inner(
 
         source = RUNNER.read_text(encoding="utf-8")
         self.assertIn('readonly PLATFORM="linux/amd64"', source)
-        self.assertIn("    madvise-reference) ;;", source)
+        header_abi_cases = _header_abi_cases()
+        self.assertEqual(len(header_abi_cases), 242)
+        self.assertEqual(
+            len(set(header_abi_cases.values())), len(header_abi_cases)
+        )
+        self.assertIn("    header-abi)", source)
         self.assertIn(
-            "    ctype-header-abi|locale-profile-header-abi|locale-multibyte-header-abi|iconv-header-abi|wide-character-header-abi|wcswcs-header-abi|locale-object-wide-header-abi|locale-narrow-header-abi|c32rtomb-header-abi|uchar-stateful-header-abi) ;;",
+            "  header-abi CASE  run one selected x86 header C/C++ ABI case",
             source,
         )
-        self.assertIn("    ffs-header-abi) ;;", source)
-        self.assertIn("    byte-strings-header-abi) ;;", source)
-        self.assertIn("    memory-search-header-abi) ;;", source)
-        self.assertIn("    string-copy-header-abi) ;;", source)
-        self.assertIn("    string-duplication-header-abi) ;;", source)
+        self.assertIn(
+            '"$ROOT_DIR/compat/x86_64/header_abi_cases.txt"',
+            source,
+        )
+        for case, script in header_abi_cases.items():
+            self.assertTrue(
+                (ROOT / "compat" / "x86_64" / script).is_file(),
+                f"missing header-abi runner: {script}",
+            )
+            self.assertNotIn(f"    {case})", source)
+            self.assertNotIn(f"run_{case.replace('-', '_')}()", source)
+            self.assertNotIn(f"  {case}  ", source)
+        self.assertIn("    madvise-reference) ;;", source)
         self.assertIn("    linux-5-10-uapi) ;;", source)
         self.assertIn("    candidate-header-closure) ;;", source)
         self.assertIn("    headers-layouts-aggregate) ;;", source)
@@ -576,13 +614,7 @@ unsafe fn join_selected_worker_inner(
         )
         self.assertIn("    header-abi-matrix) ;;", source)
         self.assertIn("    header-record-layout-matrix) ;;", source)
-        self.assertIn(
-            "    posix-spawn-file-actions-header-abi|libc-posix-spawn-file-actions|process-exec-header-abi|libc-process-exec) ;;",
-            source,
-        )
         self.assertIn("    header-declaration-macro-visibility-matrix) ;;", source)
-        self.assertIn("    dirent-header-abi) ;;", source)
-        self.assertIn("    ftw-header-abi) ;;", source)
         self.assertIn("    stat-ftw-header-source-form) ;;", source)
         self.assertIn("    param-header-source-form) ;;", source)
         self.assertIn("    math-tgmath-source-form) ;;", source)
@@ -593,12 +625,6 @@ unsafe fn join_selected_worker_inner(
         self.assertIn("    sysmacros-header-source-form) ;;", source)
         self.assertIn("    pthread-header-source-form) ;;", source)
         self.assertIn("    ioctl-header-source-form) ;;", source)
-        self.assertIn("    tcp-header-abi) ;;", source)
-        self.assertIn("    stddef-header-abi) ;;", source)
-        self.assertIn(
-            "    inet-address-header-abi|nameser-header-abi|quota-header-abi|endservent-header-abi|service-lifecycle-header-abi) ;;",
-            source,
-        )
         self.assertIn(
             "    libc-network-byte-order|libc-dn-skipname|libc-dn-expand|libc-ns-flagdata|libc-ns-get16|libc-ns-get32|libc-ns-put16|libc-ns-put32|libc-ns-skiprr|libc-nameser-wire-aggregate|libc-nameser-message-parser) ;;",
             source,
@@ -612,17 +638,9 @@ unsafe fn join_selected_worker_inner(
         self.assertIn("    libc-ns-get16)", source)
         self.assertIn("    libc-ns-get32)", source)
         self.assertIn("    libc-ns-put16)", source)
-        self.assertIn("    math-special-header-abi|libc-math-special) ;;", source)
-        self.assertIn(
-            "    math-elementary-long-double-header-abi|libc-math-elementary-long-double) ;;",
-            source,
-        )
         self.assertIn("    ldso-fixed-graph-dlfcn) ;;", source)
         self.assertIn("    ldso-public-dlfcn|ldso-dladdr-symbol-bounds) ;;", source)
         self.assertIn("    ldso-bounded-dlopen) ;;", source)
-        self.assertIn("    math-complex-header-abi)", source)
-        self.assertIn("    math-complex-complete-header-abi)", source)
-        self.assertIn("    math-special-header-abi)", source)
         self.assertIn("    libc-math-complex)", source)
         self.assertIn("    libc-math-complex-complete)", source)
         self.assertIn("    libc-elementary-sqrt-fenv)", source)
@@ -683,7 +701,6 @@ unsafe fn join_selected_worker_inner(
         self.assertIn("qualification-posix-abi-admission", source)
         self.assertIn("libc-pthread-c11-once", source)
         self.assertIn("libc-pthread-c11-tsd", source)
-        self.assertIn("pthread-cancellation-header-abi", source)
         self.assertIn("libc-pthread-cancel-deferred", source)
         self.assertIn("libc-pthread-atfork", source)
         self.assertIn("libc-pthread-cpuclock", source)
@@ -691,35 +708,21 @@ unsafe fn join_selected_worker_inner(
         self.assertIn("libc-pthread-attributes", source)
         self.assertIn("libc-pthread-barrierattr-pshared", source)
         self.assertIn("libc-pthread-barrier", source)
-        self.assertIn("pthread-spin-destroy-header-abi", source)
         self.assertIn("libc-pthread-spin-destroy", source)
-        self.assertIn("pthread-spin-operations-header-abi", source)
         self.assertIn("libc-pthread-spin-operations", source)
         self.assertIn("libc-interval-timers", source)
         self.assertIn("libc-termios-control", source)
-        self.assertIn("ctermid-header-abi", source)
         self.assertIn("libc-ctermid", source)
-        self.assertIn("grantpt-header-abi", source)
         self.assertIn("libc-grantpt", source)
-        self.assertIn("tcsetpgrp-header-abi", source)
         self.assertIn("libc-tcsetpgrp", source)
-        self.assertIn("getpass-header-abi", source)
         self.assertIn("libc-getpass", source)
-        self.assertIn("mkfifo-header-abi", source)
         self.assertIn("libc-mkfifo", source)
-        self.assertIn("mkdirat-header-abi", source)
         self.assertIn("libc-mkdirat", source)
-        self.assertIn("mkfifoat-header-abi", source)
         self.assertIn("libc-mkfifoat", source)
-        self.assertIn("mktemp-header-abi", source)
         self.assertIn("libc-mktemp", source)
-        self.assertIn("temporary-names-header-abi", source)
         self.assertIn("libc-temporary-names", source)
-        self.assertIn("file-handles-header-abi", source)
         self.assertIn("libc-file-handles", source)
-        self.assertIn("posix-spawn-file-actions-header-abi", source)
         self.assertIn("libc-posix-spawn-file-actions", source)
-        self.assertIn("process-exec-header-abi", source)
         self.assertIn("libc-process-exec", source)
         self.assertIn("libc-process-context", source)
         self.assertIn("libc-environment", source)
@@ -739,13 +742,9 @@ unsafe fn join_selected_worker_inner(
         self.assertIn("libc-process-resources", source)
         self.assertIn("libc-sched-priority-bounds", source)
         self.assertIn("libc-sched-yield", source)
-        self.assertIn("readlinkat-header-abi", source)
         self.assertIn("libc-readlinkat", source)
-        self.assertIn("linkat-header-abi", source)
         self.assertIn("libc-linkat", source)
-        self.assertIn("lchown-header-abi", source)
         self.assertIn("libc-lchown", source)
-        self.assertIn("hasmntopt-header-abi", source)
         self.assertIn("libc-hasmntopt", source)
         self.assertIn("libc-readiness-waits", source)
         self.assertIn("libc-socket-transport", source)
@@ -760,10 +759,6 @@ unsafe fn join_selected_worker_inner(
         self.assertIn('compat/x86_64/run_linux_5_10_uapi.sh', source)
         self.assertIn('run_header_abi_reference()', source)
         self.assertIn('compat/x86_64/run_header_abi_reference.sh', source)
-        self.assertIn('run_feature_profile_control_plane_header_abi()', source)
-        self.assertIn(
-            'compat/x86_64/run_feature_profile_control_plane_header_abi.sh', source
-        )
         self.assertIn('run_terminal_streams_header_topology()', source)
         self.assertIn(
             'compat/x86_64/run_terminal_streams_header_topology.sh', source
@@ -808,108 +803,12 @@ unsafe fn join_selected_worker_inner(
         self.assertIn('compat/x86_64/run_installed_header_tree_closure.sh', source)
         self.assertIn('run_uapi_wrapper_matrix()', source)
         self.assertIn('compat/x86_64/run_uapi_wrapper_matrix.sh', source)
-        self.assertIn('run_epoll_header_abi()', source)
-        self.assertIn('compat/x86_64/run_epoll_header_abi.sh', source)
-        self.assertIn('run_event_descriptors_header_abi()', source)
-        self.assertIn(
-            'compat/x86_64/run_event_descriptors_header_abi.sh', source
-        )
-        self.assertIn('run_dirent_header_abi()', source)
-        self.assertIn('compat/x86_64/run_dirent_header_abi.sh', source)
-        self.assertIn('run_pathname_lifecycle_header_abi()', source)
-        self.assertIn(
-            'compat/x86_64/run_pathname_lifecycle_header_abi.sh', source
-        )
-        self.assertIn('run_timeval_transitive_header_abi()', source)
-        self.assertIn('compat/x86_64/run_timeval_transitive_header_abi.sh', source)
-        self.assertIn('run_sys_time_direct_header_abi()', source)
-        self.assertIn('compat/x86_64/run_sys_time_direct_header_abi.sh', source)
-        self.assertIn('run_access_header_abi()', source)
-        self.assertIn('compat/x86_64/run_access_header_abi.sh', source)
         self.assertIn('run_header_abi_project()', source)
         self.assertIn('compat/x86_64/run_project_header_abi.sh', source)
-        self.assertIn('run_math_complex_header_abi()', source)
-        self.assertIn('compat/x86_64/run_math_complex_header_abi.sh', source)
-        self.assertIn('run_sys_reg_header_abi()', source)
-        self.assertIn('compat/x86_64/run_sys_reg_header_abi.sh', source)
-        self.assertIn('run_machine_context_header_abi()', source)
-        self.assertIn(
-            'compat/x86_64/run_machine_context_header_abi.sh', source
-        )
-        self.assertIn('run_types_header_abi()', source)
-        self.assertIn('compat/x86_64/run_types_header_abi.sh', source)
-        self.assertIn('run_stddef_header_abi()', source)
-        self.assertIn('compat/x86_64/run_stddef_header_abi.sh', source)
-        self.assertIn('run_stat_header_abi()', source)
-        self.assertIn('compat/x86_64/run_stat_header_abi.sh', source)
-        self.assertIn('run_utime_header_abi()', source)
-        self.assertIn('compat/x86_64/run_utime_header_abi.sh', source)
-        self.assertIn('run_pthread_c11_header_abi()', source)
-        self.assertIn('compat/x86_64/run_pthread_c11_header_abi.sh', source)
-        self.assertIn('run_pthread_cancellation_header_abi()', source)
-        self.assertIn(
-            'compat/x86_64/run_pthread_cancellation_header_abi.sh', source
-        )
-        self.assertIn('run_stdlib_header_abi()', source)
-        self.assertIn('compat/x86_64/run_stdlib_header_abi.sh', source)
-        self.assertIn('run_stdio_standard_header_abi()', source)
-        self.assertIn('compat/x86_64/run_stdio_standard_header_abi.sh', source)
         self.assertIn('run_stdio_header_source_form()', source)
         self.assertIn('compat/x86_64/run_stdio_header_source_form.sh', source)
-        self.assertIn('run_ctype_header_abi()', source)
-        self.assertIn('compat/x86_64/run_ctype_header_abi.sh', source)
-        self.assertIn('run_integer_arithmetic_header_abi()', source)
-        self.assertIn('compat/x86_64/run_integer_arithmetic_header_abi.sh', source)
-        self.assertIn('run_credential_observation_header_abi()', source)
-        self.assertIn(
-            'compat/x86_64/run_credential_observation_header_abi.sh', source
-        )
-        self.assertIn('run_ffs_header_abi()', source)
-        self.assertIn('compat/x86_64/run_ffs_header_abi.sh', source)
-        self.assertIn('run_byte_strings_header_abi()', source)
-        self.assertIn('compat/x86_64/run_byte_strings_header_abi.sh', source)
-        self.assertIn('run_memory_search_header_abi()', source)
-        self.assertIn('compat/x86_64/run_memory_search_header_abi.sh', source)
-        self.assertIn('run_memccpy_header_abi()', source)
-        self.assertIn('compat/x86_64/run_memccpy_header_abi.sh', source)
-        self.assertIn('run_string_copy_header_abi()', source)
-        self.assertIn('compat/x86_64/run_string_copy_header_abi.sh', source)
-        self.assertIn('run_random_entropy_header_abi()', source)
-        self.assertIn('compat/x86_64/run_random_entropy_header_abi.sh', source)
-        self.assertIn('run_time_header_abi()', source)
-        self.assertIn('compat/x86_64/run_time_header_abi.sh', source)
-        self.assertIn('run_poll_header_abi()', source)
-        self.assertIn('compat/x86_64/run_poll_header_abi.sh', source)
-        self.assertIn('run_select_header_abi()', source)
-        self.assertIn('compat/x86_64/run_select_header_abi.sh', source)
-        self.assertIn('run_fcntl_header_abi()', source)
-        self.assertIn('compat/x86_64/run_fcntl_header_abi.sh', source)
-        self.assertIn('run_file_handles_header_abi()', source)
-        self.assertIn(
-            'compat/x86_64/run_file_handles_header_abi.sh', source
-        )
-        self.assertIn('run_descriptor_advice_header_abi()', source)
-        self.assertIn(
-            'compat/x86_64/run_descriptor_advice_header_abi.sh', source
-        )
-        self.assertIn('run_ioctl_header_abi()', source)
-        self.assertIn('compat/x86_64/run_ioctl_header_abi.sh', source)
         self.assertIn('run_ioctl_header_source_form()', source)
         self.assertIn('compat/x86_64/run_ioctl_header_source_form.sh', source)
-        self.assertIn('run_unistd_header_abi()', source)
-        self.assertIn('compat/x86_64/run_unistd_header_abi.sh', source)
-        self.assertIn('run_system_header_abi()', source)
-        self.assertIn('compat/x86_64/run_system_header_abi.sh', source)
-        self.assertIn('run_syscall_header_abi()', source)
-        self.assertIn('compat/x86_64/run_x86_syscall_header.sh', source)
-        self.assertIn('run_signal_header_abi()', source)
-        self.assertIn('compat/x86_64/run_signal_header_abi.sh', source)
-        self.assertIn('run_termios_header_abi()', source)
-        self.assertIn('compat/x86_64/run_termios_header_abi.sh', source)
-        self.assertIn('run_mman_header_abi()', source)
-        self.assertIn('compat/x86_64/run_mman_header_abi.sh', source)
-        self.assertIn('run_resource_header_abi()', source)
-        self.assertIn('compat/x86_64/run_resource_header_abi.sh', source)
         self.assertIn('run_mm_abi_reference()', source)
         self.assertIn('compat/x86_64/run_x86_mm_reference.sh', source)
         self.assertIn('run_mapping_reference()', source)
@@ -2174,10 +2073,6 @@ unsafe fn join_selected_worker_inner(
             '    libc-termios-control)\n        [ "$#" -eq 0 ] || fail "libc-termios-control takes no arguments"',
             source,
         )
-        self.assertIn('run_ctermid_header_abi()', source)
-        self.assertIn(
-            '/workspace/compat/x86_64/run_ctermid_header_abi.sh', source
-        )
         self.assertIn('run_libc_ctermid_probe()', source)
         self.assertIn(
             '/workspace/compat/x86_64/run_libc_ctermid.sh', source
@@ -2185,10 +2080,6 @@ unsafe fn join_selected_worker_inner(
         self.assertIn(
             '    libc-ctermid)\n        [ "$#" -eq 0 ] || fail "libc-ctermid takes no arguments"',
             source,
-        )
-        self.assertIn('run_grantpt_header_abi()', source)
-        self.assertIn(
-            '/workspace/compat/x86_64/run_grantpt_header_abi.sh', source
         )
         self.assertIn('run_libc_grantpt_probe()', source)
         self.assertIn(
@@ -2198,10 +2089,6 @@ unsafe fn join_selected_worker_inner(
             '    libc-grantpt)\n        [ "$#" -eq 0 ] || fail "libc-grantpt takes no arguments"',
             source,
         )
-        self.assertIn('run_isatty_header_abi()', source)
-        self.assertIn(
-            '/workspace/compat/x86_64/run_isatty_header_abi.sh', source
-        )
         self.assertIn('run_libc_isatty_probe()', source)
         self.assertIn(
             '/workspace/compat/x86_64/run_libc_isatty.sh', source
@@ -2209,10 +2096,6 @@ unsafe fn join_selected_worker_inner(
         self.assertIn(
             '    libc-isatty)\n        [ "$#" -eq 0 ] || fail "libc-isatty takes no arguments"',
             source,
-        )
-        self.assertIn('run_ttyname_r_header_abi()', source)
-        self.assertIn(
-            '/workspace/compat/x86_64/run_ttyname_r_header_abi.sh', source
         )
         self.assertIn('run_libc_ttyname_r_probe()', source)
         self.assertIn(
@@ -2222,10 +2105,6 @@ unsafe fn join_selected_worker_inner(
             '    libc-ttyname-r)\n        [ "$#" -eq 0 ] || fail "libc-ttyname-r takes no arguments"',
             source,
         )
-        self.assertIn('run_tcgetpgrp_header_abi()', source)
-        self.assertIn(
-            '/workspace/compat/x86_64/run_tcgetpgrp_header_abi.sh', source
-        )
         self.assertIn('run_libc_tcgetpgrp_probe()', source)
         self.assertIn(
             '/workspace/compat/x86_64/run_libc_tcgetpgrp.sh', source
@@ -2233,10 +2112,6 @@ unsafe fn join_selected_worker_inner(
         self.assertIn(
             '    libc-tcgetpgrp)\n        [ "$#" -eq 0 ] || fail "libc-tcgetpgrp takes no arguments"',
             source,
-        )
-        self.assertIn('run_tcsetpgrp_header_abi()', source)
-        self.assertIn(
-            '/workspace/compat/x86_64/run_tcsetpgrp_header_abi.sh', source
         )
         self.assertIn('run_libc_tcsetpgrp_probe()', source)
         self.assertIn(
@@ -2246,10 +2121,6 @@ unsafe fn join_selected_worker_inner(
             '    libc-tcsetpgrp)\n        [ "$#" -eq 0 ] || fail "libc-tcsetpgrp takes no arguments"',
             source,
         )
-        self.assertIn('run_getpass_header_abi()', source)
-        self.assertIn(
-            '/workspace/compat/x86_64/run_getpass_header_abi.sh', source
-        )
         self.assertIn('run_libc_getpass_probe()', source)
         self.assertIn(
             '/workspace/compat/x86_64/run_libc_getpass.sh', source
@@ -2258,25 +2129,12 @@ unsafe fn join_selected_worker_inner(
             '    libc-getpass)\n        [ "$#" -eq 0 ] || fail "libc-getpass takes no arguments"',
             source,
         )
-        self.assertIn('run_mktemp_header_abi()', source)
-        self.assertIn(
-            '/workspace/compat/x86_64/run_mktemp_header_abi.sh', source
-        )
         self.assertIn('run_libc_mktemp_probe()', source)
         self.assertIn(
             '/workspace/compat/x86_64/run_libc_mktemp.sh', source
         )
         self.assertIn(
             '    libc-mktemp)\n        [ "$#" -eq 0 ] || fail "libc-mktemp takes no arguments"',
-            source,
-        )
-        self.assertIn('run_temporary_names_header_abi()', source)
-        self.assertIn(
-            '/workspace/compat/x86_64/run_temporary_names_header_abi.sh',
-            source,
-        )
-        self.assertIn(
-            '    temporary-names-header-abi)\n        [ "$#" -eq 0 ] || fail "temporary-names-header-abi takes no arguments"',
             source,
         )
         self.assertIn('run_libc_temporary_names_probe()', source)
@@ -2288,21 +2146,12 @@ unsafe fn join_selected_worker_inner(
             '    libc-temporary-names)\n        [ "$#" -eq 0 ] || fail "libc-temporary-names takes no arguments"',
             source,
         )
-        self.assertIn('run_file_handles_header_abi()', source)
-        self.assertIn(
-            '/workspace/compat/x86_64/run_file_handles_header_abi.sh', source
-        )
         self.assertIn('run_libc_file_handles_probe()', source)
         self.assertIn(
             '/workspace/compat/x86_64/run_libc_file_handles.sh', source
         )
         self.assertIn(
             '    libc-file-handles)\n        [ "$#" -eq 0 ] || fail "libc-file-handles takes no arguments"',
-            source,
-        )
-        self.assertIn('run_posix_spawn_file_actions_header_abi()', source)
-        self.assertIn(
-            '/workspace/compat/x86_64/run_posix_spawn_file_actions_header_abi.sh',
             source,
         )
         self.assertIn('run_libc_posix_spawn_file_actions()', source)
@@ -2422,15 +2271,6 @@ unsafe fn join_selected_worker_inner(
             '    libc-integer-arithmetic)\n        [ "$#" -eq 0 ] || fail "libc-integer-arithmetic takes no arguments"',
             source,
         )
-        self.assertIn('integer-parse-header-abi', source)
-        self.assertIn('run_integer_parse_header_abi()', source)
-        self.assertIn(
-            '/workspace/compat/x86_64/run_integer_parse_header_abi.sh', source,
-        )
-        self.assertIn(
-            '    integer-parse-header-abi)\n        [ "$#" -eq 0 ] || fail "integer-parse-header-abi takes no arguments"',
-            source,
-        )
         self.assertIn('libc-integer-parse', source)
         self.assertIn(
             '/workspace/compat/x86_64/run_libc_integer_parse.sh', source,
@@ -2439,29 +2279,12 @@ unsafe fn join_selected_worker_inner(
             '    libc-integer-parse)\n        [ "$#" -eq 0 ] || fail "libc-integer-parse takes no arguments"',
             source,
         )
-        self.assertIn('float-parse-header-abi', source)
-        self.assertIn('run_float_parse_header_abi()', source)
-        self.assertIn(
-            '/workspace/compat/x86_64/run_float_parse_header_abi.sh', source,
-        )
-        self.assertIn(
-            '    float-parse-header-abi)\n        [ "$#" -eq 0 ] || fail "float-parse-header-abi takes no arguments"',
-            source,
-        )
         self.assertIn('libc-float-parse', source)
         self.assertIn(
             '/workspace/compat/x86_64/run_libc_float_parse.sh', source,
         )
         self.assertIn(
             '    libc-float-parse)\n        [ "$#" -eq 0 ] || fail "libc-float-parse takes no arguments"',
-            source,
-        )
-        self.assertIn('getsubopt-header-abi', source)
-        self.assertIn(
-            '/workspace/compat/x86_64/run_getsubopt_header_abi.sh', source,
-        )
-        self.assertIn(
-            '    getsubopt-header-abi)\n        [ "$#" -eq 0 ] || fail "getsubopt-header-abi takes no arguments"',
             source,
         )
         self.assertIn('libc-getsubopt', source)
@@ -2539,11 +2362,6 @@ unsafe fn join_selected_worker_inner(
             '    libc-allocator-string-duplication)\n        [ "$#" -eq 0 ] || fail "libc-allocator-string-duplication takes no arguments"',
             source,
         )
-        self.assertIn('string-duplication-header-abi', source)
-        self.assertIn(
-            '/workspace/compat/x86_64/run_string_duplication_header_abi.sh',
-            source,
-        )
         self.assertIn('run_libc_thread_pointer_probe()', source)
         self.assertIn('/workspace/compat/x86_64/run_libc_thread_pointer.sh', source)
         self.assertIn('run_libc_foundation_probe()', source)
@@ -2564,25 +2382,10 @@ unsafe fn join_selected_worker_inner(
             '    libc-math-x87-extended)\n        [ "$#" -eq 0 ] || fail "libc-math-x87-extended takes no arguments"',
             source,
         )
-        self.assertIn('run_math_special_header_abi()', source)
-        self.assertIn('/workspace/compat/x86_64/run_math_special_header_abi.sh', source)
-        self.assertIn(
-            '    math-special-header-abi)\n        [ "$#" -eq 0 ] || fail "math-special-header-abi takes no arguments"',
-            source,
-        )
         self.assertIn('run_libc_math_special_probe()', source)
         self.assertIn('/workspace/compat/x86_64/run_libc_math_special.sh', source)
         self.assertIn(
             '    libc-math-special)\n        [ "$#" -eq 0 ] || fail "libc-math-special takes no arguments"',
-            source,
-        )
-        self.assertIn('run_math_complex_complete_header_abi()', source)
-        self.assertIn(
-            '/workspace/compat/x86_64/run_math_complex_complete_header_abi.sh',
-            source,
-        )
-        self.assertIn(
-            '    math-complex-complete-header-abi)\n        [ "$#" -eq 0 ] || fail "math-complex-complete-header-abi takes no arguments"',
             source,
         )
         self.assertIn('run_libc_math_complex_complete_probe()', source)
@@ -2592,15 +2395,6 @@ unsafe fn join_selected_worker_inner(
         )
         self.assertIn(
             '    libc-math-complex-complete)\n        [ "$#" -eq 0 ] || fail "libc-math-complex-complete takes no arguments"',
-            source,
-        )
-        self.assertIn('run_math_elementary_long_double_header_abi()', source)
-        self.assertIn(
-            '/workspace/compat/x86_64/run_math_elementary_long_double_header_abi.sh',
-            source,
-        )
-        self.assertIn(
-            '    math-elementary-long-double-header-abi)\n        [ "$#" -eq 0 ] || fail "math-elementary-long-double-header-abi takes no arguments"',
             source,
         )
         self.assertIn('run_libc_math_elementary_long_double_probe()', source)
@@ -2780,9 +2574,8 @@ unsafe fn join_selected_worker_inner(
         self.assertIn(
             'command = "./scripts/dev-x86_64.sh libc-signalfd"', parity_ledger
         )
-        self.assertIn("run_signalfd_header_abi()", dispatcher)
+        self.assertHeaderAbiCase("signalfd-header-abi", "run_signalfd_header_abi.sh")
         self.assertIn("run_libc_signalfd_probe()", dispatcher)
-        self.assertIn("signalfd-header-abi)", dispatcher)
         self.assertIn("libc-signalfd)", dispatcher)
 
     def test_libc_static_c_abi_sigisemptyset_artifact_stays_bounded(self) -> None:
@@ -3499,9 +3292,10 @@ unsafe fn join_selected_worker_inner(
             'command = "./scripts/dev-x86_64.sh libc-sched-getscheduler"',
             parity_ledger,
         )
-        self.assertIn("run_sched_getscheduler_header_abi()", dispatcher)
+        self.assertHeaderAbiCase(
+            "sched-getscheduler-header-abi", "run_sched_getscheduler_header_abi.sh"
+        )
         self.assertIn("run_libc_sched_getscheduler_probe()", dispatcher)
-        self.assertIn("sched-getscheduler-header-abi)", dispatcher)
         self.assertIn("libc-sched-getscheduler)", dispatcher)
     def test_libc_static_c_abi_alarm_artifact_stays_bounded(self) -> None:
         """Keep the historical SIGALRM timer adapter below timer promotion."""
@@ -4524,8 +4318,9 @@ unsafe fn join_selected_worker_inner(
         self.assertIn(
             'command = "./scripts/dev-x86_64.sh libc-endservent"', parity_ledger
         )
-        self.assertIn("endservent-header-abi)", dispatcher)
-        self.assertIn("run_endservent_header_abi()", dispatcher)
+        self.assertHeaderAbiCase(
+            "endservent-header-abi", "run_endservent_header_abi.sh"
+        )
         self.assertIn("libc-endservent)", dispatcher)
         self.assertIn(
             "/workspace/compat/x86_64/run_libc_endservent.sh", dispatcher
@@ -4697,16 +4492,11 @@ unsafe fn join_selected_worker_inner(
             'command = "./scripts/dev-x86_64.sh libc-protocol-database"',
             parity_ledger,
         )
-        self.assertIn("run_protocol_database_header_abi()", dispatcher)
-        self.assertIn(
-            "/workspace/compat/x86_64/run_protocol_database_header_abi.sh", dispatcher
+        self.assertHeaderAbiCase(
+            "protocol-database-header-abi", "run_protocol_database_header_abi.sh"
         )
         self.assertIn(
             "/workspace/compat/x86_64/run_libc_protocol_database.sh", dispatcher
-        )
-        self.assertIn(
-            '    protocol-database-header-abi)\n        [ "$#" -eq 0 ] || fail "protocol-database-header-abi takes no arguments"',
-            dispatcher,
         )
         self.assertIn(
             '    libc-protocol-database)\n        [ "$#" -eq 0 ] || fail "libc-protocol-database takes no arguments"',
@@ -4843,7 +4633,7 @@ unsafe fn join_selected_worker_inner(
             'command = "./scripts/dev-x86_64.sh libc-dn-skipname"',
             parity_ledger,
         )
-        self.assertIn("nameser-header-abi)", dispatcher)
+        self.assertHeaderAbiCase("nameser-header-abi", "run_nameser_header_abi.sh")
         self.assertIn("libc-dn-skipname)", dispatcher)
 
     def test_libc_static_c_abi_dn_expand_artifact_stays_private(self) -> None:
@@ -4985,7 +4775,7 @@ unsafe fn join_selected_worker_inner(
             'command = "./scripts/dev-x86_64.sh libc-dn-expand"',
             parity_ledger,
         )
-        self.assertIn("nameser-header-abi)", dispatcher)
+        self.assertHeaderAbiCase("nameser-header-abi", "run_nameser_header_abi.sh")
         self.assertIn("libc-dn-expand)", dispatcher)
 
     def test_libc_static_c_abi_ns_flagdata_artifact_stays_private(self) -> None:
@@ -5129,7 +4919,7 @@ unsafe fn join_selected_worker_inner(
             'command = "./scripts/dev-x86_64.sh libc-ns-flagdata"',
             parity_ledger,
         )
-        self.assertIn("nameser-header-abi)", dispatcher)
+        self.assertHeaderAbiCase("nameser-header-abi", "run_nameser_header_abi.sh")
         self.assertIn("libc-ns-flagdata)", dispatcher)
 
     def test_libc_static_c_abi_ns_get16_artifact_stays_private(self) -> None:
@@ -5258,7 +5048,7 @@ unsafe fn join_selected_worker_inner(
             'command = "./scripts/dev-x86_64.sh libc-ns-get16"',
             parity_ledger,
         )
-        self.assertIn("nameser-header-abi)", dispatcher)
+        self.assertHeaderAbiCase("nameser-header-abi", "run_nameser_header_abi.sh")
         self.assertIn("libc-ns-get16)", dispatcher)
 
     def test_libc_static_c_abi_ns_get32_artifact_stays_private(self) -> None:
@@ -5389,7 +5179,7 @@ unsafe fn join_selected_worker_inner(
             'command = "./scripts/dev-x86_64.sh libc-ns-get32"',
             parity_ledger,
         )
-        self.assertIn("nameser-header-abi)", dispatcher)
+        self.assertHeaderAbiCase("nameser-header-abi", "run_nameser_header_abi.sh")
         self.assertIn("libc-ns-get32)", dispatcher)
 
     def test_libc_static_c_abi_ns_put16_artifact_stays_private(self) -> None:
@@ -5521,7 +5311,7 @@ unsafe fn join_selected_worker_inner(
             'command = "./scripts/dev-x86_64.sh libc-ns-put16"',
             parity_ledger,
         )
-        self.assertIn("nameser-header-abi)", dispatcher)
+        self.assertHeaderAbiCase("nameser-header-abi", "run_nameser_header_abi.sh")
         self.assertIn("libc-ns-put16)", dispatcher)
 
     def test_system_information_syscall_judge_accepts_the_owned_raw_wrapper(
@@ -6115,9 +5905,10 @@ esac
             'command = "./scripts/dev-x86_64.sh libc-stdio-standard"',
             parity_ledger,
         )
-        self.assertIn("stdio-standard-header-abi", dispatcher)
+        self.assertHeaderAbiCase(
+            "stdio-standard-header-abi", "run_stdio_standard_header_abi.sh"
+        )
         self.assertIn("libc-stdio-standard", dispatcher)
-        self.assertIn("run_stdio_standard_header_abi()", dispatcher)
 
     def test_libc_static_c_abi_stdio_permanent_format_scan_is_opt_in(self) -> None:
         implementation = (
@@ -6449,9 +6240,10 @@ esac
             ledger,
         )
         self.assertIn("does not select `stdio.stream-io`", ledger)
-        self.assertIn("stdio-permanent-line-io-header-abi", dispatcher)
+        self.assertHeaderAbiCase(
+            "stdio-permanent-line-io-header-abi", "run_stdio_permanent_line_io_header_abi.sh"
+        )
         self.assertIn("libc-stdio-permanent-line-io", dispatcher)
-        self.assertIn("run_stdio_permanent_line_io_header_abi.sh", dispatcher)
         self.assertIn("run_libc_stdio_permanent_line_io.sh", dispatcher)
 
     def test_libc_static_c_abi_stdio_permanent_byte_io_stays_bounded(self) -> None:
@@ -6585,9 +6377,10 @@ esac
             ledger,
         )
         self.assertIn("does not select `stdio.stream-io`", ledger)
-        self.assertIn("stdio-permanent-byte-io-header-abi", dispatcher)
+        self.assertHeaderAbiCase(
+            "stdio-permanent-byte-io-header-abi", "run_stdio_permanent_byte_io_header_abi.sh"
+        )
         self.assertIn("libc-stdio-permanent-byte-io", dispatcher)
-        self.assertIn("run_stdio_permanent_byte_io_header_abi.sh", dispatcher)
         self.assertIn("run_libc_stdio_permanent_byte_io.sh", dispatcher)
 
     def test_libc_static_c_abi_stdio_permanent_status_stays_bounded(self) -> None:
@@ -6701,9 +6494,10 @@ esac
             ledger,
         )
         self.assertIn("does not select `stdio.stream-io`", ledger)
-        self.assertIn("stdio-permanent-status-header-abi", dispatcher)
+        self.assertHeaderAbiCase(
+            "stdio-permanent-status-header-abi", "run_stdio_permanent_status_header_abi.sh"
+        )
         self.assertIn("libc-stdio-permanent-status", dispatcher)
-        self.assertIn("run_stdio_permanent_status_header_abi.sh", dispatcher)
         self.assertIn("run_libc_stdio_permanent_status.sh", dispatcher)
 
     def test_libc_static_c_abi_stdio_permanent_freading_stdin_stays_bounded(
@@ -6837,16 +6631,12 @@ esac
             ledger,
         )
         self.assertIn("does not select `stdio.stream-io`", ledger)
-        self.assertIn("stdio-permanent-freading-stdin-header-abi", dispatcher)
+        self.assertHeaderAbiCase(
+            "stdio-permanent-freading-stdin-header-abi", "run_stdio_permanent_freading_stdin_header_abi.sh"
+        )
         self.assertIn("libc-stdio-permanent-freading-stdin", dispatcher)
         self.assertIn(
-            "stdio-permanent-freading-stdin-header-abi) ;;", dispatcher
-        )
-        self.assertIn(
             "|libc-stdio-permanent-freading-stdin|", dispatcher
-        )
-        self.assertIn(
-            "run_stdio_permanent_freading_stdin_header_abi.sh", dispatcher
         )
         self.assertIn("run_libc_stdio_permanent_freading_stdin.sh", dispatcher)
 
@@ -6986,13 +6776,11 @@ esac
             ledger,
         )
         self.assertIn("does not select `stdio.stream-io`", ledger)
-        self.assertIn("stdio-permanent-fseterr-stdin-header-abi", dispatcher)
-        self.assertIn("libc-stdio-permanent-fseterr-stdin", dispatcher)
-        self.assertIn(
-            "stdio-permanent-fseterr-stdin-header-abi) ;;", dispatcher
+        self.assertHeaderAbiCase(
+            "stdio-permanent-fseterr-stdin-header-abi", "run_stdio_permanent_fseterr_stdin_header_abi.sh"
         )
+        self.assertIn("libc-stdio-permanent-fseterr-stdin", dispatcher)
         self.assertIn("|libc-stdio-permanent-fseterr-stdin|", dispatcher)
-        self.assertIn("run_stdio_permanent_fseterr_stdin_header_abi.sh", dispatcher)
         self.assertIn("run_libc_stdio_permanent_fseterr_stdin.sh", dispatcher)
 
     def test_libc_static_c_abi_stdio_permanent_freadable_stdin_stays_bounded(
@@ -7115,11 +6903,10 @@ esac
             ledger,
         )
         self.assertIn("does not select `stdio.stream-io`", ledger)
-        self.assertIn("stdio-permanent-freadable-stdin-header-abi", dispatcher)
-        self.assertIn("libc-stdio-permanent-freadable-stdin", dispatcher)
-        self.assertIn(
-            "run_stdio_permanent_freadable_stdin_header_abi.sh", dispatcher
+        self.assertHeaderAbiCase(
+            "stdio-permanent-freadable-stdin-header-abi", "run_stdio_permanent_freadable_stdin_header_abi.sh"
         )
+        self.assertIn("libc-stdio-permanent-freadable-stdin", dispatcher)
         self.assertIn("run_libc_stdio_permanent_freadable_stdin.sh", dispatcher)
 
     def test_libc_static_c_abi_stdio_permanent_fbufsize_stderr_stays_bounded(
@@ -7252,16 +7039,12 @@ esac
             ledger,
         )
         self.assertIn("does not select `stdio.stream-io`", ledger)
-        self.assertIn("stdio-permanent-fbufsize-stderr-header-abi", dispatcher)
+        self.assertHeaderAbiCase(
+            "stdio-permanent-fbufsize-stderr-header-abi", "run_stdio_permanent_fbufsize_stderr_header_abi.sh"
+        )
         self.assertIn("libc-stdio-permanent-fbufsize-stderr", dispatcher)
         self.assertIn(
-            "stdio-permanent-fbufsize-stderr-header-abi) ;;", dispatcher
-        )
-        self.assertIn(
             "|libc-stdio-permanent-fbufsize-stderr|", dispatcher
-        )
-        self.assertIn(
-            "run_stdio_permanent_fbufsize_stderr_header_abi.sh", dispatcher
         )
         self.assertIn("run_libc_stdio_permanent_fbufsize_stderr.sh", dispatcher)
 
@@ -7398,11 +7181,11 @@ esac
             ledger,
         )
         self.assertIn("does not select stdio.stream-io", ledger)
-        self.assertIn("stdio-permanent-flbf-stderr-header-abi", dispatcher)
+        self.assertHeaderAbiCase(
+            "stdio-permanent-flbf-stderr-header-abi", "run_stdio_permanent_flbf_stderr_header_abi.sh"
+        )
         self.assertIn("libc-stdio-permanent-flbf-stderr", dispatcher)
-        self.assertIn("stdio-permanent-flbf-stderr-header-abi) ;;", dispatcher)
         self.assertIn("|libc-stdio-permanent-flbf-stderr|", dispatcher)
-        self.assertIn("run_stdio_permanent_flbf_stderr_header_abi.sh", dispatcher)
         self.assertIn("run_libc_stdio_permanent_flbf_stderr.sh", dispatcher)
 
     def test_libc_static_c_abi_stdio_permanent_fwritable_stderr_stays_bounded(
@@ -7525,11 +7308,10 @@ esac
             ledger,
         )
         self.assertIn("does not select `stdio.stream-io`", ledger)
-        self.assertIn("stdio-permanent-fwritable-stderr-header-abi", dispatcher)
-        self.assertIn("libc-stdio-permanent-fwritable-stderr", dispatcher)
-        self.assertIn(
-            "run_stdio_permanent_fwritable_stderr_header_abi.sh", dispatcher
+        self.assertHeaderAbiCase(
+            "stdio-permanent-fwritable-stderr-header-abi", "run_stdio_permanent_fwritable_stderr_header_abi.sh"
         )
+        self.assertIn("libc-stdio-permanent-fwritable-stderr", dispatcher)
         self.assertIn("run_libc_stdio_permanent_fwritable_stderr.sh", dispatcher)
 
     def test_libc_static_c_abi_stdio_permanent_fileno_stays_bounded(self) -> None:
@@ -7633,9 +7415,10 @@ esac
             ledger,
         )
         self.assertIn("does not select `stdio.stream-io`", ledger)
-        self.assertIn("stdio-permanent-fileno-header-abi", dispatcher)
+        self.assertHeaderAbiCase(
+            "stdio-permanent-fileno-header-abi", "run_stdio_permanent_fileno_header_abi.sh"
+        )
         self.assertIn("libc-stdio-permanent-fileno", dispatcher)
-        self.assertIn("run_stdio_permanent_fileno_header_abi.sh", dispatcher)
         self.assertIn("run_libc_stdio_permanent_fileno.sh", dispatcher)
 
     def test_libc_static_c_abi_stdio_path_stream_stays_one_slot(self) -> None:
@@ -7929,10 +7712,9 @@ esac
         self.assertNotIn("--whole-archive", runner)
         self.assertIn('id = "stdio.fopen64-alias"', ledger)
         self.assertIn("source-only `fopen64` alias", ledger)
+        self.assertHeaderAbiCase("fopen64-header-abi", "run_fopen64_header_abi.sh")
         for required in (
-            "fopen64-header-abi",
             "libc-fopen64-alias",
-            "run_fopen64_header_abi",
             "run_libc_fopen64_alias",
         ):
             self.assertIn(required, dispatcher)
@@ -8221,7 +8003,9 @@ esac
         self.assertIn(
             'command = "./scripts/dev-x86_64.sh libc-gettext-catalog"', parity
         )
-        self.assertIn("gettext-catalog-header-abi)", dispatcher)
+        self.assertHeaderAbiCase(
+            "gettext-catalog-header-abi", "run_gettext_catalog_header_abi.sh"
+        )
         self.assertIn("libc-gettext-catalog)", dispatcher)
 
     def test_pathname_lifecycle_runner_releases_dedicated_mkdirat_export(
@@ -8409,17 +8193,12 @@ esac
             'command = "./scripts/dev-x86_64.sh libc-sysv-semaphore"',
             parity_ledger,
         )
-        self.assertIn("run_sysv_semaphore_header_abi()", runner)
-        self.assertIn(
-            "/workspace/compat/x86_64/run_sysv_semaphore_header_abi.sh", runner
+        self.assertHeaderAbiCase(
+            "sysv-semaphore-header-abi", "run_sysv_semaphore_header_abi.sh"
         )
         self.assertIn("run_libc_sysv_semaphore()", runner)
         self.assertIn(
             "/workspace/compat/x86_64/run_libc_sysv_semaphore.sh", runner
-        )
-        self.assertIn(
-            '    sysv-semaphore-header-abi)\n        [ "$#" -eq 0 ] || fail "sysv-semaphore-header-abi takes no arguments"',
-            runner,
         )
         self.assertIn(
             '    libc-sysv-semaphore)\n        [ "$#" -eq 0 ] || fail "libc-sysv-semaphore takes no arguments"',
@@ -8438,17 +8217,15 @@ esac
         runner = RUNNER.read_text(encoding="utf-8")
 
         for required in (
-            "run_ftw_header_abi()",
-            "/workspace/compat/x86_64/run_ftw_header_abi.sh",
             "run_libc_filesystem_traversal()",
             "/workspace/compat/x86_64/run_libc_filesystem_traversal.sh",
             "run_libc_filesystem_directory()",
             "/workspace/compat/x86_64/run_libc_filesystem_directory.sh",
-            '    ftw-header-abi)\n        [ "$#" -eq 0 ] || fail "ftw-header-abi takes no arguments"',
             '    libc-filesystem-traversal)\n        [ "$#" -eq 0 ] || fail "libc-filesystem-traversal takes no arguments"',
             '    libc-filesystem-directory)\n        [ "$#" -eq 0 ] || fail "libc-filesystem-directory takes no arguments"',
         ):
             self.assertIn(required, runner)
+        self.assertHeaderAbiCase("ftw-header-abi", "run_ftw_header_abi.sh")
 
         for component in (
             "run_libc_directory_streams.sh",
@@ -8468,7 +8245,6 @@ esac
         runner = RUNNER.read_text(encoding="utf-8")
 
         for required in (
-            "  temporary-names-header-abi  verify x86 C/C++ tmpnam/tempnam declarations",
             "  libc-temporary-names  run the opt-in static x86 tmpnam/tempnam slice",
             "  libc-filesystem-extensions  run the selected-private x86 filesystem-extensions capability aggregate",
             "run_libc_filesystem_extensions()",
@@ -10348,7 +10124,7 @@ esac
             'command = "./scripts/dev-x86_64.sh libc-ns-put32"',
             parity_ledger,
         )
-        self.assertIn("nameser-header-abi)", dispatcher)
+        self.assertHeaderAbiCase("nameser-header-abi", "run_nameser_header_abi.sh")
         self.assertIn("libc-ns-put32)", dispatcher)
 
     def test_libc_static_c_abi_ns_skiprr_artifact_stays_private(self) -> None:
@@ -10488,7 +10264,7 @@ esac
         self.assertIn(
             'command = "./scripts/dev-x86_64.sh libc-ns-skiprr"', parity_ledger
         )
-        self.assertIn("nameser-header-abi)", dispatcher)
+        self.assertHeaderAbiCase("nameser-header-abi", "run_nameser_header_abi.sh")
         self.assertIn("libc-ns-skiprr)", dispatcher)
         self.assertIn("run_libc_ns_skiprr.sh", dispatcher)
 
@@ -10686,9 +10462,10 @@ esac
         self.assertIn(
             'command = "./scripts/dev-x86_64.sh libc-sched-getparam"', parity_ledger
         )
-        self.assertIn("run_sched_getparam_header_abi()", dispatcher)
+        self.assertHeaderAbiCase(
+            "sched-getparam-header-abi", "run_sched_getparam_header_abi.sh"
+        )
         self.assertIn("run_libc_sched_getparam_probe()", dispatcher)
-        self.assertIn("sched-getparam-header-abi)", dispatcher)
         self.assertIn("libc-sched-getparam)", dispatcher)
 
     def test_libc_static_c_abi_sched_setparam_artifact_stays_musl_enosys(self) -> None:
@@ -10820,9 +10597,10 @@ esac
         self.assertIn(
             'command = "./scripts/dev-x86_64.sh libc-sched-setparam"', parity_ledger
         )
-        self.assertIn("run_sched_setparam_header_abi()", dispatcher)
+        self.assertHeaderAbiCase(
+            "sched-setparam-header-abi", "run_sched_setparam_header_abi.sh"
+        )
         self.assertIn("run_libc_sched_setparam_probe()", dispatcher)
-        self.assertIn("sched-setparam-header-abi)", dispatcher)
         self.assertIn("libc-sched-setparam)", dispatcher)
 
     def test_libc_static_c_abi_sched_setscheduler_artifact_stays_musl_enosys(self) -> None:
@@ -10968,9 +10746,10 @@ esac
             'command = "./scripts/dev-x86_64.sh libc-sched-setscheduler"',
             parity_ledger,
         )
-        self.assertIn("run_sched_setscheduler_header_abi()", dispatcher)
+        self.assertHeaderAbiCase(
+            "sched-setscheduler-header-abi", "run_sched_setscheduler_header_abi.sh"
+        )
         self.assertIn("run_libc_sched_setscheduler_probe()", dispatcher)
-        self.assertIn("sched-setscheduler-header-abi)", dispatcher)
         self.assertIn("libc-sched-setscheduler)", dispatcher)
 
     def test_libc_static_c_abi_sched_getaffinity_artifact_stays_bounded(self) -> None:
@@ -11110,9 +10889,10 @@ esac
             'command = "./scripts/dev-x86_64.sh libc-sched-getaffinity"',
             parity_ledger,
         )
-        self.assertIn("run_sched_getaffinity_header_abi()", dispatcher)
+        self.assertHeaderAbiCase(
+            "sched-getaffinity-header-abi", "run_sched_getaffinity_header_abi.sh"
+        )
         self.assertIn("run_libc_sched_getaffinity_probe()", dispatcher)
-        self.assertIn("sched-getaffinity-header-abi)", dispatcher)
         self.assertIn("libc-sched-getaffinity)", dispatcher)
 
     def test_libc_static_c_abi_sched_setaffinity_artifact_stays_bounded(self) -> None:
@@ -11257,9 +11037,10 @@ esac
             'command = "./scripts/dev-x86_64.sh libc-sched-setaffinity"',
             parity_ledger,
         )
-        self.assertIn("run_sched_setaffinity_header_abi()", dispatcher)
+        self.assertHeaderAbiCase(
+            "sched-setaffinity-header-abi", "run_sched_setaffinity_header_abi.sh"
+        )
         self.assertIn("run_libc_sched_setaffinity_probe()", dispatcher)
-        self.assertIn("sched-setaffinity-header-abi)", dispatcher)
         self.assertIn("libc-sched-setaffinity)", dispatcher)
 
     def test_libc_static_c_abi_setfsuid_artifact_stays_bounded(self) -> None:
@@ -11392,9 +11173,8 @@ esac
         self.assertIn(
             'command = "./scripts/dev-x86_64.sh libc-setfsuid"', parity_ledger
         )
-        self.assertIn("run_setfsuid_header_abi()", dispatcher)
+        self.assertHeaderAbiCase("setfsuid-header-abi", "run_setfsuid_header_abi.sh")
         self.assertIn("run_libc_setfsuid_probe()", dispatcher)
-        self.assertIn("setfsuid-header-abi)", dispatcher)
         self.assertIn("libc-setfsuid)", dispatcher)
 
     def test_libc_static_c_abi_setfsgid_artifact_stays_bounded(self) -> None:
@@ -11535,9 +11315,8 @@ esac
         self.assertIn(
             'command = "./scripts/dev-x86_64.sh libc-setfsgid"', parity_ledger
         )
-        self.assertIn("run_setfsgid_header_abi()", dispatcher)
+        self.assertHeaderAbiCase("setfsgid-header-abi", "run_setfsgid_header_abi.sh")
         self.assertIn("run_libc_setfsgid_probe()", dispatcher)
-        self.assertIn("setfsgid-header-abi)", dispatcher)
         self.assertIn("libc-setfsgid)", dispatcher)
 
     def test_libc_static_c_abi_personality_artifact_stays_bounded(self) -> None:
@@ -11664,9 +11443,10 @@ esac
         self.assertIn(
             'command = "./scripts/dev-x86_64.sh libc-personality"', parity_ledger
         )
-        self.assertIn("run_personality_header_abi()", dispatcher)
+        self.assertHeaderAbiCase(
+            "personality-header-abi", "run_personality_header_abi.sh"
+        )
         self.assertIn("run_libc_personality_probe()", dispatcher)
-        self.assertIn("personality-header-abi)", dispatcher)
         self.assertIn("libc-personality)", dispatcher)
 
     def test_routine_c_abi_matrix_dispatches_checked_registry_natively(self) -> None:
@@ -11679,7 +11459,7 @@ esac
             dispatcher,
         )
         routine_matrix = dispatcher.index("routine-c-abi-matrix)")
-        next_arm = dispatcher.index("getloadavg-header-abi)", routine_matrix)
+        next_arm = dispatcher.index("libc-getloadavg)", routine_matrix)
         routine_matrix_arm = dispatcher[routine_matrix:next_arm]
         self.assertIn("ensure_image", routine_matrix_arm)
         self.assertIn("run_in_container", routine_matrix_arm)
