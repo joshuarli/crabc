@@ -207,6 +207,14 @@ def require_handoff_relocation(row,name):
     expected={'name':name,'kind':6,'addend':0,'symbol_type':'OBJECT','binding':'WEAK','visibility':'DEFAULT','symbol_section':0}
     require(same({k:row.get(k) for k in expected},expected),'private handoff relocation differs')
 
+def require_private_merged_definition(row,size,description):
+    expected={'type':'OBJECT','binding':'LOCAL','visibility':'HIDDEN',
+              'version':None,'version_default':False,'size_bytes':size}
+    require(same({k:row.get(k) for k in expected},expected),description+' differs')
+    section=row.get('section_index')
+    require(type(section) is str and section.isdigit() and int(section)>0,
+            description+' lacks a defining section')
+
 def require_array_bounds(start,end,section):
     require(type(start) is int and type(end) is int and 0<=start<=end and start%8==end%8==0,'invalid linker array bounds')
     if section is None:require(start==end,'nonempty linker array has no section')
@@ -526,7 +534,8 @@ def descriptor_runtime_plan(root,work,inputs,tools):
                 '-c',p(Path(policy['source']).name),'-o',p(cell['label']+'.o'),
             ],'cwd':'/workspace','expected_stdout':b'','expected_stderr':b''},
             {'label':cell['label']+'-link','argv':[
-                tool('linker'),'-static','--no-dynamic-linker','--no-undefined','--no-demangle','-e','_start',
+                tool('linker'),'-static','--export-dynamic','--no-dynamic-linker','--no-undefined',
+                '--no-demangle','-e','_start',
                 '-Map='+p(cell['label']+'.map'),p(cell['label']+'.o'),
                 m(paths[policy['attachment_artifact']]),m(paths[policy['static_artifact']]),
                 '-o',p(cell['label']),
@@ -566,7 +575,8 @@ def plan(root,work,inputs,tools):
                             else ['-L',p('oracle-link'),'-l:libc.so'])
             argv=[tool('linker'),*(['-static'] if is_static else []),*(['-pie'] if pie else []),
                   '--hash-style=sysv','-z','now','-z','relro','-z','noexecstack','--no-undefined',
-                  *([] if is_static else ['--allow-shlib-undefined',helper_exclusion,'--dynamic-linker',
+                  *([] if is_static else ['--allow-shlib-undefined',helper_exclusion,
+                     '-z','dynamic-undefined-weak','--dynamic-linker',
                      '/lib/ld-crabc-x86_64.so.1' if mode.startswith('conventional') else '/lib/ld-musl-x86_64.so.1']),
                   m(crt),p('inputs/oracle-crt/crti.o'),obj,
                   *([] if is_static else [helper_input]),*runtime_inputs,
@@ -683,11 +693,18 @@ def account_products(facts):
     for name,visibility in ((ATTACH,'DEFAULT'),(RECORD,'HIDDEN')):
         item=exact(facts,'dynamic-crabc-dynamic-attach.o',name);require_function(item['row'],item['section'],visibility);result['dynamic-crabc-dynamic-attach.o'][name]=item
     result['candidate-shared']={}
-    for table in ('.dynsym','.symtab'):
-        item=exact(facts,'candidate-shared',CONVENTIONAL,table);require_import(item['row'],'OBJECT','WEAK','DEFAULT');result['candidate-shared'][table]=item
-    for key,allowed in (('candidate-shared',{CONVENTIONAL}),('candidate-loader',set())):
-        require(all(x['row']['name'] not in NAMES or x['row']['name'] in allowed
-                    for x in rows(facts,key,'.dynsym')),'unexpected public startup identity: '+key)
+    for key in ('candidate-shared','candidate-loader'):
+        result.setdefault(key,{})
+        for name,size in ((CONVENTIONAL,88),(DESCRIPTOR,72)):
+            item=exact(facts,key,name)
+            require_private_merged_definition(item['row'],size,'merged private definition '+key+'/'+name)
+            require(item['section'] is not None and 'W' in item['section']['flags'],
+                    'merged private definition is not writable data: '+key+'/'+name)
+            require(not any(x['row']['name']==name for x in rows(facts,key,'.dynsym')),
+                    'merged private definition is publicly exported: '+key+'/'+name)
+            result[key][name]=item
+        require(not any(x['row']['name'] in NAMES for x in rows(facts,key,'.dynsym')),
+                'unexpected public startup identity: '+key)
     for name,placements in expected_contract()['source_crt_definitions'].items():
         for key in artifact_names:
             symtab=[item for item in rows(facts,key,'.symtab') if item['row']['name']==name]
@@ -772,8 +789,8 @@ def artifact_relocations(root,work,inputs):
     for key,path in paths.items():
         if key=='candidate-static':continue
         result[key]=relocations(path)
-    shared=[x for x in result['candidate-shared'] if x['name']==CONVENTIONAL]
-    require(len(shared)==1,'canonical libc startup relocation count differs');require_handoff_relocation(shared[0],CONVENTIONAL)
+    shared=[x for x in result['candidate-shared'] if x['name'] in (CONVENTIONAL,DESCRIPTOR)]
+    require(not shared,'merged libc retained a private handoff relocation')
     require_crt_caller_relocations(result)
     return result
 
@@ -1343,10 +1360,10 @@ def executable_observations(root,work,inputs,tools,facts):
                     if mode in ('static','static-pie'):
                         source_path=ordinary.mounted(root,work/(variant+'.o')) if source_key.endswith('-object') else \
                             ordinary.mounted(root,product_paths(root,inputs)['candidate-static'])+'('+original['member']+')'
-                        expression=r'^\s*([0-9a-f]+)\s+([0-9a-f]+)\s+([0-9a-f]+)\s+(\d+)\s+'+re.escape(source_path+':(.'+kind+'_array)')+r'$'
+                        expression=r'^\s*(?:0x)?([0-9a-f]+)\s+(?:0x)?([0-9a-f]+)\s+(\d+)\s+'+re.escape(source_path+':(.'+kind+'_array)')+r'$'
                         matches=re.findall(expression,(work/(name+'.link.map')).read_text(),re.MULTILINE)
                         require(len(matches)==1 and int(matches[0][0],16)==entries[slot]
-                                and int(matches[0][2],16)==8 and int(matches[0][3])==8,
+                                and int(matches[0][1],16)==8 and int(matches[0][2])==8,
                                 'static startup array input contribution differs')
                         contributions[slot]['link_map_row']=list(matches[0])
                 require_array_entries(mode,variant,kind,start,end,entries)

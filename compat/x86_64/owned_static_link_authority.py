@@ -487,9 +487,13 @@ def _require_static_functions(map_path, executable, admitted, functions):
                     'static relocation target has no unique selected definition',
                 )
                 after = final_weak_undefined_symbol(symbol['name'])
+                # Mold localizes an unresolved weak data reference in static
+                # output. The zero target and absent RELA tables are the
+                # semantic invariant; the final binding is linker spelling.
                 require(
                     final.elf_type == 2 and after['type'] == symbol['type']
-                    and after['binding'] == symbol['binding'] and after['visibility'] == symbol['visibility']
+                    and after['binding'] in (symbol['binding'], 'LOCAL')
+                    and after['visibility'] == symbol['visibility']
                     and after['section'] == after['value'] == after['size'] == 0
                     and after['version_index'] == symbol['version_index']
                     and not any(section[1] == 4 for section in final.sections),

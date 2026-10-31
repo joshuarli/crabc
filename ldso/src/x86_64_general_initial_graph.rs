@@ -21,10 +21,105 @@ use super::x86_64_general_initial_loader_state::{
     GeneralInitialLoaderState, GeneralInitialPreparationStage, ObjectTable,
 };
 use super::x86_64_initial_graph_state::{InitialGraphState, ObjectAdmission, ObjectIdentity};
+use core::sync::atomic::{AtomicU8, AtomicU64, Ordering};
 #[cfg(crabc_general_initial_tls_materialization_v1)]
 use super::x86_64_general_initial_tls_state::{
     GeneralInitialTlsState, GeneralInitialTlsTransaction,
 };
+
+/// Adopt the main image's PT_INTERP path as the installed interpreter name.
+unsafe fn set_main_interpreter(base: u64, phdr: *const u8, phnum: usize) {
+    for index in 0..phnum {
+        let header = unsafe { phdr.add(index * 56) };
+        if unsafe { read_u32(header) } != 3 { continue; }
+        let address = unsafe { read_u64(header.add(16)) };
+        let size = unsafe { read_u64(header.add(32)) };
+        if size < 2 || !unsafe { virtual_range_in_load(phdr, phnum, address, size) } { return; }
+        let name = (base + address) as *const u8;
+        if unsafe { *name.add(size as usize - 1) } != 0 { return; }
+        unsafe { x86_64_library_search::main_interpreter(name); }
+        return;
+    }
+}
+
+/// A deferred placeholder for the kernel-mapped interpreter's file identity.
+/// No real file has both fields maximized; the identity is resolved on the
+/// first opened duplicate candidate, not during the startup fast path.
+const DEFERRED_SELF_IDENTITY: ObjectIdentity =
+    ObjectIdentity { device: u64::MAX, inode: u64::MAX - 1 };
+
+const SELF_IDENTITY_UNKNOWN: u8 = 0;
+const SELF_IDENTITY_RESOLVING: u8 = 1;
+const SELF_IDENTITY_READY: u8 = 2;
+static SELF_IDENTITY_DEVICE: AtomicU64 = AtomicU64::new(0);
+static SELF_IDENTITY_INODE: AtomicU64 = AtomicU64::new(0);
+static SELF_IDENTITY_STATE: AtomicU8 = AtomicU8::new(SELF_IDENTITY_UNKNOWN);
+
+/// Resolve the interpreter's file identity only when a duplicate candidate is
+/// actually opened. The installed fast path recognizes self by PT_INTERP,
+/// reserved names or the canonical alias and never stats its own file.
+pub(crate) unsafe fn lazy_self_identity() -> Option<ObjectIdentity> {
+    loop {
+        match SELF_IDENTITY_STATE.load(Ordering::Acquire) {
+            SELF_IDENTITY_READY => {
+                return Some(ObjectIdentity {
+                    device: SELF_IDENTITY_DEVICE.load(Ordering::Relaxed),
+                    inode: SELF_IDENTITY_INODE.load(Ordering::Relaxed),
+                });
+            }
+            SELF_IDENTITY_UNKNOWN => {
+                if SELF_IDENTITY_STATE.compare_exchange(
+                    SELF_IDENTITY_UNKNOWN, SELF_IDENTITY_RESOLVING,
+                    Ordering::AcqRel, Ordering::Acquire,
+                ).is_ok() {
+                    let interpreter = unsafe { x86_64_library_search::self_path() };
+                    let identity = match unsafe { FileStatus::of_path(interpreter) } {
+                        Ok(status) => status.identity(),
+                        Err(_) => None,
+                    };
+                    if let Some(identity) = identity {
+                        SELF_IDENTITY_DEVICE.store(identity.device, Ordering::Relaxed);
+                        SELF_IDENTITY_INODE.store(identity.inode, Ordering::Relaxed);
+                        SELF_IDENTITY_STATE.store(SELF_IDENTITY_READY, Ordering::Release);
+                        return Some(identity);
+                    }
+                    SELF_IDENTITY_STATE.store(SELF_IDENTITY_UNKNOWN, Ordering::Release);
+                    return None;
+                }
+            }
+            SELF_IDENTITY_RESOLVING => core::hint::spin_loop(),
+            _ => return None,
+        }
+    }
+}
+
+/// Compare one opened candidate identity to the lazily resolved self identity.
+pub(crate) unsafe fn self_identity_matches(candidate: ObjectIdentity) -> bool {
+    unsafe { lazy_self_identity() == Some(candidate) }
+}
+
+/// The installed interpreter's canonical libc alias without a startup stat.
+/// A copied loader under another basename falls back to identity resolution.
+unsafe fn installed_self_canonical_name() -> Option<super::x86_64_library_search::LoadedName> {
+    let name = unsafe { x86_64_library_search::self_name() };
+    let prefix = unsafe { x86_64_library_search::installation_prefix() };
+    let lib = b"/lib/";
+    if name.len() <= prefix.len() + lib.len()
+        || !name.starts_with(prefix)
+        || &name[prefix.len()..prefix.len() + lib.len()] != lib
+    { return None; }
+    let basename = &name[prefix.len() + lib.len()..];
+    if basename != b"ld-crabc-x86_64.so.1" && basename != b"ld-crabc-x86_64-hardened.so.1" {
+        return None;
+    }
+    let suffix = b"/usr/lib/libc.so";
+    let length = prefix.len().checked_add(suffix.len())?;
+    let mut path = [0u8; 4096];
+    if length >= path.len() { return None; }
+    path[..prefix.len()].copy_from_slice(prefix);
+    path[prefix.len()..length].copy_from_slice(suffix);
+    super::x86_64_library_search::LoadedName::new(&path[..length])
+}
 
 /// Starts the topology-independent initial dependency transaction.
 ///
@@ -34,6 +129,8 @@ use super::x86_64_general_initial_tls_state::{
 /// interpreter's already self-relocated base. A successful initial graph is
 /// moved into the private process-lifetime owner before any constructor runs.
 pub(super) unsafe fn run(sp: usize, ldso_base: usize) -> ! {
+    #[cfg(feature = "x86_64-owned-dynamic-runtime")]
+    super::set_interpreter_base(ldso_base);
     // SAFETY: `_start` supplies the unchanged kernel stack and a self-relocated
     // interpreter base. Every object pointer below comes from a checked
     // program-header/dynamic-table parse or a successfully mapped ET_DYN.
@@ -54,8 +151,10 @@ pub(super) unsafe fn run(sp: usize, ldso_base: usize) -> ! {
             (main, sp, entry)
         } else {
             if cfg!(crabc_hardened) && !hardened_main_identity(main_base, main_phdr, main_phnum) { fail(b"mainelf\n"); }
-            (parse_mapped(main_base, main_phdr, main_phnum, ObjectRole::Main, false, true)
-                .unwrap_or_else(|| fail(b"mainelf\n")), sp, main_entry)
+            let main = parse_mapped(main_base, main_phdr, main_phnum, ObjectRole::Main, false, true)
+                .unwrap_or_else(|| fail(b"mainelf\n"));
+            set_main_interpreter(main.base, main.phdr, main.phnum);
+            (main, sp, main_entry)
         };
         #[cfg(not(feature = "x86_64-owned-dynamic-runtime"))]
         let main = parse_mapped(main_base, main_phdr, main_phnum, ObjectRole::Main, false, true)
@@ -236,6 +335,23 @@ unsafe fn run_with_initial_tls(
         }
     }
 
+    #[cfg(feature = "x86_64-owned-dynamic-runtime")]
+    let conventional_main = match state.objects() {
+        Ok(objects) => objects[0].main_crt_mode == MainCrtMode::Conventional,
+        Err(_) => return Err(b"tlsstate\n"),
+    };
+    #[cfg(feature = "x86_64-owned-dynamic-runtime")]
+    let owned_startup = if conventional_main {
+        None
+    } else {
+        match super::x86_64_conventional_startup_v1::reserve_owned() {
+            Some(reservation) => Some(reservation),
+            None => {
+                rollback_initial_tls_state(&mut state, GeneralInitialPreparationStage::ConventionalStartupReservation);
+                return Err(b"conventionalstartup\n");
+            }
+        }
+    };
     {
         let objects = match state.objects() {
             Ok(objects) => objects,
@@ -252,10 +368,15 @@ unsafe fn run_with_initial_tls(
             }
         };
         #[cfg(feature = "x86_64-owned-dynamic-runtime")]
-        let relocation = unsafe { super::x86_64_debugger::PreparedInitialDebugger::prepare(
-            &objects[..graph.object_count()]) }.and_then(|debugger| unsafe {
-                super::x86_64_general_relocation::relocate_initial_graph_with_debugger(graph, objects, &debugger)
-            });
+        let debugger = match unsafe { super::x86_64_debugger::PreparedInitialDebugger::prepare(
+            &objects[..graph.object_count()]) } {
+            Some(debugger) => debugger,
+            None => fail(b"debugger\n"),
+        };
+        #[cfg(feature = "x86_64-owned-dynamic-runtime")]
+        let relocation = unsafe {
+            super::x86_64_general_relocation::relocate_initial_graph_with_debugger(graph, objects, &debugger)
+        };
         #[cfg(not(feature = "x86_64-owned-dynamic-runtime"))]
         let relocation = unsafe { super::x86_64_general_relocation::relocate_initial_graph(graph, objects) };
         if relocation.is_none() {
@@ -275,6 +396,7 @@ unsafe fn run_with_initial_tls(
                 return Err(b"tlsstate\n");
             }
         };
+        if objects[index].interpreter_self { continue; }
         if unsafe { protect_segments(&objects[index]) }.is_none() {
             rollback_initial_tls_state(&mut state, GeneralInitialPreparationStage::Protection);
             return Err(b"protect\n");
@@ -288,6 +410,7 @@ unsafe fn run_with_initial_tls(
                 return Err(b"tlsstate\n");
             }
         };
+        if objects[index].interpreter_self { continue; }
         if unsafe { apply_relro(&objects[index]) }.is_none() {
             rollback_initial_tls_state(&mut state, GeneralInitialPreparationStage::Relro);
             return Err(b"relro\n");
@@ -321,9 +444,6 @@ unsafe fn run_with_initial_tls(
             return Err(b"ctorplan\n");
         }
     };
-    #[cfg(feature = "x86_64-owned-dynamic-runtime")]
-    let conventional_main = objects[0].main_crt_mode == MainCrtMode::Conventional;
-
     #[cfg(feature = "x86_64-owned-dynamic-runtime")]
     unsafe { x86_64_direct_entry::list_and_exit(&objects[..state.object_count()], ldso_base); }
 
@@ -418,6 +538,10 @@ unsafe fn run_with_initial_tls(
     #[cfg(feature = "x86_64-owned-dynamic-runtime")]
     if let Some(reservation) = conventional_startup {
         unsafe { super::x86_64_conventional_startup_v1::publish(reservation, installed); }
+    }
+    #[cfg(feature = "x86_64-owned-dynamic-runtime")]
+    if let Some(reservation) = owned_startup {
+        super::x86_64_conventional_startup_v1::publish_owned(reservation);
     }
     // Publication made the TLS snapshot durable before the first dependency
     // constructor can observe it. The plan was fully preflighted above, so
@@ -569,6 +693,29 @@ unsafe fn select_canonical_initial_libc(
     graph: &InitialGraphState,
     objects: &mut ObjectTable,
 ) -> Option<CanonicalInitialLibc> {
+    // A merged interpreter/libc image is the canonical libc by construction:
+    // its identity is the interpreter's own kernel mapping, not an opened
+    // pathname. Mark that one object and skip every alias open/stat.
+    if let Some(index) = objects[..graph.object_count()]
+        .iter()
+        .position(|object| object.interpreter_self)
+    {
+        for (other, object) in objects[..graph.object_count()].iter().enumerate() {
+            if other == index { continue; }
+            let stored = object.search_name.bytes();
+            let basename = stored.iter().rposition(|byte| *byte == b'/').map_or(stored, |at| &stored[at + 1..]);
+            if reserved_runtime_name(basename) || basename == b"libc.so" {
+                return None;
+            }
+        }
+        let object = objects.get_mut(index)?;
+        if object.role != ObjectRole::Library || object.canonical_libc_identity.is_some() {
+            return None;
+        }
+        let identity = graph.identity(index)?;
+        object.canonical_libc_identity = Some(identity);
+        return Some(CanonicalInitialLibc { index, identity });
+    }
     let invocation_prefix = unsafe { x86_64_library_search::installation_prefix() };
     let selected = if let Some(selected) = single_library_opened_canonical_alias(graph, objects, invocation_prefix) {
         selected
@@ -756,6 +903,145 @@ unsafe fn discover_object_needed(
     Some(())
 }
 
+/// Whether this interpreter is also the libc half: the merged link carries
+/// `SONAME libc.so`. The split loader has no SONAME, so the same source keeps
+/// its existing open-a-second-image path.
+#[cfg(feature = "x86_64-owned-dynamic-runtime")]
+unsafe fn interpreter_soname_is_libc() -> bool {
+    let base = super::interpreter_base();
+    if base == 0 { return false; }
+    let header = base as *const u8;
+    let Some(phoff) = usize::try_from(unsafe { read_u64(header.add(32)) }).ok() else { return false; };
+    let phnum = unsafe { read_u16(header.add(56)) } as usize;
+    let Some(phdr_base) = base.checked_add(phoff) else { return false; };
+    let mut dynamic = core::ptr::null::<u8>();
+    let mut dynamic_bytes = 0usize;
+    for index in 0..phnum {
+        let phdr = (phdr_base + index * 56) as *const u8;
+        if unsafe { read_u32(phdr) } != 2 { continue; }
+        let Some(address) = usize::try_from(unsafe { read_u64(phdr.add(16)) }).ok() else { return false; };
+        let Some(bytes) = usize::try_from(unsafe { read_u64(phdr.add(40)) }).ok() else { return false; };
+        let Some(pointer) = base.checked_add(address) else { return false; };
+        dynamic = pointer as *const u8;
+        dynamic_bytes = bytes;
+        break;
+    }
+    if dynamic.is_null() || dynamic_bytes % 16 != 0 { return false; }
+    let (mut strtab, mut strsz, mut soname) = (0usize, 0usize, None);
+    for index in 0..dynamic_bytes / 16 {
+        let entry = unsafe { dynamic.add(index * 16) };
+        let tag = unsafe { read_i64(entry) };
+        if tag == 0 { break; }
+        let Some(value) = usize::try_from(unsafe { read_u64(entry.add(8)) }).ok() else { return false; };
+        match tag {
+            5 => strtab = value,
+            10 => strsz = value,
+            14 => soname = Some(value),
+            _ => {}
+        }
+    }
+    let Some(offset) = soname else { return false; };
+    let Some(start) = base.checked_add(strtab).and_then(|table| table.checked_add(offset)) else { return false; };
+    let Some(available) = strsz.checked_sub(offset) else { return false; };
+    let name = start as *const u8;
+    let Some(length) = (unsafe { bounded_nul(name, available) }) else { return false; };
+    let found = unsafe { core::slice::from_raw_parts(name, length) };
+    found == b"libc.so"
+}
+
+/// Admit the kernel-mapped interpreter as graph object 1 for its own
+/// `DT_NEEDED` name. The image is already mapped at `AT_BASE`; discovery must
+/// not open, stat, pread or map a second copy of it.
+#[cfg(feature = "x86_64-owned-dynamic-runtime")]
+unsafe fn admit_interpreter_self(
+    graph: &mut InitialGraphState,
+    objects: &mut ObjectTable,
+    requester: Option<usize>,
+    name: &[u8],
+    short_name: bool,
+) -> Result<Option<usize>, ()> {
+    if let Some(index) = objects[..graph.object_count()]
+        .iter()
+        .position(|object| object.interpreter_self)
+    {
+        objects[index].search_short_name |= short_name;
+        return Ok(Some(index));
+    }
+    if !unsafe { interpreter_soname_is_libc() } { return Ok(None); }
+    let base = super::interpreter_base();
+    let header = base as *const u8;
+    let phoff = usize::try_from(unsafe { read_u64(header.add(32)) }).ok().ok_or(())?;
+    let phnum = unsafe { read_u16(header.add(56)) } as usize;
+    let phdr = base.checked_add(phoff).ok_or(())? as *const u8;
+    let mut object = match unsafe {
+        parse_mapped(base as u64, phdr, phnum, ObjectRole::Library, false, true)
+    } {
+        Some(object) => object,
+        None => fail(b"selfparse\n"),
+    };
+    object.interpreter_self = true;
+    // `_start` has already applied the merged image's packed RELR records.
+    object.relr = core::ptr::null();
+    object.relrsz = 0;
+    let index = match unsafe { graph.admit_interpreter(DEFERRED_SELF_IDENTITY) } {
+        Ok(ObjectAdmission::New { index }) => index,
+        Ok(ObjectAdmission::Existing { .. }) | Err(_) => fail(b"selfadmit\n"),
+    };
+    let fallback = super::x86_64_library_search::LoadedName::new(name);
+    let Some(search_name) = unsafe { installed_self_canonical_name() }
+        .or_else(|| unsafe { lazy_self_identity().and_then(|identity| canonical_self_name(identity)) })
+        .or(fallback)
+    else { return Err(()); };
+    let Some(search_name) = objects.retain_name(search_name) else { return Err(()); };
+    object.search_name = search_name;
+    object.search_short_name = true;
+    object.initial_load_name_is_short = short_name;
+    object.needed_by = requester;
+    if objects.set(index, object).is_none() { return Err(()); }
+    Ok(Some(index))
+}
+
+/// The canonical installed libc path whose identity matches this interpreter.
+/// A normal installation hardlinks the interpreter and `usr/lib/libc.so`, so
+/// `dladdr`/`dl_iterate_phdr` name the self by the libc alias rather than the
+/// interpreter path.
+#[cfg(feature = "x86_64-owned-dynamic-runtime")]
+unsafe fn canonical_self_name(identity: ObjectIdentity) -> Option<super::x86_64_library_search::LoadedName> {
+    let prefix = unsafe { x86_64_library_search::installation_prefix() };
+    let suffix = b"/usr/lib/libc.so";
+    let mut path = [0u8; 4096];
+    for candidate_prefix in [prefix, b"".as_slice()] {
+        let length = candidate_prefix.len().checked_add(suffix.len())?;
+        if length >= path.len() { continue; }
+        path[..candidate_prefix.len()].copy_from_slice(candidate_prefix);
+        path[candidate_prefix.len()..length].copy_from_slice(suffix);
+        let Ok(status) = (unsafe { FileStatus::of_path(path.as_ptr()) }) else { continue; };
+        if status.identity() == Some(identity) {
+            return super::x86_64_library_search::LoadedName::new(&path[..length]);
+        }
+    }
+    None
+}
+
+/// The declared installed libc aliases, under the process root or the
+/// interpreter's installation prefix. A search override that resolves a
+/// reserved name elsewhere is a second identity and fails closed.
+#[cfg(feature = "x86_64-owned-dynamic-runtime")]
+pub(crate) unsafe fn canonical_libc_path(path: &[u8]) -> bool {
+    const SUFFIXES: [&[u8]; 2] = [b"/usr/lib/libc.so", b"/lib/libc.musl-x86_64.so.1"];
+    let prefix = unsafe { x86_64_library_search::installation_prefix() };
+    for root in [b"".as_slice(), prefix] {
+        for suffix in SUFFIXES {
+            if path.len() == root.len() + suffix.len()
+                && path.starts_with(root) && path.ends_with(suffix)
+            {
+                return true;
+            }
+        }
+    }
+    false
+}
+
 /// A missing/unmappable library is optional only for load_preload. Structural
 /// transaction failures cannot be mistaken for an ignored preload. Every
 /// admitted map immediately enters the common rollback owner before more I/O.
@@ -775,6 +1061,39 @@ unsafe fn load_initial_library(
             loaded_path_matches_short_name(stored, name)
         }) { return Ok(Some(index)); }
     }
+    let self_name = reserved_runtime_name(name)
+        || name == unsafe { x86_64_library_search::interpreter_name() }
+        || unsafe { canonical_libc_path(name) };
+    if self_name {
+        if let Some(index) = unsafe { admit_interpreter_self(graph, objects, requester, name, short_name) }? {
+            let override_active = x86_64_library_search::search_path_override()
+                || objects.get(0).is_some_and(|object| !object.runpath.is_null());
+            if override_active {
+                let mut ancestor = requester;
+                let chain = core::iter::from_fn(|| {
+                    let object = objects.get(ancestor?)?;
+                    ancestor = object.needed_by;
+                    Some(object)
+                });
+                if let Ok((fd, path)) = x86_64_library_search::open(name, chain) {
+                    let status = FileStatus::of_fd(fd).ok();
+                    syscall1(SYS_CLOSE, fd);
+                    if let Some(probe) = status.and_then(|status| status.identity()) {
+                        let canonical = canonical_libc_path(path.view().bytes());
+                        if !unsafe { self_identity_matches(probe) } && !canonical {
+                            fail(b"libcidentity\n");
+                        }
+                        if canonical {
+                            if let Some(retained) = objects.retain_name(path) {
+                                objects[index].search_name = retained;
+                            }
+                        }
+                    }
+                }
+            }
+            return Ok(Some(index));
+        }
+    }
     let mut ancestor = requester;
     let chain = core::iter::from_fn(|| {
         let object = objects.get(ancestor?)?;
@@ -788,6 +1107,15 @@ unsafe fn load_initial_library(
     let Some((status, identity)) = FileStatus::of_fd(fd).ok()
         .and_then(|status| status.identity().map(|identity| (status, identity)))
     else { syscall1(SYS_CLOSE, fd); return Ok(None); };
+    if let Some(self_index) = objects[..graph.object_count()]
+        .iter().position(|object| object.interpreter_self)
+    {
+        if unsafe { self_identity_matches(identity) } {
+            syscall1(SYS_CLOSE, fd);
+            objects[self_index].search_short_name |= short_name;
+            return Ok(Some(self_index));
+        }
+    }
     if let Some(index) = graph.find(identity) {
         syscall1(SYS_CLOSE, fd);
         objects[index].search_short_name |= short_name;
@@ -798,6 +1126,17 @@ unsafe fn load_initial_library(
     let Some(mut object) = object else {
         return if cfg!(crabc_hardened) { Err(()) } else { Ok(None) };
     };
+    if unsafe { mapped_soname_is_libc(&object) } {
+        if objects[..graph.object_count()].iter().any(|object| object.interpreter_self) {
+            if !unsafe { self_identity_matches(identity) } {
+                unmap_object(&object);
+                fail(b"libcidentity\n");
+            }
+        } else if unsafe { interpreter_soname_is_libc() } {
+            unmap_object(&object);
+            fail(b"libcidentity\n");
+        }
+    }
     let index = match graph.admit_mapped(identity) {
         Ok(ObjectAdmission::New { index }) => index,
         Ok(ObjectAdmission::Existing { .. }) | Err(_) => {

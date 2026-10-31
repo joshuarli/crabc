@@ -92,6 +92,71 @@ fn lazy_request_keeps_unresolved_import_only_in_compatibility_profile() {
 }
 
 #[test]
+fn full_path_reserved_basename_loads_a_real_libm_soname() {
+    static PATH: AtomicPtr<u8> = AtomicPtr::new(core::ptr::null_mut());
+    unsafe fn probe(_: &RuntimeGuard) -> bool { unsafe { (|| -> Option<bool> {
+        let main = RuntimeObject::allocate(ObjectStorage::Runtime(Object {
+            role: ObjectRole::Main, ..EMPTY_OBJECT }), identity(1), 0, LoadedName::new(b"main"), false)?;
+        let self_node = RuntimeObject::allocate(ObjectStorage::Runtime(Object {
+            role: ObjectRole::Library, interpreter_self: true, ..EMPTY_OBJECT }),
+            identity(2), 1, LoadedName::new(b"/lib/ld-crabc-x86_64.so.1"), false)?;
+        (*main).callback_state.store(INITIALIZED, Ordering::Release);
+        (*self_node).callback_state.store(INITIALIZED, Ordering::Release);
+        (*main).next = self_node;
+        (*REGISTRY.0.get()).head = main;
+        (*REGISTRY.0.get()).tail = self_node;
+        (*REGISTRY.0.get()).count = 2;
+        add_global(&mut *REGISTRY.0.get(), main);
+        add_global(&mut *REGISTRY.0.get(), self_node);
+        RuntimeGuard::complete_fork();
+        let mut diagnostic: RuntimeDiagnostic = core::mem::zeroed();
+        let object = runtime_open(PATH.load(Ordering::Acquire), 2, &mut diagnostic);
+        let ok = !object.is_null() && diagnostic.kind == 0 && (*REGISTRY.0.get()).count == 3;
+        if !object.is_null() { let _ = runtime_close(object); }
+        Some(ok)
+    })().unwrap_or(false) } }
+    let directory = std::path::Path::new(".work/tmp/loader-reserved-basename");
+    std::fs::create_dir_all(directory).unwrap();
+    let source = directory.join("libm.c");
+    std::fs::write(&source, "int libm_probe(void) { return 7; }\n").unwrap();
+    let output = directory.join("libm.so.6");
+    let status = std::process::Command::new("/usr/local/bin/crabc-x86_64-musl-gcc")
+        .args(["-O0", "-nostdlib", "-fPIC", "-shared", "-Wl,--hash-style=sysv,-soname,libm.so.6"])
+        .arg(&source).arg("-o").arg(&output)
+        .status().unwrap();
+    assert!(status.success());
+    let path = std::ffi::CString::new(std::fs::canonicalize(output).unwrap().as_os_str().as_encoded_bytes()).unwrap();
+    PATH.store(path.as_ptr().cast_mut().cast(), Ordering::Release);
+    unsafe { super::super::x86_64_runtime_lock::isolated_mapping_probe(probe); }
+    PATH.store(core::ptr::null_mut(), Ordering::Release);
+}
+
+#[test]
+fn canonical_runtime_alias_adopts_the_loaded_self() {
+    unsafe fn probe(_: &RuntimeGuard) -> bool { unsafe { (|| -> Option<bool> {
+        let main = RuntimeObject::allocate(ObjectStorage::Runtime(Object {
+            role: ObjectRole::Main, ..EMPTY_OBJECT }), identity(1), 0, LoadedName::new(b"main"), false)?;
+        let self_node = RuntimeObject::allocate(ObjectStorage::Runtime(Object {
+            role: ObjectRole::Library, interpreter_self: true, ..EMPTY_OBJECT }),
+            identity(2), 1, LoadedName::new(b"/lib/ld-crabc-x86_64.so.1"), false)?;
+        (*main).callback_state.store(INITIALIZED, Ordering::Release);
+        (*self_node).callback_state.store(INITIALIZED, Ordering::Release);
+        (*main).next = self_node;
+        (*REGISTRY.0.get()).head = main;
+        (*REGISTRY.0.get()).tail = self_node;
+        (*REGISTRY.0.get()).count = 2;
+        add_global(&mut *REGISTRY.0.get(), main);
+        add_global(&mut *REGISTRY.0.get(), self_node);
+        RuntimeGuard::complete_fork();
+        let mut diagnostic: RuntimeDiagnostic = core::mem::zeroed();
+        let alias = b"/usr/lib/libc.so\0";
+        let object = runtime_open(alias.as_ptr(), 2, &mut diagnostic);
+        Some(object.cast::<RuntimeObject>() == self_node && diagnostic.kind == 0 && (*REGISTRY.0.get()).count == 2)
+    })().unwrap_or(false) } }
+    unsafe { super::super::x86_64_runtime_lock::isolated_mapping_probe(probe); }
+}
+
+#[test]
 fn local_dependency_scope_promotes_without_repeating_reentrant_constructor() {
     const ENOENT: i32 = 2;
     static ROOT_PATH: AtomicPtr<u8> = AtomicPtr::new(core::ptr::null_mut());

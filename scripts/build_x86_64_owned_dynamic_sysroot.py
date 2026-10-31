@@ -400,6 +400,52 @@ def loader_dependency_provenance(dependencies: Path, artifact: Path, *, object_d
     return records
 
 
+def merged_loader_dependency_provenance(dependencies: Path, loader_object: Path) -> list[dict[str, object]]:
+    """Bind the merged loader object's retained Cargo dep-info source closure."""
+
+    try:
+        text = dependencies.read_text(encoding="utf-8")
+        details = dependencies.lstat()
+    except OSError as error:
+        raise common.BuildError(f"merged loader dependency trace is missing: {dependencies}") from error
+    if not stat.S_ISREG(details.st_mode) or dependencies.is_symlink():
+        raise common.BuildError("merged loader dependency trace is not a regular file")
+    object_details = loader_object.lstat()
+    if (not stat.S_ISREG(object_details.st_mode) or loader_object.is_symlink()
+            or loader_object.resolve(strict=True) != loader_object):
+        raise common.BuildError("merged loader object is not a physical artifact")
+    rules = []
+    for line in text.replace("\\\n", " ").splitlines():
+        if not line.strip():
+            continue
+        target, separator, inputs = line.partition(":")
+        if not separator or ":" in inputs:
+            raise common.BuildError("merged loader dependency trace has an invalid rule")
+        rules.append((shlex.split(target), shlex.split(inputs)))
+    source_sets = {tuple(inputs) for _targets, inputs in rules if inputs}
+    if len(source_sets) != 1:
+        raise common.BuildError("merged loader dependency trace does not retain one source closure")
+    sources = list(source_sets.pop())
+    records = []
+    seen = set()
+    for spelling in sources:
+        path = Path(spelling)
+        if not path.is_absolute():
+            path = ROOT / path
+        record = _source_file_identity(path, "merged loader compiler dependency source")
+        name = record["path"]
+        if not isinstance(name, str) or not name.startswith("ldso/"):
+            raise common.BuildError("merged loader compiler dependency source is outside ldso")
+        if name in seen:
+            raise common.BuildError("merged loader compiler dependency trace has duplicate sources")
+        seen.add(name)
+        records.append(record)
+    if "ldso/src/lib.rs" not in seen:
+        raise common.BuildError("merged loader dependency trace lacks ldso/src/lib.rs")
+    records.sort(key=lambda record: str(record["path"]))
+    return records
+
+
 def loader_provenance(
     stage: Path,
     command: list[str],
@@ -407,6 +453,8 @@ def loader_provenance(
     compiler_artifact: Path,
     installed_artifact: Path,
     hardening_profile: common.NativeRuntimeProfile = common.NativeRuntimeProfile.COMPATIBILITY,
+    *, merged: bool = False, dependencies_override: Path | None = None,
+    merged_link_command: list[str] | None = None,
 ) -> dict[str, object]:
     """Bind the installed loader to Cargo's selected source closure and config."""
 
@@ -414,9 +462,9 @@ def loader_provenance(
             or rustflags != loader_rustflags(hardening_profile)
             or installed_artifact.name != Path(hardening_profile.interpreter).name):
         raise common.BuildError("loader profile, flags and interpreter path differ")
-    dependencies = stage / "loader" / common.TARGET / "release" / "libldso.d"
+    dependencies = dependencies_override or (stage / "loader" / common.TARGET / "release" / "libldso.d")
     expected_dependency_artifact = dependencies.with_name(LOADER_DEPENDENCY_ARTIFACT)
-    if compiler_artifact != expected_dependency_artifact:
+    if not merged and compiler_artifact != expected_dependency_artifact:
         raise common.BuildError("loader artifact does not have the expected Cargo dependency location")
     try:
         compiler_details = compiler_artifact.lstat()
@@ -425,7 +473,7 @@ def loader_provenance(
         raise common.BuildError("loader compiler or installed artifact is missing") from error
     if (not stat.S_ISREG(compiler_details.st_mode) or compiler_artifact.is_symlink()
             or not stat.S_ISREG(installed_details.st_mode) or installed_artifact.is_symlink()
-            or common.sha256_file(compiler_artifact) != common.sha256_file(installed_artifact)):
+            or (not merged and common.sha256_file(compiler_artifact) != common.sha256_file(installed_artifact))):
         raise common.BuildError("installed loader differs from its compiler artifact")
     configuration = [
         _source_file_identity(ROOT / "scripts/build_x86_64_owned_dynamic_sysroot.py", "loader producer"),
@@ -435,6 +483,7 @@ def loader_provenance(
         _source_file_identity(ROOT / "rust-toolchain.toml", "pinned Rust toolchain configuration"),
         _source_file_identity(ROOT / ".cargo/config.toml", "workspace Cargo configuration"),
         _source_file_identity(ROOT / "ldso/Cargo.toml", "loader Cargo configuration"),
+        _source_file_identity(ROOT / "ldso/build.rs", "loader build configuration"),
         _source_file_identity(ROOT / "compat/x86_64/dynamic_product_contract.py", "loader compiler policy"),
     ]
     installed = {
@@ -442,6 +491,23 @@ def loader_provenance(
         "sha256": common.sha256_file(installed_artifact),
         "mode": stat.S_IMODE(installed_details.st_mode),
     }
+    if merged:
+        compiler_dependencies = merged_loader_dependency_provenance(dependencies, compiler_artifact)
+        if merged_link_command is None:
+            raise common.BuildError("merged loader link command is missing")
+        compiler_object = {
+            "path": "$BUILD/" + compiler_artifact.relative_to(stage).as_posix(),
+            "sha256": common.sha256_file(compiler_artifact),
+            "size": compiler_details.st_size,
+        }
+        merged_link = {
+            "argv": [_normalized_loader_argument(argument, stage) for argument in merged_link_command],
+            "output_sha256": installed["sha256"],
+        }
+    else:
+        compiler_dependencies = loader_dependency_provenance(dependencies, compiler_artifact)
+        compiler_object = None
+        merged_link = None
     return {
         "schema": LOADER_PROVENANCE_SCHEMA,
         "target": common.TARGET,
@@ -450,7 +516,9 @@ def loader_provenance(
             "argv": [_normalized_loader_argument(argument, stage) for argument in command],
             "rustflags": rustflags,
         },
-        "compiler_dependencies": loader_dependency_provenance(dependencies, compiler_artifact),
+        "compiler_object": compiler_object,
+        "compiler_dependencies": compiler_dependencies,
+        "merged_link": merged_link,
         "configuration": configuration,
     }
 
@@ -661,24 +729,6 @@ def build_staged_payload(output: Path, stage: Path, *, allocator_backend: str = 
         stage / "libc-errno-private.exports",
         objects, selected, builtins, library
     )
-    run(libc_shared_link_command)
-    # The sealed dynamic product gives its one shared-library link role an
-    # executable installed mode.  Every other finite link role is materialized
-    # as a non-executable regular file below.
-    (library / "libc.so").chmod(0o755)
-    undefined = elf_imports(nm, library / "libc.so")
-    allowed = {"__crabc_x86_64_initial_tls_allocate", "__crabc_x86_64_initial_tls_release",
-               "__crabc_x86_64_resolve_initial_tls", "__crabc_x86_64_reset_current_tls_v1",
-               "__crabc_x86_64_reset_current_tls_v2",
-               "__crabc_x86_64_loader_conventional_startup_v1",
-               "__crabc_x86_64_runtime_publish_initial_tid",
-               "__crabc_x86_64_runtime_fork_prepare", "__crabc_x86_64_runtime_fork_complete",
-               "__crabc_x86_64_runtime_open", "__crabc_x86_64_runtime_symbol",
-               "__crabc_x86_64_runtime_close", "__crabc_x86_64_runtime_address",
-               "__crabc_x86_64_runtime_information", "__crabc_x86_64_runtime_iterate"}
-    unexpected = sorted(undefined - allowed)
-    if unexpected:
-        raise common.BuildError(f"shared libc has unexpected unresolved symbols: {unexpected}")
     crt = stage / "crt"
     run([sys.executable, str(ROOT / "crt/build_x86_64.py"), "--owned-dynamic-sysroot",
          "--hardening-profile", hardening_profile.value, "--out-dir", str(crt), "--llvm-objdump", objdump])
@@ -715,20 +765,55 @@ def build_staged_payload(output: Path, stage: Path, *, allocator_backend: str = 
     # Every process touches nearly all interpreter text, so it is optimized
     # for size: opt-level s cuts it from 135 to 81 KiB (54 KiB of PSS per
     # process) for about 2% more fork+exec CPU and 8% slower dlsym.
-    loader_command = [*cargo, "build", "--locked", "-p", "crabc-ldso", "--release",
+    loader_command = [*cargo, "rustc", "--locked", "-p", "crabc-ldso", "--release",
                       "--config", 'profile.release.opt-level="s"', "--target", common.TARGET,
                       "--target-dir", str(stage / "loader"), "--no-default-features", "--features",
-                      LOADER_FEATURE]
+                      LOADER_FEATURE, "--", "--emit=obj"]
     run(loader_command, environment=loader_env)
+    object_candidates = sorted((stage / "loader" / common.TARGET / "release" / "build" / "crabc-ldso").glob("*/out/ldso.o"),
+                               key=lambda path: path.stat().st_mtime)
+    if not object_candidates:
+        raise common.BuildError("merged loader object was not produced")
+    loader_object = object_candidates[-1]
+    localized_loader = stage / "ldso-localized.o"
+    localized_loader.write_bytes(loader_object.read_bytes())
+    run(["/usr/bin/objcopy", "--localize-symbol=memcpy", "--localize-symbol=memset",
+         "--localize-symbol=memmove", "--localize-symbol=memcmp", "--localize-symbol=bcmp",
+         "--localize-symbol=__tls_get_addr", "--localize-symbol=_dl_debug_state",
+         str(localized_loader)])
+    private_loader_exports = stage / "merged-private.exports"
+    private_loader_exports.write_text("{\n  local:\n    __crabc_x86_64_*;\n};\n", encoding="utf-8")
+    # The one merged link: libc's exact objects and the loader's relocatable
+    # object in one ET_DYN with _start as the entry. The loader's duplicates
+    # are localized above; libc keeps its 1661 exported names.
+    insert_at = libc_shared_link_command.index("--whole-archive")
+    libc_shared_link_command[insert_at:insert_at] = [
+        str(localized_loader), "-e", "_start", f"--version-script={private_loader_exports}"]
+    run(libc_shared_link_command)
+    (library / "libc.so").chmod(0o755)
+    undefined = elf_imports(nm, library / "libc.so")
+    allowed = {"__crabc_x86_64_initial_tls_allocate", "__crabc_x86_64_initial_tls_release",
+               "__crabc_x86_64_resolve_initial_tls", "__crabc_x86_64_reset_current_tls_v1",
+               "__crabc_x86_64_reset_current_tls_v2",
+               "__crabc_x86_64_loader_conventional_startup_v1",
+               "__crabc_x86_64_runtime_publish_initial_tid",
+               "__crabc_x86_64_runtime_fork_prepare", "__crabc_x86_64_runtime_fork_complete",
+               "__crabc_x86_64_runtime_open", "__crabc_x86_64_runtime_symbol",
+               "__crabc_x86_64_runtime_close", "__crabc_x86_64_runtime_address",
+               "__crabc_x86_64_runtime_information", "__crabc_x86_64_runtime_iterate"}
+    unexpected = sorted(undefined - allowed)
+    if unexpected:
+        raise common.BuildError(f"shared libc has unexpected unresolved symbols: {unexpected}")
     interpreter = output / hardening_profile.interpreter.lstrip("/")
-    loader_artifact = stage / "loader" / common.TARGET / "release/libldso.so"
-    common.copy_artifact(loader_artifact, interpreter)
+    interpreter.parent.mkdir(parents=True, exist_ok=True)
+    os.link(library / "libc.so", interpreter)
     interpreter.chmod(0o755)
+    loader_artifact = localized_loader
     if native_allocator_elf_audit_required(recorded_backend):
         native_definitions = elf_symbols(nm, library / "libc.so", "--defined-only")
         native_imports = elf_imports(nm, library / "libc.so")
-        loader_imports = elf_imports(nm, interpreter)
-        loader_definitions = elf_symbols(nm, interpreter, "--defined-only")
+        loader_imports = set()
+        loader_definitions = set()
         validate_native_allocator_symbols(native_definitions, native_imports, loader_imports | loader_definitions)
         if "__crabc_x86_native_mimalloc_process_finalizer" not in native_definitions:
             raise common.BuildError("native shared libc lost its private ELF process finalizer")
@@ -752,7 +837,10 @@ def build_staged_payload(output: Path, stage: Path, *, allocator_backend: str = 
     common.write_json(metadata / "loader.elf.json", loader_elf)
     common.write_json(
         metadata / "loader.provenance.json",
-        loader_provenance(stage, loader_command, loader_env["RUSTFLAGS"], loader_artifact, interpreter, hardening_profile),
+        loader_provenance(stage, loader_command, loader_env["RUSTFLAGS"], loader_artifact, interpreter,
+                          hardening_profile, merged=True,
+                          dependencies_override=loader_object.with_suffix(".d"),
+                          merged_link_command=libc_shared_link_command),
     )
     for source, name in ((ROOT / "compat/x86_64/crabc_cc_owned_dynamic.py", "bin/crabc-cc-dynamic"),
                          (ROOT / "compat/x86_64/crabc_cc_static.py", "share/crabc/crabc_cc_static.py"),
@@ -840,21 +928,10 @@ def build_debug_payload(output: Path, stage: Path, *, allocator_backend: str, li
                     f"{helper_policy['linker_option']},{private_core.name}", "--gc-sections",
                     *debug_shared_libc_compiler_helper_root_arguments(),
                     "-z", "relro", "-z", "now", "-z", "noexecstack", "-z", "text",
+                    "-z", "pack-relative-relocs",
                     *(str(objects / name) for name in selected), str(private_core),
                     "--whole-archive", str(builtins), "--no-whole-archive",
                     "-o", str(library / "libc.so")]
-    run(libc_command)
-    (library / "libc.so").chmod(0o755)
-    allowed = {"__crabc_x86_64_initial_tls_allocate", "__crabc_x86_64_initial_tls_release",
-               "__crabc_x86_64_resolve_initial_tls", "__crabc_x86_64_reset_current_tls_v1",
-               "__crabc_x86_64_reset_current_tls_v2", "__crabc_x86_64_loader_conventional_startup_v1",
-               "__crabc_x86_64_runtime_publish_initial_tid", "__crabc_x86_64_runtime_fork_prepare",
-               "__crabc_x86_64_runtime_fork_complete", "__crabc_x86_64_runtime_open", "__crabc_x86_64_runtime_symbol",
-               "__crabc_x86_64_runtime_close", "__crabc_x86_64_runtime_address", "__crabc_x86_64_runtime_information",
-               "__crabc_x86_64_runtime_iterate"}
-    imports = elf_imports(nm, library / "libc.so")
-    if imports - allowed:
-        raise common.BuildError(f"debug shared libc has unexpected unresolved symbols: {sorted(imports - allowed)}")
     crt = inputs["crt_root"]
     for name in ("crt1.o", "Scrt1.o", "crti.o", "crtn.o"):
         common.copy_artifact(crt / name, library / name)
@@ -903,18 +980,32 @@ def build_debug_payload(output: Path, stage: Path, *, allocator_backend: str, li
                       *(argument for cfg in cfgs for argument in ("--cfg", cfg)),
                       str(ROOT / "ldso/src/lib.rs"), "-o", str(loader_object)]
     run(loader_command)
-    private_exports = stage / "loader-private.exports"
-    private_exports.write_text("{ local: _R*; _ZN*; };\n")
+    localized_loader = stage / "debug-loader-localized.o"
+    common.copy_artifact(loader_object, localized_loader)
+    run(["/usr/bin/objcopy", "--localize-symbol=memcpy", "--localize-symbol=memset",
+         "--localize-symbol=memmove", "--localize-symbol=memcmp", "--localize-symbol=bcmp",
+         "--localize-symbol=__tls_get_addr", "--localize-symbol=_dl_debug_state",
+         str(localized_loader)])
+    private_exports = stage / "debug-merged-private.exports"
+    private_exports.write_text("{\n  local:\n    __crabc_x86_64_*;\n};\n", encoding="utf-8")
+    insert_at = libc_command.index("-o")
+    libc_command[insert_at:insert_at] = [
+        str(localized_loader), "-e", "_start", "--no-undefined",
+        f"--version-script={private_exports}",
+    ]
+    run(libc_command)
+    (library / "libc.so").chmod(0o755)
+    imports = elf_imports(nm, library / "libc.so")
+    if imports:
+        raise common.BuildError(f"debug shared libc has unresolved symbols: {sorted(imports)}")
     loader_artifact = hardening_profile.interpreter.lstrip("/")
     interpreter = output / loader_artifact
-    interpreter.parent.mkdir()
-    loader_link = [str(linker), "-shared", "-Bsymbolic", "--hash-style=sysv", "--eh-frame-hdr", "-e", "_start", "--no-undefined",
-                   "-z", "now", "-z", "noexecstack", f"--version-script={private_exports}",
-                   f"--exclude-libs={private_core.name},{helper_policy['archive']}", str(loader_object),
-                   str(private_core), str(builtins),
-                   "-o", str(interpreter)]
-    run(loader_link)
+    interpreter.parent.mkdir(parents=True, exist_ok=True)
+    os.link(library / "libc.so", interpreter)
     interpreter.chmod(0o755)
+    interpreter_details = interpreter.lstat()
+    if not stat.S_ISREG(interpreter_details.st_mode) or interpreter_details.st_ino != (library / "libc.so").lstat().st_ino:
+        raise common.BuildError("debug installed interpreter is not the merged libc inode")
     for alias, target in hardening_profile.aliases.items():
         (output / alias).symlink_to(target)
     metadata = output / "share/crabc"
@@ -934,7 +1025,11 @@ def build_debug_payload(output: Path, stage: Path, *, allocator_backend: str, li
         "main_source_core_dependencies": sorted(dependencies), "main_source_core_link_command": support_command,
         "attachment_compile_commands": attachment_commands, "attachment_link_command": attachment_command})
     common.write_json(metadata / "loader.provenance.json", {"build_profile": "debug", "target": common.TARGET,
-        "compiler_command": loader_command, "link_command": loader_link,
+        "compiler_command": loader_command, "link_command": libc_command,
+        "merged_link": {"argv": libc_command, "output_sha256": common.sha256_file(interpreter)},
+        "compiler_object": {"path": "$BUILD/debug-loader-localized.o",
+                            "sha256": common.sha256_file(localized_loader),
+                            "size": localized_loader.lstat().st_size},
         "compiler_dependencies": loader_dependency_provenance(loader_dependencies, loader_object, object_dependencies=True),
         "feature_configuration": _source_file_identity(ROOT / "ldso/build.rs", "loader feature configuration"),
         "source_core_archive_sha256": common.sha256_file(core), "source_helper_archive_sha256": common.sha256_file(builtins),

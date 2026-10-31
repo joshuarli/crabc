@@ -34,7 +34,7 @@ import mold_link_trace
 
 ROOT = inventory.ROOT
 CONTRACT_PATH = ROOT / "compat/x86_64/loader-runtime-registry-private-resolution.toml"
-SCHEMA = "crabc.x86_64-loader-runtime-registry-private-resolution/v2"
+SCHEMA = "crabc.x86_64-loader-runtime-registry-private-resolution/v3"
 TARGET = "x86_64-unknown-linux-musl"
 FEATURE = "x86_64-owned-dynamic-runtime"
 RAW = "raw"
@@ -360,8 +360,18 @@ def _symbol_rows(facts: Mapping[str, Any], artifact: str) -> dict[str, list[Mapp
     return selected
 
 
+def _placement_row(row: Mapping[str, Any]) -> dict[str, object]:
+    return {key: row[key] for key in
+            ("type", "binding", "visibility", "section_index", "size_bytes", "value", "version", "version_default")}
+
+
 def import_placement(facts: Mapping[str, Any]) -> dict[str, dict[str, object]]:
-    """Require exactly the selected shared-libc undefined protocol imports."""
+    """Require exactly the selected private resolver placement.
+
+    A split product imports each resolver from the loader in both ELF symbol
+    tables. The merged image binds every resolver in-image, so the shared
+    libc has one LOCAL FUNC definition in .symtab and no .dynsym row.
+    """
     artifacts = facts.get("artifacts")
     require(type(artifacts) is dict and set(("candidate-shared", "candidate-loader")) <= set(artifacts),
             "complete ELF facts omit candidate shared/loader placements")
@@ -370,21 +380,37 @@ def import_placement(facts: Mapping[str, Any]) -> dict[str, dict[str, object]]:
     loader_rows = _symbol_rows(facts, "candidate-loader")
     result: dict[str, dict[str, object]] = {}
     for name in RESOLVERS:
-        selected = {table: [row for row in shared_rows[table] if row.get("name") == name]
-                    for table in SYMBOL_TABLES}
-        require(all(len(rows) == 1 for rows in selected.values()),
-                f"shared libc protocol import {name} is not present once in each named symbol table")
-        projection: dict[str, dict[str, object]] = {}
-        for table, rows in selected.items():
-            row = rows[0]
-            require(row.get("type") == "NOTYPE" and row.get("binding") == "GLOBAL" and row.get("visibility") == "DEFAULT"
-                    and row.get("section_index") == "UND" and row.get("version") is None
-                    and row.get("version_default") is False and row.get("size_bytes") == 0 and row.get("value") == "0000000000000000",
-                    f"shared libc protocol import {name} metadata drifted")
-            projection[table] = {key: row[key] for key in
-                                 ("type", "binding", "visibility", "section_index", "size_bytes", "value", "version", "version_default")}
-        require(not any(row.get("name") == name for rows in loader_rows.values() for row in rows),
-                f"candidate loader unexpectedly exports or imports protocol name {name}")
+        dynsym = [row for row in shared_rows[".dynsym"] if row.get("name") == name]
+        symtab = [row for row in shared_rows[".symtab"] if row.get("name") == name]
+        if len(dynsym) == 1 and len(symtab) == 1 and all(
+                row.get("type") == "NOTYPE" and row.get("binding") == "GLOBAL"
+                and row.get("visibility") == "DEFAULT" and row.get("section_index") == "UND"
+                and row.get("version") is None and row.get("version_default") is False
+                and row.get("size_bytes") == 0 and row.get("value") == "0000000000000000"
+                for row in (dynsym[0], symtab[0])):
+            projection = {"placement": "import", ".dynsym": _placement_row(dynsym[0]),
+                          ".symtab": _placement_row(symtab[0])}
+        elif not dynsym and len(symtab) == 1 and symtab[0].get("type") == "FUNC" \
+                and symtab[0].get("binding") == "LOCAL" \
+                and symtab[0].get("visibility") in ("DEFAULT", "HIDDEN") \
+                and isinstance(symtab[0].get("section_index"), str) \
+                and symtab[0]["section_index"] not in ("UND", "ABS", "COM") \
+                and symtab[0].get("version") is None and symtab[0].get("version_default") is False \
+                and type(symtab[0].get("size_bytes")) is int and symtab[0]["size_bytes"] > 0:
+            projection = {"placement": "in-image", ".dynsym": None,
+                          ".symtab": _placement_row(symtab[0])}
+        else:
+            raise RuntimeRegistryEvidenceError(
+                f"shared libc protocol {name} is neither one import pair nor one in-image definition")
+        loader_dynsym = [row for row in loader_rows.get(".dynsym", []) if row.get("name") == name]
+        loader_symtab = [row for row in loader_rows.get(".symtab", []) if row.get("name") == name]
+        require(not loader_dynsym, f"candidate loader unexpectedly exports or imports protocol name {name}")
+        if projection["placement"] == "in-image":
+            require(not loader_symtab or (len(loader_symtab) == 1
+                    and _placement_row(loader_symtab[0]) == projection[".symtab"]),
+                    f"candidate loader protocol definition differs: {name}")
+        else:
+            require(not loader_symtab, f"candidate loader unexpectedly defines protocol name {name}")
         result[name] = projection
     return result
 

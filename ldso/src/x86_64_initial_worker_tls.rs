@@ -91,7 +91,8 @@ pub(super) fn runtime_function(name: &[u8]) -> Option<u64> {
 
 /// `output` must be writable/aligned for one token and disjoint from loader
 /// state. The caller is the installed libc pthread owner, not a signal handler.
-unsafe extern "C" fn allocate(output: *mut WorkerTlsAllocation) -> i32 {
+#[export_name = "__crabc_x86_64_initial_tls_allocate"]
+pub unsafe extern "C" fn allocate(output: *mut WorkerTlsAllocation) -> i32 {
     if output.is_null() || output as usize % core::mem::align_of::<WorkerTlsAllocation>() != 0 { return -1; }
     let Some(state) = GeneralInitialLoaderState::retained() else { return -1; };
     if !state.has_initial_tls_attachment() { return -1; }
@@ -303,7 +304,8 @@ mod tests {
 /// `token` must designate readable aligned token storage. All users of its TP
 /// must have quiesced, including the kernel clear-child-TID operation. Tokens
 /// are exact-once ownership, not permission to unmap arbitrary address ranges.
-unsafe extern "C" fn release(token: *const WorkerTlsAllocation) -> i64 {
+#[export_name = "__crabc_x86_64_initial_tls_release"]
+pub unsafe extern "C" fn release(token: *const WorkerTlsAllocation) -> i64 {
     if token.is_null() || token as usize % core::mem::align_of::<WorkerTlsAllocation>() != 0 { return -22; }
     let token = unsafe { core::ptr::read(token) };
     if token.allocation_id == 0 { return -22; }

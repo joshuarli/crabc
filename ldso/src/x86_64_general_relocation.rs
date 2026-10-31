@@ -1049,7 +1049,17 @@ unsafe fn validate_initial_private_imports(
             }
         }
     }
-    (imports == 1).then_some(())
+    let merged_self = imports == 0
+        && objects.get(canonical)?.interpreter_self
+        && objects[0].main_crt_mode == MainCrtMode::Owned
+        && super::x86_64_conventional_startup_v1::reserved();
+    // A foreign conventional CRT has no private import; only the merged
+    // interpreter self can supply the in-image conventional record. A split
+    // or malformed libc that lost its import is not a conventional self.
+    let foreign_conventional = imports == 0
+        && objects[0].main_crt_mode == MainCrtMode::Conventional
+        && objects.get(canonical)?.interpreter_self;
+    (imports == 1 || merged_self || foreign_conventional).then_some(())
 }
 
 /// Relocate only this transaction's runtime-new suffix. Existing mappings

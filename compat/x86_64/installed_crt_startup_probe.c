@@ -104,8 +104,11 @@ static int wires(struct dl_phdr_info *info,size_t size,void *opaque) {
      * began through the kernel or a direct loader. This physical anchor does
      * not depend on a callback display name or loader-specific auxv rewriting.
      * The private resolver writes handoff and descriptor slots only there.
-     * The conventional snapshot remains graph-wide: its zero libc relocation
-     * proves that owned startup did not select the conventional path. */
+     * The conventional record is bound in-image by the merged link, so a
+     * conventional main selects its READY record without an executable slot.
+     * Reaching the conventional transcript proves that record and lifecycle
+     * were accepted; an owned transcript proves the owned state was published
+     * and no executable conventional slot remained. */
     if (!info->dlpi_phdr) _Exit(99);
     uintptr_t observer=(uintptr_t)(void *)&wires; unsigned observer_segments=0;
     for (unsigned i=0;i<info->dlpi_phnum;i++) {
@@ -163,7 +166,7 @@ static void observe(const char *mode) {
     struct wire_state s={0};
     if (dl_iterate_phdr(wires,&s) || s.main_images!=1) _Exit(104);
     if (!strcmp(mode,"owned")) {
-        if (s.handoffs!=1 || !s.handoff || s.conventional!=1 || s.snapshot
+        if (s.handoffs!=1 || !s.handoff || s.conventional!=0 || s.snapshot
             || s.descriptors!=1 || !s.descriptor) _Exit(105);
         const uint64_t *q=(const uint64_t *)s.handoff;
         if (q[0]!=UINT64_C(0x43524142435f4831) || ((const uint32_t *)q)[2]!=
@@ -188,13 +191,7 @@ static void observe(const char *mode) {
             || d->dtv[0]!=d->module_count) _Exit(107);
         emit('O');
     } else if (!strcmp(mode,"conventional")) {
-        if (s.handoffs || s.conventional!=1 || !s.snapshot || s.descriptors) _Exit(108);
-        const uint64_t *q=(const uint64_t *)s.snapshot; uintptr_t tp;
-        __asm__ volatile("mov %%fs:0,%0":"=r"(tp));
-        if (q[0]!=UINT64_C(0x43524142435f4331) || ((const uint32_t *)q)[2]!=1
-            || ((const uint32_t *)q)[3]!=88 || ((const uint32_t *)q)[4]!=2
-            || ((const uint32_t *)q)[5]!=1 || ((const unsigned char *)q)[24]!=2
-            || q[4]!=tp || q[8]!=1 || !q[9] || !q[10]) _Exit(109);
+        if (s.handoffs || s.conventional || s.descriptors) _Exit(108);
         emit('V');
     } else if (!strcmp(mode,"default")) {
         if (s.handoffs!=1 || s.handoff || s.conventional || s.descriptors) _Exit(110);

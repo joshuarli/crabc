@@ -369,6 +369,28 @@ class LoaderRuntimeRegistryEvidenceTests(unittest.TestCase):
         rows = []
         for index, name in enumerate(EVIDENCE.RESOLVERS, start=1):
             row = {"name": name, "raw_name": name, "row_index": index,
+                   "type": "FUNC", "binding": "LOCAL", "visibility": "DEFAULT",
+                   "section_index": "19", "version": None, "version_default": False,
+                   "size_bytes": 31, "value": f"{0x1400 + index:016x}"}
+            rows.append(row)
+        return {
+            "artifacts": {"candidate-shared": {}, "candidate-loader": {}},
+            "facts": {
+                "candidate-shared": {"symbol_tables": [
+                    {"name": ".dynsym", "rows": []},
+                    {"name": ".symtab", "rows": copy.deepcopy(rows)},
+                ]},
+                "candidate-loader": {"symbol_tables": [
+                    {"name": ".dynsym", "rows": []},
+                    {"name": ".symtab", "rows": copy.deepcopy(rows)},
+                ]},
+            },
+        }
+
+    def split_facts(self):
+        rows = []
+        for index, name in enumerate(EVIDENCE.RESOLVERS, start=1):
+            row = {"name": name, "raw_name": name, "row_index": index,
                    "type": "NOTYPE", "binding": "GLOBAL", "visibility": "DEFAULT",
                    "section_index": "UND", "version": None, "version_default": False,
                    "size_bytes": 0, "value": "0000000000000000"}
@@ -448,25 +470,28 @@ class LoaderRuntimeRegistryEvidenceTests(unittest.TestCase):
         with self.assertRaisesRegex(EVIDENCE.RuntimeRegistryEvidenceError, "nonpromotion"):
             EVIDENCE.validate_contract(contract)
 
-    def test_import_placement_requires_one_undefined_row_in_each_named_shared_table(self):
-        placement = EVIDENCE.import_placement(self.facts())
-        self.assertEqual(set(placement), set(EVIDENCE.RESOLVERS))
-        self.assertTrue(all(set(row) == set(EVIDENCE.SYMBOL_TABLES) for row in placement.values()))
-        self.assertTrue(all(row[".dynsym"]["section_index"] == "UND" for row in placement.values()))
+    def test_import_placement_accepts_split_imports_and_merged_in_image_definitions(self):
+        split = EVIDENCE.import_placement(self.split_facts())
+        self.assertEqual(set(split), set(EVIDENCE.RESOLVERS))
+        self.assertTrue(all(row["placement"] == "import" and row[".dynsym"]["section_index"] == "UND"
+                            for row in split.values()))
+        merged = EVIDENCE.import_placement(self.facts())
+        self.assertEqual(set(merged), set(EVIDENCE.RESOLVERS))
+        self.assertTrue(all(row["placement"] == "in-image" and row[".dynsym"] is None
+                            and row[".symtab"]["binding"] == "LOCAL"
+                            and row[".symtab"]["section_index"] == "19" for row in merged.values()))
         malformed = self.facts()
-        malformed["facts"]["candidate-shared"]["symbol_tables"][0]["rows"][0]["visibility"] = "HIDDEN"
-        with self.assertRaisesRegex(EVIDENCE.RuntimeRegistryEvidenceError, "metadata"):
+        malformed["facts"]["candidate-shared"]["symbol_tables"][1]["rows"][0]["binding"] = "GLOBAL"
+        with self.assertRaisesRegex(EVIDENCE.RuntimeRegistryEvidenceError, "neither one import pair"):
             EVIDENCE.import_placement(malformed)
         malformed = self.facts()
         dynsym, symtab = malformed["facts"]["candidate-shared"]["symbol_tables"]
-        dynsym["rows"].extend(copy.deepcopy(symtab["rows"]))
+        dynsym["rows"].append(copy.deepcopy(symtab["rows"][0]))
         symtab["rows"].clear()
-        with self.assertRaisesRegex(EVIDENCE.RuntimeRegistryEvidenceError, "each named symbol table"):
+        with self.assertRaisesRegex(EVIDENCE.RuntimeRegistryEvidenceError, "neither one import pair"):
             EVIDENCE.import_placement(malformed)
         malformed = self.facts()
-        malformed["facts"]["candidate-loader"]["symbol_tables"][0]["rows"].append(
-            copy.deepcopy(malformed["facts"]["candidate-shared"]["symbol_tables"][0]["rows"][0])
-        )
+        malformed["facts"]["candidate-loader"]["symbol_tables"][1]["rows"][0]["size_bytes"] = 1
         with self.assertRaisesRegex(EVIDENCE.RuntimeRegistryEvidenceError, "candidate loader"):
             EVIDENCE.import_placement(malformed)
 

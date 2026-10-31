@@ -367,6 +367,20 @@ fn owned_crt_note_and_private_handoff_must_agree_before_relocation() {
 
 #[cfg(feature = "x86_64-owned-dynamic-runtime")]
 #[test]
+fn foreign_conventional_requires_the_merged_interpreter_self() {
+    let main = MappedImage::new();
+    let libc = MappedImage::new();
+    let mut objects = [EMPTY_OBJECT; TEST_OBJECTS];
+    objects[0] = main.object(false);
+    objects[1] = libc.object(true);
+    objects[1].canonical_libc_identity = Some(ObjectIdentity { device: 7, inode: 9 });
+    assert!(unsafe { validate_initial_private_imports(&graph(2), &objects) }.is_none());
+    objects[1].interpreter_self = true;
+    assert!(unsafe { validate_initial_private_imports(&graph(2), &objects) }.is_some());
+}
+
+#[cfg(feature = "x86_64-owned-dynamic-runtime")]
+#[test]
 fn private_import_selectors_validate_unrelated_names_within_string_table() {
     let mut main = MappedImage::new();
     main.symbol(1, b"ordinary_import_with_a_long_name", 2, 1, 0, 0);

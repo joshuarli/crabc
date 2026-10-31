@@ -2722,6 +2722,19 @@ def account_placements(expanded: Sequence[Mapping[str, Any]], facts: Mapping[str
                             occurrence['accounting']['resolution_proven'] = False
                         else:
                             record['unresolved'].append('exact ordinary import/provider or optional weak/null resolution proof is missing')
+                    elif role == 'definition':
+                        protocol = record['selection'].get('protocol')
+                        if (protocol and artifact.key in protocol['consumer_artifacts']
+                                and protocol['endpoint_kind'] == 'source-dispatch-operation'):
+                            occurrence['accounting']['resolution'] = {
+                                'kind': protocol['endpoint_kind'], 'endpoint': protocol['endpoint'],
+                                'operation': next(r for r in protocol['operations'] if r['name'] == row['name']),
+                            }
+                            occurrence['accounting']['resolution_proven'] = False
+                            if record['selection']['disposition'] != 'private-resolution-operation':
+                                record['unresolved'].append('private operation definition disposition differs')
+                        elif artifact.key not in {r['artifact_key'] for r in record['expected_placements']} | set(protocol.get('provider_artifacts', []) if protocol else []):
+                            record['unresolved'].append(f'candidate definition placement is not selected: {artifact.key}')
                     elif artifact.key not in {r['artifact_key'] for r in record['expected_placements']} | set(record['selection'].get('protocol', {}).get('provider_artifacts', [])):
                         record['unresolved'].append(f'candidate definition placement is not selected: {artifact.key}')
         artifacts[artifact.key] = {'artifact': copy.deepcopy(facts['artifacts'][artifact.key]), 'occurrence_indices': artifact_refs,
@@ -2736,10 +2749,21 @@ def account_placements(expanded: Sequence[Mapping[str, Any]], facts: Mapping[str
         if protocol:
             for artifact_key in protocol['consumer_artifacts']:
                 imported = [r for r in relevant if r['artifact_key'] == artifact_key and r['role'] == 'import']
-                protocol_joins.append({'identity': record['identity'], 'artifact_key': artifact_key, 'role': 'consumer-import',
-                                       'occurrence_indices': [r['index'] for r in imported], 'endpoint_kind': protocol['endpoint_kind'],
+                definitions = [r for r in relevant if r['artifact_key'] == artifact_key
+                               and r['role'] == 'definition' and r['table'] == '.symtab']
+                if imported:
+                    role = 'consumer-import'
+                    selected = imported
+                elif definitions and protocol['endpoint_kind'] == 'source-dispatch-operation':
+                    role = 'consumer-definition'
+                    selected = definitions
+                else:
+                    role = 'consumer-import'
+                    selected = []
+                protocol_joins.append({'identity': record['identity'], 'artifact_key': artifact_key, 'role': role,
+                                       'occurrence_indices': [r['index'] for r in selected], 'endpoint_kind': protocol['endpoint_kind'],
                                        'signature_status': protocol['signature_status'], 'relocation_lifecycle_proven': False})
-                if not imported:
+                if not selected:
                     record['unresolved'].append(f'selected private consumer import is absent: {artifact_key}')
             for artifact_key in protocol['provider_artifacts']:
                 definitions = [r for r in relevant if r['artifact_key'] == artifact_key and r['row']['section_index'] != 'UND']
@@ -5507,12 +5531,26 @@ def loader_runtime_registry_adapter(report_path: Path | None, *, facts: Mapping[
     require(type(imports) is dict and set(imports) == set(runtime_registry_evidence.RESOLVERS),
             'runtime registry import roster differs')
     for name in runtime_registry_evidence.RESOLVERS:
-        tables = exact(imports[name], set(runtime_registry_evidence.SYMBOL_TABLES),
+        tables = exact(imports[name], {'placement', *runtime_registry_evidence.SYMBOL_TABLES},
                        f'runtime registry import {name}')
-        for table in runtime_registry_evidence.SYMBOL_TABLES:
-            exact(tables[table], {
+        require(tables['placement'] in {'import', 'in-image'},
+                f'runtime registry placement differs: {name}')
+        if tables['placement'] == 'import':
+            for table in runtime_registry_evidence.SYMBOL_TABLES:
+                exact(tables[table], {
+                    'type', 'binding', 'visibility', 'section_index', 'size_bytes', 'value', 'version', 'version_default',
+                }, f'runtime registry import {name} {table}')
+        else:
+            require(tables['.dynsym'] is None,
+                    f'runtime registry in-image absence differs: {name}')
+            row = exact(tables['.symtab'], {
                 'type', 'binding', 'visibility', 'section_index', 'size_bytes', 'value', 'version', 'version_default',
-            }, f'runtime registry import {name} {table}')
+            }, f'runtime registry definition {name}')
+            require(row['type'] == 'FUNC' and row['binding'] == 'LOCAL'
+                    and row['visibility'] in {'DEFAULT', 'HIDDEN'}
+                    and isinstance(row['section_index'], str) and row['section_index'] not in {'UND', 'ABS', 'COM'}
+                    and type(row['size_bytes']) is int and row['size_bytes'] > 0,
+                    f'runtime registry in-image definition metadata differs: {name}')
     return {
         'status': 'private-runtime-registry-observed-with-boundaries',
         'reader': file_identity(Path(runtime_registry_evidence.__file__)),
@@ -5610,27 +5648,44 @@ def attach_loader_runtime_registry(accounting: Mapping[str, Any], companion: Map
     # Source dispatch owns this one-shot call. A same-name archive member,
     # loader definition, or CRT/builtins reference would change that boundary.
     initial_tid = '__crabc_x86_64_runtime_publish_initial_tid'
+    initial_placement = imports[initial_tid]
     initial_tid_occurrences = [row for row in accounting['occurrences']
                                if row['artifact_key'] not in {'reference-static', 'reference-shared'}
                                and row['row'].get('name') == initial_tid]
-    require(len(initial_tid_occurrences) == 2
-            and {row['table'] for row in initial_tid_occurrences} == {'.dynsym', '.symtab'},
-            'initial TID private ELF placement differs')
-    for occurrence in initial_tid_occurrences:
-        row = occurrence['row']
-        require(occurrence['artifact_key'] == 'candidate-shared'
-                and occurrence['role'] == 'import'
-                and all(occurrence.get(key) is None for key in
-                        ('member_index', 'member_occurrence', 'member_name'))
-                and row.get('type') == 'NOTYPE'
-                and row.get('binding') == 'GLOBAL'
-                and row.get('visibility') == 'DEFAULT'
-                and row.get('section_index') == 'UND'
-                and row.get('size_bytes') == 0
-                and row.get('value') == '0000000000000000'
-                and row.get('version') is None
-                and row.get('version_default') is False,
+    if initial_placement['placement'] == 'import':
+        require(len(initial_tid_occurrences) == 2
+                and {row['table'] for row in initial_tid_occurrences} == {'.dynsym', '.symtab'},
                 'initial TID private ELF placement differs')
+        for occurrence in initial_tid_occurrences:
+            row = occurrence['row']
+            require(occurrence['artifact_key'] == 'candidate-shared'
+                    and occurrence['role'] == 'import'
+                    and all(occurrence.get(key) is None for key in
+                            ('member_index', 'member_occurrence', 'member_name'))
+                    and row.get('type') == 'NOTYPE'
+                    and row.get('binding') == 'GLOBAL'
+                    and row.get('visibility') == 'DEFAULT'
+                    and row.get('section_index') == 'UND'
+                    and row.get('size_bytes') == 0
+                    and row.get('value') == '0000000000000000'
+                    and row.get('version') is None
+                    and row.get('version_default') is False,
+                    'initial TID private ELF placement differs')
+    else:
+        require(all(row['artifact_key'] in {'candidate-shared', 'candidate-loader'}
+                    for row in initial_tid_occurrences),
+                'initial TID in-image placement differs')
+        shared = [row for row in initial_tid_occurrences if row['artifact_key'] == 'candidate-shared']
+        loader = [row for row in initial_tid_occurrences if row['artifact_key'] == 'candidate-loader']
+        require(initial_placement['.dynsym'] is None and type(initial_placement['.symtab']) is dict
+                and len(shared) == 1 and shared[0]['role'] == 'definition'
+                and shared[0]['table'] == '.symtab'
+                and same(_runtime_registry_row_projection(shared[0]), initial_placement['.symtab'])
+                and shared[0].get('definition_section') is not None
+                and all(row['role'] == 'definition' and row['table'] == '.symtab'
+                        and same(_runtime_registry_row_projection(row), initial_placement['.symtab'])
+                        for row in loader),
+                'initial TID in-image placement differs')
     records = {identity_key(record['identity']): record for record in accounting['identities']}
     require(len(records) == len(accounting['identities']), 'duplicate identities before runtime registry attachment')
     protocol_joins = accounting['private_protocol_joins']
@@ -5663,42 +5718,85 @@ def attach_loader_runtime_registry(accounting: Mapping[str, Any], companion: Map
                 and type(operation.get('producer')) is dict
                 and operation['producer'].get('function') == resolver,
                 f'runtime registry protocol operation differs: {name}')
-        expected_tables = exact(imports[name], set(runtime_registry_evidence.SYMBOL_TABLES),
-                                f'runtime registry attachment import {name}')
-        occurrences = [row for row in accounting['occurrences']
-                       if row['artifact_key'] == 'candidate-shared' and row['role'] == 'import'
-                       and identity_key(row_identity(row['row'])) == key]
-        by_table = {row['table']: row for row in occurrences}
-        require(len(by_table) == len(occurrences) == len(runtime_registry_evidence.SYMBOL_TABLES)
-                and set(by_table) == set(runtime_registry_evidence.SYMBOL_TABLES),
-                f'runtime registry selected occurrences differ: {name}')
-        indices: list[int] = []
-        for table in runtime_registry_evidence.SYMBOL_TABLES:
-            occurrence = by_table[table]
-            require(same(_runtime_registry_row_projection(occurrence), expected_tables[table]),
-                    f'runtime registry selected metadata differs: {name} {table}')
+        placement = exact(imports[name], {'placement', '.dynsym', '.symtab'},
+                          f'runtime registry attachment import {name}')
+        require(placement['placement'] in {'import', 'in-image'},
+                f'runtime registry placement differs: {name}')
+        if placement['placement'] == 'import':
+            expected_tables = {table: placement[table] for table in runtime_registry_evidence.SYMBOL_TABLES}
+            occurrences = [row for row in accounting['occurrences']
+                           if row['artifact_key'] == 'candidate-shared' and row['role'] == 'import'
+                           and identity_key(row_identity(row['row'])) == key]
+            by_table = {row['table']: row for row in occurrences}
+            require(len(by_table) == len(occurrences) == len(runtime_registry_evidence.SYMBOL_TABLES)
+                    and set(by_table) == set(runtime_registry_evidence.SYMBOL_TABLES),
+                    f'runtime registry selected occurrences differ: {name}')
+            indices: list[int] = []
+            for table in runtime_registry_evidence.SYMBOL_TABLES:
+                occurrence = by_table[table]
+                require(same(_runtime_registry_row_projection(occurrence), expected_tables[table]),
+                        f'runtime registry selected metadata differs: {name} {table}')
+                observed_account = occurrence.get('accounting')
+                require(type(observed_account) is dict
+                        and observed_account.get('disposition') == 'private-resolution-operation'
+                        and observed_account.get('owner') == 'loader-runtime-operations'
+                        and observed_account.get('scope') == 'candidate-shared',
+                        f'runtime registry selected occurrence ownership differs: {name} {table}')
+                resolution = observed_account.get('resolution')
+                require(type(resolution) is dict
+                        and resolution.get('kind') == 'source-dispatch-operation'
+                        and same(resolution.get('operation'), operation)
+                        and observed_account.get('resolution_proven') is False,
+                        f'runtime registry selected occurrence resolution differs: {name} {table}')
+                observed_account['resolution_proven'] = True
+                indices.append(occurrence['index'])
+            join = next((row for row in protocol_joins
+                         if row.get('identity') == record['identity'] and row.get('artifact_key') == 'candidate-shared'
+                         and row.get('role') == 'consumer-import'), None)
+            require(join is not None and join.get('occurrence_indices') == indices
+                    and join.get('endpoint_kind') == 'source-dispatch-operation'
+                    and join.get('relocation_lifecycle_proven') is False,
+                    f'runtime registry private protocol join differs: {name}')
+            join['relocation_lifecycle_proven'] = True
+            selected_placement = 'import'
+        elif placement['placement'] == 'in-image':
+            require(placement['.dynsym'] is None and type(placement['.symtab']) is dict,
+                    f'runtime registry in-image resolver shape differs: {name}')
+            occurrences = [row for row in accounting['occurrences']
+                           if row['artifact_key'] == 'candidate-shared' and row['role'] == 'definition'
+                           and row['table'] == '.symtab'
+                           and identity_key(row_identity(row['row'])) == key]
+            require(len(occurrences) == 1,
+                    f'runtime registry in-image resolver placement differs: {name}')
+            occurrence = occurrences[0]
+            require(same(_runtime_registry_row_projection(occurrence), placement['.symtab'])
+                    and occurrence.get('definition_section') is not None,
+                    f'runtime registry in-image resolver metadata differs: {name}')
             observed_account = occurrence.get('accounting')
             require(type(observed_account) is dict
                     and observed_account.get('disposition') == 'private-resolution-operation'
                     and observed_account.get('owner') == 'loader-runtime-operations'
                     and observed_account.get('scope') == 'candidate-shared',
-                    f'runtime registry selected occurrence ownership differs: {name} {table}')
+                    f'runtime registry in-image resolver ownership differs: {name}')
             resolution = observed_account.get('resolution')
             require(type(resolution) is dict
                     and resolution.get('kind') == 'source-dispatch-operation'
                     and same(resolution.get('operation'), operation)
                     and observed_account.get('resolution_proven') is False,
-                    f'runtime registry selected occurrence resolution differs: {name} {table}')
+                    f'runtime registry in-image resolver resolution differs: {name}')
             observed_account['resolution_proven'] = True
-            indices.append(occurrence['index'])
-        join = next((row for row in protocol_joins
-                     if row.get('identity') == record['identity'] and row.get('artifact_key') == 'candidate-shared'
-                     and row.get('role') == 'consumer-import'), None)
-        require(join is not None and join.get('occurrence_indices') == indices
-                and join.get('endpoint_kind') == 'source-dispatch-operation'
-                and join.get('relocation_lifecycle_proven') is False,
-                f'runtime registry private protocol join differs: {name}')
-        join['relocation_lifecycle_proven'] = True
+            indices = [occurrence['index']]
+            join = next((row for row in protocol_joins
+                         if row.get('identity') == record['identity'] and row.get('artifact_key') == 'candidate-shared'
+                         and row.get('role') == 'consumer-definition'), None)
+            require(join is not None and join.get('occurrence_indices') == indices
+                    and join.get('endpoint_kind') == 'source-dispatch-operation'
+                    and join.get('relocation_lifecycle_proven') is False,
+                    f'runtime registry in-image protocol join differs: {name}')
+            join['relocation_lifecycle_proven'] = True
+            selected_placement = 'in-image'
+        else:
+            require(False, f'runtime registry placement differs: {name}')
         require(all(reason in record['unresolved'] for reason in RUNTIME_REGISTRY_REQUIREMENTS),
                 f'runtime registry requirements are absent before attachment: {name}')
         record['unresolved'] = [reason for reason in record['unresolved'] if reason not in RUNTIME_REGISTRY_REQUIREMENTS]
@@ -5706,6 +5804,7 @@ def attach_loader_runtime_registry(accounting: Mapping[str, Any], companion: Map
         result.append({
             'identity': copy.deepcopy(record['identity']), 'resolver': resolver,
             'artifact_key': 'candidate-shared', 'occurrence_indices': indices,
+            'placement': selected_placement,
             'requirements_discharged': list(RUNTIME_REGISTRY_REQUIREMENTS),
             'source_dispatch_proven': True,
         })

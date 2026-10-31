@@ -28,6 +28,8 @@ static mut ENVIRONMENT_PRELOAD: *const u8 = core::ptr::null();
 static mut SECURE: bool = true;
 static mut INTERPRETER_NAME: *const u8 = b"/lib/ld-crabc-x86_64.so.1\0".as_ptr();
 static mut APPLICATION_NAME: *const u8 = b"\0".as_ptr();
+static mut EXECUTABLE_NAME: *const u8 = core::ptr::null();
+static mut SELF_PATH: *const u8 = core::ptr::null();
 
 /// Initial stack strings have process lifetime, as in musl's env_path. This
 /// is initialized once before discovery and never refreshed from environ.
@@ -71,6 +73,7 @@ pub(super) unsafe fn initialize(sp: usize) {
     let application = if use_executable_name { executable_name } else { first_argument };
     unsafe {
         if !application.is_null() { APPLICATION_NAME = application; }
+        if !executable_name.is_null() { EXECUTABLE_NAME = executable_name; }
         SECURE = secure;
         ENVIRONMENT_PATH = if secure { core::ptr::null() } else { environment };
         ENVIRONMENT_PRELOAD = if secure { core::ptr::null() } else { preload };
@@ -81,7 +84,31 @@ pub(super) unsafe fn initialize(sp: usize) {
 /// Direct loader entry names its main object by the opened program path.
 pub(super) unsafe fn application_name() -> *const u8 { unsafe { APPLICATION_NAME } }
 
-pub(super) unsafe fn command_interpreter(name: *const u8) { unsafe { if !SECURE { INTERPRETER_NAME = name; } } }
+pub(super) unsafe fn command_interpreter(name: *const u8) {
+    unsafe {
+        if !SECURE {
+            INTERPRETER_NAME = name;
+            SELF_PATH = name;
+        } else if !EXECUTABLE_NAME.is_null() {
+            SELF_PATH = EXECUTABLE_NAME;
+        }
+    }
+}
+/// The trusted self file for identity stat and dedupe. Search/prefix policy
+/// keeps its own interpreter name: a secure copied loader must not adopt an
+/// attacker-chosen directory for path-file discovery.
+pub(super) fn self_path() -> *const u8 {
+    unsafe { if SELF_PATH.is_null() { INTERPRETER_NAME } else { SELF_PATH } }
+}
+/// The trusted self pathname as bytes, for installed-path recognition.
+pub(super) unsafe fn self_name() -> &'static [u8] {
+    unsafe { c_string(self_path()) }
+}
+/// The main image's kernel-supplied PT_INTERP path is trusted regardless of
+/// secure mode. This is the installed interpreter's real pathname.
+pub(super) unsafe fn main_interpreter(name: *const u8) {
+    unsafe { INTERPRETER_NAME = name; SELF_PATH = name; }
+}
 pub(super) unsafe fn interpreter_name() -> &'static [u8] {
     unsafe { c_string(INTERPRETER_NAME) }
 }
@@ -120,6 +147,10 @@ pub(super) unsafe fn command_preload(path: *const u8) { unsafe { if !SECURE { EN
 
 /// A missing or malformed optional preload is ignored by musl load_preload;
 /// successful admissions still participate in the complete initial graph.
+/// Whether an environment or direct-command path can override a reserved
+/// runtime name. A normal installed launch has none and needs no probe.
+pub(super) fn search_path_override() -> bool { unsafe { !ENVIRONMENT_PATH.is_null() } }
+
 pub(super) unsafe fn preloads() -> &'static [u8] {
     let preload = unsafe { ENVIRONMENT_PRELOAD };
     if preload.is_null() { return &[]; }
