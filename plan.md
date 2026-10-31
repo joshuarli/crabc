@@ -789,6 +789,12 @@ owner decision.
 - **D14 — CPU and memory are re-accepted only on a quiet host.** The S5
   attempt was deferred at load 20–27; a re-acceptance run must satisfy the
   existing host-load policy. Counter runs under load remain diagnostic.
+- **D15 — the ldso line budget is x86-product-only.** The 11,000 budget
+  counts x86 product lines; the paused AArch64 `loader.rs`/`aarch64.rs`
+  (4,436 non-comment lines) is preserved and reported separately. At
+  `b28cb221d` the x86 product is 12,175 lines and the total is 16,611, so the
+  lane must remove about 1,175 dead or fixed-graph-only x86 lines. It must not
+  delete live product mechanisms to reach the number.
 
 ## Runtime hardening
 
@@ -1075,7 +1081,7 @@ lever is the item-1 consolidation.
 | Area | Baseline | Identified | Budget |
 | --- | --- | --- | --- |
 | ldso features | 7 | 6 | **2** |
-| ldso lines | 18,293 | 9,626 | **11,000** |
+| ldso x86 product lines (AArch64 4,436 preserved separately, D15) | 13,857 | 9,626 | **11,000** |
 | libc features | 40 | 19 | **25** |
 | dispatcher subcommands | 942 | 272 | **720** |
 | `scripts/dev-x86_64.sh` lines | 12,817 | 2,380 | **11,000** |
