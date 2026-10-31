@@ -779,32 +779,9 @@ Native Linux/x86-64 staged-foundation evidence commands:
   libc-atomic  run the source-only x86 atomic-helper probe
   libc-clone-raw  run the source-only x86 musl-shaped raw clone probe
   libc-signal-foundation  run the source-only x86 signal-action packing probe
-  ldso-relocation  run the source-only checked x86 RELA/RELR foundation tests
-  ldso-image  run the source-only checked x86 ELF image parser tests
-  ldso-initial-graph  run the bounded x86 ET_DYN initial-interpreter graph artifact
-  ldso-target-root  run the feature-gated x86 crabc-ldso ET_DYN target-root admission
-  ldso-general-initial-graph  run the bounded general non-TLS x86 initial dependency graph artifact
-  ldso-general-initial-target-root  run the feature-gated general x86 crabc-ldso target-root admission
-  ldso-general-initial-tls  run the private general x86 initial-TLS materialization artifact
-  ldso-general-initial-tls-target-root  run the feature-gated general x86 initial-TLS target-root admission
-  ldso-initial-tls  run the bounded x86 Variant-II initial-TLS interpreter graph artifact
-  loader-libc-tls-runtime-v1  run the private x86 loader/libc initial-TLS RuntimeV1 handoff foundation
-  loader-libc-tls-runtime-v1-registry  run the private x86 RuntimeV1 initial-module registry foundation
-  loader-libc-general-tls-runtime-v1  run the private general x86 loader/libc initial-TLS RuntimeV1 handoff
-  loader-libc-general-tls-runtime-v1-target-root  run the feature-gated general x86 RuntimeV1 target-root admission
-  dynamic-main-thread-runtime-v1  run the private real-Scrt1 x86 RuntimeV1 dynamic-libc bridge
-  dynamic-main-thread-runtime-v1-target-root  run the feature-gated real-Scrt1 x86 RuntimeV1 target-root admission
   general-dynamic-lifecycle  check general-loader owned CRT/libc initialization and process exit
   general-relocations  check general COPY, symbol scope, and initial-exec TLS
-  ldso-initial-exec-tls  run the fixed x86 DF_STATIC_TLS/TPOFF64 sibling artifact
-  ldso-owned-crt-handoff  run the bounded x86 ldso-to-Rust-Scrt1 handoff artifact
-  ldso-fixed-graph-introspection  run copied introspection over the fixed x86 loader graph
-  ldso-fixed-graph-dlfcn  run handle/symbol operations over the fixed x86 loader graph
-  ldso-public-dlfcn  run the public C bridge over the fixed x86 loader graph
-  ldso-dladdr-symbol-bounds  run finite-symbol dladdr evidence over the fixed x86 loader graph
   ldso-static-dlfcn [STATIC_SYSROOT]  compare the installed static product's loaderless dlfcn surface with musl libc.a
-  ldso-bounded-dlopen  run the one-slot x86 runtime DSO mapping/search artifact
-  ldso-dynamic-admission  run the bounded x86 dynamic-loader admission inventory
 
 This closed runner rejects non-native Linux/x86-64 hosts and does not provide
 a general x86 libc artifact, ldso, CRT, sysroot, allocator, generic Cargo, or
@@ -6319,48 +6296,6 @@ run_libc_signal_foundation_probe() {
     run_in_container bash /workspace/compat/x86_64/run_libc_signal_foundation.sh
 }
 
-run_ldso_relocation_tests() {
-    run_in_container bash -ceu '
-        test_binary="$TMPDIR/crabc-x86-64-ldso-relocation"
-        mapfile -d "" -t native_rustc < <(python3 -B /workspace/compat/x86_64/native_rustc.py final-link)
-        "${native_rustc[@]}" --edition=2021 --test \
-            /workspace/ldso/src/x86_64_relocation.rs -o "$test_binary"
-        "$test_binary" --test-threads=1
-    '
-}
-
-run_ldso_image_tests() {
-    run_in_container bash /workspace/ldso/run-x86_64-image.sh test
-}
-
-run_ldso_initial_graph_tests() {
-    run_in_container bash /workspace/compat/x86_64/run_ldso_initial_graph.sh
-}
-
-run_ldso_general_initial_graph_tests() {
-    run_in_container bash /workspace/compat/x86_64/run_ldso_general_initial_graph.sh
-}
-
-run_ldso_general_initial_graph_target_root_tests() {
-    run_in_container bash /workspace/compat/x86_64/run_ldso_general_initial_graph_target_root.sh
-}
-
-run_ldso_general_initial_tls_tests() {
-    run_in_container bash /workspace/compat/x86_64/run_ldso_general_initial_tls.sh
-}
-
-run_ldso_general_initial_tls_target_root_tests() {
-    run_in_container bash /workspace/compat/x86_64/run_ldso_general_initial_tls_target_root.sh
-}
-
-run_ldso_target_root_tests() {
-    run_in_container bash /workspace/compat/x86_64/run_ldso_target_root.sh
-}
-
-run_ldso_initial_tls_tests() {
-    run_in_container bash /workspace/compat/x86_64/run_ldso_initial_tls.sh
-}
-
 run_libc_math_long_double_completion_tests() {
     run_in_container bash /workspace/compat/x86_64/run_libc_math_long_double_completion.sh
 }
@@ -6375,64 +6310,8 @@ run_libc_math_elementary_fenv_sensitive_tests() {
     '
 }
 
-run_loader_libc_tls_runtime_v1_tests() {
-    run_in_container bash /workspace/compat/x86_64/run_loader_libc_tls_runtime_v1.sh
-}
-
-run_loader_libc_tls_runtime_v1_registry_tests() {
-    run_in_container bash /workspace/compat/x86_64/run_loader_libc_tls_runtime_v1_registry.sh
-}
-
-run_loader_libc_general_tls_runtime_v1_tests() {
-    run_in_container bash /workspace/compat/x86_64/run_loader_libc_general_tls_runtime_v1.sh
-}
-
-run_loader_libc_general_tls_runtime_v1_target_root_tests() {
-    run_in_container bash /workspace/compat/x86_64/run_loader_libc_general_tls_runtime_v1_target_root.sh
-}
-
-run_dynamic_main_thread_runtime_v1_tests() {
-    run_in_container bash /workspace/compat/x86_64/run_dynamic_main_thread_runtime_v1.sh
-}
-
-run_dynamic_main_thread_runtime_v1_target_root_tests() {
-    run_in_container bash /workspace/compat/x86_64/run_dynamic_main_thread_runtime_v1_target_root.sh
-}
-
 run_general_dynamic_lifecycle_tests() {
     run_in_container bash /workspace/compat/x86_64/run_general_dynamic_lifecycle.sh
-}
-
-run_ldso_initial_exec_tls_tests() {
-    run_in_container bash /workspace/compat/x86_64/run_ldso_initial_exec_tls.sh
-}
-
-run_ldso_owned_crt_handoff_tests() {
-    run_in_container bash /workspace/compat/x86_64/run_ldso_owned_crt_handoff.sh
-}
-
-run_ldso_fixed_graph_introspection_tests() {
-    run_in_container bash /workspace/compat/x86_64/run_ldso_fixed_graph_introspection.sh
-}
-
-run_ldso_fixed_graph_dlfcn_tests() {
-    run_in_container bash /workspace/compat/x86_64/run_ldso_fixed_graph_dlfcn.sh
-}
-
-run_ldso_public_dlfcn_tests() {
-    run_in_container bash /workspace/compat/x86_64/run_ldso_public_dlfcn.sh
-}
-
-run_ldso_dladdr_symbol_bounds_tests() {
-    run_in_container bash /workspace/compat/x86_64/run_ldso_dladdr_symbol_bounds.sh
-}
-
-run_ldso_bounded_dlopen_tests() {
-    run_in_container bash /workspace/compat/x86_64/run_ldso_bounded_dlopen.sh
-}
-
-run_ldso_dynamic_admission_tests() {
-    run_in_container bash /workspace/compat/x86_64/run_ldso_dynamic_admission.sh
 }
 
 if [ "$#" -eq 0 ]; then
@@ -10163,51 +10042,6 @@ PY
         ensure_image
         run_libc_signal_foundation_probe
         ;;
-    ldso-relocation)
-        [ "$#" -eq 0 ] || fail "ldso-relocation takes no arguments"
-        ensure_image
-        run_ldso_relocation_tests
-        ;;
-    ldso-image)
-        [ "$#" -eq 0 ] || fail "ldso-image takes no arguments"
-        ensure_image
-        run_ldso_image_tests
-        ;;
-    ldso-initial-graph)
-        [ "$#" -eq 0 ] || fail "ldso-initial-graph takes no arguments"
-        ensure_image
-        run_ldso_initial_graph_tests
-        ;;
-    ldso-general-initial-graph)
-        [ "$#" -eq 0 ] || fail "ldso-general-initial-graph takes no arguments"
-        ensure_image
-        run_ldso_general_initial_graph_tests
-        ;;
-    ldso-general-initial-target-root)
-        [ "$#" -eq 0 ] || fail "ldso-general-initial-target-root takes no arguments"
-        ensure_image
-        run_ldso_general_initial_graph_target_root_tests
-        ;;
-    ldso-general-initial-tls)
-        [ "$#" -eq 0 ] || fail "ldso-general-initial-tls takes no arguments"
-        ensure_image
-        run_ldso_general_initial_tls_tests
-        ;;
-    ldso-general-initial-tls-target-root)
-        [ "$#" -eq 0 ] || fail "ldso-general-initial-tls-target-root takes no arguments"
-        ensure_image
-        run_ldso_general_initial_tls_target_root_tests
-        ;;
-    ldso-target-root)
-        [ "$#" -eq 0 ] || fail "ldso-target-root takes no arguments"
-        ensure_image
-        run_ldso_target_root_tests
-        ;;
-    ldso-initial-tls)
-        [ "$#" -eq 0 ] || fail "ldso-initial-tls takes no arguments"
-        ensure_image
-        run_ldso_initial_tls_tests
-        ;;
     libc-math-long-double-completion)
         [ "$#" -eq 0 ] || fail "libc-math-long-double-completion takes no arguments"
         ensure_image
@@ -10217,36 +10051,6 @@ PY
         [ "$#" -eq 0 ] || fail "libc-math-elementary-fenv-sensitive takes no arguments"
         ensure_image
         run_libc_math_elementary_fenv_sensitive_tests
-        ;;
-    loader-libc-tls-runtime-v1)
-        [ "$#" -eq 0 ] || fail "loader-libc-tls-runtime-v1 takes no arguments"
-        ensure_image
-        run_loader_libc_tls_runtime_v1_tests
-        ;;
-    loader-libc-tls-runtime-v1-registry)
-        [ "$#" -eq 0 ] || fail "loader-libc-tls-runtime-v1-registry takes no arguments"
-        ensure_image
-        run_loader_libc_tls_runtime_v1_registry_tests
-        ;;
-    loader-libc-general-tls-runtime-v1)
-        [ "$#" -eq 0 ] || fail "loader-libc-general-tls-runtime-v1 takes no arguments"
-        ensure_image
-        run_loader_libc_general_tls_runtime_v1_tests
-        ;;
-    loader-libc-general-tls-runtime-v1-target-root)
-        [ "$#" -eq 0 ] || fail "loader-libc-general-tls-runtime-v1-target-root takes no arguments"
-        ensure_image
-        run_loader_libc_general_tls_runtime_v1_target_root_tests
-        ;;
-    dynamic-main-thread-runtime-v1)
-        [ "$#" -eq 0 ] || fail "dynamic-main-thread-runtime-v1 takes no arguments"
-        ensure_image
-        run_dynamic_main_thread_runtime_v1_tests
-        ;;
-    dynamic-main-thread-runtime-v1-target-root)
-        [ "$#" -eq 0 ] || fail "dynamic-main-thread-runtime-v1-target-root takes no arguments"
-        ensure_image
-        run_dynamic_main_thread_runtime_v1_target_root_tests
         ;;
     general-dynamic-lifecycle)
         [ "$#" -eq 0 ] || fail "general-dynamic-lifecycle takes no arguments"
@@ -10271,49 +10075,9 @@ PY
         ensure_image
         run_in_container bash /workspace/compat/x86_64/run_general_relocations.sh
         ;;
-    ldso-initial-exec-tls)
-        [ "$#" -eq 0 ] || fail "ldso-initial-exec-tls takes no arguments"
-        ensure_image
-        run_ldso_initial_exec_tls_tests
-        ;;
-    ldso-owned-crt-handoff)
-        [ "$#" -eq 0 ] || fail "ldso-owned-crt-handoff takes no arguments"
-        ensure_image
-        run_ldso_owned_crt_handoff_tests
-        ;;
-    ldso-fixed-graph-introspection)
-        [ "$#" -eq 0 ] || fail "ldso-fixed-graph-introspection takes no arguments"
-        ensure_image
-        run_ldso_fixed_graph_introspection_tests
-        ;;
-    ldso-fixed-graph-dlfcn)
-        [ "$#" -eq 0 ] || fail "ldso-fixed-graph-dlfcn takes no arguments"
-        ensure_image
-        run_ldso_fixed_graph_dlfcn_tests
-        ;;
-    ldso-public-dlfcn)
-        [ "$#" -eq 0 ] || fail "ldso-public-dlfcn takes no arguments"
-        ensure_image
-        run_ldso_public_dlfcn_tests
-        ;;
-    ldso-dladdr-symbol-bounds)
-        [ "$#" -eq 0 ] || fail "ldso-dladdr-symbol-bounds takes no arguments"
-        ensure_image
-        run_ldso_dladdr_symbol_bounds_tests
-        ;;
     ldso-static-dlfcn)
         ensure_image
         run_in_container bash /workspace/compat/x86_64/run_ldso_static_dlfcn.sh "$@"
-        ;;
-    ldso-bounded-dlopen)
-        [ "$#" -eq 0 ] || fail "ldso-bounded-dlopen takes no arguments"
-        ensure_image
-        run_ldso_bounded_dlopen_tests
-        ;;
-    ldso-dynamic-admission)
-        [ "$#" -eq 0 ] || fail "ldso-dynamic-admission takes no arguments"
-        ensure_image
-        run_ldso_dynamic_admission_tests
         ;;
     libc-umask)
         [ "$#" -eq 0 ] || fail "libc-umask takes no arguments"

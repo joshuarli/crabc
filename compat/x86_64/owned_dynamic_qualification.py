@@ -116,6 +116,10 @@ CASES = {
     "posix-composition": ("run_owned_posix_composition.sh", None),
     "resolver-cancellation": ("run_owned_resolver_cancellation.sh", None),
     "loader-synthetic": ("run_owned_loader_synthetic.sh", None),
+    "ldso-initial-graph": ("run_owned_ldso_initial_graph_cases.sh", None),
+    "ldso-general-initial-tls": ("run_owned_ldso_initial_tls_cases.sh", None),
+    "ldso-general-loader-lifecycle": ("run_owned_ldso_lifecycle_cases.sh", None),
+    "ldso-loader-libc-tls-runtime-v1": ("run_owned_ldso_runtime_v1_cases.sh", None),
     "package-corpus": ("run_owned_package_corpus.sh", None),
     "cross-dso": ("run_owned_dynamic_cross_dso.sh", None),
 }
@@ -331,7 +335,7 @@ def prepare(work: Path) -> None:
          "--cfg", "crabc_general_initial_tls_materialization_v1", "--cfg", "crabc_general_loader_libc_tls_runtime_v1",
          "--cfg", "crabc_general_initial_lifecycle", "--cfg", "crabc_dynamic_main_thread_runtime_v1",
          "--cfg", 'feature="x86_64-owned-dynamic-runtime"',
-         str(ROOT / "ldso/src/x86_64_general_initial_tls_runtime_v1_source_root.rs"), "-o", str(work / "loader-tests")],
+         str(ROOT / "ldso/src/lib.rs"), "-o", str(work / "loader-tests")],
         [str(work / "loader-tests")],
         ["bash", str(ROOT / "compat/x86_64/run_musl_oracle.sh")],
     ]

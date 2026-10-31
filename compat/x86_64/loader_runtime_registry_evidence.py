@@ -335,7 +335,7 @@ def source_resolution(root: Path = ROOT) -> dict[str, object]:
     require('#[cfg_attr(crabc_x86_dynamic_runtime, path = "dynamic_tls.rs")]' in static_root,
             "selected libc root does not select dynamic TLS consumer")
     cargo = source_file(root, "ldso/Cargo.toml").read_text(encoding="utf-8")
-    require('x86_64-owned-dynamic-runtime = ["x86_64-general-initial-lifecycle", "x86_64-general-initial-tls-runtime-v1-dynamic-main-thread-interpreter"]' in cargo,
+    require('x86_64-owned-dynamic-runtime = []' in cargo,
             "loader selected feature closure drifted")
     return {"resolvers": dict(sorted(RESOLVERS.items())),
             "native_shadow_resolvers": NATIVE_RESOLVERS, "feature": FEATURE}

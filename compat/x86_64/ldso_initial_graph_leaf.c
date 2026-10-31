@@ -68,7 +68,13 @@ __attribute__((constructor)) static void leaf_initializer(void) {
 
 int leaf_value(void) {
     int relative_sum = 0;
-#if defined(CRABC_RELR_RECORD_OVER_CAP)
+#if defined(CRABC_RELR_RECORD_OVER_CAP) && defined(CRABC_RELR_ZERO_BIT_OVER_CAP)
+    /* The zero-bit over-cap fixture deliberately leaves its sparse slots
+       unrelocated; the loader behavior under test is the accepted table, not
+       the fixture's unrelated link-time pointer values. */
+    (void)relative_sum;
+    return leaf_data;
+#elif defined(CRABC_RELR_RECORD_OVER_CAP)
     for (unsigned index = 0; index < LEAF_RELR_SLOT_COUNT; ++index) {
         relative_sum += *leaf_relative_slots[index].pointer;
     }

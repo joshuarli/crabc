@@ -969,8 +969,7 @@ def build_debug_payload(output: Path, stage: Path, *, allocator_backend: str, li
     run(attachment_command)
     loader_object = stage / "loader.o"
     loader_dependencies = stage / "loader.d"
-    cfgs = [f'feature="{feature}"' for feature in (LOADER_FEATURE, "x86_64-general-initial-interpreter",
-             "x86_64-general-initial-lifecycle", "x86_64-general-initial-tls-runtime-v1-dynamic-main-thread-interpreter")]
+    cfgs = [f'feature="{LOADER_FEATURE}"']
     cfgs.extend(("crabc_general_initial_graph", "crabc_general_initial_lifecycle",
                  "crabc_general_initial_tls_materialization_v1", "crabc_general_loader_libc_tls_runtime_v1",
                  "crabc_dynamic_main_thread_runtime_v1"))

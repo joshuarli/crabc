@@ -55,16 +55,13 @@ use core::arch::global_asm;
 #[cfg(feature = "x86_64-owned-dynamic-runtime")]
 static mut INTERPRETER_BASE: usize = 0;
 
-#[cfg(feature = "x86_64-owned-dynamic-runtime")]
 pub(crate) fn interpreter_base() -> usize { unsafe { INTERPRETER_BASE } }
 
-#[cfg(feature = "x86_64-owned-dynamic-runtime")]
 pub(crate) fn set_interpreter_base(base: usize) { unsafe { INTERPRETER_BASE = base; } }
 
 /// musl's reserved runtime names always denote the interpreter itself. One
 /// installed merged image is `libc.so`; the other names keep the same rule so
 /// a preload or dependency can never map a second copy of the runtime.
-#[cfg(feature = "x86_64-owned-dynamic-runtime")]
 pub(crate) fn reserved_runtime_name(name: &[u8]) -> bool {
     const RESERVED: [&[u8]; 7] = [
         b"libc.", b"libpthread.", b"librt.", b"libm.", b"libdl.", b"libutil.",
@@ -74,55 +71,36 @@ pub(crate) fn reserved_runtime_name(name: &[u8]) -> bool {
 }
 
 use core::ffi::c_void;
-#[cfg(crabc_general_initial_graph)]
 #[path = "x86_64_initial_graph_state.rs"]
 mod x86_64_initial_graph_state;
-#[cfg(crabc_general_initial_graph)]
 #[path = "x86_64_general_initial_loader_state.rs"]
 mod x86_64_general_initial_loader_state;
-#[cfg(crabc_general_initial_lifecycle)]
 #[path = "x86_64_general_initial_lifecycle.rs"]
 mod x86_64_general_initial_lifecycle;
-#[cfg(crabc_general_initial_graph)]
 #[path = "x86_64_general_initial_graph.rs"]
 mod x86_64_general_initial_graph;
-#[cfg(crabc_general_initial_graph)]
 #[path = "x86_64_general_relocation.rs"]
 mod x86_64_general_relocation;
-#[cfg(any(
-    crabc_loader_libc_tls_runtime_v1,
-    crabc_general_initial_tls_materialization_v1
-))]
 #[path = "x86_64_initial_tls_registry.rs"]
 mod x86_64_initial_tls_registry;
-#[cfg(crabc_general_initial_tls_materialization_v1)]
 #[path = "x86_64_general_initial_tls_state.rs"]
 mod x86_64_general_initial_tls_state;
-#[cfg(feature = "x86_64-owned-dynamic-runtime")]
 #[path = "x86_64_conventional_startup_v1.rs"]
 mod x86_64_conventional_startup_v1;
-#[cfg(feature = "x86_64-owned-dynamic-runtime")]
 #[path = "x86_64_initial_worker_tls.rs"]
 mod x86_64_initial_worker_tls;
-#[cfg(feature = "x86_64-owned-dynamic-runtime")]
 #[path = "x86_64_runtime_tls_view.rs"]
 mod x86_64_runtime_tls_view;
-#[cfg(crabc_general_initial_graph)]
 #[path = "x86_64_runtime_memory.rs"]
 mod x86_64_runtime_memory;
-#[cfg(feature = "x86_64-owned-dynamic-runtime")]
 #[path = "x86_64_runtime_lock.rs"]
 mod x86_64_runtime_lock;
-#[cfg(feature = "x86_64-owned-dynamic-runtime")]
 #[path = "x86_64_runtime_registry.rs"]
 mod x86_64_runtime_registry;
-#[cfg(feature = "x86_64-owned-dynamic-runtime")]
 #[path = "x86_64_debugger.rs"]
 mod x86_64_debugger;
-#[cfg(feature = "x86_64-owned-dynamic-runtime")]
 #[path = "x86_64_library_search.rs"]
 mod x86_64_library_search;
-#[cfg(feature = "x86_64-owned-dynamic-runtime")]
 #[path = "x86_64_direct_entry.rs"]
 mod x86_64_direct_entry;
 #[cfg(crabc_general_initial_graph)]
@@ -1142,25 +1120,7 @@ static FIXED_GRAPH_HANDLE_REFERENCES: [AtomicUsize; MAX_OBJECTS] =
 #[cfg(any(crabc_fixed_graph_introspection, crabc_fixed_graph_dlfcn))]
 struct FixedGraphRuntimeGuard;
 
-#[cfg(any(crabc_fixed_graph_introspection, crabc_fixed_graph_dlfcn))]
-impl FixedGraphRuntimeGuard {
-    fn lock() -> Self {
-        while FIXED_GRAPH_RUNTIME_LOCK
-            .compare_exchange_weak(false, true, Ordering::Acquire, Ordering::Relaxed)
-            .is_err()
-        {
-            core::hint::spin_loop();
-        }
-        Self
-    }
-}
 
-#[cfg(any(crabc_fixed_graph_introspection, crabc_fixed_graph_dlfcn))]
-impl Drop for FixedGraphRuntimeGuard {
-    fn drop(&mut self) {
-        FIXED_GRAPH_RUNTIME_LOCK.store(false, Ordering::Release);
-    }
-}
 
 // The private source roots use their own panic terminal at runtime.  Native
 // state tests use the standard test harness instead, so compiling the same
@@ -1745,105 +1705,12 @@ global_asm!(
 /// intentionally stops before TLS in this root, main-image/CRT lifecycle,
 /// public dlfcn, runtime mapping or unload, and any persistent loader
 /// lifecycle ownership.
-#[cfg(crabc_general_initial_graph)]
 #[no_mangle]
 pub unsafe extern "C" fn x86_64_initial_graph_run(sp: usize, ldso_base: usize) -> ! {
     // SAFETY: forwarded unchanged from `_start` to the general package.
     unsafe { x86_64_general_initial_graph::run(sp, ldso_base) }
 }
 
-#[cfg(not(crabc_general_initial_graph))]
-#[no_mangle]
-pub unsafe extern "C" fn x86_64_initial_graph_run(sp: usize, ldso_base: usize) -> ! {
-    // SAFETY: `_start` preserves the kernel's initial stack and supplies the
-    // AT_BASE it decoded. All later raw accesses remain bounded by validated
-    // program-header, file-range, and dynamic-table sizes in this deliberately
-    // small fixture ABI.
-    unsafe {
-        let (main_phdr, main_phnum, main_entry) = auxv_main(sp).unwrap_or_else(|| fail(b"auxv\n"));
-        let main_base = main_load_bias(main_phdr, main_phnum).unwrap_or_else(|| fail(b"mainbase\n"));
-        let mut objects = [EMPTY_OBJECT; MAX_OBJECTS];
-        // Keep packed RELR ownership at exactly one mapped dependency.  The
-        // main and mid images remain RELA-only, while the fixed leaf carries
-        // the one required packed table; accepting the same tags elsewhere
-        // would silently widen this private graph's ABI.
-        objects[0] = parse_mapped(main_base, main_phdr, main_phnum, ObjectRole::Main, false, false)
-            .unwrap_or_else(|| fail(b"mainelf\n"));
-        if objects[0].needed_count != 1 || objects[0].runpath.is_null() || objects[0].relrsz != 0 {
-            fail(b"mainshape\n");
-        }
-        objects[1] = load_needed(&objects[0], 0).unwrap_or_else(|| fail(b"midmap\n"));
-        if objects[1].needed_count != 1 || objects[1].runpath.is_null() || objects[1].relrsz != 0 {
-            fail(b"midshape\n");
-        }
-        objects[2] = load_needed(&objects[1], 0).unwrap_or_else(|| fail(b"leafmap\n"));
-        if objects[2].needed_count != 0 || objects[2].relrsz == 0 {
-            fail(b"leafshape\n");
-        }
-        // The initial-exec sibling does not turn DF_STATIC_TLS into ambient
-        // admission.  This one fixed graph has exactly one static-TLS leaf;
-        // the TLS-free main and GNU-Dynamic mid are required to remain so.
-        #[cfg(crabc_initial_exec_tls_graph)]
-        if objects[0].static_tls || objects[1].static_tls || !objects[2].static_tls {
-            fail(b"ieshape\n");
-        }
-        // Keep module IDs stable in this fixed main -> mid -> leaf graph
-        // before relocation writes their GNU-Dynamic DTPMOD/DTPOFF slots. The
-        // no-TLS graph retains its old behavior: a layout with no PT_TLS image
-        // does not install or modify `%fs`.
-        let has_initial_tls = plan_initial_tls(&mut objects).unwrap_or_else(|| fail(b"tlsplan\n"));
-        #[cfg(crabc_loader_libc_tls_runtime_v1)]
-        let runtime_v1_registry =
-            initial_tls_runtime_v1_registry(&objects).unwrap_or_else(|| fail(b"tlsregistry\n"));
-        for object in &objects {
-            relocate(object, &objects).unwrap_or_else(|| fail(b"reloc\n"));
-        }
-        for object in &objects[1..] {
-            protect_segments(object).unwrap_or_else(|| fail(b"protect\n"));
-        }
-        // PT_TLS templates may contain relocated data, so copy them only after
-        // relocation but before any dependency initializer or application TLS
-        // access. `install_initial_tls` installs `%fs` only on success.
-        if has_initial_tls {
-            // RuntimeV1 is a deliberately separate consumer seam. The older
-            // initial-TLS graph keeps its direct transfer and never publishes
-            // an ambient loader record merely because it has a DTV.
-            #[cfg(crabc_loader_libc_tls_runtime_v1)]
-            {
-                let installed_tls = install_initial_tls(&objects)
-                    .unwrap_or_else(|| fail(b"tlsinit\n"));
-                publish_loader_tls_runtime_v1(installed_tls, runtime_v1_registry)
-                    .unwrap_or_else(|| fail(b"tlswire\n"));
-            }
-            #[cfg(not(crabc_loader_libc_tls_runtime_v1))]
-            {
-                let _installed_tls = install_initial_tls(&objects)
-                    .unwrap_or_else(|| fail(b"tlsinit\n"));
-            }
-        }
-        #[cfg(crabc_loader_libc_tls_runtime_v1)]
-        if !has_initial_tls {
-            // This one producer cannot manufacture a dynamic-mode handoff
-            // without a loader-installed TCB and initial DTV.
-            fail(b"tlswire\n");
-        }
-        for object in &objects {
-            apply_relro(object).unwrap_or_else(|| fail(b"relro\n"));
-        }
-        #[cfg(crabc_owned_crt_handoff)]
-        publish_owned_crt_handoff(&objects).unwrap_or_else(|| fail(b"crtwire\n"));
-        #[cfg(not(crabc_owned_crt_handoff))]
-        run_initializers(&objects[1..]).unwrap_or_else(|| fail(b"init\n"));
-        #[cfg(any(crabc_fixed_graph_introspection, crabc_fixed_graph_dlfcn))]
-        publish_fixed_graph_runtime(sp, &objects)
-            .unwrap_or_else(|| fail(b"fixedgraph\n"));
-        // The interpreter's bootstrap RELA table was applied in `_start`, so
-        // its own PT_GNU_RELRO is the final protection transition before
-        // handing the original stack to the already-relocated main image.
-        apply_self_relro(ldso_base as u64).unwrap_or_else(|| fail(b"selfrelro\n"));
-        jump(main_entry as usize, sp)
-    }
-}
 
 unsafe fn auxv_main(sp: usize) -> Option<(*const u8, usize, u64)> {
     let argc = *(sp as *const usize);
@@ -2052,6 +1919,7 @@ unsafe fn parse_mapped(
                 let raw_align = read_u64(header.add(48));
                 let align = if raw_align == 0 { 1 } else { raw_align };
                 if filesz > memsz
+                    || memsz == 0
                     || !align.is_power_of_two()
                     || virtual_address & (align - 1) != file_offset & (align - 1)
                 {
@@ -2196,6 +2064,11 @@ unsafe fn parse_mapped(
     #[cfg(crabc_general_initial_lifecycle)]
     let (mut general_init, mut general_fini, mut general_fini_array, mut general_fini_len) =
         (None, None, None, None);
+    #[cfg(all(
+        feature = "x86_64-owned-dynamic-runtime",
+        crabc_general_initial_tls_materialization_v1
+    ))]
+    let mut dynamic_static_tls = false;
     for index in 0..dynamic_count {
         let entry = dynamic.add(index * 16);
         let tag = read_i64(entry);
@@ -2400,6 +2273,13 @@ unsafe fn parse_mapped(
                 {
                     object.static_tls = value & DF_STATIC_TLS != 0;
                 }
+                #[cfg(all(
+                    feature = "x86_64-owned-dynamic-runtime",
+                    crabc_general_initial_tls_materialization_v1
+                ))]
+                {
+                    dynamic_static_tls |= value & DF_STATIC_TLS != 0;
+                }
             }
             #[cfg(feature = "x86_64-owned-dynamic-runtime")]
             DT_FLAGS_1 if value & !(DF_1_NOW | DF_1_PIE | DF_1_NODELETE) != 0 => return None,
@@ -2423,6 +2303,13 @@ unsafe fn parse_mapped(
             DT_GNU_HASH | DT_VERSYM | DT_VERDEF | DT_VERDEFNUM | DT_VERNEED | DT_VERNEEDNUM => return None,
             _ => {}
         }
+    }
+    #[cfg(all(
+        feature = "x86_64-owned-dynamic-runtime",
+        crabc_general_initial_tls_materialization_v1
+    ))]
+    if dynamic_static_tls && object.tls_memsz == 0 {
+        return None;
     }
     #[cfg(all(not(feature = "x86_64-owned-dynamic-runtime"), any(crabc_owned_crt_handoff, crabc_dynamic_main_thread_runtime_v1)))]
     if !mapped {
@@ -2771,7 +2658,6 @@ unsafe fn parse_mapped(
 ///
 /// The installed runtime reads the parser-validated, DT_NULL-terminated
 /// dynamic table in place, as musl does; private roots use their inline copy.
-#[cfg(feature = "x86_64-owned-dynamic-runtime")]
 unsafe fn needed_name_offset(object: &Object, slot: usize) -> Option<usize> {
     if slot >= object.needed_count || object.dynamic.is_null() { return None; }
     let mut seen = 0;
@@ -2787,10 +2673,6 @@ unsafe fn needed_name_offset(object: &Object, slot: usize) -> Option<usize> {
     }
 }
 
-#[cfg(not(feature = "x86_64-owned-dynamic-runtime"))]
-unsafe fn needed_name_offset(object: &Object, slot: usize) -> Option<usize> {
-    (slot < object.needed_count).then(|| object.needed[slot])
-}
 
 unsafe fn load_needed(parent: &Object, needed_index: usize) -> Option<Object> {
     if needed_index >= parent.needed_count || parent.runpath.is_null() { return None; }
@@ -2906,7 +2788,6 @@ impl FileStatus {
     fn size(&self) -> i64 { unsafe { read_i64(self.0.as_ptr().add(X86_64_STAT_SIZE_OFFSET)) } }
 }
 
-#[cfg(crabc_general_initial_graph)]
 unsafe fn file_identity_from_fd(fd: i64) -> Option<ObjectIdentity> {
     unsafe { FileStatus::of_fd(fd) }.ok()?.identity()
 }
@@ -3228,45 +3109,6 @@ unsafe fn plan_initial_tls(objects: &mut [Object]) -> Option<bool> {
 /// one. The fixed graph has no runtime mapping entry point, and the registry's
 /// explicit growth rejection prevents that absence from becoming an implicit
 /// libc or fixed-DTV fallback.
-#[cfg(crabc_loader_libc_tls_runtime_v1)]
-unsafe fn initial_tls_runtime_v1_registry(
-    objects: &[Object],
-) -> Option<&'static LoaderInitialTlsRegistry> {
-    // SAFETY: `plan_initial_tls` sealed this one startup-owned static before
-    // this accessor runs; the fixed graph exposes no later mutation path.
-    let registry = unsafe { &*core::ptr::addr_of!(INITIAL_TLS_RUNTIME_V1_REGISTRY) };
-    if registry.phase() != x86_64_initial_tls_registry::RegistryPhase::Sealed
-        || registry.generation().get() != 1
-        || registry.module_count() >= TLS_DTV_WORDS
-        || registry.reject_runtime_tls_growth(MAX_OBJECTS)
-            != Err(
-                x86_64_initial_tls_registry::RuntimeTlsGrowthError::DtvGrowthProtocolUnavailable,
-            )
-    {
-        return None;
-    }
-    let mut module_count = 0usize;
-    for (object_index, object) in objects.iter().enumerate() {
-        if object.tls_memsz == 0 {
-            if registry.module_id(object_index).is_some() || object.tls_module_id != 0 {
-                return None;
-            }
-            continue;
-        }
-        module_count = module_count.checked_add(1)?;
-        if object.tls_module_id != module_count
-            || registry.module_id(object_index).map(|module_id| module_id.get())
-                != Some(module_count)
-            || object.tls_offset_below_tp < object.tls_memsz
-        {
-            return None;
-        }
-    }
-    if registry.module_count() != module_count {
-        return None;
-    }
-    Some(registry)
-}
 
 /// Materialize every fixed-graph initial TLS image and install its minimal
 /// GNU-Dynamic x86 thread-pointer prefix.
@@ -3489,80 +3331,6 @@ mod tls_zero_tail_tests {
 /// the freestanding libc negative tests prove validation occurs before any
 /// consumer TCB/DTV dereference. The six metadata variants retain valid
 /// coordinates so no later pointer guard can mask an omitted metadata check.
-#[cfg(crabc_loader_libc_tls_runtime_v1)]
-unsafe fn publish_loader_tls_runtime_v1(
-    installed: InstalledInitialTls,
-    registry: &LoaderInitialTlsRegistry,
-) -> Option<()> {
-    if registry.phase() != x86_64_initial_tls_registry::RegistryPhase::Sealed
-        || registry.generation().get() != 1
-        || registry.module_count() != installed.module_count
-        || registry.module_count() >= installed.dtv_words
-    {
-        return None;
-    }
-    let record = core::ptr::addr_of_mut!(__crabc_x86_64_loader_tls_runtime_v1);
-    if unsafe {
-        (*record).state.compare_exchange(
-            LOADER_TLS_RUNTIME_V1_STATE_UNPUBLISHED,
-            LOADER_TLS_RUNTIME_V1_STATE_PUBLISHING,
-            Ordering::AcqRel,
-            Ordering::Acquire,
-        )
-    }
-    .is_err()
-    {
-        return None;
-    }
-
-    let poisoned_dtv = cfg!(crabc_loader_libc_tls_runtime_v1_poisoned_dtv);
-    let (thread_pointer, dtv, dtv_words, module_count) = if poisoned_dtv {
-        // `1` is intentionally not an aligned Linux x86-64 DTV address. The
-        // thread pointer remains valid so an accidental DTV read reaches this
-        // poison rather than being hidden by the earlier thread-pointer
-        // comparison. Every metadata variant below uses the valid branch.
-        (
-            installed.thread_pointer.cast_const(),
-            1usize as *const usize,
-            installed.dtv_words,
-            installed.module_count,
-        )
-    } else {
-        (
-            installed.thread_pointer.cast_const(),
-            installed.dtv.cast_const(),
-            installed.dtv_words,
-            installed.module_count,
-        )
-    };
-    if !poisoned_dtv
-        && (thread_pointer.is_null()
-            || dtv.is_null()
-            || module_count == 0
-            || dtv_words < module_count.checked_add(1)?)
-    {
-        unsafe {
-            (*record)
-                .state
-                .store(LOADER_TLS_RUNTIME_V1_STATE_UNPUBLISHED, Ordering::Release);
-        }
-        return None;
-    }
-
-    unsafe {
-        (*record).thread_pointer = thread_pointer;
-        (*record).dtv = dtv;
-        (*record).dtv_words = dtv_words;
-        (*record).module_count = module_count;
-        // The metadata values above are initialized in the static record and
-        // never changed by this fixture. Publish the coordinates only after
-        // every field has been written.
-        (*record)
-            .state
-            .store(LOADER_TLS_RUNTIME_V1_STATE_READY, Ordering::Release);
-    }
-    Some(())
-}
 
 #[repr(C)]
 pub struct TlsIndex {
@@ -3810,6 +3578,7 @@ unsafe fn preflight_relocation_target(object: &Object, virtual_address: u64) -> 
         return None;
     }
     let address = runtime_address(object.base, virtual_address)?;
+    #[cfg(not(test))]
     for (table, byte_len) in [
         (object.rela, object.relasz),
         (object.jmprel, object.pltrelsz),
@@ -3873,6 +3642,7 @@ unsafe fn apply_relr_table(object: &Object) -> Option<()> {
     for index in 0..(object.relrsz / ELF64_RELR_SIZE) {
         let encoded = read_u64(object.relr.add(index * ELF64_RELR_SIZE));
         if encoded & 1 == 0 {
+            unsafe { preflight_relocation_target(object, encoded)? };
             apply_relr_target(object, encoded)?;
             next_virtual_address = Some(encoded.checked_add(ELF64_RELR_SIZE as u64)?);
             continue;
@@ -3887,12 +3657,24 @@ unsafe fn apply_relr_table(object: &Object) -> Option<()> {
         };
         if bitmap == u64::MAX >> 1 {
             for bit in 0..ELF64_RELR_BITMAP_BITS {
+                unsafe {
+                    preflight_relocation_target(
+                        object,
+                        start.checked_add(bit.checked_mul(ELF64_RELR_SIZE as u64)?)?,
+                    )?
+                };
                 let slot = (runtime_start + bit * ELF64_RELR_SIZE as u64) as *mut u64;
                 *slot = (*slot).wrapping_add(object.base);
             }
         } else {
             while bitmap != 0 {
                 let bit = bitmap.trailing_zeros() as u64;
+                unsafe {
+                    preflight_relocation_target(
+                        object,
+                        start.checked_add(bit.checked_mul(ELF64_RELR_SIZE as u64)?)?,
+                    )?
+                };
                 let slot = (runtime_start + bit * ELF64_RELR_SIZE as u64) as *mut u64;
                 *slot = (*slot).wrapping_add(object.base);
                 bitmap &= bitmap - 1;
@@ -3928,13 +3710,26 @@ unsafe fn apply_relr_target(object: &Object, virtual_address: u64) -> Option<()>
 mod relr_bitmap_tests {
     use super::*;
 
+    fn writable_phdr(byte_len: u64) -> [u8; 56] {
+        let mut header = [0u8; 56];
+        header[0..4].copy_from_slice(&1u32.to_le_bytes());
+        header[4..8].copy_from_slice(&2u32.to_le_bytes());
+        header[32..40].copy_from_slice(&byte_len.to_le_bytes());
+        header[40..48].copy_from_slice(&byte_len.to_le_bytes());
+        header[48..56].copy_from_slice(&8u64.to_le_bytes());
+        header
+    }
+
     #[test]
     fn sparse_and_full_bitmaps_relocate_only_selected_words() {
         let mut words = [7u64; 128];
+        let phdr = writable_phdr((words.len() * ELF64_RELR_SIZE) as u64);
         let sparse = (1u64 | (1u64 << 5) | (1u64 << 62)) << 1 | 1;
         let table = [0u64, sparse, 0x200, u64::MAX];
         let mut object = Object {
             base: words.as_mut_ptr() as u64,
+            phdr: phdr.as_ptr(),
+            phnum: 1,
             relr: table.as_ptr().cast::<u8>(),
             relrsz: table.len() * ELF64_RELR_SIZE,
             ..EMPTY_OBJECT
@@ -3942,7 +3737,9 @@ mod relr_bitmap_tests {
         assert!(unsafe { apply_relr_table(&object) }.is_some());
         for (index, value) in words.iter().enumerate() {
             let selected = matches!(index, 0 | 1 | 6 | 63 | 64) || index >= 65;
-            assert_eq!(*value, if selected { 7u64.wrapping_add(object.base) } else { 7 });
+            if *value != if selected { 7u64.wrapping_add(object.base) } else { 7 } {
+                panic!("relr index {index} selected={selected} value={value} base={}", object.base);
+            }
         }
 
         let leading_bitmap = [1u64];
@@ -3954,8 +3751,11 @@ mod relr_bitmap_tests {
     #[test]
     fn relr_rejects_overflowed_runtime_target_and_wraps_existing_addend() {
         let overflowing = [8u64];
+        let overflow_phdr = writable_phdr(1024);
         let invalid = Object {
             base: u64::MAX - 7,
+            phdr: overflow_phdr.as_ptr(),
+            phnum: 1,
             relr: overflowing.as_ptr().cast::<u8>(),
             relrsz: ELF64_RELR_SIZE,
             ..EMPTY_OBJECT
@@ -3963,9 +3763,12 @@ mod relr_bitmap_tests {
         assert!(unsafe { apply_relr_table(&invalid) }.is_none());
 
         let mut word = u64::MAX;
+        let valid_phdr = writable_phdr(ELF64_RELR_SIZE as u64);
         let direct = [0u64];
         let valid = Object {
             base: (&mut word as *mut u64) as u64,
+            phdr: valid_phdr.as_ptr(),
+            phnum: 1,
             relr: direct.as_ptr().cast::<u8>(),
             relrsz: ELF64_RELR_SIZE,
             ..EMPTY_OBJECT
@@ -3982,9 +3785,12 @@ mod relr_bitmap_tests {
     #[test]
     fn full_bitmap_relocates_every_word_and_rejects_overflowed_span() {
         let mut words = [u64::MAX; 64];
+        let phdr = writable_phdr((words.len() * ELF64_RELR_SIZE) as u64);
         let table = [0u64, u64::MAX];
         let object = Object {
             base: words.as_mut_ptr() as u64,
+            phdr: phdr.as_ptr(),
+            phnum: 1,
             relr: table.as_ptr().cast::<u8>(),
             relrsz: table.len() * ELF64_RELR_SIZE,
             ..EMPTY_OBJECT
@@ -4275,22 +4081,6 @@ mod private_relocation_name_tests {
 
 /// The fixed initial-exec sibling admits one named leaf definition.  This is
 /// intentionally fixture topology, not a global symbol-lookup rule.
-#[cfg(crabc_initial_exec_tls_graph)]
-unsafe fn relocation_symbol_name_is(requestor: &Object, index: usize, wanted: &[u8]) -> bool {
-    if index == 0 || index >= requestor.symcount {
-        return false;
-    }
-    let symbol = requestor.symtab.add(index * 24);
-    let name_offset = read_u32(symbol) as usize;
-    if name_offset >= requestor.strsz || *symbol.add(4) & 0x0f != 6 {
-        return false;
-    }
-    let name = requestor.strtab.add(name_offset);
-    matches!(
-        bounded_nul(name, requestor.strsz - name_offset),
-        Some(length) if length == wanted.len() && bytes_eq(name, wanted.as_ptr(), length)
-    )
-}
 
 unsafe fn resolve_symbol(requestor: &Object, objects: &[Object], index: usize) -> Option<u64> {
     if index >= requestor.symcount { return None; }
@@ -4457,11 +4247,6 @@ unsafe fn resolve_symbol(requestor: &Object, objects: &[Object], index: usize) -
 
 /// Resolve a dynamic-symbol-table TLS definition to its fixed-graph module
 /// index and module-relative `st_value` offset.
-#[cfg(any(
-    crabc_initial_tls_graph,
-    crabc_initial_exec_tls_graph,
-    crabc_general_initial_tls_materialization_v1
-))]
 unsafe fn resolve_tls_symbol(
     requestor: &Object,
     objects: &[Object],
@@ -4662,414 +4447,26 @@ unsafe fn apply_relro_span(base: u64, virtual_address: u64, byte_len: u64) -> Op
     Some(())
 }
 
-#[cfg(any(crabc_fixed_graph_introspection, crabc_fixed_graph_dlfcn))]
-unsafe fn fixed_graph_text_from_bytes(source: *const u8, source_len: usize) -> FixedGraphTextV1 {
-    let mut text = EMPTY_FIXED_GRAPH_TEXT;
-    let copied = core::cmp::min(source_len, FIXED_GRAPH_TEXT_CAPACITY);
-    for index in 0..copied {
-        text.bytes[index] = *source.add(index);
-    }
-    text.len = copied as u16;
-    text.flags = (copied < source_len) as u16;
-    text
-}
 
-#[cfg(any(crabc_fixed_graph_introspection, crabc_fixed_graph_dlfcn))]
-unsafe fn fixed_graph_clear_error(error: *mut FixedGraphTextV1) {
-    if !error.is_null() {
-        core::ptr::write(error, EMPTY_FIXED_GRAPH_TEXT);
-    }
-}
 
-#[cfg(any(crabc_fixed_graph_introspection, crabc_fixed_graph_dlfcn))]
-unsafe fn fixed_graph_set_error(error: *mut FixedGraphTextV1, message: &[u8]) {
-    if !error.is_null() {
-        core::ptr::write(
-            error,
-            fixed_graph_text_from_bytes(message.as_ptr(), message.len()),
-        );
-    }
-}
 
-#[cfg(any(crabc_fixed_graph_introspection, crabc_fixed_graph_dlfcn))]
-unsafe fn fixed_graph_object(index: usize) -> Object {
-    core::ptr::read(
-        core::ptr::addr_of!(FIXED_GRAPH_RUNTIME_OBJECTS)
-            .cast::<Object>()
-            .add(index),
-    )
-}
 
-#[cfg(any(crabc_fixed_graph_introspection, crabc_fixed_graph_dlfcn))]
-unsafe fn fixed_graph_name(index: usize) -> FixedGraphTextV1 {
-    let name = core::ptr::addr_of!(FIXED_GRAPH_RUNTIME_NAMES)
-        .cast::<u8>()
-        .add(index * FIXED_GRAPH_TEXT_CAPACITY);
-    let len = bounded_nul(name, FIXED_GRAPH_TEXT_CAPACITY).unwrap_or(FIXED_GRAPH_TEXT_CAPACITY);
-    fixed_graph_text_from_bytes(name, len)
-}
 
-#[cfg(any(crabc_fixed_graph_introspection, crabc_fixed_graph_dlfcn))]
-unsafe fn fixed_graph_store_name(index: usize, source: *const u8, maximum: usize) -> Option<()> {
-    if index >= MAX_OBJECTS || source.is_null() {
-        return None;
-    }
-    let length = bounded_nul(source, maximum)?;
-    if length >= FIXED_GRAPH_TEXT_CAPACITY {
-        return None;
-    }
-    let destination = core::ptr::addr_of_mut!(FIXED_GRAPH_RUNTIME_NAMES)
-        .cast::<u8>()
-        .add(index * FIXED_GRAPH_TEXT_CAPACITY);
-    for offset in 0..length {
-        core::ptr::write(destination.add(offset), *source.add(offset));
-    }
-    core::ptr::write(destination.add(length), 0);
-    Some(())
-}
 
 /// Publish the actual post-constructor object records for process-lifetime
 /// observation and retained-object lookup. The fixed graph has no mutation
 /// operation, so its load/unload generation remains exactly zero.
-#[cfg(any(crabc_fixed_graph_introspection, crabc_fixed_graph_dlfcn))]
-unsafe fn publish_fixed_graph_runtime(
-    sp: usize,
-    objects: &[Object],
-) -> Option<()> {
-    if FIXED_GRAPH_RUNTIME_PUBLISHED.load(Ordering::Relaxed) {
-        return None;
-    }
-    if objects.iter().any(|object| object.tls_memsz != 0) {
-        return None;
-    }
-    let argv0 = *((sp + core::mem::size_of::<usize>()) as *const *const u8);
-    fixed_graph_store_name(0, argv0, MAX_PATH)?;
-    if objects[0].needed_count != 1 || objects[1].needed_count != 1 {
-        return None;
-    }
-    fixed_graph_store_name(
-        1,
-        objects[0].strtab.add(objects[0].needed[0]),
-        objects[0].strsz.checked_sub(objects[0].needed[0])?,
-    )?;
-    fixed_graph_store_name(
-        2,
-        objects[1].strtab.add(objects[1].needed[0]),
-        objects[1].strsz.checked_sub(objects[1].needed[0])?,
-    )?;
-    let destination = core::ptr::addr_of_mut!(FIXED_GRAPH_RUNTIME_OBJECTS).cast::<Object>();
-    for index in 0..INITIAL_OBJECT_COUNT {
-        core::ptr::write(destination.add(index), objects[index]);
-    }
-    FIXED_GRAPH_RUNTIME_COUNT.store(INITIAL_OBJECT_COUNT, Ordering::Relaxed);
-    FIXED_GRAPH_RUNTIME_ADDITIONS.store(0, Ordering::Relaxed);
-    FIXED_GRAPH_RUNTIME_PUBLISHED.store(true, Ordering::Release);
-    Some(())
-}
 
-#[cfg(any(crabc_fixed_graph_introspection, crabc_fixed_graph_dlfcn))]
-fn fixed_graph_object_count() -> usize {
-    FIXED_GRAPH_RUNTIME_COUNT.load(Ordering::Acquire)
-}
 
-#[cfg(any(crabc_fixed_graph_introspection, crabc_fixed_graph_dlfcn))]
-unsafe fn fixed_graph_object_contains(object: &Object, address: usize) -> bool {
-    for index in 0..object.phnum {
-        let header = object.phdr.add(index * 56);
-        if read_u32(header) != PT_LOAD {
-            continue;
-        }
-        let Some(start) = (object.base as usize).checked_add(read_u64(header.add(16)) as usize)
-        else {
-            continue;
-        };
-        let Some(end) = start.checked_add(read_u64(header.add(40)) as usize) else {
-            continue;
-        };
-        if address >= start && address < end {
-            return true;
-        }
-    }
-    false
-}
 
-#[cfg(any(crabc_fixed_graph_introspection, crabc_fixed_graph_dlfcn))]
-unsafe extern "C" fn fixed_graph_snapshot(
-    records: *mut FixedGraphImageV1,
-    capacity: usize,
-    count: *mut usize,
-    generation: *mut u64,
-    error: *mut FixedGraphTextV1,
-) -> i32 {
-    let _guard = FixedGraphRuntimeGuard::lock();
-    fixed_graph_clear_error(error);
-    if count.is_null() || generation.is_null() || (capacity != 0 && records.is_null()) {
-        fixed_graph_set_error(error, b"loader snapshot output is invalid");
-        return -1;
-    }
-    core::ptr::write(count, 0);
-    core::ptr::write(generation, 0);
-    if !FIXED_GRAPH_RUNTIME_PUBLISHED.load(Ordering::Acquire) {
-        fixed_graph_set_error(error, b"fixed graph introspection unavailable");
-        return -1;
-    }
-    let object_count = fixed_graph_object_count();
-    if capacity < object_count {
-        fixed_graph_set_error(error, b"loader snapshot capacity is too small");
-        return -1;
-    }
-    let additions = FIXED_GRAPH_RUNTIME_ADDITIONS.load(Ordering::Acquire);
-    for index in 0..object_count {
-        let object = fixed_graph_object(index);
-        core::ptr::write(
-            records.add(index),
-            FixedGraphImageV1 {
-                image_base: object.base as *mut c_void,
-                program_headers: object.phdr.cast(),
-                program_header_count: object.phnum as u16,
-                reserved: 0,
-                additions,
-                removals: 0,
-                tls_module: 0,
-                tls_data: core::ptr::null_mut(),
-                image_name: fixed_graph_name(index),
-            },
-        );
-    }
-    core::ptr::write(count, object_count);
-    core::ptr::write(generation, additions);
-    0
-}
 
-#[cfg(any(crabc_fixed_graph_introspection, crabc_fixed_graph_dlfcn))]
-unsafe extern "C" fn fixed_graph_address(
-    address: *const c_void,
-    result: *mut FixedGraphAddressV1,
-    error: *mut FixedGraphTextV1,
-) -> i32 {
-    let _guard = FixedGraphRuntimeGuard::lock();
-    fixed_graph_clear_error(error);
-    if result.is_null() {
-        fixed_graph_set_error(error, b"loader address lookup is invalid");
-        return -1;
-    }
-    core::ptr::write(
-        result,
-        FixedGraphAddressV1 {
-            image_base: core::ptr::null_mut(),
-            symbol_address: core::ptr::null_mut(),
-            image_name: EMPTY_FIXED_GRAPH_TEXT,
-            symbol_name: EMPTY_FIXED_GRAPH_TEXT,
-        },
-    );
-    if address.is_null() {
-        fixed_graph_set_error(error, b"loader address lookup is invalid");
-        return -1;
-    }
-    if !FIXED_GRAPH_RUNTIME_PUBLISHED.load(Ordering::Acquire) {
-        fixed_graph_set_error(error, b"fixed graph introspection unavailable");
-        return -1;
-    }
-    let address_value = address as usize;
-    for object_index in 0..fixed_graph_object_count() {
-        let object = fixed_graph_object(object_index);
-        if !fixed_graph_object_contains(&object, address_value) {
-            continue;
-        }
-        let mut best_address = 0usize;
-        let mut best_size = 0u64;
-        let mut best_name = core::ptr::null();
-        let mut best_name_len = 0usize;
-        for symbol_index in 1..object.symcount {
-            let symbol = object.symtab.add(symbol_index * 24);
-            let name_offset = read_u32(symbol) as usize;
-            let symbol_type = *symbol.add(4) & 0x0f;
-            let section = read_u16(symbol.add(6));
-            let value = read_u64(symbol.add(8));
-            if section == 0 || value == 0 || symbol_type == 6 || name_offset >= object.strsz {
-                continue;
-            }
-            let Some(symbol_address) = runtime_address(object.base, value) else {
-                continue;
-            };
-            if symbol_address as usize > address_value
-                || (symbol_address as usize) < best_address
-                || !virtual_range_in_load(object.phdr, object.phnum, value, 1)
-            {
-                continue;
-            }
-            let symbol_name = object.strtab.add(name_offset);
-            let Some(symbol_name_len) = bounded_nul(symbol_name, object.strsz - name_offset) else {
-                continue;
-            };
-            best_address = symbol_address as usize;
-            best_size = read_u64(symbol.add(16));
-            best_name = symbol_name;
-            best_name_len = symbol_name_len;
-        }
-        // Musl's `dynlink.c:dladdr` first identifies the containing DSO and
-        // then chooses its nearest eligible dynamic symbol.  A finite symbol
-        // does not describe the rest of that DSO: when the address falls at
-        // or after `st_size`, musl retains dli_fname/dli_fbase but clears the
-        // two symbol fields.  Its unsigned `st_size - 1` comparison treats a
-        // zero-sized dynamic symbol as open-ended; preserve that deliberate
-        // compatibility detail instead of inventing a synthetic empty range.
-        // This is metadata over the already-published no-TLS fixed graph only;
-        // it neither changes symbol lookup nor admits another object.
-        let symbol_contains_address = best_address != 0
-            && (best_size == 0
-                || matches!(
-                    usize::try_from(best_size),
-                    Ok(size) if address_value - best_address < size
-                ));
-        core::ptr::write(
-            result,
-            FixedGraphAddressV1 {
-                image_base: object.base as *mut c_void,
-                symbol_address: if symbol_contains_address {
-                    best_address as *mut c_void
-                } else {
-                    core::ptr::null_mut()
-                },
-                image_name: fixed_graph_name(object_index),
-                symbol_name: if !symbol_contains_address || best_name.is_null() {
-                    EMPTY_FIXED_GRAPH_TEXT
-                } else {
-                    fixed_graph_text_from_bytes(best_name, best_name_len)
-                },
-            },
-        );
-        return 0;
-    }
-    fixed_graph_set_error(error, b"loader address not found");
-    -1
-}
 
-#[cfg(crabc_fixed_graph_dlfcn)]
-unsafe fn fixed_graph_handle(index: usize) -> *mut c_void {
-    core::ptr::addr_of!(FIXED_GRAPH_HANDLE_TOKENS)
-        .cast::<FixedGraphHandleToken>()
-        .add(index) as *mut c_void
-}
 
-#[cfg(crabc_fixed_graph_dlfcn)]
-unsafe fn fixed_graph_handle_index(handle: *mut c_void) -> Option<usize> {
-    if handle.is_null() {
-        return None;
-    }
-    for index in 0..fixed_graph_object_count() {
-        if handle == fixed_graph_handle(index)
-            && (index == 0
-                || FIXED_GRAPH_HANDLE_REFERENCES[index].load(Ordering::Acquire) != 0)
-        {
-            return Some(index);
-        }
-    }
-    None
-}
 
-#[cfg(crabc_fixed_graph_dlfcn)]
-unsafe fn fixed_graph_name_matches(index: usize, name: *const u8) -> bool {
-    let Some(name_len) = bounded_nul(name, FIXED_GRAPH_TEXT_CAPACITY) else {
-        return false;
-    };
-    let retained = fixed_graph_name(index);
-    name_len == retained.len as usize
-        && bytes_eq(name, retained.bytes.as_ptr(), name_len)
-}
 
-#[cfg(crabc_fixed_graph_dlfcn)]
-unsafe fn fixed_graph_acquire(index: usize) -> bool {
-    let counter = &FIXED_GRAPH_HANDLE_REFERENCES[index];
-    let mut current = counter.load(Ordering::Acquire);
-    loop {
-        if current == usize::MAX {
-            return false;
-        }
-        match counter.compare_exchange_weak(
-            current,
-            current + 1,
-            Ordering::AcqRel,
-            Ordering::Acquire,
-        ) {
-            Ok(_) => return true,
-            Err(observed) => current = observed,
-        }
-    }
-}
 
-#[cfg(crabc_bounded_runtime_dlopen)]
-unsafe fn bounded_runtime_unmap(object: &Object) {
-    let mut minimum = u64::MAX;
-    let mut maximum = 0u64;
-    for index in 0..object.phnum {
-        let header = object.phdr.add(index * 56);
-        if read_u32(header) != PT_LOAD {
-            continue;
-        }
-        minimum = minimum.min(align_down(read_u64(header.add(16))));
-        let Some(end) = read_u64(header.add(16)).checked_add(read_u64(header.add(40))) else {
-            return;
-        };
-        maximum = maximum.max(align_up(end));
-    }
-    if minimum != u64::MAX && maximum > minimum {
-        let _ = syscall2(
-            SYS_MUNMAP,
-            object.base.wrapping_add(minimum) as i64,
-            (maximum - minimum) as i64,
-        );
-    }
-}
 
-#[cfg(crabc_bounded_runtime_dlopen)]
-unsafe fn bounded_runtime_dependency_index(
-    object: &Object,
-    needed_slot: usize,
-    retained_count: usize,
-) -> Option<usize> {
-    if needed_slot >= object.needed_count {
-        return None;
-    }
-    let offset = object.needed[needed_slot];
-    let name = object.strtab.add(offset);
-    let Some(name_len) = bounded_nul(name, object.strsz - offset) else {
-        return None;
-    };
-    for index in 1..retained_count {
-        let retained = fixed_graph_name(index);
-        if retained.len as usize == name_len
-            && bytes_eq(name, retained.bytes.as_ptr(), name_len)
-        {
-            return Some(index);
-        }
-    }
-    None
-}
 
-#[cfg(crabc_bounded_runtime_dlopen)]
-unsafe fn bounded_runtime_preflight_initializers(object: &Object) -> Option<()> {
-    if object.init != 0 {
-        let virtual_address = object.init.checked_sub(object.base as usize)? as u64;
-        if !virtual_range_in_executable_load(object.phdr, object.phnum, virtual_address, 1) {
-            return None;
-        }
-    }
-    if object.init_count != 0 && object.init_array.is_null() {
-        return None;
-    }
-    for index in 0..object.init_count {
-        let initializer = *object.init_array.add(index);
-        if initializer == 0 {
-            return None;
-        }
-        let virtual_address = initializer.checked_sub(object.base as usize)? as u64;
-        if !virtual_range_in_executable_load(object.phdr, object.phnum, virtual_address, 1) {
-            return None;
-        }
-    }
-    Some(())
-}
 
 /// Run the sole admitted legacy initializer before the bounded init array.
 ///
@@ -5078,24 +4475,6 @@ unsafe fn bounded_runtime_preflight_initializers(object: &Object) -> Option<()> 
 /// validated executable DT_INIT entry followed by its already-bounded init
 /// array. Its separately validated legacy DT_FINI remains inert, matching
 /// pinned musl; DT_FINI_ARRAY and every unload transition remain rejected.
-#[cfg(crabc_bounded_runtime_dlopen)]
-unsafe fn run_bounded_runtime_initializers(object: &Object) -> Option<()> {
-    if object.init != 0 {
-        let virtual_address = object.init.checked_sub(object.base as usize)? as u64;
-        if !virtual_range_in_executable_load(object.phdr, object.phnum, virtual_address, 1) {
-            return None;
-        }
-        let initializer: unsafe extern "C" fn() = core::mem::transmute(object.init);
-        initializer();
-    }
-    invoke_initializer_range(
-        object.base,
-        object.phdr,
-        object.phnum,
-        object.init_array,
-        object.init_count,
-    )
-}
 
 /// Map and publish the single admitted runtime DSO.
 ///
@@ -5105,420 +4484,15 @@ unsafe fn run_bounded_runtime_initializers(object: &Object) -> Option<()> {
 /// initializer array, plus one validated-but-inert legacy `DT_FINI` entry.
 /// It may depend only on objects already retained by the initial graph.
 /// Failed transactions never enter the published graph.
-#[cfg(crabc_bounded_runtime_dlopen)]
-unsafe fn bounded_runtime_map(path: *const u8) -> Result<usize, &'static [u8]> {
-    let Some(path_len) = bounded_nul(path, FIXED_GRAPH_TEXT_CAPACITY) else {
-        return Err(b"loader object name is invalid");
-    };
-    if path_len == 0 {
-        return Err(b"loader object name is invalid");
-    }
-    for offset in 0..path_len {
-        if *path.add(offset) == b'/' {
-            return Err(b"runtime loader accepts a RUNPATH basename only");
-        }
-    }
-    let retained_count = fixed_graph_object_count();
-    if retained_count >= MAX_OBJECTS {
-        return Err(b"runtime loader object capacity is exhausted");
-    }
-    let main = fixed_graph_object(0);
-    if main.runpath.is_null() {
-        return Err(b"runtime loader RUNPATH is unavailable");
-    }
-    let Some(fd) = open_from_runpath(main.runpath, main.runpath_len, path, path_len) else {
-        return Err(b"runtime loader object was not found in RUNPATH");
-    };
-    let mapped = map_elf(fd, true, false);
-    let _ = syscall1(SYS_CLOSE, fd);
-    let Some(object) = mapped else {
-        return Err(b"runtime loader rejected malformed ELF");
-    };
-    if object.tls_memsz != 0
-        || object.relrsz != 0
-        || object.runpath_len != 0
-        || object.needed_count > MAX_NEEDED
-        || object.init_count > MAX_BOUNDED_RUNTIME_ARRAY_ENTRIES
-    {
-        bounded_runtime_unmap(&object);
-        return Err(b"runtime loader rejected unsupported DSO metadata");
-    }
-    for slot in 0..object.needed_count {
-        if bounded_runtime_dependency_index(&object, slot, retained_count).is_none() {
-            bounded_runtime_unmap(&object);
-            return Err(b"runtime loader dependency is not already retained");
-        }
-    }
-    let mut objects = [EMPTY_OBJECT; MAX_OBJECTS];
-    for index in 0..retained_count {
-        objects[index] = fixed_graph_object(index);
-    }
-    objects[retained_count] = object;
-    if relocate(&object, &objects).is_none()
-        || protect_segments(&object).is_none()
-        || apply_relro(&object).is_none()
-        || fixed_graph_store_name(retained_count, path, FIXED_GRAPH_TEXT_CAPACITY).is_none()
-        || bounded_runtime_preflight_initializers(&object).is_none()
-    {
-        bounded_runtime_unmap(&object);
-        return Err(b"runtime loader mapping transaction failed");
-    }
-    // Every fallible validation and protection transition precedes the first
-    // constructor side effect. The preflight above makes this invocation
-    // infallible for the now-immutable mapped metadata.
-    if run_bounded_runtime_initializers(&object).is_none() {
-        bounded_runtime_unmap(&object);
-        return Err(b"runtime loader constructor transaction failed");
-    }
-    let destination = core::ptr::addr_of_mut!(FIXED_GRAPH_RUNTIME_OBJECTS)
-        .cast::<Object>()
-        .add(retained_count);
-    core::ptr::write(destination, object);
-    FIXED_GRAPH_RUNTIME_ADDITIONS.store(1, Ordering::Relaxed);
-    FIXED_GRAPH_RUNTIME_COUNT.store(retained_count + 1, Ordering::Release);
-    Ok(retained_count)
-}
 
-#[cfg(crabc_fixed_graph_dlfcn)]
-unsafe extern "C" fn fixed_graph_open(
-    path: *const u8,
-    flags: i32,
-    handle: *mut *mut c_void,
-    error: *mut FixedGraphTextV1,
-) -> i32 {
-    let _guard = FixedGraphRuntimeGuard::lock();
-    fixed_graph_clear_error(error);
-    if handle.is_null() {
-        fixed_graph_set_error(error, b"loader open output is invalid");
-        return -1;
-    }
-    core::ptr::write(handle, core::ptr::null_mut());
-    if !FIXED_GRAPH_RUNTIME_PUBLISHED.load(Ordering::Acquire) {
-        fixed_graph_set_error(error, b"fixed graph runtime unavailable");
-        return -1;
-    }
-    let binding = flags & (FIXED_GRAPH_RTLD_LAZY | FIXED_GRAPH_RTLD_NOW);
-    let no_load = flags & FIXED_GRAPH_RTLD_NOLOAD != 0;
-    // The one-slot mapping is process-lifetime owned, so this bounded sibling
-    // can accept NODELETE only for that fourth identity. It neither changes
-    // the permanent mapping nor widens initial-object or general unload rules.
-    let no_delete = flags & FIXED_GRAPH_RTLD_NODELETE != 0;
-    if (binding != FIXED_GRAPH_RTLD_LAZY && binding != FIXED_GRAPH_RTLD_NOW)
-        || flags & !FIXED_GRAPH_ALLOWED_OPEN_FLAGS != 0
-    {
-        if flags & FIXED_GRAPH_RTLD_GLOBAL != 0 {
-            fixed_graph_set_error(error, b"fixed graph cannot promote global scope");
-        } else {
-            fixed_graph_set_error(error, b"loader open flags are invalid");
-        }
-        return -1;
-    }
-    if path.is_null() {
-        if cfg!(crabc_bounded_runtime_dlopen) && no_load {
-            fixed_graph_set_error(error, b"RTLD_NOLOAD is limited to the runtime object");
-            return -1;
-        }
-        if no_delete {
-            fixed_graph_set_error(error, b"RTLD_NODELETE is limited to the runtime object");
-            return -1;
-        }
-        core::ptr::write(handle, fixed_graph_handle(0));
-        return 0;
-    }
-    let object_count = fixed_graph_object_count();
-    for index in 1..object_count {
-        if fixed_graph_name_matches(index, path) {
-            if cfg!(crabc_bounded_runtime_dlopen) && no_load && index < INITIAL_OBJECT_COUNT {
-                fixed_graph_set_error(error, b"RTLD_NOLOAD is limited to the runtime object");
-                return -1;
-            }
-            if no_delete && index < INITIAL_OBJECT_COUNT {
-                fixed_graph_set_error(error, b"RTLD_NODELETE is limited to the runtime object");
-                return -1;
-            }
-            if !fixed_graph_acquire(index) {
-                fixed_graph_set_error(error, b"loader handle reference overflow");
-                return -1;
-            }
-            core::ptr::write(handle, fixed_graph_handle(index));
-            return 0;
-        }
-    }
-    // A no-load query must observe only the already-published appended object;
-    // it never reaches the mapper or changes the copied graph state.
-    if no_load {
-        fixed_graph_set_error(error, b"RTLD_NOLOAD object is not loaded");
-        return -1;
-    }
-    #[cfg(crabc_bounded_runtime_dlopen)]
-    match bounded_runtime_map(path) {
-        Ok(index) => {
-            if !fixed_graph_acquire(index) {
-                fixed_graph_set_error(error, b"loader handle reference overflow");
-                return -1;
-            }
-            core::ptr::write(handle, fixed_graph_handle(index));
-            return 0;
-        }
-        Err(message) => {
-            fixed_graph_set_error(error, message);
-            return -1;
-        }
-    }
-    #[cfg(not(crabc_bounded_runtime_dlopen))]
-    {
-        fixed_graph_set_error(error, b"fixed graph object is not already loaded");
-        -1
-    }
-}
 
-#[cfg(crabc_fixed_graph_dlfcn)]
-unsafe fn fixed_graph_lookup_in_object(object_index: usize, name: *const u8, name_len: usize) -> Option<u64> {
-    let object = fixed_graph_object(object_index);
-    let mut weak = None;
-    for symbol_index in 1..object.symcount {
-        let symbol = object.symtab.add(symbol_index * 24);
-        let name_offset = read_u32(symbol) as usize;
-        let information = *symbol.add(4);
-        let binding = information >> 4;
-        let symbol_type = information & 0x0f;
-        let visibility = *symbol.add(5) & 0x03;
-        let section = read_u16(symbol.add(6));
-        let value = read_u64(symbol.add(8));
-        if section == 0
-            || (binding != 1 && binding != 2)
-            || (symbol_type != 0 && symbol_type != 1 && symbol_type != 2)
-            || (visibility != 0 && visibility != 3)
-            || name_offset >= object.strsz
-        {
-            continue;
-        }
-        let candidate_name = object.strtab.add(name_offset);
-        let Some(candidate_len) = bounded_nul(candidate_name, object.strsz - name_offset) else {
-            continue;
-        };
-        if candidate_len != name_len || !bytes_eq(name, candidate_name, name_len) {
-            continue;
-        }
-        if !virtual_range_in_load(object.phdr, object.phnum, value, 1) {
-            return None;
-        }
-        let address = runtime_address(object.base, value)?;
-        if binding == 1 {
-            return Some(address);
-        }
-        weak = Some(address);
-    }
-    weak
-}
 
-#[cfg(crabc_bounded_runtime_dlopen)]
-unsafe fn fixed_graph_lookup_runtime_dependencies(
-    object_index: usize,
-    name: *const u8,
-    name_len: usize,
-) -> Option<u64> {
-    if let Some(found) = fixed_graph_lookup_in_object(object_index, name, name_len) {
-        return Some(found);
-    }
-    let object = fixed_graph_object(object_index);
-    for slot in 0..object.needed_count {
-        let offset = object.needed[slot];
-        let dependency_name = object.strtab.add(offset);
-        let dependency_len = bounded_nul(dependency_name, object.strsz - offset)?;
-        for direct in 1..INITIAL_OBJECT_COUNT {
-            let retained = fixed_graph_name(direct);
-            if retained.len as usize == dependency_len
-                && bytes_eq(dependency_name, retained.bytes.as_ptr(), dependency_len)
-            {
-                // The retained startup graph's index suffix is its dependency
-                // closure: mid -> leaf and leaf -> none.
-                for candidate in direct..INITIAL_OBJECT_COUNT {
-                    if let Some(found) = fixed_graph_lookup_in_object(candidate, name, name_len) {
-                        return Some(found);
-                    }
-                }
-            }
-        }
-    }
-    None
-}
 
-#[cfg(crabc_fixed_graph_dlfcn)]
-unsafe extern "C" fn fixed_graph_symbol(
-    handle: *mut c_void,
-    name: *const u8,
-    address: *mut *mut c_void,
-    error: *mut FixedGraphTextV1,
-) -> i32 {
-    let _guard = FixedGraphRuntimeGuard::lock();
-    fixed_graph_clear_error(error);
-    if address.is_null() || name.is_null() {
-        if !address.is_null() {
-            core::ptr::write(address, core::ptr::null_mut());
-        }
-        fixed_graph_set_error(error, b"loader symbol request is invalid");
-        return -1;
-    }
-    core::ptr::write(address, core::ptr::null_mut());
-    if !FIXED_GRAPH_RUNTIME_PUBLISHED.load(Ordering::Acquire) {
-        fixed_graph_set_error(error, b"fixed graph runtime unavailable");
-        return -1;
-    }
-    let Some(handle_index) = fixed_graph_handle_index(handle) else {
-        fixed_graph_set_error(error, b"loader symbol handle is invalid");
-        return -1;
-    };
-    let Some(name_len) = bounded_nul(name, FIXED_GRAPH_TEXT_CAPACITY) else {
-        fixed_graph_set_error(error, b"loader symbol name is invalid");
-        return -1;
-    };
-    if name_len == 0 {
-        fixed_graph_set_error(error, b"loader symbol name is invalid");
-        return -1;
-    }
-    #[cfg(crabc_bounded_runtime_dlopen)]
-    if handle_index >= INITIAL_OBJECT_COUNT {
-        if let Some(found) = fixed_graph_lookup_runtime_dependencies(handle_index, name, name_len) {
-            core::ptr::write(address, found as *mut c_void);
-            return 0;
-        }
-        fixed_graph_set_error(error, b"symbol not found in runtime handle scope");
-        return -1;
-    }
-    let scope_end = core::cmp::min(fixed_graph_object_count(), INITIAL_OBJECT_COUNT);
-    for object_index in handle_index..scope_end {
-        if let Some(found) = fixed_graph_lookup_in_object(object_index, name, name_len) {
-            core::ptr::write(address, found as *mut c_void);
-            return 0;
-        }
-    }
-    fixed_graph_set_error(error, b"symbol not found in fixed handle scope");
-    -1
-}
 
-#[cfg(crabc_fixed_graph_dlfcn)]
-unsafe extern "C" fn fixed_graph_close(
-    handle: *mut c_void,
-    error: *mut FixedGraphTextV1,
-) -> i32 {
-    let _guard = FixedGraphRuntimeGuard::lock();
-    fixed_graph_clear_error(error);
-    if !FIXED_GRAPH_RUNTIME_PUBLISHED.load(Ordering::Acquire) {
-        fixed_graph_set_error(error, b"fixed graph runtime unavailable");
-        return -1;
-    }
-    if handle == fixed_graph_handle(0) {
-        return 0;
-    }
-    let mut index = None;
-    for candidate in 1..fixed_graph_object_count() {
-        if handle == fixed_graph_handle(candidate) {
-            index = Some(candidate);
-            break;
-        }
-    }
-    let Some(index) = index else {
-        fixed_graph_set_error(error, b"loader close handle is invalid");
-        return -1;
-    };
-    let counter = &FIXED_GRAPH_HANDLE_REFERENCES[index];
-    let mut current = counter.load(Ordering::Acquire);
-    loop {
-        if current == 0 {
-            fixed_graph_set_error(error, b"loader close handle is invalid");
-            return -1;
-        }
-        match counter.compare_exchange_weak(
-            current,
-            current - 1,
-            Ordering::AcqRel,
-            Ordering::Acquire,
-        ) {
-            Ok(_) => return 0,
-            Err(observed) => current = observed,
-        }
-    }
-}
 
-#[cfg(any(crabc_fixed_graph_introspection, crabc_fixed_graph_dlfcn))]
-unsafe fn fixed_graph_information_by_index(
-    image_index: usize,
-    information: *mut FixedGraphInformationV1,
-    error: *mut FixedGraphTextV1,
-) -> i32 {
-    fixed_graph_clear_error(error);
-    if information.is_null() {
-        fixed_graph_set_error(error, b"loader information output is invalid");
-        return -1;
-    }
-    core::ptr::write(
-        information,
-        FixedGraphInformationV1 {
-            image_base: core::ptr::null_mut(),
-            dynamic_address: core::ptr::null_mut(),
-            image_name: EMPTY_FIXED_GRAPH_TEXT,
-        },
-    );
-    if !FIXED_GRAPH_RUNTIME_PUBLISHED.load(Ordering::Acquire) {
-        fixed_graph_set_error(error, b"fixed graph introspection unavailable");
-        return -1;
-    }
-    if image_index >= fixed_graph_object_count() {
-        fixed_graph_set_error(error, b"loader information image is invalid");
-        return -1;
-    }
-    let object = fixed_graph_object(image_index);
-    core::ptr::write(
-        information,
-        FixedGraphInformationV1 {
-            image_base: object.base as *mut c_void,
-            dynamic_address: object.dynamic as *mut c_void,
-            image_name: fixed_graph_name(image_index),
-        },
-    );
-    0
-}
 
-#[cfg(crabc_fixed_graph_introspection)]
-unsafe extern "C" fn fixed_graph_information(
-    image_index: usize,
-    information: *mut FixedGraphInformationV1,
-    error: *mut FixedGraphTextV1,
-) -> i32 {
-    let _guard = FixedGraphRuntimeGuard::lock();
-    fixed_graph_information_by_index(image_index, information, error)
-}
 
-#[cfg(crabc_fixed_graph_dlfcn)]
-unsafe extern "C" fn fixed_graph_handle_information(
-    handle: *mut c_void,
-    information: *mut FixedGraphInformationV1,
-    error: *mut FixedGraphTextV1,
-) -> i32 {
-    let _guard = FixedGraphRuntimeGuard::lock();
-    if information.is_null() {
-        fixed_graph_clear_error(error);
-        fixed_graph_set_error(error, b"loader information output is invalid");
-        return -1;
-    }
-    let Some(image_index) = fixed_graph_handle_index(handle) else {
-        core::ptr::write(
-            information,
-            FixedGraphInformationV1 {
-                image_base: core::ptr::null_mut(),
-                dynamic_address: core::ptr::null_mut(),
-                image_name: EMPTY_FIXED_GRAPH_TEXT,
-            },
-        );
-        fixed_graph_clear_error(error);
-        fixed_graph_set_error(error, b"loader information handle is invalid");
-        return -1;
-    };
-    fixed_graph_information_by_index(image_index, information, error)
-}
 
-#[cfg(not(crabc_owned_crt_handoff))]
 unsafe fn run_initializers(objects: &[Object]) -> Option<()> {
     // The closed dependency graph has already been mapped and relocated.
     // Walking this suffix in reverse produces leaf then mid. Main-image
@@ -5564,79 +4538,8 @@ unsafe fn invoke_initializer_range(
 /// post-relocation record.  This runs after every object is relocated and
 /// RELRO sealed, but before the interpreter seals its own record and jumps to
 /// the Rust-produced main image.
-#[cfg(crabc_owned_crt_handoff)]
-unsafe fn publish_owned_crt_handoff(objects: &[Object]) -> Option<()> {
-    if core::ptr::read(core::ptr::addr_of!(OWNED_CRT_HANDOFF_STATE))
-        != OWNED_CRT_STATE_UNPUBLISHED
-    {
-        return None;
-    }
-    for index in 0..MAX_OBJECTS - 1 {
-        let object = objects[index + 1];
-        // The handoff is intentionally not a generic empty-array callback.
-        // This exact fixture has one named initializer range for each DSO.
-        if object.init_count == 0 || object.init_array.is_null() {
-            return None;
-        }
-        core::ptr::write(
-            core::ptr::addr_of_mut!(OWNED_CRT_INITIALIZER_RANGES).cast::<OwnedCrtInitializerRange>().add(index),
-            OwnedCrtInitializerRange {
-                base: object.base,
-                phdr: object.phdr,
-                phnum: object.phnum,
-                init_array: object.init_array,
-                init_count: object.init_count,
-            },
-        );
-    }
-    core::ptr::write(
-        core::ptr::addr_of_mut!(OWNED_CRT_HANDOFF_STATE),
-        OWNED_CRT_STATE_READY,
-    );
-    Some(())
-}
 
-#[cfg(crabc_owned_crt_handoff)]
-unsafe extern "C" fn owned_crt_dependency_constructors() {
-    if core::ptr::read(core::ptr::addr_of!(OWNED_CRT_HANDOFF_STATE)) != OWNED_CRT_STATE_READY {
-        fail(b"crtinit\n");
-    }
-    for index in (0..MAX_OBJECTS - 1).rev() {
-        let range = core::ptr::read(
-            core::ptr::addr_of!(OWNED_CRT_INITIALIZER_RANGES)
-                .cast::<OwnedCrtInitializerRange>()
-                .add(index),
-        );
-        invoke_initializer_range(
-            range.base,
-            range.phdr,
-            range.phnum,
-            range.init_array,
-            range.init_count,
-        )
-        .unwrap_or_else(|| fail(b"crtinit\n"));
-    }
-    core::ptr::write(
-        core::ptr::addr_of_mut!(OWNED_CRT_HANDOFF_STATE),
-        OWNED_CRT_STATE_CONSTRUCTORS_COMPLETE,
-    );
-}
 
-#[cfg(crabc_owned_crt_handoff)]
-unsafe extern "C" fn owned_crt_process_fini() {
-    // This fixed graph still rejects DSO DT_FINI/DT_FINI_ARRAY.  Its one
-    // process-finalizer callback therefore closes the record's lifecycle
-    // phase rather than selecting general DSO destruction semantics.
-    if core::ptr::read(core::ptr::addr_of!(OWNED_CRT_HANDOFF_STATE))
-        != OWNED_CRT_STATE_CONSTRUCTORS_COMPLETE
-    {
-        fail(b"crtfini\n");
-    }
-    core::ptr::write(
-        core::ptr::addr_of_mut!(OWNED_CRT_HANDOFF_STATE),
-        OWNED_CRT_STATE_FINALIZED,
-    );
-}
 
 unsafe fn virtual_range_in_load(phdr: *const u8, phnum: usize, address: u64, byte_len: u64) -> bool {
     let Some(end) = address.checked_add(byte_len) else { return false; };
@@ -5736,7 +4639,6 @@ unsafe fn virtual_range_in_readable_file_load(
 /// `[address, address + byte_len)`, as (virtual start, file end). A full
 /// scan reached it without meeting an overflowing readable load before it,
 /// so any range inside it also gets `true` from that scan.
-#[cfg(feature = "x86_64-owned-dynamic-runtime")]
 unsafe fn readable_file_load_segment(phdr: *const u8, phnum: usize, address: u64, byte_len: u64) -> Option<(u64, u64)> {
     let end = address.checked_add(byte_len)?;
     for index in 0..phnum {
@@ -5770,7 +4672,6 @@ unsafe fn virtual_range_in_writable_load(phdr: *const u8, phnum: usize, address:
 #[derive(Clone, Copy, Default)]
 pub(super) struct WritableLoadCache { hit: Option<(u64, u64)> }
 
-#[cfg(crabc_general_initial_graph)]
 impl WritableLoadCache {
     pub(super) unsafe fn contains(&mut self, phdr: *const u8, phnum: usize, address: u64, byte_len: u64) -> bool {
         let Some(end) = address.checked_add(byte_len) else { return false; };
@@ -5803,7 +4704,6 @@ unsafe fn virtual_range_in_executable_load(phdr: *const u8, phnum: usize, addres
     false
 }
 
-#[cfg(feature = "x86_64-owned-dynamic-runtime")]
 impl SymbolLookupTable {
     fn symbol_count(self) -> usize {
         match self {
@@ -5819,7 +4719,6 @@ impl SymbolLookupTable {
 /// malformed word fails that one lookup instead of the load.  Relocation
 /// code still uses `direct_symbol`, so an ELF index is never accepted merely
 /// because it is below an unrelated table's count.
-#[cfg(feature = "x86_64-owned-dynamic-runtime")]
 unsafe fn decode_sysv_hash(
     phdr: *const u8,
     phnum: usize,
@@ -5860,7 +4759,6 @@ unsafe fn decode_sysv_hash(
 /// greatest nonzero bucket through its low-bit chain terminator, exactly as
 /// musl's `count_syms` does.  All-zero buckets deliberately produce no
 /// exports; they do not make relocation-indexed undefined imports invalid.
-#[cfg(feature = "x86_64-owned-dynamic-runtime")]
 unsafe fn decode_gnu_hash(
     phdr: *const u8,
     phnum: usize,
@@ -5931,7 +4829,6 @@ unsafe fn decode_gnu_hash(
 /// Return exactly one relocation-selected dynsym record after proving its
 /// 24-byte storage lies in a readable file-backed mapped segment.  This is
 /// intentionally independent from a SysV/GNU export iteration extent.
-#[cfg(feature = "x86_64-owned-dynamic-runtime")]
 unsafe fn direct_symbol(object: &Object, index: usize) -> Option<*const u8> {
     if index < object.symtab_file_record_limit {
         // The retained limit is the number of complete 24-byte records in
@@ -5950,7 +4847,6 @@ unsafe fn direct_symbol(object: &Object, index: usize) -> Option<*const u8> {
 /// VERSYM bit 15 marks a hidden/non-default provider candidate in musl.
 /// Direct relocations and dladdr do not use this filter; only external named
 /// export lookup calls this helper.
-#[cfg(feature = "x86_64-owned-dynamic-runtime")]
 unsafe fn exported_symbol_is_visible(object: &Object, index: usize) -> Option<bool> {
     if object.versym.is_null() { return Some(true); }
     let byte_offset = index.checked_mul(2)?;
@@ -6038,7 +4934,6 @@ fn note_word_size(size: usize) -> Option<usize> {
 /// Validate the exact nonempty pointer-array shape that Rust-produced Scrt1
 /// later reaches through its hidden linker-boundary bridges.  The interpreter
 /// never dispatches these main-image entries itself.
-#[cfg(any(crabc_owned_crt_handoff, crabc_dynamic_main_thread_runtime_v1))]
 unsafe fn scrt1_array_in_load(
     phdr: *const u8,
     phnum: usize,
@@ -6074,7 +4969,6 @@ fn callback_array_entries_admitted(byte_len: u64, legacy_entries: usize) -> bool
 /// True when a mapped object declares `SONAME libc.so`. A copy of the
 /// interpreter that reaches discovery under another path is a second libc,
 /// not the self image, even when its symbols look identical.
-#[cfg(feature = "x86_64-owned-dynamic-runtime")]
 pub(crate) unsafe fn mapped_soname_is_libc(object: &Object) -> bool {
     if object.dynamic.is_null() || object.strtab.is_null() { return false; }
     for index in 0..256 {

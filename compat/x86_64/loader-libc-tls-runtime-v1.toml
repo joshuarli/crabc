@@ -67,7 +67,7 @@ dynamic_tls_growth = "not-implemented-and-not-implied"
 pthread_or_clone_settls = "not-implemented-and-not-implied"
 general_dynamic_product = false
 capability_or_family_promotion = false
-native_evidence = "compat/x86_64/run_loader_libc_tls_runtime_v1.sh"
+native_evidence = "compat/x86_64/run_owned_ldso_runtime_v1_cases.sh"
 
 # The next foundation moves initial module-ID and generation ownership out of
 # the fixed planner's ad-hoc counters without treating that ordinary fixture
@@ -86,7 +86,7 @@ runtime_tls_dtv_growth = "explicit-dtv-growth-protocol-unavailable-rejection-wit
 general_initial_graph = "integrated-ordinary-general-initial-tls-materialization-and-separate-general-runtimev1-private-publication-only-no-runtime-growth"
 general_dynamic_product = false
 capability_or_family_promotion = false
-native_evidence = "compat/x86_64/run_loader_libc_tls_runtime_v1_registry.sh"
+native_evidence = "compat/x86_64/run_owned_ldso_runtime_v1_cases.sh"
 
 # This is a distinct source root over the arbitrary bounded initial graph. It
 # is a real one-shot RuntimeV1 producer, but only inside private native
@@ -94,7 +94,7 @@ native_evidence = "compat/x86_64/run_loader_libc_tls_runtime_v1_registry.sh"
 # no worker, runtime-map, DTV-growth, or unload operation.
 [general_initial_tls_runtime_v1_foundation]
 state = "implemented-private-evidence-only"
-producer = "ldso/src/x86_64_general_initial_tls_runtime_v1_source_root.rs:crabc_general_initial_graph+crabc_general_initial_tls_materialization_v1+crabc_general_loader_libc_tls_runtime_v1"
+producer = "ldso/src/lib.rs:feature=x86_64-owned-dynamic-runtime"
 consumer = "libc/src/c_abi/x86_64/loader_tls_runtime_v1_source_root.rs"
 record = "__crabc_x86_64_loader_tls_runtime_v1"
 selector = "bounded-general-initial-pt-interp-only"
@@ -107,7 +107,7 @@ pthread_or_clone_settls = "not-implemented-and-not-implied"
 dynamic_crt_handoff = "not-implemented-and-not-implied"
 general_dynamic_product = false
 capability_or_family_promotion = false
-native_evidence = "compat/x86_64/run_loader_libc_general_tls_runtime_v1.sh+compat/x86_64/run_loader_libc_general_tls_runtime_v1_target_root.sh"
+native_evidence = "compat/x86_64/run_owned_ldso_runtime_v1_cases.sh+compat/x86_64/run_owned_ldso_runtime_v1_cases.sh"
 
 # This bridge is deliberately narrower than the owned-CRT carrier.
 # A special private Scrt1.o makes the same main-resident RuntimeV1 observation
@@ -117,7 +117,7 @@ native_evidence = "compat/x86_64/run_loader_libc_general_tls_runtime_v1.sh+compa
 # six-argument call, dynamic errno/TLS observation, and final raw exit.
 [dynamic_main_thread_runtime_v1_bridge]
 state = "implemented-private-evidence-only"
-producer = "ldso/src/x86_64_dynamic_main_thread_runtime_v1_source_root.rs:crabc_general_initial_graph+crabc_general_initial_tls_materialization_v1+crabc_general_loader_libc_tls_runtime_v1+crabc_dynamic_main_thread_runtime_v1"
+producer = "ldso/src/lib.rs:feature=x86_64-owned-dynamic-runtime"
 scrt1 = "crt/build_x86_64.py:--dynamic-main-thread-runtime-v1->crt/src/x86_64_dynamic_startup.rs:__crabc_x86_loader_tls_runtime_v1_attach-before-__libc_start_main"
 consumer = "libc/src/c_abi/x86_64/dynamic_main_thread_runtime_v1_source_root.rs"
 record = "__crabc_x86_64_loader_tls_runtime_v1"
@@ -132,7 +132,7 @@ pthread_or_clone_settls = "not-implemented-and-not-implied"
 loader_finalizer_or_dependency_lifecycle = "not-implemented-and-not-implied"
 general_dynamic_product = false
 capability_or_family_promotion = false
-native_evidence = "compat/x86_64/run_dynamic_main_thread_runtime_v1.sh+compat/x86_64/run_dynamic_main_thread_runtime_v1_target_root.sh"
+native_evidence = "compat/x86_64/run_owned_ldso_runtime_v1_cases.sh+compat/x86_64/run_dynamic_main_thread_runtime_v1_target_root.sh"
 
 # Linux/x86-64 Variant II: TLS images occupy addresses below TP and the TCB
 # starts at TP. The DTV pointer at %fs:8 is a private RuntimeV1 invariant;
@@ -182,13 +182,13 @@ runtime_v1_producer = false
 
 [[current_artifact]]
 id = "ldso-general-initial-tls-runtime-v1"
-path = "ldso/src/x86_64_general_initial_tls_runtime_v1_source_root.rs"
+path = "ldso/src/lib.rs"
 state = "implemented-private-evidence-only"
 runtime_v1_producer = true
 
 [[current_artifact]]
 id = "ldso-dynamic-main-thread-runtime-v1"
-path = "ldso/src/x86_64_dynamic_main_thread_runtime_v1_source_root.rs"
+path = "ldso/src/lib.rs"
 state = "implemented-private-evidence-only"
 runtime_v1_producer = true
 
@@ -209,18 +209,18 @@ state = "implemented-unqualified"
 
 [[integration]]
 id = "ldso-x86-main-thread-materialization"
-path = "ldso/src/x86_64_general_initial_tls_source_root.rs"
+path = "ldso/src/lib.rs"
 boundary = "loader-owned-general-initial-only-pt-tls-layout-before-dtpmod64-dtpoff64-relocations-reserve-publication-before-arch-set-fs-and-nonfallibly-commit-in-the-ordinary-no-runtimev1-or-crt-handoff-root"
 state = "implemented-private-evidence-only"
-native_evidence = "compat/x86_64/run_ldso_general_initial_tls.sh+compat/x86_64/run_ldso_general_initial_tls_target_root.sh"
+native_evidence = "compat/x86_64/run_owned_ldso_initial_tls_cases.sh+compat/x86_64/run_owned_ldso_initial_tls_cases.sh"
 scope = "bounded-general-initial-graph-generation-one-only-no-libc-descriptor-pthread-new-thread-dtv-growth-runtime-map-dlopen-crt-or-product-promotion"
 
 [[integration]]
 id = "ldso-x86-general-runtime-v1-publication"
-path = "ldso/src/x86_64_general_initial_tls_runtime_v1_source_root.rs"
+path = "ldso/src/lib.rs"
 boundary = "bounded-arbitrary-initial-pt-tls-graph-runtimev1-paired-pre-arch-set-fs-state-and-descriptor-reservation-nonfallible-retained-state-commit-72-byte-loader-owned-descriptor-ready-last-and-dependency-callbacks-only-after-ready"
 state = "implemented-private-evidence-only"
-native_evidence = "compat/x86_64/run_loader_libc_general_tls_runtime_v1.sh+compat/x86_64/run_loader_libc_general_tls_runtime_v1_target_root.sh"
+native_evidence = "compat/x86_64/run_owned_ldso_runtime_v1_cases.sh+compat/x86_64/run_owned_ldso_runtime_v1_cases.sh"
 scope = "bounded-general-initial-graph-generation-one-only-local-hidden-72-byte-record-no-crt-handoff-installed-dynamic-product-pthread-new-thread-dtv-growth-replacement-runtime-map-dlopen-unload-or-product-family-capability-promotion"
 
 [[integration]]
@@ -243,7 +243,7 @@ state = "implemented-unqualified"
 
 [[integration]]
 id = "dynamic-tls-regression-to-product"
-path = "compat/x86_64/run_ldso_initial_tls.sh"
+path = "compat/x86_64/run_owned_ldso_initial_tls_cases.sh"
 boundary = "retain-fixed-graph-tls-as-regression-while-installed-dynamic-product-gains-runtimev1-evidence"
 state = "implemented-unqualified"
 

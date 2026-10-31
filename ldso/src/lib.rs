@@ -1,5 +1,5 @@
 #![no_std]
-#![no_main]
+#![cfg_attr(not(test), no_main)]
 #![cfg_attr(feature = "x86_64-owned-dynamic-runtime", feature(linkage))]
 #![cfg_attr(
     all(target_os = "linux", target_arch = "aarch64", target_endian = "little"),
@@ -15,13 +15,7 @@
     target_os = "linux",
     target_arch = "x86_64",
     target_endian = "little",
-    any(
-        feature = "x86_64-initial-interpreter",
-        feature = "x86_64-general-initial-interpreter",
-        feature = "x86_64-general-initial-tls-interpreter",
-        feature = "x86_64-general-initial-tls-runtime-v1-interpreter",
-        feature = "x86_64-general-initial-tls-runtime-v1-dynamic-main-thread-interpreter"
-    )
+    feature = "x86_64-owned-dynamic-runtime"
 ))]
 #[path = "x86_64_initial_graph.rs"]
 mod x86_64_initial_graph;
@@ -37,15 +31,9 @@ mod loader;
         target_os = "linux",
         target_arch = "x86_64",
         target_endian = "little",
-        any(
-            feature = "x86_64-initial-interpreter",
-            feature = "x86_64-general-initial-interpreter",
-            feature = "x86_64-general-initial-tls-interpreter",
-            feature = "x86_64-general-initial-tls-runtime-v1-interpreter",
-            feature = "x86_64-general-initial-tls-runtime-v1-dynamic-main-thread-interpreter"
-        )
+        feature = "x86_64-owned-dynamic-runtime"
     )
 )))]
 compile_error!(
-    "crabc-ldso supports Linux/AArch64 little-endian; a private x86 root requires --features x86_64-initial-interpreter, x86_64-general-initial-interpreter, x86_64-general-initial-tls-interpreter, x86_64-general-initial-tls-runtime-v1-interpreter, or x86_64-general-initial-tls-runtime-v1-dynamic-main-thread-interpreter"
+    "crabc-ldso supports Linux/AArch64 little-endian; the x86-64 root requires --features x86_64-owned-dynamic-runtime"
 );

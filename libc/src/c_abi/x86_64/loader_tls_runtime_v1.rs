@@ -98,26 +98,22 @@ unsafe extern "C" {
     fn __crabc_x86_loader_tls_runtime_v1_record() -> *const u8;
 }
 
-/// Validate the loader record without observing any loader-installed TLS.
+/// Validate the record fields without observing any loader-installed TLS.
 ///
-/// The weak symbol is a private process-internal handoff, not an untrusted
-/// public pointer: the dedicated x86 loader resolves it only from its own
-/// record into the main image's GOT. Still, null, wrong-revision, wrong-mode,
-/// wrong-owner, and internally inconsistent records are all rejected before
-/// `%fs:0`, `%fs:8`, or either descriptor pointer is read.
-#[inline(never)]
-unsafe fn validate_loader_tls_runtime_v1() -> Option<&'static LoaderLibcTlsRuntimeV1> {
-    let record = unsafe { __crabc_x86_loader_tls_runtime_v1_record() };
+/// # Safety
+/// `record` must point to a readable, aligned 72-byte record that stays alive
+/// for the returned reference's lifetime. The function never dereferences
+/// `thread_pointer` or `dtv`.
+unsafe fn validate_record<'a>(record: *const u8) -> Option<&'a LoaderLibcTlsRuntimeV1> {
     if record.is_null()
         || record as usize & (core::mem::align_of::<LoaderLibcTlsRuntimeV1Header>() - 1) != 0
     {
         return None;
     }
 
-    // SAFETY: the dedicated loader only resolves this one weak GOT entry to
-    // its process-lifetime record. The fixed header is the minimum prefix
-    // needed to reject an unknown ABI size before a full-record reference is
-    // formed; a static-mode stub returns null above.
+    // SAFETY: the caller guarantees the fixed header prefix is readable and
+    // aligned. The header is the minimum prefix needed to reject an unknown
+    // ABI size before a full-record reference is formed.
     let header = unsafe { &*record.cast::<LoaderLibcTlsRuntimeV1Header>() };
     if header.magic != RECORD_MAGIC
         || header.version != RECORD_VERSION
@@ -127,8 +123,7 @@ unsafe fn validate_loader_tls_runtime_v1() -> Option<&'static LoaderLibcTlsRunti
     }
 
     // SAFETY: the exact header size now authorizes this exact v1 layout. The
-    // loader keeps the record alive for the process lifetime and publishes its
-    // remaining coordinates with the ready-state release store below.
+    // caller keeps the record alive for the returned reference's lifetime.
     let record = unsafe { &*record.cast::<LoaderLibcTlsRuntimeV1>() };
     if record.state.load(Ordering::Acquire) != STATE_READY
         || record.process_mode != PROCESS_MODE_DYNAMIC
@@ -145,6 +140,21 @@ unsafe fn validate_loader_tls_runtime_v1() -> Option<&'static LoaderLibcTlsRunti
         return None;
     }
     Some(record)
+}
+
+/// Validate the loader record without observing any loader-installed TLS.
+///
+/// The weak symbol is a private process-internal handoff, not an untrusted
+/// public pointer: the dedicated x86 loader resolves it only from its own
+/// record into the main image's GOT. Still, null, wrong-revision, wrong-mode,
+/// wrong-owner, and internally inconsistent records are all rejected before
+/// `%fs:0`, `%fs:8`, or either descriptor pointer is read.
+#[inline(never)]
+unsafe fn validate_loader_tls_runtime_v1() -> Option<&'static LoaderLibcTlsRuntimeV1> {
+    let record = unsafe { __crabc_x86_loader_tls_runtime_v1_record() };
+    // SAFETY: the weak symbol is resolved only by the dedicated loader to its
+    // process-lifetime record; a static-mode stub returns null.
+    unsafe { validate_record(record) }
 }
 
 /// Obtain the current x86-64 `%fs` base without assuming a libc TLS layout.
@@ -216,5 +226,64 @@ pub unsafe extern "C" fn __crabc_x86_loader_tls_runtime_v1_attach() -> c_int {
         0
     } else {
         -1
+    }
+}
+
+#[cfg(test)]
+mod record_validation_tests {
+    use super::*;
+
+    fn valid_record() -> LoaderLibcTlsRuntimeV1 {
+        LoaderLibcTlsRuntimeV1 {
+            magic: RECORD_MAGIC,
+            version: RECORD_VERSION,
+            abi_size: RECORD_SIZE,
+            process_mode: PROCESS_MODE_DYNAMIC,
+            owner: OWNER_LDSO,
+            state: AtomicU8::new(STATE_READY),
+            reserved: [0; 7],
+            thread_pointer: 0x1000 as *const u8,
+            dtv: 0x2000 as *const usize,
+            dtv_words: 4,
+            module_count: 3,
+            generation: GENERATION_INITIAL,
+        }
+    }
+
+    fn accepted(record: &LoaderLibcTlsRuntimeV1) -> bool {
+        unsafe { validate_record(record as *const _ as *const u8).is_some() }
+    }
+
+    #[test]
+    fn accepts_complete_ready_record_without_touching_fs_or_dtv() {
+        assert!(accepted(&valid_record()));
+    }
+
+    #[test]
+    fn rejects_null_dtv() {
+        let mut record = valid_record();
+        record.dtv = core::ptr::null();
+        assert!(!accepted(&record));
+    }
+
+    #[test]
+    fn rejects_unaligned_dtv() {
+        let mut record = valid_record();
+        record.dtv = 0x2001 as *const usize;
+        assert!(!accepted(&record));
+    }
+
+    #[test]
+    fn rejects_dtv_words_below_module_count_plus_one() {
+        let mut record = valid_record();
+        record.dtv_words = record.module_count;
+        assert!(!accepted(&record));
+    }
+
+    #[test]
+    fn rejects_zero_module_count() {
+        let mut record = valid_record();
+        record.module_count = 0;
+        assert!(!accepted(&record));
     }
 }
