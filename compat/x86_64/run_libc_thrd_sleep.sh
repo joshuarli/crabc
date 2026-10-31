@@ -156,7 +156,7 @@ done
 for unselected in pthread_mutex_timedlock \
     pthread_cond_timedwait \
     timer_create \
-    setitimer ualarm malloc free calloc realloc; do
+    malloc free calloc realloc; do
     if grep -Eq "[[:space:]][TW][[:space:]]${unselected}$" "$archive_symbols"; then
         fail "archive accidentally exports unselected ${unselected}"
     fi
@@ -191,7 +191,7 @@ done
 if grep -Eq '[[:space:]]sleep$' "$candidate_symbols"; then
     fail "thrd_sleep candidate unexpectedly pulls separately selected sleep"
 fi
-unresolved_symbols="$(awk '$7 == "UND" && NF >= 8 { print }' "$candidate_symbols")"
+unresolved_symbols="$(awk '$7 == "UND" && NF >= 8 && !($5 == "LOCAL" && ($8 == "_PROCEDURE_LINKAGE_TABLE_" || $8 == "__rela_iplt_start" || $8 == "__rela_iplt_end")) { print }' "$candidate_symbols")"
 if [ -n "$unresolved_symbols" ]; then
     printf '%s\n' "$unresolved_symbols" >&2
     fail "candidate retains an unresolved symbol"

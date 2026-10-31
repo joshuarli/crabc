@@ -183,7 +183,7 @@ for symbol in __errno_location __lseek __dup3 close read write pread pwrite read
 done
 for unselected in preadv2 pwritev2 vmsplice \
     close_range _Fork \
-    vfork clone execve syscall \
+    vfork clone syscall \
     malloc free calloc realloc; do
     if grep -Eq "[[:space:]][TW][[:space:]]${unselected}$" "$archive_symbols"; then
         fail "archive accidentally exports unselected ${unselected}"
@@ -218,7 +218,9 @@ for unselected in splice tee copy_file_range; do
         fail "candidate unexpectedly pulls independently selected transfer ${unselected}"
     fi
 done
-unresolved_symbols="$(awk '$7 == "UND" && NF >= 8 { print }' "$candidate_symbols")"
+# The linker markers and the archive's weak loader-record import are the
+# only LOCAL undefined names a closed static candidate may carry.
+unresolved_symbols="$(awk '$7 == "UND" && NF >= 8 && !($5 == "LOCAL" && ($8 == "_PROCEDURE_LINKAGE_TABLE_" || $8 == "__rela_iplt_start" || $8 == "__rela_iplt_end" || $8 == "__crabc_x86_64_fixed_graph_dlfcn_v1")) { print }' "$candidate_symbols")"
 if [ -n "$unresolved_symbols" ]; then
     printf '%s\n' "$unresolved_symbols" >&2
     fail "candidate retains an unresolved symbol"

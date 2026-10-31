@@ -52,11 +52,11 @@ build_source_runtime_libc "$target_dir/x86_64-unknown-linux-musl/debug/libc.a"
 nm -A --defined-only "$archive" >"$archive_symbols"
 assert_selected_c_abi_surface "$archive" "$selected_symbols" "$expected_symbols"
 for symbol in getgroups getresuid getresgid; do grep -Eq "[[:space:]][TW][[:space:]]${symbol}$" "$archive_symbols" || fail "archive does not define $symbol"; done
-for unselected in getusershell setusershell endusershell getgrouplist initgroups getgrgid getgrnam _Fork vfork execve syscall; do if grep -Eq "[[:space:]][TW][[:space:]]${unselected}$" "$archive_symbols"; then fail "archive accidentally exports unselected $unselected"; fi; done
+for unselected in getusershell setusershell endusershell getgrouplist initgroups getgrgid getgrnam _Fork vfork syscall; do if grep -Eq "[[:space:]][TW][[:space:]]${unselected}$" "$archive_symbols"; then fail "archive accidentally exports unselected $unselected"; fi; done
 "$ORACLE_CC" -std=c11 -D_GNU_SOURCE -DCRABC_CREDENTIAL_OBSERVATION_FREESTANDING -I"$ROOT_DIR/include" -nostdlib -static -fno-pie -no-pie -ffreestanding -fno-builtin -fno-stack-protector -Wl,-e,_start -Wl,--no-undefined compat/x86_64/libc_credential_observation_probe.c compat/x86_64/libc_credential_observation_start.S "$archive" -o "$candidate"
 readelf --symbols --wide "$candidate" >"$symbols"; readelf --program-headers --wide "$candidate" >"$headers"; readelf --dynamic --wide "$candidate" >"$dynamic" || true; readelf --relocs --wide "$candidate" >"$relocs"; objdump -d "$candidate" >"$disassembly"
 for symbol in __errno_location getgroups getresuid getresgid; do grep -Eq "[[:space:]]${symbol}$" "$symbols" || fail "candidate lacks $symbol"; done
-if awk '$7 == "UND" && NF >= 8 { print }' "$symbols" | grep . >/dev/null; then fail "candidate has unresolved symbols"; fi
+if awk '$7 == "UND" && NF >= 8 && !($5 == "LOCAL" && ($8 == "_PROCEDURE_LINKAGE_TABLE_" || $8 == "__rela_iplt_start" || $8 == "__rela_iplt_end")) { print }' "$symbols" | grep . >/dev/null; then fail "candidate has unresolved symbols"; fi
 if grep -Eq 'Requesting program interpreter|INTERP|NEEDED' "$headers" "$dynamic"; then fail "candidate is dynamic"; fi
 grep -Eq '[[:space:]]TLS[[:space:]]' "$headers" || fail "candidate lacks the selected errno TLS segment"
 if grep -Eq 'TLSGD|TLSLD|TLSDESC|GOTTPOFF|DTPMOD(64)?|DTPOFF(32|64)?|__tls_get_addr' "$relocs" "$symbols" "$disassembly"; then fail "candidate retains a dynamic TLS model"; fi

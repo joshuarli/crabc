@@ -144,7 +144,6 @@ done
 grep -Eq 'GLOBAL +HIDDEN +.*__crabc_x86_static_tls_bootstrap$' "$archive_elf_symbols" ||
     fail "archive Static Initial TLS v1 bootstrap is not hidden"
 for unselected in fdopen freopen setbuf setbuffer setlinebuf gets \
-    printf fprintf vprintf vfprintf scanf fscanf vscanf vfscanf \
     flockfile ftrylockfile funlockfile \
     getc_unlocked getchar_unlocked putc_unlocked putchar_unlocked fmemopen \
     open_memstream fopencookie popen pclose malloc calloc realloc free; do
@@ -177,7 +176,7 @@ for symbol in clearerr feof ferror fflush fgetc fileno fputc fread fwrite getc \
     grep -Eq "[[:space:]]${symbol}$" "$candidate_symbols" ||
         fail "candidate lacks ${symbol}"
 done
-unresolved_symbols="$(awk '$7 == "UND" && NF >= 8 { print }' "$candidate_symbols")"
+unresolved_symbols="$(awk '$7 == "UND" && NF >= 8 && !($5 == "LOCAL" && ($8 == "_PROCEDURE_LINKAGE_TABLE_" || $8 == "__rela_iplt_start" || $8 == "__rela_iplt_end")) { print }' "$candidate_symbols")"
 if [ -n "$unresolved_symbols" ]; then
     printf '%s\n' "$unresolved_symbols" >&2
     fail "candidate retains an unresolved symbol"

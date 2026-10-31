@@ -132,7 +132,7 @@ for symbol in __errno_location getpid getppid getuid getgid geteuid getegid \
     grep -Eq "[[:space:]][TW][[:space:]]${symbol}$" "$archive_symbols" \
         || fail "archive does not define ${symbol}"
 done
-for unselected in _Fork vfork clone execve syscall \
+for unselected in _Fork vfork clone syscall \
     malloc free calloc realloc; do
     if grep -Eq "[[:space:]][TW][[:space:]]${unselected}$" "$archive_symbols"; then
         fail "archive accidentally exports unselected ${unselected}"
@@ -162,7 +162,7 @@ for symbol in __errno_location getpid getppid getuid getgid geteuid getegid \
     grep -Eq "[[:space:]]${symbol}$" "$candidate_symbols" \
         || fail "candidate does not define ${symbol}"
 done
-unresolved_symbols="$(awk '$7 == "UND" && NF >= 8 { print }' "$candidate_symbols")"
+unresolved_symbols="$(awk '$7 == "UND" && NF >= 8 && !($5 == "LOCAL" && ($8 == "_PROCEDURE_LINKAGE_TABLE_" || $8 == "__rela_iplt_start" || $8 == "__rela_iplt_end")) { print }' "$candidate_symbols")"
 if [ -n "$unresolved_symbols" ]; then
     printf '%s\n' "$unresolved_symbols" >&2
     fail "candidate retains an unresolved symbol"

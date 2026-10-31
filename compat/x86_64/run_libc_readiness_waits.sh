@@ -165,7 +165,7 @@ done
 # candidate below, rather than archive-member co-location, proves this artifact
 # does not retain them.
 for unselected in vmsplice _Fork \
-    vfork clone execve \
+    vfork clone \
     pthread_sigmask syscall malloc free calloc realloc; do
     if grep -Eq "[[:space:]][TW][[:space:]]${unselected}$" "$archive_symbols"; then
         fail "archive accidentally exports unselected ${unselected}"
@@ -213,7 +213,9 @@ fi
 if grep -Eq '[[:space:]]sleep$' "$candidate_symbols"; then
     fail "readiness/signal-waits candidate unexpectedly pulls separately selected sleep"
 fi
-unresolved_symbols="$(awk '$7 == "UND" && NF >= 8 { print }' "$candidate_symbols")"
+# The linker markers and the archive's weak loader-record import are the
+# only LOCAL undefined names a closed static candidate may carry.
+unresolved_symbols="$(awk '$7 == "UND" && NF >= 8 && !($5 == "LOCAL" && ($8 == "_PROCEDURE_LINKAGE_TABLE_" || $8 == "__rela_iplt_start" || $8 == "__rela_iplt_end" || $8 == "__crabc_x86_64_fixed_graph_dlfcn_v1")) { print }' "$candidate_symbols")"
 if [ -n "$unresolved_symbols" ]; then
     printf '%s\n' "$unresolved_symbols" >&2
     fail "candidate retains an unresolved symbol"

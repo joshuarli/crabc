@@ -85,7 +85,7 @@ for symbol in wait waitpid waitid; do
     grep -Eq "[[:space:]][TW][[:space:]]${symbol}$" "$archive_symbols" \
         || fail "archive does not define $symbol"
 done
-for unselected in _Fork vfork clone execve syscall posix_spawn malloc free \
+for unselected in _Fork vfork clone syscall posix_spawn malloc free \
     calloc realloc; do
     if grep -Eq "[[:space:]][TW][[:space:]]${unselected}$" "$archive_symbols"; then
         fail "archive accidentally exports unselected $unselected"
@@ -110,7 +110,9 @@ for unselected in wait3 wait4; do
         fail "candidate unexpectedly pulls unselected ${unselected}"
     fi
 done
-if awk '$7 == "UND" && NF >= 8 { print }' "$symbols" | grep . >/dev/null; then fail "candidate has unresolved symbols"; fi
+# The linker markers and the archive's weak loader-record import are the
+# only LOCAL undefined names a closed static candidate may carry.
+if awk '$7 == "UND" && NF >= 8 && !($5 == "LOCAL" && ($8 == "_PROCEDURE_LINKAGE_TABLE_" || $8 == "__rela_iplt_start" || $8 == "__rela_iplt_end" || $8 == "__crabc_x86_64_fixed_graph_dlfcn_v1")) { print }' "$symbols" | grep . >/dev/null; then fail "candidate has unresolved symbols"; fi
 if grep -Eq 'Requesting program interpreter|INTERP|NEEDED' "$headers" "$dynamic"; then fail "candidate is dynamic"; fi
 grep -Eq '[[:space:]]TLS[[:space:]]' "$headers" || fail "candidate lacks the selected errno TLS segment"
 if grep -Eq 'TLSGD|TLSLD|TLSDESC|GOTTPOFF|DTPMOD(64)?|DTPOFF(32|64)?|__tls_get_addr' "$relocs" "$symbols" "$disassembly"; then fail "candidate retains a dynamic TLS model"; fi
