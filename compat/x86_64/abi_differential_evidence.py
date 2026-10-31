@@ -45,7 +45,7 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import native_abi_inventory as inventory  # noqa: E402
-import native_abi_memcmp_import_receipt as import_receipt  # noqa: E402
+import native_abi_import_receipt as import_receipt  # noqa: E402
 
 SCHEMA = "crabc.x86_64-abi-differential-evidence/v1"
 RECEIPT_NAME = "abi-evidence.json"
@@ -729,7 +729,7 @@ PRODUCERS = (
         lambda output: output),
     CompanionProducer(
         "fchdir_ordinary_import_work",
-        lambda c, r, o: (["python3", "-B", "compat/x86_64/native_abi_memcmp_import_receipt.py", "collect",
+        lambda c, r, o: (["python3", "-B", "compat/x86_64/native_abi_import_receipt.py", "collect",
                           "--symbol", "fchdir", "--static-product", str(c.static_product),
                           "--dynamic-product", str(c.dynamic_product), "--output", str(o)], {}),
         lambda output: output, requires=("native_c_allocator_boundary_report",)),

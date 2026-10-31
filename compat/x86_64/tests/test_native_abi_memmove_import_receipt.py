@@ -8,7 +8,7 @@ from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(ROOT / "compat/x86_64"))
-import native_abi_memcmp_import_receipt as receipt
+import native_abi_import_receipt as receipt
 
 
 def completed(stdout: str, returncode: int = 0):

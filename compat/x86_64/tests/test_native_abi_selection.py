@@ -28,7 +28,7 @@ if str(ROOT / 'compat/x86_64') not in sys.path:
     sys.path.insert(0, str(ROOT / 'compat/x86_64'))
 import validate_parity_ledger as parity_ledger
 import native_data_declarations as data_declarations
-import native_abi_memcmp_import_receipt as import_receipt
+import native_abi_import_receipt as import_receipt
 
 
 def identity(name, version=None, default=False):
