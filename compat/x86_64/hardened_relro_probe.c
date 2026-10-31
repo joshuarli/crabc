@@ -124,13 +124,17 @@ static int failed_tls_preparation_preserves_graph(int (*initialized)(void), unsi
         while (atomic_load_explicit(&worker_phase, memory_order_acquire) != 1) { }
         struct syscall_filter_instruction instructions[] = {
             {0x20, 0, 0, 0},
-            {0x15, 0, 3, SYS_mmap},
+            {0x15, 0, 6, SYS_mmap},
             {0x20, 0, 0, 24},
-            {0x35, 1, 0, 4096},
-            {0x06, 0, 0, 0x00050000 | EPERM},
+            {0x25, 0, 1, 20000},
             {0x06, 0, 0, 0x7fff0000},
+            {0x35, 0, 1, 16385},
+            {0x06, 0, 0, 0x00050000 | EPERM},
+            {0x35, 0, 1, 4096},
+            {0x06, 0, 0, 0x7fff0000},
+            {0x06, 0, 0, 0x00050000 | EPERM},
         };
-        struct syscall_filter_program program = {6, instructions};
+        struct syscall_filter_program program = {10, instructions};
         if (prctl(PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0) || prctl(PR_SET_SECCOMP, 2, &program, 0, 0)) _exit(2);
         errno = 0;
         if (syscall(SYS_mmap, 0, 95, 3, 0x22, -1, 0) != -1 || errno != EPERM) _exit(3);
