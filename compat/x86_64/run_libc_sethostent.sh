@@ -18,6 +18,9 @@ readonly SOURCE="$ROOT_DIR/libc/src/c_abi/x86_64/sethostent.rs"
 readonly HEADER_RUNNER="$ROOT_DIR/compat/x86_64/run_endhostent_header_abi.sh"
 readonly PROBE="$ROOT_DIR/compat/x86_64/libc_sethostent_probe.c"
 readonly START="$ROOT_DIR/compat/x86_64/libc_sethostent_start.S"
+# Mold localizes archive definitions in a static link; these are the only two
+# symbols this fixture permits to arrive LOCAL in the final candidate.
+readonly FINAL_LOCAL_BINDINGS="sethostent setnetent"
 
 fail() {
     printf 'ERROR: x86 static libc sethostent: %s\n' "$*" >&2
@@ -72,7 +75,7 @@ assert_static_candidate_closure() {
     readelf --dynamic --wide "$candidate_path" >"$dynamic" || true
     readelf --relocs --wide "$candidate_path" >"$relocations"
     objdump -d "$candidate_path" >"$disassembly"
-    if awk '$7 == "UND" && NF >= 8 && ($5 == "GLOBAL" || $5 == "WEAK") { print }' "$symbols" | grep . >/dev/null; then
+    if awk '$7 == "UND" && NF >= 8 && !($5 == "LOCAL" && ($8 == "_PROCEDURE_LINKAGE_TABLE_" || $8 == "__rela_iplt_start" || $8 == "__rela_iplt_end")) { print }' "$symbols" | grep . >/dev/null; then
         fail "$label candidate retains an unresolved symbol"
     fi
     if grep -Eq 'Requesting program interpreter|INTERP|NEEDED' "$headers" "$dynamic"; then
@@ -218,8 +221,8 @@ fi
     -Wl,--gc-sections -Wl,-Map,"$candidate_link_map" "$PROBE" "$START" \
     "$selected_archive" -o "$candidate"
 assert_static_candidate_closure "$candidate" candidate
-host_address="$(nm --defined-only --format=posix "$candidate" | awk '$1 == "sethostent" && ($2 == "T" || $2 == "t") { print $3; exit }')"
-net_address="$(nm --defined-only --format=posix "$candidate" | awk '$1 == "setnetent" && ($2 == "T" || $2 == "t" || $2 == "W" || $2 == "w") { print $3; exit }')"
+host_address="$(nm --defined-only --format=posix "$candidate" | awk -v allow="$FINAL_LOCAL_BINDINGS" 'function listed(n){return index(" " allow " ", " " n " ")} $1 == "sethostent" && ($2 == "T" || ($2 == "t" && listed($1))) { print $3; exit }')"
+net_address="$(nm --defined-only --format=posix "$candidate" | awk -v allow="$FINAL_LOCAL_BINDINGS" 'function listed(n){return index(" " allow " ", " " n " ")} $1 == "setnetent" && ($2 == "W" || ($2 != "T" && $2 != "W" && listed($1))) { print $3; exit }')"
 [ -n "$host_address" ] || fail "candidate lacks strong sethostent"
 [ -n "$net_address" ] || fail "candidate lacks weak setnetent"
 [ "$host_address" = "$net_address" ] ||
@@ -241,8 +244,8 @@ fi
     -Wl,-Map,"$candidate_link_map" "$PROBE" "$START" "$selected_archive" \
     -o "$override_candidate"
 assert_static_candidate_closure "$override_candidate" override
-override_host_address="$(nm --defined-only --format=posix "$override_candidate" | awk '$1 == "sethostent" && ($2 == "T" || $2 == "t") { print $3; exit }')"
-override_net_address="$(nm --defined-only --format=posix "$override_candidate" | awk '$1 == "setnetent" && ($2 == "T" || $2 == "t") { print $3; exit }')"
+override_host_address="$(nm --defined-only --format=posix "$override_candidate" | awk -v allow="$FINAL_LOCAL_BINDINGS" 'function listed(n){return index(" " allow " ", " " n " ")} $1 == "sethostent" && ($2 == "T" || ($2 == "t" && listed($1))) { print $3; exit }')"
+override_net_address="$(nm --defined-only --format=posix "$override_candidate" | awk -v allow="$FINAL_LOCAL_BINDINGS" 'function listed(n){return index(" " allow " ", " " n " ")} $1 == "setnetent" && ($2 == "T" || ($2 == "t" && listed($1))) { print $3; exit }')"
 [ -n "$override_host_address" ] || fail "override candidate lacks archive sethostent"
 [ -n "$override_net_address" ] || fail "caller strong setnetent did not override the archive weak binding"
 [ "$override_host_address" != "$override_net_address" ] ||

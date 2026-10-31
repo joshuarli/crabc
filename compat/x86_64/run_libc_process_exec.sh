@@ -29,6 +29,12 @@ readonly ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 readonly ELF_CALL_CLOSURE="$ROOT_DIR/compat/x86_64/elf_call_closure.py"
 readonly ORACLE_CC=/usr/local/bin/crabc-x86_64-musl-gcc
 readonly DEFAULT_PATH='/usr/local/bin:/bin:/usr/bin'
+# Mold localizes archive definitions in a static link; these are the only
+# process-exec names this fixture permits to arrive LOCAL in the final link.
+readonly FINAL_LOCAL_BINDINGS="execl execle execlp execv execve execvp execvpe __execvpe fexecve"
+# These weak compiler/personality symbols stay LOCAL undefined in every static
+# fixture link; they are toolchain plumbing, not exec dependencies.
+readonly TOOLCHAIN_LOCAL_UNDEFINED="_ITM_deregisterTMCloneTable _ITM_registerTMCloneTable __cxa_finalize __deregister_frame_info __register_frame_info"
 
 fail() {
     printf 'ERROR: x86 libc process exec: %s\n' "$*" >&2
@@ -211,14 +217,17 @@ assert_function_binding() {
     ' "$symbols_path" || fail "$symbol is not a $binding function"
 }
 
-assert_function_defined() {
+assert_candidate_binding() {
     local symbols_path="$1"
     local symbol="$2"
+    local binding="$3"
 
-    awk -v symbol="$symbol" '
-        $4 == "FUNC" && $7 != "UND" && $8 == symbol { found = 1 }
+    awk -v symbol="$symbol" -v binding="$binding" -v allow="$FINAL_LOCAL_BINDINGS" '
+        function listed(name) { return index(" " allow " ", " " name " ") > 0 }
+        $4 == "FUNC" && $8 == symbol &&
+            ($5 == binding || ($5 == "LOCAL" && listed($8))) { found = 1 }
         END { exit(found ? 0 : 1) }
-    ' "$symbols_path" || fail "$symbol is not a defined function"
+    ' "$symbols_path" || fail "$symbol is not a $binding function"
 }
 
 assert_default_path_rodata() {
@@ -248,7 +257,11 @@ assert_static_candidate_shape() {
     readelf --program-headers --wide "$executable" >"$headers_path"
     readelf --dynamic --wide "$executable" >"$dynamic_path" || true
     readelf --relocs --wide "$executable" >"$relocations_path"
-    if awk '$7 == "UND" && NF >= 8 && ($5 == "GLOBAL" || $5 == "WEAK") { print }' "$symbols_path" | grep . >/dev/null; then
+    local reference_allow="$TOOLCHAIN_LOCAL_UNDEFINED"
+    if awk -v allow="$reference_allow" '$7 == "UND" && NF >= 8 &&
+        !($5 == "LOCAL" && ($8 == "_PROCEDURE_LINKAGE_TABLE_" || $8 == "__rela_iplt_start" ||
+            $8 == "__rela_iplt_end" || index(" " allow " ", " " $8 " ") > 0)) { print }' \
+        "$symbols_path" | grep . >/dev/null; then
         fail "$label has unresolved symbols"
     fi
     if grep -Eq 'Requesting program interpreter|INTERP|NEEDED' \
@@ -553,9 +566,9 @@ for symbol in execl execle execlp execv execve execvp __execvpe execvpe fexecve;
         fail "candidate lacks $symbol"
 done
 for symbol in execl execle execlp execv execve execvp __execvpe fexecve; do
-    assert_function_defined "$work_dir/candidate.symbols" "$symbol"
+    assert_candidate_binding "$work_dir/candidate.symbols" "$symbol" GLOBAL
 done
-assert_function_defined "$work_dir/candidate.symbols" execvpe
+assert_candidate_binding "$work_dir/candidate.symbols" execvpe WEAK
 execvpe_value="$(symbol_value "$work_dir/candidate.symbols" execvpe)"
 internal_execvpe_value="$(symbol_value "$work_dir/candidate.symbols" __execvpe)"
 [ -n "$execvpe_value" ] && [ "$execvpe_value" = "$internal_execvpe_value" ] ||
@@ -596,8 +609,8 @@ done
     -o "$override_candidate"
 assert_static_candidate_shape "$override_candidate" strong-override
 readelf --symbols --wide "$override_candidate" >"$work_dir/strong-override.symbols"
-assert_function_defined "$work_dir/strong-override.symbols" execvpe
-assert_function_defined "$work_dir/strong-override.symbols" __execvpe
+assert_candidate_binding "$work_dir/strong-override.symbols" execvpe GLOBAL
+assert_candidate_binding "$work_dir/strong-override.symbols" __execvpe GLOBAL
 override_execvpe_value="$(symbol_value "$work_dir/strong-override.symbols" execvpe)"
 override_internal_value="$(symbol_value "$work_dir/strong-override.symbols" __execvpe)"
 [ -n "$override_execvpe_value" ] && \

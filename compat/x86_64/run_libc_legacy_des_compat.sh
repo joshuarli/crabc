@@ -261,7 +261,7 @@ for symbol in _start __errno_location __crabc_x86_static_tls_bootstrap \
     grep -Eq "[[:space:]]${symbol}$" "$candidate_symbols" ||
         fail "candidate lacks required inert-DES closure symbol $symbol"
 done
-if awk '$7 == "UND" && NF >= 8 && ($5 == "GLOBAL" || $5 == "WEAK") { print }' "$candidate_symbols" | grep . >/dev/null; then
+if awk '$7 == "UND" && NF >= 8 && !($5 == "LOCAL" && ($8 == "_PROCEDURE_LINKAGE_TABLE_" || $8 == "__rela_iplt_start" || $8 == "__rela_iplt_end")) { print }' "$candidate_symbols" | grep . >/dev/null; then
     fail "candidate retains an unresolved symbol"
 fi
 if grep -Eq 'Requesting program interpreter|INTERP|NEEDED' "$candidate_headers" "$candidate_dynamic"; then

@@ -11,6 +11,11 @@ set -euo pipefail
 
 readonly ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 readonly ORACLE_CC=/usr/local/bin/crabc-x86_64-musl-gcc
+# Mold localizes archive definitions in a static link; only these two names
+# may arrive LOCAL in the final candidate.
+readonly FINAL_LOCAL_BINDINGS="scandir malloc"
+# Weak compiler/personality symbols that stay LOCAL undefined in static links.
+readonly TOOLCHAIN_LOCAL_UNDEFINED="_ITM_deregisterTMCloneTable _ITM_registerTMCloneTable __cxa_finalize __deregister_frame_info __register_frame_info"
 
 fail() {
     printf 'ERROR: x86 libc scandir: %s\n' "$*" >&2
@@ -192,10 +197,12 @@ for symbol in scandir opendir closedir readdir qsort \
     grep -Eq "[[:space:]]${symbol}$" "$candidate_symbols" \
         || fail "candidate lacks crabc scandir dependency $symbol"
 done
-awk '$4 == "FUNC" && ($5 == "GLOBAL" || $5 == "LOCAL") && $8 == "scandir" { found = 1 }
+awk -v allow="$FINAL_LOCAL_BINDINGS" 'function listed(n){return index(" " allow " ", " " n " ")}
+     $4 == "FUNC" && $8 == "scandir" && ($5 == "GLOBAL" || ($5 == "LOCAL" && listed($8))) { found = 1 }
      END { exit(found ? 0 : 1) }' "$candidate_symbols" \
     || fail "candidate scandir is not a strong global function"
-awk '$4 == "FUNC" && ($5 == "WEAK" || $5 == "LOCAL") && $8 == "malloc" { found = 1 }
+awk -v allow="$FINAL_LOCAL_BINDINGS" 'function listed(n){return index(" " allow " ", " " n " ")}
+     $4 == "FUNC" && $8 == "malloc" && ($5 == "WEAK" || ($5 == "LOCAL" && listed($8))) { found = 1 }
      END { exit(found ? 0 : 1) }' "$candidate_symbols" \
     || fail "candidate malloc lost the selected weak binding"
 for symbol in malloc realloc free; do
@@ -224,7 +231,7 @@ for selected_member in "${selected_members[@]}"; do
     grep -Fq "$selected_archive($selected_member)" "$link_map" \
         || fail "candidate did not select required crabc archive member $selected_member"
 done
-if awk '$7 == "UND" && NF >= 8 && ($5 == "GLOBAL" || $5 == "WEAK") { print }' "$candidate_symbols" | grep . >/dev/null; then
+if awk -v allow="$TOOLCHAIN_LOCAL_UNDEFINED" '$7 == "UND" && NF >= 8 && !($5 == "LOCAL" && ($8 == "_PROCEDURE_LINKAGE_TABLE_" || $8 == "__rela_iplt_start" || $8 == "__rela_iplt_end" || index(" " allow " ", " " $8 " ") > 0)) { print }' "$candidate_symbols" | grep . >/dev/null; then
     fail "candidate has unresolved symbols"
 fi
 if grep -Eq 'Requesting program interpreter|INTERP|NEEDED' \

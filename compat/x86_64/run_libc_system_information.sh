@@ -15,6 +15,8 @@ set -euo pipefail
 readonly ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 readonly ORACLE_CC=/usr/local/bin/crabc-x86_64-musl-gcc
 readonly STATIC_C_ABI_EXPORTS="$ROOT_DIR/compat/x86_64/static_c_abi_exports.txt"
+# Weak compiler/personality symbols that stay LOCAL undefined in static links.
+readonly TOOLCHAIN_LOCAL_UNDEFINED="_ITM_deregisterTMCloneTable _ITM_registerTMCloneTable __cxa_finalize __deregister_frame_info __register_frame_info"
 
 fail() {
     printf 'ERROR: x86 static libc system information: %s\n' "$*" >&2
@@ -180,7 +182,7 @@ done
 # Keep them out of this older processor/page candidate below, but do not
 # misclassify their separately ratcheted archive exports as unselected here.
 for unselected in sethostid \
-    _Fork vfork clone execve syscall \
+    _Fork vfork clone syscall \
     malloc free calloc realloc; do
     if grep -Eq "[[:space:]][TW][[:space:]]${unselected}$" "$archive_symbols"; then
         fail "archive accidentally exports unselected ${unselected}"
@@ -214,7 +216,7 @@ for separately_selected in getloadavg gethostid; do
         fail "processor/page candidate unexpectedly retains separately selected ${separately_selected}"
     fi
 done
-unresolved_symbols="$(awk '$7 == "UND" && NF >= 8 { print }' "$candidate_symbols")"
+unresolved_symbols="$(awk -v allow="$TOOLCHAIN_LOCAL_UNDEFINED" '$7 == "UND" && NF >= 8 && !($5 == "LOCAL" && ($8 == "_PROCEDURE_LINKAGE_TABLE_" || $8 == "__rela_iplt_start" || $8 == "__rela_iplt_end" || index(" " allow " ", " " $8 " ") > 0)) { print }' "$candidate_symbols")"
 if [ -n "$unresolved_symbols" ]; then
     printf '%s\n' "$unresolved_symbols" >&2
     fail "candidate retains an unresolved symbol"

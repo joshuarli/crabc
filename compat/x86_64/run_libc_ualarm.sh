@@ -201,7 +201,7 @@ for unrelated in alarm getitimer setitimer timer_create timer_delete \
         fail "candidate unexpectedly pulls ${unrelated}"
     fi
 done
-unresolved="$(awk '$7 == "UND" && NF >= 8 && ($5 == "GLOBAL" || $5 == "WEAK") { print }' "$candidate_symbols")"
+unresolved="$(awk '$7 == "UND" && NF >= 8 && !($5 == "LOCAL" && ($8 == "_PROCEDURE_LINKAGE_TABLE_" || $8 == "__rela_iplt_start" || $8 == "__rela_iplt_end")) { print }' "$candidate_symbols")"
 [ -z "$unresolved" ] || {
     printf '%s\n' "$unresolved" >&2
     fail "candidate retains an unresolved symbol"

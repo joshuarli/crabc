@@ -35,7 +35,7 @@ assert_static_closure() {
     readelf --dynamic --wide "$candidate_path" >"$dynamic_path" || true
     readelf --relocs --wide "$candidate_path" >"$relocs_path"
     objdump -d "$candidate_path" >"$disassembly_path"
-    if awk '$7 == "UND" && NF >= 8 && ($5 == "GLOBAL" || $5 == "WEAK") { print }' "$symbols_path" | grep . >/dev/null; then
+    if awk '$7 == "UND" && NF >= 8 && !($5 == "LOCAL" && ($8 == "_PROCEDURE_LINKAGE_TABLE_" || $8 == "__rela_iplt_start" || $8 == "__rela_iplt_end")) { print }' "$symbols_path" | grep . >/dev/null; then
         fail "candidate has unresolved symbols"
     fi
     if grep -Eq 'Requesting program interpreter|INTERP|NEEDED' \

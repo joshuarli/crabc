@@ -199,7 +199,7 @@ grep -Fq "$archive($traversal_member)" "$link_map" ||
 if [ "$(grep -Fc "$archive($traversal_member)" "$link_map")" -lt 1 ]; then
     fail "selected archive member set drifted during extraction"
 fi
-if awk '$7 == "UND" && NF >= 8 && ($5 == "GLOBAL" || $5 == "WEAK") { print }' "$candidate_symbols" | grep . >/dev/null; then
+if awk '$7 == "UND" && NF >= 8 && !($5 == "LOCAL" && ($8 == "_PROCEDURE_LINKAGE_TABLE_" || $8 == "__rela_iplt_start" || $8 == "__rela_iplt_end")) { print }' "$candidate_symbols" | grep . >/dev/null; then
     fail "candidate retains an unresolved symbol"
 fi
 if grep -Eq 'Requesting program interpreter|INTERP|NEEDED' \

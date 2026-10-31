@@ -16,6 +16,11 @@ readonly ORACLE_CC=/usr/local/bin/crabc-x86_64-musl-gcc
 readonly FEATURE=x86-temporary-names
 readonly BASELINE_FEATURES=x86-allocator-runtime,x86-allocator-string-duplication
 readonly TMPDIR_PROBE=/tmp/crabc-temporary-names-must-be-ignored
+# Mold localizes archive definitions in a static link; only these two names
+# may arrive LOCAL in the final candidate.
+readonly FINAL_LOCAL_BINDINGS="tmpnam tempnam"
+# Weak compiler/personality symbols that stay LOCAL undefined in static links.
+readonly TOOLCHAIN_LOCAL_UNDEFINED="_ITM_deregisterTMCloneTable _ITM_registerTMCloneTable __cxa_finalize __deregister_frame_info __register_frame_info"
 
 fail() {
     printf 'ERROR: x86 libc temporary names: %s\n' "$*" >&2
@@ -433,8 +438,10 @@ for symbol in tmpnam tempnam strdup strndup \
         fail "candidate lacks temporary-name closure symbol $symbol"
 done
 for symbol in tmpnam tempnam; do
-    awk -v symbol="$symbol" '
-        $4 == "FUNC" && ($5 == "GLOBAL" || $5 == "LOCAL") && $8 == symbol { found = 1 }
+    awk -v symbol="$symbol" -v allow="$FINAL_LOCAL_BINDINGS" '
+        function listed(name) { return index(" " allow " ", " " name " ") > 0 }
+        $4 == "FUNC" && $8 == symbol &&
+            ($5 == "GLOBAL" || ($5 == "LOCAL" && listed($8))) { found = 1 }
         END { exit(found ? 0 : 1) }
     ' "$candidate_symbols" ||
         fail "candidate $symbol is not a strong global function"
@@ -453,7 +460,7 @@ fi
 if grep -Eq 'libc\.a\((memcpy|memset|strlen)\.lo\)' "$link_map"; then
     fail "candidate selected a pinned-musl byte-string implementation"
 fi
-if awk '$7 == "UND" && NF >= 8 && ($5 == "GLOBAL" || $5 == "WEAK") { print }' "$candidate_symbols" | grep . >/dev/null; then
+if awk -v allow="$TOOLCHAIN_LOCAL_UNDEFINED" '$7 == "UND" && NF >= 8 && !($5 == "LOCAL" && ($8 == "_PROCEDURE_LINKAGE_TABLE_" || $8 == "__rela_iplt_start" || $8 == "__rela_iplt_end" || index(" " allow " ", " " $8 " ") > 0)) { print }' "$candidate_symbols" | grep . >/dev/null; then
     fail "candidate has unresolved symbols"
 fi
 if grep -Eq 'Requesting program interpreter|INTERP|NEEDED' \

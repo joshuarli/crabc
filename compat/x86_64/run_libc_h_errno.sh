@@ -16,6 +16,9 @@ readonly ORACLE_CC=/usr/local/bin/crabc-x86_64-musl-gcc
 readonly STATIC_C_ABI_EXPORTS="$ROOT_DIR/compat/x86_64/static_c_abi_exports.txt"
 readonly AARCH64_STATIC_ABI="$ROOT_DIR/compat/abi/musl-1.2.6/aarch64/libc.a.static.tsv"
 readonly SOURCE="$ROOT_DIR/libc/src/c_abi/x86_64/h_errno.rs"
+# Mold localizes archive definitions in a static link; only these two names
+# may arrive LOCAL in the final candidate.
+readonly FINAL_LOCAL_BINDINGS="__h_errno_location h_errno"
 readonly HEADER_RUNNER="$ROOT_DIR/compat/x86_64/run_h_errno_header_abi.sh"
 readonly PROBE="$ROOT_DIR/compat/x86_64/libc_h_errno_probe.c"
 readonly START="$ROOT_DIR/compat/x86_64/libc_h_errno_start.S"
@@ -67,12 +70,17 @@ collect_global_surface() {
 }
 
 assert_h_errno_symbols() {
-    local symbols_path="$1" label="$2" binding="${3:-GLOBAL}"
+    local symbols_path="$1" label="$2" allow="${3:-}"
 
-    grep -Eq "FUNC[[:space:]]+(${binding})[[:space:]]+DEFAULT[[:space:]].*[[:space:]]__h_errno_location$" "$symbols_path" ||
-        fail "$label lacks default-bound __h_errno_location"
-    grep -Eq "[[:space:]]+4[[:space:]]+OBJECT[[:space:]]+(${binding})[[:space:]]+DEFAULT[[:space:]].*[[:space:]]h_errno$" "$symbols_path" ||
-        fail "$label lacks four-byte default-bound h_errno object"
+    awk -v allow="$allow" '
+        function listed(name) { return index(" " allow " ", " " name " ") > 0 }
+        $4 == "FUNC" && $8 == "__h_errno_location" && $6 == "DEFAULT" &&
+            ($5 == "GLOBAL" || ($5 == "LOCAL" && listed($8))) { function_seen = 1 }
+        $4 == "OBJECT" && $8 == "h_errno" && $3 == 4 && $6 == "DEFAULT" &&
+            ($5 == "GLOBAL" || ($5 == "LOCAL" && listed($8))) { object_seen = 1 }
+        END { exit(function_seen && object_seen ? 0 : 1) }
+    ' "$symbols_path" ||
+        fail "$label lacks the default-bound h_errno object and accessor"
 }
 
 assert_no_dynamic_tls() {
@@ -229,8 +237,8 @@ readelf --dynamic --wide "$candidate" >"$candidate_dynamic" || true
 readelf --relocs --wide "$candidate" >"$candidate_relocations"
 filter_debug_relocations "$candidate_relocations" "$candidate_runtime_relocations"
 objdump -d "$candidate" >"$candidate_disassembly"
-assert_h_errno_symbols "$candidate_symbols" "candidate" "GLOBAL|LOCAL"
-if awk '$7 == "UND" && NF >= 8 && ($5 == "GLOBAL" || $5 == "WEAK") { print }' "$candidate_symbols" | grep . >/dev/null; then
+assert_h_errno_symbols "$candidate_symbols" "candidate" "$FINAL_LOCAL_BINDINGS"
+if awk '$7 == "UND" && NF >= 8 && !($5 == "LOCAL" && ($8 == "_PROCEDURE_LINKAGE_TABLE_" || $8 == "__rela_iplt_start" || $8 == "__rela_iplt_end")) { print }' "$candidate_symbols" | grep . >/dev/null; then
     fail "candidate retains an unresolved symbol"
 fi
 if grep -Eq 'Requesting program interpreter|INTERP|NEEDED' \

@@ -82,7 +82,7 @@ done
     -fno-builtin -fno-stack-protector -Wl,-e,_start -Wl,--no-undefined \
     "$ROOT_DIR/$fixture" "$ROOT_DIR/$start" "$archive" -o "$work_dir/candidate"
 readelf --symbols --wide "$work_dir/candidate" >"$work_dir/candidate-symbols"
-if awk '$7 == "UND" && NF >= 8 && ($5 == "GLOBAL" || $5 == "WEAK") { print }' "$work_dir/candidate-symbols" | grep . >/dev/null; then
+if awk '$7 == "UND" && NF >= 8 && !($5 == "LOCAL" && ($8 == "_PROCEDURE_LINKAGE_TABLE_" || $8 == "__rela_iplt_start" || $8 == "__rela_iplt_end")) { print }' "$work_dir/candidate-symbols" | grep . >/dev/null; then
     echo "candidate has unresolved symbols" >&2
     exit 1
 fi

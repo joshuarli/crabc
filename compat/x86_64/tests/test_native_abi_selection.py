@@ -719,7 +719,7 @@ class SourceOwnerPolicyTests(unittest.TestCase):
     def test_x86_only_public_functions_select_explicit_shared_exports(self):
         group = self.groups['x86-only-public-functions']
         self.assertEqual(group['members'], ['arch_prctl', 'ioperm', 'iopl'])
-        self.assertIn('arch_prctl', self.groups['feature-abi-only-callables']['delegated_members'])
+        self.assertNotIn('arch_prctl', self.groups['feature-abi-only-callables']['delegated_members'])
         self.assertTrue({'ioperm', 'iopl'} <= set(self.groups['declared-callable-providers']['delegated_members']))
         for name in group['members']:
             record = self.records[name]

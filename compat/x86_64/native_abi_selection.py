@@ -12463,7 +12463,7 @@ def _stdio_selected_alias_placement(placements: Mapping[tuple[tuple[str, str | N
 # These three members complete the owner's source groups but have no pending
 # feature-alias receipt obligation. Keep them observed without inventing a
 # requirement to discharge. The other 39 aliases retain their exact feature
-# ownership, including the separately selected narrow scanning feature.
+# ownership, including the permanent scanning component.
 STDIO_ALREADY_ACCOUNTED_ALIASES = {
     '__getdelim': 'getdelim', '__isoc99_sscanf': 'sscanf', '__isoc99_vsscanf': 'vsscanf',
 }

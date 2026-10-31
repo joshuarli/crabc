@@ -219,7 +219,7 @@ for symbol in explicit_bzero swab memset; do
     grep -Eq "[[:space:]]${symbol}$" "$candidate_symbols" ||
         fail "candidate does not define $symbol"
 done
-if awk '$7 == "UND" && NF >= 8 && ($5 == "GLOBAL" || $5 == "WEAK") { print }' "$candidate_symbols" | grep . >/dev/null; then
+if awk '$7 == "UND" && NF >= 8 && !($5 == "LOCAL" && ($8 == "_PROCEDURE_LINKAGE_TABLE_" || $8 == "__rela_iplt_start" || $8 == "__rela_iplt_end")) { print }' "$candidate_symbols" | grep . >/dev/null; then
     fail "candidate retains an unresolved symbol"
 fi
 if grep -Eq 'Requesting program interpreter|INTERP|NEEDED' \
@@ -265,7 +265,7 @@ readelf --symbols --wide "$dead_candidate" >"$dead_candidate_symbols"
 readelf --program-headers --wide "$dead_candidate" >"$dead_candidate_headers"
 readelf --dynamic --wide "$dead_candidate" >"$dead_candidate_dynamic" || true
 objdump -d "$dead_candidate" >"$dead_candidate_disassembly"
-if awk '$7 == "UND" && NF >= 8 && ($5 == "GLOBAL" || $5 == "WEAK") { print }' "$dead_candidate_symbols" | grep . >/dev/null; then
+if awk '$7 == "UND" && NF >= 8 && !($5 == "LOCAL" && ($8 == "_PROCEDURE_LINKAGE_TABLE_" || $8 == "__rela_iplt_start" || $8 == "__rela_iplt_end")) { print }' "$dead_candidate_symbols" | grep . >/dev/null; then
     fail "dead-wipe candidate retains an unresolved symbol"
 fi
 if grep -Eq 'Requesting program interpreter|INTERP|NEEDED|[[:space:]]TLS[[:space:]]' \
