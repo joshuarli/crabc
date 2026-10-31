@@ -400,6 +400,52 @@ def loader_dependency_provenance(dependencies: Path, artifact: Path, *, object_d
     return records
 
 
+def merged_loader_dependency_provenance(dependencies: Path, loader_object: Path) -> list[dict[str, object]]:
+    """Bind the merged loader object's retained Cargo dep-info source closure."""
+
+    try:
+        text = dependencies.read_text(encoding="utf-8")
+        details = dependencies.lstat()
+    except OSError as error:
+        raise common.BuildError(f"merged loader dependency trace is missing: {dependencies}") from error
+    if not stat.S_ISREG(details.st_mode) or dependencies.is_symlink():
+        raise common.BuildError("merged loader dependency trace is not a regular file")
+    object_details = loader_object.lstat()
+    if (not stat.S_ISREG(object_details.st_mode) or loader_object.is_symlink()
+            or loader_object.resolve(strict=True) != loader_object):
+        raise common.BuildError("merged loader object is not a physical artifact")
+    rules = []
+    for line in text.replace("\\\n", " ").splitlines():
+        if not line.strip():
+            continue
+        target, separator, inputs = line.partition(":")
+        if not separator or ":" in inputs:
+            raise common.BuildError("merged loader dependency trace has an invalid rule")
+        rules.append((shlex.split(target), shlex.split(inputs)))
+    source_sets = {tuple(inputs) for _targets, inputs in rules if inputs}
+    if len(source_sets) != 1:
+        raise common.BuildError("merged loader dependency trace does not retain one source closure")
+    sources = list(source_sets.pop())
+    records = []
+    seen = set()
+    for spelling in sources:
+        path = Path(spelling)
+        if not path.is_absolute():
+            path = ROOT / path
+        record = _source_file_identity(path, "merged loader compiler dependency source")
+        name = record["path"]
+        if not isinstance(name, str) or not name.startswith("ldso/"):
+            raise common.BuildError("merged loader compiler dependency source is outside ldso")
+        if name in seen:
+            raise common.BuildError("merged loader compiler dependency trace has duplicate sources")
+        seen.add(name)
+        records.append(record)
+    if "ldso/src/lib.rs" not in seen:
+        raise common.BuildError("merged loader dependency trace lacks ldso/src/lib.rs")
+    records.sort(key=lambda record: str(record["path"]))
+    return records
+
+
 def loader_provenance(
     stage: Path,
     command: list[str],
@@ -408,6 +454,7 @@ def loader_provenance(
     installed_artifact: Path,
     hardening_profile: common.NativeRuntimeProfile = common.NativeRuntimeProfile.COMPATIBILITY,
     *, merged: bool = False, dependencies_override: Path | None = None,
+    merged_link_command: list[str] | None = None,
 ) -> dict[str, object]:
     """Bind the installed loader to Cargo's selected source closure and config."""
 
@@ -436,6 +483,7 @@ def loader_provenance(
         _source_file_identity(ROOT / "rust-toolchain.toml", "pinned Rust toolchain configuration"),
         _source_file_identity(ROOT / ".cargo/config.toml", "workspace Cargo configuration"),
         _source_file_identity(ROOT / "ldso/Cargo.toml", "loader Cargo configuration"),
+        _source_file_identity(ROOT / "ldso/build.rs", "loader build configuration"),
         _source_file_identity(ROOT / "compat/x86_64/dynamic_product_contract.py", "loader compiler policy"),
     ]
     installed = {
@@ -443,6 +491,23 @@ def loader_provenance(
         "sha256": common.sha256_file(installed_artifact),
         "mode": stat.S_IMODE(installed_details.st_mode),
     }
+    if merged:
+        compiler_dependencies = merged_loader_dependency_provenance(dependencies, compiler_artifact)
+        if merged_link_command is None:
+            raise common.BuildError("merged loader link command is missing")
+        compiler_object = {
+            "path": "$BUILD/" + compiler_artifact.relative_to(stage).as_posix(),
+            "sha256": common.sha256_file(compiler_artifact),
+            "size": compiler_details.st_size,
+        }
+        merged_link = {
+            "argv": [_normalized_loader_argument(argument, stage) for argument in merged_link_command],
+            "output_sha256": installed["sha256"],
+        }
+    else:
+        compiler_dependencies = loader_dependency_provenance(dependencies, compiler_artifact)
+        compiler_object = None
+        merged_link = None
     return {
         "schema": LOADER_PROVENANCE_SCHEMA,
         "target": common.TARGET,
@@ -451,7 +516,9 @@ def loader_provenance(
             "argv": [_normalized_loader_argument(argument, stage) for argument in command],
             "rustflags": rustflags,
         },
-        "compiler_dependencies": [] if merged else loader_dependency_provenance(dependencies, compiler_artifact),
+        "compiler_object": compiler_object,
+        "compiler_dependencies": compiler_dependencies,
+        "merged_link": merged_link,
         "configuration": configuration,
     }
 
@@ -772,7 +839,8 @@ def build_staged_payload(output: Path, stage: Path, *, allocator_backend: str = 
         metadata / "loader.provenance.json",
         loader_provenance(stage, loader_command, loader_env["RUSTFLAGS"], loader_artifact, interpreter,
                           hardening_profile, merged=True,
-                          dependencies_override=loader_object.with_suffix(".d")),
+                          dependencies_override=loader_object.with_suffix(".d"),
+                          merged_link_command=libc_shared_link_command),
     )
     for source, name in ((ROOT / "compat/x86_64/crabc_cc_owned_dynamic.py", "bin/crabc-cc-dynamic"),
                          (ROOT / "compat/x86_64/crabc_cc_static.py", "share/crabc/crabc_cc_static.py"),
