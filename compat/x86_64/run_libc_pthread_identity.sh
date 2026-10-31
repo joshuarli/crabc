@@ -68,6 +68,20 @@ assert_weak_same_address_pair() {
         fail "candidate ${first}/${second} is not a weak same-address pair"
 }
 
+assert_same_address_pair() {
+    local symbols_path="$1"
+    local first="$2"
+    local second="$3"
+    local first_value
+    local second_value
+
+    first_value="$(awk -v symbol="$first" '$4 == "FUNC" && ($5 == "WEAK" || $5 == "LOCAL") && $8 == symbol { print $2 }' "$symbols_path" | sort -u)"
+    second_value="$(awk -v symbol="$second" '$4 == "FUNC" && ($5 == "WEAK" || $5 == "LOCAL") && $8 == symbol { print $2 }' "$symbols_path" | sort -u)"
+    [ -n "$first_value" ] || fail "candidate does not define function ${first}"
+    [ "$first_value" = "$second_value" ] ||
+        fail "candidate ${first}/${second} is not a same-address pair"
+}
+
 require_native_linux_x86_64
 for tool in ar awk cargo cmp diff grep mkdir nm objdump readelf rustup sort; do
     require_tool "$tool"
@@ -163,9 +177,11 @@ for symbol in __errno_location __crabc_x86_static_tls_bootstrap \
     grep -Eq "[[:space:]]${symbol}$" "$candidate_symbols" ||
         fail "candidate does not define ${symbol}"
 done
-assert_weak_same_address_pair "$candidate_symbols" pthread_self thrd_current
-assert_weak_same_address_pair "$candidate_symbols" pthread_equal thrd_equal
-unresolved_symbols="$(awk '$7 == "UND" && NF >= 8 { print }' "$candidate_symbols")"
+# The final static link localizes the archive's weak aliases; each pair must
+# still share one address.
+assert_same_address_pair "$candidate_symbols" pthread_self thrd_current
+assert_same_address_pair "$candidate_symbols" pthread_equal thrd_equal
+unresolved_symbols="$(awk '$7 == "UND" && NF >= 8 && !($5 == "LOCAL" && ($8 == "_PROCEDURE_LINKAGE_TABLE_" || $8 == "__rela_iplt_start" || $8 == "__rela_iplt_end")) { print }' "$candidate_symbols")"
 if [ -n "$unresolved_symbols" ]; then
     printf '%s\n' "$unresolved_symbols" >&2
     fail "candidate retains an unresolved symbol"
