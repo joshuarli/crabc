@@ -808,10 +808,12 @@ owner decision.
   (90 symbolic). Musl's bare eager PLT relocation costs 349 instructions per
   relocation; crabc additionally enforces writable-target bounds, RELRO
   coverage and full symbol-extent validation, so the remaining gap cannot be
-  removed by P4 deletion or inlining. S5 is not accepted on the startup
-  instruction dimension; the CPU/memory gate is also deferred under D14.
-  Reopening this needs a separate owner decision and a semantics-preserving
-  resolver design.
+  removed by P4 deletion or inlining. `dlopen_graph` also retains its
+  unchanged per-name syscall excess (`gettid` 1, `mmap` 4, `newfstatat` 1,
+  `pread64` 5), part of the same loader-startup path. S5 is not accepted on
+  the startup instruction dimension; the CPU/memory gate is also deferred
+  under D14. Reopening this needs a separate owner decision and a
+  semantics-preserving resolver design.
 
 ## Runtime hardening
 
@@ -1143,12 +1145,15 @@ passed.
 | D10 lazy allocator | `26a2cb0cb` | `startup` 251,294→132,328 instructions, 3.5852→1.8879 (measured drop 118,966); `dlopen_graph` 303,601→184,635 startup, 2.6403→1.6057; allocator-attributed syscalls 5→0; static no-malloc hello 104,030→2,751 instructions and 14→5 syscalls | counts route matched-LLVM-23; lazy-init probe matrix across static/static-PIE/dynamic PIE and non-PIE; static 28-job and 72-path suite PASS; startup-errno 72 lazy cases PASS | neither startup instruction row meets 1.10; the residual 132,328/184,635 is the S4 startup lane |
 | S5 hardened evidence | `02d7ffed4` | harness gap: the probe has required `CRABC_CONVENTIONAL_RECORD_OFFSET` since `1469f9e51`; the hardened runner omitted it, so the owned startup exited 116 before emitting output | `hardened-runtime` PASS on a fresh current-source compatibility product; startup probe tests 37 pass / 11 skip | none |
 | S4 startup (blocked) | no commit, base `bd4c54743` | hard stop: `startup` 132,394 vs 77,101 and `dlopen_graph` 184,845 vs 126,490. Non-relocation startup is 34,721; 107 relocations (90 symbolic); musl's bare eager PLT relocation is 349 instructions each, while crabc also enforces writable-target, RELRO and symbol-extent validation. No P4 removal or inlining variant closes the gap | prepare PASS; counts deterministic twice; every experimental variant built, cased and reverted; tree clean | D16: owner keeps eager binding and hardening; startup/dlopen are a standing blocker, so S5 is not accepted on instructions |
+| S4 stdio margin | `d9623b8c7` | `stdio_format_parse` 1.100061→1.096561 (9758.70→9727.67 instructions/op, +30.5 margin); `stdio_file_4k` 0.8599→0.8455; one duplicate FILE-holder load removed | counts determinism 0.0011 %, linearity 0.287 %; owned-stdio PASS; libc-stdio-format-scan PASS; rust-check; parity PASS | none for this row |
 | S5 (attempt) | `d398d3ec0` rejected | **FAILED.** 58-row counts: 49 pass, 2 fail (`dlopen_graph` 2.639; `startup` 3.585 with judged syscalls 8 vs 11), 6 nondeterministic, 1 unavailable. Structure 5/7: libc 25, dispatcher 701, dispatcher lines 10,593, Python 566 / 269,998; ldso 7 features and 19,442 lines unmet. Static startup syscalls 10 vs 9. | products rebuilt at the acceptance commit; dynamic prepare, static 72-path, identity, dlopen, owned-stdio and memory suites PASS; counts report; hardened was a harness gap fixed in `02d7ffed4` | budgets unmet; startup instructions under D10; `dlopen_graph` under D11; ldso under D7; static 759-byte mmap under D12; CPU/memory under D14 (host load 20-27) |
 
-Follow-up rows S3a-ldso, D10 and S4 static TLS are landed, and the hardened
-gap is fixed. The remaining S5 failures are the startup instruction ratio and
-`dlopen_graph`, both waiting on the S4 startup lane, plus the quiet-host CPU
-and memory rerun.
+| S5 (second attempt) | `b255ccf2e` rejected | **NOT ACCEPTED.** 58 selected rows: 50 pass, 2 fail (`startup` 1.8886, `dlopen_graph` 1.6073), 5 nondeterministic (128m matrices and `pthread_create_join_tls` under load), 1 unavailable (`loader_dynamic_tls_growth`). Structure 7/7: libc 25, ldso 1, ldso x86 10,941, dispatcher 678, dispatcher lines 10,357, Python 557 files / 266,174 lines. Dynamic startup syscalls 8 vs 11; static 9. | final-tip prepare, four installed-product case families, static 72-path, hardened, counts, parity, campaign-status, structure all PASS | D16 startup/dlopen instruction standing blocker; `dlopen_graph` per-name syscall excess unchanged; D14 CPU/memory deferred (host load 26.9); 5 load-dependent nondeterministic rows |
+
+Follow-up rows S3a-ldso, D10, S4 static TLS and S4 stdio are landed, and the
+hardened gap is fixed. The remaining S5 failures are the D16 startup
+instruction rows and the D14 quiet-host CPU/memory rerun; `dlopen_graph` also
+retains its per-name syscall excess.
 
 ### Owner decisions after S5 (2026-10-31, resumed)
 
@@ -1184,10 +1189,12 @@ CPU and memory remain deferred under D14 until the host satisfies the existing
 load policy. The 2026-10-29 S0 questions were already answered as D6–D8; their
 evidence stays in Git history.
 
-The owner chose D16 over a new indexed resolver. S5 therefore remains
-unaccepted on the startup-instruction and CPU/memory dimensions; structure,
-loader, static-TLS, hardened evidence and the selected rows are otherwise
-addressed.
+The owner chose D16 over a new indexed resolver. The second S5 attempt at
+`b255ccf2e` therefore remains unaccepted on the startup-instruction and
+CPU/memory dimensions: 50 of 58 selected rows pass, with `startup`,
+`dlopen_graph`, five load-dependent nondeterministic rows and one unavailable
+row left. Structure, loader, static-TLS, stdio, hardened evidence and the
+remaining selected rows are addressed.
 
 ## Non-goals
 
