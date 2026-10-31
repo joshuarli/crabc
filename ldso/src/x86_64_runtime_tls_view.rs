@@ -21,7 +21,7 @@ pub(super) const CURRENT_VIEW_TCB_OFFSET: usize = 24;
 
 #[repr(C)]
 pub(super) struct RuntimeTlsView {
-    mapping_bytes: usize,
+    pub(super) byte_len: usize,
     previous: *mut RuntimeTlsView,
     module_count: usize,
     dtv: *mut usize,
@@ -113,13 +113,14 @@ impl PreparedTlsView {
         let table_bytes = words.checked_mul(core::mem::size_of::<usize>())?;
         let bytes = header_bytes.checked_add(table_bytes.checked_mul(2)?)?.checked_add(image_bytes)?;
         if bytes > isize::MAX as usize { return None; }
-        let mapped = unsafe { syscall6(SYS_MMAP, 0, bytes as i64,
-            PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0) };
-        if is_linux_error(mapped) { return None; }
+        // Loader scratch storage, not a fresh page mapping: generations are
+        // tens to hundreds of bytes and are retained until the thread's
+        // release boundary, which is exactly what the pool already provides.
+        let mapped = unsafe { x86_64_runtime_memory::allocate(bytes, core::mem::align_of::<RuntimeTlsView>()) }?;
         let view = mapped as *mut RuntimeTlsView;
         let dtv = unsafe { (mapped as *mut u8).add(header_bytes).cast::<usize>() };
         let sizes = unsafe { (mapped as *mut u8).add(header_bytes + table_bytes).cast::<usize>() };
-        unsafe { core::ptr::write(view, RuntimeTlsView { mapping_bytes: bytes, previous, module_count: count, dtv, sizes }); }
+        unsafe { core::ptr::write(view, RuntimeTlsView { byte_len: bytes, previous, module_count: count, dtv, sizes }); }
         let prepared = Self { view };
         unsafe {
             core::ptr::copy_nonoverlapping(old_dtv, dtv, old_count + 1);
@@ -162,7 +163,7 @@ impl PreparedTlsView {
 
 impl Drop for PreparedTlsView {
     fn drop(&mut self) {
-        unsafe { syscall2(SYS_MUNMAP, self.view as i64, (*self.view).mapping_bytes as i64); }
+        unsafe { x86_64_runtime_memory::release(self.view.cast(), (*self.view).byte_len, core::mem::align_of::<RuntimeTlsView>()); }
     }
 }
 
@@ -194,7 +195,7 @@ pub(super) unsafe fn release(tp: *mut u8) -> i64 {
         let view = unsafe { current(tp) };
         if view.is_null() { return 0; }
         let previous = unsafe { (*view).previous };
-        let result = unsafe { syscall2(SYS_MUNMAP, view as i64, (*view).mapping_bytes as i64) };
+        let result = unsafe { x86_64_runtime_memory::release(view.cast(), (*view).byte_len, core::mem::align_of::<RuntimeTlsView>()) };
         if result != 0 { return result; }
         unsafe { slot(tp).store(previous, Ordering::Release); }
     }
@@ -220,6 +221,7 @@ mod tests {
                 tls_memsz: 33, tls_align: 64, tls_module_id: 2, ..EMPTY_OBJECT }];
             let view = PreparedTlsView::prepare(first.thread_pointer, &modules)?;
             let address = view.view;
+            let view_bytes = unsafe { (*address).byte_len };
             let mut prepared = PreparedAllThreads { _guard: guard, threads: LoaderBuffer::new(2,
                 ThreadView { tp: core::ptr::null_mut(), view: core::ptr::null_mut() })? };
             prepared.threads.as_mut_slice()[0] = ThreadView { tp: first.thread_pointer, view: view.view };
@@ -227,14 +229,19 @@ mod tests {
             let mut original_limit = [0u64; 2];
             if syscall4(302, 0, 9, 0, original_limit.as_mut_ptr() as i64) != 0 { return None; }
             // Refuse new mappings only in this isolated child. Existing TLS
-            // remains accessible and the hard limit remains unchanged.
+            // remains accessible and the hard limit remains unchanged. The
+            // large image cannot be served from the loader's current chunk.
             let restricted = [0, original_limit[1]];
             if syscall4(302, 0, 9, restricted.as_ptr() as i64, 0) != 0 { return None; }
-            let refused = PreparedTlsView::prepare(second.thread_pointer, &modules).is_none();
+            let large = [initial[0], Object { tls_image: image.as_ptr(), tls_filesz: 1,
+                tls_memsz: 1 << 20, tls_align: 64, tls_module_id: 2, ..EMPTY_OBJECT }];
+            let refused = PreparedTlsView::prepare(second.thread_pointer, &large).is_none();
             if syscall4(302, 0, 9, original_limit.as_ptr() as i64, 0) != 0 || !refused { return None; }
             drop(prepared);
-            let mut residency = 0u8;
-            if syscall3(27, address as i64, 1, core::ptr::addr_of_mut!(residency) as i64) != -12 { return None; }
+            // A dropped preparation returns its scratch block to the pool.
+            let reclaimed = unsafe { x86_64_runtime_memory::allocate(view_bytes, core::mem::align_of::<RuntimeTlsView>()) };
+            if reclaimed != Some(address.cast()) { return None; }
+            unsafe { x86_64_runtime_memory::release(reclaimed.unwrap(), view_bytes, core::mem::align_of::<RuntimeTlsView>()); }
             for (block, value) in [(first, 97), (second, 101)] {
                 if !current(block.thread_pointer).is_null() || *block.dtv != 1
                     || *(*block.dtv.add(1) as *const u8) != value
@@ -259,6 +266,7 @@ mod tests {
             tls_memsz: 33, tls_align: 64, tls_module_id: 2, ..EMPTY_OBJECT }];
         let view = unsafe { PreparedTlsView::prepare(first.thread_pointer, &modules) }?;
         let address = view.view;
+        let view_bytes = unsafe { (*address).byte_len };
         let mut prepared = PreparedAllThreads { _guard: guard, threads: LoaderBuffer::new(2,
             ThreadView { tp: core::ptr::null_mut(), view: core::ptr::null_mut() })? };
         prepared.threads.as_mut_slice()[0] = ThreadView { tp: first.thread_pointer, view: view.view };
@@ -267,8 +275,9 @@ mod tests {
         // must reclaim the first prepared view without publishing either TP.
         if unsafe { PreparedTlsView::prepare(second.thread_pointer, &[]) }.is_some() { return None; }
         drop(prepared);
-        let mut residency = 0u8;
-        if unsafe { syscall3(27, address as i64, 1, core::ptr::addr_of_mut!(residency) as i64) } != -12 { return None; }
+        let reclaimed = unsafe { x86_64_runtime_memory::allocate(view_bytes, core::mem::align_of::<RuntimeTlsView>()) };
+        if reclaimed != Some(address.cast()) { return None; }
+        unsafe { x86_64_runtime_memory::release(reclaimed.unwrap(), view_bytes, core::mem::align_of::<RuntimeTlsView>()); }
         for block in [first, second] {
             if !unsafe { current(block.thread_pointer) }.is_null()
                 || unsafe { *block.dtv } != 1 || unsafe { *(*block.dtv.add(1) as *const u8) } != 31

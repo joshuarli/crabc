@@ -442,10 +442,8 @@ unsafe fn constructor_order(snapshot: &ObjectSnapshot, root: *mut RuntimeObject)
 }
 
 unsafe fn initialize_object(node: *mut RuntimeObject) {
-    unsafe { initialize_object_as(node, current_tid()); }
+    unsafe { initialize_object_as(node, constructor_tid()); }
 }
-
-fn current_tid() -> i32 { (unsafe { syscall1(186, 0) }) as i32 }
 
 /// A libc-attached main task has already queried its kernel TID before it
 /// invokes initial constructors. Zero means no handoff was published, and
@@ -476,12 +474,32 @@ impl InitialConstructorTid {
 
 static INITIAL_CONSTRUCTOR_TID: InitialConstructorTid = InitialConstructorTid::new();
 
+/// The initial task's kernel TID after startup consumed its one-shot
+/// constructor handoff. A dlopen from that task reuses it instead of issuing
+/// a second gettid; any other task still queries its own TID. Fork completion
+/// replaces the cached value with the child's.
+static INITIAL_TASK_TID: AtomicI32 = AtomicI32::new(0);
+
+fn current_tid() -> i32 { (unsafe { syscall1(186, 0) }) as i32 }
+
+fn constructor_tid() -> i32 {
+    let initial = unsafe { x86_64_general_initial_tls_state::retained_initial_thread_pointer() };
+    if initial == Some(unsafe { super::read_thread_pointer() } as *mut u8) {
+        let tid = INITIAL_TASK_TID.load(Ordering::Acquire);
+        if tid > 0 { return tid; }
+    }
+    current_tid()
+}
+
 /// The private libc startup attachment publishes its validated initial-task
 /// TID before any constructor can run. Reject a duplicate or late handoff so
 /// no later caller can rewrite the ownership token used by this queue.
 #[export_name = "__crabc_x86_64_runtime_publish_initial_tid"]
 pub unsafe extern "C" fn runtime_publish_initial_tid(tid: i32) -> i32 {
-    if INITIAL_CONSTRUCTOR_TID.publish(tid) { 0 } else { -1 }
+    if INITIAL_CONSTRUCTOR_TID.publish(tid) {
+        INITIAL_TASK_TID.store(tid, Ordering::Release);
+        0
+    } else { -1 }
 }
 
 /// Incremented in each fork child's copy by `runtime_fork_complete`. A
@@ -651,6 +669,7 @@ pub unsafe extern "C" fn runtime_fork_complete(parent_tid: i32, child: i32, call
         FORK_GENERATION.fetch_add(1, Ordering::Relaxed);
         let tid = unsafe { syscall1(186, 0) } as i32;
         INITIAL_CONSTRUCTOR_TID.adopt_fork_child(tid);
+        if tid > 0 { INITIAL_TASK_TID.store(tid, Ordering::Release); }
         let thread_pointer = unsafe { read_thread_pointer() } as *mut u8;
         let registry = unsafe { &mut *REGISTRY.0.get() };
         let mut node = registry.head;
@@ -738,10 +757,6 @@ unsafe fn node_name(node: *mut RuntimeObject) -> &'static [u8] {
 }
 
 unsafe fn find_identity(registry: &RuntimeRegistry, new: &UnpublishedObjects, identity: ObjectIdentity) -> *mut RuntimeObject {
-    let self_node = unsafe { find_interpreter_self(registry, new) };
-    if !self_node.is_null() && unsafe { super::x86_64_general_initial_graph::self_identity_matches(identity) } {
-        return self_node;
-    }
     for head in [registry.head, new.head] {
         let mut node = head;
         while !node.is_null() {
@@ -835,13 +850,17 @@ unsafe fn load_one(
     let mapped = unsafe { map_elf_with_status(fd, &status, false, true, ObjectRole::Library) };
     unsafe { syscall1(SYS_CLOSE, fd); }
     let mut object = mapped?;
+    // A second copy of the interpreter (a hardlink under a non-alias name or
+    // any file carrying its libc SONAME) must not become a second libc. Only
+    // this rare candidate needs the interpreter's file identity; ordinary
+    // DSOs never stat it, as musl resolves its own aliases by name.
     let self_node = unsafe { find_interpreter_self(registry, new) };
-    if !self_node.is_null()
-        && !unsafe { super::x86_64_general_initial_graph::self_identity_matches(identity) }
-        && unsafe { super::mapped_soname_is_libc(&object) }
-    {
+    if !self_node.is_null() && unsafe { super::mapped_soname_is_libc(&object) } {
+        let is_self = unsafe { super::x86_64_general_initial_graph::self_identity_matches(identity) };
         unsafe { syscall2(SYS_MUNMAP, object.map_span_start as i64, object.map_span_byte_len as i64); }
-        return Err(EINVAL);
+        if !is_self { return Err(EINVAL); }
+        if short_name { unsafe { (*self_node).short_name = true; } }
+        return Ok(self_node);
     }
     object.search_name = path.view();
     object.search_short_name = short_name;
@@ -1102,7 +1121,7 @@ pub unsafe extern "C" fn runtime_open(filename: *const u8, flags: i32, diagnosti
     };
     match result {
         Ok((root, snapshot, constructors)) => {
-            let mut tid = current_tid();
+            let mut tid = constructor_tid();
             for &index in constructors.as_slice() { tid = unsafe { initialize_object_as(snapshot.nodes.as_slice()[index], tid) }; }
             root.cast()
         }

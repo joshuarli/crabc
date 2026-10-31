@@ -230,6 +230,7 @@ const R_X86_64_TLSDESC: u32 = 36;
 const SYS_WRITE: i64 = 1;
 const SYS_CLOSE: i64 = 3;
 const SYS_FSTAT: i64 = 5;
+const SYS_READ: i64 = 0;
 const SYS_PREAD64: i64 = 17;
 const SYS_NEWFSTATAT: i64 = 262;
 const SYS_MMAP: i64 = 9;
@@ -2052,11 +2053,12 @@ unsafe fn map_elf_with_status(
         return Err(ENOEXEC);
     }
     let header_map_len = file_byte_len.min(PAGE);
-    // Read the first page as musl's map_library reads its header buffer: one
-    // pread, not a temporary mapping and its unmap. A short read means the
-    // file changed under the fstat and is rejected like a truncated image.
+    // Read the first page as musl's map_library reads its header buffer from a
+    // freshly opened descriptor: one sequential read at offset zero, not a
+    // positional read. A short read means the file changed under the fstat and
+    // is rejected like a truncated image.
     let mut header_bytes = [0u8; PAGE as usize];
-    let read = syscall_error(syscall4(SYS_PREAD64, fd, header_bytes.as_mut_ptr() as i64, header_map_len as i64, 0))?;
+    let read = syscall_error(syscall3(SYS_READ, fd, header_bytes.as_mut_ptr() as i64, header_map_len as i64))?;
     if read as u64 != header_map_len {
         return Err(ENOEXEC);
     }
@@ -2129,6 +2131,12 @@ unsafe fn map_elf_with_status(
     for index in 0..phnum {
         let p = phdr.add(index * 56);
         if read_u32(p) != PT_LOAD {
+            continue;
+        }
+        // A zero-memsz PT_LOAD describes no bytes of the image; linkers emit
+        // one for the bss-only tail. It still extends the reservation above,
+        // but mapping its page would only overlay the anonymous zero fill.
+        if read_u64(p.add(40)) == 0 {
             continue;
         }
         let vaddr = read_u64(p.add(16));
@@ -3848,6 +3856,7 @@ mod readable_file_load_tests {
         phdr[32..40].copy_from_slice(&0x100u64.to_le_bytes());
         phdr[40..48].copy_from_slice(&0x100u64.to_le_bytes());
         assert_eq!(unsafe { syscall3(SYS_WRITE, fd, image.as_ptr() as i64, PAGE as i64) }, PAGE as i64);
+        assert_eq!(unsafe { syscall3(8, fd, 0, 0) }, 0);
         let status = unsafe { FileStatus::of_fd(fd) }.unwrap();
         assert!(matches!(unsafe { map_elf_with_status(fd, &status, false, true,
             ObjectRole::Library) }, Err(ENOEXEC)));
@@ -3900,6 +3909,11 @@ mod readable_file_load_tests {
         image[0x340..0x348].copy_from_slice(&[1, 0, 0, 0, 1, 0, 0, 0]);
         image[0x370] = 0x5a;
         assert_eq!(unsafe { syscall3(SYS_WRITE, fd, image.as_ptr() as i64, PAGE as i64) }, PAGE as i64);
+        // Production opens one descriptor per image; this probe reuses the
+        // descriptor, so rewind the sequential header read before every map.
+        const SYS_LSEEK: i64 = 8;
+        let rewind = || assert_eq!(unsafe { syscall3(SYS_LSEEK, fd, 0, 0) }, 0);
+        rewind();
         let status = unsafe { FileStatus::of_fd(fd) }.unwrap();
         let object = unsafe { map_elf_with_status(fd, &status, false, true, ObjectRole::Library) }.unwrap();
         assert_eq!(object.phdr as u64, object.base + 0x2000 + 64);
@@ -3929,6 +3943,7 @@ mod readable_file_load_tests {
         let executable_stack = (PF_R | PF_W | PF_X).to_le_bytes();
         assert_eq!(unsafe { syscall4(SYS_PWRITE64, fd, executable_stack.as_ptr() as i64,
             executable_stack.len() as i64, 236) }, executable_stack.len() as i64);
+        rewind();
         let executable = unsafe { map_elf_with_status(fd, &status, false, true, ObjectRole::Library) };
         if cfg!(crabc_hardened) {
             assert!(matches!(executable, Err(ENOEXEC)));
@@ -3942,6 +3957,7 @@ mod readable_file_load_tests {
             writable_stack.len() as i64, 236) }, writable_stack.len() as i64);
         let bad_version = 0u32.to_le_bytes();
         assert_eq!(unsafe { syscall4(SYS_PWRITE64, fd, bad_version.as_ptr() as i64, 4, 20) }, 4);
+        rewind();
         let versioned = unsafe { map_elf_with_status(fd, &status, false, true, ObjectRole::Library) };
         if cfg!(crabc_hardened) {
             assert!(matches!(versioned, Err(ENOEXEC)));
@@ -3955,6 +3971,7 @@ mod readable_file_load_tests {
         let overflowing_offset = u64::MAX.to_le_bytes();
         assert_eq!(unsafe { syscall4(SYS_PWRITE64, fd, overflowing_offset.as_ptr() as i64,
             overflowing_offset.len() as i64, 64 + 56 + 8) }, overflowing_offset.len() as i64);
+        rewind();
         assert!(matches!(unsafe { map_elf_with_status(fd, &status, false, true,
             ObjectRole::Library) }, Err(ENOEXEC)));
         assert_eq!(unsafe { syscall1(SYS_CLOSE, fd) }, 0);
@@ -4000,6 +4017,9 @@ mod readable_file_load_tests {
         image[0x340..0x348].copy_from_slice(&[1, 0, 0, 0, 1, 0, 0, 0]);
         image[0x348..0x350].fill(0);
         assert_eq!(unsafe { syscall3(SYS_WRITE, fd, image.as_ptr() as i64, PAGE as i64) }, PAGE as i64);
+        const SYS_LSEEK: i64 = 8;
+        let rewind = || assert_eq!(unsafe { syscall3(SYS_LSEEK, fd, 0, 0) }, 0);
+        rewind();
         let status = unsafe { FileStatus::of_fd(fd) }.unwrap();
         let object = unsafe { map_elf_with_status(fd, &status, false, true, ObjectRole::Library) }.unwrap();
         assert_eq!(object.symtab_file_record_limit, 4);
@@ -4013,6 +4033,7 @@ mod readable_file_load_tests {
         let without_bss = 0x380u64.to_le_bytes();
         assert_eq!(unsafe { syscall4(SYS_PWRITE64, fd, without_bss.as_ptr() as i64,
             without_bss.len() as i64, 64 + 40) }, without_bss.len() as i64);
+        rewind();
         let object = unsafe { map_elf_with_status(fd, &status, false, true, ObjectRole::Library) }.unwrap();
         assert_eq!(unsafe { *((object.base as *const u8).add(0x380)) }, 0xa5);
         assert_eq!(unsafe { syscall2(SYS_MUNMAP, object.map_span_start as i64,
@@ -4027,6 +4048,65 @@ mod readable_file_load_tests {
         header[16..24].copy_from_slice(&start.to_le_bytes());
         header[32..40].copy_from_slice(&filesz.to_le_bytes());
         header[40..48].copy_from_slice(&memsz.to_le_bytes());
+    }
+
+    // A linker can emit an empty PT_LOAD for the bss-only tail. It describes
+    // no image bytes, so the mapper must not overlay the reservation page that
+    // its unaligned vaddr happens to reach.
+    #[test]
+    fn mapper_skips_zero_memory_load_without_overlaying_the_reservation() {
+        const SYS_MEMFD_CREATE: i64 = 319;
+        let fd = unsafe { syscall2(SYS_MEMFD_CREATE, b"empty-load\0".as_ptr() as i64, 0) };
+        assert!(fd >= 0);
+        let mut image = [0xa5u8; PAGE as usize];
+        image[..176].fill(0);
+        image[..4].copy_from_slice(b"\x7fELF");
+        image[4] = 2;
+        image[5] = 1;
+        image[16..18].copy_from_slice(&3u16.to_le_bytes());
+        image[18..20].copy_from_slice(&62u16.to_le_bytes());
+        image[32..40].copy_from_slice(&64u64.to_le_bytes());
+        image[54..56].copy_from_slice(&56u16.to_le_bytes());
+        image[56..58].copy_from_slice(&3u16.to_le_bytes());
+        let load = &mut image[64..120];
+        load[..4].copy_from_slice(&PT_LOAD.to_le_bytes());
+        load[4..8].copy_from_slice(&(PF_R | PF_W).to_le_bytes());
+        load[32..40].copy_from_slice(&0x400u64.to_le_bytes());
+        load[40..48].copy_from_slice(&0x400u64.to_le_bytes());
+        let empty = &mut image[120..176];
+        empty[..4].copy_from_slice(&PT_LOAD.to_le_bytes());
+        empty[4..8].copy_from_slice(&(PF_R | PF_W).to_le_bytes());
+        empty[8..16].copy_from_slice(&0x100u64.to_le_bytes());
+        empty[16..24].copy_from_slice(&0x4100u64.to_le_bytes());
+        let dynamic = &mut image[176..232];
+        dynamic[..4].copy_from_slice(&PT_DYNAMIC.to_le_bytes());
+        dynamic[8..16].copy_from_slice(&0x200u64.to_le_bytes());
+        dynamic[16..24].copy_from_slice(&0x200u64.to_le_bytes());
+        dynamic[32..40].copy_from_slice(&96u64.to_le_bytes());
+        dynamic[40..48].copy_from_slice(&96u64.to_le_bytes());
+        for (index, (tag, value)) in [
+            (DT_STRTAB, 0x300u64), (DT_STRSZ, 1), (DT_SYMTAB, 0x320),
+            (DT_SYMENT, 24), (DT_HASH, 0x340), (DT_NULL, 0),
+        ].into_iter().enumerate() {
+            let entry = &mut image[0x200 + index * 16..][..16];
+            entry[..8].copy_from_slice(&tag.to_le_bytes());
+            entry[8..16].copy_from_slice(&value.to_le_bytes());
+        }
+        image[0x300] = 0;
+        image[0x320..0x338].fill(0);
+        image[0x340..0x348].copy_from_slice(&[1, 0, 0, 0, 1, 0, 0, 0]);
+        image[0x348..0x350].fill(0);
+        assert_eq!(unsafe { syscall3(SYS_WRITE, fd, image.as_ptr() as i64, PAGE as i64) }, PAGE as i64);
+        assert_eq!(unsafe { syscall3(8, fd, 0, 0) }, 0);
+        let status = unsafe { FileStatus::of_fd(fd) }.unwrap();
+        let object = unsafe { map_elf_with_status(fd, &status, false, true, ObjectRole::Library) }.unwrap();
+        assert_eq!(object.map_span_byte_len, 0x5000);
+        let mapped = object.base as *const u8;
+        assert!(unsafe { core::slice::from_raw_parts(mapped.add(0x4000), 0x1000) }
+            .iter().all(|&byte| byte == 0));
+        assert_eq!(unsafe { syscall2(SYS_MUNMAP, object.map_span_start as i64,
+            object.map_span_byte_len as i64) }, 0);
+        assert_eq!(unsafe { syscall1(SYS_CLOSE, fd) }, 0);
     }
 
     #[test]

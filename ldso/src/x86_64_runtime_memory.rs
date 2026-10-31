@@ -125,13 +125,14 @@ fn allocate_block<const ZEROED: bool>(bytes: usize, align: usize) -> Option<*mut
 
 /// Return a block from [`allocate`] with the same `bytes` and `align`.
 ///
+/// A pooled block returns to its size class; a block that owned its own
+/// mapping is unmapped, and that result is the caller's to inspect.
 /// # Safety
 /// `block` came from `allocate(bytes, align)` and is not used afterwards.
-pub(super) unsafe fn release(block: *mut u8, bytes: usize, align: usize) {
+pub(super) unsafe fn release(block: *mut u8, bytes: usize, align: usize) -> i64 {
     let Some((index, _)) = class(bytes, align) else {
         // A zero-length request with larger alignment mapped one byte.
-        unsafe { syscall2(SYS_MUNMAP, block as i64, bytes.max(1) as i64); }
-        return;
+        return unsafe { syscall2(SYS_MUNMAP, block as i64, bytes.max(1) as i64) };
     };
     let _guard = AllocationGuard::acquire();
     // SAFETY: the guard serializes every pool access; the caller transfers
@@ -139,6 +140,7 @@ pub(super) unsafe fn release(block: *mut u8, bytes: usize, align: usize) {
     let pool = unsafe { &mut *POOL.0.get() };
     unsafe { block.cast::<*mut u8>().write(pool.free[index]); }
     pool.free[index] = block;
+    0
 }
 
 pub(super) struct LoaderBuffer<T: Copy> { pointer: *mut T, length: usize, bytes: usize }

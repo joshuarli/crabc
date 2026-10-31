@@ -213,12 +213,22 @@ mod tests {
             *second_address = 73;
             x86_64_runtime_tls_view::PreparedAllThreads::prepare(guard, &modules[..3])?.publish();
             let latest = x86_64_runtime_tls_view::current(first.thread_pointer) as usize;
-            if old == latest || !resident(old) || !resident(latest) { return None; }
+            if old == latest { return None; }
+            let old_bytes = unsafe { (*(old as *mut x86_64_runtime_tls_view::RuntimeTlsView)).byte_len };
+            let latest_bytes = unsafe { (*(latest as *mut x86_64_runtime_tls_view::RuntimeTlsView)).byte_len };
             // All worker users are quiescent. Release reacquires the same
             // graph lock through the exact runtime token release entry point.
             Guard::complete_fork();
-            if release(&first_token) != 0 || resident(old) || resident(latest)
-                || resident(first.mapping as usize) { return None; }
+            if release(&first_token) != 0 || resident(first.mapping as usize) { return None; }
+            // Retired generations return their scratch to the loader pool; the
+            // two just-freed blocks are the next allocations of their class.
+            let reclaimed_old = x86_64_runtime_memory::allocate(old_bytes, core::mem::align_of::<x86_64_runtime_tls_view::RuntimeTlsView>())?;
+            let reclaimed_latest = x86_64_runtime_memory::allocate(latest_bytes, core::mem::align_of::<x86_64_runtime_tls_view::RuntimeTlsView>())?;
+            if reclaimed_old as usize != old || reclaimed_latest as usize != latest { return None; }
+            unsafe {
+                x86_64_runtime_memory::release(reclaimed_old, old_bytes, core::mem::align_of::<x86_64_runtime_tls_view::RuntimeTlsView>());
+                x86_64_runtime_memory::release(reclaimed_latest, latest_bytes, core::mem::align_of::<x86_64_runtime_tls_view::RuntimeTlsView>());
+            }
             {
                 let next_guard = Guard::acquire();
                 let mut count = 0;
