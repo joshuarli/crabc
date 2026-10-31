@@ -776,13 +776,13 @@ owner decision.
   floor is dominated by the static-TLS bootstrap (`from_auxv`, `materialize`,
   `bootstrap_initial_thread`). Those are the S4 startup targets, subject to the
   same 1.10 × gate.
-- **D11 — `dlopen_graph`: attribute before opening a loader lane.** S5's
-  2.6403× row is 303,603 startup instructions against musl's 114,988, while
-  the dlopen operation itself is 15,582 against 15,592. The gap is the eager
-  allocator startup D10 removes, not the symbol-resolution path; the judged
-  syscall total is 60 against 61. Re-run the row after D10 and open a loader
-  lane only for a residual over 1.10×, with the same hard stop: no semantic
-  change, or report the exact blocking mechanism.
+- **D11 — `dlopen_graph`: startup, not symbol resolution.** S5's 2.6403× row
+  was 303,603 startup instructions against musl's 114,988, while the dlopen
+  operation itself was 15,582 against 15,592. D10 removes the allocator share;
+  the post-D10 row is 184,845 against a 126,490 target. The remaining gap is
+  the same relocation transaction as D16, so it is covered by the standing
+  startup blocker and no separate resolver lane is opened. The judged syscall
+  total is 60 against 61.
 - **D12 — static startup 759-byte `mmap`: remove the preallocation.** Do not
   relax the static syscall budget from 9 to 10. The mapping is static TLS
   (`StaticInitialTlsPlan::materialize`), not allocator lifecycle, so it is not
@@ -800,6 +800,18 @@ owner decision.
   `b28cb221d` the x86 product is 12,175 lines and the total is 16,611, so the
   lane must remove about 1,175 dead or fixed-graph-only x86 lines. It must not
   delete live product mechanisms to reach the number.
+- **D16 — startup instructions are a standing blocker.** The owner chose to
+  keep eager binding and every hardening check rather than authorize a new
+  indexed resolver. S4 measured the post-D10 floor: 132,394 dynamic startup
+  instructions against a 77,101 target (`dlopen_graph` 184,845 against
+  126,490), with 34,721 non-relocation instructions and 107 relocations
+  (90 symbolic). Musl's bare eager PLT relocation costs 349 instructions per
+  relocation; crabc additionally enforces writable-target bounds, RELRO
+  coverage and full symbol-extent validation, so the remaining gap cannot be
+  removed by P4 deletion or inlining. S5 is not accepted on the startup
+  instruction dimension; the CPU/memory gate is also deferred under D14.
+  Reopening this needs a separate owner decision and a semantics-preserving
+  resolver design.
 
 ## Runtime hardening
 
@@ -1130,6 +1142,7 @@ passed.
 | S4 static TLS | `b9f9554df` | static startup syscalls 10→9 (budget 9): the 767-byte initial-TLS `mmap` is gone, the main thread installs from 1,024 bytes of in-image `.bss`; judged non-allocator 5→4 (musl 4); startup instructions 55,184→55,171 (env -i); `.bss` +1,024 | new in-image TLS audit fails on the old product and passes on installed ET_EXEC and static-PIE; merged-tip `owned-static-sysroot` 72-path PASS; rust-check libc/crt; parity ledger PASS | focused `libc-*-static-tls` runners fail identically on the unchanged base (pre-existing mold/PLT harness rot), so the static product suite is the evidence |
 | D10 lazy allocator | `26a2cb0cb` | `startup` 251,294→132,328 instructions, 3.5852→1.8879 (measured drop 118,966); `dlopen_graph` 303,601→184,635 startup, 2.6403→1.6057; allocator-attributed syscalls 5→0; static no-malloc hello 104,030→2,751 instructions and 14→5 syscalls | counts route matched-LLVM-23; lazy-init probe matrix across static/static-PIE/dynamic PIE and non-PIE; static 28-job and 72-path suite PASS; startup-errno 72 lazy cases PASS | neither startup instruction row meets 1.10; the residual 132,328/184,635 is the S4 startup lane |
 | S5 hardened evidence | `02d7ffed4` | harness gap: the probe has required `CRABC_CONVENTIONAL_RECORD_OFFSET` since `1469f9e51`; the hardened runner omitted it, so the owned startup exited 116 before emitting output | `hardened-runtime` PASS on a fresh current-source compatibility product; startup probe tests 37 pass / 11 skip | none |
+| S4 startup (blocked) | no commit, base `bd4c54743` | hard stop: `startup` 132,394 vs 77,101 and `dlopen_graph` 184,845 vs 126,490. Non-relocation startup is 34,721; 107 relocations (90 symbolic); musl's bare eager PLT relocation is 349 instructions each, while crabc also enforces writable-target, RELRO and symbol-extent validation. No P4 removal or inlining variant closes the gap | prepare PASS; counts deterministic twice; every experimental variant built, cased and reverted; tree clean | D16: owner keeps eager binding and hardening; startup/dlopen are a standing blocker, so S5 is not accepted on instructions |
 | S5 (attempt) | `d398d3ec0` rejected | **FAILED.** 58-row counts: 49 pass, 2 fail (`dlopen_graph` 2.639; `startup` 3.585 with judged syscalls 8 vs 11), 6 nondeterministic, 1 unavailable. Structure 5/7: libc 25, dispatcher 701, dispatcher lines 10,593, Python 566 / 269,998; ldso 7 features and 19,442 lines unmet. Static startup syscalls 10 vs 9. | products rebuilt at the acceptance commit; dynamic prepare, static 72-path, identity, dlopen, owned-stdio and memory suites PASS; counts report; hardened was a harness gap fixed in `02d7ffed4` | budgets unmet; startup instructions under D10; `dlopen_graph` under D11; ldso under D7; static 759-byte mmap under D12; CPU/memory under D14 (host load 20-27) |
 
 Follow-up rows S3a-ldso, D10 and S4 static TLS are landed, and the hardened
@@ -1154,10 +1167,10 @@ and a lane:
 2. **ldso — D7 done at `b7c9ab7ad`.** 71/71 cases run through the installed
    product; features 7→1; x86 product lines 10,941 against the D15 budget of
    11,000; parity and campaign-status pass.
-3. **`dlopen_graph` — D11.** Attribute first: its operation delta is already
-   at parity (15,582 vs 15,592 instructions) and the 2.64× row is startup.
-   Re-run after D10; open a loader lane only for a residual >1.10 ×, with the
-   same hard stop.
+3. **`dlopen_graph` — D11/D16.** Its operation delta is already at parity
+   (15,582 vs 15,592 instructions); the post-D10 row is startup-bound at
+   184,845 against 126,490 and shares D16's standing blocker. No separate
+   resolver lane is opened.
 4. **Static 759-byte `mmap` — D12 done in `b9f9554df`.** The main thread
    installs from in-image `.bss`; static startup is 9 calls against the 9
    budget, with the allocator-attributed five unchanged. Oversized templates
@@ -1170,6 +1183,11 @@ and a lane:
 CPU and memory remain deferred under D14 until the host satisfies the existing
 load policy. The 2026-10-29 S0 questions were already answered as D6–D8; their
 evidence stays in Git history.
+
+The owner chose D16 over a new indexed resolver. S5 therefore remains
+unaccepted on the startup-instruction and CPU/memory dimensions; structure,
+loader, static-TLS, hardened evidence and the selected rows are otherwise
+addressed.
 
 ## Non-goals
 
