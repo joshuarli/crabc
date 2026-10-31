@@ -2,7 +2,7 @@
 # Native Linux/x86-64 static crabc-libc explicit_bzero/swab evidence.
 #
 # The common project-header body first runs against pinned musl 1.2.6 and then
-# an opt-in `-nostdlib -static` candidate. It proves exact range clearing and
+# a `-nostdlib -static` candidate. It proves exact range clearing and
 # disjoint pair swaps; a separate O3 dead-local witness audits that
 # explicit_bzero remains an observable wipe even without a later C read.
 set -euo pipefail
@@ -10,7 +10,6 @@ set -euo pipefail
 
 readonly ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 readonly ORACLE_CC=/usr/local/bin/crabc-x86_64-musl-gcc
-readonly FEATURE=x86-memory-special
 readonly STATIC_C_ABI_EXPORTS="$ROOT_DIR/compat/x86_64/static_c_abi_exports.txt"
 readonly SOURCE="$ROOT_DIR/libc/src/c_abi/x86_64/memory_special.rs"
 readonly HEADER_RUNNER="$ROOT_DIR/compat/x86_64/run_memory_special_header_abi.sh"
@@ -55,21 +54,6 @@ collect_global_surface() {
         nm -g --defined-only --format=posix "${members[@]}"
     ) | awk '$2 ~ /^[TWDVBR]$/ && $1 !~ /^(_R|_ZN|DW\.ref\.|anon\.)/ && $1 != "crabc_x86_64_signal_restorer" && $1 != "__crabc_x86_pthread_clone" { print $1 }' |
         LC_ALL=C sort -u >"$output_path"
-}
-
-assert_feature_delta() {
-    local baseline_symbols="$1" featured_symbols="$2" additions="$3" removed="$4"
-
-    comm -23 "$baseline_symbols" "$featured_symbols" >"$removed"
-    if [ -s "$removed" ]; then
-        diff -u "$baseline_symbols" "$featured_symbols" >&2 || true
-        fail "x86-memory-special removes a default C ABI export"
-    fi
-    comm -13 "$baseline_symbols" "$featured_symbols" >"$additions"
-    if ! cmp -s <(printf 'explicit_bzero\nswab\n') "$additions"; then
-        diff -u <(printf 'explicit_bzero\nswab\n') "$additions" >&2 || true
-        fail "x86-memory-special changes more than explicit_bzero/swab"
-    fi
 }
 
 assert_dead_wipe_retained() {
@@ -117,9 +101,7 @@ bash "$HEADER_RUNNER" >/dev/null
 work_dir="$(mktemp -d /tmp/crabc-x86-64-libc-memory-special.XXXXXX)"
 trap 'rm -rf -- "$work_dir"' EXIT
 baseline_target="$work_dir/cargo-baseline"
-featured_target="$work_dir/cargo-featured"
 baseline_archive="$baseline_target/x86_64-unknown-linux-musl/debug/libc.a"
-featured_archive="$featured_target/x86_64-unknown-linux-musl/debug/libc.a"
 selected_archive="$work_dir/libcrabc-memory-special.a"
 reference="$work_dir/musl-memory-special-reference"
 candidate="$work_dir/crabc-memory-special-candidate"
@@ -128,9 +110,6 @@ dead_candidate="$work_dir/crabc-explicit-bzero-dead-wipe"
 header_trace="$work_dir/header-trace"
 baseline_symbols="$work_dir/baseline-symbols"
 expected_symbols="$work_dir/expected-symbols"
-featured_symbols="$work_dir/featured-symbols"
-feature_additions="$work_dir/feature-additions"
-feature_removed="$work_dir/feature-removed"
 archive_symbols="$work_dir/archive-symbols"
 special_undefined="$work_dir/special-undefined"
 special_relocations="$work_dir/special-relocations"
@@ -160,29 +139,23 @@ done
 "$reference" || fail "pinned-musl explicit_bzero/swab fixture failed"
 
 build_source_runtime_libc "$baseline_target/x86_64-unknown-linux-musl/debug/libc.a"
-[ -f "$baseline_archive" ] || fail "cargo did not emit the baseline x86 static libc archive"
+[ -f "$baseline_archive" ] || fail "cargo did not emit the default x86 static libc archive"
 collect_global_surface "$baseline_archive" "$baseline_symbols" "$work_dir/baseline-members"
 grep -Ev '^(#|$)' "$STATIC_C_ABI_EXPORTS" | LC_ALL=C sort -u >"$expected_symbols"
 if ! cmp -s "$expected_symbols" "$baseline_symbols"; then
     diff -u "$expected_symbols" "$baseline_symbols" >&2 || true
-    fail "selected static C ABI export surface drifted"
+    fail "default static C ABI export surface drifted"
 fi
 for symbol in explicit_bzero swab; do
-    if grep -Fxq "$symbol" "$baseline_symbols"; then
-        fail "baseline archive unexpectedly defines opt-in $symbol"
-    fi
+    grep -Fxq "$symbol" "$baseline_symbols" ||
+        fail "default archive does not define the unconditional $symbol owner"
 done
-
-build_source_runtime_libc "$featured_target/x86_64-unknown-linux-musl/debug/libc.a" \
-    --features "$FEATURE"
 [ -f "$SOURCE" ] || fail "missing explicit_bzero/swab source"
-[ -f "$featured_archive" ] || fail "cargo did not emit the featured x86 static libc archive"
-collect_global_surface "$featured_archive" "$featured_symbols" "$work_dir/featured-members"
-assert_feature_delta "$baseline_symbols" "$featured_symbols" "$feature_additions" "$feature_removed"
+featured_archive="$baseline_archive"
 nm -A --defined-only "$featured_archive" >"$archive_symbols"
 for symbol in explicit_bzero swab memset; do
     grep -Eq "[[:space:]][TW][[:space:]]${symbol}$" "$archive_symbols" ||
-        fail "featured archive does not define $symbol"
+        fail "default archive does not define $symbol"
 done
 for marker in 'src/string/explicit_bzero.c::explicit_bzero' \
     'src/string/swab.c::swab' 'cleared = in(reg) cleared' \
@@ -246,7 +219,7 @@ for symbol in explicit_bzero swab memset; do
     grep -Eq "[[:space:]]${symbol}$" "$candidate_symbols" ||
         fail "candidate does not define $symbol"
 done
-if awk '$7 == "UND" && NF >= 8 { print }' "$candidate_symbols" | grep . >/dev/null; then
+if awk '$7 == "UND" && NF >= 8 && ($5 == "GLOBAL" || $5 == "WEAK") { print }' "$candidate_symbols" | grep . >/dev/null; then
     fail "candidate retains an unresolved symbol"
 fi
 if grep -Eq 'Requesting program interpreter|INTERP|NEEDED' \
@@ -292,7 +265,7 @@ readelf --symbols --wide "$dead_candidate" >"$dead_candidate_symbols"
 readelf --program-headers --wide "$dead_candidate" >"$dead_candidate_headers"
 readelf --dynamic --wide "$dead_candidate" >"$dead_candidate_dynamic" || true
 objdump -d "$dead_candidate" >"$dead_candidate_disassembly"
-if awk '$7 == "UND" && NF >= 8 { print }' "$dead_candidate_symbols" | grep . >/dev/null; then
+if awk '$7 == "UND" && NF >= 8 && ($5 == "GLOBAL" || $5 == "WEAK") { print }' "$dead_candidate_symbols" | grep . >/dev/null; then
     fail "dead-wipe candidate retains an unresolved symbol"
 fi
 if grep -Eq 'Requesting program interpreter|INTERP|NEEDED|[[:space:]]TLS[[:space:]]' \

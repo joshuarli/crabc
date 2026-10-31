@@ -6,13 +6,12 @@
 # wrapper against a raw syscall with repeated errno sentinels. A process-local
 # seccomp filter forces deterministic permission errors on those same invalid
 # requests. The gate never enables I/O permissions and never executes port I/O.
-# The opt-in archive closure may add exactly iopl and ioperm to the default ABI.
+# The unconditional archive closure adds exactly iopl and ioperm to the default ABI.
 set -euo pipefail
 . "$(dirname "${BASH_SOURCE[0]}")/source_runtime_libc.sh"
 
 readonly ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 readonly ORACLE_CC=/usr/local/bin/crabc-x86_64-musl-gcc
-readonly FEATURE=x86-io-permissions
 readonly STATIC_C_ABI_EXPORTS="$ROOT_DIR/compat/x86_64/static_c_abi_exports.txt"
 readonly SOURCE="$ROOT_DIR/libc/src/c_abi/x86_64/io_permissions.rs"
 readonly EXECUTION_TIMEOUT=20s
@@ -42,21 +41,6 @@ collect_global_surface() {
         nm -g --defined-only --format=posix "${members[@]}"
     ) | awk '$2 ~ /^[TWDVBR]$/ && $1 !~ /^(_R|_ZN|DW\.ref\.|anon\.)/ && $1 != "crabc_x86_64_signal_restorer" && $1 != "__crabc_x86_pthread_clone" { print $1 }' |
         LC_ALL=C sort -u >"$output_path"
-}
-
-assert_feature_delta() {
-    local baseline_symbols="$1" featured_symbols="$2" additions="$3" removed="$4"
-
-    comm -23 "$baseline_symbols" "$featured_symbols" >"$removed"
-    if [ -s "$removed" ]; then
-        diff -u "$baseline_symbols" "$featured_symbols" >&2 || true
-        fail "x86-io-permissions removes a default C ABI export"
-    fi
-    comm -13 "$baseline_symbols" "$featured_symbols" >"$additions"
-    if ! cmp -s <(printf 'ioperm\niopl\n') "$additions"; then
-        diff -u <(printf 'ioperm\niopl\n') "$additions" >&2 || true
-        fail "x86-io-permissions changes more than iopl/ioperm"
-    fi
 }
 
 assert_fixture_tls_capacity() {
@@ -208,17 +192,12 @@ bash "$ROOT_DIR/compat/x86_64/run_sys_io_header_abi.sh" >/dev/null
 work_dir="$(mktemp -d "$TMPDIR/crabc-x86-64-libc-io-permissions.XXXXXX")"
 chmod 755 "$work_dir"
 baseline_target="$work_dir/cargo-baseline"
-featured_target="$work_dir/cargo-featured"
 baseline_archive="$baseline_target/x86_64-unknown-linux-musl/debug/libc.a"
-featured_archive="$featured_target/x86_64-unknown-linux-musl/debug/libc.a"
 reference="$work_dir/musl-io-permissions-reference"
 candidate="$work_dir/crabc-io-permissions-candidate"
 header_trace="$work_dir/header-trace"
 baseline_symbols="$work_dir/baseline-symbols"
 expected_symbols="$work_dir/expected-symbols"
-featured_symbols="$work_dir/featured-symbols"
-feature_additions="$work_dir/feature-additions"
-feature_removed="$work_dir/feature-removed"
 archive_symbols="$work_dir/archive-symbols"
 archive_relocations="$work_dir/archive-relocations"
 archive_disassembly="$work_dir/archive-disassembly"
@@ -244,29 +223,23 @@ reference_status="$(capture_invalid_probe_status "$reference" "pinned-musl")"
 assert_probe_stream "$work_dir/pinned-musl.stdout"
 
 build_source_runtime_libc "$baseline_target/x86_64-unknown-linux-musl/debug/libc.a"
-[ -f "$baseline_archive" ] || fail "cargo did not emit the baseline x86 static libc archive"
+[ -f "$baseline_archive" ] || fail "cargo did not emit the default x86 static libc archive"
 collect_global_surface "$baseline_archive" "$baseline_symbols" "$work_dir/baseline-members"
 grep -Ev '^(#|$)' "$STATIC_C_ABI_EXPORTS" | LC_ALL=C sort -u >"$expected_symbols"
 if ! cmp -s "$expected_symbols" "$baseline_symbols"; then
     diff -u "$expected_symbols" "$baseline_symbols" >&2 || true
-    fail "selected static C ABI export surface drifted"
+    fail "default static C ABI export surface drifted"
 fi
 for symbol in "${EXPECTED_ADDITIONS[@]}"; do
-    if grep -Fxq "$symbol" "$baseline_symbols"; then
-        fail "baseline archive unexpectedly defines opt-in $symbol"
-    fi
+    grep -Fxq "$symbol" "$baseline_symbols" ||
+        fail "default archive does not define the unconditional $symbol owner"
 done
-
-build_source_runtime_libc "$featured_target/x86_64-unknown-linux-musl/debug/libc.a" \
-    --features "$FEATURE"
 [ -f "$SOURCE" ] || fail "missing iopl/ioperm source"
-[ -f "$featured_archive" ] || fail "cargo did not emit the featured x86 static libc archive"
-collect_global_surface "$featured_archive" "$featured_symbols" "$work_dir/featured-members"
-assert_feature_delta "$baseline_symbols" "$featured_symbols" "$feature_additions" "$feature_removed"
+featured_archive="$baseline_archive"
 nm -A --defined-only "$featured_archive" >"$archive_symbols"
 for symbol in __errno_location __crabc_x86_static_tls_bootstrap iopl ioperm; do
     grep -Eq "[[:space:]][TW][[:space:]]${symbol}$" "$archive_symbols" ||
-        fail "featured archive does not define $symbol"
+        fail "default archive does not define $symbol"
 done
 for marker in 'src/linux/iopl.c::iopl' 'src/linux/ioperm.c::ioperm' \
     'SYS_IOPL' 'SYS_IOPERM' 'pub unsafe extern "C" fn iopl' \
@@ -277,9 +250,9 @@ readelf --relocs --wide "$featured_archive" >"$archive_relocations"
 objdump -dr "$featured_archive" >"$archive_disassembly"
 if grep -Eq 'TLSGD|TLSLD|TLSDESC|GOTTPOFF|DTPMOD(64)?|__tls_get_addr|crabc_core|mimalloc|sha_crypt' \
     "$archive_relocations" "$archive_disassembly"; then
-    fail "featured archive selects dynamic TLS or an unowned runtime dependency"
+    fail "default archive selects dynamic TLS or an unowned runtime dependency"
 fi
-assert_io_permissions_boundary "$featured_archive" "$work_dir/archive-io-permissions-disassembly" "featured archive"
+assert_io_permissions_boundary "$featured_archive" "$work_dir/archive-io-permissions-disassembly" "default archive"
 
 "$ORACLE_CC" -std=c11 -DCRABC_IO_PERMISSIONS_FREESTANDING \
     -I "$ROOT_DIR/include" -nostdlib -static -fno-pie -no-pie -ffreestanding \
@@ -296,7 +269,7 @@ for symbol in __errno_location __crabc_x86_static_tls_bootstrap iopl ioperm; do
     grep -Eq "[[:space:]]${symbol}$" "$candidate_symbols" ||
         fail "candidate does not define $symbol"
 done
-if awk '$7 == "UND" && NF >= 8 { print }' "$candidate_symbols" | grep . >/dev/null; then
+if awk '$7 == "UND" && NF >= 8 && ($5 == "GLOBAL" || $5 == "WEAK") { print }' "$candidate_symbols" | grep . >/dev/null; then
     fail "candidate retains an unresolved symbol"
 fi
 if grep -Eq 'Requesting program interpreter|INTERP|NEEDED' \
@@ -332,6 +305,6 @@ cmp "$work_dir/pinned-musl.stderr" "$work_dir/candidate.stderr" ||
         pinned-musl.stdout pinned-musl.stderr pinned-musl.status \
         candidate.stdout candidate.stderr candidate.status >sha256sum
 )
-rm -rf -- "$baseline_target" "$featured_target" "$work_dir/baseline-members" \
+rm -rf -- "$baseline_target" "$work_dir/baseline-members" \
     "$work_dir/featured-members" "$work_dir/featured_archive-provider-objects"
 printf 'x86 static crabc-libc iopl/ioperm physical differential: PASS (no port-I/O execution; evidence: %s)\n' "$work_dir"

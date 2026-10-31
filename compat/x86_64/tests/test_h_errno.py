@@ -74,12 +74,10 @@ class HErrnoTests(unittest.TestCase):
         }
         ledger = tomllib.loads(PARITY.read_text(encoding="utf-8"))
 
-        self.assertIn("x86-h-errno = []", manifest)
+        self.assertNotIn("x86-h-errno", manifest)
+        self.assertIn('x86-resolver-runtime = ["dep:crabc-core"]', manifest)
         self.assertIn(
-            'x86-resolver-runtime = ["dep:crabc-core", "x86-h-errno"]', manifest
-        )
-        self.assertIn(
-            '#[cfg(feature = "x86-h-errno")]\n#[path = "h_errno.rs"]\nmod h_errno;',
+            '#[path = "h_errno.rs"]\nmod h_errno;',
             static_root,
         )
         for required in (
@@ -135,8 +133,8 @@ class HErrnoTests(unittest.TestCase):
         self.assertIn("crabc_x86_64_h_errno_probe", start)
 
         for required in (
-            "x86-h-errno",
-            "assert_feature_delta",
+            "default archive does not define the unconditional",
+            "default static export ratchet",
             "__h_errno_location",
             "h_errno",
             "h_errno.lo",
@@ -147,7 +145,7 @@ class HErrnoTests(unittest.TestCase):
         ):
             self.assertIn(required, runner)
         self.assertNotIn("--whole-archive", runner)
-        self.assertFalse(static_exports & {"h_errno", "__h_errno_location"})
+        self.assertTrue({"h_errno", "__h_errno_location"} <= static_exports)
         assert_header_abi_dispatches(
             self, ROOT, "h-errno", "run_h_errno_header_abi.sh"
         )
@@ -180,18 +178,18 @@ class HErrnoTests(unittest.TestCase):
         for boundary in ("does not complete", "public x86 support"):
             self.assertIn(boundary, evidence["scope"])
 
-        feature = next(
-            record for record in ledger["feature_archive"] if record["id"] == "x86-h-errno"
+        self.assertFalse(
+            any(
+                record["id"] == "x86-h-errno"
+                for record in ledger["feature_archive"]
+            )
         )
-        self.assertEqual("verified", feature["state"])
-        self.assertEqual([], feature["baseline_features"])
-        self.assertEqual(["__h_errno_location"], feature["additive_callables"])
         resolver_feature = next(
             record
             for record in ledger["feature_archive"]
             if record["id"] == "x86-resolver-runtime"
         )
-        self.assertEqual(["x86-h-errno"], resolver_feature["baseline_features"])
+        self.assertEqual([], resolver_feature["baseline_features"])
         self.assertNotIn("__h_errno_location", resolver_feature["additive_callables"])
 
 

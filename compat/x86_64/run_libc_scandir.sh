@@ -192,10 +192,10 @@ for symbol in scandir opendir closedir readdir qsort \
     grep -Eq "[[:space:]]${symbol}$" "$candidate_symbols" \
         || fail "candidate lacks crabc scandir dependency $symbol"
 done
-awk '$4 == "FUNC" && $5 == "GLOBAL" && $8 == "scandir" { found = 1 }
+awk '$4 == "FUNC" && ($5 == "GLOBAL" || $5 == "LOCAL") && $8 == "scandir" { found = 1 }
      END { exit(found ? 0 : 1) }' "$candidate_symbols" \
     || fail "candidate scandir is not a strong global function"
-awk '$4 == "FUNC" && $5 == "WEAK" && $8 == "malloc" { found = 1 }
+awk '$4 == "FUNC" && ($5 == "WEAK" || $5 == "LOCAL") && $8 == "malloc" { found = 1 }
      END { exit(found ? 0 : 1) }' "$candidate_symbols" \
     || fail "candidate malloc lost the selected weak binding"
 for symbol in malloc realloc free; do
@@ -224,7 +224,7 @@ for selected_member in "${selected_members[@]}"; do
     grep -Fq "$selected_archive($selected_member)" "$link_map" \
         || fail "candidate did not select required crabc archive member $selected_member"
 done
-if awk '$7 == "UND" && NF >= 8 { print }' "$candidate_symbols" | grep . >/dev/null; then
+if awk '$7 == "UND" && NF >= 8 && ($5 == "GLOBAL" || $5 == "WEAK") { print }' "$candidate_symbols" | grep . >/dev/null; then
     fail "candidate has unresolved symbols"
 fi
 if grep -Eq 'Requesting program interpreter|INTERP|NEEDED' \

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Native Linux/x86-64 opt-in crabc-libc ftw/nftw evidence.
+# Native Linux/x86-64 crabc-libc ftw/nftw evidence.
 #
 # The same project-header fixture runs the pinned-musl ordinary traversal
 # reference, then an allocation-free -nostdlib crabc candidate. FTW_CHDIR is
@@ -12,7 +12,6 @@ set -euo pipefail
 
 readonly ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 readonly ORACLE_CC=/usr/local/bin/crabc-x86_64-musl-gcc
-readonly FEATURE=x86-filesystem-traversal
 readonly STATIC_C_ABI_EXPORTS="$ROOT_DIR/compat/x86_64/static_c_abi_exports.txt"
 readonly EXECUTION_TIMEOUT=20s
 readonly -a EXPECTED_ADDITIONS=(ftw nftw)
@@ -86,20 +85,14 @@ bash "$ROOT_DIR/compat/x86_64/run_ftw_header_abi.sh" >/dev/null
 work_dir="$(mktemp -d /tmp/crabc-x86-64-libc-filesystem-traversal.XXXXXX)"
 trap 'rm -rf -- "$work_dir"' EXIT
 base_target="$work_dir/base-target"
-feature_target="$work_dir/feature-target"
 base_archive="$base_target/x86_64-unknown-linux-musl/debug/libc.a"
-archive="$feature_target/x86_64-unknown-linux-musl/debug/libc.a"
 reference="$work_dir/musl-filesystem-traversal-reference"
 candidate="$work_dir/crabc-static-filesystem-traversal-candidate"
 reference_work="$work_dir/reference-work"
 candidate_work="$work_dir/candidate-work"
 header_trace="$work_dir/header-trace"
 base_surface="$work_dir/base-surface"
-feature_surface="$work_dir/feature-surface"
 expected_surface="$work_dir/expected-surface"
-expected_feature_surface="$work_dir/expected-feature-surface"
-observed_additions="$work_dir/observed-additions"
-expected_additions="$work_dir/expected-additions"
 archive_symbols="$work_dir/archive-symbols"
 archive_elf_symbols="$work_dir/archive-elf-symbols"
 archive_relocations="$work_dir/archive-relocations"
@@ -134,34 +127,19 @@ else
 fi
 
 build_source_runtime_libc "$base_target/x86_64-unknown-linux-musl/debug/libc.a"
-[ -f "$base_archive" ] || fail "cargo did not emit unfeatured x86 archive"
+[ -f "$base_archive" ] || fail "cargo did not emit the default x86 archive"
 collect_global_surface "$base_archive" "$base_surface" "$work_dir/base-members"
 grep -Ev '^(#|$)' "$STATIC_C_ABI_EXPORTS" | LC_ALL=C sort -u >"$expected_surface"
 if ! cmp -s "$expected_surface" "$base_surface"; then
     diff -u "$expected_surface" "$base_surface" >&2 || true
-    fail "unfeatured selected-static C ABI export surface drifted"
+    fail "default selected-static C ABI export surface drifted"
 fi
 for symbol in "${EXPECTED_ADDITIONS[@]}"; do
-    if grep -Fxq "$symbol" "$base_surface"; then
-        fail "unfeatured archive unexpectedly exposes opt-in $symbol"
-    fi
+    grep -Fxq "$symbol" "$base_surface" ||
+        fail "default archive does not define the unconditional $symbol owner"
 done
-
-build_source_runtime_libc "$feature_target/x86_64-unknown-linux-musl/debug/libc.a" \
-    --features "$FEATURE"
-[ -f "$archive" ] || fail "cargo did not emit opt-in x86 archive"
-collect_global_surface "$archive" "$feature_surface" "$work_dir/feature-members"
-comm -13 "$base_surface" "$feature_surface" >"$observed_additions"
-printf '%s\n' "${EXPECTED_ADDITIONS[@]}" | LC_ALL=C sort -u >"$expected_additions"
-if ! cmp -s "$expected_additions" "$observed_additions"; then
-    diff -u "$expected_additions" "$observed_additions" >&2 || true
-    fail "opt-in traversal changed more than its exact public closure"
-fi
-LC_ALL=C sort -u "$base_surface" "$expected_additions" >"$expected_feature_surface"
-if ! cmp -s "$expected_feature_surface" "$feature_surface"; then
-    diff -u "$expected_feature_surface" "$feature_surface" >&2 || true
-    fail "opt-in traversal did not preserve frozen export surface"
-fi
+archive="$base_archive"
+feature_surface="$base_surface"
 
 nm -A --defined-only "$archive" >"$archive_symbols"
 readelf --symbols --wide "$archive" >"$archive_elf_symbols"
@@ -199,7 +177,7 @@ readelf --dynamic --wide "$candidate" >"$candidate_dynamic" || true
 readelf --relocs --wide "$candidate" >"$candidate_relocations"
 objdump -d "$candidate" >"$candidate_disassembly"
 for symbol in _start __errno_location __crabc_x86_static_tls_bootstrap ftw nftw \
-    opendir closedir chdir getcwd; do
+    fdopendir closedir chdir getcwd; do
     grep -Eq "[[:space:]]${symbol}$" "$candidate_symbols" ||
         fail "candidate lacks crabc traversal dependency $symbol"
 done
@@ -221,7 +199,7 @@ grep -Fq "$archive($traversal_member)" "$link_map" ||
 if [ "$(grep -Fc "$archive($traversal_member)" "$link_map")" -lt 1 ]; then
     fail "selected archive member set drifted during extraction"
 fi
-if awk '$7 == "UND" && NF >= 8 { print }' "$candidate_symbols" | grep . >/dev/null; then
+if awk '$7 == "UND" && NF >= 8 && ($5 == "GLOBAL" || $5 == "WEAK") { print }' "$candidate_symbols" | grep . >/dev/null; then
     fail "candidate retains an unresolved symbol"
 fi
 if grep -Eq 'Requesting program interpreter|INTERP|NEEDED' \

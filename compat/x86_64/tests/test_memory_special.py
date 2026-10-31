@@ -70,9 +70,8 @@ class MemorySpecialTests(unittest.TestCase):
         parity = PARITY.read_text(encoding="utf-8")
         static_exports = STATIC_EXPORTS.read_text(encoding="utf-8").splitlines()
 
-        self.assertIn("x86-memory-special = []", manifest)
+        self.assertNotIn("x86-memory-special", manifest)
         self.assertIn(
-            '#[cfg(feature = "x86-memory-special")]\n'
             '#[path = "memory_special.rs"]\n'
             "mod memory_special;",
             static_root,
@@ -122,10 +121,9 @@ class MemorySpecialTests(unittest.TestCase):
         self.assertIn("crabc_x86_64_explicit_bzero_dead_wipe", dead_wipe_start)
 
         for required in (
-            "x86-memory-special",
-            "assert_feature_delta",
+            "default archive does not define the unconditional",
+            "default static C ABI export surface",
             "run_memory_special_header_abi.sh",
-            "explicit_bzero\\nswab",
             "-O3",
             "dead-wipe",
             "retains no optimized explicit_bzero call or zeroing stores",
@@ -135,8 +133,8 @@ class MemorySpecialTests(unittest.TestCase):
         ):
             self.assertIn(required, runner)
         self.assertNotIn("--whole-archive", runner)
-        self.assertNotIn("explicit_bzero", static_exports)
-        self.assertNotIn("swab", static_exports)
+        self.assertIn("explicit_bzero", static_exports)
+        self.assertIn("swab", static_exports)
         assert_header_abi_dispatches(
             self, ROOT, "memory-special", "run_memory_special_header_abi.sh"
         )
@@ -158,7 +156,7 @@ class MemorySpecialTests(unittest.TestCase):
             if record["id"] == "static-c-explicit-bzero-swab"
         )
         self.assertNotIn("capabilities", artifact)
-        self.assertIn("x86-memory-special", artifact["description"])
+        self.assertIn("unconditional owner", artifact["description"])
         self.assertIn("does not complete or promote memory.bytes-special", artifact["description"])
         self.assertIn(
             "libc/src/c_abi/x86_64/memory_special.rs", artifact["source_owners"]

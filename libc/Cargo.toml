@@ -15,10 +15,6 @@ bench = false
 
 [features]
 default = []
-# Permanent stdin/stdout/stderr formatted-I/O forwarding is a distinct opt-in
-# archive: the frozen byte-string format/scan default surface remains unchanged
-# until its stream-specific export registration is added.
-x86-stdio-permanent-format-scan = []
 # Private Linux/x86-64 selection of the same C allocator backend used by the
 # AArch64 runtime. Keeping this opt-in prevents the existing dependency-free
 # selected-static artifacts from silently acquiring bundled C allocator
@@ -45,26 +41,14 @@ x86-owned-static-runtime = [
 # The installed aggregate above adds the alloc-backed
 # crypt boundary to these shared leaves.
 x86-owned-static-runtime-core = [
-    "x86-kernel-admin",
-    "x86-math-long-double-completion",
     "x86-allocator-runtime",
     "x86-allocator-observability",
     "x86-allocator-string-duplication",
     "x86-environment-runtime",
-    "x86-file-handles",
-    "x86-filesystem-traversal",
     "x86-temporary-names",
-    "x86-process-exec",
-    "x86-stdio-permanent-format-scan",
     "x86-scandir",
     "x86-resolver-runtime",
-    "x86-interval-timers",
-    "x86-ualarm",
-    "x86-sched-rr-interval",
-    "x86-netdb-setent",
     "x86-legacy-misc",
-    "x86-a64l",
-    "x86-memory-special",
     "dep:rand_pcg",
 ]
 # Share the owned leaf roster; process linkage is selected independently in
@@ -75,21 +59,9 @@ x86-owned-dynamic-runtime = ["x86-owned-static-runtime"]
 # allocator client capabilities are shared through target-local build.rs cfgs.
 x86-owned-static-native-shadow = [
     "native-mimalloc-shadow",
-    "x86-kernel-admin",
     "x86-crypt",
-    "x86-math-long-double-completion",
-    "x86-file-handles",
-    "x86-filesystem-traversal",
-    "x86-process-exec",
-    "x86-stdio-permanent-format-scan",
     "x86-resolver-runtime",
-    "x86-interval-timers",
-    "x86-ualarm",
-    "x86-sched-rr-interval",
-    "x86-netdb-setent",
     "x86-legacy-misc",
-    "x86-a64l",
-    "x86-memory-special",
     "dep:rand_pcg",
 ]
 x86-owned-dynamic-native-shadow = ["x86-owned-static-native-shadow"]
@@ -106,10 +78,6 @@ x86-temporary-names = ["x86-allocator-string-duplication"]
 # allocator boundaries. Keeping it opt-in leaves the dependency-free directory
 # stream artifact and the default x86 static export root unchanged.
 x86-scandir = ["x86-allocator-runtime"]
-# The historical ftw/nftw tree walker is an allocation-free directory client.
-# Keep it opt-in so the frozen selected-static archive does not silently add
-# callback-driven traversal or process-CWD mutation entry points.
-x86-filesystem-traversal = []
 # The environment owner needs the same C allocation provider as musl's
 # setenv/putenv vector and string bookkeeping. Keep it opt-in so existing
 # dependency-free selected-static artifacts do not silently acquire it.
@@ -119,35 +87,14 @@ x86-environment-runtime = ["x86-allocator-runtime"]
 # x86 C allocator wrapper; keeping this opt-in leaves the
 # dependency-free selected-static archive unchanged.
 x86-posix-spawn-file-actions = ["x86-allocator-runtime"]
-# Private Linux/x86-64 direct process-image replacement. This reuses the
-# selected environment and byte-string substrates plus private raw mappings
-# for variadic argv vectors, but does not select fork, vfork, spawn, or an
-# allocator/runtime composition.
-x86-process-exec = []
 # Provide the distinct strong allocator-observation entry that AArch64 also
 # exports, only when selected. This implies the private allocation backend but
 # does not widen the earlier basic-wrapper artifact's exact object surface.
 x86-allocator-observability = ["x86-allocator-runtime"]
-# Private Linux/x86-64 h_errno accessor and object. This retains only
-# the selected bootstrapped-main and selected-pthread-worker status slots;
-# it does not select resolver configuration, DNS, netdb, or a general TCB.
-x86-h-errno = []
-# Pinned musl's historical microsecond ITIMER_REAL adapter. Keep it
-# opt-in so the frozen default archive does not silently acquire process-global timer mutation.
-x86-ualarm = []
-# Pinned musl's public getitimer/setitimer pair is a process-global
-# interval-timer control boundary. Keep it opt-in so the frozen
-# dependency-free selected-static archive remains unchanged.
-x86-interval-timers = []
-# Private Linux/x86-64 file-handle syscalls.  The pair remains
-# opt-in so the frozen dependency-free selected-static archive does not gain
-# filesystem-handle authority.
-x86-file-handles = []
 # Private Linux/x86-64 resolver runtime. The C ABI state owner uses
-# the h_errno state owner plus the existing stateless
-# no_std DNS transport. It remains opt-in so
+# the stateless no_std DNS transport. It remains opt-in so
 # the frozen default archive does not silently acquire resolver state or I/O.
-x86-resolver-runtime = ["dep:crabc-core", "x86-h-errno"]
+x86-resolver-runtime = ["dep:crabc-core"]
 # Private Linux/x86-64 build of the existing bounded SHA-crypt C ABI.
 # `sha-crypt` owns the MCF result temporarily. The target-local adapter bridges
 # only to the final link's C malloc/aligned_alloc/free symbols; this does not
@@ -159,16 +106,10 @@ x86-crypt = ["dep:base64ct", "dep:sha-crypt"]
 # x86 allocator wrapper/backend. This adds no callable or capability: it names
 # the allocation-provider contract and keeps a manual pair selection rejected.
 x86-crypt-allocator-composition = ["x86-crypt", "x86-allocator-runtime"]
-# The frozen legacy.misc aggregate has five default-root
-# prerequisites. The inert-DES spelling pair is a
-# narrow prerequisite so owned products can select it without `fmtmsg`; the
-# aggregate retains only its bounded formatting addition.
-x86-legacy-des-compat = []
-x86-legacy-misc = ["x86-legacy-des-compat"]
-# Private x86 binary80 closure for the exact musl `fdiml` and GNU
-# `exp10l`/weak-`pow10l` entries.  It intentionally has no default-root or
-# dependency effect.
-x86-math-long-double-completion = []
+# The frozen legacy.misc aggregate retains only its bounded formatting
+# addition; the unconditional inert-DES pair must not gain a second fmtmsg
+# owner here.
+x86-legacy-misc = []
 # Pinned musl's `signal.c` exports two historical weak spellings at the exact
 # `signal` address. Keep this ABI-only compatibility leaf opt-in so the frozen
 # selected-static archive does not silently gain legacy signal names.
@@ -182,32 +123,6 @@ x86-signal-sysv-helpers = []
 # frozen default archive deliberately rejects diagnostics and these two public
 # spellings until this feature's closed static differential is selected.
 x86-signal-reporting = []
-# Pinned musl's iopl/ioperm pair is a direct privileged-kernel permission
-# boundary. Keep it opt-in so the default archive does not silently gain I/O
-# privilege mutation entry points.
-x86-io-permissions = []
-# The owned kernel-administration component combines musl's public x86
-# arch_prctl veneer with the separately retained iopl/ioperm module. It is
-# selected only by the owned products; the focused I/O-only feature remains
-# available so the frozen default archive keeps its exact export surface.
-x86-kernel-admin = ["x86-io-permissions"]
-# Pinned musl's round-robin interval wrapper is a direct scheduler-observation
-# seam. Keep it opt-in until its C ABI/error/TLS differential is selected,
-# leaving the frozen default archive free of scheduler query entry points.
-x86-sched-rr-interval = []
-# Pinned musl's explicit_bzero/swab pair is a small byte-range compatibility
-# boundary. Keep it opt-in until its optimizer-retention and pair-copy proof
-# closes, preserving the frozen default C ABI surface.
-x86-memory-special = []
-# Pinned musl's a64l decoder shares source provenance with the default l64a
-# encoder but uses its own immutable 64-byte table scan, with no byte-string
-# archive dependency. Keep it opt-in so the default archive remains the frozen
-# one-symbol l64a source split.
-x86-a64l = []
-# Pinned musl's stateless sethostent/setnetent pair shares one strong/weak ELF
-# alias body. Keep both names opt-in so the default archive stays free of
-# legacy netdb setter symbols and no resolver/database state is implied.
-x86-netdb-setent = []
 # Pinned musl's three spin-object operations share one exact atomic state
 # machine with the init/destroy modules. Keep the
 # acquisition/release extension opt-in so the frozen selected-static archive

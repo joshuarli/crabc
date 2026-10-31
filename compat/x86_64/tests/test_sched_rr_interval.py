@@ -64,9 +64,8 @@ class SchedRrIntervalTests(unittest.TestCase):
         parity = PARITY.read_text(encoding="utf-8")
         static_exports = STATIC_EXPORTS.read_text(encoding="utf-8").splitlines()
 
-        self.assertIn("x86-sched-rr-interval = []", manifest)
+        self.assertNotIn("x86-sched-rr-interval", manifest)
         self.assertIn(
-            '#[cfg(feature = "x86-sched-rr-interval")]\n'
             '#[path = "sched_rr_get_interval.rs"]\n'
             "mod sched_rr_get_interval;",
             static_root,
@@ -111,8 +110,8 @@ class SchedRrIntervalTests(unittest.TestCase):
         self.assertNotIn("arch_prctl", start)
 
         for required in (
-            "x86-sched-rr-interval",
-            "assert_feature_delta",
+            "unconditional sched_rr_get_interval owner",
+            "default static C ABI export surface",
             "run_sched_rr_interval_header_abi.sh",
             "syscall 148",
             "-nostdlib -static",
@@ -121,7 +120,7 @@ class SchedRrIntervalTests(unittest.TestCase):
         ):
             self.assertIn(required, runner)
         self.assertNotIn("--whole-archive", runner)
-        self.assertNotIn("sched_rr_get_interval", static_exports)
+        self.assertIn("sched_rr_get_interval", static_exports)
         for required in (
             "run_libc_sched_rr_interval_probe()",
             "run_libc_sched_rr_interval.sh",
@@ -141,7 +140,7 @@ class SchedRrIntervalTests(unittest.TestCase):
             if record["id"] == "static-c-sched-rr-interval"
         )
         self.assertNotIn("capabilities", artifact)
-        self.assertIn("x86-sched-rr-interval", artifact["description"])
+        self.assertIn("unconditional owner", artifact["description"])
         self.assertIn("does not select scheduler policy mutation", artifact["description"])
         self.assertIn(
             "libc/src/c_abi/x86_64/sched_rr_get_interval.rs",

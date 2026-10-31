@@ -5947,9 +5947,8 @@ esac
         ):
             self.assertIn(required, fixture)
         for required in (
-            "x86-stdio-permanent-format-scan",
+            "default archive does not define the unconditional",
             "default archive export surface drifted",
-            "feature-delta",
             "--no-undefined",
             "-nostdlib -static",
         ):
@@ -8234,7 +8233,7 @@ esac
             "run_libc_filesystem_traversal.sh",
         ):
             self.assertIn(component, aggregate_runner)
-        self.assertIn("x86-filesystem-traversal", traversal_runner)
+        self.assertIn("default archive does not define the unconditional", traversal_runner)
         self.assertIn("x86-scandir", aggregate_runner)
 
     def test_filesystem_extensions_dispatch_stays_explicit(self) -> None:

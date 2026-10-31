@@ -574,11 +574,11 @@ class X86ParityLedgerTests(unittest.TestCase):
         data = self.data()
         feature_archives = data["feature_archive"]
         assert isinstance(feature_archives, list)
-        a64l = next(
-            entry for entry in feature_archives if entry["id"] == "x86-a64l"
+        scandir = next(
+            entry for entry in feature_archives if entry["id"] == "x86-scandir"
         )
-        assert isinstance(a64l, dict)
-        a64l["additive_callables"] = ["clearenv"]
+        assert isinstance(scandir, dict)
+        scandir["additive_callables"] = ["clearenv"]
         with self.assertRaisesRegex(
             ledger.LedgerError,
             "already default-static",
@@ -607,7 +607,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         self.assertNotIn("capabilities", artifact)
         description = artifact["description"]
         for phrase in (
-            "x86-process-exec",
+            "unconditional `process_exec` owner",
             "execve=59",
             "execveat=322",
             "AT_EMPTY_PATH=0x1000",
@@ -630,16 +630,10 @@ class X86ParityLedgerTests(unittest.TestCase):
 
         archives = self.data()["feature_archive"]
         assert isinstance(archives, list)
-        feature = next(entry for entry in archives if entry["id"] == "x86-process-exec")
-        self.assertEqual(feature["enabled_features"], ["x86-process-exec"])
-        self.assertEqual(
-            feature["additive_callables"],
-            ["execl", "execle", "execlp", "execv", "execve", "execvp", "execvpe", "fexecve"],
-        )
-        self.assertEqual(
-            feature["aliases"],
-            [{"name": "execvpe", "target": "__execvpe", "binding": "weak-same-address"}],
-        )
+        self.assertFalse(any(entry["id"] == "x86-process-exec" for entry in archives))
+        exports = (ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt").read_text()
+        for symbol in ("__execvpe", "execl", "execve", "execvpe", "fexecve"):
+            self.assertIn(symbol + "\n", exports)
 
 
     def test_verified_artifact_rejects_duplicate_native_evidence_command(self) -> None:

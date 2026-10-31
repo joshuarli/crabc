@@ -531,42 +531,27 @@ class HeaderCallableDispositionTests(unittest.TestCase):
         self.assertTrue(quick_exit <= providers["x86-owned-static-runtime"])
         self.assertFalse(quick_exit & deferred)
 
-    def test_file_handles_are_verified_opt_in_providers_not_deferred_defaults(self) -> None:
+    def test_folded_file_handles_and_process_exec_are_default_static(self) -> None:
         report = json.loads(CHECKED_REPORT.read_text(encoding="utf-8"))
-        providers = {
+        default_static = set(report["primary_disposition"]["default_static"]["members"])
+        verified = {
             row["id"]: row
             for row in report["primary_disposition"]["verified_feature_archives"]
         }
-        file_handles = providers["x86-file-handles"]
-        self.assertEqual(
-            file_handles["members"],
-            ["name_to_handle_at", "open_by_handle_at"],
-        )
         deferred_members = {
             member
             for row in report["primary_disposition"]["deferred_owner_groups"]
             for member in row["members"]
         }
-        self.assertNotIn("name_to_handle_at", deferred_members)
-        self.assertNotIn("open_by_handle_at", deferred_members)
-
-    def test_process_exec_is_a_verified_opt_in_provider(self) -> None:
-        report = json.loads(CHECKED_REPORT.read_text(encoding="utf-8"))
-        providers = {
-            row["id"]: row
-            for row in report["primary_disposition"]["verified_feature_archives"]
-        }
-        process_exec = providers["x86-process-exec"]
-        self.assertEqual(
-            process_exec["members"],
-            ["execl", "execle", "execlp", "execv", "execve", "execvp", "execvpe", "fexecve"],
+        self.assertTrue(
+            {"name_to_handle_at", "open_by_handle_at", "execl", "execv", "execve", "execvp", "execvpe", "fexecve"}
+            <= default_static
         )
-        deferred_members = {
-            member
-            for row in report["primary_disposition"]["deferred_owner_groups"]
-            for member in row["members"]
-        }
-        self.assertFalse(set(process_exec["members"]) & deferred_members)
+        self.assertNotIn("x86-file-handles", verified)
+        self.assertNotIn("x86-process-exec", verified)
+        self.assertFalse(
+            {"name_to_handle_at", "open_by_handle_at", "execve", "fexecve"} & deferred_members
+        )
 
     def test_temporary_names_are_verified_opt_in_providers_not_deferred_defaults(
         self,

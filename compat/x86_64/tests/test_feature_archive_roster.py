@@ -78,31 +78,16 @@ class FeatureArchiveRosterTests(unittest.TestCase):
         self.assertEqual(
             owned_static.baseline_features,
             (
-                "x86-a64l",
                 "x86-allocator-observability",
                 "x86-allocator-runtime",
                 "x86-allocator-string-duplication",
                 "x86-crypt",
                 "x86-crypt-allocator-composition",
                 "x86-environment-runtime",
-                "x86-file-handles",
-                "x86-filesystem-traversal",
-                "x86-h-errno",
-                "x86-interval-timers",
-                "x86-io-permissions",
-                "x86-kernel-admin",
-                "x86-legacy-des-compat",
                 "x86-legacy-misc",
-                "x86-math-long-double-completion",
-                "x86-memory-special",
-                "x86-netdb-setent",
-                "x86-process-exec",
                 "x86-resolver-runtime",
                 "x86-scandir",
-                "x86-sched-rr-interval",
-                "x86-stdio-permanent-format-scan",
                 "x86-temporary-names",
-                "x86-ualarm",
             ),
         )
         # The roster is the ledger; check its shape and a few owned members
@@ -288,21 +273,36 @@ class FeatureArchiveRosterTests(unittest.TestCase):
             next(item for item in rows if item.identifier == "x86-environment-runtime").additive_callables,
             (),
         )
-        interval_timers = next(
-            item for item in rows if item.identifier == "x86-interval-timers"
+        static_exports = set(
+            line
+            for line in (ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt")
+            .read_text(encoding="utf-8")
+            .splitlines()
+            if line and not line.startswith("#")
         )
-        self.assertEqual(interval_timers.evidence_record, "static-c-interval-timers")
-        self.assertEqual(interval_timers.dispatch_command, "libc-interval-timers")
-        self.assertEqual(interval_timers.additive_callables, ("getitimer", "setitimer"))
-        file_handles = next(
-            item for item in rows if item.identifier == "x86-file-handles"
-        )
-        self.assertEqual(file_handles.evidence_record, "static-c-file-handles")
-        self.assertEqual(file_handles.dispatch_command, "libc-file-handles")
-        self.assertEqual(
-            file_handles.additive_callables,
-            ("name_to_handle_at", "open_by_handle_at"),
-        )
+        for retired, symbols in (
+            ("x86-interval-timers", {"getitimer", "setitimer"}),
+            ("x86-file-handles", {"name_to_handle_at", "open_by_handle_at"}),
+            ("x86-process-exec", {"execl", "execv", "execve", "execvp", "execvpe", "fexecve"}),
+            ("x86-a64l", {"a64l"}),
+            ("x86-ualarm", {"ualarm"}),
+            ("x86-h-errno", {"h_errno", "__h_errno_location"}),
+            ("x86-kernel-admin", {"arch_prctl"}),
+            ("x86-memory-special", {"explicit_bzero", "swab"}),
+            ("x86-netdb-setent", {"sethostent", "setnetent"}),
+            ("x86-sched-rr-interval", {"sched_rr_get_interval"}),
+            ("x86-io-permissions", {"ioperm", "iopl"}),
+            ("x86-legacy-des-compat", {"encrypt", "setkey"}),
+            ("x86-math-long-double-completion", {"exp10l", "fdiml", "pow10l"}),
+            ("x86-filesystem-traversal", {"ftw", "nftw"}),
+            (
+                "x86-stdio-permanent-format-scan",
+                {"printf", "fprintf", "scanf", "fscanf", "vprintf", "vfprintf", "vscanf", "vfscanf"},
+            ),
+        ):
+            with self.subTest(retired=retired):
+                self.assertNotIn(retired, {item.identifier for item in rows})
+                self.assertEqual(symbols - static_exports, set())
         temporary_names = next(
             item for item in rows if item.identifier == "x86-temporary-names"
         )
@@ -346,20 +346,6 @@ class FeatureArchiveRosterTests(unittest.TestCase):
                 "posix_spawn_file_actions_addopen",
                 "posix_spawn_file_actions_destroy",
             ),
-        )
-        process_exec = next(item for item in rows if item.identifier == "x86-process-exec")
-        self.assertEqual(process_exec.state, "verified")
-        self.assertEqual(process_exec.evidence_record, "static-c-process-exec")
-        self.assertEqual(process_exec.runner, "compat/x86_64/run_libc_process_exec.sh")
-        self.assertEqual(process_exec.dispatch_command, "libc-process-exec")
-        self.assertEqual(process_exec.baseline_features, ())
-        self.assertEqual(
-            process_exec.additive_callables,
-            ("execl", "execle", "execlp", "execv", "execve", "execvp", "execvpe", "fexecve"),
-        )
-        self.assertEqual(
-            process_exec.aliases,
-            (ROSTER.ArchiveAlias("execvpe", "__execvpe", "weak-same-address"),),
         )
         spin_operations = next(
             item
@@ -414,34 +400,14 @@ class FeatureArchiveRosterTests(unittest.TestCase):
         )
 
         rows = {row.identifier: row for row in ROSTER.load_feature_archive_roster()}
-        permanent_scan = rows["x86-stdio-permanent-format-scan"]
-        self.assertEqual(permanent_scan.state, "verified")
-        self.assertEqual(permanent_scan.evidence_record, "static-c-stdio-permanent-format-scan")
-        self.assertEqual(permanent_scan.baseline_features, ())
-        self.assertEqual(
-            permanent_scan.additive_callables,
-            ("fprintf", "fscanf", "printf", "scanf", "vfprintf", "vfscanf", "vprintf", "vscanf"),
-        )
-        self.assertEqual(permanent_scan.replacement_callables, ())
-        self.assertEqual(
-            permanent_scan.aliases,
-            (
-                ROSTER.ArchiveAlias("__isoc99_fscanf", "fscanf", "weak-same-address"),
-                ROSTER.ArchiveAlias("__isoc99_scanf", "scanf", "weak-same-address"),
-                ROSTER.ArchiveAlias("__isoc99_vfscanf", "vfscanf", "weak-same-address"),
-                ROSTER.ArchiveAlias("__isoc99_vscanf", "vscanf", "weak-same-address"),
-            ),
-        )
-
         owned_static = rows["x86-owned-static-runtime"]
-        self.assertIn(permanent_scan.identifier, owned_static.baseline_features)
         self.assertEqual(
             owned_static.abi_only_callables,
             ("__xmknod", "__xmknodat", "_fini", "_init"),
         )
 
-    def test_kernel_admin_abi_only_ownership_is_explicit(self) -> None:
-        """Keep non-header kernel administration providers out of the default archive."""
+    def test_folded_kernel_administration_is_default_static(self) -> None:
+        """The former kernel-admin and I/O-permission leaves are unconditional exports."""
 
         static_exports = tuple(
             line
@@ -451,50 +417,17 @@ class FeatureArchiveRosterTests(unittest.TestCase):
             if line and not line.startswith("#")
         )
         archives = ROSTER.load_feature_archive_roster()
-        rows = {archive.identifier: archive for archive in archives}
-        kernel_admin = rows["x86-kernel-admin"]
-        io_permissions = rows["x86-io-permissions"]
-        owned_static = rows["x86-owned-static-runtime"]
-
-        self.assertEqual(kernel_admin.state, "planned")
-        self.assertIsNone(kernel_admin.evidence_record)
-        self.assertIsNone(kernel_admin.dispatch_command)
-        self.assertEqual(kernel_admin.runner, "compat/x86_64/run_libc_kernel_admin.sh")
-        self.assertEqual(kernel_admin.feature_selection_source, "libc/Cargo.toml")
-        self.assertEqual(kernel_admin.baseline_features, ("x86-io-permissions",))
-        self.assertEqual(kernel_admin.enabled_features, ("x86-kernel-admin",))
-        self.assertEqual(kernel_admin.abi_only_callables, ("arch_prctl",))
-        self.assertEqual(kernel_admin.additive_callables, ())
-        self.assertEqual(kernel_admin.replacement_callables, ())
-        self.assertEqual(kernel_admin.aliases, ())
-
-        self.assertEqual(io_permissions.additive_callables, ("ioperm", "iopl"))
-        self.assertIn(io_permissions.identifier, owned_static.baseline_features)
-        self.assertIn(kernel_admin.identifier, owned_static.baseline_features)
-        self.assertEqual(
-            owned_static.abi_only_callables,
-            ("__xmknod", "__xmknodat", "_fini", "_init"),
-        )
-
-        inherited = ROSTER.selected_baseline_callables(
-            owned_static,
-            archives,
-            static_exports,
-        )
-        expected_inherited = ("arch_prctl", "ioperm", "iopl")
-        self.assertEqual(
-            tuple(name for name in expected_inherited if name in inherited),
-            expected_inherited,
-        )
-        self.assertEqual(
-            len(inherited.intersection(expected_inherited)),
-            len(expected_inherited),
-        )
+        identifiers = {archive.identifier for archive in archives}
+        for retired in ("x86-kernel-admin", "x86-io-permissions"):
+            with self.subTest(retired=retired):
+                self.assertNotIn(retired, identifiers)
+        for symbol in ("arch_prctl", "ioperm", "iopl"):
+            self.assertIn(symbol, static_exports)
         self.assertEqual(
             tuple(
                 name
                 for name in static_exports
-                if name in {"__xmknod", "__xmknodat", "_fini", "_init", "arch_prctl"}
+                if name in {"__xmknod", "__xmknodat", "_fini", "_init"}
             ),
             (),
         )
@@ -606,7 +539,6 @@ class FeatureArchiveRosterTests(unittest.TestCase):
             for item in ROSTER.load_feature_archive_roster()
             if item.identifier
             in {
-                "x86-kernel-admin",
                 "x86-owned-static-runtime",
                 "x86-owned-dynamic-runtime",
             }
@@ -616,7 +548,6 @@ class FeatureArchiveRosterTests(unittest.TestCase):
             (
                 "x86-owned-static-runtime",
                 "x86-owned-dynamic-runtime",
-                "x86-kernel-admin",
             ),
         )
         import tomllib
@@ -636,9 +567,9 @@ class FeatureArchiveRosterTests(unittest.TestCase):
         self.assertEqual(
             report,
             {
-                "feature_archive_count": 35,
-                "planned_feature_archive_count": 6,
-                "verified_feature_archive_count": 29,
+                "feature_archive_count": 20,
+                "planned_feature_archive_count": 5,
+                "verified_feature_archive_count": 15,
             },
         )
 
@@ -682,7 +613,7 @@ class FeatureArchiveRosterTests(unittest.TestCase):
                 with self.assertRaises(ROSTER.FeatureArchiveRosterError):
                     ROSTER.parse_feature_archive_roster(changed, features)
         changed = dict(features)
-        changed[native_id] = tuple(feature for feature in changed[native_id] if feature != 'x86-memory-special')
+        changed[native_id] = tuple(feature for feature in changed[native_id] if feature != 'x86-legacy-misc')
         with self.assertRaisesRegex(ROSTER.FeatureArchiveRosterError, 'source capabilities'):
             ROSTER.parse_feature_archive_roster(raw, changed)
 

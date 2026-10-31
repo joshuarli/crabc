@@ -25,16 +25,13 @@ class X86LegacyMiscTests(unittest.TestCase):
         manifest = LIBC_MANIFEST.read_text(encoding="utf-8")
         root = STATIC_ROOT.read_text(encoding="utf-8")
 
-        self.assertIn(
-            'x86-legacy-misc = ["x86-legacy-des-compat"]', manifest
-        )
+        self.assertIn("x86-legacy-misc = []", manifest)
         self.assertIn(
             '#[cfg(all(feature = "x86-legacy-misc", '
             'not(crabc_x86_owned_runtime)))]\n'
             '#[path = "legacy_misc.rs"]\nmod legacy_misc;', root,
         )
         self.assertIn(
-            '#[cfg(feature = "x86-legacy-des-compat")]\n'
             '#[path = "legacy_des_compat.rs"]\n'
             'mod legacy_des_compat;',
             root,
@@ -65,7 +62,7 @@ class X86LegacyMiscTests(unittest.TestCase):
         for required in (
             "src/legacy/encrypt.c::setkey",
             "src/legacy/encrypt.c::encrypt",
-            "x86-owned-static-runtime",
+            "unconditional",
             "x86-legacy-misc",
             "inert-DES",
             "intentional divergence",

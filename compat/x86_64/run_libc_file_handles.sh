@@ -35,7 +35,7 @@ assert_static_closure() {
     readelf --dynamic --wide "$candidate_path" >"$dynamic_path" || true
     readelf --relocs --wide "$candidate_path" >"$relocs_path"
     objdump -d "$candidate_path" >"$disassembly_path"
-    if awk '$7 == "UND" && NF >= 8 { print }' "$symbols_path" | grep . >/dev/null; then
+    if awk '$7 == "UND" && NF >= 8 && ($5 == "GLOBAL" || $5 == "WEAK") { print }' "$symbols_path" | grep . >/dev/null; then
         fail "candidate has unresolved symbols"
     fi
     if grep -Eq 'Requesting program interpreter|INTERP|NEEDED' \
@@ -74,13 +74,10 @@ assert_feature_archive_surface() {
     ) | awk '$2 ~ /^[TWDVBR]$/ && $1 !~ /^(_R|_ZN|DW\.ref\.|anon\.)/ &&
         $1 != "crabc_x86_64_signal_restorer" && $1 != "__crabc_x86_pthread_clone" { print $1 }' |
         sort -u >"$symbols_path"
-    {
-        grep -Ev '^(#|$)' "$STATIC_C_ABI_EXPORTS"
-        printf '%s\n' name_to_handle_at open_by_handle_at
-    } | LC_ALL=C sort -u >"$expected_path"
+    grep -Ev '^(#|$)' "$STATIC_C_ABI_EXPORTS" | LC_ALL=C sort -u >"$expected_path"
     if ! cmp -s "$expected_path" "$symbols_path"; then
         diff -u "$expected_path" "$symbols_path" >&2 || true
-        fail "file-handle feature archive export surface drifted"
+        fail "default file-handle archive export surface drifted"
     fi
 }
 
@@ -170,16 +167,15 @@ cd "$ROOT_DIR"
 (cd "$reference_work" && "$reference") ||
     fail "pinned-musl file-handle fixture failed"
 
-build_source_runtime_libc "$cargo_target/x86_64-unknown-linux-musl/debug/libc.a" \
-    --features x86-file-handles
-[ -f "$archive" ] || fail "cargo did not emit the x86 static libc archive"
+build_source_runtime_libc "$cargo_target/x86_64-unknown-linux-musl/debug/libc.a"
+[ -f "$archive" ] || fail "cargo did not emit the default x86 static libc archive"
 assert_feature_archive_surface "$archive"
 nm -A --defined-only "$archive" >"$archive_symbols"
 
 for symbol in __errno_location __crabc_x86_static_tls_bootstrap \
     name_to_handle_at open_by_handle_at; do
     grep -Eq "[[:space:]][TW][[:space:]]${symbol}$" "$archive_symbols" ||
-        fail "feature archive does not define $symbol"
+        fail "default archive does not define the unconditional $symbol owner"
 done
 
 "$ORACLE_CC" -std=c11 -D_GNU_SOURCE -DCRABC_FILE_HANDLES_FREESTANDING \

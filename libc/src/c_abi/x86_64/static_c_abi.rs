@@ -89,9 +89,8 @@
 //! code-point collation, and terminal-column width,
 //! bounded permanent stdin/stdout/stderr byte/block I/O with explicit flushing, selected
 //! allocation-free byte-buffer formatting and NUL-string scanning; the
-//! opt-in `x86-stdio-permanent-format-scan` feature additionally composes the
-//! eight integer/byte-string formatted entries over those exact permanent
-//! streams without widening the frozen default archive,
+//! same default root composes the eight integer/byte-string formatted entries
+//! over those exact permanent streams,
 //! plus one fixed regular-file pathname stream/position-buffering slot and
 //! one bounded immediately-unlinked `tmpfile` route over that same slot,
 //! intmax-arithmetic,
@@ -222,19 +221,10 @@ mod credentials;
 mod credential_observation;
 #[path = "personality.rs"]
 mod personality;
-// The public musl x86 arch_prctl veneer and direct I/O-permission wrappers
-// enter only through the owned kernel-administration component. The retained
-// I/O-only feature keeps its narrower negative-path archive available without
-// widening the frozen default C ABI surface.
-#[cfg(feature = "x86-kernel-admin")]
 #[path = "arch_prctl.rs"]
 mod arch_prctl;
-#[cfg(any(feature = "x86-io-permissions", feature = "x86-kernel-admin"))]
 #[path = "io_permissions.rs"]
 mod io_permissions;
-// The round-robin interval wrapper observes one kernel scheduler record but
-// must remain opt-in until its C ABI output/errno differential is selected.
-#[cfg(feature = "x86-sched-rr-interval")]
 #[path = "sched_rr_get_interval.rs"]
 mod sched_rr_get_interval;
 #[path = "setfsgid.rs"]
@@ -245,7 +235,6 @@ mod setfsuid;
 mod memory;
 // This pair is a private C compatibility layer over the existing x86 memory
 // owner. Its opt-in feature must not silently widen the frozen default archive.
-#[cfg(feature = "x86-memory-special")]
 #[path = "memory_special.rs"]
 mod memory_special;
 #[path = "memccpy.rs"]
@@ -322,11 +311,6 @@ mod float_parse_locale;
 mod getsubopt;
 #[path = "l64a.rs"]
 mod l64a;
-// `a64l` is the state-free decoder sibling from musl's same source file. Its
-// target-local owner scans the fixed radix-64 table directly, so it adds no
-// byte-string archive dependency. Keep that exact public addition opt-in so
-// the default archive stays the frozen l64a source split.
-#[cfg(feature = "x86-a64l")]
 #[path = "a64l.rs"]
 mod a64l;
 #[path = "intmax_arithmetic.rs"]
@@ -392,11 +376,6 @@ mod math_elementary_long_double;
 mod math_special;
 #[path = "fdim.rs"]
 mod fdim;
-// This binary80 closure is opt-in and becomes a selected component only
-// through the aggregate fenv-sensitive math feature. In
-// particular, do not silently widen the frozen dependency-free
-// selected-static archive with fdiml/exp10l/pow10l.
-#[cfg(feature = "x86-math-long-double-completion")]
 #[path = "math_long_double_completion.rs"]
 mod math_long_double_completion;
 #[path = "setjmp.rs"]
@@ -439,19 +418,10 @@ mod signal_realtime_max;
 mod signal_realtime_min;
 #[path = "signal_alarm.rs"]
 mod signal_alarm;
-#[cfg(feature = "x86-interval-timers")]
 #[path = "interval_timers.rs"]
 mod interval_timers;
-// Linux file handles are opaque caller-owned variable-sized records. Keep the
-// two direct syscall spellings opt-in so the frozen default archive does not
-// imply a broader filesystem authority or handle policy.
-#[cfg(feature = "x86-file-handles")]
 #[path = "file_handles.rs"]
 mod file_handles;
-// This historical microsecond interval-timer adapter mutates process-global
-// ITIMER_REAL state. Keep its one-symbol C ABI opt-in so the frozen
-// default archive remains distinct from this private timer leaf.
-#[cfg(feature = "x86-ualarm")]
 #[path = "signal_ualarm.rs"]
 mod signal_ualarm;
 #[path = "signal_pending.rs"]
@@ -588,35 +558,24 @@ mod environment;
 #[path = "environment_runtime.rs"]
 mod environment;
 // The direct exec forms, selected-environment forwarding, PATH search, and
-// C-variadic argv constructors are separate source leaves. The feature
-// test build pins multi-CGU, LTO-off topology and audits separate archive
-// members: there, ordinary static `execve`/`fexecve` consumers avoid
-// environment/PATH/mmap closure, `execv` adds only its environment forwarding,
-// `execvp` adds its intended PATH/environment closure but not mmap, and only
-// the variadic forms add mmap. Source modularity preserves dependency
-// ownership; arbitrary release archive topology is not claimed. The owned
-// static aggregate selects this existing direct-exec block only for its
-// environment/fork/exec composition; the standalone exec fixture remains
-// independently gated. None of these leaves implies fork, vfork, or spawn.
-#[cfg(feature = "x86-process-exec")]
+// C-variadic argv constructors are separate source leaves. The focused runner
+// pins multi-CGU, LTO-off topology and audits separate archive members:
+// ordinary static `execve`/`fexecve` consumers avoid environment/PATH/mmap
+// closure, `execv` adds only its environment forwarding, `execvp` adds its
+// intended PATH/environment closure but not mmap, and only
+// the variadic forms add mmap. None of these leaves implies fork, vfork, or spawn.
 #[path = "process_exec.rs"]
 mod process_exec;
-#[cfg(feature = "x86-process-exec")]
 #[path = "process_exec_env.rs"]
 mod process_exec_env;
-#[cfg(feature = "x86-process-exec")]
 #[path = "process_exec_path.rs"]
 mod process_exec_path;
-#[cfg(feature = "x86-process-exec")]
 #[path = "process_exec_variadic.rs"]
 mod process_exec_variadic;
-#[cfg(feature = "x86-process-exec")]
 #[path = "process_exec_execl.rs"]
 mod process_exec_execl;
-#[cfg(feature = "x86-process-exec")]
 #[path = "process_exec_execle.rs"]
 mod process_exec_execle;
-#[cfg(feature = "x86-process-exec")]
 #[path = "process_exec_execlp.rs"]
 mod process_exec_execlp;
 #[path = "login_name.rs"]
@@ -627,11 +586,6 @@ mod auxv_observation;
 mod startup_security;
 #[path = "issetugid.rs"]
 mod issetugid;
-// The frozen legacy.misc aggregate keeps its five observation prerequisites
-// in the selected default archive. Its historical formatting addition is an
-// opt-in owner so the default export surface cannot
-// silently grow into a legacy runtime.
-#[cfg(feature = "x86-legacy-des-compat")]
 #[path = "legacy_des_compat.rs"]
 mod legacy_des_compat;
 #[cfg(all(feature = "x86-legacy-misc", not(crabc_x86_owned_runtime)))]
@@ -956,7 +910,6 @@ mod directory_streams;
 #[cfg(crabc_x86_owned_runtime)]
 #[path = "owned_pattern.rs"]
 mod owned_pattern;
-#[cfg(feature = "x86-filesystem-traversal")]
 #[path = "filesystem_traversal.rs"]
 mod filesystem_traversal;
 #[path = "system_observation.rs"]
@@ -997,10 +950,6 @@ mod inet_classful;
 mod hstrerror;
 #[path = "endhostent.rs"]
 mod endhostent;
-// Musl's stateless `sethostent`/`setnetent` pair belongs to the same legacy
-// netdb source as the default terminator pair, but stays opt-in so the frozen
-// default archive does not gain legacy setter symbols or imply resolver state.
-#[cfg(feature = "x86-netdb-setent")]
 #[path = "sethostent.rs"]
 mod sethostent;
 #[path = "ether_line.rs"]
@@ -1010,7 +959,6 @@ mod ether_line;
 // ordinary archive extraction of `ether_line` alone does not pull them in.
 #[path = "ether.rs"]
 mod ether;
-#[cfg(feature = "x86-h-errno")]
 #[path = "h_errno.rs"]
 mod h_errno;
 #[cfg(feature = "x86-resolver-runtime")]

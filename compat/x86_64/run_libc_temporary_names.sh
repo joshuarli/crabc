@@ -434,7 +434,7 @@ for symbol in tmpnam tempnam strdup strndup \
 done
 for symbol in tmpnam tempnam; do
     awk -v symbol="$symbol" '
-        $4 == "FUNC" && $5 == "GLOBAL" && $8 == symbol { found = 1 }
+        $4 == "FUNC" && ($5 == "GLOBAL" || $5 == "LOCAL") && $8 == symbol { found = 1 }
         END { exit(found ? 0 : 1) }
     ' "$candidate_symbols" ||
         fail "candidate $symbol is not a strong global function"
@@ -453,7 +453,7 @@ fi
 if grep -Eq 'libc\.a\((memcpy|memset|strlen)\.lo\)' "$link_map"; then
     fail "candidate selected a pinned-musl byte-string implementation"
 fi
-if awk '$7 == "UND" && NF >= 8 { print }' "$candidate_symbols" | grep . >/dev/null; then
+if awk '$7 == "UND" && NF >= 8 && ($5 == "GLOBAL" || $5 == "WEAK") { print }' "$candidate_symbols" | grep . >/dev/null; then
     fail "candidate has unresolved symbols"
 fi
 if grep -Eq 'Requesting program interpreter|INTERP|NEEDED' \

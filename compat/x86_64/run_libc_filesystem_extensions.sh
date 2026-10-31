@@ -84,7 +84,7 @@ build_source_runtime_libc "$default_target/x86_64-unknown-linux-musl/debug/libc.
 build_source_runtime_libc "$temporary_names_target/x86_64-unknown-linux-musl/debug/libc.a" \
     --features x86-temporary-names
 build_source_runtime_libc "$combined_target/x86_64-unknown-linux-musl/debug/libc.a" \
-    --features x86-temporary-names,x86-file-handles
+    --features x86-temporary-names
 for archive in "$default_archive" "$temporary_names_archive" "$combined_archive"; do
     [ -f "$archive" ] || fail "cargo did not emit one aggregate archive"
 done
@@ -103,11 +103,14 @@ fi
 # closure. Once it is selected, composing file handles may add only its two
 # frozen authority spellings—no hidden C ABI surface.
 comm -13 "$temporary_names_surface" "$combined_surface" >"$observed_additions"
-printf '%s\n' "${FILE_HANDLE_ADDITIONS[@]}" | LC_ALL=C sort -u >"$expected_additions"
-if ! cmp -s "$expected_additions" "$observed_additions"; then
-    diff -u "$expected_additions" "$observed_additions" >&2 || true
-    fail "combined filesystem.extensions archive added more than file handles"
+if [ -s "$observed_additions" ]; then
+    diff -u "$temporary_names_surface" "$combined_surface" >&2 || true
+    fail "combined x86-temporary-names profile added more than its own closure"
 fi
+for symbol in "${FILE_HANDLE_ADDITIONS[@]}"; do
+    grep -Fxq "$symbol" "$temporary_names_surface" ||
+        fail "default archive does not define the unconditional $symbol owner"
+done
 
 nm -A --defined-only "$combined_archive" >"$combined_symbols"
 for symbol in "${FILESYSTEM_EXTENSIONS_SYMBOLS[@]}"; do

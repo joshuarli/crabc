@@ -62,9 +62,9 @@ class SetHostEntTests(unittest.TestCase):
         static_exports = STATIC_EXPORTS.read_text(encoding="utf-8").splitlines()
         ledger = tomllib.loads(PARITY.read_text(encoding="utf-8"))
 
-        self.assertIn("x86-netdb-setent = []", manifest)
+        self.assertNotIn("x86-netdb-setent", manifest)
         self.assertIn(
-            '#[cfg(feature = "x86-netdb-setent")]\n#[path = "sethostent.rs"]\nmod sethostent;',
+            '#[path = "sethostent.rs"]\nmod sethostent;',
             static_root,
         )
         for required in (
@@ -115,9 +115,8 @@ class SetHostEntTests(unittest.TestCase):
         self.assertIn("mov $60, %eax", start)
 
         for required in (
-            "x86-netdb-setent",
-            "assert_feature_delta",
-            "sethostent\\nsetnetent\\n",
+            "default archive does not define the unconditional",
+            "default static C ABI export surface",
             "run_endhostent_header_abi.sh",
             "ent.lo",
             "candidate setnetent is not the same-address weak sethostent alias",
@@ -128,8 +127,8 @@ class SetHostEntTests(unittest.TestCase):
         ):
             self.assertIn(required, runner)
         self.assertNotIn("--whole-archive", runner)
-        self.assertNotIn("sethostent", static_exports)
-        self.assertNotIn("setnetent", static_exports)
+        self.assertIn("sethostent", static_exports)
+        self.assertIn("setnetent", static_exports)
         for required in (
             "libc-sethostent)",
             "libc-sethostent takes no arguments",
@@ -147,7 +146,7 @@ class SetHostEntTests(unittest.TestCase):
             if record["id"] == "static-c-sethostent"
         )
         self.assertNotIn("capabilities", artifact)
-        self.assertIn("x86-netdb-setent", artifact["description"])
+        self.assertIn("unconditional owner", artifact["description"])
         self.assertIn("does not complete", artifact["description"])
         self.assertIn("libc/src/c_abi/x86_64/sethostent.rs", artifact["source_owners"])
         self.assertIn("scripts/check_structure.py", artifact["source_owners"])

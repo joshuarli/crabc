@@ -74,7 +74,7 @@ build_source_runtime_libc "$default_target/x86_64-unknown-linux-musl/debug/libc.
 build_source_runtime_libc "$scandir_target/x86_64-unknown-linux-musl/debug/libc.a" \
     --features x86-scandir
 build_source_runtime_libc "$combined_target/x86_64-unknown-linux-musl/debug/libc.a" \
-    --features x86-scandir,x86-filesystem-traversal
+    --features x86-scandir
 for archive in "$default_archive" "$scandir_archive" "$combined_archive"; do
     [ -f "$archive" ] || fail "cargo did not emit one aggregate archive"
 done
@@ -88,11 +88,14 @@ if ! cmp -s "$expected_default" "$default_surface"; then
     fail "default selected-static C ABI export surface drifted"
 fi
 comm -13 "$scandir_surface" "$combined_surface" >"$observed_additions"
-printf '%s\n' "${TRAVERSAL_ADDITIONS[@]}" | LC_ALL=C sort -u >"$expected_additions"
-if ! cmp -s "$expected_additions" "$observed_additions"; then
-    diff -u "$expected_additions" "$observed_additions" >&2 || true
-    fail "combined directory feature added more than ftw/nftw"
+if [ -s "$observed_additions" ]; then
+    diff -u "$scandir_surface" "$combined_surface" >&2 || true
+    fail "combined x86-scandir profile added more than scandir"
 fi
+for symbol in "${TRAVERSAL_ADDITIONS[@]}"; do
+    grep -Fxq "$symbol" "$scandir_surface" ||
+        fail "default archive does not define the unconditional $symbol owner"
+done
 
 nm -A --defined-only "$combined_archive" >"$combined_symbols"
 for symbol in "${DIRECTORY_SYMBOLS[@]}"; do

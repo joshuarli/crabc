@@ -47,11 +47,9 @@ class IoPermissionsTests(unittest.TestCase):
         parity = PARITY.read_text(encoding="utf-8")
         static_exports = STATIC_EXPORTS.read_text(encoding="utf-8").splitlines()
 
-        self.assertIn("x86-io-permissions = []", manifest)
-        self.assertIn('x86-kernel-admin = ["x86-io-permissions"]', manifest)
-        self.assertIn('"x86-kernel-admin",', manifest)
+        self.assertNotIn("x86-io-permissions", manifest)
+        self.assertNotIn("x86-kernel-admin", manifest)
         self.assertIn(
-            '#[cfg(any(feature = "x86-io-permissions", feature = "x86-kernel-admin"))]\n'
             '#[path = "io_permissions.rs"]\n'
             "mod io_permissions;",
             static_root,
@@ -91,9 +89,8 @@ class IoPermissionsTests(unittest.TestCase):
         self.assertNotIn("outb", start)
 
         for required in (
-            "--features \"$FEATURE\"",
-            "assert_feature_delta",
-            "ioperm\\niopl",
+            "default archive does not define the unconditional",
+            "default static C ABI export surface",
             "run_sys_io_header_abi.sh",
             "iopl)\n                syscall_immediate",
             "ioperm)\n                syscall_immediate",
@@ -111,12 +108,12 @@ class IoPermissionsTests(unittest.TestCase):
         ):
             self.assertIn(required, runner)
         self.assertNotIn("--whole-archive", runner)
-        self.assertNotIn("iopl", static_exports)
-        self.assertNotIn("ioperm", static_exports)
+        self.assertIn("iopl", static_exports)
+        self.assertIn("ioperm", static_exports)
         for required in (
             'id = "static-c-iopl-ioperm"',
             'command = "./scripts/dev-x86_64.sh libc-io-permissions"',
-            "x86-io-permissions",
+            "unconditional owner makes the default static archive export exactly `iopl` and `ioperm`",
             "neither enables I/O permissions nor executes port I/O",
         ):
             self.assertIn(required, parity)
@@ -139,7 +136,7 @@ class IoPermissionsTests(unittest.TestCase):
             if record["id"] == "static-c-iopl-ioperm"
         )
         self.assertNotIn("capabilities", artifact)
-        self.assertIn("x86-io-permissions", artifact["description"])
+        self.assertIn("unconditional owner", artifact["description"])
         self.assertIn(
             "compares the observed EINVAL-versus-EPERM fingerprint",
             artifact["description"],

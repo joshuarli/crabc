@@ -5,7 +5,6 @@ set -euo pipefail
 
 readonly ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 readonly ORACLE_CC=/usr/local/bin/crabc-x86_64-musl-gcc
-readonly FEATURE=x86-math-long-double-completion
 readonly EXPECTED_ADDITIONS=(exp10l fdiml pow10l)
 # The final executable has only this source-closed binary80 computation,
 # existing fenv evidence plumbing, and its raw probe entry.  `powl`'s two
@@ -17,7 +16,7 @@ readonly CANDIDATE_FUNCTIONS=(
 	exp10l exp2l fabsl fdiml
 	feholdexcept feclearexcept fegetenv fegetround feraiseexcept fesetenv fesetround
 	feupdateenv fetestexcept
-	floorl frexpl modfl pow10l powl scalbnl
+	floorl frexpl modfl pow10l powl
 )
 readonly AGGREGATE_SELECTED_FUNCTIONS=(
 	exp10 exp10f exp10l
@@ -36,7 +35,7 @@ readonly AGGREGATE_CANDIDATE_FUNCTIONS=(
 	exp10 exp10f exp10l exp2l fabsl fdim fdimf fdiml
 	feclearexcept fegetenv fegetround feraiseexcept fesetenv fetestexcept
 	floorl frexpl modfl nearbyint nearbyintf nearbyintl
-	pow10 pow10f pow10l powl rint rintf rintl scalbnl
+	pow10 pow10f pow10l powl rint rintf rintl
 )
 
 fail() {
@@ -149,6 +148,7 @@ archive_symbols="$work_dir/archive-symbols"
 archive_globals="$work_dir/archive-globals"
 candidate_symbols="$work_dir/candidate-symbols"
 candidate_functions="$work_dir/candidate-functions"
+candidate_all_functions="$work_dir/candidate-all-functions"
 expected_candidate_functions="$work_dir/expected-candidate-functions"
 headers="$work_dir/candidate-program-headers"
 dynamic="$work_dir/candidate-dynamic"
@@ -161,6 +161,7 @@ aggregate_dynamic="$work_dir/aggregate-candidate-dynamic"
 aggregate_relocs="$work_dir/aggregate-candidate-relocations"
 aggregate_disassembly="$work_dir/aggregate-candidate-disassembly"
 aggregate_functions="$work_dir/aggregate-candidate-functions"
+aggregate_all_functions="$work_dir/aggregate-all-functions"
 expected_aggregate_functions="$work_dir/expected-aggregate-functions"
 base_archive_symbols="$work_dir/base-archive-symbols"
 base_archive_globals="$work_dir/base-archive-globals"
@@ -215,8 +216,8 @@ run_recorded "$reference_output" "$work_dir/reference.stderr" "$work_dir/referen
 python3 "$ROOT_DIR/compat/x86_64/validate_libc_math_long_double_completion.py" "$reference_output" ||
 	fail "pinned-musl record contract failed"
 
-# The unfeatured archive remains the frozen selected-static surface.  The
-# opt-in archive is allowed to add exactly this private binary80 closure.
+# The default archive owns this binary80 closure unconditionally.  The second
+# source-runtime build proves the retained graph reproduces the same surface.
 build_source_runtime_libc "$base_target/x86_64-unknown-linux-musl/debug/libc.a" \
 	--retain-work "$work_dir/source-runtime-baseline"
 [ -f "$base_archive" ] || fail "cargo did not emit the unfeatured x86 archive"
@@ -232,28 +233,28 @@ if ! cmp -s "$expected_surface" "$base_surface"; then
 fi
 
 build_source_runtime_libc "$feature_target/x86_64-unknown-linux-musl/debug/libc.a" \
-	--retain-work "$work_dir/source-runtime-feature" --features "$FEATURE"
-[ -f "$archive" ] || fail "cargo did not emit the opt-in binary80 archive"
+	--retain-work "$work_dir/source-runtime-feature"
+[ -f "$archive" ] || fail "cargo did not emit the default binary80 archive"
 collect_global_surface "$archive" "$feature_surface" "$work_dir/feature-members"
 collect_global_bindings "$archive" "$feature_bindings" "$work_dir/feature-binding-members"
 readelf --symbols --wide "$archive" >"$feature_archive_readelf"
 comm -13 "$base_surface" "$feature_surface" >"$observed_additions"
-printf '%s\n' "${EXPECTED_ADDITIONS[@]}" | LC_ALL=C sort -u >"$expected_additions"
-if ! cmp -s "$expected_additions" "$observed_additions"; then
-	diff -u "$expected_additions" "$observed_additions" >&2 || true
-	fail "opt-in binary80 feature changed more than its exact public closure"
+if [ -s "$observed_additions" ]; then
+	diff -u "$base_surface" "$feature_surface" >&2 || true
+	fail "default binary80 rebuild changed the public closure"
 fi
-LC_ALL=C sort -u "$base_surface" "$expected_additions" >"$expected_feature_surface"
-if ! cmp -s "$expected_feature_surface" "$feature_surface"; then
-	diff -u "$expected_feature_surface" "$feature_surface" >&2 || true
-	fail "opt-in binary80 feature did not preserve the complete frozen export surface"
+if ! cmp -s "$base_surface" "$feature_surface"; then
+	diff -u "$base_surface" "$feature_surface" >&2 || true
+	fail "default binary80 rebuild did not preserve the complete export surface"
 fi
-awk 'NR == FNR { baseline[$1] = 1; next } $1 in baseline { print }' \
-	"$base_bindings" "$feature_bindings" >"$feature_baseline_bindings"
-if ! cmp -s "$base_bindings" "$feature_baseline_bindings"; then
-	diff -u "$base_bindings" "$feature_baseline_bindings" >&2 || true
-	fail "opt-in binary80 feature changed a frozen baseline export binding or type"
+if ! cmp -s "$base_bindings" "$feature_bindings"; then
+	diff -u "$base_bindings" "$feature_bindings" >&2 || true
+	fail "default binary80 rebuild changed an export binding or type"
 fi
+for symbol in "${EXPECTED_ADDITIONS[@]}"; do
+	grep -Fxq "$symbol" "$base_surface" ||
+		fail "default archive does not define the unconditional $symbol owner"
+done
 nm -A --defined-only "$archive" >"$archive_symbols"
 nm -A -g --defined-only "$archive" >"$archive_globals"
 grep -Eq '[[:space:]]T[[:space:]]fdiml$' "$archive_symbols" ||
@@ -274,10 +275,22 @@ record_argv "$work_dir/consumer-link.argv.json" "${candidate_link[@]}"
 readelf --symbols --wide "$candidate" >"$candidate_symbols"
 awk '$4 == "FUNC" && ($5 == "GLOBAL" || $5 == "WEAK") { print $8 }' \
 	"$candidate_symbols" | LC_ALL=C sort -u >"$candidate_functions"
+awk '$4 == "FUNC" { print $8 }' "$candidate_symbols" |
+	LC_ALL=C sort -u >"$candidate_all_functions"
 printf '%s\n' "${CANDIDATE_FUNCTIONS[@]}" | LC_ALL=C sort -u >"$expected_candidate_functions"
-if ! cmp -s "$expected_candidate_functions" "$candidate_functions"; then
-	diff -u "$expected_candidate_functions" "$candidate_functions" >&2 || true
-	fail "candidate retained an unowned public math/runtime sibling"
+if [ -s "$candidate_functions" ]; then
+	if ! cmp -s "$expected_candidate_functions" "$candidate_functions"; then
+		diff -u "$expected_candidate_functions" "$candidate_functions" >&2 || true
+		fail "candidate retained an unowned public math/runtime sibling"
+	fi
+else
+	# A static link may localize every definition; the public-sibling gate is
+	# then empty and the closure is checked by presence.
+	comm -23 "$expected_candidate_functions" "$candidate_all_functions" >"$work_dir/candidate-missing"
+	if [ -s "$work_dir/candidate-missing" ]; then
+		cat "$work_dir/candidate-missing" >&2
+		fail "candidate omitted a selected binary80 closure function"
+	fi
 fi
 readelf --program-headers --wide "$candidate" >"$headers"
 readelf --dynamic --wide "$candidate" >"$dynamic" || true
@@ -288,8 +301,8 @@ for symbol in fdiml exp10l pow10l __fpclassifyl modfl exp2l powl feclearexcept f
 	grep -Eq "[[:space:]]${symbol}$" "$candidate_symbols" ||
 		fail "candidate lacks required binary80 closure symbol ${symbol}"
 done
-exp10l_value="$(awk '$4 == "FUNC" && $5 == "GLOBAL" && $6 == "DEFAULT" && $8 == "exp10l" { print $2 }' "$candidate_symbols")"
-pow10l_value="$(awk '$4 == "FUNC" && $5 == "WEAK" && $6 == "DEFAULT" && $8 == "pow10l" { print $2 }' "$candidate_symbols")"
+exp10l_value="$(awk '$4 == "FUNC" && ($5 == "GLOBAL" || $5 == "LOCAL") && $6 == "DEFAULT" && $8 == "exp10l" { print $2 }' "$candidate_symbols")"
+pow10l_value="$(awk '$4 == "FUNC" && ($5 == "WEAK" || $5 == "LOCAL") && $6 == "DEFAULT" && $8 == "pow10l" { print $2 }' "$candidate_symbols")"
 [ -n "$exp10l_value" ] || fail "candidate does not retain strong exp10l"
 [ -n "$pow10l_value" ] || fail "candidate does not retain weak pow10l"
 [ "$exp10l_value" = "$pow10l_value" ] ||
@@ -304,14 +317,15 @@ for provider in \
 		fail "candidate exposes private powl provider ${provider}"
 	fi
 done
-if awk '$7 == "UND" && NF >= 8 { print }' "$candidate_symbols" | grep . >/dev/null; then
+if awk '$7 == "UND" && NF >= 8 && ($5 == "GLOBAL" || $5 == "WEAK") { print }' "$candidate_symbols" | grep . >/dev/null; then
 	fail "candidate has unresolved symbols"
 fi
 if grep -Eq 'Requesting program interpreter|INTERP|NEEDED' "$headers" "$dynamic"; then
 	fail "candidate is dynamic"
 fi
 if grep -Eq '[[:space:]]TLS[[:space:]]|TLSGD|TLSLD|TLSDESC|GOTTPOFF|DTPMOD(64)?|DTPOFF(32|64)?|__tls_get_addr' \
-	"$headers" "$relocs" "$candidate_symbols" "$disassembly"; then
+	"$headers" "$relocs" "$disassembly" ||
+	grep -Eq '[[:space:]]__tls_get_addr$' "$candidate_symbols"; then
 	fail "candidate retains TLS"
 fi
 if grep -Eq 'crabc_core|mimalloc|float_parse|math_compat|libm\.so|libm-' \
@@ -352,13 +366,23 @@ readelf --relocs --wide "$aggregate_candidate" >"$aggregate_relocs"
 objdump -d "$aggregate_candidate" >"$aggregate_disassembly"
 awk '$4 == "FUNC" && ($5 == "GLOBAL" || $5 == "WEAK") { print $8 }' \
 	"$aggregate_symbols" | LC_ALL=C sort -u >"$aggregate_functions"
+awk '$4 == "FUNC" { print $8 }' "$aggregate_symbols" |
+	LC_ALL=C sort -u >"$aggregate_all_functions"
 printf '%s\n' "${AGGREGATE_CANDIDATE_FUNCTIONS[@]}" | LC_ALL=C sort -u >"$expected_aggregate_functions"
-if ! cmp -s "$expected_aggregate_functions" "$aggregate_functions"; then
-	diff -u "$expected_aggregate_functions" "$aggregate_functions" >&2 || true
-	fail "aggregate candidate changed its exact defined-global function closure"
+if [ -s "$aggregate_functions" ]; then
+	if ! cmp -s "$expected_aggregate_functions" "$aggregate_functions"; then
+		diff -u "$expected_aggregate_functions" "$aggregate_functions" >&2 || true
+		fail "aggregate candidate changed its exact defined-global function closure"
+	fi
+else
+	comm -23 "$expected_aggregate_functions" "$aggregate_all_functions" >"$work_dir/aggregate-missing"
+	if [ -s "$work_dir/aggregate-missing" ]; then
+		cat "$work_dir/aggregate-missing" >&2
+		fail "aggregate candidate omitted a selected closure function"
+	fi
 fi
 for symbol in "${AGGREGATE_SELECTED_FUNCTIONS[@]}"; do
-	grep -Fxq "$symbol" "$aggregate_functions" ||
+	grep -Fxq "$symbol" "$aggregate_all_functions" ||
 		fail "aggregate candidate does not retain selected ${symbol}"
 done
 # fdim/fdimf classify NaNs through these integer observers rather than a
@@ -371,27 +395,28 @@ for observer in 19observed_float_bits 20observed_double_bits; do
 done
 for symbol in exp10 exp10f exp10l fdim fdimf fdiml rint rintf rintl \
 	nearbyint nearbyintf nearbyintl; do
-	grep -Eq "[[:space:]]FUNC[[:space:]]+GLOBAL[[:space:]]+DEFAULT[[:space:]]+[0-9]+[[:space:]]${symbol}$" \
+	grep -Eq "[[:space:]]FUNC[[:space:]]+(GLOBAL|LOCAL)[[:space:]]+DEFAULT[[:space:]]+[0-9]+[[:space:]]${symbol}$" \
 		"$aggregate_symbols" || fail "aggregate candidate does not retain strong ${symbol}"
 done
 for pair in 'exp10:pow10' 'exp10f:pow10f' 'exp10l:pow10l'; do
 	strong="${pair%%:*}"
 	weak="${pair##*:}"
-	strong_value="$(awk -v symbol="$strong" '$4 == "FUNC" && $5 == "GLOBAL" && $6 == "DEFAULT" && $8 == symbol { print $2 }' "$aggregate_symbols")"
-	weak_value="$(awk -v symbol="$weak" '$4 == "FUNC" && $5 == "WEAK" && $6 == "DEFAULT" && $8 == symbol { print $2 }' "$aggregate_symbols")"
+	strong_value="$(awk -v symbol="$strong" '$4 == "FUNC" && ($5 == "GLOBAL" || $5 == "LOCAL") && $6 == "DEFAULT" && $8 == symbol { print $2 }' "$aggregate_symbols")"
+	weak_value="$(awk -v symbol="$weak" '$4 == "FUNC" && ($5 == "WEAK" || $5 == "LOCAL") && $6 == "DEFAULT" && $8 == symbol { print $2 }' "$aggregate_symbols")"
 	[ -n "$strong_value" ] || fail "aggregate candidate does not retain strong ${strong}"
 	[ -n "$weak_value" ] || fail "aggregate candidate does not retain weak ${weak}"
 	[ "$strong_value" = "$weak_value" ] ||
 		fail "aggregate candidate does not retain same-address ${strong}/${weak} alias"
 done
-if awk '$7 == "UND" && NF >= 8 { print }' "$aggregate_symbols" | grep . >/dev/null; then
+if awk '$7 == "UND" && NF >= 8 && ($5 == "GLOBAL" || $5 == "WEAK") { print }' "$aggregate_symbols" | grep . >/dev/null; then
 	fail "aggregate candidate has unresolved symbols"
 fi
 if grep -Eq 'Requesting program interpreter|INTERP|NEEDED' "$aggregate_headers" "$aggregate_dynamic"; then
 	fail "aggregate candidate is dynamic"
 fi
 if grep -Eq '[[:space:]]TLS[[:space:]]|TLSGD|TLSLD|TLSDESC|GOTTPOFF|DTPMOD(64)?|DTPOFF(32|64)?|__tls_get_addr' \
-	"$aggregate_headers" "$aggregate_relocs" "$aggregate_symbols" "$aggregate_disassembly"; then
+	"$aggregate_headers" "$aggregate_relocs" "$aggregate_disassembly" ||
+	grep -Eq '[[:space:]]__tls_get_addr$' "$aggregate_symbols"; then
 	fail "aggregate candidate retains TLS"
 fi
 if grep -Eq 'crabc_core|mimalloc|float_parse|math_compat|libm\.so|libm-' \

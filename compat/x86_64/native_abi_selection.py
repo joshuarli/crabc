@@ -10864,10 +10864,12 @@ def _errno_provider_partition(inputs: Mapping[str, Any]) -> None:
     default_static = disposition.get('default_static')
     require(type(default_static) is dict and '__errno_location' in default_static.get('members', []),
             'errno public accessor is absent from the default-static provider partition')
+    require('__h_errno_location' in default_static.get('members', []),
+            'h_errno accessor is absent from the default-static provider partition')
     verified = disposition.get('verified_feature_archives')
-    h_errno = [row for row in verified if type(row) is dict and row.get('id') == 'x86-h-errno'] if type(verified) is list else []
-    require(len(h_errno) == 1 and h_errno[0].get('members') == ['__h_errno_location'],
-            'h_errno accessor feature provider partition differs')
+    require(type(verified) is list
+            and not any(type(row) is dict and row.get('id') == 'x86-h-errno' for row in verified),
+            'retired h_errno feature provider still appears in the partition')
 
 
 def attach_errno_storage_lifecycle(accounting: Mapping[str, Any], companion: Mapping[str, Any] | None,
@@ -10902,15 +10904,13 @@ def attach_errno_storage_lifecycle(accounting: Mapping[str, Any], companion: Map
     records, placements, occurrences = _accounting_indexes(accounting, description='errno storage lifecycle attachment')
     public_rows = []
     # ``__h_errno_location`` is routed through the checked installed-header
-    # provider group in the assembled selection.  The separate exact
-    # ``x86-h-errno`` feature roster remains an authenticated prerequisite for
-    # this lifecycle receipt; it does not rewrite the selected owner field.
+    # provider group; the default-static partition carries it unconditionally.
     for name, owner, feature_owner, static_metadata, shared_metadata in (
         ('__errno_location', 'checked-header-provider-routing',
          None,
          {'type': 'FUNC', 'binding': 'GLOBAL', 'visibility': 'DEFAULT'},
          {'type': 'FUNC', 'binding': 'GLOBAL', 'visibility': 'DEFAULT'}),
-        ('__h_errno_location', 'checked-header-provider-routing', 'x86-h-errno',
+        ('__h_errno_location', 'checked-header-provider-routing', None,
          {'type': 'FUNC', 'binding': 'GLOBAL', 'visibility': 'DEFAULT'},
          {'type': 'FUNC', 'binding': 'GLOBAL', 'visibility': 'DEFAULT'}),
         ('h_errno', 'object:h_errno', None, h_errno_layout['static'], h_errno_layout['shared']),
@@ -12475,7 +12475,7 @@ def _stdio_alias_feature_owners() -> dict[str, str]:
         'owned_static_stdio': 'x86-owned-static-runtime',
         'owned_wide_stdio': 'x86-owned-static-runtime',
         'owned_stdio_extensions': 'x86-owned-static-runtime',
-        'stdio_format_scan': 'x86-stdio-permanent-format-scan',
+        'stdio_format_scan': 'x86-owned-static-runtime',
         'owned_wide_format': 'x86-owned-static-runtime',
     }
     require({owner for owner, _source, _pairs in reader.ALIAS_GROUPS} == set(source_owners)
@@ -14580,9 +14580,9 @@ def binary80_feature_adapter(work: Path | None, *, paths: Mapping[str, Path]) ->
     except (OSError, RuntimeError, ValueError, KeyError, TypeError) as error:
         raise SelectionError(f'binary80 feature component rejected: {error}') from error
     require(result['baseline_features'] == []
-            and result['enabled_features'] == ['x86-math-long-double-completion']
-            and result['additions'] == ['exp10l', 'fdiml', 'pow10l'],
-            'binary80 feature profile differs')
+            and result['enabled_features'] == []
+            and result['additions'] == [],
+            'binary80 default profile differs')
     symbols = result['archive_symbols']
     alias, target = symbols['pow10l'], symbols['exp10l']
     require(alias['binding'] == 'WEAK' and target['binding'] == 'GLOBAL'
@@ -14694,15 +14694,13 @@ def attach_binary80_feature(accounting: Mapping[str, Any], companion: Mapping[st
                        for feature in feature_roster.load_feature_archive_roster()
                        for alias in feature.aliases if alias.name == 'pow10l']
     require(same(features, source_features), 'pow10l source feature requirement differs')
-    require(len(features) == 1 and features[0]['name'] == 'pow10l' and features[0]['target'] == 'exp10l'
-            and features[0]['binding'] == 'weak-same-address'
-            and features[0]['baseline_features'] == []
-            and features[0]['enabled_features'] == ['x86-math-long-double-completion'],
-            'pow10l source feature requirement differs')
-    _remove_identity_requirements(accounting, record, (FEATURE_ALIAS_REQUIREMENT,), description='pow10l feature')
+    require(features == [] and source_features == [],
+            'pow10l unconditional owner requirement differs')
+    if FEATURE_ALIAS_REQUIREMENT in record['unresolved']:
+        _remove_identity_requirements(accounting, record, (FEATURE_ALIAS_REQUIREMENT,), description='pow10l owner')
     return [{'identity': copy.deepcopy(record['identity']), 'component': 'binary80-feature',
              'installed_math_report': copy.deepcopy(installed_math['report']), 'feature': copy.deepcopy(companion['result']),
-             'requirements_discharged': [FEATURE_ALIAS_REQUIREMENT]}]
+             'requirements_discharged': []}]
 
 
 def feature_alias_adapter(work: Path | None, *, paths: Mapping[str, Path]) -> dict[str, Any] | None:

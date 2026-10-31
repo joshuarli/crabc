@@ -544,15 +544,22 @@ class NativeStaticSourceRuntimeClosureTests(unittest.TestCase):
             CLOSURE.pinned_rustup_frontend(target, target)
 
     def test_retained_leaf_profiles_keep_exact_empty_dependency_closures(self) -> None:
-        for feature in ('x86-signal-legacy-aliases', 'x86-process-exec', 'x86-netdb-setent'):
+        for feature in ('x86-signal-legacy-aliases',):
             with self.subTest(feature=feature):
                 self.assertEqual(CLOSURE.retained_package_features(feature), frozenset(('default', feature)))
-        for feature in ('x86-crypt', 'x86-owned-static-runtime', 'x86-process-exec,x86-netdb-setent'):
+        for feature in (
+            'x86-crypt',
+            'x86-owned-static-runtime',
+            'x86-math-long-double-completion',
+            'x86-process-exec',
+            'x86-netdb-setent',
+            'x86-process-exec,x86-netdb-setent',
+        ):
             with self.subTest(feature=feature), self.assertRaisesRegex(CLOSURE.ClosureError, 'requested feature profile'):
                 CLOSURE.retained_package_features(feature)
 
     def test_retained_cargo_command_accepts_only_the_fixed_feature_invocation(self) -> None:
-        feature = CLOSURE.RETAINED_MATH_FEATURE
+        feature = "x86-signal-legacy-aliases"
         baseline = [
             str(CLOSURE.PINNED_RUSTUP_FRONTEND), "run", CLOSURE.TOOLCHAIN, "cargo",
             "-Zbuild-std=core,alloc,compiler_builtins", "rustc", "--locked", "--offline", "-vv",
@@ -637,7 +644,7 @@ class NativeStaticSourceRuntimeClosureTests(unittest.TestCase):
                 str(CLOSURE.PINNED_RUSTUP_FRONTEND), "run", CLOSURE.TOOLCHAIN, "cargo",
                 "-Zbuild-std=core,alloc,compiler_builtins", "rustc", "--locked", "--offline", "-vv",
                 "--message-format=json-render-diagnostics", "-p", "crabc-libc", "--lib", "--target",
-                CLOSURE.TARGET, "--release", "--features", CLOSURE.RETAINED_MATH_FEATURE,
+                CLOSURE.TARGET, "--release", "--features", "x86-signal-legacy-aliases",
                 "--", "--cfg", "receipt_probe",
             ]
             captured = {}
@@ -651,7 +658,7 @@ class NativeStaticSourceRuntimeClosureTests(unittest.TestCase):
                 return ["/opt/rustup/bin/rustc", "--crate-name", name]
 
             arguments = SimpleNamespace(
-                features=CLOSURE.RETAINED_MATH_FEATURE,
+                features="x86-signal-legacy-aliases",
                 relocation_model="static",
                 rustc_arguments=["--cfg", "receipt_probe"],
                 release=True,
@@ -685,7 +692,7 @@ class NativeStaticSourceRuntimeClosureTests(unittest.TestCase):
             self.assertEqual(captured["run_command"], expected)
             self.assertEqual(receipt["cargo_command"], expected)
             self.assertEqual(receipt["cargo_profile"], "release")
-            self.assertEqual(receipt["features"], CLOSURE.RETAINED_MATH_FEATURE)
+            self.assertEqual(receipt["features"], "x86-signal-legacy-aliases")
             self.assertEqual(receipt["libc_rustc_arguments"], ["--cfg", "receipt_probe"])
 
     def test_project_vendor_requires_exact_versioned_package_directory(self) -> None:

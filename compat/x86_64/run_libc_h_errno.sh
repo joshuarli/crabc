@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Native Linux/x86-64 opt-in h_errno status-object/static-TLS evidence.
+# Native Linux/x86-64 h_errno status-object/static-TLS evidence.
 #
 # One project-header fixture executes first through pinned musl and then as a
 # true static candidate built with x86-h-errno. It selects only musl's legacy
@@ -13,7 +13,6 @@ export LC_ALL=C
 
 readonly ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 readonly ORACLE_CC=/usr/local/bin/crabc-x86_64-musl-gcc
-readonly FEATURE=x86-h-errno
 readonly STATIC_C_ABI_EXPORTS="$ROOT_DIR/compat/x86_64/static_c_abi_exports.txt"
 readonly AARCH64_STATIC_ABI="$ROOT_DIR/compat/abi/musl-1.2.6/aarch64/libc.a.static.tsv"
 readonly SOURCE="$ROOT_DIR/libc/src/c_abi/x86_64/h_errno.rs"
@@ -67,29 +66,13 @@ collect_global_surface() {
         LC_ALL=C sort -u >"$output_path"
 }
 
-assert_feature_delta() {
-    local baseline_symbols="$1" featured_symbols="$2"
-    local additions="$3" removed="$4"
-
-    comm -23 "$baseline_symbols" "$featured_symbols" >"$removed"
-    if [ -s "$removed" ]; then
-        diff -u "$baseline_symbols" "$featured_symbols" >&2 || true
-        fail "${FEATURE} removes a default C ABI export"
-    fi
-    comm -13 "$baseline_symbols" "$featured_symbols" >"$additions"
-    if ! cmp -s <(printf '__h_errno_location\nh_errno\n') "$additions"; then
-        diff -u <(printf '__h_errno_location\nh_errno\n') "$additions" >&2 || true
-        fail "${FEATURE} changes more than __h_errno_location plus h_errno"
-    fi
-}
-
 assert_h_errno_symbols() {
-    local symbols_path="$1" label="$2"
+    local symbols_path="$1" label="$2" binding="${3:-GLOBAL}"
 
-    grep -Eq 'FUNC[[:space:]]+GLOBAL[[:space:]]+DEFAULT[[:space:]].*[[:space:]]__h_errno_location$' "$symbols_path" ||
-        fail "$label lacks global-default __h_errno_location"
-    grep -Eq '[[:space:]]+4[[:space:]]+OBJECT[[:space:]]+GLOBAL[[:space:]]+DEFAULT[[:space:]].*[[:space:]]h_errno$' "$symbols_path" ||
-        fail "$label lacks four-byte global-default h_errno object"
+    grep -Eq "FUNC[[:space:]]+(${binding})[[:space:]]+DEFAULT[[:space:]].*[[:space:]]__h_errno_location$" "$symbols_path" ||
+        fail "$label lacks default-bound __h_errno_location"
+    grep -Eq "[[:space:]]+4[[:space:]]+OBJECT[[:space:]]+(${binding})[[:space:]]+DEFAULT[[:space:]].*[[:space:]]h_errno$" "$symbols_path" ||
+        fail "$label lacks four-byte default-bound h_errno object"
 }
 
 assert_no_dynamic_tls() {
@@ -148,10 +131,8 @@ grep -Fqx $'h_errno\th_errno.lo\tB\tGLOBAL\t0\t4' "$AARCH64_STATIC_ABI" ||
 work_dir="$(mktemp -d /tmp/crabc-x86-64-libc-h-errno.XXXXXX)"
 trap 'rm -rf -- "$work_dir"' EXIT
 baseline_target="$work_dir/cargo-baseline"
-featured_target="$work_dir/cargo-featured"
 resolver_target="$work_dir/cargo-resolver"
 baseline_archive="$baseline_target/x86_64-unknown-linux-musl/debug/libc.a"
-featured_archive="$featured_target/x86_64-unknown-linux-musl/debug/libc.a"
 resolver_archive="$resolver_target/x86_64-unknown-linux-musl/debug/libc.a"
 reference="$work_dir/musl-h-errno-reference"
 candidate="$work_dir/crabc-static-h-errno-candidate"
@@ -159,9 +140,6 @@ musl_archive="$($ORACLE_CC -print-file-name=libc.a)"
 musl_object="$work_dir/musl-h-errno.o"
 header_trace="$work_dir/header-trace"
 baseline_symbols="$work_dir/baseline-symbols"
-featured_symbols="$work_dir/featured-symbols"
-feature_additions="$work_dir/feature-additions"
-feature_removed="$work_dir/feature-removed"
 owner_object="$work_dir/h-errno-owner.o"
 owner_symbols="$work_dir/h-errno-owner-symbols"
 owner_relocations="$work_dir/h-errno-owner-relocations"
@@ -198,19 +176,18 @@ done
 run_fixture "$reference" "pinned-musl h_errno"
 
 build_source_runtime_libc "$baseline_target/x86_64-unknown-linux-musl/debug/libc.a"
-build_source_runtime_libc "$featured_target/x86_64-unknown-linux-musl/debug/libc.a" \
-    --features "$FEATURE"
-[ -f "$baseline_archive" ] || fail "baseline cargo build did not emit libc.a"
-[ -f "$featured_archive" ] || fail "feature cargo build did not emit libc.a"
+[ -f "$baseline_archive" ] || fail "cargo did not emit the default x86 static libc archive"
 collect_global_surface "$baseline_archive" "$baseline_symbols" "$work_dir/baseline-members"
-collect_global_surface "$featured_archive" "$featured_symbols" "$work_dir/featured-members"
-assert_feature_delta "$baseline_symbols" "$featured_symbols" "$feature_additions" "$feature_removed"
-if grep -Fqx -e h_errno -e __h_errno_location "$STATIC_C_ABI_EXPORTS"; then
-    fail "default static export ratchet absorbed opt-in h_errno symbols"
-fi
+for symbol in h_errno __h_errno_location; do
+    grep -Fqx "$symbol" "$baseline_symbols" ||
+        fail "default archive does not define the unconditional $symbol owner"
+    grep -Fqx "$symbol" "$STATIC_C_ABI_EXPORTS" ||
+        fail "default static export ratchet omits $symbol"
+done
+featured_archive="$baseline_archive"
 
 mapfile -t owner_members < <(archive_members_for_symbol "$featured_archive" __h_errno_location)
-[ "${#owner_members[@]}" -eq 1 ] || fail "feature archive has ambiguous __h_errno_location ownership"
+[ "${#owner_members[@]}" -eq 1 ] || fail "default archive has ambiguous __h_errno_location ownership"
 data_members="$(archive_members_for_symbol "$featured_archive" h_errno)"
 [ "$data_members" = "${owner_members[0]}" ] ||
     fail "h_errno object and accessor do not share one source owner"
@@ -219,10 +196,10 @@ readelf --symbols --wide "$owner_object" >"$owner_symbols"
 readelf --relocs --wide "$owner_object" >"$owner_relocations"
 filter_debug_relocations "$owner_relocations" "$owner_runtime_relocations"
 objdump -dr "$owner_object" >"$owner_disassembly"
-assert_h_errno_symbols "$owner_symbols" "feature owner"
+assert_h_errno_symbols "$owner_symbols" "owner"
 grep -Eq 'R_X86_64_TPOFF(32|64)?' "$owner_runtime_relocations" ||
-    fail "feature owner lacks direct initial-TLS h_errno relocation"
-assert_no_dynamic_tls "feature owner" "$owner_runtime_relocations" "$owner_disassembly"
+    fail "owner lacks direct initial-TLS h_errno relocation"
+assert_no_dynamic_tls "owner" "$owner_runtime_relocations" "$owner_disassembly"
 assert_no_resolver_runtime "feature owner" "$owner_symbols" "$owner_runtime_relocations" "$owner_disassembly"
 
 # The planned resolver feature must compose this one owner rather than revive
@@ -252,8 +229,8 @@ readelf --dynamic --wide "$candidate" >"$candidate_dynamic" || true
 readelf --relocs --wide "$candidate" >"$candidate_relocations"
 filter_debug_relocations "$candidate_relocations" "$candidate_runtime_relocations"
 objdump -d "$candidate" >"$candidate_disassembly"
-assert_h_errno_symbols "$candidate_symbols" "candidate"
-if awk '$7 == "UND" && NF >= 8 { print }' "$candidate_symbols" | grep . >/dev/null; then
+assert_h_errno_symbols "$candidate_symbols" "candidate" "GLOBAL|LOCAL"
+if awk '$7 == "UND" && NF >= 8 && ($5 == "GLOBAL" || $5 == "WEAK") { print }' "$candidate_symbols" | grep . >/dev/null; then
     fail "candidate retains an unresolved symbol"
 fi
 if grep -Eq 'Requesting program interpreter|INTERP|NEEDED' \

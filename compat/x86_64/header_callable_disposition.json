@@ -339,10 +339,6 @@
       {
         "id": "x86-owned-allocator-lifecycle-test-audit",
         "members": []
-      },
-      {
-        "id": "x86-kernel-admin",
-        "members": []
       }
     ],
     "default_static": {
@@ -361,6 +357,7 @@
         "__fseterr",
         "__fsetlocking",
         "__fwritable",
+        "__h_errno_location",
         "__libc_current_sigrtmax",
         "__libc_current_sigrtmin",
         "__sched_cpucount",
@@ -372,6 +369,7 @@
         "_pthread_cleanup_pop",
         "_pthread_cleanup_push",
         "_setjmp",
+        "a64l",
         "abs",
         "accept",
         "accept4",
@@ -555,6 +553,7 @@
         "duplocale",
         "eaccess",
         "ecvt",
+        "encrypt",
         "endhostent",
         "endnetent",
         "endprotoent",
@@ -582,15 +581,24 @@
         "eventfd",
         "eventfd_read",
         "eventfd_write",
+        "execl",
+        "execle",
+        "execlp",
+        "execv",
+        "execve",
+        "execvp",
+        "execvpe",
         "exit",
         "exp",
         "exp10",
         "exp10f",
+        "exp10l",
         "exp2",
         "exp2f",
         "exp2l",
         "expf",
         "expl",
+        "explicit_bzero",
         "expm1",
         "expm1f",
         "expm1l",
@@ -606,6 +614,7 @@
         "fdatasync",
         "fdim",
         "fdimf",
+        "fdiml",
         "fdopendir",
         "feclearexcept",
         "fegetenv",
@@ -622,6 +631,7 @@
         "fesetround",
         "fetestexcept",
         "feupdateenv",
+        "fexecve",
         "fflush",
         "ffs",
         "ffsl",
@@ -652,6 +662,7 @@
         "fopen",
         "fork",
         "fpathconf",
+        "fprintf",
         "fputc",
         "fputs",
         "fread",
@@ -662,6 +673,7 @@
         "frexp",
         "frexpf",
         "frexpl",
+        "fscanf",
         "fseek",
         "fseeko",
         "fsetpos",
@@ -676,6 +688,7 @@
         "ftime",
         "ftok",
         "ftruncate",
+        "ftw",
         "futimens",
         "futimes",
         "futimesat",
@@ -703,6 +716,7 @@
         "gethostid",
         "gethostname",
         "getifaddrs",
+        "getitimer",
         "getloadavg",
         "getlogin",
         "getlogin_r",
@@ -777,6 +791,8 @@
         "inotify_rm_watch",
         "insque",
         "ioctl",
+        "ioperm",
+        "iopl",
         "isalnum",
         "isalnum_l",
         "isalpha",
@@ -947,6 +963,7 @@
         "munlock",
         "munlockall",
         "munmap",
+        "name_to_handle_at",
         "nan",
         "nanf",
         "nanl",
@@ -961,6 +978,7 @@
         "nexttoward",
         "nexttowardf",
         "nexttowardl",
+        "nftw",
         "ngettext",
         "nice",
         "nl_langinfo",
@@ -977,6 +995,7 @@
         "ntohl",
         "ntohs",
         "open",
+        "open_by_handle_at",
         "openat",
         "opendir",
         "pathconf",
@@ -1008,11 +1027,13 @@
         "pow",
         "pow10",
         "pow10f",
+        "pow10l",
         "powf",
         "powl",
         "ppoll",
         "pread",
         "preadv",
+        "printf",
         "prlimit",
         "pselect",
         "pthread_atfork",
@@ -1160,12 +1181,14 @@
         "scalbn",
         "scalbnf",
         "scalbnl",
+        "scanf",
         "sched_get_priority_max",
         "sched_get_priority_min",
         "sched_getaffinity",
         "sched_getcpu",
         "sched_getparam",
         "sched_getscheduler",
+        "sched_rr_get_interval",
         "sched_setaffinity",
         "sched_setparam",
         "sched_setscheduler",
@@ -1197,9 +1220,13 @@
         "setfsuid",
         "setgid",
         "setgroups",
+        "sethostent",
         "sethostname",
+        "setitimer",
         "setjmp",
+        "setkey",
         "setlocale",
+        "setnetent",
         "setpgid",
         "setpgrp",
         "setpriority",
@@ -1317,6 +1344,7 @@
         "strverscmp",
         "strxfrm",
         "strxfrm_l",
+        "swab",
         "symlink",
         "sync",
         "sync_file_range",
@@ -1389,6 +1417,7 @@
         "tss_set",
         "ttyname_r",
         "twalk",
+        "ualarm",
         "ulimit",
         "umask",
         "uname",
@@ -1403,6 +1432,10 @@
         "utimensat",
         "utimes",
         "versionsort",
+        "vfprintf",
+        "vfscanf",
+        "vprintf",
+        "vscanf",
         "vsnprintf",
         "vsprintf",
         "vsscanf",
@@ -1521,19 +1554,6 @@
     "kind": "candidate-external-callable-primary-disposition",
     "verified_feature_archives": [
       {
-        "id": "x86-stdio-permanent-format-scan",
-        "members": [
-          "fprintf",
-          "fscanf",
-          "printf",
-          "scanf",
-          "vfprintf",
-          "vfscanf",
-          "vprintf",
-          "vscanf"
-        ]
-      },
-      {
         "id": "x86-allocator-runtime",
         "members": [
           "aligned_alloc",
@@ -1568,13 +1588,6 @@
         ]
       },
       {
-        "id": "x86-filesystem-traversal",
-        "members": [
-          "ftw",
-          "nftw"
-        ]
-      },
-      {
         "id": "x86-environment-runtime",
         "members": []
       },
@@ -1590,48 +1603,9 @@
         ]
       },
       {
-        "id": "x86-process-exec",
-        "members": [
-          "execl",
-          "execle",
-          "execlp",
-          "execv",
-          "execve",
-          "execvp",
-          "execvpe",
-          "fexecve"
-        ]
-      },
-      {
         "id": "x86-allocator-observability",
         "members": [
           "malloc_usable_size"
-        ]
-      },
-      {
-        "id": "x86-h-errno",
-        "members": [
-          "__h_errno_location"
-        ]
-      },
-      {
-        "id": "x86-ualarm",
-        "members": [
-          "ualarm"
-        ]
-      },
-      {
-        "id": "x86-interval-timers",
-        "members": [
-          "getitimer",
-          "setitimer"
-        ]
-      },
-      {
-        "id": "x86-file-handles",
-        "members": [
-          "name_to_handle_at",
-          "open_by_handle_at"
         ]
       },
       {
@@ -1658,24 +1632,9 @@
         "members": []
       },
       {
-        "id": "x86-legacy-des-compat",
-        "members": [
-          "encrypt",
-          "setkey"
-        ]
-      },
-      {
         "id": "x86-legacy-misc",
         "members": [
           "fmtmsg"
-        ]
-      },
-      {
-        "id": "x86-math-long-double-completion",
-        "members": [
-          "exp10l",
-          "fdiml",
-          "pow10l"
         ]
       },
       {
@@ -1698,39 +1657,6 @@
         "members": [
           "psiginfo",
           "psignal"
-        ]
-      },
-      {
-        "id": "x86-io-permissions",
-        "members": [
-          "ioperm",
-          "iopl"
-        ]
-      },
-      {
-        "id": "x86-sched-rr-interval",
-        "members": [
-          "sched_rr_get_interval"
-        ]
-      },
-      {
-        "id": "x86-memory-special",
-        "members": [
-          "explicit_bzero",
-          "swab"
-        ]
-      },
-      {
-        "id": "x86-a64l",
-        "members": [
-          "a64l"
-        ]
-      },
-      {
-        "id": "x86-netdb-setent",
-        "members": [
-          "sethostent",
-          "setnetent"
         ]
       },
       {
@@ -1765,7 +1691,7 @@
   "summary": {
     "candidate_external_callable_count": 1526,
     "declared_unverified_feature_callable_count": 314,
-    "default_static_callable_count": 1123,
+    "default_static_callable_count": 1160,
     "deferred_resolution_counts": {
       "compiler-builtin": 1,
       "consumer-supplied": 1,
@@ -1782,7 +1708,7 @@
     "undispositioned_candidate_callable_count": 0,
     "undispositioned_missing_reference_name_count": 0,
     "unprovided_callable_count": 11,
-    "verified_feature_callable_count": 78
+    "verified_feature_callable_count": 41
   },
   "target": "x86_64-unknown-linux-musl",
   "work_package": {

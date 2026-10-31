@@ -7,12 +7,10 @@
 //! does not implement ciphers locally and this interface has no useful modern
 //! Rust contract.
 //!
-//! `static_c_abi.rs` selects this owner through `x86-legacy-des-compat`.
-//! `x86-owned-static-runtime` selects that narrow feature for the two
-//! link-compatible names required by the pinned OS-test's X/Open calls, while
-//! `x86-legacy-misc` depends on it and retains its independent `fmtmsg`
-//! provider. With neither feature selected, the frozen default archive has
-//! neither export.
+//! `static_c_abi.rs` composes this owner unconditionally; the two
+//! link-compatible names are required by the pinned OS-test's X/Open calls.
+//! `x86-legacy-misc` retains its independent `fmtmsg` provider, so the
+//! default archive carries the DES pair but not `fmtmsg`.
 //!
 //! The two functions are deliberately inert-DES compatibility machinery:
 //! they neither read nor write caller storage, retain state, allocate, perform

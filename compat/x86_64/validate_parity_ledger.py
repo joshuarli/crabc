@@ -1905,11 +1905,6 @@ FILESYSTEM_DIRECTORY_SYMBOLS = (
     "versionsort",
 )
 
-FILESYSTEM_DIRECTORY_FEATURES = (
-    "x86-scandir",
-    "x86-filesystem-traversal",
-)
-
 FILESYSTEM_DIRECTORY_COMPONENT_RUNNERS = (
     "run_libc_directory_streams.sh",
     "run_libc_scandir.sh",
@@ -1922,11 +1917,6 @@ FILESYSTEM_EXTENSIONS_SYMBOLS = (
     "open_by_handle_at",
     "tempnam",
     "tmpnam",
-)
-
-FILESYSTEM_EXTENSIONS_FEATURES = (
-    "x86-temporary-names",
-    "x86-file-handles",
 )
 
 FILESYSTEM_EXTENSIONS_COMPONENT_RUNNERS = (

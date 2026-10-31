@@ -70,7 +70,7 @@ class X86LibcProcessExecTests(unittest.TestCase):
             / "process_exec_execlp.rs"
         ).read_text(encoding="utf-8")
 
-        self.assertIn("x86-process-exec = []", cargo)
+        self.assertNotIn("x86-process-exec", cargo)
         for module in (
             "process_exec.rs",
             "process_exec_env.rs",
@@ -80,7 +80,6 @@ class X86LibcProcessExecTests(unittest.TestCase):
             "process_exec_execle.rs",
             "process_exec_execlp.rs",
         ):
-            self.assertIn('#[cfg(feature = "x86-process-exec")]', static_root)
             self.assertIn(f'#[path = "{module}"]', static_root)
         self.assertIn(
             "ordinary static `execve`/`fexecve` consumers avoid", static_root
@@ -162,7 +161,7 @@ class X86LibcProcessExecTests(unittest.TestCase):
         ):
             self.assertIn(required, header_runner)
         for required in (
-            "x86-process-exec",
+            "default archive exec callable surface",
             "execve=59",
             "execveat=322",
             "weak execvpe",

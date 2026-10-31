@@ -22,19 +22,16 @@ class X86LegacyDesCompatTests(unittest.TestCase):
         static_root = STATIC_ROOT.read_text(encoding="utf-8")
         owner = OWNER.read_text(encoding="utf-8")
 
-        self.assertIn("x86-legacy-des-compat = []", manifest)
-        self.assertIn(
-            'x86-legacy-misc = ["x86-legacy-des-compat"]', manifest
-        )
+        self.assertNotIn("x86-legacy-des-compat", manifest)
+        self.assertIn("x86-legacy-misc = []", manifest)
         self.assertIn('"x86-legacy-misc",', manifest)
         self.assertIn(
-            '#[cfg(feature = "x86-legacy-des-compat")]\n'
             '#[path = "legacy_des_compat.rs"]\n'
             'mod legacy_des_compat;',
             static_root,
         )
         for required in (
-            "x86-legacy-des-compat",
+            "unconditional",
             "inert-DES",
             "does not alter errno",
             'pub extern "C" fn setkey',
@@ -60,16 +57,15 @@ class X86LegacyDesCompatTests(unittest.TestCase):
             self.assertIn(required, probe)
         self.assertIn("__crabc_x86_static_tls_bootstrap", start)
         for required in (
-            "FEATURE=x86-legacy-des-compat",
             "FEATURE_EXPORTS=(encrypt setkey)",
-            "default archive unexpectedly exposes opt-in",
-            "narrow feature widened the archive",
+            "default archive does not define the unconditional",
+            "does not define the unconditional",
             "collect_global_bindings",
-            "narrow feature changed the full global binding surface",
+            "legacy-misc closure must add only fmtmsg",
             "both-feature closure changed the full global binding surface",
             "assert_provider_counts",
             "providers default/narrow/composite",
-            '"${#both_encrypt_members[@]}" 0 1 1',
+            '"${#both_encrypt_members[@]}" 1 1 1',
             '"${#both_fmtmsg_members[@]}" 0 0 1',
             "fmtmsg",
             "both-feature closure",

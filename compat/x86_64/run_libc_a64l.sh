@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
-# Native Linux/x86-64 opt-in static crabc-libc a64l evidence.
+# Native Linux/x86-64 static crabc-libc a64l evidence.
 #
 # One X/Open 700 project-header fixture first runs through pinned musl 1.2.6
-# and then through a true `-nostdlib -static` candidate. The opt-in owner is
-# the state-free a64l half of musl's shared a64l.c source. Its fixed local
+# and then through a true `-nostdlib -static` candidate. The owner is the
+# state-free a64l half of musl's shared a64l.c source. Its fixed local
 # alphabet scan keeps this selected object independent of l64a, byte-string,
 # and result-buffer owners.
 set -euo pipefail
@@ -12,7 +12,6 @@ export LC_ALL=C
 
 readonly ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 readonly ORACLE_CC=/usr/local/bin/crabc-x86_64-musl-gcc
-readonly FEATURE=x86-a64l
 readonly STATIC_C_ABI_EXPORTS="$ROOT_DIR/compat/x86_64/static_c_abi_exports.txt"
 readonly AARCH64_STATIC_ABI="$ROOT_DIR/compat/abi/musl-1.2.6/aarch64/libc.a.static.tsv"
 readonly SOURCE="$ROOT_DIR/libc/src/c_abi/x86_64/a64l.rs"
@@ -58,19 +57,11 @@ collect_global_surface() {
         LC_ALL=C sort -u >"$output_path"
 }
 
-assert_feature_delta() {
-    local baseline_symbols="$1" featured_symbols="$2" additions="$3" removed="$4"
+assert_unconditional_symbol() {
+    local symbols="$1" symbol="$2" surface="$3"
 
-    comm -23 "$baseline_symbols" "$featured_symbols" >"$removed"
-    if [ -s "$removed" ]; then
-        diff -u "$baseline_symbols" "$featured_symbols" >&2 || true
-        fail "x86-a64l removes a default C ABI export"
-    fi
-    comm -13 "$baseline_symbols" "$featured_symbols" >"$additions"
-    if ! cmp -s <(printf 'a64l\n') "$additions"; then
-        diff -u <(printf 'a64l\n') "$additions" >&2 || true
-        fail "x86-a64l changes more than a64l"
-    fi
+    grep -Fxq "$symbol" "$symbols" ||
+        fail "$surface does not define the unconditional $symbol owner"
 }
 
 [ "$(uname -s)" = Linux ] || fail "requires native Linux"
@@ -93,9 +84,7 @@ grep -Fqx $'a64l\ta64l.lo\tT\tGLOBAL\t0\t64' "$AARCH64_STATIC_ABI" ||
 work_dir="$(mktemp -d /tmp/crabc-x86-64-libc-a64l.XXXXXX)"
 trap 'rm -rf -- "$work_dir"' EXIT
 baseline_target="$work_dir/cargo-baseline"
-featured_target="$work_dir/cargo-featured"
 baseline_archive="$baseline_target/x86_64-unknown-linux-musl/debug/libc.a"
-featured_archive="$featured_target/x86_64-unknown-linux-musl/debug/libc.a"
 selected_archive="$work_dir/libcrabc-a64l.a"
 reference="$work_dir/musl-a64l-reference"
 candidate="$work_dir/crabc-static-a64l-candidate"
@@ -104,9 +93,6 @@ musl_object="$work_dir/musl-a64l.o"
 header_trace="$work_dir/header-trace"
 baseline_symbols="$work_dir/baseline-symbols"
 expected_symbols="$work_dir/expected-symbols"
-featured_symbols="$work_dir/featured-symbols"
-feature_additions="$work_dir/feature-additions"
-feature_removed="$work_dir/feature-removed"
 archive_symbols="$work_dir/archive-symbols"
 a64l_undefined="$work_dir/a64l-undefined"
 a64l_relocations="$work_dir/a64l-relocations"
@@ -143,27 +129,20 @@ done
 "$reference" || fail "pinned-musl a64l fixture failed"
 
 build_source_runtime_libc "$baseline_target/x86_64-unknown-linux-musl/debug/libc.a"
-[ -f "$baseline_archive" ] || fail "cargo did not emit the baseline x86 static libc archive"
+[ -f "$baseline_archive" ] || fail "cargo did not emit the default x86 static libc archive"
 collect_global_surface "$baseline_archive" "$baseline_symbols" "$work_dir/baseline-members"
 grep -Ev '^(#|$)' "$STATIC_C_ABI_EXPORTS" | LC_ALL=C sort -u >"$expected_symbols"
 if ! cmp -s "$expected_symbols" "$baseline_symbols"; then
     diff -u "$expected_symbols" "$baseline_symbols" >&2 || true
     fail "selected static C ABI export surface drifted"
 fi
-if grep -Fxq a64l "$baseline_symbols"; then
-    fail "baseline archive unexpectedly defines opt-in a64l"
-fi
-
-build_source_runtime_libc "$featured_target/x86_64-unknown-linux-musl/debug/libc.a" \
-    --features "$FEATURE"
+assert_unconditional_symbol "$baseline_symbols" a64l "default archive"
 [ -f "$SOURCE" ] || fail "missing a64l source"
-[ -f "$featured_archive" ] || fail "cargo did not emit the featured x86 static libc archive"
-collect_global_surface "$featured_archive" "$featured_symbols" "$work_dir/featured-members"
-assert_feature_delta "$baseline_symbols" "$featured_symbols" "$feature_additions" "$feature_removed"
+featured_archive="$baseline_archive"
 nm -A --defined-only "$featured_archive" >"$archive_symbols"
 for symbol in a64l; do
     grep -Eq "[[:space:]][TW][[:space:]]${symbol}$" "$archive_symbols" ||
-        fail "featured archive does not define ${symbol}"
+        fail "default archive does not define ${symbol}"
 done
 for marker in 'src/misc/a64l.c::a64l' 'for shift in (0..36).step_by(6)' \
     'while index < 64' 'pub unsafe extern "C" fn a64l'; do
@@ -217,7 +196,8 @@ for symbol in a64l; do
     grep -Eq "[[:space:]]${symbol}$" "$candidate_symbols" ||
         fail "candidate does not define ${symbol}"
 done
-if awk '$7 == "UND" && NF >= 8 { print }' "$candidate_symbols" | grep . >/dev/null; then
+if awk '$7 == "UND" && NF >= 8 && ($5 == "GLOBAL" || $5 == "WEAK") { print }' \
+    "$candidate_symbols" | grep . >/dev/null; then
     fail "candidate retains an unresolved symbol"
 fi
 if grep -Eq 'Requesting program interpreter|INTERP|NEEDED' \

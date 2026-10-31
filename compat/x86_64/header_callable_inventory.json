@@ -621,14 +621,6 @@
         "members": [],
         "runner": "compat/x86_64/run_materialized_dynamic_sysroot.sh",
         "state": "planned"
-      },
-      {
-        "aliases": [],
-        "evidence_record": null,
-        "id": "x86-kernel-admin",
-        "members": [],
-        "runner": "compat/x86_64/run_libc_kernel_admin.sh",
-        "state": "planned"
       }
     ],
     "default_static": {
@@ -647,6 +639,7 @@
         "__fseterr",
         "__fsetlocking",
         "__fwritable",
+        "__h_errno_location",
         "__libc_current_sigrtmax",
         "__libc_current_sigrtmin",
         "__sched_cpucount",
@@ -658,6 +651,7 @@
         "_pthread_cleanup_pop",
         "_pthread_cleanup_push",
         "_setjmp",
+        "a64l",
         "abs",
         "accept",
         "accept4",
@@ -841,6 +835,7 @@
         "duplocale",
         "eaccess",
         "ecvt",
+        "encrypt",
         "endhostent",
         "endnetent",
         "endprotoent",
@@ -868,15 +863,24 @@
         "eventfd",
         "eventfd_read",
         "eventfd_write",
+        "execl",
+        "execle",
+        "execlp",
+        "execv",
+        "execve",
+        "execvp",
+        "execvpe",
         "exit",
         "exp",
         "exp10",
         "exp10f",
+        "exp10l",
         "exp2",
         "exp2f",
         "exp2l",
         "expf",
         "expl",
+        "explicit_bzero",
         "expm1",
         "expm1f",
         "expm1l",
@@ -892,6 +896,7 @@
         "fdatasync",
         "fdim",
         "fdimf",
+        "fdiml",
         "fdopendir",
         "feclearexcept",
         "fegetenv",
@@ -908,6 +913,7 @@
         "fesetround",
         "fetestexcept",
         "feupdateenv",
+        "fexecve",
         "fflush",
         "ffs",
         "ffsl",
@@ -938,6 +944,7 @@
         "fopen",
         "fork",
         "fpathconf",
+        "fprintf",
         "fputc",
         "fputs",
         "fread",
@@ -948,6 +955,7 @@
         "frexp",
         "frexpf",
         "frexpl",
+        "fscanf",
         "fseek",
         "fseeko",
         "fsetpos",
@@ -962,6 +970,7 @@
         "ftime",
         "ftok",
         "ftruncate",
+        "ftw",
         "futimens",
         "futimes",
         "futimesat",
@@ -989,6 +998,7 @@
         "gethostid",
         "gethostname",
         "getifaddrs",
+        "getitimer",
         "getloadavg",
         "getlogin",
         "getlogin_r",
@@ -1063,6 +1073,8 @@
         "inotify_rm_watch",
         "insque",
         "ioctl",
+        "ioperm",
+        "iopl",
         "isalnum",
         "isalnum_l",
         "isalpha",
@@ -1233,6 +1245,7 @@
         "munlock",
         "munlockall",
         "munmap",
+        "name_to_handle_at",
         "nan",
         "nanf",
         "nanl",
@@ -1247,6 +1260,7 @@
         "nexttoward",
         "nexttowardf",
         "nexttowardl",
+        "nftw",
         "ngettext",
         "nice",
         "nl_langinfo",
@@ -1263,6 +1277,7 @@
         "ntohl",
         "ntohs",
         "open",
+        "open_by_handle_at",
         "openat",
         "opendir",
         "pathconf",
@@ -1294,11 +1309,13 @@
         "pow",
         "pow10",
         "pow10f",
+        "pow10l",
         "powf",
         "powl",
         "ppoll",
         "pread",
         "preadv",
+        "printf",
         "prlimit",
         "pselect",
         "pthread_atfork",
@@ -1446,12 +1463,14 @@
         "scalbn",
         "scalbnf",
         "scalbnl",
+        "scanf",
         "sched_get_priority_max",
         "sched_get_priority_min",
         "sched_getaffinity",
         "sched_getcpu",
         "sched_getparam",
         "sched_getscheduler",
+        "sched_rr_get_interval",
         "sched_setaffinity",
         "sched_setparam",
         "sched_setscheduler",
@@ -1483,9 +1502,13 @@
         "setfsuid",
         "setgid",
         "setgroups",
+        "sethostent",
         "sethostname",
+        "setitimer",
         "setjmp",
+        "setkey",
         "setlocale",
+        "setnetent",
         "setpgid",
         "setpgrp",
         "setpriority",
@@ -1603,6 +1626,7 @@
         "strverscmp",
         "strxfrm",
         "strxfrm_l",
+        "swab",
         "symlink",
         "sync",
         "sync_file_range",
@@ -1675,6 +1699,7 @@
         "tss_set",
         "ttyname_r",
         "twalk",
+        "ualarm",
         "ulimit",
         "umask",
         "uname",
@@ -1689,6 +1714,10 @@
         "utimensat",
         "utimes",
         "versionsort",
+        "vfprintf",
+        "vfscanf",
+        "vprintf",
+        "vscanf",
         "vsnprintf",
         "vsprintf",
         "vsscanf",
@@ -1869,44 +1898,6 @@
     },
     "verified_feature_archives": [
       {
-        "aliases": [
-          {
-            "binding": "weak-same-address",
-            "name": "__isoc99_fscanf",
-            "target": "fscanf"
-          },
-          {
-            "binding": "weak-same-address",
-            "name": "__isoc99_scanf",
-            "target": "scanf"
-          },
-          {
-            "binding": "weak-same-address",
-            "name": "__isoc99_vfscanf",
-            "target": "vfscanf"
-          },
-          {
-            "binding": "weak-same-address",
-            "name": "__isoc99_vscanf",
-            "target": "vscanf"
-          }
-        ],
-        "evidence_record": "static-c-stdio-permanent-format-scan",
-        "id": "x86-stdio-permanent-format-scan",
-        "members": [
-          "fprintf",
-          "fscanf",
-          "printf",
-          "scanf",
-          "vfprintf",
-          "vfscanf",
-          "vprintf",
-          "vscanf"
-        ],
-        "runner": "compat/x86_64/run_libc_stdio_permanent_format_scan_wave.sh",
-        "state": "verified"
-      },
-      {
         "aliases": [],
         "evidence_record": "static-c-allocator-wrapper",
         "id": "x86-allocator-runtime",
@@ -1958,17 +1949,6 @@
       },
       {
         "aliases": [],
-        "evidence_record": "static-c-filesystem-traversal",
-        "id": "x86-filesystem-traversal",
-        "members": [
-          "ftw",
-          "nftw"
-        ],
-        "runner": "compat/x86_64/run_libc_filesystem_traversal.sh",
-        "state": "verified"
-      },
-      {
-        "aliases": [],
         "evidence_record": "static-c-environment",
         "id": "x86-environment-runtime",
         "members": [],
@@ -1991,29 +1971,6 @@
         "state": "verified"
       },
       {
-        "aliases": [
-          {
-            "binding": "weak-same-address",
-            "name": "execvpe",
-            "target": "__execvpe"
-          }
-        ],
-        "evidence_record": "static-c-process-exec",
-        "id": "x86-process-exec",
-        "members": [
-          "execl",
-          "execle",
-          "execlp",
-          "execv",
-          "execve",
-          "execvp",
-          "execvpe",
-          "fexecve"
-        ],
-        "runner": "compat/x86_64/run_libc_process_exec.sh",
-        "state": "verified"
-      },
-      {
         "aliases": [],
         "evidence_record": "allocator-observability",
         "id": "x86-allocator-observability",
@@ -2021,48 +1978,6 @@
           "malloc_usable_size"
         ],
         "runner": "compat/x86_64/run_libc_allocator_observability.sh",
-        "state": "verified"
-      },
-      {
-        "aliases": [],
-        "evidence_record": "static-c-h-errno",
-        "id": "x86-h-errno",
-        "members": [
-          "__h_errno_location"
-        ],
-        "runner": "compat/x86_64/run_libc_h_errno.sh",
-        "state": "verified"
-      },
-      {
-        "aliases": [],
-        "evidence_record": "static-c-ualarm",
-        "id": "x86-ualarm",
-        "members": [
-          "ualarm"
-        ],
-        "runner": "compat/x86_64/run_libc_ualarm.sh",
-        "state": "verified"
-      },
-      {
-        "aliases": [],
-        "evidence_record": "static-c-interval-timers",
-        "id": "x86-interval-timers",
-        "members": [
-          "getitimer",
-          "setitimer"
-        ],
-        "runner": "compat/x86_64/run_libc_interval_timers.sh",
-        "state": "verified"
-      },
-      {
-        "aliases": [],
-        "evidence_record": "static-c-file-handles",
-        "id": "x86-file-handles",
-        "members": [
-          "name_to_handle_at",
-          "open_by_handle_at"
-        ],
-        "runner": "compat/x86_64/run_libc_file_handles.sh",
         "state": "verified"
       },
       {
@@ -2119,40 +2034,11 @@
       {
         "aliases": [],
         "evidence_record": "legacy.misc",
-        "id": "x86-legacy-des-compat",
-        "members": [
-          "encrypt",
-          "setkey"
-        ],
-        "runner": "compat/x86_64/run_libc_legacy_des_compat.sh",
-        "state": "verified"
-      },
-      {
-        "aliases": [],
-        "evidence_record": "legacy.misc",
         "id": "x86-legacy-misc",
         "members": [
           "fmtmsg"
         ],
         "runner": "compat/x86_64/run_libc_legacy_misc.sh",
-        "state": "verified"
-      },
-      {
-        "aliases": [
-          {
-            "binding": "weak-same-address",
-            "name": "pow10l",
-            "target": "exp10l"
-          }
-        ],
-        "evidence_record": "static-c-math-elementary-fenv-sensitive",
-        "id": "x86-math-long-double-completion",
-        "members": [
-          "exp10l",
-          "fdiml",
-          "pow10l"
-        ],
-        "runner": "compat/x86_64/run_libc_math_long_double_completion.sh",
         "state": "verified"
       },
       {
@@ -2198,65 +2084,6 @@
           "psignal"
         ],
         "runner": "compat/x86_64/run_libc_psignal.sh",
-        "state": "verified"
-      },
-      {
-        "aliases": [],
-        "evidence_record": "static-c-iopl-ioperm",
-        "id": "x86-io-permissions",
-        "members": [
-          "ioperm",
-          "iopl"
-        ],
-        "runner": "compat/x86_64/run_libc_io_permissions.sh",
-        "state": "verified"
-      },
-      {
-        "aliases": [],
-        "evidence_record": "static-c-sched-rr-interval",
-        "id": "x86-sched-rr-interval",
-        "members": [
-          "sched_rr_get_interval"
-        ],
-        "runner": "compat/x86_64/run_libc_sched_rr_interval.sh",
-        "state": "verified"
-      },
-      {
-        "aliases": [],
-        "evidence_record": "static-c-explicit-bzero-swab",
-        "id": "x86-memory-special",
-        "members": [
-          "explicit_bzero",
-          "swab"
-        ],
-        "runner": "compat/x86_64/run_libc_memory_special.sh",
-        "state": "verified"
-      },
-      {
-        "aliases": [],
-        "evidence_record": "static-c-a64l",
-        "id": "x86-a64l",
-        "members": [
-          "a64l"
-        ],
-        "runner": "compat/x86_64/run_libc_a64l.sh",
-        "state": "verified"
-      },
-      {
-        "aliases": [
-          {
-            "binding": "weak-same-address",
-            "name": "setnetent",
-            "target": "sethostent"
-          }
-        ],
-        "evidence_record": "static-c-sethostent",
-        "id": "x86-netdb-setent",
-        "members": [
-          "sethostent",
-          "setnetent"
-        ],
-        "runner": "compat/x86_64/run_libc_sethostent.sh",
         "state": "verified"
       },
       {
@@ -436143,11 +435970,9 @@
       "__freadptr",
       "__freadptrinc",
       "__fwriting",
-      "__h_errno_location",
       "__res_state",
       "_flush_cache",
       "_flushlbf",
-      "a64l",
       "abort",
       "acct",
       "acos",
@@ -436194,7 +436019,6 @@
       "delete_module",
       "dn_comp",
       "dprintf",
-      "encrypt",
       "endgrent",
       "endmntent",
       "endpwent",
@@ -436204,24 +436028,13 @@
       "endutxent",
       "err",
       "errx",
-      "execl",
-      "execle",
-      "execlp",
-      "execv",
-      "execve",
-      "execvp",
-      "execvpe",
-      "exp10l",
-      "explicit_bzero",
       "fallocate",
       "fanotify_init",
       "fanotify_mark",
       "fchmodat",
       "fchown",
       "fchownat",
-      "fdiml",
       "fdopen",
-      "fexecve",
       "fflush_unlocked",
       "fgetc_unlocked",
       "fgetgrent",
@@ -436241,7 +436054,6 @@
       "fnmatch",
       "fopencookie",
       "forkpty",
-      "fprintf",
       "fputc_unlocked",
       "fputs_unlocked",
       "fputwc",
@@ -436251,9 +436063,7 @@
       "fread_unlocked",
       "free",
       "freopen",
-      "fscanf",
       "ftrylockfile",
-      "ftw",
       "funlockfile",
       "fwide",
       "fwprintf",
@@ -436278,7 +436088,6 @@
       "gethostbyname2_r",
       "gethostbyname_r",
       "gethostent",
-      "getitimer",
       "getline",
       "getmntent",
       "getmntent_r",
@@ -436319,8 +436128,6 @@
       "init_module",
       "initgroups",
       "initstate",
-      "ioperm",
-      "iopl",
       "isastream",
       "klogctl",
       "lckpwdf",
@@ -436356,9 +436163,6 @@
       "mq_unlink",
       "mremap",
       "mtx_timedlock",
-      "name_to_handle_at",
-      "nftw",
-      "open_by_handle_at",
       "open_memstream",
       "open_wmemstream",
       "openlog",
@@ -436376,10 +436180,8 @@
       "posix_spawn_file_actions_addopen",
       "posix_spawn_file_actions_destroy",
       "posix_spawnp",
-      "pow10l",
       "prctl",
       "preadv2",
-      "printf",
       "process_vm_readv",
       "process_vm_writev",
       "psiginfo",
@@ -436436,8 +436238,6 @@
       "res_send",
       "sbrk",
       "scandir",
-      "scanf",
-      "sched_rr_get_interval",
       "sem_close",
       "sem_open",
       "sem_timedwait",
@@ -436447,13 +436247,9 @@
       "setbuffer",
       "setcontext",
       "setgrent",
-      "sethostent",
-      "setitimer",
-      "setkey",
       "setlinebuf",
       "setlogmask",
       "setmntent",
-      "setnetent",
       "setns",
       "setpwent",
       "setspent",
@@ -436479,7 +436275,6 @@
       "strftime_l",
       "strndup",
       "strptime",
-      "swab",
       "swapcontext",
       "swapoff",
       "swapon",
@@ -436497,7 +436292,6 @@
       "tmpnam",
       "ttyname",
       "tzset",
-      "ualarm",
       "ulckpwdf",
       "umount",
       "umount2",
@@ -436513,14 +436307,10 @@
       "verr",
       "verrx",
       "vfork",
-      "vfprintf",
-      "vfscanf",
       "vfwprintf",
       "vfwscanf",
       "vhangup",
       "vmsplice",
-      "vprintf",
-      "vscanf",
       "vswprintf",
       "vswscanf",
       "vsyslog",
@@ -436548,9 +436338,9 @@
     },
     "callable_provider_counts": {
       "declared_unverified_feature_archives": 314,
-      "default_static": 1123,
+      "default_static": 1160,
       "unprovided": 11,
-      "verified_feature_archives": 78
+      "verified_feature_archives": 41
     },
     "candidate_external_callable_count": 1526,
     "candidate_public_header_count": 191,
@@ -436563,7 +436353,7 @@
       "ok": 2617,
       "oracle-not-applicable": 1
     },
-    "static_export_complement_count": 403
+    "static_export_complement_count": 366
   },
   "target": "x86_64-unknown-linux-musl"
 }

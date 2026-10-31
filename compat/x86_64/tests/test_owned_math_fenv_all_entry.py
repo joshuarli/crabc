@@ -113,7 +113,7 @@ def binary80_feature_fixture(work: Path, *, changed_baseline: bool = False,
     audit_paths = {}
     for name, archive_objects, features in (
         ("baseline", [objects[0]], ""),
-        ("feature", feature_objects, "x86-math-long-double-completion"),
+        ("feature", feature_objects, ""),
     ):
         target_name = "base-target" if name == "baseline" else "feature-target"
         archive = work / target_name / "x86_64-unknown-linux-musl" / "debug/libc.a"
@@ -353,7 +353,7 @@ def native_source_runtime_records(work: Path) -> tuple[Path, Path]:
             "name": "c", "src_path": str(ROOT / "libc/src/lib.rs"), "kind": ["staticlib"],
             "crate_types": ["staticlib"], "edition": "2021", "test": False,
         },
-        "features": ["default", "x86-math-long-double-completion"],
+        "features": ["default"],
         "profile": {
             "opt_level": "2", "debuginfo": 0, "debug_assertions": True,
             "overflow_checks": False, "test": False,
@@ -377,7 +377,7 @@ def native_source_runtime_records(work: Path) -> tuple[Path, Path]:
             "core": [],
             "compiler_builtins": ["arch", "compiler-builtins", "default", "unmangled-names"],
             "alloc": [],
-            "c": ["default", "x86-math-long-double-completion"],
+            "c": ["default"],
         }[crate]
         for feature in crate_features:
             command.extend(("--cfg", f'feature="{feature}"'))
@@ -424,7 +424,7 @@ def native_source_runtime_records(work: Path) -> tuple[Path, Path]:
     receipt_data["native_build_environment"] = receipt.source_runtime.native_build_tools.environment()
     receipt_data["cargo_stdout"] = identity(stdout)
     receipt_data["cargo_stderr"] = identity(stderr)
-    receipt_data["cargo_command"] = receipt.source_runtime.retained_cargo_command(receipt.LONG_DOUBLE_FEATURE)
+    receipt_data["cargo_command"] = receipt.source_runtime.retained_cargo_command("")
     receipt_data["source_runtime_artifacts"] = {
         name: identity(paths[0]) for name, paths in artifacts.items()
     }
@@ -451,24 +451,21 @@ def native_source_runtime_records(work: Path) -> tuple[Path, Path]:
 
 
 class OwnedMathFenvAllEntryTests(unittest.TestCase):
-    def test_binary80_feature_roster_adds_only_the_existing_long_double_feature(self) -> None:
+    def test_binary80_roster_is_the_command_default_archive(self) -> None:
         baseline, feature = receipt.feature_archive_roster(ROOT)
-        self.assertEqual(set(feature) - set(baseline), {"exp10l", "fdiml", "pow10l"})
-        self.assertEqual(set(baseline) - set(feature), set())
-        self.assertEqual(len(feature), len(baseline) + 3)
+        self.assertEqual(feature, baseline)
+        self.assertTrue({"exp10l", "fdiml", "pow10l"} <= set(baseline))
 
-    def test_retained_math_feature_profiles_match_current_manifest(self) -> None:
+    def test_retired_math_feature_profile_is_unconditional(self) -> None:
         self.assertEqual(
             receipt.source_runtime.retained_package_features(""), frozenset({"default"}),
         )
-        self.assertEqual(
-            receipt.source_runtime.retained_package_features(receipt.LONG_DOUBLE_FEATURE),
-            frozenset({"default", receipt.LONG_DOUBLE_FEATURE}),
-        )
-        with self.assertRaisesRegex(
-            receipt.source_runtime.ClosureError, "does not support this requested feature profile",
-        ):
-            receipt.source_runtime.retained_package_features("x86-owned-allocator-lifecycle-test-audit")
+        for retired in ("x86-math-long-double-completion", "x86-owned-allocator-lifecycle-test-audit"):
+            with self.subTest(retired=retired), self.assertRaisesRegex(
+                receipt.source_runtime.ClosureError,
+                "does not support this requested feature profile",
+            ):
+                receipt.source_runtime.retained_package_features(retired)
 
     def test_binary80_feature_receipt_replays_isolated_archive_and_consumer_evidence(self) -> None:
         scratch = ROOT / ".work/x86_64/tmp"
@@ -502,8 +499,9 @@ class OwnedMathFenvAllEntryTests(unittest.TestCase):
                 "baseline_archive", "feature_archive", "archive_symbols", "consumer_symbols",
             })
             self.assertEqual(result["baseline_features"], [])
-            self.assertEqual(result["enabled_features"], ["x86-math-long-double-completion"])
-            self.assertEqual(result["additions"], ["exp10l", "fdiml", "pow10l"])
+            self.assertEqual(result["enabled_features"], [])
+            self.assertEqual(result["additions"], [])
+            self.assertTrue(set(result["archive_symbols"]) == {"exp10l", "fdiml", "pow10l"})
             archive_symbols = result["archive_symbols"]
             consumer_symbols = result["consumer_symbols"]
             self.assertEqual(archive_symbols["fdiml"]["binding"], "GLOBAL")
@@ -539,7 +537,7 @@ class OwnedMathFenvAllEntryTests(unittest.TestCase):
                             work / "feature-target/x86_64-unknown-linux-musl/debug/libc.a.source-runtime.json",
                         ):
                             receipt_data = json.loads(path.read_text(encoding="utf-8"))
-                            enabled = "x86-math-long-double-completion,x86-math-complex"
+                            enabled = "default,x86-math-complex"
                             receipt_data["features"] = enabled
                             command = receipt_data["cargo_command"]
                             command[command.index("--features") + 1] = enabled
@@ -561,7 +559,7 @@ class OwnedMathFenvAllEntryTests(unittest.TestCase):
             receipt_path = graph / "receipt.json"
             original = json.loads(receipt_path.read_text(encoding="utf-8"))
             graph_evidence = receipt.source_runtime.replay_cargo_graph(
-                graph, receipt.LONG_DOUBLE_FEATURE,
+                graph, "",
             )
             self.assertEqual(
                 graph_evidence.archive,
@@ -573,7 +571,7 @@ class OwnedMathFenvAllEntryTests(unittest.TestCase):
             ):
                 with tempfile.TemporaryDirectory(prefix="staticlib-replay.", dir=replay_scratch) as temporary:
                     staticlib_evidence = receipt.source_runtime.replay_retained_graph(
-                        graph, receipt.LONG_DOUBLE_FEATURE, Path(temporary),
+                        graph, "", Path(temporary),
                     )
             self.assertEqual(staticlib_evidence.source_runtime_members, frozenset({
                 "core.runtime.o", "compiler_builtins.runtime.o",
@@ -597,7 +595,7 @@ class OwnedMathFenvAllEntryTests(unittest.TestCase):
                     changed["cargo_stderr"] = receipt.source_runtime.file_record(stderr_path, "resealed fixture stream")
                     receipt_path.write_text(json.dumps(changed), encoding="utf-8")
                     with self.assertRaisesRegex(receipt.source_runtime.ClosureError, message):
-                        receipt.source_runtime.replay_cargo_graph(graph, receipt.LONG_DOUBLE_FEATURE)
+                        receipt.source_runtime.replay_cargo_graph(graph, "")
             stderr_path.write_bytes(original_stderr)
             for field, name in (("compiler_tools", "wrapper"), ("native_build_environment", "KACHE_AUTO_CLEAN_UNUSED_UNITS_DAYS")):
                 changed = json.loads(json.dumps(original))
@@ -609,7 +607,7 @@ class OwnedMathFenvAllEntryTests(unittest.TestCase):
                     message = "native build environment differs"
                 receipt_path.write_text(json.dumps(changed), encoding="utf-8")
                 with self.subTest(resealed_receipt=field), self.assertRaisesRegex(receipt.source_runtime.ClosureError, message):
-                    receipt.source_runtime.replay_cargo_graph(graph, receipt.LONG_DOUBLE_FEATURE)
+                    receipt.source_runtime.replay_cargo_graph(graph, "")
             receipt_path.write_text(json.dumps(original), encoding="utf-8")
 
             rows = receipt.source_runtime.cargo_records(stdout_path)
@@ -651,14 +649,14 @@ class OwnedMathFenvAllEntryTests(unittest.TestCase):
             with self.assertRaisesRegex(
                 receipt.source_runtime.ClosureError, "feature closure differs from the requested",
             ):
-                receipt.source_runtime.replay_cargo_graph(graph, receipt.LONG_DOUBLE_FEATURE)
+                receipt.source_runtime.replay_cargo_graph(graph, "")
             stdout_path.write_bytes(original_stdout)
             stderr_path.write_bytes(original_stderr)
             receipt_path.write_text(json.dumps(original, sort_keys=True) + "\n", encoding="utf-8")
 
             for mismatch, mutate in (
                 ("cargo-profile", lambda record: record["profile"].__setitem__("opt_level", "3")),
-                ("cargo-features", lambda record: record["features"].remove("x86-math-long-double-completion")),
+                ("cargo-features", lambda record: record["features"].remove("default")),
             ):
                 with self.subTest(mismatch=mismatch):
                     stdout_path.write_bytes(original_stdout)
@@ -676,14 +674,14 @@ class OwnedMathFenvAllEntryTests(unittest.TestCase):
                     )
                     receipt_path.write_text(json.dumps(changed, sort_keys=True) + "\n", encoding="utf-8")
                     with self.assertRaises(receipt.source_runtime.ClosureError):
-                        receipt.source_runtime.replay_cargo_graph(graph, receipt.LONG_DOUBLE_FEATURE)
+                        receipt.source_runtime.replay_cargo_graph(graph, "")
                     stdout_path.write_bytes(original_stdout)
                     receipt_path.write_text(json.dumps(original, sort_keys=True) + "\n", encoding="utf-8")
 
             stderr_path.write_bytes(original_stderr)
             commands = receipt.source_runtime.cargo_commands(stderr_path)
             libc_command = receipt.source_runtime.invocation_for(commands, "c")
-            feature_cfg = libc_command.index('feature="x86-math-long-double-completion"')
+            feature_cfg = libc_command.index('feature="default"')
             del libc_command[feature_cfg - 1:feature_cfg + 1]
             stderr_path.write_text("".join(
                 f"     Running `{shlex.join(command)}`\n   Compiling fixture\n" for command in commands
@@ -694,7 +692,7 @@ class OwnedMathFenvAllEntryTests(unittest.TestCase):
             )
             receipt_path.write_text(json.dumps(changed, sort_keys=True) + "\n", encoding="utf-8")
             with self.assertRaises(receipt.source_runtime.ClosureError):
-                receipt.source_runtime.replay_cargo_graph(graph, receipt.LONG_DOUBLE_FEATURE)
+                receipt.source_runtime.replay_cargo_graph(graph, "")
             stderr_path.write_bytes(original_stderr)
             receipt_path.write_text(json.dumps(original, sort_keys=True) + "\n", encoding="utf-8")
 
@@ -711,7 +709,7 @@ class OwnedMathFenvAllEntryTests(unittest.TestCase):
                         receipt.source_runtime.ClosureError, "member closure differs",
                     ):
                         receipt.source_runtime.replay_retained_graph(
-                            graph, receipt.LONG_DOUBLE_FEATURE, Path(temporary),
+                            graph, "", Path(temporary),
                         )
 
             def wrong_primary(value: dict[str, object]) -> None:
@@ -737,7 +735,7 @@ class OwnedMathFenvAllEntryTests(unittest.TestCase):
                 value["cargo_command"].append("--all-features")
 
             def wrong_feature(value: dict[str, object]) -> None:
-                features = "x86-math-long-double-completion,x86-math-complex"
+                features = "default,x86-math-complex"
                 value["features"] = features
                 value["cargo_command"] = receipt.source_runtime.retained_cargo_command(features)
 
@@ -759,7 +757,7 @@ class OwnedMathFenvAllEntryTests(unittest.TestCase):
                     copied.write_text(serialized, encoding="utf-8")
                     with self.assertRaises(receipt.ReceiptError):
                         receipt.validate_feature_build(
-                            ROOT, archive, copied, graph, receipt.LONG_DOUBLE_FEATURE, "feature",
+                            ROOT, archive, copied, graph, "", "feature",
                         )
 
             graph_receipt = json.loads(json.dumps(original))
@@ -770,7 +768,7 @@ class OwnedMathFenvAllEntryTests(unittest.TestCase):
             copied.write_text(serialized, encoding="utf-8")
             with self.assertRaises(receipt.ReceiptError):
                 receipt.validate_feature_build(
-                    ROOT, archive, copied, graph, receipt.LONG_DOUBLE_FEATURE, "feature",
+                    ROOT, archive, copied, graph, "", "feature",
                 )
 
     def test_archive_public_bindings_rejects_unaccounted_archive_members(self) -> None:

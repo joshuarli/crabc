@@ -73,9 +73,9 @@ class UalarmTests(unittest.TestCase):
         }
         ledger = tomllib.loads(PARITY.read_text(encoding="utf-8"))
 
-        self.assertIn("x86-ualarm = []", manifest)
+        self.assertNotIn("x86-ualarm", manifest)
         self.assertIn(
-            '#[cfg(feature = "x86-ualarm")]\n#[path = "signal_ualarm.rs"]\nmod signal_ualarm;',
+            '#[path = "signal_ualarm.rs"]\nmod signal_ualarm;',
             static_root,
         )
         for required in (
@@ -117,16 +117,15 @@ class UalarmTests(unittest.TestCase):
         self.assertIn("crabc_x86_64_ualarm_probe", start)
 
         for required in (
-            "x86-ualarm",
-            "assert_feature_delta",
+            "default archive",
+            "default static export ratchet omits ualarm",
             "ualarm.lo",
-            "--features \"$FEATURE\"",
             "-nostdlib -static",
             "assert_named_syscall ualarm 26",
         ):
             self.assertIn(required, runner)
         self.assertNotIn("--whole-archive", runner)
-        self.assertNotIn("ualarm", static_exports)
+        self.assertIn("ualarm", static_exports)
         assert_header_abi_dispatches(
             self, ROOT, "ualarm", "run_ualarm_header_abi.sh"
         )
@@ -146,7 +145,7 @@ class UalarmTests(unittest.TestCase):
             if record["id"] == "static-c-ualarm"
         )
         self.assertNotIn("capabilities", artifact)
-        self.assertIn("ualarm", artifact["description"])
+        self.assertIn("unconditional owner exposes exactly `ualarm`", artifact["description"])
         self.assertIn("does not complete", artifact["description"])
         self.assertIn("libc/src/c_abi/x86_64/signal_ualarm.rs", artifact["source_owners"])
         self.assertEqual(1, len(artifact["native_evidence"]))
@@ -156,12 +155,12 @@ class UalarmTests(unittest.TestCase):
         for boundary in ("does not complete", "public x86 support"):
             self.assertIn(boundary, evidence["scope"])
 
-        feature = next(
-            record for record in ledger["feature_archive"] if record["id"] == "x86-ualarm"
+        self.assertFalse(
+            any(
+                record["id"] == "x86-ualarm"
+                for record in ledger["feature_archive"]
+            )
         )
-        self.assertEqual("verified", feature["state"])
-        self.assertEqual([], feature["baseline_features"])
-        self.assertEqual(["ualarm"], feature["additive_callables"])
 
 
 if __name__ == "__main__":

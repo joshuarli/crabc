@@ -38,7 +38,6 @@ SCOPE = [
     "math.elementary-long-double", "math.elementary-fenv-sensitive",
     "math.special", "math.complex",
 ]
-LONG_DOUBLE_FEATURE = source_runtime.RETAINED_MATH_FEATURE
 LONG_DOUBLE_ADDITIONS = ("exp10l", "fdiml", "pow10l")
 LINKAGES = ("static", "static-pie", "dynamic-pie", "dynamic-non-pie")
 EXECUTION_CELLS = (
@@ -188,9 +187,9 @@ def feature_archive_roster(root: Path) -> tuple[tuple[str, ...], tuple[str, ...]
     ))
     require(baseline and len(baseline) == len(set(baseline)),
             "selected-static C ABI archive roster is empty or repeats names")
-    require(not set(LONG_DOUBLE_ADDITIONS) & set(baseline),
-            "binary80 feature additions already occur in the selected-static roster")
-    return baseline, tuple(sorted((*baseline, *LONG_DOUBLE_ADDITIONS)))
+    require(set(LONG_DOUBLE_ADDITIONS) <= set(baseline),
+            "binary80 symbols are absent from the selected-static roster")
+    return baseline, baseline
 
 
 def feature_file(root: Path, work: Path, name: object, label: str) -> Path:
@@ -303,7 +302,7 @@ def validate_binary80_feature_work(root: Path, feature_work: Path) -> Binary80Fe
     }
     archive_paths = {}
     source_runtime_evidence = {}
-    for name, features in (("baseline", ""), ("feature", LONG_DOUBLE_FEATURE)):
+    for name, features in (("baseline", ""), ("feature", "")):
         archive = feature_file(root, work, expected_archive_paths[name].relative_to(root).as_posix(),
                                f"binary80 {name} archive")
         require(archive == expected_archive_paths[name],
@@ -354,7 +353,7 @@ def validate_binary80_feature_work(root: Path, feature_work: Path) -> Binary80Fe
     require(tuple(sorted(baseline_bindings)) == baseline_roster,
             "binary80 baseline archive differs from the selected-static roster")
     require(tuple(sorted(feature_bindings)) == feature_roster,
-            "binary80 feature archive differs from its exact isolated roster")
+            "binary80 rebuild differs from the exact default roster")
     require({name: value for name, value in feature_bindings.items() if name in baseline_bindings}
             == baseline_bindings,
             "binary80 feature changed a baseline archive binding or type")
@@ -467,8 +466,8 @@ def validate_binary80_feature_work(root: Path, feature_work: Path) -> Binary80Fe
     return {
         "work": work.relative_to(root).as_posix(),
         "baseline_features": [],
-        "enabled_features": [LONG_DOUBLE_FEATURE],
-        "additions": list(LONG_DOUBLE_ADDITIONS),
+        "enabled_features": [],
+        "additions": [],
         "baseline_archive": expected_archive_paths["baseline"].relative_to(root).as_posix(),
         "feature_archive": expected_archive_paths["feature"].relative_to(root).as_posix(),
         "archive_symbols": {name: rows[0] for name, rows in alias_rows.items()},
