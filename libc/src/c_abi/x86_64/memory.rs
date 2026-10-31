@@ -15,14 +15,12 @@
 //! `memset` and the hidden `__memcpy_fwd` keep musl's exact algorithms; the
 //! pinned AT&T assembly is expressed through Rust `global_asm!`'s native
 //! Intel syntax. `memcpy`, `memmove` and `memcmp` keep musl's contracts and
-//! results but use faster x86-64-baseline (SSE2, no CPU dispatch) forms,
-//! chosen by cycle measurement on the development CPU:
+//! results but use shorter x86-64-baseline (SSE2, no CPU dispatch) forms:
 //!
-//! - `memcpy` copies up to 64 bytes with overlapping register loads and
-//!   stores, and larger copies with an overlapping 64-byte head that aligns
-//!   the destination to 64 bytes, musl's `rep movsq` bulk, and an overlapping
-//!   16-byte tail (about 2x faster for short unaligned copies, 5% for 16 KiB
-//!   unaligned; aligned bulk copies are already at `rep movsq`'s bandwidth).
+//! - `memcpy` copies up to 16 bytes with overlapping register loads and
+//!   stores, 17..32 bytes with two overlapping 16-byte SSE2 blocks, and larger
+//!   ranges with one forward `rep movsb`, so no destination-alignment head or
+//!   separate tail is emitted for a copy the string engine already covers.
 //! - `memmove` performs every copy of at most 64 bytes with all loads before
 //!   any store, reaches `memcpy` for disjoint large ranges, takes
 //!   musl's forward `__memcpy_fwd` for forward overlap, and copies backwards
@@ -64,20 +62,13 @@ static_archive_member! { memcpy_source {
     .type memcpy,@function
 memcpy:
     mov rax, rdi
-    cmp rdx, 64
+    cmp rdx, 32
     ja .Lcrabc_x86_memcpy_large
     cmp rdx, 16
     jb .Lcrabc_x86_memcpy_below16
-    /* 16..64 bytes: overlapping 16-byte blocks, all loads first. */
+    /* 16..32 bytes: two overlapping 16-byte blocks, loads before stores. */
     movdqu xmm0, xmmword ptr [rsi]
     movdqu xmm1, xmmword ptr [rsi + rdx - 16]
-    cmp rdx, 32
-    jbe .Lcrabc_x86_memcpy_store2
-    movdqu xmm2, xmmword ptr [rsi + 16]
-    movdqu xmm3, xmmword ptr [rsi + rdx - 32]
-    movdqu xmmword ptr [rdi + 16], xmm2
-    movdqu xmmword ptr [rdi + rdx - 32], xmm3
-.Lcrabc_x86_memcpy_store2:
     movdqu xmmword ptr [rdi], xmm0
     movdqu xmmword ptr [rdi + rdx - 16], xmm1
     ret
@@ -112,29 +103,11 @@ memcpy:
 .Lcrabc_x86_memcpy_done:
     ret
 .Lcrabc_x86_memcpy_large:
-    /* More than 64 bytes of non-overlapping ranges: an overlapping 64-byte
-       head aligns the destination to 64 bytes for musl's `rep movsq` bulk,
-       and a preloaded 16-byte tail covers its final 0-7 bytes. */
-    movdqu xmm0, xmmword ptr [rsi]
-    movdqu xmm1, xmmword ptr [rsi + 16]
-    movdqu xmm2, xmmword ptr [rsi + 32]
-    movdqu xmm3, xmmword ptr [rsi + 48]
-    movdqu xmm4, xmmword ptr [rsi + rdx - 16]
-    lea r9, [rdi + rdx - 16]
-    mov rcx, rdi
-    neg rcx
-    and ecx, 63
-    movdqu xmmword ptr [rdi], xmm0
-    movdqu xmmword ptr [rdi + 16], xmm1
-    movdqu xmmword ptr [rdi + 32], xmm2
-    movdqu xmmword ptr [rdi + 48], xmm3
-    add rdi, rcx
-    add rsi, rcx
-    sub rdx, rcx
+    /* More than 32 bytes of non-overlapping ranges: the CPU's string engine
+       copies the whole range in one direction, with no destination-alignment
+       head or separately stored tail. */
     mov rcx, rdx
-    shr rcx, 3
-    rep movsq
-    movdqu xmmword ptr [r9], xmm4
+    rep movsb
     ret
     .size memcpy, .-memcpy
 

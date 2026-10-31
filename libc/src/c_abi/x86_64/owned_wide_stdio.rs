@@ -84,8 +84,13 @@ pub(super) unsafe fn put_held(character: c_int, stream: *mut StandardStream) -> 
         else {
             let mut bytes = [0u8; 4];
             let length = codec::encode_for_locale(bytes.as_mut_ptr().cast(), character, codec::locale_ctype_is_utf8());
-            if length == usize::MAX || fwrite_held(bytes.as_ptr().cast(), 1, length, stream) < length { WEOF }
-            else { character as u32 }
+            if length == usize::MAX { WEOF }
+            else if !is_writable(stream) { mark_error(stream); WEOF }
+            else if !prepare_write(stream) { WEOF }
+            else {
+                mark_io_started(stream);
+                if fwrite_held(bytes.as_ptr(), length, stream) < length { WEOF } else { character as u32 }
+            }
         };
         if result == WEOF { mark_error(stream); }
         result
@@ -236,6 +241,9 @@ static_archive_member! { fputws_source {
         unsafe {
             let _guard = StreamGuard::acquire(stream);
             orient(stream, 1);
+            if !is_writable(stream) { mark_error(stream); return -1; }
+            if !prepare_write(stream) { return -1; }
+            mark_io_started(stream);
             let utf8 = (*stream).wide_locale.unwrap();
             let _locale = StreamLocaleGuard::enter(utf8);
             let mut bytes = [0u8; BUFSIZ];
@@ -252,7 +260,7 @@ static_archive_member! { fputws_source {
                     ptr::copy_nonoverlapping(encoded.as_ptr(), bytes.as_mut_ptr().add(length), count);
                     length += count; source = source.add(1);
                 }
-                if length != 0 && fwrite_held(bytes.as_ptr().cast(), 1, length, stream) < length { return -1; }
+                if length != 0 && fwrite_held(bytes.as_ptr(), length, stream) < length { return -1; }
                 if ended { return length as c_int; }
             }
         }
