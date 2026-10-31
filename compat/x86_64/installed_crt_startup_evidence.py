@@ -222,11 +222,12 @@ def require_array_bounds(start,end,section):
 
 def array_entry_names(mode,variant,kind):
     names=[] if variant=='empty' else [{'preinit':'p','init':'i','fini':'f'}[kind]]
-    # Source-owned libc array transport remains present in static images even
-    # when the application contributes no arrays. No allocator-body claim is
-    # inferred from this exact slot/source-object placement.
-    if mode in ('static','static-pie') and kind!='preinit':
-        names.append('__crabc_x86_owned_mimalloc_process_'+('initializer' if kind=='init' else 'finalizer'))
+    # The source-owned finalizer remains in the static image even when the
+    # application contributes no arrays. The allocator initializer is lazy and
+    # has no array entry; no allocator-body claim is inferred from this exact
+    # slot/source-object placement.
+    if mode in ('static','static-pie') and kind=='fini':
+        names.append('__crabc_x86_owned_mimalloc_process_finalizer')
     return names
 
 def require_array_entries(mode,variant,kind,start,end,entries):

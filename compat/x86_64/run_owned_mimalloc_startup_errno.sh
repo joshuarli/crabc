@@ -6,6 +6,7 @@ ulimit -c 0
 
 readonly ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 readonly PROBE="$ROOT/compat/x86_64/owned_mimalloc_startup_errno_probe.c"
+readonly LAZY_PROBE="$ROOT/compat/x86_64/owned_mimalloc_lazy_init_probe.c"
 readonly SUCCESS_PROBE="$ROOT/compat/x86_64/owned_success_errno_probe.c"
 readonly ORACLE_CC=/usr/local/bin/crabc-x86_64-musl-gcc
 readonly INTERPRETER=/lib/ld-crabc-x86_64.so.1
@@ -241,6 +242,57 @@ run_dynamic_mode() {
     done
 }
 
+run_lazy_probe_matrix() {
+    local static_product="$1" dynamic_product="$2" mode entry root probe_mode
+    local -a probe_modes=(no-allocation malloc calloc realloc aligned_alloc posix_memalign
+        memalign valloc reallocarray strdup strndup race)
+
+    (cd "$work" && "$dynamic_product/bin/crabc-cc-dynamic" --dynamic-pie -std=c11 -fno-builtin \
+        -c "$LAZY_PROBE" -o "$work/lazy-workload.o")
+    for mode in static static-pie; do
+        (cd "$work" && "$static_product/bin/crabc-cc" "-$mode" \
+            --link-receipt "lazy-static-$mode.crabc-link.json" "$work/lazy-workload.o" \
+            -o "$work/lazy-static-$mode")
+        root="$work/lazy-static-$mode-root"
+        mkdir -p "$root/work"
+        cp "$work/lazy-static-$mode" "$root/work/probe"
+        for probe_mode in "${probe_modes[@]}"; do
+            run_in_root "$root" "lazy-static-$mode-$probe_mode" /work/probe "$probe_mode"
+        done
+    done
+    for mode in pie non-pie; do
+        (cd "$work" && "$dynamic_product/bin/crabc-cc-dynamic" "--dynamic-$mode" \
+            "$work/lazy-workload.o" -o "$work/lazy-dynamic-$mode")
+        for entry in kernel direct; do
+            root="$work/lazy-dynamic-$mode-$entry-root"
+            mkdir -p "$root/lib" "$root/usr/lib" "$root/work"
+            cp "$dynamic_product/lib/ld-crabc-x86_64.so.1" "$root/lib/ld-crabc-x86_64.so.1"
+            cp "$dynamic_product/usr/lib/libc.so" "$root/usr/lib/libc.so"
+            cp "$work/lazy-dynamic-$mode" "$root/work/probe"
+            for probe_mode in "${probe_modes[@]}"; do
+                if [ "$entry" = direct ]; then
+                    run_in_root "$root" "lazy-dynamic-$mode-$entry-$probe_mode" \
+                        "$INTERPRETER" /work/probe "$probe_mode"
+                else
+                    run_in_root "$root" "lazy-dynamic-$mode-$entry-$probe_mode" \
+                        /work/probe "$probe_mode"
+                fi
+            done
+        done
+        receipt_products+=("program-lazy-dynamic-$mode=$work/lazy-dynamic-$mode")
+    done
+    receipt_products+=(
+        "input-lazy-source=$LAZY_PROBE"
+        "input-lazy-object=$work/lazy-workload.o"
+    )
+    for mode in static static-pie; do
+        receipt_products+=(
+            "program-lazy-static-$mode=$work/lazy-static-$mode"
+            "link-lazy-static-$mode=$work/lazy-static-$mode.crabc-link.json"
+        )
+    done
+}
+
 "$ORACLE_CC" -DCRABC_MIMALLOC_STARTUP_ERRNO_ORACLE \
     -DCRABC_MIMALLOC_STARTUP_ERRNO_DYNAMIC "$PROBE" -o "$work/oracle-dynamic"
 "$ORACLE_CC" -static -fno-pie -no-pie -DCRABC_MIMALLOC_STARTUP_ERRNO_ORACLE "$PROBE" \
@@ -267,10 +319,10 @@ success_transcript "$root" oracle-dynamic /work/probe
 
 if [ -z "$provided_dynamic" ]; then
     python3 -B "$ROOT/scripts/build_x86_64_owned_dynamic_sysroot.py" \
-        --output "$work/dynamic-product" >"$work/dynamic-build.json"
+        --allocator-lifecycle-test-audit --output "$work/dynamic-product" >"$work/dynamic-build.json"
     provided_dynamic="$work/dynamic-product"
     python3 -B "$ROOT/scripts/build_x86_64_owned_sysroot.py" \
-        --output "$work/static-product" >"$work/static-build.json"
+        --allocator-lifecycle-test-audit --output "$work/static-product" >"$work/static-build.json"
     provided_static="$work/static-product"
 fi
 
@@ -304,6 +356,25 @@ fi
 for mode in pie non-pie; do
     run_dynamic_mode "$provided_dynamic" "$mode"
 done
+
+# The lazy first-allocation and race observations need the audit-only phase
+# and init-count seam from the accepted C backend. Supplied native-shadow or
+# non-audit products keep the errno-only behavior above.
+static_audit=no
+if [ -n "$provided_static" ] && python3 -B -c \
+    'import json, sys; raise SystemExit(0 if json.load(open(sys.argv[1])).get("allocator_lifecycle_test_audit") is True else 1)' \
+    "$provided_static/share/crabc/manifest.json"; then
+    static_audit=yes
+fi
+dynamic_audit=no
+if python3 -B -c \
+    'import json, sys; raise SystemExit(0 if json.load(open(sys.argv[1])).get("allocator_lifecycle_test_audit") is True else 1)' \
+    "$provided_dynamic/share/crabc/libc-shared.provenance.json"; then
+    dynamic_audit=yes
+fi
+if [ "$dynamic_backend" != native-shadow ] && [ "$static_audit" = yes ] && [ "$dynamic_audit" = yes ]; then
+    run_lazy_probe_matrix "$provided_static" "$provided_dynamic"
+fi
 
 receipt_products+=(
     "input-startup-source=$PROBE"

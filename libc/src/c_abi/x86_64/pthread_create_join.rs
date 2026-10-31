@@ -2784,6 +2784,19 @@ pub unsafe extern "C" fn pthread_create(
     if thread.is_null() || start.is_none() {
         return EINVAL;
     }
+    // The allocator's automatic process initialization must run on the process
+    // main thread. A worker that wins the first allocation would otherwise be
+    // recorded as the main thread and free the static main theap when it
+    // exits. Claim the one-shot here, before the first worker can allocate.
+    #[cfg(all(
+        crabc_owned_mimalloc_lifecycle,
+        not(feature = "native-mimalloc-shadow"),
+    ))]
+    if current_is_selected_initial_thread() {
+        // SAFETY: the initial thread runs before any selected worker exists;
+        // the lifecycle owner serializes the complete upstream sequence.
+        unsafe { super::allocator_mimalloc_lifecycle::initialize() };
+    }
     let attributes = if attributes.is_null() {
         super::pthread_attr::selected_worker_default_attributes()
     } else {

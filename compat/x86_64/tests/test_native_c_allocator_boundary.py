@@ -801,6 +801,13 @@ class NativeCAllocatorBoundaryHarnessTests(unittest.TestCase):
             BOUNDARY._lifecycle_c_abi(lifecycle.replace("fn _mi_auto_process_done();", "fn _mi_auto_process_done(value: usize);"))
         with self.assertRaisesRegex(BOUNDARY.AllocatorBoundaryError, "callback differs for initialize"):
             BOUNDARY._lifecycle_c_abi(lifecycle.replace("fn initialize()", "fn initialize(value: c_int)"))
+        eager = lifecycle.replace(
+            'static AUTOMATIC_PROCESS_INITIALIZER: unsafe extern "C" fn() = initialize;',
+            '#[link_section = ".init_array"]\nstatic AUTOMATIC_PROCESS_INITIALIZER: unsafe extern "C" fn() = initialize;',
+        )
+        with self.assertRaisesRegex(BOUNDARY.AllocatorBoundaryError,
+                                    "local-data anchor differs for __crabc_x86_owned_mimalloc_process_initializer"):
+            BOUNDARY._lifecycle_c_abi(eager)
 
     def test_wrapper_product_bindings_reject_a_global_to_weak_row_drift(self) -> None:
         expected = {name: binding for name, (binding, _, _) in BOUNDARY.WRAPPER_C_ABI.items()}
