@@ -10,6 +10,8 @@ import tomllib
 import unittest
 from pathlib import Path
 
+from header_abi_dispatch import assert_header_abi_dispatches
+
 
 ROOT = Path(__file__).resolve().parents[3]
 STATIC_ROOT = ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"
@@ -144,10 +146,11 @@ class Renameat2Tests(unittest.TestCase):
 
         self.assertIn("renameat2", static_exports)
         self.assertNotIn("renameat", static_exports)
+        assert_header_abi_dispatches(
+            self, ROOT, "renameat2", "run_renameat2_header_abi.sh"
+        )
         for required in (
-            "renameat2-header-abi",
             "libc-renameat2",
-            "run_renameat2_header_abi",
             "run_libc_renameat2_probe",
             "run_libc_renameat2.sh",
         ):

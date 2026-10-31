@@ -8,6 +8,8 @@ import subprocess
 import unittest
 from pathlib import Path
 
+from header_abi_dispatch import assert_header_abi_dispatches
+
 
 ROOT = Path(__file__).resolve().parents[3]
 PUBLIC_HEADER = ROOT / "include" / "sys" / "io.h"
@@ -110,13 +112,9 @@ class SysIoHeaderAbiTests(unittest.TestCase):
 
     def test_dispatcher_exposes_only_the_compile_object_gate(self) -> None:
         dispatcher = DISPATCHER.read_text(encoding="utf-8")
-        for phrase in (
-            "sys-io-header-abi)",
-            "run_sys_io_header_abi()",
-            "run_sys_io_header_abi.sh",
-            "sys-io-header-abi takes no arguments",
-        ):
-            self.assertIn(phrase, dispatcher)
+        assert_header_abi_dispatches(
+            self, ROOT, "sys-io", "run_sys_io_header_abi.sh"
+        )
         self.assertNotIn("libc-sys-io", dispatcher)
 
 

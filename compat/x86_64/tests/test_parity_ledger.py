@@ -1660,16 +1660,19 @@ class X86ParityLedgerTests(unittest.TestCase):
 
     def test_header_abi_commands_resolve_against_the_case_table(self) -> None:
         dispatcher = (ROOT / "scripts" / "dev-x86_64.sh").read_text(encoding="utf-8")
+        runner = "run_epoll_header_abi.sh"
         ledger.require_dispatched_command(
             dispatcher,
             "./scripts/dev-x86_64.sh header-abi epoll",
             "test",
+            runner,
         )
         with self.assertRaisesRegex(ledger.LedgerError, "unknown header-abi case"):
             ledger.require_dispatched_command(
                 dispatcher,
                 "./scripts/dev-x86_64.sh header-abi no-such-case",
                 "test",
+                runner,
             )
         with self.assertRaisesRegex(
             ledger.LedgerError, "absent from the native dispatcher"
@@ -1678,6 +1681,14 @@ class X86ParityLedgerTests(unittest.TestCase):
                 dispatcher,
                 "./scripts/dev-x86_64.sh epoll-header-abi",
                 "test",
+                runner,
+            )
+        with self.assertRaisesRegex(ledger.LedgerError, "does not read the case table"):
+            ledger.require_dispatched_command(
+                "    header-abi)\n",
+                "./scripts/dev-x86_64.sh header-abi epoll",
+                "test",
+                runner,
             )
         with tempfile.TemporaryDirectory() as directory:
             table = Path(directory) / "header_abi_cases.txt"
@@ -1688,6 +1699,50 @@ class X86ParityLedgerTests(unittest.TestCase):
                         dispatcher,
                         "./scripts/dev-x86_64.sh header-abi bogus",
                         "test",
+                        "run_missing.sh",
+                    )
+        with tempfile.TemporaryDirectory() as directory:
+            table = Path(directory) / "header_abi_cases.txt"
+            table.write_text(
+                "epoll\trun_ioctl_header_abi.sh\n", encoding="utf-8"
+            )
+            with mock.patch.object(ledger, "HEADER_ABI_CASES_PATH", table):
+                with self.assertRaisesRegex(ledger.LedgerError, "expected"):
+                    ledger.require_dispatched_command(
+                        dispatcher,
+                        "./scripts/dev-x86_64.sh header-abi epoll",
+                        "test",
+                        runner,
+                    )
+        with tempfile.TemporaryDirectory() as directory:
+            table = Path(directory) / "header_abi_cases.txt"
+            table.write_text(
+                "epoll\trun_epoll_header_abi.sh\n"
+                "epoll\trun_ioctl_header_abi.sh\n",
+                encoding="utf-8",
+            )
+            with mock.patch.object(ledger, "HEADER_ABI_CASES_PATH", table):
+                with self.assertRaisesRegex(ledger.LedgerError, "duplicate"):
+                    ledger.require_dispatched_command(
+                        dispatcher,
+                        "./scripts/dev-x86_64.sh header-abi epoll",
+                        "test",
+                        runner,
+                    )
+        with tempfile.TemporaryDirectory() as directory:
+            table = Path(directory) / "header_abi_cases.txt"
+            table.write_text(
+                "epoll\trun_epoll_header_abi.sh\n"
+                "access\trun_epoll_header_abi.sh\n",
+                encoding="utf-8",
+            )
+            with mock.patch.object(ledger, "HEADER_ABI_CASES_PATH", table):
+                with self.assertRaisesRegex(ledger.LedgerError, "more than one case"):
+                    ledger.require_dispatched_command(
+                        dispatcher,
+                        "./scripts/dev-x86_64.sh header-abi epoll",
+                        "test",
+                        runner,
                     )
 
     def test_inet_address_header_gate_stays_compile_only_and_non_promoting(self) -> None:

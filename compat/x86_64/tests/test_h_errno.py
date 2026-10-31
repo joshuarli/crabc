@@ -9,6 +9,8 @@ import tomllib
 import unittest
 from pathlib import Path
 
+from header_abi_dispatch import assert_header_abi_dispatches
+
 
 ROOT = Path(__file__).resolve().parents[3]
 MANIFEST = ROOT / "libc" / "Cargo.toml"
@@ -146,10 +148,11 @@ class HErrnoTests(unittest.TestCase):
             self.assertIn(required, runner)
         self.assertNotIn("--whole-archive", runner)
         self.assertFalse(static_exports & {"h_errno", "__h_errno_location"})
+        assert_header_abi_dispatches(
+            self, ROOT, "h-errno", "run_h_errno_header_abi.sh"
+        )
         for required in (
-            "h-errno-header-abi)",
             "libc-h-errno)",
-            "run_h_errno_header_abi.sh",
             "run_libc_h_errno.sh",
         ):
             self.assertIn(required, dispatcher)

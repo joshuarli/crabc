@@ -1215,7 +1215,7 @@ retained prefix and zero-filled extension, direct positive POSIX errors, and
 unchanged `errno`. It does not select general fallocate flags, pathname or
 filesystem policy, durability, cancellation, dynamic libc, or application
 startup.
-`descriptor-advice-header-abi` proves only the project and pinned-musl C/C++
+`header-abi descriptor-advice` proves only the project and pinned-musl C/C++
 declaration profiles for unconditional `posix_fadvise`, the six
 `POSIX_FADV_*` values, the `_LARGEFILE64_SOURCE` macro alias, and GNU-only
 `readahead`; it does not select a runtime C API. `libc-descriptor-advice`
@@ -1225,7 +1225,7 @@ unlinked regular file: all six advice words, stable descriptor position,
 direct POSIX versus `-1`/`errno` error conventions, and no cache-effect claim.
 It does not select cache policy, pathname behavior, allocation, durability,
 cancellation, dynamic libc, or application startup.
-`filesystem-capacity-header-abi` proves only the project and pinned-musl
+`header-abi filesystem-capacity` proves only the project and pinned-musl
 C/C++ declaration, LP64 layout, feature-selection, and C++ C-linkage profiles
 for `statfs`, `fstatfs`, `statvfs`, and `fstatvfs`, including their
 `_LARGEFILE64_SOURCE` macro aliases. It does not select a runtime C API.
@@ -1236,7 +1236,7 @@ selects only direct `statfs`/`fstatfs` records and musl's derived
 stale-`errno` success and missing-path/closed-fd errors. It does not select
 filesystem policy, pathname behavior, allocation, durability, cancellation,
 dynamic libc, or application startup.
-`vector-io-header-abi` proves only the project and pinned-musl C/C++
+`header-abi vector-io` proves only the project and pinned-musl C/C++
 `sys/uio.h` declarations, x86 iovec layout, feature visibility, LF64 aliases,
 and C++ C-linkage profiles. `libc-vector-io` exercises a separate freestanding
 project-header C fixture after its equivalent pinned-musl run. It selects only
@@ -1365,48 +1365,48 @@ mntent, or public x86 runtime support.
 `header-abi-reference` proves only its pinned reference baseline.
 `header-abi-project` compiles only the staged public fenv/float/fundamental
 type declarations and does not link an x86 libc artifact.
-`math-complex-header-abi` executes pinned-musl and project-header-first C
+`header-abi math-complex` executes pinned-musl and project-header-first C
 consumers in SSE and x87 modes, then checks C++ references retain unmangled C
 linkage. It proves only the named math/complex/tgmath header semantics; both
 C consumers intentionally link pinned musl's math runtime, not crabc-libc.
-`math-complex-complete-header-abi` type-checks all 66 `math.complex` function
+`header-abi math-complex-complete` type-checks all 66 `math.complex` function
 addresses against project headers and pinned musl in SSE and x87 modes,
 including 16-byte binary80 and 32-byte complex-binary80 storage. It is a
 declaration/linkage gate; the separate complete static differential owns
 runtime behavior.
-`math-elementary-long-double-header-abi` type-checks all 35 exact
+`header-abi math-elementary-long-double` type-checks all 35 exact
 `math.elementary-long-double` function addresses against project headers and
 pinned musl in SSE and x87 modes. It ratchets the SysV 16-byte binary80
 storage and unmangled C++ linkage; the separate static differential owns
 runtime behavior.
-`math-special-header-abi` compile-checks every `math.special` function-pointer
+`header-abi math-special` compile-checks every `math.special` function-pointer
 type and unmangled C++ reference in SSE and x87 modes. It records declarations
 and ABI spelling only; the separate static differential owns runtime behavior.
-`sys-reg-header-abi` compiles only the staged ptrace register-index header.
-`machine-context-header-abi` compares only selected x86 aux-vector, ptrace,
+`header-abi sys-reg` compiles only the staged ptrace register-index header.
+`header-abi machine-context` compares only selected x86 aux-vector, ptrace,
 user-register, procfs, and ucontext declaration/layout profiles against pinned
 musl. It rejects AArch64 HWCAP/register leaks and does not select runtime,
 archive linkage, header-family completion, or public x86 support.
-`types-header-abi` compiles only staged C/C++ type declarations and opaque
-pthread object layouts. `stat-header-abi`, `time-header-abi`, `poll-header-abi`,
-`select-header-abi`, `fcntl-header-abi`, `flock-header-abi`, `sendfile-header-abi`, `tee-header-abi`, `splice-header-abi`, `sync-file-range-header-abi`, `copy-file-range-header-abi`, `ioctl-header-abi`, `unistd-header-abi`, and
-`system-header-abi` compile only their named C/C++ layout/declaration slices.
-`stddef-header-abi` separately compares project-first and pinned-musl strict,
+`header-abi types` compiles only staged C/C++ type declarations and opaque
+pthread object layouts. `header-abi stat`, `header-abi time`, `header-abi poll`,
+`header-abi select`, `header-abi fcntl`, `header-abi flock`, `header-abi sendfile`, `header-abi tee`, `header-abi splice`, `header-abi sync-file-range`, `header-abi copy-file-range`, `header-abi ioctl`, `header-abi unistd`, and
+`header-abi system` compile only their named C/C++ layout/declaration slices.
+`header-abi stddef` separately compares project-first and pinned-musl strict,
 POSIX, XOPEN, GNU, and BSD C/C++ `<stddef.h>` profiles for its `_STDDEF_H`
 guard, `NULL` spelling, alltypes request boundary, fundamental LP64 types,
 `max_align_t`, and `offsetof`. It is compile-only header evidence; it does not
 select archive linkage, allocation behavior, installed-header completion,
 family completion, or public x86 support.
-`syscall-header-abi` compares only staged syscall number macros.
-`signal-header-abi`, `termios-header-abi`, `mman-header-abi`,
-`memory-sync-header-abi`, `memory-locking-header-abi`,
-`memfd-create-header-abi`, and `resource-header-abi` compile only their named
+`header-abi syscall` compares only staged syscall number macros.
+`header-abi signal`, `header-abi termios`, `header-abi mman`,
+`header-abi memory-sync`, `header-abi memory-locking`,
+`header-abi memfd-create`, and `header-abi resource` compile only their named
 staged signal-frame, GNU termios, mapping, no-cancellation msync, per-range
 memory-locking, GNU memfd_create, and strict/GNU/LFS resource declarations.
-`termios-header-abi` remains a header-only C/C++ layout/declaration gate, not
-a general C terminal/runtime claim. `resource-header-abi` is likewise
+`header-abi termios` remains a header-only C/C++ layout/declaration gate, not
+a general C terminal/runtime claim. `header-abi resource` is likewise
 header-only and does not select process-resource behavior or a C runtime.
-`socket-header-abi` compile-checks only staged C/C++ base transport
+`header-abi socket` compile-checks only staged C/C++ base transport
 declarations, `socklen_t` and generic/IPv4/IPv6 socket-address layouts, and
 creation, shutdown, and basic send/receive constants, then executes installed
 IPv4/IPv6 address-equality/classification macros and checks GNU/BSD multicast
@@ -1414,14 +1414,14 @@ source-filter layouts/size macros through project and pinned-musl headers. It
 does not select socket membership, packet I/O, socket options, vectored or
 ancillary-message APIs, address-conversion or socket behavior, a C runtime,
 or a general socket capability.
-`tcp-header-abi` separately compares project-first and pinned-musl strict,
+`header-abi tcp` separately compares project-first and pinned-musl strict,
 POSIX, XOPEN, GNU, and BSD C/C++ `<netinet/tcp.h>` feature profiles for
 unconditional TCP option/state and netlink vocabulary, GNU/BSD option parsing
 and `struct tcphdr`, and GNU-only TCP information, MD5, repair, and zero-copy
 record layouts. It is compile-only header evidence; it does not select TCP
 socket-option or transport behavior, archive linkage, installed-header
 completion, family completion, or public x86 support.
-`socket-messages-header-abi` separately compares project-first and pinned-musl
+`header-abi socket-messages` separately compares project-first and pinned-musl
 C/C++ profiles for the bounded `<sys/socket.h>` message/options declarations,
 their LP64 `msghdr`/`cmsghdr`/GNU `mmsghdr` layouts and visibility, CMSG macro
 boundaries, and unmangled C++ linkage. It is declaration/layout evidence only,
@@ -2157,7 +2157,7 @@ prefix, zero-filled range, stable position, positive direct error returns, and
 unchanged `errno`. It does not provide general fallocate flags, pathname or
 filesystem policy, durability, cancellation, dynamic libc, CRT/TLS lifecycle,
 loader, sysroot, or public x86 support.
-`descriptor-advice-header-abi` proves only the project and pinned-musl C/C++
+`header-abi descriptor-advice` proves only the project and pinned-musl C/C++
 declaration profiles for unconditional `posix_fadvise`, the six
 `POSIX_FADV_*` values, the `_LARGEFILE64_SOURCE` macro alias, and GNU-only
 `readahead`; it does not select a runtime C API. `libc-descriptor-advice`
@@ -2168,7 +2168,7 @@ descriptor position, direct POSIX versus `-1`/`errno` error conventions, and
 no cache-effect claim. It does not provide cache policy, pathname behavior,
 allocation, durability, cancellation, dynamic libc, CRT/TLS lifecycle, loader,
 sysroot, or public x86 support.
-`filesystem-capacity-header-abi` proves only the project and pinned-musl
+`header-abi filesystem-capacity` proves only the project and pinned-musl
 C/C++ declaration, LP64 layout, feature-selection, and C++ C-linkage profiles
 for `statfs`, `fstatfs`, `statvfs`, and `fstatvfs`, including their
 `_LARGEFILE64_SOURCE` macro aliases. It does not select a runtime C API.
@@ -2179,7 +2179,7 @@ runs. It selects only direct `statfs`/`fstatfs` records and musl's derived
 stale-`errno` success and missing-path/closed-fd errors. It does not provide
 filesystem policy, pathname behavior, allocation, durability, cancellation,
 dynamic libc, CRT/TLS lifecycle, loader, sysroot, or public x86 support.
-`vector-io-header-abi` proves only the project and pinned-musl C/C++
+`header-abi vector-io` proves only the project and pinned-musl C/C++
 `sys/uio.h` declarations, x86 iovec layout, feature visibility, LF64 aliases,
 and C++ C-linkage profiles. `libc-vector-io` links that archive into a separate
 freestanding project-header C fixture after an equivalent pinned-musl run. It

@@ -6,6 +6,8 @@ from __future__ import annotations
 import unittest
 from pathlib import Path
 
+from header_abi_dispatch import assert_header_abi_dispatches
+
 
 ROOT = Path(__file__).resolve().parents[3]
 
@@ -86,7 +88,7 @@ class X86LibcFilesystemTraversalTests(unittest.TestCase):
         self.assertIn("ftw.h", header_runner)
         self.assertIn("libc-filesystem-traversal)", dispatcher)
         self.assertIn("run_libc_filesystem_traversal()", dispatcher)
-        self.assertIn("ftw-header-abi)", dispatcher)
+        assert_header_abi_dispatches(self, ROOT, "ftw", "run_ftw_header_abi.sh")
 
 
 if __name__ == "__main__":

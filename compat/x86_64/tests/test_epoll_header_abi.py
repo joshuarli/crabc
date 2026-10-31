@@ -8,6 +8,8 @@ import subprocess
 import unittest
 from pathlib import Path
 
+from header_abi_dispatch import assert_header_abi_dispatches
+
 
 ROOT = Path(__file__).resolve().parents[3]
 HEADER = ROOT / "include" / "sys" / "epoll.h"
@@ -64,14 +66,9 @@ class EpollHeaderAbiTests(unittest.TestCase):
             self.assertIn(phrase, runner)
 
     def test_dispatcher_exposes_the_epoll_header_gate(self) -> None:
-        dispatcher = DISPATCHER.read_text(encoding="utf-8")
-        for phrase in (
-            "epoll-header-abi)",
-            "run_epoll_header_abi()",
-            "run_epoll_header_abi.sh",
-            "epoll-header-abi takes no arguments",
-        ):
-            self.assertIn(phrase, dispatcher)
+        assert_header_abi_dispatches(
+            self, ROOT, "epoll", "run_epoll_header_abi.sh"
+        )
 
 
 if __name__ == "__main__":

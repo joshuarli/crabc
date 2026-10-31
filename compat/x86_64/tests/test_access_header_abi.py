@@ -8,6 +8,8 @@ import subprocess
 import unittest
 from pathlib import Path
 
+from header_abi_dispatch import assert_header_abi_dispatches
+
 
 ROOT = Path(__file__).resolve().parents[3]
 HEADER = ROOT / "include" / "unistd.h"
@@ -78,14 +80,9 @@ class AccessHeaderAbiTests(unittest.TestCase):
             self.assertIn(phrase, runner)
 
     def test_dispatcher_exposes_the_direct_access_header_gate(self) -> None:
-        dispatcher = DISPATCHER.read_text(encoding="utf-8")
-        for phrase in (
-            "access-header-abi)",
-            "run_access_header_abi()",
-            "run_access_header_abi.sh",
-            "access-header-abi takes no arguments",
-        ):
-            self.assertIn(phrase, dispatcher)
+        assert_header_abi_dispatches(
+            self, ROOT, "access", "run_access_header_abi.sh"
+        )
 
 
 if __name__ == "__main__":

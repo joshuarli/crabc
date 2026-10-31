@@ -2418,11 +2418,33 @@ def header_abi_case_scripts() -> dict[str, str]:
         )
         cases[case] = script
     require(bool(cases), "header-abi case table is empty")
+    require(
+        len(set(cases.values())) == len(cases),
+        "header-abi case table maps more than one case to a runner",
+    )
     return cases
 
 
+def require_header_abi_dispatch(dispatch_source: str) -> None:
+    require(
+        "    header-abi)" in dispatch_source,
+        "header-abi is absent from the native dispatcher",
+    )
+    require(
+        "awk -F '\\t'" in dispatch_source
+        and "$1 == case_name" in dispatch_source
+        and '"$ROOT_DIR/compat/x86_64/header_abi_cases.txt"' in dispatch_source,
+        "header-abi dispatch does not read the case table",
+    )
+    require(
+        'run_in_container bash "/workspace/compat/x86_64/$header_abi_runner"'
+        in dispatch_source,
+        "header-abi dispatch does not run the mapped runner",
+    )
+
+
 def require_dispatched_command(
-    dispatch_source: str, command: str, location: str
+    dispatch_source: str, command: str, location: str, expected_runner: str | None
 ) -> None:
     prefix = "./scripts/dev-x86_64.sh "
     require(command.startswith(prefix), f"{location}.command is not a dispatcher command")
@@ -2430,13 +2452,18 @@ def require_dispatched_command(
     if subcommand.startswith("header-abi "):
         case = subcommand[len("header-abi ") :]
         cases = header_abi_case_scripts()
-        require(
-            "    header-abi)" in dispatch_source,
-            "header-abi is absent from the native dispatcher",
-        )
+        require_header_abi_dispatch(dispatch_source)
         require(
             case in cases,
             f"{location}.command names unknown header-abi case {case}",
+        )
+        require(
+            expected_runner is not None,
+            f"{location}.command must name its expected header-abi runner",
+        )
+        require(
+            cases[case] == expected_runner,
+            f"{location}.command maps {case} to {cases[case]}, expected {expected_runner}",
         )
         require(
             (ROOT / "compat" / "x86_64" / cases[case]).is_file(),
@@ -2743,7 +2770,9 @@ def validate_header_layout_manifest(
             len(evidence_matches) == 1 and evidence_matches[0].get("state") == "required",
             f"{location}.command must map to one required family evidence record",
         )
-        require_dispatched_command(dispatch_source, command, location)
+        require_dispatched_command(
+            dispatch_source, command, location, runner_sources[0].name
+        )
         probe_ids.append(identifier)
 
     require(
@@ -4718,6 +4747,7 @@ def validate_header_layout_foundation_manifest(
         dispatch_source,
         EXPECTED_EPOLL_HEADER_PROFILE_MATRIX_COMMAND,
         "header-foundation epoll header matrix",
+        EPOLL_HEADER_ABI_RUNNER_PATH.name,
     )
     epoll_matrix_evidence = [
         entry
@@ -4923,6 +4953,7 @@ def validate_header_layout_foundation_manifest(
         dispatch_source,
         EXPECTED_EVENT_DESCRIPTORS_HEADER_PROFILE_MATRIX_COMMAND,
         "header-foundation event-descriptors header matrix",
+        EVENT_DESCRIPTORS_HEADER_ABI_RUNNER_PATH.name,
     )
     event_descriptor_matrix_evidence = [
         entry
@@ -5103,6 +5134,7 @@ def validate_header_layout_foundation_manifest(
         dispatch_source,
         EXPECTED_DIRENT_HEADER_PROFILE_MATRIX_COMMAND,
         "header-foundation dirent header matrix",
+        DIRENT_HEADER_ABI_RUNNER_PATH.name,
     )
     dirent_matrix_evidence = [
         entry
@@ -5256,6 +5288,7 @@ def validate_header_layout_foundation_manifest(
         dispatch_source,
         EXPECTED_STDLIB_HEADER_PROFILE_MATRIX_COMMAND,
         "header-foundation stdlib header matrix",
+        STDLIB_HEADER_ABI_RUNNER_PATH.name,
     )
     stdlib_matrix_evidence = [
         entry
@@ -5410,6 +5443,7 @@ def validate_header_layout_foundation_manifest(
         dispatch_source,
         EXPECTED_IOCTL_HEADER_PROFILE_MATRIX_COMMAND,
         "header-foundation ioctl header matrix",
+        IOCTL_HEADER_ABI_RUNNER_PATH.name,
     )
     ioctl_matrix_evidence = [
         entry
@@ -5565,6 +5599,7 @@ def validate_header_layout_foundation_manifest(
         dispatch_source,
         EXPECTED_SYS_IO_HEADER_PROFILE_MATRIX_COMMAND,
         "header-foundation sys-io header matrix",
+        SYS_IO_HEADER_ABI_RUNNER_PATH.name,
     )
     sys_io_matrix_evidence = [
         entry
@@ -5741,6 +5776,7 @@ def validate_header_layout_foundation_manifest(
         dispatch_source,
         EXPECTED_TIMEVAL_TRANSITIVE_HEADER_PROFILE_MATRIX_COMMAND,
         "header-foundation timeval-transitive header matrix",
+        TIMEVAL_TRANSITIVE_HEADER_ABI_RUNNER_PATH.name,
     )
     timeval_matrix_evidence = [
         entry
@@ -5890,6 +5926,7 @@ def validate_header_layout_foundation_manifest(
         dispatch_source,
         EXPECTED_SYS_TIME_DIRECT_HEADER_PROFILE_MATRIX_COMMAND,
         "header-foundation sys-time-direct header matrix",
+        SYS_TIME_DIRECT_HEADER_ABI_RUNNER_PATH.name,
     )
     sys_time_direct_matrix_evidence = [
         entry
@@ -6033,6 +6070,7 @@ def validate_header_layout_foundation_manifest(
         dispatch_source,
         EXPECTED_ACCESS_HEADER_PROFILE_MATRIX_COMMAND,
         "header-foundation access header matrix",
+        ACCESS_HEADER_ABI_RUNNER_PATH.name,
     )
     access_header_matrix_evidence = [
         entry
@@ -6179,6 +6217,7 @@ def validate_header_layout_foundation_manifest(
         dispatch_source,
         EXPECTED_XATTR_HEADER_PROFILE_MATRIX_COMMAND,
         "header-foundation xattr header matrix",
+        XATTR_HEADER_ABI_RUNNER_PATH.name,
     )
     xattr_header_matrix_evidence = [
         entry
@@ -9104,6 +9143,7 @@ def require_uchar_stateful_artifact(family: Mapping[str, Any]) -> None:
         dispatcher,
         f"{HEADER_ABI_COMMAND_PREFIX}uchar-stateful",
         "libc uchar-stateful header",
+        "run_uchar_stateful_header_abi.sh",
     )
     for snippet in (
         "libc-uchar-stateful)",
