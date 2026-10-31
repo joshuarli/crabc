@@ -107,8 +107,15 @@ class RuntimeReceiptAttachmentTests(unittest.TestCase):
 
     def registry_report(self):
         imports = {
-            name: {table: self._runtime_row() for table in selection.runtime_registry_evidence.SYMBOL_TABLES}
-            for name in selection.runtime_registry_evidence.RESOLVERS
+            name: {
+                'placement': 'in-image', '.dynsym': None,
+                '.symtab': {
+                    'type': 'FUNC', 'binding': 'LOCAL', 'visibility': 'DEFAULT',
+                    'section_index': '19', 'size_bytes': 31,
+                    'value': f'{0x1400 + index:016x}', 'version': None, 'version_default': False,
+                },
+            }
+            for index, name in enumerate(selection.runtime_registry_evidence.RESOLVERS, start=1)
         }
         return {
             'schema': selection.runtime_registry_evidence.SCHEMA,
@@ -1095,22 +1102,24 @@ class RuntimeReceiptAttachmentTests(unittest.TestCase):
                 'unresolved': list(selection.RUNTIME_REGISTRY_REQUIREMENTS),
             }
             identities.append(item)
-            indices = []
-            for table in selection.runtime_registry_evidence.SYMBOL_TABLES:
-                index = len(occurrences)
-                indices.append(index)
-                occurrences.append({
-                    'index': index, 'artifact_key': 'candidate-shared', 'table': table, 'role': 'import',
-                    'row': {'name': name, 'version': None, 'version_default': False, **self._runtime_row()},
-                    'accounting': {
-                        'disposition': 'private-resolution-operation', 'owner': 'loader-runtime-operations',
-                        'scope': 'candidate-shared', 'resolution': {
-                            'kind': 'source-dispatch-operation', 'operation': copy.deepcopy(operation),
-                        }, 'resolution_proven': False,
-                    },
-                })
+            index = len(occurrences)
+            indices = [index]
+            occurrences.append({
+                'index': index, 'artifact_key': 'candidate-shared', 'table': '.symtab', 'role': 'definition',
+                'row': {'name': name, 'version': None, 'version_default': False,
+                        'type': 'FUNC', 'binding': 'LOCAL', 'visibility': 'DEFAULT',
+                        'section_index': '19', 'size_bytes': 31,
+                        'value': f'{0x1400 + len(identities):016x}'},
+                'definition_section': {'index': 19},
+                'accounting': {
+                    'disposition': 'private-resolution-operation', 'owner': 'loader-runtime-operations',
+                    'scope': 'candidate-shared', 'resolution': {
+                        'kind': 'source-dispatch-operation', 'operation': copy.deepcopy(operation),
+                    }, 'resolution_proven': False,
+                },
+            })
             joins.append({
-                'identity': selection.identity(name), 'artifact_key': 'candidate-shared', 'role': 'consumer-import',
+                'identity': selection.identity(name), 'artifact_key': 'candidate-shared', 'role': 'consumer-definition',
                 'occurrence_indices': indices, 'endpoint_kind': 'source-dispatch-operation',
                 'signature_status': protocol['signature_status'], 'relocation_lifecycle_proven': False,
             })
@@ -1146,7 +1155,7 @@ class RuntimeReceiptAttachmentTests(unittest.TestCase):
         self.assertFalse(accounting['blockers'])
         self.assertTrue(all(not row['unresolved'] for row in accounting['identities']))
         self.assertTrue(all(row['accounting']['resolution_proven'] for row in accounting['occurrences']
-                            if row['role'] == 'import'))
+                            if row['role'] == 'definition'))
         self.assertTrue(all(row['relocation_lifecycle_proven'] for row in accounting['private_protocol_joins']))
 
     def test_registry_join_rejects_an_omitted_symtab_occurrence(self):
@@ -1158,7 +1167,7 @@ class RuntimeReceiptAttachmentTests(unittest.TestCase):
             )
         accounting = self.registry_accounting()
         accounting['occurrences'].pop(1)
-        with self.assertRaisesRegex(selection.SelectionError, 'selected occurrences differ'):
+        with self.assertRaisesRegex(selection.SelectionError, 'in-image resolver placement differs'):
             selection.attach_loader_runtime_registry(accounting, companion)
 
     def test_registry_join_rejects_initial_tid_foreign_provider_or_import(self):
@@ -1197,14 +1206,12 @@ class RuntimeReceiptAttachmentTests(unittest.TestCase):
                 paths=self.paths, source=self.source,
             )
         name = '__crabc_x86_64_runtime_publish_initial_tid'
-        for field, value in (('version', 'FOREIGN_1'), ('section_index', '1'), ('type', 'FUNC')):
+        for field, value in (('version', 'FOREIGN_1'), ('section_index', 'UND'), ('type', 'NOTYPE')):
             with self.subTest(field=field):
                 accounting = self.registry_accounting()
                 occurrence = next(row for row in accounting['occurrences']
-                                  if row['row']['name'] == name and row['table'] == '.dynsym')
+                                  if row['row']['name'] == name and row['table'] == '.symtab')
                 occurrence['row'][field] = value
-                if field == 'section_index':
-                    occurrence['role'] = 'definition'
                 with self.assertRaisesRegex(selection.SelectionError, 'initial TID.*placement'):
                     selection.attach_loader_runtime_registry(accounting, companion)
 
@@ -1218,9 +1225,9 @@ class RuntimeReceiptAttachmentTests(unittest.TestCase):
         accounting = self.registry_accounting()
         name = '__crabc_x86_64_runtime_publish_initial_tid'
         occurrence = next(row for row in accounting['occurrences']
-                          if row['row']['name'] == name and row['table'] == '.dynsym')
+                          if row['row']['name'] == name and row['table'] == '.symtab')
         occurrence['accounting']['resolution']['operation']['producer']['function'] = 'runtime_open'
-        with self.assertRaisesRegex(selection.SelectionError, 'selected occurrence resolution differs'):
+        with self.assertRaisesRegex(selection.SelectionError, 'in-image resolver resolution differs'):
             selection.attach_loader_runtime_registry(accounting, companion)
 
     def test_pthread_adapter_replays_the_owner_and_binds_each_selected_product_file(self):
