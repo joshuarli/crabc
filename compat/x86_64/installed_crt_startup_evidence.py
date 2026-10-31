@@ -1359,10 +1359,10 @@ def executable_observations(root,work,inputs,tools,facts):
                     if mode in ('static','static-pie'):
                         source_path=ordinary.mounted(root,work/(variant+'.o')) if source_key.endswith('-object') else \
                             ordinary.mounted(root,product_paths(root,inputs)['candidate-static'])+'('+original['member']+')'
-                        expression=r'^\s*([0-9a-f]+)\s+([0-9a-f]+)\s+([0-9a-f]+)\s+(\d+)\s+'+re.escape(source_path+':(.'+kind+'_array)')+r'$'
+                        expression=r'^\s*(?:0x)?([0-9a-f]+)\s+(?:0x)?([0-9a-f]+)\s+(\d+)\s+'+re.escape(source_path+':(.'+kind+'_array)')+r'$'
                         matches=re.findall(expression,(work/(name+'.link.map')).read_text(),re.MULTILINE)
                         require(len(matches)==1 and int(matches[0][0],16)==entries[slot]
-                                and int(matches[0][2],16)==8 and int(matches[0][3])==8,
+                                and int(matches[0][1],16)==8 and int(matches[0][2])==8,
                                 'static startup array input contribution differs')
                         contributions[slot]['link_map_row']=list(matches[0])
                 require_array_entries(mode,variant,kind,start,end,entries)
