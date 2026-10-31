@@ -810,8 +810,12 @@ owner decision.
   coverage and full symbol-extent validation, so the remaining gap cannot be
   removed by P4 deletion or inlining. `dlopen_graph` also retains its
   unchanged per-name syscall excess (`gettid` 1, `mmap` 4, `newfstatat` 1,
-  `pread64` 5), part of the same loader-startup path. S5 is not accepted on
-  the startup instruction dimension; the CPU/memory gate is also deferred
+  `pread64` 5), part of the same loader-startup path. The formerly unavailable
+  `loader_dynamic_tls_growth` row is now measured at its fixed eight-module
+  cap: 421,415 vs 174,244 instructions (2.5703) with per-name excess
+  `gettid` 8, `mmap` 23, `munmap` 9, `newfstatat` 1, `pread64` 8; that is a
+  real loader/TLS-growth residual, not missing evidence. S5 is not accepted
+  on the startup instruction dimension; the CPU/memory gate is also deferred
   under D14. Reopening this needs a separate owner decision and a
   semantics-preserving resolver design.
 
@@ -1148,7 +1152,8 @@ passed.
 | S4 stdio margin | `d9623b8c7` | `stdio_format_parse` 1.100061→1.096561 (9758.70→9727.67 instructions/op, +30.5 margin); `stdio_file_4k` 0.8599→0.8455; one duplicate FILE-holder load removed | counts determinism 0.0011 %, linearity 0.287 %; owned-stdio PASS; libc-stdio-format-scan PASS; rust-check; parity PASS | none for this row |
 | S5 (attempt) | `d398d3ec0` rejected | **FAILED.** 58-row counts: 49 pass, 2 fail (`dlopen_graph` 2.639; `startup` 3.585 with judged syscalls 8 vs 11), 6 nondeterministic, 1 unavailable. Structure 5/7: libc 25, dispatcher 701, dispatcher lines 10,593, Python 566 / 269,998; ldso 7 features and 19,442 lines unmet. Static startup syscalls 10 vs 9. | products rebuilt at the acceptance commit; dynamic prepare, static 72-path, identity, dlopen, owned-stdio and memory suites PASS; counts report; hardened was a harness gap fixed in `02d7ffed4` | budgets unmet; startup instructions under D10; `dlopen_graph` under D11; ldso under D7; static 759-byte mmap under D12; CPU/memory under D14 (host load 20-27) |
 
-| S5 (second attempt) | `b255ccf2e` rejected | **NOT ACCEPTED.** 58 selected rows: 50 pass, 2 fail (`startup` 1.8886, `dlopen_graph` 1.6073), 5 nondeterministic (128m matrices and `pthread_create_join_tls` under load), 1 unavailable (`loader_dynamic_tls_growth`). Structure 7/7: libc 25, ldso 1, ldso x86 10,941, dispatcher 678, dispatcher lines 10,357, Python 557 files / 266,174 lines. Dynamic startup syscalls 8 vs 11; static 9. | final-tip prepare, four installed-product case families, static 72-path, hardened, counts, parity, campaign-status, structure all PASS | D16 startup/dlopen instruction standing blocker; `dlopen_graph` per-name syscall excess unchanged; D14 CPU/memory deferred (host load 26.9); 5 load-dependent nondeterministic rows |
+| Counts TLS-growth | `e141118b5` | `loader_dynamic_tls_growth` unavailable→fail at fixed N=8; 421,415 vs 174,244 instructions (2.5703); per-name excess `gettid` 8, `mmap` 23, `munmap` 9, `newfstatat` 1, `pread64` 8 | single-row counts reproduced twice; `test_run_x86_64` 63 pass/1 skip; `test_x86_64_profile` 11 pass; development report | exposes a real loader/TLS-growth residual; not forced to pass |
+| S5 (second attempt) | `b255ccf2e` rejected | **NOT ACCEPTED.** 58 selected rows: 50 pass, 3 fail (`startup` 1.8886, `dlopen_graph` 1.6073, `loader_dynamic_tls_growth` 2.5703 after the fixed-N counts fix), 5 nondeterministic (128m matrices and `pthread_create_join_tls` under load), 0 unavailable. Structure 7/7: libc 25, ldso 1, ldso x86 10,941, dispatcher 678, dispatcher lines 10,357, Python 557 files / 266,174 lines. Dynamic startup syscalls 8 vs 11; static 9. | final-tip prepare, four installed-product case families, static 72-path, hardened, counts, parity, campaign-status, structure all PASS | D16 startup/dlopen/loader-TLS-growth instruction standing blockers; per-name syscall excess on `dlopen_graph` and `loader_dynamic_tls_growth`; D14 CPU/memory deferred (host load 26.9); 5 load-dependent nondeterministic rows |
 
 Follow-up rows S3a-ldso, D10, S4 static TLS and S4 stdio are landed, and the
 hardened gap is fixed. The remaining S5 failures are the D16 startup
@@ -1192,9 +1197,9 @@ evidence stays in Git history.
 The owner chose D16 over a new indexed resolver. The second S5 attempt at
 `b255ccf2e` therefore remains unaccepted on the startup-instruction and
 CPU/memory dimensions: 50 of 58 selected rows pass, with `startup`,
-`dlopen_graph`, five load-dependent nondeterministic rows and one unavailable
-row left. Structure, loader, static-TLS, stdio, hardened evidence and the
-remaining selected rows are addressed.
+`dlopen_graph`, `loader_dynamic_tls_growth` and five load-dependent
+nondeterministic rows left. Structure, loader, static-TLS, stdio, hardened
+evidence and the remaining selected rows are addressed.
 
 ## Non-goals
 
