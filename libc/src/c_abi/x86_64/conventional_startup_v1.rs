@@ -14,9 +14,10 @@ const MAGIC: u64 = 0x4352_4142_435f_4331;
 const VERSION: u32 = 1;
 const ABI_SIZE: u32 = 88;
 const PROCESS_MODE_DYNAMIC: u32 = 2;
+const PROCESS_MODE_OWNED: u32 = 3;
 const OWNER_LDSO: u32 = 1;
 const GENERATION_INITIAL: u64 = 1;
-const STATE_UNPUBLISHED: u8 = 0;
+const STATE_OWNED: u8 = 3;
 const STATE_READY: u8 = 2;
 const SYS_ARCH_PRCTL: i64 = 158;
 const ARCH_GET_FS: i64 = 0x1003;
@@ -115,10 +116,10 @@ pub(super) unsafe fn select() -> Option<Selection> {
     let state = record.state.load(Ordering::Acquire);
     // One merged interpreter/libc image binds the weak slot to its in-image
     // record at link time, so a null GOT word no longer selects the owned CRT.
-    // The loader leaves the record UNPUBLISHED for that mode and publishes it
-    // only for a conventional main; any other non-READY state stays invalid.
-    if state == STATE_UNPUBLISHED {
-        if record.process_mode != PROCESS_MODE_DYNAMIC
+    // The loader publishes STATE_OWNED only after its reservation succeeds;
+    // any other non-READY state stays invalid.
+    if state == STATE_OWNED {
+        if record.process_mode != PROCESS_MODE_OWNED
             || record.owner != OWNER_LDSO
             || record.reserved != [0; 7]
             || record.generation != GENERATION_INITIAL

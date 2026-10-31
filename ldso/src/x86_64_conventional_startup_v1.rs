@@ -14,11 +14,13 @@ const MAGIC: u64 = 0x4352_4142_435f_4331;
 const VERSION: u32 = 1;
 const ABI_SIZE: u32 = 88;
 const PROCESS_MODE_DYNAMIC: u32 = 2;
+const PROCESS_MODE_OWNED: u32 = 3;
 const OWNER_LDSO: u32 = 1;
 const GENERATION_INITIAL: u64 = 1;
 const UNPUBLISHED: u8 = 0;
 const PUBLISHING: u8 = 1;
 const READY: u8 = 2;
+const OWNED: u8 = 3;
 
 /// Exact loader-owned v1 bytes. Callback addresses remain raw integers until
 /// libc has acquired READY, checked the exact layout, and rejected zeroes;
@@ -95,6 +97,36 @@ pub(super) fn reserve() -> Option<Reservation> {
 pub(super) fn release(_: Reservation) {
     let record = core::ptr::addr_of_mut!(__crabc_x86_64_loader_conventional_startup_v1);
     unsafe { (*record).state.store(UNPUBLISHED, Ordering::Release); }
+}
+
+/// Reserve the record for an owned merged main. The value is published only
+/// after the initial registry and TLS state are durable.
+pub(super) fn reserve_owned() -> Option<Reservation> {
+    let record = core::ptr::addr_of_mut!(__crabc_x86_64_loader_conventional_startup_v1);
+    if unsafe {
+        (*record).state.compare_exchange(UNPUBLISHED, PUBLISHING, Ordering::AcqRel, Ordering::Acquire)
+    }
+    .is_err()
+    {
+        return None;
+    }
+    Some(Reservation(()))
+}
+
+/// Publish the owned decision after the transaction can no longer fail.
+pub(super) fn publish_owned(_: Reservation) {
+    let record = core::ptr::addr_of_mut!(__crabc_x86_64_loader_conventional_startup_v1);
+    debug_assert_eq!(unsafe { (*record).state.load(Ordering::Relaxed) }, PUBLISHING);
+    unsafe {
+        (*record).process_mode = PROCESS_MODE_OWNED;
+        (*record).state.store(OWNED, Ordering::Release);
+    }
+}
+
+/// Whether the loader has reserved this record and not yet published READY.
+pub(super) fn reserved() -> bool {
+    let record = core::ptr::addr_of!(__crabc_x86_64_loader_conventional_startup_v1);
+    unsafe { (*record).state.load(Ordering::Acquire) == PUBLISHING }
 }
 
 /// Return the private record address only to the exact relocation admission.

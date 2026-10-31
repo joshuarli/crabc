@@ -6002,6 +6002,26 @@ fn callback_array_entries_admitted(byte_len: u64, legacy_entries: usize) -> bool
     }
 }
 
+/// True when a mapped object declares `SONAME libc.so`. A copy of the
+/// interpreter that reaches discovery under another path is a second libc,
+/// not the self image, even when its symbols look identical.
+#[cfg(feature = "x86_64-owned-dynamic-runtime")]
+pub(crate) unsafe fn mapped_soname_is_libc(object: &Object) -> bool {
+    if object.dynamic.is_null() || object.strtab.is_null() { return false; }
+    for index in 0..256 {
+        let entry = unsafe { object.dynamic.add(index * 16) };
+        let tag = unsafe { read_i64(entry) };
+        if tag == 0 { return false; }
+        if tag != 14 { continue; }
+        let Some(offset) = usize::try_from(unsafe { read_u64(entry.add(8)) }).ok() else { return false; };
+        let Some(available) = object.strsz.checked_sub(offset) else { return false; };
+        let name = unsafe { object.strtab.add(offset) };
+        let Some(length) = (unsafe { bounded_nul(name, available) }) else { return false; };
+        return unsafe { core::slice::from_raw_parts(name, length) } == b"libc.so";
+    }
+    false
+}
+
 fn runtime_address(base: u64, virtual_address: u64) -> Option<u64> { base.checked_add(virtual_address) }
 
 fn ranges_overlap(

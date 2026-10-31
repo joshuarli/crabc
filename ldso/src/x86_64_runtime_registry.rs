@@ -779,7 +779,9 @@ unsafe fn find_interpreter_self(registry: &RuntimeRegistry, new: &UnpublishedObj
 /// The two installed runtime names, as `scripts/build_x86_64_owned_dynamic_sysroot.py`
 /// declares them, plus the bare DT_NEEDED spelling.
 fn interpreter_self_alias(name: &[u8]) -> bool {
-    matches!(name, b"libc.so" | b"/usr/lib/libc.so" | b"/lib/libc.musl-x86_64.so.1")
+    reserved_runtime_name(name)
+        || name == unsafe { x86_64_library_search::interpreter_name() }
+        || unsafe { super::x86_64_general_initial_graph::canonical_libc_path(name) }
 }
 
 unsafe fn open_runtime_file(parent: *mut RuntimeObject, name: &[u8]) -> Result<x86_64_library_search::Opened, i32> {
@@ -804,7 +806,16 @@ unsafe fn load_one(
     }
     if interpreter_self_alias(name) {
         let existing = unsafe { find_interpreter_self(registry, new) };
-        if !existing.is_null() { return Ok(existing); }
+        if !existing.is_null() {
+            if let Ok((fd, _)) = unsafe { open_runtime_file(parent, name) } {
+                let identity = unsafe { FileStatus::of_fd(fd) }.ok().and_then(|status| status.identity());
+                unsafe { syscall1(SYS_CLOSE, fd); }
+                if identity.is_some_and(|identity| identity != unsafe { (*existing).identity }) {
+                    return Err(EINVAL);
+                }
+            }
+            return Ok(existing);
+        }
     }
     let (fd, path) = unsafe { open_runtime_file(parent, name) }?;
     // Report fstat's errno as musl load_library does; a zero identity has no
@@ -828,6 +839,23 @@ unsafe fn load_one(
     let mapped = unsafe { map_elf_with_status(fd, &status, false, true, ObjectRole::Library) };
     unsafe { syscall1(SYS_CLOSE, fd); }
     let mut object = mapped?;
+    let self_node = unsafe { find_interpreter_self(registry, new) };
+    if !self_node.is_null()
+        && identity != unsafe { (*self_node).identity }
+        && unsafe { super::mapped_soname_is_libc(&object) }
+    {
+        unsafe { syscall2(SYS_MUNMAP, object.map_span_start as i64, object.map_span_byte_len as i64); }
+        return Err(EINVAL);
+    }
+    let stored = path.view().bytes();
+    let basename = stored.iter().rposition(|byte| *byte == b'/').map_or(stored, |at| &stored[at + 1..]);
+    if (reserved_runtime_name(basename) || basename == b"libc.so")
+        && !self_node.is_null()
+        && identity != unsafe { (*self_node).identity }
+    {
+        unsafe { syscall2(SYS_MUNMAP, object.map_span_start as i64, object.map_span_byte_len as i64); }
+        return Err(22);
+    }
     object.search_name = path.view();
     object.search_short_name = short_name;
     let index = match registry.count.checked_add(new.count).and_then(|index| index.checked_add(1)).map(|next| next - 1) {

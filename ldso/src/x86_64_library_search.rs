@@ -120,6 +120,10 @@ pub(super) unsafe fn command_preload(path: *const u8) { unsafe { if !SECURE { EN
 
 /// A missing or malformed optional preload is ignored by musl load_preload;
 /// successful admissions still participate in the complete initial graph.
+/// Whether an environment or direct-command path can override a reserved
+/// runtime name. A normal installed launch has none and needs no probe.
+pub(super) fn search_path_override() -> bool { unsafe { !ENVIRONMENT_PATH.is_null() } }
+
 pub(super) unsafe fn preloads() -> &'static [u8] {
     let preload = unsafe { ENVIRONMENT_PRELOAD };
     if preload.is_null() { return &[]; }

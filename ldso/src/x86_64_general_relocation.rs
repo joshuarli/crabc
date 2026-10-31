@@ -1049,7 +1049,10 @@ unsafe fn validate_initial_private_imports(
             }
         }
     }
-    let merged_self = imports == 0 && objects.get(canonical)?.interpreter_self;
+    let merged_self = imports == 0
+        && objects.get(canonical)?.interpreter_self
+        && objects[0].main_crt_mode == MainCrtMode::Owned
+        && super::x86_64_conventional_startup_v1::reserved();
     (imports == 1 || merged_self).then_some(())
 }
 
