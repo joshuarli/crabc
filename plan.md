@@ -1004,8 +1004,8 @@ lever is the item-1 consolidation.
 | `compat/x86_64` Python lines | 271,054 | 1,482 | **270,000** |
 | dynamic startup syscalls | 25 | 14 (11 split + 3 redundant) | **14** (≤5 allocator-attributed) |
 | static startup syscalls | 10 | 1 | **9** |
-| dynamic startup instructions | 238,681 | none identified | **cost contract only** |
-| static startup instructions | 173,432 | none identified | **cost contract only** |
+| dynamic startup instructions | 238,681 | none identified | **≤ 1.10 × R total (D8)** |
+| static startup instructions | 173,432 | none identified | **≤ 1.10 × R total (D8)** |
 
 The two instruction rows have no itemised deletion. The measured costs are
 environment-dependent startup work dominated by the frozen allocator's option
