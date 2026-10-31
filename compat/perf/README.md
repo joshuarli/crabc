@@ -244,7 +244,7 @@ five attributed calls are `sysinfo`, two `open` probes, the 2359296-byte
 judged remainder is 8 vs 11 with no excess, so the syscall comparison passes;
 the row still fails on `ratio_insn` 3.585 (D8, S4 instruction work).
 
-Loop-row acceptance (`matched-llvm-23`, report `.work/x86_64/s5-counts2/counts.json`):
+Loop-row acceptance (`matched-llvm-23`, report `.work/x86_64/s5-counts3/counts.json`):
 `getpid` judged whole 200008 vs 200011, `open_close` 75008 vs 75011,
 `memcpy_16k_aligned` 8 vs 11 and `strlen_64_aligned` 8 vs 11 each carry five
 attributed calls, no per-name excess, and pass; their per-op values are 1.0 vs
