@@ -534,7 +534,8 @@ def descriptor_runtime_plan(root,work,inputs,tools):
                 '-c',p(Path(policy['source']).name),'-o',p(cell['label']+'.o'),
             ],'cwd':'/workspace','expected_stdout':b'','expected_stderr':b''},
             {'label':cell['label']+'-link','argv':[
-                tool('linker'),'-static','--no-dynamic-linker','--no-undefined','--no-demangle','-e','_start',
+                tool('linker'),'-static','--export-dynamic','--no-dynamic-linker','--no-undefined',
+                '--no-demangle','-e','_start',
                 '-Map='+p(cell['label']+'.map'),p(cell['label']+'.o'),
                 m(paths[policy['attachment_artifact']]),m(paths[policy['static_artifact']]),
                 '-o',p(cell['label']),

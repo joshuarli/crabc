@@ -939,8 +939,9 @@ int main(void) {
                 link=next(row for row in plan if row['label']==cell['label']+'-link')
                 self.assertEqual(link['argv'].count(attachment),1)
                 self.assertEqual(link['argv'].count(archive),1)
-                self.assertEqual(link['argv'][:7],[
-                    '/sealed/linker','-static','--no-dynamic-linker','--no-undefined','--no-demangle','-e','_start'])
+                self.assertEqual(link['argv'][:8],[
+                    '/sealed/linker','-static','--export-dynamic','--no-dynamic-linker','--no-undefined',
+                    '--no-demangle','-e','_start'])
                 self.assertEqual(link['argv'].count('--no-demangle'),1)
                 self.assertEqual(link['argv'].count(reader.ordinary.mounted(root,work/(cell['label']+'.o'))),1)
                 self.assertEqual(link['expected_stdout'],b'')
