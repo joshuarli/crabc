@@ -765,7 +765,12 @@ owner decision.
   allocator-free remainder is still above 1.10 × musl, so the change may land
   only with an S4 startup-instruction lane and only if the combined startup
   rows meet 1.10 ×. Otherwise record the measured floor as a standing blocker.
-  D8's total judgement and D1's syscall attribution are unchanged.
+  D8's total judgement and D1's syscall attribution are unchanged. A
+  diagnostic profile of the allocator-free dynamic floor puts 58.7 % of sampled
+  loader instructions in `__crabc_x86_64_self_relocate` (300-exec run, one
+  merged DSO); the static floor is dominated by the static-TLS bootstrap
+  (`from_auxv`, `materialize`, `bootstrap_initial_thread`). Those are the S4
+  startup targets, subject to the same 1.10 × gate.
 - **D11 — `dlopen_graph`: attribute before opening a loader lane.** S5's
   2.6403× row is 303,603 startup instructions against musl's 114,988, while
   the dlopen operation itself is 15,582 against 15,592. The gap is the eager
@@ -996,8 +1001,9 @@ Crabc dynamic +16 syscalls: split image 11 (`openat`×4, `fstat`, `pread64`,
 `mmap`×4, `close`), allocator-attributed 5 (`sysinfo`, `open`×2, 2 MiB `mmap`,
 `getrandom`), redundant 3 (`arch_prctl(ARCH_GET_FS)`, `gettid`, extra
 `mprotect`), offset by musl-only `brk`×2 + `set_tid_address` (−3).
-Static +6: allocator-attributed 5, thread-stack `mmap` 759 B, `gettid`
-replacing `set_tid_address` (net 0).
+Static +6: allocator-attributed 5, static-TLS `mmap` 759 B
+(`StaticInitialTlsPlan::materialize`), `gettid` replacing `set_tid_address`
+(net 0).
 Attribution. Run 2's `perf record` split (`ld-crabc` 82.6 %, `libc.so` 13.0 %)
 rests on 46 samples and is not quantitative. A deterministic static probe
 (`hello-static` built from this baseline) measured 173,930 instructions with
