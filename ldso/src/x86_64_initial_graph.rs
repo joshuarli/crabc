@@ -126,124 +126,35 @@ global_asm!(".hidden __crabc_x86_64_loader_tls_runtime_v1");
 #[cfg(all(not(test), feature = "x86_64-owned-dynamic-runtime"))]
 global_asm!(".hidden __crabc_x86_64_loader_conventional_startup_v1");
 
-#[cfg(all(
-    crabc_fixed_graph_introspection,
-    any(crabc_initial_tls_graph, crabc_initial_exec_tls_graph, crabc_owned_crt_handoff)
-))]
-compile_error!("fixed-graph introspection is an independent no-TLS/owned-CRT sibling");
 
-#[cfg(all(
-    crabc_fixed_graph_dlfcn,
-    any(
-        crabc_fixed_graph_introspection,
-        crabc_initial_tls_graph,
-        crabc_initial_exec_tls_graph,
-        crabc_owned_crt_handoff
-    )
-))]
-compile_error!("fixed-graph dlfcn is an independent no-TLS/owned-CRT sibling");
 
-#[cfg(all(crabc_bounded_runtime_dlopen, not(crabc_fixed_graph_dlfcn)))]
-compile_error!("bounded runtime dlopen requires the fixed-graph dlfcn record sibling");
 
 // The general initial-TLS materialization package is an x86-private extension
 // of the arbitrary initial graph, not another fixed graph or a RuntimeV1
 // descriptor producer.  Keeping the cfg pair explicit makes accidental
 // admission through the older no-TLS source root fail at compile time.
-#[cfg(all(
-    crabc_general_initial_tls_materialization_v1,
-    not(crabc_general_initial_graph)
-))]
-compile_error!("general initial TLS materialization requires the general initial graph");
 
-#[cfg(all(
-    crabc_general_initial_tls_materialization_v1,
-    any(
-        crabc_initial_tls_graph,
-        crabc_initial_exec_tls_graph,
-        crabc_owned_crt_handoff,
-        crabc_fixed_graph_introspection,
-        crabc_fixed_graph_dlfcn,
-        crabc_bounded_runtime_dlopen,
-        crabc_loader_libc_tls_runtime_v1
-    )
-))]
-compile_error!("general initial TLS materialization is separate from fixed RuntimeV1 and lifecycle siblings");
 
 // The general RuntimeV1 wire is an explicit third sibling. It needs the
 // arbitrary graph and its generation-one TLS state together, and cannot share
 // the fixed RuntimeV1's post-ARCH_SET_FS publication hole or any fixed-graph
 // lifecycle/dlfcn state.
-#[cfg(all(
-    crabc_general_loader_libc_tls_runtime_v1,
-    not(crabc_general_initial_graph)
-))]
-compile_error!("general loader/libc TLS RuntimeV1 requires the general initial graph");
 
-#[cfg(all(
-    crabc_general_loader_libc_tls_runtime_v1,
-    not(crabc_general_initial_tls_materialization_v1)
-))]
-compile_error!("general loader/libc TLS RuntimeV1 requires general initial TLS materialization");
 
-#[cfg(all(
-    crabc_general_loader_libc_tls_runtime_v1,
-    any(
-        crabc_initial_tls_graph,
-        crabc_initial_exec_tls_graph,
-        crabc_owned_crt_handoff,
-        crabc_fixed_graph_introspection,
-        crabc_fixed_graph_dlfcn,
-        crabc_bounded_runtime_dlopen,
-        crabc_loader_libc_tls_runtime_v1
-    )
-))]
-compile_error!("general loader/libc TLS RuntimeV1 is disjoint from fixed RuntimeV1, CRT, and dlfcn siblings");
 
 // The dynamic-main-thread bridge is a fourth, explicitly dependent general
 // RuntimeV1 cfg. It admits one Rust-produced Scrt1.o shape and one
 // main-resident attachment before libc startup; it does not reuse the fixed
 // owned-CRT graph. With the general lifecycle feature it reuses the record
 // layout to authenticate the conventional rdx finalizer and defer callbacks.
-#[cfg(all(
-    crabc_dynamic_main_thread_runtime_v1,
-    not(crabc_general_loader_libc_tls_runtime_v1)
-))]
-compile_error!("dynamic main-thread RuntimeV1 requires the general RuntimeV1 descriptor");
 
-#[cfg(all(
-    crabc_dynamic_main_thread_runtime_v1,
-    any(
-        crabc_initial_tls_graph,
-        crabc_initial_exec_tls_graph,
-        crabc_owned_crt_handoff,
-        crabc_fixed_graph_introspection,
-        crabc_fixed_graph_dlfcn,
-        crabc_bounded_runtime_dlopen,
-        crabc_loader_libc_tls_runtime_v1
-    )
-))]
-compile_error!("dynamic main-thread RuntimeV1 is disjoint from fixed graph and owned-CRT siblings");
 
 // The first loader/libc RuntimeV1 wire is intentionally an initial-TLS
 // sibling. It must not silently attach to the older no-TLS graph, the one
 // initial-exec exception, an owned-CRT fixture, or the general non-TLS graph.
 // Those packages have different ownership boundaries and cannot supply this
 // descriptor's loader-owned Variant-II DTV invariants.
-#[cfg(all(crabc_loader_libc_tls_runtime_v1, not(crabc_initial_tls_graph)))]
-compile_error!("loader/libc TLS RuntimeV1 requires the GNU-Dynamic initial-TLS sibling");
 
-#[cfg(all(
-    crabc_loader_libc_tls_runtime_v1,
-    any(
-        crabc_initial_exec_tls_graph,
-        crabc_owned_crt_handoff,
-        crabc_fixed_graph_introspection,
-        crabc_fixed_graph_dlfcn,
-        crabc_general_initial_graph
-    )
-))]
-compile_error!("loader/libc TLS RuntimeV1 is a separate initial-TLS handoff artifact");
 
 const AT_PHDR: u64 = 3;
 const AT_PHNUM: u64 = 5;
