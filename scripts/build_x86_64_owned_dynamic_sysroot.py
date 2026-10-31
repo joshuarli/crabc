@@ -407,6 +407,7 @@ def loader_provenance(
     compiler_artifact: Path,
     installed_artifact: Path,
     hardening_profile: common.NativeRuntimeProfile = common.NativeRuntimeProfile.COMPATIBILITY,
+    *, merged: bool = False, dependencies_override: Path | None = None,
 ) -> dict[str, object]:
     """Bind the installed loader to Cargo's selected source closure and config."""
 
@@ -414,9 +415,9 @@ def loader_provenance(
             or rustflags != loader_rustflags(hardening_profile)
             or installed_artifact.name != Path(hardening_profile.interpreter).name):
         raise common.BuildError("loader profile, flags and interpreter path differ")
-    dependencies = stage / "loader" / common.TARGET / "release" / "libldso.d"
+    dependencies = dependencies_override or (stage / "loader" / common.TARGET / "release" / "libldso.d")
     expected_dependency_artifact = dependencies.with_name(LOADER_DEPENDENCY_ARTIFACT)
-    if compiler_artifact != expected_dependency_artifact:
+    if not merged and compiler_artifact != expected_dependency_artifact:
         raise common.BuildError("loader artifact does not have the expected Cargo dependency location")
     try:
         compiler_details = compiler_artifact.lstat()
@@ -425,7 +426,7 @@ def loader_provenance(
         raise common.BuildError("loader compiler or installed artifact is missing") from error
     if (not stat.S_ISREG(compiler_details.st_mode) or compiler_artifact.is_symlink()
             or not stat.S_ISREG(installed_details.st_mode) or installed_artifact.is_symlink()
-            or common.sha256_file(compiler_artifact) != common.sha256_file(installed_artifact)):
+            or (not merged and common.sha256_file(compiler_artifact) != common.sha256_file(installed_artifact))):
         raise common.BuildError("installed loader differs from its compiler artifact")
     configuration = [
         _source_file_identity(ROOT / "scripts/build_x86_64_owned_dynamic_sysroot.py", "loader producer"),
@@ -450,7 +451,7 @@ def loader_provenance(
             "argv": [_normalized_loader_argument(argument, stage) for argument in command],
             "rustflags": rustflags,
         },
-        "compiler_dependencies": loader_dependency_provenance(dependencies, compiler_artifact),
+        "compiler_dependencies": [] if merged else loader_dependency_provenance(dependencies, compiler_artifact),
         "configuration": configuration,
     }
 
@@ -661,24 +662,6 @@ def build_staged_payload(output: Path, stage: Path, *, allocator_backend: str = 
         stage / "libc-errno-private.exports",
         objects, selected, builtins, library
     )
-    run(libc_shared_link_command)
-    # The sealed dynamic product gives its one shared-library link role an
-    # executable installed mode.  Every other finite link role is materialized
-    # as a non-executable regular file below.
-    (library / "libc.so").chmod(0o755)
-    undefined = elf_imports(nm, library / "libc.so")
-    allowed = {"__crabc_x86_64_initial_tls_allocate", "__crabc_x86_64_initial_tls_release",
-               "__crabc_x86_64_resolve_initial_tls", "__crabc_x86_64_reset_current_tls_v1",
-               "__crabc_x86_64_reset_current_tls_v2",
-               "__crabc_x86_64_loader_conventional_startup_v1",
-               "__crabc_x86_64_runtime_publish_initial_tid",
-               "__crabc_x86_64_runtime_fork_prepare", "__crabc_x86_64_runtime_fork_complete",
-               "__crabc_x86_64_runtime_open", "__crabc_x86_64_runtime_symbol",
-               "__crabc_x86_64_runtime_close", "__crabc_x86_64_runtime_address",
-               "__crabc_x86_64_runtime_information", "__crabc_x86_64_runtime_iterate"}
-    unexpected = sorted(undefined - allowed)
-    if unexpected:
-        raise common.BuildError(f"shared libc has unexpected unresolved symbols: {unexpected}")
     crt = stage / "crt"
     run([sys.executable, str(ROOT / "crt/build_x86_64.py"), "--owned-dynamic-sysroot",
          "--hardening-profile", hardening_profile.value, "--out-dir", str(crt), "--llvm-objdump", objdump])
@@ -715,20 +698,55 @@ def build_staged_payload(output: Path, stage: Path, *, allocator_backend: str = 
     # Every process touches nearly all interpreter text, so it is optimized
     # for size: opt-level s cuts it from 135 to 81 KiB (54 KiB of PSS per
     # process) for about 2% more fork+exec CPU and 8% slower dlsym.
-    loader_command = [*cargo, "build", "--locked", "-p", "crabc-ldso", "--release",
+    loader_command = [*cargo, "rustc", "--locked", "-p", "crabc-ldso", "--release",
                       "--config", 'profile.release.opt-level="s"', "--target", common.TARGET,
                       "--target-dir", str(stage / "loader"), "--no-default-features", "--features",
-                      LOADER_FEATURE]
+                      LOADER_FEATURE, "--", "--emit=obj"]
     run(loader_command, environment=loader_env)
+    object_candidates = sorted((stage / "loader" / common.TARGET / "release" / "build" / "crabc-ldso").glob("*/out/ldso.o"),
+                               key=lambda path: path.stat().st_mtime)
+    if not object_candidates:
+        raise common.BuildError("merged loader object was not produced")
+    loader_object = object_candidates[-1]
+    localized_loader = stage / "ldso-localized.o"
+    localized_loader.write_bytes(loader_object.read_bytes())
+    run(["/usr/bin/objcopy", "--localize-symbol=memcpy", "--localize-symbol=memset",
+         "--localize-symbol=memmove", "--localize-symbol=memcmp", "--localize-symbol=bcmp",
+         "--localize-symbol=__tls_get_addr", "--localize-symbol=_dl_debug_state",
+         str(localized_loader)])
+    private_loader_exports = stage / "merged-private.exports"
+    private_loader_exports.write_text("{\n  local:\n    __crabc_x86_64_*;\n};\n", encoding="utf-8")
+    # The one merged link: libc's exact objects and the loader's relocatable
+    # object in one ET_DYN with _start as the entry. The loader's duplicates
+    # are localized above; libc keeps its 1661 exported names.
+    insert_at = libc_shared_link_command.index("--whole-archive")
+    libc_shared_link_command[insert_at:insert_at] = [
+        str(localized_loader), "-e", "_start", f"--version-script={private_loader_exports}"]
+    run(libc_shared_link_command)
+    (library / "libc.so").chmod(0o755)
+    undefined = elf_imports(nm, library / "libc.so")
+    allowed = {"__crabc_x86_64_initial_tls_allocate", "__crabc_x86_64_initial_tls_release",
+               "__crabc_x86_64_resolve_initial_tls", "__crabc_x86_64_reset_current_tls_v1",
+               "__crabc_x86_64_reset_current_tls_v2",
+               "__crabc_x86_64_loader_conventional_startup_v1",
+               "__crabc_x86_64_runtime_publish_initial_tid",
+               "__crabc_x86_64_runtime_fork_prepare", "__crabc_x86_64_runtime_fork_complete",
+               "__crabc_x86_64_runtime_open", "__crabc_x86_64_runtime_symbol",
+               "__crabc_x86_64_runtime_close", "__crabc_x86_64_runtime_address",
+               "__crabc_x86_64_runtime_information", "__crabc_x86_64_runtime_iterate"}
+    unexpected = sorted(undefined - allowed)
+    if unexpected:
+        raise common.BuildError(f"shared libc has unexpected unresolved symbols: {unexpected}")
     interpreter = output / hardening_profile.interpreter.lstrip("/")
-    loader_artifact = stage / "loader" / common.TARGET / "release/libldso.so"
-    common.copy_artifact(loader_artifact, interpreter)
+    interpreter.parent.mkdir(parents=True, exist_ok=True)
+    os.link(library / "libc.so", interpreter)
     interpreter.chmod(0o755)
+    loader_artifact = localized_loader
     if native_allocator_elf_audit_required(recorded_backend):
         native_definitions = elf_symbols(nm, library / "libc.so", "--defined-only")
         native_imports = elf_imports(nm, library / "libc.so")
-        loader_imports = elf_imports(nm, interpreter)
-        loader_definitions = elf_symbols(nm, interpreter, "--defined-only")
+        loader_imports = set()
+        loader_definitions = set()
         validate_native_allocator_symbols(native_definitions, native_imports, loader_imports | loader_definitions)
         if "__crabc_x86_native_mimalloc_process_finalizer" not in native_definitions:
             raise common.BuildError("native shared libc lost its private ELF process finalizer")
@@ -752,7 +770,9 @@ def build_staged_payload(output: Path, stage: Path, *, allocator_backend: str = 
     common.write_json(metadata / "loader.elf.json", loader_elf)
     common.write_json(
         metadata / "loader.provenance.json",
-        loader_provenance(stage, loader_command, loader_env["RUSTFLAGS"], loader_artifact, interpreter, hardening_profile),
+        loader_provenance(stage, loader_command, loader_env["RUSTFLAGS"], loader_artifact, interpreter,
+                          hardening_profile, merged=True,
+                          dependencies_override=loader_object.with_suffix(".d")),
     )
     for source, name in ((ROOT / "compat/x86_64/crabc_cc_owned_dynamic.py", "bin/crabc-cc-dynamic"),
                          (ROOT / "compat/x86_64/crabc_cc_static.py", "share/crabc/crabc_cc_static.py"),
