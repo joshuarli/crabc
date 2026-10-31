@@ -13,6 +13,7 @@
 #[path = "loader_tls_runtime_v1.rs"]
 mod loader_tls_runtime_v1;
 
+#[cfg(not(test))]
 #[panic_handler]
 fn panic(_: &core::panic::PanicInfo) -> ! {
     loop {
@@ -23,6 +24,7 @@ fn panic(_: &core::panic::PanicInfo) -> ! {
 // The freestanding proof builds with `panic=abort`; retain this terminal
 // personality spelling so the isolated consumer never reaches for an ambient
 // unwind runtime.
+#[cfg(not(test))]
 #[no_mangle]
 pub extern "C" fn rust_eh_personality() {}
 
@@ -31,6 +33,7 @@ pub extern "C" fn rust_eh_personality() {}
 // runtime. Keep the one handoff consumer self-contained, as the adjacent
 // fixed-graph bridge does, rather than pulling an ambient implementation into
 // the test executable.
+#[cfg(not(test))]
 #[no_mangle]
 pub unsafe extern "C" fn memcpy(
     destination: *mut core::ffi::c_void,
@@ -50,6 +53,7 @@ pub unsafe extern "C" fn memcpy(
     destination.cast()
 }
 
+#[cfg(not(test))]
 #[no_mangle]
 pub unsafe extern "C" fn memset(
     destination: *mut core::ffi::c_void,

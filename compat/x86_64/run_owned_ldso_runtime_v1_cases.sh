@@ -149,6 +149,7 @@ build_consumer() {
         "$@" "$CONSUMER_SOURCE_ROOT" -o "$output"
 }
 mapfile -d '' -t rustc_command < <(python3 -B "$ROOT_DIR/compat/x86_64/native_rustc.py")
+mapfile -d '' -t rustc_link_command < <(python3 -B "$ROOT_DIR/compat/x86_64/native_rustc.py" final-link)
 build_consumer "$work/libconsumer-static.a" --cfg crabc_loader_libc_tls_runtime_v1_static_mode
 
 # The product CRT owns _start; the fixture start object would conflict.  Use
@@ -259,6 +260,13 @@ for mutation in magic version abi_size mode owner generation; do
 done
 cp "$work/loader-valid.so" "$loader"
 
+# The retired private poisoned-dtv loader variant is replaced by the libc
+# validator unit test that owns the DTV checks.  It rejects null, unaligned,
+# undersized, and zero-module records without reading %fs or the DTV.
+"${rustc_link_command[@]}" --edition=2021 --test \
+    "$CONSUMER_SOURCE_ROOT" -o "$work/libc-runtime-v1-record-tests"
+"$work/libc-runtime-v1-record-tests" --test-threads=1
+
 cc -D_GNU_SOURCE -std=c11 -static "$TRACE" -o "$fixtures/no-arch-set-fs-trace"
 expect_rejection_before_fs() {
     local binary="$1" label="$2" output status
@@ -285,4 +293,4 @@ if readelf -Ws "$work/main-static" | awk \
     fail 'static-mode consumer retained a loader record import'
 fi
 "$work/main-static"
-printf '%s\n' 'installed loader/libc TLS RuntimeV1: PASS (record layout, weak main handoff, malformed metadata/DSo rejection, static observer)'
+printf '%s\n' 'installed loader/libc TLS RuntimeV1: PASS (record layout, weak main handoff, malformed metadata/DSO rejection, libc DTV validator, static observer)'
