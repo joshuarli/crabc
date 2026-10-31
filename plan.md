@@ -713,7 +713,8 @@ details; this table is the acceptance rule.
 
 ## Owner decisions
 
-Decided by the owner on 2026-10-30. Reopening one needs a new owner decision.
+Decided by the owner on 2026-10-30 and 2026-10-31. Reopening one needs a new
+owner decision.
 
 - **D1 — Eager allocator start-up syscalls: keep the freeze.** The accepted C
   backend makes about 5 syscalls at start-up even when a program never
@@ -749,6 +750,36 @@ Decided by the owner on 2026-10-30. Reopening one needs a new owner decision.
   instruction exemption that the harness cannot measure. Startup rows report
   the allocator-attributed share as evidence, and the gate compares the total
   against 1.10 × R. No sample-based subtraction is added.
+- **D9 — the allocator label applies to every row.** A row's whole-process
+  count includes the process start-up, so the frozen allocator calls (and its
+  arena `madvise` pair) are labeled and removed from the judged total for loop
+  rows as well as startup rows. Per-name excess on the remaining calls still
+  fails; per-operation counts are unchanged.
+- **D10 — startup instructions: narrow allocator-lifecycle reopening, no
+  exemption.** The owner delegated the choice. Bounded measurement (below)
+  confirms mimalloc's eager process init and option scan dominate startup, and
+  that a lifecycle-only lazy initializer can remove them without an allocator
+  algorithm change. Reopen the freeze only for that lifecycle change: make the
+  existing init and option scan run on the first allocation. No allocator
+  development, port work, tuning or benchmarks. The measurement also shows the
+  allocator-free remainder is still above 1.10 × musl, so the change may land
+  only with an S4 startup-instruction lane and only if the combined startup
+  rows meet 1.10 ×. Otherwise record the measured floor as a standing blocker.
+  D8's total judgement and D1's syscall attribution are unchanged.
+- **D11 — `dlopen_graph`: S4 lane with a hard stop.** The loader's symbol-
+  resolution path is non-allocator work. It must reach ≤1.10 × musl with no
+  semantic change, or report the exact mechanism that blocks it.
+- **D12 — static startup 759-byte `mmap`: remove the preallocation.** Do not
+  relax the static syscall budget from 9 to 10. The mapping is static TLS
+  (`StaticInitialTlsPlan::materialize`), not allocator lifecycle, so it is not
+  folded into D10. If evidence later shows it is allocator lifecycle work,
+  stop and fold it into D10 instead of changing it separately.
+- **D13 — hardened exit 116: diagnose the harness, not the product.** The
+  failing runner was the evidence harness, not a runtime regression; the
+  acceptance suite must pass at the final tip before S5 can claim it.
+- **D14 — CPU and memory are re-accepted only on a quiet host.** The S5
+  attempt was deferred at load 20–27; a re-acceptance run must satisfy the
+  existing host-load policy. Counter runs under load remain diagnostic.
 
 ## Runtime hardening
 
@@ -853,6 +884,15 @@ and the reviewed unwinder dependency graph.
   chain-only dispatcher subcommands finds none: the dispatcher is behavioural
   coverage, so its reduction lever is the 314-case `*-header-abi`
   consolidation, not deletion of the receipt chain.
+- 2026-10-31: owner resumed the campaign after the rejected S5 attempt and
+  decided D10–D14. The bounded startup measurement corrected the empty-env
+  accounting: the 118,862 figure counted the host `env` process; direct static
+  startup is 54,997, and allocator eager init is 169,387 static / 169,278
+  dynamic instructions. Lazy allocator lifecycle alone leaves 2.15× dynamic
+  and 5.52× static, so it lands only with the S4 startup-instruction lane.
+  `dlopen_graph`, the ldso case migration and the static TLS mapping get
+  dedicated lanes; the hardened 116 was the missing record-offset input and is
+  fixed in `02d7ffed4`.
 
 ## S0 baseline table
 
@@ -956,18 +996,19 @@ Static +6: allocator-attributed 5, thread-stack `mmap` 759 B, `gettid`
 replacing `set_tid_address` (net 0).
 Attribution. Run 2's `perf record` split (`ld-crabc` 82.6 %, `libc.so` 13.0 %)
 rests on 46 samples and is not quantitative. A deterministic static probe
-(`hello-static` built from this baseline) measured with `perf stat`:
-173,930 instructions with the normal 41-variable environment, 118,862 with
-`env -i`, 122,564 with one variable. Environment-dependent startup work
-alone is therefore **55,068 instructions** (31.7 % of startup), and mimalloc
-symbols (`_mi_strnicmp`, `_mi_prim_getenv`, `_mi_toupper`, `_mi_strlcpy`)
-dominate the symbol samples. Sampling cannot quantify the rest: the kernel
-rate-limits a short-lived process to about nine samples per exec, so a
-3,000-exec loop gives shares, not counts. The allocator share stays
-unseparated. The empty-environment total (118,862) is an upper bound on
-allocator-free startup: it is still 139 × musl's 856 before any allocator
-cost is counted. Run 2's 173,432 differs from this reprobe by 0.3 %, which is
-the same environment term moving.
+(`hello-static` built from this baseline) measured 173,930 instructions with
+the normal 41-variable environment. The recorded 118,862 empty-environment
+figure was a harness artifact: it put the host `env` process inside the
+counted process (`perf stat env -i hello-static` measures 119,084), while the
+same binary run directly with an empty environment measures 54,997. Corrected
+2026-10-31, the environment-dependent allocator option scan is therefore
+119,130 instructions, not 55,068. Kernel-patched no-init builds isolate the
+allocator's complete eager share exactly: 169,278 of 244,878 direct dynamic
+startup instructions (69.1 %) and 169,387 of 174,109 static startup
+instructions (97.3 %). The allocator-free floors are 75,600 dynamic
+(2.15 × musl's 35,105) and 4,722 static (5.52 × musl's 856), still above
+1.10 ×. Sampling cannot quantify the remaining non-allocator work; the S4
+startup lane owns it.
 
 ### Seed rows (S1.5, `matched-llvm-23`, dynamic PIE)
 
@@ -1036,13 +1077,14 @@ lever is the item-1 consolidation.
 | static startup instructions | 173,432 | none identified | **≤ 1.10 × R total (D8)** |
 
 The two instruction rows have no itemised deletion. The measured costs are
-environment-dependent startup work dominated by the frozen allocator's option
-scan (55,068 instructions, D1) and a loader/CRT/TLS remainder that the harness cannot yet separate; a 3,000-exec
-loop shows mimalloc symbols dominating but is rate-limited to about nine
-samples per exec. They are budgeted against the cost contract (≤ 1.10 × R)
-rather than a fabricated deletion count, and they are the rows S3b/S4 must
-move. `libc` features are budgeted on the identified 19 but cannot be
-executed now that D6 accepts the default-archive change.
+the allocator's eager init and option scan (169,278 dynamic and 169,387 static
+instructions, D10) and a non-allocator loader/CRT/TLS remainder of 75,600
+dynamic and 4,722 static instructions after that init is removed. Both
+remainders are still above 1.10 × musl on their own, so D10's lifecycle change
+lands only with the S4 startup-instruction lane and the combined rows decide
+S5; there is no fabricated deletion count and no instruction exemption. `libc`
+features are budgeted on the identified 19 but cannot be executed now that D6
+accepts the default-archive change.
 
 ## Result table
 
@@ -1059,62 +1101,39 @@ passed.
 | S1.4 | `10de7c2d9` | `SYSCALL_LIMIT_FACTOR = 1`, `INSTRUCTION_LIMIT_RATIO = 1.10`; one definition | `test_performance_release_gate` 23 pass | none |
 | S1.5 | (runs, no commit) | 58 dynamic-PIE rows: 0 pass, 46 fail, 11 nondeterministic, 1 unavailable; 43 fails are syscall-only | 4 `counts` invocations exit 0 | static-PIE rows unavailable; `startup` row nondeterministic |
 | S2 | `e5118b5da`, `124606078` | 942→701 commands (budget 720); 12,817→10,593 dispatcher lines (budget 11,000); Python files 572→566 (budget 566); lines 271,148→269,998 (budget 270,000) | parity ledger PASS; test_runner 92 pass; 12 dependent header modules pass; receipts byte-identical for all seven symbols; CLI replayed on the installed product | none |
-| S3a (libc) | `d6cf5c2ab` | libc features 40→25 (budget 25); shipped `libc.a` 2488 names / 1,540,483 section bytes identical; `libc.so` 1661 exports and section sizes identical; default-archive ratchet +44, exactly the folded names | 15 folded-family commands pass; legacy-misc/des-compat pass; both product suites pass; parity ledger PASS | ldso half still blocked on 71 cases |
+| S3a (libc) | `d6cf5c2ab` | libc features 40→25 (budget 25); shipped `libc.a` 2488 names / 1,540,483 section bytes identical; `libc.so` 1661 exports and section sizes identical; default-archive ratchet +44, exactly the folded names | 15 folded-family commands pass; legacy-misc/des-compat pass; both product suites pass; parity ledger PASS | ldso half in `lane/s3a-ldso-migrate` under D7 |
 | S3b | `f7dcaafb5` | one ELF (same inode at both paths); startup syscalls 25→12 = 7 non-allocator (musl 9) + 5 allocator-attributed, budget 14; instructions 238,686→237,541 (empty env 116,582, so 120,350 is environment-dependent allocator work); bridges 44→30; 1661 exports, 0 undefined, 0 loader imports | full F roster PASS: loader, static 72-path, dlopen/TLS, both interposition suites, cancellation, hardened, identity 5 cases, CRT evidence, loader debug; debug payload merged | startup instruction ratio still ~6.8× musl (dominated by the frozen allocator), so the instruction dimension is not met |
 | S4 instructions | `b704eec12` | memcpy_16k_aligned 1.4375→0.8750; memcpy_64_aligned 1.1875→0.8750; stdio_format_parse 1.4778→1.0997 (pass); no measured row worse | libc-memory PASS; owned-stdio PASS; counts route on the merged product; rust-check | 256k rows read nondeterministic (unchanged); stdio margin 2.4 instructions |
 | S4 startup syscalls | `4b897c553` | judged startup syscalls 14→8 against musl's 11 with no per-name excess; whole 19→13; allocator-attributed 5 unchanged | prepare, identity 5 cases, dlopen PIE/non-PIE, hardened, pthread-exit, CRT evidence tests | none; startup row still fails on instructions (D8) |
-| S5 (attempt) | `d398d3ec0` rejected | **FAILED.** 58-row counts: 49 pass, 2 fail (`dlopen_graph` 2.639; `startup` 3.585 with judged syscalls 8 vs 11), 6 nondeterministic, 1 unavailable. Structure 5/7: libc 25, dispatcher 701, dispatcher lines 10,593, Python 566 / 269,998; ldso 7 features and 19,442 lines unmet. Static startup syscalls 10 vs 9. | products rebuilt at the acceptance commit; dynamic prepare, static 72-path, identity, dlopen, owned-stdio and memory suites PASS; counts report; hardened could not be reproduced (harness exit 116 with no output; the identical product sources passed at `44dc21ddb`) | budgets unmet; startup instructions under D8; `dlopen_graph`; ldso; static 759-byte mmap; hardened unverified at the final tip; CPU/memory gate deferred (host load 20-27) |
+| S5 hardened evidence | `02d7ffed4` | harness gap: the probe has required `CRABC_CONVENTIONAL_RECORD_OFFSET` since `1469f9e51`; the hardened runner omitted it, so the owned startup exited 116 before emitting output | `hardened-runtime` PASS on a fresh current-source compatibility product; startup probe tests 37 pass / 11 skip | none |
+| S5 (attempt) | `d398d3ec0` rejected | **FAILED.** 58-row counts: 49 pass, 2 fail (`dlopen_graph` 2.639; `startup` 3.585 with judged syscalls 8 vs 11), 6 nondeterministic, 1 unavailable. Structure 5/7: libc 25, dispatcher 701, dispatcher lines 10,593, Python 566 / 269,998; ldso 7 features and 19,442 lines unmet. Static startup syscalls 10 vs 9. | products rebuilt at the acceptance commit; dynamic prepare, static 72-path, identity, dlopen, owned-stdio and memory suites PASS; counts report; hardened was a harness gap fixed in `02d7ffed4` | budgets unmet; startup instructions under D10; `dlopen_graph` under D11; ldso under D7; static 759-byte mmap under D12; CPU/memory under D14 (host load 20-27) |
 
-### Needs owner
+### Owner decisions after S5 (2026-10-31, resumed)
 
-Four questions are open after acceptance:
+The S5 attempt stands rejected. Each unmet dimension now has an owner decision
+and a lane:
 
-1. **Startup instructions cannot meet 1.10 under the allocator freeze.** The
-   dynamic counts row is 3.585× musl (251,616 vs 70,141); the static probe is
-   173,432 vs 856 (202.6×) and its empty-environment form, 118,862, is still
-   136× musl. D8 judges the total, and D1 freezes the allocator whose start-up
-   dominates. Decide: accept the row as a standing blocker while the freeze
-   holds, define a measured allocator-attributed instruction exemption (it
-   needs allocator work), or reopen the freeze.
-2. **ldso structure budget is unmet.** 7 features against 2, and 19,442 lines
-   against 11,000, because the 71 behavioural cases of the three non-product
-   features have not been migrated to the installed product.
-3. **`dlopen_graph` is 2.6403× musl.** It was already above the ceiling before
-   S3b; the loader's symbol-resolution path needs an S4 lane.
-4. **Static startup makes one extra call.** 10 against the budget of 9: the
-   759-byte initial-thread `mmap`, which musl does not make.
+1. **Startup instructions — D10.** Eager allocator init is 169,278 of 244,878
+   dynamic startup instructions (69.1 %) and 169,387 of 174,109 static
+   instructions (97.3 %). A kernel-patched no-init build leaves 75,600 dynamic
+   (2.15 × musl) and 4,722 static (5.52 × musl), so the lifecycle change alone
+   cannot pass; it lands with an S4 startup-instruction lane and the combined
+   rows decide S5. No instruction exemption is taken.
+2. **ldso — D7 unchanged.** Migrate the 71 cases to the installed product, then
+   delete the three non-product features. No budget relaxation. Lane
+   `lane/s3a-ldso-migrate`.
+3. **`dlopen_graph` — D11.** S4 loader lane; hard stop at ≤1.10 × musl with no
+   semantic change, or report the blocking mechanism.
+4. **Static 759-byte `mmap` — D12.** Remove the `StaticInitialTlsPlan`
+   preallocation; do not relax the 9-call budget. Lane `lane/s4-static-tls`.
+5. **Hardened exit 116 — D13.** Fixed as a harness gap in `02d7ffed4`: the
+   evidence probe had required `CRABC_CONVENTIONAL_RECORD_OFFSET` since
+   `1469f9e51` and the hardened runner never passed it. `hardened-runtime`
+   passes on a fresh current-source compatibility product.
 
-5. **Hardened runtime could not be reproduced at the acceptance commit.** The
-   runner exits 116 with no output on `d398d3ec0`; the identical product
-   sources passed at `44dc21ddb`. That is an evidence gap, not a runtime
-   finding, and it needs a harness diagnosis before S5 can claim the suite.
-
-CPU and memory were not measured: the host stayed at load 20–27 on 32 cores,
-so the perf gate is deferred and S5 is not done for that dimension.
-
-The three questions raised while fixing the S0 budgets were answered
-on 2026-10-31 and recorded as D6-D8: accept the default-archive export change
-(D6), migrate the 71 ldso cases and delete the features (D7), and judge startup
-instructions on the total while reporting the allocator share as evidence
-(D8). The evidence that motivated them:
-
-1. **libc leaf features.** Folding the 19 leaves makes them unconditional in
-   the dependency-free test archive as well, changing its export surface and
-   deleting its absence proofs (`.work/s3a/5.2-skips.md`,
-   `libc/src/c_abi/x86_64/static_c_abi.rs`). The shipped owned archive already
-   exports `ualarm`, `getitimer`, `tmpnam`, `scandir` and `setenv`.
-2. **ldso private milestone features.** Deleting
-   `x86_64-initial-interpreter`,
-   `x86_64-general-initial-tls-interpreter` and
-   `x86_64-general-initial-tls-runtime-v1-interpreter` needs 71 behavioural
-   cases (malformed ELF, TLS, lifecycle) moved into the installed product's
-   case table first (`.work/s3a/migration.md`).
-3. **Startup instructions.** A deterministic static probe measures 173,930
-   startup instructions, 118,862 with `env -i`; environment-dependent startup
-   is 55,068, dominated by the frozen allocator's option scan. Sampling is
-   rate-limited to about nine samples per exec, so an allocator-only
-   subtraction is not measurable; the empty-environment remainder already
-   fails 1.10 x by 139 x.
+CPU and memory remain deferred under D14 until the host satisfies the existing
+load policy. The 2026-10-29 S0 questions were already answered as D6–D8; their
+evidence stays in Git history.
 
 ## Non-goals
 
