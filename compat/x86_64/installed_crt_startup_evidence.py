@@ -574,7 +574,8 @@ def plan(root,work,inputs,tools):
                             else ['-L',p('oracle-link'),'-l:libc.so'])
             argv=[tool('linker'),*(['-static'] if is_static else []),*(['-pie'] if pie else []),
                   '--hash-style=sysv','-z','now','-z','relro','-z','noexecstack','--no-undefined',
-                  *([] if is_static else ['--allow-shlib-undefined',helper_exclusion,'--dynamic-linker',
+                  *([] if is_static else ['--allow-shlib-undefined',helper_exclusion,
+                     '-z','dynamic-undefined-weak','--dynamic-linker',
                      '/lib/ld-crabc-x86_64.so.1' if mode.startswith('conventional') else '/lib/ld-musl-x86_64.so.1']),
                   m(crt),p('inputs/oracle-crt/crti.o'),obj,
                   *([] if is_static else [helper_input]),*runtime_inputs,
