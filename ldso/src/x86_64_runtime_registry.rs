@@ -1235,8 +1235,6 @@ pub unsafe extern "C" fn runtime_address_info(address: usize, output: *mut Addre
     for index in 0..object.symcount {
         #[cfg(feature = "x86_64-owned-dynamic-runtime")]
         let symbol = unsafe { direct_symbol(object, index) }.unwrap_or(core::ptr::null());
-        #[cfg(not(feature = "x86_64-owned-dynamic-runtime"))]
-        let symbol = unsafe { object.symtab.add(index * 24) };
         if symbol.is_null() { return 0; }
         let info = unsafe { *symbol.add(4) };
         let value = unsafe { read_u64(symbol.add(8)) };

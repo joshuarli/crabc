@@ -2632,42 +2632,6 @@ pub unsafe extern "C" fn __crabc_x86_64_resolve_initial_tls(index: *const TlsInd
     unsafe { __tls_get_addr(index) }
 }
 
-unsafe fn relocate(object: &Object, objects: &[Object]) -> Option<()> {
-    // Do not let a malformed table change an earlier target before the graph
-    // discovers that another table or packed bitmap is invalid. The fixed
-    // stack block records every target in this bounded fixture, rejects table
-    // writes and duplicate destinations, then permits the actual RELA-before-
-    // RELR transaction.
-    preflight_relocation_table_layout(object)?;
-    let mut targets = [0u64; MAX_RELOCATION_TARGETS];
-    let mut target_count = 0usize;
-    target_count = preflight_rela_table(
-        object,
-        objects,
-        object.rela,
-        object.relasz,
-        &mut targets,
-        target_count,
-    )?;
-    target_count = preflight_rela_table(
-        object,
-        objects,
-        object.jmprel,
-        object.pltrelsz,
-        &mut targets,
-        target_count,
-    )?;
-    target_count = preflight_relr_table(object, &mut targets, target_count)?;
-    let used_targets = &mut targets[..target_count];
-    used_targets.sort_unstable();
-    if used_targets.windows(2).any(|pair| pair[0] == pair[1]) {
-        return None;
-    }
-
-    apply_rela_table(object, objects, object.rela, object.relasz)?;
-    apply_rela_table(object, objects, object.jmprel, object.pltrelsz)?;
-    apply_relr_table(object)
-}
 
 fn preflight_relocation_table_layout(object: &Object) -> Option<()> {
     let tables = [
@@ -2702,97 +2666,12 @@ fn preflight_relocation_table_layout(object: &Object) -> Option<()> {
     Some(())
 }
 
-unsafe fn preflight_rela_table(
-    object: &Object,
-    objects: &[Object],
-    table: *const u8,
-    length: usize,
-    targets: &mut [u64; MAX_RELOCATION_TARGETS],
-    mut target_count: usize,
-) -> Option<usize> {
-    if length == 0 {
-        return Some(target_count);
-    }
-    if table.is_null() || length % ELF64_RELA_SIZE != 0 {
-        return None;
-    }
-    for index in 0..(length / ELF64_RELA_SIZE) {
-        let rela = table.add(index * ELF64_RELA_SIZE);
-        let relocation_offset = read_u64(rela);
-        preflight_relocation_target(object, relocation_offset)?;
-        let info = read_u64(rela.add(8));
-        let kind = info as u32;
-        let symbol = (info >> 32) as usize;
-        let addend = read_i64(rela.add(16));
-        let _ = relocation_value(kind, object, objects, symbol, addend)?;
-        target_count = record_relocation_target(targets, target_count, relocation_offset)?;
-    }
-    Some(target_count)
-}
 
-unsafe fn preflight_relr_table(
-    object: &Object,
-    targets: &mut [u64],
-    target_count: usize,
-) -> Option<usize> {
-    unsafe { decode_relr_table(object, targets, target_count, |target| unsafe { preflight_relr_target(object, target) }) }
-}
 
 /// Decode `object`'s RELR table into `targets`, applying `check` to each
 /// target before recording it (as [`preflight_relr_table`] does with
 /// [`preflight_relr_target`]).
-unsafe fn decode_relr_table(
-    object: &Object,
-    targets: &mut [u64],
-    mut target_count: usize,
-    mut check: impl FnMut(u64) -> Option<()>,
-) -> Option<usize> {
-    if object.relrsz == 0 {
-        return Some(target_count);
-    }
-    if object.relr.is_null()
-        || object.relrsz % ELF64_RELR_SIZE != 0
-        || (!cfg!(crabc_general_initial_graph) && object.relrsz > MAX_RELR_BYTE_LEN)
-    {
-        return None;
-    }
-    let mut next_virtual_address = None;
-    for index in 0..(object.relrsz / ELF64_RELR_SIZE) {
-        let encoded = read_u64(object.relr.add(index * ELF64_RELR_SIZE));
-        if encoded & 1 == 0 {
-            check(encoded)?;
-            target_count = record_relocation_target(targets, target_count, encoded)?;
-            next_virtual_address = Some(encoded.checked_add(ELF64_RELR_SIZE as u64)?);
-            continue;
-        }
 
-        let start = next_virtual_address?;
-        let bitmap = encoded >> 1;
-        for bit in 0..ELF64_RELR_BITMAP_BITS {
-            if bitmap & (1u64 << bit) == 0 {
-                continue;
-            }
-            let target = start.checked_add(bit.checked_mul(ELF64_RELR_SIZE as u64)?)?;
-            check(target)?;
-            target_count = record_relocation_target(targets, target_count, target)?;
-        }
-        next_virtual_address = Some(
-            start.checked_add(ELF64_RELR_BITMAP_BITS.checked_mul(ELF64_RELR_SIZE as u64)?)?,
-        );
-    }
-    Some(target_count)
-}
-
-unsafe fn preflight_relr_target(object: &Object, virtual_address: u64) -> Option<()> {
-    preflight_relocation_target(object, virtual_address)?;
-    let address = runtime_address(object.base, virtual_address)?;
-    // Packed RELR uses the preexisting pointer word as its addend. Check this
-    // arithmetic before any table changes, matching musl's add-the-load-bias
-    // operation while failing closed on an overflowing malformed input.
-    let addend = read_u64(address as *const u8);
-    let _ = addend.checked_add(object.base)?;
-    Some(())
-}
 
 unsafe fn preflight_relocation_target(object: &Object, virtual_address: u64) -> Option<()> {
     if virtual_address & (ELF64_RELR_SIZE as u64 - 1) != 0
@@ -2819,15 +2698,6 @@ unsafe fn preflight_relocation_target(object: &Object, virtual_address: u64) -> 
     Some(())
 }
 
-fn record_relocation_target(
-    targets: &mut [u64],
-    count: usize,
-    virtual_address: u64,
-) -> Option<usize> {
-    let slot = targets.get_mut(count)?;
-    *slot = virtual_address;
-    count.checked_add(1)
-}
 
 unsafe fn apply_rela_table(
     object: &Object,

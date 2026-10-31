@@ -104,8 +104,6 @@ impl ObjectTable {
         objects.push(main)?;
         #[cfg(feature = "x86_64-owned-dynamic-runtime")]
         return Some(Self(objects, LoaderVec::new()));
-        #[cfg(not(feature = "x86_64-owned-dynamic-runtime"))]
-        Some(Self(objects))
     }
 
     /// Retain `name` for the rest of the process and return its view.
@@ -622,14 +620,6 @@ mod tests {
             (left, right)
         };
         state.finish_discovery().unwrap();
-        #[cfg(not(feature = "x86_64-owned-dynamic-runtime"))]
-        assert_eq!(
-            state
-                .graph_during_transaction()
-                .unwrap()
-                .dependency_first_plan(),
-            Err(GraphStateError::DependencyCycle)
-        );
         #[cfg(feature = "x86_64-owned-dynamic-runtime")]
         assert_eq!(
             state.graph_during_transaction().unwrap().dependency_first_plan().unwrap().indices(),

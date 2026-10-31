@@ -32,10 +32,6 @@ pub(crate) enum ObjectAdmission {
 
 /// The private source-root graphs keep their original fixed object and edge
 /// bounds. The installed runtime has none.
-#[cfg(not(feature = "x86_64-owned-dynamic-runtime"))]
-const SOURCE_ROOT_MAX_OBJECTS: usize = 32;
-#[cfg(not(feature = "x86_64-owned-dynamic-runtime"))]
-const SOURCE_ROOT_MAX_NEEDED: usize = 16;
 
 /// Graph failures. In the installed runtime the two capacity errors mean the
 /// kernel refused the loader mapping that would hold another object or edge:
@@ -188,10 +184,6 @@ impl InitialGraphState {
             });
         }
         let index = self.object_count();
-        #[cfg(not(feature = "x86_64-owned-dynamic-runtime"))]
-        if index == SOURCE_ROOT_MAX_OBJECTS {
-            return Err(GraphStateError::ObjectCapacity);
-        }
         self.dependencies
             .push(ObjectSlot {
                 identity,
@@ -219,10 +211,6 @@ impl InitialGraphState {
             return Err(GraphStateError::InvalidObject);
         }
         let slot = *self.slot(parent).ok_or(GraphStateError::InvalidObject)?;
-        #[cfg(not(feature = "x86_64-owned-dynamic-runtime"))]
-        if slot.edge_count == SOURCE_ROOT_MAX_NEEDED {
-            return Err(GraphStateError::EdgeCapacity);
-        }
         let mut start = slot.edge_start;
         if start + slot.edge_count != self.edges.len() {
             start = self.edges.len();
@@ -308,8 +296,6 @@ impl InitialGraphState {
         match mark {
             #[cfg(feature = "x86_64-owned-dynamic-runtime")]
             MARK_ACTIVE => return Ok(()),
-            #[cfg(not(feature = "x86_64-owned-dynamic-runtime"))]
-            MARK_ACTIVE => return Err(GraphStateError::DependencyCycle),
             MARK_DONE => return Ok(()),
             MARK_UNVISITED => {}
             _ => return Err(GraphStateError::InvalidObject),
@@ -503,8 +489,6 @@ mod tests {
         graph.finish_discovery(left).unwrap();
         graph.finish_discovery(0).unwrap();
 
-        #[cfg(not(feature = "x86_64-owned-dynamic-runtime"))]
-        assert_eq!(graph.dependency_first_plan(), Err(GraphStateError::DependencyCycle));
         #[cfg(feature = "x86_64-owned-dynamic-runtime")]
         assert_eq!(graph.dependency_first_plan().unwrap().indices(), &[right, left]);
     }

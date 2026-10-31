@@ -19,24 +19,6 @@ use super::x86_64_runtime_lock::AllocationGuard;
 /// production use is the one-threaded initial transaction, but their source
 /// tests allocate from concurrent harness threads, so the pool still takes a
 /// short spin lock.
-#[cfg(not(feature = "x86_64-owned-dynamic-runtime"))]
-struct AllocationGuard;
-#[cfg(not(feature = "x86_64-owned-dynamic-runtime"))]
-static POOL_SPIN: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
-#[cfg(not(feature = "x86_64-owned-dynamic-runtime"))]
-impl AllocationGuard {
-    fn acquire() -> Self {
-        use core::sync::atomic::Ordering;
-        while POOL_SPIN.compare_exchange_weak(false, true, Ordering::Acquire, Ordering::Relaxed).is_err() {
-            core::hint::spin_loop();
-        }
-        Self
-    }
-}
-#[cfg(not(feature = "x86_64-owned-dynamic-runtime"))]
-impl Drop for AllocationGuard {
-    fn drop(&mut self) { POOL_SPIN.store(false, core::sync::atomic::Ordering::Release); }
-}
 use core::cell::UnsafeCell;
 
 const SMALLEST_CLASS: usize = 16;

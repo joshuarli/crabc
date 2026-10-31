@@ -97,8 +97,6 @@ pub(crate) struct InitialTlsRegistry<const OBJECT_CAPACITY: usize, const MODULE_
     // Object index of module `id - 1`. The general graph sizes this from its
     // TLS-bearing objects; the fixed private roots keep inline slots.
     module_objects: super::x86_64_runtime_memory::LoaderVec<usize>,
-    #[cfg(not(crabc_general_initial_graph))]
-    module_objects: [usize; MODULE_CAPACITY],
     module_count: usize,
     generation: InitialTlsGeneration,
     phase: RegistryPhase,
@@ -111,8 +109,6 @@ impl<const OBJECT_CAPACITY: usize, const MODULE_CAPACITY: usize>
     pub(crate) const fn new() -> Self {
         Self {
             module_objects: super::x86_64_runtime_memory::LoaderVec::new(),
-            #[cfg(not(crabc_general_initial_graph))]
-            module_objects: [0; MODULE_CAPACITY],
             module_count: 0,
             generation: InitialTlsGeneration::initial(),
             phase: RegistryPhase::Planning,
@@ -148,10 +144,6 @@ impl<const OBJECT_CAPACITY: usize, const MODULE_CAPACITY: usize>
         self.module_objects
             .push(object_index)
             .ok_or(InitialTlsRegistryError::InitialModuleCapacityExhausted)?;
-        #[cfg(not(crabc_general_initial_graph))]
-        {
-            self.module_objects[self.module_count] = object_index;
-        }
         self.module_count = next;
         Ok(module_id)
     }
