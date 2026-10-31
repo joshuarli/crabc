@@ -179,9 +179,6 @@ pub(super) unsafe fn run(sp: usize, ldso_base: usize) -> ! {
             set_main_interpreter(main.base, main.phdr, main.phnum);
             (main, sp, main_entry)
         };
-        #[cfg(not(feature = "x86_64-owned-dynamic-runtime"))]
-        let main = parse_mapped(main_base, main_phdr, main_phnum, ObjectRole::Main, false, true)
-            .unwrap_or_else(|| fail(b"mainelf\n"));
 
         #[cfg(crabc_general_initial_tls_materialization_v1)]
         {
@@ -194,113 +191,9 @@ pub(super) unsafe fn run(sp: usize, ldso_base: usize) -> ! {
             fail(b"tlsreturn\n");
         }
 
-        #[cfg(not(crabc_general_initial_tls_materialization_v1))]
-        {
-            run_without_tls(main, main_entry, sp, ldso_base)
-        }
     }
 }
 
-#[cfg(not(crabc_general_initial_tls_materialization_v1))]
-unsafe fn run_without_tls(main: Object, main_entry: u64, sp: usize, ldso_base: usize) -> ! {
-    // As in musl __dls3, main admission does not assign the file identity
-    // used to deduplicate library admissions, for either entry mode.
-    let mut state = GeneralInitialLoaderState::new(ObjectIdentity {
-        device: u64::MAX,
-        inode: u64::MAX,
-    }, main).unwrap_or_else(|| fail(b"state\n"));
-    let discovered = {
-        let (graph, objects) = state
-            .discovery_mut()
-            .unwrap_or_else(|_| fail(b"state\n"));
-        unsafe { discover_needed(graph, objects, 0) }
-    };
-    if discovered.is_none() {
-        rollback_general_initial_state(&mut state, GeneralInitialPreparationStage::Discovery);
-        fail(b"graph\n");
-    }
-    if state.finish_discovery().is_err() {
-        rollback_general_initial_state(&mut state, GeneralInitialPreparationStage::Discovery);
-        fail(b"graph\n");
-    }
-
-    let object_count = state.object_count();
-    {
-        let objects = state
-            .objects_during_transaction()
-            .unwrap_or_else(|_| fail(b"state\n"));
-        let graph = state.graph_during_transaction().unwrap_or_else(|_| fail(b"state\n"));
-        if super::x86_64_general_relocation::relocate_initial_graph(graph, objects).is_none() {
-            rollback_general_initial_state(&mut state, GeneralInitialPreparationStage::Relocation);
-            fail(b"reloc\n");
-        }
-    }
-    for object in &state
-        .objects_during_transaction()
-        .unwrap_or_else(|_| fail(b"state\n"))[1..object_count]
-    {
-        if protect_segments(object).is_none() {
-            rollback_general_initial_state(&mut state, GeneralInitialPreparationStage::Protection);
-            fail(b"protect\n");
-        }
-    }
-    for object in &state
-        .objects_during_transaction()
-        .unwrap_or_else(|_| fail(b"state\n"))[..object_count]
-    {
-        if apply_relro(object).is_none() {
-            rollback_general_initial_state(&mut state, GeneralInitialPreparationStage::Relro);
-            fail(b"relro\n");
-        }
-    }
-    if apply_self_relro(ldso_base as u64).is_none() {
-        rollback_general_initial_state(&mut state, GeneralInitialPreparationStage::SelfRelro);
-        fail(b"selfrelro\n");
-    }
-    #[allow(unused_mut)]
-    let mut initializers = match preflight_dependency_initializers(
-        state
-            .graph_during_transaction()
-            .unwrap_or_else(|_| fail(b"state\n")),
-        state
-            .objects_during_transaction()
-            .unwrap_or_else(|_| fail(b"state\n")),
-    ) {
-        Some(plan) => plan,
-        None => {
-            rollback_general_initial_state(
-                &mut state,
-                GeneralInitialPreparationStage::InitializerPreflight,
-            );
-            fail(b"ctorplan\n");
-        }
-    };
-    #[cfg(crabc_general_initial_lifecycle)]
-    if state.attach_lifecycle(initializers.lifecycle.take().unwrap()).is_err() {
-        rollback_general_initial_state(&mut state, GeneralInitialPreparationStage::InitializerPreflight);
-        fail(b"state\n");
-    }
-    if state.prepare().is_err() {
-        rollback_general_initial_state(&mut state, GeneralInitialPreparationStage::InitializerPreflight);
-        fail(b"state\n");
-    }
-    if state.reserve_publication().is_err() {
-        rollback_general_initial_state(
-            &mut state,
-            GeneralInitialPreparationStage::PublicationReservation,
-        );
-        fail(b"publish\n");
-    }
-    // All fallible graph work completed before this move. The retained common
-    // owner is therefore visible before any dependency constructor runs.
-    unsafe { state.commit() };
-    // `preflight_dependency_initializers` has read and checked every
-    // relocated entry after all object and interpreter RELRO ranges were
-    // sealed. Dispatch is consequently an infallible first callback step.
-    #[cfg(not(all(crabc_general_initial_lifecycle, crabc_dynamic_main_thread_runtime_v1)))]
-    unsafe { dispatch_dependency_initializers(&initializers) };
-    jump(main_entry as usize, sp)
-}
 
 /// Runs the bounded general graph's initial TLS materialization transaction.
 ///
@@ -400,8 +293,6 @@ unsafe fn run_with_initial_tls(
         let relocation = unsafe {
             super::x86_64_general_relocation::relocate_initial_graph_with_debugger(graph, objects, &debugger)
         };
-        #[cfg(not(feature = "x86_64-owned-dynamic-runtime"))]
-        let relocation = unsafe { super::x86_64_general_relocation::relocate_initial_graph(graph, objects) };
         if relocation.is_none() {
             rollback_initial_tls_state(&mut state, GeneralInitialPreparationStage::Relocation);
             return Err(b"reloc\n");
@@ -552,10 +443,6 @@ unsafe fn run_with_initial_tls(
     // writes its descriptor fields and release-publishes READY last. No error
     // path remains that could leave a changed FS base without its retained
     // owner.
-    #[cfg(not(crabc_general_loader_libc_tls_runtime_v1))]
-    unsafe { state.commit(installed) };
-    #[cfg(all(crabc_general_loader_libc_tls_runtime_v1, not(feature = "x86_64-owned-dynamic-runtime")))]
-    unsafe { state.commit_runtime_v1(installed) };
     #[cfg(all(crabc_general_loader_libc_tls_runtime_v1, feature = "x86_64-owned-dynamic-runtime"))]
     let conventional_startup = unsafe { state.commit_runtime_v1(installed) };
     #[cfg(feature = "x86_64-owned-dynamic-runtime")]
@@ -574,8 +461,6 @@ unsafe fn run_with_initial_tls(
     // The owned dynamic startup composition invokes this retained plan only
     // after libc startup and executable preinit. Other roots preserve their
     // established interpreter-side dependency initialization boundary.
-    #[cfg(not(all(crabc_general_initial_lifecycle, crabc_dynamic_main_thread_runtime_v1)))]
-    unsafe { dispatch_dependency_initializers(&initializers) };
     unsafe { jump(main_entry as usize, sp) }
 }
 
@@ -586,8 +471,6 @@ unsafe fn run_with_initial_tls(
 /// canonical graph before publication. Both copy from RELRO-sealed arrays,
 /// avoiding further fallible ELF reads after TLS installation.
 struct DependencyInitializerPlan {
-    #[cfg(not(crabc_general_initial_lifecycle))]
-    callbacks: super::x86_64_runtime_memory::LoaderVec<usize>,
     #[cfg(crabc_general_initial_lifecycle)]
     lifecycle: Option<super::x86_64_general_initial_lifecycle::GeneralInitialLifecycle>,
 }
@@ -595,17 +478,11 @@ struct DependencyInitializerPlan {
 impl DependencyInitializerPlan {
     const fn empty() -> Self {
         Self {
-            #[cfg(not(crabc_general_initial_lifecycle))]
-            callbacks: super::x86_64_runtime_memory::LoaderVec::new(),
             #[cfg(crabc_general_initial_lifecycle)]
             lifecycle: None,
         }
     }
 
-    #[cfg(not(crabc_general_initial_lifecycle))]
-    fn push(&mut self, callback: usize) -> Option<()> {
-        self.callbacks.push(callback)
-    }
 }
 
 /// Builds the sole accepted initial-lifecycle action from graph edges.
@@ -620,35 +497,12 @@ unsafe fn preflight_dependency_initializers(
     graph: &InitialGraphState,
     objects: &[Object],
 ) -> Option<DependencyInitializerPlan> {
-    #[cfg(not(crabc_general_initial_lifecycle))]
-    let graph_plan = graph.dependency_first_plan().ok()?;
     let mut plan = DependencyInitializerPlan::empty();
     #[cfg(crabc_general_initial_lifecycle)]
     {
         plan.lifecycle = Some(unsafe {
             super::x86_64_general_initial_lifecycle::GeneralInitialLifecycle::preflight(graph, objects)?
         });
-    }
-    #[cfg(not(crabc_general_initial_lifecycle))]
-    for &index in graph_plan.indices() {
-        let object = objects.get(index)?;
-        if object.role == ObjectRole::Main
-            || object.init_count > MAX_GENERAL_INITIAL_DEPENDENCY_INIT_ARRAY_ENTRIES
-            || (object.init_count != 0 && object.init_array.is_null())
-        {
-            return None;
-        }
-        for entry_index in 0..object.init_count {
-            let callback = *object.init_array.add(entry_index);
-            if callback == 0 {
-                return None;
-            }
-            let virtual_address = callback.checked_sub(object.base as usize)? as u64;
-            if !virtual_range_in_executable_load(object.phdr, object.phnum, virtual_address, 1) {
-                return None;
-            }
-            plan.push(callback)?;
-        }
     }
     Some(plan)
 }
@@ -669,11 +523,6 @@ unsafe fn dispatch_dependency_initializers(plan: &DependencyInitializerPlan) {
         // before reserving publication. No mapped callback runs until the
         // canonical owner (and any initial TLS attachment) is retained.
         unsafe { GeneralInitialLoaderState::retained().unwrap().lifecycle().unwrap().initialize() };
-    }
-    #[cfg(not(crabc_general_initial_lifecycle))]
-    for &callback in plan.callbacks.iter() {
-        let callback: unsafe extern "C" fn() = unsafe { core::mem::transmute(callback) };
-        unsafe { callback() };
     }
 }
 
@@ -906,8 +755,6 @@ unsafe fn discover_needed(
         }
         Some(())
     }
-    #[cfg(not(feature = "x86_64-owned-dynamic-runtime"))]
-    unsafe { discover_object_needed(graph, objects, parent_index) }
 }
 
 #[cfg(feature = "x86_64-owned-dynamic-runtime")]
@@ -1223,63 +1070,6 @@ mod short_name_tests {
 
 // Legacy source roots retain their original depth-first, explicit-RUNPATH
 // graph proof. They do not capture preload or system policy from the host.
-#[cfg(not(feature = "x86_64-owned-dynamic-runtime"))]
-unsafe fn discover_object_needed(
-    graph: &mut InitialGraphState,
-    objects: &mut ObjectTable,
-    parent_index: usize,
-) -> Option<()> {
-    let parent = *objects.get(parent_index)?;
-    if parent.runpath.is_null() && parent.needed_count != 0 {
-        return None;
-    }
-    for needed_index in 0..parent.needed_count {
-        let name_offset = needed_name_offset(&parent, needed_index)?;
-        if name_offset >= parent.strsz {
-            return None;
-        }
-        let name = parent.strtab.add(name_offset);
-        let name_len = bounded_nul(name, parent.strsz - name_offset)?;
-        if !selected_needed_name(name, name_len) {
-            return None;
-        }
-        let fd = open_from_runpath(parent.runpath, parent.runpath_len, name, name_len)?;
-        let identity = match file_identity_from_fd(fd) {
-            Some(identity) => identity,
-            None => {
-                let _ = syscall1(SYS_CLOSE, fd);
-                return None;
-            }
-        };
-        if let Some(existing) = graph.find(identity) {
-            let _ = syscall1(SYS_CLOSE, fd);
-            graph.attach_needed(parent_index, existing).ok()?;
-            continue;
-        }
-
-        let child = map_elf(fd, false, true);
-        let _ = syscall1(SYS_CLOSE, fd);
-        let child = child?;
-        let child_index = match graph.admit_mapped(identity) {
-            Ok(ObjectAdmission::New { index }) => index,
-            // The find above and one-threaded initial transaction make this
-            // unreachable. Keep it fail-closed rather than creating a second
-            // mapping with an unowned lifetime.
-            Ok(ObjectAdmission::Existing { .. }) | Err(_) => {
-                unmap_object(&child);
-                return None;
-            }
-        };
-        if objects.set(child_index, child).is_none() {
-            unmap_object(&child);
-            return None;
-        }
-        graph.attach_needed(parent_index, child_index).ok()?;
-        discover_needed(graph, objects, child_index)?;
-        graph.finish_discovery(child_index).ok()?;
-    }
-    Some(())
-}
 
 unsafe fn selected_needed_name(name: *const u8, name_len: usize) -> bool {
     if name_len == 0 {
