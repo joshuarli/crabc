@@ -24,8 +24,8 @@ and all four x87/MXCSR rounding modes with complete control restoration. Every
 successful static or dynamic output must be byte-identical to the separately
 run pinned-musl output and have an empty stderr stream.
 
-The installed runtime enables `x86-math-long-double-completion` through
-`x86-owned-static-runtime`. The provider remains the checked assembly inclusion at
+The binary80 closure is unconditional in the default archive and in both
+installed runtimes. The provider remains the checked assembly inclusion at
 `libc/src/c_abi/x86_64/math_long_double_completion.rs`, generated from pinned
 musl `src/math/fdiml.c` and `src/math/exp10l.c`. Its only public additions are
 strong `fdiml`/`exp10l` and weak same-address `pow10l`; `__fpclassifyl`,

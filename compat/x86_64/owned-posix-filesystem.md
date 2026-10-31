@@ -4,10 +4,9 @@ The installed native x86 owned products compose existing source-mapped C
 providers for `__xstat`, `__lxstat`, `__fxstat`, `__fxstatat`, `alphasort`,
 `ftw`, `nftw`, `readdir_r`, `scandir`, `telldir`, `versionsort`, `mktemp`,
 `name_to_handle_at`, `open_by_handle_at`, `tempnam`, `tmpnam`, and `lchmod`.
-`x86-owned-static-runtime` selects the already verified `x86-file-handles` and
-`x86-temporary-names` leaves alongside its existing directory and traversal
-features. The default selected-static archive retains its prior provider
-boundary.
+The file-handle pair and the directory/traversal providers are unconditional;
+`x86-temporary-names` remains opt-in. The default selected-static archive
+records the file-handle pair alongside the other unconditional providers.
 
 | Pinned musl 1.2.6 source | Installed owner and C entries |
 | --- | --- |

@@ -5,7 +5,7 @@
 //! arguments directly to Linux 5.10 syscall 303 or 304.  The C `struct
 //! file_handle` is deliberately represented as opaque storage here; its
 //! variable-sized `f_handle[]` tail, capacity, type, and mount-id output remain
-//! owned and validated by the caller/kernel contract.  This is a private opt-in
+//! owned and validated by the caller/kernel contract.  This is an unconditional
 //! filesystem extension, not handle allocation, pathname policy, mount
 //! authority, allocator support, or a Rust facade.
 //!

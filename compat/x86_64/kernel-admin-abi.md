@@ -5,12 +5,10 @@ real libc providers to the owned static and dynamic product feature closure;
 it does not complete `system.kernel-admin`, `libc.posix-runtime`, a sysroot
 family, qualification, promotion, or public x86 support.
 
-`libc/Cargo.toml` defines `x86-kernel-admin` as the component feature. The
-owned static aggregate selects it, and the owned dynamic aggregate inherits
-that aggregate. The feature selects the existing `x86-io-permissions` leaf and
-the native `arch_prctl` leaf. The default static archive selects neither
-feature, and the standalone `x86-io-permissions` feature retains its exact
-two-symbol negative-path archive boundary.
+The x86-64 target root composes the native `arch_prctl` leaf and the
+`ioperm`/`iopl` pair unconditionally. The owned static and dynamic products and
+the default static archive all export those three symbols; the focused
+I/O-only fixture retains its negative-path boundary.
 
 The pinned musl 1.2.6 release commit
 `9fa28ece75d8a2191de7c5bb53bed224c5947417` is the C ABI oracle:

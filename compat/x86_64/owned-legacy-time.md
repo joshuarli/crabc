@@ -2,9 +2,8 @@
 
 The installed native x86-64 products provide `times`, `getitimer`,
 `setitimer`, `ualarm`, `adjtime`, `adjtimex`, `settimeofday`, and `stime`.
-The owned runtime profile composes the already-verified
-`x86-interval-timers` and `x86-ualarm` leaves for the three interval-timer
-spellings. It directly owns the remaining `times` and clock-adjustment source
+The owned runtime profile and the default archive export the unconditional
+interval-timer and `ualarm` owners for the three interval-timer spellings. It directly owns the remaining `times` and clock-adjustment source
 slice in
 `libc/src/c_abi/x86_64/owned_legacy_time.rs`. `clock_adjtime` remains its
 separate syscall owner; `getrusage`, `clock`, and `nanosleep` retain their

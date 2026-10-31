@@ -1,6 +1,6 @@
 //! Bounded Linux/x86-64 explicit_bzero/swab C ABI boundary.
 //!
-//! This opt-in owner maps pinned musl 1.2.6 release commit
+//! This owner maps pinned musl 1.2.6 release commit
 //! `9fa28ece75d8a2191de7c5bb53bed224c5947417` (musl MIT):
 //!
 //! - `src/string/explicit_bzero.c::explicit_bzero` calls `memset` and follows

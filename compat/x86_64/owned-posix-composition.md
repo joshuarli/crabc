@@ -15,10 +15,8 @@ The selected contracts follow pinned musl 1.2.6 revision
 Before creating process state, the same installed-header object calls
 `sched_rr_get_interval(0, ...)` with a stale errno and validates its canonical
 `timespec` result, then calls `sethostent`/`setnetent` and
-`endhostent`/`endnetent` through their two same-address alias pairs. The
-existing `x86-sched-rr-interval` and `x86-netdb-setent` leaves are selected by
-`x86-owned-static-runtime`, which the dynamic aggregate inherits. The frozen
-default archive still selects neither added feature. This does not select
+`endhostent`/`endnetent` through their two same-address alias pairs. Those
+symbols are unconditional in the default archive. This does not select
 scheduler policy mutation, netdb enumeration, resolver state, or a public x86
 support boundary.
 
@@ -26,9 +24,8 @@ The same object also proves the existing C utility providers are installed:
 `a64l` round-trips signed 32-bit values through `l64a`, `swab` copies complete
 byte pairs while preserving an odd trailing byte and adjacent canaries, and
 `explicit_bzero` clears only its requested range. These calls preserve errno.
-The owned feature includes `x86-a64l` and `x86-memory-special`; their existing
-`a64l.rs` and `memory_special.rs` owners retain the pinned source algorithms.
-The frozen default feature selection and export manifest remain unchanged.
+The unconditional `a64l.rs` and `memory_special.rs` owners retain the pinned
+source algorithms, and the default static export manifest records both.
 
 The worker finishes its environment reads, installs a distinct signal mask,
 logs a message, locks the stream, and reports readiness through a pipe. The

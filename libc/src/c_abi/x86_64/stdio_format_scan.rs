@@ -1177,7 +1177,7 @@ static_archive_member! { printf_source {
     /// owned by `stdio_standard`; it does not construct or inspect a public FILE
     /// layout, and it leaves stdout buffered until an explicit `fflush`.
     #[no_mangle]
-        /// # Safety
+    /// # Safety
     ///
     /// `format` must be a readable NUL-terminated string and each variadic
     /// argument must have the promoted type required by the selected grammar.
@@ -1192,7 +1192,7 @@ static_archive_member! { printf_source {
 // Musl's `src/stdio/vprintf.c` object.
 static_archive_member! { vprintf_source {
     #[no_mangle]
-        /// # Safety
+    /// # Safety
     ///
     /// `format` must be a readable NUL-terminated string and `args` must contain
     /// the promoted values required by the selected grammar. The forwarded list
@@ -1210,7 +1210,7 @@ static_archive_member! { vprintf_source {
 static_archive_member! { fprintf_source {
     /// Format to a stream admitted by the selected stdio engine.
     #[no_mangle]
-        /// # Safety
+    /// # Safety
     ///
     /// With `x86-owned-static-runtime`, `stream` must be a live owned FILE;
     /// otherwise it must be exactly permanent `stdin`, `stdout`, or `stderr`.
@@ -1228,7 +1228,7 @@ static_archive_member! { fprintf_source {
 // Musl's `src/stdio/vfprintf.c` object.
 static_archive_member! { vfprintf_source {
     #[no_mangle]
-        /// # Safety
+    /// # Safety
     ///
     /// With `x86-owned-static-runtime`, `stream` must be a live owned FILE;
     /// otherwise it must be exactly one of the permanent standard-stream objects.
@@ -2083,7 +2083,7 @@ static_archive_member! { scanf_source {
 
     /// Scan from the permanently owned standard input stream.
     #[no_mangle]
-        /// # Safety
+    /// # Safety
     ///
     /// `format` must be a readable NUL-terminated string and each destination
     /// pointer in the variadic list must be non-null, writable, and correctly
@@ -2100,7 +2100,7 @@ static_archive_member! { vscanf_source {
     isoc99_alias!("vscanf");
 
     #[no_mangle]
-        /// # Safety
+    /// # Safety
     ///
     /// `format` must be NUL-terminated; every destination in the forwarded list
     /// must be non-null, writable, and correctly typed for its selected conversion.
@@ -2120,7 +2120,7 @@ static_archive_member! { fscanf_source {
     isoc99_alias!("fscanf");
 
     #[no_mangle]
-        /// # Safety
+    /// # Safety
     ///
     /// With `x86-owned-static-runtime`, `stream` must be a live owned FILE;
     /// otherwise it must be exactly permanent `stdin`, `stdout`, or `stderr`.
@@ -2142,7 +2142,7 @@ static_archive_member! { vfscanf_source {
     isoc99_alias!("vfscanf");
 
     #[no_mangle]
-        /// # Safety
+    /// # Safety
     ///
     /// With `x86-owned-static-runtime`, `stream` must be a live owned FILE;
     /// otherwise it must be exactly one of the permanent standard-stream objects.

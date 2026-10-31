@@ -1,6 +1,6 @@
 //! Private Linux/x86-64 binary80 `fdiml` and GNU `exp10l`/`pow10l` closure.
 //!
-//! This opt-in leaf is a checked GCC 15.2.0 assembly translation of pinned
+//! This leaf is a checked GCC 15.2.0 assembly translation of pinned
 //! musl 1.2.6 release commit `9fa28ece75d8a2191de7c5bb53bed224c5947417`, from
 //! the release archive whose SHA-256 is
 //! `d585fd3b613c66151fc3249e8ed44f77020cb5e6c1e635a616d3f9f82460512a`.
@@ -36,9 +36,8 @@
 //! this representation/calling boundary separately from its musl behavioral
 //! record differential, including all four x87/MXCSR rounding modes.
 //!
-//! This opt-in leaf alone does not change the default selected-static export
-//! root or select a family. Its aggregate native feature selects only
-//! the fenv-sensitive math entries; it does not select a general libm/libc,
+//! This leaf is unconditional in the x86-64 default archive and adds only the
+//! fenv-sensitive binary80 entries; it does not select a general libm/libc,
 //! CRT/TLS lifecycle, loader, or sysroot.
 
 #[cfg(not(all(target_os = "linux", target_arch = "x86_64", target_endian = "little")))]
