@@ -60,11 +60,13 @@ fini observations. The installed owned static entry emits `P` for its preinit
 array. Installed dynamic entry skips main preinit, matching pinned musl's
 dynamic lifecycle; `expected_stdout` in `installed_crt_startup_evidence.py`
 checks that absence for both PIE and non-PIE, normal and empty arrays. At main,
-`dl_iterate_phdr` observes exact weak OBJECT GLOB_DAT slots: owned handoff
-non-null/conventional slot null, conventional snapshot non-null/no owned
-handoff, default CRT weak-null, oracle neither.
-The borrowed record is read but private callbacks are not called by the probe.
-The 32-byte owned carrier and separate 88-byte conventional snapshot preserve
+`dl_iterate_phdr` observes the exact main-image slots: owned handoff non-null
+and descriptor present, conventional and owned mains without an executable
+conventional slot, default CRT weak-null handoff, oracle neither. The merged
+libc binds the 88-byte conventional record in-image. Reaching the conventional
+transcript proves libc accepted the loader's READY record and ran its initial
+lifecycle; an owned transcript proves the loader published the owned state.
+The 32-byte owned carrier and in-image conventional snapshot preserve
 source-defined roles. Schema v3 added a separate private descriptor-handoff
 account: `dynamic-crabc-dynamic-attach.o` has exactly one weak, undefined
 `NOTYPE` GOTPCREL descriptor reference, and each owned PIE/non-PIE normal and
@@ -77,8 +79,9 @@ not a shared-libc consumer or a loader ELF provider definition.
 
 The reader retains complete tables, local/hidden/undefined records and archive
 member occurrences. It joins the actual bootstrap and GOT-containing member
-extraction, each CRT import, the shared canonical receiver's relocation,
-main handoff relocation, and final empty/nonempty linker-array ranges.
+extraction, each CRT import, the merged image's local hidden conventional and
+RuntimeV1 record definitions, main handoff relocation, and final
+empty/nonempty linker-array ranges.
 `artifact_relocations` also requires the exact caller relations in six owned
 CRT objects: static bootstrap, weak handoff transport, dynamic attachment,
 and the attach object's defined hidden record callback. Each relation retains

@@ -1,11 +1,9 @@
 //! Private consumer for the loader's conventional-musl startup snapshot.
 //!
-//! Installed libc carries one weak undefined GOT reference to this exact
-//! record. The x86 loader resolves it only for the retained canonical libc
-//! identity and only when the main image selected `MainCrtMode::Conventional`.
-//! Rust-owned Scrt1 keeps the older 72-byte main-only RuntimeV1 wire; its
-//! shared libc copy receives a null slot here and cannot fall back into this
-//! route.
+//! The merged interpreter/libc image binds this weak GOT reference to the
+//! in-image record. The loader publishes READY only for a conventional main
+//! and STATE_OWNED for owned startup. Rust-owned Scrt1 keeps the older 72-byte
+//! main-only RuntimeV1 wire.
 
 use core::arch::{asm, global_asm};
 use core::sync::atomic::{AtomicU8, Ordering};
@@ -60,9 +58,9 @@ const _: () = {
     assert!(core::mem::size_of::<Record>() == ABI_SIZE as usize);
 };
 
-// The fixed product libc keeps this weak GOT data import even in owned CRT
-// mode. Ldso accepts the exact canonical-libc weak OBJECT/GLOB_DAT shape and
-// writes null for owned mode, preserving Scrt1's existing startup ownership.
+// The fixed product libc keeps this weak GOT data reference. The merged link
+// binds it to the loader's record; ldso publishes the owned or conventional
+// state, preserving Scrt1's existing startup ownership.
 global_asm!(
     ".section .text.__crabc_x86_conventional_startup_v1_record,\"ax\",@progbits",
     ".weak __crabc_x86_64_loader_conventional_startup_v1",
@@ -85,10 +83,10 @@ pub(super) struct Lifecycle {
     pub(super) process_fini: LifecycleFunction,
 }
 
-/// The GOT slot itself is the loader's ownership decision. A null slot is
-/// the established owned-CRT route; a non-null slot must be the complete
-/// conventional record below. Callback-shaped musl CRT arguments never
-/// select a lifecycle owner.
+/// A null slot selects the owned route for the split/static shape. The merged
+/// image binds the slot in-image, so the published state decides between owned
+/// and conventional. Callback-shaped musl CRT arguments never select a
+/// lifecycle owner.
 pub(super) enum Selection {
     Owned,
     Conventional(Lifecycle),
