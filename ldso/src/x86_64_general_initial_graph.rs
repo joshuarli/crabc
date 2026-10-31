@@ -301,7 +301,7 @@ unsafe fn run_with_initial_tls(
         let relocation = unsafe { super::x86_64_general_relocation::relocate_initial_graph(graph, objects) };
         if relocation.is_none() {
             rollback_initial_tls_state(&mut state, GeneralInitialPreparationStage::Relocation);
-            return Err(b"relocgraph\n");
+            return Err(b"reloc\n");
         }
     }
     if state.mark_relocated().is_err() {
