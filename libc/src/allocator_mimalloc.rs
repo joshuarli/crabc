@@ -49,6 +49,14 @@ fn mimalloc_is_power_of_two(value: usize) -> bool {
 #[cfg_attr(not(target_arch = "x86_64"), inline)]
 unsafe fn mimalloc_allocation<T>(allocate: impl FnOnce() -> *mut T) -> *mut T {
     let errno = cabi_allocator_errno();
+    // The paired lifecycle owner performs mimalloc's automatic process
+    // initialization on the first allocating C entry.  The upstream sequence
+    // is only partially once-guarded, so the bridge owns it as one one-shot;
+    // `free` of a live pointer never reaches this point first.
+    #[cfg(crabc_owned_mimalloc_lifecycle)]
+    unsafe {
+        crate::x86_64_static_c_abi::allocator_mimalloc_lifecycle::initialize();
+    }
     let ptr = allocate();
     // libmimalloc-sys intentionally does not own the process errno. The C ABI
     // does, so publish the allocator outcome at this boundary.
@@ -86,13 +94,10 @@ static_archive_member! { lite_malloc_source {
     );
 
     // The static archive extracts a member only when a loaded object names
-    // one of its symbols. The C backend's lifecycle module is otherwise
-    // reached only through its `.init_array`/`.fini_array` entries, so
-    // without this relocation an application that allocates would leave
-    // mimalloc's process attach and detach out of the image. Every allocating
-    // entry names `malloc` or this member's body alias, so naming the
-    // initializer here extracts the lifecycle member with them; the pointer
-    // is never called.
+    // one of its symbols. Every allocating entry calls the lifecycle owner's
+    // `initialize`, and this explicit anchor keeps the extraction visible even
+    // when an entry is inlined across an archive-member boundary. The pointer
+    // is never called here.
     #[cfg(crabc_owned_mimalloc_lifecycle)]
     #[used]
     static LIFECYCLE_MEMBER_ANCHOR: unsafe extern "C" fn() =

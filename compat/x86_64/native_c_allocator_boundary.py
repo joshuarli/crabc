@@ -356,17 +356,17 @@ def _c_abi_bindings(wrapper: str, observation: str) -> dict[str, dict[str, str]]
 
 
 def _lifecycle_c_abi(lifecycle: str) -> dict[str, object]:
-    """Bind the private C call declarations to the two retained array callbacks."""
+    """Bind the private C calls to the retained finalizer array entry and the inert initializer anchor."""
     imports = re.search(r'(?s)unsafe\s+extern\s+"C"\s*\{(?P<body>.*?)\}', lifecycle)
     require(imports is not None, "allocator lifecycle import block is absent")
     names = re.findall(r'\bfn\s+([_A-Za-z][_A-Za-z0-9]*)\s*\(\s*\)\s*;', imports.group("body"))
     require(names == ["_mi_auto_process_init", "_mi_auto_process_done"],
             "allocator lifecycle import declaration differs")
     callbacks = (
-        ("initialize", "_mi_auto_process_init", "__crabc_x86_owned_mimalloc_process_initializer", ".init_array"),
+        ("initialize", "_mi_auto_process_init", "__crabc_x86_owned_mimalloc_process_initializer", None),
         ("finalize", "_mi_auto_process_done", "__crabc_x86_owned_mimalloc_process_finalizer", ".fini_array"),
     )
-    observations: list[dict[str, str]] = []
+    observations: list[dict[str, object]] = []
     for callback, target, symbol, section in callbacks:
         body = re.search(
             rf'(?s)unsafe\s+extern\s+"C"\s+fn\s+{callback}\s*\(\s*\)\s*\{{(?P<body>.*?)^\}}',
@@ -375,13 +375,19 @@ def _lifecycle_c_abi(lifecycle: str) -> dict[str, object]:
         )
         require(body is not None and re.search(rf'unsafe\s*\{{\s*{target}\s*\(\s*\)\s*\}}', body.group("body")) is not None,
                 f"allocator lifecycle callback differs for {callback}")
+        array = (
+            rf'#\[link_section\s*=\s*"{re.escape(section)}"\]\s*'
+            if section is not None
+            else r'(?!\s*#\[link_section)'
+        )
         entry = re.search(
             rf'(?s)#\[used\]\s*#\[linkage\s*=\s*"internal"\]\s*'
-            rf'#\[export_name\s*=\s*"{symbol}"\]\s*#\[link_section\s*=\s*"{re.escape(section)}"\]\s*'
+            rf'#\[export_name\s*=\s*"{symbol}"\]\s*{array}'
             rf'static\s+[_A-Za-z][_A-Za-z0-9]*\s*:\s*unsafe\s+extern\s+"C"\s+fn\s*\(\s*\)\s*=\s*{callback}\s*;',
             lifecycle,
         )
-        require(entry is not None, f"allocator lifecycle array entry differs for {symbol}")
+        description = "array entry" if section is not None else "local-data anchor"
+        require(entry is not None, f"allocator lifecycle {description} differs for {symbol}")
         observations.append({"callback": callback, "target": target, "symbol": symbol, "section": section})
     return {"imports": names, "callbacks": observations}
 
