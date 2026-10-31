@@ -1658,6 +1658,38 @@ class X86ParityLedgerTests(unittest.TestCase):
         with self.assertRaisesRegex(ledger.LedgerError, "command drifted"):
             ledger.validate_ledger(data, header_layout_manifest=manifest)
 
+    def test_header_abi_commands_resolve_against_the_case_table(self) -> None:
+        dispatcher = (ROOT / "scripts" / "dev-x86_64.sh").read_text(encoding="utf-8")
+        ledger.require_dispatched_command(
+            dispatcher,
+            "./scripts/dev-x86_64.sh header-abi epoll",
+            "test",
+        )
+        with self.assertRaisesRegex(ledger.LedgerError, "unknown header-abi case"):
+            ledger.require_dispatched_command(
+                dispatcher,
+                "./scripts/dev-x86_64.sh header-abi no-such-case",
+                "test",
+            )
+        with self.assertRaisesRegex(
+            ledger.LedgerError, "absent from the native dispatcher"
+        ):
+            ledger.require_dispatched_command(
+                dispatcher,
+                "./scripts/dev-x86_64.sh epoll-header-abi",
+                "test",
+            )
+        with tempfile.TemporaryDirectory() as directory:
+            table = Path(directory) / "header_abi_cases.txt"
+            table.write_text("bogus\trun_missing.sh\n", encoding="utf-8")
+            with mock.patch.object(ledger, "HEADER_ABI_CASES_PATH", table):
+                with self.assertRaisesRegex(ledger.LedgerError, "missing runner"):
+                    ledger.require_dispatched_command(
+                        dispatcher,
+                        "./scripts/dev-x86_64.sh header-abi bogus",
+                        "test",
+                    )
+
     def test_inet_address_header_gate_stays_compile_only_and_non_promoting(self) -> None:
         data = self.data()
         headers_layouts = self.family(data, "libc.headers-layouts")
@@ -1677,7 +1709,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         evidence = next(
             entry
             for entry in headers_layouts["native_evidence"]
-            if entry["command"] == "./scripts/dev-x86_64.sh inet-address-header-abi"
+            if entry["command"] == "./scripts/dev-x86_64.sh header-abi inet-address"
         )
         self.assertEqual(evidence["state"], "required")
         for phrase in (
@@ -1698,7 +1730,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         header_evidence = next(
             entry
             for entry in headers_layouts["native_evidence"]
-            if entry["command"] == "./scripts/dev-x86_64.sh inet-address-header-abi"
+            if entry["command"] == "./scripts/dev-x86_64.sh header-abi inet-address"
         )
         header_evidence["scope"] = "header completion"
         with self.assertRaisesRegex(
@@ -1712,7 +1744,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         evidence = next(
             entry
             for entry in headers_layouts["native_evidence"]
-            if entry["command"] == "./scripts/dev-x86_64.sh socket-header-abi"
+            if entry["command"] == "./scripts/dev-x86_64.sh header-abi socket"
         )
         self.assertEqual(evidence["state"], "required")
         for phrase in (
@@ -1742,7 +1774,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         evidence = next(
             entry
             for entry in headers_layouts["native_evidence"]
-            if entry["command"] == "./scripts/dev-x86_64.sh tcp-header-abi"
+            if entry["command"] == "./scripts/dev-x86_64.sh header-abi tcp"
         )
         self.assertEqual(evidence["state"], "required")
         for phrase in (
@@ -1791,7 +1823,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         evidence = next(
             entry
             for entry in headers_layouts["native_evidence"]
-            if entry["command"] == "./scripts/dev-x86_64.sh stddef-header-abi"
+            if entry["command"] == "./scripts/dev-x86_64.sh header-abi stddef"
         )
         self.assertEqual(evidence["state"], "required")
         for phrase in (
@@ -1836,7 +1868,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         evidence = next(
             entry
             for entry in headers_layouts["native_evidence"]
-            if entry["command"] == "./scripts/dev-x86_64.sh nameser-header-abi"
+            if entry["command"] == "./scripts/dev-x86_64.sh header-abi nameser"
         )
         self.assertEqual(evidence["state"], "required")
         for phrase in (
@@ -1960,7 +1992,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         evidence = next(
             entry
             for entry in headers_layouts["native_evidence"]
-            if entry["command"] == "./scripts/dev-x86_64.sh quota-header-abi"
+            if entry["command"] == "./scripts/dev-x86_64.sh header-abi quota"
         )
         self.assertEqual(evidence["state"], "required")
         for phrase in (
@@ -1997,7 +2029,7 @@ class X86ParityLedgerTests(unittest.TestCase):
             entry
             for entry in headers_layouts["native_evidence"]
             if entry["command"]
-            == "./scripts/dev-x86_64.sh sched-cpu-macros-header-abi"
+            == "./scripts/dev-x86_64.sh header-abi sched-cpu-macros"
         )
         self.assertEqual(evidence["state"], "required")
         for phrase in (
@@ -2033,7 +2065,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         evidence = next(
             entry
             for entry in headers_layouts["native_evidence"]
-            if entry["command"] == "./scripts/dev-x86_64.sh fanotify-header-abi"
+            if entry["command"] == "./scripts/dev-x86_64.sh header-abi fanotify"
         )
         self.assertEqual(evidence["state"], "required")
         for phrase in (
@@ -2072,7 +2104,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         evidence = next(
             entry
             for entry in headers_layouts["native_evidence"]
-            if entry["command"] == "./scripts/dev-x86_64.sh ctype-header-abi"
+            if entry["command"] == "./scripts/dev-x86_64.sh header-abi ctype"
         )
         self.assertEqual(evidence["state"], "required")
         for phrase in (
@@ -2567,7 +2599,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         self.assertEqual(ioctl_matrix["state"], "partial-verified")
         self.assertEqual(ioctl_matrix["required_result"], "pass")
         self.assertEqual(
-            ioctl_matrix["command"], "./scripts/dev-x86_64.sh ioctl-header-abi"
+            ioctl_matrix["command"], "./scripts/dev-x86_64.sh header-abi ioctl"
         )
         self.assertEqual(ioctl_matrix["header_class"], "pinned-non-uapi")
         self.assertEqual(ioctl_matrix["subject_header"], "sys/ioctl.h")
@@ -2597,7 +2629,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         self.assertEqual(sys_io_matrix["state"], "partial-verified")
         self.assertEqual(sys_io_matrix["required_result"], "pass")
         self.assertEqual(
-            sys_io_matrix["command"], "./scripts/dev-x86_64.sh sys-io-header-abi"
+            sys_io_matrix["command"], "./scripts/dev-x86_64.sh header-abi sys-io"
         )
         self.assertEqual(sys_io_matrix["header_class"], "pinned-non-uapi")
         self.assertEqual(sys_io_matrix["subject_headers"], ["sys/io.h", "bits/io.h"])
@@ -2628,7 +2660,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         self.assertEqual(epoll_matrix["state"], "partial-verified")
         self.assertEqual(epoll_matrix["required_result"], "pass")
         self.assertEqual(
-            epoll_matrix["command"], "./scripts/dev-x86_64.sh epoll-header-abi"
+            epoll_matrix["command"], "./scripts/dev-x86_64.sh header-abi epoll"
         )
         self.assertEqual(epoll_matrix["header_class"], "pinned-non-uapi")
         self.assertEqual(epoll_matrix["subject_header"], "sys/epoll.h")
@@ -2663,7 +2695,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         self.assertEqual(event_descriptor_matrix["required_result"], "pass")
         self.assertEqual(
             event_descriptor_matrix["command"],
-            "./scripts/dev-x86_64.sh event-descriptors-header-abi",
+            "./scripts/dev-x86_64.sh header-abi event-descriptors",
         )
         self.assertEqual(event_descriptor_matrix["header_class"], "pinned-non-uapi")
         self.assertEqual(
@@ -2719,7 +2751,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         self.assertEqual(dirent_matrix["state"], "partial-verified")
         self.assertEqual(dirent_matrix["required_result"], "pass")
         self.assertEqual(
-            dirent_matrix["command"], "./scripts/dev-x86_64.sh dirent-header-abi"
+            dirent_matrix["command"], "./scripts/dev-x86_64.sh header-abi dirent"
         )
         self.assertEqual(dirent_matrix["header_class"], "pinned-non-uapi")
         self.assertEqual(dirent_matrix["subject_header"], "dirent.h")
@@ -2772,7 +2804,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         self.assertEqual(stdlib_matrix["state"], "partial-verified")
         self.assertEqual(stdlib_matrix["required_result"], "pass")
         self.assertEqual(
-            stdlib_matrix["command"], "./scripts/dev-x86_64.sh stdlib-header-abi"
+            stdlib_matrix["command"], "./scripts/dev-x86_64.sh header-abi stdlib"
         )
         self.assertEqual(stdlib_matrix["header_class"], "pinned-non-uapi")
         self.assertEqual(stdlib_matrix["subject_header"], "stdlib.h")
@@ -2805,7 +2837,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         self.assertEqual(timeval_matrix["required_result"], "pass")
         self.assertEqual(
             timeval_matrix["command"],
-            "./scripts/dev-x86_64.sh timeval-transitive-header-abi",
+            "./scripts/dev-x86_64.sh header-abi timeval-transitive",
         )
         self.assertEqual(timeval_matrix["header_class"], "pinned-non-uapi")
         self.assertEqual(
@@ -2854,7 +2886,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         self.assertEqual(sys_time_direct_matrix["required_result"], "pass")
         self.assertEqual(
             sys_time_direct_matrix["command"],
-            "./scripts/dev-x86_64.sh sys-time-direct-header-abi",
+            "./scripts/dev-x86_64.sh header-abi sys-time-direct",
         )
         self.assertEqual(sys_time_direct_matrix["header_class"], "pinned-non-uapi")
         self.assertEqual(sys_time_direct_matrix["subject_header"], "sys/time.h")
@@ -2887,7 +2919,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         self.assertEqual(access_header_matrix["state"], "partial-verified")
         self.assertEqual(access_header_matrix["required_result"], "pass")
         self.assertEqual(
-            access_header_matrix["command"], "./scripts/dev-x86_64.sh access-header-abi"
+            access_header_matrix["command"], "./scripts/dev-x86_64.sh header-abi access"
         )
         self.assertEqual(access_header_matrix["header_class"], "pinned-non-uapi")
         self.assertEqual(access_header_matrix["subject_headers"], ["fcntl.h", "unistd.h"])
@@ -2918,7 +2950,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         self.assertEqual(xattr_matrix["state"], "partial-verified")
         self.assertEqual(xattr_matrix["required_result"], "pass")
         self.assertEqual(
-            xattr_matrix["command"], "./scripts/dev-x86_64.sh xattr-header-abi"
+            xattr_matrix["command"], "./scripts/dev-x86_64.sh header-abi xattr"
         )
         self.assertEqual(xattr_matrix["header_class"], "pinned-non-uapi")
         self.assertEqual(xattr_matrix["subject_header"], "sys/xattr.h")
@@ -3746,7 +3778,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         self.assertEqual(posix_runtime["status"], "planned")
         headers_layouts = self.family(data, "libc.headers-layouts")
         self.assertIn(
-            "./scripts/dev-x86_64.sh socket-messages-header-abi",
+            "./scripts/dev-x86_64.sh header-abi socket-messages",
             {evidence["command"] for evidence in headers_layouts["native_evidence"]},
         )
         slices = posix_runtime["verified_slice"]
@@ -4341,8 +4373,8 @@ class X86ParityLedgerTests(unittest.TestCase):
         )
         self.assertLessEqual(
             {
-                "./scripts/dev-x86_64.sh stdlib-header-abi",
-                "./scripts/dev-x86_64.sh unistd-header-abi",
+                "./scripts/dev-x86_64.sh header-abi stdlib",
+                "./scripts/dev-x86_64.sh header-abi unistd",
                 "./scripts/dev-x86_64.sh libc-environment",
             },
             {evidence["command"] for evidence in environment["native_evidence"]},
@@ -4370,11 +4402,11 @@ class X86ParityLedgerTests(unittest.TestCase):
         }
         self.assertIn(
             "C++ linkage",
-            environment_evidence["./scripts/dev-x86_64.sh stdlib-header-abi"],
+            environment_evidence["./scripts/dev-x86_64.sh header-abi stdlib"],
         )
         self.assertIn(
             "`environ` object",
-            environment_evidence["./scripts/dev-x86_64.sh unistd-header-abi"],
+            environment_evidence["./scripts/dev-x86_64.sh header-abi unistd"],
         )
         self.assertIn(
             "in-place direct-vector replacement/removal",
@@ -6572,7 +6604,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         socket_header_evidence = next(
             evidence
             for evidence in headers_layouts["native_evidence"]
-            if evidence["command"] == "./scripts/dev-x86_64.sh socket-header-abi"
+            if evidence["command"] == "./scripts/dev-x86_64.sh header-abi socket"
         )
         self.assertEqual(socket_header_evidence["state"], "required")
         for detail in (
@@ -6637,7 +6669,7 @@ class X86ParityLedgerTests(unittest.TestCase):
             "include/termios.h", headers_layouts["source_owners"]
         )
         self.assertIn(
-            "./scripts/dev-x86_64.sh termios-header-abi",
+            "./scripts/dev-x86_64.sh header-abi termios",
             {evidence["command"] for evidence in headers_layouts["native_evidence"]},
         )
         for owner in (
@@ -6648,7 +6680,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         ):
             self.assertIn(owner, headers_layouts["source_owners"])
         self.assertIn(
-            "./scripts/dev-x86_64.sh resource-header-abi",
+            "./scripts/dev-x86_64.sh header-abi resource",
             {evidence["command"] for evidence in headers_layouts["native_evidence"]},
         )
         for owner in (
@@ -6697,27 +6729,27 @@ class X86ParityLedgerTests(unittest.TestCase):
         header_commands = {
             evidence["command"] for evidence in headers_layouts["native_evidence"]
         }
-        self.assertIn("./scripts/dev-x86_64.sh poll-header-abi", header_commands)
-        self.assertIn("./scripts/dev-x86_64.sh select-header-abi", header_commands)
-        self.assertIn("./scripts/dev-x86_64.sh byte-strings-header-abi", header_commands)
-        self.assertIn("./scripts/dev-x86_64.sh memccpy-header-abi", header_commands)
-        self.assertIn("./scripts/dev-x86_64.sh aio-error-header-abi", header_commands)
-        self.assertIn("./scripts/dev-x86_64.sh integer-parse-header-abi", header_commands)
-        self.assertIn("./scripts/dev-x86_64.sh intmax-arithmetic-header-abi", header_commands)
+        self.assertIn("./scripts/dev-x86_64.sh header-abi poll", header_commands)
+        self.assertIn("./scripts/dev-x86_64.sh header-abi select", header_commands)
+        self.assertIn("./scripts/dev-x86_64.sh header-abi byte-strings", header_commands)
+        self.assertIn("./scripts/dev-x86_64.sh header-abi memccpy", header_commands)
+        self.assertIn("./scripts/dev-x86_64.sh header-abi aio-error", header_commands)
+        self.assertIn("./scripts/dev-x86_64.sh header-abi integer-parse", header_commands)
+        self.assertIn("./scripts/dev-x86_64.sh header-abi intmax-arithmetic", header_commands)
         self.assertIn(
-            "./scripts/dev-x86_64.sh credential-observation-header-abi",
+            "./scripts/dev-x86_64.sh header-abi credential-observation",
             header_commands,
         )
         self.assertIn(
-            "./scripts/dev-x86_64.sh immediate-termination-header-abi",
+            "./scripts/dev-x86_64.sh header-abi immediate-termination",
             header_commands,
         )
         self.assertIn(
-            "./scripts/dev-x86_64.sh callback-algorithms-header-abi",
+            "./scripts/dev-x86_64.sh header-abi callback-algorithms",
             header_commands,
         )
-        self.assertIn("./scripts/dev-x86_64.sh ffs-header-abi", header_commands)
-        self.assertIn("./scripts/dev-x86_64.sh memory-search-header-abi", header_commands)
+        self.assertIn("./scripts/dev-x86_64.sh header-abi ffs", header_commands)
+        self.assertIn("./scripts/dev-x86_64.sh header-abi memory-search", header_commands)
         self.assertIn(
             "libc/src/c_abi/x86_64/process_context.rs",
             headers_layouts["source_owners"],

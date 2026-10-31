@@ -34,7 +34,7 @@ headers = ["include/bits/alltypes.h", "include/fenv.h", "include/float.h"]
 
 [[probe]]
 id = "math-complex"
-command = "./scripts/dev-x86_64.sh math-complex-header-abi"
+command = "./scripts/dev-x86_64.sh header-abi math-complex"
 state = "required"
 kind = "macro-runtime"
 sources = [
@@ -46,7 +46,7 @@ headers = ["include/complex.h", "include/float.h", "include/math.h", "include/tg
 
 [[probe]]
 id = "sys-reg"
-command = "./scripts/dev-x86_64.sh sys-reg-header-abi"
+command = "./scripts/dev-x86_64.sh header-abi sys-reg"
 state = "required"
 kind = "compile-only"
 sources = [
@@ -57,7 +57,7 @@ headers = ["include/sys/reg.h"]
 
 [[probe]]
 id = "types"
-command = "./scripts/dev-x86_64.sh types-header-abi"
+command = "./scripts/dev-x86_64.sh header-abi types"
 state = "required"
 kind = "compile-only"
 sources = [
@@ -69,7 +69,7 @@ headers = ["include/sys/types.h"]
 
 [[probe]]
 id = "stddef"
-command = "./scripts/dev-x86_64.sh stddef-header-abi"
+command = "./scripts/dev-x86_64.sh header-abi stddef"
 state = "required"
 kind = "compile-only"
 sources = [
@@ -81,7 +81,7 @@ headers = ["include/stddef.h"]
 
 [[probe]]
 id = "stat"
-command = "./scripts/dev-x86_64.sh stat-header-abi"
+command = "./scripts/dev-x86_64.sh header-abi stat"
 state = "required"
 kind = "compile-only"
 sources = [
@@ -93,7 +93,7 @@ headers = ["include/stddef.h", "include/sys/stat.h"]
 
 [[probe]]
 id = "utime"
-command = "./scripts/dev-x86_64.sh utime-header-abi"
+command = "./scripts/dev-x86_64.sh header-abi utime"
 state = "required"
 kind = "compile-only"
 sources = [
@@ -105,7 +105,7 @@ headers = ["include/stddef.h", "include/utime.h"]
 
 [[probe]]
 id = "pthread-c11"
-command = "./scripts/dev-x86_64.sh pthread-c11-header-abi"
+command = "./scripts/dev-x86_64.sh header-abi pthread-c11"
 state = "required"
 kind = "compile-only"
 sources = [
@@ -123,7 +123,7 @@ headers = [
 
 [[probe]]
 id = "pthread-cancellation"
-command = "./scripts/dev-x86_64.sh pthread-cancellation-header-abi"
+command = "./scripts/dev-x86_64.sh header-abi pthread-cancellation"
 state = "required"
 kind = "compile-only"
 sources = [
@@ -135,7 +135,7 @@ headers = ["include/pthread.h"]
 
 [[probe]]
 id = "stdio-standard"
-command = "./scripts/dev-x86_64.sh stdio-standard-header-abi"
+command = "./scripts/dev-x86_64.sh header-abi stdio-standard"
 state = "required"
 kind = "compile-only"
 sources = [
@@ -147,7 +147,7 @@ headers = ["include/stdio.h"]
 
 [[probe]]
 id = "ctype"
-command = "./scripts/dev-x86_64.sh ctype-header-abi"
+command = "./scripts/dev-x86_64.sh header-abi ctype"
 state = "required"
 kind = "compile-only"
 sources = [
@@ -159,7 +159,7 @@ headers = ["include/ctype.h"]
 
 [[probe]]
 id = "integer-arithmetic"
-command = "./scripts/dev-x86_64.sh integer-arithmetic-header-abi"
+command = "./scripts/dev-x86_64.sh header-abi integer-arithmetic"
 state = "required"
 kind = "compile-only"
 sources = [
@@ -171,7 +171,7 @@ headers = ["include/stddef.h", "include/stdlib.h"]
 
 [[probe]]
 id = "integer-parse"
-command = "./scripts/dev-x86_64.sh integer-parse-header-abi"
+command = "./scripts/dev-x86_64.sh header-abi integer-parse"
 state = "required"
 kind = "compile-only"
 sources = [
@@ -183,7 +183,7 @@ headers = ["include/inttypes.h", "include/stdlib.h"]
 
 [[probe]]
 id = "float-parse"
-command = "./scripts/dev-x86_64.sh float-parse-header-abi"
+command = "./scripts/dev-x86_64.sh header-abi float-parse"
 state = "required"
 kind = "compile-only"
 sources = [
@@ -195,7 +195,7 @@ headers = ["include/inttypes.h", "include/locale.h", "include/stdlib.h", "includ
 
 [[probe]]
 id = "intmax-arithmetic"
-command = "./scripts/dev-x86_64.sh intmax-arithmetic-header-abi"
+command = "./scripts/dev-x86_64.sh header-abi intmax-arithmetic"
 state = "required"
 kind = "compile-only"
 sources = [
@@ -207,7 +207,7 @@ headers = ["include/stddef.h", "include/inttypes.h"]
 
 [[probe]]
 id = "credential-observation"
-command = "./scripts/dev-x86_64.sh credential-observation-header-abi"
+command = "./scripts/dev-x86_64.sh header-abi credential-observation"
 state = "required"
 kind = "compile-only"
 sources = [
@@ -219,7 +219,7 @@ headers = ["include/unistd.h"]
 
 [[probe]]
 id = "login-name"
-command = "./scripts/dev-x86_64.sh login-name-header-abi"
+command = "./scripts/dev-x86_64.sh header-abi login-name"
 state = "required"
 kind = "compile-only"
 sources = [
@@ -231,7 +231,7 @@ headers = ["include/unistd.h"]
 
 [[probe]]
 id = "child-reaping"
-command = "./scripts/dev-x86_64.sh child-reaping-header-abi"
+command = "./scripts/dev-x86_64.sh header-abi child-reaping"
 state = "required"
 kind = "compile-only"
 sources = [
@@ -243,7 +243,7 @@ headers = ["include/sys/wait.h"]
 
 [[probe]]
 id = "immediate-termination"
-command = "./scripts/dev-x86_64.sh immediate-termination-header-abi"
+command = "./scripts/dev-x86_64.sh header-abi immediate-termination"
 state = "required"
 kind = "compile-only"
 sources = [
@@ -255,7 +255,7 @@ headers = ["include/stdlib.h"]
 
 [[probe]]
 id = "callback-algorithms"
-command = "./scripts/dev-x86_64.sh callback-algorithms-header-abi"
+command = "./scripts/dev-x86_64.sh header-abi callback-algorithms"
 state = "required"
 kind = "compile-only"
 sources = [
@@ -267,7 +267,7 @@ headers = ["include/stddef.h", "include/stdlib.h"]
 
 [[probe]]
 id = "ffs"
-command = "./scripts/dev-x86_64.sh ffs-header-abi"
+command = "./scripts/dev-x86_64.sh header-abi ffs"
 state = "required"
 kind = "compile-only"
 sources = [
@@ -279,7 +279,7 @@ headers = ["include/strings.h"]
 
 [[probe]]
 id = "memccpy"
-command = "./scripts/dev-x86_64.sh memccpy-header-abi"
+command = "./scripts/dev-x86_64.sh header-abi memccpy"
 state = "required"
 kind = "compile-only"
 sources = [
@@ -291,7 +291,7 @@ headers = ["include/string.h"]
 
 [[probe]]
 id = "aio-error"
-command = "./scripts/dev-x86_64.sh aio-error-header-abi"
+command = "./scripts/dev-x86_64.sh header-abi aio-error"
 state = "required"
 kind = "compile-only"
 sources = [
@@ -303,7 +303,7 @@ headers = ["include/aio.h"]
 
 [[probe]]
 id = "byte-strings"
-command = "./scripts/dev-x86_64.sh byte-strings-header-abi"
+command = "./scripts/dev-x86_64.sh header-abi byte-strings"
 state = "required"
 kind = "compile-only"
 sources = [
@@ -315,7 +315,7 @@ headers = ["include/stddef.h", "include/string.h", "include/strings.h"]
 
 [[probe]]
 id = "memory-search"
-command = "./scripts/dev-x86_64.sh memory-search-header-abi"
+command = "./scripts/dev-x86_64.sh header-abi memory-search"
 state = "required"
 kind = "compile-only"
 sources = [
@@ -327,7 +327,7 @@ headers = ["include/stddef.h", "include/string.h"]
 
 [[probe]]
 id = "string-copy"
-command = "./scripts/dev-x86_64.sh string-copy-header-abi"
+command = "./scripts/dev-x86_64.sh header-abi string-copy"
 state = "required"
 kind = "compile-only"
 sources = [
@@ -339,7 +339,7 @@ headers = ["include/alloca.h", "include/stddef.h", "include/string.h"]
 
 [[probe]]
 id = "random-entropy"
-command = "./scripts/dev-x86_64.sh random-entropy-header-abi"
+command = "./scripts/dev-x86_64.sh header-abi random-entropy"
 state = "required"
 kind = "compile-only"
 sources = [
@@ -356,7 +356,7 @@ headers = [
 
 [[probe]]
 id = "time"
-command = "./scripts/dev-x86_64.sh time-header-abi"
+command = "./scripts/dev-x86_64.sh header-abi time"
 state = "required"
 kind = "compile-only"
 sources = [
@@ -368,7 +368,7 @@ headers = ["include/stddef.h", "include/time.h"]
 
 [[probe]]
 id = "poll"
-command = "./scripts/dev-x86_64.sh poll-header-abi"
+command = "./scripts/dev-x86_64.sh header-abi poll"
 state = "required"
 kind = "compile-only"
 sources = [
@@ -380,7 +380,7 @@ headers = ["include/stddef.h", "include/poll.h"]
 
 [[probe]]
 id = "select"
-command = "./scripts/dev-x86_64.sh select-header-abi"
+command = "./scripts/dev-x86_64.sh header-abi select"
 state = "required"
 kind = "compile-only"
 sources = [
@@ -392,7 +392,7 @@ headers = ["include/stddef.h", "include/sys/select.h"]
 
 [[probe]]
 id = "fcntl"
-command = "./scripts/dev-x86_64.sh fcntl-header-abi"
+command = "./scripts/dev-x86_64.sh header-abi fcntl"
 state = "required"
 kind = "compile-only"
 sources = [
@@ -404,7 +404,7 @@ headers = ["include/stddef.h", "include/fcntl.h"]
 
 [[probe]]
 id = "ioctl"
-command = "./scripts/dev-x86_64.sh ioctl-header-abi"
+command = "./scripts/dev-x86_64.sh header-abi ioctl"
 state = "required"
 kind = "compile-only"
 sources = [
@@ -416,7 +416,7 @@ headers = ["include/sys/ioctl.h"]
 
 [[probe]]
 id = "sys-io"
-command = "./scripts/dev-x86_64.sh sys-io-header-abi"
+command = "./scripts/dev-x86_64.sh header-abi sys-io"
 state = "required"
 kind = "compile-only"
 sources = [
@@ -428,7 +428,7 @@ headers = ["include/sys/io.h"]
 
 [[probe]]
 id = "unistd"
-command = "./scripts/dev-x86_64.sh unistd-header-abi"
+command = "./scripts/dev-x86_64.sh header-abi unistd"
 state = "required"
 kind = "compile-only"
 sources = [
@@ -440,7 +440,7 @@ headers = ["include/stddef.h", "include/stdint.h", "include/unistd.h"]
 
 [[probe]]
 id = "system"
-command = "./scripts/dev-x86_64.sh system-header-abi"
+command = "./scripts/dev-x86_64.sh header-abi system"
 state = "required"
 kind = "compile-only"
 sources = [
@@ -452,7 +452,7 @@ headers = ["include/stddef.h", "include/sys/sysinfo.h", "include/sys/utsname.h"]
 
 [[probe]]
 id = "syscall"
-command = "./scripts/dev-x86_64.sh syscall-header-abi"
+command = "./scripts/dev-x86_64.sh header-abi syscall"
 state = "required"
 kind = "compile-only"
 sources = [
@@ -463,7 +463,7 @@ headers = ["include/sys/syscall.h"]
 
 [[probe]]
 id = "signal"
-command = "./scripts/dev-x86_64.sh signal-header-abi"
+command = "./scripts/dev-x86_64.sh header-abi signal"
 state = "required"
 kind = "compile-only"
 sources = [
@@ -475,7 +475,7 @@ headers = ["include/signal.h", "include/stddef.h"]
 
 [[probe]]
 id = "termios"
-command = "./scripts/dev-x86_64.sh termios-header-abi"
+command = "./scripts/dev-x86_64.sh header-abi termios"
 state = "required"
 kind = "compile-only"
 sources = [
@@ -487,7 +487,7 @@ headers = ["include/stddef.h", "include/termios.h"]
 
 [[probe]]
 id = "mman"
-command = "./scripts/dev-x86_64.sh mman-header-abi"
+command = "./scripts/dev-x86_64.sh header-abi mman"
 state = "required"
 kind = "compile-only"
 sources = [
@@ -499,7 +499,7 @@ headers = ["include/sys/mman.h"]
 
 [[probe]]
 id = "resource"
-command = "./scripts/dev-x86_64.sh resource-header-abi"
+command = "./scripts/dev-x86_64.sh header-abi resource"
 state = "required"
 kind = "compile-only"
 sources = [
@@ -516,7 +516,7 @@ headers = [
 
 [[probe]]
 id = "socket"
-command = "./scripts/dev-x86_64.sh socket-header-abi"
+command = "./scripts/dev-x86_64.sh header-abi socket"
 state = "required"
 kind = "macro-runtime"
 sources = [
@@ -529,7 +529,7 @@ headers = ["include/netinet/in.h", "include/stddef.h", "include/sys/socket.h"]
 
 [[probe]]
 id = "tcp"
-command = "./scripts/dev-x86_64.sh tcp-header-abi"
+command = "./scripts/dev-x86_64.sh header-abi tcp"
 state = "required"
 kind = "compile-only"
 sources = [
@@ -541,7 +541,7 @@ headers = ["include/netinet/tcp.h"]
 
 [[probe]]
 id = "nameser"
-command = "./scripts/dev-x86_64.sh nameser-header-abi"
+command = "./scripts/dev-x86_64.sh header-abi nameser"
 state = "required"
 kind = "compile-only"
 sources = [
@@ -553,7 +553,7 @@ headers = ["include/resolv.h"]
 
 [[probe]]
 id = "quota"
-command = "./scripts/dev-x86_64.sh quota-header-abi"
+command = "./scripts/dev-x86_64.sh header-abi quota"
 state = "required"
 kind = "compile-only"
 sources = [
@@ -565,7 +565,7 @@ headers = ["include/stddef.h", "include/sys/quota.h"]
 
 [[probe]]
 id = "sched-cpu-macros"
-command = "./scripts/dev-x86_64.sh sched-cpu-macros-header-abi"
+command = "./scripts/dev-x86_64.sh header-abi sched-cpu-macros"
 state = "required"
 kind = "compile-only"
 sources = [
@@ -577,7 +577,7 @@ headers = ["include/sched.h"]
 
 [[probe]]
 id = "fanotify"
-command = "./scripts/dev-x86_64.sh fanotify-header-abi"
+command = "./scripts/dev-x86_64.sh header-abi fanotify"
 state = "required"
 kind = "compile-only"
 sources = [
@@ -589,7 +589,7 @@ headers = ["include/stddef.h", "include/sys/fanotify.h"]
 
 [[probe]]
 id = "inet-address"
-command = "./scripts/dev-x86_64.sh inet-address-header-abi"
+command = "./scripts/dev-x86_64.sh header-abi inet-address"
 state = "required"
 kind = "compile-only"
 sources = [
@@ -601,7 +601,7 @@ headers = ["include/arpa/inet.h", "include/stddef.h"]
 
 [[probe]]
 id = "epoll"
-command = "./scripts/dev-x86_64.sh epoll-header-abi"
+command = "./scripts/dev-x86_64.sh header-abi epoll"
 state = "required"
 kind = "compile-only"
 sources = [
@@ -613,7 +613,7 @@ headers = ["include/stddef.h", "include/sys/epoll.h", "include/sys/ioctl.h"]
 
 [[probe]]
 id = "timeval-transitive"
-command = "./scripts/dev-x86_64.sh timeval-transitive-header-abi"
+command = "./scripts/dev-x86_64.sh header-abi timeval-transitive"
 state = "required"
 kind = "compile-only"
 sources = [
@@ -632,7 +632,7 @@ headers = [
 
 [[probe]]
 id = "sys-time-direct"
-command = "./scripts/dev-x86_64.sh sys-time-direct-header-abi"
+command = "./scripts/dev-x86_64.sh header-abi sys-time-direct"
 state = "required"
 kind = "compile-only"
 sources = [
@@ -644,7 +644,7 @@ headers = ["include/stddef.h", "include/sys/time.h"]
 
 [[probe]]
 id = "access-header"
-command = "./scripts/dev-x86_64.sh access-header-abi"
+command = "./scripts/dev-x86_64.sh header-abi access"
 state = "required"
 kind = "compile-only"
 sources = [
@@ -656,7 +656,7 @@ headers = ["include/fcntl.h", "include/unistd.h"]
 
 [[probe]]
 id = "xattr-header"
-command = "./scripts/dev-x86_64.sh xattr-header-abi"
+command = "./scripts/dev-x86_64.sh header-abi xattr"
 state = "required"
 kind = "compile-only"
 sources = [
@@ -668,7 +668,7 @@ headers = ["include/sys/xattr.h"]
 
 [[probe]]
 id = "machine-context"
-command = "./scripts/dev-x86_64.sh machine-context-header-abi"
+command = "./scripts/dev-x86_64.sh header-abi machine-context"
 state = "required"
 kind = "compile-only"
 sources = [
@@ -688,7 +688,7 @@ headers = [
 
 [[probe]]
 id = "event-descriptors"
-command = "./scripts/dev-x86_64.sh event-descriptors-header-abi"
+command = "./scripts/dev-x86_64.sh header-abi event-descriptors"
 state = "required"
 kind = "compile-only"
 sources = [
@@ -705,7 +705,7 @@ headers = [
 
 [[probe]]
 id = "dirent"
-command = "./scripts/dev-x86_64.sh dirent-header-abi"
+command = "./scripts/dev-x86_64.sh header-abi dirent"
 state = "required"
 kind = "compile-only"
 sources = [

@@ -101,6 +101,8 @@ HEADER_ABI_MATRIX_REPORT_PATH = (
     ROOT / "compat" / "x86_64" / "generated" / "header_abi_matrix" / "report.json"
 )
 HEADER_ABI_MATRIX_RUNNER_PATH = ROOT / "compat" / "x86_64" / "run_header_abi_matrix.sh"
+HEADER_ABI_CASES_PATH = ROOT / "compat" / "x86_64" / "header_abi_cases.txt"
+HEADER_ABI_COMMAND_PREFIX = "./scripts/dev-x86_64.sh header-abi "
 HEADER_RECORD_LAYOUT_MATRIX_CONTRACT_PATH = (
     ROOT / "compat" / "x86_64" / "header_record_layout_matrix.toml"
 )
@@ -263,11 +265,11 @@ EXPECTED_UAPI_WRAPPER_MATRIX_COMMAND = "./scripts/dev-x86_64.sh uapi-wrapper-mat
 EXPECTED_UAPI_WRAPPER_MATRIX_HEADERS = tuple(EXPECTED_PUBLIC_HEADER_UAPI_GAPS)
 EXPECTED_UAPI_WRAPPER_MATRIX_ROW_COUNT = 21
 EXPECTED_IOCTL_HEADER_PROFILE_MATRIX_ID = "x86-ioctl-header-profile-matrix"
-EXPECTED_IOCTL_HEADER_PROFILE_MATRIX_COMMAND = "./scripts/dev-x86_64.sh ioctl-header-abi"
+EXPECTED_IOCTL_HEADER_PROFILE_MATRIX_COMMAND = "./scripts/dev-x86_64.sh header-abi ioctl"
 EXPECTED_IOCTL_HEADER_PROFILE_MATRIX_SUBJECT_HEADER = "sys/ioctl.h"
 EXPECTED_IOCTL_HEADER_PROFILE_MATRIX_ROW_COUNT = 7
 EXPECTED_SYS_IO_HEADER_PROFILE_MATRIX_ID = "x86-sys-io-header-profile-matrix"
-EXPECTED_SYS_IO_HEADER_PROFILE_MATRIX_COMMAND = "./scripts/dev-x86_64.sh sys-io-header-abi"
+EXPECTED_SYS_IO_HEADER_PROFILE_MATRIX_COMMAND = "./scripts/dev-x86_64.sh header-abi sys-io"
 EXPECTED_SYS_IO_HEADER_PROFILE_MATRIX_SUBJECT_HEADERS = ("sys/io.h", "bits/io.h")
 EXPECTED_SYS_IO_HEADER_PROFILE_MATRIX_PROFILES = (
     "c11-gnu",
@@ -280,7 +282,7 @@ EXPECTED_SYS_IO_HEADER_PROFILE_MATRIX_PROFILES = (
 )
 EXPECTED_SYS_IO_HEADER_PROFILE_MATRIX_ROW_COUNT = 7
 EXPECTED_EPOLL_HEADER_PROFILE_MATRIX_ID = "x86-epoll-header-profile-matrix"
-EXPECTED_EPOLL_HEADER_PROFILE_MATRIX_COMMAND = "./scripts/dev-x86_64.sh epoll-header-abi"
+EXPECTED_EPOLL_HEADER_PROFILE_MATRIX_COMMAND = "./scripts/dev-x86_64.sh header-abi epoll"
 EXPECTED_EPOLL_HEADER_PROFILE_MATRIX_SUBJECT_HEADER = "sys/epoll.h"
 EXPECTED_EPOLL_HEADER_PROFILE_MATRIX_DIRECT_MACRO_HEADER = "sys/ioctl.h"
 EXPECTED_EPOLL_HEADER_PROFILE_MATRIX_ROW_COUNT = 7
@@ -288,7 +290,7 @@ EXPECTED_EVENT_DESCRIPTORS_HEADER_PROFILE_MATRIX_ID = (
     "x86-event-descriptors-header-profile-matrix"
 )
 EXPECTED_EVENT_DESCRIPTORS_HEADER_PROFILE_MATRIX_COMMAND = (
-    "./scripts/dev-x86_64.sh event-descriptors-header-abi"
+    "./scripts/dev-x86_64.sh header-abi event-descriptors"
 )
 EXPECTED_EVENT_DESCRIPTORS_HEADER_PROFILE_MATRIX_SUBJECT_HEADERS = (
     "sys/eventfd.h",
@@ -320,7 +322,7 @@ EXPECTED_EVENT_DESCRIPTORS_HEADER_PROFILE_MATRIX_AT_EMPTY_PATH_HIDDEN_PROFILES =
 )
 EXPECTED_EVENT_DESCRIPTORS_HEADER_PROFILE_MATRIX_ROW_COUNT = 16
 EXPECTED_DIRENT_HEADER_PROFILE_MATRIX_ID = "x86-dirent-header-profile-matrix"
-EXPECTED_DIRENT_HEADER_PROFILE_MATRIX_COMMAND = "./scripts/dev-x86_64.sh dirent-header-abi"
+EXPECTED_DIRENT_HEADER_PROFILE_MATRIX_COMMAND = "./scripts/dev-x86_64.sh header-abi dirent"
 EXPECTED_DIRENT_HEADER_PROFILE_MATRIX_SUBJECT_HEADER = "dirent.h"
 EXPECTED_DIRENT_HEADER_PROFILE_MATRIX_BASE_PROFILES = (
     "c11-gnu",
@@ -360,7 +362,7 @@ EXPECTED_DIRENT_HEADER_PROFILE_MATRIX_VERSIONSORT_VISIBLE_PROFILES = (
 )
 EXPECTED_DIRENT_HEADER_PROFILE_MATRIX_ROW_COUNT = 11
 EXPECTED_STDLIB_HEADER_PROFILE_MATRIX_ID = "x86-stdlib-header-profile-matrix"
-EXPECTED_STDLIB_HEADER_PROFILE_MATRIX_COMMAND = "./scripts/dev-x86_64.sh stdlib-header-abi"
+EXPECTED_STDLIB_HEADER_PROFILE_MATRIX_COMMAND = "./scripts/dev-x86_64.sh header-abi stdlib"
 EXPECTED_STDLIB_HEADER_PROFILE_MATRIX_SUBJECT_HEADER = "stdlib.h"
 EXPECTED_STDLIB_HEADER_PROFILE_MATRIX_PROFILES = (
     "c11-strict",
@@ -381,7 +383,7 @@ EXPECTED_TIMEVAL_TRANSITIVE_HEADER_PROFILE_MATRIX_ID = (
     "x86-timeval-transitive-header-profile-matrix"
 )
 EXPECTED_TIMEVAL_TRANSITIVE_HEADER_PROFILE_MATRIX_COMMAND = (
-    "./scripts/dev-x86_64.sh timeval-transitive-header-abi"
+    "./scripts/dev-x86_64.sh header-abi timeval-transitive"
 )
 EXPECTED_TIMEVAL_TRANSITIVE_HEADER_PROFILE_MATRIX_HEADERS = (
     "sys/time.h",
@@ -398,12 +400,12 @@ EXPECTED_SYS_TIME_DIRECT_HEADER_PROFILE_MATRIX_ID = (
     "x86-sys-time-direct-header-profile-matrix"
 )
 EXPECTED_SYS_TIME_DIRECT_HEADER_PROFILE_MATRIX_COMMAND = (
-    "./scripts/dev-x86_64.sh sys-time-direct-header-abi"
+    "./scripts/dev-x86_64.sh header-abi sys-time-direct"
 )
 EXPECTED_SYS_TIME_DIRECT_HEADER_PROFILE_MATRIX_SUBJECT_HEADER = "sys/time.h"
 EXPECTED_SYS_TIME_DIRECT_HEADER_PROFILE_MATRIX_ROW_COUNT = 7
 EXPECTED_ACCESS_HEADER_PROFILE_MATRIX_ID = "x86-access-header-profile-matrix"
-EXPECTED_ACCESS_HEADER_PROFILE_MATRIX_COMMAND = "./scripts/dev-x86_64.sh access-header-abi"
+EXPECTED_ACCESS_HEADER_PROFILE_MATRIX_COMMAND = "./scripts/dev-x86_64.sh header-abi access"
 EXPECTED_ACCESS_HEADER_PROFILE_MATRIX_SUBJECT_HEADERS = ("fcntl.h", "unistd.h")
 EXPECTED_ACCESS_HEADER_PROFILE_MATRIX_PROFILES = (
     "c-default",
@@ -417,7 +419,7 @@ EXPECTED_ACCESS_HEADER_PROFILE_MATRIX_PROFILES = (
 )
 EXPECTED_ACCESS_HEADER_PROFILE_MATRIX_ROW_COUNT = 8
 EXPECTED_XATTR_HEADER_PROFILE_MATRIX_ID = "x86-xattr-header-profile-matrix"
-EXPECTED_XATTR_HEADER_PROFILE_MATRIX_COMMAND = "./scripts/dev-x86_64.sh xattr-header-abi"
+EXPECTED_XATTR_HEADER_PROFILE_MATRIX_COMMAND = "./scripts/dev-x86_64.sh header-abi xattr"
 EXPECTED_XATTR_HEADER_PROFILE_MATRIX_SUBJECT_HEADER = "sys/xattr.h"
 EXPECTED_XATTR_HEADER_PROFILE_MATRIX_PROFILES = (
     "c-default",
@@ -1018,60 +1020,60 @@ EXPECTED_HEADER_FOUNDATION_LINKAGE_OWNERS = {
 
 EXPECTED_HEADER_LAYOUT_PROBES = {
     "project": "./scripts/dev-x86_64.sh header-abi-project",
-    "math-complex": "./scripts/dev-x86_64.sh math-complex-header-abi",
-    "sys-reg": "./scripts/dev-x86_64.sh sys-reg-header-abi",
-    "types": "./scripts/dev-x86_64.sh types-header-abi",
-    "stddef": "./scripts/dev-x86_64.sh stddef-header-abi",
-    "stat": "./scripts/dev-x86_64.sh stat-header-abi",
-    "utime": "./scripts/dev-x86_64.sh utime-header-abi",
-    "pthread-c11": "./scripts/dev-x86_64.sh pthread-c11-header-abi",
-    "pthread-cancellation": "./scripts/dev-x86_64.sh pthread-cancellation-header-abi",
-    "stdio-standard": "./scripts/dev-x86_64.sh stdio-standard-header-abi",
-    "ctype": "./scripts/dev-x86_64.sh ctype-header-abi",
-    "integer-arithmetic": "./scripts/dev-x86_64.sh integer-arithmetic-header-abi",
-    "integer-parse": "./scripts/dev-x86_64.sh integer-parse-header-abi",
-    "float-parse": "./scripts/dev-x86_64.sh float-parse-header-abi",
-    "intmax-arithmetic": "./scripts/dev-x86_64.sh intmax-arithmetic-header-abi",
-    "credential-observation": "./scripts/dev-x86_64.sh credential-observation-header-abi",
-    "login-name": "./scripts/dev-x86_64.sh login-name-header-abi",
-    "child-reaping": "./scripts/dev-x86_64.sh child-reaping-header-abi",
-    "immediate-termination": "./scripts/dev-x86_64.sh immediate-termination-header-abi",
-    "callback-algorithms": "./scripts/dev-x86_64.sh callback-algorithms-header-abi",
-    "ffs": "./scripts/dev-x86_64.sh ffs-header-abi",
-    "memccpy": "./scripts/dev-x86_64.sh memccpy-header-abi",
-    "aio-error": "./scripts/dev-x86_64.sh aio-error-header-abi",
-    "byte-strings": "./scripts/dev-x86_64.sh byte-strings-header-abi",
-    "memory-search": "./scripts/dev-x86_64.sh memory-search-header-abi",
-    "string-copy": "./scripts/dev-x86_64.sh string-copy-header-abi",
-    "random-entropy": "./scripts/dev-x86_64.sh random-entropy-header-abi",
-    "time": "./scripts/dev-x86_64.sh time-header-abi",
-    "poll": "./scripts/dev-x86_64.sh poll-header-abi",
-    "select": "./scripts/dev-x86_64.sh select-header-abi",
-    "fcntl": "./scripts/dev-x86_64.sh fcntl-header-abi",
-    "ioctl": "./scripts/dev-x86_64.sh ioctl-header-abi",
-    "sys-io": "./scripts/dev-x86_64.sh sys-io-header-abi",
-    "unistd": "./scripts/dev-x86_64.sh unistd-header-abi",
-    "system": "./scripts/dev-x86_64.sh system-header-abi",
-    "syscall": "./scripts/dev-x86_64.sh syscall-header-abi",
-    "signal": "./scripts/dev-x86_64.sh signal-header-abi",
-    "termios": "./scripts/dev-x86_64.sh termios-header-abi",
-    "mman": "./scripts/dev-x86_64.sh mman-header-abi",
-    "resource": "./scripts/dev-x86_64.sh resource-header-abi",
-    "socket": "./scripts/dev-x86_64.sh socket-header-abi",
-    "tcp": "./scripts/dev-x86_64.sh tcp-header-abi",
-    "nameser": "./scripts/dev-x86_64.sh nameser-header-abi",
-    "quota": "./scripts/dev-x86_64.sh quota-header-abi",
-    "sched-cpu-macros": "./scripts/dev-x86_64.sh sched-cpu-macros-header-abi",
-    "fanotify": "./scripts/dev-x86_64.sh fanotify-header-abi",
-    "inet-address": "./scripts/dev-x86_64.sh inet-address-header-abi",
-    "epoll": "./scripts/dev-x86_64.sh epoll-header-abi",
-    "timeval-transitive": "./scripts/dev-x86_64.sh timeval-transitive-header-abi",
-    "sys-time-direct": "./scripts/dev-x86_64.sh sys-time-direct-header-abi",
-    "access-header": "./scripts/dev-x86_64.sh access-header-abi",
-    "xattr-header": "./scripts/dev-x86_64.sh xattr-header-abi",
-    "machine-context": "./scripts/dev-x86_64.sh machine-context-header-abi",
-    "event-descriptors": "./scripts/dev-x86_64.sh event-descriptors-header-abi",
-    "dirent": "./scripts/dev-x86_64.sh dirent-header-abi",
+    "math-complex": "./scripts/dev-x86_64.sh header-abi math-complex",
+    "sys-reg": "./scripts/dev-x86_64.sh header-abi sys-reg",
+    "types": "./scripts/dev-x86_64.sh header-abi types",
+    "stddef": "./scripts/dev-x86_64.sh header-abi stddef",
+    "stat": "./scripts/dev-x86_64.sh header-abi stat",
+    "utime": "./scripts/dev-x86_64.sh header-abi utime",
+    "pthread-c11": "./scripts/dev-x86_64.sh header-abi pthread-c11",
+    "pthread-cancellation": "./scripts/dev-x86_64.sh header-abi pthread-cancellation",
+    "stdio-standard": "./scripts/dev-x86_64.sh header-abi stdio-standard",
+    "ctype": "./scripts/dev-x86_64.sh header-abi ctype",
+    "integer-arithmetic": "./scripts/dev-x86_64.sh header-abi integer-arithmetic",
+    "integer-parse": "./scripts/dev-x86_64.sh header-abi integer-parse",
+    "float-parse": "./scripts/dev-x86_64.sh header-abi float-parse",
+    "intmax-arithmetic": "./scripts/dev-x86_64.sh header-abi intmax-arithmetic",
+    "credential-observation": "./scripts/dev-x86_64.sh header-abi credential-observation",
+    "login-name": "./scripts/dev-x86_64.sh header-abi login-name",
+    "child-reaping": "./scripts/dev-x86_64.sh header-abi child-reaping",
+    "immediate-termination": "./scripts/dev-x86_64.sh header-abi immediate-termination",
+    "callback-algorithms": "./scripts/dev-x86_64.sh header-abi callback-algorithms",
+    "ffs": "./scripts/dev-x86_64.sh header-abi ffs",
+    "memccpy": "./scripts/dev-x86_64.sh header-abi memccpy",
+    "aio-error": "./scripts/dev-x86_64.sh header-abi aio-error",
+    "byte-strings": "./scripts/dev-x86_64.sh header-abi byte-strings",
+    "memory-search": "./scripts/dev-x86_64.sh header-abi memory-search",
+    "string-copy": "./scripts/dev-x86_64.sh header-abi string-copy",
+    "random-entropy": "./scripts/dev-x86_64.sh header-abi random-entropy",
+    "time": "./scripts/dev-x86_64.sh header-abi time",
+    "poll": "./scripts/dev-x86_64.sh header-abi poll",
+    "select": "./scripts/dev-x86_64.sh header-abi select",
+    "fcntl": "./scripts/dev-x86_64.sh header-abi fcntl",
+    "ioctl": "./scripts/dev-x86_64.sh header-abi ioctl",
+    "sys-io": "./scripts/dev-x86_64.sh header-abi sys-io",
+    "unistd": "./scripts/dev-x86_64.sh header-abi unistd",
+    "system": "./scripts/dev-x86_64.sh header-abi system",
+    "syscall": "./scripts/dev-x86_64.sh header-abi syscall",
+    "signal": "./scripts/dev-x86_64.sh header-abi signal",
+    "termios": "./scripts/dev-x86_64.sh header-abi termios",
+    "mman": "./scripts/dev-x86_64.sh header-abi mman",
+    "resource": "./scripts/dev-x86_64.sh header-abi resource",
+    "socket": "./scripts/dev-x86_64.sh header-abi socket",
+    "tcp": "./scripts/dev-x86_64.sh header-abi tcp",
+    "nameser": "./scripts/dev-x86_64.sh header-abi nameser",
+    "quota": "./scripts/dev-x86_64.sh header-abi quota",
+    "sched-cpu-macros": "./scripts/dev-x86_64.sh header-abi sched-cpu-macros",
+    "fanotify": "./scripts/dev-x86_64.sh header-abi fanotify",
+    "inet-address": "./scripts/dev-x86_64.sh header-abi inet-address",
+    "epoll": "./scripts/dev-x86_64.sh header-abi epoll",
+    "timeval-transitive": "./scripts/dev-x86_64.sh header-abi timeval-transitive",
+    "sys-time-direct": "./scripts/dev-x86_64.sh header-abi sys-time-direct",
+    "access-header": "./scripts/dev-x86_64.sh header-abi access",
+    "xattr-header": "./scripts/dev-x86_64.sh header-abi xattr",
+    "machine-context": "./scripts/dev-x86_64.sh header-abi machine-context",
+    "event-descriptors": "./scripts/dev-x86_64.sh header-abi event-descriptors",
+    "dirent": "./scripts/dev-x86_64.sh header-abi dirent",
 }
 
 EXPECTED_HEADER_LAYOUT_SOURCES = {
@@ -2400,6 +2402,55 @@ def require(condition: bool, message: str) -> None:
         raise LedgerError(message)
 
 
+def header_abi_case_scripts() -> dict[str, str]:
+    cases: dict[str, str] = {}
+    for line in HEADER_ABI_CASES_PATH.read_text(encoding="utf-8").splitlines():
+        require(
+            line.count("\t") == 1,
+            f"header-abi case row is malformed: {line!r}",
+        )
+        case, script = line.split("\t")
+        require(bool(case) and bool(script), f"header-abi case row is empty: {line!r}")
+        require(case not in cases, f"duplicate header-abi case: {case}")
+        require(
+            script.startswith("run_") and script.endswith(".sh"),
+            f"header-abi case {case} has an invalid runner: {script}",
+        )
+        cases[case] = script
+    require(bool(cases), "header-abi case table is empty")
+    return cases
+
+
+def require_dispatched_command(
+    dispatch_source: str, command: str, location: str
+) -> None:
+    prefix = "./scripts/dev-x86_64.sh "
+    require(command.startswith(prefix), f"{location}.command is not a dispatcher command")
+    subcommand = command[len(prefix) :]
+    if subcommand.startswith("header-abi "):
+        case = subcommand[len("header-abi ") :]
+        cases = header_abi_case_scripts()
+        require(
+            "    header-abi)" in dispatch_source,
+            "header-abi is absent from the native dispatcher",
+        )
+        require(
+            case in cases,
+            f"{location}.command names unknown header-abi case {case}",
+        )
+        require(
+            (ROOT / "compat" / "x86_64" / cases[case]).is_file(),
+            f"{location}.command maps to missing runner {cases[case]}",
+        )
+        return
+    require(
+        f"    {subcommand})" in dispatch_source
+        or f"    {subcommand}|" in dispatch_source
+        or f"|{subcommand})" in dispatch_source,
+        f"{location}.command is absent from the native dispatcher",
+    )
+
+
 def load_toml(path: Path) -> dict[str, Any]:
     try:
         with path.open("rb") as stream:
@@ -2692,16 +2743,7 @@ def validate_header_layout_manifest(
             len(evidence_matches) == 1 and evidence_matches[0].get("state") == "required",
             f"{location}.command must map to one required family evidence record",
         )
-        subcommand = command.removeprefix("./scripts/dev-x86_64.sh ")
-        require(
-            subcommand != command
-            and (
-                f"    {subcommand})" in dispatch_source
-                or f"    {subcommand}|" in dispatch_source
-                or f"|{subcommand})" in dispatch_source
-            ),
-            f"{location}.command is absent from the native dispatcher",
-        )
+        require_dispatched_command(dispatch_source, command, location)
         probe_ids.append(identifier)
 
     require(
@@ -4672,9 +4714,10 @@ def validate_header_layout_foundation_manifest(
         EPOLL_HEADER_ABI_RUNNER_PATH.is_file(),
         "header-foundation epoll header matrix runner is missing",
     )
-    require(
-        "epoll-header-abi)" in dispatch_source,
-        "epoll-header-abi is absent from the native dispatcher",
+    require_dispatched_command(
+        dispatch_source,
+        EXPECTED_EPOLL_HEADER_PROFILE_MATRIX_COMMAND,
+        "header-foundation epoll header matrix",
     )
     epoll_matrix_evidence = [
         entry
@@ -4876,9 +4919,10 @@ def validate_header_layout_foundation_manifest(
         EVENT_DESCRIPTORS_HEADER_ABI_RUNNER_PATH.is_file(),
         "header-foundation event-descriptor header matrix runner is missing",
     )
-    require(
-        "event-descriptors-header-abi)" in dispatch_source,
-        "event-descriptors-header-abi is absent from the native dispatcher",
+    require_dispatched_command(
+        dispatch_source,
+        EXPECTED_EVENT_DESCRIPTORS_HEADER_PROFILE_MATRIX_COMMAND,
+        "header-foundation event-descriptors header matrix",
     )
     event_descriptor_matrix_evidence = [
         entry
@@ -5055,9 +5099,10 @@ def validate_header_layout_foundation_manifest(
         DIRENT_HEADER_ABI_RUNNER_PATH.is_file(),
         "header-foundation dirent header matrix runner is missing",
     )
-    require(
-        "dirent-header-abi)" in dispatch_source,
-        "dirent-header-abi is absent from the native dispatcher",
+    require_dispatched_command(
+        dispatch_source,
+        EXPECTED_DIRENT_HEADER_PROFILE_MATRIX_COMMAND,
+        "header-foundation dirent header matrix",
     )
     dirent_matrix_evidence = [
         entry
@@ -5207,9 +5252,10 @@ def validate_header_layout_foundation_manifest(
         STDLIB_HEADER_ABI_RUNNER_PATH.is_file(),
         "header-foundation stdlib header matrix runner is missing",
     )
-    require(
-        "stdlib-header-abi)" in dispatch_source,
-        "stdlib-header-abi is absent from the native dispatcher",
+    require_dispatched_command(
+        dispatch_source,
+        EXPECTED_STDLIB_HEADER_PROFILE_MATRIX_COMMAND,
+        "header-foundation stdlib header matrix",
     )
     stdlib_matrix_evidence = [
         entry
@@ -5360,9 +5406,10 @@ def validate_header_layout_foundation_manifest(
         IOCTL_HEADER_ABI_RUNNER_PATH.is_file(),
         "header-foundation ioctl header matrix runner is missing",
     )
-    require(
-        "ioctl-header-abi)" in dispatch_source,
-        "ioctl-header-abi is absent from the native dispatcher",
+    require_dispatched_command(
+        dispatch_source,
+        EXPECTED_IOCTL_HEADER_PROFILE_MATRIX_COMMAND,
+        "header-foundation ioctl header matrix",
     )
     ioctl_matrix_evidence = [
         entry
@@ -5514,9 +5561,10 @@ def validate_header_layout_foundation_manifest(
         SYS_IO_HEADER_ABI_RUNNER_PATH.is_file(),
         "header-foundation sys/io header matrix runner is missing",
     )
-    require(
-        "sys-io-header-abi)" in dispatch_source,
-        "sys-io-header-abi is absent from the native dispatcher",
+    require_dispatched_command(
+        dispatch_source,
+        EXPECTED_SYS_IO_HEADER_PROFILE_MATRIX_COMMAND,
+        "header-foundation sys-io header matrix",
     )
     sys_io_matrix_evidence = [
         entry
@@ -5689,9 +5737,10 @@ def validate_header_layout_foundation_manifest(
         TIMEVAL_TRANSITIVE_HEADER_ABI_RUNNER_PATH.is_file(),
         "header-foundation timeval transitive-header matrix runner is missing",
     )
-    require(
-        "timeval-transitive-header-abi)" in dispatch_source,
-        "timeval-transitive-header-abi is absent from the native dispatcher",
+    require_dispatched_command(
+        dispatch_source,
+        EXPECTED_TIMEVAL_TRANSITIVE_HEADER_PROFILE_MATRIX_COMMAND,
+        "header-foundation timeval-transitive header matrix",
     )
     timeval_matrix_evidence = [
         entry
@@ -5837,9 +5886,10 @@ def validate_header_layout_foundation_manifest(
         SYS_TIME_DIRECT_HEADER_ABI_RUNNER_PATH.is_file(),
         "header-foundation direct sys/time header matrix runner is missing",
     )
-    require(
-        "sys-time-direct-header-abi)" in dispatch_source,
-        "sys-time-direct-header-abi is absent from the native dispatcher",
+    require_dispatched_command(
+        dispatch_source,
+        EXPECTED_SYS_TIME_DIRECT_HEADER_PROFILE_MATRIX_COMMAND,
+        "header-foundation sys-time-direct header matrix",
     )
     sys_time_direct_matrix_evidence = [
         entry
@@ -5979,9 +6029,10 @@ def validate_header_layout_foundation_manifest(
         ACCESS_HEADER_ABI_RUNNER_PATH.is_file(),
         "header-foundation access header matrix runner is missing",
     )
-    require(
-        "access-header-abi)" in dispatch_source,
-        "access-header-abi is absent from the native dispatcher",
+    require_dispatched_command(
+        dispatch_source,
+        EXPECTED_ACCESS_HEADER_PROFILE_MATRIX_COMMAND,
+        "header-foundation access header matrix",
     )
     access_header_matrix_evidence = [
         entry
@@ -6124,9 +6175,10 @@ def validate_header_layout_foundation_manifest(
         XATTR_HEADER_ABI_RUNNER_PATH.is_file(),
         "header-foundation xattr header matrix runner is missing",
     )
-    require(
-        "xattr-header-abi)" in dispatch_source,
-        "xattr-header-abi is absent from the native dispatcher",
+    require_dispatched_command(
+        dispatch_source,
+        EXPECTED_XATTR_HEADER_PROFILE_MATRIX_COMMAND,
+        "header-foundation xattr header matrix",
     )
     xattr_header_matrix_evidence = [
         entry
@@ -7150,7 +7202,7 @@ def require_ctype_header_evidence(family: Mapping[str, Any]) -> None:
         entry
         for entry in evidence
         if isinstance(entry, Mapping)
-        and entry.get("command") == "./scripts/dev-x86_64.sh ctype-header-abi"
+        and entry.get("command") == "./scripts/dev-x86_64.sh header-abi ctype"
     ]
     require(
         len(matches) == 1,
@@ -7212,7 +7264,7 @@ def require_socket_header_evidence(family: Mapping[str, Any]) -> None:
         entry
         for entry in evidence
         if isinstance(entry, Mapping)
-        and entry.get("command") == "./scripts/dev-x86_64.sh socket-header-abi"
+        and entry.get("command") == "./scripts/dev-x86_64.sh header-abi socket"
     ]
     require(
         len(matches) == 1,
@@ -7271,7 +7323,7 @@ def require_tcp_header_evidence(family: Mapping[str, Any]) -> None:
         entry
         for entry in evidence
         if isinstance(entry, Mapping)
-        and entry.get("command") == "./scripts/dev-x86_64.sh tcp-header-abi"
+        and entry.get("command") == "./scripts/dev-x86_64.sh header-abi tcp"
     ]
     require(
         len(matches) == 1,
@@ -7336,7 +7388,7 @@ def require_stddef_header_evidence(family: Mapping[str, Any]) -> None:
         entry
         for entry in evidence
         if isinstance(entry, Mapping)
-        and entry.get("command") == "./scripts/dev-x86_64.sh stddef-header-abi"
+        and entry.get("command") == "./scripts/dev-x86_64.sh header-abi stddef"
     ]
     require(
         len(matches) == 1,
@@ -7398,7 +7450,7 @@ def require_socket_messages_header_evidence(family: Mapping[str, Any]) -> None:
         for entry in evidence
         if isinstance(entry, Mapping)
         and entry.get("command")
-        == "./scripts/dev-x86_64.sh socket-messages-header-abi"
+        == "./scripts/dev-x86_64.sh header-abi socket-messages"
     ]
     require(
         len(matches) == 1,
@@ -7453,7 +7505,7 @@ def require_inet_address_header_evidence(family: Mapping[str, Any]) -> None:
         entry
         for entry in evidence
         if isinstance(entry, Mapping)
-        and entry.get("command") == "./scripts/dev-x86_64.sh inet-address-header-abi"
+        and entry.get("command") == "./scripts/dev-x86_64.sh header-abi inet-address"
     ]
     require(
         len(matches) == 1,
@@ -7512,7 +7564,7 @@ def require_nameser_header_evidence(family: Mapping[str, Any]) -> None:
         entry
         for entry in evidence
         if isinstance(entry, Mapping)
-        and entry.get("command") == "./scripts/dev-x86_64.sh nameser-header-abi"
+        and entry.get("command") == "./scripts/dev-x86_64.sh header-abi nameser"
     ]
     require(
         len(matches) == 1,
@@ -7635,7 +7687,7 @@ def require_quota_header_evidence(family: Mapping[str, Any]) -> None:
         entry
         for entry in evidence
         if isinstance(entry, Mapping)
-        and entry.get("command") == "./scripts/dev-x86_64.sh quota-header-abi"
+        and entry.get("command") == "./scripts/dev-x86_64.sh header-abi quota"
     ]
     require(
         len(matches) == 1,
@@ -7698,7 +7750,7 @@ def require_sched_cpu_macros_header_evidence(family: Mapping[str, Any]) -> None:
         for entry in evidence
         if isinstance(entry, Mapping)
         and entry.get("command")
-        == "./scripts/dev-x86_64.sh sched-cpu-macros-header-abi"
+        == "./scripts/dev-x86_64.sh header-abi sched-cpu-macros"
     ]
     require(
         len(matches) == 1,
@@ -7759,7 +7811,7 @@ def require_fanotify_header_evidence(family: Mapping[str, Any]) -> None:
         entry
         for entry in evidence
         if isinstance(entry, Mapping)
-        and entry.get("command") == "./scripts/dev-x86_64.sh fanotify-header-abi"
+        and entry.get("command") == "./scripts/dev-x86_64.sh header-abi fanotify"
     ]
     require(
         len(matches) == 1,
@@ -8247,7 +8299,7 @@ def require_memory_sync_header_evidence(family: Mapping[str, Any]) -> None:
         for entry in evidence
         if isinstance(entry, Mapping)
         and entry.get("command")
-        == "./scripts/dev-x86_64.sh memory-sync-header-abi"
+        == "./scripts/dev-x86_64.sh header-abi memory-sync"
     ]
     require(
         len(matching) == 1,
@@ -8288,7 +8340,7 @@ def require_memfd_create_header_evidence(family: Mapping[str, Any]) -> None:
         for entry in evidence
         if isinstance(entry, Mapping)
         and entry.get("command")
-        == "./scripts/dev-x86_64.sh memfd-create-header-abi"
+        == "./scripts/dev-x86_64.sh header-abi memfd-create"
     ]
     require(
         len(matching) == 1,
@@ -8332,7 +8384,7 @@ def require_memory_locking_header_evidence(family: Mapping[str, Any]) -> None:
         for entry in evidence
         if isinstance(entry, Mapping)
         and entry.get("command")
-        == "./scripts/dev-x86_64.sh memory-locking-header-abi"
+        == "./scripts/dev-x86_64.sh header-abi memory-locking"
     ]
     require(
         len(matching) == 1,
@@ -9048,10 +9100,13 @@ def require_uchar_stateful_artifact(family: Mapping[str, Any]) -> None:
         require(snippet in fixture, f"uchar stateful fixture omits {snippet}")
 
     dispatcher = X86_64_DISPATCHER_PATH.read_text(encoding="utf-8")
+    require_dispatched_command(
+        dispatcher,
+        f"{HEADER_ABI_COMMAND_PREFIX}uchar-stateful",
+        "libc uchar-stateful header",
+    )
     for snippet in (
-        "uchar-stateful-header-abi)",
         "libc-uchar-stateful)",
-        "run_uchar_stateful_header_abi.sh",
         "run_libc_uchar_stateful.sh",
     ):
         require(snippet in dispatcher, f"x86 dispatcher omits {snippet}")

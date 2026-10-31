@@ -50,7 +50,7 @@ dependents = [
   "pthread condattr raw record query/setter leaves",
 ]
 focused_command = "./scripts/dev-x86_64.sh libc-pthread-attr-lifecycle"
-family_command = "./scripts/dev-x86_64.sh pthread-c11-header-abi"
+family_command = "./scripts/dev-x86_64.sh header-abi pthread-c11"
 product_command = "./scripts/dev-x86_64.sh header-callable-provider-linkage-audit"
 evidence_targets = [
   "C/C++ public-header layout and C-linkage matrix",
