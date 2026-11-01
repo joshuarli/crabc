@@ -1164,15 +1164,23 @@ passed.
 | Test drift | `dff45cb88` | 23 loader commands retired by `8672fe86e` were still admitted and silently exited 0; removed their admission arms and 102 lines of stale help prose. The dispatcher closed-set audit and the two Python modules now match the ledger's intentional `owned-*` evidence commands and source owners | both modules exit 0 on the merged tip (91 tests/1 skip; 80 tests); parity validator PASS (26 families); `campaign-status`; `check_structure` PASS; `bash -n`; retired-name scan; `git diff --check` | dead `run_ldso_bounded_dlopen.sh` and `run_ldso_dladdr_symbol_bounds.sh` remain for a separate cleanup decision; D16/D14 still block S5 |
 | S5 (second attempt) | `b255ccf2e` rejected | **NOT ACCEPTED.** 58 selected rows: 50 pass, 3 fail (`startup` 1.8886, `dlopen_graph` 1.6073, `loader_dynamic_tls_growth` 2.5703 after the fixed-N counts fix), 5 nondeterministic (128m matrices and `pthread_create_join_tls` under load), 0 unavailable. Structure 7/7: libc 25, ldso 1, ldso x86 10,941, dispatcher 678, dispatcher lines 10,357, Python 557 files / 266,174 lines. Dynamic startup syscalls 8 vs 11; static 9. | final-tip prepare, four installed-product case families, static 72-path, hardened, counts, parity, campaign-status, structure all PASS | D16 startup/dlopen/loader-TLS-growth instruction standing blockers; TLS-growth retains one required worker-TCB `munmap`; D14 CPU/memory deferred (host load 26.9); 5 load-dependent nondeterministic rows |
 
-**Status — winding down (2026-11-01).** Follow-up rows S3a-ldso, D10, S4 static TLS, S4 stdio, the TCB fold, the
-static pthread harness and the test-drift lane are landed, and the hardened gap
-is fixed. The remaining S5 failures are the D16 startup/dlopen/TLS-growth
-instruction rows and the D14 quiet-host CPU/memory rerun. The loader-syscall and
-TCB-fold additions take ldso x86 to 11,161 non-comment lines, within the D17
-budget, and the dispatcher is 10,245 lines with 678 help-listed subcommands, so
-structure is 7/7. The loader syscall excess, the last required TCB `munmap`, the
-four focused static pthread failures, and the two pre-existing Python module
-failures are gone.
+**Status — paused 2026-11-01.** Resume prompt: "Resume the crabc simplification
+campaign from plan.md Status; no allocator work." First command:
+`./scripts/dev-x86_64.sh campaign-status`. Last green integration revision:
+`b9919d519` on `main` (both Python modules, parity validator, structure and
+campaign-status pass); current `main` adds only the winddown and pause docs. S5
+is not accepted: `startup`, `dlopen_graph` and `loader_dynamic_tls_growth` still
+exceed the D16 instruction ratios, and the D14 CPU/memory gate is deferred until
+the owner confirms a quiet host. Next slice: rerun the full 58-row counts and the
+D14 gate on a quiet host; start nothing else. Parked work: 13 `cohort/*`, 7
+`lane/*` and 2 `parked/winddown-20261026-*` worktrees under `.work/wt/`, plus 156
+branch-only lanes (`cohort/*`, `lane/*`, `parked/*`, `recovery/*`, `review/*`,
+`proof/*`, `archive/*`, `integration/os82`). Cause: superseded or unverified
+pre-reset lanes. Retry only on explicit owner direction after S5. All 22
+worktrees are clean and registered; `git worktree list` is authoritative.
+Custody rules: `docs/lanes.md`. Open owner decision: remove the two dead loader
+runners (`run_ldso_bounded_dlopen.sh`, `run_ldso_dladdr_symbol_bounds.sh`) or
+keep them.
 
 ### Owner decisions after S5 (2026-10-31, resumed)
 
