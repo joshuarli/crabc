@@ -2347,108 +2347,6 @@ support.
 kernel signal-action record packer and syscall-15 restorer. Its source-only
 runner does not itself install or deliver a handler; the selected
 `libc-signal-control` artifact owns the narrow public action/set/mask surface.
-`ldso-relocation` compiles only the unintegrated checked relocation source.
-`ldso-image` compiles only the unintegrated checked ELF image parser.
-`ldso-initial-graph` builds one private self-relocating ET_DYN interpreter and
-one fixed main PIE -> mid.so -> leaf.so graph. It selects only RELATIVE,
-GLOB_DAT, and JUMP_SLOT relocation, absolute fixture RUNPATH lookup,
-dependency DSO init arrays, and interpreter-and-graph PT_GNU_RELRO sealing;
-the runner rejects malformed-file-range/TLS/relocation/tag/flag/main-init
-mutations. It is not a general x86 ldso, CRT, loader TLS, dlfcn, sysroot, or
-public-support claim.
-`ldso-initial-tls` is a separate private Variant-II GNU-Dynamic TLS graph:
-one TLS-free main and two TLS DSOs prove initial PT_TLS copying, TBSS,
-alignment, DTPMOD/DTPOFF plus `__tls_get_addr`, and fail-closed malformed
-TLS/TPOFF/static-TLS inputs. It remains neither general loader or pthread
-TLS, dynamic CRT/sysroot, nor public x86 support.
-`ldso-initial-exec-tls` is its cfg-isolated fixed-topology sibling: the same
-main -> mid -> leaf graph admits `DF_STATIC_TLS` and one leaf-local
-`R_X86_64_TPOFF64` definition while retaining GNU-Dynamic DTPMOD/DTPOFF
-accesses. It rejects a missing/extra static-TLS flag, a nonzero TPOFF addend,
-and all other initial-exec/TLSDESC forms. It remains private loader evidence,
-not general static-TLS/pthread support, an installed dynamic runtime,
-CRT/sysroot, or public x86 support.
-`ldso-owned-crt-handoff` is a separate private post-relocation sibling of the
-no-TLS initial graph. One Rust-produced Scrt1.o main weakly imports one
-RELRO-sealed v1 record after direct entry; it defers only the two fixed DSO
-init arrays to that record, never `%rdx`, and proves clean-environment,
-absent-record, malformed-record, and out-of-order-finalizer boundaries. It
-does not select a general loader, DSO finalization, candidate libc, dynamic
-CRT/sysroot, or public x86 support.
-`ldso-fixed-graph-dlfcn` is another private no-TLS sibling. Its exact weak-main
-64-byte callback record gives only the already-loaded main/mid/leaf graph
-stable reference tokens, scoped symbol lookup, and copied address/snapshot/
-information results. It rejects strong-main and weak-DSO record imports,
-unknown names, stale or forged handles, and global promotion; close never finalizes or unmaps startup
-objects. It is not public dlfcn, runtime mapping/search, process RuntimeV1,
-candidate libc, a general loader, dynamic CRT/sysroot, or public x86 support.
-`ldso-public-dlfcn` links the staged static x86 libc archive into a real PIE and
-exports the musl-shaped public dlopen/dlsym/dlclose/dlerror plus
-dladdr/dlinfo/dl_iterate_phdr surface over that exact loader record. Its
-32-live-thread TID-keyed diagnostic table does not require loader TLS. The gate
-proves public C/C++ ABI layouts, per-thread one-shot errors, the pinned-musl
-live-handle-within-the-32-slot-bound `dlinfo(-7)` output-preserving exact
-`Unsupported request -7` diagnostic that survives one valid `RTLD_DI_LINKMAP`
-call, the pinned-musl `dlclose(NULL) == 1` exact `Invalid library handle 0`
-diagnostic, and a live retained-handle empty-name `dlsym` null result with exact
-`Symbol not found: ` only after the bounded loader confirms `loader symbol name
-is invalid`; non-empty missing names, null symbol pointers, and invalid handles
-retain existing loader paths. A seeded writable `Dl_info` also proves the
-pinned-musl `dladdr(NULL)` zero result leaves the record and `dlerror` clear;
-the candidate also preserves a non-null no-image record only when its fixed
-graph confirms `loader address not found`, while malformed/unavailable records
-continue to clear output and fail closed. The gate also proves that only this
-non-runtime public bridge returns musl's permanent main
-handle with clear `dlerror` for `dlopen(NULL, RTLD_NOLOAD)` before mode
-processing; the bounded runtime-mapping sibling retains its bare NULL/NOLOAD
-initial-object rejection. Musl `ldso/dynlink.c:dl_iterate_phdr` invokes a
-callback before taking its next-image reader lock; after the existing
-unknown-object failure, the first callback consumes that nonempty same-thread
-diagnostic, returns `74`, and leaves the next `dlerror` null. This is not
-callback-driven mapping, graph mutation, or general loader reentrancy. The
-gate also proves stale handles, malformed and absent records, and copied
-introspection, while continuing to exclude search, mutation, global promotion,
-RTLD_NEXT, finalization, and unload.
-It remains a staged fixed-graph artifact, not capability or platform promotion.
-`ldso-dladdr-symbol-bounds` is a separate no-TLS fixed-graph differential for
-one pinned-musl `dladdr` boundary: a four-byte public leaf dynamic object names
-its exact and interior addresses, while its one-past private mapped padding
-retains only the containing image name/base and has null symbol fields. It
-ratchets the existing seven-symbol static archive without adding a declaration
-or loader operation, proves malformed and absent records fail closed, and does
-not select dynamic lookup, mapping, unload, dlfcn capability, or public x86
-support.
-`ldso-bounded-dlopen` admits one append-only runtime mapping through the main
-image's already-validated absolute RUNPATH. It proves serialized concurrent
-open, one validated executable legacy `DT_INIT` entry followed by its bounded
-constructor array, each exactly once, plus one validated but inert legacy
-`DT_FINI` target, retained dependencies, copied four-image introspection, and
-bounded `RTLD_NOLOAD` acquisitions of only that published runtime basename.
-Those legacy tags are limited to the appended DSO: initial main/mid/leaf
-`DT_INIT`/`DT_FINI` remain reject-only, and a malformed runtime target fails
-before publication. Pinned musl leaves the admitted legacy fini target inert
-on ordinary final close; `DT_FINI_ARRAY` remains reject-only.
-The same fourth-slot DSO may carry one bounded `DT_PREINIT_ARRAY`/
-`DT_PREINIT_ARRAYSZ` pair as inert metadata: pinned musl and the candidate
-leave its entries undispatched, while an out-of-load pair fails before
-publication. Initial main/mid/leaf preinit tags remain reject-only.
-Before publication, `NULL`, and named initial-graph identities fail closed
-without mapping; PT_TLS/malformed rejection and a hard one-object capacity
-remain enforced. `RTLD_NODELETE` is a lifecycle-neutral accepted flag
-only for the same appended object: process-lifetime mapping already retains it,
-while closed explicit tokens still go stale. It does not provide general search, recursive
-dependency mapping, TLS growth, global promotion, RTLD_NEXT, `DT_FINI_ARRAY`,
-finalization/unload, general already-loaded-object queries, capability
-selection, or public x86 support.
-`ldso-dynamic-admission` executes the initial no-TLS, GNU-Dynamic TLS, owned-
-CRT, copied-introspection, retained-object-dlfcn, public-C-bridge and finite-
-symbol-dladdr fixed-graph,
-and bounded runtime-mapping/DT_INIT/inert-DT_FINI/DT_PREINIT_ARRAY/RTLD_NOLOAD/RTLD_NODELETE
-fixtures as one consumed admission gate. Their fresh candidate ELF inspection
-and negative launches retain only the explicit accepted shapes and rejected
-metadata, relocation, record, handle, and scope forms. It is not a general x86 ldso,
-public dlfcn, runtime mapping/search, dynamic CRT/sysroot, or public-support
-claim.
 None of the other C-runtime commands is a crabc-libc or crabc-ldso build,
 general facade admission, or C ABI support claim.
   libc-ether-line  run the static x86 crabc-libc legacy Ethernet-line slice
@@ -6456,18 +6354,9 @@ case "$command" in
     pthread-header-source-form) ;;
     atomic-addressable-abi) ;;
     project-header-extension-policy) ;;
-    image|musl-oracle|header-abi-reference|public-header-surface|header-abi-project|mm-abi-reference|mapping-reference|memory-vm-reference|pty-basic-reference|terminal-reference|mlock-reference|msync-reference|mincore-reference|fs-advice-reference|memfd-reference|ftruncate-reference|statfs-reference|timestamp-reference|path-lifecycle-reference|namespace-reference|path-core-reference|xattr-reference|directory-reference|temporary-object-reference|statx-reference|cwd-canonicalize-reference|root-change-reference|mount-reference|thread-kill-reference|signal-altstack-reference|signal-thread-queue-reference|ipc-reference|shm-reference|inotify-reference|socket-transport-reference|interface-device-reference|resolver-transport-reference|resolver-facade-reference|netdb-reference|users-databases-reference|posix-fallocate-reference|fallocate-reference|file-position-reference|sync-reference|syncfs-reference|sync-file-range-reference|rand-reference|time-abi-reference|time-observation-reference|calendar-time-reference|advanced-time-reference|relative-sleep-reference|clock-nanosleep-reference|getitimer-reference|setitimer-reference|timerfd-reference|pselect-reference|poll-reference|ppoll-reference|epoll-reference|process-identity-reference|child-ownership-reference|getgroups-reference|process-session-reference|pidfd-open-reference|fcntl-getlk-reference|fcntl-status-reference|flock-reference|sendfile-reference|copy-file-range-reference|scheduler-priority-bounds-reference|rr-interval-reference|sched-affinity-reference|sched-affinity-set-reference|priority-reference|setpriority-reference|rlimit-reference|rlimit-targeted-reference|setrlimit-reference|umask-reference|rusage-reference|times-reference|fstat-reference|statat-reference|getcwd-reference|readlinkat-reference|access-reference|system-reference|thread-reference|thread-credentials-reference|fs-credentials-reference|core|facade|facade-record-owning|libc-syscall|libc-errno-tls|libc-stat-compat|libc-credentials|libc-bootstrap-primitives|libc-signal-control|libc-signal-execution|libc-static-tls-v1|libc-crt-static-tls|libc-pthread-create-join-tls|libc-c11-lifecycle|libc-c11-plain-sync|libc-pthread-c11-once|libc-pthread-c11-tsd|libc-pthread-tls-aggregate|libc-pthread-cancel-deferred|libc-pthread-atfork|libc-thrd-sleep|libc-pthread-mutex-normal|libc-pthread-rwlock|libc-pthread-cond-private|libc-termios-control|libc-process-context|libc-environment|libc-descriptor-io|libc-descriptor-lifecycle|libc-timestamp-updates|libc-process-resources|libc-socket-transport|libc-socket-messages|libc-thread-pointer|libc-foundation|libc-fenv|libc-math-complex|libc-elementary-sqrt-fenv|libc-math-x87-extended|libc-math-long-double-completion|libc-math-elementary-fenv-sensitive|libc-memory|libc-setjmp|libc-atomic|libc-clone-raw|libc-signal-altstack|libc-signal-foundation|ldso-relocation|ldso-image|ldso-initial-graph|ldso-general-initial-graph|ldso-general-initial-target-root|ldso-general-initial-tls|ldso-general-initial-tls-target-root|ldso-initial-tls|ldso-initial-exec-tls|ldso-owned-crt-handoff|ldso-fixed-graph-introspection|ldso-dynamic-admission|libc-stack-chk-fail) ;;
+    image|musl-oracle|header-abi-reference|public-header-surface|header-abi-project|mm-abi-reference|mapping-reference|memory-vm-reference|pty-basic-reference|terminal-reference|mlock-reference|msync-reference|mincore-reference|fs-advice-reference|memfd-reference|ftruncate-reference|statfs-reference|timestamp-reference|path-lifecycle-reference|namespace-reference|path-core-reference|xattr-reference|directory-reference|temporary-object-reference|statx-reference|cwd-canonicalize-reference|root-change-reference|mount-reference|thread-kill-reference|signal-altstack-reference|signal-thread-queue-reference|ipc-reference|shm-reference|inotify-reference|socket-transport-reference|interface-device-reference|resolver-transport-reference|resolver-facade-reference|netdb-reference|users-databases-reference|posix-fallocate-reference|fallocate-reference|file-position-reference|sync-reference|syncfs-reference|sync-file-range-reference|rand-reference|time-abi-reference|time-observation-reference|calendar-time-reference|advanced-time-reference|relative-sleep-reference|clock-nanosleep-reference|getitimer-reference|setitimer-reference|timerfd-reference|pselect-reference|poll-reference|ppoll-reference|epoll-reference|process-identity-reference|child-ownership-reference|getgroups-reference|process-session-reference|pidfd-open-reference|fcntl-getlk-reference|fcntl-status-reference|flock-reference|sendfile-reference|copy-file-range-reference|scheduler-priority-bounds-reference|rr-interval-reference|sched-affinity-reference|sched-affinity-set-reference|priority-reference|setpriority-reference|rlimit-reference|rlimit-targeted-reference|setrlimit-reference|umask-reference|rusage-reference|times-reference|fstat-reference|statat-reference|getcwd-reference|readlinkat-reference|access-reference|system-reference|thread-reference|thread-credentials-reference|fs-credentials-reference|core|facade|facade-record-owning|libc-syscall|libc-errno-tls|libc-stat-compat|libc-credentials|libc-bootstrap-primitives|libc-signal-control|libc-signal-execution|libc-static-tls-v1|libc-crt-static-tls|libc-pthread-create-join-tls|libc-c11-lifecycle|libc-c11-plain-sync|libc-pthread-c11-once|libc-pthread-c11-tsd|libc-pthread-tls-aggregate|libc-pthread-cancel-deferred|libc-pthread-atfork|libc-thrd-sleep|libc-pthread-mutex-normal|libc-pthread-rwlock|libc-pthread-cond-private|libc-termios-control|libc-process-context|libc-environment|libc-descriptor-io|libc-descriptor-lifecycle|libc-timestamp-updates|libc-process-resources|libc-socket-transport|libc-socket-messages|libc-thread-pointer|libc-foundation|libc-fenv|libc-math-complex|libc-elementary-sqrt-fenv|libc-math-x87-extended|libc-math-long-double-completion|libc-math-elementary-fenv-sensitive|libc-memory|libc-setjmp|libc-atomic|libc-clone-raw|libc-signal-altstack|libc-signal-foundation|libc-stack-chk-fail) ;;
     libc-math-elementary-long-double) ;;
-    ldso-fixed-graph-dlfcn) ;;
-    ldso-public-dlfcn|ldso-dladdr-symbol-bounds) ;;
     ldso-static-dlfcn) ;;
-    ldso-bounded-dlopen) ;;
-    loader-libc-tls-runtime-v1) ;;
-    loader-libc-tls-runtime-v1-registry) ;;
-    loader-libc-general-tls-runtime-v1) ;;
-    loader-libc-general-tls-runtime-v1-target-root) ;;
-    dynamic-main-thread-runtime-v1) ;;
-    dynamic-main-thread-runtime-v1-target-root) ;;
     general-dynamic-lifecycle) ;;
     general-dynamic-dlopen) ;;
     general-dynamic-failed-open) ;;
@@ -6475,7 +6364,6 @@ case "$command" in
     libc-math-special) ;;
     libc-math-exp2|libc-math-expm1|libc-math-log10|libc-math-exp10|libc-math-log|libc-math-sin|libc-math-tan|libc-math-tanh|libc-math-atanh|libc-math-acosh|libc-math-sincos|libc-math-pow) ;;
     libc-network-byte-order|libc-dn-skipname|libc-dn-expand|libc-ns-flagdata|libc-ns-get16|libc-ns-get32|libc-ns-put16|libc-ns-put32|libc-ns-skiprr|libc-nameser-wire-aggregate|libc-nameser-message-parser) ;;
-    ldso-target-root) ;;
     libc-fenv-rounding) ;;
     math-scalar-corrections) ;;
     libc-owned-scalar-math) ;;

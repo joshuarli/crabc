@@ -950,7 +950,7 @@ class X86ParityLedgerTests(unittest.TestCase):
             self.assertIn(phrase, artifact["description"])
         self.assertEqual(
             {entry["command"] for entry in artifact["native_evidence"]},
-            {"./scripts/dev-x86_64.sh ldso-public-dlfcn"},
+            {"./scripts/dev-x86_64.sh owned-loader-inventory"},
         )
         prerequisites = " ".join(artifact["x86_abi_prerequisites"])
         for phrase in (
@@ -1038,7 +1038,6 @@ class X86ParityLedgerTests(unittest.TestCase):
         self.assertEqual(
             set(artifact["source_owners"]),
             {
-                "ldso/src/x86_64_initial_graph_source_root.rs",
                 "ldso/src/x86_64_initial_graph.rs",
                 "libc/src/c_abi/x86_64/fixed_graph_dlfcn.rs",
                 "libc/src/c_abi/x86_64/fixed_graph_dlfcn_runtime.rs",
@@ -1051,9 +1050,9 @@ class X86ParityLedgerTests(unittest.TestCase):
                 "compat/x86_64/ldso_public_dlfcn_start.S",
                 "compat/x86_64/ldso_public_dlfcn_probe.c",
                 "compat/x86_64/ldso_public_dlfcn_header_probe.cpp",
-                "compat/x86_64/run_ldso_public_dlfcn.sh",
+                "compat/x86_64/run_owned_ldso_initial_graph_cases.sh",
                 "compat/x86_64/ldso_bounded_dlopen_probe.c",
-                "compat/x86_64/run_ldso_bounded_dlopen.sh",
+                "compat/x86_64/run_owned_ldso_runtime_v1_cases.sh",
                 "scripts/dev-x86_64.sh",
             },
         )
@@ -1103,12 +1102,11 @@ class X86ParityLedgerTests(unittest.TestCase):
             self.assertIn(phrase, artifact["description"])
         self.assertEqual(
             {entry["command"] for entry in artifact["native_evidence"]},
-            {"./scripts/dev-x86_64.sh ldso-dladdr-symbol-bounds"},
+            {"./scripts/dev-x86_64.sh owned-loader-libc-identity"},
         )
         self.assertEqual(
             set(artifact["source_owners"]),
             {
-                "ldso/src/x86_64_initial_graph_source_root.rs",
                 "ldso/src/x86_64_initial_graph.rs",
                 "libc/src/c_abi/x86_64/fixed_graph_dlfcn.rs",
                 "libc/src/c_abi/x86_64/fixed_graph_dlfcn_runtime.rs",
@@ -1119,7 +1117,7 @@ class X86ParityLedgerTests(unittest.TestCase):
                 "compat/x86_64/ldso_dladdr_symbol_bounds_dso.c",
                 "compat/x86_64/ldso_dladdr_symbol_bounds_mid.c",
                 "compat/x86_64/ldso_dladdr_symbol_bounds_probe.c",
-                "compat/x86_64/run_ldso_dladdr_symbol_bounds.sh",
+                "compat/x86_64/run_owned_ldso_runtime_v1_cases.sh",
                 "scripts/dev-x86_64.sh",
             },
         )
@@ -1180,7 +1178,7 @@ class X86ParityLedgerTests(unittest.TestCase):
             self.assertIn(phrase, artifact["description"])
         self.assertEqual(
             {entry["command"] for entry in artifact["native_evidence"]},
-            {"./scripts/dev-x86_64.sh ldso-bounded-dlopen"},
+            {"./scripts/dev-x86_64.sh owned-crt-dynamic-startup"},
         )
         self.assertIn(
             "candidate copied-snapshot invariance and pinned-musl dlpi_adds reference difference",
@@ -1223,7 +1221,6 @@ class X86ParityLedgerTests(unittest.TestCase):
         self.assertEqual(
             set(artifact["source_owners"]),
             {
-                "ldso/src/x86_64_initial_graph_source_root.rs",
                 "ldso/src/x86_64_initial_graph.rs",
                 "libc/src/c_abi/x86_64/fixed_graph_dlfcn.rs",
                 "libc/src/c_abi/x86_64/fixed_graph_dlfcn_runtime.rs",
@@ -1236,7 +1233,7 @@ class X86ParityLedgerTests(unittest.TestCase):
                 "compat/x86_64/ldso_bounded_dlopen_probe.c",
                 "compat/x86_64/ldso_bounded_dlopen_preinit_probe.c",
                 "compat/x86_64/ldso_bounded_dlopen_fini_probe.c",
-                "compat/x86_64/run_ldso_bounded_dlopen.sh",
+                "compat/x86_64/run_owned_ldso_runtime_v1_cases.sh",
                 "scripts/dev-x86_64.sh",
             },
         )
