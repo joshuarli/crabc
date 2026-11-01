@@ -46,6 +46,8 @@ same command retain the source-only relocation, image, state and TLS checks.
 | `dynamic-main-thread-runtime-v1` | `ldso-loader-libc-tls-runtime-v1` installed case |
 | `dynamic-main-thread-runtime-v1-target-root` | `ldso-loader-libc-tls-runtime-v1` installed case |
 | `ldso-target-root` | The installed product is the only x86 loader root; the four cases above run it directly |
+| `general-relocations` | `elf-scope-alias`, `dlopen-pie`/`dlopen-non-pie` and `ldso-general-initial-tls` installed cases; [`general_relocations.md`](../../compat/x86_64/general_relocations.md) |
+| `general-dynamic-lifecycle` | `ldso-general-loader-lifecycle` installed case (`run_owned_ldso_lifecycle_cases.sh`); [`general_loader_lifecycle.md`](../../compat/x86_64/general_loader_lifecycle.md) |
 
 The ten private fixed-graph entries were removed from
 `compat/x86_64/parity.toml`: `ldso-fixed-graph-introspection`,

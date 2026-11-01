@@ -1150,12 +1150,11 @@ accepts the default-archive change.
 
 ## Result table
 
-**S0–S4 landed. S5 acceptance was attempted and rejected by the independent
-review; its result is recorded below as a failure, not a pass.** Numbers are
-against the budgets above. `allocator-attributed` costs are listed, never
-passed. D18 later deferred the remaining instruction and CPU/memory gates, so
-S5 acceptance on the structure, correctness and hardening dimensions is now an
-owner decision; the deferred gates remain unmeasured, not passed.
+**S0–S4 landed. S5 attempts were rejected twice; the final re-run at
+`1faf5ab6f` is accepted on the structure, correctness and hardening dimensions
+after independent review.** Numbers are against the budgets above.
+`allocator-attributed` costs are listed, never passed. D18 deferred the
+remaining instruction and CPU/memory gates; they remain unmeasured, not passed.
 
 | Step | Merged at | Numbers vs budget | Checks | Blockers |
 | --- | --- | --- | --- | --- |
@@ -1184,30 +1183,30 @@ owner decision; the deferred gates remain unmeasured, not passed.
 | Test drift | `dff45cb88` | 23 loader commands retired by `8672fe86e` were still admitted and silently exited 0; removed their admission arms and 102 lines of stale help prose. The dispatcher closed-set audit and the two Python modules now match the ledger's intentional `owned-*` evidence commands and source owners | both modules exit 0 on the merged tip (91 tests/1 skip; 80 tests); parity validator PASS (26 families); `campaign-status`; `check_structure` PASS; `bash -n`; retired-name scan; `git diff --check` | the two dead loader runners left for a separate cleanup decision are now removed; D16/D14 still block S5 |
 | S5 (second attempt) | `b255ccf2e` rejected | **NOT ACCEPTED.** 58 selected rows: 50 pass, 3 fail (`startup` 1.8886, `dlopen_graph` 1.6073, `loader_dynamic_tls_growth` 2.5703 after the fixed-N counts fix), 5 nondeterministic (128m matrices and `pthread_create_join_tls` under load), 0 unavailable. Structure 7/7: libc 25, ldso 1, ldso x86 10,941, dispatcher 678, dispatcher lines 10,357, Python 557 files / 266,174 lines. Dynamic startup syscalls 8 vs 11; static 9. | final-tip prepare, four installed-product case families, static 72-path, hardened, counts, parity, campaign-status, structure all PASS | D16 startup/dlopen/loader-TLS-growth instruction standing blockers; TLS-growth retains one required worker-TCB `munmap`; D14 CPU/memory deferred (host load 26.9); 5 load-dependent nondeterministic rows |
 | S5 counts rerun | no commit, `e6fc6bf6c` | 58 rows: 49 pass, 2 fail (`startup` 1.8898, `dlopen_graph` 1.5984), 7 nondeterministic under load (`loader_dynamic_tls_growth` 2.5611, four 128m matrices, `memcpy_256k_unaligned`, `pthread_create_join_tls`); no judged syscall total exceeds its reference. Product sources identical to `025e104b2` | `perf-c counts` on `e6fc6bf6c`; `.work/tmp/tcb-merged/installed`; development report `.work/x86_64/resume-counts/counts.json` | D16/D14 deferred by D18; counts diagnostic only |
+| S5 (accepted) | `1faf5ab6f` | **Structure 7/7:** libc features 25/25; ldso features 1/2; ldso x86 11,160/11,161; dispatcher 676/720; dispatcher lines 10,227/11,000; Python 556/566; Python lines 265,615/270,000. Dynamic products: 231/231 cases across installed, second and extracted; identical manifest `17357c58…`. Static product: declared 72-path suite. Syscall evidence is the diagnostic 58-row dynamic run at `e6fc6bf6c`: no judged total exceeds musl (startup judged 8 vs 11); static startup total 9 is within its 9-call budget, judged 4 vs musl 4. D18 did not re-run either at the final tip. D18: `startup` 1.8898, `dlopen_graph` 1.5984 and `loader_dynamic_tls_growth` 2.5611 are not passes; D14 CPU/memory unmeasured. | Prepare PASS (59+163 tests); full dynamic roster PASS (`qualification.json`); static 83 tests (1 skip) and 28/28 consumer jobs PASS; hardened PASS; parity ledger 26 families, structure, campaign-status, TLS runtime validator and 9 focused unit modules PASS; forbidden diff `0780439b3..HEAD` empty; independent review PASS. | none for structure/correctness/hardening; D16 instruction ratios and D14 CPU/memory remain deferred and unclaimed (D18). |
 
-**Status — performance gates deferred 2026-11-01.** Resume prompt: "Resume the
-crabc simplification campaign from plan.md Status; no allocator work." First
-command: `./scripts/dev-x86_64.sh campaign-status` (exits 0). Last green
-integration revision: `b9919d519` on `main`; `main` since then adds the pause
-status, the dead loader-runner removal and a diagnostic counts rerun. The owner
-deferred the remaining performance gates under D18: the D16 instruction ratios
-and the D14 CPU/memory re-acceptance are not run for S5 and are not passes. The
-fresh 58-row counts above stay diagnostic. S5 is not yet recorded as accepted;
-structure, correctness and hardening are the remaining dimensions, and that
-acceptance decision is the owner's. Start no new performance work. Parked work:
-13 `cohort/*`, 7
-`lane/*` and 2 `parked/winddown-20261026-*` worktrees under `.work/wt/`, plus 156
-branch-only lanes (`cohort/*`, `lane/*`, `parked/*`, `recovery/*`, `review/*`,
-`proof/*`, `archive/*`, `integration/os82`). Cause: superseded or unverified
-pre-reset lanes. Retry only on explicit owner direction after S5. All 22
-worktrees are clean and registered; `git worktree list` is authoritative.
-Custody rules: `docs/lanes.md`. The two dead loader runners named in the
-test-drift lane were removed; no owner decision remains open there.
+**Status — S5 accepted 2026-11-01 on structure, correctness and hardening.**
+Resume prompt: "Resume the crabc simplification campaign from plan.md Status; no
+allocator work." First command: `./scripts/dev-x86_64.sh campaign-status`
+(exits 0). Product evidence is bound to `1faf5ab6f`; the result row and this
+status are a docs-only commit after it. The owner deferred the remaining
+performance gates under D18: the D16 instruction ratios and the D14 CPU/memory
+re-acceptance are not measured for S5 and are not passes. The 58-row counts at
+`e6fc6bf6c` stay diagnostic. Start no new performance work. Parked work: 7
+`lane/*` and 2 `parked/winddown-20261026-*` worktrees under `.work/wt/`, plus 230
+refs under the `cohort/*`, `lane/*`, `parked/*`, `recovery/*`, `review/*`,
+`proof/*`, `archive/*` and `integration/os82` names (178 not merged into
+`main`). Cause: superseded or unverified pre-reset lanes. The 13 `cohort/*` checkouts were retired on 2026-11-01 after
+their reports were preserved under `.work/retained/` and every branch ref was
+kept; only the 9 lanes above remain registered. Retry only on explicit owner
+direction. `git worktree list` is authoritative. Custody rules:
+`docs/lanes.md`. The two dead loader runners named in the test-drift lane were
+removed; no owner decision remains open there.
 
-### Owner decisions after S5 (2026-10-31, resumed)
+### Decisions from the rejected S5 attempts (2026-10-31)
 
-The S5 attempt stands rejected. Each unmet dimension now has an owner decision
-and a lane:
+The earlier S5 attempts were rejected; each unmet dimension got an owner
+decision and a lane, and the remaining work produced the acceptance above.
 
 1. **Startup instructions — D10.** Eager allocator init is 169,278 of 244,878
    dynamic startup instructions (69.1 %) and 169,387 of 174,109 static
@@ -1247,9 +1246,9 @@ nondeterministic rows left. Structure, loader, static-TLS, stdio, hardened
 evidence and the remaining selected rows are addressed. The later
 loader-syscall, TCB-fold, static-pthread-harness and test-drift lanes removed
 the per-name syscall excess, the last required `munmap`, the four red static
-suites and the two red Python modules; the three instruction ratios remain, and
-ldso x86 is 11,161 non-comment lines within the D17 budget, so S5 is still not
-accepted.
+suites and the two red Python modules; the three instruction ratios remain
+deferred under D18, and ldso x86 is 11,160 non-comment lines within the D17
+budget. The final re-run at `1faf5ab6f` is the acceptance above.
 
 ## Non-goals
 
