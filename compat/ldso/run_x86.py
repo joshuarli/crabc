@@ -205,11 +205,14 @@ def checked_scratch_directory(root: pathlib.Path = ROOT) -> pathlib.Path:
 
 
 def checked_evidence_parent(path: pathlib.Path) -> pathlib.Path:
-    """Admit an existing physical evidence parent within checkout x86 work."""
+    """Admit an existing physical evidence parent within checkout .work."""
 
-    boundary = checked_scratch_directory()
+    boundary = ROOT / ".work"
+    if boundary.is_symlink() or not boundary.is_dir():
+        raise LoaderSyntheticError(f"checkout .work is missing or unsafe: {boundary}")
+    reject_symlink_components(boundary, "checkout .work")
     if not path.is_absolute() or not path.is_relative_to(boundary) or path == boundary:
-        raise LoaderSyntheticError("explicit evidence parent must be below checkout x86 work")
+        raise LoaderSyntheticError("explicit evidence parent must be below checkout .work")
     reject_symlink_components(path, "explicit evidence parent")
     if not path.is_dir() or path.resolve() != path:
         raise LoaderSyntheticError("explicit evidence parent must be a physical directory")
