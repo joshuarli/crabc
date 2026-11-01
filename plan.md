@@ -1192,14 +1192,16 @@ allocator work." First command: `./scripts/dev-x86_64.sh campaign-status`
 status are a docs-only commit after it. The owner deferred the remaining
 performance gates under D18: the D16 instruction ratios and the D14 CPU/memory
 re-acceptance are not measured for S5 and are not passes. The 58-row counts at
-`e6fc6bf6c` stay diagnostic. Start no new performance work. Parked work: 7
-`lane/*` and 2 `parked/winddown-20261026-*` worktrees under `.work/wt/`, plus 230
-refs under the `cohort/*`, `lane/*`, `parked/*`, `recovery/*`, `review/*`,
-`proof/*`, `archive/*` and `integration/os82` names (178 not merged into
-`main`). Cause: superseded or unverified pre-reset lanes. The 13 `cohort/*` checkouts were retired on 2026-11-01 after
-their reports were preserved under `.work/retained/` and every branch ref was
-kept; only the 9 lanes above remain registered. Retry only on explicit owner
-direction. `git worktree list` is authoritative. Custody rules:
+`e6fc6bf6c` stay diagnostic. Start no new performance work. Parked work: 3
+allocator-frozen `lane/*` worktrees under `.work/wt/`, plus 230 refs under the
+`cohort/*`, `lane/*`, `parked/*`, `recovery/*`, `review/*`, `proof/*`,
+`archive/*` and `integration/os82` names (178 not merged into `main`). Cause:
+superseded or unverified pre-reset lanes. The 13 `cohort/*` checkouts and the 6
+substantive pre-S0 lanes were retired on 2026-11-01 after their reports were
+preserved under `.work/retained/` and every branch ref was kept; the 6 lanes'
+product changes and tests are already present in `main`, so no branch merge was
+needed. Only the 3 allocator-frozen lanes remain registered. Retry only on
+explicit owner direction. `git worktree list` is authoritative. Custody rules:
 `docs/lanes.md`. The two dead loader runners named in the test-drift lane were
 removed; no owner decision remains open there.
 
