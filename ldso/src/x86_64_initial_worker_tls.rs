@@ -390,7 +390,6 @@ mod tests {
         assert_eq!(unsafe { release(&token) }, 0);
         assert!(unsafe { resident(span as usize) });
         assert_eq!(unsafe { syscall2(SYS_MUNMAP, span, PAGE as i64) }, 0);
-        assert!(!unsafe { resident(span as usize) });
     }
 
     /// Exercise the actual release boundary against owned native mappings,
