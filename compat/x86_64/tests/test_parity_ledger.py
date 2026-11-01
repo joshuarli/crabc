@@ -981,7 +981,7 @@ class X86ParityLedgerTests(unittest.TestCase):
             "dlopen(NULL, RTLD_NOLOAD=4)",
             "same permanent main token",
             "existing `RTLD_NOW` main route",
-            "run_ldso_bounded_dlopen.sh",
+            "isolated public-bridge build",
             "crabc_bounded_runtime_dlopen",
             "bare `NULL RTLD_NOLOAD` retains the runtime sibling's initial-object rejection",
             "ldso/dynlink.c:dl_iterate_phdr",
