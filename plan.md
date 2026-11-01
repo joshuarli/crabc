@@ -1163,16 +1163,19 @@ passed.
 | Static pthread harness | `015ef85a9` | four pre-existing red suites now PASS: create-join, cancel-deferred, detach, identity. Final static links localize weak aliases (`pthread_self`/`thrd_current`, `pthread_equal`/`thrd_equal`) and the deliberately hidden `__membarrier_init`; the archive weak bindings, same-address pairs and caller STB_GLOBAL override execution remain checked | all four suites exit 0 on the merged tip; parity validator PASS; `bash -n`; `git diff --check` | `test_runner` and `test_parity_ledger` still fail at base on unrelated command/evidence drift; separate lane needed |
 | Test drift | `dff45cb88` | 23 loader commands retired by `8672fe86e` were still admitted and silently exited 0; removed their admission arms and 102 lines of stale help prose. The dispatcher closed-set audit and the two Python modules now match the ledger's intentional `owned-*` evidence commands and source owners | both modules exit 0 on the merged tip (91 tests/1 skip; 80 tests); parity validator PASS (26 families); `campaign-status`; `check_structure` PASS; `bash -n`; retired-name scan; `git diff --check` | the two dead loader runners left for a separate cleanup decision are now removed; D16/D14 still block S5 |
 | S5 (second attempt) | `b255ccf2e` rejected | **NOT ACCEPTED.** 58 selected rows: 50 pass, 3 fail (`startup` 1.8886, `dlopen_graph` 1.6073, `loader_dynamic_tls_growth` 2.5703 after the fixed-N counts fix), 5 nondeterministic (128m matrices and `pthread_create_join_tls` under load), 0 unavailable. Structure 7/7: libc 25, ldso 1, ldso x86 10,941, dispatcher 678, dispatcher lines 10,357, Python 557 files / 266,174 lines. Dynamic startup syscalls 8 vs 11; static 9. | final-tip prepare, four installed-product case families, static 72-path, hardened, counts, parity, campaign-status, structure all PASS | D16 startup/dlopen/loader-TLS-growth instruction standing blockers; TLS-growth retains one required worker-TCB `munmap`; D14 CPU/memory deferred (host load 26.9); 5 load-dependent nondeterministic rows |
+| S5 counts rerun | no commit, `e6fc6bf6c` | 58 rows: 49 pass, 2 fail (`startup` 1.8898, `dlopen_graph` 1.5984), 7 nondeterministic under load (`loader_dynamic_tls_growth` 2.5611, four 128m matrices, `memcpy_256k_unaligned`, `pthread_create_join_tls`); no judged syscall total exceeds its reference. Product sources identical to `025e104b2` | `perf-c counts` on `e6fc6bf6c`; `.work/tmp/tcb-merged/installed`; development report `.work/x86_64/resume-counts/counts.json` | D16 instruction ratios; D14 not run (host load 5.4–6.9, policy ≤1.0) |
 
-**Status — paused 2026-11-01.** Resume prompt: "Resume the crabc simplification
+**Status — resumed 2026-11-01.** Resume prompt: "Resume the crabc simplification
 campaign from plan.md Status; no allocator work." First command:
-`./scripts/dev-x86_64.sh campaign-status`. Last green integration revision:
-`b9919d519` on `main` (both Python modules, parity validator, structure and
-campaign-status pass); current `main` adds only the winddown and pause docs. S5
-is not accepted: `startup`, `dlopen_graph` and `loader_dynamic_tls_growth` still
-exceed the D16 instruction ratios, and the D14 CPU/memory gate is deferred until
-the owner confirms a quiet host. Next slice: rerun the full 58-row counts and the
-D14 gate on a quiet host; start nothing else. Parked work: 13 `cohort/*`, 7
+`./scripts/dev-x86_64.sh campaign-status` (exits 0). Last green integration
+revision: `b9919d519` on `main`; `main` since then adds the pause status, the
+dead loader-runner removal and a diagnostic counts rerun. S5 is not accepted:
+`startup`, `dlopen_graph` and `loader_dynamic_tls_growth` still exceed the D16
+instruction ratios. The fresh 58-row counts above were measured under host load;
+the D14 CPU/memory gate was not run because the host stayed at 1-min load
+5.4–6.9 against the ≤1.0 policy, driven by unrelated `hyper`, `xsh` and `ish`
+processes. Next slice: rerun the 58-row counts and the D14 gate on a quiet host;
+start nothing else. Parked work: 13 `cohort/*`, 7
 `lane/*` and 2 `parked/winddown-20261026-*` worktrees under `.work/wt/`, plus 156
 branch-only lanes (`cohort/*`, `lane/*`, `parked/*`, `recovery/*`, `review/*`,
 `proof/*`, `archive/*`, `integration/os82`). Cause: superseded or unverified
