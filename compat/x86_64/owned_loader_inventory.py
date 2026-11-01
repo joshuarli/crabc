@@ -617,7 +617,7 @@ _FEATURES: tuple[dict[str, object], ...] = (
         "name": "compiler_selected_loader_closure",
         "description": "Cargo's dep-info selects the bounded x86 loader closure for the installed artifact.",
         "sources": None,
-        "targets": ("ldso/src/x86_64_general_initial_tls_runtime_v1_source_root.rs",),
+        "targets": ("ldso/src/lib.rs",),
     },
     {
         "name": "installed_conventional_startup",

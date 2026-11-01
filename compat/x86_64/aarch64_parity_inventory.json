@@ -1505,7 +1505,7 @@
       "capability_count": 4,
       "contract_state": "selected-private",
       "id": "ldso.dynamic-runtime",
-      "verified_artifact_count": 16,
+      "verified_artifact_count": 6,
       "verified_slice_count": 4
     },
     {
@@ -1716,26 +1716,6 @@
     },
     {
       "family": "ldso.dynamic-runtime",
-      "id": "ldso-bounded-runtime-dlopen"
-    },
-    {
-      "family": "ldso.dynamic-runtime",
-      "id": "ldso-dynamic-fixed-graph-admission"
-    },
-    {
-      "family": "ldso.dynamic-runtime",
-      "id": "ldso-fixed-graph-dladdr-symbol-bounds"
-    },
-    {
-      "family": "ldso.dynamic-runtime",
-      "id": "ldso-fixed-graph-dlfcn"
-    },
-    {
-      "family": "ldso.dynamic-runtime",
-      "id": "ldso-fixed-graph-introspection"
-    },
-    {
-      "family": "ldso.dynamic-runtime",
       "id": "ldso-general-initial-graph"
     },
     {
@@ -1744,31 +1724,11 @@
     },
     {
       "family": "ldso.dynamic-runtime",
-      "id": "ldso-initial-exec-tls"
-    },
-    {
-      "family": "ldso.dynamic-runtime",
-      "id": "ldso-initial-graph"
-    },
-    {
-      "family": "ldso.dynamic-runtime",
-      "id": "ldso-initial-tls"
-    },
-    {
-      "family": "ldso.dynamic-runtime",
       "id": "ldso-owned-crt-handoff-publication"
     },
     {
       "family": "ldso.dynamic-runtime",
       "id": "ldso-owned-crt-handoff-wire"
-    },
-    {
-      "family": "ldso.dynamic-runtime",
-      "id": "ldso-public-fixed-graph-dlfcn"
-    },
-    {
-      "family": "ldso.dynamic-runtime",
-      "id": "ldso-target-root-admission"
     },
     {
       "family": "ldso.dynamic-runtime",

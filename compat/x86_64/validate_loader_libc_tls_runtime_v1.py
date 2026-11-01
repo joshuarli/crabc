@@ -151,10 +151,7 @@ DYNAMIC_MAIN_THREAD_RUNTIME_V1_BRIDGE = {
     "loader_finalizer_or_dependency_lifecycle": "not-implemented-and-not-implied",
     "general_dynamic_product": False,
     "capability_or_family_promotion": False,
-    "native_evidence": (
-        "compat/x86_64/run_owned_ldso_runtime_v1_cases.sh+"
-        "compat/x86_64/run_dynamic_main_thread_runtime_v1_target_root.sh"
-    ),
+    "native_evidence": "compat/x86_64/run_owned_ldso_runtime_v1_cases.sh",
 }
 
 VARIANT_II = {

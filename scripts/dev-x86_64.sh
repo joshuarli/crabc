@@ -779,8 +779,6 @@ Native Linux/x86-64 staged-foundation evidence commands:
   libc-atomic  run the source-only x86 atomic-helper probe
   libc-clone-raw  run the source-only x86 musl-shaped raw clone probe
   libc-signal-foundation  run the source-only x86 signal-action packing probe
-  general-dynamic-lifecycle  check general-loader owned CRT/libc initialization and process exit
-  general-relocations  check general COPY, symbol scope, and initial-exec TLS
   ldso-static-dlfcn [STATIC_SYSROOT]  compare the installed static product's loaderless dlfcn surface with musl libc.a
 
 This closed runner rejects non-native Linux/x86-64 hosts and does not provide
@@ -6208,10 +6206,6 @@ run_libc_math_elementary_fenv_sensitive_tests() {
     '
 }
 
-run_general_dynamic_lifecycle_tests() {
-    run_in_container bash /workspace/compat/x86_64/run_general_dynamic_lifecycle.sh
-}
-
 if [ "$#" -eq 0 ]; then
     usage >&2
     exit 2
@@ -6357,10 +6351,8 @@ case "$command" in
     image|musl-oracle|header-abi-reference|public-header-surface|header-abi-project|mm-abi-reference|mapping-reference|memory-vm-reference|pty-basic-reference|terminal-reference|mlock-reference|msync-reference|mincore-reference|fs-advice-reference|memfd-reference|ftruncate-reference|statfs-reference|timestamp-reference|path-lifecycle-reference|namespace-reference|path-core-reference|xattr-reference|directory-reference|temporary-object-reference|statx-reference|cwd-canonicalize-reference|root-change-reference|mount-reference|thread-kill-reference|signal-altstack-reference|signal-thread-queue-reference|ipc-reference|shm-reference|inotify-reference|socket-transport-reference|interface-device-reference|resolver-transport-reference|resolver-facade-reference|netdb-reference|users-databases-reference|posix-fallocate-reference|fallocate-reference|file-position-reference|sync-reference|syncfs-reference|sync-file-range-reference|rand-reference|time-abi-reference|time-observation-reference|calendar-time-reference|advanced-time-reference|relative-sleep-reference|clock-nanosleep-reference|getitimer-reference|setitimer-reference|timerfd-reference|pselect-reference|poll-reference|ppoll-reference|epoll-reference|process-identity-reference|child-ownership-reference|getgroups-reference|process-session-reference|pidfd-open-reference|fcntl-getlk-reference|fcntl-status-reference|flock-reference|sendfile-reference|copy-file-range-reference|scheduler-priority-bounds-reference|rr-interval-reference|sched-affinity-reference|sched-affinity-set-reference|priority-reference|setpriority-reference|rlimit-reference|rlimit-targeted-reference|setrlimit-reference|umask-reference|rusage-reference|times-reference|fstat-reference|statat-reference|getcwd-reference|readlinkat-reference|access-reference|system-reference|thread-reference|thread-credentials-reference|fs-credentials-reference|core|facade|facade-record-owning|libc-syscall|libc-errno-tls|libc-stat-compat|libc-credentials|libc-bootstrap-primitives|libc-signal-control|libc-signal-execution|libc-static-tls-v1|libc-crt-static-tls|libc-pthread-create-join-tls|libc-c11-lifecycle|libc-c11-plain-sync|libc-pthread-c11-once|libc-pthread-c11-tsd|libc-pthread-tls-aggregate|libc-pthread-cancel-deferred|libc-pthread-atfork|libc-thrd-sleep|libc-pthread-mutex-normal|libc-pthread-rwlock|libc-pthread-cond-private|libc-termios-control|libc-process-context|libc-environment|libc-descriptor-io|libc-descriptor-lifecycle|libc-timestamp-updates|libc-process-resources|libc-socket-transport|libc-socket-messages|libc-thread-pointer|libc-foundation|libc-fenv|libc-math-complex|libc-elementary-sqrt-fenv|libc-math-x87-extended|libc-math-long-double-completion|libc-math-elementary-fenv-sensitive|libc-memory|libc-setjmp|libc-atomic|libc-clone-raw|libc-signal-altstack|libc-signal-foundation|libc-stack-chk-fail) ;;
     libc-math-elementary-long-double) ;;
     ldso-static-dlfcn) ;;
-    general-dynamic-lifecycle) ;;
     general-dynamic-dlopen) ;;
     general-dynamic-failed-open) ;;
-    general-relocations) ;;
     libc-math-special) ;;
     libc-math-exp2|libc-math-expm1|libc-math-log10|libc-math-exp10|libc-math-log|libc-math-sin|libc-math-tan|libc-math-tanh|libc-math-atanh|libc-math-acosh|libc-math-sincos|libc-math-pow) ;;
     libc-network-byte-order|libc-dn-skipname|libc-dn-expand|libc-ns-flagdata|libc-ns-get16|libc-ns-get32|libc-ns-put16|libc-ns-put32|libc-ns-skiprr|libc-nameser-wire-aggregate|libc-nameser-message-parser) ;;
@@ -9940,11 +9932,6 @@ PY
         ensure_image
         run_libc_math_elementary_fenv_sensitive_tests
         ;;
-    general-dynamic-lifecycle)
-        [ "$#" -eq 0 ] || fail "general-dynamic-lifecycle takes no arguments"
-        ensure_image
-        run_general_dynamic_lifecycle_tests
-        ;;
     general-dynamic-dlopen)
         [ "$#" -eq 2 ] || fail "general-dynamic-dlopen requires an entry mode and dynamic sysroot"
         ensure_image
@@ -9957,11 +9944,6 @@ PY
         [ "$#" -eq 1 ] || fail "general-dynamic-failed-open requires one dynamic sysroot"
         ensure_image
         run_in_chroot_cap_container bash /workspace/compat/x86_64/run_general_dynamic_failed_open.sh "$1"
-        ;;
-    general-relocations)
-        [ "$#" -eq 0 ] || fail "general-relocations takes no arguments"
-        ensure_image
-        run_in_container bash /workspace/compat/x86_64/run_general_relocations.sh
         ;;
     ldso-static-dlfcn)
         ensure_image

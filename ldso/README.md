@@ -55,8 +55,10 @@ it defers initialization to the authenticated owned CRT/libc composition,
 after libc state and executable preinit are ready. This does not select
 runtime `dlopen`/`dlclose`, worker TLS, or installed dynamic products. See the
 [native lifecycle contract and evidence](../compat/x86_64/general_loader_lifecycle.md).
-The [owned dynamic startup/exit evidence](../compat/x86_64/general_dynamic_lifecycle.md)
-specifies the real startup composition and its remaining product boundary.
+The installed-product
+[lifecycle case](../compat/x86_64/run_owned_ldso_lifecycle_cases.sh) is the
+current startup/exit evidence; the private `general-dynamic-lifecycle`
+dispatcher fixture was retired with the single-image product.
 
 ## Usage
 

@@ -328,7 +328,7 @@ def check_operation_signatures(root: Path, consumer: str) -> dict[str, Any]:
     graph=(root/'ldso/src/x86_64_initial_graph.rs').read_text()
     require(_fields(graph,'TlsIndex')==['ti_module:usize','ti_offset:usize'],'module/offset token fields drifted')
     view=(root/'ldso/src/x86_64_runtime_tls_view.rs').read_text()
-    require(_fields(view,'RuntimeTlsView')==['mapping_bytes:usize','previous:*mut RuntimeTlsView',
+    require(_fields(view,'RuntimeTlsView')==['pub(super) byte_len:usize','previous:*mut RuntimeTlsView',
             'module_count:usize','dtv:*mut usize','sizes:*mut usize'],'source-defined worker view fields drifted')
     return observations
 
@@ -398,7 +398,7 @@ SCHEMA='crabc.x86_64-prepared-worker-tls-evidence/v2'
 SCENARIOS=('normal','explicit','detached','cancelled','fork-worker')
 PROBE='prepared_worker_tls_probe.c'
 DEPENDENCY='prepared_worker_tls_dependency.c'
-UNIT_ROOT='ldso/src/x86_64_general_initial_tls_runtime_v1_source_root.rs'
+UNIT_ROOT='ldso/src/lib.rs'
 UNIT_CFG=('feature="x86_64-owned-dynamic-runtime"','crabc_general_initial_graph',
           'crabc_general_initial_lifecycle','crabc_general_initial_tls_materialization_v1',
           'crabc_general_loader_libc_tls_runtime_v1','crabc_dynamic_main_thread_runtime_v1')

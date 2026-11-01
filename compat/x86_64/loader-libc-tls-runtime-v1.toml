@@ -132,7 +132,7 @@ pthread_or_clone_settls = "not-implemented-and-not-implied"
 loader_finalizer_or_dependency_lifecycle = "not-implemented-and-not-implied"
 general_dynamic_product = false
 capability_or_family_promotion = false
-native_evidence = "compat/x86_64/run_owned_ldso_runtime_v1_cases.sh+compat/x86_64/run_dynamic_main_thread_runtime_v1_target_root.sh"
+native_evidence = "compat/x86_64/run_owned_ldso_runtime_v1_cases.sh"
 
 # Linux/x86-64 Variant II: TLS images occupy addresses below TP and the TCB
 # starts at TP. The DTV pointer at %fs:8 is a private RuntimeV1 invariant;

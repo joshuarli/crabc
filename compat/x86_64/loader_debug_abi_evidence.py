@@ -456,7 +456,7 @@ class Collector:
                     'crabc_dynamic_main_thread_runtime_v1', 'feature="x86_64-owned-dynamic-runtime"']
         self.run('compile-loader-tests', ['rustc', '--edition=2021', '--test',
                  *[value for cfg in test_cfg for value in ('--cfg', cfg)],
-                 ROOT / 'ldso/src/x86_64_general_initial_tls_runtime_v1_source_root.rs', '-o', loader_tests])
+                 ROOT / 'ldso/src/lib.rs', '-o', loader_tests])
         self.keep('loader-tests', loader_tests)
         self.run('loader-tests', [loader_tests])
         oracle = qualification.capture_oracle(self.output)

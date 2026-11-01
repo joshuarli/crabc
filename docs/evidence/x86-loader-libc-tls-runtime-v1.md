@@ -10,6 +10,14 @@ DSO. It does not claim that static TLS, normal fixed initial-TLS, ordinary
 general initial-TLS materialization, or pthread worker fixtures implement the
 general RuntimeV1 lifecycle.
 
+> **Current evidence (2026-11-01).** The private `*_source_root.rs` roots and
+> the `ldso-general-initial-*` / `dynamic-main-thread-runtime-v1*` commands
+> described below were retired with the x86 product fold in `8672fe86e`. The
+> current installed-product evidence is the four
+> `compat/x86_64/run_owned_ldso_{initial_graph,initial_tls,lifecycle,runtime_v1}_cases.sh`
+> runners, exercised through `materialized-dynamic-sysroot --resume`. The
+> sections below retain the historical design rationale.
+
 Run the fail-closed contract check with:
 
 ```text
@@ -153,10 +161,10 @@ array. The existing direct and Cargo-root general graph and general-TLS
 runners exercise the common owner across both roots:
 
 ```text
-./scripts/dev-x86_64.sh ldso-general-initial-graph
-./scripts/dev-x86_64.sh ldso-general-initial-target-root
-./scripts/dev-x86_64.sh ldso-general-initial-tls
-./scripts/dev-x86_64.sh ldso-general-initial-tls-target-root
+./scripts/dev-x86_64.sh materialized-dynamic-sysroot --resume WORK --case installed ldso-initial-graph
+./scripts/dev-x86_64.sh materialized-dynamic-sysroot --resume WORK --case installed ldso-general-initial-tls
+./scripts/dev-x86_64.sh materialized-dynamic-sysroot --resume WORK --case installed ldso-general-loader-lifecycle
+./scripts/dev-x86_64.sh materialized-dynamic-sysroot --resume WORK --case installed ldso-loader-libc-tls-runtime-v1
 ```
 
 The non-TLS pair proves the bounded dependency graph's retained identity,
@@ -193,8 +201,7 @@ roots both run a pinned-musl diamond differential and malformed-input matrix,
 including the reservation rollback/retry regression:
 
 ```text
-./scripts/dev-x86_64.sh ldso-general-initial-tls
-./scripts/dev-x86_64.sh ldso-general-initial-tls-target-root
+./scripts/dev-x86_64.sh materialized-dynamic-sysroot --resume WORK --case installed ldso-general-initial-tls
 ```
 
 Those ordinary-source-root commands are private evidence only. They do not
@@ -294,8 +301,7 @@ implementation.
 Run the two private roots with:
 
 ```text
-./scripts/dev-x86_64.sh dynamic-main-thread-runtime-v1
-./scripts/dev-x86_64.sh dynamic-main-thread-runtime-v1-target-root
+./scripts/dev-x86_64.sh materialized-dynamic-sysroot --resume WORK --case installed ldso-loader-libc-tls-runtime-v1
 ```
 
 The direct root also runs magic/version/ABI-size/mode/owner/generation and
@@ -373,25 +379,24 @@ The following normal fixtures remain private regressions, not RuntimeV1 producer
 - `libc/src/c_abi/x86_64/static_tls.rs` — static final-image TLS owner.
 - `libc/src/c_abi/x86_64/pthread_create_join.rs` — selected static worker
   materialization and `CLONE_SETTLS` seam.
-- `ldso/src/x86_64_initial_graph.rs` — normal fixed-graph initial dynamic
-  TLS/DTV fixture. Its separate cfg-isolated RuntimeV1 foundation above is a
-  one-shot producer/consumer proof, not a general loader runtime.
+- `ldso/src/x86_64_initial_graph.rs` — the installed x86 product root. The
+  private source-root variants described above were retired with the product
+  fold; the installed-product cases are the current evidence.
 - `ldso/src/x86_64_general_initial_loader_state.rs` — common retained graph,
   object, and map-provenance owner for the bounded general roots; it is not a
   public loader state or runtime mapping API.
-- `ldso/src/x86_64_general_initial_tls_source_root.rs` — ordinary bounded
-  general initial-TLS materialization. Its separate
-  `x86_64_general_initial_tls_runtime_v1_source_root.rs` sibling is the
-  one-shot bounded-general private producer above, not a dynamic product.
+- `compat/x86_64/run_owned_ldso_initial_tls_cases.sh` — installed-product
+  initial-TLS materialization evidence. The retired private source roots are
+  historical rationale, not a dynamic product.
 
 The next narrowly scoped implementation points are the loader runtime state in
 `ldso/src/loader.rs`, the future CRT carrier over the established RuntimeV1
 descriptor, the dynamic consumer branch in
 `libc/src/c_abi/x86_64/pthread_create_join.rs`, static/dynamic separation in
 `libc/src/c_abi/x86_64/static_tls.rs`, and the future dynamic CRT carrier near
-`ldso/src/x86_64_initial_graph.rs`. The existing
-`compat/x86_64/run_ldso_initial_tls.sh` stays a regression seed while an
-installed product-level test is built; it is not that product test.
+`ldso/src/x86_64_initial_graph.rs`. The installed-product
+`compat/x86_64/run_owned_ldso_initial_tls_cases.sh` is the current regression
+seed; the retired `run_ldso_initial_tls.sh` is not part of the product.
 
 The required native evidence still to be built is: installed dynamic PIE and non-PIE Variant-II layout; dynamic pthread
 workers; runtime TLS DTV growth before and after worker creation; clean

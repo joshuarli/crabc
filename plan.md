@@ -1093,8 +1093,10 @@ musl's initialisation. That row cannot be judged until the route is fixed.
 2. **ldso six private milestone features, source roots, fixed/general
    duplicates.** 6 features, 12 files, 9,626 lines. Consumers: 3 runner
    scripts, 2 test modules, `parity.toml`, and 71 behavioural cases with no
-   product equivalent (`.work/s3a/migration.md`). Risk: high. Checks: loader
-   product cases, static suite, export identity.
+   product equivalent at base. The committed mapping is
+   [docs/evidence/x86-retired-loader-fixtures.md](docs/evidence/x86-retired-loader-fixtures.md);
+   the working row table is `.work/campaign/lanes/s3a-ldso/migration.md`.
+   Risk: high. Checks: loader product cases, static suite, export identity.
 3. **19 libc per-family leaf features** enabled by both owned aggregates.
    Consumer evidence: `.work/s3a/5.2-skips.md` — folding makes them
    unconditional in the frozen default archive too, changing its export
@@ -1131,6 +1133,10 @@ lever is the item-1 consolidation.
 | static startup syscalls | 10 | 1 | **9** |
 | dynamic startup instructions | 238,681 | none identified | **≤ 1.10 × R total (D8)** |
 | static startup instructions | 173,432 | none identified | **≤ 1.10 × R total (D8)** |
+
+D15 and D17 replace the formula for the ldso x86 line row: the rule would give
+6,156, but the owner set 11,161 to keep live product mechanisms. Every other
+row uses the rule.
 
 The two instruction rows have no itemised deletion. The measured costs are
 the allocator's eager init and option scan (169,278 dynamic and 169,387 static

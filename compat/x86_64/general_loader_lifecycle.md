@@ -49,8 +49,10 @@ destructors, and full reentrant exit semantics remain separate work. The
 once-only recursive callback test is not a claim about recursive `exit()`.
 This standalone dependency witness runs initializers before application CRT
 entry. Combining the feature with the general dynamic-main-thread RuntimeV1
-mode instead defers dispatch behind libc startup and executable preinit; see
-[owned general dynamic startup and process exit](general_dynamic_lifecycle.md).
+mode instead defers dispatch behind libc startup and executable preinit; the
+installed-product [lifecycle case](run_owned_ldso_lifecycle_cases.sh) is the
+current evidence. The private `general-dynamic-lifecycle` dispatcher fixture
+was retired with the single-image product.
 
 ## Native evidence
 

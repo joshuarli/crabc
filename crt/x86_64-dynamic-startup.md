@@ -115,10 +115,12 @@ Main lifecycle ownership follows pinned musl 1.2.6 `ldso/dynlink.c`, whose
    complete, including main after `exit` from any constructor, is skipped.
    Libc flushes stdio last; `_Exit` skips all of these.
 
-The legacy private routes (`--general-dynamic-lifecycle`,
+The private build modes (`--general-dynamic-lifecycle`,
 `--dynamic-main-thread-runtime-v1`, the default `Scrt1.o`) keep their
 CRT-owned `_init`/init-array and fini-array/`_fini` walk; their loaders keep the
-main image outside the callback plan.
+main image outside the callback plan. The `general-dynamic-lifecycle`
+dispatcher fixture was retired with the single-image product; the installed
+product's lifecycle case is the current evidence.
 
 Pinned musl 1.2.6 never dispatches a dynamic executable's
 `DT_PREINIT_ARRAY`. The installed owned CRT follows that behavior, including

@@ -1,10 +1,13 @@
 # General initial relocation and symbol ownership
 
 `ldso/src/x86_64_general_relocation.rs` is the sole relocation transaction
-for the arbitrary admitted initial graph, with or without initial TLS.
-`./scripts/dev-x86_64.sh general-relocations` is its pinned native Docker gate. This is an
-initial-loader component, not runtime load/unload or installed shared-product
-closure. RuntimeV1 remains 72 bytes and OwnedCrtHandoffV1 remains 32 bytes;
+for the arbitrary admitted initial graph, with or without initial TLS. The
+installed-product `elf-scope-alias`, `dlopen-pie`/`dlopen-non-pie` and
+`ldso-general-initial-tls` cases are its current native evidence; the private
+`general-relocations` dispatcher fixture was retired with the single-image
+product. This is an initial-loader component, not runtime load/unload or
+installed shared-product closure. RuntimeV1 remains 72 bytes and
+OwnedCrtHandoffV1 remains 32 bytes;
 the canonical graph, mapping order, retained TLS IDs and lifetime do not change.
 Public support and the frozen AArch64 223/26 baseline remain unchanged.
 
