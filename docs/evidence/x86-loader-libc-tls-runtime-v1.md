@@ -178,10 +178,10 @@ make `ldso.dynamic-runtime` a general loader or select RuntimeV1, libc handoff,
 dynamic CRT, pthreads, DTV growth, runtime mapping/unload, an installed
 product, family promotion, or public x86 support.
 
-## Implemented private general initial-TLS materialization
+## Retired private general initial-TLS materialization
 
-`ldso/src/x86_64_general_initial_tls_source_root.rs` is the ordinary
-`crabc_general_initial_tls_materialization_v1` sibling. It keeps the bounded
+The retired `ldso/src/x86_64_general_initial_tls_source_root.rs` was the ordinary
+`crabc_general_initial_tls_materialization_v1` sibling. It kept the bounded
 general initial `DT_NEEDED` graph private, assigns its TLS-bearing main and
 DSO objects generation-one IDs in loader order, validates each `PT_TLS`
 template, lays every image below TP using Variant II, copies initialized bytes,
@@ -196,23 +196,24 @@ owner reserves its sole private publication slot before that syscall; any
 pre-FS failure restores `Vacant`. After a successful install, the common owner
 commits without a fallible step while the TLS state remains only the attached
 registry/allocation sidecar, so it never reports failure with a changed `%fs`
-and no owner or duplicates the graph. The source-root and feature-gated target
-roots both run a pinned-musl diamond differential and malformed-input matrix,
-including the reservation rollback/retry regression:
+and no owner or duplicates the graph. The retired source-root and target roots ran a
+pinned-musl diamond differential and malformed-input matrix, including the
+reservation rollback/retry regression:
 
 ```text
 ./scripts/dev-x86_64.sh materialized-dynamic-sysroot --resume WORK --case installed ldso-general-initial-tls
 ```
 
-Those ordinary-source-root commands are private evidence only. They do not
-establish installed dynamic PIE/non-PIE startup, RuntimeV1 publication,
-dynamic pthread behavior, DTV growth, `dlopen`, a dynamic CRT/sysroot, a
-loader family transition, or public x86 support.
+Those retired commands were private evidence only. They did not establish
+installed dynamic PIE/non-PIE startup, RuntimeV1 publication, dynamic pthread
+behavior, DTV growth, `dlopen`, a dynamic CRT/sysroot, a loader family
+transition, or public x86 support. The installed-product case above is the
+current evidence.
 
-## Implemented private general initial-TLS RuntimeV1 wire
+## Retired private general initial-TLS RuntimeV1 wire
 
-`ldso/src/x86_64_general_initial_tls_runtime_v1_source_root.rs` is a separate
-cfg-isolated root. It combines `crabc_general_initial_graph`,
+The retired `ldso/src/x86_64_general_initial_tls_runtime_v1_source_root.rs` was
+a separate cfg-isolated root. It combined `crabc_general_initial_graph`,
 `crabc_general_initial_tls_materialization_v1`, and
 `crabc_general_loader_libc_tls_runtime_v1` over the already bounded arbitrary
 initial `PT_TLS` diamond. It is the dedicated private general RuntimeV1
@@ -259,11 +260,11 @@ interpreter, dynamic PIE/non-PIE product, libc startup carrier, pthread/new
 thread operation, DTV growth/replacement, runtime mapping/`dlopen`, unload,
 general lifecycle, family/capability promotion, or public x86 support.
 
-## Implemented private dynamic main-thread RuntimeV1 bridge
+## Retired private dynamic main-thread RuntimeV1 bridge
 
-`ldso/src/x86_64_dynamic_main_thread_runtime_v1_source_root.rs` is a fourth,
-explicitly dependent general RuntimeV1 root. It adds only the shape needed by
-the private real-Scrt1 fixture: `crabc_dynamic_main_thread_runtime_v1` keeps
+The retired `ldso/src/x86_64_dynamic_main_thread_runtime_v1_source_root.rs` was
+a fourth, explicitly dependent general RuntimeV1 root. It added only the shape
+needed by the private real-Scrt1 fixture: `crabc_dynamic_main_thread_runtime_v1` keeps
 the common general initial graph/object owner, its attached TLS sidecar, and
 the 72-byte RuntimeV1 record,
 then admits the ordinary null weak owned-CRT relocation emitted by the
