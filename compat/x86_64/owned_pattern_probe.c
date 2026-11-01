@@ -942,7 +942,14 @@ static int run_selected_case(const char *selector)
 int main(int argc, char **argv)
 {
     const char *selector;
+    void *volatile allocator_warmup;
 
+    allocator_warmup = malloc(1);
+    if (!allocator_warmup) {
+        failure_line = __LINE__;
+        return 1;
+    }
+    free((void *)allocator_warmup);
     if (argc == 1) selector = "all";
     else if (argc == 2) selector = argv[1];
     else {
