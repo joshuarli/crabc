@@ -568,7 +568,9 @@ unsafe fn select_canonical_initial_libc(
             if other == index { continue; }
             let stored = object.search_name.bytes();
             let basename = stored.iter().rposition(|byte| *byte == b'/').map_or(stored, |at| &stored[at + 1..]);
-            if reserved_runtime_name(basename) || basename == b"libc.so" {
+            if unsafe { mapped_soname_is_libc(object) }
+                || (object.search_short_name && reserved_runtime_name(basename))
+            {
                 return None;
             }
         }
