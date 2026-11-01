@@ -1648,7 +1648,7 @@ unsafe fn parse_mapped(
             _ => {}
         }
     }
-    if dynamic_static_tls && object.tls_memsz == 0 {
+    if dynamic_static_tls && object.tls_memsz == 0 && role != ObjectRole::Main {
         return None;
     }
     if general_initial_graph && !mapped {
