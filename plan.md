@@ -169,15 +169,26 @@ acceptance above remains the record for structure, correctness and hardening;
 the reopened dimensions are active work, not inherited passes. The allocator
 holds above stay parked.
 
+**Owner direction (2026-11-06):** the initial ldso-only R1 design did not pass
+independent review. Widen R1 to the complete native dynamic startup path across
+`ldso/`, `crt/`, and libc startup, while retaining all three `ratio_insn <= 1.10`
+gates and every behavior, hardening and allocator-freeze constraint. Profile
+all process symbols before selecting code; the earlier D16 note remains a
+rejected proposal. Code changes still require an independently approved design.
+
 1. **R0 — rebuild the accepted products.** On a clean commit and the pinned
    image, build the dynamic and static products under fresh `.work/x86_64/`
    paths and record the SHA and image ID. No source edits. Every later
    measurement and receipt binds to these products.
-2. **R1 — D16 resolver.** Profile the installed product's startup and
-   relocation path, write a design note (≤ 1 page) for a semantics-preserving
-   resolver, and have an independent reviewer approve it before code changes.
-   Implement in `ldso/` only; keep every hardening check and behavioral suite.
-   Prove with `perf-c counts` that `startup`, `dlopen_graph` and
+2. **R1 — D16 startup and relocation.** Profile the installed product's complete
+   dynamic startup process without filtering samples to the loader DSO. Cover
+   interpreter self-relocation, initial graph loading and relocation, CRT
+   handoff, and libc early startup. Write a design note (≤ 1 page) for the
+   profile-supported semantics-preserving change and have an independent
+   reviewer approve it before code changes. Implementation may touch only
+   profile-attributed code in `ldso/`, `crt/`, or libc startup and its existing
+   behavior tests; retain every hardening check and behavioral contract. Prove
+   with `perf-c counts` that `startup`, `dlopen_graph` and
    `loader_dynamic_tls_growth` reach `ratio_insn <= 1.10`; no row may get worse.
 3. **R2 — qualification correctness.** Run `qualification-candidate` on the R1
    tip with the seeded inputs and the correctness profile. Its seven gates must
