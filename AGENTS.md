@@ -4,11 +4,16 @@ A small, auditable modern Unix runtime: a Rust `no_std` libc, dynamic linker,
 owned CRT and compiler builtins, and an idiomatic `crabc-rs` facade. Narrow
 scope must not weaken ordinary Unix semantics.
 
-## Current direction — 2026-10-30
+## Current direction — 2026-11-06
 
-**Radical non-allocator simplification comes first. All malloc/allocator work
-is frozen.** Start with S0 in [plan.md](plan.md), the only active implementation
-plan. The old qualification/promotion campaign is parked, not ready to resume.
+**Performance closure and qualification resumed; allocator work stays frozen.**
+S0–S5 are accepted on structure, correctness and hardening. The owner reopened
+the deferred D18 performance dimensions, the D16 startup/resolver design, and
+the ordered qualification/promotion chain. Follow the order in
+[Post-S5 resumption](plan.md#post-s5-resumption-2026-11-06): rebuild products,
+land the D16 resolver, pass the correctness profile, produce the full
+performance evidence, then run the full chain. Qualification evidence must be
+produced by its own current commands; a parked receipt is not inherited.
 
 Do not work on the Rust mimalloc port, the accepted C backend, allocator fixes,
 cleanup, benchmarks, tests, receipts, shadow integration, alternate allocators
@@ -22,12 +27,11 @@ Simplify mechanisms and evidence machinery, not just filenames or prose. Keep
 one owner for process-global state, thin C ABI adaptation and direct native
 syscall/vDSO paths. Measure against musl early: no additional syscalls, and
 retired user instructions <= 1.10 times musl under matched LLVM, alongside
-existing CPU/memory and correctness/hardening requirements. These are campaign
-acceptance requirements; S1 must implement the new checks before claiming them.
-Do not assume the old 2R gate or absent instruction counters already satisfy them.
+existing CPU/memory and correctness/hardening requirements. The S1 counts route
+and release gate own these checks; use them rather than a second harness.
 
 Use narrowly scoped owners and reviewers. An idle agent slot is not a defect;
-no allocator reconnaissance or feature-expansion lane is authorized. Read
+no allocator reconnaissance or new-capability lane is authorized. Read
 [docs/lanes.md](docs/lanes.md) before delegating. Keep documentation and status
 small; Git is history, not another prose archive.
 

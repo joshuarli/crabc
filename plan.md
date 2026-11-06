@@ -160,6 +160,43 @@ Rules:
 - The old G2, A0–A5, M1–M10, T4, allocator P0, O3/O4, D5 and allocator part of
   C0/C1 are parked. Passing S5 does not reactivate them.
 
+## Post-S5 resumption (2026-11-06)
+
+**Owner direction:** reopen the deferred performance dimensions, design and land
+the D16 resolver, and resume the ordered qualification/promotion chain. All
+allocator work stays frozen until all three tracks are complete. The S5
+acceptance above remains the record for structure, correctness and hardening;
+the reopened dimensions are active work, not inherited passes. The allocator
+holds above stay parked.
+
+1. **R0 — rebuild the accepted products.** On a clean commit and the pinned
+   image, build the dynamic and static products under fresh `.work/x86_64/`
+   paths and record the SHA and image ID. No source edits. Every later
+   measurement and receipt binds to these products.
+2. **R1 — D16 resolver.** Profile the installed product's startup and
+   relocation path, write a design note (≤ 1 page) for a semantics-preserving
+   resolver, and have an independent reviewer approve it before code changes.
+   Implement in `ldso/` only; keep every hardening check and behavioral suite.
+   Prove with `perf-c counts` that `startup`, `dlopen_graph` and
+   `loader_dynamic_tls_growth` reach `ratio_insn <= 1.10`; no row may get worse.
+3. **R2 — qualification correctness.** Run `qualification-candidate` on the R1
+   tip with the seeded inputs and the correctness profile. Its seven gates must
+   pass and the receipt binds the clean revision, current image and products.
+   A correctness receipt is not a full-chain result.
+4. **R3 — D18 performance.** After R2, run the three-attempt 114-row `perf-c`
+   roster and `perf-native --mode full` on a quiet host; `perf-c check` must
+   report no release blocker (CPU and memory bounds ≤ 1.00, syscall rules, no
+   unexplained per-name difference). Re-run the S1.5 counts rows on the same
+   tip and report every row, including `allocator-attributed` calls.
+5. **R4 — full qualification.** Run the full chain on the R1 tip with R2/R3
+   evidence. All eight gates must pass before promotion or public-support
+   claims; those remain separate owner decisions.
+
+Stop rules: the allocator freeze, pins, AArch64 hold and no-new-frameworks
+rules still apply. A track that needs an allocator or pin change is parked and
+reported. The result table records actual status; a deferred, failed or
+unavailable gate is never a pass.
+
 ## Hard rules for every agent
 
 1. **Delete mechanisms, keep semantics.** A win removes a mechanism listed in the
@@ -831,6 +868,13 @@ owner decision.
   evidence. S5 may be accepted on the structure, correctness and hardening
   dimensions; any later performance claim needs a new owner decision and a
   fresh quiet-host run.
+- **D19 — post-S5 resumption.** On 2026-11-06 the owner reopened the D18
+  performance dimensions, the D16 resolver design and the ordered
+  qualification/promotion chain, with the allocator freeze unchanged until all
+  three complete. S5 remains accepted on structure, correctness and hardening.
+  The old allocator holds stay parked; non-allocator qualification family
+  evidence must be produced by its own current commands, not inherited from a
+  parked receipt.
 
 ## Runtime hardening
 
@@ -1193,7 +1237,8 @@ allocator work." First command: `./scripts/dev-x86_64.sh campaign-status`
 status are a docs-only commit after it. The owner deferred the remaining
 performance gates under D18: the D16 instruction ratios and the D14 CPU/memory
 re-acceptance are not measured for S5 and are not passes. The 58-row counts at
-`e6fc6bf6c` stay diagnostic. Start no new performance work.
+`e6fc6bf6c` stay diagnostic. On 2026-11-06 the owner reopened D18, D16 and the
+qualification chain; see [Post-S5 resumption](#post-s5-resumption-2026-11-06).
 
 Host state as of 2026-11-06 (native x86-64): the pinned image is
 `sha256:91e0733b…438bb`, re-pinned at `1fe13fc24`; `musl-oracle` PASS and
