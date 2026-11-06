@@ -31,10 +31,11 @@ COPY rules, symbol extent checks, RELRO admission, and writable-load bounds.
 The cache must not outlive its scope or retained mappings. Existing lookup
 paths for named runtime symbol queries and later lazy retries stay unchanged.
 
-## Review gate
+## Review outcome
 
-This design targets repeated resolution in graph loading and TLS growth.
-Startup has less sampled resolver cost, so this design alone may not meet the
-1.10 startup ratio. The independent review must assess that gap before code
-changes. R1 remains accepted only if all three `perf-c counts` ratios reach
-1.10 or lower without worsening another row.
+The independent reviewer found the cache key and retain-then-apply ordering
+semantically feasible, but rejected R1 approval. Startup at 1.8917 needs about
+41.8% fewer candidate instructions to reach 1.10. `lookup_result_at` accounts
+for 6.96% of startup samples, and the proposed design does not address the
+8.79% in `__crabc_x86_64_self_relocate`. No code changed. A revised design
+needs an in-scope startup mechanism with credible headroom before code work.
