@@ -1,54 +1,50 @@
-# D16: Reuse relocation work within a transaction
+# R1: Full dynamic startup profile and design
 
-## Evidence
+## Acceptance and profiles
 
-The R0 installed product was profiled in the pinned image through the static
-timing launcher and candidate chroot. The `instructions:u` profiles had no lost
-samples. On startup, `__crabc_x86_64_self_relocate` accounts for 8.79% of
-samples, `lookup_result_at` 6.96%, `relocate_initial_graph_inner` 5.26%, and
-`parse_mapped` 2.25%. `lookup_result_at` accounts for 33.08% of `dlopen_graph`
-and 22.79% of loader TLS-growth samples. Matched-LLVM counts are the acceptance
-evidence: 1.8917, 1.5993, and 2.5682 for those rows. Startup needs 41.8% fewer
-candidate instructions to meet 1.10; TLS growth needs 57.2% fewer.
+The matched-LLVM-23 counts from the R0 product are the acceptance baseline:
+startup 1.8917, `dlopen_graph` 1.5993, and loader TLS growth 2.5682. Reaching
+1.10 needs 41.8% fewer startup instructions and 57.2% fewer TLS-growth
+instructions.
 
-## Design
+The exact timing-launcher chroot profiles had no lost samples. Loader-only
+startup samples named self-relocation (8.79%), `lookup_result_at` (6.96%),
+`relocate_initial_graph_inner` (5.26%), and `parse_mapped` (2.25%). The lookup
+routine accounted for 33.08% of `dlopen_graph` and 22.79% of TLS-growth samples.
 
-Use one transaction-local lookup cache keyed by requestor, dynsym index, and
-lookup mode. Validate the requestor record and bounded name before each cache
-access. Preserve the full `SymbolLookup`, including undefined weak versus
-missing strong results. Drop the cache at transaction end; retain the existing
-GNU and SysV hash lookup on misses.
+To widen the view without accessing the denied timing result files, a second
+diagnostic profiled 32 direct chroot launches of the R0 dynamic `/bin/true`
+with `instructions:u`, period 1,000, and no symbol filter. Its PT_INTERP is the
+R0 `ld-crabc-x86_64.so.1`; the capture had 5,021 samples and no loss. The
+`comm=true` report attributed 32.94% of the whole capture to `ld-crabc`, 5.48%
+to unknown mappings, 0.20% to the executable, and 0.02% to the vDSO. The report
+is diagnostic: it includes launch helpers, is not the counts workload, and
+does not separate loader and libc code linked into the same product image.
+The three counts rows remain the only acceptance measure.
 
-During initial-graph and runtime-new preflight, retain an ordered write plan
-with admitted target address, width, and resolved value. Runtime deferred PLT
-entries remain tagged separately. Apply the plan only after every affected
-object passes preflight and plan allocation succeeds. This removes the second
-relocation-table walk and repeated address conversion during apply, while
-keeping all writes after complete validation. Fold private-import recognition
-into that preflight walk; retain exact selector forms and reject malformed or
-foreign private imports before any write.
+## Candidate transaction design
 
-Keep BFS scope order, first-definition binding, version visibility, TLS and
-COPY rules, symbol extent checks, RELRO admission, writable-load bounds,
-lazy-binding queue behavior, and the no-write-before-preflight invariant.
-Existing mappings remain read-only during runtime-new relocation. Keep the
-self-relocation validation and application passes intact: its 897 RELR targets
-are mandatory writes, and merging those passes would violate the complete
-validation-before-write invariant without a bounded retained plan.
+Keep the lookup cache local to one immutable relocation transaction, keyed by
+requestor, dynsym index, and lookup mode. Validate the requestor record and
+bounded name before every cache access. Preserve weak-versus-missing results,
+BFS scope, version visibility, symbol extents, TLS, COPY, and lazy binding.
 
-## Independent review outcome
+Retain typed operations during full preflight: admitted word writes, COPY
+source/destination/length records, and deferred PLT entries. Allocate and
+validate the entire plan before writing. Apply initial libraries first and
+main last, publish debugger slots after word writes, and run COPY operations
+last. Runtime relocation touches only new mappings and publishes lazy entries
+after successful preflight. Preserve graph-wide canonical-libc uniqueness,
+private-import owner and cardinality rules, exact selector forms, and the
+merged-self and foreign-conventional cases.
 
-The wider design addresses repeated resolution and relocation-table work, but
-the measured startup headroom is not yet demonstrated. Even eliminating the
-four named startup functions entirely would remove only 23.3% of samples, less
-than the required 41.8%; the proposed changes can only remove part of them.
-The resolver's 22.79% of TLS-growth samples also does not establish the 57.2%
-reduction that row needs. The reviewer found the cache key sound within a fixed
-transaction, but rejected implementation approval: the design does not
-specify libraries-first/main-last application, a final-phase COPY operation,
-or the complete graph-wide private-import cardinality and owner rules.
+## Review required before code
 
-No code changed. The reviewer concluded that the profile does not justify
-implementation under the fixed three-row gate. R1 remains incomplete; do not
-advance to R2 or weaken the gate. A new owner direction is needed for a wider
-measured scope or a changed acceptance target.
+The transaction changes have precise semantic obligations, but the widened
+profile does not show enough removable non-allocator work to reach either
+startup gate. The exact profile identifies resolver and relocation work; the
+minimal full-process profile shows no separate CRT/libc DSO contribution, and
+cannot attribute source modules within `ld-crabc`. The profile evidence does
+not justify implementation under the unchanged gates. Independently review
+whether another code path inside `ldso/`, `crt/`, or libc startup has measured
+headroom; otherwise stop R1 without code or gate changes.
