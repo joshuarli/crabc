@@ -36,13 +36,19 @@ self-relocation validation and application passes intact: its 897 RELR targets
 are mandatory writes, and merging those passes would violate the complete
 validation-before-write invariant without a bounded retained plan.
 
-## Independent review required
+## Independent review outcome
 
 The wider design addresses repeated resolution and relocation-table work, but
 the measured startup headroom is not yet demonstrated. Even eliminating the
 four named startup functions entirely would remove only 23.3% of samples, less
 than the required 41.8%; the proposed changes can only remove part of them.
-The evidence therefore does not currently justify code work under the fixed
-three-row gate. Review whether another semantics-preserving `ldso` mechanism
-has enough measured headroom; otherwise record R1 as infeasible at this gate
-and request a new owner direction rather than weakening it.
+The resolver's 22.79% of TLS-growth samples also does not establish the 57.2%
+reduction that row needs. The reviewer found the cache key sound within a fixed
+transaction, but rejected implementation approval: the design does not
+specify libraries-first/main-last application, a final-phase COPY operation,
+or the complete graph-wide private-import cardinality and owner rules.
+
+No code changed. The reviewer concluded that the profile does not justify
+implementation under the fixed three-row gate. R1 remains incomplete; do not
+advance to R2 or weaken the gate. A new owner direction is needed for a wider
+measured scope or a changed acceptance target.
