@@ -1184,6 +1184,7 @@ remaining instruction and CPU/memory gates; they remain unmeasured, not passed.
 | S5 (second attempt) | `b255ccf2e` rejected | **NOT ACCEPTED.** 58 selected rows: 50 pass, 3 fail (`startup` 1.8886, `dlopen_graph` 1.6073, `loader_dynamic_tls_growth` 2.5703 after the fixed-N counts fix), 5 nondeterministic (128m matrices and `pthread_create_join_tls` under load), 0 unavailable. Structure 7/7: libc 25, ldso 1, ldso x86 10,941, dispatcher 678, dispatcher lines 10,357, Python 557 files / 266,174 lines. Dynamic startup syscalls 8 vs 11; static 9. | final-tip prepare, four installed-product case families, static 72-path, hardened, counts, parity, campaign-status, structure all PASS | D16 startup/dlopen/loader-TLS-growth instruction standing blockers; TLS-growth retains one required worker-TCB `munmap`; D14 CPU/memory deferred (host load 26.9); 5 load-dependent nondeterministic rows |
 | S5 counts rerun | no commit, `e6fc6bf6c` | 58 rows: 49 pass, 2 fail (`startup` 1.8898, `dlopen_graph` 1.5984), 7 nondeterministic under load (`loader_dynamic_tls_growth` 2.5611, four 128m matrices, `memcpy_256k_unaligned`, `pthread_create_join_tls`); no judged syscall total exceeds its reference. Product sources identical to `025e104b2` | development `perf-c counts` on `e6fc6bf6c` (Ryzen 9 9950X, kernel 7.2.9, clang 23.1.4) against matched-LLVM-23 musl 1.2.6; its installed product passed the installed-driver, owned-CRT, owned-loader-source and pinned-musl-oracle prepare checks and 163 loader tests. `ratio_insn` above 1.10: `startup` 1.8898, `dlopen_graph` 1.5984, `loader_dynamic_tls_growth` 2.5611, `memcpy_128m_unaligned` 1.1658; every other row ≤ 1.0966. Raw report and product discarded; rerun on `e6fc6bf6c` to reproduce | D16/D14 deferred by D18; counts diagnostic only |
 | S5 (accepted) | `1faf5ab6f` | **Structure 7/7:** libc features 25/25; ldso features 1/2; ldso x86 11,160/11,161; dispatcher 676/720; dispatcher lines 10,227/11,000; Python 556/566; Python lines 265,615/270,000. Dynamic products: 231/231 cases across installed, second and extracted; identical manifest `17357c58…`. Static product: declared 72-path suite. Syscall evidence is the diagnostic 58-row dynamic run at `e6fc6bf6c`: no judged total exceeds musl (startup judged 8 vs 11); static startup total 9 is within its 9-call budget, judged 4 vs musl 4. D18 did not re-run either at the final tip. D18: `startup` 1.8898, `dlopen_graph` 1.5984 and `loader_dynamic_tls_growth` 2.5611 are not passes; D14 CPU/memory unmeasured. | Prepare PASS (59+163 tests); full dynamic roster PASS (`qualification.json`); static 83 tests (1 skip) and 28/28 consumer jobs PASS; hardened PASS; parity ledger 26 families, structure, campaign-status, TLS runtime validator and 9 focused unit modules PASS; forbidden diff `0780439b3..HEAD` empty; independent review PASS. | none for structure/correctness/hardening; D16 instruction ratios and D14 CPU/memory remain deferred and unclaimed (D18). |
+| Image re-pin | `1fe13fc24` | pinned image `6e358109…a0129a` is absent on the replacement host and not reproducible, because the image ID embeds build time; rebuilt on the same pinned bases, `CORE_IMAGE_ID` moved to `91e0733b…438bb` (`linux/amd64`) | image build; `musl-oracle` PASS; `cargo check -p crabc-core`; `test_core_image_dispatch` 11 pass | BREAKING: evidence produced in the previous image ID is no longer admitted |
 
 **Status — S5 accepted 2026-11-01 on structure, correctness and hardening.**
 Resume prompt: "Resume the crabc simplification campaign from plan.md Status; no
@@ -1192,18 +1193,23 @@ allocator work." First command: `./scripts/dev-x86_64.sh campaign-status`
 status are a docs-only commit after it. The owner deferred the remaining
 performance gates under D18: the D16 instruction ratios and the D14 CPU/memory
 re-acceptance are not measured for S5 and are not passes. The 58-row counts at
-`e6fc6bf6c` stay diagnostic. Start no new performance work. Parked work: 3
-allocator-frozen `lane/*` worktrees under `.work/wt/`, plus 230 refs under the
-`cohort/*`, `lane/*`, `parked/*`, `recovery/*`, `review/*`, `proof/*`,
-`archive/*` and `integration/os82` names (178 not merged into `main`). Cause:
-superseded or unverified pre-reset lanes. The 13 `cohort/*` checkouts and the 6
-substantive pre-S0 lanes were retired on 2026-11-01 after their reports were
-preserved under `.work/retained/` and every branch ref was kept; the 6 lanes'
-product changes and tests are already present in `main`, so no branch merge was
-needed. Only the 3 allocator-frozen lanes remain registered. Retry only on
-explicit owner direction. `git worktree list` is authoritative. Custody rules:
-`docs/lanes.md`. The two dead loader runners named in the test-drift lane were
-removed; no owner decision remains open there.
+`e6fc6bf6c` stay diagnostic. Start no new performance work.
+
+Host state as of 2026-11-06 (native x86-64): the pinned image is
+`sha256:91e0733b…438bb`, re-pinned at `1fe13fc24`; `musl-oracle` PASS and
+`cargo check -p crabc-core` pass on it. `.work/retained/` reports,
+`.work/allocator-x86_64/`, `.work/x86_64/kache`, `.work/s0/` and
+`.work/tmp/pow-discriminator-ad7e18d35` are present and preserved. The accepted
+products that were under `.work/s5/final3|final4/` and the 230 parked lane refs
+are absent on the replacement host: rebuild products from source when a step needs product
+evidence, and treat that parked queue as closed history rather than work to
+restore. The only refs are `main`, `origin/main` and the three frozen
+`sysroot-aarch64-*` tags, and the three allocator-frozen directories under
+`.work/wt/` are unregistered. Retry parked work only on explicit owner
+direction; `git worktree list` is authoritative and
+[docs/lanes.md](docs/lanes.md) holds custody rules. The two dead loader runners
+named in the test-drift lane were removed; no owner decision remains open
+there.
 
 ### Decisions from the rejected S5 attempts (2026-10-31)
 
