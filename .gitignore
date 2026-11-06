@@ -7,6 +7,8 @@ Cargo.lock
 # exact committed resolution for its standalone `--locked` source-build lane.
 !builtins/Cargo.lock
 
+.work/
+
 # Integration test compiled binaries
 /tests/fixtures/hello
 /tests/fixtures/hello_static
