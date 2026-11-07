@@ -179,6 +179,9 @@ def verify_compile(product: Path, source: Path, workload: Path, record: Path,
             json.dumps(observed, sort_keys=True, allow_nan=False), "compile evidence identity changed")
 
 
+MOLD_SYNTHETIC_UNDEFINED = frozenset({"_PROCEDURE_LINKAGE_TABLE_", "__rela_iplt_start", "__rela_iplt_end"})
+
+
 def audit_static_views(linkage: str, views: dict[str, str]) -> None:
     """Preserve the legacy static cancellation gate's additional ELF judges.
 
@@ -196,7 +199,9 @@ def audit_static_views(linkage: str, views: dict[str, str]) -> None:
     require("INTERP" not in segments and "Requesting program interpreter" not in segments,
             "static consumer selected an interpreter")
     require(re.search(r"NEEDED|JMPREL|PLTGOT", dynamic) is None, "static consumer selected dynamic runtime state")
-    require(not any(len(fields := line.split()) >= 8 and fields[6] == "UND" for line in symbols.splitlines()),
+    require(not any(len(fields := line.split()) >= 8 and fields[6] == "UND" and
+                    not (fields[4] == "LOCAL" and fields[7] in MOLD_SYNTHETIC_UNDEFINED)
+                    for line in symbols.splitlines()),
             "static consumer retains an unresolved symbol")
     require(re.search(r"R_X86_64_(GLOB_DAT|JUMP_SLOT|TLSGD|TLSLD|TLSDESC|DTPMOD|DTPOFF)",
                       relocations + symbols) is None, "static consumer retains dynamic relocation or TLS")

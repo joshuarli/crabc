@@ -152,6 +152,13 @@ class IoCancellationEvidenceTests(unittest.TestCase):
                 evidence.audit_static_views("static-pie", {**views, key: value})
         static = {**views, "header": views["header"].replace("DYN", "EXEC"), "segments": "", "relocations": ""}
         evidence.audit_static_views("static", static)
+        mold_synthetic = "".join(f"{index}: 0000000000000000 0 NOTYPE LOCAL DEFAULT UND {name}\n" for index, name in
+            enumerate(("_PROCEDURE_LINKAGE_TABLE_", "__rela_iplt_start", "__rela_iplt_end"), 1))
+        evidence.audit_static_views("static", {**static, "symbols": static["symbols"] + mold_synthetic})
+        for symbol in ("4: 000 0 NOTYPE GLOBAL DEFAULT UND __rela_iplt_start\n",
+                       "4: 000 0 NOTYPE LOCAL DEFAULT UND missing\n"):
+            with self.subTest(symbol=symbol), self.assertRaises(evidence.EvidenceError):
+                evidence.audit_static_views("static", {**static, "symbols": static["symbols"] + symbol})
         for form in ("GLOB_DAT", "JUMP_SLOT", "TLSGD", "TLSLD", "TLSDESC", "DTPMOD64", "DTPOFF64"):
             with self.subTest(form=form), self.assertRaises(evidence.EvidenceError):
                 evidence.audit_static_views("static", {**static, "relocations": "R_X86_64_" + form})
