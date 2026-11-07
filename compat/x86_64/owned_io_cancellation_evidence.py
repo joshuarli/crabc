@@ -21,6 +21,7 @@ import sys
 
 from owned_posix_product_evidence import ProductEvidenceError, validate_link
 import installed_compiler_translation as translation_contract
+import static_product_contract as static_product
 
 ROOT = Path(__file__).resolve().parents[2]
 LOCAL_WITNESS = "compat/x86_64/owned_cancellation_proc_witness.h"
@@ -198,7 +199,11 @@ def audit_static_views(linkage: str, views: dict[str, str]) -> None:
     require(re.search(r"Type:\s+" + kind + r"\s", header) is not None, "static ELF type drifted")
     require("INTERP" not in segments and "Requesting program interpreter" not in segments,
             "static consumer selected an interpreter")
-    require(re.search(r"NEEDED|JMPREL|PLTGOT", dynamic) is None, "static consumer selected dynamic runtime state")
+    try:
+        static_product.validate_static_dynamic_tags(
+            dynamic, [line.split() for line in segments.splitlines()], linkage == "static-pie", "static consumer")
+    except static_product.StaticProductError as error:
+        raise EvidenceError(str(error)) from error
     require(not any(len(fields := line.split()) >= 8 and fields[6] == "UND" and
                     not (fields[4] == "LOCAL" and fields[7] in MOLD_SYNTHETIC_UNDEFINED)
                     for line in symbols.splitlines()),

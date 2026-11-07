@@ -138,6 +138,12 @@ class IoCancellationEvidenceTests(unittest.TestCase):
             "relocations": "000 000 R_X86_64_RELATIVE 0\n",
         }
         evidence.audit_static_views("static-pie", views)
+        relro = " GNU_RELRO 0x3ad30 0x23cd30 0x23cd30 0x4758 0x52d0 R 0x1\n"
+        mold_pie = {**views, "segments": views["segments"] + relro, "dynamic": " (PLTGOT) 0x23cd40\n"}
+        evidence.audit_static_views("static-pie", mold_pie)
+        for dynamic in (" (PLTGOT) 0x10\n", " (PLTGOT) 0x23cd40\n (PLTREL) RELA\n"):
+            with self.subTest(dynamic=dynamic), self.assertRaises(evidence.EvidenceError):
+                evidence.audit_static_views("static-pie", {**mold_pie, "dynamic": dynamic})
         for key, value in (
             ("segments", " INTERP 0 0 0\n"),
             ("segments", ""),
@@ -152,6 +158,8 @@ class IoCancellationEvidenceTests(unittest.TestCase):
                 evidence.audit_static_views("static-pie", {**views, key: value})
         static = {**views, "header": views["header"].replace("DYN", "EXEC"), "segments": "", "relocations": ""}
         evidence.audit_static_views("static", static)
+        with self.assertRaises(evidence.EvidenceError):
+            evidence.audit_static_views("static", {**static, "segments": relro, "dynamic": " (PLTGOT) 0x23cd40\n"})
         mold_synthetic = "".join(f"{index}: 0000000000000000 0 NOTYPE LOCAL DEFAULT UND {name}\n" for index, name in
             enumerate(("_PROCEDURE_LINKAGE_TABLE_", "__rela_iplt_start", "__rela_iplt_end"), 1))
         evidence.audit_static_views("static", {**static, "symbols": static["symbols"] + mold_synthetic})
