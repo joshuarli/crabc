@@ -32,17 +32,23 @@ plus `admitted_target`, `direct_symbol` and name-length decoding. Preflight
 already retains resolved values, so the earlier transaction-cache proposal is
 implemented and is not the remaining cost.
 
-Self-relocation spends about 10k in `.Lself_check_w`. Its one-segment cache
-misses whenever RELR targets alternate between the RELRO and data `RW` loads,
-and each miss rescans every program header. RELR has 37 words and about 629
-targets; 36 RELA entries carry no `RELATIVE` type.
+Self-relocation is the mandatory RELR bitmap apply: 887 targets at about 13
+instructions each, with the validation passes and the writable-load check
+already cheap. A tighter apply loop that keeps the overflow check saves about
+4.4k; musl relocates 67 `RELATIVE` words, so this phase cannot reach parity.
 
-A credible startup design must therefore do all three of these. Check RELR
-targets against the precomputed writable loads, keeping complete validation
-before any write. Cut per-relocation driver work to about musl's 90
-instructions without dropping a hardening check. Remove a few thousand more
-from the remainder. The available headroom is about 50–55k against the
-required 54k, so the gate is marginal even with all three.
+The remaining 21.9k is spread over about a hundred small functions; none
+exceeds 2.6k. The driver's per-call cost is calling-convention and
+`Option<Option<…>>` struct-passing overhead across the
+`word_resolution` → `lookup_with_record` → `ordinary_address` chain, not a
+loop. Restructuring it while keeping every hardening check plausibly removes
+25–30k of its 37.7k excess.
+
+Bringing every phase except lookup to musl parity would recover at most about
+59k. With hardening kept, the realistic total is 38–43k: driver 25–30k,
+self-relocation 4.4k, a tighter SysV hash loop about 4k, and about 5k from
+the remainder. Startup would land near 1.2–1.3. No design supported by this
+profile meets the startup gate, so no startup code is proposed.
 
 `dlopen_graph` counts the whole process. Its dlopen portion is 51.4k vs 45.0k
 (1.14); the row fails on startup and moves with it.
