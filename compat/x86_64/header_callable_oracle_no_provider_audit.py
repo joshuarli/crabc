@@ -45,10 +45,8 @@ NEW_PRIORITY_CEILING_NAMES = (
     "pthread_mutexattr_getprioceiling",
     "pthread_mutexattr_setprioceiling",
 )
-LINKER_CONTEXT = re.compile(r"^(?:\S*/)?ld: .+: in function [`'][^`']+['']:$")
-LINKER_UNDEFINED_REFERENCE = re.compile(
-    r"^(?:(?:\S*/)?ld: )?.+: undefined reference to [`']([A-Za-z_][A-Za-z0-9_]*)['']$"
-)
+LINKER_UNDEFINED_REFERENCE = re.compile(r"^mold: error: undefined symbol: ([A-Za-z_][A-Za-z0-9_]*)$")
+LINKER_CONTEXT = re.compile(r"^>>> (?:referenced by \S+|\s+\S+?(?::\([^()]+\))?)$")
 COLLECT2_LINK_FAILURE = "collect2: error: ld returned 1 exit status"
 
 
@@ -157,7 +155,7 @@ def require_exact_undefined_reference(stderr: str, intended: str) -> None:
         not unexpected,
         f"link failure includes unrelated undefined symbol(s): {', '.join(unexpected)}",
     )
-    require(saw_context, "link failure has no expected ld context diagnostic")
+    require(saw_context, "link failure has no expected mold reference context")
     require(saw_collect2, "link failure has no expected collect2 terminal diagnostic")
 
 

@@ -63,8 +63,12 @@ unique_provider u 0 0
             AUDIT.global_or_weak_providers("truncated_provider i 0\n", {"truncated_provider"})
 
     def test_link_failure_rejects_an_unrelated_undefined_symbol(self) -> None:
-        stderr = """ld: object.o: undefined reference to `pthread_mutexattr_getprioceiling'
-ld: object.o: undefined reference to `unexpected_startup_symbol'
+        stderr = """mold: error: undefined symbol: pthread_mutexattr_getprioceiling
+>>> referenced by probe.c
+>>>               object.o:(main)
+mold: error: undefined symbol: unexpected_startup_symbol
+>>> referenced by crt1.c
+>>>               crt1.o:(_start_c)
 collect2: error: ld returned 1 exit status
 """
 
@@ -77,27 +81,39 @@ collect2: error: ld returned 1 exit status
     def test_link_failure_requires_its_intended_undefined_symbol(self) -> None:
         with self.assertRaisesRegex(AUDIT.OracleNoProviderAuditError, "does not name"):
             AUDIT.require_exact_undefined_reference(
-                "ld: object.o: undefined reference to `another_symbol'\n",
+                "mold: error: undefined symbol: another_symbol\n>>> referenced by probe.c\n",
                 "pthread_mutexattr_getprioceiling",
             )
 
     def test_link_failure_rejects_an_unrelated_fatal_diagnostic(self) -> None:
-        stderr = """ld: object.o: in function `main':
-ld: object.o:(.text+0x0): undefined reference to `pthread_mutexattr_getprioceiling'
-ld: cannot find -lnot-an-oracle-input
+        stderr = """mold: error: undefined symbol: pthread_mutexattr_getprioceiling
+>>> referenced by probe.c
+>>>               object.o:(main)
+mold: fatal: library not found: not-an-oracle-input
 collect2: error: ld returned 1 exit status
 """
 
-        with self.assertRaisesRegex(AUDIT.OracleNoProviderAuditError, "cannot find"):
+        with self.assertRaisesRegex(AUDIT.OracleNoProviderAuditError, "library not found"):
             AUDIT.require_exact_undefined_reference(
                 stderr,
                 "pthread_mutexattr_getprioceiling",
             )
 
-    def test_link_failure_accepts_the_pinned_gcc_ld_context_shape(self) -> None:
+    def test_link_failure_requires_a_reference_context(self) -> None:
+        with self.assertRaisesRegex(AUDIT.OracleNoProviderAuditError, "context"):
+            AUDIT.require_exact_undefined_reference(
+                "mold: error: undefined symbol: pthread_mutexattr_getprioceiling\n"
+                "collect2: error: ld returned 1 exit status\n",
+                "pthread_mutexattr_getprioceiling",
+            )
+
+    def test_link_failure_accepts_the_pinned_gcc_mold_shape(self) -> None:
         AUDIT.require_exact_undefined_reference(
-            """/toolchain/bin/ld: object.o: in function `main':
-probe.c:(.text+0x10): undefined reference to `pthread_mutexattr_getprioceiling'
+            """mold: error: undefined symbol: pthread_mutexattr_getprioceiling
+>>> referenced by probe.c
+>>>               /work/objects/probe.c11.o:(main)
+>>> referenced by probe.c
+>>>               /work/objects/probe.c11.o
 collect2: error: ld returned 1 exit status
 """,
             "pthread_mutexattr_getprioceiling",
