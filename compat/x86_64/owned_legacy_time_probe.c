@@ -150,6 +150,12 @@ static int timeval_is_canonical(const struct timeval *value)
     return value->tv_usec >= 0 && value->tv_usec < 1000000;
 }
 
+static int timex_time_is_canonical(const struct timex *state)
+{
+    const long units = (state->status & STA_NANO) ? 1000000000L : 1000000L;
+    return state->time.tv_usec >= 0 && state->time.tv_usec < units;
+}
+
 static void disarm_timer(int which)
 {
     const struct itimerval zero = { { 0, 0 }, { 0, 0 } };
@@ -286,7 +292,7 @@ static void run_adjustment_query(void)
     status = adjtimex(&state);
     CHECK(status >= TIME_OK && status <= TIME_ERROR);
     CHECK(errno == 79);
-    CHECK(timeval_is_canonical(&state.time));
+    CHECK(timex_time_is_canonical(&state));
 
     errno = 71;
     CHECK(adjtime(NULL, &remaining) == 0);
