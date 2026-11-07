@@ -199,7 +199,7 @@ check_basic_product() {
 }
 
 check_runtime_suites() {
-    local label="$1" cases runtime_case
+    local label="$1" stop="$2" cases runtime_case
     cases="$(python3 -B - "$ROOT" <<'PYTHON'
 import sys
 sys.path.insert(0, sys.argv[1] + '/compat/x86_64')
@@ -208,8 +208,12 @@ print('\n'.join(CASES))
 PYTHON
 )"
     while IFS= read -r runtime_case; do
+        if [ -e "$stop" ]; then
+            printf 'runtime suites stopped before %s/%s: another product failed\n' "$label" "$runtime_case"
+            return 1
+        fi
         python3 -B "$ROOT/compat/x86_64/owned_dynamic_qualification.py" run \
-            --work "$work" --product "$label" --case "$runtime_case"
+            --work "$work" --product "$label" --case "$runtime_case" || { : >"$stop"; return 1; }
     done <<<"$cases"
 }
 
@@ -243,8 +247,23 @@ if [ "$action" = prepare ]; then
     printf 'materialized dynamic products prepared; next case: %s\n' "$next_case"
     exit 0
 fi
+suite_streams="$(mktemp -d "$TMPDIR/runtime-suite-streams.XXXXXX")"
+declare -A suite_pids=()
 for label in installed second extracted; do
-    check_runtime_suites "$label"
+    check_runtime_suites "$label" "$suite_streams/stop" >"$suite_streams/$label.log" 2>&1 &
+    suite_pids[$label]=$!
 done
+suite_failures=()
+for label in installed second extracted; do
+    wait "${suite_pids[$label]}" || suite_failures+=("$label")
+done
+for label in installed second extracted; do
+    cat "$suite_streams/$label.log"
+done
+rm -rf -- "$suite_streams"
+if [ "${#suite_failures[@]}" -ne 0 ]; then
+    printf 'materialized dynamic sysroot: runtime suites failed for: %s\n' "${suite_failures[*]}" >&2
+    exit 1
+fi
 python3 -B "$ROOT/compat/x86_64/owned_dynamic_qualification.py" finish --work "$work"
 printf 'materialized dynamic sysroot: PASS (two clean builds and extracted initial/runtime graphs); evidence: %s\n' "$work"
