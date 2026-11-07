@@ -82,6 +82,19 @@ def _sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
+def _sha256_walked_file(path: Path) -> str:
+    try:
+        descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC)
+    except OSError as error:
+        raise LoaderCorpusEvidenceError(f"cannot hash retained artifact: {path}") from error
+    with os.fdopen(descriptor, "rb") as stream:
+        _require(stat.S_ISREG(os.fstat(stream.fileno()).st_mode), f"hashed retained artifact is not a regular file: {path}")
+        digest = hashlib.sha256()
+        for block in iter(lambda: stream.read(1024 * 1024), b""):
+            digest.update(block)
+    return digest.hexdigest()
+
+
 def _absolute(path: Path) -> Path:
     return Path(os.path.abspath(path))
 
@@ -286,7 +299,7 @@ def _loader_tree_entries(path: Path) -> list[dict[str, object]]:
         if stat.S_ISLNK(mode):
             data.update(kind="symlink", target=os.readlink(item))
         elif stat.S_ISREG(mode):
-            data.update(kind="file", sha256=_sha256(item), size=item.stat().st_size)
+            data.update(kind="file", sha256=_sha256_walked_file(item), size=item.lstat().st_size)
         elif stat.S_ISDIR(mode):
             data.update(kind="directory")
         else:
@@ -1411,7 +1424,7 @@ def _corpus_root_entries(root: Path) -> dict[str, dict[str, object]]:
             mode = metadata.st_mode
             item: dict[str, object] = {"mode": stat.S_IMODE(mode)}
             if stat.S_ISREG(mode):
-                item.update(kind="file", sha256=_sha256(child), size=metadata.st_size)
+                item.update(kind="file", sha256=_sha256_walked_file(child), size=metadata.st_size)
             elif stat.S_ISDIR(mode):
                 item["kind"] = "directory"
                 pending.append(child)
@@ -1538,12 +1551,12 @@ def _validate_corpus_base_fixtures(root: Path, record: Mapping[str, Any], manife
              f"{description} base device differs")
 
 
-def _validate_corpus_root_layout(payload: Path, root: Path, expected_case: Any, arm: str,
+def _validate_corpus_root_layout(payload_entries: Mapping[str, Mapping[str, object]], root: Path,
+                                  expected_case: Any, arm: str,
                                   manifest: Any, corpus: Any, payload_retention_modes: Mapping[str, int],
                                   retention_modes: Mapping[str, int]) -> None:
     """Bind every immutable root entry and the finite argv-derived mutations."""
 
-    payload_entries = _corpus_root_entries(payload)
     root_entries = _corpus_root_entries(root)
     expected: dict[str, str] = {}
     for relative, entry in payload_entries.items():
@@ -1626,8 +1639,8 @@ def _validate_corpus_root_layout(payload: Path, root: Path, expected_case: Any, 
 def _validate_corpus_root(root: Path, value: object, expected_case: Any, arm: str, product: Path,
 
                           product_files: Mapping[str, str], oracle: Mapping[str, Any], source_mount: str,
-                          checkout: Path, corpus: Any, payload: Path, manifest: Any,
-                          payload_retention_modes: Mapping[str, int]) -> None:
+                          checkout: Path, corpus: Any, payload_entries: Mapping[str, Mapping[str, object]],
+                          manifest: Any, payload_retention_modes: Mapping[str, int]) -> None:
     record = _keys(value, {"base_fixtures", "runtime", "execution_tree_before_sha256", "execution_tree_after_sha256", "retention_modes", "executable"},
                    f"package-corpus {expected_case.id} {arm} root")
     before = _digest(record["execution_tree_before_sha256"], "package-corpus execution tree before")
@@ -1635,7 +1648,7 @@ def _validate_corpus_root(root: Path, value: object, expected_case: Any, arm: st
     retention_modes = _retention_modes(record["retention_modes"], f"package-corpus {expected_case.id} {arm}")
     _validate_corpus_base_fixtures(root, record, manifest, retention_modes,
                                    f"package-corpus {expected_case.id} {arm}")
-    _validate_corpus_root_layout(payload, root, expected_case, arm, manifest, corpus,
+    _validate_corpus_root_layout(payload_entries, root, expected_case, arm, manifest, corpus,
                                   payload_retention_modes, retention_modes)
     try:
         current = _corpus_tree_sha256(corpus, root, f"package-corpus {expected_case.id} {arm} retained root", retention_modes)
@@ -1778,6 +1791,7 @@ def validate_corpus_report(report_path: Path, dynamic_product: Path, *, expected
         raise
     except Exception as error:
         raise LoaderCorpusEvidenceError(f"package-corpus retained application payload is unreadable: {error}") from error
+    payload_entries = _corpus_root_entries(payload_path)
     expected_cases = {case.id: case for case in _corpus_cases()}
     _require(type(report["case_count"]) is int and report["case_count"] == len(expected_cases), "package-corpus case count differs")
     _require(isinstance(report["outcomes"], list) and len(report["outcomes"]) == len(expected_cases),
@@ -1799,7 +1813,7 @@ def validate_corpus_report(report_path: Path, dynamic_product: Path, *, expected
         for arm in ("oracle", "candidate"):
             private_root = execution_root / f"{case_id}-{arm}"
             _validate_corpus_root(private_root, roots[arm], expected, arm, dynamic_product, product_files, oracle,
-                                  source_mount, checkout, corpus, payload_path, manifest, payload_retention_modes)
+                                  source_mount, checkout, corpus, payload_entries, manifest, payload_retention_modes)
     _require(observed_ids == set(expected_cases), "package-corpus outcome roster differs from frozen manifest")
     return {"component": "package-corpus", "case_count": len(expected_cases),
             "product_manifest": str(manifest_path), "product_manifest_sha256": manifest_sha256,
