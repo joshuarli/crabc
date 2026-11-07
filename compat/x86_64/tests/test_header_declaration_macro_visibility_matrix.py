@@ -219,7 +219,7 @@ class HeaderDeclarationMacroVisibilityMatrixTests(unittest.TestCase):
         self.assertEqual(
             report["summary"]["reviewed_native_callable_extension_row_count"], 28
         )
-        self.assertEqual(report["summary"]["matched_identity_count"], 294885)
+        self.assertEqual(report["summary"]["matched_identity_count"], 295255)
         self.assertEqual(report["summary"]["source_form_difference_count"], 2)
         self.assertEqual(report["summary"]["source_form_difference_row_count"], 2)
         self.assertEqual(report["summary"]["source_form_only_difference_row_count"], 2)

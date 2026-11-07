@@ -20,6 +20,8 @@ static_assert(__is_same(nlink_t, unsigned long),
 	"musl x86-64 nlink_t is unsigned long");
 static_assert(__is_same(blksize_t, long),
 	"musl x86-64 blksize_t is signed long");
+static_assert(__is_same(reclen_t, unsigned short),
+	"musl x86-64 reclen_t is unsigned short");
 static_assert(__is_same(dev_t, unsigned long) && __is_same(ino_t, unsigned long),
 	"musl x86-64 device and inode types are unsigned long");
 static_assert(__is_same(mode_t, unsigned int) && __is_same(off_t, long) &&

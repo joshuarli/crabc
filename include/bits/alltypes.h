@@ -231,6 +231,11 @@ typedef unsigned _Int64 fsfilcnt_t;
 #define __DEFINED_fsfilcnt_t
 #endif
 
+#if defined(__NEED_reclen_t) && !defined(__DEFINED_reclen_t)
+typedef unsigned short reclen_t;
+#define __DEFINED_reclen_t
+#endif
+
 
 #if defined(__NEED_wint_t) && !defined(__DEFINED_wint_t)
 typedef unsigned wint_t;

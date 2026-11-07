@@ -556,7 +556,7 @@ EXPECTED_HEADER_DECLARATION_MACRO_VISIBILITY_MATRIX_SUMMARY = {
         "1 pinned-musl header/profile rows are oracle-not-applicable",
         "declaration-form equality, record byte layouts, archive linkage, runtime behavior, family promotion, and public support remain outside this partial matrix",
     ],
-    "matched_identity_count": 294885,
+    "matched_identity_count": 295255,
     "mismatch_row_count": 0,
     "oracle_not_applicable_candidate_fact_count": 104,
     "oracle_not_applicable_row_count": 1,

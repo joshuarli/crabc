@@ -1370,6 +1370,7 @@ class HeaderAbiMatrixTests(unittest.TestCase):
             "pthread_rwlockattr_t",
             "pthread_spinlock_t",
             "pthread_t",
+            "reclen_t",
             "ssize_t",
             "suseconds_t",
             "thrd_t",

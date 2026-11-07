@@ -22,6 +22,8 @@ _Static_assert(CRABC_TYPE_IS((nlink_t)0, unsigned long),
 	"musl x86-64 nlink_t is unsigned long");
 _Static_assert(CRABC_TYPE_IS((blksize_t)0, long),
 	"musl x86-64 blksize_t is signed long");
+_Static_assert(CRABC_TYPE_IS((reclen_t)0, unsigned short),
+	"musl x86-64 reclen_t is unsigned short");
 _Static_assert(CRABC_TYPE_IS((dev_t)0, unsigned long),
 	"musl x86-64 dev_t is unsigned long");
 _Static_assert(CRABC_TYPE_IS((ino_t)0, unsigned long),

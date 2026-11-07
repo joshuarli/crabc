@@ -3217,10 +3217,10 @@
     },
     {
       "candidate": {
-        "count": 56,
+        "count": 58,
         "kind_counts": {
           "function": 14,
-          "macro": 33,
+          "macro": 35,
           "record": 3,
           "typedef": 6
         }
@@ -3229,13 +3229,13 @@
       "candidate_status": "ok",
       "comparison": "matched",
       "header": "dirent.h",
-      "matched_identity_count": 56,
+      "matched_identity_count": 58,
       "profile": "c11-gnu",
       "reference": {
-        "count": 56,
+        "count": 58,
         "kind_counts": {
           "function": 14,
-          "macro": 33,
+          "macro": 35,
           "record": 3,
           "typedef": 6
         }
@@ -3247,10 +3247,10 @@
     },
     {
       "candidate": {
-        "count": 56,
+        "count": 58,
         "kind_counts": {
           "function": 14,
-          "macro": 33,
+          "macro": 35,
           "record": 3,
           "typedef": 6
         }
@@ -3259,73 +3259,13 @@
       "candidate_status": "ok",
       "comparison": "matched",
       "header": "dirent.h",
-      "matched_identity_count": 56,
+      "matched_identity_count": 58,
       "profile": "cxx17-gnu",
       "reference": {
-        "count": 56,
+        "count": 58,
         "kind_counts": {
           "function": 14,
-          "macro": 33,
-          "record": 3,
-          "typedef": 6
-        }
-      },
-      "reference_only": [],
-      "reference_status": "ok",
-      "separately_accounted_source_form_difference_count": 0,
-      "source_form_comparison": "matched"
-    },
-    {
-      "candidate": {
-        "count": 50,
-        "kind_counts": {
-          "function": 10,
-          "macro": 31,
-          "record": 3,
-          "typedef": 6
-        }
-      },
-      "candidate_only": [],
-      "candidate_status": "ok",
-      "comparison": "matched",
-      "header": "dirent.h",
-      "matched_identity_count": 50,
-      "profile": "c11-strict",
-      "reference": {
-        "count": 50,
-        "kind_counts": {
-          "function": 10,
-          "macro": 31,
-          "record": 3,
-          "typedef": 6
-        }
-      },
-      "reference_only": [],
-      "reference_status": "ok",
-      "separately_accounted_source_form_difference_count": 0,
-      "source_form_comparison": "matched"
-    },
-    {
-      "candidate": {
-        "count": 50,
-        "kind_counts": {
-          "function": 10,
-          "macro": 31,
-          "record": 3,
-          "typedef": 6
-        }
-      },
-      "candidate_only": [],
-      "candidate_status": "ok",
-      "comparison": "matched",
-      "header": "dirent.h",
-      "matched_identity_count": 50,
-      "profile": "c11-posix-2008",
-      "reference": {
-        "count": 50,
-        "kind_counts": {
-          "function": 10,
-          "macro": 31,
+          "macro": 35,
           "record": 3,
           "typedef": 6
         }
@@ -3339,8 +3279,8 @@
       "candidate": {
         "count": 52,
         "kind_counts": {
-          "function": 12,
-          "macro": 31,
+          "function": 10,
+          "macro": 33,
           "record": 3,
           "typedef": 6
         }
@@ -3350,26 +3290,56 @@
       "comparison": "matched",
       "header": "dirent.h",
       "matched_identity_count": 52,
-      "profile": "c11-xopen-700",
+      "profile": "c11-strict",
       "reference": {
         "count": 52,
         "kind_counts": {
+          "function": 10,
+          "macro": 33,
+          "record": 3,
+          "typedef": 6
+        }
+      },
+      "reference_only": [],
+      "reference_status": "ok",
+      "separately_accounted_source_form_difference_count": 0,
+      "source_form_comparison": "matched"
+    },
+    {
+      "candidate": {
+        "count": 52,
+        "kind_counts": {
+          "function": 10,
+          "macro": 33,
+          "record": 3,
+          "typedef": 6
+        }
+      },
+      "candidate_only": [],
+      "candidate_status": "ok",
+      "comparison": "matched",
+      "header": "dirent.h",
+      "matched_identity_count": 52,
+      "profile": "c11-posix-2008",
+      "reference": {
+        "count": 52,
+        "kind_counts": {
+          "function": 10,
+          "macro": 33,
+          "record": 3,
+          "typedef": 6
+        }
+      },
+      "reference_only": [],
+      "reference_status": "ok",
+      "separately_accounted_source_form_difference_count": 0,
+      "source_form_comparison": "matched"
+    },
+    {
+      "candidate": {
+        "count": 54,
+        "kind_counts": {
           "function": 12,
-          "macro": 31,
-          "record": 3,
-          "typedef": 6
-        }
-      },
-      "reference_only": [],
-      "reference_status": "ok",
-      "separately_accounted_source_form_difference_count": 0,
-      "source_form_comparison": "matched"
-    },
-    {
-      "candidate": {
-        "count": 55,
-        "kind_counts": {
-          "function": 13,
           "macro": 33,
           "record": 3,
           "typedef": 6
@@ -3379,12 +3349,12 @@
       "candidate_status": "ok",
       "comparison": "matched",
       "header": "dirent.h",
-      "matched_identity_count": 55,
-      "profile": "c11-bsd",
+      "matched_identity_count": 54,
+      "profile": "c11-xopen-700",
       "reference": {
-        "count": 55,
+        "count": 54,
         "kind_counts": {
-          "function": 13,
+          "function": 12,
           "macro": 33,
           "record": 3,
           "typedef": 6
@@ -3397,10 +3367,10 @@
     },
     {
       "candidate": {
-        "count": 56,
+        "count": 57,
         "kind_counts": {
-          "function": 14,
-          "macro": 33,
+          "function": 13,
+          "macro": 35,
           "record": 3,
           "typedef": 6
         }
@@ -3409,13 +3379,43 @@
       "candidate_status": "ok",
       "comparison": "matched",
       "header": "dirent.h",
-      "matched_identity_count": 56,
-      "profile": "cxx17-strict",
+      "matched_identity_count": 57,
+      "profile": "c11-bsd",
       "reference": {
-        "count": 56,
+        "count": 57,
+        "kind_counts": {
+          "function": 13,
+          "macro": 35,
+          "record": 3,
+          "typedef": 6
+        }
+      },
+      "reference_only": [],
+      "reference_status": "ok",
+      "separately_accounted_source_form_difference_count": 0,
+      "source_form_comparison": "matched"
+    },
+    {
+      "candidate": {
+        "count": 58,
         "kind_counts": {
           "function": 14,
-          "macro": 33,
+          "macro": 35,
+          "record": 3,
+          "typedef": 6
+        }
+      },
+      "candidate_only": [],
+      "candidate_status": "ok",
+      "comparison": "matched",
+      "header": "dirent.h",
+      "matched_identity_count": 58,
+      "profile": "cxx17-strict",
+      "reference": {
+        "count": 58,
+        "kind_counts": {
+          "function": 14,
+          "macro": 35,
           "record": 3,
           "typedef": 6
         }
@@ -4491,10 +4491,10 @@
     },
     {
       "candidate": {
-        "count": 189,
+        "count": 194,
         "kind_counts": {
           "function": 15,
-          "macro": 165,
+          "macro": 170,
           "record": 4,
           "typedef": 5
         }
@@ -4503,13 +4503,13 @@
       "candidate_status": "ok",
       "comparison": "matched",
       "header": "fcntl.h",
-      "matched_identity_count": 189,
+      "matched_identity_count": 194,
       "profile": "c11-gnu",
       "reference": {
-        "count": 189,
+        "count": 194,
         "kind_counts": {
           "function": 15,
-          "macro": 165,
+          "macro": 170,
           "record": 4,
           "typedef": 5
         }
@@ -4521,10 +4521,10 @@
     },
     {
       "candidate": {
-        "count": 189,
+        "count": 194,
         "kind_counts": {
           "function": 15,
-          "macro": 165,
+          "macro": 170,
           "record": 4,
           "typedef": 5
         }
@@ -4533,13 +4533,13 @@
       "candidate_status": "ok",
       "comparison": "matched",
       "header": "fcntl.h",
-      "matched_identity_count": 189,
+      "matched_identity_count": 194,
       "profile": "cxx17-gnu",
       "reference": {
-        "count": 189,
+        "count": 194,
         "kind_counts": {
           "function": 15,
-          "macro": 165,
+          "macro": 170,
           "record": 4,
           "typedef": 5
         }
@@ -4671,10 +4671,10 @@
     },
     {
       "candidate": {
-        "count": 189,
+        "count": 194,
         "kind_counts": {
           "function": 15,
-          "macro": 165,
+          "macro": 170,
           "record": 4,
           "typedef": 5
         }
@@ -4683,13 +4683,13 @@
       "candidate_status": "ok",
       "comparison": "matched",
       "header": "fcntl.h",
-      "matched_identity_count": 189,
+      "matched_identity_count": 194,
       "profile": "cxx17-strict",
       "reference": {
-        "count": 189,
+        "count": 194,
         "kind_counts": {
           "function": 15,
-          "macro": 165,
+          "macro": 170,
           "record": 4,
           "typedef": 5
         }
@@ -10062,11 +10062,41 @@
     },
     {
       "candidate": {
+        "count": 977,
+        "kind_counts": {
+          "function": 32,
+          "macro": 839,
+          "record": 20,
+          "typedef": 86
+        }
+      },
+      "candidate_only": [],
+      "candidate_status": "ok",
+      "comparison": "matched",
+      "header": "net/ethernet.h",
+      "matched_identity_count": 977,
+      "profile": "c11-gnu",
+      "reference": {
+        "count": 977,
+        "kind_counts": {
+          "function": 32,
+          "macro": 839,
+          "record": 20,
+          "typedef": 86
+        }
+      },
+      "reference_only": [],
+      "reference_status": "ok",
+      "separately_accounted_source_form_difference_count": 0,
+      "source_form_comparison": "matched"
+    },
+    {
+      "candidate": {
         "count": 974,
         "kind_counts": {
           "function": 32,
-          "macro": 837,
-          "record": 20,
+          "macro": 838,
+          "record": 19,
           "typedef": 85
         }
       },
@@ -10075,13 +10105,13 @@
       "comparison": "matched",
       "header": "net/ethernet.h",
       "matched_identity_count": 974,
-      "profile": "c11-gnu",
+      "profile": "cxx17-gnu",
       "reference": {
         "count": 974,
         "kind_counts": {
           "function": 32,
-          "macro": 837,
-          "record": 20,
+          "macro": 838,
+          "record": 19,
           "typedef": 85
         }
       },
@@ -10092,57 +10122,27 @@
     },
     {
       "candidate": {
-        "count": 971,
-        "kind_counts": {
-          "function": 32,
-          "macro": 836,
-          "record": 19,
-          "typedef": 84
-        }
-      },
-      "candidate_only": [],
-      "candidate_status": "ok",
-      "comparison": "matched",
-      "header": "net/ethernet.h",
-      "matched_identity_count": 971,
-      "profile": "cxx17-gnu",
-      "reference": {
-        "count": 971,
-        "kind_counts": {
-          "function": 32,
-          "macro": 836,
-          "record": 19,
-          "typedef": 84
-        }
-      },
-      "reference_only": [],
-      "reference_status": "ok",
-      "separately_accounted_source_form_difference_count": 0,
-      "source_form_comparison": "matched"
-    },
-    {
-      "candidate": {
-        "count": 903,
+        "count": 906,
         "kind_counts": {
           "function": 25,
-          "macro": 796,
+          "macro": 798,
           "record": 15,
-          "typedef": 67
+          "typedef": 68
         }
       },
       "candidate_only": [],
       "candidate_status": "ok",
       "comparison": "matched",
       "header": "net/ethernet.h",
-      "matched_identity_count": 903,
+      "matched_identity_count": 906,
       "profile": "c11-strict",
       "reference": {
-        "count": 903,
+        "count": 906,
         "kind_counts": {
           "function": 25,
-          "macro": 796,
+          "macro": 798,
           "record": 15,
-          "typedef": 67
+          "typedef": 68
         }
       },
       "reference_only": [],
@@ -10152,27 +10152,27 @@
     },
     {
       "candidate": {
-        "count": 903,
+        "count": 906,
         "kind_counts": {
           "function": 25,
-          "macro": 796,
+          "macro": 798,
           "record": 15,
-          "typedef": 67
+          "typedef": 68
         }
       },
       "candidate_only": [],
       "candidate_status": "ok",
       "comparison": "matched",
       "header": "net/ethernet.h",
-      "matched_identity_count": 903,
+      "matched_identity_count": 906,
       "profile": "c11-posix-2008",
       "reference": {
-        "count": 903,
+        "count": 906,
         "kind_counts": {
           "function": 25,
-          "macro": 796,
+          "macro": 798,
           "record": 15,
-          "typedef": 67
+          "typedef": 68
         }
       },
       "reference_only": [],
@@ -10182,27 +10182,27 @@
     },
     {
       "candidate": {
-        "count": 903,
+        "count": 906,
         "kind_counts": {
           "function": 25,
-          "macro": 796,
+          "macro": 798,
           "record": 15,
-          "typedef": 67
+          "typedef": 68
         }
       },
       "candidate_only": [],
       "candidate_status": "ok",
       "comparison": "matched",
       "header": "net/ethernet.h",
-      "matched_identity_count": 903,
+      "matched_identity_count": 906,
       "profile": "c11-xopen-700",
       "reference": {
-        "count": 903,
+        "count": 906,
         "kind_counts": {
           "function": 25,
-          "macro": 796,
+          "macro": 798,
           "record": 15,
-          "typedef": 67
+          "typedef": 68
         }
       },
       "reference_only": [],
@@ -10212,27 +10212,27 @@
     },
     {
       "candidate": {
-        "count": 970,
+        "count": 973,
         "kind_counts": {
           "function": 30,
-          "macro": 837,
+          "macro": 839,
           "record": 18,
-          "typedef": 85
+          "typedef": 86
         }
       },
       "candidate_only": [],
       "candidate_status": "ok",
       "comparison": "matched",
       "header": "net/ethernet.h",
-      "matched_identity_count": 970,
+      "matched_identity_count": 973,
       "profile": "c11-bsd",
       "reference": {
-        "count": 970,
+        "count": 973,
         "kind_counts": {
           "function": 30,
-          "macro": 837,
+          "macro": 839,
           "record": 18,
-          "typedef": 85
+          "typedef": 86
         }
       },
       "reference_only": [],
@@ -10242,27 +10242,27 @@
     },
     {
       "candidate": {
-        "count": 971,
+        "count": 974,
         "kind_counts": {
           "function": 32,
-          "macro": 836,
+          "macro": 838,
           "record": 19,
-          "typedef": 84
+          "typedef": 85
         }
       },
       "candidate_only": [],
       "candidate_status": "ok",
       "comparison": "matched",
       "header": "net/ethernet.h",
-      "matched_identity_count": 971,
+      "matched_identity_count": 974,
       "profile": "cxx17-strict",
       "reference": {
-        "count": 971,
+        "count": 974,
         "kind_counts": {
           "function": 32,
-          "macro": 836,
+          "macro": 838,
           "record": 19,
-          "typedef": 84
+          "typedef": 85
         }
       },
       "reference_only": [],
@@ -10476,11 +10476,41 @@
     },
     {
       "candidate": {
+        "count": 838,
+        "kind_counts": {
+          "function": 32,
+          "macro": 704,
+          "record": 16,
+          "typedef": 86
+        }
+      },
+      "candidate_only": [],
+      "candidate_status": "ok",
+      "comparison": "matched",
+      "header": "net/if_arp.h",
+      "matched_identity_count": 838,
+      "profile": "c11-gnu",
+      "reference": {
+        "count": 838,
+        "kind_counts": {
+          "function": 32,
+          "macro": 704,
+          "record": 16,
+          "typedef": 86
+        }
+      },
+      "reference_only": [],
+      "reference_status": "ok",
+      "separately_accounted_source_form_difference_count": 0,
+      "source_form_comparison": "matched"
+    },
+    {
+      "candidate": {
         "count": 835,
         "kind_counts": {
           "function": 32,
-          "macro": 702,
-          "record": 16,
+          "macro": 703,
+          "record": 15,
           "typedef": 85
         }
       },
@@ -10489,13 +10519,13 @@
       "comparison": "matched",
       "header": "net/if_arp.h",
       "matched_identity_count": 835,
-      "profile": "c11-gnu",
+      "profile": "cxx17-gnu",
       "reference": {
         "count": 835,
         "kind_counts": {
           "function": 32,
-          "macro": 702,
-          "record": 16,
+          "macro": 703,
+          "record": 15,
           "typedef": 85
         }
       },
@@ -10506,57 +10536,27 @@
     },
     {
       "candidate": {
-        "count": 832,
-        "kind_counts": {
-          "function": 32,
-          "macro": 701,
-          "record": 15,
-          "typedef": 84
-        }
-      },
-      "candidate_only": [],
-      "candidate_status": "ok",
-      "comparison": "matched",
-      "header": "net/if_arp.h",
-      "matched_identity_count": 832,
-      "profile": "cxx17-gnu",
-      "reference": {
-        "count": 832,
-        "kind_counts": {
-          "function": 32,
-          "macro": 701,
-          "record": 15,
-          "typedef": 84
-        }
-      },
-      "reference_only": [],
-      "reference_status": "ok",
-      "separately_accounted_source_form_difference_count": 0,
-      "source_form_comparison": "matched"
-    },
-    {
-      "candidate": {
-        "count": 764,
+        "count": 767,
         "kind_counts": {
           "function": 25,
-          "macro": 661,
+          "macro": 663,
           "record": 11,
-          "typedef": 67
+          "typedef": 68
         }
       },
       "candidate_only": [],
       "candidate_status": "ok",
       "comparison": "matched",
       "header": "net/if_arp.h",
-      "matched_identity_count": 764,
+      "matched_identity_count": 767,
       "profile": "c11-strict",
       "reference": {
-        "count": 764,
+        "count": 767,
         "kind_counts": {
           "function": 25,
-          "macro": 661,
+          "macro": 663,
           "record": 11,
-          "typedef": 67
+          "typedef": 68
         }
       },
       "reference_only": [],
@@ -10566,27 +10566,27 @@
     },
     {
       "candidate": {
-        "count": 764,
+        "count": 767,
         "kind_counts": {
           "function": 25,
-          "macro": 661,
+          "macro": 663,
           "record": 11,
-          "typedef": 67
+          "typedef": 68
         }
       },
       "candidate_only": [],
       "candidate_status": "ok",
       "comparison": "matched",
       "header": "net/if_arp.h",
-      "matched_identity_count": 764,
+      "matched_identity_count": 767,
       "profile": "c11-posix-2008",
       "reference": {
-        "count": 764,
+        "count": 767,
         "kind_counts": {
           "function": 25,
-          "macro": 661,
+          "macro": 663,
           "record": 11,
-          "typedef": 67
+          "typedef": 68
         }
       },
       "reference_only": [],
@@ -10596,27 +10596,27 @@
     },
     {
       "candidate": {
-        "count": 764,
+        "count": 767,
         "kind_counts": {
           "function": 25,
-          "macro": 661,
+          "macro": 663,
           "record": 11,
-          "typedef": 67
+          "typedef": 68
         }
       },
       "candidate_only": [],
       "candidate_status": "ok",
       "comparison": "matched",
       "header": "net/if_arp.h",
-      "matched_identity_count": 764,
+      "matched_identity_count": 767,
       "profile": "c11-xopen-700",
       "reference": {
-        "count": 764,
+        "count": 767,
         "kind_counts": {
           "function": 25,
-          "macro": 661,
+          "macro": 663,
           "record": 11,
-          "typedef": 67
+          "typedef": 68
         }
       },
       "reference_only": [],
@@ -10626,26 +10626,56 @@
     },
     {
       "candidate": {
-        "count": 831,
+        "count": 834,
         "kind_counts": {
           "function": 30,
-          "macro": 702,
+          "macro": 704,
           "record": 14,
-          "typedef": 85
+          "typedef": 86
         }
       },
       "candidate_only": [],
       "candidate_status": "ok",
       "comparison": "matched",
       "header": "net/if_arp.h",
-      "matched_identity_count": 831,
+      "matched_identity_count": 834,
       "profile": "c11-bsd",
       "reference": {
-        "count": 831,
+        "count": 834,
         "kind_counts": {
           "function": 30,
-          "macro": 702,
+          "macro": 704,
           "record": 14,
+          "typedef": 86
+        }
+      },
+      "reference_only": [],
+      "reference_status": "ok",
+      "separately_accounted_source_form_difference_count": 0,
+      "source_form_comparison": "matched"
+    },
+    {
+      "candidate": {
+        "count": 835,
+        "kind_counts": {
+          "function": 32,
+          "macro": 703,
+          "record": 15,
+          "typedef": 85
+        }
+      },
+      "candidate_only": [],
+      "candidate_status": "ok",
+      "comparison": "matched",
+      "header": "net/if_arp.h",
+      "matched_identity_count": 835,
+      "profile": "cxx17-strict",
+      "reference": {
+        "count": 835,
+        "kind_counts": {
+          "function": 32,
+          "macro": 703,
+          "record": 15,
           "typedef": 85
         }
       },
@@ -10656,27 +10686,29 @@
     },
     {
       "candidate": {
-        "count": 832,
+        "count": 1065,
         "kind_counts": {
-          "function": 32,
-          "macro": 701,
-          "record": 15,
-          "typedef": 84
+          "function": 36,
+          "macro": 909,
+          "record": 30,
+          "typedef": 88,
+          "variable": 2
         }
       },
       "candidate_only": [],
       "candidate_status": "ok",
       "comparison": "matched",
-      "header": "net/if_arp.h",
-      "matched_identity_count": 832,
-      "profile": "cxx17-strict",
+      "header": "net/route.h",
+      "matched_identity_count": 1065,
+      "profile": "c11-gnu",
       "reference": {
-        "count": 832,
+        "count": 1065,
         "kind_counts": {
-          "function": 32,
-          "macro": 701,
-          "record": 15,
-          "typedef": 84
+          "function": 36,
+          "macro": 909,
+          "record": 30,
+          "typedef": 88,
+          "variable": 2
         }
       },
       "reference_only": [],
@@ -10689,8 +10721,8 @@
         "count": 1062,
         "kind_counts": {
           "function": 36,
-          "macro": 907,
-          "record": 30,
+          "macro": 908,
+          "record": 29,
           "typedef": 87,
           "variable": 2
         }
@@ -10700,13 +10732,13 @@
       "comparison": "matched",
       "header": "net/route.h",
       "matched_identity_count": 1062,
-      "profile": "c11-gnu",
+      "profile": "cxx17-gnu",
       "reference": {
         "count": 1062,
         "kind_counts": {
           "function": 36,
-          "macro": 907,
-          "record": 30,
+          "macro": 908,
+          "record": 29,
           "typedef": 87,
           "variable": 2
         }
@@ -10718,44 +10750,12 @@
     },
     {
       "candidate": {
-        "count": 1059,
-        "kind_counts": {
-          "function": 36,
-          "macro": 906,
-          "record": 29,
-          "typedef": 86,
-          "variable": 2
-        }
-      },
-      "candidate_only": [],
-      "candidate_status": "ok",
-      "comparison": "matched",
-      "header": "net/route.h",
-      "matched_identity_count": 1059,
-      "profile": "cxx17-gnu",
-      "reference": {
-        "count": 1059,
-        "kind_counts": {
-          "function": 36,
-          "macro": 906,
-          "record": 29,
-          "typedef": 86,
-          "variable": 2
-        }
-      },
-      "reference_only": [],
-      "reference_status": "ok",
-      "separately_accounted_source_form_difference_count": 0,
-      "source_form_comparison": "matched"
-    },
-    {
-      "candidate": {
-        "count": 970,
+        "count": 973,
         "kind_counts": {
           "function": 29,
-          "macro": 855,
+          "macro": 857,
           "record": 15,
-          "typedef": 69,
+          "typedef": 70,
           "variable": 2
         }
       },
@@ -10763,15 +10763,15 @@
       "candidate_status": "ok",
       "comparison": "matched",
       "header": "net/route.h",
-      "matched_identity_count": 970,
+      "matched_identity_count": 973,
       "profile": "c11-strict",
       "reference": {
-        "count": 970,
+        "count": 973,
         "kind_counts": {
           "function": 29,
-          "macro": 855,
+          "macro": 857,
           "record": 15,
-          "typedef": 69,
+          "typedef": 70,
           "variable": 2
         }
       },
@@ -10782,12 +10782,12 @@
     },
     {
       "candidate": {
-        "count": 970,
+        "count": 973,
         "kind_counts": {
           "function": 29,
-          "macro": 855,
+          "macro": 857,
           "record": 15,
-          "typedef": 69,
+          "typedef": 70,
           "variable": 2
         }
       },
@@ -10795,15 +10795,15 @@
       "candidate_status": "ok",
       "comparison": "matched",
       "header": "net/route.h",
-      "matched_identity_count": 970,
+      "matched_identity_count": 973,
       "profile": "c11-posix-2008",
       "reference": {
-        "count": 970,
+        "count": 973,
         "kind_counts": {
           "function": 29,
-          "macro": 855,
+          "macro": 857,
           "record": 15,
-          "typedef": 69,
+          "typedef": 70,
           "variable": 2
         }
       },
@@ -10814,12 +10814,12 @@
     },
     {
       "candidate": {
-        "count": 970,
+        "count": 973,
         "kind_counts": {
           "function": 29,
-          "macro": 855,
+          "macro": 857,
           "record": 15,
-          "typedef": 69,
+          "typedef": 70,
           "variable": 2
         }
       },
@@ -10827,15 +10827,15 @@
       "candidate_status": "ok",
       "comparison": "matched",
       "header": "net/route.h",
-      "matched_identity_count": 970,
+      "matched_identity_count": 973,
       "profile": "c11-xopen-700",
       "reference": {
-        "count": 970,
+        "count": 973,
         "kind_counts": {
           "function": 29,
-          "macro": 855,
+          "macro": 857,
           "record": 15,
-          "typedef": 69,
+          "typedef": 70,
           "variable": 2
         }
       },
@@ -10846,12 +10846,12 @@
     },
     {
       "candidate": {
-        "count": 1058,
+        "count": 1061,
         "kind_counts": {
           "function": 34,
-          "macro": 907,
+          "macro": 909,
           "record": 28,
-          "typedef": 87,
+          "typedef": 88,
           "variable": 2
         }
       },
@@ -10859,15 +10859,15 @@
       "candidate_status": "ok",
       "comparison": "matched",
       "header": "net/route.h",
-      "matched_identity_count": 1058,
+      "matched_identity_count": 1061,
       "profile": "c11-bsd",
       "reference": {
-        "count": 1058,
+        "count": 1061,
         "kind_counts": {
           "function": 34,
-          "macro": 907,
+          "macro": 909,
           "record": 28,
-          "typedef": 87,
+          "typedef": 88,
           "variable": 2
         }
       },
@@ -10878,12 +10878,12 @@
     },
     {
       "candidate": {
-        "count": 1059,
+        "count": 1062,
         "kind_counts": {
           "function": 36,
-          "macro": 906,
+          "macro": 908,
           "record": 29,
-          "typedef": 86,
+          "typedef": 87,
           "variable": 2
         }
       },
@@ -10891,15 +10891,15 @@
       "candidate_status": "ok",
       "comparison": "matched",
       "header": "net/route.h",
-      "matched_identity_count": 1059,
+      "matched_identity_count": 1062,
       "profile": "cxx17-strict",
       "reference": {
-        "count": 1059,
+        "count": 1062,
         "kind_counts": {
           "function": 36,
-          "macro": 906,
+          "macro": 908,
           "record": 29,
-          "typedef": 86,
+          "typedef": 87,
           "variable": 2
         }
       },
@@ -11134,11 +11134,41 @@
     },
     {
       "candidate": {
+        "count": 985,
+        "kind_counts": {
+          "function": 39,
+          "macro": 840,
+          "record": 20,
+          "typedef": 86
+        }
+      },
+      "candidate_only": [],
+      "candidate_status": "ok",
+      "comparison": "matched",
+      "header": "netinet/ether.h",
+      "matched_identity_count": 985,
+      "profile": "c11-gnu",
+      "reference": {
+        "count": 985,
+        "kind_counts": {
+          "function": 39,
+          "macro": 840,
+          "record": 20,
+          "typedef": 86
+        }
+      },
+      "reference_only": [],
+      "reference_status": "ok",
+      "separately_accounted_source_form_difference_count": 0,
+      "source_form_comparison": "matched"
+    },
+    {
+      "candidate": {
         "count": 982,
         "kind_counts": {
           "function": 39,
-          "macro": 838,
-          "record": 20,
+          "macro": 839,
+          "record": 19,
           "typedef": 85
         }
       },
@@ -11147,13 +11177,13 @@
       "comparison": "matched",
       "header": "netinet/ether.h",
       "matched_identity_count": 982,
-      "profile": "c11-gnu",
+      "profile": "cxx17-gnu",
       "reference": {
         "count": 982,
         "kind_counts": {
           "function": 39,
-          "macro": 838,
-          "record": 20,
+          "macro": 839,
+          "record": 19,
           "typedef": 85
         }
       },
@@ -11164,57 +11194,27 @@
     },
     {
       "candidate": {
-        "count": 979,
-        "kind_counts": {
-          "function": 39,
-          "macro": 837,
-          "record": 19,
-          "typedef": 84
-        }
-      },
-      "candidate_only": [],
-      "candidate_status": "ok",
-      "comparison": "matched",
-      "header": "netinet/ether.h",
-      "matched_identity_count": 979,
-      "profile": "cxx17-gnu",
-      "reference": {
-        "count": 979,
-        "kind_counts": {
-          "function": 39,
-          "macro": 837,
-          "record": 19,
-          "typedef": 84
-        }
-      },
-      "reference_only": [],
-      "reference_status": "ok",
-      "separately_accounted_source_form_difference_count": 0,
-      "source_form_comparison": "matched"
-    },
-    {
-      "candidate": {
-        "count": 911,
+        "count": 914,
         "kind_counts": {
           "function": 32,
-          "macro": 797,
+          "macro": 799,
           "record": 15,
-          "typedef": 67
+          "typedef": 68
         }
       },
       "candidate_only": [],
       "candidate_status": "ok",
       "comparison": "matched",
       "header": "netinet/ether.h",
-      "matched_identity_count": 911,
+      "matched_identity_count": 914,
       "profile": "c11-strict",
       "reference": {
-        "count": 911,
+        "count": 914,
         "kind_counts": {
           "function": 32,
-          "macro": 797,
+          "macro": 799,
           "record": 15,
-          "typedef": 67
+          "typedef": 68
         }
       },
       "reference_only": [],
@@ -11224,27 +11224,27 @@
     },
     {
       "candidate": {
-        "count": 911,
+        "count": 914,
         "kind_counts": {
           "function": 32,
-          "macro": 797,
+          "macro": 799,
           "record": 15,
-          "typedef": 67
+          "typedef": 68
         }
       },
       "candidate_only": [],
       "candidate_status": "ok",
       "comparison": "matched",
       "header": "netinet/ether.h",
-      "matched_identity_count": 911,
+      "matched_identity_count": 914,
       "profile": "c11-posix-2008",
       "reference": {
-        "count": 911,
+        "count": 914,
         "kind_counts": {
           "function": 32,
-          "macro": 797,
+          "macro": 799,
           "record": 15,
-          "typedef": 67
+          "typedef": 68
         }
       },
       "reference_only": [],
@@ -11254,27 +11254,27 @@
     },
     {
       "candidate": {
-        "count": 911,
+        "count": 914,
         "kind_counts": {
           "function": 32,
-          "macro": 797,
+          "macro": 799,
           "record": 15,
-          "typedef": 67
+          "typedef": 68
         }
       },
       "candidate_only": [],
       "candidate_status": "ok",
       "comparison": "matched",
       "header": "netinet/ether.h",
-      "matched_identity_count": 911,
+      "matched_identity_count": 914,
       "profile": "c11-xopen-700",
       "reference": {
-        "count": 911,
+        "count": 914,
         "kind_counts": {
           "function": 32,
-          "macro": 797,
+          "macro": 799,
           "record": 15,
-          "typedef": 67
+          "typedef": 68
         }
       },
       "reference_only": [],
@@ -11284,26 +11284,56 @@
     },
     {
       "candidate": {
-        "count": 978,
+        "count": 981,
         "kind_counts": {
           "function": 37,
-          "macro": 838,
+          "macro": 840,
           "record": 18,
-          "typedef": 85
+          "typedef": 86
         }
       },
       "candidate_only": [],
       "candidate_status": "ok",
       "comparison": "matched",
       "header": "netinet/ether.h",
-      "matched_identity_count": 978,
+      "matched_identity_count": 981,
       "profile": "c11-bsd",
       "reference": {
-        "count": 978,
+        "count": 981,
         "kind_counts": {
           "function": 37,
-          "macro": 838,
+          "macro": 840,
           "record": 18,
+          "typedef": 86
+        }
+      },
+      "reference_only": [],
+      "reference_status": "ok",
+      "separately_accounted_source_form_difference_count": 0,
+      "source_form_comparison": "matched"
+    },
+    {
+      "candidate": {
+        "count": 982,
+        "kind_counts": {
+          "function": 39,
+          "macro": 839,
+          "record": 19,
+          "typedef": 85
+        }
+      },
+      "candidate_only": [],
+      "candidate_status": "ok",
+      "comparison": "matched",
+      "header": "netinet/ether.h",
+      "matched_identity_count": 982,
+      "profile": "cxx17-strict",
+      "reference": {
+        "count": 982,
+        "kind_counts": {
+          "function": 39,
+          "macro": 839,
+          "record": 19,
           "typedef": 85
         }
       },
@@ -11314,27 +11344,29 @@
     },
     {
       "candidate": {
-        "count": 979,
+        "count": 1196,
         "kind_counts": {
-          "function": 39,
-          "macro": 837,
-          "record": 19,
-          "typedef": 84
+          "function": 92,
+          "macro": 966,
+          "record": 47,
+          "typedef": 89,
+          "variable": 2
         }
       },
       "candidate_only": [],
       "candidate_status": "ok",
       "comparison": "matched",
-      "header": "netinet/ether.h",
-      "matched_identity_count": 979,
-      "profile": "cxx17-strict",
+      "header": "netinet/icmp6.h",
+      "matched_identity_count": 1196,
+      "profile": "c11-gnu",
       "reference": {
-        "count": 979,
+        "count": 1196,
         "kind_counts": {
-          "function": 39,
-          "macro": 837,
-          "record": 19,
-          "typedef": 84
+          "function": 92,
+          "macro": 966,
+          "record": 47,
+          "typedef": 89,
+          "variable": 2
         }
       },
       "reference_only": [],
@@ -11347,8 +11379,8 @@
         "count": 1193,
         "kind_counts": {
           "function": 92,
-          "macro": 964,
-          "record": 47,
+          "macro": 965,
+          "record": 46,
           "typedef": 88,
           "variable": 2
         }
@@ -11358,13 +11390,13 @@
       "comparison": "matched",
       "header": "netinet/icmp6.h",
       "matched_identity_count": 1193,
-      "profile": "c11-gnu",
+      "profile": "cxx17-gnu",
       "reference": {
         "count": 1193,
         "kind_counts": {
           "function": 92,
-          "macro": 964,
-          "record": 47,
+          "macro": 965,
+          "record": 46,
           "typedef": 88,
           "variable": 2
         }
@@ -11376,44 +11408,12 @@
     },
     {
       "candidate": {
-        "count": 1190,
-        "kind_counts": {
-          "function": 92,
-          "macro": 963,
-          "record": 46,
-          "typedef": 87,
-          "variable": 2
-        }
-      },
-      "candidate_only": [],
-      "candidate_status": "ok",
-      "comparison": "matched",
-      "header": "netinet/icmp6.h",
-      "matched_identity_count": 1190,
-      "profile": "cxx17-gnu",
-      "reference": {
-        "count": 1190,
-        "kind_counts": {
-          "function": 92,
-          "macro": 963,
-          "record": 46,
-          "typedef": 87,
-          "variable": 2
-        }
-      },
-      "reference_only": [],
-      "reference_status": "ok",
-      "separately_accounted_source_form_difference_count": 0,
-      "source_form_comparison": "matched"
-    },
-    {
-      "candidate": {
-        "count": 1061,
+        "count": 1064,
         "kind_counts": {
           "function": 51,
-          "macro": 908,
+          "macro": 910,
           "record": 31,
-          "typedef": 69,
+          "typedef": 70,
           "variable": 2
         }
       },
@@ -11421,15 +11421,15 @@
       "candidate_status": "ok",
       "comparison": "matched",
       "header": "netinet/icmp6.h",
-      "matched_identity_count": 1061,
+      "matched_identity_count": 1064,
       "profile": "c11-strict",
       "reference": {
-        "count": 1061,
+        "count": 1064,
         "kind_counts": {
           "function": 51,
-          "macro": 908,
+          "macro": 910,
           "record": 31,
-          "typedef": 69,
+          "typedef": 70,
           "variable": 2
         }
       },
@@ -11440,12 +11440,12 @@
     },
     {
       "candidate": {
-        "count": 1077,
+        "count": 1080,
         "kind_counts": {
           "function": 63,
-          "macro": 910,
+          "macro": 912,
           "record": 32,
-          "typedef": 70,
+          "typedef": 71,
           "variable": 2
         }
       },
@@ -11453,15 +11453,15 @@
       "candidate_status": "ok",
       "comparison": "matched",
       "header": "netinet/icmp6.h",
-      "matched_identity_count": 1077,
+      "matched_identity_count": 1080,
       "profile": "c11-posix-2008",
       "reference": {
-        "count": 1077,
+        "count": 1080,
         "kind_counts": {
           "function": 63,
-          "macro": 910,
+          "macro": 912,
           "record": 32,
-          "typedef": 70,
+          "typedef": 71,
           "variable": 2
         }
       },
@@ -11472,12 +11472,12 @@
     },
     {
       "candidate": {
-        "count": 1078,
+        "count": 1081,
         "kind_counts": {
           "function": 64,
-          "macro": 910,
+          "macro": 912,
           "record": 32,
-          "typedef": 70,
+          "typedef": 71,
           "variable": 2
         }
       },
@@ -11485,15 +11485,15 @@
       "candidate_status": "ok",
       "comparison": "matched",
       "header": "netinet/icmp6.h",
-      "matched_identity_count": 1078,
+      "matched_identity_count": 1081,
       "profile": "c11-xopen-700",
       "reference": {
-        "count": 1078,
+        "count": 1081,
         "kind_counts": {
           "function": 64,
-          "macro": 910,
+          "macro": 912,
           "record": 32,
-          "typedef": 70,
+          "typedef": 71,
           "variable": 2
         }
       },
@@ -11504,12 +11504,12 @@
     },
     {
       "candidate": {
-        "count": 1183,
+        "count": 1186,
         "kind_counts": {
           "function": 85,
-          "macro": 963,
+          "macro": 965,
           "record": 45,
-          "typedef": 88,
+          "typedef": 89,
           "variable": 2
         }
       },
@@ -11517,14 +11517,46 @@
       "candidate_status": "ok",
       "comparison": "matched",
       "header": "netinet/icmp6.h",
-      "matched_identity_count": 1183,
+      "matched_identity_count": 1186,
       "profile": "c11-bsd",
       "reference": {
-        "count": 1183,
+        "count": 1186,
         "kind_counts": {
           "function": 85,
-          "macro": 963,
+          "macro": 965,
           "record": 45,
+          "typedef": 89,
+          "variable": 2
+        }
+      },
+      "reference_only": [],
+      "reference_status": "ok",
+      "separately_accounted_source_form_difference_count": 0,
+      "source_form_comparison": "matched"
+    },
+    {
+      "candidate": {
+        "count": 1193,
+        "kind_counts": {
+          "function": 92,
+          "macro": 965,
+          "record": 46,
+          "typedef": 88,
+          "variable": 2
+        }
+      },
+      "candidate_only": [],
+      "candidate_status": "ok",
+      "comparison": "matched",
+      "header": "netinet/icmp6.h",
+      "matched_identity_count": 1193,
+      "profile": "cxx17-strict",
+      "reference": {
+        "count": 1193,
+        "kind_counts": {
+          "function": 92,
+          "macro": 965,
+          "record": 46,
           "typedef": 88,
           "variable": 2
         }
@@ -11536,29 +11568,27 @@
     },
     {
       "candidate": {
-        "count": 1190,
+        "count": 977,
         "kind_counts": {
-          "function": 92,
-          "macro": 963,
-          "record": 46,
-          "typedef": 87,
-          "variable": 2
+          "function": 32,
+          "macro": 839,
+          "record": 20,
+          "typedef": 86
         }
       },
       "candidate_only": [],
       "candidate_status": "ok",
       "comparison": "matched",
-      "header": "netinet/icmp6.h",
-      "matched_identity_count": 1190,
-      "profile": "cxx17-strict",
+      "header": "netinet/if_ether.h",
+      "matched_identity_count": 977,
+      "profile": "c11-gnu",
       "reference": {
-        "count": 1190,
+        "count": 977,
         "kind_counts": {
-          "function": 92,
-          "macro": 963,
-          "record": 46,
-          "typedef": 87,
-          "variable": 2
+          "function": 32,
+          "macro": 839,
+          "record": 20,
+          "typedef": 86
         }
       },
       "reference_only": [],
@@ -11571,8 +11601,8 @@
         "count": 974,
         "kind_counts": {
           "function": 32,
-          "macro": 837,
-          "record": 20,
+          "macro": 838,
+          "record": 19,
           "typedef": 85
         }
       },
@@ -11581,13 +11611,13 @@
       "comparison": "matched",
       "header": "netinet/if_ether.h",
       "matched_identity_count": 974,
-      "profile": "c11-gnu",
+      "profile": "cxx17-gnu",
       "reference": {
         "count": 974,
         "kind_counts": {
           "function": 32,
-          "macro": 837,
-          "record": 20,
+          "macro": 838,
+          "record": 19,
           "typedef": 85
         }
       },
@@ -11598,57 +11628,27 @@
     },
     {
       "candidate": {
-        "count": 971,
-        "kind_counts": {
-          "function": 32,
-          "macro": 836,
-          "record": 19,
-          "typedef": 84
-        }
-      },
-      "candidate_only": [],
-      "candidate_status": "ok",
-      "comparison": "matched",
-      "header": "netinet/if_ether.h",
-      "matched_identity_count": 971,
-      "profile": "cxx17-gnu",
-      "reference": {
-        "count": 971,
-        "kind_counts": {
-          "function": 32,
-          "macro": 836,
-          "record": 19,
-          "typedef": 84
-        }
-      },
-      "reference_only": [],
-      "reference_status": "ok",
-      "separately_accounted_source_form_difference_count": 0,
-      "source_form_comparison": "matched"
-    },
-    {
-      "candidate": {
-        "count": 903,
+        "count": 906,
         "kind_counts": {
           "function": 25,
-          "macro": 796,
+          "macro": 798,
           "record": 15,
-          "typedef": 67
+          "typedef": 68
         }
       },
       "candidate_only": [],
       "candidate_status": "ok",
       "comparison": "matched",
       "header": "netinet/if_ether.h",
-      "matched_identity_count": 903,
+      "matched_identity_count": 906,
       "profile": "c11-strict",
       "reference": {
-        "count": 903,
+        "count": 906,
         "kind_counts": {
           "function": 25,
-          "macro": 796,
+          "macro": 798,
           "record": 15,
-          "typedef": 67
+          "typedef": 68
         }
       },
       "reference_only": [],
@@ -11658,27 +11658,27 @@
     },
     {
       "candidate": {
-        "count": 903,
+        "count": 906,
         "kind_counts": {
           "function": 25,
-          "macro": 796,
+          "macro": 798,
           "record": 15,
-          "typedef": 67
+          "typedef": 68
         }
       },
       "candidate_only": [],
       "candidate_status": "ok",
       "comparison": "matched",
       "header": "netinet/if_ether.h",
-      "matched_identity_count": 903,
+      "matched_identity_count": 906,
       "profile": "c11-posix-2008",
       "reference": {
-        "count": 903,
+        "count": 906,
         "kind_counts": {
           "function": 25,
-          "macro": 796,
+          "macro": 798,
           "record": 15,
-          "typedef": 67
+          "typedef": 68
         }
       },
       "reference_only": [],
@@ -11688,27 +11688,27 @@
     },
     {
       "candidate": {
-        "count": 903,
+        "count": 906,
         "kind_counts": {
           "function": 25,
-          "macro": 796,
+          "macro": 798,
           "record": 15,
-          "typedef": 67
+          "typedef": 68
         }
       },
       "candidate_only": [],
       "candidate_status": "ok",
       "comparison": "matched",
       "header": "netinet/if_ether.h",
-      "matched_identity_count": 903,
+      "matched_identity_count": 906,
       "profile": "c11-xopen-700",
       "reference": {
-        "count": 903,
+        "count": 906,
         "kind_counts": {
           "function": 25,
-          "macro": 796,
+          "macro": 798,
           "record": 15,
-          "typedef": 67
+          "typedef": 68
         }
       },
       "reference_only": [],
@@ -11718,27 +11718,27 @@
     },
     {
       "candidate": {
-        "count": 970,
+        "count": 973,
         "kind_counts": {
           "function": 30,
-          "macro": 837,
+          "macro": 839,
           "record": 18,
-          "typedef": 85
+          "typedef": 86
         }
       },
       "candidate_only": [],
       "candidate_status": "ok",
       "comparison": "matched",
       "header": "netinet/if_ether.h",
-      "matched_identity_count": 970,
+      "matched_identity_count": 973,
       "profile": "c11-bsd",
       "reference": {
-        "count": 970,
+        "count": 973,
         "kind_counts": {
           "function": 30,
-          "macro": 837,
+          "macro": 839,
           "record": 18,
-          "typedef": 85
+          "typedef": 86
         }
       },
       "reference_only": [],
@@ -11748,27 +11748,27 @@
     },
     {
       "candidate": {
-        "count": 971,
+        "count": 974,
         "kind_counts": {
           "function": 32,
-          "macro": 836,
+          "macro": 838,
           "record": 19,
-          "typedef": 84
+          "typedef": 85
         }
       },
       "candidate_only": [],
       "candidate_status": "ok",
       "comparison": "matched",
       "header": "netinet/if_ether.h",
-      "matched_identity_count": 971,
+      "matched_identity_count": 974,
       "profile": "cxx17-strict",
       "reference": {
-        "count": 971,
+        "count": 974,
         "kind_counts": {
           "function": 32,
-          "macro": 836,
+          "macro": 838,
           "record": 19,
-          "typedef": 84
+          "typedef": 85
         }
       },
       "reference_only": [],
@@ -13080,29 +13080,29 @@
     },
     {
       "candidate": {
-        "count": 669,
+        "count": 672,
         "kind_counts": {
           "enum": 1,
           "function": 26,
-          "macro": 540,
+          "macro": 542,
           "record": 18,
-          "typedef": 84
+          "typedef": 85
         }
       },
       "candidate_only": [],
       "candidate_status": "ok",
       "comparison": "matched",
       "header": "netinet/tcp.h",
-      "matched_identity_count": 669,
+      "matched_identity_count": 672,
       "profile": "c11-gnu",
       "reference": {
-        "count": 669,
+        "count": 672,
         "kind_counts": {
           "enum": 1,
           "function": 26,
-          "macro": 540,
+          "macro": 542,
           "record": 18,
-          "typedef": 84
+          "typedef": 85
         }
       },
       "reference_only": [],
@@ -13112,29 +13112,29 @@
     },
     {
       "candidate": {
-        "count": 668,
+        "count": 671,
         "kind_counts": {
           "enum": 1,
           "function": 26,
-          "macro": 540,
+          "macro": 542,
           "record": 17,
-          "typedef": 84
+          "typedef": 85
         }
       },
       "candidate_only": [],
       "candidate_status": "ok",
       "comparison": "matched",
       "header": "netinet/tcp.h",
-      "matched_identity_count": 668,
+      "matched_identity_count": 671,
       "profile": "cxx17-gnu",
       "reference": {
-        "count": 668,
+        "count": 671,
         "kind_counts": {
           "enum": 1,
           "function": 26,
-          "macro": 540,
+          "macro": 542,
           "record": 17,
-          "typedef": 84
+          "typedef": 85
         }
       },
       "reference_only": [],
@@ -13216,27 +13216,27 @@
     },
     {
       "candidate": {
-        "count": 643,
+        "count": 646,
         "kind_counts": {
           "function": 24,
-          "macro": 524,
+          "macro": 526,
           "record": 11,
-          "typedef": 84
+          "typedef": 85
         }
       },
       "candidate_only": [],
       "candidate_status": "ok",
       "comparison": "matched",
       "header": "netinet/tcp.h",
-      "matched_identity_count": 643,
+      "matched_identity_count": 646,
       "profile": "c11-bsd",
       "reference": {
-        "count": 643,
+        "count": 646,
         "kind_counts": {
           "function": 24,
-          "macro": 524,
+          "macro": 526,
           "record": 11,
-          "typedef": 84
+          "typedef": 85
         }
       },
       "reference_only": [],
@@ -13246,29 +13246,29 @@
     },
     {
       "candidate": {
-        "count": 668,
+        "count": 671,
         "kind_counts": {
           "enum": 1,
           "function": 26,
-          "macro": 540,
+          "macro": 542,
           "record": 17,
-          "typedef": 84
+          "typedef": 85
         }
       },
       "candidate_only": [],
       "candidate_status": "ok",
       "comparison": "matched",
       "header": "netinet/tcp.h",
-      "matched_identity_count": 668,
+      "matched_identity_count": 671,
       "profile": "cxx17-strict",
       "reference": {
-        "count": 668,
+        "count": 671,
         "kind_counts": {
           "enum": 1,
           "function": 26,
-          "macro": 540,
+          "macro": 542,
           "record": 17,
-          "typedef": 84
+          "typedef": 85
         }
       },
       "reference_only": [],
@@ -16398,10 +16398,10 @@
     },
     {
       "candidate": {
-        "count": 208,
+        "count": 213,
         "kind_counts": {
           "function": 25,
-          "macro": 171,
+          "macro": 176,
           "record": 5,
           "typedef": 7
         }
@@ -16410,13 +16410,13 @@
       "candidate_status": "ok",
       "comparison": "matched",
       "header": "semaphore.h",
-      "matched_identity_count": 208,
+      "matched_identity_count": 213,
       "profile": "c11-gnu",
       "reference": {
-        "count": 208,
+        "count": 213,
         "kind_counts": {
           "function": 25,
-          "macro": 171,
+          "macro": 176,
           "record": 5,
           "typedef": 7
         }
@@ -16428,10 +16428,10 @@
     },
     {
       "candidate": {
-        "count": 208,
+        "count": 213,
         "kind_counts": {
           "function": 25,
-          "macro": 171,
+          "macro": 176,
           "record": 5,
           "typedef": 7
         }
@@ -16440,13 +16440,13 @@
       "candidate_status": "ok",
       "comparison": "matched",
       "header": "semaphore.h",
-      "matched_identity_count": 208,
+      "matched_identity_count": 213,
       "profile": "cxx17-gnu",
       "reference": {
-        "count": 208,
+        "count": 213,
         "kind_counts": {
           "function": 25,
-          "macro": 171,
+          "macro": 176,
           "record": 5,
           "typedef": 7
         }
@@ -16578,10 +16578,10 @@
     },
     {
       "candidate": {
-        "count": 208,
+        "count": 213,
         "kind_counts": {
           "function": 25,
-          "macro": 171,
+          "macro": 176,
           "record": 5,
           "typedef": 7
         }
@@ -16590,13 +16590,13 @@
       "candidate_status": "ok",
       "comparison": "matched",
       "header": "semaphore.h",
-      "matched_identity_count": 208,
+      "matched_identity_count": 213,
       "profile": "cxx17-strict",
       "reference": {
-        "count": 208,
+        "count": 213,
         "kind_counts": {
           "function": 25,
-          "macro": 171,
+          "macro": 176,
           "record": 5,
           "typedef": 7
         }
@@ -20784,10 +20784,10 @@
     },
     {
       "candidate": {
-        "count": 57,
+        "count": 59,
         "kind_counts": {
           "function": 14,
-          "macro": 34,
+          "macro": 36,
           "record": 3,
           "typedef": 6
         }
@@ -20796,13 +20796,13 @@
       "candidate_status": "ok",
       "comparison": "matched",
       "header": "sys/dir.h",
-      "matched_identity_count": 57,
+      "matched_identity_count": 59,
       "profile": "c11-gnu",
       "reference": {
-        "count": 57,
+        "count": 59,
         "kind_counts": {
           "function": 14,
-          "macro": 34,
+          "macro": 36,
           "record": 3,
           "typedef": 6
         }
@@ -20814,10 +20814,10 @@
     },
     {
       "candidate": {
-        "count": 57,
+        "count": 59,
         "kind_counts": {
           "function": 14,
-          "macro": 34,
+          "macro": 36,
           "record": 3,
           "typedef": 6
         }
@@ -20826,73 +20826,13 @@
       "candidate_status": "ok",
       "comparison": "matched",
       "header": "sys/dir.h",
-      "matched_identity_count": 57,
+      "matched_identity_count": 59,
       "profile": "cxx17-gnu",
       "reference": {
-        "count": 57,
+        "count": 59,
         "kind_counts": {
           "function": 14,
-          "macro": 34,
-          "record": 3,
-          "typedef": 6
-        }
-      },
-      "reference_only": [],
-      "reference_status": "ok",
-      "separately_accounted_source_form_difference_count": 0,
-      "source_form_comparison": "matched"
-    },
-    {
-      "candidate": {
-        "count": 51,
-        "kind_counts": {
-          "function": 10,
-          "macro": 32,
-          "record": 3,
-          "typedef": 6
-        }
-      },
-      "candidate_only": [],
-      "candidate_status": "ok",
-      "comparison": "matched",
-      "header": "sys/dir.h",
-      "matched_identity_count": 51,
-      "profile": "c11-strict",
-      "reference": {
-        "count": 51,
-        "kind_counts": {
-          "function": 10,
-          "macro": 32,
-          "record": 3,
-          "typedef": 6
-        }
-      },
-      "reference_only": [],
-      "reference_status": "ok",
-      "separately_accounted_source_form_difference_count": 0,
-      "source_form_comparison": "matched"
-    },
-    {
-      "candidate": {
-        "count": 51,
-        "kind_counts": {
-          "function": 10,
-          "macro": 32,
-          "record": 3,
-          "typedef": 6
-        }
-      },
-      "candidate_only": [],
-      "candidate_status": "ok",
-      "comparison": "matched",
-      "header": "sys/dir.h",
-      "matched_identity_count": 51,
-      "profile": "c11-posix-2008",
-      "reference": {
-        "count": 51,
-        "kind_counts": {
-          "function": 10,
-          "macro": 32,
+          "macro": 36,
           "record": 3,
           "typedef": 6
         }
@@ -20906,8 +20846,8 @@
       "candidate": {
         "count": 53,
         "kind_counts": {
-          "function": 12,
-          "macro": 32,
+          "function": 10,
+          "macro": 34,
           "record": 3,
           "typedef": 6
         }
@@ -20917,12 +20857,12 @@
       "comparison": "matched",
       "header": "sys/dir.h",
       "matched_identity_count": 53,
-      "profile": "c11-xopen-700",
+      "profile": "c11-strict",
       "reference": {
         "count": 53,
         "kind_counts": {
-          "function": 12,
-          "macro": 32,
+          "function": 10,
+          "macro": 34,
           "record": 3,
           "typedef": 6
         }
@@ -20934,9 +20874,9 @@
     },
     {
       "candidate": {
-        "count": 56,
+        "count": 53,
         "kind_counts": {
-          "function": 13,
+          "function": 10,
           "macro": 34,
           "record": 3,
           "typedef": 6
@@ -20946,12 +20886,12 @@
       "candidate_status": "ok",
       "comparison": "matched",
       "header": "sys/dir.h",
-      "matched_identity_count": 56,
-      "profile": "c11-bsd",
+      "matched_identity_count": 53,
+      "profile": "c11-posix-2008",
       "reference": {
-        "count": 56,
+        "count": 53,
         "kind_counts": {
-          "function": 13,
+          "function": 10,
           "macro": 34,
           "record": 3,
           "typedef": 6
@@ -20964,9 +20904,9 @@
     },
     {
       "candidate": {
-        "count": 57,
+        "count": 55,
         "kind_counts": {
-          "function": 14,
+          "function": 12,
           "macro": 34,
           "record": 3,
           "typedef": 6
@@ -20976,12 +20916,12 @@
       "candidate_status": "ok",
       "comparison": "matched",
       "header": "sys/dir.h",
-      "matched_identity_count": 57,
-      "profile": "cxx17-strict",
+      "matched_identity_count": 55,
+      "profile": "c11-xopen-700",
       "reference": {
-        "count": 57,
+        "count": 55,
         "kind_counts": {
-          "function": 14,
+          "function": 12,
           "macro": 34,
           "record": 3,
           "typedef": 6
@@ -20994,189 +20934,27 @@
     },
     {
       "candidate": {
-        "count": 695,
+        "count": 58,
         "kind_counts": {
-          "enum": 1,
-          "function": 26,
-          "macro": 574,
-          "record": 12,
-          "typedef": 82
+          "function": 13,
+          "macro": 36,
+          "record": 3,
+          "typedef": 6
         }
       },
       "candidate_only": [],
       "candidate_status": "ok",
       "comparison": "matched",
-      "header": "sys/epoll.h",
-      "matched_identity_count": 695,
-      "profile": "c11-gnu",
-      "reference": {
-        "count": 695,
-        "kind_counts": {
-          "enum": 1,
-          "function": 26,
-          "macro": 574,
-          "record": 12,
-          "typedef": 82
-        }
-      },
-      "reference_only": [],
-      "reference_status": "ok",
-      "separately_accounted_source_form_difference_count": 0,
-      "source_form_comparison": "matched"
-    },
-    {
-      "candidate": {
-        "count": 694,
-        "kind_counts": {
-          "enum": 1,
-          "function": 26,
-          "macro": 574,
-          "record": 11,
-          "typedef": 82
-        }
-      },
-      "candidate_only": [],
-      "candidate_status": "ok",
-      "comparison": "matched",
-      "header": "sys/epoll.h",
-      "matched_identity_count": 694,
-      "profile": "cxx17-gnu",
-      "reference": {
-        "count": 694,
-        "kind_counts": {
-          "enum": 1,
-          "function": 26,
-          "macro": 574,
-          "record": 11,
-          "typedef": 82
-        }
-      },
-      "reference_only": [],
-      "reference_status": "ok",
-      "separately_accounted_source_form_difference_count": 0,
-      "source_form_comparison": "matched"
-    },
-    {
-      "candidate": {
-        "count": 553,
-        "kind_counts": {
-          "enum": 1,
-          "function": 12,
-          "macro": 468,
-          "record": 7,
-          "typedef": 65
-        }
-      },
-      "candidate_only": [],
-      "candidate_status": "ok",
-      "comparison": "matched",
-      "header": "sys/epoll.h",
-      "matched_identity_count": 553,
-      "profile": "c11-strict",
-      "reference": {
-        "count": 553,
-        "kind_counts": {
-          "enum": 1,
-          "function": 12,
-          "macro": 468,
-          "record": 7,
-          "typedef": 65
-        }
-      },
-      "reference_only": [],
-      "reference_status": "ok",
-      "separately_accounted_source_form_difference_count": 0,
-      "source_form_comparison": "matched"
-    },
-    {
-      "candidate": {
-        "count": 553,
-        "kind_counts": {
-          "enum": 1,
-          "function": 12,
-          "macro": 468,
-          "record": 7,
-          "typedef": 65
-        }
-      },
-      "candidate_only": [],
-      "candidate_status": "ok",
-      "comparison": "matched",
-      "header": "sys/epoll.h",
-      "matched_identity_count": 553,
-      "profile": "c11-posix-2008",
-      "reference": {
-        "count": 553,
-        "kind_counts": {
-          "enum": 1,
-          "function": 12,
-          "macro": 468,
-          "record": 7,
-          "typedef": 65
-        }
-      },
-      "reference_only": [],
-      "reference_status": "ok",
-      "separately_accounted_source_form_difference_count": 0,
-      "source_form_comparison": "matched"
-    },
-    {
-      "candidate": {
-        "count": 553,
-        "kind_counts": {
-          "enum": 1,
-          "function": 12,
-          "macro": 468,
-          "record": 7,
-          "typedef": 65
-        }
-      },
-      "candidate_only": [],
-      "candidate_status": "ok",
-      "comparison": "matched",
-      "header": "sys/epoll.h",
-      "matched_identity_count": 553,
-      "profile": "c11-xopen-700",
-      "reference": {
-        "count": 553,
-        "kind_counts": {
-          "enum": 1,
-          "function": 12,
-          "macro": 468,
-          "record": 7,
-          "typedef": 65
-        }
-      },
-      "reference_only": [],
-      "reference_status": "ok",
-      "separately_accounted_source_form_difference_count": 0,
-      "source_form_comparison": "matched"
-    },
-    {
-      "candidate": {
-        "count": 667,
-        "kind_counts": {
-          "enum": 1,
-          "function": 18,
-          "macro": 557,
-          "record": 9,
-          "typedef": 82
-        }
-      },
-      "candidate_only": [],
-      "candidate_status": "ok",
-      "comparison": "matched",
-      "header": "sys/epoll.h",
-      "matched_identity_count": 667,
+      "header": "sys/dir.h",
+      "matched_identity_count": 58,
       "profile": "c11-bsd",
       "reference": {
-        "count": 667,
+        "count": 58,
         "kind_counts": {
-          "enum": 1,
-          "function": 18,
-          "macro": 557,
-          "record": 9,
-          "typedef": 82
+          "function": 13,
+          "macro": 36,
+          "record": 3,
+          "typedef": 6
         }
       },
       "reference_only": [],
@@ -21186,29 +20964,251 @@
     },
     {
       "candidate": {
-        "count": 694,
+        "count": 59,
+        "kind_counts": {
+          "function": 14,
+          "macro": 36,
+          "record": 3,
+          "typedef": 6
+        }
+      },
+      "candidate_only": [],
+      "candidate_status": "ok",
+      "comparison": "matched",
+      "header": "sys/dir.h",
+      "matched_identity_count": 59,
+      "profile": "cxx17-strict",
+      "reference": {
+        "count": 59,
+        "kind_counts": {
+          "function": 14,
+          "macro": 36,
+          "record": 3,
+          "typedef": 6
+        }
+      },
+      "reference_only": [],
+      "reference_status": "ok",
+      "separately_accounted_source_form_difference_count": 0,
+      "source_form_comparison": "matched"
+    },
+    {
+      "candidate": {
+        "count": 703,
         "kind_counts": {
           "enum": 1,
           "function": 26,
-          "macro": 574,
-          "record": 11,
-          "typedef": 82
+          "macro": 581,
+          "record": 12,
+          "typedef": 83
         }
       },
       "candidate_only": [],
       "candidate_status": "ok",
       "comparison": "matched",
       "header": "sys/epoll.h",
-      "matched_identity_count": 694,
-      "profile": "cxx17-strict",
+      "matched_identity_count": 703,
+      "profile": "c11-gnu",
       "reference": {
-        "count": 694,
+        "count": 703,
         "kind_counts": {
           "enum": 1,
           "function": 26,
-          "macro": 574,
+          "macro": 581,
+          "record": 12,
+          "typedef": 83
+        }
+      },
+      "reference_only": [],
+      "reference_status": "ok",
+      "separately_accounted_source_form_difference_count": 0,
+      "source_form_comparison": "matched"
+    },
+    {
+      "candidate": {
+        "count": 702,
+        "kind_counts": {
+          "enum": 1,
+          "function": 26,
+          "macro": 581,
           "record": 11,
-          "typedef": 82
+          "typedef": 83
+        }
+      },
+      "candidate_only": [],
+      "candidate_status": "ok",
+      "comparison": "matched",
+      "header": "sys/epoll.h",
+      "matched_identity_count": 702,
+      "profile": "cxx17-gnu",
+      "reference": {
+        "count": 702,
+        "kind_counts": {
+          "enum": 1,
+          "function": 26,
+          "macro": 581,
+          "record": 11,
+          "typedef": 83
+        }
+      },
+      "reference_only": [],
+      "reference_status": "ok",
+      "separately_accounted_source_form_difference_count": 0,
+      "source_form_comparison": "matched"
+    },
+    {
+      "candidate": {
+        "count": 556,
+        "kind_counts": {
+          "enum": 1,
+          "function": 12,
+          "macro": 470,
+          "record": 7,
+          "typedef": 66
+        }
+      },
+      "candidate_only": [],
+      "candidate_status": "ok",
+      "comparison": "matched",
+      "header": "sys/epoll.h",
+      "matched_identity_count": 556,
+      "profile": "c11-strict",
+      "reference": {
+        "count": 556,
+        "kind_counts": {
+          "enum": 1,
+          "function": 12,
+          "macro": 470,
+          "record": 7,
+          "typedef": 66
+        }
+      },
+      "reference_only": [],
+      "reference_status": "ok",
+      "separately_accounted_source_form_difference_count": 0,
+      "source_form_comparison": "matched"
+    },
+    {
+      "candidate": {
+        "count": 556,
+        "kind_counts": {
+          "enum": 1,
+          "function": 12,
+          "macro": 470,
+          "record": 7,
+          "typedef": 66
+        }
+      },
+      "candidate_only": [],
+      "candidate_status": "ok",
+      "comparison": "matched",
+      "header": "sys/epoll.h",
+      "matched_identity_count": 556,
+      "profile": "c11-posix-2008",
+      "reference": {
+        "count": 556,
+        "kind_counts": {
+          "enum": 1,
+          "function": 12,
+          "macro": 470,
+          "record": 7,
+          "typedef": 66
+        }
+      },
+      "reference_only": [],
+      "reference_status": "ok",
+      "separately_accounted_source_form_difference_count": 0,
+      "source_form_comparison": "matched"
+    },
+    {
+      "candidate": {
+        "count": 556,
+        "kind_counts": {
+          "enum": 1,
+          "function": 12,
+          "macro": 470,
+          "record": 7,
+          "typedef": 66
+        }
+      },
+      "candidate_only": [],
+      "candidate_status": "ok",
+      "comparison": "matched",
+      "header": "sys/epoll.h",
+      "matched_identity_count": 556,
+      "profile": "c11-xopen-700",
+      "reference": {
+        "count": 556,
+        "kind_counts": {
+          "enum": 1,
+          "function": 12,
+          "macro": 470,
+          "record": 7,
+          "typedef": 66
+        }
+      },
+      "reference_only": [],
+      "reference_status": "ok",
+      "separately_accounted_source_form_difference_count": 0,
+      "source_form_comparison": "matched"
+    },
+    {
+      "candidate": {
+        "count": 670,
+        "kind_counts": {
+          "enum": 1,
+          "function": 18,
+          "macro": 559,
+          "record": 9,
+          "typedef": 83
+        }
+      },
+      "candidate_only": [],
+      "candidate_status": "ok",
+      "comparison": "matched",
+      "header": "sys/epoll.h",
+      "matched_identity_count": 670,
+      "profile": "c11-bsd",
+      "reference": {
+        "count": 670,
+        "kind_counts": {
+          "enum": 1,
+          "function": 18,
+          "macro": 559,
+          "record": 9,
+          "typedef": 83
+        }
+      },
+      "reference_only": [],
+      "reference_status": "ok",
+      "separately_accounted_source_form_difference_count": 0,
+      "source_form_comparison": "matched"
+    },
+    {
+      "candidate": {
+        "count": 702,
+        "kind_counts": {
+          "enum": 1,
+          "function": 26,
+          "macro": 581,
+          "record": 11,
+          "typedef": 83
+        }
+      },
+      "candidate_only": [],
+      "candidate_status": "ok",
+      "comparison": "matched",
+      "header": "sys/epoll.h",
+      "matched_identity_count": 702,
+      "profile": "cxx17-strict",
+      "reference": {
+        "count": 702,
+        "kind_counts": {
+          "enum": 1,
+          "function": 26,
+          "macro": 581,
+          "record": 11,
+          "typedef": 83
         }
       },
       "reference_only": [],
@@ -21406,10 +21406,10 @@
     },
     {
       "candidate": {
-        "count": 311,
+        "count": 316,
         "kind_counts": {
           "function": 18,
-          "macro": 255,
+          "macro": 260,
           "record": 4,
           "typedef": 34
         }
@@ -21418,13 +21418,13 @@
       "candidate_status": "ok",
       "comparison": "matched",
       "header": "sys/eventfd.h",
-      "matched_identity_count": 311,
+      "matched_identity_count": 316,
       "profile": "c11-gnu",
       "reference": {
-        "count": 311,
+        "count": 316,
         "kind_counts": {
           "function": 18,
-          "macro": 255,
+          "macro": 260,
           "record": 4,
           "typedef": 34
         }
@@ -21436,10 +21436,10 @@
     },
     {
       "candidate": {
-        "count": 311,
+        "count": 316,
         "kind_counts": {
           "function": 18,
-          "macro": 255,
+          "macro": 260,
           "record": 4,
           "typedef": 34
         }
@@ -21448,13 +21448,13 @@
       "candidate_status": "ok",
       "comparison": "matched",
       "header": "sys/eventfd.h",
-      "matched_identity_count": 311,
+      "matched_identity_count": 316,
       "profile": "cxx17-gnu",
       "reference": {
-        "count": 311,
+        "count": 316,
         "kind_counts": {
           "function": 18,
-          "macro": 255,
+          "macro": 260,
           "record": 4,
           "typedef": 34
         }
@@ -21586,10 +21586,10 @@
     },
     {
       "candidate": {
-        "count": 311,
+        "count": 316,
         "kind_counts": {
           "function": 18,
-          "macro": 255,
+          "macro": 260,
           "record": 4,
           "typedef": 34
         }
@@ -21598,13 +21598,13 @@
       "candidate_status": "ok",
       "comparison": "matched",
       "header": "sys/eventfd.h",
-      "matched_identity_count": 311,
+      "matched_identity_count": 316,
       "profile": "cxx17-strict",
       "reference": {
-        "count": 311,
+        "count": 316,
         "kind_counts": {
           "function": 18,
-          "macro": 255,
+          "macro": 260,
           "record": 4,
           "typedef": 34
         }
@@ -21826,10 +21826,10 @@
     },
     {
       "candidate": {
-        "count": 189,
+        "count": 194,
         "kind_counts": {
           "function": 15,
-          "macro": 165,
+          "macro": 170,
           "record": 4,
           "typedef": 5
         }
@@ -21838,13 +21838,13 @@
       "candidate_status": "ok",
       "comparison": "matched",
       "header": "sys/fcntl.h",
-      "matched_identity_count": 189,
+      "matched_identity_count": 194,
       "profile": "c11-gnu",
       "reference": {
-        "count": 189,
+        "count": 194,
         "kind_counts": {
           "function": 15,
-          "macro": 165,
+          "macro": 170,
           "record": 4,
           "typedef": 5
         }
@@ -21856,10 +21856,10 @@
     },
     {
       "candidate": {
-        "count": 189,
+        "count": 194,
         "kind_counts": {
           "function": 15,
-          "macro": 165,
+          "macro": 170,
           "record": 4,
           "typedef": 5
         }
@@ -21868,13 +21868,13 @@
       "candidate_status": "ok",
       "comparison": "matched",
       "header": "sys/fcntl.h",
-      "matched_identity_count": 189,
+      "matched_identity_count": 194,
       "profile": "cxx17-gnu",
       "reference": {
-        "count": 189,
+        "count": 194,
         "kind_counts": {
           "function": 15,
-          "macro": 165,
+          "macro": 170,
           "record": 4,
           "typedef": 5
         }
@@ -22006,10 +22006,10 @@
     },
     {
       "candidate": {
-        "count": 189,
+        "count": 194,
         "kind_counts": {
           "function": 15,
-          "macro": 165,
+          "macro": 170,
           "record": 4,
           "typedef": 5
         }
@@ -22018,13 +22018,13 @@
       "candidate_status": "ok",
       "comparison": "matched",
       "header": "sys/fcntl.h",
-      "matched_identity_count": 189,
+      "matched_identity_count": 194,
       "profile": "cxx17-strict",
       "reference": {
-        "count": 189,
+        "count": 194,
         "kind_counts": {
           "function": 15,
-          "macro": 165,
+          "macro": 170,
           "record": 4,
           "typedef": 5
         }
@@ -22414,10 +22414,10 @@
     },
     {
       "candidate": {
-        "count": 336,
+        "count": 341,
         "kind_counts": {
           "function": 19,
-          "macro": 279,
+          "macro": 284,
           "record": 5,
           "typedef": 33
         }
@@ -22426,13 +22426,13 @@
       "candidate_status": "ok",
       "comparison": "matched",
       "header": "sys/inotify.h",
-      "matched_identity_count": 336,
+      "matched_identity_count": 341,
       "profile": "c11-gnu",
       "reference": {
-        "count": 336,
+        "count": 341,
         "kind_counts": {
           "function": 19,
-          "macro": 279,
+          "macro": 284,
           "record": 5,
           "typedef": 33
         }
@@ -22444,10 +22444,10 @@
     },
     {
       "candidate": {
-        "count": 336,
+        "count": 341,
         "kind_counts": {
           "function": 19,
-          "macro": 279,
+          "macro": 284,
           "record": 5,
           "typedef": 33
         }
@@ -22456,13 +22456,13 @@
       "candidate_status": "ok",
       "comparison": "matched",
       "header": "sys/inotify.h",
-      "matched_identity_count": 336,
+      "matched_identity_count": 341,
       "profile": "cxx17-gnu",
       "reference": {
-        "count": 336,
+        "count": 341,
         "kind_counts": {
           "function": 19,
-          "macro": 279,
+          "macro": 284,
           "record": 5,
           "typedef": 33
         }
@@ -22594,10 +22594,10 @@
     },
     {
       "candidate": {
-        "count": 336,
+        "count": 341,
         "kind_counts": {
           "function": 19,
-          "macro": 279,
+          "macro": 284,
           "record": 5,
           "typedef": 33
         }
@@ -22606,13 +22606,13 @@
       "candidate_status": "ok",
       "comparison": "matched",
       "header": "sys/inotify.h",
-      "matched_identity_count": 336,
+      "matched_identity_count": 341,
       "profile": "cxx17-strict",
       "reference": {
-        "count": 336,
+        "count": 341,
         "kind_counts": {
           "function": 19,
-          "macro": 279,
+          "macro": 284,
           "record": 5,
           "typedef": 33
         }
@@ -24430,27 +24430,27 @@
     },
     {
       "candidate": {
-        "count": 513,
+        "count": 516,
         "kind_counts": {
           "function": 6,
-          "macro": 437,
+          "macro": 439,
           "record": 10,
-          "typedef": 60
+          "typedef": 61
         }
       },
       "candidate_only": [],
       "candidate_status": "ok",
       "comparison": "matched",
       "header": "sys/mtio.h",
-      "matched_identity_count": 513,
+      "matched_identity_count": 516,
       "profile": "c11-gnu",
       "reference": {
-        "count": 513,
+        "count": 516,
         "kind_counts": {
           "function": 6,
-          "macro": 437,
+          "macro": 439,
           "record": 10,
-          "typedef": 60
+          "typedef": 61
         }
       },
       "reference_only": [],
@@ -24460,27 +24460,27 @@
     },
     {
       "candidate": {
-        "count": 512,
+        "count": 515,
         "kind_counts": {
           "function": 6,
-          "macro": 437,
+          "macro": 439,
           "record": 9,
-          "typedef": 60
+          "typedef": 61
         }
       },
       "candidate_only": [],
       "candidate_status": "ok",
       "comparison": "matched",
       "header": "sys/mtio.h",
-      "matched_identity_count": 512,
+      "matched_identity_count": 515,
       "profile": "cxx17-gnu",
       "reference": {
-        "count": 512,
+        "count": 515,
         "kind_counts": {
           "function": 6,
-          "macro": 437,
+          "macro": 439,
           "record": 9,
-          "typedef": 60
+          "typedef": 61
         }
       },
       "reference_only": [],
@@ -24490,27 +24490,27 @@
     },
     {
       "candidate": {
-        "count": 425,
+        "count": 428,
         "kind_counts": {
           "function": 1,
-          "macro": 382,
+          "macro": 384,
           "record": 7,
-          "typedef": 35
+          "typedef": 36
         }
       },
       "candidate_only": [],
       "candidate_status": "ok",
       "comparison": "matched",
       "header": "sys/mtio.h",
-      "matched_identity_count": 425,
+      "matched_identity_count": 428,
       "profile": "c11-strict",
       "reference": {
-        "count": 425,
+        "count": 428,
         "kind_counts": {
           "function": 1,
-          "macro": 382,
+          "macro": 384,
           "record": 7,
-          "typedef": 35
+          "typedef": 36
         }
       },
       "reference_only": [],
@@ -24520,27 +24520,27 @@
     },
     {
       "candidate": {
-        "count": 425,
+        "count": 428,
         "kind_counts": {
           "function": 1,
-          "macro": 382,
+          "macro": 384,
           "record": 7,
-          "typedef": 35
+          "typedef": 36
         }
       },
       "candidate_only": [],
       "candidate_status": "ok",
       "comparison": "matched",
       "header": "sys/mtio.h",
-      "matched_identity_count": 425,
+      "matched_identity_count": 428,
       "profile": "c11-posix-2008",
       "reference": {
-        "count": 425,
+        "count": 428,
         "kind_counts": {
           "function": 1,
-          "macro": 382,
+          "macro": 384,
           "record": 7,
-          "typedef": 35
+          "typedef": 36
         }
       },
       "reference_only": [],
@@ -24550,27 +24550,27 @@
     },
     {
       "candidate": {
-        "count": 425,
+        "count": 428,
         "kind_counts": {
           "function": 1,
-          "macro": 382,
+          "macro": 384,
           "record": 7,
-          "typedef": 35
+          "typedef": 36
         }
       },
       "candidate_only": [],
       "candidate_status": "ok",
       "comparison": "matched",
       "header": "sys/mtio.h",
-      "matched_identity_count": 425,
+      "matched_identity_count": 428,
       "profile": "c11-xopen-700",
       "reference": {
-        "count": 425,
+        "count": 428,
         "kind_counts": {
           "function": 1,
-          "macro": 382,
+          "macro": 384,
           "record": 7,
-          "typedef": 35
+          "typedef": 36
         }
       },
       "reference_only": [],
@@ -24580,27 +24580,27 @@
     },
     {
       "candidate": {
-        "count": 513,
+        "count": 516,
         "kind_counts": {
           "function": 6,
-          "macro": 437,
+          "macro": 439,
           "record": 10,
-          "typedef": 60
+          "typedef": 61
         }
       },
       "candidate_only": [],
       "candidate_status": "ok",
       "comparison": "matched",
       "header": "sys/mtio.h",
-      "matched_identity_count": 513,
+      "matched_identity_count": 516,
       "profile": "c11-bsd",
       "reference": {
-        "count": 513,
+        "count": 516,
         "kind_counts": {
           "function": 6,
-          "macro": 437,
+          "macro": 439,
           "record": 10,
-          "typedef": 60
+          "typedef": 61
         }
       },
       "reference_only": [],
@@ -24610,27 +24610,27 @@
     },
     {
       "candidate": {
-        "count": 512,
+        "count": 515,
         "kind_counts": {
           "function": 6,
-          "macro": 437,
+          "macro": 439,
           "record": 9,
-          "typedef": 60
+          "typedef": 61
         }
       },
       "candidate_only": [],
       "candidate_status": "ok",
       "comparison": "matched",
       "header": "sys/mtio.h",
-      "matched_identity_count": 512,
+      "matched_identity_count": 515,
       "profile": "cxx17-strict",
       "reference": {
-        "count": 512,
+        "count": 515,
         "kind_counts": {
           "function": 6,
-          "macro": 437,
+          "macro": 439,
           "record": 9,
-          "typedef": 60
+          "typedef": 61
         }
       },
       "reference_only": [],
@@ -25452,12 +25452,12 @@
     },
     {
       "candidate": {
-        "count": 852,
+        "count": 855,
         "kind_counts": {
           "function": 134,
-          "macro": 610,
+          "macro": 612,
           "record": 12,
-          "typedef": 90,
+          "typedef": 91,
           "variable": 6
         }
       },
@@ -25465,15 +25465,15 @@
       "candidate_status": "ok",
       "comparison": "matched",
       "header": "sys/procfs.h",
-      "matched_identity_count": 852,
+      "matched_identity_count": 855,
       "profile": "c11-gnu",
       "reference": {
-        "count": 852,
+        "count": 855,
         "kind_counts": {
           "function": 134,
-          "macro": 610,
+          "macro": 612,
           "record": 12,
-          "typedef": 90,
+          "typedef": 91,
           "variable": 6
         }
       },
@@ -25484,12 +25484,12 @@
     },
     {
       "candidate": {
-        "count": 851,
+        "count": 854,
         "kind_counts": {
           "function": 134,
-          "macro": 610,
+          "macro": 612,
           "record": 11,
-          "typedef": 90,
+          "typedef": 91,
           "variable": 6
         }
       },
@@ -25497,15 +25497,15 @@
       "candidate_status": "ok",
       "comparison": "matched",
       "header": "sys/procfs.h",
-      "matched_identity_count": 851,
+      "matched_identity_count": 854,
       "profile": "cxx17-gnu",
       "reference": {
-        "count": 851,
+        "count": 854,
         "kind_counts": {
           "function": 134,
-          "macro": 610,
+          "macro": 612,
           "record": 11,
-          "typedef": 90,
+          "typedef": 91,
           "variable": 6
         }
       },
@@ -25516,12 +25516,12 @@
     },
     {
       "candidate": {
-        "count": 700,
+        "count": 703,
         "kind_counts": {
           "function": 83,
-          "macro": 527,
+          "macro": 529,
           "record": 11,
-          "typedef": 75,
+          "typedef": 76,
           "variable": 4
         }
       },
@@ -25529,15 +25529,15 @@
       "candidate_status": "ok",
       "comparison": "matched",
       "header": "sys/procfs.h",
-      "matched_identity_count": 700,
+      "matched_identity_count": 703,
       "profile": "c11-strict",
       "reference": {
-        "count": 700,
+        "count": 703,
         "kind_counts": {
           "function": 83,
-          "macro": 527,
+          "macro": 529,
           "record": 11,
-          "typedef": 75,
+          "typedef": 76,
           "variable": 4
         }
       },
@@ -25548,12 +25548,12 @@
     },
     {
       "candidate": {
-        "count": 736,
+        "count": 739,
         "kind_counts": {
           "function": 83,
-          "macro": 563,
+          "macro": 565,
           "record": 11,
-          "typedef": 75,
+          "typedef": 76,
           "variable": 4
         }
       },
@@ -25561,15 +25561,15 @@
       "candidate_status": "ok",
       "comparison": "matched",
       "header": "sys/procfs.h",
-      "matched_identity_count": 736,
+      "matched_identity_count": 739,
       "profile": "c11-posix-2008",
       "reference": {
-        "count": 736,
+        "count": 739,
         "kind_counts": {
           "function": 83,
-          "macro": 563,
+          "macro": 565,
           "record": 11,
-          "typedef": 75,
+          "typedef": 76,
           "variable": 4
         }
       },
@@ -25580,12 +25580,12 @@
     },
     {
       "candidate": {
-        "count": 753,
+        "count": 756,
         "kind_counts": {
           "function": 93,
-          "macro": 570,
+          "macro": 572,
           "record": 11,
-          "typedef": 75,
+          "typedef": 76,
           "variable": 4
         }
       },
@@ -25593,15 +25593,15 @@
       "candidate_status": "ok",
       "comparison": "matched",
       "header": "sys/procfs.h",
-      "matched_identity_count": 753,
+      "matched_identity_count": 756,
       "profile": "c11-xopen-700",
       "reference": {
-        "count": 753,
+        "count": 756,
         "kind_counts": {
           "function": 93,
-          "macro": 570,
+          "macro": 572,
           "record": 11,
-          "typedef": 75,
+          "typedef": 76,
           "variable": 4
         }
       },
@@ -25612,12 +25612,12 @@
     },
     {
       "candidate": {
-        "count": 839,
+        "count": 842,
         "kind_counts": {
           "function": 124,
-          "macro": 608,
+          "macro": 610,
           "record": 12,
-          "typedef": 90,
+          "typedef": 91,
           "variable": 5
         }
       },
@@ -25625,15 +25625,15 @@
       "candidate_status": "ok",
       "comparison": "matched",
       "header": "sys/procfs.h",
-      "matched_identity_count": 839,
+      "matched_identity_count": 842,
       "profile": "c11-bsd",
       "reference": {
-        "count": 839,
+        "count": 842,
         "kind_counts": {
           "function": 124,
-          "macro": 608,
+          "macro": 610,
           "record": 12,
-          "typedef": 90,
+          "typedef": 91,
           "variable": 5
         }
       },
@@ -25644,12 +25644,12 @@
     },
     {
       "candidate": {
-        "count": 851,
+        "count": 854,
         "kind_counts": {
           "function": 134,
-          "macro": 610,
+          "macro": 612,
           "record": 11,
-          "typedef": 90,
+          "typedef": 91,
           "variable": 6
         }
       },
@@ -25657,15 +25657,15 @@
       "candidate_status": "ok",
       "comparison": "matched",
       "header": "sys/procfs.h",
-      "matched_identity_count": 851,
+      "matched_identity_count": 854,
       "profile": "cxx17-strict",
       "reference": {
-        "count": 851,
+        "count": 854,
         "kind_counts": {
           "function": 134,
-          "macro": 610,
+          "macro": 612,
           "record": 11,
-          "typedef": 90,
+          "typedef": 91,
           "variable": 6
         }
       },
@@ -27966,10 +27966,10 @@
     },
     {
       "candidate": {
-        "count": 312,
+        "count": 317,
         "kind_counts": {
           "function": 16,
-          "macro": 256,
+          "macro": 261,
           "record": 6,
           "typedef": 34
         }
@@ -27978,13 +27978,13 @@
       "candidate_status": "ok",
       "comparison": "matched",
       "header": "sys/signalfd.h",
-      "matched_identity_count": 312,
+      "matched_identity_count": 317,
       "profile": "c11-gnu",
       "reference": {
-        "count": 312,
+        "count": 317,
         "kind_counts": {
           "function": 16,
-          "macro": 256,
+          "macro": 261,
           "record": 6,
           "typedef": 34
         }
@@ -27996,10 +27996,10 @@
     },
     {
       "candidate": {
-        "count": 312,
+        "count": 317,
         "kind_counts": {
           "function": 16,
-          "macro": 256,
+          "macro": 261,
           "record": 6,
           "typedef": 34
         }
@@ -28008,13 +28008,13 @@
       "candidate_status": "ok",
       "comparison": "matched",
       "header": "sys/signalfd.h",
-      "matched_identity_count": 312,
+      "matched_identity_count": 317,
       "profile": "cxx17-gnu",
       "reference": {
-        "count": 312,
+        "count": 317,
         "kind_counts": {
           "function": 16,
-          "macro": 256,
+          "macro": 261,
           "record": 6,
           "typedef": 34
         }
@@ -28146,10 +28146,10 @@
     },
     {
       "candidate": {
-        "count": 312,
+        "count": 317,
         "kind_counts": {
           "function": 16,
-          "macro": 256,
+          "macro": 261,
           "record": 6,
           "typedef": 34
         }
@@ -28158,13 +28158,13 @@
       "candidate_status": "ok",
       "comparison": "matched",
       "header": "sys/signalfd.h",
-      "matched_identity_count": 312,
+      "matched_identity_count": 317,
       "profile": "cxx17-strict",
       "reference": {
-        "count": 312,
+        "count": 317,
         "kind_counts": {
           "function": 16,
-          "macro": 256,
+          "macro": 261,
           "record": 6,
           "typedef": 34
         }
@@ -30942,10 +30942,10 @@
     },
     {
       "candidate": {
-        "count": 273,
+        "count": 278,
         "kind_counts": {
           "function": 49,
-          "macro": 201,
+          "macro": 206,
           "record": 9,
           "typedef": 10,
           "variable": 4
@@ -30955,13 +30955,13 @@
       "candidate_status": "ok",
       "comparison": "matched",
       "header": "sys/timerfd.h",
-      "matched_identity_count": 273,
+      "matched_identity_count": 278,
       "profile": "c11-gnu",
       "reference": {
-        "count": 273,
+        "count": 278,
         "kind_counts": {
           "function": 49,
-          "macro": 201,
+          "macro": 206,
           "record": 9,
           "typedef": 10,
           "variable": 4
@@ -30974,10 +30974,10 @@
     },
     {
       "candidate": {
-        "count": 273,
+        "count": 278,
         "kind_counts": {
           "function": 49,
-          "macro": 201,
+          "macro": 206,
           "record": 9,
           "typedef": 10,
           "variable": 4
@@ -30987,13 +30987,13 @@
       "candidate_status": "ok",
       "comparison": "matched",
       "header": "sys/timerfd.h",
-      "matched_identity_count": 273,
+      "matched_identity_count": 278,
       "profile": "cxx17-gnu",
       "reference": {
-        "count": 273,
+        "count": 278,
         "kind_counts": {
           "function": 49,
-          "macro": 201,
+          "macro": 206,
           "record": 9,
           "typedef": 10,
           "variable": 4
@@ -31132,10 +31132,10 @@
     },
     {
       "candidate": {
-        "count": 273,
+        "count": 278,
         "kind_counts": {
           "function": 49,
-          "macro": 201,
+          "macro": 206,
           "record": 9,
           "typedef": 10,
           "variable": 4
@@ -31145,13 +31145,13 @@
       "candidate_status": "ok",
       "comparison": "matched",
       "header": "sys/timerfd.h",
-      "matched_identity_count": 273,
+      "matched_identity_count": 278,
       "profile": "cxx17-strict",
       "reference": {
-        "count": 273,
+        "count": 278,
         "kind_counts": {
           "function": 49,
-          "macro": 201,
+          "macro": 206,
           "record": 9,
           "typedef": 10,
           "variable": 4
@@ -31752,27 +31752,27 @@
     },
     {
       "candidate": {
-        "count": 204,
+        "count": 207,
         "kind_counts": {
           "function": 5,
-          "macro": 135,
+          "macro": 137,
           "record": 4,
-          "typedef": 60
+          "typedef": 61
         }
       },
       "candidate_only": [],
       "candidate_status": "ok",
       "comparison": "matched",
       "header": "sys/types.h",
-      "matched_identity_count": 204,
+      "matched_identity_count": 207,
       "profile": "c11-gnu",
       "reference": {
-        "count": 204,
+        "count": 207,
         "kind_counts": {
           "function": 5,
-          "macro": 135,
+          "macro": 137,
           "record": 4,
-          "typedef": 60
+          "typedef": 61
         }
       },
       "reference_only": [],
@@ -31782,27 +31782,27 @@
     },
     {
       "candidate": {
-        "count": 203,
+        "count": 206,
         "kind_counts": {
           "function": 5,
-          "macro": 135,
+          "macro": 137,
           "record": 3,
-          "typedef": 60
+          "typedef": 61
         }
       },
       "candidate_only": [],
       "candidate_status": "ok",
       "comparison": "matched",
       "header": "sys/types.h",
-      "matched_identity_count": 203,
+      "matched_identity_count": 206,
       "profile": "cxx17-gnu",
       "reference": {
-        "count": 203,
+        "count": 206,
         "kind_counts": {
           "function": 5,
-          "macro": 135,
+          "macro": 137,
           "record": 3,
-          "typedef": 60
+          "typedef": 61
         }
       },
       "reference_only": [],
@@ -31812,25 +31812,25 @@
     },
     {
       "candidate": {
-        "count": 116,
+        "count": 119,
         "kind_counts": {
-          "macro": 80,
+          "macro": 82,
           "record": 1,
-          "typedef": 35
+          "typedef": 36
         }
       },
       "candidate_only": [],
       "candidate_status": "ok",
       "comparison": "matched",
       "header": "sys/types.h",
-      "matched_identity_count": 116,
+      "matched_identity_count": 119,
       "profile": "c11-strict",
       "reference": {
-        "count": 116,
+        "count": 119,
         "kind_counts": {
-          "macro": 80,
+          "macro": 82,
           "record": 1,
-          "typedef": 35
+          "typedef": 36
         }
       },
       "reference_only": [],
@@ -31840,25 +31840,25 @@
     },
     {
       "candidate": {
-        "count": 116,
+        "count": 119,
         "kind_counts": {
-          "macro": 80,
+          "macro": 82,
           "record": 1,
-          "typedef": 35
+          "typedef": 36
         }
       },
       "candidate_only": [],
       "candidate_status": "ok",
       "comparison": "matched",
       "header": "sys/types.h",
-      "matched_identity_count": 116,
+      "matched_identity_count": 119,
       "profile": "c11-posix-2008",
       "reference": {
-        "count": 116,
+        "count": 119,
         "kind_counts": {
-          "macro": 80,
+          "macro": 82,
           "record": 1,
-          "typedef": 35
+          "typedef": 36
         }
       },
       "reference_only": [],
@@ -31868,25 +31868,25 @@
     },
     {
       "candidate": {
-        "count": 116,
+        "count": 119,
         "kind_counts": {
-          "macro": 80,
+          "macro": 82,
           "record": 1,
-          "typedef": 35
+          "typedef": 36
         }
       },
       "candidate_only": [],
       "candidate_status": "ok",
       "comparison": "matched",
       "header": "sys/types.h",
-      "matched_identity_count": 116,
+      "matched_identity_count": 119,
       "profile": "c11-xopen-700",
       "reference": {
-        "count": 116,
+        "count": 119,
         "kind_counts": {
-          "macro": 80,
+          "macro": 82,
           "record": 1,
-          "typedef": 35
+          "typedef": 36
         }
       },
       "reference_only": [],
@@ -31896,27 +31896,27 @@
     },
     {
       "candidate": {
-        "count": 204,
+        "count": 207,
         "kind_counts": {
           "function": 5,
-          "macro": 135,
+          "macro": 137,
           "record": 4,
-          "typedef": 60
+          "typedef": 61
         }
       },
       "candidate_only": [],
       "candidate_status": "ok",
       "comparison": "matched",
       "header": "sys/types.h",
-      "matched_identity_count": 204,
+      "matched_identity_count": 207,
       "profile": "c11-bsd",
       "reference": {
-        "count": 204,
+        "count": 207,
         "kind_counts": {
           "function": 5,
-          "macro": 135,
+          "macro": 137,
           "record": 4,
-          "typedef": 60
+          "typedef": 61
         }
       },
       "reference_only": [],
@@ -31926,27 +31926,27 @@
     },
     {
       "candidate": {
-        "count": 203,
+        "count": 206,
         "kind_counts": {
           "function": 5,
-          "macro": 135,
+          "macro": 137,
           "record": 3,
-          "typedef": 60
+          "typedef": 61
         }
       },
       "candidate_only": [],
       "candidate_status": "ok",
       "comparison": "matched",
       "header": "sys/types.h",
-      "matched_identity_count": 203,
+      "matched_identity_count": 206,
       "profile": "cxx17-strict",
       "reference": {
-        "count": 203,
+        "count": 206,
         "kind_counts": {
           "function": 5,
-          "macro": 135,
+          "macro": 137,
           "record": 3,
-          "typedef": 60
+          "typedef": 61
         }
       },
       "reference_only": [],
@@ -37881,7 +37881,7 @@
       "1 pinned-musl header/profile rows are oracle-not-applicable",
       "declaration-form equality, record byte layouts, archive linkage, runtime behavior, family promotion, and public support remain outside this partial matrix"
     ],
-    "matched_identity_count": 294885,
+    "matched_identity_count": 295255,
     "mismatch_row_count": 0,
     "oracle_not_applicable_candidate_fact_count": 104,
     "oracle_not_applicable_row_count": 1,

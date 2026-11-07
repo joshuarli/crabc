@@ -13,12 +13,11 @@ extern "C" {
 #define __NEED_off_t
 #define __NEED_size_t
 #define __NEED_ssize_t
+#define __NEED_reclen_t
 
 #include <bits/alltypes.h>
 
 #include <bits/dirent.h>
-
-typedef unsigned short reclen_t;
 
 struct posix_dent {
 	ino_t d_ino;
