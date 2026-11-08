@@ -181,11 +181,20 @@ PY
                 fail "$label candidate lacks PT_PHDR"
             ;;
     esac
-    if grep -Eq 'Requesting program interpreter|INTERP' "$program_headers" ||
-        grep -Eq 'NEEDED|JMPREL|PLTGOT' "$dynamic"; then
+    if grep -Eq 'Requesting program interpreter|INTERP' "$program_headers"; then
         fail "$label candidate selected dynamic runtime state"
     fi
-    if awk '$7 == "UND" && NF >= 8 { print }' "$symbols" | grep . >/dev/null; then
+    python3 -B - "$ROOT_DIR/compat/x86_64" "$dynamic" "$program_headers" "$mode" <<'PY' ||
+import sys
+from pathlib import Path
+sys.path.insert(0, sys.argv[1])
+from static_product_contract import validate_static_dynamic_tags
+validate_static_dynamic_tags(Path(sys.argv[2]).read_text(),
+    [line.split() for line in Path(sys.argv[3]).read_text().splitlines()],
+    sys.argv[4] == "-static-pie", sys.argv[4])
+PY
+        fail "$label candidate selected dynamic runtime state"
+    if awk '$7 == "UND" && NF >= 8 && !($5 == "LOCAL" && ($8 == "_PROCEDURE_LINKAGE_TABLE_" || $8 == "__rela_iplt_start" || $8 == "__rela_iplt_end")) { print }' "$symbols" | grep . >/dev/null; then
         fail "$label candidate retains an unresolved symbol"
     fi
     if grep -Eq 'R_X86_64_(GLOB_DAT|JUMP_SLOT|TLSGD|TLSLD|TLSDESC|DTPMOD|DTPOFF)' \
