@@ -87,8 +87,9 @@ class TargetAdapterPlanTests(unittest.TestCase):
         source = ROOT / ".work/x86_64/owned-os-test-plan-source"
         evidence = ROOT / ".work/x86_64/owned-os-test-plan-evidence"
         runtime = ROOT / ".work/x86_64/owned-os-test-plan-runtime"
-        include = RUNNER.make_commands("include", source, MODULE, self.product, evidence, runtime, 7)
-        process = RUNNER.make_commands("process", source, MODULE, self.product, evidence, runtime, 7)
+        bytecode = ROOT / ".work/x86_64/owned-os-test-plan-bytecode"
+        include = RUNNER.make_commands("include", source, RUNNER.ADAPTER_LAUNCHER, self.product, evidence, runtime, 7, bytecode)
+        process = RUNNER.make_commands("process", source, RUNNER.ADAPTER_LAUNCHER, self.product, evidence, runtime, 7, bytecode)
         musl = RUNNER.musl_make_commands("basic", source, 7)
         self.assertEqual([(phase, command[3:5]) for phase, command in include], [("test", ["-j7", "include-test"])])
         self.assertEqual([(phase, command[3:5]) for phase, command in process],
@@ -110,11 +111,11 @@ class TargetAdapterPlanTests(unittest.TestCase):
 
     def test_make_adapter_quotes_each_path_in_the_shell_valued_compiler(self) -> None:
         root = ROOT / ".work/x86_64/owned os-test; no-shell"
-        [(_, command), _] = RUNNER.make_commands("basic", root / "source path", MODULE, root / "product path",
-                                                 root / "evidence path", root / "runtime path", 1)
+        [(_, command), _] = RUNNER.make_commands("basic", root / "source path", RUNNER.ADAPTER_LAUNCHER, root / "product path",
+                                                 root / "evidence path", root / "runtime path", 1, root / "bytecode path")
         compiler = next(value[3:] for value in command if value.startswith("CC="))
         self.assertEqual(shlex.split(compiler), [
-            sys.executable, "-B", str(MODULE), "--adapter", "--product", str(root / "product path"),
+            sys.executable, "-X", f"pycache_prefix={root / 'bytecode path'}", str(RUNNER.ADAPTER_LAUNCHER), "--adapter", "--product", str(root / "product path"),
             "--source-root", str(root / "source path"), "--evidence", str(root / "evidence path"),
             "--runtime-root", str(root / "runtime path"), "--",
         ])

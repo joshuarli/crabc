@@ -1727,10 +1727,10 @@ def _os_make(reader, suite, side, records, timeout, contract):
         expected_commands = contract.musl_make_commands(suite, Path(reader.recorded(root)), OS_TEST_COMPILE_JOBS)
     else:
         expected_commands = contract.make_commands(suite, Path(reader.recorded(root)),
-            Path(reader.recorded(reader.root / 'compat/x86_64/owned_os_test.py')),
+            Path(reader.recorded(reader.root / 'compat/x86_64/owned_os_test_adapter.py')),
             Path(reader.recorded(reader.leaf / 'products' / suite)),
             Path(reader.recorded(reader.leaf / 'evidence' / suite)), Path(reader.recorded(reader.leaf / 'runtime' / suite)),
-            OS_TEST_COMPILE_JOBS)
+            OS_TEST_COMPILE_JOBS, Path(reader.recorded(reader.leaf / contract.ADAPTER_BYTECODE)))
     require(isinstance(records, list) and [record.get('phase') for record in records] == [phase for phase, _ in expected_commands],
             'os-test Make phase roster differs')
     return [_os_make_phase(reader, suite, side, record, command, timeout)

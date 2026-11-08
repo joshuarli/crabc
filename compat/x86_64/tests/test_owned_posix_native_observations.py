@@ -999,8 +999,9 @@ class NativeObservationsTests(unittest.TestCase):
                     path = self.put(root / 'out/linux' / suite / name, value)
                     outcomes[name] = {'sha256': self.binding(path)['sha256'], 'text': value.decode()}
                 commands = (contract.musl_make_commands(suite, Path(self.recorded(root)), 8) if side == 'musl' else
-                            contract.make_commands(suite, Path(self.recorded(root)), Path(self.recorded(self.root / 'compat/x86_64/owned_os_test.py')),
-                            Path(self.recorded(product)), Path(self.recorded(self.leaf / 'evidence' / suite)), Path(self.recorded(runtime)), 8))
+                            contract.make_commands(suite, Path(self.recorded(root)), Path(self.recorded(self.root / 'compat/x86_64/owned_os_test_adapter.py')),
+                            Path(self.recorded(product)), Path(self.recorded(self.leaf / 'evidence' / suite)), Path(self.recorded(runtime)), 8,
+                            Path(self.recorded(self.leaf / contract.ADAPTER_BYTECODE))))
                 records = [contract.make_record(self.leaf, suite, side, phase, command, contract.SUITE_TIMEOUT_SECONDS, 0, b'make output\n', b'')
                            for phase, command in commands]
                 row[side] = {'make': records, 'outcomes': outcomes, 'outcome_count': len(expected), 'passed': True}

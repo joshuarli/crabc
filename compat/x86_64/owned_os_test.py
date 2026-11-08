@@ -60,6 +60,8 @@ BASIC_SYSTEM_FILES = {
 }
 
 AIO_SUSPEND_PREPARER = HERE / "owned_os_test_aio_suspend_source.py"
+ADAPTER_LAUNCHER = HERE / "owned_os_test_adapter.py"
+ADAPTER_BYTECODE = "adapter-bytecode"
 
 
 class RunnerError(RuntimeError):
@@ -833,9 +835,9 @@ def _make_commands(suite: str, source: Path, compiler: str, compile_jobs: int) -
 
 
 def make_commands(suite: str, source: Path, adapter_path: Path, product: Path, evidence: Path, runtime: Path,
-                  compile_jobs: int) -> list[tuple[str, list[str]]]:
+                  compile_jobs: int, bytecode: Path) -> list[tuple[str, list[str]]]:
     adapter = " ".join(shlex.quote(str(argument)) for argument in (
-        sys.executable, "-B", adapter_path, "--adapter", "--product", product,
+        sys.executable, "-X", f"pycache_prefix={bytecode}", adapter_path, "--adapter", "--product", product,
         "--source-root", source, "--evidence", evidence, "--runtime-root", runtime, "--",
     ))
     return _make_commands(suite, source, adapter, compile_jobs)
@@ -1456,7 +1458,8 @@ def run_profile(values: argparse.Namespace) -> int:
                     mount_private_proc_tracked(runtime, proc_lifecycle)
                 status, dynamic_records = run_make_phases(
                     work, suite, "dynamic",
-                    make_commands(suite, suite_root, Path(__file__).resolve(), compile_product, evidence, runtime, values.compile_jobs),
+                    make_commands(suite, suite_root, ADAPTER_LAUNCHER, compile_product, evidence, runtime, values.compile_jobs,
+                                  work / ADAPTER_BYTECODE),
                     values.timeout)
             except (FixtureError, RunnerError, OSError) as error:
                 fixture = error.control if isinstance(error, FixtureError) else {}
@@ -1503,6 +1506,8 @@ def run_profile(values: argparse.Namespace) -> int:
                                   "unchanged": same_musl_oracle(musl_before, musl_after)}
         report["passed"] = report["musl_oracle"]["unchanged"] and all(suite["passed"] for suite in report["suites"])
     finally:
+        if (work / ADAPTER_BYTECODE).exists():
+            shutil.rmtree(work / ADAPTER_BYTECODE)
         report_path = work / "os-test.json"
         report_path.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n")
         live_proc_mounts = {
