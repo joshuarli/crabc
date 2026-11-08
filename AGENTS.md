@@ -6,7 +6,7 @@ scope must not weaken ordinary Unix semantics.
 
 ## Current direction — 2026-11-06
 
-**Performance closure and qualification resumed; allocator work stays frozen.**
+**Performance closure and qualification resumed; the allocator freeze is partially lifted.**
 S0–S5 are accepted on structure, correctness and hardening. The owner reopened
 the deferred D18 performance dimensions, the D16 startup/resolver design, and
 the ordered qualification/promotion chain. Follow the order in
@@ -15,13 +15,14 @@ land the D16 resolver, pass the correctness profile, produce the full
 performance evidence, then run the full chain. Qualification evidence must be
 produced by its own current commands; a parked receipt is not inherited.
 
-Do not work on the Rust mimalloc port, the accepted C backend, allocator fixes,
-cleanup, benchmarks, tests, receipts, shadow integration, alternate allocators
-or promotion. Do not merge parked allocator work or call it a prerequisite.
-Preserve the unchanged accepted C backend and all allocator evidence. Ordinary
-runtime builds and regression checks may use it; record allocator failures
-without starting an investigation. The exact boundary and restart condition are
-in [Allocator freeze](plan.md#allocator-freeze).
+The crabc glue around the accepted C backend is open for allocator failures
+and allocator-attributed costs that an R1–R4 gate reports: investigate,
+profile and fix them with behavior tests. The backend moves from
+`libmimalloc-sys` 0.1.49 (v3.3.2) to the pinned upstream mimalloc v3.5.0
+archive; the upstream C source stays unedited. Do not work on the Rust mimalloc port, its harness, receipts,
+shadow integration, allocator benchmarks, alternate allocators or promotion,
+and do not merge parked allocator work. The exact boundary is in
+[Allocator freeze](plan.md#allocator-freeze).
 
 Simplify mechanisms and evidence machinery, not just filenames or prose. Keep
 one owner for process-global state, thin C ABI adaptation and direct native
@@ -47,7 +48,7 @@ third-party targets or deployed systems to protect.
 Crash reproduction, use-after-free diagnostics, register and backtrace
 inspection, fault injection, fuzzing, and C/Rust differential tests against
 repository-owned code are defensive correctness work when authorized by the
-active plan. This context does not reopen frozen allocator diagnostics. Crashes
+active plan, including allocator diagnostics inside the partial lift. Crashes
 and deliberately invalid inputs can be expected test outcomes. Memory-safety
 defects, undefined behavior and unsound public APIs remain real defects to
 investigate within scope. Evaluate security concerns against the actual local
@@ -92,8 +93,8 @@ rebuild deletes the pinned image and must be followed by a re-pin of
   `compat/upstreams.toml`. Paused AArch64 retains `[musl]` 1.2.6. Glibc is
   neither oracle nor fallback; rustix is a test oracle only. Candidate target
   artifacts borrow no ambient musl, CRT, runtime, header or loader input.
-- No allocator invention or development during the freeze. Preserve the port's
-  source/provenance and the unchanged selected C backend. Completing a historical
+- No allocator invention. Preserve the port's source/provenance and the
+  unchanged upstream source of the selected C backend. Completing a historical
   milestone does not authorize native-default promotion.
 - Never implement cryptographic primitives locally. The attributed musl
   `random` family is the sole legacy exception, never for security or entropy.

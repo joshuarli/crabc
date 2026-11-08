@@ -139,30 +139,28 @@ Startup instructions = `hello` count − `nop` count. Syscalls are the lines in
 
 ## Allocator freeze
 
-Until S5 has passed **and** the owner has recorded a separate restart decision,
-all malloc/allocator development is stopped.
+**Owner decision (2026-11-08): partially lifted.** The accepted C backend's
+crabc integration is open: the lifecycle, initialization, option and wrapper
+code in `libc/` around `libmimalloc-sys` 0.1.49 (mimalloc v3.3.2). Work there
+needs a failure or allocator-attributed cost reported by an R1–R4 gate. The
+owner also directed moving the backend from `libmimalloc-sys` 0.1.49 (mimalloc
+v3.3.2) to the pinned upstream `[mimalloc]` v3.5.0 archive in
+`compat/upstreams.toml`. The upstream C source stays unedited.
 
-**Owner decision (2026-11-08):** the freeze is lifted for the allocator
-failures that block R2. Fix those through the accepted C backend's crabc glue;
-the backend pin stays.
-
-| Allowed | Forbidden |
+| Open | Still frozen |
 | --- | --- |
-| Building and linking the accepted C backend (`libmimalloc-sys` 0.1.49, mimalloc v3.3.2) unchanged as part of an ordinary product | Any edit under `crabc-mimalloc/`, `compat/allocator/`, allocator-only tests or integration modules |
-| Running existing non-allocator regression suites that happen to call `malloc` | Allocator benchmarks, including the `allocator_live` and `allocator_after_ready` perf modes |
-| Writing down an allocator failure or allocator-attributed cost in a report, in one line | Investigating, profiling, bisecting or reproducing an allocator failure |
-| `cargo check` of a feature set that includes the shadow/native backend, to prove a shared edit still compiles | Building or running native-shadow products; changing the native/default backend selection |
-| Reading allocator code only to attribute a measured cost to it (S0.6) | Merging parked allocator branches; dead-code cleanup, receipts or milestone tooling for the allocator |
+| Investigating, reproducing, profiling and fixing allocator failures and allocator-attributed costs that an R1–R4 gate reports | The Rust mimalloc port under `crabc-mimalloc/`, the `compat/allocator/` harness, its receipts and milestone tooling |
+| Changing the crabc glue around the C backend, with behavior tests | Editing the upstream C source; any version change beyond the directed v3.5.0 move; changing the native/default backend selection |
+| Allocator-attributed counts rows and the focused tests that cover them | Alternate allocators, native-shadow products, promotion, merging parked allocator branches |
+| Building and linking the C backend in ordinary products and regression suites | Allocator benchmarks, including the `allocator_live` and `allocator_after_ready` perf modes |
 
 Rules:
 
-- A non-allocator change that would need an allocator or allocator-lifecycle
-  change is **parked**: report it and stop that change.
-- Allocator-attributed rows and syscalls stay visible in every report, labeled
-  `allocator-attributed`. They never count as a pass and never block a
-  non-allocator step's **Done**.
+- Allocator-attributed rows and syscalls stay labeled `allocator-attributed`
+  in every report and are judged like every other gate row.
+- A change that needs frozen work is **parked**: report it and stop that change.
 - The old G2, A0–A5, M1–M10, T4, allocator P0, O3/O4, D5 and allocator part of
-  C0/C1 are parked. Passing S5 does not reactivate them.
+  C0/C1 stay parked.
 
 ## Post-S5 resumption (2026-11-06)
 
