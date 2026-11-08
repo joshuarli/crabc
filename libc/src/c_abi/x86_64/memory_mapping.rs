@@ -128,6 +128,14 @@ static_archive_member! { mmap_source {
             return mapping_failed(ENOMEM);
         }
 
+        #[cfg(all(
+            crabc_owned_mimalloc_lifecycle,
+            not(feature = "native-mimalloc-shadow"),
+        ))]
+        // SAFETY: the lifecycle owner serializes the complete upstream
+        // sequence and skips a nested or concurrent call.
+        unsafe { crate::x86_64_static_c_abi::allocator_mimalloc_lifecycle::initialize_before_mapping() };
+
         if flags & MAP_FIXED != 0 {
             selected_owned_vm_wait();
         }

@@ -21,6 +21,12 @@
 //! one-shot.  A program that never allocates does no allocator work, while the
 //! retained `.fini_array` entry remains a safe no-op because
 //! `_mi_auto_process_done` returns when the process was never initialized.
+//!
+//! Initialization reserves mimalloc's page map, and upstream never retries a
+//! failed reservation: once it fails, every later allocation fails, even after
+//! the program releases address space.  A C `mmap` therefore also runs the
+//! one-shot before the program's first own mapping, so a program cannot
+//! exhaust the address space ahead of the allocator through libc.
 
 use core::sync::atomic::{AtomicU8, Ordering};
 #[cfg(feature = "x86-owned-allocator-lifecycle-test-audit")]
@@ -91,6 +97,19 @@ unsafe fn initialize_slow() {
     }
     PROCESS_INIT_STATE.store(PROCESS_INIT_COMPLETE, Ordering::Release);
     unsafe { errno::set_errno(saved_errno) };
+}
+
+/// Run the one-shot before a C mapping when no initialization has started.
+///
+/// Mimalloc's own initialization maps memory through the same C `mmap`; that
+/// nested call, and any call racing another thread's initialization, finds the
+/// one-shot already started and proceeds without waiting.
+#[inline]
+pub(super) unsafe fn initialize_before_mapping() {
+    if PROCESS_INIT_STATE.load(Ordering::Acquire) == PROCESS_INIT_UNSTARTED {
+        // SAFETY: the cold path owns the one-shot and the upstream sequence.
+        unsafe { initialize_slow() };
+    }
 }
 
 unsafe extern "C" fn finalize() {

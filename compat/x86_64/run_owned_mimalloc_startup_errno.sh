@@ -245,7 +245,7 @@ run_dynamic_mode() {
 run_lazy_probe_matrix() {
     local static_product="$1" dynamic_product="$2" mode entry root probe_mode
     local -a probe_modes=(no-allocation malloc calloc realloc aligned_alloc posix_memalign
-        memalign valloc reallocarray strdup strndup race address-space-exhausted)
+        memalign valloc reallocarray strdup strndup race address-space-exhausted address-space-released)
 
     (cd "$work" && "$dynamic_product/bin/crabc-cc-dynamic" --dynamic-pie -std=c11 -fno-builtin \
         -c "$LAZY_PROBE" -o "$work/lazy-workload.o")

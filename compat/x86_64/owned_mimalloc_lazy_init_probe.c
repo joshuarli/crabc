@@ -7,10 +7,11 @@
  * usable result. The race mode additionally observes that the initial thread
  * claims the one-shot at thread creation, before a worker can allocate, and
  * that concurrent worker allocations do not re-run it. The address-space
- * mode reserves every free address first, so the one initialization runs
- * without memory; malloc must fail with ENOMEM and exit must still finalize
- * the allocator cleanly. This observes the installed C backend, not source
- * shape.
+ * modes reserve every free address first; malloc must fail with ENOMEM and
+ * exit must still finalize the allocator cleanly. The released mode then
+ * unmaps most of the largest reservation, and malloc must succeed again, as
+ * libc-test's regression/malloc-brk-fail requires. This observes the
+ * installed C backend, not source shape.
  */
 
 #define _GNU_SOURCE
@@ -154,23 +155,56 @@ static void probe_strndup(void)
     free(copy);
 }
 
-static void reserve_all_address_space(void)
+static size_t reserve_all_address_space(void **largest)
 {
+    size_t largest_length = 0;
+
     for (size_t length = (size_t)1 << 62; length >= 4096;) {
-        if (mmap(NULL, length, PROT_NONE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0) == MAP_FAILED)
+        void *mapping = mmap(NULL, length, PROT_NONE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+        if (mapping == MAP_FAILED) {
             length >>= 1;
+        } else if (largest_length == 0) {
+            *largest = mapping;
+            largest_length = length;
+        }
     }
+    return largest_length;
 }
 
 static void probe_address_space_exhausted(void)
 {
-    reserve_all_address_space();
+    void *largest;
+
+    reserve_all_address_space(&largest);
     errno = 0;
     if (malloc(1) != NULL)
         fail(109);
     if (errno != ENOMEM)
         fail(110);
     free(NULL);
+}
+
+static void probe_address_space_released(void)
+{
+    void *largest;
+    size_t length = reserve_all_address_space(&largest);
+
+    if (length < 2 * 65536)
+        fail(111);
+    errno = 0;
+    if (malloc(10000) != NULL)
+        fail(112);
+    if (errno != ENOMEM)
+        fail(113);
+    if (munmap((char *)largest + 65536, length - 65536) != 0)
+        fail(114);
+    unsigned char *block = malloc(10000);
+    if (block == NULL)
+        fail(115);
+    block[9999] = 0x6b;
+    if (block[9999] != 0x6b)
+        fail(116);
+    free(block);
 }
 
 static _Atomic int race_go;
@@ -246,6 +280,8 @@ int main(int argc, char **argv)
         probe_strndup();
     else if (strcmp(mode, "address-space-exhausted") == 0)
         probe_address_space_exhausted();
+    else if (strcmp(mode, "address-space-released") == 0)
+        probe_address_space_released();
     else
         fail(79);
     require_initialized_once();
