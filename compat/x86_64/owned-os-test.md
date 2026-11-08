@@ -20,7 +20,12 @@ adding DES, a cipher, a PRNG, or a cryptographic service; the runner continues t
 outcome independently.
 
 Each fresh source copy first runs through pinned musl 1.2.6, then the supplied
-dynamic product runs the same target. The runner uses a fixed empty build
+dynamic product runs the same targets. The compile-only `include` and
+`namespace` suites run their upstream `<suite>-test` target with eight Make
+jobs. Every other suite runs two Make phases on both sides: the upstream
+`<suite>-all` target builds its binaries with eight jobs, then `<suite>-test`
+runs with one job, so tests still execute one at a time against binaries that
+are already current. The runner uses a fixed empty build
 environment and preserves os-test's own `CFLAGS`, `CPPFLAGS`, and `LDFLAGS`
 defaults, including its ordinary Linux pthread, math, and realtime aliases.
 It sets only `EXTRA_LDFLAGS=` because Linux's source profile otherwise injects
@@ -28,7 +33,7 @@ unowned gdbm, crypt, and atomic libraries. Musl’s pinned compiler specs select
 its headers and mode; the installed product adapter records its own selected
 headers and ordinary PIE or explicit shared-object mode. `os-test.json` binds
 raw physical Make stdout, stderr, and canonical status records for every
-suite/side, derives each exact expected `.out` roster from the frozen source,
+suite, side and phase, derives each exact expected `.out` roster from the frozen source,
 and compares outcomes by relative pathname and exact bytes. A source or
 runtime difference is a failure; the runner has no inherited exception list.
 

@@ -998,11 +998,12 @@ class NativeObservationsTests(unittest.TestCase):
                         value = b'aio_error: EINPROGRESS\n' if side == 'musl' else b'exit: 0\n'
                     path = self.put(root / 'out/linux' / suite / name, value)
                     outcomes[name] = {'sha256': self.binding(path)['sha256'], 'text': value.decode()}
-                command = (contract.musl_make_command(suite, Path(self.recorded(root)), 8) if side == 'musl' else
-                           contract.make_command(suite, Path(self.recorded(root)), Path(self.recorded(self.root / 'compat/x86_64/owned_os_test.py')),
-                           Path(self.recorded(product)), Path(self.recorded(self.leaf / 'evidence' / suite)), Path(self.recorded(runtime)), 8))
-                record = contract.make_record(self.leaf, suite, side, command, contract.SUITE_TIMEOUT_SECONDS, 0, b'make output\n', b'')
-                row[side] = {**(record if side == 'musl' else {'make': record}), 'outcomes': outcomes, 'outcome_count': len(expected), 'passed': True}
+                commands = (contract.musl_make_commands(suite, Path(self.recorded(root)), 8) if side == 'musl' else
+                            contract.make_commands(suite, Path(self.recorded(root)), Path(self.recorded(self.root / 'compat/x86_64/owned_os_test.py')),
+                            Path(self.recorded(product)), Path(self.recorded(self.leaf / 'evidence' / suite)), Path(self.recorded(runtime)), 8))
+                records = [contract.make_record(self.leaf, suite, side, phase, command, contract.SUITE_TIMEOUT_SECONDS, 0, b'make output\n', b'')
+                           for phase, command in commands]
+                row[side] = {'make': records, 'outcomes': outcomes, 'outcome_count': len(expected), 'passed': True}
             integrity = {'passed': True, 'difference': {'missing': [], 'unexpected': [], 'changed': []}}
             for phase in ('before', 'after'):
                 integrity[phase] = artifact(self.leaf / 'records' / (suite + '.dynamic-product-payload-' + phase + '.json'),
@@ -1141,7 +1142,9 @@ class NativeObservationsTests(unittest.TestCase):
             'one omitted suite': lambda r: r['suites'].pop(),
             'different installed product': lambda r: r['product'].update(root='/workspace/.work/other'),
             'missing outcome graph': lambda r: r['suites'][0]['dynamic']['outcomes'].clear(),
-            'failed command disguised by summary': lambda r: r['suites'][0]['musl'].update(make_status=1),
+            'failed command disguised by summary': lambda r: r['suites'][0]['musl']['make'][0].update(make_status=1),
+            'omitted basic build phase': lambda r: r['suites'][2]['dynamic']['make'].pop(0),
+            'serial basic phases reordered': lambda r: r['suites'][2]['musl']['make'].reverse(),
             'changed timeout': lambda r: r.update(timeout_seconds=1200.0),
             'failed oracle stability': lambda r: r['musl_oracle'].update(unchanged=False),
             'unbound oracle compiler identity': lambda r: r['musl_oracle']['before']['wrapper'].update(path='/foreign/cc'),
@@ -1164,7 +1167,7 @@ class NativeObservationsTests(unittest.TestCase):
                 with self.assertRaises(native.NativeObservationError): self.collect('os-test')
         self.put(self.leaf / 'os-test.json', original)
         object_relative = next((self.leaf / 'evidence/include/objects').glob('*.driver.o')).relative_to(self.leaf).as_posix()
-        for relative in ('records/malloc.musl.stdout', 'records/malloc.dynamic.status.json', 'products/malloc/usr/lib/libc.so',
+        for relative in ('records/malloc.musl.test.stdout', 'records/malloc.dynamic.build.status.json', 'products/malloc/usr/lib/libc.so',
                          'runtime/malloc/usr/lib/libc.so', 'suites/malloc/out/linux/malloc/case.out', 'source-stage/GNUmakefile', object_relative,
                          'runtime/basic/bin/sh', 'runtime/basic/control/candidate-shell-launcher.c',
                          'runtime/basic/control/candidate-shell-launcher.o', 'runtime/basic/etc/passwd', 'runtime/basic/control/busybox',

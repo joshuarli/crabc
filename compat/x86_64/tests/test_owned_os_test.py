@@ -87,12 +87,16 @@ class TargetAdapterPlanTests(unittest.TestCase):
         source = ROOT / ".work/x86_64/owned-os-test-plan-source"
         evidence = ROOT / ".work/x86_64/owned-os-test-plan-evidence"
         runtime = ROOT / ".work/x86_64/owned-os-test-plan-runtime"
-        include = RUNNER.make_command("include", source, MODULE, self.product, evidence, runtime, 7)
-        process = RUNNER.make_command("process", source, MODULE, self.product, evidence, runtime, 7)
-        musl = RUNNER.musl_make_command("basic", source, 7)
-        self.assertIn("-j7", include)
-        self.assertIn("-j1", process)
-        for command in (include, process, musl):
+        include = RUNNER.make_commands("include", source, MODULE, self.product, evidence, runtime, 7)
+        process = RUNNER.make_commands("process", source, MODULE, self.product, evidence, runtime, 7)
+        musl = RUNNER.musl_make_commands("basic", source, 7)
+        self.assertEqual([(phase, command[3:5]) for phase, command in include], [("test", ["-j7", "include-test"])])
+        self.assertEqual([(phase, command[3:5]) for phase, command in process],
+                         [("build", ["-j7", "process-all"]), ("test", ["-j1", "process-test"])])
+        self.assertEqual([(phase, command[3:5]) for phase, command in musl],
+                         [("build", ["-j7", "basic-all"]), ("test", ["-j1", "basic-test"])])
+        self.assertEqual(process[0][1][5:], process[1][1][5:])
+        for _, command in (*include, *process, *musl):
             self.assertIn("EXTRA_LDFLAGS=", command)
             self.assertNotIn("CFLAGS=", command)
             self.assertNotIn("CPPFLAGS=", command)
@@ -106,8 +110,8 @@ class TargetAdapterPlanTests(unittest.TestCase):
 
     def test_make_adapter_quotes_each_path_in_the_shell_valued_compiler(self) -> None:
         root = ROOT / ".work/x86_64/owned os-test; no-shell"
-        command = RUNNER.make_command("basic", root / "source path", MODULE, root / "product path",
-                                      root / "evidence path", root / "runtime path", 1)
+        [(_, command), _] = RUNNER.make_commands("basic", root / "source path", MODULE, root / "product path",
+                                                 root / "evidence path", root / "runtime path", 1)
         compiler = next(value[3:] for value in command if value.startswith("CC="))
         self.assertEqual(shlex.split(compiler), [
             sys.executable, "-B", str(MODULE), "--adapter", "--product", str(root / "product path"),
@@ -413,16 +417,16 @@ class EvidenceContractTests(unittest.TestCase):
             devpts = {"status": 0, "target": str(runtime / "dev/pts")}
             control = {"root": str(runtime), "private_proc": private, "private_devpts": devpts,
                        "product_payload_before": [], "execution_root_after_setup": []}
-            values = SimpleNamespace(timeout=1.0, header_jobs=1, dynamic_sysroot=str(product), os_test_root=source)
+            values = SimpleNamespace(timeout=1.0, compile_jobs=1, dynamic_sysroot=str(product), os_test_root=source)
 
             def mount(destination: Path, receipt: dict[str, object]) -> None:
                 self.assertEqual(destination, runtime)
                 self.assertIs(receipt, private)
                 receipt["mount"] = {"status": 0}
 
-            def command(*_arguments: object) -> list[str]:
+            def command(*_arguments: object) -> list[tuple[str, list[str]]]:
                 (work / "evidence" / "basic" / "events").mkdir(parents=True)
-                return ["make"]
+                return [("test", ["make"])]
 
             readable = mock.Mock()
             with ExitStack() as stack:
@@ -439,7 +443,7 @@ class EvidenceContractTests(unittest.TestCase):
                 stack.enter_context(mock.patch.object(RUNNER, "musl_oracle_identity", return_value={}))
                 stack.enter_context(mock.patch.object(RUNNER, "retain_expected_outcomes", return_value=([], {"path": "expected"})))
                 stack.enter_context(mock.patch.object(RUNNER, "copied_tree"))
-                stack.enter_context(mock.patch.object(RUNNER, "musl_make_command", return_value=["make"]))
+                stack.enter_context(mock.patch.object(RUNNER, "musl_make_commands", return_value=[("test", ["make"])]))
                 stack.enter_context(mock.patch.object(RUNNER, "run_make", return_value=(0, b"", b"")))
                 stack.enter_context(mock.patch.object(RUNNER, "make_record", return_value={}))
                 stack.enter_context(mock.patch.object(RUNNER, "collect_outcomes", return_value={}))
@@ -448,7 +452,7 @@ class EvidenceContractTests(unittest.TestCase):
                 stack.enter_context(mock.patch.object(RUNNER, "prepare_execution_root", return_value=control))
                 stack.enter_context(mock.patch.object(RUNNER, "DEFAULT_SUITES", ("basic",)))
                 stack.enter_context(mock.patch.object(RUNNER, "mount_private_proc", side_effect=mount))
-                stack.enter_context(mock.patch.object(RUNNER, "make_command", side_effect=command))
+                stack.enter_context(mock.patch.object(RUNNER, "make_commands", side_effect=command))
                 stack.enter_context(mock.patch.object(RUNNER, "unmount_private_proc", side_effect=OSError("proc umount denied")))
                 devpts_unmount = stack.enter_context(mock.patch.object(RUNNER, "unmount_private_devpts", return_value={"status": 0}))
                 stack.enter_context(mock.patch.object(RUNNER, "make_evidence_host_readable", readable))
@@ -543,12 +547,13 @@ class EvidenceContractTests(unittest.TestCase):
     def test_make_record_binds_raw_streams_and_canonical_status(self) -> None:
         with tempfile.TemporaryDirectory(dir=ROOT / ".work/x86_64") as temporary:
             work = Path(temporary)
-            record = RUNNER.make_record(work, "basic", "dynamic", ["make", "basic-test"], 9.0, 0, b"out\x00", b"err\n")
+            record = RUNNER.make_record(work, "basic", "dynamic", "test", ["make", "basic-test"], 9.0, 0, b"out\x00", b"err\n")
             self.assertEqual((work / record["stdout"]["path"]).read_bytes(), b"out\x00")
             self.assertEqual((work / record["stderr"]["path"]).read_bytes(), b"err\n")
             status = json.loads((work / record["status_record"]["path"]).read_text())
             self.assertEqual(status["suite"], "basic")
             self.assertEqual(status["side"], "dynamic")
+            self.assertEqual(status["phase"], "test")
             self.assertEqual(status["stdout"]["sha256"], hashlib.sha256(b"out\x00").hexdigest())
 
     def test_aio_suspend_preparation_is_identical_for_musl_and_dynamic_and_retains_both_receipts(self) -> None:

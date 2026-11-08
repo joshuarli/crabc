@@ -37,6 +37,7 @@ DEFAULT_SUITES = (
     "include", "namespace", "basic", "io", "limits", "malloc", "process", "pty", "signal", "stdio",
 )
 MUSL_COMPILER = "/usr/local/bin/crabc-x86_64-musl-gcc"
+COMPILE_ONLY_SUITES = frozenset({"include", "namespace"})
 # One whole-suite Make bound, used only as a hang guard: os-test's run.sh has no
 # per-case limit. The owned side compiles each case twice, scans dependencies
 # and seals every link, so `basic` alone takes ~1100 s at a host load average
@@ -811,21 +812,38 @@ def copied_tree(source: Path, destination: Path, *, discard_git: bool = False, b
         thaw_tree(destination)
 
 
-def make_command(suite: str, source: Path, adapter_path: Path, product: Path, evidence: Path, runtime: Path, header_jobs: int) -> list[str]:
+def make_phases(suite: str, compile_jobs: int) -> tuple[tuple[str, str, int], ...]:
+    """Return each suite's ordered ``(phase, upstream target, jobs)`` Make runs.
+
+    The include and namespace suites only compile, so their ``-test`` target
+    runs in parallel. Every other suite first builds all of its upstream
+    ``-all`` binaries in parallel and then runs ``-test`` serially; the test
+    pass finds every binary current and only executes it.
+    """
+
+    if suite in COMPILE_ONLY_SUITES:
+        return (("test", f"{suite}-test", compile_jobs),)
+    return (("build", f"{suite}-all", compile_jobs), ("test", f"{suite}-test", 1))
+
+
+def _make_commands(suite: str, source: Path, compiler: str, compile_jobs: int) -> list[tuple[str, list[str]]]:
+    return [(phase, ["make", "-C", str(source), f"-j{jobs}", target, f"CC={compiler}", "EXTRA_LDFLAGS=",
+                     "CC_FOR_BUILD=/usr/bin/cc", "CFLAGS_FOR_BUILD=", "CPPFLAGS_FOR_BUILD=", "LDFLAGS_FOR_BUILD="])
+            for phase, target, jobs in make_phases(suite, compile_jobs)]
+
+
+def make_commands(suite: str, source: Path, adapter_path: Path, product: Path, evidence: Path, runtime: Path,
+                  compile_jobs: int) -> list[tuple[str, list[str]]]:
     adapter = " ".join(shlex.quote(str(argument)) for argument in (
         sys.executable, "-B", adapter_path, "--adapter", "--product", product,
         "--source-root", source, "--evidence", evidence, "--runtime-root", runtime, "--",
     ))
-    jobs = header_jobs if suite in {"include", "namespace"} else 1
-    return ["make", "-C", str(source), f"-j{jobs}", f"{suite}-test", f"CC={adapter}", "EXTRA_LDFLAGS=", "CC_FOR_BUILD=/usr/bin/cc",
-            "CFLAGS_FOR_BUILD=", "CPPFLAGS_FOR_BUILD=", "LDFLAGS_FOR_BUILD="]
+    return _make_commands(suite, source, adapter, compile_jobs)
 
 
-def musl_make_command(suite: str, source: Path, header_jobs: int) -> list[str]:
+def musl_make_commands(suite: str, source: Path, compile_jobs: int) -> list[tuple[str, list[str]]]:
     """Run the untouched suite through its pinned musl 1.2.6 oracle."""
-    jobs = header_jobs if suite in {"include", "namespace"} else 1
-    return ["make", "-C", str(source), f"-j{jobs}", f"{suite}-test", f"CC={MUSL_COMPILER}", "EXTRA_LDFLAGS=", "CC_FOR_BUILD=/usr/bin/cc",
-            "CFLAGS_FOR_BUILD=", "CPPFLAGS_FOR_BUILD=", "LDFLAGS_FOR_BUILD="]
+    return _make_commands(suite, source, MUSL_COMPILER, compile_jobs)
 
 
 def run_make(command: list[str], timeout: float) -> tuple[int | str, bytes, bytes]:
@@ -844,16 +862,17 @@ def run_make(command: list[str], timeout: float) -> tuple[int | str, bytes, byte
         return "TIMEOUT", stdout, stderr
 
 
-def make_record(work: Path, suite: str, side: str, command: list[str], timeout: float,
+def make_record(work: Path, suite: str, side: str, phase: str, command: list[str], timeout: float,
                 status: int | str, stdout: bytes, stderr: bytes) -> dict[str, Any]:
     """Retain one canonical Make result and its unmodified physical streams."""
-    prefix = work / "records" / f"{suite}.{side}.make"
+    prefix = work / "records" / f"{suite}.{side}.{phase}.make"
     stdout_artifact = retain_bytes(work, prefix.with_suffix(".stdout"), stdout)
     stderr_artifact = retain_bytes(work, prefix.with_suffix(".stderr"), stderr)
     status_artifact = retain_json(work, prefix.with_suffix(".status.json"), {
         "schema": "crabc.x86_64-owned-os-test-make-status/v1",
         "suite": suite,
         "side": side,
+        "phase": phase,
         "command": command,
         "timeout_seconds": timeout,
         "environment": {"LC_ALL": "C", "PATH": "/usr/bin:/bin", "TZ": "UTC", "SOURCE_DATE_EPOCH": "1"},
@@ -861,8 +880,21 @@ def make_record(work: Path, suite: str, side: str, command: list[str], timeout: 
         "stdout": stdout_artifact,
         "stderr": stderr_artifact,
     })
-    return {"command": command, "timeout_seconds": timeout, "make_status": status,
+    return {"phase": phase, "command": command, "timeout_seconds": timeout, "make_status": status,
             "stdout": stdout_artifact, "stderr": stderr_artifact, "status_record": status_artifact}
+
+
+def run_make_phases(work: Path, suite: str, side: str, commands: list[tuple[str, list[str]]],
+                    timeout: float) -> tuple[int | str, list[dict[str, Any]]]:
+    """Run the ordered phases until one fails; return its status and every record."""
+    records: list[dict[str, Any]] = []
+    status: int | str = 0
+    for phase, command in commands:
+        status, stdout, stderr = run_make(command, timeout)
+        records.append(make_record(work, suite, side, phase, command, timeout, status, stdout, stderr))
+        if status != 0:
+            break
+    return status, records
 
 
 def make_evidence_host_readable(work: Path, *, skip_roots: set[Path] | None = None) -> None:
@@ -1352,8 +1384,8 @@ def retain_execution_integrity(work: Path, suite: str, control: dict[str, Any], 
 def run_profile(values: argparse.Namespace) -> int:
     if values.timeout <= 0:
         raise RunnerError("--timeout must be positive")
-    if values.header_jobs <= 0:
-        raise RunnerError("--header-jobs must be positive")
+    if values.compile_jobs <= 0:
+        raise RunnerError("--compile-jobs must be positive")
     temporary = physical_work_directory(os.environ.get("TMPDIR", ""), "TMPDIR")
     product = physical_work_directory(values.dynamic_sysroot, "dynamic product")
     product_identity = validate_dynamic_product(product)
@@ -1387,11 +1419,10 @@ def run_profile(values: argparse.Namespace) -> int:
                 report["source_preparation"]["aio_suspend_lifetime"]["sides"]["musl"] = prepare_aio_suspend_copy(
                     musl_root, "musl", prepared_aio_suspend, aio_suspend_map, work
                 )
-            musl_command = musl_make_command(suite, musl_root, values.header_jobs)
             musl_started = time.monotonic()
-            musl_status, musl_stdout, musl_stderr = run_make(musl_command, values.timeout)
+            musl_status, musl_records = run_make_phases(
+                work, suite, "musl", musl_make_commands(suite, musl_root, values.compile_jobs), values.timeout)
             musl_elapsed = round(time.monotonic() - musl_started, 3)
-            musl_record = make_record(work, suite, "musl", musl_command, values.timeout, musl_status, musl_stdout, musl_stderr)
             musl_outcomes = collect_outcomes(musl_root, suite)
             musl_passed = suite_passed(musl_status, musl_outcomes, expected, [])
             suite_root = work / "suites" / suite
@@ -1404,11 +1435,8 @@ def run_profile(values: argparse.Namespace) -> int:
             evidence.mkdir(parents=True)
             runtime = work / "runtime" / suite
             compile_product = work / "products" / suite
-            command: list[str] | None = None
             status: int | str = "SETUP_ERROR"
-            stdout = b""
-            stderr = b""
-            dynamic_record: dict[str, Any] | None = None
+            dynamic_records: list[dict[str, Any]] | dict[str, Any] | None = None
             control: dict[str, Any] = {"root": str(runtime), "setup_status": "ERROR"}
             proc_lifecycle: dict[str, Any] | None = None
             started = time.monotonic()
@@ -1426,13 +1454,14 @@ def run_profile(values: argparse.Namespace) -> int:
                     proc_lifecycle = private_proc_lifecycle(private_proc)
                     private_proc_lifecycles.append(proc_lifecycle)
                     mount_private_proc_tracked(runtime, proc_lifecycle)
-                command = make_command(suite, suite_root, Path(__file__).resolve(), compile_product, evidence, runtime, values.header_jobs)
-                status, stdout, stderr = run_make(command, values.timeout)
-                dynamic_record = make_record(work, suite, "dynamic", command, values.timeout, status, stdout, stderr)
+                status, dynamic_records = run_make_phases(
+                    work, suite, "dynamic",
+                    make_commands(suite, suite_root, Path(__file__).resolve(), compile_product, evidence, runtime, values.compile_jobs),
+                    values.timeout)
             except (FixtureError, RunnerError, OSError) as error:
                 fixture = error.control if isinstance(error, FixtureError) else {}
                 control = {**control, **fixture, "setup_status": "ERROR", "setup_error": str(error)}
-                dynamic_record = retain_json(work, work / "records" / f"{suite}.dynamic.setup-error.json", {
+                dynamic_records = retain_json(work, work / "records" / f"{suite}.dynamic.setup-error.json", {
                     "schema": "crabc.x86_64-owned-os-test-setup-error/v1", "suite": suite, "error": str(error),
                     "control": control,
                 })
@@ -1460,10 +1489,10 @@ def run_profile(values: argparse.Namespace) -> int:
             candidate_passed = suite_passed(status, outcomes, expected, events) and fixture_passed and product_intact
             report["suites"].append({"suite": suite,
                                       "expected_outcomes": expected_artifact,
-                                      "musl": {**musl_record,
+                                      "musl": {"make": musl_records,
                                                "elapsed_seconds": musl_elapsed,
                                                "outcomes": musl_outcomes, "outcome_count": len(musl_outcomes), "passed": musl_passed},
-                                      "dynamic": {"make": dynamic_record, "elapsed_seconds": round(time.monotonic() - started, 3),
+                                      "dynamic": {"make": dynamic_records, "elapsed_seconds": round(time.monotonic() - started, 3),
                                                   "outcomes": outcomes, "outcome_count": len(outcomes), "execution_control": control,
                                                   "adapter_event_count": len(events), "adapter_errors": [event for event in events if event.get("adapter_error") or event.get("state") == "adapter-error"],
                                                   "passed": candidate_passed},
@@ -1494,8 +1523,8 @@ def parse_arguments(arguments: list[str]) -> argparse.Namespace:
     parser.add_argument("--evidence", type=Path, help=argparse.SUPPRESS)
     parser.add_argument("--runtime-root", type=Path, help=argparse.SUPPRESS)
     parser.add_argument("--timeout", type=float, default=SUITE_TIMEOUT_SECONDS)
-    parser.add_argument("--header-jobs", type=int, default=8,
-                        help="bounded parallel jobs for compile-only include and namespace suites (default: 8)")
+    parser.add_argument("--compile-jobs", type=int, default=8,
+                        help="bounded parallel jobs for compile phases; tests always run serially (default: 8)")
     parser.add_argument("--os-test-root", type=Path,
                         default=ROOT / ".work/x86_64/source-oracles" / f"os-test-{OS_TEST_REVISION}")
     parser.add_argument("dynamic_sysroot", nargs="?")

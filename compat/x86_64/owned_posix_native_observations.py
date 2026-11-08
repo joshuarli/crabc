@@ -41,6 +41,7 @@ LIBC_TEST_TREE = '4f7a5373652c6534b0fbafb58fe3fed1489f3b3b'
 OS_TEST_REVISION = '5e9456d510612f83b6ec8b1a0c06d6b1303a2512'
 OS_TEST_TREE = '68fd4eef88d0e52b55c7cc2a73659b1e439d33fe'
 OS_TEST_SUITES = ('include', 'namespace', 'basic', 'io', 'limits', 'malloc', 'process', 'pty', 'signal', 'stdio')
+OS_TEST_COMPILE_JOBS = 8
 BOOTSTRAP_SOURCE = ROOT / 'compat/x86_64/libc_bootstrap_primitives_probe.c'
 BOOTSTRAP_JUMP_SOURCE = ROOT / 'libc/src/c_abi/x86_64/setjmp.rs'
 BOOTSTRAP_SOURCE_MOUNT = '/workspace'
@@ -1720,12 +1721,29 @@ def _os_event_graph(reader, suite, expected, result, source_files, contract):
     return objects
 
 
-def _os_make(reader, suite, side, record, timeout, contract):
-    prefix = reader.leaf / 'records' / (suite + '.' + side)
+def _os_make(reader, suite, side, records, timeout, contract):
+    root = reader.leaf / ('musl' if side == 'musl' else 'suites') / suite
+    if side == 'musl':
+        expected_commands = contract.musl_make_commands(suite, Path(reader.recorded(root)), OS_TEST_COMPILE_JOBS)
+    else:
+        expected_commands = contract.make_commands(suite, Path(reader.recorded(root)),
+            Path(reader.recorded(reader.root / 'compat/x86_64/owned_os_test.py')),
+            Path(reader.recorded(reader.leaf / 'products' / suite)),
+            Path(reader.recorded(reader.leaf / 'evidence' / suite)), Path(reader.recorded(reader.leaf / 'runtime' / suite)),
+            OS_TEST_COMPILE_JOBS)
+    require(isinstance(records, list) and [record.get('phase') for record in records] == [phase for phase, _ in expected_commands],
+            'os-test Make phase roster differs')
+    return [_os_make_phase(reader, suite, side, record, command, timeout)
+            for record, (_, command) in zip(records, expected_commands)]
+
+
+def _os_make_phase(reader, suite, side, record, expected_command, timeout):
+    phase = record['phase']
+    prefix = reader.leaf / 'records' / (suite + '.' + side + '.' + phase)
     status_path = Path(str(prefix) + '.status.json')
     reader.relative_artifact(record['status_record'], status_path)
     status = read_json(status_path)
-    expected = {'schema': 'crabc.x86_64-owned-os-test-make-status/v1', 'suite': suite, 'side': side,
+    expected = {'schema': 'crabc.x86_64-owned-os-test-make-status/v1', 'suite': suite, 'side': side, 'phase': phase,
                 'command': record['command'], 'timeout_seconds': timeout, 'make_status': 0,
                 'environment': {'LC_ALL': 'C', 'PATH': '/usr/bin:/bin', 'TZ': 'UTC', 'SOURCE_DATE_EPOCH': '1'},
                 'stdout': record['stdout'], 'stderr': record['stderr']}
@@ -1735,22 +1753,17 @@ def _os_make(reader, suite, side, record, timeout, contract):
     for stream in ('stdout', 'stderr'):
         raw[stream] = reader.relative_artifact(record[stream], Path(str(prefix) + '.' + stream), raw=True)
     command = record['command']
-    root = reader.leaf / ('musl' if side == 'musl' else 'suites') / suite
     if side == 'musl':
-        same(command, contract.musl_make_command(suite, Path(reader.recorded(root)), 8), 'os-test pinned-musl Make invocation')
+        same(command, expected_command, 'os-test pinned-musl Make invocation')
     else:
-        expected = contract.make_command(suite, Path(reader.recorded(root)),
-            Path(reader.recorded(reader.root / 'compat/x86_64/owned_os_test.py')),
-            Path(reader.recorded(reader.leaf / 'products' / suite)),
-            Path(reader.recorded(reader.leaf / 'evidence' / suite)), Path(reader.recorded(reader.leaf / 'runtime' / suite)), 8)
         # The exact Python executable belongs to the pinned image, not to the
         # host running this read-only collector. Every remaining CC word is fixed.
-        require(isinstance(command, list) and len(command) == len(expected), 'os-test Make command roster differs')
-        actual_cc, expected_cc = shlex.split(command[5][3:]), shlex.split(expected[5][3:])
+        require(isinstance(command, list) and len(command) == len(expected_command), 'os-test Make command roster differs')
+        actual_cc, expected_cc = shlex.split(command[5][3:]), shlex.split(expected_command[5][3:])
         require(command[5].startswith('CC=') and actual_cc[0] in ('/usr/bin/python3', '/usr/local/bin/python3'),
                 'os-test adapter is not the pinned Python control plane')
         same(actual_cc[1:], expected_cc[1:], 'os-test source-bound adapter invocation')
-        same(command[:5] + command[6:], expected[:5] + expected[6:], 'os-test frozen Make invocation')
+        same(command[:5] + command[6:], expected_command[:5] + expected_command[6:], 'os-test frozen Make invocation')
     return raw
 
 
@@ -2019,7 +2032,7 @@ def _os_test(reader):
             result = suite[side]
             same([result['passed'], result['outcome_count']], [True, len(expected)], 'os-test side result')
             require(set(result['outcomes']) == set(expected), 'os-test side omitted or added a source outcome')
-            commands[name][side] = _os_make(reader, name, side, result if side == 'musl' else result['make'], contract.SUITE_TIMEOUT_SECONDS, contract)
+            commands[name][side] = _os_make(reader, name, side, result['make'], contract.SUITE_TIMEOUT_SECONDS, contract)
             root = leaf / ('musl' if side == 'musl' else 'suites') / name
             outcomes = root / 'out/linux' / name
             actual = {path.relative_to(outcomes).as_posix() for path in outcomes.rglob('*.out')}
@@ -2104,4 +2117,4 @@ def _os_test(reader):
                        'dispositions': dispositions},
         source_tree={'revision': OS_TEST_REVISION, 'tree': OS_TEST_TREE, 'files': files},
         source_preparation=reader.identity(reader.root / 'compat/x86_64/owned_os_test_aio_suspend_source.py', source=True),
-        oracle_inputs=oracle, limits={'suite_timeout_seconds': contract.SUITE_TIMEOUT_SECONDS, 'header_jobs': 8})
+        oracle_inputs=oracle, limits={'suite_timeout_seconds': contract.SUITE_TIMEOUT_SECONDS, 'compile_jobs': OS_TEST_COMPILE_JOBS})
