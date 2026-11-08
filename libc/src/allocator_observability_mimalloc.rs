@@ -19,5 +19,5 @@ pub unsafe extern "C" fn malloc_usable_size(ptr: *mut c_void) -> usize {
             .unwrap_or(0);
     }
     #[cfg(not(feature = "native-mimalloc-shadow"))]
-    libmimalloc_sys::mi_usable_size(ptr)
+    mimalloc_c::mi_usable_size(ptr)
 }

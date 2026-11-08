@@ -2643,7 +2643,8 @@ class RustAllocationHandlerBindingTests(unittest.TestCase):
                                   'static_provenance': {'sha256': 'd' * 64}}}
         provenance = {
             'archive': {'name': 'libc.a', 'sha256': archive_sha},
-            'dependency_graph': {'c_allocator_selected': True, 'native_allocator_selected': False},
+            'allocator_backend': {'member': selection.producer_metadata.C_MEMBER},
+            'dependency_graph': {'native_allocator_selected': False},
             'selected_members': [{'name': name, 'sha256': digest} for name, digest in members.items()],
             'rust_runtime_duplicate_bindings': [
                 {'member': self.ALLOC_MEMBER, 'installed_sha256': members[self.ALLOC_MEMBER],
@@ -2719,6 +2720,7 @@ class RustAllocationHandlerBindingTests(unittest.TestCase):
             'wrong installed member hash': lambda a, p: p['selected_members'][0].update(sha256='0' * 64),
             'missing weakened symbol': lambda a, p: p['rust_runtime_duplicate_bindings'][1].update(weakened_symbols=[]),
             'native allocator selected': lambda a, p: p['dependency_graph'].update(native_allocator_selected=True),
+            'C allocator member absent': lambda a, p: p['allocator_backend'].update(member='other-static.o'),
             'foreign archive fact': lambda a, p: a['artifacts']['candidate-static']['artifact']['identity'].update(sha256='0' * 64),
             'wrong marker section': lambda a, p: a['occurrences'][4]['definition_section'].update(index=4),
         }
@@ -2780,7 +2782,7 @@ class RustAllocationHandlerPhysicalLinkTests(unittest.TestCase):
                 provenance_path = archive.parents[2] / 'share/crabc/libc-static.provenance.json'
                 provenance = json.loads(provenance_path.read_text())
                 self.assertEqual(provenance['archive'], {'name': 'libc.a', 'sha256': libc['sha256']})
-                self.assertIs(provenance['dependency_graph']['c_allocator_selected'], True)
+                self.assertEqual(provenance['allocator_backend']['member'], selection.producer_metadata.C_MEMBER)
                 self.assertIs(provenance['dependency_graph']['native_allocator_selected'], False)
                 if source is None:
                     source = (libc['sha256'], self.digest(provenance_path))

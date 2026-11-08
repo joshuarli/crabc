@@ -1,32 +1,33 @@
 # Fixed-C mimalloc producer metadata
 
 `owned_mimalloc_producer_metadata.toml` accounts for the private C producer
-selected by the native owned products: `libmimalloc-sys` 0.1.49 carrying
-mimalloc v3.3.2. It is deliberately separate from the fixed mimalloc v3.5.0
-Rust-port oracle in `crabc-mimalloc/`, and from public malloc ABI and
-interposition evidence.
+selected by the native owned products: unedited upstream mimalloc v3.5.0, the
+`[mimalloc]` archive pin in `compat/upstreams.toml`, whose `src/static.c` the
+product builders compile into one `mimalloc-v3.5.0-static.o` object. It is
+deliberately separate from the Rust port in `crabc-mimalloc/`, and from public
+malloc ABI and interposition evidence.
 
 The contract starts with
 `libc/src/c_abi/x86_64/owned_mimalloc_hidden.list`: its SHA-256 and sorted
-424-name roster select this component. It never uses a `mi_*` or `_mi_*`
-prefix. The same contract seals all 32 pinned v3 C source/header dependency
-hashes, highlighting `src/static.c`, public `include/mimalloc.h`, and
-`src/alloc.c`; it also records the exact static and shared compiler flags and
-the one local-only version-script policy.
+437-name roster select this component. The roster is exactly the object's
+default-visibility definitions, which both product builders recheck. It never
+uses a `mi_*` or `_mi_*` prefix. The same contract seals all 34 pinned upstream
+C source/header dependency hashes, highlighting `src/static.c`, public
+`include/mimalloc.h`, and `src/alloc.c`; it also records the exact static and
+shared target flags and the one local-only version-script policy.
 
-The four non-function layouts record two different facts. Their C source
-requires size/alignment `(1,64)`, `(4,4)`, `(4368,8)`, and `(8,8)` for
-`_mi_cpu_has_popcnt`, `_mi_heap_default_key`, `_mi_stats_main`, and
-`mi_thread_locals`. The static producer places those symbols in sections
-aligned `64`, `4`, `32`, and `8`. The 32-byte section for `_mi_stats_main` is
-compiler/producer over-alignment; it does not change the source requirement
-of 8. The contract pins each defining C spelling, source line, type/size
-basis, and alignment authority. In particular, `pthread_key_t` follows the
-x86-selected `include/pthread.h:26,30` route to
-`include/bits/alltypes.h:322`, where it is `unsigned`.
+The two non-function layouts record two different facts. Their C source
+requires size/alignment `(1,64)` and `(4,4)` for `_mi_cpu_has_popcnt` and
+`_mi_heap_default_key`. The static producer places those symbols in sections
+aligned `64` and `4`; a producer section may exceed the source requirement
+without changing it. The contract pins each defining C spelling, source line,
+type/size basis, and alignment authority. In particular, `pthread_key_t`
+follows the x86-selected `include/pthread.h:26,30` route to
+`include/bits/alltypes.h:327`, where it is `unsigned`. No TLS object keeps
+default visibility in v3.5.0.
 
-The `source_hidden_objects` bucket separately accounts for twelve C globals
-outside the 424-name version script. Nine are `OBJECT` definitions and three
+The `source_hidden_objects` bucket separately accounts for nine C globals
+outside the 437-name version script. Six are `OBJECT` definitions and three
 are `TLS` definitions. Their static C member rows are `GLOBAL HIDDEN`; their
 shared rows are `LOCAL HIDDEN`, with no shared `.dynsym` entry. The contract
 pins each C definition, declaration, profile condition, source consumer and
@@ -48,11 +49,11 @@ The shared build also contains the owned compiler-helper archive. Its exact
 link input, installed archive hash, both archive placements, and private libc
 copy must agree with the already authenticated product and ELF facts. Broad,
 duplicate, allocator, and mixed archive exclusions remain rejected. The C
-producer keeps its separate exact 424-name version script.
+producer keeps its separate exact 437-name version script.
 
 `selected_metadata()` exposes the validated finite policy as an exact
-424-name mapping to static/shared type, binding, and visibility expectations.
-Its four data/TLS rows also carry source-selected `size_bytes` and
+437-name mapping to static/shared type, binding, and visibility expectations.
+Its two data rows also carry source-selected `size_bytes` and
 `alignment_bytes`: both roles use the C source minimum, because generic
 consumers compare it to both a symbol value and defining section. Exact static
 producer section placement remains in this component's account. It does not
@@ -60,33 +61,33 @@ expose observed ELF values or turn these private names into public exports.
 
 The reader requires these finite producer facts:
 
-- 419 strong `FUNC GLOBAL DEFAULT` definitions in the selected static C member
+- 434 strong `FUNC GLOBAL DEFAULT` definitions in the selected static C member
   become `FUNC LOCAL DEFAULT` definitions in shared `libc.so`.
 - `_ZSt15get_new_handlerv` is a **defined** `FUNC WEAK DEFAULT` static
   fallback and a `FUNC LOCAL DEFAULT` shared definition. Pinned
   `src/alloc.c` returns null from that fallback; it is not treated as an
   optional undefined C++ import or given an invented provider.
 - Every selected row resolves through one positive numeric defining-section
-  index in its own static-member or shared-DSO section roster. The 420
-  function definitions (the 419 strong functions and the weak fallback) must
+  index in its own static-member or shared-DSO section roster. The 435
+  function definitions (the 434 strong functions and the weak fallback) must
   resolve to an executable (`X`) section; a special, reserved, missing, or
   duplicated index cannot stand in for a C body.
-- `_mi_cpu_has_popcnt`, `_mi_heap_default_key`, and `_mi_stats_main` retain
-  their exact object size, source-required alignment, and static producer
-  section alignment. Shared placement must meet the source requirement.
-- `mi_thread_locals` retains its TLS size and initial-exec section alignment.
-  Both static and shared `st_value` fields must themselves be divisible by the
-  source-required alignment. Shared TLS `st_value` is a TLS-relative offset;
-  the reader does not subtract the `.tdata` virtual address.
-- The twelve source-hidden C objects retain their exact source-selected type,
+- `_mi_cpu_has_popcnt` and `_mi_heap_default_key` retain their exact object
+  size, source-required alignment, and static producer section alignment.
+  Shared placement must meet the source requirement. Both static and shared
+  `st_value` fields must themselves be divisible by the source-required
+  alignment.
+- The nine source-hidden C objects retain their exact source-selected type,
   size and alignment. Their static C definitions remain `GLOBAL HIDDEN` and
   their shared definitions remain `LOCAL HIDDEN`; none may appear in shared
   `.dynsym` or in a static Rust member. Their selected static provider must be
-  the fixed-C archive member. This bucket does not expand the 424-entry
+  the fixed-C archive member. Shared TLS `st_value` is a TLS-relative offset;
+  the reader does not subtract the `.tdata` virtual address. This bucket does
+  not expand the 437-entry
   version script or the eight Rust-root imports.
-- None of the 424 identities has a shared `.dynsym` row.
-- The archive map retains the raw Cargo allocator archive identity, the
-  reconstructed `libc.a` identity, exactly one C `*-static.o` member, and the
+- None of the 437 identities has a shared `.dynsym` row.
+- The archive map retains the reconstructed `libc.a` identity, exactly one C
+  `mimalloc-v3.5.0-static.o` member, and the
   static Rust members (`static_rust_members`), and one shared Rust object. The
   installed archive emits one static member per Rust module. The static Rust
   members import exactly eight C names: `_mi_auto_process_done`,
@@ -118,6 +119,6 @@ The receipt seals the ELF facts, both provenance records, and dynamic manifest
 before and after accounting, then records their identities. It remains
 `component-pass-not-qualification`: its family-completion, promotion, and
 public-support flags are all false. A qualified Rust-backend promotion removes
-this fixed-C producer contract, its 424-name localization list, and its eight
+this fixed-C producer contract, its 437-name localization list, and its eight
 Rust-to-C joins. It does not transfer this private metadata to Rust or change
 the separate public allocation boundary.

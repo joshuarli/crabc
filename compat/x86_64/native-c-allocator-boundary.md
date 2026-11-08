@@ -1,7 +1,7 @@
 # Installed C allocator boundary
 
-`native_c_allocator_boundary.py` joins the selected `libmimalloc-sys` 0.1.49
-implementation (C mimalloc v3.3.2) to the installed x86 allocator wrappers. It
+`native_c_allocator_boundary.py` joins the selected C mimalloc v3.5.0
+implementation to the installed x86 allocator wrappers. It
 consumes supplied static and dynamic products; it never builds a product or
 selects a general allocator policy.
 
@@ -16,7 +16,7 @@ check binds the C ABI wrappers for `malloc`, `calloc`, `realloc`,
 to the selected x86 root.
 
 The same producer account authenticates the selected C static member. This
-reader separately records its finite inverse dependency roster: 27 `NOTYPE
+reader separately records its finite inverse dependency roster: 28 `NOTYPE
 GLOBAL DEFAULT UND` imports from that one current archive member to selected
 public Rust libc providers, each defined by exactly one Rust archive member
 (the installed archive emits one member per Rust module). Each row is reconstructed from the current static
@@ -29,9 +29,9 @@ shared provider rows bind that selected shared product. This proves a finite
 ordinary link-availability boundary; it does not claim that every imported API
 was executed by the startup probe.
 
-The source provenance remains `libmimalloc-sys` 0.1.49 carrying C mimalloc
-v3.3.2 and its pinned 32-source `static.c` closure. It is distinct from the
-fixed v3.5.0 Rust-port oracle.
+The source provenance is unedited upstream mimalloc v3.5.0, the `[mimalloc]`
+archive pin, and its `static.c` closure. The fixed Rust port in
+`crabc-mimalloc/` targets the same upstream version but is a separate backend.
 
 `malloc` is the only weak wrapper. `calloc`, `realloc`, `reallocarray`,
 `free`, `aligned_alloc`, `posix_memalign`, `memalign`, `valloc`, and

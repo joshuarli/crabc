@@ -8,6 +8,7 @@ import argparse
 import hashlib
 import json
 import sqlite3
+import subprocess
 import tempfile
 import unittest
 from pathlib import Path
@@ -211,21 +212,36 @@ class NativeStaticSourceRuntimeClosureTests(unittest.TestCase):
                 with self.assertRaisesRegex(CLOSURE.ClosureError, "not a physical child"):
                     CLOSURE.replay_private_vendor(work, rust_source)
 
-    def test_target_c_environment_rejects_unapproved_overrides_before_building(self) -> None:
-        approved = {
-            "CC_x86_64_unknown_linux_musl": "/usr/bin/gcc",
-            "CFLAGS_x86_64_unknown_linux_musl": "-nostdinc",
-            "CC_SHELL_ESCAPED_FLAGS": "1",
-        }
-        for override in (
-            dict(approved, PATH="/ambient"),
-            dict(approved, CC_x86_64_unknown_linux_musl="gcc"),
-            dict(approved, CC_SHELL_ESCAPED_FLAGS="0"),
-            {key: value for key, value in approved.items() if key != "CFLAGS_x86_64_unknown_linux_musl"},
-        ):
-            with self.subTest(override=override):
-                with self.assertRaisesRegex(CLOSURE.ClosureError, "pinned target compiler"):
-                    CLOSURE.build(argparse.Namespace(), c_environment=override)
+    def test_c_allocator_is_appended_exactly_when_libc_selects_its_wrapper(self) -> None:
+        archive = Path("/fixture/libc.a")
+        work = Path("/fixture/work")
+        unselected = ["rustc", "--crate-name", "c", "--cfg", 'feature="x86-legacy-misc"']
+        selected = ["rustc", "--crate-name", "c", "--cfg", 'feature="x86-allocator-runtime"']
+        self.assertIsNone(CLOSURE.append_c_allocator(Path("llvm-ar"), archive, work, unselected, None, release=False))
+        with self.assertRaisesRegex(CLOSURE.ClosureError, "without the C allocator wrapper"):
+            CLOSURE.append_c_allocator(Path("llvm-ar"), archive, work, unselected, ["-nostdinc"], release=False)
+        from scripts import build_x86_64_owned_sysroot as products
+        compiled: list[list[str]] = []
+
+        def compile_c_allocator(path, flags, *, profile):
+            compiled.append((list(flags), profile))
+            return Path("/fixture/c-allocator") / products.C_ALLOCATOR_MEMBER, {"member": products.C_ALLOCATOR_MEMBER}
+
+        archived: list[list[str]] = []
+
+        def fake_run(command, **kwargs):
+            archived.append(command)
+            stdout = "c.libc.rcgu.o\n" if command[1] == "t" else ""
+            return subprocess.CompletedProcess(command, 0, stdout, "")
+
+        with patch.object(products, "compile_c_allocator", side_effect=compile_c_allocator), \
+                patch.object(CLOSURE, "work_child", side_effect=lambda root, path, _: root / path), \
+                patch.object(CLOSURE.subprocess, "run", side_effect=fake_run):
+            record = CLOSURE.append_c_allocator(Path("llvm-ar"), archive, work, selected, None, release=False)
+        self.assertEqual(compiled, [([], "debug")])
+        self.assertEqual(record, {"member": products.C_ALLOCATOR_MEMBER, "target_flags": []})
+        self.assertEqual(archived[-1], ["llvm-ar", "rsD", str(archive),
+                                        str(Path("/fixture/c-allocator") / products.C_ALLOCATOR_MEMBER)])
 
     def test_selected_static_c_profiles_exclude_optional_runtime_dependencies(self) -> None:
         for features in ("", "x86-legacy-misc"):
@@ -254,7 +270,6 @@ class NativeStaticSourceRuntimeClosureTests(unittest.TestCase):
                 "compiler_builtins": ("noprelude", "nounused"),
                 "core": ("noprelude", "nounused"),
                 "crabc_core": (),
-                "libmimalloc_sys": (),
                 "rand_pcg": (),
             },
         )
@@ -297,7 +312,7 @@ class NativeStaticSourceRuntimeClosureTests(unittest.TestCase):
             "compiler_builtins": ("noprelude", "nounused"),
             "core": ("noprelude", "nounused"),
             "crabc_core": (),
-            "libmimalloc_sys": (),
+            "rand_pcg": (),
         }
         command, target, runtime, artifacts, source = self._command(immediate_abort=True, extern_matrix=matrix)
 
@@ -586,7 +601,7 @@ class NativeStaticSourceRuntimeClosureTests(unittest.TestCase):
                         "cargo_profile_dev_debug": 0,
                         "cargo_profile_dev_codegen_units": CLOSURE.DEV_CODEGEN_UNITS,
                         "libc_rustc_arguments": [],
-                        "c_environment": {},
+                        "c_allocator": None,
                         "runtime_flags": list(CLOSURE.RUNTIME_FLAGS),
                     }
                     receipt_path.write_text(json.dumps(receipt), encoding="utf-8")

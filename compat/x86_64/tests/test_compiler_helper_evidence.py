@@ -77,7 +77,7 @@ def _helper_elf(path: Path, binding: str, dynamic_binding: str | None = None,
 class CompilerHelperEvidenceTests(unittest.TestCase):
     def test_allocator_popcount_witness_follows_the_product_build_profile(self) -> None:
         self.assertEqual(EVIDENCE.allocator_popcount_witness_for_profile("release"),
-                         "mi_bbitmap_try_find_and_clearNC")
+                         "mi_bitmap_popcount")
         self.assertEqual(EVIDENCE.allocator_popcount_witness_for_profile("debug"), "mi_popcount")
         for profile in (None, True, "unknown"):
             with self.subTest(profile=profile), self.assertRaisesRegex(

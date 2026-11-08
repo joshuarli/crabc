@@ -942,8 +942,9 @@ AArch64 and its frozen manifests unchanged
 `compat/abi/musl-1.2.6/aarch64/headers.tsv`). Preserve `dlclose`'s retained-object
 behavior, failed-load rollback, interposition, pthread/cancellation/TLS and the
 selected error conventions. The runtime leaves process THP policy unchanged.
-The accepted C backend (`libmimalloc-sys` 0.1.49, mimalloc v3.3.2) is distinct
-from the frozen v3.5.0 port oracle. Keep upstream licenses, pins, corrections
+The accepted x86 C backend is unedited upstream mimalloc v3.5.0 (`[mimalloc]`);
+paused AArch64 keeps `libmimalloc-sys` 0.1.49 (mimalloc v3.3.2). Both are
+distinct from the frozen Rust port. Keep upstream licenses, pins, corrections
 and the reviewed unwinder dependency graph.
 
 [Scope](docs/scope.md), [selected behavior](COMPATIBILITY-PROFILE.md),

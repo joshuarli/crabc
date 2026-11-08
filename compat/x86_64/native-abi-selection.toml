@@ -93,7 +93,7 @@ members_file = "libc/src/c_abi/x86_64/owned_mimalloc_hidden.list"
 expected_type = ""
 delegated_members = []
 placement_metadata = {}
-reason = "Exact fixed-C mimalloc producer metadata supplies both static and shared placement fields for this 424-name localization list; its source minimum data alignment is distinct from the retained compiler section alignment observation. No other private owner inherits this account."
+reason = "Exact fixed-C mimalloc producer metadata supplies both static and shared placement fields for this 437-name localization list; its source minimum data alignment is distinct from the retained compiler section alignment observation. No other private owner inherits this account."
 static_metadata_rule = "explicit"
 
 [[owner_groups]]
@@ -104,12 +104,12 @@ owner = "fixed-C-mimalloc-producer"
 family = "libc.c-abi-compat"
 artifacts = ["candidate-static", "candidate-shared"]
 sources = ["libc/src/c_abi/x86_64/owned_mimalloc_hidden.list", "compat/x86_64/owned_mimalloc_producer_metadata.py", "compat/x86_64/owned_mimalloc_producer_metadata.toml", "compat/x86_64/owned-mimalloc-producer-metadata.md", "compat/x86_64/owned-mimalloc-export-visibility.md"]
-members = ["__mi_theap_cached", "__mi_theap_default", "__mi_theap_main", "_mi_cpu_movsb_max", "_mi_cpu_stosb_max", "_mi_page_empty", "_mi_page_map", "_mi_process_is_initialized", "_mi_theap_empty", "_mi_theap_empty_wrong", "heap_main", "theap_main"]
+members = ["__mi_page_map", "__mi_theap_cached", "__mi_theap_default", "__mi_thread_id_helper", "_mi_cpu_movsb_max", "_mi_cpu_stosb_max", "_mi_process_is_initialized", "_mi_theap_empty", "_mi_theap_empty_wrong"]
 members_file = ""
 expected_type = ""
 delegated_members = []
 placement_metadata = {"candidate-static" = {"binding" = "GLOBAL", "visibility" = "HIDDEN"}, "candidate-shared" = {"binding" = "LOCAL", "visibility" = "HIDDEN"}}
-reason = "Pinned fixed-C source defines these twelve private data objects in the selected C member. They have a separate hidden placement shape from the 424-name shared-localization roster and are not Rust-root imports."
+reason = "Pinned fixed-C source defines these nine private data objects in the selected C member. They have a separate hidden placement shape from the 437-name shared-localization roster and are not Rust-root imports."
 static_metadata_rule = "explicit"
 
 [[owner_groups]]

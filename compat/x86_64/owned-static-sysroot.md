@@ -103,15 +103,14 @@ or hash mismatch before compilation, packaging, or extraction. It records the
 excluded inputs and unselected scope. Final publication is atomic, and two
 clean builds in distinct roots must have identical regular-file bytes.
 
-The `x86-owned-static-runtime` composition includes the Cargo-locked
-`libmimalloc-sys` 0.1.49 backend, not the incomplete native Rust port. The
-builder verifies its single object against the dependency producer archive,
-binds the crate checksum and compiler identity, and records source/header
-hashes from the actual C compilation. `-MD` writes the dependency trace beside
-the compiled object in Cargo's `OUT_DIR`. The builder resolves that trace from
-the archive's sole member and validates its header closure on cold and cached
-builds. `-nostdinc` permits only project headers
-and that pinned backend's own sources. Owned `syscall`, `prctl`, `realpath`,
+The `x86-owned-static-runtime` composition selects the C allocator wrapper,
+not the incomplete native Rust port. The builder obtains the pinned
+`[mimalloc]` v3.5.0 archive through the allocator harness's SHA-256-verified
+route, compiles its unedited `src/static.c` with one recorded gcc command, and
+adds that object to `libc.a` as `mimalloc-v3.5.0-static.o`. It binds the
+upstream pin and compiler identity and records source/header hashes from the
+compiler's dependency trace. `-nostdinc` permits only project headers and the
+pinned upstream sources. Owned `syscall`, `prctl`, `realpath`,
 and `abort` providers remove the earlier musl support-object tail. This is
 an accepted C dependency, not full target-runtime Rust purity.
 

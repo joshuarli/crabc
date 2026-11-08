@@ -13876,6 +13876,8 @@ pub unsafe extern "C" fn rename(old: *const c_char, new_: *const c_char) -> c_in
 // nondefault Rust shadow backend has no runtime selection or C fallback, so a
 // native pointer cannot accidentally cross allocator ownership domains.
 #[cfg(not(feature = "native-mimalloc-shadow"))]
+use libmimalloc_sys as mimalloc_c;
+#[cfg(not(feature = "native-mimalloc-shadow"))]
 include!("allocator_mimalloc.rs");
 #[cfg(feature = "native-mimalloc-shadow")]
 include!("allocator_native_mimalloc.rs");

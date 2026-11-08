@@ -1037,7 +1037,7 @@ mod runtime_facade_v1;
 #[path = "allocator_mimalloc_lifecycle.rs"]
 mod allocator_mimalloc_lifecycle;
 
-// The allocator is opt-in until the complete x86 runtime can own its bundled
+// The allocator is opt-in until the complete x86 runtime can own its C
 // backend and lifecycle. Its C contract is shared verbatim with AArch64; only
 // the target-local errno accessor differs.
 #[cfg(all(
@@ -1049,6 +1049,19 @@ mod allocator {
     use core::ptr::null_mut;
 
     use super::errno;
+
+    pub(super) mod mimalloc_c {
+        use core::ffi::c_void;
+
+        unsafe extern "C" {
+            pub(crate) fn mi_free(p: *mut c_void);
+            pub(crate) fn mi_malloc_aligned(size: usize, alignment: usize) -> *mut c_void;
+            pub(crate) fn mi_realloc_aligned(p: *mut c_void, newsize: usize, alignment: usize) -> *mut c_void;
+            pub(crate) fn mi_usable_size(p: *const c_void) -> usize;
+            pub(crate) fn mi_zalloc(size: usize) -> *mut c_void;
+            pub(crate) fn mi_zalloc_aligned(size: usize, alignment: usize) -> *mut c_void;
+        }
+    }
 
     type SizeT = usize;
     const ENOMEM: c_int = 12;
@@ -1131,7 +1144,7 @@ mod allocator {
     #[cfg(crabc_x86_owned_runtime)]
     pub(super) unsafe fn allocate_internal(size: usize) -> *mut c_void {
         unsafe { mimalloc_allocation(|| unsafe {
-            libmimalloc_sys::mi_malloc_aligned(size, MIMALLOC_MALLOC_ALIGNMENT)
+            mimalloc_c::mi_malloc_aligned(size, MIMALLOC_MALLOC_ALIGNMENT)
         }) }
     }
 
@@ -1158,7 +1171,7 @@ mod allocator {
     pub(super) unsafe fn deallocate_internal(pointer: *mut c_void) {
         if !pointer.is_null() {
             let saved_errno = cabi_allocator_errno();
-            unsafe { libmimalloc_sys::mi_free(pointer) };
+            unsafe { mimalloc_c::mi_free(pointer) };
             cabi_set_allocator_errno(saved_errno);
         }
     }
@@ -1168,7 +1181,7 @@ mod allocator {
 // The selected native adapter retains the same private internal allocation
 // seam as the C provider. Its individual public entries use the Rust engine
 // exclusively, so this feature combination cannot free or query a native
-// pointer through libmimalloc-sys.
+// pointer through the C backend.
 #[cfg(feature = "native-mimalloc-shadow")]
 #[path = "allocator_native_mimalloc.rs"]
 mod allocator;
@@ -1353,6 +1366,8 @@ mod pthread_mutex_prioceiling_query;
 ))]
 mod allocator_observability {
     use core::ffi::c_void;
+
+    use super::allocator::mimalloc_c;
 
     include!("../../allocator_observability_mimalloc.rs");
 

@@ -47,7 +47,7 @@ class X86LibcAllocatorObservabilityTests(unittest.TestCase):
         )
         self.assertIn('include!("allocator_observability_mimalloc.rs");', aarch64)
         self.assertIn("pub unsafe extern \"C\" fn malloc_usable_size", shared)
-        self.assertIn("libmimalloc_sys::mi_usable_size(ptr)", shared)
+        self.assertIn("mimalloc_c::mi_usable_size(ptr)", shared)
         self.assertNotIn("#[linkage = \"weak\"]", shared)
 
 if __name__ == "__main__":

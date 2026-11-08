@@ -1,7 +1,7 @@
 //! Owned lifecycle entries for the pinned C mimalloc backend.
 //!
-//! `libmimalloc-sys` 0.1.49 bundles mimalloc v3.3.2.  Its pinned
-//! `c_src/mimalloc/v3/src/prim/prim.c` normally adds private compiler
+//! The product builders compile pinned upstream mimalloc v3.5.0.  Its
+//! `src/prim/prim.c` normally adds private compiler
 //! constructor/destructor entries named `mi_process_attach` and
 //! `mi_process_detach`.  The native static and dynamic product builders define
 //! `MI_PRIM_HAS_PROCESS_ATTACH=1`, which suppresses exactly those entries; it
@@ -21,12 +21,8 @@
 //! one-shot.  A program that never allocates does no allocator work, while the
 //! retained `.fini_array` entry remains a safe no-op because
 //! `_mi_auto_process_done` returns when the process was never initialized.
-//! Lazy initialization can also run after the program has exhausted its
-//! address space, leaving the page map unreserved; the finalizer then has no
-//! allocator memory to release and skips the upstream done sequence.
 
-use core::ffi::c_void;
-use core::sync::atomic::{AtomicPtr, AtomicU8, Ordering};
+use core::sync::atomic::{AtomicU8, Ordering};
 #[cfg(feature = "x86-owned-allocator-lifecycle-test-audit")]
 use core::sync::atomic::AtomicUsize;
 
@@ -38,12 +34,6 @@ unsafe extern "C" {
     // private Rust glue; neither name becomes part of crabc's C ABI.
     fn _mi_auto_process_init();
     fn _mi_auto_process_done();
-    // mimalloc v3.3.2 ignores a failed page-map reservation during process
-    // initialization and leaves this pointer NULL until a later page
-    // registration succeeds. Its process done then frees the absent
-    // thread-local slot bitmap with `mi_free(NULL)`, whose release build
-    // reads `_mi_page_map[0]` unchecked.
-    static _mi_page_map: AtomicPtr<c_void>;
 }
 
 const PROCESS_INIT_UNSTARTED: u8 = 0;
@@ -104,11 +94,6 @@ unsafe fn initialize_slow() {
 }
 
 unsafe extern "C" fn finalize() {
-    // SAFETY: `_mi_page_map` is the backend's pointer-sized page-map global
-    // in this image; an atomic load matches its `_Atomic` element accesses.
-    if unsafe { _mi_page_map.load(Ordering::Acquire) }.is_null() {
-        return;
-    }
     let saved_errno = unsafe { errno::get_errno() };
     unsafe { _mi_auto_process_done() };
     #[cfg(feature = "x86-owned-allocator-lifecycle-test-audit")]

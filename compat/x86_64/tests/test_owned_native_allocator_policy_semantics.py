@@ -136,16 +136,18 @@ class PolicyReceiptTests(unittest.TestCase):
         native_identity = backend in allocator.products.NATIVE_ALLOCATOR_BACKENDS if native_identity is None else native_identity
         pin = dict(allocator.products.C_ALLOCATOR_PIN)
         if bad_accepted_pin:
-            pin["checksum"] = "0" * 64
+            pin["archive_sha256"] = "0" * 64
+        accepted = {"upstream": pin, "member_sha256": "a" * 64,
+                    "source_and_header_sha256": {"mimalloc-3.5.0/src/static.c": "b" * 64}}
         product("static-libc-provenance", json.dumps({
             "archive": {"sha256": "0" * 64 if bad_archive else digest(files["static-libc-archive"])},
-            "allocator_backend": ({"upstream_sha256": upstream_hash} if native_identity else {"crate": pin}),
+            "allocator_backend": ({"upstream_sha256": upstream_hash} if native_identity else accepted),
         }).encode())
         product("dynamic-libc-provenance", json.dumps({
             "allocator_backend": dynamic_backend or backend,
             "native_allocator": ({"path": "crabc-mimalloc/UPSTREAM.md", "sha256": upstream_hash}
                                  if native_identity else None),
-            "accepted_allocator": None if native_identity else pin,
+            "accepted_allocator": None if native_identity else accepted,
         }).encode())
         product("static-manifest", json.dumps({
             "allocator_backend": backend, "installed": {"files": {

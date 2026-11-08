@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Verify the exact shared-only visibility boundary for bundled mimalloc v3."""
+"""Verify the exact shared-only visibility boundary for the pinned C mimalloc v3.5.0 backend."""
 from __future__ import annotations
 
 import argparse
@@ -12,8 +12,8 @@ import sys
 
 ROOT = Path(__file__).resolve().parents[2]
 CONTRACT = ROOT / "libc/src/c_abi/x86_64/owned_mimalloc_hidden.list"
-CONTRACT_SHA256 = "cd537f6579018bbba79d831ee148a7b07f51a0f3bda538a27970724751d78873"
-CONTRACT_COUNT = 424
+CONTRACT_SHA256 = "645197d35ecab7d547f5ac0c9510a748d97d1a45e4b33dbdf68e39879aa77121"
+CONTRACT_COUNT = 437
 PUBLIC_ALLOCATORS = {
     "malloc": "WEAK",
     "calloc": "GLOBAL",
@@ -221,7 +221,7 @@ def static_allocator_provider(
     listing, ar_command = run([ar, "t", str(archive)], "static archive member inspection")
     members = [member for member in listing.splitlines() if member]
     backend = [member for member in members if member.endswith("-static.o")]
-    require(len(backend) == 1, "static archive must retain exactly one bundled allocator member")
+    require(len(backend) == 1, "static archive must retain exactly one C allocator member")
     extracted = scratch / backend[0]
     completed = subprocess.run([ar, "p", str(archive), backend[0]], check=False, capture_output=True)
     require(completed.returncode == 0 and not completed.stderr,
@@ -347,7 +347,7 @@ def validate_dynsym_delta(
 
     expected_names = set(baseline) - hidden
     require(set(current) == expected_names,
-            "shared dynsym changed by names beyond the exact 424-name mimalloc local contract")
+            "shared dynsym changed by names beyond the exact mimalloc local contract")
     metadata_drift = sorted(
         name for name in expected_names if metadata_signature(current[name]) != metadata_signature(baseline[name])
     )

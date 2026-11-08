@@ -5,8 +5,8 @@ This reader consumes facts already authenticated by native_abi_elf_facts, the
 two owned-product provenance records, and the selected dynamic-product manifest.
 It does not build products, replay ELF collection, select public ABI providers,
 or infer ownership from prefixes.
-Its closed contract binds the selected libmimalloc-sys 0.1.49 source bundle,
-the exact 424-name localization list, and five C producer metadata buckets.
+Its closed contract binds the pinned upstream mimalloc v3.5.0 source bundle,
+the exact 437-name localization list, and four C producer metadata buckets.
 """
 from __future__ import annotations
 
@@ -31,8 +31,8 @@ import compiler_helper_evidence as compiler_helpers
 
 CONTRACT_PATH = MODULE_DIRECTORY / "owned_mimalloc_producer_metadata.toml"
 HIDDEN_LIST = ROOT / "libc/src/c_abi/x86_64/owned_mimalloc_hidden.list"
-SCHEMA = "crabc.x86_64-owned-mimalloc-producer-metadata/v2"
-RECEIPT_SCHEMA = "crabc.x86_64-owned-mimalloc-producer-metadata-receipt/v2"
+SCHEMA = "crabc.x86_64-owned-mimalloc-producer-metadata/v3"
+RECEIPT_SCHEMA = "crabc.x86_64-owned-mimalloc-producer-metadata-receipt/v3"
 ELF_FACTS_SCHEMA = "crabc.x86_64-native-abi-elf-facts/v1"
 TARGET = "x86_64-unknown-linux-musl"
 DYNAMIC_PRODUCT_MANIFEST_SCHEMA = 1
@@ -62,25 +62,25 @@ EXPECTED_RUST_ROOT_DATA_REFERENCES = ("_mi_heap_default_key",)
 EXPECTED_DATA_OBJECTS = (
     "_mi_cpu_has_popcnt",
     "_mi_heap_default_key",
-    "_mi_stats_main",
 )
-EXPECTED_TLS_OBJECT = "mi_thread_locals"
 EXPECTED_SOURCE_HIDDEN_LAYOUTS = {
-    "_mi_page_empty": ("OBJECT", 120, 64),
-    "_mi_page_map": ("OBJECT", 8, 64),
+    "__mi_page_map": ("OBJECT", 8, 64),
     "_mi_cpu_movsb_max": ("OBJECT", 8, 64),
     "_mi_cpu_stosb_max": ("OBJECT", 8, 64),
     "__mi_theap_default": ("TLS", 8, 8),
-    "__mi_theap_main": ("TLS", 8, 8),
     "__mi_theap_cached": ("TLS", 8, 8),
-    "_mi_theap_empty": ("OBJECT", 8096, 64),
-    "_mi_theap_empty_wrong": ("OBJECT", 8096, 64),
-    "theap_main": ("OBJECT", 8096, 64),
-    "heap_main": ("OBJECT", 6440, 64),
+    "__mi_thread_id_helper": ("TLS", 8, 8),
+    "_mi_theap_empty": ("OBJECT", 8104, 64),
+    "_mi_theap_empty_wrong": ("OBJECT", 8104, 64),
     "_mi_process_is_initialized": ("OBJECT", 1, 1),
 }
 EXPECTED_SOURCE_HIDDEN_OBJECTS = tuple(sorted(EXPECTED_SOURCE_HIDDEN_LAYOUTS))
 EXPECTED_WEAK_NULL_FALLBACK = "_ZSt15get_new_handlerv"
+C_MEMBER = "mimalloc-v3.5.0-static.o"
+UPSTREAM_PREFIX = "mimalloc-3.5.0/"
+MEMBER_COUNT = 437
+STRONG_FUNCTION_COUNT = 434
+UPSTREAMS = ROOT / "compat/upstreams.toml"
 SHA256_RE = re.compile(r"[0-9a-f]{64}\Z")
 LINKER_NAME_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*\Z")
 
@@ -194,7 +194,7 @@ def _source_hidden_metadata(value: object, description: str) -> dict[str, str]:
 def _source_reference(value: object, description: str) -> dict[str, str]:
     record = mapping(value, description, {"path", "sha256"})
     path = text(record["path"], f"{description}.path")
-    require(path.startswith("libmimalloc-sys/c_src/mimalloc/v3/"), f"{description}.path leaves pinned v3 source")
+    require(path.startswith(UPSTREAM_PREFIX), f"{description}.path leaves the pinned upstream source")
     return {"path": path, "sha256": sha256(record["sha256"], f"{description}.sha256")}
 
 
@@ -272,8 +272,8 @@ def _source_hidden_proof(
     for label in ("definition", "declaration", "alignment"):
         path = text(record[f"{label}_path"], f"{description}.{label}_path")
         digest = sha256(record[f"{label}_sha256"], f"{description}.{label}_sha256")
-        require(path.startswith("libmimalloc-sys/c_src/mimalloc/v3/"),
-                f"{description}.{label}_path leaves pinned v3 source")
+        require(path.startswith(UPSTREAM_PREFIX),
+                f"{description}.{label}_path leaves the pinned upstream source")
         require(source_hashes.get(path) == digest, f"{description} {label} source is not pinned")
         source_references[label] = {"path": path, "sha256": digest}
     raw_consumers = record["c_consumers"]
@@ -284,7 +284,7 @@ def _source_hidden_proof(
         consumer = mapping(raw, f"{description}.c_consumers[{index}]", {"path", "sha256", "references"})
         path = text(consumer["path"], f"{description}.c_consumers[{index}].path")
         digest = sha256(consumer["sha256"], f"{description}.c_consumers[{index}].sha256")
-        require(path.startswith("libmimalloc-sys/c_src/mimalloc/v3/")
+        require(path.startswith(UPSTREAM_PREFIX)
                 and source_hashes.get(path) == digest,
                 f"{description} consumer source is not pinned")
         require(path not in seen_paths, f"{description} repeats a consumer source")
@@ -353,15 +353,21 @@ def _validate_contract(value: object) -> dict[str, Any]:
     require(contract["schema"] == SCHEMA, "fixed-C mimalloc producer schema differs")
     require(contract["target"] == TARGET, "fixed-C mimalloc producer target differs")
 
-    backend = mapping(contract["backend"], "allocator backend", {"crate", "version", "checksum", "mimalloc_version", "version_macro"})
+    backend = mapping(contract["backend"], "allocator backend",
+                      {"upstream", "version", "tag", "revision", "archive_sha256", "version_macro"})
+    try:
+        pin = tomllib.loads(UPSTREAMS.read_text(encoding="utf-8"))["mimalloc"]
+    except (OSError, KeyError, tomllib.TOMLDecodeError) as error:
+        raise ProducerMetadataError(f"cannot read the mimalloc upstream pin: {error}") from error
     require(
         backend == {
-            "crate": "libmimalloc-sys",
-            "version": "0.1.49",
-            "checksum": "6a45a52f43e1c16f667ccfe4dd8c85b7f7c204fd5e3bf46c5b0db9a5c3c0b8e9",
-            "mimalloc_version": "3.3.2",
-            "version_macro": 30302,
-        },
+            "upstream": "mimalloc",
+            "version": pin.get("version"),
+            "tag": pin.get("tag"),
+            "revision": pin.get("revision"),
+            "archive_sha256": pin.get("sha256"),
+            "version_macro": 30500,
+        } and pin.get("version") == "3.5.0",
         "allocator backend pin differs",
     )
 
@@ -387,10 +393,10 @@ def _validate_contract(value: object) -> dict[str, Any]:
     members_file = text(provenance["members_file"], "allocator member source")
     require(members_file == HIDDEN_LIST.relative_to(ROOT).as_posix(), "allocator member source path differs")
     sha256(provenance["members_sha256"], "allocator member source SHA-256")
-    require(positive(provenance["members_count"], "allocator member count") == 424,
+    require(positive(provenance["members_count"], "allocator member count") == MEMBER_COUNT,
             "allocator member count differs")
     prefix = text(provenance["upstream_prefix"], "allocator upstream prefix")
-    require(prefix == "libmimalloc-sys/c_src/mimalloc/v3/", "allocator upstream prefix differs")
+    require(prefix == UPSTREAM_PREFIX, "allocator upstream prefix differs")
     upstream_sources = mapping(provenance["upstream_sources"], "allocator upstream source map")
     normalized_sources: dict[str, str] = {}
     for path, digest in upstream_sources.items():
@@ -419,9 +425,9 @@ def _validate_contract(value: object) -> dict[str, Any]:
         "allocator installed header source map digest differs",
     )
     for key, expected in (
-        ("static_translation_unit", "libmimalloc-sys/c_src/mimalloc/v3/src/static.c"),
-        ("public_header", "libmimalloc-sys/c_src/mimalloc/v3/include/mimalloc.h"),
-        ("weak_fallback_source", "libmimalloc-sys/c_src/mimalloc/v3/src/alloc.c"),
+        ("static_translation_unit", UPSTREAM_PREFIX + "src/static.c"),
+        ("public_header", UPSTREAM_PREFIX + "include/mimalloc.h"),
+        ("weak_fallback_source", UPSTREAM_PREFIX + "src/alloc.c"),
     ):
         reference = _source_reference(provenance[key], f"allocator {key}")
         require(reference["path"] == expected and normalized_sources.get(reference["path"]) == reference["sha256"],
@@ -436,13 +442,13 @@ def _validate_contract(value: object) -> dict[str, Any]:
         "-nostdinc", "-isystem", "$CRABC_SOURCE/include", "-fPIC", "-ftls-model=initial-exec",
         "-fstack-protector-strong", "-DMI_PRIM_HAS_PROCESS_ATTACH=1",
         "-Dmmap=__mmap", "-Dmadvise=__madvise", "-Dmremap=__mremap", "-Dmprotect=__mprotect",
-        "-ffile-prefix-map=$CRABC_SOURCE=/crabc", "-MD",
+        "-ffile-prefix-map=$CRABC_SOURCE=/crabc",
     ], "static allocator build flags differ")
     require(shared_flags == [
         "-nostdinc", "-isystem", "$SOURCE/include", "-fPIC", "-ftls-model=initial-exec",
         "-fstack-protector-strong", "-DMI_PRIM_HAS_PROCESS_ATTACH=1",
         "-Dmmap=__mmap", "-Dmadvise=__madvise", "-Dmremap=__mremap", "-Dmprotect=__mprotect",
-        "-ffile-prefix-map=$SOURCE=/crabc", "-MD",
+        "-ffile-prefix-map=$SOURCE=/crabc",
     ], "shared allocator build flags differ")
     lifecycle = mapping(
         build["lifecycle_profile"],
@@ -472,7 +478,7 @@ def _validate_contract(value: object) -> dict[str, Any]:
     metadata = mapping(
         contract["metadata"],
         "allocator metadata",
-        {"strong_functions", "weak_null_fallback", "data_objects", "tls_object", "source_hidden_objects"},
+        {"strong_functions", "weak_null_fallback", "data_objects", "source_hidden_objects"},
     )
     strong = mapping(metadata["strong_functions"], "strong allocator functions", {"static", "shared", "excluded_names"})
     strong["static"] = _exact_metadata(strong["static"], "strong allocator static metadata")
@@ -521,24 +527,6 @@ def _validate_contract(value: object) -> dict[str, Any]:
         data.append(item)
     require(tuple(item["name"] for item in data) == EXPECTED_DATA_OBJECTS, "allocator data object names differ")
 
-    tls = mapping(
-        metadata["tls_object"],
-        "allocator TLS object",
-        {"name", "static", "shared", "size_bytes", "source", "producer"},
-    )
-    tls["name"] = text(tls["name"], "allocator TLS object name")
-    tls["static"] = _exact_metadata(tls["static"], "allocator TLS static metadata")
-    tls["shared"] = _exact_metadata(tls["shared"], "allocator TLS shared metadata")
-    tls["size_bytes"] = positive(tls["size_bytes"], "allocator TLS size")
-    tls["source"] = _source_layout(tls["source"], "allocator TLS source layout", source_hashes)
-    tls["producer"] = _producer_layout(tls["producer"], "allocator TLS producer layout")
-    require(
-        tls["name"] == EXPECTED_TLS_OBJECT
-        and tls["static"] == {"type": "TLS", "binding": "GLOBAL", "visibility": "DEFAULT"}
-        and tls["shared"] == {"type": "TLS", "binding": "LOCAL", "visibility": "DEFAULT"},
-        "allocator TLS metadata differs",
-    )
-
     raw_source_hidden = metadata["source_hidden_objects"]
     require(type(raw_source_hidden) is list and len(raw_source_hidden) == len(EXPECTED_SOURCE_HIDDEN_OBJECTS),
             "source-hidden allocator data roster differs")
@@ -576,7 +564,7 @@ def _validate_contract(value: object) -> dict[str, Any]:
 
     excluded = names(strong["excluded_names"], "strong allocator function exclusions")
     require(
-        excluded == sorted([weak["name"], *(item["name"] for item in data), tls["name"]]),
+        excluded == sorted([weak["name"], *(item["name"] for item in data)]),
         "strong allocator function exclusions differ",
     )
 
@@ -622,7 +610,6 @@ def _validate_contract(value: object) -> dict[str, Any]:
             "strong_functions": dict(strong),
             "weak_null_fallback": dict(weak),
             "data_objects": data,
-            "tls_object": dict(tls),
             "source_hidden_objects": source_hidden,
         },
         "rust_root_imports": {"names": import_names},
@@ -665,21 +652,17 @@ def selected_metadata() -> dict[str, dict[str, dict[str, object]]]:
 
     This policy projection intentionally contains no observed ELF values.  A
     consumer can attach its own authenticated facts while using the same finite
-    424-name source contract instead of re-creating the four metadata buckets.
+    437-name source contract instead of re-creating the three metadata buckets.
     """
     contract = load_contract()
     metadata = contract["metadata"]
     data = {item["name"]: item for item in metadata["data_objects"]}
-    tls = metadata["tls_object"]
     weak = metadata["weak_null_fallback"]
     result: dict[str, dict[str, dict[str, object]]] = {}
     for name in contract_members(contract):
         layout: Mapping[str, Any] | None = None
         if name in data:
             expected = data[name]
-            layout = expected
-        elif name == tls["name"]:
-            expected = tls
             layout = expected
         elif name == weak["name"]:
             expected = weak
@@ -703,7 +686,7 @@ def selected_metadata() -> dict[str, dict[str, dict[str, object]]]:
             "static": static,
             "shared": shared,
         }
-    require(len(result) == 424, "selected producer metadata roster differs")
+    require(len(result) == MEMBER_COUNT, "selected producer metadata roster differs")
     return result
 
 
@@ -733,7 +716,7 @@ def _require_exact_source_map(value: object, contract: Mapping[str, Any], descri
     source = contract["source_provenance"]
     prefix = source["upstream_prefix"]
     upstream = {path: digest for path, digest in normalized.items() if path.startswith(prefix)}
-    require(upstream == source["upstream_sources"], f"{description} pinned v3 source map differs")
+    require(upstream == source["upstream_sources"], f"{description} pinned upstream source map differs")
     project_headers = {
         path: digest
         for path, digest in normalized.items()
@@ -744,19 +727,15 @@ def _require_exact_source_map(value: object, contract: Mapping[str, Any], descri
         f"{description} installed header source map differs",
     )
     require(
-        all(path.startswith(prefix) for path in normalized if path.startswith("libmimalloc-sys/")),
-        f"{description} includes a non-v3 libmimalloc-sys source",
+        all(path.startswith((prefix, "include/")) for path in normalized),
+        f"{description} includes a source outside the pinned upstream and project headers",
     )
     return normalized
 
 
-def _crate_pin(contract: Mapping[str, Any]) -> dict[str, str]:
+def _upstream_pin(contract: Mapping[str, Any]) -> dict[str, str]:
     backend = contract["backend"]
-    return {
-        "name": backend["crate"],
-        "version": backend["version"],
-        "checksum": backend["checksum"],
-    }
+    return {key: backend[key] for key in ("version", "tag", "revision", "archive_sha256")}
 
 
 def _member_records(value: object, description: str) -> dict[str, str]:
@@ -776,7 +755,7 @@ def _member_roles(records: Mapping[str, str], description: str) -> tuple[str, li
     The installed static archive has one Rust member per libc module; the
     shared link selects one Rust object.
     """
-    c_members = [name for name in records if re.fullmatch(r"[0-9a-f]+-static\.o", name) is not None]
+    c_members = [name for name in records if name == C_MEMBER]
     rust_members = sorted(name for name in records if name.endswith(".rcgu.o"))
     require(len(c_members) == 1 and rust_members and set(c_members + rust_members) == set(records),
             f"{description} member roles differ")
@@ -807,13 +786,14 @@ def _validate_static_provenance(
     require_keys(
         backend,
         {
-            "archive_sha256", "crate", "implementation", "member", "member_sha256",
+            "upstream", "mi_malloc_version", "implementation", "member", "member_sha256",
             "source_and_header_sha256", "target_flags", "lifecycle_profile",
         },
         "static allocator backend",
     )
-    producer_archive_sha256 = sha256(backend["archive_sha256"], "static allocator producer archive SHA-256")
-    require(same(backend["crate"], _crate_pin(contract)), "static allocator crate pin differs")
+    require(same(backend["upstream"], _upstream_pin(contract))
+            and backend["mi_malloc_version"] == contract["backend"]["version_macro"],
+            "static allocator upstream pin differs")
     require(backend["implementation"] == "accepted C backend; native Rust promotion remains separate",
             "static allocator implementation boundary differs")
     require(backend["member"] == c_member and backend["member_sha256"] == selected[c_member],
@@ -822,7 +802,7 @@ def _validate_static_provenance(
     require(backend["target_flags"] == contract["build"]["static_target_flags"], "static allocator build flags differ")
     require(backend["lifecycle_profile"] == contract["build"]["lifecycle_profile"],
             "static allocator lifecycle profile differs")
-    return archive_sha256, producer_archive_sha256, c_member, rust_members, selected
+    return archive_sha256, c_member, rust_members, selected
 
 
 def _validate_shared_provenance(
@@ -833,13 +813,19 @@ def _validate_shared_provenance(
     require_keys(
         record,
         {
-            "accepted_allocator", "allocator_headers", "allocator_flags", "selected_members",
+            "accepted_allocator", "allocator_flags", "selected_members",
             "shared_mimalloc_hidden_exports", "libc_shared_link_command",
         },
         "shared allocator provenance",
     )
-    require(same(record["accepted_allocator"], _crate_pin(contract)), "shared allocator crate pin differs")
-    _require_exact_source_map(record["allocator_headers"], contract, "shared allocator source provenance")
+    accepted = mapping(record["accepted_allocator"], "shared accepted allocator")
+    require_keys(accepted, {"upstream", "mi_malloc_version", "member", "member_sha256", "source_and_header_sha256"},
+                 "shared accepted allocator")
+    require(same(accepted["upstream"], _upstream_pin(contract))
+            and accepted["mi_malloc_version"] == contract["backend"]["version_macro"]
+            and accepted["member"] == c_member and accepted["member_sha256"] == c_sha256,
+            "shared allocator upstream pin or member differs")
+    _require_exact_source_map(accepted["source_and_header_sha256"], contract, "shared allocator source provenance")
     require(record["allocator_flags"] == contract["build"]["shared_allocator_flags"], "shared allocator build flags differ")
     selected = _shared_member_records(record["selected_members"], "shared allocator selected members")
     require(selected.get(c_member) == c_sha256, "shared selected member differs from static C provider")
@@ -874,7 +860,7 @@ def _validate_shared_provenance(
             "shared allocator link did not use the exact version script")
     if any("--exclude-libs" in item for item in command) or "shared_compiler_helper_archive" in record:
         # Only the separate helper owner can admit its exact archive exclusion.
-        # The C object remains governed by the 424-name version script above.
+        # The C object remains governed by the exact version script above.
         try:
             compiler_helpers.shared_libc_archive_policy_from_product(record, shared_manifest, elf_facts, root=ROOT)
         except (compiler_helpers.CompilerHelperEvidenceError, OSError, ValueError) as error:
@@ -1121,10 +1107,9 @@ def _validate_metadata_rows(
     metadata = contract["metadata"]
     weak = metadata["weak_null_fallback"]
     data = {item["name"]: item for item in metadata["data_objects"]}
-    tls = metadata["tls_object"]
-    special = {weak["name"], *data, tls["name"]}
+    special = {weak["name"], *data}
     strong_names = [name for name in members if name not in special]
-    require(len(strong_names) == 419, "strong function bucket count differs")
+    require(len(strong_names) == STRONG_FUNCTION_COUNT, "strong function bucket count differs")
 
     strong_records: list[dict[str, Any]] = []
     for name in strong_names:
@@ -1186,20 +1171,6 @@ def _validate_metadata_rows(
             },
         })
 
-    tls_static_row = _named_row(c_rows, tls["name"], "static C TLS provider")
-    tls_shared_row = _named_row(shared_rows, tls["name"], "shared C TLS provider")
-    tls_static = _symbol_metadata(tls_static_row, tls["static"], f"static TLS {tls['name']}")
-    tls_shared = _symbol_metadata(tls_shared_row, tls["shared"], f"shared TLS {tls['name']}")
-    require(
-        tls_static["size_bytes"] == tls["size_bytes"] and tls_shared["size_bytes"] == tls["size_bytes"],
-        f"TLS layout differs for {tls['name']}",
-    )
-    tls_source_alignment = tls["source"]["source_required_alignment"]
-    tls_static_alignment = _section_alignment(c_member, tls_static_row, f"static TLS {tls['name']}")
-    tls_shared_alignment = _section_alignment(shared, tls_shared_row, f"shared TLS {tls['name']}")
-    require(tls_static_alignment == tls["producer"]["static_section_alignment"], f"TLS layout differs for {tls['name']}")
-    require(tls_shared_alignment >= tls_source_alignment, f"TLS layout differs for {tls['name']}")
-
     source_hidden_records: list[dict[str, Any]] = []
     for item in contract["metadata"]["source_hidden_objects"]:
         name = item["name"]
@@ -1254,28 +1225,6 @@ def _validate_metadata_rows(
             }],
         },
         "data-objects": {"count": len(data_records), "members": data_records},
-        "initial-exec-tls": {
-            "count": 1,
-            "members": [{
-                "name": tls["name"],
-                "static": tls_static,
-                "shared": tls_shared,
-                "layout": {
-                    "size_bytes": tls["size_bytes"],
-                    "source": tls["source"],
-                    "producer": tls["producer"],
-                    "static_section_alignment": tls_static_alignment,
-                    "shared_section_alignment": tls_shared_alignment,
-                    "shared_source_minimum_alignment": tls_source_alignment,
-                    "static_symbol_value": _symbol_value_alignment(
-                        tls_static_row, tls_source_alignment, f"static TLS {tls['name']}"
-                    ),
-                    "shared_symbol_value": _symbol_value_alignment(
-                        tls_shared_row, tls_source_alignment, f"shared TLS {tls['name']}"
-                    ),
-                },
-            }],
-        },
         "source-hidden-objects": {
             "count": len(source_hidden_records),
             "members": source_hidden_records,
@@ -1419,7 +1368,6 @@ def account_producer_metadata(
     members = contract_members(contract)
     (
         static_archive_sha256,
-        producer_archive_sha256,
         c_member_name,
         rust_member_names,
         static_members,
@@ -1466,14 +1414,12 @@ def account_producer_metadata(
         "scope": {
             "member_count": len(members),
             "metadata_buckets": {name: buckets[name]["count"] for name in (
-                "strong-functions", "weak-null-fallback", "data-objects", "initial-exec-tls",
-                "source-hidden-objects",
+                "strong-functions", "weak-null-fallback", "data-objects", "source-hidden-objects",
             )},
             "rust_root_c_imports": len(joins),
             "shared_dynsym_private_names": "absent",
         },
         "archive_map": {
-            "raw_cargo_allocator_archive_sha256": producer_archive_sha256,
             "reconstructed_static_libc_archive_sha256": static_archive_sha256,
             "static_c_member": c_member_name,
             "static_rust_members": rust_member_names,
@@ -1497,7 +1443,7 @@ def account_producer_metadata(
             "Consumes already authenticated ELF facts and owned-product provenance; it does not replay either source receipt.",
             "Public malloc ABI, interposition, and runtime behavior are separate components.",
             "The eight Rust-root C joins are retained producer observations; their separate selection closure needs an installed consumer/map component.",
-            "The fixed mimalloc v3.5.0 Rust-port oracle is distinct from this selected v3.3.2 C backend.",
+            "The Rust mimalloc port in crabc-mimalloc is a separate backend from this selected C backend.",
             "A qualified Rust-backend promotion removes this C producer contract instead of transferring its metadata to Rust.",
         ],
     }

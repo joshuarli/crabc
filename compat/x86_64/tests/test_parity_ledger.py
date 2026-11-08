@@ -696,11 +696,10 @@ class X86ParityLedgerTests(unittest.TestCase):
         self.assertNotIn("capabilities", artifact)
         for phrase in (
             "mixed-runtime",
-            "libmimalloc-sys` 0.1.49",
-            "bundled mimalloc v3.3.2",
+            "pinned upstream mimalloc v3.5.0 object",
             "pinned musl 1.2.6",
             "reject every pinned-musl",
-            "paused fixed-v3.5.0 Rust-port evidence",
+            "paused Rust-port evidence",
             "not an owned runtime",
             "private `mi_*` globals",
             "all nine observed allocation calls",

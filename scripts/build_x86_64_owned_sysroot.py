@@ -56,12 +56,18 @@ PACKAGE_ARCHIVE_ROOT = "crabc-x86_64-owned-static-sysroot"
 LIBC_MEMBER = re.compile(r"^c\..+\.rcgu\.o$")
 THIN_LTO_RUST_RUNTIME_MEMBER = re.compile(r"^c\.(core|alloc)-([0-9a-f]+)\..+\.rcgu\.o$")
 RUST_ALLOC_SHIM_MEMBER = re.compile(r"^c\.[a-z0-9]+\.rcgu\.o$")
-ALLOCATOR_MEMBER = re.compile(r"^[0-9a-f]+-static\.o$")
-C_ALLOCATOR_PIN = {
-    "name": "libmimalloc-sys",
-    "version": "0.1.49",
-    "checksum": "6a45a52f43e1c16f667ccfe4dd8c85b7f7c204fd5e3bf46c5b0db9a5c3c0b8e9",
-}
+C_ALLOCATOR_MEMBER = "mimalloc-v3.5.0-static.o"
+C_ALLOCATOR_MI_MALLOC_VERSION = 30500
+
+
+def _c_allocator_pin() -> dict[str, str]:
+    pin = tomllib.loads((ROOT / "compat/upstreams.toml").read_text(encoding="utf-8"))["mimalloc"]
+    return {"version": pin["version"], "tag": pin["tag"], "revision": pin["revision"],
+            "archive_sha256": pin["sha256"]}
+
+
+C_ALLOCATOR_PIN = _c_allocator_pin()
+
 # The C backend's compiler constructor is disabled only when this matching
 # Rust cfg selects the private same-image replacement entries.  Keeping the
 # two spellings here makes the product builder, rather than an ambient Cargo
@@ -139,7 +145,7 @@ TARGET_RUNTIME_INPUTS = (
     "project regular-file headers",
     "Rust-produced x86 CRT objects",
     "crabc-libc c.*.rcgu.o members",
-    "Cargo-pinned libmimalloc-sys C allocator compiled against project headers",
+    "pinned upstream mimalloc v3.5.0 src/static.c compiled against project headers",
     "Rust-produced bounded x86 compiler helpers",
 )
 NOT_SELECTED = (
@@ -402,12 +408,12 @@ def run(
 
 
 def owned_mimalloc_lifecycle_profile(
-    c_flags: Sequence[str], cargo_command: Sequence[str], allocator_archive: Path,
-    raw_libc: Path, *, llvm_ar: str, llvm_nm: str, llvm_objdump: str, stage: Path,
+    c_flags: Sequence[str], cargo_command: Sequence[str], allocator_object: Path,
+    raw_libc: Path, *, llvm_nm: str, llvm_objdump: str,
 ) -> dict[str, object]:
     """Reject a one-sided C/Rust automatic-mimalloc lifecycle selection.
 
-    The locked C source owns the normal compiler constructor. These native
+    Upstream mimalloc owns the normal compiler constructor. These native
     products suppress it only because the same Cargo invocation selects the
     private Rust entries below. Inspect the produced C object and raw Rust
     archive as well as the commands, so changing just a flag or just a cfg
@@ -424,17 +430,8 @@ def owned_mimalloc_lifecycle_profile(
         for index in range(len(cargo_command) - 1)
     ) != 1:
         raise BuildError("owned mimalloc lifecycle Rust cfg is missing or ambiguous")
-
-    members = run([llvm_ar, "t", str(allocator_archive)]).decode("utf-8", errors="replace").splitlines()
-    if len(members) != 1 or ALLOCATOR_MEMBER.fullmatch(members[0]) is None:
-        raise BuildError("owned mimalloc lifecycle requires one accepted allocator object")
-    if stage.exists() or stage.is_symlink():
-        raise BuildError("owned mimalloc lifecycle inspection path is already occupied")
-    stage.mkdir(mode=0o700)
-    backend = stage / members[0]
-    backend.write_bytes(run([llvm_ar, "p", str(allocator_archive), members[0]]))
-    sections = run([llvm_objdump, "--section-headers", str(backend)]).decode("utf-8", errors="replace")
-    symbols = run([llvm_nm, str(backend)]).decode("utf-8", errors="replace")
+    sections = run([llvm_objdump, "--section-headers", str(allocator_object)]).decode("utf-8", errors="replace")
+    symbols = run([llvm_nm, str(allocator_object)]).decode("utf-8", errors="replace")
     if re.search(r"\.(?:init|fini)_array\b", sections) or re.search(
         r"(?m)^.*\bmi_process_(?:attach|detach)$", symbols
     ):
@@ -447,6 +444,8 @@ def owned_mimalloc_lifecycle_profile(
         )
         if entry_types != ["d"]:
             raise BuildError(f"raw libc lacks exactly one local-data owned mimalloc lifecycle entry: {symbol}")
+    if any(name.startswith(("mi_", "_mi_")) for name in archive_defined_symbols(llvm_nm, raw_libc)):
+        raise BuildError("Cargo libc defines C mimalloc symbols")
     return {
         "c_define": MIMALLOC_LIFECYCLE_C_FLAG,
         "rust_cfg": MIMALLOC_LIFECYCLE_RUST_CFG,
@@ -559,7 +558,7 @@ def install_header_tree(destination: Path) -> dict[str, object]:
 
 
 def classify_libc_members(
-    members: Sequence[str], *, allocator_member: str | None = None
+    members: Sequence[str],
 ) -> tuple[tuple[str, ...], tuple[str, ...]]:
     if not members or len(set(members)) != len(members):
         raise BuildError("Cargo libc archive has an empty or duplicate member roster")
@@ -578,14 +577,9 @@ def classify_libc_members(
         raise BuildError(
             "Cargo libc archive has an unsafe member path: " + ", ".join(unsafe)
         )
-    if allocator_member is not None and (
-        ALLOCATOR_MEMBER.fullmatch(allocator_member) is None or allocator_member not in members
-    ):
-        raise BuildError("attested allocator member is invalid or absent from Cargo libc")
-    selected = tuple(
-        member for member in members
-        if LIBC_MEMBER.fullmatch(member) or member == allocator_member
-    )
+    if C_ALLOCATOR_MEMBER in members:
+        raise BuildError("Cargo libc archive already contains the C allocator member name")
+    selected = tuple(member for member in members if LIBC_MEMBER.fullmatch(member))
     excluded = tuple(member for member in members if member not in selected)
     if not any(LIBC_MEMBER.fullmatch(member) for member in selected):
         raise BuildError("Cargo libc archive has no crabc Rust object members")
@@ -646,7 +640,7 @@ def global_definitions(nm: str, object_or_archive: Path) -> dict[str, str]:
 
 def rebuild_libc_archive(
     source: Path, output: Path, *, llvm_ar: str, llvm_nm: str,
-    allocator_archive: Path | None = None,
+    allocator_object: Path | None = None,
     llvm_objcopy: str | None = None, stock_runtime_libdir: Path | None = None,
 ) -> dict[str, object]:
     """Rebuild from the already-attested target LLVM archive tools."""
@@ -656,27 +650,7 @@ def rebuild_libc_archive(
         for line in run([llvm_ar, "t", str(source)]).decode("utf-8", errors="replace").splitlines()
         if line
     )
-    allocator_record = None
-    allocator_member = None
-    if allocator_archive is not None:
-        # The backend must be the exact single object produced by the locked
-        # dependency build, not any archive member with a convenient suffix.
-        backend_members = run([llvm_ar, "t", str(allocator_archive)]).decode().splitlines()
-        if len(backend_members) != 1 or ALLOCATOR_MEMBER.fullmatch(backend_members[0]) is None:
-            raise BuildError("accepted allocator archive must contain one named static object")
-        allocator_member = backend_members[0]
-        backend_object = run([llvm_ar, "p", str(allocator_archive), allocator_member])
-        cargo_object = run([llvm_ar, "p", str(source), allocator_member])
-        if backend_object != cargo_object:
-            raise BuildError("Cargo libc allocator object differs from its dependency producer")
-        allocator_record = {
-            "crate": dict(C_ALLOCATOR_PIN),
-            "archive_sha256": sha256_file(allocator_archive),
-            "member": allocator_member,
-            "member_sha256": hashlib.sha256(backend_object).hexdigest(),
-            "implementation": "accepted C backend; native Rust promotion remains separate",
-        }
-    selected, excluded = classify_libc_members(members, allocator_member=allocator_member)
+    selected, excluded = classify_libc_members(members)
     output.parent.mkdir(parents=True, exist_ok=True)
     rebound_runtime: list[dict[str, object]] = []
     with tempfile.TemporaryDirectory(prefix="x86-libc-members.", dir=output.parent) as temporary:
@@ -685,6 +659,10 @@ def rebuild_libc_archive(
         selected_paths = tuple(member_root / member for member in selected)
         if any(not path.is_file() for path in selected_paths):
             raise BuildError("llvm-ar did not extract every selected crabc-libc member")
+        if allocator_object is not None:
+            copy_artifact(allocator_object, member_root / C_ALLOCATOR_MEMBER)
+            selected = (*selected, C_ALLOCATOR_MEMBER)
+            selected_paths = (*selected_paths, member_root / C_ALLOCATOR_MEMBER)
         for path in selected_paths:
             imported = THIN_LTO_RUST_RUNTIME_MEMBER.fullmatch(path.name)
             shim = RUST_ALLOC_SHIM_MEMBER.fullmatch(path.name)
@@ -762,8 +740,6 @@ def rebuild_libc_archive(
         "rust_runtime_duplicate_bindings": rebound_runtime,
         "policy": "crabc objects and the explicitly attested allocator object only; duplicate ThinLTO core/alloc and Rust allocation-shim definitions are weak, while stock core/compiler_builtins and native compiler-rt members are excluded",
     }
-    if allocator_record is not None:
-        result["allocator_backend"] = allocator_record
     return result
 
 
@@ -816,8 +792,6 @@ def installed_manifest(
     target_inputs = list(TARGET_RUNTIME_INPUTS)
     if allocator_backend in NATIVE_ALLOCATOR_BACKENDS:
         target_inputs[3] = "fixed-upstream Rust mimalloc in the selected crabc-libc Rust object"
-    if allocator_backend == EVIDENCE_ALLOCATOR_BACKEND:
-        target_inputs[3] = "exact pinned mimalloc v3.5.0 src/static.c in place of the libmimalloc-sys object (evidence only)"
     return {
         "schema": 1,
         "format": FORMAT,
@@ -873,60 +847,6 @@ def installed_manifest(
     }
 
 
-def accepted_allocator_pin() -> dict[str, str]:
-    """Bind the accepted backend to the reviewed Cargo lock, not a filename."""
-
-    lock = tomllib.loads((ROOT / "Cargo.lock").read_text(encoding="utf-8"))
-    packages = [item for item in lock.get("package", []) if item.get("name") == C_ALLOCATOR_PIN["name"]]
-    if len(packages) != 1 or any(packages[0].get(key) != value for key, value in C_ALLOCATOR_PIN.items()):
-        raise BuildError("accepted allocator Cargo pin changed; review its production provenance")
-    return dict(C_ALLOCATOR_PIN)
-
-
-def allocator_header_provenance(
-    archive: Path, cargo_home: Path, *, llvm_ar: str, vendor_root: Path | None = None,
-) -> dict[str, str]:
-    """Reject target headers outside the project and pinned allocator source."""
-
-    packages = (list((cargo_home / "registry/src").glob("*/libmimalloc-sys-0.1.49")) if vendor_root is None else list(vendor_root.glob("libmimalloc-sys-0.1.49")))
-    if len(packages) != 1:
-        raise BuildError("accepted allocator source package is absent or ambiguous")
-    package = packages[0].resolve()
-    source_root = package / "c_src/mimalloc/v3"
-    if not package.is_relative_to((cargo_home if vendor_root is None else vendor_root).resolve()):
-        raise BuildError("accepted allocator source package escapes the checkout cache")
-    members = run([llvm_ar, "t", str(archive)]).decode("utf-8", errors="replace").splitlines()
-    if len(members) != 1 or Path(members[0]).name != members[0] or not members[0].endswith(".o"):
-        raise BuildError("accepted allocator archive must have one object member for its dependency trace")
-    dependencies = archive.parent / Path(members[0]).with_suffix(".d")
-    try:
-        details = dependencies.lstat()
-        if not stat.S_ISREG(details.st_mode) or dependencies.is_symlink():
-            raise BuildError(f"allocator compiler dependency trace is not a physical file: {dependencies}")
-        text = dependencies.read_text(encoding="utf-8").replace("\\\n", " ")
-    except OSError as error:
-        raise BuildError(f"allocator compiler dependency trace is missing: {dependencies}") from error
-    _, separator, inputs = text.partition(":")
-    if not separator:
-        raise BuildError("allocator compiler dependency trace has no target")
-    records: dict[str, str] = {}
-    for spelling in shlex.split(inputs):
-        path = Path(spelling)
-        path = (path if path.is_absolute() else package / path).resolve(strict=True)
-        if path.is_relative_to(ROOT / "include"):
-            name = path.relative_to(ROOT).as_posix()
-        elif path.is_relative_to(source_root):
-            name = "libmimalloc-sys/" + path.relative_to(package).as_posix()
-        else:
-            raise BuildError(f"allocator compiler used an unowned source/header: {path}")
-        records[name] = sha256_file(path)
-    if "libmimalloc-sys/c_src/mimalloc/v3/src/static.c" not in records or not any(
-        name.startswith("include/") for name in records
-    ):
-        raise BuildError("allocator dependency trace lacks its source or project headers")
-    return records
-
-
 ALLOCATOR_BACKENDS = ("accepted-c", "native-shadow", "pinned-c-evidence", "native")
 # The one compile-time default. Select the native allocator here only after
 # its production checks pass; no other setting changes ordinary products.
@@ -946,18 +866,16 @@ def backend_selection(allocator_backend: str, lifecycle_test_audit: bool) -> str
         if lifecycle_test_audit:
             raise BuildError("the production native backend admits no allocator test-audit feature")
         return "native-shadow"
+    if allocator_backend == EVIDENCE_ALLOCATOR_BACKEND:
+        return "accepted-c"
     return allocator_backend
 # `pinned-c-evidence` is never a production product: it is the accepted-C
-# build with its one libmimalloc-sys object replaced by exact pinned
-# mimalloc v3.5.0 `src/static.c`, compiled by the command that reproduces
-# that libmimalloc-sys object byte for byte. It exists only as the C
-# reference of the allocator's integrated-product comparison
-# (compat/allocator/perf_integrated_x86_64.py). Its product records
-# `allocator_backend = "pinned-c-evidence"` and an evidence-only scope, so no
-# production qualification, which selects `accepted-c`, can admit it.
+# build recorded under an evidence-only backend name and scope. It exists only
+# as the C reference of the allocator's integrated-product comparison
+# (compat/allocator/perf_integrated_x86_64.py), so no production
+# qualification, which selects `accepted-c`, can admit it.
 EVIDENCE_ALLOCATOR_BACKEND = "pinned-c-evidence"
 C_ALLOCATOR_BACKENDS = ("accepted-c", EVIDENCE_ALLOCATOR_BACKEND)
-PINNED_C_EVIDENCE_MEMBER = "pinned-mimalloc-v3.5.0-static.o"
 EVIDENCE_SCOPE = "evidence-only-pinned-c-allocator-reference-never-a-production-product"
 
 
@@ -970,34 +888,14 @@ def allocator_dependency_graph(cargo: list[str], features: str, allocator_backen
                "--target", TARGET, "--no-default-features", "--features", features,
                "--edges", "normal,build", "--prefix", "none", "--format", "{p}"]
     packages = sorted(set(run(command, environment=environment).decode().splitlines()))
-    c_selected = any(line.startswith("libmimalloc-sys ") for line in packages)
+    if any(line.startswith("libmimalloc-sys ") for line in packages):
+        raise BuildError("x86 dependency graph selects a Cargo-built C allocator")
     native_selected = any(line.startswith("crabc-mimalloc ") for line in packages)
-    if allocator_backend == "native-shadow" and (c_selected or not native_selected):
-        raise BuildError("native production dependency graph must select Rust mimalloc without C mimalloc")
-    if allocator_backend == "accepted-c" and (not c_selected or native_selected):
-        raise BuildError("accepted-C production dependency graph selected an unexpected allocator")
+    if native_selected != (backend_selection(allocator_backend, False) == "native-shadow"):
+        raise BuildError("x86 dependency graph selects an unexpected allocator")
     return {"target": TARGET, "edges": ["normal", "build"], "features": features.split(","),
             "packages": [line.replace(str(ROOT), "$SOURCE") for line in packages],
-            "c_allocator_selected": c_selected, "native_allocator_selected": native_selected}
-
-
-def selected_allocator_archive(cargo_root: Path, allocator_backend: str, *, profile: str = "release") -> Path | None:
-    build_root = cargo_root / TARGET / profile / "build"
-    # The pinned nightly uses `libmimalloc-sys/<hash>` instead of the older
-    # single `libmimalloc-sys-<hash>` build-directory component. Keep the
-    # archive selection exact for both layouts so the C backend remains
-    # uniquely attested and native-shadow builds still reject any C archive.
-    archives = [
-        *build_root.glob("libmimalloc-sys-*/out/libmimalloc.a"),
-        *build_root.glob("libmimalloc-sys/*/out/libmimalloc.a"),
-    ]
-    if allocator_backend == "native-shadow":
-        if archives:
-            raise BuildError("native production build contains a C mimalloc archive")
-        return None
-    if allocator_backend != "accepted-c" or len(archives) != 1:
-        raise BuildError("Cargo did not produce one unambiguous accepted allocator archive")
-    return archives[0]
+            "native_allocator_selected": native_selected}
 
 
 def _allocator_perf_helpers():
@@ -1015,20 +913,25 @@ def _allocator_perf_helpers():
     return module
 
 
-def libmimalloc_sys_compile_command(c_flags: Sequence[str], source_root: Path, output: Path) -> list[str]:
-    """The exact gcc command the pinned cc crate runs for libmimalloc-sys 0.1.49.
+C_ALLOCATOR_OPTIMIZATION = {"release": "-O3", "debug": "-O0"}
 
-    cc's release defaults, then the target CFLAGS, then the crate's include
-    directories and its release defines (see libmimalloc-sys build.rs).
-    `pinned_c_evidence_object` proves the reconstruction by reproducing the
-    Cargo-built object byte for byte before reusing it for v3.5.0.
+
+def c_allocator_compile_command(c_flags: Sequence[str], source_root: Path, output: Path,
+                                dependencies: Path, *, profile: str) -> list[str]:
+    """The one gcc command that builds the accepted C allocator object.
+
+    The build profile's optimization and section splitting, then the product's
+    target flags, then upstream's include directories and release defines.
     """
 
     return [
-        "/usr/bin/gcc", "-O3", "-ffunction-sections", "-fdata-sections", "-fPIC", "-m64", *c_flags,
+        "/usr/bin/gcc", C_ALLOCATOR_OPTIMIZATION[profile], "-ffunction-sections", "-fdata-sections",
+        "-fPIC", "-m64", *c_flags,
+        f"-ffile-prefix-map={source_root}=/mimalloc",
         "-I", str(source_root / "include"), "-I", str(source_root / "src"),
         "-Wno-error=date-time", "-ftls-model=initial-exec",
         "-DMI_DEBUG=0", "-DMI_BUILD_RELEASE", "-DNDEBUG",
+        "-MD", "-MF", str(dependencies),
         "-o", str(output), "-c", str(source_root / "src" / "static.c"),
     ]
 
@@ -1045,101 +948,82 @@ def default_visibility_definitions(object_path: Path) -> list[str]:
     return sorted(names)
 
 
-def pinned_c_evidence_object(
-    stage: Path, c_flags: Sequence[str], allocator_archive: Path, *, llvm_ar: str, environment: dict[str, str],
-) -> tuple[Path, dict[str, object]]:
-    """Compile exact pinned mimalloc v3.5.0 as the accepted wrapper's allocator object."""
+def compile_c_allocator(work: Path, c_flags: Sequence[str], *, profile: str) -> tuple[Path, dict[str, object]]:
+    """Compile unedited pinned upstream mimalloc `src/static.c` into one object.
 
+    The archive comes only through the allocator harness's SHA-256-verified
+    route and must be the `[mimalloc]` pin. The compiler's dependency trace
+    must name only that source tree and project headers.
+    """
+
+    if profile not in C_ALLOCATOR_OPTIMIZATION:
+        raise BuildError("unknown C allocator build profile")
     helpers = _allocator_perf_helpers()
     try:
         pin = helpers.load_pin()
-        archive = helpers.fetch_archive(pin, offline=True)
+        archive = helpers.fetch_archive(pin, offline=False)
     except helpers.HarnessError as error:
         raise BuildError(f"pinned mimalloc archive is not authenticated: {error}") from error
-    work = stage / "pinned-c-evidence"
+    if {"version": pin["version"], "tag": pin["tag"], "revision": pin["revision"],
+            "archive_sha256": pin["sha256"]} != C_ALLOCATOR_PIN:
+        raise BuildError("authenticated mimalloc archive is not the accepted C allocator pin")
+    if work.exists() or work.is_symlink():
+        raise BuildError("C allocator build path is already occupied")
     work.mkdir(mode=0o700)
-    source = helpers.safe_extract(archive, work / "source", pin["archive_root"])
-
-    members = run([llvm_ar, "t", str(allocator_archive)]).decode().splitlines()
-    if len(members) != 1 or ALLOCATOR_MEMBER.fullmatch(members[0]) is None:
-        raise BuildError("accepted allocator archive must contain one named static object")
-    accepted_object = run([llvm_ar, "p", str(allocator_archive), members[0]])
-    registry = sorted(Path(environment["CARGO_HOME"]).glob(
-        f"registry/src/*/{C_ALLOCATOR_PIN['name']}-{C_ALLOCATOR_PIN['version']}/c_src/mimalloc/v3"))
-    if len(registry) != 1:
-        raise BuildError("the locked libmimalloc-sys source is not uniquely present in the Cargo registry")
-    flags = [flag for flag in c_flags if flag not in {"-MD"} and not flag.startswith(str(stage))]
-    flags = [flag for index, flag in enumerate(flags) if flag != "-MF" and (index == 0 or flags[index - 1] != "-MF")]
-    reproduced = work / "reproduced-accepted.o"
-    run(libmimalloc_sys_compile_command(flags, registry[0], reproduced), environment=environment)
-    if reproduced.read_bytes() != accepted_object:
-        raise BuildError("the reconstructed libmimalloc-sys compile command does not reproduce its Cargo object")
-
-    evidence = work / PINNED_C_EVIDENCE_MEMBER
-    dependencies = work / "pinned.d"
-    command = libmimalloc_sys_compile_command([*flags, "-MD", "-MF", str(dependencies)], source, evidence)
-    run(command, environment=environment)
+    try:
+        source = helpers.safe_extract(archive, work / "source", pin["archive_root"]).resolve()
+    except helpers.HarnessError as error:
+        raise BuildError(f"pinned mimalloc archive is unsafe: {error}") from error
     version = re.search(r"(?m)^#define MI_MALLOC_VERSION (\d+)", (source / "include/mimalloc.h").read_text())
-    if version is None or int(version.group(1)) != 30500:
-        raise BuildError("the pinned mimalloc archive does not declare MI_MALLOC_VERSION 30500")
-    headers = {}
-    for item in dependencies.read_text().replace("\\\n", " ").split(":", 1)[1].split():
-        path = Path(item).resolve()
-        if path.is_relative_to(source.resolve()):
-            headers["mimalloc-3.5.0/" + path.relative_to(source.resolve()).as_posix()] = sha256_file(path)
+    if version is None or int(version.group(1)) != C_ALLOCATOR_MI_MALLOC_VERSION:
+        raise BuildError(f"the pinned mimalloc archive does not declare MI_MALLOC_VERSION {C_ALLOCATOR_MI_MALLOC_VERSION}")
+    output = work / C_ALLOCATOR_MEMBER
+    dependencies = work / "static.d"
+    command = c_allocator_compile_command(c_flags, source, output, dependencies, profile=profile)
+    run(command)
+    headers: dict[str, str] = {}
+    for item in shlex.split(dependencies.read_text(encoding="utf-8").replace("\\\n", " ").partition(":")[2]):
+        path = Path(item).resolve(strict=True)
+        if path.is_relative_to(source):
+            name = f"{pin['archive_root']}/{path.relative_to(source).as_posix()}"
         elif path.is_relative_to((ROOT / "include").resolve()):
-            headers["include/" + path.relative_to((ROOT / "include").resolve()).as_posix()] = sha256_file(path)
+            name = path.relative_to(ROOT.resolve()).as_posix()
+        elif not any(flag == "-nostdinc" for flag in c_flags):
+            continue
         else:
-            raise BuildError(f"pinned mimalloc compile read a header outside the project and pinned source: {item}")
-    reviewed = (ROOT / "libc/src/c_abi/x86_64/owned_mimalloc_hidden.list").read_text(encoding="utf-8").split()
-    if default_visibility_definitions(reproduced) != sorted(reviewed):
-        raise BuildError("the default-visibility rule does not reproduce the reviewed accepted-C hidden list")
-    normalize = lambda value: str(value).replace(str(stage), "$CRABC_X86_BUILD").replace(str(ROOT), "$CRABC_SOURCE")
-    return evidence, {
-        "implementation": "evidence-only exact pinned mimalloc C; never a production allocator",
-        "upstream": {key: pin[key] for key in ("version", "tag", "revision")} | {"archive_sha256": pin["sha256"]},
+            raise BuildError(f"C allocator compile read a header outside the project and pinned source: {item}")
+        headers[name] = sha256_file(path)
+    if f"{pin['archive_root']}/src/static.c" not in headers:
+        raise BuildError("C allocator dependency trace lacks its pinned translation unit")
+    normalize = lambda value: str(value).replace(str(work), "$CRABC_C_ALLOCATOR").replace(str(ROOT), "$CRABC_SOURCE")
+    return output, {
+        "implementation": "accepted C backend; native Rust promotion remains separate",
+        "upstream": dict(C_ALLOCATOR_PIN),
         "mi_malloc_version": int(version.group(1)),
-        "member": PINNED_C_EVIDENCE_MEMBER,
-        "member_sha256": sha256_file(evidence),
+        "member": C_ALLOCATOR_MEMBER,
+        "member_sha256": sha256_file(output),
+        "compiler": executable_identity(Path("/usr/bin/gcc"), "pinned-image allocator C compiler"),
         "compile_command": [normalize(item) for item in command],
-        "flag_reconstruction": {
-            "reproduces": f"{C_ALLOCATOR_PIN['name']} {C_ALLOCATOR_PIN['version']} member {members[0]}",
-            "accepted_member_sha256": hashlib.sha256(accepted_object).hexdigest(),
-            "reproduced_member_sha256": sha256_file(reproduced),
-        },
-        "replaced_accepted_member": members[0],
         "source_and_header_sha256": dict(sorted(headers.items())),
-        "default_visibility_definitions": default_visibility_definitions(evidence),
     }
 
 
-def require_no_implicit_lifecycle(object_path: Path, *, llvm_nm: str, llvm_objdump: str) -> None:
-    """The same object rule `owned_mimalloc_lifecycle_profile` applies to the accepted member."""
+def require_reviewed_hidden_list(object_path: Path) -> list[str]:
+    """The reviewed shared-libc local list is exactly the object's default-visibility definitions."""
 
-    sections = run([llvm_objdump, "--section-headers", str(object_path)]).decode("utf-8", errors="replace")
-    symbols = run([llvm_nm, str(object_path)]).decode("utf-8", errors="replace")
-    if re.search(r"\.(?:init|fini)_array\b", sections) or re.search(
-        r"(?m)^.*\bmi_process_(?:attach|detach)$", symbols
-    ):
-        raise BuildError("pinned mimalloc evidence object retains its implicit process attach/detach hooks")
+    reviewed = (ROOT / "libc/src/c_abi/x86_64/owned_mimalloc_hidden.list").read_text(encoding="utf-8").split()
+    defined = default_visibility_definitions(object_path)
+    if defined != sorted(reviewed):
+        raise BuildError("the C allocator's default-visibility definitions differ from the reviewed hidden list")
+    return defined
 
 
-def replace_allocator_member(
-    archive: Path, stage: Path, accepted_member: str, evidence: Path, *, llvm_ar: str, llvm_nm: str,
-) -> None:
-    """Swap the accepted allocator member of a rebuilt libc archive for the evidence object."""
+def c_allocator_target_flags() -> list[str]:
+    """The product target flags for the accepted C allocator object."""
 
-    run([llvm_ar, "d", str(archive), accepted_member])
-    run([llvm_ar, "rcsD", str(archive), str(evidence)])
-    members = run([llvm_ar, "t", str(archive)]).decode().splitlines()
-    if accepted_member in members or members.count(evidence.name) != 1:
-        raise BuildError("libc archive allocator member replacement did not take")
-    undefined = {line.split()[-1] for line in run([llvm_nm, "--undefined-only", str(archive)]).decode().splitlines()
-                 if len(line.split()) >= 2}
-    defined = archive_defined_symbols(llvm_nm, archive)
-    missing = sorted(name for name in undefined - defined if name.startswith(("mi_", "_mi_")))
-    if missing:
-        raise BuildError(f"pinned mimalloc object lacks symbols the accepted wrapper imports: {missing}")
+    return ["-nostdinc", "-isystem", str(ROOT / "include"), "-fPIC", "-ftls-model=initial-exec",
+            "-fstack-protector-strong", MIMALLOC_LIFECYCLE_C_FLAG, *MIMALLOC_INTERNAL_VM_C_FLAGS,
+            f"-ffile-prefix-map={ROOT}=/crabc"]
 
 
 def build_debug_runtime_inputs(stage: Path, *, allocator_backend: str = DEFAULT_ALLOCATOR_BACKEND,
@@ -1148,8 +1032,6 @@ def build_debug_runtime_inputs(stage: Path, *, allocator_backend: str = DEFAULT_
     from compat.x86_64 import native_static_source_runtime_closure as closure
     recorded_backend = allocator_backend
     allocator_backend = backend_selection(allocator_backend, lifecycle_test_audit)
-    if allocator_backend == EVIDENCE_ALLOCATOR_BACKEND:
-        raise BuildError("debug runtime selects the accepted C or native Rust backend")
     accepted_c = allocator_backend == "accepted-c"
     linkage = "dynamic" if dynamic else "static"
     feature = f"x86-owned-{linkage}-runtime" if accepted_c else f"x86-owned-{linkage}-native-shadow"
@@ -1159,11 +1041,6 @@ def build_debug_runtime_inputs(stage: Path, *, allocator_backend: str = DEFAULT_
     ar = producer_tool_path(tools, "llvm-ar")
     nm = producer_tool_path(tools, "llvm-nm")
     objdump = producer_tool_path(tools, "llvm-objdump")
-    flags = ["-nostdinc", "-isystem", str(ROOT / "include"), "-fPIC", "-ftls-model=initial-exec",
-             "-fstack-protector-strong", MIMALLOC_LIFECYCLE_C_FLAG, *MIMALLOC_INTERNAL_VM_C_FLAGS,
-             f"-ffile-prefix-map={ROOT}=/crabc", "-MD"]
-    c_environment = ({"CC_x86_64_unknown_linux_musl": "/usr/bin/gcc", "CC_SHELL_ESCAPED_FLAGS": "1",
-                      "CFLAGS_x86_64_unknown_linux_musl": shlex.join(flags)} if accepted_c else None)
     graph = stage / "source-runtime"
     arguments = closure.parser().parse_args(["build", "--work", str(graph.relative_to(ROOT / ".work/x86_64")),
                                              "--features", feature, "--relocation-model", "pic"])
@@ -1172,7 +1049,7 @@ def build_debug_runtime_inputs(stage: Path, *, allocator_backend: str = DEFAULT_
     previous = os.environ.get("CARGO_PROFILE_DEV_OPT_LEVEL")
     os.environ["CARGO_PROFILE_DEV_OPT_LEVEL"] = "0"
     try:
-        raw = closure.build(arguments, c_environment=c_environment)
+        raw = closure.build(arguments, c_allocator_flags=c_allocator_target_flags() if accepted_c else None)
     finally:
         if previous is None:
             os.environ.pop("CARGO_PROFILE_DEV_OPT_LEVEL", None)
@@ -1205,13 +1082,13 @@ def collect_debug_runtime_inputs(stage: Path, graph: Path, raw: Path, *, allocat
     recorded_archive = receipt["staticlib_closure"]["archive"]
     if recorded_archive["path"] != str(raw) or recorded_archive["sha256"] != sha256_file(raw):
         raise BuildError("debug runtime archive differs from its source-built graph")
-    flags = shlex.split(receipt["c_environment"].get("CFLAGS_x86_64_unknown_linux_musl", ""))
+    c_allocator = receipt["c_allocator"]
+    if accepted_c != (c_allocator is not None) or (
+            accepted_c and c_allocator["target_flags"] != c_allocator_target_flags()):
+        raise BuildError("debug runtime graph does not carry the product C allocator")
     cargo_root = graph / "cargo-target"
     core = Path(receipt["source_runtime_artifacts"]["core"]["path"])
     compiler = Path(receipt["source_runtime_artifacts"]["compiler_builtins"]["path"])
-    backend = selected_allocator_archive(cargo_root, allocator_backend, profile="debug")
-    headers = (allocator_header_provenance(backend, graph / "cargo-home", llvm_ar=ar,
-                                           vendor_root=graph / "cargo-vendor") if accepted_c else None)
     environment = deterministic_environment()
     runtime_arguments = ["--profile", "debug", "--runtime-core", str(core.with_suffix(".rmeta")),
                          "--runtime-compiler-builtins", str(compiler.with_suffix(".rmeta"))]
@@ -1231,6 +1108,10 @@ def collect_debug_runtime_inputs(stage: Path, graph: Path, raw: Path, *, allocat
     for artifact in emitted:
         if artifact.suffix == ".rlib":
             permitted.update(run([ar, "t", str(artifact)]).decode().splitlines())
+    if c_allocator is not None:
+        if hashlib.sha256(run([ar, "p", str(raw), C_ALLOCATOR_MEMBER])).hexdigest() != c_allocator["member_sha256"]:
+            raise BuildError("debug libc C allocator member differs from its compiled object")
+        permitted.add(C_ALLOCATOR_MEMBER)
     selected = tuple(name for name in members if name not in compiler_members)
     if any(not LIBC_MEMBER.fullmatch(name) and name not in permitted for name in selected):
         raise BuildError("debug libc contains a member outside its audited source-built Cargo graph")
@@ -1272,7 +1153,7 @@ def collect_debug_runtime_inputs(stage: Path, graph: Path, raw: Path, *, allocat
     provenance = {"archive": {"name": libc.name, "sha256": sha256_file(libc)}, "build_profile": "debug",
                   "source_runtime": receipt, "allocator_backend": recorded_backend,
                   "allocator_lifecycle_test_audit": lifecycle_test_audit,
-                  "allocator_headers": headers, "allocator_flags": flags if accepted_c else [],
+                  "accepted_allocator": c_allocator,
                   "selected_members": [{"name": name, "sha256": sha256_file(objects / name)} for name in selected],
                   "excluded_members": [name for name in members if name in compiler_members]}
     provenance["rust_private_runtime_bindings"] = private_runtime
@@ -1314,34 +1195,17 @@ def build_runtime_inputs(stage: Path, *, allocator_backend: str = DEFAULT_ALLOCA
     cargo_root = stage / "cargo"
     if allocator_backend not in ALLOCATOR_BACKENDS:
         raise BuildError("unknown owned allocator backend")
-    evidence_c = allocator_backend == EVIDENCE_ALLOCATOR_BACKEND
-    accepted_c = allocator_backend in C_ALLOCATOR_BACKENDS
-    allocator_pin = accepted_allocator_pin() if accepted_c else None
-    c_compiler = executable_identity(Path("/usr/bin/gcc"), "pinned-image allocator C compiler") if accepted_c else None
-    c_flags = [
-        "-nostdinc", "-isystem", str(ROOT / "include"),
-        "-fPIC", "-ftls-model=initial-exec", "-fstack-protector-strong",
-        # The Rust libc owns the matching init/fini entries.  Do not let the
-        # fixed C backend install a second hidden constructor.
-        MIMALLOC_LIFECYCLE_C_FLAG, *MIMALLOC_INTERNAL_VM_C_FLAGS,
-        f"-ffile-prefix-map={ROOT}=/crabc", "-MD",
-    ]
+    accepted_c = allocator_backend == "accepted-c"
+    c_flags = c_allocator_target_flags()
     environment = deterministic_environment()
     environment["CARGO_BUILD_JOBS"] = "2"
-    if accepted_c:
-        environment.update({
-        "CC_x86_64_unknown_linux_musl": str(c_compiler["path"]),
-        "CFLAGS_x86_64_unknown_linux_musl": shlex.join(c_flags),
-        "CC_SHELL_ESCAPED_FLAGS": "1",
-    })
     selected_feature = "x86-owned-static-runtime" if accepted_c else "x86-owned-static-native-shadow"
     # The explicit scalar lifecycle audit mirrors the dynamic producer's
     # development flag. It selects no allocator and exposes no pointer.
     if lifecycle_test_audit:
         selected_feature += ",x86-owned-allocator-lifecycle-test-audit"
     dependency_graph = allocator_dependency_graph([rustup, "run", PINNED_TOOLCHAIN, "cargo"],
-                                                 selected_feature, "accepted-c" if accepted_c else allocator_backend,
-                                                 environment)
+                                                 selected_feature, allocator_backend, environment)
     cargo_command = [
         rustup,
         "run",
@@ -1384,15 +1248,13 @@ def build_runtime_inputs(stage: Path, *, allocator_backend: str = DEFAULT_ALLOCA
     raw_libc = cargo_root / TARGET / "release" / "libc.a"
     if not raw_libc.is_file():
         raise BuildError("Cargo did not produce the x86 crabc-libc static archive")
-    allocator_archive = selected_allocator_archive(cargo_root, "accepted-c" if accepted_c else allocator_backend)
-    allocator_headers = (allocator_header_provenance(allocator_archive, Path(environment["CARGO_HOME"]),
-                                                     llvm_ar=llvm_ar)
-                         if accepted_c else None)
+    allocator_object, allocator_record = (compile_c_allocator(stage / "c-allocator", c_flags, profile="release")
+                                          if accepted_c else (None, None))
+    if allocator_object is not None:
+        require_reviewed_hidden_list(allocator_object)
     allocator_lifecycle = (owned_mimalloc_lifecycle_profile(
-        c_flags, cargo_command, allocator_archive, raw_libc,
-        llvm_ar=llvm_ar, llvm_nm=llvm_nm, llvm_objdump=llvm_objdump,
-        stage=stage / "allocator-lifecycle-profile",
-    ) if accepted_c else {"initialization": "owned-static-startup-before-constructors",
+        c_flags, cargo_command, allocator_object, raw_libc, llvm_nm=llvm_nm, llvm_objdump=llvm_objdump,
+    ) if allocator_object is not None else {"initialization": "owned-static-startup-before-constructors",
                           "process_done": "same-image-fini-array-before-stdio-flush",
                           "post_done_backing": "source-default-release-retained"})
 
@@ -1430,24 +1292,12 @@ def build_runtime_inputs(stage: Path, *, allocator_backend: str = DEFAULT_ALLOCA
         libc,
         llvm_ar=llvm_ar,
         llvm_nm=llvm_nm,
-        allocator_archive=allocator_archive,
+        allocator_object=allocator_object,
         llvm_objcopy=str(objcopy["path"]),
         stock_runtime_libdir=runtime_libdir,
     )
     libc_provenance["rust_runtime_duplicate_binding_tool"] = objcopy
-    if evidence_c:
-        evidence_object, evidence_record = pinned_c_evidence_object(
-            stage, c_flags, allocator_archive, llvm_ar=llvm_ar, environment=environment)
-        require_no_implicit_lifecycle(evidence_object, llvm_nm=llvm_nm, llvm_objdump=llvm_objdump)
-        replace_allocator_member(libc, stage, evidence_record["replaced_accepted_member"], evidence_object,
-                                 llvm_ar=llvm_ar, llvm_nm=llvm_nm)
-        libc_provenance["archive"]["sha256"] = sha256_file(libc)
-        libc_provenance["selected_members"] = [
-            item for item in libc_provenance["selected_members"]
-            if item["name"] != evidence_record["replaced_accepted_member"]
-        ] + [{"name": evidence_object.name, "sha256": sha256_file(evidence_object)}]
-        libc_provenance["allocator_backend"]["pinned_c_evidence"] = evidence_record
-    if not accepted_c:
+    if allocator_record is None:
         symbols = archive_defined_symbols(llvm_nm, libc)
         if any(name.startswith(("mi_", "_mi_")) for name in symbols):
             raise BuildError("native static archive defines C mimalloc symbols")
@@ -1455,16 +1305,18 @@ def build_runtime_inputs(stage: Path, *, allocator_backend: str = DEFAULT_ALLOCA
             "implementation": ("native Rust; production-shaped selection" if recorded_backend == NATIVE_ALLOCATOR_BACKEND
                                else "native Rust shadow; promotion remains separate"),
             "upstream_sha256": sha256_file(ROOT / "crabc-mimalloc/UPSTREAM.md"),
+            "target_flags": [],
         }
+    else:
+        libc_provenance["allocator_backend"] = {
+            **allocator_record,
+            "target_flags": [flag.replace(str(ROOT), "$CRABC_SOURCE") for flag in c_flags],
+        }
+        if recorded_backend == EVIDENCE_ALLOCATOR_BACKEND:
+            libc_provenance["allocator_backend"]["pinned_c_evidence"] = allocator_record
     libc_provenance["dependency_graph"] = dependency_graph
     libc_provenance["allocator_lifecycle_test_audit"] = lifecycle_test_audit
-    libc_provenance["allocator_backend"].update({
-        "crate": allocator_pin,
-        "compiler": c_compiler,
-        "target_flags": [flag.replace(str(stage), "$CRABC_X86_BUILD").replace(str(ROOT), "$CRABC_SOURCE") for flag in c_flags] if accepted_c else [],
-        "source_and_header_sha256": allocator_headers,
-        "lifecycle_profile": allocator_lifecycle,
-    })
+    libc_provenance["allocator_backend"]["lifecycle_profile"] = allocator_lifecycle
     return {
         "cargo_command": [
             "$CRABC_PINNED_CARGO_HOME/bin/rustup",

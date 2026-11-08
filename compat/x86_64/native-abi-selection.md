@@ -235,7 +235,7 @@ the backend imports it once. The imports are `_mi_auto_process_done`,
 account must supply matching static and shared provider metadata. The same
 name in another member or artifact remains unresolved. This evidence does not
 claim allocator-family completion, general allocation semantics, promotion,
-or public support for the C v3.3.2 backend.
+or public support for the C v3.5.0 backend.
 
 `--stdio-alias-contract-report REPORT` is independently optional. Its owner
 reader replays the current selected source, static preparation, static and
@@ -1090,32 +1090,32 @@ static metadata from the selected oracle definition. It delegates them out of
 the header and ABI-only provider routes and grants no other x86-only name a
 shared-metadata default.
 
-The bundled C allocator's upstream API is not an installed crabc API.
+The C allocator's upstream API is not an installed crabc API.
 `libc/src/allocator_mimalloc.rs` owns the public allocation wrappers and states
-that backend `mi_*` names are private. The exact 424-name
+that backend `mi_*` names are private. The exact 437-name
 `libc/src/c_abi/x86_64/owned_mimalloc_hidden.list` is owned by the fixed-C
 producer account in
 [`owned_mimalloc_producer_metadata.py`](owned_mimalloc_producer_metadata.py).
 That account binds the selected static and dynamic products, their provenance
 files, the dynamic manifest, and every static/shared type, binding, visibility,
 and applicable size/alignment field before the selection reader observes a
-candidate row. Data and TLS symbol alignment is the C source minimum in both
+candidate row. Data symbol alignment is the C source minimum in both
 placements; the producer's static-section over-alignment remains a separate
 measurement. The shared builder still localizes the names with its exact
 version script. The [visibility component](owned-mimalloc-export-visibility.md)
 requires their absence from dynsym, their LOCAL shared symtab definitions, and
 preserved static providers and public allocation metadata. This fixed-C
-attachment supplies metadata only for the 424-name list. It does not select
+attachment supplies metadata only for the 437-name list. It does not select
 other private owners. The separate native C allocator-boundary receipt can
 prove its eight exact static Rust-root imports and the selected C member's
 three private VM calls; allocator semantics,
 lifecycle beyond that bounded receipt, family completion, promotion, and
 public support remain open.
 
-The same fixed-C source account records twelve C source-hidden data objects
+The same fixed-C source account records nine C source-hidden data objects
 in the separate `allocator-source-hidden` group. It requires `GLOBAL HIDDEN`
 definitions in the selected static C member and `LOCAL HIDDEN` definitions in
-shared `libc.so`. These names remain outside the 424-entry version script and
+shared `libc.so`. These names remain outside the 437-entry version script and
 the eight Rust-root imports. This account does not authorize a Rust member to
 import a C-private object.
 

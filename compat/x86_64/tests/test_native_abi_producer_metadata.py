@@ -67,7 +67,7 @@ class NativeAbiProducerMetadataTests(unittest.TestCase):
                 'artifacts': list(selection.FIXED_C_PRODUCER_ARTIFACTS),
                 'member_count': len(cls.companion['members']),
                 'metadata_placement_count': len(cls.companion['members']) * 2,
-                'data_layout_placement_count': 8,
+                'data_layout_placement_count': 4,
                 'source_hidden_owner_group': selection.FIXED_C_SOURCE_HIDDEN_GROUP,
                 'source_hidden_member_count': len(cls.companion['source_hidden_members']),
                 'source_hidden_metadata_placement_count': len(cls.companion['source_hidden_members']) * 2,
@@ -225,10 +225,10 @@ class NativeAbiProducerMetadataTests(unittest.TestCase):
             'status': 'component-pass-not-qualification',
             'status_flags': {'family_completion': False, 'promotion_ready': False, 'public_support': False},
             'scope': {
-                'member_count': 424,
+                'member_count': 437,
                 'metadata_buckets': {
-                    'strong-functions': 419, 'weak-null-fallback': 1,
-                    'data-objects': 3, 'initial-exec-tls': 1,
+                    'strong-functions': 434, 'weak-null-fallback': 1,
+                    'data-objects': 2,
                     'source-hidden-objects': len(selection.FIXED_C_SOURCE_HIDDEN_MEMBERS),
                 },
                 'rust_root_c_imports': 8,
@@ -244,8 +244,8 @@ class NativeAbiProducerMetadataTests(unittest.TestCase):
 
     def test_fixed_c_function_ownership_preserves_the_defined_weak_fallback(self):
         names = (ROOT / 'libc/src/c_abi/x86_64/owned_mimalloc_hidden.list').read_text().splitlines()
-        objects = {'_mi_cpu_has_popcnt', '_mi_heap_default_key', '_mi_stats_main', 'mi_thread_locals'}
-        self.assertEqual(len(names), 424)
+        objects = {'_mi_cpu_has_popcnt', '_mi_heap_default_key'}
+        self.assertEqual(len(names), 437)
         for name in names:
             if name in objects:
                 continue
@@ -258,14 +258,9 @@ class NativeAbiProducerMetadataTests(unittest.TestCase):
                 })
 
     def test_fixed_c_object_alignment_uses_the_source_minimum_in_both_placements(self):
-        # Generic alignment constrains both a section and its symbol offset.
-        # The owning component separately checks the compiler's 32-byte stats
-        # section; that does not strengthen the object's C alignment of eight.
         layouts = {
             '_mi_cpu_has_popcnt': ('OBJECT', 1, 64, 64),
             '_mi_heap_default_key': ('OBJECT', 4, 4, 4),
-            '_mi_stats_main': ('OBJECT', 4368, 8, 8),
-            'mi_thread_locals': ('TLS', 8, 8, 8),
         }
         for name, (kind, size, static_alignment, shared_alignment) in layouts.items():
             with self.subTest(name=name):
@@ -279,8 +274,8 @@ class NativeAbiProducerMetadataTests(unittest.TestCase):
     def test_fixed_c_source_hidden_objects_keep_separate_hidden_placements(self):
         self.assertEqual(self.companion['source_hidden_group']['id'], selection.FIXED_C_SOURCE_HIDDEN_GROUP)
         self.assertEqual(self.companion['source_hidden_members'], list(selection.FIXED_C_SOURCE_HIDDEN_MEMBERS))
-        self.assertEqual(len(self.pending), 848)
-        self.assertEqual(len(self.source_hidden_pending), 24)
+        self.assertEqual(len(self.pending), 874)
+        self.assertEqual(len(self.source_hidden_pending), 18)
         for name, roles in self.companion['source_hidden_metadata'].items():
             with self.subTest(name=name):
                 self.assertEqual(self.placements(name), {
@@ -298,7 +293,7 @@ class NativeAbiProducerMetadataTests(unittest.TestCase):
             selection.fixed_c_producer_metadata_selection(contract, self.inputs)
 
         metadata = copy.deepcopy(self.companion['source_hidden_metadata'])
-        metadata['_mi_page_map']['shared']['visibility'] = 'DEFAULT'
+        metadata['__mi_page_map']['shared']['visibility'] = 'DEFAULT'
         with mock.patch.object(selection.producer_metadata, 'selected_source_hidden_metadata', return_value=metadata):
             with self.assertRaisesRegex(selection.SelectionError, 'source-hidden metadata is invalid'):
                 selection.fixed_c_producer_metadata_selection(self.contract, self.inputs)
@@ -307,7 +302,7 @@ class NativeAbiProducerMetadataTests(unittest.TestCase):
         self.assertEqual(self.companion['group']['id'], selection.FIXED_C_PRODUCER_GROUP)
         self.assertEqual(self.companion['group']['owner'], selection.FIXED_C_PRODUCER_OWNER)
         self.assertEqual(self.companion['members'], (ROOT / 'libc/src/c_abi/x86_64/owned_mimalloc_hidden.list').read_text().splitlines())
-        self.assertEqual(len(self.pending), 848)
+        self.assertEqual(len(self.pending), 874)
         for name in selection.FIXED_C_PRODUCER_SOURCE_FILES:
             with self.subTest(name=name):
                 self.assertEqual(self.companion['source_inputs'][name], selection.file_identity(ROOT / name))
@@ -323,9 +318,9 @@ class NativeAbiProducerMetadataTests(unittest.TestCase):
         with self.assertRaisesRegex(selection.SelectionError, 'source input differs'):
             selection.fixed_c_producer_metadata_selection(self.contract, inputs)
 
-    def test_fixed_c_selection_rejects_the_old_static_section_alignment_as_symbol_alignment(self):
+    def test_fixed_c_selection_rejects_a_section_alignment_as_symbol_alignment(self):
         metadata = copy.deepcopy(self.companion['metadata'])
-        metadata['_mi_stats_main']['static']['alignment_bytes'] = 32
+        metadata['_mi_heap_default_key']['static']['alignment_bytes'] = 8
         with mock.patch.object(selection.producer_metadata, 'selected_metadata', return_value=metadata):
             with self.assertRaisesRegex(selection.SelectionError, 'source alignment differs'):
                 selection.fixed_c_producer_metadata_selection(self.contract, self.inputs)
@@ -338,10 +333,10 @@ class NativeAbiProducerMetadataTests(unittest.TestCase):
                 facts, measurement, paths, self.contract, self.inputs,
             )
         account.assert_called_once()
-        self.assertEqual(result['selection']['member_count'], 424)
-        self.assertEqual(result['selection']['metadata_placement_count'], 848)
-        self.assertEqual(result['selection']['source_hidden_member_count'], 12)
-        self.assertEqual(result['selection']['source_hidden_metadata_placement_count'], 24)
+        self.assertEqual(result['selection']['member_count'], 437)
+        self.assertEqual(result['selection']['metadata_placement_count'], 874)
+        self.assertEqual(result['selection']['source_hidden_member_count'], 9)
+        self.assertEqual(result['selection']['source_hidden_metadata_placement_count'], 18)
         self.assertEqual(result['inputs']['before'], result['inputs']['after'])
         self.assertEqual(result['inputs']['public_elf_replay']['candidate_build'], measurement['candidate_build'])
 

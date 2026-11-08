@@ -41,6 +41,24 @@ def require(condition: bool, message: str) -> None:
         raise PromotionClosureError(message)
 
 
+def accepted_c_allocator_record(allocator: object) -> bool:
+    from scripts import build_x86_64_owned_sysroot as common
+    if not isinstance(allocator, Mapping):
+        return False
+    sources = allocator.get('source_and_header_sha256')
+    compiler = allocator.get('compiler')
+    return (allocator.get('upstream') == common.C_ALLOCATOR_PIN
+            and allocator.get('mi_malloc_version') == common.C_ALLOCATOR_MI_MALLOC_VERSION
+            and allocator.get('implementation') == 'accepted C backend; native Rust promotion remains separate'
+            and allocator.get('member') == common.C_ALLOCATOR_MEMBER
+            and re.fullmatch(r'[0-9a-f]{64}', str(allocator.get('member_sha256'))) is not None
+            and isinstance(compiler, Mapping) and compiler.get('path') == '/usr/bin/gcc'
+            and re.fullmatch(r'[0-9a-f]{64}', str(compiler.get('sha256'))) is not None
+            and isinstance(sources, Mapping) and 'mimalloc-3.5.0/src/static.c' in sources
+            and any(name.startswith('include/') for name in sources)
+            and all(re.fullmatch(r'[0-9a-f]{64}', str(digest)) is not None for digest in sources.values()))
+
+
 def validate_native_product(tree: Path, kind: str, provenance: Mapping, *, ar: str, nm: str) -> None:
     """Reinspect owned native products instead of trusting an audit's pass bit."""
     from scripts import build_x86_64_owned_sysroot as common
@@ -52,7 +70,7 @@ def validate_native_product(tree: Path, kind: str, provenance: Mapping, *, ar: s
     require(graph.get('target') == common.TARGET
             and graph.get('features') == [f'x86-owned-{kind}-native-shadow']
             and graph.get('edges') == ['normal', 'build']
-            and graph.get('native_allocator_selected') is True and graph.get('c_allocator_selected') is False
+            and graph.get('native_allocator_selected') is True
             and any(name.startswith('crabc-mimalloc ') for name in graph['packages'])
             and not any(name.startswith('libmimalloc-sys ') for name in graph['packages']),
             f'{kind} product native dependency ownership differs')
@@ -61,7 +79,7 @@ def validate_native_product(tree: Path, kind: str, provenance: Mapping, *, ar: s
         allocator = provenance['allocator_backend']
         require(allocator.get('implementation') == 'native Rust; production-shaped selection'
                 and allocator.get('upstream_sha256') == upstream
-                and all(allocator.get(key) is None for key in ('crate', 'compiler', 'source_and_header_sha256')),
+                and all(allocator.get(key) is None for key in ('upstream', 'compiler', 'source_and_header_sha256')),
                 'static native allocator provenance differs')
         artifact = tree / 'usr/lib/libc.a'
         definitions = common.archive_defined_symbols(nm, artifact)
@@ -70,7 +88,7 @@ def validate_native_product(tree: Path, kind: str, provenance: Mapping, *, ar: s
     else:
         require(provenance.get('native_allocator') == {'path': 'crabc-mimalloc/UPSTREAM.md', 'sha256': upstream}
                 and all(provenance.get(key) is None for key in
-                        ('accepted_allocator', 'allocator_headers', 'allocator_compiler', 'excluded_c_allocator')),
+                        ('accepted_allocator', 'excluded_c_allocator')),
                 'dynamic native allocator provenance differs')
         artifact = tree / 'usr/lib/libc.so'
         loader = tree / 'lib/ld-crabc-x86_64.so.1'
@@ -202,21 +220,13 @@ def validate_promotion_closure(receipt_path: Path | None) -> dict:
                     and provenance.get('allocator_lifecycle_test_audit') is False,
                     "static product does not select the accepted-C allocator")
             graph = provenance['dependency_graph']
-            require(graph.get('c_allocator_selected') is True and graph.get('native_allocator_selected') is False
+            require(graph.get('native_allocator_selected') is False
                     and graph.get('edges') == ['normal', 'build']
-                    and any(name.startswith('libmimalloc-sys ') for name in graph['packages'])
-                    and not any(name.startswith('crabc-mimalloc ') for name in graph['packages']),
+                    and not any(name.startswith(('libmimalloc-sys ', 'crabc-mimalloc ')) for name in graph['packages']),
                     "static product accepted-C dependency ownership differs")
             allocator = provenance['allocator_backend']
-            require(allocator['crate'] == static_builder.C_ALLOCATOR_PIN
-                    and allocator['implementation'] == 'accepted C backend; native Rust promotion remains separate'
-                    and static_builder.ALLOCATOR_MEMBER.fullmatch(allocator['member']) is not None
-                    and all(re.fullmatch(r'[0-9a-f]{64}', allocator[key]) is not None
-                            for key in ('archive_sha256', 'member_sha256'))
-                    and allocator['compiler']['path'] == '/usr/bin/gcc'
-                    and re.fullmatch(r'[0-9a-f]{64}', allocator['compiler']['sha256']) is not None
-                    and 'libmimalloc-sys/c_src/mimalloc/v3/src/static.c' in allocator['source_and_header_sha256']
-                    and any(name.startswith('include/') for name in allocator['source_and_header_sha256']),
+            require(accepted_c_allocator_record(allocator)
+                    and {'name': allocator['member'], 'sha256': allocator['member_sha256']} in provenance['selected_members'],
                     "static accepted-C allocator provenance differs")
             archive = tree / 'usr/lib/libc.a'
             definitions = static_builder.archive_defined_symbols(nm, archive)
@@ -248,21 +258,13 @@ def validate_promotion_closure(receipt_path: Path | None) -> dict:
                     and provenance['allocator_lifecycle_test_audit'] is False,
                     "dynamic product does not select the accepted-C allocator")
             graph = provenance['dependency_graph']
-            require(graph.get('c_allocator_selected') is True and graph.get('native_allocator_selected') is False
+            require(graph.get('native_allocator_selected') is False
                     and graph.get('edges') == ['normal', 'build']
-                    and any(name.startswith('libmimalloc-sys ') for name in graph['packages'])
-                    and not any(name.startswith('crabc-mimalloc ') for name in graph['packages']),
+                    and not any(name.startswith(('libmimalloc-sys ', 'crabc-mimalloc ')) for name in graph['packages']),
                     "dynamic product accepted-C dependency ownership differs")
-            allocator_headers = provenance['allocator_headers']
-            allocator_compiler = provenance['allocator_compiler']
-            require(provenance['accepted_allocator'] == dynamic_builder.common.C_ALLOCATOR_PIN
-                    and isinstance(allocator_headers, Mapping)
-                    and 'libmimalloc-sys/c_src/mimalloc/v3/src/static.c' in allocator_headers
-                    and any(name.startswith('include/') for name in allocator_headers)
-                    and all(re.fullmatch(r'[0-9a-f]{64}', digest) is not None
-                            for digest in allocator_headers.values())
-                    and allocator_compiler['path'] == '/usr/bin/gcc'
-                    and re.fullmatch(r'[0-9a-f]{64}', allocator_compiler['sha256']) is not None,
+            allocator = provenance['accepted_allocator']
+            require(accepted_c_allocator_record(allocator)
+                    and provenance['selected_members'].get(allocator['member']) == allocator['member_sha256'],
                     "dynamic accepted-C allocator provenance differs")
             hidden_policy = provenance['shared_mimalloc_hidden_exports']
             require(hidden_policy['source']['path'] == 'libc/src/c_abi/x86_64/owned_mimalloc_hidden.list'

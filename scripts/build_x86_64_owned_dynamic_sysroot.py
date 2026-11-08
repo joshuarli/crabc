@@ -3,8 +3,8 @@
 
 Tool attestation, header provenance and Cargo archive membership classification
 are shared with the static producer. Final shared linkage is separate: every
-member is explicit. The default retains only the accepted pinned C mimalloc
-implementation; explicit native shadow selection excludes that exact member.
+member is explicit. The default links only the accepted pinned C mimalloc
+object; explicit native shadow selection links no C allocator.
 Neither selection completes the dynamic product.
 """
 from __future__ import annotations
@@ -46,17 +46,17 @@ SHARED_LIBC_DYNAMIC_LIST = ROOT / "libc/src/c_abi/x86_64/owned_dynamic.list"
 # one Rust/C allocator seam after objects have resolved it. It is distinct
 # from musl's public dynamic-list and from the fixed C mimalloc list below.
 SHARED_LIBC_ERRNO_PRIVATE_ALIASES = ROOT / "libc/src/c_abi/x86_64/owned_errno_private_aliases.list"
-# This is an exact, reviewed local-symbol contract for the one bundled C
-# allocator member selected by `libmimalloc-sys` 0.1.49. It names its 172
-# upstream `mimalloc.h` declarations and 252 non-header implementation names;
-# it is not a prefix rule and does not select a different object or backend.
+# This is an exact, reviewed local-symbol contract for the one C allocator
+# member compiled from pinned upstream mimalloc v3.5.0: every definition that
+# object leaves at default visibility. It is not a prefix rule and does not
+# select a different object or backend.
 SHARED_LIBC_MIMALLOC_HIDDEN_LIST = ROOT / "libc/src/c_abi/x86_64/owned_mimalloc_hidden.list"
 COMPILER_HELPER_CONTRACT = ROOT / "builtins/x86_64-helper-contract.toml"
 MUSL_1_2_6_DYNAMIC_LIST_SHA256 = "264ae3bf630a7f6d894a51f91f9acae45b89a5f639537353d03af1a04e9da0f9"
 ERRNO_PRIVATE_ALIAS_LIST_SHA256 = "2e69ec5346002fa183b51dbbbef2f24744bd89093b5cfac6329337c1b3d240dd"
 ERRNO_PRIVATE_ALIAS_MEMBERS = ("___errno_location",)
-MIMALLOC_V3_HIDDEN_LIST_SHA256 = "cd537f6579018bbba79d831ee148a7b07f51a0f3bda538a27970724751d78873"
-MIMALLOC_V3_HIDDEN_LIST_COUNT = 424
+MIMALLOC_V3_HIDDEN_LIST_SHA256 = "645197d35ecab7d547f5ac0c9510a748d97d1a45e4b33dbdf68e39879aa77121"
+MIMALLOC_V3_HIDDEN_LIST_COUNT = 437
 MUSL_1_2_6_DYNAMIC_LIST_MEMBERS = (
     "environ", "__environ", "stdin", "stdout", "stderr",
     "malloc", "calloc", "realloc", "free", "memalign", "posix_memalign",
@@ -180,7 +180,7 @@ def shared_libc_dynamic_list() -> dict[str, object]:
 def shared_libc_mimalloc_hidden_exports(stage: Path) -> dict[str, object]:
     """Materialize the exact local-only list for this one shared libc link.
 
-    The selected `libmimalloc-sys` 0.1.49 member retains all of these global
+    The pinned mimalloc v3.5.0 member retains all of these global
     definitions in `libc.a`.  Its upstream header and implementation spellings
     are not installed crabc headers, and this version script changes only their
     physical visibility in `libc.so`.  Keep the source list exact: a glob or
@@ -533,26 +533,6 @@ def loader_rustflags(profile: common.NativeRuntimeProfile) -> str:
 ALLOCATOR_BACKENDS = common.ALLOCATOR_BACKENDS
 
 
-def select_allocator_members(members, allocator_member: str | None, allocator_backend: str):
-    """Classify every Cargo member, then exclude the attested C shadow input.
-
-    The native Rust code is in libc's fat-LTO Rust object. Its producer rejects
-    any C dependency archive before this strict Rust-only roster is selected.
-    Retained legacy archive inputs still require exact member classification.
-    """
-    if allocator_backend not in ALLOCATOR_BACKENDS:
-        raise common.BuildError("unknown dynamic allocator backend")
-    if allocator_backend == common.EVIDENCE_ALLOCATOR_BACKEND:
-        allocator_backend = "accepted-c"
-    classified_allocator = (None if allocator_backend == "native-shadow"
-                            and allocator_member not in members else allocator_member)
-    selected, excluded = common.classify_libc_members(members, allocator_member=classified_allocator)
-    if allocator_backend == "native-shadow":
-        selected = tuple(member for member in selected if member != allocator_member)
-        excluded = tuple(member for member in members if member not in selected)
-    return selected, excluded
-
-
 def validate_native_allocator_symbols(definitions, imports, loader_symbols) -> None:
     """No selected C allocator implementation or loader/libc heap crossing."""
     c_symbols = sorted(symbol for symbol in definitions | imports
@@ -636,29 +616,18 @@ def build_staged_payload(output: Path, stage: Path, *, allocator_backend: str = 
     rust_sysroot = common.pinned_rustc_sysroot(Path(rustup))
     linker = common.native_build_tools.MOLD
     shared_dynamic_list = shared_libc_dynamic_list()
-    evidence_c = allocator_backend == common.EVIDENCE_ALLOCATOR_BACKEND
-    accepted_c = allocator_backend in common.C_ALLOCATOR_BACKENDS
+    accepted_c = allocator_backend == "accepted-c"
     shared_mimalloc_hidden_exports = (shared_libc_mimalloc_hidden_exports(stage)
         if accepted_c else {"status": "not-selected-native-shadow"})
     shared_compiler_helper_policy = shared_libc_compiler_helper_archive_policy()
     shared_errno_private_aliases = shared_libc_errno_private_aliases(stage)
     run = common.run
-    c_flags = ["-nostdinc", "-isystem", str(ROOT / "include"), "-fPIC",
-               "-ftls-model=initial-exec", "-fstack-protector-strong",
-               # The Rust libc owns the matching init/fini entries.  Do not
-               # let the fixed C backend install a second hidden constructor.
-               common.MIMALLOC_LIFECYCLE_C_FLAG, *common.MIMALLOC_INTERNAL_VM_C_FLAGS,
-               f"-ffile-prefix-map={ROOT}=/crabc", "-MD"]
-    if accepted_c:
-        environment.update({"CC_x86_64_unknown_linux_musl": "/usr/bin/gcc",
-                        "CFLAGS_x86_64_unknown_linux_musl": shlex.join(c_flags),
-                        "CC_SHELL_ESCAPED_FLAGS": "1"})
+    c_flags = common.c_allocator_target_flags()
     cargo = [rustup, "run", common.PINNED_TOOLCHAIN, "cargo"]
     features = ["x86-owned-dynamic-runtime" if accepted_c else "x86-owned-dynamic-native-shadow"]
     if lifecycle_test_audit:
         features.append("x86-owned-allocator-lifecycle-test-audit")
-    dependency_graph = common.allocator_dependency_graph(cargo, ",".join(features),
-                                                         "accepted-c" if accepted_c else allocator_backend, environment)
+    dependency_graph = common.allocator_dependency_graph(cargo, ",".join(features), allocator_backend, environment)
     libc_command = [*cargo, "rustc", "--locked", "-p", "crabc-libc", "--lib", "--release", "--no-default-features",
          "--features", ",".join(features), "--target", common.TARGET,
          "--target-dir", str(stage / "cargo"), *common.TARGET_TLS_CONFIG,
@@ -673,50 +642,27 @@ def build_staged_payload(output: Path, stage: Path, *, allocator_backend: str = 
     # static cfg remains for other shared source-owner visibility choices.
     run(libc_command, environment=environment)
     raw = stage / "cargo" / common.TARGET / "release/libc.a"
-    backend_archive = common.selected_allocator_archive(stage / "cargo", "accepted-c" if accepted_c else allocator_backend)
+    allocator_object, accepted_allocator = (common.compile_c_allocator(stage / "c-allocator", c_flags,
+                                                                        profile="release")
+                                            if accepted_c else (None, None))
+    if allocator_object is not None:
+        common.require_reviewed_hidden_list(allocator_object)
     allocator_lifecycle = (common.owned_mimalloc_lifecycle_profile(
-        c_flags, libc_command, backend_archive, raw,
-        llvm_ar=ar, llvm_nm=nm, llvm_objdump=objdump,
-        stage=stage / "allocator-lifecycle-profile",
-    ) if accepted_c else {
+        c_flags, libc_command, allocator_object, raw, llvm_nm=nm, llvm_objdump=objdump,
+    ) if allocator_object is not None else {
         "initialization": "owned_dynamic_runtime::prepare-before-constructors",
         "process_done": "libc-fini-array-at-loader-graph-position-before-stdio-flush",
         "post_done_backing": "source-default-release-retained",
         "loader_allocator_pointer_transfer": False,
     })
-    member = None
-    if backend_archive is not None:
-        backend_members = run([ar, "t", str(backend_archive)]).decode().splitlines()
-        if len(backend_members) != 1:
-            raise common.BuildError("accepted allocator archive must have one object")
-        member = backend_members[0]
     members = tuple(run([ar, "t", str(raw)]).decode().splitlines())
-    selected, excluded = select_allocator_members(members, member, allocator_backend)
-    if member is not None:
-        if run([ar, "p", str(raw), member]) != run([ar, "p", str(backend_archive), member]):
-            raise common.BuildError("Cargo allocator member differs from attested backend")
+    selected, excluded = common.classify_libc_members(members)
     objects = stage / "objects"
     objects.mkdir()
     run([ar, "x", str(raw), *selected], cwd=objects)
-    pinned_c_evidence = None
-    if evidence_c:
-        # Evidence only: the exact pinned v3.5.0 object replaces the accepted
-        # libmimalloc-sys member; its locally-bound export set follows the
-        # default-visibility rule the helper proves on the accepted member.
-        evidence_object, pinned_c_evidence = common.pinned_c_evidence_object(
-            stage, c_flags, backend_archive, llvm_ar=ar, environment=environment)
-        common.require_no_implicit_lifecycle(evidence_object, llvm_nm=nm, llvm_objdump=objdump)
-        (objects / member).unlink()
-        common.copy_artifact(evidence_object, objects / evidence_object.name)
-        selected = tuple(evidence_object.name if item == member else item for item in selected)
-        hidden = pinned_c_evidence["default_visibility_definitions"]
-        script = stage / "libc-mimalloc-hidden.exports"
-        script.write_text("{\n  local:\n" + "".join(f"    {name};\n" for name in hidden) + "};\n", encoding="utf-8")
-        shared_mimalloc_hidden_exports = {
-            "source": "pinned-c-evidence default-visibility definitions",
-            "member_count": len(hidden), "members": hidden,
-            "linker_script_sha256": common.sha256_file(script), "linker_policy": "exact-local-symbols",
-        }
+    if allocator_object is not None:
+        common.copy_artifact(allocator_object, objects / common.C_ALLOCATOR_MEMBER)
+        selected = (*selected, common.C_ALLOCATOR_MEMBER)
     builtins = stage / "libcrabc-builtins.a"
     run([sys.executable, str(ROOT / "builtins/build_x86_64.py"), "--output", str(builtins),
          "--provenance", str(stage / "builtins.json"), "--verify-reproducible"])
@@ -853,15 +799,13 @@ def build_staged_payload(output: Path, stage: Path, *, allocator_backend: str = 
                   "excluded_members": list(excluded),
                   "allocator_backend": recorded_backend,
                   "allocator_lifecycle_test_audit": lifecycle_test_audit,
-                  "accepted_allocator": (common.accepted_allocator_pin() if accepted_c else None),
-                  "pinned_c_evidence": pinned_c_evidence,
+                  "accepted_allocator": accepted_allocator,
+                  "pinned_c_evidence": (accepted_allocator if recorded_backend == common.EVIDENCE_ALLOCATOR_BACKEND
+                                        else None),
                   "native_allocator": (_source_file_identity(ROOT / "crabc-mimalloc/UPSTREAM.md", "fixed native allocator provenance") if allocator_backend == "native-shadow" else None),
                   "dependency_graph": dependency_graph,
                   "excluded_c_allocator": None,
-                  "allocator_headers": (common.allocator_header_provenance(
-                      backend_archive, Path(environment["CARGO_HOME"]), llvm_ar=ar) if accepted_c else None),
-                  "allocator_compiler": (common.executable_identity(Path("/usr/bin/gcc"), "pinned allocator C compiler") if accepted_c else None),
-                  "allocator_flags": ([flag.replace(str(stage), "$BUILD").replace(str(ROOT), "$SOURCE") for flag in c_flags] if accepted_c else []),
+                  "allocator_flags": ([flag.replace(str(ROOT), "$SOURCE") for flag in c_flags] if accepted_c else []),
                   "allocator_lifecycle_profile": allocator_lifecycle,
                   "libc_command": [arg.replace(str(stage), "$BUILD").replace(str(ROOT), "$SOURCE") for arg in libc_command],
                   "libc_shared_link_command": [_normalized_loader_argument(arg, stage) for arg in libc_shared_link_command],

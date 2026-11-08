@@ -156,7 +156,6 @@ SOURCE_RUNTIME_PROFILES: dict[str, dict[str, object]] = {
             "compiler_builtins": ("noprelude", "nounused"),
             "core": ("noprelude", "nounused"),
             "crabc_core": (),
-            "libmimalloc_sys": (),
             "rand_pcg": (),
         },
     },
@@ -1059,8 +1058,10 @@ def replay_cargo_graph(graph: pathlib.Path, features: str) -> RetainedCargoGraph
     if receipt.get("cargo_profile") != "dev" or receipt.get("cargo_profile_dev_debug") != 0 \
             or receipt.get("cargo_profile_dev_codegen_units") != DEV_CODEGEN_UNITS:
         fail("retained source-runtime Cargo profile differs")
-    if receipt.get("libc_rustc_arguments") != [] or receipt.get("c_environment") != {}:
-        fail("retained source-runtime build admits extra compiler arguments or C environment")
+    c_allocator = receipt.get("c_allocator")
+    if receipt.get("libc_rustc_arguments") != [] or not (
+            c_allocator is None or (isinstance(c_allocator, dict) and c_allocator.get("target_flags") == [])):
+        fail("retained source-runtime build admits extra compiler arguments or C allocator flags")
     if receipt.get("runtime_flags") != list(RUNTIME_FLAGS):
         fail("retained source-runtime flags differ")
 
@@ -1346,7 +1347,7 @@ def replay_retained_graph(graph: pathlib.Path, features: str, scratch: pathlib.P
         "schema", "profile", "features", "cargo_profile", "libc_rustc_arguments", "scope",
         "target", "toolchain", "pinned_rustup", "compiler_tools", "native_build_environment",
         "cargo_command", "cargo_profile_dev_debug",
-        "cargo_profile_dev_codegen_units", "c_environment", "runtime_flags", "cargo_stdout",
+        "cargo_profile_dev_codegen_units", "c_allocator", "runtime_flags", "cargo_stdout",
         "cargo_stderr", "rust_source", "vendor", "source_runtime_artifacts",
         "source_runtime_rustc", "primary_rustc", "allocator_rustc", "staticlib_closure",
         "immediate_abort_semantics",
@@ -1398,11 +1399,34 @@ def replay_retained_graph(graph: pathlib.Path, features: str, scratch: pathlib.P
     return RetainedStaticlibEvidence(source_runtime_members=runtime_names, archive_members=member_names)
 
 
-def build(arguments: argparse.Namespace, *, c_environment: dict[str, str] | None = None) -> pathlib.Path:
-    if c_environment is not None:
-        allowed = {"CC_x86_64_unknown_linux_musl", "CFLAGS_x86_64_unknown_linux_musl", "CC_SHELL_ESCAPED_FLAGS"}
-        if set(c_environment) != allowed or c_environment["CC_x86_64_unknown_linux_musl"] != "/usr/bin/gcc" or c_environment["CC_SHELL_ESCAPED_FLAGS"] != "1":
-            fail("source-runtime C environment must name only the pinned target compiler and its flags")
+def append_c_allocator(ar: pathlib.Path, archive: pathlib.Path, work: pathlib.Path, libc_command: Sequence[str],
+                       c_allocator_flags: Sequence[str] | None, *, release: bool) -> dict[str, object] | None:
+    """Link pinned C mimalloc into the staticlib exactly when libc selects its wrapper."""
+
+    if 'feature="x86-allocator-runtime"' not in option_values(libc_command, "--cfg"):
+        if c_allocator_flags is not None:
+            fail("source-runtime C allocator flags were supplied without the C allocator wrapper")
+        return None
+    from scripts import build_x86_64_owned_sysroot as products
+    flags = list(c_allocator_flags or ())
+    try:
+        allocator, record = products.compile_c_allocator(
+            work_child(work, pathlib.Path("c-allocator"), "source-runtime C allocator"), flags,
+            profile="release" if release else "debug")
+    except products.BuildError as error:
+        raise ClosureError(str(error)) from error
+    members = subprocess.run([str(ar), "t", str(archive)], stdin=subprocess.DEVNULL, capture_output=True,
+                             text=True, check=False)
+    if members.returncode != 0 or allocator.name in members.stdout.splitlines():
+        fail("source-runtime staticlib cannot take the C allocator member")
+    appended = subprocess.run([str(ar), "rsD", str(archive), str(allocator)], stdin=subprocess.DEVNULL,
+                              capture_output=True, text=True, check=False)
+    if appended.returncode != 0:
+        fail(f"source-runtime staticlib C allocator append failed: {appended.stderr}")
+    return {**record, "target_flags": flags}
+
+
+def build(arguments: argparse.Namespace, *, c_allocator_flags: Sequence[str] | None = None) -> pathlib.Path:
     arguments.features = normalized_features(arguments.features)
     profile = source_runtime_profile(arguments.features)
     flags = runtime_flags(arguments.relocation_model)
@@ -1411,7 +1435,6 @@ def build(arguments: argparse.Namespace, *, c_environment: dict[str, str] | None
     work = work_child(work_root, pathlib.Path(arguments.work), "source-runtime closure work")
     work.mkdir(mode=0o755)
     rustup, base_environment = pinned_environment()
-    base_environment.update(c_environment or {})
     sysroot_result = subprocess.run([rustup["argv0"], "run", TOOLCHAIN, "rustc", "--print", "sysroot"], cwd=ROOT,
                                     env=base_environment, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
                                     stderr=subprocess.PIPE, text=True, check=False)
@@ -1501,6 +1524,8 @@ def build(arguments: argparse.Namespace, *, c_environment: dict[str, str] | None
     elif emits_crabc_mimalloc:
         fail("C allocator source-runtime profile unexpectedly emitted crabc-mimalloc")
     ar, nm = required_tool(sysroot, "llvm-ar"), required_tool(sysroot, "llvm-nm")
+    c_allocator = append_c_allocator(ar, archive, work, libc_command, c_allocator_flags,
+                                     release=arguments.release)
     closure = staticlib_closure(
         ar, nm, archive, rlibs, work, profile["staticlib_runtime_names"],
     )
@@ -1520,7 +1545,7 @@ def build(arguments: argparse.Namespace, *, c_environment: dict[str, str] | None
         "cargo_command": cargo_command,
         "cargo_profile_dev_debug": 0,
         "cargo_profile_dev_codegen_units": DEV_CODEGEN_UNITS,
-        "c_environment": c_environment or {},
+        "c_allocator": c_allocator,
         "runtime_flags": list(flags),
         "cargo_stdout": file_record(stdout_path, "source-runtime Cargo JSON stream"),
         "cargo_stderr": file_record(stderr_path, "source-runtime Cargo diagnostics"),

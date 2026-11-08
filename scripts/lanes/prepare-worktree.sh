@@ -25,8 +25,9 @@ if [ ! -d "$root/$vendor" ]; then
         "/workspace/$vendor" >/dev/null
 fi
 # The host runner caches under .work/allocator-cache (with its tag record);
-# the x86 container launcher caches under .work/allocator-x86_64.
-for cache in .work/allocator-cache .work/allocator-x86_64/allocator-cache; do
+# the x86 container launcher caches under .work/allocator-x86_64; the product
+# builders' C allocator archive comes from compat/allocator/.cache.
+for cache in .work/allocator-cache .work/allocator-x86_64/allocator-cache compat/allocator/.cache; do
     if [ ! -f "$root/$cache/mimalloc-3.5.0.tar.gz" ] && [ "$primary" != "$root" ] &&
         [ -f "$primary/$cache/mimalloc-3.5.0.tar.gz" ]; then
         mkdir -p "$root/$cache"

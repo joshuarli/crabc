@@ -13,8 +13,8 @@
 // reallocarray,posix_memalign,memalign}.c` and `src/legacy/valloc.c`.
 // `realloc` and `free` then dispatch to `src/malloc/mallocng/{realloc,free}.c`.
 // `aligned_alloc` maps to `src/malloc/mallocng/aligned_alloc.c`. The
-// underlying allocation engine is deliberately the existing pinned
-// libmimalloc-sys backend, not a port of musl mallocng; this layer owns only
+// underlying allocation engine is deliberately the pinned C mimalloc
+// backend, not a port of musl mallocng; this layer owns only
 // the C wrapper's observable argument, overflow, errno, alignment, and
 // lifetime boundary. It does not provide allocator lifecycle, threading,
 // fork, or dynamic-runtime integration.
@@ -58,7 +58,7 @@ unsafe fn mimalloc_allocation<T>(allocate: impl FnOnce() -> *mut T) -> *mut T {
         crate::x86_64_static_c_abi::allocator_mimalloc_lifecycle::initialize();
     }
     let ptr = allocate();
-    // libmimalloc-sys intentionally does not own the process errno. The C ABI
+    // The C mimalloc backend intentionally does not own the process errno. The C ABI
     // does, so publish the allocator outcome at this boundary.
     cabi_set_allocator_errno(if ptr.is_null() { ENOMEM } else { errno });
     ptr
@@ -109,7 +109,7 @@ static_archive_member! { lite_malloc_source {
         // The generic mimalloc entry point need not align zero-sized allocations
         // to the C ABI's 16-byte boundary.  Preserve that boundary for every
         // successful `malloc` result, including a distinct zero-sized object.
-        mimalloc_allocation(|| unsafe { libmimalloc_sys::mi_malloc_aligned(size, MIMALLOC_MALLOC_ALIGNMENT) })
+        mimalloc_allocation(|| unsafe { mimalloc_c::mi_malloc_aligned(size, MIMALLOC_MALLOC_ALIGNMENT) })
     }
 }}
 
@@ -123,7 +123,7 @@ static_archive_member! { free_source {
             // error.  mimalloc may internally issue VM calls while reclaiming a
             // page, so preserve the libc-owned errno around the implementation.
             let errno = cabi_allocator_errno();
-            libmimalloc_sys::mi_free(ptr);
+            mimalloc_c::mi_free(ptr);
             cabi_set_allocator_errno(errno);
         }
     }
@@ -167,10 +167,10 @@ static_archive_member! { calloc_source {
         #[cfg(target_arch = "x86_64")]
         if total <= core::mem::size_of::<usize>() {
             return mimalloc_allocation(|| unsafe {
-                libmimalloc_sys::mi_zalloc_aligned(total, MIMALLOC_MALLOC_ALIGNMENT)
+                mimalloc_c::mi_zalloc_aligned(total, MIMALLOC_MALLOC_ALIGNMENT)
             });
         }
-        mimalloc_allocation(|| unsafe { libmimalloc_sys::mi_zalloc(total) })
+        mimalloc_allocation(|| unsafe { mimalloc_c::mi_zalloc(total) })
     }
 }}
 
@@ -192,7 +192,7 @@ static_archive_member! { realloc_source {
         // result. C realloc must remain suitable for every fundamental C type,
         // including after shrink, so retain the wrapper's natural alignment.
         mimalloc_allocation(|| unsafe {
-            libmimalloc_sys::mi_realloc_aligned(ptr, new_size, MIMALLOC_MALLOC_ALIGNMENT)
+            mimalloc_c::mi_realloc_aligned(ptr, new_size, MIMALLOC_MALLOC_ALIGNMENT)
         })
     }
 }}
@@ -260,7 +260,7 @@ static_archive_member! { aligned_alloc_source {
         // x86 C boundary's sixteen-byte natural alignment.
         #[cfg(target_arch = "x86_64")]
         let alignment = alignment.max(MIMALLOC_MALLOC_ALIGNMENT);
-        mimalloc_allocation(|| unsafe { libmimalloc_sys::mi_malloc_aligned(size, alignment) })
+        mimalloc_allocation(|| unsafe { mimalloc_c::mi_malloc_aligned(size, alignment) })
     }
 }}
 

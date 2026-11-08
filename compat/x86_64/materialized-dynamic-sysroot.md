@@ -324,7 +324,7 @@ allocation/reallocation, ordinary environment COPY interposition, independent
 main/worker errno, 24 create/join/release cycles, over-aligned TLS and TBSS,
 buffered file I/O and ordinary-exit flushing. Its stdout equals pinned musl
 1.2.6. The paired static and dynamic builders compile the accepted
-`libmimalloc-sys` 0.1.49 mimalloc v3.3.2 backend with
+pinned upstream mimalloc v3.5.0 backend with
 `MI_PRIM_HAS_PROCESS_ATTACH=1`. That suppresses its C-owned implicit
 attach/detach entries only because the same Cargo build selects one private
 local-data Rust initializer anchor and one `.fini_array` finalizer entry in the

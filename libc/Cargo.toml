@@ -15,11 +15,10 @@ bench = false
 
 [features]
 default = []
-# Private Linux/x86-64 selection of the same C allocator backend used by the
-# AArch64 runtime. Keeping this opt-in prevents the existing dependency-free
-# selected-static artifacts from silently acquiring bundled C allocator
-# objects.
-x86-allocator-runtime = ["dep:libmimalloc-sys"]
+# Private Linux/x86-64 selection of the C mimalloc wrapper. The product
+# builders compile and link pinned upstream mimalloc v3.5.0 for it; keeping
+# this opt-in leaves the selected-static artifacts free of allocator imports.
+x86-allocator-runtime = []
 # A separate opt-in allocation-client leaf keeps strdup/strndup out of the
 # completed allocator-wrapper object's exact public surface. It reuses only
 # that feature's private wrapper/backend boundary and does not select a wider
@@ -162,7 +161,6 @@ sha-crypt = { version = "0.6", default-features = false, features = ["alloc", "p
 [target.'cfg(all(target_os = "linux", target_arch = "x86_64", target_endian = "little"))'.dependencies]
 crabc-core = { path = "../crabc-core", optional = true }
 crabc-mimalloc = { path = "../crabc-mimalloc", optional = true }
-libmimalloc-sys = { version = "0.1.49", default-features = false, features = ["extended"], optional = true }
 # These are the same RustCrypto packages used by the AArch64 crypt profile.
 # Keeping them optional confines their alloc-enabled MCF path to the x86
 # `x86-crypt` feature.

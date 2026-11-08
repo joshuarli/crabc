@@ -42,13 +42,13 @@ DYNAMIC_MODES = ("pie", "non-pie")
 ENTRIES = ("kernel", "direct")
 SCENARIOS = ("asprintf", "passwd", "lio")
 C_RUNTIME_IMPORTS = (
-    ("__errno_location", "GLOBAL"), ("abort", "GLOBAL"), ("clock_gettime", "WEAK"),
-    ("fputs", "GLOBAL"), ("free", "GLOBAL"), ("getenv", "GLOBAL"),
+    ("__errno_location", "GLOBAL"), ("abort", "GLOBAL"), ("clock", "GLOBAL"), ("clock_gettime", "WEAK"),
+    ("fputs", "GLOBAL"), ("getenv", "GLOBAL"),
     ("getrusage", "GLOBAL"), ("memcpy", "GLOBAL"),
     ("memset", "GLOBAL"), ("munmap", "WEAK"), ("pathconf", "GLOBAL"), ("prctl", "GLOBAL"),
     ("pthread_key_create", "WEAK"), ("pthread_key_delete", "WEAK"),
     ("pthread_mutex_destroy", "GLOBAL"), ("pthread_mutex_lock", "WEAK"),
-    ("pthread_mutex_unlock", "WEAK"), ("pthread_setspecific", "GLOBAL"),
+    ("pthread_mutex_trylock", "WEAK"), ("pthread_mutex_unlock", "WEAK"), ("pthread_setspecific", "GLOBAL"),
     ("realpath", "GLOBAL"), ("sleep", "GLOBAL"), ("strtol", "GLOBAL"),
     ("syscall", "GLOBAL"), ("sysconf", "GLOBAL"), ("sysinfo", "WEAK"),
 )
@@ -240,9 +240,9 @@ def load_contract(root: Path = ROOT) -> dict[str, Any]:
 def validate_contract(value: object) -> None:
     record = exact(value, {"schema", "id", "target", "status", "backend", "scope", "limits"}, "allocator boundary contract")
     require((record["schema"], record["id"], record["target"], record["status"]) == (
-        "crabc.x86_64-native-c-allocator-boundary-contract/v2", "x86-native-c-allocator-boundary",
+        "crabc.x86_64-native-c-allocator-boundary-contract/v3", "x86-native-c-allocator-boundary",
         TARGET, "implemented-unqualified"), "allocator boundary contract identity drifted")
-    require(record["backend"] == {"crate": "libmimalloc-sys", "version": "0.1.49", "mimalloc_version": "3.3.2"},
+    require(record["backend"] == {"upstream": "mimalloc", "mimalloc_version": "3.5.0"},
             "allocator backend contract drifted")
     scope = exact(record["scope"], {"weak_entries", "global_entries", "rust_c_imports", "c_runtime_imports", "lifecycle_entries", "interposition_scenarios", "dynamic_modes", "dynamic_entries", "static_modes"}, "allocator boundary scope")
     require(scope["weak_entries"] == ["malloc"], "weak allocator entry roster drifted")
@@ -347,7 +347,7 @@ def _c_abi_bindings(wrapper: str, observation: str) -> dict[str, dict[str, str]]
             "usable-size C ABI signature differs")
     require("#[no_mangle]" in observed.group("attributes")
             and "#[linkage = \"weak\"]" not in observed.group("attributes")
-            and "libmimalloc_sys::mi_usable_size(ptr)" in observed.group("body"),
+            and "mimalloc_c::mi_usable_size(ptr)" in observed.group("body"),
             "usable-size C ABI wrapper source drifted")
     result["malloc_usable_size"] = {
         "binding": "GLOBAL", "signature": USABLE_SIZE_C_ABI, "callee": "mi_usable_size",
@@ -586,7 +586,7 @@ def source_resolution(root: Path, product_revision: str) -> dict[str, object]:
     require("struct CrabcRustAllocator" in crypt and "mi_malloc_aligned" in crypt and "mi_free" in crypt,
             "crypt allocator source does not use the selected C backend")
     cargo = texts["libc/Cargo.toml"]
-    require('x86-allocator-runtime = ["dep:libmimalloc-sys"]' in cargo and
+    require('x86-allocator-runtime = []' in cargo and
             'x86-crypt-allocator-composition = ["x86-crypt", "x86-allocator-runtime"]' in cargo,
             "allocator feature composition drifted")
     blobs: dict[str, str] = {}

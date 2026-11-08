@@ -6,9 +6,9 @@ The dynamic producer keeps `accepted-c` as its default. Explicit
 dynamic runtime without it, and `libc/build.rs` rejects `native-mimalloc-shadow`
 together with `x86-allocator-runtime`. The builders' `--allocator-backend` also
 lists `native` (the production-shaped Rust product: the same libc features, but
-it refuses any test-audit feature) and `pinned-c-evidence` (an evidence-only
-build with the exact pinned v3.5.0 C source as the reference for
-`allocator-perf-integrated`). The dynamic builder's native ELF audit currently
+it refuses any test-audit feature) and `pinned-c-evidence` (the accepted-C
+build recorded under an evidence-only name and scope, the reference for
+`allocator-perf-integrated`; its bytes equal the accepted-C product's). The dynamic builder's native ELF audit currently
 keys on `native-shadow` only. This is a development product, not allocator
 promotion or public x86 support.
 
@@ -59,8 +59,8 @@ These checks establish this one production lifecycle slice. General lifecycle
 and promotion claims remain partial.
 
 The finalizer remains an entry in **libc's own `.fini_array`**. The accepted C
-oracle is `libmimalloc-sys` 0.1.49's bundled v3.3.2
-`c_src/mimalloc/v3/src/prim/prim.c`: its compiler destructor calls
+oracle is pinned upstream mimalloc v3.5.0's
+`src/prim/prim.c`: its compiler destructor calls
 `_mi_auto_process_done`. The owned producer suppresses only that transport with
 `MI_PRIM_HAS_PROCESS_ATTACH=1`; `libc/src/c_abi/x86_64/allocator_mimalloc_lifecycle.rs`
 replaces it in the same image. The native v3.5.0 source pin and port mapping
@@ -97,7 +97,8 @@ and installed public callable sets must match the referenced profiles.
 Both owned builders keep accepted C as the default. For a native backend they
 attest Cargo's target normal/build
 dependency graph, require the native allocator and forbid `libmimalloc-sys` in
-that graph, then reject any C allocator archive in the fresh build. Every raw
+that graph, compile no C allocator object, and reject any `mi_*` definition in
+the built libc. Every raw
 libc archive member still passes the existing strict Rust/compiler-helper
 classification. The native selected archive is Rust-only; native provenance
 has no C compiler, header, or excluded-backend record. The pinned C oracle

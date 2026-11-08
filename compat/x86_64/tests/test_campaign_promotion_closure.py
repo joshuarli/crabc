@@ -66,27 +66,29 @@ class PromotionClosureTests(unittest.TestCase):
         self.start(patch.dict(dynamic_builder.build.__kwdefaults__, allocator_backend='accepted-c'))
         self.start(patch.object(runner, 'tool_identity', return_value={'path': shutil.which('nm')}))
         allocator_hash = 'a' * 64
-        graph = {'edges': ['normal', 'build'], 'packages': ['libmimalloc-sys v0.1.49'],
-                 'c_allocator_selected': True, 'native_allocator_selected': False}
+        graph = {'edges': ['normal', 'build'], 'packages': ['crabc-libc v0.1.0'],
+                 'native_allocator_selected': False}
         object_path = self.root / 'symbols.o'
         self.accepted_symbols = {'malloc', 'free', 'mi_malloc', 'mi_free'}
         object_path.write_bytes(fixture_elf(self.accepted_symbols, executable=False))
         tree = self.root / '.work/static-tree'
         package_tests.OwnedStaticSysrootPackageTests.populate_tree(self, tree)
         (tree / 'usr/lib/libc.a').write_bytes(symbol_archive(self.accepted_symbols))
-        allocator_sources = {'libmimalloc-sys/c_src/mimalloc/v3/src/static.c': allocator_hash,
+        allocator_sources = {'mimalloc-3.5.0/src/static.c': allocator_hash,
                              'include/crabc/stdlib.h': allocator_hash}
+        accepted_allocator = {
+            'upstream': static_builder.C_ALLOCATOR_PIN,
+            'mi_malloc_version': static_builder.C_ALLOCATOR_MI_MALLOC_VERSION,
+            'member': static_builder.C_ALLOCATOR_MEMBER,
+            'member_sha256': allocator_hash,
+            'implementation': 'accepted C backend; native Rust promotion remains separate',
+            'compiler': {'path': '/usr/bin/gcc', 'resolved_path': '/usr/bin/gcc', 'sha256': allocator_hash},
+            'source_and_header_sha256': allocator_sources,
+        }
         self.static_provenance = {'dependency_graph': graph, 'allocator_lifecycle_test_audit': False,
-                                  'allocator_backend': {
-                                      'crate': static_builder.C_ALLOCATOR_PIN,
-                                      'archive_sha256': allocator_hash,
-                                      'member': 'a' * 16 + '-static.o',
-                                      'member_sha256': allocator_hash,
-                                      'implementation': 'accepted C backend; native Rust promotion remains separate',
-                                      'compiler': {'path': '/usr/bin/gcc', 'resolved_path': '/usr/bin/gcc',
-                                                  'sha256': allocator_hash},
-                                      'source_and_header_sha256': allocator_sources,
-                                  }}
+                                  'selected_members': [{'name': static_builder.C_ALLOCATOR_MEMBER,
+                                                        'sha256': allocator_hash}],
+                                  'allocator_backend': accepted_allocator}
         (tree / 'share/crabc/libc-static.provenance.json').write_text(json.dumps(self.static_provenance))
         document = json.loads((tree / 'share/crabc/manifest.json').read_text())
         document['allocator_backend'] = 'accepted-c'
@@ -108,10 +110,8 @@ class PromotionClosureTests(unittest.TestCase):
             (tree / 'lib').mkdir()
             state = {'allocator_backend': 'accepted-c', 'allocator_lifecycle_test_audit': False}
             provenance = {**state, 'dependency_graph': graph,
-                          'accepted_allocator': dynamic_builder.common.C_ALLOCATOR_PIN,
-                          'allocator_headers': allocator_sources,
-                          'allocator_compiler': {'path': '/usr/bin/gcc', 'resolved_path': '/usr/bin/gcc',
-                                                 'sha256': allocator_hash},
+                          'accepted_allocator': accepted_allocator,
+                          'selected_members': {static_builder.C_ALLOCATOR_MEMBER: allocator_hash},
                           'shared_mimalloc_hidden_exports': {
                               'source': {'path': 'libc/src/c_abi/x86_64/owned_mimalloc_hidden.list',
                                          'sha256': dynamic_builder.MIMALLOC_V3_HIDDEN_LIST_SHA256},
@@ -146,19 +146,18 @@ class PromotionClosureTests(unittest.TestCase):
         digest = hashlib.sha256(target.read_bytes()).hexdigest()
         graph = {'target': static_builder.TARGET, 'features': [f'x86-owned-{kind}-native-shadow'],
                  'edges': ['normal', 'build'], 'packages': ['crabc-mimalloc v0.3.0'],
-                 'c_allocator_selected': False, 'native_allocator_selected': True}
+                 'native_allocator_selected': True}
         symbols = {'malloc', 'calloc', 'realloc', 'free', 'aligned_alloc', 'posix_memalign', 'malloc_usable_size'}
         provenance = {'dependency_graph': graph, 'allocator_lifecycle_test_audit': False}
         if kind == 'static':
             provenance['allocator_backend'] = {'implementation': 'native Rust; production-shaped selection',
-                                               'upstream_sha256': digest, 'crate': None, 'compiler': None,
+                                               'upstream_sha256': digest, 'upstream': None, 'compiler': None,
                                                'source_and_header_sha256': None}
             (tree / 'usr/lib/libc.a').write_bytes(symbol_archive(symbols))
         else:
             provenance.update(allocator_backend='native',
                               native_allocator={'path': 'crabc-mimalloc/UPSTREAM.md', 'sha256': digest},
-                              accepted_allocator=None, allocator_headers=None, allocator_compiler=None,
-                              excluded_c_allocator=None)
+                              accepted_allocator=None, excluded_c_allocator=None)
             (tree / 'usr/lib/libc.so').write_bytes(fixture_elf(
                 symbols | {'__crabc_x86_native_mimalloc_process_finalizer'}))
             (tree / 'lib/ld-crabc-x86_64.so.1').write_bytes(fixture_elf({'loader_anchor'}))
@@ -222,7 +221,6 @@ class PromotionClosureTests(unittest.TestCase):
         target = self.provenance_paths[-1]
         document = json.loads(target.read_text())
         document['dependency_graph']['packages'].append('crabc-mimalloc v0.1.0')
-        document['dependency_graph']['c_allocator_selected'] = False
         document['dependency_graph']['native_allocator_selected'] = True
         target.write_text(json.dumps(document))
         with self.assertRaisesRegex(closure.PromotionClosureError, 'dependency ownership differs'):

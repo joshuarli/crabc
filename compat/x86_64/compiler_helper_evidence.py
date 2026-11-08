@@ -96,7 +96,7 @@ DYNAMIC_APPLICATION_METADATA = {
 }
 ALLOCATOR_POPCOUNT_WITNESSES = {
     "debug": "mi_popcount",
-    "release": "mi_bbitmap_try_find_and_clearNC",
+    "release": "mi_bitmap_popcount",
 }
 HELPER_ABIS = {
     "u128-to-binary64", "binary64-to-u128", "u128-to-binary32", "binary32-to-u128",

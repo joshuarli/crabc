@@ -117,9 +117,16 @@ the selected libc graph.  The required immediate-abort mode is the supported
 
 The allocator-basic fixture uses `x86-owned-static-runtime-core` instead. This
 profile keeps the C backend and the other owned-static leaves while omitting
-alloc-backed SHA-crypt. Its `crabc-libc` graph retains the selected
-`libmimalloc_sys` dependency, uses the same pinned source-built three-crate
-runtime set, and does not emit `crabc-mimalloc`. Although the source-built
+alloc-backed SHA-crypt. Its `crabc-libc` graph uses the same pinned
+source-built three-crate runtime set and does not emit `crabc-mimalloc`.
+
+When the libc rustc command selects `x86-allocator-runtime`, the closure
+compiles pinned upstream mimalloc v3.5.0 through the product builder's
+`compile_c_allocator` and appends that one `mimalloc-v3.5.0-static.o` member
+to the staticlib before auditing it. Fixture builds pass no target flags, as
+the earlier Cargo-built backend received none; the debug product builders pass
+their product flags. The receipt's `c_allocator` record names the object,
+its compile command and its source/header hashes. Although the source-built
 `alloc` artifact is authenticated, the C backend must leave all of its object
 members out of `libc.a`.
 

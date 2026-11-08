@@ -283,28 +283,6 @@ class BuildX86OwnedSysrootTests(unittest.TestCase):
                 )
             )
 
-    def test_libc_member_classification_admits_only_the_attested_allocator_member(self) -> None:
-        members = (
-            "c.one.rcgu.o",
-            "compiler_builtins-abc.rcgu.o",
-            "45c91108d938afe8-addvdi3.o",
-            "1234-static.o",
-        )
-        selected, excluded = builder.classify_libc_members(
-            members, allocator_member="1234-static.o"
-        )
-        self.assertEqual(selected, ("c.one.rcgu.o", "1234-static.o"))
-        self.assertEqual(excluded, members[1:3])
-        for roster, approved in (
-            (members, None),
-            (members, "5678-static.o"),
-            (members + ("5678-static.o",), "1234-static.o"),
-            (members + ("foreign.o",), "foreign.o"),
-        ):
-            with self.subTest(roster=roster, approved=approved):
-                with self.assertRaises(builder.BuildError):
-                    builder.classify_libc_members(roster, allocator_member=approved)
-
     def test_libc_member_classification_rejects_path_like_archive_members(self) -> None:
         """Archive extraction must never receive a member path outside its private root."""
 
@@ -319,146 +297,178 @@ class BuildX86OwnedSysrootTests(unittest.TestCase):
                 )
             )
 
-    def test_installed_allocator_rejects_a_different_cargo_object_before_extraction(self) -> None:
+    def test_libc_member_classification_reserves_the_c_allocator_member_name(self) -> None:
+        members = (
+            "c.one.rcgu.o",
+            "compiler_builtins-abc.rcgu.o",
+            "45c91108d938afe8-addvdi3.o",
+        )
+        selected, excluded = builder.classify_libc_members(members)
+        self.assertEqual(selected, ("c.one.rcgu.o",))
+        self.assertEqual(excluded, members[1:])
+        for roster in (members + (builder.C_ALLOCATOR_MEMBER,), members + ("1234-static.o",)):
+            with self.subTest(roster=roster):
+                with self.assertRaises(builder.BuildError):
+                    builder.classify_libc_members(roster)
+
+    def test_installed_archive_appends_the_compiled_c_allocator_as_its_last_member(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             source = root / "cargo-libc.a"
-            backend = root / "libmimalloc.a"
+            allocator = root / "compiled.o"
+            allocator.write_bytes(b"pinned mimalloc object")
             output = root / "installed/libc.a"
+            archived: list[list[str]] = []
 
             def fake_run(command: list[str], **kwargs: object) -> bytes:
+                if command[1] == "t" and command[2] == str(source):
+                    return b"c.libc-module.rcgu.o\ncompiler_builtins-abc.rcgu.o\n45c91108d938afe8-addvdi3.o\n"
+                if command[1] == "x":
+                    for name in command[3:]:
+                        (Path(kwargs["cwd"]) / name).write_bytes(b"rust member")
+                    return b""
+                if command[1] == "rcsD":
+                    archived.append([Path(item).name for item in command[3:]])
+                    self.assertEqual(Path(command[-1]).read_bytes(), b"pinned mimalloc object")
+                    Path(command[2]).write_bytes(b"rebuilt archive")
+                    return b""
                 if command[1] == "t":
-                    return b"1234-static.o\n" if command[2] == str(backend) else (
-                        b"c.one.rcgu.o\ncompiler_builtins-abc.rcgu.o\n"
-                        b"45c91108d938afe8-addvdi3.o\n1234-static.o\n"
-                    )
-                self.assertEqual(command[1], "p")
-                return b"producer" if command[2] == str(backend) else b"substituted"
+                    return f"c.libc-module.rcgu.o\n{builder.C_ALLOCATOR_MEMBER}\n".encode()
+                raise AssertionError(command)
 
-            with mock.patch.object(builder, "run", side_effect=fake_run):
-                with self.assertRaisesRegex(builder.BuildError, "differs from its dependency producer"):
-                    builder.rebuild_libc_archive(
-                        source, output, llvm_ar="llvm-ar", llvm_nm="llvm-nm", allocator_archive=backend
-                    )
-            self.assertFalse(output.parent.exists())
+            with mock.patch.object(builder, "run", side_effect=fake_run), \
+                    mock.patch.object(builder, "archive_defined_symbols",
+                                      return_value=set(builder.REQUIRED_LIBC_SYMBOLS)):
+                result = builder.rebuild_libc_archive(
+                    source, output, llvm_ar="llvm-ar", llvm_nm="llvm-nm", allocator_object=allocator,
+                )
+            self.assertEqual(archived, [["c.libc-module.rcgu.o", builder.C_ALLOCATOR_MEMBER]])
+            self.assertEqual(result["selected_members"][-1],
+                             {"name": builder.C_ALLOCATOR_MEMBER, "sha256": builder.sha256_file(allocator)})
 
-    def test_allocator_header_trace_rejects_ambient_inputs_and_records_owned_bytes(self) -> None:
+    def c_allocator_fixture(self, root: Path, *, version: int = 30500, pin: dict[str, str] | None = None):
+        source = root / "extracted/mimalloc-3.5.0"
+        (source / "include").mkdir(parents=True)
+        (source / "src").mkdir()
+        (source / "include/mimalloc.h").write_text(f"#define MI_MALLOC_VERSION {version}\n", encoding="utf-8")
+        (source / "src/static.c").write_text("int fixture;\n", encoding="utf-8")
+        pinned = {"version": "3.5.0", "tag": "v3.5.0", "revision": builder.C_ALLOCATOR_PIN["revision"],
+                  "sha256": builder.C_ALLOCATOR_PIN["archive_sha256"], "archive_root": "mimalloc-3.5.0"}
+        pinned.update(pin or {})
+
+        class Helpers:
+            HarnessError = RuntimeError
+
+            @staticmethod
+            def load_pin():
+                return pinned
+
+            @staticmethod
+            def fetch_archive(value, *, offline):
+                return root / "archive.tar.gz"
+
+            @staticmethod
+            def safe_extract(archive, destination, archive_root):
+                return source
+
+        return source, Helpers
+
+    def test_c_allocator_compiles_only_the_authenticated_pinned_source_and_project_headers(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             checkout = Path(temporary)
-            cargo = checkout / ".work/cargo"
-            package = cargo / "registry/src/test/libmimalloc-sys-0.1.49"
-            source = package / "c_src/mimalloc/v3/src/static.c"
             header = checkout / "include/stdint.h"
-            archive = checkout / ".work/cargo-target/build/libmimalloc-sys/out/libmimalloc.a"
-            dependencies = archive.parent / "allocator-static.d"
-            for path in (source, header, archive):
-                path.parent.mkdir(parents=True, exist_ok=True)
-                path.write_bytes(b"owned\n")
-            dependencies.write_text(f"allocator-static.o: {source} {header}\n", encoding="utf-8")
-            with mock.patch.object(builder, "ROOT", checkout), \
-                    mock.patch.object(builder, "run", return_value=b"allocator-static.o\n"):
-                record = builder.allocator_header_provenance(archive, cargo, llvm_ar="llvm-ar")
-                self.assertEqual(record["include/stdint.h"], builder.sha256_file(header))
-                self.assertIn("libmimalloc-sys/c_src/mimalloc/v3/src/static.c", record)
-                foreign = checkout / "ambient.h"
-                foreign.write_bytes(b"ambient\n")
-                dependencies.write_text(f"allocator.o: {source} {header} {foreign}\n", encoding="utf-8")
-                with self.assertRaisesRegex(builder.BuildError, "unowned source/header"):
-                    builder.allocator_header_provenance(archive, cargo, llvm_ar="llvm-ar")
-                dependencies.write_text(f"allocator.o: {header}\n", encoding="utf-8")
-                with self.assertRaisesRegex(builder.BuildError, "lacks its source"):
-                    builder.allocator_header_provenance(archive, cargo, llvm_ar="llvm-ar")
+            header.parent.mkdir()
+            header.write_text("typedef int fixture;\n", encoding="utf-8")
+            source, helpers = self.c_allocator_fixture(checkout)
+            reads = [source / "src/static.c", header]
 
-    def test_allocator_header_trace_comes_from_the_cargo_archive_member(self) -> None:
-        (ROOT / ".work").mkdir(exist_ok=True)
-        with tempfile.TemporaryDirectory(dir=ROOT / ".work") as temporary:
-            checkout = Path(temporary)
-            cargo = checkout / ".work/cargo"
-            package = cargo / "registry/src/test/libmimalloc-sys-0.1.49"
-            source = package / "c_src/mimalloc/v3/src/static.c"
-            header = checkout / "include/stdint.h"
-            archive = checkout / ".work/target/release/build/libmimalloc-sys/out/libmimalloc.a"
-            object_path = archive.parent / "allocator-static.o"
-            dependencies = object_path.with_suffix(".d")
-            external = checkout / ".work/stage/allocator.d"
-            for path in (source, header, object_path, archive):
-                path.parent.mkdir(parents=True, exist_ok=True)
-                path.write_bytes(b"owned\n")
-            record = f"{object_path}: {source} {header}\n"
-            external.parent.mkdir(parents=True, exist_ok=True)
-            external.write_text(record, encoding="utf-8")
+            def fake_run(command: list[str], **kwargs: object) -> bytes:
+                output = Path(command[command.index("-o") + 1])
+                output.write_bytes(b"object")
+                Path(command[command.index("-MF") + 1]).write_text(
+                    f"{output}: " + " ".join(map(str, reads)) + "\n", encoding="utf-8")
+                return b""
 
             with mock.patch.object(builder, "ROOT", checkout), \
-                    mock.patch.object(builder, "run", return_value=b"allocator-static.o\n"):
-                with self.assertRaisesRegex(builder.BuildError, "dependency trace is missing"):
-                    builder.allocator_header_provenance(archive, cargo, llvm_ar="llvm-ar")
+                    mock.patch.object(builder, "_allocator_perf_helpers", return_value=helpers), \
+                    mock.patch.object(builder, "run", side_effect=fake_run), \
+                    mock.patch.object(builder, "executable_identity", return_value={"path": "/usr/bin/gcc"}):
+                flags = ["-nostdinc", "-isystem", str(checkout / "include")]
+                obj, record = builder.compile_c_allocator(checkout / "c-allocator", flags, profile="release")
+                self.assertEqual(obj.name, builder.C_ALLOCATOR_MEMBER)
+                self.assertEqual(record["upstream"], builder.C_ALLOCATOR_PIN)
+                self.assertEqual(record["mi_malloc_version"], 30500)
+                self.assertEqual(set(record["source_and_header_sha256"]),
+                                 {"mimalloc-3.5.0/src/static.c", "include/stdint.h"})
+                self.assertIn("$CRABC_C_ALLOCATOR/mimalloc-v3.5.0-static.o", record["compile_command"])
+                self.assertEqual(record["compile_command"][1], "-O3")
+                _, debug = builder.compile_c_allocator(checkout / "c-allocator-debug", flags, profile="debug")
+                self.assertEqual(debug["compile_command"][1], "-O0")
+                with self.assertRaisesRegex(builder.BuildError, "unknown C allocator build profile"):
+                    builder.compile_c_allocator(checkout / "c-allocator-unknown", flags, profile="fast")
 
-                dependencies.write_text(record, encoding="utf-8")
-                recorded = builder.allocator_header_provenance(archive, cargo, llvm_ar="llvm-ar")
-                self.assertEqual(recorded["include/stdint.h"], builder.sha256_file(header))
+                ambient = checkout / "ambient.h"
+                ambient.write_text("ambient\n", encoding="utf-8")
+                reads.append(ambient)
+                with self.assertRaisesRegex(builder.BuildError, "outside the project and pinned source"):
+                    builder.compile_c_allocator(checkout / "c-allocator-ambient", flags, profile="release")
+                reads[:] = [header]
+                with self.assertRaisesRegex(builder.BuildError, "lacks its pinned translation unit"):
+                    builder.compile_c_allocator(checkout / "c-allocator-no-source", flags, profile="release")
 
-                dependencies.unlink()
-                with self.assertRaisesRegex(builder.BuildError, "dependency trace is missing"):
-                    builder.allocator_header_provenance(archive, cargo, llvm_ar="llvm-ar")
+    def test_c_allocator_rejects_another_upstream_or_version(self) -> None:
+        for label, version, pin, message in (
+            ("version macro", 30302, None, "MI_MALLOC_VERSION 30500"),
+            ("archive digest", 30500, {"sha256": "0" * 64}, "not the accepted C allocator pin"),
+            ("revision", 30500, {"revision": "1" * 40}, "not the accepted C allocator pin"),
+        ):
+            with self.subTest(label=label), tempfile.TemporaryDirectory() as temporary:
+                checkout = Path(temporary)
+                _, helpers = self.c_allocator_fixture(checkout, version=version, pin=pin)
+                with mock.patch.object(builder, "_allocator_perf_helpers", return_value=helpers), \
+                        mock.patch.object(builder, "run", side_effect=AssertionError("compiled")):
+                    with self.assertRaisesRegex(builder.BuildError, message):
+                        builder.compile_c_allocator(checkout / "c-allocator", [], profile="release")
 
     def test_owned_mimalloc_lifecycle_profile_rejects_unpaired_or_duplicate_entries(self) -> None:
         """The producer may suppress C hooks only with one Rust replacement pair."""
 
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
-            archive = root / "libmimalloc.a"
+            allocator = root / builder.C_ALLOCATOR_MEMBER
             raw_libc = root / "libc.a"
-            archive.write_bytes(b"archive")
+            allocator.write_bytes(b"object")
             raw_libc.write_bytes(b"raw libc")
             command = ("cargo", "rustc", "--cfg", builder.MIMALLOC_LIFECYCLE_RUST_CFG)
             c_flags = (builder.MIMALLOC_LIFECYCLE_C_FLAG,)
 
+            def profile(flags, cargo):
+                return builder.owned_mimalloc_lifecycle_profile(
+                    flags, cargo, allocator, raw_libc, llvm_nm="nm", llvm_objdump="objdump")
+
             with self.assertRaisesRegex(builder.BuildError, "C profile"):
-                builder.owned_mimalloc_lifecycle_profile(
-                    (), command, archive, raw_libc, llvm_ar="ar", llvm_nm="nm",
-                    llvm_objdump="objdump", stage=root / "missing-c",
-                )
+                profile((), command)
             with self.assertRaisesRegex(builder.BuildError, "C profile"):
-                builder.owned_mimalloc_lifecycle_profile(
-                    c_flags * 2, command, archive, raw_libc, llvm_ar="ar", llvm_nm="nm",
-                    llvm_objdump="objdump", stage=root / "duplicate-c",
-                )
+                profile(c_flags * 2, command)
             with self.assertRaisesRegex(builder.BuildError, "Rust cfg"):
-                builder.owned_mimalloc_lifecycle_profile(
-                    c_flags, ("cargo", "rustc"), archive, raw_libc, llvm_ar="ar", llvm_nm="nm",
-                    llvm_objdump="objdump", stage=root / "missing-rust",
-                )
+                profile(c_flags, ("cargo", "rustc"))
             with self.assertRaisesRegex(builder.BuildError, "Rust cfg"):
-                builder.owned_mimalloc_lifecycle_profile(
-                    c_flags, (*command, "--cfg", builder.MIMALLOC_LIFECYCLE_RUST_CFG), archive, raw_libc,
-                    llvm_ar="ar", llvm_nm="nm", llvm_objdump="objdump", stage=root / "duplicate-rust",
-                )
+                profile(c_flags, (*command, "--cfg", builder.MIMALLOC_LIFECYCLE_RUST_CFG))
 
-            profile_index = 0
-
-            def run_with(symbols: bytes, shim_symbols: bytes, sections: bytes = b"Sections:\n") -> object:
-                nonlocal profile_index
-                stage = root / f"profile-{profile_index}"
-                profile_index += 1
-
+            def run_with(symbols: bytes, shim_symbols: bytes, sections: bytes = b"Sections:\n",
+                         rust_definitions: set[str] = frozenset()) -> object:
                 def fake_run(command: list[str], **kwargs: object) -> bytes:
-                    if command[:2] == ["ar", "t"]:
-                        return b"1234-static.o\n"
-                    if command[:2] == ["ar", "p"]:
-                        return b"object"
                     if command[:2] == ["objdump", "--section-headers"]:
                         return sections
-                    if command == ["nm", str(stage / "1234-static.o")]:
+                    if command == ["nm", str(allocator)]:
                         return symbols
                     if command == ["nm", "--defined-only", str(raw_libc)]:
                         return shim_symbols
                     raise AssertionError(command)
 
-                with mock.patch.object(builder, "run", side_effect=fake_run):
-                    return builder.owned_mimalloc_lifecycle_profile(
-                        c_flags, command, archive, raw_libc, llvm_ar="ar", llvm_nm="nm",
-                        llvm_objdump="objdump", stage=stage,
-                    )
+                with mock.patch.object(builder, "run", side_effect=fake_run), \
+                        mock.patch.object(builder, "archive_defined_symbols", return_value=set(rust_definitions)):
+                    return profile(c_flags, command)
 
             entries = (
                 f"0000 d {builder.MIMALLOC_LIFECYCLE_INIT_SYMBOL}\n"
@@ -469,6 +479,8 @@ class BuildX86OwnedSysrootTests(unittest.TestCase):
                 run_with(b"0000 t mi_process_attach\n", entries)
             with self.assertRaisesRegex(builder.BuildError, "implicit process attach"):
                 run_with(b"", entries, b"  8 .init_array\n")
+            with self.assertRaisesRegex(builder.BuildError, "Cargo libc defines C mimalloc"):
+                run_with(b"", entries, rust_definitions={"mi_malloc"})
             for symbol in (builder.MIMALLOC_LIFECYCLE_INIT_SYMBOL, builder.MIMALLOC_LIFECYCLE_FINI_SYMBOL):
                 with self.subTest(duplicate=symbol), self.assertRaisesRegex(builder.BuildError, "exactly one"):
                     run_with(b"", entries + f"0010 d {symbol}\n".encode())
@@ -477,20 +489,6 @@ class BuildX86OwnedSysrootTests(unittest.TestCase):
                 )
                 with self.subTest(globally_bound=symbol), self.assertRaisesRegex(builder.BuildError, "local-data"):
                     run_with(b"", globally_bound_entries)
-
-    def test_accepted_allocator_pin_rejects_changed_or_duplicate_dependencies(self) -> None:
-        with tempfile.TemporaryDirectory() as temporary:
-            checkout = Path(temporary)
-            entry = "[[package]]\n" + "\n".join(
-                f'{key} = "{value}"' for key, value in builder.C_ALLOCATOR_PIN.items()
-            ) + "\n"
-            with mock.patch.object(builder, "ROOT", checkout):
-                (checkout / "Cargo.lock").write_text(entry, encoding="utf-8")
-                self.assertEqual(builder.accepted_allocator_pin(), builder.C_ALLOCATOR_PIN)
-                for changed in (entry.replace("0.1.49", "0.1.50"), entry + entry):
-                    (checkout / "Cargo.lock").write_text(changed, encoding="utf-8")
-                    with self.assertRaisesRegex(builder.BuildError, "Cargo pin changed"):
-                        builder.accepted_allocator_pin()
 
     def test_regular_tree_materialization_rejects_symlinks(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

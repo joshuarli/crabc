@@ -30,9 +30,7 @@ class X86LibcAllocatorRuntimeTests(unittest.TestCase):
         ).read_text(encoding="utf-8")
 
         self.assertIn("default = []", manifest)
-        self.assertIn(
-            'x86-allocator-runtime = ["dep:libmimalloc-sys"]', manifest
-        )
+        self.assertIn('x86-allocator-runtime = []', manifest)
         self.assertIn('optional = true', manifest)
         self.assertIn('target_arch = "x86_64"', crate_root)
         self.assertIn('mod x86_64_static_c_abi;', crate_root)

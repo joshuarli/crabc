@@ -258,7 +258,7 @@ ERRNO_STORAGE_LIFECYCLE_LIMITS = [
 C_ALLOCATOR_BOUNDARY_LIMITS = [
     'Only the eight authenticated candidate-static Rust-root imports are joined to the fixed-C mimalloc provider account.',
     'The finite selected C static-member imports are joined only to their authenticated public Rust providers and ordinary installed links.',
-    'The C v3.3.2 wrapper/lifecycle receipt does not select other imports or complete allocator behavior, family, promotion or public support.',
+    'The C v3.5.0 wrapper/lifecycle receipt does not select other imports or complete allocator behavior, family, promotion or public support.',
 ]
 C_ALLOCATOR_BOUNDARY_SOURCE_FILES = (
     *native_c_allocator_boundary.COMPONENT_SOURCES,
@@ -3376,7 +3376,8 @@ def fixed_c_producer_metadata_selection(contract: Mapping[str, Any], inputs: Map
         metadata = producer_metadata.selected_metadata()
     except (ValueError, OSError) as error:
         raise SelectionError(f'fixed-C producer metadata contract rejected: {error}') from error
-    require(members == owner_members and len(members) == 424, 'fixed-C producer member roster differs')
+    require(members == owner_members and len(members) == producer_metadata.MEMBER_COUNT,
+            'fixed-C producer member roster differs')
     require(set(metadata) == set(members) and len(metadata) == len(members),
             'fixed-C producer metadata roster differs')
     try:
@@ -3397,7 +3398,6 @@ def fixed_c_producer_metadata_selection(contract: Mapping[str, Any], inputs: Map
                     and row['alignment_bytes'] & (row['alignment_bytes'] - 1) == 0,
                     f'fixed-C source-hidden metadata is invalid: {name}')
     data_layouts = {row['name']: row for row in owner_contract['metadata']['data_objects']}
-    data_layouts[owner_contract['metadata']['tls_object']['name']] = owner_contract['metadata']['tls_object']
     for name in members:
         roles = exact(metadata[name], {'static', 'shared'}, f'fixed-C producer metadata {name}')
         fields = {'type', 'binding', 'visibility'}
@@ -3588,7 +3588,8 @@ def fixed_c_producer_metadata_adapter(facts: Mapping[str, Any], measurement: Map
     require(same(scope, {
                 'member_count': len(selection['members']),
                 'metadata_buckets': {
-                    'strong-functions': 419, 'weak-null-fallback': 1, 'data-objects': 3, 'initial-exec-tls': 1,
+                    'strong-functions': producer_metadata.STRONG_FUNCTION_COUNT, 'weak-null-fallback': 1,
+                    'data-objects': len(producer_metadata.EXPECTED_DATA_OBJECTS),
                     'source-hidden-objects': len(FIXED_C_SOURCE_HIDDEN_MEMBERS),
                 },
                 'rust_root_c_imports': 8,
@@ -3616,7 +3617,7 @@ def fixed_c_producer_metadata_adapter(facts: Mapping[str, Any], measurement: Map
             'artifacts': list(FIXED_C_PRODUCER_ARTIFACTS),
             'member_count': len(selection['members']),
             'metadata_placement_count': len(selection['members']) * len(FIXED_C_PRODUCER_ARTIFACTS),
-            'data_layout_placement_count': 8,
+            'data_layout_placement_count': len(producer_metadata.EXPECTED_DATA_OBJECTS) * len(FIXED_C_PRODUCER_ARTIFACTS),
             'source_hidden_owner_group': FIXED_C_SOURCE_HIDDEN_GROUP,
             'source_hidden_member_count': len(selection['source_hidden_members']),
             'source_hidden_metadata_placement_count':
@@ -3658,7 +3659,7 @@ def attach_fixed_c_producer_metadata(expanded: Sequence[Mapping[str, Any]], comp
                 == len(FIXED_C_SOURCE_HIDDEN_MEMBERS) * len(FIXED_C_PRODUCER_ARTIFACTS),
             'fixed-C producer companion selection differs')
     metadata = companion['selected_metadata']
-    require(type(metadata) is dict and len(metadata) == selection['member_count'] == 424,
+    require(type(metadata) is dict and len(metadata) == selection['member_count'] == producer_metadata.MEMBER_COUNT,
             'fixed-C producer companion metadata roster differs')
     records = {}
     for record in expanded:
@@ -6401,7 +6402,7 @@ def _c_allocator_boundary_contract() -> tuple[dict[str, Any], list[str]]:
 
     The C component's TOML is the authority for this finite list.  This
     selector deliberately consumes it as an exact contract rather than
-    extending the fixed-C metadata group's 424-name private-provider roster.
+    extending the fixed-C metadata group's exact private-provider roster.
     """
     try:
         contract = native_c_allocator_boundary.load_contract(ROOT)
@@ -9899,8 +9900,8 @@ def attach_rust_allocation_handlers(accounting: Mapping[str, Any], rule: Mapping
             or type(static) is not dict or type(static.get('sha256')) is not str
             or type(provenance) is not dict
             or provenance.get('archive') != {'name': 'libc.a', 'sha256': static['sha256']}
-            or provenance.get('dependency_graph', {}).get('c_allocator_selected') is not True
-            or provenance['dependency_graph'].get('native_allocator_selected') is not False):
+            or provenance.get('allocator_backend', {}).get('member') != producer_metadata.C_MEMBER
+            or provenance.get('dependency_graph', {}).get('native_allocator_selected') is not False):
         return []
     artifact = accounting.get('artifacts', {}).get('candidate-static', {}).get('artifact', {})
     if artifact.get('identity', {}).get('sha256') != static['sha256']:

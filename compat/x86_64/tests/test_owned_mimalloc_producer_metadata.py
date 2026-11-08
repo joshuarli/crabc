@@ -23,17 +23,14 @@ import compiler_helper_evidence as helpers
 
 
 SOURCE_HIDDEN_ELF_ROWS = (
-    ("_mi_page_empty", "OBJECT", 120, 64),
-    ("_mi_page_map", "OBJECT", 8, 64),
+    ("__mi_page_map", "OBJECT", 8, 64),
     ("_mi_cpu_movsb_max", "OBJECT", 8, 64),
     ("_mi_cpu_stosb_max", "OBJECT", 8, 64),
     ("__mi_theap_default", "TLS", 8, 8),
-    ("__mi_theap_main", "TLS", 8, 8),
     ("__mi_theap_cached", "TLS", 8, 8),
-    ("_mi_theap_empty", "OBJECT", 8096, 64),
-    ("_mi_theap_empty_wrong", "OBJECT", 8096, 64),
-    ("theap_main", "OBJECT", 8096, 64),
-    ("heap_main", "OBJECT", 6440, 64),
+    ("__mi_thread_id_helper", "TLS", 8, 8),
+    ("_mi_theap_empty", "OBJECT", 8104, 64),
+    ("_mi_theap_empty_wrong", "OBJECT", 8104, 64),
     ("_mi_process_is_initialized", "OBJECT", 1, 1),
 )
 
@@ -77,7 +74,6 @@ class FixedCMimallocProducerMetadataTests(unittest.TestCase):
         contract = self.contract
         metadata = contract["metadata"]
         data_layouts = {item["name"]: item for item in metadata["data_objects"]}
-        tls_layout = metadata["tls_object"]
         weak = metadata["weak_null_fallback"]
         excluded = set(metadata["strong_functions"]["excluded_names"])
         c_rows: list[dict[str, object]] = []
@@ -87,8 +83,6 @@ class FixedCMimallocProducerMetadataTests(unittest.TestCase):
         section_indices = {
             "_mi_cpu_has_popcnt": (101, 201),
             "_mi_heap_default_key": (102, 202),
-            "_mi_stats_main": (103, 203),
-            "mi_thread_locals": (104, 204),
         }
         for name in self.members:
             if name in data_layouts:
@@ -119,35 +113,6 @@ class FixedCMimallocProducerMetadataTests(unittest.TestCase):
                         "index": shared_index,
                         "alignment": layout["source"]["source_required_alignment"],
                         "name": ".fixture.shared",
-                    }
-                )
-            elif name == tls_layout["name"]:
-                static_index, shared_index = section_indices[name]
-                static = symbol(
-                    name,
-                    kind="TLS",
-                    section=str(static_index),
-                    size=tls_layout["size_bytes"],
-                )
-                shared = symbol(
-                    name,
-                    kind="TLS",
-                    binding="LOCAL",
-                    section=str(shared_index),
-                    size=tls_layout["size_bytes"],
-                )
-                static_sections.append(
-                    {
-                        "index": static_index,
-                        "alignment": tls_layout["producer"]["static_section_alignment"],
-                        "name": ".fixture.tdata",
-                    }
-                )
-                shared_sections.append(
-                    {
-                        "index": shared_index,
-                        "alignment": tls_layout["source"]["source_required_alignment"],
-                        "name": ".fixture.tdata",
                     }
                 )
             elif name == weak["name"]:
@@ -193,7 +158,7 @@ class FixedCMimallocProducerMetadataTests(unittest.TestCase):
             symbol(name, kind="NOTYPE", section="UND", size=0)
             for name in (*imports, *references)
         ]
-        c_member = "b85de32113adef8e-static.o"
+        c_member = producer.C_MEMBER
         rust_member = "fixture-rust.rcgu.o"
         shared_rust_member = "fixture-dynamic.rcgu.o"
         c_sha = "c" * 64
@@ -202,11 +167,7 @@ class FixedCMimallocProducerMetadataTests(unittest.TestCase):
         source_map = dict(contract["source_provenance"]["upstream_sources"])
         source_map.update(contract["source_provenance"]["project_header_sources"])
         source_map["include/fixture.h"] = "f" * 64
-        crate_pin = {
-            "name": contract["backend"]["crate"],
-            "version": contract["backend"]["version"],
-            "checksum": contract["backend"]["checksum"],
-        }
+        upstream_pin = {key: contract["backend"][key] for key in ("version", "tag", "revision", "archive_sha256")}
         static_provenance: dict[str, object] = {
             "archive": {"name": "libc.a", "sha256": static_sha},
             "selected_members": [
@@ -214,8 +175,8 @@ class FixedCMimallocProducerMetadataTests(unittest.TestCase):
                 {"name": c_member, "sha256": c_sha},
             ],
             "allocator_backend": {
-                "archive_sha256": "e" * 64,
-                "crate": crate_pin,
+                "upstream": upstream_pin,
+                "mi_malloc_version": 30500,
                 "implementation": "accepted C backend; native Rust promotion remains separate",
                 "member": c_member,
                 "member_sha256": c_sha,
@@ -225,8 +186,13 @@ class FixedCMimallocProducerMetadataTests(unittest.TestCase):
             },
         }
         shared_provenance: dict[str, object] = {
-            "accepted_allocator": crate_pin,
-            "allocator_headers": source_map,
+            "accepted_allocator": {
+                "upstream": upstream_pin,
+                "mi_malloc_version": 30500,
+                "member": c_member,
+                "member_sha256": c_sha,
+                "source_and_header_sha256": source_map,
+            },
             "allocator_flags": list(contract["build"]["shared_allocator_flags"]),
             "selected_members": {
                 c_member: c_sha,
@@ -350,7 +316,7 @@ class FixedCMimallocProducerMetadataTests(unittest.TestCase):
 
     def test_exact_authenticated_helper_archive_policy_composes_with_c_localization(self):
         result = producer.account_producer_metadata(*self.helper_composition_fixture())
-        self.assertEqual(result["scope"]["member_count"], 424)
+        self.assertEqual(result["scope"]["member_count"], 437)
         self.assertEqual(result["scope"]["rust_root_c_imports"], 8)
         self.assertFalse(result["status_flags"]["family_completion"])
 
@@ -395,19 +361,17 @@ class FixedCMimallocProducerMetadataTests(unittest.TestCase):
                 with self.assertRaises(producer.ProducerMetadataError):
                     producer.account_producer_metadata(facts, static, shared, manifest)
 
-    def test_accounts_exact_five_metadata_buckets_and_eight_rust_root_joins(self) -> None:
+    def test_accounts_exact_four_metadata_buckets_and_eight_rust_root_joins(self) -> None:
         account = self.account()
         self.assertEqual(account["status"], "component-pass-not-qualification")
-        self.assertEqual(account["scope"]["member_count"], 424)
+        self.assertEqual(account["scope"]["member_count"], 437)
         self.assertEqual(account["scope"]["metadata_buckets"], {
-            "strong-functions": 419,
+            "strong-functions": 434,
             "weak-null-fallback": 1,
-            "data-objects": 3,
-            "initial-exec-tls": 1,
+            "data-objects": 2,
             "source-hidden-objects": len(SOURCE_HIDDEN_ELF_ROWS),
         })
         self.assertEqual(account["scope"]["rust_root_c_imports"], 8)
-        self.assertEqual(account["archive_map"]["raw_cargo_allocator_archive_sha256"], "e" * 64)
         self.assertEqual(account["archive_map"]["reconstructed_static_libc_archive_sha256"], "a" * 64)
         self.assertEqual(
             [item["name"] for item in account["rust_root_c_import_joins"]],
@@ -429,7 +393,6 @@ class FixedCMimallocProducerMetadataTests(unittest.TestCase):
             record["name"]: record["layout"]
             for record in account["metadata_buckets"]["data-objects"]["members"]
         }
-        layouts[producer.EXPECTED_TLS_OBJECT] = account["metadata_buckets"]["initial-exec-tls"]["members"][0]["layout"]
         self.assertEqual(
             {
                 name: (
@@ -442,13 +405,7 @@ class FixedCMimallocProducerMetadataTests(unittest.TestCase):
             {
                 "_mi_cpu_has_popcnt": (1, 64, 64),
                 "_mi_heap_default_key": (4, 4, 4),
-                "_mi_stats_main": (4368, 8, 32),
-                "mi_thread_locals": (8, 8, 8),
             },
-        )
-        self.assertEqual(layouts["mi_thread_locals"]["shared_symbol_value"]["integer"], 0)
-        self.assertEqual(
-            layouts["mi_thread_locals"]["shared_symbol_value"]["modulo_source_required_alignment"], 0
         )
 
     def test_accounts_the_exact_source_hidden_c_data_objects(self) -> None:
@@ -468,14 +425,14 @@ class FixedCMimallocProducerMetadataTests(unittest.TestCase):
             and item["shared"]["visibility"] == "HIDDEN"
             for item in bucket["members"]
         ))
-        self.assertEqual(account["scope"]["member_count"], 424)
+        self.assertEqual(account["scope"]["member_count"], 437)
         self.assertEqual(account["scope"]["rust_root_c_imports"], 8)
         self.assertEqual(account["rust_root_c_data_reference_joins"][0]["name"], "_mi_heap_default_key")
         self.assertEqual(
             {item["name"] for item in bucket["members"]},
             {name for name, _, _, _ in SOURCE_HIDDEN_ELF_ROWS},
         )
-        self.assertTrue(all(item["static_member"] == "b85de32113adef8e-static.o"
+        self.assertTrue(all(item["static_member"] == producer.C_MEMBER
                             for item in bucket["members"]))
 
     def test_rejects_source_hidden_provider_and_rust_import_drift(self) -> None:
@@ -493,7 +450,7 @@ class FixedCMimallocProducerMetadataTests(unittest.TestCase):
         for label, change, message in cases:
             with self.subTest(change=label):
                 facts, static, shared, manifest = self.fixture()
-                source_name = "__mi_theap_main" if change == "tls-as-object" else "_mi_page_map"
+                source_name = "__mi_theap_default" if change == "tls-as-object" else "__mi_page_map"
                 static_c_rows = facts["facts"]["candidate-static"][1]["symbol_tables"][0]["rows"]
                 rust_rows = facts["facts"]["candidate-static"][0]["symbol_tables"][0]["rows"]
                 static_row = next(row for row in static_c_rows if row["name"] == source_name)
@@ -539,12 +496,12 @@ class FixedCMimallocProducerMetadataTests(unittest.TestCase):
 
         raw = tomllib.loads(producer.CONTRACT_PATH.read_text(encoding="utf-8"))
         raw["metadata"]["source_hidden_objects"][0]["source"]["definition_path"] = (
-            "libmimalloc-sys/c_src/mimalloc/v3/src/page-map.c"
+            "mimalloc-3.5.0/src/page.c"
         )
         with self.assertRaisesRegex(producer.ProducerMetadataError, "definition source is not pinned"):
             producer._validate_contract(raw)
 
-    def test_allocator_flags_use_cargo_output_dependency_files(self) -> None:
+    def test_allocator_target_flags_reject_a_dependency_file_override(self) -> None:
         import tomllib
 
         for field, stale_path, message in (
@@ -649,34 +606,16 @@ class FixedCMimallocProducerMetadataTests(unittest.TestCase):
             },
         })
         self.assertEqual(projection["_ZSt15get_new_handlerv"]["static"]["binding"], "WEAK")
-        self.assertEqual(projection["_mi_stats_main"], {
+        self.assertEqual(projection["_mi_heap_default_key"], {
             "static": {
                 "type": "OBJECT", "binding": "GLOBAL", "visibility": "DEFAULT",
-                "size_bytes": 4368, "alignment_bytes": 8,
+                "size_bytes": 4, "alignment_bytes": 4,
             },
             "shared": {
                 "type": "OBJECT", "binding": "LOCAL", "visibility": "DEFAULT",
-                "size_bytes": 4368, "alignment_bytes": 8,
+                "size_bytes": 4, "alignment_bytes": 4,
             },
         })
-        self.assertEqual(set(projection["mi_thread_locals"]), {"static", "shared"})
-
-    def test_static_stats_value_uses_source_alignment_not_section_overalignment(self) -> None:
-        """A source-valid symbol offset must not inherit static section 32-byte placement."""
-        facts, static_provenance, shared_provenance, shared_manifest = self.fixture()
-        static_rows = facts["facts"]["candidate-static"][1]["symbol_tables"][0]["rows"]
-        stats = next(row for row in static_rows if row["name"] == "_mi_stats_main")
-        stats["value"] = "0000000000000008"
-        account = producer.account_producer_metadata(facts, static_provenance, shared_provenance, shared_manifest)
-        layout = next(
-            record["layout"]
-            for record in account["metadata_buckets"]["data-objects"]["members"]
-            if record["name"] == "_mi_stats_main"
-        )
-        self.assertEqual(layout["producer"]["static_section_alignment"], 32)
-        self.assertEqual(layout["static_symbol_value"]["source_required_alignment"], 8)
-        self.assertEqual(layout["static_symbol_value"]["integer"], 8)
-        self.assertEqual(producer.selected_metadata()["_mi_stats_main"]["static"]["alignment_bytes"], 8)
 
     def test_rejects_omitted_or_extra_identity_from_exact_roster(self) -> None:
         facts, static_provenance, shared_provenance, shared_manifest = self.fixture()
@@ -699,9 +638,9 @@ class FixedCMimallocProducerMetadataTests(unittest.TestCase):
     def test_rejects_metadata_layout_or_dynsym_exposure_drift(self) -> None:
         facts, static_provenance, shared_provenance, shared_manifest = self.fixture()
         shared_rows = facts["facts"]["candidate-shared"]["symbol_tables"][1]["rows"]
-        stats = next(row for row in shared_rows if row["name"] == "_mi_stats_main")
-        stats["size_bytes"] = 4367
-        stats["size"] = "4367"
+        key = next(row for row in shared_rows if row["name"] == "_mi_heap_default_key")
+        key["size_bytes"] = 3
+        key["size"] = "3"
         with self.assertRaisesRegex(producer.ProducerMetadataError, "data layout"):
             producer.account_producer_metadata(facts, static_provenance, shared_provenance, shared_manifest)
 
@@ -760,7 +699,7 @@ class FixedCMimallocProducerMetadataTests(unittest.TestCase):
     def test_rejects_unaligned_symbol_values_and_unbound_shared_artifact_identity(self) -> None:
         """ELF section alignment cannot stand in for each selected symbol's value."""
         for placement in ("candidate-static", "candidate-shared"):
-            for name in (*producer.EXPECTED_DATA_OBJECTS, producer.EXPECTED_TLS_OBJECT):
+            for name in producer.EXPECTED_DATA_OBJECTS:
                 with self.subTest(placement=placement, name=name):
                     facts, static_provenance, shared_provenance, shared_manifest = self.fixture()
                     member = (
@@ -784,17 +723,22 @@ class FixedCMimallocProducerMetadataTests(unittest.TestCase):
         with self.assertRaisesRegex(producer.ProducerMetadataError, "shared artifact identity"):
             producer.account_producer_metadata(facts, static_provenance, shared_provenance, shared_manifest)
 
-    def test_rejects_crate_or_pinned_c_source_drift_and_optional_undefined_handler_substitution(self) -> None:
+    def test_rejects_upstream_or_pinned_c_source_drift_and_optional_undefined_handler_substitution(self) -> None:
         facts, static_provenance, shared_provenance, shared_manifest = self.fixture()
-        static_provenance["allocator_backend"]["crate"]["version"] = "0.1.50"
-        with self.assertRaisesRegex(producer.ProducerMetadataError, "allocator crate pin"):
+        static_provenance["allocator_backend"]["upstream"]["version"] = "3.5.1"
+        with self.assertRaisesRegex(producer.ProducerMetadataError, "allocator upstream pin"):
+            producer.account_producer_metadata(facts, static_provenance, shared_provenance, shared_manifest)
+
+        facts, static_provenance, shared_provenance, shared_manifest = self.fixture()
+        shared_provenance["accepted_allocator"]["member_sha256"] = "0" * 64
+        with self.assertRaisesRegex(producer.ProducerMetadataError, "shared allocator upstream pin or member"):
             producer.account_producer_metadata(facts, static_provenance, shared_provenance, shared_manifest)
 
         facts, static_provenance, shared_provenance, shared_manifest = self.fixture()
         static_provenance["allocator_backend"]["source_and_header_sha256"][
-            "libmimalloc-sys/c_src/mimalloc/v3/src/alloc.c"
+            "mimalloc-3.5.0/src/alloc.c"
         ] = "0" * 64
-        with self.assertRaisesRegex(producer.ProducerMetadataError, "pinned v3 source map"):
+        with self.assertRaisesRegex(producer.ProducerMetadataError, "pinned upstream source map"):
             producer.account_producer_metadata(facts, static_provenance, shared_provenance, shared_manifest)
 
         facts, static_provenance, shared_provenance, shared_manifest = self.fixture()
@@ -825,7 +769,7 @@ class FixedCMimallocProducerMetadataTests(unittest.TestCase):
             producer.account_producer_metadata(facts, static_provenance, shared_provenance, shared_manifest)
 
         facts, static_provenance, shared_provenance, shared_manifest = self.fixture()
-        shared_provenance["selected_members"].pop("b85de32113adef8e-static.o")
+        shared_provenance["selected_members"].pop(producer.C_MEMBER)
         with self.assertRaisesRegex(producer.ProducerMetadataError, "shared allocator selected"):
             producer.account_producer_metadata(facts, static_provenance, shared_provenance, shared_manifest)
 
@@ -855,7 +799,7 @@ class FixedCMimallocProducerMetadataTests(unittest.TestCase):
             self.assertEqual(receipt["inputs"]["before"], receipt["inputs"]["after"])
             self.assertEqual(receipt["inputs"]["before"]["elf_facts"]["sha256"], producer.sha256_file(fact_path))
             self.assertEqual(receipt["inputs"]["before"]["shared_manifest"]["sha256"], producer.sha256_file(manifest_path))
-            self.assertEqual(receipt["account"]["scope"]["member_count"], 424)
+            self.assertEqual(receipt["account"]["scope"]["member_count"], 437)
 
     def test_current_product_receipt_rejects_manifest_change_during_accounting(self) -> None:
         facts, static_provenance, shared_provenance, shared_manifest = self.fixture()

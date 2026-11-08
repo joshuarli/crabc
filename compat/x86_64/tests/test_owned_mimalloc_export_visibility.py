@@ -107,11 +107,11 @@ class OwnedMimallocExportVisibilityTests(unittest.TestCase):
 
     def test_exact_contract_is_sealed_and_not_a_prefix_rule(self) -> None:
         members = LIST.read_text(encoding="utf-8").splitlines()
-        self.assertEqual(len(members), 424)
+        self.assertEqual(len(members), 437)
         self.assertEqual(members, sorted(set(members)))
         self.assertEqual(
             hashlib.sha256(LIST.read_bytes()).hexdigest(),
-            "cd537f6579018bbba79d831ee148a7b07f51a0f3bda538a27970724751d78873",
+            "645197d35ecab7d547f5ac0c9510a748d97d1a45e4b33dbdf68e39879aa77121",
         )
         for required in (
             "mi_malloc_aligned",
@@ -121,7 +121,7 @@ class OwnedMimallocExportVisibilityTests(unittest.TestCase):
         ):
             self.assertIn(required, members)
         source = BUILDER.read_text(encoding="utf-8")
-        self.assertIn("MIMALLOC_V3_HIDDEN_LIST_COUNT = 424", source)
+        self.assertIn("MIMALLOC_V3_HIDDEN_LIST_COUNT = 437", source)
         self.assertIn("MIMALLOC_V3_HIDDEN_LIST_SHA256", source)
         self.assertIn("members != tuple(sorted(set(members)))", source)
         self.assertNotIn("mi_*", source)
@@ -239,7 +239,7 @@ class OwnedMimallocExportVisibilityTests(unittest.TestCase):
             "derived_baseline_extra_names",
             "candidate-minus-reference-dynamic-symbol-identities",
             "validate_dynsym_delta",
-            "shared dynsym changed by names beyond the exact 424-name mimalloc local contract",
+            "shared dynsym changed by names beyond the exact mimalloc local contract",
             "static allocator provider lost hidden shared-only names",
             "fresh shared link selected allocator member differs from the static provider",
             "shared symtab {member} spelling/version/kind differs from the static allocator provider",

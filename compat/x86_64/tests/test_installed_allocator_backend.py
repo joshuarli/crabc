@@ -45,12 +45,12 @@ class InstalledAllocatorProvenanceTests(unittest.TestCase):
 
     def test_accepted_c_requires_the_reviewed_pin_despite_matching_labels(self) -> None:
         state = {"allocator_backend": "accepted-c"}
-        for pin in (None, {}, allocator.products.C_ALLOCATOR_PIN | {"checksum": "0" * 64}):
-            provenance = state | {"accepted_allocator": pin, "native_allocator": None}
-            with self.subTest(pin=pin), self.assertRaisesRegex(ReceiptError, "accepted allocator source"):
+        pin = allocator.products.C_ALLOCATOR_PIN
+        for record in (None, {}, {"upstream": pin | {"archive_sha256": "0" * 64}}, dict(pin)):
+            provenance = state | {"accepted_allocator": record, "native_allocator": None}
+            with self.subTest(record=record), self.assertRaisesRegex(ReceiptError, "accepted allocator source"):
                 allocator.dynamic_backend(self.root, state, provenance)
-        provenance = state | {"accepted_allocator": dict(allocator.products.C_ALLOCATOR_PIN),
-                              "native_allocator": None}
+        provenance = state | {"accepted_allocator": {"upstream": dict(pin)}, "native_allocator": None}
         self.assertEqual(allocator.dynamic_backend(self.root, state, provenance), "accepted-c")
         provenance["native_allocator"] = self.marker
         with self.assertRaisesRegex(ReceiptError, "native allocator source"):
@@ -63,14 +63,19 @@ class InstalledAllocatorProvenanceTests(unittest.TestCase):
         static = self.root / "static.json"
         state.write_text(json.dumps({"allocator_backend": "accepted-c"}))
         manifest.write_text(state.read_text())
-        dynamic.write_text(json.dumps({"allocator_backend": "accepted-c",
-                                       "accepted_allocator": allocator.products.C_ALLOCATOR_PIN,
+        record = {"upstream": allocator.products.C_ALLOCATOR_PIN, "member_sha256": "a" * 64,
+                  "source_and_header_sha256": {"mimalloc-3.5.0/src/static.c": "b" * 64}}
+        dynamic.write_text(json.dumps({"allocator_backend": "accepted-c", "accepted_allocator": record,
                                        "native_allocator": None}))
-        static.write_text(json.dumps({"allocator_backend": {"crate": allocator.products.C_ALLOCATOR_PIN}}))
+        static.write_text(json.dumps({"allocator_backend": record}))
         for paths in ((state, dynamic), (manifest, static, state, dynamic)):
             command = [sys.executable, "-B", allocator.__file__, *map(str, paths)]
             result = subprocess.run(command, capture_output=True, text=True)
             self.assertEqual((result.returncode, result.stdout, result.stderr), (0, "accepted-c\n", ""))
+        static.write_text(json.dumps({"allocator_backend": record | {"member_sha256": "c" * 64}}))
+        result = subprocess.run(command, capture_output=True, text=True)
+        self.assertEqual((result.returncode, result.stdout), (1, ""))
+        self.assertIn("disagree on the accepted allocator source", result.stderr)
         dynamic.write_text(json.dumps({"allocator_backend": "accepted-c", "accepted_allocator": None}))
         result = subprocess.run(command, capture_output=True, text=True)
         self.assertEqual((result.returncode, result.stdout), (1, ""))

@@ -1,16 +1,17 @@
 # Owned mimalloc shared-export boundary
 
-`libc/src/c_abi/x86_64/owned_mimalloc_hidden.list` is the exact 424-name
-contract for bundled `libmimalloc-sys` 0.1.49/mimalloc v3 definitions that may
-remain global in the selected static `libc.a` member but must be local in the
-owned `libc.so`. It contains 172 names declared by the bundled upstream
-`mimalloc/v3/include/mimalloc.h` and 252 names from its implementation surface.
+`libc/src/c_abi/x86_64/owned_mimalloc_hidden.list` is the exact 437-name
+contract for pinned upstream mimalloc v3.5.0 definitions that may remain global
+in the selected static `libc.a` member but must be local in the owned
+`libc.so`. It is exactly the compiled object's default-visibility definitions:
+the names declared by upstream `include/mimalloc.h` and its implementation
+surface. Both product builders recheck that equality.
 The installed crabc headers declare none of them. This is a visibility decision
 for the selected shared product; it does not claim that the upstream header is
 part of crabc's installed C ABI.
 
 `scripts/build_x86_64_owned_dynamic_sysroot.py` verifies the physical list,
-its SHA-256 and its sorted 424-member roster, then materializes an `ld.lld`
+its SHA-256 and its sorted 437-member roster, then materializes an `ld.lld`
 version script with one `local:` rule per name. The option is passed only to the
 owned shared-libc link. The static sysroot builder and its `libc.a` remain
 unchanged. Musl's byte-pinned `owned_dynamic.list`, including its eight malloc
@@ -42,10 +43,10 @@ the fresh dynamic product.
 Rust allocator products from one sealed source state. Its reader checks both
 installed manifests, the static archive's selected members and weak C ABI
 allocator entry points, and the dynamic product's source state, link inputs,
-public allocator bindings, absent bundled-C definitions, and local process
-finalizer. The C-only 424-name version script must be absent from this shared
+public allocator bindings, absent C allocator definitions, and local process
+finalizer. The C-only 437-name version script must be absent from this shared
 link. This path does not compare a historical C product because the native
-backend has no bundled C allocator member. Its `ar`, `nm`, and `readelf`
+backend has no C allocator member. Its `ar`, `nm`, and `readelf`
 executables are bound to the core image and exact bytes in
 `owned_mimalloc_export_visibility_image_inputs.json`; changed tool bytes,
 backend selection, link policy, or product provenance fail the receipt.

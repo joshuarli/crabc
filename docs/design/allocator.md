@@ -18,11 +18,12 @@ the evidence harness is described in
 [`compat/allocator/README.md`](../../compat/allocator/README.md) and the
 performance contract in [`performance.md`](performance.md).
 
-The production backend, on both targets, is the C `libmimalloc-sys` 0.1.49,
-which bundles mimalloc v3.3.2. It stays the default until a qualified,
-target-specific promotion. It is not the v3.5.0 oracle: the pinned v3.5.0
-archive is built separately for the Rust-port differential and the performance
-baseline. The native Rust engine in `crabc-mimalloc` is reachable only through
+The production backend is C mimalloc. On x86-64 the product builders compile
+unedited upstream v3.5.0 `src/static.c` from the pinned `[mimalloc]` archive in
+`compat/upstreams.toml`; paused AArch64 keeps `libmimalloc-sys` 0.1.49, which
+bundles v3.3.2. It stays the default until a qualified, target-specific
+promotion. The same pinned v3.5.0 archive is also built separately for the
+Rust-port differential and the performance baseline. The native Rust engine in `crabc-mimalloc` is reachable only through
 explicit non-default features (see
 [Integration](#integration-and-dependency-direction)). Where this document
 describes a mechanism that only test or audit builds compile, it says so; the
@@ -62,10 +63,11 @@ crabc-mimalloc -> crabc-core + chacha20 + zeroize + rand_xoshiro
 crabc-libc     -> crabc-core + crabc-mimalloc + libmimalloc-sys (+ other leaf dependencies)
 ```
 
-On x86-64 every `crabc-libc` edge above is optional: `libmimalloc-sys` is
-selected by `x86-allocator-runtime` or an owned product, `crabc-mimalloc` by
-`native-mimalloc-shadow`. On AArch64 `libmimalloc-sys` is an unconditional
-dependency.
+On x86-64 every `crabc-libc` edge above is optional and `libmimalloc-sys` is
+absent: `x86-allocator-runtime` selects the C wrapper, whose six `mi_*` entries
+the product builders resolve with their compiled pinned v3.5.0 object, and
+`native-mimalloc-shadow` selects `crabc-mimalloc`. On AArch64
+`libmimalloc-sys` is an unconditional dependency.
 
 `crabc-mimalloc -> crabc-libc` is forbidden. Raw Linux primitives belong in
 `crabc-core`; the allocator must not duplicate syscall assembly or call public
@@ -85,7 +87,8 @@ only in a final isolated promotion change.
 
 `libc` features (`libc/Cargo.toml`):
 
-- `x86-allocator-runtime` selects the C backend (`libmimalloc-sys`).
+- `x86-allocator-runtime` selects the C backend wrapper; the x86 product
+  builders and the source-runtime closure link the pinned v3.5.0 object.
 - `native-mimalloc-shadow` (`dep:crabc-mimalloc`) selects the Rust-engine
   wrapper instead of the C one: `libc/src/c_abi/x86_64/allocator_native_mimalloc.rs`
   on x86-64 (the AArch64 route includes `libc/src/allocator_native_mimalloc.rs`).

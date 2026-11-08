@@ -39,8 +39,8 @@ def dynamic_backend(root: Path, state: Mapping[str, object],
     else:
         if native is not None:
             raise ReceiptError("accepted C products claim a native allocator source")
-        if accepted != products.C_ALLOCATOR_PIN:
-            raise ReceiptError("installed accepted allocator source differs from the reviewed C dependency")
+        if not isinstance(accepted, dict) or accepted.get("upstream") != products.C_ALLOCATOR_PIN:
+            raise ReceiptError("installed accepted allocator source differs from the pinned upstream mimalloc")
     return backend
 
 
@@ -61,7 +61,8 @@ def static_and_dynamic_backend(root: Path, static_manifest: Mapping[str, object]
     else:
         if "upstream_sha256" in allocator:
             raise ReceiptError("accepted C products claim a native allocator source")
-        if allocator.get("crate") != dynamic_provenance["accepted_allocator"]:
+        accepted = dynamic_provenance["accepted_allocator"]
+        if any(allocator.get(key) != accepted.get(key) for key in ("upstream", "member_sha256", "source_and_header_sha256")):
             raise ReceiptError("static and dynamic libc provenance disagree on the accepted allocator source")
     return backend
 
