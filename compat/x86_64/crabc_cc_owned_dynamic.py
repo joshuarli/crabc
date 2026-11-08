@@ -38,6 +38,7 @@ REQUIRED = {"usr/lib/libc.so", "usr/lib/crt1.o", "usr/lib/Scrt1.o", "usr/lib/crt
             "share/crabc/crabc_cc_static.py", "share/crabc/native_runtime_profile.py",
             "share/crabc/crt.provenance.json", "share/crabc/loader.provenance.json",
             "share/crabc/owned_dynamic_receipt.py", "share/crabc/owned_dynamic_elf.py"}
+SHA256_DIGEST = re.compile("[0-9a-f]{64}")
 APPLICATION_DSO_BASENAME = re.compile(r"[^/\x00]+\.so(?:\.[0-9]+)*\Z")
 RECEIPT_V1_FIELDS = receipt_contract.V1_FIELDS
 RECEIPT_V2_FIELDS = receipt_contract.V2_FIELDS
@@ -236,7 +237,7 @@ def validate(root: Path) -> dict:
     if observed != files.keys() or aliases != profile.aliases:
         raise shared.DriverError("installed payload differs from exact manifest roster")
     for relative, digest in files.items():
-        if Path(relative).is_absolute() or ".." in Path(relative).parts or not re.fullmatch("[0-9a-f]{64}", str(digest)):
+        if relative.startswith("/") or ".." in relative.split("/") or SHA256_DIGEST.fullmatch(str(digest)) is None:
             raise shared.DriverError("unsafe manifest payload entry")
         if hashes[relative] != digest:
             raise shared.DriverError(f"installed payload hash mismatch: {relative}")
@@ -278,7 +279,7 @@ def validate_combined(root: Path) -> dict:
     if observed != files.keys() or aliases != profile.aliases:
         raise shared.DriverError("installed payload differs from exact combined manifest roster")
     for relative, digest in files.items():
-        if Path(relative).is_absolute() or ".." in Path(relative).parts or not re.fullmatch("[0-9a-f]{64}", str(digest)):
+        if relative.startswith("/") or ".." in relative.split("/") or SHA256_DIGEST.fullmatch(str(digest)) is None:
             raise shared.DriverError("unsafe combined manifest payload entry")
         if hashes[relative] != digest:
             raise shared.DriverError(f"installed payload hash mismatch: {relative}")
