@@ -27,6 +27,7 @@ MODULE_DIR = Path(__file__).resolve().parent
 if str(MODULE_DIR) not in sys.path:
     sys.path.insert(0, str(MODULE_DIR))
 from loader_debug_abi_evidence import Elf, EvidenceError
+from static_product_contract import MOLD_SYNTHETIC_UNDEFINED
 
 ROOT = Path(__file__).resolve().parents[2]
 CONTRACT = Path("builtins/x86_64-helper-contract.toml")
@@ -1852,6 +1853,10 @@ def _ambient_link_input(trace: str) -> bool:
     return re.search(r"libgcc|compiler-rt|libc\.a|/[Sr]?crt[^/\s]*\.o", inputs) is not None
 
 
+def _unresolved_names(undefined_listing: str) -> set[str]:
+    return {line.split()[-1] for line in undefined_listing.splitlines() if line.split()} - MOLD_SYNTHETIC_UNDEFINED
+
+
 def _validate_aggregate_observations(work: Path, contract: Mapping[str, Any], events: Sequence[Mapping[str, Any]],
                                      artifacts: Mapping[str, Any]) -> dict[str, Any]:
     names = set(helper_names(contract))
@@ -1861,7 +1866,7 @@ def _validate_aggregate_observations(work: Path, contract: Mapping[str, Any], ev
     definitions = {line.split()[-1] for line in _event_text(work, events, "candidate-definitions", "stdout").splitlines()
                    if line.split()}
     require(names <= definitions, "aggregate candidate definition roster differs")
-    require(not _event_text(work, events, "candidate-undefined", "stdout").strip(),
+    require(not _unresolved_names(_event_text(work, events, "candidate-undefined", "stdout")),
             "aggregate candidate retains undefined symbols")
     archive_free = _event_text(work, events, "archive-free-link", "stderr")
     require(all(name in archive_free for name in names), "archive-free link did not name every direct helper")
@@ -2065,7 +2070,7 @@ def _live_artifact_observations(work: Path, contract: Mapping[str, Any], artifac
     candidate_definitions = _nm_defined_names(candidate)
     require(names <= candidate_definitions, "retained aggregate candidate definitions differ")
     candidate_undefined = _live_tool(["nm", "--undefined-only", str(candidate)], "aggregate candidate undefined symbols")
-    require(not candidate_undefined.strip(), "retained aggregate candidate has undefined symbols")
+    require(not _unresolved_names(candidate_undefined), "retained aggregate candidate has undefined symbols")
     header = _live_tool(["readelf", "-hW", str(candidate)], "aggregate candidate ELF header")
     program_headers = _live_tool(["readelf", "-lW", str(candidate)], "aggregate candidate program headers")
     dynamic = _live_tool(["readelf", "-dW", str(candidate)], "aggregate candidate dynamic section")

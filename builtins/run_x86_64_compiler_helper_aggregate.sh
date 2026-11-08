@@ -151,7 +151,10 @@ readelf -lW "$candidate" | grep -E 'INTERP| TLS ' >/dev/null && fail "candidate 
 if readelf -dW "$candidate" | grep -E '\((NEEDED|JMPREL|PLTGOT)\)' >/dev/null; then
     fail "candidate has dynamic linkage"
 fi
-[ ! -s "$WORK_DIR/raw/candidate-undefined.stdout" ] || fail "candidate retains an undefined symbol"
+if awk '$NF != "_PROCEDURE_LINKAGE_TABLE_" && $NF != "__rela_iplt_start" && $NF != "__rela_iplt_end" { found = 1 } END { exit !found }' \
+    "$WORK_DIR/raw/candidate-undefined.stdout"; then
+    fail "candidate retains an undefined symbol"
+fi
 
 record_command reference-compile env -u CPATH -u C_INCLUDE_PATH -u CPLUS_INCLUDE_PATH -u LIBRARY_PATH \
     -u GCC_EXEC_PREFIX -u COMPILER_PATH "$ORACLE_CC" -std=c11 -O2 -fno-stack-protector -fno-pie \

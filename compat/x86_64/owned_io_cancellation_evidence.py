@@ -180,9 +180,6 @@ def verify_compile(product: Path, source: Path, workload: Path, record: Path,
             json.dumps(observed, sort_keys=True, allow_nan=False), "compile evidence identity changed")
 
 
-MOLD_SYNTHETIC_UNDEFINED = frozenset({"_PROCEDURE_LINKAGE_TABLE_", "__rela_iplt_start", "__rela_iplt_end"})
-
-
 def audit_static_views(linkage: str, views: dict[str, str]) -> None:
     """Preserve the legacy static cancellation gate's additional ELF judges.
 
@@ -205,7 +202,7 @@ def audit_static_views(linkage: str, views: dict[str, str]) -> None:
     except static_product.StaticProductError as error:
         raise EvidenceError(str(error)) from error
     require(not any(len(fields := line.split()) >= 8 and fields[6] == "UND" and
-                    not (fields[4] == "LOCAL" and fields[7] in MOLD_SYNTHETIC_UNDEFINED)
+                    not (fields[4] == "LOCAL" and fields[7] in static_product.MOLD_SYNTHETIC_UNDEFINED)
                     for line in symbols.splitlines()),
             "static consumer retains an unresolved symbol")
     require(re.search(r"R_X86_64_(GLOB_DAT|JUMP_SLOT|TLSGD|TLSLD|TLSDESC|DTPMOD|DTPOFF)",

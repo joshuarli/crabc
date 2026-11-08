@@ -88,6 +88,9 @@ RUNTIME_INPUTS = {
 }
 
 
+MOLD_SYNTHETIC_UNDEFINED = frozenset({"_PROCEDURE_LINKAGE_TABLE_", "__rela_iplt_start", "__rela_iplt_end"})
+
+
 class StaticProductError(ValueError):
     """The contract, retained evidence, or publication is invalid."""
 
