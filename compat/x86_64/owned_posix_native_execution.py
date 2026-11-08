@@ -644,9 +644,7 @@ def collect_component(root, work, index, component, inputs, product, source_moun
     require(set((step / 'tmp').iterdir()) == {leaf}, 'undeclared component scratch child')
     try:
         observed = native.collect(component.id, leaf, source_mount=source_mount, dynamic_product=product, root=root,
-            profile_inputs={key: inputs[key]['path'] for key in
-                            ('family_execution', 'crypt_profile', 'atomic_addressable_profile', 'wordexp_profile',
-                             'wordexp_expected_native_inputs')})
+            profile_companions=native.profile_companions(inputs))
     except native.NativeObservationError as error:
         raise family.ExecutionError(str(error)) from error
     require(observed['component'] == component.id and observed['product']['path'] == product.relative_to(root).as_posix()

@@ -579,34 +579,23 @@ def source_tree(directory, *, ignore_git_metadata=False, allow_symlinks=False):
     return walk(directory).hex(), dict(sorted(files.items()))
 
 
-def _load_profile_companions(root, product, inputs):
-    """Only physical prerequisite paths are accepted, never caller waivers."""
-    import owned_posix_family_execution as family
-    import owned_crypt_profile as crypt
-    import owned_atomic_addressable_profile as atomic
-    import owned_wordexp_upstream_policy as wordexp_policy
-    keys(inputs, ('family_execution', 'crypt_profile', 'atomic_addressable_profile', 'wordexp_profile',
-                  'wordexp_expected_native_inputs'),
-         'native profile prerequisite paths')
-    paths = {}
-    for key, value in inputs.items():
-        require(isinstance(value, str) and not Path(value).is_absolute(), 'native profile input must be checkout-relative')
-        paths[key] = family.physical(root, root / value)
-    family.validate_receipt(root, paths['family_execution'])
-    crypt_record = crypt.validate_receipt(root, paths['crypt_profile'], product=product)
-    atomic_record = atomic.validate_receipt(root, paths['atomic_addressable_profile'], product=product)
-    wordexp_record = wordexp_policy.validate_companion(root, paths['wordexp_profile'],
-                                                        paths['wordexp_expected_native_inputs'], product)
-    return {'crypt': {'receipt': family.file_identity(root, paths['crypt_profile']),
-            'vectors': crypt_record['vectors'], 'observations': crypt_record['vector_observations']},
-            'atomic': {'receipt': family.file_identity(root, paths['atomic_addressable_profile']),
-                       'selected_dynamic_entries': atomic_record['entries']},
-            'wordexp': {'receipt': family.file_identity(root, paths['wordexp_profile']),
-                        'expected_native_inputs': family.file_identity(root, paths['wordexp_expected_native_inputs']),
-                        **wordexp_record}}
+def profile_companions(inputs):
+    """Shape the crypt, atomic and wordexp companions the native aggregate validated against its product."""
+    require(isinstance(inputs, dict) and {'crypt_profile', 'atomic_addressable_profile', 'wordexp_profile',
+            'wordexp_expected_native_inputs', 'profile_companions'} <= set(inputs),
+            'native profile prerequisite inputs are missing')
+    records = inputs['profile_companions']
+    keys(records, ('crypt', 'atomic', 'wordexp'), 'native profile companion records')
+    return {'crypt': {'receipt': inputs['crypt_profile'],
+            'vectors': records['crypt']['vectors'], 'observations': records['crypt']['vector_observations']},
+            'atomic': {'receipt': inputs['atomic_addressable_profile'],
+                       'selected_dynamic_entries': records['atomic']['entries']},
+            'wordexp': {'receipt': inputs['wordexp_profile'],
+                        'expected_native_inputs': inputs['wordexp_expected_native_inputs'],
+                        **records['wordexp']}}
 
 
-def collect(component, leaf_root, *, source_mount, dynamic_product, root=ROOT, profile_inputs=None):
+def collect(component, leaf_root, *, source_mount, dynamic_product, root=ROOT, profile_companions=None):
     """Reconstruct one dynamic-only component; never compile, link or execute.
 
     ``source_mount`` is the original absolute checkout path in retained JSON.
@@ -615,10 +604,8 @@ def collect(component, leaf_root, *, source_mount, dynamic_product, root=ROOT, p
     """
     require(component in COMPONENTS, 'unknown native POSIX component')
     reader = Reader(leaf_root, source_mount, dynamic_product, root)
-    reader.profile_companions = None
+    reader.profile_companions = profile_companions if component in ('os-test', 'libc-test') else None
     try:
-        if profile_inputs is not None and component in ('os-test', 'libc-test'):
-            reader.profile_companions = _load_profile_companions(root, dynamic_product, profile_inputs)
         result = {'differential': _differential, 'signal-process': _signal_process,
                 'pthread-stress': _pthread_stress, 'os-test': _os_test, 'libc-test': _libc_test}[component](reader)
         result.setdefault('qualification', {'status': 'passed', 'raw_passed': True, 'dispositions': []})

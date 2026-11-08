@@ -165,14 +165,17 @@ class NativeExecutionTests(unittest.TestCase):
                              'sha256': self.digest(path), 'base64': base64.b64encode(value).decode()}
         return result
 
-    def native_result(self, component, leaf, *, source_mount, dynamic_product, root, profile_inputs=None):
+    def native_result(self, component, leaf, *, source_mount, dynamic_product, root, profile_companions=None):
         self.assertEqual(dynamic_product, self.product)
         self.assertEqual(root, self.root)
-        self.assertEqual(profile_inputs, {'family_execution': self.relative(self.matrix_path),
-            'crypt_profile': self.relative(self.crypt_path),
-            'atomic_addressable_profile': self.relative(self.atomic_path),
-            'wordexp_profile': self.relative(self.wordexp_path),
-            'wordexp_expected_native_inputs': self.relative(self.wordexp_expected_path)})
+        self.assertEqual({name: record['receipt']['path'] for name, record in profile_companions.items()},
+                         {'crypt': self.relative(self.crypt_path), 'atomic': self.relative(self.atomic_path),
+                          'wordexp': self.relative(self.wordexp_path)})
+        self.assertEqual(profile_companions['wordexp']['expected_native_inputs']['path'],
+                         self.relative(self.wordexp_expected_path))
+        self.assertEqual(profile_companions['wordexp']['product'],
+                         self.wordexp_companion(self.root, self.wordexp_path, self.wordexp_expected_path,
+                                                self.product)['product'])
         if (leaf / 'raw.status').read_bytes() != b'0\n' or (leaf / 'raw.stdout').read_bytes() != (component + ' observed\n').encode():
             raise native.NativeObservationError('synthetic component raw observation failed')
         def identity(path):

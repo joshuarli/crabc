@@ -1086,11 +1086,9 @@ class NativeObservationsTests(unittest.TestCase):
     def test_os_test_qualifies_only_the_pinned_aio_cancel_oracle_race(self):
         report = self.os_test_fixture(profile=True, aio_cancel_oracle_failure=True)
         proof = self.profile_companions()
-        inputs = self.profile_input_paths()
         def collect():
-            with patch.object(native, '_load_profile_companions', return_value=proof):
-                return native.collect('os-test', self.leaf, source_mount=self.mount,
-                                      dynamic_product=self.product, root=self.root, profile_inputs=inputs)
+            return native.collect('os-test', self.leaf, source_mount=self.mount,
+                                  dynamic_product=self.product, root=self.root, profile_companions=proof)
         result = collect()
         self.assertEqual(result['qualification']['status'], 'profile-qualified')
         self.assertEqual([item['outcome'] for item in result['qualification']['dispositions']
@@ -1706,12 +1704,6 @@ class NativeObservationsTests(unittest.TestCase):
                     'diagnostic_reference': {'path': 'compat/x86_64/owned_wordexp_upstream_policy_diagnostics.json', 'sha256': 'b'*64},
                     'selected_dynamic_entries': {mode: {} for mode in MODES}}}
 
-    def profile_input_paths(self):
-        return {'family_execution': '.work/family/execution.json', 'crypt_profile': '.work/crypt/crypt-profile.json',
-                'atomic_addressable_profile': '.work/atomic/atomic-addressable-profile.json',
-                'wordexp_profile': '.work/wordexp/owned-wordexp-products.json',
-                'wordexp_expected_native_inputs': '.work/wordexp-inputs/expected-native-inputs.json'}
-
     def fixture_wordexp_disposition(self, reader, source, **arguments):
         """Routing seam only; test_owned_wordexp_upstream_policy owns raw qualification."""
         self.assertEqual(source.name, 'wordexp.c')
@@ -1723,32 +1715,30 @@ class NativeObservationsTests(unittest.TestCase):
         self.assertIn('receipt', arguments['companion'])
         return {'unit': 'functional/wordexp', 'status': 'posix-policy-qualified', 'raw_passed': False}
 
-    def test_profile_prerequisites_require_wordexp_report_and_independent_expected_input(self):
-        import owned_atomic_addressable_profile as atomic
-        import owned_crypt_profile as crypt
-        import owned_posix_family_execution as family
-        import owned_posix_native_dispositions as dispositions
-        import owned_wordexp_upstream_policy as wordexp_policy
-        paths = self.profile_input_paths()
-        for value in paths.values():
-            self.put(self.root / value, {'fixture': value})
-        companion = {'product': {'path': '.work/product'}, 'source_policy_probe': {'path': 'probe'},
-                     'diagnostic_reference': {'path': 'reference'},
-                     'selected_dynamic_entries': {mode: {} for mode in MODES}}
-        with patch.object(family, 'validate_receipt', return_value={'fixture': 'complete family matrix'}), \
-             patch.object(crypt, 'validate_receipt', return_value={'vectors': [], 'vector_observations': {}}), \
-             patch.object(atomic, 'validate_receipt', return_value={'entries': {}}), \
-             patch.object(wordexp_policy, 'validate_companion', return_value=companion) as validate_wordexp:
-            observed = native._load_profile_companions(self.root, self.product, paths)
-        validate_wordexp.assert_called_once_with(self.root, self.root / paths['wordexp_profile'],
-                                                 self.root / paths['wordexp_expected_native_inputs'], self.product)
-        self.assertEqual(observed['wordexp']['product'], companion['product'])
-        self.assertEqual(observed['wordexp']['receipt']['path'], paths['wordexp_profile'])
-        self.assertEqual(observed['wordexp']['expected_native_inputs']['path'],
-                         paths['wordexp_expected_native_inputs'])
-        paths.pop('wordexp_expected_native_inputs')
+    def test_profile_companions_bind_validated_records_to_their_receipts_and_expected_input(self):
+        def identity(name):
+            return {'path': '.work/' + name, 'sha256': name[0] * 64, 'size': len(name)}
+        wordexp = {'product': {'path': '.work/product'}, 'source_policy_probe': {'path': 'probe'},
+                   'diagnostic_reference': {'path': 'reference'},
+                   'selected_dynamic_entries': {mode: {} for mode in MODES}}
+        inputs = {'crypt_profile': identity('crypt.json'), 'atomic_addressable_profile': identity('atomic.json'),
+                  'wordexp_profile': identity('wordexp.json'),
+                  'wordexp_expected_native_inputs': identity('expected.json'),
+                  'profile_companions': {'crypt': {'vectors': ['v'], 'vector_observations': {'v': 'o'}},
+                                         'atomic': {'entries': {'e': 1}}, 'wordexp': wordexp}}
+        self.assertEqual(native.profile_companions(inputs), {
+            'crypt': {'receipt': identity('crypt.json'), 'vectors': ['v'], 'observations': {'v': 'o'}},
+            'atomic': {'receipt': identity('atomic.json'), 'selected_dynamic_entries': {'e': 1}},
+            'wordexp': {'receipt': identity('wordexp.json'), 'expected_native_inputs': identity('expected.json'),
+                        **wordexp}})
+        for key in ('wordexp_expected_native_inputs', 'profile_companions'):
+            missing = dict(inputs)
+            missing.pop(key)
+            with self.assertRaises(native.NativeObservationError):
+                native.profile_companions(missing)
+        missing = {**inputs, 'profile_companions': {'crypt': {}, 'atomic': {}}}
         with self.assertRaises(native.NativeObservationError):
-            native._load_profile_companions(self.root, self.product, paths)
+            native.profile_companions(missing)
 
     def fixture_math_oracle_defects(self):
         expected_hashes = {name: {key: hashlib.sha256(value).hexdigest() for key, value in {
@@ -1763,33 +1753,29 @@ class NativeObservationsTests(unittest.TestCase):
     def test_native_os_profile_preserves_exact_six_raw_failures(self):
         report = self.os_test_fixture(profile=True)
         proof = self.profile_companions()
-        inputs = self.profile_input_paths()
         with self.assertRaises(native.NativeObservationError): self.collect('os-test')
-        with patch.object(native, '_load_profile_companions', return_value=proof):
-            result = native.collect('os-test', self.leaf, source_mount=self.mount, dynamic_product=self.product,
-                                    root=self.root, profile_inputs=inputs)
-            self.assertIs(report['passed'], False)
-            self.assertEqual(result['qualification']['status'], 'profile-qualified')
-            self.assertEqual(len(result['qualification']['dispositions']), 6)
-            self.assertIs(result['qualification']['raw_passed'], False)
-            include = next(row for row in report['suites'] if row['suite'] == 'include')
-            include['differences'].append({'case': 'case.out', 'dynamic': {}, 'musl': {}})
-            include['difference_count'] = 7
-            self.put(self.leaf / 'os-test.json', report)
-            with self.assertRaises(native.NativeObservationError):
-                native.collect('os-test', self.leaf, source_mount=self.mount, dynamic_product=self.product,
-                               root=self.root, profile_inputs=inputs)
+        result = native.collect('os-test', self.leaf, source_mount=self.mount, dynamic_product=self.product,
+                                root=self.root, profile_companions=proof)
+        self.assertIs(report['passed'], False)
+        self.assertEqual(result['qualification']['status'], 'profile-qualified')
+        self.assertEqual(len(result['qualification']['dispositions']), 6)
+        self.assertIs(result['qualification']['raw_passed'], False)
+        include = next(row for row in report['suites'] if row['suite'] == 'include')
+        include['differences'].append({'case': 'case.out', 'dynamic': {}, 'musl': {}})
+        include['difference_count'] = 7
+        self.put(self.leaf / 'os-test.json', report)
+        with self.assertRaises(native.NativeObservationError):
+            native.collect('os-test', self.leaf, source_mount=self.mount, dynamic_product=self.product,
+                           root=self.root, profile_companions=proof)
 
     def test_native_libc_profile_preserves_crypt_strptime_and_math_oracle_defect_units(self):
         report = self.libc_test_fixture(profile=True, math_defects=True)
         proof = self.profile_companions()
-        inputs = self.profile_input_paths()
         with self.assertRaises(native.NativeObservationError): self.collect('libc-test')
         with patch.object(math_oracle_defects, 'ORACLE_DEFECTS', self.fixture_math_oracle_defects()), \
-             patch.object(native, '_load_profile_companions', return_value=proof), \
              patch.object(wordexp_policy, 'upstream_disposition', side_effect=self.fixture_wordexp_disposition):
             result = native.collect('libc-test', self.leaf, source_mount=self.mount, dynamic_product=self.product,
-                                    root=self.root, profile_inputs=inputs)
+                                    root=self.root, profile_companions=proof)
             self.assertEqual(report['counts'], {'passed': 428, 'runtime-failed': 6})
             self.assertEqual(len(result['observations']), 434)
             self.assertEqual(result['qualification']['status'], 'profile-qualified')
@@ -1807,23 +1793,21 @@ class NativeObservationsTests(unittest.TestCase):
             self.put(self.leaf / 'libc-test.json', count_changed)
             with self.assertRaises(native.NativeObservationError):
                 native.collect('libc-test', self.leaf, source_mount=self.mount, dynamic_product=self.product,
-                               root=self.root, profile_inputs=inputs)
+                               root=self.root, profile_companions=proof)
             self.put(self.leaf / 'libc-test.json', report)
             report['units'][0]['status'] = 'runtime-failed'
             self.put(self.leaf / 'libc-test.json', report)
             with self.assertRaises(native.NativeObservationError):
                 native.collect('libc-test', self.leaf, source_mount=self.mount, dynamic_product=self.product,
-                               root=self.root, profile_inputs=inputs)
+                               root=self.root, profile_companions=proof)
 
     def test_native_libc_observer_keeps_snapshot_math_passes_raw_and_only_disposes_remaining_defects(self):
         report = self.libc_test_fixture(profile=True, math_defects=True)
         proof = self.profile_companions()
-        inputs = self.profile_input_paths()
         with patch.object(math_oracle_defects, 'ORACLE_DEFECTS', self.fixture_math_oracle_defects()):
-            with patch.object(native, '_load_profile_companions', return_value=proof), \
-                 patch.object(wordexp_policy, 'upstream_disposition', side_effect=self.fixture_wordexp_disposition):
+            with patch.object(wordexp_policy, 'upstream_disposition', side_effect=self.fixture_wordexp_disposition):
                 result = native.collect('libc-test', self.leaf, source_mount=self.mount, dynamic_product=self.product,
-                                        root=self.root, profile_inputs=inputs)
+                                        root=self.root, profile_companions=proof)
         defects = [entry for entry in result['qualification']['dispositions'] if entry['unit'].startswith('math/')]
         self.assertEqual([entry['unit'] for entry in defects], ['math/fmal', 'math/pow', 'math/powf'])
         self.assertTrue(all(entry['status'] == 'candidate-passed-oracle-defect' for entry in defects if entry['unit'] != 'math/pow'))
@@ -1863,14 +1847,12 @@ class NativeObservationsTests(unittest.TestCase):
     def test_native_libc_math_oracle_defect_rejects_changed_stream_source_and_unlisted_failures(self):
         report = self.libc_test_fixture(profile=True, math_defects=True)
         proof = self.profile_companions()
-        inputs = self.profile_input_paths()
         fixture_defects = self.fixture_math_oracle_defects()
         def collect():
             with patch.object(math_oracle_defects, 'ORACLE_DEFECTS', fixture_defects):
-                with patch.object(native, '_load_profile_companions', return_value=proof), \
-                     patch.object(wordexp_policy, 'upstream_disposition', side_effect=self.fixture_wordexp_disposition):
+                with patch.object(wordexp_policy, 'upstream_disposition', side_effect=self.fixture_wordexp_disposition):
                     return native.collect('libc-test', self.leaf, source_mount=self.mount, dynamic_product=self.product,
-                                          root=self.root, profile_inputs=inputs)
+                                          root=self.root, profile_companions=proof)
         original_report = (self.leaf / 'libc-test.json').read_bytes()
 
         candidate = self.leaf / 'execution/math/fmal/candidate.stdout'
