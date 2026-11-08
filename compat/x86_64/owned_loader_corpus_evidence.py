@@ -1451,16 +1451,30 @@ def _corpus_root_entries(root: Path) -> dict[str, dict[str, object]]:
 
 
 def _corpus_add_parent_directories(expected: dict[str, str], relative: str) -> None:
-    _require(not relative.startswith("/"), f"package-corpus root entry is absolute: {relative}")
+    """Add every parent of ``relative`` as a directory.
+
+    Every key enters ``expected`` through ``_corpus_expected_entry``, which
+    adds all of its parents, so the walk stops at the first parent present.
+    """
+
+    if relative.startswith("/"):
+        _fail(f"package-corpus root entry is absolute: {relative}")
     parts = [part for part in relative.split("/") if part not in {"", "."}]
     for end in range(len(parts) - 1, 0, -1):
-        prior = expected.setdefault("/".join(parts[:end]), "directory")
-        _require(prior == "directory", "package-corpus root entry conflicts with a parent directory")
+        parent = "/".join(parts[:end])
+        prior = expected.get(parent)
+        if prior is None:
+            expected[parent] = "directory"
+            continue
+        if prior != "directory":
+            _fail("package-corpus root entry conflicts with a parent directory")
+        break
 
 
 def _corpus_expected_entry(expected: dict[str, str], relative: str, kind: str) -> None:
     prior = expected.setdefault(relative, kind)
-    _require(prior == kind, f"package-corpus root entry type conflicts: {relative}")
+    if prior != kind:
+        _fail(f"package-corpus root entry type conflicts: {relative}")
     _corpus_add_parent_directories(expected, relative)
 
 
@@ -1570,21 +1584,22 @@ def _validate_corpus_root_layout(payload_entries: Mapping[str, Mapping[str, obje
     root_entries = _corpus_root_entries(root)
     expected: dict[str, str] = {}
     for relative, entry in payload_entries.items():
-        _corpus_expected_entry(expected, relative, str(entry["kind"]))
+        kind = str(entry["kind"])
+        _corpus_expected_entry(expected, relative, kind)
         observed = root_entries.get(relative)
-        _require(observed is not None and observed.get("kind") == entry.get("kind"),
-                 f"package-corpus {expected_case.id} {arm} package payload entry {relative} differs")
-        for field in ("sha256", "size", "target"):
-            if field in entry:
-                _require(observed.get(field) == entry[field],
-                         f"package-corpus {expected_case.id} {arm} package payload entry {relative} differs")
-        if entry["kind"] in {"file", "directory"}:
-            payload_mode = _corpus_original_mode(entry, relative, str(entry["kind"]), payload_retention_modes,
-                                                  f"package-corpus payload entry {relative}")
-            root_mode = _corpus_original_mode(observed, relative, str(entry["kind"]), retention_modes,
-                                               f"package-corpus {expected_case.id} {arm} package payload entry {relative}")
-            _require(root_mode == payload_mode,
-                     f"package-corpus {expected_case.id} {arm} package payload entry {relative} mode differs")
+        if (observed is None or observed.get("kind") != entry.get("kind")
+                or any(field in entry and observed.get(field) != entry[field] for field in ("sha256", "size", "target"))):
+            _fail(f"package-corpus {expected_case.id} {arm} package payload entry {relative} differs")
+        if kind in {"file", "directory"}:
+            payload_mode, root_mode = entry.get("mode"), observed.get("mode")
+            if (type(payload_mode) is not int or type(root_mode) is not int
+                    or relative in payload_retention_modes or relative in retention_modes):
+                payload_mode = _corpus_original_mode(entry, relative, kind, payload_retention_modes,
+                                                      f"package-corpus payload entry {relative}")
+                root_mode = _corpus_original_mode(observed, relative, kind, retention_modes,
+                                                   f"package-corpus {expected_case.id} {arm} package payload entry {relative}")
+            if root_mode != payload_mode:
+                _fail(f"package-corpus {expected_case.id} {arm} package payload entry {relative} mode differs")
 
     for virtual in manifest.base_image_files:
         _corpus_expected_entry(expected, virtual.lstrip("/"), "file")
