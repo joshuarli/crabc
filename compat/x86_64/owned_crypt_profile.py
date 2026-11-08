@@ -192,7 +192,7 @@ def collect_link(reader, obj, binary, receipt_path, mode):
           'input_receipts': [reader.binding(path) for path in [*runtime,obj,builtins]]}, 'crypt canonical source/product link inputs')
     receipt_contract.require_runpath(search, '/usr/lib', label='crypt sealed link receipt', fail=lambda message: require(False, message))
     linker = keys(receipt['resolved_linker'], ('path', 'sha256'), 'crypt recorded linker')
-    products._check_linker(linker, receipt_path)
+    same(linker['path'], str(products.native_build_tools.MOLD), 'crypt recorded linker is the pinned mold')
     same(receipt['link_command'], link_command(reader, obj, binary, mode, linker['path']), 'crypt sealed linker invocation')
     direct = {reader.recorded(path) for path in [*runtime,obj]}
     archive = reader.recorded(builtins)
@@ -384,7 +384,7 @@ def collect_command(reader, label, command, *, raw_stdout=None, environment=ENVI
     return {'invocation': reader.identity(path), **identity}
 
 
-def collect_static_entries(reader):
+def collect_static_entries(reader, linker):
     # Dynamic-only runs make no static claim. Once any static evidence is
     # retained, both installed archive link modes must remain independently
     # verifiable, including the product outside the observation directory.
@@ -401,8 +401,8 @@ def collect_static_entries(reader):
         require(not product.is_relative_to(reader.leaf), 'crypt static product must remain outside observations')
         require(selected is None or product == selected, 'crypt static modes use different products')
         selected = product
-        linked = products.validate_link(product, reader.leaf/'workload.o',
-            reader.leaf/(mode+'-consumer'), reader.leaf/(mode+'.receipt.json'), mode)
+        linked = products.validate_retained_link(reader.root, str(reader.mount), product, reader.leaf/'workload.o',
+            reader.leaf/(mode+'-consumer'), reader.leaf/(mode+'.receipt.json'), mode, linker)
         linked['product'] = reader.recorded(product)
         same(recorded, linked, 'crypt independently recorded static product link')
         entries[mode] = {'link': linked, 'execution': collect_command(reader, mode,
@@ -508,7 +508,7 @@ def collect(root, work, *, product=None):
                     else native.digest(path))
         same(observed, item['sha256'], 'crypt physically retained pinned oracle '+name)
     abi = collect_abi_compile(reader, tools)
-    abi['static_entries'] = collect_static_entries(reader)
+    abi['static_entries'] = collect_static_entries(reader, tools['linker'])
     abi['oracle_link'] = collect_command(reader, 'abi-oracle-link', abi_oracle_command(reader.mount, Path(reader.recorded(work))), raw_stdout=b'')
     abi['oracle_elf'] = require_elf(work/'oracle','oracle')
     abi['oracle'] = collect_command(reader, 'oracle', runtime_command(Path(reader.recorded(work)),'oracle'), raw_stdout=b'crypt ok\n')

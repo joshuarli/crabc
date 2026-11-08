@@ -172,32 +172,36 @@ class CryptProfileTests(unittest.TestCase):
 
     def test_static_entries_recheck_both_physical_product_links_and_runtime_results(self):
         reader = self.static_reader()
-        def validate(product, obj, binary, receipt, mode):
-            self.assertEqual((product, obj, binary, receipt), (self.product, self.leaf/'workload.o',
-                self.leaf/(mode+'-consumer'), self.leaf/(mode+'.receipt.json')))
+        linker = {'path': '/usr/bin/mold', 'sha256': '1' * 64}
+        def validate(root, mount, product, obj, binary, receipt, mode, recorded_linker):
+            self.assertEqual((root, mount, product, obj, binary, receipt, recorded_linker),
+                (reader.root, str(reader.mount), self.product, self.leaf/'workload.o',
+                 self.leaf/(mode+'-consumer'), self.leaf/(mode+'.receipt.json'), linker))
             return {'product': str(product), 'linkage': mode}
-        with patch.object(crypt.products, 'validate_link', side_effect=validate) as checked:
-            self.assertEqual(set(crypt.collect_static_entries(reader)), {'static', 'static-pie'})
+        with patch.object(crypt.products, 'validate_retained_link', side_effect=validate) as checked, \
+             patch.object(crypt.products, 'validate_link', side_effect=AssertionError('probed the live linker')):
+            self.assertEqual(set(crypt.collect_static_entries(reader, linker)), {'static', 'static-pie'})
             self.assertEqual(checked.call_count, 2)
             self.put(self.leaf/'static-pie.stdout', b'wrong result\n')
             with self.assertRaises(native.NativeObservationError):
-                crypt.collect_static_entries(reader)
+                crypt.collect_static_entries(reader, linker)
 
     def test_static_entries_propagate_product_mutation_and_reject_incomplete_roster(self):
         reader = self.static_reader()
-        with patch.object(crypt.products, 'validate_link', side_effect=crypt.products.ProductEvidenceError('changed archive')):
+        linker = {'path': '/usr/bin/mold', 'sha256': '1' * 64}
+        with patch.object(crypt.products, 'validate_retained_link', side_effect=crypt.products.ProductEvidenceError('changed archive')):
             with self.assertRaises(crypt.products.ProductEvidenceError):
-                crypt.collect_static_entries(reader)
+                crypt.collect_static_entries(reader, linker)
         (self.leaf/'static-pie-link-evidence.json').unlink()
         with self.assertRaises(native.NativeObservationError):
-            crypt.collect_static_entries(reader)
+            crypt.collect_static_entries(reader, linker)
 
     def test_dynamic_only_leaf_has_no_static_claim(self):
         reader = self.static_reader()
         for path in self.leaf.glob('static*'):
             path.unlink()
-        with patch.object(crypt.products, 'validate_link') as checked:
-            self.assertEqual(crypt.collect_static_entries(reader), {})
+        with patch.object(crypt.products, 'validate_retained_link') as checked:
+            self.assertEqual(crypt.collect_static_entries(reader, {'path': '/usr/bin/mold', 'sha256': '1' * 64}), {})
             checked.assert_not_called()
 
     def test_runtime_invocations_bind_each_dynamic_copy_and_observer_role(self):

@@ -234,7 +234,7 @@ def _collect_link(reader, objects, binary, mode, tools):
         search, '/usr/lib', label='atomic sealed link receipt', fail=lambda message: require(False, message)
     )
     linker = keys(receipt['resolved_linker'], ('path', 'sha256'), "atomic linker's identity")
-    products._check_linker(linker, receipt_path)
+    same(linker['path'], str(products.native_build_tools.MOLD), 'atomic recorded linker is the pinned mold')
     same(linker, tools['linker'], 'atomic sealed linker differs from retained tool')
     same(receipt['link_command'], _link_command(reader, objects, binary, mode, linker['path']),
          'atomic sealed linker invocation')
