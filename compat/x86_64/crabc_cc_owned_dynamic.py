@@ -228,16 +228,17 @@ def validate(root: Path) -> dict:
     files = record.get("files")
     if not isinstance(files, dict) or not required <= files.keys():
         raise shared.DriverError("incomplete installed dynamic payload")
-    observed, aliases, other = shared.installed_tree_roster(root)
+    hashes, aliases, other = shared.installed_tree(root)
     if other:
         raise shared.DriverError(f"nonregular installed payload: {other[0]}")
-    observed.discard("share/crabc/manifest.json")
+    hashes.pop("share/crabc/manifest.json", None)
+    observed = set(hashes)
     if observed != files.keys() or aliases != profile.aliases:
         raise shared.DriverError("installed payload differs from exact manifest roster")
     for relative, digest in files.items():
         if Path(relative).is_absolute() or ".." in Path(relative).parts or not re.fullmatch("[0-9a-f]{64}", str(digest)):
             raise shared.DriverError("unsafe manifest payload entry")
-        if shared.sha256_file(root / relative) != digest:
+        if hashes[relative] != digest:
             raise shared.DriverError(f"installed payload hash mismatch: {relative}")
     shared.validate_crt_provenance(root, "share/crabc/crt.provenance.json", profile, "Scrt1.o")
     validate_loader_provenance(root, "share/crabc/loader.provenance.json", profile, record.get("build_profile"))
@@ -269,16 +270,17 @@ def validate_combined(root: Path) -> dict:
     if (product.get("format") != FORMAT or product.get("manifest") != COMBINED_PRODUCT_MANIFEST
             or COMBINED_PRODUCT_MANIFEST not in files or not isinstance(placements, dict)):
         raise shared.DriverError("combined sysroot does not embed this dynamic product")
-    observed, aliases, other = shared.installed_tree_roster(root)
+    hashes, aliases, other = shared.installed_tree(root)
     if other:
         raise shared.DriverError(f"nonregular installed payload: {other[0]}")
-    observed.discard(MANIFEST)
+    hashes.pop(MANIFEST, None)
+    observed = set(hashes)
     if observed != files.keys() or aliases != profile.aliases:
         raise shared.DriverError("installed payload differs from exact combined manifest roster")
     for relative, digest in files.items():
         if Path(relative).is_absolute() or ".." in Path(relative).parts or not re.fullmatch("[0-9a-f]{64}", str(digest)):
             raise shared.DriverError("unsafe combined manifest payload entry")
-        if shared.sha256_file(root / relative) != digest:
+        if hashes[relative] != digest:
             raise shared.DriverError(f"installed payload hash mismatch: {relative}")
     try:
         embedded = json.loads((root / COMBINED_PRODUCT_MANIFEST).read_text())

@@ -206,31 +206,50 @@ def require_regular(path: Path, description: str) -> None:
         raise DriverError(f"owned {description} is missing or unsafe: {path}")
 
 
-def installed_tree_roster(root: Path) -> tuple[set[str], dict[str, str], list[str]]:
-    """Return the regular files, symlink targets and other entries below ``root``.
+def installed_tree(root: Path) -> tuple[dict[str, str], dict[str, str], list[str]]:
+    """Return the regular-file hashes, symlink targets and other entries below ``root``.
 
-    Paths are relative POSIX spellings. A symlinked directory is reported as a
-    symlink and never entered.
+    Paths are relative POSIX spellings. Every directory is opened O_NOFOLLOW
+    relative to its parent, so a symlinked directory is reported as a symlink
+    and never entered, and each file is hashed from the entry just listed.
     """
 
-    regular: set[str] = set()
+    regular: dict[str, str] = {}
     links: dict[str, str] = {}
     other: list[str] = []
-    pending = [""]
-    while pending:
-        directory = pending.pop()
-        with os.scandir(os.path.join(root, directory)) as children:
-            for child in children:
-                relative = f"{directory}/{child.name}" if directory else child.name
-                mode = child.stat(follow_symlinks=False).st_mode
-                if stat.S_ISLNK(mode):
-                    links[relative] = os.readlink(child.path)
-                elif stat.S_ISDIR(mode):
-                    pending.append(relative)
-                elif stat.S_ISREG(mode):
-                    regular.add(relative)
-                else:
-                    other.append(relative)
+    flags = os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC
+    pending = [("", os.open(root, flags | os.O_DIRECTORY))]
+    try:
+        while pending:
+            directory, parent = pending.pop()
+            try:
+                with os.scandir(parent) as children:
+                    entries = [(f"{directory}/{child.name}" if directory else child.name, child.name,
+                                child.stat(follow_symlinks=False).st_mode) for child in children]
+                for relative, name, mode in entries:
+                    if stat.S_ISLNK(mode):
+                        links[relative] = os.readlink(name, dir_fd=parent)
+                    elif stat.S_ISDIR(mode):
+                        pending.append((relative, os.open(name, flags | os.O_DIRECTORY, dir_fd=parent)))
+                    elif stat.S_ISREG(mode):
+                        descriptor = os.open(name, flags | os.O_NONBLOCK, dir_fd=parent)
+                        try:
+                            if not stat.S_ISREG(os.fstat(descriptor).st_mode):
+                                other.append(relative)
+                                continue
+                            digest = hashlib.sha256()
+                            while block := os.read(descriptor, 1 << 16):
+                                digest.update(block)
+                            regular[relative] = digest.hexdigest()
+                        finally:
+                            os.close(descriptor)
+                    else:
+                        other.append(relative)
+            finally:
+                os.close(parent)
+    finally:
+        for _, descriptor in pending:
+            os.close(descriptor)
     return regular, links, sorted(other)
 
 
@@ -377,7 +396,8 @@ def validate_manifest_payload(root: Path) -> None:
     else:
         files, links = static_product_payload_files(manifest), {}
     expected_files = set(files)
-    observed_files, observed_links, other = installed_tree_roster(root)
+    observed_hashes, observed_links, other = installed_tree(root)
+    observed_files = set(observed_hashes)
     unexpected_links = sorted(set(observed_links) - set(links))
     if unexpected_links:
         raise DriverError(f"owned installed tree contains a symlink: {unexpected_links[0]}")
@@ -393,9 +413,7 @@ def validate_manifest_payload(root: Path) -> None:
     if observed_links != links:
         raise DriverError("owned installed aliases differ from the combined manifest")
     for relative, expected_hash in files.items():
-        artifact = root / relative
-        require_regular(artifact, relative)
-        if sha256_file(artifact) != expected_hash:
+        if observed_hashes[relative] != expected_hash:
             raise DriverError(f"owned manifest payload hash mismatch: {relative}")
 
 
