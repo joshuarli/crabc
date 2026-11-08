@@ -541,6 +541,32 @@ class ErrnoStorageLifecycleTests(unittest.TestCase):
                     ROOT,
                 )
 
+    def test_shared_libc_identity_admits_only_the_installed_loader_hard_link(self) -> None:
+        TEST_WORK_ROOT.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(dir=TEST_WORK_ROOT) as temporary:
+            product = Path(temporary)
+            libc = product / "usr/lib/libc.so"
+            loader = product / "lib/ld-crabc-x86_64.so.1"
+            libc.parent.mkdir(parents=True)
+            loader.parent.mkdir(parents=True)
+            libc.write_bytes(b"shared libc")
+            record = reader.identity(libc, "shared libc", shared_libc=True)
+            loader.hardlink_to(libc)
+            self.assertEqual(reader.identity(libc, "shared libc", shared_libc=True), record)
+            self.assertEqual(reader.validate_identity(record, "shared libc", shared_libc=True), libc)
+            with self.assertRaisesRegex(reader.ErrnoStorageEvidenceError, "unexpected hard link"):
+                reader.identity(libc, "shared libc")
+            (product / "extra").hardlink_to(libc)
+            with self.assertRaisesRegex(reader.ErrnoStorageEvidenceError, "unexpected hard link"):
+                reader.identity(libc, "shared libc", shared_libc=True)
+            (product / "extra").unlink()
+            loader.unlink()
+            (product / "other").write_bytes(b"other")
+            loader.hardlink_to(product / "other")
+            (product / "stray").hardlink_to(libc)
+            with self.assertRaisesRegex(reader.ErrnoStorageEvidenceError, "unexpected hard link"):
+                reader.validate_identity(record, "shared libc", shared_libc=True)
+
     def test_independent_link_layouts_do_not_compare_raw_addresses(self) -> None:
         # Alias identity is a relation inside an ELF file.  Pinned-musl and
         # candidate links may legitimately assign unrelated section/value pairs.

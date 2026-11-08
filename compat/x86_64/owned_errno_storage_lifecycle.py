@@ -160,17 +160,22 @@ def strict_json_loads(payload: str, description: str) -> Any:
         raise ErrnoStorageEvidenceError(f"{description} is not strict JSON") from error
 
 
-def physical_regular(path: Path, description: str) -> Path:
+def physical_regular(path: Path, description: str, *, loader_link: Path | None = None) -> Path:
     try:
         resolved = path.resolve(strict=True)
         status = path.lstat()
+        loader_status = loader_link.lstat() if loader_link is not None and status.st_nlink == 2 else None
     except OSError as error:
         raise ErrnoStorageEvidenceError(f"{description} is unavailable: {path}") from error
     if path.is_symlink() or not resolved.is_file() or not os.path.isfile(path):
         fail(f"{description} is not a physical regular file: {path}")
-    if status.st_nlink != 1:
+    if status.st_nlink != 1 and not (loader_status is not None and os.path.samestat(status, loader_status)):
         fail(f"{description} has an unexpected hard link: {path}")
     return resolved
+
+
+def shared_libc_loader_link(libc: Path) -> Path:
+    return libc.parent.parent.parent / "lib/ld-crabc-x86_64.so.1"
 
 
 def physical_directory(path: Path, description: str) -> Path:
@@ -191,8 +196,8 @@ def sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
-def identity(path: Path, description: str) -> dict[str, object]:
-    physical = physical_regular(path, description)
+def identity(path: Path, description: str, *, shared_libc: bool = False) -> dict[str, object]:
+    physical = physical_regular(path, description, loader_link=shared_libc_loader_link(path) if shared_libc else None)
     return {"path": str(physical), "sha256": sha256(physical), "size_bytes": physical.stat().st_size}
 
 
@@ -214,14 +219,16 @@ def exact_same(left: object, right: object) -> bool:
     return left == right
 
 
-def validate_identity(value: object, description: str, *, within: Path | None = None) -> Path:
+def validate_identity(value: object, description: str, *, within: Path | None = None,
+                      shared_libc: bool = False) -> Path:
     record = require_exact_mapping(value, {"path", "sha256", "size_bytes"}, description)
     path_value, digest, size = record["path"], record["sha256"], record["size_bytes"]
     if not isinstance(path_value, str) or not isinstance(digest, str) or SHA256.fullmatch(digest) is None:
         fail(f"{description} identity is malformed")
     if type(size) is not int or size < 0:
         fail(f"{description} size is malformed")
-    path = physical_regular(Path(path_value), description)
+    path = Path(path_value)
+    path = physical_regular(path, description, loader_link=shared_libc_loader_link(path) if shared_libc else None)
     if within is not None:
         try:
             path.relative_to(within)
@@ -832,7 +839,7 @@ def _product_libraries(products: Mapping[str, Any]) -> tuple[Path, Path]:
         fail("errno storage products are malformed")
     return (
         validate_identity(static.get("libc"), "candidate static libc"),
-        validate_identity(dynamic.get("libc"), "candidate shared libc"),
+        validate_identity(dynamic.get("libc"), "candidate shared libc", shared_libc=True),
     )
 
 
@@ -1053,7 +1060,7 @@ def product_record(static_product: Path, dynamic_product: Path) -> dict[str, Any
         "dynamic": {
             "root": str(dynamic),
             "manifest": identity(dynamic / "share/crabc/manifest.json", "dynamic product manifest"),
-            "libc": identity(dynamic / "usr/lib/libc.so", "dynamic product libc shared object"),
+            "libc": identity(dynamic / "usr/lib/libc.so", "dynamic product libc shared object", shared_libc=True),
             "libc_shared_provenance": identity(
                 dynamic / "share/crabc/libc-shared.provenance.json", "dynamic product libc shared provenance"
             ),
@@ -1072,7 +1079,7 @@ def validate_products(value: object) -> dict[str, Any]:
             fail(f"{kind} product root is malformed")
         root = physical_directory(Path(item["root"]), f"{kind} product root")
         validate_identity(item["manifest"], f"{kind} product manifest")
-        libc = validate_identity(item["libc"], f"{kind} product libc")
+        libc = validate_identity(item["libc"], f"{kind} product libc", shared_libc=kind == "dynamic")
         if libc != root / "usr/lib" / library:
             fail(f"{kind} product library path drifted")
         if kind == "dynamic":
