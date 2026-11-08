@@ -228,17 +228,10 @@ def validate(root: Path) -> dict:
     files = record.get("files")
     if not isinstance(files, dict) or not required <= files.keys():
         raise shared.DriverError("incomplete installed dynamic payload")
-    observed = set()
-    aliases = {}
-    for path in root.rglob("*"):
-        relative = path.relative_to(root).as_posix()
-        if path.is_symlink():
-            aliases[relative] = os.readlink(path)
-        elif path.is_file():
-            if relative != "share/crabc/manifest.json":
-                observed.add(relative)
-        elif not path.is_dir():
-            raise shared.DriverError(f"nonregular installed payload: {relative}")
+    observed, aliases, other = shared.installed_tree_roster(root)
+    if other:
+        raise shared.DriverError(f"nonregular installed payload: {other[0]}")
+    observed.discard("share/crabc/manifest.json")
     if observed != files.keys() or aliases != profile.aliases:
         raise shared.DriverError("installed payload differs from exact manifest roster")
     for relative, digest in files.items():
@@ -276,16 +269,10 @@ def validate_combined(root: Path) -> dict:
     if (product.get("format") != FORMAT or product.get("manifest") != COMBINED_PRODUCT_MANIFEST
             or COMBINED_PRODUCT_MANIFEST not in files or not isinstance(placements, dict)):
         raise shared.DriverError("combined sysroot does not embed this dynamic product")
-    observed, aliases = set(), {}
-    for path in root.rglob("*"):
-        relative = path.relative_to(root).as_posix()
-        if path.is_symlink():
-            aliases[relative] = os.readlink(path)
-        elif path.is_file():
-            if relative != MANIFEST:
-                observed.add(relative)
-        elif not path.is_dir():
-            raise shared.DriverError(f"nonregular installed payload: {relative}")
+    observed, aliases, other = shared.installed_tree_roster(root)
+    if other:
+        raise shared.DriverError(f"nonregular installed payload: {other[0]}")
+    observed.discard(MANIFEST)
     if observed != files.keys() or aliases != profile.aliases:
         raise shared.DriverError("installed payload differs from exact combined manifest roster")
     for relative, digest in files.items():

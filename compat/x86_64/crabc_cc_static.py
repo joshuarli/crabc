@@ -20,6 +20,7 @@ import hashlib
 import json
 import os
 import shutil
+import stat
 import subprocess
 import sys
 import tempfile
@@ -205,6 +206,34 @@ def require_regular(path: Path, description: str) -> None:
         raise DriverError(f"owned {description} is missing or unsafe: {path}")
 
 
+def installed_tree_roster(root: Path) -> tuple[set[str], dict[str, str], list[str]]:
+    """Return the regular files, symlink targets and other entries below ``root``.
+
+    Paths are relative POSIX spellings. A symlinked directory is reported as a
+    symlink and never entered.
+    """
+
+    regular: set[str] = set()
+    links: dict[str, str] = {}
+    other: list[str] = []
+    pending = [""]
+    while pending:
+        directory = pending.pop()
+        with os.scandir(os.path.join(root, directory)) as children:
+            for child in children:
+                relative = f"{directory}/{child.name}" if directory else child.name
+                mode = child.stat(follow_symlinks=False).st_mode
+                if stat.S_ISLNK(mode):
+                    links[relative] = os.readlink(child.path)
+                elif stat.S_ISDIR(mode):
+                    pending.append(relative)
+                elif stat.S_ISREG(mode):
+                    regular.add(relative)
+                else:
+                    other.append(relative)
+    return regular, links, sorted(other)
+
+
 def sha256_file(path: Path) -> str:
     digest = hashlib.sha256()
     with path.open("rb") as stream:
@@ -348,22 +377,13 @@ def validate_manifest_payload(root: Path) -> None:
     else:
         files, links = static_product_payload_files(manifest), {}
     expected_files = set(files)
-    observed_files: set[str] = set()
-    observed_links: dict[str, str] = {}
-    for artifact in sorted(root.rglob("*")):
-        relative = artifact.relative_to(root).as_posix()
-        if artifact.is_symlink():
-            if relative not in links:
-                raise DriverError(f"owned installed tree contains a symlink: {relative}")
-            observed_links[relative] = os.readlink(artifact)
-            continue
-        if artifact.is_dir():
-            continue
-        if not artifact.is_file():
-            raise DriverError(f"owned installed tree contains a non-regular entry: {relative}")
-        if relative == MANIFEST_RELATIVE_PATH:
-            continue
-        observed_files.add(relative)
+    observed_files, observed_links, other = installed_tree_roster(root)
+    unexpected_links = sorted(set(observed_links) - set(links))
+    if unexpected_links:
+        raise DriverError(f"owned installed tree contains a symlink: {unexpected_links[0]}")
+    if other:
+        raise DriverError(f"owned installed tree contains a non-regular entry: {other[0]}")
+    observed_files.discard(MANIFEST_RELATIVE_PATH)
     undeclared = sorted(observed_files - expected_files)
     if undeclared:
         raise DriverError(f"owned manifest has an undeclared installed regular file: {undeclared[0]}")
