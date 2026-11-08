@@ -289,18 +289,27 @@ def _normalised_mode(recorded: int, actual: int, kind: str) -> bool:
 def _loader_tree_entries(path: Path) -> list[dict[str, object]]:
     root = _physical_directory(path, "retained loader tree")
     entries: list[dict[str, object]] = []
+    found: list[tuple[str, str, os.stat_result]] = []
+    pending = [(os.fspath(root), "")]
     try:
-        found = sorted(root.rglob("*"), key=lambda value: value.relative_to(root).as_posix())
+        while pending:
+            directory, prefix = pending.pop()
+            with os.scandir(directory) as scan:
+                for child in scan:
+                    metadata = child.stat(follow_symlinks=False)
+                    found.append((prefix + child.name, child.path, metadata))
+                    if stat.S_ISDIR(metadata.st_mode):
+                        pending.append((child.path, prefix + child.name + "/"))
     except OSError as error:
         raise LoaderCorpusEvidenceError(f"cannot enumerate retained loader tree: {root}") from error
-    for item in found:
-        relative = item.relative_to(root).as_posix()
-        mode = item.lstat().st_mode
+    found.sort(key=lambda value: value[0])
+    for relative, item, metadata in found:
+        mode = metadata.st_mode
         data: dict[str, object] = {"path": relative, "mode": stat.S_IMODE(mode)}
         if stat.S_ISLNK(mode):
             data.update(kind="symlink", target=os.readlink(item))
         elif stat.S_ISREG(mode):
-            data.update(kind="file", sha256=_sha256_walked_file(item), size=item.lstat().st_size)
+            data.update(kind="file", sha256=_sha256_walked_file(item), size=metadata.st_size)
         elif stat.S_ISDIR(mode):
             data.update(kind="directory")
         else:
@@ -1409,28 +1418,29 @@ def _corpus_root_entries(root: Path) -> dict[str, dict[str, object]]:
 
     root = _physical_directory(root, "package-corpus retained root")
     entries: dict[str, dict[str, object]] = {}
-    pending = [root]
+    pending = [(os.fspath(root), "")]
     while pending:
-        directory = pending.pop()
+        directory, prefix = pending.pop()
         try:
-            children = sorted(directory.iterdir(), key=lambda child: child.name, reverse=True)
+            with os.scandir(directory) as scan:
+                children = sorted(scan, key=lambda child: child.name, reverse=True)
         except OSError as error:
             raise LoaderCorpusEvidenceError(f"package-corpus retained root is unreadable: {directory}") from error
         for child in children:
-            relative = child.relative_to(root).as_posix()
+            relative = prefix + child.name
             try:
-                metadata = child.lstat()
+                metadata = child.stat(follow_symlinks=False)
             except OSError as error:
                 raise LoaderCorpusEvidenceError(f"package-corpus retained root entry is unreadable: {relative}") from error
             mode = metadata.st_mode
             item: dict[str, object] = {"mode": stat.S_IMODE(mode)}
             if stat.S_ISREG(mode):
-                item.update(kind="file", sha256=_sha256_walked_file(child), size=metadata.st_size)
+                item.update(kind="file", sha256=_sha256_walked_file(child.path), size=metadata.st_size)
             elif stat.S_ISDIR(mode):
                 item["kind"] = "directory"
-                pending.append(child)
+                pending.append((child.path, relative + "/"))
             elif stat.S_ISLNK(mode):
-                item.update(kind="symlink", target=os.readlink(child))
+                item.update(kind="symlink", target=os.readlink(child.path))
             elif stat.S_ISCHR(mode) and relative == "dev/null":
                 item.update(kind="character", major=os.major(metadata.st_rdev), minor=os.minor(metadata.st_rdev))
             else:
@@ -1441,12 +1451,11 @@ def _corpus_root_entries(root: Path) -> dict[str, dict[str, object]]:
 
 
 def _corpus_add_parent_directories(expected: dict[str, str], relative: str) -> None:
-    current = PurePosixPath(relative).parent
-    while current.parts:
-        parent = current.as_posix()
-        prior = expected.setdefault(parent, "directory")
+    _require(not relative.startswith("/"), f"package-corpus root entry is absolute: {relative}")
+    parts = [part for part in relative.split("/") if part not in {"", "."}]
+    for end in range(len(parts) - 1, 0, -1):
+        prior = expected.setdefault("/".join(parts[:end]), "directory")
         _require(prior == "directory", "package-corpus root entry conflicts with a parent directory")
-        current = current.parent
 
 
 def _corpus_expected_entry(expected: dict[str, str], relative: str, kind: str) -> None:

@@ -119,16 +119,22 @@ def sha256_bytes(value: bytes) -> str:
 
 def sha256_file(path: Path, label: str) -> str:
     try:
-        mode = path.lstat().st_mode
-        if not stat.S_ISREG(mode) or path.is_symlink():
+        descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC)
+    except OSError as error:
+        if os.path.islink(path):
+            fail(f"{label} is not a physical regular file: {path}")
+        raise CorpusError(f"cannot hash {label}: {path}") from error
+    try:
+        if not stat.S_ISREG(os.fstat(descriptor).st_mode):
             fail(f"{label} is not a physical regular file: {path}")
         digest = hashlib.sha256()
-        with path.open("rb") as stream:
-            for block in iter(lambda: stream.read(1024 * 1024), b""):
-                digest.update(block)
+        while block := os.read(descriptor, 1 << 16):
+            digest.update(block)
         return digest.hexdigest()
     except OSError as error:
         raise CorpusError(f"cannot hash {label}: {path}") from error
+    finally:
+        os.close(descriptor)
 
 
 def require_physical_directory(path: Path, label: str) -> Path:
@@ -556,13 +562,16 @@ def tree_sha256(root: Path, label: str, *, retention_modes: Mapping[str, int] | 
             fail(f"{label} has an invalid retained mode entry")
     observed_modes: set[str] = set()
     digest = hashlib.sha256()
-    pending = [root]
+    pending = [(os.fspath(root), "")]
     while pending:
-        directory = pending.pop()
-        for child in sorted(directory.iterdir(), key=lambda value: value.name, reverse=True):
-            relative_path = child.relative_to(root).as_posix()
+        directory, prefix = pending.pop()
+        with os.scandir(directory) as scan:
+            children = sorted(scan, key=lambda value: value.name, reverse=True)
+        for entry in children:
+            child = Path(entry.path)
+            relative_path = prefix + entry.name
             relative = relative_path.encode("utf-8")
-            mode = child.lstat().st_mode
+            mode = entry.stat(follow_symlinks=False).st_mode
             permissions = stat.S_IMODE(mode)
             if relative_path in retention_modes:
                 original = retention_modes[relative_path]
@@ -576,7 +585,7 @@ def tree_sha256(root: Path, label: str, *, retention_modes: Mapping[str, int] | 
                 digest.update(b"regular\0" + bytes.fromhex(sha256_file(child, label)))
             elif stat.S_ISDIR(mode):
                 digest.update(b"directory\0")
-                pending.append(child)
+                pending.append((entry.path, relative_path + "/"))
             elif stat.S_ISLNK(mode):
                 digest.update(b"symlink\0" + os.fsencode(os.readlink(child)))
             elif stat.S_ISCHR(mode):

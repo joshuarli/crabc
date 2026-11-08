@@ -156,9 +156,20 @@ def require(condition: bool, message: str) -> None:
         raise QualificationError(message)
 
 
-def digest(path: Path) -> str:
-    require(path.is_file() and not path.is_symlink(), f"missing or unsafe evidence: {path}")
-    return hashlib.sha256(path.read_bytes()).hexdigest()
+def digest(path: Path | str) -> str:
+    """Hash one regular file opened without following a final symlink."""
+    try:
+        descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC)
+    except OSError as error:
+        raise QualificationError(f"missing or unsafe evidence: {path}") from error
+    try:
+        require(stat.S_ISREG(os.fstat(descriptor).st_mode), f"missing or unsafe evidence: {path}")
+        value = hashlib.sha256()
+        while block := os.read(descriptor, 1 << 16):
+            value.update(block)
+    finally:
+        os.close(descriptor)
+    return value.hexdigest()
 
 
 def git(*arguments: str) -> bytes:
@@ -438,7 +449,7 @@ def artifact_snapshot(log: Path, source_mount: str) -> dict:
                     mode = child.stat(follow_symlinks=False).st_mode
                     entry = {"mode": stat.S_IMODE(mode), "type": stat.S_IFMT(mode)}
                     if stat.S_ISREG(mode):
-                        entry["sha256"] = digest(Path(child.path))
+                        entry["sha256"] = digest(child.path)
                     elif stat.S_ISLNK(mode):
                         entry["target"] = os.readlink(child.path)
                     entries[name] = entry

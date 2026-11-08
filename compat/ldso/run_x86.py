@@ -312,14 +312,25 @@ def summary_lines(component_complete: bool, evidence: pathlib.Path, receipt: pat
 
 def tree_seal(root: pathlib.Path) -> dict[str, object]:
     entries: list[dict[str, object]] = []
-    for item in sorted(root.rglob("*"), key=lambda value: value.relative_to(root).as_posix()):
-        relative = item.relative_to(root).as_posix()
-        data: dict[str, object] = {"path": relative, "mode": stat.S_IMODE(item.lstat().st_mode)}
-        if item.is_symlink():
+    found: list[tuple[str, str, os.stat_result]] = []
+    pending = [(os.fspath(root), "")]
+    while pending:
+        directory, prefix = pending.pop()
+        with os.scandir(directory) as scan:
+            for child in scan:
+                metadata = child.stat(follow_symlinks=False)
+                found.append((prefix + child.name, child.path, metadata))
+                if stat.S_ISDIR(metadata.st_mode):
+                    pending.append((child.path, prefix + child.name + "/"))
+    found.sort(key=lambda value: value[0])
+    for relative, item, metadata in found:
+        mode = metadata.st_mode
+        data: dict[str, object] = {"path": relative, "mode": stat.S_IMODE(mode)}
+        if stat.S_ISLNK(mode):
             data.update(kind="symlink", target=os.readlink(item))
-        elif item.is_file():
-            data.update(kind="file", sha256=sha256(item), size=item.stat().st_size)
-        elif item.is_dir():
+        elif stat.S_ISREG(mode):
+            data.update(kind="file", sha256=sha256(pathlib.Path(item)), size=metadata.st_size)
+        elif stat.S_ISDIR(mode):
             data.update(kind="directory")
         else:
             raise LoaderSyntheticError(f"unsealed special product entry: {item}")
