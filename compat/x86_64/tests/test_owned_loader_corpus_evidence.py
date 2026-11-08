@@ -354,6 +354,16 @@ class OwnedLoaderCorpusEvidenceTests(unittest.TestCase):
         self.assertEqual(identity["case_count"], len(evidence.LOADER_CASES))
         self.assertEqual(identity["product_manifest_sha256"], sha256(self.product / "share/crabc/manifest.json"))
 
+    def test_retained_artifact_hash_rejects_a_symlinked_ancestor(self) -> None:
+        tree = self.work / "retained"
+        tree.mkdir()
+        (tree / "payload").write_bytes(b"retained bytes")
+        self.assertEqual(evidence._sha256(tree / "payload"), hashlib.sha256(b"retained bytes").hexdigest())
+        redirected = self.work / "redirected"
+        redirected.symlink_to(tree, target_is_directory=True)
+        with self.assertRaisesRegex(evidence.LoaderCorpusEvidenceError, "traverses a symlink"):
+            evidence._sha256(redirected / "payload")
+
     def test_loader_shared_sidecar_command_binds_its_soname(self) -> None:
         report = self._loader_report()
         value = json.loads(report.read_text(encoding="utf-8"))

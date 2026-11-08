@@ -101,12 +101,13 @@ def _absolute(path: Path) -> Path:
 
 def _without_symlink_components(path: Path, description: str) -> Path:
     _require(".." not in path.parts, f"{description} has parent traversal")
-    absolute = _absolute(path)
-    current = Path(absolute.anchor)
+    spelling = os.path.abspath(path)
+    absolute = Path(spelling)
     try:
-        for component in absolute.parts[1:]:
-            current /= component
-            if stat.S_ISLNK(current.lstat().st_mode):
+        end = 0
+        while end >= 0:
+            end = spelling.find("/", end + 1)
+            if stat.S_ISLNK(os.lstat(spelling if end < 0 else spelling[:end]).st_mode):
                 _fail(f"{description} traverses a symlink: {path}")
     except OSError as error:
         raise LoaderCorpusEvidenceError(f"{description} is unavailable: {path}") from error

@@ -1010,6 +1010,24 @@ class OwnedPosixProductEvidenceTests(unittest.TestCase):
                     self.dynamic, lexical_workload, self.executable, receipt, "pie"
                 )
 
+    def test_symlinked_workload_ancestor_fails(self) -> None:
+        receipt = self.dynamic_receipt()
+        redirected = self.root / "redirected-work"
+        redirected.symlink_to(self.workload.parent, target_is_directory=True)
+        with mock.patch.object(evidence, "_readelf", return_value=self.readelf("pie")):
+            with self.assertRaisesRegex(evidence.ProductEvidenceError, "workload object traverses a symlink"):
+                evidence.validate_link(
+                    self.dynamic, redirected / self.workload.name, self.executable, receipt, "pie"
+                )
+
+    def test_symlinked_product_payload_directory_fails(self) -> None:
+        include = self.dynamic / "usr/include"
+        moved = self.root / "moved-include"
+        include.rename(moved)
+        include.symlink_to(moved, target_is_directory=True)
+        with self.assertRaisesRegex(evidence.ProductEvidenceError, "dynamic product headers traverses a symlink"):
+            evidence._validate_dynamic_product(self.dynamic)
+
     def test_receipt_linker_must_be_an_executable_mold(self) -> None:
         receipt = self.static_receipt()
         record = json.loads(receipt.read_text(encoding="utf-8"))

@@ -121,25 +121,21 @@ def _fail(message: str) -> None:
     raise ProductEvidenceError(message)
 
 
-def _absolute(path: Path) -> Path:
-    return Path(os.path.abspath(path))
-
-
 def _reject_symlink_components(path: Path, description: str) -> Path:
     """Return an absolute existing path only after checking lexical ancestry."""
 
     if ".." in path.parts:
         _fail(f"{description} has lexical parent traversal: {path}")
-    absolute = _absolute(path)
-    current = Path(absolute.anchor)
+    absolute = os.path.abspath(path)
     try:
-        for component in absolute.parts[1:]:
-            current /= component
-            if stat.S_ISLNK(current.lstat().st_mode):
+        end = 0
+        while end >= 0:
+            end = absolute.find("/", end + 1)
+            if stat.S_ISLNK(os.lstat(absolute if end < 0 else absolute[:end]).st_mode):
                 _fail(f"{description} traverses a symlink: {path}")
     except OSError as error:
         raise ProductEvidenceError(f"{description} is unreadable: {path}") from error
-    return absolute
+    return Path(absolute)
 
 
 def _physical_directory(path: Path, description: str) -> Path:
@@ -509,35 +505,37 @@ def _payload_files(value: object, description: str) -> dict[str, str]:
 def _validate_payload_tree(root: Path, files: Mapping[str, str], *, aliases: Mapping[str, str]) -> None:
     observed_files: set[str] = set()
     observed_aliases: dict[str, str] = {}
-    try:
-        entries = sorted(root.rglob("*"))
-    except OSError as error:
-        raise ProductEvidenceError(f"cannot enumerate product payload: {root}") from error
-    for entry in entries:
-        relative = entry.relative_to(root).as_posix()
+    pending = [""]
+    while pending:
+        directory = pending.pop()
         try:
-            mode = entry.lstat().st_mode
+            with os.scandir(os.path.join(root, directory)) as children:
+                entries = [(f"{directory}/{child.name}" if directory else child.name, child) for child in children]
         except OSError as error:
-            raise ProductEvidenceError(f"cannot inspect product payload: {entry}") from error
-        if stat.S_ISLNK(mode):
+            raise ProductEvidenceError(f"cannot enumerate product payload: {root}") from error
+        for relative, entry in entries:
             try:
-                observed_aliases[relative] = os.readlink(entry)
+                mode = entry.stat(follow_symlinks=False).st_mode
             except OSError as error:
-                raise ProductEvidenceError(f"cannot read product alias: {entry}") from error
-        elif stat.S_ISDIR(mode):
-            continue
-        elif stat.S_ISREG(mode):
-            if relative != "share/crabc/manifest.json":
-                observed_files.add(relative)
-        else:
-            _fail(f"product payload has a non-regular entry: {relative}")
+                raise ProductEvidenceError(f"cannot inspect product payload: {entry.path}") from error
+            if stat.S_ISLNK(mode):
+                try:
+                    observed_aliases[relative] = os.readlink(entry.path)
+                except OSError as error:
+                    raise ProductEvidenceError(f"cannot read product alias: {entry.path}") from error
+            elif stat.S_ISDIR(mode):
+                pending.append(relative)
+            elif stat.S_ISREG(mode):
+                if relative != "share/crabc/manifest.json":
+                    observed_files.add(relative)
+            else:
+                _fail(f"product payload has a non-regular entry: {relative}")
     if observed_files != set(files):
         _fail("product payload roster differs from its manifest")
     if observed_aliases != dict(aliases):
         _fail("product alias roster differs from its manifest")
     for relative, expected in files.items():
-        artifact = _physical_regular(root / relative, f"product payload {relative}")
-        _require_digest(expected, _sha256(artifact), f"product payload {relative}")
+        _require_digest(expected, _sha256(root / relative), f"product payload {relative}")
 
 
 def _validate_link_input_modes(root: Path, expected: Mapping[str, int], label: str) -> None:
