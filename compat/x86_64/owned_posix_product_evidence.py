@@ -124,7 +124,11 @@ def _fail(message: str) -> None:
 def _reject_symlink_components(path: Path, description: str) -> Path:
     """Return an absolute existing path only after checking lexical ancestry."""
 
-    if ".." in path.parts:
+    return Path(_symlink_free_spelling(path, description))
+
+
+def _symlink_free_spelling(path: str | Path, description: str) -> str:
+    if ".." in os.fspath(path).split("/"):
         _fail(f"{description} has lexical parent traversal: {path}")
     absolute = os.path.abspath(path)
     try:
@@ -135,7 +139,7 @@ def _reject_symlink_components(path: Path, description: str) -> Path:
                 _fail(f"{description} traverses a symlink: {path}")
     except OSError as error:
         raise ProductEvidenceError(f"{description} is unreadable: {path}") from error
-    return Path(absolute)
+    return absolute
 
 
 def _physical_directory(path: Path, description: str) -> Path:
@@ -170,16 +174,13 @@ def _physical_executable(path: Path, description: str) -> Path:
     return absolute
 
 
-def _sha256(path: Path) -> str:
-    path = _physical_regular(path, "hashed artifact")
-    digest = hashlib.sha256()
+def _sha256(path: str | Path) -> str:
+    spelling = _symlink_free_spelling(path, "hashed artifact")
     try:
-        with path.open("rb") as stream:
-            for block in iter(lambda: stream.read(1024 * 1024), b""):
-                digest.update(block)
+        descriptor = os.open(spelling, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC)
     except OSError as error:
         raise ProductEvidenceError(f"cannot hash artifact: {path}") from error
-    return digest.hexdigest()
+    return _hash_open_regular(descriptor, str(path))
 
 
 def semantic_link_trace(lines: list[str]) -> list[str]:
@@ -484,8 +485,8 @@ def _require_digest(value: object, actual: str, description: str) -> None:
 def _relative_payload_path(value: object, description: str) -> str:
     if not isinstance(value, str):
         _fail(f"{description} has a non-string path")
-    candidate = Path(value)
-    if candidate.is_absolute() or not candidate.parts or any(part in {"", ".", ".."} for part in candidate.parts):
+    parts = [part for part in value.split("/") if part not in {"", "."}]
+    if value.startswith("/") or not parts or ".." in parts:
         _fail(f"{description} has an unsafe payload path: {value}")
     return value
 
@@ -502,40 +503,76 @@ def _payload_files(value: object, description: str) -> dict[str, str]:
     return result
 
 
+def _hash_open_regular(descriptor: int, label: str) -> str:
+    try:
+        if not stat.S_ISREG(os.fstat(descriptor).st_mode):
+            _fail(f"hashed artifact is not a physical regular file: {label}")
+        digest = hashlib.sha256()
+        while block := os.read(descriptor, 1 << 16):
+            digest.update(block)
+    except OSError as error:
+        raise ProductEvidenceError(f"cannot hash artifact: {label}") from error
+    finally:
+        os.close(descriptor)
+    return digest.hexdigest()
+
+
 def _validate_payload_tree(root: Path, files: Mapping[str, str], *, aliases: Mapping[str, str]) -> None:
-    observed_files: set[str] = set()
+    """Walk the tree through no-follow directory descriptors and bind its exact payload.
+
+    Each child is opened relative to its already opened parent, so no entry
+    is reached through a symlink and no path is resolved twice.
+    """
+
+    observed_files: dict[str, str] = {}
     observed_aliases: dict[str, str] = {}
-    pending = [""]
-    while pending:
-        directory = pending.pop()
-        try:
-            with os.scandir(os.path.join(root, directory)) as children:
-                entries = [(f"{directory}/{child.name}" if directory else child.name, child) for child in children]
-        except OSError as error:
-            raise ProductEvidenceError(f"cannot enumerate product payload: {root}") from error
-        for relative, entry in entries:
+    spelling = _symlink_free_spelling(root, "product payload root")
+    flags = os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC
+    try:
+        pending = [("", os.open(spelling, flags | os.O_DIRECTORY))]
+    except OSError as error:
+        raise ProductEvidenceError(f"cannot enumerate product payload: {root}") from error
+    try:
+        while pending:
+            directory, parent = pending.pop()
             try:
-                mode = entry.stat(follow_symlinks=False).st_mode
+                with os.scandir(parent) as children:
+                    entries = [(f"{directory}/{child.name}" if directory else child.name, child.name,
+                                child.stat(follow_symlinks=False).st_mode) for child in children]
             except OSError as error:
-                raise ProductEvidenceError(f"cannot inspect product payload: {entry.path}") from error
-            if stat.S_ISLNK(mode):
-                try:
-                    observed_aliases[relative] = os.readlink(entry.path)
-                except OSError as error:
-                    raise ProductEvidenceError(f"cannot read product alias: {entry.path}") from error
-            elif stat.S_ISDIR(mode):
-                pending.append(relative)
-            elif stat.S_ISREG(mode):
-                if relative != "share/crabc/manifest.json":
-                    observed_files.add(relative)
-            else:
-                _fail(f"product payload has a non-regular entry: {relative}")
-    if observed_files != set(files):
+                raise ProductEvidenceError(f"cannot enumerate product payload: {root}/{directory}") from error
+            try:
+                for relative, name, mode in entries:
+                    if stat.S_ISLNK(mode):
+                        try:
+                            observed_aliases[relative] = os.readlink(name, dir_fd=parent)
+                        except OSError as error:
+                            raise ProductEvidenceError(f"cannot read product alias: {relative}") from error
+                    elif stat.S_ISDIR(mode):
+                        try:
+                            pending.append((relative, os.open(name, flags | os.O_DIRECTORY, dir_fd=parent)))
+                        except OSError as error:
+                            raise ProductEvidenceError(f"cannot enumerate product payload: {relative}") from error
+                    elif stat.S_ISREG(mode):
+                        if relative != "share/crabc/manifest.json":
+                            try:
+                                descriptor = os.open(name, flags | os.O_NONBLOCK, dir_fd=parent)
+                            except OSError as error:
+                                raise ProductEvidenceError(f"cannot hash artifact: {relative}") from error
+                            observed_files[relative] = _hash_open_regular(descriptor, relative)
+                    else:
+                        _fail(f"product payload has a non-regular entry: {relative}")
+            finally:
+                os.close(parent)
+    finally:
+        for _, descriptor in pending:
+            os.close(descriptor)
+    if set(observed_files) != set(files):
         _fail("product payload roster differs from its manifest")
     if observed_aliases != dict(aliases):
         _fail("product alias roster differs from its manifest")
     for relative, expected in files.items():
-        _require_digest(expected, _sha256(root / relative), f"product payload {relative}")
+        _require_digest(expected, observed_files[relative], f"product payload {relative}")
 
 
 def _validate_link_input_modes(root: Path, expected: Mapping[str, int], label: str) -> None:
