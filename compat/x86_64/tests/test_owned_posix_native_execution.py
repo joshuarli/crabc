@@ -810,11 +810,13 @@ class NativeFamilyAdmissionTests(unittest.TestCase):
                 with patch.object(execution, 'admission_proof', side_effect=mutate_matrix_after_first_proof):
                     with self.assertRaisesRegex(RuntimeError, 'family matrix receipt changed'):
                         execution.admit(ROOT, (work / 'mutated').relative_to(ROOT), native_path.relative_to(ROOT))
-                self.assertEqual(native_receipt.call_count, 3)
+                self.assertEqual(native_receipt.call_count, 2)
 
                 matrix_path.write_text(json.dumps(matrix), encoding='utf-8')
                 output = work / 'admission'
+                native_receipt.reset_mock()
                 receipt = execution.admit(ROOT, output.relative_to(ROOT), native_path.relative_to(ROOT))
+                self.assertEqual(native_receipt.call_count, 2)
                 record = execution.validate_admission_receipt(ROOT, receipt)
                 self.assertTrue(record['family_completion'])
                 self.assertTrue(record['native_aggregate_complete'])

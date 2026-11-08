@@ -505,8 +505,12 @@ def admission_inputs(root, native_path):
     return native_execution, matrix, source, matrix_path
 
 
-def collect_admission(root, work):
-    """Rebuild one physical family-admission receipt without target execution."""
+def collect_admission(root, work, validated_inputs=None):
+    """Rebuild one physical family-admission receipt without target execution.
+
+    ``validated_inputs`` is the ``admission_inputs`` result for the request's
+    native receipt, when the caller validated it immediately before.
+    """
     work = family.physical(root, work)
     request = read(work / 'request.json')
     require(isinstance(request, dict) and set(request) == {'schema', 'native_execution'}
@@ -515,7 +519,9 @@ def collect_admission(root, work):
     value = request['native_execution']
     require(isinstance(value, str) and value and not Path(value).is_absolute(),
             'POSIX family admission native receipt must be checkout-relative')
-    native_execution, matrix, source, matrix_path = admission_inputs(root, root / value)
+    if validated_inputs is None:
+        validated_inputs = admission_inputs(root, root / value)
+    native_execution, matrix, source, matrix_path = validated_inputs
     expected = {'request.json', 'source-before.json', 'source-after.json', 'family-admission.json'}
     require({path.name for path in work.iterdir()} in (expected - {'family-admission.json'}, expected),
             'POSIX family admission output roster differs')
@@ -573,7 +579,8 @@ def admit(root, work, native_path):
             'POSIX family admission output overlaps native aggregate input')
     # Validate inputs before creating output, so a bad matrix/native receipt
     # cannot leave a plausible-looking family admission directory behind.
-    _, _, source, _ = admission_inputs(root, native_path)
+    validated_inputs = admission_inputs(root, native_path)
+    source = validated_inputs[2]
     work.mkdir(parents=True)
     try:
         request = {'schema': ADMISSION_SCHEMA,
@@ -581,7 +588,7 @@ def admit(root, work, native_path):
         write_new(work / 'request.json', request)
         write_new(work / 'source-before.json', source)
         write_new(work / 'source-after.json', source_identity(root))
-        result = collect_admission(root, work)
+        result = collect_admission(root, work, validated_inputs)
         path = work / 'family-admission.json'
         write_new(path, result)
         return path
