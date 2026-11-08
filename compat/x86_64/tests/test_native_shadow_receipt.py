@@ -25,6 +25,22 @@ SPEC.loader.exec_module(receipt)
 RUNNER = "owned-native-allocator-stress"
 
 
+def _publish_in_child(arguments: tuple[Path, Path, bool]) -> str:
+    root, work, clear_first = arguments
+    try:
+        if clear_first:
+            receipt.clear_receipt(root, RUNNER)
+        receipt.write_receipt(
+            root, RUNNER, work, {"stress-static-pie": work / "program", "stress-provenance": work / "provenance.json"},
+            [("stress-1-1-1-static-pie", 0, [work / "stress-1-1-1-static-pie.stdout"]),
+             ("soak-1-static-pie", 0, [work / "soak-1-static-pie.stdout"])],
+            {"SOAK_ROUNDS": "1200"}, True,
+        )
+    except Exception as error:
+        return f"{type(error).__name__}: {error}"
+    return "ok"
+
+
 class NativeShadowReceiptTests(unittest.TestCase):
     def setUp(self) -> None:
         scratch = ROOT / ".work/x86_64/tmp"
@@ -68,6 +84,17 @@ class NativeShadowReceiptTests(unittest.TestCase):
         self.assertEqual(read.case_ids(), ["stress-1-1-1-static-pie", "soak-1-static-pie"])
         self.assertEqual(read.case_ids("stress-"), ["stress-1-1-1-static-pie"])
         self.assertIn("stress-static-pie", read.products)
+
+    def test_concurrent_clears_and_publishers_of_one_runner_all_succeed(self) -> None:
+        import multiprocessing
+
+        context = multiprocessing.get_context("fork")
+        with context.Pool(8) as pool:
+            results = pool.map(_publish_in_child, [(self.root, self.work, index % 2 == 0) for index in range(64)])
+        self.assertEqual(results, ["ok"] * 64)
+        receipt.read_receipt(self.root, RUNNER, case_prefix="soak-")
+        leftovers = sorted(path.name for path in (self.root / receipt.RECEIPTS / RUNNER).iterdir())
+        self.assertEqual(leftovers, ["latest"])
 
     def test_a_changed_or_untracked_source_makes_the_receipt_stale(self) -> None:
         self.publish()

@@ -28,7 +28,7 @@ print(json.dumps(source_seal(root), sort_keys=True, separators=(',', ':')))
 PY
 }
 
-rm -rf "$ROOT/.work/x86_64/reports/native-shadow/$receipt_runner/latest"
+python3 -B "$ROOT/compat/x86_64/native_shadow_receipt.py" clear --runner "$receipt_runner"
 receipt_cases=()
 receipt_products=()
 allocator_backend=unknown
@@ -55,7 +55,7 @@ publish_receipt() {
     if ! python3 -B "$ROOT/compat/x86_64/native_shadow_receipt.py" write "${arguments[@]}"; then
         status=1
     elif [ "$(source_seal)" != "$source_before" ]; then
-        rm -rf "$ROOT/.work/x86_64/reports/native-shadow/$receipt_runner/latest"
+        python3 -B "$ROOT/compat/x86_64/native_shadow_receipt.py" clear --runner "$receipt_runner"
         printf 'owned loader libc identity: source changed while publishing the receipt\n' >&2
         status=1
     fi

@@ -33,6 +33,8 @@ missing or changed evidence.
 from __future__ import annotations
 
 import argparse
+import contextlib
+import fcntl
 import hashlib
 import json
 import os
@@ -43,7 +45,7 @@ import sys
 import tempfile
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Iterable, Mapping, Sequence
+from typing import Any, Iterable, Iterator, Mapping, Sequence
 
 SCHEMA = "crabc.x86_64-native-shadow-runner-receipt/v1"
 ROOT = Path(__file__).resolve().parents[2]
@@ -160,17 +162,40 @@ def write_receipt(
         (staged / "receipt.json").write_text(json.dumps(receipt, indent=2, sort_keys=True) + "\n")
         for path in [staged, *staged.rglob("*")]:
             path.chmod(0o755 if path.is_dir() else 0o644)
-        if destination.exists():
-            retired = Path(tempfile.mkdtemp(prefix=".retired.", dir=destination.parent))
-            os.replace(destination, retired / "latest")
-            os.replace(staged, destination)
-            shutil.rmtree(retired)
-        else:
-            os.replace(staged, destination)
+        with _runner_lock(destination.parent):
+            if destination.exists():
+                retired = Path(tempfile.mkdtemp(prefix=".retired.", dir=destination.parent))
+                os.replace(destination, retired / "latest")
+                os.replace(staged, destination)
+                shutil.rmtree(retired)
+            else:
+                os.replace(staged, destination)
     except BaseException:
         shutil.rmtree(staged, ignore_errors=True)
         raise
     return destination / "receipt.json"
+
+
+@contextlib.contextmanager
+def _runner_lock(directory: Path) -> Iterator[None]:
+    """Serialize every change to one runner's ``latest`` across processes."""
+
+    descriptor = os.open(directory, os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC)
+    try:
+        fcntl.flock(descriptor, fcntl.LOCK_EX)
+        yield
+    finally:
+        os.close(descriptor)
+
+
+def clear_receipt(root: Path, runner: str) -> None:
+    """Remove a runner's ``latest`` receipt before a new run can fail."""
+
+    destination = receipt_directory(root, runner)
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    with _runner_lock(destination.parent):
+        if destination.exists():
+            shutil.rmtree(destination)
 
 
 @dataclass(frozen=True)
@@ -313,11 +338,16 @@ def main(argv: Sequence[str] | None = None) -> int:
         help="LOG paths are relative to --work")
     write.add_argument("--parameter", action="append", default=[], metavar="NAME=VALUE")
     write.add_argument("--canonical", choices=("yes", "no"), required=True)
+    clear = commands.add_parser("clear", help="remove a runner's latest receipt")
+    clear.add_argument("--runner", required=True)
     check = commands.add_parser("check", help="validate a runner's latest receipt on this tree")
     check.add_argument("--runner", required=True)
     check.add_argument("--case-prefix", default="")
     arguments = parser.parse_args(argv)
     try:
+        if arguments.command == "clear":
+            clear_receipt(ROOT, arguments.runner)
+            return 0
         if arguments.command == "check":
             receipt = read_receipt(ROOT, arguments.runner, case_prefix=arguments.case_prefix)
             print(f"{arguments.runner}: {len(receipt.case_ids(arguments.case_prefix))} passing cases at "
