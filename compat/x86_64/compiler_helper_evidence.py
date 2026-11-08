@@ -1975,7 +1975,7 @@ def _complex_edge_record(work: Path) -> dict[str, Any]:
     require({"__muldc3", "crabc_reference_muldc3"} <= probe_imports,
             "complex edge probe does not import both implementations")
     candidate = work / "complex-edge-candidate"
-    final_definitions = _nm_defined_names(candidate)
+    final_definitions = _nm_defined_names(candidate, extern_only=False)
     require({"__muldc3", "crabc_reference_muldc3"} <= final_definitions,
             "complex edge final ELF definitions differ")
     header = _live_tool(["readelf", "-hW", str(candidate)], "complex edge final ELF header")
@@ -2042,9 +2042,9 @@ def validate_complex_edge_differential(report_path: Path) -> dict[str, Any]:
     return report
 
 
-def _nm_defined_names(path: Path) -> set[str]:
-    return {line.split()[-1] for line in _live_tool(["nm", "--defined-only", "--extern-only", str(path)],
-                                                     "compiler-helper symbol table").splitlines()
+def _nm_defined_names(path: Path, *, extern_only: bool = True) -> set[str]:
+    command = ["nm", "--defined-only", *(["--extern-only"] if extern_only else []), str(path)]
+    return {line.split()[-1] for line in _live_tool(command, "compiler-helper symbol table").splitlines()
             if len(line.split()) >= 2 and not line.endswith(":" )}
 
 
@@ -2067,7 +2067,7 @@ def _live_artifact_observations(work: Path, contract: Mapping[str, Any], artifac
             "retained compiler-helper archive ELF metadata differs")
     require({fields[-1] for fields in rows} == names,
             "retained compiler-helper archive has an extra exported function")
-    candidate_definitions = _nm_defined_names(candidate)
+    candidate_definitions = _nm_defined_names(candidate, extern_only=False)
     require(names <= candidate_definitions, "retained aggregate candidate definitions differ")
     candidate_undefined = _live_tool(["nm", "--undefined-only", str(candidate)], "aggregate candidate undefined symbols")
     require(not _unresolved_names(candidate_undefined), "retained aggregate candidate has undefined symbols")
