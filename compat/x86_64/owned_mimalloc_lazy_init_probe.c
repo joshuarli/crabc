@@ -6,8 +6,11 @@
  * its first allocator call, then requires exactly one initialization and a
  * usable result. The race mode additionally observes that the initial thread
  * claims the one-shot at thread creation, before a worker can allocate, and
- * that concurrent worker allocations do not re-run it. This observes the
- * installed C backend, not source shape.
+ * that concurrent worker allocations do not re-run it. The address-space
+ * mode reserves every free address first, so the one initialization runs
+ * without memory; malloc must fail with ENOMEM and exit must still finalize
+ * the allocator cleanly. This observes the installed C backend, not source
+ * shape.
  */
 
 #define _GNU_SOURCE
@@ -19,6 +22,7 @@
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/mman.h>
 #include <unistd.h>
 
 extern int __crabc_x86_owned_allocator_lifecycle_test_phase(void);
@@ -150,6 +154,25 @@ static void probe_strndup(void)
     free(copy);
 }
 
+static void reserve_all_address_space(void)
+{
+    for (size_t length = (size_t)1 << 62; length >= 4096;) {
+        if (mmap(NULL, length, PROT_NONE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0) == MAP_FAILED)
+            length >>= 1;
+    }
+}
+
+static void probe_address_space_exhausted(void)
+{
+    reserve_all_address_space();
+    errno = 0;
+    if (malloc(1) != NULL)
+        fail(109);
+    if (errno != ENOMEM)
+        fail(110);
+    free(NULL);
+}
+
 static _Atomic int race_go;
 
 static void *race_worker(void *argument)
@@ -221,6 +244,8 @@ int main(int argc, char **argv)
         probe_strdup();
     else if (strcmp(mode, "strndup") == 0)
         probe_strndup();
+    else if (strcmp(mode, "address-space-exhausted") == 0)
+        probe_address_space_exhausted();
     else
         fail(79);
     require_initialized_once();
