@@ -241,9 +241,7 @@ static_archive_member! { fputws_source {
         unsafe {
             let _guard = StreamGuard::acquire(stream);
             orient(stream, 1);
-            if !is_writable(stream) { mark_error(stream); return -1; }
-            if !prepare_write(stream) { return -1; }
-            mark_io_started(stream);
+            let mut admitted = false;
             let utf8 = (*stream).wide_locale.unwrap();
             let _locale = StreamLocaleGuard::enter(utf8);
             let mut bytes = [0u8; BUFSIZ];
@@ -260,7 +258,15 @@ static_archive_member! { fputws_source {
                     ptr::copy_nonoverlapping(encoded.as_ptr(), bytes.as_mut_ptr().add(length), count);
                     length += count; source = source.add(1);
                 }
-                if length != 0 && fwrite_held(bytes.as_ptr(), length, stream) < length { return -1; }
+                if length != 0 {
+                    if !admitted {
+                        if !is_writable(stream) { mark_error(stream); return -1; }
+                        if !prepare_write(stream) { return -1; }
+                        mark_io_started(stream);
+                        admitted = true;
+                    }
+                    if fwrite_held(bytes.as_ptr(), length, stream) < length { return -1; }
+                }
                 if ended { return length as c_int; }
             }
         }
