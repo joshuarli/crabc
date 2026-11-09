@@ -169,10 +169,27 @@ def private_fixture(root: Path, action: str) -> None:
     os.chmod(path, 0o644)
 
 
+def copy_product(dynamic: Path, root: Path) -> None:
+    """Materialize a private product copy whose hard-linked files stay one inode."""
+    copied: dict[tuple[int, int], str] = {}
+
+    def copy_file(source: str, destination: str) -> str:
+        metadata = os.lstat(source)
+        key = (metadata.st_dev, metadata.st_ino)
+        if metadata.st_nlink > 1 and key in copied:
+            os.link(copied[key], destination)
+            return destination
+        shutil.copy2(source, destination, follow_symlinks=False)
+        copied[key] = destination
+        return destination
+
+    shutil.copytree(dynamic, root, symlinks=True, copy_function=copy_file)
+
+
 def copy_root(work: Path, root: Path, dynamic: Path | None, executable: Path, role: str, action: str,
               audit: Path) -> None:
     if dynamic is not None:
-        shutil.copytree(dynamic, root, symlinks=True, copy_function=shutil.copy2)
+        copy_product(dynamic, root)
         write_json(audit / "product-copy.json", family.snapshot(root))
     else:
         root.mkdir(parents=True)

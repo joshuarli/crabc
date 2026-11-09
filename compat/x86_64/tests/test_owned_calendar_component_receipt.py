@@ -6,6 +6,7 @@ from __future__ import annotations
 import hashlib
 import importlib.util
 import json
+import os
 from pathlib import Path
 import shutil
 import stat
@@ -624,6 +625,33 @@ class OwnedCalendarComponentReceiptTests(unittest.TestCase):
         with self.assertRaisesRegex(self.module.CalendarReceiptError, "retained argv differs"):
             self.validate()
 
+
+
+class OwnedCalendarRunnerProductCopyTests(unittest.TestCase):
+    def test_dynamic_root_copy_keeps_the_installed_loader_hard_link(self) -> None:
+        spec = importlib.util.spec_from_file_location("run_owned_calendar_component_test",
+                                                      ROOT / "compat/x86_64/run_owned_calendar_component.py")
+        assert spec is not None and spec.loader is not None
+        runner = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(runner)
+        (ROOT / ".work/x86_64/tmp").mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(prefix="owned-calendar-copy.", dir=ROOT / ".work/x86_64/tmp") as name:
+            base = Path(name)
+            product = base / "product"
+            (product / "usr/lib").mkdir(parents=True)
+            (product / "lib").mkdir()
+            libc = product / "usr/lib/libc.so"
+            libc.write_bytes(b"\x7fELF shared libc and loader")
+            libc.chmod(0o755)
+            os.link(libc, product / "lib/ld-crabc-x86_64.so.1")
+            (product / "usr/lib/libc.so.6").symlink_to("libc.so")
+            root = base / "root"
+            runner.copy_product(product, root)
+            self.assertTrue(runner.receipt.same_materialized_product_tree(
+                runner.family.snapshot(root), runner.family.snapshot(product)))
+            self.assertTrue(os.path.samefile(root / "usr/lib/libc.so", root / "lib/ld-crabc-x86_64.so.1"))
+            self.assertFalse(os.path.samefile(root / "usr/lib/libc.so", libc))
+            self.assertEqual((root / "usr/lib/libc.so.6").readlink(), Path("libc.so"))
 
 if __name__ == "__main__":
     unittest.main()
