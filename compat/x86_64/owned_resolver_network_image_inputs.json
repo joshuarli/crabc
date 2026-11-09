@@ -51,7 +51,7 @@
     "/usr/bin/python3": {
       "mode": 493,
       "path": "/usr/bin/python3.14",
-      "sha256": "994dd208d5739f182434c9ffc8b486c9edcf725aa009088fa2ed5305ba22ae92",
+      "sha256": "7293b0d6edcbf0177ab26148b64c6c4c99568ddee57654596faba0e3c36828e8",
       "size": 14080
     },
     "/usr/bin/readelf": {
