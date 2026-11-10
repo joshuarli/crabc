@@ -195,7 +195,10 @@ rejected proposal. Code changes still require an independently approved design.
 3. **R2 — qualification correctness.** Run `qualification-candidate` on the R1
    tip with the seeded inputs and the correctness profile. Its seven gates must
    pass and the receipt binds the clean revision, current image and products.
-   A correctness receipt is not a full-chain result.
+   Iteration may resume across commits that leave the product-input set
+   (`compat/x86_64/source_seal.py`) unchanged; acceptance needs one complete
+   run whose summary is `fresh: true`, every step run at the accepted
+   revision. A correctness receipt is not a full-chain result.
 4. **R3 — D18 performance.** After R2, run the three-attempt 114-row `perf-c`
    roster and `perf-native --mode full` on a quiet host; `perf-c check` must
    report no release blocker (CPU and memory bounds ≤ 1.00, syscall rules, no
