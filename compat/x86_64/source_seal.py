@@ -6,7 +6,8 @@ identity is the names, modes and bytes of the product-input set:
 
 - every tracked or untracked non-ignored file below `PRODUCT_TREES`, so an
   added file there changes the digest;
-- `PRODUCT_FILES`, the other repository files a product build reads;
+- `PRODUCT_FILES`, the other repository files a product build reads,
+  including the Cargo workspace members outside the product trees;
 - `PRODUCT_BUILDERS`, `PRODUCT_LAZY_MODULES` and the module-level Python
   import closure of both, resolved the way the builders resolve imports.
 
@@ -41,6 +42,12 @@ PRODUCT_TREES = (
 PRODUCT_FILES = (
     "Cargo.lock",
     "Cargo.toml",
+    "compat/allocator/native-mi-adapter/Cargo.toml",
+    "compat/allocator/native-mi-adapter/src/lib.rs",
+    "compat/allocator/runtime-ticket-zero-adapter/Cargo.toml",
+    "compat/allocator/runtime-ticket-zero-adapter/src/lib.rs",
+    "compat/allocator/test-adapter/Cargo.toml",
+    "compat/allocator/test-adapter/src/lib.rs",
     "compat/upstreams.toml",
     "compat/x86_64/dynamic-product-state.json",
     "compat/x86_64/dynamic-product.toml",
