@@ -7,7 +7,8 @@ identity is the names, modes and bytes of the product-input set:
 - every tracked or untracked non-ignored file below `PRODUCT_TREES`, so an
   added file there changes the digest;
 - `PRODUCT_FILES`, the other repository files a product build reads,
-  including the Cargo workspace members outside the product trees;
+  including the Cargo workspace members outside the product trees and the
+  two loader case runners whose presence the TLS contract checks;
 - `PRODUCT_BUILDERS`, `PRODUCT_LAZY_MODULES` and the module-level Python
   import closure of both, resolved the way the builders resolve imports.
 
@@ -53,6 +54,8 @@ PRODUCT_FILES = (
     "compat/x86_64/dynamic-product.toml",
     "compat/x86_64/header_callable_inventory.toml",
     "compat/x86_64/loader-libc-tls-runtime-v1.toml",
+    "compat/x86_64/run_owned_ldso_initial_tls_cases.sh",
+    "compat/x86_64/run_owned_ldso_runtime_v1_cases.sh",
     "rust-toolchain.toml",
 )
 PRODUCT_BUILDERS = (
