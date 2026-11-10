@@ -48,6 +48,7 @@ CONFIGURATION_PATHS = (
     "rust-toolchain.toml",
     ".cargo/config.toml",
     "ldso/Cargo.toml",
+    "ldso/build.rs",
     "compat/x86_64/dynamic_product_contract.py",
 )
 RAW_STREAMS = (
@@ -185,8 +186,16 @@ def load_loader_provenance(product: Path) -> tuple[dict[str, Any], dict[str, Any
     require(manifest["files"][LOADER_PROVENANCE_PATH] == digest(path, "loader compiler provenance"),
             "manifest does not bind loader compiler provenance")
     record = read_json(path, "loader compiler provenance")
-    require(set(record) == {"schema", "target", "artifact", "cargo", "compiler_dependencies", "configuration"},
-            "loader compiler provenance fields drifted")
+    validate_loader_provenance(product, record)
+    return manifest, record
+
+
+def validate_loader_provenance(product: Path, record: object) -> None:
+    """Bind the merged libc/loader image to its loader object, link and source closure."""
+
+    require(isinstance(record, dict) and set(record) == {
+        "schema", "target", "artifact", "cargo", "compiler_object", "compiler_dependencies", "merged_link",
+        "configuration"}, "loader compiler provenance fields drifted")
     require(record["schema"] == PROVENANCE_SCHEMA and record["target"] == TARGET,
             "loader compiler provenance schema or target differs")
     require_identity(record["artifact"], product / LOADER_PATH, LOADER_PATH, "installed loader")
@@ -197,12 +206,27 @@ def load_loader_provenance(product: Path) -> tuple[dict[str, Any], dict[str, Any
     rustup_path = rustup.get("path") if isinstance(rustup, dict) else None
     require(isinstance(rustup_path, str) and rustup_path, "producer tool identity lacks rustup path")
     expected_argv = [
-        rustup_path, "run", PINNED_TOOLCHAIN, "cargo", "build", "--locked", "-p", "crabc-ldso", "--release",
+        rustup_path, "run", PINNED_TOOLCHAIN, "cargo", "rustc", "--locked", "-p", "crabc-ldso", "--release",
         "--config", 'profile.release.opt-level="s"',
         "--target", TARGET, "--target-dir", "$BUILD/loader", "--no-default-features", "--features", LOADER_FEATURE,
+        "--", "--emit=obj",
     ]
     require(cargo["argv"] == expected_argv and cargo["rustflags"] == dynamic_product_contract.LOADER_RUSTFLAGS,
             "loader Cargo command or RUSTFLAGS differ")
+    compiler_object = record["compiler_object"]
+    require(isinstance(compiler_object, dict) and set(compiler_object) == {"path", "sha256", "size"}
+            and isinstance(compiler_object["path"], str) and compiler_object["path"].startswith("$BUILD/")
+            and isinstance(compiler_object["sha256"], str)
+            and re.fullmatch(r"[0-9a-f]{64}", compiler_object["sha256"]) is not None
+            and type(compiler_object["size"]) is int and compiler_object["size"] > 0,
+            "loader compiler object identity differs")
+    link = record["merged_link"]
+    require(isinstance(link, dict) and set(link) == {"argv", "output_sha256"} and isinstance(link["argv"], list)
+            and all(isinstance(argument, str) for argument in link["argv"]), "merged link provenance fields drifted")
+    require(link["output_sha256"] == record["artifact"]["sha256"], "merged link output is not the installed loader")
+    require(compiler_object["path"] in link["argv"], "merged link does not consume the loader object")
+    output = [link["argv"][index + 1] for index, argument in enumerate(link["argv"][:-1]) if argument == "-o"]
+    require(output == ["$BUILD/installed/" + LIBC_PATH], "merged link output path differs")
 
     dependencies = record["compiler_dependencies"]
     require(isinstance(dependencies, list) and dependencies, "loader compiler dependency roster is empty")
@@ -214,8 +238,7 @@ def load_loader_provenance(product: Path) -> tuple[dict[str, Any], dict[str, Any
         dependency_names.append(name)
     require(dependency_names == sorted(dependency_names) and len(dependency_names) == len(set(dependency_names)),
             "loader compiler dependency roster is not sorted and unique")
-    require({"ldso/build.rs", "ldso/src/lib.rs"} <= set(dependency_names),
-            "loader compiler dependency roster lacks build.rs or lib.rs")
+    require("ldso/src/lib.rs" in dependency_names, "loader compiler dependency roster lacks lib.rs")
 
     configuration = record["configuration"]
     require(isinstance(configuration, list) and len(configuration) == len(CONFIGURATION_PATHS),
@@ -225,7 +248,6 @@ def load_loader_provenance(product: Path) -> tuple[dict[str, Any], dict[str, Any
         identity = require_source_identity(entry, "loader configuration")
         configuration_names.append(str(identity["path"]))
     require(tuple(configuration_names) == CONFIGURATION_PATHS, "loader configuration roster differs")
-    return manifest, record
 
 
 def capture_bindings(product: Path) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any]]:

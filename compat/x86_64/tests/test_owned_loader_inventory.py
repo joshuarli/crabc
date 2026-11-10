@@ -378,5 +378,72 @@ class OwnedLoaderInventoryTests(unittest.TestCase):
             inventory.capture_bindings(missing)
 
 
+class MergedLoaderProvenanceTests(unittest.TestCase):
+    def setUp(self) -> None:
+        scratch = ROOT / ".work" / "x86_64" / "tmp"
+        scratch.mkdir(parents=True, exist_ok=True)
+        temporary = tempfile.TemporaryDirectory(dir=scratch)
+        self.addCleanup(temporary.cleanup)
+        self.product = Path(temporary.name) / "product"
+        loader = self.product / inventory.LOADER_PATH
+        loader.parent.mkdir(parents=True)
+        loader.write_bytes(b"merged libc and loader image\n")
+        loader.chmod(0o755)
+        tools = self.product / "share/crabc/producer-tools.json"
+        tools.parent.mkdir(parents=True)
+        tools.write_text(json.dumps({"rustup": {"path": "/opt/cargo/bin/rustup"}}), encoding="utf-8")
+        artifact = {"path": inventory.LOADER_PATH, "sha256": inventory.digest(loader, "loader"), "mode": 0o755}
+        self.record = {
+            "schema": inventory.PROVENANCE_SCHEMA,
+            "target": inventory.TARGET,
+            "artifact": artifact,
+            "cargo": {
+                "argv": ["/opt/cargo/bin/rustup", "run", inventory.PINNED_TOOLCHAIN, "cargo", "rustc", "--locked",
+                         "-p", "crabc-ldso", "--release", "--config", 'profile.release.opt-level="s"',
+                         "--target", inventory.TARGET, "--target-dir", "$BUILD/loader", "--no-default-features",
+                         "--features", inventory.LOADER_FEATURE, "--", "--emit=obj"],
+                "rustflags": inventory.dynamic_product_contract.LOADER_RUSTFLAGS,
+            },
+            "compiler_object": {"path": "$BUILD/ldso-localized.o", "sha256": "7" * 64, "size": 226320},
+            "compiler_dependencies": [inventory.source_identity(ROOT / name, "dependency")
+                                      for name in ("ldso/src/lib.rs", "ldso/src/x86_64_debugger.rs")],
+            "merged_link": {
+                "argv": ["/usr/bin/mold", "-shared", "-soname", "libc.so", "$BUILD/ldso-localized.o",
+                         "-e", "_start", "-o", "$BUILD/installed/usr/lib/libc.so"],
+                "output_sha256": artifact["sha256"],
+            },
+            "configuration": [inventory.source_identity(ROOT / name, "configuration")
+                              for name in inventory.CONFIGURATION_PATHS],
+        }
+
+    def test_merged_release_record_is_admitted(self) -> None:
+        inventory.validate_loader_provenance(self.product, self.record)
+
+    def test_separately_built_loader_command_is_rejected(self) -> None:
+        self.record["cargo"]["argv"] = [*self.record["cargo"]["argv"][:4], "build",
+                                        *self.record["cargo"]["argv"][5:-2]]
+        with self.assertRaisesRegex(inventory.InventoryError, "loader Cargo command or RUSTFLAGS differ"):
+            inventory.validate_loader_provenance(self.product, self.record)
+
+    def test_dependency_roster_must_retain_the_loader_crate_root(self) -> None:
+        self.record["compiler_dependencies"] = self.record["compiler_dependencies"][1:]
+        with self.assertRaisesRegex(inventory.InventoryError, "loader compiler dependency roster lacks lib.rs"):
+            inventory.validate_loader_provenance(self.product, self.record)
+
+    def test_record_without_the_merged_link_is_rejected(self) -> None:
+        del self.record["merged_link"]
+        with self.assertRaisesRegex(inventory.InventoryError, "loader compiler provenance fields drifted"):
+            inventory.validate_loader_provenance(self.product, self.record)
+
+    def test_merged_link_must_produce_the_installed_loader_from_the_loader_object(self) -> None:
+        self.record["merged_link"]["output_sha256"] = "0" * 64
+        with self.assertRaisesRegex(inventory.InventoryError, "merged link output is not the installed loader"):
+            inventory.validate_loader_provenance(self.product, self.record)
+        self.record["merged_link"]["output_sha256"] = self.record["artifact"]["sha256"]
+        self.record["merged_link"]["argv"].remove("$BUILD/ldso-localized.o")
+        with self.assertRaisesRegex(inventory.InventoryError, "merged link does not consume the loader object"):
+            inventory.validate_loader_provenance(self.product, self.record)
+
+
 if __name__ == "__main__":
     unittest.main()
