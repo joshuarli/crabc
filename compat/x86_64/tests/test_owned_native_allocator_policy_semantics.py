@@ -14,6 +14,8 @@ import tempfile
 import unittest
 from unittest import mock
 
+import product_fixture
+
 
 ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(ROOT / "compat/x86_64"))
@@ -89,6 +91,7 @@ class PolicyReceiptTests(unittest.TestCase):
         upstream = self.root / "crabc-mimalloc/UPSTREAM.md"
         upstream.parent.mkdir()
         upstream.write_text("fixed upstream allocator\n")
+        product_fixture.seed_product_inputs(self.root)
         subprocess.run(("git", "add", "."), cwd=self.root, check=True)
         subprocess.run(("git", "commit", "-qm", "base"), cwd=self.root, check=True)
         self.work = self.root / ".work/x86_64/tmp/policy"
@@ -174,7 +177,7 @@ class PolicyReceiptTests(unittest.TestCase):
         product("dynamic-product-state", json.dumps({
             "schema": "crabc.x86_64-owned-dynamic-materialization/v1",
             "allocator_backend": backend,
-            "source_sha256": "0" * 64 if bad_source_digest else policy._product_source_digest(self.root),
+            "source_sha256": "0" * 64 if bad_source_digest else policy.source_seal.product_source_digest(self.root),
             "modes": ["dynamic-pie", "dynamic-non-pie", "dynamic-shared-object"],
             "payload_files": dynamic_files,
         }).encode())

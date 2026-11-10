@@ -28,6 +28,7 @@ MODULE_DIR = Path(__file__).resolve().parent
 if str(MODULE_DIR) not in sys.path:
     sys.path.insert(0, str(MODULE_DIR))
 import native_abi_inventory as inventory
+import source_seal
 import owned_mimalloc_producer_metadata as producer
 import owned_posix_product_evidence as product_evidence
 import owned_posix_static_products as static_products
@@ -645,9 +646,7 @@ def _epoch_source(preparation: Mapping[str, Any], report: Mapping[str, Any], dyn
     require(type(facts_source["revision"]) is str and REVISION.fullmatch(facts_source["revision"]) is not None
             and type(facts_source["content_sha256"]) is str and SHA256.fullmatch(facts_source["content_sha256"]) is not None
             and facts_source["clean"] is True, "ELF facts collector source scalar types drifted")
-    require(facts_source["revision"] == source["revision"]
-            and facts_source["content_sha256"] == source["content_sha256"],
-            "ELF facts source differs from static preparation")
+    require(source_seal.same_product(facts_source, source), "ELF facts source differs from static preparation")
     require(dynamic_state.get("schema") == "crabc.x86_64-owned-dynamic-materialization/v1"
             and type(dynamic_state.get("source_sha256")) is str
             and SHA256.fullmatch(dynamic_state["source_sha256"]) is not None,
@@ -2790,7 +2789,7 @@ def validate_report(report_path: Path, *, static_preparation: Path, static_produ
     report = exact(json_object(report_path, "allocator boundary report"), {"schema", "target", "status", "collector_source", "component_sources", "inputs", "startup", "public_weak", "errno_import", "interposition"}, "allocator boundary report")
     require(report["schema"] == SCHEMA and report["target"] == TARGET and report["status"] == {"family_completion": False, "promotion": False, "public_support": False},
             "allocator boundary report identity drifted")
-    require(same(report["collector_source"], inventory.collector_source_seal()), "collector source changed")
+    require(inventory.is_current_collector_source(report["collector_source"]), "collector source changed")
     validate_source_records(ROOT, report["component_sources"])
     static_mount = admitted_supplied_path(static_product, "static product")
     dynamic_mount = admitted_supplied_path(dynamic_product, "dynamic product")

@@ -784,7 +784,7 @@ def validate_report(root: Path, report_path: Path, *, base_inventory: Path, elf_
     require(same(record['links'],ordinary.candidate_links(root,work,inputs,tools)),'executable links do not reconstruct')
     require(same(record['observations'],report_observations(root,work,inputs,tools)),'worker observations do not reconstruct')
     require(same(before,ordinary.work_file_identity(root,report_path,'worker report')),'report changed during replay')
-    require(same(source,inventory.collector_source_seal()),'source changed during replay')
+    require(inventory.is_current_collector_source(source),'source changed during replay')
     return record
 
 
@@ -852,7 +852,7 @@ def collect(root: Path, output: Path, **paths: Path) -> Path:
     for role in ('selector','compiler'):
         original=rust[role]['original']
         require(same(original,inventory.file_record(Path(original['path']),logical_path=original['path'])),'Rust tool changed')
-    require(same(source,inventory.collector_source_seal()),'collector source changed')
+    require(inventory.is_current_collector_source(source),'collector source changed')
     require(same(copies,source_copies(root,output)),'source copy changed')
     # Retention changes only readability; execution modes were already exact.
     ordinary.static_products.make_retained_evidence_readable(output)

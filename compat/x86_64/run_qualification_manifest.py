@@ -39,6 +39,7 @@ from pathlib import Path
 from typing import Any, Iterator
 
 import generate_qualification_manifest as manifest
+import source_seal
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -422,39 +423,12 @@ def require(condition: bool, message: str) -> None:
         raise QualificationRunError(message)
 
 
-def git(*arguments: str) -> bytes:
-    return subprocess.check_output(
-        ["git", "-c", f"safe.directory={ROOT}", *arguments],
-        cwd=ROOT,
-        env={**os.environ, "GIT_OPTIONAL_LOCKS": "0"},
-    )
-
-
-def require_clean_source() -> str:
-    if git("status", "--porcelain", "--untracked-files=all").strip():
-        raise QualificationRunError("qualification receipt requires clean committed source")
-    return git("rev-parse", "HEAD").decode("utf-8").strip()
-
-
 def source_identity() -> dict[str, str]:
-    """Bind an execution to checked-out bytes, modes, and its clean revision.
-
-    Git's tree identifies the committed revision, while this independent hash
-    makes the physical content observed before and after the transaction
-    explicit. Receipts remain beneath ignored `.work` and are not self-hashed.
-    """
-    revision = require_clean_source()
-    content = hashlib.sha256()
-    for name in sorted(name for name in git("ls-files", "-z").split(b"\0") if name):
-        path = ROOT / os.fsdecode(name)
-        try:
-            mode = path.lstat().st_mode
-        except OSError as error:
-            raise QualificationRunError(f"tracked source is absent: {path}") from error
-        data = os.fsencode(os.readlink(path)) if stat.S_ISLNK(mode) else path.read_bytes()
-        content.update(name + b"\0" + str(stat.S_IMODE(mode)).encode("ascii") + b"\0")
-        content.update(hashlib.sha256(data).digest())
-    return {"revision": revision, "content_sha256": content.hexdigest()}
+    """The clean checkout's product source seal; its revision is informational."""
+    try:
+        return source_seal.seal(ROOT)
+    except source_seal.SourceSealError as error:
+        raise QualificationRunError(f"qualification receipt requires clean committed source: {error}") from error
 
 
 def sha256_file(path: Path, label: str) -> str:
@@ -1052,7 +1026,8 @@ def validate_private_admission_receipt(path: Path) -> dict[str, object]:
     if not all(isinstance(value, int) and not isinstance(value, bool) for value in timing) or timing[1] < timing[0] or timing[2] != timing[1] - timing[0]:
         raise QualificationRunError("private admission receipt timing drifted")
     source = source_identity()
-    if receipt["source_before"] != source or receipt["source_after"] != source:
+    if not (source_seal.same_product(receipt["source_before"], source)
+            and source_seal.same_product(receipt["source_after"], source)):
         raise QualificationRunError("private admission receipt source is stale")
     inputs = execution_inputs()
     if receipt["inputs_before"] != inputs or receipt["inputs_after"] != inputs:
@@ -1566,7 +1541,8 @@ def validate_chain_receipt(path: Path) -> dict[str, object]:
     if not all(isinstance(value, int) and not isinstance(value, bool) for value in timing) or timing[1] < timing[0] or timing[2] != timing[1] - timing[0]:
         raise QualificationRunError("qualification chain receipt timing drifted")
     source = source_identity()
-    if receipt["source_before"] != source or receipt["source_after"] != source:
+    if not (source_seal.same_product(receipt["source_before"], source)
+            and source_seal.same_product(receipt["source_after"], source)):
         raise QualificationRunError("qualification chain receipt source is stale")
     inputs = execution_inputs()
     if receipt["inputs_before"] != inputs or receipt["inputs_after"] != inputs:

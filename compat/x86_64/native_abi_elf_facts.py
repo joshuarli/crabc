@@ -301,7 +301,7 @@ def _project(item: Artifact, raw: Mapping[str, str], artifact: Mapping[str, Any]
 def _validate_base(base_inventory: Path, static_product: Path, dynamic_product: Path, static_preparation: Path) -> dict[str, Any]:
     base = inventory.validate_report(base_inventory, static_product=static_product, dynamic_product=dynamic_product,
                                      static_preparation=static_preparation)
-    require(base['collector_execution_source'] == inventory.collector_source_seal(),
+    require(inventory.is_current_collector_source(base['collector_execution_source']),
             'ELF facts require a same-current-collector v1 inventory')
     return base
 
@@ -349,7 +349,7 @@ def collect_facts(*, base_inventory: Path, static_product: Path, dynamic_product
             raw[suffix] = _replay_command(output, commands[key], key=key, tool=tool, flag=flag, artifact_key=item.key,
                                           artifact=artifacts[item.key], tool_record=tools[tool], source=source)
         facts[item.key] = _project(item, raw, artifacts[item.key], base)
-    require(source == inventory.collector_source_seal(), 'ELF fact collector source changed during collection')
+    require(inventory.is_current_collector_source(source), 'ELF fact collector source changed during collection')
     require(base == _validate_base(base_inventory, static_product, dynamic_product, static_preparation), 'base inventory changed during collection')
     require(artifacts == _artifact_records(base, static_product, dynamic_product), 'artifact placements changed during collection')
     for artifact in artifacts.values():

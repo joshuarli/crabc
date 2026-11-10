@@ -27,6 +27,7 @@ def module(name, filename):
     return value
 
 manifest = module('generate_qualification_manifest', 'generate_qualification_manifest.py')
+module('source_seal', 'source_seal.py')
 runner = module('qualification_prefix_runner', 'run_qualification_manifest.py')
 
 class QualificationPrefixTests(unittest.TestCase):

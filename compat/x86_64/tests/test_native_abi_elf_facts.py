@@ -363,7 +363,7 @@ class ElfFactReceiptTests(unittest.TestCase):
 
     def test_stale_base_source_or_failed_v1_validation_cannot_be_resealed(self):
         stale = copy.deepcopy(self.base)
-        stale['collector_execution_source']['revision'] = 'f' * 40
+        stale['collector_execution_source']['content_sha256'] = 'f' * 64
         self.validated_base.return_value = stale
         with self.assertRaisesRegex(facts.inventory.InventoryError, 'same-current-collector'):
             self.replay()

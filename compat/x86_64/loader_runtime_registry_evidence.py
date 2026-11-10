@@ -253,7 +253,7 @@ def validate_source_records(root: Path, records: object) -> None:
 
 def validate_current_source(record: object) -> None:
     """Reject JSON lookalikes such as integer ``1`` for a source clean flag."""
-    require(same(record, inventory.collector_source_seal()), "runtime registry collector source drifted")
+    require(inventory.is_current_collector_source(record), "runtime registry collector source drifted")
 
 
 def load_contract(root: Path = ROOT) -> dict[str, Any]:
@@ -993,7 +993,7 @@ def collect(*, base_inventory: Path, elf_report: Path, static_preparation: Path,
                         "observation": native_observation}
     for role, path in fork_evidence.REPLAY_TOOL_PATHS.items():
         require(same(tools[role]["original"], inventory.file_record(Path(path), logical_path=path)), "registry tool changed during collection")
-    require(source == inventory.collector_source_seal(), "collector source changed during runtime observations")
+    require(inventory.is_current_collector_source(source), "collector source changed during runtime observations")
     report = {"schema": SCHEMA, "target": TARGET, "status": {"family_completion": False, "promotion_ready": False},
               "source": source, "source_files": source_records(ROOT), "inputs": inputs,
               "replay_inputs": {"tools": tools, "files": replay_files(output, fork_work, timer_work)},

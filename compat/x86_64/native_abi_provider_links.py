@@ -148,7 +148,7 @@ def collect(static: Path, elf_report: Path, output: Path) -> dict[str, Any]:
         require(linked == linker and identity(Path(linker['path'])) == identity(output / 'linker'),
                 'provider linker changed across links')
         commands[mode + '-run'] = capture(command(static, output, mode + '-run'), output, mode + '-run')
-    require(before == inventory.collector_source_seal(), 'provider source changed during collection')
+    require(inventory.is_current_collector_source(before), 'provider source changed during collection')
     report = {'source': before, 'static_manifest': identity(static / 'share/crabc/manifest.json'),
               'archive': identity(static / 'usr/lib/libc.a'), 'driver': identity(static / 'bin/crabc-cc'),
               'fixture': identity(output / 'providers.c'), 'object': identity(output / 'providers.o'),
@@ -166,7 +166,7 @@ def validate(work: Path, static: Path, facts: Mapping[str, Any]) -> dict[str, An
     report = inventory.read_json(work / 'report.json', 'provider links')
     require(set(report) == {'source', 'static_manifest', 'archive', 'driver', 'fixture', 'object', 'commands', 'links', 'object_references', 'linker'},
             'provider link report fields differ')
-    require(report['source'] == inventory.collector_source_seal() and report['source']['clean'] is True,
+    require(inventory.is_current_collector_source(report['source']) and report['source']['clean'] is True,
             'provider links belong to another source')
     for field, path in (('static_manifest', static / 'share/crabc/manifest.json'),
                         ('archive', static / 'usr/lib/libc.a'), ('driver', static / 'bin/crabc-cc'),

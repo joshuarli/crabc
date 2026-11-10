@@ -5,15 +5,14 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
-import os
 from pathlib import Path
 import re
-import stat
 import subprocess
 from typing import Mapping
 
 from installed_allocator_backend import dynamic_backend
 import native_shadow_receipt as shared
+import source_seal
 import mold_link_trace
 import owned_posix_product_evidence as product_evidence
 
@@ -73,29 +72,6 @@ def json_file(path: Path) -> dict:
         raise shared.ReceiptError(f"{RUNNER}: unreadable {path.name}: {error}") from error
     require(isinstance(value, dict), f"{path.name} is malformed")
     return value
-
-
-def product_source_digest(root: Path) -> str:
-    """Recompute the installed product's content, path and mode source seal."""
-
-    result = subprocess.run(
-        ["git", "-c", "safe.directory=*", "-C", str(root), "ls-files", "-z",
-         "--cached", "--others", "--exclude-standard"],
-        capture_output=True, check=False,
-    )
-    require(result.returncode == 0, "cannot enumerate dynamic product source")
-    names = sorted(set(result.stdout.split(b"\0")) - {b""})
-    digest = hashlib.sha256()
-    try:
-        for name in names:
-            path = root / os.fsdecode(name)
-            mode = path.lstat().st_mode
-            data = os.fsencode(os.readlink(path)) if stat.S_ISLNK(mode) else path.read_bytes()
-            digest.update(name + b"\0" + str(stat.S_IMODE(mode)).encode() + b"\0")
-            digest.update(hashlib.sha256(data).digest())
-    except OSError as error:
-        raise shared.ReceiptError(f"{RUNNER}: cannot read dynamic product source: {error}") from error
-    return digest.hexdigest()
 
 
 def readelf(path: Path, *options: str) -> str:
@@ -312,8 +288,11 @@ def read_native_allocator_dso_receipt(
             and state.get("status") == "materialized-unqualified"
             and state.get("modes") == ["dynamic-pie", "dynamic-non-pie", "dynamic-shared-object"]
             and isinstance(state.get("payload_files"), dict), "dynamic product state differs")
-    require(state.get("source_sha256") == product_source_digest(root),
-            "dynamic product source differs from checkout")
+    try:
+        product_source = source_seal.product_source_digest(root)
+    except source_seal.SourceSealError as error:
+        raise shared.ReceiptError(f"{RUNNER}: cannot read dynamic product source: {error}") from error
+    require(state.get("source_sha256") == product_source, "dynamic product source differs from checkout")
     for name, relative in PRODUCT_PATHS.items():
         if name != "dynamic-manifest":
             require(manifest["files"].get(relative) == receipt.products[name]["sha256"],

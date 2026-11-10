@@ -33,6 +33,7 @@ if str(MODULE_DIR) not in sys.path:
 
 import owned_posix_product_evidence as product_evidence
 import owned_dynamic_qualification as dynamic_materialization
+import source_seal
 
 
 SCHEMA = "crabc.x86_64-native-abi-inventory/v1"
@@ -1221,30 +1222,22 @@ def _git(*arguments: str) -> bytes:
 
 
 def collector_source_seal() -> dict[str, object]:
-    """Seal the exact clean checkout which executed this collector."""
+    """Seal the clean collector checkout's product source; the revision is informational."""
 
-    require(
-        not _git("status", "--porcelain", "--untracked-files=all").strip(),
-        "native ABI inventory collection requires a clean collector checkout",
-    )
-    revision = _git("rev-parse", "HEAD").decode("ascii").strip()
-    require(_REVISION.fullmatch(revision) is not None, "collector Git revision is invalid")
-    names = sorted(name for name in _git("ls-files", "-z", "--cached").split(b"\0") if name)
-    digest = hashlib.sha256()
-    for name in names:
-        path = ROOT / os.fsdecode(name)
-        try:
-            mode = path.lstat().st_mode
-            payload = os.fsencode(os.readlink(path)) if stat.S_ISLNK(mode) else path.read_bytes()
-        except OSError as error:
-            raise InventoryError(f"cannot seal collector source: {path}") from error
-        digest.update(name + b"\0" + str(stat.S_IMODE(mode)).encode("ascii") + b"\0")
-        digest.update(hashlib.sha256(payload).digest())
-    return {
-        "revision": revision,
-        "content_sha256": digest.hexdigest(),
-        "clean": True,
-    }
+    try:
+        seal = source_seal.seal(ROOT)
+    except source_seal.SourceSealError as error:
+        raise InventoryError(f"native ABI inventory collection requires a clean collector checkout: {error}") from error
+    return {**seal, "clean": True}
+
+
+def is_current_collector_source(record: object) -> bool:
+    """Whether a retained collector seal is clean and names the current product source."""
+
+    return (isinstance(record, dict) and set(record) == {"revision", "content_sha256", "clean"}
+            and record["clean"] is True and isinstance(record["revision"], str)
+            and _REVISION.fullmatch(record["revision"]) is not None
+            and source_seal.same_product(record, collector_source_seal()))
 
 
 def _validate_collector_source_seal(record: object) -> None:
@@ -1255,7 +1248,7 @@ def _validate_collector_source_seal(record: object) -> None:
         isinstance(record["content_sha256"], str) and _SHA256.fullmatch(record["content_sha256"]) is not None,
         "collector execution content digest malformed",
     )
-    require(record == collector_source_seal(), "current collector Git revision or content differs")
+    require(source_seal.same_product(record, collector_source_seal()), "current collector product source differs")
 
 
 def _tool_records(output_root: Path) -> dict[str, dict[str, object]]:
@@ -2509,7 +2502,7 @@ def collect_inventory(
             dynamic_product=dynamic_record,
         )
         require(
-            collector_source_seal() == collector_execution_source,
+            is_current_collector_source(collector_execution_source),
             "collector Git revision or content changed during inventory collection",
         )
 

@@ -31,6 +31,7 @@ def load_module(name: str, path: Path):
 
 
 qualification = load_module("generate_qualification_manifest", GENERATOR_PATH)
+load_module("source_seal", ROOT / "compat" / "x86_64" / "source_seal.py")
 runner = load_module("qualification_manifest_runner", RUNNER_PATH)
 
 

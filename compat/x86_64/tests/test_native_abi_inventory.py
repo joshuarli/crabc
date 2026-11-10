@@ -841,5 +841,28 @@ class NativeAbiCompleteSymbolFactsTests(unittest.TestCase):
                 self.assertEqual(inventory.parse_elf_sections(raw)["flag_legend"][-1], ending)
 
 
+class CollectorSourceSealTests(unittest.TestCase):
+    """The collector seal names the same product source the products record."""
+
+    SEAL = {"revision": "a" * 40, "content_sha256": "b" * 64}
+
+    def test_collector_seal_is_the_product_source_seal(self) -> None:
+        with mock.patch.object(inventory.source_seal, "seal", return_value=dict(self.SEAL)):
+            self.assertEqual(inventory.collector_source_seal(), {**self.SEAL, "clean": True})
+
+    def test_a_retained_seal_from_another_revision_with_the_same_product_is_current(self) -> None:
+        retained = {**self.SEAL, "revision": "c" * 40, "clean": True}
+        with mock.patch.object(inventory.source_seal, "seal", return_value=dict(self.SEAL)):
+            inventory._validate_collector_source_seal(retained)
+            with self.assertRaisesRegex(inventory.InventoryError, "product source differs"):
+                inventory._validate_collector_source_seal({**retained, "content_sha256": "d" * 64})
+
+    def test_a_dirty_checkout_has_no_collector_seal(self) -> None:
+        with mock.patch.object(inventory.source_seal, "seal",
+                               side_effect=inventory.source_seal.SourceSealError("qualification requires clean committed source")):
+            with self.assertRaisesRegex(inventory.InventoryError, "clean collector checkout"):
+                inventory.collector_source_seal()
+
+
 if __name__ == "__main__":
     unittest.main()

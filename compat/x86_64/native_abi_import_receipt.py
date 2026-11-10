@@ -280,7 +280,7 @@ def validate_report(report_path: Path, *, static_product: Path, dynamic_product:
     require(type(report) is dict and set(report) == set(REPORT_KEYS) | extras,
             f"{row.name} report shape differs")
     require(report["schema"] == row.schema and report["source_sha256"] == digest(MODULE_DIR / row.fixture)
-            and report["source"] == inventory.collector_source_seal()
+            and inventory.is_current_collector_source(report["source"])
             and report["static_product"] == str(static_product)
             and report["dynamic_product"] == str(dynamic_product)
             and report["dynamic_driver_sha256"] == digest(dynamic_product / "bin/crabc-cc-dynamic")

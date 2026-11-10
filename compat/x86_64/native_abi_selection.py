@@ -31,6 +31,7 @@ MODULE_DIR = Path(__file__).resolve().parent
 if str(MODULE_DIR) not in sys.path:
     sys.path.insert(0, str(MODULE_DIR))
 import native_abi_inventory as inventory
+import source_seal
 import native_abi_elf_facts as elf_facts
 import owned_aio_evidence
 import owned_syslog_evidence
@@ -2305,21 +2306,15 @@ def _git(root: Path, *args: str) -> bytes:
 def selection_source() -> dict[str, Any]:
     """Use the inventory seal for clean source; mark development source dirty.
 
-    The same tracked-tree digest framing is retained in development. Explicit
+    The same product source digest is used in development. Explicit
     source-input records additionally bind the not-yet-tracked new component.
     A dirty selection can be measured but can never satisfy source closure.
     """
     clean = not _git(ROOT, 'status', '--porcelain', '--untracked-files=all').strip()
     if clean:
         return inventory.collector_source_seal()
-    digest = hashlib.sha256()
-    for name in sorted(n for n in _git(ROOT, 'ls-files', '-z', '--cached').split(b'\0') if n):
-        path = ROOT / os.fsdecode(name)
-        mode = path.lstat().st_mode
-        payload = os.fsencode(os.readlink(path)) if stat.S_ISLNK(mode) else path.read_bytes()
-        digest.update(name + b'\0' + str(stat.S_IMODE(mode)).encode() + b'\0')
-        digest.update(hashlib.sha256(payload).digest())
-    return {'revision': _git(ROOT, 'rev-parse', 'HEAD').decode().strip(), 'content_sha256': digest.hexdigest(), 'clean': False}
+    return {'revision': source_seal.revision(ROOT), 'content_sha256': source_seal.product_source_digest(ROOT),
+            'clean': False}
 
 
 def _feature_alias_requirement(feature: Any, alias: Any) -> dict[str, Any]:
