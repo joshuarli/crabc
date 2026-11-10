@@ -161,6 +161,29 @@ def parse_symbols(transcript: str) -> list[Definition]:
     return rows
 
 
+def audit_static_image(roster: Roster, transcript: str, label: str) -> None:
+    """Require every roster name to be defined in a final static image's `.symtab`.
+
+    A static image has no later symbol resolution, so binding carries no
+    meaning there and mold writes every retained symbol as LOCAL.
+    """
+    defined: set[str] = set()
+    undefined: list[str] = []
+    for raw in transcript.splitlines():
+        match = _SYMBOL_ROW.match(raw)
+        if match is None or not match["name"]:
+            continue
+        name = match["name"].partition("@")[0]
+        if match["ndx"] == "UND":
+            if name in roster.names:
+                undefined.append(name)
+        elif match["type"] not in {"SECTION", "FILE"}:
+            defined.add(name)
+    missing = sorted(set(roster.names) - defined)
+    require(not missing, f"{label} leaves roster names unresolved: {', '.join(missing)}")
+    require(not undefined, f"{label} retains undefined roster names: {', '.join(undefined)}")
+
+
 def parse_archive_index(transcript: str) -> dict[str, set[str]]:
     """Parse `nm --print-armap` `NAME in MEMBER` index rows."""
     index: dict[str, set[str]] = {}

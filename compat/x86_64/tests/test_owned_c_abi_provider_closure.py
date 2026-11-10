@@ -195,6 +195,30 @@ class ProviderClosureReaderTests(unittest.TestCase):
                   relocations, library, library, "fixture")
 
 
+class StaticImageRosterTests(unittest.TestCase):
+    def test_mold_demoted_local_definitions_resolve_the_roster(self) -> None:
+        demoted = {name: "LOCAL" for group in GROUPS for name in group}
+        reader.audit_static_image(PROCESS_GLOBALS, rows(binding=demoted), "static")
+        reader.audit_static_image(PROCESS_GLOBALS, rows(), "static")
+
+    def test_missing_definition_is_rejected(self) -> None:
+        with self.assertRaisesRegex(reader.ProviderClosureError,
+                                    "static leaves roster names unresolved: getenv, putenv"):
+            reader.audit_static_image(
+                PROCESS_GLOBALS, rows(omit=frozenset({"getenv", "putenv"})), "static")
+
+    def test_section_or_file_rows_do_not_define_a_name(self) -> None:
+        transcript = rows(omit=frozenset({"getenv"})) + row(90, "getenv", 0, kind="FILE", bind="LOCAL") + "\n"
+        with self.assertRaisesRegex(reader.ProviderClosureError, "unresolved: getenv"):
+            reader.audit_static_image(PROCESS_GLOBALS, transcript, "static")
+
+    def test_undefined_roster_reference_is_rejected(self) -> None:
+        undefined = "    90: 0000000000000000     0 NOTYPE  GLOBAL DEFAULT  UND getenv\n"
+        with self.assertRaisesRegex(reader.ProviderClosureError,
+                                    "static-pie retains undefined roster names: getenv"):
+            reader.audit_static_image(PROCESS_GLOBALS, rows() + undefined, "static-pie")
+
+
 class ProcessGlobalsRunnerTests(unittest.TestCase):
     def assert_usage(self, *arguments: str) -> None:
         scratch = ROOT / ".work" / "x86_64" / "tmp"

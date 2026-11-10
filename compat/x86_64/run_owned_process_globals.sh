@@ -156,18 +156,13 @@ from pathlib import Path
 import sys
 
 sys.path.insert(0, str(Path(sys.argv[1]) / "compat" / "x86_64"))
-from owned_c_abi_provider_closure import frozen_roster, parse_symbols
+from owned_c_abi_provider_closure import ProviderClosureError, audit_static_image, frozen_roster
 
-ROSTER = frozen_roster(["process.globals"]).names
-transcript = Path(sys.argv[2]).read_text(encoding="utf-8")
-defined = {row.name for row in parse_symbols(transcript)}
-missing = sorted(set(ROSTER) - defined)
-if missing:
-    raise SystemExit(f"{sys.argv[3]} leaves roster names unresolved: {', '.join(missing)}")
-undefined = [line.split()[-1] for line in transcript.splitlines()
-             if " UND " in line and line.split()[-1] in ROSTER]
-if undefined:
-    raise SystemExit(f"{sys.argv[3]} retains undefined roster names: {', '.join(undefined)}")
+try:
+    audit_static_image(frozen_roster(["process.globals"]),
+                       Path(sys.argv[2]).read_text(encoding="utf-8"), sys.argv[3])
+except ProviderClosureError as error:
+    raise SystemExit(str(error)) from error
 PY
 }
 
