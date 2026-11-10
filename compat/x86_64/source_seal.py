@@ -337,8 +337,9 @@ def traced_accesses(trace: Path, root_cwd: str) -> list[Access]:
     """Replay a `strace -ff -y -z` trace and return each successful path access.
 
     Each process starts with its parent's program and working directory at
-    the fork that created it; a git process's own accesses are its metadata
-    walk, not build inputs, and are omitted.
+    the fork that created it; a process whose fork the trace does not show
+    starts in `root_cwd`. A git process's own accesses are its metadata walk,
+    not build inputs, and are omitted.
     """
 
     files = {int(path.name.rsplit(".", 1)[1]): path for path in trace.parent.glob(trace.name + ".*")}
@@ -351,10 +352,10 @@ def traced_accesses(trace: Path, root_cwd: str) -> list[Access]:
             match = LINE.match(line)
             if match is not None and match.group("name") in FORKS:
                 children.add(int(match.group("result"), 0))
-    roots = [pid for pid in files if pid not in children]
-    require(len(roots) == 1, f"trace has no single root process: {sorted(roots)}")
-    state = {roots[0]: ("", root_cwd)}
-    order = [roots[0]]
+    roots = sorted(pid for pid in files if pid not in children)
+    require(bool(roots), "trace has no root process")
+    state = {pid: ("", root_cwd) for pid in roots}
+    order = list(reversed(roots))
     accesses: list[Access] = []
     while order:
         pid = order.pop()
