@@ -321,17 +321,38 @@ directory has exactly the manifest roster and every APK matches its pinned
 digest; the native corpus runner separately verifies signatures and index
 contents.
 
-The run is bound to the clean source identity and core image recorded in
-`NAME/candidate.json`. Each `--inputs` group is sealed immediately before its
-first consuming step runs, and is checked again on resume and after each
-consumer. This lets a correctness prefix resume after performance inputs are
-added for `performance-release`. A restart on the same revision skips each step whose
-recorded outputs still hash identically and resumes at the first incomplete one;
-a failed attempt's step directory and fresh outputs are renamed `*.failed-N`.
-A different revision, changed inputs or environment, a changed completed output,
-or a failed step stops the run; `NAME/summary.json` names the step and every step
-not run. `--through STEP` runs the prefix ending at that step id (staged
-preflights; never reported complete). `--dry-run` resolves every command with
-placeholders for not-yet-produced outputs, prints the preflight blockers as
-JSON, and runs nothing. Exit status: 0 for a complete run or a finished
-`--through` prefix, 1 for an incomplete run, 2 for a candidate error.
+The run is bound to the product source digest, core image and inputs recorded
+in `NAME/candidate.json`, not to the revision. The product source digest
+([`source_seal.py`](source_seal.py)) hashes the product-input set: every file
+below the product trees (`libc`, `ldso`, `crt`, `builtins`, `crabc-core`,
+`crabc-rs`, `crabc-mimalloc`, `unwinder`, `include`, `.cargo`, `docker`), the
+root Cargo manifests, `rust-toolchain.toml`, `compat/upstreams.toml`, and the
+product builders and packagers with their module-level Python import closure.
+`python3 -B compat/x86_64/source_seal.py files` prints the set. Each product
+build and package step runs under `source_seal.py guard`, which traces it with
+strace and fails, naming the path, if it touches a repository file outside the
+set. Each `--inputs` group is sealed immediately before its first consuming
+step runs, and is checked again on resume and after each consumer. This lets a
+correctness prefix resume after performance inputs are added for
+`performance-release`.
+
+A restart on any clean revision with the same product source digest skips each
+step whose recorded outputs still hash identically and resumes at the first
+incomplete one, so a harness-only commit keeps the products and every completed
+step. A failed attempt's step directory and fresh outputs are renamed
+`*.failed-N`. Each step record keeps the revision it ran at. A different
+product source digest, changed inputs or environment, a dirty tree, a changed
+completed output, a revision change during one invocation, or a failed step
+stops the run; `NAME/summary.json` names the step and every step not run. A
+reused step is still re-read by every later reader; a reader that still
+compares revisions refuses it and stops the run.
+
+`NAME/summary.json` is `fresh` only when every completed step ran at the final
+revision. **R2 acceptance requires one complete, fresh run**: a run that
+completes on steps reused from another revision is development evidence only
+and must be repeated in a new `--work`. `--through STEP` runs the prefix ending
+at that step id (staged preflights; never reported complete). `--dry-run`
+resolves every command with placeholders for not-yet-produced outputs, prints
+the preflight blockers as JSON, and runs nothing. Exit status: 0 for a
+complete, fresh run or a finished `--through` prefix, 1 for an incomplete run
+or a complete run that is not fresh, 2 for a candidate error.

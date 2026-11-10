@@ -14,6 +14,8 @@ import tempfile
 import unittest
 from unittest import mock
 
+import product_fixture
+
 ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(ROOT / "compat/x86_64"))
 import locale_alias_contract_receipt as receipt
@@ -73,6 +75,7 @@ class LocaleAliasContractReceiptTests(unittest.TestCase):
             shutil.copy2(source, destination)
         if tracked_unselected:
             (trusted / "unselected-tracked.txt").write_text("tracked original\n", encoding="utf-8")
+        product_fixture.seed_product_inputs(trusted)
         for command in (("git", "init", "-q"), ("git", "add", "."),
                         ("git", "-c", "user.email=receipt@example.invalid", "-c", "user.name=Receipt", "commit", "-qm", "receipt")):
             subprocess.run(command, cwd=trusted, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
@@ -443,15 +446,15 @@ class LocaleAliasContractReceiptTests(unittest.TestCase):
         record = {"directory": receipt.STATIC_PREPARATION_DIRECTORY,
                   "tree": receipt._tree_records(output, receipt.STATIC_PREPARATION_DIRECTORY),
                   "record": receipt._identity(output, record_path)}
-        original = owner.package.static_product_contract.source_digest
+        original = (owner.source_seal.seal, owner.package.source_seal.product_source_digest)
 
         def validate(materialized: Path, _path: Path) -> dict[str, object]:
-            self.assertEqual(owner.source_identity(materialized), source)
-            self.assertEqual(owner.package.static_product_contract.source_digest(), source["content_sha256"])
+            self.assertEqual(owner.source_seal.seal(materialized), source)
+            self.assertEqual(owner.package.source_seal.product_source_digest(ROOT), source["content_sha256"])
             return {"products": {"primary": {"tree": {}}}}
 
         def tree_identity(_product: Path) -> dict[str, object]:
-            self.assertEqual(owner.package.static_product_contract.source_digest(), source["content_sha256"])
+            self.assertEqual(owner.package.source_seal.product_source_digest(ROOT), source["content_sha256"])
             return {}
 
         with mock.patch.object(authority, "source_tree", return_value=(source, {})), \
@@ -459,7 +462,7 @@ class LocaleAliasContractReceiptTests(unittest.TestCase):
              mock.patch.object(owner, "tree_identity", side_effect=tree_identity), \
              mock.patch("subprocess.Popen", side_effect=AssertionError("static replay started a process")):
             self.assertEqual(receipt._validate_static_preparation(self.root, output, source, record), record)
-        self.assertIs(owner.package.static_product_contract.source_digest, original)
+        self.assertEqual((owner.source_seal.seal, owner.package.source_seal.product_source_digest), original)
 
     def test_runner_snapshot_keeps_producer_paths_and_receipt_relative_identities(self) -> None:
         """The runner hashes supplied products at their mounted producer paths."""
@@ -872,7 +875,8 @@ class LocaleAliasContractReceiptTests(unittest.TestCase):
         source = self.root / "clean-source"
         source.mkdir()
         (source / "tracked.txt").write_text("tracked\n", encoding="utf-8")
-        for command in (("git", "init", "-q"), ("git", "add", "tracked.txt"),
+        product_fixture.seed_product_inputs(source)
+        for command in (("git", "init", "-q"), ("git", "add", "."),
                         ("git", "-c", "user.email=receipt@example.invalid", "-c", "user.name=Receipt", "commit", "-qm", "source")):
             subprocess.run(command, cwd=source, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         state = receipt._live_source_state(source)

@@ -32,6 +32,7 @@ if str(MODULE_DIR) not in sys.path:
     sys.path.insert(0, str(MODULE_DIR))
 import owned_posix_product_evidence as product_evidence
 import owned_posix_static_products as static_products
+import source_seal
 import core_image
 
 SCHEMA = 'crabc.x86_64-owned-resolver-alias-contract/v1'
@@ -537,7 +538,7 @@ def _git_file(root: Path, revision: str, relative: Path) -> tuple[int, bytes]:
 def _source_identity(root: Path, preparation: Path) -> dict[str, str]:
     preparation_value = read_json(preparation, 'static preparation')
     source = exact(preparation_value.get('source'), {'revision', 'content_sha256'}, 'static preparation source')
-    current = static_products.source_identity(root)
+    current = source_seal.seal(root)
     revision = current['revision']
     require(source['revision'] == revision and source['content_sha256'] == current['content_sha256'],
             'selected static preparation source is not current collector source')

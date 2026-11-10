@@ -130,7 +130,7 @@ class FeatureAliasReceiptTests(unittest.TestCase):
             prep = {'source': {'content_sha256': source}, 'products': {'primary': {'path': product}}}
             with self.subTest(source=source, product=product), \
                     mock.patch.object(receipt.static_products, 'validate_receipt', return_value=prep), \
-                    mock.patch.object(receipt.qualification, 'source_digest', return_value='current'):
+                    mock.patch.object(receipt.qualification.source_seal, 'product_source_digest', return_value='current'):
                 with self.assertRaises(receipt.FeatureAliasError):
                     receipt.source_product_seal(static, dynamic, preparation)
 

@@ -24,6 +24,21 @@ import owned_text_math_locale_stdio_family as coordinator
 SOURCE = {"revision": "a" * 40, "content_sha256": "b" * 64}
 
 
+class Patches:
+    """Enter several re-enterable patchers as one, as often as a test needs."""
+
+    def __init__(self, *patchers: object) -> None:
+        self.patchers = patchers
+
+    def __enter__(self) -> None:
+        for patcher in self.patchers:
+            patcher.__enter__()
+
+    def __exit__(self, *exception: object) -> None:
+        for patcher in reversed(self.patchers):
+            patcher.__exit__(*exception)
+
+
 class FamilyFixture:
     """Physical declared inputs with only the behavior-owner boundary mocked.
 
@@ -246,6 +261,11 @@ class FamilyFixture:
         if context.dynamic_qualification != self.dynamic_qualification:
             raise AssertionError("fixture dynamic input differs")
 
+    def _coordinator(self, adapters: dict[str, object]) -> "Patches":
+        return Patches(mock.patch.multiple(coordinator, ROSTER_PATH=self.roster,
+                                           _reader_adapters=mock.Mock(return_value=adapters)),
+                       mock.patch.object(coordinator.source_seal, "seal", mock.Mock(return_value=SOURCE)))
+
     def patches(self, adapters: dict[str, object]):
         matrix = self.matrix()
 
@@ -255,12 +275,8 @@ class FamilyFixture:
             coordinator.family._request_paths(root, request)
             return matrix["inputs"], self.products
 
-        return mock.patch.multiple(
-            coordinator,
-            ROSTER_PATH=self.roster,
-            current_source_identity=mock.Mock(return_value=SOURCE),
-            _reader_adapters=mock.Mock(return_value=adapters),
-        ), mock.patch.object(coordinator.family, "validate_receipt", return_value=matrix), mock.patch.object(
+        return self._coordinator(adapters), mock.patch.object(coordinator.family, "validate_receipt",
+                                                              return_value=matrix), mock.patch.object(
             coordinator.family, "input_products", side_effect=input_products
         ), mock.patch.object(coordinator.pthread, "validate_receipt", return_value=self.pthread())
 
@@ -335,14 +351,14 @@ class TextMathLocaleStdioFamilyTests(unittest.TestCase):
                 coordinator.admission_facts(fixture.root, output)
         product_payload.write_text(original_product, encoding="utf-8")
 
-        with mock.patch.multiple(coordinator, ROSTER_PATH=fixture.roster,
-                                 current_source_identity=mock.Mock(return_value={**SOURCE, "revision": "c" * 40})):
+        with mock.patch.object(coordinator, "ROSTER_PATH", fixture.roster), \
+                mock.patch.object(coordinator.source_seal, "seal", return_value={**SOURCE, "content_sha256": "c" * 64}):
             with self.assertRaisesRegex(coordinator.FamilyError, "not bound to current source"):
                 coordinator.admission_facts(fixture.root, output)
 
         fixture.matrix_path.write_text("{}\n", encoding="utf-8")
-        with mock.patch.multiple(coordinator, ROSTER_PATH=fixture.roster,
-                                 current_source_identity=mock.Mock(return_value=SOURCE)):
+        with mock.patch.object(coordinator, "ROSTER_PATH", fixture.roster), \
+                mock.patch.object(coordinator.source_seal, "seal", return_value=SOURCE):
             with self.assertRaisesRegex(coordinator.FamilyError, "family_execution changed"):
                 coordinator.admission_facts(fixture.root, output)
 
@@ -405,7 +421,7 @@ class TextMathLocaleStdioFamilyTests(unittest.TestCase):
             }
 
         adapter = coordinator._reader_adapters()["numeric"]
-        with mock.patch.object(coordinator, "current_source_identity", return_value=SOURCE):
+        with mock.patch.object(coordinator.source_seal, "seal", return_value=SOURCE):
             with mock.patch.object(numeric, "validate_report", side_effect=lambda _root, path, require_static:
                                    report(path, numeric.SCOPE)) as reader:
                 observed = adapter(fixture.root, request, context)
@@ -450,7 +466,7 @@ class TextMathLocaleStdioFamilyTests(unittest.TestCase):
 
         complete = {capability: 1 for capability in coordinator.STDIO_ENGINE_FROZEN_SURFACE}
         partial = {capability: 1 for capability in sorted(coordinator.STDIO_ENGINE_FROZEN_SURFACE)[1:]}
-        with mock.patch.object(coordinator, "current_source_identity", return_value=SOURCE):
+        with mock.patch.object(coordinator.source_seal, "seal", return_value=SOURCE):
             with mock.patch.object(engine, "validate_report",
                                    side_effect=lambda path, _root, require_static: report(path, complete)):
                 observed = coordinator._stdio_engine_adapter(fixture.root, request, context)
@@ -476,7 +492,7 @@ class TextMathLocaleStdioFamilyTests(unittest.TestCase):
         patches = fixture.patches(fixture.adapter_results())
         # Exercise the real aggregate writer and public validator together.
         # Only the native leaf/product judges are substituted in this test.
-        with patches[2], mock.patch.object(component.static_products, "source_identity", return_value=SOURCE), \
+        with patches[2], mock.patch.object(component.static_products.source_seal, "seal", return_value=SOURCE), \
                 mock.patch.object(component, "validate_report", return_value=(
                     {"execution_cells": list(component.EXECUTION_CELLS)}, {"fixture": b"same object"},
                 )):
@@ -502,7 +518,7 @@ class TextMathLocaleStdioFamilyTests(unittest.TestCase):
         output = Path(".work/assembly")
         patches = fixture.patches(fixture.adapter_results())
         with patches[0], patches[1], patches[2], patches[3], \
-                mock.patch.object(component.static_products, "source_identity", return_value=SOURCE), \
+                mock.patch.object(component.static_products.source_seal, "seal", return_value=SOURCE), \
                 mock.patch.object(component, "validate_report", return_value=(
                     {"execution_cells": list(component.EXECUTION_CELLS)}, {"fixture": b"same object"},
                 )):

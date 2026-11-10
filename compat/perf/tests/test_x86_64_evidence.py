@@ -1680,13 +1680,15 @@ class DynamicQualificationReplayTests(unittest.TestCase):
                     "schema": "crabc.x86_64-owned-dynamic-qualification/v1",
                     "status": "qualified-pending-review", "source_sha256": digest, "products": products,
                 }),
-                "source_digest": staticmethod(lambda: digest),
+                "ROOT": ROOT,
+                "product_source_digest": staticmethod(lambda _root: digest),
             })()
             with patch.object(evidence, "_x86_module", return_value=owner):
                 evidence.verify_dynamic_product_prerequisite(ROOT, record, product, digest)
             partial = type("PartialOwner", (), {
                 "validate_receipt": staticmethod(lambda _path: {"status": "partial"}),
-                "source_digest": staticmethod(lambda: digest),
+                "ROOT": ROOT,
+                "product_source_digest": staticmethod(lambda _root: digest),
             })()
             with patch.object(evidence, "_x86_module", return_value=partial):
                 with self.assertRaisesRegex(evidence.EvidenceError, "not a validated three-product"):

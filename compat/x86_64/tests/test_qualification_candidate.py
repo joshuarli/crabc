@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import contextlib
+import io
 import json
 import os
 from pathlib import Path
@@ -19,7 +21,8 @@ import qualification_candidate as candidate  # noqa: E402
 import qualification_gates as gates  # noqa: E402
 
 
-SOURCE = {"revision": "r" * 40, "content_sha256": "c" * 64}
+SOURCE = {"revision": "a" * 40, "content_sha256": "c" * 64}
+HARNESS_FIX = {**SOURCE, "revision": "b" * 40}
 
 
 class PlanTests(unittest.TestCase):
@@ -266,8 +269,9 @@ class ExecutionTests(unittest.TestCase):
         stderr.write_text("", encoding="utf-8")
         return 0
 
-    def _execute(self, **keywords: object) -> dict[str, object]:
-        return candidate.execute(self.root, self.work, self.inputs, runner=self._runner, source=SOURCE, **keywords)
+    def _execute(self, source: dict[str, str] = SOURCE, **keywords: object) -> dict[str, object]:
+        return candidate.execute(self.root, self.work, self.inputs, runner=self._runner,
+                                 source=lambda _root: source, **keywords)
 
     def test_complete_run_writes_one_summary_and_a_restart_skips_every_step(self) -> None:
         summary = self._execute()
@@ -284,9 +288,12 @@ class ExecutionTests(unittest.TestCase):
         request = json.loads((self.work / "out/loader-family/request.json").read_text(encoding="utf-8"))
         self.assertEqual(request["qualification"], ".work/x86_64/run/out/dynamic/qualification.json")
 
+        self.assertTrue(written["fresh"])
+
         self.calls.clear()
         again = self._execute()
         self.assertTrue(again["complete"])
+        self.assertTrue(again["fresh"])
         self.assertEqual(self.calls, [])
         self.assertTrue(all(record.get("resumed") for record in again["steps"]))
 
@@ -359,14 +366,58 @@ class ExecutionTests(unittest.TestCase):
         failed = [path.name for path in (self.work / "steps").iterdir() if ".failed-" in path.name]
         self.assertEqual(len(failed), 1)
 
-    def test_changed_output_or_another_revision_fails_closed(self) -> None:
+    def test_changed_output_or_another_product_source_fails_closed(self) -> None:
         self.assertTrue(self._execute(through="posix-family")["steps"])
         (self.work / "out/posix-family/execution.json").write_text("changed", encoding="utf-8")
         summary = self._execute(through="posix-native")
         self.assertIn("changed after completion", summary["error"])
-        with self.assertRaisesRegex(candidate.CandidateError, "another source revision"):
-            candidate.execute(self.root, self.work, self.inputs, runner=self._runner,
-                              source={**SOURCE, "revision": "o" * 40})
+        self.calls.clear()
+        with self.assertRaisesRegex(candidate.CandidateError, "another product source"):
+            self._execute({**SOURCE, "content_sha256": "d" * 64}, through="posix-native")
+        self.assertEqual(self.calls, [])
+
+    def test_a_harness_only_revision_resumes_completed_steps_and_is_not_fresh(self) -> None:
+        first = self._execute(through="posix-family")
+        self.assertTrue(first["fresh"])
+        self.calls.clear()
+        resumed = self._execute(HARNESS_FIX, through="posix-native")
+        self.assertNotIn("error", resumed)
+        ran = [step.id for step in candidate.plan(through="posix-native") if step.internal is None]
+        self.assertEqual(self.calls, ran[ran.index("posix-family") + 1:])
+        revisions = {record["step"]: record["revision"] for record in resumed["steps"]}
+        self.assertEqual(revisions["static-products"], SOURCE["revision"])
+        self.assertEqual(revisions["posix-family"], SOURCE["revision"])
+        self.assertEqual(revisions["posix-native"], HARNESS_FIX["revision"])
+        self.assertFalse(resumed["fresh"])
+        record = json.loads((self.work / "steps/00-static-products/record.json").read_text(encoding="utf-8"))
+        self.assertEqual(record["source"], SOURCE)
+
+    def test_a_complete_run_on_reused_steps_is_not_acceptance(self) -> None:
+        self._execute(through="posix-family")
+        summary = self._execute(HARNESS_FIX)
+        self.assertTrue(summary["complete"], summary.get("error"))
+        self.assertFalse(summary["fresh"])
+        errors = io.StringIO()
+        with mock.patch.object(candidate, "execute", return_value=summary), \
+                mock.patch.object(candidate, "_work", return_value=self.work), \
+                contextlib.redirect_stderr(errors):
+            self.assertEqual(candidate.main(["--work", str(self.work)]), 1)
+        self.assertIn("NOT FRESH", errors.getvalue())
+        self.assertIn(SOURCE["revision"], errors.getvalue())
+
+    def test_a_dirty_checkout_is_a_candidate_error(self) -> None:
+        def dirty(_root: Path) -> dict[str, str]:
+            raise candidate.source_seal.SourceSealError("qualification requires clean committed source")
+
+        with self.assertRaisesRegex(candidate.CandidateError, "clean committed source"):
+            candidate.execute(self.root, self.work, self.inputs, runner=self._runner, source=dirty)
+        self.assertEqual(self.calls, [])
+
+    def test_a_revision_change_during_one_invocation_stops_the_run(self) -> None:
+        seals = iter([SOURCE, SOURCE, SOURCE, HARNESS_FIX])
+        summary = candidate.execute(self.root, self.work, self.inputs, runner=self._runner,
+                                    source=lambda _root: next(seals, HARNESS_FIX), through="dynamic-products")
+        self.assertIn("candidate source changed during execution", summary["error"])
 
     def test_restart_rejects_changed_inputs_before_reusing_steps(self) -> None:
         self._execute(through="rust-std-lto")
@@ -381,7 +432,7 @@ class ExecutionTests(unittest.TestCase):
         state["schema"] = "crabc.x86_64-qualification-candidate/v2"
         state_path.write_text(json.dumps(state), encoding="utf-8")
 
-        with self.assertRaisesRegex(candidate.CandidateError, "another source revision, candidate inputs or environment"):
+        with self.assertRaisesRegex(candidate.CandidateError, "another product source, candidate inputs or environment"):
             self._execute(through="static-products")
 
     def test_restart_rejects_replaced_input_at_the_same_path(self) -> None:

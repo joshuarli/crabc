@@ -11,6 +11,8 @@ import sys
 import tempfile
 import unittest
 
+import product_fixture
+
 ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(ROOT / "compat/x86_64"))
 import owned_posix_static_products as preparation
@@ -35,6 +37,7 @@ class StaticPreparationTests(unittest.TestCase):
         (self.root / "compat").mkdir()
         (self.root / "compat/upstreams.toml").write_text("oracle = 'musl 1.2.6'\n")
         (self.root / "rust-toolchain.toml").write_text("channel = 'pinned'\n")
+        product_fixture.seed_product_inputs(self.root)
         self.git("init", "-q")
         self.git("add", ".")
         self.git("-c", "user.name=fixture", "-c", "user.email=fixture@example.invalid", "-c", "core.hooksPath=/dev/null", "commit", "-qm", "fixture")
@@ -53,7 +56,7 @@ class StaticPreparationTests(unittest.TestCase):
         for label in ("primary", "reproduction"):
             package.create_archive(products / label, archives / f"{label}.tar.xz")
         package.extract_archive(archives / "primary.tar.xz", products / "extracted")
-        source = preparation.source_identity(self.root)
+        source = preparation.source_seal.seal(self.root)
         preparation.write_new(self.work / "source-before.json", source)
         preparation.write_new(self.work / "source-after.json", source)
         (self.work / "steps").mkdir()
@@ -130,7 +133,7 @@ class StaticPreparationTests(unittest.TestCase):
 
     def test_dirty_source_rejected(self):
         (self.root / "source").write_text("dirty\n")
-        with self.assertRaisesRegex(preparation.PreparationError, "clean"):
+        with self.assertRaisesRegex(preparation.source_seal.SourceSealError, "clean committed source"):
             self.validate()
 
     def test_duplicate_json_keys_rejected(self):
@@ -162,11 +165,24 @@ class StaticPreparationTests(unittest.TestCase):
         preparation.make_retained_evidence_readable(retained)
         self.assertEqual(outside.stat().st_mode & 0o777, 0o600)
 
-    def test_new_committed_source_rejected(self):
-        (self.root / "source").write_text("new revision\n")
-        self.git("add", "source")
-        self.git("-c", "user.name=fixture", "-c", "user.email=fixture@example.invalid", "-c", "core.hooksPath=/dev/null", "commit", "-qm", "changed")
-        with self.assertRaises(preparation.PreparationError):
+    def commit(self, message):
+        self.git("add", "-A")
+        self.git("-c", "user.name=fixture", "-c", "user.email=fixture@example.invalid", "-c", "core.hooksPath=/dev/null", "commit", "-qm", message)
+
+    def test_harness_only_commit_keeps_the_preparation_valid(self):
+        before = self.validate()
+        (self.root / "source").write_text("new harness revision\n")
+        self.commit("harness only")
+        after = self.validate()
+        self.assertEqual(after, before)
+        self.assertNotEqual(preparation.source_seal.revision(self.root), before["source"]["revision"])
+
+    def test_new_committed_product_input_rejected(self):
+        product_input = self.root / "libc/src/added.rs"
+        product_input.parent.mkdir(parents=True)
+        product_input.write_text("pub fn added() {}\n")
+        self.commit("product input")
+        with self.assertRaisesRegex(preparation.PreparationError, "source seal changed"):
             self.validate()
 
     def test_source_seal_tampering_rejected(self):

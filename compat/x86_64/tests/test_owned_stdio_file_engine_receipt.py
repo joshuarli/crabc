@@ -514,7 +514,7 @@ class OwnedStdioFileEngineReceiptTests(unittest.TestCase):
             mock.patch.object(receipt.products, "_validate_dynamic_product", return_value=(self.fixture.dynamic / "share/crabc/manifest.json", {})),
             mock.patch.object(receipt.products, "validate_link", side_effect=self._link),
             mock.patch.object(receipt.copies, "audit_execution_payload", side_effect=self._payload),
-            mock.patch.object(qualification, "source_digest", return_value="a" * 64),
+            mock.patch.object(qualification.source_seal, "product_source_digest", return_value="a" * 64),
             mock.patch.object(qualification, "ROOT", self.fixture.checkout),
             mock.patch.object(receipt, "_elf_output", side_effect=self.allocator_elf),
             mock.patch.object(receipt, "validate_dso_differential", return_value=None),

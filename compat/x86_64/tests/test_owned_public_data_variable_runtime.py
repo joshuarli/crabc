@@ -662,11 +662,11 @@ class PublicDataVariableRuntimeExecutionRootTests(unittest.TestCase):
         sources = {'captured': 'source'}
         projection = {'joined': 'companions'}
         tools = {'tool': 'current'}
-        collection = {'source': {'revision': 'current'}}
+        collection = {'source': {'revision': 'a' * 40, 'content_sha256': 'b' * 64}}
         companions = {'inputs': {name: {} for name in reader.COMPANION_NAMES}, 'projection': projection}
         with mock.patch.object(reader.ordinary_link, 'admit_inputs', return_value=cohort) as admitted, \
              mock.patch.object(reader, '_validate_source_capture', return_value=sources) as source_capture, \
-             mock.patch.object(reader.static_products, 'source_identity', return_value=collection['source']), \
+             mock.patch.object(reader.static_products.source_seal, 'seal', return_value=collection['source']), \
              mock.patch.object(reader, '_validate_copied_input', side_effect=lambda _root, _value, description: originals[description.removeprefix('public-data runtime ')]), \
              mock.patch.object(reader, '_current_companion_projection', return_value=projection) as companion_projection, \
              mock.patch.object(reader.ordinary_link.qualification, 'validate_oracle'), \
@@ -692,7 +692,7 @@ class PublicDataVariableRuntimeExecutionRootTests(unittest.TestCase):
 
         with mock.patch.object(reader.ordinary_link, 'admit_inputs', return_value=cohort), \
              mock.patch.object(reader, '_validate_source_capture', return_value=sources), \
-             mock.patch.object(reader.static_products, 'source_identity', return_value=collection['source']), \
+             mock.patch.object(reader.static_products.source_seal, 'seal', return_value=collection['source']), \
              mock.patch.object(reader, '_validate_copied_input', side_effect=lambda _root, _value, description: originals[description.removeprefix('public-data runtime ')]), \
              mock.patch.object(reader, '_current_companion_projection', return_value=projection), \
              mock.patch.object(reader.ordinary_link.qualification, 'validate_oracle'), \
@@ -925,7 +925,7 @@ class PublicDataVariableRuntimePublicReplayTests(unittest.TestCase):
         )
         with mock.patch.dict(os.environ, {reader.IMAGE_ENV: reader.IMAGE}), \
              mock.patch.object(reader.ordinary_link, 'admit_inputs', return_value=self.cohort), \
-             mock.patch.object(reader.static_products, 'source_identity', return_value=self.source), \
+             mock.patch.object(reader.static_products.source_seal, 'seal', return_value=self.source), \
              mock.patch.object(reader, '_current_companion_projection',
                                side_effect=reader.PublicDataVariableRuntimeError('stop before runtime collection')) as projection:
             with self.assertRaisesRegex(reader.PublicDataVariableRuntimeError, 'stop before runtime collection'):
@@ -969,7 +969,7 @@ class PublicDataVariableRuntimePublicReplayTests(unittest.TestCase):
 
         patches = (
             mock.patch.object(reader.ordinary_link, 'admit_inputs', return_value=self.cohort),
-            mock.patch.object(reader.static_products, 'source_identity', return_value=self.source),
+            mock.patch.object(reader.static_products.source_seal, 'seal', return_value=self.source),
             mock.patch.object(reader, '_current_companion_projection', return_value=self.projection),
             mock.patch.object(reader.ordinary_link.qualification, 'validate_oracle'),
             mock.patch.object(reader.ordinary_link, 'validate_oracle_static_inputs'),

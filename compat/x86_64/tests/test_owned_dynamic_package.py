@@ -80,7 +80,7 @@ class OwnedDynamicPackageTests(unittest.TestCase):
             entries = sorted({*files, "share/crabc/manifest.json", *package.driver.ALIASES})
             baseline = workspace / "baseline.tar"
             package.write_archive(source, baseline, manifest, entries)
-            with mock.patch.object(qualification, "source_digest", return_value="a" * 64), \
+            with mock.patch.object(qualification.source_seal, "product_source_digest", return_value="a" * 64), \
                  mock.patch.object(qualification, "contract_digests", return_value={"contract": "b" * 64}):
                 package.package(source, workspace / "created-baseline.tar")
                 package.extract(baseline, workspace / "baseline")

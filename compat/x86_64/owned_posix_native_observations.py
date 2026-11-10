@@ -29,6 +29,7 @@ import owned_pthread_stress_source as stress_source
 import owned_os_test_aio_suspend_source as aio_suspend_source
 import owned_posix_product_evidence as product_evidence
 import owned_dynamic_qualification as dynamic_qualification
+import source_seal
 import owned_crypt_runtime_evidence as payload_evidence
 import owned_dynamic_elf as dynamic_elf
 
@@ -413,7 +414,7 @@ def collect_bootstrap_primitives(leaf_root, *, static_product, dynamic_product):
             'bootstrap static and dynamic products must be separate from evidence and each other')
     _bootstrap_exact_roster(reader)
     try:
-        source_sha256 = dynamic_qualification.source_digest()
+        source_sha256 = source_seal.product_source_digest(dynamic_qualification.ROOT)
         source_identity = reader.identity(source, source=True)
         jump_source_identity = reader.identity(physical(BOOTSTRAP_JUMP_SOURCE), source=True)
         products_before = {
@@ -495,7 +496,7 @@ def collect_bootstrap_primitives(leaf_root, *, static_product, dynamic_product):
             'dynamic': _bootstrap_product_snapshot(reader, reader.product, 'dynamic', source_sha256),
         }
         same(products_after, products_before, 'bootstrap selected products during replay')
-        same(dynamic_qualification.source_digest(), source_sha256, 'bootstrap checkout source during replay')
+        same(source_seal.product_source_digest(dynamic_qualification.ROOT), source_sha256, 'bootstrap checkout source during replay')
         same(reader.identity(source, source=True), source_identity, 'bootstrap source during replay')
         same(reader.identity(BOOTSTRAP_JUMP_SOURCE, source=True), jump_source_identity,
              'bootstrap jump-tail owner source during replay')

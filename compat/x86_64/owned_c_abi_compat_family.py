@@ -28,6 +28,7 @@ from typing import Any, Mapping
 
 import owned_c_abi_compat_family_cohort as cohort
 import owned_posix_family_execution as family
+import source_seal
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -300,7 +301,7 @@ def _request(root: Path, work: Path) -> dict[str, str]:
 
 
 def _guard(root: Path, work: Path, products: Mapping[str, Mapping[str, Any]]) -> None:
-    require(family.same_json(family.static_products.source_identity(root),
+    require(family.same_json(source_seal.seal(root),
                              family.read(work / "source-before.json")),
             "source changed during c-abi-compat family execution")
     require(family.same_json(_product_seal(root, products), family.read(work / "product-before.json")),
@@ -332,7 +333,7 @@ def execute(root: Path, work: Path, static_preparation: Path, dynamic_qualificat
                                             root / request["dynamic_qualification"])
     work.mkdir()
     family.static_products.write_new(work / "request.json", request)
-    family.static_products.write_new(work / "source-before.json", family.static_products.source_identity(root))
+    family.static_products.write_new(work / "source-before.json", source_seal.seal(root))
     family.static_products.write_new(work / "product-before.json", _product_seal(root, products))
     companions: dict[str, Mapping[str, object]] = {}
     try:
@@ -356,7 +357,7 @@ def execute(root: Path, work: Path, static_preparation: Path, dynamic_qualificat
             print(f"c-abi-compat family {component.identifier}: "
                   + ("PASS" if result["admitted"] else f"GAP ({result['gap']['reason']})"), flush=True)
     finally:
-        for name, capture in (("source-after.json", lambda: family.static_products.source_identity(root)),
+        for name, capture in (("source-after.json", lambda: source_seal.seal(root)),
                               ("product-after.json", lambda: _product_seal(root, products))):
             try:
                 family.static_products.write_new(work / name, capture())
@@ -687,7 +688,7 @@ def collect(root: Path, work: Path) -> dict[str, object]:
     mount = request["source_mount"]
     source, products = cohort.canonical_products(root, root / request["static_preparation"],
                                                  root / request["dynamic_qualification"])
-    current = family.static_products.source_identity(root)
+    current = source_seal.seal(root)
     seals = {}
     for name in ("source-before.json", "source-after.json"):
         require(family.same_json(family.read(work / name), current), f"c-abi-compat family {name} differs")
@@ -789,9 +790,8 @@ def admission_facts(root: Path, assessment_path: Path) -> dict[str, object]:
             "c-abi-compat family assessment capability admission differs")
     seal = retained.get("cohort", {}).get("source") if isinstance(retained.get("cohort"), dict) else None
     require(isinstance(seal, dict), "c-abi-compat family assessment cohort differs")
-    current = family.static_products.source_identity(root)
-    require(seal.get("revision") == current["revision"] and seal.get("content_sha256") == current["content_sha256"],
-            "c-abi-compat family assessment is not bound to current source")
+    current = source_seal.seal(root)
+    require(source_seal.same_product(seal, current), "c-abi-compat family assessment is not bound to current source")
     receipts: dict[str, dict[str, object]] = {}
     for name in ("static_preparation", "dynamic_qualification"):
         record = seal.get(name)

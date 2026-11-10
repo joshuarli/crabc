@@ -3726,7 +3726,7 @@ class PublicDataLinkageAdapterTests(unittest.TestCase):
         }
         with (
             mock.patch.object(selection.ordinary_link_evidence.static_products, 'validate_receipt', return_value=preparation),
-            mock.patch.object(selection.ordinary_link_evidence.static_products, 'source_identity', return_value=ordinary_source),
+            mock.patch.object(selection.ordinary_link_evidence.static_products.source_seal, 'seal', return_value=ordinary_source),
             mock.patch.object(selection.ordinary_link_evidence.qualification, 'product_identity', return_value='f' * 64),
         ):
             admitted = selection.ordinary_link_evidence.admit_inputs(

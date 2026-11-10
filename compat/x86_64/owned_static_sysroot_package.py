@@ -37,7 +37,7 @@ from typing import Iterable, Mapping
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
-from compat.x86_64 import static_product_contract
+from compat.x86_64 import source_seal
 
 
 PACKAGE_FORMAT = "crabc-x86-64-owned-static-sysroot-package/v1"
@@ -185,7 +185,7 @@ def manifest_payload_hashes(manifest: object) -> dict[str, str]:
     if (not isinstance(source_sha256, str) or len(source_sha256) != 64
             or any(character not in "0123456789abcdef" for character in source_sha256)):
         raise PackageError("installed manifest source seal is missing or invalid")
-    if source_sha256 != static_product_contract.source_digest():
+    if source_sha256 != source_seal.product_source_digest(ROOT):
         raise PackageError("installed manifest source seal differs from the current checkout")
     package = manifest.get("package")
     if package != {"format": PACKAGE_FORMAT, "archive_root": ARCHIVE_ROOT}:

@@ -17,7 +17,6 @@ sys.path.insert(0, str(ROOT / "compat/x86_64"))
 import owned_resolver_cancellation as cancellation  # noqa: E402
 import owned_resolver_cancellation_network as network  # noqa: E402
 import owned_resolver_cancellation_receipt as receipt  # noqa: E402
-from owned_dynamic_qualification import source_digest  # noqa: E402
 
 
 class FakeFixture:
@@ -132,7 +131,7 @@ class OwnedResolverCancellationReceiptTests(unittest.TestCase):
             self._write(label, (label + " binary\n").encode())
             self._write(label + ".crabc-link.json", (label + " receipt\n").encode())
         audit = {
-            "source_sha256": receipt._source_digest(ROOT),
+            "source_sha256": receipt.source_seal.product_source_digest(ROOT),
             "source": receipt.artifact_record(ROOT / receipt.SOURCE),
             "object": receipt.artifact_record(self.work / "workload.o"),
             "products": {"static": self.fixture.tree_identity(self.static), "dynamic": self.fixture.tree_identity(self.dynamic)},
@@ -242,9 +241,6 @@ class OwnedResolverCancellationReceiptTests(unittest.TestCase):
         raw = (" ".join(f"{key}=0" for key in network.FIELDS) + " errno=0\n").encode()
         with self.assertRaisesRegex(RuntimeError, "unexpected network observation"):
             network.observe(raw)
-
-    def test_source_digest_matches_the_cancellation_producer(self) -> None:
-        self.assertEqual(receipt._source_digest(ROOT), source_digest())
 
     def test_rejects_missing_status_cell_before_accepting_raw_outputs(self) -> None:
         status = receipt._expected_status(cancellation)

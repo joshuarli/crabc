@@ -112,9 +112,10 @@ def current_source_identity() -> dict[str, str]:
     if str(qualification_root) not in sys.path:
         sys.path.insert(0, str(qualification_root))
     import owned_dynamic_qualification as qualification
+    import source_seal
 
-    revision = qualification.git("rev-parse", "HEAD").decode().strip()
-    return {"revision": revision, "source_sha256": qualification.source_digest()}
+    revision = source_seal.revision(qualification.ROOT)
+    return {"revision": revision, "source_sha256": source_seal.product_source_digest(qualification.ROOT)}
 
 
 @dataclasses.dataclass(frozen=True)

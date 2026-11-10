@@ -79,6 +79,7 @@ import crabc_cc_owned_dynamic as installed_driver
 import owned_static_sysroot_package as shared_package
 import owned_dynamic_elf as elf_inspection
 import owned_dynamic_qualification as qualification
+import source_seal
 import native_static_source_runtime_closure as source_runtime
 
 
@@ -571,7 +572,7 @@ def build(output: Path, *, allocator_backend: str = common.DEFAULT_ALLOCATOR_BAC
         raise common.BuildError("unknown dynamic hardening profile")
     if allocator_backend not in ALLOCATOR_BACKENDS:
         raise common.BuildError("unknown dynamic allocator backend")
-    source_before_build = qualification.source_digest()
+    source_before_build = source_seal.product_source_digest(ROOT)
     output = common.validate_output_path(output)
     if not output.is_relative_to(ROOT / ".work"):
         raise common.BuildError("dynamic output must remain below checkout .work")
@@ -583,7 +584,7 @@ def build(output: Path, *, allocator_backend: str = common.DEFAULT_ALLOCATOR_BAC
     stage.mkdir(parents=True, mode=0o700)
     staged_output = stage / "installed"
     build_staged_payload(staged_output, stage, allocator_backend=allocator_backend, lifecycle_test_audit=lifecycle_test_audit, profile=profile, hardening_profile=hardening_profile)
-    if qualification.source_digest() != source_before_build:
+    if source_seal.product_source_digest(ROOT) != source_before_build:
         raise common.BuildError("source changed during dynamic product build")
     try:
         installed_driver.validate(staged_output)
@@ -819,7 +820,7 @@ def build_staged_payload(output: Path, stage: Path, *, allocator_backend: str = 
                      for path in sorted(output.rglob("*")) if path.is_file() and not path.is_symlink()}
     common.write_json(metadata / "dynamic-product-state.json", {
         "schema": "crabc.x86_64-owned-dynamic-materialization/v1",
-        "status": "materialized-unqualified", "source_sha256": qualification.source_digest(),
+        "status": "materialized-unqualified", "source_sha256": source_seal.product_source_digest(ROOT),
         "allocator_backend": recorded_backend, "allocator_lifecycle_test_audit": lifecycle_test_audit,
         "allocator_promoted": False,
         "contracts": qualification.contract_digests(), "payload_files": payload_files,
@@ -1001,7 +1002,7 @@ def write_product_manifest(output: Path, metadata: Path, *, profile: str = "rele
         # Debug state describes only the unqualified backend selection. Bind
         # its installed payload to source content in the manifest; build()
         # also requires this fingerprint to match the one taken before build.
-        manifest["source_sha256"] = qualification.source_digest()
+        manifest["source_sha256"] = source_seal.product_source_digest(ROOT)
     common.write_json(metadata / "manifest.json", manifest)
 
 

@@ -22,6 +22,7 @@ import sys
 import tomllib
 
 import owned_posix_family_execution as family
+import source_seal
 import owned_posix_family_observations as family_observations
 import owned_posix_native_observations as native
 import owned_crypt_profile as crypt
@@ -99,10 +100,6 @@ require = family.require
 read = family.read
 same_json = family.same_json
 write_new = family.static_products.write_new
-
-
-def source_identity(root):
-    return family.static_products.source_identity(root)
 
 
 def require_execution_environment():
@@ -258,8 +255,8 @@ def _input_matrix(root, request):
             and matrix['family'] == 'libc.posix-runtime', 'complete POSIX family matrix required')
     require(all(matrix[key] is False for key in ('family_completion', 'public_support', 'native_aggregate_complete')),
             'matrix promotion flags differ')
-    source = source_identity(root)
-    require(same_json(matrix['inputs']['source'], source), 'matrix source differs')
+    source = source_seal.seal(root)
+    require(source_seal.same_product(matrix['inputs']['source'], source), 'matrix source differs')
     products = matrix['inputs']['dynamic_products']
     require(set(products) == set(family.PAIRS), 'matrix product roster differs')
     dynamic_work = family.physical(root, root / matrix['inputs']['dynamic_work'])
@@ -498,9 +495,9 @@ def admission_inputs(root, native_path):
             and matrix['family_completion'] is False
             and matrix['public_support'] is False,
             'POSIX family matrix completion boundary differs')
-    source = source_identity(root)
-    require(same_json(native_execution['inputs']['source'], source)
-            and same_json(matrix['inputs']['source'], source),
+    source = source_seal.seal(root)
+    require(source_seal.same_product(native_execution['inputs']['source'], source)
+            and source_seal.same_product(matrix['inputs']['source'], source),
             'native aggregate and POSIX matrix do not share current source')
     return native_execution, matrix, source, matrix_path
 
@@ -525,8 +522,9 @@ def collect_admission(root, work, validated_inputs=None):
     expected = {'request.json', 'source-before.json', 'source-after.json', 'family-admission.json'}
     require({path.name for path in work.iterdir()} in (expected - {'family-admission.json'}, expected),
             'POSIX family admission output roster differs')
+    recorded = read(work / 'source-before.json')
     for phase in ('before', 'after'):
-        require(same_json(read(work / f'source-{phase}.json'), source),
+        require(source_seal.same_product(read(work / f'source-{phase}.json'), source),
                 f'POSIX family admission source seal differs: {phase}')
     proof = admission_proof(root, native_execution, matrix)
     # Reconstruct both receipts after traversing every spelling/cell.  Their
@@ -537,12 +535,12 @@ def collect_admission(root, work, validated_inputs=None):
     require(matrix_path_after == matrix_path
             and same_json(native_after, native_execution)
             and same_json(matrix_after, matrix)
-            and same_json(source_after, source),
+            and source_seal.same_product(source_after, source),
             'POSIX family admission input or product snapshot changed during proof collection')
     proof_after = admission_proof(root, native_after, matrix_after)
     require(same_json(proof_after, proof),
             'POSIX family admission proof inputs changed during collection')
-    require(same_json(read(work / 'source-after.json'), source_identity(root)),
+    require(source_seal.same_product(read(work / 'source-after.json'), source_seal.seal(root)),
             'POSIX family admission final source seal differs')
     return {
         'schema': ADMISSION_SCHEMA,
@@ -551,7 +549,7 @@ def collect_admission(root, work, validated_inputs=None):
         'inputs': {
             'native_execution': family.file_identity(root, root / value),
             'family_execution': family.file_identity(root, matrix_path),
-            'source': source,
+            'source': recorded,
             'source_files': {path: family.source_file(root, path) for path in ADMISSION_SOURCES},
         },
         'request': family.file_identity(root, work / 'request.json'),
@@ -587,7 +585,7 @@ def admit(root, work, native_path):
                    'native_execution': native_path.relative_to(root).as_posix()}
         write_new(work / 'request.json', request)
         write_new(work / 'source-before.json', source)
-        write_new(work / 'source-after.json', source_identity(root))
+        write_new(work / 'source-after.json', source_seal.seal(root))
         result = collect_admission(root, work, validated_inputs)
         path = work / 'family-admission.json'
         write_new(path, result)
@@ -675,7 +673,7 @@ def collect_component(root, work, index, component, inputs, product, source_moun
 
 
 def guard(root, inputs, product):
-    require(same_json(source_identity(root), inputs['source']) and
+    require(source_seal.same_product(source_seal.seal(root), inputs['source']) and
             same_json(source_files(root), inputs['source_files']), 'source changed during native execution')
     require(same_json(product_binding(root, product), inputs['product']), 'product changed during native execution')
     require(same_json(matrix_product_bindings(root, {'inputs': inputs['matrix_inputs']}),
@@ -803,7 +801,7 @@ def execute(root, work, matrixpath, cryptpath, atomicpath, wordexppath, wordexp_
                 current = None
                 print(f'POSIX native {component.id}: PASS', flush=True)
         finally:
-            for kind, capture in (('source', lambda: source_identity(root)),
+            for kind, capture in (('source', lambda: source_seal.seal(root)),
                                   ('product', lambda: product_binding(root, product))):
                 try:
                     write_new(work / f'{kind}-after.json', capture())

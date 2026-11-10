@@ -25,7 +25,7 @@ import crabc_cc_owned_dynamic as driver
 
 REAL_PRODUCT_IDENTITY = qualification.product_identity
 REAL_SOURCE_BOUND_PRODUCT_IDENTITY = qualification._product_identity
-REAL_SOURCE_DIGEST = qualification.source_digest
+REAL_SOURCE_DIGEST = qualification.source_seal.product_source_digest
 REAL_VALIDATE_ELF_INSPECTION = qualification.elf_inspection.validate_record
 
 
@@ -50,10 +50,11 @@ class OwnedDynamicQualificationTests(unittest.TestCase):
         for patch in (
             mock.patch.object(qualification, "ROOT", self.root),
             mock.patch.object(qualification, "PUBLICATION", self.root / ".work/publication.json"),
-            mock.patch.object(qualification, "source_digest", return_value=self.source),
+            mock.patch.object(qualification.source_seal, "product_source_digest", return_value=self.source),
             mock.patch.object(qualification, "contract_digests", return_value={"contracts": "c" * 64}),
             mock.patch.object(qualification, "_product_identity", return_value=self.manifest),
-            mock.patch.object(qualification, "require_clean_source", return_value="clean-revision"),
+            mock.patch.object(qualification.source_seal, "require_clean"),
+            mock.patch.object(qualification.source_seal, "revision", return_value="clean-revision"),
             # These tests exercise the catalog's transaction and publication
             # contract. Native component semantics have their own retained
             # report tests; the small catalog fixture is not a native run.
@@ -222,9 +223,9 @@ class OwnedDynamicQualificationTests(unittest.TestCase):
             return validate(root)
 
         with mock.patch.object(driver, "validate_installation", side_effect=validate_product), \
-             mock.patch.object(qualification, "source_digest", side_effect=lambda: events.append("source") or self.source) as source_digest:
+             mock.patch.object(qualification.source_seal, "product_source_digest", side_effect=lambda _root: events.append("source") or self.source) as source_digest:
             self.assertEqual(REAL_PRODUCT_IDENTITY(product), qualification.digest(manifest_path))
-        source_digest.assert_called_once_with()
+        source_digest.assert_called_once_with(self.root)
         self.assertEqual(events, ["product", "source"])
 
     def test_bracketed_product_identity_rejects_a_mutated_payload(self):
@@ -248,11 +249,11 @@ class OwnedDynamicQualificationTests(unittest.TestCase):
             source.write_bytes(b"mutated during leaf execution")
             return subprocess.CompletedProcess([], 0, b"", b"")
 
-        with mock.patch.object(qualification, "git", return_value=b"tracked-source.c\0"):
-            source_before = REAL_SOURCE_DIGEST()
+        with mock.patch.object(qualification.source_seal, "product_files", return_value=("tracked-source.c",)):
+            source_before = REAL_SOURCE_DIGEST(self.root)
             _product, _manifest_path, _manifest, validate = self.materialized_product(
                 "installed", source_identity=source_before)
-            with mock.patch.object(qualification, "source_digest", wraps=REAL_SOURCE_DIGEST) as source_digest, \
+            with mock.patch.object(qualification.source_seal, "product_source_digest", wraps=REAL_SOURCE_DIGEST) as source_digest, \
                  mock.patch.object(qualification, "require_live_oracle"), \
                  mock.patch.object(driver, "validate_installation", side_effect=validate), \
                  mock.patch.object(qualification, "_product_identity",
@@ -278,11 +279,11 @@ class OwnedDynamicQualificationTests(unittest.TestCase):
             (product / "payload").write_bytes(b"mutated during leaf execution")
             return subprocess.CompletedProcess([], 0, b"", b"")
 
-        with mock.patch.object(qualification, "git", return_value=b"tracked-source.c\0"):
-            source_before = REAL_SOURCE_DIGEST()
+        with mock.patch.object(qualification.source_seal, "product_files", return_value=("tracked-source.c",)):
+            source_before = REAL_SOURCE_DIGEST(self.root)
             product, _manifest_path, _manifest, validate = self.materialized_product(
                 "installed", source_identity=source_before)
-            with mock.patch.object(qualification, "source_digest", wraps=REAL_SOURCE_DIGEST) as source_digest, \
+            with mock.patch.object(qualification.source_seal, "product_source_digest", wraps=REAL_SOURCE_DIGEST) as source_digest, \
                  mock.patch.object(qualification, "require_live_oracle"), \
                  mock.patch.object(driver, "validate_installation", side_effect=validate), \
                  mock.patch.object(qualification, "_product_identity",
@@ -609,11 +610,13 @@ class OwnedDynamicQualificationTests(unittest.TestCase):
             "receipt_sha256": qualification.digest(path), "source_revision": "clean-revision",
         })
         self.assertEqual(qualification.load_publication(), receipt)
-        with mock.patch.object(qualification, "require_clean_source", return_value="later-revision"):
+        with mock.patch.object(qualification.source_seal, "revision", return_value="later-revision"):
+            self.assertEqual(qualification.load_publication(), receipt)
+        with mock.patch.object(qualification.source_seal, "product_source_digest", return_value="f" * 64):
             self.assertIsNone(qualification.load_publication())
 
     def test_collection_reuses_its_opening_source_seal_for_each_product(self):
-        with mock.patch.object(qualification, "source_digest", side_effect=[self.source, self.source]) as source_digest, \
+        with mock.patch.object(qualification.source_seal, "product_source_digest", side_effect=[self.source, self.source]) as source_digest, \
              mock.patch.object(qualification, "_product_identity", return_value=self.manifest) as product_identity:
             qualification.collect(self.work)
         self.assertEqual(source_digest.call_count, 2)
@@ -791,8 +794,8 @@ class OwnedDynamicQualificationTests(unittest.TestCase):
         prepare.write_text(json.dumps(record))
         for path in second_work.glob("*.crabc-link.json"):
             path.write_text(path.read_text().replace(str(self.work), str(second_work)))
-        with mock.patch.object(qualification, "source_digest", return_value=new_source), \
-             mock.patch.object(qualification, "require_clean_source", return_value="next-clean-revision"):
+        with mock.patch.object(qualification.source_seal, "product_source_digest", return_value=new_source), \
+             mock.patch.object(qualification.source_seal, "revision", return_value="next-clean-revision"):
             second = second_work / "qualification.json"
             qualification.write_new(second, qualification.collect(second_work))
             self.assertEqual(self.publish(second), 0)
@@ -807,7 +810,17 @@ class OwnedDynamicQualificationTests(unittest.TestCase):
         self.assertEqual(self.publish(path), 0)
         pointer_bytes = qualification.PUBLICATION.read_bytes()
         receipt_bytes = path.read_bytes()
-        with mock.patch.object(qualification, "require_clean_source", side_effect=["clean-revision", "later-revision"]):
+        digest = {"current": self.source}
+        validate = qualification.validate_receipt
+
+        def validate_then_change_source(receipt_path):
+            receipt = validate(receipt_path)
+            digest["current"] = "f" * 64
+            return receipt
+
+        with mock.patch.object(qualification.source_seal, "product_source_digest",
+                               side_effect=lambda _root: digest["current"]), \
+                mock.patch.object(qualification, "validate_receipt", side_effect=validate_then_change_source):
             self.assertEqual(self.publish(path), 1)
         self.assertEqual(qualification.PUBLICATION.read_bytes(), pointer_bytes)
         self.assertEqual(path.read_bytes(), receipt_bytes)
@@ -816,7 +829,8 @@ class OwnedDynamicQualificationTests(unittest.TestCase):
     def test_dirty_source_makes_existing_publication_unqualified(self):
         path = self.put("qualification.json", qualification.collect(self.work))
         self.assertEqual(self.publish(path), 0)
-        with mock.patch.object(qualification, "require_clean_source", side_effect=qualification.QualificationError("dirty source")):
+        with mock.patch.object(qualification.source_seal, "require_clean",
+                               side_effect=qualification.source_seal.SourceSealError("dirty source")):
             self.assertIsNone(qualification.load_publication())
 
     def test_leaf_permissions_change_only_after_execution_and_symlink_targets_stay_private(self):

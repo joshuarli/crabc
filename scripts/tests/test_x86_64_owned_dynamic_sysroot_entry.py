@@ -154,7 +154,7 @@ class DynamicSysrootEntryTests(unittest.TestCase):
             state = {"build_profile": "debug", "allocator_backend": "native-shadow",
                      "allocator_lifecycle_test_audit": False, "status": "materialized-unqualified"}
             builder.common.write_json(metadata / "dynamic-product-state.json", state)
-            with mock.patch.object(builder.qualification, "source_digest", return_value="a" * 64):
+            with mock.patch.object(builder.qualification.source_seal, "product_source_digest", return_value="a" * 64):
                 builder.write_product_manifest(output, metadata, profile="debug")
             manifest = json.loads((metadata / "manifest.json").read_text())
             self.assertEqual(manifest["source_sha256"], "a" * 64)
@@ -172,7 +172,7 @@ class DynamicSysrootEntryTests(unittest.TestCase):
             output = Path(temporary) / "candidate"
             with (mock.patch.object(builder.common, "assert_native_target"),
                   mock.patch.object(builder, "build_staged_payload"),
-                  mock.patch.object(builder.qualification, "source_digest", side_effect=["a" * 64, "b" * 64]),
+                  mock.patch.object(builder.qualification.source_seal, "product_source_digest", side_effect=["a" * 64, "b" * 64]),
                   mock.patch.object(builder.installed_driver, "validate") as installed,
                   mock.patch.object(builder.shared_package, "publish_noreplace") as publish):
                 with self.assertRaisesRegex(builder.common.BuildError, "source changed"):

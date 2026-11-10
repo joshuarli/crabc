@@ -25,6 +25,7 @@ from typing import Any, Mapping
 import locale_alias_contract_symbols as alias_symbols
 import owned_crypt_runtime_evidence as payload_evidence
 import owned_dynamic_qualification as qualification
+import source_seal
 import owned_posix_family_execution as family
 import owned_posix_product_evidence as product_evidence
 import owned_posix_static_products as static_products
@@ -278,7 +279,7 @@ def source_product_seal(root: Path, static: Path, dynamic: Path) -> dict[str, ob
             state.get("schema") == "crabc.x86_64-owned-dynamic-materialization/v1" and
             state.get("status") == "materialized-unqualified", "dynamic product state differs")
     try:
-        current_source = qualification.source_digest()
+        current_source = source_seal.product_source_digest(qualification.ROOT)
     except Exception as error:
         raise ReceiptError("current source digest is unreadable") from error
     require(state.get("source_sha256") == current_source,
@@ -1001,7 +1002,7 @@ def collect(root: Path, static_preparation: Path, dynamic_qualification: Path,
         "schema": SCHEMA,
         # This exact two-field source shape is the POSIX family boundary; do
         # not add a component-specific source record here.
-        "source": static_products.source_identity(root),
+        "source": source_seal.seal(root),
         "inputs": {"static_preparation": request["static_preparation"],
                    "dynamic_qualification": request["dynamic_qualification"], "evidence": inputs},
         "products": {pair: {kind: relative(root, products[pair][kind], f"{pair} {kind} product").as_posix()

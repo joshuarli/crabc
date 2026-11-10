@@ -16,6 +16,7 @@ import zlib
 
 from loader_debug_abi_evidence import Elf
 import core_image
+import source_seal
 
 ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
@@ -105,11 +106,11 @@ def source_tree(output, revision):
         require(cursor == len(data), 'truncated Git tree')
 
     walk(tree_line[5:].decode(), b'')
-    content = hashlib.sha256()
-    for name, (mode, data, _symlink) in sorted(files.items()):
-        content.update(name.encode() + b'\0' + str(mode).encode() + b'\0')
-        content.update(hashlib.sha256(data).digest())
-    return {'revision': revision, 'content_sha256': content.hexdigest()}, files
+    try:
+        content = source_seal.product_source_digest_of({name: (mode, data) for name, (mode, data, _) in files.items()})
+    except source_seal.SourceSealError as error:
+        raise AuthorityError(f'retained Git tree has no product source: {error}') from error
+    return {'revision': revision, 'content_sha256': content}, files
 
 
 def archive_members(data):

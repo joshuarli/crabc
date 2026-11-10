@@ -86,7 +86,7 @@ def cases(work: Path) -> list[dict[str, str]]:
 
 def validate(work: Path, paths: list[Path], receipt: Path) -> None:
     work = physical(work)
-    source = qualification.source_digest()
+    source = qualification.source_seal.product_source_digest(qualification.ROOT)
     report = json.loads(receipt.read_text())
     require(report.get("schema") == "crabc.x86_64-loader-iterate-close-race/v1"
             and report.get("source_sha256") == source, "receipt source differs")
@@ -101,7 +101,7 @@ def main() -> int:
         raise SystemExit("usage: reader {collect|validate} WORK ACCEPTED_STATIC ACCEPTED_DYNAMIC NATIVE_STATIC NATIVE_DYNAMIC")
     action, work = sys.argv[1], physical(Path(sys.argv[2]))
     paths = [Path(value) for value in sys.argv[3:]]
-    source = qualification.source_digest()
+    source = qualification.source_seal.product_source_digest(qualification.ROOT)
     receipt = work / "receipt.json"
     if action == "collect":
         report = {"schema": "crabc.x86_64-loader-iterate-close-race/v1",

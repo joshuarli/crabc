@@ -31,6 +31,7 @@ if str(MODULE_DIR) not in sys.path:
 import native_abi_inventory as inventory
 import native_abi_selection as selection
 import owned_dynamic_qualification as qualification
+import source_seal
 import owned_posix_product_evidence as products
 import owned_posix_static_products as static_products
 import owned_static_consumer_matrix as consumer_matrix
@@ -300,7 +301,7 @@ def admit_inputs(root: Path, static_preparation: Path, static_product: Path,
     dynamic_product = physical_work_path(root, dynamic_product, "dynamic product")
     try:
         preparation = static_products.validate_receipt(root, static_preparation)
-    except (static_products.PreparationError, OSError, ValueError) as error:
+    except (static_products.PreparationError, source_seal.SourceSealError, OSError, ValueError) as error:
         raise PublicDataEvidenceError(f"static preparation is not current: {error}") from error
     static_identity = _preparation_identity(root, static_preparation, preparation)
     expected_static = root / static_identity["primary"]["path"]
@@ -317,7 +318,7 @@ def admit_inputs(root: Path, static_preparation: Path, static_product: Path,
     require(type(state.get("source_sha256")) is str
             and state["source_sha256"] == static_identity["source"]["content_sha256"],
             "static preparation and dynamic materialization source digests differ")
-    source = static_products.source_identity(root)
+    source = source_seal.seal(root)
     require(same_json(source, static_identity["source"]), "static preparation source changed")
     require(state["source_sha256"] == source["content_sha256"], "dynamic materialization source changed")
     return {
@@ -1379,7 +1380,7 @@ def main() -> int:
         else:
             validate_report(ROOT, args.report)
             print("public-data ordinary-link receipt valid; runtime qualification and family closure remain independent")
-    except (PublicDataEvidenceError, static_products.PreparationError, qualification.QualificationError,
+    except (PublicDataEvidenceError, static_products.PreparationError, source_seal.SourceSealError, qualification.QualificationError,
             products.ProductEvidenceError, OSError, ValueError, subprocess.SubprocessError) as error:
         parser.exit(1, f"public-data ordinary-link failed: {error}\n")
     return 0

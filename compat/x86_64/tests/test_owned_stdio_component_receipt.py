@@ -381,7 +381,7 @@ class OwnedStdioComponentReceiptTests(unittest.TestCase):
             mock.patch.object(receipt.products, "_validate_static_product", return_value=(self.fixture.static / "manifest.json", {"bin/crabc-cc": "s" * 64})),
             mock.patch.object(receipt.products, "validate_link", side_effect=self._link),
             mock.patch.object(receipt.copies, "audit_execution_payload", side_effect=self._payload),
-            mock.patch.object(qualification, "source_digest", return_value="a" * 64),
+            mock.patch.object(qualification.source_seal, "product_source_digest", return_value="a" * 64),
             mock.patch.object(qualification, "ROOT", self.fixture.checkout),
             mock.patch.object(receipt, "elf_section_layout", return_value={".text": (0x1000, 0x10), ".rodata": (0x2000, 0x4)}),
         ]

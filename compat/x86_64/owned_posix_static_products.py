@@ -3,28 +3,30 @@
 
 The existing owned-static producer selects and records the pinned tools. The
 existing package owner validates installed payloads and performs bounded safe
-extraction. This coordinator only binds those operations to one clean source
-revision and the POSIX catalog's primary/reproduction/extracted product names.
+extraction. This coordinator only binds those operations to one clean
+checkout's product source seal and the POSIX catalog's
+primary/reproduction/extracted product names, and runs each build under the
+product-input completeness guard.
 """
 
 from __future__ import annotations
 
 import argparse
 import filecmp
-import hashlib
 import json
-import os
 from pathlib import Path
 import stat
 import subprocess
 import tempfile
 
 import owned_static_sysroot_package as package
+import source_seal
 
 ROOT = Path(__file__).resolve().parents[2]
 SCHEMA = "crabc.x86_64-owned-posix-static-preparation/v1"
 PRODUCER = "scripts/build_x86_64_owned_sysroot.py"
 PACKAGER = "compat/x86_64/owned_static_sysroot_package.py"
+GUARD = ("python3", "-B", "compat/x86_64/source_seal.py", "guard", "--")
 ALLOCATOR_BACKENDS = ("accepted-c", "native-shadow")
 
 
@@ -91,28 +93,6 @@ def make_retained_evidence_readable(work: Path) -> None:
             path.chmod(stat.S_IMODE(mode) | 0o444, follow_symlinks=False)
 
 
-def source_identity(root: Path) -> dict:
-    """Use the dynamic coordinator's content/mode hashing, without its contracts.
-
-    Cleanliness is mandatory here, rather than only at publication. Hash actual
-    files as well as HEAD so a receipt cannot survive a source-content change.
-    """
-    def git(*arguments: str) -> bytes:
-        return subprocess.check_output(["git", *arguments], cwd=root)
-    require(not git("status", "--porcelain", "--untracked-files=all").strip(),
-            "static preparation requires clean committed source")
-    names = sorted(set(git("ls-files", "-z", "--cached", "--others", "--exclude-standard").split(b"\0")) - {b""})
-    content = hashlib.sha256()
-    for name in names:
-        path = root / os.fsdecode(name)
-        mode = path.lstat().st_mode
-        data = os.fsencode(os.readlink(path)) if stat.S_ISLNK(mode) else path.read_bytes()
-        content.update(name + b"\0" + str(stat.S_IMODE(mode)).encode() + b"\0")
-        content.update(hashlib.sha256(data).digest())
-    return {"revision": git("rev-parse", "HEAD").decode().strip(),
-            "content_sha256": content.hexdigest()}
-
-
 def product_paths(work: Path) -> dict[str, Path]:
     return {"primary": work / "products/primary",
             "reproduction": work / "products/reproduction",
@@ -129,13 +109,13 @@ def commands(root: Path, work: Path, allocator_backend: str = "accepted-c") -> d
     base = relative(root, work)
     result = {}
     for label in ("primary", "reproduction"):
-        result[f"{label}-build"] = ["python3", "-B", PRODUCER, "--output", f"{base}/products/{label}"]
+        result[f"{label}-build"] = [*GUARD, "python3", "-B", PRODUCER, "--output", f"{base}/products/{label}"]
         if allocator_backend == "native-shadow":
             result[f"{label}-build"].extend(("--allocator-backend", allocator_backend))
     for label in ("primary", "reproduction"):
-        result[f"{label}-package"] = ["python3", "-B", PACKAGER, "create", "--source",
+        result[f"{label}-package"] = [*GUARD, "python3", "-B", PACKAGER, "create", "--source",
             f"{base}/products/{label}", "--archive", f"{base}/archives/{label}.tar.xz"]
-    result["extract"] = ["python3", "-B", PACKAGER, "extract", "--archive",
+    result["extract"] = [*GUARD, "python3", "-B", PACKAGER, "extract", "--archive",
         f"{base}/archives/primary.tar.xz", "--destination", f"{base}/products/extracted"]
     return result
 
@@ -184,9 +164,10 @@ def collect(root: Path, work: Path) -> dict:
     returning; no product, command log, or successful receipt is rewritten.
     """
     work = physical(root, work)
-    source = source_identity(root)
+    current = source_seal.seal(root)
+    source = read(work / "source-before.json")
     for name in ("source-before.json", "source-after.json"):
-        require(same_json(read(work / name), source), f"source seal changed: {name}")
+        require(source_seal.same_product(read(work / name), current), f"source seal changed: {name}")
     exact_children(work / "products", {"primary", "reproduction", "extracted"})
     exact_children(work / "products/extracted", {package.ARCHIVE_ROOT})
     exact_children(work / "archives", {"primary.tar.xz", "reproduction.tar.xz"})
@@ -236,7 +217,7 @@ def collect(root: Path, work: Path) -> dict:
     with tempfile.TemporaryDirectory(prefix=".verify-static-package.", dir=scratch) as temporary:
         extracted = package.extract_archive(work / "archives/primary.tar.xz", Path(temporary) / "extraction")
         require(tree_identity(extracted) == primary["tree"], "archive payload differs from primary")
-    require(source_identity(root) == source, "source changed during preparation validation")
+    require(source_seal.same_product(source_seal.seal(root), current), "source changed during preparation validation")
     return {"schema": SCHEMA, "status": "prepared-unqualified", "work": relative(root, work),
             "source": source, "source_seals": {name: file_identity(root, work / name)
                 for name in ("source-before.json", "source-after.json")},
@@ -248,7 +229,7 @@ def collect(root: Path, work: Path) -> dict:
 def prepare(root: Path, work: Path, allocator_backend: str = "accepted-c") -> Path:
     require(allocator_backend in ALLOCATOR_BACKENDS, "unsupported preparation allocator backend")
     work = physical(root, work)
-    source = source_identity(root)
+    source = source_seal.seal(root)
     require(not work.exists(), "preparation requires a fresh run directory")
     work.mkdir(parents=True)
     for name in ("products", "archives", "steps"):
@@ -261,8 +242,8 @@ def prepare(root: Path, work: Path, allocator_backend: str = "accepted-c") -> Pa
         # Even a failed producer leaves its command/status/log files. A dirty
         # final source cannot acquire a success seal or preparation receipt.
         try:
-            write_new(work / "source-after.json", source_identity(root))
-        except PreparationError as error:
+            write_new(work / "source-after.json", source_seal.seal(root))
+        except source_seal.SourceSealError as error:
             write_new(work / "source-after-error.json", {"error": str(error)})
         finally:
             make_retained_evidence_readable(work)
@@ -295,7 +276,8 @@ def main() -> int:
             require(args.allocator_backend is None, "allocator backend is selected by the sealed product manifest")
             validate_receipt(ROOT, args.path)
             print("owned POSIX static preparation: valid; runtime unqualified")
-    except (PreparationError, package.PackageError, OSError, ValueError, subprocess.CalledProcessError) as error:
+    except (PreparationError, package.PackageError, source_seal.SourceSealError, OSError, ValueError,
+            subprocess.CalledProcessError) as error:
         parser.exit(1, f"owned POSIX static preparation failed: {error}\n")
     return 0
 

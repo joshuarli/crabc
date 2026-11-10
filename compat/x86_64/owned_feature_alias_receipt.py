@@ -23,6 +23,7 @@ import musl_oracle
 import native_abi_inventory as inventory
 import native_static_source_runtime_closure as source_runtime
 import owned_dynamic_qualification as qualification
+import source_seal
 import owned_math_fenv_all_entry_receipt as math_receipt
 import owned_posix_product_evidence as products
 import owned_posix_static_products as static_products
@@ -119,7 +120,7 @@ def alias_requirements() -> dict[str, dict[str, Any]]:
 
 def source_product_seal(static: Path, dynamic: Path, preparation: Path) -> dict[str, Any]:
     prep = static_products.validate_receipt(ROOT, preparation)
-    source = qualification.source_digest()
+    source = source_seal.product_source_digest(qualification.ROOT)
     require(prep['source']['content_sha256'] == source, 'static preparation source differs')
     require(any(ROOT / row['path'] == static for row in prep['products'].values()),
             'selected static product is absent from preparation')

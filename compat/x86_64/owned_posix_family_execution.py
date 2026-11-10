@@ -24,6 +24,7 @@ import sys
 from typing import Mapping
 
 import owned_posix_static_products as static_products
+import source_seal
 
 ROOT = Path(__file__).resolve().parents[2]
 SCHEMA = 'crabc.x86_64-owned-posix-family-execution/v1'
@@ -45,7 +46,7 @@ def require(condition: bool, message: str) -> None:
 def physical(root: Path, path: Path) -> Path:
     try:
         return static_products.physical(root, path)
-    except (static_products.PreparationError, OSError) as error:
+    except (static_products.PreparationError, source_seal.SourceSealError, OSError) as error:
         raise ExecutionError(str(error)) from error
 
 
@@ -67,7 +68,7 @@ def file_identity(root: Path, path: Path) -> dict:
 def read(path: Path) -> object:
     try:
         return static_products.read(path)
-    except (static_products.PreparationError, OSError, ValueError) as error:
+    except (static_products.PreparationError, source_seal.SourceSealError, OSError, ValueError) as error:
         raise ExecutionError(str(error)) from error
 
 
@@ -339,7 +340,7 @@ def _validated_input_products(root: Path, request: dict, evidence: object) -> _V
     for name, path in paths.items():
         require(same_json(file_identity(root, path), evidence[name]),
                 f'POSIX matrix {name} receipt changed')
-    source = static_products.source_identity(root)
+    source = source_seal.seal(root)
     require(same_json(source, evidence['source']), 'POSIX matrix product source changed')
 
     static_paths = static_products.product_paths(paths['static_preparation'].parent)
@@ -387,8 +388,8 @@ def input_products(root: Path, request: dict) -> tuple[dict, dict[str, dict[str,
     payloads = product_payloads(root, products)
     static = static_products.validate_receipt(root, paths['static_preparation'])
     shared = dynamic.validate_receipt(paths['dynamic_qualification'])
-    source = static_products.source_identity(root)
-    require(same_json(static['source'], source)
+    source = source_seal.seal(root)
+    require(source_seal.same_product(static['source'], source)
             and shared['source_sha256'] == source['content_sha256'], 'product source seals differ')
     require(shared['family_completion'] is False and shared['public_support'] is False,
             'product qualification cannot replace family execution')
@@ -508,7 +509,7 @@ def collect(root: Path, work: Path) -> dict:
                    for label in PAIRS}
         identical_objects(objects)
         object_sets[workload.id] = objects['primary']
-    require(same_json(static_products.source_identity(root), inputs['source']), 'source changed during matrix validation')
+    require(source_seal.same_product(source_seal.seal(root), inputs['source']), 'source changed during matrix validation')
     require(same_json(product_payloads(root, products), payloads), 'product payload changed during matrix validation')
     return {'schema': SCHEMA, 'status': 'workload-matrix-verified',
             'family': 'libc.posix-runtime', 'work': work.relative_to(root).as_posix(),
@@ -545,7 +546,7 @@ def execute(root: Path, work: Path, static_preparation: Path, dynamic_qualificat
                 dynamic.require_live_oracle(root / inputs['dynamic_work'], inputs['oracle'])
                 require(same_json(product_payloads(root, products), payloads),
                         'product payload changed before workload execution')
-                require(same_json(static_products.source_identity(root), inputs['source']),
+                require(source_seal.same_product(source_seal.seal(root), inputs['source']),
                         'source changed before workload execution')
                 print(f'POSIX matrix {label}/{workload.id}: running', flush=True)
                 try:
@@ -559,7 +560,7 @@ def execute(root: Path, work: Path, static_preparation: Path, dynamic_qualificat
                 dynamic.require_live_oracle(root / inputs['dynamic_work'], inputs['oracle'])
                 require(same_json(product_payloads(root, products), payloads),
                         'product payload changed during workload execution')
-                require(same_json(static_products.source_identity(root), inputs['source']),
+                require(source_seal.same_product(source_seal.seal(root), inputs['source']),
                         'source changed during workload execution')
                 record = collect_step(root, work, label, workload, products[label], str(root))
                 require(same_json(product_payloads(root, products), payloads),
@@ -568,8 +569,8 @@ def execute(root: Path, work: Path, static_preparation: Path, dynamic_qualificat
                 print(f'POSIX matrix {label}/{workload.id}: PASS', flush=True)
     finally:
         try:
-            static_products.write_new(work / 'source-after.json', static_products.source_identity(root))
-        except static_products.PreparationError as error:
+            static_products.write_new(work / 'source-after.json', source_seal.seal(root))
+        except (static_products.PreparationError, source_seal.SourceSealError) as error:
             static_products.write_new(work / 'source-after-error.json', {'error': str(error)})
         static_products.make_retained_evidence_readable(work)
     result = collect(root, work)
@@ -603,7 +604,7 @@ def main() -> int:
         else:
             validate_receipt(ROOT, args.receipt)
             print('owned POSIX workload matrix: valid; native aggregate and family closure remain separate')
-    except (ExecutionError, static_products.PreparationError, OSError, ValueError, RuntimeError) as error:
+    except (ExecutionError, static_products.PreparationError, source_seal.SourceSealError, OSError, ValueError, RuntimeError) as error:
         parser.exit(1, f'owned POSIX workload execution failed: {error}\n')
     return 0
 

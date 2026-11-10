@@ -102,7 +102,7 @@ class LoaderFamilyContractTests(unittest.TestCase):
         self.qualification_validations = 0
         self.inventory_validations = {product: 0 for product in family.PRODUCTS}
         self.patchers = [
-            patch.object(family.qualification, "source_digest", return_value=SOURCE),
+            patch.object(family.qualification.source_seal, "product_source_digest", return_value=SOURCE),
             patch.object(family.qualification, "validate_receipt", side_effect=self._validate_qualification),
             patch.object(family.qualification, "validate_oracle", return_value={}),
             patch.object(family.inventory, "validate_receipt", side_effect=self._validate_inventory),

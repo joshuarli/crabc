@@ -21,6 +21,7 @@ import native_abi_inventory as inventory
 import owned_dynamic_receipt as dynamic_receipt
 import owned_posix_product_evidence as products
 import owned_posix_static_products as static_products
+import source_seal
 import owned_dynamic_qualification as qualification
 import owned_static_link_authority as static_authority
 import compiler_helper_evidence as compiler_helpers
@@ -1614,7 +1615,7 @@ def collect(root,output,preparation,static,dynamic,historical):
     output=substrate.fresh_output(root,output,[preparation,static,dynamic,historical])
     require(sys.platform=='linux' and os.uname().machine=='x86_64' and os.environ.get('LC_ALL')=='C','native pinned C-locale collection required')
     image=os.environ.get(ordinary.IMAGE_ENV,'');require(ordinary.IMAGE_PATTERN.fullmatch(image) is not None,'pinned image required')
-    source=static_products.source_identity(root);policy=contract(root);before=admit(root,preparation,static,dynamic,historical)
+    source=source_seal.seal(root);policy=contract(root);before=admit(root,preparation,static,dynamic,historical)
     output.mkdir(parents=True)
     try:
         selected=source_files(root,output,before['selected_source']['revision'],True);collector=source_files(root,output,capture=True)
@@ -1633,7 +1634,7 @@ def collect(root,output,preparation,static,dynamic,historical):
                        expected_status=spec.get('expected_status',0),stdout=spec.get('expected_stdout'),
                        stderr=spec.get('expected_stderr'))
         after=admit(root,preparation,static,dynamic,historical);require(same(before,after),'startup products changed during collection')
-        require(same(source,static_products.source_identity(root)),'startup collector changed')
+        require(source_seal.same_product(source, source_seal.seal(root)),'startup collector changed')
         ordinary.require_live_tool_roster({k:v for k,v in tools.items() if k not in EXTRA_TOOLS})
         ordinary.require_live_oracle_static_inputs(static_oracle)
         for name in ORACLE_CRT:require(ordinary.digest(Path('/opt/musl-1.2.6/lib')/name)==crts[name]['original']['sha256'],'oracle CRT changed')
@@ -1650,7 +1651,7 @@ def validate_report(root,report_path):
     require(set(report)=={'schema','status','image','contract','collector_source','collector_files','selected_files','inputs_before','inputs_after','oracle','oracle_static','oracle_crt','tools','commands','observations','files'},'startup report fields differ')
     require(report['schema']==SCHEMA and same(report['status'],STATUS) and same(report['contract'],contract(root)),'startup report contract or flags differ')
     require(type(report['image']) is str and ordinary.IMAGE_PATTERN.fullmatch(report['image']) is not None,'startup image identity differs')
-    require(same(report['collector_source'],static_products.source_identity(root)),'startup collector source differs')
+    require(source_seal.same_product(report['collector_source'], source_seal.seal(root)),'startup collector source differs')
     supplied=report['inputs_before'];preparation=ordinary.resolve_work_identity(root,supplied['preparation'],'static preparation')
     historical=ordinary.resolve_work_identity(root,supplied['historical_facts'],'historical ELF facts')
     static=root/supplied['static_preparation']['primary']['path'];dynamic=root/supplied['dynamic_product']['path']
@@ -1681,5 +1682,5 @@ def main(argv=None):
     print(json.dumps({'schema':SCHEMA,'report':str(path),'sha256':ordinary.digest(path),'status':STATUS},sort_keys=True));return 0
 if __name__=='__main__':
     try:raise SystemExit(main())
-    except (ValueError,OSError,KeyError,static_products.PreparationError,products.ProductEvidenceError) as error:
+    except (ValueError,OSError,KeyError,static_products.PreparationError, source_seal.SourceSealError,products.ProductEvidenceError) as error:
         print('ERROR: installed CRT startup: '+str(error),file=sys.stderr);raise SystemExit(2)

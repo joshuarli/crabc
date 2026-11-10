@@ -72,7 +72,7 @@ class OwnedTextLocaleNumericComponentReceiptTests(unittest.TestCase):
                  mock.patch.object(receipt.product_evidence, "_validate_static_product", return_value=(static_manifest, {})), \
                  mock.patch.object(receipt.product_evidence, "_validate_dynamic_product", return_value=(dynamic_manifest, {})), \
                  mock.patch.object(qualification, "ROOT", checkout), \
-                 mock.patch.object(qualification, "source_digest", return_value="a" * 64):
+                 mock.patch.object(qualification.source_seal, "product_source_digest", return_value="a" * 64):
                 current = receipt.source_product_seal(checkout, static, dynamic)
                 self.assertEqual(current["dynamic"]["tree"], receipt.family.snapshot(dynamic))
 

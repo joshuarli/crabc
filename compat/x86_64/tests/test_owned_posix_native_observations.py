@@ -119,7 +119,7 @@ class NativeObservationsTests(unittest.TestCase):
         product_fixture.initialize_compiler_tools()
         product_fixture.static = product_fixture.install_static()
         product_fixture.dynamic = product_fixture.install_dynamic()
-        source_sha256 = dynamic_qualification.source_digest()
+        source_sha256 = dynamic_qualification.source_seal.product_source_digest(dynamic_qualification.ROOT)
         self.bootstrap_source_sha256 = source_sha256
         self.bootstrap_leaf = leaf
         self.bootstrap_product_fixture = product_fixture
@@ -266,10 +266,10 @@ class NativeObservationsTests(unittest.TestCase):
             self.put(leaf / (label + '.command.json'), command_record)
 
     def collect_bootstrap(self, link_validator=None, source_digests=None):
-        source_patch = (patch.object(native.dynamic_qualification, 'source_digest',
+        source_patch = (patch.object(native.dynamic_qualification.source_seal, 'product_source_digest',
                                      return_value=self.bootstrap_source_sha256)
                         if source_digests is None else
-                        patch.object(native.dynamic_qualification, 'source_digest', side_effect=source_digests))
+                        patch.object(native.dynamic_qualification.source_seal, 'product_source_digest', side_effect=source_digests))
         def readelf(path):
             linkage = {
                 'static': 'static', 'static-pie': 'static-pie',

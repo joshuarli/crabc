@@ -644,6 +644,7 @@ def audit_supplied_planned_profile(*, product_root: Path, profile: str, output: 
     import native_shadow_receipt as receipts
     import owned_posix_product_evidence as product_evidence
     import owned_posix_static_products as products
+    import source_seal
     import crabc_cc_static as driver
     import header_declaration_inventory as declarations
     import header_abi_matrix as matrix
@@ -662,7 +663,7 @@ def audit_supplied_planned_profile(*, product_root: Path, profile: str, output: 
     tool_inputs = {"image": core_image.CORE_IMAGE_ID, "compiler": compiler,
                    "compiler_resource": matrix.header_tree_digest(resource),
                    "linux_uapi": matrix.header_tree_digest(Path("/opt/linux-5.10-uapi/include"))}
-    source = products.source_identity(ROOT)
+    source = source_seal.seal(ROOT)
     manifest_path, payload = product_evidence._validate_static_product(product_root)
     manifest = json.loads(manifest_path.read_text())
     provider_require(manifest.get("source_sha256") == source["content_sha256"],
@@ -706,7 +707,7 @@ def audit_supplied_planned_profile(*, product_root: Path, profile: str, output: 
         if replay:
             provider_require(subprocess.run([str(executable)], timeout=60).returncode == 0,
                              "planned binding retained execution failed")
-        provider_require(products.source_identity(ROOT) == source, "planned binding source changed during reading")
+        provider_require(source_seal.same_product(source_seal.seal(ROOT), source), "planned binding source changed during reading")
         return receipt.path
     provider_require(not output.exists(), "planned binding output must be fresh")
     objects, jobs, retained, cases = compile_planned_declarations(inventory,
@@ -754,7 +755,7 @@ def audit_supplied_planned_profile(*, product_root: Path, profile: str, output: 
                      "planned linker changed during execution")
     provider_require(product_evidence._validate_static_product(product_root)[1] == payload,
                      "planned product changed during execution")
-    provider_require(products.source_identity(ROOT) == source, "planned binding source changed during execution")
+    provider_require(source_seal.same_product(source_seal.seal(ROOT), source), "planned binding source changed during execution")
     return receipts.write_receipt(ROOT, runner, output, retained, cases,
         {"profile": profile, "product": product_root.relative_to(ROOT).as_posix(),
          "output": output.relative_to(ROOT).as_posix(), "scope": "physical-binding-only-no-behavior-or-admission"}, True)

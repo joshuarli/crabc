@@ -286,11 +286,11 @@ def _product_records(static, dynamic, mode):
 
 def validate_report(path):
     import owned_dynamic_qualification as qualification
+    import source_seal
     report = json.loads(Path(path).read_text())
     require(report['schema'] == SCHEMA and report['status'] == 'component-verified'
             and report['family_complete'] is False and report['public_support'] is False, 'invalid component boundary')
-    require(report['source_sha256'] == qualification.source_digest(), 'evidence source changed')
-    require(report['source_commit'] == qualification.git('rev-parse', 'HEAD').decode().strip(), 'evidence revision changed')
+    require(report['source_sha256'] == source_seal.product_source_digest(qualification.ROOT), 'evidence source changed')
     require(re.fullmatch(r'crabc-core-evidence@sha256:[0-9a-f]{64}', report['image']) is not None, 'missing pinned image identity')
     for item in report['artifacts'].values():
         artifact(item)
@@ -445,8 +445,10 @@ class Collector:
 
     def collect(self):
         import owned_dynamic_qualification as qualification
-        source = qualification.source_digest()
-        commit = qualification.require_clean_source()
+        import source_seal
+        source_seal.require_clean(qualification.ROOT)
+        source = source_seal.product_source_digest(qualification.ROOT)
+        commit = source_seal.revision(qualification.ROOT)
         image = os.environ.get('CRABC_LOADER_DEBUG_IMAGE_ID', '')
         require(re.fullmatch(r'crabc-core-evidence@sha256:[0-9a-f]{64}', image) is not None, 'dispatcher must supply CRABC_LOADER_DEBUG_IMAGE_ID')
         self.run('oracle-pin', ['bash', ROOT / 'compat/x86_64/run_musl_oracle.sh'])
@@ -571,7 +573,8 @@ class Collector:
                     self.keep(binary.name + '-elf', binary)
                     self.keep(binary.name + '-map', Path(str(binary) + '.map'))
                     self.execute(binary.name, ['timeout', '25', binary], 'archive-' + kind, binary)
-        require(source == qualification.source_digest() and commit == qualification.require_clean_source(), 'source changed during component collection')
+        source_seal.require_clean(qualification.ROOT)
+        require(source == source_seal.product_source_digest(qualification.ROOT), 'source changed during component collection')
         require(products == _product_records(static, dynamic, products['mode']),
                 'selected products changed during component collection')
         report = {'schema': SCHEMA, 'status': 'component-verified', 'family_complete': False, 'public_support': False,

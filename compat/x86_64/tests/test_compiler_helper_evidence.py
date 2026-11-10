@@ -175,9 +175,9 @@ class CompilerHelperEvidenceTests(unittest.TestCase):
         module_dir = Path(EVIDENCE.__file__).resolve().parent
         if str(module_dir) not in sys.path:
             sys.path.insert(0, str(module_dir))
-        import owned_dynamic_qualification as qualification
+        import source_seal
 
-        return qualification.source_digest()
+        return source_seal.product_source_digest(source_seal.ROOT)
 
     def test_materialized_debug_product_binds_current_source_and_installed_payload(self) -> None:
         scratch = ROOT / ".work/x86_64/compiler-helper-evidence-tests"

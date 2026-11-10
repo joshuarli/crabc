@@ -27,6 +27,7 @@ if str(MODULE_DIR) not in sys.path:
     sys.path.insert(0, str(MODULE_DIR))
 import owned_posix_product_evidence as product_evidence
 import owned_posix_static_products as static_products
+import source_seal
 import public_data_ordinary_link_evidence as ordinary_link
 import header_declaration_inventory
 import native_declaration_abi
@@ -856,7 +857,7 @@ class Collector:
                 'public-data runtime output must be fresh')
         self.output.mkdir()
         before = ordinary_link.admit_inputs(self.root, self.static_preparation, self.static_product, self.dynamic_product)
-        source_before = static_products.source_identity(self.root)
+        source_before = source_seal.seal(self.root)
         companions_before = _current_companion_projection(
             self.root, self.companions, static_product=self.static_product, dynamic_product=self.dynamic_product,
         )
@@ -880,7 +881,7 @@ class Collector:
         companions_after = _current_companion_projection(
             self.root, self.companions, static_product=self.static_product, dynamic_product=self.dynamic_product,
         )
-        require(same(before, after) and same(source_before, static_products.source_identity(self.root))
+        require(same(before, after) and source_seal.same_product(source_before, source_seal.seal(self.root))
                 and same(companions_before, companions_after),
                 'supplied products or collector source changed during public-data runtime collection')
         ordinary_link.require_live_tool_roster(self.tools)
@@ -1102,7 +1103,7 @@ def _recheck_live_collection_boundary(*, receipt_root: Path, report_path: Path, 
     final_inputs = ordinary_link.admit_inputs(root, static_preparation, static_product, dynamic_product)
     require(final_inputs == actual_inputs, 'public-data runtime supplied product cohort changed during replay')
     final_sources = _validate_source_capture(receipt_root, sources)
-    require(final_sources == sources and collection['source'] == static_products.source_identity(root),
+    require(final_sources == sources and source_seal.same_product(collection['source'], source_seal.seal(root)),
             'public-data runtime source changed during replay')
     companion_inputs = companions['inputs']
     for name in COMPANION_NAMES:
@@ -1159,7 +1160,7 @@ def validate_report(report_path: Path, *, root: Path = ROOT, static_preparation:
     require(report['schema'] == SCHEMA and report['status'] == STATUS and report['component'] == COMPONENT,
             'public-data runtime report identity differs')
     collection = exact(report['collection'], {'image', 'source'}, 'public-data runtime collection')
-    require(collection['image'] == IMAGE and collection['source'] == static_products.source_identity(root),
+    require(collection['image'] == IMAGE and source_seal.same_product(collection['source'], source_seal.seal(root)),
             'public-data runtime collection source differs')
     require(report['contract'] == load_contract() and report['runtime_matrix'] == empty_runtime_matrix()
             and report['h_errno'] == h_errno_composition_contract(),

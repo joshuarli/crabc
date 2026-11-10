@@ -27,6 +27,7 @@ from typing import Any, NamedTuple
 import owned_dynamic_qualification as dynamic_materialization
 from musl_oracle import load_pin
 import owned_posix_product_evidence as product_evidence
+import source_seal
 
 
 SCHEMA = "crabc.x86_64-owned-pthread-alias-contract/v2"
@@ -392,36 +393,18 @@ def _git(root: Path, *arguments: str) -> bytes:
         raise ReceiptError(f"git source identity query failed: {' '.join(arguments)}") from error
 
 
-def checkout_source_digest(root: Path) -> str:
-    """Match the source/product digest used by the selected native products."""
-
-    names = sorted(
-        set(_git(root, "ls-files", "-z", "--cached", "--others", "--exclude-standard").split(b"\0"))
-        - {b""}
-    )
-    result = hashlib.sha256()
-    for name in names:
-        path = root / os.fsdecode(name)
-        try:
-            mode = path.lstat().st_mode
-            data = os.fsencode(os.readlink(path)) if stat.S_ISLNK(mode) else path.read_bytes()
-        except OSError as error:
-            raise ReceiptError(f"source digest cannot read {path}") from error
-        result.update(name + b"\0" + str(stat.S_IMODE(mode)).encode() + b"\0")
-        result.update(hashlib.sha256(data).digest())
-    return result.hexdigest()
-
-
 def source_identity(root: Path) -> dict[str, object]:
+    """The clean collector checkout: informational revision and tree, product source digest."""
+
     root = root.resolve(strict=True)
-    require(
-        not _git(root, "status", "--porcelain", "--untracked-files=all").strip(),
-        "receipt collection requires a clean source checkout",
-    )
+    try:
+        seal = source_seal.seal(root)
+    except source_seal.SourceSealError as error:
+        raise ReceiptError(f"receipt collection requires a clean source checkout: {error}") from error
     return {
-        "revision": _git(root, "rev-parse", "HEAD").decode("ascii").strip(),
+        "revision": seal["revision"],
         "tree": _git(root, "rev-parse", "HEAD^{tree}").decode("ascii").strip(),
-        "source_sha256": checkout_source_digest(root),
+        "source_sha256": seal["content_sha256"],
     }
 
 

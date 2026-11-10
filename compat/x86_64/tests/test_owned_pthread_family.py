@@ -908,7 +908,7 @@ class PthreadPhaseInputTests(unittest.TestCase):
         stack.enter_context(patch.object(family.family, "validate_receipt", side_effect=validate_matrix))
         if source_identity is None:
             source_identity = lambda _root: self.source
-        stack.enter_context(patch.object(family.family.static_products, "source_identity", side_effect=source_identity))
+        stack.enter_context(patch.object(family.family.static_products.source_seal, "seal", side_effect=source_identity))
         stack.enter_context(patch.object(dynamic_qualification, "ROOT", self.root))
         stack.enter_context(patch.object(dynamic_qualification, "ORACLE_FILES", self.unavailable_oracle_files))
         if allow_live_oracle:

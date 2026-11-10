@@ -16,6 +16,8 @@ from unittest.mock import patch
 from pathlib import Path
 
 
+import product_fixture
+
 ROOT = Path(__file__).resolve().parents[3]
 SOURCE_DIR = ROOT / "compat" / "x86_64"
 AUDIT_PATH = SOURCE_DIR / "header_callable_provider_linkage_audit.py"
@@ -73,9 +75,10 @@ class SuppliedPlannedProfileTests(unittest.TestCase):
             contract_dir.mkdir(parents=True)
             (contract_dir / "owned_resolver_network_image_inputs.json").write_text(json.dumps(anchor))
             (root / ".gitignore").write_text(".work/\n")
+            product_fixture.seed_product_inputs(root)
             for args in (["init", "-q"], ["add", "."], ["-c", "user.name=T", "-c", "user.email=t@example.invalid", "-c", "core.hooksPath=/dev/null", "commit", "-qm", "fixture"]):
                 subprocess.run(["git", *args], cwd=root, check=True)
-            source = products.source_identity(root)
+            source = products.source_seal.seal(root)
             product = root / ".work/product"
             for directory in (product / "usr/include", product / "usr/lib", product / "share/crabc", product / "bin"):
                 directory.mkdir(parents=True)
@@ -156,7 +159,7 @@ class SuppliedPlannedProfileTests(unittest.TestCase):
                             (root / ".gitignore").write_text(".work/\n# changed\n")
                         return result
                     with patch.object(AUDIT.subprocess, "run", side_effect=changing_source):
-                        with self.assertRaisesRegex(products.PreparationError, "clean committed source"):
+                        with self.assertRaisesRegex(products.source_seal.SourceSealError, "clean committed source"):
                             AUDIT.audit_supplied_planned_profile(product_root=product, profile=profile.identifier,
                                 output=root / ".work/changed-during")
                     self.assertEqual(path.read_bytes(), previous)

@@ -34,6 +34,7 @@ from core_image import CORE_IMAGE_ID  # noqa: E402
 import native_abi_inventory as inventory  # noqa: E402
 import crabc_cc_static as static_driver
 import owned_dynamic_qualification as qualification  # noqa: E402
+import source_seal
 
 
 class EvidenceError(RuntimeError):
@@ -364,7 +365,7 @@ def collector_source_identity() -> dict[str, object]:
     require(revision.returncode == 0 and tree.returncode == 0 and status.returncode == 0,
             "cannot record validator collector source identity")
     return {"revision": revision.stdout.strip(), "tree": tree.stdout.strip(),
-            "source_sha256": qualification.source_digest(), "status": status.stdout}
+            "source_sha256": source_seal.product_source_digest(qualification.ROOT), "status": status.stdout}
 
 
 def dynamic_product_source_binding(library: Path, collector: dict[str, object]) -> dict[str, object]:

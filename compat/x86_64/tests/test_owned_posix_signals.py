@@ -79,8 +79,8 @@ class OwnedPosixSignalsTests(unittest.TestCase):
                      patch.object(signals, "observe", return_value={"returncode": 0, "timed_out": False}) as observe, \
                      patch.object(signals, "same_observation", return_value=True), \
                      patch.object(signals.shutil, "copytree"), patch.object(signals.shutil, "copy2"), \
-                     patch.object(signals.qualification, "source_digest", return_value="source"), \
-                     patch.object(signals.qualification, "git", return_value=b"revision"), \
+                     patch.object(signals.qualification.source_seal, "product_source_digest", return_value="source"), \
+                     patch.object(signals.source_seal, "revision", return_value="revision"), \
                      patch.object(signals.product_evidence, "_validate_static_product"), \
                      patch.object(signals.product_evidence, "_validate_dynamic_product"):
                     signals.run(arguments)

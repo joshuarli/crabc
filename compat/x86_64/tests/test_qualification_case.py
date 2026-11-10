@@ -64,10 +64,10 @@ class QualificationCaseTests(unittest.TestCase):
 
     def test_dirty_source_is_a_case_error(self) -> None:
         with mock.patch.object(
-            case.PRODUCT, "require_clean_source",
-            side_effect=case.PRODUCT.QualificationError("qualification publication requires clean source"),
-        ), mock.patch.object(case.PRODUCT, "source_digest", side_effect=AssertionError("digest before clean check")):
-            with self.assertRaisesRegex(case.QualificationCaseError, "clean source"):
+            case.source_seal, "require_clean",
+            side_effect=case.source_seal.SourceSealError("qualification requires clean committed source"),
+        ), mock.patch.object(case.source_seal, "product_source_digest", side_effect=AssertionError("digest before clean check")):
+            with self.assertRaisesRegex(case.QualificationCaseError, "clean committed source"):
                 case.clean_source_identity()
 
 

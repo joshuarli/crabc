@@ -481,11 +481,12 @@ class ReceiptReaderTests(unittest.TestCase):
             self.record["retained_files"][str(cleanup_receipt)] = digest
         self.receipt = root / "receipt.json"
         qualification = mock.MagicMock()
-        qualification.source_digest.return_value = "a" * 64
         qualification.QualificationError = DYNAMIC_QUALIFICATION.QualificationError
+        seal = mock.MagicMock()
+        seal.product_source_digest.return_value = "a" * 64
         self.patches = [
             mock.patch.object(GATE, "_oracle_static_inputs", return_value=self.oracle_inputs),
-            mock.patch.dict(sys.modules, {"owned_dynamic_qualification": qualification}),
+            mock.patch.dict(sys.modules, {"owned_dynamic_qualification": qualification, "source_seal": seal}),
             mock.patch.object(GATE, "cohort_products",
                               side_effect=lambda *_: (copy.deepcopy(self.cohort), self.product_paths)),
             mock.patch.object(GATE, "product_pair", side_effect=self.snapshot_product_pair),

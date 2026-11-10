@@ -18,6 +18,7 @@ import stat
 from typing import Any, Mapping
 
 import owned_dynamic_qualification as dynamic
+import source_seal
 import owned_posix_static_products as static
 
 
@@ -102,8 +103,8 @@ def _canonical_products(root: Path, static_preparation: Path, dynamic_qualificat
     try:
         prepared = static.validate_receipt(root, static_preparation)
         qualified = dynamic.validate_receipt(dynamic_qualification)
-        source = static.source_identity(root)
-    except (static.PreparationError, dynamic.QualificationError, OSError, ValueError) as error:
+        source = source_seal.seal(root)
+    except (static.PreparationError, source_seal.SourceSealError, dynamic.QualificationError, OSError, ValueError) as error:
         raise ResolverFamilyCohortError(f"canonical product receipt rejected: {error}") from error
 
     require(prepared.get("source") == source, "static preparation is not current source")

@@ -14,6 +14,7 @@ from unittest.mock import patch
 import crabc_cc_owned_dynamic as driver
 import owned_dynamic_package as package
 import owned_dynamic_qualification as qualification
+import source_seal
 import owned_posix_product_evidence as product_evidence
 import io
 import tarfile
@@ -153,7 +154,7 @@ class InstalledDynamicDriverTests(unittest.TestCase):
         loader_path.write_text(json.dumps(loader))
         manifest["files"]["share/crabc/loader.provenance.json"] = hashlib.sha256(loader_path.read_bytes()).hexdigest()
         manifest["build_profile"] = "release"
-        source = qualification.source_digest()
+        source = source_seal.product_source_digest(qualification.ROOT)
         provenance_path = root / "share/crabc/libc-shared.provenance.json"
         provenance_path.write_text(json.dumps({
             "allocator_backend": qualification.MATERIALIZATION_ALLOCATOR_BACKEND,

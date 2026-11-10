@@ -171,8 +171,8 @@ class QualificationCaseTests(unittest.TestCase):
         with (
             self.forbid_execution(),
             mock.patch.object(
-                QUALIFY.CASE.PRODUCT, "require_clean_source",
-                side_effect=QUALIFY.CASE.PRODUCT.QualificationError("qualification publication requires clean source"),
+                QUALIFY.CASE.source_seal, "require_clean",
+                side_effect=QUALIFY.CASE.source_seal.SourceSealError("qualification requires clean committed source"),
             ),
             mock.patch.object(
                 QUALIFY.CASE.CAMPAIGN, "build_report", side_effect=AssertionError("prerequisites read")
@@ -181,7 +181,7 @@ class QualificationCaseTests(unittest.TestCase):
             status, stdout, stderr = self.run_main()
         self.assertEqual(status, 1)
         self.assertNotIn(QUALIFY.PASS_MARKER, stdout)
-        self.assertIn("clean source", stderr)
+        self.assertIn("clean committed source", stderr)
 
     def closed_run(self, *, after: dict[str, str] = SOURCE, admitted: dict[str, str] = SOURCE):
         calls: list[str] = []

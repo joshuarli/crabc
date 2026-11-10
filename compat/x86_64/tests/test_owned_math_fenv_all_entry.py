@@ -863,7 +863,7 @@ int main(void) {{
             state_path.write_text(json.dumps(state) + "\n")
             with mock.patch.object(receipt.product_evidence, "_validate_static_product", return_value=(static_manifest, {})), \
                  mock.patch.object(receipt.product_evidence, "_validate_dynamic_product", return_value=(dynamic_manifest, {})), \
-                 mock.patch.object(catalog, "source_digest", return_value="a" * 64):
+                 mock.patch.object(catalog.source_seal, "product_source_digest", return_value="a" * 64):
                 sealed = receipt.expected_source_product_seal(ROOT, static, dynamic)
                 self.assertEqual(sealed["dynamic"]["tree"], receipt.family.snapshot(dynamic))
 

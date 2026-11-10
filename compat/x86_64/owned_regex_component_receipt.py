@@ -35,6 +35,7 @@ import installed_compiler_translation as translation_contract
 import owned_posix_family_execution as family
 import owned_posix_product_evidence as products
 import owned_dynamic_qualification as qualification
+import source_seal
 
 
 SCHEMA = "crabc.x86_64-owned-regex-products/v2"
@@ -184,7 +185,7 @@ def source_product_seal(root: Path, static: Path | None, dynamic: Path) -> dict[
             state.get("status") == "materialized-unqualified",
             "dynamic regex product state differs")
     try:
-        current_source = qualification.source_digest()
+        current_source = source_seal.product_source_digest(qualification.ROOT)
     except Exception as error:
         raise RegexReceiptError("current regex source digest is unreadable") from error
     require(state.get("source_sha256") == current_source,

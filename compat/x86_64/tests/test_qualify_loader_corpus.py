@@ -78,15 +78,15 @@ class LoaderCorpusCaseTests(unittest.TestCase):
         with (
             self.forbid_work(),
             mock.patch.object(
-                qualify.CASE.PRODUCT, "require_clean_source",
-                side_effect=qualify.CASE.PRODUCT.QualificationError("qualification publication requires clean source"),
+                qualify.CASE.source_seal, "require_clean",
+                side_effect=qualify.CASE.source_seal.SourceSealError("qualification requires clean committed source"),
             ),
             mock.patch.object(qualify.CASE.CAMPAIGN, "build_report", side_effect=AssertionError("prerequisites read")),
         ):
             status, stdout, stderr = self.run_main()
         self.assertEqual(status, 1)
         self.assertNotIn(qualify.PASS_MARKER, stdout)
-        self.assertIn("clean source", stderr)
+        self.assertIn("clean committed source", stderr)
 
     def closed(self) -> contextlib.ExitStack:
         stack = contextlib.ExitStack()

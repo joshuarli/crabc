@@ -258,7 +258,7 @@ class OwnedNumericCalendarComponentReceiptTests(unittest.TestCase):
              mock.patch.object(self.module.products, "_validate_static_product",
                                return_value=(self.static / "manifest", {})), \
              mock.patch.object(qualification, "ROOT", self.root), \
-             mock.patch.object(qualification, "source_digest", return_value="a" * 64), \
+             mock.patch.object(qualification.source_seal, "product_source_digest", return_value="a" * 64), \
              mock.patch.object(self.module, "tool_roster", return_value=self.tool_roster), \
              mock.patch.object(self.module.products, "validate_retained_link", side_effect=self.reconstructed_link), \
              mock.patch.object(self.module.copies, "audit_execution_payload", return_value={}):

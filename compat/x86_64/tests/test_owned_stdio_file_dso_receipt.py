@@ -47,7 +47,7 @@ class FileDsoReceiptTests(unittest.TestCase):
             (dynamic / "share/crabc/libc-shared.provenance.json").write_text(json.dumps(provenance))
             preparation.write_text(json.dumps({"schema": receipt.static_products.SCHEMA, "source": source,
                 "products": {"primary": {"tree": {"fixture": "static"}}}}))
-            with (mock.patch.object(receipt.static_products, "source_identity", return_value=source),
+            with (mock.patch.object(receipt.static_products.source_seal, "seal", return_value=source),
                   mock.patch.object(receipt.static_products, "tree_identity", return_value={"fixture": "static"}),
                   mock.patch.object(receipt.products, "_validate_static_product", return_value=(static / "share/crabc/manifest.json", {})),
                   mock.patch.object(receipt.products, "_validate_dynamic_product", return_value=(dynamic / "share/crabc/manifest.json", {}))):

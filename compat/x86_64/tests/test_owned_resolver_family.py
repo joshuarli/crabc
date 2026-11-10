@@ -302,7 +302,7 @@ class OwnedResolverFamilyTests(unittest.TestCase):
         import owned_posix_static_products as static
 
         path, source = self._complete_assessment()
-        with (mock.patch.object(static, "source_identity", return_value=source),
+        with (mock.patch.object(static.source_seal, "seal", return_value=source),
               mock.patch.object(family, "_validate_admission_cohort") as cohort_binding):
             facts = family.admission_facts(ROOT, path.relative_to(ROOT))
         cohort_binding.assert_called_once()
@@ -310,10 +310,10 @@ class OwnedResolverFamilyTests(unittest.TestCase):
         self.assertEqual(facts["static_preparation"]["path"], self._relative(self.work / "preparation.json"))
         self.assertEqual(facts["assessment"], family._identity(ROOT, path))
 
-        with mock.patch.object(static, "source_identity", return_value={**source, "revision": "o" * 40}):
+        with mock.patch.object(static.source_seal, "seal", return_value={**source, "content_sha256": "0" * 64}):
             with self.assertRaisesRegex(family.ResolverFamilyError, "not bound to current source"):
                 family.admission_facts(ROOT, path.relative_to(ROOT))
-        with mock.patch.object(static, "source_identity", return_value=source):
+        with mock.patch.object(static.source_seal, "seal", return_value=source):
             (self.work / "qualification.json").write_text("changed\n", encoding="utf-8")
             with self.assertRaisesRegex(family.ResolverFamilyError, "dynamic_qualification receipt changed"):
                 family.admission_facts(ROOT, path.relative_to(ROOT))
@@ -330,7 +330,7 @@ class OwnedResolverFamilyTests(unittest.TestCase):
             "capability admission": lambda value: value["capabilities"].pop("network.netdb"),
             "contract changed": lambda value: value["contract"].update(sha256="0" * 64),
         }
-        with mock.patch.object(static, "source_identity", return_value=source):
+        with mock.patch.object(static.source_seal, "seal", return_value=source):
             for message, mutate in mutations.items():
                 changed = json.loads(json.dumps(original))
                 mutate(changed)
@@ -396,7 +396,7 @@ class OwnedResolverFamilyTests(unittest.TestCase):
                                             "source_sha256": source["content_sha256"]}}
         alias_file = self._file("alias-source.json", json.dumps(alias_report))
         request_components["resolver-alias-private-bodies"]["report"] = self._relative(alias_file)
-        cancellation_source = cancellation._source_digest(ROOT)
+        cancellation_source = cancellation.source_seal.product_source_digest(ROOT)
         cancellation_work = ROOT / request_components["resolver-cancellation"]["work"]
         (cancellation_work / cancellation.ARTIFACT_AUDIT).write_text(
             json.dumps({"source_sha256": cancellation_source}), encoding="utf-8")
@@ -434,7 +434,7 @@ class OwnedResolverFamilyTests(unittest.TestCase):
         with (mock.patch.object(alias, "validate_report", return_value=alias_summary) as alias_replay,
               mock.patch.object(cohort, "_canonical_products", return_value=(source, products)),
               mock.patch.object(network, "product_paths", return_value=network_roots),
-              mock.patch.object(static, "source_identity", return_value={
+              mock.patch.object(static.source_seal, "seal", return_value={
                   "revision": source["revision"], "content_sha256": source["content_sha256"],
               })):
             assessment = family.collect(ROOT, request, readers=readers)

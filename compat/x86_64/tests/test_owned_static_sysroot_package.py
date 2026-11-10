@@ -50,7 +50,7 @@ class OwnedStaticSysrootPackageTests(unittest.TestCase):
         manifest = {
             "format": "crabc-x86-64-owned-static-sysroot-v1",
             "target": "x86_64-unknown-linux-musl",
-            "source_sha256": static_product_contract.source_digest(),
+            "source_sha256": static_product_contract.source_seal.product_source_digest(static_product_contract.ROOT),
             "installed": {
                 "headers": "usr/include",
                 "crt_objects": [

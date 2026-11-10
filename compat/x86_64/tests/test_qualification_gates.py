@@ -70,9 +70,11 @@ class GateConditionTests(unittest.TestCase):
                 paths[name] = path
                 products[name] = {"manifest": path.relative_to(root).as_posix(),
                                   "sha256": hashlib.sha256(path.read_bytes()).hexdigest()}
-            qualification = SimpleNamespace(source_digest=Mock(return_value=source), product_identity=Mock())
+            qualification = SimpleNamespace(ROOT=root, product_identity=Mock())
+            seal = SimpleNamespace(product_source_digest=Mock(return_value=source))
             evidence = SimpleNamespace(_validate_static_product=Mock(), validate_dynamic_product_source=Mock())
-            modules = {"owned_dynamic_qualification": qualification, "owned_posix_product_evidence": evidence}
+            modules = {"owned_dynamic_qualification": qualification, "owned_posix_product_evidence": evidence,
+                       "source_seal": seal}
             with patch.object(gates, "ROOT", root), patch.object(gates, "_import_compat", side_effect=modules.__getitem__):
                 self.assertEqual(gates.validate_hardened_products(products), products)
                 evidence._validate_static_product.assert_called_once_with(paths["static"].parents[2])

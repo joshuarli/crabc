@@ -3266,7 +3266,7 @@ def dynamic_product_prerequisite(
     require(receipt.get("schema") == "crabc.x86_64-owned-dynamic-qualification/v1"
             and receipt.get("status") == "qualified-pending-review",
             "dynamic product qualification receipt is not a validated three-product record")
-    require(receipt.get("source_sha256") == qualification.source_digest(),
+    require(receipt.get("source_sha256") == evidence._x86_module(root, "source_seal").product_source_digest(qualification.ROOT),
             "dynamic product qualification receipt is stale for the current source")
     products = receipt.get("products")
     require(isinstance(products, dict) and set(products) == {"installed", "second", "extracted"},
@@ -3283,11 +3283,10 @@ def dynamic_product_prerequisite(
 
 
 def native_source_digest(root: Path) -> str:
-    """Use the existing x86 source owner for a full nonignored source seal."""
+    """Use the x86 product source digest as native measurement provenance."""
 
     try:
-        qualification = evidence._x86_module(root, "owned_dynamic_qualification")
-        digest = qualification.source_digest()
+        digest = evidence._x86_module(root, "source_seal").product_source_digest(root)
     except (OSError, RuntimeError, ValueError) as error:
         raise AdapterError(f"cannot calculate native source provenance: {error}") from error
     require(isinstance(digest, str) and re.fullmatch(r"[0-9a-f]{64}", digest) is not None,

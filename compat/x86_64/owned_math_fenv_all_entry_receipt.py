@@ -25,6 +25,7 @@ import owned_math_fenv_all_entry_contract as contract
 import owned_math_fenv_all_entry_evidence as providers
 import owned_crypt_runtime_evidence as payload_evidence
 import owned_dynamic_qualification as qualification
+import source_seal
 import owned_posix_family_execution as family
 import owned_posix_product_evidence as product_evidence
 import native_static_source_runtime_closure as source_runtime
@@ -505,7 +506,7 @@ def expected_source_product_seal(root: Path, static: Path, dynamic: Path) -> dic
     require(state.get("schema") == "crabc.x86_64-owned-dynamic-materialization/v1"
             and state.get("status") == "materialized-unqualified", "dynamic product state differs")
     try:
-        current_source = qualification.source_digest()
+        current_source = source_seal.product_source_digest(qualification.ROOT)
     except Exception as error:
         raise ReceiptError("current math/fenv source digest is unreadable") from error
     require(state.get("source_sha256") == current_source,

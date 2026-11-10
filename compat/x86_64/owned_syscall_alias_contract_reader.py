@@ -29,6 +29,7 @@ import owned_dynamic_receipt
 import owned_syscall_alias_authority as authority
 import owned_posix_product_evidence as product_evidence
 import owned_posix_static_products as static_products
+import source_seal
 import owned_pthread_alias_contract_reader as pthread_reader
 import core_image
 from musl_oracle import load_pin
@@ -736,7 +737,7 @@ def collect_report(*, root: Path, output: Path, static_preparation: Path, static
     static_preparation, elf_facts, base_inventory = (physical(value, label) for value, label in ((static_preparation, "static preparation"), (elf_facts, "full ELF facts"), (base_inventory, "base inventory")))
     static_product, dynamic_product = (physical(value, label, True) for value, label in ((static_product, "static product"), (dynamic_product, "dynamic product")))
     for value in (static_preparation, static_product, dynamic_product, elf_facts, base_inventory): require(value.is_relative_to(root / ".work"), "receipt input is outside checkout .work")
-    source_before = static_products.source_identity(root); selected_source = admit_inputs(static_preparation, static_product, dynamic_product, elf_facts, base_inventory, image)
+    source_before = source_seal.seal(root); selected_source = admit_inputs(static_preparation, static_product, dynamic_product, elf_facts, base_inventory, image)
     try:
         product_evidence._validate_static_product(static_product)
         product_evidence._validate_dynamic_product(dynamic_product)
@@ -786,7 +787,7 @@ def collect_report(*, root: Path, output: Path, static_preparation: Path, static
     for name, before in tools_before.items():
         require(live_identity(Path(str(before["path"]))) == before, f"collector tool changed during native execution: {name}")
     require(same(authority.image_input_manifest(), image_manifest), "pinned image inputs changed during execution")
-    source_after = static_products.source_identity(root); require(same(source_before, source_after), "collector source changed during native execution")
+    source_after = source_seal.seal(root); require(same(source_before, source_after), "collector source changed during native execution")
     authority.capture_git_objects(root, output, {source_before["revision"], selected_source["revision"]})
     report = {"schema": SCHEMA, "status": STATUS, "image": image, "musl_source_commit": MUSL_SOURCE_COMMIT, "collector_source": {"before": source_before, "after": source_after}, "selected_product_source": selected_source, "image_inputs": image_inputs, "inputs": inputs, "products": products, "link_input_modes": LINK_INPUT_MODES, "source": source, "tools": tools, "runner": validate_runner_work(output, runner, inputs, source, runner), "selection_projection": component_projection()}
     (output / "report.json").write_text(json.dumps(report, indent=2, sort_keys=True) + "\n")

@@ -1552,12 +1552,13 @@ def validate_materialized_dynamic_product(root: Path, product: Path) -> str:
     if str(module_dir) not in sys.path:
         sys.path.insert(0, str(module_dir))
     import owned_dynamic_qualification as qualification
+    import source_seal
     import owned_posix_product_evidence as product_evidence
     import crabc_cc_owned_dynamic as driver
     try:
         manifest = driver.validate_installation(product)
         if manifest.get("build_profile") == "debug":
-            product_evidence.validate_debug_product_source(product, qualification.source_digest())
+            product_evidence.validate_debug_product_source(product, source_seal.product_source_digest(qualification.ROOT))
             return digest(product / "share/crabc/manifest.json")
         return qualification.product_identity(product)
     except (qualification.QualificationError, product_evidence.ProductEvidenceError,
@@ -1668,9 +1669,10 @@ def _product_source_identity(root: Path) -> dict[str, Any]:
     if str(module_dir) not in sys.path:
         sys.path.insert(0, str(module_dir))
     import owned_posix_static_products as static_products
+    import source_seal
     try:
-        value = static_products.source_identity(Path(root).absolute())
-    except (static_products.PreparationError, OSError, subprocess.CalledProcessError) as error:
+        value = source_seal.seal(Path(root).absolute())
+    except (static_products.PreparationError, source_seal.SourceSealError, OSError, subprocess.CalledProcessError) as error:
         raise CompilerHelperEvidenceError("compiler-helper aggregate product source identity is unavailable") from error
     require(type(value) is dict and set(value) == {"revision", "content_sha256"}
             and type(value["revision"]) is str and re.fullmatch(r"[0-9a-f]{40}", value["revision"]) is not None

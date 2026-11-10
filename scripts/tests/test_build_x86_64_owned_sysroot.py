@@ -577,7 +577,7 @@ class BuildX86OwnedSysrootTests(unittest.TestCase):
             with mock.patch.object(builder, "assert_native_target"), \
                  mock.patch.object(builder, "build_runtime_inputs", return_value={}), \
                  mock.patch.object(builder, "assemble", return_value={"source_sha256": "a" * 64}), \
-                 mock.patch.object(builder.static_product_contract, "source_digest",
+                 mock.patch.object(builder.source_seal, "product_source_digest",
                                    side_effect=["a" * 64, "b" * 64]):
                 with self.assertRaisesRegex(builder.BuildError, "source changed during build"):
                     builder.build(output)

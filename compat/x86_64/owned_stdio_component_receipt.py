@@ -28,6 +28,7 @@ if str(HERE) not in sys.path:
 
 import owned_crypt_runtime_evidence as copies
 import owned_dynamic_qualification as qualification
+import source_seal
 import installed_compiler_translation as translation_contract
 import owned_posix_product_evidence as products
 
@@ -336,7 +337,7 @@ def validate_source_product_seals(
     state = strict_json(dynamic / "share/crabc/dynamic-product-state.json", "dynamic product materialization state")
     if state.get("build_profile") == "debug":
         try:
-            products.validate_debug_product_source(dynamic, qualification.source_digest())
+            products.validate_debug_product_source(dynamic, source_seal.product_source_digest(qualification.ROOT))
         except Exception as error:
             raise ReceiptError(str(error)) from error
     else:
@@ -347,7 +348,7 @@ def validate_source_product_seals(
         require(type(recorded_source) is str and SHA256.fullmatch(recorded_source) is not None,
                 "dynamic product source digest is invalid")
         try:
-            current_source = qualification.source_digest()
+            current_source = source_seal.product_source_digest(qualification.ROOT)
         except Exception as error:
             raise ReceiptError("current source digest cannot be read") from error
         require(recorded_source == current_source, "dynamic product source differs from current checkout")

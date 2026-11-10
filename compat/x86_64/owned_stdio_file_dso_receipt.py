@@ -54,6 +54,7 @@ if str(HERE) not in sys.path:
 import core_image
 import owned_posix_product_evidence as products
 import owned_posix_static_products as static_products
+import source_seal
 import owned_pthread_alias_contract_reader as pthread_receipt
 
 SCHEMA = "crabc.x86_64-owned-stdio-file-dso/v1"
@@ -181,7 +182,7 @@ def selected_products(root: Path, preparation: Path, static: Path, dynamic: Path
     dynamic = physical(root, dynamic, "dynamic product", directory=True)
     require(preparation.name == "preparation.json" and static == preparation.parent / "products/primary",
             "static product is not the prepared primary")
-    source = static_products.source_identity(root)
+    source = source_seal.seal(root)
     prepared = read_json(preparation)
     require(prepared["schema"] == static_products.SCHEMA and prepared["source"] == source,
             "static preparation source differs")

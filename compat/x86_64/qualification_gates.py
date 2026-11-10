@@ -494,7 +494,7 @@ def validate_hardened_products(value: object) -> dict[str, object]:
                  "hardened runtime product roster differs")
     qualification = _import_compat("owned_dynamic_qualification")
     evidence = _import_compat("owned_posix_product_evidence")
-    source = qualification.source_digest()
+    source = _import_compat("source_seal").product_source_digest(qualification.ROOT)
     for name in ("static", "dynamic", "compatibility"):
         record = value[name]
         unmet_unless(isinstance(record, dict) and set(record) == {"manifest", "sha256"},

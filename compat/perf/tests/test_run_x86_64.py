@@ -720,13 +720,13 @@ class RosterBoundaryTests(unittest.TestCase):
             }
             roster_path = directory / "attempt-roster.json"
             runner.write_json(roster_path, roster)
-            owner = SimpleNamespace(source_digest=lambda: "c" * 64)
+            owner = SimpleNamespace(product_source_digest=lambda _root: "c" * 64)
             real_module = runner.evidence._x86_module
 
             def module(checkout: Path, name: str) -> object:
                 # Replace only the source-digest owner; admission still reads
                 # the real ordered qualification chain.
-                return owner if name == "owned_dynamic_qualification" else real_module(checkout, name)
+                return owner if name == "source_seal" else real_module(checkout, name)
 
             with patch.object(runner, "git_revision", return_value="b" * 40), \
                  patch.object(runner.evidence, "_x86_module", side_effect=module):

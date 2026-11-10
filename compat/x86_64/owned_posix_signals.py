@@ -22,6 +22,7 @@ REQUIRED_SCENARIOS = ("sets", "initial-handler-mask", "threaded-handler-mask", "
                       "alternate-stack", "alternate-minimum", "signalfd", "waits")
 import crabc_cc_static as compiler_contract
 import owned_dynamic_qualification as qualification
+import source_seal
 import installed_compiler_translation as translation_contract
 import owned_posix_product_evidence as product_evidence
 
@@ -177,8 +178,8 @@ def run(arguments):
         product_evidence._validate_static_product(static)
     include_static = static is not None or dynamic_argument is None
     contract = validate_contract(tomllib.loads(CONTRACT.read_text()))
-    source_identity = qualification.source_digest()
-    revision = qualification.git("rev-parse", "HEAD").decode().strip()
+    source_identity = source_seal.product_source_digest(qualification.ROOT)
+    revision = source_seal.revision(qualification.ROOT)
     scenarios = contract["scenarios"]
     work = Path(tempfile.mkdtemp(prefix="owned-posix-signals.", dir=temporary))
     print(f"signal-full evidence: {work}", flush=True)
@@ -225,7 +226,7 @@ def run(arguments):
                 comparisons.append({"mode": mode, "scenario": scenario, "equal": equal})
                 if not equal:
                     failures.append(f"{mode}:{scenario}")
-        if qualification.source_digest() != source_identity:
+        if source_seal.product_source_digest(qualification.ROOT) != source_identity:
             raise ValueError("signal-full source changed during execution")
         receipt = {"source_sha256": source_identity, "revision": revision, "schema": "crabc.x86_64-owned-posix-signals/v1", "workload_object_sha256": digest(workload),
                    "contract_sha256": digest(CONTRACT), "product_manifest_sha256": digest(product / "share/crabc/manifest.json"),

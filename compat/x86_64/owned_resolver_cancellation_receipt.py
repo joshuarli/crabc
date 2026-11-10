@@ -28,6 +28,7 @@ import subprocess
 import sys
 import tempfile
 from typing import Any, Mapping
+import source_seal
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -157,30 +158,6 @@ def _below(root: Path, path: Path, description: str, *, directory: bool) -> Path
     value = physical_directory(path, description) if directory else physical_file(path, description)
     require(value.is_relative_to(root / ".work"), f"{description} escapes checkout .work")
     return value
-
-
-def _source_digest(root: Path) -> str:
-    """Match the producer's live nonignored source digest byte-for-byte."""
-
-    try:
-        output = subprocess.check_output(
-            ["git", "-c", f"safe.directory={root}", "ls-files", "-z", "--cached", "--others", "--exclude-standard"],
-            cwd=root,
-        )
-    except (OSError, subprocess.CalledProcessError) as error:
-        raise ReceiptError("cannot enumerate the source bound to cancellation evidence") from error
-    names = sorted(set(output.split(b"\0")) - {b""})
-    value = sha256()
-    for name in names:
-        path = root / os.fsdecode(name)
-        try:
-            mode = path.lstat().st_mode
-            contents = os.fsencode(os.readlink(path)) if stat.S_ISLNK(mode) else path.read_bytes()
-        except OSError as error:
-            raise ReceiptError(f"cannot read source-bound path: {path}") from error
-        value.update(name + b"\0" + str(stat.S_IMODE(mode)).encode() + b"\0")
-        value.update(sha256(contents).digest())
-    return value.hexdigest()
 
 
 def _fixture(root: Path) -> Any:
@@ -479,7 +456,7 @@ def validate_report(root: Path, work: Path, *, static_product: Path, dynamic_pro
     static = _below(root, static_product, "static cancellation product", directory=True)
     dynamic = _below(root, dynamic_product, "dynamic cancellation product", directory=True)
     require(len({work, static, dynamic}) == 3, "cancellation evidence and products must be distinct")
-    source_before = _source_digest(root)
+    source_before = source_seal.product_source_digest(root)
     prior_bytecode_policy = sys.dont_write_bytecode
     sys.dont_write_bytecode = True
     try:
@@ -501,7 +478,7 @@ def validate_report(root: Path, work: Path, *, static_product: Path, dynamic_pro
     _verify_transition(work, cancellation, fallback=False)
     _verify_transition(work, cancellation, fallback=True)
     ordinary, source_later = _replay_observations(work, cancellation)
-    require(_source_digest(root) == source_before, "source changed during cancellation receipt replay")
+    require(source_seal.product_source_digest(root) == source_before, "source changed during cancellation receipt replay")
     require(fixture.tree_identity(static) == static_before and fixture.tree_identity(dynamic) == dynamic_before,
             "product changed during cancellation receipt replay")
     return {

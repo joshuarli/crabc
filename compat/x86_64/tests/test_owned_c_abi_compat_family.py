@@ -263,7 +263,7 @@ class ComponentTests(unittest.TestCase):
         source = {**SOURCE, "static_preparation": {}, "dynamic_qualification": {}}
         return (
             mock.patch.object(cohort, "canonical_products", return_value=(source, self.products)),
-            mock.patch.object(execution.static_products, "source_identity", return_value=SOURCE),
+            mock.patch.object(execution.static_products.source_seal, "seal", return_value=SOURCE),
             mock.patch.dict(family.READERS, {kind: (lambda **_: {"replayed": True}) for kind in family.READER_KINDS}),
         )
 
@@ -337,8 +337,8 @@ class ComponentTests(unittest.TestCase):
             qualification.write_text("changed\n", encoding="utf-8")
             with self.assertRaisesRegex(family.CAbiCompatFamilyError, "dynamic_qualification receipt changed"):
                 family.admission_facts(ROOT, path.relative_to(ROOT))
-        with mock.patch.object(execution.static_products, "source_identity",
-                               return_value={**SOURCE, "revision": "o" * 40}):
+        with mock.patch.object(execution.static_products.source_seal, "seal",
+                               return_value={**SOURCE, "content_sha256": "0" * 64}):
             with self.assertRaisesRegex(family.CAbiCompatFamilyError, "not bound to current source"):
                 family.admission_facts(ROOT, path.relative_to(ROOT))
 

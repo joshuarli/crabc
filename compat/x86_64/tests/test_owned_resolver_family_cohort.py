@@ -150,7 +150,7 @@ class ResolverFamilyCohortTests(unittest.TestCase):
         shutil.copyfile(receipt, copied)
 
         with (mock.patch.object(cohort.static, "validate_receipt", return_value=prepared),
-              mock.patch.object(cohort.static, "source_identity", return_value=source),
+              mock.patch.object(cohort.static.source_seal, "seal", return_value=source),
               mock.patch.object(cohort.static, "product_paths",
                                 return_value={label: pair["static"] for label, pair in self.products.items()}),
               mock.patch.object(cohort.dynamic, "collect", return_value=qualified)):

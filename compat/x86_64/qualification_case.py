@@ -14,6 +14,7 @@ from typing import Any, Mapping
 
 import campaign_report as CAMPAIGN
 import owned_dynamic_qualification as PRODUCT
+import source_seal
 
 
 class QualificationCaseError(RuntimeError):
@@ -29,11 +30,10 @@ def clean_source_identity() -> dict[str, str]:
     """Return the committed revision and live source digest of a clean checkout."""
 
     try:
-        revision = PRODUCT.require_clean_source()
-        source = PRODUCT.source_digest()
-    except PRODUCT.QualificationError as error:
+        seal = source_seal.seal(PRODUCT.ROOT)
+    except source_seal.SourceSealError as error:
         raise QualificationCaseError(str(error)) from error
-    return {"revision": revision, "source_sha256": source}
+    return {"revision": seal["revision"], "source_sha256": seal["content_sha256"]}
 
 
 def unverified_prerequisites(report: Mapping[str, Any], family: str) -> list[str]:

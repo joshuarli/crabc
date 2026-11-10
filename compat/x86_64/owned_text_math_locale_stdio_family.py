@@ -24,6 +24,7 @@ import tomllib
 from typing import Any, Callable, Mapping
 
 import owned_posix_family_execution as family
+import source_seal
 import owned_pthread_family as pthread
 
 
@@ -379,12 +380,6 @@ def _snapshot_identity_from_contents(root: Path, path: Path,
     }
 
 
-def current_source_identity(root: Path) -> dict[str, object]:
-    """Use the product owner's full current clean-source identity."""
-
-    return family.static_products.source_identity(root)
-
-
 def _roster_identity(root: Path, roster: Path) -> dict[str, object]:
     return _source_file_identity(root, _physical(root, roster.relative_to(root), "family roster"))
 
@@ -548,8 +543,8 @@ def _require_pthread(root: Path, receipt: Path, matrix_identity: dict[str, objec
 
 def _source_after_reader(root: Path) -> dict[str, object]:
     try:
-        return current_source_identity(root)
-    except (family.static_products.PreparationError, OSError, ValueError) as error:
+        return source_seal.seal(root)
+    except (family.static_products.PreparationError, source_seal.SourceSealError, OSError, ValueError) as error:
         raise FamilyError(f"current source identity rejected: {error}") from error
 
 
@@ -914,7 +909,7 @@ def _require_snapshots_current(root: Path, directories: tuple[_DirectorySnapshot
     for snapshot in files:
         require(same(_snapshot_file_identity(root, snapshot.path), snapshot.identity),
                 f"declared input changed during collection: {snapshot.description}")
-    require(same(current_source_identity(root), source), "current source changed during collection")
+    require(source_seal.same_product(source_seal.seal(root), source), "current source changed during collection")
 
 
 def _require_component(name: str, values: object, products: Mapping[str, Mapping[str, Path]], source: object) -> None:
@@ -1019,7 +1014,7 @@ def collect(root: Path, request_path: Path) -> dict[str, Any]:
     root = root.resolve(strict=True)
     load_roster(ROSTER_PATH)
     _request_value, matrix_path, pthread_path, requests = _request(root, request_path)
-    source_before = current_source_identity(root)
+    source_before = source_seal.seal(root)
     matrix_identity = _identity(root, matrix_path)
     try:
         matrix = _require_matrix(family.validate_receipt(root, matrix_path))
@@ -1075,7 +1070,7 @@ def collect(root: Path, request_path: Path) -> dict[str, Any]:
     }
     # Construct every retained identity before the final input check. No read
     # used for the return value is allowed to occur after that check.
-    source_after = current_source_identity(root)
+    source_after = source_seal.seal(root)
     result = {
         "schema": SCHEMA,
         "status": "installed-family-evidence-verified",
@@ -1238,7 +1233,7 @@ def _assembly_matrix_context(root: Path, family_execution: Path | str,
 
     matrix_path = _physical(root, family_execution, "assembly family execution receipt", below_work=True)
     pthread_path = _physical(root, pthread_family, "assembly pthread family receipt", below_work=True)
-    source = current_source_identity(root)
+    source = source_seal.seal(root)
     matrix_identity = _identity(root, matrix_path)
     try:
         matrix = _require_matrix(family.validate_receipt(root, matrix_path))
@@ -1281,7 +1276,7 @@ def assemble(root: Path, family_execution: Path | str, pthread_family: Path | st
         )
     except (OSError, ValueError, family.ExecutionError, text_component.product_evidence.ProductEvidenceError,
             text_component.payload_evidence.CryptRuntimeEvidenceError,
-            text_component.static_products.PreparationError) as error:
+            text_component.static_products.PreparationError, source_seal.SourceSealError) as error:
         raise FamilyError(f"text-locale-numeric public aggregate rejected: {error}") from error
 
     assembly = _fresh_assembly_directory(root, output)
@@ -1374,8 +1369,9 @@ def admission_facts(root: Path, receipt_path: Path) -> dict[str, object]:
     require(isinstance(inputs, Mapping) and set(inputs) == {
         "request", "family_execution", "pthread_family", "source_before", "source_after", "roster",
     }, "family admission input roster differs")
-    source = current_source_identity(root)
-    require(same(inputs["source_before"], source) and same(inputs["source_after"], source),
+    source = source_seal.seal(root)
+    require(source_seal.same_product(inputs["source_before"], source)
+            and source_seal.same_product(inputs["source_after"], source),
             "family admission is not bound to current source")
     require(same(inputs["roster"], _roster_identity(root, ROSTER_PATH)),
             "family admission roster changed")
@@ -1466,7 +1462,7 @@ def admission_facts(root: Path, receipt_path: Path) -> dict[str, object]:
         require(same(_identity(root, path), identity), "declared file changed during admission")
     for path, identity in checked_directories.items():
         require(same(_snapshot_identity(root, path), identity), "declared product or evidence changed during admission")
-    require(same(current_source_identity(root), source), "family admission source changed")
+    require(source_seal.same_product(source_seal.seal(root), source), "family admission source changed")
     return result
 
 

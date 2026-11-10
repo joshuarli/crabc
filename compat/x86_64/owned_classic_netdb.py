@@ -97,8 +97,8 @@ def symbols(binary: Path, dynamic: bool, destination: Path, journal: CommandJour
 def run(work: Path, static: Path | None, dynamic: Path) -> None:
     image_id = receipt.require_collection_image()
     fixture = fixture_module()
-    from owned_dynamic_qualification import source_digest
-    source_sha256 = source_digest()
+    import source_seal
+    source_sha256 = source_seal.product_source_digest(ROOT)
     execution_mode = receipt.FULL_MODE if static is not None else receipt.DYNAMIC_MODE
     source_product_before = receipt.source_product_seal(ROOT, static, dynamic)
     tools_before = receipt.tool_roster(ROOT, dynamic, static)
@@ -271,7 +271,7 @@ def run(work: Path, static: Path | None, dynamic: Path) -> None:
     expected = arms * len(CASES)
     if len(outcomes) != expected or any(row['exit_status'] != 0 for row in outcomes):
         raise RuntimeError('incomplete classic netdb execution matrix')
-    if source_digest() != source_sha256 or fixture.artifact_record(obj) != audits['object']:
+    if source_seal.product_source_digest(ROOT) != source_sha256 or fixture.artifact_record(obj) != audits['object']:
         raise RuntimeError('classic netdb source or shared application object changed during execution')
     (work / 'artifact-audits.json').write_text(json.dumps(audits, indent=2, sort_keys=True) + '\n')
     (work / 'exact-question-association-differences.json').write_text(

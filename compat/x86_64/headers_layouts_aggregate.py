@@ -1774,9 +1774,10 @@ def collect_supplied_header_pair(static_product: Path, dynamic_product: Path, ou
     """Execute installed-header and sealed-link evidence for one supplied pair."""
     import header_declaration_inventory as declarations
     import owned_posix_static_products as static_products
+    import source_seal
     from owned_posix_product_evidence import validate_link
 
-    source_before = static_products.source_identity(ROOT)
+    source_before = source_seal.seal(ROOT)
     inputs_before = supplied_header_product_inputs(static_product, dynamic_product, source_before)
     require(output.resolve() == output and output.is_relative_to(ROOT / ".work/x86_64/header-declaration-inventory")
             and not output.exists(), "header pair output must be a fresh physical declaration evidence directory")
@@ -1811,7 +1812,7 @@ def collect_supplied_header_pair(static_product: Path, dynamic_product: Path, ou
         links.append({"mode": mode, "linkage": linkage, "workload": pair_file_identity(workload),
                       "executable": pair_file_identity(executable), "map": pair_file_identity(map_path),
                       "trace": pair_file_identity(trace), "receipt": pair_file_identity(receipt), "result": result})
-    source_after = static_products.source_identity(ROOT)
+    source_after = source_seal.seal(ROOT)
     inputs_after = supplied_header_product_inputs(static_product, dynamic_product, source_after)
     tools_after = pair_linker_identity()
     require(source_before == source_after and inputs_before == inputs_after and tools_before == tools_after,

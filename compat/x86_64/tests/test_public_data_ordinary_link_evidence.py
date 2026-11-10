@@ -64,7 +64,7 @@ class PublicDataOrdinaryLinkEvidenceTests(unittest.TestCase):
         state_source = self.source["content_sha256"] if state_source is None else state_source
         with (
             mock.patch.object(evidence.static_products, "validate_receipt", return_value=preparation),
-            mock.patch.object(evidence.static_products, "source_identity", return_value=dict(self.source)),
+            mock.patch.object(evidence.static_products.source_seal, "seal", return_value=dict(self.source)),
             mock.patch.object(
                 evidence.qualification,
                 "product_identity",

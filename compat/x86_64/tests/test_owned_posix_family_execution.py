@@ -276,7 +276,7 @@ class FamilyMatrixTests(unittest.TestCase):
         self.run = self.work / 'execution'
         self.patch(execution, 'input_products', return_value=(self.inputs, self.products))
         self.patch(execution, 'workload_roster', return_value=(Workload(),))
-        self.patch(execution.static_products, 'source_identity', return_value=self.source)
+        self.patch(execution.source_seal, 'seal', return_value=self.source)
         import owned_dynamic_qualification as dynamic
         self.patch(dynamic, 'require_live_oracle')
         import owned_posix_family_observations as observations
@@ -464,7 +464,7 @@ class ValidatedInputProductsTests(unittest.TestCase):
     def test_recovery_uses_sealed_identities_without_replaying_product_owners(self):
         import owned_dynamic_qualification as dynamic
 
-        with patch.object(execution.static_products, 'source_identity', return_value=self.source), \
+        with patch.object(execution.static_products.source_seal, 'seal', return_value=self.source), \
                 patch.object(execution.static_products, 'validate_receipt',
                              side_effect=AssertionError('static producer replayed')), \
                 patch.object(dynamic, 'validate_receipt', side_effect=AssertionError('dynamic producer replayed')):
@@ -480,7 +480,7 @@ class ValidatedInputProductsTests(unittest.TestCase):
         copied.write_bytes(self.dynamic_receipt.read_bytes())
         request = {**self.request, 'dynamic_qualification': copied.relative_to(self.root).as_posix()}
         evidence = {**self.evidence, 'dynamic_qualification': execution.file_identity(self.root, copied)}
-        with patch.object(execution.static_products, 'source_identity', return_value=self.source):
+        with patch.object(execution.static_products.source_seal, 'seal', return_value=self.source):
             with self.assertRaisesRegex(execution.ExecutionError, 'dynamic qualification receipt path differs'):
                 execution._validated_input_products(self.root, request, evidence)
 
@@ -496,7 +496,7 @@ class ValidatedInputProductsTests(unittest.TestCase):
                 patch.object(dynamic, 'validate_receipt', return_value=qualified), \
                 patch.object(dynamic, 'read', return_value={'oracle': self.evidence['oracle']}), \
                 patch.object(execution.static_products, 'validate_receipt', return_value=static), \
-                patch.object(execution.static_products, 'source_identity', return_value=self.source):
+                patch.object(execution.static_products.source_seal, 'seal', return_value=self.source):
             valid, _ = execution.input_products(self.root, self.request)
             self.assertEqual(valid['dynamic_work'], self.evidence['dynamic_work'])
             with self.assertRaisesRegex(execution.ExecutionError, 'dynamic qualification receipt path differs'):
@@ -519,7 +519,7 @@ class ValidatedInputProductsTests(unittest.TestCase):
                 patch.object(dynamic, 'validate_receipt', return_value=qualified), \
                 patch.object(dynamic, 'read', return_value={'oracle': self.evidence['oracle']}), \
                 patch.object(execution.static_products, 'validate_receipt', return_value=static), \
-                patch.object(execution.static_products, 'source_identity', return_value=self.source):
+                patch.object(execution.static_products.source_seal, 'seal', return_value=self.source):
             with self.assertRaisesRegex(execution.ExecutionError, 'allocator backend'):
                 execution.input_products(self.root, self.request)
 
@@ -546,7 +546,7 @@ class ValidatedInputProductsTests(unittest.TestCase):
                 patch.object(dynamic, 'validate_receipt', side_effect=mutate_after_owner_judge), \
                 patch.object(dynamic, 'read', return_value={'oracle': self.evidence['oracle']}), \
                 patch.object(execution.static_products, 'validate_receipt', return_value=static), \
-                patch.object(execution.static_products, 'source_identity', return_value=self.source):
+                patch.object(execution.static_products.source_seal, 'seal', return_value=self.source):
             with self.assertRaisesRegex(execution.ExecutionError, 'product.*changed'):
                 execution.input_products(self.root, self.request)
 

@@ -50,6 +50,7 @@ if str(Path(__file__).resolve().parent) not in sys.path:
 import native_abi_inventory as inventory
 import owned_posix_product_evidence as products
 import owned_posix_static_products as static_products
+import source_seal
 import owned_dynamic_qualification as qualification
 import public_data_ordinary_link_evidence as ordinary
 import owned_pthread_alias_contract_reader as pthread_reader
@@ -543,7 +544,7 @@ def collect(root,output,preparation,static,dynamic,historical):
     require(os.environ.get('LC_ALL')=='C','C locale collection required')
     image=os.environ.get(ordinary.IMAGE_ENV,'')
     require(ordinary.IMAGE_PATTERN.fullmatch(image) is not None,'pinned image identity is required')
-    source=static_products.source_identity(root); policy=contract(root)
+    source=source_seal.seal(root); policy=contract(root)
     before=admitted(root,preparation,static,dynamic,historical)
     output.mkdir(parents=True)
     try:
@@ -564,7 +565,7 @@ def collect(root,output,preparation,static,dynamic,historical):
             runner.run(spec['label'],spec['argv'],cwd=root if spec['cwd']=='/workspace' else output,timeout_seconds=45)
         after=admitted(root,preparation,static,dynamic,historical)
         require(same(before,after),'supplied FILE inputs changed during collection')
-        require(same(source,static_products.source_identity(root)),'collector source changed during collection')
+        require(source_seal.same_product(source, source_seal.seal(root)),'collector source changed during collection')
         ordinary.require_live_tool_roster({k:v for k,v in tools.items() if k not in EXTRA_TOOLS})
         ordinary.require_live_oracle_static_inputs(oracle_static)
         for role,path in EXTRA_TOOLS.items():
@@ -585,7 +586,7 @@ def validate_report(root,report_path):
     require(report['schema']==SCHEMA and same(report['status'],STATUS),'FILE receipt status differs')
     require(same(report['contract'],contract(root)),'FILE receipt contract differs')
     require(ordinary.IMAGE_PATTERN.fullmatch(report['image']) is not None,'pinned image differs')
-    require(same(report['collector_source'],static_products.source_identity(root)),'current collector source differs')
+    require(source_seal.same_product(report['collector_source'], source_seal.seal(root)),'current collector source differs')
     inputs=report['inputs_before']
     preparation=ordinary.resolve_work_identity(root,inputs['preparation'],'preparation')
     historical=ordinary.resolve_work_identity(root,inputs['historical_facts'],'historical facts')

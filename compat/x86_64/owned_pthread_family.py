@@ -547,6 +547,7 @@ def _prevalidated_input_trees(root: Path, request: object,
     """
 
     import owned_dynamic_qualification as dynamic
+    import source_seal
 
     matrix_path = _request_matrix_path(root, request)
     matrix = family.read(matrix_path)
@@ -567,7 +568,7 @@ def _prevalidated_input_trees(root: Path, request: object,
         trees=_snapshot_input_trees(root, _input_tree_paths(
             root, matrix_path, paths["static_preparation"], dynamic_work, case_artifacts)),
         dynamic_case_artifacts=case_artifacts,
-        source_identity=family.static_products.source_identity(root), oracle=oracle,
+        source_identity=source_seal.seal(root), oracle=oracle,
         roster_identity=_source_file_identity(root, ROSTER_PATH, "pthread family roster"),
     )
     _require_phase_oracle(dynamic_work, oracle, native_execution)
@@ -935,6 +936,7 @@ def read_worker_composition(root: Path, report_path: Path, static_product: Path,
                             dynamic_product: Path, fixture_name: str, *, replay: bool = False) -> dict[str, Any]:
     """Authenticate the fixed caller's six cells independently of family admission."""
     import owned_dynamic_qualification as dynamic
+    import source_seal
     import owned_posix_native_execution as native
 
     fixture = worker_fixture_selection(fixture_name)
@@ -943,7 +945,7 @@ def read_worker_composition(root: Path, report_path: Path, static_product: Path,
     leaf = report_path.parent
     static_product = family.physical(root, static_product)
     dynamic_product = family.physical(root, dynamic_product)
-    source = family.static_products.source_identity(root)
+    source = source_seal.seal(root)
     require(root == ROOT, "worker reader root differs from its owning checkout")
     oracle_path = family.physical(root, leaf / "worker-oracle.json")
     oracle = family.read(oracle_path)
@@ -966,7 +968,7 @@ def read_worker_composition(root: Path, report_path: Path, static_product: Path,
     after = _composition_report(root, leaf, static_product, dynamic_product, entry,
                                 "/workspace", oracle, expected_stdout=fixture.stdout)
     require(family.same_json(observed, after), "worker evidence changed during reading or replay")
-    require(source == family.static_products.source_identity(root), "worker reader source changed")
+    require(source_seal.same_product(source, source_seal.seal(root)), "worker reader source changed")
     return observed
 
 

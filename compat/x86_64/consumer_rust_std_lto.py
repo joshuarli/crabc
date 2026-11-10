@@ -1184,9 +1184,10 @@ def run_gate(arguments: argparse.Namespace) -> tuple[dict[str, Any], Path]:
     require((platform.system(), platform.machine()) == ("Linux", "x86_64"), "native Linux/x86-64 required")
     require(os.geteuid() == 0, "execution roots require container root for chroot and device nodes")
     import owned_dynamic_qualification as qualification  # pylint: disable=import-outside-toplevel
+    import source_seal
 
     resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
-    source_before = qualification.source_digest()
+    source_before = source_seal.product_source_digest(qualification.ROOT)
     output = owned_cleanup.work_child(arguments.output, "consumer gate output")
     output.mkdir(mode=0o755)
     retained = Retained(output)
@@ -1279,7 +1280,7 @@ def run_gate(arguments: argparse.Namespace) -> tuple[dict[str, Any], Path]:
         cohort_after, _paths = cohort_products(arguments.static_preparation, arguments.dynamic_qualification)
         if cohort_after != cohort:
             unmet.append("product cohort changed during consumer execution")
-    if qualification.source_digest() != source_before:
+    if source_seal.product_source_digest(qualification.ROOT) != source_before:
         unmet.append("source changed during consumer execution")
     if cohort is None and not arguments.allocator_evidence and not arguments.debug:
         unmet.append("development products are not a current-source installed/extracted cohort")
@@ -1321,6 +1322,7 @@ def validate_receipt(root: Path, path: Path) -> dict[str, Any]:
     """
 
     import owned_dynamic_qualification as qualification  # pylint: disable=import-outside-toplevel
+    import source_seal
 
     require(root == ROOT, "consumer receipt must be read by this checkout")
     path = owned_cleanup.physical(path, "consumer gate receipt")
@@ -1330,7 +1332,7 @@ def validate_receipt(root: Path, path: Path) -> dict[str, Any]:
             "consumer gate receipt has the wrong schema")
     require(record.get("qualifying") is True and isinstance(record.get("cohort"), dict),
             "consumer gate receipt used development products")
-    require(record.get("source_sha256") == qualification.source_digest(), "consumer gate receipt source is stale")
+    require(record.get("source_sha256") == source_seal.product_source_digest(qualification.ROOT), "consumer gate receipt source is stale")
     request = record["cohort"]["request"]
     try:
         cohort, cohort_paths = cohort_products(ROOT / request["static_preparation"],

@@ -23,6 +23,7 @@ if str(COMPAT) not in sys.path:
     sys.path.insert(0, str(COMPAT))
 import native_rustc
 import owned_dynamic_qualification as dynamic_qualification
+import source_seal
 import owned_posix_static_products as static_products
 
 DSO_LABELS = ("dso-worker", "dso-main")
@@ -75,13 +76,12 @@ def image_identity(path: Path) -> tuple[dict[str, str], str]:
 def source_products(static_path: Path, dynamic_path: Path) -> tuple[dict[str, str], dict[str, Any], dict[str, Any], dict[str, Any]]:
     static_path = owned.physical(static_path, "static preparation receipt")
     dynamic_path = owned.physical(dynamic_path, "dynamic qualification receipt")
-    revision = dynamic_qualification.require_clean_source()
-    source = dynamic_qualification.source_digest()
+    seal = source_seal.seal(owned.CHECKOUT)
     static = static_products.validate_receipt(owned.CHECKOUT, static_path)
     dynamic = dynamic_qualification.validate_receipt(dynamic_path)
-    owned.require(static["source"] == {"revision": revision, "content_sha256": source},
+    owned.require(source_seal.same_product(static["source"], seal),
                   "static preparation differs from current source")
-    owned.require(dynamic["source_sha256"] == source and dynamic["status"] == "qualified-pending-review",
+    owned.require(dynamic["source_sha256"] == seal["content_sha256"] and dynamic["status"] == "qualified-pending-review",
                   "dynamic qualification differs from current source or failed its matrix")
     owned.require(len(dynamic["cases"]) == 3 * len(dynamic_qualification.CASES),
                   "dynamic qualification has an incomplete three-product matrix")
@@ -95,7 +95,7 @@ def source_products(static_path: Path, dynamic_path: Path) -> tuple[dict[str, st
                   "extracted dynamic product differs from installed dynamic product")
     products = {"static": static_primary, "static_extracted": static_extracted,
                 "dynamic": dynamic_installed, "dynamic_extracted": dynamic_extracted}
-    return {"revision": revision, "content_sha256": source}, products, static, dynamic
+    return seal, products, static, dynamic
 
 
 def capture(command: list[str], output: Path, *, timeout: int = 90,
@@ -585,8 +585,7 @@ def run(static_path: Path, dynamic_path: Path, vendor: Path, image_inspect: Path
     owned.require([entry["label"] for entry in dso_replays["installed"]["backtrace"]]
                   == [entry["label"] for entry in dso_replays["extracted"]["backtrace"]],
                   "installed and extracted DSO completion differs")
-    owned.require(dynamic_qualification.require_clean_source() == source["revision"]
-                  and dynamic_qualification.source_digest() == source["content_sha256"],
+    owned.require(source_seal.same_product(source_seal.seal(owned.CHECKOUT), source),
                   "source changed during backtrace collection")
     for name, snapshot in products.items():
         mode = "static" if name.startswith("static") else "dynamic"
@@ -616,7 +615,7 @@ def validate(path: Path) -> dict[str, Any]:
     static_path = require_record(receipt["static_preparation"], "static preparation receipt")
     dynamic_path = require_record(receipt["dynamic_qualification"], "dynamic qualification receipt")
     source, products, _, _ = source_products(static_path, dynamic_path)
-    owned.require(source == receipt["source"] and products == receipt["products"],
+    owned.require(source_seal.same_product(source, receipt["source"]) and products == receipt["products"],
                   "installed backtrace source or products changed")
     native_path = require_record(receipt["owned_cleanup"], "owned cleanup receipt")
     selected = owned_receipt(native_path, products)

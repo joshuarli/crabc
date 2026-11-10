@@ -20,6 +20,7 @@ import tempfile
 import aarch64_parity_inventory as inventory
 import generate_qualification_manifest as manifest
 import owned_dynamic_qualification as dynamic
+import source_seal
 import owned_static_sysroot_package as package
 import run_qualification_manifest as qualification
 import static_product_contract as static
@@ -195,8 +196,8 @@ def validate_promotion_closure(receipt_path: Path | None) -> dict:
     dynamic_receipt = dynamic.load_publication()
     require(static_receipt is not None and dynamic_receipt is not None,
             "reviewed current-source static and dynamic qualification publications are required")
-    source = static.source_digest()
-    require(source == dynamic.source_digest()
+    source = source_seal.product_source_digest(static.ROOT)
+    require(source == source_seal.product_source_digest(dynamic.ROOT)
             and static_receipt['source_sha256'] == source
             and dynamic_receipt['source_sha256'] == source,
             "reviewed product source differs from promotion source")

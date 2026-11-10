@@ -22,6 +22,7 @@ import tomllib
 from typing import Any, Mapping
 
 import owned_dynamic_qualification as qualification
+import source_seal
 import owned_loader_corpus_evidence as corpus_evidence
 import owned_loader_inventory as inventory
 
@@ -264,7 +265,7 @@ def _qualification(root: Path, path: Path) -> tuple[dict[str, Any], Path, dict[s
     require(isinstance(record, dict) and set(record) == expected
             and record["schema"] == qualification.SCHEMA and record["status"] == "qualified-pending-review",
             "dynamic qualification schema differs")
-    require(isinstance(record["source_sha256"], str) and record["source_sha256"] == qualification.source_digest(),
+    require(isinstance(record["source_sha256"], str) and record["source_sha256"] == source_seal.product_source_digest(qualification.ROOT),
             "dynamic qualification source differs")
     require(set(record["products"]) == set(PRODUCTS) and all(isinstance(record["products"][item], str) for item in PRODUCTS),
             "dynamic qualification product roster differs")
@@ -366,7 +367,7 @@ def collect(root: Path, work: Path) -> dict[str, Any]:
     request_path = _physical_under(root, work / "request.json", "loader family request", directory=False)
     request_before = _identity(root, request_path, "loader family request")
     request = _read(root, request_path, "loader family request")
-    source_before = qualification.source_digest()
+    source_before = source_seal.product_source_digest(qualification.ROOT)
     roster = load_roster()
     roster_identity = _source_identity(root, ROSTER_PATH, "loader family roster")
     qualification_path, selections = validate_request(root, request)
@@ -427,7 +428,7 @@ def collect(root: Path, work: Path) -> dict[str, Any]:
     require(readelf_after is not None and same_json(readelf_before, readelf_after),
             "readelf tool changed during loader family collection")
 
-    source_after = qualification.source_digest()
+    source_after = source_seal.product_source_digest(qualification.ROOT)
     request_after = _identity(root, request_path, "loader family request")
     inputs_after = _input_snapshot(root, qualification_path, selections)
     require(same_json(source_before, source_after), "source changed during loader family collection")

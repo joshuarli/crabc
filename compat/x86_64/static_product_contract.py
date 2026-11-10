@@ -33,7 +33,6 @@ import json
 import os
 import re
 import shutil
-import stat
 import subprocess
 import sys
 import tempfile
@@ -43,6 +42,9 @@ from pathlib import Path
 from typing import Any
 
 ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(ROOT))
+from compat.x86_64 import source_seal
+
 CONTRACT_PATH = ROOT / "compat" / "x86_64" / "static-product.toml"
 CONTRACT_SCHEMA = "crabc.x86_64-owned-static-product/v1"
 RECEIPT_SCHEMA = "crabc.x86_64-owned-static-qualification/v1"
@@ -264,28 +266,6 @@ def declared_paths(contract: Mapping[str, Any]) -> list[str]:
     return [path for case in suite_cases(contract) for path in case["paths"]]
 
 
-def git(*arguments: str) -> bytes:
-    return subprocess.check_output(["git", "-c", f"safe.directory={ROOT}", *arguments], cwd=ROOT)
-
-
-def source_digest() -> str:
-    """Hash live nonignored source names, modes, and bytes.
-
-    This is the dynamic product's source identity rule: untracked source is
-    included so a new fixture cannot escape binding during development, and
-    generated `.work` evidence is ignored, so there is no self-hash cycle.
-    """
-    names = sorted(set(git("ls-files", "-z", "--cached", "--others", "--exclude-standard").split(b"\0")) - {b""})
-    result = hashlib.sha256()
-    for name in names:
-        path = ROOT / os.fsdecode(name)
-        mode = path.lstat().st_mode
-        data = os.fsencode(os.readlink(path)) if stat.S_ISLNK(mode) else path.read_bytes()
-        result.update(name + b"\0" + str(stat.S_IMODE(mode)).encode() + b"\0")
-        result.update(hashlib.sha256(data).digest())
-    return result.hexdigest()
-
-
 def require_product_source(manifests: Mapping[str, object], source: str) -> None:
     """Bind each selected installed static tree to the independently observed source."""
 
@@ -321,12 +301,6 @@ def validate_tree_manifest(report: Path, product: str, manifest: Mapping[str, An
             and set(rows) == expected, f"{product} installed tree digest rows differ from the manifest")
 
 
-def require_clean_source() -> str:
-    require(not git("status", "--porcelain", "--untracked-files=all").strip(),
-            "static product publication requires clean source")
-    return git("rev-parse", "HEAD").decode().strip()
-
-
 def evidence_directory(path: Path) -> Path:
     path = path.absolute()
     require(path.resolve() == path and path.is_relative_to(ROOT / ".work"),
@@ -355,7 +329,7 @@ def collect(work_dir: Path, started_source: str) -> Path:
     contract = load_contract()
     validate_contract(contract)
     work_dir = evidence_directory(work_dir)
-    source = source_digest()
+    source = source_seal.product_source_digest(ROOT)
     require(source == started_source, "source changed during the static product run")
     REPORT_ROOT.mkdir(parents=True, exist_ok=True)
     report = Path(tempfile.mkdtemp(prefix="run.", dir=REPORT_ROOT))
@@ -398,7 +372,7 @@ def collect(work_dir: Path, started_source: str) -> Path:
         retain(work_dir / "primary-consumer" / mode / "without-builtins.stderr",
                f"compiler-helper-rejection/{mode}.stderr")
 
-    require(source == source_digest(), "source changed while collecting static product evidence")
+    require(source == source_seal.product_source_digest(ROOT), "source changed while collecting static product evidence")
     receipt = {
         "schema": RECEIPT_SCHEMA,
         "status": "qualified-pending-review",
@@ -553,7 +527,7 @@ def validate_receipt(path: Path) -> dict[str, Any]:
     contract = load_contract()
     validate_contract(contract)
     require(receipt["contract_sha256"] == contract_sha256(), "static product contract changed since the receipt")
-    require(receipt["source_sha256"] == source_digest(), "static product source changed since the receipt")
+    require(receipt["source_sha256"] == source_seal.product_source_digest(ROOT), "static product source changed since the receipt")
     files = receipt["files"]
     require(isinstance(files, Mapping) and files, "static product receipt retains no files")
     retained = {entry.relative_to(report).as_posix() for entry in report.rglob("*")
@@ -613,7 +587,8 @@ def validate_receipt(path: Path) -> dict[str, Any]:
 
 def publish_receipt(path: Path) -> None:
     """Atomically replace the reviewed pointer after revalidating the receipt."""
-    revision = require_clean_source()
+    source_seal.require_clean(ROOT)
+    revision = source_seal.revision(ROOT)
     receipt = validate_receipt(path)
     receipt_hash = digest(path)
     destination = evidence_directory(PUBLICATION)
@@ -630,8 +605,9 @@ def publish_receipt(path: Path) -> None:
             output.write("\n")
             output.flush()
             os.fsync(output.fileno())
-        require(require_clean_source() == revision and source_digest() == receipt["source_sha256"]
-                and digest(path) == receipt_hash, "source or receipt changed during publication")
+        source_seal.require_clean(ROOT)
+        require(source_seal.product_source_digest(ROOT) == receipt["source_sha256"] and digest(path) == receipt_hash,
+                "source or receipt changed during publication")
         os.replace(staged, destination)
         staged = None
     finally:
@@ -648,12 +624,11 @@ def load_publication() -> dict[str, Any] | None:
             "static product publication fields drifted")
     require(published["schema"] == RECEIPT_SCHEMA, "static product publication schema drifted")
     try:
-        if published["source_revision"] != require_clean_source():
-            return None
+        source_seal.require_clean(ROOT)
         receipt = evidence_directory(ROOT / str(published["receipt"]))
         require(digest(receipt) == published["receipt_sha256"], "published static receipt hash mismatch")
         return validate_receipt(receipt)
-    except (StaticProductError, OSError, ValueError, subprocess.SubprocessError):
+    except (StaticProductError, source_seal.SourceSealError, OSError, ValueError, subprocess.SubprocessError):
         return None
 
 
@@ -683,7 +658,7 @@ def main(arguments: Sequence[str] | None = None) -> int:
         elif parsed.suite_paths:
             print("\n".join(declared_paths(load_contract())))
         elif parsed.source_digest:
-            print(source_digest())
+            print(source_seal.product_source_digest(ROOT))
         elif parsed.operation == "collect":
             require(parsed.work_dir is not None and parsed.source_sha256 is not None,
                     "collect requires --work-dir and --source-sha256")
@@ -697,7 +672,7 @@ def main(arguments: Sequence[str] | None = None) -> int:
             print(f"owned static product receipt {parsed.operation}d; family and platform gates remain independent")
         else:
             parser.error("choose --check, --suite-paths, collect, validate, or publish")
-    except (StaticProductError, OSError, subprocess.SubprocessError) as error:
+    except (StaticProductError, source_seal.SourceSealError, OSError, subprocess.SubprocessError) as error:
         print(f"static product contract: {error}", file=sys.stderr)
         return 1
     return 0

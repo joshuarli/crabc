@@ -222,11 +222,12 @@ if [ "$supplied" -eq 0 ]; then
     if [ "$allocator_backend" = native-shadow ]; then
         allocator_arguments=(--allocator-backend native-shadow)
     fi
-    python3 -B "$ROOT/scripts/build_x86_64_owned_dynamic_sysroot.py" --output "$work/installed" "${allocator_arguments[@]}"
-    python3 -B "$ROOT/scripts/build_x86_64_owned_dynamic_sysroot.py" --output "$work/second" "${allocator_arguments[@]}"
-    python3 -B "$ROOT/compat/x86_64/owned_dynamic_package.py" package "$work/installed" "$work/runtime.tar"
-    python3 -B "$ROOT/compat/x86_64/owned_dynamic_package.py" package "$work/second" "$work/second-runtime.tar"
-    python3 -B "$ROOT/compat/x86_64/owned_dynamic_package.py" extract "$work/runtime.tar" "$work/extracted"
+    guard=(python3 -B "$ROOT/compat/x86_64/source_seal.py" guard --)
+    "${guard[@]}" python3 -B "$ROOT/scripts/build_x86_64_owned_dynamic_sysroot.py" --output "$work/installed" "${allocator_arguments[@]}"
+    "${guard[@]}" python3 -B "$ROOT/scripts/build_x86_64_owned_dynamic_sysroot.py" --output "$work/second" "${allocator_arguments[@]}"
+    "${guard[@]}" python3 -B "$ROOT/compat/x86_64/owned_dynamic_package.py" package "$work/installed" "$work/runtime.tar"
+    "${guard[@]}" python3 -B "$ROOT/compat/x86_64/owned_dynamic_package.py" package "$work/second" "$work/second-runtime.tar"
+    "${guard[@]}" python3 -B "$ROOT/compat/x86_64/owned_dynamic_package.py" extract "$work/runtime.tar" "$work/extracted"
 fi
 cmp "$work/installed/share/crabc/manifest.json" "$work/second/share/crabc/manifest.json"
 cmp "$work/runtime.tar" "$work/second-runtime.tar"

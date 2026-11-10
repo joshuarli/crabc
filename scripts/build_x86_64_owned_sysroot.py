@@ -36,7 +36,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 from scripts.rust_toolchain import pinned_toolchain
 from scripts import native_build_tools
-from compat.x86_64 import static_product_contract
+from compat.x86_64 import source_seal
 from compat.x86_64.native_runtime_profile import NativeRuntimeProfile
 TARGET = "x86_64-unknown-linux-musl"
 FORMAT = "crabc-x86-64-owned-static-sysroot-v1"
@@ -786,7 +786,7 @@ def installed_manifest(
     if allocator_backend not in ALLOCATOR_BACKENDS:
         raise BuildError("unknown owned allocator backend")
     if source_sha256 is None:
-        source_sha256 = static_product_contract.source_digest()
+        source_sha256 = source_seal.product_source_digest(ROOT)
     if len(source_sha256) != 64 or any(character not in "0123456789abcdef" for character in source_sha256):
         raise BuildError("invalid owned static source digest")
     target_inputs = list(TARGET_RUNTIME_INPUTS)
@@ -1491,7 +1491,7 @@ def build(output: Path, *, allocator_backend: str = DEFAULT_ALLOCATOR_BACKEND,
           lifecycle_test_audit: bool = False, profile: str = "release",
           hardening_profile: NativeRuntimeProfile = NativeRuntimeProfile.COMPATIBILITY) -> dict[str, object]:
     assert_native_target()
-    source_before_build = static_product_contract.source_digest()
+    source_before_build = source_seal.product_source_digest(ROOT)
     output = validate_output_path(output)
     output.parent.mkdir(parents=True, exist_ok=True)
     if profile == "debug":
@@ -1507,7 +1507,7 @@ def build(output: Path, *, allocator_backend: str = DEFAULT_ALLOCATOR_BACKEND,
                                       hardening_profile=hardening_profile)
         staged_output = temporary_root / "installed"
         manifest = assemble(staged_output, inputs, source_before_build)
-        if static_product_contract.source_digest() != source_before_build:
+        if source_seal.product_source_digest(ROOT) != source_before_build:
             raise BuildError("owned static source changed during build")
         remove_owned_output(output)
         staged_output.replace(output)

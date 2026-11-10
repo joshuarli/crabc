@@ -24,6 +24,7 @@ import tomllib
 
 import owned_dynamic_elf as elf_inspection
 import owned_dynamic_receipt as receipt_contract
+import source_seal
 
 ROOT = Path(__file__).resolve().parents[2]
 SCHEMA = "crabc.x86_64-owned-dynamic-qualification/v1"
@@ -172,33 +173,6 @@ def digest(path: Path | str) -> str:
     return value.hexdigest()
 
 
-def git(*arguments: str) -> bytes:
-    return subprocess.check_output(["git", "-c", f"safe.directory={ROOT}", *arguments], cwd=ROOT)
-
-
-def source_digest() -> str:
-    """Hash live nonignored source content, names and modes without a self-hash.
-
-    Generated receipts are ignored. Include untracked source during component
-    development so adding a file cannot silently escape build/source binding.
-    Verified publication additionally requires a clean working tree.
-    """
-    names = sorted(set(git("ls-files", "-z", "--cached", "--others", "--exclude-standard").split(b"\0")) - {b""})
-    result = hashlib.sha256()
-    for name in names:
-        path = ROOT / os.fsdecode(name)
-        mode = path.lstat().st_mode
-        data = os.fsencode(os.readlink(path)) if stat.S_ISLNK(mode) else path.read_bytes()
-        result.update(name + b"\0" + str(stat.S_IMODE(mode)).encode() + b"\0")
-        result.update(hashlib.sha256(data).digest())
-    return result.hexdigest()
-
-
-def require_clean_source() -> str:
-    require(not git("status", "--porcelain", "--untracked-files=all").strip(), "qualification publication requires clean source")
-    return git("rev-parse", "HEAD").decode().strip()
-
-
 def contract_digests() -> dict[str, str]:
     # A matching byte hash cannot substitute for valid semantic contracts.
     import dynamic_product_contract as product_contract
@@ -237,7 +211,7 @@ def read(path: Path) -> dict:
 
 def product_identity(product: Path) -> str:
     manifest, state, provenance = _materialization_product(product)
-    return _product_identity_from_state(product, manifest, state, provenance, source_digest())
+    return _product_identity_from_state(product, manifest, state, provenance, source_seal.product_source_digest(ROOT))
 
 
 def _product_identity(product: Path, source_identity: str) -> str:
@@ -336,7 +310,7 @@ def prepare(work: Path) -> None:
     # This is the evidence parent, not a runtime fixture root. Make even a
     # failed preparation log reachable from the host without recursive changes.
     os.chmod(work, stat.S_IMODE(work.stat().st_mode) | 0o555, follow_symlinks=False)
-    source = source_digest()
+    source = source_seal.product_source_digest(ROOT)
     oracle = capture_oracle(work)
     require_live_oracle(work, oracle)
     commands = [
@@ -357,7 +331,7 @@ def prepare(work: Path) -> None:
             completed = subprocess.run(command, cwd=ROOT, stdout=output, stderr=subprocess.STDOUT)
             require(completed.returncode == 0, f"qualification preparation failed: {command[0]}; {log}")
     print(log.read_text(errors="replace"), end="", flush=True)
-    require(source == source_digest(), "source changed during qualification preparation")
+    require(source == source_seal.product_source_digest(ROOT), "source changed during qualification preparation")
     require_live_oracle(work, oracle)
     write_new(work / "qualification-prepare.json", {
         "schema": SCHEMA, "source_sha256": source, "log": relative(log), "log_sha256": digest(log),
@@ -559,14 +533,14 @@ def validate_loader_corpus_case(work: Path, product: str, case: str, log: Path,
 
 def current_products(work: Path) -> tuple[str, dict[str, str]]:
     work = evidence_path(work)
-    source = source_digest()
+    source = source_seal.product_source_digest(ROOT)
     manifests = {}
     for product in PRODUCTS:
         product_path = evidence_path(work / product)
         manifests[product] = _product_identity(product_path, source)
     require(len(set(manifests.values())) == 1, "three product manifests differ")
     validate_product_archives(work)
-    require(source == source_digest(), "source changed during product validation")
+    require(source == source_seal.product_source_digest(ROOT), "source changed during product validation")
     return source, manifests
 
 
@@ -605,7 +579,7 @@ def validated_resume_state(work: Path) -> tuple[str, dict[str, str], tuple[tuple
                 "invalid dynamic product qualification receipt")
         require(not missing, "qualification receipt exists with missing cases")
         validate_receipt(receipt_path)
-    require(source == source_digest(), "source changed during resume validation")
+    require(source == source_seal.product_source_digest(ROOT), "source changed during resume validation")
     return source, manifests, tuple(missing)
 
 
@@ -629,7 +603,7 @@ def _run_case(work: Path, product: str, case: str, source: str, manifest: str,
     oracle = read(work / "qualification-prepare.json")["oracle"]
     require_live_oracle(work, oracle)
     if resume:
-        require(source == source_digest() and _product_identity(work / product, source) == manifest,
+        require(source == source_seal.product_source_digest(ROOT) and _product_identity(work / product, source) == manifest,
                 "source or installed product changed before coverage case")
 
     script, mode = CASES[case]
@@ -653,7 +627,7 @@ def _run_case(work: Path, product: str, case: str, source: str, manifest: str,
             make_retained_evidence_readable(directory)
     require(completed.returncode == 0, f"coverage case failed: {product}/{case}; {log}")
     require_live_oracle(work, oracle)
-    source_after = source_digest()
+    source_after = source_seal.product_source_digest(ROOT)
     require(source_after == source and _product_identity(work / product, source_after) == manifest,
             "source or installed product changed during coverage case")
     if case in LOADER_CORPUS_CASES:
@@ -688,7 +662,7 @@ def run_case(work: Path, product: str, case: str) -> None:
     record_exists, log_exists = record_path.exists(), log_path.exists()
     require(record_exists == log_exists, f"incomplete case checkpoint: {product}/{case}")
     require(not record_exists, f"case is already complete: {product}/{case}")
-    source = source_digest()
+    source = source_seal.product_source_digest(ROOT)
     manifest = _product_identity(evidence_path(work / product), source)
     _run_case(work, product, case, source, manifest)
 
@@ -817,7 +791,7 @@ def validate_archive(path: Path, product: Path) -> None:
 
 def collect(work: Path) -> dict:
     work = evidence_path(work)
-    source = source_digest()
+    source = source_seal.product_source_digest(ROOT)
     manifests = {product: _product_identity(work / product, source) for product in PRODUCTS}
     require(len(set(manifests.values())) == 1, "three product manifests differ")
     records = {}
@@ -833,7 +807,7 @@ def collect(work: Path) -> dict:
     require(len(set(archives.values())) == 1, "independent product archives differ")
     validate_archive(work / "runtime.tar", work / "installed")
     validate_archive(work / "second-runtime.tar", work / "second")
-    require(source == source_digest(), "source changed during qualification validation")
+    require(source == source_seal.product_source_digest(ROOT), "source changed during qualification validation")
     return {"schema": SCHEMA, "status": "qualified-pending-review", "work": relative(work),
             "source_sha256": source, "contracts": contract_digests(), "products": manifests,
             "preparation": preparation_evidence(work, source), "cases": records, "base_evidence": base_evidence(work, manifests), "archives": archives,
@@ -868,7 +842,8 @@ def publish_receipt(path: Path) -> None:
     replace this mutable selection. Validate both before staging and just
     before replacement, so a concurrent source edit cannot publish stale proof.
     """
-    revision = require_clean_source()
+    source_seal.require_clean(ROOT)
+    revision = source_seal.revision(ROOT)
     receipt = validate_receipt(path)
     receipt_hash = digest(path)
     destination = evidence_path(PUBLICATION)
@@ -886,8 +861,9 @@ def publish_receipt(path: Path) -> None:
             output.write("\n")
             output.flush()
             os.fsync(output.fileno())
-        require(require_clean_source() == revision and source_digest() == receipt["source_sha256"]
-                and digest(path) == receipt_hash, "source or receipt changed during publication")
+        source_seal.require_clean(ROOT)
+        require(source_seal.product_source_digest(ROOT) == receipt["source_sha256"] and digest(path) == receipt_hash,
+                "source or receipt changed during publication")
         os.replace(staged, destination)
         directory = os.open(destination.parent, os.O_RDONLY | os.O_DIRECTORY)
         try:
@@ -913,12 +889,11 @@ def load_publication() -> dict | None:
     require(set(published) == {"schema", "receipt", "receipt_sha256", "source_revision"}, "publication fields drifted")
     require(published["schema"] == SCHEMA, "publication schema drifted")
     try:
-        if published["source_revision"] != require_clean_source():
-            return None
+        source_seal.require_clean(ROOT)
         receipt = evidence_path(ROOT / published["receipt"])
         require(digest(receipt) == published["receipt_sha256"], "published receipt hash mismatch")
         return validate_receipt(receipt)
-    except (QualificationError, OSError, ValueError, tarfile.TarError):
+    except (QualificationError, source_seal.SourceSealError, OSError, ValueError, tarfile.TarError):
         return None
 
 
@@ -960,7 +935,8 @@ def main() -> int:
             else:
                 validate_receipt(args.receipt)
             print("dynamic product receipt validated; family and platform gates remain independent")
-    except (QualificationError, OSError, ValueError, subprocess.SubprocessError, tarfile.TarError) as error:
+    except (QualificationError, source_seal.SourceSealError, OSError, ValueError, subprocess.SubprocessError,
+            tarfile.TarError) as error:
         print(f"dynamic qualification: {error}", file=sys.stderr)
         return 1
     return 0

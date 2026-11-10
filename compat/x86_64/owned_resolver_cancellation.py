@@ -14,7 +14,7 @@ import subprocess
 import sys
 
 from owned_classic_netdb import checked, fixture_module, physical
-from owned_dynamic_qualification import source_digest
+import source_seal
 
 ROOT = Path(__file__).resolve().parents[2]
 APIS = ('query', 'send', 'classic', 'modern', 'modern-dual', 'reverse')
@@ -95,7 +95,7 @@ def compare_observation(api: str, scenario: str, expected: dict[str, int], oracl
 def run(work: Path, static: Path | None, dynamic: Path | None) -> None:
     fixture = fixture_module()
     fixture.require_native_loopback_container()
-    source_sha256 = source_digest()
+    source_sha256 = source_seal.product_source_digest(ROOT)
     products = {kind: fixture.tree_identity(path) for kind, path in (('static', static), ('dynamic', dynamic)) if path is not None}
     proof = {'interfaces': sorted(line.split(':', 1)[0].strip() for line in Path('/proc/net/dev').read_text().splitlines()[2:] if ':' in line),
              'network_namespace': os.readlink('/proc/self/ns/net'), 'user_namespace': os.readlink('/proc/self/ns/user')}
@@ -199,7 +199,7 @@ def run(work: Path, static: Path | None, dynamic: Path | None) -> None:
             shutil.copy2(binary, execution / binary.name)
             execute('dynamic-'+mode+'-kernel', ['/'+binary.name])
             execute('dynamic-'+mode+'-direct', ['/lib/ld-crabc-x86_64.so.1', '/'+binary.name])
-    if source_digest() != source_sha256 or fixture.artifact_record(obj) != object_record:
+    if source_seal.product_source_digest(ROOT) != source_sha256 or fixture.artifact_record(obj) != object_record:
         raise RuntimeError('DNS cancellation source or same application object changed during execution')
     for kind, path in (('static', static), ('dynamic', dynamic)):
         if path is not None and fixture.tree_identity(path) != products[kind]:
@@ -230,7 +230,7 @@ def replay_case(work: Path, static: Path | None, dynamic: Path | None, *,
                 for kind, path in (('static', static), ('dynamic', dynamic)) if path is not None}
     receipt.require(len({work, *supplied.values()}) == 1 + len(supplied),
                     'cancellation evidence and products must be distinct')
-    source_before = source_digest()
+    source_before = source_seal.product_source_digest(ROOT)
     fixture = fixture_module()
     products = {kind: fixture.tree_identity(path) for kind, path in supplied.items()}
     audit = receipt.read_json(work / receipt.ARTIFACT_AUDIT, 'cancellation artifact audit')
@@ -291,7 +291,7 @@ def replay_case(work: Path, static: Path | None, dynamic: Path | None, *,
         stderr = receipt._raw(work, name + '.stderr', name + ' stderr').read_bytes()
         observations.append((receipt._strict_observation(sys.modules[__name__], stdout, name), stderr))
     compare_observation(api, scenario, *observations[0], *observations[1])
-    receipt.require(source_digest() == source_before, 'source changed during cancellation diagnostic replay')
+    receipt.require(source_seal.product_source_digest(ROOT) == source_before, 'source changed during cancellation diagnostic replay')
     receipt.require({kind: fixture.tree_identity(path) for kind, path in supplied.items()} == products,
                     'product changed during cancellation diagnostic replay')
     receipt.require(receipt.artifact_record(work / 'workload.o') == audit['object'],

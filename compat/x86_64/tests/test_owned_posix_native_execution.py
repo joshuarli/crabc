@@ -128,7 +128,7 @@ class NativeExecutionTests(unittest.TestCase):
                     for name in family_observations.IO_SCENARIOS}}}}
         self.put(self.matrix_path, self.matrix)
         self.patch(family, 'validate_receipt', side_effect=lambda root, path: self.matrix)
-        self.patch(execution, 'source_identity', side_effect=self.current_source)
+        self.patch(execution.source_seal, 'seal', side_effect=self.current_source)
         self.patch(execution, 'require_execution_environment')
         self.patch(execution, 'require_live_oracle')
         self.patch(execution.crypt, 'validate_receipt', side_effect=lambda *args, **kwargs: {'vectors': [], 'vector_observations': {}})
@@ -703,7 +703,7 @@ class NativeFamilyAdmissionTests(unittest.TestCase):
         matrix_path = ROOT / native['inputs']['family_execution']['path']
         with patch.object(execution, 'validate_receipt_with_matrix',
                           return_value=(native, matrix)) as validate, \
-             patch.object(execution, 'source_identity', return_value=self.source), \
+             patch.object(execution.source_seal, 'seal', return_value=self.source), \
              patch.object(family, 'file_identity',
                           return_value=native['inputs']['family_execution']) as matrix_identity:
             observed_native, observed_matrix, _, observed_path = execution.admission_inputs(
@@ -791,7 +791,7 @@ class NativeFamilyAdmissionTests(unittest.TestCase):
                     raise RuntimeError('family matrix receipt changed')
                 return observed_native, observed_matrix
 
-            with patch.object(execution, 'source_identity', return_value=self.source) as current_source, \
+            with patch.object(execution.source_seal, 'seal', return_value=self.source) as current_source, \
                  patch.object(execution, 'validate_receipt_with_matrix',
                               side_effect=native_receipt_with_matrix) as native_receipt:
                 original_proof = execution.admission_proof
@@ -823,6 +823,8 @@ class NativeFamilyAdmissionTests(unittest.TestCase):
                 for flag in ('campaign_complete', 'promotion_ready', 'public_support'):
                     self.assertIs(record[flag], False)
                 current_source.return_value = {**self.source, 'revision': 'c' * 40}
+                self.assertEqual(execution.validate_admission_receipt(ROOT, receipt), record)
+                current_source.return_value = {**self.source, 'content_sha256': 'c' * 64}
                 with self.assertRaisesRegex(RuntimeError, 'do not share current source'):
                     execution.validate_admission_receipt(ROOT, receipt)
                 current_source.return_value = self.source

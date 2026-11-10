@@ -9,12 +9,16 @@ writes one summary. Every step is an existing dispatcher command or reader;
 this module only fixes their order, inputs, and output paths.
 
 State lives below `--work` (a physical child of `.work/x86_64`). The run is
-bound to the checkout's clean source identity: a restart on the same revision
-skips every step whose recorded outputs still hash identically and resumes
-from the first incomplete one; a failed attempt's output is renamed aside, so
-each producer still receives a fresh output. Any other revision, a dirty
-tree, or a changed completed output fails closed. `--dry-run` resolves the
-whole plan, names every preflight blocker, and runs nothing.
+bound to the product source digest (`source_seal`), the core image and the
+sealed inputs, never to the revision. A restart on any clean revision with the
+same product source skips every step whose recorded outputs still hash
+identically and resumes from the first incomplete one; a failed attempt's
+output is renamed aside, so each producer still receives a fresh output. Each
+step record keeps the revision it ran at, and the summary is `fresh` only when
+every step ran at the final revision; acceptance requires a complete, fresh
+run. A different product source, a dirty tree, or a changed completed output
+fails closed. `--dry-run` resolves the whole plan, names every preflight
+blocker, and runs nothing.
 
 The order follows the installed POSIX admission sequence and the complete
 dynamic-product preflight. Steps run sequentially: the only
@@ -38,9 +42,11 @@ import sys
 import tomllib
 from typing import Callable, Mapping, Sequence
 
+import source_seal
+
 
 ROOT = Path(__file__).resolve().parents[2]
-SCHEMA = "crabc.x86_64-qualification-candidate/v3"
+SCHEMA = "crabc.x86_64-qualification-candidate/v4"
 DISPATCHER = "./scripts/dev-x86_64.sh"
 MOUNT = "/workspace"
 WORK_PARENT = Path(".work/x86_64")
@@ -531,10 +537,8 @@ def preflight(root: Path, context: Context, steps: Sequence[Step]) -> list[str]:
     except OSError as error:
         blockers.append(f"pinned native core image cannot be inspected: {error}")
     try:
-        import owned_posix_static_products as static
-
-        static.source_identity(root)
-    except Exception as error:  # noqa: BLE001 - any source-identity failure blocks the run
+        source_seal.seal(root)
+    except source_seal.SourceSealError as error:
         blockers.append(f"clean committed source: {error}")
     for relative in SOURCE_ORACLES:
         if not (root / relative).is_dir():
@@ -656,15 +660,20 @@ def _discover(root: Path, context: Context, step: Step, stdout: str) -> dict[str
     return found
 
 
-def _completed(root: Path, record_path: Path, source: Mapping[str, str], argv: list[str]) -> dict[str, str] | None:
-    """Return a completed step's outputs only when every one is unchanged."""
+def _completed(root: Path, record_path: Path, source: Mapping[str, str],
+               argv: list[str]) -> tuple[dict[str, str], str] | None:
+    """Return a completed step's outputs and revision only when every output is unchanged."""
 
     if not record_path.is_file():
         return None
     record = json.loads(record_path.read_text(encoding="utf-8"))
     if record.get("status") != "complete":
         return None
-    require(record.get("source") == source, f"{record_path.parent.name} completed on another source")
+    require(source_seal.same_product(record.get("source"), source),
+            f"{record_path.parent.name} completed on another product source")
+    revision = record["source"].get("revision")
+    require(isinstance(revision, str) and re.fullmatch(r"[0-9a-f]{40}", revision) is not None,
+            f"{record_path.parent.name} record has no revision")
     require(record.get("argv") == argv, f"{record_path.parent.name} invocation changed after completion")
     for name, identity in record["outputs"].items():
         path = root / identity["path"]
@@ -672,7 +681,7 @@ def _completed(root: Path, record_path: Path, source: Mapping[str, str], argv: l
                 f"{record_path.parent.name} output {name} is not a physical checkout .work file")
         require(path.is_file() and _digest(path) == identity["sha256"],
                 f"{record_path.parent.name} output {name} changed after completion: {identity['path']}")
-    return {name: identity["path"] for name, identity in record["outputs"].items()}
+    return {name: identity["path"] for name, identity in record["outputs"].items()}, revision
 
 
 def _validate_products(root: Path, step: Step, found: Mapping[str, str], context: Context) -> None:
@@ -720,6 +729,7 @@ def _set_aside(path: Path) -> None:
 
 
 Runner = Callable[[list[str], Path, Path], int]
+Source = Callable[[Path], Mapping[str, str]]
 
 
 def _run(argv: list[str], stdout: Path, stderr: Path) -> int:
@@ -727,24 +737,33 @@ def _run(argv: list[str], stdout: Path, stderr: Path) -> int:
         return subprocess.run(argv, cwd=ROOT, stdin=subprocess.DEVNULL, stdout=out, stderr=err, check=False).returncode
 
 
+def _sealed(root: Path, source: Source) -> dict[str, str]:
+    try:
+        sealed = dict(source(root))
+    except source_seal.SourceSealError as error:
+        raise CandidateError(str(error)) from error
+    require(set(sealed) == {"revision", "content_sha256"}
+            and all(isinstance(sealed[key], str) for key in sealed)
+            and re.fullmatch(r"[0-9a-f]{40}", sealed["revision"]) is not None
+            and re.fullmatch(r"[0-9a-f]{64}", sealed["content_sha256"]) is not None,
+            "candidate source seal is malformed")
+    return sealed
+
+
 def execute(root: Path, work: Path, inputs: Mapping[str, Mapping[str, object]], *,
-            runner: Runner = _run, source: Mapping[str, str] | None = None,
+            runner: Runner = _run, source: Source = source_seal.seal,
             through: str | None = None, profile: str = "full") -> dict[str, object]:
     """Run or resume the candidate sequence; always write `summary.json`."""
 
     context = Context(root, work, inputs)
     steps = plan(through, profile)
     blockers = preflight(root, context, steps)
-    authenticate_source = source is None
-    if source is None:
-        import owned_posix_static_products as static
-
-        source = static.source_identity(root)
+    sealed = _sealed(root, source)
     work.mkdir(parents=True, exist_ok=True)
     candidate = work / "candidate.json"
     import core_image
 
-    identity = {"schema": SCHEMA, "source": dict(source),
+    identity = {"schema": SCHEMA, "product_sha256": sealed["content_sha256"],
                 "core_image": os.environ.get("CRABC_X86_64_CORE_IMAGE", core_image.CORE_IMAGE_ID)}
     if candidate.exists():
         retained = json.loads(candidate.read_text(encoding="utf-8"))
@@ -754,27 +773,27 @@ def execute(root: Path, work: Path, inputs: Mapping[str, Mapping[str, object]], 
         require(isinstance(input_seals, dict) and set(input_seals) <= set(INPUT_KEYS),
                 "candidate input seals are malformed; use a fresh --work")
         require({key: retained[key] for key in identity} == identity,
-                "candidate work belongs to another source revision, candidate inputs or environment; use a fresh --work")
-        for group, sealed in input_seals.items():
+                "candidate work belongs to another product source, candidate inputs or environment; use a fresh --work")
+        for group, group_seal in input_seals.items():
             try:
                 current_group = _input_group_identity(root, inputs, group)
             except CandidateError as error:
                 raise CandidateError(f"candidate input group {group} changed after sealing: {error}") from error
-            require(current_group == sealed, f"candidate input group {group} changed after sealing")
+            require(current_group == group_seal, f"candidate input group {group} changed after sealing")
     else:
         input_seals = {}
         retained = {**identity, "input_seals": input_seals}
         _write(candidate, retained)
     records: list[dict[str, object]] = []
-    summary: dict[str, object] = {"schema": SCHEMA, "source": dict(source), "work": context.rel(work),
+    summary: dict[str, object] = {"schema": SCHEMA, "source": sealed, "work": context.rel(work),
                                   "through": through, "profile": profile,
                                   "preflight_blockers": blockers, "steps": records,
-                                  "attachments": attachments(root, context, steps), "complete": False}
+                                  "attachments": attachments(root, context, steps), "complete": False,
+                                  "fresh": False}
     try:
         require(not blockers, "preflight blockers: " + "; ".join(blockers))
         for index, step in enumerate(steps):
-            if authenticate_source:
-                require(static.source_identity(root) == source, "candidate source changed during execution")
+            require(_sealed(root, source) == sealed, "candidate source changed during execution")
             directory = work / "steps" / f"{index:02d}-{step.id}"
             argv = ["internal", step.id] if step.internal is not None else step.argv(context)
             if step.needs_input is not None:
@@ -791,12 +810,13 @@ def execute(root: Path, work: Path, inputs: Mapping[str, Mapping[str, object]], 
                     input_seals[group] = current_group
                     retained["input_seals"] = input_seals
                     _write(candidate, retained)
-            done = _completed(root, directory / "record.json", source, argv)
+            done = _completed(root, directory / "record.json", sealed, argv)
             if done is not None:
-                _validate_products(root, step, done, context)
-                context.outputs[step.id] = done
+                outputs, revision = done
+                _validate_products(root, step, outputs, context)
+                context.outputs[step.id] = outputs
                 records.append({"step": step.id, "family": step.family, "status": "complete", "resumed": True,
-                                "outputs": done})
+                                "revision": revision, "outputs": outputs})
                 continue
             _set_aside(directory)
             for fresh in fresh_paths(context, step):
@@ -821,8 +841,7 @@ def execute(root: Path, work: Path, inputs: Mapping[str, Mapping[str, object]], 
                                 "log": context.rel(directory)})
                 raise CandidateError(f"step {step.id} failed with status {status}; see {context.rel(directory)}")
             found = _discover(root, context, step, (directory / "stdout").read_text(errors="replace"))
-            if authenticate_source:
-                require(static.source_identity(root) == source, "candidate source changed during execution")
+            require(_sealed(root, source) == sealed, "candidate source changed during execution")
             if step.needs_input is not None:
                 group = step.needs_input
                 try:
@@ -834,10 +853,11 @@ def execute(root: Path, work: Path, inputs: Mapping[str, Mapping[str, object]], 
             _validate_products(root, step, found, context)
             context.outputs[step.id] = found
             _write(directory / "record.json", {
-                "schema": SCHEMA, "step": step.id, "status": "complete", "source": dict(source), "argv": argv,
+                "schema": SCHEMA, "step": step.id, "status": "complete", "source": sealed, "argv": argv,
                 "outputs": {name: {"path": path, "sha256": _digest(root / path)} for name, path in found.items()},
             })
-            records.append({"step": step.id, "family": step.family, "status": "complete", "outputs": found})
+            records.append({"step": step.id, "family": step.family, "status": "complete",
+                            "revision": sealed["revision"], "outputs": found})
             print(f"qualification candidate {step.id}: PASS", flush=True)
         summary["complete"] = through is None
     except CandidateError as error:
@@ -845,6 +865,8 @@ def execute(root: Path, work: Path, inputs: Mapping[str, Mapping[str, object]], 
         done = {record["step"] for record in records}
         summary["not_run"] = [step.id for step in steps if step.id not in done]
     finally:
+        summary["fresh"] = all(record["revision"] == sealed["revision"] for record in records
+                               if record["status"] == "complete")
         _write(work / "summary.json", summary)
     return summary
 
@@ -893,9 +915,14 @@ def main(arguments: Sequence[str] | None = None) -> int:
     except CandidateError as error:
         print(f"x86 qualification candidate: ERROR: {error}", file=sys.stderr)
         return 2
-    if summary["complete"]:
+    if summary["complete"] and summary["fresh"]:
         print(f"x86 qualification candidate: PASS; summary: {work / 'summary.json'}")
         return 0
+    if summary["complete"]:
+        reused = sorted({record["revision"] for record in summary["steps"]} - {summary["source"]["revision"]})
+        print(f"x86 qualification candidate: COMPLETE, NOT FRESH (steps reused from {', '.join(reused)}); "
+              f"acceptance requires one fresh run in a new --work; summary: {work / 'summary.json'}", file=sys.stderr)
+        return 1
     if values.through is not None and "error" not in summary:
         print(f"x86 qualification candidate: prefix through {values.through} complete (not qualification); "
               f"summary: {work / 'summary.json'}")

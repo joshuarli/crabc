@@ -204,7 +204,7 @@ class OwnedLocaleComponentReceiptTests(unittest.TestCase):
 
     def validate(self, *, require_static: bool = False) -> dict[str, object]:
         with mock.patch.object(self.module.qualification, "ROOT", self.root), \
-             mock.patch.object(self.module.qualification, "source_digest", return_value="a" * 64), \
+             mock.patch.object(self.module.qualification.source_seal, "product_source_digest", return_value="a" * 64), \
              mock.patch.object(self.module.products, "_validate_dynamic_product", return_value=(self.dynamic / "manifest", {})), \
              mock.patch.object(self.module.products, "_validate_static_product", return_value=(self.static / "manifest", {})), \
              mock.patch.object(self.module, "tool_roster", return_value=self.tool_roster), \

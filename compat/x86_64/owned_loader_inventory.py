@@ -28,6 +28,7 @@ from scripts.rust_toolchain import pinned_toolchain
 sys.path.insert(0, str(ROOT / "compat" / "x86_64"))
 import crabc_cc_owned_dynamic as installed_driver
 import owned_dynamic_qualification as qualification
+import source_seal
 import dynamic_product_contract
 
 
@@ -273,7 +274,7 @@ def capture_bindings(product: Path) -> tuple[dict[str, Any], dict[str, Any], dic
     require(product_snapshot["manifest_sha256"] == qualification.product_identity(product),
             "product manifest identity differs")
     source_snapshot = {
-        "source_sha256": qualification.source_digest(),
+        "source_sha256": source_seal.product_source_digest(qualification.ROOT),
         "loader_provenance_sha256": product_snapshot["loader_provenance"]["sha256"],
         "compiler_dependencies": provenance["compiler_dependencies"],
         "configuration": provenance["configuration"],

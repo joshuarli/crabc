@@ -367,7 +367,7 @@ class OwnedCalendarComponentReceiptTests(unittest.TestCase):
         with mock.patch.object(self.module.products, "_validate_static_product", return_value=(self.static / "manifest", {})), \
              mock.patch.object(self.module.products, "_validate_dynamic_product", return_value=(self.dynamic / "manifest", {})), \
              mock.patch.object(qualification, "ROOT", self.root), \
-             mock.patch.object(qualification, "source_digest", return_value="a" * 64):
+             mock.patch.object(qualification.source_seal, "product_source_digest", return_value="a" * 64):
             sealed = self.module.source_product_seal(self.root, self.static, self.dynamic)
             self.assertEqual(sealed["dynamic"]["tree"], self.module.family.snapshot(self.dynamic))
 

@@ -834,7 +834,7 @@ def verify_dynamic_product_prerequisite(
     try:
         qualification = _x86_module(checkout, "owned_dynamic_qualification")
         receipt = qualification.validate_receipt(receipt_path)
-        current_source = qualification.source_digest()
+        current_source = _x86_module(checkout, "source_seal").product_source_digest(qualification.ROOT)
     except (OSError, RuntimeError, ValueError) as error:
         raise EvidenceError(f"collector dynamic product qualification receipt is invalid: {error}") from error
     require(receipt.get("schema") == "crabc.x86_64-owned-dynamic-qualification/v1"

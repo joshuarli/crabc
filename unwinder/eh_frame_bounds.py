@@ -58,17 +58,18 @@ def run_installed(static_preparation: Path, dynamic_qualification: Path,
         sys.path.insert(0, str(compat))
     import owned_dynamic_qualification as qualification
     import owned_posix_static_products as static_products
+    import source_seal
 
     output = owned.work_child(output, 'guarded installed metadata output')
     if not image_id.startswith('sha256:') or len(image_id) != 71:
         raise RuntimeError('installed metadata requires an immutable image digest')
-    source = qualification.source_digest()
-    revision = subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=owned.CHECKOUT, text=True).strip()
+    seal = source_seal.seal(owned.CHECKOUT)
+    source = seal['content_sha256']
     static_preparation = owned.physical(static_preparation, 'static preparation')
     dynamic_qualification = owned.physical(dynamic_qualification, 'dynamic qualification')
     static_receipt = static_products.validate_receipt(owned.CHECKOUT, static_preparation)
     dynamic_receipt = qualification.validate_receipt(dynamic_qualification)
-    if static_receipt['source'] != {'revision': revision, 'content_sha256': source}:
+    if not source_seal.same_product(static_receipt['source'], seal):
         raise RuntimeError('static preparation differs from the current source')
     if dynamic_receipt['source_sha256'] != source:
         raise RuntimeError('dynamic qualification differs from the current source')
@@ -90,7 +91,7 @@ def run_installed(static_preparation: Path, dynamic_qualification: Path,
     fixture = owned.physical(owned.ROOT / 'fixtures/guarded_eh_frame.rs', 'guarded metadata fixture')
     receipt = {
         'schema': 1, 'scope': 'source-bound installed guarded EH metadata development proof',
-        'qualified': False, 'source': {'revision': revision, 'content_sha256': source},
+        'qualified': False, 'source': seal,
         'image_id': image_id,
         'static_preparation': owned.record_file(static_preparation, 'static preparation'),
         'dynamic_qualification': owned.record_file(dynamic_qualification, 'dynamic qualification'),
@@ -167,7 +168,7 @@ def run_installed(static_preparation: Path, dynamic_qualification: Path,
             }
             assert_case_result(label, status, stdout, stderr)
         receipt['cases'][mode] = mode_record
-    if qualification.source_digest() != source:
+    if source_seal.product_source_digest(qualification.ROOT) != source:
         raise RuntimeError('source changed during installed guarded metadata execution')
     owned.assert_same_product(static_product, 'static')
     owned.assert_same_product(dynamic_product, 'dynamic')

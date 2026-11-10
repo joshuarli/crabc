@@ -1021,22 +1021,19 @@ def _validate_static_preparation(
         _materialize_authoritative_source(materialized, files)
         replay_preparation = materialized / str(preparation["work"])
         _copy_physical_tree(preparation_root, replay_preparation, "retained static preparation")
-        original_source_identity = static_products.source_identity
-        package_contract = static_products.package.static_product_contract
-        original_package_source_digest = package_contract.source_digest
+        preparation_seal = static_products.source_seal
+        package_seal = static_products.package.source_seal
+        original_seal = preparation_seal.seal
+        original_package_digest = package_seal.product_source_digest
 
-        def sealed_source_identity(candidate: Path) -> dict[str, object]:
+        def sealed_source(candidate: Path) -> dict[str, object]:
             if candidate != materialized:
                 _fail("static preparation owner escaped the sealed source root")
             return dict(expected_source)
 
         try:
-            static_products.source_identity = sealed_source_identity
-            # The package owner checks every installed manifest against its
-            # source digest too. That digest has already been authenticated
-            # from complete Git bytes and current tracked files, so replay
-            # must give both owner readpoints the same authority.
-            package_contract.source_digest = lambda: digest
+            preparation_seal.seal = sealed_source
+            package_seal.product_source_digest = lambda _root: digest
             observed = static_products.validate_receipt(materialized, replay_preparation / "preparation.json")
             if not isinstance(observed, Mapping):
                 _fail("static preparation owner produced no record")
@@ -1045,11 +1042,11 @@ def _validate_static_preparation(
                 _fail("static preparation has no primary product tree")
             if primary["tree"] != static_products.tree_identity(receipt_root / STATIC_PRODUCT_DIRECTORY):
                 _fail("static preparation primary differs from retained static product")
-        except (static_products.PreparationError, static_products.package.PackageError, OSError, ValueError) as error:
+        except (static_products.PreparationError, static_products.source_seal.SourceSealError, static_products.package.PackageError, OSError, ValueError) as error:
             raise LocaleAliasReceiptError(f"static preparation differs: {error}") from error
         finally:
-            static_products.source_identity = original_source_identity
-            package_contract.source_digest = original_package_source_digest
+            preparation_seal.seal = original_seal
+            package_seal.product_source_digest = original_package_digest
     return {"directory": STATIC_PREPARATION_DIRECTORY, "tree": tree, "record": preparation_record}
 
 
@@ -1262,9 +1259,10 @@ def _live_source_state(root: Path) -> dict[str, object]:
 
     sys.path.insert(0, str(ROOT / "compat/x86_64"))
     import owned_posix_static_products as static_products
+    import source_seal
 
     try:
-        state = static_products.source_identity(root)
+        state = source_seal.seal(root)
         tree = subprocess.check_output(["/usr/bin/git", "rev-parse", str(state["revision"]) + "^{tree}"], cwd=root, text=True).strip()
     except (OSError, subprocess.CalledProcessError, RuntimeError, ValueError) as error:
         raise LocaleAliasReceiptError("locale receipt cannot read the clean Git source state") from error
@@ -1423,7 +1421,7 @@ def _validate_current_tracked_source(revision: str, digest: str, files: Mapping[
 
     if _local_git_head(ROOT) != revision:
         _fail("current Git HEAD differs from retained source authority")
-    current_digest = hashlib.sha256()
+    current = {}
     for name, (mode, expected, symlink) in sorted(files.items()):
         path = ROOT / name
         try:
@@ -1442,9 +1440,15 @@ def _validate_current_tracked_source(revision: str, digest: str, files: Mapping[
             actual = path.read_bytes()
         if actual != expected:
             _fail(f"current tracked source differs from retained authority: {name}")
-        current_digest.update(name.encode() + b"\0" + str(mode).encode() + b"\0")
-        current_digest.update(hashlib.sha256(actual).digest())
-    if current_digest.hexdigest() != digest:
+        current[name] = (mode, actual)
+    sys.path.insert(0, str(ROOT / "compat/x86_64"))
+    import source_seal
+
+    try:
+        current_digest = source_seal.product_source_digest_of(current)
+    except source_seal.SourceSealError as error:
+        raise LocaleAliasReceiptError(f"current tracked source has no product source: {error}") from error
+    if current_digest != digest:
         _fail("current tracked source digest differs from retained authority")
 
 

@@ -22,6 +22,8 @@ import stat
 import tomllib
 from typing import Any, Callable, Mapping
 
+import source_seal
+
 
 ROOT = Path(__file__).resolve().parents[2]
 SCHEMA = "crabc.x86_64-owned-resolver-family/v1"
@@ -993,7 +995,7 @@ def _validate_admission_sources(
     cancellation_paths, cancellation_result = replays["resolver-cancellation"]
     audit = _read_json(cancellation_paths["work"] / cancellation.ARTIFACT_AUDIT,
                        "resolver cancellation admission audit")
-    cancellation_source = cancellation._source_digest(root)
+    cancellation_source = source_seal.product_source_digest(root)
     cancellation_report = cancellation_result.get("report")
     require(isinstance(cancellation_report, dict), "resolver cancellation assessment result differs")
     require(cancellation_report.get("source_sha256") == cancellation_source
@@ -1046,9 +1048,8 @@ def admission_facts(root: Path, assessment_path: Path) -> dict[str, object]:
     require(isinstance(cohort, dict) and isinstance(cohort.get("source"), dict),
             "resolver family assessment cohort result differs")
     seal = cohort["source"]
-    current = static.source_identity(root)
-    require(seal.get("revision") == current["revision"] and seal.get("content_sha256") == current["content_sha256"],
-            "resolver family assessment is not bound to current source")
+    current = source_seal.seal(root)
+    require(source_seal.same_product(seal, current), "resolver family assessment is not bound to current source")
     receipts: dict[str, dict[str, object]] = {}
     for name in ("static_preparation", "dynamic_qualification"):
         record = seal.get(name)
