@@ -42,8 +42,8 @@ source_digest() {
 import sys
 from pathlib import Path
 sys.path.insert(0, str(Path(sys.argv[1]) / 'compat/x86_64'))
-import owned_dynamic_qualification as qualification
-print(qualification.source_digest())
+import source_seal
+print(source_seal.seal(Path(sys.argv[1]))['content_sha256'])
 PY
 }
 

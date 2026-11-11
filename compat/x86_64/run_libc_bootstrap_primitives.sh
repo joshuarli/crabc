@@ -103,8 +103,8 @@ import sys
 
 root = Path(sys.argv[1]).resolve(strict=True)
 sys.path.insert(0, str(root / 'compat/x86_64'))
-import owned_dynamic_qualification as dynamic
 import owned_posix_product_evidence as products
+import source_seal
 
 try:
     selected = []
@@ -119,7 +119,7 @@ try:
         selected.append(path)
     if selected[0] == selected[1]:
         raise products.ProductEvidenceError('static and dynamic products must be separate')
-    source = dynamic.source_digest()
+    source = source_seal.seal(root)['content_sha256']
     for kind, path in zip(('static', 'dynamic'), selected):
         product_format = products.STATIC_PRODUCT_FORMAT if kind == 'static' else products.DYNAMIC_PRODUCT_FORMAT
         _, manifest, _ = products._product_manifest(path, kind, product_format)
