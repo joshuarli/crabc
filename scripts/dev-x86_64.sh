@@ -5693,6 +5693,13 @@ run_owned_resolver_family() {
     # Create the output as the invoking user: the user-mapped native ABI
     # collectors below must create their fresh outputs inside it.
     mkdir "$host_output" || fail "cannot create resolver family output: $host_output"
+    # The public network report sits outside that output; its directory is
+    # created as the invoking user too, so a failed attempt's report can be
+    # renamed aside before a retry.
+    local report_directory
+    report_directory="$(python3 -B -c 'import sys; sys.path.insert(0, sys.argv[1]); import owned_resolver_family as family; print(family.NETWORK_REPORT_DIRECTORY)' "$ROOT_DIR/compat/x86_64")" ||
+        fail "cannot read the resolver network report directory"
+    mkdir -p "$ROOT_DIR/$report_directory" || fail "cannot create resolver network report directory: $report_directory"
     run_in_container python3 -B /workspace/compat/x86_64/owned_resolver_family.py plan \
         --static-preparation "$RESOLVER_FAMILY_STATIC_PREPARATION" \
         --dynamic-qualification "$RESOLVER_FAMILY_DYNAMIC_QUALIFICATION" \
