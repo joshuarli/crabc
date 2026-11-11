@@ -46,6 +46,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import native_abi_inventory as inventory  # noqa: E402
 import native_abi_import_receipt as import_receipt  # noqa: E402
+import source_seal  # noqa: E402
 
 SCHEMA = "crabc.x86_64-abi-differential-evidence/v1"
 RECEIPT_NAME = "abi-evidence.json"
@@ -324,11 +325,12 @@ def load(path: Path) -> EvidenceSet:
         "ABI-differential evidence receipt does not match its schema",
     )
     source = current_source()
-    require(record["source"] == source, f"evidence set was assembled at {record['source']}, not current {source}")
+    require(source_seal.same_product(record["source"], source),
+            f"evidence set was assembled from product source {record['source']}, not current {source}")
     evidence = EvidenceSet(record)
     preparation = inventory.read_json(evidence.inputs["static_preparation"], "static preparation")
     require(
-        isinstance(preparation, dict) and preparation.get("source") == source,
+        isinstance(preparation, dict) and source_seal.same_product(preparation.get("source"), source),
         "static preparation was not built from the current source",
     )
     return evidence
@@ -339,13 +341,8 @@ def load(path: Path) -> EvidenceSet:
 
 
 def _collector_is_current(report: Mapping[str, Any], name: str) -> None:
-    seal = report.get("collector_execution_source")
-    source = current_source()
-    require(
-        isinstance(seal, dict) and seal.get("revision") == source["revision"]
-        and seal.get("content_sha256") == source["content_sha256"],
-        f"{name} was collected at another revision",
-    )
+    require(inventory.is_current_collector_source(report.get("collector_execution_source")),
+            f"{name} was collected from another product source")
 
 
 def read_inventory(evidence: EvidenceSet) -> str:
@@ -818,7 +815,8 @@ def load_companions(path: Path, cohort: Cohort) -> dict[str, Path]:
             and record["schema"] == COMPANIONS_SCHEMA and isinstance(record["companions"], dict)
             and set(record["companions"]) <= set(SELECTION_COMPANIONS),
             "companion manifest does not match its schema")
-    require(record["source"] == current_source(), "companion manifest was collected at another revision")
+    require(source_seal.same_product(record["source"], current_source()),
+            "companion manifest was collected from another product source")
     require(record["cohort"] == cohort.record(), "companion manifest was collected against another cohort")
     companions: dict[str, Path] = {}
     for name, entry in record["companions"].items():

@@ -262,7 +262,7 @@ def _validate_retained_cohort(output: Path, inputs: Mapping[str, object], produc
         artifact = root / relative
         require(fact.get("sha256") == digest(artifact) and fact.get("size") == artifact.stat().st_size, f"retained facts {key} binding differs")
     candidate = facts.get("base_inventory", {}).get("candidate_build", {})
-    require(candidate.get("revision") == source.get("revision") and candidate.get("source_content_sha256") == source.get("content_sha256"), "retained facts/preparation source cohort differs")
+    require(candidate.get("source_content_sha256") == source.get("content_sha256"), "retained facts/preparation source cohort differs")
     shared = read_json(dynamic_root / "share/crabc/libc-shared.provenance.json", "retained shared provenance")
     selected_list = shared.get("shared_dynamic_list", {}).get("source", {}) if isinstance(shared, dict) else {}
     require(selected_list.get("path") == "libc/src/c_abi/x86_64/owned_dynamic.list", "retained shared dynamic-list path differs")

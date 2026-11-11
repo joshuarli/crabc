@@ -31,6 +31,7 @@ import zlib
 from typing import Any, Iterable, Mapping, Sequence
 import core_image
 import feature_archive_roster
+import source_seal
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -1846,7 +1847,7 @@ def _admit_supplied_products(root: Path, output: Path, static: Path, dynamic: Pa
         products._validate_dynamic_product(dynamic)
     except (RuntimeError, ValueError, OSError) as error:
         raise LocaleAliasReceiptError(f"supplied product admission failed: {error}") from error
-    if admitted.get("source") != {key: source[key] for key in ("revision", "content_sha256")}:
+    if not source_seal.same_product(admitted.get("source"), source):
         _fail("supplied static preparation source differs from receipt source")
     state = _strict_json(dynamic / "share/crabc/dynamic-product-state.json", "supplied dynamic state")
     if not isinstance(state, Mapping) or state.get("source_sha256") != source["content_sha256"]:

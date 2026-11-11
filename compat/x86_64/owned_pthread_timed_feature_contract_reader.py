@@ -2384,7 +2384,6 @@ def _validate_selected_products(
 
     preparation = load_json_object(work / "retained/products/static-preparation.json", "retained static preparation")
     require(preparation.get("schema") == "crabc.x86_64-owned-posix-static-preparation/v1"
-            and preparation.get("source", {}).get("revision") == source["revision"]
             and preparation.get("source", {}).get("content_sha256") == source["source_sha256"],
             "retained static preparation source changed")
     require(preparation.get("steps", {}).get("primary-build", {}).get("exit_status") == 0

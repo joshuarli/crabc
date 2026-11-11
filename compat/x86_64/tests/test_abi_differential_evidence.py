@@ -66,10 +66,16 @@ class AbiDifferentialEvidenceTests(unittest.TestCase):
         self.assertEqual(set(loaded.reports), set(evidence.REPORTS))
         self.assertNotIn("ordinary_link_report", loaded.selection_arguments())
 
-    def test_set_from_another_revision_is_stale(self) -> None:
-        self.record["source"] = {"revision": "3" * 40, "content_sha256": "2" * 64}
-        with self.assertRaisesRegex(evidence.EvidenceError, "assembled at"):
+    def test_set_from_another_product_source_is_stale(self) -> None:
+        self.record["source"] = {"revision": "1" * 40, "content_sha256": "3" * 64}
+        with self.assertRaisesRegex(evidence.EvidenceError, "assembled from product source"):
             evidence.load(self.write())
+
+    def test_set_sealed_at_another_revision_with_the_same_products_loads(self) -> None:
+        self.record["source"] = {"revision": "3" * 40, "content_sha256": "2" * 64}
+        (self.work / "preparation.json").write_text(
+            json.dumps({"source": {"revision": "4" * 40, "content_sha256": "2" * 64}}))
+        self.assertEqual(evidence.load(self.write()).inputs["dynamic_product"], self.work / "dynamic")
 
     def test_products_from_another_revision_are_stale(self) -> None:
         (self.work / "preparation.json").write_text(json.dumps({"source": {"revision": "4" * 40}}))

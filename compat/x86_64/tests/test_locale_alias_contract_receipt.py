@@ -331,6 +331,8 @@ class LocaleAliasContractReceiptTests(unittest.TestCase):
                                      "dynamic": dynamic.relative_to(self.root).as_posix()})
             owner.assert_called_once_with(self.root, static.parents[1] / "preparation.json")
             owner.return_value = {"source": {**source, "revision": "c" * 40}}
+            self.assertEqual(receipt._admit_supplied_products(self.root, output, static, dynamic, source), paths)
+            owner.return_value = {"source": {**source, "content_sha256": "c" * 64}}
             with self.assertRaisesRegex(receipt.LocaleAliasReceiptError, "static preparation source differs"):
                 receipt._admit_supplied_products(self.root, output, static, dynamic, source)
             owner.return_value = {"source": source}

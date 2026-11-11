@@ -184,10 +184,10 @@ def selected_products(root: Path, preparation: Path, static: Path, dynamic: Path
             "static product is not the prepared primary")
     source = source_seal.seal(root)
     prepared = read_json(preparation)
-    require(prepared["schema"] == static_products.SCHEMA and prepared["source"] == source,
+    require(prepared["schema"] == static_products.SCHEMA and source_seal.same_product(prepared["source"], source),
             "static preparation source differs")
     for name in ("source-before.json", "source-after.json"):
-        require(same(read_json(preparation.parent / name), source), "static source seal differs")
+        require(source_seal.same_product(read_json(preparation.parent / name), source), "static source seal differs")
     static_manifest, _ = products._validate_static_product(static)
     dynamic_manifest, dynamic_files = products._validate_dynamic_product(dynamic)
     require(same(static_products.tree_identity(static), prepared["products"]["primary"]["tree"]),
