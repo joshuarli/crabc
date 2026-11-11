@@ -1231,8 +1231,7 @@ def _validate_product_cohort_links(root: Path, source: Mapping[str, Any], static
     preparation = read_json(static_preparation, 'static preparation')
     preparation_source = exact(preparation.get('source'), {'revision', 'content_sha256'},
                                'static preparation source')
-    require(preparation_source['revision'] == source['revision']
-            and preparation_source['content_sha256'] == source['source_sha256'],
+    require(preparation_source['content_sha256'] == source['source_sha256'],
             'static preparation source cohort differs')
     products = exact(preparation.get('products'), {'extracted', 'primary', 'reproduction'},
                      'static preparation products')

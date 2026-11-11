@@ -122,12 +122,11 @@ class ResolverFamilyCohortTests(unittest.TestCase):
                             component_products=components,
                         )
 
-    def test_copied_dynamic_qualification_receipt_is_rejected(self) -> None:
-        source = {"revision": "a" * 40, "content_sha256": "b" * 64}
+    def _receipts(self, prepared_source: dict[str, str], content_sha256: str) -> tuple[Path, Path, dict, dict]:
         static_receipt = self.work / "static/preparation.json"
         static_receipt.parent.mkdir()
         static_receipt.write_text("{}\n", encoding="utf-8")
-        prepared = {"source": source, "products": {}}
+        prepared = {"source": prepared_source, "products": {}}
         for label, pair in self.products.items():
             manifest = cohort._file_identity(ROOT, pair["static"] / "share/crabc/manifest.json", label)
             prepared["products"][label] = {
@@ -137,7 +136,7 @@ class ResolverFamilyCohortTests(unittest.TestCase):
             }
 
         dynamic_work = self.work / "dynamic-work"
-        qualified = {"work": self._relative(dynamic_work), "source_sha256": source["content_sha256"],
+        qualified = {"work": self._relative(dynamic_work), "source_sha256": content_sha256,
                      "family_completion": False, "public_support": False, "products": {}}
         for label, dynamic_label in cohort.PAIRS.items():
             manifest = dynamic_work / dynamic_label / "share/crabc/manifest.json"
@@ -146,14 +145,23 @@ class ResolverFamilyCohortTests(unittest.TestCase):
             qualified["products"][dynamic_label] = cohort._file_identity(ROOT, manifest, label)["sha256"]
         receipt = dynamic_work / "qualification.json"
         receipt.write_text(json.dumps(qualified), encoding="utf-8")
+        return static_receipt, receipt, prepared, qualified
+
+    def _patched(self, prepared: dict, qualified: dict, current: dict[str, str]):
+        return (mock.patch.object(cohort.static, "validate_receipt", return_value=prepared),
+                mock.patch.object(cohort.static.source_seal, "seal", return_value=current),
+                mock.patch.object(cohort.static, "product_paths",
+                                  return_value={label: pair["static"] for label, pair in self.products.items()}),
+                mock.patch.object(cohort.dynamic, "collect", return_value=qualified))
+
+    def test_copied_dynamic_qualification_receipt_is_rejected(self) -> None:
+        source = {"revision": "a" * 40, "content_sha256": "b" * 64}
+        static_receipt, receipt, prepared, qualified = self._receipts(source, source["content_sha256"])
         copied = self.work / "copied-qualification.json"
         shutil.copyfile(receipt, copied)
 
-        with (mock.patch.object(cohort.static, "validate_receipt", return_value=prepared),
-              mock.patch.object(cohort.static.source_seal, "seal", return_value=source),
-              mock.patch.object(cohort.static, "product_paths",
-                                return_value={label: pair["static"] for label, pair in self.products.items()}),
-              mock.patch.object(cohort.dynamic, "collect", return_value=qualified)):
+        validate, seal, paths, collect = self._patched(prepared, qualified, source)
+        with validate, seal, paths, collect:
             valid_source, valid_products = cohort.canonical_products(ROOT, static_receipt, receipt)
             self.assertEqual(valid_source["content_sha256"], source["content_sha256"])
             self.assertEqual(set(valid_products), set(cohort.PAIRS))
@@ -161,6 +169,21 @@ class ResolverFamilyCohortTests(unittest.TestCase):
                                         "dynamic qualification receipt is outside its work directory"):
                 cohort.canonical_products(ROOT, static_receipt, copied)
 
+    def test_products_sealed_at_another_revision_bind_only_by_product_digest(self) -> None:
+        prepared_source = {"revision": "e" * 40, "content_sha256": "b" * 64}
+        static_receipt, receipt, prepared, qualified = self._receipts(prepared_source, "b" * 64)
+        validate, seal, paths, collect = self._patched(
+            prepared, qualified, {"revision": "a" * 40, "content_sha256": "b" * 64})
+        with validate, seal, paths, collect:
+            source, products = cohort.canonical_products(ROOT, static_receipt, receipt)
+        self.assertEqual(source["revision"], "a" * 40)
+        self.assertEqual(set(products), set(cohort.PAIRS))
+
+        validate, seal, paths, collect = self._patched(
+            prepared, qualified, {"revision": "e" * 40, "content_sha256": "f" * 64})
+        with validate, seal, paths, collect:
+            with self.assertRaisesRegex(cohort.ResolverFamilyCohortError, "static preparation is not current source"):
+                cohort.canonical_products(ROOT, static_receipt, receipt)
 
 if __name__ == "__main__":
     unittest.main()

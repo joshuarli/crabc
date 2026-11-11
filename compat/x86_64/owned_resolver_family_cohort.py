@@ -107,7 +107,7 @@ def _canonical_products(root: Path, static_preparation: Path, dynamic_qualificat
     except (static.PreparationError, source_seal.SourceSealError, dynamic.QualificationError, OSError, ValueError) as error:
         raise ResolverFamilyCohortError(f"canonical product receipt rejected: {error}") from error
 
-    require(prepared.get("source") == source, "static preparation is not current source")
+    require(source_seal.same_product(prepared.get("source"), source), "static preparation is not current source")
     require(qualified.get("source_sha256") == source["content_sha256"],
             "dynamic qualification is not current source")
     require(qualified.get("family_completion") is False and qualified.get("public_support") is False,
