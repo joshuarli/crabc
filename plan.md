@@ -199,6 +199,16 @@ rejected proposal. Code changes still require an independently approved design.
    (`compat/x86_64/source_seal.py`) unchanged; acceptance needs one complete
    run whose summary is `fresh: true`, every step run at the accepted
    revision. A correctness receipt is not a full-chain result.
+   Remaining order, one product fix at a time because each exposes the next
+   mold difference: (a) remove the duplicate LOCAL `mem*`/`bcmp` bodies from
+   the `libc.so` link (D20); (b) the syscall-alias static-link authority under
+   mold; (c) the prepared-worker-TLS reader, its relocation account and the
+   ABI selection patching, for loader operations that are now LOCAL
+   definitions in the merged image; (d) verify the two pthread readers with
+   `loader_debug_report` alongside. Rerun the failing companion producers,
+   then resume at `abi-companions`, followed by ABI evidence, `rust-std-lto`,
+   Lua (its own fix) and `loader-family`. Then one fresh acceptance run. The
+   CI container stays stopped until that run.
 4. **R3 — D18 performance.** After R2, run the three-attempt 114-row `perf-c`
    roster and `perf-native --mode full` on a quiet host; `perf-c check` must
    report no release blocker (CPU and memory bounds ≤ 1.00, syscall rules, no
@@ -891,6 +901,14 @@ owner decision.
   The old allocator holds stay parked; non-allocator qualification family
   evidence must be produced by its own current commands, not inherited from a
   parked receipt.
+- **D20 — `libc.so` carries one definition of each `mem*` symbol.** On
+  2026-11-11 the owner chose removal over acceptance: the 9–40-byte LOCAL
+  `memcpy`, `memset`, `memmove`, `memcmp` and `bcmp` bodies near `0x14ff80`
+  are dead weight, not a wrong binding, and the allocator-boundary reader is
+  right to flag them. They are not from `libcrabc-builtins.a`; the fix first
+  identifies the contributing link member (suspected: Rust
+  `compiler_builtins` weak shims) and removes it from the link. The reader
+  stays unchanged.
 
 ## Runtime hardening
 
@@ -1249,6 +1267,7 @@ remaining instruction and CPU/memory gates; they remain unmeasured, not passed.
 | R0 (post-S5) | `068c22ebd` | dynamic and static products rebuilt under `.work/x86_64/post-s5-r0-06822ebd/`; pinned image `sha256:91e0733b32a12383565bb9030245cf5793f667eb1ee11b38fa8fe4ffabb438bb` | `materialized-dynamic-sysroot --work ... --prepare` PASS (59+163 tests; products validated, cases pending); `owned-posix-static-products ...` and static preparation validation PASS | products are prepared-unqualified; initial ldso-only R1 design was rejected |
 | R1 (post-S5, parked: allocator freeze) | no source change; counts at `eb56e7cb2` used the R0 installed product | matched-LLVM-23 ratios: startup 1.8917, `dlopen_graph` 1.5993, `loader_dynamic_tls_growth` 2.5682; startup judged syscalls 8 vs 11; TLS-growth has `clock_gettime` excess 4 and 5 allocator-attributed calls | exact ptrace single-step traces of the R0 counts roots ([note](docs/evidence/x86-d16-relocation-transaction.md)) supersede the sampled profiles: startup lookup 46.5k vs musl 47.7k, relocation driver 48.3k vs 10.6k, self-relocation 14.9k vs 1.4k; `dlopen_graph` dlopen portion 51.4k vs 45.0k; TLS-growth frozen-allocator initialization 90.3k vs musl malloc 5.5k | parked under the stop rule: TLS growth cannot reach 1.10 without allocator work (about 242k at musl parity vs about 175k allowed); startup has no supported design: realistic hardened savings are 38–43k vs 54k required (ceiling about 59k at musl parity), and `dlopen_graph` moves with startup; no code changes |
 | R2 (post-S5, first run) | `071629a87` (checker fixes `95fecc202`–`071629a87` for mold-linked products, oracle `[musl_native]` header drift, parallel product suites) | **INCOMPLETE, 8 of 69 steps:** static-products, dynamic-products, publish, posix-family, crypt, atomic, wordexp profile and inputs PASS; `posix-native` fails in libc-test: `regression/malloc-oom`, `regression/setenv-oom` and `regression/pthread_create-oom` segfault in the candidate (oracle passes) after `t_memfill` exhausts address space and loops `malloc(1)`, allocator-attributed; the other six non-passes are the finite crypt, strptime, wordexp, `fmal`, `pow`, `powf` dispositions; 60 steps not run | `qualification-candidate --profile correctness` in the pinned image `91e0733b…438bb`; `dynamic-products` took 80 min; libc-test at `02b6fa8a6` had 428 raw passes and the same six dispositions, so the three OOM units regressed since | fixed by `f733b49d0` after the owner lifted the freeze: the lazy first allocation can run with no address space left, mimalloc v3.3.2 then leaves its page map unreserved and its process done calls `mi_free(NULL)` on it; the finalizer now skips process done in that state. The three units pass on the fixed loader and `owned-mimalloc-startup-errno` gained an `address-space-exhausted` mode (red 139, green 0 in all six entries); R2 needs a full rerun. `headers-layouts-aggregate` legacy runners (not in R2) still assert GLOBAL bindings that mold localizes in static executables; R1 stays parked; R3/R4 held |
+| R2 (post-S5, resumed) | `2d7d4d954`; reader fixes `fcfa0c9de`, `1a96ad16f` | **INCOMPLETE, 57 steps PASS through `abi-public-data`** (resolver-family, C-ABI compat family, loader-inventory, static and combined sysroots, four ABI collectors); `abi-companions` fails 6 of 26 producers, the first run of these readers on mold-linked merged-image products | `qualification-candidate --profile correctness`, resumed; bootstrap-primitives passes on the real products after `fcfa0c9de`; four readers hold mold's ELF forms after `1a96ad16f` | allocator boundary (duplicate LOCAL `mem*`, D20); syscall alias "merged static target lacks its constant pool"; prepared worker TLS (LOCAL loader definitions since `2b1242cb9`); two pthread readers unverified without `loader_debug_report`; order in R2 above |
 
 **Status — S5 accepted 2026-11-01 on structure, correctness and hardening.**
 Resume prompt: "Resume the crabc simplification campaign from plan.md Status; no
