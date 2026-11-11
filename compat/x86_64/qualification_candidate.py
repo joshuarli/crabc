@@ -107,10 +107,11 @@ class Step:
     family: str
     argv: Callable[["Context"], list[str]] | None
     outputs: tuple[Output, ...] = ()
-    # Fresh producer outputs (checkout-relative templates). A failed
-    # attempt's are renamed aside before a retry. None means the directory
-    # holding the first fixed output; an empty tuple preserves atomic pointers.
-    fresh: tuple[str, ...] | None = None
+    # Fresh producer outputs (checkout-relative templates, or functions of the
+    # context for paths a producer derives). A failed attempt's are renamed
+    # aside before a retry. None means the directory holding the first fixed
+    # output; an empty tuple preserves atomic pointers.
+    fresh: tuple[str | Callable[["Context"], str], ...] | None = None
     # Internal steps write their outputs without running a command.
     internal: Callable[["Context"], None] | None = None
     # Candidate inputs this step needs (keys of `--inputs`).
@@ -238,6 +239,12 @@ POSIX_NATIVE_COMMAND = (
 )
 
 
+def _resolver_network_report(context: Context) -> str:
+    import owned_resolver_family
+
+    return owned_resolver_family.execution_layout(Path(context.template("{work}/out/resolver-family")))["network_report"]
+
+
 def plan(through: str | None = None, profile: str = "full") -> tuple[Step, ...]:
     """Return the fixed candidate sequence in dependency order.
 
@@ -322,6 +329,7 @@ def _plan(profile: str = "full") -> tuple[Step, ...]:
              lambda c: _d("owned-resolver-family", *c.cohort(), "--output", c.template("{work}/out/resolver-family")),
              (Output("assessment", fixed="{work}/out/resolver-family/assessment.json"),
               Output("network", glob="{work}/out/resolver-family/network/run-*/report.json")),
+             fresh=("{work}/out/resolver-family", _resolver_network_report),
              attaches=("libc.resolver", "./scripts/dev-x86_64.sh owned-resolver-family --static-preparation FILE "
                                         "--dynamic-qualification FILE --output NEW_DIR")),
         # libc.c-abi-compat.
@@ -716,7 +724,8 @@ def _validate_products(root: Path, step: Step, found: Mapping[str, str], context
 def fresh_paths(context: Context, step: Step) -> list[Path]:
     templates = step.fresh if step.fresh is not None else tuple(
         str(Path(output.fixed).parent) for output in step.outputs[:1] if output.fixed is not None)
-    return [context.root / context.template(template) for template in templates]
+    return [context.root / (context.template(template) if isinstance(template, str) else template(context))
+            for template in templates]
 
 
 def _set_aside(path: Path) -> None:

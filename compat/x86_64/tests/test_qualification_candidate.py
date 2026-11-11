@@ -72,6 +72,18 @@ class PlanTests(unittest.TestCase):
             self.assertEqual(step.argv(context), ["python3", "-B", f"compat/x86_64/{reader}", "publish",
                                                   "--receipt", receipt])
 
+    def test_a_resolver_family_retry_sets_aside_the_previous_public_network_report(self) -> None:
+        import owned_resolver_family
+
+        work = ROOT / ".work/x86_64/candidate-resolver-retry"
+        context = candidate.Context(ROOT, work, {}, dry_run=True)
+        step = next(step for step in candidate.plan(profile="correctness") if step.id == "resolver-family")
+        output = Path(".work/x86_64/candidate-resolver-retry/out/resolver-family")
+        self.assertEqual(candidate.fresh_paths(context, step), [
+            ROOT / output,
+            ROOT / owned_resolver_family.execution_layout(output)["network_report"],
+        ])
+
     def test_correctness_profile_defers_performance_steps_and_reaches_the_chain(self) -> None:
         steps = candidate.plan(profile="correctness")
         identifiers = [step.id for step in steps]
