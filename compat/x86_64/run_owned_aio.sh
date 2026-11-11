@@ -158,11 +158,13 @@ run_capture() {
 	local output="$1" label status=0 deadline=30
 	shift
 	label="$(basename "${output%.stdout}")"
-	# These two workloads contain many finite fork/thread waits. Keep their
-	# outer budget above loaded-host scheduling delay; their internal outcomes
-	# and complete transcripts still decide whether behavior passed.
+	# behavior and fresh-signal contain many finite fork/thread waits, and
+	# fd-reuse makes one aio_fsync per attempt, which on ext4 data=ordered waits
+	# for every dirty page the host has buffered. Keep their outer budget above
+	# loaded-host scheduling and writeback delay; their internal outcomes and
+	# complete transcripts still decide whether behavior passed.
 	case "$label" in
-		*behavior|*fresh-signal) deadline=180 ;;
+		*behavior|*fresh-signal|*fd-reuse) deadline=180 ;;
 	esac
 	env -i LC_ALL=C PATH=/usr/bin:/bin SOURCE_DATE_EPOCH=1 TZ=UTC TMPDIR="$WORK" \
 		/usr/bin/timeout "$deadline" "$@" >"$output" 2>"${output%.stdout}.stderr" || status=$?
@@ -185,11 +187,11 @@ run_fd_reuse_source_observation() {
 	shift
 	label="$(basename "${output%.stdout}")"
 	env -i LC_ALL=C PATH=/usr/bin:/bin SOURCE_DATE_EPOCH=1 TZ=UTC TMPDIR="$WORK" \
-		/usr/bin/timeout 30 "$@" >"$output" 2>"${output%.stdout}.stderr" || status=$?
+		/usr/bin/timeout 180 "$@" >"$output" 2>"${output%.stdout}.stderr" || status=$?
 	printf '%s\n' "$status" >"${output%.stdout}.status"
 	python3 -B "$EVIDENCE" record-command --root "$ROOT" --work "$WORK" --label "$label" \
 		--cwd "$ROOT" --stdout "$output" --stderr "${output%.stdout}.stderr" --status "${output%.stdout}.status" -- \
-		/usr/bin/timeout 30 "$@" >/dev/null
+		/usr/bin/timeout 180 "$@" >/dev/null
 	if ! python3 -B - "$ROOT" "$WORK/commands/$label.json" <<'PYTHON'
 import json
 from pathlib import Path

@@ -75,7 +75,7 @@ int main(int argc, char **argv)
 
 	if (attempts <= 0 || attempts > 4096)
 		return 2;
-	alarm(30);
+	alarm(150);
 	for (int attempt = 0; attempt < attempts; attempt++) {
 		char written = 'R';
 		char read_back = 0;

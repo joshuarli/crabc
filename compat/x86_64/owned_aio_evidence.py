@@ -68,6 +68,7 @@ ORACLE_CASES = ("workload", "one-write", "behavior", "fd-reuse", "lio-create-fai
 STATIC_MODES = (("static", "static"), ("static-pie", "static-pie"))
 DYNAMIC_MODES = (("dynamic-pie", "pie"), ("dynamic-non-pie", "non-pie"))
 ROUTES = ("kernel", "direct")
+LOADED_HOST_DEADLINE_CASES = frozenset({"behavior", "fresh-signal", "fd-reuse"})
 HEADERS = ("aio.h", "signal.h", "time.h", "features.h", "bits/alltypes.h")
 STANDARD_TRANSCRIPTS = {
     "workload": b"owned-aio basic ok\n",
@@ -722,10 +723,13 @@ def _mode_claims(static: Path | None) -> list[str]:
     claims += ["dynamic-pie-kernel", "dynamic-pie-direct", "dynamic-non-pie-kernel", "dynamic-non-pie-direct"]
     return claims
 
+def _deadline(case: str) -> str:
+    return "180" if case in LOADED_HOST_DEADLINE_CASES else "30"
+
 def _execution_argv(root: Path, work: Path, rootmode: str, consumer: str, route: str, arguments: str) -> list[str]:
     execution = work / f"{rootmode}-root"
     mounted = _mounted(root, execution); program = "/" + CONSUMERS[consumer]
-    deadline = "180" if consumer in {"behavior", "fresh-signal"} else "30"
+    deadline = _deadline(consumer)
     argv = ["/usr/bin/timeout", deadline, "/usr/sbin/chroot", mounted]
     if rootmode.startswith("dynamic-") and route == "direct":
         argv += ["/lib/ld-crabc-x86_64.so.1", program]
@@ -781,7 +785,7 @@ def validate_report(root: Path, report_path: Path, expected: object, *, live: bo
     oracle_commands: dict[str, Any] = {}
     for key in ORACLE_CASES:
         binary = work / ("oracle" if key == "workload" else f"oracle-{key}")
-        deadline = "180" if key in {"behavior", "fresh-signal"} else "30"
+        deadline = _deadline(key)
         argv = ["/usr/bin/timeout", deadline, "/usr/sbin/chroot", _mounted(root, work / "oracle-root"), "/" + CONSUMERS[key]]
         if key == "fd-reuse": argv.append("512")
         statuses = {b"0\n", b"1\n"} if key in {"fd-reuse", "fresh-signal"} else {b"0\n"}
