@@ -766,16 +766,18 @@ def execution_layout(output: Path) -> dict[str, str]:
     chooses a report path itself, so the request written before execution is
     the request the retained assessment later reconstructs. The network
     reader admits a public report only below its established report directory;
-    that one file is named after this execution instead of `latest.json`.
+    that one file is named after this execution's whole output path instead of
+    `latest.json`, so runs whose outputs share a leaf name never collide.
     """
 
     base = output.as_posix()
+    execution = sha256(base.encode()).hexdigest()[:16]
     return {
         "plan": f"{base}/plan.json",
         "request": f"{base}/request.json",
         "assessment": f"{base}/assessment.json",
         "network_work_root": f"{base}/network",
-        "network_report": (NETWORK_REPORT_DIRECTORY / f"family-{output.name}.json").as_posix(),
+        "network_report": (NETWORK_REPORT_DIRECTORY / f"family-{output.name}-{execution}.json").as_posix(),
         "classic_work": f"{base}/classic-netdb",
         "classic_report": f"{base}/classic-netdb/classic-netdb-products.json",
         "cancellation_work": f"{base}/cancellation",

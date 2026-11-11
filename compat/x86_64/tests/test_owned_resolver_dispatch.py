@@ -11,6 +11,8 @@ import unittest
 
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(ROOT / "compat/x86_64"))
+import owned_resolver_family as family  # noqa: E402
 
 
 class OwnedResolverDispatchTests(unittest.TestCase):
@@ -270,7 +272,7 @@ class OwnedResolverDispatchTests(unittest.TestCase):
                              "/workspace/.work/x86_64/cohort/extracted-dynamic")
             self.assertEqual(network[network.index("--work-root") + 1], family_root + "/network")
             self.assertEqual(network[network.index("--report") + 1],
-                             "/workspace/compat/reports/resolver-network/x86_64/family-family.json")
+                             "/workspace/" + family.execution_layout(Path(".work/x86_64/family"))["network_report"])
             protocol = runs[5]
             self.assertEqual(protocol[protocol.index("--reproduction-static-sysroot") + 1],
                              "/workspace/.work/x86_64/cohort/reproduction-static")

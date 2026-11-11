@@ -220,6 +220,12 @@ class OwnedResolverFamilyTests(unittest.TestCase):
         }
         return source, products
 
+    def test_runs_whose_outputs_share_a_leaf_name_publish_distinct_network_reports(self) -> None:
+        first = family.execution_layout(Path(".work/x86_64/r2-a/out/resolver-family"))
+        second = family.execution_layout(Path(".work/x86_64/r2-b/out/resolver-family"))
+        self.assertNotEqual(first["network_report"], second["network_report"])
+        self.assertEqual(first, family.execution_layout(Path(".work/x86_64/r2-a/out/resolver-family")))
+
     def test_plan_fixes_a_fresh_layout_and_request_for_the_supplied_cohort(self) -> None:
         import owned_resolver_family_cohort as cohort
 

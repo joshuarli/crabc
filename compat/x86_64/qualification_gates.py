@@ -189,7 +189,7 @@ def _validate_resolver_network(path: Path) -> Mapping[str, Any]:
     The resolver-network runner retains ``state_root/report.json`` and
     publishes identical bytes below `compat/reports/resolver-network/x86_64`.
     Publication selects the retained copy (standalone ``latest.json`` or a
-    family run's ``family-NAME.json`` alike); the leaf reader then replays
+    family run's ``family-NAME-EXECUTION.json`` alike); the leaf reader then replays
     the public report and requires those bytes to match.
     """
     reader = _import_compat("resolver_network_component_receipt")
