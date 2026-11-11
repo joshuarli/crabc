@@ -17,6 +17,35 @@ ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(ROOT / "compat" / "x86_64"))
 
 
+class TimedFeatureFinalLinkTests(unittest.TestCase):
+    def _write_final_links(self, work: Path, static_alias_value: str = "1000") -> None:
+        reader = importlib.import_module("owned_pthread_timed_feature_contract_reader")
+        for label in ("static-contract", "static-pie-contract"):
+            rows = []
+            for index, (public, provider) in enumerate(reader.ALIASES):
+                value = f"{0x1000 + index * 0x100:016x}"
+                alias = static_alias_value if public == "pthread_cond_timedwait" else value
+                rows.append(f"   {2 * index}: {value}     5 FUNC    LOCAL  HIDDEN    13 {provider}")
+                rows.append(f"   {2 * index + 1}: {alias:0>16}     5 FUNC    LOCAL  DEFAULT   13 {public}")
+            (work / f"{label}.symbols.txt").write_text("Symbol table '.symtab' contains 8 entries:\n" + "\n".join(rows) + "\n")
+        for label in ("dynamic-pie-contract", "dynamic-non-pie-contract"):
+            rows = [f"   {index}: 0000000000000000     0 FUNC    GLOBAL DEFAULT  UND {public}"
+                    for index, (public, _) in enumerate(reader.ALIASES)]
+            (work / f"{label}.symbols.txt").write_text("Symbol table '.dynsym' contains 4 entries:\n" + "\n".join(rows) + "\n")
+
+    def test_mold_final_static_links_keep_each_alias_on_its_provider_body(self) -> None:
+        reader = importlib.import_module("owned_pthread_timed_feature_contract_reader")
+        (ROOT / ".work/x86_64/tmp").mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(dir=ROOT / ".work/x86_64/tmp") as temporary:
+            work = Path(temporary)
+            self._write_final_links(work)
+            result = reader.evaluate_final_extraction(work)
+            self.assertEqual(result["static"]["pthread_cond_timedwait"]["alias"]["binding"], "LOCAL")
+            self._write_final_links(work, static_alias_value="2000")
+            with self.assertRaises(reader.ReceiptError):
+                reader.evaluate_final_extraction(work)
+
+
 class TimedFeatureReceiptBoundaryTests(unittest.TestCase):
     def test_split_static_provider_members_are_bound_to_selected_archive(self) -> None:
         reader = importlib.import_module("owned_pthread_timed_feature_contract_reader")

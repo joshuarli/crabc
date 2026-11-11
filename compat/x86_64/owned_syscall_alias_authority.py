@@ -441,13 +441,13 @@ def require_static_function_map(map_path, executable, admitted, probe_path, crt_
                         archive_owners[name] = owner
         require(set(archive_owners) == wanted, 'selected archive omits a syscall definition')
     contracts = [
-        StaticFunctionContract('main', probe_path, 'GLOBAL', 'DEFAULT', 'GLOBAL', 'DEFAULT'),
-        StaticFunctionContract('_start', crt_path, 'GLOBAL', 'DEFAULT', 'GLOBAL', 'DEFAULT'),
+        StaticFunctionContract('main', probe_path, 'GLOBAL', 'DEFAULT', 'LOCAL', 'DEFAULT'),
+        StaticFunctionContract('_start', crt_path, 'GLOBAL', 'DEFAULT', 'LOCAL', 'DEFAULT'),
     ]
     for name in aliases:
         owner = probe_path if override else archive_owners[name]
         binding = 'GLOBAL' if override else 'WEAK'
-        contracts.append(StaticFunctionContract(name, owner, binding, 'DEFAULT', binding, 'DEFAULT'))
+        contracts.append(StaticFunctionContract(name, owner, binding, 'DEFAULT', 'LOCAL', 'DEFAULT'))
     try:
         require_static_functions(map_path, executable, admitted, contracts)
     except StaticLinkAuthorityError as error:

@@ -149,6 +149,10 @@ CANDIDATE_STATIC_PROVIDER_SHAPES = {
 FINAL_STATIC_PROVIDER_SHAPES = {
     provider: ("FUNC", "LOCAL", "HIDDEN") for provider in ARCHIVE_HIDDEN
 }
+ARCHIVE_ALIAS_SHAPE = ("FUNC", "WEAK", "DEFAULT")
+# mold, the owned static linker, emits every .symtab symbol of a static
+# executable as LOCAL and keeps its visibility.
+FINAL_STATIC_ALIAS_SHAPE = ("FUNC", "LOCAL", "DEFAULT")
 # These ten internal C helpers contain the actual bounded runtime observations;
 # main only dispatches them. Their source and final bytes are separate static
 # contracts so an unchanged main/provider map cannot discharge a replaced body.
@@ -1223,14 +1227,15 @@ def _shared_symbols(path: Path) -> tuple[dict[str, list[SymbolRow]], dict[str, d
 
 def _static_symbols(
     path: Path, provider_shapes: Mapping[str, tuple[str, str, str]] = CANDIDATE_STATIC_PROVIDER_SHAPES,
+    alias_shape: tuple[str, str, str] = ARCHIVE_ALIAS_SHAPE,
 ) -> tuple[dict[str, list[SymbolRow]], dict[str, dict[str, object]]]:
     table = _defined_by_name(path, {".symtab"})
     definitions: dict[str, dict[str, object]] = {}
     for name, provider in ALIASES:
         alias = _one(table, name, path)
         target = _one(table, provider, path)
-        require(_shape(alias) == ("FUNC", "WEAK", "DEFAULT"),
-                f"{path}: {name} is not FUNC WEAK DEFAULT")
+        require(_shape(alias) == alias_shape,
+                f"{path}: {name} is not {' '.join(alias_shape)}")
         expected = provider_shapes[provider]
         require(_shape(target) == expected,
                 f"{path}: {provider} archive binding differs from musl source form")
@@ -1288,7 +1293,7 @@ def evaluate_final_extraction(work: Path) -> dict[str, object]:
 
     def static(label: str) -> dict[str, dict[str, object]]:
         path = work / f"{label}.symbols.txt"
-        table, definitions = _static_symbols(path, FINAL_STATIC_PROVIDER_SHAPES)
+        table, definitions = _static_symbols(path, FINAL_STATIC_PROVIDER_SHAPES, FINAL_STATIC_ALIAS_SHAPE)
         result: dict[str, dict[str, object]] = {}
         for public, provider in ALIASES:
             alias = _one(table, public, path)

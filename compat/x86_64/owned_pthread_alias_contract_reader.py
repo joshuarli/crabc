@@ -1281,16 +1281,13 @@ def _validate_dynamic_link_receipt(
     require(observed_inputs == expected_inputs,
             f"{binary} dynamic link receipt input binding changed")
 
-    expected_trace = [
-        f"{root}/usr/lib/{crt}",
-        f"{root}/usr/lib/crabc-dynamic-attach.o",
-        f"{root}/usr/lib/crti.o",
-        f"{work}/contract.o",
-        f"{root}/usr/lib/libc.so",
-        f"{root}/usr/lib/crtn.o",
-    ]
-    require(product_evidence.semantic_link_trace(receipt["link_trace"]) == expected_trace,
-            f"{binary} dynamic link trace changed")
+    try:
+        product_evidence._validate_dynamic_trace(
+            receipt["link_trace"], Path(root), (Path(f"{work}/contract.o"),),
+            "pie" if expected_mode == "pie" else "non-pie",
+        )
+    except product_evidence.ProductEvidenceError as error:
+        raise ReceiptError(f"{binary} dynamic link trace changed: {error}") from error
     linker = _resolved_linker_path(receipt["resolved_linker"], binary)
     expected_link = product_evidence._dynamic_link_command(
         Path(root), Path(f"{work}/contract.o"), Path(f"{work}/{binary}"),

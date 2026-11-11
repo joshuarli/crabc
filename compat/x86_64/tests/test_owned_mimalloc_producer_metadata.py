@@ -134,7 +134,7 @@ class FixedCMimallocProducerMetadataTests(unittest.TestCase):
                 section=str(static_index), size=size,
             ))
             shared_rows.append(symbol(
-                name, kind=kind, binding="LOCAL", visibility="HIDDEN",
+                name, kind=kind, binding="LOCAL", visibility="DEFAULT" if kind == "TLS" else "HIDDEN",
                 section=str(shared_index), size=size,
             ))
             source_hidden_sections.extend([
@@ -422,7 +422,7 @@ class FixedCMimallocProducerMetadataTests(unittest.TestCase):
             item["static"]["binding"] == "GLOBAL"
             and item["static"]["visibility"] == "HIDDEN"
             and item["shared"]["binding"] == "LOCAL"
-            and item["shared"]["visibility"] == "HIDDEN"
+            and item["shared"]["visibility"] == ("DEFAULT" if item["static"]["type"] == "TLS" else "HIDDEN")
             for item in bucket["members"]
         ))
         self.assertEqual(account["scope"]["member_count"], 437)

@@ -472,6 +472,15 @@ class OwnedPthreadAliasContractReaderTests(unittest.TestCase):
             "original_paths": {"driver": f"{product_root}/bin/crabc-cc-dynamic"},
         }}
         _validate_dynamic_link_receipt(receipt_path, work_path, binary, artifacts, products)
+        receipt["link_trace"] = [*trace[:4], f"{product_root}/usr/lib/libcrabc-builtins.a(crabc-builtins.o)", *trace[4:]]
+        receipt_path.write_text(__import__("json").dumps(receipt) + "\n", encoding="utf-8")
+        _validate_dynamic_link_receipt(receipt_path, work_path, binary, artifacts, products)
+        receipt["link_trace"] = [*trace, "/usr/lib/libunowned.so"]
+        receipt_path.write_text(__import__("json").dumps(receipt) + "\n", encoding="utf-8")
+        with self.assertRaisesRegex(ReceiptError, "dynamic link trace"):
+            _validate_dynamic_link_receipt(receipt_path, work_path, binary, artifacts, products)
+        receipt["link_trace"] = trace
+        receipt_path.write_text(__import__("json").dumps(receipt) + "\n", encoding="utf-8")
         legacy = list(command)
         legacy.remove("--exclude-libs=libcrabc-builtins.a")
         archive = f"{product_root}/usr/lib/libcrabc-builtins.a"

@@ -74,6 +74,9 @@ EXPECTED_SOURCE_HIDDEN_LAYOUTS = {
     "_mi_theap_empty_wrong": ("OBJECT", 8104, 64),
     "_mi_process_is_initialized": ("OBJECT", 1, 1),
 }
+# mold, the owned shared linker, localizes source-hidden data in libc.so and
+# keeps HIDDEN on ordinary objects but writes thread-local ones as DEFAULT.
+SHARED_SOURCE_HIDDEN_VISIBILITY = {"OBJECT": "HIDDEN", "TLS": "DEFAULT"}
 EXPECTED_SOURCE_HIDDEN_OBJECTS = tuple(sorted(EXPECTED_SOURCE_HIDDEN_LAYOUTS))
 EXPECTED_WEAK_NULL_FALLBACK = "_ZSt15get_new_handlerv"
 C_MEMBER = "mimalloc-v3.5.0-static.o"
@@ -187,7 +190,6 @@ def _source_hidden_metadata(value: object, description: str) -> dict[str, str]:
     record = mapping(value, description, {"type", "binding", "visibility"})
     result = {field: text(record[field], f"{description}.{field}") for field in ("type", "binding", "visibility")}
     require(result["type"] in {"OBJECT", "TLS"}, f"{description}.type is unsupported")
-    require(result["visibility"] == "HIDDEN", f"{description}.visibility is not HIDDEN")
     return result
 
 
@@ -553,7 +555,8 @@ def _validate_contract(value: object) -> dict[str, Any]:
         )
         require(
             item["static"] == {"type": expected_type, "binding": "GLOBAL", "visibility": "HIDDEN"}
-            and item["shared"] == {"type": expected_type, "binding": "LOCAL", "visibility": "HIDDEN"}
+            and item["shared"] == {"type": expected_type, "binding": "LOCAL",
+                                   "visibility": SHARED_SOURCE_HIDDEN_VISIBILITY.get(expected_type)}
             and item["size_bytes"] == expected_size
             and item["source"]["alignment"]["source_required_alignment"] == expected_alignment,
             f"source-hidden allocator metadata differs for {item['name']}",
