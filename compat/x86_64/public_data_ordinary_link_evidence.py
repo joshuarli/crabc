@@ -319,7 +319,7 @@ def admit_inputs(root: Path, static_preparation: Path, static_product: Path,
             and state["source_sha256"] == static_identity["source"]["content_sha256"],
             "static preparation and dynamic materialization source digests differ")
     source = source_seal.seal(root)
-    require(same_json(source, static_identity["source"]), "static preparation source changed")
+    require(source_seal.same_product(source, static_identity["source"]), "static preparation source changed")
     require(state["source_sha256"] == source["content_sha256"], "dynamic materialization source changed")
     return {
         "source": source,

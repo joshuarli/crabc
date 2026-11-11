@@ -80,6 +80,23 @@ class ResolverAliasReceiptContractTests(unittest.TestCase):
         })
 
 
+class ResolverAliasSourceIdentityTests(unittest.TestCase):
+    def test_preparation_sealed_at_another_revision_binds_by_product_digest(self) -> None:
+        with tempfile.TemporaryDirectory(dir=ROOT / '.work') as temporary:
+            preparation = Path(temporary) / 'preparation.json'
+            preparation.write_text(json.dumps({'source': {'revision': 'e' * 40, 'content_sha256': 'b' * 64}}))
+            current = {'revision': 'a' * 40, 'content_sha256': 'b' * 64}
+            with mock.patch.object(resolver_reader.source_seal, 'seal', return_value=current), \
+                 mock.patch.object(resolver_reader, '_git', return_value='t' * 40):
+                identity = resolver_reader._source_identity(ROOT, preparation)
+            self.assertEqual(identity, {'revision': 'a' * 40, 'tree': 't' * 40, 'source_sha256': 'b' * 64})
+            with mock.patch.object(resolver_reader.source_seal, 'seal',
+                                   return_value={'revision': 'e' * 40, 'content_sha256': 'f' * 64}), \
+                 mock.patch.object(resolver_reader, '_git', return_value='t' * 40):
+                with self.assertRaises(resolver_reader.ReceiptError):
+                    resolver_reader._source_identity(ROOT, preparation)
+
+
 class ResolverPrivateSourceContractTests(unittest.TestCase):
     def test_mkquery_private_extern_has_the_source_accurate_memory_contract(self) -> None:
         source = (ROOT / 'libc/src/c_abi/x86_64/resolver_runtime.rs').read_text(encoding='utf-8')

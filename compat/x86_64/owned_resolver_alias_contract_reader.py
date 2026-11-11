@@ -540,7 +540,7 @@ def _source_identity(root: Path, preparation: Path) -> dict[str, str]:
     source = exact(preparation_value.get('source'), {'revision', 'content_sha256'}, 'static preparation source')
     current = source_seal.seal(root)
     revision = current['revision']
-    require(source['revision'] == revision and source['content_sha256'] == current['content_sha256'],
+    require(source_seal.same_product(source, current),
             'selected static preparation source is not current collector source')
     tree = _git(root, 'rev-parse', revision + '^{tree}')
     require(type(source['content_sha256']) is str and re.fullmatch(r'[0-9a-f]{64}', source['content_sha256']) is not None,

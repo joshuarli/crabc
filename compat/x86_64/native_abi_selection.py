@@ -5165,7 +5165,6 @@ def _measurement_source_matches(source: Mapping[str, Any], measurement: Mapping[
             and type(candidate.get('revision')) is str and type(candidate.get('source_content_sha256')) is str,
             f'{description} public ELF candidate-build binding differs')
     require(source.get('clean') is True
-            and source.get('revision') == candidate['revision']
             and source.get('content_sha256') == candidate['source_content_sha256'],
             f'{description} source differs from the selected product cohort')
 
@@ -15135,7 +15134,7 @@ def _build_report(*, contract_path: Path, paths: Mapping[str, Path], declaration
             installed_links=compiler_helper_installed_links, crt_startup_report=crt_startup_report,
         ), compiler_helper_companion), 'compiler-helper evidence changed during final recheck')
     candidate = measurement['candidate_build']
-    source_matches = source_before['clean'] is True and source_before['revision'] == candidate['revision'] and source_before['content_sha256'] == candidate['source_content_sha256']
+    source_matches = source_before['clean'] is True and source_before['content_sha256'] == candidate['source_content_sha256']
     blockers = accounting.pop('blockers')
     component_companions = {
         'ordinary_declaration_abi_report': (declaration or {}).get('ordinary_declaration_abi'),
