@@ -82,7 +82,7 @@ class AbiDifferentialEvidenceTests(unittest.TestCase):
 
     def test_changed_report_bytes_are_rejected(self) -> None:
         self.write()
-        self.reports["native_abi_ratchet"].write_text("replaced")
+        self.reports["native_abi_elf_facts"].write_text("replaced")
         with self.assertRaisesRegex(evidence.EvidenceError, "changed after assembly"):
             evidence.load(self.receipt)
 
@@ -90,18 +90,18 @@ class AbiDifferentialEvidenceTests(unittest.TestCase):
         self.write()
 
         def reject(_set: object) -> str:
-            raise evidence.EvidenceError("floor regressed")
+            raise evidence.EvidenceError("export delta drifted")
 
         readers = {name: (lambda _set: "ok") for name in evidence.LEAF_READERS}
-        readers["native_abi_ratchet"] = reject
+        readers["native_abi_exports"] = reject
         with mock.patch.object(evidence, "LEAF_READERS", readers):
             results = evidence.validate_receipt(evidence.ROOT, self.receipt)["results"]
-        self.assertFalse(results["native_abi_ratchet"]["met"])
-        self.assertIn("floor regressed", results["native_abi_ratchet"]["detail"])
-        self.assertTrue(all(result["met"] for name, result in results.items() if name != "native_abi_ratchet"))
+        self.assertFalse(results["native_abi_exports"]["met"])
+        self.assertIn("export delta drifted", results["native_abi_exports"]["detail"])
+        self.assertTrue(all(result["met"] for name, result in results.items() if name != "native_abi_exports"))
 
-    def test_assembly_binds_the_five_retained_leaves(self) -> None:
-        import native_abi_ratchet
+    def test_assembly_binds_the_four_retained_reports_and_the_export_delta(self) -> None:
+        import native_abi_exports
 
         output = evidence.OUTPUT_PARENT / f"assemble-test-{self.work.name}"
         self.addCleanup(lambda: __import__("shutil").rmtree(output, ignore_errors=True))
@@ -115,15 +115,15 @@ class AbiDifferentialEvidenceTests(unittest.TestCase):
             public_data_ordinary_link=self.reports["public_data_ordinary_link"],
             output=output,
         )
-        with mock.patch.object(native_abi_ratchet, "check",
-                               return_value=self.reports["native_abi_ratchet"]):
+        with mock.patch.object(native_abi_exports, "require_matching") as matching:
             receipt = evidence.assemble(arguments)
+        matching.assert_called_once_with(self.reports["native_abi_inventory"])
         record = json.loads(receipt.read_text())
-        self.assertEqual(record["schema"], "crabc.x86_64-abi-differential-evidence/v2")
+        self.assertEqual(record["schema"], "crabc.x86_64-abi-differential-evidence/v3")
         self.assertEqual(set(record), {"schema", "source", "inputs", "reports"})
         self.assertEqual(set(record["reports"]), set(evidence.REPORTS))
-        self.assertEqual(evidence.load(receipt).reports["native_abi_ratchet"],
-                         self.reports["native_abi_ratchet"])
+        self.assertEqual(evidence.load(receipt).reports["native_abi_inventory"],
+                         self.reports["native_abi_inventory"])
 
     def test_every_gate_evidence_row_has_a_reader(self) -> None:
         families = qualification_gates.load_families()

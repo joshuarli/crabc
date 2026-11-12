@@ -7,7 +7,7 @@ Nothing here is a pass until a receipt revalidates (see Receipts).
 
 | # | Gate | What it consumes (published as) | Producer command |
 | - | ---- | ------------------------------- | ---------------- |
-| 1 | `compat.abi-differential` | one current-source cohort of ABI inventory, ELF facts, declaration inventory and public-data link report (`abi-evidence`) | `abi-differential-evidence assemble` |
+| 1 | `compat.abi-differential` | one current-source cohort of ABI inventory, reviewed export delta, ELF facts, declaration inventory and public-data link report (`abi-evidence`) | `abi-differential-evidence assemble` |
 | 2 | `compat.posix-process` | the native POSIX aggregate receipt (`posix-native`) | `owned-posix-native` |
 | 3 | `compat.resolver-network` | the retained resolver-network report (`resolver-network`) | `owned-resolver-network`, or the network step of `owned-resolver-family` |
 | 4 | `compat.loader-corpus` | the loader family receipt (`loader-family`) and a current-source hardened runtime execution | `owned-loader-family --work DIR`; `hardened-runtime DYNAMIC_SYSROOT` |
@@ -96,9 +96,12 @@ gate and the receipt file its producer writes: `abi-evidence.json`,
 product, the materialized dynamic product, and the native ABI inventory, ELF
 facts, declaration inventory and public-data link report. Every product and
 report must come from the evaluated clean revision, and assembly runs in the
-pinned image because the reports record checkout paths. Each of the gate's
-retained evidence rows reruns its own leaf reader; the gate checks
-caller-visible behavior and ABI, not linker output. The manual path is:
+pinned image because the reports record checkout paths. Assembly and every gate
+evaluation compare the inventory's triage with the reviewed export delta in
+`native-abi-exports.json`; that delta is derived from the report and has no
+separate receipt. Each of the gate's retained evidence rows reruns its own leaf
+reader; the gate checks caller-visible behavior and ABI, not linker output. The
+manual path is:
 
 ```sh
 mkdir -p .work/x86_64/abi .work/x86_64/native-abi-inventory \
@@ -112,6 +115,7 @@ P="--static-product .work/x86_64/abi/static/products/primary --dynamic-product $
 ./scripts/dev-x86_64.sh native-abi-elf-facts collect --base-inventory .work/x86_64/native-abi-inventory/abi/report.json $P --output .work/x86_64/abi/elf
 ./scripts/dev-x86_64.sh header-declaration-inventory collect --output .work/x86_64/header-declaration-inventory/abi --workers 8
 ./scripts/dev-x86_64.sh public-data-ordinary-link collect $P --output .work/x86_64/public-data-ordinary-link/abi
+./scripts/dev-x86_64.sh native-abi-exports check .work/x86_64/native-abi-inventory/abi/report.json
 R="--native-abi-inventory .work/x86_64/native-abi-inventory/abi/report.json \
   --native-abi-elf-facts .work/x86_64/abi/elf/report.json \
   --header-declaration-inventory .work/x86_64/header-declaration-inventory/abi/report.json \

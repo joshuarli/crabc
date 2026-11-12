@@ -155,14 +155,17 @@ initial-graph boundary.
 [native-abi-inventory.md](native-abi-inventory.md) defines the source-bound
 measurement and host replay of fixed musl plus selected materialized owned
 static/dynamic product ABI observations. It routes an input to the still-planned
-`compat.abi-differential` family and does not create a symbol ratchet or a
-compatibility, family, promotion, or public-support result.
+`compat.abi-differential` family and does not create a reviewed export delta or
+a compatibility, family, promotion, or public-support result.
 
-[native-abi-ratchet.md](native-abi-ratchet.md) applies the separately reviewed
-native x86 public-dynamic-symbol regression floor to a fresh public inventory.
-It keeps historical missing, unexpected, and metadata differences visible and
-does not turn the floor into ABI compatibility, family completion, promotion,
-or public support.
+[native-abi-exports.json](native-abi-exports.json) is the reviewed exact export
+delta for that inventory, checked by
+[native_abi_exports.py](native_abi_exports.py). It lists every shared-dynamic
+extra and missing identity with its type, binding, visibility and, for data
+objects, size; the exact static-archive name additions and removals excluding
+reserved Rust v0 mangled identifiers; and the exact static class differences.
+Measurement-only differences are not gated. A matching delta does not establish
+ABI compatibility, family completion, promotion, or public support.
 
 [native-abi-elf-facts.md](native-abi-elf-facts.md) retains every physical symbol
 occurrence across the selected libc, loader, CRT and builtins artifacts,

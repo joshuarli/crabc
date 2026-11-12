@@ -210,8 +210,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   abi-behavior RUNNER ...  run one retained ABI behavior probe on the selected products
   header-declaration-inventory {collect|validate-report} ...  retain or replay compiler declaration and macro occurrences
   public-data-ordinary-link {collect|validate-report} ...  prove or replay ordinary links to selected public data objects
-  native-abi-ratchet {check|validate-report} ...  check or replay the reviewed native x86 public-dynamic ABI floor
-  native-abi-ratchet-test  run focused native ABI-ratchet policy and dispatcher tests
+  native-abi-exports {check|update} REPORT  check or rewrite the reviewed native x86 exact export delta
   musl-oracle  verify the pinned musl-1.2.6 x86 C/POSIX oracle toolchain
   linux-5-10-uapi  verify the fixed Linux 5.10 x86 exported-UAPI input
   header-abi CASE  run one selected x86 header C/C++ ABI case
@@ -2942,101 +2941,14 @@ prepare_native_abi_inventory_arguments() {
     fi
 }
 
-native_abi_ratchet_output_path() {
-    python3 -B - "$ROOT_DIR" "$1" <<'PY_NATIVE_ABI_RATCHET_OUTPUT'
-from pathlib import Path
-import os
-import sys
-
-root = Path(sys.argv[1])
-argument = sys.argv[2]
-try:
-    raw = Path(argument)
-    if ".." in raw.parts or any(character in argument for character in ("\n", "\r", ":")):
-        raise ValueError("path has parent traversal or mount syntax")
-    path = Path(os.path.abspath(raw))
-    work_root = root / ".work/x86_64"
-    if not path.is_relative_to(work_root):
-        raise ValueError(f"output is outside this checkout work root: {work_root}")
-    if path.exists() or path.is_symlink():
-        raise ValueError("output must be a fresh path")
-    if path.parent.resolve(strict=True) != path.parent or not path.parent.is_dir():
-        raise ValueError("output parent is not a physical directory")
-    print(path)
-except (OSError, RuntimeError, ValueError) as error:
-    raise SystemExit(f"ERROR: native ABI ratchet output: {error}")
-PY_NATIVE_ABI_RATCHET_OUTPUT
-}
-
-prepare_native_abi_ratchet_arguments() {
-    [ "$#" -ge 1 ] || fail "usage: ./scripts/dev-x86_64.sh native-abi-ratchet {check|validate-report} ..."
-    local mode="$1"
-    shift
-    local static_product='' dynamic_product='' static_preparation='' inventory_report='' output='' report=''
-    case "$mode" in
-        check|validate-report) ;;
-        *) fail "usage: ./scripts/dev-x86_64.sh native-abi-ratchet {check|validate-report} ..." ;;
+prepare_native_abi_exports_arguments() {
+    [ "$#" -eq 2 ] || fail "usage: ./scripts/dev-x86_64.sh native-abi-exports {check|update} REPORT"
+    case "$1" in
+        check|update) ;;
+        *) fail "usage: ./scripts/dev-x86_64.sh native-abi-exports {check|update} REPORT" ;;
     esac
-    if [ "$mode" = validate-report ]; then
-        [ "$#" -ge 1 ] && [ -n "$1" ] && [[ "$1" != -* ]] || fail "native-abi-ratchet validate-report requires REPORT"
-        report="$1"
-        shift
-    fi
-    while [ "$#" -gt 0 ]; do
-        [ "$#" -ge 2 ] && [ -n "$2" ] && [[ "$2" != -* ]] || fail "native ABI ratchet arguments require a value"
-        case "$1" in
-            --inventory-report)
-                [ -z "$inventory_report" ] || fail "--inventory-report may appear once"
-                inventory_report="$2"
-                ;;
-            --static-product)
-                [ -z "$static_product" ] || fail "--static-product may appear once"
-                static_product="$2"
-                ;;
-            --dynamic-product)
-                [ -z "$dynamic_product" ] || fail "--dynamic-product may appear once"
-                dynamic_product="$2"
-                ;;
-            --static-preparation)
-                [ -z "$static_preparation" ] || fail "--static-preparation may appear once"
-                static_preparation="$2"
-                ;;
-            --output)
-                [ "$mode" = check ] && [ -z "$output" ] || fail "--output is required once for check only"
-                output="$2"
-                ;;
-            *) fail "unknown native ABI ratchet argument: $1" ;;
-        esac
-        shift 2
-    done
-    [ -n "$inventory_report" ] && [ -n "$static_product" ] && [ -n "$dynamic_product" ] && [ -n "$static_preparation" ] || \
-        fail "native-abi-ratchet requires an inventory report, static/dynamic products, and static preparation receipt"
-    NATIVE_ABI_RATCHET_INVENTORY_REPORT="$(native_abi_inventory_input_path inventory-report "$inventory_report" file)" || exit 2
-    NATIVE_ABI_RATCHET_STATIC_PRODUCT="$(native_abi_inventory_input_path static-product "$static_product" directory)" || exit 2
-    NATIVE_ABI_RATCHET_DYNAMIC_PRODUCT="$(native_abi_inventory_input_path dynamic-product "$dynamic_product" directory)" || exit 2
-    NATIVE_ABI_RATCHET_STATIC_PREPARATION="$(native_abi_inventory_input_path static-preparation "$static_preparation" file)" || exit 2
-    if [ "$mode" = check ]; then
-        [ -n "$output" ] || fail "native-abi-ratchet check requires --output"
-        NATIVE_ABI_RATCHET_OUTPUT="$(native_abi_ratchet_output_path "$output")" || exit 2
-        NATIVE_ABI_RATCHET_ARGUMENTS=(
-            check
-            --inventory-report "$NATIVE_ABI_RATCHET_INVENTORY_REPORT"
-            --static-product "$NATIVE_ABI_RATCHET_STATIC_PRODUCT"
-            --dynamic-product "$NATIVE_ABI_RATCHET_DYNAMIC_PRODUCT"
-            --static-preparation "$NATIVE_ABI_RATCHET_STATIC_PREPARATION"
-            --output "$NATIVE_ABI_RATCHET_OUTPUT"
-        )
-    else
-        [ -z "$output" ] || fail "native-abi-ratchet validate-report does not take --output"
-        NATIVE_ABI_RATCHET_REPORT="$(native_abi_inventory_input_path ratchet-report "$report" file)" || exit 2
-        NATIVE_ABI_RATCHET_ARGUMENTS=(
-            validate-report "$NATIVE_ABI_RATCHET_REPORT"
-            --inventory-report "$NATIVE_ABI_RATCHET_INVENTORY_REPORT"
-            --static-product "$NATIVE_ABI_RATCHET_STATIC_PRODUCT"
-            --dynamic-product "$NATIVE_ABI_RATCHET_DYNAMIC_PRODUCT"
-            --static-preparation "$NATIVE_ABI_RATCHET_STATIC_PREPARATION"
-        )
-    fi
+    translate_owned_posix_product "$2" receipt-file >/dev/null || exit 2
+    NATIVE_ABI_EXPORTS_ARGUMENTS=("$1" "$(readlink -f -- "$2")")
 }
 
 prepare_owned_posix_family_arguments() {
@@ -6319,11 +6231,8 @@ case "$command" in
     native-abi-inventory-test)
         [ "$#" -eq 0 ] || fail "native-abi-inventory-test takes no arguments"
         ;;
-    native-abi-ratchet)
-        [ "$#" -ge 1 ] || fail "native-abi-ratchet requires check or validate-report"
-        ;;
-    native-abi-ratchet-test)
-        [ "$#" -eq 0 ] || fail "native-abi-ratchet-test takes no arguments"
+    native-abi-exports)
+        [ "$#" -ge 1 ] || fail "native-abi-exports requires check or update"
         ;;
     routine-c-abi-matrix)
         [ "$#" -eq 1 ] || fail "routine-c-abi-matrix requires exactly one family id"
@@ -6538,9 +6447,9 @@ case "$command" in
         prepare_native_abi_elf_facts_arguments "$@"
         set -- "${NATIVE_ABI_ELF_FACTS_ARGUMENTS[@]}"
         ;;
-    native-abi-ratchet)
-        prepare_native_abi_ratchet_arguments "$@"
-        set -- "${NATIVE_ABI_RATCHET_ARGUMENTS[@]}"
+    native-abi-exports)
+        prepare_native_abi_exports_arguments "$@"
+        set -- "${NATIVE_ABI_EXPORTS_ARGUMENTS[@]}"
         ;;
     perf-c)
         prepare_native_c_performance_arguments "$@"
@@ -6685,16 +6594,13 @@ case "$command" in
             run_in_native_abi_elf_facts_container python3 -B /workspace/compat/x86_64/native_abi_elf_facts.py "$@"
         fi
         ;;
-    native-abi-ratchet)
-        # The ratchet first invokes the inventory's public retained-evidence
-        # reader.  This host-only path deliberately executes no ELF tool or
-        # compiler; native collection remains native-abi-inventory collect.
-        python3 -B "$ROOT_DIR/compat/x86_64/native_abi_ratchet.py" "$@"
+    native-abi-exports)
+        python3 -B "$ROOT_DIR/compat/x86_64/native_abi_exports.py" "$@"
         ;;
     abi-differential-evidence)
         # The gate evaluates this set in the pinned image at /workspace, and
-        # the ratchet report it produces records checkout paths, so assembly
-        # runs there too. It compiles and executes nothing.
+        # the reports it binds record checkout paths, so assembly runs there
+        # too. It compiles and executes nothing.
         ensure_image
         run_in_network_none_container python3 -B /workspace/compat/x86_64/abi_differential_evidence.py "$@"
         ;;
@@ -6781,12 +6687,6 @@ case "$command" in
             run_in_public_data_ordinary_link_container \
                 python3 -B /workspace/compat/x86_64/public_data_ordinary_link_evidence.py "$@"
         fi
-        ;;
-    native-abi-ratchet-test)
-        ensure_image
-        run_in_network_none_container python3 -B -m unittest \
-            compat/x86_64/tests/test_native_abi_ratchet.py \
-            compat/x86_64/tests/test_native_abi_ratchet_dispatcher.py
         ;;
     perf-c)
         if [ "$1" = check ]; then

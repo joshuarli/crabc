@@ -1,19 +1,21 @@
 #!/usr/bin/env python3
 """Bind one current-source ABI-differential evidence set for its gate.
 
-The `compat.abi-differential` gate family names five retained leaf reports:
-the native ABI inventory, complete ELF facts, the public-dynamic ratchet, the
+The `compat.abi-differential` gate family names five leaf checks: the native
+ABI inventory, complete ELF facts, the reviewed native x86 export delta, the
 compiler declaration inventory, and the ordinary public-data link receipt.
-Every one of them is replayed only against explicit products, so a gate reader
-cannot validate one of them from its path alone.
+Four of them are retained reports; the export delta is read from the inventory
+and the tracked file, so it has no separate report. Every report is replayed
+only against explicit products, so a gate reader cannot validate one from its
+path alone.
 
-`assemble` takes the products and the four natively collected reports,
-produces the ratchet check from them into the set directory, and writes
-`abi-evidence.json`; `validate` replays every leaf reader against it. Assembly
-and gate evaluation both run in the pinned image: the ratchet report records
-its inputs by checkout path, so a set built on the host would not replay at
-`/workspace`. The receipt holds only checkout-relative paths, byte hashes and
-the collecting source revision; it restates no leaf result.
+`assemble` takes the products and the four natively collected reports, checks
+the inventory against the reviewed export delta, and writes `abi-evidence.json`;
+`validate` replays every leaf reader against it. Assembly and gate evaluation
+both run in the pinned image: the reports record their inputs by checkout path,
+so a set built on the host would not replay at `/workspace`. The receipt holds
+only checkout-relative paths, byte hashes and the collecting source revision;
+it restates no leaf result.
 `qualification_gates.py` publishes it and, on every evaluation, calls the
 per-leaf functions below, which rerun the owning leaf reader. A component that
 no longer replays, a changed report byte, or a product built from another
@@ -43,7 +45,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import native_abi_inventory as inventory  # noqa: E402
 import source_seal  # noqa: E402
 
-SCHEMA = "crabc.x86_64-abi-differential-evidence/v2"
+SCHEMA = "crabc.x86_64-abi-differential-evidence/v3"
 RECEIPT_NAME = "abi-evidence.json"
 OUTPUT_PARENT = ROOT / ".work" / "x86_64" / "abi-differential"
 
@@ -51,11 +53,9 @@ INPUT_KINDS = {"static_product": "directory", "static_preparation": "file", "dyn
 REPORTS = (
     "native_abi_inventory",
     "native_abi_elf_facts",
-    "native_abi_ratchet",
     "header_declaration_inventory",
     "public_data_ordinary_link",
 )
-# Reports collected by their own native commands; assembly produces the rest.
 COLLECTED_REPORTS = (
     "native_abi_inventory",
     "native_abi_elf_facts",
@@ -185,17 +185,11 @@ def read_elf_facts(evidence: EvidenceSet) -> str:
     return f"complete ELF facts replay for {len(report['artifacts'])} placements"
 
 
-def read_ratchet(evidence: EvidenceSet) -> str:
-    import native_abi_ratchet
+def read_exports(evidence: EvidenceSet) -> str:
+    import native_abi_exports
 
-    report = native_abi_ratchet.validate_check_report(
-        evidence.reports["native_abi_ratchet"],
-        inventory_report=evidence.reports["native_abi_inventory"],
-        **evidence.product_arguments,
-    )
-    violations = {key: value for key, value in report["violations"].items() if value}
-    require(report["passed"] is True and not violations, f"public-dynamic ratchet violations: {violations}")
-    return "public-dynamic regression floor holds with no violations"
+    native_abi_exports.require_matching(evidence.reports["native_abi_inventory"])
+    return "reviewed native x86 export delta matches the replayed inventory"
 
 
 def read_declarations(evidence: EvidenceSet) -> str:
@@ -228,7 +222,7 @@ def read_public_data(evidence: EvidenceSet) -> str:
 LEAF_READERS = {
     "native_abi_inventory": read_inventory,
     "native_abi_elf_facts": read_elf_facts,
-    "native_abi_ratchet": read_ratchet,
+    "native_abi_exports": read_exports,
     "header_declaration_inventory": read_declarations,
     "public_data_ordinary_link": read_public_data,
 }
@@ -252,7 +246,7 @@ def validate_receipt(root: Path, path: Path) -> dict[str, Any]:
 
 
 def assemble(arguments: argparse.Namespace) -> Path:
-    import native_abi_ratchet
+    import native_abi_exports
 
     output = Path(os.path.abspath(arguments.output))
     require(output.parent == OUTPUT_PARENT or output.parent.is_relative_to(OUTPUT_PARENT),
@@ -261,11 +255,9 @@ def assemble(arguments: argparse.Namespace) -> Path:
     source = current_source()
     inputs = {name: Path(os.path.abspath(getattr(arguments, name))) for name in INPUT_KINDS}
     reports = {name: Path(os.path.abspath(getattr(arguments, name))) for name in COLLECTED_REPORTS}
+    native_abi_exports.require_matching(reports["native_abi_inventory"])
     OUTPUT_PARENT.mkdir(parents=True, exist_ok=True)
     output.mkdir()
-    reports["native_abi_ratchet"] = native_abi_ratchet.check(
-        reports["native_abi_inventory"], output=output / "ratchet", **inputs,
-    )
     record = {
         "schema": SCHEMA,
         "source": source,
@@ -305,7 +297,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         return 0
     except Exception as error:  # noqa: BLE001 - leaf reader errors are reported, not traced
         if not isinstance(error, (EvidenceError, OSError)) and type(error).__name__ not in (
-            "RatchetError", "InventoryError",
+            "ExportsError", "InventoryError",
         ):
             raise
         print(f"ABI-differential evidence: {error}", file=sys.stderr)

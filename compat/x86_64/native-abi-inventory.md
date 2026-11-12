@@ -3,7 +3,7 @@
 `compat/x86_64/native_abi_inventory.py` records a source-bound observation of
 the fixed musl 1.2.6 x86-64 ABI and one selected owned static/dynamic product
 pair. It is an input to the still-planned `compat.abi-differential` family.
-The report is measurement only: it neither defines a symbol ratchet nor
+The report is measurement only: it neither defines a reviewed export delta nor
 establishes compatibility, family completion, promotion, or public support.
 
 The collector consumes a prepared-unqualified static product and its static
@@ -67,7 +67,8 @@ evidence. The corresponding collector, replay reader, and focused tests are
 Complete symbol and archive facts are available through opt-in parsing APIs in
 `native_abi_inventory.py`. They are prerequisites for a future versioned
 collector and selection contract; the v1 collector, command roster, public
-projection, static `nm` projection, report reader and ratchet remain unchanged.
+projection, static `nm` projection, report reader and reviewed export delta
+remain unchanged.
 
 - `parse_dynamic_symbol_rows(raw)` requires exactly one complete `.dynsym`
   table and retains every row, including the unnamed zero row, local and hidden
@@ -136,4 +137,4 @@ qualify runtime products, select exports, or change any promotion flag.
 The separate [ELF fact supplement](native-abi-elf-facts.md) now binds these
 complete projections to the finite libc/loader/CRT/builtins placement roster.
 It requires a fresh same-current-collector v1 inventory and preserves this v1
-report and its measurement/ratchet meaning.
+report and its measurement meaning.

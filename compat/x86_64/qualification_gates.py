@@ -592,7 +592,7 @@ ABI_EVIDENCE_ROWS = {
     "--dynamic-product DYNAMIC_PRODUCT --static-preparation STATIC_PREPARATION "
     "--output .work/x86_64/native-abi-inventory/REPORT": "native_abi_inventory",
     "./scripts/dev-x86_64.sh native-abi-elf-facts": "native_abi_elf_facts",
-    "./scripts/dev-x86_64.sh native-abi-ratchet": "native_abi_ratchet",
+    "./scripts/dev-x86_64.sh native-abi-exports": "native_abi_exports",
     "./scripts/dev-x86_64.sh header-declaration-inventory": "header_declaration_inventory",
     "./scripts/dev-x86_64.sh public-data-ordinary-link": "public_data_ordinary_link",
 }
