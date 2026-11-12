@@ -21,7 +21,7 @@ CXX_PROBE = ROOT / "compat/x86_64/fcntl_event_header_topology_probe.cpp"
 # so this private x86 repair cannot change the frozen AArch64 header surface.
 HEADER_FORMS = {
     "include/fcntl.h": (
-        "22fb6921bcfbfd1ca74cdbea97ad811c9ce3df9ec410f6c9dedacd1da3d9680c",
+        "02f3c18a6cc9303d9414bbbe3f2e42d8bc7a3e210ee329323887c46111f6cad2",
         "ae7ddb0b790ea5b6a564e1125312d9cab150d1cdacfad7c9d63560a8340a5043",
     ),
     "include/sys/fcntl.h": (

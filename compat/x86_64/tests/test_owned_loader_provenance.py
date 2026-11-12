@@ -118,7 +118,7 @@ class OwnedLoaderProvenanceTests(unittest.TestCase):
             "run",
             producer.common.PINNED_TOOLCHAIN,
             "cargo",
-            "build",
+            "rustc",
             "--locked",
             "-p",
             "crabc-ldso",
@@ -132,6 +132,7 @@ class OwnedLoaderProvenanceTests(unittest.TestCase):
             "--no-default-features",
             "--features",
             producer.LOADER_FEATURE,
+            "--", "--emit=obj",
         ]
         return producer.loader_provenance(
             stage,
@@ -179,6 +180,7 @@ class OwnedLoaderProvenanceTests(unittest.TestCase):
                 "rust-toolchain.toml",
                 ".cargo/config.toml",
                 "ldso/Cargo.toml",
+                "ldso/build.rs",
                 "compat/x86_64/dynamic_product_contract.py",
             ],
         )
@@ -272,6 +274,15 @@ class OwnedLoaderProvenanceTests(unittest.TestCase):
 
     def test_inventory_accepts_selected_loader_cargo_and_rejects_tampering(self) -> None:
         record = self.collect()
+        record["compiler_object"] = {
+            "path": "$BUILD/loader/loader.o",
+            "sha256": producer.common.sha256_file(self.compiler_artifact),
+            "size": self.compiler_artifact.stat().st_size,
+        }
+        record["merged_link"] = {
+            "argv": ["$BUILD/loader/loader.o", "-o", "$BUILD/installed/usr/lib/libc.so"],
+            "output_sha256": record["artifact"]["sha256"],
+        }
         metadata = self.installed_artifact.parents[1] / "share/crabc"
         metadata.mkdir(parents=True)
         provenance = metadata / "loader.provenance.json"

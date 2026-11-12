@@ -32,7 +32,8 @@ RUNNERS = {
     ),
     "syslog": (
         ROOT / "compat/x86_64/run_owned_syslog.sh",
-        'python3 -B - "$ROOT" "$family" "$mode" "$candidate" "$receipt" "$candidate.provider-symbols" <<\'PY\'\n',
+        'python3 -B - "$ROOT" "$family" "$mode" "$candidate" "$receipt" \\\n'
+        '        "$candidate.provider-symbols" "$provider" <<\'PY\'\n',
     ),
     "error-reporting": (
         ROOT / "compat/x86_64/run_owned_error_reporting.sh",
@@ -176,7 +177,7 @@ class OwnedDynamicReceiptConsumerTests(unittest.TestCase):
             "io-cancellation": [ROOT, self.product, "pie", self.candidate, INTERPRETER],
             "process-control": [ROOT, self.product, self.candidate, "pie", self.object, self.receipt_path],
             "driver-source-inputs": [ROOT, self.receipt_path, self.candidate],
-            "syslog": [ROOT, "dynamic", "pie", self.candidate, self.receipt_path, self.provider],
+            "syslog": [ROOT, "dynamic", "pie", self.candidate, self.receipt_path, self.provider, self.provider],
             "error-reporting": [ROOT, "dynamic", "pie", self.candidate, self.receipt_path, self.provider],
         }[label]
         return subprocess.run(

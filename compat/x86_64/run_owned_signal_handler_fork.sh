@@ -50,7 +50,7 @@ root, static, dynamic = map(Path, sys.argv[1:])
 sys.path.insert(0, str(root / 'compat/x86_64'))
 from owned_posix_product_evidence import ProductEvidenceError, _validate_static_product, _validate_dynamic_product
 from owned_dynamic_qualification import QualificationError, product_identity, read
-from static_product_contract import git, source_digest
+import source_seal
 for product, name, validate in ((static, 'static', _validate_static_product), (dynamic, 'dynamic', _validate_dynamic_product)):
     try:
         manifest, _ = validate(product)
@@ -58,14 +58,16 @@ for product, name, validate in ((static, 'static', _validate_static_product), (d
         raise SystemExit(f'signal-handler fork {name} product payload is invalid: {error}') from error
     if name == 'static':
         static_manifest = json.loads(manifest.read_text())
-if git('status', '--porcelain', '--untracked-files=all'):
-    raise SystemExit('signal-handler fork supplied pair requires clean source')
+try:
+    source_seal.require_clean(root)
+except source_seal.SourceSealError as error:
+    raise SystemExit(f'signal-handler fork supplied pair requires clean source: {error}') from error
 try:
     product_identity(dynamic)
 except QualificationError as error:
     raise SystemExit(f'signal-handler fork dynamic product identity is invalid: {error}') from error
 state = read(dynamic / 'share/crabc/dynamic-product-state.json')
-if static_manifest.get('source_sha256') != state['source_sha256'] or state['source_sha256'] != source_digest():
+if static_manifest.get('source_sha256') != state['source_sha256'] or state['source_sha256'] != source_seal.product_source_digest(root):
     raise SystemExit('signal-handler fork supplied product source identities differ')
 if static_manifest.get('allocator_backend') != state['allocator_backend']:
     raise SystemExit('signal-handler fork supplied product allocator selections differ')
