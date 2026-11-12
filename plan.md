@@ -902,13 +902,24 @@ owner decision.
   evidence must be produced by its own current commands, not inherited from a
   parked receipt.
 - **D20 — `libc.so` carries one definition of each `mem*` symbol.** On
-  2026-11-11 the owner chose removal over acceptance: the 9–40-byte LOCAL
-  `memcpy`, `memset`, `memmove`, `memcmp` and `bcmp` bodies near `0x14ff80`
-  are dead weight, not a wrong binding, and the allocator-boundary reader is
-  right to flag them. They are not from `libcrabc-builtins.a`; the fix first
-  identifies the contributing link member (suspected: Rust
-  `compiler_builtins` weak shims) and removes it from the link. The reader
-  stays unchanged.
+  2026-11-11 the owner chose removal over acceptance. The LOCAL `memcpy`,
+  `memset`, `memmove`, `memcmp` and `bcmp` bodies near `0x14ff80` are the
+  loader's private copies in `ldso/src/x86_64_initial_graph.rs`, kept from the
+  split-image era; loader code reached them through its own GOT slots. They
+  are removed so the loader uses libc's definitions. Self-relocation makes no
+  `mem*` call. The allocator-boundary reader stays unchanged.
+- **D21 — hardening outranks the startup instruction ratio.** On 2026-11-11
+  the owner kept eager binding and every loader hardening check. `startup`,
+  `dlopen_graph` and `loader_dynamic_tls_growth` instruction ratios are
+  reported against musl but no longer gate; the CPU and memory bounds are
+  relaxed, with the new bound set before R3. The no-additional-syscalls rule
+  and the 1.10 ratio for every other row stand. R1 closes on this decision.
+- **D22 — qualification checks behavior, not linker output.** On 2026-11-11
+  the owner directed that R2 machinery be cut to checks a caller would notice:
+  a reader that only asserts ELF forms, seals or another receipt's structure
+  is deleted rather than repaired, and a behavior test replaces it where none
+  exists. Shell and Python machinery is simplified along the way; the frozen
+  `compat/allocator/` harness is excluded.
 
 ## Runtime hardening
 
