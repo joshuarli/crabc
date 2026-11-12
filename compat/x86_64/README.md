@@ -31,6 +31,7 @@ command.
 ```sh
 ./scripts/dev-x86_64.sh campaign-status             # frozen baseline, ledger and family status
 ./scripts/dev-x86_64.sh campaign-family FAMILY      # one family's blockers and evidence commands
+python3 -B scripts/test_python.py --directory compat/x86_64/tests --jobs 4
 scripts/lanes/rust-check.sh python3 -B scripts/test_python.py --directory compat/x86_64/tests --jobs 4
 scripts/lanes/rust-check.sh cargo check -q --locked -p <non-allocator-crate>
 ./scripts/dev-x86_64.sh core --cached               # crabc-core tests on a checkout-local Cargo target
@@ -38,9 +39,12 @@ scripts/lanes/rust-check.sh cargo check -q --locked -p <non-allocator-crate>
 
 Replace the crate placeholder with the touched crate; the helper's no-argument
 legacy sweep includes frozen allocator profiles. `scripts/test_python.py` runs isolated modules with immediate failure
-diagnostics and private logs under `.work/python-test-runs/`. Run it through
-`rust-check.sh` from a prepared worktree; a bare host run lacks the image's
-compilers and binutils. Modules listed in its `CASE_SHARDED_MODULES` (the
+diagnostics and private logs under `.work/python-test-runs/`. Dispatcher and
+container-launcher modules belong on the host; modules that compile or inspect
+objects belong in the image (`rust-check.sh` from a prepared worktree). Neither
+run alone is complete: at `234ff6cc3` about twenty modules fail only on the host
+for missing tools and eighteen only in the image for host paths or Docker, and
+none fails in both. Judge each module where it belongs. Modules listed in its `CASE_SHARDED_MODULES` (the
 parity ledger and the two slow POSIX evidence modules) are split into exact
 test-ID shards with fail-closed completion accounting, so each worker stays
 within the 300-second timeout. Select the nearest module while developing and reserve the full

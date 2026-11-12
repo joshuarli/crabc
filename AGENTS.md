@@ -77,17 +77,21 @@ frozen Rust allocator qualification commands.
 
 ```sh
 scripts/lanes/rust-check.sh cargo check -q --locked -p <non-allocator-crate>
-scripts/lanes/rust-check.sh python3 -B scripts/test_python.py --module <path/to/test_file.py>
+python3 -B scripts/test_python.py --module <dispatcher_test.py>
+scripts/lanes/rust-check.sh python3 -B scripts/test_python.py --module <toolchain_test.py>
 python3 compat/x86_64/validate_parity_ledger.py
 ./scripts/dev-x86_64.sh campaign-status
 ./scripts/dev-x86_64.sh qualification-candidate --work .work/x86_64/feature-complete --profile correctness
 ./scripts/dev-x86_64.sh --help
 ```
 
-Run Python harness tests through `rust-check.sh` in a worktree prepared by
-`scripts/lanes/prepare-worktree.sh`: many modules need the image's `gcc`,
-`readelf`, `nm`, `ar` and pinned Rust toolchain, so a bare host run reports
-missing-tool failures that hide real ones.
+Python harness modules have two homes. Modules that drive the dispatcher or
+container launcher (`*_dispatch*`, promotion phases, the resolver network
+gate) run on the host. Modules that compile or inspect objects need the
+image's `gcc`, binutils and pinned Rust toolchain; run them through
+`rust-check.sh` from a worktree prepared by `scripts/lanes/prepare-worktree.sh`.
+A missing-tool failure on the host or a path/Docker failure in the image is
+the wrong environment, not a pass; rerun the module where it belongs.
 The placeholders above require the actual touched crate/test. Full legacy
 profile checks are regression tools, not permission to run allocator campaigns.
 The full correctness command is the integrated milestone, not a per-edit loop.
