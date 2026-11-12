@@ -86,6 +86,72 @@ fn posix_rules_reverse_offsets_and_change_at_utc_boundaries() {
     assert_eq!(east_info.abbreviation(), b"+03");
 }
 
+fn assert_offset(zone: &TimeZone, at: UnixTime, offset: i32, daylight: bool) {
+    let info = zone.offset_at(at);
+    assert_eq!(info.offset().seconds_east_of_utc(), offset, "offset at {}", at.seconds());
+    assert_eq!(info.is_daylight_saving(), daylight, "daylight at {}", at.seconds());
+}
+
+#[test]
+fn posix_rule_start_spills_back_into_the_previous_year() {
+    // The 2023 start, first Sunday of January minus 167 hours, falls on
+    // 2022-12-25 01:00 UTC; the 2022 end is 2022-06-04 23:00 UTC.
+    let backward = TimeZone::from_posix_tz(b"STD0DST,M1.1.0/-167,M6.1.0/0")
+        .expect("negative extended transition time");
+    assert_offset(&backward, instant(2022, 6, 4, 22, 59, 59), 3_600, true);
+    assert_offset(&backward, instant(2022, 6, 4, 23, 0, 0), 0, false);
+    assert_offset(&backward, instant(2022, 12, 25, 0, 59, 59), 0, false);
+    assert_offset(&backward, instant(2022, 12, 25, 1, 0, 0), 3_600, true);
+    assert_offset(&backward, instant(2022, 12, 31, 0, 0, 0), 3_600, true);
+    assert_offset(&backward, instant(2023, 1, 1, 12, 0, 0), 3_600, true);
+}
+
+#[test]
+fn posix_rule_end_spills_forward_into_the_next_year() {
+    // The 2023 end, last Sunday of December (the 31st) plus 167 wall hours,
+    // falls on 2024-01-06 22:00 UTC; the 2024 start is 2024-06-02 00:00 UTC.
+    let forward = TimeZone::from_posix_tz(b"STD0DST,M6.1.0/0,M12.5.0/167")
+        .expect("positive extended transition time");
+    assert_offset(&forward, instant(2023, 12, 31, 12, 0, 0), 3_600, true);
+    assert_offset(&forward, instant(2024, 1, 3, 0, 0, 0), 3_600, true);
+    assert_offset(&forward, instant(2024, 1, 6, 21, 59, 59), 3_600, true);
+    assert_offset(&forward, instant(2024, 1, 6, 22, 0, 0), 0, false);
+    assert_offset(&forward, instant(2024, 6, 1, 23, 59, 59), 0, false);
+    assert_offset(&forward, instant(2024, 6, 2, 0, 0, 0), 3_600, true);
+}
+
+#[test]
+fn posix_southern_rule_end_spills_back_after_the_start() {
+    // Southern-hemisphere order: the 2023 end, first Sunday of January minus
+    // 167 wall hours at +11, falls on 2022-12-24 14:00 UTC, after the 2022
+    // start on 2022-10-01 16:00 UTC.
+    let southern = TimeZone::from_posix_tz(b"STD-10DST,M10.1.0/2,M1.1.0/-167")
+        .expect("southern extended transition time");
+    assert_offset(&southern, instant(2022, 10, 1, 15, 59, 59), 36_000, false);
+    assert_offset(&southern, instant(2022, 11, 15, 0, 0, 0), 39_600, true);
+    assert_offset(&southern, instant(2022, 12, 24, 13, 59, 59), 39_600, true);
+    assert_offset(&southern, instant(2022, 12, 24, 14, 0, 0), 36_000, false);
+    assert_offset(&southern, instant(2022, 12, 28, 12, 0, 0), 36_000, false);
+}
+
+#[test]
+fn tzif_continuation_applies_transitions_that_spill_into_adjacent_years() {
+    let types = [(0, false, 0)];
+    let abbreviations = b"STD\0";
+    let final_transition = instant(2022, 7, 1, 0, 0, 0).seconds();
+    let mut bytes = Vec::new();
+    push_header(&mut bytes, b'2', [0, 0, 0, 0, 1, abbreviations.len() as i32]);
+    push_block(&mut bytes, false, &[], &[], &types, abbreviations, &[]);
+    push_header(&mut bytes, b'2', [0, 0, 0, 1, 1, abbreviations.len() as i32]);
+    push_block(&mut bytes, true, &[final_transition], &[0], &types, abbreviations, &[]);
+    bytes.extend_from_slice(b"\nSTD0DST,M1.1.0/-167,M6.1.0/0\n");
+
+    let zone = TimeZone::from_tzif(&bytes).expect("continuation agrees with the final type");
+    assert_offset(&zone, instant(2022, 12, 25, 0, 59, 59), 0, false);
+    assert_offset(&zone, instant(2022, 12, 31, 0, 0, 0), 3_600, true);
+    assert_eq!(zone.offset_at(instant(2022, 12, 31, 0, 0, 0)).abbreviation(), b"DST");
+}
+
 #[test]
 fn posix_julian_day_of_year_and_transition_times_are_distinct() {
     let julian = TimeZone::from_posix_tz(b"STD0DST,J60/0,J300/0").expect("Julian transition rules");

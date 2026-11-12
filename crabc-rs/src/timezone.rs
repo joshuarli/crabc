@@ -192,15 +192,24 @@ impl PosixZone {
         };
         let start = self.start.expect("daylight rules are validated together");
         let end = self.end.expect("daylight rules are validated together");
+        // A rule time spans -167..=167 hours and the offset adds at most 25
+        // more, so a rule year's transitions stay within eight days of that
+        // year. Both of year - 2's transitions precede `seconds`, and none of
+        // year + 2's can.
         let year = year_from_unix_seconds(seconds);
-        let start_at = transition_seconds(year, start, self.standard.offset, self.standard.offset);
-        let end_at = transition_seconds(year, end, self.standard.offset, daylight.offset);
         let current = seconds as i128;
-        let in_daylight = if start_at < end_at {
-            current >= start_at && current < end_at
-        } else {
-            current >= start_at || current < end_at
-        };
+        let mut latest: Option<(i128, bool)> = None;
+        for rule_year in year - 2..=year + 1 {
+            let start_at =
+                transition_seconds(rule_year, start, self.standard.offset, self.standard.offset);
+            let end_at = transition_seconds(rule_year, end, self.standard.offset, daylight.offset);
+            for (at, enters_daylight) in [(end_at, false), (start_at, true)] {
+                if at <= current && latest.is_none_or(|(previous, _)| at >= previous) {
+                    latest = Some((at, enters_daylight));
+                }
+            }
+        }
+        let (_, in_daylight) = latest.expect("year - 2 transitions precede the instant");
         if in_daylight {
             self.info_for(daylight)
         } else {
