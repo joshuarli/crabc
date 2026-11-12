@@ -170,9 +170,17 @@ disposable-process Rust handler regression, the no-std
 raw half is the exact syscall ABI proof and verifies a live worker's pending
 signal, handler TID, and delivery. Musl's adjacent `pthread_kill` behavior
 uses `tkill`, so it does not imply a selected musl `tgkill` API. This selects
-no generic process/group signaling, signal masks, queues, `signalfd`,
-signal-management framework, C ABI or errno TLS, pthread cancellation, or
-public x86 support.
+no signal masks, queues, `signalfd`, signal-management framework, C ABI or
+errno TLS, pthread cancellation, or public x86 support.
+
+Process-directed delivery uses Linux `kill=62` through `process_x86_64.rs`:
+`process::{kill_process, kill_process_group, kill_current_process_group}` and
+their signal-zero `test_kill_*` probes take typed positive `Pid` and `Signal`
+values and return direct `ESRCH`, `EPERM` and `EINVAL`. A bare PID can name a
+different process after its owner reaps it, so `Child::kill(&self, signal)`
+signals an owned, therefore unreaped, child while keeping its wait owner.
+`crabc-rs/tests/x86_64_process_kill.rs` covers self and group probes, absent
+targets, owner-retaining delivery and PID-addressed delivery.
 
 The same private x86 lane separately selects `memory.mapping` through
 `mm_x86_64.rs`: unsafe `mm::{mmap, mmap_anonymous, mprotect, munmap}` invoke

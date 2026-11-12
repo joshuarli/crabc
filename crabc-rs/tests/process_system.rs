@@ -5,8 +5,6 @@ fn process_thread_and_system_identity_use_direct_kernel_state() {
     let pid = process::getpid();
     assert!(pid.as_raw_pid() > 0);
     assert!(process::getppid().map_or(true, |parent| parent.as_raw_pid() > 0));
-    // The x86 facade selects thread-directed signals only; process kill is a recorded gap.
-    #[cfg(not(target_arch = "x86_64"))]
     process::test_kill_process(pid).expect("the current process accepts a signal-zero probe");
     assert_eq!(
         process::getpgid(None).expect("get current process group"),

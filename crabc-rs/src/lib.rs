@@ -99,9 +99,9 @@ pub mod collections;
 // alloc-gated one-shot
 // `process::{PreparedExec, FdAction, SpawnOptions, Child, WaitOptions,
 // WaitStatus}` prepared-child ownership boundary (not generic fork/exec/wait
-// control), `rand`, `signal` one-argument actions plus direct current-thread
-// `raise` and same-process exact-thread `kill_thread` delivery (not generic
-// process signaling),
+// control), Linux `kill` process, process-group and signal-zero probes plus
+// `Child::kill`, `rand`, `signal` one-argument actions plus direct
+// current-thread `raise` and same-process exact-thread `kill_thread` delivery,
 // `stdio`, bounded `system::{uname, sysinfo, load_average}` plus direct owned
 // `system::inotify::{Inotify, WatchDescriptor, Event, Events}` caller-buffered
 // watch/event records, `text`, bounded

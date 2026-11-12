@@ -491,6 +491,16 @@ impl Child {
     pub fn wait(self, options: WaitOptions) -> Result<Option<WaitStatus>> {
         wait_child(self.pid, options)
     }
+
+    /// Sends `signal` to this child while retaining its unique wait owner.
+    ///
+    /// The child remains unreaped while this owner exists, so its PID cannot
+    /// have been reused. A child that has already exited but is not yet
+    /// waited for still accepts the signal as a zombie.
+    #[inline]
+    pub fn kill(&self, signal: crate::signal::Signal) -> Result<()> {
+        kill_process(self.pid, signal)
+    }
 }
 
 #[cfg(feature = "alloc")]
@@ -1913,6 +1923,48 @@ pub fn getpgrp() -> Pid {
         Ok(raw) => unsafe { Pid::from_raw_unchecked(raw) },
         Err(_) => panic!("Linux getpgid(0) syscall failed"),
     }
+}
+
+/// Sends `signal` to one process through Linux `kill`.
+///
+/// A bare PID can name a different process once its original owner has been
+/// reaped; prefer [`Child::kill`] for a child this process owns.
+#[inline]
+pub fn kill_process(pid: Pid, signal: crate::signal::Signal) -> Result<()> {
+    crabc_core::process::kill(pid.as_raw_pid(), signal.as_raw())
+}
+
+/// Tests whether a process exists and may receive a signal, without sending one.
+#[inline]
+pub fn test_kill_process(pid: Pid) -> Result<()> {
+    crabc_core::process::kill(pid.as_raw_pid(), 0)
+}
+
+/// Sends `signal` to every member of the process group `pgid`.
+#[inline]
+pub fn kill_process_group(pgid: Pid, signal: crate::signal::Signal) -> Result<()> {
+    crabc_core::process::kill(-pgid.as_raw_pid(), signal.as_raw())
+}
+
+/// Tests whether the process group `pgid` exists and may receive a signal,
+/// without sending one.
+#[inline]
+pub fn test_kill_process_group(pgid: Pid) -> Result<()> {
+    crabc_core::process::kill(-pgid.as_raw_pid(), 0)
+}
+
+/// Sends `signal` to every member of the caller's process group, including
+/// the caller.
+#[inline]
+pub fn kill_current_process_group(signal: crate::signal::Signal) -> Result<()> {
+    crabc_core::process::kill(0, signal.as_raw())
+}
+
+/// Tests whether the caller's process group may receive a signal, without
+/// sending one.
+#[inline]
+pub fn test_kill_current_process_group() -> Result<()> {
+    crabc_core::process::kill(0, 0)
 }
 
 /// Returns a session ID. `None` selects the calling process.
