@@ -1,5 +1,15 @@
 Prefix: CRAB
-Next: 3
+Next: 4
+### CRAB-3 · P2 · Restore compiling crabc-rs integration tests on x86-64
+
+- **Area:** Rust facade
+- **Where:** crabc-rs/tests/{accessat,core_os,descriptor,directory,directory_position,event_time,fcntl_getlk,futimesat,pause,ppoll,process_system,pty_session,sleep,statx,terminal_control,termios_exclusive,termios_special_codes,time_realtime_millis,time_timers,time_timespec_get,truncate,ttyname}.rs; crabc-rs/src/lib.rs:136-139
+- **Problem:** Priority assumed. At bdbaf8874, 22 of 250 crabc-rs test targets fail to compile in the pinned x86 image, so `cargo test -p crabc-rs --lib --tests` stops before running any of the remaining suite. They are ungated and call the generic module APIs, while x86 selects `fs_x86_64.rs` and the other x86 modules: `process::ForkResult`/`fork_raw` (14 uses), `process::Signal`, `process::setsid`, `pty::ioctl_tiocgptpeer`, fields on `Result<Timespec, Errno>`, `fs::AtFlags` where x86 `unlinkat` takes `UnlinkAtFlags`, and a `PathArg` bound. The behaviors these tests cover are unverified on the active target.
+- **Recommendation:** Per target, port the test to the x86 facade API when that API provides the behavior, or gate it with `#![cfg(not(target_arch = "x86_64"))]` and name the x86 test that covers the same contract. Do not add generic-API shims to the x86 facade to satisfy old tests. The paused AArch64 build of these files must keep compiling unchanged. Finish with the whole suite compiling and running in the image.
+- **Fix with:** test-audit
+- **Effort:** M
+
+
 ### CRAB-2 · P3 · Align child wait options with ownership after nonterminal results
 
 - **Area:** Process ownership
