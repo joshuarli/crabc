@@ -45,6 +45,7 @@ fn x86_64_owned_child_is_signaled_and_then_reaped_by_its_owner() {
     let status = child
         .wait(process::WaitOptions::empty())
         .expect("wait for the signaled child")
+        .reaped()
         .expect("a blocking wait reports the termination");
     assert!(status.signaled());
     assert_eq!(status.terminating_signal(), Some(9));

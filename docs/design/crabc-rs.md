@@ -527,20 +527,27 @@ has no Linux PTY meaning.
 ## Prepared child ownership
 
 `process::PreparedExec::spawn` transfers one native child owner into
-`process::Child`. The owner is deliberately neither `Clone` nor `Copy`, and
-`Child::wait` consumes it, so a PID cannot be duplicated into multiple safe
-wait attempts. The existing prepared error-pipe, descriptor-action, fork,
-exec, and wait behavior remains bounded to explicit caller inputs; nonblocking
-polling, `Command`/`PATH` search, `posix_spawn` attributes, and process-lifetime
-policy are separate contracts.
+`process::Child`. The owner is deliberately neither `Clone` nor `Copy`, so a
+PID cannot be duplicated into multiple safe wait attempts. `Child::wait`
+consumes the owner only when it reaps the child: an exit or terminating signal
+returns `WaitOutcome::Reaped(status)`, while `NOHANG` with no change returns
+`WaitOutcome::Running(child)`, a stop or continue report returns
+`WaitOutcome::Changed(child, status)`, and any non-`EINTR` error returns
+`WaitError`, which yields the owner through `into_child`. A returned owner does
+not prove the kernel child still exists if a raw or C wait reaped it. The
+existing prepared error-pipe, descriptor-action, fork, exec, and wait behavior
+remains bounded to explicit caller inputs; `Command`/`PATH` search,
+`posix_spawn` attributes, background reaping, and process-lifetime policy are
+separate contracts.
 
 The private Linux/x86-64 evidence lane separately admits that same alloc-gated
 ownership boundary in `crabc-rs/src/process_x86_64.rs`: parent-owned C-string
 and pointer preparation, `FdAction::{close, dup2}`, bounded `SpawnOptions`, a
-`CLOEXEC` error pipe relocated away from requested `dup2` targets, and one
-consuming `Child::wait`. Its internal fork-equivalent clone exists only inside
-`PreparedExec::spawn`; it does not expose generic x86 `fork`, direct `exec`,
-`waitpid`, `waitid`, polling/retry waits, C process APIs or `errno` TLS. The
+`CLOEXEC` error pipe relocated away from requested `dup2` targets, and the
+ownership-returning `Child::wait`. Its internal fork-equivalent clone exists
+only inside `PreparedExec::spawn`; it does not expose generic x86 `fork`,
+direct `exec`, `waitpid`, `waitid`, any-child selection, C process APIs or
+`errno` TLS. The
 native raw/pinned-musl child lifecycle evidence is a private parity slice, not
 public x86 platform support.
 

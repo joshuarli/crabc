@@ -43,7 +43,7 @@ fn x86_64_prepared_child_options_survive_exec_without_changing_parent() {
         let prepared = process::PreparedExec::new(executable.as_c_str(), &argv, &[mode]).unwrap()
             .with_options(options.signal_mask(&child_mask));
         assert_eq!(prepared.spawn().unwrap().wait(process::WaitOptions::empty())
-            .unwrap().unwrap().exit_status(), Some(0));
+            .unwrap().reaped().unwrap().exit_status(), Some(0));
     }
     let invalid = process::PreparedExec::new(executable.as_c_str(), &argv, &[]).unwrap()
         .with_options(process::SpawnOptions::new().new_session(true).process_group(None));

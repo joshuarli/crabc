@@ -98,7 +98,7 @@ pub mod collections;
 // snapshots (not C account APIs, NSS lookup, or enumeration state), and the
 // alloc-gated one-shot
 // `process::{PreparedExec, FdAction, SpawnOptions, Child, WaitOptions,
-// WaitStatus}` prepared-child ownership boundary (not generic fork/exec/wait
+// WaitStatus, WaitOutcome, WaitError}` prepared-child ownership boundary (not generic fork/exec/wait
 // control), Linux `kill` process, process-group and signal-zero probes plus
 // `Child::kill`, `rand`, `signal` one-argument actions plus direct
 // current-thread `raise` and same-process exact-thread `kill_thread` delivery,

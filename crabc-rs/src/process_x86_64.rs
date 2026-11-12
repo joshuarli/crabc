@@ -75,8 +75,8 @@ bitflags! {
     /// Options for waiting on one owned child process.
     ///
     /// These retain Linux's `wait4` encodings. [`Child::wait`] consumes its
-    /// owner for every result, including a `NOHANG` observation which returns
-    /// `None`; it is not a retry or supervision API.
+    /// owner only when it reaps the child; `NOHANG`, stop and continue reports
+    /// return the owner in [`WaitOutcome`]. It is not a supervision API.
     #[repr(transparent)]
     #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
     pub struct WaitOptions: u32 {
@@ -483,13 +483,25 @@ impl Child {
         self.pid
     }
 
-    /// Waits for this child, consuming its unique owner. `NOHANG` may return
-    /// `None`, while a state report returns its decoded wait status; either
-    /// result consumes the `Child` and cannot be waited a second time.
+    /// Waits for this child and returns its owner unless the wait reaped it.
+    ///
+    /// An exit or terminating signal reaps the child and consumes the owner.
+    /// `NOHANG` with no reportable change, and a stop or continue report
+    /// selected by `UNTRACED` or `CONTINUED`, return the same `Child` so it can
+    /// be waited again. Any other error also returns the owner with its
+    /// [`crate::Errno`]; that does not prove the kernel child still exists,
+    /// since a raw or C wait elsewhere in the process may have reaped it.
     /// Signal interruptions retry the same wait while retaining ownership.
     #[inline]
-    pub fn wait(self, options: WaitOptions) -> Result<Option<WaitStatus>> {
-        wait_child(self.pid, options)
+    pub fn wait(self, options: WaitOptions) -> core::result::Result<WaitOutcome, WaitError> {
+        match wait_child(self.pid, options) {
+            Ok(None) => Ok(WaitOutcome::Running(self)),
+            Ok(Some(status)) if status.stopped() || status.continued() => {
+                Ok(WaitOutcome::Changed(self, status))
+            }
+            Ok(Some(status)) => Ok(WaitOutcome::Reaped(status)),
+            Err(errno) => Err(WaitError { child: self, errno }),
+        }
     }
 
     /// Sends `signal` to this child while retaining its unique wait owner.
@@ -500,6 +512,67 @@ impl Child {
     #[inline]
     pub fn kill(&self, signal: crate::signal::Signal) -> Result<()> {
         kill_process(self.pid, signal)
+    }
+}
+
+/// The result of [`Child::wait`], carrying the owner while the child is unreaped.
+#[cfg(feature = "alloc")]
+#[derive(Debug, Eq, PartialEq)]
+#[must_use = "an unreaped outcome carries the child's only wait owner"]
+pub enum WaitOutcome {
+    /// The child exited or was killed by a signal and has been reaped.
+    Reaped(WaitStatus),
+    /// `NOHANG` found no reportable change; the child is still unreaped.
+    Running(Child),
+    /// A stop or continue report; the child is still unreaped.
+    Changed(Child, WaitStatus),
+}
+
+#[cfg(feature = "alloc")]
+impl WaitOutcome {
+    /// Returns the terminal status, or `None` and drops the owner of a child
+    /// that is still unreaped.
+    #[inline]
+    #[must_use]
+    pub fn reaped(self) -> Option<WaitStatus> {
+        match self {
+            Self::Reaped(status) => Some(status),
+            Self::Running(_) | Self::Changed(..) => None,
+        }
+    }
+}
+
+/// A failed [`Child::wait`], returning the owner with the Linux error.
+#[cfg(feature = "alloc")]
+#[derive(Debug, Eq, PartialEq)]
+#[must_use = "a failed wait carries the child's only wait owner"]
+pub struct WaitError {
+    child: Child,
+    errno: crate::Errno,
+}
+
+#[cfg(feature = "alloc")]
+impl WaitError {
+    /// Returns the Linux error reported by `wait4`.
+    #[inline]
+    #[must_use]
+    pub const fn errno(&self) -> crate::Errno {
+        self.errno
+    }
+
+    /// Returns the child's wait owner for an explicit retry or transfer.
+    #[inline]
+    #[must_use]
+    pub fn into_child(self) -> Child {
+        self.child
+    }
+}
+
+#[cfg(feature = "alloc")]
+impl From<WaitError> for crate::Errno {
+    #[inline]
+    fn from(error: WaitError) -> Self {
+        error.errno
     }
 }
 
@@ -632,7 +705,9 @@ mod child_descriptor_tests {
         // not be needed merely to report exec errors.
         occupied.pop();
         occupied.pop();
-        let status = prepared.spawn().and_then(|child| child.wait(WaitOptions::empty()));
+        let status = prepared
+            .spawn()
+            .and_then(|child| Ok(child.wait(WaitOptions::empty())?.reaped()));
         let failure = missing.spawn();
         let mut raw_status = 0;
         // SAFETY: This isolated process runs only this regression. The raw

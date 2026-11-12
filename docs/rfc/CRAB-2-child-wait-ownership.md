@@ -1,6 +1,6 @@
 # CRAB-2: Child ownership after nonterminal waits
 
-Status: draft
+Status: accepted
 
 ## Summary
 
@@ -8,8 +8,7 @@ Decide whether the native x86-64 `Child` should admit nonterminal waits. The
 current API deliberately consumes its unique owner on every result, including
 `NOHANG` with no status. The recommendation is to return that owner whenever
 the wait has not reaped the child, while preserving the existing Linux options.
-This needs an owner decision because the current facade explicitly excludes
-polling and retry contracts. No implementation change is authorized by this RFC.
+The owner accepted this recommendation; see Decision.
 
 ## Motivation
 
@@ -78,5 +77,9 @@ consumed owner cannot be waited twice and the existing EINTR retry behavior.
 
 ## Decision
 
-Pending owner decision. Keep the current implementation and contract until
-the scope and API transition are accepted; CRAB-2 remains a planning item.
+Accepted by the owner on 2026-11-12: ownership-returning outcomes for the
+existing options, replacing the previous method directly. `Child::wait` returns
+`WaitOutcome::{Reaped, Running, Changed}` or a `WaitError` carrying the owner.
+`crabc-rs/tests/x86_64_child_ownership.rs` covers the synchronized `NOHANG`
+retry through the returned owner, stop and continue reports, and an `EINVAL`
+error that returns the owner.

@@ -2,7 +2,7 @@
 
 use std::ffi::CStr;
 
-use crabc_rs::{io, pipe, process, Errno};
+use crabc_rs::{io, pipe, process, signal::Signal, Errno};
 
 fn cstr(bytes: &'static [u8]) -> &'static CStr {
     CStr::from_bytes_with_nul(bytes).expect("test C strings include one terminal NUL")
@@ -21,6 +21,7 @@ fn x86_64_prepared_child_owns_one_successful_exec_wait() {
     let status = child
         .wait(process::WaitOptions::empty())
         .expect("wait for the owned child")
+        .reaped()
         .expect("blocking wait must report the child exit");
     assert!(status.exited());
     assert_eq!(status.exit_status(), Some(42));
@@ -52,6 +53,7 @@ fn x86_64_prepared_child_applies_descriptor_actions() {
         child
             .wait(process::WaitOptions::empty())
             .expect("wait for descriptor-action child")
+            .reaped()
             .expect("child must report an exit status")
             .exit_status(),
         Some(0)
@@ -121,7 +123,7 @@ fn x86_64_prepared_child_preserves_the_error_pipe_across_fd_collisions() {
 }
 
 #[test]
-fn x86_64_child_wait_nohang_consumes_the_owned_child() {
+fn x86_64_child_wait_nohang_returns_the_owner_until_the_child_is_reaped() {
     let (pid_reader, pid_writer) = pipe::pipe().expect("create child PID pipe");
     let (release_reader, release_writer) = pipe::pipe().expect("create child release pipe");
     let actions = [
@@ -156,26 +158,28 @@ fn x86_64_child_wait_nohang_consumes_the_owned_child() {
         .expect("shell PID report is a Linux PID");
 
     // The child cannot have exited before this point: it reported its PID, then
-    // blocks reading descriptor 21. `Child::wait` consumes the owner even when
-    // WNOHANG returns no status, so the test-only raw wait below performs the
-    // sole later reap after the release pipe unblocks it.
-    assert_eq!(
-        child
-            .wait(process::WaitOptions::NOHANG)
-            .expect("observe the owned child without blocking"),
-        None
-    );
+    // blocks reading descriptor 21, so NOHANG must return the same owner.
+    let child = match child
+        .wait(process::WaitOptions::NOHANG)
+        .expect("observe the owned child without blocking")
+    {
+        process::WaitOutcome::Running(child) => child,
+        other => panic!("a blocked child has no reportable change: {other:?}"),
+    };
     io::write(&release_writer, b"release\n").expect("release prepared child");
     drop(release_writer);
-    let mut status = 0_i32;
-    // SAFETY: `status` remains writable Linux `int` storage for the final
-    // blocking wait, which reaps the child after its safe owner was consumed.
+    let status = child
+        .wait(process::WaitOptions::empty())
+        .expect("reap the released child through its returned owner")
+        .reaped()
+        .expect("a blocking wait reports the child exit");
+    assert_eq!(status.exit_status(), Some(23));
+    let mut raw_status = 0_i32;
+    // SAFETY: `raw_status` is writable; this only proves no child was left unreaped.
     assert_eq!(
-        unsafe { crabc_core::process::wait4_raw(reported_pid, &mut status, 0) }
-            .expect("reap released prepared child"),
-        reported_pid
+        unsafe { crabc_core::process::wait4_raw(reported_pid, &mut raw_status, 1) },
+        Err(Errno::CHILD)
     );
-    assert_eq!(status, 23 << 8);
 }
 
 #[test]
@@ -192,7 +196,7 @@ fn x86_64_prepared_child_replaces_descriptor_actions() {
         ])
         .with_actions(&[process::FdAction::dup2(&writer, 1)]);
     let child = prepared.spawn().expect("replacement removes the prior source close");
-    assert_eq!(child.wait(process::WaitOptions::empty()).unwrap().unwrap().exit_status(), Some(17));
+    assert_eq!(child.wait(process::WaitOptions::empty()).unwrap().reaped().unwrap().exit_status(), Some(17));
 
     // The parent owns a known slot which exec will close unless a retained
     // dup2 action clears its close-on-exec flag in the child.
@@ -208,7 +212,7 @@ fn x86_64_prepared_child_replaces_descriptor_actions() {
         .with_actions(&[process::FdAction::dup2(&writer, target.as_raw_fd())])
         .with_actions(&[]);
     assert_eq!(cleared.spawn().unwrap().wait(process::WaitOptions::empty())
-        .unwrap().unwrap().exit_status(), Some(0));
+        .unwrap().reaped().unwrap().exit_status(), Some(0));
 }
 
 #[test]
@@ -229,7 +233,7 @@ fn x86_64_prepared_child_applies_actions_in_declared_order() {
         process::FdAction::close(&writer),
     ]);
     assert_eq!(prepared.spawn().unwrap().wait(process::WaitOptions::empty())
-        .unwrap().unwrap().exit_status(), Some(7));
+        .unwrap().reaped().unwrap().exit_status(), Some(7));
 }
 
 #[test]
@@ -251,7 +255,7 @@ fn x86_64_prepared_children_keep_parent_descriptor_ownership() {
     // parent keeps both owners, allowing the same prepared image to be reused.
     for _ in 0..2 {
         let child = prepared.spawn().expect("reuse borrowed parent descriptors");
-        assert_eq!(child.wait(process::WaitOptions::empty()).unwrap().unwrap()
+        assert_eq!(child.wait(process::WaitOptions::empty()).unwrap().reaped().unwrap()
             .exit_status(), Some(0));
         assert!(io::fcntl_getfd(&reader).unwrap().contains(io::FdFlags::CLOEXEC));
         assert!(io::fcntl_getfd(&writer).unwrap().contains(io::FdFlags::CLOEXEC));
@@ -268,4 +272,63 @@ fn x86_64_prepared_children_keep_parent_descriptor_ownership() {
     assert_eq!(&output, b"ownedowned");
     assert_eq!(io::read(&reader, &mut [0_u8; 1]).unwrap(), 0,
         "reaped children and dropped parent writer leave no writer owner");
+}
+
+fn sleeping_child() -> process::Child {
+    process::PreparedExec::new(
+        cstr(b"/bin/sh\0"),
+        &[cstr(b"sh\0"), cstr(b"-c\0"), cstr(b"exec sleep 30\0")],
+        &[],
+    )
+    .expect("prepare a sleeping child image")
+    .spawn()
+    .expect("spawn the sleeping child")
+}
+
+#[test]
+fn x86_64_child_stop_and_continue_reports_return_the_owner() {
+    let child = sleeping_child();
+    child.kill(Signal::STOP).expect("stop the owned child");
+    let child = match child.wait(process::WaitOptions::UNTRACED).expect("observe the stop") {
+        process::WaitOutcome::Changed(child, status) => {
+            assert!(status.stopped());
+            assert_eq!(status.stopping_signal(), Some(19));
+            child
+        }
+        other => panic!("UNTRACED must report the stop: {other:?}"),
+    };
+    child.kill(Signal::CONT).expect("continue the owned child");
+    let child = match child.wait(process::WaitOptions::CONTINUED).expect("observe the resume") {
+        process::WaitOutcome::Changed(child, status) => {
+            assert!(status.continued());
+            child
+        }
+        other => panic!("CONTINUED must report the resume: {other:?}"),
+    };
+    child.kill(Signal::KILL).expect("terminate the owned child");
+    let status = child
+        .wait(process::WaitOptions::empty())
+        .expect("reap the terminated child")
+        .reaped()
+        .expect("a blocking wait reports the termination");
+    assert_eq!(status.terminating_signal(), Some(9));
+}
+
+#[test]
+fn x86_64_child_wait_error_returns_the_owner() {
+    let child = sleeping_child();
+    // Linux wait4 rejects option bits outside WNOHANG, WUNTRACED, WCONTINUED,
+    // __WNOTHREAD, __WCLONE and __WALL with EINVAL before selecting a child.
+    let error = child
+        .wait(process::WaitOptions::from_bits_retain(0x0001_0000))
+        .expect_err("undefined wait4 option bits are rejected");
+    assert_eq!(error.errno(), Errno::INVAL);
+    let child = error.into_child();
+    child.kill(Signal::KILL).expect("terminate the returned owner's child");
+    let status = child
+        .wait(process::WaitOptions::empty())
+        .expect("reap through the owner returned with the error")
+        .reaped()
+        .expect("a blocking wait reports the termination");
+    assert_eq!(status.terminating_signal(), Some(9));
 }

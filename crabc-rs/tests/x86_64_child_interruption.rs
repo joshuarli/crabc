@@ -61,5 +61,5 @@ fn x86_64_consuming_child_wait_keeps_ownership_across_interruption() {
     unsafe { signal::sigaction(selected, Some(&old_action)) }.unwrap();
     assert!(SIGNAL_SEEN.load(Ordering::SeqCst));
     assert_eq!(result.expect("interruption must retain the consuming wait operation")
-        .unwrap().exit_status(), Some(29));
+        .reaped().unwrap().exit_status(), Some(29));
 }
