@@ -56,9 +56,8 @@ not disposable merely because the lane is parked. No bulk cleanup on stop.
 ## Development loop
 
 Follow the standard procedures in [plan.md](../plan.md#standard-procedures):
-P1 for branches and commits, P2 to measure a row, P3 to delete or consolidate a
-mechanism, P4 for runtime code, P5 to stop, and P6 for the report. Each step's
-**Allowed files** list is binding.
+P1 for runtime code, P2 to measure a row, P3 to delete a mechanism and P4 to
+stop. A lane's brief lists the files it may edit; that list is binding.
 
 Use the pinned native x86 environment. Never run `scripts/dev.sh`, emulate
 AArch64, or invoke the allocator runner directly. Examples for in-scope work:

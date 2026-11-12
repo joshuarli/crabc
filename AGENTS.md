@@ -4,15 +4,14 @@ A small, auditable modern Unix runtime: a Rust `no_std` libc, dynamic linker,
 owned CRT and compiler builtins, and an idiomatic `crabc-rs` facade. Narrow
 scope must not weaken ordinary Unix semantics.
 
-## Current direction — 2026-11-06
+## Current direction — 2026-11-12
 
-**Performance closure and qualification resumed; the allocator freeze is partially lifted.**
-S0–S5 are accepted on structure, correctness and hardening. The owner reopened
-the deferred D18 performance dimensions, the D16 startup/resolver design, and
-the ordered qualification/promotion chain. Follow the order in
-[Post-S5 resumption](plan.md#post-s5-resumption-2026-11-06): rebuild products,
-land the D16 resolver, pass the correctness profile, produce the full
-performance evidence, then run the full chain. Qualification evidence must be
+**Qualification correctness, then performance; hardening first; the allocator freeze is partially lifted.**
+S0–S5 are accepted on structure, correctness and hardening. Follow the
+[Sequence](plan.md#sequence): pass the correctness profile (R2), produce the
+performance evidence (R3), then run the full chain (R4). Hardening outranks
+the startup instruction ratio (D21), and qualification checks caller-visible
+behavior rather than linker output (D22). Qualification evidence must be
 produced by its own current commands; a parked receipt is not inherited.
 
 The crabc glue around the accepted C backend is open for allocator failures
@@ -27,8 +26,9 @@ and do not merge parked allocator work. The exact boundary is in
 Simplify mechanisms and evidence machinery, not just filenames or prose. Keep
 one owner for process-global state, thin C ABI adaptation and direct native
 syscall/vDSO paths. Measure against musl early: no additional syscalls, and
-retired user instructions <= 1.10 times musl under matched LLVM, alongside
-existing CPU/memory and correctness/hardening requirements. The S1 counts route
+retired user instructions <= 1.10 times musl under matched LLVM (except the
+rows D21 reports without gating), alongside
+the relaxed CPU/memory bound and correctness/hardening requirements. The S1 counts route
 and release gate own these checks; use them rather than a second harness.
 
 Use narrowly scoped owners and reviewers. An idle agent slot is not a defect;
