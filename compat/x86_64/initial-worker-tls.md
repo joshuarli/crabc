@@ -2,10 +2,9 @@
 
 This page defines the process-private worker TLS allocation token and its
 no-growth boundary. Installed ownership, runtime TLS generations, and worker
-reclamation are defined in [prepared-worker-tls.md](prepared-worker-tls.md) and
-`loader-libc-tls-runtime-v1.toml::owned_runtime`, including its 144-byte CRT
-carrier. The 32-byte worker allocation token and 72-byte initial TLS descriptor
-remain distinct contracts.
+reclamation are defined in `loader-libc-tls-runtime-v1.toml::owned_runtime`,
+including its 144-byte CRT carrier. The 32-byte worker allocation token and
+72-byte initial TLS descriptor remain distinct contracts.
 
 The installed dynamic component selects `x86_64-owned-dynamic-runtime` in
 ldso. It retains the established arbitrary admitted initial graph, its module

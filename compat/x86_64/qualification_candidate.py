@@ -22,7 +22,7 @@ blocker, and runs nothing.
 
 The order follows the installed POSIX admission sequence and the complete
 dynamic-product preflight. Steps run sequentially: the only
-independence the sequence allows (products; the matrix and its companions)
+independence the sequence allows (products; the independent behavior probes)
 is not worth the contention it adds to timing-limited leaves.
 """
 
@@ -261,15 +261,7 @@ def plan(through: str | None = None, profile: str = "full") -> tuple[Step, ...]:
 
 
 def _plan(profile: str = "full") -> tuple[Step, ...]:
-    import abi_differential_evidence
-
     primary = lambda c: ["--static-sysroot", c.static_pair("primary"), c.dynamic_pair("primary")]  # noqa: E731
-    abi_companion_root = ".work/x86_64/abi-differential/candidate-{name}-companions"
-    abi_companion_fresh = (
-        abi_companion_root,
-        *(f"{producer.output_parent}/candidate-{{name}}-companions"
-          for producer in abi_differential_evidence.PRODUCERS if producer.output_parent is not None),
-    )
     steps: list[Step] = [
         # One product cohort for every family and gate.
         Step("static-products", "cohort",
@@ -385,26 +377,66 @@ def _plan(profile: str = "full") -> tuple[Step, ...]:
                           "--output", c.template(".work/x86_64/public-data-ordinary-link/candidate-{name}")),
              (Output("report", fixed=".work/x86_64/public-data-ordinary-link/candidate-{name}/report.json"),),
              fresh=(".work/x86_64/public-data-ordinary-link/candidate-{name}",)),
-        Step("abi-companions", "compat.abi-differential",
-             lambda c: _d("abi-differential-evidence", "collect-companions", *c.products(),
-                          "--native-abi-inventory", c.out("abi-inventory", "report"),
-                          "--native-abi-elf-facts", c.out("abi-elf-facts", "report"),
-                          "--header-declaration-inventory", c.out("abi-declarations", "report"),
-                          "--public-data-ordinary-link", c.out("abi-public-data", "report"),
-                          "--output", c.template(abi_companion_root)),
-             (Output("manifest", fixed=f"{abi_companion_root}/companions.json"),),
-             fresh=abi_companion_fresh),
         Step("abi-evidence", "compat.abi-differential",
              lambda c: _d("abi-differential-evidence", "assemble", *c.products(),
                           "--native-abi-inventory", c.out("abi-inventory", "report"),
                           "--native-abi-elf-facts", c.out("abi-elf-facts", "report"),
                           "--header-declaration-inventory", c.out("abi-declarations", "report"),
                           "--public-data-ordinary-link", c.out("abi-public-data", "report"),
-                          "--companions", c.out("abi-companions", "manifest"),
                           "--output", c.template(".work/x86_64/abi-differential/candidate-{name}")),
              (Output("receipt", fixed=".work/x86_64/abi-differential/candidate-{name}/abi-evidence.json"),),
              fresh=(".work/x86_64/abi-differential/candidate-{name}",),
              publishes=("compat.abi-differential", "abi-evidence")),
+        # Caller-visible behavior probes on the selected products.
+        Step("abi-bootstrap-primitives", "compat.abi-differential",
+             lambda c: _d("abi-behavior", "bootstrap-primitives", "--static-product", c.static_pair("primary"),
+                          "--dynamic-product", c.dynamic_pair("primary"))),
+        Step("abi-binary80-math", "compat.abi-differential", lambda c: _d("libc-math-long-double-completion")),
+        Step("abi-compiler-helper-aggregate", "compat.abi-differential",
+             lambda c: _d("abi-behavior", "compiler-helper-aggregate",
+                          c.template("{work}/out/abi-behavior/compiler-helper")),
+             fresh=("{work}/out/abi-behavior/compiler-helper",)),
+        Step("abi-errno-storage", "compat.abi-differential",
+             lambda c: _d("abi-behavior", "errno-storage", *primary(c))),
+        Step("abi-bsd-random", "compat.abi-differential",
+             lambda c: _d("owned-bsd-random", "--static-sysroot", c.static_pair("primary"),
+                          c.dynamic_pair("primary"))),
+        Step("abi-pthread-timed-feature", "compat.abi-differential",
+             lambda c: _d("abi-behavior", "pthread-timed", c.static_pair("primary"), c.dynamic_pair("primary"))),
+        Step("abi-public-data-runtime", "compat.abi-differential",
+             lambda c: _d("abi-behavior", "public-data-runtime", "collect",
+                          "--static-preparation", c.out("static-products", "preparation"),
+                          "--static-product", c.static_pair("primary"),
+                          "--dynamic-product", c.dynamic_pair("primary"),
+                          "--header-report", c.out("abi-declarations", "report"),
+                          "--ordinary-link-report", c.out("abi-public-data", "report"),
+                          "--output", c.template("{work}/out/abi-behavior/public-data-runtime")),
+             fresh=("{work}/out/abi-behavior/public-data-runtime",)),
+        Step("abi-feature-alias-passwd", "compat.abi-differential",
+             lambda c: _d("owned-passwd", c.dynamic_pair("primary"))),
+        Step("abi-feature-alias-exec", "compat.abi-differential",
+             lambda c: _d("owned-process-control", *primary(c))),
+        Step("abi-feature-alias-temporary", "compat.abi-differential",
+             lambda c: _d("abi-behavior", "string-temporary-alias", c.static_pair("primary"),
+                          c.dynamic_pair("primary"))),
+        Step("abi-feature-alias-signal", "compat.abi-differential",
+             lambda c: _d("abi-behavior", "signal-legacy-aliases")),
+        Step("abi-feature-alias-netdb", "compat.abi-differential",
+             lambda c: _d("abi-behavior", "sethostent")),
+        Step("abi-runtime-private-facades", "compat.abi-differential",
+             lambda c: _d("runtime-private-facades", c.dynamic_pair("primary"))),
+        Step("abi-utmpx", "compat.abi-differential",
+             lambda c: _d("owned-utmpx", "--static-sysroot", c.static_pair("primary"),
+                          c.dynamic_pair("primary"))),
+        Step("abi-pthread-alias", "compat.abi-differential",
+             lambda c: _d("abi-behavior", "pthread-alias", c.static_pair("primary"), c.dynamic_pair("primary"))),
+        Step("abi-stdio-alias", "compat.abi-differential",
+             lambda c: _d("abi-behavior", "stdio-alias", c.static_pair("primary"), c.dynamic_pair("primary"))),
+        Step("abi-syscall-alias", "compat.abi-differential",
+             lambda c: _d("abi-behavior", "syscall-alias", c.static_pair("primary"), c.dynamic_pair("primary"))),
+        Step("abi-locale-alias", "compat.abi-differential",
+             lambda c: _d("abi-behavior", "locale-alias", "--static-sysroot", c.static_pair("primary"),
+                          c.dynamic_pair("primary"))),
         # consumer gates.
         Step("rust-std-lto", "consumer.rust-std-lto",
              lambda c: _d("consumer-rust-std-lto", "run", *c.cohort(),
@@ -704,19 +736,6 @@ def _validate_products(root: Path, step: Step, found: Mapping[str, str], context
             import owned_dynamic_qualification as dynamic
 
             dynamic.validate_receipt(root / found["qualification"])
-        elif step.id == "abi-companions":
-            import abi_differential_evidence as evidence
-
-            cohort = evidence.Cohort(
-                static_product=root / context.static_pair("primary"),
-                dynamic_product=root / context.dynamic_pair("primary"),
-                static_preparation=root / context.out("static-products", "preparation"),
-                native_abi_inventory=root / context.out("abi-inventory", "report"),
-                native_abi_elf_facts=root / context.out("abi-elf-facts", "report"),
-                header_declaration_inventory=root / context.out("abi-declarations", "report"),
-                public_data_ordinary_link=root / context.out("abi-public-data", "report"),
-            )
-            evidence.load_companions(root / found["manifest"], cohort)
     except Exception as error:
         raise CandidateError(f"{step.id} retained product validation failed: {error}") from error
 

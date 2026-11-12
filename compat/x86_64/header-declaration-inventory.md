@@ -9,8 +9,9 @@ after repeated declarations have been collapsed.
 collapse. It uses the existing `header_abi_matrix.toml` header/profile roster,
 `header_callable_inventory.py` compiler commands and source-location helpers,
 and `header_abi_matrix.py` compiler process controls. The existing collapsed
-ABI matrix keeps its own output contract. The new receipt supplies enumerable
-inputs to [native ABI selection](native-abi-selection.md).
+ABI matrix keeps its own output contract. The receipt supplies enumerable
+inputs to the [public-data ordinary-link](public-data-ordinary-link.md) and
+callable-declaration readers.
 
 ## Collection and replay
 

@@ -3,12 +3,12 @@
 public_data_ordinary_link_evidence.py is the narrow data counterpart to the
 selected callable/provider work. It proves ordinary C linking and addressability
 for the exact 32 typed object contracts placed in both candidate-static and
-candidate-shared by native-abi-selection.toml.
+candidate-shared by public-data-ordinary-link.toml.
 
-The selection TOML is the authority. The component derives its object names,
-ELF type/binding/visibility/size/alignment, source references, and ten named
-source aliases from that file. It does not consume the historical ignored
-selection audit. A policy update that changes the static/shared selection,
+The ordinary-link TOML is the authority. The component derives its object
+names, ELF type/binding/visibility/size/alignment, source references, and ten
+named source aliases from that file. It does not consume a historical ignored
+audit. A policy update that changes the static/shared selection,
 alias roster, or fixed probe ABI-only declarations fails before collection.
 The static archive must define each selected object with the specified binding.
 Final static executables may keep that binding or localize the definition;

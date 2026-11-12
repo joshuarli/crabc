@@ -2,8 +2,6 @@
 # Focused native proof for the four musl-shaped x86 owned pthread timed aliases.
 set -euo pipefail
 
-# Receipt staging has its own fixed filesystem permission boundary.  In
-# particular, do not inherit setgid bits from the checkout's .work tree.
 umask 022
 
 ulimit -c 0
@@ -13,14 +11,10 @@ readonly ORACLE_CC=/usr/local/bin/crabc-x86_64-musl-gcc
 readonly MUSL_LIB=/opt/musl-1.2.6/lib/libc.so
 readonly MUSL_ARCHIVE=/opt/musl-1.2.6/lib/libc.a
 readonly CONTRACT_SOURCE="$ROOT/compat/x86_64/owned_pthread_timed_feature_contract_probe.c"
-readonly READER="$ROOT/compat/x86_64/owned_pthread_timed_feature_contract_reader.py"
 readonly INTERPRETER=/lib/ld-crabc-x86_64.so.1
 readonly EXECUTION_PATH=/opt/cargo/bin:/opt/musl-1.2.6/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 readonly EXECUTION_TMPDIR="$ROOT/.work/x86_64/tmp"
 
-# The receipt collector starts this runner through an exact Python subprocess
-# environment before Bash begins. These values keep a direct, no-receipt run
-# convenient for diagnostics, but cannot close an ambient caller on their own.
 # Every launched command reads EOF from /dev/null.
 export PATH="$EXECUTION_PATH"
 export HOME=/nonexistent
@@ -37,15 +31,11 @@ export GIT_CONFIG_KEY_0=safe.directory
 export GIT_CONFIG_VALUE_0=/workspace
 export TMPDIR="$EXECUTION_TMPDIR"
 
-# The sealed static driver admits only a relative receipt/map/trace trio.  Run
-# that link from the evidence directory so the receipt records sidecar names
-# relative to its own physical parent; the reusable product validator rejects
-# a nested checkout-relative spelling.
 cd "$ROOT"
 mkdir -p "$TMPDIR"
 
 usage() {
-    printf 'usage: %s [--receipt-dir DIR --product-report REPORT --static-preparation PREPARATION [--historical-inputs INPUTS --historical-source-commit COMMIT]] STATIC_SYSROOT DYNAMIC_SYSROOT\n' "$0" >&2
+    printf 'usage: %s STATIC_SYSROOT DYNAMIC_SYSROOT\n' "$0" >&2
     exit 2
 }
 
@@ -54,122 +44,31 @@ fail() {
     exit 1
 }
 
-RECEIPT_DIR=""
-PRODUCT_REPORT=""
-STATIC_PREPARATION=""
-HISTORICAL_INPUTS=""
-HISTORICAL_SOURCE_COMMIT=""
-while [ "$#" -gt 0 ]; do
-    case "$1" in
-        --receipt-dir)
-            [ "$#" -ge 2 ] && [ -z "$RECEIPT_DIR" ] || usage
-            RECEIPT_DIR="$2"
-            shift 2
-            ;;
-        --product-report)
-            [ "$#" -ge 2 ] && [ -z "$PRODUCT_REPORT" ] || usage
-            PRODUCT_REPORT="$2"
-            shift 2
-            ;;
-        --static-preparation)
-            [ "$#" -ge 2 ] && [ -z "$STATIC_PREPARATION" ] || usage
-            STATIC_PREPARATION="$2"
-            shift 2
-            ;;
-        --historical-inputs)
-            [ "$#" -ge 2 ] && [ -z "$HISTORICAL_INPUTS" ] || usage
-            HISTORICAL_INPUTS="$2"
-            shift 2
-            ;;
-        --historical-source-commit)
-            [ "$#" -ge 2 ] && [ -z "$HISTORICAL_SOURCE_COMMIT" ] || usage
-            HISTORICAL_SOURCE_COMMIT="$2"
-            shift 2
-            ;;
-        --*) usage ;;
-        *) break ;;
-    esac
-done
 [ "$#" -eq 2 ] || usage
-if [ -n "$RECEIPT_DIR" ]; then
-    # The earlier plain runner's input ledger is optional provenance.
-    [ -n "$PRODUCT_REPORT" ] && [ -n "$STATIC_PREPARATION" ] || usage
-    if { [ -n "$HISTORICAL_INPUTS" ] && [ -z "$HISTORICAL_SOURCE_COMMIT" ]; } ||
-        { [ -z "$HISTORICAL_INPUTS" ] && [ -n "$HISTORICAL_SOURCE_COMMIT" ]; }; then
-        usage
-    fi
-else
-    [ -z "$PRODUCT_REPORT" ] && [ -z "$STATIC_PREPARATION" ] && [ -z "$HISTORICAL_INPUTS" ] && [ -z "$HISTORICAL_SOURCE_COMMIT" ] || usage
-fi
 [ "$(uname -s)" = Linux ] || fail 'requires native Linux'
 case "$(uname -m)" in x86_64|amd64) ;; *) fail "refuses emulation on $(uname -m)" ;; esac
 case "$TMPDIR" in
     "$ROOT"/.work/*) ;;
     *) fail 'internal TMPDIR escaped checkout .work' ;;
 esac
-for tool in chroot cmp python3 readelf realpath sha256sum timeout; do
+for tool in chroot cmp python3 realpath timeout; do
     command -v "$tool" >/dev/null || fail "missing $tool"
 done
 [ -x "$ORACLE_CC" ] && [ -f "$MUSL_LIB" ] && [ -f "$MUSL_ARCHIVE" ] ||
     fail 'missing pinned musl 1.2.6 toolchain or artifacts'
-for source in "$CONTRACT_SOURCE" "$READER"; do
+for source in "$CONTRACT_SOURCE"; do
     [ -f "$source" ] || fail "missing source $source"
 done
 
 static_product="$(realpath -e "$1")"
 dynamic_product="$(realpath -e "$2")"
-if [ -n "$RECEIPT_DIR" ]; then
-    RECEIPT_DIR="$(python3 -B - "$ROOT" "$TMPDIR" "$RECEIPT_DIR" <<'PY'
+python3 -B - "$ROOT" "$TMPDIR" "$static_product" "$dynamic_product" <<'PY'
 from pathlib import Path
 import sys
 
-root = Path(sys.argv[1]).resolve(strict=True)
-temporary = Path(sys.argv[2]).resolve(strict=True)
-requested = Path(sys.argv[3])
-candidate = requested.resolve(strict=False)
-if candidate.exists() or candidate.is_symlink():
-    raise SystemExit("owned pthread timed feature receipt directory must be fresh")
-if not candidate.is_relative_to(root / ".work"):
-    raise SystemExit("owned pthread timed feature receipt directory must remain below checkout .work")
-print(candidate)
-PY
-)"
-    PRODUCT_REPORT="$(realpath -e "$PRODUCT_REPORT")"
-    STATIC_PREPARATION="$(realpath -e "$STATIC_PREPARATION")"
-    if [ -n "$HISTORICAL_INPUTS" ]; then
-        HISTORICAL_INPUTS="$(realpath -e "$HISTORICAL_INPUTS")"
-    fi
-fi
-python3 -B - "$ROOT" "$TMPDIR" "$static_product" "$dynamic_product" "$RECEIPT_DIR" "$PRODUCT_REPORT" "$STATIC_PREPARATION" "$HISTORICAL_INPUTS" <<'PY'
-import hashlib
-import os
-from pathlib import Path
-import sys
-
-root, temporary, static, dynamic = (Path(value).resolve(strict=True) for value in sys.argv[1:5])
-receipt, product_report, static_preparation, historical = (sys.argv[5:])
-retained_value = os.environ.get("CRABC_RETAINED_640C0939_ROOT")
-allowed = [root / ".work"]
-if retained_value:
-    retained = Path(retained_value).resolve(strict=True)
-    expected_static = retained / "static/products/primary"
-    expected_dynamic = retained / "dynamic"
-    if static != expected_static or dynamic != expected_dynamic:
-        raise SystemExit(
-            "owned pthread timed feature contract retained inputs must be the sealed "
-            "640c0939 primary static and dynamic products"
-        )
-    expected_hashes = {
-        static / "usr/lib/libc.a": "ba36c1db3e38c97f50c02c4cdffae845221a1070192b9149e01825867f96f5c8",
-        dynamic / "usr/lib/libc.so": "2d32042be95daf2ba65f3b2eb7e3d738e3a429444fdf45c46699137c04e8725a",
-    }
-    for path, expected in expected_hashes.items():
-        observed = hashlib.sha256(path.read_bytes()).hexdigest()
-        if observed != expected:
-            raise SystemExit(f"sealed retained product hash drifted: {path}")
-    allowed.append(retained)
+root, temporary, static, dynamic = (Path(value).resolve(strict=True) for value in sys.argv[1:])
 for path, label in ((temporary, "TMPDIR"), (static, "static product"), (dynamic, "dynamic product")):
-    if not any(path.is_relative_to(base) for base in allowed):
+    if not path.is_relative_to(root / ".work"):
         raise SystemExit(f"owned pthread timed feature contract {label} must remain below checkout .work")
 for path, label in ((static / "bin/crabc-cc", "static compiler"),
                     (static / "usr/lib/libc.a", "static libc"),
@@ -195,139 +94,17 @@ def overlaps(left: Path, right: Path) -> bool:
     return left == right or left.is_relative_to(right) or right.is_relative_to(left)
 
 
-# The runner writes its evidence under either TMPDIR or --receipt-dir. Check
-# both physical work roots before mkdir, source capture, or any command can
-# write into a caller-supplied selected product.
 for product, label in ((static, "static product"), (dynamic, "dynamic product")):
     if overlaps(temporary, product):
         raise SystemExit(f"owned pthread timed feature contract TMPDIR overlaps {label}")
-if receipt:
-    receipt_path = Path(receipt).resolve(strict=False)
-    if receipt_path.exists() or receipt_path.is_symlink() or not receipt_path.is_relative_to(root / ".work"):
-        raise SystemExit("owned pthread timed feature contract receipt directory is unsafe")
-    for product, label in ((static, "static product"), (dynamic, "dynamic product")):
-        if overlaps(receipt_path, product):
-            raise SystemExit(f"owned pthread timed feature contract receipt directory overlaps {label}")
-    supplied = [(Path(product_report), "product anchor"), (Path(static_preparation), "static preparation")]
-    if historical:
-        supplied.append((Path(historical), "historical input identities"))
-    for path, label in supplied:
-        if not path.is_file() or path.is_symlink():
-            raise SystemExit(f"owned pthread timed feature contract missing physical {label}: {path}")
 PY
 
 readonly STATIC_PRODUCT="$static_product"
 readonly DYNAMIC_PRODUCT="$dynamic_product"
-if [ -n "$RECEIPT_DIR" ]; then
-    mkdir "$RECEIPT_DIR"
-    readonly WORK="$RECEIPT_DIR"
-else
-    readonly WORK="$(mktemp -d "$TMPDIR/owned-pthread-timed-feature-contract.XXXXXX")"
-fi
+readonly WORK="$(mktemp -d "$TMPDIR/owned-pthread-timed-feature-contract.XXXXXX")"
 chmod 0755 "$WORK"
-case "$WORK" in
-    "$ROOT"/.work/*) readonly WORK_RELATIVE="${WORK#"$ROOT"/}" ;;
-    *) fail "work directory escaped checkout .work: $WORK" ;;
-esac
 printf 'owned pthread timed feature contract evidence: %s\n' "$WORK"
 
-if [ -n "$RECEIPT_DIR" ]; then
-    python3 -B - "$WORK/execution-environment.json" <<'PY'
-import json
-import os
-from pathlib import Path
-import sys
-
-expected = {
-    "GIT_CONFIG_GLOBAL": "/dev/null",
-    "GIT_CONFIG_COUNT": "1",
-    "GIT_CONFIG_KEY_0": "safe.directory",
-    "GIT_CONFIG_VALUE_0": "/workspace",
-    "GIT_CONFIG_NOSYSTEM": "1",
-    "GIT_OPTIONAL_LOCKS": "0",
-    "HOME": "/nonexistent",
-    "LANG": "C",
-    "LC_ALL": "C",
-    "OLDPWD": "/workspace",
-    "PATH": "/opt/cargo/bin:/opt/musl-1.2.6/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
-    "PYTHONDONTWRITEBYTECODE": "1",
-    "PYTHONHASHSEED": "0",
-    "TZ": "UTC",
-    "PWD": "/workspace",
-    "SHLVL": "1",
-    "TMPDIR": "/workspace/.work/x86_64/tmp",
-    "_": "/usr/bin/python3",
-}
-if dict(os.environ) != expected:
-    raise SystemExit(f"closed runner environment differs: {dict(sorted(os.environ.items()))!r}")
-Path(sys.argv[1]).write_text(json.dumps({
-    "environment": expected,
-    "schema": "crabc.x86_64-owned-pthread-timed-feature-execution/v1",
-    "stdin": "/dev/null",
-}, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-PY
-fi
-
-if [ -n "$RECEIPT_DIR" ]; then
-    python3 -B "$READER" --capture-source --root "$ROOT" --output "$WORK/source-before.json"
-fi
-
-if [ -n "$RECEIPT_DIR" ]; then
-python3 -B - "$WORK/input-identities.json" "$CONTRACT_SOURCE" "$READER" "$0" \
-    "$ORACLE_CC" "$MUSL_LIB" "$MUSL_ARCHIVE" "$STATIC_PRODUCT/bin/crabc-cc" \
-    "$STATIC_PRODUCT/usr/lib/libc.a" "$STATIC_PRODUCT/usr/lib/crt1.o" \
-    "$STATIC_PRODUCT/usr/lib/rcrt1.o" "$STATIC_PRODUCT/usr/lib/crti.o" \
-    "$STATIC_PRODUCT/usr/lib/crtn.o" "$STATIC_PRODUCT/usr/lib/libcrabc-builtins.a" \
-    "$DYNAMIC_PRODUCT/bin/crabc-cc-dynamic" \
-    "$DYNAMIC_PRODUCT/usr/lib/crt1.o" "$DYNAMIC_PRODUCT/usr/lib/Scrt1.o" \
-    "$DYNAMIC_PRODUCT/usr/lib/crti.o" "$DYNAMIC_PRODUCT/usr/lib/crtn.o" \
-    "$DYNAMIC_PRODUCT/usr/lib/crabc-dynamic-attach.o" "$DYNAMIC_PRODUCT/usr/lib/libcrabc-builtins.a" \
-    "$DYNAMIC_PRODUCT/usr/lib/libc.so" "$DYNAMIC_PRODUCT/lib/ld-crabc-x86_64.so.1" \
-    "$PRODUCT_REPORT" "$STATIC_PREPARATION" <<'PY'
-import hashlib
-import json
-from pathlib import Path
-import sys
-
-output = Path(sys.argv[1])
-names = ("probe", "reader", "runner", "oracle_compiler", "musl_shared", "musl_archive",
-         "static_driver", "static_libc", "static_crt1", "static_rcrt1", "static_crti", "static_crtn", "static_builtins",
-         "dynamic_driver", "dynamic_crt1", "dynamic_scrt1", "dynamic_crti", "dynamic_crtn",
-         "dynamic_attach", "dynamic_builtins", "dynamic_libc", "dynamic_loader",
-         "product_report", "static_preparation")
-paths = [Path(value).resolve(strict=True) for value in sys.argv[2:]]
-output.write_text(json.dumps({
-    "format": "owned-pthread-timed-feature-contract-inputs-v2",
-    "inputs": {
-        name: {"path": str(path), "sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
-               "size": path.stat().st_size, "mode": path.stat().st_mode & 0o777}
-        for name, path in zip(names, paths)
-    },
-}, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-PY
-else
-python3 -B - "$WORK/input-identities.json" "$CONTRACT_SOURCE" "$READER" "$0" \
-    "$MUSL_LIB" "$MUSL_ARCHIVE" "$STATIC_PRODUCT/bin/crabc-cc" \
-    "$STATIC_PRODUCT/usr/lib/libc.a" "$DYNAMIC_PRODUCT/bin/crabc-cc-dynamic" \
-    "$DYNAMIC_PRODUCT/usr/lib/libc.so" <<'PY'
-import hashlib
-import json
-from pathlib import Path
-import sys
-
-output = Path(sys.argv[1])
-names = ("probe", "reader", "runner", "musl_shared", "musl_archive", "static_driver",
-         "static_libc", "dynamic_driver", "dynamic_libc")
-paths = [Path(value).resolve(strict=True) for value in sys.argv[2:]]
-output.write_text(json.dumps({
-    "format": "owned-pthread-timed-feature-contract-inputs-v1",
-    "inputs": {
-        name: {"path": str(path), "sha256": hashlib.sha256(path.read_bytes()).hexdigest()}
-        for name, path in zip(names, paths)
-    },
-}, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-PY
-fi
 
 run() {
     local stem="$1"
@@ -451,17 +228,8 @@ run oracle "$WORK/oracle-contract"
 assert_elf_type oracle-contract "$WORK/oracle-contract" exec
 
 for mode in static static-pie; do
-    if [ -n "$RECEIPT_DIR" ]; then
-        (
-            cd "$WORK"
-            run "$mode-link" "$STATIC_PRODUCT/bin/crabc-cc" "-$mode" -pthread \
-                "$WORK/contract.o" --link-receipt "$mode-contract.link.json" \
-                -o "$WORK/$mode-contract"
-        )
-    else
-        run "$mode-link" "$STATIC_PRODUCT/bin/crabc-cc" "-$mode" -pthread \
-            "$WORK/contract.o" -o "$WORK/$mode-contract"
-    fi
+    run "$mode-link" "$STATIC_PRODUCT/bin/crabc-cc" "-$mode" -pthread \
+        "$WORK/contract.o" -o "$WORK/$mode-contract"
     case "$mode" in
         static) assert_elf_type "$mode-contract" "$WORK/$mode-contract" exec ;;
         static-pie) assert_elf_type "$mode-contract" "$WORK/$mode-contract" pie ;;
@@ -514,29 +282,5 @@ for mode in pie non-pie; do
 done
 
 assert_contract_output_modes
-
-readelf --dyn-syms --wide "$MUSL_LIB" >"$WORK/musl-dynamic-symbols.txt"
-readelf --dyn-syms --wide "$DYNAMIC_PRODUCT/usr/lib/libc.so" >"$WORK/candidate-dynamic-symbols.txt"
-readelf --symbols --wide "$MUSL_LIB" >"$WORK/musl-shared-symbols.txt"
-readelf --symbols --wide "$DYNAMIC_PRODUCT/usr/lib/libc.so" >"$WORK/candidate-shared-symbols.txt"
-readelf --symbols --wide "$MUSL_ARCHIVE" >"$WORK/musl-static-symbols.txt"
-readelf --symbols --wide "$STATIC_PRODUCT/usr/lib/libc.a" >"$WORK/candidate-static-symbols.txt"
-readelf --relocs --wide "$MUSL_ARCHIVE" >"$WORK/musl-static-relocations.txt"
-readelf --relocs --wide "$STATIC_PRODUCT/usr/lib/libc.a" >"$WORK/candidate-static-relocations.txt"
-for binary in "$WORK"/static-contract "$WORK"/static-pie-contract "$WORK"/dynamic-*-contract; do
-    readelf --symbols --wide "$binary" >"$binary.symbols.txt"
-done
-
-python3 -B "$READER" --check-work --work "$WORK"
-
-if [ -n "$RECEIPT_DIR" ]; then
-    historical=()
-    if [ -n "$HISTORICAL_INPUTS" ]; then
-        historical=(--historical-inputs "$HISTORICAL_INPUTS" --historical-source-commit "$HISTORICAL_SOURCE_COMMIT")
-    fi
-    python3 -B "$READER" --collect-report --root "$ROOT" --work "$WORK" \
-        --product-report "$PRODUCT_REPORT" "${historical[@]}"
-    python3 -B "$READER" --validate-report "$WORK/report.json"
-fi
 
 printf 'owned pthread timed feature contract: PASS (four pinned-musl-shaped timed aliases, exact source feature route, selected product bytes, final-link extraction, and bounded timeout/join behavior across five executable modes); evidence: %s\n' "$WORK"

@@ -169,13 +169,6 @@ occurrence across the selected libc, loader, CRT and builtins artifacts,
 including undefined and non-public records. Its public reader reconstructs
 those observations from retained tool output.
 
-[native-abi-selection.md](native-abi-selection.md) defines the executable
-callable/data selection and provider-placement policy. Its report expands exact
-frozen and header origins, records native owners and project extensions, and
-joins every physical occurrence without treating an observation as permission
-to expose it. Host replay can validate an incomplete audit; `require-closure`
-separately refuses unresolved metadata, source, component or family evidence.
-
 [header-declaration-inventory.md](header-declaration-inventory.md) describes
 the companion compiler receipt for declaration occurrences and ordered macro
 events across the existing finite header/profile roster. It retains the raw
@@ -193,16 +186,6 @@ receipt. It retains physical raw FunctionDecl multiplicity and exact compiler
 type/linker-spelling agreement without selecting providers, inferring linkage,
 or treating macros as callable declarations.
 
-[native-declaration-abi.md](native-declaration-abi.md) adds the finite native
-C/C++ ordinary-object spelling and exact x86-64 address-initializer relocation
-witness for those already authenticated direct callable declarations, together
-with the bounded `_ns_flagdata` and `in6_addr` record-layout projection. It
-replays one public header envelope, binds clang to that retained compiler
-snapshot, and retains the missing compiler-resource and `readelf` bytes. It
-leaves `FILE`, array extent, `h_errno` storage semantics, provider selection,
-family completion, and promotion open. Native ABI selection may reuse that one
-current header replay for the declaration-object reader; it does not treat the
-finite observation as closure.
 
 [public-data-ordinary-link.md](public-data-ordinary-link.md) describes the
 ordinary-link matrix for the 32 data objects shared by the static and dynamic
@@ -453,10 +436,10 @@ platform.
 
 The [pthread alias contract](owned-pthread-alias-contract.md) retains the
 fixed native weak-alias roster and the `mq_notify` public
-`pthread_detach` relocation. `native_abi_selection.py` can attach its replay
-only with the same selected static/dynamic products and public ELF cohort; it
-does not turn the private implementation spellings into new installed ABI
-providers or close pthread lifecycle, family, or public-support evidence.
+`pthread_detach` relocation. Its runner executes the probes on the selected
+static/dynamic products; it does not turn the private implementation spellings
+into new installed ABI providers or close pthread lifecycle, family, or
+public-support evidence.
 
 ## Hardened kernel entry prototype
 
@@ -514,14 +497,9 @@ Each probe uses PIE and non-PIE executables, entered through both the kernel
 and the direct interpreter. Without an argument it builds a fresh product.
 The report binds the clean source and dynamic product manifest. It retains the
 six probe objects and twelve linked executables. It records each execution's
-stdout, stderr, and status bytes.
-The selector replays those retained files when you pass the report with
-`--runtime-private-facades-report` to `native-abi-selection build-report`
-through `./scripts/dev-x86_64.sh` inside the pinned image, alongside the
-matching source, inventory, ELF facts, declaration, product, and preparation
-inputs. The attachment selects the shared getter provider and closes only this
-consumer requirement. It does not qualify the dynamic product or
-`ldso.dynamic-runtime`.
+stdout, stderr, and status bytes. Qualification runs the runner as a plain
+behavior step on the selected dynamic product and judges its exit status; it
+does not qualify the dynamic product or `ldso.dynamic-runtime`.
 
 ## Installed descriptor control
 

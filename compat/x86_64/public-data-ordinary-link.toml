@@ -1,0 +1,564 @@
+schema = "crabc.x86_64-public-data-ordinary-link-contract/v1"
+target = "x86_64-unknown-linux-musl"
+
+[[object_contracts]]
+id = "object:___environ"
+name = "___environ"
+sources = ["libc/src/c_abi/x86_64/environment_runtime.rs"]
+artifacts = ["candidate-static", "candidate-shared"]
+type = "OBJECT"
+binding = "WEAK"
+visibility = "DEFAULT"
+size_bytes = 8
+alignment_bytes = 8
+alias_target = "__environ"
+declaration = "Exact spelling is absent from the entire installed include/ source tree; selection is ABI-only, not header-derived."
+meaning = "One pointer object naming a null-terminated environment vector; 8 bytes describes the pointer, not vector/strings."
+c_abi_type = "char **"
+source_mutable = true
+declaration_kind = "abi-only"
+
+[[object_contracts]]
+id = "object:__daylight"
+name = "__daylight"
+sources = ["libc/src/c_abi/x86_64/owned_timezone.rs"]
+artifacts = ["candidate-static", "candidate-shared"]
+type = "OBJECT"
+binding = "GLOBAL"
+visibility = "DEFAULT"
+size_bytes = 4
+alignment_bytes = 4
+alias_target = ""
+declaration = "Exact spelling is absent from the entire installed include/ source tree; selection is ABI-only, not header-derived."
+meaning = "Whether the selected timezone has daylight-saving rules."
+c_abi_type = "int"
+source_mutable = true
+declaration_kind = "abi-only"
+
+[[object_contracts]]
+id = "object:__environ"
+name = "__environ"
+sources = ["libc/src/c_abi/x86_64/environment_runtime.rs"]
+artifacts = ["candidate-static", "candidate-shared"]
+type = "OBJECT"
+binding = "GLOBAL"
+visibility = "DEFAULT"
+size_bytes = 8
+alignment_bytes = 8
+alias_target = ""
+declaration = "Exact spelling is absent from the entire installed include/ source tree; selection is ABI-only, not header-derived."
+meaning = "One pointer object naming a null-terminated environment vector; 8 bytes describes the pointer, not vector/strings."
+c_abi_type = "char **"
+source_mutable = true
+declaration_kind = "abi-only"
+
+[[object_contracts]]
+id = "object:__optpos"
+name = "__optpos"
+sources = ["libc/src/getopt_exports.rs"]
+artifacts = ["candidate-static", "candidate-shared"]
+type = "OBJECT"
+binding = "GLOBAL"
+visibility = "DEFAULT"
+size_bytes = 4
+alignment_bytes = 4
+alias_target = ""
+declaration = "Exact spelling is absent from the entire installed include/ source tree; selection is ABI-only, not header-derived."
+meaning = "Internal current short-option byte position, part of frozen addressable ABI."
+c_abi_type = "int"
+source_mutable = true
+declaration_kind = "abi-only"
+
+[[object_contracts]]
+id = "object:__optreset"
+name = "__optreset"
+sources = ["libc/src/getopt_exports.rs"]
+artifacts = ["candidate-static", "candidate-shared"]
+type = "OBJECT"
+binding = "GLOBAL"
+visibility = "DEFAULT"
+size_bytes = 4
+alignment_bytes = 4
+alias_target = ""
+declaration = "Exact spelling is absent from the entire installed include/ source tree; selection is ABI-only, not header-derived."
+meaning = "One mutable parser reset flag; optreset weak alias shares the canonical source definition."
+c_abi_type = "int"
+source_mutable = true
+declaration_kind = "abi-only"
+
+[[object_contracts]]
+id = "object:__progname"
+name = "__progname"
+sources = ["libc/src/c_abi/x86_64/process_globals.rs", "libc/src/c_abi/x86_64/auxv_observation.rs", "libc/src/getopt_exports.rs"]
+artifacts = ["candidate-static", "candidate-shared"]
+type = "OBJECT"
+binding = "GLOBAL"
+visibility = "DEFAULT"
+size_bytes = 8
+alignment_bytes = 8
+alias_target = ""
+declaration = "Exact spelling is absent from the entire installed include/ source tree; selection is ABI-only, not header-derived."
+meaning = "Process diagnostic name pointer: basename for __progname; full argv[0], or validated AT_EXECFN when argv[0] is absent, for __progname_full. Storage size does not describe the borrowed character string."
+c_abi_type = "char *"
+source_mutable = true
+declaration_kind = "abi-only"
+
+[[object_contracts]]
+id = "object:__progname_full"
+name = "__progname_full"
+sources = ["libc/src/c_abi/x86_64/process_globals.rs", "libc/src/c_abi/x86_64/auxv_observation.rs", "libc/src/getopt_exports.rs"]
+artifacts = ["candidate-static", "candidate-shared"]
+type = "OBJECT"
+binding = "GLOBAL"
+visibility = "DEFAULT"
+size_bytes = 8
+alignment_bytes = 8
+alias_target = ""
+declaration = "Exact spelling is absent from the entire installed include/ source tree; selection is ABI-only, not header-derived."
+meaning = "Process diagnostic name pointer: basename for __progname; full argv[0], or validated AT_EXECFN when argv[0] is absent, for __progname_full. Storage size does not describe the borrowed character string."
+c_abi_type = "char *"
+source_mutable = true
+declaration_kind = "abi-only"
+
+[[object_contracts]]
+id = "object:__signgam"
+name = "__signgam"
+sources = ["libc/src/c_abi/x86_64/math_special_musl_x86_64.S"]
+artifacts = ["candidate-static", "candidate-shared"]
+type = "OBJECT"
+binding = "GLOBAL"
+visibility = "DEFAULT"
+size_bytes = 4
+alignment_bytes = 4
+alias_target = ""
+declaration = "Exact spelling is absent from the entire installed include/ source tree; selection is ABI-only, not header-derived."
+meaning = "Shared gamma-sign result; ordinary lgamma variants update it, while *_r forms accept an explicit sign output."
+c_abi_type = "int"
+source_mutable = true
+declaration_kind = "abi-only"
+
+[[object_contracts]]
+id = "object:__stack_chk_guard"
+name = "__stack_chk_guard"
+sources = ["libc/src/c_abi/x86_64/dynamic_main_thread_runtime_v1_lifecycle.rs", "libc/src/c_abi/x86_64/static_tls.rs"]
+artifacts = ["candidate-static", "candidate-shared"]
+type = "OBJECT"
+binding = "GLOBAL"
+visibility = "DEFAULT"
+size_bytes = 8
+alignment_bytes = 8
+alias_target = ""
+declaration = "Exact spelling is absent from the entire installed include/ source tree; selection is ABI-only, not header-derived."
+meaning = "Addressable compiler guard equals the AT_RANDOM-derived word with byte one cleared. The separate x86 compiler TCB slot at FS+40 and worker copies are not ELF TLS definitions of this object."
+c_abi_type = "uintptr_t / machine word"
+source_mutable = true
+declaration_kind = "abi-only"
+
+[[object_contracts]]
+id = "object:__timezone"
+name = "__timezone"
+sources = ["libc/src/c_abi/x86_64/owned_timezone.rs"]
+artifacts = ["candidate-static", "candidate-shared"]
+type = "OBJECT"
+binding = "GLOBAL"
+visibility = "DEFAULT"
+size_bytes = 8
+alignment_bytes = 8
+alias_target = ""
+declaration = "Exact spelling is absent from the entire installed include/ source tree; selection is ABI-only, not header-derived."
+meaning = "Seconds west of UTC for the standard timezone."
+c_abi_type = "long"
+source_mutable = true
+declaration_kind = "abi-only"
+
+[[object_contracts]]
+id = "object:__tzname"
+name = "__tzname"
+sources = ["libc/src/c_abi/x86_64/owned_timezone.rs"]
+artifacts = ["candidate-static", "candidate-shared"]
+type = "OBJECT"
+binding = "GLOBAL"
+visibility = "DEFAULT"
+size_bytes = 16
+alignment_bytes = 8
+alias_target = ""
+declaration = "Exact spelling is absent from the entire installed include/ source tree; selection is ABI-only, not header-derived."
+meaning = "Two name pointers (standard/daylight), not sixteen bytes of character names; pointees are cached name buffers or mapped TZif abbreviations."
+c_abi_type = "char *[2]"
+source_mutable = true
+declaration_kind = "abi-only"
+
+[[object_contracts]]
+id = "object:_dl_debug_addr"
+name = "_dl_debug_addr"
+sources = ["libc/src/c_abi/x86_64/loader_debug_abi.rs"]
+artifacts = ["candidate-shared"]
+type = "OBJECT"
+binding = "GLOBAL"
+visibility = "DEFAULT"
+size_bytes = 8
+alignment_bytes = 8
+alias_target = ""
+declaration = "Exact spelling is absent from the entire installed include/ source tree; selection is ABI-only, not header-derived."
+meaning = "Mutable libc pointer slot to one loader-owned 40-byte repr(C) rendezvous. The pointee owns real link-map references; it is not an eight-byte r_debug and not a copied loader graph."
+c_abi_type = "struct r_debug * protocol view; source uses void *"
+source_mutable = true
+declaration_kind = "abi-only"
+
+[[object_contracts]]
+id = "object:_environ"
+name = "_environ"
+sources = ["libc/src/c_abi/x86_64/environment_runtime.rs"]
+artifacts = ["candidate-static", "candidate-shared"]
+type = "OBJECT"
+binding = "WEAK"
+visibility = "DEFAULT"
+size_bytes = 8
+alignment_bytes = 8
+alias_target = "__environ"
+declaration = "Exact spelling is absent from the entire installed include/ source tree; selection is ABI-only, not header-derived."
+meaning = "One pointer object naming a null-terminated environment vector; 8 bytes describes the pointer, not vector/strings."
+c_abi_type = "char **"
+source_mutable = true
+declaration_kind = "abi-only"
+
+[[object_contracts]]
+id = "object:_ns_flagdata"
+name = "_ns_flagdata"
+sources = ["include/arpa/nameser.h", "libc/src/c_abi/x86_64/ns_flagdata.rs"]
+artifacts = ["candidate-static", "candidate-shared"]
+type = "OBJECT"
+binding = "GLOBAL"
+visibility = "DEFAULT"
+size_bytes = 128
+alignment_bytes = 4
+alias_target = ""
+declaration = "extern const struct _ns_flagdata _ns_flagdata[];"
+meaning = "Sixteen immutable mask/shift records, 8 bytes each, consumed by the installed ns_msg_getflag macro. This is a table object, not a pointer."
+c_abi_type = "const struct _ns_flagdata[16] (provider bound; installed extern array is incomplete)"
+source_mutable = false
+declaration_kind = "installed-variable"
+
+[[object_contracts]]
+id = "object:daylight"
+name = "daylight"
+sources = ["include/time.h", "libc/src/c_abi/x86_64/owned_timezone.rs"]
+artifacts = ["candidate-static", "candidate-shared"]
+type = "OBJECT"
+binding = "WEAK"
+visibility = "DEFAULT"
+size_bytes = 4
+alignment_bytes = 4
+alias_target = "__daylight"
+declaration = "extern int daylight;"
+meaning = "Whether the selected timezone has daylight-saving rules."
+c_abi_type = "int"
+source_mutable = true
+declaration_kind = "installed-variable"
+
+[[object_contracts]]
+id = "object:environ"
+name = "environ"
+sources = ["include/unistd.h", "libc/src/c_abi/x86_64/environment_runtime.rs"]
+artifacts = ["candidate-static", "candidate-shared"]
+type = "OBJECT"
+binding = "WEAK"
+visibility = "DEFAULT"
+size_bytes = 8
+alignment_bytes = 8
+alias_target = "__environ"
+declaration = "extern char **environ;"
+meaning = "One pointer object naming a null-terminated environment vector; 8 bytes describes the pointer, not vector/strings."
+c_abi_type = "char **"
+source_mutable = true
+declaration_kind = "installed-variable"
+
+[[object_contracts]]
+id = "object:getdate_err"
+name = "getdate_err"
+sources = ["include/time.h", "libc/src/c_abi/x86_64/owned_getdate.rs"]
+artifacts = ["candidate-static", "candidate-shared"]
+type = "OBJECT"
+binding = "GLOBAL"
+visibility = "DEFAULT"
+size_bytes = 4
+alignment_bytes = 4
+alias_target = ""
+declaration = "extern int getdate_err;"
+meaning = "Shared getdate error indicator. Callers serialize getdate, the shared result record, and accesses to this integer."
+c_abi_type = "int"
+source_mutable = true
+declaration_kind = "installed-variable"
+
+[[object_contracts]]
+id = "object:h_errno"
+name = "h_errno"
+sources = ["include/netdb.h", "libc/src/c_abi/x86_64/h_errno.rs"]
+artifacts = ["candidate-static", "candidate-shared"]
+type = "OBJECT"
+binding = "GLOBAL"
+visibility = "DEFAULT"
+size_bytes = 4
+alignment_bytes = 4
+alias_target = ""
+declaration = "accessor-macro-not-object-declaration"
+meaning = "Global main-task legacy resolver-status fallback. The accessor selects this object for the authenticated main task and separate selected-worker resolver/TLS storage for workers; the exported object is not STT_TLS."
+c_abi_type = "int"
+source_mutable = true
+declaration_kind = "accessor-macro"
+
+[[object_contracts]]
+id = "object:in6addr_any"
+name = "in6addr_any"
+sources = ["include/netinet/in.h", "libc/src/c_abi/x86_64/in6addr_any.rs"]
+artifacts = ["candidate-static", "candidate-shared"]
+type = "OBJECT"
+binding = "GLOBAL"
+visibility = "DEFAULT"
+size_bytes = 16
+alignment_bytes = 4
+alias_target = ""
+declaration = "extern const struct in6_addr in6addr_any, in6addr_loopback;"
+meaning = "Sixteen zero address bytes."
+c_abi_type = "const struct in6_addr"
+source_mutable = false
+declaration_kind = "installed-variable"
+
+[[object_contracts]]
+id = "object:in6addr_loopback"
+name = "in6addr_loopback"
+sources = ["include/netinet/in.h", "libc/src/c_abi/x86_64/in6addr_loopback.rs"]
+artifacts = ["candidate-static", "candidate-shared"]
+type = "OBJECT"
+binding = "GLOBAL"
+visibility = "DEFAULT"
+size_bytes = 16
+alignment_bytes = 4
+alias_target = ""
+declaration = "extern const struct in6_addr in6addr_any, in6addr_loopback;"
+meaning = "Fifteen zero address bytes followed by byte 1."
+c_abi_type = "const struct in6_addr"
+source_mutable = false
+declaration_kind = "installed-variable"
+
+[[object_contracts]]
+id = "object:optarg"
+name = "optarg"
+sources = ["include/getopt.h", "include/unistd.h", "libc/src/getopt_exports.rs"]
+artifacts = ["candidate-static", "candidate-shared"]
+type = "OBJECT"
+binding = "GLOBAL"
+visibility = "DEFAULT"
+size_bytes = 8
+alignment_bytes = 8
+alias_target = ""
+declaration = "extern char *optarg;; extern char *optarg;"
+meaning = "Borrowed current option-argument pointer."
+c_abi_type = "char *"
+source_mutable = true
+declaration_kind = "installed-variable"
+
+[[object_contracts]]
+id = "object:opterr"
+name = "opterr"
+sources = ["include/getopt.h", "include/unistd.h", "libc/src/getopt_exports.rs"]
+artifacts = ["candidate-static", "candidate-shared"]
+type = "OBJECT"
+binding = "GLOBAL"
+visibility = "DEFAULT"
+size_bytes = 4
+alignment_bytes = 4
+alias_target = ""
+declaration = "extern int optind, opterr, optopt;; extern int optind, opterr, optopt, optreset;"
+meaning = "Diagnostic-output enable flag initialized to 1."
+c_abi_type = "int"
+source_mutable = true
+declaration_kind = "installed-variable"
+
+[[object_contracts]]
+id = "object:optind"
+name = "optind"
+sources = ["include/getopt.h", "include/unistd.h", "libc/src/getopt_exports.rs"]
+artifacts = ["candidate-static", "candidate-shared"]
+type = "OBJECT"
+binding = "GLOBAL"
+visibility = "DEFAULT"
+size_bytes = 4
+alignment_bytes = 4
+alias_target = ""
+declaration = "extern int optind, opterr, optopt;; extern int optind, opterr, optopt, optreset;"
+meaning = "Next argv index; initialized to 1; caller reset to 0 restarts parsing."
+c_abi_type = "int"
+source_mutable = true
+declaration_kind = "installed-variable"
+
+[[object_contracts]]
+id = "object:optopt"
+name = "optopt"
+sources = ["include/getopt.h", "include/unistd.h", "libc/src/getopt_exports.rs"]
+artifacts = ["candidate-static", "candidate-shared"]
+type = "OBJECT"
+binding = "GLOBAL"
+visibility = "DEFAULT"
+size_bytes = 4
+alignment_bytes = 4
+alias_target = ""
+declaration = "extern int optind, opterr, optopt;; extern int optind, opterr, optopt, optreset;"
+meaning = "Current rejected option code initialized to 0."
+c_abi_type = "int"
+source_mutable = true
+declaration_kind = "installed-variable"
+
+[[object_contracts]]
+id = "object:optreset"
+name = "optreset"
+sources = ["include/getopt.h", "include/unistd.h", "libc/src/c_abi/x86_64/process_globals.rs", "libc/src/getopt_exports.rs"]
+artifacts = ["candidate-static", "candidate-shared"]
+type = "OBJECT"
+binding = "WEAK"
+visibility = "DEFAULT"
+size_bytes = 4
+alignment_bytes = 4
+alias_target = "__optreset"
+declaration = "extern int optreset;; extern int optind, opterr, optopt, optreset;"
+meaning = "One mutable parser reset flag; optreset weak alias shares the canonical source definition."
+c_abi_type = "int"
+source_mutable = true
+declaration_kind = "installed-variable"
+
+[[object_contracts]]
+id = "object:program_invocation_name"
+name = "program_invocation_name"
+sources = ["include/errno.h", "libc/src/c_abi/x86_64/process_globals.rs", "libc/src/c_abi/x86_64/auxv_observation.rs", "libc/src/getopt_exports.rs"]
+artifacts = ["candidate-static", "candidate-shared"]
+type = "OBJECT"
+binding = "WEAK"
+visibility = "DEFAULT"
+size_bytes = 8
+alignment_bytes = 8
+alias_target = "__progname_full"
+declaration = "extern char *program_invocation_short_name, *program_invocation_name;"
+meaning = "Process diagnostic name pointer: basename for __progname; full argv[0], or validated AT_EXECFN when argv[0] is absent, for __progname_full. Storage size does not describe the borrowed character string."
+c_abi_type = "char *"
+source_mutable = true
+declaration_kind = "installed-variable"
+
+[[object_contracts]]
+id = "object:program_invocation_short_name"
+name = "program_invocation_short_name"
+sources = ["include/errno.h", "libc/src/c_abi/x86_64/process_globals.rs", "libc/src/c_abi/x86_64/auxv_observation.rs", "libc/src/getopt_exports.rs"]
+artifacts = ["candidate-static", "candidate-shared"]
+type = "OBJECT"
+binding = "WEAK"
+visibility = "DEFAULT"
+size_bytes = 8
+alignment_bytes = 8
+alias_target = "__progname"
+declaration = "extern char *program_invocation_short_name, *program_invocation_name;"
+meaning = "Process diagnostic name pointer: basename for __progname; full argv[0], or validated AT_EXECFN when argv[0] is absent, for __progname_full. Storage size does not describe the borrowed character string."
+c_abi_type = "char *"
+source_mutable = true
+declaration_kind = "installed-variable"
+
+[[object_contracts]]
+id = "object:signgam"
+name = "signgam"
+sources = ["include/math.h", "libc/src/c_abi/x86_64/math_special_musl_x86_64.S"]
+artifacts = ["candidate-static", "candidate-shared"]
+type = "OBJECT"
+binding = "WEAK"
+visibility = "DEFAULT"
+size_bytes = 4
+alignment_bytes = 4
+alias_target = "__signgam"
+declaration = "extern int signgam;"
+meaning = "Shared gamma-sign result; ordinary lgamma variants update it, while *_r forms accept an explicit sign output."
+c_abi_type = "int"
+source_mutable = true
+declaration_kind = "installed-variable"
+
+[[object_contracts]]
+id = "object:stderr"
+name = "stderr"
+sources = ["include/stdio.h", "libc/src/c_abi/x86_64/owned_static_stdio.rs"]
+artifacts = ["candidate-static", "candidate-shared"]
+type = "OBJECT"
+binding = "GLOBAL"
+visibility = "DEFAULT"
+size_bytes = 8
+alignment_bytes = 8
+alias_target = ""
+declaration = "extern FILE *const stderr;"
+meaning = "Pointer object naming its distinct mutable STDERR_STREAM. Eight bytes is not sizeof(FILE) or the private StandardStream."
+c_abi_type = "FILE *const (installed declaration)"
+source_mutable = true
+declaration_kind = "installed-variable"
+
+[[object_contracts]]
+id = "object:stdin"
+name = "stdin"
+sources = ["include/stdio.h", "libc/src/c_abi/x86_64/owned_static_stdio.rs"]
+artifacts = ["candidate-static", "candidate-shared"]
+type = "OBJECT"
+binding = "GLOBAL"
+visibility = "DEFAULT"
+size_bytes = 8
+alignment_bytes = 8
+alias_target = ""
+declaration = "extern FILE *const stdin;"
+meaning = "Pointer object naming its distinct mutable STDIN_STREAM. Eight bytes is not sizeof(FILE) or the private StandardStream."
+c_abi_type = "FILE *const (installed declaration)"
+source_mutable = true
+declaration_kind = "installed-variable"
+
+[[object_contracts]]
+id = "object:stdout"
+name = "stdout"
+sources = ["include/stdio.h", "libc/src/c_abi/x86_64/owned_static_stdio.rs"]
+artifacts = ["candidate-static", "candidate-shared"]
+type = "OBJECT"
+binding = "GLOBAL"
+visibility = "DEFAULT"
+size_bytes = 8
+alignment_bytes = 8
+alias_target = ""
+declaration = "extern FILE *const stdout;"
+meaning = "Pointer object naming its distinct mutable STDOUT_STREAM. Eight bytes is not sizeof(FILE) or the private StandardStream."
+c_abi_type = "FILE *const (installed declaration)"
+source_mutable = true
+declaration_kind = "installed-variable"
+
+[[object_contracts]]
+id = "object:timezone"
+name = "timezone"
+sources = ["include/time.h", "libc/src/c_abi/x86_64/owned_timezone.rs"]
+artifacts = ["candidate-static", "candidate-shared"]
+type = "OBJECT"
+binding = "WEAK"
+visibility = "DEFAULT"
+size_bytes = 8
+alignment_bytes = 8
+alias_target = "__timezone"
+declaration = "extern long timezone;"
+meaning = "Seconds west of UTC for the standard timezone."
+c_abi_type = "long"
+source_mutable = true
+declaration_kind = "installed-variable"
+
+[[object_contracts]]
+id = "object:tzname"
+name = "tzname"
+sources = ["include/time.h", "libc/src/c_abi/x86_64/owned_timezone.rs"]
+artifacts = ["candidate-static", "candidate-shared"]
+type = "OBJECT"
+binding = "WEAK"
+visibility = "DEFAULT"
+size_bytes = 16
+alignment_bytes = 8
+alias_target = "__tzname"
+declaration = "extern char *tzname[2];"
+meaning = "Two name pointers (standard/daylight), not sixteen bytes of character names; pointees are cached name buffers or mapped TZif abbreviations."
+c_abi_type = "char *[2]"
+source_mutable = true
+declaration_kind = "installed-variable"
+

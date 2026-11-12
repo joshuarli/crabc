@@ -20,6 +20,7 @@ import stat
 import subprocess
 import sys
 import time
+import tomllib
 from typing import Any, Mapping
 
 sys.dont_write_bytecode = True
@@ -29,7 +30,6 @@ if str(MODULE_DIR) not in sys.path:
     sys.path.insert(0, str(MODULE_DIR))
 
 import native_abi_inventory as inventory
-import native_abi_selection as selection
 import owned_dynamic_qualification as qualification
 import source_seal
 import owned_posix_product_evidence as products
@@ -42,7 +42,14 @@ IMAGE_ENV = "CRABC_X86_PUBLIC_DATA_IMAGE_ID"
 IMAGE_PATTERN = re.compile(r"crabc-core-evidence@sha256:[0-9a-f]{64}")
 SOURCE_MOUNT = "/workspace"
 PROBE = ROOT / "compat/x86_64/public_data_ordinary_link_probe.c"
-SELECTION = ROOT / "compat/x86_64/native-abi-selection.toml"
+CONTRACT = ROOT / "compat/x86_64/public-data-ordinary-link.toml"
+CONTRACT_SCHEMA = "crabc.x86_64-public-data-ordinary-link-contract/v1"
+TARGET = "x86_64-unknown-linux-musl"
+OBJECT_FIELDS = {
+    "id", "name", "sources", "artifacts", "type", "binding", "visibility", "size_bytes",
+    "alignment_bytes", "alias_target", "declaration", "meaning", "c_abi_type",
+    "source_mutable", "declaration_kind",
+}
 EXPECTED_OBJECT_COUNT = 32
 EXPECTED_ALIAS_COUNT = 10
 STATIC_MODES = ("static", "static-pie")
@@ -199,10 +206,47 @@ def mounted(root: Path, path: Path) -> str:
     return (Path(SOURCE_MOUNT) / path.relative_to(root)).as_posix()
 
 
+def load_contract(path: Path = CONTRACT) -> dict[str, Any]:
+    try:
+        contract = tomllib.loads(Path(path).read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, tomllib.TOMLDecodeError) as error:
+        raise PublicDataEvidenceError(f"cannot read ordinary-link contract: {error}") from error
+    require(set(contract) == {"schema", "target", "object_contracts"}
+            and contract["schema"] == CONTRACT_SCHEMA and contract["target"] == TARGET
+            and isinstance(contract["object_contracts"], list),
+            "ordinary-link contract schema or target differs")
+    names = set()
+    for entry in contract["object_contracts"]:
+        require(isinstance(entry, dict) and set(entry) == OBJECT_FIELDS,
+                "ordinary-link object contract fields differ")
+        name = entry["name"]
+        require(isinstance(name, str) and re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", name) is not None
+                and entry["id"] == "object:" + name and name not in names,
+                "ordinary-link object contract identity differs")
+        require(entry["type"] == "OBJECT" and entry["binding"] in {"GLOBAL", "WEAK"}
+                and entry["visibility"] in {"DEFAULT", "HIDDEN"}
+                and type(entry["size_bytes"]) is int and entry["size_bytes"] > 0
+                and type(entry["alignment_bytes"]) is int and entry["alignment_bytes"] > 0
+                and entry["size_bytes"] % entry["alignment_bytes"] == 0
+                and isinstance(entry["sources"], list) and entry["sources"]
+                and all(isinstance(source, str) and source and not Path(source).is_absolute()
+                        and ".." not in Path(source).parts for source in entry["sources"])
+                and isinstance(entry["artifacts"], list) and set(entry["artifacts"]) <= {"candidate-static", "candidate-shared"}
+                and isinstance(entry["alias_target"], str)
+                and entry["declaration_kind"] in {"abi-only", "installed-variable", "accessor-macro"}
+                and isinstance(entry["source_mutable"], bool)
+                and isinstance(entry["c_abi_type"], str) and entry["c_abi_type"],
+                "ordinary-link object contract values differ")
+        if entry["alias_target"]:
+            require(re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", entry["alias_target"]) is not None
+                    and entry["alias_target"] in names | {item["name"] for item in contract["object_contracts"]},
+                    "ordinary-link alias target is not selected")
+        names.add(name)
+    return contract
+
+
 def selected_objects(contract: Mapping[str, Any] | None = None) -> tuple[list[dict[str, Any]], list[dict[str, str]]]:
-    if contract is None:
-        contract = selection.load_contract()
-    contract = selection.validate_contract(dict(contract))
+    contract = load_contract() if contract is None else contract
     raw = contract["object_contracts"]
     objects = [dict(row) for row in raw if set(row["artifacts"]) == {"candidate-static", "candidate-shared"}]
     require(len(objects) == EXPECTED_OBJECT_COUNT, "ordinary-link selection does not contain exactly 32 static/shared objects")
@@ -262,14 +306,14 @@ def validate_probe_policy(objects: list[Mapping[str, Any]], aliases: list[Mappin
 
 def selection_identity(root: Path) -> dict[str, Any]:
     objects, aliases = selected_objects()
-    source_paths = {SELECTION}
+    source_paths = {CONTRACT}
     for item in objects:
         for relative in item["sources"]:
             candidate = Path(relative)
             require(not candidate.is_absolute() and ".." not in candidate.parts, "object source reference escapes checkout")
             source_paths.add(ROOT / candidate)
     return {
-        "contract": source_file_identity(root, SELECTION, "selection contract"),
+        "contract": source_file_identity(root, CONTRACT, "ordinary-link contract"),
         "sources": [source_file_identity(root, path, "selected object source")
                     for path in sorted(source_paths, key=lambda item: item.as_posix())],
         "names": [item["name"] for item in objects],

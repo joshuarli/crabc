@@ -156,8 +156,6 @@ class LocaleAliasContractTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         source = RUNNER.read_text(encoding="utf-8")
         self.assertIn('readonly PROBE="$ROOT/compat/x86_64/locale_alias_contract_probe.c"', source)
-        self.assertIn('readonly CONTRACT="$ROOT/compat/x86_64/locale_alias_contract.json"', source)
-        self.assertIn('readonly SYMBOLS="$ROOT/compat/x86_64/locale_alias_contract_symbols.py"', source)
         self.assertIn('candidate-static-link', source)
         self.assertIn('candidate-static-pie-link', source)
         self.assertIn('for mode in pie non-pie; do', source)
@@ -181,15 +179,7 @@ class LocaleAliasContractTests(unittest.TestCase):
             'capture candidate-static-link "$static_product/bin/crabc-cc" -static -no-pie',
             source,
         )
-        self.assertIn('readelf -Ws "$static_product/usr/lib/libc.a"', source)
-        self.assertIn('readelf --dyn-syms -W "$dynamic_product/usr/lib/libc.so"', source)
-        self.assertIn('capture oracle-shared-symbols /usr/bin/readelf -Ws /opt/musl-1.2.6/lib/libc.so', source)
-        self.assertIn('capture candidate-shared-symbols /usr/bin/readelf -Ws "$dynamic_product/usr/lib/libc.so"', source)
-        self.assertIn('capture oracle-static-symbols /usr/bin/readelf -Ws /opt/musl-1.2.6/lib/libc.a', source)
-        self.assertIn(
-            'capture oracle-dynamic-symbols /usr/bin/readelf --dyn-syms -W /opt/musl-1.2.6/lib/libc.so',
-            source,
-        )
+        self.assertNotIn('locale_alias_contract_symbols.py', source)
 
     def test_symbol_parser_keeps_symtab_and_dynsym_observations_separate(self) -> None:
         raw = """\

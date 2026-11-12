@@ -1082,69 +1082,6 @@ int main(void) {
                     {**contract,'extra':True}):
             with self.assertRaises(reader.StartupEvidenceError):reader.validate_contract(bad)
 
-    def test_source_crt_native_owner_groups_keep_exact_sources_and_artifact_roles(self):
-        contract=reader.tomllib.loads((reader.ROOT/'compat/x86_64/native-abi-selection.toml').read_text())
-        self.assertEqual(len(contract['owner_groups']),len({group['id'] for group in contract['owner_groups']}))
-        groups={group['id']:group for group in contract['owner_groups']}
-        source_groups={group['id'] for group in contract['owner_groups'] if group['id'].startswith('source-crt-')}
-        self.assertEqual(source_groups,{
-            'source-crt-linker-array-address-bridges','source-crt-static-lifecycle-bodies',
-            'source-crt-dynamic-lifecycle-bodies','source-crt-owned-handoff-accessor',
-            'source-crt-conventional-dispatcher','source-crt-attached-owned-handoff',
-            'source-crt-raw-entry-symbol',
-        })
-        self.assertEqual(groups['source-crt-static-lifecycle-bodies']['artifacts'],
-                         ['static-crt1.o','static-rcrt1.o','dynamic-crt1.o'])
-        self.assertEqual(groups['source-crt-static-lifecycle-bodies']['members'],[
-            '__crabc_x86_64_executable_fini','__crabc_x86_64_executable_init','__crabc_x86_64_static_pie_start'])
-        self.assertEqual(set(groups['source-crt-static-lifecycle-bodies']['placement_metadata']),
-                         set(groups['source-crt-static-lifecycle-bodies']['artifacts']))
-        self.assertEqual(groups['source-crt-dynamic-lifecycle-bodies']['artifacts'],
-                         ['static-crt1.o','static-Scrt1.o','dynamic-crt1.o','dynamic-Scrt1.o'])
-        self.assertIn('crt/src/x86_64_crt1.rs',groups['source-crt-dynamic-lifecycle-bodies']['sources'])
-        self.assertEqual(groups['source-crt-dynamic-lifecycle-bodies']['members'],[
-            '__crabc_x86_64_dynamic_executable_fini','__crabc_x86_64_dynamic_executable_init',
-            '__crabc_x86_64_dynamic_start'])
-        self.assertEqual(set(groups['source-crt-dynamic-lifecycle-bodies']['placement_metadata']),
-                         set(groups['source-crt-dynamic-lifecycle-bodies']['artifacts']))
-        self.assertEqual(groups['source-crt-owned-handoff-accessor']['artifacts'],
-                         ['static-Scrt1.o','dynamic-Scrt1.o'])
-        self.assertEqual(groups['source-crt-owned-handoff-accessor']['members'],
-                         ['__crabc_x86_64_owned_crt_handoff_value'])
-        self.assertEqual(set(groups['source-crt-owned-handoff-accessor']['placement_metadata']),
-                         set(groups['source-crt-owned-handoff-accessor']['artifacts']))
-        for group_id in ('source-crt-static-lifecycle-bodies','source-crt-dynamic-lifecycle-bodies',
-                         'source-crt-owned-handoff-accessor'):
-            group=groups[group_id]
-            self.assertEqual(group['placement_metadata'],{
-                artifact:{'type':'FUNC','binding':'GLOBAL','visibility':'DEFAULT'}
-                for artifact in group['artifacts']})
-        self.assertEqual(groups['source-crt-conventional-dispatcher'], {
-            'id':'source-crt-conventional-dispatcher','selector':'explicit','disposition':'private-provider',
-            'owner':'x86-crt-entry-dispatcher','family':'crt.static-pie',
-            'artifacts':['static-crt1.o','dynamic-crt1.o'],'sources':['crt/src/x86_64_crt1.rs'],
-            'members':['__crabc_x86_64_exec_start'],'members_file':'','expected_type':'FUNC',
-            'delegated_members':[],'placement_metadata':{
-                'static-crt1.o':{'type':'FUNC','binding':'GLOBAL','visibility':'DEFAULT'},
-                'dynamic-crt1.o':{'type':'FUNC','binding':'GLOBAL','visibility':'DEFAULT'}},
-            'reason':'Combined crt1 objects dispatch static and dynamic executable entry using source-owned mode detection.',
-            'static_metadata_rule':'explicit',
-        })
-        self.assertEqual(groups['source-crt-attached-owned-handoff'], {
-            'id':'source-crt-attached-owned-handoff','selector':'explicit','disposition':'private-provider',
-            'owner':'x86-owned-crt-handoff-attachment','family':'crt.dynamic-startup',
-            'artifacts':['static-crt1.o','dynamic-crt1.o','dynamic-crabc-dynamic-attach.o'],
-            'sources':['crt/src/x86_64_crt1.rs','crt/src/x86_64_owned_crt_handoff_attachment.rs'],
-            'members':['__crabc_x86_64_attached_owned_crt_handoff'],'members_file':'','expected_type':'FUNC',
-            'delegated_members':[],'placement_metadata':{
-                'static-crt1.o':{'type':'FUNC','binding':'WEAK','visibility':'HIDDEN'},
-                'dynamic-crt1.o':{'type':'FUNC','binding':'WEAK','visibility':'HIDDEN'},
-                'dynamic-crabc-dynamic-attach.o':{'type':'FUNC','binding':'GLOBAL','visibility':'HIDDEN'}},
-            'reason':'Combined CRTs define weak HIDDEN fallbacks. The dynamic attachment defines their GLOBAL HIDDEN replacement.',
-            'static_metadata_rule':'explicit',
-        })
-        self.assertTrue((reader.ROOT/'crt/src/x86_64_owned_crt_handoff_attachment.rs').is_file())
-
     def test_source_crt_definition_rows_keep_exact_object_roles(self):
         facts=self.fixture();placements=reader.account_products(facts)
         def named_rows(artifact):

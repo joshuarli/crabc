@@ -16,8 +16,6 @@ umask 022
 readonly ROOT="$(cd -P "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 readonly ORACLE_CC=/usr/local/bin/crabc-x86_64-musl-gcc
 readonly PROBE="$ROOT/compat/x86_64/locale_alias_contract_probe.c"
-readonly CONTRACT="$ROOT/compat/x86_64/locale_alias_contract.json"
-readonly SYMBOLS="$ROOT/compat/x86_64/locale_alias_contract_symbols.py"
 readonly TIMEOUT=/usr/bin/timeout
 readonly TIMEOUT_SECONDS=20
 readonly COMMAND_ENV=/usr/bin/env
@@ -61,8 +59,7 @@ done
 case "$(/bin/uname -m)" in x86_64|amd64) ;; *) fail "requires native x86-64, got $(/bin/uname -m)" ;; esac
 [ -n "${TMPDIR:-}" ] || fail 'requires explicit checkout-local TMPDIR'
 [ -x "$ORACLE_CC" ] || fail 'missing pinned musl compiler'
-[ -f "$PROBE" ] && [ -f "$CONTRACT" ] && [ -f "$SYMBOLS" ] ||
-    fail 'missing probe, alias contract, or selected-symbol validator'
+[ -f "$PROBE" ] || fail 'missing probe'
 
 static_product="$(/usr/bin/realpath -e "$static_product")"
 dynamic_product="$(/usr/bin/realpath -e "$dynamic_product")"
@@ -146,7 +143,7 @@ PY
 
 snapshot() {
     local point="$1"
-    /usr/bin/sha256sum "$PROBE" "$CONTRACT" "$SYMBOLS" \
+    /usr/bin/sha256sum "$PROBE" \
         "$static_product/usr/lib/libc.a" "$dynamic_product/usr/lib/libc.so" \
         >"$work/$point.sha256"
 }
@@ -246,27 +243,7 @@ for mode in pie non-pie; do
     done
 done
 
-capture oracle-static-symbols /usr/bin/readelf -Ws /opt/musl-1.2.6/lib/libc.a
-capture oracle-dynamic-symbols /usr/bin/readelf --dyn-syms -W /opt/musl-1.2.6/lib/libc.so
-capture oracle-shared-symbols /usr/bin/readelf -Ws /opt/musl-1.2.6/lib/libc.so
-capture candidate-static-symbols /usr/bin/readelf -Ws "$static_product/usr/lib/libc.a"
-capture candidate-dynamic-symbols /usr/bin/readelf --dyn-syms -W "$dynamic_product/usr/lib/libc.so"
-capture candidate-shared-symbols /usr/bin/readelf -Ws "$dynamic_product/usr/lib/libc.so"
-capture executable-dynamic-pie-symbols /usr/bin/readelf --dyn-syms -W "$work/candidate-dynamic-pie"
-capture executable-dynamic-non-pie-symbols /usr/bin/readelf --dyn-syms -W "$work/candidate-dynamic-non-pie"
-capture alias-symbol-observation /usr/bin/python3 -B "$SYMBOLS" \
-    "$CONTRACT" \
-    "$work/oracle-static-symbols.stdout" \
-    "$work/oracle-dynamic-symbols.stdout" \
-    "$work/oracle-shared-symbols.stdout" \
-    "$work/candidate-static-symbols.stdout" \
-    "$work/candidate-dynamic-symbols.stdout" \
-    "$work/candidate-shared-symbols.stdout" \
-    "$work/executable-dynamic-pie-symbols.stdout" \
-    "$work/executable-dynamic-non-pie-symbols.stdout" \
-    "$work/alias-observation.json"
-
 snapshot after
 /usr/bin/cmp "$work/before.sha256" "$work/after.sha256" ||
     fail 'probe, contract, or supplied product changed during the proof'
-printf 'locale alias contract: PASS (one installed-header object; static ET_EXEC/static-PIE and dynamic PIE/non-PIE kernel/direct links; public overrides, retained internal calls, and selected .dynsym/.symtab observations); evidence: %s\n' "$work"
+printf 'locale alias contract: PASS (one installed-header object; static ET_EXEC/static-PIE and dynamic PIE/non-PIE kernel/direct links; public overrides and retained internal calls); evidence: %s\n' "$work"

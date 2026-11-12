@@ -51,14 +51,11 @@ Feature ABI-only names are retained as separate feature accounting and are not
 made header requirements by this adapter.
 
 `account_declarations` is a composition helper, not an alternate source of
-selection policy.  Its selected provider/deferred/ABI-only partition and
-checked matrix projection must come from
-`native_abi_selection.load_source_inputs`.  The enclosing selection receipt
-retains the exact partition source bindings in `source_inputs.bindings`; this
-account retains the checked matrix report/reader/contract/extension identities
-in `matrix_provenance`.  Passing an arbitrary direct subset or alternate
-projection is outside that caller-authenticated boundary and cannot establish
-selection closure.
+provider policy. Its provider/deferred/ABI-only partition and checked matrix
+projection come from the replaying caller's `header_declaration_inventory`
+report; this account retains the checked matrix report/reader/contract/extension
+identities in `matrix_provenance`. Passing an arbitrary direct subset or
+alternate projection is outside that caller-authenticated boundary.
 
 Successful declaration accounting leaves provider selection, archive
 extraction, complete language linkage, runtime semantics, family completion,

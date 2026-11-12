@@ -102,8 +102,6 @@ class PublicDataVariableRuntimeContractTests(unittest.TestCase):
         self.assertIn('compat/x86_64/owned_calendar_component_receipt.py', paths)
         self.assertIn('compat/x86_64/tests/test_owned_public_data_variable_runtime.py', paths)
         self.assertIn('include/netdb.h', paths)
-        self.assertIn('compat/x86_64/native-abi-selection.toml', paths)
-        self.assertIn('compat/x86_64/native_data_declarations.toml', paths)
         self.assertIn('compat/x86_64/owned_errno_storage_lifecycle.py', paths)
         self.assertEqual(len(paths), len(set(paths)))
 
@@ -112,7 +110,7 @@ class PublicDataVariableRuntimeContractTests(unittest.TestCase):
             'object': 'h_errno',
             'accessor': '__h_errno_location',
             'header': 'include/netdb.h',
-            'header_owner': 'native_data_declarations',
+            'header_owner': 'header_declaration_inventory',
             'runtime_owner': 'owned_errno_storage_lifecycle',
             'static_shared_roles': ['static', 'shared'],
             'execution_scope': ['main', 'live-worker', 'loaded-dso'],
@@ -902,20 +900,6 @@ class PublicDataVariableRuntimePublicReplayTests(unittest.TestCase):
             path, root=ROOT, static_preparation=self.static_primary,
             static_product=self.static_primary, dynamic_product=self.dynamic_product,
             **self.companions,
-        )
-
-    def test_declaration_companion_reader_receives_the_supplied_owned_products(self) -> None:
-        envelope = {'current_selecting_source': {'matches_retained': True}}
-        with mock.patch.object(reader.header_declaration_inventory, 'validate_report', return_value=envelope), \
-             mock.patch.object(reader.native_declaration_abi, 'validate_report',
-                               side_effect=ValueError('stop after declaration-boundary replay')) as declaration_reader:
-            with self.assertRaisesRegex(reader.PublicDataVariableRuntimeError, 'stop after declaration-boundary replay'):
-                reader._current_companion_projection(
-                    ROOT, self.companions, static_product=self.static_primary, dynamic_product=self.dynamic_product,
-                )
-        declaration_reader.assert_called_once_with(
-            self.companions['declaration_abi_report'], header_report=self.companions['header_report'],
-            header_envelope=envelope, static_product=self.static_primary, dynamic_product=self.dynamic_product,
         )
 
     def test_collection_replays_declaration_links_against_its_admitted_product_pair(self) -> None:

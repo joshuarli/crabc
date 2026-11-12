@@ -89,103 +89,12 @@ public strong replacements. It intentionally does not claim a general locale
 catalog, legacy encodings, timezone-data qualification, or full application
 interposition coverage.
 
-## Retained receipt and host replay
+## Qualification use
 
-`locale_alias_contract_receipt.py` wraps the existing runner; it does not turn
-a shell transcript into evidence. Receipts use
-`locale-alias-contract-image-inputs-v2.json`, whose image identity agrees with
-`core_image.py` and whose toolchain paths follow `rust-toolchain.toml`.
-The manifest does not transfer a receipt to a different image.
-The finite image-input manifest binds the selected image, musl
-1.2.6 archive/shared object/specs/compiler, the pinned target `llvm-ar`,
-`llvm-nm`, and `llvm-objdump`, and every runner or collector tool by physical
-path, bytes, and mode. Both static and dynamic product metadata must name those
-same three retained LLVM inputs. Collection requires a clean Git checkout
-including no untracked inputs, captures the complete HEAD/tree Git bytes and
-modes, and copies the selected source files both before and after the native
-work. The dynamic product retains that complete source transaction, including
-the selected path byte and mode identities. Static source authority instead
-remains with the established
-`owned_posix_static_products.py` preparation: the receipt retains its complete
-primary/reproduction/extracted product, archive, source-seal, and command
-transaction, and the normal runner receives only that preparation's `primary`
-sysroot. It then passes one fresh explicit `--receipt-dir` to
-`run_locale_alias_contract.sh`. Every captured compile, link, header, normal
-static runtime, dynamic kernel/direct runtime, and symbol-observation command
-retains its exact argv, `/workspace` working directory, closed `LC_ALL`/`PATH`
-environment, `/dev/null` stdin, `/usr/bin/env -i` plus `/usr/bin/timeout`
-launcher, stdout, stderr, status, and modes. The normal consumer runner uses
-`umask 022`; source, image-tool, installed-product, raw-stream, and linked
-consumer mode policies are all checked from retained bytes. The receipt also
-retains the compiled object and every linked consumer identity, before/after
-input snapshots, and complete static/dynamic product trees including directory
-and symlink modes. The descendant-tree convention intentionally omits each
-product root, so the receipt records the physical static and dynamic root modes
-separately. This preserves a dynamic setgid root such as `02755` without
-inventing a root mode from descendants.
+`run_locale_alias_contract.sh --static-sysroot STATIC_SYSROOT DYNAMIC_SYSROOT`
+runs the focused installed-product proof. Candidate qualification runs it as a
+plain behavior step and judges only its exit status; it publishes no receipt.
 
-To check the current manifest independently of product construction, run
-`python3 -B compat/x86_64/locale_alias_contract_receipt.py image-input-manifest`
-inside the exact image named by `core_image.py`. The command observes each
-tool's resolved path, SHA-256, size and mode. Compare the result with
-`locale-alias-contract-image-inputs-v2.json`; an image-ID update alone cannot
-authenticate changed tool bytes. Collection authenticates those same physical
-files before retaining them, and the reader authenticates their retained bytes
-against the selected manifest. This image check does not qualify products or
-locale behavior.
-
-Collection accepts `collect --output DIR --static-product STATIC_ROOT
---dynamic-product DYNAMIC_ROOT` for an existing product pair. Both roots are
-required together. The static root must be the existing preparation's
-`products/primary`; its complete `preparation.json` transaction is replayed
-against the current clean source before admission. The dynamic state must
-identify that same source. The collector retains both supplied trees and the
-unchanged static preparation, then runs the normal consumer against the
-original supplied roots. It reopens the original trees, root modes and
-preparation after copying, execution, and report construction. Omitting both
-roots retains standalone construction of fresh products.
-
-Supplied collection uses the existing command records to retain exact copy
-source paths and runner arguments. Replay derives those original paths from
-the closed retention-command roster and compares the retained snapshot paths
-and all consumer commands against them. Static preparation and dynamic link
-readers materialize their original path namespaces from retained bytes in
-disposable checkout scratch. Neither original supplied root is needed for
-later process-free replay; the link commands and preparation record remain
-unchanged.
-
-The retained snapshot stream keeps the runner's exact mounted producer paths:
-source inputs are rooted at `/workspace`, while supplied products are rooted
-at the checkout-relative output directory. Its reconstructed records use the
-receipt-relative product paths used by the retained product trees, so replay
-checks both the runner invocation identity and the receipt's product identity.
-Source-tool records likewise keep their logical source-relative paths while
-their copied bytes and modes remain under `inputs/source`; the reader compares
-those paths in the source namespace without losing the retained-file check.
-
-The host-side `validate-report` path only reads the receipt. It reconstructs
-the fixed command runner roster and its paths, authenticates the retained
-complete Git source tree, rechecks the trusted checkout's recorded HEAD and
-every tracked source byte/mode, replays the retained static preparation against
-that sealed Git tree, checks image inputs and both product producer-tool
-records, then reconstructs product manifests/trees, launch context, runtime
-comparisons, and the complete alias observation from the retained `readelf`
-streams. Before public success it reopens the report and repeats those finite
-joins, including source, inputs, products, commands, artifacts, snapshots,
-runtime, and symbols. Collection likewise repeats its mutable
-source/image/product/raw-input checks after report construction; host replay
-starts no compiler, linker, target executable, shell, or container.
-
-The selected source relation remains deliberately narrow: `locale_narrow.rs`,
-`locale_objects.rs`, `gmtime_r.rs`, `owned_calendar.rs`,
-`owned_strftime.rs`, `owned_wcsftime.rs`, `owned_timezone.rs`, and their selected
-`static_c_abi.rs` composition are byte-bound. The four time internals retain
-the source-specific distinction described above: musl's full table has local
-`DEFAULT` definitions while the candidate's has local `HIDDEN` definitions;
-neither is accepted as a dynamic export. The receipt also retains the
-source-local oracle `tzset`/`__tzset` distinction instead of inferring a
-candidate static placement from a symbol's presence.
-
-This receipt still excludes native ABI selection, a general locale or timezone
-implementation, dynamic-authority review, runtime
-qualification, family completion, and public-support promotion.
+```sh
+./scripts/dev-x86_64.sh abi-behavior locale-alias --static-sysroot STATIC_SYSROOT DYNAMIC_SYSROOT
+```

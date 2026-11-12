@@ -30,8 +30,6 @@ import owned_posix_static_products as static_products
 import source_seal
 import public_data_ordinary_link_evidence as ordinary_link
 import header_declaration_inventory
-import native_declaration_abi
-import native_data_declarations
 import owned_errno_storage_lifecycle
 import owned_calendar_component_receipt as calendar_receipt
 import core_image
@@ -233,10 +231,6 @@ def source_inputs(contract: Mapping[str, Any] | None = None) -> list[dict[str, A
     paths.extend(contract['h_errno']['owner_sources'])
     paths.extend((
         contract['h_errno']['header'],
-        'compat/x86_64/native-abi-selection.toml',
-        'compat/x86_64/native_data_declarations.py',
-        'compat/x86_64/native_data_declarations.toml',
-        'compat/x86_64/native_declaration_abi.py',
         'compat/x86_64/header_declaration_inventory.py',
         'compat/x86_64/public_data_ordinary_link_evidence.py',
         'compat/x86_64/owned_errno_storage_lifecycle.py',
@@ -341,7 +335,7 @@ def h_errno_composition_contract() -> dict[str, Any]:
     """Name the existing owners that must meet at the one accessor boundary."""
     return {
         **H_ERRNO,
-        'header_owner': 'native_data_declarations',
+        'header_owner': 'header_declaration_inventory',
         'runtime_owner': 'owned_errno_storage_lifecycle',
         'static_shared_roles': ['static', 'shared'],
         'execution_scope': ['main', 'live-worker', 'loaded-dso'],
@@ -512,20 +506,13 @@ def _oracle_root_setup(root: Path, receipt_root: Path, consumer: Path,
     return ordinary_link.execution_tree(ROOT, root, 'oracle execution root')
 
 
-COMPANION_NAMES = ('header_report', 'declaration_abi_report', 'ordinary_link_report', 'errno_report')
+COMPANION_NAMES = ('header_report', 'ordinary_link_report')
 
 
 def _current_companion_projection(root: Path, paths: Mapping[str, Path], *,
                                   static_product: Path, dynamic_product: Path) -> dict[str, Any]:
-    """Replay the four existing owners used by the h_errno composition.
-
-    This component does not replace their evidence.  It requires each public
-    reader first, then records only the small facts that meet at the installed
-    declaration boundary.  Every caller passes these reports again during
-    retained replay; a copied report alone never transfers a cohort.
-    Declaration link controls receive the same supplied product pair that the
-    runtime collector admits before and after replay.
-    """
+    """Replay the two retained owners the runtime matrix still consumes."""
+    del static_product, dynamic_product
     require(set(paths) == set(COMPANION_NAMES), 'public-data runtime companion roster differs')
     for name, path in paths.items():
         require(_physical_file(path, name + ' report').name == 'report.json',
@@ -535,48 +522,18 @@ def _current_companion_projection(root: Path, paths: Mapping[str, Path], *,
         current = header.get('current_selecting_source')
         require(isinstance(current, Mapping) and current.get('matches_retained') is True,
                 'header declaration report source differs from current selection')
-        declaration = native_declaration_abi.validate_report(
-            paths['declaration_abi_report'], header_report=paths['header_report'], header_envelope=header,
-            static_product=static_product, dynamic_product=dynamic_product,
-        )
-        declaration_contract = native_data_declarations.load_contract()
-        selected_declarations = [{key: item[key] for key in (
-            'id', 'name', 'declaration_kind', 'declaration', 'c_abi_type', 'source_mutable',
-        )} for item in declaration_contract['objects']]
-        header_account = native_data_declarations.account_declarations(
-            header, selected_declarations, contract=declaration_contract,
-        )
         ordinary = ordinary_link.validate_report(root, paths['ordinary_link_report'])
-        errno = owned_errno_storage_lifecycle.validate_report(root, paths['errno_report'])
     except (OSError, ValueError, KeyError, TypeError) as error:
         raise PublicDataVariableRuntimeError(f'public-data runtime companion rejected: {error}') from error
-    summary = declaration.get('summary')
-    require(isinstance(summary, Mapping) and set(summary) == {
-        'cxx_job_count', 'job_count', 'language_counts', 'observation_count',
-        'observation_status_counts', 'reference_category_counts', 'reference_count',
-    } and type(summary['job_count']) is int and summary['job_count'] > 0,
-            'ordinary declaration ABI companion summary differs')
     require(isinstance(ordinary, Mapping) and set(ordinary) == {'report', 'links'},
             'ordinary public-data link companion envelope differs')
     link_projection = {}
     for name, record in ordinary['links'].items():
         require(isinstance(record, Mapping), 'ordinary public-data link projection differs')
         link_projection[name] = {key: value for key, value in record.items() if key != 'product'}
-    h_layout = errno.get('h_errno_layout')
-    require(isinstance(h_layout, Mapping) and set(h_layout) == {'static', 'shared'},
-            'errno storage companion h_errno layout differs')
-    require(header_account['scope'] == {
-        'selected_object_contracts': 33, 'installed_variables': 19, 'accessor_macros': 1,
-        'abi_only_names': 13, 'provider_selection': 'not-evaluated', 'object_layout': 'not-evaluated',
-        'runtime': 'not-evaluated', 'family_completion': 'not-claimed', 'public_support': 'not-claimed',
-    }, 'header declaration runtime scope differs')
-    h_errno_header = next(item for item in header_account['objects'] if item['id'] == 'object:h_errno')
     return {
         'header_current_source': {'matches_retained': True},
-        'declaration_summary': dict(summary),
         'ordinary_link': {'report': dict(ordinary['report']), 'links': link_projection},
-        'h_errno_header': h_errno_header,
-        'h_errno_layout': dict(h_layout),
         'h_errno_execution_labels': list(owned_errno_storage_lifecycle.RUN_LABELS),
     }
 
@@ -1137,8 +1094,7 @@ def _validate_objects(receipt_root: Path, value: object) -> None:
 
 def validate_report(report_path: Path, *, root: Path = ROOT, static_preparation: Path,
                     static_product: Path, dynamic_product: Path,
-                    header_report: Path, declaration_abi_report: Path,
-                    ordinary_link_report: Path, errno_report: Path) -> dict[str, Any]:
+                    header_report: Path, ordinary_link_report: Path) -> dict[str, Any]:
     """Replay the exact current retained receipt without a compiler or target tool."""
     root = Path(root).resolve(strict=True)
     report_path = _physical_file(report_path, 'public-data runtime report')
@@ -1174,8 +1130,7 @@ def validate_report(report_path: Path, *, root: Path = ROOT, static_preparation:
     require(type(companions['inputs']) is dict and set(companions['inputs']) == set(COMPANION_NAMES),
             'public-data runtime retained companion roster differs')
     supplied_companions = {
-        'header_report': header_report, 'declaration_abi_report': declaration_abi_report,
-        'ordinary_link_report': ordinary_link_report, 'errno_report': errno_report,
+        'header_report': header_report, 'ordinary_link_report': ordinary_link_report,
     }
     for name in COMPANION_NAMES:
         copied = _validate_copied_input(receipt_root, companions['inputs'][name], 'public-data runtime ' + name)
@@ -1217,8 +1172,7 @@ def validate_report(report_path: Path, *, root: Path = ROOT, static_preparation:
 
 
 def collect(*, root: Path, static_preparation: Path, static_product: Path, dynamic_product: Path,
-            header_report: Path, declaration_abi_report: Path, ordinary_link_report: Path,
-            errno_report: Path, output: Path) -> Path:
+            header_report: Path, ordinary_link_report: Path, output: Path) -> Path:
     """Collect and immediately replay one fresh source-matched component receipt."""
     root = Path(root).resolve(strict=True)
     output = Path(output)
@@ -1228,8 +1182,7 @@ def collect(*, root: Path, static_preparation: Path, static_product: Path, dynam
     require(output.parent.is_dir() and output.is_relative_to(root / '.work'),
             'public-data runtime output parent differs')
     companions = {
-        'header_report': Path(header_report), 'declaration_abi_report': Path(declaration_abi_report),
-        'ordinary_link_report': Path(ordinary_link_report), 'errno_report': Path(errno_report),
+        'header_report': Path(header_report), 'ordinary_link_report': Path(ordinary_link_report),
     }
     collector = Collector(root, output, Path(static_preparation), Path(static_product), Path(dynamic_product), companions)
     try:
@@ -1259,7 +1212,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     collect_parser = commands.add_parser('collect', allow_abbrev=False)
     replay_parser = commands.add_parser('validate-report', allow_abbrev=False)
     names = ('static-preparation', 'static-product', 'dynamic-product', 'header-report',
-             'declaration-abi-report', 'ordinary-link-report', 'errno-report', 'output')
+             'ordinary-link-report', 'output')
     for target in (collect_parser, replay_parser):
         for name in names:
             if target is replay_parser and name == 'output':
@@ -1281,15 +1234,13 @@ def main(argv: Sequence[str] | None = None) -> int:
     elif args.command == 'collect':
         path = collect(root=ROOT, static_preparation=args.static_preparation, static_product=args.static_product,
                        dynamic_product=args.dynamic_product, header_report=args.header_report,
-                       declaration_abi_report=args.declaration_abi_report, ordinary_link_report=args.ordinary_link_report,
-                       errno_report=args.errno_report, output=args.output)
+                       ordinary_link_report=args.ordinary_link_report, output=args.output)
         print(json.dumps({'schema': SCHEMA, 'report': str(path), 'sha256': digest(path), 'status': STATUS}, sort_keys=True))
     else:
         replayed = validate_report(args.report, root=ROOT,
                                    static_preparation=args.static_preparation, static_product=args.static_product,
                                    dynamic_product=args.dynamic_product, header_report=args.header_report,
-                                   declaration_abi_report=args.declaration_abi_report,
-                                   ordinary_link_report=args.ordinary_link_report, errno_report=args.errno_report)
+                                   ordinary_link_report=args.ordinary_link_report)
         print(json.dumps({'schema': SCHEMA, 'report': replayed['report']['path'],
                           'sha256': replayed['report']['sha256'], 'status': STATUS}, sort_keys=True))
     return 0

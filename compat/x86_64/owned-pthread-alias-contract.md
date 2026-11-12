@@ -12,9 +12,8 @@ The receipt also binds `owned_message_queues::notify_start` to its one public
 `__pthread_detach`, or any other implementation spelling, into an additional
 installed ABI identity.
 
-`native_abi_selection.py` may consume a current receipt only with the matching
-public ELF/product cohort. It binds the receipt's selected source revision and
-all static/dynamic product files to that cohort, then records alias and
-`mq_notify` joins. The latter can discharge only the matching ordinary static
-import reason. Pthread lifecycle, cancellation, scheduling, family closure,
-promotion, and public-support status remain separate requirements.
+`run_owned_pthread_alias_contract.sh STATIC_SYSROOT DYNAMIC_SYSROOT` runs the
+alias and `mq_notify` probes against the selected products. Candidate
+qualification runs it as a plain behavior step and judges only its exit status.
+Pthread lifecycle, cancellation, scheduling, family closure, promotion, and
+public-support status remain separate requirements.

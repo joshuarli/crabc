@@ -2,9 +2,9 @@
 """Account selected native callable declaration forms without selecting providers.
 
 This adapter consumes the one envelope already returned by
-``header_declaration_inventory.validate_report`` and a matrix projection that
-``native_abi_selection`` derived after validating the checked header ABI
-matrix.  It reuses the existing complete-envelope derivation before joining
+``header_declaration_inventory.validate_report`` and a matrix projection
+derived after validating the checked header ABI matrix. It reuses the existing
+complete-envelope derivation before joining
 selected raw FunctionDecls to their retained compiler-job AST paths and
 physical header dependencies.  It never runs a compiler, replays raw compiler
 evidence, parses a header, infers language linkage, or chooses an
@@ -284,9 +284,9 @@ def matrix_projection_from_checked_report(
 ) -> dict[str, Any]:
     """Project an already validated matrix without invoking its collector.
 
-    ``native_abi_selection.load_source_inputs`` first calls the matrix's public
-    checked-report validator.  This deliberately small projection then carries
-    only the row classification needed to place raw FunctionDecl occurrences.
+    The matrix's public checked-report validator runs first.  This deliberately
+    small projection then carries only the row classification needed to place
+    raw FunctionDecl occurrences.
     """
     require(isinstance(report, Mapping) and report.get("schema") == HEADER_MATRIX_REPORT_SCHEMA, "checked matrix report schema differs")
     raw_provenance = exact_keys(provenance, {"report", "reader", "contract", "extension_contract"}, "callable matrix provenance")
@@ -834,9 +834,9 @@ def account_declarations(
         "header_abi_matrix_report_schema": HEADER_MATRIX_REPORT_SCHEMA,
         "matrix_provenance": matrix_provenance,
         "caller_authenticated_inputs": {
-            "selected_partition": "native_abi_selection.load_source_inputs",
-            "checked_matrix_projection": "native_abi_selection.load_source_inputs",
-            "selection_report_identity_location": "source_inputs.bindings",
+            "selected_partition": "header_declaration_inventory",
+            "checked_matrix_projection": "native_callable_declarations.matrix_projection_from_checked_report",
+            "selection_report_identity_location": "matrix_provenance",
         },
         "source_receipt": {
             "current_selecting_source_matches_retained": source_match,

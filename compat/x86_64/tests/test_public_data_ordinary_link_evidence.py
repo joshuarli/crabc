@@ -83,19 +83,19 @@ class PublicDataOrdinaryLinkEvidenceTests(unittest.TestCase):
         self.assertNotIn("_dl_debug_addr", {item["name"] for item in objects})
 
     def test_omitted_object_or_alias_is_rejected_before_probe_observation(self) -> None:
-        contract = copy.deepcopy(evidence.selection.load_contract())
+        contract = copy.deepcopy(evidence.load_contract())
         contract["object_contracts"] = [
             item for item in contract["object_contracts"] if item["name"] != "stdout"
         ]
         with self.assertRaisesRegex(evidence.PublicDataEvidenceError, "32"):
             evidence.selected_objects(contract)
-        contract = copy.deepcopy(evidence.selection.load_contract())
+        contract = copy.deepcopy(evidence.load_contract())
         next(item for item in contract["object_contracts"] if item["name"] == "tzname")["alias_target"] = ""
         with self.assertRaisesRegex(evidence.PublicDataEvidenceError, "aliases"):
             evidence.selected_objects(contract)
 
     def test_probe_alignment_and_alias_literals_are_bound_to_typed_policy(self) -> None:
-        contract = copy.deepcopy(evidence.selection.load_contract())
+        contract = copy.deepcopy(evidence.load_contract())
         next(item for item in contract["object_contracts"] if item["name"] == "__timezone")["alignment_bytes"] = 16
         with self.assertRaisesRegex(evidence.PublicDataEvidenceError, "probe alignment"):
             evidence.selected_objects(contract)

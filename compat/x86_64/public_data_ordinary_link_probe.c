@@ -1,6 +1,6 @@
 /* Exact ordinary-link probe for the 32 selected static/shared public objects.
  *
- * Object names and aliases come from native-abi-selection.toml. Installed
+ * Object names and aliases come from public-data-ordinary-link.toml. Installed
  * declarations are used where available. The explicit declarations below are
  * only for typed declaration_kind = abi-only objects; h_errno is an installed
  * accessor macro whose selected backing object requires an ABI-only reference.

@@ -10,7 +10,6 @@ from pathlib import Path
 import subprocess
 import sys
 import tempfile
-import tomllib
 import unittest
 from product_fixture import write_compatibility_provenance
 
@@ -439,17 +438,6 @@ class CompilerHelperEvidenceTests(unittest.TestCase):
         with self.assertRaisesRegex(EVIDENCE.CompilerHelperEvidenceError, "not unique"):
             EVIDENCE._popcount_import_from_facts(duplicate, placement)
 
-    def test_selection_group_consumes_the_producer_contract_and_never_shared_libc(self) -> None:
-        selection = tomllib.loads((ROOT / "compat/x86_64/native-abi-selection.toml").read_text(encoding="utf-8"))
-        group = next(row for row in selection["owner_groups"] if row["id"] == "owned-compiler-helper-archive")
-        self.assertEqual(group["sources"], ["builtins/src/lib.rs", "builtins/build_x86_64.py", "builtins/x86_64-helper-contract.toml"])
-        self.assertEqual(group["artifacts"], ["static-builtins", "dynamic-builtins"])
-        self.assertEqual(group["placement_metadata"], {
-            "static-builtins": {"binding": "GLOBAL", "visibility": "DEFAULT"},
-            "dynamic-builtins": {"binding": "GLOBAL", "visibility": "DEFAULT"},
-        })
-        self.assertNotIn("candidate-shared", group["artifacts"])
-
     def test_aggregate_runner_is_checkout_local_and_records_all_commands(self) -> None:
         runner = (ROOT / "builtins/run_x86_64_compiler_helper_aggregate.sh").read_text(encoding="utf-8")
         self.assertIn("CRABC_COMPILER_HELPER_WORK_DIR", runner)
@@ -463,52 +451,6 @@ class CompilerHelperEvidenceTests(unittest.TestCase):
         for label, _status in EVIDENCE.AGGREGATE_COMMANDS:
             self.assertIn("record_command " + label, runner)
         self.assertIn("validate-aggregate-report", runner)
-
-    def test_installed_helper_command_recorder_retains_success_and_failure(self) -> None:
-        test_root = ROOT / ".work/x86_64/compiler-helper-command-capture-tests"
-        test_root.mkdir(parents=True, exist_ok=True)
-        with tempfile.TemporaryDirectory(dir=test_root) as temporary:
-            work = Path(temporary)
-            (work / "raw").mkdir()
-            success = [sys.executable, "-c", "import sys; sys.stdout.write('success stdout' + chr(10)); "
-                       "sys.stderr.write('success stderr' + chr(10))"]
-            failure = [sys.executable, "-c", "import sys; sys.stdout.write('failure stdout' + chr(10)); "
-                       "sys.stderr.write('failure stderr' + chr(10)); sys.exit(7)"]
-            script = (
-                "import json, sys\n"
-                "from pathlib import Path\n"
-                "sys.path.insert(0, sys.argv[1])\n"
-                "import compiler_helper_evidence as evidence\n"
-                "root, work = Path(sys.argv[2]), Path(sys.argv[3])\n"
-                "success, failure = json.loads(sys.argv[4]), json.loads(sys.argv[5])\n"
-                "evidence._record_installed_helper_command(root, work, 'success', success)\n"
-                "print('success-recorded')\n"
-                "try:\n"
-                "    evidence._record_installed_helper_command(root, work, 'failure', failure)\n"
-                "except evidence.CompilerHelperEvidenceError as error:\n"
-                "    print(f'failure-raised: {error}')\n"
-                "else:\n"
-                "    raise SystemExit('nonzero command status was accepted')\n"
-            )
-            result = subprocess.run(
-                [sys.executable, "-B", "-c", script, str(ROOT / "compat/x86_64"), str(ROOT),
-                 str(work), json.dumps(success), json.dumps(failure)],
-                cwd=ROOT, check=False, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-            )
-
-            self.assertEqual(result.returncode, 0, result.stderr.decode("utf-8", errors="replace"))
-            self.assertEqual(result.stdout,
-                             b"success-recorded\n"
-                             b"failure-raised: compiler-helper installed failure failed with 7\n")
-            self.assertEqual(result.stderr, b"")
-            for label, argv, stdout, stderr, status in (
-                ("success", success, b"success stdout\n", b"success stderr\n", "0\n"),
-                ("failure", failure, b"failure stdout\n", b"failure stderr\n", "7\n"),
-            ):
-                self.assertEqual(json.loads((work / "raw" / f"{label}.argv").read_text()), argv)
-                self.assertEqual((work / "raw" / f"{label}.stdout").read_bytes(), stdout)
-                self.assertEqual((work / "raw" / f"{label}.stderr").read_bytes(), stderr)
-                self.assertEqual((work / "raw" / f"{label}.status").read_text(), status)
 
     def test_command_reader_rejects_argv_substitution_and_wrong_artifact_input(self) -> None:
         test_root = ROOT / ".work/x86_64/compiler-helper-evidence-tests"

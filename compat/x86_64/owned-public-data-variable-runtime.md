@@ -61,11 +61,9 @@ POSIX-TZ publication check is separate from the source-specific TZif
 known-difference observation and does not bless a raw candidate/oracle TZif
 transcript difference.
 
-`h_errno` is not collected here. The declaration selector composes the installed
-`netdb.h` object-like macro and exact C/C++ accessor declaration with the current
-`owned_errno_storage_lifecycle.py` receipt's selected `h_errno` static/shared
-metadata and its existing main, worker, and loaded-DSO observations. A report
-that merely names the errno receipt cannot satisfy that composed owner join.
+`h_errno` is not collected here. Its installed declaration and its
+`owned_errno_storage_lifecycle.py` runtime observations remain separate owners;
+this runtime matrix does not compose them.
 
 A valid receipt can complete only the fixed nineteen installed-variable and one
 accessor-macro declaration obligations. It does not select a provider; prove
@@ -75,10 +73,9 @@ public support. ABI-only data names remain outside this predicate.
 
 `run_owned_public_data_variable_runtime.sh check-contract` is the source-only
 preflight. `collect` requires the selected static preparation and static/dynamic
-products plus the four current public companions: header declarations, ordinary
-declaration ABI, public-data ordinary link, and errno storage lifecycle. It
-first admits and snapshots that exact cohort, then records the ordinary C
-commands. Every probe compile calls the selected dynamic driver with only
+products plus the two current public companions: header declarations and
+public-data ordinary link. It first admits and snapshots that exact cohort,
+then records the ordinary C commands. Every probe compile calls the selected dynamic driver with only
 `--dynamic-pie -std=c11 -D_GNU_SOURCE=1 -fno-builtin
 -fno-stack-protector -c SOURCE -o OBJECT`. The installed driver itself fixes
 the installed header root and selected PIE code generation; a caller cannot

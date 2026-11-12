@@ -585,8 +585,8 @@ def _execute_static_c_abi_differential(evaluation: Evaluation) -> str:
     return STATIC_C_ABI_DIFFERENTIAL_MARKER.decode("utf-8")
 
 
-# The six retained ABI-differential leaves and the selection closure are one
-# published current-source evidence set; each ledger row reads its own leaf.
+# The five retained ABI-differential leaves are one published current-source
+# evidence set; each ledger row reads its own leaf.
 ABI_EVIDENCE_ROWS = {
     "./scripts/dev-x86_64.sh native-abi-inventory collect --static-product STATIC_PRODUCT "
     "--dynamic-product DYNAMIC_PRODUCT --static-preparation STATIC_PREPARATION "
@@ -594,9 +594,7 @@ ABI_EVIDENCE_ROWS = {
     "./scripts/dev-x86_64.sh native-abi-elf-facts": "native_abi_elf_facts",
     "./scripts/dev-x86_64.sh native-abi-ratchet": "native_abi_ratchet",
     "./scripts/dev-x86_64.sh header-declaration-inventory": "header_declaration_inventory",
-    "./scripts/dev-x86_64.sh native-abi-selection": "native_abi_selection",
     "./scripts/dev-x86_64.sh public-data-ordinary-link": "public_data_ordinary_link",
-    "./scripts/dev-x86_64.sh native-abi-selection require-abi-prerequisite-closure": "native_abi_selection_closure",
 }
 
 

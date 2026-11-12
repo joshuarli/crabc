@@ -206,8 +206,8 @@ Native Linux/x86-64 staged-foundation evidence commands:
   native-abi-inventory-test  run focused native ABI-inventory parser, replay, and dispatcher tests
   owned-text-math-locale-stdio-family {assemble|validate} ...  assemble or replay text/math/locale/stdio family evidence in the pinned image
   native-abi-elf-facts {collect|validate-report} ...  inspect or replay complete ELF facts supplementing a current v1 inventory
-  native-abi-selection {build-report|validate-report|require-closure|require-abi-prerequisite-closure} ...  replay full campaign or ABI prerequisite closure
-  abi-differential-evidence {collect-companions|assemble|validate} ...  collect selection companions for, bind, or replay the current-source compat.abi-differential evidence set
+  abi-differential-evidence {assemble|validate} ...  bind or replay the current-source compat.abi-differential evidence set
+  abi-behavior RUNNER ...  run one retained ABI behavior probe on the selected products
   header-declaration-inventory {collect|validate-report} ...  retain or replay compiler declaration and macro occurrences
   public-data-ordinary-link {collect|validate-report} ...  prove or replay ordinary links to selected public data objects
   native-abi-ratchet {check|validate-report} ...  check or replay the reviewed native x86 public-dynamic ABI floor
@@ -464,7 +464,6 @@ Native Linux/x86-64 staged-foundation evidence commands:
   owned-stdio [--static-sysroot STATIC_SYSROOT] [DYNAMIC_SYSROOT]  test installed byte/wide streams, positioning and format/scan
   owned-stdio-file-engine [--static-sysroot STATIC_SYSROOT DYNAMIC_SYSROOT]  replay the installed FILE-engine rows; builds current products without a supplied pair
   owned-numeric-calendar [--static-sysroot STATIC_SYSROOT] [DYNAMIC_SYSROOT]  test installed numeric conversions and clock/calendar behavior
-  owned-feature-aliases collect|validate-report PATH --static-product STATIC --dynamic-product DYNAMIC --static-preparation PREPARATION  prove six feature aliases without family admission
   owned-math-fenv-all-entry [--static-sysroot STATIC_SYSROOT] [DYNAMIC_SYSROOT]  test the installed C math/fenv all-entry component; builds current products without a supplied pair
   owned-calendar-component [--static-sysroot STATIC_SYSROOT DYNAMIC_SYSROOT]  test installed time.clock-calendar rows with fixed IANA TZif fixtures
   owned-text-locale-numeric-component --static-sysroot STATIC_SYSROOT DYNAMIC_SYSROOT  test bounded installed numeric, locale, wide-conversion, and UTF iconv rows
@@ -6282,22 +6281,18 @@ case "$command" in
     native-abi-elf-facts)
         [ "$#" -ge 1 ] || fail "native-abi-elf-facts requires collect or validate-report"
         ;;
-    owned-feature-aliases)
-        [ "$#" -ge 1 ] || fail "owned-feature-aliases requires collect or validate-report"
-        case "$1" in collect|validate-report) ;; *) fail "owned-feature-aliases requires collect or validate-report" ;; esac
-        ;;
-    native-abi-selection)
-        [ "$#" -ge 1 ] || fail "native-abi-selection requires build-report, validate-report, require-closure, or require-abi-prerequisite-closure"
+    abi-differential-evidence)
+        [ "$#" -ge 1 ] || fail "abi-differential-evidence requires assemble or validate"
         case "$1" in
-            build-report|validate-report|require-closure|require-abi-prerequisite-closure) ;;
-            *) fail "native-abi-selection requires build-report, validate-report, require-closure, or require-abi-prerequisite-closure" ;;
+            assemble|validate) ;;
+            *) fail "abi-differential-evidence requires assemble or validate" ;;
         esac
         ;;
-    abi-differential-evidence)
-        [ "$#" -ge 1 ] || fail "abi-differential-evidence requires collect-companions, assemble, or validate"
+    abi-behavior)
+        [ "$#" -ge 1 ] || fail "abi-behavior requires a retained behavior runner"
         case "$1" in
-            collect-companions|assemble|validate) ;;
-            *) fail "abi-differential-evidence requires collect-companions, assemble, or validate" ;;
+            bootstrap-primitives|compiler-helper-aggregate|errno-storage|pthread-timed|public-data-runtime|pthread-alias|stdio-alias|syscall-alias|locale-alias|string-temporary-alias|signal-legacy-aliases|sethostent) ;;
+            *) fail "abi-behavior names unknown runner: $1" ;;
         esac
         ;;
     owned-text-math-locale-stdio-family)
@@ -6696,27 +6691,74 @@ case "$command" in
         # compiler; native collection remains native-abi-inventory collect.
         python3 -B "$ROOT_DIR/compat/x86_64/native_abi_ratchet.py" "$@"
         ;;
-    owned-feature-aliases)
-        ensure_image
-        run_in_abi_companion_container python3 -B /workspace/compat/x86_64/owned_feature_alias_receipt.py "$@"
-        ;;
-    native-abi-selection)
-        # Selection consumes retained compiler/product facts on the host. Its
-        # reader owns argument admission and source/product binding, including
-        # the explicit measurement checkout for historical observations.
-        python3 -B "$ROOT_DIR/compat/x86_64/native_abi_selection.py" "$@"
-        ;;
     abi-differential-evidence)
         # The gate evaluates this set in the pinned image at /workspace, and
-        # the ratchet and selection reports it produces record checkout
-        # paths, so assembly runs there too. It compiles and executes nothing.
-        # Companion collection instead runs each companion's existing runner.
+        # the ratchet report it produces records checkout paths, so assembly
+        # runs there too. It compiles and executes nothing.
         ensure_image
-        if [ "$1" = collect-companions ]; then
-            run_in_abi_companion_container python3 -B /workspace/compat/x86_64/abi_differential_evidence.py "$@"
-        else
-            run_in_network_none_container python3 -B /workspace/compat/x86_64/abi_differential_evidence.py "$@"
-        fi
+        run_in_network_none_container python3 -B /workspace/compat/x86_64/abi_differential_evidence.py "$@"
+        ;;
+    abi-behavior)
+        ensure_image
+        abi_behavior_runner="$1"
+        shift
+        case "$abi_behavior_runner" in
+            bootstrap-primitives)
+                [ "$#" -eq 4 ] && [ "$1" = --static-product ] && [ "$3" = --dynamic-product ] ||
+                    fail "abi-behavior bootstrap-primitives requires --static-product STATIC --dynamic-product DYNAMIC"
+                run_in_abi_companion_container bash /workspace/compat/x86_64/run_libc_bootstrap_primitives.sh "$@"
+                ;;
+            compiler-helper-aggregate)
+                [ "$#" -eq 1 ] && [ -n "$1" ] && [[ "$1" != -* ]] ||
+                    fail "abi-behavior compiler-helper-aggregate requires a fresh work directory"
+                run_in_abi_companion_container env CRABC_COMPILER_HELPER_WORK_DIR="/workspace/$1" \
+                    bash /workspace/builtins/run_x86_64_compiler_helper_aggregate.sh
+                ;;
+            errno-storage)
+                [ "$#" -eq 3 ] && [ "$1" = --static-sysroot ] ||
+                    fail "abi-behavior errno-storage requires --static-sysroot STATIC DYNAMIC"
+                run_in_abi_companion_container bash /workspace/compat/x86_64/run_owned_errno_storage_lifecycle.sh "$@"
+                ;;
+            pthread-timed)
+                [ "$#" -eq 2 ] || fail "abi-behavior pthread-timed requires STATIC DYNAMIC"
+                run_in_abi_companion_container bash /workspace/compat/x86_64/run_owned_pthread_timed_feature_contract.sh "$@"
+                ;;
+            public-data-runtime)
+                run_in_abi_companion_container python3 -B /workspace/compat/x86_64/owned_public_data_variable_runtime.py "$@"
+                ;;
+            pthread-alias)
+                [ "$#" -eq 2 ] || fail "abi-behavior pthread-alias requires STATIC DYNAMIC"
+                run_in_abi_companion_container bash /workspace/compat/x86_64/run_owned_pthread_alias_contract.sh "$@"
+                ;;
+            stdio-alias)
+                [ "$#" -eq 2 ] || fail "abi-behavior stdio-alias requires STATIC DYNAMIC"
+                run_in_abi_companion_container bash /workspace/compat/x86_64/run_owned_stdio_alias_contract.sh "$@"
+                ;;
+            syscall-alias)
+                [ "$#" -eq 2 ] || fail "abi-behavior syscall-alias requires STATIC DYNAMIC"
+                run_in_abi_companion_container bash /workspace/compat/x86_64/run_owned_syscall_alias_contract.sh "$@"
+                ;;
+            locale-alias)
+                [ "$#" -eq 3 ] && [ "$1" = --static-sysroot ] ||
+                    fail "abi-behavior locale-alias requires --static-sysroot STATIC DYNAMIC"
+                run_in_abi_companion_container bash /workspace/compat/x86_64/run_locale_alias_contract.sh "$@"
+                ;;
+            string-temporary-alias)
+                [ "$#" -eq 2 ] || fail "abi-behavior string-temporary-alias requires STATIC DYNAMIC"
+                run_in_abi_companion_container bash /workspace/compat/x86_64/run_owned_string_temporary_alias_contract.sh "$@"
+                ;;
+            signal-legacy-aliases)
+                [ "$#" -eq 0 ] || fail "abi-behavior signal-legacy-aliases takes no arguments"
+                run_in_abi_companion_container bash /workspace/compat/x86_64/run_libc_signal_legacy_aliases.sh
+                ;;
+            sethostent)
+                [ "$#" -eq 0 ] || fail "abi-behavior sethostent takes no arguments"
+                run_in_abi_companion_container bash /workspace/compat/x86_64/run_libc_sethostent.sh
+                ;;
+            *)
+                fail "abi-behavior names unknown runner: $abi_behavior_runner"
+                ;;
+        esac
         ;;
     owned-text-math-locale-stdio-family)
         ensure_image

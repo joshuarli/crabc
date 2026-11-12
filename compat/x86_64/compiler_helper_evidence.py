@@ -48,12 +48,10 @@ SHARED_PLACEMENT_FIXTURES = (
     Path("builtins/fixtures/x86_64_compiler_helper_shared_dso_interpose.c"),
     Path("builtins/fixtures/x86_64_compiler_helper_shared_interpose.c"),
 )
-SELECTION = Path("compat/x86_64/native-abi-selection.toml")
 READER = Path("compat/x86_64/compiler_helper_evidence.py")
 DOCUMENTATION = Path("builtins/x86_64-helper-contract.md")
 BUILTINS_DOCUMENTATION = Path("builtins/README.md")
 MATERIALIZED_DYNAMIC_DOCUMENTATION = Path("compat/x86_64/materialized-dynamic-sysroot.md")
-SELECTION_DOCUMENTATION = Path("compat/x86_64/native-abi-selection.md")
 ELF_READER = Path("compat/x86_64/loader_debug_abi_evidence.py")
 CAST_PROBE = Path("builtins/fixtures/x86_64_int128_casts_probe.c")
 BINARY32_CAST_PROBE = Path("builtins/fixtures/x86_64_binary32_casts_probe.c")
@@ -70,8 +68,8 @@ SOURCE_FILES = (*(Path("builtins/fixtures/llvm22_float_complex") / name for name
                   ("fmaxl.c", "logbl.c", "ilogbl.c", "scalbnl.c", "__fpclassifyl.c", "__signbitl.c", "COPYRIGHT", "SHA256SUMS")),
                 CAST_PROBE, BINARY32_CAST_PROBE, CONTRACT, SOURCE, Path("builtins/src/x86_64_complex_classification.rs"), BUILDER, DYNAMIC_BUILDER, DYNAMIC_QUALIFICATION, AGGREGATE_PROBE, AGGREGATE_START, AGGREGATE_RUNNER,
                 SHARED_PLACEMENT_RUNNER, *SHARED_PLACEMENT_FIXTURES, DYNAMIC_DRIVER,
-                DYNAMIC_PRODUCT_EVIDENCE, READER, SELECTION, DOCUMENTATION,
-                BUILTINS_DOCUMENTATION, MATERIALIZED_DYNAMIC_DOCUMENTATION, SELECTION_DOCUMENTATION, ELF_READER)
+                DYNAMIC_PRODUCT_EVIDENCE, READER, DOCUMENTATION,
+                BUILTINS_DOCUMENTATION, MATERIALIZED_DYNAMIC_DOCUMENTATION, ELF_READER)
 SCHEMA = "crabc.x86_64-compiler-helper-owner/v1"
 AGGREGATE_SCHEMA = "crabc.x86_64-compiler-helper-aggregate/v1"
 SOURCE_SEAL_SCHEMA = "crabc.x86_64-compiler-helper-source-seal/v1"
@@ -498,34 +496,6 @@ def _aggregate_archive_join(root: Path, aggregate_report: Path, *, supplied_sour
         "installed_archives": {placement: dict(installed_archives[placement]) for placement in ARCHIVE_PLACEMENTS},
         "c_abi_proof": "aggregate-direct-c-consumer"}
 
-
-def account_compiler_helpers(validated_receipt: Mapping[str, Any], selected_owner_group: Mapping[str, Any],
-                             complete_occurrences: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
-    """Return only source-selected archive placement accounting.
-
-    The caller supplies selection records from the native selection engine. This
-    function deliberately leaves candidate-shared rows out: archive selection
-    does not imply a shared-libc visibility decision.
-    """
-
-    contract = validate_contract(validated_receipt["contract"])
-    names = set(helper_names(contract))
-    require(selected_owner_group.get("id") == contract["owner_group"]
-            and selected_owner_group.get("artifacts") == list(ARCHIVE_PLACEMENTS)
-            and set(selected_owner_group.get("members", ())) == names,
-            "compiler-helper selected owner group differs")
-    by_name: dict[str, list[Mapping[str, Any]]] = {name: [] for name in names}
-    for occurrence in complete_occurrences:
-        if occurrence.get("row", {}).get("name") in names:
-            by_name[occurrence["row"]["name"]].append(occurrence)
-    for name, rows in by_name.items():
-        selected = [row for row in rows if row.get("artifact_key") in ARCHIVE_PLACEMENTS and row.get("role") == "definition"]
-        require(len(selected) == 2, f"compiler-helper {name} selected archive occurrence differs")
-        require({row["artifact_key"] for row in selected} == set(ARCHIVE_PLACEMENTS),
-                f"compiler-helper {name} selected archive placement differs")
-    return {"owner_group": contract["owner_group"], "placements": list(ARCHIVE_PLACEMENTS),
-            "names": list(helper_names(contract)), "shared_placement_selected": False,
-            "family_completion": False, "public_support": False}
 
 
 def write_fixture_report(output: Path, *, contract: Mapping[str, Any], source: Mapping[str, Any]) -> dict[str, Any]:
@@ -1046,120 +1016,6 @@ def retained_integer128_cast_link(*, root: Path, product: Path, workload: Path,
     return observations
 
 
-def _installed_helper_expected_argv(root: Path, work: Path, static_product: Path,
-                                    dynamic_product: Path, chroot: str) -> dict[str, list[str]]:
-    probe = root / AGGREGATE_PROBE
-    object_path = work / "aggregate.o"
-    static_driver = static_product / "bin/crabc-cc"
-    dynamic_driver = dynamic_product / "bin/crabc-cc-dynamic"
-    executable = {mode: work / mode for mode in INSTALLED_LINK_RECEIPTS}
-    return {
-        "hosted-object-compile": [str(static_driver), "--static-pie", "-O2", "-fno-builtin",
-                                  "-c", str(probe), "-o", str(object_path)],
-        "static-link": [str(static_driver), "-static", "--link-receipt",
-                        (work / INSTALLED_LINK_RECEIPTS["static"]).relative_to(root).as_posix(),
-                        str(object_path), "-o", str(executable["static"])],
-        "static-pie-link": [str(static_driver), "-static-pie", "--link-receipt",
-                            (work / INSTALLED_LINK_RECEIPTS["static-pie"]).relative_to(root).as_posix(),
-                            str(object_path), "-o", str(executable["static-pie"])],
-        "dynamic-pie-link": ["/usr/bin/env", "CRABC_X86_64_RETAIN_LINK_EVIDENCE=1",
-                             str(dynamic_driver), "--dynamic-pie", str(object_path),
-                             "-o", str(executable["pie"])],
-        "dynamic-non-pie-link": ["/usr/bin/env", "CRABC_X86_64_RETAIN_LINK_EVIDENCE=1",
-                                 str(dynamic_driver), "--dynamic-non-pie", str(object_path),
-                                 "-o", str(executable["non-pie"])],
-        "static-run": ["/usr/bin/timeout", "30", str(executable["static"])],
-        "static-pie-run": ["/usr/bin/timeout", "30", str(executable["static-pie"])],
-        "dynamic-pie-run": ["/usr/bin/timeout", "30", chroot, str(work / "dynamic-root"),
-                            "/installed-helper-pie"],
-        "dynamic-non-pie-run": ["/usr/bin/timeout", "30", chroot, str(work / "dynamic-root"),
-                                "/installed-helper-non-pie"],
-}
-
-
-def _require_installed_helper_work_disjoint(work: Path, *products: Path) -> None:
-    require(all(not work.is_relative_to(product) and not product.is_relative_to(work) for product in products),
-            "compiler-helper installed link work overlaps a selected product")
-
-
-def _record_installed_helper_command(root: Path, work: Path, label: str,
-                                     argv: Sequence[str]) -> None:
-    raw = work / "raw"
-    stdout_path, stderr_path = raw / f"{label}.stdout", raw / f"{label}.stderr"
-    (raw / f"{label}.argv").write_text(canonical_json(list(argv)) + "\n", encoding="utf-8")
-    with stdout_path.open("wb") as stdout, stderr_path.open("wb") as stderr:
-        completed = subprocess.run(argv, cwd=root, env=dict(os.environ), stdin=subprocess.DEVNULL,
-                                   stdout=stdout, stderr=stderr, check=False)
-    (raw / f"{label}.status").write_text(f"{completed.returncode}\n", encoding="ascii")
-    require(completed.returncode == 0, f"compiler-helper installed {label} failed with {completed.returncode}")
-
-
-def collect_installed_links(*, root: Path, base_inventory: Path, elf_report: Path,
-                            static_preparation: Path, static_product: Path, dynamic_product: Path,
-                            aggregate_report: Path, crt_startup_report: Path,
-                            output: Path) -> Path:
-    root = _physical_directory(root, "compiler-helper checkout")
-    dynamic_product = _physical_directory(dynamic_product, "compiler-helper installed dynamic product")
-    requested_output = Path(output).absolute()
-    output = checkout_work_directory(root, requested_output, product=dynamic_product)
-    require(output == requested_output, "compiler-helper installed link output is not a physical path")
-    static_product = _physical_directory(static_product, "compiler-helper installed static product")
-    _require_installed_helper_work_disjoint(output, static_product, dynamic_product)
-    require(not output.exists() and not output.is_symlink(),
-            "compiler-helper installed link output must be fresh")
-    output.parent.mkdir(parents=True, exist_ok=True)
-    output.mkdir()
-    (output / "raw").mkdir()
-
-    contract = load_contract(root)
-    source_before = source_binding(root, contract)
-    account = validate_supplied_product_evidence(
-        root=root, base_inventory=base_inventory, elf_report=elf_report,
-        static_preparation=static_preparation, static_product=static_product,
-        dynamic_product=dynamic_product, ordinary_link_report=None,
-        aggregate_report=aggregate_report)
-    require(account["aggregate_c_abi"].get("status") == "joined",
-            "compiler-helper installed links require the joined aggregate report")
-    import installed_crt_startup_evidence as crt_reader
-
-    crt_startup_report = _physical_file(crt_startup_report, "compiler-helper installed CRT report")
-    crt = crt_reader.validate_report(root, crt_startup_report)
-    import public_data_ordinary_link_evidence as ordinary
-
-    chroot = ordinary.validate_chroot_invocation(crt["tools"]["chroot"]["invocation"],
-                                                  crt["tools"]["chroot"]["original"])
-    expected = _installed_helper_expected_argv(root, output, static_product, dynamic_product, chroot)
-    for label in ("hosted-object-compile", "static-link", "static-pie-link",
-                  "dynamic-pie-link", "dynamic-non-pie-link"):
-        _record_installed_helper_command(root, output, label, expected[label])
-
-    execution_root = output / "dynamic-root"
-    shutil.copytree(dynamic_product, execution_root, symlinks=True, copy_function=shutil.copy2)
-    validate_materialized_dynamic_product(root, execution_root)
-    for mode, installed_name in (("pie", "installed-helper-pie"),
-                                 ("non-pie", "installed-helper-non-pie")):
-        shutil.copy2(output / mode, execution_root / installed_name)
-    for label in ("static-run", "static-pie-run", "dynamic-pie-run", "dynamic-non-pie-run"):
-        _record_installed_helper_command(root, output, label, expected[label])
-
-    for label in ("static-run", "static-pie-run", "dynamic-pie-run", "dynamic-non-pie-run"):
-        stdout = (output / "raw" / f"{label}.stdout").read_bytes()
-        stderr = (output / "raw" / f"{label}.stderr").read_bytes()
-        require(stdout == EXPECTED_TRANSCRIPT and stderr == b"",
-                f"compiler-helper installed {label} transcript differs")
-    require(same(source_before, source_binding(root, contract)),
-            "compiler-helper source changed during installed link collection")
-    account_after = validate_supplied_product_evidence(
-        root=root, base_inventory=base_inventory, elf_report=elf_report,
-        static_preparation=static_preparation, static_product=static_product,
-        dynamic_product=dynamic_product, ordinary_link_report=None,
-        aggregate_report=aggregate_report)
-    require(same(account, account_after),
-            "compiler-helper installed link products changed during collection")
-    require(same(crt, crt_reader.validate_report(root, crt_startup_report)),
-            "compiler-helper installed link CRT evidence changed during collection")
-    return output
-
 
 def _popcount_import_from_facts(facts_report: Mapping[str, Any], placements: Mapping[str, Any]) -> dict[str, Any]:
     """Bind the one static ordinary import to the selected archive member.
@@ -1460,12 +1316,6 @@ COMPLEX_EDGE_ARTIFACTS = (
     "complex-edge-probe.o", "complex-edge-candidate", "complex-edge-commands.json",
 )
 EXPECTED_TRANSCRIPT = b"compiler-helper-aggregate-ok\n"
-INSTALLED_LINK_RECEIPTS = {
-    "static": "static.json",
-    "static-pie": "static-pie.json",
-    "pie": "pie.crabc-link.json",
-    "non-pie": "non-pie.crabc-link.json",
-}
 IMAGE_PATTERN = re.compile(r"crabc-core-evidence@sha256:[0-9a-f]{64}\Z")
 SOURCE_MOUNT = "/workspace"
 ORACLE_CC = "/usr/local/bin/crabc-x86_64-musl-gcc"
@@ -1503,13 +1353,6 @@ def _physical_file(path: Path, description: str) -> Path:
             f"{description} is not a physical regular file")
     return path
 
-
-def installed_link_receipts(directory: Path) -> dict[str, Path]:
-    directory = _physical_directory(directory, "compiler-helper installed link directory")
-    return {
-        mode: _physical_file(directory / name, f"compiler-helper {mode} link receipt")
-        for mode, name in INSTALLED_LINK_RECEIPTS.items()
-    }
 
 
 def checkout_work_directory(root: Path, path: Path, *, product: Path | None = None) -> Path:
@@ -2256,16 +2099,6 @@ def main(argv: list[str] | None = None) -> int:
     products.add_argument("--dynamic-product", required=True, type=Path)
     products.add_argument("--ordinary-link-report", type=Path)
     products.add_argument("--aggregate-report", type=Path)
-    installed = commands.add_parser("collect-installed-links", allow_abbrev=False)
-    installed.add_argument("--root", type=Path, default=ROOT)
-    installed.add_argument("--base-inventory", required=True, type=Path)
-    installed.add_argument("--elf-report", required=True, type=Path)
-    installed.add_argument("--static-preparation", required=True, type=Path)
-    installed.add_argument("--static-product", required=True, type=Path)
-    installed.add_argument("--dynamic-product", required=True, type=Path)
-    installed.add_argument("--aggregate-report", required=True, type=Path)
-    installed.add_argument("--crt-startup-report", required=True, type=Path)
-    installed.add_argument("--output", required=True, type=Path)
     args = parser.parse_args(argv)
     try:
         if args.command == "capture-source":
@@ -2313,14 +2146,6 @@ def main(argv: list[str] | None = None) -> int:
             )
             print("compiler-helper supplied product evidence valid; shared placement remains unselected"
                   f"; ordinary-popcount={'present' if value['ordinary_popcount_import'] else 'absent'}")
-        elif args.command == "collect-installed-links":
-            collect_installed_links(
-                root=args.root, base_inventory=args.base_inventory, elf_report=args.elf_report,
-                static_preparation=args.static_preparation, static_product=args.static_product,
-                dynamic_product=args.dynamic_product, aggregate_report=args.aggregate_report,
-                crt_startup_report=args.crt_startup_report, output=args.output,
-            )
-            print("compiler-helper installed links collected")
         else:
             validate_fixture_report(args.report)
             print("compiler-helper source fixture receipt valid; product collection remains separate")

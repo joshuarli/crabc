@@ -133,7 +133,13 @@ class StartupEvidenceError(ValueError):pass
 
 def require(condition,message):
     if not condition:raise StartupEvidenceError(message)
-from prepared_worker_tls_evidence import same
+
+def same(left, right):
+    if type(left) is not type(right): return False
+    if isinstance(left, dict): return left.keys()==right.keys() and all(same(value,right[key]) for key,value in left.items())
+    if isinstance(left, list): return len(left)==len(right) and all(same(a,b) for a,b in zip(left,right))
+    return left==right
+
 ident=substrate.ident
 read=substrate.read
 def raw(work,label):return substrate.raw(work,label.replace('.','-').lower())
@@ -440,8 +446,7 @@ COLLECTOR_SOURCES=tuple(dict.fromkeys((*substrate.COLLECTOR_SOURCES,*RUNTIME_SOU
     'compat/x86_64/compiler_helper_evidence.py',compiler_helpers.CONTRACT.as_posix(),
     compiler_helpers.SOURCE.as_posix(),compiler_helpers.SOURCE.with_name('x86_64_binary80.rs').as_posix(),
     DESCRIPTOR_RUNTIME_PROBE,
-    'compat/x86_64/owned_static_link_authority.py',
-    'compat/x86_64/prepared_worker_tls_evidence.py')))
+    'compat/x86_64/owned_static_link_authority.py')))
 ORACLE_CRT=('crt1.o','Scrt1.o','rcrt1.o','crti.o','crtn.o')
 EXTRA_TOOLS=substrate.EXTRA_TOOLS
 

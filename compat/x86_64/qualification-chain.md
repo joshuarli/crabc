@@ -7,7 +7,7 @@ Nothing here is a pass until a receipt revalidates (see Receipts).
 
 | # | Gate | What it consumes (published as) | Producer command |
 | - | ---- | ------------------------------- | ---------------- |
-| 1 | `compat.abi-differential` | one current-source cohort of ABI inventory, ELF facts, declaration inventory, public-data link report and selection companions (`abi-evidence`) | `abi-differential-evidence assemble` |
+| 1 | `compat.abi-differential` | one current-source cohort of ABI inventory, ELF facts, declaration inventory and public-data link report (`abi-evidence`) | `abi-differential-evidence assemble` |
 | 2 | `compat.posix-process` | the native POSIX aggregate receipt (`posix-native`) | `owned-posix-native` |
 | 3 | `compat.resolver-network` | the retained resolver-network report (`resolver-network`) | `owned-resolver-network`, or the network step of `owned-resolver-family` |
 | 4 | `compat.loader-corpus` | the loader family receipt (`loader-family`) and a current-source hardened runtime execution | `owned-loader-family --work DIR`; `hardened-runtime DYNAMIC_SYSROOT` |
@@ -94,31 +94,11 @@ gate and the receipt file its producer writes: `abi-evidence.json`,
 
 `abi-evidence` binds one current-source set: the static preparation and
 product, the materialized dynamic product, and the native ABI inventory, ELF
-facts, declaration inventory, public-data link report and selection companion
-receipts. `collect-companions` runs each companion's runner (`PRODUCERS` in
-`abi_differential_evidence.py`) against that one cohort and writes
-`companions.json`; a failed runner, and any companion that consumes its receipt,
-is recorded and never bound, so its selection blockers stay open. The text-family
-and POSIX `__sysv_signal` receipts come only from their family admission flows.
-`feature_alias_work` supplies one standalone companion for the six remaining
-feature aliases. Its five owner sections require isolated signal, exec and
-netdb feature archives, the selected static preparation's owned-runtime feature
-command, and installed behavior and override probes. It does not run the POSIX
-aggregate. Collection retains raw commands, streams, source graphs and link
-receipts. The owning reader reconstructs every section before ABI attachment.
-
-Five bounded component producers also retain directory companions:
-`installed_math_work`, `installed_stdio_work`, `signal_process_work`,
-`bootstrap_primitives_work` and `binary80_feature_work`. The first four use
-the cohort's installed products. The binary80 producer retains its isolated
-baseline and feature archives. These producers do not run the POSIX aggregate.
-Directory seals admit copied loader symlinks only at the selected manifest's
-alias path, with its exact target and selected loader bytes. Other directory
-companions retain their existing symlink policy.
-Every product and report must come from the evaluated clean revision, and
-assembly runs in the pinned image because the reports record checkout paths.
-Each of the gate's retained evidence rows reruns its own leaf reader; the last
-applies `native-abi-selection require-closure`. The manual path is:
+facts, declaration inventory and public-data link report. Every product and
+report must come from the evaluated clean revision, and assembly runs in the
+pinned image because the reports record checkout paths. Each of the gate's
+retained evidence rows reruns its own leaf reader; the gate checks
+caller-visible behavior and ABI, not linker output. The manual path is:
 
 ```sh
 mkdir -p .work/x86_64/abi .work/x86_64/native-abi-inventory \
@@ -136,9 +116,7 @@ R="--native-abi-inventory .work/x86_64/native-abi-inventory/abi/report.json \
   --native-abi-elf-facts .work/x86_64/abi/elf/report.json \
   --header-declaration-inventory .work/x86_64/header-declaration-inventory/abi/report.json \
   --public-data-ordinary-link .work/x86_64/public-data-ordinary-link/abi/report.json"
-./scripts/dev-x86_64.sh abi-differential-evidence collect-companions $P $R --output .work/x86_64/abi-differential/companions
 ./scripts/dev-x86_64.sh abi-differential-evidence assemble $P $R \
-  --companions .work/x86_64/abi-differential/companions/companions.json \
   --output .work/x86_64/abi-differential/abi
 ./scripts/dev-x86_64.sh qualification-manifest --publish compat.abi-differential abi-evidence .work/x86_64/abi-differential/abi/abi-evidence.json
 ```
@@ -146,7 +124,7 @@ R="--native-abi-inventory .work/x86_64/native-abi-inventory/abi/report.json \
 Create these output parents as the host user before the container produces
 their children. Bounded dynamic preparation supplies a materialized product
 for ELF inspection; it does not run or claim the full runtime qualification
-matrix. ABI selection closure and the other runtime gates remain separate.
+matrix. The other runtime gates remain separate.
 
 `resolver-network` publication replays the report that the retained copy names
 and requires identical bytes, so a stale `latest.json` from an older producer
@@ -295,7 +273,16 @@ while passing that profile to `qualification-manifest`.
 6. `crt-dynamic-startup`, `static-sysroot`, `publish-static-product` after its
    receipt passes the product reader, then `combined-sysroot`.
 7. ABI: `abi-inventory`, `abi-elf-facts`, `abi-declarations`,
-   `abi-public-data`, `abi-evidence`, `publish-abi-evidence`.
+   `abi-public-data`, `abi-evidence`, `publish-abi-evidence`, then the plain
+   behavior steps `abi-bootstrap-primitives`, `abi-binary80-math`,
+   `abi-compiler-helper-aggregate`, `abi-errno-storage`, `abi-bsd-random`,
+   `abi-pthread-timed-feature`, `abi-public-data-runtime`,
+   `abi-feature-alias-passwd`, `abi-feature-alias-exec`,
+   `abi-feature-alias-temporary`, `abi-feature-alias-signal`,
+   `abi-feature-alias-netdb`, `abi-runtime-private-facades`, `abi-utmpx`,
+   `abi-pthread-alias`, `abi-stdio-alias`, `abi-syscall-alias` and
+   `abi-locale-alias`. Each is judged only on exit status; none writes a
+   published receipt.
 8. Consumers: `rust-std-lto`, `publish-rust-std-lto`, `lua-static`,
    `lua-dynamic`, `lua-admission`, `publish-lua-source-build`.
 9. Full profile only: `performance-release`, `publish-performance-release`.
