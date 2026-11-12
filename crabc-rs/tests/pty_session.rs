@@ -1,3 +1,6 @@
+#![cfg(not(target_arch = "x86_64"))]
+// x86 coverage: x86_64_pty_basic.rs:x86_64_pair_owns_both_descriptors_and_resolves_slave_name, x86_64_ptsname_into_rejects_short_caller_storage and x86_64_terminal.rs:x86_64_explicit_session_handoff_is_confined_to_a_child.
+
 use core::mem::MaybeUninit;
 
 use crabc_rs::{process, pty, termios, Errno};

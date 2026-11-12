@@ -3,8 +3,12 @@ use crabc_rs::time::{clock_gettime, realtime_millis, ClockId, NANOS_PER_SECOND};
 #[test]
 fn native_realtime_millis_is_current_and_normalized() {
     let before = clock_gettime(ClockId::Realtime);
+    #[cfg(target_arch = "x86_64")]
+    let before = before.expect("clock query");
     let observed = realtime_millis().expect("direct CLOCK_REALTIME query");
     let after = clock_gettime(ClockId::Realtime);
+    #[cfg(target_arch = "x86_64")]
+    let after = after.expect("clock query");
 
     // Realtime can be stepped between reads, so this remains a deliberately
     // coarse observation window rather than a monotonic-ordering assertion.

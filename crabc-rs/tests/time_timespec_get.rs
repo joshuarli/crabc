@@ -3,8 +3,12 @@ use crabc_rs::time::{clock_gettime, timespec_get, ClockId, NANOS_PER_SECOND};
 #[test]
 fn timespec_get_observes_current_realtime_with_normalized_nanoseconds() {
     let before = clock_gettime(ClockId::Realtime);
+    #[cfg(target_arch = "x86_64")]
+    let before = before.expect("clock query");
     let observed = timespec_get().expect("direct realtime timespec query");
     let after = clock_gettime(ClockId::Realtime);
+    #[cfg(target_arch = "x86_64")]
+    let after = after.expect("clock query");
 
     assert!(observed.tv_sec > 0, "realtime must be after the Unix epoch");
     assert!((0..NANOS_PER_SECOND as i64).contains(&observed.tv_nsec));

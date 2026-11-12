@@ -1,9 +1,14 @@
-use crabc_rs::fs::{self, AtFlags, StatxFlags, CWD};
+#[cfg(target_arch = "x86_64")]
+const STATX_FLAGS: crabc_rs::fs::StatxAtFlags = crabc_rs::fs::StatxAtFlags::empty();
+#[cfg(not(target_arch = "x86_64"))]
+const STATX_FLAGS: crabc_rs::fs::AtFlags = crabc_rs::fs::AtFlags::empty();
+
+use crabc_rs::fs::{self, StatxFlags, CWD};
 use crabc_rs::Errno;
 
 #[test]
 fn statx_basic_metadata_matches_stat_and_reports_valid_mask() {
-    let extended = fs::statx(CWD, "/tmp", AtFlags::empty(), StatxFlags::BASIC_STATS)
+    let extended = fs::statx(CWD, "/tmp", STATX_FLAGS, StatxFlags::BASIC_STATS)
         .expect("statx direct metadata query");
     let legacy = fs::stat("/tmp").expect("stat direct metadata query");
 
@@ -14,7 +19,10 @@ fn statx_basic_metadata_matches_stat_and_reports_valid_mask() {
         assert_eq!(u32::from(extended.stx_mode), legacy.st_mode);
     }
     if mask & StatxFlags::NLINK.bits() != 0 {
+        #[cfg(not(target_arch = "x86_64"))]
         assert_eq!(extended.stx_nlink, legacy.st_nlink);
+        #[cfg(target_arch = "x86_64")]
+        assert_eq!(u64::from(extended.stx_nlink), legacy.st_nlink);
     }
     if mask & StatxFlags::UID.bits() != 0 {
         assert_eq!(extended.stx_uid, legacy.st_uid);
@@ -48,7 +56,7 @@ fn statx_basic_metadata_matches_stat_and_reports_valid_mask() {
 fn statx_rejects_reserved_mask_before_kernel_entry() {
     let mask =
         StatxFlags::from_bits_retain(StatxFlags::BASIC_STATS.bits() | StatxFlags::RESERVED_MASK);
-    let error = fs::statx(CWD, "/tmp", AtFlags::empty(), mask)
+    let error = fs::statx(CWD, "/tmp", STATX_FLAGS, mask)
         .expect_err("STATX__RESERVED must be rejected");
     assert_eq!(error, Errno::INVAL);
 }

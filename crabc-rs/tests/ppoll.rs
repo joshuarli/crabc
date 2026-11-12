@@ -1,3 +1,6 @@
+#![cfg(not(target_arch = "x86_64"))]
+// x86 coverage: x86_64_poll.rs:x86_64_ppoll_temporarily_installs_mask_and_restores_previous_mask and x86_64_poll_observes_pipe_readiness_and_preserves_requested_events.
+
 use crabc_rs::{event, io, pipe, process, signal, time};
 
 unsafe extern "C" fn ppoll_signal_handler(_: process::Signal) {}

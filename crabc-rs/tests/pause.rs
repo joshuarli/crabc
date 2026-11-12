@@ -1,3 +1,6 @@
+#![cfg(not(target_arch = "x86_64"))]
+// x86 coverage: x86_64_poll.rs:x86_64_pause_waits_for_a_signal_on_the_ppoll_seam.
+
 use core::sync::atomic::{AtomicBool, Ordering};
 
 use crabc_rs::{event, io, pipe, process, signal, time, Errno};

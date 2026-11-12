@@ -1,3 +1,8 @@
+#[cfg(target_arch = "x86_64")]
+const UNLINK_FILE: crabc_rs::fs::UnlinkAtFlags = crabc_rs::fs::UnlinkAtFlags::empty();
+#[cfg(not(target_arch = "x86_64"))]
+const UNLINK_FILE: crabc_rs::fs::AtFlags = crabc_rs::fs::AtFlags::empty();
+
 use core::mem::MaybeUninit;
 use core::sync::atomic::{AtomicUsize, Ordering};
 
@@ -67,7 +72,7 @@ fn dir_owns_close_on_exec_descriptor_and_preserves_byte_names() {
         Mode::empty(),
     )
     .expect("reopen fixture directory for cleanup");
-    fs::unlinkat(&directory, &byte_name[..], fs::AtFlags::empty()).expect("remove byte entry");
+    fs::unlinkat(&directory, &byte_name[..], UNLINK_FILE).expect("remove byte entry");
     drop(directory);
     fs::rmdir(&root).expect("remove directory fixture");
 }

@@ -46,7 +46,10 @@ fn native_posix_timer_owns_and_deletes_a_kernel_timer() {
 
 #[test]
 fn timer_notification_vocabulary_excludes_thread_callbacks() {
+    #[cfg(not(target_arch = "x86_64"))]
     let signal = crabc_rs::process::Signal::USR1;
+    #[cfg(target_arch = "x86_64")]
+    let signal = crabc_rs::signal::Signal::USR1;
     let thread = crabc_rs::thread::gettid();
     let notification = TimerNotification::ThreadId {
         thread,

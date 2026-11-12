@@ -1,3 +1,8 @@
+#[cfg(target_arch = "x86_64")]
+const UNLINK_FILE: crabc_rs::fs::UnlinkAtFlags = crabc_rs::fs::UnlinkAtFlags::empty();
+#[cfg(not(target_arch = "x86_64"))]
+const UNLINK_FILE: crabc_rs::fs::AtFlags = crabc_rs::fs::AtFlags::empty();
+
 use core::mem::MaybeUninit;
 
 use crabc_rs::fs::{self, Dir, Mode, OFlags, CWD};
@@ -91,9 +96,9 @@ fn dir_rewind_and_seek_discard_buffered_records() {
         Mode::empty(),
     )
     .expect("reopen directory-position fixture for cleanup");
-    fs::unlinkat(&directory, FIRST_NAME, fs::AtFlags::empty())
+    fs::unlinkat(&directory, FIRST_NAME, UNLINK_FILE)
         .expect("remove first directory-position entry");
-    fs::unlinkat(&directory, SECOND_NAME, fs::AtFlags::empty())
+    fs::unlinkat(&directory, SECOND_NAME, UNLINK_FILE)
         .expect("remove second directory-position entry");
     drop(directory);
     fs::rmdir(ROOT_PATH).expect("remove directory-position fixture");

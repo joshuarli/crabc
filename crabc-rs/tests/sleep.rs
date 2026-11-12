@@ -1,3 +1,6 @@
+#![cfg(not(target_arch = "x86_64"))]
+// x86 coverage: x86_64_sleep.rs:x86_64_nanosleep_completes_zero_duration_without_c_state, x86_64_nanosleep_rejects_seconds_outside_linux_timespec_range and x86_64_nanosleep_preserves_eintr_and_remaining_duration.
+
 use core::sync::atomic::{AtomicBool, Ordering};
 use core::time::Duration;
 

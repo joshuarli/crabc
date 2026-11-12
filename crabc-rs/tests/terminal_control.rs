@@ -1,3 +1,6 @@
+#![cfg(not(target_arch = "x86_64"))]
+// x86 coverage: x86_64_terminal.rs:x86_64_explicit_session_handoff_is_confined_to_a_child covers explicit handoff; x86_64_terminal_operations_reject_non_tty_descriptors covers errors.
+
 use crabc_rs::{pipe, process, pty, termios, Errno, OwnedFd};
 
 fn pty_master() -> OwnedFd {

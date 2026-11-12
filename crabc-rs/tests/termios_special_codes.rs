@@ -1,5 +1,6 @@
 use crabc_rs::{pty, termios};
 
+#[cfg(not(target_arch = "x86_64"))]
 fn pty_pair() -> (crabc_rs::OwnedFd, crabc_rs::OwnedFd) {
     let master =
         pty::openpt(pty::OpenptFlags::RDWR | pty::OpenptFlags::NOCTTY | pty::OpenptFlags::CLOEXEC)
@@ -12,6 +13,13 @@ fn pty_pair() -> (crabc_rs::OwnedFd, crabc_rs::OwnedFd) {
     )
     .expect("open PTY slave");
     (master, slave)
+}
+
+#[cfg(target_arch = "x86_64")]
+fn pty_pair() -> (crabc_rs::OwnedFd, crabc_rs::OwnedFd) {
+    pty::PtyPair::open(pty::OpenptFlags::RDWR | pty::OpenptFlags::NOCTTY | pty::OpenptFlags::CLOEXEC)
+        .expect("open PTY pair")
+        .into_parts()
 }
 
 #[test]

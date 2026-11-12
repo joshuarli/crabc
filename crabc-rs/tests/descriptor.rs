@@ -83,6 +83,7 @@ fn vmsplice_transfers_an_immutable_source_iovec() {
     assert_eq!(&received, b"vmsplice");
 }
 
+#[cfg(not(target_arch = "x86_64"))]
 fn child_lockf_test(fd: &OwnedFd) -> ! {
     match fs::lock_from_current(
         fd,
@@ -95,6 +96,8 @@ fn child_lockf_test(fd: &OwnedFd) -> ! {
     }
 }
 
+// x86 coverage: x86_64_fcntl_getlk.rs:x86_64_fcntl_getlk_reports_a_conflicting_record_lock.
+#[cfg(not(target_arch = "x86_64"))]
 #[test]
 fn lockf_uses_current_offset_and_reports_conflicts() {
     let file = fs::memfd_create(&b"crabc-native-lockf"[..], fs::MemfdFlags::CLOEXEC)

@@ -1,3 +1,8 @@
+#[cfg(target_arch = "x86_64")]
+const UNLINK_FILE: crabc_rs::fs::UnlinkAtFlags = crabc_rs::fs::UnlinkAtFlags::empty();
+#[cfg(not(target_arch = "x86_64"))]
+const UNLINK_FILE: crabc_rs::fs::AtFlags = crabc_rs::fs::AtFlags::empty();
+
 use crabc_rs::fs::{self, Mode, OFlags, Timeval};
 
 const ROOT_PATH: &[u8] = b"/tmp/crabc-rs-native-futimesat";
@@ -65,8 +70,8 @@ fn futimesat_resolves_relative_paths_and_updates_the_target() {
     assert!(current.st_mtime > 12 || current.st_mtime == 12 && current.st_mtime_nsec > 222_222_000);
 
     drop(target);
-    fs::unlinkat(&directory, "link", fs::AtFlags::empty()).expect("remove futimesat link");
-    fs::unlinkat(&directory, "target", fs::AtFlags::empty()).expect("remove futimesat target");
+    fs::unlinkat(&directory, "link", UNLINK_FILE).expect("remove futimesat link");
+    fs::unlinkat(&directory, "target", UNLINK_FILE).expect("remove futimesat target");
     drop(directory);
     fs::rmdir(ROOT_PATH).expect("remove futimesat directory");
 }
