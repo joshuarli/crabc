@@ -131,11 +131,18 @@ fn x86_64_memfd_keeps_the_closed_name_and_flag_boundary() {
         "a borrowed C string bypasses the stack conversion but keeps Linux's label limit",
     );
 
-    let rejected_by_facade = [b'd'; fs::SMALL_PATH_BUFFER_SIZE];
+    let beyond_stack_buffer = [b'd'; fs::SMALL_PATH_BUFFER_SIZE];
+    #[cfg(not(feature = "alloc"))]
     assert_eq!(
-        fs::memfd_create(&rejected_by_facade[..], fs::MemfdFlags::empty()).unwrap_err(),
+        fs::memfd_create(&beyond_stack_buffer[..], fs::MemfdFlags::empty()).unwrap_err(),
         Errno::NAMETOOLONG,
         "the fixed-stack conversion rejects 256 bytes before the syscall",
+    );
+    #[cfg(feature = "alloc")]
+    assert_eq!(
+        fs::memfd_create(&beyond_stack_buffer[..], fs::MemfdFlags::empty()).unwrap_err(),
+        Errno::INVAL,
+        "an owned C string carries 256 bytes to Linux, which rejects the label",
     );
 }
 
