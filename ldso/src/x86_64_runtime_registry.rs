@@ -573,7 +573,6 @@ pub(super) unsafe fn initialize_initial() {
         (order.as_ptr(), order.len())
     };
     // This immutable queue was allocated/preflighted before ARCH_SET_FS.
-    // Runtime growth cannot replace it; no fallible work follows preinit.
     let mut tid = INITIAL_CONSTRUCTOR_TID.consume_with(current_tid);
     for index in 0..count { tid = unsafe { initialize_object_as(*order.add(index), tid) }; }
 }

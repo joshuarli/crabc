@@ -49,7 +49,6 @@ pub(super) fn owned_crt_handoff_address() -> u64 {
     core::ptr::addr_of!(OWNED_CRT_HANDOFF) as usize as u64
 }
 
-/// Called by the owned CRT only after libc state and executable preinit.
 /// The installed runtime constructs every initial dependency and then the
 /// main image; legacy private roots construct dependencies only.
 #[cfg(crabc_dynamic_main_thread_runtime_v1)]
@@ -123,8 +122,6 @@ impl GeneralInitialLifecycle {
         objects: &[Object],
     ) -> Option<Self> {
         let order = graph.dependency_first_plan().ok()?;
-        // The installed runtime owns main DT_INIT/DT_INIT_ARRAY/DT_FINI_ARRAY
-        // and DT_FINI in both CRT modes; the owned CRT runs only preinit.
         #[cfg(feature = "x86_64-owned-dynamic-runtime")]
         let main = Some(0);
         let planned = || order.indices().iter().map(|&index| (index, false)).chain(main.map(|index| (index, true)));

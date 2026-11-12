@@ -15,41 +15,42 @@ preserved.
    conventional executable lifecycle boundary. `builtins` owns the separate
    Rust `no_std` compiler-helper archive. Neither owns libc or loader process
    state. See [`crt-and-sysroot.md`](crt-and-sysroot.md).
-5. `crabc-mimalloc` is the pinned, errno-free allocator engine (see
-   [`allocator.md`](allocator.md)). It consumes `crabc-core` and reviewed
-   focused cryptographic primitives, but never libc. Before promotion, `libc`
-   has one private Rust-only dependency on its no-page process/pthread
-   lifecycle control; that boundary owns no C ABI, allocation routing, or
-   backend choice. `libc` owns full C ABI adaptation and lifecycle integration
-   after promotion. The C backend remains production until then.
+5. The selected allocator is pinned C mimalloc v3.5.0 on active x86-64;
+   `libc` owns its C ABI adaptation and lifecycle integration. The separate
+   errno-free Rust port, `crabc-mimalloc`, consumes `crabc-core` but never
+   libc. Its development, shadow products and promotion are frozen. Paused
+   AArch64 retains its private Rust-only no-page lifecycle dependency beside
+   the C backend; that boundary does not route allocations. See
+   [`allocator.md`](allocator.md) and the [freeze](../../plan.md#allocator-freeze).
 6. `crabc-rs` is the idiomatic Rust facade. It consumes `crabc-core` directly
    for typed native operations and never treats the C ABI as its syscall API.
 7. `compat`, `tests`, and `libc-test-harness` are executable evidence. They
    validate contracts but are not runtime dependencies.
 
 The normal dependency direction is toward narrower boundaries: `crabc-rs`,
-`crabc-mimalloc`, and `libc` may consume `crabc-core`; `libc` may consume the
-bounded private lifecycle control in `crabc-mimalloc`, while full allocator
-adaptation is a post-promotion boundary; evidence may exercise every
-runtime layer before promotion.
+`crabc-mimalloc`, and `libc` may consume `crabc-core`. The Rust allocator
+dependency is target/feature-specific, not part of selected x86-64 allocation.
+Evidence exercises runtime layers without becoming a runtime dependency.
 `ldso` stays independently bootstrappable because it starts before ordinary
 runtime services are available. Neither `crabc-core` nor `crabc-rs` may own
 libc or loader singleton state.
 
-The application CRT enters `libc::__libc_start_main` only after bounded
-initial-stack parsing. libc establishes early process state, guard, and
-initial TLS; it then owns executable preinit, `_init`, init arrays, normal
-exit handlers, fini arrays, and `_fini`. `Scrt1.o` identifies its owned
-lifecycle with a private mapped ELF note. When that note is present, crabc
-ldso passes a private x0 handoff containing the dependency-constructor and
-process-finalizer callbacks; the CRT invokes dependencies after executable
-preinit. For a conventional CRT, libc instead reaches ldso's existing private
-dlsym callback after guard/TLS startup and asks it to run the complete legacy
-initial graph before `_init`. Neither path adds a default-visible lifecycle
-symbol: the owned loader finalizer is passed only as an address in the x0
-handoff and is ELF-hidden. The loader retains dependency/DSO finalizers and
-the dynamic loader process finalizer. This gives each lifecycle phase one
-owner and prevents constructors from running before libc startup state exists.
+On x86-64, static CRT startup establishes libc process state, guards and TLS
+before the executable lifecycle. The installed dynamic product instead
+retains loader-owned TLS and validates a private post-relocation CRT handoff
+before entering libc startup. The loader also passes its process finalizer
+in `rdx`; the owned CRT checks it against the validated handoff. The carrier
+is a private weak data symbol, not an installed public lifecycle API.
+The loader registry owns dependency and main-image init/fini callbacks;
+libc owns normal exit handlers. This avoids duplicate callback ownership and
+keeps initialization behind the required libc startup state. See
+[`crt-and-sysroot.md`](crt-and-sysroot.md) and the
+[native lifecycle contract](../../compat/x86_64/general_loader_lifecycle.md).
+
+Paused AArch64 retains its mapped ELF note and private `x0` handoff. Its CRT
+and libc own executable arrays, while ldso owns dependency constructors and
+the loader process finalizer. Those target-specific conventions do not
+describe the installed x86-64 product.
 
 The one intentional bridge is `crabc_core::runtime::RuntimeV1`. It is a
 versioned, data-only private wire ABI. `libc` exposes the table and `ldso`
@@ -63,15 +64,14 @@ layouts, weak/linkage behavior, and TLS `errno` remain there. Typed native
 operations begin in `crabc-core` and are shaped by `crabc-rs`; direct native
 errors remain values rather than C `errno` side effects.
 
-Within `libc`, `libc/src/lib.rs` is only the crate's target and linkage
-composition root. `libc/src/c_abi.rs` owns the shared C layouts, TLS errno,
-stdio, pthread, locale, and process runtime state that cannot safely cross a
-C ABI boundary as typed native code. Leaf C ABI domains with independent
-state are ordinary private modules with explicit imports: syscall adapters,
-fenv, DNS expansion, random, select, timer helpers, small compatibility
-exports, and linkage-adjacent leaves are representative examples.
+Within `libc`, `libc/src/lib.rs` is the target and linkage composition root.
+It selects `c_abi/x86_64/static_c_abi.rs` for both static and owned dynamic
+x86-64 compositions, with distinct startup/TLS ownership, and `c_abi.rs` for
+paused AArch64. These C ABI owners retain layouts, TLS errno, stdio, pthread,
+locale and process state. Independently owned C ABI leaves remain private
+modules with explicit imports.
 
-`c_abi.rs` is deliberately a lexical C-ABI namespace rather than a second
+The AArch64 `c_abi.rs` is a lexical C-ABI namespace rather than a second
 composition root: its compatibility fragments directly share private layouts,
 TLS state, and helper routines. Independently owned C-ABI leaves remain normal
 private modules with named imports. Three cohesive lexical families have an

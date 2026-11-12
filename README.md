@@ -5,29 +5,27 @@ application CRT and compiler helpers, and `crabc-rs`, an idiomatic Rust facade
 over the same OS mechanisms.
 
 The goal is exact modern Unix behavior without an unlimited historical libc
-surface. musl 1.2.6 is the compatibility oracle; glibc is neither an oracle
-nor a fallback. Filesystem, process, signal, thread/TLS, socket, memory,
+surface. The compatibility oracle is the exact `[musl_native]` snapshot in
+[`compat/upstreams.toml`](compat/upstreams.toml) for active x86-64; paused
+AArch64 retains `[musl]` 1.2.6. Glibc is neither an oracle nor a fallback.
+Filesystem, process, signal, thread/TLS, socket, memory,
 stdio, resolver and loader semantics are meant to be rigorous. The Rust facade
 exposes useful OS capabilities rather than a wrapper for every C symbol.
 
 ## Current work
 
-The [campaign](plan.md) prioritizes complete selected native x86-64 behavior,
-with independent implementation, testing and review running in parallel.
-All performance and memory-usage gates are waived until feature completeness,
-including CPU/time, instructions, syscall counts and footprint. Default
-qualification runs the seven correctness gates and explicitly defers performance;
-optimization and full release qualification follow the feature-complete milestone.
-Correctness, memory safety, ABI compatibility and hardening remain required.
-The pinned C mimalloc backend stays selected, with its crabc integration open
-for correctness work; development and promotion of the Rust allocator port stay
-frozen.
+The [active plan](plan.md) prioritizes complete selected native x86-64 behavior
+with parallel implementation and review. Performance and memory-usage gates are
+waived until feature completeness; correctness, memory safety, ABI compatibility
+and hardening remain required. Default qualification runs seven correctness
+gates and defers performance. The pinned C mimalloc integration is open for
+correctness work; the Rust allocator port and its promotion remain frozen.
 
 ## Support
 
 | Target | Status |
 | --- | --- |
-| Linux/AArch64, little-endian, kernel 5.10+ | Supported |
+| Linux/AArch64, little-endian, kernel 5.10+ | Supported; development paused |
 | Linux/x86-64, little-endian, kernel 5.10+ | In development, not yet supported |
 
 Nothing else is a target: no other architectures, no 32-bit or big-endian,

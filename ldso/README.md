@@ -1,108 +1,68 @@
 # crabc-ldso
 
-> The Linux/AArch64 route this page describes is paused; native x86-64 is the active target (see `./scripts/dev-x86_64.sh --help`).
+A Rust `no_std` dynamic linker for crabc's selected Linux runtime profile.
+Native little-endian x86-64 on Linux 5.10+ is the active development target;
+public x86-64 support remains unqualified. The supported AArch64 route is
+paused and must be preserved without running or emulating it.
 
-A `no_std` Rust dynamic linker (`ldso`) for crabc's focused Linux AArch64
-musl-compatible runtime profile. It produces `libldso.so`, which can be used
-as `--dynamic-linker` for selected unmodified musl-linked executables.
+## Native x86-64 product
 
-## Compatibility profile
+The sole x86 Cargo feature is `x86_64-owned-dynamic-runtime`. It selects the
+initial graph, lifecycle, TLS and RuntimeV1 handoff together. The installed
+product builder combines loader and libc into one shared image, installed
+with the `/lib/ld-crabc-x86_64.so.1` interpreter entry. Building this crate
+alone is not an installed sysroot or a qualification result.
 
-The supported target is Linux AArch64 on Linux kernel versions 5.10 and
-newer. This is a focused modern-runtime loader, not a general loader for
-other architectures or a promise of complete historical musl or glibc
-behavior.
+The loader owns ELF admission, mapping, relocation, symbol scope, loader TLS
+and dynamic-object lifecycle. libc retains its C ABI and process state;
+checked private startup records connect the two owners. Initial graph
+publication follows complete relocation, protection and callback preflight.
+Runtime loading retains admitted mappings after `dlclose`, while failed
+admission rolls back its unpublished objects, matching the pinned musl
+profile. No registry reference may span application callbacks.
 
-A private Linux/x86-64 little-endian `x86_64-initial-interpreter` feature
-exists only for the staged native evidence lane. It builds one bounded ET_DYN
-interpreter root for a fixed graph; it is not an installed loader target or
-x86-64 support claim.
+The selected behavior and evidence are described in:
 
-All x86 graph profiles validate the null `DT_SYMTAB` record against one
-readable file-backed `PT_LOAD` before admitting the symbol table.
-`x86_64_initial_graph.rs::virtual_range_in_readable_file_load` therefore has
-no TLS/lifecycle feature gate: the original no-TLS graph needs it too. The
-`ldso-public-dlfcn` native gate compiles the no-feature parser regression and
-checks file/BSS, permissions, segment-crossing, and overflow boundaries before
-its existing public bridge/oracle consumers.
+- [General relocation](../compat/x86_64/general_relocations.md): symbol scope,
+  relocation destinations, COPY and TLS forms.
+- [Initial lifecycle](../compat/x86_64/general_loader_lifecycle.md): dependency
+  and main-image callbacks, CRT handoff and installed-product evidence.
+- [Runtime loader](../compat/x86_64/runtime-dynamic-loader.md): `dlopen`,
+  introspection, mapping lifetime and conventional CRT startup.
+- [Runtime ownership](../docs/design/architecture.md): libc, loader, CRT and
+  private RuntimeV1 boundaries, including required hardening.
 
-The separate private `x86_64-general-initial-interpreter` feature is the first
-loader-owned x86 initial-graph package. It discovers an arbitrary bounded
-non-TLS `DT_NEEDED` topology, deduplicates opened DSO identities by
-`(st_dev, st_ino)`, searches only explicit absolute RUNPATH components, maps
-and relocates its admitted objects, and rolls them back on a failed
-transaction. Its direct evidence is
-`compat/x86_64/run_ldso_general_initial_graph.sh`; the target-root variant is
-`compat/x86_64/run_ldso_general_initial_graph_target_root.sh`. It does not
-yet select TLS, dlfcn, process finalization, CRT handoff, an installed
-dynamic product, or x86-64 support.
+## Development commands
 
-`x86_64_general_relocation.rs` owns the general graph's relocation transaction:
-breadth-first symbol scope, whole-graph preflight, library/main word fixups,
-then variable-sized executable COPY. Initial-TLS compositions additionally
-admit general TPOFF64 against retained Variant-II module placements. The
-[general relocation contract and native gate](../compat/x86_64/general_relocations.md)
-record supported forms, exact ownership checks, and the protected-TLS
-ABI-versus-musl distinction; fixed/private roots remain separate regressions.
+Type-check the active loader inside the pinned native x86 image:
 
-The additive `x86_64-general-initial-lifecycle` integration feature uses that
-same general graph and retains dependency legacy init/fini plus init/fini
-arrays in its canonical owner. Initialization follows dependency order;
-process finalization reverses that order and claims each object once. The
-loader passes its private finalizer address through the conventional x86-64
-`rdx` entry register. With the general dynamic-main-thread RuntimeV1 feature,
-it defers initialization to the authenticated owned CRT/libc composition,
-after libc state and executable preinit are ready. This does not select
-runtime `dlopen`/`dlclose`, worker TLS, or installed dynamic products. See the
-[native lifecycle contract and evidence](../compat/x86_64/general_loader_lifecycle.md).
-The installed-product
-[lifecycle case](../compat/x86_64/run_owned_ldso_lifecycle_cases.sh) is the
-current startup/exit evidence; the private `general-dynamic-lifecycle`
-dispatcher fixture was retired with the single-image product.
-
-## Usage
-
-Build with:
-```bash
-cargo build -p crabc-ldso
+```sh
+scripts/lanes/rust-check.sh cargo check -q --locked -p crabc-ldso --features x86_64-owned-dynamic-runtime
 ```
 
-Output is in `target/debug/libldso.so`.
+The installed product is built and exercised through
+`./scripts/dev-x86_64.sh materialized-dynamic-sysroot --work NEW_DIR`.
+`--prepare` stops after preparation; `--resume WORK --next`, `--case PRODUCT CASE`
+and `--finish` drive its existing resumable evidence. Use a fresh directory
+under `.work/`, the selected C allocator backend, and the pinned native image.
+See the [native harness](../compat/x86_64/README.md) and dispatcher `--help`
+for prerequisites and the [qualification chain](../compat/x86_64/qualification-chain.md)
+for the distinction between a product case and full correctness acceptance.
 
-Run a supported AArch64 musl-linked binary:
-```bash
-LD_LIBRARY_PATH=target/debug ./target/debug/loader my_binary
-```
+## Paused AArch64 route
 
-Or directly:
-```bash
-./my_binary  # if ldso is set as PT_INTERP
-```
+`src/loader.rs` retains the AArch64 loader, TLS_ABOVE_TP and TLSDESC handling.
+Its startup vectors have no fixed argv/envp/auxv limits, and failed dependency
+closures roll back DSO mappings. Secure execution ignores and removes
+`LD_LIBRARY_PATH` and `LD_PRELOAD`; the current directory is never an implicit
+library search path. Its runtime loader lock is recursive, and `dlerror`
+storage is per thread; allocation failure yields no pending error rather
+than another thread's message.
 
-## Features
-
-- Self-relocating `_start` entry point
-- Loads `DT_NEEDED` dependencies
-- Handles AArch64 TLS (Thread-Local Storage) with TLS_ABOVE_TP
-- Processes the supported AArch64 ELF relocation types
-- TLSDESC resolver for aarch64
-
-Startup vectors are copied without fixed argv/envp/auxv limits, and failed
-dependency closures roll back their DSO mappings.  In secure execution
-(`AT_SECURE`), `LD_LIBRARY_PATH` and `LD_PRELOAD` are ignored and removed from
-the environment handed to the program.  Bare
-`DT_NEEDED` names are searched through configured and system library paths;
-the current working directory is never an implicit search directory.
-
-Runtime `dlopen`, `dlsym`, and `dlclose` operations use a recursive loader lock
-and keep `dlerror()` state separate for each thread. Error storage is allocated
-per thread; if that allocation fails, the defined result is no pending error
-(`dlerror()` returns null) rather than another thread's message.
-
-Consumers that reclaim a TLS block belonging to another thread should use
-`__rc_tls_block_size_for(fs_base)` and `__rc_tls_base_offset_for(fs_base)`;
-the parameterless compatibility helpers describe the calling thread/process
-default only.
+Cross-thread TLS reclamation uses `__rc_tls_block_size_for(fs_base)` and
+`__rc_tls_base_offset_for(fs_base)`; parameterless compatibility helpers describe
+the caller/process default. The [CRT contract](../docs/design/crt-and-sysroot.md)
+records this target's separate startup conventions.
 
 ## License
 

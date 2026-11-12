@@ -144,6 +144,7 @@ rebuild deletes the pinned image and must be followed by a re-pin of
 | Parallel workstreams, ownership and integration | [docs/lanes.md](docs/lanes.md) |
 | Runtime ownership and current wire boundary | [docs/design/architecture.md](docs/design/architecture.md) |
 | Rust facade | [docs/design/crabc-rs.md](docs/design/crabc-rs.md) |
+| Review backlog and open child-wait decision | [TODO.md](TODO.md), [child-wait RFC](docs/rfc/CRAB-2-child-wait-ownership.md) |
 | CRT, installed sysroot and target-input purity | [docs/design/crt-and-sysroot.md](docs/design/crt-and-sysroot.md) |
 | Frozen allocator design and differences | [docs/design/allocator.md](docs/design/allocator.md), [compat/allocator/known-differences.md](compat/allocator/known-differences.md) |
 | Frozen allocator provenance | [crabc-mimalloc/UPSTREAM.md](crabc-mimalloc/UPSTREAM.md) |
