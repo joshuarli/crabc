@@ -3,7 +3,7 @@
 
 The runner deliberately has a small surface: select either a directory of
 ``test_*.py`` files or one or more files, then each ordinary file gets one
-Python process. The audited parity-ledger module is bounded into selected-case
+Python process. Modules listed in CASE_SHARDED_MODULES are bounded into selected-case
 workers by default. This keeps module globals, patches, and ``tempfile`` state
 from leaking between tests without making the suite depend on a test framework.
 """
@@ -41,6 +41,13 @@ LOG_TAIL_BYTES: Final = 64 * 1024
 RESULT_PREFIX: Final = "CRABC_PYTHON_TEST_RESULT "
 PROGRESS_PREFIX: Final = "CRABC_PYTHON_TEST_PROGRESS "
 PARITY_LEDGER_TEST_MODULE: Final = "compat/x86_64/tests/test_parity_ledger.py"
+# Modules whose cases share no class or module fixture, mapped to the default
+# shard size that keeps one worker within DEFAULT_TIMEOUT_SECONDS.
+CASE_SHARDED_MODULES: Final = {
+    PARITY_LEDGER_TEST_MODULE: DEFAULT_CASE_SHARD_SIZE,
+    "compat/x86_64/tests/test_owned_posix_native_observations.py": 6,
+    "compat/x86_64/tests/test_owned_posix_static_products.py": 6,
+}
 
 
 class TestPythonError(RuntimeError):
@@ -259,12 +266,12 @@ def test_cases_in_suite(suite: unittest.TestSuite | unittest.TestCase) -> list[u
     return [suite]
 
 
-def parity_ledger_case_ids(module: Path) -> tuple[str, ...]:
-    """Discover the audited parity tests once, solely to form safe case shards."""
+def shardable_case_ids(module: Path) -> tuple[str, ...]:
+    """Discover a shardable module's tests once, solely to form safe case shards."""
 
-    if relative_to_repository(module) != PARITY_LEDGER_TEST_MODULE:
+    if relative_to_repository(module) not in CASE_SHARDED_MODULES:
         raise TestPythonError(
-            "case sharding is currently limited to " + PARITY_LEDGER_TEST_MODULE
+            "case sharding is limited to " + ", ".join(sorted(CASE_SHARDED_MODULES))
         )
     original_dont_write_bytecode = sys.dont_write_bytecode
     sys.dont_write_bytecode = True
@@ -278,10 +285,10 @@ def parity_ledger_case_ids(module: Path) -> tuple[str, ...]:
     return case_ids
 
 
-def sharded_parity_jobs(module: Path, shard_size: int) -> list[TestJob]:
-    """Form bounded jobs from the one audited module that is process-safe to shard."""
+def sharded_jobs(module: Path, shard_size: int) -> list[TestJob]:
+    """Form bounded jobs from a module whose cases are process-safe to shard."""
 
-    case_ids = parity_ledger_case_ids(module)
+    case_ids = shardable_case_ids(module)
     if not case_ids:
         # Preserve the ordinary zero-test outcome instead of silently passing
         # an empty selected-case shard.
@@ -293,7 +300,7 @@ def sharded_parity_jobs(module: Path, shard_size: int) -> list[TestJob]:
 
 
 def select_jobs(args: argparse.Namespace) -> list[TestJob]:
-    """Shard only audited parity cases; leave every other selected module whole."""
+    """Shard only process-safe modules; leave every other selected module whole."""
 
     modules = select_modules(args)
     if args.case_ids:
@@ -312,21 +319,23 @@ def select_jobs(args: argparse.Namespace) -> list[TestJob]:
     if args.no_case_sharding:
         return [TestJob(module) for module in modules]
 
-    parity_modules = [
+    sharded_modules = [
         module
         for module in modules
-        if relative_to_repository(module) == PARITY_LEDGER_TEST_MODULE
+        if relative_to_repository(module) in CASE_SHARDED_MODULES
     ]
-    if args.case_shard_size is not None and not parity_modules:
+    if args.case_shard_size is not None and not sharded_modules:
         raise TestPythonError(
-            "case sharding without --case is currently limited to "
-            + PARITY_LEDGER_TEST_MODULE
+            "case sharding without --case is limited to "
+            + ", ".join(sorted(CASE_SHARDED_MODULES))
         )
-    shard_size = args.case_shard_size or DEFAULT_CASE_SHARD_SIZE
     jobs: list[TestJob] = []
     for module in modules:
-        if module in parity_modules:
-            jobs.extend(sharded_parity_jobs(module, shard_size))
+        if module in sharded_modules:
+            shard_size = args.case_shard_size or CASE_SHARDED_MODULES[
+                relative_to_repository(module)
+            ]
+            jobs.extend(sharded_jobs(module, shard_size))
         else:
             jobs.append(TestJob(module))
     return jobs
@@ -1132,14 +1141,14 @@ def parse_args(arguments: Sequence[str] | None = None) -> argparse.Namespace:
         "--case-shard-size",
         type=int,
         help=(
-            "split the audited parity-ledger module into selected-case workers "
+            "split each CASE_SHARDED_MODULES entry into selected-case workers "
             f"of this size (use {DEFAULT_CASE_SHARD_SIZE} for the normal bounded shard)"
         ),
     )
     sharding.add_argument(
         "--no-case-sharding",
         action="store_true",
-        help="keep the audited parity-ledger module as one monolithic worker",
+        help="keep every CASE_SHARDED_MODULES entry as one monolithic worker",
     )
     parser.add_argument("--worker", help=argparse.SUPPRESS)
     parser.add_argument("--worker-case", action="append", default=[], help=argparse.SUPPRESS)

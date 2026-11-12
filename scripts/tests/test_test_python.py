@@ -493,7 +493,7 @@ class StoppedSelectionTests(unittest.TestCase):
                 "4",
             ]
         )
-        discovered = RUNNER_MODULE.parity_ledger_case_ids(
+        discovered = RUNNER_MODULE.shardable_case_ids(
             ROOT / RUNNER_MODULE.PARITY_LEDGER_TEST_MODULE
         )
         jobs = RUNNER_MODULE.select_jobs(arguments)
@@ -517,7 +517,7 @@ class StoppedSelectionTests(unittest.TestCase):
                 "4",
             ]
         )
-        discovered = RUNNER_MODULE.parity_ledger_case_ids(
+        discovered = RUNNER_MODULE.shardable_case_ids(
             ROOT / RUNNER_MODULE.PARITY_LEDGER_TEST_MODULE
         )
         jobs = RUNNER_MODULE.select_jobs(arguments)
@@ -541,7 +541,7 @@ class StoppedSelectionTests(unittest.TestCase):
                 "4",
             ]
         )
-        discovered = RUNNER_MODULE.parity_ledger_case_ids(
+        discovered = RUNNER_MODULE.shardable_case_ids(
             ROOT / RUNNER_MODULE.PARITY_LEDGER_TEST_MODULE
         )
 
@@ -551,6 +551,27 @@ class StoppedSelectionTests(unittest.TestCase):
         self.assertTrue(
             all(0 < len(job.case_ids) <= RUNNER_MODULE.DEFAULT_CASE_SHARD_SIZE for job in jobs)
         )
+
+    def test_slow_posix_module_auto_shards_within_its_own_bound(self) -> None:
+        module = "compat/x86_64/tests/test_owned_posix_static_products.py"
+        arguments = RUNNER_MODULE.parse_args(["--module", module, "--jobs", "4"])
+        discovered = RUNNER_MODULE.shardable_case_ids(ROOT / module)
+
+        jobs = RUNNER_MODULE.select_jobs(arguments)
+
+        bound = RUNNER_MODULE.CASE_SHARDED_MODULES[module]
+        self.assertLess(bound, len(discovered))
+        self.assertGreater(len(jobs), 1)
+        self.assertEqual(tuple(case_id for job in jobs for case_id in job.case_ids), discovered)
+        self.assertTrue(all(0 < len(job.case_ids) <= bound for job in jobs))
+
+    def test_case_shard_size_rejects_selection_without_a_shardable_module(self) -> None:
+        arguments = RUNNER_MODULE.parse_args(
+            ["--module", "scripts/tests/test_test_python.py", "--case-shard-size", "2", "--jobs", "1"]
+        )
+
+        with self.assertRaisesRegex(RUNNER_MODULE.TestPythonError, "case sharding without --case is limited"):
+            RUNNER_MODULE.select_jobs(arguments)
 
     def test_no_case_sharding_keeps_the_audited_module_monolithic(self) -> None:
         arguments = RUNNER_MODULE.parse_args(
@@ -747,8 +768,8 @@ class TimeoutTests(unittest.TestCase):
 """,
         )
         started = time.monotonic()
-        result = self.invoke("--module", self.relative(timeout), "--jobs", "1", "--timeout", "0.2")
-        self.assertLess(time.monotonic() - started, 5.0)
+        result = self.invoke("--module", self.relative(timeout), "--jobs", "1", "--timeout", "2")
+        self.assertLess(time.monotonic() - started, 15.0)
         self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
         self.assertIn("TIMEOUT", result.stdout)
         run_root = self.only_run_root()

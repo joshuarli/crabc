@@ -146,7 +146,7 @@ allocator runner. Examples for scoped work:
 
 ```sh
 scripts/lanes/rust-check.sh cargo check -q --locked -p <non-allocator-crate>
-python3 -B scripts/test_python.py --module <path/to/test_file.py>
+scripts/lanes/rust-check.sh python3 -B scripts/test_python.py --module <path/to/test_file.py>
 python3 compat/x86_64/validate_parity_ledger.py
 ./scripts/dev-x86_64.sh campaign-status
 ./scripts/dev-x86_64.sh qualification-candidate --work DIR --profile correctness
