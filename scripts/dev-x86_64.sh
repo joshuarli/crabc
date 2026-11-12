@@ -193,7 +193,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   promotion-closure --qualification-receipt PATH  reread current complete qualification and native-default products
   campaign-promotion-check [--qualification-receipt PATH]  run the final promotion gate when it is ready
   campaign-all [--qualification-receipt PATH]  run the complete native x86 campaign gate sequence
-  qualification-candidate --work DIR [--inputs FILE] [--through STEP] [--dry-run]  build one cohort, run every family aggregate and gate producer, publish and check receipts, run the chain; restartable on any revision with the same product source
+  qualification-candidate --work DIR [--profile correctness|full] [--inputs FILE] [--through STEP] [--dry-run]  build one cohort, run family aggregates and selected gate producers; defaults to correctness with performance deferred until feature completion; restartable on revisions with the same product source
   routine-c-abi-matrix <family-id>  run checked routine C ABI evidence for one family
   headers-layouts-aggregate  run finite non-promoting header accounting evidence
   image  build the pinned Linux/amd64 core-evidence image

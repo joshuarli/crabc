@@ -15,31 +15,36 @@ a fallback.
 
 ## Current authorization and implementation status
 
-**2026-10-30: non-allocator simplification first; all allocator work frozen.**
-Do not launch allocator engine benchmarks, port qualification, tuning or
-promotion. Whole-runtime tests may use the unchanged accepted C backend and
-must report, not hide, its contribution. Frozen allocator failures are recorded
-without opening a development campaign. Existing allocator design/milestone
-contracts remain preserved, not waived or activated by this document.
+**D23, 2026-11-12: every performance and memory-efficiency gate is waived until
+full selected native feature completeness.** This includes time/CPU, throughput,
+latency, retired instructions, syscall counts, allocation/retention, RSS/PSS,
+cgroup peaks and footprint, as well as the earlier numerical simplification
+budgets. No pre/post measurement is required for a feature change. Missing PMUs,
+quiet-host windows, matched performance compilers or cgroup delegation cannot
+block feature work or occupy the correctness queue.
 
-The owner now requires syscall ceiling **R**, not 2R, and retired-user-instruction
-ceiling **1.10R** under a matched LLVM backend. S1 must implement collection,
-producer/reader checks and release gates together. The release gate and the
-syscall reader now enforce R and 1.10; no producer writes instruction fields
-yet, so every runtime row reads as unavailable until S1.3 lands. Per-syscall classification already rejects unresolved
-differences, but that is not the permanent numerical no-extra-calls contract.
-An old passing report therefore cannot establish the new requirements.
+Default qualification uses the seven-gate `correctness` profile and explicitly
+defers `performance.release`. Full benchmarking, optimization and the eight-gate
+`full` profile belong to F3, after the F2 feature-complete milestone in `plan.md`.
+Optional bounded diagnostics may use existing tooling, but cannot gate a slice,
+stop other workers for a quiet host or become a benchmark-infrastructure project.
+Observed failures remain failures in their own reports; waived is not passed.
 
-Focused development checks are required early, with the relevant behavioral
-checks, rather than after complete qualification. Full release evidence still
-requires its correctness admission. Missing PMU access or a blocked qualification
-chain is reported explicitly; neither becomes a passing instruction result.
+The selected C mimalloc backend and its contribution remain visible. Its crabc
+glue may be fixed for selected behavior and memory safety. The Rust allocator
+port, alternate allocators and allocator-only qualification remain frozen. Leaks
+from broken lifecycle, unsafe memory access, incorrect allocation failure and
+nontermination are correctness defects, not waived resource-efficiency targets.
+
+**All measurement requirements below apply when making or replaying a performance
+claim, not when accepting F0–F2 feature work.** Existing collectors/readers and
+raw results are retained for F3; no replacement harness is needed.
 
 ## Measurement contract
 
-The existing active entry points are `./scripts/dev-x86_64.sh perf-c` and
-`perf-native`; see the harness README for actual flags. S1 supplies the focused
-development path through existing machinery. Do not invent command support or
+The existing entry points are `./scripts/dev-x86_64.sh perf-c` and
+`perf-native`; see the harness README for actual flags. Use the existing focused
+counts path for optional diagnostics. Do not invent command support or
 relax a smoke's budget label to make it appear qualified.
 
 For the x86 C supplied-product adapter, compile each unchanged C application/DSO
@@ -60,18 +65,21 @@ profile through `capability.accounting`, not a status assertion or a receipt
 for another revision. Retain source/product/artifact identities and raw logs,
 recompute derived results, and distinguish development, smoke and release runs.
 A later full-profile receipt must not silently replace the correctness receipt
-that admitted an earlier measurement. Preserve these properties while S2
-consolidates duplicated readers and bookkeeping.
+that admitted an earlier measurement. Preserve these properties when maintaining
+the existing readers and bookkeeping.
 
 Reports and raw samples remain ignored local evidence in the existing work/report
 locations. Compare only matching fixture, host, product and sampling contracts.
 Keep one shared result format per genuine measurement boundary, not a new schema
 or receipt reader for each symbol.
 
-## Acceptance bounds
+## Retained bounds for post-completion qualification
 
-These are required active-x86 bounds. They must be implemented and tested in S1
-before a report can claim compliance; the AArch64 contract remains unchanged.
+These describe retained cost targets/readers, not F0–F2 acceptance requirements.
+They are deferred together until F2 completes, including every zero-to-one
+syscall increase and memory regression. F3 rebaselines the completed product and
+uses the existing release machinery; no historical result implies compliance.
+The paused AArch64 contract remains unchanged.
 
 | Metric | Requirement |
 | --- | --- |
@@ -79,7 +87,7 @@ before a report can claim compliance; the AArch64 contract remains unchanged.
 | Retired user instructions | Candidate/reference <= 1.10 for the actual measured operation and separately for startup/first-use. Lower is better; there is no 0.90 lower acceptance floor. |
 | CPU | Retain per-row one-sided 95% upper ratio <= 1.00, with 0.90 reported only as a non-gating target. |
 | PSS and `memory.peak` | Retain per-row one-sided 95% upper ratio <= 1.00, with raw totals and the existing collection protocol. |
-| Linked footprint/structure | Report final linked sections and all runtime images; meet the explicit S0 simplification budgets independently of instruction/CPU results. |
+| Linked footprint/structure | Report final linked sections and all runtime images. Historical S0–S5/D17 reduction budgets are no longer feature gates; do not delete selected behavior to recover them. |
 
 No geomean offsets a failing selected runtime row. Reference/candidate error
 or behavior differences need semantic investigation; fewer calls are accepted
@@ -96,9 +104,9 @@ a ratio above 1.10, missing/unreliable counters and backend mismatch, plus valid
 reductions and boundary values. Preserve raw rejected inputs.
 
 Frozen allocator promotion bounds and source-fidelity obligations remain in
-`compat/allocator/`; do not modify them while implementing runtime bounds.
-Allocator-only failures cannot be presented as passes or erased from full-runtime
-reports, but do not make native allocator milestones prerequisites for S5.
+`compat/allocator/`; they are outside this runtime completion milestone.
+Allocator-only failures cannot be presented as passes or erased from reports,
+and native allocator milestones are not prerequisites for F2.
 
 ## Matched compiler backend
 
@@ -114,7 +122,7 @@ The frontends remain different: common LLVM does not guarantee identical IR or
 machine code. Unresolved backend differences make the result diagnostic only.
 
 Keep production Rust/upstream pins unchanged. A separately pinned comparator
-compiler/image may be added under S1; do not silently update the runtime or
+compiler/image needs the plan's pin-change authority; do not silently update the runtime or
 start a whole-toolchain project. Record any unavoidable backend limitation.
 Compare equivalent product configurations and algorithms; whole-runtime musl
 comparisons and same-algorithm C/Rust studies answer different questions.
@@ -236,8 +244,8 @@ total (D8): the allocator calls are reported, not subtracted from
   memory bounds and exact raw values.
 
 The existing host-load policy and release protocol remain implemented in the
-shared evidence module. S1/S2 may simplify their implementation, not loosen them
-to select favorable outcomes. Three clean invocations must pass; a budget label,
+shared evidence module for F3. Do not loosen them to select favorable outcomes.
+Three clean invocations must pass for a qualifying cost claim; a budget label,
 report field or green reader test does not substitute for the actual execution.
 
 ## Source and linked-footprint accounting
@@ -275,4 +283,4 @@ closure is distinct from dependency-free `std,panic_abort` experiments.
 The paused AArch64 commands and earlier results remain documented in the
 existing harnesses and
 [the pre-reset methodology](https://github.com/joshuarli/crabc/blob/fe7f1874289d7f54ef27af4fb639cf307104540f/docs/design/performance.md).
-They are preserved history, not work authorized by this x86 simplification phase.
+They are preserved history, not work authorized by this native x86 campaign.

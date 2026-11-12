@@ -1,9 +1,62 @@
 # Completion requirements
 
-What the native x86-64 runtime and the Rust allocator port must do before
-either is called complete. [plan.md](../plan.md) sequences the work and
-[scope.md](scope.md) bounds the product; this file is the standard an item is
-judged against.
+The active milestone is full feature completeness of the selected native
+x86-64 runtime, using the accepted pinned C allocator. [plan.md](../plan.md)
+sequences the work and [scope.md](scope.md) bounds the product. This file
+defines the exit criteria; passing a narrow fixture or running out of ready
+tasks does not establish completion.
+
+The owner's 2026-11-12 direction waives every performance and memory-efficiency
+gate until this milestone is complete. Instruction/syscall ratios, CPU time,
+RSS, allocation counts, retained-memory and footprint comparisons cannot block
+implementation, integration or feature acceptance. Memory safety, ownership,
+required cleanup, ABI, liveness and hardening remain correctness requirements.
+The Rust allocator port requirements below are preserved for a separately
+authorized restart; that frozen port is neither counted as complete nor a
+prerequisite for the active runtime milestone. AArch64 remains paused.
+
+## Feature-completion exit criteria
+
+All of the following must hold on the integrated native x86-64 source:
+
+1. **Every selected family is implemented.** Close all behavior obligations in
+   the runtime table below and all non-performance families in
+   `compat/x86_64/parity.toml`'s `promotion.required_families`. Respect existing
+   `excluded_surface` and deliberate compatibility limits. An incomplete family
+   cannot be removed, relabeled unsupported, or left deferred to obtain closure.
+2. **Every selected capability is accounted for.** Reconcile native behavior
+   against the existing `compat/crabc-rs/coverage.toml` and parity mappings.
+   Direct Rust paths, C ABI machinery, Rust-subsumed facilities and deliberate
+   unsupported behavior retain their actual classifications and evidence.
+   Symbol totals and `foundation-verified`/private slices alone are insufficient.
+3. **Real owned products and consumers work.** Exercise the required static,
+   static-PIE and dynamic compatibility products, hardened products, installed
+   headers/sysroot, loader/package cases, Rust std/build-std/LTO/unwinder and
+   Lua source consumer on their actual owned inputs. Compile-only, mock,
+   ambient-host-runtime or source-inventory results cannot substitute for
+   selected runtime behavior.
+4. **No selected functional blocker remains.** Resolve the feature queue and
+   reproduced correctness, safety, ABI, hardening and consumer failures,
+   including retained admission failures. Preserve raw failure evidence and
+   upstream workloads. A blocked required case keeps this milestone open;
+   unrelated lanes continue while its owner works on it.
+5. **The integrated tree passes current-source correctness.** Run
+   `./scripts/dev-x86_64.sh qualification-candidate --work DIR --profile correctness`
+   from a clean commit in the pinned native environment. All seven correctness
+   gates must pass in one complete run with `fresh: true`, alongside the
+   applicable hardening and focused regressions. A worker's old receipt or a
+   resumed development run alone cannot certify the final integrated product.
+6. **Record the feature milestone separately from release.** The coordinator
+   records the accepted commit, correctness evidence and zero remaining
+   selected feature blockers in `plan.md`. `performance.release` stays deferred
+   and unpassed; missing counters or memory metrics do not invalidate feature
+   completion. Public support, backend promotion and full release qualification
+   remain distinct later decisions.
+
+Only after these conditions hold may performance/memory optimization become
+the campaign's acceptance work. Use the existing cost harness at that stage;
+do not make collecting a baseline or meeting a cost budget an earlier hidden
+prerequisite.
 
 ## Runtime
 
@@ -22,7 +75,7 @@ A C ABI pass does not prove the Rust-native path, or the reverse.
 | CRT, builtins, sysroot | Compatibility products retain owned static, static-PIE, dynamic PIE and dynamic non-PIE entry. Hardened products require dynamic PIE or static PIE and reject non-PIE selection. Both require libc handoff, lifecycle arrays, finalization, compiler helpers, and a deterministic link interface. The sysroot owns headers, CRT objects, `libc.a`, shared libc, the interpreter, builtins, allocator selection and link specifications; a pinned host compiler is permitted, ambient target inputs are not. |
 | Runtime hardening | The native x86-64 [hardened profile](../COMPATIBILITY-PROFILE.md#runtime-hardening-profiles) is enforced across kernel/direct loader entry, initial dependencies/preloads, runtime `dlopen`, and applicable owned static-PIE startup. PIE admission, non-executable stacks, page-level W^X, bounded relocation writes, effective RELRO, eager binding, search restrictions and secure startup have positive, negative and failure-path evidence. Product selection cannot silently downgrade. |
 | Consumers | Rust std, dependency-bearing std, build-std, LTO, and the Lua source build through the real `_Unwind_*` ABI, ordinary archive extraction, and shared symbol resolution. Dummy unwind symbols, hidden providers, or C recovery are not implementations. |
-| Rust facade | Every other frozen family and exact semantic mapping, with direct native API, error, ownership, and dependency ownership. |
+| Rust facade | Every selected baseline family and exact semantic mapping, with direct native API, error, ownership, and dependency ownership; completion of the C ABI does not establish native-path completion. |
 
 ### Hardening evidence
 
@@ -49,7 +102,14 @@ Historical receipts cannot prove a newly selected contract.
   for each entry path and new threads, plus environment/command-line attempts
   to weaken the selected profile. Require Linux 5.10-compatible core behavior.
 
-## Native allocator
+## Native allocator — retained, frozen obligations
+
+This section does not authorize work on `crabc-mimalloc/`,
+`compat/allocator/`, native-shadow integration or allocator promotion. Those
+remain outside the active feature-completion milestone under
+[plan.md](../plan.md#allocator-freeze). The selected C backend's crabc glue must
+still satisfy the runtime's allocation, lifecycle, fork and memory-safety
+contracts and may be fixed in the relevant runtime lane.
 
 `crabc-mimalloc` is a `#![no_std]` engine with no production `alloc`, C or C++
 implementation, bindgen, native build script, dependency on crabc-libc, or
@@ -112,9 +172,10 @@ Also required:
   validated raw projections, no long-lived reference that contradicts remote
   access. A legal free cannot return unavailable, and allocation cannot
   report OOM because a scheduler token is busy.
-- **Memory metrics.** For total-memory rows dominated by mandatory live
-  payload or kernel charge granularity, require no regression; keep the raw
-  reference and candidate measurements.
+- **Memory metrics (deferred).** No memory-efficiency comparison is an active
+  feature gate. Preserve raw reference/candidate evidence; any later allocator
+  qualification must distinguish mandatory live payload and kernel charge
+  granularity from implementation overhead under the then-active cost policy.
 
 Source feature groups, each of which must be implemented and verified for
 Linux/x86-64: source foundations, memory substrate, local engine, allocation

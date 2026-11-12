@@ -66,6 +66,8 @@ class QualificationManifestTests(unittest.TestCase):
 
     def test_checked_in_contract_declares_every_ordered_gate_executable(self) -> None:
         report = qualification.load_contract()
+        self.assertEqual(report["qualification_profile"], "correctness")
+        self.assertEqual(report["deferred_gate_ids"], ["performance.release"])
         self.assertEqual(report["execution"], qualification.EXECUTION_CONTRACT)
         self.assertEqual(
             tuple(row["id"] for row in report["promotion_chain"]),

@@ -21,8 +21,8 @@ import validate_parity_ledger as ledger
 def correctness_inputs() -> list:
     """Validated campaign inputs restated in the correctness scope.
 
-    The checked-in default is the full scope; these tests state their scope
-    explicitly instead of depending on that default.
+    Mutation tests state their scope explicitly instead of depending on the
+    checked-in campaign selection.
     """
     with mock.patch.object(qualification, "load_publication", return_value=None):
         inputs = list(copy.deepcopy(report.load_validated_campaign_inputs()))
@@ -157,8 +157,8 @@ class CampaignReportTests(unittest.TestCase):
             ],
         )
 
-    def test_correctness_defers_performance_without_completing_functional_families(self):
-        value = self.correctness_value
+    def test_default_campaign_defers_performance_without_completing_functional_families(self):
+        value = self.value
         self.assertEqual(value['campaign']['qualification_profile'], 'correctness')
         self.assertEqual(value['campaign']['deferred_families'], ['performance.release'])
         self.assertFalse(value['campaign']['performance_qualified'])

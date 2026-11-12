@@ -1,6 +1,9 @@
 # Ordered qualification chain
 
-Qualification runs eight gates in one fixed order. Each gate is also the
+Full qualification has eight gates in one fixed order; the active feature
+campaign defaults to the first seven, with performance explicitly deferred
+until full feature completeness under [D23](../../plan.md#performance-and-memory-waiver).
+Each gate is also the
 `parity.toml` family of the same id; the family status records an earlier
 admission, while the chain re-proves the gate against the current checkout.
 Nothing here is a pass until a receipt revalidates (see Receipts).
@@ -36,11 +39,12 @@ the declaration.
 ## Profiles
 
 `qualification_profile` in the declaration selects the default scope, currently
-`full`. `--profile` overrides it for ordered execution and `--status` only.
+`correctness`. `--profile` overrides it for ordered execution and `--status` only.
 
-- `full`: all eight gates.
+- `full`: all eight gates, explicitly selected for post-completion qualification.
 - `correctness`: the first seven gates; `performance.release` is deferred
-  because it needs an uncontended host.
+  until the selected feature surface is complete. No performance or memory-usage
+  threshold, measurement tool or quiet-host window gates this profile.
 
 A correctness receipt records its deferred gate, so it is never a full-chain
 result (`complete_profile` is true only when the profile's last gate passed).
@@ -254,10 +258,12 @@ cannot satisfy or replace any chain gate.
 [`qualification_candidate.py`](qualification_candidate.py) is the unattended
 final qualification of one clean candidate checkout. It runs on the host and
 every step is itself a dispatcher command that owns its container. `--work`
-must be a physical child of `.work/x86_64`. It has no `--profile`: the final
-`qualification-chain` step receives the selected profile, which defaults to
-`full`. `--profile correctness` skips `performance-release` and its publication
-while passing that profile to `qualification-manifest`.
+must be a physical child of `.work/x86_64`. The final `qualification-chain`
+step receives the selected profile, which defaults to `correctness`. That
+profile skips `performance-release`, its publication and required performance
+inputs while passing the same profile to `qualification-manifest`.
+Explicit `--profile full` restores all eight gates and their real input
+requirements; it does not inherit a performance pass from the feature waiver.
 
 `plan()` fixes the step order; step ids, in order:
 
@@ -339,7 +345,7 @@ reused step is still re-read by every later reader; a reader that still
 compares revisions refuses it and stops the run.
 
 `NAME/summary.json` is `fresh` only when every completed step ran at the final
-revision. **R2 acceptance requires one complete, fresh run**: a run that
+revision. **F2 feature-completion acceptance requires one complete, fresh run**: a run that
 completes on steps reused from another revision is development evidence only
 and must be repeated in a new `--work`. `--through STEP` runs the prefix ending
 at that step id (staged preflights; never reported complete). `--dry-run`

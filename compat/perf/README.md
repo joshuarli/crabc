@@ -1,6 +1,17 @@
 # musl–crabc performance evidence
 
-Active x86 work uses the [supplied-product C adapter](#native-x86-64-supplied-product-adapter)
+## Campaign policy
+
+The owner's 2026-11-12 [D23 decision](../../plan.md#performance-and-memory-waiver)
+waives all performance and memory-efficiency gates until full selected feature
+completeness. No command in this document is required for F0–F2 feature acceptance,
+and no ratio, syscall increase or memory-usage result blocks those phases.
+Default qualification selects `correctness` and reports `performance.release`
+as deferred. Preserve collectors/readers and raw results for F3; an explicit
+performance check still reports its real result and never converts the waiver
+into a pass. Optional diagnostics must not delay feature lanes.
+
+X86 measurement uses the [supplied-product C adapter](#native-x86-64-supplied-product-adapter)
 and the [Rust-facade companion](native/x86_64.md) through
 `./scripts/dev-x86_64.sh perf-c` and `perf-native`. The AArch64 commands below
 are preserved reference paths while that architecture's work is paused.

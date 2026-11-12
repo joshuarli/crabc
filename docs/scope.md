@@ -6,30 +6,33 @@ this file owns the detail. [plan.md](../plan.md) owns the active work.
 
 ## Current campaign
 
-**2026-10-30: radical non-allocator simplification first; all allocator work
-frozen.** The active sequence is S0–S5 in `plan.md`, not the historical
-qualification/native-promotion schedule. Keep the accepted C allocator unchanged.
-Do not develop, tune, clean up, profile, qualify or promote the Rust port or
-another allocator; do not merge parked allocator changes. Ordinary runtime
-builds and checks may use the unchanged C backend. Record allocator failures
-without starting allocator investigations. The precise freeze and restart
-boundary are in [plan.md](../plan.md#allocator-freeze).
+**2026-11-12: complete the selected features first, with independent work in
+parallel. All performance and memory-efficiency gates are waived until that
+milestone.** The active F0–F3 sequence in `plan.md` supersedes the October 30
+simplification-first and serial-lane restrictions. Missing selected capabilities,
+integration and behavior coverage are authorized work; unrelated product/target
+expansion is not.
 
-Preserve the selected behavior and hardening below while reducing non-allocator
-runtime mechanisms, product variants, internal bridges and evidence machinery.
-Early focused correctness/cost checks replace the old rule that all performance
-work waits for complete qualification. Actual release claims still require full
-qualification. These changes authorize no new capability or target campaign.
-Historical completion requirements remain obligations, not permission to work
-on frozen components or evidence that a phase has already passed.
+Use the pinned C mimalloc v3.5.0 backend. Its crabc integration is open for
+functional work and focused correctness fixes without waiting for an aggregate
+gate failure. Do not develop, tune, qualify or promote the Rust allocator port,
+change upstream C source or merge parked allocator branches. The exact boundary
+is in [plan.md](../plan.md#allocator-freeze).
+
+Complete every selected runtime, ABI, facade, product and consumer obligation
+with current behavioral evidence and a fresh seven-gate correctness run. Keep
+performance explicitly deferred; default qualification is `correctness`, not a
+claim of full release qualification. Memory safety, ordinary semantics and
+hardening remain required. Performance tools, quiet hosts and a prior family's
+aggregate admission cannot block independently testable feature work.
 
 ## Targets
 
 - Linux, little-endian, kernel **5.10 or newer**. Do not add pre-5.10 kernel
   fallbacks. Record a newer-kernel requirement centrally before relying on it.
 - **Active:** native Linux/x86-64 (`x86_64-unknown-linux-musl` where a Rust
-  target name is needed), built and run on an x86-64 host. x86 becomes public
-  only through qualification after the simplification phase in `plan.md`.
+  target name is needed), built and run on an x86-64 host. Public support remains
+  a separate promotion decision after feature and full release qualification.
 - **Paused:** Linux/AArch64, which remains the publicly supported target.
   Preserve its behavior, selected allocator, frozen baseline and
   target-qualified evidence. Do not run or emulate its suites
@@ -52,8 +55,10 @@ on frozen components or evidence that a phase has already passed.
 
 Tests and source establish behavior; generated reports measure it. Reconcile
 contradictions: neither stale prose nor an assertion in a report waives a
-requirement. The October 30 freeze and simplification-first sequence supersede
-older allocator, broad-parallelism and cleanup-last instructions.
+requirement. The owner's November 12 D23/D24 decisions waive cost gates and
+require parallel feature work; they supersede older simplification/serial and
+performance-first instructions, including shared skill scheduling defaults.
+The separate Rust allocator freeze and paused AArch64 boundary remain in force.
 
 Oracles:
 
@@ -99,13 +104,16 @@ paths thin and LLVM-visible rather than round-tripping through the C ABI.
 Expose real platform mechanisms, not emulations or a portable runtime
 framework. Design: [crabc-rs](design/crabc-rs.md).
 
-**Allocator (frozen).** No allocator invention or development in the active
-campaign. Preserve the faithful Rust semantic port of pinned mimalloc
+**Allocator.** The selected native x86 backend is pinned upstream C mimalloc
+v3.5.0. Its crabc lifecycle, initialization and ABI glue are open for selected
+feature integration and correctness fixes, with behavioral proof. Do not edit
+upstream C source or change backend selection. Preserve the faithful Rust semantic port of pinned mimalloc
 **v3.5.0**, with provenance in
 [`crabc-mimalloc/UPSTREAM.md`](../crabc-mimalloc/UPSTREAM.md), without advancing
 it. Preserve source algorithms, data structures, ownership, memory ordering,
 lifecycle, valid-program behavior, existing differences and known failures.
-The accepted C backend and configuration remain selected and unchanged.
+The Rust port and its harness remain frozen; ordinary runtime builds use the
+selected C backend.
 A later, separately authorized restart must reassess scope before any port work;
 the old plan's eventual native-default switch is not assumed. Existing fidelity
 and promotion contracts are not waived: algorithmic divergence still needs
@@ -149,8 +157,8 @@ pipeline framework, security-policy language, generic provider registry,
 plugin system, or hypothetical platform/backend abstraction. Use coarse
 features only for real dependency or environment boundaries. Prefer one runtime
 implementation per selected contract over retaining every intermediate proof
-product as a permanent feature. Evaluate loader/libc image consolidation under
-S3; do not add a second permanent composition or discard bootstrap invariants.
+product as a permanent feature. Preserve the accepted loader/libc composition
+and bootstrap invariants while finishing its behavior.
 
 ## Dependencies
 
@@ -178,23 +186,21 @@ budget. Preserve one owner for each process-global state across product images.
 
 ## Performance
 
-The active campaign requires candidate syscall count <= musl and retired user
-instructions <= 1.10 times musl on equivalent selected workloads under a matched
-LLVM backend. Existing CPU and memory no-regression requirements remain.
-These are acceptance requirements; S1 must implement the new numerical gates
-and counters. The legacy 2R bound is not sufficient, and a report without
-instruction measurements cannot prove the instruction target.
+All time/CPU, throughput/latency, instruction, syscall-count, allocation,
+RSS/PSS/peak-memory and footprint gates are waived until full selected native
+feature completeness. The old numerical simplification budgets and mandatory
+before/after measurements cannot delay feature acceptance. A resource regression
+is recorded honestly if observed; it is not a new prerequisite or optimization
+assignment. Existing performance collection/checking code and thresholds remain
+for the later F3 phase, with `performance.release` explicitly deferred in F0–F2.
 
-Remove unnecessary syscalls, allocation, indirection, and algorithmic work
-first; prove simple scalar semantics, then inspect active-target codegen.
-SIMD is a narrow, separately tested and measured optimization, not an internal
-framework or a substitute for a better algorithm. An established math kernel
-may be appropriate earlier when its numerical contract is proved. Crypto
-primitives remain in reviewed dependencies, including vectorized ones.
-Use focused correctness/cost checks during simplification, without falsely
-promoting them to full qualification. Separate startup and per-operation work,
-linked footprint and source complexity, test/generated/frozen code and shipping
-implementation. Full measurement policy: [performance](design/performance.md).
+Implement straightforward complete semantics first. Optional measurements must
+stay off the feature path; unavailable counters, a busy host or absent cgroup
+delegation do not block functional work. A broken lifecycle, unsafe access,
+deadlock or failure to complete a functional workload is still a correctness
+defect. Preserve bounded algorithms and existing ownership boundaries; the
+waiver is not permission to invent frameworks or weaken hardening.
+Full measurement policy: [performance](design/performance.md).
 
 ## Evidence and bookkeeping
 
@@ -205,7 +211,8 @@ implementation. Full measurement policy: [performance](design/performance.md).
   existing duplicates into the existing test matrices and shared helpers.
 - Preserve exact upstream revisions, source-to-Rust mappings, licenses, and
   intentional differences. Do not rewrite upstream workloads, suppress raw
-  failures, remove behavioral coverage or weaken gates to conceal a defect.
+  failures, remove behavioral coverage or weaken correctness gates. Waived cost
+  gates stay deferred rather than being reported as passing.
 - `plan.md` is the only active implementation plan and repository-wide handoff.
   Required capability/source state stays in existing manifests; raw evidence
   stays in ignored `.work/` reports. Git is history: no prose archives, per-leaf

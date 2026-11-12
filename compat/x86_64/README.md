@@ -15,6 +15,13 @@ contracts for the native Linux/x86-64 little-endian campaign defined by
 [plan.md](../../plan.md). Everything here is private foundation evidence until
 the completion predicate in plan.md passes; it is not a public-support claim.
 
+The [current campaign](../../plan.md) finishes the selected feature surface
+through parallel implementation and behavioral closure. Qualification defaults
+to `correctness`: seven gates, with `performance.release` explicitly deferred
+until feature completeness. Cost and memory-efficiency measurements are not
+prerequisites for feature work. Explicit `--profile full` and promotion commands
+belong to the later release phase; they are not per-slice acceptance commands.
+
 ## Development commands
 
 Run from the repository root. Inside the pinned native environment the
@@ -25,11 +32,12 @@ command.
 ./scripts/dev-x86_64.sh campaign-status             # frozen baseline, ledger and family status
 ./scripts/dev-x86_64.sh campaign-family FAMILY      # one family's blockers and evidence commands
 python3 -B scripts/test_python.py --directory compat/x86_64/tests --jobs 4
-scripts/lanes/rust-check.sh                         # type-check runtime crates in the pinned image
+scripts/lanes/rust-check.sh cargo check -q --locked -p <non-allocator-crate>
 ./scripts/dev-x86_64.sh core --cached               # crabc-core tests on a checkout-local Cargo target
 ```
 
-`scripts/test_python.py` runs isolated modules with immediate failure
+Replace the crate placeholder with the touched crate; the helper's no-argument
+legacy sweep includes frozen allocator profiles. `scripts/test_python.py` runs isolated modules with immediate failure
 diagnostics and private logs under `.work/python-test-runs/`. The large parity
 ledger module is split into exact test-ID shards with fail-closed completion
 accounting. Select the nearest module while developing and reserve the full
@@ -374,8 +382,9 @@ implementation and qualification remain paused, and native mimalloc work follows
 - `compat/*/README.md`, `docs/design/`, and `docs/evidence/`: harness
   mechanics, architecture, and durable rationale.
 - `COMPATIBILITY.md`: generated dashboard; never edit by hand.
-- `.work/`: all mutable worktrees, scratch, source extracts, caches, sysroots,
-  and generated report backing storage. It is disposable.
+- `.work/`: mutable worktrees, scratch, source extracts, caches, sysroots,
+  and generated report backing storage. Preserve the retained paths and unique
+  evidence named in `plan.md`; cleanup needs reconciled custody.
 
 Evidence must identify the source revision, target, pinned inputs, command,
 scope, and report path. Generated reports are measurements, not policy.
@@ -384,11 +393,11 @@ intentional exclusions in the nearest contract or evidence document.
 
 ## Completion boundary
 
-Native x86-64 becomes publicly supported only after the full predicate in
-plan.md passes: frozen accounting, every required family, reproducible owned
-static and dynamic products, complete ordered qualification, native
-performance, promotion validation, public-document update, and a final clean
-aggregate rerun. Until then, describe results as private foundation evidence.
+The F2 feature milestone requires all selected nonperformance obligations and
+fresh seven-gate correctness on the integrated product. Native x86-64 public
+support remains a separate decision after F3 full performance qualification,
+promotion validation, public-document update and a final clean aggregate rerun.
+Feature completeness alone does not imply performance qualification or support.
 
 ## Installed pthread/TLS behavior component
 

@@ -12,12 +12,16 @@ exposes useful OS capabilities rather than a wrapper for every C symbol.
 
 ## Current work
 
-The [campaign](plan.md) prioritizes radical non-allocator simplification.
-All allocator development and native-mimalloc promotion are frozen; the accepted
-C backend remains unchanged. The cost targets are no extra syscalls and at most
-10% more retired user instructions than musl under a matched LLVM backend,
-without weakening correctness or hardening. These are acceptance requirements,
-not achieved performance claims or already-implemented gates.
+The [campaign](plan.md) prioritizes complete selected native x86-64 behavior,
+with independent implementation, testing and review running in parallel.
+All performance and memory-usage gates are waived until feature completeness,
+including CPU/time, instructions, syscall counts and footprint. Default
+qualification runs the seven correctness gates and explicitly defers performance;
+optimization and full release qualification follow the feature-complete milestone.
+Correctness, memory safety, ABI compatibility and hardening remain required.
+The pinned C mimalloc backend stays selected, with its crabc integration open
+for correctness work; development and promotion of the Rust allocator port stay
+frozen.
 
 ## Support
 
@@ -51,7 +55,8 @@ search rules. Existing compatibility products retain their selected behavior.
 This is a completion requirement, not a claim that the profile has shipped.
 The [compatibility profile](COMPATIBILITY-PROFILE.md#runtime-hardening-profiles)
 defines the restrictions; [plan.md](plan.md#runtime-hardening) owns sequencing.
-Simplification does not waive this requirement or resume release qualification.
+The performance waiver preserves this requirement and does not claim release
+qualification.
 
 ## Compatibility
 

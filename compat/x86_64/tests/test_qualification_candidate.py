@@ -41,7 +41,7 @@ class PlanTests(unittest.TestCase):
         self.assertEqual([step.id for step in steps][-2:], ["qualification-chain", "parity-ledger"])
 
     def test_every_publication_and_attachment_names_a_registered_contract(self) -> None:
-        steps = candidate.plan()
+        steps = candidate.plan(profile="full")
         for step in steps:
             if step.publishes is not None:
                 gate, publication = step.publishes
@@ -84,21 +84,32 @@ class PlanTests(unittest.TestCase):
             ROOT / owned_resolver_family.execution_layout(output)["network_report"],
         ])
 
-    def test_correctness_profile_defers_performance_steps_and_reaches_the_chain(self) -> None:
-        steps = candidate.plan(profile="correctness")
+    def test_default_profile_defers_performance_steps_and_reaches_the_chain(self) -> None:
+        steps = candidate.plan()
         identifiers = [step.id for step in steps]
         self.assertNotIn("performance-release", identifiers)
         self.assertNotIn("publish-performance-release", identifiers)
         chain = next(step for step in steps if step.id == "qualification-chain")
         self.assertEqual(chain.argv(candidate.Context(ROOT, ROOT / ".work/x86_64/profile", {}, dry_run=True)),
                          ["./scripts/dev-x86_64.sh", "qualification-manifest", "--profile", "correctness"])
-        report = candidate.dry_run(ROOT, ROOT / ".work/x86_64/profile", {}, profile="correctness")
+        report = candidate.dry_run(ROOT, ROOT / ".work/x86_64/profile", {})
+        self.assertEqual(report["profile"], "correctness")
         self.assertFalse(any("performance_release" in blocker for blocker in report["preflight_blockers"]))
+
+    def test_cli_defaults_to_correctness_and_keeps_full_explicit(self) -> None:
+        work = ROOT / ".work/x86_64/profile-cli"
+        for arguments, expected in (([], "correctness"), (["--profile", "full"], "full")):
+            with self.subTest(arguments=arguments), contextlib.redirect_stdout(io.StringIO()), \
+                    mock.patch.object(candidate, "_work", return_value=work), \
+                    mock.patch.object(candidate, "_load_inputs", return_value={}), \
+                    mock.patch.object(candidate, "dry_run", return_value={}) as run:
+                self.assertEqual(candidate.main(["--work", str(work), "--dry-run", *arguments]), 0)
+                run.assert_called_once_with(ROOT, work, {}, None, expected)
 
     def test_performance_release_candidate_uses_only_runtime_and_facade_inputs(self) -> None:
         self.assertEqual(candidate.INPUT_KEYS["performance_release"], (
             "runtime_c_collector", "native_facade_report", "rustybench_source", "rustix_source"))
-        step = next(step for step in candidate.plan() if step.id == "performance-release")
+        step = next(step for step in candidate.plan(profile="full") if step.id == "performance-release")
         inputs = {"performance_release": {key: key for key in candidate.INPUT_KEYS["performance_release"]}}
         argv = step.argv(candidate.Context(ROOT, ROOT / ".work/x86_64/performance-release-plan", inputs, dry_run=True))
         self.assertFalse(any(argument.startswith("--allocator-report") for argument in argv))
@@ -226,7 +237,7 @@ class ExecutionTests(unittest.TestCase):
     def _runner(self, argv: list[str], stdout: Path, stderr: Path) -> int:
         identifier = stdout.parent.name.split("-", 1)[1]
         self.calls.append(identifier)
-        step = next(step for step in candidate.plan() if step.id == identifier)
+        step = next(step for step in candidate.plan(profile="full") if step.id == identifier)
         context = candidate.Context(self.root, self.work, self.inputs, dry_run=True)
         printed = []
         if identifier in self.fail:
@@ -405,7 +416,7 @@ class ExecutionTests(unittest.TestCase):
 
     def test_performance_inputs_can_be_added_after_their_consumers_and_resumed(self) -> None:
         self.inputs.pop("performance_release")
-        prefix = self._execute(through="lua-admission")
+        prefix = self._execute(through="lua-admission", profile="full")
         self.assertNotIn("error", prefix)
         state = json.loads((self.work / "candidate.json").read_text(encoding="utf-8"))
         self.assertNotIn("performance_release", state["input_seals"])
@@ -414,7 +425,7 @@ class ExecutionTests(unittest.TestCase):
             key: "x" for key in candidate.INPUT_KEYS["performance_release"]
         }
         self.calls.clear()
-        resumed = self._execute()
+        resumed = self._execute(profile="full")
         self.assertTrue(resumed["complete"], resumed.get("error"))
         self.assertTrue(self.calls and self.calls[0] == "publish-lua-source-build", self.calls)
         self.assertEqual(self.calls[1], "performance-release")

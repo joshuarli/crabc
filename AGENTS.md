@@ -6,35 +6,40 @@ scope must not weaken ordinary Unix semantics.
 
 ## Current direction — 2026-11-12
 
-**Qualification correctness, then performance; hardening first; the allocator freeze is partially lifted.**
-S0–S5 are accepted on structure, correctness and hardening. Follow the
-[Sequence](plan.md#sequence): pass the correctness profile (R2), produce the
-performance evidence (R3), then run the full chain (R4). Hardening outranks
-the startup instruction ratio (D21), and qualification checks caller-visible
-behavior rather than linker output (D22). Qualification evidence must be
-produced by its own current commands; a parked receipt is not inherited.
+**Feature completeness first; all performance and memory budgets waived until
+then; independent work runs in parallel.** The owner's D23/D24 decisions in
+[plan.md](plan.md) supersede the old simplification/serial-first campaign and
+mandatory cost measurements. S0–S5 are accepted; do not repeat them as a
+prerequisite to implementing the selected native x86-64 surface.
 
-The crabc glue around the accepted C backend is open for allocator failures
-and allocator-attributed costs that an R1–R4 gate reports: investigate,
-profile and fix them with behavior tests. The backend moves from
-`libmimalloc-sys` 0.1.49 (v3.3.2) to the pinned upstream mimalloc v3.5.0
-archive; the upstream C source stays unedited. Do not work on the Rust mimalloc port, its harness, receipts,
-shadow integration, allocator benchmarks, alternate allocators or promotion,
-and do not merge parked allocator work. The exact boundary is in
+Follow [F0–F3](plan.md#sequence): immediately dispatch independent feature and
+behavior-closure lanes, integrate continuously, and prove full selected
+completeness with one fresh seven-gate correctness run before optimization or
+full performance qualification. Default qualification is `correctness`;
+`performance.release` stays explicitly deferred. A parked receipt or status
+count never proves a current-source capability or full-chain result.
+
+No CPU/time, instruction, syscall-count, RSS/PSS/peak-memory, allocation,
+footprint or old numerical reduction budget blocks F0–F2. No mandatory
+before/after benchmark, quiet host or performance tool is needed. Correctness,
+memory safety, ABI/errno/TLS/cancellation semantics and hardening remain binding.
+Keep one owner for process-global state, thin C ABI adaptation and direct native
+syscall/vDSO paths; implement the simplest complete behavior before tuning it.
+
+The pinned C mimalloc v3.5.0 backend remains selected. Its crabc glue is open
+for feature integration and correctness fixes backed by focused behavior tests;
+an R1–R4 failure is no longer required to start that work. Upstream C source
+stays unedited. The Rust allocator port, its harness/receipts, shadow products,
+alternate allocators and promotion remain frozen under
 [Allocator freeze](plan.md#allocator-freeze).
 
-Simplify mechanisms and evidence machinery, not just filenames or prose. Keep
-one owner for process-global state, thin C ABI adaptation and direct native
-syscall/vDSO paths. Measure against musl early: no additional syscalls, and
-retired user instructions <= 1.10 times musl under matched LLVM (except the
-rows D21 reports without gating), alongside
-the relaxed CPU/memory bound and correctness/hardening requirements. The S1 counts route
-and release gate own these checks; use them rather than a second harness.
-
-Use narrowly scoped owners and reviewers. An idle agent slot is not a defect;
-no allocator reconnaissance or new-capability lane is authorized. Read
-[docs/lanes.md](docs/lanes.md) before delegating. Keep documentation and status
-small; Git is history, not another prose archive.
+Fill all useful available agent slots within the actual harness limits. Use
+component-sized tasks, isolated worktrees, explicit file ownership and independent
+review; keep the queue replenished while the coordinator integrates. Family
+acceptance dependencies do not serialize independent implementation. Read
+[docs/lanes.md](docs/lanes.md) before delegating. Use existing orchestration
+routing and helpers; this owner direction overrides their serial-first and
+performance-readiness scheduling defaults. Keep status small; Git is history.
 
 The active target is native Linux/x86-64 on an x86-64 host. AArch64 is the
 public target and is paused: preserve it, never run or emulate it.
@@ -66,21 +71,24 @@ machine-readable contracts. Historical documents do not override the freeze.
 
 ## Commands
 
-Builds and native tests run inside the pinned native x86 images. Use targeted
-non-allocator checks; do not launch the old allocator qualification commands.
+Builds and native tests run inside the pinned native x86 images. Use focused
+checks for the selected feature and C-backend integration; do not launch the
+frozen Rust allocator qualification commands.
 
 ```sh
 scripts/lanes/rust-check.sh cargo check -q --locked -p <non-allocator-crate>
 python3 -B scripts/test_python.py --module <path/to/test_file.py>
 python3 compat/x86_64/validate_parity_ledger.py
 ./scripts/dev-x86_64.sh campaign-status
+./scripts/dev-x86_64.sh qualification-candidate --work .work/x86_64/feature-complete --profile correctness
 ./scripts/dev-x86_64.sh --help
 ```
 
 The placeholders above require the actual touched crate/test. Full legacy
 profile checks are regression tools, not permission to run allocator campaigns.
-Performance commands/availability are in [compat/perf/README.md](compat/perf/README.md);
-S1 owns the focused development route. Do not invent command support.
+The full correctness command is the integrated milestone, not a per-edit loop.
+Performance commands in [compat/perf/README.md](compat/perf/README.md) are
+deferred from required work until feature completeness. Do not invent command support.
 Do not run `./scripts/dev-x86_64.sh image` unless a plan step says so: a
 rebuild deletes the pinned image and must be followed by a re-pin of
 `compat/x86_64/core_image.py`.
@@ -109,8 +117,8 @@ rebuild deletes the pinned image and must be followed by a re-pin of
 - Every public unsafe API documents concrete caller obligations. Do not create
   references whose aliasing/lifetime promises the implementation cannot uphold.
 - Preserve selected hardening, exact upstream revisions, source mappings,
-  licenses, raw failures and behavioral coverage. Never weaken gates or rewrite
-  upstream workloads to hide a defect or meet a size/performance budget.
+  licenses, raw failures and behavioral coverage. D23 waives cost gates; never
+  weaken correctness checks or rewrite upstream workloads to hide a defect.
 - Tests exercise behavior; validators check shared structure and actual
   evidence. No per-artifact validators, source-literal/prose-count tests,
   duplicate status files or report/receipt frameworks.
@@ -124,8 +132,8 @@ rebuild deletes the pinned image and must be followed by a re-pin of
 | Active sequence, freeze, acceptance and retained holds | [plan.md](plan.md) |
 | Scope, oracles, dependencies and safety | [docs/scope.md](docs/scope.md) |
 | Selected behavior and hardening | [COMPATIBILITY-PROFILE.md](COMPATIBILITY-PROFILE.md) |
-| Family completion obligations, not work authorization | [docs/completion-requirements.md](docs/completion-requirements.md) |
-| Narrow workstreams and integration | [docs/lanes.md](docs/lanes.md) |
+| Active feature completion and separately frozen allocator obligations | [docs/completion-requirements.md](docs/completion-requirements.md) |
+| Parallel workstreams, ownership and integration | [docs/lanes.md](docs/lanes.md) |
 | Runtime ownership and current wire boundary | [docs/design/architecture.md](docs/design/architecture.md) |
 | Rust facade | [docs/design/crabc-rs.md](docs/design/crabc-rs.md) |
 | CRT, installed sysroot and target-input purity | [docs/design/crt-and-sysroot.md](docs/design/crt-and-sysroot.md) |

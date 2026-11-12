@@ -245,7 +245,7 @@ def _resolver_network_report(context: Context) -> str:
     return owned_resolver_family.execution_layout(Path(context.template("{work}/out/resolver-family")))["network_report"]
 
 
-def plan(through: str | None = None, profile: str = "full") -> tuple[Step, ...]:
+def plan(through: str | None = None, profile: str = "correctness") -> tuple[Step, ...]:
     """Return the fixed candidate sequence in dependency order.
 
     ``through`` selects the prefix ending at one step, for staged runs; the
@@ -260,7 +260,7 @@ def plan(through: str | None = None, profile: str = "full") -> tuple[Step, ...]:
     return steps[: identifiers.index(through) + 1]
 
 
-def _plan(profile: str = "full") -> tuple[Step, ...]:
+def _plan(profile: str = "correctness") -> tuple[Step, ...]:
     primary = lambda c: ["--static-sysroot", c.static_pair("primary"), c.dynamic_pair("primary")]  # noqa: E731
     steps: list[Step] = [
         # One product cohort for every family and gate.
@@ -780,7 +780,7 @@ def _sealed(root: Path, source: Source) -> dict[str, str]:
 
 def execute(root: Path, work: Path, inputs: Mapping[str, Mapping[str, object]], *,
             runner: Runner = _run, source: Source = source_seal.seal,
-            through: str | None = None, profile: str = "full") -> dict[str, object]:
+            through: str | None = None, profile: str = "correctness") -> dict[str, object]:
     """Run or resume the candidate sequence; always write `summary.json`."""
 
     context = Context(root, work, inputs)
@@ -900,7 +900,7 @@ def execute(root: Path, work: Path, inputs: Mapping[str, Mapping[str, object]], 
 
 
 def dry_run(root: Path, work: Path, inputs: Mapping[str, Mapping[str, object]],
-            through: str | None = None, profile: str = "full") -> dict[str, object]:
+            through: str | None = None, profile: str = "correctness") -> dict[str, object]:
     """Resolve every step's command with placeholders; run and write nothing."""
 
     context = Context(root, work, inputs, dry_run=True)
@@ -930,7 +930,8 @@ def main(arguments: Sequence[str] | None = None) -> int:
     parser.add_argument("--work", type=Path, required=True)
     parser.add_argument("--inputs", type=Path, help="JSON naming pre-seeded vendors and performance measurements")
     parser.add_argument("--through", help="run only the prefix ending at this step")
-    parser.add_argument("--profile", choices=("correctness", "full"), default="full")
+    parser.add_argument("--profile", choices=("correctness", "full"), default="correctness",
+                        help="default: correctness; full includes performance for post-completion qualification")
     parser.add_argument("--dry-run", action="store_true")
     values = parser.parse_args(arguments)
     try:

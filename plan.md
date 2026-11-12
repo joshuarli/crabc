@@ -1,200 +1,248 @@
 # crabc plan
 
-This file is the only active plan. It holds the current sequence, the rules
-that bind it and the owner decisions still in force. Git holds everything
-else: the S0–S5 simplification runbook, its baseline tables, rejected attempts
-and per-step results are in `plan.md` at `6a1761f84`.
+This is the only active plan. The owner's 2026-11-12 direction is binding:
+**finish the selected feature surface first, waive every performance and memory
+budget until then, and run a continuously replenished parallel campaign.** It
+supersedes the S0–S5/R2–R4 scheduling rules and serial defaults in shared campaign
+skills. Git retains the earlier plans; do not maintain a second handoff or log.
 
-## Goal
+## Status and first action
 
-A small, auditable Linux runtime with ordinary Unix semantics and musl-like
-economy: few mechanisms, one owner per piece of process state, thin C ABI
-adapters, direct syscall/vDSO paths, and the selected hardening. Semantics, C
-ABI/interposition, cancellation, TLS, errno and hardening are never traded for
-cost.
+S0–S5 were accepted on structure, correctness and hardening (S5 at
+`1faf5ab6f`). R0 rebuilt products; D20 removed duplicate `mem*` bodies and D22
+removed per-symbol ABI-selection machinery. The last inspected product revision
+is `85a1756` (export-delta change); fresh correctness closure remains pending.
 
-## Status
+The checked-in campaign report at that revision accounts for **223 selected
+capabilities: 180 implemented-foundation and 43 selected-private**. Of **25
+nonperformance families**, 9 are foundation-verified and 16 still planned.
+These are incomplete family claims, not a count of missing functions: substantial
+private implementations and behavior tests already exist. Static and dynamic
+products remain implemented-unqualified. The `math/pow` and C-ABI admission
+holds remain unresolved correctness work; no fresh native run is claimed here.
 
-S0–S5 are accepted on structure, correctness and hardening (S5 at
-`1faf5ab6f`). R0 rebuilt the products. R1 closed under D21 without code
-changes. R2 is in progress: D20 removed the duplicate `mem*` bodies
-(`6c0debc0b`) and D22 removed the per-symbol ABI selection engine
-(`257426f20`); the fresh correctness run follows the export-delta change.
+**Next:** run `./scripts/dev-x86_64.sh campaign-status`, assign the ready
+workstreams in [docs/lanes.md](docs/lanes.md), and launch independent behavior
+closure/implementation lanes in the first scheduling cycle. Give one integration
+owner the fresh correctness run and feed its failures to the relevant lanes.
+Do not wait for that whole run, a performance baseline or one family's admission
+before starting independent work. The report's dependency-ready transitions are
+an acceptance order, not the implementation queue.
+
+## Goal and completion boundary
+
+Finish the entire selected native Linux/x86-64 runtime in
+[COMPATIBILITY-PROFILE.md](COMPATIBILITY-PROFILE.md) and
+[docs/completion-requirements.md](docs/completion-requirements.md): C/POSIX
+behavior, headers/ABI, direct Rust facade, loader/TLS, CRT/builtins/sysroot,
+hardening and real consumers. Use the pinned C mimalloc backend. New work that
+closes this already-selected surface is authorized; new platforms, unrelated
+APIs and the frozen Rust allocator port are outside this campaign.
+
+Feature-complete means all selected obligations have current behavioral proof,
+all 223 capability mappings and 25 nonperformance family obligations are closed
+(or any genuinely inapplicable case is justified within the existing profile),
+and one clean integrated commit passes all seven correctness gates with a
+`fresh: true` candidate summary. No selected-private placeholder, missing test,
+known semantic failure, unavailable required proof or unbuilt product counts as
+complete. Do not shrink the profile or relabel an unimplemented feature to reach
+these totals. Ledger totals alone never establish completeness.
+
+Feature completeness, performance qualification and public support are separate
+claims. The seven-gate result explicitly defers `performance.release`; it never
+implies a passing full chain, allocator-port completion or public promotion.
 
 ## Sequence
 
-1. **R2 — qualification correctness.** Run
-   `./scripts/dev-x86_64.sh qualification-candidate --work DIR --profile correctness`
-   on a clean commit in the pinned image. Its seven gates must pass. Iteration
-   may resume across commits that leave the product-input set
-   (`compat/x86_64/source_seal.py`) unchanged; acceptance needs one complete
-   run whose summary is `fresh: true`. A correctness receipt is not a
-   full-chain result.
-2. **R3 — performance.** On a quiet host, run the `perf-c` roster and
-   `perf-native --mode full`; `perf-c check` must report no release blocker
-   under the [cost contract](#cost-contract). Before R3 the owner sets the
-   relaxed CPU and memory bound (D21). Re-run the counts rows on the same tip
-   and report every row, including `allocator-attributed` calls.
-3. **R4 — full qualification.** Run the full chain on the R2/R3 tip. All eight
-   gates must pass before promotion or public-support claims, which remain
-   separate owner decisions.
+| Phase | Work and ownership | Exit proof |
+| --- | --- | --- |
+| F0 — dispatch | Coordinator reads current status and makes file-disjoint assignments from the lane table; one integration owner seeds existing products and correctness evidence. Repair a shared harness problem only when it blocks a named feature test. This is a bounded startup step, not a new inventory project. | Every launched slice names its capability/failure, base revision, owned paths, real test command and expected behavior. Launch useful independent lanes immediately. |
+| F1 — parallel feature closure | Implement missing selected behavior, fix existing failures and complete integration in parallel. Resolve the oldest `math/pow`/C-ABI holds in their owners while unrelated work proceeds. Keep reviewers and an integration/check owner active; refill freed slots after each result. | Each slice passes its focused behavior/ABI/hardening checks on the integrated tree; update existing capability/family evidence only after it proves the claim. |
+| F2 — feature-complete milestone | After all selected families close, integrate a clean candidate and run `./scripts/dev-x86_64.sh qualification-candidate --work .work/x86_64/feature-complete --profile correctness`. Fix any cross-family failures through F1. | All seven gates pass in one complete fresh run; `capability.accounting` closes the full selected surface. Record the accepted commit and evidence path in Status. |
+| F3 — optimization and full qualification | Starts only after F2. Rebaseline the completed runtime using existing `perf-c` and `perf-native` commands, resolve retained cost failures, and run a candidate with explicit `--profile full`. | Actual current-source performance evidence and all eight full-chain gates pass under the retained release contracts. Public support/promotion still needs its separate authorization. |
 
-A track that needs frozen allocator work, a pin change or AArch64 work is
-parked and reported. A deferred, failed or unavailable gate is never a pass.
+Run focused tests per slice and the affected family suite per coherent integration
+batch. A long correctness run uses one clean snapshot while other lanes continue
+on separate worktrees; its evidence proves that snapshot. Reuse intermediate
+results only under existing product-input/source rules. Final F2 acceptance must
+be fresh on the final integrated commit. Never rerun the entire candidate chain
+for every leaf edit or treat an old receipt as proof of changed code.
+
+## Performance and memory waiver
+
+**D23 — owner decision, 2026-11-12.** Until F2 is complete, all runtime performance
+and resource-efficiency acceptance gates are waived, including:
+
+- wall/CPU time, throughput, latency, startup/first-use cost and tail behavior;
+- retired instructions, per-operation/whole-process syscalls and musl ratios;
+- RSS, PSS, cgroup `memory.peak`, allocation counts, retained bytes and footprint;
+- linked/code size and the old S0–S5/D17 numerical reduction budgets.
+
+No before/after benchmark, quiet host, PMU access, cgroup delegation, matched
+performance compiler or favorable ratio is needed to start, accept or integrate
+a feature slice. No lane is assigned optimization, benchmark infrastructure or
+cost-only cleanup while selected feature work remains. Optional existing
+measurements are diagnostic, off the critical path, and never create work ahead
+of a feature. Do not manufacture a green report: skipped cost gates are
+**deferred**, and an observed regression remains an observed regression.
+
+Memory safety, ownership, allocation-failure behavior, leaks caused by broken
+lifecycle, bounded parsing, termination, race freedom and hardening remain
+correctness obligations. Practical worker/build limits prevent exhausting the
+host; they are scheduling controls, not product memory targets. A defect that
+prevents a functional workload from completing is fixed as a correctness blocker.
+
+The default qualification profile and ledger scope are `correctness`, with
+`performance.release` explicitly deferred. Explicit `full` and the existing cost
+readers remain available for F3; their thresholds and raw evidence are preserved.
+The waiver does not silently pass them or authorize a release claim. The retained
+[performance methodology](docs/design/performance.md) governs measurements when
+used; it imposes no F0–F2 gate.
+
+## Parallel execution
+
+**D24 — owner decision, 2026-11-12.** Parallel work is the default for independent
+selected features. Fill useful available slots within the actual harness caps
+(current repository settings: 16 Codex threads, 24 Claude subagents; a hosted
+session may expose fewer). Keep one coordinator/integrator, sufficient independent
+review/check capacity, and a ready queue of component-sized implementation slices.
+Do not cap the campaign at one writer or leave slots idle while independent
+implementation, tests, failure reproduction or review is ready.
+
+Use the existing `orchestrate` routing/tiers and worktree helpers; no new agent
+framework, queue service or receipt schema. This owner direction overrides shared
+skills' serial-first and performance-readiness scheduling defaults. The detailed
+ownership map, initial workstreams, brief contract and resource policy are in
+[docs/lanes.md](docs/lanes.md). Each writer gets an isolated worktree and exact
+paths; shared manifests, dispatch, exports and product wiring have one owner.
+
+A prerequisite blocks only work needing its unfinished interface. It does not
+block independent implementation against an already-available owned interface.
+Final family acceptance remains dependency ordered. Integrate small reviewed
+slices continuously; replenish the queue after each completion, failure or merge.
+Use one owner to repair a shared blocker while other lanes progress. If review or
+builds saturate, move capacity to those stages instead of starting conflicting
+writers. Track landed behavior and closed obligations, not agent counts or docs.
 
 ## Allocator freeze
 
-**Partially lifted (2026-11-08).** The crabc integration around the accepted C
-backend is open: lifecycle, initialization, option and wrapper code in `libc/`
-around pinned upstream mimalloc v3.5.0 (`[mimalloc]` in
-`compat/upstreams.toml`). Work there needs a failure or allocator-attributed
-cost that an R1–R4 gate reports. The upstream C source stays unedited.
+The selected backend is pinned upstream C mimalloc v3.5.0 (`[mimalloc]` in
+`compat/upstreams.toml`); upstream C source remains unedited. Its crabc integration
+in `libc/` is open for selected feature work and correctness fixes: initialization,
+options, lifecycle, wrappers, errno, fork/threads and failure handling. A focused
+reproducer is sufficient; do not wait for an R1–R4 cost gate to authorize a fix.
 
-| Open | Still frozen |
-| --- | --- |
-| Investigating, reproducing, profiling and fixing allocator failures and allocator-attributed costs that an R1–R4 gate reports | The Rust mimalloc port under `crabc-mimalloc/`, the `compat/allocator/` harness, its receipts and milestone tooling |
-| Changing the crabc glue around the C backend, with behavior tests | Editing the upstream C source; any version change beyond v3.5.0; changing the native/default backend selection |
-| Allocator-attributed counts rows and the focused tests that cover them | Alternate allocators, native-shadow products, promotion, merging parked allocator branches |
-| Building and linking the C backend in ordinary products and regression suites | Allocator benchmarks, including the `allocator_live` and `allocator_after_ready` perf modes |
-
-Allocator-attributed rows and syscalls stay labeled `allocator-attributed` in
-every report and are judged like every other row. The old G2, A0–A5, M1–M10,
-T4, allocator P0, O3/O4 and allocator part of C0/C1 stay parked.
-
-## Cost contract
-
-[docs/design/performance.md](docs/design/performance.md) owns measurement.
-
-| Dimension | Rule |
-| --- | --- |
-| Syscalls | Candidate <= musl per row, per operation and whole process. Reference zero requires zero. Every per-name difference is explained; an explanation never waives an extra call. |
-| Instructions | `ratio_insn <= 1.10` per operation and for startup, counting vDSO and all threads. `startup`, `dlopen_graph` and `loader_dynamic_tls_growth` are reported, not gated (D21). |
-| Matched backend | Reference musl is built by clang with the same LLVM major as the pinned rustc; otherwise the row is `unmatched` and diagnostic. |
-| Determinism | Single-threaded counts repeat within 0.01 %. Scheduling-dependent rows use repeated pairs and a one-sided 95 % bound. |
-| CPU and memory | Relaxed bound set by the owner before R3 (D21); measured only on a quiet host. |
-
-Fewer calls or instructions than musl are always fine; never add work to reach
-equality.
+The Rust port (`crabc-mimalloc/`), `compat/allocator/` harness/receipts/milestones,
+allocator tuning, alternate allocators, native-shadow products, default promotion
+and parked allocator branches remain frozen. Ordinary products and regressions
+may build/use the C backend. Any optional cost observation retains the
+`allocator-attributed` label. Old G2, A0–A5, M1–M10, T4, allocator P0, O3/O4 and
+allocator C0/C1 work remains parked and does not block F2.
 
 ## Runtime hardening
 
 PIE, non-executable stacks, page-level W^X, effective RELRO, eager binding and
-explicit library search rules stay mandatory, as defined in
-[COMPATIBILITY-PROFILE.md](COMPATIBILITY-PROFILE.md#runtime-hardening-profiles)
-and [architecture](docs/design/architecture.md#native-x86-64-runtime-hardening).
-A change runs the hardening cases for its area. A cost win that weakens
-hardening is rejected.
+explicit library search rules stay mandatory under the selected
+[profile](COMPATIBILITY-PROFILE.md#runtime-hardening-profiles). Each change runs
+its area's behavioral protection and failure-path tests. Hardening work runs
+alongside implementation; it does not wait until optimization.
 
 ## Rules for every agent
 
-1. **Keep semantics, delete mechanisms.** Moving, renaming or splitting code is
-   not a reduction.
-2. **Never weaken a check to pass.** If a test is wrong, show why; the
-   coordinator decides.
-3. **Checks test behavior (D22).** A reader that only asserts ELF forms,
-   seals or another receipt's structure is deleted, not repaired. No new
-   runner framework, receipt format, schema, validator or per-symbol proof.
-4. **One writer per file set.** Edit only the files your brief allows.
-5. **Native x86-64 only.** Never run, emulate or modify AArch64 paths or the
-   frozen inputs of `compat/x86_64/aarch64_frozen_baseline.json`.
-6. **Pins stay.** `rust-toolchain.toml`, `compat/upstreams.toml` and the Alpine
-   base digest do not change. Do not run `./scripts/dev-x86_64.sh image`
-   unless a step says so; a rebuild deletes the pinned image and must be
-   followed by a re-pin of `compat/x86_64/core_image.py` in its own commit.
-7. **Nothing outside the repository.** No host changes, release or publication.
-8. **Honest status.** Missing counters, failing tests and unbuilt products are
-   `blocked` or `unavailable`, never `pass`.
+1. **Finish behavior.** Prefer the smallest correct implementation within the
+   existing ownership model. Broad simplification or tuning is not a prerequisite.
+2. **Keep correctness checks.** Never hide a semantic failure, shrink upstream
+   workloads or disable hardening. D23 waives cost gates, not test assertions.
+3. **Checks test behavior (D22).** Do not rebuild per-symbol ELF/receipt proof
+   machinery. Keep caller-visible coverage and necessary ABI/purity boundaries.
+4. **One writer per file set.** The coordinator resolves cross-lane edits; no
+   worker invents a local substitute for another owner's shared interface.
+5. **Native x86-64 only.** Preserve paused AArch64; never execute/emulate it or
+   refresh frozen baselines to absorb drift.
+6. **Pins stay.** Do not change `rust-toolchain.toml`, `compat/upstreams.toml`,
+   the Alpine base digest or pinned core image. Do not run the destructive
+   `./scripts/dev-x86_64.sh image` rebuild as routine preparation.
+7. **Repository work only.** No unrelated host changes, release or publication.
+   The coordinator may commit reviewed changes to main under the owner's direct
+   commit instruction; workers never commit, switch branches, stash or push.
+8. **Honest status.** Required unavailable proof keeps the affected obligation
+   open. A lane blocker does not stop other authorized lanes. A waived cost gate
+   stays deferred, never pass.
 
 ## Standard procedures
 
 ### P1 — Change runtime code
 
-Pin the touched contract with a behavior test run against the unchanged code
-first (a bug fix's test fails first). Measure affected rows with P2 before and
-after; no row may get worse except under D21. Re-run the area's behavior and
-hardening tests. Forbidden shortcuts: blanket `#[inline(always)]`, unchecked
-access for speed, weaker atomics, SIMD dispatch frameworks, skipped
-cancellation points, raw-syscall replacements of POSIX entry points, disabled
-hardening.
+Reproduce a bug with a focused failing behavior test; for new behavior, name the
+missing contract and its oracle. Implement the complete slice, run the narrow
+behavior/ABI/hardening checks, and hand the diff to independent review. The
+coordinator verifies the integrated result. No performance measurement is
+required before F2. Preserve cancellation, errno, TLS, ownership and atomics;
+never trade correctness for speed or expedience.
 
 ### P2 — Measure a row
 
-Use `perf-c counts` ([compat/perf/README.md](compat/perf/README.md)). Compile
-the workload once and link it against both runtimes in the same mode. Count
-`instructions:u` at `N1` and `N2 = 2·N1` (and `3·N1` for linearity, within
-0.5 %); per-operation cost is the difference quotient. Count syscalls with
-`strace -f` in a separate run. Never take best-of-N; never mix counters,
-`strace` and timing in one process.
+Deferred from required F0–F2 work. If a bounded diagnostic is directly useful,
+use existing `perf-c counts`/`perf-native` machinery and the
+[measurement contract](docs/design/performance.md), label unavailable/loaded-host
+results honestly and return to the feature. Full performance campaigns wait
+until F3. Do not stop feature workers to obtain a quiet measurement window.
 
-### P3 — Delete a mechanism
+### P3 — Remove a mechanism
 
-Find every consumer (`rg` the name and each file stem, including dispatcher
-arms, `parity.toml`, docs and `scripts/lanes/`). A consumer either dies with
-the mechanism, or needs a behavior that another test covers, or needs a
-behavior with no other test: move that behavior into the family's existing
-test first and run it on the current code. Delete in one commit with no stub
-or shim; the body lists lines removed and added and the checks run.
+Only when needed by the feature or to fix its shared blocker: find consumers
+with `rg`, retain behavior in existing tests, and delete without stubs or a
+parallel framework. Do not turn the feature campaign back into a reduction tour.
 
-### P4 — Stop and escalate
+### P4 — Handle a blocker
 
-Stop and report when a required command fails for a reason your change does not
-explain, when you would need a file outside your brief, frozen allocator,
-AArch64 or pin work, or a weakened check, or when a tool denies an action
-(record the exact command and message; do not retry it in another form).
+Diagnose the exact failure. After two materially different unsuccessful attempts,
+hand the bounded problem and raw evidence to an expert/reviewer or park it with a
+retry condition, then refill the slot. A shared blocker gets one owner. Permission,
+profile expansion, frozen allocator, AArch64 or pin work remains out of scope;
+park only the dependent slice. A denied tool action is stopped with its exact
+reason preserved; do not reroute it. No destructive cleanup on stop.
 
-## Preserved checkpoint and holds
+## Preserved decisions and holds
 
-- POSIX `math/pow` and C-ABI admission stay held under the
-  [October 25 decisions](https://github.com/joshuarli/crabc/blob/fe7f1874289d7f54ef27af4fb639cf307104540f/plan.md#decision-log)
-  (raw evidence in `.work/tmp/pow-discriminator-ad7e18d35`). Do not
-  trim the libc-test aggregate, change backends or invent an exception.
-- Unmerged `archive/*`, `cohort/*`, `integration/*`, `lane/*`, `parked/*`,
-  `proof/*`, `recovery/*` and `review/*` branches stay parked; never merge
-  allocator branches.
-- Nothing under `.work/retained/`, `.work/allocator-x86_64/`,
-  `.work/x86_64/kache` or `.work/tmp/pow-discriminator-*` is removed by an
-  agent. `git worktree list` is authoritative for worktrees.
+D23/D24 override earlier numerical cost/structure budgets, mandatory measurements,
+R3-before-feature sequencing and restrictions on selected-feature parallel lanes.
+They do not change these boundaries:
 
-## Owner decisions in force
+- **D1/D9:** allocator-attributed observations stay labeled, never hidden.
+- **D2:** generated musl assembly and its generators stay untouched.
+- **D4/D5/D14:** matched LLVM and quiet-host rules still govern any qualifying
+  performance claim in F3; they do not gate F0–F2 work.
+- **D20:** one definition of each `mem*` symbol in `libc.so`; self-relocation
+  makes no `mem*` call.
+- **D21:** hardening outranks cost. Its startup/loader/TLS concerns are deferred
+  with all other cost work; no new owner-supplied CPU/memory bound is needed to
+  execute F0–F2.
+- **D22:** qualification tests caller-visible behavior; the allocator harness
+  remains excluded from its machinery cleanup.
+- The October 25 `math/pow` and C-ABI holds remain open until correct behavior
+  is proved. Investigate/fix them in F1; do not trim the libc-test aggregate,
+  change backends or invent an exception. Preserve raw evidence under
+  `.work/tmp/pow-discriminator-*`.
+- Existing `archive/*`, `cohort/*`, `integration/*`, `lane/*`, `parked/*`,
+  `proof/*`, `recovery/*` and `review/*` branches are not automatically adopted.
+  Never merge parked allocator branches. New scoped lanes use reviewed current
+  main; inspect existing work before any reuse.
+- Preserve `.work/retained/`, `.work/allocator-x86_64/`, `.work/x86_64/kache`
+  and `.work/tmp/pow-discriminator-*`. `git worktree list` is authoritative;
+  never delete unique source, failed evidence or unresolved ignored files.
 
-- **D1/D9 — allocator labels.** Allocator start-up and arena calls are labeled
-  `allocator-attributed` in every row and reported, never hidden.
-- **D2 — generated musl assembly.** The ≈81k lines of `.S` generated from musl
-  C and their generators are left alone.
-- **D4/D5 — matched backend.** Same LLVM major as the pinned rustc; the
-  reference musl is built in a digest-pinned `alpine:edge` builder stage until
-  stable Alpine ships that clang.
-- **D14 — quiet host.** CPU and memory are accepted only under the host-load
-  policy; runs under load are diagnostic.
-- **D17 — structure budgets.** libc features 25, ldso features 2, ldso x86
-  product lines 11,161, dispatcher commands 720 and 11,000 lines,
-  `compat/x86_64` Python 566 files and 270,000 lines, startup syscalls 14
-  dynamic and 9 static. Budgets only tighten.
-- **D20 — one definition of each `mem*` symbol in `libc.so`.** The loader's
-  private `memcpy`, `memset`, `memmove`, `memcmp` and `bcmp` copies, left from
-  the split-image era, are removed; the loader uses libc's definitions.
-  Self-relocation makes no `mem*` call.
-- **D21 — hardening outranks the startup instruction ratio.** Eager binding
-  and every loader hardening check stay. `startup`, `dlopen_graph` and
-  `loader_dynamic_tls_growth` instruction ratios are reported, not gated; the
-  CPU and memory bounds are relaxed to a bound the owner sets before R3. The
-  syscall rule and the 1.10 ratio for every other row stand.
-- **D22 — qualification checks behavior, not linker output.** R2 machinery is
-  cut to checks a caller would notice; form-only readers are deleted rather
-  than repaired and replaced by a behavior test where none exists. The frozen
-  `compat/allocator/` harness is excluded.
+## Needs environment
 
-## Results
-
-| Step | Commit | Result |
-| --- | --- | --- |
-| S5 | `1faf5ab6f` | Accepted on structure (7/7 budgets), correctness (231/231 dynamic cases, static 72-path, 28/28 consumers) and hardening. |
-| R0 | `068c22ebd` | Products rebuilt in pinned image `91e0733b…438bb`. |
-| R1 | none | Closed by D21: exact traces showed no hardened design reaches 1.10 for startup (38–43k savings vs 54k needed) and TLS growth is allocator initialization ([note](docs/evidence/x86-d16-relocation-transaction.md)). Ratios 1.89, 1.60, 2.57. |
-| R2 | pending | In progress. |
+Native product/correctness execution requires the pinned x86-64 images and their
+existing fixtures/network capabilities. If unavailable, preserve the exact command
+and blocker, continue host-side checks and other independent slices, and leave F2
+open. PMUs, a quiet host and delegated cgroup memory accounting are only F3 needs;
+their absence cannot block feature completion.
 
 ## Non-goals
 
-Frozen allocator work; new capabilities, platforms or public surface; AArch64
-execution or emulation; weakening semantics, safety, hardening or tests; a new
-validation framework; whole-toolchain integration.
+New architectures or non-Linux runtimes; AArch64 execution; Rust allocator-port
+restart or backend replacement; new cryptographic/numerical algorithms; weaker
+semantics, safety, hardening or tests; a new orchestration/validation framework;
+whole-toolchain integration; public-support promotion without authorization.
