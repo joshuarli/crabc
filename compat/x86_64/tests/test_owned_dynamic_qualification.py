@@ -795,6 +795,40 @@ class OwnedDynamicQualificationTests(unittest.TestCase):
         self.assertFalse((self.work / "qualification.json").exists())
         self.assertFalse(case_record.exists())
 
+    def test_finish_hashes_each_leaf_artifact_once_and_writes_the_receipt(self):
+        artifact = self.work / "leaf-artifacts/installed-cycle/consumer"
+        hashed = []
+        original_digest = qualification.digest
+
+        def counting_digest(path):
+            hashed.append(Path(path))
+            return original_digest(path)
+
+        with mock.patch.object(qualification, "digest", side_effect=counting_digest), \
+             contextlib.redirect_stdout(io.StringIO()):
+            receipt = qualification.finish(self.work)
+
+        self.assertEqual(hashed.count(artifact), 1)
+        self.assertEqual(json.loads((self.work / "qualification.json").read_text()), receipt)
+
+    def test_finish_rejects_a_narrowed_mode_before_widening_permissions(self):
+        artifact = self.work / "leaf-artifacts/installed-cycle/consumer"
+        artifact.chmod(0o600)
+
+        with self.assertRaisesRegex(qualification.QualificationError, "leaf artifact evidence changed"):
+            qualification.finish(self.work)
+
+        self.assertEqual(stat.S_IMODE(artifact.stat().st_mode), 0o600)
+        self.assertFalse((self.work / "qualification.json").exists())
+
+    def test_finish_rejects_changed_leaf_contents(self):
+        (self.work / "leaf-artifacts/installed-cycle/consumer").write_bytes(b"replacement fixture")
+
+        with self.assertRaisesRegex(qualification.QualificationError, "leaf artifact evidence changed"):
+            qualification.finish(self.work)
+
+        self.assertFalse((self.work / "qualification.json").exists())
+
     def publish(self, path):
         with mock.patch.object(sys, "argv", ["owned_dynamic_qualification.py", "publish", "--receipt", str(path)]), \
              contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):

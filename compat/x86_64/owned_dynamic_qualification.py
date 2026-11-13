@@ -410,8 +410,12 @@ def make_retained_evidence_readable(root: Path) -> None:
             os.chmod(path, stat.S_IMODE(mode) | 0o444, follow_symlinks=False)
 
 
-def artifact_snapshot(log: Path, source_mount: str) -> dict:
-    """Seal post-execution evidence, including derived ELF and link receipts."""
+def artifact_snapshot(log: Path, source_mount: str, *, contents: bool = True) -> dict:
+    """Seal post-execution evidence, including derived ELF and link receipts.
+
+    Without contents the snapshot keeps every entry's type, mode and link
+    target but omits file digests.
+    """
     directories = leaf_evidence_directories(log, source_mount)
     require(directories, "leaf did not identify retained artifact evidence")
     result = {}
@@ -425,7 +429,7 @@ def artifact_snapshot(log: Path, source_mount: str) -> dict:
                     name = child.name if not parent else f"{parent}/{child.name}"
                     mode = child.stat(follow_symlinks=False).st_mode
                     entry = {"mode": stat.S_IMODE(mode), "type": stat.S_IFMT(mode)}
-                    if stat.S_ISREG(mode):
+                    if stat.S_ISREG(mode) and contents:
                         entry["sha256"] = digest(child.path)
                     elif stat.S_ISLNK(mode):
                         entry["target"] = os.readlink(child.path)
@@ -547,7 +551,7 @@ def current_products(work: Path) -> tuple[str, dict[str, str]]:
     return source, manifests
 
 
-def validated_resume_state(work: Path) -> tuple[str, dict[str, str], tuple[tuple[str, str], ...]]:
+def validated_resume_state(work: Path, *, contents: bool = True) -> tuple[str, dict[str, str], tuple[tuple[str, str], ...]]:
     work = evidence_path(work)
     source, manifests = current_products(work)
     preparation_evidence(work, source)
@@ -573,7 +577,7 @@ def validated_resume_state(work: Path) -> tuple[str, dict[str, str], tuple[tuple
                 missing.append((product, case))
                 continue
             try:
-                validate_case(read(record_path), product, case, source, manifests[product])
+                validate_case(read(record_path), product, case, source, manifests[product], contents=contents)
             except QualificationError as error:
                 raise QualificationError(f"invalid case checkpoint {product}/{case}: {error}") from error
     receipt_path = work / "qualification.json"
@@ -688,7 +692,15 @@ def run_next_case(work: Path) -> tuple[str, str]:
     return product, case
 
 
-def validate_case(record: dict, product: str, case: str, source: str, manifest: str) -> None:
+def without_digests(artifacts: dict) -> dict:
+    return {directory: {name: {key: value for key, value in entry.items() if key != "sha256"}
+                        for name, entry in entries.items()}
+            for directory, entries in artifacts.items()}
+
+
+def validate_case(record: dict, product: str, case: str, source: str, manifest: str,
+                  *, contents: bool = True) -> None:
+    """Validate one case; without contents, check its record and artifact shape only."""
     script, mode = CASES[case]
     expected = {"schema": SCHEMA, "product": product, "case": case, "script": script,
                 "entry_mode": mode, "source_sha256": source, "manifest_sha256": manifest,
@@ -704,6 +716,10 @@ def validate_case(record: dict, product: str, case: str, source: str, manifest: 
     require(set(record) == set(expected) | {"log", "log_sha256", "source_mount", "artifacts"}, "coverage record fields drifted")
     require(all(record.get(key) == value for key, value in expected.items()), "stale or mismatched coverage record")
     log = evidence_path(ROOT / record["log"])
+    if not contents:
+        require(artifact_snapshot(log, record["source_mount"], contents=False) == without_digests(record["artifacts"]),
+                "leaf artifact evidence changed")
+        return
     require(digest(log) == record["log_sha256"], "coverage log hash mismatch")
     require(artifact_snapshot(log, record["source_mount"]) == record["artifacts"], "leaf artifact evidence changed")
     if case in DNS_CASES:
@@ -857,7 +873,9 @@ def finish(work: Path) -> dict:
     receipt_path = work / "qualification.json"
     require(not receipt_path.exists() and not receipt_path.is_symlink(),
             "qualification receipt already exists")
-    _source, _manifests, missing = validated_resume_state(work)
+    # Widening permissions could mask a narrowed mode, so shapes are checked
+    # first; collect then validates every case's contents after the change.
+    _source, _manifests, missing = validated_resume_state(work, contents=False)
     require(not missing, "dynamic product qualification is missing cases")
     make_retained_evidence_readable(work)
     receipt = collect(work)
