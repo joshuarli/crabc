@@ -8,25 +8,25 @@
   "capabilities": [
     {
       "aarch64_classification": "abi-only",
-      "contract_state": "selected-private",
+      "contract_state": "implemented-foundation",
       "id": "catalog.gettext",
       "x86_family": "libc.c-abi-compat"
     },
     {
       "aarch64_classification": "abi-only",
-      "contract_state": "selected-private",
+      "contract_state": "implemented-foundation",
       "id": "crypto.crypt",
       "x86_family": "libc.c-abi-compat"
     },
     {
       "aarch64_classification": "abi-only",
-      "contract_state": "selected-private",
+      "contract_state": "implemented-foundation",
       "id": "crypto.crypt-helpers",
       "x86_family": "libc.c-abi-compat"
     },
     {
       "aarch64_classification": "abi-only",
-      "contract_state": "selected-private",
+      "contract_state": "implemented-foundation",
       "id": "error.reporting-termination",
       "x86_family": "libc.c-abi-compat"
     },
@@ -116,7 +116,7 @@
     },
     {
       "aarch64_classification": "abi-only",
-      "contract_state": "selected-private",
+      "contract_state": "implemented-foundation",
       "id": "filesystem.directory",
       "x86_family": "libc.posix-runtime"
     },
@@ -158,7 +158,7 @@
     },
     {
       "aarch64_classification": "abi-only",
-      "contract_state": "selected-private",
+      "contract_state": "implemented-foundation",
       "id": "filesystem.extensions",
       "x86_family": "libc.posix-runtime"
     },
@@ -176,7 +176,7 @@
     },
     {
       "aarch64_classification": "abi-only",
-      "contract_state": "selected-private",
+      "contract_state": "implemented-foundation",
       "id": "filesystem.lchmod-unsupported",
       "x86_family": "libc.posix-runtime"
     },
@@ -266,7 +266,7 @@
     },
     {
       "aarch64_classification": "abi-only",
-      "contract_state": "selected-private",
+      "contract_state": "implemented-foundation",
       "id": "filesystem.stat-compat",
       "x86_family": "libc.posix-runtime"
     },
@@ -410,31 +410,31 @@
     },
     {
       "aarch64_classification": "abi-only",
-      "contract_state": "selected-private",
+      "contract_state": "implemented-foundation",
       "id": "legacy.misc",
       "x86_family": "libc.c-abi-compat"
     },
     {
       "aarch64_classification": "native-unsafe",
-      "contract_state": "selected-private",
+      "contract_state": "implemented-foundation",
       "id": "loader.dlfcn-basic",
       "x86_family": "ldso.dynamic-runtime"
     },
     {
       "aarch64_classification": "native-unsafe",
-      "contract_state": "selected-private",
+      "contract_state": "implemented-foundation",
       "id": "loader.dlfcn-introspection",
       "x86_family": "ldso.dynamic-runtime"
     },
     {
       "aarch64_classification": "abi-only",
-      "contract_state": "selected-private",
+      "contract_state": "implemented-foundation",
       "id": "locale.core",
       "x86_family": "libc.text-math-locale-stdio"
     },
     {
       "aarch64_classification": "abi-only",
-      "contract_state": "selected-private",
+      "contract_state": "implemented-foundation",
       "id": "math.complex",
       "x86_family": "libc.text-math-locale-stdio"
     },
@@ -446,13 +446,13 @@
     },
     {
       "aarch64_classification": "abi-only",
-      "contract_state": "selected-private",
+      "contract_state": "implemented-foundation",
       "id": "math.elementary-fenv-sensitive",
       "x86_family": "libc.text-math-locale-stdio"
     },
     {
       "aarch64_classification": "abi-only",
-      "contract_state": "selected-private",
+      "contract_state": "implemented-foundation",
       "id": "math.elementary-long-double",
       "x86_family": "libc.text-math-locale-stdio"
     },
@@ -464,7 +464,7 @@
     },
     {
       "aarch64_classification": "abi-only",
-      "contract_state": "selected-private",
+      "contract_state": "implemented-foundation",
       "id": "math.special",
       "x86_family": "libc.text-math-locale-stdio"
     },
@@ -476,13 +476,13 @@
     },
     {
       "aarch64_classification": "scope-exception",
-      "contract_state": "selected-private",
+      "contract_state": "implemented-foundation",
       "id": "memory.allocator-basic",
       "x86_family": "libc.c-abi-compat"
     },
     {
       "aarch64_classification": "scope-exception",
-      "contract_state": "selected-private",
+      "contract_state": "implemented-foundation",
       "id": "memory.allocator-observability",
       "x86_family": "libc.c-abi-compat"
     },
@@ -740,7 +740,7 @@
     },
     {
       "aarch64_classification": "abi-only",
-      "contract_state": "selected-private",
+      "contract_state": "implemented-foundation",
       "id": "numeric.parse-float-locale",
       "x86_family": "libc.text-math-locale-stdio"
     },
@@ -752,7 +752,7 @@
     },
     {
       "aarch64_classification": "abi-only",
-      "contract_state": "selected-private",
+      "contract_state": "implemented-foundation",
       "id": "numeric.qsort-helper",
       "x86_family": "libc.c-abi-compat"
     },
@@ -782,13 +782,13 @@
     },
     {
       "aarch64_classification": "abi-only",
-      "contract_state": "selected-private",
+      "contract_state": "implemented-foundation",
       "id": "pattern.regex",
       "x86_family": "libc.text-math-locale-stdio"
     },
     {
       "aarch64_classification": "abi-only",
-      "contract_state": "selected-private",
+      "contract_state": "implemented-foundation",
       "id": "pattern.wordexp",
       "x86_family": "libc.text-math-locale-stdio"
     },
@@ -812,7 +812,7 @@
     },
     {
       "aarch64_classification": "abi-only",
-      "contract_state": "selected-private",
+      "contract_state": "implemented-foundation",
       "id": "process.atfork-exit-hooks",
       "x86_family": "libc.pthread-tls"
     },
@@ -824,19 +824,19 @@
     },
     {
       "aarch64_classification": "abi-only",
-      "contract_state": "selected-private",
+      "contract_state": "implemented-foundation",
       "id": "process.control",
       "x86_family": "libc.posix-runtime"
     },
     {
       "aarch64_classification": "abi-only",
-      "contract_state": "selected-private",
+      "contract_state": "implemented-foundation",
       "id": "process.credentials",
       "x86_family": "libc.posix-runtime"
     },
     {
       "aarch64_classification": "abi-only",
-      "contract_state": "selected-private",
+      "contract_state": "implemented-foundation",
       "id": "process.environment-mutation",
       "x86_family": "libc.posix-runtime"
     },
@@ -854,7 +854,7 @@
     },
     {
       "aarch64_classification": "abi-only",
-      "contract_state": "selected-private",
+      "contract_state": "implemented-foundation",
       "id": "process.globals",
       "x86_family": "libc.c-abi-compat"
     },
@@ -938,7 +938,7 @@
     },
     {
       "aarch64_classification": "abi-only",
-      "contract_state": "selected-private",
+      "contract_state": "implemented-foundation",
       "id": "process.signal",
       "x86_family": "libc.posix-runtime"
     },
@@ -980,31 +980,31 @@
     },
     {
       "aarch64_classification": "internal-runtime",
-      "contract_state": "selected-private",
+      "contract_state": "implemented-foundation",
       "id": "runtime.loader",
       "x86_family": "ldso.dynamic-runtime"
     },
     {
       "aarch64_classification": "internal-runtime",
-      "contract_state": "selected-private",
+      "contract_state": "implemented-foundation",
       "id": "runtime.private-facades",
       "x86_family": "ldso.dynamic-runtime"
     },
     {
       "aarch64_classification": "rust-subsumed",
-      "contract_state": "selected-private",
+      "contract_state": "implemented-foundation",
       "id": "search.hash-table",
       "x86_family": "libc.c-abi-compat"
     },
     {
       "aarch64_classification": "abi-only",
-      "contract_state": "selected-private",
+      "contract_state": "implemented-foundation",
       "id": "search.tree-intrusive",
       "x86_family": "libc.c-abi-compat"
     },
     {
       "aarch64_classification": "abi-only",
-      "contract_state": "selected-private",
+      "contract_state": "implemented-foundation",
       "id": "stdio.fopen64-alias",
       "x86_family": "libc.text-math-locale-stdio"
     },
@@ -1022,7 +1022,7 @@
     },
     {
       "aarch64_classification": "abi-only",
-      "contract_state": "selected-private",
+      "contract_state": "implemented-foundation",
       "id": "stdio.format-scan",
       "x86_family": "libc.text-math-locale-stdio"
     },
@@ -1034,19 +1034,19 @@
     },
     {
       "aarch64_classification": "abi-only",
-      "contract_state": "selected-private",
+      "contract_state": "implemented-foundation",
       "id": "stdio.path-stream",
       "x86_family": "libc.text-math-locale-stdio"
     },
     {
       "aarch64_classification": "abi-only",
-      "contract_state": "selected-private",
+      "contract_state": "implemented-foundation",
       "id": "stdio.position-buffering",
       "x86_family": "libc.text-math-locale-stdio"
     },
     {
       "aarch64_classification": "abi-only",
-      "contract_state": "selected-private",
+      "contract_state": "implemented-foundation",
       "id": "stdio.stream-io",
       "x86_family": "libc.text-math-locale-stdio"
     },
@@ -1070,7 +1070,7 @@
     },
     {
       "aarch64_classification": "abi-only",
-      "contract_state": "selected-private",
+      "contract_state": "implemented-foundation",
       "id": "system.kernel-admin",
       "x86_family": "libc.posix-runtime"
     },
@@ -1160,13 +1160,13 @@
     },
     {
       "aarch64_classification": "abi-only",
-      "contract_state": "selected-private",
+      "contract_state": "implemented-foundation",
       "id": "text.iconv",
       "x86_family": "libc.text-math-locale-stdio"
     },
     {
       "aarch64_classification": "abi-only",
-      "contract_state": "selected-private",
+      "contract_state": "implemented-foundation",
       "id": "text.wide-multibyte",
       "x86_family": "libc.text-math-locale-stdio"
     },
@@ -1208,7 +1208,7 @@
     },
     {
       "aarch64_classification": "abi-only",
-      "contract_state": "selected-private",
+      "contract_state": "implemented-foundation",
       "id": "thread.pthread-c11",
       "x86_family": "libc.pthread-tls"
     },
@@ -1226,7 +1226,7 @@
     },
     {
       "aarch64_classification": "abi-only",
-      "contract_state": "selected-private",
+      "contract_state": "implemented-foundation",
       "id": "time.clock-calendar",
       "x86_family": "libc.text-math-locale-stdio"
     },
@@ -1268,7 +1268,7 @@
     },
     {
       "aarch64_classification": "abi-only",
-      "contract_state": "selected-private",
+      "contract_state": "implemented-foundation",
       "id": "time.posix-timer-thread-notify",
       "x86_family": "libc.pthread-tls"
     },
@@ -1346,8 +1346,7 @@
     }
   ],
   "capability_state_counts": {
-    "implemented-foundation": 180,
-    "selected-private": 43
+    "implemented-foundation": 223
   },
   "families": [
     {
@@ -1432,7 +1431,7 @@
         "libc-test"
       ],
       "capability_count": 9,
-      "contract_state": "selected-private",
+      "contract_state": "implemented-foundation",
       "id": "libc.posix-runtime",
       "verified_artifact_count": 172,
       "verified_slice_count": 9
@@ -1445,7 +1444,7 @@
         "libc-test"
       ],
       "capability_count": 3,
-      "contract_state": "selected-private",
+      "contract_state": "implemented-foundation",
       "id": "libc.pthread-tls",
       "verified_artifact_count": 39,
       "verified_slice_count": 3
@@ -1457,7 +1456,7 @@
         "os-test"
       ],
       "capability_count": 16,
-      "contract_state": "selected-private",
+      "contract_state": "implemented-foundation",
       "id": "libc.text-math-locale-stdio",
       "verified_artifact_count": 77,
       "verified_slice_count": 13
@@ -1468,7 +1467,7 @@
         "libc-test"
       ],
       "capability_count": 0,
-      "contract_state": "selected-private",
+      "contract_state": "implemented-foundation",
       "id": "libc.resolver",
       "verified_artifact_count": 20,
       "verified_slice_count": 0
@@ -1480,7 +1479,7 @@
         "compat"
       ],
       "capability_count": 11,
-      "contract_state": "selected-private",
+      "contract_state": "implemented-foundation",
       "id": "libc.c-abi-compat",
       "verified_artifact_count": 30,
       "verified_slice_count": 10
@@ -1503,7 +1502,7 @@
         "lto"
       ],
       "capability_count": 4,
-      "contract_state": "selected-private",
+      "contract_state": "implemented-foundation",
       "id": "ldso.dynamic-runtime",
       "verified_artifact_count": 6,
       "verified_slice_count": 4
@@ -1650,9 +1649,9 @@
     }
   ],
   "family_state_counts": {
-    "implemented-foundation": 9,
+    "implemented-foundation": 15,
     "missing": 5,
-    "selected-private": 12
+    "selected-private": 6
   },
   "frozen_baseline": {
     "aarch64_inputs": {
