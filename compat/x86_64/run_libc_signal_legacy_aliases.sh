@@ -73,6 +73,22 @@ assert_signal_aliases() {
     done
 }
 
+# A final static link localizes the archive's strong signal and weak aliases;
+# the archive and pinned-musl checks above keep their exact bindings.
+assert_linked_signal_aliases() {
+    local symbols_path="$1" label="$2"
+    local signal_value alias_value alias
+
+    signal_value="$(awk '$4 == "FUNC" && ($5 == "GLOBAL" || $5 == "LOCAL") && $6 == "DEFAULT" && $7 != "UND" && $8 == "signal" { print $2; exit }' "$symbols_path")"
+    [ -n "$signal_value" ] || fail "$label lacks a defined signal"
+    for alias in bsd_signal __sysv_signal; do
+        alias_value="$(awk -v symbol="$alias" '$4 == "FUNC" && ($5 == "WEAK" || $5 == "LOCAL") && $6 == "DEFAULT" && $7 != "UND" && $8 == symbol { print $2; exit }' "$symbols_path")"
+        [ -n "$alias_value" ] || fail "$label lacks a defined $alias"
+        [ "$alias_value" = "$signal_value" ] ||
+            fail "$label does not retain same-address signal/$alias alias"
+    done
+}
+
 require_native_linux_x86_64
 for tool in ar awk cargo cmp comm diff grep mkdir mktemp nm objdump readelf rustup sort uname; do
     command -v "$tool" >/dev/null 2>&1 || fail "requires $tool"
@@ -211,7 +227,7 @@ readelf --program-headers --wide "$candidate" >"$candidate_program_headers"
 readelf --dynamic --wide "$candidate" >"$candidate_dynamic" || true
 readelf --relocs --wide "$candidate" >"$candidate_relocations"
 objdump -d "$candidate" >"$candidate_disassembly"
-assert_signal_aliases "$candidate_symbols" "freestanding candidate"
+assert_linked_signal_aliases "$candidate_symbols" "freestanding candidate"
 for symbol in _start __errno_location signal bsd_signal __sysv_signal \
     crabc_x86_64_signal_legacy_aliases_probe crabc_x86_64_signal_restorer; do
     grep -Eq "[[:space:]]${symbol}$" "$candidate_symbols" ||
@@ -224,7 +240,7 @@ for unselected in raise kill killpg tgkill pthread_kill pthread_sigmask \
         fail "candidate unexpectedly pulls $unselected"
     fi
 done
-if awk '$7 == "UND" && NF >= 8 { print }' "$candidate_symbols" | grep . >/dev/null; then
+if awk '$7 == "UND" && NF >= 8 && !($5 == "LOCAL" && ($8 == "_PROCEDURE_LINKAGE_TABLE_" || $8 == "__rela_iplt_start" || $8 == "__rela_iplt_end")) { print }' "$candidate_symbols" | grep . >/dev/null; then
     fail "candidate retains an unresolved symbol"
 fi
 if grep -Eq 'Requesting program interpreter|INTERP|NEEDED' \
