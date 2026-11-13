@@ -349,7 +349,7 @@ def admit_supplied(static_report: Path, dynamic_report: Path) -> dict[str, objec
     current, _validation = SUPPLIED.validate_cohort(
         checkout=Path(cohort["checkout"]), receipt=Path(cohort["receipt"]["path"]),
         installed=Path(cohort["roots"]["installed"]["path"]),
-        extracted=Path(cohort["roots"]["extracted"]["path"]), state=state, timeout=300.0,
+        extracted=Path(cohort["roots"]["extracted"]["path"]), state=state,
     )
     require(current == cohort, "supplied dynamic Lua cohort changed")
     source = LUA.current_source_identity()

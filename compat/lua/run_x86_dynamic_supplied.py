@@ -197,8 +197,13 @@ def _supplied_root_identity(root: Path, label: str, expected_manifest: str) -> d
     }
 
 
+# The cohort reader replays the whole dynamic qualification, re-hashing every
+# case's artifacts, so it is bounded separately from the Lua workload timeout.
+COHORT_READER_TIMEOUT_SECONDS = 3600.0
+
+
 def validate_cohort(
-    *, checkout: Path, receipt: Path, installed: Path, extracted: Path, state: Path, timeout: float,
+    *, checkout: Path, receipt: Path, installed: Path, extracted: Path, state: Path,
 ) -> tuple[dict[str, object], dict[str, object]]:
     """Replay the frozen cohort reader and bind two physical dynamic roots."""
 
@@ -221,7 +226,7 @@ def validate_cohort(
     environment, git_context = _cohort_git_context(checkout, state / "cohort-reader")
     validation = LUA.command_record(
         [sys.executable, "-B", str(reader), "validate", "--receipt", str(receipt.relative_to(checkout))],
-        cwd=checkout, environment=environment, timeout=timeout,
+        cwd=checkout, environment=environment, timeout=COHORT_READER_TIMEOUT_SECONDS,
     )
     LUA.write_json_atomic(state / "cohort-validation.json", validation)
     DYNAMIC.require_success(validation, "supplied Lua cohort receipt reader")
@@ -296,7 +301,7 @@ def run_supplied_dynamic(
         report["consumer_source_before"] = source_before
         cohort_before, cohort_validation = validate_cohort(
             checkout=cohort_checkout, receipt=cohort_receipt, installed=installed_sysroot,
-            extracted=extracted_sysroot, state=state, timeout=timeout,
+            extracted=extracted_sysroot, state=state,
         )
         report["dispatcher"]["cohort"] = cohort_before
         report["dispatcher"]["cohort_validation_before"] = cohort_validation
@@ -327,7 +332,7 @@ def run_supplied_dynamic(
         }
         cohort_after, cohort_validation_after = validate_cohort(
             checkout=cohort_checkout, receipt=cohort_receipt, installed=installed_sysroot,
-            extracted=extracted_sysroot, state=state, timeout=timeout,
+            extracted=extracted_sysroot, state=state,
         )
         report["dispatcher"]["cohort_validation_after"] = cohort_validation_after
         require(cohort_before == cohort_after, "supplied Lua cohort changed during lane execution")

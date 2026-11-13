@@ -303,11 +303,13 @@ class SuppliedDynamicCohortIdentityTests(unittest.TestCase):
         with (
             mock.patch.object(RUNNER, "_cohort_path", side_effect=lambda root, path, *a, **kw: path),
             mock.patch.object(RUNNER, "_cohort_git_context", return_value=({}, {})),
-            mock.patch.object(RUNNER.LUA, "command_record", return_value=validation),
+            mock.patch.object(RUNNER.LUA, "command_record", return_value=validation) as reader,
         ):
             with self.assertRaisesRegex(RUNNER.LUA.RunnerError, "TIMEOUT"):
                 RUNNER.validate_cohort(checkout=checkout, receipt=receipt,
-                                       installed=installed, extracted=extracted, state=state, timeout=5)
+                                       installed=installed, extracted=extracted, state=state)
+        self.assertEqual(reader.call_args.kwargs["timeout"], RUNNER.COHORT_READER_TIMEOUT_SECONDS)
+        self.assertGreater(RUNNER.COHORT_READER_TIMEOUT_SECONDS, 300)
         self.assertEqual(json.loads((state / "cohort-validation.json").read_text()), validation)
 
     def test_rebuilt_root_cannot_replace_the_qualified_extraction_arm(self) -> None:
@@ -335,7 +337,7 @@ class SuppliedDynamicCohortIdentityTests(unittest.TestCase):
             with self.assertRaisesRegex(RUNNER.LUA.RunnerError, "extracted root"):
                 RUNNER.validate_cohort(checkout=checkout, receipt=receipt,
                                        installed=work / "installed", extracted=work / "second",
-                                       state=state, timeout=5)
+                                       state=state)
 
     def test_independent_frozen_clone_reader_uses_its_own_physical_git_directory(self) -> None:
         checkout = self.temporary / "retained-source"
