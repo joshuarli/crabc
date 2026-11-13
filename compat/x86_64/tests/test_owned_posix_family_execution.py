@@ -54,6 +54,20 @@ class FamilyExecutionTests(unittest.TestCase):
             execution.validate_receipt(self.root, first)
             self.assertEqual(collect.call_count, 7)
 
+    def test_reuse_scope_includes_dynamic_receipts(self):
+        import owned_dynamic_qualification as dynamic
+
+        path = self.work / 'qualification.json'
+        receipt = {'work': '.work/run', 'value': [1]}
+        path.write_text(json.dumps(receipt))
+        with patch.object(dynamic, 'ROOT', self.root), \
+                patch.object(dynamic, 'collect', return_value=receipt) as collect:
+            with execution.reuse_validated_receipts():
+                dynamic.validate_receipt(path)['value'].append(2)
+                self.assertEqual(dynamic.validate_receipt(path), receipt)
+                self.assertEqual(collect.call_count, 1)
+            self.assertEqual(collect.call_count, 2)
+
     def test_recorded_source_seals_compare_product_content_not_revision(self):
         content = 'a' * 64
         current = {'revision': '1' * 40, 'content_sha256': content}

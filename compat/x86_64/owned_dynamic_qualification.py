@@ -10,6 +10,9 @@ completion or platform promotion. All generated state remains below .work.
 from __future__ import annotations
 
 import argparse
+from contextlib import contextmanager
+from contextvars import ContextVar
+import copy
 import hashlib
 import json
 import os
@@ -815,7 +818,35 @@ def collect(work: Path) -> dict:
             "promotion_ready": False, "public_support": False}
 
 
+_receipt_cache: ContextVar[dict | None] = ContextVar("dynamic_receipt_cache", default=None)
+
+
+@contextmanager
+def reuse_validated_receipts():
+    """Reuse only between full start validation and full end revalidation."""
+    cache = {}
+    token = _receipt_cache.set(cache)
+    try:
+        yield
+        for (path, receipt_digest), receipt in cache.items():
+            require(_revalidate_receipt(path) == receipt and digest(path) == receipt_digest,
+                    "qualification receipt is stale or incomplete")
+    finally:
+        _receipt_cache.reset(token)
+
+
 def validate_receipt(path: Path) -> dict:
+    cache = _receipt_cache.get()
+    if cache is None:
+        return _revalidate_receipt(path)
+    path = evidence_path(path)
+    key = (path.resolve(strict=True), digest(path))
+    if key not in cache:
+        cache[key] = copy.deepcopy(_revalidate_receipt(path))
+    return copy.deepcopy(cache[key])
+
+
+def _revalidate_receipt(path: Path) -> dict:
     receipt = read(evidence_path(path))
     require(receipt == collect(ROOT / receipt.get("work", "")), "qualification receipt is stale or incomplete")
     return receipt

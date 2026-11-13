@@ -595,6 +595,38 @@ class OwnedDynamicQualificationTests(unittest.TestCase):
             with self.assertRaisesRegex(qualification.QualificationError, "payload binding"):
                 REAL_SOURCE_BOUND_PRODUCT_IDENTITY(product, self.source)
 
+    def test_receipt_reuse_and_outside_validation(self):
+        receipt = qualification.collect(self.work)
+        path = self.put("qualification.json", receipt)
+        with mock.patch.object(qualification, "collect", wraps=qualification.collect) as collect:
+            qualification.validate_receipt(path)
+            qualification.validate_receipt(path)
+            self.assertEqual(collect.call_count, 2)
+            with qualification.reuse_validated_receipts():
+                result = qualification.validate_receipt(path)
+                result["products"].clear()
+                self.assertEqual(qualification.validate_receipt(path), receipt)
+                qualification.validate_receipt(path)
+                self.assertEqual(collect.call_count, 3)
+            self.assertEqual(collect.call_count, 4)
+
+    def test_receipt_reuse_revalidates_artifact_at_exit(self):
+        path = self.put("qualification.json", qualification.collect(self.work))
+        with self.assertRaises(qualification.QualificationError):
+            with qualification.reuse_validated_receipts():
+                qualification.validate_receipt(path)
+                (self.work / "leaf-artifacts/installed-cycle/consumer").write_bytes(b"changed")
+
+    def test_receipt_reuse_preserves_body_exception(self):
+        path = self.put("qualification.json", qualification.collect(self.work))
+        with mock.patch.object(qualification, "collect", wraps=qualification.collect) as collect:
+            with self.assertRaisesRegex(ValueError, "body failure"):
+                with qualification.reuse_validated_receipts():
+                    qualification.validate_receipt(path)
+                    (self.work / "leaf-artifacts/installed-cycle/consumer").write_bytes(b"changed")
+                    raise ValueError("body failure")
+            self.assertEqual(collect.call_count, 1)
+
     def test_complete_receipt_requires_explicit_clean_reviewed_publication(self):
         receipt = qualification.collect(self.work)
         self.assertEqual(receipt["status"], "qualified-pending-review")

@@ -589,9 +589,12 @@ _receipt_cache: ContextVar[dict | None] = ContextVar('receipt_cache', default=No
 @contextmanager
 def reuse_validated_receipts():
     # Reuse is valid only between a full start validation and a full end revalidation.
+    import owned_dynamic_qualification as dynamic
+
     token = _receipt_cache.set({})
     try:
-        yield
+        with dynamic.reuse_validated_receipts():
+            yield
     finally:
         _receipt_cache.reset(token)
 
