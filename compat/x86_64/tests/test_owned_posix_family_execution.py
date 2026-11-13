@@ -54,6 +54,26 @@ class FamilyExecutionTests(unittest.TestCase):
             execution.validate_receipt(self.root, first)
             self.assertEqual(collect.call_count, 7)
 
+    def test_recorded_source_seals_compare_product_content_not_revision(self):
+        content = 'a' * 64
+        current = {'revision': '1' * 40, 'content_sha256': content}
+        (self.work / 'request.json').write_text('{}')
+        (self.work / 'runs').mkdir()
+
+        def collect_with(recorded):
+            for name in ('source-before.json', 'source-after.json'):
+                (self.work / name).write_text(json.dumps(recorded))
+            with patch.object(execution, 'input_products', return_value=({'source': current}, {})), \
+                    patch.object(execution, 'product_payloads', return_value={}):
+                with self.assertRaises(execution.ExecutionError) as raised:
+                    execution.collect(self.root, self.work)
+            return str(raised.exception)
+
+        reused = collect_with({'revision': '2' * 40, 'content_sha256': content})
+        self.assertNotIn('execution source changed', reused)
+        changed = collect_with({'revision': '1' * 40, 'content_sha256': 'b' * 64})
+        self.assertIn('execution source changed', changed)
+
     def test_case_environment_preserves_pinned_rust_and_checkout_git_access(self):
         from generate_qualification_manifest import EXECUTION_CONTRACT
         environment = execution.case_environment(self.root, self.work / 'step', '/workspace')

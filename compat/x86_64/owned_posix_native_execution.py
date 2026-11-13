@@ -709,7 +709,7 @@ def _collect(root, work):
     require(set(p.name for p in (work / 'sequence').iterdir()) ==
             {f'{i:02d}-{c.id}.json' for i, c in enumerate(COMPONENTS)}, 'native sequence roster differs')
     for phase in ('before', 'after'):
-        require(same_json(read(work / f'source-{phase}.json'), inputs['source']), 'native source seal changed')
+        require(source_seal.same_product(read(work / f'source-{phase}.json'), inputs['source']), 'native source seal changed')
         require(same_json(read(work / f'product-{phase}.json'), inputs['product']), 'native product seal changed')
     components = {}
     predecessor = inputs['family_execution']

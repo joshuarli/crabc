@@ -155,7 +155,7 @@ class NativeExecutionTests(unittest.TestCase):
         return path.relative_to(self.root).as_posix()
 
     def current_source(self, root):
-        return {**self.source, 'revision': '3' * 40} if (self.root / '.work/source-changed').exists() else self.source
+        return {**self.source, 'content_sha256': '3' * 64} if (self.root / '.work/source-changed').exists() else self.source
 
     def raw(self, leaf, stem, stdout):
         result = {}

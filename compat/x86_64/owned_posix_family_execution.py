@@ -344,7 +344,7 @@ def _validated_input_products(root: Path, request: dict, evidence: object) -> _V
         require(same_json(file_identity(root, path), evidence[name]),
                 f'POSIX matrix {name} receipt changed')
     source = source_seal.seal(root)
-    require(same_json(source, evidence['source']), 'POSIX matrix product source changed')
+    require(source_seal.same_product(source, evidence['source']), 'POSIX matrix product source changed')
 
     static_paths = static_products.product_paths(paths['static_preparation'].parent)
     static_records = evidence['static_products']
@@ -490,7 +490,7 @@ def collect(root: Path, work: Path) -> dict:
     inputs, products = input_products(root, request)
     payloads = product_payloads(root, products)
     for name in ('source-before.json', 'source-after.json'):
-        require(same_json(read(work / name), inputs['source']), f'execution source changed: {name}')
+        require(source_seal.same_product(read(work / name), inputs['source']), f'execution source changed: {name}')
     roster = workload_roster()
     identifiers = {workload.id for workload in roster}
     require(len(identifiers) == len(roster), 'duplicate family workload')
