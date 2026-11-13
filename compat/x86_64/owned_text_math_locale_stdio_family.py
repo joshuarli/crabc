@@ -1008,7 +1008,7 @@ def _input_snapshots(root: Path, request_path: Path, matrix_path: Path, pthread_
     return _snapshot_directories(root, directory_inputs), _snapshot_files(root, file_inputs)
 
 
-def collect(root: Path, request_path: Path) -> dict[str, Any]:
+def collect(root: Path, request_path: Path, *, end_validation: Callable[[], None] | None = None) -> dict[str, Any]:
     """Replay declared current receipts without producing or executing anything."""
 
     root = root.resolve(strict=True)
@@ -1090,6 +1090,8 @@ def collect(root: Path, request_path: Path) -> dict[str, Any]:
         "promotion_ready": False,
         "public_support": False,
     }
+    if end_validation is not None:
+        end_validation()
     _require_snapshots_current(root, directories, files, source_before)
     require(same(source_after, source_before), "current source changed during output construction")
     return result
@@ -1122,10 +1124,12 @@ def _fresh_output(root: Path, path: Path) -> Path:
     return output
 
 
-def execute(root: Path, request_path: Path, output: Path) -> Path:
+def execute(root: Path, request_path: Path, output: Path, *,
+            end_validation: Callable[[], None] | None = None) -> Path:
     root = root.resolve(strict=True)
     receipt = _fresh_output(root, output)
-    value = collect(root, request_path)
+    value = (collect(root, request_path) if end_validation is None
+             else collect(root, request_path, end_validation=end_validation))
     try:
         with receipt.open("x", encoding="utf-8") as stream:
             stream.write(json.dumps(value, indent=2, sort_keys=True, allow_nan=False) + "\n")
@@ -1228,7 +1232,7 @@ def _write_assembly_json(path: Path, value: object, description: str) -> None:
 
 
 def _assembly_matrix_context(root: Path, family_execution: Path | str,
-                             pthread_family: Path | str) -> tuple[Path, Path, MatrixContext]:
+                             pthread_family: Path | str) -> tuple[Path, Path, MatrixContext, dict[str, Any]]:
     """Authenticate the supplied matrix before an aggregate writer reads its pairs."""
 
     matrix_path = _physical(root, family_execution, "assembly family execution receipt", below_work=True)
@@ -1246,7 +1250,7 @@ def _assembly_matrix_context(root: Path, family_execution: Path | str,
     _require_pthread(root, pthread_path, matrix_identity, source)
     return matrix_path, pthread_path, MatrixContext(
         source, inputs, products, static_preparation, dynamic_qualification,
-    )
+    ), matrix
 
 
 def assemble(root: Path, family_execution: Path | str, pthread_family: Path | str,
@@ -1261,56 +1265,65 @@ def assemble(root: Path, family_execution: Path | str, pthread_family: Path | st
     never a product producer, workload runner, or family promotion mechanism.
     """
 
-    root = root.resolve(strict=True)
-    resolved_reports = _assembly_report_mapping(root, reports)
-    expected_inputs = _assembly_expected_inputs(root, wordexp_expected_inputs)
-    matrix_path, pthread_path, context = _assembly_matrix_context(root, family_execution, pthread_family)
-    try:
-        text_component = importlib.import_module("owned_text_locale_numeric_component_receipt")
-    except ImportError as error:
-        raise FamilyError(f"text-locale-numeric public aggregate is unavailable: {error}") from error
-    try:
-        aggregate = text_component.collect(
-            root, context.static_preparation, context.dynamic_qualification,
-            resolved_reports["text-locale-numeric"],
-        )
-    except (OSError, ValueError, family.ExecutionError, text_component.product_evidence.ProductEvidenceError,
-            text_component.payload_evidence.CryptRuntimeEvidenceError,
-            text_component.static_products.PreparationError, source_seal.SourceSealError) as error:
-        raise FamilyError(f"text-locale-numeric public aggregate rejected: {error}") from error
-
-    assembly = _fresh_assembly_directory(root, output)
-    aggregate_path = assembly / "text-locale-numeric-receipt.json"
-    _write_assembly_json(aggregate_path, aggregate, "text-locale-numeric aggregate")
-    request = {
-        "schema": SCHEMA,
-        "family_execution": matrix_path.relative_to(root).as_posix(),
-        "pthread_family": pthread_path.relative_to(root).as_posix(),
-        "components": {
-            name: (
-                {"receipt": aggregate_path.relative_to(root).as_posix()}
-                if name == "text-locale-numeric"
-                else {
-                    pair: (
-                        {
-                            "report": resolved_reports[name][pair].relative_to(root).as_posix(),
-                            "expected_inputs": expected_inputs[pair].relative_to(root).as_posix(),
-                        }
-                        if COMPONENTS[name].request_kind == "wordexp-pairs"
-                        else resolved_reports[name][pair].relative_to(root).as_posix()
-                    )
-                    for pair in PAIRS
-                }
+    with family.reuse_validated_receipts():
+        root = root.resolve(strict=True)
+        resolved_reports = _assembly_report_mapping(root, reports)
+        expected_inputs = _assembly_expected_inputs(root, wordexp_expected_inputs)
+        matrix_path, pthread_path, context, initial_matrix = _assembly_matrix_context(root, family_execution, pthread_family)
+        try:
+            text_component = importlib.import_module("owned_text_locale_numeric_component_receipt")
+        except ImportError as error:
+            raise FamilyError(f"text-locale-numeric public aggregate is unavailable: {error}") from error
+        try:
+            aggregate = text_component.collect(
+                root, context.static_preparation, context.dynamic_qualification,
+                resolved_reports["text-locale-numeric"],
             )
-            for name in COMPONENTS
-        },
-    }
-    request_path = assembly / "request.json"
-    _write_assembly_json(request_path, request, "request")
-    # `execute` is the public-reader gate.  It reconstructs every physical
-    # component report (including the aggregate just written) and snapshots
-    # the whole declared closure before its immutable `receipt.json` exists.
-    return execute(root, request_path.relative_to(root), (assembly / "receipt.json").relative_to(root))
+        except (OSError, ValueError, family.ExecutionError, text_component.product_evidence.ProductEvidenceError,
+                text_component.payload_evidence.CryptRuntimeEvidenceError,
+                text_component.static_products.PreparationError, source_seal.SourceSealError) as error:
+            raise FamilyError(f"text-locale-numeric public aggregate rejected: {error}") from error
+
+        assembly = _fresh_assembly_directory(root, output)
+        aggregate_path = assembly / "text-locale-numeric-receipt.json"
+        _write_assembly_json(aggregate_path, aggregate, "text-locale-numeric aggregate")
+        request = {
+            "schema": SCHEMA,
+            "family_execution": matrix_path.relative_to(root).as_posix(),
+            "pthread_family": pthread_path.relative_to(root).as_posix(),
+            "components": {
+                name: (
+                    {"receipt": aggregate_path.relative_to(root).as_posix()}
+                    if name == "text-locale-numeric"
+                    else {
+                        pair: (
+                            {
+                                "report": resolved_reports[name][pair].relative_to(root).as_posix(),
+                                "expected_inputs": expected_inputs[pair].relative_to(root).as_posix(),
+                            }
+                            if COMPONENTS[name].request_kind == "wordexp-pairs"
+                            else resolved_reports[name][pair].relative_to(root).as_posix()
+                        )
+                        for pair in PAIRS
+                    }
+                )
+                for name in COMPONENTS
+            },
+        }
+        request_path = assembly / "request.json"
+        _write_assembly_json(request_path, request, "request")
+        # `execute` is the public-reader gate.  It reconstructs every physical
+        # component report (including the aggregate just written) and snapshots
+        # the whole declared closure before its immutable `receipt.json` exists.
+        def end_validation() -> None:
+            try:
+                final_matrix = family.revalidate_receipt(root, matrix_path)
+            except (family.ExecutionError, OSError, ValueError) as error:
+                raise FamilyError(f"POSIX family execution evidence changed during collection: {error}") from error
+            require(same(final_matrix, initial_matrix), "POSIX family execution evidence changed during collection")
+
+        return execute(root, request_path.relative_to(root), (assembly / "receipt.json").relative_to(root),
+                       end_validation=end_validation)
 
 
 def _assembly_report_argument(value: str) -> tuple[str, str, Path]:
@@ -1329,21 +1342,35 @@ def _assembly_expected_input_argument(value: str) -> tuple[str, Path]:
 
 
 def validate_receipt(root: Path, receipt: Path) -> dict[str, Any]:
-    root = root.resolve(strict=True)
-    receipt = _physical(root, receipt, "family receipt", below_work=True)
-    require(receipt.name == "receipt.json", "family receipt must be named receipt.json")
-    retained = _strict_json(receipt, "family receipt")
-    inputs = retained.get("inputs")
-    require(isinstance(inputs, dict) and isinstance(inputs.get("request"), dict),
-            "family receipt request identity differs")
-    request_identity = inputs["request"]
-    require(isinstance(request_identity.get("path"), str), "family receipt request path differs")
-    request = _physical(root, request_identity["path"], "family receipt request", below_work=True)
-    require(same(_identity(root, request), request_identity), "family receipt request changed")
-    # The collector accepts checkout-relative requests, just like the writer.
-    observed = collect(root, request.relative_to(root))
-    require(same(retained, observed), "family receipt differs from reconstructed evidence")
-    return observed
+    with family.reuse_validated_receipts():
+        root = root.resolve(strict=True)
+        receipt = _physical(root, receipt, "family receipt", below_work=True)
+        require(receipt.name == "receipt.json", "family receipt must be named receipt.json")
+        retained = _strict_json(receipt, "family receipt")
+        inputs = retained.get("inputs")
+        require(isinstance(inputs, dict) and isinstance(inputs.get("request"), dict),
+                "family receipt request identity differs")
+        request_identity = inputs["request"]
+        require(isinstance(request_identity.get("path"), str), "family receipt request path differs")
+        request = _physical(root, request_identity["path"], "family receipt request", below_work=True)
+        require(same(_identity(root, request), request_identity), "family receipt request changed")
+        # The collector accepts checkout-relative requests, just like the writer.
+        _request_value, matrix_path, _pthread_path, _requests = _request(root, request.relative_to(root))
+        try:
+            initial_matrix = family.validate_receipt(root, matrix_path)
+        except (family.ExecutionError, OSError, ValueError) as error:
+            raise FamilyError(f"POSIX family receipt rejected: {error}") from error
+
+        def end_validation() -> None:
+            try:
+                final_matrix = family.revalidate_receipt(root, matrix_path)
+            except (family.ExecutionError, OSError, ValueError) as error:
+                raise FamilyError(f"POSIX family execution evidence changed during collection: {error}") from error
+            require(same(final_matrix, initial_matrix), "POSIX family execution evidence changed during collection")
+
+        observed = collect(root, request.relative_to(root), end_validation=end_validation)
+        require(same(retained, observed), "family receipt differs from reconstructed evidence")
+        return observed
 
 
 def admission_facts(root: Path, receipt_path: Path) -> dict[str, object]:

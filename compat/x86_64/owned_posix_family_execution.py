@@ -11,6 +11,9 @@ or public x86 support.
 from __future__ import annotations
 
 import argparse
+from contextlib import contextmanager
+from contextvars import ContextVar
+import copy
 from dataclasses import asdict, dataclass
 import hashlib
 import json
@@ -580,7 +583,32 @@ def execute(root: Path, work: Path, static_preparation: Path, dynamic_qualificat
     return path
 
 
+_receipt_cache: ContextVar[dict | None] = ContextVar('receipt_cache', default=None)
+
+
+@contextmanager
+def reuse_validated_receipts():
+    # Reuse is valid only between a full start validation and a full end revalidation.
+    token = _receipt_cache.set({})
+    try:
+        yield
+    finally:
+        _receipt_cache.reset(token)
+
+
 def validate_receipt(root: Path, path: Path) -> dict:
+    cache = _receipt_cache.get()
+    if cache is None:
+        return revalidate_receipt(root, path)
+    root = root.resolve(strict=True)
+    path = physical(root, path)
+    key = (root, path.resolve(strict=True), digest(path))
+    if key not in cache:
+        cache[key] = copy.deepcopy(revalidate_receipt(root, path))
+    return copy.deepcopy(cache[key])
+
+
+def revalidate_receipt(root: Path, path: Path) -> dict:
     path = physical(root, path)
     require(path.name == 'execution.json', 'expected execution.json receipt')
     observed = collect(root, path.parent)

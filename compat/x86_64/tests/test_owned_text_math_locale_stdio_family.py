@@ -304,7 +304,8 @@ class TextMathLocaleStdioFamilyTests(unittest.TestCase):
         patches = fixture.patches(fixture.adapter_results())
         output = Path(".work/coordinator/receipt.json")
         (fixture.root / output.parent).mkdir()
-        with patches[0], patches[1], patches[2], patches[3]:
+        with patches[0], patches[1], patches[2], patches[3], \
+                mock.patch.object(coordinator.family, "revalidate_receipt", return_value=fixture.matrix()):
             receipt = coordinator.execute(fixture.root, fixture.relative(fixture.request_path), output)
             retained = json.loads(receipt.read_text(encoding="utf-8"))
             replayed = coordinator.validate_receipt(fixture.root, output)
@@ -518,6 +519,7 @@ class TextMathLocaleStdioFamilyTests(unittest.TestCase):
         output = Path(".work/assembly")
         patches = fixture.patches(fixture.adapter_results())
         with patches[0], patches[1], patches[2], patches[3], \
+                mock.patch.object(coordinator.family, "revalidate_receipt", return_value=fixture.matrix()), \
                 mock.patch.object(component.static_products.source_seal, "seal", return_value=SOURCE), \
                 mock.patch.object(component, "validate_report", return_value=(
                     {"execution_cells": list(component.EXECUTION_CELLS)}, {"fixture": b"same object"},
@@ -547,6 +549,52 @@ class TextMathLocaleStdioFamilyTests(unittest.TestCase):
         self.assertTrue(retained["family_completion"])
         self.assertFalse(retained["promotion_ready"])
         self.assertFalse(retained["public_support"])
+
+    def test_assembly_revalidates_once_and_rejects_changes(self) -> None:
+        import owned_text_locale_numeric_component_receipt as component
+
+        for mutation in (None, "evidence", "receipt"):
+            with self.subTest(mutation=mutation):
+                fixture = FamilyFixture()
+                self.addCleanup(fixture.addCleanup)
+                matrix = fixture.matrix()
+                fixture.matrix_path.write_text(json.dumps(matrix))
+                adapters = fixture.adapter_results()
+                original = adapters["locale"]
+                calls = []
+
+                def reader(root, request, context):
+                    for _ in range(5):
+                        coordinator.family.validate_receipt(root, fixture.matrix_path)
+                    if mutation and not calls:
+                        calls.append(True)
+                        if mutation == "receipt":
+                            fixture.matrix_path.write_text('{}')
+                    return original(root, request, context)
+
+                adapters["locale"] = reader
+                patches = fixture.patches(adapters)
+
+                def collect_matrix(root, work):
+                    result = copy.deepcopy(matrix)
+                    if mutation == "evidence" and calls:
+                        result["status"] = "changed"
+                    return result
+
+                with patches[0], patches[2], patches[3], \
+                        mock.patch.object(coordinator.family, "collect", side_effect=collect_matrix) as full, \
+                        mock.patch.object(component, "collect", return_value=json.loads(
+                            fixture.aggregate_receipts["text-locale-numeric"].read_text())):
+                    args = (fixture.root, fixture.relative(fixture.matrix_path),
+                            fixture.relative(fixture.pthread_path), fixture.assembly_reports(),
+                            {pair: fixture.relative(path) for pair, path in fixture.expected_inputs.items()},
+                            Path(".work/assembly"))
+                    if mutation:
+                        with self.assertRaises(coordinator.FamilyError):
+                            coordinator.assemble(*args)
+                    else:
+                        coordinator.assemble(*args)
+                        self.assertEqual(full.call_count, 2)
 
     def test_assembly_rejects_a_missing_wordexp_expected_input_before_writing(self) -> None:
         reports = self.fixture.assembly_reports()

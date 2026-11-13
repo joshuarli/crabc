@@ -30,6 +30,30 @@ class FamilyExecutionTests(unittest.TestCase):
         self.work = self.root / '.work/run'
         self.work.mkdir(parents=True)
 
+    def test_receipt_reuse_is_scoped_and_keyed_by_path_and_bytes(self):
+        first = self.work / 'execution.json'
+        first.write_text('{"value": 1}')
+        other = self.work / 'other/execution.json'
+        other.parent.mkdir()
+        other.write_text('{"value": 1}')
+        with patch.object(execution, 'collect', side_effect=lambda root, work: json.loads(
+                (work / 'execution.json').read_text())) as collect:
+            execution.validate_receipt(self.root, first)
+            execution.validate_receipt(self.root, first)
+            self.assertEqual(collect.call_count, 2)
+            with execution.reuse_validated_receipts():
+                result = execution.validate_receipt(self.root, first)
+                result['value'] = 99
+                self.assertEqual(execution.validate_receipt(self.root, first)['value'], 1)
+                execution.validate_receipt(self.root, other)
+                first.write_text('{"value": 2}')
+                self.assertEqual(execution.validate_receipt(self.root, first)['value'], 2)
+                self.assertEqual(collect.call_count, 5)
+                execution.revalidate_receipt(self.root, first)
+                self.assertEqual(collect.call_count, 6)
+            execution.validate_receipt(self.root, first)
+            self.assertEqual(collect.call_count, 7)
+
     def test_case_environment_preserves_pinned_rust_and_checkout_git_access(self):
         from generate_qualification_manifest import EXECUTION_CONTRACT
         environment = execution.case_environment(self.root, self.work / 'step', '/workspace')
