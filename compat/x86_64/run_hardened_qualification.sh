@@ -42,8 +42,9 @@ root, static, dynamic, compatibility = map(Path, sys.argv[1:])
 sys.path.insert(0, str(root / "compat/x86_64"))
 import owned_dynamic_qualification as qualification
 import owned_posix_product_evidence as evidence
+import source_seal
 
-source = qualification.source_digest()
+source = source_seal.product_source_digest(root)
 qualification.product_identity(compatibility)
 for product, validate in ((static, evidence._validate_static_product), (dynamic, evidence._validate_dynamic_product)):
     validate(product)
