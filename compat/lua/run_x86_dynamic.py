@@ -1434,19 +1434,31 @@ def verify_candidate_maps(
         "probe": ("/application/lib/crabc_probe.so", libraries / "crabc_probe.so"),
     }
     identities = _mapped_execution_files(maps, root)
+    digests = {
+        name: LUA.sha256_file(require_regular(source, f"candidate map source {name}"))
+        for name, (_inside_path, source) in expected.items()
+    }
+    # The installed runtime is one image linked from the loader and libc. The
+    # kernel maps it once through PT_INTERP and the loader satisfies libc.so
+    # with itself, so identical libc bytes are proven by the loader mapping.
+    accepted_paths = {name: {inside_path} for name, (inside_path, _source) in expected.items()}
+    if digests["owned_libc"] == digests["owned_loader"]:
+        accepted_paths["owned_libc"].add(expected["owned_loader"][0])
     records: dict[str, object] = {}
     missing: list[str] = []
     for name, (inside_path, source) in expected.items():
-        digest = LUA.sha256_file(require_regular(source, f"candidate map source {name}"))
-        mapped = any(
-            item["chroot_path"] == inside_path and item["sha256"] == digest
-            for item in identities
+        digest = digests[name]
+        mapped_as = sorted(
+            item["chroot_path"] for item in identities
+            if item["chroot_path"] in accepted_paths[name] and item["sha256"] == digest
         )
+        mapped = bool(mapped_as)
         records[name] = {
             "source_path": str(source),
             "chroot_path": inside_path,
             "sha256": digest,
             "mapped": mapped,
+            "mapped_as": mapped_as,
         }
         if not mapped:
             missing.append(name)

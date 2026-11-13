@@ -634,6 +634,45 @@ class NativeDynamicExecutionRootTests(unittest.TestCase):
                 execution_root=self.execution,
             )
 
+    def map_lines(self, *paths: str) -> str:
+        return "\n".join(
+            f"00{index}00000-00{index}01000 r--p 00000000 00:00 0 {path}"
+            for index, path in enumerate(paths, start=4)
+        )
+
+    def test_merged_runtime_image_proves_libc_through_its_loader_mapping(self) -> None:
+        self.runtime["libc.so"].write_bytes(self.runtime["loader"].read_bytes())
+        self.root()
+        maps = self.map_lines(
+            "/lib/ld-crabc-x86_64.so.1",
+            "/application/lib/liblua.so.5.4",
+            "/application/lib/crabc_probe.so",
+        )
+
+        record = RUNNER.verify_candidate_maps(
+            maps, self.runtime, self.candidate["libraries"], execution_root=self.execution
+        )
+
+        self.assertEqual(record["status"], "passed")
+        self.assertEqual(
+            record["expected_artifacts"]["owned_libc"]["mapped_as"], ["/lib/ld-crabc-x86_64.so.1"]
+        )
+
+    def test_distinct_libc_is_not_proven_by_the_loader_mapping(self) -> None:
+        self.root()
+        maps = self.map_lines(
+            "/lib/ld-crabc-x86_64.so.1",
+            "/application/lib/liblua.so.5.4",
+            "/application/lib/crabc_probe.so",
+        )
+
+        record = RUNNER.verify_candidate_maps(
+            maps, self.runtime, self.candidate["libraries"], execution_root=self.execution
+        )
+
+        self.assertEqual(record["status"], "rejected")
+        self.assertEqual(record["errors"], {"missing_expected_artifacts": ["owned_libc"]})
+
     def test_private_root_rejects_a_resealed_product_copy(self) -> None:
         record = self.root()
         (self.execution / "usr/lib/libc.so").write_bytes(b"substituted libc\n")
