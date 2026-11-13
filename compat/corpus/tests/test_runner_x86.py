@@ -341,6 +341,19 @@ class PrivatePayloadTests(unittest.TestCase):
             self.assertEqual((boundary / "reports").stat().st_mode & 0o777, 0o755)
             self.assertEqual(private.stat().st_mode & 0o777, 0o700)
 
+    def test_tree_sha256_accepts_precomputed_file_digests(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "nested").mkdir()
+            (root / "nested" / "a").write_bytes(b"first")
+            (root / "b").write_bytes(b"second")
+            (root / "link").symlink_to("nested/a")
+            expected = RUNNER.tree_sha256(root, "fixture")
+            digests = {"nested/a": RUNNER.sha256_file(root / "nested/a", "fixture")}
+            self.assertEqual(RUNNER.tree_sha256(root, "fixture", file_sha256=digests), expected)
+            digests["b"] = RUNNER.sha256_file(root / "b", "fixture")
+            self.assertEqual(RUNNER.tree_sha256(root, "fixture", file_sha256=digests), expected)
+
     def test_retained_readability_preserves_the_execution_tree_seal(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary) / "root"

@@ -318,7 +318,7 @@ def _loader_tree_entries(path: Path) -> list[dict[str, object]]:
     return entries
 
 
-def _validate_retained_loader_tree(path: Path, seal: object, description: str) -> None:
+def _validate_retained_loader_tree(path: Path, seal: object, description: str) -> list[dict[str, object]]:
     value = _keys(seal, {"entries", "sha256"}, description)
     entries = value["entries"]
     _digest(value["sha256"], f"{description} hash")
@@ -342,6 +342,8 @@ def _validate_retained_loader_tree(path: Path, seal: object, description: str) -
                  f"{description} entry mode differs outside retained readability normalization")
         for name in expected_keys - {"mode"}:
             _require(expected[name] == observed[name], f"{description} entry {expected['path']} differs")
+
+    return actual
 
 
 def _resolved_file_within(root: Path, relative: str, description: str) -> Path:
@@ -878,13 +880,6 @@ def _validate_loader_sidecar(root: Path, source_mount: str, product: Path, name:
              f"loader case {name} dynamic link sidecar trace differs")
 
 
-def _loader_root_entries(root: Path) -> dict[str, dict[str, object]]:
-    entries = _loader_tree_entries(root)
-    result = {entry["path"]: entry for entry in entries}
-    _require(len(result) == len(entries), "retained loader root has duplicate paths")
-    return result
-
-
 def _loader_add_parent_directories(expected: dict[str, str], path: str) -> None:
     current = PurePosixPath(path).parent
     while current.parts:
@@ -903,7 +898,8 @@ def _loader_require_file(entries: Mapping[str, Mapping[str, object]], relative: 
 
 
 def _validate_loader_execution_root(checkout: Path, execution_root: Path, source_mount: str, product: Path, oracle: Mapping[str, Any],
-                                    producer_linker: Mapping[str, str], name: str, case: Mapping[str, Any], loader: Any, arm: str) -> None:
+                                    producer_linker: Mapping[str, str], name: str, case: Mapping[str, Any], loader: Any, arm: str,
+                                    root_entries: list[dict[str, object]]) -> None:
     """Require the exact recipe-derived root, rather than trusting its seal.
 
     The producer seal proves that retained bytes did not change after it was
@@ -912,7 +908,8 @@ def _validate_loader_execution_root(checkout: Path, execution_root: Path, source
     oracle, and only the finite link artifacts/sidecars made by this case.
     """
 
-    entries = _loader_root_entries(execution_root)
+    entries = {entry["path"]: entry for entry in root_entries}
+    _require(len(entries) == len(root_entries), "retained loader root has duplicate paths")
     expected: dict[str, str] = {}
     product_entries = {entry["path"]: entry for entry in loader_tree_seal(product)["entries"]}
     if arm == "candidate":
@@ -1161,8 +1158,8 @@ def _validate_loader_case(root: Path, source_mount: str, report_root: Path, prod
     roots = _keys(case["execution_roots"], {"oracle", "candidate"}, f"loader case {name} roots")
     for arm in ("oracle", "candidate"):
         retained_root = report_root / "cases" / name / (arm + "-root")
-        _validate_retained_loader_tree(retained_root, roots[arm], f"loader case {name} {arm} root")
-        _validate_loader_execution_root(root, retained_root, source_mount, product, oracle, producer_linker, name, case, loader, arm)
+        root_entries = _validate_retained_loader_tree(retained_root, roots[arm], f"loader case {name} {arm} root")
+        _validate_loader_execution_root(root, retained_root, source_mount, product, oracle, producer_linker, name, case, loader, arm, root_entries)
     _require(_hash_within(report_root / "cases" / name / "oracle-root", "lib/ld-musl-x86_64.so.1", "loader oracle") == oracle["libc_sha256"],
              f"loader case {name} oracle loader differs")
     _require(_hash_within(report_root / "cases" / name / "oracle-root", "usr/lib/libc.so", "loader oracle") == oracle["libc_sha256"],
@@ -1364,10 +1361,12 @@ def _retention_modes(value: object, description: str) -> dict[str, int]:
     return result
 
 
-def _corpus_tree_sha256(corpus: Any, root: Path, label: str, retention_modes: dict[str, int]) -> str:
+def _corpus_tree_sha256(corpus: Any, root: Path, label: str, retention_modes: dict[str, int],
+                        entries: Mapping[str, Mapping[str, object]]) -> str:
     """Use the v3 producer's exact retained-mode reconstruction helper."""
 
-    return corpus.tree_sha256(root, label, retention_modes=retention_modes)
+    return corpus.tree_sha256(root, label, retention_modes=retention_modes,
+                              file_sha256={path: entry["sha256"] for path, entry in entries.items() if entry["kind"] == "file"})
 
 
 def _elf_has_dt_relr(path: Path, description: str) -> bool:
@@ -1578,10 +1577,9 @@ def _validate_corpus_base_fixtures(root: Path, record: Mapping[str, Any], manife
 def _validate_corpus_root_layout(payload_entries: Mapping[str, Mapping[str, object]], root: Path,
                                   expected_case: Any, arm: str,
                                   manifest: Any, corpus: Any, payload_retention_modes: Mapping[str, int],
-                                  retention_modes: Mapping[str, int]) -> None:
+                                  retention_modes: Mapping[str, int], root_entries: Mapping[str, Mapping[str, object]]) -> None:
     """Bind every immutable root entry and the finite argv-derived mutations."""
 
-    root_entries = _corpus_root_entries(root)
     expected: dict[str, str] = {}
     for relative, entry in payload_entries.items():
         kind = str(entry["kind"])
@@ -1673,10 +1671,11 @@ def _validate_corpus_root(root: Path, value: object, expected_case: Any, arm: st
     retention_modes = _retention_modes(record["retention_modes"], f"package-corpus {expected_case.id} {arm}")
     _validate_corpus_base_fixtures(root, record, manifest, retention_modes,
                                    f"package-corpus {expected_case.id} {arm}")
+    root_entries = _corpus_root_entries(root)
     _validate_corpus_root_layout(payload_entries, root, expected_case, arm, manifest, corpus,
-                                  payload_retention_modes, retention_modes)
+                                  payload_retention_modes, retention_modes, root_entries)
     try:
-        current = _corpus_tree_sha256(corpus, root, f"package-corpus {expected_case.id} {arm} retained root", retention_modes)
+        current = _corpus_tree_sha256(corpus, root, f"package-corpus {expected_case.id} {arm} retained root", retention_modes, root_entries)
     except Exception as error:
         raise LoaderCorpusEvidenceError(f"package-corpus {expected_case.id} {arm} retained root is unreadable: {error}") from error
     _require(current == after, f"package-corpus {expected_case.id} {arm} retained root differs from its after seal")
@@ -1808,15 +1807,15 @@ def validate_corpus_report(report_path: Path, dynamic_product: Path, *, expected
     _validate_corpus_payload(payload_path, report["application_payload"], manifest, corpus)
     payload_retention_modes = _retention_modes(report["application_payload"]["retention_modes"],
                                                "package-corpus application payload")
+    payload_entries = _corpus_root_entries(payload_path)
     try:
         _require(_corpus_tree_sha256(corpus, payload_path, "package-corpus retained application payload",
-                                     payload_retention_modes) == report["application_payload"]["sha256"],
+                                     payload_retention_modes, payload_entries) == report["application_payload"]["sha256"],
                  "package-corpus retained application payload differs")
     except LoaderCorpusEvidenceError:
         raise
     except Exception as error:
         raise LoaderCorpusEvidenceError(f"package-corpus retained application payload is unreadable: {error}") from error
-    payload_entries = _corpus_root_entries(payload_path)
     expected_cases = {case.id: case for case in _corpus_cases()}
     _require(type(report["case_count"]) is int and report["case_count"] == len(expected_cases), "package-corpus case count differs")
     _require(isinstance(report["outcomes"], list) and len(report["outcomes"]) == len(expected_cases),

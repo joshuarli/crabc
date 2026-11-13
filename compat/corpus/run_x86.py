@@ -543,7 +543,8 @@ def make_tree_readable(root: Path) -> dict[str, int]:
     return original_modes
 
 
-def tree_sha256(root: Path, label: str, *, retention_modes: Mapping[str, int] | None = None) -> str:
+def tree_sha256(root: Path, label: str, *, retention_modes: Mapping[str, int] | None = None,
+                file_sha256: Mapping[str, str] | None = None) -> str:
     """Hash a tree, optionally reconstructing its pre-retention permissions.
 
     Only an exact recorded read/traverse-bit addition can be reconstructed.
@@ -582,7 +583,8 @@ def tree_sha256(root: Path, label: str, *, retention_modes: Mapping[str, int] | 
                 permissions = original
             digest.update(relative + b"\0" + str(permissions).encode("ascii") + b"\0")
             if stat.S_ISREG(mode):
-                digest.update(b"regular\0" + bytes.fromhex(sha256_file(child, label)))
+                file_digest = file_sha256[relative_path] if file_sha256 is not None and relative_path in file_sha256 else sha256_file(child, label)
+                digest.update(b"regular\0" + bytes.fromhex(file_digest))
             elif stat.S_ISDIR(mode):
                 digest.update(b"directory\0")
                 pending.append((entry.path, relative_path + "/"))

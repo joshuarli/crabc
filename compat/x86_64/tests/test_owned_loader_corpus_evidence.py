@@ -679,22 +679,14 @@ class OwnedLoaderCorpusEvidenceTests(unittest.TestCase):
         self.assertEqual(set(source), {"runner", "native_manifest", "workload_source", "process_lifetime_helpers"})
 
     def test_corpus_reader_accepts_a_full_retained_roster_and_rejects_a_changed_private_root(self) -> None:
+        real_corpus = evidence._corpus()
+
         class FixtureCorpus:
             SCHEMA = "crabc.x86_64-owned-package-corpus/v3"
             CANONICAL_INTERPRETER = "/lib/ld-musl-x86_64.so.1"
             CANONICAL_LIBC = "/lib/libc.musl-x86_64.so.1"
             CASE_ENVIRONMENT = {"PATH": "/bin:/usr/bin", "HOME": "/root", "LC_ALL": "C", "LANG": "C", "TZ": "UTC"}
-
-            @staticmethod
-            def tree_sha256(root: Path, label: str, *, retention_modes: dict[str, int] | None = None) -> str:
-                if retention_modes:
-                    raise AssertionError("fixture does not normalize modes")
-                digest = hashlib.sha256()
-                for path in sorted(root.rglob("*")):
-                    if path.is_dir():
-                        continue
-                    digest.update(path.relative_to(root).as_posix().encode() + b"\0" + path.read_bytes())
-                return digest.hexdigest()
+            tree_sha256 = staticmethod(real_corpus.tree_sha256)
 
             @staticmethod
             def source_identity(manifest: object) -> dict[str, object]:
@@ -821,8 +813,15 @@ class OwnedLoaderCorpusEvidenceTests(unittest.TestCase):
              mock.patch.object(evidence, "_corpus_cases", return_value=cases), \
              mock.patch.object(evidence, "_corpus_root_entries", side_effect=fixture_corpus_entries), \
              mock.patch.object(evidence, "_validate_corpus_base_fixtures"):
-            identity = evidence.validate_corpus_report(report_path, self.product,
-                                                       expected_oracle={"runtime_sha256": oracle_hash, "compiler_wrapper_sha256": "a" * 64}, root=ROOT)
+            candidate_root = root / "case-00-candidate"
+            files = {path for path in candidate_root.rglob("*") if path.is_file() and not path.is_symlink()}
+            with mock.patch.object(evidence, "_sha256_walked_file", wraps=evidence._sha256_walked_file) as walked, \
+                 mock.patch.object(real_corpus, "sha256_file", wraps=real_corpus.sha256_file) as tree_hash:
+                identity = evidence.validate_corpus_report(report_path, self.product,
+                                                           expected_oracle={"runtime_sha256": oracle_hash, "compiler_wrapper_sha256": "a" * 64}, root=ROOT)
+            counts = [Path(call.args[0]) for call in walked.call_args_list if Path(call.args[0]) in files]
+            self.assertCountEqual(counts, files)
+            self.assertFalse(any(Path(call.args[0]) in files for call in tree_hash.call_args_list))
             self.assertEqual(identity["case_count"], 34)
             candidate_root = root / "case-00-candidate"
             executable = candidate_root / "bin/case-00"
@@ -899,17 +898,20 @@ class OwnedLoaderCorpusEvidenceTests(unittest.TestCase):
 
         with mock.patch.object(evidence, "_corpus_root_entries", side_effect=entries):
             evidence._validate_corpus_root_layout(evidence._corpus_root_entries(payload), root, case, "candidate",
-                                                  SimpleNamespace(base_image_files={}), corpus, {}, {})
+                                                  SimpleNamespace(base_image_files={}), corpus, {}, {},
+                                                  evidence._corpus_root_entries(root))
             (root / "tmp/crabc-corpus-input").write_bytes(b"input\n")
             with self.assertRaisesRegex(evidence.LoaderCorpusEvidenceError, "removed setup"):
                 evidence._validate_corpus_root_layout(evidence._corpus_root_entries(payload), root, case, "candidate",
-                                                      SimpleNamespace(base_image_files={}), corpus, {}, {})
+                                                      SimpleNamespace(base_image_files={}), corpus, {}, {},
+                                                  evidence._corpus_root_entries(root))
             (root / "tmp/crabc-corpus-input").unlink()
             (root / "etc").mkdir()
             (root / "etc/ld-musl-x86_64.path").write_text("/usr/lib\n", encoding="utf-8")
             with self.assertRaisesRegex(evidence.LoaderCorpusEvidenceError, "unsealed root entry"):
                 evidence._validate_corpus_root_layout(evidence._corpus_root_entries(payload), root, case, "candidate",
-                                                      SimpleNamespace(base_image_files={}), corpus, {}, {})
+                                                      SimpleNamespace(base_image_files={}), corpus, {}, {},
+                                                  evidence._corpus_root_entries(root))
         altered = SimpleNamespace(id=case.id, path=case.path,
                                   argv=("mv", "/tmp/crabc-corpus-input", "/tmp/other"),
                                   setup=case.setup, cwd=case.cwd)
