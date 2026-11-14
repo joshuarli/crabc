@@ -122,13 +122,22 @@ static void notify(union sigval value)
     CHECK(pthread_setcancelstate(PTHREAD_CANCEL_DISABLE, NULL) == 0);
     CHECK(pthread_setcanceltype(PTHREAD_CANCEL_ASYNCHRONOUS, NULL) == 0);
 }
-static void wait_count(atomic_int *word, int wanted)
+static void wait_count_at(atomic_int *word, int wanted, const char *counter,
+                          const char *caller, int line)
 {
     for (int i = 0; atomic_load(word) < wanted && i < 2000; ++i) {
         struct timespec delay = {0, 1000000}; nanosleep(&delay, NULL);
     }
-    CHECK(atomic_load(word) >= wanted);
+    int observed = atomic_load(word);
+    if (observed < wanted) {
+        int saved_errno = errno;
+        fprintf(stderr, "wait_count: counter=%s caller=%s line=%d observed=%d wanted=%d pid=%ld ppid=%ld\n",
+                counter, caller, line, observed, wanted, (long)getpid(), (long)getppid());
+        errno = saved_errno;
+    }
+    CHECK(observed >= wanted);
 }
+#define wait_count(word, wanted) wait_count_at((word), (wanted), #word, __func__, __LINE__)
 static void *initialize_cancellation_handler(void *unused)
 {
     (void)unused;

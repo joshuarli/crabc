@@ -23,6 +23,44 @@ from owned_posix_product_evidence import DYNAMIC_PRODUCT_FORMAT
 
 
 class OwnedPosixTimersTests(unittest.TestCase):
+    def test_wait_count_failure_context(self):
+        compiler = "/usr/local/bin/crabc-x86_64-musl-gcc"
+        probe = ROOT / "compat/x86_64/owned_posix_timers_probe.c"
+        scratch_root = ROOT / ".work/tmp"
+        scratch_root.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(dir=scratch_root) as temporary:
+            source = Path(temporary) / "fixture.c"
+            executable = Path(temporary) / "fixture"
+            source.write_text(
+                f'#define main timer_probe_main\n#include "{probe}"\n#undef main\n'
+                'static atomic_int missed_counter = 2;\n'
+                'int main(int argc, char **argv) {\n'
+                '    (void)argv;\n'
+                '#line 100 "fixture.c"\n'
+                '    wait_count(&missed_counter, argc > 1 ? 3 : 2);\n'
+                '    return 0;\n}\n', encoding="utf-8",
+            )
+            subprocess.run([compiler, "-static", "-fno-pie", "-no-pie", "-std=c11",
+                            "-pthread", str(source), "-o", str(executable)],
+                           check=True, capture_output=True, text=True)
+            success = subprocess.run([str(executable)], capture_output=True, text=True, timeout=10)
+            self.assertEqual((success.returncode, success.stdout, success.stderr), (0, "", ""))
+            with subprocess.Popen([str(executable), "miss"], stdout=subprocess.PIPE,
+                                  stderr=subprocess.PIPE, text=True) as process:
+                try:
+                    stdout, stderr = process.communicate(timeout=10)
+                except BaseException:
+                    process.kill()
+                    process.communicate()
+                    raise
+                returncode, pid = process.returncode, process.pid
+            self.assertEqual(returncode, 1)
+            self.assertEqual(stdout, "")
+            for field in ("counter=&missed_counter", "caller=main", "line=100",
+                          "observed=2", "wanted=3", f"pid={pid}",
+                          f"ppid={os.getpid()}"):
+                self.assertIn(field, stderr)
+
     def test_replay_tls_elf_uses_in_process_bytes_without_host_readelf(self):
         facts = {
             "type": 3, "machine": 62, "interpreters": [], "dynamic": True, "needed": ["libc.so"],
