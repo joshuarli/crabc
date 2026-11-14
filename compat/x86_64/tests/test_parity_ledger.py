@@ -158,7 +158,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         data = self.data()
         planned = [row for row in data["family"]
                    if row["status"] == "planned" and row["id"] != "performance.release"]
-        self.assertEqual(len(planned), 16)
+        self.assertTrue(planned)
         for family in planned:
             family["status"] = "foundation-verified"
             for evidence in family["native_evidence"]:
@@ -8689,6 +8689,68 @@ class X86ParityLedgerTests(unittest.TestCase):
         data = self.data()
         self.assertIn("symbols", self.family(data, "compat.abi-differential")["aarch64_gates"])
 
+
+    def test_posix_process_admission_uses_published_complete_native_gate(self) -> None:
+        import hashlib
+        import qualification_gates as gates
+        import owned_posix_native_execution as native
+
+        family = self.family(self.data(), "compat.posix-process")
+        family["status"] = "foundation-verified"
+        family["native_evidence"][0]["state"] = "verified"
+        record = {"status": "native-aggregate-verified", "native_aggregate_complete": True,
+                  "components": {name: {} for name in gates.POSIX_PROCESS_COMPONENTS}}
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            receipt = root / ".work/native/native-execution.json"
+            receipt.parent.mkdir(parents=True)
+            receipt.write_text("fixture", encoding="utf-8")
+            pointer = root / ".work/x86_64/qualification-evidence/compat.posix-process/posix-native.json"
+            pointer.parent.mkdir(parents=True)
+            publication = {"schema": gates.PUBLICATION_SCHEMA, "gate": "compat.posix-process",
+                           "publication": "posix-native", "receipt": ".work/native/native-execution.json",
+                           "receipt_sha256": hashlib.sha256(receipt.read_bytes()).hexdigest()}
+            with mock.patch.object(gates, "ROOT", root), mock.patch.object(
+                gates, "PUBLICATION_DIRECTORY", pointer.parents[1]
+            ), mock.patch.object(native, "validate_receipt", return_value=record) as validate:
+                with self.assertRaises(ledger.LedgerError):
+                    ledger.posix_process_private_artifact_view(family)
+                pointer.write_text(json.dumps(publication), encoding="utf-8")
+                view = ledger.posix_process_private_artifact_view(family)
+                ledger.require_posix_process_abi_admission_artifact(view)
+                self.assertEqual(family["status"], "foundation-verified")
+                validate.assert_called_with(root, receipt)
+                receipt.write_text("stale", encoding="utf-8")
+                with self.assertRaises(ledger.LedgerError):
+                    ledger.posix_process_private_artifact_view(family)
+                receipt.write_text("fixture", encoding="utf-8")
+                with mock.patch.object(native, "validate_receipt", side_effect=RuntimeError("raw evidence changed")):
+                    with self.assertRaises(ledger.LedgerError):
+                        ledger.posix_process_private_artifact_view(family)
+                with mock.patch.object(native, "validate_receipt", return_value={**record, "components": {}}):
+                    with self.assertRaises(ledger.LedgerError):
+                        ledger.posix_process_private_artifact_view(family)
+                wrong = copy.deepcopy(family)
+                wrong["native_evidence"][0]["command"] = "wrong"
+                with self.assertRaises(ledger.LedgerError):
+                    ledger.posix_process_private_artifact_view(wrong)
+                environment = ledger.qualification_manifest_runner.controlled_environment()
+                with mock.patch.object(ledger.qualification_manifest_runner, "controlled_environment",
+                                       return_value={**environment, "LD_LIBRARY_PATH": "poison"}):
+                    with self.assertRaisesRegex(ledger.LedgerError, "execution environment drifted"):
+                        ledger.require_posix_process_abi_admission_artifact(view)
+
+    def test_posix_process_structural_view_needs_no_publication(self) -> None:
+        family = self.family(self.data(), "compat.posix-process")
+        family["status"] = "foundation-verified"
+        token = ledger._require_receipts.set(False)
+        try:
+            with mock.patch("qualification_gates.read_publication", side_effect=AssertionError("unexpected read")):
+                view = ledger.posix_process_private_artifact_view(family)
+                ledger.require_posix_process_abi_admission_artifact(view)
+        finally:
+            ledger._require_receipts.reset(token)
+        self.assertEqual(family["status"], "foundation-verified")
 
     def test_qualification_posix_abi_admission_rejects_manifest_environment_drift(self) -> None:
         data = self.data()

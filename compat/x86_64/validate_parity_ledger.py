@@ -8140,6 +8140,28 @@ def require_verified_artifacts(
     return records
 
 
+def posix_process_private_artifact_view(family: Mapping[str, Any]) -> Mapping[str, Any]:
+    """Preserve the static leaf boundary after the published gate is validated."""
+    if family.get("status") == "planned":
+        return family
+    if _receipts_required():
+        import qualification_gates as gates
+
+        evidence, _ = require_evidence(
+            family.get("native_evidence"), "family[compat.posix-process].native_evidence",
+            "foundation-verified",
+        )
+        require(len(evidence) == 1 and evidence[0].get("command") == gates.POSIX_NATIVE_COMMAND,
+                "compat.posix-process requires the canonical native aggregate command")
+        try:
+            gates.READERS[("compat.posix-process", gates.POSIX_NATIVE_COMMAND)].read(gates.Evaluation())
+        except (RuntimeError, OSError, ValueError, TypeError) as error:
+            raise LedgerError(f"compat.posix-process publication rejected: {error}") from error
+    view = dict(family)
+    view["status"] = "planned"
+    return view
+
+
 def require_posix_process_abi_admission_artifact(family: Mapping[str, Any]) -> None:
     """Ratchet the selected static qualification inventory below family completion."""
     artifacts = require_verified_artifacts(
@@ -10003,10 +10025,7 @@ def _validate_ledger(
     require_math_log2_artifact(text_leaf)
     require_uchar_stateful_artifact(text_leaf)
     require_text_component_slices(text_leaf)
-    posix_process_leaf = by_id["compat.posix-process"]
-    if posix_process_leaf.get("status") == "foundation-verified" and not _receipts_required():
-        posix_process_leaf = dict(posix_process_leaf)
-        posix_process_leaf["status"] = "planned"
+    posix_process_leaf = posix_process_private_artifact_view(by_id["compat.posix-process"])
     require_posix_process_abi_admission_artifact(posix_process_leaf)
 
     musl_oracle = by_id["oracle.musl-toolchain"]
