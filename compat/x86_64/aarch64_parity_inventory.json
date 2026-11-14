@@ -1525,7 +1525,7 @@
         "rust-std"
       ],
       "capability_count": 0,
-      "contract_state": "selected-private",
+      "contract_state": "implemented-foundation",
       "id": "crt.dynamic-startup",
       "verified_artifact_count": 3,
       "verified_slice_count": 0
@@ -1536,7 +1536,7 @@
         "sysroot"
       ],
       "capability_count": 0,
-      "contract_state": "selected-private",
+      "contract_state": "implemented-foundation",
       "id": "sysroot.static-tls",
       "verified_artifact_count": 1,
       "verified_slice_count": 0
@@ -1548,7 +1548,7 @@
         "sysroot-smoke"
       ],
       "capability_count": 0,
-      "contract_state": "selected-private",
+      "contract_state": "implemented-foundation",
       "id": "sysroot.owned-artifact",
       "verified_artifact_count": 1,
       "verified_slice_count": 0
@@ -1649,9 +1649,9 @@
     }
   ],
   "family_state_counts": {
-    "implemented-foundation": 15,
+    "implemented-foundation": 18,
     "missing": 5,
-    "selected-private": 6
+    "selected-private": 3
   },
   "frozen_baseline": {
     "aarch64_inputs": {
