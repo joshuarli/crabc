@@ -9,8 +9,9 @@ skills. Git retains the earlier plans; do not maintain a second handoff or log.
 ## Status and first action
 
 F2 remains open. The current producer run qualifies `f402e22c6` in
-`.work/wt/f2-run2/.work/x86_64/feature-complete`. It has completed 40 steps and
-is running `text-family`. Main's later harness changes preserve its product digest.
+`.work/wt/f2-run2/.work/x86_64/feature-complete`. Its CRT, static sysroot and
+combined sysroot checks have passed. ABI and consumer evidence collection is
+still running. Main's later harness changes preserve its product digest.
 The campaign report accounts for **223 implemented-foundation capabilities**
 and **15 foundation-verified families**. Ten correctness families still need
 admission. `performance.release` remains deferred.
@@ -19,8 +20,12 @@ admission. `performance.release` remains deferred.
 and seven correctness gates in dependency order after their native checks pass.
 The strict POSIX gate validator repair is integrated at `c154400e3` after focused
 tests and a real native-publication replay. It preserves physical receipt
-validation and the leaf's non-promoting boundary. After these admissions, run
-one complete fresh correctness candidate on the integrated commit and record
+validation and the leaf's non-promoting boundary. After the producer run stops,
+make its gate admissions in that worktree with `c154400e3` and `200d132cc`
+applied. Keep the other producer inputs intact: receipts also bind harness
+input bytes outside the product digest. Merge the admissions into main, then
+run one complete fresh correctness candidate in the prepared
+`.work/wt/f2-fresh-final` worktree on the integrated commit. Record
 the accepted commit and evidence here. CRAB-5 and CRAB-6 retain their diagnostic
 work in `TODO.md`. No F2 milestone is accepted yet.
 
