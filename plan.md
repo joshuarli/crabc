@@ -8,26 +8,29 @@ skills. Git retains the earlier plans; do not maintain a second handoff or log.
 
 ## Status and first action
 
-F2 remains open. The current producer run qualifies `f402e22c6` in
-`.work/wt/f2-run2/.work/x86_64/feature-complete`. Its CRT, static sysroot and
-combined sysroot checks have passed. ABI and consumer evidence collection is
-still running. Main's later harness changes preserve its product digest.
-The campaign report accounts for **223 implemented-foundation capabilities**
-and **15 foundation-verified families**. Ten correctness families still need
-admission. `performance.release` remains deferred.
+F2 remains open. The `f402e22c6` producer in
+`.work/wt/f2-run2/.work/x86_64/feature-complete` passed all 84 producer and
+publication steps, including both Lua consumers. Its chain stopped at the
+then-planned product prerequisites. Main now admits the CRT, static sysroot and
+combined sysroot families from those results: **223 implemented-foundation
+capabilities and 18 foundation-verified families**. The seven correctness gate
+families remain pending; `performance.release` stays deferred.
 
-**Next:** finish the producer evidence, then admit the three product families
-and seven correctness gates in dependency order after their native checks pass.
-The strict POSIX gate validator repair is integrated at `c154400e3` after focused
-tests and a real native-publication replay. It preserves physical receipt
-validation and the leaf's non-promoting boundary. After the producer run stops,
-make its gate admissions in that worktree with `c154400e3` and `200d132cc`
-applied. Keep the other producer inputs intact: receipts also bind harness
-input bytes outside the product digest. Merge the admissions into main, then
-run one complete fresh correctness candidate in the prepared
-`.work/wt/f2-fresh-final` worktree on the integrated commit. Record
-the accepted commit and evidence here. CRAB-5 and CRAB-6 retain their diagnostic
-work in `TODO.md`. No F2 milestone is accepted yet.
+The public-data reader repair `d6271924b` preserves product identity across
+informational revision changes; its 27 tests and baseline-failing regression
+pass. Strict POSIX replay still refuses the older producer after a status
+commit: its reconstructed receipt and admission bind collecting source and
+ledger bytes. Preserve those failures and the original producer evidence.
+
+**Next:** run one complete fresh correctness candidate in
+`.work/wt/f2-fresh-final`. Stage the seven remaining gate declarations only on
+that isolated candidate branch so all producers and readers see one fixed
+commit. Those declarations are provisional and must not reach main before
+all seven gates pass with `complete: true` and `fresh: true`. Integrate the
+accepted candidate without changing its tested files, then record its commit
+and evidence here. A failed run returns to F1; no reader is weakened to reuse
+old evidence. CRAB-5 and CRAB-6 retain their diagnostics in `TODO.md`.
+No F2 milestone is accepted yet.
 
 ## Goal and completion boundary
 
