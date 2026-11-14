@@ -8,26 +8,21 @@ skills. Git retains the earlier plans; do not maintain a second handoff or log.
 
 ## Status and first action
 
-S0–S5 were accepted on structure, correctness and hardening (S5 at
-`1faf5ab6f`). R0 rebuilt products; D20 removed duplicate `mem*` bodies and D22
-removed per-symbol ABI-selection machinery. The last inspected product revision
-is `85a1756` (export-delta change); fresh correctness closure remains pending.
+F2 remains open. The current producer run qualifies `f402e22c6` in
+`.work/wt/f2-run2/.work/x86_64/feature-complete`. It has completed 40 steps and
+is running `text-family`. Main at `9c0cb9170` has the same product digest.
+The campaign report accounts for **223 implemented-foundation capabilities**
+and **15 foundation-verified families**. Ten correctness families still need
+admission. `performance.release` remains deferred.
 
-The checked-in campaign report at that revision accounts for **223 selected
-capabilities: 180 implemented-foundation and 43 selected-private**. Of **25
-nonperformance families**, 9 are foundation-verified and 16 still planned.
-These are incomplete family claims, not a count of missing functions: substantial
-private implementations and behavior tests already exist. Static and dynamic
-products remain implemented-unqualified. The `math/pow` and C-ABI admission
-holds remain unresolved correctness work; no fresh native run is claimed here.
-
-**Next:** run `./scripts/dev-x86_64.sh campaign-status`, assign the ready
-workstreams in [docs/lanes.md](docs/lanes.md), and launch independent behavior
-closure/implementation lanes in the first scheduling cycle. Give one integration
-owner the fresh correctness run and feed its failures to the relevant lanes.
-Do not wait for that whole run, a performance baseline or one family's admission
-before starting independent work. The report's dependency-ready transitions are
-an acceptance order, not the implementation queue.
+**Next:** finish the producer evidence, then admit the three product families
+and seven correctness gates in dependency order after their native checks pass.
+Repair the strict POSIX gate validator first: its private-leaf check currently
+rejects a completed family even with required receipts. Keep physical receipt
+validation and the leaf's non-promoting boundary. After these admissions, run
+one complete fresh correctness candidate on the integrated commit and record
+the accepted commit and evidence here. CRAB-5 and CRAB-6 retain their diagnostic
+work in `TODO.md`. No F2 milestone is accepted yet.
 
 ## Goal and completion boundary
 
