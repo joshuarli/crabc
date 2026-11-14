@@ -156,19 +156,16 @@ class PublicSupportDeclarationTests(unittest.TestCase):
 class X86ParityLedgerTests(unittest.TestCase):
     def test_verified_family_receipts_are_opt_in_to_the_ledger_check(self) -> None:
         data = self.data()
-        planned = [row for row in data["family"]
-                   if row["status"] == "planned" and row["id"] != "performance.release"]
-        self.assertTrue(planned)
-        for family in planned:
-            family["status"] = "foundation-verified"
-            for evidence in family["native_evidence"]:
-                evidence["state"] = "verified"
-                if family["id"] != "sysroot.static-tls":
-                    evidence["receipt"] = f".work/x86_64/fixture/{family['id']}/receipt.json"
-
-        ledger.validate_ledger(data)
-        with self.assertRaises(ledger.LedgerError):
-            ledger.validate_ledger(data, require_receipts=True)
+        family = self.family(data, "libc.posix-runtime")
+        family["status"] = "foundation-verified"
+        scratch = ledger.ROOT / ".work/tmp"
+        scratch.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(dir=scratch) as temporary:
+            missing = Path(temporary) / "missing-admission.json"
+            family["native_evidence"][0]["receipt"] = missing.relative_to(ledger.ROOT).as_posix()
+            ledger.validate_ledger(data)
+            with self.assertRaisesRegex(ledger.LedgerError, "POSIX family admission receipt must be a physical"):
+                ledger.validate_ledger(data, require_receipts=True)
 
     def test_reviewed_membarrier_cpp_matrix_rows_reject_foreign_or_missing_difference(self) -> None:
         report = json.loads(ledger.HEADER_ABI_MATRIX_REPORT_PATH.read_text(encoding="utf-8"))
