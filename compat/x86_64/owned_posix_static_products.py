@@ -61,7 +61,8 @@ def read(path: Path) -> object:
     def unique_pairs(pairs: list[tuple[str, object]]) -> dict:
         result = {}
         for key, value in pairs:
-            require(key not in result, f"duplicate JSON key in {path}: {key}")
+            if key in result:
+                raise PreparationError(f"duplicate JSON key in {path}: {key}")
             result[key] = value
         return result
     def invalid_constant(value: str) -> None:

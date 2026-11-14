@@ -145,6 +145,12 @@ class StaticPreparationTests(unittest.TestCase):
                 self.validate()
             path.write_text(original)
 
+    def test_nested_duplicate_json_key_retains_path_and_key(self):
+        self.receipt.write_text('{"outer": [{"inner": 1, "inner": 2}]}')
+        with self.assertRaises(preparation.PreparationError) as raised:
+            preparation.read(self.receipt)
+        self.assertEqual(str(raised.exception), f"duplicate JSON key in {self.receipt}: inner")
+
     def test_retention_makes_private_archives_readable_without_changing_write_or_execute_bits(self):
         archive = self.work / "archives/primary.tar.xz"
         archive.chmod(0o600)
