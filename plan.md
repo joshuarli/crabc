@@ -10,15 +10,15 @@ skills. Git retains the earlier plans; do not maintain a second handoff or log.
 
 F2 remains open. The current producer run qualifies `f402e22c6` in
 `.work/wt/f2-run2/.work/x86_64/feature-complete`. It has completed 40 steps and
-is running `text-family`. Main at `9c0cb9170` has the same product digest.
+is running `text-family`. Main's later harness changes preserve its product digest.
 The campaign report accounts for **223 implemented-foundation capabilities**
 and **15 foundation-verified families**. Ten correctness families still need
 admission. `performance.release` remains deferred.
 
 **Next:** finish the producer evidence, then admit the three product families
 and seven correctness gates in dependency order after their native checks pass.
-Repair the strict POSIX gate validator first: its private-leaf check currently
-rejects a completed family even with required receipts. Keep physical receipt
+The strict POSIX gate validator repair is integrated at `c154400e3` after focused
+tests and a real native-publication replay. It preserves physical receipt
 validation and the leaf's non-promoting boundary. After these admissions, run
 one complete fresh correctness candidate on the integrated commit and record
 the accepted commit and evidence here. CRAB-5 and CRAB-6 retain their diagnostic
