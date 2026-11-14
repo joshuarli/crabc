@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import copy
-from contextlib import redirect_stderr
+from contextlib import ExitStack, redirect_stderr
 import hashlib
 import importlib.util
 import io
@@ -115,6 +115,64 @@ class PublicDataOrdinaryLinkEvidenceTests(unittest.TestCase):
         self.assertEqual(admitted["static_preparation"]["primary"]["path"],
                          self.static.relative_to(self.root).as_posix())
         self.assertEqual(admitted["dynamic_product"]["path"], self.dynamic.relative_to(self.root).as_posix())
+
+    def test_report_replay_accepts_revision_only_and_rejects_input_drift(self) -> None:
+        inputs = self.admit()
+        work = self.root / ".work/report-replay"
+        work.mkdir()
+        probe = work / "public_data_ordinary_link_probe.c"
+        probe.write_bytes(evidence.PROBE.read_bytes())
+        obj = work / "probe.o"
+        obj.write_bytes(b"object")
+        report = {
+            "schema": evidence.SCHEMA, "status": "ordinary-link-evidence-unqualified",
+            "target": "x86_64-unknown-linux-musl", "image": "crabc-core-evidence@sha256:" + "a" * 64,
+            "source_before": inputs, "source_after": copy.deepcopy(inputs), "selection": {},
+            "probe": {"source": evidence.work_file_identity(self.root, probe, "probe"),
+                      "object": evidence.work_file_identity(self.root, obj, "object")},
+            "oracle": {"compiler_wrapper_sha256": "x"}, "oracle_static_inputs": {},
+            "tools": {}, "execution_roots": {}, "commands": [], "executables": {},
+            "observations": {}, "links": {}, "limits": [
+                "No lifecycle, strong-override, interposition, COPY-relocation, or header-feature-profile proof.",
+                "Shared-only _dl_debug_addr remains owned by the loader debugger component.",
+                "Prepared/materialized ordinary-link evidence is not runtime qualification, family completion, or public support.",
+            ],
+        }
+        report_path = work / "report.json"
+        current = copy.deepcopy(inputs)
+        current["source"]["revision"] = "c" * 40
+        leaves = ("validate_oracle_identity", "validate_oracle_static_inputs", "validate_command_records",
+                  "validate_executable_observations", "validate_execution_roots", "validate_observations",
+                  "validate_links")
+        with ExitStack() as stack:
+            stack.enter_context(mock.patch.object(evidence, "admit_inputs", side_effect=lambda *args: current))
+            stack.enter_context(mock.patch.object(evidence, "selection_identity", return_value={}))
+            stack.enter_context(mock.patch.object(
+                evidence, "validate_tool_roster",
+                return_value={"oracle_wrapper": {"original": {"sha256": "x"}}}))
+            for name in leaves:
+                stack.enter_context(mock.patch.object(evidence, name))
+            def validate() -> None:
+                report_path.write_text(json.dumps(report), encoding="utf-8")
+                evidence.validate_report(self.root, report_path)
+
+            validate()
+            current["source"]["content_sha256"] = "d" * 64
+            with self.assertRaisesRegex(evidence.PublicDataEvidenceError, "source or product identity differs"):
+                validate()
+            current["source"]["content_sha256"] = inputs["source"]["content_sha256"]
+            current["dynamic_product"]["manifest"]["sha256"] = "d" * 64
+            with self.assertRaisesRegex(evidence.PublicDataEvidenceError, "source or product identity differs"):
+                validate()
+            current["dynamic_product"] = copy.deepcopy(inputs["dynamic_product"])
+            report["source_after"]["source"]["revision"] = "e" * 40
+            with self.assertRaisesRegex(evidence.PublicDataEvidenceError, "source or product identity differs"):
+                validate()
+            report["source_after"] = copy.deepcopy(inputs)
+            report["source_before"]["source"] = {"content_sha256": "b" * 64}
+            report["source_after"]["source"] = {"content_sha256": "b" * 64}
+            with self.assertRaisesRegex(evidence.PublicDataEvidenceError, "source or product identity differs"):
+                validate()
 
     def test_strict_json_accepts_raw_command_arrays_and_rejects_nonfinite_numbers(self) -> None:
         command = self.root / ".work/raw-command.json"

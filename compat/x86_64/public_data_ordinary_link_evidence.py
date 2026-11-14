@@ -1350,7 +1350,17 @@ def validate_report(root: Path, report_path: Path) -> dict[str, Any]:
     static_product = root / primary["path"]
     dynamic_product = root / dynamic["path"]
     actual_inputs = admit_inputs(root, static_receipt, static_product, dynamic_product)
-    require(same_json(before, actual_inputs) and same_json(report["source_after"], actual_inputs),
+    source = before["source"]
+    actual_source = actual_inputs.get("source")
+    require(type(source) is dict and set(source) == {"revision", "content_sha256"}
+            and type(actual_source) is dict and set(actual_source) == {"revision", "content_sha256"}
+            and type(source["revision"]) is str and type(actual_source["revision"]) is str
+            and re.fullmatch(r"[0-9a-f]{40}|[0-9a-f]{64}", source["revision"]) is not None
+            and re.fullmatch(r"[0-9a-f]{40}|[0-9a-f]{64}", actual_source["revision"]) is not None
+            and source_seal.same_product(source, actual_source)
+            and same_json(before, report["source_after"])
+            and same_json({key: value for key, value in before.items() if key != "source"},
+                          {key: value for key, value in actual_inputs.items() if key != "source"}),
             "ordinary-link source or product identity differs")
     policy = selection_identity(root)
     require(same_json(report["selection"], policy), "ordinary-link selection contract changed")
