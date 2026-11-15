@@ -880,7 +880,10 @@ def build_reference(
     shared = [objects[name] for name, _ in roster if name not in {"src/lua.c", "src/luac.c"}]
 
     def link(arguments: Sequence[str], output: Path, label: str) -> dict[str, object]:
-        record = command(arguments, work=work, state=work / f"reference-link-{label}", timeout=timeout)
+        record = command(
+            [arguments[0], *LUA.X86_MUSL_LINK_FLAGS, *arguments[1:]],
+            work=work, state=work / f"reference-link-{label}", timeout=timeout,
+        )
         require_success(record, f"pinned-musl dynamic link {label}")
         if not output.is_file() or output.is_symlink():
             raise LUA.RunnerError(f"pinned-musl dynamic link did not produce {label}")

@@ -54,6 +54,8 @@ DEFAULT_X86_STATIC_WORK_ROOT = ROOT / ".work/x86_64/lua-static-source-build"
 # them keeps its private report and never replaces an accepted-C latest report.
 X86_ALLOCATOR_BACKENDS = ("accepted-c", "native-shadow")
 X86_MUSL_COMPILER = Path("/usr/local/bin/crabc-x86_64-musl-gcc")
+# Mold otherwise reports link completion before its worker exits.
+X86_MUSL_LINK_FLAGS = ("-Wl,--no-fork",)
 DEFAULT_JOBS = 4
 MAX_JOBS = 8
 CORE_SOURCES = (
@@ -1820,7 +1822,7 @@ def pinned_musl_static_pie_wrapper_diagnostic(work: Path, timeout: float) -> dic
     output = diagnostic / "minimal-static-pie"
     source.write_text("int main(void) { return 0; }\n", encoding="utf-8", newline="\n")
     compile_record = command_record(
-        [str(compiler), "-static-pie", "-fPIE", "-fno-stack-protector", str(source), "-o", str(output)],
+        [str(compiler), *X86_MUSL_LINK_FLAGS, "-static-pie", "-fPIE", "-fno-stack-protector", str(source), "-o", str(output)],
         cwd=diagnostic,
         environment=static_environment(diagnostic / "compile"),
         timeout=timeout,
@@ -1887,6 +1889,7 @@ def build_static_reference(
                 str(compiler),
                 reference_mode.driver_flag,
                 "-no-pie",
+                *X86_MUSL_LINK_FLAGS,
                 *static_compiler_flags(build_profile),
                 "-I",
                 str(source / "src"),

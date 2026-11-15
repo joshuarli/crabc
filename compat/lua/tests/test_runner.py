@@ -18,6 +18,7 @@ import tempfile
 import threading
 import time
 import unittest
+from unittest import mock
 from pathlib import Path
 
 
@@ -491,6 +492,116 @@ class NativeStaticContracts(unittest.TestCase):
         self.assertEqual([record["status"] for record in records], [0, 0, 0, 0])
         self.assertEqual(len(observed), 4)
         self.assertTrue(all("preexec_fn" not in keywords for keywords in observed))
+
+    def test_static_reference_waits_for_mold_linker(self) -> None:
+        compiler = Path("/usr/local/bin/crabc-x86_64-musl-gcc")
+        if not compiler.is_file() or shutil.which("gcc") is None:
+            self.skipTest("pinned native compiler and gcc are required")
+        root = self.temporary
+        source = root / "source/src"
+        source.mkdir(parents=True)
+        for name in ("lua.c", "luac.c"):
+            (source / name).write_text("int main(void) { return 0; }\n")
+        shim_source = root / "hold.c"
+        shim = root / "hold.so"
+        marker = root / "member"
+        shim_source.write_text(r'''#define _GNU_SOURCE
+#include <unistd.h>
+#include <sys/syscall.h>
+#include <fcntl.h>
+#include <string.h>
+#include <stdio.h>
+#include <stdlib.h>
+ssize_t write(int fd, const void *buf, size_t n) {
+    char exe[512];
+    ssize_t len = readlink("/proc/self/exe", exe, sizeof(exe) - 1);
+    int target = len > 0 && fd > 2 && n == 1 && *(const unsigned char *)buf == 1;
+    if (len > 0) { exe[len] = 0; target = target && strstr(exe, "mold") != 0; }
+    ssize_t ret = syscall(SYS_write, fd, buf, n);
+    if (target && ret == 1) {
+        int f = open(getenv("MOLD_HOLD_MARKER"), O_CREAT | O_WRONLY | O_TRUNC, 0600);
+        if (f >= 0) {
+            char s[640];
+            int k = snprintf(s, sizeof(s), "pid=%ld ppid=%ld exe=%s\n",
+                             (long)getpid(), (long)getppid(), exe);
+            syscall(SYS_write, f, s, k);
+            close(f);
+        }
+        close(1); close(2);
+        for (;;) pause();
+    }
+    return ret;
+}
+''')
+        subprocess.run(["gcc", "-shared", "-fPIC", "-o", str(shim), str(shim_source)],
+                       check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        original_environment = RUNNER.static_environment
+        def environment(state: Path) -> dict[str, str]:
+            result = original_environment(state)
+            result.update(LD_PRELOAD=str(shim), MOLD_HOLD_MARKER=str(marker))
+            return result
+
+        original_check = RUNNER.owned_group_has_live_members
+        observed: list[str] = []
+        def observe(group: int) -> bool:
+            for entry in Path("/proc").iterdir():
+                if not entry.name.isdecimal():
+                    continue
+                try:
+                    stat = (entry / "stat").read_text()
+                    fields = stat.rsplit(")", 1)[1].split()
+                    if int(fields[2]) == group and fields[0] not in {"X", "Z"}:
+                        observed.append(stat + " cmdline=" + repr((entry / "cmdline").read_bytes()))
+                except (OSError, ValueError, IndexError):
+                    continue
+            return original_check(group)
+
+        with mock.patch.object(RUNNER, "owned_group_has_live_members", side_effect=observe):
+            control = RUNNER.command_record(
+                [str(compiler), "-static", "-no-pie", str(source / "lua.c"),
+                 "-o", str(root / "control")], environment=environment(root / "control-state"))
+        self.assertEqual(control["status"], "PROCESS_GROUP_LEAK", control)
+        self.assertTrue(marker.exists(), "mold notification was not intercepted")
+        self.assertTrue(any("mold" in member for member in observed), observed)
+        marker.unlink()
+        roster = (("src/lua.c", source / "lua.c"), ("src/luac.c", source / "luac.c"))
+        work = root / "build"
+        work.mkdir()
+        with mock.patch.object(RUNNER, "static_source_roster", return_value=roster), \
+             mock.patch.object(RUNNER, "static_environment", side_effect=environment):
+            result = RUNNER.build_static_reference(source.parent, source, work, 10.0)
+        self.assertFalse(marker.exists(), "reference linker notified before exit")
+        for path in result["paths"].values():
+            completed = subprocess.run([str(path)], capture_output=True, timeout=2)
+            self.assertEqual(completed.returncode, 0, completed.stderr)
+
+        dynamic_spec = importlib.util.spec_from_file_location(
+            "lua_mold_boundary_dynamic", RUNNER_PATH.with_name("run_x86_dynamic.py")
+        )
+        assert dynamic_spec is not None and dynamic_spec.loader is not None
+        dynamic = importlib.util.module_from_spec(dynamic_spec)
+        with mock.patch.dict(sys.modules, {"run": RUNNER}):
+            dynamic_spec.loader.exec_module(dynamic)
+        for name in ("crabc_probe", "crabc_fail"):
+            (source / f"{name}.crabc-dynamic.c").write_text(
+                "int fixture(void) { return 0; }\n"
+            )
+        library = source / "library.c"
+        library.write_text("int library(void) { return 0; }\n")
+        dynamic_roster = (*roster, ("src/library.c", library))
+        dynamic_work = root / "dynamic"
+        with mock.patch.object(dynamic, "dynamic_roster", return_value=dynamic_roster), \
+             mock.patch.object(RUNNER, "static_environment", side_effect=environment):
+            dynamic_result = dynamic.build_reference(source.parent, source, dynamic_work, 10.0)
+        self.assertFalse(marker.exists(), "dynamic reference linker notified before exit")
+        execution_environment = RUNNER.static_environment(root / "dynamic-run")
+        execution_environment["LD_LIBRARY_PATH"] = str(dynamic_result["paths"]["libraries"])
+        for name in ("lua", "luac"):
+            completed = subprocess.run(
+                [str(dynamic_result["paths"][name])], env=execution_environment,
+                capture_output=True, timeout=2,
+            )
+            self.assertEqual(completed.returncode, 0, completed.stderr)
 
     def test_timeout_and_clean_leader_exit_reap_owned_descendants(self) -> None:
         timeout_program = (
