@@ -8,29 +8,25 @@ skills. Git retains the earlier plans; do not maintain a second handoff or log.
 
 ## Status and first action
 
-F2 remains open. The `f402e22c6` producer in
-`.work/wt/f2-run2/.work/x86_64/feature-complete` passed all 84 producer and
-publication steps, including both Lua consumers. Its chain stopped at the
-then-planned product prerequisites. Main now admits the CRT, static sysroot and
-combined sysroot families from those results: **223 implemented-foundation
-capabilities and 18 foundation-verified families**. The seven correctness gate
-families remain pending; `performance.release` stays deferred.
+F2 remains open. Main has **223 implemented-foundation capabilities and
+18 foundation-verified families**. The seven correctness gate families remain
+pending; `performance.release` stays deferred.
 
-The public-data reader repair `d6271924b` preserves product identity across
-informational revision changes; its 27 tests and baseline-failing regression
-pass. Strict POSIX replay still refuses the older producer after a status
-commit: its reconstructed receipt and admission bind collecting source and
-ledger bytes. Preserve those failures and the original producer evidence.
+The fresh candidate `e30ca23be` in
+`.work/wt/f2-fresh-final/.work/x86_64/feature-complete` passed steps 0–78,
+including the combined sysroot, ABI behavior and Rust std/LTO consumer. Step 79
+failed in the primary Lua static consumer: the pinned-musl `luac` oracle build
+reported `PROCESS_GROUP_LEAK`; the reproduction and extracted Lua products
+passed. Its summary is `complete: false`, `fresh: true`. Preserve this failed
+run. Its seven gate declarations remain provisional on the isolated branch.
 
-**Next:** run one complete fresh correctness candidate in
-`.work/wt/f2-fresh-final`. Stage the seven remaining gate declarations only on
-that isolated candidate branch so all producers and readers see one fixed
-commit. Those declarations are provisional and must not reach main before
-all seven gates pass with `complete: true` and `fresh: true`. Integrate the
-accepted candidate without changing its tested files, then record its commit
-and evidence here. A failed run returns to F1; no reader is weakened to reuse
-old evidence. CRAB-5 and CRAB-6 retain their diagnostics in `TODO.md`.
-No F2 milestone is accepted yet.
+**Next:** establish and repair the Lua compiler process-boundary failure in
+`.work/wt/f2-lua-process-boundary`, retaining the strict descendant checks and a
+behavior regression. Then run one complete fresh correctness candidate on a
+new fixed commit. No provisional gate declaration reaches main before all
+seven gates pass with `complete: true` and `fresh: true`; no reader or oracle
+is weakened to reuse old evidence. Record the accepted commit and evidence
+here after integration. CRAB-5 and CRAB-6 retain their diagnostics in `TODO.md`.
 
 ## Goal and completion boundary
 
