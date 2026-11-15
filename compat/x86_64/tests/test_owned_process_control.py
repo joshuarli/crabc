@@ -8,6 +8,8 @@ import json
 import os
 from pathlib import Path
 import re
+import shutil
+import signal
 import subprocess
 import sys
 import tempfile
@@ -252,6 +254,66 @@ class OwnedProcessControlTests(unittest.TestCase):
                     self.assertEqual(output.read_text(), "raw stdout\n")
                     self.assertEqual(output.with_suffix(".stderr").read_text(), "raw stderr\n")
                     self.assertEqual(output.with_suffix(".status").read_text(), f"{status}\n")
+
+    def test_raw_fork_worker_waits_for_creator_locks_to_be_released(self) -> None:
+        scratch = ROOT / ".work/x86_64/tmp"
+        scratch.mkdir(parents=True, exist_ok=True)
+        work = Path(tempfile.mkdtemp(prefix="process-control-creator-", dir=scratch))
+        control = work / "creator.c"
+        control.write_text(r"""#define _GNU_SOURCE
+#include <sched.h>
+#include <unistd.h>
+
+extern int __real___clone(int (*)(void *), void *, int, void *, int *, void *, int *);
+
+int __wrap___clone(int (*entry)(void *), void *stack, int flags, void *argument,
+    int *parent_tid, void *tls, int *child_tid)
+{
+    int result = __real___clone(entry, stack, flags, argument, parent_tid, tls, child_tid);
+    if (result > 0 && (flags & CLONE_THREAD)) {
+        static const char marker[] = "creator-before-unlock\n";
+        (void)write(2, marker, sizeof marker - 1);
+        (void)usleep(500000);
+    }
+    return result;
+}
+""", encoding="utf-8")
+        root = work / "root"
+        root.mkdir()
+        consumer = root / "consumer"
+        compiled = subprocess.run(
+            ["/usr/local/bin/crabc-x86_64-musl-gcc", "-std=c11", "-fno-builtin",
+             '-DCRABC_PROCESS_CONTROL_EXECUTABLE="/consumer"', str(PROBE), str(control),
+             "-static", "-fno-pie", "-no-pie", "-pthread", "-Wl,--wrap=__clone",
+             "-o", str(consumer)],
+            capture_output=True,
+        )
+        (work / "compile.stdout").write_bytes(compiled.stdout)
+        (work / "compile.stderr").write_bytes(compiled.stderr)
+        self.assertEqual(compiled.returncode, 0, compiled.stderr.decode(errors="replace"))
+        chroot = shutil.which("chroot")
+        self.assertIsNotNone(chroot, "native process-control test requires chroot")
+        timed_out = False
+        with (work / "stdout").open("wb") as stdout, (work / "stderr").open("wb") as stderr:
+            process = subprocess.Popen(
+                [chroot, str(root), "/consumer"],
+                env={"PATH": "/", "EXEC_TOKEN": "parent", "LC_ALL": "C"},
+                stdin=subprocess.DEVNULL, stdout=stdout, stderr=stderr,
+                start_new_session=True,
+            )
+            try:
+                status = process.wait(timeout=40)
+            except subprocess.TimeoutExpired:
+                timed_out = True
+                os.killpg(process.pid, signal.SIGKILL)
+                status = process.wait(timeout=5)
+        (work / "status").write_text(f"{status}\n", encoding="utf-8")
+        output = (work / "stdout").read_bytes()
+        error = (work / "stderr").read_bytes()
+        self.assertFalse(timed_out, f"raw-fork worker inherited creator locks; evidence: {work}; {error!r}")
+        self.assertEqual(status, 0, f"{work}: {output!r}; {error!r}")
+        self.assertEqual(output, b"owned-process-control-ok fexecve-seccomp=9\n")
+        self.assertEqual(error, b"creator-before-unlock\n")
 
 
 class StaticProcessReceiptTests(unittest.TestCase):

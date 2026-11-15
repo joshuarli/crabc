@@ -70,9 +70,14 @@ and exit calls are fixture plumbing only; they do not select a public fork,
 pipe, supervision, or lifecycle API.
 
 The public creation entries are exercised directly. `fork` reports the
-child's own pid and parent through a pipe. As in musl, `fork` also succeeds in
-a process image copied by a raw `SYS_fork` from the initial thread or from a
-worker: that sole task keeps the copied TLS but has a new TID. Such an image
+child's own pid and parent through a pipe. It also forks through libc in a
+quiescent process image copied by a raw `SYS_fork` from the initial thread or
+from a worker: that sole task keeps the copied TLS but has a new TID. The
+worker waits on a raw pipe until `pthread_create` returns. The pinned musl
+oracle can start a worker while its creator still holds internal locks; a raw
+syscall snapshot skips the libc hooks that synchronize those locks. A native
+regression holds that creation window open and requires the complete probe
+to finish after the worker is released. Such an image
 was never prepared, so under the native allocator it takes the unprepared raw
 copy rather than the prepared-fork child contract. `clone` rejects a null stack and
 `CLONE_THREAD`, preserves `errno` on success, and runs its callback to an exit

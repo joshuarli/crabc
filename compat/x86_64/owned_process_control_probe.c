@@ -923,11 +923,8 @@ static int check_fork(void)
     return 0;
 }
 
-/* Musl's fork identifies its caller by thread pointer alone, so public fork
- * also succeeds in a process image copied by a raw SYS_fork, where the sole
- * task keeps the copied TLS but has a new TID. The raw child forks through
- * libc and proves the grandchild's identities; the raw copy is made from the
- * initial thread and from a worker. */
+/* A raw SYS_fork skips libc's atfork synchronization. The worker snapshot
+ * must wait for pthread_create to finish releasing its creation locks. */
 static int raw_image_fork_child(void)
 {
     int report[2] = { -1, -1 };
@@ -962,22 +959,46 @@ static int raw_image_fork(void)
     return exited_with(status, 48) ? 0 : 2;
 }
 
+struct raw_image_fork_worker_state {
+    int release;
+    int result;
+};
+
 static void *raw_image_fork_worker(void *argument)
 {
-    *(int *)argument = raw_image_fork();
+    struct raw_image_fork_worker_state *state = argument;
+    char release;
+    state->result = !raw_read_full(state->release, &release, 1) || release != 'R'
+        ? 3 : raw_image_fork();
     return NULL;
 }
 
 static int check_fork_in_raw_image(void)
 {
     pthread_t worker;
-    int worker_result = -1;
+    int release[2];
+    struct raw_image_fork_worker_state state;
+    char ready = 'R';
+    int released;
     if (raw_image_fork() != 0)
         return 1;
-    if (pthread_create(&worker, NULL, raw_image_fork_worker, &worker_result) != 0 ||
-        pthread_join(worker, NULL) != 0 || worker_result != 0)
+    if (raw_pipe(release) != 0)
         return 2;
-    return 0;
+    state.release = release[0];
+    state.result = -1;
+    if (pthread_create(&worker, NULL, raw_image_fork_worker, &state) != 0) {
+        (void)raw_close(release[0]);
+        (void)raw_close(release[1]);
+        return 2;
+    }
+    released = raw_write_full(release[1], &ready, 1);
+    (void)raw_close(release[1]);
+    if (pthread_join(worker, NULL) != 0) {
+        (void)raw_syscall1(SYS_exit_group, 72);
+        __builtin_unreachable();
+    }
+    (void)raw_close(release[0]);
+    return !released || state.result != 0 ? 2 : 0;
 }
 
 static unsigned char clone_stack[65536] __attribute__((aligned(16)));
