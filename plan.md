@@ -20,13 +20,20 @@ reported `PROCESS_GROUP_LEAK`; the reproduction and extracted Lua products
 passed. Its summary is `complete: false`, `fresh: true`. Preserve this failed
 run. Its seven gate declarations remain provisional on the isolated branch.
 
-**Next:** establish and repair the Lua compiler process-boundary failure in
-`.work/wt/f2-lua-process-boundary`, retaining the strict descendant checks and a
-behavior regression. Then run one complete fresh correctness candidate on a
-new fixed commit. No provisional gate declaration reaches main before all
-seven gates pass with `complete: true` and `fresh: true`; no reader or oracle
-is weakened to reuse old evidence. Record the accepted commit and evidence
-here after integration. CRAB-5 and CRAB-6 retain their diagnostics in `TODO.md`.
+Repair `9600a90d0` selects synchronous mold linking for the static and dynamic
+pinned-musl Lua oracles. A controlled real-linker regression fails before the
+repair; both runner modules now pass all 54 tests, including real descendant
+rejection and cancellation. Standalone static and dynamic Lua consumers pass
+on source `6916ac5b9`. The original failed member's identity remains unknown;
+the repair addresses the demonstrated asynchronous linker boundary without
+changing the oracle workload or weakening the process-group checker.
+
+**Next:** run one complete fresh correctness candidate in
+`.work/wt/f2-fresh-final2` on a new fixed commit. No provisional gate declaration
+reaches main before all seven gates pass with `complete: true` and `fresh: true`;
+no reader or oracle is weakened to reuse old evidence. Record the accepted
+commit and evidence here after integration. CRAB-5 and CRAB-6 retain their
+diagnostics in `TODO.md`.
 
 ## Goal and completion boundary
 
