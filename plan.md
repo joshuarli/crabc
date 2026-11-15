@@ -12,24 +12,27 @@ F2 remains open. Main has **223 implemented-foundation capabilities and
 18 foundation-verified families**. The seven correctness gate families remain
 pending; `performance.release` stays deferred.
 
-The fresh candidate `e30ca23be` in
-`.work/wt/f2-fresh-final/.work/x86_64/feature-complete` passed steps 0–78,
-including the combined sysroot, ABI behavior and Rust std/LTO consumer. Step 79
-failed in the primary Lua static consumer: the pinned-musl `luac` oracle build
-reported `PROCESS_GROUP_LEAK`; the reproduction and extracted Lua products
-passed. Its summary is `complete: false`, `fresh: true`. Preserve this failed
-run. Its seven gate declarations remain provisional on the isolated branch.
+The fresh candidate `79f3d6a44` in
+`.work/wt/f2-fresh-final2/.work/x86_64/feature-complete` passed steps 0–51.
+Step 52 failed when two combined-sysroot process-control musl oracles timed out
+before candidate execution. Its summary is `complete: false`, `fresh: true`.
+Preserve this failed run and its raw timeout evidence.
 
-Repair `9600a90d0` selects synchronous mold linking for the static and dynamic
-pinned-musl Lua oracles. A controlled real-linker regression fails before the
-repair; both runner modules now pass all 54 tests, including real descendant
-rejection and cancellation. Standalone static and dynamic Lua consumers pass
-on source `6916ac5b9`. The original failed member's identity remains unknown;
-the repair addresses the demonstrated asynchronous linker boundary without
-changing the oracle workload or weakening the process-group checker.
+Repair `afd426258` gates the fixture's raw-fork worker until `pthread_create`
+has returned. The original oracle reproduced a hang inside libc `fork` in the
+worker's raw copy. Holding the real musl creator window open reproduces the
+copied-lock deadlock; the regression fails on the original source and passes
+with the gate. The focused module passes 17 tests, the actual process-control
+consumer passes all 44 names in every selected link/entry mode, and its
+produced oracle passes 100 concurrent runs. Runtime and upstream source,
+semantic assertions and runner timeouts are unchanged.
+
+Cleanup retired 14 integrated lane worktrees. Verified compressed historical
+evidence and restoration notes are under `.work/tmp/f2-cleanup-archives/`.
+Permission-held fixtures and the preserved legacy holds remain in place.
 
 **Next:** run one complete fresh correctness candidate in
-`.work/wt/f2-fresh-final2` on a new fixed commit. No provisional gate declaration
+`.work/wt/f2-fresh-final3` on a new fixed commit. No provisional gate declaration
 reaches main before all seven gates pass with `complete: true` and `fresh: true`;
 no reader or oracle is weakened to reuse old evidence. Record the accepted
 commit and evidence here after integration. CRAB-5 and CRAB-6 retain their
