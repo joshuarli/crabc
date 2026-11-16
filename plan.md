@@ -8,37 +8,23 @@ skills. Git retains the earlier plans; do not maintain a second handoff or log.
 
 ## Status and first action
 
-F2 remains open. Main has **223 implemented-foundation capabilities and
-18 foundation-verified families**. The seven correctness gate families remain
-pending; `performance.release` stays deferred.
+**Winding down 2026-11-16.** Launch no new lane or qualification attempt. F2 remains open; performance qualification stays deferred.
+Resume prompt: "Read plan.md Status and resume F2 under D23/D24; require fresh current-source proof, preserve holds, do not start F3." First command after owner resume: `codex-campaign-closeout.py cancel`.
+Last accepted repair: `fd7351147` (focused native replay and authentication checks green; raw-byte review finding fixed), integrated and pushed through `0a3849e45`. Main has 223 mappings and 18 foundation families; seven gate declarations remain isolated.
+Current attempt: `lane/f2-fresh-final4` at `27761fdd3`, `.work/wt/f2-fresh-final4/.work/x86_64/feature-complete`; preserve it and let this attempt finish, then integrate only if all 86 steps and seven gates pass with `complete: true`, `fresh: true`. Never auto-retry.
+Cleanup retired 18 checkouts. Verified raw evidence and restoration notes: `.work/tmp/f2-cleanup-archives/README.md`. Six permission-held trees remain under `.work/wt/`: `f2-admission-review`, `f2-fresh-final2`, `f2-lua-process-boundary`, `f2-process-control-wait`, `f2-resolver-reader-env`, `f2-run2`; retain their refused fixtures without another access or removal attempt. Preserve the legacy holds below.
 
-The fresh candidate `cea501bc0` in
-`.work/wt/f2-fresh-final3/.work/x86_64/feature-complete` passed steps 0–83,
-including combined sysroots, Rust std/LTO and both Lua source-build consumers.
-Step 84 failed at the resolver publication gate: its physical reader required
-the pinned image command path while the chain supplied its scrubbed path.
-Its summary is `complete: false`, `fresh: true`. Preserve this failed run.
+- `lane/f2-admissions`: accepted patches equivalent to main; retained around refused fixtures; retry cleanup only after owner resolution.
+- `lane/f2-fresh-final`: historical candidate `e30ca23be`, failed Lua static; archived, superseded by current candidate; never merge its unverified declarations.
+- `lane/f2-fresh-final2`: historical `79f3d6a44`, failed combined-sysroot oracle; archived except refused records; use current repaired candidate on resume.
+- `lane/f2-fresh-final3`: historical `cea501bc0`, steps 0–83 passed, resolver replay failed at 84; archived and checkout retired; repair is in main.
+- `lane/f2-fresh-final4`: current attempt and provisional declarations; merge only after its full fresh correctness result, otherwise park exact failure.
+- `lane/f2-gate-closure`: accepted patch equivalent to main; keep non-ancestor history, no implementation retry needed.
+- `lane/f2-gate-review`: same accepted closure patch; keep non-ancestor history, no implementation retry needed.
+- `lane/f2-lua-process-boundary`: accepted Lua repair plus superseded unverified declarations; retain refused logs, use current candidate.
+- `lane/f2-timer-diagnostics`: accepted diagnostic patch equivalent to main; CRAB-6 remains unreproduced, retry investigation on a fresh failure.
 
-Repair `fd7351147` invokes the unchanged physical reader in a child with the
-authenticated image path and leaves the qualification environment unchanged.
-Retained receipt bytes must stay identical through replay. The real native
-receipt regression fails on the baseline and passes with the adapter. Native
-gate and leaf-authentication modules each passed 21 tests; the final raw-byte
-guard passes its LF-to-CRLF mutation regression and real native replay.
-Independent review found that newline-normalization defect, now corrected.
-No receipt authentication, runtime, upstream source or pin was weakened.
-
-Cleanup retired 17 integrated lane worktrees. Verified compressed historical
-evidence and restoration notes are under `.work/tmp/f2-cleanup-archives/`.
-Permission-held fixtures and legacy holds remain in place, including the
-repair checkout's refused host temporary-directory creation.
-
-**Next:** run one complete fresh correctness candidate in
-`.work/wt/f2-fresh-final4` on a new fixed commit. No provisional gate declaration
-reaches main before all seven gates pass with `complete: true` and `fresh: true`;
-no reader or oracle is weakened to reuse old evidence. Record the accepted
-commit and evidence here after integration. CRAB-5 and CRAB-6 retain their
-diagnostics in `TODO.md`.
+Next slice after resume: inspect the current attempt's retained summary; complete its acceptance or repair its exact failure. CRAB-5/CRAB-6 stay in `TODO.md`; no performance work during winddown.
 
 ## Goal and completion boundary
 
