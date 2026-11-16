@@ -10,6 +10,8 @@ does not build, run, or qualify a runtime.
 
 from __future__ import annotations
 
+from contextlib import contextmanager
+from contextvars import ContextVar
 import hashlib
 import json
 import os
@@ -663,7 +665,7 @@ def _validate_product_tree(root: Path, product: str, files: dict[str, str], alia
     return installed
 
 
-def _validate_static_product(root: Path) -> tuple[Path, dict[str, str]]:
+def _validate_static_product_uncached(root: Path) -> tuple[Path, dict[str, str]]:
     manifest_path, manifest, combined = _product_manifest(root, "static", STATIC_PRODUCT_FORMAT)
     if (manifest.get("schema"), manifest.get("format"), manifest.get("target")) != (1, STATIC_PRODUCT_FORMAT, TARGET):
         _fail("static product manifest has the wrong product identity")
@@ -713,7 +715,7 @@ def _validate_static_product(root: Path) -> tuple[Path, dict[str, str]]:
     return manifest_path, files
 
 
-def _validate_dynamic_product(root: Path) -> tuple[Path, dict[str, str]]:
+def _validate_dynamic_product_uncached(root: Path) -> tuple[Path, dict[str, str]]:
     manifest_path, manifest, combined = _product_manifest(root, "dynamic", DYNAMIC_PRODUCT_FORMAT)
     try:
         profile = NativeRuntimeProfile(manifest["hardening_profile"])
@@ -770,6 +772,46 @@ def _validate_dynamic_product(root: Path) -> tuple[Path, dict[str, str]]:
         raise ProductEvidenceError(str(error)) from error
     _validate_link_input_modes(root, DYNAMIC_LINK_INPUT_MODES, "dynamic link input")
     return manifest_path, files
+
+
+_product_validation_cache: ContextVar[tuple[frozenset[Path], dict] | None] = ContextVar(
+    "product_validation_cache", default=None,
+)
+
+
+@contextmanager
+def _reuse_product_validations(products: set[Path]):
+    """Reuse authenticated physical products between the caller's full tree checks.
+
+    The caller must snapshot these exact trees before entering and rehash them
+    after leaving, before accepting any result. Each reader pass needs a fresh
+    scope; independent readers retain full validation outside the scope.
+    """
+    token = _product_validation_cache.set((frozenset(products), {}))
+    try:
+        yield
+    finally:
+        _product_validation_cache.reset(token)
+
+
+def _validated_product(root: Path, kind: str, validate) -> tuple[Path, dict[str, str]]:
+    state = _product_validation_cache.get()
+    if state is None or root not in state[0]:
+        return validate(root)
+    cache = state[1]
+    key = (root, kind)
+    if key not in cache:
+        cache[key] = validate(root)
+    manifest, files = cache[key]
+    return manifest, files.copy()
+
+
+def _validate_static_product(root: Path) -> tuple[Path, dict[str, str]]:
+    return _validated_product(root, "static", _validate_static_product_uncached)
+
+
+def _validate_dynamic_product(root: Path) -> tuple[Path, dict[str, str]]:
+    return _validated_product(root, "dynamic", _validate_dynamic_product_uncached)
 
 
 def _validate_static_link_mode(root: Path, linkage: str) -> None:

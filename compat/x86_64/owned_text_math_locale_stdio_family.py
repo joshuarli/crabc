@@ -24,6 +24,7 @@ import tomllib
 from typing import Any, Callable, Mapping
 
 import owned_posix_family_execution as family
+import owned_posix_product_evidence as product_evidence
 import source_seal
 import owned_pthread_family as pthread
 
@@ -1031,9 +1032,10 @@ def collect(root: Path, request_path: Path, *, end_validation: Callable[[], None
     adapters = _reader_adapters()
     require(tuple(adapters) == tuple(COMPONENTS), "public component reader roster differs")
     observed: dict[str, dict[str, ComponentEvidence]] = {}
-    for name in COMPONENTS:
-        observed[name] = adapters[name](root, requests[name], context)
-        _require_component(name, observed[name], products, source_before)
+    with product_evidence._reuse_product_validations({path for pair in products.values() for path in pair.values()}):
+        for name in COMPONENTS:
+            observed[name] = adapters[name](root, requests[name], context)
+            _require_component(name, observed[name], products, source_before)
 
     _require_snapshots_current(root, directories, files, source_before)
     try:
@@ -1046,10 +1048,11 @@ def collect(root: Path, request_path: Path, *, end_validation: Callable[[], None
     _require_pthread(root, pthread_path, matrix_identity, source_before)
     final_adapters = _reader_adapters()
     require(tuple(final_adapters) == tuple(COMPONENTS), "public component reader roster changed")
-    for name in COMPONENTS:
-        replayed = final_adapters[name](root, requests[name], context)
-        _require_component(name, replayed, products, source_before)
-        require(replayed == observed[name], f"{name} public reader changed during collection")
+    with product_evidence._reuse_product_validations({path for pair in products.values() for path in pair.values()}):
+        for name in COMPONENTS:
+            replayed = final_adapters[name](root, requests[name], context)
+            _require_component(name, replayed, products, source_before)
+            require(replayed == observed[name], f"{name} public reader changed during collection")
 
     # Reuse the initial product/evidence-root snapshots for receipt identities.
     # The final check below ensures those bytes stayed unchanged through output
