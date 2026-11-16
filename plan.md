@@ -12,27 +12,29 @@ F2 remains open. Main has **223 implemented-foundation capabilities and
 18 foundation-verified families**. The seven correctness gate families remain
 pending; `performance.release` stays deferred.
 
-The fresh candidate `79f3d6a44` in
-`.work/wt/f2-fresh-final2/.work/x86_64/feature-complete` passed steps 0–51.
-Step 52 failed when two combined-sysroot process-control musl oracles timed out
-before candidate execution. Its summary is `complete: false`, `fresh: true`.
-Preserve this failed run and its raw timeout evidence.
+The fresh candidate `cea501bc0` in
+`.work/wt/f2-fresh-final3/.work/x86_64/feature-complete` passed steps 0–83,
+including combined sysroots, Rust std/LTO and both Lua source-build consumers.
+Step 84 failed at the resolver publication gate: its physical reader required
+the pinned image command path while the chain supplied its scrubbed path.
+Its summary is `complete: false`, `fresh: true`. Preserve this failed run.
 
-Repair `afd426258` gates the fixture's raw-fork worker until `pthread_create`
-has returned. The original oracle reproduced a hang inside libc `fork` in the
-worker's raw copy. Holding the real musl creator window open reproduces the
-copied-lock deadlock; the regression fails on the original source and passes
-with the gate. The focused module passes 17 tests, the actual process-control
-consumer passes all 44 names in every selected link/entry mode, and its
-produced oracle passes 100 concurrent runs. Runtime and upstream source,
-semantic assertions and runner timeouts are unchanged.
+Repair `fd7351147` invokes the unchanged physical reader in a child with the
+authenticated image path and leaves the qualification environment unchanged.
+Retained receipt bytes must stay identical through replay. The real native
+receipt regression fails on the baseline and passes with the adapter. Native
+gate and leaf-authentication modules each passed 21 tests; the final raw-byte
+guard passes its LF-to-CRLF mutation regression and real native replay.
+Independent review found that newline-normalization defect, now corrected.
+No receipt authentication, runtime, upstream source or pin was weakened.
 
-Cleanup retired 14 integrated lane worktrees. Verified compressed historical
+Cleanup retired 17 integrated lane worktrees. Verified compressed historical
 evidence and restoration notes are under `.work/tmp/f2-cleanup-archives/`.
-Permission-held fixtures and the preserved legacy holds remain in place.
+Permission-held fixtures and legacy holds remain in place, including the
+repair checkout's refused host temporary-directory creation.
 
 **Next:** run one complete fresh correctness candidate in
-`.work/wt/f2-fresh-final3` on a new fixed commit. No provisional gate declaration
+`.work/wt/f2-fresh-final4` on a new fixed commit. No provisional gate declaration
 reaches main before all seven gates pass with `complete: true` and `fresh: true`;
 no reader or oracle is weakened to reuse old evidence. Record the accepted
 commit and evidence here after integration. CRAB-5 and CRAB-6 retain their
