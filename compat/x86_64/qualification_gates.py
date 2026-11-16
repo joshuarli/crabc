@@ -189,19 +189,34 @@ def _validate_resolver_network(path: Path) -> Mapping[str, Any]:
     The resolver-network runner retains ``state_root/report.json`` and
     publishes identical bytes below `compat/reports/resolver-network/x86_64`.
     Publication selects the retained copy (standalone ``latest.json`` or a
-    family run's ``family-NAME-EXECUTION.json`` alike); the leaf reader then replays
-    the public report and requires those bytes to match.
+    family run's ``family-NAME-EXECUTION.json`` alike). The child reader uses the
+    pinned image command path while this interpreter keeps its scrubbed environment.
     """
     reader = _import_compat("resolver_network_component_receipt")
     try:
-        document = json.loads(path.read_text(encoding="utf-8"))
+        retained_bytes = path.read_bytes()
+        document = json.loads(retained_bytes.decode("utf-8"))
     except (OSError, UnicodeDecodeError, json.JSONDecodeError) as error:
         raise EvidenceUnmet(f"resolver-network retained report is unreadable: {error}") from error
     public = document.get("published_report") if isinstance(document, dict) else None
     mount = reader.SOURCE_MOUNT.rstrip("/") + "/"
     unmet_unless(isinstance(public, str) and public.startswith(mount),
                  "resolver-network retained report names no published report")
-    report = reader.validate_report(ROOT, ROOT / public[len(mount):])
+    environment = {**os.environ, "PATH": reader.trusted_image_manifest(ROOT)["path"]}
+    try:
+        completed = subprocess.run(
+            [sys.executable, "-B", str(ROOT / "compat/x86_64/resolver_network_component_receipt.py"),
+             "validate-report", "--root", str(ROOT), "--report", str(ROOT / public[len(mount):])],
+            cwd=ROOT, env=environment, stdin=subprocess.DEVNULL, capture_output=True, text=True,
+        )
+    except OSError as error:
+        raise EvidenceUnmet(f"resolver-network physical replay could not start: {error}") from error
+    unmet_unless(completed.returncode == 0,
+                 f"resolver-network physical replay failed ({completed.returncode}): "
+                 f"{completed.stderr.strip()} {completed.stdout.strip()}")
+    unmet_unless(path.read_bytes() == retained_bytes,
+                 "resolver-network retained report changed during replay")
+    report = document
     state = report.get("state_root")
     unmet_unless(isinstance(state, str) and state.startswith(mount)
                  and ROOT / state[len(mount):] / "report.json" == path,

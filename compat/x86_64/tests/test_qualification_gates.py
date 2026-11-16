@@ -6,6 +6,7 @@ from __future__ import annotations
 import hashlib
 import io
 import json
+import os
 import sys
 import tempfile
 import unittest
@@ -365,23 +366,89 @@ class ResolverNetworkPublicationTests(unittest.TestCase):
         patcher.start()
         self.addCleanup(patcher.stop)
         self.reader = gates._import_compat("resolver_network_component_receipt")
+        image = patch.object(self.reader, "trusted_image_manifest", return_value={"path": "/pinned/bin"})
+        image.start()
+        self.addCleanup(image.stop)
+        process = patch.object(gates.subprocess, "run", return_value=SimpleNamespace(
+            returncode=0, stdout="valid\n", stderr=""))
+        self.run = process.start()
+        self.addCleanup(process.stop)
 
     def test_the_published_report_is_replayed_and_must_retain_this_copy(self):
-        with patch.object(self.reader, "validate_report", return_value=self.document) as validate:
+        with patch.dict(os.environ, {"PATH": "/qualification/bin"}):
             self.assertEqual(gates._validate_resolver_network(self.retained), self.document)
-        validate.assert_called_once_with(self.root, self.root / "compat/reports/resolver-network/x86_64/family-run.json")
+            self.assertEqual(os.environ["PATH"], "/qualification/bin")
+        argv = self.run.call_args.args[0]
+        self.assertEqual(argv, [sys.executable, "-B",
+                               str(self.root / "compat/x86_64/resolver_network_component_receipt.py"),
+                               "validate-report", "--root", str(self.root), "--report",
+                               str(self.root / "compat/reports/resolver-network/x86_64/family-run.json")])
+        self.assertEqual(self.run.call_args.kwargs["env"]["PATH"], "/pinned/bin")
 
         for changed, message in (
             ({"state_root": "/workspace/.work/x86_64/other"}, "retained copy"),
             ({"passed": False}, "did not pass"),
         ):
-            with self.subTest(message=message), patch.object(
-                    self.reader, "validate_report", return_value={**self.document, **changed}):
+            with self.subTest(message=message):
+                self.retained.write_text(json.dumps({**self.document, **changed}), encoding="utf-8")
                 with self.assertRaisesRegex(gates.EvidenceUnmet, message):
                     gates._validate_resolver_network(self.retained)
         self.retained.write_text(json.dumps({"state_root": "x"}), encoding="utf-8")
         with self.assertRaisesRegex(gates.EvidenceUnmet, "names no published report"):
             gates._validate_resolver_network(self.retained)
+
+    def test_child_failure_and_receipt_mutation_remain_unmet(self):
+        self.run.return_value = SimpleNamespace(returncode=1, stdout="", stderr="image identity differs")
+        with patch.dict(os.environ, {"PATH": "/qualification/bin"}):
+            with self.assertRaisesRegex(gates.EvidenceUnmet, "image identity differs"):
+                gates._validate_resolver_network(self.retained)
+            self.assertEqual(os.environ["PATH"], "/qualification/bin")
+
+        def replace_receipt(*args, **kwargs):
+            self.retained.write_text("{}", encoding="utf-8")
+            return SimpleNamespace(returncode=0, stdout="valid\n", stderr="")
+
+        self.run.side_effect = replace_receipt
+        with self.assertRaisesRegex(gates.EvidenceUnmet, "changed during replay"):
+            gates._validate_resolver_network(self.retained)
+
+class ResolverNetworkPublicationMutationTests(unittest.TestCase):
+    def test_retained_newlines_are_compared_as_bytes(self):
+        root = Path("/qualification-fixture")
+        retained = root / ".work/x86_64/network/report.json"
+        document = {"published_report": "/workspace/compat/reports/resolver-network/x86_64/report.json",
+                    "state_root": "/workspace/.work/x86_64/network", "passed": True}
+        original = (json.dumps(document) + "\n").encode("utf-8")
+        changed = original.replace(b"\n", b"\r\n")
+        reader = gates._import_compat("resolver_network_component_receipt")
+        with patch.object(gates, "ROOT", root), \
+             patch.object(reader, "trusted_image_manifest", return_value={"path": "/pinned/bin"}), \
+             patch.object(gates.subprocess, "run", return_value=SimpleNamespace(
+                 returncode=0, stdout="valid\n", stderr="")), \
+             patch.object(Path, "read_text", return_value=original.decode("utf-8")), \
+             patch.object(Path, "read_bytes", side_effect=[original, changed]):
+            with self.assertRaisesRegex(gates.EvidenceUnmet, "changed during replay"):
+                gates._validate_resolver_network(retained)
+
+
+class ResolverNetworkNativePublicationTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        report = os.environ.get("CRABC_RESOLVER_NETWORK_TEST_REPORT")
+        if not report:
+            raise unittest.SkipTest("set CRABC_RESOLVER_NETWORK_TEST_REPORT to a fresh native resolver receipt")
+        cls.root = Path(os.environ.get("CRABC_RESOLVER_NETWORK_TEST_ROOT", "/workspace"))
+        document = json.loads(Path(report).read_text(encoding="utf-8"))
+        cls.retained = cls.root / Path(document["state_root"]).relative_to("/workspace") / "report.json"
+
+    def test_real_receipt_replays_under_the_qualification_environment(self):
+        import run_qualification_manifest as runner
+
+        environment = runner.controlled_environment()
+        with patch.dict(os.environ, environment, clear=True), patch.object(gates, "ROOT", self.root):
+            report = gates._validate_resolver_network(self.retained)
+            self.assertTrue(report["passed"])
+            self.assertEqual(os.environ["PATH"], environment["PATH"])
 
 
 class CheckedInGateRegistryTests(unittest.TestCase):
