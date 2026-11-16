@@ -7,6 +7,12 @@ behavioral review and integration. All performance and memory-efficiency gates
 are waived until full feature completeness. Correctness, memory safety, ABI,
 ownership and selected hardening remain mandatory.
 
+Read [Status](../plan.md#status-and-first-action) first. Its winddown and phase
+override dispatch guidance here. The current campaign is in F2 closeout: after
+owner resume, reconcile the retained attempt and use only the demonstrated
+blocker, review and acceptance work in [F2 closeout](../plan.md#f2-closeout).
+The implementation pool below is not a queue to restart at every resume.
+
 The Rust allocator port and its private harness remain frozen; the pinned C
 backend's crabc integration is open for functional fixes. Preserve AArch64
 without executing or emulating it. The exact boundaries remain in
@@ -24,15 +30,20 @@ supersedes serial defaults and any `perf-gate-ready`/quiet-host headroom
 prerequisite for parallel dispatch. Do not create new repository-specific agent
 types, a scheduler or a receipt system.
 
-**Fill every available agent slot with ready implementation, review or focused
-validation work.** Refill a slot when a lane finishes or blocks; do not wait for
-all members of a batch. The lane pool below is deliberately wider than a small
+**During F0/F1, fill useful available slots with ready implementation, review or
+focused validation work.** Refill a slot when a lane finishes or blocks; do not
+wait for all members of a batch. The lane pool below is deliberately wider than a small
 harness's concurrency cap. With more capacity, split independent file sets and
 test matrices; with fewer slots, run successive waves from the same queue.
 Respect actual tool/provider limits and the configured caps (Codex 16, Claude
 24); these are ceilings, not reasons to invent work. Idle capacity needs a
 concrete reason such as no independent ready work or exhausted build resources,
 not the old preference for a narrow campaign.
+
+During F2, keep one fixed acceptance candidate. Assign independent demonstrated
+blockers and their review in parallel where useful; do not reopen completed
+families to fill slots. If no independent selected blocker is ready, leave
+unused capacity idle. Winddown authorizes no new lane or qualification attempt.
 
 Agent parallelism and build parallelism are separate. Keep reasoning, coding
 and review lanes running while queuing heavy native builds to fit the host.
@@ -166,10 +177,14 @@ derived inventories from resolved inputs; never rewrite frozen AArch64 inputs
 or inherit a worker's receipt as proof of a different merged product.
 
 Run correctness checkpoints after coherent integration batches, and one complete
-fresh correctness run after the feature queue is closed. Keep other ready lanes
-running in their worktrees during these runs. A change invalidating a checkpoint
-is tested at the next applicable checkpoint; it does not justify holding all
+fresh correctness run after the feature queue is closed. During F0/F1, keep other
+ready lanes running in their worktrees during checkpoints. A change invalidating
+a checkpoint is tested at the next applicable checkpoint; it does not justify holding all
 feature implementation until a global run finishes.
+For F2, finish known repairs and their producer/publication/reader checks before
+the fresh run. Keep that candidate checkout unchanged throughout qualification;
+record progress elsewhere. A later status-only commit names the tested SHA
+without restarting qualification or relabeling its evidence.
 
 No pre/post benchmark, instruction/syscall ratio, CPU/RSS/allocation/footprint
 budget or quiet-host measurement window is required to merge feature work.
@@ -180,6 +195,7 @@ valid failure handling, resource ownership and required cleanup remain behavior
 obligations, independent of memory-efficiency comparisons.
 
 The exit criteria are in [completion-requirements.md](completion-requirements.md).
-Only after that feature milestone may the campaign move to performance/memory
-optimization and full release qualification. Feature completion itself does
-not promote a backend, a target or a public-support claim.
+At that feature milestone, report acceptance and stop this campaign.
+Performance/memory optimization and full release qualification are a separate
+follow-up. Feature completion itself does not promote a backend, a target or a
+public-support claim.

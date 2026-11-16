@@ -20,6 +20,10 @@ waived until feature completeness; correctness, memory safety, ABI compatibility
 and hardening remain required. Default qualification runs seven correctness
 gates and defers performance. The pinned C mimalloc integration is open for
 correctness work; the Rust allocator port and its promotion remain frozen.
+The campaign is now at [F2 closeout](plan.md#f2-closeout); the plan's current
+winddown remains in effect pending owner resume. Accept the retained candidate
+or repair its demonstrated blockers, then stop at the feature milestone.
+Performance qualification is a separate follow-up.
 
 ## Support
 

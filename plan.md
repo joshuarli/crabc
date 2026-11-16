@@ -4,14 +4,16 @@ This is the only active plan. The owner's 2026-11-12 direction is binding:
 **finish the selected feature surface first, waive every performance and memory
 budget until then, and run a continuously replenished parallel campaign.** It
 supersedes the S0–S5/R2–R4 scheduling rules and serial defaults in shared campaign
-skills. Git retains the earlier plans; do not maintain a second handoff or log.
+skills. Parallel implementation gives way to bounded F2 closeout when the feature
+queue is closed. Status takes precedence over general dispatch instructions.
+Git retains the earlier plans; do not maintain a second handoff or log.
 
 ## Status and first action
 
 **Winding down 2026-11-16.** Launch no new lane or qualification attempt. F2 remains open; performance qualification stays deferred.
-Resume prompt: "Read plan.md Status and resume F2 under D23/D24; require fresh current-source proof, preserve holds, do not start F3." First command after owner resume: `codex-campaign-closeout.py cancel`.
+Resume prompt: "Read plan.md Status and F2 closeout; reconcile the retained candidate, finish only demonstrated blockers, require fresh current-source proof, preserve holds, and stop at F2; do not start F3." First command after owner resume: `codex-campaign-closeout.py cancel`.
 Last accepted repair: `fd7351147` (focused native replay and authentication checks green; raw-byte review finding fixed), integrated and pushed through `0a3849e45`. Main has 223 mappings and 18 foundation families; seven gate declarations remain isolated.
-Current attempt: `lane/f2-fresh-final4` at `27761fdd3`, `.work/wt/f2-fresh-final4/.work/x86_64/feature-complete`; preserve it and let this attempt finish, then integrate only if all 86 steps and seven gates pass with `complete: true`, `fresh: true`. Never auto-retry.
+Current attempt: `lane/f2-fresh-final4` at `27761fdd3`, `.work/wt/f2-fresh-final4/.work/x86_64/feature-complete`; preserve it and let this attempt finish, then integrate only if all 86 steps and seven gates pass with `complete: true`, `fresh: true`. Never auto-retry during winddown. This review has not inspected that host's retained result and does not resume or replace its attempt.
 Cleanup retired 18 checkouts. Verified raw evidence and restoration notes: `.work/tmp/f2-cleanup-archives/README.md`. Six permission-held trees remain under `.work/wt/`: `f2-admission-review`, `f2-fresh-final2`, `f2-lua-process-boundary`, `f2-process-control-wait`, `f2-resolver-reader-env`, `f2-run2`; retain their refused fixtures without another access or removal attempt. Preserve the legacy holds below.
 
 - `lane/f2-admissions`: accepted patches equivalent to main; retained around refused fixtures; retry cleanup only after owner resolution.
@@ -24,7 +26,7 @@ Cleanup retired 18 checkouts. Verified raw evidence and restoration notes: `.wor
 - `lane/f2-lua-process-boundary`: accepted Lua repair plus superseded unverified declarations; retain refused logs, use current candidate.
 - `lane/f2-timer-diagnostics`: accepted diagnostic patch equivalent to main; CRAB-6 remains unreproduced, retry investigation on a fresh failure.
 
-Next slice after resume: inspect the current attempt's retained summary; complete its acceptance or repair its exact failure. CRAB-5/CRAB-6 stay in `TODO.md`; no performance work during winddown.
+Next slice after resume: inspect the current attempt's retained summary and follow [F2 closeout](#f2-closeout). CRAB-5/CRAB-6 stay in `TODO.md`; no performance work during winddown. A missing local result is unknown, not a failed candidate or permission to launch another one.
 
 ## Goal and completion boundary
 
@@ -48,22 +50,86 @@ these totals. Ledger totals alone never establish completeness.
 Feature completeness, performance qualification and public support are separate
 claims. The seven-gate result explicitly defers `performance.release`; it never
 implies a passing full chain, allocator-port completion or public promotion.
+**Accepted F2 is the terminal deliverable of this campaign.** Report it and stop;
+schedule F3 separately instead of silently extending the feature campaign.
 
 ## Sequence
 
 | Phase | Work and ownership | Exit proof |
 | --- | --- | --- |
 | F0 — dispatch | Coordinator reads current status and makes file-disjoint assignments from the lane table; one integration owner seeds existing products and correctness evidence. Repair a shared harness problem only when it blocks a named feature test. This is a bounded startup step, not a new inventory project. | Every launched slice names its capability/failure, base revision, owned paths, real test command and expected behavior. Launch useful independent lanes immediately. |
-| F1 — parallel feature closure | Implement missing selected behavior, fix existing failures and complete integration in parallel. Resolve the oldest `math/pow`/C-ABI holds in their owners while unrelated work proceeds. Keep reviewers and an integration/check owner active; refill freed slots after each result. | Each slice passes its focused behavior/ABI/hardening checks on the integrated tree; update existing capability/family evidence only after it proves the claim. |
-| F2 — feature-complete milestone | After all selected families close, integrate a clean candidate and run `./scripts/dev-x86_64.sh qualification-candidate --work .work/x86_64/feature-complete --profile correctness`. Fix any cross-family failures through F1. | All seven gates pass in one complete fresh run; `capability.accounting` closes the full selected surface. Record the accepted commit and evidence path in Status. |
-| F3 — optimization and full qualification | Starts only after F2. Rebaseline the completed runtime using existing `perf-c` and `perf-native` commands, resolve retained cost failures, and run a candidate with explicit `--profile full`. | Actual current-source performance evidence and all eight full-chain gates pass under the retained release contracts. Public support/promotion still needs its separate authorization. |
+| F1 — parallel feature closure | Implement missing selected behavior, fix existing failures and complete integration in parallel. Reconcile historical holds with admitted evidence before assigning work; reopen admitted behavior only for a concrete failure or missing obligation. Keep reviewers and an integration/check owner active; refill freed slots from actual remaining work. | Each slice passes its focused behavior/ABI/hardening checks on the integrated tree; update existing capability/family evidence only after it proves the claim. |
+| F2 — feature-complete milestone | Follow [F2 closeout](#f2-closeout): reconcile the retained attempt, repair demonstrated blockers with focused checks, then qualify one fixed clean candidate. | All seven gates pass in one complete fresh run; `capability.accounting` closes the full selected surface. Record the accepted commit and evidence path in Status, then stop this campaign. |
+| F3 — optimization and full qualification | Separate follow-up after F2, not an automatic next iteration. Rebaseline the completed runtime using existing `perf-c` and `perf-native` commands, resolve retained cost failures, and run a candidate with explicit `--profile full`. | Actual current-source performance evidence and all eight full-chain gates pass under the retained release contracts. Public support/promotion still needs its separate authorization. |
 
 Run focused tests per slice and the affected family suite per coherent integration
 batch. A long correctness run uses one clean snapshot while other lanes continue
 on separate worktrees; its evidence proves that snapshot. Reuse intermediate
 results only under existing product-input/source rules. Final F2 acceptance must
-be fresh on the final integrated commit. Never rerun the entire candidate chain
-for every leaf edit or treat an old receipt as proof of changed code.
+be fresh on the accepted integrated candidate. Never rerun the entire candidate
+chain for every leaf edit or treat an old receipt as proof of changed code.
+
+## F2 closeout
+
+These steps apply after owner resume; they do not lift the current winddown.
+The remaining task is to accept or reject the selected runtime with evidence,
+not to open another feature inventory, proof framework or general review tour.
+Useful independent blocker repairs may run in parallel, but there is only one
+active acceptance candidate. Extra slots are optional when no independent
+selected blocker remains.
+
+1. **Reconcile final4 first.** Inspect its `candidate.json`, `summary.json`,
+   terminal chain receipt and raw failure in its original checkout. If still
+   running, observe that attempt. If inaccessible, record the exact environment
+   blocker. A complete result must have all 86 steps, seven passing correctness
+   gates, strict receipt-backed parity validation, `complete: true` and
+   `fresh: true`; counters or provisional declarations cannot replace them.
+   Validate it under the owning readers before integrating its declarations.
+2. **Name the actual blocker.** Separate runtime behavior, test/oracle defects,
+   evidence-reader/publication defects and missing environment. Give each
+   demonstrated failure one repair owner and independent review. Record its
+   command, expected/actual result, source and evidence path in Status; do not
+   reopen every family because one reader failed. Any failing required behavior
+   stays blocking, including a suspected timing flake. Keep CRAB-6 unresolved:
+   passing repetitions do not establish its cause or prove host noise. Use its
+   existing diagnostics on recurrence instead of another blind stress campaign.
+3. **Prove the repair before paying for a new full run.** Run the affected
+   producer/case and its publication and owning gate reader in the environment
+   used by final qualification; a helper unit test alone does not prove that
+   boundary. Batch demonstrated repairs. Use the existing same-product-source
+   candidate resume for development where its input/output checks permit it;
+   never edit receipts, force a stale reader, or call a mixed-revision run fresh.
+   Changed product inputs need a new cohort. Follow the existing
+   [candidate contract](compat/x86_64/qualification-chain.md#one-command-candidate-run),
+   not a new resume protocol. After two materially different failed repairs,
+   apply P4 to the specific blocker before another acceptance attempt.
+4. **Keep the verification loop practical.** CRAB-5's recorded multi-hour
+   repeated product hashing is harness overhead, not a waived runtime cost gate.
+   If it still delays a necessary retry, measure the current path (some reuse
+   fixes have landed) and make only the bounded reuse repair in `TODO.md`, with
+   its changed-during-collection rejection intact. Do not interrupt a healthy
+   final4 to do it, impose a new numerical budget, or start a harness rewrite.
+5. **Freeze the acceptance candidate.** Before a new attempt, finish known
+   repairs, run their focused checks and inspect the candidate's `--dry-run`
+   output for blockers using the actual seeded inputs and intended work path.
+   A dry-run exit of zero alone is not readiness. Use the existing
+   `./scripts/dev-x86_64.sh qualification-candidate --work .work/x86_64/feature-complete --profile correctness`
+   with the actual `--inputs` file. A fresh attempt uses an isolated prepared
+   checkout with the ledger's expected relative receipt paths; preserve earlier
+   work directories. Keep the clean candidate SHA and inputs fixed; only that
+   run may write its outputs. No rebases, status edits or concurrent writers in
+   that checkout. A failure returns to its named repair, not an automatic
+   `finalN` rebuild. Do not add unrelated
+   features, audits or optimization while waiting for this result.
+6. **Accept once and stop.** Record the exact tested SHA, product source digest,
+   candidate/chain evidence paths, seven-gate result, 223 accounted mappings,
+   25 closed nonperformance families, hold reconciliation and any unresolved
+   observations in Status. Missing required proof keeps F2 open. A later
+   status-only commit reports that tested SHA; it neither claims its own SHA was
+   tested nor requires another full run just to record acceptance. Any change
+   to product, test, gate or contract inputs needs the applicable checks and a
+   fresh accepted candidate. Leave performance explicitly deferred, preserve
+   unresolved observations such as CRAB-6 without claiming them fixed, and stop.
 
 ## Performance and memory waiver
 
@@ -103,8 +169,10 @@ selected features. Fill useful available slots within the actual harness caps
 (current repository settings: 16 Codex threads, 24 Claude subagents; a hosted
 session may expose fewer). Keep one coordinator/integrator, sufficient independent
 review/check capacity, and a ready queue of component-sized implementation slices.
-Do not cap the campaign at one writer or leave slots idle while independent
-implementation, tests, failure reproduction or review is ready.
+During F0/F1, do not cap the campaign at one writer or leave slots idle while
+independent implementation, tests, failure reproduction or review is ready.
+During F2, use only the remaining blocker/review/acceptance work above; do not
+replenish from completed families or invent work to maintain agent utilization.
 
 Use the existing `orchestrate` routing/tiers and worktree helpers; no new agent
 framework, queue service or receipt schema. This owner direction overrides shared
@@ -217,10 +285,15 @@ They do not change these boundaries:
   execute F0–F2.
 - **D22:** qualification tests caller-visible behavior; the allocator harness
   remains excluded from its machinery cleanup.
-- The October 25 `math/pow` and C-ABI holds remain open until correct behavior
-  is proved. Investigate/fix them in F1; do not trim the libc-test aggregate,
-  change backends or invent an exception. Preserve raw evidence under
-  `.work/tmp/pow-discriminator-*`.
+- `77e5dfc3` explicitly records closure of the October 25 C-ABI admission hold.
+  Do not assign that admitted family as missing implementation; its current
+  F2 aggregate must still pass. No explicit `math/pow` closure is recorded:
+  reconcile the retained failing case against the unmodified required aggregate
+  in the accepted candidate, and fix it only if still failing. Name that case
+  and evidence in closeout rather than inferring a pass from family counts.
+  Never trim the libc-test aggregate, change backends or invent an exception.
+  Preserve `.work/tmp/pow-discriminator-*`; this review did not replay those
+  host-local records.
 - Existing `archive/*`, `cohort/*`, `integration/*`, `lane/*`, `parked/*`,
   `proof/*`, `recovery/*` and `review/*` branches are not automatically adopted.
   Never merge parked allocator branches. New scoped lanes use reviewed current

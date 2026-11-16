@@ -47,16 +47,22 @@ All of the following must hold on the integrated native x86-64 source:
    applicable hardening and focused regressions. A worker's old receipt or a
    resumed development run alone cannot certify the final integrated product.
 6. **Record the feature milestone separately from release.** The coordinator
-   records the accepted commit, correctness evidence and zero remaining
-   selected feature blockers in `plan.md`. `performance.release` stays deferred
-   and unpassed; missing counters or memory metrics do not invalidate feature
+   records the exact tested candidate commit, product source digest, correctness
+   evidence, hold reconciliation and zero remaining selected feature blockers
+   in `plan.md`. Unresolved observations such as CRAB-6 remain visible and are
+   not described as fixed by a green rerun. A subsequent status-only commit
+   refers to the tested SHA; it does not claim fresh proof for its own SHA or
+   trigger a new full run merely to report acceptance. `performance.release`
+   stays deferred and unpassed; missing counters or memory metrics do not invalidate feature
    completion. Public support, backend promotion and full release qualification
    remain distinct later decisions.
 
-Only after these conditions hold may performance/memory optimization become
-the campaign's acceptance work. Use the existing cost harness at that stage;
-do not make collecting a baseline or meeting a cost budget an earlier hidden
-prerequisite.
+Once these conditions hold, report F2 acceptance and stop this feature campaign.
+Performance/memory optimization is a separate follow-up using the existing cost
+harness; do not start it automatically, or make collecting a baseline or meeting
+a cost budget an earlier hidden prerequisite. Until acceptance, follow the
+bounded [F2 closeout](../plan.md#f2-closeout) instead of opening new inventories
+or repeatedly rebuilding candidates to discover whether a local repair works.
 
 ## Runtime
 

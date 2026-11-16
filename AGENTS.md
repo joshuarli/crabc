@@ -4,7 +4,7 @@ A small, auditable modern Unix runtime: a Rust `no_std` libc, dynamic linker,
 owned CRT and compiler builtins, and an idiomatic `crabc-rs` facade. Narrow
 scope must not weaken ordinary Unix semantics.
 
-## Current direction — 2026-11-12
+## Current direction — 2026-11-16
 
 **Feature completeness first; all performance and memory budgets waived until
 then; independent work runs in parallel.** The owner's D23/D24 decisions in
@@ -12,12 +12,17 @@ then; independent work runs in parallel.** The owner's D23/D24 decisions in
 mandatory cost measurements. S0–S5 are accepted; do not repeat them as a
 prerequisite to implementing the selected native x86-64 surface.
 
-Follow [F0–F3](plan.md#sequence): immediately dispatch independent feature and
-behavior-closure lanes, integrate continuously, and prove full selected
-completeness with one fresh seven-gate correctness run before optimization or
-full performance qualification. Default qualification is `correctness`;
-`performance.release` stays explicitly deferred. A parked receipt or status
-count never proves a current-source capability or full-chain result.
+Read [Status](plan.md#status-and-first-action) before dispatch: its phase and
+winddown state take precedence over general parallel-work instructions. The
+current F2 winddown permits no new lane or qualification attempt. After owner
+resume, follow [F2 closeout](plan.md#f2-closeout), starting with the retained
+candidate's actual result; do not restart F0/F1 or invent work to fill slots.
+During F0/F1, dispatch independent selected behavior work and integrate it
+continuously. F2 requires one fresh seven-gate correctness run and ends this
+feature campaign. F3 is a separate follow-up, not an automatic continuation.
+Default qualification is `correctness`; `performance.release` stays explicitly
+deferred. A parked receipt or status count never proves a current-source
+capability or full-chain result.
 
 No CPU/time, instruction, syscall-count, RSS/PSS/peak-memory, allocation,
 footprint or old numerical reduction budget blocks F0–F2. No mandatory
@@ -33,10 +38,12 @@ stays unedited. The Rust allocator port, its harness/receipts, shadow products,
 alternate allocators and promotion remain frozen under
 [Allocator freeze](plan.md#allocator-freeze).
 
-Fill all useful available agent slots within the actual harness limits. Use
+During feature implementation, fill useful available slots within the actual
+harness limits. During closeout, assign only demonstrated remaining blockers,
+their review and acceptance; keep the candidate checkout fixed. Use
 component-sized tasks, isolated worktrees, explicit file ownership and independent
-review; keep the queue replenished while the coordinator integrates. Family
-acceptance dependencies do not serialize independent implementation. Read
+review; keep the feature queue replenished while the coordinator integrates.
+Family acceptance dependencies do not serialize independent implementation. Read
 [docs/lanes.md](docs/lanes.md) before delegating. Use existing orchestration
 routing and helpers; this owner direction overrides their serial-first and
 performance-readiness scheduling defaults. Keep status small; Git is history.
