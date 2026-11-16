@@ -750,6 +750,43 @@ class TextMathLocaleStdioFamilyTests(unittest.TestCase):
         with self.assertRaisesRegex(coordinator.FamilyError, "declared input changed during collection"):
             self.collect()
 
+    def test_reader_passes_reuse_product_validation_and_reject_same_size_nested_mutation(self) -> None:
+        product = self.fixture.products["primary"]["dynamic"]
+        nested = product / "nested"
+        nested.mkdir()
+        payload = nested / "payload"
+        payload.write_bytes(b"first")
+        adapters = self.fixture.adapter_results()
+        original = adapters["locale"]
+        counts = []
+
+        def validate(path: Path):
+            counts.append(path)
+            return path / "manifest", {"payload": "digest"}
+
+        def reader(root: Path, request: object, context: object):
+            for _ in range(4):
+                coordinator.product_evidence._validate_dynamic_product(product)
+            return original(root, request, context)
+
+        adapters["locale"] = reader
+        with mock.patch.object(coordinator.product_evidence, "_validate_dynamic_product_uncached", side_effect=validate):
+            self.collect(adapters)
+            self.assertEqual(counts, [product, product])
+            coordinator.product_evidence._validate_dynamic_product(product)
+            self.assertEqual(counts, [product, product, product])
+            counts.clear()
+
+            def mutate(root: Path, request: object, context: object):
+                result = reader(root, request, context)
+                payload.write_bytes(b"other")
+                return result
+
+            adapters["locale"] = mutate
+            with self.assertRaisesRegex(coordinator.FamilyError, "declared input changed during collection"):
+                self.collect(adapters)
+            self.assertEqual(counts, [product])
+
     def test_reader_rejects_an_aggregate_pair_root_payload_mutated_after_validation(self) -> None:
         self.fixture.mutate_aggregate_root = True
         with self.assertRaisesRegex(coordinator.FamilyError, "declared input changed during collection"):

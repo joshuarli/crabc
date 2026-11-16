@@ -433,6 +433,24 @@ class OwnedPosixProductEvidenceTests(unittest.TestCase):
         self.write_json(product / "share/crabc/manifest.json", manifest)
         return product
 
+    def test_product_validation_scope_expires_and_independent_reader_rejects_mutation(self) -> None:
+        with mock.patch.object(evidence, "_validate_static_product_uncached",
+                               wraps=evidence._validate_static_product_uncached) as validate:
+            with evidence._reuse_product_validations({self.static}):
+                evidence._validate_static_product(self.static)
+                evidence._validate_static_product(self.static)
+                self.assertEqual(validate.call_count, 1)
+            payload = self.static / "usr/include/fixture.h"
+            original = payload.read_bytes()
+            payload.write_bytes(b"X" * len(original))
+            with self.assertRaises(evidence.ProductEvidenceError):
+                evidence._validate_static_product(self.static)
+            self.assertEqual(validate.call_count, 2)
+            with evidence._reuse_product_validations({self.static}):
+                with self.assertRaises(evidence.ProductEvidenceError):
+                    evidence._validate_static_product(self.static)
+            self.assertEqual(validate.call_count, 3)
+
     def test_static_product_reader_rejects_a_mismatched_crt_profile(self) -> None:
         path = self.static / "share/crabc/crt.provenance.json"
         manifest_path = self.static / "share/crabc/manifest.json"
