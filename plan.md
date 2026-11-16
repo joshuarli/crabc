@@ -10,10 +10,10 @@ Git retains the earlier plans; do not maintain a second handoff or log.
 
 ## Status and first action
 
-**Winding down 2026-11-16.** Launch no new lane or qualification attempt. F2 remains open; performance qualification stays deferred.
+**Paused 2026-11-16.** Launch no new lane or qualification attempt. F2 remains open; performance qualification stays deferred.
 Resume prompt: "Read plan.md Status and F2 closeout; reconcile the retained candidate, finish only demonstrated blockers, require fresh current-source proof, preserve holds, and stop at F2; do not start F3." First command after owner resume: `codex-campaign-closeout.py cancel`.
 Last accepted repair: `fd7351147` (focused native replay and authentication checks green; raw-byte review finding fixed), integrated and pushed through `0a3849e45`. Main has 223 mappings and 18 foundation families; seven gate declarations remain isolated.
-Current attempt: `lane/f2-fresh-final4` at `27761fdd3`, `.work/wt/f2-fresh-final4/.work/x86_64/feature-complete`; preserve it and let this attempt finish, then integrate only if all 86 steps and seven gates pass with `complete: true`, `fresh: true`. Never auto-retry during winddown. This review has not inspected that host's retained result and does not resume or replace its attempt.
+Parked current attempt: `lane/f2-fresh-final4` at `27761fdd3`, `.work/wt/f2-fresh-final4/.work/x86_64/feature-complete`; it remains running by the owner's keep-active instruction. No coordinator monitor, automatic retry or integration remains; preserve it and let this attempt finish, then integrate only if all 86 steps and seven gates pass with `complete: true`, `fresh: true`. Never auto-retry during winddown. This review has not inspected that host's retained result and does not resume or replace its attempt.
 Cleanup retired 18 checkouts. Verified raw evidence and restoration notes: `.work/tmp/f2-cleanup-archives/README.md`. Six permission-held trees remain under `.work/wt/`: `f2-admission-review`, `f2-fresh-final2`, `f2-lua-process-boundary`, `f2-process-control-wait`, `f2-resolver-reader-env`, `f2-run2`; retain their refused fixtures without another access or removal attempt. Preserve the legacy holds below.
 
 - `lane/f2-admissions`: accepted patches equivalent to main; retained around refused fixtures; retry cleanup only after owner resolution.
@@ -26,7 +26,8 @@ Cleanup retired 18 checkouts. Verified raw evidence and restoration notes: `.wor
 - `lane/f2-lua-process-boundary`: accepted Lua repair plus superseded unverified declarations; retain refused logs, use current candidate.
 - `lane/f2-timer-diagnostics`: accepted diagnostic patch equivalent to main; CRAB-6 remains unreproduced, retry investigation on a fresh failure.
 
-Next slice after resume: inspect the current attempt's retained summary and follow [F2 closeout](#f2-closeout). CRAB-5/CRAB-6 stay in `TODO.md`; no performance work during winddown. A missing local result is unknown, not a failed candidate or permission to launch another one.
+Next slice after resume: inspect the current attempt's summary and follow [F2 closeout](#f2-closeout); integrate only all 86 steps/seven gates with `complete: true`, `fresh: true`. A missing local result is unknown, not a failed candidate or permission to launch another one; if missing or incomplete, preserve it and require a full fresh run after any repair. CRAB-5/CRAB-6 stay in `TODO.md`; no performance work during winddown; do not start F3.
+Closeout allowances record all seven retained trees. The live qualifier is the intentional process-audit exception; no campaign cron or restart was created. Guard precedence repair USR-82 is committed locally in `usr` at `cf0573b` (four tests, Ruff and ty pass); no push was issued during winddown, though freeze commit `e027d2a5c` is already on origin.
 
 ## Goal and completion boundary
 
