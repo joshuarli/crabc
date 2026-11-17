@@ -63,10 +63,10 @@ PYTHON
 }
 
 verify_products >/dev/null
-if ! CRABC_CRT_X86_64_EVIDENCE=native CRABC_CRT_X86_64_EVIDENCE_SLICE=static-pie python3 -B -m unittest \
-    crt.tests.test_x86_64_static_pie.X86_64StaticPieTests.test_hardened_static_pie_rejects_executable_or_missing_stack_and_wx_load \
-    crt.tests.test_x86_64_static_pie.X86_64StaticPieTests.test_hardened_static_pie_bootstrap_executes_and_rejects_unknown_relocations \
-    crt.tests.test_x86_64_static_pie.X86_64StaticPieTests.test_static_pie_bootstrap_executes_and_rejects_unknown_relocations \
+if ! CRABC_CRT_X86_64_EVIDENCE=native CRABC_CRT_X86_64_EVIDENCE_SLICE=static-pie python3 -B "$root/crt/tests/test_x86_64_static_pie.py" \
+    X86_64StaticPieTests.test_hardened_static_pie_rejects_executable_or_missing_stack_and_wx_load \
+    X86_64StaticPieTests.test_hardened_static_pie_bootstrap_executes_and_rejects_unknown_relocations \
+    X86_64StaticPieTests.test_static_pie_bootstrap_executes_and_rejects_unknown_relocations \
     >"$work/static-pie-tests.log" 2>&1; then
     cat "$work/static-pie-tests.log" >&2
     exit 1
