@@ -70,7 +70,10 @@ static void names_attributes_transfer(void) {
     errno=0; CHECK(mq_open("//bad",O_RDONLY)==-1 && errno==EACCES);
     errno=0; CHECK(mq_open("/bad/name",O_RDONLY)==-1 && errno==EACCES);
     errno=0; CHECK(mq_unlink("//bad")==-1 && errno==EACCES);
-    char long_name[257]; memset(long_name,'n',256); long_name[256]=0;
+    char long_name[257];
+    int prefix=snprintf(long_name,sizeof long_name,"owned-mq-max-%d-",getpid());
+    CHECK(prefix>0 && prefix<255);
+    memset(long_name+prefix,'n',256-prefix); long_name[256]=0;
     errno=0; CHECK(mq_open(long_name,O_RDONLY)==-1 && errno==ENAMETOOLONG);
     long_name[255]=0;
     struct mq_attr attributes={.mq_maxmsg=2,.mq_msgsize=32};
