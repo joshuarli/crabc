@@ -4,7 +4,7 @@ A small, auditable modern Unix runtime: a Rust `no_std` libc, dynamic linker,
 owned CRT and compiler builtins, and an idiomatic `crabc-rs` facade. Narrow
 scope must not weaken ordinary Unix semantics.
 
-## Current direction — 2026-11-16
+## Current direction — 2026-11-17
 
 **Feature completeness first; all performance and memory budgets waived until
 then; independent work runs in parallel.** The owner's D23/D24 decisions in
@@ -12,11 +12,11 @@ then; independent work runs in parallel.** The owner's D23/D24 decisions in
 mandatory cost measurements. S0–S5 are accepted; do not repeat them as a
 prerequisite to implementing the selected native x86-64 surface.
 
-Read [Status](plan.md#status-and-first-action) before dispatch: its phase and
-winddown state take precedence over general parallel-work instructions. The
-current F2 winddown permits no new lane or qualification attempt. After owner
-resume, follow [F2 closeout](plan.md#f2-closeout), starting with the retained
-candidate's actual result; do not restart F0/F1 or invent work to fill slots.
+Read [Status](plan.md#status-and-first-action) before dispatch. Its active
+candidate and phase take precedence over general parallel-work instructions.
+Follow [F2 closeout](plan.md#f2-closeout), starting with that candidate's actual
+result. While it runs, keep it fixed and open no other acceptance attempt or
+unrelated lane. Do not restart F0/F1 or invent work to fill slots.
 During F0/F1, dispatch independent selected behavior work and integrate it
 continuously. F2 requires one fresh seven-gate correctness run and ends this
 feature campaign. F3 is a separate follow-up, not an automatic continuation.

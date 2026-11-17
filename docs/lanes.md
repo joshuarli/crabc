@@ -7,10 +7,10 @@ behavioral review and integration. All performance and memory-efficiency gates
 are waived until full feature completeness. Correctness, memory safety, ABI,
 ownership and selected hardening remain mandatory.
 
-Read [Status](../plan.md#status-and-first-action) first. Its winddown and phase
-override dispatch guidance here. The current campaign is in F2 closeout: after
-owner resume, reconcile the retained attempt and use only the demonstrated
-blocker, review and acceptance work in [F2 closeout](../plan.md#f2-closeout).
+Read [Status](../plan.md#status-and-first-action) first. Its active candidate and
+phase override dispatch guidance here. In F2 closeout, reconcile that attempt
+and use only the demonstrated blocker, review and acceptance work in
+[F2 closeout](../plan.md#f2-closeout).
 The implementation pool below is not a queue to restart at every resume.
 
 The Rust allocator port and its private harness remain frozen; the pinned C
@@ -43,7 +43,8 @@ not the old preference for a narrow campaign.
 During F2, keep one fixed acceptance candidate. Assign independent demonstrated
 blockers and their review in parallel where useful; do not reopen completed
 families to fill slots. If no independent selected blocker is ready, leave
-unused capacity idle. Winddown authorizes no new lane or qualification attempt.
+unused capacity idle. While acceptance runs, open no other acceptance attempt
+or unrelated lane.
 
 Agent parallelism and build parallelism are separate. Keep reasoning, coding
 and review lanes running while queuing heavy native builds to fit the host.
