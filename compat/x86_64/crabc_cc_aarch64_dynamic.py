@@ -24,4 +24,4 @@ with tempfile.TemporaryDirectory(prefix="crabc-aarch64-dynamic-") as temporary:
         obj = str(Path(temporary) / f"{index}.o")
         subprocess.run(["/usr/local/bin/crabc-aarch64-mold-gcc", "-nostdinc", "-isystem", str(root / "usr/include"), "-fPIE", "-c", source, "-o", obj], check=True)
         objects.append(obj)
-    subprocess.run(["/usr/bin/mold", "-pie", "--dynamic-linker", "/lib/ld-crabc-aarch64.so.1", "--no-undefined", "--eh-frame-hdr", "-z", "relro", "-z", "now", "-e", "_start", str(lib / "Scrt1.o"), str(lib / "crti.o"), *objects, str(lib / "libc.so"), str(lib / "libcrabc-builtins.a"), str(lib / "crtn.o"), "-o", output], check=True)
+    subprocess.run(["/usr/bin/mold", "-pie", "-z", "dynamic-undefined-weak", "--dynamic-linker", "/lib/ld-crabc-aarch64.so.1", "--no-undefined", "--eh-frame-hdr", "-z", "relro", "-z", "now", "-e", "_start", str(lib / "Scrt1.o"), str(lib / "crti.o"), *objects, str(lib / "libc.so"), str(lib / "libcrabc-builtins.a"), str(lib / "crtn.o"), "-o", output], check=True)

@@ -75,15 +75,14 @@ core::arch::global_asm!(
 #[cfg(all(target_arch = "aarch64", not(crabc_x86_64_combined_exec_entry)))]
 core::arch::global_asm!(
     ".weak __crabc_x86_64_owned_crt_handoff",
+    ".type __crabc_x86_64_owned_crt_handoff,%object",
     ".text",
     ".global __crabc_x86_64_owned_crt_handoff_value",
     ".type __crabc_x86_64_owned_crt_handoff_value,%function",
     "__crabc_x86_64_owned_crt_handoff_value:",
     "adrp x0, :got:__crabc_x86_64_owned_crt_handoff",
     "ldr x0, [x0, :got_lo12:__crabc_x86_64_owned_crt_handoff]",
-    "cbz x0, 1f",
-    "ldr x0, [x0]",
-    "1: ret",
+    "ret",
     ".size __crabc_x86_64_owned_crt_handoff_value, .-__crabc_x86_64_owned_crt_handoff_value",
 );
 
