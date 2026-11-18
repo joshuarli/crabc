@@ -30,6 +30,16 @@ compile_error!("the x86 fenv-sensitive rounding leaf requires little-endian Linu
 // libc.a; a chunk that shares local labels with another stays with it.
 // Musl's `src/math/rint.c` object.
 static_archive_member! { rint_source {
+    // musl 1.2.6 src/math/aarch64/rint.c; MIT license.
+    #[cfg(target_arch = "aarch64")]
+    #[no_mangle]
+    pub extern "C" fn rint(x: f64) -> f64 {
+        let result: f64;
+        // SAFETY: FRINTX operates on scalar FP registers without memory access.
+        unsafe { core::arch::asm!("frintx {result:d}, {input:d}", result = out(vreg) result, input = in(vreg) x, options(nostack)); }
+        result
+    }
+
     #[cfg(target_arch = "x86_64")]
     core::arch::global_asm!(
         r#"
@@ -74,6 +84,16 @@ rint:
 
 // Musl's `src/math/rintf.c` object.
 static_archive_member! { rintf_source {
+    // musl 1.2.6 src/math/aarch64/rintf.c; MIT license.
+    #[cfg(target_arch = "aarch64")]
+    #[no_mangle]
+    pub extern "C" fn rintf(x: f32) -> f32 {
+        let result: f32;
+        // SAFETY: FRINTX operates on scalar FP registers without memory access.
+        unsafe { core::arch::asm!("frintx {result:s}, {input:s}", result = out(vreg) result, input = in(vreg) x, options(nostack)); }
+        result
+    }
+
     #[cfg(target_arch = "x86_64")]
     core::arch::global_asm!(
         r#"
@@ -159,6 +179,18 @@ rintl:
 
 // Musl's `src/math/nearbyint.c` object.
 static_archive_member! { nearbyint_source {
+    // musl 1.2.6 src/math/nearbyint.c; MIT license.
+    #[cfg(target_arch = "aarch64")]
+    #[no_mangle]
+    pub extern "C" fn nearbyint(x: f64) -> f64 {
+        let inexact = crabc_core::fenv::test_exceptions(crabc_core::fenv::ExceptionFlags::INEXACT);
+        let result = rint(x);
+        if inexact.is_empty() {
+            crabc_core::fenv::clear_exceptions(crabc_core::fenv::ExceptionFlags::INEXACT);
+        }
+        result
+    }
+
     #[cfg(target_arch = "x86_64")]
     core::arch::global_asm!(
         r#"
@@ -196,6 +228,18 @@ nearbyint:
 
 // Musl's `src/math/nearbyintf.c` object.
 static_archive_member! { nearbyintf_source {
+    // musl 1.2.6 src/math/nearbyintf.c; MIT license.
+    #[cfg(target_arch = "aarch64")]
+    #[no_mangle]
+    pub extern "C" fn nearbyintf(x: f32) -> f32 {
+        let inexact = crabc_core::fenv::test_exceptions(crabc_core::fenv::ExceptionFlags::INEXACT);
+        let result = rintf(x);
+        if inexact.is_empty() {
+            crabc_core::fenv::clear_exceptions(crabc_core::fenv::ExceptionFlags::INEXACT);
+        }
+        result
+    }
+
     #[cfg(target_arch = "x86_64")]
     core::arch::global_asm!(
         r#"
