@@ -764,7 +764,7 @@ def require_application_file(root: Path, path: Path, kind: str) -> Path:
     return resolved
 
 
-def require_x86_64_relocatable_object(root: Path, path: Path) -> Path:
+def require_x86_64_relocatable_object(root: Path, path: Path, *, architecture: str = "x86_64") -> Path:
     """Admit only a structurally complete Linux/x86-64 ET_REL object.
 
     linker dispatches a named input by file contents, not by its ``.o`` suffix.
@@ -780,7 +780,7 @@ def require_x86_64_relocatable_object(root: Path, path: Path) -> Path:
 
     def malformed(detail: str) -> None:
         raise DriverError(
-            "admitted application object is not a Linux/x86-64 ELF64 ET_REL object: "
+            f"admitted application object is not a Linux/{architecture.replace('_', '-')} ELF64 ET_REL object: "
             f"{path} ({detail})"
         )
 
@@ -799,7 +799,7 @@ def require_x86_64_relocatable_object(root: Path, path: Path) -> Path:
                 malformed("not an ELF64 little-endian current object")
             if (
                 int.from_bytes(header[16:18], "little") != ET_REL
-                or int.from_bytes(header[18:20], "little") != EM_X86_64
+                or int.from_bytes(header[18:20], "little") != (EM_X86_64 if architecture == "x86_64" else 183)
                 or int.from_bytes(header[20:24], "little") != EV_CURRENT
                 or int.from_bytes(header[52:54], "little") != ELF64_HEADER_SIZE
             ):
@@ -1216,14 +1216,15 @@ def execute_aarch64(root: Path, arguments: Sequence[str], manifest: dict) -> Non
         raise DriverError("aarch64 installed sysroot payload differs from its manifest")
     static_pie = "-static-pie" in arguments or "--static-pie" in arguments
     invocation = parse_invocation([arg for arg in arguments if arg not in {"-no-pie", "-static-pie", "--static-pie"}])
-    if invocation.print_link_plan or invocation.link_receipt is not None or invocation.objects:
-        raise DriverError("aarch64 driver currently accepts C source inputs without a link receipt")
+    if invocation.print_link_plan or invocation.link_receipt is not None:
+        raise DriverError("aarch64 driver does not yet support link plans or receipts")
     sources = [require_application_file(root, source, "source") for source in invocation.sources]
+    inputs = [require_x86_64_relocatable_object(root, obj, architecture="aarch64") for obj in invocation.objects]
     output = invocation.output or (sources[0].with_suffix(".o") if invocation.compile_only else Path("a.out"))
     validate_application_output(root, output)
-    validate_application_output_disjoint(output, sources)
+    validate_application_output_disjoint(output, (*sources, *inputs))
     with tempfile.TemporaryDirectory(prefix="crabc-aarch64-cc.") as temporary:
-        objects = []
+        objects = list(inputs)
         for index, source in enumerate(sources):
             obj = output if invocation.compile_only else Path(temporary) / f"application-{index}.o"
             run_checked(["/usr/local/bin/crabc-aarch64-mold-gcc", "-nostdinc", "-isystem", str(root / "usr/include"), "-fstack-protector-strong", *invocation.compiler_flags, "-fPIE" if static_pie else "-fno-pie", "-c", str(source), "-o", str(obj)])
