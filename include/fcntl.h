@@ -293,6 +293,23 @@ int fcntl(int, int, ...);
 #define O_SEARCH 0x400000
 #define O_TTY_INIT 0
 
+#if defined(__aarch64__)
+/* musl 1.2.6 arch/aarch64/bits/fcntl.h (MIT). */
+#define O_ASYNC 020000
+#define O_DIRECT 0200000
+#define O_LARGEFILE 0400000
+#define O_NOATIME 01000000
+#define O_PATH 010000000
+#define O_TMPFILE 020040000
+#define O_NDELAY O_NONBLOCK
+#undef O_EXEC
+#undef O_SEARCH
+#define O_EXEC O_PATH
+#define O_SEARCH O_PATH
+#undef O_ACCMODE
+#define O_ACCMODE (03|O_SEARCH)
+#endif
+
 #if defined(__x86_64__)
 /* The generic constants above describe the AArch64 kernel encoding.  x86-64
  * has a distinct encoding; `<bits/fcntl.h>` owns its target-specific facts. */
