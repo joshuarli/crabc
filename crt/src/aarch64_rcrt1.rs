@@ -103,6 +103,76 @@ _start:
     cmp x20, x25
     b.lo .Lstatic_pie_fail
     sub x19, x20, x25
+
+    mov w0, {hardened}
+    cbz w0, .Lstatic_pie_hardened_headers_done
+    mov x0, xzr
+    mov x1, x20
+    mov x2, xzr
+.Lstatic_pie_hardened_headers:
+    cmp x0, x22
+    b.hs .Lstatic_pie_hardened_headers_end
+    ldr w3, [x1]
+    movz w4, #0xe551
+    movk w4, #0x6474, lsl #16
+    cmp w3, w4
+    b.ne .Lstatic_pie_hardened_not_stack
+    cbnz x2, .Lstatic_pie_fail
+    ldr w4, [x1, #4]
+    tbnz w4, #0, .Lstatic_pie_fail
+    mov x2, #1
+    b .Lstatic_pie_hardened_next
+.Lstatic_pie_hardened_not_stack:
+    cmp w3, #1
+    b.ne .Lstatic_pie_hardened_next
+    ldr w4, [x1, #4]
+    and w3, w4, #3
+    cmp w3, #3
+    b.eq .Lstatic_pie_fail
+    tbz w4, #1, .Lstatic_pie_hardened_next
+    ldr x7, [x1, #40]
+    cbz x7, .Lstatic_pie_hardened_next
+    ldr x5, [x1, #16]
+    adds x6, x5, x7
+    b.cs .Lstatic_pie_fail
+    adds x6, x6, #4095
+    b.cs .Lstatic_pie_fail
+    and x5, x5, #0xfffffffffffff000
+    and x6, x6, #0xfffffffffffff000
+    mov x8, x20
+    mov x9, xzr
+.Lstatic_pie_hardened_overlap:
+    cmp x9, x22
+    b.hs .Lstatic_pie_hardened_next
+    ldr w3, [x8]
+    cmp w3, #1
+    b.ne .Lstatic_pie_hardened_overlap_next
+    ldr w3, [x8, #4]
+    tbz w3, #0, .Lstatic_pie_hardened_overlap_next
+    ldr x7, [x8, #40]
+    cbz x7, .Lstatic_pie_hardened_overlap_next
+    ldr x11, [x8, #16]
+    adds x12, x11, x7
+    b.cs .Lstatic_pie_fail
+    adds x12, x12, #4095
+    b.cs .Lstatic_pie_fail
+    and x11, x11, #0xfffffffffffff000
+    and x12, x12, #0xfffffffffffff000
+    cmp x5, x12
+    b.hs .Lstatic_pie_hardened_overlap_next
+    cmp x11, x6
+    b.lo .Lstatic_pie_fail
+.Lstatic_pie_hardened_overlap_next:
+    add x8, x8, #56
+    add x9, x9, #1
+    b .Lstatic_pie_hardened_overlap
+.Lstatic_pie_hardened_next:
+    add x1, x1, #56
+    add x0, x0, #1
+    b .Lstatic_pie_hardened_headers
+.Lstatic_pie_hardened_headers_end:
+    cbz x2, .Lstatic_pie_fail
+.Lstatic_pie_hardened_headers_done:
     adds x23, x19, x26
     b.cs .Lstatic_pie_fail
     adds x24, x23, x27
@@ -350,4 +420,5 @@ _start:
     .section .note.GNU-stack,"",@progbits
 "#,
     startup = sym __crabc_x86_64_static_pie_start,
+    hardened = const cfg!(crabc_hardened) as u8,
 );
