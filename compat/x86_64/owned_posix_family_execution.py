@@ -28,6 +28,7 @@ from typing import Mapping
 
 import owned_posix_static_products as static_products
 import source_seal
+from native_arch import native_arch
 
 ROOT = Path(__file__).resolve().parents[2]
 SCHEMA = 'crabc.x86_64-owned-posix-family-execution/v1'
@@ -245,11 +246,12 @@ def case_environment(root: Path, step: Path, source_mount: str) -> dict[str, str
     # can silently change a workload. Installed drivers additionally apply their
     # own fixed compiler environment. The native image owns these tool paths.
     from generate_qualification_manifest import EXECUTION_CONTRACT
+    work = Path(source_mount) / ".work" / native_arch()["work_name"]
     return {'PATH': EXECUTION_CONTRACT['rust_bin_directory'] +
                    ':/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin',
             'RUSTUP_HOME': EXECUTION_CONTRACT['rustup_home'],
-            'CARGO_HOME': str(Path(source_mount) / '.work/x86_64/cargo'),
-            'CRABC_WORK_DIR': str(Path(source_mount) / '.work/x86_64'),
+            'CARGO_HOME': str(work / 'cargo'),
+            'CRABC_WORK_DIR': str(work),
             'LC_ALL': 'C', 'LANG': 'C', 'PYTHONDONTWRITEBYTECODE': '1',
             'TZ': 'UTC', 'PYTHONNOUSERSITE': '1',
             'GIT_OPTIONAL_LOCKS': '0', 'GIT_CONFIG_COUNT': '1',

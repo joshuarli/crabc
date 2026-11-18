@@ -1,9 +1,12 @@
 from pathlib import Path
 
+from compat.x86_64.native_arch import native_arch
+
 
 KACHE = Path("/usr/local/bin/kache")
 MOLD = Path("/usr/bin/mold")
-CARGO_LINKER = Path("/usr/local/bin/crabc-x86_64-mold-gcc")
+ARCHITECTURE = native_arch()
+CARGO_LINKER = Path(ARCHITECTURE["linker"])
 
 
 def environment() -> dict[str, str]:
@@ -12,12 +15,12 @@ def environment() -> dict[str, str]:
         "KACHE_CONFIG": "/dev/null",
         "KACHE_HOST_CONFIG": "",
         "KACHE_LOCAL_ONLY": "1",
-        "KACHE_CACHE_DIR": "/workspace/.work/x86_64/kache",
+        "KACHE_CACHE_DIR": f"/workspace/.work/{ARCHITECTURE['work_name']}/kache",
         "KACHE_AUTO_CLEAN_ORPHANED_TARGETS": "0",
         "KACHE_AUTO_CLEAN_UNUSED_UNITS_DAYS": "0",
         "KACHE_AUTO_SHARE_TARGET_FILES": "0",
         "KACHE_SEED_NEW_TARGETS": "0",
-        "CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER": str(CARGO_LINKER),
+        ARCHITECTURE["linker_variable"]: str(CARGO_LINKER),
     }
 
 

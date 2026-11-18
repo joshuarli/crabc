@@ -11,6 +11,7 @@ if str(ROOT) not in sys.path:
 
 from scripts import native_build_tools
 from scripts.rust_toolchain import pinned_toolchain
+from compat.x86_64.native_arch import native_arch
 
 
 def compiler_path() -> Path:
@@ -30,7 +31,7 @@ def compiler_path() -> Path:
     if completed.returncode != 0:
         raise RuntimeError(f"could not resolve pinned rustc: {completed.stderr}")
     path = Path(completed.stdout.strip())
-    expected = Path("/opt/rustup/toolchains") / f"{toolchain}-x86_64-unknown-linux-musl/bin/rustc"
+    expected = Path("/opt/rustup/toolchains") / f"{toolchain}-{native_arch()['target_triple']}/bin/rustc"
     if path != expected or not path.is_file():
         raise RuntimeError(f"rustup selected an unexpected compiler path: {path}")
     return path
