@@ -562,7 +562,7 @@ impl GeneralInitialTlsState {
 
         // One (object index, offset below TP) per planned module, by ID.
         let mut planned = super::x86_64_runtime_memory::LoaderVec::new();
-        let mut offset_below_tp = 0usize;
+        let mut offset_below_tp = if cfg!(target_arch = "aarch64") { 16usize } else { 0usize };
         let mut registry = GeneralInitialTlsRegistry::new();
         let mut has_tls = false;
 
@@ -583,21 +583,31 @@ impl GeneralInitialTlsState {
             {
                 return Err(GeneralInitialTlsStateError::InvalidTemplate);
             }
-            let with_alignment_slack = offset_below_tp
-                .checked_add(object.tls_memsz)
-                .and_then(|value| value.checked_add(object.tls_align - 1))
-                .ok_or(GeneralInitialTlsStateError::LayoutOverflow)?;
-            let source_phase = object.tls_image as usize & (object.tls_align - 1);
-            let placement_phase = with_alignment_slack
-                .checked_add(source_phase)
-                .ok_or(GeneralInitialTlsStateError::LayoutOverflow)?
-                & (object.tls_align - 1);
-            offset_below_tp = with_alignment_slack
-                .checked_sub(placement_phase)
-                .ok_or(GeneralInitialTlsStateError::LayoutOverflow)?;
-            if offset_below_tp < object.tls_memsz {
-                return Err(GeneralInitialTlsStateError::LayoutOverflow);
+            #[cfg(target_arch = "x86_64")]
+            {
+                let with_alignment_slack = offset_below_tp
+                    .checked_add(object.tls_memsz)
+                    .and_then(|value| value.checked_add(object.tls_align - 1))
+                    .ok_or(GeneralInitialTlsStateError::LayoutOverflow)?;
+                let source_phase = object.tls_image as usize & (object.tls_align - 1);
+                let placement_phase = with_alignment_slack
+                    .checked_add(source_phase)
+                    .ok_or(GeneralInitialTlsStateError::LayoutOverflow)?
+                    & (object.tls_align - 1);
+                offset_below_tp = with_alignment_slack
+                    .checked_sub(placement_phase)
+                    .ok_or(GeneralInitialTlsStateError::LayoutOverflow)?;
+                if offset_below_tp < object.tls_memsz {
+                    return Err(GeneralInitialTlsStateError::LayoutOverflow);
+                }
             }
+            #[cfg(target_arch = "aarch64")]
+            let placement = offset_below_tp.checked_add(
+                (object.tls_image as usize).wrapping_sub(offset_below_tp) & (object.tls_align - 1)
+            ).ok_or(GeneralInitialTlsStateError::LayoutOverflow)?;
+            #[cfg(target_arch = "aarch64")]
+            { offset_below_tp = placement.checked_add(object.tls_memsz)
+                .ok_or(GeneralInitialTlsStateError::LayoutOverflow)?; }
             let module_id = registry
                 .assign_initial(index)
                 .map_err(|_| GeneralInitialTlsStateError::Registry)?;
@@ -605,7 +615,9 @@ impl GeneralInitialTlsState {
                 return Err(GeneralInitialTlsStateError::Registry);
             }
             planned
-                .push((index, offset_below_tp))
+                .push((index, if cfg!(target_arch = "aarch64") {
+                    offset_below_tp.checked_sub(object.tls_memsz).ok_or(GeneralInitialTlsStateError::LayoutOverflow)?
+                } else { offset_below_tp }))
                 .ok_or(GeneralInitialTlsStateError::ModuleCapacity)?;
         }
         registry
@@ -893,7 +905,8 @@ impl GeneralInitialTlsState {
                 .ok_or(GeneralInitialTlsStateError::ModuleCapacity)?;
             if registry_id.map(TlsModuleId::get) != Some(expected_module)
                 || object.tls_module_id != expected_module
-                || object.tls_offset_below_tp < object.tls_memsz
+                || (cfg!(target_arch = "x86_64") && object.tls_offset_below_tp < object.tls_memsz)
+                || (cfg!(target_arch = "aarch64") && object.tls_offset_below_tp < 16)
             {
                 return Err(GeneralInitialTlsStateError::Registry);
             }

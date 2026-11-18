@@ -626,7 +626,11 @@ unsafe fn word_value(
             if module.tls_module_id > scope.static_tls_count { return None; }
             let offset = i64::try_from(offset).ok()?;
             let placement = i64::try_from(module.tls_offset_below_tp).ok()?;
-            Some(offset.checked_sub(placement)? as u64)
+            if cfg!(target_arch = "aarch64") {
+                Some(offset.checked_add(placement)? as u64)
+            } else {
+                Some(offset.checked_sub(placement)? as u64)
+            }
         }
         _ => None,
     }
