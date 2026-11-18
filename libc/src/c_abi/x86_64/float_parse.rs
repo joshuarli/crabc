@@ -71,14 +71,20 @@
  )))]
  compile_error!("the x86 floating parser requires little-endian Linux/x86-64");
 
+#[cfg(target_arch = "x86_64")]
 core::arch::global_asm!(
     include_str!("float_parse_musl_x86_64.S"),
     options(att_syntax)
 );
+#[cfg(target_arch = "aarch64")]
+core::arch::global_asm!(include_str!("float_parse_musl_aarch64.S"));
+#[cfg(target_arch = "x86_64")]
 core::arch::global_asm!(
     include_str!("float_parse_musl_support_x86_64.S"),
     options(att_syntax)
 );
+#[cfg(target_arch = "aarch64")]
+core::arch::global_asm!(include_str!("float_parse_musl_support_aarch64.S"));
 // The installed static archive gives each public musl object below its own
 // member, as musl's libc.a does, so a program may define any of them. The
 // scanner and its pseudo-string reader stay here; the entries reach them as
@@ -91,18 +97,27 @@ core::arch::global_asm!(
     ".hidden crabc_x86_float_parse_shlim",
 );
 // Musl's `src/stdlib/strtod.c` and `src/stdlib/atof.c` objects.
+#[cfg(target_arch = "x86_64")]
 musl_object_assembly!("float_parse_musl_entry_x86_64");
+#[cfg(target_arch = "aarch64")]
+musl_object_assembly!("float_parse_musl_entry_aarch64");
 // Musl's `src/stdlib/wcstod.c` object.
 static_archive_member! { wcstod_source {
+    #[cfg(target_arch = "x86_64")]
     core::arch::global_asm!(
         include_str!("float_parse_locale_musl_x86_64.S"),
         options(att_syntax)
     );
+    #[cfg(target_arch = "aarch64")]
+    core::arch::global_asm!(include_str!("float_parse_locale_musl_aarch64.S"));
 }}
 // Musl's `src/locale/strtod_l.c` object.
 static_archive_member! { strtod_l_source {
+    #[cfg(target_arch = "x86_64")]
     core::arch::global_asm!(
         include_str!("float_parse_locale_aliases_x86_64.S"),
         options(att_syntax)
     );
+    #[cfg(target_arch = "aarch64")]
+    core::arch::global_asm!(include_str!("float_parse_locale_aliases_aarch64.S"));
 }}
