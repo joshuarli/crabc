@@ -186,3 +186,71 @@ deferred on both architectures.
   before starting anything.
 - **D6, page size:** accept 4 KiB-only coverage for this campaign and name
   16 KiB and 64 KiB as a gap (recommended), or require a second host.
+
+## Handoff: starting A0 on the Mac
+
+All six recommendations above were accepted on 2026-11-18. This section is the
+starting brief for the Apple Silicon session.
+
+### State at handoff
+
+- **Main:** the governing docs (`AGENTS.md`, `docs/scope.md`,
+  `COMPATIBILITY-PROFILE.md`, `plan.md`) already record the accepted decisions.
+  No AArch64 code has changed yet.
+- **x86 host:** it keeps running F2 unattended. The final7 resume runs to
+  completion. If it completes, a fresh final8 runs in `.work/wt/f2-fresh-final8`
+  at a fixed main SHA, then a musl-vs-crabc perf comparison. `plan.md` Status
+  records that chain. Acceptance (F2 closeout step 6) is recorded from the x86
+  host afterwards. The Mac session never runs or edits x86 candidates.
+- **Merge rule:** until final8 is accepted, nothing that touches the x86
+  product source seal merges to main. The seal is `PRODUCT_TREES` and
+  `PRODUCT_FILES` in `compat/x86_64/source_seal.py`, and it includes
+  `docker/`, so even the arm64 Dockerfile waits on its branch. Docs outside the
+  seal may land.
+
+### Host setup (OrbStack)
+
+```sh
+orb create alpine crabc                  # arm64 Linux machine
+orb -m crabc
+# Inside the machine. Install Docker Engine here, not the Mac's OrbStack engine,
+# so every mounted path is on the machine's own disk.
+git clone git@github.com:joshuarli/crabc ~/crabc   # under ~, never /Users/...
+cd ~/crabc && git switch -c lane/a0-aarch64-image
+stat -f -c %T .                          # must be ext2/ext3 (ext4), not virtiofs/fuse
+uname -m; uname -r; getconf PAGESIZE; nproc; df -h ~
+```
+
+Record the last line's values in the A0 commit. Never pass
+`--platform linux/amd64` on the Mac.
+
+### A0 tasks, on `lane/a0-aarch64-image`
+
+1. Create `docker/Dockerfile.aarch64` from `docker/Dockerfile.x86_64` with the
+   same tool set and pins. Alpine digests there may be platform-specific; use
+   the manifest-list digest, or the arm64 one, and record which. Build the
+   `[musl_native]` oracle toolchain for `aarch64-linux-musl`, and set
+   `RUST_TARGET=aarch64-unknown-linux-musl`.
+2. Build the image natively. Pin its ID in an AArch64 counterpart of
+   `compat/x86_64/core_image.py`. Take the architecture as a parameter (A4)
+   rather than copying the module.
+3. Make `scripts/lanes/rust-check.sh` and `prepare-worktree.sh` select that
+   image when `uname -m` is `aarch64`, without changing x86 behavior.
+4. **Exit check:** `scripts/lanes/rust-check.sh cargo check -q --locked -p crabc-core --target aarch64-unknown-linux-musl`
+   passes in the pinned arm64 image.
+
+### A1 tasks, on `lane/a1-aarch64-inventory` from A0
+
+Widen the x86-only cfg gates to AArch64 and build every runtime crate. Commit
+the five-bucket dispatch table described in A1 above. Then dispatch A2 and A3
+as parallel lanes.
+
+### Don't
+
+- Do not use `scripts/dev.sh` or the old `c_abi.rs` AArch64 suites as
+  acceptance evidence. They are superseded, and the old composition is only a
+  source for facts A2 moves.
+- Do not refresh `COMPATIBILITY.md` or the old AArch64 manifests.
+- Do not change `rust-toolchain.toml` or `compat/upstreams.toml` pins.
+- Do not do any performance work, and do not start the macOS facade backend
+  (CRAB-7).
