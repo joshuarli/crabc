@@ -29,11 +29,7 @@ compile_error!("the x86 C legacy-memory leaf requires little-endian Linux/x86-64
 // Musl's `src/string/bcopy.c` object.
 static_archive_member! { bcopy_source {
     #[cfg(target_arch = "aarch64")]
-    #[no_mangle]
-    pub unsafe extern "C" fn bcopy(src: *const u8, dst: *mut u8, len: usize) {
-        // SAFETY: the caller supplies valid memmove ranges of len bytes.
-        unsafe { crate::x86_64_static_c_abi::memory::memmove(dst, src, len); }
-    }
+    core::arch::global_asm!(include_str!("bcopy_aarch64.S"));
     #[cfg(target_arch = "x86_64")]
     core::arch::global_asm!(
         r#"
@@ -57,12 +53,7 @@ bcopy:
 // Musl's `src/string/bzero.c` object.
 static_archive_member! { bzero_source {
     #[cfg(target_arch = "aarch64")]
-    #[no_mangle]
-    pub unsafe extern "C" fn bzero(dst: *mut u8, len: usize) {
-        unsafe extern "C" { fn memset(dst: *mut u8, value: i32, len: usize) -> *mut u8; }
-        // SAFETY: the caller supplies a writable range of len bytes.
-        unsafe { memset(dst, 0, len); }
-    }
+    core::arch::global_asm!(include_str!("bzero_aarch64.S"));
     #[cfg(target_arch = "x86_64")]
     core::arch::global_asm!(
         r#"
