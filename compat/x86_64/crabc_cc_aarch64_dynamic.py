@@ -31,10 +31,10 @@ def execute(arguments):
     index = 0
     while index < len(arguments):
         arg = arguments[index]
-        if arg in ("--dynamic-pie", "--dynamic-shared-object"):
+        if arg in ("--dynamic-pie", "-pie", "--dynamic-shared-object", "-shared"):
             if mode is not None:
                 raise shared.DriverError("select exactly one dynamic mode")
-            mode = "shared" if arg == "--dynamic-shared-object" else "pie"
+            mode = "shared" if arg in ("--dynamic-shared-object", "-shared") else "pie"
         elif arg == "-o":
             index += 1
             if index == len(arguments):
