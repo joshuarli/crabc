@@ -2,6 +2,8 @@
 """Compile native AArch64 dynamic applications against the installed crabc sysroot."""
 import importlib.machinery
 import importlib.util
+import json
+import os
 from pathlib import Path
 import re
 import subprocess
@@ -72,7 +74,7 @@ def execute(arguments):
     mode = mode or "pie"
     invocation = shared.parse_invocation(common)
     if invocation.print_link_plan or invocation.link_receipt is not None:
-        raise shared.DriverError("arm64 link plans and receipts are unavailable")
+        raise shared.DriverError("arm64 explicit link plans and receipt paths are unavailable")
     if invocation.compile_only and (dsos or runpath is not None or export_dynamic):
         raise shared.DriverError("compile-only accepts no link options")
     if mode == "shared" and export_dynamic:
@@ -94,7 +96,7 @@ def execute(arguments):
                 or any("/" in value for value in re.findall(r"\(NEEDED\).*\[([^\]]+)\]", dynamic))
                 or re.findall(r"\(RUNPATH\).*\[([^\]]*)\]", dynamic) not in ([], ["/usr/lib"])):
             raise shared.DriverError(f"application DSO metadata is not admitted: {path}")
-    output = invocation.output or (sources[0].with_suffix(".o") if invocation.compile_only else Path("a.out"))
+    output = (invocation.output or (sources[0].with_suffix(".o") if invocation.compile_only else Path("a.out"))).absolute()
     shared.validate_application_output(root, output)
     shared.validate_application_output_disjoint(output, (*sources, *objects_in, *dso_inputs))
     with tempfile.TemporaryDirectory(prefix="crabc-aarch64-dynamic-") as temporary:
@@ -108,19 +110,69 @@ def execute(arguments):
             objects.append(obj)
         if invocation.compile_only:
             return
-        command = ["/usr/bin/mold", "-shared" if mode == "shared" else "-pie", "-z", "dynamic-undefined-weak",
-                   "--no-undefined", "--eh-frame-hdr", "-z", "relro", "-z", "now"]
-        if mode == "pie":
-            command += ["--dynamic-linker", "/lib/ld-crabc-aarch64.so.1", "-e", "_start", str(lib / "Scrt1.o")]
-        else:
-            command += ["-soname", output.name]
-        if runpath is not None:
-            command += ["--enable-new-dtags", "-rpath", runpath]
+        receipt_path = Path(str(output) + ".crabc-link.json")
+        shared.validate_application_output(root, receipt_path)
+        shared.validate_application_output_disjoint(receipt_path, (*sources, *objects_in, *dso_inputs, output))
+        runtime = [lib / name for name in ("crti.o", "libc.so", "crtn.o")]
+        command = ["/usr/bin/mold", "-shared" if mode == "shared" else "-pie", "--hash-style=sysv",
+                   "--eh-frame-hdr", "-z", "relro", "-z", "now", "-z", "noexecstack", "-z", "text", "--no-undefined",
+                   "--allow-shlib-undefined", "--enable-new-dtags", "-rpath", runpath or "/usr/lib",
+                   "--exclude-libs=libcrabc-builtins.a"]
         if export_dynamic:
             command.append("--export-dynamic")
-        command += [str(lib / "crti.o"), *(str(path) for path in objects), *(str(path) for path in dso_inputs),
-                    str(lib / "libc.so"), str(lib / "libcrabc-builtins.a"), str(lib / "crtn.o"), "-o", str(output)]
-        shared.run_checked(command)
+        if mode == "pie":
+            runtime.append(lib / "Scrt1.o")
+            command += ["-z", "dynamic-undefined-weak", "--dynamic-linker", "/lib/ld-crabc-aarch64.so.1", str(lib / "Scrt1.o")]
+        else:
+            command += ["-soname", output.name]
+        archive = lib / "libcrabc-builtins.a"
+        command += [str(lib / "crti.o"), *(str(path) for path in objects), str(archive),
+                    *(str(path) for path in dso_inputs), str(lib / "libc.so"), str(lib / "crtn.o"), "-o", str(output)]
+        descriptor = os.open(receipt_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o644)
+        try:
+            completed = subprocess.run([*command[:-2], "--trace", *command[-2:]], text=True,
+                                       stdout=subprocess.PIPE, check=True, env=shared.clean_environment())
+            trace = completed.stdout.splitlines()
+            direct = [*runtime, *objects, *dso_inputs]
+            direct_text = {str(path) for path in direct}
+            seen = set()
+            for line in trace:
+                line = line.removeprefix("trace: ")
+                if line in direct_text:
+                    seen.add(line)
+                elif line == str(archive) or (line.startswith(str(archive) + "(") and line.endswith(")")):
+                    continue
+                else:
+                    raise shared.DriverError(f"unadmitted dynamic link trace input: {line}")
+            if seen != direct_text:
+                raise shared.DriverError("dynamic link trace omitted an explicit input")
+            header = subprocess.check_output(["/usr/bin/readelf", "-hW", str(output)], text=True)
+            segments = subprocess.check_output(["/usr/bin/readelf", "-lW", str(output)], text=True)
+            dynamic = subprocess.check_output(["/usr/bin/readelf", "-dW", str(output)], text=True)
+            if ("AArch64" not in header or "DYN" not in header or "TEXTREL" in dynamic
+                    or (mode == "pie" and "/lib/ld-crabc-aarch64.so.1" not in segments)
+                    or (mode == "shared" and "INTERP" in segments)):
+                raise shared.DriverError("linked dynamic ELF does not match its native mode")
+            record = {"schema": 2, "format": "crabc-aarch64-owned-dynamic-sysroot-v1", "mode": mode,
+                      "binding": "now", "runtime_imports": [], "application_runpath": runpath or "/usr/lib",
+                      "application_rpath": None, "application_search_kind": "runpath", "application_hash_style": "sysv",
+                      "output_path": str(output.resolve()), "output_sha256": shared.sha256_file(output),
+                      "manifest_sha256": shared.sha256_file(root / "share/crabc/manifest.json"),
+                      "application_dsos": {path.name: shared.sha256_file(path) for path in dso_inputs},
+                      "owned_runtime_inputs": sorted(path.relative_to(root).as_posix() for path in [*runtime, archive]),
+                      "input_receipts": [{"path": str(path), "sha256": shared.sha256_file(path)} for path in [*direct, archive]],
+                      "resolved_linker": {"path": command[0], "sha256": shared.sha256_file(Path(command[0]))},
+                      "link_command": command, "link_trace": trace, "campaign_complete": False}
+            with os.fdopen(descriptor, "w", encoding="utf-8") as stream:
+                descriptor = -1
+                json.dump(record, stream, indent=2, sort_keys=True)
+                stream.write("\n")
+        except BaseException:
+            if descriptor != -1:
+                os.close(descriptor)
+            receipt_path.unlink(missing_ok=True)
+            raise
+
 
 
 try:
