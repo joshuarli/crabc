@@ -449,6 +449,9 @@ mod pthread_signal;
 #[cfg(crabc_x86_owned_runtime)]
 #[path = "pthread_scheduling.rs"]
 mod pthread_scheduling;
+#[cfg(target_arch = "aarch64")]
+#[path = "aarch64_tls_layout.rs"]
+mod aarch64_tls_layout;
 #[path = "pthread_identity.rs"]
 mod pthread_identity;
 #[path = "pthread_create_join.rs"]
