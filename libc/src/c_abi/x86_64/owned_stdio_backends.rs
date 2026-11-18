@@ -320,7 +320,7 @@ pub(super) unsafe fn seek(stream: *mut StandardStream, offset: i64, whence: c_in
     unsafe {
         if !(0..=2).contains(&whence) { errno::set_errno(EINVAL); return -1; }
         let (position, length, maximum) = match (*stream).backend {
-            Backend::Descriptor => return c_off_status(raw_syscall::syscall3(8, (*stream).file_descriptor as i64, offset, whence as i64)),
+            Backend::Descriptor => return c_off_status(raw_syscall::syscall3(raw_syscall::SYS_LSEEK, (*stream).file_descriptor as i64, offset, whence as i64)),
             Backend::Cookie(cookie) => {
                 let Some(seek) = cookie.functions.seek else { errno::set_errno(95); return -1; };
                 let mut result = offset;
