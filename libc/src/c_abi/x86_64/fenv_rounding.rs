@@ -30,6 +30,7 @@ compile_error!("the x86 fenv-sensitive rounding leaf requires little-endian Linu
 // libc.a; a chunk that shares local labels with another stays with it.
 // Musl's `src/math/rint.c` object.
 static_archive_member! { rint_source {
+    #[cfg(target_arch = "x86_64")]
     core::arch::global_asm!(
         r#"
     .section .text.rint, "ax", @progbits
@@ -73,6 +74,7 @@ rint:
 
 // Musl's `src/math/rintf.c` object.
 static_archive_member! { rintf_source {
+    #[cfg(target_arch = "x86_64")]
     core::arch::global_asm!(
         r#"
     .section .text.rintf, "ax", @progbits
@@ -119,6 +121,22 @@ rintf:
 
 // Musl's `src/math/rintl.c` object.
 static_archive_member! { rintl_source {
+    // musl 1.2.6 src/math/rintl.c, LDBL_MANT_DIG == 113; MIT license.
+    #[cfg(target_arch = "aarch64")]
+    #[no_mangle]
+    pub extern "C" fn rintl(x: f128) -> f128 {
+        let bits = x.to_bits();
+        let exponent = (bits >> 112) & 0x7fff;
+        let sign = bits >> 127;
+        if exponent >= 0x3fff + 112 {
+            return x;
+        }
+        let toint = f128::from_bits((0x3fffu128 + 112) << 112);
+        let y = if sign != 0 { x - toint + toint } else { x + toint - toint };
+        if y == 0.0f128 { 0.0f128 * x } else { y }
+    }
+
+    #[cfg(target_arch = "x86_64")]
     core::arch::global_asm!(
         r#"
     .section .text.rintl, "ax", @progbits
@@ -141,6 +159,7 @@ rintl:
 
 // Musl's `src/math/nearbyint.c` object.
 static_archive_member! { nearbyint_source {
+    #[cfg(target_arch = "x86_64")]
     core::arch::global_asm!(
         r#"
     .section .text.nearbyint, "ax", @progbits
@@ -177,6 +196,7 @@ nearbyint:
 
 // Musl's `src/math/nearbyintf.c` object.
 static_archive_member! { nearbyintf_source {
+    #[cfg(target_arch = "x86_64")]
     core::arch::global_asm!(
         r#"
     .section .text.nearbyintf, "ax", @progbits
@@ -216,6 +236,19 @@ nearbyintf:
 
 // Musl's `src/math/nearbyintl.c` object.
 static_archive_member! { nearbyintl_source {
+    // musl 1.2.6 src/math/nearbyintl.c; MIT license.
+    #[cfg(target_arch = "aarch64")]
+    #[no_mangle]
+    pub extern "C" fn nearbyintl(x: f128) -> f128 {
+        let inexact = crabc_core::fenv::test_exceptions(crabc_core::fenv::ExceptionFlags::INEXACT);
+        let result = rintl(x);
+        if inexact.is_empty() {
+            crabc_core::fenv::clear_exceptions(crabc_core::fenv::ExceptionFlags::INEXACT);
+        }
+        result
+    }
+
+    #[cfg(target_arch = "x86_64")]
     core::arch::global_asm!(
         r#"
     .section .text.nearbyintl, "ax", @progbits
