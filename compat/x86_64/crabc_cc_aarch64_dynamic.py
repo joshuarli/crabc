@@ -33,6 +33,11 @@ def execute(arguments):
             if mode is not None:
                 raise shared.DriverError("select exactly one dynamic mode")
             mode = "shared" if arg == "--dynamic-shared-object" else "pie"
+        elif arg == "-o":
+            index += 1
+            if index == len(arguments):
+                raise shared.DriverError("-o requires an output path")
+            common.extend((arg, arguments[index]))
         elif arg in ("--application-quote-include-dir", "--application-runpath", "--application-dso"):
             index += 1
             if index == len(arguments) or arguments[index].startswith("-"):
