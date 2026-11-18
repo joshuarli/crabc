@@ -31,7 +31,7 @@ def generate_related(root, compiler, includes, names, environment, output_dir):
                 text = re.sub(r"(?<![A-Za-z0-9_.])\.L([A-Za-z0-9_.$]+)", f".Lcrabc_{stem}_{index}_\\1", text)
                 text = re.sub(r"^\s*\.(file|ident)\s+.*\n", "", text, flags=re.MULTILINE)
                 if stem == "float_parse_musl_support":
-                    text = re.sub(r"(?m)^(\s*)\.global(\s+crabc_x86_float_parse_)", r"\1.local\2", text)
+                    text = re.sub(r"(?m)^(\s*)\.global(\s+crabc_x86_float_parse_)(?!shlim\b)", r"\1.local\2", text)
                 blocks.extend((f"/* musl-1.2.6/{relative} */", text))
             (output_dir / f"{stem}_aarch64.S").write_text("\n".join(blocks))
 

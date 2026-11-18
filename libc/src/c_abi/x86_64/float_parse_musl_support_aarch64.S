@@ -4,7 +4,7 @@
 	.text
 	.section	.text.crabc_x86_float_parse_shlim,"ax",@progbits
 	.align	2
-	.local	crabc_x86_float_parse_shlim
+	.global	crabc_x86_float_parse_shlim
 	.hidden	crabc_x86_float_parse_shlim
 	.type	crabc_x86_float_parse_shlim, %function
 crabc_x86_float_parse_shlim:
