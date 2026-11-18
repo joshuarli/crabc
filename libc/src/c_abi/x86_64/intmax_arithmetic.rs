@@ -36,6 +36,7 @@ pub struct ImaxDivResult {
 /// Divide two C `intmax_t` values with x86's signed quotient/remainder
 /// instruction.
 #[inline]
+#[cfg(target_arch = "x86_64")]
 fn divide_intmax(numerator: c_long, denominator: c_long) -> ImaxDivResult {
     let quotient: c_long;
     let remainder: c_long;
@@ -58,6 +59,12 @@ fn divide_intmax(numerator: c_long, denominator: c_long) -> ImaxDivResult {
         quot: quotient,
         rem: remainder,
     }
+}
+
+#[cfg(target_arch = "aarch64")]
+#[inline]
+fn divide_intmax(numerator: c_long, denominator: c_long) -> ImaxDivResult {
+    ImaxDivResult { quot: numerator / denominator, rem: numerator % denominator }
 }
 
 // Musl's `src/stdlib/imaxabs.c` object.

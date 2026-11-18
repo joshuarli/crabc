@@ -49,6 +49,7 @@ pub struct LongLongDivResult {
 
 /// Divide two C `int` values with x86's signed quotient/remainder instruction.
 #[inline]
+#[cfg(target_arch = "x86_64")]
 fn divide_int(numerator: c_int, denominator: c_int) -> DivResult {
     let quotient: c_int;
     let remainder: c_int;
@@ -73,8 +74,15 @@ fn divide_int(numerator: c_int, denominator: c_int) -> DivResult {
     }
 }
 
+#[cfg(target_arch = "aarch64")]
+#[inline]
+fn divide_int(numerator: c_int, denominator: c_int) -> DivResult {
+    DivResult { quot: numerator / denominator, rem: numerator % denominator }
+}
+
 /// Divide two C `long`/`long long` values with x86's signed instruction.
 #[inline]
+#[cfg(target_arch = "x86_64")]
 fn divide_long(numerator: c_long, denominator: c_long) -> LongDivResult {
     let quotient: c_long;
     let remainder: c_long;
@@ -98,8 +106,15 @@ fn divide_long(numerator: c_long, denominator: c_long) -> LongDivResult {
     }
 }
 
+#[cfg(target_arch = "aarch64")]
+#[inline]
+fn divide_long(numerator: c_long, denominator: c_long) -> LongDivResult {
+    LongDivResult { quot: numerator / denominator, rem: numerator % denominator }
+}
+
 /// Divide two C `long long` values with x86's signed instruction.
 #[inline]
+#[cfg(target_arch = "x86_64")]
 fn divide_long_long(
     numerator: c_longlong,
     denominator: c_longlong,
@@ -122,6 +137,12 @@ fn divide_long_long(
         quot: quotient,
         rem: remainder,
     }
+}
+
+#[cfg(target_arch = "aarch64")]
+#[inline]
+fn divide_long_long(numerator: c_longlong, denominator: c_longlong) -> LongLongDivResult {
+    LongLongDivResult { quot: numerator / denominator, rem: numerator % denominator }
 }
 
 // Musl's `src/stdlib/abs.c` object.
