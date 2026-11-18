@@ -3900,6 +3900,7 @@ unsafe fn syscall4(number: i64, one: i64, two: i64, three: i64, four: i64) -> i6
 #[cfg(target_arch = "x86_64")]
 unsafe fn syscall6(number: i64, one: i64, two: i64, three: i64, four: i64, five: i64, six: i64) -> i64 { let result: i64; core::arch::asm!("syscall", inlateout("rax") number => result, in("rdi") one, in("rsi") two, in("rdx") three, in("r10") four, in("r8") five, in("r9") six, lateout("rcx") _, lateout("r11") _, options(nostack)); result }
 
+#[cfg(target_arch = "x86_64")]
 unsafe fn jump(entry: usize, sp: usize) -> ! {
     core::arch::asm!("mov rsp, {stack}", "jmp {target}", stack = in(reg) sp,
         target = in(reg) entry,
@@ -3908,6 +3909,17 @@ unsafe fn jump(entry: usize, sp: usize) -> ! {
     #[cfg(not(crabc_general_initial_lifecycle))]
     core::arch::asm!("mov rsp, {stack}", "jmp {target}", stack = in(reg) sp,
         target = in(reg) entry, options(noreturn));
+}
+#[cfg(target_arch = "aarch64")]
+unsafe fn jump(entry: usize, sp: usize) -> ! {
+    // SAFETY: The loader supplies the admitted entry and initial stack. The
+    // AArch64 startup ABI passes the loader finalizer in x0.
+    unsafe {
+        core::arch::asm!("mov sp, {stack}", "br {target}", stack = in(reg) sp,
+            target = in(reg) entry,
+            in("x0") x86_64_general_initial_lifecycle::process_finalizer as *const () as usize,
+            options(noreturn));
+    }
 }
 fn fail(message: &[u8]) -> ! { unsafe { die(message) } }
 unsafe fn die(message: &[u8]) -> ! { let _ = syscall3(SYS_WRITE, 2, message.as_ptr() as i64, message.len() as i64); let _ = syscall1(SYS_EXIT, 127); core::hint::unreachable_unchecked() }
