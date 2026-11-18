@@ -33,6 +33,10 @@ compile_error!("the x86 binary32/binary64 extrema leaf requires little-endian Li
 // libc.a; a chunk that shares local labels with another stays with it.
 // Musl's `src/math/fmax.c` object.
 static_archive_member! { fmax_source {
+    // musl 1.2.6 src/math/aarch64/fmax.c.
+    #[cfg(target_arch = "aarch64")]
+    core::arch::global_asm!(".text", ".global fmax", ".type fmax, %function", "fmax:", "fmaxnm d0, d0, d1", "ret", ".size fmax, .-fmax");
+    #[cfg(target_arch = "x86_64")]
     core::arch::global_asm!(
         r#"
     .text
@@ -83,6 +87,10 @@ fmax:
 
 // Musl's `src/math/fmaxf.c` object.
 static_archive_member! { fmaxf_source {
+    // musl 1.2.6 src/math/aarch64/fmaxf.c.
+    #[cfg(target_arch = "aarch64")]
+    core::arch::global_asm!(".text", ".global fmaxf", ".type fmaxf, %function", "fmaxf:", "fmaxnm s0, s0, s1", "ret", ".size fmaxf, .-fmaxf");
+    #[cfg(target_arch = "x86_64")]
     core::arch::global_asm!(
         r#"
     .text
@@ -133,6 +141,10 @@ fmaxf:
 
 // Musl's `src/math/fmin.c` object.
 static_archive_member! { fmin_source {
+    // musl 1.2.6 src/math/aarch64/fmin.c.
+    #[cfg(target_arch = "aarch64")]
+    core::arch::global_asm!(".text", ".global fmin", ".type fmin, %function", "fmin:", "fminnm d0, d0, d1", "ret", ".size fmin, .-fmin");
+    #[cfg(target_arch = "x86_64")]
     core::arch::global_asm!(
         r#"
     .text
@@ -184,6 +196,10 @@ fmin:
 
 // Musl's `src/math/fminf.c` object.
 static_archive_member! { fminf_source {
+    // musl 1.2.6 src/math/aarch64/fminf.c.
+    #[cfg(target_arch = "aarch64")]
+    core::arch::global_asm!(".text", ".global fminf", ".type fminf, %function", "fminf:", "fminnm s0, s0, s1", "ret", ".size fminf, .-fminf");
+    #[cfg(target_arch = "x86_64")]
     core::arch::global_asm!(
         r#"
     .text
