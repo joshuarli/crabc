@@ -114,6 +114,8 @@ fcntl:
     record_lock = sym record_locks::fcntl_record_lock,
 );
 
+/// # Safety
+/// The descriptor and any command-specific variadic argument must satisfy the C fcntl contract.
 #[cfg(target_arch = "aarch64")]
 #[no_mangle]
 pub unsafe extern "C" fn fcntl(descriptor: c_int, command: c_int, mut arguments: ...) -> c_int {

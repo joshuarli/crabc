@@ -53,6 +53,8 @@ unsafe fn kernel_name(name: *const c_char) -> *const c_char {
 // Two-argument callers do not supply mode/attribute registers. The O_CREAT
 // branch alone admits the promoted mode_t and pointer varargs in edx/rcx.
 static_archive_member! { mq_open_source {
+    /// # Safety
+    /// The name must be a readable C string and O_CREAT requires a mode and mq_attr pointer.
     #[cfg(target_arch = "aarch64")]
     #[no_mangle]
     pub unsafe extern "C" fn mq_open(name: *const c_char, flags: c_int, mut arguments: ...) -> c_int {
