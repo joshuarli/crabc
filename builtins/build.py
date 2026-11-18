@@ -136,10 +136,12 @@ FORBIDDEN_EXPORT_TOKENS = (
 )
 
 # compiler_builtins also carries a small all-Rust libm compatibility surface.
-# These names are intentionally acceptable only as archive members: the driver
-# puts crabc libc first, so ordinary C programs continue to resolve their
-# public libm entry points from libc rather than silently replacing them here.
-APPROVED_COMPATIBILITY_EXPORTS = frozenset(
+# The archive is linked into libc.so with --whole-archive and ahead of libc by
+# the application drivers, so a visible copy would either replace musl's libm
+# for applications or, through ELF visibility merging with these hidden weak
+# definitions, demote libc's own exports to local. They are localized in every
+# extracted member and must never reach the archive's global symbol surface.
+LOCALIZED_LIBM_SYMBOLS = frozenset(
     {
         "cbrt",
         "cbrtf",
@@ -717,9 +719,12 @@ def extract_upstream_members(
     members = sorted(destination.glob("*.o"))
     if not members:
         raise BuildError("source-built compiler_builtins archive contained no object members")
+    llvm_objcopy = str(pathlib.Path(llvm_ar).with_name("llvm-objcopy"))
+    localize = [f"--localize-symbol={symbol}" for symbol in sorted(LOCALIZED_LIBM_SYMBOLS)]
     for member in members:
         if not member.name.startswith("compiler_builtins-"):
             raise BuildError(f"compiler_builtins rlib carried a non-compiler-builtins object member: {member.name}")
+        run((require_tool(llvm_objcopy), *localize, str(member)))
     return members
 
 
@@ -888,7 +893,7 @@ def assert_symbol_surface(defined: Sequence[str]) -> None:
         if any(token in symbol for token in FORBIDDEN_EXPORT_TOKENS):
             rejected.append(symbol)
             continue
-        if symbol.startswith("__") or symbol in APPROVED_COMPATIBILITY_EXPORTS:
+        if symbol.startswith("__"):
             continue
         rejected.append(symbol)
     if rejected:
