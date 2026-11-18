@@ -447,4 +447,3 @@ getopt_source_member! { getopt_long_source {
         cabi_getopt_long_impl(argc, argv, optstring, longopts, idx, true)
     }
 } }
-

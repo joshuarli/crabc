@@ -84,7 +84,7 @@ pub(crate) unsafe fn x86_64_compare_exchange_acqrel_i32(
     #[cfg(target_arch = "aarch64")]
     {
         // SAFETY: the caller supplies live aligned storage with atomic access.
-        unsafe { AtomicI32::from_ptr(address) }.compare_exchange(expected, desired, Ordering::AcqRel, Ordering::Acquire).unwrap_or_else(|value| value)
+        unsafe { AtomicI32::from_ptr(address) }.compare_exchange(expected, desired, Ordering::SeqCst, Ordering::SeqCst).unwrap_or_else(|value| value)
     }
 }
 
@@ -120,7 +120,7 @@ pub(crate) unsafe fn x86_64_swap_acqrel_i32(address: *mut c_int, desired: c_int)
     #[cfg(target_arch = "aarch64")]
     {
         // SAFETY: the caller supplies live aligned storage with atomic access.
-        unsafe { AtomicI32::from_ptr(address) }.swap(desired, Ordering::AcqRel)
+        unsafe { AtomicI32::from_ptr(address) }.swap(desired, Ordering::SeqCst)
     }
 }
 
@@ -157,7 +157,7 @@ pub(crate) unsafe fn x86_64_fetch_add_acqrel_i32(address: *mut c_int, value: c_i
     #[cfg(target_arch = "aarch64")]
     {
         // SAFETY: the caller supplies live aligned storage with atomic access.
-        unsafe { AtomicI32::from_ptr(address) }.fetch_add(value, Ordering::AcqRel)
+        unsafe { AtomicI32::from_ptr(address) }.fetch_add(value, Ordering::SeqCst)
     }
 }
 
