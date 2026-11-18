@@ -3,6 +3,7 @@ import importlib.util
 import hashlib
 import json
 import os
+import platform
 from pathlib import Path
 import subprocess
 import tempfile
@@ -42,6 +43,7 @@ class OwnedRustLinkContract(unittest.TestCase):
                                   "--plugin-opt=mcpu=x86-64", "--trace", "/owned/consumer.o",
                                   "/owned/libstd.rlib", "-o", "/owned/consumer.lto.o"])
 
+    @unittest.skipUnless(platform.machine() == "x86_64", "requires native x86-64 linker fixture")
     @unittest.skipUnless(Path("/opt/cargo/bin/rustup").is_file() and Path("/usr/bin/mold").is_file(), "requires pinned native image")
     def test_bitcode_archive_materializes_before_mold_preserving_call_behavior(self):
         from scripts.rust_toolchain import pinned_toolchain
