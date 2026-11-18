@@ -9,6 +9,9 @@
 #[cfg(not(all(target_os = "linux", any(target_arch = "x86_64", target_arch = "aarch64"), target_endian = "little")))]
 compile_error!("the x86 setjmp leaf requires little-endian Linux/x86-64");
 
+#[cfg(target_arch = "aarch64")]
+use super::raw_syscall;
+
 /*
  * The public jmp_buf begins with eight machine words: RBX, RBP, R12-R15,
  * post-return RSP, and RIP. `sigsetjmp` uses the following word temporarily
@@ -20,6 +23,9 @@ compile_error!("the x86 setjmp leaf requires little-endian Linux/x86-64");
 // libc.a; a chunk that shares local labels with another stays with it.
 // Musl's `src/setjmp/setjmp.c` object.
 static_archive_member! { setjmp_source {
+    #[cfg(target_arch = "aarch64")]
+    core::arch::global_asm!(include_str!("setjmp_aarch64.S"));
+    #[cfg(target_arch = "x86_64")]
     core::arch::global_asm!(
         r#"
     .text
@@ -57,6 +63,9 @@ _setjmp:
 
 // Musl's `src/setjmp/longjmp.c` object.
 static_archive_member! { longjmp_source {
+    #[cfg(target_arch = "aarch64")]
+    core::arch::global_asm!(include_str!("longjmp_aarch64.S"));
+    #[cfg(target_arch = "x86_64")]
     core::arch::global_asm!(
         r#"
     .text
@@ -88,6 +97,18 @@ _longjmp:
 
 // Musl's `src/signal/sigsetjmp.c` object.
 static_archive_member! { sigsetjmp_source {
+    #[cfg(target_arch = "aarch64")]
+    core::arch::global_asm!(include_str!("sigsetjmp_aarch64.S"));
+    #[cfg(target_arch = "aarch64")]
+    #[no_mangle]
+    unsafe extern "C" fn __sigsetjmp_tail(buffer: *mut u8, result: i32) -> i32 {
+        // SAFETY: musl's sigsetjmp caller provides its live sigjmp_buf and mask storage at byte 184.
+        let mask = unsafe { buffer.add(184) } as i64;
+        // SAFETY: the selected pointer addresses the caller's valid signal mask storage.
+        unsafe { raw_syscall::syscall4(raw_syscall::SYS_RT_SIGPROCMASK, 2, if result != 0 { mask } else { 0 }, if result != 0 { 0 } else { mask }, 8); }
+        result
+    }
+    #[cfg(target_arch = "x86_64")]
     core::arch::global_asm!(
         r#"
     .text
@@ -135,6 +156,9 @@ __sigsetjmp:
 
 // Musl's `src/signal/siglongjmp.c` object.
 static_archive_member! { siglongjmp_source {
+    #[cfg(target_arch = "aarch64")]
+    core::arch::global_asm!(include_str!("siglongjmp_aarch64.S"));
+    #[cfg(target_arch = "x86_64")]
     core::arch::global_asm!(
         r#"
     .text
