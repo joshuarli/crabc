@@ -82,6 +82,7 @@ mod source {
 
     // LLVM can see both Rust definitions and fold these forwarding calls into
     // identity returns. The jump keeps musl's public archive extraction edge.
+    #[cfg(target_arch = "x86_64")]
     core::arch::global_asm!(
         r#"
     .text
@@ -101,6 +102,9 @@ __crabc_x86_gettext_cabi_dngettext:
     .size __crabc_x86_gettext_cabi_dngettext, .-__crabc_x86_gettext_cabi_dngettext
 "#,
     );
+
+    #[cfg(target_arch = "aarch64")]
+    core::arch::global_asm!(include_str!("gettext_thunks_aarch64.S"));
 
     unsafe extern "C" {
         #[link_name = "__crabc_x86_gettext_cabi_dgettext"]
@@ -206,6 +210,7 @@ mod state {
     // Pinned `textdomain.c` calls public `malloc`, which musl keeps
     // preemptible in libc.so. Keep the call at the ELF lookup boundary so LTO
     // cannot bind it directly to this crate's allocator definition.
+    #[cfg(target_arch = "x86_64")]
     core::arch::global_asm!(
         r#"
     .text
@@ -218,6 +223,9 @@ __crabc_x86_textdomain_cabi_malloc:
     .size __crabc_x86_textdomain_cabi_malloc, .-__crabc_x86_textdomain_cabi_malloc
 "#
     );
+
+    #[cfg(target_arch = "aarch64")]
+    core::arch::global_asm!(include_str!("textdomain_thunk_aarch64.S"));
 
     unsafe extern "C" {
         #[link_name = "__crabc_x86_textdomain_cabi_malloc"]
