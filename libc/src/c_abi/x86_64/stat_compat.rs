@@ -51,6 +51,7 @@ struct Timespec {
 /// spelling in `include/bits/stat.h`; Rust callers continue to use the typed
 /// `crabc-rs` metadata facade instead of a C-compatible layout.
 #[repr(C)]
+#[cfg(target_arch = "x86_64")]
 pub struct Stat {
     device: u64,
     inode: u64,
@@ -67,6 +68,28 @@ pub struct Stat {
     modification_time: Timespec,
     change_time: Timespec,
     unused: [i64; 3],
+}
+
+#[repr(C)]
+#[cfg(target_arch = "aarch64")]
+/// Layout from musl 1.2.6 `arch/generic/bits/stat.h` and the former AArch64 composition.
+pub struct Stat {
+    device: u64,
+    inode: u64,
+    mode: u32,
+    link_count: u32,
+    user_id: u32,
+    group_id: u32,
+    rdevice: u64,
+    padding0: u64,
+    size: i64,
+    block_size: i32,
+    padding1: i32,
+    blocks: i64,
+    access_time: Timespec,
+    modification_time: Timespec,
+    change_time: Timespec,
+    unused: [u32; 2],
 }
 
 /// Private path metadata view for selected sibling C ABI leaves.
@@ -140,6 +163,7 @@ pub(super) unsafe fn stat_device_and_inode(path: *const c_char) -> Option<(u64, 
     }
 }
 
+#[cfg(target_arch = "x86_64")]
 const _: () = {
     assert!(size_of::<Timespec>() == 16);
     assert!(align_of::<Timespec>() == 8);
@@ -158,6 +182,17 @@ const _: () = {
     assert!(offset_of!(Stat, access_time) == 72);
     assert!(offset_of!(Stat, modification_time) == 88);
     assert!(offset_of!(Stat, change_time) == 104);
+};
+
+#[cfg(target_arch = "aarch64")]
+const _: () = {
+    assert!(size_of::<Stat>() == 128);
+    assert!(align_of::<Stat>() == 8);
+    assert!(offset_of!(Stat, mode) == 16);
+    assert!(offset_of!(Stat, link_count) == 20);
+    assert!(offset_of!(Stat, size) == 48);
+    assert!(offset_of!(Stat, blocks) == 64);
+    assert!(offset_of!(Stat, access_time) == 72);
 };
 
 /// Issue `newfstatat` without imposing Rust pointer validity on the C ABI.
