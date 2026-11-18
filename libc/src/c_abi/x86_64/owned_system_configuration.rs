@@ -50,8 +50,14 @@ use super::{auxv_observation, c_status, errno, raw_syscall, system_information};
 const EINVAL: c_int = 22;
 
 const AT_MINSIGSTKSZ: c_ulong = 51;
+#[cfg(target_arch = "x86_64")]
 const MINSIGSTKSZ: c_uint = 2_048;
+#[cfg(target_arch = "aarch64")]
+const MINSIGSTKSZ: c_uint = 6_144;
+#[cfg(target_arch = "x86_64")]
 const SIGSTKSZ: c_uint = 8_192;
+#[cfg(target_arch = "aarch64")]
+const SIGSTKSZ: c_uint = 12_288;
 
 const CS_PATH: c_int = 0;
 const CS_POSIX_V6_WIDTH_RESTRICTED_ENVS: c_int = 1;
