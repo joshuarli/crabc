@@ -1006,8 +1006,90 @@ def write_product_manifest(output: Path, metadata: Path, *, profile: str = "rele
     common.write_json(metadata / "manifest.json", manifest)
 
 
+def build_aarch64(output: Path, *, allocator_backend: str, lifecycle_test_audit: bool,
+                  profile: str, hardening_profile: common.NativeRuntimeProfile) -> None:
+    import platform
+    import shutil
+    import tempfile
+    if platform.system() != "Linux" or platform.machine() not in {"aarch64", "arm64"}:
+        raise common.BuildError("aarch64 dynamic sysroot requires native Linux/aarch64")
+    if allocator_backend != common.DEFAULT_ALLOCATOR_BACKEND or lifecycle_test_audit or profile != "release" or hardening_profile is not common.NativeRuntimeProfile.COMPATIBILITY:
+        raise common.BuildError("aarch64 supports the accepted C backend and release compatibility profile")
+    output = common.validate_output_path(output)
+    work = ROOT / ".work/aarch64"
+    if not output.is_relative_to(work):
+        raise common.BuildError("aarch64 output must be under .work/aarch64")
+    output.parent.mkdir(parents=True, exist_ok=True)
+    target = "aarch64-unknown-linux-musl"
+    rustup = str(common.pinned_rustup())
+    rust_sysroot = common.pinned_rustc_sysroot(Path(rustup))
+    tools = rust_sysroot / "lib/rustlib" / target / "bin"
+    environment = common.deterministic_environment()
+    environment.update({"CARGO_HOME": str(work / "cargo"), "TMPDIR": str(work / "tmp"),
+                        "CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_LINKER": "/usr/local/bin/crabc-aarch64-mold-gcc"})
+    skipped = ["x86 source seal and installed receipt validation", "x86 CRT entry and relocation audits",
+               "x86 libc member classification and symbol contract", "x86 allocator lifecycle and hidden-symbol audit",
+               "x86 compiler-helper contract and ELF audits", "x86 dynamic driver and receipt audits"]
+    for item in skipped:
+        print("aarch64: skipped " + item, file=sys.stderr, flush=True)
+    with tempfile.TemporaryDirectory(prefix="owned-dynamic-build-", dir=work) as temporary:
+        stage = Path(temporary)
+        cargo = [rustup, "run", common.PINNED_TOOLCHAIN, "cargo"]
+        flags = ["--config", f'target.{target}.rustflags=["-Ztls-model=initial-exec", "-Ctarget-feature=-outline-atomics"]']
+        common.run([*cargo, "rustc", "--locked", "-p", "crabc-libc", "--lib", "--release", "--no-default-features", "--features", "x86-owned-dynamic-runtime", "--target", target, "--target-dir", str(stage / "cargo"), *common.STATIC_ARCHIVE_PROFILE, *flags, "--", "--cfg", "crabc_owned_static_sysroot", "--cfg", common.MIMALLOC_LIFECYCLE_RUST_CFG, "-C", "relocation-model=pic", "-C", "panic=abort", "-Ztls-model=initial-exec", "-Zmerge-functions=disabled"], environment=environment)
+        crt = stage / "crt"
+        common.run([sys.executable, str(ROOT / "crt/build_x86_64.py"), "--architecture", "aarch64", "--owned-dynamic-sysroot", "--out-dir", str(crt)], environment=environment)
+        builtins = stage / "libcrabc-builtins.a"
+        common.run([sys.executable, str(ROOT / "builtins/build.py"), "--output", str(builtins), "--llvm-ar", str(tools / "llvm-ar"), "--llvm-nm", str(tools / "llvm-nm"), "--llvm-readelf", "/usr/bin/readelf", "--ld-lld", "/usr/bin/mold"], environment=environment)
+        allocator, _ = common.compile_c_allocator(stage / "c-allocator", common.c_allocator_target_flags(), profile="release", architecture="aarch64")
+        raw = stage / "cargo" / target / "release/libc.a"
+        ar = str(tools / "llvm-ar")
+        members = common.run([ar, "t", str(raw)], environment=environment).decode().splitlines()
+        selected = [name for name in members if common.LIBC_MEMBER.fullmatch(name)]
+        if not selected or len(set(selected)) != len(selected):
+            raise common.BuildError("aarch64 libc has no unique crabc object members")
+        objects = stage / "objects"
+        objects.mkdir()
+        common.run([ar, "x", str(raw), *selected], cwd=objects, environment=environment)
+        common.run([*cargo, "rustc", "--locked", "-p", "crabc-ldso", "--release", "--target", target, "--target-dir", str(stage / "loader"), "--no-default-features", "--features", LOADER_FEATURE, *flags, "--", "--emit=obj"], environment=environment)
+        candidates = list((stage / "loader" / target / "release/build/crabc-ldso").glob("*/out/ldso.o"))
+        if len(candidates) != 1:
+            raise common.BuildError(f"expected one loader object, found {candidates}")
+        loader = stage / "loader-local.o"
+        shutil.copyfile(candidates[0], loader)
+        common.run(["/usr/bin/objcopy", *["--localize-symbol=" + name for name in ("memcpy", "memset", "memmove", "memcmp", "bcmp", "__tls_get_addr", "_dl_debug_state")], str(loader)], environment=environment)
+        installed = stage / "installed"
+        library = installed / "usr/lib"
+        library.mkdir(parents=True)
+        private = stage / "private.exports"
+        private.write_text("{ local: __crabc_x86_64_*; };\n")
+        common.run(["/usr/bin/mold", "-shared", "--hash-style=sysv", "--eh-frame-hdr", "-soname", "libc.so", f"--dynamic-list={SHARED_LIBC_DYNAMIC_LIST}", f"--version-script={private}", "-z", "relro", "-z", "now", "-z", "noexecstack", "-z", "text", "-e", "_start", *(str(objects / name) for name in selected), str(allocator), str(loader), "--whole-archive", str(builtins), "--no-whole-archive", "-o", str(library / "libc.so")], environment=environment)
+        for name in ("crt1.o", "Scrt1.o", "crti.o", "crtn.o"):
+            common.copy_artifact(crt / name, library / name)
+        common.copy_artifact(builtins, library / builtins.name)
+        common.copy_regular_tree(ROOT / "include", installed / "usr/include")
+        interpreter = installed / "lib/ld-crabc-aarch64.so.1"
+        interpreter.parent.mkdir()
+        os.link(library / "libc.so", interpreter)
+        common.copy_artifact(ROOT / "compat/x86_64/crabc_cc_aarch64_dynamic.py", installed / "bin/crabc-cc-dynamic")
+        (installed / "bin/crabc-cc-dynamic").chmod(0o755)
+        manifest = {"format": "crabc-aarch64-owned-dynamic-sysroot-v1", "target": target,
+                    "files": common.regular_file_hashes(installed), "skipped": skipped}
+        common.write_json(installed / "share/crabc/manifest.json", manifest)
+        if output.exists():
+            try:
+                old = json.loads((output / "share/crabc/manifest.json").read_text())
+            except (OSError, ValueError) as error:
+                raise common.BuildError("refusing to replace unrecognized aarch64 sysroot") from error
+            if old.get("format") != manifest["format"]:
+                raise common.BuildError("refusing to replace unrecognized aarch64 sysroot")
+            shutil.rmtree(output)
+        installed.replace(output)
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--architecture", choices=("x86_64", "aarch64"), default="x86_64")
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--allocator-backend", choices=ALLOCATOR_BACKENDS, default=common.DEFAULT_ALLOCATOR_BACKEND)
     parser.add_argument("--allocator-lifecycle-test-audit", action="store_true")
@@ -1015,7 +1097,8 @@ def main() -> int:
     parser.add_argument("--hardening-profile", type=common.NativeRuntimeProfile, choices=tuple(common.NativeRuntimeProfile), default=common.NativeRuntimeProfile.COMPATIBILITY)
     args = parser.parse_args()
     try:
-        build(args.output, allocator_backend=args.allocator_backend, lifecycle_test_audit=args.allocator_lifecycle_test_audit, profile=args.profile, hardening_profile=args.hardening_profile)
+        builder = build_aarch64 if args.architecture == "aarch64" else build
+        builder(args.output, allocator_backend=args.allocator_backend, lifecycle_test_audit=args.allocator_lifecycle_test_audit, profile=args.profile, hardening_profile=args.hardening_profile)
     except (common.BuildError, OSError) as error:
         print(f"owned dynamic sysroot: {error}", file=sys.stderr)
         return 1
