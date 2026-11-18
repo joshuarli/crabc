@@ -24,6 +24,10 @@ TAG = "crabc-core-evidence:x86_64"
 STALE = "sha256:" + "2" * 64
 
 
+HOST_MACHINE = subprocess.check_output(["uname", "-m"], text=True).strip()
+
+
+@unittest.skipUnless(HOST_MACHINE in ("x86_64", "amd64"), "x86 image contract")
 class CoreImageDispatchTests(unittest.TestCase):
     def setUp(self) -> None:
         scratch = ROOT / ".work/x86_64/tmp"
@@ -220,6 +224,7 @@ class CoreImageDispatchTests(unittest.TestCase):
                                  "/workspace/.work/x86_64/" + kind + "-output")
 
 
+@unittest.skipUnless(HOST_MACHINE in ("x86_64", "amd64"), "x86 image contract")
 class InstalledRustCheckWorktreeTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
@@ -265,6 +270,38 @@ class InstalledRustCheckWorktreeTests(unittest.TestCase):
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertEqual(result.stdout, "branch-only.txt\n")
             self.assertEqual(metadata(), before)
+
+
+@unittest.skipUnless(HOST_MACHINE in ("aarch64", "arm64"), "aarch64 image contract")
+class ArmCoreImageDispatchTests(unittest.TestCase):
+    def test_pinned_image_and_help(self) -> None:
+        scratch = ROOT / ".work/aarch64/tmp"
+        scratch.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(dir=scratch) as temporary:
+            directory = Path(temporary)
+            log = directory / "docker.log"
+            docker = directory / "docker"
+            docker.write_text(
+                f"#!{sys.executable}\n"
+                "import json, os, sys\n"
+                "a = sys.argv[1:]\n"
+                "with open(os.environ['ARM_DOCKER_LOG'], 'a') as f: f.write(json.dumps(a) + '\\n')\n"
+                "if a[:2] == ['image', 'inspect']:\n"
+                f" print({'linux/arm64'!r} if '--format' in a and a[a.index('--format')+1] == '{{{{.Os}}}}/{{{{.Architecture}}}}' else {core_image.AARCH64_CORE_IMAGE_ID!r})\n",
+                encoding="utf-8",
+            )
+            docker.chmod(0o755)
+            environment = os.environ.copy()
+            environment.update(PATH=str(directory) + os.pathsep + environment["PATH"], ARM_DOCKER_LOG=str(log))
+            help_result = subprocess.run([str(ROOT / "scripts/dev-x86_64.sh"), "--help"], cwd=ROOT, env=environment, capture_output=True, text=True)
+            self.assertEqual(help_result.returncode, 0, help_result.stderr)
+            result = subprocess.run([str(ROOT / "scripts/dev-x86_64.sh"), "core"], cwd=ROOT, env=environment, capture_output=True, text=True)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            calls = [json.loads(line) for line in log.read_text().splitlines()]
+            run = next(call for call in calls if call[0] == "run")
+            self.assertIn(core_image.AARCH64_CORE_IMAGE_ID, run)
+            self.assertEqual(run[run.index("--platform") + 1], "linux/arm64")
+            self.assertIn("CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_LINKER=/usr/local/bin/crabc-aarch64-mold-gcc", run)
 
 
 if __name__ == "__main__":
