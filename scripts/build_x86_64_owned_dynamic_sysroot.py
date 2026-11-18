@@ -1063,7 +1063,7 @@ def build_aarch64(output: Path, *, allocator_backend: str, lifecycle_test_audit:
         library.mkdir(parents=True)
         private = stage / "private.exports"
         private.write_text("{ local: __crabc_x86_64_*; };\n")
-        common.run(["/usr/bin/mold", "-shared", "--hash-style=sysv", "--eh-frame-hdr", "-soname", "libc.so", f"--dynamic-list={SHARED_LIBC_DYNAMIC_LIST}", f"--version-script={private}", "-z", "relro", "-z", "now", "-z", "noexecstack", "-z", "text", "-e", "_start", *(str(objects / name) for name in selected), str(allocator), str(loader), "--whole-archive", str(builtins), "--no-whole-archive", "-o", str(library / "libc.so")], environment=environment)
+        common.run(["/usr/bin/mold", "-shared", "--no-undefined", "--hash-style=sysv", "--eh-frame-hdr", "-soname", "libc.so", f"--dynamic-list={SHARED_LIBC_DYNAMIC_LIST}", f"--version-script={private}", "-z", "relro", "-z", "now", "-z", "noexecstack", "-z", "text", "-e", "_start", *(str(objects / name) for name in selected), str(allocator), str(loader), "--whole-archive", str(builtins), "--no-whole-archive", "-o", str(library / "libc.so")], environment=environment)
         for name in ("crt1.o", "Scrt1.o", "crti.o", "crtn.o"):
             common.copy_artifact(crt / name, library / name)
         common.copy_artifact(builtins, library / builtins.name)
