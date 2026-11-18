@@ -1,11 +1,41 @@
 #!/bin/sh
-# Type-check the runtime crates across their owned feature profiles inside the
-# pinned x86 image, with a separate target directory under .work/x86_64. Run
-# `scripts/lanes/rust-check.sh cargo fetch --locked` once in a fresh checkout.
+# Type-check the runtime crates across their owned feature profiles inside
+# the pinned native image for this host's architecture, with a separate
+# target directory under .work/<arch>. x86-64 keeps crabc-x86_64-mold-gcc and
+# the x86 feature-profile list; aarch64 builds for aarch64-unknown-linux-musl.
+# Run `scripts/lanes/rust-check.sh cargo fetch --locked` once in a fresh
+# checkout.
 set -u
 root=$(git rev-parse --show-toplevel)
-work=$root/.work/x86_64
-image=${CRABC_X86_64_CORE_IMAGE:-$(python3 -B "$root/compat/x86_64/core_image.py")} || exit
+host_arch=$(uname -m) || exit
+case "$host_arch" in
+    x86_64)
+        arch=x86_64
+        platform=linux/amd64
+        expected_identity=linux/amd64
+        target_triple=x86_64-unknown-linux-musl
+        linker_variable=CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER
+        mold_gcc=/usr/local/bin/crabc-x86_64-mold-gcc
+        ;;
+    aarch64|arm64)
+        arch=aarch64
+        platform=linux/arm64
+        expected_identity=linux/arm64
+        target_triple=aarch64-unknown-linux-musl
+        linker_variable=CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_LINKER
+        mold_gcc=/usr/local/bin/crabc-aarch64-mold-gcc
+        ;;
+    *)
+        printf 'ERROR: unsupported host architecture %s\n' "$host_arch" >&2
+        exit 1
+        ;;
+esac
+work=$root/.work/$arch
+if [ "$arch" = x86_64 ]; then
+    image=${CRABC_X86_64_CORE_IMAGE:-$(python3 -B "$root/compat/x86_64/core_image.py")} || exit
+else
+    image=${CRABC_AARCH64_CORE_IMAGE:-$(python3 -B "$root/compat/x86_64/core_image.py" aarch64)} || exit
+fi
 if docker image inspect "$image" >/dev/null; then
     :
 else
@@ -15,8 +45,8 @@ else
     exit 1
 fi
 identity=$(docker image inspect --format '{{.Os}}/{{.Architecture}}' "$image") || exit
-if [ "$identity" != linux/amd64 ]; then
-    printf 'ERROR: native Rust-check image %s is %s; expected linux/amd64\n' "$image" "$identity" >&2
+if [ "$identity" != "$expected_identity" ]; then
+    printf 'ERROR: native Rust-check image %s is %s; expected %s\n' "$image" "$identity" "$expected_identity" >&2
     exit 1
 fi
 mkdir -p "$work/target-check" "$work/tmp"
@@ -33,20 +63,20 @@ in_image() {
     fi
     # Arena tests lock their complete 32-MiB caller-owned reservation.
     # Expected aborts retain status and stderr; core dumps can copy large mappings.
-    docker run --rm --init --platform linux/amd64 --workdir /workspace \
+    docker run --rm --init --platform "$platform" --workdir /workspace \
         --ulimit core=0:0 \
         --ulimit memlock=67108864:67108864 \
         --env CARGO_INCREMENTAL=0 \
         --env RUSTC_WRAPPER=/usr/local/bin/kache \
-        --env CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER=/usr/local/bin/crabc-x86_64-mold-gcc \
-        --env CARGO_HOME=/workspace/.work/x86_64/cargo \
-        --env CARGO_TARGET_DIR=/workspace/.work/x86_64/target-check \
-        --env TMPDIR=/workspace/.work/x86_64/tmp \
+        --env "$linker_variable=$mold_gcc" \
+        --env CARGO_HOME="/workspace/.work/$arch/cargo" \
+        --env CARGO_TARGET_DIR="/workspace/.work/$arch/target-check" \
+        --env TMPDIR="/workspace/.work/$arch/tmp" \
         --env GIT_OPTIONAL_LOCKS=0 \
         --env GIT_CONFIG_COUNT=1 \
         --env GIT_CONFIG_KEY_0=safe.directory \
         --env GIT_CONFIG_VALUE_0=/workspace \
-        --volume "$root:/workspace" --volume "$work:/workspace/.work/x86_64" \
+        --volume "$root:/workspace" --volume "$work:/workspace/.work/$arch" \
         "$@"
 }
 if [ "$#" -gt 0 ]; then in_image "$@"; exit; fi
@@ -58,13 +88,17 @@ check() {
         echo "FAIL $*"; grep -E '^error' "$work/tmp/rust-check.log" | head -5; status=1
     fi
 }
-check -p crabc-libc
-check -p crabc-libc --features x86-owned-static-runtime
-check -p crabc-libc --features x86-owned-dynamic-runtime
-check -p crabc-libc --features x86-owned-static-native-shadow
-check -p crabc-libc --features x86-owned-dynamic-native-shadow
-check -p crabc-mimalloc --all-targets
-check -p crabc-ldso --features x86_64-owned-dynamic-runtime
-check -p crabc-core
-check -p crabc-rs
+if [ "$arch" = x86_64 ]; then
+    check -p crabc-libc
+    check -p crabc-libc --features x86-owned-static-runtime
+    check -p crabc-libc --features x86-owned-dynamic-runtime
+    check -p crabc-libc --features x86-owned-static-native-shadow
+    check -p crabc-libc --features x86-owned-dynamic-native-shadow
+    check -p crabc-mimalloc --all-targets
+    check -p crabc-ldso --features x86_64-owned-dynamic-runtime
+    check -p crabc-core
+    check -p crabc-rs
+else
+    check --target "$target_triple" -p crabc-core
+fi
 exit $status

@@ -6,12 +6,18 @@
 # archive hashes and authenticate the package index before use.
 set -eu
 root=$(git rev-parse --show-toplevel)
+host_arch=$(uname -m)
+case "$host_arch" in
+    x86_64) arch=x86_64; work_name=x86_64 ;;
+    aarch64|arm64) arch=aarch64; work_name=aarch64 ;;
+    *) printf 'prepare-worktree: unsupported host architecture %s\n' "$host_arch" >&2; exit 1 ;;
+esac
 common=$(cd "$(git rev-parse --git-common-dir)" && pwd)
 primary=$(dirname "$common")
 here=$root/scripts/lanes
 if [ -L "$root/.work" ] || [ -L "$root/.work/tmp" ] ||
-    [ -L "$root/.work/x86_64" ] || [ -L "$root/.work/x86_64/tmp" ] ||
-    [ -L "$root/.work/x86_64/cargo" ] || [ -L "$root/.work/x86_64/target-check" ]; then
+    [ -L "$root/.work/$work_name" ] || [ -L "$root/.work/$work_name/tmp" ] ||
+    [ -L "$root/.work/$work_name/cargo" ] || [ -L "$root/.work/$work_name/target-check" ]; then
     printf 'prepare-worktree: work or temporary directory is a symlink\n' >&2
     exit 1
 fi
@@ -19,15 +25,15 @@ mkdir -p "$root/.work/tmp"
 TMPDIR=$root/.work/tmp
 export TMPDIR
 "$here/rust-check.sh" cargo fetch --locked
-vendor=.work/x86_64/cargo/native-static-source-runtime-vendor
+vendor=.work/$work_name/cargo/native-static-source-runtime-vendor
 if [ ! -d "$root/$vendor" ]; then
     "$here/rust-check.sh" cargo vendor --locked --offline --versioned-dirs \
         "/workspace/$vendor" >/dev/null
 fi
 # The host runner caches under .work/allocator-cache (with its tag record);
-# the x86 container launcher caches under .work/allocator-x86_64; the product
+# the container launcher caches under .work/allocator-<arch>; the product
 # builders' C allocator archive comes from compat/allocator/.cache.
-for cache in .work/allocator-cache .work/allocator-x86_64/allocator-cache compat/allocator/.cache; do
+for cache in .work/allocator-cache ".work/allocator-$work_name/allocator-cache" compat/allocator/.cache; do
     if [ ! -f "$root/$cache/mimalloc-3.5.0.tar.gz" ] && [ "$primary" != "$root" ] &&
         [ -f "$primary/$cache/mimalloc-3.5.0.tar.gz" ]; then
         mkdir -p "$root/$cache"
@@ -39,7 +45,7 @@ done
 # Qualification inputs are prepared before the native container runs without
 # network access. Reuse exact local caches when present; their consumers still
 # authenticate the pinned bytes and source revisions.
-python3 -B - "$root" "$primary" <<'PY'
+python3 -B - "$root" "$primary" "$work_name" <<'PY'
 import hashlib
 import json
 import os
@@ -52,7 +58,8 @@ import tempfile
 import tomllib
 import urllib.request
 
-root, primary = (Path(value).resolve() for value in sys.argv[1:])
+root, primary = (Path(value).resolve() for value in sys.argv[1:3])
+work_name = sys.argv[3]
 
 
 def require(condition, message):
@@ -148,10 +155,10 @@ def ensure_source(record, path, label):
         shutil.rmtree(staging)
 
 
-core_registry = root / ".work/x86_64/cargo/registry"
+core_registry = root / f".work/{work_name}/cargo/registry"
 require(core_registry.exists() or core_registry.is_symlink(),
         "fetched core Cargo registry is missing")
-allocator_work = root / ".work/allocator-x86_64"
+allocator_work = root / (".work/allocator-x86_64" if work_name == "x86_64" else f".work/allocator-{work_name}")
 allocator_cargo = allocator_work / "cargo"
 for directory, label in ((allocator_work, "allocator work directory"),
                          (allocator_cargo, "allocator Cargo home")):
@@ -163,8 +170,8 @@ copy_missing_tree(core_registry, allocator_cargo / "registry", "allocator Cargo 
 
 pins = tomllib.loads((root / "compat/upstreams.toml").read_text(encoding="utf-8"))
 source_oracles = (
-    (pins["os_test"], f".work/x86_64/source-oracles/os-test-{pins['os_test']['revision']}", "os-test oracle"),
-    (pins["libc_test"], f".work/x86_64/source-oracles/laputa-libc-test-{pins['libc_test']['revision']}",
+    (pins["os_test"], f".work/{work_name}/source-oracles/os-test-{pins['os_test']['revision']}", "os-test oracle"),
+    (pins["libc_test"], f".work/{work_name}/source-oracles/laputa-libc-test-{pins['libc_test']['revision']}",
      "libc-test oracle"),
 )
 for record, path, label in source_oracles:
@@ -174,7 +181,7 @@ for record, path, label in source_oracles:
 # archive checks remain the responsibility of fetch_x86.py and its manifest.
 for relative, label in (("compat/lua/.cache", "Lua source cache"),
                         ("compat/corpus/.cache", "package corpus cache"),
-                        (".work/x86_64/rust-std-lto", "Rust std/LTO vendors")):
+                        (f".work/{work_name}/rust-std-lto", "Rust std/LTO vendors")):
     copy_missing_tree(primary / relative, root / relative, label, f"primary {label}")
 
 lua_manifest = tomllib.loads((root / "compat/lua/manifest.toml").read_text(encoding="utf-8"))["lua"]
@@ -210,8 +217,8 @@ else:
 
 # The dispatcher admits only physical `.work` seed files; keep the verified
 # source cache intact and pass a worktree-local copy to both Lua consumers.
-lua_seed_relative = ".work/x86_64/lua-source-build-seed/" + lua_archive.name
-lua_seed_directory = root / ".work/x86_64/lua-source-build-seed"
+lua_seed_relative = f".work/{work_name}/lua-source-build-seed/" + lua_archive.name
+lua_seed_directory = root / f".work/{work_name}/lua-source-build-seed"
 if not lua_seed_directory.exists() and not lua_seed_directory.is_symlink():
     lua_seed_directory.mkdir(parents=True)
 physical_directory(lua_seed_directory, "worktree Lua source seed directory")
@@ -233,10 +240,10 @@ finally:
         staging.unlink(missing_ok=True)
 
 vendor_paths = {
-    "provider_vendor": ".work/x86_64/rust-std-lto/provider-vendor",
-    "dependency_vendor": ".work/x86_64/rust-std-lto/dependency-vendor",
+    "provider_vendor": f".work/{work_name}/rust-std-lto/provider-vendor",
+    "dependency_vendor": f".work/{work_name}/rust-std-lto/dependency-vendor",
 }
-inputs_path = root / ".work/x86_64/inputs.json"
+inputs_path = root / f".work/{work_name}/inputs.json"
 inputs_path.parent.mkdir(parents=True, exist_ok=True)
 if inputs_path.exists() or inputs_path.is_symlink():
     require(not inputs_path.is_symlink() and inputs_path.is_file(),
@@ -255,7 +262,8 @@ for group, fields in inputs.items():
     require(isinstance(fields, dict) and set(fields) == set(qualification_candidate.INPUT_KEYS[group]),
             f"candidate input {group} fields differ")
 inputs["lua_source_build"] = {"archive_seed": lua_seed_relative}
-inputs["rust_std_lto"] = vendor_paths
+if work_name == "x86_64":
+    inputs["rust_std_lto"] = vendor_paths
 with tempfile.NamedTemporaryFile("w", encoding="utf-8", dir=inputs_path.parent,
                                  prefix=".inputs.json.", delete=False) as output:
     json.dump(inputs, output, indent=2, sort_keys=True)
@@ -268,20 +276,21 @@ except BaseException:
     raise
 PY
 
-provider_vendor=.work/x86_64/rust-std-lto/provider-vendor
-dependency_vendor=.work/x86_64/rust-std-lto/dependency-vendor
-if [ -L "$root/$provider_vendor" ] || [ -L "$root/$dependency_vendor" ]; then
-    printf 'prepare-worktree: Rust std/LTO vendor path is a symlink\n' >&2
-    exit 1
-fi
-if [ ! -d "$root/$provider_vendor" ]; then
-    "$here/rust-check.sh" cargo vendor --locked --manifest-path unwinder/Cargo.toml \
-        --versioned-dirs "/workspace/$provider_vendor" >/dev/null
-fi
-if [ ! -d "$root/$dependency_vendor" ]; then
-    "$root/scripts/dev-x86_64.sh" consumer-rust-std-lto-vendor "$dependency_vendor" >/dev/null
-fi
-python3 -B - "$root" "$provider_vendor" "$dependency_vendor" <<'PY'
+provider_vendor=.work/$work_name/rust-std-lto/provider-vendor
+dependency_vendor=.work/$work_name/rust-std-lto/dependency-vendor
+if [ "$work_name" = x86_64 ]; then
+    if [ -L "$root/$provider_vendor" ] || [ -L "$root/$dependency_vendor" ]; then
+        printf 'prepare-worktree: Rust std/LTO vendor path is a symlink\n' >&2
+        exit 1
+    fi
+    if [ ! -d "$root/$provider_vendor" ]; then
+        "$here/rust-check.sh" cargo vendor --locked --manifest-path unwinder/Cargo.toml \
+            --versioned-dirs "/workspace/$provider_vendor" >/dev/null
+    fi
+    if [ ! -d "$root/$dependency_vendor" ]; then
+        "$root/scripts/dev-x86_64.sh" consumer-rust-std-lto-vendor "$dependency_vendor" >/dev/null
+    fi
+    python3 -B - "$root" "$provider_vendor" "$dependency_vendor" <<'PY'
 from pathlib import Path
 import stat
 import sys
@@ -296,8 +305,13 @@ for relative in sys.argv[2:]:
         if not (stat.S_ISDIR(mode) or stat.S_ISREG(mode)):
             raise SystemExit(f"prepare-worktree: Rust std/LTO vendor contains a link or special file: {item}")
 PY
-corpus=.work/x86_64/owned-package-corpus-input
-if [ ! -d "$root/$corpus/apks" ]; then
-    python3 -B "$root/compat/corpus/fetch_x86.py" ||
-        printf 'prepare-worktree: x86 package-corpus input unavailable; run ./scripts/dev-x86_64.sh owned-package-corpus-input\n' >&2
+fi
+corpus=.work/$work_name/owned-package-corpus-input
+if [ "$work_name" = x86_64 ]; then
+    if [ ! -d "$root/$corpus/apks" ]; then
+        python3 -B "$root/compat/corpus/fetch_x86.py" ||
+            printf 'prepare-worktree: x86 package-corpus input unavailable; run ./scripts/dev-x86_64.sh owned-package-corpus-input\n' >&2
+    fi
+else
+    printf 'prepare-worktree: x86 package-corpus input skipped on %s; the AArch64 corpus is not wired yet (CRAB-8 A4)\n' "$work_name" >&2
 fi
