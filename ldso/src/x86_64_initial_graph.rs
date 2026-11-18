@@ -227,17 +227,36 @@ const R_X86_64_GOTPC32_TLSDESC: u32 = 34;
 const R_X86_64_TLSDESC_CALL: u32 = 35;
 const R_X86_64_TLSDESC: u32 = 36;
 
+#[cfg(target_arch = "aarch64")]
+#[path = "aarch64.rs"]
+mod aarch64;
+#[cfg(target_arch = "aarch64")]
+use aarch64::{syscall1, syscall2, syscall3, syscall4, syscall6, SYS_WRITE, SYS_CLOSE,
+    SYS_FSTAT, SYS_READ, SYS_PREAD64, SYS_NEWFSTATAT, SYS_MMAP, SYS_MPROTECT,
+    SYS_MUNMAP, SYS_OPENAT, SYS_EXIT};
+
+#[cfg(target_arch = "x86_64")]
 const SYS_WRITE: i64 = 1;
+#[cfg(target_arch = "x86_64")]
 const SYS_CLOSE: i64 = 3;
+#[cfg(target_arch = "x86_64")]
 const SYS_FSTAT: i64 = 5;
+#[cfg(target_arch = "x86_64")]
 const SYS_READ: i64 = 0;
+#[cfg(target_arch = "x86_64")]
 const SYS_PREAD64: i64 = 17;
+#[cfg(target_arch = "x86_64")]
 const SYS_NEWFSTATAT: i64 = 262;
+#[cfg(target_arch = "x86_64")]
 const SYS_MMAP: i64 = 9;
+#[cfg(target_arch = "x86_64")]
 const SYS_MPROTECT: i64 = 10;
+#[cfg(target_arch = "x86_64")]
 const SYS_MUNMAP: i64 = 11;
 const SYS_ARCH_PRCTL: i64 = 158;
+#[cfg(target_arch = "x86_64")]
 const SYS_OPENAT: i64 = 257;
+#[cfg(target_arch = "x86_64")]
 const SYS_EXIT: i64 = 60;
 const AT_FDCWD: i64 = -100;
 const PROT_READ: i64 = 1;
@@ -3848,6 +3867,7 @@ fn align_up_usize(value: usize, align: usize) -> Option<usize> {
 fn add_signed(value: u64, addend: i64) -> Option<u64> { if addend >= 0 { value.checked_add(addend as u64) } else { value.checked_sub(addend.unsigned_abs()) } }
 fn is_linux_error(value: i64) -> bool { (-4_095..=-1).contains(&value) }
 
+#[cfg(target_arch = "x86_64")]
 #[inline(always)]
 unsafe fn read_thread_pointer() -> usize {
     let thread_pointer: usize;
@@ -3859,10 +3879,25 @@ unsafe fn read_thread_pointer() -> usize {
     thread_pointer
 }
 
+#[cfg(target_arch = "aarch64")]
+#[inline(always)]
+unsafe fn read_thread_pointer() -> usize {
+    let thread_pointer: usize;
+    // SAFETY: Reading the current thread pointer does not alter machine state.
+    unsafe { core::arch::asm!("mrs {thread_pointer}, tpidr_el0", thread_pointer = out(reg) thread_pointer,
+        options(nomem, nostack, preserves_flags)); }
+    thread_pointer
+}
+
+#[cfg(target_arch = "x86_64")]
 unsafe fn syscall1(number: i64, one: i64) -> i64 { let result: i64; core::arch::asm!("syscall", inlateout("rax") number => result, in("rdi") one, lateout("rcx") _, lateout("r11") _, options(nostack)); result }
+#[cfg(target_arch = "x86_64")]
 unsafe fn syscall2(number: i64, one: i64, two: i64) -> i64 { let result: i64; core::arch::asm!("syscall", inlateout("rax") number => result, in("rdi") one, in("rsi") two, lateout("rcx") _, lateout("r11") _, options(nostack)); result }
+#[cfg(target_arch = "x86_64")]
 unsafe fn syscall3(number: i64, one: i64, two: i64, three: i64) -> i64 { let result: i64; core::arch::asm!("syscall", inlateout("rax") number => result, in("rdi") one, in("rsi") two, in("rdx") three, lateout("rcx") _, lateout("r11") _, options(nostack)); result }
+#[cfg(target_arch = "x86_64")]
 unsafe fn syscall4(number: i64, one: i64, two: i64, three: i64, four: i64) -> i64 { let result: i64; core::arch::asm!("syscall", inlateout("rax") number => result, in("rdi") one, in("rsi") two, in("rdx") three, in("r10") four, lateout("rcx") _, lateout("r11") _, options(nostack)); result }
+#[cfg(target_arch = "x86_64")]
 unsafe fn syscall6(number: i64, one: i64, two: i64, three: i64, four: i64, five: i64, six: i64) -> i64 { let result: i64; core::arch::asm!("syscall", inlateout("rax") number => result, in("rdi") one, in("rsi") two, in("rdx") three, in("r10") four, in("r8") five, in("r9") six, lateout("rcx") _, lateout("r11") _, options(nostack)); result }
 
 unsafe fn jump(entry: usize, sp: usize) -> ! {
