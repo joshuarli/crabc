@@ -2288,12 +2288,16 @@ unsafe fn install_initial_tls(
 ) -> Option<InstalledInitialTls> {
     let builtin = BUILTIN_INITIAL_TLS.0.get().cast::<u8>();
     let installed = unsafe { materialize_tls_in(objects, 0, Some((builtin, BUILTIN_INITIAL_TLS_BYTES))) }?;
+    #[cfg(target_arch = "x86_64")]
     if syscall2(SYS_ARCH_PRCTL, ARCH_SET_FS, installed.thread_pointer as i64) < 0 {
         if installed.mapping != builtin {
             let _ = syscall2(SYS_MUNMAP, installed.mapping as i64, installed.mapping_byte_len as i64);
         }
         return None;
     }
+    #[cfg(target_arch = "aarch64")]
+    // SAFETY: The just-materialized record is valid for this initial thread.
+    unsafe { core::arch::asm!("msr tpidr_el0, {}", in(reg) installed.thread_pointer, options(nostack)); }
     Some(installed)
 }
 
@@ -2329,7 +2333,14 @@ struct InitialTlsBlockLayout {
     mapping_size: usize,
 }
 
+#[cfg(target_arch = "aarch64")]
+#[path = "aarch64_initial_tls.rs"]
+mod aarch64_initial_tls;
+#[cfg(target_arch = "aarch64")]
+use aarch64_initial_tls::{initial_tls_block_layout, materialize_tls_in_layout};
+
 /// Validate one initial TLS population and compute its complete page span.
+#[cfg(target_arch = "x86_64")]
 unsafe fn initial_tls_block_layout(
     objects: &[Object],
     ownership_prefix: usize,
@@ -2397,6 +2408,7 @@ unsafe fn materialize_tls_in(
 /// A caller that owns a long-lived immutable population may reuse the layout
 /// across allocations instead of validating every object again. `layout` must
 /// designate one readable layout for the whole call.
+#[cfg(target_arch = "x86_64")]
 unsafe fn materialize_tls_in_layout(
     objects: &[Object],
     ownership_prefix: usize,
@@ -2583,15 +2595,17 @@ pub unsafe extern "C" fn __tls_get_addr(index: *const TlsIndex) -> *mut c_void {
             return unsafe { x86_64_runtime_tls_view::resolve(view, module_id, offset) };
         }
     }
-    let dtv = core::ptr::read_unaligned(
-        (thread_pointer as *const u8).add(core::mem::size_of::<usize>()) as *const usize,
-    ) as *const usize;
+    #[cfg(target_arch = "x86_64")]
+    let dtv = core::ptr::read_unaligned((thread_pointer as *const u8).add(8).cast::<usize>()) as *const usize;
+    #[cfg(target_arch = "aarch64")]
+    let dtv = core::ptr::read_unaligned((thread_pointer as *const u8).sub(8).cast::<usize>()) as *const usize;
     if dtv.is_null() {
         return core::ptr::null_mut();
     }
-    let module_sizes = core::ptr::read_unaligned(
-        (thread_pointer as *const u8).add(TLS_TCB_MODULE_SIZE_TABLE_OFFSET) as *const usize,
-    ) as *const usize;
+    #[cfg(target_arch = "x86_64")]
+    let module_sizes = core::ptr::read_unaligned((thread_pointer as *const u8).add(TLS_TCB_MODULE_SIZE_TABLE_OFFSET).cast::<usize>()) as *const usize;
+    #[cfg(target_arch = "aarch64")]
+    let module_sizes = core::ptr::read_unaligned(thread_pointer as *const usize) as *const usize;
     if module_sizes.is_null() {
         return core::ptr::null_mut();
     }

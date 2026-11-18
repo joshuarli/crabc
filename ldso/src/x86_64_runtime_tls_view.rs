@@ -87,8 +87,14 @@ impl PreparedTlsView {
         if tp.is_null() || tp as usize % core::mem::align_of::<usize>() != 0 { return None; }
         let previous = unsafe { current(tp) };
         let (old_dtv, old_sizes, old_count) = if previous.is_null() {
+            #[cfg(target_arch = "x86_64")]
             let dtv = unsafe { *tp.add(8).cast::<*mut usize>() };
+            #[cfg(target_arch = "x86_64")]
             let sizes = unsafe { *tp.add(TLS_TCB_MODULE_SIZE_TABLE_OFFSET).cast::<*mut usize>() };
+            #[cfg(target_arch = "aarch64")]
+            let dtv = unsafe { *tp.sub(8).cast::<*mut usize>() };
+            #[cfg(target_arch = "aarch64")]
+            let sizes = unsafe { *tp.cast::<*mut usize>() };
             if dtv.is_null() || sizes.is_null() { return None; }
             (dtv, sizes, unsafe { *dtv })
         } else {
@@ -156,6 +162,10 @@ impl PreparedTlsView {
     /// exclusively held; no other writer changed its current view. Scope
     /// publication must follow publication to every registered thread.
     pub(super) unsafe fn publish(self, tp: *mut u8) {
+        #[cfg(target_arch = "aarch64")]
+        // SAFETY: This registered thread owns the aligned ABI DTV slot, and
+        // the new descriptor and all of its DTV entries are fully prepared.
+        unsafe { (&*tp.sub(8).cast::<AtomicPtr<usize>>()).store((*self.view).dtv, Ordering::Release); }
         unsafe { slot(tp).store(self.view, Ordering::Release); }
         core::mem::forget(self);
     }
@@ -168,7 +178,11 @@ impl Drop for PreparedTlsView {
 }
 
 unsafe fn slot<'a>(tp: *mut u8) -> &'a AtomicPtr<RuntimeTlsView> {
+    #[cfg(target_arch = "x86_64")]
     unsafe { &*tp.add(CURRENT_VIEW_TCB_OFFSET).cast::<AtomicPtr<RuntimeTlsView>>() }
+    #[cfg(target_arch = "aarch64")]
+    // SAFETY: The loader reserves TP-32 for the aligned current-view pointer.
+    unsafe { &*tp.sub(32).cast::<AtomicPtr<RuntimeTlsView>>() }
 }
 
 pub(super) unsafe fn current(tp: *mut u8) -> *mut RuntimeTlsView {
@@ -493,8 +507,14 @@ pub(super) unsafe fn module_image_bounds(tp: *mut u8, object: &Object) -> Option
         || (object.tls_filesz != 0 && object.tls_image.is_null()) { return None; }
     let view = unsafe { current(tp) };
     let (destination, size) = if view.is_null() {
+        #[cfg(target_arch = "x86_64")]
         let dtv = unsafe { *tp.add(8).cast::<*const usize>() };
+        #[cfg(target_arch = "x86_64")]
         let sizes = unsafe { *tp.add(TLS_TCB_MODULE_SIZE_TABLE_OFFSET).cast::<*const usize>() };
+        #[cfg(target_arch = "aarch64")]
+        let dtv = unsafe { *tp.sub(8).cast::<*const usize>() };
+        #[cfg(target_arch = "aarch64")]
+        let sizes = unsafe { *tp.cast::<*const usize>() };
         if dtv.is_null() || sizes.is_null() || object.tls_module_id > unsafe { *dtv } { return None; }
         unsafe { (*dtv.add(object.tls_module_id) as *mut u8, *sizes.add(object.tls_module_id)) }
     } else {
