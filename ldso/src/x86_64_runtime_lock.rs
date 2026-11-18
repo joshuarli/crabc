@@ -26,12 +26,12 @@ const CONTENDED: i32 = 2;
 fn acquire(lock: &AtomicI32) {
     if lock.compare_exchange(FREE, HELD, Ordering::Acquire, Ordering::Relaxed).is_ok() { return; }
     while lock.swap(CONTENDED, Ordering::Acquire) != FREE {
-        unsafe { syscall6(202, lock as *const _ as i64, 128, CONTENDED as i64, 0, 0, 0); }
+        unsafe { syscall6(SYS_FUTEX, lock as *const _ as i64, 128, CONTENDED as i64, 0, 0, 0); }
     }
 }
 fn release(lock: &AtomicI32) {
     if lock.swap(FREE, Ordering::Release) == CONTENDED {
-        unsafe { syscall6(202, lock as *const _ as i64, 129, 1, 0, 0, 0); }
+        unsafe { syscall6(SYS_FUTEX, lock as *const _ as i64, 129, 1, 0, 0, 0); }
     }
 }
 
@@ -93,10 +93,10 @@ impl Drop for RuntimeGuard {
 }
 
 pub(super) fn wait_initialization(state: &AtomicI32, expected: i32) {
-    unsafe { syscall6(202, state as *const AtomicI32 as i64, 128, expected as i64, 0, 0, 0); }
+    unsafe { syscall6(SYS_FUTEX, state as *const AtomicI32 as i64, 128, expected as i64, 0, 0, 0); }
 }
 pub(super) fn wake_initialization(state: &AtomicI32) {
-    unsafe { syscall6(202, state as *const AtomicI32 as i64, 129, i32::MAX as i64, 0, 0, 0); }
+    unsafe { syscall6(SYS_FUTEX, state as *const AtomicI32 as i64, 129, i32::MAX as i64, 0, 0, 0); }
 }
 
 /// Isolate mincore-after-unmap assertions from unrelated test threads that

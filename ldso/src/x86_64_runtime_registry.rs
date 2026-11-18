@@ -480,7 +480,7 @@ static INITIAL_CONSTRUCTOR_TID: InitialConstructorTid = InitialConstructorTid::n
 /// replaces the cached value with the child's.
 static INITIAL_TASK_TID: AtomicI32 = AtomicI32::new(0);
 
-fn current_tid() -> i32 { (unsafe { syscall1(186, 0) }) as i32 }
+fn current_tid() -> i32 { (unsafe { syscall1(SYS_GETTID, 0) }) as i32 }
 
 fn constructor_tid() -> i32 {
     let initial = unsafe { x86_64_general_initial_tls_state::retained_initial_thread_pointer() };
@@ -649,7 +649,7 @@ pub unsafe extern "C" fn runtime_fork_prepare(callback_lock: i32) -> i32 {
     let thread_pointer = unsafe { read_thread_pointer() } as *mut u8;
     if !unsafe { x86_64_initial_worker_tls::contains_thread(&guard, thread_pointer) } { return -1; }
     let callbacks = (callback_lock != 0).then(CallbackGuard::acquire);
-    let tid = unsafe { syscall1(186, 0) } as i32;
+    let tid = unsafe { syscall1(SYS_GETTID, 0) } as i32;
     if tid <= 0 { return -1; }
     super::x86_64_runtime_lock::AllocationGuard::retain_for_fork();
     core::mem::forget(callbacks);
@@ -666,7 +666,7 @@ pub unsafe extern "C" fn runtime_fork_complete(parent_tid: i32, child: i32, call
     if child != 0 {
         // Publish the new process before any suspended visitor resumes.
         FORK_GENERATION.fetch_add(1, Ordering::Relaxed);
-        let tid = unsafe { syscall1(186, 0) } as i32;
+        let tid = unsafe { syscall1(SYS_GETTID, 0) } as i32;
         INITIAL_CONSTRUCTOR_TID.adopt_fork_child(tid);
         if tid > 0 { INITIAL_TASK_TID.store(tid, Ordering::Release); }
         let thread_pointer = unsafe { read_thread_pointer() } as *mut u8;
