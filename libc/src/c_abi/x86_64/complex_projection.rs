@@ -27,6 +27,7 @@
 #[cfg(not(all(target_os = "linux", any(target_arch = "x86_64", target_arch = "aarch64"), target_endian = "little")))]
 compile_error!("the x86 complex-projection leaf requires little-endian Linux/x86-64");
 
+#[cfg(target_arch = "x86_64")]
 core::arch::global_asm!(
     r#"
     .section .text.cprojf, "ax", @progbits
@@ -129,3 +130,40 @@ cprojl:
     .section .note.GNU-stack, "", @progbits
 "#,
 );
+
+// musl 1.2.6 src/complex/cprojf.c.
+#[cfg(target_arch = "aarch64")]
+#[repr(C)]
+pub struct Projection32 { real: f32, imag: f32 }
+#[cfg(target_arch = "aarch64")]
+#[no_mangle]
+pub extern "C" fn cprojf(z: Projection32) -> Projection32 {
+    if z.real.to_bits() & 0x7fff_ffff == 0x7f80_0000 || z.imag.to_bits() & 0x7fff_ffff == 0x7f80_0000 {
+        return Projection32 { real: f32::from_bits(0x7f80_0000), imag: f32::from_bits(z.imag.to_bits() & (1u32 << 31)) };
+    }
+    z
+}
+// musl 1.2.6 src/complex/cproj.c.
+#[cfg(target_arch = "aarch64")]
+#[repr(C)]
+pub struct Projection64 { real: f64, imag: f64 }
+#[cfg(target_arch = "aarch64")]
+#[no_mangle]
+pub extern "C" fn cproj(z: Projection64) -> Projection64 {
+    if z.real.to_bits() & 0x7fff_ffff_ffff_ffff == 0x7ff0_0000_0000_0000 || z.imag.to_bits() & 0x7fff_ffff_ffff_ffff == 0x7ff0_0000_0000_0000 {
+        return Projection64 { real: f64::from_bits(0x7ff0_0000_0000_0000), imag: f64::from_bits(z.imag.to_bits() & (1u64 << 63)) };
+    }
+    z
+}
+// musl 1.2.6 src/complex/cprojl.c.
+#[cfg(target_arch = "aarch64")]
+#[repr(C)]
+pub struct Projection128 { real: f128, imag: f128 }
+#[cfg(target_arch = "aarch64")]
+#[no_mangle]
+pub extern "C" fn cprojl(z: Projection128) -> Projection128 {
+    if z.real.to_bits() & 0x7fff_ffff_ffff_ffff_ffff_ffff_ffff_ffff == 0x7fff_0000_0000_0000_0000_0000_0000_0000 || z.imag.to_bits() & 0x7fff_ffff_ffff_ffff_ffff_ffff_ffff_ffff == 0x7fff_0000_0000_0000_0000_0000_0000_0000 {
+        return Projection128 { real: f128::from_bits(0x7fff_0000_0000_0000_0000_0000_0000_0000), imag: f128::from_bits(z.imag.to_bits() & (1u128 << 127)) };
+    }
+    z
+}
