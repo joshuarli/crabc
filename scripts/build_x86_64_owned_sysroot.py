@@ -1569,9 +1569,14 @@ def build_aarch64(output: Path, *, allocator_backend: str, lifecycle_test_audit:
         copy_artifact(builtins, library / builtins.name)
         copy_regular_tree(ROOT / "include", installed / "usr/include")
         install_static_driver(installed / "bin/crabc-cc")
+        copy_artifact(crt / "objects.json", installed / "share/crabc/crt.provenance.json")
+        copy_artifact(crt / "commands.json", installed / "share/crabc/crt.commands.json")
         manifest_path = installed / "share/crabc/manifest.json"
         files = regular_file_hashes(installed)
-        manifest = {"format": "crabc-aarch64-owned-static-sysroot-v1", "target": target, "files": files, "skipped": skipped}
+        manifest = {"schema": 1, "format": "crabc-aarch64-owned-static-sysroot-v1", "target": target,
+                    "toolchain": PINNED_TOOLCHAIN, "build_profile": profile,
+                    "hardening_profile": hardening_profile.value, "symlinks": {},
+                    "files": files, "skipped": skipped}
         write_json(manifest_path, manifest)
         if output.exists():
             old = output / "share/crabc/manifest.json"
