@@ -9,16 +9,10 @@
 // The installed x86 static archive extracts one object per Rust module. Keep
 // both long-option entries together in their own source member, matching
 // musl's getopt_long object, while AArch64 retains its inline items.
-#[cfg(target_arch = "x86_64")]
 macro_rules! getopt_source_member {
     ($name:ident { $($item:item)* }) => {
         static_archive_member! { $name { $($item)* } }
     };
-}
-
-#[cfg(not(target_arch = "x86_64"))]
-macro_rules! getopt_source_member {
-    ($name:ident { $($item:item)* }) => { $($item)* };
 }
 
 #[no_mangle]
@@ -33,54 +27,19 @@ pub static mut optopt: c_int = 0;
 pub static mut __optpos: c_int = 0;
 #[no_mangle]
 pub static mut __optreset: c_int = 0;
-#[cfg(all(target_os = "linux", target_arch = "aarch64", target_endian = "little"))]
-#[no_mangle]
-#[linkage = "weak"]
-pub static mut optreset: c_int = 0;
-
 #[no_mangle]
 pub static mut __progname: *mut c_char = core::ptr::null_mut();
 #[no_mangle]
 pub static mut __progname_full: *mut c_char = core::ptr::null_mut();
-#[cfg(all(target_os = "linux", target_arch = "aarch64", target_endian = "little"))]
-#[no_mangle]
-#[linkage = "weak"]
-pub static mut program_invocation_name: *mut c_char = core::ptr::null_mut();
-#[cfg(all(target_os = "linux", target_arch = "aarch64", target_endian = "little"))]
-#[no_mangle]
-#[linkage = "weak"]
-pub static mut program_invocation_short_name: *mut c_char = core::ptr::null_mut();
-
 #[inline]
 unsafe fn cabi_getopt_set_errno(value: c_int) {
-    #[cfg(all(target_os = "linux", target_arch = "aarch64", target_endian = "little"))]
-    {
-        ERRNO = value;
-    }
-    #[cfg(all(target_os = "linux", target_arch = "x86_64", target_endian = "little"))]
-    {
-        errno::set_errno(value);
-    }
+    errno::set_errno(value);
 }
 
-/// Apply either standardized reset spelling before parsing another option.
-///
-/// Musl's x86 ABI makes weak `optreset` a same-address alias of
-/// `__optreset`, while the established AArch64 runtime still publishes two
-/// synchronized data objects. Keep that target distinction at this shared
-/// lexical boundary rather than weakening the x86 ELF alias contract.
 #[inline]
 unsafe fn cabi_getopt_apply_reset() {
-    #[cfg(all(target_os = "linux", target_arch = "aarch64", target_endian = "little"))]
-    let reset = optind == 0 || __optreset != 0 || optreset != 0;
-    #[cfg(all(target_os = "linux", target_arch = "x86_64", target_endian = "little"))]
-    let reset = optind == 0 || __optreset != 0;
-    if reset {
+    if optind == 0 || __optreset != 0 {
         __optreset = 0;
-        #[cfg(all(target_os = "linux", target_arch = "aarch64", target_endian = "little"))]
-        {
-            optreset = 0;
-        }
         __optpos = 0;
         optind = 1;
     }
@@ -489,35 +448,3 @@ getopt_source_member! { getopt_long_source {
     }
 } }
 
-#[cfg(all(target_os = "linux", target_arch = "aarch64", target_endian = "little"))]
-#[no_mangle]
-#[linkage = "weak"]
-pub unsafe extern "C" fn __posix_getopt(
-    argc: c_int,
-    argv: *const *mut c_char,
-    optstring: *const c_char,
-) -> c_int {
-    getopt(argc, argv, optstring)
-}
-
-#[cfg(all(target_os = "linux", target_arch = "aarch64", target_endian = "little"))]
-pub unsafe fn cabi_set_program_names(argv0: *const c_char) {
-    if argv0.is_null() {
-        return;
-    }
-    let mut short = argv0;
-    let mut cursor = argv0;
-    while *cursor != 0 {
-        if *cursor as u8 == b'/' {
-            short = cursor.add(1);
-        }
-        cursor = cursor.add(1);
-    }
-    __progname_full = argv0 as *mut c_char;
-    __progname = short as *mut c_char;
-    #[cfg(all(target_os = "linux", target_arch = "aarch64", target_endian = "little"))]
-    {
-        program_invocation_name = argv0 as *mut c_char;
-        program_invocation_short_name = short as *mut c_char;
-    }
-}

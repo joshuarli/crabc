@@ -7,16 +7,10 @@
 // Each interface-name entry comes from a separate musl object, while
 // getifaddrs and freeifaddrs share one. Give the installed x86 static archive
 // those boundaries without changing AArch64's inline item layout.
-#[cfg(target_arch = "x86_64")]
 macro_rules! interface_source_member {
     ($name:ident { $($item:item)* }) => {
         static_archive_member! { $name { $($item)* } }
     };
-}
-
-#[cfg(not(target_arch = "x86_64"))]
-macro_rules! interface_source_member {
-    ($name:ident { $($item:item)* }) => { $($item)* };
 }
 
 const CABI_IF_NAMESIZE: usize = 16;
