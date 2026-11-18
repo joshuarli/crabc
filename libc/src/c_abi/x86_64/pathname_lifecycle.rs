@@ -1,3 +1,5 @@
+// musl 1.2.6 src/unistd/{unlink,rmdir,link,symlink,readlink}.c,
+// src/stat/{mkdir,chmod}.c and src/stdio/rename.c provide the *at forms.
 //! Selected static Linux/x86-64 pathname-mutation C boundary.
 //!
 //! This leaf owns one coherent, bounded C pathname-lifecycle block: `chdir`,
@@ -200,8 +202,9 @@ static_archive_member! { mkdir_source {
         // SAFETY: the caller owns the pathname pointer contract; Linux validates
         // the scalar mode word.
         let result = unsafe {
-            raw_syscall::syscall2(
-                raw_syscall::SYS_MKDIR,
+            raw_syscall::syscall3(
+                raw_syscall::SYS_MKDIRAT,
+                -100,
                 path as usize as i64,
                 i64::from(mode),
             )
@@ -222,7 +225,7 @@ static_archive_member! { unlink_source {
     pub unsafe extern "C" fn unlink(path: *const c_char) -> c_int {
         // SAFETY: the caller owns the pathname pointer contract.
         let result = unsafe {
-            raw_syscall::syscall1(raw_syscall::SYS_UNLINK, path as usize as i64)
+            raw_syscall::syscall3(raw_syscall::SYS_UNLINKAT, -100, path as usize as i64, 0)
         };
         c_status(result)
     }
@@ -240,7 +243,7 @@ static_archive_member! { rmdir_source {
     pub unsafe extern "C" fn rmdir(path: *const c_char) -> c_int {
         // SAFETY: the caller owns the pathname pointer contract.
         let result = unsafe {
-            raw_syscall::syscall1(raw_syscall::SYS_RMDIR, path as usize as i64)
+            raw_syscall::syscall3(raw_syscall::SYS_UNLINKAT, -100, path as usize as i64, 0x200)
         };
         c_status(result)
     }
@@ -259,13 +262,13 @@ static_archive_member! { remove_source {
     pub unsafe extern "C" fn remove(path: *const c_char) -> c_int {
         // SAFETY: the caller owns the pathname pointer contract.
         let mut result = unsafe {
-            raw_syscall::syscall1(raw_syscall::SYS_UNLINK, path as usize as i64)
+            raw_syscall::syscall3(raw_syscall::SYS_UNLINKAT, -100, path as usize as i64, 0)
         };
         if result == -EISDIR {
             // SAFETY: preserve musl's raw intermediate result so a successful
             // directory retry does not manufacture stale EISDIR errno.
             result = unsafe {
-                raw_syscall::syscall1(raw_syscall::SYS_RMDIR, path as usize as i64)
+                raw_syscall::syscall3(raw_syscall::SYS_UNLINKAT, -100, path as usize as i64, 0x200)
             };
         }
         c_status(result)
@@ -285,9 +288,11 @@ static_archive_member! { rename_source {
     pub unsafe extern "C" fn rename(old_path: *const c_char, new_path: *const c_char) -> c_int {
         // SAFETY: the caller owns both pathname pointer contracts.
         let result = unsafe {
-            raw_syscall::syscall2(
-                raw_syscall::SYS_RENAME,
+            raw_syscall::syscall4(
+                raw_syscall::SYS_RENAMEAT,
+                -100,
                 old_path as usize as i64,
+                -100,
                 new_path as usize as i64,
             )
         };
@@ -311,10 +316,13 @@ static_archive_member! { link_source {
     ) -> c_int {
         // SAFETY: the caller owns both pathname pointer contracts.
         let result = unsafe {
-            raw_syscall::syscall2(
-                raw_syscall::SYS_LINK,
+            raw_syscall::syscall5(
+                raw_syscall::SYS_LINKAT,
+                -100,
                 existing_path as usize as i64,
+                -100,
                 new_path as usize as i64,
+                0,
             )
         };
         c_status(result)
@@ -334,9 +342,10 @@ static_archive_member! { symlink_source {
     pub unsafe extern "C" fn symlink(target: *const c_char, link_path: *const c_char) -> c_int {
         // SAFETY: the caller owns both pathname pointer contracts.
         let result = unsafe {
-            raw_syscall::syscall2(
-                raw_syscall::SYS_SYMLINK,
+            raw_syscall::syscall3(
+                raw_syscall::SYS_SYMLINKAT,
                 target as usize as i64,
+                -100,
                 link_path as usize as i64,
             )
         };
@@ -369,8 +378,9 @@ static_archive_member! { readlink_source {
         // SAFETY: the caller owns the pathname and nonzero output contracts; the
         // local dummy is writable for the zero-capacity musl compatibility path.
         let result = unsafe {
-            raw_syscall::syscall3(
-                raw_syscall::SYS_READLINK,
+            raw_syscall::syscall4(
+                raw_syscall::SYS_READLINKAT,
+                -100,
                 path as usize as i64,
                 kernel_buffer as usize as i64,
                 kernel_capacity as i64,
@@ -397,8 +407,9 @@ static_archive_member! { chmod_source {
         // SAFETY: the caller owns the pathname pointer contract; Linux validates
         // the scalar mode word.
         let result = unsafe {
-            raw_syscall::syscall2(
-                raw_syscall::SYS_CHMOD,
+            raw_syscall::syscall3(
+                raw_syscall::SYS_FCHMODAT,
+                -100,
                 path as usize as i64,
                 i64::from(mode),
             )
@@ -443,8 +454,9 @@ static_archive_member! { fchmod_source {
         // SAFETY: procfdname writes a NUL-terminated fixed stack pathname, and
         // Linux validates the scalar mode word.
         let fallback = unsafe {
-            raw_syscall::syscall2(
-                raw_syscall::SYS_CHMOD,
+            raw_syscall::syscall3(
+                raw_syscall::SYS_FCHMODAT,
+                -100,
                 procfd_path.as_ptr() as i64,
                 i64::from(mode),
             )
