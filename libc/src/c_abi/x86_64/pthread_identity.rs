@@ -41,7 +41,12 @@ use core::sync::atomic::{AtomicUsize, Ordering};
 
 use super::pthread_cancel::SelectedWorkerCancellation;
 
-const CANCELLATION_STATE_POINTER_OFFSET: usize = 32;
+#[cfg(target_arch = "x86_64")]
+const fn cancellation_state_offset() -> isize { 32 }
+#[cfg(target_arch = "aarch64")]
+const fn cancellation_state_offset() -> isize {
+    -(super::aarch64_tls_layout::CANCELLATION_OFFSET_BELOW_TP as isize)
+}
 
 /// Read the current x86-64 Variant-II thread pointer from its `%fs:0` self
 /// word.
@@ -96,7 +101,7 @@ pub(super) unsafe fn publish_current_selected_cancellation_state(
     unsafe {
         AtomicUsize::from_ptr(
             thread_pointer
-                .add(CANCELLATION_STATE_POINTER_OFFSET)
+                .offset(cancellation_state_offset())
                 .cast::<usize>(),
         )
     }
@@ -137,7 +142,7 @@ pub(super) fn current_selected_cancellation_state() -> *const SelectedWorkerCanc
     unsafe {
         AtomicUsize::from_ptr(
             thread_pointer
-                .add(CANCELLATION_STATE_POINTER_OFFSET)
+                .offset(cancellation_state_offset())
                 .cast::<usize>(),
         )
     }
