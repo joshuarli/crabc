@@ -24,7 +24,11 @@ from typing import Mapping, Sequence
 
 
 ROOT = Path(__file__).resolve().parents[2]
-WORK_BOUNDARY = ROOT / ".work/x86_64"
+sys.path.insert(0, str(ROOT / "compat/x86_64"))
+from native_arch import native_arch
+
+ARCH = native_arch()["arch"]
+WORK_BOUNDARY = ROOT / ".work" / ARCH
 STATIC_BUILDER = ROOT / "scripts/build_x86_64_owned_sysroot.py"
 DYNAMIC_BUILDER = ROOT / "scripts/build_x86_64_owned_dynamic_sysroot.py"
 STATIC_PACKAGE = ROOT / "compat/x86_64/owned_static_sysroot_package.py"
@@ -125,7 +129,7 @@ def write_report(path: Path, report: Mapping[str, object]) -> None:
 
 def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--output", required=True, type=Path, help="fresh directory below .work/x86_64")
+    parser.add_argument("--output", required=True, type=Path, help=f"fresh directory below .work/{ARCH}")
     parser.add_argument("--timeout", type=float, default=900.0)
     args = parser.parse_args(argv)
     if not math.isfinite(args.timeout) or args.timeout <= 0 or args.timeout > 1800:
@@ -160,9 +164,10 @@ def run(args: argparse.Namespace) -> tuple[dict[str, object], Path]:
         dynamic_builder = physical_regular(DYNAMIC_BUILDER, "owned dynamic sysroot builder")
         static_package = physical_regular(STATIC_PACKAGE, "owned static package tool")
         dynamic_package = physical_regular(DYNAMIC_PACKAGE, "owned dynamic package tool")
+        architecture = [] if ARCH == "x86_64" else ["--architecture", ARCH]
         for label, command, destination, kind in (
-            ("static-build", [sys.executable, "-B", str(static_builder), "--output", str(static)], static, "directory"),
-            ("dynamic-build", [sys.executable, "-B", str(dynamic_builder), "--output", str(dynamic)], dynamic, "directory"),
+            ("static-build", [sys.executable, "-B", str(static_builder), *architecture, "--output", str(static)], static, "directory"),
+            ("dynamic-build", [sys.executable, "-B", str(dynamic_builder), *architecture, "--output", str(dynamic)], dynamic, "directory"),
             ("static-package-one", [sys.executable, "-B", str(static_package), "create", "--source", str(static), "--archive", str(static_package_one)], static_package_one, "file"),
             ("static-package-two", [sys.executable, "-B", str(static_package), "create", "--source", str(static), "--archive", str(static_package_two)], static_package_two, "file"),
             ("dynamic-package-one", [sys.executable, "-B", str(dynamic_package), "package", str(dynamic), str(dynamic_package_one)], dynamic_package_one, "file"),
@@ -170,6 +175,8 @@ def run(args: argparse.Namespace) -> tuple[dict[str, object], Path]:
             ("static-extract", [sys.executable, "-B", str(static_package), "extract", "--archive", str(static_package_one), "--destination", str(static_extraction)], static_extracted, "directory"),
             ("dynamic-extract", [sys.executable, "-B", str(dynamic_package), "extract", str(dynamic_package_one), str(dynamic_extracted)], dynamic_extracted, "directory"),
         ):
+            if ARCH != "x86_64" and label == "static-package-one":
+                raise PreparationError("aarch64 resolver-network package and extracted-product contracts are unavailable")
             record = command_record(command, timeout=args.timeout)
             report["steps"][label] = record
             if record["status"] != 0:
@@ -202,6 +209,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         print(f"native resolver-network preparation: ERROR: {error}", file=sys.stderr)
         return 2
     print(json.dumps({"state_root": str(report_path.parent), "report": str(report_path), **report["prepared_products"], "passed": report["result"] == "pass"}, sort_keys=True))
+    if ARCH != "x86_64" and report["result"] != "pass":
+        print(f"native resolver-network preparation: {report['error']}", file=sys.stderr)
     return 0 if report["result"] == "pass" else 1
 
 
