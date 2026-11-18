@@ -74,6 +74,7 @@ use core::arch::asm;
 /// not decode Linux's `-4095..=-1` errno result range or establish any C ABI
 /// policy.
 #[inline(always)]
+#[cfg(target_arch = "x86_64")]
 pub(crate) unsafe fn syscall0(n: i64) -> i64 {
     let result: i64;
     // SAFETY: The caller upholds the raw Linux syscall contract documented
@@ -98,6 +99,7 @@ pub(crate) unsafe fn syscall0(n: i64) -> i64 {
 /// including validity, lifetime, and accessibility of every pointer encoded
 /// in `a1`. The raw signed result is returned unchanged.
 #[inline(always)]
+#[cfg(target_arch = "x86_64")]
 pub(crate) unsafe fn syscall1(n: i64, a1: i64) -> i64 {
     let result: i64;
     // SAFETY: `rdi` is Linux/x86-64 syscall argument one; the caller owns all
@@ -122,6 +124,7 @@ pub(crate) unsafe fn syscall1(n: i64, a1: i64) -> i64 {
 /// `n`, `a1`, and `a2` must satisfy the named kernel syscall's complete raw
 /// contract. The wrapper neither validates arguments nor translates errno.
 #[inline(always)]
+#[cfg(target_arch = "x86_64")]
 pub(crate) unsafe fn syscall2(n: i64, a1: i64, a2: i64) -> i64 {
     let result: i64;
     // SAFETY: Linux/x86-64 syscall arguments one/two occupy `rdi`/`rsi`.
@@ -146,6 +149,7 @@ pub(crate) unsafe fn syscall2(n: i64, a1: i64, a2: i64) -> i64 {
 /// `n` and all arguments must satisfy the named kernel syscall's complete
 /// raw contract. The wrapper neither validates arguments nor translates errno.
 #[inline(always)]
+#[cfg(target_arch = "x86_64")]
 pub(crate) unsafe fn syscall3(n: i64, a1: i64, a2: i64, a3: i64) -> i64 {
     let result: i64;
     // SAFETY: Linux/x86-64 syscall arguments one through three occupy
@@ -173,6 +177,7 @@ pub(crate) unsafe fn syscall3(n: i64, a1: i64, a2: i64, a3: i64) -> i64 {
 /// raw contract. In particular, `a4` is passed in `r10`, not the normal C ABI
 /// fourth-argument register `rcx`.
 #[inline(always)]
+#[cfg(target_arch = "x86_64")]
 pub(crate) unsafe fn syscall4(n: i64, a1: i64, a2: i64, a3: i64, a4: i64) -> i64 {
     let result: i64;
     // SAFETY: Linux/x86-64 moves syscall argument four from the C ABI's `rcx`
@@ -201,6 +206,7 @@ pub(crate) unsafe fn syscall4(n: i64, a1: i64, a2: i64, a3: i64, a4: i64) -> i64
 /// raw contract. Arguments four/five must be the exact `r10`/`r8` machine
 /// words expected by that syscall.
 #[inline(always)]
+#[cfg(target_arch = "x86_64")]
 pub(crate) unsafe fn syscall5(
     n: i64,
     a1: i64,
@@ -236,6 +242,7 @@ pub(crate) unsafe fn syscall5(
 /// raw contract. Arguments four through six must be the exact `r10`/`r8`/`r9`
 /// machine words expected by that syscall.
 #[inline(always)]
+#[cfg(target_arch = "x86_64")]
 pub(crate) unsafe fn syscall6(
     n: i64,
     a1: i64,
@@ -274,6 +281,7 @@ pub(crate) unsafe fn syscall6(
 /// `SYS_EXIT` or `SYS_EXIT_GROUP`). A returning syscall would violate this
 /// function's `!` contract.
 #[inline(always)]
+#[cfg(target_arch = "x86_64")]
 pub(crate) unsafe fn syscall_noreturn1(n: i64, a1: i64) -> ! {
     // SAFETY: The caller guarantees a non-returning raw Linux syscall.
     unsafe {
@@ -284,6 +292,125 @@ pub(crate) unsafe fn syscall_noreturn1(n: i64, a1: i64) -> ! {
             options(noreturn, nostack),
         );
     }
+}
+
+// Linux AArch64 entry follows musl 1.2.6 arch/aarch64/syscall_arch.h.
+#[inline(always)]
+#[cfg(target_arch = "aarch64")]
+pub(crate) unsafe fn syscall0(n: i64) -> i64 {
+    let result: i64;
+    // SAFETY: the caller guarantees the raw syscall and its arguments are valid.
+    unsafe { core::arch::asm!(
+        "svc #0",
+        inlateout("x8") n => _,
+        lateout("x0") result,
+        options(nostack),
+    ); }
+    result
+}
+#[inline(always)]
+#[cfg(target_arch = "aarch64")]
+pub(crate) unsafe fn syscall1(n: i64, a1: i64) -> i64 {
+    let result: i64;
+    // SAFETY: the caller guarantees the raw syscall and its arguments are valid.
+    unsafe { core::arch::asm!(
+        "svc #0",
+        inlateout("x8") n => _,
+        inlateout("x0") a1 => result,
+        options(nostack),
+    ); }
+    result
+}
+#[inline(always)]
+#[cfg(target_arch = "aarch64")]
+pub(crate) unsafe fn syscall2(n: i64, a1: i64, a2: i64) -> i64 {
+    let result: i64;
+    // SAFETY: the caller guarantees the raw syscall and its arguments are valid.
+    unsafe { core::arch::asm!(
+        "svc #0",
+        inlateout("x8") n => _,
+        inlateout("x0") a1 => result,
+        inlateout("x1") a2 => _,
+        options(nostack),
+    ); }
+    result
+}
+#[inline(always)]
+#[cfg(target_arch = "aarch64")]
+pub(crate) unsafe fn syscall3(n: i64, a1: i64, a2: i64, a3: i64) -> i64 {
+    let result: i64;
+    // SAFETY: the caller guarantees the raw syscall and its arguments are valid.
+    unsafe { core::arch::asm!(
+        "svc #0",
+        inlateout("x8") n => _,
+        inlateout("x0") a1 => result,
+        inlateout("x1") a2 => _,
+        inlateout("x2") a3 => _,
+        options(nostack),
+    ); }
+    result
+}
+#[inline(always)]
+#[cfg(target_arch = "aarch64")]
+pub(crate) unsafe fn syscall4(n: i64, a1: i64, a2: i64, a3: i64, a4: i64) -> i64 {
+    let result: i64;
+    // SAFETY: the caller guarantees the raw syscall and its arguments are valid.
+    unsafe { core::arch::asm!(
+        "svc #0",
+        inlateout("x8") n => _,
+        inlateout("x0") a1 => result,
+        inlateout("x1") a2 => _,
+        inlateout("x2") a3 => _,
+        inlateout("x3") a4 => _,
+        options(nostack),
+    ); }
+    result
+}
+#[inline(always)]
+#[cfg(target_arch = "aarch64")]
+pub(crate) unsafe fn syscall5(n: i64, a1: i64, a2: i64, a3: i64, a4: i64, a5: i64) -> i64 {
+    let result: i64;
+    // SAFETY: the caller guarantees the raw syscall and its arguments are valid.
+    unsafe { core::arch::asm!(
+        "svc #0",
+        inlateout("x8") n => _,
+        inlateout("x0") a1 => result,
+        inlateout("x1") a2 => _,
+        inlateout("x2") a3 => _,
+        inlateout("x3") a4 => _,
+        inlateout("x4") a5 => _,
+        options(nostack),
+    ); }
+    result
+}
+#[inline(always)]
+#[cfg(target_arch = "aarch64")]
+pub(crate) unsafe fn syscall6(n: i64, a1: i64, a2: i64, a3: i64, a4: i64, a5: i64, a6: i64) -> i64 {
+    let result: i64;
+    // SAFETY: the caller guarantees the raw syscall and its arguments are valid.
+    unsafe { core::arch::asm!(
+        "svc #0",
+        inlateout("x8") n => _,
+        inlateout("x0") a1 => result,
+        inlateout("x1") a2 => _,
+        inlateout("x2") a3 => _,
+        inlateout("x3") a4 => _,
+        inlateout("x4") a5 => _,
+        inlateout("x5") a6 => _,
+        options(nostack),
+    ); }
+    result
+}
+#[inline(always)]
+#[cfg(target_arch = "aarch64")]
+pub(crate) unsafe fn syscall_noreturn1(n: i64, a1: i64) -> ! {
+    // SAFETY: the caller guarantees the raw syscall and its arguments are valid.
+    unsafe { core::arch::asm!(
+        "svc #0",
+        in("x8") n,
+        in("x0") a1,
+        options(noreturn, nostack),
+    ); }
 }
 
 // Linux 5.10 x86-64 UAPI syscall numbers. These intentionally retain the
