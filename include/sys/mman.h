@@ -96,7 +96,7 @@ int munlockall(void);
 int msync(void *, size_t, int);
 int posix_madvise(void *, size_t, int);
 
-#if defined(__x86_64__) && (defined(_GNU_SOURCE) || defined(_BSD_SOURCE))
+#if (defined(__x86_64__) || defined(__aarch64__)) && (defined(_GNU_SOURCE) || defined(_BSD_SOURCE))
 #define MADV_NORMAL      0
 #define MADV_RANDOM      1
 #define MADV_SEQUENTIAL  2
@@ -167,7 +167,7 @@ void *mremap(void *, size_t, size_t, int, ...);
 int memfd_create(const char *, unsigned);
 #endif
 
-#if defined(__x86_64__) && (defined(_GNU_SOURCE) || defined(_BSD_SOURCE))
+#if (defined(__x86_64__) || defined(__aarch64__)) && (defined(_GNU_SOURCE) || defined(_BSD_SOURCE))
 int madvise(void *, size_t, int);
 int mincore(void *, size_t, unsigned char *);
 #endif
