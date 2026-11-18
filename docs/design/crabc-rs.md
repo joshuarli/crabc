@@ -541,7 +541,7 @@ remains bounded to explicit caller inputs; `Command`/`PATH` search,
 separate contracts.
 
 The private Linux/x86-64 evidence lane separately admits that same alloc-gated
-ownership boundary in `crabc-rs/src/process_x86_64.rs`: parent-owned C-string
+ownership boundary in `crabc-rs/src/process.rs`: parent-owned C-string
 and pointer preparation, `FdAction::{close, dup2}`, bounded `SpawnOptions`, a
 `CLOEXEC` error pipe relocated away from requested `dup2` targets, and the
 ownership-returning `Child::wait`. Its internal fork-equivalent clone exists

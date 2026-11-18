@@ -1197,10 +1197,10 @@ unsafe fn join_selected_worker_inner(
             ROOT / 'compat/x86_64/run_x86_namespace_reference.sh'
         ).read_text(encoding='utf-8')
         path_lifecycle_test = (
-            ROOT / 'crabc-rs/tests/x86_64_path_lifecycle.rs'
+            ROOT / 'crabc-rs/tests/linux_path_lifecycle.rs'
         ).read_text(encoding='utf-8')
         namespace_test = (
-            ROOT / 'crabc-rs/tests/x86_64_namespace.rs'
+            ROOT / 'crabc-rs/tests/linux_namespace.rs'
         ).read_text(encoding='utf-8')
         xattr_runner = (
             ROOT / 'compat/x86_64/run_x86_xattr_reference.sh'
@@ -1208,7 +1208,7 @@ unsafe fn join_selected_worker_inner(
         xattr_probe = (
             ROOT / 'compat/x86_64/x86_xattr_reference_probe.c'
         ).read_text(encoding='utf-8')
-        xattr_test = (ROOT / 'crabc-rs/tests/x86_64_xattr.rs').read_text(encoding='utf-8')
+        xattr_test = (ROOT / 'crabc-rs/tests/linux_xattr.rs').read_text(encoding='utf-8')
         xattr_direct_probe = (
             ROOT / 'crabc-rs/examples/xattr_direct_probe.rs'
         ).read_text(encoding='utf-8')
@@ -1219,13 +1219,13 @@ unsafe fn join_selected_worker_inner(
             ROOT / 'compat/x86_64/x86_directory_reference_probe.c'
         ).read_text(encoding='utf-8')
         raw_directory_test = (
-            ROOT / 'crabc-rs/tests/x86_64_raw_directory.rs'
+            ROOT / 'crabc-rs/tests/linux_raw_directory.rs'
         ).read_text(encoding='utf-8')
         directory_test = (
-            ROOT / 'crabc-rs/tests/x86_64_directory.rs'
+            ROOT / 'crabc-rs/tests/linux_directory.rs'
         ).read_text(encoding='utf-8')
         directory_position_test = (
-            ROOT / 'crabc-rs/tests/x86_64_directory_position.rs'
+            ROOT / 'crabc-rs/tests/linux_directory_position.rs'
         ).read_text(encoding='utf-8')
         directory_direct_probe = (
             ROOT / 'crabc-rs/examples/directory_direct_probe.rs'
@@ -1257,7 +1257,7 @@ unsafe fn join_selected_worker_inner(
         statx_probe = (
             ROOT / 'compat/x86_64/x86_statx_reference_probe.c'
         ).read_text(encoding='utf-8')
-        statx_test = (ROOT / 'crabc-rs/tests/x86_64_statx.rs').read_text(encoding='utf-8')
+        statx_test = (ROOT / 'crabc-rs/tests/linux_statx.rs').read_text(encoding='utf-8')
         statx_direct_probe = (
             ROOT / 'crabc-rs/examples/statx_direct_probe.rs'
         ).read_text(encoding='utf-8')
@@ -1268,10 +1268,10 @@ unsafe fn join_selected_worker_inner(
             ROOT / 'compat/x86_64/x86_cwd_canonicalize_reference_probe.c'
         ).read_text(encoding='utf-8')
         canonicalize_test = (
-            ROOT / 'crabc-rs/tests/x86_64_canonicalize.rs'
+            ROOT / 'crabc-rs/tests/linux_canonicalize.rs'
         ).read_text(encoding='utf-8')
         cwd_mutation_test = (
-            ROOT / 'crabc-rs/tests/x86_64_cwd_mutation.rs'
+            ROOT / 'crabc-rs/tests/linux_cwd_mutation.rs'
         ).read_text(encoding='utf-8')
         canonicalize_direct_probe = (
             ROOT / 'crabc-rs/examples/fs_canonicalize_direct_probe.rs'
@@ -1295,7 +1295,7 @@ unsafe fn join_selected_worker_inner(
         mount_probe = (
             ROOT / 'compat/x86_64/x86_mount_reference_probe.c'
         ).read_text(encoding='utf-8')
-        mount_test = (ROOT / 'crabc-rs/tests/x86_64_mount.rs').read_text(encoding='utf-8')
+        mount_test = (ROOT / 'crabc-rs/tests/linux_mount.rs').read_text(encoding='utf-8')
         mount_direct_probe = (
             ROOT / 'crabc-rs/examples/mount_direct_probe.rs'
         ).read_text(encoding='utf-8')
@@ -1318,7 +1318,7 @@ unsafe fn join_selected_worker_inner(
             ROOT / 'compat/x86_64/x86_mapping_reference_probe.c'
         ).read_text(encoding='utf-8')
         memory_mapping_test = (
-            ROOT / 'crabc-rs/tests/x86_64_memory_mapping.rs'
+            ROOT / 'crabc-rs/tests/linux_memory_mapping.rs'
         ).read_text(encoding='utf-8')
         mapping_direct_probe = (
             ROOT / 'crabc-rs/examples/mapping_direct_probe.rs'
@@ -1330,7 +1330,7 @@ unsafe fn join_selected_worker_inner(
             ROOT / 'compat/x86_64/x86_memory_vm_reference_probe.c'
         ).read_text(encoding='utf-8')
         memory_vm_test = (
-            ROOT / 'crabc-rs/tests/x86_64_memory_vm.rs'
+            ROOT / 'crabc-rs/tests/linux_memory_vm.rs'
         ).read_text(encoding='utf-8')
         memory_vm_direct_probe = (
             ROOT / 'crabc-rs/examples/memory_vm_direct_probe.rs'
@@ -1342,7 +1342,7 @@ unsafe fn join_selected_worker_inner(
             ROOT / 'compat/x86_64/x86_pty_basic_reference_probe.c'
         ).read_text(encoding='utf-8')
         pty_basic_test = (
-            ROOT / 'crabc-rs/tests/x86_64_pty_basic.rs'
+            ROOT / 'crabc-rs/tests/linux_pty_basic.rs'
         ).read_text(encoding='utf-8')
         pty_basic_direct_probe = (
             ROOT / 'crabc-rs/examples/pty_basic_direct_probe.rs'
@@ -1354,7 +1354,7 @@ unsafe fn join_selected_worker_inner(
             ROOT / 'compat/x86_64/x86_terminal_reference_probe.c'
         ).read_text(encoding='utf-8')
         terminal_test = (
-            ROOT / 'crabc-rs/tests/x86_64_terminal.rs'
+            ROOT / 'crabc-rs/tests/linux_terminal.rs'
         ).read_text(encoding='utf-8')
         terminal_direct_probe = (
             ROOT / 'crabc-rs/examples/x86_64_terminal_direct_probe.rs'
@@ -1375,7 +1375,7 @@ unsafe fn join_selected_worker_inner(
         shm_probe = (
             ROOT / 'compat/x86_64/x86_shm_reference_probe.c'
         ).read_text(encoding='utf-8')
-        shm_test = (ROOT / 'crabc-rs/tests/x86_64_shm.rs').read_text(encoding='utf-8')
+        shm_test = (ROOT / 'crabc-rs/tests/linux_shm.rs').read_text(encoding='utf-8')
         shm_direct_probe = (
             ROOT / 'crabc-rs/examples/shm_direct_probe.rs'
         ).read_text(encoding='utf-8')
@@ -1385,7 +1385,7 @@ unsafe fn join_selected_worker_inner(
         inotify_probe = (
             ROOT / 'compat/x86_64/x86_inotify_reference_probe.c'
         ).read_text(encoding='utf-8')
-        inotify_test = (ROOT / 'crabc-rs/tests/x86_64_inotify.rs').read_text(encoding='utf-8')
+        inotify_test = (ROOT / 'crabc-rs/tests/linux_inotify.rs').read_text(encoding='utf-8')
         inotify_direct_probe = (
             ROOT / 'crabc-rs/examples/inotify_direct_probe.rs'
         ).read_text(encoding='utf-8')
@@ -1402,7 +1402,7 @@ unsafe fn join_selected_worker_inner(
             ROOT / 'compat/x86_64/x86_advanced_time_reference_probe.c'
         ).read_text(encoding='utf-8')
         advanced_time_test = (
-            ROOT / 'crabc-rs/tests/x86_64_advanced_time.rs'
+            ROOT / 'crabc-rs/tests/linux_advanced_time.rs'
         ).read_text(encoding='utf-8')
         calendar_oracle = (
             'syscall=gettimeofday:96 abi=rdi-timeval:rsi-null '

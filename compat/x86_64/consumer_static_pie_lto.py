@@ -46,9 +46,9 @@ FACADE_CRATE_ROOT = ROOT / "crabc-rs" / "src" / "lib.rs"
 ROUTE_SOURCES = (
     ROOT / "crabc-core/src/process.rs",
     ROOT / "crabc-core/src/io.rs",
-    ROOT / "crabc-core/src/syscall_x86_64.rs",
+    ROOT / "crabc-core/src/syscall.rs",
     ROOT / "crabc-core/src/error.rs",
-    ROOT / "crabc-rs/src/process_x86_64.rs",
+    ROOT / "crabc-rs/src/process.rs",
     ROOT / "crabc-rs/src/io.rs",
     ROOT / "crabc-rs/src/fd.rs",
 )
