@@ -21,7 +21,7 @@ int main(void)
 	if (aio_write(&control))
 		return 2;
 	while (aio_error(&control) == EINPROGRESS)
-		if (aio_suspend(one, 1, &limit) && errno != EINTR)
+		if (aio_suspend(one, 1, &limit) && errno != EINTR && errno != EAGAIN)
 			return 3;
 	if (aio_error(&control) || aio_return(&control) != 1 || close(descriptor)
 		|| unlink("/state/aio-native-pie"))

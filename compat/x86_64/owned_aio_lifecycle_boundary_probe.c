@@ -47,13 +47,10 @@ static int terminal(struct aiocb *control)
 {
 	const struct aiocb *list[] = { control };
 
-	for (int attempt = 0; attempt < 8; attempt++) {
-		if (aio_error(control) != EINPROGRESS)
-			return 0;
-		if (aio_suspend(list, 1, &wait_limit) && errno != EINTR)
+	while (aio_error(control) == EINPROGRESS)
+		if (aio_suspend(list, 1, &wait_limit) && errno != EINTR && errno != EAGAIN)
 			return -1;
-	}
-	return aio_error(control) == EINPROGRESS ? -1 : 0;
+	return 0;
 }
 
 static int result_is(struct aiocb *control, int expected_error, ssize_t expected_result)

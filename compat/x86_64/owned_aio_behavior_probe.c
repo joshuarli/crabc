@@ -43,15 +43,10 @@ static int wait_control(struct aiocb *control)
 {
 	const struct aiocb *controls[] = { control };
 
-	for (int attempt = 0; attempt < 4; attempt++) {
-		if (aio_error(control) != EINPROGRESS)
-			return 0;
-		if (aio_suspend(controls, 1, &wait_limit) == 0)
-			continue;
-		if (errno != EINTR)
+	while (aio_error(control) == EINPROGRESS)
+		if (aio_suspend(controls, 1, &wait_limit) && errno != EINTR && errno != EAGAIN)
 			return -1;
-	}
-	return aio_error(control) == EINPROGRESS ? -1 : 0;
+	return 0;
 }
 
 static int completed(struct aiocb *control, ssize_t expected)

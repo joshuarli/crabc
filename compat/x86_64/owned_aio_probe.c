@@ -54,7 +54,7 @@ static int wait_for(struct aiocb *control)
 			return 0;
 		if (aio_suspend_signature(one, 1, &timeout) == 0)
 			return 0;
-		if (errno != EINTR) {
+		if (errno != EINTR && errno != EAGAIN) {
 			int saved_errno = errno;
 			fprintf(stderr, "owned-aio wait errno=%d error=%d\n",
 				saved_errno, aio_error_signature(control));
