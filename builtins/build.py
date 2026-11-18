@@ -114,13 +114,18 @@ FORBIDDEN_SOURCE_TOKENS = (
     "#[link",
 )
 FORBIDDEN_SECTIONS = (".eh_frame", ".gcc_except_table", ".ARM.exidx", ".ARM.extab")
+OUTLINE_ATOMIC_SYMBOLS = frozenset(
+    f"__aarch64_{operation}{width}_{order}"
+    for operation in ("cas", "swp", "ldadd", "ldclr", "ldeor", "ldset")
+    for width in ((1, 2, 4, 8, 16) if operation == "cas" else (1, 2, 4, 8))
+    for order in ("relax", "acq", "rel", "acq_rel")
+)
 FORBIDDEN_EXPORT_TOKENS = (
     "memcpy",
     "memmove",
     "memset",
     "bcopy",
     "bzero",
-    "__aarch64_",
     "__atomic_",
     "__sync_",
     "__stack_chk_",
@@ -469,7 +474,7 @@ def source_build_rustflags(stage: pathlib.Path, upstream: pathlib.Path) -> tuple
         "-C",
         "embed-bitcode=no",
         "-C",
-        "target-feature=-outline-atomics",
+        "target-feature=+outline-atomics",
         "--remap-path-prefix",
         f"{stage}=/crabc/builtins-stage",
         "--remap-path-prefix",
@@ -795,7 +800,7 @@ def source_build_compiler_builtins(
             "-C",
             "embed-bitcode=no",
             "-C",
-            "target-feature=-outline-atomics",
+            "target-feature=+outline-atomics",
             "--remap-path-prefix",
             "$CRABC_BUILTINS_STAGE=/crabc/builtins-stage",
             "--remap-path-prefix",
@@ -867,11 +872,14 @@ def ensure_no_absolute_build_paths(archive: pathlib.Path, paths: Sequence[pathli
 
 
 def assert_symbol_surface(defined: Sequence[str]) -> None:
-    missing = sorted(set(EXPECTED_SYMBOLS).difference(defined))
+    missing = sorted((set(EXPECTED_SYMBOLS) | OUTLINE_ATOMIC_SYMBOLS).difference(defined))
     if missing:
         raise BuildError(f"archive is missing required C compiler helpers: {missing!r}")
     rejected: list[str] = []
     for symbol in defined:
+        if symbol.startswith("__aarch64_") and symbol not in OUTLINE_ATOMIC_SYMBOLS:
+            rejected.append(symbol)
+            continue
         # These are Rust implementation details kept externally visible only
         # for cross-codegen-unit references. They are not C ABI exports, so a
         # mangled implementation named ``memcpy`` cannot shadow crabc libc.
@@ -1088,6 +1096,7 @@ def main() -> int:
                 "panic": "abort",
                 "unwind_tables": "disabled",
                 "target_feature": "-outline-atomics",
+                "source_built_target_feature": "+outline-atomics",
                 "source_built_standard_components": list(UPSTREAM_SOURCE_BUILD_COMPONENTS),
             },
             "reproducible": reproducible,
