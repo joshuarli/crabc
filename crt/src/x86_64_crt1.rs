@@ -55,7 +55,7 @@ type LifecycleHook = unsafe extern "C" fn();
 
 // Failing weak defaults for the mode-specific boundaries described above,
 // each in its own section like compiler-emitted functions.
-#[cfg(crabc_x86_64_combined_exec_entry)]
+#[cfg(all(target_arch = "x86_64", crabc_x86_64_combined_exec_entry))]
 core::arch::global_asm!(
     ".section .text.__crabc_x86_static_tls_bootstrap,\"ax\",@progbits",
     ".weak __crabc_x86_static_tls_bootstrap",
@@ -84,7 +84,7 @@ core::arch::global_asm!(
 
 // The owned interpreter admits a dynamic main image's owned entry only by
 // this private revision-one marker. A static executable carries it inertly.
-#[cfg(crabc_x86_64_combined_exec_entry)]
+#[cfg(all(target_arch = "x86_64", crabc_x86_64_combined_exec_entry))]
 core::arch::global_asm!(
     r#"
     .section .note.crabc.owned-crt,"a",@note
@@ -99,7 +99,7 @@ core::arch::global_asm!(
 "#,
 );
 
-#[cfg(crabc_x86_64_combined_exec_entry)]
+#[cfg(all(target_arch = "x86_64", crabc_x86_64_combined_exec_entry))]
 core::arch::global_asm!(
     r#"
     .intel_syntax noprefix
@@ -125,7 +125,7 @@ _start:
     startup = sym __crabc_x86_64_exec_start,
 );
 
-#[cfg(not(crabc_x86_64_combined_exec_entry))]
+#[cfg(all(target_arch = "x86_64", not(crabc_x86_64_combined_exec_entry)))]
 core::arch::global_asm!(
     r#"
     .intel_syntax noprefix
@@ -172,3 +172,22 @@ pub unsafe extern "C" fn __crabc_x86_64_exec_start(
     // a register without a handoff, before any libc or application code.
     unsafe { __crabc_x86_64_dynamic_start(initial_stack, loader_finalizer) }
 }
+
+// musl 1.2.6 arch/aarch64/crt_arch.h, MIT license.
+#[cfg(target_arch = "aarch64")]
+core::arch::global_asm!(
+    r#"
+    .section .text._start,"ax",%progbits
+    .global _start
+    .type _start,%function
+_start:
+    mov x29, #0
+    mov x30, #0
+    mov x0, sp
+    and sp, x0, #-16
+    b {startup}
+    .size _start, .-_start
+    .section .note.GNU-stack,"",%progbits
+"#,
+    startup = sym __crabc_x86_64_static_pie_start,
+);
