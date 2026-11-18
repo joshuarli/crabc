@@ -1022,6 +1022,7 @@ def build_aarch64(output: Path, *, allocator_backend: str, lifecycle_test_audit:
         raise common.BuildError("aarch64 output must be under .work/aarch64")
     output.parent.mkdir(parents=True, exist_ok=True)
     target = arch["target_triple"]
+    source_before_build = source_seal.product_source_digest(ROOT)
     rustup = str(common.pinned_rustup())
     rust_sysroot = common.pinned_rustc_sysroot(Path(rustup))
     tools = rust_sysroot / "lib/rustlib" / target / "bin"
@@ -1078,9 +1079,11 @@ def build_aarch64(output: Path, *, allocator_backend: str, lifecycle_test_audit:
         common.copy_artifact(common.NATIVE_PROFILE_SOURCE, installed / common.NATIVE_PROFILE_PATH)
         common.copy_artifact(crt / "objects.json", installed / "share/crabc/crt.provenance.json")
         common.copy_artifact(crt / "commands.json", installed / "share/crabc/crt.commands.json")
+        if source_seal.product_source_digest(ROOT) != source_before_build:
+            raise common.BuildError("aarch64 dynamic product source changed during build")
         manifest = {"schema": 1, "format": "crabc-aarch64-owned-dynamic-sysroot-v1", "target": target,
                     "toolchain": common.PINNED_TOOLCHAIN, "build_profile": profile,
-                    "hardening_profile": hardening_profile.value, "symlinks": {},
+                    "hardening_profile": hardening_profile.value, "source_sha256": source_before_build, "symlinks": {},
                     "files": common.regular_file_hashes(installed), "skipped": skipped}
         common.write_json(installed / "share/crabc/manifest.json", manifest)
         if output.exists():

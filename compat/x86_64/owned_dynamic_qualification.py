@@ -222,12 +222,14 @@ def _product_identity(product: Path, source_identity: str) -> str:
     return _product_identity_from_state(product, manifest, state, provenance, source_identity)
 
 
-def _materialization_product(product: Path) -> tuple[dict, dict, dict]:
+def _materialization_product(product: Path) -> tuple[dict, dict | None, dict | None]:
     import crabc_cc_owned_dynamic as driver
     try:
         manifest = driver.validate_installation(product)
     except driver.shared.DriverError as error:
         raise QualificationError(f"installed product invalid: {error}") from error
+    if manifest.get("format") == "crabc-aarch64-owned-dynamic-sysroot-v1":
+        return manifest, None, None
     if manifest.get("format") == driver.COMBINED_FORMAT:
         manifest = read(product / driver.COMBINED_PRODUCT_MANIFEST)
     state = read(product / "share/crabc/dynamic-product-state.json")
@@ -240,8 +242,12 @@ def _materialization_product(product: Path) -> tuple[dict, dict, dict]:
     return manifest, state, provenance
 
 
-def _product_identity_from_state(product: Path, manifest: dict, state: dict, provenance: dict,
+def _product_identity_from_state(product: Path, manifest: dict, state: dict | None, provenance: dict | None,
                                  source_identity: str) -> str:
+    if manifest.get("format") == "crabc-aarch64-owned-dynamic-sysroot-v1":
+        require(manifest.get("source_sha256") == source_identity, "installed product source is stale")
+        return digest(product / "share/crabc/manifest.json")
+    require(state is not None and provenance is not None, "materialization evidence is missing")
     require(state.get("source_sha256") == source_identity, "installed product source is stale")
     require(state.get("contracts") == contract_digests(), "installed product contracts are stale")
     allocator_backend = state.get("allocator_backend")
