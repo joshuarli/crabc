@@ -917,7 +917,7 @@ C_ALLOCATOR_OPTIMIZATION = {"release": "-O3", "debug": "-O0"}
 
 
 def c_allocator_compile_command(c_flags: Sequence[str], source_root: Path, output: Path,
-                                dependencies: Path, *, profile: str) -> list[str]:
+                                dependencies: Path, *, profile: str, architecture: str = "x86_64") -> list[str]:
     """The one gcc command that builds the accepted C allocator object.
 
     The build profile's optimization and section splitting, then the product's
@@ -925,8 +925,8 @@ def c_allocator_compile_command(c_flags: Sequence[str], source_root: Path, outpu
     """
 
     return [
-        "/usr/bin/gcc", C_ALLOCATOR_OPTIMIZATION[profile], "-ffunction-sections", "-fdata-sections",
-        "-fPIC", "-m64", *c_flags,
+        ("/usr/bin/gcc" if architecture == "x86_64" else "/usr/local/bin/crabc-aarch64-mold-gcc"), C_ALLOCATOR_OPTIMIZATION[profile], "-ffunction-sections", "-fdata-sections",
+        "-fPIC", *(["-m64"] if architecture == "x86_64" else []), *c_flags,
         f"-ffile-prefix-map={source_root}=/mimalloc",
         "-I", str(source_root / "include"), "-I", str(source_root / "src"),
         "-Wno-error=date-time", "-ftls-model=initial-exec",
@@ -948,7 +948,7 @@ def default_visibility_definitions(object_path: Path) -> list[str]:
     return sorted(names)
 
 
-def compile_c_allocator(work: Path, c_flags: Sequence[str], *, profile: str) -> tuple[Path, dict[str, object]]:
+def compile_c_allocator(work: Path, c_flags: Sequence[str], *, profile: str, architecture: str = "x86_64") -> tuple[Path, dict[str, object]]:
     """Compile unedited pinned upstream mimalloc `src/static.c` into one object.
 
     The archive comes only through the allocator harness's SHA-256-verified
@@ -979,7 +979,7 @@ def compile_c_allocator(work: Path, c_flags: Sequence[str], *, profile: str) -> 
         raise BuildError(f"the pinned mimalloc archive does not declare MI_MALLOC_VERSION {C_ALLOCATOR_MI_MALLOC_VERSION}")
     output = work / C_ALLOCATOR_MEMBER
     dependencies = work / "static.d"
-    command = c_allocator_compile_command(c_flags, source, output, dependencies, profile=profile)
+    command = c_allocator_compile_command(c_flags, source, output, dependencies, profile=profile, architecture=architecture)
     run(command)
     headers: dict[str, str] = {}
     for item in shlex.split(dependencies.read_text(encoding="utf-8").replace("\\\n", " ").partition(":")[2]):
@@ -1002,7 +1002,7 @@ def compile_c_allocator(work: Path, c_flags: Sequence[str], *, profile: str) -> 
         "mi_malloc_version": int(version.group(1)),
         "member": C_ALLOCATOR_MEMBER,
         "member_sha256": sha256_file(output),
-        "compiler": executable_identity(Path("/usr/bin/gcc"), "pinned-image allocator C compiler"),
+        "compiler": executable_identity(Path(command[0]), "pinned-image allocator C compiler"),
         "compile_command": [normalize(item) for item in command],
         "source_and_header_sha256": dict(sorted(headers.items())),
     }
@@ -1514,8 +1514,79 @@ def build(output: Path, *, allocator_backend: str = DEFAULT_ALLOCATOR_BACKEND,
         return manifest
 
 
+def build_aarch64(output: Path, *, allocator_backend: str, lifecycle_test_audit: bool,
+                  profile: str, hardening_profile: NativeRuntimeProfile) -> dict[str, object]:
+    if platform.system() != "Linux" or platform.machine() not in {"aarch64", "arm64"}:
+        raise BuildError("aarch64 static sysroot requires native Linux/aarch64")
+    if allocator_backend != DEFAULT_ALLOCATOR_BACKEND or lifecycle_test_audit or profile != "release" or hardening_profile is not NativeRuntimeProfile.COMPATIBILITY:
+        raise BuildError("aarch64 currently supports only the accepted C backend and release compatibility profile")
+    output = validate_output_path(output)
+    work = ROOT / ".work/aarch64"
+    if not output.is_relative_to(work):
+        raise BuildError("aarch64 output must be under .work/aarch64")
+    output.parent.mkdir(parents=True, exist_ok=True)
+    target = "aarch64-unknown-linux-musl"
+    rustup = str(pinned_rustup())
+    rust_sysroot = pinned_rustc_sysroot(Path(rustup))
+    tools = rust_sysroot / "lib/rustlib" / target / "bin"
+    environment = deterministic_environment()
+    environment.update({"CARGO_HOME": str(work / "cargo"), "TMPDIR": str(work / "tmp"),
+                        "CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_LINKER": "/usr/local/bin/crabc-aarch64-mold-gcc"})
+    skipped = ["x86 source seal and installed receipt validation", "x86 CRT entry and relocation audits",
+               "x86 libc member classification and symbol contract", "x86 allocator lifecycle and hidden-symbol audit",
+               "x86 static PIE and dynamic CRT products"]
+    for item in skipped:
+        print("aarch64: skipped " + item, file=sys.stderr)
+    with tempfile.TemporaryDirectory(prefix="owned-static-build-", dir=work) as temporary:
+        stage = Path(temporary)
+        cargo_dir = stage / "cargo"
+        cargo = [rustup, "run", PINNED_TOOLCHAIN, "cargo", "rustc", "--locked", "-p", "crabc-libc", "--lib", "--release", "--no-default-features", "--features", "x86-owned-static-runtime", "--target", target, "--target-dir", str(cargo_dir), *STATIC_ARCHIVE_PROFILE,
+                 "--config", f'target.{target}.rustflags=["-Ztls-model=initial-exec"]', "--", "--cfg", "crabc_owned_static_sysroot", "--cfg", MIMALLOC_LIFECYCLE_RUST_CFG, "-C", "relocation-model=pic", "-C", "panic=abort", "-Ztls-model=initial-exec", "-Zmerge-functions=disabled"]
+        run(cargo, environment=environment)
+        crt = stage / "crt"
+        run([sys.executable, str(ROOT / "crt/build_x86_64.py"), "--architecture", "aarch64", "--out-dir", str(crt)], environment=environment)
+        builtins = stage / "builtins/libcrabc-builtins.a"
+        builtins.parent.mkdir()
+        run([sys.executable, str(ROOT / "builtins/build.py"), "--output", str(builtins), "--llvm-ar", str(tools / "llvm-ar"), "--llvm-nm", str(tools / "llvm-nm"), "--llvm-readelf", "/usr/bin/readelf", "--ld-lld", "/usr/bin/mold"], environment=environment)
+        allocator, _ = compile_c_allocator(stage / "c-allocator", c_allocator_target_flags(), profile="release", architecture="aarch64")
+        raw = cargo_dir / target / "release/libc.a"
+        ar = str(tools / "llvm-ar")
+        members = run([ar, "t", str(raw)], environment=environment).decode().splitlines()
+        selected = [name for name in members if LIBC_MEMBER.fullmatch(name)]
+        if not selected or len(set(selected)) != len(selected):
+            raise BuildError("aarch64 libc has no unique crabc object members")
+        object_dir = stage / "objects"
+        object_dir.mkdir()
+        run([ar, "x", str(raw), *selected], cwd=object_dir, environment=environment)
+        installed = stage / "installed"
+        library = installed / "usr/lib"
+        library.mkdir(parents=True)
+        run([ar, "rcsD", str(library / "libc.a"), *(str(object_dir / name) for name in selected), str(allocator)], environment=environment)
+        for name in ("crt1.o", "crti.o", "crtn.o"):
+            copy_artifact(crt / name, library / name)
+        copy_artifact(builtins, library / builtins.name)
+        copy_regular_tree(ROOT / "include", installed / "usr/include")
+        install_static_driver(installed / "bin/crabc-cc")
+        manifest_path = installed / "share/crabc/manifest.json"
+        files = regular_file_hashes(installed)
+        manifest = {"format": "crabc-aarch64-owned-static-sysroot-v1", "target": target, "files": files, "skipped": skipped}
+        write_json(manifest_path, manifest)
+        if output.exists():
+            old = output / "share/crabc/manifest.json"
+            try:
+                record = json.loads(old.read_text())
+            except (OSError, ValueError) as error:
+                raise BuildError("refusing to replace unrecognized aarch64 sysroot") from error
+            if record.get("format") != manifest["format"]:
+                raise BuildError("refusing to replace unrecognized aarch64 sysroot")
+            shutil.rmtree(output)
+        installed.replace(output)
+        return manifest
+
+
 def parse_args(arguments: Sequence[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--architecture", choices=("x86_64", "aarch64"), default="x86_64")
     parser.add_argument("--output", type=Path, default=DEFAULT_OUTPUT)
     parser.add_argument("--allocator-backend", choices=ALLOCATOR_BACKENDS, default=DEFAULT_ALLOCATOR_BACKEND)
     parser.add_argument("--allocator-lifecycle-test-audit", action="store_true")
@@ -1528,7 +1599,10 @@ def parse_args(arguments: Sequence[str] | None = None) -> argparse.Namespace:
 def main(arguments: Sequence[str] | None = None) -> int:
     try:
         parsed = parse_args(arguments)
-        manifest = build(parsed.output, allocator_backend=parsed.allocator_backend,
+        if parsed.architecture == "aarch64":
+            manifest = build_aarch64(parsed.output, allocator_backend=parsed.allocator_backend, lifecycle_test_audit=parsed.allocator_lifecycle_test_audit, profile=parsed.profile, hardening_profile=parsed.hardening_profile)
+        else:
+            manifest = build(parsed.output, allocator_backend=parsed.allocator_backend,
                          lifecycle_test_audit=parsed.allocator_lifecycle_test_audit, profile=parsed.profile,
                          hardening_profile=parsed.hardening_profile)
     except BuildError as error:
