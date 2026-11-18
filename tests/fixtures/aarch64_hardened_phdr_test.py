@@ -36,3 +36,18 @@ result = subprocess.run([str(path)], check=False)
 if result.returncode != 127:
     raise SystemExit(f'invalid-ehsize: expected 127, got {result.returncode}')
 os.unlink(path)
+
+modified = bytearray(data)
+for entry in entries:
+    if struct.unpack_from('<I', modified, entry)[0] == 0x6474e552:
+        struct.pack_into('<Q', modified, entry + 40, 0)
+        break
+else:
+    raise SystemExit('missing RELRO segment')
+path = original.with_name(original.name + '-empty-relro')
+path.write_bytes(modified)
+path.chmod(0o755)
+result = subprocess.run([str(path)], check=False)
+if result.returncode != 127:
+    raise SystemExit(f'empty-relro: expected 127, got {result.returncode}')
+os.unlink(path)

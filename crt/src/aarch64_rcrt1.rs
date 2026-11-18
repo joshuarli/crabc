@@ -75,6 +75,7 @@ _start:
     mov x27, xzr
     mov x9, xzr
     mov x10, xzr
+    mov x16, xzr
 .Lstatic_pie_find_phdr:
     cmp x24, x22
     b.hs .Lstatic_pie_found_phdr
@@ -86,6 +87,16 @@ _start:
     mov x9, #1
     b .Lstatic_pie_next_program_header
 .Lstatic_pie_not_program_header:
+    movz w12, #0xe552
+    movk w12, #0x6474, lsl #16
+    cmp w11, w12
+    b.ne .Lstatic_pie_not_relro_header
+    cbnz x16, .Lstatic_pie_fail
+    ldr x12, [x23, #40]
+    cbz x12, .Lstatic_pie_fail
+    mov x16, x23
+    b .Lstatic_pie_next_program_header
+.Lstatic_pie_not_relro_header:
     cmp w11, #2
     b.ne .Lstatic_pie_next_program_header
     cbnz x10, .Lstatic_pie_fail
@@ -270,6 +281,79 @@ _start:
 .Lstatic_pie_hardened_headers_end:
     cbz x2, .Lstatic_pie_fail
 .Lstatic_pie_hardened_headers_done:
+    cbz x16, .Lstatic_pie_relro_range_done
+    ldr x0, [x16, #16]
+    adds x0, x0, x19
+    b.cs .Lstatic_pie_fail
+    ldr x1, [x16, #40]
+    adds x1, x1, x0
+    b.cs .Lstatic_pie_fail
+    adds x1, x1, #4095
+    b.cs .Lstatic_pie_fail
+    and x0, x0, #0xfffffffffffff000
+    and x1, x1, #0xfffffffffffff000
+    mov x8, x20
+    mov x9, xzr
+.Lstatic_pie_relro_range:
+    cmp x9, x22
+    b.hs .Lstatic_pie_fail
+    ldr w2, [x8]
+    cmp w2, #1
+    b.ne .Lstatic_pie_relro_range_next
+    ldr x4, [x8, #40]
+    cbz x4, .Lstatic_pie_relro_range_next
+    ldr w2, [x8, #4]
+    and w2, w2, #3
+    cmp w2, #2
+    b.ne .Lstatic_pie_relro_range_next
+    ldr x2, [x8, #16]
+    adds x2, x2, x19
+    b.cs .Lstatic_pie_fail
+    adds x3, x2, x4
+    b.cs .Lstatic_pie_fail
+    adds x3, x3, #4095
+    b.cs .Lstatic_pie_fail
+    and x2, x2, #0xfffffffffffff000
+    and x3, x3, #0xfffffffffffff000
+    cmp x0, x2
+    b.lo .Lstatic_pie_relro_range_next
+    cmp x1, x3
+    b.ls .Lstatic_pie_relro_executable_check
+.Lstatic_pie_relro_range_next:
+    add x8, x8, #56
+    add x9, x9, #1
+    b .Lstatic_pie_relro_range
+.Lstatic_pie_relro_executable_check:
+    mov x8, x20
+    mov x9, xzr
+.Lstatic_pie_relro_executable_next:
+    cmp x9, x22
+    b.hs .Lstatic_pie_relro_range_done
+    ldr w2, [x8]
+    cmp w2, #1
+    b.ne .Lstatic_pie_relro_executable_advance
+    ldr x4, [x8, #40]
+    cbz x4, .Lstatic_pie_relro_executable_advance
+    ldr w2, [x8, #4]
+    tbz w2, #0, .Lstatic_pie_relro_executable_advance
+    ldr x2, [x8, #16]
+    adds x2, x2, x19
+    b.cs .Lstatic_pie_fail
+    adds x3, x2, x4
+    b.cs .Lstatic_pie_fail
+    adds x3, x3, #4095
+    b.cs .Lstatic_pie_fail
+    and x2, x2, #0xfffffffffffff000
+    and x3, x3, #0xfffffffffffff000
+    cmp x0, x3
+    b.hs .Lstatic_pie_relro_executable_advance
+    cmp x2, x1
+    b.lo .Lstatic_pie_fail
+.Lstatic_pie_relro_executable_advance:
+    add x8, x8, #56
+    add x9, x9, #1
+    b .Lstatic_pie_relro_executable_next
+.Lstatic_pie_relro_range_done:
     adds x23, x19, x26
     b.cs .Lstatic_pie_fail
     adds x24, x23, x27
