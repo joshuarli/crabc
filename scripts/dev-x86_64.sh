@@ -8,11 +8,21 @@
 set -euo pipefail
 
 readonly ROOT_DIR="$(cd -P "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-readonly PLATFORM="linux/amd64"
-IMAGE="${CRABC_X86_64_CORE_IMAGE:-}"
+arch_config="$(python3 -B "$ROOT_DIR/compat/x86_64/native_arch.py" "$(uname -m)")"
+eval "$arch_config"
+readonly PLATFORM="$platform"
+readonly ARCH="$arch"
+readonly TARGET_TRIPLE="$target_triple"
+readonly LINKER_ENV="$linker_variable=$linker"
+readonly PINNED_IMAGE="$image"
+if [ "$ARCH" = x86_64 ]; then
+    IMAGE="${CRABC_X86_64_CORE_IMAGE:-}"
+else
+    IMAGE="${CRABC_AARCH64_CORE_IMAGE:-}"
+fi
 readonly BUILD_IMAGE="${CRABC_X86_64_CORE_IMAGE:-crabc-core-evidence:x86_64}"
 readonly DOCKERFILE="$ROOT_DIR/docker/Dockerfile.x86_64"
-readonly WORK_BOUNDARY="$ROOT_DIR/.work/x86_64"
+readonly WORK_BOUNDARY="$ROOT_DIR/.work/$ARCH"
 normalize_absolute_path() {
     local path="${1#/}"
     local component
@@ -2436,7 +2446,7 @@ fail() {
 
 translate_owned_posix_product() {
     python3 -B - "$ROOT_DIR" "$WORK_DIR" "$CARGO_VOLUME" "$1" "${2:-directory}" \
-        "$TARGET_VOLUME" "$TMP_DIR" "$REPORT_DIR" <<'PY_PRODUCT'
+        "$TARGET_VOLUME" "$TMP_DIR" "$REPORT_DIR" "$ARCH" <<'PY_PRODUCT'
 from pathlib import Path
 import os
 import sys
@@ -2445,7 +2455,7 @@ root, work, cargo = map(Path, sys.argv[1:4])
 argument = sys.argv[4]
 kind = sys.argv[5]
 container_root = Path('/workspace')
-container_work = container_root / '.work/x86_64'
+container_work = container_root / '.work' / sys.argv[9]
 container_cargo = container_work / 'cargo'
 
 def host_path(container):
@@ -2470,7 +2480,7 @@ try:
     if kind == 'fresh-output':
         if path.exists() or path.is_symlink() or path.parent.resolve(strict=True) != path.parent or not path.parent.is_dir():
             raise ValueError('output must be fresh below an existing physical .work directory')
-        if any(directory.is_relative_to(path) for directory in (work, cargo, *map(Path, sys.argv[6:]))):
+        if any(directory.is_relative_to(path) for directory in (work, cargo, *map(Path, sys.argv[6:9]))):
             raise ValueError('output is reserved for container setup')
     elif kind in ('directory', 'receipt-file'):
         if path.resolve(strict=True) != path or not (path.is_dir() if kind == 'directory' else path.is_file()):
@@ -2563,11 +2573,11 @@ prepare_native_c_performance_arguments() {
 # mounts; retained-report replay uses it without entering a container.
 native_facade_performance_host_path() {
     case "$1" in
-        /workspace/.work/x86_64/cargo|/workspace/.work/x86_64/cargo/*)
-            printf '%s%s\n' "$CARGO_VOLUME" "${1#/workspace/.work/x86_64/cargo}"
+        /workspace/.work/$ARCH/cargo|/workspace/.work/$ARCH/cargo/*)
+            printf '%s%s\n' "$CARGO_VOLUME" "${1#/workspace/.work/$ARCH/cargo}"
             ;;
-        /workspace/.work/x86_64|/workspace/.work/x86_64/*)
-            printf '%s%s\n' "$WORK_DIR" "${1#/workspace/.work/x86_64}"
+        /workspace/.work/$ARCH|/workspace/.work/$ARCH/*)
+            printf '%s%s\n' "$WORK_DIR" "${1#/workspace/.work/$ARCH}"
             ;;
         /workspace/*)
             printf '%s/%s\n' "$ROOT_DIR" "${1#/workspace/}"
@@ -2580,14 +2590,14 @@ native_facade_performance_host_path() {
 # physical-product translator, then rebound read-only at their canonical
 # container paths. Keep that conversion local to this dispatcher boundary:
 # unlike the normal work tree, the cleanup evidence root is the only writable
-# part of /workspace/.work/x86_64 for this command.
+# part of /workspace/.work/$ARCH for this command.
 owned_rust_cleanup_host_path() {
     case "$1" in
-        /workspace/.work/x86_64/cargo|/workspace/.work/x86_64/cargo/*)
-            printf '%s%s\n' "$CARGO_VOLUME" "${1#/workspace/.work/x86_64/cargo}"
+        /workspace/.work/$ARCH/cargo|/workspace/.work/$ARCH/cargo/*)
+            printf '%s%s\n' "$CARGO_VOLUME" "${1#/workspace/.work/$ARCH/cargo}"
             ;;
-        /workspace/.work/x86_64|/workspace/.work/x86_64/*)
-            printf '%s%s\n' "$WORK_DIR" "${1#/workspace/.work/x86_64}"
+        /workspace/.work/$ARCH|/workspace/.work/$ARCH/*)
+            printf '%s%s\n' "$WORK_DIR" "${1#/workspace/.work/$ARCH}"
             ;;
         /workspace/*)
             printf '%s/%s\n' "$ROOT_DIR" "${1#/workspace/}"
@@ -2659,7 +2669,7 @@ prepare_native_facade_performance_arguments() {
         else
             # WORK_DIR was already physically admitted at dispatcher startup
             # and is bound at this fixed container path, including overrides.
-            translated=/workspace/.work/x86_64
+            translated=/workspace/.work/$ARCH
         fi
         NATIVE_FACADE_PERFORMANCE_ARGUMENTS=(
             --work-root "$translated"
@@ -2767,7 +2777,7 @@ prepare_public_data_ordinary_link_arguments() {
     static_preparation="$(translate_owned_posix_product "$static_preparation" receipt-file)" || exit 2
     output="$(translate_owned_posix_product "$output" fresh-output)" || exit 2
     case "$output" in
-        /workspace/.work/x86_64/public-data-ordinary-link/*) ;;
+        /workspace/.work/$ARCH/public-data-ordinary-link/*) ;;
         *) fail "public data output must be below this checkout's .work/x86_64/public-data-ordinary-link" ;;
     esac
     PUBLIC_DATA_PREPARATION_ROOT="${static_preparation%/*}"
@@ -2824,7 +2834,7 @@ prepare_header_declaration_inventory_arguments() {
     [ -n "$output" ] || fail "header-declaration-inventory collect requires --output"
     output="$(translate_owned_posix_product "$output" fresh-output)" || exit 2
     case "$output" in
-        /workspace/.work/x86_64/header-declaration-inventory/*) ;;
+        /workspace/.work/$ARCH/header-declaration-inventory/*) ;;
         *) fail "declaration output must be below this checkout's .work/x86_64/header-declaration-inventory" ;;
     esac
     HEADER_DECLARATION_ARGUMENTS=(--collect --output "$output" --compiler clang)
@@ -2906,7 +2916,7 @@ prepare_native_abi_inventory_arguments() {
     if [ "$mode" = collect ]; then
         output="$(translate_owned_posix_product "$output" fresh-output)" || exit 2
         case "$output" in
-            /workspace/.work/x86_64|/workspace/.work/x86_64/*) ;;
+            /workspace/.work/$ARCH|/workspace/.work/$ARCH/*) ;;
             *) fail "native ABI inventory output must be below this checkout's .work/x86_64" ;;
         esac
         NATIVE_ABI_INVENTORY_ARGUMENTS=(
@@ -2915,17 +2925,17 @@ prepare_native_abi_inventory_arguments() {
             --dynamic-product /inputs/dynamic-product
             --static-preparation /inputs/static-preparation.json
             --output "$output"
-            --work-root /workspace/.work/x86_64
+            --work-root /workspace/.work/$ARCH
         )
     else
         [ -z "$output" ] || fail "validate-report does not take --output"
         report="$(translate_owned_posix_product "$report" receipt-file)" || exit 2
         case "$report" in
-            /workspace/.work/x86_64/cargo|/workspace/.work/x86_64/cargo/*)
-                report="$CARGO_VOLUME${report#/workspace/.work/x86_64/cargo}"
+            /workspace/.work/$ARCH/cargo|/workspace/.work/$ARCH/cargo/*)
+                report="$CARGO_VOLUME${report#/workspace/.work/$ARCH/cargo}"
                 ;;
-            /workspace/.work/x86_64|/workspace/.work/x86_64/*)
-                report="$WORK_DIR${report#/workspace/.work/x86_64}"
+            /workspace/.work/$ARCH|/workspace/.work/$ARCH/*)
+                report="$WORK_DIR${report#/workspace/.work/$ARCH}"
                 ;;
             /workspace/*)
                 report="$ROOT_DIR/${report#/workspace/}"
@@ -3008,7 +3018,7 @@ prepare_owned_c_abi_compat_family_arguments() {
     output="$(translate_owned_posix_product "$output" fresh-output)" || exit 2
     # Every component runner requires its scratch below the work mount.
     case "$output" in
-        /workspace/.work/x86_64/*) ;;
+        /workspace/.work/$ARCH/*) ;;
         *) fail "c-abi-compat family output must be below this checkout's .work/x86_64" ;;
     esac
     C_ABI_COMPAT_FAMILY_ARGUMENTS=(--static-preparation "$static_receipt" --dynamic-qualification "$dynamic_receipt" --output "$output")
@@ -3252,7 +3262,7 @@ require_native_linux_x86_64_host() {
     fi
 
     case "$host_machine" in
-        x86_64|amd64) ;;
+        x86_64|amd64|aarch64|arm64) ;;
         *) fail "native x86-64 core evidence refuses emulation (host: $host_system/$host_machine)" ;;
     esac
 }
@@ -3269,7 +3279,7 @@ ensure_image() {
     # Launch the declared immutable image even when a development tag has moved.
     # Rebuilding is an explicit operation because it cannot restore a missing ID.
     if [ -z "$IMAGE" ]; then
-        IMAGE="$(python3 -B "$ROOT_DIR/compat/x86_64/core_image.py")"
+        IMAGE="$PINNED_IMAGE"
     fi
     if ! docker image inspect "$IMAGE" >/dev/null 2>&1; then
         if [ -z "${CRABC_X86_64_CORE_IMAGE:-}" ] || [[ "$IMAGE" = sha256:* || "$IMAGE" = *@sha256:* ]]; then
@@ -3280,7 +3290,7 @@ ensure_image() {
 
     local identity
     identity="$(docker image inspect --format '{{.Os}}/{{.Architecture}}' "$IMAGE")"
-    if [ "$identity" != "linux/amd64" ]; then
+    if [ "$identity" != "$PLATFORM" ]; then
         fail "$IMAGE is $identity; rebuild it with ./scripts/dev-x86_64.sh image"
     fi
 }
@@ -3294,13 +3304,13 @@ run_in_container() {
     # their writes too; new runners use the repository-local TMPDIR directly.
     docker run --rm --init \
         --env RUSTC_WRAPPER=/usr/local/bin/kache \
-        --env CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER=/usr/local/bin/crabc-x86_64-mold-gcc \
+        --env "$LINKER_ENV" --env "TARGET_TRIPLE=$TARGET_TRIPLE" --env "ARCH=$ARCH" \
         "${GIT_METADATA_MOUNT[@]}" \
         --platform "$PLATFORM" \
         --workdir /workspace \
-        --env CARGO_HOME=/workspace/.work/x86_64/cargo \
-        --env CRABC_WORK_DIR=/workspace/.work/x86_64 \
-        --env TMPDIR=/workspace/.work/x86_64/tmp \
+        --env CARGO_HOME=/workspace/.work/$ARCH/cargo \
+        --env CRABC_WORK_DIR=/workspace/.work/$ARCH \
+        --env TMPDIR=/workspace/.work/$ARCH/tmp \
         --env PYTHONDONTWRITEBYTECODE=1 \
         --env CRABC_X86_HEADER_DECLARATION_IMAGE_ID="crabc-core-evidence@$image_id" \
         --env GIT_OPTIONAL_LOCKS=0 \
@@ -3308,9 +3318,9 @@ run_in_container() {
         --env GIT_CONFIG_KEY_0=safe.directory \
         --env GIT_CONFIG_VALUE_0=/workspace \
         --volume "$ROOT_DIR:/workspace" \
-        --volume "$TMP_DIR:/tmp" --volume "$WORK_DIR:/workspace/.work/x86_64" \
+        --volume "$TMP_DIR:/tmp" --volume "$WORK_DIR:/workspace/.work/$ARCH" \
         --volume "$TARGET_VOLUME:/workspace/target" \
-        --volume "$CARGO_VOLUME:/workspace/.work/x86_64/cargo" \
+        --volume "$CARGO_VOLUME:/workspace/.work/$ARCH/cargo" \
         "$image_id" "$@"
 }
 
@@ -3320,22 +3330,22 @@ run_in_promotion_reader_container() {
     private_directory="$(mktemp -d "$TMP_DIR/.promotion-reader.XXXXXX")"
     docker run --rm --init --read-only --network none \
         --env RUSTC_WRAPPER=/usr/local/bin/kache \
-        --env CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER=/usr/local/bin/crabc-x86_64-mold-gcc \
+        --env "$LINKER_ENV" --env "TARGET_TRIPLE=$TARGET_TRIPLE" --env "ARCH=$ARCH" \
         --user "$(id -u):$(id -g)" \
         "${GIT_METADATA_MOUNT[@]}" \
         --platform "$PLATFORM" --workdir /workspace \
-        --env CARGO_HOME=/workspace/.work/x86_64/cargo \
-        --env CRABC_WORK_DIR=/workspace/.work/x86_64 \
-        --env TMPDIR=/workspace/.work/x86_64/tmp \
+        --env CARGO_HOME=/workspace/.work/$ARCH/cargo \
+        --env CRABC_WORK_DIR=/workspace/.work/$ARCH \
+        --env TMPDIR=/workspace/.work/$ARCH/tmp \
         --env RUSTUP_HOME=/opt/rustup --env PATH=/opt/cargo/bin:/usr/local/bin:/usr/bin:/bin \
         --env PYTHONDONTWRITEBYTECODE=1 --env GIT_OPTIONAL_LOCKS=0 \
         --env GIT_CONFIG_COUNT=1 --env GIT_CONFIG_KEY_0=safe.directory \
         --env GIT_CONFIG_VALUE_0=/workspace \
         --volume "$ROOT_DIR:/workspace:ro" \
-        --volume "$WORK_DIR:/workspace/.work/x86_64:ro" \
+        --volume "$WORK_DIR:/workspace/.work/$ARCH:ro" \
         --volume "$TARGET_VOLUME:/workspace/target:ro" \
-        --volume "$CARGO_VOLUME:/workspace/.work/x86_64/cargo:ro" \
-        --volume "$private_directory:/workspace/.work/x86_64/tmp:rw" \
+        --volume "$CARGO_VOLUME:/workspace/.work/$ARCH/cargo:ro" \
+        --volume "$private_directory:/workspace/.work/$ARCH/tmp:rw" \
         --volume "$private_directory:/tmp:rw" \
         "$IMAGE" "$@" || status=$?
     rm -rf -- "$private_directory"
@@ -3383,18 +3393,18 @@ run_in_owned_rust_cleanup_container() {
     done
     docker run --rm --init \
         --env RUSTC_WRAPPER=/usr/local/bin/kache \
-        --env CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER=/usr/local/bin/crabc-x86_64-mold-gcc \
+        --env "$LINKER_ENV" --env "TARGET_TRIPLE=$TARGET_TRIPLE" --env "ARCH=$ARCH" \
         --user "$(id -u):$(id -g)" \
         "${GIT_METADATA_MOUNT[@]}" \
         --platform "$PLATFORM" --network none --workdir /workspace \
-        --env CARGO_HOME=/workspace/.work/x86_64/owned-rust-std-cleanup/cargo \
-        --env CRABC_WORK_DIR=/workspace/.work/x86_64/owned-rust-std-cleanup \
-        --env TMPDIR=/workspace/.work/x86_64/owned-rust-std-cleanup/tmp \
+        --env CARGO_HOME=/workspace/.work/$ARCH/owned-rust-std-cleanup/cargo \
+        --env CRABC_WORK_DIR=/workspace/.work/$ARCH/owned-rust-std-cleanup \
+        --env TMPDIR=/workspace/.work/$ARCH/owned-rust-std-cleanup/tmp \
         --env PYTHONDONTWRITEBYTECODE=1 --env GIT_OPTIONAL_LOCKS=0 \
         --env GIT_CONFIG_COUNT=1 --env GIT_CONFIG_KEY_0=safe.directory \
         --env GIT_CONFIG_VALUE_0=/workspace \
         --volume "$ROOT_DIR:/workspace:ro" \
-        --volume "$evidence_root:/workspace/.work/x86_64/owned-rust-std-cleanup" \
+        --volume "$evidence_root:/workspace/.work/$ARCH/owned-rust-std-cleanup" \
         --volume "$evidence_root/tmp:/tmp" \
         --volume "$OWNED_RUST_CLEANUP_PROVIDER_VENDOR_HOST:$OWNED_RUST_CLEANUP_PROVIDER_VENDOR_CONTAINER:ro" \
         --volume "$OWNED_RUST_CLEANUP_STATIC_HOST:$OWNED_RUST_CLEANUP_STATIC_CONTAINER:ro" \
@@ -3415,14 +3425,14 @@ run_in_native_facade_performance_container() {
     [ -n "$image_id" ] || fail "cannot resolve native Rust-facade performance image identity"
     docker run --rm --init \
         --env RUSTC_WRAPPER=/usr/local/bin/kache \
-        --env CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER=/usr/local/bin/crabc-x86_64-mold-gcc \
+        --env "$LINKER_ENV" --env "TARGET_TRIPLE=$TARGET_TRIPLE" --env "ARCH=$ARCH" \
         --user "$(id -u):$(id -g)" \
         "${GIT_METADATA_MOUNT[@]}" \
         --platform "$PLATFORM" \
         "${network_arguments[@]}" \
         --workdir /workspace \
-        --env CRABC_WORK_DIR=/workspace/.work/x86_64 \
-        --env TMPDIR=/workspace/.work/x86_64/tmp \
+        --env CRABC_WORK_DIR=/workspace/.work/$ARCH \
+        --env TMPDIR=/workspace/.work/$ARCH/tmp \
         --env PYTHONDONTWRITEBYTECODE=1 \
         --env GIT_OPTIONAL_LOCKS=0 \
         --env GIT_CONFIG_COUNT=3 \
@@ -3434,7 +3444,7 @@ run_in_native_facade_performance_container() {
         --env GIT_CONFIG_VALUE_2=/inputs/rustix \
         --env CRABC_PERF_X86_IMAGE_ID="crabc-core-evidence@$image_id" \
         --volume "$ROOT_DIR:/workspace" \
-        --volume "$TMP_DIR:/tmp" --volume "$WORK_DIR:/workspace/.work/x86_64" \
+        --volume "$TMP_DIR:/tmp" --volume "$WORK_DIR:/workspace/.work/$ARCH" \
         --volume "$NATIVE_FACADE_RUSTYBENCH_SOURCE:/inputs/rustybench:ro" \
         --volume "$NATIVE_FACADE_RUSTIX_SOURCE:/inputs/rustix:ro" \
         "$IMAGE" "$@"
@@ -3447,16 +3457,16 @@ run_in_native_abi_elf_facts_container() {
     [ -n "$image_id" ] || fail "cannot resolve native ABI ELF fact image identity"
     docker run --rm --init \
         --env RUSTC_WRAPPER=/usr/local/bin/kache \
-        --env CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER=/usr/local/bin/crabc-x86_64-mold-gcc \
+        --env "$LINKER_ENV" --env "TARGET_TRIPLE=$TARGET_TRIPLE" --env "ARCH=$ARCH" \
         --user "$(id -u):$(id -g)" \
         "${GIT_METADATA_MOUNT[@]}" \
         --platform "$PLATFORM" --network none --workdir /workspace \
-        --env CRABC_WORK_DIR=/workspace/.work/x86_64 \
-        --env TMPDIR=/workspace/.work/x86_64/tmp \
+        --env CRABC_WORK_DIR=/workspace/.work/$ARCH \
+        --env TMPDIR=/workspace/.work/$ARCH/tmp \
         --env PYTHONDONTWRITEBYTECODE=1 --env GIT_OPTIONAL_LOCKS=0 \
         --env CRABC_X86_ABI_IMAGE_ID="crabc-core-evidence@$image_id" \
         --volume "$ROOT_DIR:/workspace" \
-        --volume "$TMP_DIR:/tmp" --volume "$WORK_DIR:/workspace/.work/x86_64" \
+        --volume "$TMP_DIR:/tmp" --volume "$WORK_DIR:/workspace/.work/$ARCH" \
         --volume "$NATIVE_ABI_STATIC_PRODUCT:/inputs/static-product:ro" \
         --volume "$NATIVE_ABI_DYNAMIC_PRODUCT:/inputs/dynamic-product:ro" \
         --volume "$NATIVE_ABI_STATIC_PREPARATION:/inputs/static-preparation.json:ro" \
@@ -3473,18 +3483,18 @@ run_in_public_data_ordinary_link_container() {
     # relaxed syscall filter is needed for this finite address-taking probe.
     docker run --rm --init \
         --env RUSTC_WRAPPER=/usr/local/bin/kache \
-        --env CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER=/usr/local/bin/crabc-x86_64-mold-gcc \
+        --env "$LINKER_ENV" --env "TARGET_TRIPLE=$TARGET_TRIPLE" --env "ARCH=$ARCH" \
         "${GIT_METADATA_MOUNT[@]}" \
         --platform "$PLATFORM" --network none --cap-add=SYS_CHROOT --workdir /workspace \
-        --env TMPDIR=/workspace/.work/x86_64/tmp \
-        --env CRABC_WORK_DIR=/workspace/.work/x86_64 \
+        --env TMPDIR=/workspace/.work/$ARCH/tmp \
+        --env CRABC_WORK_DIR=/workspace/.work/$ARCH \
         --env PYTHONDONTWRITEBYTECODE=1 --env GIT_OPTIONAL_LOCKS=0 \
         --env GIT_CONFIG_COUNT=1 --env GIT_CONFIG_KEY_0=safe.directory \
         --env GIT_CONFIG_VALUE_0=/workspace \
         --env CRABC_X86_PUBLIC_DATA_IMAGE_ID="crabc-core-evidence@$image_id" \
         --volume "$ROOT_DIR:/workspace:ro" \
-        --volume "$WORK_DIR:/workspace/.work/x86_64:ro" \
-        --volume "$TMP_DIR:/tmp" --volume "$TMP_DIR:/workspace/.work/x86_64/tmp" \
+        --volume "$WORK_DIR:/workspace/.work/$ARCH:ro" \
+        --volume "$TMP_DIR:/tmp" --volume "$TMP_DIR:/workspace/.work/$ARCH/tmp" \
         --volume "$PUBLIC_DATA_HOST_OUTPUT_PARENT:$PUBLIC_DATA_OUTPUT_PARENT" \
         "${PUBLIC_DATA_INPUT_MOUNTS[@]}" \
         "$image_id" "$@"
@@ -3497,18 +3507,18 @@ run_in_header_declaration_inventory_container() {
     [ -n "$image_id" ] || fail "cannot resolve header declaration image identity"
     docker run --rm --init \
         --env RUSTC_WRAPPER=/usr/local/bin/kache \
-        --env CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER=/usr/local/bin/crabc-x86_64-mold-gcc \
+        --env "$LINKER_ENV" --env "TARGET_TRIPLE=$TARGET_TRIPLE" --env "ARCH=$ARCH" \
         --user "$(id -u):$(id -g)" \
         "${GIT_METADATA_MOUNT[@]}" \
         --platform "$PLATFORM" --network none --workdir /workspace \
-        --env TMPDIR=/workspace/.work/x86_64/tmp \
-        --env CRABC_WORK_DIR=/workspace/.work/x86_64 \
+        --env TMPDIR=/workspace/.work/$ARCH/tmp \
+        --env CRABC_WORK_DIR=/workspace/.work/$ARCH \
         --env PYTHONDONTWRITEBYTECODE=1 --env GIT_OPTIONAL_LOCKS=0 \
         --env GIT_CONFIG_COUNT=1 --env GIT_CONFIG_KEY_0=safe.directory \
         --env GIT_CONFIG_VALUE_0=/workspace \
         --env CRABC_X86_HEADER_DECLARATION_IMAGE_ID="crabc-core-evidence@$image_id" \
         --volume "$ROOT_DIR:/workspace:ro" \
-        --volume "$TMP_DIR:/tmp" --volume "$WORK_DIR:/workspace/.work/x86_64" \
+        --volume "$TMP_DIR:/tmp" --volume "$WORK_DIR:/workspace/.work/$ARCH" \
         "$image_id" "$@"
 }
 
@@ -3519,18 +3529,18 @@ run_in_native_abi_inventory_container() {
     [ -n "$image_id" ] || fail "cannot resolve native ABI inventory image identity"
     docker run --rm --init \
         --env RUSTC_WRAPPER=/usr/local/bin/kache \
-        --env CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER=/usr/local/bin/crabc-x86_64-mold-gcc \
+        --env "$LINKER_ENV" --env "TARGET_TRIPLE=$TARGET_TRIPLE" --env "ARCH=$ARCH" \
         --user "$(id -u):$(id -g)" \
         "${GIT_METADATA_MOUNT[@]}" \
         --platform "$PLATFORM" \
         --network none \
         --workdir /workspace \
-        --env CRABC_WORK_DIR=/workspace/.work/x86_64 \
-        --env TMPDIR=/workspace/.work/x86_64/tmp \
+        --env CRABC_WORK_DIR=/workspace/.work/$ARCH \
+        --env TMPDIR=/workspace/.work/$ARCH/tmp \
         --env PYTHONDONTWRITEBYTECODE=1 \
         --env CRABC_X86_ABI_IMAGE_ID="crabc-core-evidence@$image_id" \
         --volume "$ROOT_DIR:/workspace" \
-        --volume "$TMP_DIR:/tmp" --volume "$WORK_DIR:/workspace/.work/x86_64" \
+        --volume "$TMP_DIR:/tmp" --volume "$WORK_DIR:/workspace/.work/$ARCH" \
         --volume "$NATIVE_ABI_STATIC_PRODUCT:/inputs/static-product:ro" \
         --volume "$NATIVE_ABI_DYNAMIC_PRODUCT:/inputs/dynamic-product:ro" \
         --volume "$NATIVE_ABI_STATIC_PREPARATION:/inputs/static-preparation.json:ro" \
@@ -3544,23 +3554,23 @@ run_in_network_none_container() {
     prepare_work_dir
     docker run --rm --init \
         --env RUSTC_WRAPPER=/usr/local/bin/kache \
-        --env CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER=/usr/local/bin/crabc-x86_64-mold-gcc \
+        --env "$LINKER_ENV" --env "TARGET_TRIPLE=$TARGET_TRIPLE" --env "ARCH=$ARCH" \
         "${GIT_METADATA_MOUNT[@]}" \
         --platform "$PLATFORM" \
         --network none \
         --workdir /workspace \
-        --env CARGO_HOME=/workspace/.work/x86_64/cargo \
-        --env CRABC_WORK_DIR=/workspace/.work/x86_64 \
-        --env TMPDIR=/workspace/.work/x86_64/tmp \
+        --env CARGO_HOME=/workspace/.work/$ARCH/cargo \
+        --env CRABC_WORK_DIR=/workspace/.work/$ARCH \
+        --env TMPDIR=/workspace/.work/$ARCH/tmp \
         --env PYTHONDONTWRITEBYTECODE=1 \
         --env GIT_OPTIONAL_LOCKS=0 \
         --env GIT_CONFIG_COUNT=1 \
         --env GIT_CONFIG_KEY_0=safe.directory \
         --env GIT_CONFIG_VALUE_0=/workspace \
         --volume "$ROOT_DIR:/workspace" \
-        --volume "$TMP_DIR:/tmp" --volume "$WORK_DIR:/workspace/.work/x86_64" \
+        --volume "$TMP_DIR:/tmp" --volume "$WORK_DIR:/workspace/.work/$ARCH" \
         --volume "$TARGET_VOLUME:/workspace/target" \
-        --volume "$CARGO_VOLUME:/workspace/.work/x86_64/cargo" \
+        --volume "$CARGO_VOLUME:/workspace/.work/$ARCH/cargo" \
         "$IMAGE" "$@"
 }
 
@@ -3573,14 +3583,14 @@ run_in_owned_calendar_container() {
     [ -n "$image_id" ] || fail "cannot resolve calendar component image identity"
     docker run --rm --init \
         --env RUSTC_WRAPPER=/usr/local/bin/kache \
-        --env CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER=/usr/local/bin/crabc-x86_64-mold-gcc \
+        --env "$LINKER_ENV" --env "TARGET_TRIPLE=$TARGET_TRIPLE" --env "ARCH=$ARCH" \
         "${GIT_METADATA_MOUNT[@]}" \
         --platform "$PLATFORM" \
         --cap-add=SYS_CHROOT \
         --workdir /workspace \
-        --env CARGO_HOME=/workspace/.work/x86_64/cargo \
-        --env CRABC_WORK_DIR=/workspace/.work/x86_64 \
-        --env TMPDIR=/workspace/.work/x86_64/tmp \
+        --env CARGO_HOME=/workspace/.work/$ARCH/cargo \
+        --env CRABC_WORK_DIR=/workspace/.work/$ARCH \
+        --env TMPDIR=/workspace/.work/$ARCH/tmp \
         --env PYTHONDONTWRITEBYTECODE=1 \
         --env GIT_OPTIONAL_LOCKS=0 \
         --env GIT_CONFIG_COUNT=1 \
@@ -3588,9 +3598,9 @@ run_in_owned_calendar_container() {
         --env GIT_CONFIG_VALUE_0=/workspace \
         --env CRABC_X86_CALENDAR_IMAGE_ID="$image_id" \
         --volume "$ROOT_DIR:/workspace" \
-        --volume "$TMP_DIR:/tmp" --volume "$WORK_DIR:/workspace/.work/x86_64" \
+        --volume "$TMP_DIR:/tmp" --volume "$WORK_DIR:/workspace/.work/$ARCH" \
         --volume "$TARGET_VOLUME:/workspace/target" \
-        --volume "$CARGO_VOLUME:/workspace/.work/x86_64/cargo" \
+        --volume "$CARGO_VOLUME:/workspace/.work/$ARCH/cargo" \
         "$image_id" "$@"
 }
 
@@ -3615,25 +3625,25 @@ run_in_chroot_cap_container() {
     prepare_work_dir
     docker run --rm --init \
         --env RUSTC_WRAPPER=/usr/local/bin/kache \
-        --env CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER=/usr/local/bin/crabc-x86_64-mold-gcc \
+        --env "$LINKER_ENV" --env "TARGET_TRIPLE=$TARGET_TRIPLE" --env "ARCH=$ARCH" \
         "${GIT_METADATA_MOUNT[@]}" \
         --platform "$PLATFORM" \
         --cap-add=SYS_CHROOT \
         "${execution_network[@]}" \
         "${execution_environment[@]}" \
         --workdir /workspace \
-        --env CARGO_HOME=/workspace/.work/x86_64/cargo \
-        --env CRABC_WORK_DIR=/workspace/.work/x86_64 \
-        --env TMPDIR=/workspace/.work/x86_64/tmp \
+        --env CARGO_HOME=/workspace/.work/$ARCH/cargo \
+        --env CRABC_WORK_DIR=/workspace/.work/$ARCH \
+        --env TMPDIR=/workspace/.work/$ARCH/tmp \
         --env PYTHONDONTWRITEBYTECODE=1 \
         --env GIT_OPTIONAL_LOCKS=0 \
         --env GIT_CONFIG_COUNT=1 \
         --env GIT_CONFIG_KEY_0=safe.directory \
         --env GIT_CONFIG_VALUE_0=/workspace \
         --volume "$ROOT_DIR:/workspace" \
-        --volume "$TMP_DIR:/tmp" --volume "$WORK_DIR:/workspace/.work/x86_64" \
+        --volume "$TMP_DIR:/tmp" --volume "$WORK_DIR:/workspace/.work/$ARCH" \
         --volume "$TARGET_VOLUME:/workspace/target" \
-        --volume "$CARGO_VOLUME:/workspace/.work/x86_64/cargo" \
+        --volume "$CARGO_VOLUME:/workspace/.work/$ARCH/cargo" \
         "$IMAGE" "$@"
 }
 
@@ -3643,24 +3653,24 @@ run_in_consumer_rust_std_lto_container() {
     prepare_work_dir
     docker run --rm --init \
         --env RUSTC_WRAPPER=/usr/local/bin/kache \
-        --env CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER=/usr/local/bin/crabc-x86_64-mold-gcc \
+        --env "$LINKER_ENV" --env "TARGET_TRIPLE=$TARGET_TRIPLE" --env "ARCH=$ARCH" \
         "${GIT_METADATA_MOUNT[@]}" \
         --platform "$PLATFORM" \
         --cap-add=SYS_CHROOT \
         --network none \
         --workdir /workspace \
-        --env CARGO_HOME=/workspace/.work/x86_64/cargo \
-        --env CRABC_WORK_DIR=/workspace/.work/x86_64 \
-        --env TMPDIR=/workspace/.work/x86_64/tmp \
+        --env CARGO_HOME=/workspace/.work/$ARCH/cargo \
+        --env CRABC_WORK_DIR=/workspace/.work/$ARCH \
+        --env TMPDIR=/workspace/.work/$ARCH/tmp \
         --env PYTHONDONTWRITEBYTECODE=1 \
         --env GIT_OPTIONAL_LOCKS=0 \
         --env GIT_CONFIG_COUNT=1 \
         --env GIT_CONFIG_KEY_0=safe.directory \
         --env GIT_CONFIG_VALUE_0=/workspace \
         --volume "$ROOT_DIR:/workspace" \
-        --volume "$TMP_DIR:/tmp" --volume "$WORK_DIR:/workspace/.work/x86_64" \
+        --volume "$TMP_DIR:/tmp" --volume "$WORK_DIR:/workspace/.work/$ARCH" \
         --volume "$TARGET_VOLUME:/workspace/target" \
-        --volume "$CARGO_VOLUME:/workspace/.work/x86_64/cargo" \
+        --volume "$CARGO_VOLUME:/workspace/.work/$ARCH/cargo" \
         "$IMAGE" "$@"
 }
 
@@ -3673,24 +3683,24 @@ run_in_user_namespace_chroot_container() {
     prepare_work_dir
     docker run --rm --init \
         --env RUSTC_WRAPPER=/usr/local/bin/kache \
-        --env CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER=/usr/local/bin/crabc-x86_64-mold-gcc \
+        --env "$LINKER_ENV" --env "TARGET_TRIPLE=$TARGET_TRIPLE" --env "ARCH=$ARCH" \
         "${GIT_METADATA_MOUNT[@]}" \
         --platform "$PLATFORM" \
         --cap-add=SYS_CHROOT \
         --security-opt=seccomp=unconfined \
         --workdir /workspace \
-        --env CARGO_HOME=/workspace/.work/x86_64/cargo \
-        --env CRABC_WORK_DIR=/workspace/.work/x86_64 \
-        --env TMPDIR=/workspace/.work/x86_64/tmp \
+        --env CARGO_HOME=/workspace/.work/$ARCH/cargo \
+        --env CRABC_WORK_DIR=/workspace/.work/$ARCH \
+        --env TMPDIR=/workspace/.work/$ARCH/tmp \
         --env PYTHONDONTWRITEBYTECODE=1 \
         --env GIT_OPTIONAL_LOCKS=0 \
         --env GIT_CONFIG_COUNT=1 \
         --env GIT_CONFIG_KEY_0=safe.directory \
         --env GIT_CONFIG_VALUE_0=/workspace \
         --volume "$ROOT_DIR:/workspace" \
-        --volume "$TMP_DIR:/tmp" --volume "$WORK_DIR:/workspace/.work/x86_64" \
+        --volume "$TMP_DIR:/tmp" --volume "$WORK_DIR:/workspace/.work/$ARCH" \
         --volume "$TARGET_VOLUME:/workspace/target" \
-        --volume "$CARGO_VOLUME:/workspace/.work/x86_64/cargo" \
+        --volume "$CARGO_VOLUME:/workspace/.work/$ARCH/cargo" \
         "$IMAGE" "$@"
 }
 
@@ -3703,15 +3713,15 @@ run_in_resolver_network_container() {
     prepare_work_dir
     docker run --rm --init \
         --env RUSTC_WRAPPER=/usr/local/bin/kache \
-        --env CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER=/usr/local/bin/crabc-x86_64-mold-gcc \
+        --env "$LINKER_ENV" --env "TARGET_TRIPLE=$TARGET_TRIPLE" --env "ARCH=$ARCH" \
         "${GIT_METADATA_MOUNT[@]}" \
         --platform "$PLATFORM" \
         --cap-add=SYS_CHROOT \
         --network none \
         --workdir /workspace \
-        --env CARGO_HOME=/workspace/.work/x86_64/cargo \
-        --env CRABC_WORK_DIR=/workspace/.work/x86_64 \
-        --env TMPDIR=/workspace/.work/x86_64/tmp \
+        --env CARGO_HOME=/workspace/.work/$ARCH/cargo \
+        --env CRABC_WORK_DIR=/workspace/.work/$ARCH \
+        --env TMPDIR=/workspace/.work/$ARCH/tmp \
         --env PYTHONDONTWRITEBYTECODE=1 \
         --env "CRABC_CLASSIC_NETDB_IMAGE_ID=crabc-core-evidence@$image_id" \
         --env GIT_OPTIONAL_LOCKS=0 \
@@ -3719,9 +3729,9 @@ run_in_resolver_network_container() {
         --env GIT_CONFIG_KEY_0=safe.directory \
         --env GIT_CONFIG_VALUE_0=/workspace \
         --volume "$ROOT_DIR:/workspace" \
-        --volume "$TMP_DIR:/tmp" --volume "$WORK_DIR:/workspace/.work/x86_64" \
+        --volume "$TMP_DIR:/tmp" --volume "$WORK_DIR:/workspace/.work/$ARCH" \
         --volume "$TARGET_VOLUME:/workspace/target" \
-        --volume "$CARGO_VOLUME:/workspace/.work/x86_64/cargo" \
+        --volume "$CARGO_VOLUME:/workspace/.work/$ARCH/cargo" \
         "$image_id" "$@"
 }
 
@@ -3749,7 +3759,7 @@ run_in_dynamic_loader_mount_container() {
     prepare_work_dir
     docker run --rm --init \
         --env RUSTC_WRAPPER=/usr/local/bin/kache \
-        --env CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER=/usr/local/bin/crabc-x86_64-mold-gcc \
+        --env "$LINKER_ENV" --env "TARGET_TRIPLE=$TARGET_TRIPLE" --env "ARCH=$ARCH" \
         "${GIT_METADATA_MOUNT[@]}" \
         --platform "$PLATFORM" \
         --cap-add=SYS_CHROOT \
@@ -3757,9 +3767,9 @@ run_in_dynamic_loader_mount_container() {
         --security-opt=apparmor=unconfined \
         "${family_namespace_authority[@]}" \
         --workdir /workspace \
-        --env CARGO_HOME=/workspace/.work/x86_64/cargo \
-        --env CRABC_WORK_DIR=/workspace/.work/x86_64 \
-        --env TMPDIR=/workspace/.work/x86_64/tmp \
+        --env CARGO_HOME=/workspace/.work/$ARCH/cargo \
+        --env CRABC_WORK_DIR=/workspace/.work/$ARCH \
+        --env TMPDIR=/workspace/.work/$ARCH/tmp \
         --env PYTHONDONTWRITEBYTECODE=1 \
         --env "CRABC_CLASSIC_NETDB_IMAGE_ID=crabc-core-evidence@$image_id" \
         --env GIT_OPTIONAL_LOCKS=0 \
@@ -3767,9 +3777,9 @@ run_in_dynamic_loader_mount_container() {
         --env GIT_CONFIG_KEY_0=safe.directory \
         --env GIT_CONFIG_VALUE_0=/workspace \
         --volume "$ROOT_DIR:/workspace" \
-        --volume "$TMP_DIR:/tmp" --volume "$WORK_DIR:/workspace/.work/x86_64" \
+        --volume "$TMP_DIR:/tmp" --volume "$WORK_DIR:/workspace/.work/$ARCH" \
         --volume "$TARGET_VOLUME:/workspace/target" \
-        --volume "$CARGO_VOLUME:/workspace/.work/x86_64/cargo" \
+        --volume "$CARGO_VOLUME:/workspace/.work/$ARCH/cargo" \
         "$image_id" "$@"
 }
 
@@ -3778,7 +3788,7 @@ run_in_dynamic_loader_mount_container() {
 # resolving it before execution keeps a mutable alias from changing the inputs.
 require_native_c_performance_image() {
     local pinned_image selected_image image_id
-    pinned_image="$(python3 -B "$ROOT_DIR/compat/x86_64/core_image.py")"
+    pinned_image="$PINNED_IMAGE"
     selected_image="${IMAGE:-$pinned_image}"
     image_id="$(docker image inspect --format '{{.Id}}' "$selected_image")" || \
         fail "native C performance image $selected_image is unavailable"
@@ -3801,7 +3811,7 @@ run_in_native_c_performance_container() {
     fi
     docker run --rm --init \
         --env RUSTC_WRAPPER=/usr/local/bin/kache \
-        --env CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER=/usr/local/bin/crabc-x86_64-mold-gcc \
+        --env "$LINKER_ENV" --env "TARGET_TRIPLE=$TARGET_TRIPLE" --env "ARCH=$ARCH" \
         "${GIT_METADATA_MOUNT[@]}" \
         --platform "$PLATFORM" \
         --cgroupns=private \
@@ -3812,9 +3822,9 @@ run_in_native_c_performance_container() {
         "${perfmon_cap[@]}" \
         --security-opt=seccomp=unconfined \
         --workdir /workspace \
-        --env CARGO_HOME=/workspace/.work/x86_64/cargo \
-        --env CRABC_WORK_DIR=/workspace/.work/x86_64 \
-        --env TMPDIR=/workspace/.work/x86_64/tmp \
+        --env CARGO_HOME=/workspace/.work/$ARCH/cargo \
+        --env CRABC_WORK_DIR=/workspace/.work/$ARCH \
+        --env TMPDIR=/workspace/.work/$ARCH/tmp \
         --env PYTHONDONTWRITEBYTECODE=1 \
         --env GIT_OPTIONAL_LOCKS=0 \
         --env GIT_CONFIG_COUNT=1 \
@@ -3823,9 +3833,9 @@ run_in_native_c_performance_container() {
         --env CRABC_PERF_DOCKER_IMAGE_ID="$image_id" \
         --env CRABC_PERF_CONTAINER_POLICY=cgroupns=private,network=none,SYS_CHROOT,SYS_ADMIN,SYS_PTRACE,seccomp=unconfined \
         --volume "$ROOT_DIR:/workspace" \
-        --volume "$TMP_DIR:/tmp" --volume "$WORK_DIR:/workspace/.work/x86_64" \
+        --volume "$TMP_DIR:/tmp" --volume "$WORK_DIR:/workspace/.work/$ARCH" \
         --volume "$TARGET_VOLUME:/workspace/target" \
-        --volume "$CARGO_VOLUME:/workspace/.work/x86_64/cargo" \
+        --volume "$CARGO_VOLUME:/workspace/.work/$ARCH/cargo" \
         "$image_id" "$@"
 }
 
@@ -3837,34 +3847,34 @@ run_in_uts_cap_container() {
     prepare_work_dir
     docker run --rm --init \
         --env RUSTC_WRAPPER=/usr/local/bin/kache \
-        --env CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER=/usr/local/bin/crabc-x86_64-mold-gcc \
+        --env "$LINKER_ENV" --env "TARGET_TRIPLE=$TARGET_TRIPLE" --env "ARCH=$ARCH" \
         "${GIT_METADATA_MOUNT[@]}" \
         --platform "$PLATFORM" \
         --cap-add=SYS_ADMIN \
         --workdir /workspace \
-        --env CARGO_HOME=/workspace/.work/x86_64/cargo \
-        --env CRABC_WORK_DIR=/workspace/.work/x86_64 \
-        --env TMPDIR=/workspace/.work/x86_64/tmp \
+        --env CARGO_HOME=/workspace/.work/$ARCH/cargo \
+        --env CRABC_WORK_DIR=/workspace/.work/$ARCH \
+        --env TMPDIR=/workspace/.work/$ARCH/tmp \
         --env PYTHONDONTWRITEBYTECODE=1 \
         --env GIT_OPTIONAL_LOCKS=0 \
         --env GIT_CONFIG_COUNT=1 \
         --env GIT_CONFIG_KEY_0=safe.directory \
         --env GIT_CONFIG_VALUE_0=/workspace \
         --volume "$ROOT_DIR:/workspace" \
-        --volume "$TMP_DIR:/tmp" --volume "$WORK_DIR:/workspace/.work/x86_64" \
+        --volume "$TMP_DIR:/tmp" --volume "$WORK_DIR:/workspace/.work/$ARCH" \
         --volume "$TARGET_VOLUME:/workspace/target" \
-        --volume "$CARGO_VOLUME:/workspace/.work/x86_64/cargo" \
+        --volume "$CARGO_VOLUME:/workspace/.work/$ARCH/cargo" \
         "$IMAGE" "$@"
 }
 
 run_core_tests() {
     run_in_container bash -ceu '
         target_dir="$(mktemp -d "$TMPDIR/crabc-x86-64-core.XXXXXX")"
-        CARGO_TARGET_DIR="$target_dir" cargo test --locked --target x86_64-unknown-linux-musl \
+        CARGO_TARGET_DIR="$target_dir" cargo test --locked --target $TARGET_TRIPLE \
             -p crabc-core --lib --no-default-features -- --test-threads=1
 
         mapfile -d "" -t test_binaries < <(
-            find "$target_dir/x86_64-unknown-linux-musl/debug/deps" -maxdepth 1 \
+            find "$target_dir/$TARGET_TRIPLE/debug/deps" -maxdepth 1 \
                 -type f -name "crabc_core-*" -perm -111 -print0
         )
         if [ "${#test_binaries[@]}" -ne 1 ]; then
@@ -4456,10 +4466,10 @@ run_mapping_reference() {
     # mappings, protection transitions, and exact unmapping. It does not
     # reclassify the separately admitted remap, locking, synchronization,
     # advice, residency, or broader VM-policy boundaries.
-    run_in_container cargo test --locked --target x86_64-unknown-linux-musl \
+    run_in_container cargo test --locked --target $TARGET_TRIPLE \
         -p crabc-rs --no-default-features --test x86_64_memory_mapping \
         -- --test-threads=1
-    run_in_container cargo build --locked --target x86_64-unknown-linux-musl \
+    run_in_container cargo build --locked --target $TARGET_TRIPLE \
         -p crabc-rs --no-default-features --example mapping_direct_probe
     run_in_container bash /workspace/compat/x86_64/run_x86_mapping_reference.sh
 }
@@ -4469,10 +4479,10 @@ run_memory_vm_reference() {
     # process-wide locking transitions in disposable test children. It does
     # not claim allocator ownership, successful legacy file remapping, or a
     # wider VM-policy surface.
-    run_in_container cargo test --locked --target x86_64-unknown-linux-musl \
+    run_in_container cargo test --locked --target $TARGET_TRIPLE \
         -p crabc-rs --no-default-features --test x86_64_memory_vm \
         -- --test-threads=1
-    run_in_container cargo build --locked --target x86_64-unknown-linux-musl \
+    run_in_container cargo build --locked --target $TARGET_TRIPLE \
         -p crabc-rs --no-default-features --example memory_vm_direct_probe
     run_in_container bash /workspace/compat/x86_64/run_x86_memory_vm_reference.sh
 }
@@ -4481,13 +4491,13 @@ run_pty_basic_reference() {
     # This private PTY slice owns only a non-session-changing master/slave
     # pair and its `/dev/pts/N` name. It deliberately leaves controlling
     # terminals, sessions, termios, and generic ioctl outside x86 scope.
-    run_in_container cargo test --locked --target x86_64-unknown-linux-musl \
+    run_in_container cargo test --locked --target $TARGET_TRIPLE \
         -p crabc-rs --no-default-features --test x86_64_pty_basic \
         -- --test-threads=1
-    run_in_container cargo test --locked --target x86_64-unknown-linux-musl \
+    run_in_container cargo test --locked --target $TARGET_TRIPLE \
         -p crabc-rs --no-default-features --features alloc --test x86_64_pty_basic \
         -- --test-threads=1
-    run_in_container cargo build --locked --target x86_64-unknown-linux-musl \
+    run_in_container cargo build --locked --target $TARGET_TRIPLE \
         -p crabc-rs --no-default-features --example pty_basic_direct_probe
     run_in_container bash /workspace/compat/x86_64/run_x86_pty_basic_reference.sh
 }
@@ -4497,13 +4507,13 @@ run_terminal_reference() {
     # selects only its explicit unsafe session handoff plus typed terminal
     # operations. This Rust vertical does not expose C termios records or a
     # generic ioctl API; the separate static C termios artifact does not alter it.
-    run_in_container cargo test --locked --target x86_64-unknown-linux-musl \
+    run_in_container cargo test --locked --target $TARGET_TRIPLE \
         -p crabc-rs --no-default-features --test x86_64_terminal \
         -- --test-threads=1
-    run_in_container cargo test --locked --target x86_64-unknown-linux-musl \
+    run_in_container cargo test --locked --target $TARGET_TRIPLE \
         -p crabc-rs --no-default-features --features alloc --test x86_64_terminal \
         -- --test-threads=1
-    run_in_container cargo build --locked --target x86_64-unknown-linux-musl \
+    run_in_container cargo build --locked --target $TARGET_TRIPLE \
         -p crabc-rs --no-default-features --example x86_64_terminal_direct_probe
     run_in_container bash /workspace/compat/x86_64/run_x86_terminal_reference.sh
 }
@@ -4538,26 +4548,26 @@ run_ftruncate_reference() {
 
 run_statfs_reference() {
     run_in_container bash /workspace/compat/x86_64/run_x86_statfs_reference.sh
-    run_in_container cargo test --locked --target x86_64-unknown-linux-musl \
+    run_in_container cargo test --locked --target $TARGET_TRIPLE \
         -p crabc-rs --no-default-features --test x86_64_fs_capacity -- --test-threads=1
 }
 
 run_timestamp_reference() {
     run_in_container bash /workspace/compat/x86_64/run_x86_timestamp_reference.sh
-    run_in_container cargo test --locked --target x86_64-unknown-linux-musl \
+    run_in_container cargo test --locked --target $TARGET_TRIPLE \
         -p crabc-rs --no-default-features --test x86_64_futimens \
         --test x86_64_timestamp_paths -- --test-threads=1
 }
 
 run_path_lifecycle_reference() {
     run_in_container bash /workspace/compat/x86_64/run_x86_path_lifecycle_reference.sh
-    run_in_container cargo test --locked --target x86_64-unknown-linux-musl \
+    run_in_container cargo test --locked --target $TARGET_TRIPLE \
         -p crabc-rs --no-default-features --test x86_64_path_lifecycle -- --test-threads=1
 }
 
 run_namespace_reference() {
     run_in_container bash /workspace/compat/x86_64/run_x86_namespace_reference.sh
-    run_in_container cargo test --locked --target x86_64-unknown-linux-musl \
+    run_in_container cargo test --locked --target $TARGET_TRIPLE \
         -p crabc-rs --no-default-features --test x86_64_namespace -- --test-threads=1
 }
 
@@ -4573,11 +4583,11 @@ run_path_core_reference() {
     run_namespace_reference
     run_timestamp_reference
     run_readlinkat_reference
-    run_in_container cargo test --locked --target x86_64-unknown-linux-musl \
+    run_in_container cargo test --locked --target $TARGET_TRIPLE \
         -p crabc-rs --no-default-features --features std \
         --test x86_64_fs --test x86_64_statat --test x86_64_readlink \
         -- --test-threads=1
-    run_in_container cargo build --locked --target x86_64-unknown-linux-musl \
+    run_in_container cargo build --locked --target $TARGET_TRIPLE \
         -p crabc-rs --no-default-features --features alloc \
         --example path_core_owned_direct_probe
 }
@@ -4586,9 +4596,9 @@ run_xattr_reference() {
     # This is the complete direct xattr family: path, no-follow-path, and
     # descriptor forms. It intentionally excludes statx, newer *xattrat forms,
     # directory/temporary abstractions, the C ABI, and public x86 support.
-    run_in_container cargo test --locked --target x86_64-unknown-linux-musl \
+    run_in_container cargo test --locked --target $TARGET_TRIPLE \
         -p crabc-rs --no-default-features --test x86_64_xattr -- --test-threads=1
-    run_in_container cargo build --locked --target x86_64-unknown-linux-musl \
+    run_in_container cargo build --locked --target $TARGET_TRIPLE \
         -p crabc-rs --no-default-features --example xattr_direct_probe
     run_in_container bash /workspace/compat/x86_64/run_x86_xattr_reference.sh
 }
@@ -4598,11 +4608,11 @@ run_directory_reference() {
     # getdents64, owned streams, and opaque seek/rewind cookies. It does not
     # select C DIR APIs, C headers/ABI, temporary objects, CWD mutation, or
     # public x86 support.
-    run_in_container cargo test --locked --target x86_64-unknown-linux-musl \
+    run_in_container cargo test --locked --target $TARGET_TRIPLE \
         -p crabc-rs --no-default-features \
         --test x86_64_raw_directory --test x86_64_directory \
         --test x86_64_directory_position -- --test-threads=1
-    run_in_container cargo build --locked --target x86_64-unknown-linux-musl \
+    run_in_container cargo build --locked --target $TARGET_TRIPLE \
         -p crabc-rs --no-default-features \
         --example directory_direct_probe --example directory_position_direct_probe
     run_in_container bash /workspace/compat/x86_64/run_x86_directory_reference.sh
@@ -4614,13 +4624,13 @@ run_temporary_object_reference() {
     # fallback, and caller-buffered/owned temporary-directory names. It does
     # not select C mk* APIs, CWD mutation, file handles, C ABI, or public x86
     # support.
-    run_in_container cargo test --locked --target x86_64-unknown-linux-musl \
+    run_in_container cargo test --locked --target $TARGET_TRIPLE \
         -p crabc-rs --no-default-features --test x86_64_temporary_objects \
         -- --test-threads=1
-    run_in_container cargo test --locked --target x86_64-unknown-linux-musl \
+    run_in_container cargo test --locked --target $TARGET_TRIPLE \
         -p crabc-rs --no-default-features --features alloc --test x86_64_temporary_objects \
         -- --test-threads=1
-    run_in_container cargo build --locked --target x86_64-unknown-linux-musl \
+    run_in_container cargo build --locked --target $TARGET_TRIPLE \
         -p crabc-rs --no-default-features \
         --example fs_named_tempfile_direct_probe --example fs_tempfile_direct_probe \
         --example fs_tempdir_direct_probe
@@ -4632,9 +4642,9 @@ run_statx_reference() {
     # statx record, a statx-specific lookup-flag vocabulary, and no fallback
     # or availability cache. It does not widen general x86 AT_EMPTY_PATH,
     # select C statx APIs, or provide public x86 support.
-    run_in_container cargo test --locked --target x86_64-unknown-linux-musl \
+    run_in_container cargo test --locked --target $TARGET_TRIPLE \
         -p crabc-rs --no-default-features --test x86_64_statx -- --test-threads=1
-    run_in_container cargo build --locked --target x86_64-unknown-linux-musl \
+    run_in_container cargo build --locked --target $TARGET_TRIPLE \
         -p crabc-rs --no-default-features --example statx_direct_probe
     run_in_container bash /workspace/compat/x86_64/run_x86_statx_reference.sh
 }
@@ -4643,15 +4653,15 @@ run_cwd_canonicalize_reference() {
     # This private filesystem-context slice resolves physical byte paths and
     # changes/restores process-global CWD through direct Linux seams. It does
     # not select chroot, openat2, C APIs, errno TLS, or public x86 support.
-    run_in_container cargo test --locked --target x86_64-unknown-linux-musl \
+    run_in_container cargo test --locked --target $TARGET_TRIPLE \
         -p crabc-rs --no-default-features \
         --test x86_64_canonicalize --test x86_64_cwd_mutation \
         -- --test-threads=1
-    run_in_container cargo test --locked --target x86_64-unknown-linux-musl \
+    run_in_container cargo test --locked --target $TARGET_TRIPLE \
         -p crabc-rs --no-default-features --features alloc \
         --test x86_64_canonicalize --test x86_64_cwd_mutation \
         -- --test-threads=1
-    run_in_container cargo build --locked --target x86_64-unknown-linux-musl \
+    run_in_container cargo build --locked --target $TARGET_TRIPLE \
         -p crabc-rs --no-default-features \
         --example fs_canonicalize_direct_probe --example process_cwd_direct_probe
     run_in_container bash /workspace/compat/x86_64/run_x86_cwd_canonicalize_reference.sh
@@ -4661,9 +4671,9 @@ run_root_change_reference() {
     # This separate privileged transition changes root only in disposable test
     # children. It is not a sandbox, containment framework, C ABI, or public
     # x86 support claim.
-    run_in_chroot_cap_container cargo test --locked --target x86_64-unknown-linux-musl \
+    run_in_chroot_cap_container cargo test --locked --target $TARGET_TRIPLE \
         -p crabc-rs --no-default-features --test x86_64_chroot -- --test-threads=1
-    run_in_container cargo build --locked --target x86_64-unknown-linux-musl \
+    run_in_container cargo build --locked --target $TARGET_TRIPLE \
         -p crabc-rs --no-default-features --example process_chroot_direct_probe
     run_in_chroot_cap_container bash /workspace/compat/x86_64/run_x86_root_change_reference.sh
 }
@@ -4673,10 +4683,10 @@ run_mount_reference() {
     # It deliberately receives no CAP_SYS_ADMIN and makes no successful
     # namespace, bind, remount, propagation, or filesystem-descriptor mount
     # API claim.
-    run_in_container cargo test --locked --target x86_64-unknown-linux-musl \
+    run_in_container cargo test --locked --target $TARGET_TRIPLE \
         -p crabc-rs --no-default-features --test x86_64_mount \
         -- --test-threads=1
-    run_in_container cargo build --locked --target x86_64-unknown-linux-musl \
+    run_in_container cargo build --locked --target $TARGET_TRIPLE \
         -p crabc-rs --no-default-features --example mount_direct_probe
     run_in_container bash /workspace/compat/x86_64/run_x86_mount_reference.sh
 }
@@ -4686,10 +4696,10 @@ run_thread_kill_reference() {
     # calling process and targets one named thread. It does not select generic
     # process/group signaling, signal-mask management, C APIs, or public x86
     # support.
-    run_in_container cargo test --locked --target x86_64-unknown-linux-musl \
+    run_in_container cargo test --locked --target $TARGET_TRIPLE \
         -p crabc-rs --no-default-features --test x86_64_thread_kill \
         -- --test-threads=1
-    run_in_container cargo build --locked --target x86_64-unknown-linux-musl \
+    run_in_container cargo build --locked --target $TARGET_TRIPLE \
         -p crabc-rs --no-default-features --example thread_kill_direct_probe
     run_in_container bash /workspace/compat/x86_64/run_x86_thread_kill_reference.sh
 }
@@ -4699,9 +4709,9 @@ run_ipc_reference() {
     # priorities, absolute deadlines, and unlink-after-open lifetime. It does
     # not select mq_notify, POSIX shared memory, SysV IPC, semaphores, C APIs,
     # errno TLS, or public x86 support.
-    run_in_container cargo test --locked --target x86_64-unknown-linux-musl \
+    run_in_container cargo test --locked --target $TARGET_TRIPLE \
         -p crabc-rs --no-default-features --test x86_64_ipc -- --test-threads=1
-    run_in_container cargo build --locked --target x86_64-unknown-linux-musl \
+    run_in_container cargo build --locked --target $TARGET_TRIPLE \
         -p crabc-rs --no-default-features --example ipc_direct_probe
     run_in_container bash /workspace/compat/x86_64/run_x86_mqueue_reference.sh
 }
@@ -4711,9 +4721,9 @@ run_shm_reference() {
     # close-on-exec descriptors only. It preserves the existing AArch64/Rustix
     # direct flag policy rather than selecting musl's C wrapper, SysV IPC,
     # mapping policy, C APIs/errno TLS, or public x86 support.
-    run_in_container cargo test --locked --target x86_64-unknown-linux-musl \
+    run_in_container cargo test --locked --target $TARGET_TRIPLE \
         -p crabc-rs --no-default-features --test x86_64_shm -- --test-threads=1
-    run_in_container cargo build --locked --target x86_64-unknown-linux-musl \
+    run_in_container cargo build --locked --target $TARGET_TRIPLE \
         -p crabc-rs --no-default-features --example shm_direct_probe
     run_in_container bash /workspace/compat/x86_64/run_x86_shm_reference.sh
 }
@@ -4723,61 +4733,61 @@ run_inotify_reference() {
     # watches, and caller-buffered byte records. It does not select C inotify,
     # legacy init, fanotify, recursive/background policy, global registries,
     # namespaces/capability mutation, errno TLS, or public x86 support.
-    run_in_container cargo test --locked --target x86_64-unknown-linux-musl \
+    run_in_container cargo test --locked --target $TARGET_TRIPLE \
         -p crabc-rs --lib --no-default-features system::inotify:: \
         -- --test-threads=1
-    run_in_container cargo test --locked --target x86_64-unknown-linux-musl \
+    run_in_container cargo test --locked --target $TARGET_TRIPLE \
         -p crabc-rs --no-default-features --test x86_64_inotify -- --test-threads=1
-    run_in_container cargo build --locked --target x86_64-unknown-linux-musl \
+    run_in_container cargo build --locked --target $TARGET_TRIPLE \
         -p crabc-rs --no-default-features --example inotify_direct_probe
     run_in_container bash /workspace/compat/x86_64/run_x86_inotify_reference.sh
 }
 
 run_socket_transport_reference() {
     run_in_container bash /workspace/compat/x86_64/run_x86_socket_transport_reference.sh
-    run_in_container cargo test --locked --target x86_64-unknown-linux-musl \
+    run_in_container cargo test --locked --target $TARGET_TRIPLE \
         -p crabc-rs --no-default-features --test x86_64_socket_transport -- --test-threads=1
 }
 
 run_interface_device_reference() {
     run_in_container bash /workspace/compat/x86_64/run_x86_interface_device_reference.sh
-    run_in_container cargo test --locked --target x86_64-unknown-linux-musl \
+    run_in_container cargo test --locked --target $TARGET_TRIPLE \
         -p crabc-rs --no-default-features --features alloc \
         --test x86_64_interface_device -- --test-threads=1
-    run_in_container cargo test --locked --target x86_64-unknown-linux-musl \
+    run_in_container cargo test --locked --target $TARGET_TRIPLE \
         -p crabc-rs --lib --no-default-features --features alloc net::netdevice:: \
         -- --test-threads=1
-    run_in_container cargo build --locked --target x86_64-unknown-linux-musl \
+    run_in_container cargo build --locked --target $TARGET_TRIPLE \
         -p crabc-rs --no-default-features \
         --example network_interface_index_direct_probe \
         --example network_interface_index_name_direct_probe \
         --example interface_names_direct_probe
-    run_in_container cargo build --locked --target x86_64-unknown-linux-musl \
+    run_in_container cargo build --locked --target $TARGET_TRIPLE \
         -p crabc-rs --no-default-features --features alloc \
         --example interface_names_alloc_direct_probe \
         --example interface_addresses_direct_probe
 }
 
 run_resolver_transport_reference() {
-    run_in_container cargo test --locked --target x86_64-unknown-linux-musl \
+    run_in_container cargo test --locked --target $TARGET_TRIPLE \
         -p crabc-core --no-default-features --test x86_64_resolver_transport \
         -- --test-threads=1
 }
 
 run_resolver_facade_reference() {
-    run_in_container cargo test --locked --target x86_64-unknown-linux-musl \
+    run_in_container cargo test --locked --target $TARGET_TRIPLE \
         -p crabc-rs --no-default-features --features alloc --test x86_64_resolver \
         -- --test-threads=1
-    run_in_container cargo build --locked --target x86_64-unknown-linux-musl \
+    run_in_container cargo build --locked --target $TARGET_TRIPLE \
         -p crabc-rs --no-default-features --features alloc \
         --example resolver_hosts_direct_probe
 }
 
 run_netdb_reference() {
-    run_in_container cargo test --locked --target x86_64-unknown-linux-musl \
+    run_in_container cargo test --locked --target $TARGET_TRIPLE \
         -p crabc-rs --no-default-features --features alloc --test x86_64_netdb \
         -- --test-threads=1
-    run_in_container cargo build --locked --target x86_64-unknown-linux-musl \
+    run_in_container cargo build --locked --target $TARGET_TRIPLE \
         -p crabc-rs --no-default-features --features alloc \
         --example resolver_direct_probe
 }
@@ -4786,10 +4796,10 @@ run_users_databases_reference() {
     # This private alloc-backed slice owns strict conventional passwd/group
     # snapshots only. It does not select C/NSS/provider state, shadow, utmp,
     # mntent, account mutation, or public x86 support.
-    run_in_container cargo test --locked --target x86_64-unknown-linux-musl \
+    run_in_container cargo test --locked --target $TARGET_TRIPLE \
         -p crabc-rs --no-default-features --features alloc \
         --test x86_64_users_databases -- --test-threads=1
-    run_in_container cargo build --locked --target x86_64-unknown-linux-musl \
+    run_in_container cargo build --locked --target $TARGET_TRIPLE \
         -p crabc-rs --no-default-features --features alloc \
         --example users_databases_direct_probe
     run_in_container bash /workspace/compat/x86_64/run_x86_users_databases_reference.sh
@@ -4797,13 +4807,13 @@ run_users_databases_reference() {
 
 run_posix_fallocate_reference() {
     run_in_container bash /workspace/compat/x86_64/run_x86_posix_fallocate_reference.sh
-    run_in_container cargo test --locked --target x86_64-unknown-linux-musl \
+    run_in_container cargo test --locked --target $TARGET_TRIPLE \
         -p crabc-rs --no-default-features --test x86_64_posix_fallocate -- --test-threads=1
 }
 
 run_fallocate_reference() {
     run_in_container bash /workspace/compat/x86_64/run_x86_fallocate_reference.sh
-    run_in_container cargo test --locked --target x86_64-unknown-linux-musl \
+    run_in_container cargo test --locked --target $TARGET_TRIPLE \
         -p crabc-rs --no-default-features --test x86_64_fallocate -- --test-threads=1
 }
 
@@ -4813,19 +4823,19 @@ run_file_position_reference() {
 
 run_sync_reference() {
     run_in_container bash /workspace/compat/x86_64/run_x86_sync_reference.sh
-    run_in_container cargo test --locked --target x86_64-unknown-linux-musl \
+    run_in_container cargo test --locked --target $TARGET_TRIPLE \
         -p crabc-rs --no-default-features --test x86_64_sync -- --test-threads=1
 }
 
 run_syncfs_reference() {
     run_in_container bash /workspace/compat/x86_64/run_x86_syncfs_reference.sh
-    run_in_container cargo test --locked --target x86_64-unknown-linux-musl \
+    run_in_container cargo test --locked --target $TARGET_TRIPLE \
         -p crabc-rs --no-default-features --test x86_64_syncfs -- --test-threads=1
 }
 
 run_sync_file_range_reference() {
     run_in_container bash /workspace/compat/x86_64/run_x86_sync_file_range_reference.sh
-    run_in_container cargo test --locked --target x86_64-unknown-linux-musl \
+    run_in_container cargo test --locked --target $TARGET_TRIPLE \
         -p crabc-rs --no-default-features --test x86_64_sync_file_range -- --test-threads=1
 }
 
@@ -4847,22 +4857,22 @@ run_calendar_time_reference() {
     # through caller-supplied immutable POSIX-TZ/TZif rules. It does not
     # select a C time/tm ABI, process-global TZ state, zoneinfo I/O, inverse
     # ambiguous-local conversion, clock mutation, or public x86 support.
-    run_in_container cargo test --locked --target x86_64-unknown-linux-musl \
+    run_in_container cargo test --locked --target $TARGET_TRIPLE \
         -p crabc-core --lib --no-default-features \
         x86_64_gettimeofday_writes_one_normalized_private_record \
         -- --test-threads=1
-    run_in_container cargo test --locked --target x86_64-unknown-linux-musl \
+    run_in_container cargo test --locked --target $TARGET_TRIPLE \
         -p crabc-rs --no-default-features \
         --test time --test calendar_utc --test x86_64_calendar_time \
         -- --test-threads=1
-    run_in_container cargo test --locked --target x86_64-unknown-linux-musl \
+    run_in_container cargo test --locked --target $TARGET_TRIPLE \
         -p crabc-rs --no-default-features --features alloc \
         --test timezone_rules --test calendar_local \
         -- --test-threads=1
-    run_in_container cargo build --locked --target x86_64-unknown-linux-musl \
+    run_in_container cargo build --locked --target $TARGET_TRIPLE \
         -p crabc-rs --no-default-features \
         --example time_direct_probe --example calendar_utc_direct_probe
-    run_in_container cargo build --locked --target x86_64-unknown-linux-musl \
+    run_in_container cargo build --locked --target $TARGET_TRIPLE \
         -p crabc-rs --no-default-features --features alloc \
         --example calendar_local_direct_probe
     run_in_container bash /workspace/compat/x86_64/run_x86_calendar_time_reference.sh
@@ -4873,14 +4883,14 @@ run_advanced_time_reference() {
     # clock mutation, and owned POSIX timers. It retains direct kernel errors,
     # excludes C timer/sigevent ABI and SIGEV_THREAD callbacks, and does not
     # promote x86-64 platform support.
-    run_in_container cargo test --locked --target x86_64-unknown-linux-musl \
+    run_in_container cargo test --locked --target $TARGET_TRIPLE \
         -p crabc-core --lib --no-default-features \
         x86_64_posix_timer_writes_exact_id_and_old_setting_records \
         -- --test-threads=1
-    run_in_container cargo test --locked --target x86_64-unknown-linux-musl \
+    run_in_container cargo test --locked --target $TARGET_TRIPLE \
         -p crabc-rs --no-default-features --test x86_64_advanced_time \
         -- --test-threads=1
-    run_in_container cargo build --locked --target x86_64-unknown-linux-musl \
+    run_in_container cargo build --locked --target $TARGET_TRIPLE \
         -p crabc-rs --no-default-features \
         --example time_dynamic_direct_probe \
         --example process_clock_id_direct_probe \
@@ -4895,9 +4905,9 @@ run_facade_record_owning() {
     # complete Rust facade remains usable both without allocation and with its
     # explicitly alloc-gated records; the component runners retain their
     # individual behavioral, ABI, and musl-oracle evidence.
-    run_in_container cargo check --locked --target x86_64-unknown-linux-musl \
+    run_in_container cargo check --locked --target $TARGET_TRIPLE \
         -p crabc-rs --no-default-features
-    run_in_container cargo check --locked --target x86_64-unknown-linux-musl \
+    run_in_container cargo check --locked --target $TARGET_TRIPLE \
         -p crabc-rs --no-default-features --features alloc
 
     run_root_change_reference
@@ -4940,7 +4950,7 @@ run_getitimer_reference() {
 
 run_setitimer_reference() {
     run_in_container bash /workspace/compat/x86_64/run_x86_setitimer_reference.sh
-    run_in_container cargo test --locked --target x86_64-unknown-linux-musl \
+    run_in_container cargo test --locked --target $TARGET_TRIPLE \
         -p crabc-rs --no-default-features --test x86_64_setitimer \
         -- --test-threads=1
 }
@@ -4971,7 +4981,7 @@ run_process_identity_reference() {
 
 run_child_ownership_reference() {
     run_in_container bash /workspace/compat/x86_64/run_x86_child_ownership_reference.sh
-    run_in_container cargo test --locked --target x86_64-unknown-linux-musl \
+    run_in_container cargo test --locked --target $TARGET_TRIPLE \
         -p crabc-rs --no-default-features --features alloc \
         --test x86_64_child_ownership -- --test-threads=1
 }
@@ -4994,25 +5004,25 @@ run_fcntl_getlk_reference() {
 
 run_fcntl_status_reference() {
     run_in_container bash /workspace/compat/x86_64/run_x86_fcntl_status_reference.sh
-    run_in_container cargo test --locked --target x86_64-unknown-linux-musl \
+    run_in_container cargo test --locked --target $TARGET_TRIPLE \
         -p crabc-rs --no-default-features --test x86_64_fcntl_flags -- --test-threads=1
 }
 
 run_flock_reference() {
     run_in_container bash /workspace/compat/x86_64/run_x86_flock_reference.sh
-    run_in_container cargo test --locked --target x86_64-unknown-linux-musl \
+    run_in_container cargo test --locked --target $TARGET_TRIPLE \
         -p crabc-rs --no-default-features --test x86_64_flock -- --test-threads=1
 }
 
 run_sendfile_reference() {
     run_in_container bash /workspace/compat/x86_64/run_x86_sendfile_reference.sh
-    run_in_container cargo test --locked --target x86_64-unknown-linux-musl \
+    run_in_container cargo test --locked --target $TARGET_TRIPLE \
         -p crabc-rs --no-default-features --test x86_64_sendfile -- --test-threads=1
 }
 
 run_copy_file_range_reference() {
     run_in_container bash /workspace/compat/x86_64/run_x86_copy_file_range_reference.sh
-    run_in_container cargo test --locked --target x86_64-unknown-linux-musl \
+    run_in_container cargo test --locked --target $TARGET_TRIPLE \
         -p crabc-rs --no-default-features --test x86_64_copy_file_range -- --test-threads=1
 }
 
@@ -5034,7 +5044,7 @@ run_rlimit_reference() {
 
 run_rlimit_targeted_reference() {
     run_in_container bash /workspace/compat/x86_64/run_x86_rlimit_targeted_reference.sh
-    run_in_container cargo test --locked --target x86_64-unknown-linux-musl \
+    run_in_container cargo test --locked --target $TARGET_TRIPLE \
         -p crabc-rs --no-default-features --test x86_64_rlimit_targeted -- --test-threads=1
 }
 
@@ -5064,7 +5074,7 @@ run_statat_reference() {
 
 run_getcwd_reference() {
     run_in_container bash /workspace/compat/x86_64/run_x86_getcwd_reference.sh
-    run_in_container cargo test --locked --target x86_64-unknown-linux-musl \
+    run_in_container cargo test --locked --target $TARGET_TRIPLE \
         -p crabc-rs --no-default-features --features alloc --test x86_64_getcwd \
         --test x86_64_current_dir_name -- --test-threads=1
 }
@@ -5075,7 +5085,7 @@ run_readlinkat_reference() {
 
 run_access_reference() {
     run_in_container bash /workspace/compat/x86_64/run_x86_access_reference.sh
-    run_in_container cargo test --locked --target x86_64-unknown-linux-musl \
+    run_in_container cargo test --locked --target $TARGET_TRIPLE \
         -p crabc-rs --no-default-features --test x86_64_access -- --test-threads=1
 }
 
@@ -5111,7 +5121,7 @@ run_libc_syscall_probe() {
     run_in_container bash -ceu '
         probe="$TMPDIR/crabc-x86-libc-syscall-probe"
         mapfile -d "" -t native_rustc < <(python3 -B /workspace/compat/x86_64/native_rustc.py final-link)
-        "${native_rustc[@]}" --edition=2021 --target x86_64-unknown-linux-musl \
+        "${native_rustc[@]}" --edition=2021 --target $TARGET_TRIPLE \
             /workspace/compat/x86_64/libc_syscall_probe.rs -o "$probe"
         "$probe"
     '
@@ -5401,7 +5411,7 @@ run_owned_classic_netdb_probe() {
     prepare_work_dir
     local state container_state
     state="$(mktemp -d "$TMP_DIR/owned-classic-netdb.XXXXXX")"
-    container_state="/workspace/.work/x86_64/tmp/${state##*/}"
+    container_state="/workspace/.work/$ARCH/tmp/${state##*/}"
     run_in_container bash /workspace/compat/x86_64/run_owned_classic_netdb.sh --prepare "$container_state"
     run_in_resolver_network_container bash /workspace/compat/x86_64/run_owned_classic_netdb.sh --prepared "$container_state"
 }
@@ -5414,7 +5424,7 @@ run_owned_resolver_cancellation_probe() {
     prepare_work_dir
     local state container_state
     state="$(mktemp -d "$TMP_DIR/owned-resolver-cancellation.XXXXXX")"
-    container_state="/workspace/.work/x86_64/tmp/${state##*/}"
+    container_state="/workspace/.work/$ARCH/tmp/${state##*/}"
     run_in_container bash /workspace/compat/x86_64/run_owned_resolver_cancellation.sh --prepare "$container_state"
     run_in_resolver_network_container bash /workspace/compat/x86_64/run_owned_resolver_cancellation.sh --prepared "$container_state"
 }
@@ -5423,7 +5433,7 @@ run_owned_resolver_network_probe() {
     prepare_work_dir
     local state container_state
     state="$(mktemp -d "$TMP_DIR/owned-resolver-network.XXXXXX")"
-    container_state="/workspace/.work/x86_64/tmp/${state##*/}"
+    container_state="/workspace/.work/$ARCH/tmp/${state##*/}"
     run_in_container python3 -B /workspace/compat/resolver-network/prepare_x86_64.py \
         --output "$container_state/products"
     run_in_resolver_network_container python3 -B /workspace/compat/resolver-network/run_x86_64.py \
@@ -5466,7 +5476,7 @@ run_owned_protocol_database_probe() {
     prepare_work_dir
     local state container_state
     state="$(mktemp -d "$TMP_DIR/owned-protocol-database.XXXXXX")"
-    container_state="/workspace/.work/x86_64/tmp/${state##*/}"
+    container_state="/workspace/.work/$ARCH/tmp/${state##*/}"
     run_in_chroot_cap_container python3 -B /workspace/compat/x86_64/owned_protocol_database.py \
         --work "$container_state" "${OWNED_PROTOCOL_DATABASE_ARGUMENTS[@]}"
 }
@@ -5499,7 +5509,7 @@ prepare_owned_resolver_family_arguments() {
     RESOLVER_FAMILY_OUTPUT="$(translate_owned_posix_product "$output" fresh-output)" || exit 2
     # The network reader admits only execution roots below the work mount.
     case "$RESOLVER_FAMILY_OUTPUT" in
-        /workspace/.work/x86_64/*) ;;
+        /workspace/.work/$ARCH/*) ;;
         *) fail "resolver family output must be below this checkout's .work/x86_64" ;;
     esac
 }
@@ -5514,15 +5524,15 @@ run_in_resolver_family_image_container() {
     prepare_work_dir
     docker run --rm --init \
         --env RUSTC_WRAPPER=/usr/local/bin/kache \
-        --env CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER=/usr/local/bin/crabc-x86_64-mold-gcc \
+        --env "$LINKER_ENV" --env "TARGET_TRIPLE=$TARGET_TRIPLE" --env "ARCH=$ARCH" \
         "${GIT_METADATA_MOUNT[@]}" \
         --platform "$PLATFORM" \
         --cap-add=SYS_CHROOT \
         --network none \
         --workdir /workspace \
-        --env CARGO_HOME=/workspace/.work/x86_64/cargo \
-        --env CRABC_WORK_DIR=/workspace/.work/x86_64 \
-        --env TMPDIR=/workspace/.work/x86_64/tmp \
+        --env CARGO_HOME=/workspace/.work/$ARCH/cargo \
+        --env CRABC_WORK_DIR=/workspace/.work/$ARCH \
+        --env TMPDIR=/workspace/.work/$ARCH/tmp \
         --env PYTHONDONTWRITEBYTECODE=1 \
         --env GIT_OPTIONAL_LOCKS=0 \
         --env GIT_CONFIG_COUNT=1 \
@@ -5531,9 +5541,9 @@ run_in_resolver_family_image_container() {
         --env "$marker=crabc-core-evidence@$image_id" \
         --env "CRABC_CLASSIC_NETDB_IMAGE_ID=crabc-core-evidence@$image_id" \
         --volume "$ROOT_DIR:/workspace" \
-        --volume "$TMP_DIR:/tmp" --volume "$WORK_DIR:/workspace/.work/x86_64" \
+        --volume "$TMP_DIR:/tmp" --volume "$WORK_DIR:/workspace/.work/$ARCH" \
         --volume "$TARGET_VOLUME:/workspace/target" \
-        --volume "$CARGO_VOLUME:/workspace/.work/x86_64/cargo" \
+        --volume "$CARGO_VOLUME:/workspace/.work/$ARCH/cargo" \
         "$image_id" "$@"
 }
 
@@ -5547,15 +5557,15 @@ run_in_abi_companion_container() {
     prepare_work_dir
     docker run --rm --init \
         --env RUSTC_WRAPPER=/usr/local/bin/kache \
-        --env CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER=/usr/local/bin/crabc-x86_64-mold-gcc \
+        --env "$LINKER_ENV" --env "TARGET_TRIPLE=$TARGET_TRIPLE" --env "ARCH=$ARCH" \
         "${GIT_METADATA_MOUNT[@]}" \
         --platform "$PLATFORM" \
         --cap-add=SYS_CHROOT \
         --network none \
         --workdir /workspace \
-        --env CARGO_HOME=/workspace/.work/x86_64/cargo \
-        --env CRABC_WORK_DIR=/workspace/.work/x86_64 \
-        --env TMPDIR=/workspace/.work/x86_64/tmp \
+        --env CARGO_HOME=/workspace/.work/$ARCH/cargo \
+        --env CRABC_WORK_DIR=/workspace/.work/$ARCH \
+        --env TMPDIR=/workspace/.work/$ARCH/tmp \
         --env LC_ALL=C \
         --env PYTHONDONTWRITEBYTECODE=1 \
         --env GIT_OPTIONAL_LOCKS=0 \
@@ -5570,9 +5580,9 @@ run_in_abi_companion_container() {
         --env "CRABC_X86_PUBLIC_DATA_IMAGE_ID=$reference" \
         --env "CRABC_PUBLIC_DATA_VARIABLE_RUNTIME_IMAGE_ID=$reference" \
         --volume "$ROOT_DIR:/workspace" \
-        --volume "$TMP_DIR:/tmp" --volume "$WORK_DIR:/workspace/.work/x86_64" \
+        --volume "$TMP_DIR:/tmp" --volume "$WORK_DIR:/workspace/.work/$ARCH" \
         --volume "$TARGET_VOLUME:/workspace/target" \
-        --volume "$CARGO_VOLUME:/workspace/.work/x86_64/cargo" \
+        --volume "$CARGO_VOLUME:/workspace/.work/$ARCH/cargo" \
         "$image_id" "$@"
 }
 
@@ -5600,7 +5610,7 @@ resolver_family_step() {
 run_owned_resolver_family() {
     local output="$RESOLVER_FAMILY_OUTPUT" host_output
     prepare_work_dir
-    host_output="$WORK_DIR/${output#/workspace/.work/x86_64/}"
+    host_output="$WORK_DIR/${output#/workspace/.work/$ARCH/}"
     # Create the output as the invoking user: the user-mapped native ABI
     # collectors below must create their fresh outputs inside it.
     mkdir "$host_output" || fail "cannot create resolver family output: $host_output"
@@ -6127,6 +6137,11 @@ run_libc_math_elementary_fenv_sensitive_tests() {
 if [ "$#" -eq 0 ]; then
     usage >&2
     exit 2
+fi
+
+if [ "$ARCH" = aarch64 ] && [ "$1" = --help ] && [ "$#" -eq 1 ]; then
+    usage
+    exit 0
 fi
 
 command="$1"
@@ -6712,7 +6727,7 @@ case "$command" in
         require_native_c_performance_image
         ensure_image
         run_in_native_c_performance_container bash -ceu '
-            work="$(mktemp -d /workspace/.work/x86_64/native-c-performance-adapter-test.XXXXXX)"
+            work="$(mktemp -d /workspace/.work/$ARCH/native-c-performance-adapter-test.XXXXXX)"
             log="$work/command.log"
             if ! {
                 python3 -B -m unittest \
@@ -7079,14 +7094,14 @@ case "$command" in
         [ "$#" -eq 0 ] || fail "signal-thread-queue-reference takes no arguments"
         ensure_image
         run_in_container bash /workspace/compat/x86_64/run_x86_signal_thread_queue_reference.sh
-        run_in_container cargo test --locked --target x86_64-unknown-linux-musl \
+        run_in_container cargo test --locked --target $TARGET_TRIPLE \
             -p crabc-rs --no-default-features --test x86_64_signal_thread_queue -- --test-threads=1
         ;;
     signal-altstack-reference)
         [ "$#" -eq 0 ] || fail "signal-altstack-reference takes no arguments"
         ensure_image
         run_in_container bash /workspace/compat/x86_64/run_x86_signal_altstack_reference.sh
-        run_in_container cargo test --locked --target x86_64-unknown-linux-musl \
+        run_in_container cargo test --locked --target $TARGET_TRIPLE \
             -p crabc-rs --no-default-features --test x86_64_signal_altstack -- --test-threads=1
         ;;
     socket-transport-reference)
@@ -7407,19 +7422,19 @@ case "$command" in
     facade)
         [ "$#" -eq 0 ] || fail "facade takes no arguments"
         ensure_image
-        run_in_container cargo test --locked --target x86_64-unknown-linux-musl \
+        run_in_container cargo test --locked --target $TARGET_TRIPLE \
             -p crabc-rs --lib --no-default-features --test fenv --test futex --test x86_64_foundation --test x86_64_fnmatch \
             --test x86_64_memory_mapping --test x86_64_memory_vm --test x86_64_pty_basic --test x86_64_terminal --test x86_64_mount \
             --test x86_64_epoll --test x86_64_signalfd --test x86_64_signal_wait --test x86_64_signal_altstack --test x86_64_signal_queue --test x86_64_signal_thread_queue --test x86_64_eventfd --test x86_64_fcntl_getlk --test x86_64_fcntl_flags --test x86_64_flock --test x86_64_sendfile --test x86_64_copy_file_range --test x86_64_fs --test x86_64_fs_capacity --test x86_64_fs_advice --test x86_64_file_position --test x86_64_sync --test x86_64_syncfs --test x86_64_sync_file_range --test x86_64_ftruncate --test x86_64_futimens --test x86_64_timestamp_paths --test x86_64_path_lifecycle --test x86_64_namespace --test x86_64_xattr --test x86_64_raw_directory --test x86_64_directory --test x86_64_directory_position --test x86_64_temporary_objects --test x86_64_statx --test x86_64_canonicalize --test x86_64_cwd_mutation --test x86_64_ipc --test x86_64_shm --test x86_64_inotify --test x86_64_socket_transport --test x86_64_posix_fallocate --test x86_64_fallocate --test x86_64_fs_credentials --test x86_64_getgroups --test x86_64_getitimer --test x86_64_setitimer --test x86_64_io --test x86_64_memfd --test x86_64_mm --test x86_64_param --test x86_64_pipe --test x86_64_poll --test x86_64_pselect --test x86_64_priority --test x86_64_setpriority --test x86_64_process_identity --test x86_64_process_session --test x86_64_pidfd_open --test x86_64_rand --test x86_64_rlimit --test x86_64_rlimit_targeted --test x86_64_setrlimit --test x86_64_umask --test x86_64_rusage --test x86_64_scheduler_priority_bounds --test x86_64_sleep --test x86_64_clock_nanosleep --test x86_64_statat --test x86_64_access --test x86_64_getcwd --test x86_64_current_dir_name --test x86_64_readlink --test x86_64_sched_rr_interval --test x86_64_sched_affinity --test x86_64_sched_setaffinity --test x86_64_system --test x86_64_thread --test x86_64_thread_kill --test x86_64_thread_credentials --test x86_64_time --test time --test calendar_utc --test x86_64_calendar_time --test x86_64_advanced_time --test x86_64_timerfd --test x86_64_times \
             -- --test-threads=1
         # The allocation-free matcher keeps its separate static no-std archive
         # proof beside the direct facade test.
-        run_in_container cargo build --locked --target x86_64-unknown-linux-musl \
+        run_in_container cargo build --locked --target $TARGET_TRIPLE \
             -p crabc-rs --no-default-features --release --example fnmatch_direct_probe
         run_in_container bash /workspace/compat/x86_64/verify_fnmatch_direct.sh
-        run_in_chroot_cap_container cargo test --locked --target x86_64-unknown-linux-musl \
+        run_in_chroot_cap_container cargo test --locked --target $TARGET_TRIPLE \
             -p crabc-rs --no-default-features --test x86_64_chroot -- --test-threads=1
-        run_in_container cargo test --locked --target x86_64-unknown-linux-musl \
+        run_in_container cargo test --locked --target $TARGET_TRIPLE \
         -p crabc-rs --no-default-features --features alloc \
             --test timezone_rules --test calendar_local --test x86_64_glob --test x86_64_child_ownership \
             --test x86_64_pty_basic --test x86_64_terminal \
@@ -7429,7 +7444,7 @@ case "$command" in
         # Native archive inspection therefore rejects public C traversal,
         # errno, and allocation boundaries without requiring allocation-free
         # code generation.
-        run_in_container cargo build --locked --target x86_64-unknown-linux-musl \
+        run_in_container cargo build --locked --target $TARGET_TRIPLE \
             -p crabc-rs --no-default-features --features alloc --release --example glob_direct_probe
         run_in_container bash /workspace/compat/x86_64/verify_glob_direct.sh
         ;;

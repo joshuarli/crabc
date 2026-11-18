@@ -6,12 +6,8 @@
 # archive hashes and authenticate the package index before use.
 set -eu
 root=$(git rev-parse --show-toplevel)
-host_arch=$(uname -m)
-case "$host_arch" in
-    x86_64) arch=x86_64; work_name=x86_64 ;;
-    aarch64|arm64) arch=aarch64; work_name=aarch64 ;;
-    *) printf 'prepare-worktree: unsupported host architecture %s\n' "$host_arch" >&2; exit 1 ;;
-esac
+arch_config=$(python3 -B "$root/compat/x86_64/native_arch.py" "$(uname -m)")
+eval "$arch_config"
 common=$(cd "$(git rev-parse --git-common-dir)" && pwd)
 primary=$(dirname "$common")
 here=$root/scripts/lanes
