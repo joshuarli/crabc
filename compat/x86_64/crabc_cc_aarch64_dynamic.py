@@ -8,6 +8,7 @@ import subprocess
 import sys
 import tempfile
 
+sys.dont_write_bytecode = True
 root = Path(__file__).resolve().parent.parent
 lib = root / "usr/lib"
 args = sys.argv[1:]
