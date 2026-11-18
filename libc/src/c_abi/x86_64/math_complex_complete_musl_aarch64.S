@@ -3264,12 +3264,12 @@ crabc_x86_math_complex_elementary_atan:
 	fmul	d31, d31, d30
 	cmn	w0, #1
 	beq	.Lcrabc_x86_math_complex_src_math_atan_22
-	adrp	x1, atanlo
-	add	x1, x1, :lo12:atanlo
+	adrp	x1, crabc_x86_math_complex_src_math_atan_atanlo
+	add	x1, x1, :lo12:crabc_x86_math_complex_src_math_atan_atanlo
 	cmp	w3, 0
 	ldr	d29, [x1, w0, sxtw 3]
-	adrp	x1, atanhi
-	add	x1, x1, :lo12:atanhi
+	adrp	x1, crabc_x86_math_complex_src_math_atan_atanhi
+	add	x1, x1, :lo12:crabc_x86_math_complex_src_math_atan_atanhi
 	fsub	d31, d31, d29
 	fsub	d31, d31, d30
 	ldr	d30, [x1, w0, sxtw 3]
@@ -3334,9 +3334,9 @@ crabc_x86_math_complex_elementary_atan:
 	.size	crabc_x86_math_complex_elementary_atan, .-crabc_x86_math_complex_elementary_atan
 	.section	.rodata.atanlo.crabc_x86_math_complex_src_math_atan,"a"
 	.align	4
-	.type	atanlo, %object
-	.size	atanlo, 32
-atanlo:
+	.type	crabc_x86_math_complex_src_math_atan_atanlo, %object
+	.size	crabc_x86_math_complex_src_math_atan_atanlo, 32
+crabc_x86_math_complex_src_math_atan_atanlo:
 	.word	573531618
 	.word	1014639487
 	.word	856972295
@@ -3347,9 +3347,9 @@ atanlo:
 	.word	1016178214
 	.section	.rodata.atanhi.crabc_x86_math_complex_src_math_atan,"a"
 	.align	4
-	.type	atanhi, %object
-	.size	atanhi, 32
-atanhi:
+	.type	crabc_x86_math_complex_src_math_atan_atanhi, %object
+	.size	crabc_x86_math_complex_src_math_atan_atanhi, 32
+crabc_x86_math_complex_src_math_atan_atanhi:
 	.word	90291023
 	.word	1071492199
 	.word	1413754136
@@ -3657,15 +3657,15 @@ crabc_x86_math_complex_elementary_atan2:
 	movi	d0, #0
 	cmp	w2, 2
 	bhi	.Lcrabc_x86_math_complex_src_math_atan2_27
-	adrp	x0, CSWTCH.6
-	add	x0, x0, :lo12:CSWTCH.6
+	adrp	x0, crabc_x86_math_complex_src_math_atan2_CSWTCH.6
+	add	x0, x0, :lo12:crabc_x86_math_complex_src_math_atan2_CSWTCH.6
 	ldr	d0, [x0, w2, uxtw 3]
 	ret
 .Lcrabc_x86_math_complex_src_math_atan2_35:
 	cmp	w2, 2
 	bhi	.Lcrabc_x86_math_complex_src_math_atan2_19
-	adrp	x0, crabc_aarch64_62_CSWTCH.5
-	add	x0, x0, :lo12:crabc_aarch64_62_CSWTCH.5
+	adrp	x0, crabc_x86_math_complex_src_math_atan2_CSWTCH.5
+	add	x0, x0, :lo12:crabc_x86_math_complex_src_math_atan2_CSWTCH.5
 	ldr	d0, [x0, w2, uxtw 3]
 	ret
 .Lcrabc_x86_math_complex_src_math_atan2_31:
@@ -3718,9 +3718,9 @@ crabc_x86_math_complex_elementary_atan2:
 	.size	crabc_x86_math_complex_elementary_atan2, .-crabc_x86_math_complex_elementary_atan2
 	.section	.rodata.CSWTCH.6.crabc_x86_math_complex_src_math_atan2,"a"
 	.align	3
-	.type	CSWTCH.6, %object
-	.size	CSWTCH.6, 24
-CSWTCH.6:
+	.type	crabc_x86_math_complex_src_math_atan2_CSWTCH.6, %object
+	.size	crabc_x86_math_complex_src_math_atan2_CSWTCH.6, 24
+crabc_x86_math_complex_src_math_atan2_CSWTCH.6:
 	.word	0
 	.word	-2147483648
 	.word	1413754136
@@ -3729,9 +3729,9 @@ CSWTCH.6:
 	.word	-1073143301
 	.section	.rodata.CSWTCH.5.crabc_x86_math_complex_src_math_atan2,"a"
 	.align	3
-	.type	crabc_aarch64_62_CSWTCH.5, %object
-	.size	crabc_aarch64_62_CSWTCH.5, 24
-crabc_aarch64_62_CSWTCH.5:
+	.type	crabc_x86_math_complex_src_math_atan2_CSWTCH.5, %object
+	.size	crabc_x86_math_complex_src_math_atan2_CSWTCH.5, 24
+crabc_x86_math_complex_src_math_atan2_CSWTCH.5:
 	.word	1413754136
 	.word	-1075240453
 	.word	2134057426
@@ -3837,8 +3837,8 @@ crabc_x86_math_complex_elementary_atan2f:
 	movi	v0.2s, #0
 	cmp	w2, 2
 	bhi	.Lcrabc_x86_math_complex_src_math_atan2f_29
-	adrp	x0, crabc_aarch64_63_CSWTCH.5
-	add	x0, x0, :lo12:crabc_aarch64_63_CSWTCH.5
+	adrp	x0, crabc_x86_math_complex_src_math_atan2f_CSWTCH.5
+	add	x0, x0, :lo12:crabc_x86_math_complex_src_math_atan2f_CSWTCH.5
 	ldr	s0, [x0, w2, uxtw 2]
 	ret
 .Lcrabc_x86_math_complex_src_math_atan2f_37:
@@ -3922,9 +3922,9 @@ crabc_x86_math_complex_elementary_atan2f:
 	.size	crabc_x86_math_complex_elementary_atan2f, .-crabc_x86_math_complex_elementary_atan2f
 	.section	.rodata.CSWTCH.5.crabc_x86_math_complex_src_math_atan2f,"a"
 	.align	3
-	.type	crabc_aarch64_63_CSWTCH.5, %object
-	.size	crabc_aarch64_63_CSWTCH.5, 12
-crabc_aarch64_63_CSWTCH.5:
+	.type	crabc_x86_math_complex_src_math_atan2f_CSWTCH.5, %object
+	.size	crabc_x86_math_complex_src_math_atan2f_CSWTCH.5, 12
+crabc_x86_math_complex_src_math_atan2f_CSWTCH.5:
 	.word	-2147483648
 	.word	1078530011
 	.word	-1068953637
@@ -8078,8 +8078,8 @@ crabc_x86_math_complex_internal_rem_pio2_large:
 	sub	sp, sp, #720
 	stp	x20, x21, [sp, 16]
 	mov	x20, x0
-	adrp	x0, init_jk
-	add	x0, x0, :lo12:init_jk
+	adrp	x0, crabc_x86_math_complex_src_math___rem_pio2_large_init_jk
+	add	x0, x0, :lo12:crabc_x86_math_complex_src_math___rem_pio2_large_init_jk
 	stp	x30, x19, [sp]
 	sub	w19, w3, #1
 	stp	x22, x23, [sp, 32]
@@ -8107,10 +8107,10 @@ crabc_x86_math_complex_internal_rem_pio2_large:
 	add	w28, w2, w0
 	ldr	w0, [sp, 124]
 	add	x6, sp, 400
-	adrp	x7, ipio2
+	adrp	x7, crabc_x86_math_complex_src_math___rem_pio2_large_ipio2
 	sub	w0, w0, w19
 	add	w2, w27, w19
-	add	x7, x7, :lo12:ipio2
+	add	x7, x7, :lo12:crabc_x86_math_complex_src_math___rem_pio2_large_ipio2
 	mov	w1, 0
 	sxtw	x0, w0
 	sub	x4, x6, x0, lsl 3
@@ -8337,8 +8337,8 @@ crabc_x86_math_complex_internal_rem_pio2_large:
 	add	x1, x22, w3, sxtw
 	add	w9, w9, w23
 	sxtw	x8, w8
-	adrp	x0, ipio2
-	add	x0, x0, :lo12:ipio2
+	adrp	x0, crabc_x86_math_complex_src_math___rem_pio2_large_ipio2
+	add	x0, x0, :lo12:crabc_x86_math_complex_src_math___rem_pio2_large_ipio2
 	add	x4, x6, x1, lsl 3
 	add	x11, x26, w10, sxtw 3
 	sub	x8, x8, x1
@@ -8447,11 +8447,11 @@ crabc_x86_math_complex_internal_rem_pio2_large:
 	cmn	w0, 1
 	bpl	.Lcrabc_x86_math_complex_src_math___rem_pio2_large_46
 	add	x10, sp, 240
-	adrp	x3, PIo2
+	adrp	x3, crabc_x86_math_complex_src_math___rem_pio2_large_PIo2
 	add	x26, x26, x22, lsl 3
 	mov	x7, x10
 	mov	w5, w23
-	add	x3, x3, :lo12:PIo2
+	add	x3, x3, :lo12:crabc_x86_math_complex_src_math___rem_pio2_large_PIo2
 	mov	w1, 0
 	b	.Lcrabc_x86_math_complex_src_math___rem_pio2_large_47
 .Lcrabc_x86_math_complex_src_math___rem_pio2_large_49:
@@ -8616,9 +8616,9 @@ crabc_x86_math_complex_internal_rem_pio2_large:
 	.size	crabc_x86_math_complex_internal_rem_pio2_large, .-crabc_x86_math_complex_internal_rem_pio2_large
 	.section	.rodata.PIo2.crabc_x86_math_complex_src_math___rem_pio2_large,"a"
 	.align	4
-	.type	PIo2, %object
-	.size	PIo2, 64
-PIo2:
+	.type	crabc_x86_math_complex_src_math___rem_pio2_large_PIo2, %object
+	.size	crabc_x86_math_complex_src_math___rem_pio2_large_PIo2, 64
+crabc_x86_math_complex_src_math___rem_pio2_large_PIo2:
 	.word	1073741824
 	.word	1073291771
 	.word	0
@@ -8637,9 +8637,9 @@ PIo2:
 	.word	896135965
 	.section	.rodata.ipio2.crabc_x86_math_complex_src_math___rem_pio2_large,"a"
 	.align	4
-	.type	ipio2, %object
-	.size	ipio2, 2760
-ipio2:
+	.type	crabc_x86_math_complex_src_math___rem_pio2_large_ipio2, %object
+	.size	crabc_x86_math_complex_src_math___rem_pio2_large_ipio2, 2760
+crabc_x86_math_complex_src_math___rem_pio2_large_ipio2:
 	.word	10680707
 	.word	7228996
 	.word	1387004
@@ -9332,9 +9332,9 @@ ipio2:
 	.word	8417760
 	.section	.rodata.init_jk.crabc_x86_math_complex_src_math___rem_pio2_large,"a"
 	.align	4
-	.type	init_jk, %object
-	.size	init_jk, 16
-init_jk:
+	.type	crabc_x86_math_complex_src_math___rem_pio2_large_init_jk, %object
+	.size	crabc_x86_math_complex_src_math___rem_pio2_large_init_jk, 16
+crabc_x86_math_complex_src_math___rem_pio2_large_init_jk:
 	.word	3
 	.word	4
 	.word	4

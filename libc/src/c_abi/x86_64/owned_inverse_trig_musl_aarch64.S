@@ -43,8 +43,8 @@
 	.text
 	.section	.text.R,"ax",@progbits
 	.align	2
-	.type	crabc_aarch64_1_R, %function
-crabc_aarch64_1_R:
+	.type	crabc_x86_owned_inverse_trig_src_math_asin_R, %function
+crabc_x86_owned_inverse_trig_src_math_asin_R:
 	adrp	x0, .Lcrabc_x86_owned_inverse_trig_src_math_asin_C0
 	ldr	d31, [x0, #:lo12:.Lcrabc_x86_owned_inverse_trig_src_math_asin_C0]
 	adrp	x0, .Lcrabc_x86_owned_inverse_trig_src_math_asin_C1
@@ -88,7 +88,7 @@ crabc_aarch64_1_R:
 	fadd	d0, d0, d30
 	fdiv	d0, d31, d0
 	ret
-	.size	crabc_aarch64_1_R, .-crabc_aarch64_1_R
+	.size	crabc_x86_owned_inverse_trig_src_math_asin_R, .-crabc_x86_owned_inverse_trig_src_math_asin_R
 	.section	.text.asin,"ax",@progbits
 	.align	2
 	.global	asin
@@ -129,7 +129,7 @@ asin:
 	cmp	w0, w1
 	bls	.Lcrabc_x86_owned_inverse_trig_src_math_asin_3
 	fmul	d0, d0, d0
-	bl	crabc_aarch64_1_R
+	bl	crabc_x86_owned_inverse_trig_src_math_asin_R
 	fmul	d0, d0, d28
 	fadd	d28, d0, d28
 .Lcrabc_x86_owned_inverse_trig_src_math_asin_3:
@@ -152,7 +152,7 @@ asin:
 	fmov	d0, d15
 	mov	w1, 13106
 	movk	w1, 0x3fef, lsl 16
-	bl	crabc_aarch64_1_R
+	bl	crabc_x86_owned_inverse_trig_src_math_asin_R
 	ldr	w0, [sp, 28]
 	ldr	x3, [sp, 16]
 	cmp	w0, w1
@@ -249,8 +249,8 @@ asin:
 	.text
 	.section	.text.R,"ax",@progbits
 	.align	2
-	.type	crabc_aarch64_2_R, %function
-crabc_aarch64_2_R:
+	.type	crabc_x86_owned_inverse_trig_src_math_acos_R, %function
+crabc_x86_owned_inverse_trig_src_math_acos_R:
 	adrp	x0, .Lcrabc_x86_owned_inverse_trig_src_math_acos_C0
 	ldr	d31, [x0, #:lo12:.Lcrabc_x86_owned_inverse_trig_src_math_acos_C0]
 	adrp	x0, .Lcrabc_x86_owned_inverse_trig_src_math_acos_C1
@@ -294,7 +294,7 @@ crabc_aarch64_2_R:
 	fadd	d0, d0, d30
 	fdiv	d0, d31, d0
 	ret
-	.size	crabc_aarch64_2_R, .-crabc_aarch64_2_R
+	.size	crabc_x86_owned_inverse_trig_src_math_acos_R, .-crabc_x86_owned_inverse_trig_src_math_acos_R
 	.section	.text.acos,"ax",@progbits
 	.align	2
 	.global	acos
@@ -342,7 +342,7 @@ acos:
 	b	.Lcrabc_x86_owned_inverse_trig_src_math_acos_3
 .Lcrabc_x86_owned_inverse_trig_src_math_acos_8:
 	fmul	d0, d0, d0
-	bl	crabc_aarch64_2_R
+	bl	crabc_x86_owned_inverse_trig_src_math_acos_R
 	fmul	d0, d0, d28
 	adrp	x0, .Lcrabc_x86_owned_inverse_trig_src_math_acos_C11
 	ldr	d31, [x0, #:lo12:.Lcrabc_x86_owned_inverse_trig_src_math_acos_C11]
@@ -370,7 +370,7 @@ acos:
 	fmov	d0, d31
 	fsub	d28, d31, d28
 	fdiv	d28, d28, d30
-	bl	crabc_aarch64_2_R
+	bl	crabc_x86_owned_inverse_trig_src_math_acos_R
 	fmul	d0, d0, d26
 	fadd	d0, d0, d28
 	fadd	d0, d0, d27
@@ -387,7 +387,7 @@ acos:
 	bl	sqrt
 	fmov	d27, d0
 	ldr	d0, [sp, 24]
-	bl	crabc_aarch64_2_R
+	bl	crabc_x86_owned_inverse_trig_src_math_acos_R
 	fmul	d31, d0, d27
 	adrp	x0, .Lcrabc_x86_owned_inverse_trig_src_math_acos_C11
 	ldr	d30, [x0, #:lo12:.Lcrabc_x86_owned_inverse_trig_src_math_acos_C11]
@@ -536,12 +536,12 @@ atan:
 	fmul	d31, d31, d30
 	cmn	w0, #1
 	beq	.Lcrabc_x86_owned_inverse_trig_src_math_atan_22
-	adrp	x1, atanlo
-	add	x1, x1, :lo12:atanlo
+	adrp	x1, crabc_x86_owned_inverse_trig_src_math_atan_atanlo
+	add	x1, x1, :lo12:crabc_x86_owned_inverse_trig_src_math_atan_atanlo
 	cmp	w3, 0
 	ldr	d29, [x1, w0, sxtw 3]
-	adrp	x1, atanhi
-	add	x1, x1, :lo12:atanhi
+	adrp	x1, crabc_x86_owned_inverse_trig_src_math_atan_atanhi
+	add	x1, x1, :lo12:crabc_x86_owned_inverse_trig_src_math_atan_atanhi
 	fsub	d31, d31, d29
 	fsub	d31, d31, d30
 	ldr	d30, [x1, w0, sxtw 3]
@@ -606,9 +606,9 @@ atan:
 	.size	atan, .-atan
 	.section	.rodata.atanlo,"a"
 	.align	3
-	.type	atanlo, %object
-	.size	atanlo, 32
-atanlo:
+	.type	crabc_x86_owned_inverse_trig_src_math_atan_atanlo, %object
+	.size	crabc_x86_owned_inverse_trig_src_math_atan_atanlo, 32
+crabc_x86_owned_inverse_trig_src_math_atan_atanlo:
 	.word	573531618
 	.word	1014639487
 	.word	856972295
@@ -619,9 +619,9 @@ atanlo:
 	.word	1016178214
 	.section	.rodata.atanhi,"a"
 	.align	3
-	.type	atanhi, %object
-	.size	atanhi, 32
-atanhi:
+	.type	crabc_x86_owned_inverse_trig_src_math_atan_atanhi, %object
+	.size	crabc_x86_owned_inverse_trig_src_math_atan_atanhi, 32
+crabc_x86_owned_inverse_trig_src_math_atan_atanhi:
 	.word	90291023
 	.word	1071492199
 	.word	1413754136
@@ -757,15 +757,15 @@ atan2:
 	movi	d0, #0
 	cmp	w2, 2
 	bhi	.Lcrabc_x86_owned_inverse_trig_src_math_atan2_27
-	adrp	x0, CSWTCH.6
-	add	x0, x0, :lo12:CSWTCH.6
+	adrp	x0, crabc_x86_owned_inverse_trig_src_math_atan2_CSWTCH.6
+	add	x0, x0, :lo12:crabc_x86_owned_inverse_trig_src_math_atan2_CSWTCH.6
 	ldr	d0, [x0, w2, uxtw 3]
 	ret
 .Lcrabc_x86_owned_inverse_trig_src_math_atan2_35:
 	cmp	w2, 2
 	bhi	.Lcrabc_x86_owned_inverse_trig_src_math_atan2_19
-	adrp	x0, crabc_aarch64_4_CSWTCH.5
-	add	x0, x0, :lo12:crabc_aarch64_4_CSWTCH.5
+	adrp	x0, crabc_x86_owned_inverse_trig_src_math_atan2_CSWTCH.5
+	add	x0, x0, :lo12:crabc_x86_owned_inverse_trig_src_math_atan2_CSWTCH.5
 	ldr	d0, [x0, w2, uxtw 3]
 	ret
 .Lcrabc_x86_owned_inverse_trig_src_math_atan2_31:
@@ -818,9 +818,9 @@ atan2:
 	.size	atan2, .-atan2
 	.section	.rodata.CSWTCH.6,"a"
 	.align	3
-	.type	CSWTCH.6, %object
-	.size	CSWTCH.6, 24
-CSWTCH.6:
+	.type	crabc_x86_owned_inverse_trig_src_math_atan2_CSWTCH.6, %object
+	.size	crabc_x86_owned_inverse_trig_src_math_atan2_CSWTCH.6, 24
+crabc_x86_owned_inverse_trig_src_math_atan2_CSWTCH.6:
 	.word	0
 	.word	-2147483648
 	.word	1413754136
@@ -829,9 +829,9 @@ CSWTCH.6:
 	.word	-1073143301
 	.section	.rodata.CSWTCH.5,"a"
 	.align	3
-	.type	crabc_aarch64_4_CSWTCH.5, %object
-	.size	crabc_aarch64_4_CSWTCH.5, 24
-crabc_aarch64_4_CSWTCH.5:
+	.type	crabc_x86_owned_inverse_trig_src_math_atan2_CSWTCH.5, %object
+	.size	crabc_x86_owned_inverse_trig_src_math_atan2_CSWTCH.5, 24
+crabc_x86_owned_inverse_trig_src_math_atan2_CSWTCH.5:
 	.word	1413754136
 	.word	-1075240453
 	.word	2134057426
@@ -1397,8 +1397,8 @@ atan2f:
 	movi	v0.2s, #0
 	cmp	w2, 2
 	bhi	.Lcrabc_x86_owned_inverse_trig_src_math_atan2f_29
-	adrp	x0, crabc_aarch64_8_CSWTCH.5
-	add	x0, x0, :lo12:crabc_aarch64_8_CSWTCH.5
+	adrp	x0, crabc_x86_owned_inverse_trig_src_math_atan2f_CSWTCH.5
+	add	x0, x0, :lo12:crabc_x86_owned_inverse_trig_src_math_atan2f_CSWTCH.5
 	ldr	s0, [x0, w2, uxtw 2]
 	ret
 .Lcrabc_x86_owned_inverse_trig_src_math_atan2f_37:
@@ -1482,9 +1482,9 @@ atan2f:
 	.size	atan2f, .-atan2f
 	.section	.rodata.CSWTCH.5,"a"
 	.align	3
-	.type	crabc_aarch64_8_CSWTCH.5, %object
-	.size	crabc_aarch64_8_CSWTCH.5, 12
-crabc_aarch64_8_CSWTCH.5:
+	.type	crabc_x86_owned_inverse_trig_src_math_atan2f_CSWTCH.5, %object
+	.size	crabc_x86_owned_inverse_trig_src_math_atan2f_CSWTCH.5, 12
+crabc_x86_owned_inverse_trig_src_math_atan2f_CSWTCH.5:
 	.word	-2147483648
 	.word	1078530011
 	.word	-1068953637

@@ -129,7 +129,7 @@ def transform_assembly(relative: str, text: str) -> str:
     )
     typed = set(
         re.findall(
-            rf"^\s*\.type\s+({SYMBOL})\s*,\s*@(?:function|object)\s*$",
+            rf"^\s*\.type\s+({SYMBOL})\s*,\s*[@%](?:function|object)\s*$",
             text,
             re.MULTILINE,
         )

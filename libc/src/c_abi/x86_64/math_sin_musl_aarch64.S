@@ -993,8 +993,8 @@ crabc_x86_math_sin_reduce_pio2_large:
 	sub	sp, sp, #720
 	stp	x20, x21, [sp, 16]
 	mov	x20, x0
-	adrp	x0, init_jk
-	add	x0, x0, :lo12:init_jk
+	adrp	x0, crabc_x86_math_sin_src_math___rem_pio2_large_init_jk
+	add	x0, x0, :lo12:crabc_x86_math_sin_src_math___rem_pio2_large_init_jk
 	stp	x30, x19, [sp]
 	sub	w19, w3, #1
 	stp	x22, x23, [sp, 32]
@@ -1022,10 +1022,10 @@ crabc_x86_math_sin_reduce_pio2_large:
 	add	w28, w2, w0
 	ldr	w0, [sp, 144]
 	add	x22, sp, 240
-	adrp	x7, ipio2
+	adrp	x7, crabc_x86_math_sin_src_math___rem_pio2_large_ipio2
 	sub	w0, w0, w19
 	add	w2, w27, w19
-	add	x7, x7, :lo12:ipio2
+	add	x7, x7, :lo12:crabc_x86_math_sin_src_math___rem_pio2_large_ipio2
 	mov	w1, 0
 	sxtw	x0, w0
 	sub	x4, x22, x0, lsl 3
@@ -1246,8 +1246,8 @@ crabc_x86_math_sin_reduce_pio2_large:
 	add	x1, x24, w3, sxtw
 	add	w9, w9, w23
 	sxtw	x8, w8
-	adrp	x0, ipio2
-	add	x0, x0, :lo12:ipio2
+	adrp	x0, crabc_x86_math_sin_src_math___rem_pio2_large_ipio2
+	add	x0, x0, :lo12:crabc_x86_math_sin_src_math___rem_pio2_large_ipio2
 	add	x4, x22, x1, lsl 3
 	add	x11, x26, w10, sxtw 3
 	sub	x8, x8, x1
@@ -1352,11 +1352,11 @@ crabc_x86_math_sin_reduce_pio2_large:
 	cmn	w0, 1
 	bpl	.Lcrabc_x86_math_sin_src_math___rem_pio2_large_46
 	add	x10, sp, 400
-	adrp	x3, PIo2
+	adrp	x3, crabc_x86_math_sin_src_math___rem_pio2_large_PIo2
 	add	x26, x26, x24, lsl 3
 	mov	x7, x10
 	mov	w5, w23
-	add	x3, x3, :lo12:PIo2
+	add	x3, x3, :lo12:crabc_x86_math_sin_src_math___rem_pio2_large_PIo2
 	mov	w1, 0
 	b	.Lcrabc_x86_math_sin_src_math___rem_pio2_large_47
 .Lcrabc_x86_math_sin_src_math___rem_pio2_large_49:
@@ -1522,9 +1522,9 @@ crabc_x86_math_sin_reduce_pio2_large:
 	.size	crabc_x86_math_sin_reduce_pio2_large, .-crabc_x86_math_sin_reduce_pio2_large
 	.section	.rodata.PIo2.crabc_x86_math_sin_src_math___rem_pio2_large,"a"
 	.align	3
-	.type	PIo2, %object
-	.size	PIo2, 64
-PIo2:
+	.type	crabc_x86_math_sin_src_math___rem_pio2_large_PIo2, %object
+	.size	crabc_x86_math_sin_src_math___rem_pio2_large_PIo2, 64
+crabc_x86_math_sin_src_math___rem_pio2_large_PIo2:
 	.word	1073741824
 	.word	1073291771
 	.word	0
@@ -1543,9 +1543,9 @@ PIo2:
 	.word	896135965
 	.section	.rodata.ipio2.crabc_x86_math_sin_src_math___rem_pio2_large,"a"
 	.align	3
-	.type	ipio2, %object
-	.size	ipio2, 2760
-ipio2:
+	.type	crabc_x86_math_sin_src_math___rem_pio2_large_ipio2, %object
+	.size	crabc_x86_math_sin_src_math___rem_pio2_large_ipio2, 2760
+crabc_x86_math_sin_src_math___rem_pio2_large_ipio2:
 	.word	10680707
 	.word	7228996
 	.word	1387004
@@ -2238,9 +2238,9 @@ ipio2:
 	.word	8417760
 	.section	.rodata.init_jk.crabc_x86_math_sin_src_math___rem_pio2_large,"a"
 	.align	3
-	.type	init_jk, %object
-	.size	init_jk, 16
-init_jk:
+	.type	crabc_x86_math_sin_src_math___rem_pio2_large_init_jk, %object
+	.size	crabc_x86_math_sin_src_math___rem_pio2_large_init_jk, 16
+crabc_x86_math_sin_src_math___rem_pio2_large_init_jk:
 	.word	3
 	.word	4
 	.word	4

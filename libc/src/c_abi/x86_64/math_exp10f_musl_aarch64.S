@@ -51,8 +51,8 @@ exp10f:
 	fcmp	s0, #0.0
 	bne	.Lcrabc_x86_math_exp10f_src_math_exp10f_3
 	fmov	s31, w0
-	adrp	x1, p10.0
-	add	x1, x1, :lo12:p10.0
+	adrp	x1, crabc_x86_math_exp10f_src_math_exp10f_p10.0
+	add	x1, x1, :lo12:crabc_x86_math_exp10f_src_math_exp10f_p10.0
 	fcvtzs	w0, s31
 	add	w0, w0, 7
 	ldr	s0, [x1, w0, sxtw 2]
@@ -67,8 +67,8 @@ exp10f:
 	fmul	s0, s0, s31
 	bl	crabc_x86_math_exp10f_provider_exp2f
 	ldr	s31, [sp, 28]
-	adrp	x1, p10.0
-	add	x1, x1, :lo12:p10.0
+	adrp	x1, crabc_x86_math_exp10f_src_math_exp10f_p10.0
+	add	x1, x1, :lo12:crabc_x86_math_exp10f_src_math_exp10f_p10.0
 	fcvtzs	w0, s31
 	add	w0, w0, 7
 	ldr	s31, [x1, w0, sxtw 2]
@@ -87,9 +87,9 @@ exp10f:
 	.set	pow10f,exp10f
 	.section	.rodata.p10.0.crabc_x86_math_exp10f_src_math_exp10f,"a"
 	.align	3
-	.type	p10.0, %object
-	.size	p10.0, 60
-p10.0:
+	.type	crabc_x86_math_exp10f_src_math_exp10f_p10.0, %object
+	.size	crabc_x86_math_exp10f_src_math_exp10f_p10.0, 60
+crabc_x86_math_exp10f_src_math_exp10f_p10.0:
 	.word	869711765
 	.word	897988541
 	.word	925353388

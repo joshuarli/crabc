@@ -132,7 +132,7 @@ def transform_assembly(relative: str, text: str) -> str:
         re.findall(rf"^\s*\.(?:globl|global|weak)\s+({SYMBOL})\s*$", text, re.MULTILINE)
     )
     typed = set(
-        re.findall(rf"^\s*\.type\s+({SYMBOL})\s*,\s*@(?:function|object)\s*$", text, re.MULTILINE)
+        re.findall(rf"^\s*\.type\s+({SYMBOL})\s*,\s*[@%](?:function|object)\s*$", text, re.MULTILINE)
     )
     for name in sorted(
         typed - globals_and_weak - set(PRIVATE_RENAMES.values()),
