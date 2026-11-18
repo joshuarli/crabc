@@ -29,8 +29,10 @@ its `libm/configure.rs` input, every target dep-info Rust source hash, the
 selected feature set, archive members, full symbol inventory, member ELF
 facts, closure resolution, and SHA-256. It rejects the upstream `c` and `mem`
 features, native build commands, prebuilt compiler-builtins input, memory
-intrinsic exports, outline-atomic exports, unwind sections, absolute build
+intrinsic exports, unexpected outline-atomic exports, unwind sections, absolute build
 paths, and an archive closure with an unresolved runtime symbol.
+The source-built archive supplies the AArch64 outline-atomic helpers used by
+GCC's default code generation.
 
 The disposable source-build probe has its own deterministic no-dependency
 `Cargo.lock`, while the pinned rust-src library lock remains the authority for
