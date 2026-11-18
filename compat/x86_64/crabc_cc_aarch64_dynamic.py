@@ -73,8 +73,26 @@ def execute(arguments):
         index += 1
     mode = mode or "pie"
     invocation = shared.parse_invocation(common)
-    if invocation.print_link_plan or invocation.link_receipt is not None:
-        raise shared.DriverError("arm64 explicit link plans and receipt paths are unavailable")
+    if invocation.link_receipt is not None:
+        raise shared.DriverError("dynamic link receipt path is derived from -o")
+    if invocation.print_link_plan:
+        if quote_dirs or dsos or rounding or export_dynamic or runpath is not None:
+            raise shared.DriverError("link plan accepts no application inputs")
+        plan = ["/usr/bin/mold", "-shared" if mode == "shared" else "-pie", "--hash-style=sysv",
+                "--eh-frame-hdr", "-z", "relro", "-z", "now", "-z", "noexecstack", "-z", "text",
+                "--no-undefined", "--allow-shlib-undefined", "--enable-new-dtags", "-rpath", "/usr/lib",
+                "--exclude-libs=libcrabc-builtins.a"]
+        if mode == "pie":
+            plan += ["-z", "dynamic-undefined-weak", "--dynamic-linker", "/lib/ld-crabc-aarch64.so.1", str(lib / "Scrt1.o")]
+        else:
+            plan += ["-soname", "<output-basename>"]
+        plan += [str(lib / "crti.o"), shared.APPLICATION_OBJECTS, str(lib / "libcrabc-builtins.a"),
+                 str(lib / "libc.so"), str(lib / "crtn.o"), "-o", shared.OUTPUT]
+        print(json.dumps({"format": "crabc-aarch64-owned-dynamic-sysroot-v1", "mode": mode, "binding": "now",
+                          "runtime_imports": [], "application_runpath": "/usr/lib", "application_rpath": None,
+                          "application_search_kind": "runpath", "application_hash_style": "sysv", "linker": plan,
+                          "campaign_complete": False}, sort_keys=True))
+        return
     if invocation.compile_only and (dsos or runpath is not None or export_dynamic):
         raise shared.DriverError("compile-only accepts no link options")
     if mode == "shared" and export_dynamic:
