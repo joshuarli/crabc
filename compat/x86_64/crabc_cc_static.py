@@ -456,7 +456,7 @@ def static_mode(identifier: str) -> StaticMode:
         raise DriverError(f"unsupported owned static mode: {identifier}") from error
 
 
-def owned_link_plan(root: Path, mode: StaticMode) -> list[str]:
+def owned_link_plan(root: Path, mode: StaticMode, *, architecture: str = "x86_64") -> list[str]:
     """Return the complete explicit linker plan with only an application hole."""
 
     library = root / "usr" / "lib"
@@ -479,21 +479,23 @@ def owned_link_plan(root: Path, mode: StaticMode) -> list[str]:
         str(library / mode.crt_object),
         str(library / "crti.o"),
         APPLICATION_OBJECTS,
+        *(["--start-group"] if architecture == "aarch64" else []),
         str(library / "libc.a"),
         str(library / "libcrabc-builtins.a"),
+        *(["--end-group"] if architecture == "aarch64" else []),
         str(library / "crtn.o"),
         "-o",
         OUTPUT,
     ]
 
 
-def plan_record(root: Path, mode: StaticMode) -> dict[str, object]:
+def plan_record(root: Path, mode: StaticMode, *, architecture: str = "x86_64") -> dict[str, object]:
     """Serialize the inspected, deterministic link contract without executing it."""
 
     return {
         "schema": 1,
-        "format": DRIVER_FORMAT,
-        "target": TARGET,
+        "format": DRIVER_FORMAT if architecture == "x86_64" else "crabc-aarch64-sealed-static-driver-v1",
+        "target": TARGET if architecture == "x86_64" else "aarch64-unknown-linux-musl",
         "status": "planned-owned-static-product-seed-not-family-completion-not-public-support",
         "mode": {
             "id": mode.identifier,
@@ -519,9 +521,9 @@ def plan_record(root: Path, mode: StaticMode) -> dict[str, object]:
             "declared static-product coverage suite",
             "sysroot.static-tls family completion",
             "sysroot.owned-artifact family completion",
-            "x86-64 promotion or public support",
+            "x86-64 promotion or public support" if architecture == "x86_64" else "aarch64 promotion or public support",
         ],
-        "linker": owned_link_plan(root, mode),
+        "linker": owned_link_plan(root, mode, architecture=architecture),
     }
 
 
@@ -1019,6 +1021,7 @@ def write_link_receipt(
     receipt: Path,
     map_path: Path,
     trace_path: Path,
+    *, architecture: str = "x86_64",
 ) -> None:
     """Write a stable receipt after linker produced the driver-owned sidecars."""
 
@@ -1028,8 +1031,8 @@ def write_link_receipt(
     require_regular(trace_path, "link trace")
     record = {
         "schema": LINK_RECEIPT_SCHEMA,
-        "format": DRIVER_FORMAT,
-        "target": TARGET,
+        "format": DRIVER_FORMAT if architecture == "x86_64" else "crabc-aarch64-sealed-static-driver-v1",
+        "target": TARGET if architecture == "x86_64" else "aarch64-unknown-linux-musl",
         "mode": {
             "id": mode.identifier,
             "elf_type": mode.elf_type,
@@ -1040,7 +1043,7 @@ def write_link_receipt(
             "path": str(resolved_path(linker_path, "resolved linker")),
             "sha256": sha256_file(linker_path),
         },
-        "owned_link_contract": owned_link_plan(root, mode),
+        "owned_link_contract": owned_link_plan(root, mode, architecture=architecture),
         "input_receipts": receipt_input_records(root, mode, applications, receipt),
         "output": {"path": receipt_file_path(output, receipt), "sha256": sha256_file(output)},
         "map": {"path": receipt_file_path(map_path, receipt), "sha256": sha256_file(map_path)},
@@ -1216,12 +1219,16 @@ def execute_aarch64(root: Path, arguments: Sequence[str], manifest: dict) -> Non
         raise DriverError("aarch64 installed sysroot payload differs from its manifest")
     static_pie = "-static-pie" in arguments or "--static-pie" in arguments
     invocation = parse_invocation([arg for arg in arguments if arg not in {"-no-pie", "-static-pie", "--static-pie"}])
-    if invocation.print_link_plan or invocation.link_receipt is not None:
-        raise DriverError("aarch64 driver does not yet support link plans or receipts")
+    static_mode = STATIC_PIE if static_pie else STATIC_ET_EXEC
+    if invocation.print_link_plan:
+        print(json.dumps(plan_record(root, static_mode, architecture="aarch64"), indent=2, sort_keys=True))
+        return
     sources = [require_application_file(root, source, "source") for source in invocation.sources]
     inputs = [require_x86_64_relocatable_object(root, obj, architecture="aarch64") for obj in invocation.objects]
     output = invocation.output or (sources[0].with_suffix(".o") if invocation.compile_only else Path("a.out"))
     validate_application_output(root, output)
+    if invocation.link_receipt is not None:
+        validate_receipt_output_disjoint(root, output, invocation.link_receipt)
     validate_application_output_disjoint(output, (*sources, *inputs))
     with tempfile.TemporaryDirectory(prefix="crabc-aarch64-cc.") as temporary:
         objects = list(inputs)
@@ -1231,10 +1238,21 @@ def execute_aarch64(root: Path, arguments: Sequence[str], manifest: dict) -> Non
             objects.append(obj)
         if invocation.compile_only:
             return
-        lib = root / "usr/lib"
-        mode = ["-static", "-pie", "--no-dynamic-linker"] if static_pie else ["-static", "--no-dynamic-linker"]
-        entry = "rcrt1.o" if static_pie else "crt1.o"
-        run_checked(["/usr/bin/mold", *mode, "--no-undefined", "--eh-frame-hdr", "--gc-sections", "-z", "relro", "-z", "now", "-e", "_start", str(lib / entry), str(lib / "crti.o"), *(str(obj) for obj in objects), "--start-group", str(lib / "libc.a"), str(lib / "libcrabc-builtins.a"), "--end-group", str(lib / "crtn.o"), "-o", str(output)])
+        command = []
+        for item in owned_link_plan(root, static_mode, architecture="aarch64"):
+            if item == "mold":
+                command.append(linker(root))
+            elif item == APPLICATION_OBJECTS:
+                command.extend(str(obj) for obj in objects)
+            elif item == OUTPUT:
+                command.append(str(output))
+            else:
+                command.append(item)
+        if invocation.link_receipt is None:
+            run_checked(command)
+        else:
+            receipt, map_path, trace_path = run_link_with_receipt(root, static_mode, objects, command, invocation.link_receipt)
+            write_link_receipt(root, static_mode, objects, output, Path(command[0]), receipt, map_path, trace_path, architecture="aarch64")
 
 
 def main(arguments: Sequence[str] | None = None) -> int:
