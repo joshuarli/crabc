@@ -720,6 +720,7 @@ unsafe extern "C" {
     ) -> i64;
 }
 
+#[cfg(target_arch = "x86_64")]
 core::arch::global_asm!(
     r#"
     .text
@@ -760,6 +761,37 @@ __crabc_x86_pthread_clone:
 "#
 );
 
+#[cfg(target_arch = "aarch64")]
+core::arch::global_asm!(
+    r#"
+    .text
+    .global __crabc_x86_pthread_clone
+    .hidden __crabc_x86_pthread_clone
+    .type __crabc_x86_pthread_clone,%function
+__crabc_x86_pthread_clone:
+    // musl 1.2.6 src/thread/aarch64/clone.s
+    and x1, x1, #-16
+    stp x0, x3, [x1, #-16]!
+    uxtw x0, w2
+    mov x2, x4
+    mov x3, x5
+    mov x4, x6
+    mov x8, #220
+    svc #0
+    cbz x0, 1f
+    ret
+1:
+    mov x29, 0
+    ldp x1, x0, [sp], #16
+    blr x1
+    mov x8, #93
+    svc #0
+    brk #0
+    .size __crabc_x86_pthread_clone, .-__crabc_x86_pthread_clone
+    .section .note.GNU-stack,"",%progbits
+"#
+);
+
 #[inline]
 fn is_linux_error(result: i64) -> bool {
     result < 0 && result >= -LINUX_ERRNO_MAX
@@ -783,6 +815,7 @@ fn current_linux_thread_id() -> Option<c_int> {
     // instruction adjacent to that identity check avoids relying on a generic
     // raw-syscall wrapper's cross-item inlining in pthread_exit's audited
     // foreign-thread rejection path.
+    #[cfg(target_arch = "x86_64")]
     unsafe {
         core::arch::asm!(
             "syscall",
@@ -792,6 +825,9 @@ fn current_linux_thread_id() -> Option<c_int> {
             options(nostack),
         );
     }
+    #[cfg(target_arch = "aarch64")]
+    // SAFETY: gettid takes no arguments.
+    unsafe { result = raw_syscall::syscall0(raw_syscall::SYS_GETTID) };
     if is_linux_error(result) || result <= 0 || result > i64::from(c_int::MAX) {
         return None;
     }
@@ -2442,6 +2478,7 @@ unsafe fn unmap_worker(mapping: *mut u8, mapping_size: usize) -> i64 {
     // SAFETY: this is the direct Linux x86-64 munmap register contract. Keep
     // it at the selected lifecycle release boundary so join/reaper auditing
     // cannot depend on cross-item inlining of the generic syscall wrapper.
+    #[cfg(target_arch = "x86_64")]
     unsafe {
         core::arch::asm!(
             "syscall",
@@ -2453,6 +2490,9 @@ unsafe fn unmap_worker(mapping: *mut u8, mapping_size: usize) -> i64 {
             options(nostack),
         );
     }
+    #[cfg(target_arch = "aarch64")]
+    // SAFETY: the caller supplies the exact no-longer-used mapping.
+    unsafe { result = raw_syscall::syscall2(raw_syscall::SYS_MUNMAP, mapping as usize as i64, mapping_size as i64) };
     result
 }
 
@@ -2485,6 +2525,7 @@ unsafe fn exit_selected_linux_task() -> ! {
     // SAFETY: SYS_exit terminates exactly the calling Linux task and cannot
     // return. The selected lifecycle requires this only after the result
     // publication described by its caller.
+    #[cfg(target_arch = "x86_64")]
     unsafe {
         core::arch::asm!(
             "syscall",
@@ -2493,6 +2534,9 @@ unsafe fn exit_selected_linux_task() -> ! {
             options(noreturn, nostack),
         )
     }
+    #[cfg(target_arch = "aarch64")]
+    // SAFETY: exit terminates the current task without returning.
+    unsafe { raw_syscall::syscall_noreturn1(raw_syscall::SYS_EXIT, 0) }
 }
 
 /// Attach the native allocator before a selected worker can run user code.
