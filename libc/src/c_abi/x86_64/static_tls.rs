@@ -272,7 +272,7 @@ pub(super) unsafe fn bootstrap_initial_thread(initial_stack: *const usize) -> bo
         STATIC_INITIAL_TLS_STATE.store(TLS_STATE_FAILED, Ordering::Release);
         return false;
     }
-    if !unsafe { arch_set_fs(block.thread_pointer as usize) } {
+    if !unsafe { arch_set_fs(block.thread_pointer as usize, initial_stack) } {
         let _ = unsafe { release_thread(block) };
         STATIC_INITIAL_TLS_STATE.store(TLS_STATE_FAILED, Ordering::Release);
         return false;
@@ -933,7 +933,7 @@ unsafe fn unmap(address: *mut u8, length: usize) -> i64 {
 }
 
 #[cfg(target_arch = "x86_64")]
-unsafe fn arch_set_fs(thread_pointer: usize) -> bool {
+unsafe fn arch_set_fs(thread_pointer: usize, _initial_stack: *const usize) -> bool {
     !is_linux_error(unsafe {
         raw_syscall::syscall2(
             raw_syscall::SYS_ARCH_PRCTL,
@@ -944,10 +944,31 @@ unsafe fn arch_set_fs(thread_pointer: usize) -> bool {
 }
 
 #[cfg(target_arch = "aarch64")]
-unsafe fn arch_set_fs(thread_pointer: usize) -> bool {
+unsafe fn arch_set_fs(thread_pointer: usize, initial_stack: *const usize) -> bool {
+    // SAFETY: bootstrap has validated the writable kernel entry stack and its auxiliary vector.
+    let Some(auxv) = (unsafe { auxiliary_vector_from_initial_stack(initial_stack) }) else { return false };
     // SAFETY: the caller has initialized the thread's live TLS allocation.
     unsafe { core::arch::asm!("msr tpidr_el0, {}", in(reg) thread_pointer, options(nostack, preserves_flags)); }
-    true
+    // musl 1.2.6 src/thread/aarch64/__set_thread_area.c masks unsupported SME and future features.
+    for index in 0..MAX_AUXV_ENTRIES {
+        let entry = auxv.wrapping_add(index * 2) as *mut usize;
+        // SAFETY: bootstrap validated the terminated auxiliary vector on the writable initial stack.
+        let kind = unsafe { core::ptr::read(entry) };
+        if kind == AT_NULL { return true; }
+        let mask = match kind {
+            16 => !((!0usize) << 42),
+            26 => !(((0xffusize) << 23) | ((0x3fusize) << 37) | ((0x3fusize) << 57)),
+            29 | 30 => {
+                // SAFETY: this entry and its value are writable initial-stack words.
+                unsafe { core::ptr::write(entry, 1); core::ptr::write(entry.add(1), 0); }
+                continue;
+            }
+            _ => continue,
+        };
+        // SAFETY: this entry's value is a writable initial-stack word.
+        unsafe { let value = entry.add(1); core::ptr::write(value, core::ptr::read(value) & mask); }
+    }
+    false
 }
 
 #[inline]
