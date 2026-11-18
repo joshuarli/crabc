@@ -9,6 +9,7 @@ C compiler.
 from __future__ import annotations
 
 import argparse
+from generate_libc_math_long_double_completion import architecture_flags, architecture_source, finalize_assembly
 import hashlib
 import re
 import subprocess
@@ -160,6 +161,7 @@ def retained_notices(source_root: Path) -> list[str]:
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--musl-source", required=True, type=Path)
+    parser.add_argument("--arch", choices=("x86_64", "aarch64"), default="x86_64")
     parser.add_argument("--cc", default="/usr/local/bin/crabc-x86_64-musl-gcc")
     parser.add_argument(
         "--output",
@@ -167,6 +169,8 @@ def main() -> int:
         default=ROOT / "libc/src/c_abi/x86_64/owned_inverse_trig_musl_x86_64.S",
     )
     arguments = parser.parse_args()
+    if arguments.arch == "aarch64":
+        arguments.output = arguments.output.with_name(arguments.output.name.replace("_x86_64.S", "_aarch64.S"))
 
     source_root = arguments.musl_source.resolve()
     actual_digest = normalized_tree_digest(source_root)
@@ -176,12 +180,12 @@ def main() -> int:
             f"expected {EXPECTED_MUSL_TREE_DIGEST}, got {actual_digest}"
         )
     environment = generation_environment()
-    compiler = checked_compiler(arguments.cc, environment=environment)
+    compiler = checked_compiler(arguments.cc, environment=environment, arch=arguments.arch)
 
     include_flags = (
         f"-I{source_root / 'src/internal'}",
         f"-I{source_root / 'src/include'}",
-        f"-I{source_root / 'arch/x86_64'}",
+        f"-I{source_root / 'arch' / arguments.arch}",
         f"-I{source_root / 'arch/generic'}",
         f"-I{source_root / 'include'}",
     )
@@ -196,6 +200,9 @@ def main() -> int:
         " */",
     ]
     blocks.extend(retained_notices(source_root))
+    if arguments.arch == "aarch64":
+        blocks = [line.replace("x86-64", "aarch64").replace("binary80", "binary128") for line in blocks]
+        blocks.insert(1, " * AArch64 translation generated with the pinned musl compiler.")
     with tempfile.TemporaryDirectory(
         prefix="crabc-x86-owned-inverse-trig-", dir=environment["TMPDIR"]
     ) as temporary:
@@ -205,11 +212,11 @@ def main() -> int:
             subprocess.run(
                 [
                     compiler,
-                    *COMPILE_FLAGS,
+                    *architecture_flags(COMPILE_FLAGS, arguments.arch),
                     *include_flags,
                     "-fPIC",
                     "-S",
-                    str(source_root / relative),
+                    str(architecture_source(source_root, relative, arguments.arch)),
                     "-o",
                     str(assembly),
                 ],
@@ -218,13 +225,13 @@ def main() -> int:
             )
             blocks.extend(
                 (
-                    f"/* musl-1.2.6/{relative} */",
+                    f"/* musl-1.2.6/{architecture_source(source_root, relative, arguments.arch).relative_to(source_root)} */",
                     transform_assembly(relative, assembly.read_text()),
                 )
             )
     blocks.append('.section .note.GNU-stack,"",@progbits')
     arguments.output.parent.mkdir(parents=True, exist_ok=True)
-    arguments.output.write_text("\n".join(blocks) + "\n")
+    arguments.output.write_text(finalize_assembly("\n".join(blocks) + "\n", arguments.arch))
     return 0
 
 

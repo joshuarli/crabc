@@ -82,10 +82,11 @@ fn split_musl_objects() {
     let output_root = PathBuf::from(std::env::var_os("OUT_DIR").expect("output directory")).join("musl_objects");
     println!("cargo::rerun-if-changed=build.rs");
     println!("cargo::rerun-if-changed={}", source_dir.display());
+    let arch = std::env::var("CARGO_CFG_TARGET_ARCH").expect("target architecture");
     let mut sources: Vec<PathBuf> = std::fs::read_dir(&source_dir)
         .expect("x86 source directory")
         .map(|entry| entry.expect("x86 source entry").path())
-        .filter(|path| path.extension().is_some_and(|extension| extension == "S"))
+        .filter(|path| path.file_name().is_some_and(|name| name.to_string_lossy().ends_with(&format!("_{arch}.S"))))
         .collect();
     sources.sort();
     for path in sources {
@@ -203,8 +204,9 @@ fn split_musl_objects() {
             std::fs::write(&file, object).expect("musl object assembly");
             writeln!(
                 rust,
-                "mod {tag}_source {{ core::arch::global_asm!(include_str!({:?}), options(att_syntax)); }}",
+                "mod {tag}_source {{ core::arch::global_asm!(include_str!({:?}){}); }}",
                 file.display().to_string(),
+                if arch == "x86_64" { ", options(att_syntax)" } else { "" },
             ).expect("string write");
         }
         std::fs::write(output_root.join(format!("{stem}.rs")), rust).expect("musl object modules");
@@ -213,7 +215,7 @@ fn split_musl_objects() {
 
 fn main() {
     x86_runtime_capabilities();
-    if std::env::var("CARGO_CFG_TARGET_ARCH").as_deref() == Ok("x86_64") {
+    if matches!(std::env::var("CARGO_CFG_TARGET_ARCH").as_deref(), Ok("x86_64" | "aarch64")) {
         split_musl_objects();
     }
     // The installed static product selects musl's loaderless dlfcn stubs
