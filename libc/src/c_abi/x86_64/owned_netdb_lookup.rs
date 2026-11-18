@@ -198,7 +198,7 @@ pub(super) unsafe fn configuration() -> Result<Config,c_int> {
 
 pub(super) unsafe fn query(config: &Config, name: &[u8], kind: u16, answer: &mut [u8]) -> Result<(usize,u16), c_int> {
     let mut time = [0i64;2];
-    unsafe { c_status(raw_syscall::syscall2(228, 0, time.as_mut_ptr() as i64)); }
+    unsafe { c_status(raw_syscall::syscall2(raw_syscall::SYS_CLOCK_GETTIME, 0, time.as_mut_ptr() as i64)); }
     let id = (time[1] + time[1]/65536) as u16;
     let mut wire = [0u8;280];
     let length = resolver::encode_query(name, kind, id, &mut wire).map_err(|_| 0)?;
@@ -218,7 +218,7 @@ pub(super) unsafe fn query(config: &Config, name: &[u8], kind: u16, answer: &mut
 unsafe fn dns(out: &mut [Address;MAX_ADDRS], canon: &mut [u8;256], name: &[u8], family: c_int, conf: &Config) -> c_int {
     let mut replies = [[0u8;4800];2]; let mut lengths = [0;2]; let mut ids = [0;2]; let mut kinds = [0;2]; let mut wires = [[0u8;280];2]; let mut wire_lengths = [0;2]; let mut nq = 0;
     let mut time = [0i64;2];
-    unsafe { c_status(raw_syscall::syscall2(228, 0, time.as_mut_ptr() as i64)); }
+    unsafe { c_status(raw_syscall::syscall2(raw_syscall::SYS_CLOCK_GETTIME, 0, time.as_mut_ptr() as i64)); }
     let initial_id = (time[1] + time[1]/65536) as u16;
     for (excluded, kind) in [(10,1), (2,28)] {
         if family == excluded { continue; }
@@ -408,11 +408,11 @@ unsafe fn sort_addresses(addresses: &mut [Address]) {
         let destination = mapped(a); let (precedence,label) = policy(&destination); let dscope = scope(&destination);
         let mut key = 0; let mut prefix = 0;
         let (destination_sa, length) = sockaddr(a,65535); let mut source_sa = [0u8;28]; let mut source_length = length;
-        let fd = unsafe { c_status(raw_syscall::syscall3(41, a.family as i64, 2|0x80000, 17)) };
+        let fd = unsafe { c_status(raw_syscall::syscall3(raw_syscall::SYS_SOCKET, a.family as i64, 2|0x80000, 17)) };
         if fd >= 0 {
-            if unsafe { c_status(raw_syscall::syscall3(42, fd as i64, destination_sa.as_ptr() as i64, length as i64)) } == 0 {
+            if unsafe { c_status(raw_syscall::syscall3(raw_syscall::SYS_CONNECT, fd as i64, destination_sa.as_ptr() as i64, length as i64)) } == 0 {
                 key |= 0x40000000;
-                if unsafe { c_status(raw_syscall::syscall3(51, fd as i64, source_sa.as_mut_ptr() as i64, &mut source_length as *mut u32 as i64)) } == 0 {
+                if unsafe { c_status(raw_syscall::syscall3(raw_syscall::SYS_GETSOCKNAME, fd as i64, source_sa.as_mut_ptr() as i64, &mut source_length as *mut u32 as i64)) } == 0 {
                     let mut source = [0u8;16];
                     if a.family == 2 { source[..12].copy_from_slice(&V4_PREFIX); source[12..].copy_from_slice(&source_sa[4..8]); }
                     else { source.copy_from_slice(&source_sa[8..24]); }
@@ -421,7 +421,7 @@ unsafe fn sort_addresses(addresses: &mut [Address]) {
                     for bit in 0..128 { if (source[bit/8] ^ destination[bit/8]) & (128 >> (bit%8)) != 0 { break; } prefix += 1; }
                 }
             }
-            unsafe { c_status(raw_syscall::syscall1(3, fd as i64)); }
+            unsafe { c_status(raw_syscall::syscall1(raw_syscall::SYS_CLOSE, fd as i64)); }
         }
         a.key = key | precedence<<20 | (15-dscope)<<16 | prefix<<8 | (MAX_ADDRS-i) as i32;
     }

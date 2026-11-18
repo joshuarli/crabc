@@ -124,7 +124,6 @@ const MUTEXATTR_ROBUST_BIT: u32 = MUTEX_ROBUST_BIT as u32;
 const MUTEXATTR_PRIO_INHERIT_BIT: u32 = MUTEX_PRIO_INHERIT_BIT as u32;
 const MUTEXATTR_PROCESS_SHARED_BIT: u32 = MUTEX_PROCESS_SHARED_BIT as u32;
 const LINUX_ERRNO_MAX: i64 = 4_095;
-const LINUX_X86_64_SYS_GET_ROBUST_LIST: i64 = 274;
 const LINUX_ROBUST_LIST_SIZE: usize = 3 * size_of::<usize>();
 
 const FUTEX_WAIT: i64 = 0;
@@ -1029,7 +1028,7 @@ unsafe fn selected_robust_list_support() -> c_int {
     // current task or exposure of a runtime pointer.
     let result = unsafe {
         raw_syscall::syscall3(
-            LINUX_X86_64_SYS_GET_ROBUST_LIST,
+            raw_syscall::SYS_GET_ROBUST_LIST,
             0,
             core::ptr::addr_of_mut!(head) as usize as i64,
             core::ptr::addr_of_mut!(length) as usize as i64,

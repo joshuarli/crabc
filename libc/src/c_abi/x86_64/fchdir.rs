@@ -32,10 +32,6 @@ use super::{c_status, raw_syscall};
 
 const EBADF: i64 = 9;
 const F_GETFD: i64 = 1;
-#[cfg(target_arch = "x86_64")]
-const SYS_FCHDIR: i64 = 81;
-#[cfg(target_arch = "aarch64")]
-const SYS_FCHDIR: i64 = 50;
 const PROC_FD_PREFIX: &[u8] = b"/proc/self/fd/";
 const PROC_FD_NAME_SIZE: usize = 15 + 3 * size_of::<c_int>();
 
@@ -87,7 +83,7 @@ fn procfdname(path: &mut [u8; PROC_FD_NAME_SIZE], descriptor: c_int) {
 pub extern "C" fn fchdir(directory_descriptor: c_int) -> c_int {
     // SAFETY: the public descriptor is a scalar Linux `fchdir=81` argument.
     let direct = unsafe {
-        raw_syscall::syscall1(SYS_FCHDIR, i64::from(directory_descriptor))
+        raw_syscall::syscall1(raw_syscall::SYS_FCHDIR, i64::from(directory_descriptor))
     };
     if direct != -EBADF {
         return c_status(direct);

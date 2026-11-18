@@ -16,7 +16,6 @@ use super::{c_status, errno, pthread_attr, pthread_cancel, pthread_create_join,
     pthread_tsd, raw_syscall, signal_foundation, static_tls};
 
 const SIGTIMER: i64 = 32;
-const SYS_TIMER_CREATE: i64 = 222;
 const FUTEX_WAIT_PRIVATE: i64 = 128;
 const FUTEX_WAKE_PRIVATE: i64 = 129;
 const TIMER_MASK: u64 = 1 << 31;
@@ -205,7 +204,7 @@ static_archive_member! { timer_create_source {
                 &kernel as *const KernelSigevent
             };
             let mut id = 0;
-            let result = unsafe { raw_syscall::syscall3(SYS_TIMER_CREATE, clock as i64, pointer as i64, &mut id as *mut c_int as i64) };
+            let result = unsafe { raw_syscall::syscall3(raw_syscall::SYS_TIMER_CREATE, clock as i64, pointer as i64, &mut id as *mut c_int as i64) };
             if c_status(result) < 0 { return -1; }
             unsafe { output.write(id as usize as *mut c_void); }
             return 0;
@@ -243,7 +242,7 @@ static_archive_member! { timer_create_source {
         unsafe { (*worker).tid = tid; }
         let kernel = KernelSigevent { value: Sigval { integer: 0 }, signal: SIGTIMER as c_int, notify: 4, tid, padding: [0; 44] };
         let mut id = -1;
-        let result = unsafe { raw_syscall::syscall3(SYS_TIMER_CREATE, clock as i64, &kernel as *const _ as i64, &mut id as *mut c_int as i64) };
+        let result = unsafe { raw_syscall::syscall3(raw_syscall::SYS_TIMER_CREATE, clock as i64, &kernel as *const _ as i64, &mut id as *mut c_int as i64) };
         let status = c_status(result);
         if status < 0 { id = -1; }
         unsafe { (*worker).id.store(id, Ordering::Release); }

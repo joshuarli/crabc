@@ -401,12 +401,12 @@ static_archive_member! { getaddrinfo_source {
                 if family == other { continue; }
                 let mut a = Address::for_family(af); if af == 2 { a.bytes[..4].copy_from_slice(&[127,0,0,1]); } else { a.bytes[15] = 1; }
                 let (socket,len) = lookup::sockaddr(&a,65535);
-                let fd = unsafe { c_status(raw_syscall::syscall3(41,af as i64,2|0x80000,17)) };
+                let fd = unsafe { c_status(raw_syscall::syscall3(raw_syscall::SYS_SOCKET,af as i64,2|0x80000,17)) };
                 if fd >= 0 {
                     let mut cancel = 0; unsafe { pthread_cancel::pthread_setcancelstate(1,&mut cancel); }
-                    let r = unsafe { c_status(raw_syscall::syscall3(42,fd as i64,socket.as_ptr() as i64,len as i64)) };
+                    let r = unsafe { c_status(raw_syscall::syscall3(raw_syscall::SYS_CONNECT,fd as i64,socket.as_ptr() as i64,len as i64)) };
                     let saved = unsafe { *errno::__errno_location() };
-                    unsafe { pthread_cancel::pthread_setcancelstate(cancel,ptr::null_mut()); c_status(raw_syscall::syscall1(3,fd as i64)); }
+                    unsafe { pthread_cancel::pthread_setcancelstate(cancel,ptr::null_mut()); c_status(raw_syscall::syscall1(raw_syscall::SYS_CLOSE,fd as i64)); }
                     if r == 0 { continue; } unsafe { errno::set_errno(saved); }
                 }
                 if !matches!(unsafe { *errno::__errno_location() },99|97|113|100|101) { return -11; }
