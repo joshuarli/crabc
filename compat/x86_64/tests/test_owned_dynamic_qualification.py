@@ -236,6 +236,15 @@ class OwnedDynamicQualificationTests(unittest.TestCase):
                                         "installed product invalid: installed payload hash mismatch"):
                 REAL_SOURCE_BOUND_PRODUCT_IDENTITY(product, self.source)
 
+    def test_aarch64_product_identity_rejects_stale_source(self):
+        product = self.work / "installed"
+        manifest = {"format": "crabc-aarch64-owned-dynamic-sysroot-v1", "source_sha256": self.source}
+        with mock.patch.object(driver, "validate_installation", return_value=manifest):
+            self.assertEqual(REAL_SOURCE_BOUND_PRODUCT_IDENTITY(product, self.source),
+                             qualification.digest(product / "share/crabc/manifest.json"))
+            with self.assertRaisesRegex(qualification.QualificationError, "installed product source is stale"):
+                REAL_SOURCE_BOUND_PRODUCT_IDENTITY(product, "d" * 64)
+
     def test_run_case_rejects_source_mutation_during_the_leaf(self):
         source = self.root / "tracked-source.c"
         source.write_bytes(b"before leaf execution")
