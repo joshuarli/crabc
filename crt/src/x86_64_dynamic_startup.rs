@@ -51,7 +51,7 @@ static mut INITIAL_DEPENDENCY_CONSTRUCTORS: Option<LifecycleHook> = None;
 // crt1.o is also linked into static executables, which must not retain an
 // unresolved loader symbol, so it reaches the same slot only through the
 // dynamic-only main-resident attachment (see `x86_64_crt1.rs`).
-#[cfg(not(crabc_x86_64_combined_exec_entry))]
+#[cfg(all(target_arch = "x86_64", not(crabc_x86_64_combined_exec_entry)))]
 core::arch::global_asm!(
     ".att_syntax prefix",
     ".weak __crabc_x86_64_owned_crt_handoff",
@@ -70,6 +70,21 @@ core::arch::global_asm!(
     "ret",
     ".size __crabc_x86_64_owned_crt_handoff_value, .-__crabc_x86_64_owned_crt_handoff_value",
     ".intel_syntax noprefix",
+);
+
+#[cfg(all(target_arch = "aarch64", not(crabc_x86_64_combined_exec_entry)))]
+core::arch::global_asm!(
+    ".weak __crabc_x86_64_owned_crt_handoff",
+    ".text",
+    ".global __crabc_x86_64_owned_crt_handoff_value",
+    ".type __crabc_x86_64_owned_crt_handoff_value,%function",
+    "__crabc_x86_64_owned_crt_handoff_value:",
+    "adrp x0, :got:__crabc_x86_64_owned_crt_handoff",
+    "ldr x0, [x0, :got_lo12:__crabc_x86_64_owned_crt_handoff]",
+    "cbz x0, 1f",
+    "ldr x0, [x0]",
+    "1: ret",
+    ".size __crabc_x86_64_owned_crt_handoff_value, .-__crabc_x86_64_owned_crt_handoff_value",
 );
 
 struct InitialProcess {
@@ -394,11 +409,14 @@ fn startup_reject() -> ! {
         // A dependency constructor may already have created workers when a
         // later main-image array is rejected. Linux exit terminates only this
         // thread; exit_group stops the entire malformed startup transaction.
+        #[cfg(target_arch = "x86_64")]
         core::arch::asm!(
             "syscall",
             in("rax") 231usize,
             in("rdi") 127usize,
             options(noreturn, nostack),
         );
+        #[cfg(target_arch = "aarch64")]
+        core::arch::asm!("svc 0", in("x8") 94usize, in("x0") 127usize, options(noreturn, nostack));
     }
 }
