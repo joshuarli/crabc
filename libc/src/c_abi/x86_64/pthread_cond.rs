@@ -38,7 +38,7 @@
 //! The frozen artifact still admits only normal/private mutexes. This component
 //! does not change the public profile or provide complete pthread behavior.
 
-#[cfg(not(all(target_os = "linux", target_arch = "x86_64", target_endian = "little")))]
+#[cfg(not(all(target_os = "linux", any(target_arch = "x86_64", target_arch = "aarch64"), target_endian = "little")))]
 compile_error!("the x86 private pthread-condition leaf requires little-endian Linux/x86-64");
 
 use core::cell::UnsafeCell;

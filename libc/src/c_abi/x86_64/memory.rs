@@ -36,7 +36,7 @@
 //! bulk-memory surface only after its freestanding artifact fixture proves
 //! it. It is not a general C runtime.
 
-#[cfg(not(all(target_os = "linux", target_arch = "x86_64", target_endian = "little")))]
+#[cfg(not(all(target_os = "linux", any(target_arch = "x86_64", target_arch = "aarch64"), target_endian = "little")))]
 compile_error!("the x86 C memory leaf requires little-endian Linux/x86-64");
 
 // Preserve musl's contracts, including `memcpy`'s non-overlap contract and a

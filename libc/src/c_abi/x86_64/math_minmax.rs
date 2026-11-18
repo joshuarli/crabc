@@ -23,7 +23,7 @@
 //! integer-result rounding, binary80/x87 math, special and complex functions,
 //! errno policy, general libm, libc.so, CRT/TLS lifecycle, loader, and sysroot.
 
-#[cfg(not(all(target_os = "linux", target_arch = "x86_64", target_endian = "little")))]
+#[cfg(not(all(target_os = "linux", any(target_arch = "x86_64", target_arch = "aarch64"), target_endian = "little")))]
 compile_error!("the x86 binary32/binary64 extrema leaf requires little-endian Linux/x86-64");
 
 // Integer classification precedes each UCOMIS instruction. In particular,

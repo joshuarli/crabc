@@ -11,7 +11,7 @@
 //! TLS module, resize a DTV, install `%fs`, expose `__tls_get_addr`, or select
 //! a general dynamic libc/loader runtime.
 
-#[cfg(not(all(target_os = "linux", target_arch = "x86_64", target_endian = "little")))]
+#[cfg(not(all(target_os = "linux", any(target_arch = "x86_64", target_arch = "aarch64"), target_endian = "little")))]
 compile_error!("the x86 loader/libc TLS RuntimeV1 consumer requires little-endian Linux/x86-64");
 
 use core::arch::{asm, global_asm};

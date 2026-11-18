@@ -19,7 +19,7 @@
 //! x86 FS+40 guard and its worker copies; static startup retains the inert weak
 //! `__init_ssp` compatibility spelling without reseeding a running thread.
 
-#[cfg(not(all(target_os = "linux", target_arch = "x86_64", target_endian = "little")))]
+#[cfg(not(all(target_os = "linux", any(target_arch = "x86_64", target_arch = "aarch64"), target_endian = "little")))]
 compile_error!("x86 stack-check failure requires little-endian Linux/x86-64");
 
 core::arch::global_asm!(

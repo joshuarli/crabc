@@ -67,7 +67,7 @@
 //! not general scalar/complex math, a dynamic `libc.so`, CRT/TLS lifecycle,
 //! allocator, loader, or sysroot.
 
-#[cfg(not(all(target_os = "linux", target_arch = "x86_64", target_endian = "little")))]
+#[cfg(not(all(target_os = "linux", any(target_arch = "x86_64", target_arch = "aarch64"), target_endian = "little")))]
 compile_error!("the math.special leaf requires little-endian Linux/x86-64");
 
 musl_object_assembly!("math_special_musl_x86_64");

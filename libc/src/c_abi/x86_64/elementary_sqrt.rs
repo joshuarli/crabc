@@ -20,7 +20,7 @@
 //! math family: it does not select any other elementary operation, general
 //! libm, complex math, errno policy, libc.so, CRT, loader, or sysroot.
 
-#[cfg(not(all(target_os = "linux", target_arch = "x86_64", target_endian = "little")))]
+#[cfg(not(all(target_os = "linux", any(target_arch = "x86_64", target_arch = "aarch64"), target_endian = "little")))]
 compile_error!("the x86 square-root leaf requires little-endian Linux/x86-64");
 
 // Each musl object below has its own static archive member, as in musl's

@@ -188,7 +188,7 @@
 //! than C's variadic `syscall(long, ...)`: a complete variadic wrapper needs a
 //! separately specified argument-count and cancellation contract.
 
-#[cfg(not(all(target_os = "linux", target_arch = "x86_64", target_endian = "little")))]
+#[cfg(not(all(target_os = "linux", any(target_arch = "x86_64", target_arch = "aarch64"), target_endian = "little")))]
 compile_error!("the selected static C ABI requires little-endian Linux/x86-64");
 
 // Defined before every leaf module so the leaves can use it.

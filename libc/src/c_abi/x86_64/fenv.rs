@@ -20,7 +20,7 @@
 
 use core::ffi::c_int;
 
-#[cfg(not(all(target_os = "linux", target_arch = "x86_64", target_endian = "little")))]
+#[cfg(not(all(target_os = "linux", any(target_arch = "x86_64", target_arch = "aarch64"), target_endian = "little")))]
 compile_error!("the x86 C fenv leaf requires little-endian Linux/x86-64");
 
 const FE_ALL_EXCEPT: c_int = 63;

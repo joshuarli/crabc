@@ -22,7 +22,7 @@
 
 #![allow(clippy::missing_safety_doc)]
 
-#[cfg(not(all(target_os = "linux", target_arch = "x86_64", target_endian = "little")))]
+#[cfg(not(all(target_os = "linux", any(target_arch = "x86_64", target_arch = "aarch64"), target_endian = "little")))]
 compile_error!("the x86 pthread spin operations require little-endian Linux/x86-64");
 
 use core::ffi::c_int;

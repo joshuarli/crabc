@@ -31,7 +31,7 @@
 //! gamma/Bessel/error, or complex transcendental families; it is not scalar
 //! math completion, `libc.so`, a CRT, loader, or sysroot.
 
-#[cfg(not(all(target_os = "linux", target_arch = "x86_64", target_endian = "little")))]
+#[cfg(not(all(target_os = "linux", any(target_arch = "x86_64", target_arch = "aarch64"), target_endian = "little")))]
 compile_error!("the x87 extended-math leaf requires little-endian Linux/x86-64");
 
 // Keep the fixed upstream spellings in AT&T syntax where practical. The eight

@@ -89,7 +89,7 @@
 //! own private mapped list node; creation is limited by actual mapping/TLS
 //! allocation, not an artifact-local numeric registry ceiling.
 
-#[cfg(not(all(target_os = "linux", target_arch = "x86_64", target_endian = "little")))]
+#[cfg(not(all(target_os = "linux", any(target_arch = "x86_64", target_arch = "aarch64"), target_endian = "little")))]
 compile_error!("the x86 pthread create/join leaf requires little-endian Linux/x86-64");
 
 use core::ffi::{c_int, c_long, c_void};

@@ -18,7 +18,7 @@
 //! cancellation, signal/allocator/loader state, and a portable `prctl`
 //! abstraction are outside the owned-static runtime.
 
-#[cfg(not(all(target_os = "linux", target_arch = "x86_64", target_endian = "little")))]
+#[cfg(not(all(target_os = "linux", any(target_arch = "x86_64", target_arch = "aarch64"), target_endian = "little")))]
 compile_error!("owned static prctl support requires little-endian Linux/x86-64");
 
 // The fifth prctl word is already in r8; r9 is not consumed by Linux's

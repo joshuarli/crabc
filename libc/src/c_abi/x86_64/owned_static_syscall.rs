@@ -23,7 +23,7 @@
 //! [`super::raw_syscall`]; the error path writes the existing initial-TLS
 //! `errno` object through `__errno_location`.
 
-#[cfg(not(all(target_os = "linux", target_arch = "x86_64", target_endian = "little")))]
+#[cfg(not(all(target_os = "linux", any(target_arch = "x86_64", target_arch = "aarch64"), target_endian = "little")))]
 compile_error!("owned static syscall support requires little-endian Linux/x86-64");
 
 // The entry C ABI is `syscall(long number, ...)`:

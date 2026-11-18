@@ -14,7 +14,7 @@ fn x86_runtime_capabilities() {
         ("crabc_x86_crypt_allocator_composition", "CARGO_FEATURE_X86_CRYPT_ALLOCATOR_COMPOSITION"),
     ];
     let selected_x86 = std::env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("linux")
-        && std::env::var("CARGO_CFG_TARGET_ARCH").as_deref() == Ok("x86_64")
+        && matches!(std::env::var("CARGO_CFG_TARGET_ARCH").as_deref(), Ok("x86_64" | "aarch64"))
         && std::env::var("CARGO_CFG_TARGET_ENDIAN").as_deref() == Ok("little");
     let enabled = |feature| std::env::var_os(feature).is_some();
     let owned = enabled("CARGO_FEATURE_X86_OWNED_STATIC_RUNTIME")

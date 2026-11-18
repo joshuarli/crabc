@@ -18,7 +18,7 @@
 //! source in `xmm1`). Binary80 `fabsl`/`copysignl`, fdim, rounding, special,
 //! and general math remain outside this artifact.
 
-#[cfg(not(all(target_os = "linux", target_arch = "x86_64", target_endian = "little")))]
+#[cfg(not(all(target_os = "linux", any(target_arch = "x86_64", target_arch = "aarch64"), target_endian = "little")))]
 compile_error!("the x86 math bit-sign leaf requires little-endian Linux/x86-64");
 
 // Each musl object below has its own static archive member, as in musl's

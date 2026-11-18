@@ -14,7 +14,7 @@
 //! This file exports no public signal API. Its one hidden restorer symbol is
 //! an x86 signal-frame implementation detail, not a C entry point.
 
-#[cfg(not(all(target_os = "linux", target_arch = "x86_64", target_endian = "little")))]
+#[cfg(not(all(target_os = "linux", any(target_arch = "x86_64", target_arch = "aarch64"), target_endian = "little")))]
 compile_error!("x86 signal foundation requires little-endian Linux/x86-64");
 
 #[repr(C)]

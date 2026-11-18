@@ -6,7 +6,7 @@
 //! pretending that a general x86 libc, CRT, pthread/TLS lifecycle, or public
 //! x86 runtime exists.
 
-#[cfg(not(all(target_os = "linux", target_arch = "x86_64", target_endian = "little")))]
+#[cfg(not(all(target_os = "linux", any(target_arch = "x86_64", target_arch = "aarch64"), target_endian = "little")))]
 compile_error!("the x86 setjmp leaf requires little-endian Linux/x86-64");
 
 /*
