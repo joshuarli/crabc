@@ -373,6 +373,8 @@ _start:
     mov x27, xzr
     mov x28, xzr
     mov x18, xzr
+    mov x14, xzr
+    mov x21, xzr
 .Lstatic_pie_dynamic:
     add x9, x23, #16
     cmp x9, x24
@@ -381,32 +383,113 @@ _start:
     ldr x11, [x23, #8]
     add x23, x23, #16
     cbz x10, .Lstatic_pie_dynamic_done
+    cmp x10, #1
+    b.eq .Lstatic_pie_fail
+    cmp x10, #2
+    b.eq .Lstatic_pie_fail
+    cmp x10, #17
+    b.lo .Lstatic_pie_not_rel
+    cmp x10, #20
+    b.ls .Lstatic_pie_fail
+.Lstatic_pie_not_rel:
+    cmp x10, #22
+    b.eq .Lstatic_pie_fail
+    cmp x10, #23
+    b.eq .Lstatic_pie_fail
+    cmp x10, #30
+    b.ne .Lstatic_pie_not_flags
+    tbnz x11, #2, .Lstatic_pie_fail
+    b .Lstatic_pie_dynamic
+.Lstatic_pie_not_flags:
+    cmp x10, #3
+    b.ne .Lstatic_pie_not_pltgot
+    tbnz x14, #6, .Lstatic_pie_fail
+    orr x14, x14, #64
+    mov x21, x11
+    b .Lstatic_pie_dynamic
+.Lstatic_pie_not_pltgot:
     cmp x10, #7
     b.ne .Lstatic_pie_not_rela
+    tbnz x14, #0, .Lstatic_pie_fail
+    orr x14, x14, #1
     mov x25, x11
     b .Lstatic_pie_dynamic
 .Lstatic_pie_not_rela:
     cmp x10, #8
     b.ne .Lstatic_pie_not_relasz
+    tbnz x14, #1, .Lstatic_pie_fail
+    orr x14, x14, #2
     mov x26, x11
     b .Lstatic_pie_dynamic
 .Lstatic_pie_not_relasz:
+    cmp x10, #9
+    b.ne .Lstatic_pie_not_relaent
+    tbnz x14, #5, .Lstatic_pie_fail
+    orr x14, x14, #32
+    cmp x11, #24
+    b.ne .Lstatic_pie_fail
+    b .Lstatic_pie_dynamic
+.Lstatic_pie_not_relaent:
     cmp x10, #36
     b.ne .Lstatic_pie_not_relr
+    tbnz x14, #2, .Lstatic_pie_fail
+    orr x14, x14, #4
     mov x27, x11
     b .Lstatic_pie_dynamic
 .Lstatic_pie_not_relr:
     cmp x10, #35
     b.ne .Lstatic_pie_not_relrsz
+    tbnz x14, #3, .Lstatic_pie_fail
+    orr x14, x14, #8
     mov x28, x11
     b .Lstatic_pie_dynamic
 .Lstatic_pie_not_relrsz:
     cmp x10, #37
     b.ne .Lstatic_pie_dynamic
+    tbnz x14, #4, .Lstatic_pie_fail
+    orr x14, x14, #16
     mov x18, x11
     b .Lstatic_pie_dynamic
 .Lstatic_pie_dynamic_done:
+    and x9, x14, #3
+    cbz x9, .Lstatic_pie_rela_tags_done
+    cmp x9, #3
+    b.ne .Lstatic_pie_fail
+.Lstatic_pie_rela_tags_done:
+    and x9, x14, #28
+    cbz x9, .Lstatic_pie_relr_tags_done
+    cmp x9, #28
+    b.ne .Lstatic_pie_fail
+.Lstatic_pie_relr_tags_done:
+    mov w9, {hardened}
+    cbz w9, .Lstatic_pie_got_done
+    tbz x14, #6, .Lstatic_pie_got_done
+    cbz x16, .Lstatic_pie_fail
+    cbz x21, .Lstatic_pie_fail
+    adds x0, x21, x19
+    b.cs .Lstatic_pie_fail
+    adds x9, x0, #24
+    b.cs .Lstatic_pie_fail
+    ldr x10, [x16, #16]
+    adds x10, x10, x19
+    b.cs .Lstatic_pie_fail
+    ldr x11, [x16, #40]
+    adds x11, x11, x10
+    b.cs .Lstatic_pie_fail
+    adds x11, x11, #4095
+    b.cs .Lstatic_pie_fail
+    and x10, x10, #0xfffffffffffff000
+    and x11, x11, #0xfffffffffffff000
+    cmp x0, x10
+    b.lo .Lstatic_pie_fail
+    cmp x9, x11
+    b.hi .Lstatic_pie_fail
+    mov x1, #24
+    adr x17, .Lstatic_pie_got_done
+    b .Lstatic_pie_require_writable_load_range
+.Lstatic_pie_got_done:
     cbz x26, .Lstatic_pie_rela_done
+    tbz x14, #5, .Lstatic_pie_fail
     cbz x25, .Lstatic_pie_fail
     mov x9, #24
     udiv x10, x26, x9
