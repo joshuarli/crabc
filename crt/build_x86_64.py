@@ -238,6 +238,7 @@ class ElfObject:
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--architecture", choices=("x86_64", "aarch64"), default="x86_64")
     parser.add_argument("--out-dir", type=Path, default=DEFAULT_OUTPUT)
     parser.add_argument("--llvm-objdump", default="llvm-objdump")
     parser.add_argument("--profile", choices=("release", "debug"), default="release")
@@ -328,7 +329,7 @@ def default_rustc_command() -> list[str]:
 
 
 def selected_nightly_sysroot(version: dict[str, Any], sysroot: dict[str, Any],
-                             environment: dict[str, str]) -> Path:
+                             environment: dict[str, str], expected_host: str = TARGET) -> Path:
     """Require rustup's exact selected nightly and the expected x86 host."""
 
     release = next(
@@ -341,7 +342,7 @@ def selected_nightly_sysroot(version: dict[str, Any], sysroot: dict[str, Any],
          if line.startswith("host: ")),
         "",
     )
-    if version["returncode"] != 0 or not release.endswith("-nightly") or host != TARGET:
+    if version["returncode"] != 0 or not release.endswith("-nightly") or host != expected_host:
         raise BuildError("x86-64 CRT builder requires the selected nightly x86 toolchain")
     if sysroot["returncode"] != 0:
         raise BuildError(f"unable to locate selected Rust sysroot: {sysroot['stderr']}")
@@ -878,9 +879,43 @@ def build(args: argparse.Namespace) -> dict[str, object]:
     return report
 
 
+def build_aarch64(args: argparse.Namespace) -> dict[str, object]:
+    if args.profile != "release" or args.hardening_profile is not NativeRuntimeProfile.COMPATIBILITY:
+        raise BuildError("aarch64 CRT currently supports the compatibility static profile only")
+    if args.dynamic_main_thread_runtime_v1 or args.general_dynamic_lifecycle or args.owned_dynamic_sysroot:
+        raise BuildError("aarch64 dynamic CRT is not implemented")
+    output = output_directory(args.out_dir)
+    environment = deterministic_environment()
+    rustc = default_rustc_command()
+    version = run_command(rustc + ["-Vv"], environment)
+    sysroot = run_command(rustc + ["--print", "sysroot"], environment)
+    physical_sysroot = selected_nightly_sysroot(version, sysroot, environment, "aarch64-unknown-linux-musl")
+    compiler = native_build_tools.compile_command(physical_sysroot / "bin/rustc")
+    records = []
+    objects = {}
+    for name in ("crt1", "crti", "crtn"):
+        source = source_path("x86_64_" + name + ".rs")
+        destination = output / (name + ".o")
+        command = compiler + ["--edition=2021", "--crate-type=lib", "--emit=obj", "--target", "aarch64-unknown-linux-musl", "-C", "panic=abort", "-C", "force-unwind-tables=no", "-C", "opt-level=2", "-C", "relocation-model=static", "-C", "code-model=small", str(source), "-o", str(destination)]
+        result = run_command(command, environment)
+        records.append(result)
+        if result["returncode"]:
+            raise BuildError(f"aarch64 CRT {name} failed: {result['stderr']}")
+        data = destination.read_bytes()
+        if len(data) < 64 or data[:6] != b"\x7fELF\x02\x01" or struct.unpack_from("<HH", data, 16) != (ET_REL, 183):
+            raise BuildError(f"{destination}: expected aarch64 ELF relocatable")
+        objects[destination.name] = {"sha256": sha256_file(destination), "source": source.name}
+    write_json(output / "commands.json", records)
+    report = {"schema": 1, "target": "aarch64-unknown-linux-musl", "hardening_profile": args.hardening_profile.value, "objects": objects, "skipped": ["x86 entry machine-code and relocation audit", "x86 dynamic and static PIE CRT objects"]}
+    write_json(output / "objects.json", report)
+    print("aarch64 CRT: skipped x86 entry machine-code/relocation audit and dynamic/static-PIE objects", file=sys.stderr)
+    return report
+
+
 def main() -> int:
     try:
-        report = build(parse_args())
+        args = parse_args()
+        report = build_aarch64(args) if args.architecture == "aarch64" else build(args)
     except BuildError as error:
         print(f"crabc x86-64 static CRT build failed: {error}", file=sys.stderr)
         return 1
