@@ -26,6 +26,7 @@ compile_error!("the x86 C c32rtomb adapter requires little-endian Linux/x86-64")
 // pointer arguments remain rdi/rdx. A direct tail jump is therefore the exact
 // ABI form of musl's one-call C body, including bit-preserving values above
 // INT_MAX that `wcrtomb` subsequently interprets as `u32`.
+#[cfg(target_arch = "x86_64")]
 core::arch::global_asm!(
     r#"
     .text
@@ -39,3 +40,6 @@ c32rtomb:
     .section .note.GNU-stack,"",@progbits
     "#,
 );
+
+#[cfg(target_arch = "aarch64")]
+core::arch::global_asm!(include_str!("c32rtomb_aarch64.S"));

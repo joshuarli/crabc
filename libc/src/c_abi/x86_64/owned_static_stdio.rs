@@ -218,6 +218,7 @@ pub static mut stderr: *mut StandardStream = ptr::addr_of_mut!(STDERR_STREAM);
 // These opaque tails are source-matched to directory_streams.rs's selected C
 // allocator client thunks; the linker emits ordinary PLT relocations for the
 // public symbols, preserving executable interposition in libc.so.
+#[cfg(target_arch = "x86_64")]
 core::arch::global_asm!(r#"
     .text
     .p2align 4
@@ -244,6 +245,8 @@ __crabc_x86_stdio_cabi_free:
     jmp free
     .size __crabc_x86_stdio_cabi_free, .-__crabc_x86_stdio_cabi_free
 "#);
+#[cfg(target_arch = "aarch64")]
+core::arch::global_asm!(include_str!("stdio_thunks_aarch64.S"));
 
 unsafe extern "C" {
     #[link_name = "__crabc_x86_stdio_cabi_malloc"]
@@ -269,7 +272,7 @@ unsafe fn initialize_buffer(stream: *mut StandardStream) {
             if matches!((*stream).backend, Backend::Descriptor)
                 && (*stream).flags & (F_NOWR | F_STDOUT_WRITE) == 0 && (*stream).capacity != 0 {
                 let mut window_size = [0u16; 4];
-                (*stream).line_break = if raw_syscall::syscall3(16,
+                (*stream).line_break = if raw_syscall::syscall3(raw_syscall::SYS_IOCTL,
                     (*stream).file_descriptor as i64, 0x5413,
                     window_size.as_mut_ptr() as i64) == 0 { b'\n' as c_int } else { EOF };
             }
@@ -300,10 +303,10 @@ unsafe fn pending_output(stream: *const StandardStream) -> usize {
 }
 
 unsafe fn futex_wait(lock: &AtomicI32, value: i32) {
-    unsafe { raw_syscall::syscall4(202, lock.as_ptr() as i64, 128, value as i64, 0); }
+    unsafe { raw_syscall::syscall4(raw_syscall::SYS_FUTEX, lock.as_ptr() as i64, 128, value as i64, 0); }
 }
 unsafe fn futex_wake(lock: &AtomicI32) {
-    unsafe { raw_syscall::syscall3(202, lock.as_ptr() as i64, 129, 1); }
+    unsafe { raw_syscall::syscall3(raw_syscall::SYS_FUTEX, lock.as_ptr() as i64, 129, 1); }
 }
 
 // Acquire a FREE/LOCKED/CONTENDED futex word. A waiter always leaves the
@@ -654,7 +657,7 @@ static_archive_member! { fdopen_source {
             let Some((flags, stream_flags)) = open_mode(mode) else {
                 errno::set_errno(EINVAL); return ptr::null_mut();
             };
-            let current = c_status(raw_syscall::syscall3(72, fd as i64, 3, 0));
+            let current = c_status(raw_syscall::syscall3(raw_syscall::SYS_FCNTL, fd as i64, 3, 0));
             if current < 0 { return ptr::null_mut(); }
             if (current & 3 == 0 && stream_flags & F_NOWR == 0)
                 || (current & 3 == 1 && stream_flags & F_NORD == 0) {
@@ -675,9 +678,9 @@ unsafe fn descriptor_stream(fd: c_int, flags: c_int, stream_flags: u32, current:
         let stream = stdio_cabi_malloc(core::mem::size_of::<StandardStream>()).cast::<StandardStream>();
         if stream.is_null() { return stream; }
         StandardStream::write_header(stream, fd, stream_flags, BUFSIZ);
-        if flags & 0o2000000 != 0 { raw_syscall::syscall3(72, fd as i64, 2, 1); }
+        if flags & 0o2000000 != 0 { raw_syscall::syscall3(raw_syscall::SYS_FCNTL, fd as i64, 2, 1); }
         if flags & 0o2000 != 0 && current & 0o2000 == 0 {
-            if c_status(raw_syscall::syscall3(72, fd as i64, 4, (current | 0o2000) as i64)) < 0 {
+            if c_status(raw_syscall::syscall3(raw_syscall::SYS_FCNTL, fd as i64, 4, (current | 0o2000) as i64)) < 0 {
                 stdio_cabi_free(stream.cast()); return ptr::null_mut();
             }
         }
@@ -709,13 +712,13 @@ static_archive_member! { fopen_source {
     pub unsafe extern "C" fn fopen(path: *const c_char, mode: *const c_char) -> *mut StandardStream {
         unsafe {
             let Some((flags, stream_flags)) = open_mode(mode) else { errno::set_errno(EINVAL); return ptr::null_mut(); };
-            let fd = c_status(raw_syscall::syscall4(257, -100, path as i64, flags as i64, 0o666));
+            let fd = c_status(raw_syscall::syscall4(raw_syscall::SYS_OPENAT, -100, path as i64, flags as i64, 0o666));
             if fd < 0 { return ptr::null_mut(); }
             // The descriptor was just opened with exactly `flags`, so its access
             // mode matches the stream mode and O_APPEND is already set for "a":
             // fdopen's F_GETFL query and access check would add nothing.
             let stream = descriptor_stream(fd, flags, stream_flags, flags);
-            if stream.is_null() { raw_syscall::syscall1(3, fd as i64); }
+            if stream.is_null() { raw_syscall::syscall1(raw_syscall::SYS_CLOSE, fd as i64); }
             stream
         }
     }
@@ -740,17 +743,17 @@ unsafe fn reopen_descriptor(path: *const c_char, mode: *const c_char, stream: *m
             // Preserve musl's null-path branch: adjust the existing open
             // description's status flags without clearing FILE indicators or
             // replacing the stream's existing access restrictions.
-            if flags & 0o2000000 != 0 { raw_syscall::syscall3(72, old_fd, 2, 1); }
+            if flags & 0o2000000 != 0 { raw_syscall::syscall3(raw_syscall::SYS_FCNTL, old_fd, 2, 1); }
             let status_flags = flags & !(0o100 | 0o200 | 0o2000000);
-            return c_status(raw_syscall::syscall3(72, old_fd, 4, status_flags as i64)) >= 0;
+            return c_status(raw_syscall::syscall3(raw_syscall::SYS_FCNTL, old_fd, 4, status_flags as i64)) >= 0;
         }
-        let replacement = c_status(raw_syscall::syscall4(257, -100, path as i64, flags as i64, 0o666));
+        let replacement = c_status(raw_syscall::syscall4(raw_syscall::SYS_OPENAT, -100, path as i64, flags as i64, 0o666));
         if replacement < 0 { return false; }
         if replacement as i64 != old_fd {
-            let duplicated = c_status(raw_syscall::syscall3(292,
+            let duplicated = c_status(raw_syscall::syscall3(raw_syscall::SYS_DUP3,
                 replacement as i64, old_fd, (flags & 0o2000000) as i64));
             // Raw close cannot overwrite a duplication error in errno.
-            raw_syscall::syscall1(3, replacement as i64);
+            raw_syscall::syscall1(raw_syscall::SYS_CLOSE, replacement as i64);
             if duplicated < 0 { return false; }
         }
         // If open reused an externally closed old fd, it is already the
@@ -1381,7 +1384,7 @@ unsafe fn write_backend_held(stream: *mut StandardStream, source: *const u8, len
             (*stream).flags &= !F_STDOUT_WRITE;
             if (*stream).flags & F_SVB == 0 {
                 let mut window_size = [0u16; 4];
-                if raw_syscall::syscall3(16, (*stream).file_descriptor as i64,
+                if raw_syscall::syscall3(raw_syscall::SYS_IOCTL, (*stream).file_descriptor as i64,
                     0x5413, window_size.as_mut_ptr() as i64) != 0 { (*stream).line_break = EOF; }
             }
         }
@@ -2217,15 +2220,15 @@ pub(super) unsafe fn with_readonly_file<R>(
     read: impl FnOnce(*mut StandardStream) -> R,
 ) -> Result<R, c_int> {
     debug_assert!(capacity <= BUFSIZ);
-    let fd = unsafe { c_status(raw_syscall::syscall4(257, -100, path as i64, 0x80000, 0)) };
+    let fd = unsafe { c_status(raw_syscall::syscall4(raw_syscall::SYS_OPENAT, -100, path as i64, 0x80000, 0)) };
     if fd < 0 { return Err(unsafe { *errno::__errno_location() }); }
     // musl redundantly sets FD_CLOEXEC after open and ignores its result.
-    unsafe { raw_syscall::syscall3(72, fd as i64, 2, 1); }
+    unsafe { raw_syscall::syscall3(raw_syscall::SYS_FCNTL, fd as i64, 2, 1); }
     let mut stream = StandardStream::new(fd, F_PERM | F_NOWR, capacity);
     stream.holder.store(NEVER_LOCKED, Ordering::Relaxed);
     let pointer = ptr::addr_of_mut!(stream);
     unsafe { initialize_buffer(pointer); }
     let result = read(pointer);
-    unsafe { c_status(raw_syscall::syscall1(3, fd as i64)); }
+    unsafe { c_status(raw_syscall::syscall1(raw_syscall::SYS_CLOSE, fd as i64)); }
     Ok(result)
 }
