@@ -1,5 +1,5 @@
 /* The opaque context pointer and integer reason codes use the System V
- * x86-64 unwind ABI. No compiler unwinder header or runtime is required. */
+ * x86-64 and AArch64 unwind ABIs. No compiler unwinder header or runtime is required. */
 #include <stdint.h>
 
 struct unwind_context;
@@ -15,14 +15,22 @@ static int count_frame(struct unwind_context *context, void *data)
 
 __attribute__((noinline)) int crabc_provider_abi_walk(void)
 {
-    /* Keep actual SysV callee-saved registers live across the provider's
+    /* Keep actual ABI callee-saved registers live across the provider's
      * capture trampoline. The empty asm operands prevent constant folding
      * of the post-call comparisons without introducing another runtime. */
+#if defined(__aarch64__)
+    register uintptr_t saved_rbx __asm__("x19") = UINT64_C(0x1122334455667788);
+    register uintptr_t saved_r12 __asm__("x20") = UINT64_C(0x2233445566778899);
+    register uintptr_t saved_r13 __asm__("x21") = UINT64_C(0x33445566778899aa);
+    register uintptr_t saved_r14 __asm__("x22") = UINT64_C(0x445566778899aabb);
+    register uintptr_t saved_r15 __asm__("x23") = UINT64_C(0x5566778899aabbcc);
+#else
     register uintptr_t saved_rbx __asm__("rbx") = UINT64_C(0x1122334455667788);
     register uintptr_t saved_r12 __asm__("r12") = UINT64_C(0x2233445566778899);
     register uintptr_t saved_r13 __asm__("r13") = UINT64_C(0x33445566778899aa);
     register uintptr_t saved_r14 __asm__("r14") = UINT64_C(0x445566778899aabb);
     register uintptr_t saved_r15 __asm__("r15") = UINT64_C(0x5566778899aabbcc);
+#endif
     __asm__ volatile ("" : "+r"(saved_rbx), "+r"(saved_r12), "+r"(saved_r13),
                           "+r"(saved_r14), "+r"(saved_r15));
     unsigned frames = 0;

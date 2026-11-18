@@ -12,9 +12,14 @@ import stat
 import subprocess
 import tempfile
 import tomllib
+import sys
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / 'compat/x86_64'))
+from native_arch import native_arch
 
 ROOT = Path(__file__).resolve().parent
-TARGET = 'x86_64-unknown-linux-musl'
+ARCH = native_arch()
+TARGET = ARCH['target_triple']
 PINS = {
     'unwinding': ('0.2.10', '4b134ada16dda9e435abe2a6d76a01d497bc60707357845a15f9b0ed42dc88ce'),
     'gimli': ('0.34.0', '1033caf0b349c518623b5396bfb2cf0bddf44f0306d543a250e5743297aafd10'),
@@ -280,7 +285,7 @@ def stage_patched_unwinding(packages, *, stage_root=None, registry_source=None):
     # evidence-local root so every copied/overlaid source remains writable
     # without relaxing their input mounts.
     if stage_root is None:
-        inputs_root = ROOT.parent / '.work/x86_64/unwinder-source-inputs'
+        inputs_root = ROOT.parent / '.work' / ARCH['work_name'] / 'unwinder-source-inputs'
     else:
         inputs_root = private_stage_root(stage_root)
     source_root = inputs_root / input_identity.hexdigest()
@@ -480,8 +485,8 @@ def declared_offline_sources(environment):
 def build(output, *, stage_root=None, cargo_home=None, registry_unwinding_source=None, profile='release'):
     if profile not in ('release', 'debug'):
         raise ValueError('provider profile must be release or debug')
-    if (platform.system(), platform.machine()) != ('Linux', 'x86_64'):
-        raise ValueError('native Linux/x86-64 required')
+    if platform.system() != 'Linux':
+        raise ValueError('native Linux required')
     output = output.resolve()
     if not output.is_relative_to(ROOT.parent / '.work'):
         raise ValueError('build output must remain inside checkout .work')
@@ -503,7 +508,7 @@ def build(output, *, stage_root=None, cargo_home=None, registry_unwinding_source
                 or not registry_unwinding_source.resolve(strict=True).is_relative_to(output.parent)):
             raise ValueError('registry unwinding source must be a physical input below the build output parent')
     if cargo_home is None:
-        cargo_home = ROOT.parent / '.work/x86_64/cargo'
+        cargo_home = ROOT.parent / '.work' / ARCH['work_name'] / 'cargo'
     elif declared is None:
         cargo_home = Path(os.path.abspath(cargo_home))
         if cargo_home.parent != output.parent:
@@ -557,7 +562,7 @@ def build(output, *, stage_root=None, cargo_home=None, registry_unwinding_source
     verify_staged_patched_gimli(staged)
     (output / 'cargo.jsonl').write_text(log)
     sysroot = Path(run([*rustc, '--print', 'sysroot'], **kwargs).strip())
-    llvm = sysroot / 'lib/rustlib/x86_64-unknown-linux-musl/bin'
+    llvm = sysroot / 'lib/rustlib' / TARGET / 'bin'
     # llvm-tools reside under the host triple, which this image pins to musl.
     ar = llvm / 'llvm-ar'
     nm = llvm / 'llvm-nm'
@@ -598,7 +603,7 @@ def build(output, *, stage_root=None, cargo_home=None, registry_unwinding_source
     subprocess.run([str(ar), 'x', str(staticlib), fused_members[0]], cwd=directory, check=True)
     fused = directory / fused_members[0]
     header = fused.read_bytes()[:20]
-    if header[:6] != b'\x7fELF\x02\x01' or header[18:20] != b'\x3e\x00':
+    if header[:6] != b'\x7fELF\x02\x01' or header[18:20] != {'x86_64': b'\x3e\x00', 'aarch64': b'\xb7\x00'}[ARCH['arch']]:
         raise ValueError('non-native ELF object in provider')
     keep = directory / 'keep-global-symbols.txt'
     keep.write_text(''.join(f'{symbol}\n' for symbol in sorted(UNWIND_ABI)))
@@ -690,7 +695,7 @@ if __name__ == '__main__':
     arguments = parser.parse_args()
     output = arguments.output
     if output is None:
-        runs = ROOT.parent / '.work/x86_64/unwinder-builds'
+        runs = ROOT.parent / '.work' / ARCH['work_name'] / 'unwinder-builds'
         runs.mkdir(parents=True, exist_ok=True)
         output = Path(tempfile.mkdtemp(prefix='run-', dir=runs))
         # The pinned container builds as root; retain public build evidence
