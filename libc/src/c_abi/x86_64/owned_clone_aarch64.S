@@ -5,6 +5,7 @@
 // syscall(SYS_clone, flags, stack, ptid, tls, ctid)
 //         x8,        x0,    x1,    x2,   x3,  x4
 
+.text
 .global __crabc_owned_clone_raw
 .hidden __crabc_owned_clone_raw
 .type   __crabc_owned_clone_raw,%function
