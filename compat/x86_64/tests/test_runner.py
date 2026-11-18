@@ -576,7 +576,7 @@ unsafe fn join_selected_worker_inner(
         self.assertEqual(syntax.returncode, 0, syntax.stderr)
 
         source = RUNNER.read_text(encoding="utf-8")
-        self.assertIn('readonly PLATFORM="linux/amd64"', source)
+        self.assertIn('readonly PLATFORM="$platform"', source)
         header_abi_cases = _header_abi_cases()
         self.assertEqual(len(header_abi_cases), 242)
         self.assertEqual(
@@ -1459,14 +1459,14 @@ unsafe fn join_selected_worker_inner(
         ).read_text(encoding='utf-8')
         self.assertIn('x86_path_lifecycle_reference_probe.c', path_lifecycle_runner)
         self.assertIn('x86_namespace_reference_probe.c', namespace_runner)
-        self.assertIn('x86_64_path_lifecycle_is_descriptor_relative_and_typed', path_lifecycle_test)
-        self.assertIn('x86_64_namespace_lifecycle_is_descriptor_relative', namespace_test)
+        self.assertIn('linux_path_lifecycle_is_descriptor_relative_and_typed', path_lifecycle_test)
+        self.assertIn('linux_namespace_lifecycle_is_descriptor_relative', namespace_test)
         self.assertIn('x86_xattr_reference_probe.c', xattr_runner)
         self.assertIn('SYS_setxattr == 188', xattr_probe)
         self.assertIn('SYS_fremovexattr == 199', xattr_probe)
         self.assertIn('XATTR_CREATE == 1', xattr_probe)
         self.assertIn('XATTR_REPLACE == 2', xattr_probe)
-        self.assertIn('x86_64_xattr_preserves_path_nofollow_fd_and_caller_buffer_contracts', xattr_test)
+        self.assertIn('linux_xattr_preserves_path_nofollow_fd_and_caller_buffer_contracts', xattr_test)
         self.assertIn('crabc_rs_xattr_direct_probe', xattr_direct_probe)
         self.assertIn('x86_directory_reference_probe.c', directory_runner)
         self.assertIn('SYS_getdents64 == 217', directory_probe)
@@ -1477,9 +1477,9 @@ unsafe fn join_selected_worker_inner(
         self.assertIn('fdopendir', directory_probe)
         self.assertIn('seekdir', directory_probe)
         self.assertIn('rewinddir', directory_probe)
-        self.assertIn('x86_64_raw_dir_preserves_unaligned_buffer_borrowed_names_and_small_buffer_error', raw_directory_test)
-        self.assertIn('x86_64_dir_owns_close_on_exec_descriptor_and_preserves_byte_names', directory_test)
-        self.assertIn('x86_64_dir_rewind_and_seek_discard_buffered_records', directory_position_test)
+        self.assertIn('linux_raw_dir_preserves_unaligned_buffer_borrowed_names_and_small_buffer_error', raw_directory_test)
+        self.assertIn('linux_dir_owns_close_on_exec_descriptor_and_preserves_byte_names', directory_test)
+        self.assertIn('linux_dir_rewind_and_seek_discard_buffered_records', directory_position_test)
         self.assertIn('crabc_rs_directory_direct_probe', directory_direct_probe)
         self.assertIn('crabc_rs_directory_position_direct_probe', directory_position_direct_probe)
         self.assertIn('x86_temporary_object_reference_probe.c', temporary_object_runner)
@@ -1503,9 +1503,9 @@ unsafe fn join_selected_worker_inner(
         self.assertIn('AT_EMPTY_PATH == 0x1000', statx_probe)
         self.assertIn('STATX__RESERVED == 0x80000000U', statx_probe)
         self.assertIn('AT_STATX_FORCE_SYNC | AT_STATX_DONT_SYNC', statx_probe)
-        self.assertIn('x86_64_statx_observes_descriptor_relative_metadata_only_when_masked_in', statx_test)
-        self.assertIn('x86_64_statx_keeps_operation_specific_nofollow_and_empty_path_semantics', statx_test)
-        self.assertIn('x86_64_statx_preserves_direct_validation_and_bounded_path_contracts', statx_test)
+        self.assertIn('linux_statx_observes_descriptor_relative_metadata_only_when_masked_in', statx_test)
+        self.assertIn('linux_statx_keeps_operation_specific_nofollow_and_empty_path_semantics', statx_test)
+        self.assertIn('linux_statx_preserves_direct_validation_and_bounded_path_contracts', statx_test)
         self.assertIn('crabc_rs_statx_direct_probe', statx_direct_probe)
         self.assertIn('x86_cwd_canonicalize_reference_probe.c', cwd_canonicalize_runner)
         self.assertIn('SYS_getcwd == 79', cwd_canonicalize_probe)
@@ -1513,8 +1513,8 @@ unsafe fn join_selected_worker_inner(
         self.assertIn('SYS_fchdir == 81', cwd_canonicalize_probe)
         self.assertIn('realpath', cwd_canonicalize_probe)
         self.assertIn('cwd_mutation_child', cwd_canonicalize_probe)
-        self.assertIn('x86_64_canonicalize_into_is_physical_byte_preserving_and_noalloc', canonicalize_test)
-        self.assertIn('x86_64_cwd_mutation_is_child_contained_and_descriptor_restorable', cwd_mutation_test)
+        self.assertIn('linux_canonicalize_into_is_physical_byte_preserving_and_noalloc', canonicalize_test)
+        self.assertIn('linux_cwd_mutation_is_child_contained_and_descriptor_restorable', cwd_mutation_test)
         self.assertIn('crabc_rs_fs_canonicalize_direct_probe', canonicalize_direct_probe)
         self.assertIn('crabc_rs_process_cwd_direct_probe', cwd_direct_probe)
         self.assertIn('x86_root_change_reference_probe.c', root_change_runner)
@@ -1534,7 +1534,7 @@ unsafe fn join_selected_worker_inner(
         self.assertIn('matching_missing_target_failure', mount_probe)
         self.assertIn('run_in_child', mount_probe)
         self.assertIn(
-            'x86_64_mount_basic_checks_paths_and_preserves_direct_missing_target_errors',
+            'linux_mount_basic_checks_paths_and_preserves_direct_missing_target_errors',
             mount_test,
         )
         self.assertIn('mount::mount', mount_test)
@@ -1567,11 +1567,11 @@ unsafe fn join_selected_worker_inner(
         self.assertIn('raw_unaligned_mprotect_is_einval', mapping_reference_probe)
         self.assertIn('run_in_child', mapping_reference_probe)
         self.assertIn(
-            'x86_64_memory_mapping_preserves_protection_and_unique_unmap_lifetime',
+            'linux_memory_mapping_preserves_protection_and_unique_unmap_lifetime',
             memory_mapping_test,
         )
         self.assertIn(
-            'x86_64_memory_mapping_file_backed_boundary_and_direct_errors_are_precise',
+            'linux_memory_mapping_file_backed_boundary_and_direct_errors_are_precise',
             memory_mapping_test,
         )
         self.assertIn('mm::mmap_anonymous', memory_mapping_test)
@@ -1593,19 +1593,19 @@ unsafe fn join_selected_worker_inner(
         self.assertIn('check_anonymous_remap_rejected', memory_vm_reference_probe)
         self.assertIn('run_in_child', memory_vm_reference_probe)
         self.assertIn(
-            'x86_64_kernel_brk_queries_and_replays_without_allocator_mutation',
+            'linux_kernel_brk_queries_and_replays_without_allocator_mutation',
             memory_vm_test,
         )
         self.assertIn(
-            'x86_64_mlockall_flags_are_the_closed_linux_vocabulary',
+            'linux_mlockall_flags_are_the_closed_linux_vocabulary',
             memory_vm_test,
         )
         self.assertIn(
-            'x86_64_mlockall_is_child_contained_and_unlocked_after_success',
+            'linux_mlockall_is_child_contained_and_unlocked_after_success',
             memory_vm_test,
         )
         self.assertIn(
-            'x86_64_remap_file_pages_keeps_legacy_anonymous_error_typed',
+            'linux_remap_file_pages_keeps_legacy_anonymous_error_typed',
             memory_vm_test,
         )
         self.assertIn('process::kernel_brk', memory_vm_test)
@@ -1629,20 +1629,20 @@ unsafe fn join_selected_worker_inner(
         self.assertIn('if (grantpt(null_fd) != 0)', pty_basic_reference_probe)
         self.assertIn('ptsname_r(master, short_name, sizeof(short_name)) != ERANGE', pty_basic_reference_probe)
         self.assertIn(
-            'x86_64_pair_requires_read_write_before_touching_devpts',
+            'linux_pair_requires_read_write_before_touching_devpts',
             pty_basic_test,
         )
         self.assertIn(
-            'x86_64_grantpt_validates_a_non_pty_descriptor',
+            'linux_grantpt_validates_a_non_pty_descriptor',
             pty_basic_test,
         )
         self.assertIn("musl's C grantpt no-op wrapper", pty_basic_test)
         self.assertIn(
-            'x86_64_pair_owns_both_descriptors_and_resolves_slave_name',
+            'linux_pair_owns_both_descriptors_and_resolves_slave_name',
             pty_basic_test,
         )
-        self.assertIn('x86_64_ptsname_into_rejects_short_caller_storage', pty_basic_test)
-        self.assertIn('x86_64_slave_output_reaches_its_owned_master', pty_basic_test)
+        self.assertIn('linux_ptsname_into_rejects_short_caller_storage', pty_basic_test)
+        self.assertIn('linux_slave_output_reaches_its_owned_master', pty_basic_test)
         self.assertIn('pty::PtyPair::open', pty_basic_test)
         self.assertIn('pty::ptsname_into', pty_basic_test)
         self.assertIn('crabc_rs_pty_basic_direct_probe', pty_basic_direct_probe)
@@ -1660,10 +1660,10 @@ unsafe fn join_selected_worker_inner(
         self.assertIn('make_kernel_raw', terminal_reference_probe)
         self.assertIn('terminal_session_child', terminal_reference_probe)
         self.assertIn(
-            'x86_64_terminal_attributes_queue_special_codes_and_window_size_round_trip',
+            'linux_terminal_attributes_queue_special_codes_and_window_size_round_trip',
             terminal_test,
         )
-        self.assertIn('x86_64_explicit_session_handoff_is_confined_to_a_child', terminal_test)
+        self.assertIn('linux_explicit_session_handoff_is_confined_to_a_child', terminal_test)
         self.assertIn('pair.establish_session_and_controlling_terminal(false)', terminal_test)
         self.assertIn('termios::ttyname_into', terminal_test)
         self.assertIn('raw.make_raw()', terminal_test)
@@ -1689,8 +1689,8 @@ unsafe fn join_selected_worker_inner(
         self.assertIn('O_NOFOLLOW', shm_probe)
         self.assertIn('O_NONBLOCK', shm_probe)
         self.assertIn('shm_open', shm_probe)
-        self.assertIn('x86_64_shm_owns_cloexec_descriptors_and_unlink_after_open_lifetime', shm_test)
-        self.assertIn('x86_64_shm_validates_posix_names_before_the_direct_syscall', shm_test)
+        self.assertIn('linux_shm_owns_cloexec_descriptors_and_unlink_after_open_lifetime', shm_test)
+        self.assertIn('linux_shm_validates_posix_names_before_the_direct_syscall', shm_test)
         self.assertIn('crabc_rs_shm_direct_probe', shm_direct_probe)
         self.assertIn('x86_inotify_reference_probe.c', inotify_runner)
         self.assertIn('SYS_inotify_init1 == 294', inotify_probe)
@@ -1698,8 +1698,8 @@ unsafe fn join_selected_worker_inner(
         self.assertIn('SYS_inotify_rm_watch == 255', inotify_probe)
         self.assertIn('sizeof(struct inotify_event) == 16', inotify_probe)
         self.assertIn('IN_NONBLOCK == 0x00000800', inotify_probe)
-        self.assertIn('x86_64_inotify_owns_nonblocking_cloexec_watches_and_byte_events', inotify_test)
-        self.assertIn('x86_64_inotify_preserves_direct_validation_and_noalloc_path_boundaries', inotify_test)
+        self.assertIn('linux_inotify_owns_nonblocking_cloexec_watches_and_byte_events', inotify_test)
+        self.assertIn('linux_inotify_preserves_direct_validation_and_noalloc_path_boundaries', inotify_test)
         self.assertIn('crabc_rs_inotify_direct_probe', inotify_direct_probe)
         self.assertIn('x86_calendar_time_reference_probe.c', calendar_time_runner)
         self.assertIn('civil-time reference', calendar_time_runner)
@@ -1728,9 +1728,9 @@ unsafe fn join_selected_worker_inner(
         self.assertIn('0x00000004', advanced_time_probe)
         self.assertIn('INT_MIN', advanced_time_probe)
         self.assertIn('itimerspec_has_zero_interval', advanced_time_probe)
-        self.assertIn('x86_64_advanced_clock_ids_are_validated_and_direct', advanced_time_test)
-        self.assertIn('x86_64_clock_settime_preflights_and_never_mutates_realtime', advanced_time_test)
-        self.assertIn('x86_64_posix_timer_owns_a_sigev_none_lifecycle', advanced_time_test)
+        self.assertIn('linux_advanced_clock_ids_are_validated_and_direct', advanced_time_test)
+        self.assertIn('linux_clock_settime_preflights_and_never_mutates_realtime', advanced_time_test)
+        self.assertIn('linux_posix_timer_owns_a_sigev_none_lifecycle', advanced_time_test)
         self.assertIn('TimerSetFlags::from_bits_retain(2)', advanced_time_test)
         self.assertIn('x86_socket_transport_reference_probe.c', socket_transport_runner)
         self.assertIn('SYS_accept4 == 288', socket_transport_probe)
@@ -1991,7 +1991,7 @@ unsafe fn join_selected_worker_inner(
         )
         self.assertEqual(
             aggregate.count(
-                'run_in_container cargo check --locked --target x86_64-unknown-linux-musl'
+                'run_in_container cargo check --locked --target $TARGET_TRIPLE'
             ),
             2,
         )
@@ -3625,7 +3625,7 @@ unsafe fn join_selected_worker_inner(
             "ELF64_CLASS",
             "ELFDATA2LSB",
             "EV_CURRENT",
-            "EM_X86_64",
+            "ELF_MACHINE",
             "virtual_range_within_readable_file_load",
             "Some(0)",
         ):
@@ -8246,7 +8246,7 @@ esac
             self.assertIn(component, aggregate_runner)
 
     def test_x86_fs_credentials_are_typed_and_child_contained(self) -> None:
-        process = (ROOT / "crabc-rs" / "src" / "process_x86_64.rs").read_text(
+        process = (ROOT / "crabc-rs" / "src" / "process.rs").read_text(
             encoding="utf-8"
         )
         probe = (
@@ -8255,7 +8255,7 @@ esac
         runner = (
             ROOT / "compat" / "x86_64" / "run_x86_fs_credentials_reference.sh"
         ).read_text(encoding="utf-8")
-        test = (ROOT / "crabc-rs" / "tests" / "x86_64_fs_credentials.rs").read_text(
+        test = (ROOT / "crabc-rs" / "tests" / "linux_fs_credentials.rs").read_text(
             encoding="utf-8"
         )
 
@@ -8282,7 +8282,7 @@ esac
 
         self.assertIn("#[ignore", test)
         self.assertIn('"--ignored"', test)
-        self.assertIn("x86_64_fs_credentials_child_queries_and_requests_current_identity", test)
+        self.assertIn("linux_fs_credentials_child_queries_and_requests_current_identity", test)
         self.assertIn("Err(Errno::INVAL)", test)
 
     def test_core_refuses_a_non_native_host_before_docker(self) -> None:
@@ -8294,7 +8294,7 @@ esac
             fake_uname.write_text(
                 "#!/usr/bin/env bash\n"
                 "case \"$1\" in\n"
-                "  -s) printf 'Linux\\n' ;;\n"
+                "  -s) printf 'Darwin\\n' ;;\n"
                 "  -m) printf 'aarch64\\n' ;;\n"
                 "esac\n",
                 encoding="utf-8",
@@ -8314,7 +8314,7 @@ esac
             )
 
             self.assertEqual(completed.returncode, 2)
-            self.assertIn("refuses emulation", completed.stderr)
+            self.assertIn("requires a Linux host", completed.stderr)
 
     def test_owned_pthread_mutex_dispatch_preserves_supplied_product_arguments(self) -> None:
         temporary_root = ROOT / ".work" / "x86_64" / "tmp"
