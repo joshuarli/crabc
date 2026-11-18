@@ -667,6 +667,35 @@ def _validate_product_tree(root: Path, product: str, files: dict[str, str], alia
 
 def _validate_static_product_uncached(root: Path) -> tuple[Path, dict[str, str]]:
     manifest_path, manifest, combined = _product_manifest(root, "static", STATIC_PRODUCT_FORMAT)
+    if manifest.get("format") == "crabc-aarch64-owned-static-sysroot-v1":
+        if (manifest.get("schema"), manifest.get("target"), manifest.get("build_profile"), manifest.get("symlinks")) != (
+            1, "aarch64-unknown-linux-musl", "release", {}
+        ) or manifest.get("toolchain") != pinned_toolchain(ROOT):
+            _fail("aarch64 static product identity differs")
+        try:
+            profile = NativeRuntimeProfile(manifest["hardening_profile"])
+        except (KeyError, TypeError, ValueError):
+            _fail("aarch64 static product profile differs")
+        files = _payload_files(manifest.get("files"), "aarch64 static product manifest")
+        required = {"bin/crabc-cc", "share/crabc/crt.provenance.json", "share/crabc/crt.commands.json",
+                    "usr/lib/crt1.o", "usr/lib/rcrt1.o", "usr/lib/crti.o", "usr/lib/crtn.o",
+                    "usr/lib/libc.a", "usr/lib/libcrabc-builtins.a"}
+        if not required <= files.keys():
+            _fail("aarch64 static product omits runtime payload")
+        _validate_payload_tree(root, files, aliases={})
+        _physical_executable(root / "bin/crabc-cc", "aarch64 static product driver")
+        _physical_directory(root / "usr/include", "aarch64 static product headers")
+        import crabc_cc_static
+        try:
+            crabc_cc_static.validate_crt_provenance(root, "share/crabc/crt.provenance.json", profile)
+        except crabc_cc_static.DriverError as error:
+            raise ProductEvidenceError(str(error)) from error
+        for name in ("crt1.o", "rcrt1.o", "crti.o", "crtn.o"):
+            header = (root / "usr/lib" / name).read_bytes()[:20]
+            if len(header) != 20 or header[:7] != b"\x7fELF\x02\x01\x01" or header[16:20] != b"\x01\x00\xb7\x00":
+                _fail(f"aarch64 static product ELF differs: {name}")
+        _validate_link_input_modes(root, STATIC_LINK_INPUT_MODES, "static link input")
+        return manifest_path, files
     if (manifest.get("schema"), manifest.get("format"), manifest.get("target")) != (1, STATIC_PRODUCT_FORMAT, TARGET):
         _fail("static product manifest has the wrong product identity")
     try:
@@ -717,6 +746,13 @@ def _validate_static_product_uncached(root: Path) -> tuple[Path, dict[str, str]]
 
 def _validate_dynamic_product_uncached(root: Path) -> tuple[Path, dict[str, str]]:
     manifest_path, manifest, combined = _product_manifest(root, "dynamic", DYNAMIC_PRODUCT_FORMAT)
+    if manifest.get("format") == "crabc-aarch64-owned-dynamic-sysroot-v1":
+        import crabc_cc_owned_dynamic
+        try:
+            record = crabc_cc_owned_dynamic.validate(root)
+        except crabc_cc_owned_dynamic.shared.DriverError as error:
+            raise ProductEvidenceError(str(error)) from error
+        return manifest_path, _payload_files(record.get("files"), "aarch64 dynamic product manifest")
     try:
         profile = NativeRuntimeProfile(manifest["hardening_profile"])
     except (KeyError, TypeError, ValueError):
@@ -843,6 +879,10 @@ def _dynamic_metadata_path(root: Path, combined: dict | None, relative: str) -> 
 def validate_dynamic_product_source(root: Path, source_sha256: str) -> None:
     _validate_dynamic_product(root)
     _, manifest, combined = _product_manifest(root, "dynamic", DYNAMIC_PRODUCT_FORMAT)
+    if manifest.get("format") == "crabc-aarch64-owned-dynamic-sysroot-v1":
+        if manifest.get("source_sha256") != source_sha256:
+            _fail("dynamic product source differs from current checkout")
+        return
     if manifest.get("build_profile") == "debug":
         validate_debug_product_source(root, source_sha256)
         return

@@ -1528,6 +1528,7 @@ def build_aarch64(output: Path, *, allocator_backend: str, lifecycle_test_audit:
         raise BuildError("aarch64 output must be under .work/aarch64")
     output.parent.mkdir(parents=True, exist_ok=True)
     target = arch["target_triple"]
+    source_before_build = source_seal.product_source_digest(ROOT)
     rustup = str(pinned_rustup())
     rust_sysroot = pinned_rustc_sysroot(Path(rustup))
     tools = rust_sysroot / "lib/rustlib" / target / "bin"
@@ -1573,7 +1574,10 @@ def build_aarch64(output: Path, *, allocator_backend: str, lifecycle_test_audit:
         copy_artifact(crt / "commands.json", installed / "share/crabc/crt.commands.json")
         manifest_path = installed / "share/crabc/manifest.json"
         files = regular_file_hashes(installed)
+        if source_seal.product_source_digest(ROOT) != source_before_build:
+            raise BuildError("aarch64 static product source changed during build")
         manifest = {"schema": 1, "format": "crabc-aarch64-owned-static-sysroot-v1", "target": target,
+                    "source_sha256": source_before_build,
                     "toolchain": PINNED_TOOLCHAIN, "build_profile": profile,
                     "hardening_profile": hardening_profile.value, "symlinks": {},
                     "files": files, "skipped": skipped}
