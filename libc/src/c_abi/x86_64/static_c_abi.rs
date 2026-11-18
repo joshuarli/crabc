@@ -221,8 +221,10 @@ mod credentials;
 mod credential_observation;
 #[path = "personality.rs"]
 mod personality;
+#[cfg(target_arch = "x86_64")]
 #[path = "arch_prctl.rs"]
 mod arch_prctl;
+#[cfg(target_arch = "x86_64")]
 #[path = "io_permissions.rs"]
 mod io_permissions;
 #[path = "sched_rr_get_interval.rs"]
