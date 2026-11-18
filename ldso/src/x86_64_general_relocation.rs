@@ -523,7 +523,9 @@ unsafe fn tls_coordinates(
     let object = &objects[owner];
     if object.tls_module_id == 0 || object.tls_module_id > scope.module_count
         || object.tls_memsz == 0
-        || (object.tls_module_id <= scope.static_tls_count && object.tls_offset_below_tp < object.tls_memsz)
+        || (object.tls_module_id <= scope.static_tls_count
+            && if cfg!(target_arch = "aarch64") { object.tls_offset_below_tp < 16 }
+               else { object.tls_offset_below_tp < object.tls_memsz })
         || (object.tls_module_id > scope.static_tls_count && object.tls_offset_below_tp != 0)
         || offset.checked_add(size)? > object.tls_memsz as u64
     { return None; }
