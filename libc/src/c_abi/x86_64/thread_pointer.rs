@@ -35,6 +35,7 @@ pub(crate) unsafe fn thread_pointer_identity() -> *mut c_void {
     // `%fs:0` word. This snapshots that word without dereferencing the result
     // or modifying TLS state. `readonly` is required because the instruction
     // reads memory; it neither uses the stack nor changes condition flags.
+    #[cfg(target_arch = "x86_64")]
     unsafe {
         asm!(
             "mov {thread_pointer}, fs:[0]",
@@ -42,5 +43,8 @@ pub(crate) unsafe fn thread_pointer_identity() -> *mut c_void {
             options(readonly, nostack, preserves_flags),
         );
     }
+    #[cfg(target_arch = "aarch64")]
+    // SAFETY: TPIDR_EL0 is the calling thread's user-accessible thread pointer.
+    unsafe { asm!("mrs {thread_pointer}, tpidr_el0", thread_pointer = out(reg) thread_pointer, options(nostack, preserves_flags)); }
     thread_pointer as *mut c_void
 }

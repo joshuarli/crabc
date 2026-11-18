@@ -74,8 +74,7 @@ fn attach_with_tid_handoff(
 }
 
 pub(super) unsafe fn attach_initial_thread() -> bool {
-    let pointer: usize;
-    unsafe { core::arch::asm!("mov {}, fs:[0]", out(reg) pointer, options(nostack, readonly)); }
+    let pointer = super::pthread_identity::current_thread_pointer() as usize;
     let tid = unsafe {
         raw_syscall::syscall1(
             raw_syscall::SYS_SET_TID_ADDRESS,
