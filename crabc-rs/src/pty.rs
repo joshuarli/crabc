@@ -1,4 +1,12 @@
-//! Linux pseudoterminal operations.
+//! Native Linux/x86-64 pseudoterminal ownership and explicit session handoff.
+//!
+//! This private native seam owns opening a `/dev/ptmx` master, validating and
+//! unlocking its devpts slave, opening that slave with forced `O_NOCTTY`, and
+//! deriving its `/dev/pts/<number>` name into caller-owned or alloc-backed
+//! storage. Pair construction always forces `O_NOCTTY`; the only stateful
+//! transition is the explicit unsafe session/controlling-terminal handoff on
+//! the already-owned slave. It deliberately does not expose a
+//! caller-controlled `TIOCGPTPEER` open or a generic ioctl boundary.
 
 use core::ffi::CStr;
 use core::mem::MaybeUninit;
@@ -24,18 +32,28 @@ const PTY_NAME_PREFIX: &[u8] = b"/dev/pts/";
 const PTY_NAME_MAX: usize = PTY_NAME_PREFIX.len() + 10;
 
 bitflags! {
-    /// Flags accepted by [`openpt`] and [`ioctl_tiocgptpeer`].
+    /// Linux `O_*` flags accepted by [`openpt`] and [`PtyPair::open`].
+    ///
+    /// The pair constructor requires [`Self::RDWR`]. `NOCTTY` and `CLOEXEC`
+    /// are passed to the master as requested; its internal slave open always
+    /// includes `NOCTTY` so constructing a pair cannot acquire a controlling
+    /// terminal as a side effect.
     #[repr(transparent)]
     #[derive(Copy, Clone, Debug, Eq, Hash, PartialEq)]
     pub struct OpenptFlags: u32 {
+        /// `O_RDWR`.
         const RDWR = 0x2;
+        /// `O_NOCTTY`.
         const NOCTTY = 0x100;
+        /// `O_CLOEXEC`.
         const CLOEXEC = 0x80000;
+        /// Preserve direct Linux flag words for kernel validation.
         const _ = !0;
     }
 }
 
 impl From<OpenptFlags> for fs::OFlags {
+    #[inline]
     fn from(value: OpenptFlags) -> Self {
         Self::from_bits_retain(value.bits())
     }
@@ -43,12 +61,12 @@ impl From<OpenptFlags> for fs::OFlags {
 
 /// An owned Linux pseudoterminal master/slave pair.
 ///
-/// `PtyPair::open` opens `/dev/ptmx`, validates and unlocks its devpts slave,
-/// then obtains that slave through `TIOCGPTPEER`. Both descriptors are owned
-/// by this value and are closed on drop. The peer open always includes
-/// `O_NOCTTY`, so constructing a pair does not silently change the caller's
-/// controlling terminal; use the explicit unsafe handoff methods below when
-/// a session intentionally wants that transition.
+/// [`Self::open`] opens `/dev/ptmx`, validates and unlocks its devpts slave,
+/// then opens that slave through an internal `TIOCGPTPEER` boundary. Both
+/// descriptors are owned by this value and are closed on drop. The peer open
+/// always includes `O_NOCTTY`, so construction cannot silently change the
+/// calling process's terminal state. The only state-changing operation is the
+/// explicit unsafe handoff below.
 pub struct PtyPair {
     master: OwnedFd,
     slave: OwnedFd,
@@ -59,7 +77,7 @@ impl PtyPair {
     ///
     /// `flags` must include [`OpenptFlags::RDWR`]. `NOCTTY` and `CLOEXEC`
     /// are passed to the master and peer opens as requested; the peer always
-    /// receives `NOCTTY` to keep session ownership explicit.
+    /// receives `NOCTTY` to preserve the safe ownership-only boundary.
     #[inline]
     pub fn open(flags: OpenptFlags) -> Result<Self> {
         if !flags.contains(OpenptFlags::RDWR) {
@@ -69,8 +87,7 @@ impl PtyPair {
         let master = openpt(flags)?;
         grantpt(&master)?;
         unlockpt(&master)?;
-        let peer_flags = flags | OpenptFlags::NOCTTY;
-        let slave = ioctl_tiocgptpeer(&master, peer_flags)?;
+        let slave = open_peer_noctty(&master, flags | OpenptFlags::NOCTTY)?;
         Ok(Self { master, slave })
     }
 
@@ -100,19 +117,18 @@ impl PtyPair {
     ///
     /// # Safety
     ///
-    /// The caller must be a Linux session leader, must keep this pair's slave
-    /// open and exclusively owned for the ioctl, and must serialize this
-    /// transition with all other session, process-group, and terminal-state
-    /// operations in the process. `steal` requests Linux's privileged
-    /// reassignment behavior (`TIOCSCTTY` argument one) and therefore also
-    /// requires the authority demanded by the kernel. This operation changes
-    /// process-global session state and is not suitable for an arbitrary
-    /// multithreaded caller.
+    /// The caller must be a Linux session leader, keep this pair's slave open
+    /// and exclusively owned for the ioctl, and serialize the transition with
+    /// all other session, process-group, and terminal-state operations in the
+    /// process. `steal` selects Linux's privileged reassignment behavior
+    /// (`TIOCSCTTY` argument one), so the caller must also hold the authority
+    /// the kernel requires. This process-global operation is not suitable for
+    /// an arbitrary multithreaded caller.
     #[inline]
     pub unsafe fn set_controlling_terminal(&self, steal: bool) -> Result<()> {
         let argument = usize::from(steal) as *mut u8;
-        // SAFETY: The method contract requires a live PTY slave and a caller
-        // that has serialized the process-global terminal transition.
+        // SAFETY: the method contract establishes the live descriptor,
+        // session-leader, ownership, and process-state serialization rules.
         unsafe {
             crabc_core::io::ioctl_raw(self.slave.as_raw_fd(), TIOCSCTTY, argument)?;
         }
@@ -122,9 +138,8 @@ impl PtyPair {
     /// Creates a new session and assigns this pair's slave as its controlling
     /// terminal.
     ///
-    /// This combines Linux `setsid` with [`Self::set_controlling_terminal`]
-    /// for a deliberately explicit one-shot handoff. It does not fork,
-    /// supervise, duplicate, or exec a child process.
+    /// This is an explicit one-shot `setsid` + `TIOCSCTTY` handoff. It does
+    /// not fork, supervise, duplicate, or exec a child process.
     ///
     /// # Safety
     ///
@@ -133,14 +148,14 @@ impl PtyPair {
     /// is intentional. No other code may concurrently inspect or mutate
     /// process groups, sessions, or terminal state. Linux `setsid` must be
     /// permitted for the caller (in particular, it must not already be a
-    /// process-group leader), and `steal` carries the kernel's authority
-    /// requirement. If the ioctl fails after `setsid` succeeds, the new
-    /// session remains in effect and the error is returned.
+    /// process-group leader), and `steal` has the authority requirements
+    /// documented by [`Self::set_controlling_terminal`]. If the ioctl fails
+    /// after `setsid` succeeds, the new session remains in effect.
     #[inline]
     pub unsafe fn establish_session_and_controlling_terminal(&self, steal: bool) -> Result<()> {
-        crate::process::setsid()?;
-        // SAFETY: The caller's obligations are identical to this method's
-        // documented process-state and descriptor requirements.
+        crabc_core::process::setsid()?;
+        // SAFETY: this method's documented caller obligations are exactly
+        // those required by the constituent controlling-terminal operation.
         unsafe { self.set_controlling_terminal(steal) }
     }
 }
@@ -175,23 +190,6 @@ pub fn unlockpt<Fd: AsFd>(fd: Fd) -> Result<()> {
         )?;
     }
     Ok(())
-}
-
-/// Opens the slave side directly through `TIOCGPTPEER`.
-#[inline]
-pub fn ioctl_tiocgptpeer<Fd: AsFd>(fd: Fd, flags: OpenptFlags) -> Result<OwnedFd> {
-    let fd = fd.as_fd();
-    // SAFETY: TIOCGPTPEER encodes `O_*` flags in the ioctl argument word and
-    // returns a newly-owned descriptor as its successful integer result.
-    let raw = unsafe {
-        crabc_core::io::ioctl_raw(
-            fd.as_raw_fd(),
-            TIOCGPTPEER,
-            flags.bits() as usize as *mut u8,
-        )?
-    };
-    // SAFETY: a successful TIOCGPTPEER result is a newly allocated fd.
-    Ok(unsafe { OwnedFd::from_raw_fd(raw) })
 }
 
 /// Returns the slave device name into caller-provided uninitialized storage.
@@ -235,6 +233,24 @@ pub fn ptsname<Fd: AsFd, B: Into<Vec<u8>>>(fd: Fd, reuse: B) -> Result<CString> 
     Ok(unsafe { CString::from_vec_with_nul_unchecked(path) })
 }
 
+#[inline]
+fn open_peer_noctty<Fd: AsFd>(fd: Fd, flags: OpenptFlags) -> Result<OwnedFd> {
+    let fd = fd.as_fd();
+    // SAFETY: TIOCGPTPEER encodes `O_*` flags in the ioctl argument word and
+    // returns a newly-owned descriptor as its successful integer result. The
+    // caller is private to this module and always includes O_NOCTTY.
+    let raw = unsafe {
+        crabc_core::io::ioctl_raw(
+            fd.as_raw_fd(),
+            TIOCGPTPEER,
+            flags.bits() as usize as *mut u8,
+        )?
+    };
+    // SAFETY: a successful TIOCGPTPEER result is a newly allocated fd.
+    Ok(unsafe { OwnedFd::from_raw_fd(raw) })
+}
+
+#[inline]
 fn ptsname_raw<'buffer>(
     number: i32,
     buffer: &'buffer mut [MaybeUninit<u8>],
@@ -283,4 +299,21 @@ fn pty_number<Fd: AsFd>(fd: Fd) -> Result<i32> {
         crabc_core::io::ioctl_raw(fd.as_raw_fd(), TIOCGPTN, (&mut number as *mut i32).cast())?;
     }
     Ok(number)
+}
+
+/// Opens the slave side directly through `TIOCGPTPEER`.
+#[inline]
+pub fn ioctl_tiocgptpeer<Fd: AsFd>(fd: Fd, flags: OpenptFlags) -> Result<OwnedFd> {
+    let fd = fd.as_fd();
+    // SAFETY: TIOCGPTPEER encodes `O_*` flags in the ioctl argument word and
+    // returns a newly-owned descriptor as its successful integer result.
+    let raw = unsafe {
+        crabc_core::io::ioctl_raw(
+            fd.as_raw_fd(),
+            TIOCGPTPEER,
+            flags.bits() as usize as *mut u8,
+        )?
+    };
+    // SAFETY: a successful TIOCGPTPEER result is a newly allocated fd.
+    Ok(unsafe { OwnedFd::from_raw_fd(raw) })
 }

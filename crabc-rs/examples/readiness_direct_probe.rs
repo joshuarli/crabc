@@ -5,7 +5,6 @@
 use core::mem::MaybeUninit;
 
 use crabc_rs::{event, time};
-#[cfg(not(target_arch = "x86_64"))]
 use crabc_rs::pipe;
 
 #[panic_handler]
@@ -13,9 +12,7 @@ fn panic(_: &core::panic::PanicInfo<'_>) -> ! {
     loop {}
 }
 
-#[cfg(not(target_arch = "x86_64"))]
-#[no_mangle]
-pub extern "C" fn crabc_rs_readiness_direct_probe() -> i32 {
+fn legacy_readiness() -> i32 {
     let (reader, _writer) = match pipe::pipe() {
         Ok(pipe) => pipe,
         Err(error) => return -error.raw(),
@@ -33,7 +30,7 @@ pub extern "C" fn crabc_rs_readiness_direct_probe() -> i32 {
         return -error.raw();
     }
 
-    let timeout = time::Timespec::default();
+    let timeout = time::Timespec { tv_sec: 0, tv_nsec: 0 };
     let empty = crabc_rs::signal::SignalSet::EMPTY;
     let mut events = [MaybeUninit::uninit(); 1];
     match event::epoll::wait_with_mask(&epoll, &mut events, Some(&timeout), Some(&empty)) {
@@ -73,16 +70,16 @@ pub extern "C" fn crabc_rs_readiness_direct_probe() -> i32 {
 
 
 /// Exercises readiness ownership in an isolated writable working directory.
-#[cfg(target_arch = "x86_64")]
 #[no_mangle]
 pub extern "C" fn crabc_rs_readiness_direct_probe() -> i32 {
+    let legacy = legacy_readiness();
+    if legacy != 0 { return legacy; }
     match native_readiness() {
         Ok(()) => 0,
         Err(error) => -error.raw(),
     }
 }
 
-#[cfg(target_arch = "x86_64")]
 fn native_readiness() -> crabc_rs::Result<()> {
     use crabc_rs::{fs, io, Errno};
     use crabc_rs::system::inotify::{CreateFlags, EventMask, Inotify};

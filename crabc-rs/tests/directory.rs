@@ -1,7 +1,4 @@
-#[cfg(target_arch = "x86_64")]
 const UNLINK_FILE: crabc_rs::fs::UnlinkAtFlags = crabc_rs::fs::UnlinkAtFlags::empty();
-#[cfg(not(target_arch = "x86_64"))]
-const UNLINK_FILE: crabc_rs::fs::AtFlags = crabc_rs::fs::AtFlags::empty();
 
 use core::mem::MaybeUninit;
 use core::sync::atomic::{AtomicUsize, Ordering};

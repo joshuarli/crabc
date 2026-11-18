@@ -1,16 +1,28 @@
-//! Direct Linux/AArch64 clock queries.
+//! Bounded native Linux/x86-64 wall-clock, civil-calendar, advanced
+//! clock-query/mutation, owned POSIX timer, relative `nanosleep`, typed
+//! `clock_nanosleep`, interval-timer-control, and timerfd operations.
 //!
-//! Known clocks use an infallible interface matching Rustix: each enum value
-//! is supported by Linux at runtime. Dynamic descriptor clocks retain a
-//! fallible result because the kernel can reject a descriptor-backed clock.
+//! This facade provides validated Linux clock IDs, typed whole-second and
+//! millisecond realtime observations, direct `gettimeofday` wall-clock
+//! observations, strict UTC Gregorian conversion, alloc-gated explicit
+//! immutable POSIX-TZ/TZif local projections, direct safe clock mutation, and
+//! owned POSIX timers without `SIGEV_THREAD` callbacks. Interrupted sleeps
+//! preserve the kernel's remainder instead of retrying or hiding `EINTR`. It
+//! intentionally does not expose C time/tm APIs, libc `TZ` state, zoneinfo
+//! loading, inverse ambiguous-local conversion, C `timer_t`/`sigevent` ABI,
+//! or a timer/signal policy framework. The interval-timer and timerfd operations
+//! are direct kernel boundaries; none selects a C time API.
 
-use bitflags::bitflags;
+use core::convert::TryFrom;
 use core::mem::MaybeUninit;
 use core::time::Duration;
-
-use crate::{process::Pid, process::Signal, AsFd, BorrowedFd, Errno, OwnedFd, Result};
-
-pub use crate::fs::{Nsecs, Secs, Timespec};
+use bitflags::bitflags;
+use crabc_core::time::{
+    KernelItimerval, KernelItimervalTimeval, KernelItimerspec, KernelTimespec,
+};
+use crate::process::Pid;
+use crate::signal::Signal;
+use crate::{AsFd, BorrowedFd, Errno, OwnedFd, Result};
 
 pub use crate::civil_time::{
     difftime, gmtime, timegm, CalendarTime, UnixTime, NANOS_PER_SECOND,
@@ -20,66 +32,145 @@ pub use crate::civil_time::LocalCalendar;
 
 const CLOCK_NANOSLEEP_TIMER_ABSTIME: u32 = 1;
 
-/// Reads the current UTC wall-clock second through the direct Linux clock
-/// syscall.  This is the native counterpart of musl's `time`; subsecond
-/// precision is intentionally discarded at this typed boundary.
-#[inline]
-pub fn time() -> Result<i64> {
-    Ok(clock_query_result(ClockId::Realtime as i32)?.tv_sec)
+/// Linux clock identifiers admitted by this x86-64 foundation slice.
+#[repr(i32)]
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+#[non_exhaustive]
+pub enum ClockId {
+    /// `CLOCK_REALTIME` (Unix epoch wall clock).
+    Realtime = 0,
+    /// `CLOCK_MONOTONIC` (boot-relative, nondecreasing clock).
+    Monotonic = 1,
+    /// `CLOCK_PROCESS_CPUTIME_ID` (CPU time consumed by this process).
+    ProcessCPUTime = 2,
+    /// `CLOCK_THREAD_CPUTIME_ID` (CPU time consumed by this thread).
+    ThreadCPUTime = 3,
+    /// `CLOCK_MONOTONIC_RAW` (hardware-derived non-adjusted clock).
+    MonotonicRaw = 4,
+    /// `CLOCK_REALTIME_COARSE`.
+    RealtimeCoarse = 5,
+    /// `CLOCK_MONOTONIC_COARSE`.
+    MonotonicCoarse = 6,
+    /// `CLOCK_BOOTTIME`.
+    Boottime = 7,
+    /// `CLOCK_REALTIME_ALARM`.
+    RealtimeAlarm = 8,
+    /// `CLOCK_BOOTTIME_ALARM`.
+    BoottimeAlarm = 9,
+    /// `CLOCK_TAI`.
+    Tai = 11,
 }
 
-/// A UTC realtime observation reduced to whole milliseconds.
-///
-/// The seconds field remains signed so observations before the Unix epoch are
-/// representable. The millisecond field is a normalized remainder in
-/// `0..1000`; it is obtained by truncating Linux's nanosecond field rather
-/// than rounding it. The fields are private so callers cannot construct a
-/// non-canonical observation or cross this native boundary with a C
-/// `timespec` value.
-#[derive(Debug, Copy, Clone, Eq, Hash, Ord, PartialEq, PartialOrd)]
-pub struct RealtimeMillis {
-    seconds: i64,
-    milliseconds: u16,
-}
+impl TryFrom<i32> for ClockId {
+    type Error = Errno;
 
-impl RealtimeMillis {
-    #[inline]
-    fn from_timespec(value: Timespec) -> Option<Self> {
-        if !(0..NANOS_PER_SECOND as i64).contains(&value.tv_nsec) {
-            return None;
+    fn try_from(value: i32) -> Result<Self> {
+        match value {
+            0 => Ok(Self::Realtime),
+            1 => Ok(Self::Monotonic),
+            2 => Ok(Self::ProcessCPUTime),
+            3 => Ok(Self::ThreadCPUTime),
+            4 => Ok(Self::MonotonicRaw),
+            5 => Ok(Self::RealtimeCoarse),
+            6 => Ok(Self::MonotonicCoarse),
+            7 => Ok(Self::Boottime),
+            8 => Ok(Self::RealtimeAlarm),
+            9 => Ok(Self::BoottimeAlarm),
+            11 => Ok(Self::Tai),
+            _ => Err(Errno::INVAL),
         }
-        Some(Self {
-            seconds: value.tv_sec,
-            milliseconds: (value.tv_nsec / 1_000_000) as u16,
-        })
-    }
-
-    /// Returns signed whole seconds since 1970-01-01 00:00:00 UTC.
-    #[must_use]
-    #[inline]
-    pub const fn seconds(self) -> i64 {
-        self.seconds
-    }
-
-    /// Returns the truncated millisecond remainder within the current
-    /// second, in `0..1000`.
-    #[must_use]
-    #[inline]
-    pub const fn milliseconds(self) -> u16 {
-        self.milliseconds
     }
 }
 
-/// Reads `CLOCK_REALTIME` through the shared Linux vDSO clock dispatch and
-/// truncates its subsecond component to milliseconds.
+/// A validated Linux process CPU-clock identifier.
 ///
-/// Kernel errors remain typed [`Errno`] values. Absent or malformed vDSO
-/// metadata falls back to the direct syscall; no C ABI function, allocation,
-/// timezone state, or TLS `errno` participates in the observation.
-#[inline]
-pub fn realtime_millis() -> Result<RealtimeMillis> {
-    RealtimeMillis::from_timespec(clock_query_result(ClockId::Realtime as i32)?).ok_or(Errno::RANGE)
+/// Linux represents this clock as `(-pid - 1) * 8 + 2`, rather than allocating
+/// a timer object. Construction validates the encoded ID with direct
+/// `clock_getres`, so safe callers cannot manufacture a clock for a missing or
+/// unrelated process.
+#[repr(transparent)]
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub struct ProcessClockId(i32);
+
+impl ProcessClockId {
+    /// Returns the Linux-encoded `clockid_t` value.
+    #[must_use]
+    #[inline]
+    pub const fn as_raw(self) -> i32 {
+        self.0
+    }
 }
+
+/// Resolves a process CPU clock without libc or TLS `errno`.
+///
+/// `None` selects the calling process. Linux reports `EINVAL` when the
+/// encoded clock does not resolve; this typed API adopts musl's
+/// `clock_getcpuclockid` mapping of that specific condition to `ESRCH` while
+/// retaining every other direct kernel error.
+pub fn clock_getcpuclockid(pid: Option<Pid>) -> Result<ProcessClockId> {
+    // `clockid_t` is signed 32-bit. Reject values whose Linux/musl encoding
+    // would wrap into an unrelated ordinary clock before validating it.
+    const MAX_ENCODED_PROCESS_PID: i32 = 268_435_455;
+    if let Some(pid) = pid {
+        if pid.as_raw_pid() > MAX_ENCODED_PROCESS_PID {
+            return Err(Errno::SRCH);
+        }
+    }
+
+    let raw_pid = pid.map_or(0, Pid::as_raw_pid) as u32;
+    let encoded = raw_pid.wrapping_neg().wrapping_sub(1).wrapping_shl(3)
+        | ClockId::ProcessCPUTime as u32;
+    let encoded = encoded as i32;
+    let mut resolution = MaybeUninit::<KernelTimespec>::uninit();
+    // SAFETY: `resolution` owns one exact x86-64 output record. Success proves
+    // that Linux accepted the encoded scalar before it becomes a typed value.
+    match unsafe { crabc_core::time::clock_getres_raw(encoded, resolution.as_mut_ptr()) } {
+        Err(Errno::INVAL) => Err(Errno::SRCH),
+        Err(error) => Err(error),
+        Ok(()) => {
+            // SAFETY: Linux initialized the full private record on success.
+            let _ = unsafe { resolution.assume_init() };
+            Ok(ProcessClockId(encoded))
+        }
+    }
+}
+
+/// Linux clock identifiers accepted by [`clock_gettime_dynamic`].
+///
+/// `Dynamic` borrows a descriptor that must remain open for the query; Linux
+/// validates whether it is a clock device. `Process` can only contain a value
+/// returned by [`clock_getcpuclockid`].
+#[derive(Clone, Copy, Debug)]
+#[non_exhaustive]
+pub enum DynamicClockId<'fd> {
+    /// One of the direct known Linux clocks.
+    Known(ClockId),
+    /// A validated process CPU clock.
+    Process(ProcessClockId),
+    /// A Linux `CLOCKFD` descriptor-backed clock.
+    Dynamic(BorrowedFd<'fd>),
+    /// `CLOCK_REALTIME_ALARM`.
+    RealtimeAlarm,
+    /// `CLOCK_TAI`.
+    Tai,
+    /// `CLOCK_BOOTTIME`.
+    Boottime,
+    /// `CLOCK_BOOTTIME_ALARM`.
+    BoottimeAlarm,
+}
+
+/// Linux/x86-64 `struct timespec` represented as a typed native observation.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub struct Timespec {
+    /// Seconds in the selected clock's epoch.
+    pub tv_sec: i64,
+    /// Nanoseconds within `tv_sec`, normalized by Linux on success.
+    pub tv_nsec: i64,
+}
+
+const _: () = assert!(core::mem::size_of::<Timespec>() == 16);
+const _: () = assert!(core::mem::align_of::<Timespec>() == 8);
 
 /// The result of a relative native sleep request.
 ///
@@ -99,17 +190,19 @@ pub enum SleepOutcome {
 /// Errors produced while converting or issuing a native sleep request.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum SleepError {
-    /// The request exceeded Linux/AArch64's signed `timespec.tv_sec` range.
+    /// The request exceeded Linux/x86-64's signed `timespec.tv_sec` range.
     DurationOutOfRange,
-    /// An absolute deadline had a non-canonical `tv_nsec` field.
+    /// A mode-specific timespec request had a non-canonical `tv_nsec` field.
+    ///
+    /// Relative `nanosleep` constructs its timespec from [`Duration`] and
+    /// therefore cannot produce this variant; it remains part of the shared
+    /// sleep error vocabulary for exact facade parity.
     InvalidRequest,
     /// The kernel returned an invalid remaining `timespec` after `EINTR`.
     InvalidRemaining,
     /// A Linux syscall failure, kept as a typed value.
     ///
     /// Relative `EINTR` is represented by [`SleepOutcome::Interrupted`].
-    /// Absolute `EINTR` remains here because Linux provides no remaining
-    /// duration for an absolute deadline.
     Kernel(Errno),
 }
 
@@ -124,9 +217,18 @@ impl SleepError {
     }
 }
 
+impl Timespec {
+    fn from_kernel(value: KernelTimespec) -> Result<Self> {
+        if !(0..i64::from(NANOS_PER_SECOND)).contains(&value.tv_nsec) {
+            return Err(Errno::RANGE);
+        }
+        Ok(Self { tv_sec: value.tv_sec, tv_nsec: value.tv_nsec })
+    }
+}
+
 /// Sleeps for a relative duration through Linux `nanosleep`.
 ///
-/// `Duration` is converted explicitly to the Linux/AArch64 timespec contract:
+/// `Duration` is converted explicitly to the Linux/x86-64 timespec contract:
 /// seconds must fit in `i64`, and nanoseconds are already guaranteed by Rust
 /// to be below one billion. `EINTR` is represented by
 /// [`SleepOutcome::Interrupted`] with the kernel's remaining duration; other
@@ -136,7 +238,7 @@ impl SleepError {
 pub fn nanosleep(duration: Duration) -> core::result::Result<SleepOutcome, SleepError> {
     let request = duration_to_timespec(duration)?;
     let mut remaining = MaybeUninit::<Timespec>::uninit();
-    // SAFETY: `request` is an initialized Linux/AArch64 timespec and
+    // SAFETY: `request` is an initialized Linux/x86-64 timespec and
     // `remaining` is writable storage for the kernel's interrupted result.
     match unsafe {
         crabc_core::time::nanosleep_raw(
@@ -159,8 +261,8 @@ pub fn nanosleep(duration: Duration) -> core::result::Result<SleepOutcome, Sleep
 
 /// Sleeps for a relative duration on a selected Linux clock.
 ///
-/// This is the typed relative form of `clock_nanosleep`: `duration` is
-/// converted to an AArch64 `timespec`, and an `EINTR` result includes the
+/// This is the typed x86-64 form of `clock_nanosleep`: `duration` is
+/// converted to an x86-64 `timespec`, and an `EINTR` result includes the
 /// kernel-provided remaining duration. Other syscall failures remain typed in
 /// [`SleepError::Kernel`].
 #[inline]
@@ -170,7 +272,7 @@ pub fn clock_nanosleep_relative(
 ) -> core::result::Result<SleepOutcome, SleepError> {
     let request = duration_to_timespec(duration)?;
     let mut remaining = MaybeUninit::<Timespec>::uninit();
-    // SAFETY: `request` is an initialized Linux/AArch64 timespec and
+    // SAFETY: `request` is an initialized Linux/x86-64 timespec and
     // `remaining` is writable storage for the kernel's interrupted result.
     match unsafe {
         crabc_core::time::clock_nanosleep_raw(
@@ -195,14 +297,13 @@ pub fn clock_nanosleep_relative(
 
 /// Sleeps until an absolute time on a selected Linux clock.
 ///
-/// `deadline` uses the Linux/AArch64 `timespec` contract: `tv_sec` is signed
+/// `deadline` uses the Linux/x86-64 `timespec` contract: `tv_sec` is signed
 /// 64-bit seconds and `tv_nsec` must be in `0..1_000_000_000`. No
 /// normalization is performed, so a past or negative deadline is passed to
 /// the selected clock unchanged. A malformed `tv_nsec` is rejected before
-/// the syscall. Linux reports an interrupted
-/// absolute sleep as [`SleepError::Kernel`] containing `EINTR`; no remaining
-/// duration is returned or invented because `TIMER_ABSTIME` has no remaining
-/// time output.
+/// the syscall. Linux reports an interrupted absolute sleep as
+/// [`SleepError::Kernel`] containing `EINTR`; no remaining duration is
+/// returned or invented because `TIMER_ABSTIME` has no remaining output.
 #[inline]
 pub fn clock_nanosleep_absolute(
     id: ClockId,
@@ -211,7 +312,7 @@ pub fn clock_nanosleep_absolute(
     if !valid_timespec(deadline) {
         return Err(SleepError::InvalidRequest);
     }
-    // SAFETY: `deadline` has the validated Linux/AArch64 timespec range. The
+    // SAFETY: `deadline` has the validated Linux/x86-64 timespec range. The
     // null remaining pointer is required for an absolute request.
     match unsafe {
         crabc_core::time::clock_nanosleep_raw(
@@ -237,7 +338,7 @@ fn duration_to_timespec(duration: Duration) -> core::result::Result<Timespec, Sl
 
 #[inline]
 fn duration_from_timespec(timespec: Timespec) -> core::result::Result<Duration, SleepError> {
-    if timespec.tv_sec < 0 || !(0..1_000_000_000).contains(&timespec.tv_nsec) {
+    if timespec.tv_sec < 0 || !(0..i64::from(NANOS_PER_SECOND)).contains(&timespec.tv_nsec) {
         return Err(SleepError::InvalidRemaining);
     }
     Ok(Duration::new(
@@ -248,29 +349,171 @@ fn duration_from_timespec(timespec: Timespec) -> core::result::Result<Duration, 
 
 #[inline]
 fn valid_timespec(timespec: Timespec) -> bool {
-    timespec.tv_nsec >= 0 && timespec.tv_nsec < NANOS_PER_SECOND as i64
+    timespec.tv_nsec >= 0 && timespec.tv_nsec < i64::from(NANOS_PER_SECOND)
 }
 
-/// Reads the current UTC wall clock from Linux's `gettimeofday` syscall.
+/// A UTC realtime observation reduced to whole milliseconds.
 ///
-/// Kernel failures are returned as [`crate::Errno`] values. A malformed
-/// kernel subsecond field is reported as `Errno::RANGE`; valid Linux results
-/// always normalize to a [`UnixTime`] with nanoseconds below one second. No
-/// C `errno`, timezone state, vDSO/libc call, or allocation is involved.
+/// The seconds field remains signed so observations before the Unix epoch are
+/// representable. The millisecond field is normalized to `0..1000` by
+/// truncating the kernel's validated nanosecond remainder rather than
+/// rounding it. Private fields prevent callers from manufacturing a
+/// non-canonical value.
+#[derive(Debug, Copy, Clone, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub struct RealtimeMillis {
+    seconds: i64,
+    milliseconds: u16,
+}
+
+impl RealtimeMillis {
+    #[inline]
+    fn from_timespec(value: Timespec) -> Option<Self> {
+        if !(0..i64::from(NANOS_PER_SECOND)).contains(&value.tv_nsec) {
+            return None;
+        }
+        Some(Self {
+            seconds: value.tv_sec,
+            milliseconds: (value.tv_nsec / 1_000_000) as u16,
+        })
+    }
+
+    /// Returns signed whole seconds since the Unix epoch.
+    #[inline]
+    #[must_use]
+    pub const fn seconds(self) -> i64 {
+        self.seconds
+    }
+
+    /// Returns the truncated millisecond remainder in `0..1000`.
+    #[inline]
+    #[must_use]
+    pub const fn milliseconds(self) -> u16 {
+        self.milliseconds
+    }
+}
+
+/// Reads a validated observation from one admitted Linux clock.
+pub fn clock_gettime(clock: ClockId) -> Result<Timespec> {
+    Timespec::from_kernel(crabc_core::time::clock_gettime(clock as i32)?)
+}
+
+/// Reads a validated resolution for one admitted Linux clock.
+pub fn clock_getres(clock: ClockId) -> Result<Timespec> {
+    Timespec::from_kernel(crabc_core::time::clock_getres(clock as i32)?)
+}
+
+/// Returns the current value of a known, validated-process, or descriptor
+/// backed Linux clock.
+///
+/// Unlike [`clock_gettime`], this operation remains fallible because Linux may
+/// reject a dynamic descriptor clock. No libc or TLS `errno` participates;
+/// the shared x86 clock dispatcher reaches the validated vDSO or its direct
+/// syscall fallback with caller-owned private output storage.
+pub fn clock_gettime_dynamic(id: DynamicClockId<'_>) -> Result<Timespec> {
+    let mut value = MaybeUninit::<KernelTimespec>::uninit();
+    // SAFETY: `value` owns one exact x86-64 Linux timespec output record for
+    // the dynamically encoded clock ID.
+    unsafe {
+        crabc_core::time::clock_gettime_raw(dynamic_clock_id(id), value.as_mut_ptr().cast())?;
+        Timespec::from_kernel(value.assume_init())
+    }
+}
+
+const CLOCKFD: i32 = 3;
+
+#[inline]
+fn dynamic_clock_id(id: DynamicClockId<'_>) -> i32 {
+    match id {
+        DynamicClockId::Known(id) => id as i32,
+        DynamicClockId::Process(id) => id.as_raw(),
+        DynamicClockId::Dynamic(fd) => ((!fd.as_raw_fd()) << 3) | CLOCKFD,
+        DynamicClockId::RealtimeAlarm => ClockId::RealtimeAlarm as i32,
+        DynamicClockId::Tai => ClockId::Tai as i32,
+        DynamicClockId::Boottime => ClockId::Boottime as i32,
+        DynamicClockId::BoottimeAlarm => ClockId::BoottimeAlarm as i32,
+    }
+}
+
+/// Reads the current UTC wall-clock value using the admitted realtime clock.
+pub fn timespec_get() -> Result<Timespec> {
+    clock_gettime(ClockId::Realtime)
+}
+
+/// Sets one known Linux clock through the direct x86-64 syscall.
+///
+/// The public `Timespec` is validated before it becomes a private kernel
+/// record. Linux remains responsible for settable-clock and privilege checks;
+/// callers can use a non-settable clock such as `CLOCK_MONOTONIC` to observe
+/// its direct `EINVAL` or `EPERM` result without mutating realtime.
+#[inline]
+pub fn clock_settime(id: ClockId, timespec: Timespec) -> Result<()> {
+    if !valid_timespec(timespec) {
+        return Err(Errno::INVAL);
+    }
+    let timespec = KernelTimespec {
+        tv_sec: timespec.tv_sec,
+        tv_nsec: timespec.tv_nsec,
+    };
+    // SAFETY: `timespec` is initialized and canonical. Linux owns the clock
+    // mutability and privilege decision.
+    unsafe { crabc_core::time::clock_settime_raw(id as i32, &timespec) }
+}
+
+/// Reads the current UTC wall clock through direct Linux `gettimeofday`.
+///
+/// Linux's signed seconds plus normalized microsecond remainder are converted
+/// into a Rust-native [`UnixTime`]. A malformed kernel remainder is reported
+/// as [`Errno::RANGE`]; no C `timeval`/`tm`, libc `TZ` state, vDSO dispatch,
+/// allocation, or thread-local `errno` is involved.
 #[inline]
 pub fn wall_clock() -> Result<UnixTime> {
     let parts = crabc_core::time::gettimeofday()?;
     UnixTime::from_wall_clock_parts(parts.seconds, parts.microseconds).ok_or(Errno::RANGE)
 }
 
-/// The three Linux process interval timers accepted by [`getitimer`] and
-/// [`setitimer`].
+/// Reads the current UTC wall-clock second through the validated realtime
+/// clock query. Subsecond precision is intentionally discarded at this
+/// typed boundary; no C `time_t`/`tloc` ABI or thread-local `errno` is used.
+#[inline]
+pub fn time() -> Result<i64> {
+    Ok(clock_gettime(ClockId::Realtime)?.tv_sec)
+}
+
+/// Reads `CLOCK_REALTIME` and truncates its subsecond part to milliseconds.
 ///
-/// This is deliberately a closed vocabulary: unsupported selector integers
-/// cannot cross the safe Rust API boundary. `Real` measures elapsed wall-clock
-/// time, `Virtual` measures user CPU time, and `Profiler` measures user plus
-/// system CPU time.
-#[derive(Debug, Copy, Clone, Eq, Hash, PartialEq)]
+/// The direct x86-64 clock query returns a normalized kernel `timespec`; no C
+/// `timeb` record, timezone state, allocation, or thread-local `errno` is
+/// involved. A malformed kernel result is rejected before a public value is
+/// exposed.
+#[inline]
+pub fn realtime_millis() -> Result<RealtimeMillis> {
+    RealtimeMillis::from_timespec(clock_gettime(ClockId::Realtime)?).ok_or(Errno::RANGE)
+}
+
+/// Returns CPU time consumed by the calling process as a native duration.
+///
+/// This observes Linux's `CLOCK_PROCESS_CPUTIME_ID`, which accumulates user
+/// and system CPU time across the process rather than elapsed wall time. The
+/// known-clock result is infallible by convention; malformed or failed kernel
+/// data cannot be represented as a `Duration` and is treated as an impossible
+/// direct-kernel contract failure.
+#[inline]
+#[must_use]
+pub fn process_cpu_time() -> Duration {
+    let value = clock_gettime(ClockId::ProcessCPUTime)
+        .unwrap_or_else(|_| panic!("Linux process CPU clock query failed"));
+    if value.tv_sec < 0 || !(0..i64::from(NANOS_PER_SECOND)).contains(&value.tv_nsec) {
+        panic!("Linux process CPU clock returned an invalid timespec");
+    }
+    Duration::new(value.tv_sec as u64, value.tv_nsec as u32)
+}
+
+/// The three Linux process interval timers admitted by [`getitimer`].
+///
+/// This is a closed vocabulary: unsupported selector integers cannot cross
+/// the safe Rust boundary. `Real` measures elapsed wall-clock time, `Virtual`
+/// measures user CPU time, and `Profiler` measures user plus system CPU time.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 #[repr(i32)]
 pub enum IntervalTimerKind {
     /// `ITIMER_REAL` (selector `0`).
@@ -284,9 +527,9 @@ pub enum IntervalTimerKind {
 impl TryFrom<i32> for IntervalTimerKind {
     type Error = Errno;
 
-    /// Converts a Linux `ITIMER_*` selector, rejecting unsupported values.
+    /// Converts one Linux `ITIMER_*` selector, rejecting unsupported values.
     #[inline]
-    fn try_from(value: i32) -> core::result::Result<Self, Self::Error> {
+    fn try_from(value: i32) -> Result<Self> {
         match value {
             0 => Ok(Self::Real),
             1 => Ok(Self::Virtual),
@@ -296,14 +539,14 @@ impl TryFrom<i32> for IntervalTimerKind {
     }
 }
 
-/// A validated interval-timer setting returned by Linux `getitimer`.
+/// A validated interval-timer setting accepted by and returned from Linux
+/// `getitimer`/`setitimer`.
 ///
-/// Both durations are non-negative and have nanosecond precision that is a
-/// multiple of one thousand, because Linux reports signed seconds plus a
-/// normalized microsecond remainder. The fields are private and there are no
-/// mutation methods, so callers cannot construct or alter an invalid timer
-/// setting through this type.
-#[derive(Debug, Copy, Clone, Eq, Hash, PartialEq)]
+/// Both durations are non-negative and have microsecond precision, because
+/// Linux reports signed seconds plus a normalized microsecond remainder. The
+/// fields are private so callers can only submit settings made through the
+/// precision- and range-checked [`Self::new`] constructor.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub struct IntervalTimerValue {
     interval: Duration,
     value: Duration,
@@ -314,8 +557,9 @@ impl IntervalTimerValue {
     ///
     /// `setitimer` is a legacy microsecond API. Values with sub-microsecond
     /// precision are rejected rather than silently rounded at the kernel
-    /// boundary; `alarm` and `ualarm` provide the corresponding integral
-    /// second and microsecond aliases.
+    /// boundary; [`alarm`] and [`ualarm`] provide the corresponding integral
+    /// second and microsecond aliases. Seconds outside Linux's signed
+    /// `timeval.tv_sec` range are rejected as well.
     #[inline]
     pub const fn new(interval: Duration, value: Duration) -> Option<Self> {
         if interval.subsec_nanos() % 1_000 != 0
@@ -345,7 +589,7 @@ impl IntervalTimerValue {
 }
 
 /// Errors returned by the native `getitimer` query.
-#[derive(Debug, Copy, Clone, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum GetitimerError {
     /// Linux returned a malformed signed timeval or microsecond remainder.
     InvalidKernelValue,
@@ -367,7 +611,7 @@ impl GetitimerError {
 
 /// Reads one process interval timer through the direct Linux syscall.
 ///
-/// The query does not arm, disarm, or otherwise mutate process timer state.
+/// This query does not arm, disarm, or otherwise mutate process timer state.
 /// Linux's signed timeval fields are validated before conversion to
 /// [`IntervalTimerValue`]; malformed kernel output is never exposed as a
 /// negative or non-canonical Rust duration. No libc, C ABI, vDSO, allocation,
@@ -376,14 +620,14 @@ impl GetitimerError {
 pub fn getitimer(
     kind: IntervalTimerKind,
 ) -> core::result::Result<IntervalTimerValue, GetitimerError> {
-    let mut value = MaybeUninit::<crabc_core::time::KernelItimerval>::uninit();
-    // SAFETY: `value` is writable storage for the exact Linux/AArch64
-    // `__kernel_old_itimerval` record and remains live for the syscall.
+    let mut value = MaybeUninit::<KernelItimerval>::uninit();
+    // SAFETY: `value` is writable storage for one exact x86-64 Linux
+    // `itimerval` result and remains live for the direct syscall.
     unsafe {
-        crabc_core::time::getitimer_raw(kind as i32, value.as_mut_ptr().cast())
+        crabc_core::time::getitimer_raw(kind as i32, value.as_mut_ptr())
             .map_err(GetitimerError::Kernel)?;
     }
-    // SAFETY: A successful getitimer syscall initializes all four words.
+    // SAFETY: Linux initializes all four result words on successful return.
     let value = unsafe { value.assume_init() };
     let interval = duration_from_itimerval_timeval(value.it_interval)
         .ok_or(GetitimerError::InvalidKernelValue)?;
@@ -392,24 +636,8 @@ pub fn getitimer(
     Ok(IntervalTimerValue { interval, value })
 }
 
-/// Converts one signed Linux interval-timer timeval into a canonical Rust
-/// duration. Linux's `getitimer` ABI reports non-negative values with
-/// `tv_usec` in `0..1_000_000`; every other record is rejected.
-#[inline]
-fn duration_from_itimerval_timeval(
-    value: crabc_core::time::KernelItimervalTimeval,
-) -> Option<Duration> {
-    if value.tv_sec < 0 || value.tv_usec < 0 || value.tv_usec >= 1_000_000 {
-        return None;
-    }
-    Some(Duration::new(
-        value.tv_sec as u64,
-        (value.tv_usec as u32) * 1_000,
-    ))
-}
-
 /// Errors returned when controlling a Linux process interval timer.
-#[derive(Debug, Copy, Clone, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum IntervalTimerError {
     /// A duration cannot be represented by Linux's signed microsecond
     /// `timeval` ABI, or has finer-than-microsecond precision.
@@ -419,7 +647,7 @@ pub enum IntervalTimerError {
 }
 
 impl IntervalTimerError {
-    /// Returns the underlying kernel errno, when the failure came from Linux.
+    /// Returns the underlying Linux errno, when the failure came from Linux.
     #[must_use]
     #[inline]
     pub const fn kernel_errno(self) -> Option<Errno> {
@@ -430,27 +658,24 @@ impl IntervalTimerError {
     }
 }
 
-/// Arms, disarms, and observes one of Linux's three process interval timers.
+/// Arms or disarms one of Linux's three process interval timers.
 ///
-/// The setting is represented by the same validated microsecond vocabulary
-/// returned by [`getitimer`]. The previous setting is returned after the
-/// kernel operation, matching Linux's atomic `setitimer` exchange.
+/// The setting uses the same validated microsecond vocabulary returned by
+/// [`getitimer`]. The previous setting is returned after Linux's atomic
+/// `setitimer` exchange. This is process-global state: callers must coordinate
+/// use of the selected timer with other code in the same process.
 #[inline]
 pub fn setitimer(
     kind: IntervalTimerKind,
     new_value: IntervalTimerValue,
 ) -> core::result::Result<IntervalTimerValue, IntervalTimerError> {
     let new_value = kernel_itimerval_from_interval(new_value);
-    let mut old_value = MaybeUninit::<crabc_core::time::KernelItimerval>::uninit();
-    // SAFETY: `new_value` is a fully initialized Linux timeval pair and the
-    // output storage is initialized on a successful syscall.
+    let mut old_value = MaybeUninit::<KernelItimerval>::uninit();
+    // SAFETY: `new_value` is a fully initialized Linux/x86-64 timeval pair
+    // and the output storage is initialized on a successful syscall.
     unsafe {
-        crabc_core::time::setitimer_raw(
-            kind as i32,
-            (&new_value as *const crabc_core::time::KernelItimerval).cast(),
-            old_value.as_mut_ptr().cast(),
-        )
-        .map_err(IntervalTimerError::Kernel)?;
+        crabc_core::time::setitimer_raw(kind as i32, &new_value, old_value.as_mut_ptr())
+            .map_err(IntervalTimerError::Kernel)?;
         let old_value = old_value.assume_init();
         interval_from_kernel_itimerval(old_value).ok_or(IntervalTimerError::InvalidSpecification)
     }
@@ -459,8 +684,9 @@ pub fn setitimer(
 /// Arms the real interval timer for integral seconds and returns its previous
 /// remaining value rounded up to the next second.
 ///
-/// The ceiling is required by the C `alarm` contract: a previously armed
-/// timer with any positive fractional remainder reports at least one second.
+/// The ceiling is required by the `alarm` contract: a previously armed timer
+/// with any positive fractional remainder reports at least one second. This
+/// is a Rust facade alias only; it does not add a C ABI export.
 #[inline]
 pub fn alarm(seconds: u32) -> core::result::Result<u32, IntervalTimerError> {
     let setting = IntervalTimerValue::new(Duration::ZERO, Duration::from_secs(seconds as u64))
@@ -473,6 +699,8 @@ pub fn alarm(seconds: u32) -> core::result::Result<u32, IntervalTimerError> {
 
 /// Arms the real interval timer in integral microseconds and returns its
 /// previous remaining value in microseconds.
+///
+/// This is a Rust facade alias only; it does not add a C ABI export.
 #[inline]
 pub fn ualarm(
     value_microseconds: u32,
@@ -492,51 +720,57 @@ pub fn ualarm(
     Ok(micros.min(u64::from(u32::MAX)) as u32)
 }
 
+/// Converts one signed Linux interval-timer timeval into a canonical Rust
+/// duration. Linux's `getitimer` ABI reports non-negative values with
+/// `tv_usec` in `0..1_000_000`; every other record is rejected.
 #[inline]
-fn kernel_itimerval_from_interval(value: IntervalTimerValue) -> crabc_core::time::KernelItimerval {
-    fn timeval(duration: Duration) -> crabc_core::time::KernelItimervalTimeval {
-        crabc_core::time::KernelItimervalTimeval {
-            tv_sec: duration.as_secs() as i64,
-            tv_usec: (duration.subsec_nanos() / 1_000) as i64,
+fn duration_from_itimerval_timeval(value: KernelItimervalTimeval) -> Option<Duration> {
+    if value.tv_sec < 0 || value.tv_usec < 0 || value.tv_usec >= 1_000_000 {
+        return None;
+    }
+    Some(Duration::new(
+        value.tv_sec as u64,
+        (value.tv_usec as u32) * 1_000,
+    ))
+}
+
+#[inline]
+fn kernel_itimerval_from_interval(value: IntervalTimerValue) -> KernelItimerval {
+    fn timeval(value: Duration) -> KernelItimervalTimeval {
+        KernelItimervalTimeval {
+            tv_sec: value.as_secs() as i64,
+            tv_usec: (value.subsec_nanos() / 1_000) as i64,
         }
     }
-    crabc_core::time::KernelItimerval {
+    KernelItimerval {
         it_interval: timeval(value.interval),
         it_value: timeval(value.value),
     }
 }
 
 #[inline]
-fn interval_from_kernel_itimerval(
-    value: crabc_core::time::KernelItimerval,
-) -> Option<IntervalTimerValue> {
-    fn duration(value: crabc_core::time::KernelItimervalTimeval) -> Option<Duration> {
-        if value.tv_sec < 0 || value.tv_usec < 0 || value.tv_usec >= 1_000_000 {
-            return None;
-        }
-        Some(Duration::new(
-            value.tv_sec as u64,
-            (value.tv_usec as u32) * 1_000,
-        ))
-    }
-    IntervalTimerValue::new(duration(value.it_interval)?, duration(value.it_value)?)
+fn interval_from_kernel_itimerval(value: KernelItimerval) -> Option<IntervalTimerValue> {
+    IntervalTimerValue::new(
+        duration_from_itimerval_timeval(value.it_interval)?,
+        duration_from_itimerval_timeval(value.it_value)?,
+    )
 }
 
 /// A validated nanosecond-resolution POSIX timer setting.
 ///
-/// Unlike [`IntervalTimerValue`], this uses Linux's native `timespec` ABI and
-/// therefore preserves sub-microsecond precision. The fields are private so
-/// malformed nanoseconds and unrepresentable seconds cannot cross the safe
-/// syscall boundary.
-#[derive(Debug, Copy, Clone, Eq, Hash, PartialEq)]
+/// This is deliberately distinct from timerfd's public `Itimerspec`: it owns
+/// only a pair of non-negative `Duration` values and never exposes a C
+/// `itimerspec` record or `timer_t` representation.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub struct TimerSpec {
     interval: Duration,
     value: Duration,
 }
 
 impl TimerSpec {
-    /// Constructs a timer setting, returning `None` if seconds exceed Linux's
-    /// signed `timespec.tv_sec` range.
+    /// Constructs a setting when both durations fit Linux's signed timespec
+    /// seconds field.
+    #[must_use]
     #[inline]
     pub const fn new(interval: Duration, value: Duration) -> Option<Self> {
         if interval.as_secs() > i64::MAX as u64 || value.as_secs() > i64::MAX as u64 {
@@ -562,48 +796,53 @@ impl TimerSpec {
 }
 
 bitflags! {
-    /// POSIX `timer_settime` flags.
+    /// Flags accepted by Linux `timer_settime`.
     #[repr(transparent)]
     #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
     pub struct TimerSetFlags: u32 {
         /// Interpret the expiration as an absolute deadline on the selected
         /// clock instead of a relative duration.
-        const ABSTIME = 1;
-        /// Preserve future Linux-defined bits for kernel validation.
+        const ABSTIME = 0x0000_0001;
+        /// Preserve non-`ABSTIME` bits unchanged. Linux 5.10 masks these
+        /// bits while applying the timer rather than rejecting them.
         const _ = !0;
     }
 }
 
 /// The supported Linux POSIX timer notification modes.
 ///
-/// `SIGEV_THREAD` is intentionally absent: it requires a process runtime and
-/// callback ownership boundary. Signal payloads are integer values, matching
-/// Linux's `sigval` representation without exposing a raw C union.
-#[derive(Debug, Copy, Clone, Eq, Hash, PartialEq)]
+/// `SIGEV_THREAD` is deliberately absent: its callback lifetime requires a
+/// process runtime and policy boundary that this direct facade does not own.
+/// Signal and thread-directed timers carry only an integer payload, never a C
+/// `sigval` union or callback pointer.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub enum TimerNotification {
     /// Expiration has no notification side effect.
     None,
-    /// Deliver `signal` with the supplied integer payload.
+    /// Deliver `signal` with an integer payload.
     Signal { signal: Signal, value: i32 },
-    /// Deliver `signal` directly to `thread` with the supplied payload.
+    /// Deliver `signal` with an integer payload directly to `thread`.
     ThreadId {
+        /// The target Linux task ID.
         thread: Pid,
+        /// The signal to deliver.
         signal: Signal,
+        /// The integer payload.
         value: i32,
     },
 }
 
-/// Errors returned by POSIX timer creation and operations.
-#[derive(Debug, Copy, Clone, Eq, PartialEq)]
+/// Errors returned while reading or replacing an owned POSIX timer setting.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum TimerError {
-    /// A timer setting cannot be represented by Linux's signed timespec ABI.
+    /// Linux returned a setting outside Rust's checked duration representation.
     InvalidSpecification,
-    /// Linux rejected the clock, notification, timer ID, flag, or operation.
+    /// Linux rejected the timer ID, flags, or setting operation.
     Kernel(Errno),
 }
 
 impl TimerError {
-    /// Returns the underlying kernel errno, when present.
+    /// Returns the underlying direct kernel error, when present.
     #[must_use]
     #[inline]
     pub const fn kernel_errno(self) -> Option<Errno> {
@@ -616,21 +855,21 @@ impl TimerError {
 
 /// An owned Linux POSIX timer.
 ///
-/// The kernel timer ID is private and can only be retired through
-/// [`Self::delete`]. Dropping an undeleted timer makes one best-effort direct
-/// `timer_delete` syscall; its result cannot be reported from `Drop`.
+/// The private kernel identifier is retired by [`Self::delete`]. Dropping an
+/// undeleted timer makes one best-effort direct `timer_delete` call; its
+/// result cannot be reported from `Drop`.
 pub struct PosixTimer {
     id: Option<i32>,
 }
 
 impl PosixTimer {
-    /// Creates a timer on `clock` with the selected non-thread notification.
+    /// Creates a timer on `clock` with a non-callback notification mode.
     #[inline]
     pub fn new(clock: ClockId, notification: TimerNotification) -> Result<Self> {
         let event = kernel_sigevent(notification);
         let mut id = 0i32;
-        // SAFETY: `event` is the exact private 64-byte Linux sigevent layout,
-        // and `id` is writable storage for the kernel timer ID.
+        // SAFETY: `event` is the exact private x86-64 Linux sigevent record,
+        // and `id` is one live writable kernel timer-ID word.
         unsafe {
             crabc_core::time::timer_create_raw(
                 clock as i32,
@@ -641,7 +880,7 @@ impl PosixTimer {
         Ok(Self { id: Some(id) })
     }
 
-    /// Returns the kernel timer ID for diagnostics and raw interoperation.
+    /// Returns the private raw kernel timer identifier for diagnostics only.
     #[must_use]
     #[inline]
     pub const fn as_raw(&self) -> i32 {
@@ -652,36 +891,45 @@ impl PosixTimer {
     }
 
     /// Arms or disarms the timer and returns its previous setting.
+    ///
+    /// [`TimerSetFlags`] reaches the direct Linux syscall unchanged. In the
+    /// Linux 5.10 POSIX-timer path, only `ABSTIME` controls the arm mode; other
+    /// retained bits are ignored rather than preflighted into an invented error.
     #[inline]
     pub fn settime(
         &self,
         flags: TimerSetFlags,
         new_value: TimerSpec,
     ) -> core::result::Result<TimerSpec, TimerError> {
-        let new_value = kernel_itimerspec(new_value);
-        let mut old_value = MaybeUninit::<crabc_core::time::KernelItimerspec>::uninit();
-        // SAFETY: The timer ID is owned by `self`; the input is initialized;
-        // Linux initializes old_value on success.
+        let new_value = timer_spec_to_kernel(new_value);
+        let mut old_value = MaybeUninit::<KernelItimerspec>::uninit();
+        // SAFETY: `self` retains the timer ID; `new_value` is initialized; and
+        // Linux initializes the complete old setting on success.
         unsafe {
             crabc_core::time::timer_settime_raw(
                 self.as_raw(),
                 flags.bits() as i32,
-                (&new_value as *const crabc_core::time::KernelItimerspec).cast(),
-                old_value.as_mut_ptr().cast(),
+                &new_value,
+                old_value.as_mut_ptr(),
             )
             .map_err(TimerError::Kernel)?;
             timer_spec_from_kernel(old_value.assume_init()).ok_or(TimerError::InvalidSpecification)
         }
     }
 
-    /// Reads the current setting of the timer.
+    /// Reads the timer's current setting.
+    ///
+    /// Linux's `SIGEV_NONE` implementation can retain the last expiry as a
+    /// nonzero value after a disarm while reporting a zero interval. This
+    /// direct boundary preserves that kernel record instead of manufacturing
+    /// a fully zero setting.
     #[inline]
     pub fn gettime(&self) -> core::result::Result<TimerSpec, TimerError> {
-        let mut value = MaybeUninit::<crabc_core::time::KernelItimerspec>::uninit();
-        // SAFETY: The timer ID is owned by `self`; Linux initializes the full
-        // output record on success.
+        let mut value = MaybeUninit::<KernelItimerspec>::uninit();
+        // SAFETY: `self` retains the timer ID and `value` owns one exact
+        // writable x86-64 itimerspec record.
         unsafe {
-            crabc_core::time::timer_gettime_raw(self.as_raw(), value.as_mut_ptr().cast())
+            crabc_core::time::timer_gettime_raw(self.as_raw(), value.as_mut_ptr())
                 .map_err(TimerError::Kernel)?;
             timer_spec_from_kernel(value.assume_init()).ok_or(TimerError::InvalidSpecification)
         }
@@ -693,9 +941,10 @@ impl PosixTimer {
         crabc_core::time::timer_getoverrun_raw(self.as_raw())
     }
 
-    /// Explicitly deletes this timer.
+    /// Explicitly deletes the timer.
     ///
-    /// On an error the ID is retained so `Drop` can make a best-effort retry.
+    /// On error its identifier is retained so `Drop` can make one best-effort
+    /// retry.
     #[inline]
     pub fn delete(&mut self) -> Result<()> {
         let id = self.id.ok_or(Errno::INVAL)?;
@@ -713,6 +962,10 @@ impl Drop for PosixTimer {
     }
 }
 
+/// Private Linux/x86-64 `sigevent` storage for POSIX timer creation.
+///
+/// It is intentionally not a public C ABI type. `value`, `signal`, `notify`,
+/// and the `SIGEV_THREAD_ID` task word occupy the pinned offsets below.
 #[repr(C)]
 struct KernelSigevent {
     value: usize,
@@ -721,9 +974,16 @@ struct KernelSigevent {
     padding: [i32; 12],
 }
 
+const _: () = assert!(core::mem::size_of::<KernelSigevent>() == 64);
+const _: () = assert!(core::mem::align_of::<KernelSigevent>() == 8);
+const _: () = assert!(core::mem::offset_of!(KernelSigevent, value) == 0);
+const _: () = assert!(core::mem::offset_of!(KernelSigevent, signal) == 8);
+const _: () = assert!(core::mem::offset_of!(KernelSigevent, notify) == 12);
+const _: () = assert!(core::mem::offset_of!(KernelSigevent, padding) == 16);
+
 #[inline]
 fn kernel_sigevent(notification: TimerNotification) -> KernelSigevent {
-    let (value, signal, notify, tid) = match notification {
+    let (value, signal, notify, thread) = match notification {
         TimerNotification::None => (0, 0, 1, 0),
         TimerNotification::Signal { signal, value } => {
             (value as u32 as usize, signal.as_raw(), 0, 0)
@@ -745,28 +1005,28 @@ fn kernel_sigevent(notification: TimerNotification) -> KernelSigevent {
         notify,
         padding: [0; 12],
     };
-    event.padding[0] = tid;
+    event.padding[0] = thread;
     event
 }
 
 #[inline]
-fn kernel_itimerspec(value: TimerSpec) -> crabc_core::time::KernelItimerspec {
-    fn timespec(value: Duration) -> crabc_core::time::KernelTimerTimespec {
-        crabc_core::time::KernelTimerTimespec {
+fn timer_spec_to_kernel(value: TimerSpec) -> KernelItimerspec {
+    fn timespec(value: Duration) -> KernelTimespec {
+        KernelTimespec {
             tv_sec: value.as_secs() as i64,
             tv_nsec: value.subsec_nanos() as i64,
         }
     }
-    crabc_core::time::KernelItimerspec {
+    KernelItimerspec {
         it_interval: timespec(value.interval),
         it_value: timespec(value.value),
     }
 }
 
 #[inline]
-fn timer_spec_from_kernel(value: crabc_core::time::KernelItimerspec) -> Option<TimerSpec> {
-    fn duration(value: crabc_core::time::KernelTimerTimespec) -> Option<Duration> {
-        if value.tv_sec < 0 || !(0..1_000_000_000).contains(&value.tv_nsec) {
+fn timer_spec_from_kernel(value: KernelItimerspec) -> Option<TimerSpec> {
+    fn duration(value: KernelTimespec) -> Option<Duration> {
+        if value.tv_sec < 0 || !(0..i64::from(NANOS_PER_SECOND)).contains(&value.tv_nsec) {
             return None;
         }
         Some(Duration::new(value.tv_sec as u64, value.tv_nsec as u32))
@@ -774,232 +1034,41 @@ fn timer_spec_from_kernel(value: crabc_core::time::KernelItimerspec) -> Option<T
     TimerSpec::new(duration(value.it_interval)?, duration(value.it_value)?)
 }
 
-/// Linux `CLOCK_*` identifiers which are known to be supported at runtime.
-#[derive(Debug, Copy, Clone, Eq, Hash, PartialEq)]
-#[repr(i32)]
-#[non_exhaustive]
-pub enum ClockId {
-    /// `CLOCK_REALTIME`.
-    Realtime = 0,
-    /// `CLOCK_MONOTONIC`.
-    Monotonic = 1,
-    /// `CLOCK_PROCESS_CPUTIME_ID`.
-    ProcessCPUTime = 2,
-    /// `CLOCK_THREAD_CPUTIME_ID`.
-    ThreadCPUTime = 3,
-    /// `CLOCK_MONOTONIC_RAW`.
-    MonotonicRaw = 4,
-    /// `CLOCK_REALTIME_COARSE`.
-    RealtimeCoarse = 5,
-    /// `CLOCK_MONOTONIC_COARSE`.
-    MonotonicCoarse = 6,
-    /// `CLOCK_BOOTTIME`.
-    Boottime = 7,
-    /// `CLOCK_REALTIME_ALARM`.
-    RealtimeAlarm = 8,
-    /// `CLOCK_TAI` (Linux kernels with TAI support).
-    Tai = 11,
-    /// `CLOCK_BOOTTIME_ALARM`.
-    BoottimeAlarm = 9,
-}
+#[cfg(test)]
+mod interval_timer_tests {
+    use super::{duration_from_itimerval_timeval, Duration, KernelItimervalTimeval};
 
-impl TryFrom<i32> for ClockId {
-    type Error = Errno;
-
-    #[inline]
-    fn try_from(value: i32) -> Result<Self> {
-        match value {
-            0 => Ok(Self::Realtime),
-            1 => Ok(Self::Monotonic),
-            2 => Ok(Self::ProcessCPUTime),
-            3 => Ok(Self::ThreadCPUTime),
-            4 => Ok(Self::MonotonicRaw),
-            5 => Ok(Self::RealtimeCoarse),
-            6 => Ok(Self::MonotonicCoarse),
-            7 => Ok(Self::Boottime),
-            8 => Ok(Self::RealtimeAlarm),
-            11 => Ok(Self::Tai),
-            9 => Ok(Self::BoottimeAlarm),
-            _ => Err(Errno::RANGE),
-        }
+    #[test]
+    fn x86_64_interval_timer_timeval_rejects_malformed_kernel_fields() {
+        assert_eq!(
+            duration_from_itimerval_timeval(KernelItimervalTimeval {
+                tv_sec: 12,
+                tv_usec: 345,
+            }),
+            Some(Duration::new(12, 345_000)),
+        );
+        assert_eq!(
+            duration_from_itimerval_timeval(KernelItimervalTimeval {
+                tv_sec: -1,
+                tv_usec: 0,
+            }),
+            None,
+        );
+        assert_eq!(
+            duration_from_itimerval_timeval(KernelItimervalTimeval {
+                tv_sec: 0,
+                tv_usec: -1,
+            }),
+            None,
+        );
+        assert_eq!(
+            duration_from_itimerval_timeval(KernelItimervalTimeval {
+                tv_sec: 0,
+                tv_usec: 1_000_000,
+            }),
+            None,
+        );
     }
-}
-
-/// A validated Linux process CPU-clock identifier.
-///
-/// Linux represents a process CPU clock as `(-pid - 1) * 8 + 2`, using the
-/// encoded value as a `clockid_t` rather than allocating a kernel object. The
-/// value is private until [`clock_getcpuclockid`] has validated it with
-/// `clock_getres`; this prevents a safe caller from manufacturing an ID for a
-/// process which does not exist or is not visible in the caller's PID
-/// namespace.
-#[repr(transparent)]
-#[derive(Debug, Copy, Clone, Eq, Hash, Ord, PartialEq, PartialOrd)]
-pub struct ProcessClockId(i32);
-
-impl ProcessClockId {
-    /// Returns the Linux-encoded clock identifier.
-    #[must_use]
-    #[inline]
-    pub const fn as_raw(self) -> i32 {
-        self.0
-    }
-}
-
-/// Resolves a process CPU clock for `pid` without using libc or TLS `errno`.
-///
-/// `None` requests the calling process, matching Linux's `pid == 0` API
-/// convention. Linux reports `EINVAL` for a process clock that cannot be
-/// resolved; musl's `clock_getcpuclockid` translates that particular kernel
-/// result to POSIX `ESRCH`, while preserving all other kernel errors.
-pub fn clock_getcpuclockid(pid: Option<Pid>) -> Result<ProcessClockId> {
-    // A clockid_t is signed 32-bit. Linux bounds real PIDs far below this,
-    // but Pid intentionally permits any positive pid_t word. Refuse values
-    // whose musl encoding would wrap into an unrelated known clock ID (for
-    // example i32::MAX would become CLOCK_PROCESS_CPUTIME_ID for self).
-    const MAX_ENCODED_PROCESS_PID: i32 = 268_435_455;
-    if let Some(pid) = pid {
-        if pid.as_raw_pid() > MAX_ENCODED_PROCESS_PID {
-            return Err(Errno::SRCH);
-        }
-    }
-    let raw_pid = Pid::as_raw(pid) as u32;
-    // This is musl's `(-pid-1)*8 + 2` encoding evaluated with the same
-    // unsigned wraparound as the Linux clock-id ABI.
-    let id =
-        raw_pid.wrapping_neg().wrapping_sub(1).wrapping_shl(3) | ClockId::ProcessCPUTime as u32;
-    let id = id as i32;
-    let mut resolution = MaybeUninit::<Timespec>::uninit();
-    // SAFETY: `resolution` is writable storage for the Linux timespec, and
-    // the encoded scalar is validated by the kernel before construction of
-    // the typed process-clock value.
-    match unsafe { crabc_core::time::clock_getres_raw(id, resolution.as_mut_ptr().cast()) } {
-        Err(Errno::INVAL) => Err(Errno::SRCH),
-        Err(error) => Err(error),
-        Ok(()) => {
-            // The kernel initializes the timespec on success. We intentionally
-            // do not expose it: resolution is only the validation operation.
-            let _ = unsafe { resolution.assume_init() };
-            Ok(ProcessClockId(id))
-        }
-    }
-}
-
-/// Linux clock identifiers accepted by [`clock_gettime_dynamic`].
-///
-/// `Known` contains clocks which are supported by Linux at runtime. `Dynamic`
-/// encodes a borrowed clock device descriptor using Linux's `CLOCKFD` scheme;
-/// the descriptor owner remains responsible for keeping it open for the
-/// duration of the call. The named clock variants mirror Rustix's Linux
-/// dynamic-clock vocabulary and may still be rejected by a particular kernel.
-#[derive(Debug, Copy, Clone)]
-#[non_exhaustive]
-pub enum DynamicClockId<'fd> {
-    /// A clock identifier which is always supported at runtime.
-    Known(ClockId),
-    /// A validated process CPU clock returned by [`clock_getcpuclockid`].
-    Process(ProcessClockId),
-    /// A Linux dynamic clock backed by an open clock device descriptor.
-    Dynamic(BorrowedFd<'fd>),
-    /// `CLOCK_REALTIME_ALARM`.
-    RealtimeAlarm,
-    /// `CLOCK_TAI`.
-    Tai,
-    /// `CLOCK_BOOTTIME`.
-    Boottime,
-    /// `CLOCK_BOOTTIME_ALARM`.
-    BoottimeAlarm,
-}
-
-/// Returns a known Linux clock's resolution.
-#[must_use]
-#[inline]
-pub fn clock_getres(id: ClockId) -> Timespec {
-    clock_query(id, clock_getres_bytes)
-}
-
-/// Returns a known Linux clock's current value.
-#[must_use]
-#[inline]
-pub fn clock_gettime(id: ClockId) -> Timespec {
-    clock_query(id, crabc_core::time::clock_gettime_raw)
-}
-
-/// Reads the current UTC timespec through Linux's realtime clock.
-///
-/// This is the native Rust counterpart of the C11 `timespec_get` operation
-/// for its only supported Linux base, `TIME_UTC`. The C base discriminator and
-/// its zero-success sentinel are intentionally absent: a safe caller can only
-/// request UTC, and a syscall failure is returned as a typed [`Errno`]. The
-/// operation is read-only and does not expose C ABI storage, locale/timezone
-/// state, or TLS `errno`.
-#[inline]
-pub fn timespec_get() -> Result<Timespec> {
-    clock_query_result(ClockId::Realtime as i32)
-}
-
-/// Sets a known Linux clock through the direct `clock_settime` syscall.
-///
-/// The nanosecond field is validated before the raw syscall so a safe caller
-/// cannot cross the kernel boundary with a non-canonical `timespec`. Linux
-/// still owns clock mutability and privilege checks: `Errno::INVAL` is
-/// preserved for clocks such as [`ClockId::Monotonic`] that cannot be set,
-/// while `Errno::PERM` is preserved when the caller lacks `CAP_SYS_TIME`.
-#[inline]
-pub fn clock_settime(id: ClockId, timespec: Timespec) -> Result<()> {
-    if !(0..NANOS_PER_SECOND as i64).contains(&timespec.tv_nsec) {
-        return Err(Errno::INVAL);
-    }
-
-    // SAFETY: `Timespec` is the exact Linux/AArch64 `struct timespec` layout,
-    // and its nanosecond field was validated immediately above.
-    unsafe { crabc_core::time::clock_settime_raw(id as i32, (&timespec as *const Timespec).cast()) }
-}
-
-/// Returns the current value of a known or descriptor-backed Linux clock.
-///
-/// This is the Rustix-shaped fallible companion to [`clock_gettime`]. Linux
-/// validates the encoded clock identifier and can return an error such as
-/// [`Errno::INVAL`] for a descriptor that is not a clock device. The query
-/// uses the shared typed clock dispatcher with caller-owned, fully initialized
-/// output storage. Eligible fixed clock IDs use the kernel vDSO; descriptor
-/// clocks reach the same vDSO entry, which delegates unsupported IDs through
-/// its exact kernel syscall fallback. It does not dispatch through libc or TLS
-/// `errno`.
-pub fn clock_gettime_dynamic(id: DynamicClockId<'_>) -> Result<Timespec> {
-    clock_query_result(dynamic_clock_id(id))
-}
-
-const CLOCKFD: i32 = 3;
-
-#[inline]
-fn dynamic_clock_id(id: DynamicClockId<'_>) -> i32 {
-    match id {
-        DynamicClockId::Known(id) => id as i32,
-        DynamicClockId::Process(id) => id.as_raw(),
-        DynamicClockId::Dynamic(fd) => ((!fd.as_raw_fd()) << 3) | CLOCKFD,
-        DynamicClockId::RealtimeAlarm => ClockId::RealtimeAlarm as i32,
-        DynamicClockId::Tai => ClockId::Tai as i32,
-        DynamicClockId::Boottime => ClockId::Boottime as i32,
-        DynamicClockId::BoottimeAlarm => ClockId::BoottimeAlarm as i32,
-    }
-}
-
-/// Returns CPU time consumed by the calling process as a native duration.
-///
-/// This observes Linux's `CLOCK_PROCESS_CPUTIME_ID`, which accumulates user
-/// and system CPU time for all threads in the process rather than wall-clock
-/// elapsed time. The known-clock query is infallible by convention; a
-/// malformed kernel timespec is treated as an impossible Linux contract
-/// before constructing [`Duration`].
-#[must_use]
-#[inline]
-pub fn process_cpu_time() -> Duration {
-    let value = clock_gettime(ClockId::ProcessCPUTime);
-    if value.tv_sec < 0 || value.tv_nsec < 0 || value.tv_nsec >= NANOS_PER_SECOND as i64 {
-        panic!("Linux process CPU clock returned an invalid timespec");
-    }
-    Duration::new(value.tv_sec as u64, value.tv_nsec as u32)
 }
 
 bitflags! {
@@ -1011,7 +1080,7 @@ bitflags! {
         const NONBLOCK = 0x0000_0800;
         /// `TFD_CLOEXEC`.
         const CLOEXEC = 0x0008_0000;
-        /// Preserve future Linux-defined bits.
+        /// Preserve future Linux-defined bits for kernel validation.
         const _ = !0;
     }
 }
@@ -1022,16 +1091,16 @@ bitflags! {
     #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
     pub struct TimerfdTimerFlags: u32 {
         /// `TFD_TIMER_ABSTIME`.
-        const ABSTIME = 0x1;
+        const ABSTIME = 0x0000_0001;
         /// `TFD_TIMER_CANCEL_ON_SET`.
-        const CANCEL_ON_SET = 0x2;
-        /// Preserve future Linux-defined bits.
+        const CANCEL_ON_SET = 0x0000_0002;
+        /// Preserve future Linux-defined bits for kernel validation.
         const _ = !0;
     }
 }
 
 /// Clocks accepted by Linux `timerfd_create`.
-#[derive(Debug, Copy, Clone, Eq, Hash, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 #[repr(i32)]
 #[non_exhaustive]
 pub enum TimerfdClockId {
@@ -1047,85 +1116,123 @@ pub enum TimerfdClockId {
     BoottimeAlarm = 9,
 }
 
-/// Linux `struct itimerspec` used by timerfd operations.
+/// Linux/x86-64 `struct itimerspec` used by timerfd operations.
+///
+/// Both fields are direct Linux `timespec` records. Input values must have a
+/// non-negative seconds field and a nanosecond field in `0..1_000_000_000`;
+/// [`timerfd_settime`] rejects malformed records before the kernel boundary.
 #[repr(C)]
-#[derive(Debug, Clone, Copy, Default, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub struct Itimerspec {
-    /// Interval between expirations.
+    /// Interval between expirations, or zero for a one-shot timer.
     pub it_interval: Timespec,
-    /// Initial expiration or absolute expiration time.
+    /// Initial or absolute expiration, or zero to disarm the timer.
     pub it_value: Timespec,
 }
 
-/// Creates a Linux timer descriptor.
+const _: () = assert!(core::mem::size_of::<Itimerspec>() == 32);
+const _: () = assert!(core::mem::align_of::<Itimerspec>() == 8);
+const _: () = assert!(core::mem::offset_of!(Itimerspec, it_interval) == 0);
+const _: () = assert!(core::mem::offset_of!(Itimerspec, it_value) == 16);
+
+impl Default for Itimerspec {
+    #[inline]
+    fn default() -> Self {
+        Self {
+            it_interval: Timespec { tv_sec: 0, tv_nsec: 0 },
+            it_value: Timespec { tv_sec: 0, tv_nsec: 0 },
+        }
+    }
+}
+
+/// Creates a Linux/x86-64 timer descriptor.
 #[inline]
 pub fn timerfd_create(clock_id: TimerfdClockId, flags: TimerfdFlags) -> Result<OwnedFd> {
     let fd = crabc_core::time::timerfd_create(clock_id as i32, flags.bits())?;
-    // SAFETY: a successful Linux `timerfd_create` returns one new,
-    // non-negative, uniquely-owned descriptor.
+    // SAFETY: successful `timerfd_create` returns one fresh, non-negative,
+    // uniquely owned Linux descriptor.
     unsafe { Ok(OwnedFd::from_raw_fd(fd)) }
 }
 
-/// Arms or disarms a Linux timer descriptor and returns its previous setting.
+/// Arms or disarms a Linux/x86-64 timer descriptor and returns its previous
+/// setting.
+///
+/// The interval and initial value have the exact kernel `itimerspec` shape.
+/// A zero initial value disarms the descriptor. `ABSTIME` changes the initial
+/// value from a relative duration to an absolute value in the selected clock.
+/// Linux validates timerfd flag combinations directly.
 #[inline]
 pub fn timerfd_settime<Fd: AsFd>(
     fd: Fd,
     flags: TimerfdTimerFlags,
     new_value: &Itimerspec,
 ) -> Result<Itimerspec> {
+    let new_value = itimerspec_to_kernel(*new_value)?;
     let fd = fd.as_fd();
-    let mut old_value = MaybeUninit::<Itimerspec>::uninit();
-    // SAFETY: `new_value` and `old_value` have the Linux/AArch64
-    // `struct itimerspec` layout, and the output is initialized on success.
+    let mut old_value = MaybeUninit::<KernelItimerspec>::uninit();
+    // SAFETY: `new_value` is an initialized exact x86-64 kernel record,
+    // `old_value` is writable exact storage, and the descriptor borrow remains
+    // open for the complete direct syscall.
     unsafe {
         crabc_core::time::timerfd_settime_raw(
             fd.as_raw_fd(),
             flags.bits(),
-            (new_value as *const Itimerspec).cast(),
-            old_value.as_mut_ptr().cast(),
+            &new_value,
+            old_value.as_mut_ptr(),
         )?;
-        Ok(old_value.assume_init())
+        itimerspec_from_kernel(old_value.assume_init())
     }
 }
 
-/// Returns a Linux timer descriptor's current setting.
+/// Reads a Linux/x86-64 timer descriptor's current setting.
 #[inline]
 pub fn timerfd_gettime<Fd: AsFd>(fd: Fd) -> Result<Itimerspec> {
     let fd = fd.as_fd();
-    let mut value = MaybeUninit::<Itimerspec>::uninit();
-    // SAFETY: `value` has exactly the Linux/AArch64 `struct itimerspec`
-    // layout and Linux initializes it on success.
+    let mut value = MaybeUninit::<KernelItimerspec>::uninit();
+    // SAFETY: `value` is exact writable x86-64 kernel storage and the
+    // descriptor borrow remains open while Linux initializes the record.
     unsafe {
-        crabc_core::time::timerfd_gettime_raw(fd.as_raw_fd(), value.as_mut_ptr().cast())?;
-        Ok(value.assume_init())
-    }
-}
-
-unsafe fn clock_getres_bytes(id: i32, value: *mut u8) -> Result<()> {
-    // SAFETY: The caller supplies writable Linux timespec storage.
-    unsafe { crabc_core::time::clock_getres_raw(id, value.cast()) }
-}
-
-fn clock_query(id: ClockId, query: unsafe fn(i32, *mut u8) -> Result<()>) -> Timespec {
-    let mut value = MaybeUninit::<Timespec>::uninit();
-    // SAFETY: `value` has exactly the Linux/AArch64 `timespec` layout and
-    // the enum contains only statically supported Linux clock identifiers.
-    match unsafe { query(id as i32, value.as_mut_ptr().cast()) } {
-        Ok(()) => unsafe { value.assume_init() },
-        Err(error) => panic!("known Linux clock query failed with errno {}", error.raw()),
+        crabc_core::time::timerfd_gettime_raw(fd.as_raw_fd(), value.as_mut_ptr())?;
+        itimerspec_from_kernel(value.assume_init())
     }
 }
 
 #[inline]
-fn clock_query_result(clock_id: i32) -> Result<Timespec> {
-    let mut value = MaybeUninit::<Timespec>::uninit();
-    // SAFETY: `value` has exactly the Linux/AArch64 `timespec` layout and the
-    // direct syscall initializes it on success. Errors are returned before
-    // the uninitialized value can be observed.
-    unsafe {
-        crabc_core::time::clock_gettime_raw(clock_id, value.as_mut_ptr().cast())?;
-        Ok(value.assume_init())
+fn itimerspec_to_kernel(value: Itimerspec) -> Result<KernelItimerspec> {
+    Ok(KernelItimerspec {
+        it_interval: timer_timespec_to_kernel(value.it_interval)?,
+        it_value: timer_timespec_to_kernel(value.it_value)?,
+    })
+}
+
+#[inline]
+fn timer_timespec_to_kernel(value: Timespec) -> Result<KernelTimespec> {
+    if value.tv_sec < 0 || !(0..i64::from(NANOS_PER_SECOND)).contains(&value.tv_nsec) {
+        return Err(Errno::INVAL);
     }
+    Ok(KernelTimespec {
+        tv_sec: value.tv_sec,
+        tv_nsec: value.tv_nsec,
+    })
+}
+
+#[inline]
+fn itimerspec_from_kernel(value: KernelItimerspec) -> Result<Itimerspec> {
+    Ok(Itimerspec {
+        it_interval: timer_timespec_from_kernel(value.it_interval)?,
+        it_value: timer_timespec_from_kernel(value.it_value)?,
+    })
+}
+
+#[inline]
+fn timer_timespec_from_kernel(value: KernelTimespec) -> Result<Timespec> {
+    if value.tv_sec < 0 || !(0..i64::from(NANOS_PER_SECOND)).contains(&value.tv_nsec) {
+        return Err(Errno::RANGE);
+    }
+    Ok(Timespec {
+        tv_sec: value.tv_sec,
+        tv_nsec: value.tv_nsec,
+    })
 }
 
 #[cfg(test)]

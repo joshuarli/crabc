@@ -1,15 +1,18 @@
-//! Direct Linux event-descriptor and polling operations.
+//! The deliberately narrow Linux/x86-64 event facade.
 //!
-//! Poll descriptors borrow their underlying file descriptors, preventing a
-//! safe caller from polling a resource after its owner has been dropped. The
-//! implementation uses `ppoll` directly through `crabc-core`, never the C ABI
-//! or TLS `errno`.
+//! This target provides the scalar `eventfd2` counter seam and typed `poll(2)`,
+//! `ppoll(2)`, `select(2)`, `pselect(2)`, signal-only `pause`, and epoll
+//! readiness operations. The descriptor-set records and pselect signal-mask
+//! pair stay target-specific: this module never reuses an AArch64 record and
+//! defines no C polling ABI. Signalfd is not provided here.
 
-use bitflags::bitflags;
+use core::convert::TryFrom;
 use core::ffi::c_void;
 use core::hash::{Hash, Hasher};
 use core::mem::size_of;
 use core::ptr;
+
+use bitflags::bitflags;
 
 use crate::buffer::Buffer;
 use crate::signal::SignalSet;
@@ -19,7 +22,7 @@ use crate::{AsFd, BorrowedFd, OwnedFd, Result};
 pub use crate::eventfd::{EventfdFlags, eventfd, eventfd_read, eventfd_write};
 
 bitflags! {
-    /// Linux `POLL*` flags used by [`poll`].
+    /// Linux `POLL*` readiness flags used by [`poll`].
     #[repr(transparent)]
     #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
     pub struct PollFlags: u16 {
@@ -29,45 +32,55 @@ bitflags! {
         const PRI = 0x0002;
         /// `POLLOUT`.
         const OUT = 0x0004;
-        /// `POLLRDNORM`.
-        const RDNORM = 0x0040;
-        /// `POLLWRNORM`.
-        const WRNORM = 0x0100;
-        /// `POLLRDBAND`.
-        const RDBAND = 0x0080;
-        /// `POLLWRBAND`.
-        const WRBAND = 0x0200;
         /// `POLLERR`.
         const ERR = 0x0008;
         /// `POLLHUP`.
         const HUP = 0x0010;
         /// `POLLNVAL`.
         const NVAL = 0x0020;
-        /// `POLLRDHUP`.
+        /// `POLLRDNORM`.
+        const RDNORM = 0x0040;
+        /// `POLLRDBAND`.
+        const RDBAND = 0x0080;
+        /// `POLLWRNORM`.
+        const WRNORM = 0x0100;
+        /// `POLLWRBAND`.
+        const WRBAND = 0x0200;
+        /// Linux `POLLRDHUP`.
         const RDHUP = 0x2000;
-        /// Preserve Linux extension bits.
+        /// Preserve future Linux-defined bits reported by the kernel.
         const _ = !0;
     }
 }
 
-/// A borrowed Linux `struct pollfd` record.
+/// A borrowed Linux/x86-64 `struct pollfd` record.
+///
+/// The descriptor borrow keeps its owner alive for the complete call to
+/// [`poll`]. Linux writes readiness bits into the record's private `revents`
+/// field; the requested event mask is not changed by the syscall.
 #[doc(alias = "pollfd")]
 #[repr(C)]
-#[derive(Debug, Clone)]
+#[derive(Clone, Debug)]
 pub struct PollFd<'fd> {
     fd: BorrowedFd<'fd>,
     events: u16,
     revents: u16,
 }
 
+const _: () = assert!(core::mem::size_of::<PollFd<'static>>() == 8);
+const _: () = assert!(core::mem::align_of::<PollFd<'static>>() == 4);
+const _: () = assert!(core::mem::offset_of!(PollFd<'static>, fd) == 0);
+const _: () = assert!(core::mem::offset_of!(PollFd<'static>, events) == 4);
+const _: () = assert!(core::mem::offset_of!(PollFd<'static>, revents) == 6);
+
 impl<'fd> PollFd<'fd> {
-    /// Constructs a record which observes `fd` for `events`.
+    /// Constructs a readiness record for `fd`.
     #[inline]
     pub fn new<Fd: AsFd>(fd: &'fd Fd, events: PollFlags) -> Self {
         Self::from_borrowed_fd(fd.as_fd(), events)
     }
 
-    /// Constructs a record from an existing descriptor borrow.
+    /// Constructs a readiness record from an existing descriptor borrow.
     #[inline]
     pub fn from_borrowed_fd(fd: BorrowedFd<'fd>, events: PollFlags) -> Self {
         Self {
@@ -83,16 +96,16 @@ impl<'fd> PollFd<'fd> {
         self.fd = fd.as_fd();
     }
 
-    /// Clears ready events before reusing this record.
+    /// Clears readiness bits before reusing this record.
     #[inline]
     pub fn clear_revents(&mut self) {
         self.revents = 0;
     }
 
-    /// Returns the events observed by the most recent [`poll`] call.
+    /// Returns readiness reported by the most recent [`poll`] call.
     #[inline]
     pub fn revents(&self) -> PollFlags {
-        PollFlags::from_bits_retain(self.revents)
+        PollFlags::from_bits_retain(self.revents as u16)
     }
 }
 
@@ -101,6 +114,21 @@ impl AsFd for PollFd<'_> {
     fn as_fd(&self) -> BorrowedFd<'_> {
         self.fd.as_fd()
     }
+}
+
+/// Waits for requested readiness on borrowed descriptors.
+///
+/// `None` waits indefinitely. A supplied [`Timespec`] is converted to the
+/// millisecond representation required by Linux `poll(2)`, rounding up
+/// non-zero sub-millisecond values. Inputs that cannot fit the signed Linux
+/// millisecond range return [`crate::Errno::INVAL`] rather than being silently
+/// truncated.
+#[inline]
+pub fn poll(fds: &mut [PollFd<'_>], timeout: Option<&Timespec>) -> Result<usize> {
+    let timeout_ms = timeout.map(timeout_millis).transpose()?.unwrap_or(-1);
+    // SAFETY: `PollFd` has the exact x86-64 `pollfd` layout, and each record's
+    // descriptor borrow remains valid while the mutable slice is borrowed.
+    unsafe { crabc_core::event::poll_raw(fds.as_mut_ptr().cast(), fds.len(), timeout_ms) }
 }
 
 /// Direct Linux epoll operations.
@@ -114,7 +142,7 @@ pub mod epoll {
         pub struct CreateFlags: u32 {
             /// `EPOLL_CLOEXEC`.
             const CLOEXEC = 0x0008_0000;
-            /// Preserve future Linux-defined bits.
+            /// Preserve future Linux-defined bits for kernel validation.
             const _ = !0;
         }
     }
@@ -126,14 +154,16 @@ pub mod epoll {
         pub struct EventFlags: u32 {
             /// `EPOLLIN`.
             const IN = 0x0000_0001;
-            /// `EPOLLOUT`.
-            const OUT = 0x0000_0004;
             /// `EPOLLPRI`.
             const PRI = 0x0000_0002;
+            /// `EPOLLOUT`.
+            const OUT = 0x0000_0004;
             /// `EPOLLERR`.
             const ERR = 0x0000_0008;
             /// `EPOLLHUP`.
             const HUP = 0x0000_0010;
+            /// `EPOLLNVAL`.
+            const NVAL = 0x0000_0020;
             /// `EPOLLRDNORM`.
             const RDNORM = 0x0000_0040;
             /// `EPOLLRDBAND`.
@@ -146,35 +176,26 @@ pub mod epoll {
             const MSG = 0x0000_0400;
             /// `EPOLLRDHUP`.
             const RDHUP = 0x0000_2000;
-            /// `EPOLLET`.
-            const ET = 0x8000_0000;
             /// `EPOLLONESHOT`.
             const ONESHOT = 0x4000_0000;
-            /// `EPOLLWAKEUP`.
-            const WAKEUP = 0x2000_0000;
             /// `EPOLLEXCLUSIVE`.
             const EXCLUSIVE = 0x1000_0000;
-            /// Preserve future Linux-defined bits.
+            /// `EPOLLWAKEUP`.
+            const WAKEUP = 0x2000_0000;
+            /// `EPOLLET`.
+            const ET = 0x8000_0000;
+            /// Preserve future Linux-defined bits reported by or forwarded to
+            /// the kernel.
             const _ = !0;
         }
     }
 
-    /// A record of an event returned by Linux `epoll_wait`.
-    ///
-    /// Linux/AArch64 uses the naturally aligned 16-byte `epoll_event` layout:
-    /// a 32-bit event mask followed by four bytes of padding and an eight-byte
-    /// data union.
-    #[repr(C)]
-    #[derive(Clone, Copy, Eq, PartialEq, Hash)]
-    pub struct Event {
-        /// Which readiness or behavior flags occurred.
-        pub flags: EventFlags,
-        /// Caller-provided data associated with the registered descriptor.
-        pub data: EventData,
-    }
-
     /// Data associated with an [`Event`], represented as a 64-bit token or
     /// pointer without crossing the C ABI.
+    ///
+    /// A pointer token does not borrow or own its pointee. The kernel and this
+    /// facade copy the token without dereferencing it; the caller must retain
+    /// and synchronize the pointee for any later dereference.
     #[repr(C)]
     #[derive(Clone, Copy)]
     pub union EventData {
@@ -227,6 +248,84 @@ pub mod epoll {
         }
     }
 
+    impl core::fmt::Debug for EventData {
+        fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+            formatter.debug_tuple("EventData").field(&self.u64()).finish()
+        }
+    }
+
+    /// One Linux/x86-64 `struct epoll_event` record.
+    ///
+    /// x86-64 uses the packed 12-byte kernel layout: the 32-bit event mask at
+    /// offset zero followed immediately by the 64-bit data union at offset
+    /// four. Fields are private so callers cannot accidentally take an
+    /// unaligned reference; use [`Self::flags`] and [`Self::data`] instead.
+    #[repr(C)]
+    #[cfg_attr(target_arch = "x86_64", repr(packed))]
+    #[derive(Clone, Copy)]
+    pub struct Event {
+        flags: EventFlags,
+        data: EventData,
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    const _: () = assert!(size_of::<Event>() == 12);
+    #[cfg(target_arch = "x86_64")]
+    const _: () = assert!(core::mem::align_of::<Event>() == 1);
+    const _: () = assert!(size_of::<Event>() == size_of::<crabc_core::event::KernelEpollEvent>());
+    const _: () = assert!(core::mem::align_of::<Event>() == core::mem::align_of::<crabc_core::event::KernelEpollEvent>());
+    const _: () = assert!(core::mem::offset_of!(Event, data) == core::mem::offset_of!(crabc_core::event::KernelEpollEvent, data));
+    const _: () = assert!(core::mem::offset_of!(Event, flags) == 0);
+    #[cfg(target_arch = "x86_64")]
+    const _: () = assert!(core::mem::offset_of!(Event, data) == 4);
+
+    impl Event {
+        /// Constructs an event record for an epoll registration or result.
+        #[inline]
+        pub const fn new(flags: EventFlags, data: EventData) -> Self {
+            Self { flags, data }
+        }
+
+        /// Returns readiness and behavior flags from this event.
+        #[inline]
+        pub fn flags(self) -> EventFlags {
+            self.flags
+        }
+
+        /// Returns caller-provided data from this event.
+        #[inline]
+        pub fn data(self) -> EventData {
+            self.data
+        }
+    }
+
+    impl PartialEq for Event {
+        #[inline]
+        fn eq(&self, other: &Self) -> bool {
+            self.flags() == other.flags() && self.data() == other.data()
+        }
+    }
+
+    impl Eq for Event {}
+
+    impl Hash for Event {
+        #[inline]
+        fn hash<H: Hasher>(&self, state: &mut H) {
+            self.flags().hash(state);
+            self.data().hash(state);
+        }
+    }
+
+    impl core::fmt::Debug for Event {
+        fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+            formatter
+                .debug_struct("Event")
+                .field("flags", &self.flags())
+                .field("data", &self.data())
+                .finish()
+        }
+    }
+
     /// Creates an epoll descriptor.
     #[inline]
     #[doc(alias = "epoll_create1")]
@@ -237,13 +336,7 @@ pub mod epoll {
         unsafe { Ok(OwnedFd::from_raw_fd(fd)) }
     }
 
-    /// Creates an epoll descriptor using the legacy `epoll_create(size)`
-    /// contract.
-    ///
-    /// Linux/AArch64 has no separate legacy syscall. A value of zero is
-    /// rejected as `EINVAL`, while any positive value is accepted and ignored
-    /// by the historical interface; the direct implementation therefore uses
-    /// `epoll_create1(0)` after validating that contract.
+    /// Creates an epoll descriptor using the legacy positive-size contract.
     #[inline]
     #[doc(alias = "epoll_create")]
     pub fn create_legacy(size: usize) -> Result<OwnedFd> {
@@ -254,6 +347,15 @@ pub mod epoll {
     }
 
     /// Registers a source descriptor with an epoll object.
+    ///
+    /// The source is borrowed only during this call. Linux keys the registration
+    /// by both descriptor number and open file description. Closing or replacing
+    /// the registered descriptor can leave its registration alive while another
+    /// descriptor retains the original file description. A reused descriptor
+    /// number can therefore have a separate registration for its new description.
+    /// Delete the registration before replacing its slot when explicit removal
+    /// is required; closing the final descriptor for a description also removes
+    /// its registrations.
     #[inline]
     #[doc(alias = "epoll_ctl")]
     pub fn add<EpollFd: AsFd, SourceFd: AsFd>(
@@ -262,22 +364,7 @@ pub mod epoll {
         data: EventData,
         event_flags: EventFlags,
     ) -> Result<()> {
-        let epoll = epoll.as_fd();
-        let source = source.as_fd();
-        let event = Event {
-            flags: event_flags,
-            data,
-        };
-        // SAFETY: `event` is a naturally aligned AArch64 epoll record alive
-        // for the syscall; both descriptor borrows remain open for the call.
-        unsafe {
-            crabc_core::event::epoll_ctl_raw(
-                epoll.as_raw_fd(),
-                1,
-                source.as_raw_fd(),
-                (&event as *const Event).cast(),
-            )
-        }
+        ctl(epoll, source, 1, Event::new(event_flags, data))
     }
 
     /// Modifies a source descriptor's epoll registration.
@@ -289,19 +376,25 @@ pub mod epoll {
         data: EventData,
         event_flags: EventFlags,
     ) -> Result<()> {
+        ctl(epoll, source, 3, Event::new(event_flags, data))
+    }
+
+    fn ctl<EpollFd: AsFd, SourceFd: AsFd>(
+        epoll: EpollFd,
+        source: SourceFd,
+        operation: u32,
+        event: Event,
+    ) -> Result<()> {
         let epoll = epoll.as_fd();
         let source = source.as_fd();
-        let event = Event {
-            flags: event_flags,
-            data,
-        };
-        // SAFETY: See [`add`]; operation three selects Linux `EPOLL_CTL_MOD`.
+        // SAFETY: `Event` has the exact packed x86-64 epoll layout and lives
+        // through the syscall; both descriptor borrows remain open as well.
         unsafe {
             crabc_core::event::epoll_ctl_raw(
                 epoll.as_raw_fd(),
-                3,
+                operation,
                 source.as_raw_fd(),
-                (&event as *const Event).cast(),
+                (&event as *const Event).cast::<crabc_core::event::KernelEpollEvent>(),
             )
         }
     }
@@ -318,16 +411,16 @@ pub mod epoll {
                 epoll.as_raw_fd(),
                 2,
                 source.as_raw_fd(),
-                core::ptr::null(),
+                ptr::null(),
             )
         }
     }
 
     /// Waits for registered events, initializing the supplied event buffer.
     ///
-    /// `timeout` is expressed as a `Timespec` and rounded up to the
-    /// millisecond representation used by Linux `epoll_pwait`, matching the
-    /// pinned Rustix backend. `None` waits indefinitely.
+    /// `timeout` is rounded up to Linux's signed millisecond representation.
+    /// Invalid timespec fields and values which do not fit that representation
+    /// return [`crate::Errno::INVAL`].
     #[inline]
     #[allow(private_interfaces)]
     pub fn wait<EpollFd: AsFd, Buf: Buffer<Event>>(
@@ -340,9 +433,8 @@ pub mod epoll {
 
     /// Waits for registered events while temporarily installing a signal mask.
     ///
-    /// `timeout` is copied before entering Linux because `epoll_pwait` accepts
-    /// a millisecond timeout and does not expose a mutable Rust value. A
-    /// supplied mask is installed atomically for the wait and restored by the
+    /// `timeout` is rounded up to Linux's signed millisecond representation.
+    /// A supplied mask is installed atomically for the wait and restored by the
     /// kernel before this function returns. `None` preserves the ordinary
     /// unmasked [`wait`] behavior.
     #[inline]
@@ -356,17 +448,19 @@ pub mod epoll {
         let timeout = timeout.map(timeout_millis).transpose()?.unwrap_or(-1);
         let epoll = epoll.as_fd();
         let (events, maxevents) = event_list.parts_mut();
+        // The Linux ABI takes this count as a signed `int`; reject values
+        // which cannot be represented before crossing the raw seam.
         let maxevents = i32::try_from(maxevents).map_err(|_| crate::Errno::INVAL)?;
-        let sigmask = mask.map_or(core::ptr::null(), |mask| {
+        let sigmask = mask.map_or(ptr::null(), |mask| {
             (mask.kernel_bits() as *const u64).cast()
         });
-        // SAFETY: `Buffer` supplies writable storage for exactly `maxevents`
-        // records, the epoll descriptor remains open through the borrow, and
-        // `SignalSet` supplies one live kernel-sized signal mask word.
+        // SAFETY: `Buffer` supplies writable storage for `maxevents` packed
+        // x86-64 records, the epoll descriptor remains open for the call, and
+        // `SignalSet` supplies one live kernel-sized signal-mask word.
         let ready = unsafe {
             crabc_core::event::epoll_pwait_raw(
                 epoll.as_raw_fd(),
-                events.cast(),
+                events.cast::<crabc_core::event::KernelEpollEvent>(),
                 maxevents,
                 timeout,
                 sigmask,
@@ -378,7 +472,7 @@ pub mod epoll {
     }
 
     fn timeout_millis(timeout: &Timespec) -> Result<i32> {
-        if timeout.tv_sec < 0 || timeout.tv_nsec < 0 {
+        if timeout.tv_sec < 0 || !(0..1_000_000_000).contains(&timeout.tv_nsec) {
             return Err(crate::Errno::INVAL);
         }
         let millis = timeout
@@ -391,17 +485,21 @@ pub mod epoll {
     }
 }
 
-/// One 64-bit Linux/AArch64 `select` descriptor-set storage element.
+/// One 64-bit Linux/x86-64 `select` descriptor-set storage element.
 ///
-/// The element is intentionally a transparent native value rather than the
+/// The element is intentionally a transparent native value rather than a
 /// public C `fd_set` wrapper. Use [`fd_set_num_elements`] to allocate enough
 /// elements for a selected `nfds` range, then use the set helpers to mutate
-/// and inspect the bit vector.
+/// and inspect the bit vector. Linux's x86-64 kernel representation is one
+/// little-endian 64-bit word per element.
 #[repr(transparent)]
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct FdSetElement(u64);
 
 const FD_SET_BITS: usize = size_of::<FdSetElement>() * 8;
+
+const _: () = assert!(size_of::<FdSetElement>() == 8);
+const _: () = assert!(core::mem::align_of::<FdSetElement>() == 8);
 
 /// Sets `fd` in a Linux descriptor bit vector.
 #[doc(alias = "FD_SET")]
@@ -494,6 +592,14 @@ impl Iterator for FdSetIter<'_> {
 ///
 /// The timeout is copied before crossing the kernel boundary, so Linux's
 /// mutable `pselect6` timeout does not alter the caller's `Timespec`.
+/// Negative `nfds` and undersized sets are rejected with [`crate::Errno::INVAL`]
+/// before any pointer is formed or the kernel is entered.
+///
+/// # Safety
+///
+/// Every descriptor represented by a supplied set must remain open for the
+/// syscall's duration. Supplied mutable sets must remain valid and writable;
+/// their first `fd_set_num_elements(0, nfds)` elements are rewritten by Linux.
 pub unsafe fn select(
     nfds: i32,
     readfds: Option<&mut [FdSetElement]>,
@@ -501,23 +607,29 @@ pub unsafe fn select(
     exceptfds: Option<&mut [FdSetElement]>,
     timeout: Option<&Timespec>,
 ) -> Result<i32> {
+    // SAFETY: `select` has exactly the unmasked pselect contract and does not
+    // add any pointer or descriptor obligations of its own.
     unsafe { pselect(nfds, readfds, writefds, exceptfds, timeout, None) }
 }
 
 /// Waits for readiness while temporarily installing a signal mask.
 ///
 /// This is the native Rust extension corresponding to C `pselect`. Its
-/// descriptor sets are the Rustix-compatible bit-vector slices, and the mask
-/// is the borrowed kernel-sized [`SignalSet`]. The sets are rewritten by
-/// Linux. The timeout is copied and the signal mask is atomically restored by
-/// the kernel before return.
+/// descriptor sets are Rustix-compatible bit-vector slices, and the mask is
+/// the borrowed kernel-sized [`SignalSet`]. Linux rewrites each supplied set
+/// to contain only ready descriptors. The timeout is copied, and the signal
+/// mask is atomically restored by the kernel before return.
+///
+/// Negative `nfds` and undersized sets are rejected with
+/// [`crate::Errno::INVAL`] rather than panicking. The x86-64 kernel signal
+/// mask is passed as one eight-byte word, even though the public musl
+/// `sigset_t` has a wider C representation.
 ///
 /// # Safety
 ///
 /// Every descriptor represented by a supplied set must remain open for the
-/// syscall's duration, and every set must have at least
-/// `fd_set_num_elements(0, nfds)` elements. The mutable slices must remain
-/// valid while Linux writes the resulting ready sets.
+/// syscall's duration. Supplied mutable sets must remain valid and writable;
+/// their first `fd_set_num_elements(0, nfds)` elements are rewritten by Linux.
 pub unsafe fn pselect(
     nfds: i32,
     readfds: Option<&mut [FdSetElement]>,
@@ -526,35 +638,40 @@ pub unsafe fn pselect(
     timeout: Option<&Timespec>,
     mask: Option<&SignalSet>,
 ) -> Result<i32> {
+    if nfds < 0 {
+        return Err(crate::Errno::INVAL);
+    }
     let required = fd_set_num_elements(0, nfds);
-    let readfds = readfds.map(|fds| {
-        assert!(fds.len() >= required);
-        fds.as_mut_ptr().cast()
-    });
-    let writefds = writefds.map(|fds| {
-        assert!(fds.len() >= required);
-        fds.as_mut_ptr().cast()
-    });
-    let exceptfds = exceptfds.map(|fds| {
-        assert!(fds.len() >= required);
-        fds.as_mut_ptr().cast()
-    });
+    let readfds = match readfds {
+        Some(fds) if fds.len() < required => return Err(crate::Errno::INVAL),
+        Some(fds) => Some(fds.as_mut_ptr().cast()),
+        None => None,
+    };
+    let writefds = match writefds {
+        Some(fds) if fds.len() < required => return Err(crate::Errno::INVAL),
+        Some(fds) => Some(fds.as_mut_ptr().cast()),
+        None => None,
+    };
+    let exceptfds = match exceptfds {
+        Some(fds) if fds.len() < required => return Err(crate::Errno::INVAL),
+        Some(fds) => Some(fds.as_mut_ptr().cast()),
+        None => None,
+    };
     let mut timeout = timeout.copied();
-    let timeout = timeout.as_mut().map_or(core::ptr::null_mut(), |timeout| {
-        (timeout as *mut Timespec).cast()
-    });
-    let sigmask = mask.map_or(core::ptr::null(), |mask| {
-        (mask.kernel_bits() as *const u64).cast()
-    });
-    // SAFETY: The function's caller owns the set lifetime and descriptor
-    // liveness obligations; local timeout and pselect6 argument records live
-    // through the direct syscall.
+    let timeout = timeout
+        .as_mut()
+        .map_or(ptr::null_mut(), |value| (value as *mut Timespec).cast());
+    let sigmask = mask.map_or(ptr::null(), |mask| (mask.kernel_bits() as *const u64).cast());
+    // SAFETY: The function's caller owns descriptor-set liveness and the
+    // pointed-to set storage. The local timeout and the borrowed signal mask
+    // remain live for the complete direct syscall. The core seam owns the
+    // x86-64 pselect6 argument-6 pair and uses the eight-byte mask size.
     unsafe {
         crabc_core::event::pselect6_raw(
             nfds,
-            readfds.unwrap_or(core::ptr::null_mut()),
-            writefds.unwrap_or(core::ptr::null_mut()),
-            exceptfds.unwrap_or(core::ptr::null_mut()),
+            readfds.unwrap_or(ptr::null_mut()),
+            writefds.unwrap_or(ptr::null_mut()),
+            exceptfds.unwrap_or(ptr::null_mut()),
             timeout,
             sigmask,
             crabc_core::signal::KERNEL_SIGSET_SIZE,
@@ -562,15 +679,14 @@ pub unsafe fn pselect(
     }
 }
 
-/// Waits for events on descriptor records while temporarily installing a
-/// signal mask.
+/// Waits for descriptor readiness while temporarily installing a signal mask.
 ///
-/// `None` waits indefinitely. A supplied timeout is copied before crossing
-/// the kernel boundary because Linux may mutate its `ppoll` timespec. When
+/// `None` waits indefinitely. The supplied timeout is copied before crossing
+/// the kernel boundary because Linux may mutate the `ppoll` timespec. When
 /// `mask` is `Some`, Linux atomically installs that borrowed [`SignalSet`]
 /// during the wait and restores the calling thread's previous mask before
 /// returning. The mask remains borrowed for the complete direct syscall and
-/// is passed with Linux/AArch64's exact eight-byte kernel signal-set size.
+/// is passed with Linux/x86-64's exact eight-byte kernel signal-set size.
 #[inline]
 pub fn ppoll(
     fds: &mut [PollFd<'_>],
@@ -580,13 +696,13 @@ pub fn ppoll(
     let timeout = timeout.copied();
     let timeout = timeout
         .as_ref()
-        .map_or(core::ptr::null(), |value| (value as *const Timespec).cast());
-    let sigmask: *const u8 = mask.map_or(core::ptr::null(), |mask| {
+        .map_or(ptr::null(), |value| (value as *const Timespec).cast());
+    let sigmask: *const u8 = mask.map_or(ptr::null(), |mask| {
         (mask.kernel_bits() as *const u64).cast()
     });
-    // SAFETY: `PollFd` is exactly the Linux/AArch64 `pollfd` layout. Its
-    // descriptor borrows keep every non-token descriptor open for the call;
-    // `SignalSet` supplies one live Linux/AArch64 kernel signal-set word, and
+    // SAFETY: `PollFd` is exactly the Linux/x86-64 `pollfd` layout. Its
+    // descriptor borrows keep every descriptor open for the call;
+    // `SignalSet` supplies one live Linux/x86-64 kernel signal-set word, and
     // the timeout copy remains live for the call.
     unsafe {
         crabc_core::event::ppoll_raw(
@@ -601,11 +717,10 @@ pub fn ppoll(
 
 /// Sleeps until a signal interrupts the calling thread.
 ///
-/// Rustix exposes `pause` as a unit-returning operation because POSIX/Linux
-/// only ever completes it by returning `EINTR`. Linux/AArch64 has no useful
-/// standalone `pause` syscall for this facade's direct ABI, so use syscall 73
-/// with the exact null `ppoll(NULL, 0, NULL, NULL)` arguments. The null mask
-/// and its zero size leave the calling thread's signal mask unchanged.
+/// Linux/x86-64 has a dedicated `pause(2)` syscall, but the direct facade
+/// keeps this operation on the existing `ppoll` seam so its signal-mask and
+/// interruption behavior share one kernel boundary. The null mask and zero
+/// size leave the calling thread's signal mask unchanged.
 #[inline]
 pub fn pause() {
     // SAFETY: Null pointers and zero descriptor count are the intentional
@@ -615,13 +730,15 @@ pub fn pause() {
     debug_assert_eq!(result, Err(crate::Errno::INTR));
 }
 
-/// Waits for events on descriptor records without changing a signal mask.
-///
-/// `None` waits indefinitely. A supplied timeout is copied before crossing
-/// the kernel boundary, so a kernel ABI implementation cannot mutate the
-/// caller's immutable value. This preserves the existing unmasked [`poll`]
-/// behavior while sharing the typed direct-`ppoll` implementation.
-#[inline]
-pub fn poll(fds: &mut [PollFd<'_>], timeout: Option<&Timespec>) -> Result<usize> {
-    ppoll(fds, timeout, None)
+fn timeout_millis(timeout: &Timespec) -> Result<i32> {
+    if timeout.tv_sec < 0 || !(0..1_000_000_000).contains(&timeout.tv_nsec) {
+        return Err(crate::Errno::INVAL);
+    }
+    let millis = timeout
+        .tv_sec
+        .checked_mul(1_000)
+        .and_then(|seconds| seconds.checked_add((timeout.tv_nsec + 999_999) / 1_000_000))
+        .and_then(|millis| i32::try_from(millis).ok())
+        .ok_or(crate::Errno::INVAL)?;
+    Ok(millis)
 }

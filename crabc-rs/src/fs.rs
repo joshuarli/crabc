@@ -1,48 +1,60 @@
-//! Direct Linux/AArch64 filesystem operations.
+//! Staged Linux/x86-64 filesystem operations and memory-file support.
 //!
-//! Filesystem operations use the shared stateless Linux/AArch64 syscall seams.
-//! They exercise path, descriptor, flag, mode, ownership, and typed error
-//! contracts without crossing into libc's process-global runtime state.
+//! This module admits descriptor-based `fstat(2)`, `statat(2)` path metadata,
+//! caller-buffered and allocation-backed `readlinkat(2)` target reads,
+//! caller-buffered extended-attribute operations through the direct path,
+//! no-follow-path, and descriptor syscall forms, direct `statx(2)` extended
+//! metadata with operation-specific lookup flags, `access(2)` and `faccessat2(2)` permission
+//! checks, direct `fcntl(F_GETFL/F_SETFL)` status-flag observation and
+//! mutation, filesystem-capacity observation through `statfs(2)` and
+//! `fstatfs(2)` plus derived `statvfs` views, a bounded pathname lifecycle
+//! and namespace slice through `openat(2)`, `newfstatat(2)`, `mkdirat(2)`,
+//! `mknodat(2)`, `unlinkat(2)`, `linkat(2)`, `symlinkat(2)`, `renameat2(2)`,
+//! `fchmodat(2)`, `fchownat(2)`, and `truncate(2)`, file-access advice,
+//! file readahead, descriptor-based file-length and timestamp mutation, and
+//! closed pathname timestamp mutation through a bounded no-alloc path boundary,
+//! fixed-mode descriptor-range allocation,
+//! descriptor-to-descriptor transfer and descriptor-range copying,
+//! file-position and synchronization operations,
+//! system-wide and descriptor-associated filesystem synchronization, and direct anonymous
+//! memory-file creation with bounded sealing, plus private named and anonymous
+//! temporary-file ownership and caller-buffered/owned temporary-directory
+//! creation.
+//! The
+//! x86-64 kernel record is not interchangeable with the AArch64 record:
+//! `st_nlink` and the timestamp nanoseconds are 64-bit here, and the record
+//! has a distinct 144-byte layout. The pathname lifecycle slice uses explicit
+//! current-directory or borrowed-directory authority and operation-specific
+//! `AT_*` flag types. A bounded physical canonicalization operation uses
+//! explicit descriptor traversal; general `AT_EMPTY_PATH` remains separate
+//! x86 work, while [`StatxAtFlags::EMPTY_PATH`] is admitted only for
+//! `statx(2)`. Current-directory mutation is owned by [`crate::process`].
+//! Allocation-free Linux `getdents64` streams are admitted through [`RawDir`]
+//! and [`Dir`]: their caller-owned record buffer and opaque cursor semantics do
+//! not select a C `DIR` ABI.
 
+#[cfg(feature = "alloc")]
+use alloc::{ffi::CString, string::String, vec::Vec};
 use bitflags::bitflags;
+use crate::buffer::Buffer;
 use core::ffi::CStr;
 use core::mem::{ManuallyDrop, MaybeUninit};
 use core::num::NonZeroU64;
 use core::ptr;
 
-#[cfg(feature = "alloc")]
-use alloc::ffi::CString;
-#[cfg(feature = "alloc")]
-use alloc::vec::Vec;
+#[cfg(feature = "std")]
+use std::ffi::{OsStr, OsString};
+#[cfg(feature = "std")]
+use std::os::unix::ffi::OsStrExt;
+#[cfg(feature = "std")]
+use std::path::{Path, PathBuf};
 
-use crate::buffer::Buffer;
 use crate::{
-    path::Arg,
     process::{Gid, Uid},
-    AsFd, BorrowedFd, OwnedFd, Result,
+    AsFd, BorrowedFd, Errno, OwnedFd, Result,
 };
 
 pub use crate::{RawDir, RawDirEntry};
-
-bitflags! {
-    /// Permission checks accepted by [`access`].
-    ///
-    /// This closed set mirrors POSIX `R_OK`, `W_OK`, `X_OK`, and `F_OK`.
-    /// Unknown bits are rejected by [`Access::from_bits`] and are never
-    /// forwarded to the kernel.
-    #[repr(transparent)]
-    #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
-pub struct Access: u32 {
-        /// Test read permission.
-        const READ_OK = 0x4;
-        /// Test write permission.
-        const WRITE_OK = 0x2;
-        /// Test execute/search permission.
-        const EXEC_OK = 0x1;
-        /// Test only whether the path exists.
-        const EXISTS = 0;
-    }
-}
 
 bitflags! {
     /// The bounded Linux `fallocate` modes supported by this facade.
@@ -55,7 +67,7 @@ bitflags! {
     #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
     pub struct FallocateFlags: u32 {
         /// Allocate blocks and extend the file when the range reaches beyond
-        /// its current end (Linux `FALLOC_FL_ALLOCATE_RANGE`, value zero).
+        /// its current end (Linux's mode-zero operation).
         const ALLOCATE = 0;
         /// Do not change the file length while allocating or zeroing.
         const KEEP_SIZE = 0x01;
@@ -67,11 +79,737 @@ bitflags! {
     }
 }
 
+bitflags! {
+    /// Permission checks accepted by [`access`] and [`accessat`].
+    ///
+    /// This closed set mirrors Linux's `R_OK`, `W_OK`, `X_OK`, and `F_OK`
+    /// vocabulary. Unknown bits are rejected before a syscall;
+    /// [`Access::EXISTS`] deliberately has the zero value used by `F_OK`.
+    #[repr(transparent)]
+    #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+    pub struct Access: u32 {
+        /// Test read permission.
+        const READ_OK = 0x4;
+        /// Test write permission.
+        const WRITE_OK = 0x2;
+        /// Test execute/search permission.
+        const EXEC_OK = 0x1;
+        /// Test only whether the path exists.
+        const EXISTS = 0;
+    }
+}
+
+bitflags! {
+    /// `XATTR_*` flags accepted by Linux extended-attribute setters.
+    ///
+    /// Unknown bits are forwarded to Linux for validation rather than being
+    /// silently discarded at the native Rust boundary.
+    #[repr(transparent)]
+    #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+    pub struct XattrFlags: u32 {
+        /// `XATTR_CREATE`: fail if the named attribute already exists.
+        const CREATE = 0x1;
+        /// `XATTR_REPLACE`: fail if the named attribute does not exist.
+        const REPLACE = 0x2;
+        /// Preserve future Linux-defined flags for direct kernel validation.
+        const _ = !0;
+    }
+}
+
+bitflags! {
+    /// Known Linux/x86-64 `O_*` values for [`openat`], [`fcntl_getfl`], and
+    /// [`fcntl_setfl`].
+    ///
+    /// Unknown bits are retained so callers can faithfully observe and forward
+    /// future kernel-defined status bits. At the pathname boundary they are
+    /// passed directly to Linux rather than interpreted as a portability or
+    /// fallback policy.
+    #[repr(transparent)]
+    #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+    pub struct OFlags: u32 {
+        /// `O_ACCMODE` on Linux/x86-64, including the `O_PATH` selection bit.
+        const ACCMODE = 0x0020_0003;
+        /// The read/write-only portion of [`Self::ACCMODE`].
+        ///
+        /// On x86-64, `O_PATH` is part of `O_ACCMODE` but is not a read/write
+        /// mode bit.
+        const RWMODE = 0x0000_0003;
+        /// `O_RDONLY`. This bit pattern is zero.
+        const RDONLY = 0;
+        /// `O_WRONLY`.
+        const WRONLY = 0x0000_0001;
+        /// `O_RDWR`.
+        const RDWR = 0x0000_0002;
+        /// `O_CREAT`.
+        const CREATE = 0x0000_0040;
+        /// `O_EXCL`.
+        const EXCL = 0x0000_0080;
+        /// `O_NOCTTY`.
+        const NOCTTY = 0x0000_0100;
+        /// `O_TRUNC`.
+        const TRUNC = 0x0000_0200;
+        /// `O_APPEND`.
+        const APPEND = 0x0000_0400;
+        /// `O_NONBLOCK`.
+        const NONBLOCK = 0x0000_0800;
+        /// `O_DSYNC`.
+        const DSYNC = 0x0000_1000;
+        /// `O_ASYNC`/`FASYNC`.
+        const ASYNC = 0x0000_2000;
+        /// `O_DIRECT`.
+        #[cfg(target_arch = "x86_64")]
+        const DIRECT = 0x0000_4000;
+        #[cfg(target_arch = "aarch64")]
+        const DIRECT = 0x0001_0000;
+        /// `O_LARGEFILE`.
+        #[cfg(target_arch = "x86_64")]
+        const LARGEFILE = 0x0000_8000;
+        #[cfg(target_arch = "aarch64")]
+        const LARGEFILE = 0x0002_0000;
+        /// `O_DIRECTORY`.
+        #[cfg(target_arch = "x86_64")]
+        const DIRECTORY = 0x0001_0000;
+        #[cfg(target_arch = "aarch64")]
+        const DIRECTORY = 0x0000_4000;
+        /// `O_NOFOLLOW`.
+        #[cfg(target_arch = "x86_64")]
+        const NOFOLLOW = 0x0002_0000;
+        #[cfg(target_arch = "aarch64")]
+        const NOFOLLOW = 0x0000_8000;
+        /// `O_NOATIME`.
+        const NOATIME = 0x0004_0000;
+        /// `O_CLOEXEC`.
+        const CLOEXEC = 0x0008_0000;
+        /// `O_SYNC`.
+        const SYNC = 0x0010_1000;
+        /// `O_FSYNC`, an alias of [`Self::SYNC`].
+        const FSYNC = Self::SYNC.bits();
+        /// `O_RSYNC`, an alias of [`Self::SYNC`].
+        const RSYNC = Self::SYNC.bits();
+        /// `O_PATH`.
+        const PATH = 0x0020_0000;
+        /// `O_TMPFILE`.
+        #[cfg(target_arch = "x86_64")]
+        const TMPFILE = 0x0041_0000;
+        #[cfg(target_arch = "aarch64")]
+        const TMPFILE = 0x0040_4000;
+        /// Preserve future kernel-defined bits.
+        const _ = !0;
+    }
+}
+
+bitflags! {
+    /// Linux pathname-resolution controls accepted by [`openat2`].
+    ///
+    /// The named controls are available on the minimum supported Linux 5.10.
+    /// Unknown retained bits are passed to Linux for validation.
+    #[repr(transparent)]
+    #[derive(Clone, Copy, Debug, Default, Eq, Hash, PartialEq)]
+    pub struct ResolveFlags: u64 {
+        /// Reject traversal across mount points, including bind mounts.
+        const NO_XDEV = 0x01;
+        /// Reject magic links such as the descriptor links in procfs.
+        const NO_MAGICLINKS = 0x02;
+        /// Reject symbolic links during resolution.
+        const NO_SYMLINKS = 0x04;
+        /// Keep resolution beneath the supplied directory.
+        const BENEATH = 0x08;
+        /// Treat the supplied directory as the root for this lookup.
+        const IN_ROOT = 0x10;
+        /// Resolve only from cached path components.
+        const CACHED = 0x20;
+        /// Preserve unrecognized kernel flag bits for direct validation.
+        const _ = !0;
+    }
+}
+
+/// Linux whole-file advisory-lock operations accepted by [`flock`] and
+/// [`fcntl_lock`].
+///
+/// `flock` associates the lock with an open file description; `fcntl_lock`
+/// associates it with the process. The blocking variants may wait indefinitely
+/// for a conflicting advisory lock.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[repr(u32)]
+pub enum FlockOperation {
+    /// Acquire a shared lock, waiting if needed.
+    LockShared = 1,
+    /// Acquire an exclusive lock, waiting if needed.
+    LockExclusive = 2,
+    /// Release a lock.
+    Unlock = 8,
+    /// Acquire a shared lock without waiting.
+    NonBlockingLockShared = 1 | 4,
+    /// Acquire an exclusive lock without waiting.
+    NonBlockingLockExclusive = 2 | 4,
+    /// Release a lock without waiting.
+    NonBlockingUnlock = 8 | 4,
+}
+
+/// Operations on an exclusive record lock beginning at a descriptor's current
+/// file offset.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub enum CurrentLockOperation {
+    /// Release the selected range without waiting.
+    Unlock,
+    /// Acquire an exclusive lock, waiting until it is available.
+    LockExclusive,
+    /// Acquire an exclusive lock without waiting.
+    TryExclusive,
+    /// Observe whether an exclusive lock would conflict.
+    TestExclusive,
+}
+
+/// A checked signed range relative to a descriptor's current file offset.
+///
+/// Nonzero lengths keep a finite range distinct from Linux's zero-length
+/// convention for locking through the dynamically changing end of file.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub enum CurrentLockRange {
+    /// Lock from the current offset through the dynamically changing EOF.
+    ToEnd,
+    /// Lock `length` bytes beginning at the current offset.
+    Forward(NonZeroU64),
+    /// Lock `length` bytes ending at the current offset.
+    Backward(NonZeroU64),
+}
+
+/// The largest byte pathname represented in the fixed-stack [`PathArg`]
+/// boundary.
+///
+/// One byte is reserved for the terminating NUL. No-allocation builds reject
+/// longer byte paths with [`Errno::NAMETOOLONG`]; allocation-enabled builds
+/// form an owned [`CString`] and leave Linux to enforce its pathname limit.
+pub const SMALL_PATH_BUFFER_SIZE: usize = 256;
+
+/// A pathname or memory-file name input accepted by the path lifecycle,
+/// [`access`], [`accessat`], [`statat`], [`stat`], [`statx`], [`statfs`], [`statvfs`],
+/// [`readlinkat_raw`], [`canonicalize_into`], the extended-attribute family,
+/// the timestamp-mutation family, the temporary-object family,
+/// [`crate::process::chroot`], [`crate::mount::{mount, unmount}`], and
+/// [`memfd_create`].
+///
+/// Implementations borrow an existing C string or form one in a fixed stack
+/// buffer; allocation-enabled builds use an owned [`CString`] for longer
+/// inputs. The callback is invoked while that C string remains live, so the
+/// safe facade never exposes a temporary raw pathname pointer. Byte-oriented
+/// inputs reject interior NULs with [`Errno::INVAL`] and need not be UTF-8.
+/// [`memfd_create`] uses the same input boundary for its anonymous-file label,
+/// not for pathname resolution.
+pub trait PathArg {
+    /// Runs `callback` with a NUL-terminated representation of this path.
+    fn into_with_c_str<T, F>(self, callback: F) -> Result<T>
+    where
+        Self: Sized,
+        F: FnOnce(&CStr) -> Result<T>;
+}
+
+#[inline]
+fn with_path_bytes<T, F>(bytes: &[u8], callback: F) -> Result<T>
+where
+    F: FnOnce(&CStr) -> Result<T>,
+{
+    if bytes.iter().any(|&byte| byte == 0) {
+        return Err(Errno::INVAL);
+    }
+    if bytes.len() >= SMALL_PATH_BUFFER_SIZE {
+        #[cfg(feature = "alloc")]
+        {
+            let path = CString::new(bytes).map_err(|_| Errno::INVAL)?;
+            return callback(path.as_c_str());
+        }
+
+        #[cfg(not(feature = "alloc"))]
+        return Err(Errno::NAMETOOLONG);
+    }
+
+    let mut storage = [0_u8; SMALL_PATH_BUFFER_SIZE];
+    storage[..bytes.len()].copy_from_slice(bytes);
+    // SAFETY: `bytes` has no NUL and is shorter than the buffer, while the
+    // zero-initialized next byte is its sole terminating NUL.
+    let path = unsafe { CStr::from_bytes_with_nul_unchecked(&storage[..=bytes.len()]) };
+    callback(path)
+}
+
+impl PathArg for &CStr {
+    #[inline]
+    fn into_with_c_str<T, F>(self, callback: F) -> Result<T>
+    where
+        Self: Sized,
+        F: FnOnce(&CStr) -> Result<T>,
+    {
+        callback(self)
+    }
+}
+
+impl PathArg for &[u8] {
+    #[inline]
+    fn into_with_c_str<T, F>(self, callback: F) -> Result<T>
+    where
+        Self: Sized,
+        F: FnOnce(&CStr) -> Result<T>,
+    {
+        with_path_bytes(self, callback)
+    }
+}
+
+impl<const LENGTH: usize> PathArg for &[u8; LENGTH] {
+    #[inline]
+    fn into_with_c_str<T, F>(self, callback: F) -> Result<T>
+    where
+        Self: Sized,
+        F: FnOnce(&CStr) -> Result<T>,
+    {
+        with_path_bytes(self, callback)
+    }
+}
+
+impl PathArg for &str {
+    #[inline]
+    fn into_with_c_str<T, F>(self, callback: F) -> Result<T>
+    where
+        Self: Sized,
+        F: FnOnce(&CStr) -> Result<T>,
+    {
+        with_path_bytes(self.as_bytes(), callback)
+    }
+}
+
+#[cfg(feature = "alloc")]
+impl PathArg for CString {
+    #[inline]
+    fn into_with_c_str<T, F>(self, callback: F) -> Result<T>
+    where
+        Self: Sized,
+        F: FnOnce(&CStr) -> Result<T>,
+    {
+        callback(self.as_c_str())
+    }
+}
+
+#[cfg(feature = "alloc")]
+impl PathArg for &CString {
+    #[inline]
+    fn into_with_c_str<T, F>(self, callback: F) -> Result<T>
+    where
+        Self: Sized,
+        F: FnOnce(&CStr) -> Result<T>,
+    {
+        callback(self.as_c_str())
+    }
+}
+
+#[cfg(feature = "alloc")]
+impl PathArg for String {
+    #[inline]
+    fn into_with_c_str<T, F>(self, callback: F) -> Result<T>
+    where
+        Self: Sized,
+        F: FnOnce(&CStr) -> Result<T>,
+    {
+        with_path_bytes(self.as_bytes(), callback)
+    }
+}
+
+#[cfg(feature = "alloc")]
+impl PathArg for &String {
+    #[inline]
+    fn into_with_c_str<T, F>(self, callback: F) -> Result<T>
+    where
+        Self: Sized,
+        F: FnOnce(&CStr) -> Result<T>,
+    {
+        with_path_bytes(self.as_bytes(), callback)
+    }
+}
+
+#[cfg(feature = "std")]
+impl PathArg for &OsStr {
+    #[inline]
+    fn into_with_c_str<T, F>(self, callback: F) -> Result<T>
+    where
+        Self: Sized,
+        F: FnOnce(&CStr) -> Result<T>,
+    {
+        with_path_bytes(self.as_bytes(), callback)
+    }
+}
+
+#[cfg(feature = "std")]
+impl PathArg for &OsString {
+    #[inline]
+    fn into_with_c_str<T, F>(self, callback: F) -> Result<T>
+    where
+        Self: Sized,
+        F: FnOnce(&CStr) -> Result<T>,
+    {
+        with_path_bytes(self.as_os_str().as_bytes(), callback)
+    }
+}
+
+#[cfg(feature = "std")]
+impl PathArg for OsString {
+    #[inline]
+    fn into_with_c_str<T, F>(self, callback: F) -> Result<T>
+    where
+        Self: Sized,
+        F: FnOnce(&CStr) -> Result<T>,
+    {
+        with_path_bytes(self.as_os_str().as_bytes(), callback)
+    }
+}
+
+#[cfg(feature = "std")]
+impl PathArg for &Path {
+    #[inline]
+    fn into_with_c_str<T, F>(self, callback: F) -> Result<T>
+    where
+        Self: Sized,
+        F: FnOnce(&CStr) -> Result<T>,
+    {
+        with_path_bytes(self.as_os_str().as_bytes(), callback)
+    }
+}
+
+#[cfg(feature = "std")]
+impl PathArg for &PathBuf {
+    #[inline]
+    fn into_with_c_str<T, F>(self, callback: F) -> Result<T>
+    where
+        Self: Sized,
+        F: FnOnce(&CStr) -> Result<T>,
+    {
+        with_path_bytes(self.as_os_str().as_bytes(), callback)
+    }
+}
+
+#[cfg(feature = "std")]
+impl PathArg for PathBuf {
+    #[inline]
+    fn into_with_c_str<T, F>(self, callback: F) -> Result<T>
+    where
+        Self: Sized,
+        F: FnOnce(&CStr) -> Result<T>,
+    {
+        with_path_bytes(self.as_os_str().as_bytes(), callback)
+    }
+}
+
+/// `AT_FDCWD`, the directory token representing the current working directory.
+///
+/// This is a reserved Linux token rather than an owned descriptor. It is
+/// accepted only as the directory argument to `*at` operations and can
+/// never become an owned descriptor.
+pub const CWD: BorrowedFd<'static> =
+    // SAFETY: `AT_FDCWD` is a reserved, non-allocatable Linux token. The
+    // narrowly documented exception in `BorrowedFd::borrow_raw` permits it.
+    unsafe { BorrowedFd::borrow_raw(crabc_core::AT_FDCWD) };
+
+bitflags! {
+    /// The closed `fstatat(2)` flag vocabulary admitted by [`statat`].
+    ///
+    /// `SYMLINK_NOFOLLOW` observes a final symlink rather than its target.
+    /// `AT_EMPTY_PATH`, `AT_NO_AUTOMOUNT`, and all unknown bits remain outside
+    /// this metadata boundary and return [`Errno::INVAL`] before a syscall.
+    #[repr(transparent)]
+    #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+    pub struct AtFlags: u32 {
+        /// `AT_SYMLINK_NOFOLLOW`.
+        const SYMLINK_NOFOLLOW = 0x0000_0100;
+    }
+}
+
+bitflags! {
+    /// Linux `statx(2)` lookup and synchronization flags accepted by [`statx`].
+    ///
+    /// This vocabulary is deliberately separate from the closed [`AtFlags`]
+    /// used by `newfstatat(2)`: `AT_EMPTY_PATH`, `AT_NO_AUTOMOUNT`, and the
+    /// statx synchronization modifiers have operation-specific kernel
+    /// meanings. Unknown bits are retained and passed to Linux so this direct
+    /// syscall boundary preserves its kernel validation behavior.
+    #[repr(transparent)]
+    #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+    pub struct StatxAtFlags: u32 {
+        /// `AT_SYMLINK_NOFOLLOW`: observe a final symbolic link itself.
+        const SYMLINK_NOFOLLOW = 0x0000_0100;
+        /// `AT_NO_AUTOMOUNT`: do not trigger a terminal automount.
+        const NO_AUTOMOUNT = 0x0000_0800;
+        /// `AT_EMPTY_PATH`: resolve an empty path as `dirfd` itself.
+        const EMPTY_PATH = 0x0000_1000;
+        /// `AT_STATX_FORCE_SYNC`: request metadata synchronized to storage.
+        const FORCE_SYNC = 0x0000_2000;
+        /// `AT_STATX_DONT_SYNC`: accept cached metadata when available.
+        const DONT_SYNC = 0x0000_4000;
+        /// Preserve future Linux-defined statx flags for direct validation.
+        const _ = !0;
+    }
+}
+
+bitflags! {
+    /// Flags accepted by [`unlinkat`].
+    ///
+    /// This is intentionally separate from [`AtFlags`]: `AT_REMOVEDIR` is
+    /// meaningful only to `unlinkat(2)`, so a metadata flag cannot become a
+    /// removal request by accident.
+    #[repr(transparent)]
+    #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+    pub struct UnlinkAtFlags: u32 {
+        /// Remove an empty directory rather than a non-directory entry.
+        const REMOVEDIR = 0x0000_0200;
+    }
+}
+
+bitflags! {
+    /// Flags accepted by [`linkat`].
+    ///
+    /// The direct x86-64 lifecycle slice admits only the final-link-follow
+    /// selection. `AT_EMPTY_PATH` and all other `AT_*` forms are excluded.
+    #[repr(transparent)]
+    #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+    pub struct LinkAtFlags: u32 {
+        /// Follow a final symbolic link at the source path.
+        const SYMLINK_FOLLOW = 0x0000_0400;
+    }
+}
+
+bitflags! {
+    /// Linux `renameat2(2)` flags admitted by [`renameat_with`].
+    ///
+    /// The no-replace and exchange operations are ordinary namespace
+    /// transitions. Whiteout creation is filesystem- and privilege-specific,
+    /// so it remains outside this Rust boundary.
+    #[repr(transparent)]
+    #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+    pub struct RenameFlags: u32 {
+        /// Fail when the destination already exists.
+        const NOREPLACE = 0x0000_0001;
+        /// Atomically exchange two existing directory entries.
+        const EXCHANGE = 0x0000_0002;
+    }
+}
+
+bitflags! {
+    /// Flags accepted by [`chownat`].
+    ///
+    /// Ownership changes have their own closed flag type because Linux reuses
+    /// `AT_*` bit values across unrelated operations.
+    #[repr(transparent)]
+    #[derive(Clone, Copy, Debug, Default, Eq, Hash, PartialEq)]
+    pub struct ChownFlags: u32 {
+        /// Change a final symbolic link itself rather than its target.
+        const SYMLINK_NOFOLLOW = 0x0000_0100;
+    }
+}
+
+bitflags! {
+    /// The closed `utimensat(2)` pathname flag vocabulary.
+    ///
+    /// Linux reuses `AT_*` values across unrelated syscall families. Keeping
+    /// this timestamp-specific type separate from [`AtFlags`] and
+    /// [`AccessAtFlags`] prevents metadata or access selections from crossing
+    /// into a timestamp mutation request. `AT_EMPTY_PATH`, `AT_SYMLINK_FOLLOW`,
+    /// and unknown bits are rejected before a descriptor is borrowed or a
+    /// pathname is converted.
+    #[repr(transparent)]
+    #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+    pub struct TimestampAtFlags: u32 {
+        /// Update a final symbolic link itself rather than its target.
+        const SYMLINK_NOFOLLOW = 0x0000_0100;
+    }
+}
+
+bitflags! {
+    /// Flags accepted by [`accessat`].
+    ///
+    /// This operation-specific type is intentionally distinct from
+    /// [`AtFlags`], whose closed vocabulary belongs to the `statat`
+    /// metadata boundary. Linux reuses these flag bits across unrelated
+    /// `*at` syscalls; keeping the types separate prevents an access flag from
+    /// silently becoming a valid metadata flag. Unknown bits are rejected
+    /// before entering the kernel.
+    #[repr(transparent)]
+    #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+    pub struct AccessAtFlags: u32 {
+        /// Check using effective rather than real credentials.
+        const EACCESS = 0x0000_0200;
+        /// Check the final symbolic link itself rather than its target.
+        const SYMLINK_NOFOLLOW = 0x0000_0100;
+    }
+}
+
+/// Tests a pathname using Linux's standard `access()` behavior.
+///
+/// The pathname is resolved relative to the process current working
+/// directory and the permission check uses the real UID and GID. This direct
+/// x86-64 facade reaches the shared `faccessat(AT_FDCWD, path, mode)` seam;
+/// it does not consult libc or thread-local `errno`. Unknown [`Access`] bits
+/// are rejected before the pathname is converted or the syscall is issued.
+#[inline]
+pub fn access<P: PathArg>(path: P, access: Access) -> Result<()> {
+    let access = Access::from_bits(access.bits()).ok_or(Errno::INVAL)?;
+    path.into_with_c_str(|path| crabc_core::fs::access(path, access.bits()))
+}
+
+/// Tests a pathname relative to `dirfd` using Linux's `faccessat` and
+/// `faccessat2` contracts.
+///
+/// Empty [`AccessAtFlags`] uses the three-argument `faccessat` syscall.
+/// Either supported nonempty flag uses direct `faccessat2`, preserving its
+/// kernel availability and error result without an emulated fallback. The
+/// descriptor is borrowed only for the syscall, and [`PathArg`] keeps any
+/// fixed-stack pathname representation live until Linux has consumed it.
+/// Unknown access modes and flags are rejected before that boundary.
+#[inline]
+#[doc(alias = "faccessat")]
+#[doc(alias = "faccessat2")]
+pub fn accessat<P: PathArg, Fd: AsFd>(
+    dirfd: Fd,
+    path: P,
+    access: Access,
+    flags: AccessAtFlags,
+) -> Result<()> {
+    let access = Access::from_bits(access.bits()).ok_or(Errno::INVAL)?;
+    let flags = AccessAtFlags::from_bits(flags.bits()).ok_or(Errno::INVAL)?;
+    let dirfd = dirfd.as_fd();
+    path.into_with_c_str(|path| {
+        crabc_core::fs::accessat(
+            dirfd.as_raw_fd(),
+            path,
+            access.bits(),
+            flags.bits(),
+        )
+    })
+}
+
+/// Reads the open-file-description status flags through `fcntl(F_GETFL)`.
+///
+/// The returned [`OFlags`] includes the access mode and status flags reported
+/// by Linux. Unknown kernel bits are retained. These flags are shared by
+/// duplicate descriptors; per-descriptor close-on-exec state remains the
+/// separate [`crate::io::fcntl_getfd`] contract.
+#[inline]
+#[doc(alias = "F_GETFL")]
+pub fn fcntl_getfl<Fd: AsFd>(fd: Fd) -> Result<OFlags> {
+    crabc_core::io::fcntl_getfl(fd.as_fd().as_raw_fd()).map(OFlags::from_bits_retain)
+}
+
+/// Replaces the open-file-description status flags through `fcntl(F_SETFL)`.
+///
+/// Linux changes only status bits supported for the open file. Access,
+/// creation, and per-descriptor flags are not promised to change. The
+/// descriptor is borrowed and the operation affects all descriptors referring
+/// to the same open file description.
+#[inline]
+#[doc(alias = "F_SETFL")]
+pub fn fcntl_setfl<Fd: AsFd>(fd: Fd, flags: OFlags) -> Result<()> {
+    crabc_core::io::fcntl_setfl(fd.as_fd().as_raw_fd(), flags.bits())
+}
+
+/// Acquires or releases a Linux whole-file `flock(2)` advisory lock.
+///
+/// The descriptor is borrowed only for the direct syscall. Blocking operations
+/// may wait indefinitely. Unlike [`fcntl_lock`], this associates locks with
+/// an open file description rather than a process.
+#[inline]
+pub fn flock<Fd: AsFd>(fd: Fd, operation: FlockOperation) -> Result<()> {
+    crabc_core::fs::flock(fd.as_fd().as_raw_fd(), operation as u32)
+}
+
+const F_GETLK: i32 = 5;
+const F_SETLK: i32 = 6;
+const F_SETLKW: i32 = 7;
+const F_WRLCK: i16 = 1;
+const F_UNLCK: i16 = 2;
+
+/// Acquires or releases a whole-file, process-associated `fcntl` lock.
+///
+/// The range extends from byte zero through the dynamically changing EOF.
+/// These locks do not exclude threads of the same process. Closing any
+/// descriptor for the same file releases that process's record locks, even
+/// when it is not the descriptor passed here. Blocking requests propagate
+/// interruption errors without retrying.
+#[inline]
+pub fn fcntl_lock<Fd: AsFd>(fd: Fd, operation: FlockOperation) -> Result<()> {
+    let (command, lock_type) = match operation {
+        FlockOperation::LockShared => (F_SETLKW, 0),
+        FlockOperation::LockExclusive => (F_SETLKW, F_WRLCK),
+        FlockOperation::Unlock => (F_SETLKW, F_UNLCK),
+        FlockOperation::NonBlockingLockShared => (F_SETLK, 0),
+        FlockOperation::NonBlockingLockExclusive => (F_SETLK, F_WRLCK),
+        FlockOperation::NonBlockingUnlock => (F_SETLK, F_UNLCK),
+    };
+    let mut lock = crabc_core::process::KernelFlock {
+        l_type: lock_type,
+        l_whence: crabc_core::fs::SEEK_SET as i16,
+        l_start: 0,
+        l_len: 0,
+        l_pid: 0,
+    };
+    // SAFETY: The complete Linux/x86-64 flock record remains readable for
+    // the selected fixed-arity operation on the borrowed descriptor.
+    unsafe { crabc_core::io::fcntl_raw(fd.as_fd().as_raw_fd(), command,
+        core::ptr::addr_of_mut!(lock).cast()).map(|_| ()) }
+}
+
+/// Acquires, tests, or releases an exclusive process-associated record lock
+/// relative to a descriptor's observed current file offset.
+///
+/// The current offset is read through `lseek(SEEK_CUR)` and never changed.
+/// Callers sharing an open file description must synchronize concurrent seeks
+/// if the observation must match a particular position. Lengths exceeding
+/// `i64::MAX` return [`Errno::RANGE`]; Linux validates the resulting range.
+/// `TestExclusive` reports a conflicting lock as [`Errno::ACCESS`]. Lock
+/// ownership and close behavior are the same as [`fcntl_lock`].
+#[inline]
+#[doc(alias = "lockf")]
+pub fn lock_from_current<Fd: AsFd>(
+    fd: Fd,
+    operation: CurrentLockOperation,
+    range: CurrentLockRange,
+) -> Result<()> {
+    let fd = fd.as_fd();
+    let current = crabc_core::fs::lseek(fd.as_raw_fd(), 0, crabc_core::fs::SEEK_CUR)?;
+    if current < 0 { return Err(Errno::RANGE); }
+    let (start, length) = match range {
+        CurrentLockRange::ToEnd => (current, 0_i64),
+        CurrentLockRange::Forward(length) => {
+            let length = i64::try_from(length.get()).map_err(|_| Errno::RANGE)?;
+            (current, length)
+        }
+        CurrentLockRange::Backward(length) => {
+            let length = i64::try_from(length.get()).map_err(|_| Errno::RANGE)?;
+            (current.checked_sub(length).ok_or(Errno::RANGE)?, length)
+        }
+    };
+    let (command, lock_type) = match operation {
+        CurrentLockOperation::Unlock => (F_SETLK, F_UNLCK),
+        CurrentLockOperation::LockExclusive => (F_SETLKW, F_WRLCK),
+        CurrentLockOperation::TryExclusive => (F_SETLK, F_WRLCK),
+        CurrentLockOperation::TestExclusive => (F_GETLK, F_WRLCK),
+    };
+    let mut lock = crabc_core::process::KernelFlock {
+        l_type: lock_type,
+        l_whence: crabc_core::fs::SEEK_SET as i16,
+        l_start: start,
+        l_len: length,
+        l_pid: 0,
+    };
+    // SAFETY: The complete Linux/x86-64 flock record is readable and writable
+    // for the selected operation; F_GETLK writes only into this local record.
+    unsafe { crabc_core::io::fcntl_raw(fd.as_raw_fd(), command,
+        core::ptr::addr_of_mut!(lock).cast()).map(|_| ())?; }
+    if operation == CurrentLockOperation::TestExclusive && lock.l_type != F_UNLCK {
+        return Err(Errno::ACCESS);
+    }
+    Ok(())
+}
+
 /// The six POSIX filesystem access-pattern policies accepted by Linux
 /// `fadvise64`.
 ///
-/// This filesystem advice type is intentionally distinct from [`crate::mm::Advice`],
-/// whose values describe virtual-memory page policy rather than file access.
+/// This filesystem advice type is intentionally distinct from the virtual
+/// memory advice types in [`crate::mm`]. The values are the Linux/POSIX ABI
+/// constants and are passed directly to the x86-64 `fadvise64` syscall.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 #[repr(u32)]
 pub enum Advice {
@@ -90,12 +828,404 @@ pub enum Advice {
 }
 
 bitflags! {
+    /// Linux file-creation permission and process-mask bits.
+    ///
+    /// This is shared by the x86-64 pathname lifecycle and the native
+    /// process::umask vocabulary. The bitset intentionally retains future
+    /// Linux mode bits, matching the AArch64 facade contract. Individual
+    /// operations such as [`mknodat`] may deliberately validate a narrower
+    /// subset before entering the kernel.
+    #[repr(transparent)]
+    #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+    pub struct Mode: u32 {
+        /// Owner read permission.
+        const RUSR = 0o400;
+        /// Owner write permission.
+        const WUSR = 0o200;
+        /// Owner execute/search permission.
+        const XUSR = 0o100;
+        /// Group read permission.
+        const RGRP = 0o040;
+        /// Group write permission.
+        const WGRP = 0o020;
+        /// Group execute/search permission.
+        const XGRP = 0o010;
+        /// Other read permission.
+        const ROTH = 0o004;
+        /// Other write permission.
+        const WOTH = 0o002;
+        /// Other execute/search permission.
+        const XOTH = 0o001;
+        /// Owner read/write/execute permission.
+        const RWXU = Self::RUSR.bits() | Self::WUSR.bits() | Self::XUSR.bits();
+        /// Group read/write/execute permission.
+        const RWXG = Self::RGRP.bits() | Self::WGRP.bits() | Self::XGRP.bits();
+        /// Other read/write/execute permission.
+        const RWXO = Self::ROTH.bits() | Self::WOTH.bits() | Self::XOTH.bits();
+        /// Set-user-ID bit.
+        const SUID = 0o4000;
+        /// Set-group-ID bit.
+        const SGID = 0o2000;
+        /// Sticky bit.
+        const STICKY = 0o1000;
+        /// S_ISVTX, the Rustix spelling for the sticky bit.
+        const SVTX = Self::STICKY.bits();
+        /// Preserve future Linux mode bits.
+        const _ = !0;
+    }
+}
+
+/// Raw Linux st_mode bits.
+pub type RawMode = u32;
+
+/// Linux `dev_t` used by [`mknodat`].
+///
+/// Linux/x86-64 carries this value in one 64-bit syscall argument. FIFO
+/// creation always uses [`FIFO_DEVICE`]; character and block device creation
+/// retains the kernel's ordinary privilege and device-number checks.
+pub type Dev = u64;
+
+/// The device number required when creating a FIFO.
+pub const FIFO_DEVICE: Dev = 0;
+
+/// Seconds in a Linux/x86-64 `timespec`.
+pub type Secs = i64;
+
+/// Nanoseconds in a Linux/x86-64 `timespec`.
+pub type Nsecs = i64;
+
+/// A Linux/x86-64 `timespec` used for descriptor timestamp updates.
+///
+/// The representation is the direct kernel record consumed by
+/// [`futimens`], rather than a public C `struct timespec` compatibility
+/// declaration. `tv_nsec` accepts ordinary nanoseconds and the
+/// [`UTIME_NOW`]/[`UTIME_OMIT`] sentinels; Linux validates every supplied
+/// value.
+#[repr(C)]
+#[derive(Debug, Clone, Copy, Default, Eq, Ord, PartialEq, PartialOrd)]
+pub struct Timespec {
+    /// Whole seconds.
+    pub tv_sec: Secs,
+    /// Nanoseconds, or [`UTIME_NOW`]/[`UTIME_OMIT`] for timestamp updates.
+    pub tv_nsec: Nsecs,
+}
+
+const _: [(); 16] = [(); core::mem::size_of::<Timespec>()];
+const _: [(); 8] = [(); core::mem::align_of::<Timespec>()];
+
+/// The current-time sentinel accepted in [`Timespec::tv_nsec`] by Linux
+/// `utimensat`.
+pub const UTIME_NOW: Nsecs = 0x3fff_ffff;
+
+/// The leave-unchanged sentinel accepted in [`Timespec::tv_nsec`] by Linux
+/// `utimensat`.
+pub const UTIME_OMIT: Nsecs = 0x3fff_fffe;
+
+/// The access and modification timestamps consumed by [`futimens`].
+#[repr(C)]
+#[derive(Debug, Clone)]
+pub struct Timestamps {
+    /// Last-access timestamp.
+    pub last_access: Timespec,
+    /// Last-modification timestamp.
+    pub last_modification: Timespec,
+}
+
+const _: [(); 32] = [(); core::mem::size_of::<Timestamps>()];
+const _: [(); 8] = [(); core::mem::align_of::<Timestamps>()];
+
+/// A legacy Linux/x86-64 `timeval` value expressed in whole seconds and
+/// microseconds.
+///
+/// This native Rust value is converted to [`Timespec`] before the direct
+/// syscall. Its microsecond field must be in `0..1_000_000`.
+#[repr(C)]
+#[derive(Debug, Clone, Copy, Default, Eq, Ord, PartialEq, PartialOrd)]
+pub struct Timeval {
+    /// Whole seconds.
+    pub tv_sec: Secs,
+    /// Microseconds within `tv_sec`.
+    pub tv_usec: i64,
+}
+
+const _: [(); 16] = [(); core::mem::size_of::<Timeval>()];
+const _: [(); 8] = [(); core::mem::align_of::<Timeval>()];
+
+/// A legacy Linux timestamp pair expressed in whole seconds.
+///
+/// [`utime`] converts these values to two [`Timespec`] records with zero
+/// nanoseconds before entering Linux.
+#[derive(Debug, Clone, Copy, Default, Eq, Ord, PartialEq, PartialOrd)]
+pub struct Utimbuf {
+    /// Last-access timestamp in whole seconds.
+    pub actime: Secs,
+    /// Last-modification timestamp in whole seconds.
+    pub modtime: Secs,
+}
+
+impl Mode {
+    /// Extracts permission bits from a Linux st_mode value.
+    #[inline]
+    pub const fn from_raw_mode(st_mode: RawMode) -> Self {
+        Self::from_bits_truncate(st_mode & !0o170000)
+    }
+
+    /// Returns this value in the Linux st_mode representation.
+    #[inline]
+    pub const fn as_raw_mode(self) -> RawMode {
+        self.bits()
+    }
+}
+
+impl From<RawMode> for Mode {
+    #[inline]
+    fn from(st_mode: RawMode) -> Self {
+        Self::from_raw_mode(st_mode)
+    }
+}
+
+impl From<Mode> for RawMode {
+    #[inline]
+    fn from(mode: Mode) -> Self {
+        mode.as_raw_mode()
+    }
+}
+
+/// A file kind encoded in Linux `st_mode` values.
+///
+/// [`FileType::Unknown`] is an observation-only result and cannot be used by
+/// [`mknodat`] to create an arbitrary file type.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum FileType {
+    /// `S_IFREG`.
+    RegularFile,
+    /// `S_IFDIR`.
+    Directory,
+    /// `S_IFLNK`.
+    Symlink,
+    /// `S_IFIFO`.
+    Fifo,
+    /// `S_IFSOCK`.
+    Socket,
+    /// `S_IFCHR`.
+    CharacterDevice,
+    /// `S_IFBLK`.
+    BlockDevice,
+    /// An unrecognized Linux file kind.
+    Unknown,
+}
+
+impl FileType {
+    /// Interprets the file-kind bits in a Linux `st_mode` value.
+    #[inline]
+    pub const fn from_raw_mode(st_mode: RawMode) -> Self {
+        match st_mode & 0o170000 {
+            0o100000 => Self::RegularFile,
+            0o040000 => Self::Directory,
+            0o120000 => Self::Symlink,
+            0o010000 => Self::Fifo,
+            0o140000 => Self::Socket,
+            0o020000 => Self::CharacterDevice,
+            0o060000 => Self::BlockDevice,
+            _ => Self::Unknown,
+        }
+    }
+
+    /// Returns this value in the Linux `st_mode` representation.
+    #[inline]
+    pub const fn as_raw_mode(self) -> RawMode {
+        match self {
+            Self::RegularFile => 0o100000,
+            Self::Directory => 0o040000,
+            Self::Symlink => 0o120000,
+            Self::Fifo => 0o010000,
+            Self::Socket => 0o140000,
+            Self::CharacterDevice => 0o020000,
+            Self::BlockDevice => 0o060000,
+            Self::Unknown => 0o170000,
+        }
+    }
+
+    /// Interprets the Linux `DT_*` byte embedded in a `getdents64` record.
+    ///
+    /// `DT_UNKNOWN` and values not defined by Linux are retained as an
+    /// observation-only [`Self::Unknown`] result. A directory record's type is
+    /// not a metadata query; callers that need an authoritative type use
+    /// [`statat`] or [`fstat`].
+    #[inline]
+    pub(crate) const fn from_dirent_d_type(d_type: u8) -> Self {
+        match d_type {
+            1 => Self::Fifo,
+            2 => Self::CharacterDevice,
+            4 => Self::Directory,
+            6 => Self::BlockDevice,
+            8 => Self::RegularFile,
+            10 => Self::Symlink,
+            12 => Self::Socket,
+            _ => Self::Unknown,
+        }
+    }
+}
+
+/// A descriptor-owning, allocation-free Linux directory stream.
+///
+/// `Dir` takes ownership of the directory descriptor and borrows caller-owned
+/// storage for `getdents64` records. Each entry borrows the stream, so an
+/// entry cannot remain live while the next call refills or advances it. Copy
+/// names and metadata before advancing when observations must be retained.
+/// The stream follows its open directory even if that directory is renamed;
+/// it does not resolve its original pathname again. `None`
+/// means end-of-directory; `Some(Err(_))` reports the first I/O or malformed
+/// record error, after which the stream is exhausted. Use [`RawDir`] when an
+/// undersized-buffer error must be recovered by dropping the iterator and
+/// rebuilding it with a larger buffer on the same descriptor.
+pub struct Dir<'buffer> {
+    entries: RawDir<'buffer, OwnedFd>,
+    done: bool,
+}
+
+/// One byte-preserving entry borrowed from [`Dir`].
+pub type DirEntry<'entry> = RawDirEntry<'entry>;
+
+impl<'buffer> Dir<'buffer> {
+    /// Opens `path` as a close-on-exec directory stream.
+    ///
+    /// The stream uses read-only access, `O_DIRECTORY`, and `O_CLOEXEC`.
+    /// Path arguments remain byte-oriented through [`PathArg`]; no UTF-8 or
+    /// process-global C `DIR` state is involved.
+    #[inline]
+    pub fn open<P: PathArg>(path: P, buffer: &'buffer mut [MaybeUninit<u8>]) -> Result<Self> {
+        Self::openat(CWD, path, buffer)
+    }
+
+    /// Opens `path` relative to a borrowed directory descriptor as a
+    /// close-on-exec directory stream.
+    #[inline]
+    pub fn openat<P: PathArg, Fd: AsFd>(
+        dirfd: Fd,
+        path: P,
+        buffer: &'buffer mut [MaybeUninit<u8>],
+    ) -> Result<Self> {
+        let fd = openat(
+            dirfd,
+            path,
+            OFlags::RDONLY | OFlags::DIRECTORY | OFlags::CLOEXEC,
+            Mode::empty(),
+        )?;
+        Ok(Self::from_owned_fd(fd, buffer))
+    }
+
+    /// Constructs a stream by transferring ownership of an existing
+    /// directory descriptor.
+    ///
+    /// The descriptor is not re-opened or duplicated. If it does not refer to
+    /// a directory, the first call to [`Self::next`] returns the kernel error.
+    #[inline]
+    pub fn from_owned_fd(fd: OwnedFd, buffer: &'buffer mut [MaybeUninit<u8>]) -> Self {
+        Self {
+            entries: RawDir::new(fd, buffer),
+            done: false,
+        }
+    }
+
+    /// Rewinds the directory stream to its beginning.
+    ///
+    /// Buffered records are discarded immediately. The direct `lseek` to
+    /// offset zero is deferred until the next call to [`Self::next`], matching
+    /// Rustix's Linux-raw `rewinddir` behavior. Interrupted seeks are retried;
+    /// another kernel error is returned through that call and exhausts the
+    /// stream.
+    #[inline]
+    pub fn rewind(&mut self) {
+        self.entries.rewind();
+        self.done = false;
+    }
+
+    /// Seeks to a Linux directory-entry cookie.
+    ///
+    /// `offset` is the opaque cookie returned by
+    /// [`DirEntry::next_entry_cookie`], not a byte offset. Buffered records
+    /// are discarded before the direct `lseek(fd, offset, SEEK_SET)` call,
+    /// which retries interruption. Another failed seek is returned immediately
+    /// and leaves the stream exhausted.
+    #[inline]
+    pub fn seek(&mut self, offset: i64) -> Result<()> {
+        match self.entries.seek(offset) {
+            Ok(()) => {
+                self.done = false;
+                Ok(())
+            }
+            Err(error) => {
+                self.done = true;
+                Err(error)
+            }
+        }
+    }
+
+    /// Returns the next entry, an I/O error, or end-of-directory.
+    #[inline]
+    pub fn next(&mut self) -> Option<Result<DirEntry<'_>>> {
+        if self.done {
+            return None;
+        }
+        match self.entries.next() {
+            Some(Err(error)) => {
+                self.done = true;
+                Some(Err(error))
+            }
+            Some(Ok(entry)) => Some(Ok(entry)),
+            None => {
+                self.done = true;
+                None
+            }
+        }
+    }
+
+    /// Borrows the owned directory descriptor for descriptor-relative
+    /// operations without transferring ownership.
+    ///
+    /// Changing the file position through this borrow does not reset cached
+    /// records or end-of-directory state. Use [`Self::seek`] or [`Self::rewind`]
+    /// to reset that state when repositioning the stream.
+    #[inline]
+    pub fn as_fd(&self) -> BorrowedFd<'_> {
+        self.entries.as_fd()
+    }
+}
+
+impl AsFd for Dir<'_> {
+    #[inline]
+    fn as_fd(&self) -> BorrowedFd<'_> {
+        self.entries.as_fd()
+    }
+}
+
+#[cfg(feature = "std")]
+impl std::os::fd::AsRawFd for Dir<'_> {
+    #[inline]
+    fn as_raw_fd(&self) -> std::os::fd::RawFd {
+        Dir::as_fd(self).as_raw_fd()
+    }
+}
+
+#[cfg(feature = "std")]
+impl std::os::fd::AsFd for Dir<'_> {
+    #[inline]
+    fn as_fd(&self) -> std::os::fd::BorrowedFd<'_> {
+        // SAFETY: `Dir` owns its descriptor through its internal `OwnedFd`, so
+        // it stays open for the returned standard-library borrow.
+        unsafe { std::os::fd::BorrowedFd::borrow_raw(Dir::as_fd(self).as_raw_fd()) }
+    }
+}
+
+bitflags! {
     /// Stable Linux `MFD_*` creation flags for [`memfd_create`].
     ///
     /// This is deliberately a closed set: unknown or newer kernel bits are
     /// rejected by [`MemfdFlags::from_bits`] instead of being silently
-    /// forwarded. Huge-page sizing bits and Linux 6.3 exec-policy flags are
-    /// outside this bounded facade slice.
+    /// forwarded. [`MemfdFlags::HUGETLB`] selects only the kernel's default
+    /// hugetlb page size; `MFD_HUGE_*` size selectors and any huge-page
+    /// allocation policy remain outside this bounded facade slice.
     #[repr(transparent)]
     #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
     pub struct MemfdFlags: u32 {
@@ -104,7 +1234,8 @@ bitflags! {
         /// Permit `F_ADD_SEALS` operations on the returned file.
         const ALLOW_SEALING = 0x0002;
         /// Use hugetlb-backed storage with the kernel's default huge-page
-        /// size. Allocation may fail when no suitable huge pages are reserved.
+        /// size. Allocation remains a direct kernel result; this facade does
+        /// not expose huge-page size selection or reservation policy.
         const HUGETLB = 0x0004;
     }
 }
@@ -112,12 +1243,16 @@ bitflags! {
 bitflags! {
     /// Linux `F_SEAL_*` flags returned by [`fcntl_get_seals`].
     ///
-    /// Unknown bits are retained so observations from a newer Linux kernel are
-    /// not silently discarded at the native Rust boundary.
+    /// Linux 5.10 defines the first five flags below. Unknown bits are retained
+    /// so observations from a newer Linux kernel are not silently discarded at
+    /// the native Rust boundary, and requested unknown bits pass unchanged to
+    /// Linux for validation. In particular, [`SealFlags::EXEC`] is kept as an
+    /// exact directly forwarded Linux 6.3+ bit; executable-policy behavior is
+    /// not part of this Linux-5.10 evidence slice.
     #[repr(transparent)]
     #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
     pub struct SealFlags: u32 {
-        /// Prevent adding or removing seals.
+        /// Prevent adding further seals.
         const SEAL = 0x0001;
         /// Prevent shrinking the inode.
         const SHRINK = 0x0002;
@@ -125,9 +1260,15 @@ bitflags! {
         const GROW = 0x0004;
         /// Prevent writes to the inode.
         const WRITE = 0x0008;
-        /// Prevent future writable mappings (Linux 5.1+).
+        /// Prevent future writable shared mappings (Linux 5.1+).
+        ///
+        /// Writable shared mappings created before this seal remain permitted,
+        /// but direct descriptor writes are rejected.
         const FUTURE_WRITE = 0x0010;
-        /// Prevent executable changes (Linux 6.3+).
+        /// Directly forward the Linux 6.3+ executable-change seal.
+        ///
+        /// It is intentionally exposed for API fidelity but is not proved on
+        /// the Linux 5.10 baseline and does not admit executable-policy scope.
         const EXEC = 0x0020;
         /// Preserve future Linux-defined seal bits.
         const _ = !0;
@@ -136,13 +1277,20 @@ bitflags! {
 
 /// Creates an anonymous Linux memory file and returns its unique owner.
 ///
-/// `name` follows the existing [`Arg`] boundary: it is a borrowed or owned
+/// `name` follows the bounded [`PathArg`] boundary: it is a borrowed
 /// byte-oriented NUL-terminated string, rejects interior NUL bytes, and does
-/// not require UTF-8. Linux limits the name to 249 bytes excluding the NUL;
-/// the kernel reports an overlong name as `EINVAL` (or the no-alloc `Arg`
-/// boundary reports its documented bounded-name error before the syscall).
+/// not require UTF-8. Byte and string inputs through the no-allocation arm
+/// reject names of 256 bytes or more with [`Errno::NAMETOOLONG`] before the
+/// syscall; a supplied [`CStr`] is borrowed directly. Linux accepts 249 label
+/// bytes and rejects 250 with its direct [`Errno::INVAL`] result; that kernel
+/// limit remains distinct from the facade's 256-byte conversion limit.
+///
+/// This creates only anonymous memory files. `memfd_secret`, huge-page size
+/// selectors, and broader filesystem policy remain outside the typed x86-64
+/// facade.
 #[inline]
-pub fn memfd_create<P: Arg>(name: P, flags: MemfdFlags) -> Result<OwnedFd> {
+pub fn memfd_create<P: PathArg>(name: P, flags: MemfdFlags) -> Result<OwnedFd> {
+    let flags = MemfdFlags::from_bits(flags.bits()).ok_or(Errno::INVAL)?;
     name.into_with_c_str(|name| {
         crabc_core::fs::memfd_create(name, flags.bits()).map(|fd| {
             // SAFETY: successful Linux `memfd_create` returns one fresh,
@@ -167,6 +1315,14 @@ pub fn fcntl_get_seals<Fd: AsFd>(fd: Fd) -> Result<SealFlags> {
 ///
 /// The descriptor must have been created with [`MemfdFlags::ALLOW_SEALING`],
 /// and once [`SealFlags::SEAL`] is present no further flags may be added.
+/// [`SealFlags::FUTURE_WRITE`] rejects direct descriptor writes and new shared
+/// writable mappings, while retaining writable shared mappings that existed
+/// before the seal was added.
+/// Unknown requested bits are forwarded unchanged; Linux 5.10 rejects an
+/// unrecognized bit with its direct [`crate::Errno::INVAL`] result. The
+/// [`SealFlags::EXEC`] bit is likewise forwarded unchanged when requested, but
+/// its Linux 6.3+ executable-policy semantics are not part of this Linux-5.10
+/// slice.
 /// Kernel errors such as [`crate::Errno::PERM`] remain direct results without
 /// libc or TLS `errno`.
 #[inline]
@@ -257,7 +1413,7 @@ impl NamedTempFile {
         let name = unsafe {
             CStr::from_bytes_with_nul_unchecked(&self.name[..self.name_len as usize + 1])
         };
-        unlinkat(&self.parent, name, AtFlags::empty())
+        unlinkat(&self.parent, name, UnlinkAtFlags::empty())
     }
 }
 
@@ -297,7 +1453,10 @@ impl Drop for NamedTempFile {
 /// Creates a named temporary file in `parent` relative to the current
 /// directory, retaining a stable parent descriptor for cleanup.
 #[inline]
-pub fn create_temp_file<P: Arg, Prefix: Arg>(parent: P, prefix: Prefix) -> Result<NamedTempFile> {
+pub fn create_temp_file<P: PathArg, Prefix: PathArg>(
+    parent: P,
+    prefix: Prefix,
+) -> Result<NamedTempFile> {
     parent.into_with_c_str(|parent| {
         let directory = openat(
             CWD,
@@ -316,13 +1475,13 @@ pub fn create_temp_file<P: Arg, Prefix: Arg>(parent: P, prefix: Prefix) -> Resul
 /// to later current-directory changes. The generated basename is available
 /// through [`NamedTempFile::name`].
 #[inline]
-pub fn create_temp_file_at<Fd: AsFd, Prefix: Arg>(
+pub fn create_temp_file_at<Fd: AsFd, Prefix: PathArg>(
     parent: Fd,
     prefix: Prefix,
 ) -> Result<NamedTempFile> {
     let parent = parent.as_fd();
     if parent.as_raw_fd() < 0 {
-        return Err(crate::Errno::BADF);
+        return Err(Errno::BADF);
     }
     let parent = crate::io::fcntl_dupfd_cloexec(parent, 0)?;
     prefix.into_with_c_str(|prefix| {
@@ -347,7 +1506,7 @@ fn create_temp_file_at_bytes<Fd: AsFd>(
     let hex = b"0123456789abcdef";
     let mut attempt = 0;
     while attempt < TEMP_FILE_MAX_ATTEMPTS {
-        let _ = crate::rand::getentropy(&mut entropy)?;
+        crate::rand::getentropy(&mut entropy)?;
         candidate[..prefix.len()].copy_from_slice(prefix);
         for (index, byte) in entropy.iter().enumerate() {
             candidate[prefix.len() + index * 2] = hex[(byte >> 4) as usize];
@@ -363,24 +1522,24 @@ fn create_temp_file_at_bytes<Fd: AsFd>(
             Mode::from_bits_retain(TEMP_FILE_MODE_BITS),
         ) {
             Ok(fd) => return Ok((candidate, name_len, fd)),
-            Err(crate::Errno::EXIST) => attempt += 1,
+            Err(Errno::EXIST) => attempt += 1,
             Err(error) => return Err(error),
         }
     }
-    Err(crate::Errno::EXIST)
+    Err(Errno::EXIST)
 }
 
 #[inline]
 fn validate_temp_file_prefix(prefix: &[u8]) -> Result<usize> {
     if prefix.is_empty() || prefix.iter().any(|&byte| byte == b'/') {
-        return Err(crate::Errno::INVAL);
+        return Err(Errno::INVAL);
     }
     let name_len = prefix
         .len()
         .checked_add(TEMP_FILE_SUFFIX_LENGTH)
-        .ok_or(crate::Errno::NAMETOOLONG)?;
+        .ok_or(Errno::NAMETOOLONG)?;
     if name_len > TEMP_FILE_NAME_MAX {
-        return Err(crate::Errno::NAMETOOLONG);
+        return Err(Errno::NAMETOOLONG);
     }
     Ok(name_len)
 }
@@ -394,9 +1553,8 @@ fn validate_temp_file_prefix(prefix: &[u8]) -> Result<usize> {
 ///
 /// This API deliberately has no named-file or `mkstemp` fallback. A filesystem
 /// that cannot create anonymous temporary files returns
-/// [`crate::Errno::OPNOTSUPP`] (Linux `EOPNOTSUPP`) from [`Self::open`] or
-/// [`Self::open_at`]. Callers that need a pathname must choose and audit a
-/// separate named-file contract.
+/// [`Errno::OPNOTSUPP`] from [`Self::open`] or [`Self::open_at`]. Callers that
+/// need a pathname must choose and audit a separate named-file contract.
 #[repr(transparent)]
 pub struct TempFile {
     fd: OwnedFd,
@@ -410,7 +1568,7 @@ impl TempFile {
     /// close-on-exec. No pathname is returned or created. `EOPNOTSUPP` is
     /// returned unchanged when the filesystem lacks this operation.
     #[inline]
-    pub fn open<P: Arg>(directory: P, mode: Mode) -> Result<Self> {
+    pub fn open<P: PathArg>(directory: P, mode: Mode) -> Result<Self> {
         Self::open_at(CWD, directory, mode)
     }
 
@@ -421,7 +1579,7 @@ impl TempFile {
     /// `directory` must name a directory on a filesystem supporting Linux
     /// `O_TMPFILE`. No named-file fallback is attempted on `EOPNOTSUPP`.
     #[inline]
-    pub fn open_at<Fd: AsFd, P: Arg>(dirfd: Fd, directory: P, mode: Mode) -> Result<Self> {
+    pub fn open_at<Fd: AsFd, P: PathArg>(dirfd: Fd, directory: P, mode: Mode) -> Result<Self> {
         openat(
             dirfd,
             directory,
@@ -473,514 +1631,533 @@ impl std::os::fd::AsFd for TempFile {
     }
 }
 
-/// A descriptor-owning, allocation-free Linux directory stream.
+/// Sets the length of an open file descriptor.
 ///
-/// `Dir` takes ownership of the directory descriptor and borrows caller-owned
-/// storage for `getdents64` records. Each entry borrows the stream, so an
-/// entry cannot remain live while the next call refills or advances it. `None`
-/// means end-of-directory; `Some(Err(_))` reports the first I/O or malformed
-/// record error, after which the stream is exhausted. Use [`RawDir`] when an
-/// undersized-buffer error must be recovered by dropping the iterator and
-/// rebuilding it with a larger buffer on the same descriptor.
-pub struct Dir<'buffer> {
-    entries: RawDir<'buffer, OwnedFd>,
-    done: bool,
+/// The length is an unsigned byte count at this facade boundary. Values above
+/// Linux's signed loff_t range return [Errno::INVAL](crate::Errno::INVAL)
+/// before the descriptor is borrowed or the direct ftruncate(2) syscall is
+/// issued. Successful extension creates a zero-filled byte range; all
+/// descriptor and filesystem errors remain direct kernel results.
+#[inline]
+pub fn ftruncate<Fd: AsFd>(fd: Fd, length: u64) -> Result<()> {
+    if length > i64::MAX as u64 {
+        return Err(Errno::INVAL);
+    }
+
+    crabc_core::fs::ftruncate(fd.as_fd().as_raw_fd(), length as i64)
 }
 
-/// One byte-preserving entry borrowed from [`Dir`].
-pub type DirEntry<'entry> = RawDirEntry<'entry>;
-
-impl<'buffer> Dir<'buffer> {
-    /// Opens `path` as a close-on-exec directory stream.
-    ///
-    /// The stream uses read-only access, `O_DIRECTORY`, and `O_CLOEXEC`.
-    /// Path arguments remain byte-oriented through [`Arg`]; no UTF-8 or
-    /// process-global C `DIR` state is involved.
-    #[inline]
-    pub fn open<P: Arg>(path: P, buffer: &'buffer mut [MaybeUninit<u8>]) -> Result<Self> {
-        Self::openat(CWD, path, buffer)
-    }
-
-    /// Opens `path` relative to a borrowed directory descriptor as a
-    /// close-on-exec directory stream.
-    #[inline]
-    pub fn openat<P: Arg, Fd: AsFd>(
-        dirfd: Fd,
-        path: P,
-        buffer: &'buffer mut [MaybeUninit<u8>],
-    ) -> Result<Self> {
-        let fd = openat(
-            dirfd,
-            path,
-            OFlags::RDONLY | OFlags::DIRECTORY | OFlags::CLOEXEC,
-            Mode::empty(),
-        )?;
-        Ok(Self::from_owned_fd(fd, buffer))
-    }
-
-    /// Constructs a stream by transferring ownership of an existing
-    /// directory descriptor.
-    ///
-    /// The descriptor is not re-opened or duplicated. If it does not refer to
-    /// a directory, the first call to [`Self::next`] returns the kernel error.
-    #[inline]
-    pub fn from_owned_fd(fd: OwnedFd, buffer: &'buffer mut [MaybeUninit<u8>]) -> Self {
-        Self {
-            entries: RawDir::new(fd, buffer),
-            done: false,
-        }
-    }
-
-    /// Rewinds the directory stream to its beginning.
-    ///
-    /// Buffered records are discarded immediately. The direct `lseek` to
-    /// offset zero is deferred until the next call to [`Self::next`], matching
-    /// Rustix's Linux-raw `rewinddir` behavior. Interrupted seeks are retried;
-    /// another kernel error is returned through that call and exhausts the
-    /// stream.
-    #[inline]
-    pub fn rewind(&mut self) {
-        self.entries.rewind();
-        self.done = false;
-    }
-
-    /// Seeks to a Linux directory-entry cookie.
-    ///
-    /// `offset` is the opaque cookie returned by
-    /// [`DirEntry::next_entry_cookie`], not a byte offset. Buffered records
-    /// are discarded before the direct `lseek(fd, offset, SEEK_SET)` call,
-    /// which retries interruption. Another failed seek is returned immediately
-    /// and leaves the stream exhausted.
-    #[inline]
-    pub fn seek(&mut self, offset: i64) -> Result<()> {
-        match self.entries.seek(offset) {
-            Ok(()) => {
-                self.done = false;
-                Ok(())
-            }
-            Err(error) => {
-                self.done = true;
-                Err(error)
-            }
-        }
-    }
-
-    /// Returns the next entry, an I/O error, or end-of-directory.
-    #[inline]
-    pub fn next(&mut self) -> Option<Result<DirEntry<'_>>> {
-        if self.done {
-            return None;
-        }
-        match self.entries.next() {
-            Some(Err(error)) => {
-                self.done = true;
-                Some(Err(error))
-            }
-            Some(Ok(entry)) => Some(Ok(entry)),
-            None => {
-                self.done = true;
-                None
-            }
-        }
-    }
-
-    /// Borrows the owned directory descriptor for descriptor-relative
-    /// operations without transferring ownership.
-    #[inline]
-    pub fn as_fd(&self) -> BorrowedFd<'_> {
-        self.entries.as_fd()
-    }
-}
-
-impl AsFd for Dir<'_> {
-    #[inline]
-    fn as_fd(&self) -> BorrowedFd<'_> {
-        self.entries.as_fd()
-    }
-}
-
-#[cfg(feature = "std")]
-impl std::os::fd::AsRawFd for Dir<'_> {
-    #[inline]
-    fn as_raw_fd(&self) -> std::os::fd::RawFd {
-        Dir::as_fd(self).as_raw_fd()
-    }
-}
-
-#[cfg(feature = "std")]
-impl std::os::fd::AsFd for Dir<'_> {
-    #[inline]
-    fn as_fd(&self) -> std::os::fd::BorrowedFd<'_> {
-        // SAFETY: `Dir` owns the descriptor through its internal `OwnedFd`,
-        // so it stays open for the returned standard-library borrow.
-        unsafe { std::os::fd::BorrowedFd::borrow_raw(Dir::as_fd(self).as_raw_fd()) }
-    }
-}
-
-/// `AT_FDCWD`, a directory token representing the current working directory.
+/// Sets the length of a pathname-selected file.
 ///
-/// It is a reserved Linux token rather than an owned descriptor. It is safe to
-/// borrow for `*at` APIs and can never be converted into [`OwnedFd`].
-pub const CWD: BorrowedFd<'static> =
-    // SAFETY: `AT_FDCWD` is a reserved, non-allocatable Linux token. See the
-    // narrowly documented exception in `BorrowedFd::borrow_raw`.
-    unsafe { BorrowedFd::borrow_raw(crabc_core::AT_FDCWD) };
+/// This is the direct Linux `truncate(2)` operation through the fixed-stack
+/// [`PathArg`] boundary. Values above the signed `loff_t` range return
+/// [`Errno::INVAL`] before pathname conversion or syscall entry. It does not
+/// resolve a descriptor, allocate, or provide a C ABI wrapper.
+#[inline]
+pub fn truncate<P: PathArg>(path: P, length: u64) -> Result<()> {
+    if length > i64::MAX as u64 {
+        return Err(Errno::INVAL);
+    }
 
-/// A special directory token which requires an absolute path.
+    path.into_with_c_str(|path| crabc_core::fs::truncate(path, length as i64))
+}
+
+/// Sets access and modification timestamps relative to `dirfd`.
 ///
-/// Linux has no `AT_ABS` constant. Rustix conventionally passes `-EBADF`, a
-/// non-allocatable invalid descriptor, so an absolute path ignores `dirfd`
-/// while a relative path deterministically fails with `EBADF`.
-pub const ABS: BorrowedFd<'static> =
-    // SAFETY: `-EBADF` is a documented Rustix convention for `*at` operations
-    // and `BorrowedFd::borrow_raw` accepts this narrowly scoped token.
-    unsafe { BorrowedFd::borrow_raw(-9) };
-
-bitflags! {
-    /// `O_*` flags accepted by [`openat`] on Linux/AArch64.
-    ///
-    /// Unknown bits are preserved so callers forwarding kernel-defined flags
-    /// do not lose information as Linux grows new values.
-    #[repr(transparent)]
-    #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
-    pub struct OFlags: u32 {
-        /// `O_ACCMODE`.
-        const ACCMODE = 0x0000_0003;
-        /// The read/write portion of [`Self::ACCMODE`].
-        const RWMODE = Self::ACCMODE.bits();
-        /// Read-only access. This bit pattern is zero.
-        const RDONLY = 0;
-        /// `O_WRONLY`.
-        const WRONLY = 0x0000_0001;
-        /// `O_RDWR`.
-        const RDWR = 0x0000_0002;
-        /// `O_CREAT`.
-        const CREATE = 0x0000_0040;
-        /// `O_EXCL`.
-        const EXCL = 0x0000_0080;
-        /// `O_NOCTTY`.
-        const NOCTTY = 0x0000_0100;
-        /// `O_TRUNC`.
-        const TRUNC = 0x0000_0200;
-        /// `O_APPEND`.
-        const APPEND = 0x0000_0400;
-        /// `O_NONBLOCK`.
-        const NONBLOCK = 0x0000_0800;
-        /// `O_DSYNC`.
-        const DSYNC = 0x0000_1000;
-        /// `O_ASYNC`/`FASYNC`.
-        const ASYNC = 0x0000_2000;
-        /// `O_DIRECTORY` in crabc's pinned Linux/AArch64 headers.
-        const DIRECTORY = 0x0000_4000;
-        /// `O_NOFOLLOW` in crabc's pinned Linux/AArch64 headers.
-        const NOFOLLOW = 0x0000_8000;
-        /// `O_CLOEXEC`.
-        const CLOEXEC = 0x0008_0000;
-        /// `O_SYNC`.
-        const SYNC = 0x0010_1000;
-        /// `O_FSYNC`, an alias of [`Self::SYNC`].
-        const FSYNC = Self::SYNC.bits();
-        /// `O_RSYNC`, an alias of [`Self::SYNC`].
-        const RSYNC = Self::SYNC.bits();
-        /// `O_DIRECT`.
-        const DIRECT = 0x0001_0000;
-        /// `O_LARGEFILE`.
-        const LARGEFILE = 0x0002_0000;
-        /// `O_NOATIME`.
-        const NOATIME = 0x0004_0000;
-        /// `O_PATH`.
-        const PATH = 0x0020_0000;
-        /// `O_TMPFILE`.
-        const TMPFILE = 0x0040_4000;
-        /// Preserve future kernel-defined bits.
-        const _ = !0;
-    }
+/// The descriptor and fixed-stack pathname are borrowed only for the direct
+/// Linux `utimensat(2)` syscall. This closed operation accepts only
+/// [`TimestampAtFlags::SYMLINK_NOFOLLOW`]; it does not expose `AT_EMPTY_PATH`,
+/// general pathname mutation, or a public C timestamp API. Linux validates
+/// ordinary nanoseconds and [`UTIME_NOW`]/[`UTIME_OMIT`] directly.
+#[inline]
+pub fn utimensat<P: PathArg, Fd: AsFd>(
+    dirfd: Fd,
+    path: P,
+    times: &Timestamps,
+    flags: TimestampAtFlags,
+) -> Result<()> {
+    let flags = TimestampAtFlags::from_bits(flags.bits()).ok_or(Errno::INVAL)?;
+    let dirfd = dirfd.as_fd();
+    path.into_with_c_str(|path| {
+        // SAFETY: `path` and `times` remain valid for the direct syscall, and
+        // `Timestamps` is exactly two Linux/x86-64 `timespec` values.
+        unsafe {
+            crabc_core::fs::utimensat_raw(
+                dirfd.as_raw_fd(),
+                path.as_ptr().cast(),
+                (times as *const Timestamps).cast(),
+                flags.bits(),
+            )
+        }
+    })
 }
 
-bitflags! {
-    /// `RESOLVE_*` flags accepted by Linux [`openat2`].
-    #[repr(transparent)]
-    #[derive(Clone, Copy, Debug, Default, Eq, Hash, PartialEq)]
-    pub struct ResolveFlags: u64 {
-        /// `RESOLVE_NO_XDEV`.
-        const NO_XDEV = 0x01;
-        /// `RESOLVE_NO_MAGICLINKS`.
-        const NO_MAGICLINKS = 0x02;
-        /// `RESOLVE_NO_SYMLINKS`.
-        const NO_SYMLINKS = 0x04;
-        /// `RESOLVE_BENEATH`.
-        const BENEATH = 0x08;
-        /// `RESOLVE_IN_ROOT`.
-        const IN_ROOT = 0x10;
-        /// `RESOLVE_CACHED`.
-        const CACHED = 0x20;
-        /// Preserve future Linux-defined flags.
-        const _ = !0;
-    }
-}
-
-bitflags! {
-    /// `XATTR_*` flags accepted by Linux extended-attribute setters.
-    #[repr(transparent)]
-    #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
-    pub struct XattrFlags: u32 {
-        /// `XATTR_CREATE`: fail if the named attribute already exists.
-        const CREATE = 0x1;
-        /// `XATTR_REPLACE`: fail if the named attribute does not exist.
-        const REPLACE = 0x2;
-        /// Preserve future Linux-defined flags.
-        const _ = !0;
-    }
-}
-
-bitflags! {
-    /// `RENAME_*` flags accepted by Linux `renameat2`.
-    #[repr(transparent)]
-    #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
-    pub struct RenameFlags: u32 {
-        /// `RENAME_EXCHANGE`.
-        const EXCHANGE = 0x2;
-        /// `RENAME_NOREPLACE`.
-        const NOREPLACE = 0x1;
-        /// `RENAME_WHITEOUT`.
-        const WHITEOUT = 0x4;
-        /// Preserve future Linux-defined flags.
-        const _ = !0;
-    }
-}
-
-bitflags! {
-    /// File creation-permission bits for [`openat`].
-    #[repr(transparent)]
-    #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
-    pub struct Mode: u32 {
-        /// Owner read permission.
-        const RUSR = 0o400;
-        /// Owner write permission.
-        const WUSR = 0o200;
-        /// Owner execute/search permission.
-        const XUSR = 0o100;
-        /// Group read permission.
-        const RGRP = 0o040;
-        /// Group write permission.
-        const WGRP = 0o020;
-        /// Group execute/search permission.
-        const XGRP = 0o010;
-        /// Other read permission.
-        const ROTH = 0o004;
-        /// Other write permission.
-        const WOTH = 0o002;
-        /// Other execute/search permission.
-        const XOTH = 0o001;
-        /// Owner read/write/execute permission.
-        const RWXU = Self::RUSR.bits() | Self::WUSR.bits() | Self::XUSR.bits();
-        /// Group read/write/execute permission.
-        const RWXG = Self::RGRP.bits() | Self::WGRP.bits() | Self::XGRP.bits();
-        /// Other read/write/execute permission.
-        const RWXO = Self::ROTH.bits() | Self::WOTH.bits() | Self::XOTH.bits();
-        /// Set-user-ID bit.
-        const SUID = 0o4000;
-        /// Set-group-ID bit.
-        const SGID = 0o2000;
-        /// Sticky bit.
-        const STICKY = 0o1000;
-        /// `S_ISVTX`, the Rustix spelling for the sticky bit.
-        const SVTX = Self::STICKY.bits();
-        /// Preserve future Linux mode bits.
-        const _ = !0;
-    }
-}
-
-/// Raw Linux `st_mode` bits.
-pub type RawMode = u32;
-
-/// Linux `dev_t` used by [`mknodat`].
+/// Sets access and modification timestamps on an open file or directory.
 ///
-/// The AArch64 kernel ABI carries this value in one 64-bit syscall register.
-/// FIFO creation always uses [`FIFO_DEVICE`] because FIFOs do not carry a
-/// device number; character and block nodes are subject to the kernel's
-/// privilege and device-number checks.
-pub type Dev = u64;
-
-/// The device number required by Linux for a FIFO node.
-pub const FIFO_DEVICE: Dev = 0;
-
-impl Mode {
-    /// Extracts permission bits from a Linux `st_mode` value.
-    #[inline]
-    pub const fn from_raw_mode(st_mode: RawMode) -> Self {
-        Self::from_bits_truncate(st_mode & !0o170000)
-    }
-
-    /// Returns this value in the Linux `st_mode` representation.
-    #[inline]
-    pub const fn as_raw_mode(self) -> RawMode {
-        self.bits()
+/// This is the descriptor-only `utimensat(2)` form: Linux receives the
+/// borrowed descriptor, a null pathname, two exact x86-64 [`Timespec`]
+/// records, and zero flags. The timestamp pair remains live for the direct
+/// syscall, and Linux validates normal nanoseconds, [`UTIME_NOW`], and
+/// [`UTIME_OMIT`] without a libc wrapper or TLS `errno`.
+#[inline]
+pub fn futimens<Fd: AsFd>(fd: Fd, times: &Timestamps) -> Result<()> {
+    // SAFETY: `times` remains valid for the direct syscall, and its layout is
+    // exactly two Linux/x86-64 `timespec` values. A null path selects the
+    // kernel's futimens form.
+    unsafe {
+        crabc_core::fs::utimensat_raw(
+            fd.as_fd().as_raw_fd(),
+            core::ptr::null(),
+            (times as *const Timestamps).cast(),
+            0,
+        )
     }
 }
 
-impl From<RawMode> for Mode {
-    #[inline]
-    fn from(st_mode: RawMode) -> Self {
-        Self::from_raw_mode(st_mode)
+/// Sets access and modification times on an open file using microseconds.
+///
+/// `None` sends a null timestamp pointer and asks Linux to set both values to
+/// the current time. For explicit values, each `tv_usec` must be in
+/// `0..1_000_000`; invalid values return [`Errno::INVAL`] before the
+/// descriptor is borrowed or the direct syscall is issued.
+#[inline]
+pub fn futimes<Fd: AsFd>(fd: Fd, times: Option<&[Timeval; 2]>) -> Result<()> {
+    let converted = match times {
+        None => None,
+        Some(times) => Some([
+            timeval_to_timespec(times[0])?,
+            timeval_to_timespec(times[1])?,
+        ]),
+    };
+    let times_ptr = converted
+        .as_ref()
+        .map_or(core::ptr::null(), |times| times.as_ptr());
+
+    // SAFETY: the borrowed descriptor and optional converted timestamp array
+    // remain valid for this direct syscall. A null timestamp pointer selects
+    // Linux's current-time behavior.
+    unsafe {
+        crabc_core::fs::utimensat_raw(
+            fd.as_fd().as_raw_fd(),
+            core::ptr::null(),
+            times_ptr.cast(),
+            0,
+        )
     }
 }
 
-impl From<Mode> for RawMode {
-    #[inline]
-    fn from(mode: Mode) -> Self {
-        mode.as_raw_mode()
-    }
-}
-
-bitflags! {
-    /// `AT_*` flags accepted by filesystem operations on Linux/AArch64.
-    ///
-    /// Linux reuses some flag bits for different syscall families. Preserve
-    /// them verbatim here; each operation documents the subset its kernel
-    /// syscall accepts.
-    #[repr(transparent)]
-    #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
-pub struct AtFlags: u32 {
-        /// `AT_SYMLINK_NOFOLLOW`.
-        const SYMLINK_NOFOLLOW = 0x100;
-        /// `AT_EACCESS` for access checks.
-        const EACCESS = 0x200;
-        /// `AT_REMOVEDIR` for `unlinkat`.
-        const REMOVEDIR = 0x200;
-        /// `AT_SYMLINK_FOLLOW` for `linkat`.
-        const SYMLINK_FOLLOW = 0x400;
-        /// `AT_NO_AUTOMOUNT` for metadata queries.
-        const NO_AUTOMOUNT = 0x800;
-        /// `AT_EMPTY_PATH` for supported Linux `*at` operations.
-        const EMPTY_PATH = 0x1000;
-        /// `AT_STATX_SYNC_AS_STAT` (the zero-valued default).
-        const STATX_SYNC_AS_STAT = 0;
-        /// `AT_STATX_FORCE_SYNC`.
-        const STATX_FORCE_SYNC = 0x2000;
-        /// `AT_STATX_DONT_SYNC`.
-        const STATX_DONT_SYNC = 0x4000;
-        /// Preserve future Linux-defined flags.
-        const _ = !0;
-    }
-}
-
-bitflags! {
-    /// Flags accepted by [`chownat`].
-    ///
-    /// This is deliberately separate from [`AtFlags`]. Linux reuses the
-    /// `*at` flag word across unrelated operations, while ownership changes
-    /// only accept `AT_SYMLINK_NOFOLLOW` in this bounded facade. In
-    /// particular, access, unlink, link, statx, and timestamp flags cannot
-    /// accidentally cross the ownership boundary. Linux's
-    /// `AT_EMPTY_PATH` form is left outside this path-based slice.
-    #[repr(transparent)]
-    #[derive(Clone, Copy, Debug, Default, Eq, Hash, PartialEq)]
-    pub struct ChownFlags: u32 {
-        /// Change the symbolic link itself rather than its target.
-        const SYMLINK_NOFOLLOW = 0x100;
-    }
-}
-
-bitflags! {
-    /// Linux mount flags reported by [`StatFs`] and [`StatVfs`].
-    ///
-    /// Unknown bits are retained so callers can inspect flags introduced by
-    /// newer kernels without losing information. These are observations, not
-    /// flags accepted by a mount-changing operation.
-    #[repr(transparent)]
-    #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
-    pub struct StatVfsMountFlags: u64 {
-        /// `ST_RDONLY`.
-        const RDONLY = 0x0000_0001;
-        /// `ST_NOSUID`.
-        const NOSUID = 0x0000_0002;
-        /// `ST_NODEV`.
-        const NODEV = 0x0000_0004;
-        /// `ST_NOEXEC`.
-        const NOEXEC = 0x0000_0008;
-        /// `ST_SYNCHRONOUS`.
-        const SYNCHRONOUS = 0x0000_0010;
-        /// `ST_MANDLOCK`.
-        const MANDLOCK = 0x0000_0040;
-        /// `ST_NOATIME`.
-        const NOATIME = 0x0000_0400;
-        /// `ST_NODIRATIME`.
-        const NODIRATIME = 0x0000_0800;
-        /// `ST_RELATIME`.
-        const RELATIME = 0x0000_1000;
-        /// Preserve future Linux-defined mount bits.
-        const _ = !0;
-    }
-}
-
-/// A file kind encoded in Linux `st_mode` or `getdents64` records.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum FileType {
-    /// `S_IFREG`.
-    RegularFile,
-    /// `S_IFDIR`.
-    Directory,
-    /// `S_IFLNK`.
-    Symlink,
-    /// `S_IFIFO`.
-    Fifo,
-    /// `S_IFSOCK`.
-    Socket,
-    /// `S_IFCHR`.
-    CharacterDevice,
-    /// `S_IFBLK`.
-    BlockDevice,
-    /// An unrecognized Linux file kind.
-    Unknown,
-}
-
-impl FileType {
-    /// Interprets the file-kind bits in a Linux `st_mode` value.
-    #[inline]
-    pub const fn from_raw_mode(st_mode: RawMode) -> Self {
-        match st_mode & 0o170000 {
-            0o100000 => Self::RegularFile,
-            0o040000 => Self::Directory,
-            0o120000 => Self::Symlink,
-            0o010000 => Self::Fifo,
-            0o140000 => Self::Socket,
-            0o020000 => Self::CharacterDevice,
-            0o060000 => Self::BlockDevice,
-            _ => Self::Unknown,
+/// Sets timestamps for a final symbolic link rather than its target.
+///
+/// `None` asks Linux to set both link timestamps to the current time. Explicit
+/// microsecond values are validated before the fixed-stack pathname conversion
+/// and direct syscall.
+#[inline]
+pub fn lutimes<P: PathArg>(path: P, times: Option<&[Timeval; 2]>) -> Result<()> {
+    let converted = match times {
+        None => None,
+        Some(times) => Some([
+            timeval_to_timespec(times[0])?,
+            timeval_to_timespec(times[1])?,
+        ]),
+    };
+    let times_ptr = converted
+        .as_ref()
+        .map_or(core::ptr::null(), |times| times.as_ptr());
+    path.into_with_c_str(|path| {
+        // SAFETY: the path and optional converted timestamp array remain live
+        // for the direct syscall. The no-follow flag updates the final
+        // symbolic link itself rather than resolving it to its target.
+        unsafe {
+            crabc_core::fs::utimensat_raw(
+                crabc_core::AT_FDCWD,
+                path.as_ptr().cast(),
+                times_ptr.cast(),
+                TimestampAtFlags::SYMLINK_NOFOLLOW.bits(),
+            )
         }
-    }
-
-    /// Returns this value in the Linux `st_mode` representation.
-    #[inline]
-    pub const fn as_raw_mode(self) -> RawMode {
-        match self {
-            Self::RegularFile => 0o100000,
-            Self::Directory => 0o040000,
-            Self::Symlink => 0o120000,
-            Self::Fifo => 0o010000,
-            Self::Socket => 0o140000,
-            Self::CharacterDevice => 0o020000,
-            Self::BlockDevice => 0o060000,
-            Self::Unknown => 0o170000,
-        }
-    }
-
-    #[inline]
-    pub(crate) const fn from_dirent_d_type(d_type: u8) -> Self {
-        match d_type {
-            1 => Self::Fifo,
-            2 => Self::CharacterDevice,
-            4 => Self::Directory,
-            6 => Self::BlockDevice,
-            8 => Self::RegularFile,
-            10 => Self::Symlink,
-            12 => Self::Socket,
-            _ => Self::Unknown,
-        }
-    }
+    })
 }
 
+/// Sets timestamps for a path relative to `dirfd`, following a final symlink.
+///
+/// `None` asks Linux to set both timestamps to the current time. Explicit
+/// microsecond values are validated before the descriptor is borrowed or the
+/// fixed-stack pathname is converted.
+#[inline]
+pub fn futimesat<P: PathArg, Fd: AsFd>(
+    dirfd: Fd,
+    path: P,
+    times: Option<&[Timeval; 2]>,
+) -> Result<()> {
+    let converted = match times {
+        None => None,
+        Some(times) => Some([
+            timeval_to_timespec(times[0])?,
+            timeval_to_timespec(times[1])?,
+        ]),
+    };
+    let times_ptr = converted
+        .as_ref()
+        .map_or(core::ptr::null(), |times| times.as_ptr());
+    let dirfd = dirfd.as_fd();
+    path.into_with_c_str(|path| {
+        // SAFETY: the borrowed directory descriptor, path, and optional
+        // converted timestamp array remain live for the direct syscall.
+        // Zero flags preserve final-symlink-following behavior.
+        unsafe {
+            crabc_core::fs::utimensat_raw(
+                dirfd.as_raw_fd(),
+                path.as_ptr().cast(),
+                times_ptr.cast(),
+                0,
+            )
+        }
+    })
+}
+
+/// Sets timestamps for a current-directory-relative path, following a final
+/// symbolic link.
+///
+/// `None` asks Linux to set both timestamps to the current time. Explicit
+/// microsecond values are validated before the fixed-stack pathname conversion
+/// and direct syscall.
+#[inline]
+pub fn utimes<P: PathArg>(path: P, times: Option<&[Timeval; 2]>) -> Result<()> {
+    let converted = match times {
+        None => None,
+        Some(times) => Some([
+            timeval_to_timespec(times[0])?,
+            timeval_to_timespec(times[1])?,
+        ]),
+    };
+    let times_ptr = converted
+        .as_ref()
+        .map_or(core::ptr::null(), |times| times.as_ptr());
+    path.into_with_c_str(|path| {
+        // SAFETY: the path and optional converted timestamp array remain live
+        // for the direct syscall. Zero flags preserve final-symlink-following
+        // behavior.
+        unsafe {
+            crabc_core::fs::utimensat_raw(
+                crabc_core::AT_FDCWD,
+                path.as_ptr().cast(),
+                times_ptr.cast(),
+                0,
+            )
+        }
+    })
+}
+
+/// Sets timestamps for a current-directory-relative path at whole-second
+/// precision, following a final symbolic link.
+///
+/// `None` asks Linux to set both timestamps to the current time. Explicit
+/// [`Utimbuf`] values are converted to two [`Timespec`] records with zero
+/// nanoseconds before entering the direct syscall.
+#[inline]
+pub fn utime<P: PathArg>(path: P, times: Option<&Utimbuf>) -> Result<()> {
+    let converted = times.map(|times| {
+        [
+            Timespec {
+                tv_sec: times.actime,
+                tv_nsec: 0,
+            },
+            Timespec {
+                tv_sec: times.modtime,
+                tv_nsec: 0,
+            },
+        ]
+    });
+    let times_ptr = converted
+        .as_ref()
+        .map_or(core::ptr::null(), |times| times.as_ptr());
+    path.into_with_c_str(|path| {
+        // SAFETY: the path and optional converted timestamp array remain live
+        // for the direct syscall. Zero flags preserve final-symlink-following
+        // behavior.
+        unsafe {
+            crabc_core::fs::utimensat_raw(
+                crabc_core::AT_FDCWD,
+                path.as_ptr().cast(),
+                times_ptr.cast(),
+                0,
+            )
+        }
+    })
+}
+
+#[inline]
+fn timeval_to_timespec(time: Timeval) -> Result<Timespec> {
+    if time.tv_usec < 0 || time.tv_usec >= 1_000_000 {
+        return Err(Errno::INVAL);
+    }
+    Ok(Timespec {
+        tv_sec: time.tv_sec,
+        tv_nsec: time.tv_usec * 1_000,
+    })
+}
+
+/// Allocates, zeros, or punches a range in an open file.
+///
+/// The syscall borrows the supplied raw descriptor for its duration: passing a
+/// reference or [`BorrowedFd`] retains Rust descriptor ownership, while an
+/// owning [`AsFd`] passed by value follows ordinary Rust move/drop semantics.
+/// `offset` and `length` are non-negative byte counts. Both must fit Linux's
+/// signed `loff_t`, and their sum must not overflow that range; these invalid
+/// ranges return [`Errno::INVAL`] before a syscall.
+/// `PUNCH_HOLE` requires `KEEP_SIZE`, and unknown or unsupported mode bits are
+/// rejected before a syscall. The operation never changes the descriptor's
+/// current file position. `ALLOCATE` extends the file when necessary;
+/// `KEEP_SIZE` suppresses that extension.
+#[inline]
+pub fn fallocate<Fd: AsFd>(
+    fd: Fd,
+    flags: FallocateFlags,
+    offset: u64,
+    length: u64,
+) -> Result<()> {
+    if FallocateFlags::from_bits(flags.bits()).is_none()
+        || (flags.contains(FallocateFlags::PUNCH_HOLE)
+            && !flags.contains(FallocateFlags::KEEP_SIZE))
+        || (flags.contains(FallocateFlags::PUNCH_HOLE)
+            && flags.contains(FallocateFlags::ZERO_RANGE))
+        || offset > i64::MAX as u64
+        || length > i64::MAX as u64
+        || offset
+            .checked_add(length)
+            .map_or(true, |end| end > i64::MAX as u64)
+    {
+        return Err(Errno::INVAL);
+    }
+
+    crabc_core::fs::fallocate(
+        fd.as_fd().as_raw_fd(),
+        flags.bits(),
+        offset as i64,
+        length as i64,
+    )
+}
+
+/// Allocates a non-negative byte range using Linux `fallocate(2)` mode zero,
+/// the native Rust spelling of POSIX `posix_fallocate`.
+///
+/// This fixes the mode to zero and otherwise has the same descriptor,
+/// range-validation, position, and direct-kernel-error contract as
+/// [`fallocate`]. Unlike the C `posix_fallocate` function's direct integer
+/// error convention, this API returns [`Result<(), Errno>`] and does not use
+/// libc or TLS `errno`.
+#[inline]
+pub fn posix_fallocate<Fd: AsFd>(fd: Fd, offset: u64, length: u64) -> Result<()> {
+    fallocate(fd, FallocateFlags::empty(), offset, length)
+}
+
+/// Transfers up to `count` bytes from the supplied input descriptor to the
+/// supplied output descriptor through Linux `sendfile(2)`.
+///
+/// With `offset == Some`, Linux starts at the supplied non-negative input
+/// offset, leaves the input descriptor's shared position unchanged, and
+/// writes the resulting position back through the same mutable reference.
+/// With `offset == None`, Linux starts at and advances the input descriptor's
+/// shared position. The output descriptor's shared position advances in both
+/// forms. A short transfer is returned as its actual byte count. The syscall
+/// does not transfer kernel descriptor ownership. Passing a reference or
+/// [`BorrowedFd`] retains Rust descriptor ownership; as with any by-value
+/// Rust parameter, an owning `AsFd` value is consumed by the call.
+///
+/// The optional offset is a Rust in/out borrow, not a nullable C `off_t *`:
+/// values above Linux's signed `off_t` range are rejected with
+/// [`Errno::INVAL`] before the syscall, and the reference remains valid for
+/// the call. This direct descriptor-transfer boundary does not admit
+/// splice-family operations, pathname opening, or a C ABI.
+#[inline]
+pub fn sendfile<OutFd: AsFd, InFd: AsFd>(
+    out_fd: OutFd,
+    in_fd: InFd,
+    offset: Option<&mut u64>,
+    count: usize,
+) -> Result<usize> {
+    if offset
+        .as_ref()
+        .map_or(false, |offset| **offset > i64::MAX as u64)
+    {
+        return Err(Errno::INVAL);
+    }
+
+    crabc_core::io::sendfile(
+        out_fd.as_fd().as_raw_fd(),
+        in_fd.as_fd().as_raw_fd(),
+        offset,
+        count,
+    )
+}
+
+/// Copies up to `len` bytes between the supplied descriptors through Linux
+/// `copy_file_range(2)`.
+///
+/// A supplied `off_in` or `off_out` is an explicit in/out byte position. Its
+/// descriptor's shared position remains unchanged, while the supplied value
+/// advances by the copied byte count. With `None`, Linux uses and advances
+/// that descriptor's shared position. A short copy, including zero at end of
+/// input, is returned as its actual byte count.
+///
+/// Explicit offsets and their requested ranges must fit signed Linux
+/// `loff_t`. The wrapper stages both offsets in local initialized values and
+/// commits them only after a successful syscall, so an error leaves caller
+/// offsets unchanged. The syscall borrows raw descriptor values for the call;
+/// passing a reference or [`BorrowedFd`] retains Rust descriptor ownership,
+/// while an owning `AsFd` passed by value follows ordinary Rust move/drop
+/// semantics. This boundary always passes zero Linux copy flags and does not
+/// admit copy flags, sendfile/splice fallbacks, pathname operations, a C ABI,
+/// or general file-copy policy.
+#[inline]
+pub fn copy_file_range<InFd: AsFd, OutFd: AsFd>(
+    in_fd: InFd,
+    off_in: Option<&mut u64>,
+    out_fd: OutFd,
+    off_out: Option<&mut u64>,
+    len: usize,
+) -> Result<usize> {
+    let len_as_u64 = len as u64;
+    let max_loff_t = i64::MAX as u64;
+    let in_initial = off_in.as_ref().map(|offset| **offset);
+    let out_initial = off_out.as_ref().map(|offset| **offset);
+    let range_fits = |offset: Option<u64>| {
+        offset.map_or(true, |offset| {
+            offset <= max_loff_t
+                && len_as_u64 <= max_loff_t
+                && offset
+                    .checked_add(len_as_u64)
+                    .map_or(false, |end| end <= max_loff_t)
+        })
+    };
+    if !range_fits(in_initial) || !range_fits(out_initial) {
+        return Err(Errno::INVAL);
+    }
+
+    let mut in_offset = in_initial;
+    let mut out_offset = out_initial;
+    let in_fd = in_fd.as_fd();
+    let out_fd = out_fd.as_fd();
+    let copied = crabc_core::fs::copy_file_range(
+        in_fd.as_raw_fd(),
+        in_offset.as_mut(),
+        out_fd.as_raw_fd(),
+        out_offset.as_mut(),
+        len,
+    )?;
+
+    // Commit only after a successful syscall. In particular, this prevents a
+    // partially updated kernel in/out pointer from escaping on an error.
+    if let (Some(offset), Some(updated)) = (off_in, in_offset) {
+        *offset = updated;
+    }
+    if let (Some(offset), Some(updated)) = (off_out, out_offset) {
+        *offset = updated;
+    }
+    Ok(copied)
+}
+
+/// The Linux file-position origins accepted by [`seek`].
+///
+/// `Data` and `Hole` select Linux sparse-file regions in addition to the
+/// ordinary absolute, end-relative, and current-position origins. Unsupported
+/// sparse seeking or an invalid resulting position remains a direct kernel
+/// error.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub enum SeekFrom {
+    /// Set the position to an absolute byte offset.
+    Start(u64),
+    /// Set the position relative to the end of the file.
+    End(i64),
+    /// Set the position relative to the current file position.
+    Current(i64),
+    /// Set the position to the next data region at or after an absolute byte
+    /// offset.
+    Data(u64),
+    /// Set the position to the next hole at or after an absolute byte offset.
+    Hole(u64),
+}
+
+/// Repositions an open descriptor through Linux `lseek(2)`.
+///
+/// Successful Linux positions are non-negative and are returned as an
+/// unsigned byte offset. Absolute `Start`, `Data`, and `Hole` values above
+/// `i64::MAX` are passed through their signed Linux `off_t` representation,
+/// so their direct Linux error is preserved: a negative `SEEK_SET` position
+/// is `EINVAL`, while sparse `SEEK_DATA`/`SEEK_HOLE` may report `ENXIO`.
+/// Relative positions retain their signed Linux representation, so an invalid
+/// resulting offset remains the kernel's direct error.
+#[inline]
+#[doc(alias = "lseek")]
+pub fn seek<Fd: AsFd>(fd: Fd, position: SeekFrom) -> Result<u64> {
+    let (whence, offset) = match position {
+        SeekFrom::Start(offset) => (crabc_core::fs::SEEK_SET, offset as i64),
+        SeekFrom::End(offset) => (crabc_core::fs::SEEK_END, offset),
+        SeekFrom::Current(offset) => (crabc_core::fs::SEEK_CUR, offset),
+        SeekFrom::Data(offset) => (crabc_core::fs::SEEK_DATA, offset as i64),
+        SeekFrom::Hole(offset) => (crabc_core::fs::SEEK_HOLE, offset as i64),
+    };
+
+    // Linux reports a non-negative signed off_t on every successful seek;
+    // preserve that direct kernel value in the facade's unsigned byte count.
+    crabc_core::fs::lseek(fd.as_fd().as_raw_fd(), offset, whence).map(|offset| offset as u64)
+}
+
+/// Returns an open descriptor's current byte position without changing it.
+#[inline]
+#[doc(alias = "lseek")]
+pub fn tell<Fd: AsFd>(fd: Fd) -> Result<u64> {
+    crabc_core::fs::lseek(fd.as_fd().as_raw_fd(), 0, crabc_core::fs::SEEK_CUR)
+        .map(|offset| offset as u64)
+}
+
+/// Flushes file data and metadata for an open descriptor through Linux
+/// `fsync(2)`.
+///
+/// The descriptor is borrowed only for the direct syscall; filesystem and
+/// descriptor errors remain unchanged [`Errno`] values.
+#[inline]
+pub fn fsync<Fd: AsFd>(fd: Fd) -> Result<()> {
+    crabc_core::fs::fsync(fd.as_fd().as_raw_fd())
+}
+
+/// Flushes file data for an open descriptor through Linux `fdatasync(2)`.
+///
+/// The descriptor is borrowed only for the direct syscall; filesystem and
+/// descriptor errors remain unchanged [`Errno`] values.
+#[inline]
+pub fn fdatasync<Fd: AsFd>(fd: Fd) -> Result<()> {
+    crabc_core::fs::fdatasync(fd.as_fd().as_raw_fd())
+}
+
+/// Requests system-wide filesystem synchronization through Linux `sync(2)`.
+///
+/// Unlike [`syncfs`], this operation is neither descriptor- nor
+/// filesystem-scoped: it includes dirty data reachable through other
+/// descriptors and filesystems in the calling system. Linux waits for
+/// kernel/filesystem writeback completion before returning, but that is not a
+/// promise that a device's volatile cache has reached nonvolatile media.
+/// Linux specifies this syscall as always successful, so the typed Rust
+/// operation returns `()` without libc or TLS `errno`.
+#[inline]
+pub fn sync() {
+    crabc_core::fs::sync();
+}
+
+/// Requests synchronization of the filesystem associated with `fd`
+/// through Linux `syncfs(2)`.
+///
+/// The descriptor is borrowed only for the direct syscall. A successful
+/// request is a Linux kernel/filesystem writeback completion point, not a
+/// promise that a device's volatile cache has reached nonvolatile media.
+/// Descriptor and filesystem errors remain unchanged [`Errno`] values. This
+/// does not admit the separate process/system-wide `sync(2)` operation.
+#[inline]
+pub fn syncfs<Fd: AsFd>(fd: Fd) -> Result<()> {
+    crabc_core::fs::syncfs(fd.as_fd().as_raw_fd())
+}
+
+#[cfg(target_arch = "aarch64")]
 /// Linux/AArch64 `struct stat` metadata.
 ///
 /// This is deliberately `repr(C)` and matches the kernel ABI consumed by
@@ -1029,13 +2206,109 @@ pub struct Stat {
     __unused5: u32,
 }
 
-/// Linux/AArch64 `struct statx` metadata returned by [`statx`].
+
+/// Linux/x86-64 `struct stat` returned by `fstat(2)`.
 ///
-/// The representation follows the pinned Rustix layout. Optional observations
-/// are valid only when their corresponding bit is present in [`Self::stx_mask`];
-/// callers must not infer support merely from the requested mask.
+/// This is the private-kernel-shaped record exposed by the bounded native
+/// facade. Its field types and order follow the pinned musl x86-64 ABI; the
+/// trailing reserved words are retained so the buffer passed to Linux is
+/// exactly 144 bytes.
+#[cfg(target_arch = "x86_64")]
+#[doc(alias = "struct stat")]
 #[repr(C)]
-#[derive(Debug, Copy, Clone)]
+#[derive(Clone, Copy, Debug)]
+#[non_exhaustive]
+pub struct Stat {
+    /// Device identifier.
+    pub st_dev: u64,
+    /// Inode number.
+    pub st_ino: u64,
+    /// Hard-link count.
+    pub st_nlink: u64,
+    /// File type and permission bits.
+    pub st_mode: u32,
+    /// Owning user ID.
+    pub st_uid: u32,
+    /// Owning group ID.
+    pub st_gid: u32,
+    __pad0: u32,
+    /// Device identifier for special files.
+    pub st_rdev: u64,
+    /// File size in bytes.
+    pub st_size: i64,
+    /// Preferred I/O block size.
+    pub st_blksize: i64,
+    /// Allocated 512-byte blocks.
+    pub st_blocks: i64,
+    /// Last-access time in seconds.
+    pub st_atime: i64,
+    /// Last-access time nanoseconds.
+    pub st_atime_nsec: i64,
+    /// Last-modification time in seconds.
+    pub st_mtime: i64,
+    /// Last-modification time nanoseconds.
+    pub st_mtime_nsec: i64,
+    /// Last-status-change time in seconds.
+    pub st_ctime: i64,
+    /// Last-status-change time nanoseconds.
+    pub st_ctime_nsec: i64,
+    __unused: [i64; 3],
+}
+
+#[cfg(target_arch = "x86_64")]
+const _: [(); 144] = [(); core::mem::size_of::<Stat>()];
+#[cfg(target_arch = "x86_64")]
+const _: [(); 8] = [(); core::mem::align_of::<Stat>()];
+#[cfg(target_arch = "x86_64")]
+const _: [(); 0] = [(); core::mem::offset_of!(Stat, st_dev)];
+#[cfg(target_arch = "x86_64")]
+const _: [(); 8] = [(); core::mem::offset_of!(Stat, st_ino)];
+#[cfg(target_arch = "x86_64")]
+const _: [(); 16] = [(); core::mem::offset_of!(Stat, st_nlink)];
+#[cfg(target_arch = "x86_64")]
+const _: [(); 24] = [(); core::mem::offset_of!(Stat, st_mode)];
+#[cfg(target_arch = "x86_64")]
+const _: [(); 28] = [(); core::mem::offset_of!(Stat, st_uid)];
+#[cfg(target_arch = "x86_64")]
+const _: [(); 32] = [(); core::mem::offset_of!(Stat, st_gid)];
+#[cfg(target_arch = "x86_64")]
+const _: [(); 40] = [(); core::mem::offset_of!(Stat, st_rdev)];
+#[cfg(target_arch = "x86_64")]
+const _: [(); 48] = [(); core::mem::offset_of!(Stat, st_size)];
+#[cfg(target_arch = "x86_64")]
+const _: [(); 56] = [(); core::mem::offset_of!(Stat, st_blksize)];
+#[cfg(target_arch = "x86_64")]
+const _: [(); 64] = [(); core::mem::offset_of!(Stat, st_blocks)];
+#[cfg(target_arch = "x86_64")]
+const _: [(); 72] = [(); core::mem::offset_of!(Stat, st_atime)];
+#[cfg(target_arch = "x86_64")]
+const _: [(); 88] = [(); core::mem::offset_of!(Stat, st_mtime)];
+#[cfg(target_arch = "x86_64")]
+const _: [(); 104] = [(); core::mem::offset_of!(Stat, st_ctime)];
+
+impl Stat {
+    /// Returns the file kind encoded in [`Self::st_mode`].
+    #[inline]
+    pub const fn file_type(self) -> FileType {
+        FileType::from_raw_mode(self.st_mode)
+    }
+
+    /// Returns the permission and special bits encoded in [`Self::st_mode`].
+    #[inline]
+    pub const fn mode(self) -> Mode {
+        Mode::from_raw_mode(self.st_mode)
+    }
+}
+
+/// Linux `struct statx` metadata returned by [`statx`].
+///
+/// The 256-byte record is shared by the admitted Linux targets. Optional
+/// observations are valid only when their corresponding bit is present in
+/// [`Self::stx_mask`]; callers must not infer support merely from the
+/// requested mask.
+#[doc(alias = "struct statx")]
+#[repr(C)]
+#[derive(Clone, Copy, Debug)]
 #[non_exhaustive]
 pub struct Statx {
     /// Fields supplied by the kernel.
@@ -1101,7 +2374,7 @@ pub struct Statx {
 
 /// One timestamp in Linux's `struct statx` output.
 #[repr(C)]
-#[derive(Debug, Copy, Clone)]
+#[derive(Clone, Copy, Debug)]
 #[non_exhaustive]
 pub struct StatxTimestamp {
     /// Seconds since the Unix epoch.
@@ -1115,8 +2388,8 @@ bitflags! {
     /// `STATX_*` fields accepted by [`statx`].
     ///
     /// This is deliberately closed to the fields understood by this pinned
-    /// facade. `Statx::stx_mask` remains authoritative when a kernel omits a
-    /// requested field or supplies only a subset of the request.
+    /// facade. [`Statx::stx_mask`] remains authoritative when a kernel omits
+    /// a requested field or supplies only a subset of the request.
     #[repr(transparent)]
     #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
     pub struct StatxFlags: u32 {
@@ -1156,20 +2429,20 @@ bitflags! {
 }
 
 impl StatxFlags {
-    /// Reserved mask bit rejected by Rustix before entering the kernel.
+    /// Reserved mask bit rejected before entering the kernel.
     ///
-    /// It is exposed as a raw value only so callers testing kernel-compatibility
-    /// behavior can construct a retained bitflags value; it is not a valid
-    /// member of this closed flag set.
+    /// It is exposed as a raw value only so callers testing direct Linux
+    /// compatibility can construct a retained bitflags value; it is not a
+    /// valid member of this closed flag set.
     pub const RESERVED_MASK: u32 = 0x8000_0000;
 }
 
 bitflags! {
     /// `STATX_ATTR_*` bits reported in [`Statx::stx_attributes`].
     ///
-    /// This is a closed set matching the pinned Rustix contract. Unknown
-    /// kernel attribute bits are retained in the raw statx wire value only by
-    /// the kernel; this facade does not invent names for them.
+    /// This is a closed set matching the pinned facade contract. Unknown
+    /// kernel attribute bits remain raw kernel observations; this facade does
+    /// not invent names for them.
     #[repr(transparent)]
     #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
     pub struct StatxAttributes: u64 {
@@ -1195,16 +2468,72 @@ bitflags! {
 }
 
 const _: [(); 256] = [(); core::mem::size_of::<Statx>()];
+const _: [(); 8] = [(); core::mem::align_of::<Statx>()];
 const _: [(); 16] = [(); core::mem::size_of::<StatxTimestamp>()];
+const _: [(); 8] = [(); core::mem::align_of::<StatxTimestamp>()];
+const _: [(); 0] = [(); core::mem::offset_of!(Statx, stx_mask)];
+const _: [(); 4] = [(); core::mem::offset_of!(Statx, stx_blksize)];
+const _: [(); 8] = [(); core::mem::offset_of!(Statx, stx_attributes)];
+const _: [(); 16] = [(); core::mem::offset_of!(Statx, stx_nlink)];
+const _: [(); 20] = [(); core::mem::offset_of!(Statx, stx_uid)];
+const _: [(); 24] = [(); core::mem::offset_of!(Statx, stx_gid)];
+const _: [(); 28] = [(); core::mem::offset_of!(Statx, stx_mode)];
+const _: [(); 32] = [(); core::mem::offset_of!(Statx, stx_ino)];
+const _: [(); 40] = [(); core::mem::offset_of!(Statx, stx_size)];
+const _: [(); 48] = [(); core::mem::offset_of!(Statx, stx_blocks)];
+const _: [(); 56] = [(); core::mem::offset_of!(Statx, stx_attributes_mask)];
+const _: [(); 64] = [(); core::mem::offset_of!(Statx, stx_atime)];
+const _: [(); 80] = [(); core::mem::offset_of!(Statx, stx_btime)];
+const _: [(); 96] = [(); core::mem::offset_of!(Statx, stx_ctime)];
+const _: [(); 112] = [(); core::mem::offset_of!(Statx, stx_mtime)];
+const _: [(); 128] = [(); core::mem::offset_of!(Statx, stx_rdev_major)];
+const _: [(); 132] = [(); core::mem::offset_of!(Statx, stx_rdev_minor)];
+const _: [(); 136] = [(); core::mem::offset_of!(Statx, stx_dev_major)];
+const _: [(); 140] = [(); core::mem::offset_of!(Statx, stx_dev_minor)];
+const _: [(); 144] = [(); core::mem::offset_of!(Statx, stx_mnt_id)];
+const _: [(); 152] = [(); core::mem::offset_of!(Statx, stx_dio_mem_align)];
+const _: [(); 156] = [(); core::mem::offset_of!(Statx, stx_dio_offset_align)];
 
-/// Linux/AArch64 `struct statfs` filesystem statistics.
+bitflags! {
+    /// Linux mount flags reported by [`StatFs`] and [`StatVfs`].
+    ///
+    /// Unknown bits are retained so observations from newer kernels are not
+    /// discarded. These are filesystem observations, not mount-changing
+    /// operation flags.
+    #[repr(transparent)]
+    #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+    pub struct StatVfsMountFlags: u64 {
+        /// `ST_RDONLY`.
+        const RDONLY = 0x0000_0001;
+        /// `ST_NOSUID`.
+        const NOSUID = 0x0000_0002;
+        /// `ST_NODEV`.
+        const NODEV = 0x0000_0004;
+        /// `ST_NOEXEC`.
+        const NOEXEC = 0x0000_0008;
+        /// `ST_SYNCHRONOUS`.
+        const SYNCHRONOUS = 0x0000_0010;
+        /// `ST_MANDLOCK`.
+        const MANDLOCK = 0x0000_0040;
+        /// `ST_NOATIME`.
+        const NOATIME = 0x0000_0400;
+        /// `ST_NODIRATIME`.
+        const NODIRATIME = 0x0000_0800;
+        /// `ST_RELATIME`.
+        const RELATIME = 0x0000_1000;
+        /// Preserve future Linux-defined mount bits.
+        const _ = !0;
+    }
+}
+
+/// Linux/x86-64 `struct statfs` filesystem statistics.
 ///
-/// This is the kernel representation returned by [`statfs`] and [`fstatfs`],
-/// not a public C `struct statfs` alias. The spare words are retained privately
-/// solely to keep the output buffer's ABI layout exact; callers receive the
-/// named filesystem observations below.
+/// This is the kernel representation returned by [`statfs`] and
+/// [`fstatfs`], not a public C ABI alias. The spare words remain private so
+/// the output buffer retains the complete 120-byte x86-64 layout.
+#[doc(alias = "struct statfs")]
 #[repr(C)]
-#[derive(Debug, Copy, Clone)]
+#[derive(Clone, Copy, Debug)]
 #[non_exhaustive]
 pub struct StatFs {
     /// Filesystem type magic number.
@@ -1225,9 +2554,9 @@ pub struct StatFs {
     pub f_fsid: [i32; 2],
     /// Maximum filename length.
     pub f_namelen: i64,
-    /// Fragment size, or zero when the filesystem does not report one.
+    /// Fragment size, or zero when not reported.
     pub f_frsize: i64,
-    /// Linux mount flags as returned by the kernel.
+    /// Linux mount flags.
     pub f_flags: i64,
     __spare: [i64; 4],
 }
@@ -1249,12 +2578,12 @@ const _: [(); 88] = [(); core::mem::offset_of!(StatFs, __spare)];
 
 /// POSIX-shaped filesystem statistics derived from Linux [`StatFs`].
 ///
-/// Linux has no separate `statvfs` syscall. [`statvfs`] and [`fstatvfs`]
-/// perform `statfs`/`fstatfs` and apply musl's Linux field mapping: a zero
-/// fragment size falls back to the fundamental block size, available file nodes
-/// equal the reported free file nodes, and `f_fsid` is the first signed Linux
+/// Linux has no separate `statvfs` syscall. The facade performs `statfs` or
+/// `fstatfs` and applies musl's Linux field mapping: a zero fragment size
+/// falls back to the fundamental block size, available file nodes equal the
+/// reported free file nodes, and `f_fsid` is the first signed Linux
 /// filesystem-id word widened to `u64`.
-#[derive(Debug, Copy, Clone)]
+#[derive(Clone, Copy, Debug)]
 #[non_exhaustive]
 pub struct StatVfs {
     /// Fundamental block size in bytes.
@@ -1271,7 +2600,7 @@ pub struct StatVfs {
     pub f_files: u64,
     /// Free file nodes.
     pub f_ffree: u64,
-    /// Available file nodes. Linux supplies no distinct value; this is `f_ffree`.
+    /// Available file nodes; Linux supplies no distinct value.
     pub f_favail: u64,
     /// The first Linux filesystem-id word, widened with musl's signed-to-
     /// unsigned conversion.
@@ -1288,11 +2617,7 @@ impl From<StatFs> for StatVfs {
         let f_bsize = statfs.f_bsize as u64;
         Self {
             f_bsize,
-            f_frsize: if statfs.f_frsize != 0 {
-                statfs.f_frsize as u64
-            } else {
-                f_bsize
-            },
+            f_frsize: if statfs.f_frsize != 0 { statfs.f_frsize as u64 } else { f_bsize },
             f_blocks: statfs.f_blocks,
             f_bfree: statfs.f_bfree,
             f_bavail: statfs.f_bavail,
@@ -1306,142 +2631,146 @@ impl From<StatFs> for StatVfs {
     }
 }
 
-/// Seconds in a Linux `timespec`.
-pub type Secs = i64;
-
-/// Nanoseconds in a Linux `timespec`.
-pub type Nsecs = i64;
-
-/// A Linux `timespec` value.
-#[repr(C)]
-#[derive(Debug, Clone, Copy, Default, Eq, Ord, PartialEq, PartialOrd)]
-pub struct Timespec {
-    /// Whole seconds.
-    pub tv_sec: Secs,
-    /// Nanoseconds, or [`UTIME_NOW`]/[`UTIME_OMIT`] for timestamp updates.
-    pub tv_nsec: Nsecs,
-}
-
-/// The current time sentinel accepted in [`Timespec::tv_nsec`] by Linux
-/// `utimensat`.
-pub const UTIME_NOW: Nsecs = 0x3fff_ffff;
-
-/// The leave-unchanged sentinel accepted in [`Timespec::tv_nsec`] by Linux
-/// `utimensat`.
-pub const UTIME_OMIT: Nsecs = 0x3fff_fffe;
-
-/// A legacy Linux `timeval` value expressed in whole seconds and
-/// microseconds.
-///
-/// This is a native Rust value used by [`futimes`]; it is converted to the
-/// nanosecond [`Timespec`] representation before the direct syscall. The
-/// microsecond field must be in `0..1_000_000`.
-#[repr(C)]
-#[derive(Debug, Clone, Copy, Default, Eq, Ord, PartialEq, PartialOrd)]
-pub struct Timeval {
-    /// Whole seconds.
-    pub tv_sec: Secs,
-    /// Microseconds within the second.
-    pub tv_usec: i64,
-}
-
-/// A legacy Linux `utime` timestamp pair expressed in whole seconds.
-///
-/// This is a native Rust value used by [`utime`]. It is converted to the
-/// nanosecond [`Timespec`] representation before the direct syscall; both
-/// resulting nanosecond fields are always zero.
-#[derive(Debug, Clone, Copy, Default, Eq, Ord, PartialEq, PartialOrd)]
-pub struct Utimbuf {
-    /// Last-access timestamp in whole seconds.
-    pub actime: Secs,
-    /// Last-modification timestamp in whole seconds.
-    pub modtime: Secs,
-}
-
-/// The access and modification timestamps consumed by `utimensat` and
-/// `futimens`.
-#[repr(C)]
-#[derive(Debug, Clone)]
-pub struct Timestamps {
-    /// Last-access timestamp.
-    pub last_access: Timespec,
-    /// Last-modification timestamp.
-    pub last_modification: Timespec,
-}
-
-/// Linux advisory-lock operations accepted by [`flock`] and [`fcntl_lock`].
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-#[repr(u32)]
-pub enum FlockOperation {
-    /// Acquire a shared lock, waiting if needed.
-    LockShared = 1,
-    /// Acquire an exclusive lock, waiting if needed.
-    LockExclusive = 2,
-    /// Release a lock.
-    Unlock = 8,
-    /// Acquire a shared lock without waiting.
-    NonBlockingLockShared = 1 | 4,
-    /// Acquire an exclusive lock without waiting.
-    NonBlockingLockExclusive = 2 | 4,
-    /// Release a lock without waiting.
-    NonBlockingUnlock = 8 | 4,
-}
-
-/// Operations on an exclusive record lock beginning at a descriptor's current
-/// file offset.
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
-pub enum CurrentLockOperation {
-    /// Release the selected range without waiting.
-    Unlock,
-    /// Acquire an exclusive lock, waiting until it is available.
-    LockExclusive,
-    /// Acquire an exclusive lock without waiting.
-    TryExclusive,
-    /// Observe whether an exclusive lock would conflict.
-    TestExclusive,
-}
-
-/// A checked signed range relative to a descriptor's current file offset.
-///
-/// `ToEnd` uses Linux's zero-length `struct flock` convention. The non-zero
-/// forms avoid an ambiguous zero-byte lock and preserve the direction of a
-/// POSIX `lockf` request without transporting C integer command constants.
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
-pub enum CurrentLockRange {
-    /// Lock from the current offset through the dynamically changing EOF.
-    ToEnd,
-    /// Lock `length` bytes beginning at the current offset.
-    Forward(NonZeroU64),
-    /// Lock `length` bytes ending at the current offset.
-    Backward(NonZeroU64),
-}
-
-/// Enumeration of possible methods to seek within an open file descriptor.
-///
-/// This follows Rustix's Linux `SeekFrom` vocabulary. `Data` and `Hole` map to
-/// Linux sparse-file seeking and are available on this target in addition to
-/// the portable `Start`, `End`, and `Current` variants.
-#[derive(Copy, Clone, Debug, Eq, PartialEq)]
-pub enum SeekFrom {
-    /// Set the offset to the provided absolute byte position.
-    Start(u64),
-    /// Set the offset relative to the end of the file.
-    End(i64),
-    /// Set the offset relative to the current file position.
-    Current(i64),
-    /// Seek to the next data region at or after the provided offset.
-    Data(u64),
-    /// Seek to the next hole at or after the provided offset.
-    Hole(u64),
-}
-
-/// Opens `path` relative to `dirfd`.
-///
-/// The call directly reaches the Linux `openat` syscall through the shared
-/// `crabc-core` implementation. A successful descriptor is returned as an
-/// RAII owner; a failure is returned directly as [`crate::Errno`].
+/// Queries filesystem statistics for an open file or directory.
 #[inline]
-pub fn openat<P: Arg, Fd: AsFd>(
+pub fn fstatfs<Fd: AsFd>(fd: Fd) -> Result<StatFs> {
+    let fd = fd.as_fd();
+    let mut statfs = MaybeUninit::<StatFs>::uninit();
+    // SAFETY: `StatFs` is the complete 120-byte Linux/x86-64 output layout.
+    unsafe { crabc_core::fs::fstatfs_raw(fd.as_raw_fd(), statfs.as_mut_ptr().cast())? };
+    // SAFETY: a successful syscall initialized the complete output record.
+    Ok(unsafe { statfs.assume_init() })
+}
+
+/// Queries filesystem statistics for `path` using the fixed-stack path boundary.
+#[inline]
+pub fn statfs<P: PathArg>(path: P) -> Result<StatFs> {
+    path.into_with_c_str(|path| {
+        let mut statfs = MaybeUninit::<StatFs>::uninit();
+        // SAFETY: `PathArg` keeps the C string live and `StatFs` is complete.
+        crabc_core::fs::statfs(path, statfs.as_mut_ptr().cast())?;
+        // SAFETY: a successful syscall initialized the complete output record.
+        Ok(unsafe { statfs.assume_init() })
+    })
+}
+
+/// Queries POSIX-shaped filesystem statistics for an open descriptor.
+#[inline]
+pub fn fstatvfs<Fd: AsFd>(fd: Fd) -> Result<StatVfs> {
+    fstatfs(fd).map(StatVfs::from)
+}
+
+/// Queries POSIX-shaped filesystem statistics for `path`.
+#[inline]
+pub fn statvfs<P: PathArg>(path: P) -> Result<StatVfs> {
+    statfs(path).map(StatVfs::from)
+}
+
+/// Queries extended Linux metadata for `path` relative to `dirfd`.
+///
+/// This direct x86-64 `statx` shape enters Linux through syscall 332, returns
+/// kernel errors directly, and does not emulate musl's `ENOSYS` compatibility
+/// fallback or cache process-wide availability. The returned
+/// [`Statx::stx_mask`] determines which requested observations are valid; a
+/// successful call does not promise every requested field. Unlike [`statat`],
+/// this operation accepts the separate [`StatxAtFlags`] vocabulary, including
+/// its narrowly scoped `AT_EMPTY_PATH` and synchronization forms.
+#[inline]
+pub fn statx<P: PathArg, Fd: AsFd>(
+    dirfd: Fd,
+    path: P,
+    flags: StatxAtFlags,
+    mask: StatxFlags,
+) -> Result<Statx> {
+    let dirfd = dirfd.as_fd();
+    path.into_with_c_str(|path| {
+        let mut statx = MaybeUninit::<Statx>::uninit();
+        // SAFETY: `Statx` is the complete Linux 256-byte output layout,
+        // while `PathArg` keeps its C string and the writable record storage
+        // live for the direct syscall. The core seam owns mask prevalidation.
+        unsafe {
+            crabc_core::fs::statx_raw(
+                dirfd.as_raw_fd(),
+                path.as_ptr().cast(),
+                flags.bits(),
+                mask.bits(),
+                statx.as_mut_ptr().cast(),
+            )?
+        };
+        // SAFETY: A successful statx initialized the complete output record.
+        Ok(unsafe { statx.assume_init() })
+    })
+}
+
+/// Queries metadata for an open file or directory descriptor.
+///
+/// The descriptor is borrowed for the duration of the direct Linux syscall;
+/// no libc wrapper or thread-local `errno` is involved.  The returned record
+/// contains the x86-64 kernel ABI fields, including nanosecond timestamps and
+/// the signed size/block fields.
+#[inline]
+pub fn fstat<Fd: AsFd>(fd: Fd) -> Result<Stat> {
+    let fd = fd.as_fd();
+    let mut stat = MaybeUninit::<Stat>::uninit();
+    // SAFETY: `Stat` is the complete 144-byte Linux/x86-64 `struct stat`
+    // layout, and its writable storage remains live during the syscall.
+    unsafe { crabc_core::fs::fstat_raw(fd.as_raw_fd(), stat.as_mut_ptr().cast())? };
+    // SAFETY: A successful `fstat` initialized the complete output record.
+    Ok(unsafe { stat.assume_init() })
+}
+
+/// Queries x86-64 Linux metadata for `path` relative to `dirfd`.
+///
+/// The returned [`Stat`] is exactly the 144-byte Linux/x86-64 kernel layout.
+/// `dirfd` is borrowed for the direct syscall, while [`PathArg`] keeps any
+/// temporary pathname storage alive until Linux has consumed it. Only
+/// [`AtFlags::SYMLINK_NOFOLLOW`] is admitted; `AT_EMPTY_PATH` and
+/// `AT_NO_AUTOMOUNT` remain outside this `newfstatat(2)` boundary.
+#[inline]
+#[doc(alias = "fstatat")]
+pub fn statat<P: PathArg, Fd: AsFd>(dirfd: Fd, path: P, flags: AtFlags) -> Result<Stat> {
+    let flags = AtFlags::from_bits(flags.bits()).ok_or(Errno::INVAL)?;
+    let dirfd = dirfd.as_fd();
+    path.into_with_c_str(|path| {
+        let mut stat = MaybeUninit::<Stat>::uninit();
+        // SAFETY: `PathArg` supplies a live C string and `Stat` is the complete
+        // x86-64 output layout. The kernel initializes it only on success.
+        unsafe {
+            crabc_core::fs::statat(
+                dirfd.as_raw_fd(),
+                path,
+                stat.as_mut_ptr().cast(),
+                flags.bits(),
+            )?;
+        }
+        // SAFETY: successful `newfstatat` initialized the complete record.
+        Ok(unsafe { stat.assume_init() })
+    })
+}
+
+/// Queries x86-64 Linux metadata for `path` relative to the current directory.
+///
+/// This is [`statat`] with [`CWD`] and no flags.
+#[inline]
+pub fn stat<P: PathArg>(path: P) -> Result<Stat> {
+    statat(CWD, path, AtFlags::empty())
+}
+
+/// Queries x86-64 Linux metadata for a final symbolic link itself.
+#[inline]
+pub fn lstat<P: PathArg>(path: P) -> Result<Stat> {
+    statat(CWD, path, AtFlags::SYMLINK_NOFOLLOW)
+}
+
+/// Opens `path` relative to `dirfd` through Linux `openat(2)`.
+///
+/// The directory descriptor is borrowed and a successful direct syscall
+/// transfers its fresh descriptor into [`OwnedFd`]. `O_*` meanings remain
+/// Linux/x86-64 meanings: this facade supplies no portability mapping, libc
+/// wrapper, or fallback. `create_mode` is meaningful only when Linux sees a
+/// creation flag, and the process umask remains a kernel/process policy.
+#[inline]
+pub fn openat<P: PathArg, Fd: AsFd>(
     dirfd: Fd,
     path: P,
     oflags: OFlags,
@@ -1456,334 +2785,22 @@ pub fn openat<P: Arg, Fd: AsFd>(
             create_mode.bits(),
         )
         .map(|fd| {
-            // SAFETY: A successful `openat` returns a newly owned non-negative
-            // descriptor. This is the sole transfer into the RAII wrapper.
+            // SAFETY: successful Linux `openat` transfers one fresh,
+            // non-negative descriptor into this RAII owner.
             unsafe { OwnedFd::from_raw_fd(fd) }
         })
     })
 }
 
-/// Opens `path` relative to the process current directory.
-#[inline]
-pub fn open<P: Arg>(path: P, oflags: OFlags, create_mode: Mode) -> Result<OwnedFd> {
-    openat(CWD, path, oflags, create_mode)
-}
-
-/// Creates or truncates `path` with C `creat` semantics.
+/// Opens `path` relative to `dirfd` with explicit Linux resolution controls.
 ///
-/// This is the deliberately narrow equivalent of `creat(path, mode)`:
-/// it opens relative to the process current directory with write-only
-/// access, creates the file when absent, and truncates it when present. The
-/// supplied [`Mode`] is used only for a newly created file and Linux applies
-/// the process umask. No additional open policy, including `O_CLOEXEC`, is
-/// implied; use [`open`] when other flags or access modes are needed.
+/// The supplied flag and mode words are passed unchanged through `openat2`.
+/// Linux rejects a nonzero mode without a creation flag, unknown flag bits,
+/// and incompatible resolution controls. Kernel errors are returned directly
+/// without retrying through a weaker lookup operation. Success transfers one
+/// fresh descriptor into [`OwnedFd`] and leaves `dirfd` borrowed.
 #[inline]
-#[doc(alias = "creat")]
-pub fn create<P: Arg>(path: P, mode: Mode) -> Result<OwnedFd> {
-    openat(
-        CWD,
-        path,
-        OFlags::WRONLY | OFlags::CREATE | OFlags::TRUNC,
-        mode,
-    )
-}
-
-/// Repositions an open file descriptor using Linux's `lseek` operation.
-///
-/// The returned offset is an unsigned byte position, matching Rustix. An
-/// absolute offset larger than `i64::MAX` is passed through to Linux's signed
-/// `off_t` representation and therefore receives the kernel's normal
-/// `EINVAL` result when it becomes negative.
-#[inline]
-#[doc(alias = "lseek")]
-pub fn seek<Fd: AsFd>(fd: Fd, position: SeekFrom) -> Result<u64> {
-    let (whence, offset) = match position {
-        SeekFrom::Start(offset) => (crabc_core::fs::SEEK_SET, offset as i64),
-        SeekFrom::End(offset) => (crabc_core::fs::SEEK_END, offset),
-        SeekFrom::Current(offset) => (crabc_core::fs::SEEK_CUR, offset),
-        SeekFrom::Data(offset) => (crabc_core::fs::SEEK_DATA, offset as i64),
-        SeekFrom::Hole(offset) => (crabc_core::fs::SEEK_HOLE, offset as i64),
-    };
-    // Linux reports successful file offsets as non-negative signed `off_t`
-    // values; the cast preserves that kernel result in Rustix's `u64` API.
-    crabc_core::fs::lseek(fd.as_fd().as_raw_fd(), offset, whence).map(|offset| offset as u64)
-}
-
-/// Returns the current offset of an open file descriptor without changing it.
-#[inline]
-#[doc(alias = "lseek")]
-pub fn tell<Fd: AsFd>(fd: Fd) -> Result<u64> {
-    crabc_core::fs::lseek(fd.as_fd().as_raw_fd(), 0, crabc_core::fs::SEEK_CUR)
-        .map(|offset| offset as u64)
-}
-
-/// Flushes file data and metadata for an open file descriptor.
-#[inline]
-pub fn fsync<Fd: AsFd>(fd: Fd) -> Result<()> {
-    crabc_core::fs::fsync(fd.as_fd().as_raw_fd())
-}
-
-/// Flushes file data for an open file descriptor.
-#[inline]
-pub fn fdatasync<Fd: AsFd>(fd: Fd) -> Result<()> {
-    crabc_core::fs::fdatasync(fd.as_fd().as_raw_fd())
-}
-
-/// Flushes pending filesystem metadata and cached file data for all
-/// filesystems.
-///
-/// This operation is system-wide rather than descriptor- or mount-scoped: it
-/// includes dirty data reachable through other descriptors and filesystems in
-/// the calling system. Linux waits for writeback I/O completion, whereas POSIX
-/// permits `sync()` to return after scheduling writes. Completion here means
-/// kernel/filesystem writeback completion, not a guarantee that a device's
-/// volatile cache has reached nonvolatile media. Linux specifies `sync()` as
-/// always successful, so this Rustix-shaped operation returns `()` and does
-/// not expose libc or TLS `errno`.
-#[inline]
-pub fn sync() {
-    crabc_core::fs::sync();
-}
-
-/// Declares an expected access pattern for a file range through Linux's
-/// native `fadvise64` syscall.
-///
-/// `len == None` is passed as a zero length, which Linux interprets as
-/// extending the advice to the end of the file. `Some(length)` is guaranteed
-/// non-zero by [`NonZeroU64`]. On AArch64 Linux, `offset` and `length` are
-/// signed `loff_t` syscall arguments; values above `i64::MAX` return
-/// [`Errno::INVAL`] before the syscall. This is a typed Rust error, not a C
-/// `posix_fadvise` status conversion.
-#[inline]
-#[doc(alias = "posix_fadvise")]
-pub fn fadvise<Fd: AsFd>(
-    fd: Fd,
-    offset: u64,
-    len: Option<NonZeroU64>,
-    advice: Advice,
-) -> Result<()> {
-    let offset = i64::try_from(offset).map_err(|_| crate::Errno::INVAL)?;
-    let length = len.map_or(Ok(0), |length| {
-        i64::try_from(length.get()).map_err(|_| crate::Errno::INVAL)
-    })?;
-    crabc_core::fs::fadvise64(fd.as_fd().as_raw_fd(), offset, length, advice as u32)
-}
-
-/// Initiates Linux readahead for a byte range of an open file.
-///
-/// `offset` and `length` are unsigned byte quantities at this safe boundary:
-/// negative offsets cannot be expressed, while values above Linux's signed
-/// `loff_t` range are rejected with [`Errno::INVAL`] instead of being cast or
-/// truncated. The half-open range `[offset, offset + length)` must also end
-/// within that signed range; checked arithmetic rejects a wrapping or
-/// unrepresentable end before the direct syscall. A zero length is allowed
-/// and is forwarded unchanged; its advisory effect is whatever Linux defines
-/// for a zero count. Successful readahead leaves the descriptor's current
-/// file position unchanged.
-#[inline]
-pub fn readahead<Fd: AsFd>(fd: Fd, offset: u64, length: u64) -> Result<()> {
-    if offset > i64::MAX as u64
-        || length > i64::MAX as u64
-        || offset
-            .checked_add(length)
-            .map_or(true, |end| end > i64::MAX as u64)
-    {
-        return Err(crate::Errno::INVAL);
-    }
-
-    crabc_core::fs::readahead(fd.as_fd().as_raw_fd(), offset as i64, length as usize)
-}
-
-/// Transfers up to `count` bytes from a borrowed input descriptor to a
-/// borrowed output descriptor through Linux `sendfile`.
-///
-/// With `offset == Some`, Linux starts at the supplied non-negative input
-/// offset, leaves the input descriptor's shared position unchanged, and
-/// writes the resulting position back through the same mutable reference.
-/// With `offset == None`, Linux starts at and advances the input descriptor's
-/// shared position. The output descriptor's shared position advances in both
-/// forms. A short transfer is returned as its actual byte count, and no
-/// descriptor ownership changes hands.
-///
-/// The optional offset is a Rust in/out borrow, not a nullable C `off_t *`:
-/// values above Linux's signed `off_t` range are rejected with [`Errno::INVAL`]
-/// before the syscall, and the reference remains valid for the call.
-#[inline]
-pub fn sendfile<OutFd: AsFd, InFd: AsFd>(
-    out_fd: OutFd,
-    in_fd: InFd,
-    offset: Option<&mut u64>,
-    count: usize,
-) -> Result<usize> {
-    if offset
-        .as_ref()
-        .map_or(false, |offset| **offset > i64::MAX as u64)
-    {
-        return Err(crate::Errno::INVAL);
-    }
-
-    crabc_core::io::sendfile(
-        out_fd.as_fd().as_raw_fd(),
-        in_fd.as_fd().as_raw_fd(),
-        offset,
-        count,
-    )
-}
-
-/// Copies up to `len` bytes from a borrowed input descriptor to a borrowed
-/// output descriptor through Linux `copy_file_range`.
-///
-/// A supplied `off_in` or `off_out` is an explicit in/out byte position. The
-/// corresponding descriptor position remains unchanged, and the supplied
-/// value advances by the number of bytes copied. With `None`, Linux uses and
-/// advances that descriptor's shared position. A short copy is returned as
-/// its byte count, including zero at end of input.
-///
-/// Both explicit offsets and their requested ranges must fit signed Linux
-/// `loff_t`; invalid values return [`Errno::INVAL`] before the syscall. The
-/// offsets are staged in initialized local values: a successful full or short
-/// copy commits Linux's resulting values to the caller's references, while an
-/// error leaves both caller-provided offsets unchanged. No descriptor
-/// ownership changes hands, and the bounded API always passes zero syscall
-/// flags.
-#[inline]
-pub fn copy_file_range<InFd: AsFd, OutFd: AsFd>(
-    in_fd: InFd,
-    off_in: Option<&mut u64>,
-    out_fd: OutFd,
-    off_out: Option<&mut u64>,
-    len: usize,
-) -> Result<usize> {
-    let len_as_u64 = len as u64;
-    let max_loff_t = i64::MAX as u64;
-    let in_initial = off_in.as_ref().map(|offset| **offset);
-    let out_initial = off_out.as_ref().map(|offset| **offset);
-    let range_fits = |offset: Option<u64>| {
-        offset.map_or(true, |offset| {
-            offset <= max_loff_t
-                && len_as_u64 <= max_loff_t
-                && offset
-                    .checked_add(len_as_u64)
-                    .map_or(false, |end| end <= max_loff_t)
-        })
-    };
-    if !range_fits(in_initial) || !range_fits(out_initial) {
-        return Err(crate::Errno::INVAL);
-    }
-
-    let mut in_offset = in_initial;
-    let mut out_offset = out_initial;
-    let in_fd = in_fd.as_fd();
-    let out_fd = out_fd.as_fd();
-    let copied = crabc_core::fs::copy_file_range(
-        in_fd.as_raw_fd(),
-        in_offset.as_mut(),
-        out_fd.as_raw_fd(),
-        out_offset.as_mut(),
-        len,
-    )?;
-
-    // Commit only after a successful syscall. In particular, this prevents a
-    // partially updated kernel in/out pointer from escaping on an error.
-    if let (Some(offset), Some(updated)) = (off_in, in_offset) {
-        *offset = updated;
-    }
-    if let (Some(offset), Some(updated)) = (off_out, out_offset) {
-        *offset = updated;
-    }
-    Ok(copied)
-}
-
-/// Flushes all pending filesystem data associated with the descriptor's
-/// mounted filesystem.
-///
-/// The descriptor is borrowed only for the direct Linux/AArch64 `syncfs`
-/// syscall; no libc wrapper, process-global state, or TLS `errno` is used.
-#[inline]
-pub fn syncfs<Fd: AsFd>(fd: Fd) -> Result<()> {
-    crabc_core::fs::syncfs(fd.as_fd().as_raw_fd())
-}
-
-/// Sets the length of a pathname-selected file.
-///
-/// The length uses Rustix's unsigned byte-count API. Values above Linux's
-/// signed `loff_t` range return [`crate::Errno::INVAL`] before the path is
-/// converted or the direct syscall is issued, so an invalid request cannot
-/// mutate the named file.
-#[inline]
-pub fn truncate<P: Arg>(path: P, length: u64) -> Result<()> {
-    if length > i64::MAX as u64 {
-        return Err(crate::Errno::INVAL);
-    }
-    path.into_with_c_str(|path| crabc_core::fs::truncate(path, length as i64))
-}
-
-/// Sets the length of an open file descriptor.
-///
-/// The length uses Rustix's unsigned byte-count API. Values above Linux's
-/// signed `loff_t` range return [`crate::Errno::INVAL`] before the descriptor
-/// is borrowed or the direct syscall is issued.
-#[inline]
-pub fn ftruncate<Fd: AsFd>(fd: Fd, length: u64) -> Result<()> {
-    if length > i64::MAX as u64 {
-        return Err(crate::Errno::INVAL);
-    }
-    crabc_core::fs::ftruncate(fd.as_fd().as_raw_fd(), length as i64)
-}
-
-/// Allocates, zeros, or punches a range in an open file.
-///
-/// The descriptor is borrowed for the direct Linux syscall and remains owned
-/// by its caller. `offset` and `length` are non-negative byte counts. Both
-/// must fit Linux's signed `loff_t`, and their sum must not overflow that
-/// range; these invalid ranges return [`Errno::INVAL`] before a syscall.
-/// `PUNCH_HOLE` requires `KEEP_SIZE`, and unknown or unsupported mode bits are
-/// rejected before a syscall. The operation never changes the descriptor's
-/// current file position. `ALLOCATE` extends the file when necessary;
-/// `KEEP_SIZE` suppresses that extension.
-#[inline]
-pub fn fallocate<Fd: AsFd>(fd: Fd, flags: FallocateFlags, offset: u64, length: u64) -> Result<()> {
-    if FallocateFlags::from_bits(flags.bits()).is_none()
-        || (flags.contains(FallocateFlags::PUNCH_HOLE)
-            && !flags.contains(FallocateFlags::KEEP_SIZE))
-        || (flags.contains(FallocateFlags::PUNCH_HOLE)
-            && flags.contains(FallocateFlags::ZERO_RANGE))
-        || offset > i64::MAX as u64
-        || length > i64::MAX as u64
-        || offset
-            .checked_add(length)
-            .map_or(true, |end| end > i64::MAX as u64)
-    {
-        return Err(crate::Errno::INVAL);
-    }
-
-    crabc_core::fs::fallocate(
-        fd.as_fd().as_raw_fd(),
-        flags.bits(),
-        offset as i64,
-        length as i64,
-    )
-}
-
-/// Allocates a file range using the POSIX mode-zero operation.
-///
-/// This is the native Rust spelling of `posix_fallocate`: the descriptor is
-/// borrowed, the operation never changes its current position, and the
-/// non-negative byte range must fit Linux's signed `loff_t` representation.
-/// Linux errors are returned as [`Errno`] values rather than through the C
-/// function's direct integer error convention. The operation has no flag
-/// argument; use [`fallocate`] when a Linux mode is intentional.
-#[inline]
-pub fn posix_fallocate<Fd: AsFd>(fd: Fd, offset: u64, length: u64) -> Result<()> {
-    fallocate(fd, FallocateFlags::empty(), offset, length)
-}
-
-/// Opens `path` relative to `dirfd` with Linux `openat2` resolution controls.
-///
-/// `O_LARGEFILE` is not synthesized on Linux/AArch64: as in Rustix's pinned
-/// 64-bit backend, the supplied flag representation is passed unchanged.
-#[inline]
-pub fn openat2<P: Arg, Fd: AsFd>(
+pub fn openat2<P: PathArg, Fd: AsFd>(
     dirfd: Fd,
     path: P,
     oflags: OFlags,
@@ -1792,463 +2809,124 @@ pub fn openat2<P: Arg, Fd: AsFd>(
 ) -> Result<OwnedFd> {
     let dirfd = dirfd.as_fd();
     path.into_with_c_str(|path| {
-        crabc_core::fs::openat2(
-            dirfd.as_raw_fd(),
-            path,
-            oflags.bits() as u64,
-            create_mode.bits() as u64,
-            resolve.bits(),
-        )
-        .map(|fd| {
-            // SAFETY: A successful openat2 returns a newly owned
-            // non-negative descriptor, transferring ownership exactly once.
-            unsafe { OwnedFd::from_raw_fd(fd) }
-        })
+        crabc_core::fs::openat2(dirfd.as_raw_fd(), path, oflags.bits() as u64,
+            create_mode.bits() as u64, resolve.bits()).map(|fd| {
+                // SAFETY: A successful direct openat2 transfers one fresh,
+                // non-negative descriptor into this unique RAII owner.
+                unsafe { OwnedFd::from_raw_fd(fd) }
+            })
     })
 }
 
-/// Reads an extended attribute into caller-provided storage.
+/// Opens `path` relative to the process current directory.
 #[inline]
-pub fn getxattr<P: Arg, Name: Arg, Buf: Buffer<u8>>(
-    path: P,
-    name: Name,
-    mut value: Buf,
-) -> Result<Buf::Output> {
-    let (pointer, length) = value.parts_mut();
-    let initialized = path.into_with_c_str(|path| {
-        name.into_with_c_str(|name| {
-            // SAFETY: `Buffer` supplies writable output storage and both
-            // arguments supply NUL-terminated pathnames for this syscall.
-            unsafe {
-                crabc_core::fs::getxattr_raw(
-                    path.as_ptr().cast(),
-                    name.as_ptr().cast(),
-                    pointer,
-                    length,
-                )
-            }
-        })
-    })?;
-    // SAFETY: A successful getxattr initialized exactly the returned prefix.
-    unsafe { Ok(value.assume_init(initialized)) }
+pub fn open<P: PathArg>(path: P, oflags: OFlags, create_mode: Mode) -> Result<OwnedFd> {
+    openat(CWD, path, oflags, create_mode)
 }
 
-/// Reads an extended attribute without following a final symbolic link.
-#[inline]
-pub fn lgetxattr<P: Arg, Name: Arg, Buf: Buffer<u8>>(
-    path: P,
-    name: Name,
-    mut value: Buf,
-) -> Result<Buf::Output> {
-    let (pointer, length) = value.parts_mut();
-    let initialized = path.into_with_c_str(|path| {
-        name.into_with_c_str(|name| {
-            // SAFETY: `Buffer` supplies writable output storage and both
-            // arguments supply NUL-terminated pathnames for this syscall.
-            unsafe {
-                crabc_core::fs::lgetxattr_raw(
-                    path.as_ptr().cast(),
-                    name.as_ptr().cast(),
-                    pointer,
-                    length,
-                )
-            }
-        })
-    })?;
-    // SAFETY: A successful lgetxattr initialized exactly the returned prefix.
-    unsafe { Ok(value.assume_init(initialized)) }
-}
-
-/// Reads a descriptor extended attribute into caller-provided storage.
-#[inline]
-pub fn fgetxattr<Fd: AsFd, Name: Arg, Buf: Buffer<u8>>(
-    fd: Fd,
-    name: Name,
-    mut value: Buf,
-) -> Result<Buf::Output> {
-    let fd = fd.as_fd();
-    let (pointer, length) = value.parts_mut();
-    let initialized = name.into_with_c_str(|name| {
-        // SAFETY: `Buffer` supplies writable output storage and `name` is a
-        // NUL-terminated pathname for the direct syscall.
-        unsafe {
-            crabc_core::fs::fgetxattr_raw(fd.as_raw_fd(), name.as_ptr().cast(), pointer, length)
-        }
-    })?;
-    // SAFETY: A successful fgetxattr initialized exactly the returned prefix.
-    unsafe { Ok(value.assume_init(initialized)) }
-}
-
-/// Sets an extended attribute on a path.
-#[inline]
-pub fn setxattr<P: Arg, Name: Arg>(
-    path: P,
-    name: Name,
-    value: &[u8],
-    flags: XattrFlags,
-) -> Result<()> {
-    path.into_with_c_str(|path| {
-        name.into_with_c_str(|name| {
-            // SAFETY: `path` and `name` are NUL-terminated; `value` remains
-            // readable for its exact slice length through the syscall.
-            unsafe {
-                crabc_core::fs::setxattr_raw(
-                    path.as_ptr().cast(),
-                    name.as_ptr().cast(),
-                    value.as_ptr(),
-                    value.len(),
-                    flags.bits(),
-                )
-            }
-        })
-    })
-}
-
-/// Sets an extended attribute without following a final symbolic link.
-#[inline]
-pub fn lsetxattr<P: Arg, Name: Arg>(
-    path: P,
-    name: Name,
-    value: &[u8],
-    flags: XattrFlags,
-) -> Result<()> {
-    path.into_with_c_str(|path| {
-        name.into_with_c_str(|name| {
-            // SAFETY: `path` and `name` are NUL-terminated; `value` remains
-            // readable for its exact slice length through the syscall.
-            unsafe {
-                crabc_core::fs::lsetxattr_raw(
-                    path.as_ptr().cast(),
-                    name.as_ptr().cast(),
-                    value.as_ptr(),
-                    value.len(),
-                    flags.bits(),
-                )
-            }
-        })
-    })
-}
-
-/// Sets an extended attribute on an open descriptor.
-#[inline]
-pub fn fsetxattr<Fd: AsFd, Name: Arg>(
-    fd: Fd,
-    name: Name,
-    value: &[u8],
-    flags: XattrFlags,
-) -> Result<()> {
-    let fd = fd.as_fd();
-    name.into_with_c_str(|name| {
-        // SAFETY: `name` is NUL-terminated and `value` remains readable for
-        // its exact slice length through the direct syscall.
-        unsafe {
-            crabc_core::fs::fsetxattr_raw(
-                fd.as_raw_fd(),
-                name.as_ptr().cast(),
-                value.as_ptr(),
-                value.len(),
-                flags.bits(),
-            )
-        }
-    })
-}
-
-/// Lists extended attribute names into caller-provided storage.
-#[inline]
-pub fn listxattr<P: Arg, Buf: Buffer<u8>>(path: P, mut list: Buf) -> Result<Buf::Output> {
-    let (pointer, length) = list.parts_mut();
-    let initialized = path.into_with_c_str(|path| {
-        // SAFETY: `Buffer` supplies writable output storage and `path` is a
-        // NUL-terminated pathname for this syscall.
-        unsafe { crabc_core::fs::listxattr_raw(path.as_ptr().cast(), pointer, length) }
-    })?;
-    // SAFETY: A successful listxattr initialized exactly the returned prefix.
-    unsafe { Ok(list.assume_init(initialized)) }
-}
-
-/// Lists extended attribute names without following a final symbolic link.
-#[inline]
-pub fn llistxattr<P: Arg, Buf: Buffer<u8>>(path: P, mut list: Buf) -> Result<Buf::Output> {
-    let (pointer, length) = list.parts_mut();
-    let initialized = path.into_with_c_str(|path| {
-        // SAFETY: `Buffer` supplies writable output storage and `path` is a
-        // NUL-terminated pathname for this syscall.
-        unsafe { crabc_core::fs::llistxattr_raw(path.as_ptr().cast(), pointer, length) }
-    })?;
-    // SAFETY: A successful llistxattr initialized exactly the returned prefix.
-    unsafe { Ok(list.assume_init(initialized)) }
-}
-
-/// Lists descriptor extended-attribute names into caller-provided storage.
-#[inline]
-pub fn flistxattr<Fd: AsFd, Buf: Buffer<u8>>(fd: Fd, mut list: Buf) -> Result<Buf::Output> {
-    let fd = fd.as_fd();
-    let (pointer, length) = list.parts_mut();
-    // SAFETY: `Buffer` supplies writable output storage for the direct
-    // syscall, and the descriptor borrow remains live for it.
-    let initialized = unsafe { crabc_core::fs::flistxattr_raw(fd.as_raw_fd(), pointer, length) }?;
-    // SAFETY: A successful flistxattr initialized exactly the returned prefix.
-    unsafe { Ok(list.assume_init(initialized)) }
-}
-
-/// Removes an extended attribute from a path.
-#[inline]
-pub fn removexattr<P: Arg, Name: Arg>(path: P, name: Name) -> Result<()> {
-    path.into_with_c_str(|path| {
-        name.into_with_c_str(|name| {
-            // SAFETY: Both arguments are NUL-terminated pathnames for the
-            // duration of this direct syscall.
-            unsafe { crabc_core::fs::removexattr_raw(path.as_ptr().cast(), name.as_ptr().cast()) }
-        })
-    })
-}
-
-/// Removes an extended attribute without following a final symbolic link.
-#[inline]
-pub fn lremovexattr<P: Arg, Name: Arg>(path: P, name: Name) -> Result<()> {
-    path.into_with_c_str(|path| {
-        name.into_with_c_str(|name| {
-            // SAFETY: Both arguments are NUL-terminated pathnames for the
-            // duration of this direct syscall.
-            unsafe { crabc_core::fs::lremovexattr_raw(path.as_ptr().cast(), name.as_ptr().cast()) }
-        })
-    })
-}
-
-/// Removes an extended attribute from an open descriptor.
-#[inline]
-pub fn fremovexattr<Fd: AsFd, Name: Arg>(fd: Fd, name: Name) -> Result<()> {
-    let fd = fd.as_fd();
-    name.into_with_c_str(|name| {
-        // SAFETY: `name` is a NUL-terminated pathname for the duration of
-        // this direct syscall; Linux validates the descriptor.
-        unsafe { crabc_core::fs::fremovexattr_raw(fd.as_raw_fd(), name.as_ptr().cast()) }
-    })
-}
-
-/// Queries metadata for an open file or directory.
-#[inline]
-pub fn fstat<Fd: AsFd>(fd: Fd) -> Result<Stat> {
-    let fd = fd.as_fd();
-    let mut stat = MaybeUninit::<Stat>::uninit();
-    // SAFETY: `Stat` exactly matches the Linux/AArch64 output layout, and its
-    // writable `MaybeUninit` storage remains live throughout the syscall.
-    unsafe { crabc_core::fs::fstat_raw(fd.as_raw_fd(), stat.as_mut_ptr().cast())? };
-    // SAFETY: A successful fstat initialized the complete `Stat` object.
-    Ok(unsafe { stat.assume_init() })
-}
-
-/// Reads the open-file-description status flags through `fcntl(F_GETFL)`.
+/// Creates or truncates a current-directory-relative file with `creat(2)`
+/// semantics.
 ///
-/// The returned [`OFlags`] includes the access mode and status flags reported
-/// by Linux. Unknown kernel bits are retained, matching Rustix's Linux API.
-/// These are shared by duplicate descriptors; per-descriptor close-on-exec
-/// state remains the separate [`crate::io::fcntl_getfd`] contract.
+/// The returned descriptor is write-only. Linux applies the process umask to
+/// `mode` when creating the entry; no close-on-exec policy is implied.
 #[inline]
-#[doc(alias = "F_GETFL")]
-pub fn fcntl_getfl<Fd: AsFd>(fd: Fd) -> Result<OFlags> {
-    crabc_core::io::fcntl_getfl(fd.as_fd().as_raw_fd()).map(OFlags::from_bits_retain)
-}
-
-/// Replaces the open-file-description status flags through `fcntl(F_SETFL)`.
-///
-/// Linux applies only the status bits supported for the open file; immutable
-/// creation and descriptor flags are not promised to change. The descriptor
-/// is borrowed and the operation affects all descriptors referring to the
-/// same open file description.
-#[inline]
-#[doc(alias = "F_SETFL")]
-pub fn fcntl_setfl<Fd: AsFd>(fd: Fd, flags: OFlags) -> Result<()> {
-    crabc_core::io::fcntl_setfl(fd.as_fd().as_raw_fd(), flags.bits())
-}
-
-/// Queries filesystem statistics for an open file or directory.
-///
-/// The returned value is a typed Linux/AArch64 kernel view. It does not borrow
-/// libc state or expose the public C `struct statfs` ABI.
-#[inline]
-pub fn fstatfs<Fd: AsFd>(fd: Fd) -> Result<StatFs> {
-    let fd = fd.as_fd();
-    let mut statfs = MaybeUninit::<StatFs>::uninit();
-    // SAFETY: `StatFs` exactly matches the Linux/AArch64 `struct statfs`
-    // output layout, and its writable storage remains live throughout the
-    // syscall.
-    unsafe { crabc_core::fs::fstatfs_raw(fd.as_raw_fd(), statfs.as_mut_ptr().cast())? };
-    // SAFETY: A successful fstatfs initialized the complete StatFs object.
-    Ok(unsafe { statfs.assume_init() })
-}
-
-/// Queries filesystem statistics for `path`.
-///
-/// The operation is a direct Linux/AArch64 `statfs` call. The pathname is
-/// borrowed only for the duration of the syscall and failures are returned as
-/// an ordinary [`crate::Errno`].
-#[inline]
-pub fn statfs<P: Arg>(path: P) -> Result<StatFs> {
-    path.into_with_c_str(|path| {
-        let mut statfs = MaybeUninit::<StatFs>::uninit();
-        // `StatFs` exactly matches the Linux/AArch64 `struct statfs` output
-        // layout, and `path`/the output storage remain live for the direct
-        // syscall. The core wrapper owns the raw-pointer boundary.
-        crabc_core::fs::statfs(path, statfs.as_mut_ptr().cast())?;
-        // SAFETY: A successful statfs initialized the complete StatFs object.
-        Ok(unsafe { statfs.assume_init() })
-    })
-}
-
-/// Queries POSIX-shaped filesystem statistics for an open file or directory.
-///
-/// Linux has no `fstatvfs` syscall; this is [`fstatfs`] followed by the
-/// documented [`StatFs`] to [`StatVfs`] field mapping.
-#[inline]
-pub fn fstatvfs<Fd: AsFd>(fd: Fd) -> Result<StatVfs> {
-    fstatfs(fd).map(StatVfs::from)
-}
-
-/// Queries POSIX-shaped filesystem statistics for `path`.
-///
-/// Linux has no `statvfs` syscall; this is [`statfs`] followed by the
-/// documented [`StatFs`] to [`StatVfs`] field mapping.
-#[inline]
-pub fn statvfs<P: Arg>(path: P) -> Result<StatVfs> {
-    statfs(path).map(StatVfs::from)
-}
-
-/// Queries extended Linux metadata for `path` relative to `dirfd`.
-///
-/// This is Rustix's direct `statx` shape. The operation enters Linux/AArch64
-/// through syscall 291, returns kernel errors directly, and does not emulate
-/// musl's `ENOSYS` compatibility fallback or cache process-wide availability.
-/// The returned [`Statx::stx_mask`] determines which requested observations
-/// are valid; a successful call does not promise every requested field.
-#[inline]
-pub fn statx<P: Arg, Fd: AsFd>(
-    dirfd: Fd,
-    path: P,
-    flags: AtFlags,
-    mask: StatxFlags,
-) -> Result<Statx> {
-    let dirfd = dirfd.as_fd();
-    path.into_with_c_str(|path| {
-        let mut statx = MaybeUninit::<Statx>::uninit();
-        // `Statx` is the exact 256-byte Linux/AArch64 output layout. The
-        // private core wire type validates that layout before issuing the
-        // direct syscall, and the writable storage remains live throughout.
-        unsafe {
-            crabc_core::fs::statx_raw(
-                dirfd.as_raw_fd(),
-                path.as_ptr().cast(),
-                flags.bits(),
-                mask.bits(),
-                statx.as_mut_ptr().cast(),
-            )?
-        };
-        // SAFETY: A successful statx initialized the complete Statx object.
-        Ok(unsafe { statx.assume_init() })
-    })
-}
-
-/// Queries metadata for `path` relative to `dirfd`.
-///
-/// This is Rustix's `fstatat` spelling. Use [`AtFlags::SYMLINK_NOFOLLOW`] to
-/// query a symbolic link itself rather than its target.
-#[inline]
-#[doc(alias = "fstatat")]
-pub fn statat<P: Arg, Fd: AsFd>(dirfd: Fd, path: P, flags: AtFlags) -> Result<Stat> {
-    let dirfd = dirfd.as_fd();
-    path.into_with_c_str(|path| {
-        let mut stat = MaybeUninit::<Stat>::uninit();
-        // SAFETY: `Stat` exactly matches the Linux/AArch64 output layout, and
-        // `path`/the output storage remain live for the direct syscall.
-        unsafe {
-            crabc_core::fs::statat(
-                dirfd.as_raw_fd(),
-                path,
-                stat.as_mut_ptr().cast(),
-                flags.bits(),
-            )?
-        };
-        // SAFETY: A successful newfstatat initialized the complete `Stat`.
-        Ok(unsafe { stat.assume_init() })
-    })
-}
-
-/// Queries metadata for `path` relative to the process current directory.
-#[inline]
-pub fn stat<P: Arg>(path: P) -> Result<Stat> {
-    statat(CWD, path, AtFlags::empty())
-}
-
-/// Tests a path using the standard POSIX `access()` contract.
-///
-/// The path is resolved from the process current working directory. This is
-/// musl's `faccessat(AT_FDCWD, path, mode, 0)` public-wrapper contract; on
-/// AArch64 the underlying Linux syscall has only `(dirfd, path, mode)` and
-/// therefore no flags argument. Linux performs the check with the real UID
-/// and GID, matching `access()` rather than an effective-ID check. This
-/// bounded API intentionally has no directory descriptor or `faccessat2`
-/// flags surface.
-#[inline]
-pub fn access<P: Arg>(path: P, access: Access) -> Result<()> {
-    if Access::from_bits(access.bits()).is_none() {
-        return Err(crate::Errno::INVAL);
-    }
-    path.into_with_c_str(|path| crabc_core::fs::access(path, access.bits()))
-}
-
-/// Tests a path relative to a borrowed directory descriptor.
-///
-/// Empty [`AtFlags`] uses AArch64's direct three-argument `faccessat`
-/// syscall. Either supported nonempty flag uses direct `faccessat2`; an old
-/// kernel therefore returns [`crate::Errno::NOSYS`] rather than receiving an
-/// emulated or cached fallback. Unknown access modes and flags are rejected
-/// before path conversion and syscall entry. [`AtFlags::REMOVEDIR`] shares
-/// Linux's `0x200` bit with [`AtFlags::EACCESS`], so that spelling is
-/// necessarily interpreted as the latter at this call boundary.
-#[inline]
-pub fn accessat<P: Arg, Fd: AsFd>(
-    dirfd: Fd,
-    path: P,
-    access: Access,
-    flags: AtFlags,
-) -> Result<()> {
-    const ACCESSAT_FLAG_BITS: u32 = AtFlags::EACCESS.bits() | AtFlags::SYMLINK_NOFOLLOW.bits();
-    if Access::from_bits(access.bits()).is_none() || flags.bits() & !ACCESSAT_FLAG_BITS != 0 {
-        return Err(crate::Errno::INVAL);
-    }
-    let dirfd = dirfd.as_fd();
-    path.into_with_c_str(|path| {
-        crabc_core::fs::accessat(dirfd.as_raw_fd(), path, access.bits(), flags.bits())
-    })
-}
-
-/// Queries metadata for `path` without following a final symbolic link.
-#[inline]
-pub fn lstat<P: Arg>(path: P) -> Result<Stat> {
-    statat(CWD, path, AtFlags::SYMLINK_NOFOLLOW)
-}
-
-/// Flags accepted by descriptor-relative unlink operations.
-pub type UnlinkAtFlags = AtFlags;
-
-/// Removes a file or, with [`AtFlags::REMOVEDIR`], an empty directory.
-#[inline]
-pub fn unlinkat<P: Arg, Fd: AsFd>(dirfd: Fd, path: P, flags: AtFlags) -> Result<()> {
-    let dirfd = dirfd.as_fd();
-    path.into_with_c_str(|path| crabc_core::fs::unlinkat(dirfd.as_raw_fd(), path, flags.bits()))
+#[doc(alias = "creat")]
+pub fn create<P: PathArg>(path: P, mode: Mode) -> Result<OwnedFd> {
+    openat(
+        CWD,
+        path,
+        OFlags::WRONLY | OFlags::CREATE | OFlags::TRUNC,
+        mode,
+    )
 }
 
 /// Creates a directory relative to `dirfd`.
+///
+/// The fixed-stack path and borrowed directory descriptor remain live only
+/// through the direct `mkdirat(2)` syscall. Linux applies the process umask.
 #[inline]
-pub fn mkdirat<P: Arg, Fd: AsFd>(dirfd: Fd, path: P, mode: Mode) -> Result<()> {
+pub fn mkdirat<P: PathArg, Fd: AsFd>(dirfd: Fd, path: P, mode: Mode) -> Result<()> {
     let dirfd = dirfd.as_fd();
     path.into_with_c_str(|path| crabc_core::fs::mkdirat(dirfd.as_raw_fd(), path, mode.bits()))
 }
 
-/// Creates a directory relative to the process current directory.
+/// Creates a current-directory-relative directory.
 #[inline]
-pub fn mkdir<P: Arg>(path: P, mode: Mode) -> Result<()> {
+pub fn mkdir<P: PathArg>(path: P, mode: Mode) -> Result<()> {
     mkdirat(CWD, path, mode)
+}
+
+/// Creates a Linux filesystem node relative to `dirfd`.
+///
+/// The file kind and permission/special bits are separate so callers cannot
+/// accidentally override the requested type through `mode`. [`FileType::Unknown`]
+/// is observation-only and rejected. `dev` is Linux's 64-bit `dev_t`; use
+/// [`FIFO_DEVICE`] for [`FileType::Fifo`]. Character and block device policy
+/// remains the kernel's direct privilege and filesystem decision.
+#[inline]
+pub fn mknodat<P: PathArg, Fd: AsFd>(
+    dirfd: Fd,
+    path: P,
+    file_type: FileType,
+    mode: Mode,
+    dev: Dev,
+) -> Result<()> {
+    if file_type == FileType::Unknown || mode.bits() & !0o7777 != 0 {
+        return Err(Errno::INVAL);
+    }
+
+    let dirfd = dirfd.as_fd();
+    path.into_with_c_str(|path| {
+        crabc_core::fs::mknodat(
+            dirfd.as_raw_fd(),
+            path,
+            file_type.as_raw_mode() | mode.bits(),
+            dev,
+        )
+    })
+}
+
+/// Creates a FIFO node relative to `dirfd`.
+#[inline]
+pub fn mkfifoat<P: PathArg, Fd: AsFd>(dirfd: Fd, path: P, mode: Mode) -> Result<()> {
+    mknodat(dirfd, path, FileType::Fifo, mode, FIFO_DEVICE)
+}
+
+/// Creates a current-directory-relative FIFO node.
+#[inline]
+pub fn mkfifo<P: PathArg>(path: P, mode: Mode) -> Result<()> {
+    mkfifoat(CWD, path, mode)
+}
+
+/// Removes a path relative to `dirfd`.
+///
+/// Removing a file's directory entry does not close its open descriptors.
+/// They continue to refer to the same file, including after its final link
+/// is removed, until the final open owner is released.
+///
+/// [`UnlinkAtFlags::REMOVEDIR`] selects removal of an empty directory. The
+/// closed flag type excludes `AT_EMPTY_PATH` and unrelated `AT_*` meanings.
+#[inline]
+pub fn unlinkat<P: PathArg, Fd: AsFd>(
+    dirfd: Fd,
+    path: P,
+    flags: UnlinkAtFlags,
+) -> Result<()> {
+    let flags = UnlinkAtFlags::from_bits(flags.bits()).ok_or(Errno::INVAL)?;
+    let dirfd = dirfd.as_fd();
+    path.into_with_c_str(|path| crabc_core::fs::unlinkat(dirfd.as_raw_fd(), path, flags.bits()))
+}
+
+/// Removes a current-directory-relative non-directory entry.
+#[inline]
+pub fn unlink<P: PathArg>(path: P) -> Result<()> {
+    unlinkat(CWD, path, UnlinkAtFlags::empty())
+}
+
+/// Removes a current-directory-relative empty directory.
+#[inline]
+pub fn rmdir<P: PathArg>(path: P) -> Result<()> {
+    unlinkat(CWD, path, UnlinkAtFlags::REMOVEDIR)
 }
 
 /// Number of kernel-random bytes used for each temporary-directory candidate.
@@ -2263,6 +2941,11 @@ pub const TEMP_DIR_MAX_ATTEMPTS: usize = 128;
 const TEMP_DIR_NAME_MAX: usize = 255;
 const TEMP_DIR_SUFFIX_LENGTH: usize = TEMP_DIR_RANDOM_BYTES * 2;
 const TEMP_DIR_MODE: Mode = Mode::RWXU;
+
+// Linux's x86-64 pathname ceiling includes its terminating NUL. This local
+// limit belongs to temporary pathname construction only; canonicalization is
+// a separately x86 capability and must not leak its API or policy here.
+const TEMP_DIR_PATH_MAX: usize = 4096;
 
 /// Creates a private temporary directory below `parent` and writes the
 /// resulting pathname with the caller's `parent` spelling into caller-owned
@@ -2280,13 +2963,13 @@ const TEMP_DIR_MODE: Mode = Mode::RWXU;
 /// collisions are retried; another kernel error is returned unchanged.
 ///
 /// The initialized output is the pathname bytes without a trailing NUL. This
-/// operation never allocates and returns [`crate::Errno::RANGE`] when the
-/// caller's output is too small, [`crate::Errno::INVAL`] for an invalid prefix,
-/// or [`crate::Errno::NAMETOOLONG`] when the directory-entry/pathname bounds
-/// are exceeded. No libc ABI, C `errno`, or process-global temporary-directory
+/// operation never allocates and returns [`Errno::RANGE`] when the caller's
+/// output is too small, [`Errno::INVAL`] for an invalid prefix, or
+/// [`Errno::NAMETOOLONG`] when the directory-entry/pathname bounds are
+/// exceeded. No libc ABI, C `errno`, or process-global temporary-directory
 /// state is used.
 #[inline]
-pub fn create_temp_dir_into<P: Arg, Prefix: Arg, Buf: Buffer<u8>>(
+pub fn create_temp_dir_into<P: PathArg, Prefix: PathArg, Buf: Buffer<u8>>(
     parent: P,
     prefix: Prefix,
     mut output: Buf,
@@ -2302,12 +2985,12 @@ pub fn create_temp_dir_into<P: Arg, Prefix: Arg, Buf: Buffer<u8>>(
                 .len()
                 .checked_add(usize::from(separator))
                 .and_then(|length| length.checked_add(name_length))
-                .ok_or(crate::Errno::NAMETOOLONG)?;
-            if total >= CANONICAL_PATH_MAX {
-                return Err(crate::Errno::NAMETOOLONG);
+                .ok_or(Errno::NAMETOOLONG)?;
+            if total >= TEMP_DIR_PATH_MAX {
+                return Err(Errno::NAMETOOLONG);
             }
             if total > capacity {
-                return Err(crate::Errno::RANGE);
+                return Err(Errno::RANGE);
             }
 
             let directory = openat(
@@ -2347,13 +3030,13 @@ pub fn create_temp_dir_into<P: Arg, Prefix: Arg, Buf: Buffer<u8>>(
 /// creation contract succeeds.
 #[cfg(feature = "alloc")]
 #[inline]
-pub fn create_temp_dir<P: Arg, Prefix: Arg>(parent: P, prefix: Prefix) -> Result<CString> {
-    let mut output = [0u8; CANONICAL_PATH_MAX];
+pub fn create_temp_dir<P: PathArg, Prefix: PathArg>(parent: P, prefix: Prefix) -> Result<CString> {
+    let mut output = [0u8; TEMP_DIR_PATH_MAX];
     let length = create_temp_dir_into(parent, prefix, &mut output)?;
     let mut bytes = Vec::with_capacity(length + 1);
     bytes.extend_from_slice(&output[..length]);
     bytes.push(0);
-    // SAFETY: the source is composed from NUL-free `Arg` bytes and a
+    // SAFETY: the source is composed from NUL-free `PathArg` bytes and a
     // generated hexadecimal suffix; the only NUL is the final terminator.
     Ok(unsafe { CString::from_vec_with_nul_unchecked(bytes) })
 }
@@ -2365,7 +3048,7 @@ pub fn create_temp_dir<P: Arg, Prefix: Arg>(parent: P, prefix: Prefix) -> Result
 /// [`create_temp_dir_into`]. It is useful when the caller already has a stable
 /// directory descriptor and does not need a process-relative full pathname.
 #[inline]
-pub fn create_temp_dir_at_into<Fd: AsFd, Prefix: Arg, Buf: Buffer<u8>>(
+pub fn create_temp_dir_at_into<Fd: AsFd, Prefix: PathArg, Buf: Buffer<u8>>(
     parent: Fd,
     prefix: Prefix,
     mut output: Buf,
@@ -2375,7 +3058,7 @@ pub fn create_temp_dir_at_into<Fd: AsFd, Prefix: Arg, Buf: Buffer<u8>>(
         let prefix = prefix.to_bytes();
         let name_length = validate_temp_prefix(prefix)?;
         if name_length > capacity {
-            return Err(crate::Errno::RANGE);
+            return Err(Errno::RANGE);
         }
         // SAFETY: `pointer` is writable for `capacity` bytes and the helper
         // writes exactly `name_length` initialized bytes after successful
@@ -2392,7 +3075,7 @@ pub fn create_temp_dir_at_into<Fd: AsFd, Prefix: Arg, Buf: Buffer<u8>>(
 /// returns its generated basename.
 #[cfg(feature = "alloc")]
 #[inline]
-pub fn create_temp_dir_at<Fd: AsFd, Prefix: Arg>(parent: Fd, prefix: Prefix) -> Result<CString> {
+pub fn create_temp_dir_at<Fd: AsFd, Prefix: PathArg>(parent: Fd, prefix: Prefix) -> Result<CString> {
     let mut output = [0u8; TEMP_DIR_NAME_MAX + 1];
     let length = create_temp_dir_at_into(parent, prefix, &mut output)?;
     let mut bytes = Vec::with_capacity(length + 1);
@@ -2406,14 +3089,14 @@ pub fn create_temp_dir_at<Fd: AsFd, Prefix: Arg>(parent: Fd, prefix: Prefix) -> 
 #[inline]
 fn validate_temp_prefix(prefix: &[u8]) -> Result<usize> {
     if prefix.is_empty() || prefix.iter().any(|&byte| byte == b'/') {
-        return Err(crate::Errno::INVAL);
+        return Err(Errno::INVAL);
     }
     let name_length = prefix
         .len()
         .checked_add(TEMP_DIR_SUFFIX_LENGTH)
-        .ok_or(crate::Errno::NAMETOOLONG)?;
+        .ok_or(Errno::NAMETOOLONG)?;
     if name_length > TEMP_DIR_NAME_MAX {
-        return Err(crate::Errno::NAMETOOLONG);
+        return Err(Errno::NAMETOOLONG);
     }
     Ok(name_length)
 }
@@ -2425,7 +3108,7 @@ fn create_temp_dir_at_bytes<Fd: AsFd>(
 ) -> Result<usize> {
     let name_length = validate_temp_prefix(prefix)?;
     if output.len() < name_length {
-        return Err(crate::Errno::RANGE);
+        return Err(Errno::RANGE);
     }
     let parent = parent.as_fd();
     let mut candidate = [0u8; TEMP_DIR_NAME_MAX + 1];
@@ -2434,7 +3117,7 @@ fn create_temp_dir_at_bytes<Fd: AsFd>(
 
     let mut attempt = 0;
     while attempt < TEMP_DIR_MAX_ATTEMPTS {
-        let _ = crate::rand::getentropy(&mut entropy)?;
+        crate::rand::getentropy(&mut entropy)?;
         candidate[..prefix.len()].copy_from_slice(prefix);
         for (index, byte) in entropy.iter().enumerate() {
             candidate[prefix.len() + index * 2] = hex[(byte >> 4) as usize];
@@ -2447,78 +3130,240 @@ fn create_temp_dir_at_bytes<Fd: AsFd>(
                 output[..name_length].copy_from_slice(&candidate[..name_length]);
                 return Ok(name_length);
             }
-            Err(crate::Errno::EXIST) => {
-                attempt += 1;
-            }
+            Err(Errno::EXIST) => attempt += 1,
             Err(error) => return Err(error),
         }
     }
-    Err(crate::Errno::EXIST)
+    Err(Errno::EXIST)
 }
 
-/// Creates a Linux filesystem node relative to `dirfd`.
+/// Creates a hard link between paths relative to their directory descriptors.
 ///
-/// This follows Rustix's `mknodat` vocabulary while keeping the node type and
-/// creation permissions distinct. `FileType::Unknown` is metadata-only and is
-/// rejected. `mode` may contain only the permission and special bits accepted
-/// by `mknodat`; its file-type bits (or any other unknown bits) are rejected
-/// before the direct kernel call, so callers cannot accidentally override the
-/// explicit `file_type`. `dev` is the Linux AArch64 `dev_t` value; use
-/// [`FIFO_DEVICE`] for [`FileType::Fifo`].
+/// [`LinkAtFlags::SYMLINK_FOLLOW`] selects final-source-link resolution. This
+/// safe boundary deliberately excludes `AT_EMPTY_PATH` and its descriptor
+/// linking semantics.
 #[inline]
-pub fn mknodat<P: Arg, Fd: AsFd>(
-    dirfd: Fd,
-    path: P,
-    file_type: FileType,
-    mode: Mode,
-    dev: Dev,
+pub fn linkat<P: PathArg, Q: PathArg, PFd: AsFd, QFd: AsFd>(
+    old_dirfd: PFd,
+    old_path: P,
+    new_dirfd: QFd,
+    new_path: Q,
+    flags: LinkAtFlags,
 ) -> Result<()> {
-    if file_type == FileType::Unknown || mode.bits() & !0o7777 != 0 {
-        return Err(crate::Errno::INVAL);
-    }
-
-    let dirfd = dirfd.as_fd();
-    path.into_with_c_str(|path| {
-        crabc_core::fs::mknodat(
-            dirfd.as_raw_fd(),
-            path,
-            file_type.as_raw_mode() | mode.bits(),
-            dev,
-        )
+    let flags = LinkAtFlags::from_bits(flags.bits()).ok_or(Errno::INVAL)?;
+    let old_dirfd = old_dirfd.as_fd();
+    let new_dirfd = new_dirfd.as_fd();
+    old_path.into_with_c_str(|old_path| {
+        new_path.into_with_c_str(|new_path| {
+            crabc_core::fs::linkat(
+                old_dirfd.as_raw_fd(),
+                old_path,
+                new_dirfd.as_raw_fd(),
+                new_path,
+                flags.bits(),
+            )
+        })
     })
 }
 
-/// Creates a FIFO node relative to `dirfd`.
+/// Creates a hard link relative to the process current directory.
+#[inline]
+pub fn link<P: PathArg, Q: PathArg>(old_path: P, new_path: Q) -> Result<()> {
+    linkat(CWD, old_path, CWD, new_path, LinkAtFlags::empty())
+}
+
+/// Creates a symbolic link relative to `new_dirfd`.
 ///
-/// FIFOs have no device number; this wrapper always supplies
-/// [`FIFO_DEVICE`] and the explicit [`FileType::Fifo`] type to Linux.
+/// The link target is stored as supplied and is not resolved at creation.
 #[inline]
-pub fn mkfifoat<P: Arg, Fd: AsFd>(dirfd: Fd, path: P, mode: Mode) -> Result<()> {
-    mknodat(dirfd, path, FileType::Fifo, mode, FIFO_DEVICE)
+pub fn symlinkat<P: PathArg, Q: PathArg, Fd: AsFd>(
+    target: P,
+    new_dirfd: Fd,
+    new_path: Q,
+) -> Result<()> {
+    let new_dirfd = new_dirfd.as_fd();
+    target.into_with_c_str(|target| {
+        new_path.into_with_c_str(|new_path| {
+            crabc_core::fs::symlinkat(target, new_dirfd.as_raw_fd(), new_path)
+        })
+    })
 }
 
-/// Creates a FIFO node relative to the process current directory.
+/// Creates a current-directory-relative symbolic link.
 #[inline]
-pub fn mkfifo<P: Arg>(path: P, mode: Mode) -> Result<()> {
-    mkfifoat(CWD, path, mode)
+pub fn symlink<P: PathArg, Q: PathArg>(target: P, new_path: Q) -> Result<()> {
+    symlinkat(target, CWD, new_path)
 }
 
-/// Removes a file relative to the process current directory.
+/// Renames a path or directory without special Linux rename flags.
+///
+/// This changes directory entries; retained descriptors continue to refer to
+/// their original filesystem objects, independently of the new pathname.
 #[inline]
-pub fn unlink<P: Arg>(path: P) -> Result<()> {
-    unlinkat(CWD, path, AtFlags::empty())
+pub fn renameat<P: PathArg, Q: PathArg, PFd: AsFd, QFd: AsFd>(
+    old_dirfd: PFd,
+    old_path: P,
+    new_dirfd: QFd,
+    new_path: Q,
+) -> Result<()> {
+    renameat_with(
+        old_dirfd,
+        old_path,
+        new_dirfd,
+        new_path,
+        RenameFlags::empty(),
+    )
 }
 
-/// Removes an empty directory relative to the process current directory.
+/// Renames a path or directory using the admitted Linux `renameat2(2)` flags.
+///
+/// [`RenameFlags::NOREPLACE`] and [`RenameFlags::EXCHANGE`] are mutually
+/// exclusive; their combination and unknown flag bits return [`Errno::INVAL`]
+/// before path conversion or syscall entry. Whiteout creation remains outside
+/// this filesystem- and privilege-dependent boundary.
 #[inline]
-pub fn rmdir<P: Arg>(path: P) -> Result<()> {
-    unlinkat(CWD, path, AtFlags::REMOVEDIR)
+pub fn renameat_with<P: PathArg, Q: PathArg, PFd: AsFd, QFd: AsFd>(
+    old_dirfd: PFd,
+    old_path: P,
+    new_dirfd: QFd,
+    new_path: Q,
+    flags: RenameFlags,
+) -> Result<()> {
+    let flags = RenameFlags::from_bits(flags.bits()).ok_or(Errno::INVAL)?;
+    if flags.contains(RenameFlags::NOREPLACE) && flags.contains(RenameFlags::EXCHANGE) {
+        return Err(Errno::INVAL);
+    }
+
+    let old_dirfd = old_dirfd.as_fd();
+    let new_dirfd = new_dirfd.as_fd();
+    old_path.into_with_c_str(|old_path| {
+        new_path.into_with_c_str(|new_path| {
+            crabc_core::fs::renameat2(
+                old_dirfd.as_raw_fd(),
+                old_path,
+                new_dirfd.as_raw_fd(),
+                new_path,
+                flags.bits(),
+            )
+        })
+    })
 }
 
-/// Reads a symbolic-link target relative to `dirfd` into a caller-provided
-/// buffer, without allocating or appending a NUL byte.
+/// Renames a path or directory relative to the process current directory.
 #[inline]
-pub fn readlinkat_raw<P: Arg, Fd: AsFd, Buf: Buffer<u8>>(
+pub fn rename<P: PathArg, Q: PathArg>(old_path: P, new_path: Q) -> Result<()> {
+    renameat(CWD, old_path, CWD, new_path)
+}
+
+/// Changes permissions for an open file or directory.
+#[inline]
+pub fn fchmod<Fd: AsFd>(fd: Fd, mode: Mode) -> Result<()> {
+    crabc_core::fs::fchmod(fd.as_fd().as_raw_fd(), mode.bits())
+}
+
+/// Changes permissions for `path` relative to `dirfd`.
+///
+/// Linux cannot change a symbolic link's mode. Passing exactly
+/// [`AtFlags::SYMLINK_NOFOLLOW`] returns [`Errno::OPNOTSUPP`] without a
+/// syscall; all other flags are rejected before syscall entry.
+#[inline]
+#[doc(alias = "fchmodat")]
+pub fn chmodat<P: PathArg, Fd: AsFd>(
+    dirfd: Fd,
+    path: P,
+    mode: Mode,
+    flags: AtFlags,
+) -> Result<()> {
+    let flags = AtFlags::from_bits(flags.bits()).ok_or(Errno::INVAL)?;
+    if flags == AtFlags::SYMLINK_NOFOLLOW {
+        return Err(Errno::OPNOTSUPP);
+    }
+    if !flags.is_empty() {
+        return Err(Errno::INVAL);
+    }
+
+    let dirfd = dirfd.as_fd();
+    path.into_with_c_str(|path| crabc_core::fs::fchmodat(dirfd.as_raw_fd(), path, mode.bits(), 0))
+}
+
+/// Changes permissions for a current-directory-relative path.
+#[inline]
+pub fn chmod<P: PathArg>(path: P, mode: Mode) -> Result<()> {
+    chmodat(CWD, path, mode, AtFlags::empty())
+}
+
+/// Converts optional typed ownership IDs to Linux's `fchown*` words.
+///
+/// Linux reserves all ones as the no-change sentinel. `None` is the only way
+/// to request that meaning: an all-ones typed ID is rejected instead of being
+/// silently treated as absence.
+#[inline]
+fn ownership_words(owner: Option<Uid>, group: Option<Gid>) -> Result<(u32, u32)> {
+    let owner = match owner {
+        Some(owner) if owner.as_raw() == u32::MAX => return Err(Errno::INVAL),
+        Some(owner) => owner.as_raw(),
+        None => u32::MAX,
+    };
+    let group = match group {
+        Some(group) if group.as_raw() == u32::MAX => return Err(Errno::INVAL),
+        Some(group) => group.as_raw(),
+        None => u32::MAX,
+    };
+    Ok((owner, group))
+}
+
+/// Changes ownership for an open file or directory.
+#[inline]
+pub fn fchown<Fd: AsFd>(fd: Fd, owner: Option<Uid>, group: Option<Gid>) -> Result<()> {
+    let (owner, group) = ownership_words(owner, group)?;
+    crabc_core::fs::fchown(fd.as_fd().as_raw_fd(), owner, group)
+}
+
+/// Changes ownership for `path` relative to `dirfd`.
+///
+/// [`ChownFlags::SYMLINK_NOFOLLOW`] selects the final symbolic link itself.
+/// `AT_EMPTY_PATH` and all other cross-syscall flag meanings are excluded.
+#[inline]
+#[doc(alias = "fchownat")]
+pub fn chownat<P: PathArg, Fd: AsFd>(
+    dirfd: Fd,
+    path: P,
+    owner: Option<Uid>,
+    group: Option<Gid>,
+    flags: ChownFlags,
+) -> Result<()> {
+    let (owner, group) = ownership_words(owner, group)?;
+    let flags = ChownFlags::from_bits(flags.bits()).ok_or(Errno::INVAL)?;
+    let dirfd = dirfd.as_fd();
+    path.into_with_c_str(|path| {
+        crabc_core::fs::fchownat(dirfd.as_raw_fd(), path, owner, group, flags.bits())
+    })
+}
+
+/// Changes ownership for a path, following a final symbolic link.
+#[inline]
+pub fn chown<P: PathArg>(path: P, owner: Option<Uid>, group: Option<Gid>) -> Result<()> {
+    chownat(CWD, path, owner, group, ChownFlags::empty())
+}
+
+/// Changes ownership for a final symbolic link itself.
+#[inline]
+pub fn lchown<P: PathArg>(path: P, owner: Option<Uid>, group: Option<Gid>) -> Result<()> {
+    chownat(CWD, path, owner, group, ChownFlags::SYMLINK_NOFOLLOW)
+}
+
+/// Reads a symbolic-link target relative to `dirfd` into caller-owned storage.
+///
+/// Linux returns the exact initialized target-byte prefix and never appends a
+/// NUL byte. If the supplied buffer is shorter than the target, Linux reports
+/// success with the truncated prefix. A zero-length buffer returns
+/// [`crate::Errno::INVAL`] from the raw kernel boundary; unlike the C wrapper,
+/// this direct facade deliberately does not translate it to an empty result.
+/// This boundary allocates nothing, changes no process or descriptor state,
+/// and propagates kernel errors unchanged.
+#[inline]
+#[allow(private_interfaces)]
+pub fn readlinkat_raw<P: PathArg, Fd: AsFd, Buf: Buffer<u8>>(
     dirfd: Fd,
     path: P,
     mut buffer: Buf,
@@ -2527,22 +3372,34 @@ pub fn readlinkat_raw<P: Arg, Fd: AsFd, Buf: Buffer<u8>>(
     let (pointer, length) = buffer.parts_mut();
     let initialized = path.into_with_c_str(|path| {
         // SAFETY: `Buffer` is sealed and supplies writable storage for
-        // exactly `length` bytes. readlinkat initializes the returned prefix.
-        unsafe { crabc_core::fs::readlinkat_raw(dirfd.as_raw_fd(), path, pointer.cast(), length) }
+        // exactly `length` bytes. `readlinkat` initializes the returned
+        // prefix and does not write a terminating NUL byte.
+        unsafe {
+            crabc_core::fs::readlinkat_raw(
+                dirfd.as_raw_fd(),
+                path,
+                pointer.cast(),
+                length,
+            )
+        }
     })?;
-    // SAFETY: A successful readlinkat initialized exactly the reported prefix
-    // and never returns more bytes than the supplied buffer length.
+    // SAFETY: A successful readlinkat initialized exactly the reported
+    // prefix and never returns more bytes than the supplied buffer length.
     unsafe { Ok(buffer.assume_init(initialized)) }
 }
 
-/// Reads a symbolic-link target relative to `dirfd`.
+/// Reads a complete symbolic-link target relative to `dirfd` into owned
+/// byte-path storage.
 ///
-/// The supplied vector is reused when possible. The result is a `CString`
-/// because Linux link targets are byte pathnames and never contain an
-/// embedded NUL.
+/// `readlinkat(2)` does not append a NUL byte and reports a successful length
+/// equal to the supplied capacity for both an exactly fitting target and a
+/// truncated one. This wrapper therefore retries with a larger buffer until
+/// the returned length is strictly shorter than the capacity. The supplied
+/// vector is reused where its capacity permits; the resulting [`CString`]
+/// preserves arbitrary non-NUL target bytes without UTF-8 conversion.
 #[cfg(feature = "alloc")]
 #[inline]
-pub fn readlinkat<P: Arg, Fd: AsFd, B: Into<Vec<u8>>>(
+pub fn readlinkat<P: PathArg, Fd: AsFd, B: Into<Vec<u8>>>(
     dirfd: Fd,
     path: P,
     reuse: B,
@@ -2551,13 +3408,13 @@ pub fn readlinkat<P: Arg, Fd: AsFd, B: Into<Vec<u8>>>(
     path.into_with_c_str(|path| {
         let mut buffer = reuse.into();
         buffer.clear();
-        buffer.reserve(crate::path::SMALL_PATH_BUFFER_SIZE);
+        buffer.reserve(SMALL_PATH_BUFFER_SIZE);
 
         loop {
             let capacity = buffer.capacity();
             let spare = buffer.spare_capacity_mut();
             // SAFETY: the vector spare capacity is writable for its exact
-            // length and remains live for the duration of this syscall.
+            // length and remains live for the duration of this direct syscall.
             let length = unsafe {
                 crabc_core::fs::readlinkat_raw(
                     dirfd.as_raw_fd(),
@@ -2580,10 +3437,15 @@ pub fn readlinkat<P: Arg, Fd: AsFd, B: Into<Vec<u8>>>(
     })
 }
 
-/// Reads a symbolic-link target relative to the process current directory.
+/// Reads a complete symbolic-link target relative to the process current
+/// directory into owned byte-path storage.
+///
+/// The current working directory is process-global on Linux. Relative paths
+/// therefore require callers to coordinate with concurrent CWD mutation; an
+/// absolute path ignores the [`CWD`] directory token as usual.
 #[cfg(feature = "alloc")]
 #[inline]
-pub fn readlink<P: Arg, B: Into<Vec<u8>>>(path: P, reuse: B) -> Result<CString> {
+pub fn readlink<P: PathArg, B: Into<Vec<u8>>>(path: P, reuse: B) -> Result<CString> {
     readlinkat(CWD, path, reuse)
 }
 
@@ -2601,12 +3463,12 @@ const CANONICAL_MAX_SYMLINKS: usize = 40;
 /// Resolves a pathname to an absolute, byte-preserving physical pathname.
 ///
 /// This is the allocation-free caller-buffered equivalent of [`canonicalize`].
-/// The input is accepted through [`Arg`], so it may contain non-UTF-8 bytes but
-/// may not contain an interior NUL. `.` and `..` are interpreted lexically,
-/// while every existing component is checked against the kernel and symbolic
-/// links are read relative to their containing directory. Linux's direct
-/// `openat`, `readlinkat`, and `getcwd` seams are used; no libc function, C
-/// ABI, or TLS `errno` is involved.
+/// The input is accepted through [`PathArg`], so it may contain non-UTF-8
+/// bytes but may not contain an interior NUL. `.` and `..` are interpreted
+/// lexically, while every existing component is checked against the kernel and
+/// symbolic links are read relative to their containing directory. Linux's
+/// direct `openat`, `readlinkat`, and `getcwd` seams are used; no libc
+/// function, C ABI, or TLS `errno` is involved.
 ///
 /// The initialized result is the canonical pathname without a trailing NUL.
 /// A buffer too small for the result returns [`crate::Errno::RANGE`]. A
@@ -2615,7 +3477,10 @@ const CANONICAL_MAX_SYMLINKS: usize = 40;
 /// Linux/musl limit of forty links and returns [`crate::Errno::LOOP`] when the
 /// limit is reached.
 #[inline]
-pub fn canonicalize_into<P: Arg, Buf: Buffer<u8>>(path: P, mut output: Buf) -> Result<Buf::Output> {
+pub fn canonicalize_into<P: PathArg, Buf: Buffer<u8>>(
+    path: P,
+    mut output: Buf,
+) -> Result<Buf::Output> {
     let (pointer, capacity) = output.parts_mut();
     let initialized = path.into_with_c_str(|path| {
         canonicalize_bytes(path.to_bytes(), |resolved| {
@@ -2642,8 +3507,8 @@ pub fn canonicalize_into<P: Arg, Buf: Buffer<u8>>(path: P, mut output: Buf) -> R
 /// interior NUL and preserves non-UTF-8 pathname bytes exactly.
 #[cfg(feature = "alloc")]
 #[inline]
-pub fn canonicalize<P: Arg>(path: P) -> Result<CString> {
-    let path = path_bytes(path)?;
+pub fn canonicalize<P: PathArg>(path: P) -> Result<CString> {
+    let path = canonical_path_bytes(path)?;
     canonicalize_bytes(&path, |resolved| {
         let mut bytes = Vec::with_capacity(resolved.len() + 1);
         bytes.extend_from_slice(resolved);
@@ -2656,7 +3521,7 @@ pub fn canonicalize<P: Arg>(path: P) -> Result<CString> {
 
 #[cfg(feature = "alloc")]
 #[inline]
-fn path_bytes<P: Arg>(path: P) -> Result<Vec<u8>> {
+fn canonical_path_bytes<P: PathArg>(path: P) -> Result<Vec<u8>> {
     path.into_with_c_str(|path| Ok(path.to_bytes().to_vec()))
 }
 
@@ -2949,7 +3814,7 @@ impl CanonicalWorkspace {
     }
 
     fn open_path(&self, path: &[u8]) -> Result<OwnedFd> {
-        with_path_cstr(path, |path| {
+        canonical_path_cstr(path, |path| {
             openat(
                 CWD,
                 path,
@@ -2965,7 +3830,7 @@ impl CanonicalWorkspace {
         component: &[u8],
         directory_only: bool,
     ) -> Result<OwnedFd> {
-        with_path_cstr(component, |component| {
+        canonical_path_cstr(component, |component| {
             let flags = OFlags::PATH | OFlags::NOFOLLOW | OFlags::CLOEXEC;
             let flags = if directory_only {
                 flags | OFlags::DIRECTORY
@@ -2977,7 +3842,7 @@ impl CanonicalWorkspace {
     }
 
     fn ensure_directory<Fd: AsFd>(&self, descriptor: Fd) -> Result<()> {
-        with_path_cstr(b".", |path| {
+        canonical_path_cstr(b".", |path| {
             let _ = openat(
                 descriptor,
                 path,
@@ -2994,7 +3859,7 @@ impl CanonicalWorkspace {
         component: &[u8],
         target: &mut [MaybeUninit<u8>; CANONICAL_PATH_MAX],
     ) -> Result<Option<usize>> {
-        with_path_cstr(component, |component| {
+        canonical_path_cstr(component, |component| {
             // SAFETY: `target` is writable for its full fixed length and the
             // component C string remains alive for the direct syscall.
             match unsafe {
@@ -3019,7 +3884,7 @@ impl CanonicalWorkspace {
     }
 }
 
-fn with_path_cstr<T, F>(path: &[u8], f: F) -> Result<T>
+fn canonical_path_cstr<T, F>(path: &[u8], f: F) -> Result<T>
 where
     F: FnOnce(&CStr) -> Result<T>,
 {
@@ -3030,563 +3895,435 @@ where
     bytes[..path.len()].copy_from_slice(path);
     bytes[path.len()] = 0;
     // SAFETY: `path` is NUL-free by construction: all callers pass either a
-    // component from a validated `Arg` or the fixed `.`/`/` spellings.
+    // component from a validated `PathArg` or the fixed `.`/`/` spellings.
     let path = unsafe { CStr::from_bytes_with_nul_unchecked(&bytes[..path.len() + 1]) };
     f(path)
 }
 
-/// Creates a hard link between two paths relative to their directory
-/// descriptors.
+/// Queries the byte length of an extended attribute, following the final link.
+///
+/// This sizing observation initializes no caller buffer and allocates nothing.
+/// The value may change before [`getxattr`] fills storage; a larger value then
+/// returns [`Errno::RANGE`] from that fill instead of exposing an unwritten prefix.
 #[inline]
-pub fn linkat<P: Arg, Q: Arg, PFd: AsFd, QFd: AsFd>(
-    old_dirfd: PFd,
-    old_path: P,
-    new_dirfd: QFd,
-    new_path: Q,
-    flags: AtFlags,
-) -> Result<()> {
-    let old_dirfd = old_dirfd.as_fd();
-    let new_dirfd = new_dirfd.as_fd();
-    old_path.into_with_c_str(|old_path| {
-        new_path.into_with_c_str(|new_path| {
-            crabc_core::fs::linkat(
-                old_dirfd.as_raw_fd(),
-                old_path,
-                new_dirfd.as_raw_fd(),
-                new_path,
-                flags.bits(),
-            )
+pub fn getxattr_size<P: PathArg, Name: PathArg>(path: P, name: Name) -> Result<usize> {
+    path.into_with_c_str(|path| {
+        name.into_with_c_str(|name| {
+            // SAFETY: both names are live NUL-terminated strings. Linux's
+            // null, zero-length output form queries size without writing.
+            unsafe {
+                crabc_core::fs::getxattr_raw(
+                    path.as_ptr().cast(), name.as_ptr().cast(), ptr::null_mut(), 0,
+                )
+            }
         })
     })
 }
 
-/// Creates a hard link relative to the process current directory.
-#[inline]
-pub fn link<P: Arg, Q: Arg>(old_path: P, new_path: Q) -> Result<()> {
-    linkat(CWD, old_path, CWD, new_path, AtFlags::empty())
-}
-
-/// Creates a symbolic link relative to `new_dirfd`.
-#[inline]
-pub fn symlinkat<P: Arg, Q: Arg, Fd: AsFd>(target: P, new_dirfd: Fd, new_path: Q) -> Result<()> {
-    let new_dirfd = new_dirfd.as_fd();
-    target.into_with_c_str(|target| {
-        new_path.into_with_c_str(|new_path| {
-            crabc_core::fs::symlinkat(target, new_dirfd.as_raw_fd(), new_path)
-        })
-    })
-}
-
-/// Creates a symbolic link relative to the process current directory.
-#[inline]
-pub fn symlink<P: Arg, Q: Arg>(target: P, new_path: Q) -> Result<()> {
-    symlinkat(target, CWD, new_path)
-}
-
-/// Renames a path or directory without special Linux rename flags.
-#[inline]
-pub fn renameat<P: Arg, Q: Arg, PFd: AsFd, QFd: AsFd>(
-    old_dirfd: PFd,
-    old_path: P,
-    new_dirfd: QFd,
-    new_path: Q,
-) -> Result<()> {
-    renameat_with(
-        old_dirfd,
-        old_path,
-        new_dirfd,
-        new_path,
-        RenameFlags::empty(),
-    )
-}
-
-/// Renames a path or directory with Linux `renameat2` flags.
-#[inline]
-pub fn renameat_with<P: Arg, Q: Arg, PFd: AsFd, QFd: AsFd>(
-    old_dirfd: PFd,
-    old_path: P,
-    new_dirfd: QFd,
-    new_path: Q,
-    flags: RenameFlags,
-) -> Result<()> {
-    let old_dirfd = old_dirfd.as_fd();
-    let new_dirfd = new_dirfd.as_fd();
-    old_path.into_with_c_str(|old_path| {
-        new_path.into_with_c_str(|new_path| {
-            crabc_core::fs::renameat2(
-                old_dirfd.as_raw_fd(),
-                old_path,
-                new_dirfd.as_raw_fd(),
-                new_path,
-                flags.bits(),
-            )
-        })
-    })
-}
-
-/// Renames a path or directory relative to the process current directory.
-#[inline]
-pub fn rename<P: Arg, Q: Arg>(old_path: P, new_path: Q) -> Result<()> {
-    renameat(CWD, old_path, CWD, new_path)
-}
-
-/// Changes permissions for an open file or directory.
-#[inline]
-pub fn fchmod<Fd: AsFd>(fd: Fd, mode: Mode) -> Result<()> {
-    crabc_core::fs::fchmod(fd.as_fd().as_raw_fd(), mode.bits())
-}
-
-/// Changes permissions for `path` relative to `dirfd`.
+/// Reads an extended attribute into caller-provided storage.
 ///
-/// Linux cannot change a symbolic link's mode. Matching Rustix, passing
-/// exactly [`AtFlags::SYMLINK_NOFOLLOW`] reports `EOPNOTSUPP`; passing any
-/// other nonempty flag set reports `EINVAL` rather than silently ignoring it.
+/// A successful read returns only the initialized prefix. [`Errno::RANGE`]
+/// means the supplied buffer was too short, including an empty buffer when
+/// the value is nonempty. Use [`getxattr_size`] for a byte-length query. An
+/// empty attribute can be read into empty storage; no allocation or retry is hidden.
 #[inline]
-#[doc(alias = "fchmodat")]
-pub fn chmodat<P: Arg, Fd: AsFd>(dirfd: Fd, path: P, mode: Mode, flags: AtFlags) -> Result<()> {
-    if flags == AtFlags::SYMLINK_NOFOLLOW {
-        return Err(crate::Errno::OPNOTSUPP);
-    }
-    if !flags.is_empty() {
-        return Err(crate::Errno::INVAL);
-    }
-    let dirfd = dirfd.as_fd();
-    path.into_with_c_str(|path| crabc_core::fs::fchmodat(dirfd.as_raw_fd(), path, mode.bits(), 0))
-}
-
-/// Changes permissions relative to the process current directory.
-#[inline]
-pub fn chmod<P: Arg>(path: P, mode: Mode) -> Result<()> {
-    chmodat(CWD, path, mode, AtFlags::empty())
-}
-
-/// Converts optional typed ownership IDs to the Linux `fchown*` words.
-///
-/// Linux uses all ones (`(uid_t)-1`/`(gid_t)-1`) as an explicit no-change
-/// sentinel. `None` is the only way to request that sentinel here: although
-/// [`Uid::from_raw`] and [`Gid::from_raw`] preserve raw words for observation,
-/// an all-ones typed ID is rejected so it cannot silently become `None`.
-#[inline]
-fn ownership_words(owner: Option<Uid>, group: Option<Gid>) -> Result<(u32, u32)> {
-    let owner = match owner {
-        Some(owner) if owner.as_raw() == u32::MAX => return Err(crate::Errno::INVAL),
-        Some(owner) => owner.as_raw(),
-        None => u32::MAX,
-    };
-    let group = match group {
-        Some(group) if group.as_raw() == u32::MAX => return Err(crate::Errno::INVAL),
-        Some(group) => group.as_raw(),
-        None => u32::MAX,
-    };
-    Ok((owner, group))
-}
-
-/// Validates and returns the ownership-specific `fchownat` flag word.
-#[inline]
-fn checked_chown_flags(flags: ChownFlags) -> Result<u32> {
-    ChownFlags::from_bits(flags.bits())
-        .map(|flags| flags.bits())
-        .ok_or(crate::Errno::INVAL)
-}
-
-/// Changes ownership for an open file or directory.
-///
-/// `None` for either ID maps to Linux's all-ones no-change sentinel. A
-/// `Some(Uid::from_raw(u32::MAX))` or `Some(Gid::from_raw(u32::MAX))` is
-/// rejected with [`crate::Errno::INVAL`] instead of being given that meaning.
-#[inline]
-pub fn fchown<Fd: AsFd>(fd: Fd, owner: Option<Uid>, group: Option<Gid>) -> Result<()> {
-    let (owner, group) = ownership_words(owner, group)?;
-    crabc_core::fs::fchown(fd.as_fd().as_raw_fd(), owner, group)
-}
-
-/// Changes ownership for `path` relative to `dirfd`.
-///
-/// The bounded [`ChownFlags`] type accepts only
-/// [`ChownFlags::SYMLINK_NOFOLLOW`], which changes a symbolic link itself.
-/// All other `AT_*` meanings belong to other syscall families and are
-/// rejected before path conversion or the kernel boundary.
-#[inline]
-#[doc(alias = "fchownat")]
-pub fn chownat<P: Arg, Fd: AsFd>(
-    dirfd: Fd,
+pub fn getxattr<P: PathArg, Name: PathArg, Buf: Buffer<u8>>(
     path: P,
-    owner: Option<Uid>,
-    group: Option<Gid>,
-    flags: ChownFlags,
-) -> Result<()> {
-    let (owner, group) = ownership_words(owner, group)?;
-    let flags = checked_chown_flags(flags)?;
-    let dirfd = dirfd.as_fd();
+    name: Name,
+    mut value: Buf,
+) -> Result<Buf::Output> {
+    let (pointer, length) = value.parts_mut();
+    let initialized = path.into_with_c_str(|path| {
+        name.into_with_c_str(|name| {
+            // SAFETY: `Buffer` supplies writable output storage and both
+            // arguments are NUL-terminated for the direct syscall.
+            unsafe {
+                crabc_core::fs::getxattr_raw(
+                    path.as_ptr().cast(),
+                    name.as_ptr().cast(),
+                    pointer,
+                    length,
+                )
+            }
+        })
+    })?;
+    if initialized > length {
+        return Err(Errno::RANGE);
+    }
+    // SAFETY: Linux initialized exactly the reported output prefix.
+    unsafe { Ok(value.assume_init(initialized)) }
+}
+
+/// Queries an attribute's byte length without following a final symbolic link.
+///
+/// This observes the link's own attributes. The size may change before
+/// [`lgetxattr`] fills storage, which then returns [`Errno::RANGE`] if too short.
+#[inline]
+pub fn lgetxattr_size<P: PathArg, Name: PathArg>(path: P, name: Name) -> Result<usize> {
     path.into_with_c_str(|path| {
-        crabc_core::fs::fchownat(dirfd.as_raw_fd(), path, owner, group, flags)
+        name.into_with_c_str(|name| {
+            // SAFETY: both names are live NUL-terminated strings. Linux's
+            // null, zero-length output form queries size without writing.
+            unsafe {
+                crabc_core::fs::lgetxattr_raw(
+                    path.as_ptr().cast(), name.as_ptr().cast(), ptr::null_mut(), 0,
+                )
+            }
+        })
     })
 }
 
-/// Changes ownership for `path`, following a final symbolic link.
+/// Reads an extended attribute without following a final symbolic link.
+///
+/// The initialized-prefix and undersized-buffer rules are those of [`getxattr`].
+/// Use [`lgetxattr_size`] for a byte-length query on the link itself.
 #[inline]
-pub fn chown<P: Arg>(path: P, owner: Option<Uid>, group: Option<Gid>) -> Result<()> {
-    chownat(CWD, path, owner, group, ChownFlags::empty())
-}
-
-/// Changes ownership for `path` without following a final symbolic link.
-#[inline]
-pub fn lchown<P: Arg>(path: P, owner: Option<Uid>, group: Option<Gid>) -> Result<()> {
-    chownat(CWD, path, owner, group, ChownFlags::SYMLINK_NOFOLLOW)
-}
-
-/// Sets access and modification times relative to `dirfd`.
-#[inline]
-pub fn utimensat<P: Arg, Fd: AsFd>(
-    dirfd: Fd,
+pub fn lgetxattr<P: PathArg, Name: PathArg, Buf: Buffer<u8>>(
     path: P,
-    times: &Timestamps,
-    flags: AtFlags,
-) -> Result<()> {
-    let dirfd = dirfd.as_fd();
-    path.into_with_c_str(|path| {
-        // SAFETY: `path` and `times` remain valid for the direct syscall, and
-        // `Timestamps` is exactly two Linux/AArch64 `timespec` values.
-        unsafe {
-            crabc_core::fs::utimensat_raw(
-                dirfd.as_raw_fd(),
-                path.as_ptr().cast(),
-                (times as *const Timestamps).cast(),
-                flags.bits(),
-            )
-        }
-    })
-}
-
-/// Sets timestamps on an open file or directory.
-#[inline]
-pub fn futimens<Fd: AsFd>(fd: Fd, times: &Timestamps) -> Result<()> {
-    // SAFETY: `times` remains valid for the direct syscall, and its layout is
-    // exactly two Linux/AArch64 `timespec` values. A null path selects the
-    // kernel's futimens form.
-    unsafe {
-        crabc_core::fs::utimensat_raw(
-            fd.as_fd().as_raw_fd(),
-            core::ptr::null(),
-            (times as *const Timestamps).cast(),
-            0,
-        )
+    name: Name,
+    mut value: Buf,
+) -> Result<Buf::Output> {
+    let (pointer, length) = value.parts_mut();
+    let initialized = path.into_with_c_str(|path| {
+        name.into_with_c_str(|name| {
+            // SAFETY: `Buffer` supplies writable output storage and both
+            // arguments are NUL-terminated for the direct syscall.
+            unsafe {
+                crabc_core::fs::lgetxattr_raw(
+                    path.as_ptr().cast(),
+                    name.as_ptr().cast(),
+                    pointer,
+                    length,
+                )
+            }
+        })
+    })?;
+    if initialized > length {
+        return Err(Errno::RANGE);
     }
+    // SAFETY: Linux initialized exactly the reported output prefix.
+    unsafe { Ok(value.assume_init(initialized)) }
 }
 
-/// Sets access and modification times on an open file using microseconds.
+/// Queries an open descriptor's extended-attribute byte length.
 ///
-/// This preserves the legacy `futimes` timestamp unit while using Linux's
-/// direct `utimensat` syscall. `None` maps to the kernel's null-times pointer,
-/// which sets both timestamps to the current time. For `Some(times)`, each
-/// `tv_usec` must be in `0..1_000_000`; invalid values return
-/// [`crate::Errno::INVAL`] before entering the kernel.
+/// The descriptor borrow keeps the object live; its value may still change
+/// before [`fgetxattr`] fills storage, which returns [`Errno::RANGE`] if too short.
 #[inline]
-pub fn futimes<Fd: AsFd>(fd: Fd, times: Option<&[Timeval; 2]>) -> Result<()> {
-    let converted = match times {
-        None => None,
-        Some(times) => Some([
-            timeval_to_timespec(times[0])?,
-            timeval_to_timespec(times[1])?,
-        ]),
-    };
-    let times_ptr = converted
-        .as_ref()
-        .map_or(core::ptr::null(), |times| times.as_ptr());
-
-    // SAFETY: the borrowed descriptor and optional converted timestamp array
-    // remain valid for this direct syscall. A null timestamp pointer selects
-    // Linux's current-time behavior.
-    unsafe {
-        crabc_core::fs::utimensat_raw(
-            fd.as_fd().as_raw_fd(),
-            core::ptr::null(),
-            times_ptr.cast(),
-            0,
-        )
-    }
-}
-
-/// Sets access and modification times on a path without following its final
-/// symbolic link.
-///
-/// This keeps the legacy `lutimes` microsecond unit while using the direct
-/// Linux `utimensat` syscall with [`AtFlags::SYMLINK_NOFOLLOW`]. `None` maps
-/// to the kernel's null-times pointer and sets both timestamps to the current
-/// time. Invalid microsecond fields return [`crate::Errno::INVAL`] before the
-/// path conversion or syscall.
-#[inline]
-pub fn lutimes<P: Arg>(path: P, times: Option<&[Timeval; 2]>) -> Result<()> {
-    let converted = match times {
-        None => None,
-        Some(times) => Some([
-            timeval_to_timespec(times[0])?,
-            timeval_to_timespec(times[1])?,
-        ]),
-    };
-    let times_ptr = converted
-        .as_ref()
-        .map_or(core::ptr::null(), |times| times.as_ptr());
-    path.into_with_c_str(|path| {
-        // SAFETY: the path and optional converted timestamp array remain live
-        // for this direct syscall. The no-follow flag updates the final
-        // symbolic link itself rather than resolving it to its target.
+pub fn fgetxattr_size<Fd: AsFd, Name: PathArg>(fd: Fd, name: Name) -> Result<usize> {
+    let fd = fd.as_fd();
+    name.into_with_c_str(|name| {
+        // SAFETY: the descriptor borrow and NUL-terminated name remain live.
+        // Linux's null, zero-length output form queries size without writing.
         unsafe {
-            crabc_core::fs::utimensat_raw(
-                crabc_core::AT_FDCWD,
-                path.as_ptr().cast(),
-                times_ptr.cast(),
-                AtFlags::SYMLINK_NOFOLLOW.bits(),
-            )
+            crabc_core::fs::fgetxattr_raw(fd.as_raw_fd(), name.as_ptr().cast(), ptr::null_mut(), 0)
         }
     })
 }
 
-/// Sets access and modification times for a path relative to `dirfd`,
-/// following its final symbolic link.
+/// Reads a descriptor extended attribute into caller-provided storage.
 ///
-/// This keeps the legacy `futimesat` microsecond unit while using the direct
-/// Linux `utimensat` syscall with no path flags. `None` maps to the kernel's
-/// null-times pointer and sets both timestamps to the current time. Invalid
-/// microsecond fields return [`crate::Errno::INVAL`] before path conversion or
-/// the syscall.
+/// The initialized-prefix and undersized-buffer rules are those of [`getxattr`].
+/// Use [`fgetxattr_size`] for a byte-length query on the descriptor's object.
 #[inline]
-pub fn futimesat<P: Arg, Fd: AsFd>(dirfd: Fd, path: P, times: Option<&[Timeval; 2]>) -> Result<()> {
-    let converted = match times {
-        None => None,
-        Some(times) => Some([
-            timeval_to_timespec(times[0])?,
-            timeval_to_timespec(times[1])?,
-        ]),
-    };
-    let times_ptr = converted
-        .as_ref()
-        .map_or(core::ptr::null(), |times| times.as_ptr());
-    let dirfd = dirfd.as_fd();
-    path.into_with_c_str(|path| {
-        // SAFETY: the borrowed directory descriptor, path, and optional
-        // converted timestamp array remain live for this direct syscall.
-        // Zero flags preserve futimesat's final-symlink-following behavior.
-        unsafe {
-            crabc_core::fs::utimensat_raw(
-                dirfd.as_raw_fd(),
-                path.as_ptr().cast(),
-                times_ptr.cast(),
-                0,
-            )
-        }
-    })
-}
-
-/// Sets access and modification times for a path relative to the process
-/// current directory, following its final symbolic link.
-///
-/// This keeps the legacy `utimes` microsecond unit while using the direct
-/// Linux `utimensat` syscall with zero path flags. `None` maps to the kernel's
-/// null-times pointer and sets both timestamps to the current time. Invalid
-/// microsecond fields return [`crate::Errno::INVAL`] before path conversion or
-/// the syscall.
-#[inline]
-pub fn utimes<P: Arg>(path: P, times: Option<&[Timeval; 2]>) -> Result<()> {
-    let converted = match times {
-        None => None,
-        Some(times) => Some([
-            timeval_to_timespec(times[0])?,
-            timeval_to_timespec(times[1])?,
-        ]),
-    };
-    let times_ptr = converted
-        .as_ref()
-        .map_or(core::ptr::null(), |times| times.as_ptr());
-    path.into_with_c_str(|path| {
-        // SAFETY: the path and optional converted timestamp array remain live
-        // for this direct syscall. Zero flags preserve utimes' final-symlink-
-        // following behavior.
-        unsafe {
-            crabc_core::fs::utimensat_raw(
-                crabc_core::AT_FDCWD,
-                path.as_ptr().cast(),
-                times_ptr.cast(),
-                0,
-            )
-        }
-    })
-}
-
-/// Sets access and modification times for a path at whole-second precision,
-/// following its final symbolic link.
-///
-/// This preserves the legacy `utime` timestamp unit while using the direct
-/// Linux `utimensat` syscall with `AT_FDCWD` and zero flags. `None` maps to
-/// the kernel's null-times pointer and sets both timestamps to the current
-/// time. Explicit [`Utimbuf`] values are converted to two `Timespec` values
-/// with zero nanoseconds; no C ABI pointer or process-global error state is
-/// involved.
-#[inline]
-pub fn utime<P: Arg>(path: P, times: Option<&Utimbuf>) -> Result<()> {
-    let converted = times.map(|times| {
-        [
-            Timespec {
-                tv_sec: times.actime,
-                tv_nsec: 0,
-            },
-            Timespec {
-                tv_sec: times.modtime,
-                tv_nsec: 0,
-            },
-        ]
-    });
-    let times_ptr = converted
-        .as_ref()
-        .map_or(core::ptr::null(), |times| times.as_ptr());
-    path.into_with_c_str(|path| {
-        // SAFETY: the path and optional converted timestamp array remain live
-        // for this direct syscall. Zero flags preserve utime's final-symlink-
-        // following behavior.
-        unsafe {
-            crabc_core::fs::utimensat_raw(
-                crabc_core::AT_FDCWD,
-                path.as_ptr().cast(),
-                times_ptr.cast(),
-                0,
-            )
-        }
-    })
-}
-
-#[inline]
-fn timeval_to_timespec(time: Timeval) -> Result<Timespec> {
-    if time.tv_usec < 0 || time.tv_usec >= 1_000_000 {
-        return Err(crate::Errno::INVAL);
-    }
-    Ok(Timespec {
-        tv_sec: time.tv_sec,
-        tv_nsec: time.tv_usec * 1_000,
-    })
-}
-
-/// Acquires or releases a Linux `flock` advisory lock.
-#[inline]
-pub fn flock<Fd: AsFd>(fd: Fd, operation: FlockOperation) -> Result<()> {
-    crabc_core::fs::flock(fd.as_fd().as_raw_fd(), operation as u32)
-}
-
-#[repr(C)]
-struct KernelFlock {
-    l_type: i16,
-    l_whence: i16,
-    l_start: i64,
-    l_len: i64,
-    l_pid: i32,
-}
-
-// Linux/AArch64 keeps the trailing padding after `l_pid`; the direct fcntl
-// seam must therefore receive the complete 32-byte record rather than a
-// Rust-optimized approximation.
-const _: [(); 32] = [(); core::mem::size_of::<KernelFlock>()];
-const _: [(); 8] = [(); core::mem::align_of::<KernelFlock>()];
-
-const F_GETLK: i32 = 5;
-const F_SETLK: i32 = 6;
-const F_SETLKW: i32 = 7;
-const F_UNLCK: i16 = 2;
-const F_WRLCK: i16 = 1;
-
-/// Acquires or releases a whole-file, process-associated `fcntl` lock.
-///
-/// A zero length deliberately means from byte zero through the dynamically
-/// changing end of file. As in Rustix, these locks are process-associated and
-/// do not protect two threads of one process from each other.
-#[inline]
-pub fn fcntl_lock<Fd: AsFd>(fd: Fd, operation: FlockOperation) -> Result<()> {
-    let (command, lock_type) = match operation {
-        FlockOperation::LockShared => (7, 0),
-        FlockOperation::LockExclusive => (7, 1),
-        FlockOperation::Unlock => (7, 2),
-        FlockOperation::NonBlockingLockShared => (6, 0),
-        FlockOperation::NonBlockingLockExclusive => (6, 1),
-        FlockOperation::NonBlockingUnlock => (6, 2),
-    };
-    let mut lock = KernelFlock {
-        l_type: lock_type,
-        l_whence: 0,
-        l_start: 0,
-        l_len: 0,
-        l_pid: 0,
-    };
-    // SAFETY: `KernelFlock` matches the Linux/AArch64 `struct flock` ABI and
-    // remains live for the command. The selected command reads this complete
-    // whole-file lock specification.
-    unsafe {
-        crabc_core::io::fcntl_raw(
-            fd.as_fd().as_raw_fd(),
-            command,
-            core::ptr::addr_of_mut!(lock).cast(),
-        )
-        .map(|_| ())
-    }
-}
-
-/// Acquires, tests, or releases an exclusive lock relative to a descriptor's
-/// current file offset.
-///
-/// The current offset is observed through direct `lseek(SEEK_CUR)` and is not
-/// changed. `CurrentLockRange` is converted to a checked Linux/AArch64
-/// `struct flock`; arithmetic overflow is returned as [`crate::Errno::RANGE`]
-/// before the fcntl syscall. `TestExclusive` reports a conflicting lock as
-/// [`crate::Errno::ACCESS`], matching the POSIX lockf observable result, while
-/// all other kernel errors remain ordinary errno values.
-#[inline]
-#[doc(alias = "lockf")]
-pub fn lock_from_current<Fd: AsFd>(
+pub fn fgetxattr<Fd: AsFd, Name: PathArg, Buf: Buffer<u8>>(
     fd: Fd,
-    operation: CurrentLockOperation,
-    range: CurrentLockRange,
+    name: Name,
+    mut value: Buf,
+) -> Result<Buf::Output> {
+    let fd = fd.as_fd();
+    let (pointer, length) = value.parts_mut();
+    let initialized = name.into_with_c_str(|name| {
+        // SAFETY: `Buffer` supplies writable output storage, `name` is
+        // NUL-terminated, and the descriptor borrow remains live.
+        unsafe {
+            crabc_core::fs::fgetxattr_raw(fd.as_raw_fd(), name.as_ptr().cast(), pointer, length)
+        }
+    })?;
+    if initialized > length {
+        return Err(Errno::RANGE);
+    }
+    // SAFETY: Linux initialized exactly the reported output prefix.
+    unsafe { Ok(value.assume_init(initialized)) }
+}
+
+/// Sets an extended attribute on a path.
+#[inline]
+pub fn setxattr<P: PathArg, Name: PathArg>(
+    path: P,
+    name: Name,
+    value: &[u8],
+    flags: XattrFlags,
+) -> Result<()> {
+    path.into_with_c_str(|path| {
+        name.into_with_c_str(|name| {
+            // SAFETY: Both names are NUL-terminated and `value` remains
+            // readable for its exact slice length through this syscall.
+            unsafe {
+                crabc_core::fs::setxattr_raw(
+                    path.as_ptr().cast(),
+                    name.as_ptr().cast(),
+                    value.as_ptr(),
+                    value.len(),
+                    flags.bits(),
+                )
+            }
+        })
+    })
+}
+
+/// Sets an extended attribute without following a final symbolic link.
+#[inline]
+pub fn lsetxattr<P: PathArg, Name: PathArg>(
+    path: P,
+    name: Name,
+    value: &[u8],
+    flags: XattrFlags,
+) -> Result<()> {
+    path.into_with_c_str(|path| {
+        name.into_with_c_str(|name| {
+            // SAFETY: Both names are NUL-terminated and `value` remains
+            // readable for its exact slice length through this syscall.
+            unsafe {
+                crabc_core::fs::lsetxattr_raw(
+                    path.as_ptr().cast(),
+                    name.as_ptr().cast(),
+                    value.as_ptr(),
+                    value.len(),
+                    flags.bits(),
+                )
+            }
+        })
+    })
+}
+
+/// Sets an extended attribute on an open descriptor.
+#[inline]
+pub fn fsetxattr<Fd: AsFd, Name: PathArg>(
+    fd: Fd,
+    name: Name,
+    value: &[u8],
+    flags: XattrFlags,
 ) -> Result<()> {
     let fd = fd.as_fd();
-    let current = crabc_core::fs::lseek(fd.as_raw_fd(), 0, crabc_core::fs::SEEK_CUR)?;
-    if current < 0 {
-        return Err(crate::Errno::RANGE);
-    }
-    let (start, length) = match range {
-        CurrentLockRange::ToEnd => (current, 0_i64),
-        CurrentLockRange::Forward(length) => {
-            let length = i64::try_from(length.get()).map_err(|_| crate::Errno::RANGE)?;
-            (current, length)
-        }
-        CurrentLockRange::Backward(length) => {
-            let length = i64::try_from(length.get()).map_err(|_| crate::Errno::RANGE)?;
-            (
-                current.checked_sub(length).ok_or(crate::Errno::RANGE)?,
-                length,
+    name.into_with_c_str(|name| {
+        // SAFETY: `name` is NUL-terminated, `value` remains readable for its
+        // exact slice length, and the descriptor borrow remains live.
+        unsafe {
+            crabc_core::fs::fsetxattr_raw(
+                fd.as_raw_fd(),
+                name.as_ptr().cast(),
+                value.as_ptr(),
+                value.len(),
+                flags.bits(),
             )
         }
-    };
-    let (command, lock_type) = match operation {
-        CurrentLockOperation::Unlock => (F_SETLK, F_UNLCK),
-        CurrentLockOperation::LockExclusive => (F_SETLKW, F_WRLCK),
-        CurrentLockOperation::TryExclusive => (F_SETLK, F_WRLCK),
-        CurrentLockOperation::TestExclusive => (F_GETLK, F_WRLCK),
-    };
-    let mut lock = KernelFlock {
-        l_type: lock_type,
-        l_whence: crabc_core::fs::SEEK_SET as i16,
-        l_start: start,
-        l_len: length,
-        l_pid: 0,
-    };
-    // SAFETY: `KernelFlock` is the complete Linux/AArch64 `struct flock` ABI
-    // record and remains live for the selected fcntl operation.
-    unsafe {
-        crabc_core::io::fcntl_raw(
-            fd.as_raw_fd(),
-            command,
-            core::ptr::addr_of_mut!(lock).cast(),
-        )
-        .map(|_| ())?
-    };
-    if operation == CurrentLockOperation::TestExclusive && lock.l_type != F_UNLCK {
-        return Err(crate::Errno::ACCESS);
+    })
+}
+
+/// Queries the byte length of a path's NUL-separated extended-attribute names.
+///
+/// The final symbolic link is followed. Names may change before [`listxattr`]
+/// fills storage; growth then returns [`Errno::RANGE`] when the buffer is too short.
+#[inline]
+pub fn listxattr_size<P: PathArg>(path: P) -> Result<usize> {
+    path.into_with_c_str(|path| {
+        // SAFETY: the path is live and NUL-terminated. Linux's null,
+        // zero-length output form queries size without writing.
+        unsafe { crabc_core::fs::listxattr_raw(path.as_ptr().cast(), ptr::null_mut(), 0) }
+    })
+}
+
+/// Lists extended-attribute names into caller-provided storage.
+///
+/// Returned names are Linux's NUL-separated byte sequence, without a lossy
+/// UTF-8 conversion or a hidden allocation. Only the initialized prefix is
+/// returned. A short buffer, including empty storage for a nonempty list,
+/// returns [`Errno::RANGE`]; an empty list succeeds with an empty prefix.
+/// Use [`listxattr_size`] for a byte-length query.
+#[inline]
+pub fn listxattr<P: PathArg, Buf: Buffer<u8>>(path: P, mut list: Buf) -> Result<Buf::Output> {
+    let (pointer, length) = list.parts_mut();
+    let initialized = path.into_with_c_str(|path| {
+        // SAFETY: `Buffer` supplies writable output storage and `path` is
+        // NUL-terminated for this direct syscall.
+        unsafe { crabc_core::fs::listxattr_raw(path.as_ptr().cast(), pointer, length) }
+    })?;
+    // A successful zero-length syscall is a size query, not an initialized
+    // prefix. Reject its count before crossing the sealed Buffer boundary.
+    if initialized > length {
+        return Err(Errno::RANGE);
     }
-    Ok(())
+    // SAFETY: Linux initialized exactly the reported output prefix.
+    unsafe { Ok(list.assume_init(initialized)) }
+}
+
+/// Queries name-list byte length without following a final symbolic link.
+///
+/// The result includes each NUL terminator. Names may change before
+/// [`llistxattr`] fills storage, which returns [`Errno::RANGE`] if too short.
+#[inline]
+pub fn llistxattr_size<P: PathArg>(path: P) -> Result<usize> {
+    path.into_with_c_str(|path| {
+        // SAFETY: the path is live and NUL-terminated. Linux's null,
+        // zero-length output form queries size without writing.
+        unsafe { crabc_core::fs::llistxattr_raw(path.as_ptr().cast(), ptr::null_mut(), 0) }
+    })
+}
+
+/// Lists extended-attribute names without following a final symbolic link.
+///
+/// The initialized-prefix and undersized-buffer rules are those of [`listxattr`].
+/// Use [`llistxattr_size`] for a byte-length query on the link itself.
+#[inline]
+pub fn llistxattr<P: PathArg, Buf: Buffer<u8>>(path: P, mut list: Buf) -> Result<Buf::Output> {
+    let (pointer, length) = list.parts_mut();
+    let initialized = path.into_with_c_str(|path| {
+        // SAFETY: `Buffer` supplies writable output storage and `path` is
+        // NUL-terminated for this direct syscall.
+        unsafe { crabc_core::fs::llistxattr_raw(path.as_ptr().cast(), pointer, length) }
+    })?;
+    if initialized > length {
+        return Err(Errno::RANGE);
+    }
+    // SAFETY: Linux initialized exactly the reported output prefix.
+    unsafe { Ok(list.assume_init(initialized)) }
+}
+
+/// Queries name-list byte length on an open descriptor's object.
+///
+/// The result includes each NUL terminator. Names may change before
+/// [`flistxattr`] fills storage, which returns [`Errno::RANGE`] if too short.
+#[inline]
+pub fn flistxattr_size<Fd: AsFd>(fd: Fd) -> Result<usize> {
+    let fd = fd.as_fd();
+    // SAFETY: the descriptor borrow remains live. Linux's null,
+    // zero-length output form queries size without writing.
+    unsafe { crabc_core::fs::flistxattr_raw(fd.as_raw_fd(), ptr::null_mut(), 0) }
+}
+
+/// Lists descriptor extended-attribute names into caller-provided storage.
+///
+/// The initialized-prefix and undersized-buffer rules are those of [`listxattr`].
+/// Use [`flistxattr_size`] for a byte-length query on the descriptor's object.
+#[inline]
+pub fn flistxattr<Fd: AsFd, Buf: Buffer<u8>>(fd: Fd, mut list: Buf) -> Result<Buf::Output> {
+    let fd = fd.as_fd();
+    let (pointer, length) = list.parts_mut();
+    // SAFETY: `Buffer` supplies writable output storage and the descriptor
+    // borrow remains live for the direct syscall.
+    let initialized = unsafe { crabc_core::fs::flistxattr_raw(fd.as_raw_fd(), pointer, length) }?;
+    if initialized > length {
+        return Err(Errno::RANGE);
+    }
+    // SAFETY: Linux initialized exactly the reported output prefix.
+    unsafe { Ok(list.assume_init(initialized)) }
+}
+
+/// Removes an extended attribute from a path.
+#[inline]
+pub fn removexattr<P: PathArg, Name: PathArg>(path: P, name: Name) -> Result<()> {
+    path.into_with_c_str(|path| {
+        name.into_with_c_str(|name| {
+            // SAFETY: Both names are NUL-terminated for the direct syscall.
+            unsafe { crabc_core::fs::removexattr_raw(path.as_ptr().cast(), name.as_ptr().cast()) }
+        })
+    })
+}
+
+/// Removes an extended attribute without following a final symbolic link.
+#[inline]
+pub fn lremovexattr<P: PathArg, Name: PathArg>(path: P, name: Name) -> Result<()> {
+    path.into_with_c_str(|path| {
+        name.into_with_c_str(|name| {
+            // SAFETY: Both names are NUL-terminated for the direct syscall.
+            unsafe { crabc_core::fs::lremovexattr_raw(path.as_ptr().cast(), name.as_ptr().cast()) }
+        })
+    })
+}
+
+/// Removes an extended attribute from an open descriptor.
+#[inline]
+pub fn fremovexattr<Fd: AsFd, Name: PathArg>(fd: Fd, name: Name) -> Result<()> {
+    let fd = fd.as_fd();
+    name.into_with_c_str(|name| {
+        // SAFETY: `name` is NUL-terminated and the descriptor borrow remains
+        // live for this direct syscall.
+        unsafe { crabc_core::fs::fremovexattr_raw(fd.as_raw_fd(), name.as_ptr().cast()) }
+    })
+}
+
+/// Gives Linux a POSIX filesystem access-pattern advisory through the native
+/// x86-64 `fadvise64` syscall.
+///
+/// `offset` and the optional `length` are non-negative Rust quantities. Each
+/// must fit Linux's signed `loff_t` argument; values above `i64::MAX` return
+/// [`crate::Errno::INVAL`] before the descriptor is borrowed or a syscall is
+/// issued. `None` is the Linux zero-length-to-end-of-file convention. The
+/// descriptor is borrowed and its current file position is unchanged.
+#[inline]
+#[doc(alias = "posix_fadvise")]
+pub fn fadvise<Fd: AsFd>(
+    fd: Fd,
+    offset: u64,
+    len: Option<NonZeroU64>,
+    advice: Advice,
+) -> Result<()> {
+    let offset = i64::try_from(offset).map_err(|_| crate::Errno::INVAL)?;
+    let length = len.map_or(Ok(0), |length| {
+        i64::try_from(length.get()).map_err(|_| crate::Errno::INVAL)
+    })?;
+    crabc_core::fs::fadvise64(fd.as_fd().as_raw_fd(), offset, length, advice as u32)
+}
+
+/// Initiates Linux file readahead for a byte range of an open file.
+///
+/// `offset` and `length` are unsigned byte quantities at this safe boundary.
+/// The x86-64 syscall carries the offset as signed Linux `loff_t`, so values
+/// above that range—or whose checked half-open end exceeds it—return
+/// [`crate::Errno::INVAL`] before the direct syscall. A zero length is
+/// forwarded unchanged. Successful readahead leaves the descriptor's current
+/// file position unchanged.
+#[inline]
+pub fn readahead<Fd: AsFd>(fd: Fd, offset: u64, length: u64) -> Result<()> {
+    if offset > i64::MAX as u64
+        || length > i64::MAX as u64
+        || offset
+            .checked_add(length)
+            .map_or(true, |end| end > i64::MAX as u64)
+    {
+        return Err(crate::Errno::INVAL);
+    }
+
+    crabc_core::fs::readahead(fd.as_fd().as_raw_fd(), offset as i64, length as usize)
+}
+
+/// while a relative path deterministically fails with `EBADF`.
+pub const ABS: BorrowedFd<'static> =
+    // SAFETY: `-EBADF` is a documented Rustix convention for `*at` operations
+    // and `BorrowedFd::borrow_raw` accepts this narrowly scoped token.
+    unsafe { BorrowedFd::borrow_raw(-9) };
+
+/// Renames an entry and creates a whiteout at its old location.
+pub fn renameat_whiteout<P: PathArg, Q: PathArg, PFd: AsFd, QFd: AsFd>(
+    old_dirfd: PFd, old_path: P, new_dirfd: QFd, new_path: Q, flags: RenameFlags,
+) -> Result<()> {
+    let old_dirfd = old_dirfd.as_fd();
+    let new_dirfd = new_dirfd.as_fd();
+    old_path.into_with_c_str(|old_path| new_path.into_with_c_str(|new_path| {
+        crabc_core::fs::renameat2(old_dirfd.as_raw_fd(), old_path, new_dirfd.as_raw_fd(), new_path, flags.bits() | 4)
+    }))
+}
+
+/// Creates a hard link to the object referenced by an open descriptor.
+///
+/// Linux applies its `AT_EMPTY_PATH` capability and filesystem restrictions.
+pub fn linkat_from_fd<Fd: AsFd, P: PathArg, Dir: AsFd>(
+    source: Fd, directory: Dir, path: P,
+) -> Result<()> {
+    let source = source.as_fd();
+    let directory = directory.as_fd();
+    path.into_with_c_str(|path| {
+        crabc_core::fs::linkat(source.as_raw_fd(), c"", directory.as_raw_fd(), path, 0x1000)
+    })
 }

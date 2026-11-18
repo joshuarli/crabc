@@ -5,19 +5,19 @@ use crabc_rs::fs::{
     self, AtFlags, FileType, FlockOperation, Mode, OFlags, RawDir, RenameFlags, ResolveFlags,
     Timespec, Timestamps, XattrFlags, CWD,
 };
-#[cfg(target_arch = "aarch64")]
-use crabc_rs::fs::{AtFlags as LinkAtFlags, AtFlags as TimestampAtFlags, AtFlags as UnlinkAtFlags, ABS};
-#[cfg(target_arch = "x86_64")]
 use crabc_rs::fs::{LinkAtFlags, TimestampAtFlags, UnlinkAtFlags};
+#[cfg(target_arch = "aarch64")]
+use crabc_rs::fs::ABS;
 use crabc_rs::{Errno, Result};
 
 static SCRATCH_SEQUENCE: AtomicUsize = AtomicUsize::new(0);
 
 fn with_scratch_directory<T>(run: impl FnOnce(&str) -> Result<T>) -> T {
     let root = format!(
-        "{}/crabc-rs-fs-{}-{}",
+        "{}/crabc-rs-fs-{}-{}-{}",
         std::env::temp_dir().display(),
         std::process::id(),
+        std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos(),
         SCRATCH_SEQUENCE.fetch_add(1, Ordering::Relaxed),
     );
     match fs::rmdir(&root) {
@@ -219,9 +219,6 @@ fn permissions_and_timestamps_match_linux_rustix_contracts() {
             .unwrap_err(),
             Errno::OPNOTSUPP,
         );
-        #[cfg(target_arch = "aarch64")]
-        let access_flags = AtFlags::EACCESS;
-        #[cfg(target_arch = "x86_64")]
         // Linux's AT_EACCESS belongs to access checks, not permission changes.
         let access_flags = AtFlags::from_bits_retain(0x200);
         assert_eq!(
@@ -461,12 +458,7 @@ fn extended_attributes_preserve_path_link_fd_and_buffer_contracts() {
             }
             Err(error) => return Err(error),
         }
-        #[cfg(target_arch = "aarch64")]
-        assert_eq!(
-            fs::getxattr(&path, "user.crabc-rs", &mut [0_u8; 0]).unwrap(),
-            4,
-        );
-        #[cfg(target_arch = "x86_64")]
+        assert_eq!(fs::getxattr(&path, "user.crabc-rs", &mut [0_u8; 0]), Err(Errno::RANGE));
         assert_eq!(fs::getxattr_size(&path, "user.crabc-rs").unwrap(), 4);
         let mut get = [0_u8; 32];
         let get_length = fs::getxattr(&path, "user.crabc-rs", &mut get).unwrap();

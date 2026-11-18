@@ -1,7 +1,4 @@
-#[cfg(target_arch = "x86_64")]
 const STATX_FLAGS: crabc_rs::fs::StatxAtFlags = crabc_rs::fs::StatxAtFlags::empty();
-#[cfg(not(target_arch = "x86_64"))]
-const STATX_FLAGS: crabc_rs::fs::AtFlags = crabc_rs::fs::AtFlags::empty();
 
 use crabc_rs::fs::{self, StatxFlags, CWD};
 use crabc_rs::Errno;
@@ -19,10 +16,7 @@ fn statx_basic_metadata_matches_stat_and_reports_valid_mask() {
         assert_eq!(u32::from(extended.stx_mode), legacy.st_mode);
     }
     if mask & StatxFlags::NLINK.bits() != 0 {
-        #[cfg(not(target_arch = "x86_64"))]
-        assert_eq!(extended.stx_nlink, legacy.st_nlink);
-        #[cfg(target_arch = "x86_64")]
-        assert_eq!(u64::from(extended.stx_nlink), legacy.st_nlink);
+        assert_eq!(u64::from(extended.stx_nlink), u64::from(legacy.st_nlink));
     }
     if mask & StatxFlags::UID.bits() != 0 {
         assert_eq!(extended.stx_uid, legacy.st_uid);

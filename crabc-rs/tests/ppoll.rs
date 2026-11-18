@@ -26,7 +26,7 @@ fn child_ppoll_case(reader: &crabc_rs::OwnedFd, result: &crabc_rs::OwnedFd) -> !
         child_report(result, 3);
     }
 
-    let timeout = time::Timespec::default();
+    let timeout = time::Timespec { tv_sec: 0, tv_nsec: 0 };
     let mut fds = [event::PollFd::new(reader, event::PollFlags::IN)];
     if event::ppoll(&mut fds, Some(&timeout), Some(&selected)) != Ok(0) {
         child_report(result, 4);
@@ -99,7 +99,7 @@ fn ppoll_temporarily_installs_signal_mask_and_preserves_legacy_poll() {
 #[test]
 fn poll_without_mask_keeps_existing_unmasked_contract() {
     let (reader, writer) = pipe::pipe().expect("create legacy poll fixture pipe");
-    let timeout = time::Timespec::default();
+    let timeout = time::Timespec { tv_sec: 0, tv_nsec: 0 };
     let mut fds = [event::PollFd::new(&reader, event::PollFlags::IN)];
     assert_eq!(
         event::poll(&mut fds, Some(&timeout)).expect("legacy poll"),
