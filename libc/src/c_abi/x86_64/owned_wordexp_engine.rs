@@ -330,6 +330,10 @@ pub(super) struct WordexpSyntax {
 
 impl WordexpSyntax {
     pub(super) fn parse(input: &[u8]) -> Result<Self, WordexpError> {
+        Self::parse_with_no_commands(input, false)
+    }
+
+    pub(super) fn parse_with_no_commands(input: &[u8], no_commands: bool) -> Result<Self, WordexpError> {
         if input.iter().any(|byte| *byte == 0) {
             return Err(WordexpError::OutputNul);
         }
@@ -349,6 +353,7 @@ impl WordexpSyntax {
         }
         let mut parser = SyntaxParser {
             syntax: &mut syntax,
+            no_commands,
             pending_words: HeapVec::new(),
             pending_arithmetic: HeapVec::new(),
         };
@@ -534,11 +539,20 @@ fn nested_dollar_construct(
 
 struct SyntaxParser<'a> {
     syntax: &'a mut WordexpSyntax,
+    no_commands: bool,
     pending_words: HeapVec<PendingWord>,
     pending_arithmetic: HeapVec<PendingArithmetic>,
 }
 
 impl SyntaxParser<'_> {
+    fn control_error(&self, byte: u8) -> WordexpError {
+        if !self.no_commands && matches!(byte, b'(' | b')') {
+            WordexpError::Syntax
+        } else {
+            WordexpError::BadCharacter
+        }
+    }
+
     unsafe fn byte(&self, index: usize) -> u8 {
         // SAFETY: every parser cursor is checked against source length.
         unsafe { self.syntax.byte(index) }
@@ -623,7 +637,7 @@ impl SyntaxParser<'_> {
                 continue;
             }
             if byte == b'\n' || unquoted_control(byte) {
-                return Err(WordexpError::BadCharacter);
+                return Err(self.control_error(byte));
             }
             let word = self.parse_word(
                 Span { start: index, end: self.syntax.source_len() },
@@ -653,7 +667,7 @@ impl SyntaxParser<'_> {
             let byte = unsafe { self.byte(index) };
             if outer && matches!(byte, b' ' | b'\t') { break; }
             if outer && (byte == b'\n' || unquoted_control(byte)) {
-                return Err(WordexpError::BadCharacter);
+                return Err(self.control_error(byte));
             }
             if byte == b'\'' && inherited_flags & NODE_DOUBLE == 0 {
                 let after = scan_simple_quote(self.syntax, index + 1)?;
@@ -896,7 +910,7 @@ impl SyntaxParser<'_> {
                 break;
             }
             if outer && (byte == b'\n' || unquoted_control(byte)) {
-                return Err(WordexpError::BadCharacter);
+                return Err(self.control_error(byte));
             }
             index += 1;
         }
@@ -6943,9 +6957,17 @@ mod tests {
     #[test]
     fn tilde_prefix_cannot_hide_unquoted_forbidden_root_characters() {
         for input in [b"~;x".as_slice(), b"~|x", b"~&x", b"~<x", b"~>x",
-            b"~(x)", b"~{x}", b"~\nx", b"~tester;x"]
+            b"~{x}", b"~\nx", b"~tester;x"]
         {
             assert!(matches!(WordexpSyntax::parse(input), Err(WordexpError::BadCharacter)));
+        }
+    }
+
+    #[test]
+    fn unquoted_parentheses_follow_command_policy() {
+        for input in [b"(".as_slice(), b")", b"~(x)", b"word)"] {
+            assert!(matches!(WordexpSyntax::parse(input), Err(WordexpError::Syntax)));
+            assert!(matches!(WordexpSyntax::parse_with_no_commands(input, true), Err(WordexpError::BadCharacter)));
         }
     }
 
