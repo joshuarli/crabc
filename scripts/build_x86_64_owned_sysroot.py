@@ -926,7 +926,7 @@ def c_allocator_compile_command(c_flags: Sequence[str], source_root: Path, outpu
 
     return [
         ("/usr/bin/gcc" if architecture == "x86_64" else "/usr/local/bin/crabc-aarch64-mold-gcc"), C_ALLOCATOR_OPTIMIZATION[profile], "-ffunction-sections", "-fdata-sections",
-        "-fPIC", *(["-m64"] if architecture == "x86_64" else []), *c_flags,
+        "-fPIC", *(["-m64"] if architecture == "x86_64" else ["-mno-outline-atomics"]), *c_flags,
         f"-ffile-prefix-map={source_root}=/mimalloc",
         "-I", str(source_root / "include"), "-I", str(source_root / "src"),
         "-Wno-error=date-time", "-ftls-model=initial-exec",
@@ -1541,7 +1541,7 @@ def build_aarch64(output: Path, *, allocator_backend: str, lifecycle_test_audit:
         stage = Path(temporary)
         cargo_dir = stage / "cargo"
         cargo = [rustup, "run", PINNED_TOOLCHAIN, "cargo", "rustc", "--locked", "-p", "crabc-libc", "--lib", "--release", "--no-default-features", "--features", "x86-owned-static-runtime", "--target", target, "--target-dir", str(cargo_dir), *STATIC_ARCHIVE_PROFILE,
-                 "--config", f'target.{target}.rustflags=["-Ztls-model=initial-exec"]', "--", "--cfg", "crabc_owned_static_sysroot", "--cfg", MIMALLOC_LIFECYCLE_RUST_CFG, "-C", "relocation-model=pic", "-C", "panic=abort", "-Ztls-model=initial-exec", "-Zmerge-functions=disabled"]
+                 "--config", f'target.{target}.rustflags=["-Ztls-model=initial-exec", "-Ctarget-feature=-outline-atomics"]', "--", "--cfg", "crabc_owned_static_sysroot", "--cfg", MIMALLOC_LIFECYCLE_RUST_CFG, "-C", "relocation-model=pic", "-C", "panic=abort", "-Ztls-model=initial-exec", "-Zmerge-functions=disabled"]
         run(cargo, environment=environment)
         crt = stage / "crt"
         run([sys.executable, str(ROOT / "crt/build_x86_64.py"), "--architecture", "aarch64", "--out-dir", str(crt)], environment=environment)
