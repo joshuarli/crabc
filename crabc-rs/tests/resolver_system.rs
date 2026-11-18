@@ -114,6 +114,13 @@ fn caller_owned_resolver_snapshot_rejects_invalid_configuration() {
 }
 
 #[test]
+fn resolver_snapshot_skips_a_root_search_suffix_like_musl() {
+    let config = ResolverConfig::from_bytes(b"nameserver 192.0.2.53\nsearch . example.test\n", b"")
+        .expect("musl loads a root search suffix");
+    assert_eq!(config.search_domains(), &["example.test"]);
+}
+
+#[test]
 fn resolver_search_candidates_follow_ndots_order() {
     let server = UdpSocket::bind("127.0.0.1:0").unwrap();
     let port = server.local_addr().unwrap().port();
