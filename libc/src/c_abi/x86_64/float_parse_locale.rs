@@ -171,6 +171,7 @@ fn decimal_point(exact: &ExactDecimal) -> i32 {
     exact.len as i32 - exact.scale as i32
 }
 
+#[cfg(target_arch = "x86_64")]
 #[inline]
 fn x87_rounding_direction() -> u16 {
     let mut control = 0u16;
@@ -178,6 +179,26 @@ fn x87_rounding_direction() -> u16 {
         asm!("fnstcw [{word}]", word = in(reg) &mut control, options(nostack, preserves_flags));
     }
     (control >> 10) & 3
+}
+
+// Returns the current rounding direction in the x87 RC encoding the callers
+// use (nearest, down, up, toward zero). AArch64 FPCR.RMode orders the
+// directed modes as up then down (Arm ARM, FPCR; musl 1.2.6
+// arch/aarch64/bits/fenv.h FE_UPWARD 0x400000, FE_DOWNWARD 0x800000).
+#[cfg(target_arch = "aarch64")]
+#[inline]
+fn x87_rounding_direction() -> u16 {
+    let fpcr: u64;
+    // SAFETY: reading FPCR has no memory or flag effects.
+    unsafe {
+        asm!("mrs {fpcr}, fpcr", fpcr = out(reg) fpcr, options(nomem, nostack, preserves_flags));
+    }
+    match (fpcr >> 22) & 3 {
+        0 => 0,
+        1 => 2,
+        2 => 1,
+        _ => 3,
+    }
 }
 
 fn should_increment(

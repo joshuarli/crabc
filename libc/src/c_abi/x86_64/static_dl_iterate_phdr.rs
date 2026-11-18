@@ -43,9 +43,19 @@ pub(super) unsafe fn iterate(
         return -1;
     };
     let dynamic: usize;
+    #[cfg(target_arch = "x86_64")]
     unsafe {
         core::arch::asm!(
             "lea {dynamic}, [rip + _DYNAMIC]",
+            dynamic = out(reg) dynamic,
+            options(nostack, preserves_flags, readonly),
+        );
+    }
+    #[cfg(target_arch = "aarch64")]
+    unsafe {
+        core::arch::asm!(
+            "adrp {dynamic}, _DYNAMIC",
+            "add {dynamic}, {dynamic}, :lo12:_DYNAMIC",
             dynamic = out(reg) dynamic,
             options(nostack, preserves_flags, readonly),
         );

@@ -1094,9 +1094,21 @@ mod allocator {
             let address: usize;
             // SAFETY: a RIP-relative load of this image's GOT slot for
             // `$name`; the slot is immutable once relocation has completed.
+            #[cfg(target_arch = "x86_64")]
             unsafe {
                 core::arch::asm!(
                     concat!("mov {0}, qword ptr [rip + ", $name, "@GOTPCREL]"),
+                    out(reg) address,
+                    options(nomem, nostack, preserves_flags, pure),
+                )
+            };
+            // SAFETY: a PC-relative load of this image's GOT slot for
+            // `$name`; the slot is immutable once relocation has completed.
+            #[cfg(target_arch = "aarch64")]
+            unsafe {
+                core::arch::asm!(
+                    concat!("adrp {0}, :got:", $name),
+                    concat!("ldr {0}, [{0}, :got_lo12:", $name, "]"),
                     out(reg) address,
                     options(nomem, nostack, preserves_flags, pure),
                 )
@@ -1110,9 +1122,20 @@ mod allocator {
     fn cabi_application_malloc_replaced() -> bool {
         let body: usize;
         // SAFETY: a RIP-relative address computation of the local alias.
+        #[cfg(target_arch = "x86_64")]
         unsafe {
             core::arch::asm!(
                 "lea {0}, [rip + __crabc_x86_c_allocator_malloc_body]",
+                out(reg) body,
+                options(nomem, nostack, preserves_flags, pure),
+            )
+        };
+        // SAFETY: a PC-relative address computation of the local alias.
+        #[cfg(target_arch = "aarch64")]
+        unsafe {
+            core::arch::asm!(
+                "adrp {0}, __crabc_x86_c_allocator_malloc_body",
+                "add {0}, {0}, :lo12:__crabc_x86_c_allocator_malloc_body",
                 out(reg) body,
                 options(nomem, nostack, preserves_flags, pure),
             )

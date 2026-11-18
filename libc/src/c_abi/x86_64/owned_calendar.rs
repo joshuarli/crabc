@@ -150,7 +150,14 @@ static_archive_member! { asctime_r_source {
                     locale_objects::fixed_c_locale(),
                 ), tm.month_day,
                 tm.hours, tm.minutes, tm.seconds, tm.year.wrapping_add(1900));
-            if count >= 26 { core::arch::asm!("ud2", options(noreturn)); }
+            if count >= 26 {
+                #[cfg(target_arch = "x86_64")]
+                core::arch::asm!("ud2", options(noreturn));
+                // musl 1.2.6 src/time/asctime_r.c calls a_crash(); on aarch64
+                // that is the generic null store (src/internal/atomic.h).
+                #[cfg(target_arch = "aarch64")]
+                core::arch::asm!("mov x16, #0", "strb wzr, [x16]", "brk #0x3e8", options(noreturn));
+            }
             output
         }
     }

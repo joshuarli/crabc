@@ -61,9 +61,19 @@ pub unsafe extern "C" fn sched_getaffinity(
             // SAFETY: success initialized the prefix; the caller promised the
             // entire byte extent is writable. This direct x86 store keeps the
             // one-symbol codegen closure while matching musl's zero values.
+            #[cfg(target_arch = "x86_64")]
             unsafe {
                 asm!(
                     "mov byte ptr [{address}], 0",
+                    address = in(reg) mask.cast::<u8>().add(offset),
+                    options(nostack, preserves_flags),
+                );
+            }
+            // SAFETY: as above, one writable byte of the caller's mask.
+            #[cfg(target_arch = "aarch64")]
+            unsafe {
+                asm!(
+                    "strb wzr, [{address}]",
                     address = in(reg) mask.cast::<u8>().add(offset),
                     options(nostack, preserves_flags),
                 );
