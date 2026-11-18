@@ -1247,6 +1247,9 @@ def main(argv: Sequence[str] | None = None) -> int:
 
 
 if __name__ == '__main__':
+    from native_arch import native_arch
+    if native_arch()["arch"] != "x86_64":
+        raise SystemExit("owned_public_data_variable_runtime: x86-64 receipt or ELF contract is unavailable on aarch64")
     try:
         raise SystemExit(main())
     except (PublicDataVariableRuntimeError, product_evidence.ProductEvidenceError,

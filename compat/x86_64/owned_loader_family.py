@@ -494,4 +494,7 @@ def main() -> int:
 
 
 if __name__ == "__main__":
+    from native_arch import native_arch
+    if native_arch()["arch"] != "x86_64":
+        raise SystemExit("owned_loader_family: x86-64 receipt or ELF contract is unavailable on aarch64")
     raise SystemExit(main())
