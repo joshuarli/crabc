@@ -129,8 +129,13 @@ unsafe extern "C" fn cancel_handler(_signal: c_int, _information: *mut c_void, c
         // Linux/x86 ucontext_t: mcontext at 40, REG_RIP at gregs[16], and
         // uc_sigmask at 296. Only the kernel's first eight signal-mask bytes
         // are touched; no public tail/padding is read or manufactured.
-        let pc = context.cast::<u8>().add(40+16*8).cast::<usize>();
-        let mask = context.cast::<u8>().add(296).cast::<u64>();
+        #[cfg(target_arch = "x86_64")]
+        let (pc_offset, mask_offset) = (40 + 16 * 8, 296);
+        #[cfg(target_arch = "aarch64")]
+        // musl 1.2.6 arch/aarch64/bits/signal.h: uc_sigmask and uc_mcontext.pc.
+        let (pc_offset, mask_offset) = (440, 40);
+        let pc = context.cast::<u8>().add(pc_offset).cast::<usize>();
+        let mask = context.cast::<u8>().add(mask_offset).cast::<u64>();
         let saved_pc = pc.read_unaligned();
         let saved_mask = mask.read_unaligned() | SIGNAL_BIT;
         mask.write_unaligned(saved_mask);
