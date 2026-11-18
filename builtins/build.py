@@ -745,8 +745,8 @@ def source_build_compiler_builtins(
     completed = run_completed(command, environment=environment)
     log = completed.stdout + completed.stderr
     source_build_audit = compiler_builtins_build_log_audit(log, target_dir)
-    dependencies = target_dir / TARGET / "release" / "deps"
-    rlib = find_one(dependencies, "libcompiler_builtins-*.rlib", "source-built compiler_builtins rlib")
+    dependencies = target_dir / TARGET / "release" / "build" / "compiler_builtins"
+    rlib = find_one(dependencies, "*/out/libcompiler_builtins-*.rlib", "source-built compiler_builtins rlib")
     selected_sources = selected_upstream_sources(rlib, upstream)
     members = extract_upstream_members(llvm_ar, rlib, stage / "compiler-builtins-members")
     manifest = upstream / "Cargo.toml"
