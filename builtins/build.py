@@ -86,6 +86,7 @@ EXPECTED_SYMBOLS = (
     "__lttf2",
     "__modti3",
     "__muldc3",
+    "__multc3",
     "__muloti4",
     "__multf3",
     "__multi3",
