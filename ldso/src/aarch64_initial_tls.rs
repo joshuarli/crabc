@@ -79,3 +79,36 @@ pub(super) unsafe fn materialize_tls_in_layout(objects: &[Object], ownership_pre
         thread_pointer: tp as *mut u8, dtv: dtv as *mut usize, dtv_words: layout.dtv_words,
         module_count: layout.module_count })
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[repr(align(4096))]
+    struct Storage([u8; 4096]);
+
+    #[test]
+    fn initial_record_and_image_follow_aarch64_variant_i() {
+        let image = [31u8, 41, 59];
+        let placement = 16 + ((image.as_ptr() as usize).wrapping_sub(16) & 7);
+        let object = Object { tls_image: image.as_ptr(), tls_filesz: image.len(), tls_memsz: 8,
+            tls_align: 8, tls_module_id: 1, tls_offset_below_tp: placement, ..EMPTY_OBJECT };
+        let mut storage = Storage([0xa5; 4096]);
+        // SAFETY: The image and placement remain live for the entire test.
+        let layout = unsafe { initial_tls_block_layout(&[object], 0) }.unwrap();
+        // SAFETY: Storage is private, page aligned, and at least layout.mapping_size bytes.
+        let block = unsafe { materialize_tls_in_layout(&[object], 0, &layout,
+            Some((storage.0.as_mut_ptr(), storage.0.len()))) }.unwrap();
+        let tp = block.thread_pointer;
+        // SAFETY: The materialized block contains the checked record and module image.
+        unsafe {
+            assert_eq!(*tp.sub(8).cast::<usize>(), block.dtv as usize);
+            assert_eq!(*tp.sub(16).cast::<usize>(), 0);
+            assert_eq!(*tp.sub(24).cast::<usize>(), 0);
+            assert_eq!(*block.dtv, 1);
+            let module = *block.dtv.add(1) as *const u8;
+            assert_eq!(module as usize, tp as usize + placement);
+            assert_eq!(core::slice::from_raw_parts(module, 8), &[31, 41, 59, 0, 0, 0, 0, 0]);
+        }
+    }
+}

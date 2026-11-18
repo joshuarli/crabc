@@ -4771,7 +4771,7 @@ mod owned_dynamic_symbolic_tag_tests {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, target_arch = "x86_64"))]
 mod self_relocate_tests {
     extern crate std;
 
