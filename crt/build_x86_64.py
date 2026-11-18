@@ -883,8 +883,6 @@ def build(args: argparse.Namespace) -> dict[str, object]:
 def build_aarch64(args: argparse.Namespace) -> dict[str, object]:
     if args.profile != "release":
         raise BuildError("aarch64 CRT currently supports release builds only")
-    if not args.owned_dynamic_sysroot and args.hardening_profile is NativeRuntimeProfile.HARDENED:
-        raise BuildError("aarch64 static PIE startup does not implement the hardened profile")
     output = output_directory(args.out_dir)
     environment = deterministic_environment()
     rustc = default_rustc_command()
@@ -902,8 +900,8 @@ def build_aarch64(args: argparse.Namespace) -> dict[str, object]:
         command = compiler + ["--edition=2021", "--crate-type=lib", "--emit=obj", "--target", target, "-C", "panic=abort", "-C", "force-unwind-tables=no", "-C", "opt-level=2", "-C", "relocation-model=static", "-C", "code-model=small", str(source), "-o", str(destination)]
         if name == "Scrt1":
             command[command.index("-C"):command.index("-C")] = ["--cfg", "crabc_owned_dynamic_runtime", "--cfg", "crabc_general_dynamic_lifecycle"]
-            if args.hardening_profile is NativeRuntimeProfile.HARDENED:
-                command[command.index("-C"):command.index("-C")] = ["--cfg", "crabc_hardened"]
+        if name in ("Scrt1", "rcrt1") and args.hardening_profile is NativeRuntimeProfile.HARDENED:
+            command[command.index("-C"):command.index("-C")] = ["--cfg", "crabc_hardened"]
         if name in ("Scrt1", "rcrt1"):
             command[command.index("relocation-model=static")] = "relocation-model=pic"
         result = run_command(command, environment)
