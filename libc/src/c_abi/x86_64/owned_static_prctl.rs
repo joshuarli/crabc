@@ -26,6 +26,7 @@ compile_error!("owned static prctl support requires little-endian Linux/x86-64")
 // caller state.  The error path is intentionally duplicated with `syscall`:
 // keeping this owner independently extractable avoids a hidden dependency on
 // an extra support symbol while retaining the same `__syscall_ret` semantics.
+#[cfg(target_arch = "x86_64")]
 core::arch::global_asm!(
     r#"
     .text
@@ -51,3 +52,14 @@ prctl:
     .section .note.GNU-stack,"",@progbits
 "#,
 );
+
+#[cfg(target_arch = "aarch64")]
+core::arch::global_asm!(include_str!("owned_prctl_aarch64.S"));
+
+#[cfg(target_arch = "aarch64")]
+#[no_mangle]
+unsafe extern "C" fn __crabc_aarch64_prctl(option: i32, a: i64, b: i64, c: i64, d: i64) -> i32 {
+    // SAFETY: the assembly entry forwards the C caller's register words and Linux validates the option's arguments.
+    let result = unsafe { super::raw_syscall::syscall5(super::raw_syscall::SYS_PRCTL, i64::from(option), a, b, c, d) };
+    super::c_status(result)
+}

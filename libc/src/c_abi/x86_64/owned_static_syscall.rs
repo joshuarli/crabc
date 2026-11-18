@@ -35,6 +35,7 @@ compile_error!("owned static syscall support requires little-endian Linux/x86-64
 // call to the existing TLS accessor, then publish `-1` exactly as musl's
 // `__syscall_ret` does.  The push aligns the stack before the nested call:
 // entry `%rsp % 16 == 8`, and `push` makes it zero before `call`.
+#[cfg(target_arch = "x86_64")]
 core::arch::global_asm!(
     r#"
     .text
@@ -64,3 +65,14 @@ syscall:
     .section .note.GNU-stack,"",@progbits
 "#,
 );
+
+#[cfg(target_arch = "aarch64")]
+core::arch::global_asm!(include_str!("owned_syscall_aarch64.S"));
+
+#[cfg(target_arch = "aarch64")]
+#[no_mangle]
+unsafe extern "C" fn __crabc_aarch64_syscall(number: i64, a: i64, b: i64, c: i64, d: i64, e: i64, f: i64) -> i64 {
+    // SAFETY: the assembly entry forwards the C caller's register words unchanged; Linux validates them for the selected syscall.
+    let result = unsafe { super::raw_syscall::syscall6(number, a, b, c, d, e, f) };
+    super::c_result(result)
+}
