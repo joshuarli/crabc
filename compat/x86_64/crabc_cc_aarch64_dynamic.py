@@ -16,12 +16,14 @@ if index + 1 >= len(args):
     sys.exit("crabc-cc-dynamic: missing output")
 output = args[index + 1]
 inputs = args[:index] + args[index + 2:]
-if not inputs or any(value.startswith("-") for value in inputs):
+dsos = [value for value in inputs if value.endswith(".so")]
+sources = [value for value in inputs if value not in dsos]
+if not sources or any(value.startswith("-") for value in inputs):
     sys.exit("crabc-cc-dynamic: expected C source inputs")
 with tempfile.TemporaryDirectory(prefix="crabc-aarch64-dynamic-") as temporary:
     objects = []
-    for index, source in enumerate(inputs):
+    for index, source in enumerate(sources):
         obj = str(Path(temporary) / f"{index}.o")
         subprocess.run(["/usr/local/bin/crabc-aarch64-mold-gcc", "-nostdinc", "-isystem", str(root / "usr/include"), "-fPIE", "-c", source, "-o", obj], check=True)
         objects.append(obj)
-    subprocess.run(["/usr/bin/mold", "-pie", "-z", "dynamic-undefined-weak", "--dynamic-linker", "/lib/ld-crabc-aarch64.so.1", "--no-undefined", "--eh-frame-hdr", "-z", "relro", "-z", "now", "-e", "_start", str(lib / "Scrt1.o"), str(lib / "crti.o"), *objects, str(lib / "libc.so"), str(lib / "libcrabc-builtins.a"), str(lib / "crtn.o"), "-o", output], check=True)
+    subprocess.run(["/usr/bin/mold", "-pie", "-z", "dynamic-undefined-weak", "--dynamic-linker", "/lib/ld-crabc-aarch64.so.1", "--no-undefined", "--eh-frame-hdr", "-z", "relro", "-z", "now", "-e", "_start", str(lib / "Scrt1.o"), str(lib / "crti.o"), *objects, *dsos, str(lib / "libc.so"), str(lib / "libcrabc-builtins.a"), str(lib / "crtn.o"), "-o", output], check=True)
