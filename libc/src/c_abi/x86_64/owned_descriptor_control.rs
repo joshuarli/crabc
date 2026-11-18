@@ -25,10 +25,7 @@ const F_SETFL: c_int = 4;
 const F_GETOWN: c_int = 9;
 const F_GETOWN_EX: c_int = 16;
 const F_OWNER_PGRP: c_int = 2;
-#[cfg(target_arch = "x86_64")]
-const O_LARGEFILE: c_int = 0x8_000;
-#[cfg(target_arch = "aarch64")]
-const O_LARGEFILE: c_int = 0o400000;
+const O_LARGEFILE: c_int = super::raw_syscall::O_LARGEFILE as c_int;
 
 // C fcntl has two fixed words. Tail branches preserve the variadic word only
 // for a command that defines one; the no-argument helper supplies syscall rdx=0.

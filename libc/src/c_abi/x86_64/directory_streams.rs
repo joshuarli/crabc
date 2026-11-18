@@ -101,8 +101,8 @@ const MAP_ANONYMOUS: c_int = 0x20;
 #[cfg(not(crabc_x86_owned_runtime))]
 const MAP_PRIVATE: c_int = 0x02;
 const O_CLOEXEC: c_int = 0x80_000;
-const O_DIRECTORY: c_int = 0x1_0000;
-const O_LARGEFILE: c_int = 0x8_000;
+const O_DIRECTORY: c_int = super::raw_syscall::O_DIRECTORY as c_int;
+const O_LARGEFILE: c_int = super::raw_syscall::O_LARGEFILE as c_int;
 const O_PATH: c_int = 0x20_0000;
 const O_RDONLY: c_int = 0;
 // The frozen archive's private stream mapping only.

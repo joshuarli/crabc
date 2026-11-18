@@ -57,8 +57,8 @@ const ENOENT: c_int = 2;
 
 const AT_FDCWD: c_int = -100;
 const O_CLOEXEC: c_int = 0x80_000;
-const O_DIRECTORY: c_int = 0x1_0000;
-const O_LARGEFILE: c_int = 0x8_000;
+const O_DIRECTORY: c_int = super::raw_syscall::O_DIRECTORY as c_int;
+const O_LARGEFILE: c_int = super::raw_syscall::O_LARGEFILE as c_int;
 const O_RDONLY: c_int = 0;
 const S_IFDIR: u32 = 0o040_000;
 const S_IFLNK: u32 = 0o120_000;

@@ -43,10 +43,7 @@ const F_GETFD: c_int = 1;
 const F_SETFD: c_int = 2;
 const F_GETFL: c_int = 3;
 const F_SETFL: c_int = 4;
-#[cfg(target_arch = "x86_64")]
-const O_LARGEFILE: c_int = 0x8_000;
-#[cfg(target_arch = "aarch64")]
-const O_LARGEFILE: c_int = 0o400000;
+const O_LARGEFILE: c_int = super::raw_syscall::O_LARGEFILE as c_int;
 
 /*
  * Keep the public entry in assembly. A C fcntl(fd, F_GETFD) call has no rdx
