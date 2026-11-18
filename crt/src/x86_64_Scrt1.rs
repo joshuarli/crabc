@@ -110,6 +110,9 @@ core::arch::global_asm!(
 _start:
     mov x1, x0
     mov x0, sp
+    mov x9, sp
+    and x9, x9, #-16
+    mov sp, x9
     mov x29, xzr
     bl {startup}
     brk #0
