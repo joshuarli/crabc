@@ -1,3 +1,4 @@
+// musl 1.2.6 src/unistd/access.c and link.c supply the *at forms.
 //! Owned named POSIX semaphores and shared-memory objects.
 //!
 //! Pinned musl 1.2.6, commit 9fa28ece75d8a2191de7c5bb53bed224c5947417,
@@ -238,7 +239,7 @@ fn temporary_name(nanoseconds: i64) -> [u8; 64] {
 /// source errno behavior, including stale success errno and unlink failures.
 unsafe fn acquire_mapping(path: &[u8], flags: c_int, creation: Option<Creation>) -> Option<(*mut c_void, u64)> {
     if flags == O_CREAT | O_EXCL && c_status(unsafe {
-        raw_syscall::syscall2(raw_syscall::SYS_ACCESS, path.as_ptr() as i64, 0)
+        raw_syscall::syscall3(raw_syscall::SYS_FACCESSAT, AT_FDCWD, path.as_ptr() as i64, 0)
     }) == 0 {
         unsafe { fail(EEXIST) }; return None;
     }
@@ -278,8 +279,8 @@ unsafe fn acquire_mapping(path: &[u8], flags: c_int, creation: Option<Creation>)
         let mapping = if inode.is_some() { unsafe { map_semaphore(fd) } } else { RESERVED };
         unsafe { close_file(fd) };
         if mapping == RESERVED { unsafe { unlink_file(temporary.as_ptr()); } return None; }
-        let linked = c_status(unsafe { raw_syscall::syscall2(raw_syscall::SYS_LINK,
-            temporary.as_ptr() as i64, path.as_ptr() as i64) });
+        let linked = c_status(unsafe { raw_syscall::syscall5(raw_syscall::SYS_LINKAT, AT_FDCWD,
+            temporary.as_ptr() as i64, AT_FDCWD, path.as_ptr() as i64, 0) });
         let error = if linked == 0 { 0 } else { unsafe { errno::get_errno() } };
         unsafe { unlink_file(temporary.as_ptr()); }
         if error == 0 { return Some((mapping, inode.unwrap())); }

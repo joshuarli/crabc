@@ -1,3 +1,4 @@
+// musl 1.2.6 src/unistd/chown.c and src/stat/mknod.c supply the *at forms.
 //! Installed owned Linux/x86-64 filesystem C mechanisms.
 //!
 //! This feature-gated block owns exactly `fchmodat`, `lchmod`, `fchown`,
@@ -376,11 +377,13 @@ static_archive_member! { fchown_source {
         pathname_lifecycle::procfdname(&mut procfd_path, descriptor);
         // SAFETY: the fixed local procfd pathname remains valid through chown.
         c_status(unsafe {
-            raw_syscall::syscall3(
-                raw_syscall::SYS_CHOWN,
+            raw_syscall::syscall5(
+                raw_syscall::SYS_FCHOWNAT,
+                -100,
                 procfd_path.as_ptr() as i64,
                 i64::from(user),
                 i64::from(group),
+                0,
             )
         })
     }
@@ -435,8 +438,9 @@ static_archive_member! { mknod_source {
     ) -> c_int {
         // SAFETY: the caller owns the raw pathname/mode/dev_t request.
         c_status(unsafe {
-            raw_syscall::syscall3(
-                raw_syscall::SYS_MKNOD,
+            raw_syscall::syscall4(
+                raw_syscall::SYS_MKNODAT,
+                -100,
                 path as usize as i64,
                 i64::from(mode),
                 device as i64,

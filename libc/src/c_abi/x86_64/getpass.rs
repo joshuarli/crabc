@@ -1,3 +1,4 @@
+// musl 1.2.6 src/internal/syscall.h defines open through openat.
 //! Selected static Linux/x86-64 C `getpass` terminal boundary.
 //!
 //! This is a narrow port of pinned musl 1.2.6 release commit
@@ -152,8 +153,9 @@ pub unsafe extern "C" fn getpass(prompt: *const c_char) -> *mut c_char {
     // SAFETY: the fixed path remains valid for the direct open operation and
     // the selected flags do not encode a caller-owned pointer.
     let opened = unsafe {
-        raw_syscall::syscall3(
-            raw_syscall::SYS_OPEN,
+        raw_syscall::syscall4(
+            raw_syscall::SYS_OPENAT,
+            -100,
             b"/dev/tty\0".as_ptr() as usize as i64,
             O_RDWR | O_NOCTTY | O_CLOEXEC,
             0,

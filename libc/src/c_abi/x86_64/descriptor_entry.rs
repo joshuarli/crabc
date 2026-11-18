@@ -1,3 +1,4 @@
+// musl 1.2.6 src/internal/syscall.h defines open through openat.
 //! Selected static Linux/x86-64 C descriptor-entry boundary.
 //!
 //! This leaf owns one coherent pathname-to-descriptor entry block: C `open`,
@@ -80,19 +81,20 @@ static_archive_member! { open_source {
             #[cfg(crabc_x86_owned_runtime)]
             {
                 crate::x86_64_static_c_abi::pthread_cancel::syscall_cp(
-                    raw_syscall::SYS_OPEN,
+                    raw_syscall::SYS_OPENAT,
+                    -100,
                     path as usize as i64,
                     i64::from(flags | O_LARGEFILE),
                     mode,
-                    0,
                     0,
                     0,
                 )
             }
             #[cfg(not(crabc_x86_owned_runtime))]
             {
-                raw_syscall::syscall3(
-                    raw_syscall::SYS_OPEN,
+                raw_syscall::syscall4(
+                    raw_syscall::SYS_OPENAT,
+                    -100,
                     path as usize as i64,
                     i64::from(flags | O_LARGEFILE),
                     mode,

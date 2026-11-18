@@ -1,3 +1,4 @@
+// musl 1.2.6 src/unistd/access.c uses faccessat.
 //! Selected static Linux/x86-64 C filesystem-access boundary.
 //!
 //! This leaf owns exactly `access`, `faccessat`, `euidaccess`, and musl's weak
@@ -51,8 +52,9 @@ static_archive_member! { access_source {
         // SAFETY: the caller owns the raw pathname and access-mode contract; Linux
         // x86-64 takes them in rdi/rsi for the direct access=21 request.
         let result = unsafe {
-            raw_syscall::syscall2(
-                raw_syscall::SYS_ACCESS,
+            raw_syscall::syscall3(
+                raw_syscall::SYS_FACCESSAT,
+                -100,
                 path as usize as i64,
                 i64::from(mode),
             )
