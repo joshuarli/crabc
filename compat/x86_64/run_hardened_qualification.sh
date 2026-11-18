@@ -8,6 +8,10 @@ case "$compatibility" in "$root"/.work/*) ;; *) exit 2;; esac
 readonly work="$(mktemp -d "$TMPDIR/hardened-qualification.XXXXXX")"
 readonly static="$work/static"
 readonly dynamic="$work/dynamic"
+architecture_args=()
+if [ "$(python3 -B -c 'import sys; sys.path.insert(0, sys.argv[1]); from native_arch import native_arch; print(native_arch()["arch"])' "$root/compat/x86_64")" = aarch64 ]; then
+    architecture_args=(--architecture aarch64)
+fi
 
 python3 -B - "$root" "$compatibility" <<'PYTHON'
 from pathlib import Path
@@ -21,12 +25,12 @@ import owned_dynamic_qualification as qualification
 qualification.product_identity(product)
 PYTHON
 
-if ! python3 -B "$root/scripts/build_x86_64_owned_sysroot.py" --profile release --hardening-profile hardened \
+if ! python3 -B "$root/scripts/build_x86_64_owned_sysroot.py" "${architecture_args[@]}" --profile release --hardening-profile hardened \
     --output "$static" >"$work/static.log" 2>&1; then
     cat "$work/static.log" >&2
     exit 1
 fi
-if ! python3 -B "$root/scripts/build_x86_64_owned_dynamic_sysroot.py" --profile release --hardening-profile hardened \
+if ! python3 -B "$root/scripts/build_x86_64_owned_dynamic_sysroot.py" "${architecture_args[@]}" --profile release --hardening-profile hardened \
     --output "$dynamic" >"$work/dynamic.log" 2>&1; then
     cat "$work/dynamic.log" >&2
     exit 1
