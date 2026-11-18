@@ -1,3 +1,4 @@
+.text
 // musl 1.2.6 src/setjmp/aarch64/setjmp.s; MIT license.
 .global __setjmp
 .global _setjmp

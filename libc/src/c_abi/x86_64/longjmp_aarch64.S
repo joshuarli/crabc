@@ -1,3 +1,4 @@
+.text
 // musl 1.2.6 src/setjmp/aarch64/longjmp.s; MIT license.
 .global _longjmp
 .global longjmp
