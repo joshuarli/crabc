@@ -452,7 +452,7 @@ def validate_product(product: Path) -> dict[str, Any]:
     product = physical_within(product, ROOT / ".work", "supplied dynamic product", directory=True)
     manifest_path = product / "share/crabc/manifest.json"
     manifest = read_json(manifest_path, "supplied dynamic product manifest")
-    expected_schema = 1 if ARCH == "x86_64" else None
+    expected_schema = 1
     if (manifest.get("schema"), manifest.get("format"), manifest.get("target")) != (expected_schema, PRODUCT_FORMAT, TARGET):
         fail("supplied dynamic product manifest identity drifted")
     files = manifest.get("files")
