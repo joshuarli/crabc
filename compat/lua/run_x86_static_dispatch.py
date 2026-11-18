@@ -16,6 +16,8 @@ from typing import Sequence
 # directory from sys.path; name it so sibling imports still resolve.
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import run as LUA  # noqa: E402
+sys.path.insert(0, str(LUA.ROOT / "compat/x86_64"))
+from native_arch import native_arch
 
 
 SUPPLIED_ROOTS = ("primary", "reproduction", "extracted")
@@ -203,6 +205,13 @@ def main(argv: Sequence[str] | None = None) -> int:
         if args.cohort_checkout is not None:
             report, report_path = read_supplied(args) if args.read is not None else run_supplied(args)
             latest = None
+        elif native_arch()["arch"] == "aarch64":
+            if args.allocator_backend != "accepted-c":
+                raise LUA.RunnerError("aarch64 Lua static requires the accepted C allocator")
+            report, report_path, latest = LUA.run_x86_static_dispatch(
+                jobs=args.jobs, timeout=args.timeout, architecture="aarch64",
+                state_parent=LUA.ROOT / ".work/aarch64/lua-static-source-build", latest_report=None,
+            )
         elif args.allocator_backend == "accepted-c":
             report, report_path, latest = LUA.run_x86_static_dispatch(jobs=args.jobs, timeout=args.timeout)
         else:
@@ -222,6 +231,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         "passed": report.get("passed") is True,
     }
     print(json.dumps(result, sort_keys=True))
+    if native_arch()["arch"] == "aarch64" and report.get("error"):
+        print(f"native Lua static source-build: {report['error']}", file=sys.stderr)
     return 0 if result["passed"] else 1
 
 

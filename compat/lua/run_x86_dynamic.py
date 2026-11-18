@@ -36,6 +36,7 @@ ROOT = LUA.ROOT
 sys.path.insert(0, str(ROOT / "compat/x86_64"))
 import owned_posix_product_evidence as product_evidence
 import owned_dynamic_receipt as receipt_contract
+from native_arch import native_arch
 
 FIXTURES = LUA.FIXTURES
 MANIFEST = LUA.MANIFEST
@@ -1798,6 +1799,7 @@ def publish_report(report: Path, latest_report: Path) -> Path:
 def run_dynamic_dispatch(
     *, jobs: int, timeout: float, offline: bool, state_parent: Path = DEFAULT_WORK_ROOT,
     latest_report: Path | None = DEFAULT_REPORT, allocator_backend: str = "accepted-c",
+    architecture: str = "x86_64",
 ) -> tuple[dict[str, object], Path, Path | None]:
     """Build, package/extract, and source-qualify one isolated dynamic Lua graph."""
 
@@ -1835,7 +1837,7 @@ def run_dynamic_dispatch(
     try:
         builder = require_regular(DYNAMIC_SYSROOT_BUILDER, "native Lua dynamic sysroot builder")
         producer = command(
-            [sys.executable, "-B", str(builder), "--output", str(installed),
+            [sys.executable, "-B", str(builder), *(("--architecture", architecture) if architecture != "x86_64" else ()), "--output", str(installed),
              *(("--allocator-backend", allocator_backend) if allocator_backend != "accepted-c" else ())],
             work=ROOT,
             state=state / "producer",
@@ -1843,6 +1845,8 @@ def run_dynamic_dispatch(
         )
         dispatcher["producer"] = producer
         require_success(producer, "native Lua dynamic sysroot producer")
+        if architecture != "x86_64":
+            raise LUA.RunnerError("aarch64 Lua dynamic package and driver receipt contracts are unavailable")
         package_tool = require_regular(DYNAMIC_PACKAGE_TOOL, "native Lua dynamic sysroot package tool")
         packaged = command(
             [sys.executable, "-B", str(package_tool), "package", str(installed), str(package)],
@@ -1938,6 +1942,13 @@ def main(argv: Sequence[str] | None = None) -> int:
             )
             LUA.write_json_atomic(report_path, report)
             latest = None
+        elif native_arch()["arch"] == "aarch64":
+            if args.allocator_backend != "accepted-c":
+                raise LUA.RunnerError("aarch64 Lua dynamic requires the accepted C allocator")
+            report, report_path, latest = run_dynamic_dispatch(
+                jobs=args.jobs, timeout=args.timeout, offline=args.offline, architecture="aarch64",
+                state_parent=ROOT / ".work/aarch64/lua-dynamic-source-build", latest_report=None,
+            )
         elif args.allocator_backend == "accepted-c":
             report, report_path, latest = run_dynamic_dispatch(
                 jobs=args.jobs, timeout=args.timeout, offline=args.offline
@@ -1958,6 +1969,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         "latest_report": str(latest) if latest is not None else None,
         "passed": report.get("passed") is True,
     }, sort_keys=True))
+    if native_arch()["arch"] == "aarch64" and report.get("error"):
+        print(f"native Lua dynamic source-build: {report['error']}", file=sys.stderr)
     return 0 if report.get("passed") is True else 1
 
 

@@ -81,6 +81,15 @@ class NativeStaticDispatcherTests(unittest.TestCase):
             static_runner=runner,
         )
 
+    def test_arm64_builder_is_selected_and_receipt_gap_is_reported(self) -> None:
+        report, _, published = RUNNER.run_x86_static_dispatch(
+            jobs=2, timeout=5.0, state_parent=self.parent, latest_report=None,
+            builder=self.builder, static_runner=self.passing_runner, architecture="aarch64",
+        )
+        self.assertIsNone(published)
+        self.assertIn("aarch64 Lua static driver", report["error"])
+        self.assertIn("aarch64", report["dispatcher"]["producer"]["command"])
+
     def test_published_latest_report_is_readable_by_other_users(self) -> None:
         # The container publishes as root; host readers must still read it.
         private = self.temporary / "private-report.json"

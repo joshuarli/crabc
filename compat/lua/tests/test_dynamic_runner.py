@@ -863,12 +863,23 @@ class NativeDynamicDebugProfileTests(unittest.TestCase):
     def test_default_cli_preserves_the_release_dispatcher(self) -> None:
         result = {"passed": True, "result": "pass"}
         with (
+            mock.patch.object(RUNNER, "native_arch", return_value={"arch": "x86_64"}),
             mock.patch.object(RUNNER, "run_dynamic_dispatch", return_value=(result, Path("report.json"), Path("latest.json"))) as dispatch,
             mock.patch.object(RUNNER, "run_dynamic_lane") as lane,
         ):
             self.assertEqual(RUNNER.main([]), 0)
         dispatch.assert_called_once_with(jobs=RUNNER.LUA.DEFAULT_JOBS, timeout=180.0, offline=False)
         lane.assert_not_called()
+
+    def test_arm64_cli_selects_native_builder_and_never_publishes_x86_receipt(self) -> None:
+        result = {"passed": False, "result": "fail", "error": "arm64 gap"}
+        with (
+            mock.patch.object(RUNNER, "native_arch", return_value={"arch": "aarch64"}),
+            mock.patch.object(RUNNER, "run_dynamic_dispatch", return_value=(result, Path("report.json"), None)) as dispatch,
+        ):
+            self.assertEqual(RUNNER.main([]), 1)
+        dispatch.assert_called_once_with(jobs=4, timeout=180.0, offline=False, architecture="aarch64",
+                                         state_parent=ROOT / ".work/aarch64/lua-dynamic-source-build", latest_report=None)
 
     def test_debug_requires_a_supplied_product_and_release_rejects_consumer_options(self) -> None:
         for arguments in (
