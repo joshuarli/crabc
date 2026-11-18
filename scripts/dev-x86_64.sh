@@ -3870,13 +3870,25 @@ run_in_uts_cap_container() {
 run_core_tests() {
     run_in_container bash -ceu '
         target_dir="$(mktemp -d "$TMPDIR/crabc-x86-64-core.XXXXXX")"
-        CARGO_TARGET_DIR="$target_dir" cargo test --locked --target $TARGET_TRIPLE \
-            -p crabc-core --lib --no-default-features -- --test-threads=1
+        if [ "$ARCH" = x86_64 ]; then
+            CARGO_TARGET_DIR="$target_dir" cargo test --locked --target x86_64-unknown-linux-musl \
+                -p crabc-core --lib --no-default-features -- --test-threads=1
+        else
+            CARGO_TARGET_DIR="$target_dir" cargo test --locked --target "$TARGET_TRIPLE" \
+                -p crabc-core --lib --no-default-features -- --test-threads=1
+        fi
 
-        mapfile -d "" -t test_binaries < <(
-            find "$target_dir/$TARGET_TRIPLE/debug/deps" -maxdepth 1 \
-                -type f -name "crabc_core-*" -perm -111 -print0
-        )
+        if [ "$ARCH" = x86_64 ]; then
+            mapfile -d "" -t test_binaries < <(
+                find "$target_dir/x86_64-unknown-linux-musl/debug/deps" -maxdepth 1 \
+                    -type f -name "crabc_core-*" -perm -111 -print0
+            )
+        else
+            mapfile -d "" -t test_binaries < <(
+                find "$target_dir/$TARGET_TRIPLE/debug/deps" -maxdepth 1 \
+                    -type f -name "crabc_core-*" -perm -111 -print0
+            )
+        fi
         if [ "${#test_binaries[@]}" -ne 1 ]; then
             printf "ERROR: expected one crabc-core test binary, found %s\\n" \
                 "${#test_binaries[@]}" >&2
