@@ -258,8 +258,7 @@ for group, fields in inputs.items():
     require(isinstance(fields, dict) and set(fields) == set(qualification_candidate.INPUT_KEYS[group]),
             f"candidate input {group} fields differ")
 inputs["lua_source_build"] = {"archive_seed": lua_seed_relative}
-if work_name == "x86_64":
-    inputs["rust_std_lto"] = vendor_paths
+inputs["rust_std_lto"] = vendor_paths
 with tempfile.NamedTemporaryFile("w", encoding="utf-8", dir=inputs_path.parent,
                                  prefix=".inputs.json.", delete=False) as output:
     json.dump(inputs, output, indent=2, sort_keys=True)
@@ -274,7 +273,7 @@ PY
 
 provider_vendor=.work/$work_name/rust-std-lto/provider-vendor
 dependency_vendor=.work/$work_name/rust-std-lto/dependency-vendor
-if [ "$work_name" = x86_64 ]; then
+if [ "$work_name" = x86_64 ] || [ "$work_name" = aarch64 ]; then
     if [ -L "$root/$provider_vendor" ] || [ -L "$root/$dependency_vendor" ]; then
         printf 'prepare-worktree: Rust std/LTO vendor path is a symlink\n' >&2
         exit 1
