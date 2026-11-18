@@ -895,7 +895,7 @@ def build_aarch64(args: argparse.Namespace) -> dict[str, object]:
     objects = {}
     names = ("crt1", "crti", "crtn", "Scrt1") if args.owned_dynamic_sysroot else ("crt1", "rcrt1", "crti", "crtn")
     for name in names:
-        source = source_path("x86_64_" + name + ".rs")
+        source = source_path("aarch64_rcrt1.rs" if name == "rcrt1" else "x86_64_" + name + ".rs")
         destination = output / (name + ".o")
         command = compiler + ["--edition=2021", "--crate-type=lib", "--emit=obj", "--target", target, "-C", "panic=abort", "-C", "force-unwind-tables=no", "-C", "opt-level=2", "-C", "relocation-model=static", "-C", "code-model=small", str(source), "-o", str(destination)]
         if name == "Scrt1":

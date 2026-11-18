@@ -1214,9 +1214,8 @@ def execute_aarch64(root: Path, arguments: Sequence[str], manifest: dict) -> Non
     observed.pop(MANIFEST_RELATIVE_PATH, None)
     if observed != expected or links or other:
         raise DriverError("aarch64 installed sysroot payload differs from its manifest")
-    if "-static-pie" in arguments or "--static-pie" in arguments:
-        raise DriverError("aarch64 static PIE is not implemented")
-    invocation = parse_invocation([arg for arg in arguments if arg != "-no-pie"])
+    static_pie = "-static-pie" in arguments or "--static-pie" in arguments
+    invocation = parse_invocation([arg for arg in arguments if arg not in {"-no-pie", "-static-pie", "--static-pie"}])
     if invocation.print_link_plan or invocation.link_receipt is not None or invocation.objects:
         raise DriverError("aarch64 driver currently accepts C source inputs without a link receipt")
     sources = [require_application_file(root, source, "source") for source in invocation.sources]
@@ -1227,12 +1226,14 @@ def execute_aarch64(root: Path, arguments: Sequence[str], manifest: dict) -> Non
         objects = []
         for index, source in enumerate(sources):
             obj = output if invocation.compile_only else Path(temporary) / f"application-{index}.o"
-            run_checked(["/usr/local/bin/crabc-aarch64-mold-gcc", "-nostdinc", "-isystem", str(root / "usr/include"), "-fstack-protector-strong", *invocation.compiler_flags, "-fno-pie", "-c", str(source), "-o", str(obj)])
+            run_checked(["/usr/local/bin/crabc-aarch64-mold-gcc", "-nostdinc", "-isystem", str(root / "usr/include"), "-fstack-protector-strong", *invocation.compiler_flags, "-fPIE" if static_pie else "-fno-pie", "-c", str(source), "-o", str(obj)])
             objects.append(obj)
         if invocation.compile_only:
             return
         lib = root / "usr/lib"
-        run_checked(["/usr/bin/mold", "-static", "--no-dynamic-linker", "--no-undefined", "--eh-frame-hdr", "--gc-sections", "-z", "relro", "-z", "now", "-e", "_start", str(lib / "crt1.o"), str(lib / "crti.o"), *(str(obj) for obj in objects), "--start-group", str(lib / "libc.a"), str(lib / "libcrabc-builtins.a"), "--end-group", str(lib / "crtn.o"), "-o", str(output)])
+        mode = ["-static", "-pie", "--no-dynamic-linker"] if static_pie else ["-static", "--no-dynamic-linker"]
+        entry = "rcrt1.o" if static_pie else "crt1.o"
+        run_checked(["/usr/bin/mold", *mode, "--no-undefined", "--eh-frame-hdr", "--gc-sections", "-z", "relro", "-z", "now", "-e", "_start", str(lib / entry), str(lib / "crti.o"), *(str(obj) for obj in objects), "--start-group", str(lib / "libc.a"), str(lib / "libcrabc-builtins.a"), "--end-group", str(lib / "crtn.o"), "-o", str(output)])
 
 
 def main(arguments: Sequence[str] | None = None) -> int:
