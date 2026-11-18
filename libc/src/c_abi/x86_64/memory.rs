@@ -146,6 +146,8 @@ __memcpy_fwd:
 // Musl's `src/string/memcmp.c` object: the same first-different-unsigned-byte
 // result, compared 16 bytes (SSE2) or 8 bytes at a time.
 static_archive_member! { memcmp_source {
+    /// # Safety
+    /// Both pointers must be readable for length bytes.
     #[cfg(target_arch = "aarch64")]
     #[no_mangle]
     pub unsafe extern "C" fn memcmp(left: *const u8, right: *const u8, length: usize) -> i32 {
@@ -270,11 +272,7 @@ memcmp:
 // Musl's `src/string/bcmp.c` object.
 static_archive_member! { bcmp_source {
     #[cfg(target_arch = "aarch64")]
-    #[no_mangle]
-    pub unsafe extern "C" fn bcmp(left: *const u8, right: *const u8, length: usize) -> i32 {
-        // SAFETY: bcmp has the same readable-range contract as memcmp.
-        unsafe { memcmp(left, right, length) }
-    }
+    core::arch::global_asm!(include_str!("bcmp_aarch64.S"));
     #[cfg(target_arch = "x86_64")]
     core::arch::global_asm!(
         r#"
@@ -380,6 +378,8 @@ memset:
 
 // Musl's `src/string/x86_64/memmove.s` object.
 static_archive_member! { memmove_source {
+    /// # Safety
+    /// The source and destination must be readable and writable for length bytes, respectively.
     #[cfg(target_arch = "aarch64")]
     #[no_mangle]
     pub unsafe extern "C" fn memmove(destination: *mut u8, source: *const u8, length: usize) -> *mut u8 {

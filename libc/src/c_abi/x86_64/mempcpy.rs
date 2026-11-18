@@ -46,9 +46,4 @@ mempcpy:
 );
 
 #[cfg(target_arch = "aarch64")]
-#[no_mangle]
-pub unsafe extern "C" fn mempcpy(dst: *mut u8, src: *const u8, len: usize) -> *mut u8 {
-    unsafe extern "C" { fn memcpy(dst: *mut u8, src: *const u8, len: usize) -> *mut u8; }
-    // SAFETY: the caller supplies valid nonoverlapping memcpy ranges.
-    unsafe { memcpy(dst, src, len); dst.add(len) }
-}
+core::arch::global_asm!(include_str!("mempcpy_aarch64.S"));
