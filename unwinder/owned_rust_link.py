@@ -41,6 +41,7 @@ ARCH = native_arch()["arch"]
 TARGET = native_arch()["target_triple"]
 INTERPRETER = f"/lib/ld-crabc-{ARCH}.so.1"
 ELF_MACHINE = b"\x3e\x00" if ARCH == "x86_64" else b"\xb7\x00"
+ELF_DESCRIPTION = "x86-64" if ARCH == "x86_64" else "aarch64"
 STOCK_RUST_UNWIND_ARCHIVE = re.compile(r"libunwind-[0-9a-f]+\.rlib\Z")
 COMPILER_BUILTINS_ARCHIVE = re.compile(r"libcompiler_builtins-[0-9a-f]+\.rlib\Z")
 SOURCE_BUILT_COMPILER_BUILTINS_ARCHIVE = re.compile(r"libcompiler_builtins-([0-9a-f]{16})\.rlib\Z")
@@ -997,7 +998,7 @@ def _cargo_input_kind(path: Path) -> str:
         return "llvm-bitcode"
     if header[:4] == b"\x7fELF" and header[18:20] == ELF_MACHINE:
         return f"elf-{ARCH}"
-    raise LinkError(f"Cargo Rust object is neither {ARCH} ELF nor LLVM bitcode: {path}")
+    raise LinkError(f"Cargo Rust object is neither {ELF_DESCRIPTION} ELF nor LLVM bitcode: {path}")
 
 
 def lto_materialization_command(materializer: Path, objects: list[Path], archives: list[Path],
@@ -1016,7 +1017,7 @@ def materialize_lto(rust_sysroot: Path, objects: list[Path], archives: list[Path
     trace = run(command)
     validate_trace(trace, {*objects, *archives}, frozenset(archives))
     if _cargo_input_kind(physical_regular(materialized, "materialized Rust LTO object")) != f"elf-{ARCH}":
-        raise LinkError(f"LTO materializer did not emit native {ARCH} ELF")
+        raise LinkError(f"LTO materializer did not emit native {ELF_DESCRIPTION} ELF")
     return materialized, {"resolved_materializer": _record_input(materializer), "command": command,
                           "resolved_input_trace": trace, "output": _record_input(materialized)}
 
@@ -1215,7 +1216,7 @@ def link(arguments: list[str]) -> None:
     input_records: list[dict[str, object]] = []
     for object_path in objects:
         if object_path.read_bytes()[:20][18:20] != ELF_MACHINE:
-            raise LinkError(f"Rust application object is not {ARCH} ELF: {object_path}")
+            raise LinkError(f"Rust application object is not {ELF_DESCRIPTION} ELF: {object_path}")
         input_records.append(_record_input(object_path))
     for archive in archives:
         input_records.append(_record_input(archive, members=audit_rust_archive(archive, ar)))
