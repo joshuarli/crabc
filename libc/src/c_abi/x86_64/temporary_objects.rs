@@ -1,3 +1,4 @@
+// musl 1.2.6 src/stat/mkdir.c uses mkdirat on AArch64.
 //! Atomic temporary-object creation for the installed runtime.
 //!
 //! Pinned musl 1.2.6 (`9fa28ece75d8a2191de7c5bb53bed224c5947417`, MIT):
@@ -52,7 +53,7 @@ unsafe fn create(template: *mut c_char, suffix_length: c_int, object: Object) ->
                 descriptor_entry::open(template, (flags & !O_ACCMODE) | O_RDWR | O_CREAT | O_EXCL, 0o600)
             },
             Object::Directory => c_status(unsafe {
-                raw_syscall::syscall2(raw_syscall::SYS_MKDIR, template as usize as i64, 0o700)
+                raw_syscall::syscall3(raw_syscall::SYS_MKDIRAT, -100, template as usize as i64, 0o700)
             }),
         };
         if result >= 0 { return result; }

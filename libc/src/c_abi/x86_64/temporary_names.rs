@@ -1,3 +1,4 @@
+// musl 1.2.6 src/unistd/readlink.c uses readlinkat on AArch64.
 //! Linux/x86-64 legacy C temporary-name compatibility.
 //!
 //! This module is a provenance-preserving translation of pinned musl 1.2.6
@@ -105,8 +106,9 @@ unsafe fn pathname_is_absent(pathname: *const c_char) -> bool {
     // SAFETY: the caller supplies the complete pathname; output is one
     // writable byte exactly as the musl source's compound literal.
     let result = unsafe {
-        raw_syscall::syscall3(
-            raw_syscall::SYS_READLINK,
+        raw_syscall::syscall4(
+            raw_syscall::SYS_READLINKAT,
+            -100,
             pathname as usize as i64,
             output.as_mut_ptr() as usize as i64,
             1,
