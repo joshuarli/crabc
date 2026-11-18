@@ -76,14 +76,21 @@ fn invalid_argument() -> c_int {
 
 #[inline]
 fn retry_dup2(old_descriptor: c_int, new_descriptor: c_int) -> i64 {
+    // musl 1.2.6 src/unistd/dup2.c checks an identical descriptor via F_GETFD.
+    if old_descriptor == new_descriptor {
+        // SAFETY: fcntl F_GETFD takes a scalar descriptor and no pointer.
+        let result = unsafe { raw_syscall::syscall2(raw_syscall::SYS_FCNTL, i64::from(old_descriptor), 1) };
+        return if result < 0 { result } else { i64::from(old_descriptor) };
+    }
     loop {
         // SAFETY: both arguments are scalar Linux descriptor words. The
         // kernel owns atomic replacement and validates their current state.
         let result = unsafe {
-            raw_syscall::syscall2(
-                raw_syscall::SYS_DUP2,
+            raw_syscall::syscall3(
+                raw_syscall::SYS_DUP3,
                 i64::from(old_descriptor),
                 i64::from(new_descriptor),
+                0,
             )
         };
         if result != -EBUSY {
@@ -581,7 +588,8 @@ static_archive_member! { pipe_source {
     pub unsafe extern "C" fn pipe(file_descriptors: *mut c_int) -> c_int {
         // SAFETY: the caller supplies the raw two-int writable output region.
         let result = unsafe {
-            raw_syscall::syscall1(raw_syscall::SYS_PIPE, file_descriptors as usize as i64)
+            // musl 1.2.6 src/unistd/pipe.c uses pipe2 with zero flags.
+            raw_syscall::syscall2(raw_syscall::SYS_PIPE2, file_descriptors as usize as i64, 0)
         };
         c_status(result)
     }
