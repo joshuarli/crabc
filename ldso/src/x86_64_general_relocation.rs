@@ -20,11 +20,11 @@ use super::x86_64_initial_graph_state::{InitialGraphState, ObjectState};
 mod tests;
 
 const R_NONE: u32 = 0;
-const R_64: u32 = 1;
+const R_64: u32 = if cfg!(target_arch = "aarch64") { 257 } else { 1 };
 // The x86-64 PC-relative form stores the low 32 bits of S+A-P. Its target
 // occupies four bytes and may begin at a non-word-aligned address.
 const R_X86_64_PC32: u32 = 2;
-const R_COPY: u32 = 5;
+const R_COPY: u32 = if cfg!(target_arch = "aarch64") { 1024 } else { 5 };
 const SHN_ABS: u16 = 0xfff1;
 // musl dynlink.c:find_sym2 includes GNU unique alongside global and weak in
 // OK_BINDS. It treats unique as an eligible definition, not a new scope rule.
@@ -547,6 +547,7 @@ unsafe fn word_value(
     scope: &SymbolScope<'_>, objects: &[Object], owner: usize,
     kind: u32, index: usize, addend: i64,
 ) -> Option<u64> {
+    if cfg!(target_arch = "aarch64") && kind == R_X86_64_PC32 { return None; }
     let object = &objects[owner];
     // One validated record supplies the private selectors and ordinary lookup.
     let requested_symbol = if index != 0 { Some(unsafe { symbol_record(object, index) }?) } else { None };

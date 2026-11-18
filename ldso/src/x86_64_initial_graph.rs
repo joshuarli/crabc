@@ -215,17 +215,19 @@ const DF_1_PIE: u64 = 0x0800_0000;
 const DF_1_NODELETE: u64 = 0x8;
 
 const ELF64_RELA: u64 = 7;
-const R_X86_64_GLOB_DAT: u32 = 6;
-const R_X86_64_JUMP_SLOT: u32 = 7;
-const R_X86_64_RELATIVE: u32 = 8;
-const R_X86_64_DTPMOD64: u32 = 16;
-const R_X86_64_DTPOFF64: u32 = 17;
-const R_X86_64_TPOFF64: u32 = 18;
+// musl 1.2.6 arch/aarch64/reloc.h selects the AArch64 ELF relocation set.
+const ELF_MACHINE: u16 = if cfg!(target_arch = "aarch64") { 183 } else { 62 };
+const R_X86_64_GLOB_DAT: u32 = if cfg!(target_arch = "aarch64") { 1025 } else { 6 };
+const R_X86_64_JUMP_SLOT: u32 = if cfg!(target_arch = "aarch64") { 1026 } else { 7 };
+const R_X86_64_RELATIVE: u32 = if cfg!(target_arch = "aarch64") { 1027 } else { 8 };
+const R_X86_64_DTPMOD64: u32 = if cfg!(target_arch = "aarch64") { 1028 } else { 16 };
+const R_X86_64_DTPOFF64: u32 = if cfg!(target_arch = "aarch64") { 1029 } else { 17 };
+const R_X86_64_TPOFF64: u32 = if cfg!(target_arch = "aarch64") { 1030 } else { 18 };
 const R_X86_64_GOTTPOFF: u32 = 22;
 const R_X86_64_TPOFF32: u32 = 23;
 const R_X86_64_GOTPC32_TLSDESC: u32 = 34;
 const R_X86_64_TLSDESC_CALL: u32 = 35;
-const R_X86_64_TLSDESC: u32 = 36;
+const R_X86_64_TLSDESC: u32 = if cfg!(target_arch = "aarch64") { 1031 } else { 36 };
 
 #[cfg(target_arch = "aarch64")]
 #[path = "aarch64.rs"]
@@ -1288,7 +1290,7 @@ unsafe fn hardened_main_identity(base: u64, phdr: *const u8, phnum: usize) -> bo
         let Some(address) = base.checked_add(read_u64(load.add(16))) else { return false; };
         let header = address as *const u8;
         if core::slice::from_raw_parts(header, 7) != b"\x7fELF\x02\x01\x01"
-            || read_u16(header.add(16)) != 3 || read_u16(header.add(18)) != 62
+            || read_u16(header.add(16)) != 3 || read_u16(header.add(18)) != ELF_MACHINE
             || read_u32(header.add(20)) != 1 || read_u16(header.add(52)) != 64
             || read_u16(header.add(54)) != 56 || read_u16(header.add(56)) as usize != phnum { return false; }
         let offset = read_u64(header.add(32));
@@ -2089,7 +2091,7 @@ unsafe fn map_elf_with_status(
     let header = header_bytes.as_ptr();
     let elf_type = read_u16(header.add(16));
     let valid = *header == 0x7f && *header.add(1) == b'E' && *header.add(2) == b'L' && *header.add(3) == b'F'
-        && *header.add(4) == 2 && *header.add(5) == 1 && (elf_type == 3 || (!cfg!(crabc_hardened) && role == ObjectRole::Main && elf_type == 2)) && read_u16(header.add(18)) == 62
+        && *header.add(4) == 2 && *header.add(5) == 1 && (elf_type == 3 || (!cfg!(crabc_hardened) && role == ObjectRole::Main && elf_type == 2)) && read_u16(header.add(18)) == ELF_MACHINE
         && read_u16(header.add(54)) == 56 && (!cfg!(crabc_hardened)
             || (*header.add(6) == 1 && read_u32(header.add(20)) == 1 && read_u16(header.add(52)) == 64));
     let phoff = usize::try_from(read_u64(header.add(32))).map_err(|_| ENOEXEC)?;
@@ -3312,7 +3314,7 @@ unsafe fn apply_self_relro(base: u64) -> Option<()> {
     let header = base as *const u8;
     if *header != 0x7f || *header.add(1) != b'E' || *header.add(2) != b'L' || *header.add(3) != b'F'
         || *header.add(4) != 2 || *header.add(5) != 1 || read_u16(header.add(16)) != 3
-        || read_u16(header.add(18)) != 62 || read_u16(header.add(54)) != 56
+        || read_u16(header.add(18)) != ELF_MACHINE || read_u16(header.add(54)) != 56
     {
         return None;
     }
