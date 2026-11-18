@@ -2228,6 +2228,9 @@ pub fn lstat<P: Arg>(path: P) -> Result<Stat> {
     statat(CWD, path, AtFlags::SYMLINK_NOFOLLOW)
 }
 
+/// Flags accepted by descriptor-relative unlink operations.
+pub type UnlinkAtFlags = AtFlags;
+
 /// Removes a file or, with [`AtFlags::REMOVEDIR`], an empty directory.
 #[inline]
 pub fn unlinkat<P: Arg, Fd: AsFd>(dirfd: Fd, path: P, flags: AtFlags) -> Result<()> {

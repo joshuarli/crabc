@@ -133,3 +133,13 @@ fn x86_64_posix_timer_owns_a_sigev_none_lifecycle() {
     timer.delete().expect("explicitly delete timer");
     assert_eq!(timer.delete(), Err(Errno::INVAL));
 }
+
+#[cfg(target_arch = "aarch64")]
+trait ClockQueryResult {
+    fn expect(self, message: &str) -> Self;
+}
+
+#[cfg(target_arch = "aarch64")]
+impl ClockQueryResult for crabc_rs::time::Timespec {
+    fn expect(self, _message: &str) -> Self { self }
+}

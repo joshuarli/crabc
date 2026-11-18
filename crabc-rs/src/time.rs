@@ -915,7 +915,7 @@ pub enum DynamicClockId<'fd> {
 #[must_use]
 #[inline]
 pub fn clock_getres(id: ClockId) -> Timespec {
-    clock_query(id, crabc_core::time::clock_getres_raw)
+    clock_query(id, clock_getres_bytes)
 }
 
 /// Returns a known Linux clock's current value.
@@ -1099,6 +1099,11 @@ pub fn timerfd_gettime<Fd: AsFd>(fd: Fd) -> Result<Itimerspec> {
         crabc_core::time::timerfd_gettime_raw(fd.as_raw_fd(), value.as_mut_ptr().cast())?;
         Ok(value.assume_init())
     }
+}
+
+unsafe fn clock_getres_bytes(id: i32, value: *mut u8) -> Result<()> {
+    // SAFETY: The caller supplies writable Linux timespec storage.
+    unsafe { crabc_core::time::clock_getres_raw(id, value.cast()) }
 }
 
 fn clock_query(id: ClockId, query: unsafe fn(i32, *mut u8) -> Result<()>) -> Timespec {

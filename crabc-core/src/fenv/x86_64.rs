@@ -1,130 +1,17 @@
-//! Direct Linux/x86-64 floating-point environment operations.
-//!
-//! Linux/x86-64 has two independently stored floating-point environments:
-//! the legacy x87 control/status words and the SSE MXCSR register.  Scalar
-//! Rust `f32`/`f64` instructions normally use MXCSR, while x87 remains part
-//! of the SysV ABI and is used by x87 instructions and the target's extended
-//! precision operations.  Every mutating operation in this module therefore
-//! updates both units.  It does not use libc's `fenv.h` functions, a
-//! process-global singleton, or TLS `errno`.
-
 use core::arch::asm;
-use core::fmt;
-use core::ops::{BitAnd, BitOr, BitOrAssign};
-
+use super::ExceptionFlags;
 const X87_ROUNDING_MASK: u16 = 0x0c00;
-const MXCSR_ROUNDING_MASK: u32 = 0x0000_6000;
+const MXCSR_ROUNDING_MASK: u32 = 0x6000;
 const MXCSR_ROUNDING_SHIFT: u32 = 3;
-
-// x87 and MXCSR use the same low-bit encoding for the five ISO C exception
-// flags.  Bit 1 is x86's non-portable denormal-operand status flag; it has no
-// counterpart in the existing core API and remains preserved in raw snapshots.
-const EXCEPTION_MASK: u32 = 0x003d;
-
 const MXCSR_MASK_OFFSET: usize = 28;
-const DEFAULT_MXCSR_MASK: u32 = 0x0000_ffbf;
-
-// `FNSTENV`/`FLDENV` use the legacy 28-byte protected-mode environment in
-// 64-bit mode.  Unlike the compact FXSAVE header, its status word begins at
-// byte four.  We use this format only when an operation must alter x87 status:
-// it restores x87 control/status/tag and instruction metadata, but never the
-// x87 data-register stack or any XMM registers.
+const DEFAULT_MXCSR_MASK: u32 = 0xffbf;
 const X87_ENV_CONTROL_WORD_OFFSET: usize = 0;
 const X87_ENV_STATUS_WORD_OFFSET: usize = 4;
-
-/// The five ISO C floating-point exception flags on Linux/x86-64.
-///
-/// The values match the low status bits in both x87 and MXCSR, and match
-/// musl's x86-64 `FE_*` constants for these five exceptions.  x86 also has a
-/// denormal-operand status bit (`0x02`), but it is deliberately not exposed:
-/// the existing `crabc-core` fenv vocabulary has no such flag.  Raw
-/// [`Environment`] snapshots preserve that bit, while operations selected by
-/// this type leave it unchanged.
-#[repr(transparent)]
-#[derive(Clone, Copy, Debug, Default, Eq, Hash, PartialEq)]
-pub struct ExceptionFlags(u32);
-
-impl ExceptionFlags {
-    /// No pending floating-point exceptions.
-    pub const EMPTY: Self = Self(0);
-    /// Invalid-operation exception.
-    pub const INVALID: Self = Self(0x01);
-    /// Division-by-zero exception.
-    pub const DIVIDE_BY_ZERO: Self = Self(0x04);
-    /// Overflow exception.
-    pub const OVERFLOW: Self = Self(0x08);
-    /// Underflow exception.
-    pub const UNDERFLOW: Self = Self(0x10);
-    /// Inexact-result exception.
-    pub const INEXACT: Self = Self(0x20);
-    /// All five exception flags represented by this API.
-    pub const ALL: Self = Self(EXCEPTION_MASK);
-
-    /// Creates flags if `bits` contains only the five supported flags.
-    #[inline]
-    pub const fn from_bits(bits: u32) -> Option<Self> {
-        if bits & !Self::ALL.0 == 0 {
-            Some(Self(bits))
-        } else {
-            None
-        }
-    }
-
-    /// Creates flags after discarding bits outside the supported set.
-    #[inline]
-    pub const fn from_bits_truncate(bits: u32) -> Self {
-        Self(bits & Self::ALL.0)
-    }
-
-    /// Returns the x87/MXCSR-compatible bit representation.
-    #[inline]
-    pub const fn bits(self) -> u32 {
-        self.0
-    }
-
-    /// Returns whether no exception flag is selected.
-    #[inline]
-    pub const fn is_empty(self) -> bool {
-        self.0 == 0
-    }
-
-    /// Returns whether every flag in `other` is selected.
-    #[inline]
-    pub const fn contains(self, other: Self) -> bool {
-        self.0 & other.0 == other.0
-    }
-
-    /// Returns whether at least one flag in `other` is selected.
-    #[inline]
-    pub const fn intersects(self, other: Self) -> bool {
-        self.0 & other.0 != 0
-    }
-}
-
-impl BitOr for ExceptionFlags {
-    type Output = Self;
-
-    #[inline]
-    fn bitor(self, rhs: Self) -> Self::Output {
-        Self::from_bits_truncate(self.0 | rhs.0)
-    }
-}
-
-impl BitOrAssign for ExceptionFlags {
-    #[inline]
-    fn bitor_assign(&mut self, rhs: Self) {
-        *self = *self | rhs;
-    }
-}
-
-impl BitAnd for ExceptionFlags {
-    type Output = Self;
-
-    #[inline]
-    fn bitand(self, rhs: Self) -> Self::Output {
-        Self(self.0 & rhs.0)
-    }
-}
+pub(super) const DIVIDE_BY_ZERO: u32 = 4;
+pub(super) const OVERFLOW: u32 = 8;
+pub(super) const UNDERFLOW: u32 = 16;
+pub(super) const INEXACT: u32 = 32;
+pub(super) const EXCEPTION_MASK: u32 = 0x3d;
 
 /// Linux/x86-64 floating-point rounding mode.
 ///
@@ -172,17 +59,6 @@ impl RoundingMode {
     #[inline]
     const fn mxcsr_raw(self) -> u32 {
         (self.raw() as u32) << MXCSR_ROUNDING_SHIFT
-    }
-}
-
-impl fmt::Display for RoundingMode {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.write_str(match self {
-            Self::Nearest => "nearest",
-            Self::Downward => "downward",
-            Self::Upward => "upward",
-            Self::TowardZero => "toward-zero",
-        })
     }
 }
 
@@ -544,37 +420,17 @@ pub fn test_exceptions(flags: ExceptionFlags) -> ExceptionFlags {
     get_environment().exceptions() & flags
 }
 
-/// Captures the environment and clears all five exception flags represented
-/// by [`ExceptionFlags`].
-///
-/// As in the existing AArch64 core API, this leaves exception-mask/trap-enable
-/// bits unchanged; it is a typed environment snapshot operation rather than a
-/// C ABI implementation of every `feholdexcept` side effect.
-#[inline]
-pub fn hold_exceptions() -> Environment {
-    let environment = get_environment();
-    clear_exceptions(ExceptionFlags::ALL);
-    environment
-}
-
-/// Restores `environment` and re-raises exception flags pending before the
-/// restore in both x87 and MXCSR.
-#[inline]
-pub fn update_environment(environment: Environment) {
-    let exceptions = test_exceptions(ExceptionFlags::ALL);
-    set_environment(environment);
-    raise_exceptions(exceptions);
-}
-
 #[cfg(test)]
 mod tests {
     use core::arch::x86_64::{_mm_add_pd, _mm_set1_pd, _mm_set_pd, _mm_storeu_pd};
 
     use super::{
-        clear_exceptions, get_environment, get_rounding, hold_exceptions, raise_exceptions,
-        set_environment, set_rounding, test_exceptions, update_environment, Environment,
+        clear_exceptions, get_environment, get_rounding, raise_exceptions,
+        set_environment, set_rounding, test_exceptions, Environment,
         ExceptionFlags, RoundingMode, MXCSR_ROUNDING_MASK, X87_ROUNDING_MASK,
     };
+
+    use super::super::{hold_exceptions, update_environment};
 
     struct Restore(Environment);
 

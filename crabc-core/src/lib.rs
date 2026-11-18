@@ -26,13 +26,7 @@ mod error;
 
 pub use error::{Errno, RawFd, Result, AT_FDCWD};
 
-/// Direct, typed access to the calling thread's AArch64 floating-point state.
-#[cfg(target_arch = "aarch64")]
-pub mod fenv;
-/// Direct, typed access to the calling thread's x87 and SSE floating-point
-/// state.
-#[cfg(target_arch = "x86_64")]
-#[path = "fenv_x86_64.rs"]
+/// Direct access to the calling thread's floating-point environment.
 pub mod fenv;
 /// Allocation-free character-set conversion shared by the native and C facades.
 pub mod iconv;
@@ -54,11 +48,6 @@ mod vdso;
 /// through the explicitly versioned private entry point.
 pub mod runtime;
 
-#[cfg(target_arch = "aarch64")]
-#[path = "syscall.rs"]
-mod syscall;
-#[cfg(target_arch = "x86_64")]
-#[path = "syscall_x86_64.rs"]
 mod syscall;
 
 /// Miri-only kernel model behind the raw syscall seams; see its module docs.
@@ -78,19 +67,9 @@ pub mod pipe;
 pub mod rand;
 
 /// Direct stateless clock queries.
-#[cfg(target_arch = "aarch64")]
-pub mod time;
-/// Deliberately bounded Linux/x86-64 clock queries.
-#[cfg(target_arch = "x86_64")]
-#[path = "time_x86_64.rs"]
 pub mod time;
 
 /// Direct event-descriptor and polling operations.
-#[cfg(target_arch = "aarch64")]
-pub mod event;
-/// Deliberately bounded Linux/x86-64 event-descriptor and polling operations.
-#[cfg(target_arch = "x86_64")]
-#[path = "event_x86_64.rs"]
 pub mod event;
 
 /// Direct Linux socket operations.
@@ -104,29 +83,10 @@ pub mod net;
 /// its historical `_res` state at its own ABI boundary.
 pub mod resolver;
 
-/// Direct Linux/AArch64 virtual-memory operations.
-#[cfg(target_arch = "aarch64")]
-pub mod mm;
-/// Deliberately bounded Linux/x86-64 virtual-memory operations.
-#[cfg(target_arch = "x86_64")]
-#[path = "mm_x86_64.rs"]
+/// Direct Linux virtual-memory operations.
 pub mod mm;
 
-/// Direct Linux/AArch64 signal operations.
-///
-/// This module exposes only kernel ABI records and direct syscalls. Policy
-/// around reserved libc signals, handler lifetimes, and safe Rust vocabulary
-/// belongs to `crabc-rs::signal`; C's public `sigaction` record is likewise a
-/// distinct ABI boundary in `libc`.
-#[cfg(target_arch = "aarch64")]
-pub mod signal;
-/// Direct Linux/x86-64 signal operations.
-///
-/// This raw kernel ABI boundary deliberately requires callers installing a
-/// handler to supply the target's `SA_RESTORER` trampoline; choosing the C or
-/// Rust runtime owner remains outside shared core.
-#[cfg(target_arch = "x86_64")]
-#[path = "signal_x86_64.rs"]
+/// Direct Linux signal operations.
 pub mod signal;
 
 /// Direct process-identity, process-group, and signal operations.
@@ -136,10 +96,6 @@ pub mod process;
 pub mod thread;
 
 /// Direct Linux system-information operations.
-#[cfg(target_arch = "aarch64")]
-pub mod system;
-#[cfg(target_arch = "x86_64")]
-#[path = "system_x86_64.rs"]
 pub mod system;
 
 /// Direct Linux POSIX message-queue operations.

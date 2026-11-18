@@ -1,15 +1,5 @@
-//! Concrete Linux/x86-64 syscall instruction boundary and result decoding.
-
-//! The syscall numbers in this file are checked against Linux `asm/unistd_64.h`
-//! by the architecture checking tooling. Linux/x86-64 uses `syscall`, with
-//! `rax` carrying both the syscall number and result, arguments in
-//! `rdi`, `rsi`, `rdx`, `r10`, `r8`, and `r9`, and `rcx`/`r11` clobbered.
-
 #[cfg(not(miri))]
 use core::arch::asm;
-
-use crate::error::MAX_ERRNO;
-use crate::{Errno, Result};
 
 pub(crate) const SYS_READ: usize = 0;
 pub(crate) const SYS_WRITE: usize = 1;
@@ -29,7 +19,6 @@ pub(crate) const SYS_PWRITEV2: usize = 328;
 pub(crate) const SYS_LSEEK: usize = 8;
 pub(crate) const SYS_FCNTL: usize = 72;
 pub(crate) const SYS_DUP: usize = 32;
-pub(crate) const SYS_DUP2: usize = 33;
 pub(crate) const SYS_DUP3: usize = 292;
 pub(crate) const SYS_CLOSE: usize = 3;
 pub(crate) const SYS_FLOCK: usize = 73;
@@ -100,7 +89,6 @@ pub(crate) const SYS_TIMER_DELETE: usize = 226;
 pub(crate) const SYS_GETTIMEOFDAY: usize = 96;
 pub(crate) const SYS_NANOSLEEP: usize = 35;
 pub(crate) const SYS_GETRANDOM: usize = 318;
-pub(crate) const SYS_POLL: usize = 7;
 pub(crate) const SYS_EVENTFD2: usize = 290;
 pub(crate) const SYS_MQ_OPEN: usize = 240;
 pub(crate) const SYS_MQ_UNLINK: usize = 241;
@@ -362,91 +350,4 @@ pub(crate) unsafe fn syscall6(
         );
     }
     result
-}
-
-#[inline]
-pub(crate) fn decode(result: isize) -> Result<usize> {
-    if result < 0 && result >= -(MAX_ERRNO as isize) {
-        // SAFETY: Linux syscall errors are in the inclusive `-4095..=-1` range.
-        return Err(Errno::from_raw_os_error((-result) as i32));
-    }
-    Ok(result as usize)
-}
-
-#[inline]
-pub(crate) fn decode_i32(result: isize) -> Result<i32> {
-    if result < 0 && result >= -(MAX_ERRNO as isize) {
-        // SAFETY: Linux syscall errors are in the inclusive `-4095..=-1` range.
-        return Err(Errno::from_raw_os_error((-result) as i32));
-    }
-    Ok(result as i32)
-}
-
-#[inline]
-pub(crate) fn decode_i64(result: isize) -> Result<i64> {
-    if result < 0 && result >= -(MAX_ERRNO as isize) {
-        // SAFETY: Linux syscall errors are in the inclusive `-4095..=-1` range.
-        return Err(Errno::from_raw_os_error((-result) as i32));
-    }
-    Ok(result as i64)
-}
-
-// Miri cannot execute `syscall`; these seams dispatch to the kernel model.
-// Calls that return pointers or write through caller pointers never reach
-// here: their typed wrappers call the model directly to keep provenance.
-#[cfg(miri)]
-#[inline(always)]
-pub(crate) unsafe fn syscall0(number: usize) -> isize {
-    crate::miri_model::syscall(number, [0; 6])
-}
-
-#[cfg(miri)]
-#[inline(always)]
-pub(crate) unsafe fn syscall1(number: usize, arg0: usize) -> isize {
-    crate::miri_model::syscall(number, [arg0, 0, 0, 0, 0, 0])
-}
-
-#[cfg(miri)]
-#[inline(always)]
-pub(crate) unsafe fn syscall2(number: usize, arg0: usize, arg1: usize) -> isize {
-    crate::miri_model::syscall(number, [arg0, arg1, 0, 0, 0, 0])
-}
-
-#[cfg(miri)]
-#[inline(always)]
-pub(crate) unsafe fn syscall3(number: usize, arg0: usize, arg1: usize, arg2: usize) -> isize {
-    crate::miri_model::syscall(number, [arg0, arg1, arg2, 0, 0, 0])
-}
-
-#[cfg(miri)]
-#[inline(always)]
-pub(crate) unsafe fn syscall4(number: usize, arg0: usize, arg1: usize, arg2: usize, arg3: usize) -> isize {
-    crate::miri_model::syscall(number, [arg0, arg1, arg2, arg3, 0, 0])
-}
-
-#[cfg(miri)]
-#[inline(always)]
-pub(crate) unsafe fn syscall5(
-    number: usize,
-    arg0: usize,
-    arg1: usize,
-    arg2: usize,
-    arg3: usize,
-    arg4: usize,
-) -> isize {
-    crate::miri_model::syscall(number, [arg0, arg1, arg2, arg3, arg4, 0])
-}
-
-#[cfg(miri)]
-#[inline(always)]
-pub(crate) unsafe fn syscall6(
-    number: usize,
-    arg0: usize,
-    arg1: usize,
-    arg2: usize,
-    arg3: usize,
-    arg4: usize,
-    arg5: usize,
-) -> isize {
-    crate::miri_model::syscall(number, [arg0, arg1, arg2, arg3, arg4, arg5])
 }

@@ -356,6 +356,7 @@ pub mod epoll {
         let timeout = timeout.map(timeout_millis).transpose()?.unwrap_or(-1);
         let epoll = epoll.as_fd();
         let (events, maxevents) = event_list.parts_mut();
+        let maxevents = i32::try_from(maxevents).map_err(|_| crate::Errno::INVAL)?;
         let sigmask = mask.map_or(core::ptr::null(), |mask| {
             (mask.kernel_bits() as *const u64).cast()
         });

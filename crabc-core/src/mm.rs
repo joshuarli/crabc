@@ -1,16 +1,31 @@
-//! Stateless Linux/AArch64 virtual-memory operations.
+//! Linux virtual-memory syscall seams.
+//!
+//! This module exposes only the raw mapping, bounded remapping, protection,
+//! unmapping, per-range/process-wide memory locking, and legacy file-page
+//! remapping calls used by the Rust facade.
 
+use crate::syscall::{
+    decode, syscall0, syscall1, syscall2, syscall3, syscall4, syscall5, syscall6, SYS_MLOCK,
+    SYS_MLOCK2, SYS_MLOCKALL, SYS_MADVISE, SYS_MBIND, SYS_MMAP, SYS_MINCORE, SYS_MPROTECT, SYS_MREMAP,
+    SYS_MSYNC, SYS_MUNLOCK, SYS_MUNLOCKALL, SYS_MUNMAP, SYS_REMAP_FILE_PAGES,
+};
 use crate::{RawFd, Result};
-use crate::syscall::{decode, syscall2, syscall3, syscall4, syscall5, syscall6, SYS_MADVISE, SYS_MBIND, SYS_MINCORE, SYS_MLOCK, SYS_MLOCK2, SYS_MLOCKALL, SYS_MMAP, SYS_MPROTECT, SYS_MREMAP, SYS_MSYNC, SYS_MUNLOCK, SYS_MUNLOCKALL, SYS_MUNMAP, SYS_REMAP_FILE_PAGES};
 
 const MREMAP_FIXED: u32 = 0x2;
 
-/// Creates a mapping with the Linux/AArch64 `mmap` ABI.
+/// Creates a mapping with Linux/x86-64's six-word `mmap` syscall ABI.
 ///
 /// # Safety
 ///
-/// The caller must uphold Linux mapping requirements and Rust pointer
-/// provenance/reference invariants for `address` and the returned range.
+/// This is the unfiltered kernel boundary. The caller must supply Linux-valid
+/// arguments: in particular, a nonzero range, page-aligned file offset, and a
+/// live file descriptor for a file mapping. If `flags` selects a fixed
+/// mapping, `address` must meet Linux's alignment requirements and the caller
+/// must ensure that replacing an existing range cannot invalidate any Rust
+/// reference. A successful result is usable only with the selected
+/// permissions and until a later unmap or protection change. The backing file
+/// must not be truncated below bytes that the caller accesses, because Linux
+/// can otherwise raise `SIGBUS`.
 #[inline]
 pub unsafe fn mmap_raw(
     address: *mut u8,
@@ -20,9 +35,12 @@ pub unsafe fn mmap_raw(
     fd: RawFd,
     offset: u64,
 ) -> Result<*mut u8> {
-    // SAFETY: The caller owns the mapping contract. `decode` recognizes
-    // only the Linux error range, so valid high-address mappings remain
-    // successful pointer values.
+    // Miri: return model memory with real provenance rather than an integer.
+    #[cfg(all(miri, target_arch = "x86_64"))]
+    return unsafe { crate::miri_model::mmap(address, length, protection, flags, fd, offset) };
+    // SAFETY: The caller owns the mapping contract. `decode` recognizes only
+    // the Linux error range, so valid high-address mappings remain successful
+    // pointer values.
     decode(unsafe {
         syscall6(
             SYS_MMAP,
@@ -37,34 +55,41 @@ pub unsafe fn mmap_raw(
     .map(|address| address as *mut u8)
 }
 
-/// Removes a Linux mapping.
+/// Removes a Linux/x86-64 mapping.
 ///
 /// # Safety
 ///
-/// The mapped range must be valid for unmapping and have no remaining Rust
-/// references.
+/// `address..address + length` must identify a mapped Linux range. No Rust
+/// references, slices, or aliases into that range may remain usable after a
+/// successful call, including references held by another abstraction.
 #[inline]
 pub unsafe fn munmap_raw(address: *mut u8, length: usize) -> Result<()> {
     // SAFETY: The caller owns the mapping lifetime/provenance contract.
     decode(unsafe { syscall2(SYS_MUNMAP, address as usize, length) }).map(|_| ())
 }
 
-/// Resizes or moves a Linux mapping with the AArch64 `mremap` ABI.
+/// Resizes or moves a Linux/x86-64 mapping with the four-argument ABI.
 ///
-/// `flags` is passed to Linux unchanged. The native facade currently
-/// exposes only `MREMAP_MAYMOVE`; this raw seam remains an ABI-level
-/// operation so the facade can own its closed flag policy.
+/// The x86-64 syscall convention carries the fourth argument in `r10`, which
+/// is handled by the generic `syscall4` instruction seam. The facade owns the
+/// closed flag policy; this raw operation intentionally forwards the supplied
+/// bits unchanged.
 ///
 /// # Safety
 ///
 /// `address` must be page-aligned, and the range beginning there and
-/// extending for `old_length` bytes, rounded up to a page boundary, must
-/// be a valid mapping owned by the caller. The caller must ensure that
-/// `address + old_length` and `address + new_length` do not wrap. There
-/// must be no Rust references into the old range when the operation may
-/// move it, and callers must treat the old mapping as invalid after any
-/// successful call: only the returned address may be used. If the call
-/// fails, Linux leaves the old mapping available for cleanup.
+/// extending for `old_length` bytes, rounded up to a page boundary, must be a
+/// valid mapping owned by the caller. The caller must ensure that
+/// `address + old_length` and `address + new_length` do not wrap. There must
+/// be no Rust references into the old range when the operation may move it,
+/// and ordinary nonzero-length success consumes the old mapping: callers
+/// must discard its pointer and use the returned pointer even when the numeric
+/// address is unchanged. With zero `old_length`, `address` must instead name a
+/// live shareable mapping and `MREMAP_MAYMOVE` must be supplied. Linux creates
+/// an additional shared alias while preserving the original source. Both
+/// mappings require independent cleanup, synchronized shared contents, and
+/// no incompatible Rust references through either alias. If the call fails,
+/// Linux leaves the original mapping available for cleanup.
 #[inline]
 pub unsafe fn mremap_raw(
     address: *mut u8,
@@ -72,8 +97,8 @@ pub unsafe fn mremap_raw(
     new_length: usize,
     flags: u32,
 ) -> Result<*mut u8> {
-    // SAFETY: The caller owns the mapping lifetime/provenance contract;
-    // Linux validates lengths, flags, and the mapping itself.
+    // SAFETY: The caller owns the mapping contract; Linux validates lengths,
+    // flags, and the mapping itself.
     decode(unsafe {
         syscall4(
             SYS_MREMAP,
@@ -86,25 +111,28 @@ pub unsafe fn mremap_raw(
     .map(|address| address as *mut u8)
 }
 
-/// Resizes or moves a Linux mapping to a caller-selected address.
+/// Resizes or moves a Linux/x86-64 mapping to a selected destination.
 ///
-/// This is the five-argument form of `mremap`. The kernel receives
-/// `MREMAP_FIXED` in addition to `flags`; the constant is kept private so
-/// the native facade cannot accidentally expose a fixed-address request
-/// through its ordinary operation. The returned address is the only valid
-/// successor of the old mapping after success.
+/// The kernel receives `MREMAP_FIXED` in addition to `flags`; keeping this
+/// constant private prevents the native facade from requesting fixed-address
+/// behavior through its ordinary operation.
 ///
 /// # Safety
 ///
-/// `address` and `new_address` must be page-aligned. The old range,
-/// rounded up to a page boundary, must be a valid mapping owned by the
-/// caller. The destination range must be valid for the destination
-/// pointer's provenance and must contain no Rust references: Linux may
-/// replace it. There must be no Rust references into the old range either.
-/// The caller must ensure that neither range calculation wraps. After a
-/// successful call, both the old mapping and any destination mapping
-/// replaced by Linux are invalid; only the returned address may be used.
-/// If the call fails, the old mapping remains available for cleanup.
+/// `address` and `new_address` must be page-aligned. The old range, rounded
+/// up to a page boundary, must be a valid mapping owned by the caller. The
+/// destination range must contain no Rust references because Linux may
+/// replace it, and neither range calculation may wrap. After success the
+/// replaced destination is invalid; its old pointer must be discarded for
+/// the returned pointer even when the numeric address is unchanged. Ordinary
+/// nonzero-length success also consumes the source mapping. With zero
+/// `old_length`, the source must instead be a live shareable mapping and
+/// `MREMAP_MAYMOVE` must be supplied: the source remains mapped, and the
+/// returned destination is an additional shared alias. Both require independent
+/// cleanup, synchronized shared contents, and no incompatible Rust references
+/// through either alias. Fixed remapping is not transactional: a failed call
+/// may already have unmapped the destination or truncated the source. The
+/// caller must not assume that an error preserves either original range.
 #[inline]
 pub unsafe fn mremap_fixed_raw(
     address: *mut u8,
@@ -113,8 +141,8 @@ pub unsafe fn mremap_fixed_raw(
     flags: u32,
     new_address: *mut u8,
 ) -> Result<*mut u8> {
-    // SAFETY: The caller owns both mapping lifetime/provenance contracts;
-    // Linux validates the fixed destination and mapping overlap rules.
+    // SAFETY: The caller owns both mapping contracts; Linux validates the
+    // fixed destination and mapping overlap rules.
     decode(unsafe {
         syscall5(
             SYS_MREMAP,
@@ -128,12 +156,14 @@ pub unsafe fn mremap_fixed_raw(
     .map(|address| address as *mut u8)
 }
 
-/// Changes Linux mapping protection.
+/// Changes Linux/x86-64 mapping protection.
 ///
 /// # Safety
 ///
-/// The range must be a valid mapped range, and the caller must preserve
-/// Rust's reference invariants after changing access permissions.
+/// `address..address + length` must identify a mapped Linux range. The caller
+/// must ensure no live Rust reference is used with permissions incompatible
+/// with `flags`; `PROT_NONE` makes every dereference invalid until a later
+/// protection change restores access.
 #[inline]
 pub unsafe fn mprotect_raw(address: *mut u8, length: usize, flags: u32) -> Result<()> {
     // SAFETY: The caller owns the mapped-range and provenance contracts.
@@ -141,83 +171,100 @@ pub unsafe fn mprotect_raw(address: *mut u8, length: usize, flags: u32) -> Resul
         .map(|_| ())
 }
 
-/// Locks a mapped range into memory with Linux `mlock`.
+/// Locks a mapped range into memory with Linux/x86-64's `mlock` syscall.
 ///
-/// Linux rounds the range down/up to page boundaries. This is a direct
-/// Linux/AArch64 syscall and does not use libc or thread-local `errno`.
+/// Linux rounds the range down/up to page boundaries. This direct syscall
+/// seam does not use libc or thread-local `errno`; the facade owns the
+/// caller-visible memlock and mapped-range contract.
 ///
 /// # Safety
 ///
 /// The range beginning at `address`, rounded down to the applicable page
-/// boundary and extending for `length` bytes rounded up to a page
-/// boundary, must remain mapped and readable for the duration of the
-/// call. The rounded address range must not overflow. The caller must
-/// preserve pointer provenance and Rust reference invariants for the
-/// mapped range.
+/// boundary and extending for `length` bytes rounded up to a page boundary,
+/// must remain mapped and readable for the duration of the call. The rounded
+/// address range must not overflow, and the caller must preserve pointer
+/// provenance and Rust reference invariants for the mapped range.
 #[inline]
 pub unsafe fn mlock_raw(address: *mut u8, length: usize) -> Result<()> {
-    // SAFETY: The caller owns the mapped-range and provenance contract;
-    // Linux validates the address, range, and process memlock limit.
+    // SAFETY: The caller owns the mapped-range contract; Linux validates the
+    // address, range, and process memlock limit.
     decode(unsafe { syscall2(SYS_MLOCK, address as usize, length) }).map(|_| ())
 }
 
-/// Locks a mapped range into memory with Linux `mlock2` flags.
+/// Locks a mapped range into memory with Linux/x86-64's `mlock2` syscall.
 ///
-/// `flags` is the Linux `MLOCK_*` bit set. The supported
-/// `MLOCK_ONFAULT` bit requests that pages be locked when they are first
-/// faulted instead of immediately. This is a direct Linux/AArch64 syscall
-/// and does not use libc or thread-local `errno`.
+/// `flags` is the Linux `MLOCK_*` bit set. The supported `MLOCK_ONFAULT` bit
+/// requests deferred page locking. Unsupported bits are passed to Linux for
+/// validation, preserving its direct error behavior.
 ///
 /// # Safety
 ///
 /// The range beginning at `address`, rounded down to the applicable page
-/// boundary and extending for `length` bytes rounded up to a page
-/// boundary, must remain mapped and readable for the duration of the
-/// call. The rounded address range must not overflow. The caller must
-/// preserve pointer provenance and Rust reference invariants for the
-/// mapped range. Unsupported flag bits are reported by Linux as an
-/// error.
+/// boundary and extending for `length` bytes rounded up to a page boundary,
+/// must remain mapped and readable for the duration of the call. The rounded
+/// address range must not overflow, and the caller must preserve pointer
+/// provenance and Rust reference invariants for the mapped range.
 #[inline]
 pub unsafe fn mlock2_raw(address: *mut u8, length: usize, flags: u32) -> Result<()> {
-    // SAFETY: The caller owns the mapped-range and provenance contract;
-    // Linux validates the address, range, flags, and memlock limit.
+    // SAFETY: The caller owns the mapped-range contract; Linux validates the
+    // address, range, flags, and process memlock limit.
     decode(unsafe { syscall3(SYS_MLOCK2, address as usize, length, flags as usize) })
         .map(|_| ())
 }
 
-/// Unlocks a previously locked mapped range with Linux `munlock`.
+/// Unlocks a previously locked mapped range with Linux/x86-64's `munlock`.
 ///
-/// Linux rounds the range down/up to page boundaries. This is a direct
-/// Linux/AArch64 syscall and does not use libc or thread-local `errno`.
+/// Linux rounds the range down/up to page boundaries. This direct syscall
+/// seam does not use libc or thread-local `errno`.
 ///
 /// # Safety
 ///
 /// The range beginning at `address`, rounded down to the applicable page
-/// boundary and extending for `length` bytes rounded up to a page
-/// boundary, must remain mapped for the duration of the call. The rounded
-/// address range must not overflow. The caller must preserve pointer
-/// provenance and Rust reference invariants for the mapped range.
+/// boundary and extending for `length` bytes rounded up to a page boundary,
+/// must remain mapped for the duration of the call. The rounded address range
+/// must not overflow, and the caller must preserve pointer provenance and
+/// Rust reference invariants for the mapped range.
 #[inline]
 pub unsafe fn munlock_raw(address: *mut u8, length: usize) -> Result<()> {
-    // SAFETY: The caller owns the mapped-range and provenance contract;
-    // Linux validates the address and range.
+    // SAFETY: The caller owns the mapped-range contract; Linux validates the
+    // address and range.
     decode(unsafe { syscall2(SYS_MUNLOCK, address as usize, length) }).map(|_| ())
+}
+
+/// Locks all current/future mappings in the calling process.
+///
+/// This operation changes process-global VM policy. It is kept as a direct
+/// raw seam so the native facade can expose that scope explicitly; no C
+/// allocator or thread-local error state is involved.
+#[inline]
+pub fn mlockall_raw(flags: u32) -> Result<()> {
+    // SAFETY: `flags` is an immediate Linux bit mask; Linux validates the
+    // combinations and process memlock limit.
+    decode(unsafe { syscall1(SYS_MLOCKALL, flags as usize) }).map(|_| ())
+}
+
+/// Removes all process-wide memory-lock policy.
+#[inline]
+pub fn munlockall_raw() -> Result<()> {
+    // SAFETY: The syscall has no pointer arguments and Linux validates the
+    // calling process state.
+    decode(unsafe { syscall0(SYS_MUNLOCKALL) }).map(|_| ())
 }
 
 /// Synchronizes a mapped range with its backing storage.
 ///
-/// This is the Linux/AArch64 `msync` syscall directly; it does not use
-/// libc or thread-local `errno`.
+/// This is the Linux/x86-64 `msync` syscall directly; it does not use libc or
+/// thread-local `errno`.
 ///
 /// # Safety
 ///
-/// `address` must be page-aligned and identify a valid mapped range of
-/// `length` bytes. `length` must be non-zero, and the mapping must remain
-/// valid for the duration of the call. The caller must preserve pointer
-/// provenance and Rust reference invariants across an operation which may
-/// write mapped contents back to its backing storage or invalidate cached
-/// data. `flags` must contain a Linux-supported synchronization mode;
-/// invalid combinations are reported by the kernel as [`Errno::INVAL`].
+/// `address` must be page-aligned. For a nonzero `length`, it must identify a
+/// valid mapped range which remains valid for the duration of the call. A zero
+/// length is a Linux no-op. The caller must preserve pointer provenance and
+/// Rust reference invariants across an operation which may write mapped
+/// contents back to its backing storage or invalidate cached data. `flags`
+/// must contain a Linux-supported synchronization mode; invalid combinations
+/// are reported by the kernel as `EINVAL`.
 #[inline]
 pub unsafe fn msync_raw(address: *mut u8, length: usize, flags: u32) -> Result<()> {
     // SAFETY: The caller owns the mapped-range and provenance contracts;
@@ -229,13 +276,13 @@ pub unsafe fn msync_raw(address: *mut u8, length: usize, flags: u32) -> Result<(
 ///
 /// # Safety
 ///
-/// `address` must be page-aligned and identify the first byte of a valid
-/// mapped range. `length` must be non-zero, and `address..address+length`
-/// must not overflow and must remain mapped for the duration of the call.
-/// The caller must preserve pointer provenance and Rust reference
-/// invariants across advice that can discard or alter page contents, such
-/// as `MADV_DONTNEED`. Linux rounds the final partial page as specified by
-/// the kernel ABI.
+/// `address` must be page-aligned. For a nonzero `length`, it must identify
+/// the first byte of a valid mapped range, `address..address+length` must not
+/// overflow, and the range must remain mapped for the duration of the call. A
+/// zero length is a Linux no-op. The caller must preserve pointer provenance
+/// and Rust reference invariants across advice that can discard or alter page
+/// contents, such as `MADV_DONTNEED`. Linux rounds the final partial page as
+/// specified by the kernel ABI.
 #[inline]
 pub unsafe fn madvise_raw(address: *mut u8, length: usize, advice: u32) -> Result<()> {
     // SAFETY: The caller owns the mapped-range and provenance contracts;
@@ -244,25 +291,21 @@ pub unsafe fn madvise_raw(address: *mut u8, length: usize, advice: u32) -> Resul
         .map(|_| ())
 }
 
-/// Applies a Linux NUMA memory policy to an existing mapped range.
+/// Applies a Linux/x86-64 NUMA memory policy to an existing mapped range.
 ///
-/// This is the exact Linux/AArch64 `mbind` ABI: `mode` is the kernel's
-/// signed `int`, while `nodemask` points to `unsigned long` words. On the
-/// supported AArch64 target `usize` is that unsigned-long word, so this seam
-/// does not introduce a compatibility layout. It intentionally supplies no
-/// memory-policy constants, NUMA discovery, huge-page allocation, retry, or
-/// fallback policy; those decisions remain with the caller.
+/// This is the exact `mbind(2)` word ABI on the native target: `mode` is the
+/// kernel signed integer, while `nodemask` addresses `unsigned long` words.
+/// Linux/x86-64 LP64 makes one Rust `usize` one such word. This raw seam owns
+/// neither node discovery nor a policy vocabulary; callers select and retain
+/// those source-level decisions.
 ///
 /// # Safety
 ///
-/// `address..address + length` must not wrap and must identify a mapping that
-/// remains valid for the syscall. For any `mode` that makes Linux inspect
-/// `nodemask`, the pointer must be null only when that mode permits it;
-/// otherwise it must be aligned and readable for enough `usize` words to
-/// represent `maxnode` bits, rounded up to the word size. Any pointer-valued
-/// policy argument must remain valid for the call, and the caller must uphold
-/// the selected Linux memory-policy semantics for the mapping and concurrent
-/// users of it.
+/// `address..address + length` must not wrap and must remain mapped for the
+/// call. A mode that makes Linux inspect `nodemask` requires a suitably
+/// aligned, readable word array for `maxnode` bits (rounded up to word size);
+/// a null pointer is valid only for modes that permit it. The caller owns the
+/// selected policy's lifetime and concurrency effects on this mapping.
 #[inline]
 pub unsafe fn mbind_raw(
     address: *mut u8,
@@ -272,9 +315,8 @@ pub unsafe fn mbind_raw(
     maxnode: usize,
     flags: u32,
 ) -> Result<()> {
-    // SAFETY: The caller owns the mapping and optional nodemask contracts;
-    // all scalar words are passed unchanged to Linux for option-specific
-    // validation.
+    // SAFETY: the caller owns the mapped range and optional nodemask
+    // contracts; scalar arguments pass unchanged to the Linux x86-64 ABI.
     decode(unsafe {
         syscall6(
             SYS_MBIND,
@@ -291,62 +333,44 @@ pub unsafe fn mbind_raw(
 
 /// Applies a POSIX memory-access advisory through Linux's `madvise` ABI.
 ///
-/// The syscall is shared with [`madvise_raw`], but this separate seam is
-/// intentional: POSIX `DONTNEED` has advisory semantics and must not be
-/// confused with Linux's page-discarding `MADV_DONTNEED` policy in a
-/// higher-level facade.
+/// The syscall is shared with [`madvise_raw`], but this separate seam keeps
+/// POSIX `DONTNEED` from being confused with Linux's page-discarding
+/// `MADV_DONTNEED` policy in a higher-level facade.
 ///
 /// # Safety
 ///
-/// `address..address+length` must satisfy the Linux advisory syscall's
-/// mapped-range and pointer-validity requirements.
+/// For policies other than POSIX `DONTNEED`, `address` must be page-aligned
+/// and `address..address+length` must satisfy the Linux advisory syscall's
+/// mapped-range and pointer-validity requirements. POSIX `DONTNEED` is a
+/// successful musl-compatible no-op on Linux, so it does not access or
+/// validate the supplied range.
 #[inline]
 pub unsafe fn posix_madvise_raw(address: *mut u8, length: usize, advice: u32) -> Result<()> {
-    // musl's POSIX_MADV_DONTNEED is intentionally a no-op on Linux:
-    // issuing Linux MADV_DONTNEED here would discard private anonymous
-    // contents and would silently change the POSIX contract.
+    // musl's POSIX_MADV_DONTNEED is intentionally a no-op on Linux: issuing
+    // Linux MADV_DONTNEED here would discard private anonymous contents and
+    // silently change the POSIX contract.
     if advice == 4 {
         let _ = (address, length);
         return Ok(());
     }
-    // SAFETY: The caller owns the mapped-range contract. Linux validates
-    // the POSIX advice value and reports invalid values as EINVAL.
+    // SAFETY: The caller owns the mapped-range contract. Linux validates the
+    // POSIX advice value and reports invalid values as EINVAL.
     decode(unsafe { syscall3(SYS_MADVISE, address as usize, length, advice as usize) })
         .map(|_| ())
-}
-
-/// Locks all current/future mappings in the calling process.
-///
-/// This operation changes process-global VM policy.  It is kept as a
-/// direct raw seam so the native facade can expose that scope explicitly;
-/// no C allocator or thread-local error state is involved.
-#[inline]
-pub fn mlockall_raw(flags: u32) -> Result<()> {
-    // SAFETY: `flags` is an immediate Linux bit mask; Linux validates the
-    // combinations and process memlock limit.
-    decode(unsafe { crate::syscall::syscall1(SYS_MLOCKALL, flags as usize) }).map(|_| ())
-}
-
-/// Removes all process-wide memory-lock policy.
-#[inline]
-pub fn munlockall_raw() -> Result<()> {
-    // SAFETY: The syscall has no pointer arguments and Linux validates the
-    // calling process state.
-    decode(unsafe { crate::syscall::syscall0(SYS_MUNLOCKALL) }).map(|_| ())
 }
 
 /// Re-maps pages in a legacy file mapping through Linux's
 /// `remap_file_pages` syscall.
 ///
 /// The protection and flags words are deliberately fixed to zero at this
-/// native boundary.  They are C ABI compatibility fields rather than a
-/// Rust policy surface for this legacy operation.
+/// native boundary. They are C ABI compatibility fields rather than a Rust
+/// policy surface for this legacy operation.
 ///
 /// # Safety
 ///
-/// The caller must provide the page-aligned mapped range and file-page
-/// offset required by Linux, and must not retain Rust references whose
-/// interpretation changes when the mapping is re-arranged.
+/// The caller must provide the page-aligned mapped range and file-page offset
+/// required by Linux, and must not retain Rust references whose interpretation
+/// changes when the mapping is re-arranged.
 #[inline]
 pub unsafe fn remap_file_pages_raw(
     address: *mut u8,
@@ -370,24 +394,25 @@ pub unsafe fn remap_file_pages_raw(
 
 /// Queries Linux page residency for a mapped range.
 ///
-/// Linux writes one byte per page of the range to `vector`; bit zero is
-/// set when that page is resident and the remaining bits are unspecified.
-/// The direct AArch64 syscall is number 232 and returns no count on
-/// success.
+/// Linux writes one byte per page of the range to `vector`; bit zero is set
+/// when that page is resident and the remaining bits are unspecified.
 ///
 /// # Safety
 ///
 /// `address` must be page-aligned and identify the first byte of a range
-/// which remains mapped for the duration of the call. `length` must not
-/// make `address..address+length` wrap. `vector` must be writable for the
-/// kernel's page count, namely `ceil(length / page_size)` bytes, and must
-/// remain valid for that duration. The caller must keep this output
-/// storage disjoint from the mapping being queried. A null `vector` is
-/// permitted only when the kernel page count is zero.
+/// which remains mapped for the duration of the call. `length` must not make
+/// `address..address+length` wrap. `vector` must be writable for the kernel's
+/// page count, namely `ceil(length / 4096)` bytes, and must remain valid for
+/// that duration. The caller must keep this output storage disjoint from the
+/// mapping being queried. A null `vector` is permitted only when the kernel
+/// page count is zero.
 #[inline]
 pub unsafe fn mincore_raw(address: *mut u8, length: usize, vector: *mut u8) -> Result<()> {
-    // SAFETY: The caller supplies the mapped-range and output-vector
-    // validity contracts; Linux validates the address and range.
+    // Miri: the model writes through the caller's own vector pointer.
+    #[cfg(all(miri, target_arch = "x86_64"))]
+    return unsafe { crate::miri_model::mincore(address, length, vector) };
+    // SAFETY: The caller supplies the mapped-range and output-vector validity
+    // contracts; Linux validates the address and range.
     decode(unsafe { syscall3(SYS_MINCORE, address as usize, length, vector as usize) })
         .map(|_| ())
 }

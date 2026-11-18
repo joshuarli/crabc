@@ -1,20 +1,19 @@
-//! Direct AArch64 floating-point environment operations.
-//!
-//! The floating-point environment is part of the calling thread's architectural
-//! state. This module snapshots and updates FPCR/FPSR directly; it does not use
-//! libc's `fenv.h` functions, a process-global singleton, or TLS `errno`.
+//! Floating-point environment operations.
 
-use core::arch::asm;
 use core::fmt;
 use core::ops::{BitAnd, BitOr, BitOrAssign};
 
-const ROUNDING_MASK: u32 = 0x00c0_0000;
+#[cfg(target_arch = "aarch64")]
+#[path = "fenv/aarch64.rs"]
+mod arch;
+#[cfg(target_arch = "x86_64")]
+#[path = "fenv/x86_64.rs"]
+mod arch;
+pub use arch::*;
 
-/// The five AArch64 floating-point exception flags exposed by musl.
+/// The five ISO C floating-point exception flags in the target register encoding.
 ///
-/// The bit values intentionally match FPSR and musl's AArch64 `FE_*`
-/// constants, so a captured flag set can cross this typed boundary without a
-/// C ABI translation.
+/// On x86-64 the denormal-operand status bit is preserved but not exposed.
 #[repr(transparent)]
 #[derive(Clone, Copy, Debug, Default, Eq, Hash, PartialEq)]
 pub struct ExceptionFlags(u32);
@@ -23,17 +22,17 @@ impl ExceptionFlags {
     /// No pending floating-point exceptions.
     pub const EMPTY: Self = Self(0);
     /// Invalid-operation exception.
-    pub const INVALID: Self = Self(1);
+    pub const INVALID: Self = Self(0x01);
     /// Division-by-zero exception.
-    pub const DIVIDE_BY_ZERO: Self = Self(2);
+    pub const DIVIDE_BY_ZERO: Self = Self(arch::DIVIDE_BY_ZERO);
     /// Overflow exception.
-    pub const OVERFLOW: Self = Self(4);
+    pub const OVERFLOW: Self = Self(arch::OVERFLOW);
     /// Underflow exception.
-    pub const UNDERFLOW: Self = Self(8);
+    pub const UNDERFLOW: Self = Self(arch::UNDERFLOW);
     /// Inexact-result exception.
-    pub const INEXACT: Self = Self(16);
-    /// All five architecturally exposed exception flags.
-    pub const ALL: Self = Self(31);
+    pub const INEXACT: Self = Self(arch::INEXACT);
+    /// All five exception flags represented by this API.
+    pub const ALL: Self = Self(arch::EXCEPTION_MASK);
 
     /// Creates flags if `bits` contains only the five supported flags.
     #[inline]
@@ -51,7 +50,7 @@ impl ExceptionFlags {
         Self(bits & Self::ALL.0)
     }
 
-    /// Returns the FPSR-compatible bit representation.
+    /// Returns the target register-compatible bit representation.
     #[inline]
     pub const fn bits(self) -> u32 {
         self.0
@@ -101,44 +100,6 @@ impl BitAnd for ExceptionFlags {
     }
 }
 
-/// AArch64 floating-point rounding mode.
-#[repr(u32)]
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
-pub enum RoundingMode {
-    /// Round to nearest, ties to even.
-    Nearest = 0x0000_0000,
-    /// Round toward negative infinity.
-    Downward = 0x0080_0000,
-    /// Round toward positive infinity.
-    Upward = 0x0040_0000,
-    /// Round toward zero.
-    TowardZero = 0x00c0_0000,
-}
-
-impl RoundingMode {
-    /// Decodes the FPCR rounding field.
-    ///
-    /// AArch64 reserves exactly two FPCR bits for rounding, and all four
-    /// encodings are defined. Masking the field therefore always produces one
-    /// of these typed values; an optional or fallible representation would
-    /// falsely suggest an invalid hardware state is possible here.
-    #[inline]
-    pub const fn from_raw(raw: u32) -> Self {
-        match raw & ROUNDING_MASK {
-            0x0000_0000 => Self::Nearest,
-            0x0080_0000 => Self::Downward,
-            0x0040_0000 => Self::Upward,
-            _ => Self::TowardZero,
-        }
-    }
-
-    /// Returns the FPCR-compatible rounding field.
-    #[inline]
-    pub const fn raw(self) -> u32 {
-        self as u32
-    }
-}
-
 impl fmt::Display for RoundingMode {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter.write_str(match self {
@@ -150,146 +111,12 @@ impl fmt::Display for RoundingMode {
     }
 }
 
-/// A captured AArch64 floating-point environment.
+/// Captures the environment and clears all five exception flags represented
+/// by [`ExceptionFlags`].
 ///
-/// This is a thread-local architectural snapshot, not a pointer to a C
-/// `fenv_t`. `Default` is the musl `FE_DFL_ENV` state (FPCR and FPSR zero).
-#[repr(C)]
-#[derive(Clone, Copy, Debug, Default, Eq, Hash, PartialEq)]
-pub struct Environment {
-    fpcr: u32,
-    fpsr: u32,
-}
-
-impl Environment {
-    /// Reconstructs a captured AArch64 FPCR/FPSR environment from its exact
-    /// architectural bit patterns.
-    ///
-    /// This is the shared C-facade bridge for an already-captured musl
-    /// `fenv_t`; it does not expose a pointer, global object, or C ABI type.
-    #[inline]
-    pub const fn from_raw(fpcr: u32, fpsr: u32) -> Self {
-        Self { fpcr, fpsr }
-    }
-
-    /// Returns the raw FPCR bits captured in this environment.
-    #[inline]
-    pub const fn fpcr(self) -> u32 {
-        self.fpcr
-    }
-
-    /// Returns the raw FPSR bits captured in this environment.
-    #[inline]
-    pub const fn fpsr(self) -> u32 {
-        self.fpsr
-    }
-
-    /// Returns the pending exception flags captured in this environment.
-    #[inline]
-    pub const fn exceptions(self) -> ExceptionFlags {
-        ExceptionFlags::from_bits_truncate(self.fpsr)
-    }
-
-    /// Returns the rounding mode captured in this environment.
-    #[inline]
-    pub const fn rounding(self) -> RoundingMode {
-        RoundingMode::from_raw(self.fpcr)
-    }
-}
-
-#[inline]
-fn read_fpcr() -> u32 {
-    let fpcr: u64;
-    // SAFETY: `mrs fpcr` reads the calling thread's AArch64 FPCR register into
-    // an ordinary integer and has no memory or pointer preconditions.
-    unsafe {
-        asm!("mrs {fpcr}, fpcr", fpcr = out(reg) fpcr, options(nostack));
-    }
-    fpcr as u32
-}
-
-#[inline]
-fn read_fpsr() -> u32 {
-    let fpsr: u64;
-    // SAFETY: `mrs fpsr` reads the calling thread's AArch64 FPSR register into
-    // an ordinary integer and has no memory or pointer preconditions.
-    unsafe {
-        asm!("mrs {fpsr}, fpsr", fpsr = out(reg) fpsr, options(nostack));
-    }
-    fpsr as u32
-}
-
-#[inline]
-fn write_fpcr(fpcr: u32) {
-    let fpcr = fpcr as u64;
-    // SAFETY: `msr fpcr` writes one scalar value to the calling thread's
-    // architectural FPCR register; the value came from this typed module.
-    unsafe {
-        asm!("msr fpcr, {fpcr}", fpcr = in(reg) fpcr, options(nostack));
-    }
-}
-
-#[inline]
-fn write_fpsr(fpsr: u32) {
-    let fpsr = fpsr as u64;
-    // SAFETY: `msr fpsr` writes one scalar value to the calling thread's
-    // architectural FPSR register; the value came from this typed module.
-    unsafe {
-        asm!("msr fpsr, {fpsr}", fpsr = in(reg) fpsr, options(nostack));
-    }
-}
-
-/// Captures the calling thread's FPCR and FPSR.
-#[inline]
-pub fn get_environment() -> Environment {
-    Environment {
-        fpcr: read_fpcr(),
-        fpsr: read_fpsr(),
-    }
-}
-
-/// Restores a previously captured floating-point environment.
-#[inline]
-pub fn set_environment(environment: Environment) {
-    write_fpcr(environment.fpcr);
-    write_fpsr(environment.fpsr);
-}
-
-/// Returns the calling thread's current rounding mode.
-#[inline]
-pub fn get_rounding() -> RoundingMode {
-    RoundingMode::from_raw(read_fpcr())
-}
-
-/// Sets the calling thread's rounding mode while preserving other FPCR bits.
-#[inline]
-pub fn set_rounding(rounding: RoundingMode) {
-    write_fpcr((read_fpcr() & !ROUNDING_MASK) | rounding.raw());
-}
-
-/// Clears selected pending exception flags in the calling thread's FPSR.
-#[inline]
-pub fn clear_exceptions(flags: ExceptionFlags) {
-    if !flags.is_empty() {
-        write_fpsr(read_fpsr() & !flags.bits());
-    }
-}
-
-/// Raises selected pending exception flags in the calling thread's FPSR.
-#[inline]
-pub fn raise_exceptions(flags: ExceptionFlags) {
-    if !flags.is_empty() {
-        write_fpsr(read_fpsr() | flags.bits());
-    }
-}
-
-/// Tests selected pending exception flags in the calling thread's FPSR.
-#[inline]
-pub fn test_exceptions(flags: ExceptionFlags) -> ExceptionFlags {
-    ExceptionFlags::from_bits_truncate(read_fpsr()) & flags
-}
-
-/// Captures the environment and clears all pending exception flags.
+/// As in the existing AArch64 core API, this leaves exception-mask/trap-enable
+/// bits unchanged; it is a typed environment snapshot operation rather than a
+/// C ABI implementation of every `feholdexcept` side effect.
 #[inline]
 pub fn hold_exceptions() -> Environment {
     let environment = get_environment();
@@ -297,7 +124,8 @@ pub fn hold_exceptions() -> Environment {
     environment
 }
 
-/// Restores `environment` and re-raises exceptions pending before the restore.
+/// Restores `environment` and re-raises exception flags pending before the
+/// restore in both x87 and MXCSR.
 #[inline]
 pub fn update_environment(environment: Environment) {
     let exceptions = test_exceptions(ExceptionFlags::ALL);

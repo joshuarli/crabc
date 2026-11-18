@@ -3,6 +3,16 @@ use core::mem::{align_of, offset_of, size_of};
 
 use crabc_rs::time::{self, ClockId, Timespec, NANOS_PER_SECOND};
 
+#[cfg(target_arch = "aarch64")]
+trait ClockQueryResult {
+    fn expect(self, message: &str) -> Self;
+}
+
+#[cfg(target_arch = "aarch64")]
+impl ClockQueryResult for Timespec {
+    fn expect(self, _message: &str) -> Self { self }
+}
+
 #[test]
 fn x86_64_timespec_record_matches_linux_wire_shape() {
     assert_eq!(size_of::<Timespec>(), 16);

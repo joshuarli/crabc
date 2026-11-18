@@ -1066,13 +1066,11 @@ pub fn exchange_with_transport(
 /// callback parsers to retain a complete answer prefix before a late malformed
 /// record. It deliberately keeps the core's stronger exact-question
 /// correlation, and is not a public DNS parsing interface.
-#[cfg(target_arch = "x86_64")]
 #[doc(hidden)]
 pub struct QuestionMatchedReply {
     length: usize,
 }
 
-#[cfg(target_arch = "x86_64")]
 impl QuestionMatchedReply {
     /// Byte length of the received packet in the caller's answer buffer.
     pub const fn len(&self) -> usize { self.length }
@@ -1085,7 +1083,6 @@ impl QuestionMatchedReply {
 /// framing validation. This narrow boundary accepts only a complete transport
 /// reply that passed exact response/question correlation; DNS TC still uses
 /// TCP and an incomplete TCP frame remains an exchange error.
-#[cfg(target_arch = "x86_64")]
 #[doc(hidden)]
 pub fn exchange_with_transport_question_matched(
     config: &ExchangeConfig,

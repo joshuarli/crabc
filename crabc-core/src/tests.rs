@@ -66,9 +66,8 @@ fn prctl_raw_preserves_invalid_kernel_argument_errors() {
     );
 }
 
-#[cfg(target_arch = "x86_64")]
 #[test]
-fn x86_64_openat_mode_and_direct_io_follow_the_kernel_abi() {
+fn openat_mode_and_direct_io_follow_the_kernel_abi() {
     use core::ffi::CStr;
 
     const O_RDWR: i32 = 0x0002;
@@ -389,4 +388,37 @@ fn x86_64_preadv2_pwritev2_preserve_split_offsets_and_sixth_flags() {
     let close = crate::io::close(fd);
     operation.expect("x86 preadv2/pwritev2 argument sequence");
     close.expect("close anonymous I/O evidence descriptor");
+}
+
+#[test]
+fn dup2_equal_descriptors_validate_the_source() {
+    let (read, write) = crate::pipe::pipe2(0).expect("pipe");
+    assert_eq!(crate::io::dup2(read, read), Ok(()));
+    assert!(crate::io::fcntl_getfd(read).is_ok());
+    assert_eq!(crate::io::dup2(-1, -1), Err(Errno::BADF));
+    crate::io::close(read).expect("close reader");
+    crate::io::close(write).expect("close writer");
+}
+
+#[test]
+fn poll_converts_zero_positive_and_negative_timeouts() {
+    use std::time::{Duration, Instant};
+    let (read, write) = crate::pipe::pipe2(0).expect("pipe");
+    let mut pollfd = crate::event::KernelPollFd { fd: read, events: 1, revents: 0 };
+    // SAFETY: `pollfd` is one live writable pollfd record.
+    assert_eq!(unsafe { crate::event::poll_raw(&mut pollfd, 1, 0) }, Ok(0));
+    let start = Instant::now();
+    // SAFETY: `pollfd` is one live writable pollfd record.
+    assert_eq!(unsafe { crate::event::poll_raw(&mut pollfd, 1, 25) }, Ok(0));
+    assert!(start.elapsed() >= Duration::from_millis(20));
+    let writer = std::thread::spawn(move || {
+        std::thread::sleep(Duration::from_millis(20));
+        crate::io::write(write, &[1]).expect("write pipe");
+        crate::io::close(write).expect("close writer");
+    });
+    // SAFETY: `pollfd` is one live writable pollfd record.
+    assert_eq!(unsafe { crate::event::poll_raw(&mut pollfd, 1, -2) }, Ok(1));
+    assert_ne!(pollfd.revents & 1, 0);
+    writer.join().expect("writer thread");
+    crate::io::close(read).expect("close reader");
 }
