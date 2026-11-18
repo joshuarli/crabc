@@ -20,6 +20,7 @@ pub use x86_64_dynamic_startup::__crabc_x86_64_dynamic_start;
 // This private marker is the crabc-loader's owned-entry check, not
 // an ELF export or the lifecycle handoff record. Pinned musl ignores it, which
 // keeps this executable runnable under the musl loader.
+#[cfg(target_arch = "x86_64")]
 core::arch::global_asm!(
     r#"
     .section .note.crabc.owned-crt,"a",@note
@@ -35,7 +36,23 @@ core::arch::global_asm!(
     revision = const if cfg!(crabc_hardened) { 2 } else { 1 },
 );
 
-#[cfg(not(crabc_general_dynamic_lifecycle))]
+#[cfg(target_arch = "aarch64")]
+core::arch::global_asm!(
+    r#"
+    .section .note.crabc.owned-crt,"a",%note
+    .balign 4
+    .long 6
+    .long 4
+    .long 0x43525401
+    .asciz "CRABC"
+    .balign 4
+    .long {revision}
+    .balign 4
+"#,
+    revision = const if cfg!(crabc_hardened) { 2 } else { 1 },
+);
+
+#[cfg(all(target_arch = "x86_64", not(crabc_general_dynamic_lifecycle)))]
 core::arch::global_asm!(
     r#"
     .intel_syntax noprefix
@@ -62,7 +79,7 @@ _start:
 // Only the owned dynamic lifecycle mode consumes the loader's conventional
 // rtld_fini register. Preserve it as the second Rust argument before any
 // call, then authenticate it against the existing owned handoff record.
-#[cfg(crabc_general_dynamic_lifecycle)]
+#[cfg(all(target_arch = "x86_64", crabc_general_dynamic_lifecycle))]
 core::arch::global_asm!(
     r#"
     .intel_syntax noprefix
@@ -80,6 +97,24 @@ _start:
     .size _start, .-_start
     .att_syntax prefix
     .section .note.GNU-stack,"",@progbits
+"#,
+    startup = sym __crabc_x86_64_dynamic_start,
+);
+
+#[cfg(target_arch = "aarch64")]
+core::arch::global_asm!(
+    r#"
+    .section .text._start,"ax",%progbits
+    .global _start
+    .type _start,%function
+_start:
+    mov x1, x0
+    mov x0, sp
+    mov x29, xzr
+    bl {startup}
+    brk #0
+    .size _start, .-_start
+    .section .note.GNU-stack,"",%progbits
 "#,
     startup = sym __crabc_x86_64_dynamic_start,
 );

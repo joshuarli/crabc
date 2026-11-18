@@ -882,8 +882,6 @@ def build(args: argparse.Namespace) -> dict[str, object]:
 def build_aarch64(args: argparse.Namespace) -> dict[str, object]:
     if args.profile != "release" or args.hardening_profile is not NativeRuntimeProfile.COMPATIBILITY:
         raise BuildError("aarch64 CRT currently supports the compatibility static profile only")
-    if args.dynamic_main_thread_runtime_v1 or args.general_dynamic_lifecycle or args.owned_dynamic_sysroot:
-        raise BuildError("aarch64 dynamic CRT is not implemented")
     output = output_directory(args.out_dir)
     environment = deterministic_environment()
     rustc = default_rustc_command()
@@ -893,10 +891,14 @@ def build_aarch64(args: argparse.Namespace) -> dict[str, object]:
     compiler = native_build_tools.compile_command(physical_sysroot / "bin/rustc")
     records = []
     objects = {}
-    for name in ("crt1", "crti", "crtn"):
+    names = ("crt1", "crti", "crtn", "Scrt1") if args.owned_dynamic_sysroot else ("crt1", "crti", "crtn")
+    for name in names:
         source = source_path("x86_64_" + name + ".rs")
         destination = output / (name + ".o")
         command = compiler + ["--edition=2021", "--crate-type=lib", "--emit=obj", "--target", "aarch64-unknown-linux-musl", "-C", "panic=abort", "-C", "force-unwind-tables=no", "-C", "opt-level=2", "-C", "relocation-model=static", "-C", "code-model=small", str(source), "-o", str(destination)]
+        if name == "Scrt1":
+            command[command.index("-C"):command.index("-C")] = ["--cfg", "crabc_owned_dynamic_runtime", "--cfg", "crabc_general_dynamic_lifecycle"]
+            command[command.index("relocation-model=static")] = "relocation-model=pic"
         result = run_command(command, environment)
         records.append(result)
         if result["returncode"]:
@@ -906,9 +908,9 @@ def build_aarch64(args: argparse.Namespace) -> dict[str, object]:
             raise BuildError(f"{destination}: expected aarch64 ELF relocatable")
         objects[destination.name] = {"sha256": sha256_file(destination), "source": source.name}
     write_json(output / "commands.json", records)
-    report = {"schema": 1, "target": "aarch64-unknown-linux-musl", "hardening_profile": args.hardening_profile.value, "objects": objects, "skipped": ["x86 entry machine-code and relocation audit", "x86 dynamic and static PIE CRT objects"]}
+    report = {"schema": 1, "target": "aarch64-unknown-linux-musl", "hardening_profile": args.hardening_profile.value, "objects": objects, "skipped": ["x86 entry machine-code and relocation audit", "x86 static PIE CRT objects"]}
     write_json(output / "objects.json", report)
-    print("aarch64 CRT: skipped x86 entry machine-code/relocation audit and dynamic/static-PIE objects", file=sys.stderr)
+    print("aarch64 CRT: skipped x86 entry machine-code/relocation audit and static-PIE objects", file=sys.stderr)
     return report
 
 
