@@ -48,7 +48,7 @@ struct TimezoneGuard;
 impl TimezoneGuard {
     fn acquire() -> Self {
         while LOCK.compare_exchange(0, 1, Ordering::Acquire, Ordering::Relaxed).is_err() {
-            unsafe { sys::syscall4(202, LOCK.as_ptr() as i64, 128, 1, 0); }
+            unsafe { sys::syscall4(sys::SYS_FUTEX, LOCK.as_ptr() as i64, 128, 1, 0); }
         }
         Self
     }
@@ -56,7 +56,7 @@ impl TimezoneGuard {
 impl Drop for TimezoneGuard {
     fn drop(&mut self) {
         LOCK.store(0, Ordering::Release);
-        unsafe { sys::syscall3(202, LOCK.as_ptr() as i64, 129, 1); }
+        unsafe { sys::syscall3(sys::SYS_FUTEX, LOCK.as_ptr() as i64, 129, 1); }
     }
 }
 /// Acquire the __timezone_lockptr position after stdio/syslog in musl fork order.
@@ -151,7 +151,7 @@ unsafe fn read32(p: *const u8) -> u32 {
     unsafe { u32::from_be_bytes([*p, *p.add(1), *p.add(2), *p.add(3)]) }
 }
 
-// Linux/x86 stat is 144 bytes with st_size at byte 48. This scratch record is
+// Linux/x86-64 and AArch64 stat place st_size at byte 48. This scratch record is
 // private kernel ABI storage, not a new public struct-stat owner.
 //
 // musl's `__map_file` opens through `sys_open`, which is `__syscall_ret`
@@ -160,19 +160,19 @@ unsafe fn read32(p: *const u8) -> u32 {
 // the first tzset/localtime, and callers observe it.
 unsafe fn map_file(path: *const u8) -> Option<(*const u8, usize)> {
     unsafe {
-        let fd = sys::syscall3(2, path as i64, 0x80800, 0);
+        let fd = sys::syscall4(sys::SYS_OPENAT, -100, path as i64, 0x80800, 0);
         if fd < 0 {
             errno::set_errno(-fd as c_int);
             return None;
         }
         let mut stat = [0u64; 18];
-        let status = sys::syscall2(5, fd, stat.as_mut_ptr() as i64);
+        let status = sys::syscall2(sys::SYS_FSTAT, fd, stat.as_mut_ptr() as i64);
         let mut mapping = -1;
         if status == 0 {
-            mapping = sys::syscall6(9, 0, stat[6] as i64, 1, 1, fd, 0);
+            mapping = sys::syscall6(sys::SYS_MMAP, 0, stat[6] as i64, 1, 1, fd, 0);
             if (-4095..0).contains(&mapping) { errno::set_errno(-mapping as c_int); }
         } else { errno::set_errno(-status as c_int); }
-        sys::syscall1(3, fd);
+        sys::syscall1(sys::SYS_CLOSE, fd);
         if (-4095..0).contains(&mapping) { None }
         else { Some((mapping as *const u8, stat[6] as usize)) }
     }
@@ -232,7 +232,7 @@ unsafe fn configure() {
         if *source == 0 { source = utc; }
         if !OLD_TZ.is_null() && equal(source, OLD_TZ) { return; }
         RULES = [[0; 5]; 2];
-        if let Some(map) = MAPPING { sys::syscall2(11, map.base as i64, map.size as i64); }
+        if let Some(map) = MAPPING { sys::syscall2(sys::SYS_MUNMAP, map.base as i64, map.size as i64); }
         MAPPING = None;
         let mut size = length(source);
         if size > 4097 { source = utc; size = 3; }
@@ -276,7 +276,7 @@ unsafe fn configure() {
         }
         if let Some((base, size)) = mapped {
             MAPPING = parse_mapping(base, size);
-            if MAPPING.is_none() { sys::syscall2(11, base as i64, size as i64); source = utc; }
+            if MAPPING.is_none() { sys::syscall2(sys::SYS_MUNMAP, base as i64, size as i64); source = utc; }
         }
         let mut cursor = TzCursor::string(source);
         if let Some(map) = MAPPING {

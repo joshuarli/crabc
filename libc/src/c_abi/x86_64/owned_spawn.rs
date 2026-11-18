@@ -63,10 +63,6 @@ unsafe extern "C" {
         stack: *mut u8, flags: i32, argument: *mut c_void, parent_tid: *mut c_int,
         tls: *mut c_void, child_tid: *mut c_int) -> i64;
 }
-#[cfg(target_arch = "x86_64")]
-const SYS_FCHDIR: i64 = 81;
-#[cfg(target_arch = "aarch64")]
-const SYS_FCHDIR: i64 = 50;
 
 unsafe fn duplicate_to(old: i64, new: i64) -> i64 {
     #[cfg(target_arch = "x86_64")]
@@ -78,10 +74,6 @@ unsafe fn duplicate_to(old: i64, new: i64) -> i64 {
 }
 
 unsafe fn open_path(path: *const u8, flags: i64, mode: i64) -> i64 {
-    #[cfg(target_arch = "x86_64")]
-    // SAFETY: the caller supplies the terminated file-action pathname.
-    unsafe { sys::syscall3(2, path as i64, flags, mode) }
-    #[cfg(target_arch = "aarch64")]
     // SAFETY: the caller supplies the terminated file-action pathname.
     unsafe { sys::syscall4(sys::SYS_OPENAT, -100, path as i64, flags, mode) }
 }
@@ -158,7 +150,7 @@ unsafe fn child_exec(args: *mut SpawnArguments, error_fd: &mut c_int) -> i64 {
                     0
                 }
                 4 => sys::syscall1(sys::SYS_CHDIR, op.cast::<u8>().add(36) as i64),
-                5 => sys::syscall1(SYS_FCHDIR, (*op).fd as i64),
+                5 => sys::syscall1(sys::SYS_FCHDIR, (*op).fd as i64),
                 _ => 0, // Only the existing initialized action owner writes cmd.
             };
             if result < 0 { return result; }

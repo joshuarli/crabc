@@ -3168,7 +3168,7 @@ unsafe fn create_selected_worker_with_attributes(
     #[cfg(crabc_x86_owned_runtime)]
     let scheduler_result = if clone_result >= 0 && attributes.scheduler_requested {
         let result = unsafe { raw_syscall::syscall3(
-            144, clone_result, attributes.sched_policy as i64,
+            raw_syscall::SYS_SCHED_SETSCHEDULER, clone_result, attributes.sched_policy as i64,
             core::ptr::addr_of!(attributes.sched_priority) as i64,
         ) };
         unsafe {

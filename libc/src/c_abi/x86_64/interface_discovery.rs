@@ -39,12 +39,6 @@ const ENXIO_VAL: c_int = 6;
 const AF_UNIX: c_int = 1;
 const SOCK_DGRAM: c_int = 2;
 
-const SYS_CLOSE: i64 = raw_syscall::SYS_CLOSE;
-const SYS_MMAP: i64 = raw_syscall::SYS_MMAP;
-const SYS_MUNMAP: i64 = raw_syscall::SYS_MUNMAP;
-const SYS_IOCTL: i64 = raw_syscall::SYS_IOCTL;
-const SYS_SENDTO: i64 = raw_syscall::SYS_SENDTO;
-const SYS_RECVFROM: i64 = raw_syscall::SYS_RECVFROM;
 
 const PROT_READ_WRITE: i64 = 0x3;
 const MAP_PRIVATE_ANONYMOUS: i64 = 0x22;
@@ -88,7 +82,7 @@ unsafe fn malloc(size: usize) -> *mut c_void {
         }
     };
     let mapping = raw_syscall::syscall6(
-        SYS_MMAP,
+        raw_syscall::SYS_MMAP,
         0,
         mapping_length as i64,
         PROT_READ_WRITE,
@@ -141,7 +135,7 @@ unsafe fn free(pointer: *mut c_void) {
     }
     let length = (*header).mapping_length;
     (*header).magic = 0;
-    let _ = raw_syscall::syscall2(SYS_MUNMAP, header as i64, length as i64);
+    let _ = raw_syscall::syscall2(raw_syscall::SYS_MUNMAP, header as i64, length as i64);
 }
 
 #[inline]
@@ -177,12 +171,12 @@ unsafe fn realloc(pointer: *mut c_void, size: usize) -> *mut c_void {
 
 #[inline]
 unsafe fn sys_close(fd: i64) -> i64 {
-    raw_syscall::syscall1(SYS_CLOSE, fd)
+    raw_syscall::syscall1(raw_syscall::SYS_CLOSE, fd)
 }
 
 #[inline]
 unsafe fn sys_ioctl(fd: c_int, request: u32, argument: *mut u8) -> i64 {
-    raw_syscall::syscall3(SYS_IOCTL, fd as i64, request as i64, argument as i64)
+    raw_syscall::syscall3(raw_syscall::SYS_IOCTL, fd as i64, request as i64, argument as i64)
 }
 
 #[inline]
@@ -195,7 +189,7 @@ unsafe fn sys_sendto(
     address_length: c_uint,
 ) -> i64 {
     raw_syscall::syscall6(
-        SYS_SENDTO,
+        raw_syscall::SYS_SENDTO,
         fd as i64,
         buffer as i64,
         length as i64,
@@ -215,7 +209,7 @@ unsafe fn sys_recvfrom(
     address_length: *mut c_uint,
 ) -> i64 {
     raw_syscall::syscall6(
-        SYS_RECVFROM,
+        raw_syscall::SYS_RECVFROM,
         fd as i64,
         buffer as i64,
         length as i64,

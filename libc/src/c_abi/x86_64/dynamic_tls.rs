@@ -248,7 +248,7 @@ pub(super) unsafe fn reset_current_thread_images(
     #[cfg(not(feature = "native-mimalloc-shadow"))]
     let result = unsafe { __crabc_x86_64_reset_current_tls_v1() };
     if result != 0 {
-        unsafe { raw_syscall::syscall1(231, 127); }
+        unsafe { raw_syscall::syscall1(raw_syscall::SYS_EXIT_GROUP, 127); }
         loop { core::hint::spin_loop(); }
     }
 }

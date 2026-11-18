@@ -55,7 +55,7 @@ struct CleanupDescriptor { fd: Cell<c_int> }
 unsafe extern "C" fn cleanup(argument: *mut c_void) {
     let descriptor = unsafe { &*argument.cast::<CleanupDescriptor>() };
     let fd = descriptor.fd.replace(-1);
-    if fd >= 0 { unsafe { raw_syscall::syscall1(3, fd as i64); } }
+    if fd >= 0 { unsafe { raw_syscall::syscall1(raw_syscall::SYS_CLOSE, fd as i64); } }
 }
 
 struct OwnedDnsTransport<'a> {
@@ -107,7 +107,7 @@ impl DnsTransport for OwnedDnsTransport<'_> {
 
     fn close_socket(&mut self, fd: c_int) {
         self.descriptor.fd.set(-1);
-        unsafe { raw_syscall::syscall1(3, fd as i64); }
+        unsafe { raw_syscall::syscall1(raw_syscall::SYS_CLOSE, fd as i64); }
     }
 
     fn syscall_failed(&mut self, error: Errno) { self.last_errno = Some(error); }
@@ -174,7 +174,7 @@ impl DnsTransport for OwnedDnsTransport<'_> {
         let enabled: c_int = 1;
         // SAFETY: the initialized int option and sockaddr remain live through
         // their raw non-canceling operations; fd is registered for retirement.
-        let option = unsafe { raw_syscall::syscall5(54, fd as i64, 6, 30,
+        let option = unsafe { raw_syscall::syscall5(raw_syscall::SYS_SETSOCKOPT, fd as i64, 6, 30,
             &enabled as *const c_int as i64, core::mem::size_of::<c_int>() as i64) };
         if self.record(option).is_ok() {
             let prefix = [(query.len() >> 8) as u8, query.len() as u8];
@@ -185,7 +185,7 @@ impl DnsTransport for OwnedDnsTransport<'_> {
             // SAFETY: both readable frame slices and the addressed header are
             // initialized locals. Source sends this first frame with cancel
             // disabled; later queued suffixes use the ordinary sendmsg CP.
-            let sent = unsafe { raw_syscall::syscall3(46, fd as i64,
+            let sent = unsafe { raw_syscall::syscall3(raw_syscall::SYS_SENDMSG, fd as i64,
                 &message as *const Message as i64, MSG_FASTOPEN|MSG_NOSIGNAL) };
             match self.record(sent) {
                 Ok(frame_bytes) => return Ok(DnsTcpStart::Queued { frame_bytes }),
@@ -193,7 +193,7 @@ impl DnsTransport for OwnedDnsTransport<'_> {
                 Err(_) => (),
             }
         }
-        let connected = unsafe { raw_syscall::syscall3(42, fd as i64, address.as_ptr() as i64, address.len() as i64) };
+        let connected = unsafe { raw_syscall::syscall3(raw_syscall::SYS_CONNECT, fd as i64, address.as_ptr() as i64, address.len() as i64) };
         match self.record(connected) {
             Ok(_) => Ok(DnsTcpStart::Queued { frame_bytes: 0 }),
             Err(error) if error == Errno::INPROGRESS => Ok(DnsTcpStart::Queued { frame_bytes: 0 }),

@@ -227,7 +227,7 @@ impl CleanupDescriptors {
     fn new() -> Self { Self { fds: core::array::from_fn(|_| Cell::new(-1)) } }
     fn close(&self, index: usize) {
         let fd = self.fds[index].replace(-1);
-        if fd >= 0 { unsafe { raw_syscall::syscall1(3, fd as i64); } }
+        if fd >= 0 { unsafe { raw_syscall::syscall1(raw_syscall::SYS_CLOSE, fd as i64); } }
     }
 }
 
@@ -297,7 +297,7 @@ impl Batch<'_> {
         // Linux 5.10 supplies CLOCK_MONOTONIC.  The upstream ENOSYS realtime
         // fallback is intentionally omitted rather than adding pre-baseline
         // kernel behavior to this selected Linux runtime.
-        let result = unsafe { raw_syscall::syscall2(228, 1, &mut time as *mut Timespec as i64) };
+        let result = unsafe { raw_syscall::syscall2(raw_syscall::SYS_CLOCK_GETTIME, 1, &mut time as *mut Timespec as i64) };
         if self.record(result).is_err() { return 0; }
         (time.seconds as u64).wrapping_mul(1000).wrapping_add((time.nanoseconds / 1_000_000) as u64)
     }
@@ -621,7 +621,7 @@ pub(super) unsafe fn exchange(config: &CResolverBatchConfig, requests: BatchRequ
     unsafe { pthread_cancel::pthread_setcancelstate(DISABLE, &mut entry_state); }
     let descriptors = core::pin::pin!(CleanupDescriptors::new());
     let descriptors = descriptors.as_ref().get_ref();
-    let mut open = |family: c_int| unsafe { raw_syscall::syscall3(41, family as i64, SOCK_DGRAM|SOCK_NONBLOCK|SOCK_CLOEXEC, 0) };
+    let mut open = |family: c_int| unsafe { raw_syscall::syscall3(raw_syscall::SYS_SOCKET, family as i64, SOCK_DGRAM|SOCK_NONBLOCK|SOCK_CLOEXEC, 0) };
     let mut fd = open(family);
     if fd < 0 && family == AF_INET6 && fd == -(Errno::AFNOSUPPORT.raw() as i64) {
         let Some(first_v4) = config.nameservers[..server_count].iter().position(|server| server.family as c_int == AF_INET) else {
@@ -640,13 +640,13 @@ pub(super) unsafe fn exchange(config: &CResolverBatchConfig, requests: BatchRequ
     }
     if family == AF_INET6 {
         let disabled: c_int = 0;
-        let _ = unsafe { raw_syscall::syscall5(54, fd, 41, IPV6_V6ONLY, &disabled as *const c_int as i64, core::mem::size_of::<c_int>() as i64) };
+        let _ = unsafe { raw_syscall::syscall5(raw_syscall::SYS_SETSOCKOPT, fd, 41, IPV6_V6ONLY, &disabled as *const c_int as i64, core::mem::size_of::<c_int>() as i64) };
     }
     let mut bound = [0u8;28]; bound[..2].copy_from_slice(&(family as u16).to_ne_bytes());
     let bound_length = if family == AF_INET6 { 28 } else { 16 };
-    let bound_result = unsafe { raw_syscall::syscall3(49, fd, bound.as_ptr() as i64, bound_length) };
+    let bound_result = unsafe { raw_syscall::syscall3(raw_syscall::SYS_BIND, fd, bound.as_ptr() as i64, bound_length) };
     if bound_result < 0 {
-        unsafe { raw_syscall::syscall1(3, fd); pthread_cancel::pthread_setcancelstate(entry_state, ptr::null_mut()); }
+        unsafe { raw_syscall::syscall1(raw_syscall::SYS_CLOSE, fd); pthread_cancel::pthread_setcancelstate(entry_state, ptr::null_mut()); }
         let error = Errno::from_raw((-bound_result) as c_int).unwrap_or(Errno::IO);
         return BatchOutcome { result: Err(ExchangeError::Setup(error)), last_errno: None, masked_errno: None };
     }

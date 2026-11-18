@@ -1359,3 +1359,138 @@ pub(crate) const O_NOFOLLOW: i64 = 0o100000;
 pub(crate) const O_TMPFILE: i64 = 0o20200000;
 #[cfg(target_arch = "aarch64")]
 pub(crate) const O_TMPFILE: i64 = 0o20040000;
+
+#[cfg(target_arch = "x86_64")]
+pub(crate) const SYS_SETREUID: i64 = 113;
+#[cfg(target_arch = "aarch64")]
+pub(crate) const SYS_SETREUID: i64 = 145;
+
+#[cfg(target_arch = "x86_64")]
+pub(crate) const SYS_SETREGID: i64 = 114;
+#[cfg(target_arch = "aarch64")]
+pub(crate) const SYS_SETREGID: i64 = 143;
+
+#[cfg(target_arch = "x86_64")]
+pub(crate) const SYS_TIMER_CREATE: i64 = 222;
+#[cfg(target_arch = "aarch64")]
+pub(crate) const SYS_TIMER_CREATE: i64 = 107;
+
+#[cfg(target_arch = "x86_64")]
+pub(crate) const SYS_FCHDIR: i64 = 81;
+#[cfg(target_arch = "aarch64")]
+pub(crate) const SYS_FCHDIR: i64 = 50;
+
+#[cfg(target_arch = "x86_64")]
+pub(crate) const SYS_SCHED_GETPARAM: i64 = 143;
+#[cfg(target_arch = "aarch64")]
+pub(crate) const SYS_SCHED_GETPARAM: i64 = 121;
+
+#[cfg(target_arch = "x86_64")]
+pub(crate) const SYS_SCHED_GETSCHEDULER: i64 = 145;
+#[cfg(target_arch = "aarch64")]
+pub(crate) const SYS_SCHED_GETSCHEDULER: i64 = 120;
+
+#[cfg(target_arch = "x86_64")]
+pub(crate) const SYS_SCHED_SETSCHEDULER: i64 = 144;
+#[cfg(target_arch = "aarch64")]
+pub(crate) const SYS_SCHED_SETSCHEDULER: i64 = 119;
+
+#[cfg(target_arch = "x86_64")]
+pub(crate) const SYS_SCHED_SETPARAM: i64 = 142;
+#[cfg(target_arch = "aarch64")]
+pub(crate) const SYS_SCHED_SETPARAM: i64 = 118;
+
+#[cfg(target_arch = "x86_64")]
+pub(crate) const SYS_PTRACE: i64 = 101;
+#[cfg(target_arch = "aarch64")]
+pub(crate) const SYS_PTRACE: i64 = 117;
+
+#[cfg(target_arch = "x86_64")]
+pub(crate) const SYS_SYSLOG: i64 = 103;
+#[cfg(target_arch = "aarch64")]
+pub(crate) const SYS_SYSLOG: i64 = 116;
+
+#[cfg(target_arch = "x86_64")]
+pub(crate) const SYS_CAPGET: i64 = 125;
+#[cfg(target_arch = "aarch64")]
+pub(crate) const SYS_CAPGET: i64 = 90;
+
+#[cfg(target_arch = "x86_64")]
+pub(crate) const SYS_CAPSET: i64 = 126;
+#[cfg(target_arch = "aarch64")]
+pub(crate) const SYS_CAPSET: i64 = 91;
+
+#[cfg(target_arch = "x86_64")]
+pub(crate) const SYS_PIVOT_ROOT: i64 = 155;
+#[cfg(target_arch = "aarch64")]
+pub(crate) const SYS_PIVOT_ROOT: i64 = 41;
+
+#[cfg(target_arch = "x86_64")]
+pub(crate) const SYS_ACCT: i64 = 163;
+#[cfg(target_arch = "aarch64")]
+pub(crate) const SYS_ACCT: i64 = 89;
+
+#[cfg(target_arch = "x86_64")]
+pub(crate) const SYS_SWAPON: i64 = 167;
+#[cfg(target_arch = "aarch64")]
+pub(crate) const SYS_SWAPON: i64 = 224;
+
+#[cfg(target_arch = "x86_64")]
+pub(crate) const SYS_SWAPOFF: i64 = 168;
+#[cfg(target_arch = "aarch64")]
+pub(crate) const SYS_SWAPOFF: i64 = 225;
+
+#[cfg(target_arch = "x86_64")]
+pub(crate) const SYS_REBOOT: i64 = 169;
+#[cfg(target_arch = "aarch64")]
+pub(crate) const SYS_REBOOT: i64 = 142;
+
+#[cfg(target_arch = "x86_64")]
+pub(crate) const SYS_INIT_MODULE: i64 = 175;
+#[cfg(target_arch = "aarch64")]
+pub(crate) const SYS_INIT_MODULE: i64 = 105;
+
+#[cfg(target_arch = "x86_64")]
+pub(crate) const SYS_DELETE_MODULE: i64 = 176;
+#[cfg(target_arch = "aarch64")]
+pub(crate) const SYS_DELETE_MODULE: i64 = 106;
+
+#[cfg(target_arch = "x86_64")]
+pub(crate) const SYS_QUOTACTL: i64 = 179;
+#[cfg(target_arch = "aarch64")]
+pub(crate) const SYS_QUOTACTL: i64 = 60;
+
+#[cfg(target_arch = "x86_64")]
+pub(crate) const SYS_UNSHARE: i64 = 272;
+#[cfg(target_arch = "aarch64")]
+pub(crate) const SYS_UNSHARE: i64 = 97;
+
+#[cfg(target_arch = "x86_64")]
+pub(crate) const SYS_FANOTIFY_INIT: i64 = 300;
+#[cfg(target_arch = "aarch64")]
+pub(crate) const SYS_FANOTIFY_INIT: i64 = 262;
+
+#[cfg(target_arch = "x86_64")]
+pub(crate) const SYS_FANOTIFY_MARK: i64 = 301;
+#[cfg(target_arch = "aarch64")]
+pub(crate) const SYS_FANOTIFY_MARK: i64 = 263;
+
+#[cfg(target_arch = "x86_64")]
+pub(crate) const SYS_SETNS: i64 = 308;
+#[cfg(target_arch = "aarch64")]
+pub(crate) const SYS_SETNS: i64 = 268;
+
+#[cfg(target_arch = "x86_64")]
+pub(crate) const SYS_PROCESS_VM_READV: i64 = 310;
+#[cfg(target_arch = "aarch64")]
+pub(crate) const SYS_PROCESS_VM_READV: i64 = 270;
+
+#[cfg(target_arch = "x86_64")]
+pub(crate) const SYS_PROCESS_VM_WRITEV: i64 = 311;
+#[cfg(target_arch = "aarch64")]
+pub(crate) const SYS_PROCESS_VM_WRITEV: i64 = 271;
+
+#[cfg(target_arch = "x86_64")]
+pub(crate) const SYS_GET_ROBUST_LIST: i64 = 274;
+#[cfg(target_arch = "aarch64")]
+pub(crate) const SYS_GET_ROBUST_LIST: i64 = 100;

@@ -27,10 +27,6 @@ use core::sync::atomic::{AtomicI32, Ordering};
 
 use super::{c_status, owned_synccall, raw_syscall};
 
-// Linux/x86-64 `setreuid`/`setregid`; the shared raw table does not name
-// them, and only this leaf needs them.
-const SYS_SETREUID: i64 = 113;
-const SYS_SETREGID: i64 = 114;
 const EAGAIN: i64 = 11;
 
 /// Musl `setxid.c`'s `struct ctx`.
@@ -186,7 +182,7 @@ static_archive_member! { setreuid_source {
     /// Scalar C ABI entry; all-ones means unchanged.
     #[no_mangle]
     pub unsafe extern "C" fn setreuid(real_user_id: c_uint, effective_user_id: c_uint) -> c_int {
-        setxid(SYS_SETREUID, real_user_id as c_int, effective_user_id as c_int, 0)
+        setxid(raw_syscall::SYS_SETREUID, real_user_id as c_int, effective_user_id as c_int, 0)
     }
 }}
 
@@ -199,7 +195,7 @@ static_archive_member! { setregid_source {
     /// Scalar C ABI entry; all-ones means unchanged.
     #[no_mangle]
     pub unsafe extern "C" fn setregid(real_group_id: c_uint, effective_group_id: c_uint) -> c_int {
-        setxid(SYS_SETREGID, real_group_id as c_int, effective_group_id as c_int, 0)
+        setxid(raw_syscall::SYS_SETREGID, real_group_id as c_int, effective_group_id as c_int, 0)
     }
 }}
 

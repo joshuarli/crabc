@@ -1028,7 +1028,7 @@ pub(super) unsafe fn reset_current_thread_images(
     let destination = unsafe { tp.add(plan.image_offset_below_tp) };
     let start = destination as usize;
     let Some(end) = start.checked_add(plan.memsz) else {
-        unsafe { raw_syscall::syscall1(231, 127); }
+        unsafe { raw_syscall::syscall1(raw_syscall::SYS_EXIT_GROUP, 127); }
         loop { core::hint::spin_loop(); }
     };
     let mut valid = true;
@@ -1048,7 +1048,7 @@ pub(super) unsafe fn reset_current_thread_images(
         if !valid { break; }
     }
     if !valid {
-        unsafe { raw_syscall::syscall1(231, 127); }
+        unsafe { raw_syscall::syscall1(raw_syscall::SYS_EXIT_GROUP, 127); }
         loop { core::hint::spin_loop(); }
     }
 
