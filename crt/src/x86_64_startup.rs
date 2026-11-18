@@ -222,15 +222,19 @@ unsafe fn invoke_linker_entry(entry: LinkerArrayEntry) {
 #[cold]
 #[inline(never)]
 fn startup_reject() -> ! {
+    // SAFETY: exit_group terminates the process without returning or using pointers.
     unsafe {
         // A finalizer boundary can be rejected after application workers
         // exist. End the whole process, not just the thread running exit.
+        #[cfg(target_arch = "x86_64")]
         core::arch::asm!(
             "syscall",
             in("rax") 231usize,
             in("rdi") 127usize,
             options(noreturn, nostack),
         );
+        #[cfg(target_arch = "aarch64")]
+        core::arch::asm!("svc 0", in("x8") 94usize, in("x0") 127usize, options(noreturn, nostack));
     }
 }
 
