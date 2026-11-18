@@ -1,6 +1,6 @@
 # CRAB-7: macOS/AArch64 libSystem backend for `crabc-rs`
 
-Status: draft — needs an owner scope decision; implementation waits until F2 is accepted
+Status: deferred by the owner until Linux/AArch64 feature completion ([CRAB-8](CRAB-8-linux-aarch64-feature-completion.md))
 
 ## Summary
 
