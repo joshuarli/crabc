@@ -891,7 +891,7 @@ def build_aarch64(args: argparse.Namespace) -> dict[str, object]:
     compiler = native_build_tools.compile_command(physical_sysroot / "bin/rustc")
     records = []
     objects = {}
-    names = ("crt1", "rcrt1", "crti", "crtn", "Scrt1") if args.owned_dynamic_sysroot else ("crt1", "rcrt1", "crti", "crtn")
+    names = ("crt1", "crti", "crtn", "Scrt1") if args.owned_dynamic_sysroot else ("crt1", "rcrt1", "crti", "crtn")
     for name in names:
         source = source_path("x86_64_" + name + ".rs")
         destination = output / (name + ".o")
