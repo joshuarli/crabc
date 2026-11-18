@@ -874,7 +874,7 @@ class NativeDynamicDebugProfileTests(unittest.TestCase):
     def test_arm64_cli_selects_native_builder_and_never_publishes_x86_receipt(self) -> None:
         result = {"passed": False, "result": "fail", "error": "arm64 gap"}
         with (
-            mock.patch.object(RUNNER, "native_arch", return_value={"arch": "aarch64"}),
+            mock.patch.object(RUNNER, "native_arch", return_value={"arch": "aarch64", "work_name": "aarch64"}),
             mock.patch.object(RUNNER, "run_dynamic_dispatch", return_value=(result, Path("report.json"), None)) as dispatch,
         ):
             self.assertEqual(RUNNER.main([]), 1)

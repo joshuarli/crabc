@@ -1931,6 +1931,7 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
 
 def main(argv: Sequence[str] | None = None) -> int:
     args = parse_args(argv)
+    arch = native_arch()
     try:
         if args.build_profile == "debug":
             LUA.disable_core_dump_inheritance()
@@ -1942,12 +1943,12 @@ def main(argv: Sequence[str] | None = None) -> int:
             )
             LUA.write_json_atomic(report_path, report)
             latest = None
-        elif native_arch()["arch"] == "aarch64":
+        elif arch["arch"] == "aarch64":
             if args.allocator_backend != "accepted-c":
                 raise LUA.RunnerError("aarch64 Lua dynamic requires the accepted C allocator")
             report, report_path, latest = run_dynamic_dispatch(
                 jobs=args.jobs, timeout=args.timeout, offline=args.offline, architecture="aarch64",
-                state_parent=ROOT / ".work/aarch64/lua-dynamic-source-build", latest_report=None,
+                state_parent=ROOT / ".work" / arch["work_name"] / "lua-dynamic-source-build", latest_report=None,
             )
         elif args.allocator_backend == "accepted-c":
             report, report_path, latest = run_dynamic_dispatch(
@@ -1969,7 +1970,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         "latest_report": str(latest) if latest is not None else None,
         "passed": report.get("passed") is True,
     }, sort_keys=True))
-    if native_arch()["arch"] == "aarch64" and report.get("error"):
+    if arch["arch"] == "aarch64" and report.get("error"):
         print(f"native Lua dynamic source-build: {report['error']}", file=sys.stderr)
     return 0 if report.get("passed") is True else 1
 
