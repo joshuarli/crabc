@@ -672,6 +672,7 @@ pub extern "C" fn rust_eh_personality() {}
 // link-time ELF-header symbol through RIP-relative addressing instead. The
 // validated routine below performs the complete self-relocation transaction;
 // `_start` only decodes the initial stack, AT_BASE and PT_DYNAMIC.
+#[cfg(target_arch = "x86_64")]
 global_asm!(
     ".text",
     ".global __crabc_x86_64_self_relocate",
@@ -1141,7 +1142,7 @@ global_asm!(
     options(att_syntax),
 );
 
-#[cfg(not(test))]
+#[cfg(all(not(test), target_arch = "x86_64"))]
 global_asm!(
     ".global _start",
     ".hidden _start",
@@ -1228,6 +1229,10 @@ global_asm!(
     ".popsection",
     options(att_syntax),
 );
+
+#[cfg(all(not(test), target_arch = "aarch64"))]
+#[path = "aarch64_bootstrap.rs"]
+mod aarch64_bootstrap;
 
 /// The first general-runtime x86 slice owns arbitrary initial non-TLS
 /// `DT_NEEDED` topology plus dependency-only `DT_INIT_ARRAY` dispatch. It

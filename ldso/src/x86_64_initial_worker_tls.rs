@@ -155,11 +155,14 @@ pub unsafe extern "C" fn allocate(output: *mut WorkerTlsAllocation) -> i32 {
         }
         return -1;
     }
-    // GCC's guard is process entropy, not a per-thread generator. Copy only
-    // this reserved TCB field; initialized TLS always comes from ELF templates.
-    let guard: usize;
-    unsafe { core::arch::asm!("mov {}, fs:[40]", out(reg) guard, options(nostack, readonly)); }
-    unsafe { core::ptr::write(block.thread_pointer.add(40).cast::<usize>(), guard); }
+    #[cfg(target_arch = "x86_64")]
+    {
+        let guard: usize;
+        // SAFETY: The current thread has an installed x86 TLS block.
+        unsafe { core::arch::asm!("mov {}, fs:[40]", out(reg) guard, options(nostack, readonly)); }
+        // SAFETY: The worker allocation reserves the x86 TCB guard word.
+        unsafe { core::ptr::write(block.thread_pointer.add(40).cast::<usize>(), guard); }
+    }
     let token = WorkerTlsAllocation { mapping: block.mapping,
         mapping_size: if embedded { 0 } else { block.mapping_byte_len },
         thread_pointer: block.thread_pointer, allocation_id: id };
