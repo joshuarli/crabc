@@ -239,6 +239,7 @@ unsafe fn do_wordexp(input: *const c_char, words: *mut Wordexp, flags: c_int) ->
     // Retire process and pathname owners before publishing the result. The
     // call-local context also drops before the wrapper restores cancellation.
     let outcome = (|| {
+        context.set_special(b"#", Some(b"0"))?;
         // SAFETY: the C environment and selected CTYPE remain stable under
         // this call's documented process-state contract.
         let environment = unsafe { WordexpEnvironmentSnapshot::capture(&mut context) }?;
