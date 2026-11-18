@@ -10,15 +10,17 @@ existing functionality merely because it exceeds the minimum.
 
 Public support remains Linux/AArch64 little-endian, kernel **5.10 or newer**.
 Native Linux/x86-64 is active but not public until its runtime promotion passes.
-AArch64 implementation/qualification are paused. Other architectures, 32-bit,
-big-endian and non-Linux libc remain inactive. A future macOS/AArch64
-libSystem backend for `crabc-rs` would be separately scoped.
+AArch64 is converging onto the x86 runtime under
+[CRAB-8](docs/rfc/CRAB-8-linux-aarch64-feature-completion.md), with the same
+selected behavior and correctness qualification. Other architectures, 32-bit,
+big-endian and non-Linux libc remain inactive. The macOS/AArch64 libSystem
+backend for `crabc-rs` is deferred until Linux/AArch64 feature completion.
 
 Core Unix behavior is not approximate: filesystems, descriptors/pipes,
 signals, fork/exec, pthread/TLS, sockets, mappings, time, stdio, the bounded
 resolver, dynamic linking, errno, and ABI require full selected semantics.
 The exact `[musl_native]` snapshot in `compat/upstreams.toml` is the active
-x86-64 C compatibility oracle. Paused AArch64 retains released musl 1.2.6.
+C compatibility oracle for x86-64 and converging AArch64.
 Glibc is neither oracle nor fallback.
 Newer-kernel requirements are explicit; there are no pre-5.10 fallback goals.
 
@@ -91,7 +93,7 @@ flow protections are separate future enhancements, not implicit core gates.
 | Time zones | `TZ`, POSIX TZ syntax, tzfile and system zoneinfo. No bundled tzdata. |
 | Localization | At most small gettext-compatible ABI entries; no catalog/resource framework. |
 | Regex and frameworks | Selected POSIX regex/glob/fnmatch compatibility, not a competing Rust regex ecosystem. Synchronous OS mechanisms, not an async runtime, process supervisor, security-policy language, plugin registry or portability emulation. |
-| Allocation | Pinned upstream C mimalloc v3.5.0 for the active native x86 runtime, with crabc glue open for feature integration and correctness fixes. The faithful Rust port is retained but frozen; it is a separate completion obligation, not a prerequisite to this runtime's feature milestone. No allocator invention or backend switch. Rust APIs use normal Rust allocation. AArch64's selected backend stays unchanged. |
+| Allocation | Pinned upstream C mimalloc v3.5.0 for the active native x86 runtime, with crabc glue open for feature integration and correctness fixes. The faithful Rust port is retained but frozen; it is a separate completion obligation, not a prerequisite to this runtime's feature milestone. No allocator invention or backend switch. Rust APIs use normal Rust allocation. Converging AArch64 moves to the same pinned C mimalloc glue (CRAB-8 D3); its `libmimalloc-sys` route is deleted with the old composition. |
 | Cryptography | OS entropy and surrounding state machines are allowed. Cryptographic primitives come from reviewed focused dependencies, never local implementations; otherwise the feature is explicitly limited. The bounded C crypt profile is recorded in [crypt-profile.md](compat/crabc-rs/crypt-profile.md). |
 | Legacy PRNG | Only the provenance-preserving musl 1.2.6 `random`/`srandom`/`initstate`/`setstate` semantic port, including recurrence, seeding and state switching. Never security-sensitive randomness, entropy or allocator hardening. |
 

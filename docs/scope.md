@@ -33,13 +33,18 @@ aggregate admission cannot block independently testable feature work.
 - **Active:** native Linux/x86-64 (`x86_64-unknown-linux-musl` where a Rust
   target name is needed), built and run on an x86-64 host. Public support remains
   a separate promotion decision after feature and full release qualification.
-- **Paused:** Linux/AArch64, which remains the publicly supported target.
-  Preserve its behavior, selected allocator, frozen baseline and
-  target-qualified evidence. Do not run or emulate its suites
-  (`scripts/dev.sh`, `--platform linux/arm64`) for x86 work.
+- **Active, converging:** Linux/AArch64 (`aarch64-unknown-linux-musl`), the
+  publicly supported target, per the owner-accepted
+  [CRAB-8](rfc/CRAB-8-linux-aarch64-feature-completion.md). It converges onto
+  the x86 runtime tree plus one architecture layer, runs only natively on an
+  arm64 host (an Apple Silicon Linux VM with its own disk; never a macOS bind
+  mount, never emulated), and replaces the older AArch64 composition and its
+  August evidence instead of refreshing them. Nothing from it that touches the
+  x86 product source seal merges before x86 F2 is accepted.
 - No new architectures, 32-bit or big-endian targets, non-Linux libc, or
-  speculative portability layers. A macOS/AArch64 libSystem backend for
-  `crabc-rs` is separately scoped and is not part of this campaign.
+  speculative portability layers. The macOS/AArch64 libSystem backend for
+  `crabc-rs` ([CRAB-7](rfc/CRAB-7-macos-libsystem-backend.md)) is deferred
+  until Linux/AArch64 feature completion.
 - **Future, out of scope:** crabc as the C runtime substrate of an LLVM/Clang
   toolchain. crabc would supply public C/POSIX headers, libc, dynamic loader,
   startup objects and a sealed sysroot; LLVM would supply Clang, lld,
@@ -58,13 +63,14 @@ contradictions: neither stale prose nor an assertion in a report waives a
 requirement. The owner's November 12 D23/D24 decisions waive cost gates and
 require parallel feature work; they supersede older simplification/serial and
 performance-first instructions, including shared skill scheduling defaults.
-The separate Rust allocator freeze and paused AArch64 boundary remain in force.
+The separate Rust allocator freeze remains in force; CRAB-8 governs AArch64.
 
 Oracles:
 
 - The native x86-64 C/POSIX oracle is the exact musl snapshot in
-  `compat/upstreams.toml` under `[musl_native]`. The paused AArch64 oracle
-  remains the released **1.2.6** pin under `[musl]`. Use the applicable Linux
+  `compat/upstreams.toml` under `[musl_native]`, for AArch64 as well as
+  x86-64. The released **1.2.6** `[musl]` pin remains only for the superseded
+  AArch64 evidence. Use the applicable Linux
   and System V AMD64 ABI contracts for target boundaries.
 - Rustix is a pinned test oracle, never a production dependency.
 - Glibc is neither an oracle nor a fallback. Candidate target artifacts must

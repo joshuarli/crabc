@@ -1,7 +1,8 @@
 # CRAB-8: Linux/AArch64 feature completion on an Apple Silicon host
 
-Status: draft — owner decisions D1–D6 are open. After they are settled, this
-plan moves into `plan.md` as the campaign that follows F2.
+Status: accepted 2026-11-18 — the owner took every recommendation in D1–D6.
+The host is an OrbStack Linux/arm64 VM on the Apple Silicon Mac.
+[`plan.md`](../../plan.md) records it as the campaign after F2.
 
 ## Summary
 

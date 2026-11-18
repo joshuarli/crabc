@@ -48,8 +48,13 @@ Family acceptance dependencies do not serialize independent implementation. Read
 routing and helpers; this owner direction overrides their serial-first and
 performance-readiness scheduling defaults. Keep status small; Git is history.
 
-The active target is native Linux/x86-64 on an x86-64 host. AArch64 is the
-public target and is paused: preserve it, never run or emulate it.
+The active target is native Linux/x86-64 on an x86-64 host. Linux/AArch64,
+the public target, is converging onto the same runtime under the accepted
+[CRAB-8](docs/rfc/CRAB-8-linux-aarch64-feature-completion.md): it runs only
+natively in an arm64 Linux VM with its own disk on the Apple Silicon host,
+never emulated and never on a macOS bind mount. Until x86 F2 is accepted,
+AArch64 work stays on branches; nothing touching the x86 product source seal
+(including `docker/`) merges. The macOS facade backend (CRAB-7) is deferred.
 
 This is a greenfield libc under local development. It is not deployed in any
 practical sense and serves no production users or services. The code is built,
@@ -113,7 +118,7 @@ rebuild deletes the pinned image and must be followed by a re-pin of
 - Linux, little-endian, kernel 5.10 or newer; no older-kernel fallbacks, new
   architectures, or portability layers.
 - The native x86-64 C/POSIX oracle is the exact `[musl_native]` snapshot in
-  `compat/upstreams.toml`. Paused AArch64 retains `[musl]` 1.2.6. Glibc is
+  `compat/upstreams.toml`, for AArch64 as well as x86-64. Glibc is
   neither oracle nor fallback; rustix is a test oracle only. Candidate target
   artifacts borrow no ambient musl, CRT, runtime, header or loader input.
 - No allocator invention. Preserve the port's source/provenance and the
@@ -137,8 +142,9 @@ rebuild deletes the pinned image and must be followed by a re-pin of
 - Tests exercise behavior; validators check shared structure and actual
   evidence. No per-artifact validators, source-literal/prose-count tests,
   duplicate status files or report/receipt frameworks.
-- `COMPATIBILITY.md` is generated; never hand-edit it. Frozen AArch64 manifests
-  and the inputs they digest must not be refreshed to absorb drift.
+- `COMPATIBILITY.md` is generated; never hand-edit it. The old AArch64
+  manifests and the inputs they digest are superseded by CRAB-8's converged
+  evidence, never refreshed to absorb drift.
 
 ## Where things are
 

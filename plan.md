@@ -21,7 +21,8 @@ Retained proof branches/consumers: `lane/f2-hardened-selectors` (`72b8cd638`, lo
 Permission-held fixtures remain untouched in checkouts: `.work/wt/{f2-admission-review,f2-fresh-final2,f2-lua-process-boundary,f2-process-control-wait,f2-resolver-reader-env,f2-run2}`. Their sources are detached `d6271924b`, `lane/f2-fresh-final2`, `lane/f2-lua-process-boundary`, `lane/f2-process-control-wait`, `lane/f2-resolver-reader-env`, and `lane/f2-admissions`, respectively. Retry refused fixture access/cleanup only after owner resolution. Git-only identity/cleanliness checks recorded closeout allowances for all six without reading ignored fixtures.
 Historical parked branches: `lane/f2-fresh-final`, `lane/f2-fresh-final3`, `lane/f2-gate-closure`, `lane/f2-gate-review`, `lane/f2-timer-diagnostics` and `lane/f2-message-queue-review`; use repaired current source, not their superseded declarations. Prior archival records stay in `.work/tmp/f2-cleanup-archives/` (the superseded-candidate tarballs were removed in the owner-approved cleanup; `.work/tmp/archives-removed.txt` lists them) and the retired MQ-review diff in `.work/tmp/f2-message-queue-review.diff`; retry only for an actual unresolved consumer. MQ review acceptance was unmet despite no supported defect; parent proof owns the integrated verdict.
 Access holds also remain exact: final4 `tmp/hardened-qualification.ZVkdk5/static-pie-tests.log`; hardened repair host write `.work/tmp/hardened-boundary-dynamic.log`; final5 cohort `{installed.build,second.build}/dynamic.build`; MQ worker `run-5rwx6isi/modules/001-test-owned-message-queues-runner/stderr.log`; prior process-inspection refusals. The final4 oracle-static/tools inputs were removed with its `out/` under the owner-approved `doas` cleanup. Do not retry or reroute denied actions. Preserve `.work/retained`, allocator/kache/pow-discriminator holds and all original failures.
-Next slice: resume final7's work at the repaired main revision with the same command and inputs (same product digest; step 00 reused, step 01 reruns) through the end; complete true/fresh false is development completion only. Then a fresh final8 in a new isolated prepared checkout, and accept per F2 closeout step 6. CRAB-5 is landed with full-run speedup unmeasured; CRAB-6's cause stays unresolved and any required-behavior recurrence blocks. Do not start F3, AArch64, or frozen Rust allocator work.
+Next slice: resume final7's work at the repaired main revision with the same command and inputs (same product digest; step 00 reused, step 01 reruns) through the end; complete true/fresh false is development completion only. Then a fresh final8 in a new isolated prepared checkout, and accept per F2 closeout step 6. CRAB-5 is landed with full-run speedup unmeasured; CRAB-6's cause stays unresolved and any required-behavior recurrence blocks. Do not start F3 or frozen Rust allocator work here.
+**Next campaign (owner-accepted 2026-11-18):** Linux/AArch64 feature completion per [CRAB-8](docs/rfc/CRAB-8-linux-aarch64-feature-completion.md), all six recommendations (D1–D6) accepted; performance deferred; F3 unscheduled. Host: OrbStack Linux/arm64 VM on the Apple Silicon Mac (owner-provisioned). A0/A1 may start now on `lane/a*` branches from that host; nothing touching the x86 product seal merges before final8 acceptance. The macOS backend (CRAB-7) is deferred behind it.
 
 ## Goal and completion boundary
 
@@ -225,8 +226,9 @@ alongside implementation; it does not wait until optimization.
    machinery. Keep caller-visible coverage and necessary ABI/purity boundaries.
 4. **One writer per file set.** The coordinator resolves cross-lane edits; no
    worker invents a local substitute for another owner's shared interface.
-5. **Native x86-64 only.** Preserve paused AArch64; never execute/emulate it or
-   refresh frozen baselines to absorb drift.
+5. **Native x86-64 only on this host.** F2 lanes stay x86-64. AArch64 work
+   follows CRAB-8 on the arm64 VM host and its own branches; never emulate it
+   or refresh old baselines to absorb drift.
 6. **Pins stay.** Do not change `rust-toolchain.toml`, `compat/upstreams.toml`,
    the Alpine base digest or pinned core image. Do not run the destructive
    `./scripts/dev-x86_64.sh image` rebuild as routine preparation.
@@ -267,7 +269,7 @@ parallel framework. Do not turn the feature campaign back into a reduction tour.
 Diagnose the exact failure. After two materially different unsuccessful attempts,
 hand the bounded problem and raw evidence to an expert/reviewer or park it with a
 retry condition, then refill the slot. A shared blocker gets one owner. Permission,
-profile expansion, frozen allocator, AArch64 or pin work remains out of scope;
+profile expansion, frozen allocator, CRAB-8 AArch64 or pin work remains out of F2 scope;
 park only the dependent slice. A denied tool action is stopped with its exact
 reason preserved; do not reroute it. No destructive cleanup on stop.
 
@@ -315,7 +317,7 @@ their absence cannot block feature completion.
 
 ## Non-goals
 
-New architectures or non-Linux runtimes; AArch64 execution; Rust allocator-port
+New architectures or non-Linux runtimes; AArch64 execution inside F2 (CRAB-8 owns it); Rust allocator-port
 restart or backend replacement; new cryptographic/numerical algorithms; weaker
 semantics, safety, hardening or tests; a new orchestration/validation framework;
 whole-toolchain integration; public-support promotion without authorization.
