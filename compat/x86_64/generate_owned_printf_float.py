@@ -71,22 +71,26 @@ int __crabc_owned_printf_float(FILE *sink, const void *value,
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--musl-source", required=True, type=Path)
+    parser.add_argument("--arch", choices=("x86_64", "aarch64"), default="x86_64")
     parser.add_argument("--cc", default="/usr/local/bin/crabc-x86_64-musl-gcc")
     parser.add_argument("--output", type=Path,
         default=ROOT / "libc/src/c_abi/x86_64/owned_printf_float_musl_x86_64.S")
     args = parser.parse_args()
+    if args.arch == "aarch64":
+        args.output = args.output.with_name(args.output.name.replace("_x86_64.S", "_aarch64.S"))
     source_root = args.musl_source.resolve()
     if normalized_tree_digest(source_root) != EXPECTED_MUSL_TREE_DIGEST:
         raise SystemExit("pinned musl tree digest mismatch")
     environment = generation_environment()
-    compiler = checked_compiler(args.cc, environment=environment)
+    compiler = checked_compiler(args.cc, environment=environment, arch=args.arch)
     original = (source_root / "src/stdio/vfprintf.c").read_text()
     macros = original[original.index("#define MAX"):original.index("/* State machine")]
     numeric = original[original.index("static const char xdigits"):original.index("static int getint")]
     # fmt_fp, fmt_u and xdigits are copied verbatim. Unused fmt_x/fmt_o from
     # the contiguous upstream block are eliminated by the pinned compiler.
     includes, adapter = ADAPTER.split("typedef struct", 1)
-    source = includes + macros + "typedef struct" + adapter + numeric + ENTRY
+    entry = ENTRY if args.arch == "x86_64" else ENTRY.replace("10);", "16);")
+    source = includes + macros + "typedef struct" + adapter + numeric + entry
     with tempfile.TemporaryDirectory(prefix="owned-printf-float.", dir=environment["TMPDIR"]) as temporary:
         unit = Path(temporary) / "owned_printf_float.c"
         assembly = Path(temporary) / "owned_printf_float.s"
@@ -106,6 +110,8 @@ def main():
     header += "Source SHA256: " + hashlib.sha256(original.encode()).hexdigest() + "\n"
     header += "Generated translation-unit SHA256: " + hashlib.sha256(source.encode()).hexdigest() + "\n"
     header += "See owned_printf_float.rs for ABI, adapter differences and provenance.\n\n" + notice + "\n*/\n"
+    if args.arch == "aarch64":
+        header = "/* AArch64 translation using the pinned musl compiler. */\n" + header
     args.output.write_text(header + text)
 
 

@@ -38,7 +38,9 @@ macro_rules! musl_object_assembly {
     ($stem:literal) => {
         #[cfg(all(crabc_owned_static_sysroot, not(crabc_x86_dynamic_runtime)))]
         include!(concat!(env!("OUT_DIR"), "/musl_objects/", $stem, ".rs"));
-        #[cfg(not(all(crabc_owned_static_sysroot, not(crabc_x86_dynamic_runtime))))]
+        #[cfg(all(target_arch = "x86_64", not(all(crabc_owned_static_sysroot, not(crabc_x86_dynamic_runtime)))))]
         core::arch::global_asm!(include_str!(concat!($stem, ".S")), options(att_syntax));
+        #[cfg(all(target_arch = "aarch64", not(all(crabc_owned_static_sysroot, not(crabc_x86_dynamic_runtime)))))]
+        core::arch::global_asm!(include_str!(concat!($stem, ".S")));
     };
 }

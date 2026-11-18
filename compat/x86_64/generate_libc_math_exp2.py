@@ -8,6 +8,7 @@ the build input, so the static archive never invokes a foreign C compiler.
 from __future__ import annotations
 
 import argparse
+from generate_libc_math_long_double_completion import architecture_flags, architecture_source, finalize_assembly, checked_compiler
 import hashlib
 import re
 import subprocess
@@ -173,9 +174,13 @@ def retained_notices(source_root: Path) -> list[str]:
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--musl-source", required=True, type=Path)
+    parser.add_argument("--arch", choices=("x86_64", "aarch64"), default="x86_64")
     parser.add_argument("--cc", default="/usr/local/bin/crabc-x86_64-musl-gcc")
     parser.add_argument("--output", type=Path, default=ROOT / "libc/src/c_abi/x86_64/math_exp2_musl_x86_64.S")
     args = parser.parse_args()
+    if args.arch == "aarch64":
+        checked_compiler(args.cc, arch=args.arch)
+        args.output = args.output.with_name(args.output.name.replace("_x86_64.S", "_aarch64.S"))
 
     source_root = args.musl_source.resolve()
     actual_digest = normalized_tree_digest(source_root)
@@ -187,7 +192,7 @@ def main() -> int:
 
     include_flags = (
         f"-I{source_root / 'src/internal'}", f"-I{source_root / 'src/include'}",
-        f"-I{source_root / 'arch/x86_64'}", f"-I{source_root / 'arch/generic'}",
+        f"-I{source_root / 'arch' / args.arch}", f"-I{source_root / 'arch/generic'}",
         f"-I{source_root / 'include'}",
     )
     blocks = [
@@ -198,17 +203,20 @@ def main() -> int:
         " * exact release license is recorded by compat/upstreams.toml.", " */",
     ]
     blocks.extend(retained_notices(source_root))
+    if args.arch == "aarch64":
+        blocks = [line.replace("x86-64", "aarch64").replace("binary80", "binary128") for line in blocks]
+        blocks.insert(1, " * AArch64 translation generated with the pinned musl compiler.")
     with tempfile.TemporaryDirectory(prefix="crabc-x86-math-exp2-") as temporary:
         temporary_root = Path(temporary)
         for relative in (*PUBLIC_SOURCES, *PRIVATE_SOURCES):
             output = temporary_root / (Path(relative).stem + ".S")
             subprocess.run(
-                [args.cc, *COMPILE_FLAGS, *include_flags, "-S", str(source_root / relative), "-o", str(output)],
+                [args.cc, *architecture_flags(COMPILE_FLAGS, args.arch), *include_flags, "-S", str(architecture_source(source_root, relative, args.arch)), "-o", str(output)],
                 check=True,
             )
-            blocks.extend((f"/* musl-1.2.6/{relative} */", transform_assembly(relative, output.read_text())))
+            blocks.extend((f"/* musl-1.2.6/{architecture_source(source_root, relative, args.arch).relative_to(source_root)} */", transform_assembly(relative, output.read_text())))
     blocks.append('.section .note.GNU-stack,"",@progbits')
-    args.output.write_text("\n".join(blocks) + "\n")
+    args.output.write_text(finalize_assembly("\n".join(blocks) + "\n", args.arch))
     return 0
 
 
