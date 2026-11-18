@@ -26,7 +26,10 @@ const NAME_MAX: usize = 255;
 static mut ENVIRONMENT_PATH: *const u8 = core::ptr::null();
 static mut ENVIRONMENT_PRELOAD: *const u8 = core::ptr::null();
 static mut SECURE: bool = true;
+#[cfg(target_arch = "x86_64")]
 static mut INTERPRETER_NAME: *const u8 = b"/lib/ld-crabc-x86_64.so.1\0".as_ptr();
+#[cfg(target_arch = "aarch64")]
+static mut INTERPRETER_NAME: *const u8 = b"/lib/ld-crabc-aarch64.so.1\0".as_ptr();
 static mut APPLICATION_NAME: *const u8 = b"\0".as_ptr();
 static mut EXECUTABLE_NAME: *const u8 = core::ptr::null();
 static mut SELF_PATH: *const u8 = core::ptr::null();
@@ -170,7 +173,10 @@ unsafe fn load_system_path() -> SystemPath {
     // an absolute interpreter name. Relative names retain the root prefix.
     let prefix = unsafe { installation_prefix() };
     let prefix_len = prefix.len();
+    #[cfg(target_arch = "x86_64")]
     let suffix = b"/etc/ld-musl-x86_64.path\0";
+    #[cfg(target_arch = "aarch64")]
+    let suffix = b"/etc/ld-musl-aarch64.path\0";
     let mut path = [0u8; PATH_CAPACITY + 32];
     path[..prefix_len].copy_from_slice(prefix);
     path[prefix_len..prefix_len + suffix.len()].copy_from_slice(suffix);
