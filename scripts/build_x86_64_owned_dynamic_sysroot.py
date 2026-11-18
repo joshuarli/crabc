@@ -1074,6 +1074,8 @@ def build_aarch64(output: Path, *, allocator_backend: str, lifecycle_test_audit:
         os.link(library / "libc.so", interpreter)
         common.copy_artifact(ROOT / "compat/x86_64/crabc_cc_aarch64_dynamic.py", installed / "bin/crabc-cc-dynamic")
         (installed / "bin/crabc-cc-dynamic").chmod(0o755)
+        common.copy_artifact(common.STATIC_DRIVER_SOURCE, installed / "share/crabc/crabc_cc_static.py")
+        common.copy_artifact(common.NATIVE_PROFILE_SOURCE, installed / common.NATIVE_PROFILE_PATH)
         manifest = {"format": "crabc-aarch64-owned-dynamic-sysroot-v1", "target": target,
                     "files": common.regular_file_hashes(installed), "skipped": skipped}
         common.write_json(installed / "share/crabc/manifest.json", manifest)
