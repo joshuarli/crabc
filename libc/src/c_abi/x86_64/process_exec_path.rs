@@ -73,7 +73,8 @@ unsafe fn record_error(error: c_int, slot: *mut c_int) -> i64 {
 unsafe fn execute_candidate(path: *const c_char, argv: *const *const c_char,
     envp: *const *const c_char) -> i64 {
     #[cfg(crabc_x86_owned_runtime)]
-    unsafe { raw_syscall::syscall3(59, path as i64, argv as i64, envp as i64) }
+    // SAFETY: the caller supplies the kernel's execve path and vectors.
+    unsafe { raw_syscall::syscall3(raw_syscall::SYS_EXECVE, path as i64, argv as i64, envp as i64) }
     #[cfg(not(crabc_x86_owned_runtime))]
     unsafe {
         let result = super::process_exec::execve_result(path, argv, envp);
@@ -85,10 +86,17 @@ unsafe fn execute_candidate(path: *const c_char, argv: *const *const c_char,
 // preempted by an application's allocator/TLS/callback code in shared libc.
 // Legacy selection retains the same intrinsic/archive contract as before.
 unsafe fn copy_candidate(source: *const u8, destination: *mut u8, length: usize) {
-    #[cfg(crabc_x86_owned_runtime)]
+    #[cfg(all(crabc_x86_owned_runtime, target_arch = "x86_64"))]
     unsafe {
         unsafe extern "C" { fn __memcpy_fwd(destination: *mut u8, source: *const u8, length: usize) -> *mut u8; }
         __memcpy_fwd(destination, source, length);
+    }
+    #[cfg(all(crabc_x86_owned_runtime, target_arch = "aarch64"))]
+    // SAFETY: the caller provides disjoint readable and writable ranges.
+    unsafe {
+        for index in 0..length {
+            destination.add(index).write_volatile(source.add(index).read_volatile());
+        }
     }
     #[cfg(not(crabc_x86_owned_runtime))]
     unsafe { ptr::copy_nonoverlapping(source, destination, length); }
