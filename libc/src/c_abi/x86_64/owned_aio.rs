@@ -1703,6 +1703,7 @@ const _: () = {
 // `__libc_*` macros. These thunks retain executable interposition in libc.so:
 // a Rust-level call could bind this crate's known weak wrapper before the ELF
 // lookup boundary, while the assembly jumps retain an ordinary PLT relocation.
+#[cfg(target_arch = "x86_64")]
 core::arch::global_asm!(r#"
     .text
     .p2align 4
@@ -1721,6 +1722,8 @@ __crabc_x86_aio_cabi_free:
     jmp free
     .size __crabc_x86_aio_cabi_free, .-__crabc_x86_aio_cabi_free
 "#);
+#[cfg(target_arch = "aarch64")]
+core::arch::global_asm!(include_str!("owned_aio_thunks_0_aarch64.S"));
 
 unsafe extern "C" {
     #[link_name = "__crabc_x86_aio_cabi_malloc"]

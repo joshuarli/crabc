@@ -64,6 +64,7 @@ const ENOMEM: c_int = 12;
 // LTO could otherwise bind a Rust extern spelling directly to this crate's
 // own allocator definitions and bypass an executable's replacement.
 #[cfg(crabc_x86_owned_runtime)]
+#[cfg(target_arch = "x86_64")]
 core::arch::global_asm!(
     r#"
     .text
@@ -84,6 +85,8 @@ __crabc_x86_hsearch_cabi_free:
     .size __crabc_x86_hsearch_cabi_free, .-__crabc_x86_hsearch_cabi_free
 "#
 );
+#[cfg(all(crabc_x86_owned_runtime, target_arch = "aarch64"))]
+core::arch::global_asm!(include_str!("search_hash_table_thunks_0_aarch64.S"));
 
 #[cfg(crabc_x86_owned_runtime)]
 unsafe extern "C" {

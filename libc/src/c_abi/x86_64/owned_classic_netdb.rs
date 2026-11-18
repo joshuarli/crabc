@@ -32,6 +32,7 @@ pub struct Servent { name: *mut c_char, aliases: *mut *mut c_char, port: c_int, 
 // malloc/free pair. An executable may replace that pair. Keep both calls at
 // the ELF lookup boundary: LTO can bind a Rust extern spelling directly to
 // this crate's weak allocator and send an interposed pointer to native_free.
+#[cfg(target_arch = "x86_64")]
 core::arch::global_asm!(r#"
     .text
     .p2align 4
@@ -50,6 +51,8 @@ __crabc_x86_host_cache_cabi_free:
     jmp free
     .size __crabc_x86_host_cache_cabi_free, .-__crabc_x86_host_cache_cabi_free
 "#);
+#[cfg(target_arch = "aarch64")]
+core::arch::global_asm!(include_str!("owned_classic_netdb_thunks_0_aarch64.S"));
 unsafe extern "C" {
     #[link_name = "__crabc_x86_host_cache_cabi_malloc"]
     fn host_cache_malloc(size: usize) -> *mut c_void;
