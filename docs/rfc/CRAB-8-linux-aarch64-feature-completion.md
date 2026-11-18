@@ -55,8 +55,9 @@ care:
    gRPC FUSE over case-insensitive APFS) changes behavior for hard links,
    xattrs, ownership, file locks, `statx` fields, inotify and case-only name
    differences. Filesystem tests would then measure the bridge, not crabc. The
-   checkout, `.work/` and every test scratch directory must live on the VM's own
-   ext4 filesystem.
+   checkout, `.work/` and every test scratch directory must live on a
+   filesystem on the VM's own block device. OrbStack machine roots are btrfs,
+   which the owner accepted on 2026-11-18; ext4 is equally valid.
 2. **No x86 on the Mac.** Never pass `--platform linux/amd64` there, because
    Rosetta or QEMU would be emulation. The x86 campaign stays on the existing
    x86 Linux host.
@@ -179,8 +180,9 @@ deferred on both architectures.
 - **D3, allocator:** move AArch64 to the pinned C mimalloc v3.5.0 glue that x86
   uses (recommended). The profile currently says AArch64's backend "stays
   unchanged", and the Rust allocator port stays frozen either way.
-- **D4, host:** a Lima or OrbStack Linux VM with its own ext4 disk (recommended),
-  or Docker Desktop with a named volume.
+- **D4, host:** a Lima or OrbStack Linux VM with its own disk (recommended),
+  or Docker Desktop with a named volume. Accepted as OrbStack, whose machine
+  root is btrfs on the VM's block device.
 - **D5, start:** start A0 and A1 now on a branch, with nothing merged until
   final8 is accepted (recommended). The alternative is to wait for final8
   before starting anything.
@@ -215,14 +217,24 @@ orb create alpine crabc                  # arm64 Linux machine
 orb -m crabc
 # Inside the machine. Install Docker Engine here, not the Mac's OrbStack engine,
 # so every mounted path is on the machine's own disk.
-git clone git@github.com:joshuarli/crabc ~/crabc   # under ~, never /Users/...
+git clone https://github.com/joshuarli/crabc ~/crabc   # under ~, never /Users/...
 cd ~/crabc && git switch -c lane/a0-aarch64-image
-stat -f -c %T .                          # must be ext2/ext3 (ext4), not virtiofs/fuse
+git config receive.denyCurrentBranch updateInstead
+stat -f -c %T .                          # ext2/ext3 or btrfs, never virtiofs/fuse
 uname -m; uname -r; getconf PAGESIZE; nproc; df -h ~
 ```
 
 Record the last line's values in the A0 commit. Never pass
 `--platform linux/amd64` on the Mac.
+
+The VM holds no GitHub credentials. The Mac reaches the VM clone over
+OrbStack's SSH and relays branches to GitHub:
+
+```sh
+git remote add a64 crabc@orb:crabc       # on the Mac, in the main checkout
+git fetch a64 && git push origin a64/lane/a1-aarch64-inventory:lane/a1-aarch64-inventory
+git push a64 HEAD:lane/a1-aarch64-inventory   # Mac edits; updates the VM checkout
+```
 
 ### A0 tasks, on `lane/a0-aarch64-image`
 
@@ -244,6 +256,34 @@ Record the last line's values in the A0 commit. Never pass
 Widen the x86-only cfg gates to AArch64 and build every runtime crate. Commit
 the five-bucket dispatch table described in A1 above. Then dispatch A2 and A3
 as parallel lanes.
+
+### A1 dispatch table
+
+`lane/a1-aarch64-inventory` points the AArch64 build at the x86 roots: libc
+selects `c_abi/x86_64/static_c_abi.rs`, ldso selects `x86_64_initial_graph.rs`,
+and the unwinder gate admits AArch64. The old composition (`libc/src/c_abi.rs`,
+`ldso/src/loader.rs`) is unreferenced and kept only as a source of facts for A2.
+Its frozen Rust `crabc-mimalloc` dependency no longer compiled, so libc's
+AArch64-only dependency table is gone (D3).
+
+Results in the pinned arm64 image: `crabc-core`, `crabc-rs`, `builtins` and
+`unwinder` check clean. libc fails with 115 errors under
+`x86-owned-dynamic-runtime` and ldso with 34. All of those errors come from
+inline asm or name resolution. Type errors only appear once bucket 3 compiles,
+so buckets 1, 2, 4 and 5 below also draw on a source scan. Paths without a
+directory are under `libc/src/c_abi/x86_64/`.
+
+| Bucket | Owner files |
+| --- | --- |
+| 1. Linux-generic, only gated | `crabc-core/src/{fenv,syscall,time,event,signal,mm,system}.rs` and their `*_x86_64.rs` forks: make the x86 copy the single generic owner, keeping only numbers, entry and registers per architecture. libc needs these x86-only APIs: `time::VdsoClockGettime`, `param::install_initial_sysinfo_ehdr_for_vdso` and the `crabc-core/src/resolver.rs` question-matched exchange. `libc/src/{getopt_exports,network_interface_exports,allocator_mimalloc}.rs` keep AArch64 arms keyed to the old composition. The `crabc-rs` dual-arm cfgs follow `crabc-core`. Most `global_asm!` blocks are `.weak`/`.set` aliases and portable as is. |
+| 2. Legacy syscalls | `open`, `unlink`, `poll`, `dup2`, `readlink`, `select`, `rmdir`, `pause`, `mkdir`, `link`, `chown`, `chmod`, `access`, `symlink`, `rename`, `pipe`, `mknod`, `lchown` in `crabc-core/src/{syscall_x86_64,event_x86_64,io}.rs`, `chown`, `lchown`, `descriptor_entry`, `descriptor_io`, `filesystem_access`, `getpass`, `owned_filesystem_mechanisms`, `owned_named_ipc`, `owned_static_stdio`, `pathname_lifecycle`, `readiness_waits`, `stdio_standard`, `syscall`, `temporary_names`, `temporary_objects`, `ttyname_r`; `fork` through `clone` in `pthread_atfork`. Use the generic form on both architectures unless an x86 test compares syscall sequences. |
+| 3. Architecture layer | Syscall entry: `syscall`, `pthread_create_join`, `pthread_atfork`, `posix_spawnattr_{init,signal_fields}`, `crabc-core/src/syscall_x86_64.rs`. Thread pointer (`%fs`, TLS variant II): 16 files including `thread_pointer`, `static_tls`, `dynamic_tls`, plus ldso `x86_64_{initial_worker_tls,general_initial_tls_state,runtime_tls_view}.rs`. Register asm: `atomic`, `integer_arithmetic`, `intmax_arithmetic`, `math_fmod`, `byte_scan` (SSE), `fenv`, `fenv_rounding`, `crabc-core/src/fenv_x86_64.rs`. `setjmp`; signal frames in `signal_foundation`, `signal_control`, `owned_syscall_cancel`, `owned_synccall`; vDSO in `clock_gettime` and `crabc-core/src/vdso.rs`. Musl translations: 37 `*_x86_64.S` from 29 `compat/x86_64/generate_*.py`, split by the x86-only `split_musl_objects` in `libc/build.rs`. Relocations: ldso `x86_64_{general_relocation,deferred_relocations,initial_graph}.rs`. CRT: `crt/src/x86_64_*.rs` and `crt/build_x86_64*.py`. builtins: AArch64 outline-atomics helpers are missing. Unwinder: `unwinder/patches/unwinding-0.2.10-remote-reader.rs` x86 register arms and the x86 triple in `unwinder/build.py`. `arch_prctl` and `io_permissions` are x86-only exports, absent from the AArch64 surface. |
+| 4. ABI types | `stat` layout: `stat_compat`, `mktemp`, `ttyname_r`, `filesystem_capacity`, `filesystem_traversal`, `owned_filesystem_mechanisms`. `va_list` (`owned_printf_float` asserts the SysV layout): `owned_printf`, `owned_scanf`, `stdio_format_scan`, `owned_wide_format`, `owned_error_reporting`, `process_exec_variadic`, `owned_syslog`, `descriptor_entry`, `owned_strfmon`. Unsigned `c_char`: `stdio_format_scan`, `owned_printf`, `locale_multibyte`, `owned_static_stdio`, `byte_scan`. `ucontext`/`mcontext`: the signal-frame files in bucket 3. `include/bits/` already carries AArch64 arms; revalidate them against the oracle. |
+| 5. binary128 `long double` | 55 files reference x87 or binary80, chiefly `math_x87_extended`, `math_long_double_completion`, `math_elementary_long_double`, `float_parse`, `owned_printf`, `owned_scanf`, `stdio_format_scan`, `owned_static_stdio` and their `.S` translations. `builtins/src/x86_64_binary80.rs` has no binary128 counterpart; the `*tf3` soft-float helpers are missing. |
+
+A2 takes buckets 1 to 4, starting with the `crabc-core` convergence and the
+syscall entry, which every other row depends on. A3 takes bucket 5 in
+parallel.
 
 ### Don't
 
