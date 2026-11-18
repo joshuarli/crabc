@@ -26,10 +26,11 @@ ROOT = Path(__file__).resolve().parent
 SOURCE = ROOT / "src" / "lib.rs"
 CONTRACT = ROOT / "x86_64-helper-contract.toml"
 sys.path.insert(0, str(ROOT.parent))
+from compat.x86_64.native_arch import native_arch
 from scripts.rust_toolchain import pinned_toolchain
 from scripts import native_build_tools
 TOOLCHAIN = pinned_toolchain(ROOT.parent)
-TARGET = "x86_64-unknown-linux-musl"
+TARGET = native_arch("x86_64")["target_triple"]
 ARCHIVE_NAME = "libcrabc-builtins.a"
 MEMBER_NAME = "crabc-builtins.o"
 REQUIRED_SYMBOLS = frozenset({

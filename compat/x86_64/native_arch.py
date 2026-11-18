@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Native harness architecture settings."""
-import platform
+import subprocess
 import shlex
 import sys
 
@@ -11,7 +11,7 @@ else:
 
 
 def native_arch(machine=None):
-    machine = machine or platform.machine()
+    machine = machine or subprocess.check_output(["uname", "-m"], text=True).strip()
     aliases = {"x86_64": "x86_64", "amd64": "x86_64", "aarch64": "aarch64", "arm64": "aarch64"}
     if machine not in aliases:
         raise SystemExit(f"unsupported host architecture: {machine}")

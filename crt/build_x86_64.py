@@ -32,9 +32,10 @@ sys.path.insert(0, str(ROOT))
 from scripts.rust_toolchain import pinned_toolchain
 from scripts import native_build_tools
 from compat.x86_64.native_runtime_profile import NativeRuntimeProfile
+from compat.x86_64.native_arch import native_arch
 CRT_ROOT = Path(__file__).resolve().parent
 SOURCE_ROOT = CRT_ROOT / "src"
-TARGET = "x86_64-unknown-linux-musl"
+TARGET = native_arch("x86_64")["target_triple"]
 PINNED_TOOLCHAIN = pinned_toolchain(ROOT)
 DEFAULT_OUTPUT = ROOT / "target" / "crt-x86_64-static"
 
@@ -887,7 +888,8 @@ def build_aarch64(args: argparse.Namespace) -> dict[str, object]:
     rustc = default_rustc_command()
     version = run_command(rustc + ["-Vv"], environment)
     sysroot = run_command(rustc + ["--print", "sysroot"], environment)
-    physical_sysroot = selected_nightly_sysroot(version, sysroot, environment, "aarch64-unknown-linux-musl")
+    target = native_arch("aarch64")["target_triple"]
+    physical_sysroot = selected_nightly_sysroot(version, sysroot, environment, target)
     compiler = native_build_tools.compile_command(physical_sysroot / "bin/rustc")
     records = []
     objects = {}
@@ -895,7 +897,7 @@ def build_aarch64(args: argparse.Namespace) -> dict[str, object]:
     for name in names:
         source = source_path("x86_64_" + name + ".rs")
         destination = output / (name + ".o")
-        command = compiler + ["--edition=2021", "--crate-type=lib", "--emit=obj", "--target", "aarch64-unknown-linux-musl", "-C", "panic=abort", "-C", "force-unwind-tables=no", "-C", "opt-level=2", "-C", "relocation-model=static", "-C", "code-model=small", str(source), "-o", str(destination)]
+        command = compiler + ["--edition=2021", "--crate-type=lib", "--emit=obj", "--target", target, "-C", "panic=abort", "-C", "force-unwind-tables=no", "-C", "opt-level=2", "-C", "relocation-model=static", "-C", "code-model=small", str(source), "-o", str(destination)]
         if name == "Scrt1":
             command[command.index("-C"):command.index("-C")] = ["--cfg", "crabc_owned_dynamic_runtime", "--cfg", "crabc_general_dynamic_lifecycle"]
         if name in ("Scrt1", "rcrt1"):
@@ -909,7 +911,7 @@ def build_aarch64(args: argparse.Namespace) -> dict[str, object]:
             raise BuildError(f"{destination}: expected aarch64 ELF relocatable")
         objects[destination.name] = {"sha256": sha256_file(destination), "source": source.name}
     write_json(output / "commands.json", records)
-    report = {"schema": 1, "target": "aarch64-unknown-linux-musl", "hardening_profile": args.hardening_profile.value, "objects": objects, "skipped": ["x86 entry machine-code and relocation audit"]}
+    report = {"schema": 1, "target": target, "hardening_profile": args.hardening_profile.value, "objects": objects, "skipped": ["x86 entry machine-code and relocation audit"]}
     write_json(output / "objects.json", report)
     print("aarch64 CRT: skipped x86 entry machine-code/relocation audit", file=sys.stderr)
     return report

@@ -38,7 +38,8 @@ from scripts.rust_toolchain import pinned_toolchain
 from scripts import native_build_tools
 from compat.x86_64 import source_seal
 from compat.x86_64.native_runtime_profile import NativeRuntimeProfile
-TARGET = "x86_64-unknown-linux-musl"
+from compat.x86_64.native_arch import native_arch
+TARGET = native_arch("x86_64")["target_triple"]
 FORMAT = "crabc-x86-64-owned-static-sysroot-v1"
 PINNED_TOOLCHAIN = pinned_toolchain(ROOT)
 PINNED_CARGO_HOME = Path("/opt/cargo")
@@ -925,7 +926,7 @@ def c_allocator_compile_command(c_flags: Sequence[str], source_root: Path, outpu
     """
 
     return [
-        ("/usr/bin/gcc" if architecture == "x86_64" else "/usr/local/bin/crabc-aarch64-mold-gcc"), C_ALLOCATOR_OPTIMIZATION[profile], "-ffunction-sections", "-fdata-sections",
+        ("/usr/bin/gcc" if architecture == "x86_64" else native_arch(architecture)["linker"]), C_ALLOCATOR_OPTIMIZATION[profile], "-ffunction-sections", "-fdata-sections",
         "-fPIC", *(["-m64"] if architecture == "x86_64" else ["-mno-outline-atomics"]), *c_flags,
         f"-ffile-prefix-map={source_root}=/mimalloc",
         "-I", str(source_root / "include"), "-I", str(source_root / "src"),
@@ -1521,17 +1522,18 @@ def build_aarch64(output: Path, *, allocator_backend: str, lifecycle_test_audit:
     if allocator_backend != DEFAULT_ALLOCATOR_BACKEND or lifecycle_test_audit or profile != "release" or hardening_profile is not NativeRuntimeProfile.COMPATIBILITY:
         raise BuildError("aarch64 currently supports only the accepted C backend and release compatibility profile")
     output = validate_output_path(output)
-    work = ROOT / ".work/aarch64"
+    arch = native_arch("aarch64")
+    work = ROOT / ".work" / arch["work_name"]
     if not output.is_relative_to(work):
         raise BuildError("aarch64 output must be under .work/aarch64")
     output.parent.mkdir(parents=True, exist_ok=True)
-    target = "aarch64-unknown-linux-musl"
+    target = arch["target_triple"]
     rustup = str(pinned_rustup())
     rust_sysroot = pinned_rustc_sysroot(Path(rustup))
     tools = rust_sysroot / "lib/rustlib" / target / "bin"
     environment = deterministic_environment()
     environment.update({"CARGO_HOME": str(work / "cargo"), "TMPDIR": str(work / "tmp"),
-                        "CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_LINKER": "/usr/local/bin/crabc-aarch64-mold-gcc"})
+                        arch["linker_variable"]: arch["linker"]})
     skipped = ["x86 source seal and installed receipt validation", "x86 CRT entry and relocation audits",
                "x86 libc member classification and symbol contract", "x86 allocator lifecycle and hidden-symbol audit",
                "x86 dynamic CRT products"]

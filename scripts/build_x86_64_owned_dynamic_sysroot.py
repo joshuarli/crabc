@@ -1016,17 +1016,18 @@ def build_aarch64(output: Path, *, allocator_backend: str, lifecycle_test_audit:
     if allocator_backend != common.DEFAULT_ALLOCATOR_BACKEND or lifecycle_test_audit or profile != "release" or hardening_profile is not common.NativeRuntimeProfile.COMPATIBILITY:
         raise common.BuildError("aarch64 supports the accepted C backend and release compatibility profile")
     output = common.validate_output_path(output)
-    work = ROOT / ".work/aarch64"
+    arch = common.native_arch("aarch64")
+    work = ROOT / ".work" / arch["work_name"]
     if not output.is_relative_to(work):
         raise common.BuildError("aarch64 output must be under .work/aarch64")
     output.parent.mkdir(parents=True, exist_ok=True)
-    target = "aarch64-unknown-linux-musl"
+    target = arch["target_triple"]
     rustup = str(common.pinned_rustup())
     rust_sysroot = common.pinned_rustc_sysroot(Path(rustup))
     tools = rust_sysroot / "lib/rustlib" / target / "bin"
     environment = common.deterministic_environment()
     environment.update({"CARGO_HOME": str(work / "cargo"), "TMPDIR": str(work / "tmp"),
-                        "CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_LINKER": "/usr/local/bin/crabc-aarch64-mold-gcc"})
+                        arch["linker_variable"]: arch["linker"]})
     skipped = ["x86 source seal and installed receipt validation", "x86 CRT entry and relocation audits",
                "x86 libc member classification and symbol contract", "x86 allocator lifecycle and hidden-symbol audit",
                "x86 compiler-helper contract and ELF audits", "x86 dynamic driver and receipt audits"]

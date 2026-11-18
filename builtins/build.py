@@ -27,8 +27,10 @@ from typing import Any, Mapping, Sequence
 
 
 ROOT = pathlib.Path(__file__).resolve().parent
+sys.path.insert(0, str(ROOT.parent))
+from compat.x86_64.native_arch import native_arch
 SOURCE = ROOT / "src" / "lib.rs"
-TARGET = "aarch64-unknown-linux-musl"
+TARGET = native_arch("aarch64")["target_triple"]
 ARCHIVE_MEMBER = "crabc-builtins.o"
 TOOLCHAIN_CONFIG = ROOT.parent / "rust-toolchain.toml"
 UPSTREAM_WORKSPACE_RELATIVE = pathlib.Path("lib/rustlib/src/rust/library/compiler-builtins")
