@@ -26,3 +26,13 @@ for name, kind, flag in [('exec-stack', 0x6474e551, 1), ('writable-exec', 1, 3)]
     if result.returncode != 127:
         raise SystemExit(f'{name}: expected 127, got {result.returncode}')
     os.unlink(path)
+
+modified = bytearray(data)
+struct.pack_into('<H', modified, 52, 65)
+path = original.with_name(original.name + '-invalid-ehsize')
+path.write_bytes(modified)
+path.chmod(0o755)
+result = subprocess.run([str(path)], check=False)
+if result.returncode != 127:
+    raise SystemExit(f'invalid-ehsize: expected 127, got {result.returncode}')
+os.unlink(path)
