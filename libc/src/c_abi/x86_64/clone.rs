@@ -30,6 +30,7 @@ extern "C" {
     ) -> i64;
 }
 
+#[cfg(target_arch = "x86_64")]
 core::arch::global_asm!(
     r#"
     .text
@@ -86,3 +87,6 @@ pub(crate) unsafe fn clone_raw(
 ) -> i64 {
     unsafe { __crabc_x86_clone_raw(func, stack, flags, arg, core::ptr::null_mut(), core::ptr::null_mut(), core::ptr::null_mut()) }
 }
+
+#[cfg(target_arch = "aarch64")]
+core::arch::global_asm!(include_str!("clone_aarch64.S"));

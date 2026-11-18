@@ -45,6 +45,9 @@ unsafe extern "C" {
 // Each musl object below has its own static archive member, as in musl's
 // libc.a; a chunk that shares local labels with another stays with it.
 static_archive_member! { crabc_owned_clone_raw_source {
+    #[cfg(target_arch = "aarch64")]
+    core::arch::global_asm!(include_str!("owned_clone_aarch64.S"));
+    #[cfg(target_arch = "x86_64")]
     core::arch::global_asm!(
         r#"
     .text
@@ -81,6 +84,9 @@ __crabc_owned_clone_raw:
 }}
 
 static_archive_member! { vfork_source {
+    #[cfg(target_arch = "aarch64")]
+    core::arch::global_asm!(include_str!("vfork_aarch64.S"));
+    #[cfg(target_arch = "x86_64")]
     core::arch::global_asm!(
         r#"
     .text
