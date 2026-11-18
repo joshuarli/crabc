@@ -13,6 +13,7 @@ import os
 from pathlib import Path
 import re
 import shlex
+import struct
 import subprocess
 import sys
 import tempfile
@@ -216,9 +217,21 @@ def validate(root: Path) -> dict:
     except (ValueError, OSError) as error:
         raise shared.DriverError(f"invalid dynamic manifest: {error}") from error
     profile = shared.profile_from_manifest(record)
-    required = (REQUIRED - {INTERPRETER.lstrip("/")}) | {profile.interpreter.lstrip("/")}
-    if not isinstance(record, dict) or type(record.get("schema")) is not int or record.get("schema") != 1 or record.get("format") != FORMAT or record.get("target") != shared.TARGET or record.get("symlinks") != profile.aliases:
+    arm = record.get("format") == "crabc-aarch64-owned-dynamic-sysroot-v1"
+    aliases_expected = {} if arm else profile.aliases
+    if arm:
+        required = {"usr/lib/libc.so", "usr/lib/crt1.o", "usr/lib/Scrt1.o", "usr/lib/crti.o", "usr/lib/crtn.o",
+                    "usr/lib/" + COMPILER_HELPER_ARCHIVE, "lib/ld-crabc-aarch64.so.1", "bin/crabc-cc-dynamic",
+                    "share/crabc/crabc_cc_static.py", "share/crabc/native_runtime_profile.py",
+                    "share/crabc/crt.provenance.json", "share/crabc/crt.commands.json"}
+    else:
+        required = (REQUIRED - {INTERPRETER.lstrip("/")}) | {profile.interpreter.lstrip("/")}
+    target = "aarch64-unknown-linux-musl" if arm else shared.TARGET
+    if not isinstance(record, dict) or type(record.get("schema")) is not int or record.get("schema") != 1 or record.get("format") != ("crabc-aarch64-owned-dynamic-sysroot-v1" if arm else FORMAT) or record.get("target") != target or record.get("symlinks") != aliases_expected:
         raise shared.DriverError("wrong installed dynamic product contract")
+    if arm and (profile is not shared.NativeRuntimeProfile.COMPATIBILITY or record.get("build_profile") != "release"
+                or not isinstance(record.get("toolchain"), str) or not record["toolchain"]):
+        raise shared.DriverError("unsupported aarch64 dynamic product profile")
     # Debug products keep their input fingerprint in the manifest; their
     # unqualified state contains only backend selection. Installed drivers
     # validate its shape without requiring the producer checkout to exist.
@@ -234,7 +247,7 @@ def validate(root: Path) -> dict:
         raise shared.DriverError(f"nonregular installed payload: {other[0]}")
     hashes.pop("share/crabc/manifest.json", None)
     observed = set(hashes)
-    if observed != files.keys() or aliases != profile.aliases:
+    if observed != files.keys() or aliases != aliases_expected:
         raise shared.DriverError("installed payload differs from exact manifest roster")
     for relative, digest in files.items():
         if relative.startswith("/") or ".." in relative.split("/") or SHA256_DIGEST.fullmatch(str(digest)) is None:
@@ -242,7 +255,20 @@ def validate(root: Path) -> dict:
         if hashes[relative] != digest:
             raise shared.DriverError(f"installed payload hash mismatch: {relative}")
     shared.validate_crt_provenance(root, "share/crabc/crt.provenance.json", profile, "Scrt1.o")
-    validate_loader_provenance(root, "share/crabc/loader.provenance.json", profile, record.get("build_profile"))
+    if arm:
+        crt = shared.load_manifest(root / "share/crabc/crt.provenance.json", "CRT provenance")
+        if crt.get("target") != target:
+            raise shared.DriverError("installed CRT target does not match product")
+        for name, elf_type in (("usr/lib/libc.so", 3), ("usr/lib/crt1.o", 1), ("usr/lib/Scrt1.o", 1),
+                               ("usr/lib/crti.o", 1), ("usr/lib/crtn.o", 1)):
+            with (root / name).open("rb") as elf:
+                data = elf.read(64)
+            if len(data) < 64 or data[:6] != b"\x7fELF\x02\x01" or struct.unpack_from("<HH", data, 16) != (elf_type, 183):
+                raise shared.DriverError(f"installed aarch64 ELF differs: {name}")
+        if not os.path.samefile(root / "usr/lib/libc.so", root / "lib/ld-crabc-aarch64.so.1"):
+            raise shared.DriverError("installed loader is not the merged libc")
+    else:
+        validate_loader_provenance(root, "share/crabc/loader.provenance.json", profile, record.get("build_profile"))
     return record
 
 
