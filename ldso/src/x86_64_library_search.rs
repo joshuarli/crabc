@@ -185,7 +185,7 @@ unsafe fn load_system_path() -> SystemPath {
         let bytes = contents.as_mut_slice();
         let mut count = 0;
         while count + 1 < bytes.len() {
-            let read = unsafe { syscall3(0, fd, bytes.as_mut_ptr().add(count) as i64, (bytes.len() - count - 1) as i64) };
+            let read = unsafe { syscall3(SYS_READ, fd, bytes.as_mut_ptr().add(count) as i64, (bytes.len() - count - 1) as i64) };
             if read == -4 { continue; }
             if read < 0 { return None; }
             if read == 0 { break; }
@@ -341,7 +341,10 @@ unsafe fn object_paths(object: &Object) -> Result<ObjectPaths<'_>, i32> {
     let mut executable = [0; SEARCH_BUFFER];
     let name = if object.map_provenance == ObjectMapProvenance::KernelMain {
         if unsafe { SECURE } { return Ok(ObjectPaths::None); }
-        let size = unsafe { syscall3(89, b"/proc/self/exe\0".as_ptr() as i64, executable.as_mut_ptr() as i64, SEARCH_BUFFER as i64) };
+        #[cfg(target_arch = "x86_64")]
+        let size = unsafe { syscall3(SYS_READLINK, b"/proc/self/exe\0".as_ptr() as i64, executable.as_mut_ptr() as i64, SEARCH_BUFFER as i64) };
+        #[cfg(target_arch = "aarch64")]
+        let size = unsafe { syscall4(SYS_READLINKAT, AT_FDCWD, b"/proc/self/exe\0".as_ptr() as i64, executable.as_mut_ptr() as i64, SEARCH_BUFFER as i64) };
         if size < 0 {
             return match -size { 2 | 20 | 13 => Ok(ObjectPaths::None), error => Err(error as i32) };
         }

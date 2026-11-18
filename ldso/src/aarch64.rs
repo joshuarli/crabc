@@ -1,6 +1,9 @@
 //! Linux/AArch64 syscall instruction and number boundary for `ldso`.
 
 /// Linux/AArch64 `read`.
+pub(crate) const SYS_FUTEX: i64 = 98;
+pub(crate) const SYS_GETTID: i64 = 178;
+pub(crate) const SYS_READLINKAT: i64 = 78;
 pub(crate) const SYS_READ: i64 = 63;
 /// Linux/AArch64 `write`.
 pub(crate) const SYS_WRITE: i64 = 64;

@@ -235,8 +235,14 @@ mod aarch64;
 #[cfg(target_arch = "aarch64")]
 use aarch64::{syscall1, syscall2, syscall3, syscall4, syscall6, SYS_WRITE, SYS_CLOSE,
     SYS_FSTAT, SYS_READ, SYS_PREAD64, SYS_NEWFSTATAT, SYS_MMAP, SYS_MPROTECT,
-    SYS_MUNMAP, SYS_OPENAT, SYS_EXIT};
+    SYS_MUNMAP, SYS_OPENAT, SYS_EXIT, SYS_FUTEX, SYS_GETTID, SYS_READLINKAT};
 
+#[cfg(target_arch = "x86_64")]
+const SYS_FUTEX: i64 = 202;
+#[cfg(target_arch = "x86_64")]
+const SYS_GETTID: i64 = 186;
+#[cfg(target_arch = "x86_64")]
+const SYS_READLINK: i64 = 89;
 #[cfg(target_arch = "x86_64")]
 const SYS_WRITE: i64 = 1;
 #[cfg(target_arch = "x86_64")]
@@ -2040,7 +2046,7 @@ const ENOEXEC: i32 = 8;
 const EISDIR: i32 = 21;
 const S_IFMT: u32 = 0o170000;
 const S_IFDIR: u32 = 0o040000;
-const X86_64_STAT_MODE_OFFSET: usize = 24;
+const X86_64_STAT_MODE_OFFSET: usize = if cfg!(target_arch = "aarch64") { 16 } else { 24 };
 
 fn syscall_error(result: i64) -> Result<i64, i32> {
     if is_linux_error(result) { Err((-result) as i32) } else { Ok(result) }
