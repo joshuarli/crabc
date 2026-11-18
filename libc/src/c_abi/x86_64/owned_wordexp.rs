@@ -172,7 +172,7 @@ unsafe fn do_wordexp(input: *const c_char, words: *mut Wordexp, flags: c_int) ->
     }
     // SAFETY: the C caller retains a readable terminated input for this call.
     let source = unsafe { core::ffi::CStr::from_ptr(input).to_bytes() };
-    let syntax = match WordexpSyntax::parse(source) {
+    let syntax = match WordexpSyntax::parse_with_no_commands(source, flags & WRDE_NOCMD != 0) {
         Ok(syntax) => syntax,
         Err(WordexpError::NoSpace) => return unsafe { early_no_space(words, flags) },
         Err(WordexpError::BadCharacter) => return unsafe { early_bad_character(words, flags) },
