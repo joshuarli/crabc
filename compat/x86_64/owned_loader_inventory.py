@@ -30,8 +30,10 @@ import crabc_cc_owned_dynamic as installed_driver
 import owned_dynamic_qualification as qualification
 import source_seal
 import dynamic_product_contract
+from native_arch import native_arch
 
 
+ARCH = native_arch()["arch"]
 SCHEMA = "crabc.x86_64-owned-loader-inventory/v1"
 PROVENANCE_SCHEMA = "crabc.x86_64-owned-loader-provenance/v1"
 TARGET = "x86_64-unknown-linux-musl"
@@ -362,7 +364,7 @@ def field(output: str, label: str) -> str | None:
     return None
 
 
-def parse_header(output: str) -> dict[str, str | None]:
+def parse_header(output: str, architecture: str = "x86_64") -> dict[str, str | None]:
     values = {
         "class": field(output, "Class"), "data": field(output, "Data"), "version": field(output, "Version"),
         "os_abi": field(output, "OS/ABI"), "type": field(output, "Type"), "machine": field(output, "Machine"),
@@ -373,7 +375,10 @@ def parse_header(output: str) -> dict[str, str | None]:
     }
     require(values["class"] == "ELF64", "readelf header is not ELF64")
     require(values["data"] == "2's complement, little endian", "readelf header is not little-endian")
-    require(values["machine"] == "Advanced Micro Devices X86-64", "readelf header is not x86-64")
+    machines = {"x86_64": ("Advanced Micro Devices X86-64", "x86-64"), "aarch64": ("AArch64", "aarch64")}
+    require(architecture in machines, "unsupported readelf architecture")
+    machine, label = machines[architecture]
+    require(values["machine"] == machine, f"readelf header is not {label}")
     require(all(value is not None for value in values.values()), "readelf header is incomplete")
     return values
 
@@ -559,9 +564,9 @@ def parse_dynamic_symbols(output: str) -> dict[str, Any]:
     return {"tables": tables, "public_defined": public}
 
 
-def shape(streams: Mapping[str, str]) -> dict[str, Any]:
+def shape(streams: Mapping[str, str], architecture: str = "x86_64") -> dict[str, Any]:
     require(set(streams) == {name for name, _ in RAW_STREAMS}, "readelf stream roster differs")
-    header = parse_header(streams["header"])
+    header = parse_header(streams["header"], architecture)
     program_headers = parse_program_headers(streams["program_headers"])
     dynamic = parse_dynamic(streams["dynamic"])
     require(re.fullmatch(r"\d+", str(header["program_header_count"])) is not None
@@ -626,7 +631,7 @@ def capture_elf(
             streams[stream_name] = payload.decode("utf-8")
         except UnicodeDecodeError as error:
             raise InventoryError(f"readelf produced non-text output for {subject_name}/{stream_name}") from error
-    return shape(streams), records
+    return shape(streams, ARCH), records
 
 
 def subject_binding(identity: Mapping[str, Any], description: str) -> dict[str, str]:
@@ -892,11 +897,11 @@ def validate_receipt(path: Path, product: Path, oracle_capture_path: Path, reade
         "candidate-loader": subject_binding(product_snapshot["loader"], "candidate loader"),
         "candidate-libc": subject_binding(product_snapshot["libc"], "candidate libc"),
     })
-    require(receipt["oracle_shape"] == shape(streams["musl-loader"]), "pinned musl loader shape differs")
+    require(receipt["oracle_shape"] == shape(streams["musl-loader"], ARCH), "pinned musl loader shape differs")
     candidate = receipt["candidate_shapes"]
     require(isinstance(candidate, dict) and set(candidate) == {"loader", "libc"}, "candidate shape fields drifted")
-    require(candidate["loader"] == shape(streams["candidate-loader"]), "candidate loader shape differs")
-    require(candidate["libc"] == shape(streams["candidate-libc"]), "candidate libc shape differs")
+    require(candidate["loader"] == shape(streams["candidate-loader"], ARCH), "candidate loader shape differs")
+    require(candidate["libc"] == shape(streams["candidate-libc"], ARCH), "candidate libc shape differs")
     require(receipt["candidate_features"] == feature_rows(source), "candidate feature rows differ")
     return receipt
 
