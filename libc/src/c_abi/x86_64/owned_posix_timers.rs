@@ -126,6 +126,7 @@ unsafe extern "C" {
 
 // Preserve the timer loop's callee-saved registers and its original stack in
 // an ordinary single-return ABI. setjmp/longjmp never target a Rust frame.
+#[cfg(target_arch = "x86_64")]
 core::arch::global_asm!(r#"
     .text
     .hidden __crabc_x86_timer_invoke
@@ -150,6 +151,9 @@ __crabc_x86_timer_dispatch:
     .size __crabc_x86_timer_dispatch, .-__crabc_x86_timer_dispatch
     .section .note.GNU-stack,"",@progbits
 "#);
+
+#[cfg(target_arch = "aarch64")]
+core::arch::global_asm!(include_str!("timer_dispatch_aarch64.S"));
 
 unsafe extern "C" fn start(argument: *mut c_void) -> *mut c_void {
     let args = argument.cast::<StartArgs>();
