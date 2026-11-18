@@ -1,3 +1,4 @@
+.text
 // musl 1.2.6 src/string/bcmp.c; MIT license.
 .text
 .global bcmp

@@ -1,3 +1,4 @@
+.text
 // musl 1.2.6 src/signal/aarch64/sigsetjmp.s; MIT license.
 .global sigsetjmp
 .global __sigsetjmp

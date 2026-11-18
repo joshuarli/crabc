@@ -1,5 +1,10 @@
+.text
 /* musl 1.2.6 src/string/aarch64/memcpy.S; Copyright (c) 2012-2020 Arm Limited; SPDX-License-Identifier: MIT */
 .global memcpy
+.global __memcpy_fwd
+.hidden __memcpy_fwd
+.type __memcpy_fwd,%function
+__memcpy_fwd:
 .type memcpy,%function
 memcpy:
  add x4, x1, x2

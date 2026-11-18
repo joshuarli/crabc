@@ -1,3 +1,4 @@
+.text
 /* musl 1.2.6 src/string/aarch64/memset.S; Copyright (c) 2012-2020 Arm Limited; SPDX-License-Identifier: MIT */
 .global memset
 .type memset,%function
