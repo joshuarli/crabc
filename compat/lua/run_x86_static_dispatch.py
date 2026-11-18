@@ -201,16 +201,17 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
 
 def main(argv: Sequence[str] | None = None) -> int:
     args = parse_args(argv)
+    arch = native_arch()
     try:
         if args.cohort_checkout is not None:
             report, report_path = read_supplied(args) if args.read is not None else run_supplied(args)
             latest = None
-        elif native_arch()["arch"] == "aarch64":
+        elif arch["arch"] == "aarch64":
             if args.allocator_backend != "accepted-c":
                 raise LUA.RunnerError("aarch64 Lua static requires the accepted C allocator")
             report, report_path, latest = LUA.run_x86_static_dispatch(
                 jobs=args.jobs, timeout=args.timeout, architecture="aarch64",
-                state_parent=LUA.ROOT / ".work/aarch64/lua-static-source-build", latest_report=None,
+                state_parent=LUA.ROOT / ".work" / arch["work_name"] / "lua-static-source-build", latest_report=None,
             )
         elif args.allocator_backend == "accepted-c":
             report, report_path, latest = LUA.run_x86_static_dispatch(jobs=args.jobs, timeout=args.timeout)
@@ -231,7 +232,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         "passed": report.get("passed") is True,
     }
     print(json.dumps(result, sort_keys=True))
-    if native_arch()["arch"] == "aarch64" and report.get("error"):
+    if arch["arch"] == "aarch64" and report.get("error"):
         print(f"native Lua static source-build: {report['error']}", file=sys.stderr)
     return 0 if result["passed"] else 1
 
