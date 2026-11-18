@@ -1371,3 +1371,25 @@ fn initial_exec_and_dynamic_offsets_share_retained_module_coordinates_and_checke
     objects[1].tls_offset_below_tp = 8192; objects[1].tls_module_id = 0;
     assert!(unsafe { word_value(&scope, &objects, 0, R_X86_64_TPOFF64, 1, 0) }.is_none());
 }
+
+#[cfg(all(target_arch = "aarch64", crabc_general_initial_tls_materialization_v1))]
+#[test]
+fn tlsdesc_static_checks_both_words_and_returns_tp_offset() {
+    let mut image = Image::new();
+    image.rela(IMAGE_DATA as u64, R_X86_64_TLSDESC, 0, 4);
+    let mut object = image.object(false);
+    object.tls_module_id = 1;
+    object.tls_memsz = 16;
+    object.tls_offset_below_tp = 32;
+    let scope = SymbolScope { indices: &[0], module_count: 1, static_tls_count: 1, initial: true };
+    // SAFETY: The fixture owns its ELF metadata, writable target and TLS coordinates.
+    unsafe {
+        preflight_object(&scope, &[object], 0).unwrap();
+        apply_word_relocations(&scope, &[object], 0).unwrap();
+        let descriptor = (object.base as usize + IMAGE_DATA) as *const usize;
+        let resolver: unsafe extern "C" fn(*const usize) -> usize = core::mem::transmute(*descriptor);
+        assert_eq!(resolver(descriptor), 36);
+        image.relocations[0][0] = (IMAGE_DATA + IMAGE_DATA_BYTES - 8) as u64;
+        assert!(preflight_object(&scope, &[object], 0).is_none());
+    }
+}
