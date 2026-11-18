@@ -674,8 +674,15 @@ impl StaticInitialTlsPlan {
         };
 
         #[cfg(target_arch = "aarch64")]
-        // SAFETY: the bounds above reserve the thread record immediately below TP.
-        unsafe { core::ptr::write_bytes((tp - super::aarch64_tls_layout::THREAD_RECORD_SIZE) as *mut u8, 0, super::aarch64_tls_layout::THREAD_RECORD_SIZE); }
+        // SAFETY: the checked placement reserves the thread record and the
+        // 16-byte gap for the two-word DTV before the TLS image.
+        unsafe {
+            core::ptr::write_bytes((tp - super::aarch64_tls_layout::THREAD_RECORD_SIZE) as *mut u8, 0, super::aarch64_tls_layout::THREAD_RECORD_SIZE);
+            (tp as *mut usize).write(usize::from(self.memsz != 0));
+            ((tp + core::mem::size_of::<usize>()) as *mut usize).write(if self.memsz != 0 { image_destination } else { 0 });
+            ((tp - super::aarch64_tls_layout::CANARY_OFFSET_BELOW_TP) as *mut usize).write(self.stack_guard);
+            ((tp - super::aarch64_tls_layout::DTV_OFFSET_BELOW_TP) as *mut usize).write(tp);
+        }
 
         Some(StaticInitialTlsBlock {
             placement,
