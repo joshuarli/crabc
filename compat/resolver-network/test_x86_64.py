@@ -698,7 +698,7 @@ class NativeResolverNetworkPreparationTests(unittest.TestCase):
                         (destination / "crabc-x86_64-owned-static-sysroot").mkdir()
                 return {"argv": list(arguments), "status": 0, "stdout": {}, "stderr": {}}
 
-            with mock.patch.object(prepare, "command_record", side_effect=produce) as command:
+            with mock.patch.object(prepare, "ARCH", "x86_64"), mock.patch.object(prepare, "command_record", side_effect=produce) as command:
                 report, report_path = prepare.run(prepare.parse_args(["--output", str(output), "--timeout", "1"]))
             self.assertEqual(report["result"], "pass")
             self.assertTrue(report_path.is_file())
@@ -708,6 +708,23 @@ class NativeResolverNetworkPreparationTests(unittest.TestCase):
             ])
             self.assertTrue(report["packages"]["static"]["byte_identical"])
             self.assertTrue(report["packages"]["dynamic"]["byte_identical"])
+
+    def test_arm64_prepares_native_products_and_reports_package_gap(self) -> None:
+        with tempfile.TemporaryDirectory(dir=prepare.WORK_BOUNDARY) as directory:
+            output = Path(directory) / "prepared"
+
+            def produce(arguments, *, timeout):
+                Path(arguments[-1]).mkdir()
+                return {"argv": list(arguments), "status": 0, "stdout": {}, "stderr": {}}
+
+            with mock.patch.object(prepare, "ARCH", "aarch64"), mock.patch.object(prepare, "command_record", side_effect=produce) as command:
+                report, _ = prepare.run(prepare.parse_args(["--output", str(output)]))
+            self.assertEqual(report["result"], "fail")
+            self.assertIn("aarch64 resolver-network package", report["error"])
+            self.assertEqual(len(command.call_args_list), 2)
+            for call in command.call_args_list:
+                self.assertIn("--architecture", call.args[0])
+                self.assertIn("aarch64", call.args[0])
 
 
 if __name__ == "__main__":
