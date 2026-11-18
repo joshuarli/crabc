@@ -550,6 +550,13 @@ unsafe fn word_value(
     kind: u32, index: usize, addend: i64,
 ) -> Option<u64> {
     if cfg!(target_arch = "aarch64") && kind == R_X86_64_PC32 { return None; }
+    #[cfg(all(target_arch = "aarch64", crabc_general_initial_tls_materialization_v1))]
+    // SAFETY: The caller provides the validated scope and relocation records.
+    if kind == R_X86_64_TLSDESC
+        && unsafe { dynamic_tlsdesc_coordinates(scope, objects, owner, index, addend) }?.is_some()
+    {
+        return Some(0);
+    }
     let kind = if cfg!(target_arch = "aarch64") && kind == R_X86_64_TLSDESC {
         R_X86_64_TPOFF64
     } else { kind };
@@ -639,6 +646,19 @@ unsafe fn word_value(
         }
         _ => None,
     }
+}
+
+#[cfg(all(target_arch = "aarch64", crabc_general_initial_tls_materialization_v1))]
+unsafe fn dynamic_tlsdesc_coordinates(
+    scope: &SymbolScope<'_>, objects: &[Object], owner: usize, index: usize, addend: i64,
+) -> Option<Option<[usize; 2]>> {
+    // SAFETY: The caller supplies the validated relocation scope and object metadata.
+    let (provider, value) = unsafe { tls_coordinates(scope, objects, owner, index) }?;
+    let module = &objects[provider];
+    let offset = add_signed(value, addend)?;
+    if offset > module.tls_memsz as u64 { return None; }
+    if module.tls_module_id <= scope.static_tls_count { return Some(None); }
+    Some(Some([module.tls_module_id, usize::try_from(offset).ok()?]))
 }
 
 /// None is invalid relocation; Some(None) is a validated deferred strong
@@ -801,6 +821,17 @@ unsafe fn preflight_object_resolved(
 unsafe extern "C" fn tlsdesc_static() {
     // musl 1.2.6 src/ldso/aarch64/tlsdesc.s::__tlsdesc_static.
     core::arch::naked_asm!("ldr x0, [x0, #8]", "ret");
+}
+
+#[cfg(target_arch = "aarch64")]
+#[unsafe(naked)]
+unsafe extern "C" fn tlsdesc_dynamic() {
+    // musl 1.2.6 src/ldso/aarch64/tlsdesc.s::__tlsdesc_dynamic.
+    core::arch::naked_asm!(
+        "stp x1, x2, [sp, #-16]!", "mrs x1, tpidr_el0", "ldr x0, [x0, #8]",
+        "ldp x0, x2, [x0]", "sub x2, x2, x1", "ldr x1, [x1, #-8]",
+        "ldr x1, [x1, x0, lsl #3]", "add x0, x1, x2", "ldp x1, x2, [sp], #16", "ret"
+    );
 }
 
 unsafe fn write_resolved_word(address: u64, kind: u32, value: u64) {
