@@ -3,6 +3,7 @@ from pathlib import Path
 import hashlib
 import json
 import os
+import platform
 import shutil
 import sys
 import tempfile
@@ -165,6 +166,7 @@ class OwnedCleanupContract(unittest.TestCase):
         with self.assertRaisesRegex(owned_cleanup.OwnedCleanupError, "does not match its worker cleanup result"):
             owned_cleanup.dso_thread_join_contract(host, invalid)
 
+    @unittest.skipUnless(platform.machine() == "x86_64", "requires native x86-64 cleanup harness")
     def test_mixed_source_generated_compile_diagnostics_compile_both_fixture_shapes_without_execution(self):
         output = WORK / f"mixed-source-diagnostics-{Path(self.temporary.name).name}"
         static = {"root": str(Path(self.temporary.name) / "static"), "manifest": {"path": "static"}, "files": {}}
@@ -582,6 +584,7 @@ class OwnedCleanupContract(unittest.TestCase):
             self.assertTrue((application / "cleanup-dependency/src/lib.rs").is_file())
             self.assertEqual(len(prepared["sources"]), 4 if index == 1 else 3)
 
+    @unittest.skipUnless(platform.machine() == "x86_64", "requires native x86-64 cleanup harness")
     def test_source_graph_preflight_uses_the_generated_static_workspace_without_a_sysroot_product(self):
         output = WORK / f"source-graph-preflight-{Path(self.temporary.name).name}"
         rust_sysroot = Path(self.temporary.name) / "rust-sysroot"
@@ -903,6 +906,7 @@ class OwnedCleanupContract(unittest.TestCase):
         with self.assertRaisesRegex(owned_cleanup.OwnedCleanupError, "retained Cargo host-link input changed"):
             self.host_build_manifest(fixture)
 
+    @unittest.skipUnless(platform.machine() == "x86_64", "requires native x86-64 cleanup harness")
     def test_host_build_receipt_accepts_only_the_pinned_kache_launcher_and_linked_script(self):
         fixture = self.host_build_fixture()
         linked = fixture['linked']
