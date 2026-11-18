@@ -167,7 +167,7 @@ const O_RDWR: c_int = 2;
 const O_CREAT: c_int = 0o100;
 const O_EXCL: c_int = 0o200;
 const O_TRUNC: c_int = 0o1000;
-const O_LARGEFILE: c_int = 0o100000;
+const O_LARGEFILE: c_int = super::raw_syscall::O_LARGEFILE as c_int;
 
 const SEEK_SET: c_int = 0;
 const SEEK_CUR: c_int = 1;

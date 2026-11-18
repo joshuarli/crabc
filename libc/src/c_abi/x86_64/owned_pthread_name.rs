@@ -35,7 +35,7 @@ const AT_FDCWD: i64 = -100;
 const O_RDONLY: i64 = 0;
 const O_WRONLY: i64 = 1;
 const O_CLOEXEC: i64 = 0x8_0000;
-const O_LARGEFILE: i64 = 0x8000;
+const O_LARGEFILE: i64 = super::raw_syscall::O_LARGEFILE as i64;
 /// `sizeof "/proc/self/task//comm" + 3*sizeof(int)`, musl's path buffer.
 const COMM_PATH_CAPACITY: usize = 22 + 3 * 4;
 

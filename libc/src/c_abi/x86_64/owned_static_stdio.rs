@@ -525,7 +525,7 @@ const EINTR: c_int = 4;
 const O_RDWR: c_int = 2;
 const O_CREAT: c_int = 0o100;
 const O_EXCL: c_int = 0o200;
-const O_LARGEFILE: c_int = 0o100000;
+const O_LARGEFILE: c_int = super::raw_syscall::O_LARGEFILE as c_int;
 
 // Musl's `src/stdio/tmpfile.c` object.
 static_archive_member! { tmpfile_source {

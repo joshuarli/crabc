@@ -34,8 +34,8 @@ use super::{c_status, raw_syscall};
 
 const O_CREAT: c_int = 0x40;
 const O_CLOEXEC: c_int = 0x80_000;
-const O_LARGEFILE: c_int = 0x8_000;
-const O_TMPFILE: c_int = 0x41_0000;
+const O_LARGEFILE: c_int = super::raw_syscall::O_LARGEFILE as c_int;
+const O_TMPFILE: c_int = super::raw_syscall::O_TMPFILE as c_int;
 const O_WRONLY: c_int = 0x1;
 const O_TRUNC: c_int = 0x200;
 const F_SETFD: c_int = 2;
