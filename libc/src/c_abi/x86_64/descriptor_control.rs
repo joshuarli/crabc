@@ -43,7 +43,10 @@ const F_GETFD: c_int = 1;
 const F_SETFD: c_int = 2;
 const F_GETFL: c_int = 3;
 const F_SETFL: c_int = 4;
+#[cfg(target_arch = "x86_64")]
 const O_LARGEFILE: c_int = 0x8_000;
+#[cfg(target_arch = "aarch64")]
+const O_LARGEFILE: c_int = 0o400000;
 
 /*
  * Keep the public entry in assembly. A C fcntl(fd, F_GETFD) call has no rdx
@@ -53,6 +56,7 @@ const O_LARGEFILE: c_int = 0x8_000;
  * its own executable section so selecting fcntl does not retain unrelated
  * global-assembly entries from the same archive object.
  */
+#[cfg(target_arch = "x86_64")]
 core::arch::global_asm!(
     r#"
     .section .text.fcntl,"ax",@progbits
@@ -87,6 +91,35 @@ fcntl:
     record_lock = sym record_locks::fcntl_record_lock,
     unsupported = sym fcntl_unsupported,
 );
+
+#[cfg(target_arch = "aarch64")]
+#[no_mangle]
+pub unsafe extern "C" fn fcntl(descriptor: c_int, command: c_int, mut arguments: ...) -> c_int {
+    match command {
+        // SAFETY: these commands do not take a variadic argument.
+        1 | 3 => unsafe { fcntl_no_argument(descriptor, command) },
+        2 | 4 => {
+            // SAFETY: these commands take a promoted int argument.
+            let argument = unsafe { arguments.next_arg::<c_int>() };
+            // SAFETY: the caller supplies the expected scalar argument.
+            unsafe { fcntl_scalar(descriptor, command, argument) }
+        }
+        5 | 6 => {
+            // SAFETY: these commands take a flock pointer.
+            let argument = unsafe { arguments.next_arg::<*mut core::ffi::c_void>() };
+            // SAFETY: the caller supplies the kernel-validated pointer.
+            unsafe { record_locks::fcntl_record_lock(descriptor, command, argument) }
+        }
+        7 if cfg!(crabc_x86_owned_runtime) => {
+            // SAFETY: F_SETLKW takes a flock pointer.
+            let argument = unsafe { arguments.next_arg::<*mut core::ffi::c_void>() };
+            // SAFETY: the caller supplies the kernel-validated pointer.
+            unsafe { record_locks::fcntl_record_lock(descriptor, command, argument) }
+        }
+        // SAFETY: the fallback does not inspect an absent argument.
+        _ => unsafe { fcntl_unsupported(descriptor, command) },
+    }
+}
 
 #[inline(never)]
 unsafe extern "C" fn fcntl_no_argument(
