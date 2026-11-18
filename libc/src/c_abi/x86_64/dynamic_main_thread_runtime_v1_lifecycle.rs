@@ -178,7 +178,14 @@ pub unsafe extern "C" fn __libc_start_main(
     if guard == 0 { immediate_termination::_Exit(127); }
     unsafe {
         core::ptr::write(core::ptr::addr_of_mut!(__stack_chk_guard), guard);
+        #[cfg(target_arch = "x86_64")]
         core::arch::asm!("mov qword ptr fs:[40], {guard}", guard = in(reg) guard, options(nostack));
+        #[cfg(target_arch = "aarch64")]
+        {
+            let tp: usize;
+            core::arch::asm!("mrs {}, tpidr_el0", out(reg) tp, options(nostack));
+            core::ptr::write((tp - super::super::aarch64_tls_layout::CANARY_OFFSET_BELOW_TP) as *mut usize, guard);
+        }
         environment::install_initial(vectors.envp);
         auxv_observation::install_initial(vectors.auxv);
         startup_security::install_initial(vectors.auxv);

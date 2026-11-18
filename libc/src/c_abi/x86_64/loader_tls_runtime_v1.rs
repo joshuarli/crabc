@@ -166,7 +166,10 @@ unsafe fn validate_loader_tls_runtime_v1() -> Option<&'static LoaderLibcTlsRunti
 unsafe fn current_thread_pointer() -> Option<usize> {
     let thread_pointer: usize;
     unsafe {
+        #[cfg(target_arch = "x86_64")]
         asm!("mov {}, fs:[0]", out(reg) thread_pointer, options(nostack, readonly));
+        #[cfg(target_arch = "aarch64")]
+        asm!("mrs {}, tpidr_el0", out(reg) thread_pointer, options(nostack));
     }
     (thread_pointer != 0).then_some(thread_pointer)
 }
@@ -185,14 +188,21 @@ unsafe fn observe_validated_loader_tls(record: &LoaderLibcTlsRuntimeV1) -> bool 
     if thread_pointer != record.thread_pointer as usize {
         return false;
     }
-    let dtv_slot = match (record.thread_pointer as usize).checked_add(core::mem::size_of::<usize>()) {
+    #[cfg(target_arch = "x86_64")]
+    let slot = (record.thread_pointer as usize).checked_add(core::mem::size_of::<usize>());
+    #[cfg(target_arch = "aarch64")]
+    let slot = (record.thread_pointer as usize).checked_sub(super::super::aarch64_tls_layout::DTV_OFFSET_BELOW_TP);
+    let dtv_slot = match slot {
         Some(address) => address as *const usize,
         None => return false,
     };
     // SAFETY: `record` passed every metadata and alignment check, and the
     // loader's release publication occurs only after it has mapped this TCB
     // and DTV. These are the contract's exact `%fs:0` and `%fs:8` words.
+    #[cfg(target_arch = "x86_64")]
     let self_word = unsafe { core::ptr::read_volatile(record.thread_pointer.cast::<usize>()) };
+    #[cfg(target_arch = "aarch64")]
+    let self_word = thread_pointer;
     let dtv_word = unsafe { core::ptr::read_volatile(dtv_slot) };
     let dtv_count = unsafe { core::ptr::read_volatile(record.dtv) };
     self_word == thread_pointer
