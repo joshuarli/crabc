@@ -163,6 +163,40 @@ unsafe fn early_bad_character(words: *mut Wordexp, flags: c_int) -> c_int {
     WRDE_BADCHAR
 }
 
+// Musl 1.2.6 src/misc/wordexp.c scans WRDE_NOCMD before invoking the shell.
+fn scan_no_commands(source: &[u8]) -> Option<c_int> {
+    let mut i = 0;
+    let mut single = false;
+    let mut double = false;
+    let mut parens = 0usize;
+    while i < source.len() {
+        match source[i] {
+            b'\\' if !single => {
+                i += 1;
+                if i == source.len() { return Some(WRDE_SYNTAX); }
+            }
+            b'\'' if !double => single = !single,
+            b'"' if !single => double = !double,
+            b'(' if parens != 0 => parens += 1,
+            b')' if parens != 0 => parens -= 1,
+            b'(' | b')' | b'\n' | b'|' | b'&' | b';' | b'<' | b'>' | b'{' | b'}'
+                if !single && !double && parens == 0 => return Some(WRDE_BADCHAR),
+            b'$' if !single && source.get(i + 1) == Some(&b'(') => {
+                if source.get(i + 2) == Some(&b'(') {
+                    i += 2;
+                    parens += 2;
+                } else {
+                    return Some(WRDE_CMDSUB);
+                }
+            }
+            b'`' if !single => return Some(WRDE_CMDSUB),
+            _ => {}
+        }
+        i += 1;
+    }
+    None
+}
+
 unsafe fn do_wordexp(input: *const c_char, words: *mut Wordexp, flags: c_int) -> c_int {
     if input.is_null() || words.is_null() { return WRDE_BADCHAR; }
     let allocator = result_allocator();
@@ -172,6 +206,9 @@ unsafe fn do_wordexp(input: *const c_char, words: *mut Wordexp, flags: c_int) ->
     }
     // SAFETY: the C caller retains a readable terminated input for this call.
     let source = unsafe { core::ffi::CStr::from_ptr(input).to_bytes() };
+    if flags & WRDE_NOCMD != 0 {
+        if let Some(status) = scan_no_commands(source) { return status; }
+    }
     let syntax = match WordexpSyntax::parse_with_no_commands(source, flags & WRDE_NOCMD != 0) {
         Ok(syntax) => syntax,
         Err(WordexpError::NoSpace) => return unsafe { early_no_space(words, flags) },
