@@ -52,6 +52,7 @@ unsafe fn copy_sigset_words(destination: *mut c_ulong, source: *const c_ulong) {
     // SAFETY: each public sigset_t has sixteen aligned c_ulong words. Callers
     // of the C declarations supply distinct, valid objects because both musl
     // source declarations use restrict-qualified pointers.
+    #[cfg(target_arch = "x86_64")]
     unsafe {
         core::arch::asm!(
             "mov rax, [rsi + 0]", "mov [rdi + 0], rax",
@@ -76,6 +77,9 @@ unsafe fn copy_sigset_words(destination: *mut c_ulong, source: *const c_ulong) {
             options(nostack, preserves_flags),
         );
     }
+    #[cfg(target_arch = "aarch64")]
+    // SAFETY: the caller supplies distinct complete signal sets.
+    unsafe { core::ptr::copy_nonoverlapping(source, destination, POSIX_SPAWNATTR_SIGSET_WORDS) };
 }
 
 // Musl's `src/process/posix_spawnattr_setflags.c` object.
