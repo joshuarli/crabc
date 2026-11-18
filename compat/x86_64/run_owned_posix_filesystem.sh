@@ -4,7 +4,10 @@ set -euo pipefail
 ulimit -c 0
 
 readonly ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-readonly ORACLE_CC=/usr/local/bin/crabc-x86_64-musl-gcc
+eval "$(python3 -B "$ROOT/compat/x86_64/native_arch.py" "$(uname -m)")"
+readonly ORACLE_CC="$oracle"
+architecture_args=()
+if [ "$arch" != x86_64 ]; then architecture_args=(--architecture "$arch"); fi
 readonly PROBE="$ROOT/compat/x86_64/owned_posix_filesystem_probe.c"
 readonly AUDITOR="$ROOT/compat/x86_64/owned_posix_filesystem_audit.py"
 readonly cases=(aliases directory traversal temporary handles comparators directory-edges directory-threads traversal-flags traversal-descriptor traversal-permissions legacy-edges handle-edges alias-edges namespace-boundaries)
@@ -194,10 +197,41 @@ run_in_root() {
 if [ -z "$provided_dynamic" ]; then
     step=build-dynamic
     python3 -B "$ROOT/scripts/build_x86_64_owned_dynamic_sysroot.py" \
-        --output "$work/dynamic-sysroot" >"$work/dynamic-build.json"
+        "${architecture_args[@]}" --output "$work/dynamic-sysroot" >"$work/dynamic-build.json"
     provided_dynamic="$work/dynamic-sysroot"
 fi
 readonly installed="$provided_dynamic"
+if [ "$arch" = aarch64 ]; then
+    step=validate-aarch64-product
+    python3 -B - "$ROOT" "$installed" <<'PY_ARM_PRODUCT'
+import sys
+from pathlib import Path
+sys.path.insert(0, str(Path(sys.argv[1]) / "compat/x86_64"))
+import owned_posix_filesystem_audit as audit
+root = audit.require_directory(Path(sys.argv[2]), "aarch64 dynamic product")
+manifest = audit.read_object(root / audit.MANIFEST_RELATIVE, "aarch64 dynamic manifest")
+if manifest.get("format") != "crabc-aarch64-owned-dynamic-sysroot-v1" or manifest.get("target") != "aarch64-unknown-linux-musl":
+    audit.fail("aarch64 dynamic product identity drifted")
+audit.validate_payload(root, audit.checked_files(manifest.get("files"), "aarch64 dynamic manifest"), {}, "aarch64 dynamic product")
+PY_ARM_PRODUCT
+    step=link-aarch64-oracle
+    "$ORACLE_CC" -static -fno-pie -no-pie -pthread -Wl,--export-dynamic "$PROBE" -o "$work/oracle"
+    step=link-aarch64-dynamic
+    "$installed/bin/crabc-cc-dynamic" "$PROBE" -o "$work/dynamic"
+    mkdir -p "$work/oracle-root/tmp"
+    cp "$work/oracle" "$work/oracle-root/consumer"
+    cp -a "$installed/." "$work/dynamic-root/"
+    cp "$work/dynamic" "$work/dynamic-root/consumer"
+    for scenario in "${cases[@]}"; do
+        run_in_root "$work/oracle-root" "$work/oracle-$scenario.stdout" /consumer "$scenario"
+        run_in_root "$work/dynamic-root" "$work/dynamic-$scenario.stdout" /consumer "$scenario"
+        cmp "$work/oracle-$scenario.stdout" "$work/dynamic-$scenario.stdout"
+        cmp "$work/oracle-$scenario.stderr" "$work/dynamic-$scenario.stderr"
+        cmp "$work/oracle-$scenario.status" "$work/dynamic-$scenario.status"
+    done
+    printf 'owned POSIX filesystem aarch64 dynamic behavioral component: PASS; x86 receipt and static-mode audits not claimed; evidence: %s\n' "$work"
+    exit 0
+fi
 python3 -B "$AUDITOR" validate-dynamic-product "$installed"
 step=compile-installed-object
 "$installed/bin/crabc-cc-dynamic" --dynamic-pie -std=c11 -fno-builtin \
@@ -222,7 +256,7 @@ if [ -n "$provided_static" ]; then
 elif [ "$dynamic_was_supplied" -eq 0 ]; then
     step=build-static
     python3 -B "$ROOT/scripts/build_x86_64_owned_sysroot.py" \
-        --output "$work/static-sysroot" >"$work/static-build.json"
+        "${architecture_args[@]}" --output "$work/static-sysroot" >"$work/static-build.json"
     static_product="$work/static-sysroot"
 fi
 if [ -n "$static_product" ]; then
