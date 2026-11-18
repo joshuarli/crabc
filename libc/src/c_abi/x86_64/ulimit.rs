@@ -59,6 +59,7 @@ const _: () = {
  * to preserve rsi into the three-word helper; all other command values take
  * musl's no-vararg query route and deliberately ignore rsi.
  */
+#[cfg(target_arch = "x86_64")]
 core::arch::global_asm!(
     r#"
     .text
@@ -76,6 +77,20 @@ ulimit:
     set_limit = sym ulimit_set,
     query_limit = sym ulimit_query,
 );
+
+/// # Safety
+/// UL_SETFSIZE requires a variadic long argument.
+#[cfg(target_arch = "aarch64")]
+#[no_mangle]
+pub unsafe extern "C" fn ulimit(command: c_int, mut arguments: ...) -> c_long {
+    if command == UL_SETFSIZE {
+        // SAFETY: UL_SETFSIZE requires one long variadic argument.
+        let blocks = unsafe { arguments.next_arg::<c_long>() };
+        ulimit_set(command, blocks)
+    } else {
+        ulimit_query(command)
+    }
+}
 
 /// Query the calling process's file-size limit through Linux `prlimit64`.
 ///
