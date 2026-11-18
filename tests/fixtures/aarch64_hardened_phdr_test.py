@@ -51,3 +51,19 @@ result = subprocess.run([str(path)], check=False)
 if result.returncode != 127:
     raise SystemExit(f'empty-relro: expected 127, got {result.returncode}')
 os.unlink(path)
+
+modified = bytearray(data)
+for entry in entries:
+    if struct.unpack_from('<I', modified, entry)[0] == 2:
+        dynamic_offset = struct.unpack_from('<Q', modified, entry + 8)[0]
+        break
+else:
+    raise SystemExit('missing dynamic segment')
+struct.pack_into('<Q', modified, dynamic_offset, 1)
+path = original.with_name(original.name + '-needed')
+path.write_bytes(modified)
+path.chmod(0o755)
+result = subprocess.run([str(path)], check=False)
+if result.returncode != 127:
+    raise SystemExit(f'needed: expected 127, got {result.returncode}')
+os.unlink(path)
