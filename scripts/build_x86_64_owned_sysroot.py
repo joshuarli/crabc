@@ -1534,7 +1534,7 @@ def build_aarch64(output: Path, *, allocator_backend: str, lifecycle_test_audit:
                         "CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_LINKER": "/usr/local/bin/crabc-aarch64-mold-gcc"})
     skipped = ["x86 source seal and installed receipt validation", "x86 CRT entry and relocation audits",
                "x86 libc member classification and symbol contract", "x86 allocator lifecycle and hidden-symbol audit",
-               "x86 static PIE and dynamic CRT products"]
+               "x86 dynamic CRT products"]
     for item in skipped:
         print("aarch64: skipped " + item, file=sys.stderr)
     with tempfile.TemporaryDirectory(prefix="owned-static-build-", dir=work) as temporary:
@@ -1562,7 +1562,7 @@ def build_aarch64(output: Path, *, allocator_backend: str, lifecycle_test_audit:
         library = installed / "usr/lib"
         library.mkdir(parents=True)
         run([ar, "rcsD", str(library / "libc.a"), *(str(object_dir / name) for name in selected), str(allocator)], environment=environment)
-        for name in ("crt1.o", "crti.o", "crtn.o"):
+        for name in ("crt1.o", "rcrt1.o", "crti.o", "crtn.o"):
             copy_artifact(crt / name, library / name)
         copy_artifact(builtins, library / builtins.name)
         copy_regular_tree(ROOT / "include", installed / "usr/include")
