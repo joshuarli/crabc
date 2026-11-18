@@ -2192,6 +2192,7 @@ def run_x86_static_dispatch(
     builder: Path | None = None,
     static_runner: Any | None = None,
     allocator_backend: str = "accepted-c",
+    architecture: str = "x86_64",
 ) -> tuple[dict[str, object], Path, Path | None]:
     """Materialize and qualify one isolated installed x86 Lua static product.
 
@@ -2230,7 +2231,7 @@ def run_x86_static_dispatch(
             "native Lua static sysroot builder",
         )
         producer = command_record(
-            [sys.executable, "-B", str(selected_builder), "--output", str(sysroot),
+            [sys.executable, "-B", str(selected_builder), *(('--architecture', architecture) if architecture != 'x86_64' else ()), "--output", str(sysroot),
              *(("--allocator-backend", allocator_backend) if allocator_backend != "accepted-c" else ())],
             cwd=ROOT,
             environment=static_environment(state / "producer"),
@@ -2239,6 +2240,8 @@ def run_x86_static_dispatch(
         dispatcher["producer"] = producer
         require_success(producer, "native Lua static sysroot producer")
         require_physical_directory(sysroot, "native Lua static produced sysroot")
+        if architecture != "x86_64":
+            raise RunnerError("aarch64 Lua static driver and ELF receipt contracts are unavailable")
         inner_args = argparse.Namespace(
             manifest=MANIFEST,
             sysroot=sysroot,
