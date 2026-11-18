@@ -1217,8 +1217,14 @@ def execute_aarch64(root: Path, arguments: Sequence[str], manifest: dict) -> Non
     observed.pop(MANIFEST_RELATIVE_PATH, None)
     if observed != expected or links or other:
         raise DriverError("aarch64 installed sysroot payload differs from its manifest")
+    cortex_flag = "-Wl,--fix-cortex-a53-843419"
+    if arguments.count(cortex_flag) > 1:
+        raise DriverError("duplicate cortex-a53 linker option")
+    fix_cortex = cortex_flag in arguments
     static_pie = "-static-pie" in arguments or "--static-pie" in arguments
-    invocation = parse_invocation([arg for arg in arguments if arg not in {"-no-pie", "-static-pie", "--static-pie"}])
+    invocation = parse_invocation([arg for arg in arguments if arg not in {"-no-pie", "-static-pie", "--static-pie", cortex_flag}])
+    if fix_cortex and (invocation.compile_only or invocation.print_link_plan):
+        raise DriverError("cortex-a53 linker option requires a link")
     static_mode = STATIC_PIE if static_pie else STATIC_ET_EXEC
     if invocation.print_link_plan:
         print(json.dumps(plan_record(root, static_mode, architecture="aarch64"), indent=2, sort_keys=True))
@@ -1248,6 +1254,8 @@ def execute_aarch64(root: Path, arguments: Sequence[str], manifest: dict) -> Non
                 command.append(str(output))
             else:
                 command.append(item)
+        if fix_cortex:
+            command.insert(1, "--fix-cortex-a53-843419")
         if invocation.link_receipt is None:
             run_checked(command)
         else:
