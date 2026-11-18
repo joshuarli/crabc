@@ -514,13 +514,3 @@ fn timestamp_cwd_child() {
     let current = fs::fstat(borrow(&target)).expect("observe cwd-relative current time");
     assert_current_times(current, current_before, current_after);
 }
-
-#[cfg(target_arch = "aarch64")]
-trait ClockQueryResult {
-    fn expect(self, message: &str) -> Self;
-}
-
-#[cfg(target_arch = "aarch64")]
-impl ClockQueryResult for crabc_rs::time::Timespec {
-    fn expect(self, _message: &str) -> Self { self }
-}

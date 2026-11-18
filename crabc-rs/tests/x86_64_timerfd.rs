@@ -278,13 +278,3 @@ fn x86_64_timerfd_rejects_invalid_records_and_descriptor_kinds() {
     let (reader, _writer) = pipe::pipe().expect("create non-timer descriptor");
     assert_eq!(time::timerfd_gettime(&reader), Err(Errno::INVAL));
 }
-
-#[cfg(target_arch = "aarch64")]
-trait ClockQueryResult {
-    fn expect(self, message: &str) -> Self;
-}
-
-#[cfg(target_arch = "aarch64")]
-impl ClockQueryResult for crabc_rs::time::Timespec {
-    fn expect(self, _message: &str) -> Self { self }
-}

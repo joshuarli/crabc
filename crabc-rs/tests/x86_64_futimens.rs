@@ -206,13 +206,3 @@ fn x86_64_futimens_keeps_kernel_validation_and_state_atomicity_direct() {
         (observed_before.st_mtime, observed_before.st_mtime_nsec),
     );
 }
-
-#[cfg(target_arch = "aarch64")]
-trait ClockQueryResult {
-    fn expect(self, message: &str) -> Self;
-}
-
-#[cfg(target_arch = "aarch64")]
-impl ClockQueryResult for crabc_rs::time::Timespec {
-    fn expect(self, _message: &str) -> Self { self }
-}
