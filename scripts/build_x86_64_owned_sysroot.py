@@ -1519,8 +1519,8 @@ def build_aarch64(output: Path, *, allocator_backend: str, lifecycle_test_audit:
                   profile: str, hardening_profile: NativeRuntimeProfile) -> dict[str, object]:
     if platform.system() != "Linux" or platform.machine() not in {"aarch64", "arm64"}:
         raise BuildError("aarch64 static sysroot requires native Linux/aarch64")
-    if allocator_backend != DEFAULT_ALLOCATOR_BACKEND or lifecycle_test_audit or profile != "release" or hardening_profile is not NativeRuntimeProfile.COMPATIBILITY:
-        raise BuildError("aarch64 currently supports only the accepted C backend and release compatibility profile")
+    if allocator_backend != DEFAULT_ALLOCATOR_BACKEND or lifecycle_test_audit or profile != "release":
+        raise BuildError("aarch64 currently supports only the accepted C backend and release builds")
     output = validate_output_path(output)
     arch = native_arch("aarch64")
     work = ROOT / ".work" / arch["work_name"]
@@ -1546,7 +1546,7 @@ def build_aarch64(output: Path, *, allocator_backend: str, lifecycle_test_audit:
                  "--config", f'target.{target}.rustflags=["-Ztls-model=initial-exec", "-Ctarget-feature=-outline-atomics"]', "--", "--cfg", "crabc_owned_static_sysroot", "--cfg", MIMALLOC_LIFECYCLE_RUST_CFG, "-C", "relocation-model=pic", "-C", "panic=abort", "-Ztls-model=initial-exec", "-Zmerge-functions=disabled"]
         run(cargo, environment=environment)
         crt = stage / "crt"
-        run([sys.executable, str(ROOT / "crt/build_x86_64.py"), "--architecture", "aarch64", "--out-dir", str(crt)], environment=environment)
+        run([sys.executable, str(ROOT / "crt/build_x86_64.py"), "--architecture", "aarch64", "--hardening-profile", hardening_profile.value, "--out-dir", str(crt)], environment=environment)
         builtins = stage / "builtins/libcrabc-builtins.a"
         builtins.parent.mkdir()
         run([sys.executable, str(ROOT / "builtins/build.py"), "--output", str(builtins), "--llvm-ar", str(tools / "llvm-ar"), "--llvm-nm", str(tools / "llvm-nm"), "--llvm-readelf", "/usr/bin/readelf", "--ld-lld", "/usr/bin/mold"], environment=environment)
