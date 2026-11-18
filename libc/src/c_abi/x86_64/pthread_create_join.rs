@@ -3841,7 +3841,7 @@ unsafe fn join_selected_worker_inner(
         // boundary gives the lifecycle's wait-before-reclaim proof a direct
         // machine-code witness rather than depending on generic-wrapper
         // inlining after the worker attribute path grew.
-        #[cfg(not(crabc_x86_owned_runtime))]
+        #[cfg(all(not(crabc_x86_owned_runtime), target_arch = "x86_64"))]
         unsafe {
             core::arch::asm!(
                 "syscall",
@@ -3855,6 +3855,13 @@ unsafe fn join_selected_worker_inner(
                 lateout("r11") _,
                 options(nostack),
             );
+        }
+        #[cfg(all(not(crabc_x86_owned_runtime), target_arch = "aarch64"))]
+        // SAFETY: the child-TID word is live, and the null timeout and expected value satisfy FUTEX_WAIT.
+        unsafe {
+            wait_result = raw_syscall::syscall4(raw_syscall::SYS_FUTEX,
+                core::ptr::addr_of_mut!((*control).child_tid) as i64,
+                FUTEX_WAIT, i64::from(child_tid), 0);
         }
         if is_linux_error(wait_result) {
             let error = positive_linux_error(wait_result);
