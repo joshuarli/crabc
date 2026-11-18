@@ -32,8 +32,10 @@ use super::{c_status, raw_syscall};
 
 const EBADF: i64 = 9;
 const F_GETFD: i64 = 1;
+#[cfg(target_arch = "x86_64")]
 const SYS_FCHDIR: i64 = 81;
-const SYS_CHDIR: i64 = 80;
+#[cfg(target_arch = "aarch64")]
+const SYS_FCHDIR: i64 = 50;
 const PROC_FD_PREFIX: &[u8] = b"/proc/self/fd/";
 const PROC_FD_NAME_SIZE: usize = 15 + 3 * size_of::<c_int>();
 
@@ -110,7 +112,7 @@ pub extern "C" fn fchdir(directory_descriptor: c_int) -> c_int {
     // SAFETY: procfdname supplies the exact NUL-terminated stack path that
     // musl passes to syscall(SYS_chdir, buf); Linux validates its resolution.
     let fallback = unsafe {
-        raw_syscall::syscall1(SYS_CHDIR, procfd_path.as_ptr() as i64)
+        raw_syscall::syscall1(raw_syscall::SYS_CHDIR, procfd_path.as_ptr() as i64)
     };
     c_status(fallback)
 }
