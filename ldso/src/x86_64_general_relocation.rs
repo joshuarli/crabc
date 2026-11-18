@@ -548,6 +548,9 @@ unsafe fn word_value(
     kind: u32, index: usize, addend: i64,
 ) -> Option<u64> {
     if cfg!(target_arch = "aarch64") && kind == R_X86_64_PC32 { return None; }
+    let kind = if cfg!(target_arch = "aarch64") && kind == R_X86_64_TLSDESC {
+        R_X86_64_TPOFF64
+    } else { kind };
     let object = &objects[owner];
     // One validated record supplies the private selectors and ordinary lookup.
     let requested_symbol = if index != 0 { Some(unsafe { symbol_record(object, index) }?) } else { None };
@@ -754,8 +757,11 @@ unsafe fn preflight_object_resolved(
             if cfg!(crabc_hardened) {
                 let binding = matches!(kind, R_X86_64_GLOB_DAT | R_X86_64_JUMP_SLOT
                     | R_X86_64_DTPMOD64 | R_X86_64_DTPOFF64 | R_X86_64_TPOFF64)
+                    || (cfg!(target_arch = "aarch64") && kind == R_X86_64_TLSDESC)
                     || (symbol != 0 && matches!(kind, R_64 | R_X86_64_PC32));
-                let width = if kind == R_X86_64_PC32 { 4 } else { 8 };
+                let width = if kind == R_X86_64_PC32 { 4 }
+                    else if cfg!(target_arch = "aarch64") && kind == R_X86_64_TLSDESC { 16 }
+                    else { 8 };
                 if binding && !relro_covers(object, offset, width) { return None; }
             }
             // Reserved runtime wires are imports only through their exact
@@ -778,12 +784,38 @@ unsafe fn preflight_object_resolved(
                 // A non-lazy caller keeps each word value for application,
                 // which then needs no second symbol lookup.
                 if let Some(resolved) = resolved.as_deref_mut() { resolved.push(value?)?; }
-                if kind == R_X86_64_PC32 { 4 } else { 8 }
+                if kind == R_X86_64_PC32 { 4 }
+                else if cfg!(target_arch = "aarch64") && kind == R_X86_64_TLSDESC { 16 }
+                else { 8 }
             };
             unsafe { admitted_target(object, &mut writable, offset, length, kind != R_COPY && kind != R_X86_64_PC32) }?;
         }
     }
     Some(())
+}
+
+#[cfg(target_arch = "aarch64")]
+#[unsafe(naked)]
+unsafe extern "C" fn tlsdesc_static() {
+    // musl 1.2.6 src/ldso/aarch64/tlsdesc.s::__tlsdesc_static.
+    core::arch::naked_asm!("ldr x0, [x0, #8]", "ret");
+}
+
+unsafe fn write_resolved_word(address: u64, kind: u32, value: u64) {
+    #[cfg(target_arch = "aarch64")]
+    if kind == R_X86_64_TLSDESC {
+        // SAFETY: Preflight admitted both aligned descriptor words in a writable load.
+        unsafe {
+            core::ptr::write_unaligned(address as *mut u64, tlsdesc_static as *const () as u64);
+            core::ptr::write_unaligned((address + 8) as *mut u64, value);
+        }
+        return;
+    }
+    // SAFETY: Preflight admitted the relocation destination at its ABI width.
+    unsafe {
+        if kind == R_X86_64_PC32 { core::ptr::write_unaligned(address as *mut u32, value as u32); }
+        else { core::ptr::write_unaligned(address as *mut u64, value); }
+    }
 }
 
 /// [`apply_word_relocations`] with the values preflight already resolved for
@@ -797,11 +829,8 @@ unsafe fn apply_resolved_word_relocations(object: &Object, values: &[u64]) -> Op
             if kind == R_NONE || kind == R_COPY { continue; }
             let value = *values.next()?;
             let address = runtime_address(object.base, unsafe { read_u64(entry) })?;
-            if kind == R_X86_64_PC32 {
-                unsafe { core::ptr::write_unaligned(address as *mut u32, value as u32); }
-            } else {
-                unsafe { core::ptr::write_unaligned(address as *mut u64, value); }
-            }
+            // SAFETY: The complete object was preflighted before relocation.
+            unsafe { write_resolved_word(address, kind, value); }
         }
     }
     if values.next().is_some() { return None; }
@@ -820,11 +849,8 @@ unsafe fn apply_word_relocations(scope: &SymbolScope<'_>, objects: &[Object], ow
             let value = unsafe { word_resolution(scope, objects, owner, offset, kind,
                 (info >> 32) as usize, read_i64(entry.add(16)), false) }??;
             let address = runtime_address(object.base, offset)?;
-            if kind == R_X86_64_PC32 {
-                unsafe { core::ptr::write_unaligned(address as *mut u32, value as u32); }
-            } else {
-                unsafe { core::ptr::write_unaligned(address as *mut u64, value); }
-            }
+            // SAFETY: The complete object was preflighted before relocation.
+            unsafe { write_resolved_word(address, kind, value); }
         }
     }
     unsafe { apply_relr_table(object) }

@@ -62,11 +62,8 @@ pub(in super::super) unsafe fn relocate_new(objects: &[Object], indices: &[usize
                 match unsafe { word_resolution(&scope, objects, owner, record.offset, kind, record.symbol, record.addend, lazy && !object.bind_now) }? {
                     Some(value) => {
                         let address = runtime_address(object.base, record.offset)?;
-                        if kind == R_X86_64_PC32 {
-                            unsafe { core::ptr::write_unaligned(address as *mut u32, value as u32); }
-                        } else {
-                            unsafe { core::ptr::write_unaligned(address as *mut u64, value); }
-                        }
+                        // SAFETY: The graph-wide preflight admitted this target.
+                        unsafe { write_resolved_word(address, kind, value); }
                     }
                     None => pending.push(record)?,
                 }
