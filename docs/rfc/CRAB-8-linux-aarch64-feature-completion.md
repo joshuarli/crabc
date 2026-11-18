@@ -277,13 +277,28 @@ directory are under `libc/src/c_abi/x86_64/`.
 | --- | --- |
 | 1. Linux-generic, only gated | `crabc-core/src/{fenv,syscall,time,event,signal,mm,system}.rs` and their `*_x86_64.rs` forks: make the x86 copy the single generic owner, keeping only numbers, entry and registers per architecture. libc needs these x86-only APIs: `time::VdsoClockGettime`, `param::install_initial_sysinfo_ehdr_for_vdso` and the `crabc-core/src/resolver.rs` question-matched exchange. `libc/src/{getopt_exports,network_interface_exports,allocator_mimalloc}.rs` keep AArch64 arms keyed to the old composition. The `crabc-rs` dual-arm cfgs follow `crabc-core`. Most `global_asm!` blocks are `.weak`/`.set` aliases and portable as is. |
 | 2. Legacy syscalls | `open`, `unlink`, `poll`, `dup2`, `readlink`, `select`, `rmdir`, `pause`, `mkdir`, `link`, `chown`, `chmod`, `access`, `symlink`, `rename`, `pipe`, `mknod`, `lchown` in `crabc-core/src/{syscall_x86_64,event_x86_64,io}.rs`, `chown`, `lchown`, `descriptor_entry`, `descriptor_io`, `filesystem_access`, `getpass`, `owned_filesystem_mechanisms`, `owned_named_ipc`, `owned_static_stdio`, `pathname_lifecycle`, `readiness_waits`, `stdio_standard`, `syscall`, `temporary_names`, `temporary_objects`, `ttyname_r`; `fork` through `clone` in `pthread_atfork`. Use the generic form on both architectures unless an x86 test compares syscall sequences. |
-| 3. Architecture layer | Syscall entry: `syscall`, `pthread_create_join`, `pthread_atfork`, `posix_spawnattr_{init,signal_fields}`, `crabc-core/src/syscall_x86_64.rs`. Thread pointer (`%fs`, TLS variant II): 16 files including `thread_pointer`, `static_tls`, `dynamic_tls`, plus ldso `x86_64_{initial_worker_tls,general_initial_tls_state,runtime_tls_view}.rs`. Register asm: `atomic`, `integer_arithmetic`, `intmax_arithmetic`, `math_fmod`, `byte_scan` (SSE), `fenv`, `fenv_rounding`, `crabc-core/src/fenv_x86_64.rs`. `setjmp`; signal frames in `signal_foundation`, `signal_control`, `owned_syscall_cancel`, `owned_synccall`; vDSO in `clock_gettime` and `crabc-core/src/vdso.rs`. Musl translations: 37 `*_x86_64.S` from 29 `compat/x86_64/generate_*.py`, split by the x86-only `split_musl_objects` in `libc/build.rs`. Relocations: ldso `x86_64_{general_relocation,deferred_relocations,initial_graph}.rs`. CRT: `crt/src/x86_64_*.rs` and `crt/build_x86_64*.py`. builtins: AArch64 outline-atomics helpers are missing. Unwinder: `unwinder/patches/unwinding-0.2.10-remote-reader.rs` x86 register arms and the x86 triple in `unwinder/build.py`. `arch_prctl` and `io_permissions` are x86-only exports, absent from the AArch64 surface. |
+| 3. Architecture layer | Syscall entry: `syscall`, `pthread_create_join`, `pthread_atfork`, `posix_spawnattr_{init,signal_fields}`, `crabc-core/src/syscall_x86_64.rs`. Thread pointer (`%fs`, TLS variant II): 16 files including `thread_pointer`, `static_tls`, `dynamic_tls`, plus ldso `x86_64_{initial_worker_tls,general_initial_tls_state,runtime_tls_view}.rs`. Register asm: `atomic`, `integer_arithmetic`, `intmax_arithmetic`, `math_fmod`, `byte_scan` (SSE), `fenv`, `fenv_rounding`, `crabc-core/src/fenv_x86_64.rs`. `setjmp`; signal frames in `signal_foundation`, `signal_control`, `owned_syscall_cancel`, `owned_synccall`; vDSO in `clock_gettime` and `crabc-core/src/vdso.rs`. Relocations: ldso `x86_64_{general_relocation,deferred_relocations,initial_graph}.rs`. CRT: `crt/src/x86_64_*.rs` and `crt/build_x86_64*.py`. Unwinder: `unwinder/patches/unwinding-0.2.10-remote-reader.rs` x86 register arms and the x86 triple in `unwinder/build.py`. `arch_prctl` and `io_permissions` are x86-only exports, absent from the AArch64 surface. |
 | 4. ABI types | `stat` layout: `stat_compat`, `mktemp`, `ttyname_r`, `filesystem_capacity`, `filesystem_traversal`, `owned_filesystem_mechanisms`. `va_list` (`owned_printf_float` asserts the SysV layout): `owned_printf`, `owned_scanf`, `stdio_format_scan`, `owned_wide_format`, `owned_error_reporting`, `process_exec_variadic`, `owned_syslog`, `descriptor_entry`, `owned_strfmon`. Unsigned `c_char`: `stdio_format_scan`, `owned_printf`, `locale_multibyte`, `owned_static_stdio`, `byte_scan`. `ucontext`/`mcontext`: the signal-frame files in bucket 3. `include/bits/` already carries AArch64 arms; revalidate them against the oracle. |
-| 5. binary128 `long double` | 55 files reference x87 or binary80, chiefly `math_x87_extended`, `math_long_double_completion`, `math_elementary_long_double`, `float_parse`, `owned_printf`, `owned_scanf`, `stdio_format_scan`, `owned_static_stdio` and their `.S` translations. `builtins/src/x86_64_binary80.rs` has no binary128 counterpart; the `*tf3` soft-float helpers are missing. |
+| 5. binary128 `long double` | Musl translations first: 37 `*_x86_64.S` from 32 `compat/x86_64/generate_*.py`, split by the x86-only `split_musl_objects` in `libc/build.rs`. Each generator takes `--cc`, and musl's C already carries the binary128 paths, so most of this bucket is regenerating those translations with the aarch64 oracle compiler. Then the Rust leaves that assume x87: 55 files reference x87 or binary80, chiefly `math_x87_extended`, `math_long_double_completion`, `math_elementary_long_double`, `float_parse`, `owned_printf`, `owned_scanf`, `stdio_format_scan` and `owned_static_stdio`. builtins needs nothing new: `builtins/build.py` already source-builds `compiler_builtins` for aarch64, which supplies the `*tf3` helpers and outline atomics. |
 
 A2 takes buckets 1 to 4, starting with the `crabc-core` convergence and the
-syscall entry, which every other row depends on. A3 takes bucket 5 in
-parallel.
+syscall entry, which every other row depends on. Legacy syscalls switch to the
+generic form on both architectures. `compat/x86_64/owned_syscall_profile.py`
+already treats `open`/`openat` and the stat family as equal, and its other
+groups need the same treatment if a switch changes them. A3 takes bucket 5 in
+parallel, starting with the musl translations.
+
+The arm64 image can type-check x86 without an x86 host, which covers changes
+to shared files. Linking and running still need the x86 host:
+
+```sh
+scripts/lanes/rust-check.sh env CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_RUSTFLAGS=-Ztls-model=initial-exec \
+  cargo check --locked -Zbuild-std=core,alloc --target x86_64-unknown-linux-musl \
+  -p crabc-libc --features x86-owned-dynamic-runtime
+```
+
+Use `-Zbuild-std=std,panic_abort` for `crabc-rs`. The override drops
+`link-dead-code`, which breaks a source-built `compiler_builtins`.
 
 ### Don't
 
