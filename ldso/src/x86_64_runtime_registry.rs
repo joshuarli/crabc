@@ -100,6 +100,8 @@ struct RuntimeObject {
     // either. Musl's ELF arrays have no length bound, so this is sized to the
     // object; rollback releases it with the node and published nodes retain it.
     callbacks: Option<LoaderBuffer<usize>>,
+    #[cfg(all(target_arch = "aarch64", crabc_general_initial_tls_materialization_v1))]
+    tlsdesc_records: Option<LoaderBuffer<[usize; 2]>>,
     initializer_count: usize,
     finalizer_count: usize,
     // Zero is queued, a positive kernel TID owns an executing constructor,
@@ -119,7 +121,10 @@ impl RuntimeObject {
         unsafe { core::ptr::write(node, Self { link_map: LinkMap { address: 0, name: core::ptr::null(), dynamic: core::ptr::null(), next: core::ptr::null_mut(), previous: core::ptr::null_mut() }, storage, identity, index,
             next: core::ptr::null_mut(), previous: core::ptr::null_mut(), symbol_next: core::ptr::null_mut(), fini_next: core::ptr::null_mut(), needed_by: core::ptr::null_mut(), global: false, short_name,
             needed: LoaderVec::new(), dependency_scope: None, name: name.as_ref().map_or(ObjectName::EMPTY, LoadedName::view), owned_name: name,
-            callbacks: None, initializer_count: 0, finalizer_count: 0,
+            callbacks: None,
+            #[cfg(all(target_arch = "aarch64", crabc_general_initial_tls_materialization_v1))]
+            tlsdesc_records: None,
+            initializer_count: 0, finalizer_count: 0,
             callback_state: AtomicI32::new(0), callback_waiters: AtomicBool::new(false) });
             (*node).link_map.name = (*node).name.as_ptr();
             if let ObjectStorage::Runtime(object) = &(*node).storage {
@@ -984,8 +989,29 @@ unsafe fn open_transaction(guard: &RuntimeGuard, filename: &[u8], flags: i32, di
         report(diagnostic, DIAGNOSTIC_FORK, 0, &[unsafe { node_name(snapshot.nodes.as_slice()[abandoned]) }]);
         return Err(());
     }
+    #[cfg(all(target_arch = "aarch64", crabc_general_initial_tls_materialization_v1))]
+    let mut descriptors = {
+        let Some(mut pointers) = LoaderBuffer::new(snapshot.objects.as_slice().len(), core::ptr::null_mut()) else {
+            memory(diagnostic); return Err(());
+        };
+        for index in registry.count..snapshot.objects.as_slice().len() {
+            let object = &snapshot.objects.as_slice()[index];
+            let Some(count) = (object.relasz / ELF64_RELA_SIZE).checked_add(object.pltrelsz / ELF64_RELA_SIZE) else {
+                memory(diagnostic); return Err(());
+            };
+            let Some(mut records) = LoaderBuffer::new(count, [0usize; 2]) else {
+                memory(diagnostic); return Err(());
+            };
+            pointers.as_mut_slice()[index] = records.as_mut_slice().as_mut_ptr();
+            // SAFETY: The snapshot's new node is exclusively owned by this transaction.
+            unsafe { (*snapshot.nodes.as_slice()[index]).tlsdesc_records = Some(records); }
+        }
+        pointers
+    };
     let deferred = match unsafe { deferred::relocate_new(snapshot.objects.as_slice(), scope.as_slice(), registry.count,
-        registry.initial_tls_count, lazy) } {
+        registry.initial_tls_count, lazy,
+        #[cfg(all(target_arch = "aarch64", crabc_general_initial_tls_materialization_v1))]
+        descriptors.as_mut_slice()) } {
         Some(deferred) => deferred,
         None => {
             unsafe { report_relocation_failure(diagnostic, &snapshot, scope.as_slice(), registry.count,
