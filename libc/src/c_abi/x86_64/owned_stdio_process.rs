@@ -39,15 +39,15 @@ unsafe extern "C" {
     static mut __environ: *mut *mut c_char;
 }
 
-unsafe fn close(fd: c_int) { unsafe { sys::syscall1(3, fd as i64); } }
+unsafe fn close(fd: c_int) { unsafe { sys::syscall1(sys::SYS_CLOSE, fd as i64); } }
 unsafe fn mask(how: i64, set: *const u64, old: *mut u64) {
     unsafe {
-        let result = sys::syscall4(14, how, set as i64, old as i64, 8);
+        let result = sys::syscall4(sys::SYS_RT_SIGPROCMASK, how, set as i64, old as i64, 8);
         if result == 0 && !old.is_null() { *old &= !0x380000000; }
     }
 }
 unsafe fn disposition(sig: i64, set: *const KernelSignalAction, old: *mut KernelSignalAction) {
-    unsafe { sys::syscall4(13, sig, set as i64, old as i64, 8); }
+    unsafe { sys::syscall4(sys::SYS_RT_SIGACTION, sig, set as i64, old as i64, 8); }
 }
 
 unsafe fn spawn(command: *const c_char, actions: *const SpawnFileActions,
@@ -66,7 +66,7 @@ unsafe fn spawn(command: *const c_char, actions: *const SpawnFileActions,
 /// Pinned `pclose.c` retries raw __sys_wait4 without publishing EINTR.
 unsafe fn wait_process_stream_raw(pid: c_int, status: *mut c_int) -> i64 {
     loop {
-        let result = unsafe { sys::syscall4(61, pid as i64, status as i64, 0, 0) };
+        let result = unsafe { sys::syscall4(sys::SYS_WAIT4, pid as i64, status as i64, 0, 0) };
         if result != -EINTR { return result; }
     }
 }
@@ -84,7 +84,7 @@ static_archive_member! { popen_source {
             let direction = match *mode as u8 { b'r' => 0, b'w' => 1,
                 _ => { errno::set_errno(22); return ptr::null_mut(); } };
             let mut pipes = [-1i32; 2];
-            let result = sys::syscall2(293, pipes.as_mut_ptr() as i64, CLOEXEC);
+            let result = sys::syscall2(sys::SYS_PIPE2, pipes.as_mut_ptr() as i64, CLOEXEC);
             if result < 0 { errno::set_errno(-result as c_int); return ptr::null_mut(); }
             let stream = fdopen(pipes[direction], mode);
             if stream.is_null() { close(pipes[0]); close(pipes[1]); return stream; }
@@ -111,7 +111,7 @@ static_archive_member! { popen_source {
                     (*stream).pipe_pid = pid;
                     let mut cursor = mode;
                     while *cursor != 0 && *cursor as u8 != b'e' { cursor = cursor.add(1); }
-                    if *cursor == 0 { sys::syscall3(72, pipes[direction] as i64, 2, 0); }
+                    if *cursor == 0 { sys::syscall3(sys::SYS_FCNTL, pipes[direction] as i64, 2, 0); }
                     close(pipes[1-direction]);
                     return stream;
                 }
