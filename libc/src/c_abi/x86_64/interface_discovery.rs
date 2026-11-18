@@ -39,12 +39,12 @@ const ENXIO_VAL: c_int = 6;
 const AF_UNIX: c_int = 1;
 const SOCK_DGRAM: c_int = 2;
 
-const SYS_CLOSE: i64 = 3;
-const SYS_MMAP: i64 = 9;
-const SYS_MUNMAP: i64 = 11;
-const SYS_IOCTL: i64 = 16;
-const SYS_SENDTO: i64 = 44;
-const SYS_RECVFROM: i64 = 45;
+const SYS_CLOSE: i64 = raw_syscall::SYS_CLOSE;
+const SYS_MMAP: i64 = raw_syscall::SYS_MMAP;
+const SYS_MUNMAP: i64 = raw_syscall::SYS_MUNMAP;
+const SYS_IOCTL: i64 = raw_syscall::SYS_IOCTL;
+const SYS_SENDTO: i64 = raw_syscall::SYS_SENDTO;
+const SYS_RECVFROM: i64 = raw_syscall::SYS_RECVFROM;
 
 const PROT_READ_WRITE: i64 = 0x3;
 const MAP_PRIVATE_ANONYMOUS: i64 = 0x22;
