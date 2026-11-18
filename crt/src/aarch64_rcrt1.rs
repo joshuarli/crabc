@@ -108,6 +108,103 @@ _start:
     cbz w0, .Lstatic_pie_hardened_headers_done
     mov x0, xzr
     mov x1, x20
+.Lstatic_pie_hardened_elf_header:
+    cmp x0, x22
+    b.hs .Lstatic_pie_fail
+    ldr w2, [x1]
+    cmp w2, #1
+    b.ne .Lstatic_pie_hardened_elf_next
+    ldr x2, [x1, #8]
+    cbnz x2, .Lstatic_pie_hardened_elf_next
+    ldr w2, [x1, #4]
+    tbz w2, #2, .Lstatic_pie_hardened_elf_next
+    ldr x2, [x1, #32]
+    cmp x2, #64
+    b.lo .Lstatic_pie_hardened_elf_next
+    ldr x2, [x1, #40]
+    cmp x2, #64
+    b.lo .Lstatic_pie_hardened_elf_next
+    ldr x3, [x1, #16]
+    adds x3, x3, x19
+    b.cs .Lstatic_pie_fail
+    adds x2, x3, #64
+    b.cs .Lstatic_pie_fail
+    ldr w2, [x3]
+    movz w4, #0x457f
+    movk w4, #0x464c, lsl #16
+    cmp w2, w4
+    b.ne .Lstatic_pie_fail
+    ldrh w2, [x3, #4]
+    mov w4, #0x102
+    cmp w2, w4
+    b.ne .Lstatic_pie_fail
+    ldrb w2, [x3, #6]
+    cmp w2, #1
+    b.ne .Lstatic_pie_fail
+    ldrh w2, [x3, #16]
+    cmp w2, #3
+    b.ne .Lstatic_pie_fail
+    ldrh w2, [x3, #18]
+    cmp w2, #183
+    b.ne .Lstatic_pie_fail
+    ldr w2, [x3, #20]
+    cmp w2, #1
+    b.ne .Lstatic_pie_fail
+    ldrh w2, [x3, #52]
+    cmp w2, #64
+    b.ne .Lstatic_pie_fail
+    ldrh w2, [x3, #54]
+    cmp w2, #56
+    b.ne .Lstatic_pie_fail
+    ldrh w2, [x3, #56]
+    cmp x2, x22
+    b.ne .Lstatic_pie_fail
+    ldr x5, [x3, #32]
+    mov x2, #56
+    mul x6, x22, x2
+    adds x6, x6, x5
+    b.cs .Lstatic_pie_fail
+    mov x8, x20
+    mov x9, xzr
+.Lstatic_pie_hardened_phdr_mapping:
+    cmp x9, x22
+    b.hs .Lstatic_pie_fail
+    ldr w2, [x8]
+    cmp w2, #1
+    b.ne .Lstatic_pie_hardened_phdr_next
+    ldr w2, [x8, #4]
+    tbz w2, #2, .Lstatic_pie_hardened_phdr_next
+    ldr x7, [x8, #8]
+    cmp x5, x7
+    b.lo .Lstatic_pie_hardened_phdr_next
+    ldr x2, [x8, #32]
+    adds x2, x2, x7
+    b.cs .Lstatic_pie_fail
+    cmp x6, x2
+    b.hi .Lstatic_pie_hardened_phdr_next
+    sub x2, x6, x7
+    ldr x4, [x8, #40]
+    cmp x2, x4
+    b.hi .Lstatic_pie_hardened_phdr_next
+    sub x2, x5, x7
+    ldr x4, [x8, #16]
+    adds x2, x2, x4
+    b.cs .Lstatic_pie_fail
+    adds x2, x2, x19
+    b.cs .Lstatic_pie_fail
+    cmp x2, x20
+    b.eq .Lstatic_pie_hardened_elf_done
+.Lstatic_pie_hardened_phdr_next:
+    add x8, x8, #56
+    add x9, x9, #1
+    b .Lstatic_pie_hardened_phdr_mapping
+.Lstatic_pie_hardened_elf_next:
+    add x1, x1, #56
+    add x0, x0, #1
+    b .Lstatic_pie_hardened_elf_header
+.Lstatic_pie_hardened_elf_done:
+    mov x0, xzr
+    mov x1, x20
     mov x2, xzr
 .Lstatic_pie_hardened_headers:
     cmp x0, x22
