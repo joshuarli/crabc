@@ -1,16 +1,25 @@
-//! Direct Linux virtual-memory mappings.
+//! The deliberately bounded Linux/x86-64 mapping facade.
 //!
-//! These raw-pointer operations are intentionally unsafe. Mapping state has no
-//! C-runtime identity, but callers must preserve pointer provenance and ensure
-//! no Rust references outlive an `munmap` or incompatible `mprotect` call.
+//! This module owns ordinary anonymous/file mappings, bounded remapping,
+//! protection changes, unmapping, per-range/process-wide memory locking, and
+//! legacy file-page remapping. It also exposes bounded mapping
+//! synchronization, advice, and residency operations, but not the
+//! broader AArch64 VM policy surface.
 
 use bitflags::bitflags;
 
 use crate::ffi::c_void;
-use crate::Result;
+use crate::{AsFd, Result};
+
+const MAP_ANONYMOUS: u32 = 0x20;
+const SUPPORTED_PROTECTION_BITS: u32 =
+    ProtFlags::READ.bits() | ProtFlags::WRITE.bits() | ProtFlags::EXEC.bits();
+const SUPPORTED_MAP_BITS: u32 = MapFlags::SHARED.bits() | MapFlags::PRIVATE.bits();
 
 bitflags! {
-    /// Linux `PROT_*` flags for [`mmap`] and [`mmap_anonymous`].
+    /// Linux/x86-64 `PROT_*` flags for [`mmap`] and [`mmap_anonymous`].
+    ///
+    /// The empty set is the admitted `PROT_NONE` value.
     #[repr(transparent)]
     #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
     pub struct ProtFlags: u32 {
@@ -20,13 +29,13 @@ bitflags! {
         const WRITE = 0x2;
         /// `PROT_EXEC`.
         const EXEC = 0x4;
-        /// Preserve future Linux-defined bits.
-        const _ = !0;
     }
 }
 
 bitflags! {
-    /// Linux `PROT_*` flags for [`mprotect`].
+    /// Linux/x86-64 `PROT_*` flags for [`mprotect`].
+    ///
+    /// The empty set is the admitted `PROT_NONE` value.
     #[repr(transparent)]
     #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
     pub struct MprotectFlags: u32 {
@@ -36,39 +45,70 @@ bitflags! {
         const WRITE = 0x2;
         /// `PROT_EXEC`.
         const EXEC = 0x4;
-        /// `PROT_GROWSUP`.
-        const GROWSUP = 0x0200_0000;
-        /// `PROT_GROWSDOWN`.
+        /// Extend protection changes down a growing mapping.
         const GROWSDOWN = 0x0100_0000;
-        /// `PROT_SEM`.
+        /// Extend protection changes up a growing mapping.
+        const GROWSUP = 0x0200_0000;
+        /// Permit atomic semaphore operations.
         const SEM = 0x8;
-        /// `PROT_BTI` on Linux/AArch64.
+        /// Enable branch target identification.
+        #[cfg(target_arch = "aarch64")]
         const BTI = 0x10;
-        /// `PROT_MTE` on Linux/AArch64.
+        /// Enable memory tagging.
+        #[cfg(target_arch = "aarch64")]
         const MTE = 0x20;
-        /// Preserve future Linux-defined bits.
+        /// Retain kernel-defined flags.
         const _ = !0;
     }
 }
 
 bitflags! {
-    /// Linux `MS_*` flags for [`msync`].
+    /// Linux/x86-64 `MAP_*` flags for [`mmap`] and [`mmap_anonymous`].
     #[repr(transparent)]
     #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
-    pub struct MsyncFlags: u32 {
-        /// `MS_ASYNC`: schedule an update and return without waiting.
-        const ASYNC = 0x1;
-        /// `MS_INVALIDATE`: invalidate other cached mappings of the file.
-        const INVALIDATE = 0x2;
-        /// `MS_SYNC`: update the backing storage and wait for completion.
-        const SYNC = 0x4;
-        /// Preserve future Linux-defined bits; the kernel validates them.
+    pub struct MapFlags: u32 {
+        /// `MAP_SHARED`.
+        const SHARED = 0x01;
+        /// `MAP_PRIVATE`.
+        const PRIVATE = 0x02;
+        /// Replace mappings at the specified address.
+        const FIXED = 0x10;
+        /// Map at the specified address only if the range is vacant.
+        const FIXED_NOREPLACE = 0x0010_0000;
+        /// Permit a stack mapping to grow downward.
+        const GROWSDOWN = 0x0100;
+        /// Lock the mapping in memory.
+        const LOCKED = 0x2000;
+        /// Do not reserve swap space.
+        const NORESERVE = 0x4000;
+        /// Populate page tables during mapping.
+        const POPULATE = 0x8000;
+        /// Identify a stack mapping.
+        const STACK = 0x0002_0000;
+        /// Retain kernel-defined flags.
         const _ = !0;
     }
 }
 
 bitflags! {
-    /// Linux `MLOCK_*` flags for [`mlock_with`].
+    /// The bounded `MREMAP_*` flags accepted by [`mremap`] and
+    /// [`mremap_fixed`].
+    ///
+    /// `MREMAP_FIXED` is deliberately not a value in this set: callers use
+    /// [`mremap_fixed`] when they need a selected destination, and that
+    /// operation adds the kernel's fixed-address bit at its syscall boundary.
+    /// `MREMAP_DONTUNMAP` is not exposed because retaining a
+    /// moved source range changes its page-fault and ownership semantics.
+    #[repr(transparent)]
+    #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+    pub struct MremapFlags: u32 {
+        /// `MREMAP_MAYMOVE`: permit Linux to relocate the mapping.
+        const MAYMOVE = 0x1;
+    }
+}
+
+bitflags! {
+    /// Linux/x86-64 `MLOCK_*` flags for [`mlock_with`].
     #[repr(transparent)]
     #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
     pub struct MlockFlags: u32 {
@@ -82,7 +122,7 @@ bitflags! {
 bitflags! {
     /// Linux `MCL_*` flags accepted by [`mlockall`].
     ///
-    /// This operation changes process-global VM policy.  The flags remain a
+    /// This operation changes process-global VM policy. The flags remain a
     /// closed Rust value so an unrelated integer cannot silently request a
     /// different policy at the syscall boundary.
     #[repr(transparent)]
@@ -94,6 +134,22 @@ bitflags! {
         const FUTURE = 0x2;
         /// Defer locking until pages are faulted in.
         const ONFAULT = 0x4;
+    }
+}
+
+bitflags! {
+    /// Linux/x86-64 `MS_*` flags for [`msync`].
+    #[repr(transparent)]
+    #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+    pub struct MsyncFlags: u32 {
+        /// `MS_ASYNC`: schedule an update and return without waiting.
+        const ASYNC = 0x1;
+        /// `MS_INVALIDATE`: invalidate other cached mappings of the file.
+        const INVALIDATE = 0x2;
+        /// `MS_SYNC`: update the backing storage and wait for completion.
+        const SYNC = 0x4;
+        /// Preserve future Linux-defined bits; the kernel validates them.
+        const _ = !0;
     }
 }
 
@@ -117,52 +173,6 @@ pub enum PosixAdvice {
     DontNeed = 4,
 }
 
-bitflags! {
-    /// The bounded `MREMAP_*` flags accepted by [`mremap`] and
-    /// [`mremap_fixed`].
-    ///
-    /// `MREMAP_FIXED` is deliberately not a value in this set: callers use
-    /// [`mremap_fixed`] when they need a selected destination, and that
-    /// operation adds the kernel's fixed-address bit at its syscall boundary.
-    /// `MREMAP_DONTUNMAP` is also outside this first slice because it changes
-    /// the ordinary mremap guarantee that the old range is invalid after a
-    /// successful move.
-    #[repr(transparent)]
-    #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
-    pub struct MremapFlags: u32 {
-        /// `MREMAP_MAYMOVE`: permit Linux to relocate the mapping.
-        const MAYMOVE = 0x1;
-    }
-}
-
-bitflags! {
-    /// Linux `MAP_*` flags for [`mmap`] and [`mmap_anonymous`].
-    #[repr(transparent)]
-    #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
-    pub struct MapFlags: u32 {
-        /// `MAP_SHARED`.
-        const SHARED = 0x01;
-        /// `MAP_PRIVATE`.
-        const PRIVATE = 0x02;
-        /// `MAP_FIXED`.
-        const FIXED = 0x10;
-        /// `MAP_FIXED_NOREPLACE`.
-        const FIXED_NOREPLACE = 0x0010_0000;
-        /// `MAP_GROWSDOWN`.
-        const GROWSDOWN = 0x0100;
-        /// `MAP_LOCKED`.
-        const LOCKED = 0x2000;
-        /// `MAP_NORESERVE`.
-        const NORESERVE = 0x4000;
-        /// `MAP_POPULATE`.
-        const POPULATE = 0x8000;
-        /// `MAP_STACK`.
-        const STACK = 0x0002_0000;
-        /// Preserve future Linux-defined bits.
-        const _ = !0;
-    }
-}
-
 /// Closed Linux `madvise` policies exposed by this native facade.
 ///
 /// `LinuxDontNeed` has Linux's page-discarding behavior; it is deliberately
@@ -178,83 +188,32 @@ pub enum Advice {
     Sequential = 2,
     /// `MADV_WILLNEED`.
     WillNeed = 3,
-    /// `MADV_DONTNEED`: discard private anonymous pages on next access.
+    /// `MADV_DONTNEED`: discard resident contents. Private anonymous pages
+    /// become zero-filled; private file pages reload their backing contents.
     LinuxDontNeed = 4,
 }
 
-/// The smallest Linux page size supported by the AArch64 ABI.
-///
-/// `mincore` writes one output byte per kernel page. Using the minimum page
-/// size here makes [`mincore`]'s caller-owned output check a safe upper bound
-/// on the supported AArch64 kernels; a kernel configured with larger pages
-/// writes fewer bytes and leaves the remainder untouched.
+/// The Linux/x86-64 base page size used to size a [`mincore`] output vector.
 pub const MINCORE_PAGE_SIZE: usize = 4096;
 
-/// Creates a file-backed Linux mapping.
-///
-/// # Safety
-///
-/// If `ptr` is non-null, it must be page-aligned and valid for the mapped
-/// range's mutation requirements. The caller must preserve pointer provenance
-/// and Rust reference invariants for the returned range, including when the
-/// underlying file is concurrently changed. `offset` must meet the kernel's
-/// page-alignment requirement for the selected mapping.
 #[inline]
-pub unsafe fn mmap<Fd: crate::AsFd>(
-    ptr: *mut c_void,
-    len: usize,
-    prot: ProtFlags,
-    flags: MapFlags,
-    fd: Fd,
-    offset: u64,
-) -> Result<*mut c_void> {
-    let fd = fd.as_fd();
-    // SAFETY: The caller owns the mapping and pointer-provenance contract;
-    // `fd` remains borrowed for the duration of the kernel call.
-    unsafe {
-        crabc_core::mm::mmap_raw(
-            ptr.cast(),
-            len,
-            prot.bits(),
-            flags.bits(),
-            fd.as_raw_fd(),
-            offset,
-        )
-        .map(|mapping| mapping.cast())
+fn checked_protection_bits(bits: u32) -> Result<u32> {
+    if bits & !SUPPORTED_PROTECTION_BITS == 0 {
+        Ok(bits)
+    } else {
+        Err(crate::Errno::INVAL)
     }
 }
 
-/// Creates an anonymous Linux mapping.
-///
-/// # Safety
-///
-/// If `ptr` is non-null, it must be page-aligned and valid for the mapped
-/// range's mutation requirements. The caller must uphold Rust pointer
-/// provenance and reference invariants for the returned mapping.
 #[inline]
-pub unsafe fn mmap_anonymous(
-    ptr: *mut c_void,
-    len: usize,
-    prot: ProtFlags,
-    flags: MapFlags,
-) -> Result<*mut c_void> {
-    // SAFETY: The caller owns the mapping and pointer-provenance contract.
-    unsafe {
-        crabc_core::mm::mmap_raw(ptr.cast(), len, prot.bits(), flags.bits() | 0x20, -1, 0)
-            .map(|mapping| mapping.cast())
+fn checked_map_bits(flags: MapFlags) -> Result<u32> {
+    let bits = flags.bits();
+    let kind = bits & SUPPORTED_MAP_BITS;
+    if bits & !SUPPORTED_MAP_BITS != 0 || kind == 0 || kind == SUPPORTED_MAP_BITS {
+        Err(crate::Errno::INVAL)
+    } else {
+        Ok(bits)
     }
-}
-
-/// Removes a Linux mapping.
-///
-/// # Safety
-///
-/// `ptr..ptr+len` must be a valid mapping range and no Rust references may
-/// remain into it.
-#[inline]
-pub unsafe fn munmap(ptr: *mut c_void, len: usize) -> Result<()> {
-    // SAFETY: The caller owns the mapping-lifetime contract.
-    unsafe { crabc_core::mm::munmap_raw(ptr.cast(), len) }
 }
 
 #[inline]
@@ -267,7 +226,95 @@ fn checked_mremap_flags(flags: MremapFlags) -> Result<u32> {
     }
 }
 
-/// Resizes or moves a Linux mapping.
+/// Creates a file-backed Linux/x86-64 mapping.
+///
+/// # Safety
+///
+/// This facade rejects fixed-map flags, so `ptr` is only a kernel address hint;
+/// it has no alignment, liveness, or dereference precondition. `offset` must
+/// be page-aligned, and `fd` must name a file Linux can map for the duration
+/// of this call. The caller owns the returned mapping's lifetime and must not
+/// create Rust references that outlive an unmap or incompatible protection
+/// change. Closing `fd` after the call does not invalidate the mapping.
+/// Accesses through shared backing aliases must be synchronized, and any Rust
+/// references must satisfy Rust's aliasing rules across all such aliases.
+/// The backing file must remain large enough for every accessed byte, including
+/// when another descriptor or process can truncate it: truncation can make a
+/// later access raise `SIGBUS`.
+#[inline]
+pub unsafe fn mmap<Fd: AsFd>(
+    ptr: *mut c_void,
+    len: usize,
+    prot: ProtFlags,
+    flags: MapFlags,
+    fd: Fd,
+    offset: u64,
+) -> Result<*mut c_void> {
+    let prot = checked_protection_bits(prot.bits())?;
+    let flags = checked_map_bits(flags)?;
+    let fd = fd.as_fd();
+    // SAFETY: The caller owns the mapping and pointer-provenance contract;
+    // `fd` remains borrowed for the duration of the kernel call.
+    unsafe {
+        crabc_core::mm::mmap_raw(
+            ptr.cast(),
+            len,
+            prot,
+            flags,
+            fd.as_raw_fd(),
+            offset,
+        )
+        .map(|mapping| mapping.cast())
+    }
+}
+
+/// Creates an anonymous Linux/x86-64 mapping.
+///
+/// # Safety
+///
+/// This facade rejects fixed-map flags, so `ptr` is only a kernel address hint;
+/// it has no alignment, liveness, or dereference precondition. The caller owns
+/// the returned mapping's lifetime and must not create Rust references that
+/// outlive an unmap or incompatible protection change. An empty `prot` is
+/// `PROT_NONE` and must not be dereferenced until later protection restores
+/// access.
+#[inline]
+pub unsafe fn mmap_anonymous(
+    ptr: *mut c_void,
+    len: usize,
+    prot: ProtFlags,
+    flags: MapFlags,
+) -> Result<*mut c_void> {
+    let prot = checked_protection_bits(prot.bits())?;
+    let flags = checked_map_bits(flags)?;
+    // SAFETY: The caller owns the mapping and pointer-provenance contract.
+    unsafe {
+        crabc_core::mm::mmap_raw(
+            ptr.cast(),
+            len,
+            prot,
+            flags | MAP_ANONYMOUS,
+            -1,
+            0,
+        )
+        .map(|mapping| mapping.cast())
+    }
+}
+
+/// Removes a Linux/x86-64 mapping.
+///
+/// # Safety
+///
+/// `ptr..ptr + len` must identify a mapped range. No Rust references, slices,
+/// or aliases into the range may remain usable after this call succeeds,
+/// including values held by another abstraction.
+#[inline]
+pub unsafe fn munmap(ptr: *mut c_void, len: usize) -> Result<()> {
+    // SAFETY: The caller owns the mapping-lifetime contract.
+    unsafe { crabc_core::mm::munmap_raw(ptr.cast(), len) }
+}
+
+/// Resizes or moves a Linux/x86-64 mapping.
 ///
 /// This is the direct Rust counterpart of the ordinary Rustix `mremap`
 /// operation. It returns the successor address rather than a C sentinel and
@@ -279,11 +326,18 @@ fn checked_mremap_flags(flags: MremapFlags) -> Result<u32> {
 /// range beginning at `ptr` and extending for `old_len` bytes, rounded up to
 /// a page boundary, must remain valid for the syscall; the address arithmetic
 /// for both old and new ranges must not wrap. There must be no Rust references
-/// into the old range while this operation runs. On success, the old mapping
-/// is consumed: Linux may have moved it when [`MremapFlags::MAYMOVE`] is set,
-/// and the caller must invalidate every use of `ptr` and use only the
-/// returned address, even when the numeric address is unchanged. A failed
-/// call leaves the old mapping available for cleanup.
+/// into the old range while this operation runs. With nonzero `old_len`, a
+/// successful call consumes the old mapping: Linux may have moved it when
+/// [`MremapFlags::MAYMOVE`] is set, and the caller must discard the old pointer
+/// and use the returned pointer, even when the numeric address is unchanged.
+///
+/// With zero `old_len`, `ptr` must instead identify a live shareable mapping
+/// and the caller must supply Linux's required [`MremapFlags::MAYMOVE`]. A
+/// successful call creates an additional mapping of the shared backing and
+/// preserves the original mapping. Both mappings require independent cleanup;
+/// the caller must synchronize their shared contents and avoid incompatible
+/// Rust references through either alias. A failed call leaves the original
+/// mapping available for cleanup.
 #[inline]
 pub unsafe fn mremap(
     ptr: *mut c_void,
@@ -294,14 +348,14 @@ pub unsafe fn mremap(
     let flags = checked_mremap_flags(flags)?;
 
     // SAFETY: The caller owns the mapping lifetime/provenance contract and
-    // must invalidate the old pointer after a successful operation.
+    // preserves or consumes the old mapping according to the old length.
     unsafe {
         crabc_core::mm::mremap_raw(ptr.cast(), old_len, new_len, flags)
             .map(|mapping| mapping.cast())
     }
 }
 
-/// Resizes or moves a Linux mapping to a caller-selected address.
+/// Resizes or moves a Linux/x86-64 mapping to a caller-selected address.
 ///
 /// This is the fixed-address counterpart of [`mremap`]. The fixed-address
 /// kernel flag is added only here, so [`MremapFlags`] remains a closed set for
@@ -315,10 +369,19 @@ pub unsafe fn mremap(
 /// provenance, must not overlap the old range, and must contain no Rust
 /// references because Linux may replace it. Neither range calculation may
 /// wrap, and no Rust references may point into either range during the call.
-/// On success, the old mapping and any destination mapping replaced by Linux
-/// are invalidated; the caller must discard both input pointers and use only
-/// the returned address. A failed call leaves the old mapping available for
-/// cleanup.
+/// On success, any replaced destination mapping is invalidated: the caller
+/// must discard its old destination pointer and use the returned pointer,
+/// even when the numeric destination address is unchanged. With nonzero
+/// `old_len`, the original source mapping is also consumed.
+///
+/// With zero `old_len`, the source must instead be a live shareable mapping
+/// and [`MremapFlags::MAYMOVE`] must be supplied. Linux preserves the original
+/// source and creates an additional shared alias at the destination. The
+/// source and returned alias require independent cleanup, synchronized
+/// contents, and no incompatible Rust references through either alias.
+/// Fixed remapping is not transactional: a failed call may already have
+/// unmapped the destination or truncated the source. The caller must not
+/// assume that an error preserves either original range.
 #[inline]
 pub unsafe fn mremap_fixed(
     ptr: *mut c_void,
@@ -330,23 +393,27 @@ pub unsafe fn mremap_fixed(
     let flags = checked_mremap_flags(flags)?;
 
     // SAFETY: The caller owns both mapping lifetime/provenance contracts and
-    // must invalidate both input pointers after a successful operation.
+    // invalidates the destination and preserves or consumes the source
+    // according to the old length.
     unsafe {
         crabc_core::mm::mremap_fixed_raw(ptr.cast(), old_len, new_len, flags, new_ptr.cast())
             .map(|mapping| mapping.cast())
     }
 }
 
-/// Changes a Linux mapping's protection.
+/// Changes a Linux/x86-64 mapping's protection.
 ///
 /// # Safety
 ///
-/// `ptr..ptr+len` must be a valid mapping range and the caller must preserve
-/// Rust's reference invariants after its access permissions change.
+/// `ptr..ptr + len` must identify a mapped range. The caller must ensure that
+/// no live Rust reference is used with permissions incompatible with `flags`;
+/// an empty flag set is `PROT_NONE`, so every dereference is invalid until a
+/// later protection change restores access.
 #[inline]
 pub unsafe fn mprotect(ptr: *mut c_void, len: usize, flags: MprotectFlags) -> Result<()> {
+    let flags = checked_protection_bits(flags.bits())?;
     // SAFETY: The caller owns the mapped-range and provenance contracts.
-    unsafe { crabc_core::mm::mprotect_raw(ptr.cast(), len, flags.bits()) }
+    unsafe { crabc_core::mm::mprotect_raw(ptr.cast(), len, flags) }
 }
 
 /// Locks a mapped range into memory with Linux `mlock`.
@@ -364,6 +431,7 @@ pub unsafe fn mprotect(ptr: *mut c_void, len: usize, flags: MprotectFlags) -> Re
 /// mapped and readable for the duration of the call. The rounded address range
 /// must not overflow. The caller must preserve pointer provenance and Rust
 /// reference invariants for the mapped range. Linux may return
+/// [`crate::Errno::PERM`] when the caller lacks permission to lock memory, or
 /// [`crate::Errno::AGAIN`] or [`crate::Errno::NOMEM`] when the process's
 /// memlock limit cannot accommodate the range.
 #[inline]
@@ -384,7 +452,10 @@ pub unsafe fn mlock(ptr: *mut c_void, len: usize) -> Result<()> {
 /// and extending for `len` bytes rounded up to a page boundary, must remain
 /// mapped and readable for the duration of the call. The rounded address range
 /// must not overflow. The caller must preserve pointer provenance and Rust
-/// reference invariants for the mapped range. Unsupported flags are returned
+/// reference invariants for the mapped range. Linux may return
+/// [`crate::Errno::PERM`] when the caller lacks permission to lock memory, or
+/// [`crate::Errno::AGAIN`] or [`crate::Errno::NOMEM`] when the process's
+/// memlock limit cannot accommodate the range. Unsupported flags are returned
 /// as [`crate::Errno::INVAL`] by Linux.
 #[inline]
 pub unsafe fn mlock_with(ptr: *mut c_void, len: usize, flags: MlockFlags) -> Result<()> {
@@ -413,11 +484,11 @@ pub unsafe fn munlock(ptr: *mut c_void, len: usize) -> Result<()> {
 
 /// Locks all current and/or future mappings in the calling process.
 ///
-/// This operation is process-global rather than tied to one mapping.  The
+/// This operation is process-global rather than tied to one mapping. The
 /// caller must account for its effect on every thread and mapping in the
 /// process, and must expect Linux to reject the request when the memlock
-/// budget or flag combination is unavailable.  It never calls the public C
-/// ABI or writes C thread-local `errno`.
+/// budget or flag combination is unavailable. It never calls the public C ABI
+/// or writes C thread-local `errno`.
 #[inline]
 pub fn mlockall(flags: MlockAllFlags) -> Result<()> {
     crabc_core::mm::mlockall_raw(flags.bits())
@@ -439,15 +510,15 @@ pub fn munlockall() -> Result<()> {
 ///
 /// # Safety
 ///
-/// `ptr` must be page-aligned and identify a valid mapped range of `len`
-/// bytes. `len` must be non-zero, and the mapping must remain valid for the
-/// duration of the call. The caller must preserve pointer provenance and Rust
-/// reference invariants across an operation which may write mapped contents
-/// back to its backing storage or invalidate cached data. Invalid flag
-/// combinations are returned as [`crate::Errno::INVAL`].
+/// `ptr` must be page-aligned. For a nonzero `len`, it must identify a valid
+/// mapped range which remains valid for the duration of the call. A zero
+/// length is a Linux no-op. The caller must preserve pointer provenance and
+/// Rust reference invariants across an operation which may write mapped
+/// contents back to its backing storage or invalidate cached data. Invalid
+/// flag combinations are returned as [`crate::Errno::INVAL`].
 #[inline]
 pub unsafe fn msync(ptr: *mut c_void, len: usize, flags: MsyncFlags) -> Result<()> {
-    // SAFETY: The caller owns the mapped-range and provenance contract.
+    // SAFETY: The caller owns the mapped-range and provenance contracts.
     unsafe { crabc_core::mm::msync_raw(ptr.cast(), len, flags.bits()) }
 }
 
@@ -455,12 +526,13 @@ pub unsafe fn msync(ptr: *mut c_void, len: usize, flags: MsyncFlags) -> Result<(
 ///
 /// # Safety
 ///
-/// `ptr` must be page-aligned and identify the first byte of a valid mapped
-/// range. `len` must be non-zero, and `ptr..ptr+len` must not overflow or
-/// leave the mapping during the call. The caller must preserve pointer
-/// provenance and must not rely on Rust references or typed contents across
-/// advice that can discard or alter pages, including [`Advice::LinuxDontNeed`].
-/// Linux rounds a final partial page according to its `madvise` ABI.
+/// `ptr` must be page-aligned. For a nonzero `len`, it must identify the first
+/// byte of a valid mapped range whose address arithmetic does not overflow and
+/// which remains mapped during the call. A zero length is a Linux no-op. The
+/// caller must preserve pointer provenance and must not rely on Rust references
+/// or typed contents across advice that can discard or alter pages, including
+/// [`Advice::LinuxDontNeed`]. Linux rounds a final partial page according to
+/// its `madvise` ABI.
 #[inline]
 pub unsafe fn madvise(ptr: *mut c_void, len: usize, advice: Advice) -> Result<()> {
     // SAFETY: The caller owns the mapped-range and provenance contract.
@@ -470,12 +542,26 @@ pub unsafe fn madvise(ptr: *mut c_void, len: usize, advice: Advice) -> Result<()
 /// Gives Linux the POSIX access-pattern advisory for a mapped range.
 ///
 /// Unlike [`madvise`], this operation exposes only the POSIX policy set and
-/// does not name Linux's page-discarding `MADV_DONTNEED` behavior.  The
+/// does not name Linux's page-discarding `MADV_DONTNEED` behavior. The
 /// operation remains unsafe because the pointer and mapped-range contract is
 /// still supplied by the caller; errors are direct Linux [`crate::Errno`]
 /// values rather than C `errno` state.
+///
+/// # Safety
+///
+/// For policies other than [`PosixAdvice::DontNeed`], `ptr` must be
+/// page-aligned, identify the first byte of a valid mapped range, and have a
+/// `ptr..ptr+len` range that remains valid for the duration of the call. POSIX
+/// `DONTNEED` is a successful musl-compatible no-op on Linux, so it does not
+/// access or validate the supplied range. The caller must preserve pointer
+/// provenance and Rust reference invariants across every advisory operation
+/// that reaches the kernel.
 #[inline]
-pub unsafe fn posix_madvise(ptr: *mut c_void, len: usize, advice: PosixAdvice) -> Result<()> {
+pub unsafe fn posix_madvise(
+    ptr: *mut c_void,
+    len: usize,
+    advice: PosixAdvice,
+) -> Result<()> {
     // SAFETY: The caller owns the mapped-range and pointer-provenance
     // contract. The typed advice is one of POSIX's five policies.
     unsafe { crabc_core::mm::posix_madvise_raw(ptr.cast(), len, advice as u32) }
@@ -484,14 +570,14 @@ pub unsafe fn posix_madvise(ptr: *mut c_void, len: usize, advice: PosixAdvice) -
 /// Remaps pages in a legacy file-backed mapping.
 ///
 /// The legacy C ABI carries protection and flags words, but the native
-/// contract deliberately fixes both compatibility fields to zero.  The
+/// contract deliberately fixes both compatibility fields to zero. The
 /// operation can change which file pages a mapped address observes and is
 /// therefore unsafe around outstanding Rust references.
 ///
 /// # Safety
 ///
 /// `ptr` must identify a page-aligned mapping whose range and file-page offset
-/// satisfy Linux's `remap_file_pages(2)` contract.  No Rust references may be
+/// satisfy Linux's `remap_file_pages(2)` contract. No Rust references may be
 /// retained across a call which changes the mapping's page association.
 #[inline]
 pub unsafe fn remap_file_pages(ptr: *mut c_void, len: usize, page_offset: usize) -> Result<()> {
@@ -504,13 +590,9 @@ pub unsafe fn remap_file_pages(ptr: *mut c_void, len: usize, page_offset: usize)
 ///
 /// The first `ceil(len / 4096)` bytes of `residency` are the caller-owned
 /// output area. Linux writes one byte per actual kernel page; bit zero reports
-/// whether that page is resident and the other bits are unspecified. A
-/// successful call returns `Ok(())`; bytes after the kernel's actual page
-/// count are left untouched. The 4096-byte check is an upper bound for the
-/// supported AArch64 page-size configurations.
-///
-/// This operation never enters the public C ABI and never reads or writes
-/// thread-local `errno`.
+/// whether that page is resident and the other bits are unspecified. Bytes
+/// after the required page count are left untouched. This operation never
+/// enters the public C ABI and never reads or writes thread-local `errno`.
 ///
 /// # Safety
 ///
@@ -532,8 +614,42 @@ pub unsafe fn mincore(ptr: *mut c_void, len: usize, residency: &mut [u8]) -> Res
         return Err(crate::Errno::INVAL);
     }
 
-    // SAFETY: The caller owns the mapped-range and output-slice contracts;
-    // the length check proves Linux cannot write beyond the supplied slice on
-    // any supported AArch64 page-size configuration.
+    // SAFETY: The length check proves Linux cannot write beyond the supplied
+    // slice on Linux/x86-64's 4096-byte base page ABI.
     unsafe { crabc_core::mm::mincore_raw(ptr.cast(), len, residency.as_mut_ptr()) }
+}
+
+/// Creates a file-backed mapping using Linux mapping flags directly.
+///
+/// # Safety
+/// The caller must own the affected address range, including any mappings
+/// replaced by `FIXED`, and uphold the lifetime, aliasing, backing-file and
+/// alignment obligations of [`mmap`].
+pub unsafe fn mmap_with_flags<Fd: AsFd>(
+    ptr: *mut c_void, len: usize, prot: ProtFlags, flags: MapFlags, fd: Fd, offset: u64,
+) -> Result<*mut c_void> {
+    let fd = fd.as_fd();
+    unsafe { crabc_core::mm::mmap_raw(ptr.cast(), len, prot.bits(), flags.bits(), fd.as_raw_fd(), offset).map(|p| p.cast()) }
+}
+
+/// Creates an anonymous mapping using Linux mapping flags directly.
+///
+/// # Safety
+/// The caller must own the affected range, including mappings replaced by
+/// `FIXED`, and uphold the lifetime, aliasing and alignment obligations of
+/// [`mmap_anonymous`].
+pub unsafe fn mmap_anonymous_with_flags(
+    ptr: *mut c_void, len: usize, prot: ProtFlags, flags: MapFlags,
+) -> Result<*mut c_void> {
+    unsafe { crabc_core::mm::mmap_raw(ptr.cast(), len, prot.bits(), flags.bits() | MAP_ANONYMOUS, -1, 0).map(|p| p.cast()) }
+}
+
+/// Changes mapping protection using Linux protection flags directly.
+///
+/// # Safety
+/// The caller must own every page affected, including any extension selected
+/// by a grow flag, coordinate concurrent accesses, and ensure no references
+/// violate the resulting protection or aliasing rules.
+pub unsafe fn mprotect_with_flags(ptr: *mut c_void, len: usize, flags: MprotectFlags) -> Result<()> {
+    unsafe { crabc_core::mm::mprotect_raw(ptr.cast(), len, flags.bits()) }
 }

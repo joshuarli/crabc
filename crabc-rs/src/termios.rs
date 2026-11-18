@@ -1,9 +1,10 @@
-//! Native terminal control for Linux/AArch64.
+//! Native terminal control for Linux/x86-64.
 //!
-//! `Termios` deliberately has a Rust-native representation. The C facade's
-//! musl `struct termios` has a larger public control-code array, while Linux's
-//! tty ioctls consume the older 19-byte kernel layout. The conversion remains
-//! local to this module rather than leaking a C ABI cast into Rust callers.
+//! `Termios` deliberately has a Rust-native representation. The pinned musl
+//! x86-64 `struct termios` has a larger public control-code array, while
+//! Linux's `TCGETS`/`TCSETS*` ioctls consume the older 19-byte kernel
+//! layout. The conversion remains local to this module rather than leaking a
+//! C ABI cast into Rust callers.
 
 use core::ffi::CStr;
 use core::mem::MaybeUninit;
@@ -48,7 +49,7 @@ pub struct Termios {
     line_discipline: u8,
     /// How the terminal handles its special control bytes.
     ///
-    /// This is the Linux/AArch64 kernel `NCCS == 19` region. The wrapper is
+    /// This is the Linux/x86-64 kernel `NCCS == 19` region. The wrapper is
     /// intentionally Rust-native: the public C `struct termios` has a
     /// different control-code array and is never used as this ioctl buffer.
     pub special_codes: SpecialCodes,
@@ -56,11 +57,15 @@ pub struct Termios {
     output_speed: u32,
 }
 
-/// The private Linux/AArch64 record consumed by `TCGETS`/`TCSETS`.
+/// The private Linux/x86-64 record consumed by `TCGETS`/`TCSETS*`.
 ///
-/// Keeping this wire type separate from [`Termios`] means the public native
-/// state does not itself promise a C ABI. The kernel still receives the exact
-/// legacy 44-byte record used by musl's `tcgetattr`/`tcsetattr` implementation.
+/// Linux/x86-64 uses exactly four `u32` flags, one line-discipline byte, and
+/// 19 special-code bytes: 36 bytes with four-byte alignment. The public musl
+/// `struct termios` is a distinct C ABI with a larger control-code array, so
+/// this Rust facade passes neither it nor the Rust-native [`Termios`] value
+/// to the ioctl. The separately selected static C termios-control artifact
+/// forwards a public C pointer directly, so Linux consumes only its shared
+/// 36-byte prefix; that independent C boundary does not alter this facade.
 #[repr(C)]
 struct KernelTermios {
     input_modes: u32,
@@ -69,12 +74,16 @@ struct KernelTermios {
     local_modes: u32,
     line_discipline: u8,
     special_codes: [u8; 19],
-    input_speed: u32,
-    output_speed: u32,
 }
 
-const _: [(); 44] = [(); core::mem::size_of::<KernelTermios>()];
-
+const _: [(); 36] = [(); core::mem::size_of::<KernelTermios>()];
+const _: [(); 4] = [(); core::mem::align_of::<KernelTermios>()];
+const _: [(); 0] = [(); core::mem::offset_of!(KernelTermios, input_modes)];
+const _: [(); 4] = [(); core::mem::offset_of!(KernelTermios, output_modes)];
+const _: [(); 8] = [(); core::mem::offset_of!(KernelTermios, control_modes)];
+const _: [(); 12] = [(); core::mem::offset_of!(KernelTermios, local_modes)];
+const _: [(); 16] = [(); core::mem::offset_of!(KernelTermios, line_discipline)];
+const _: [(); 17] = [(); core::mem::offset_of!(KernelTermios, special_codes)];
 impl From<KernelTermios> for Termios {
     #[inline]
     fn from(kernel: KernelTermios) -> Self {
@@ -85,8 +94,10 @@ impl From<KernelTermios> for Termios {
             local_modes: kernel.local_modes,
             line_discipline: kernel.line_discipline,
             special_codes: SpecialCodes(kernel.special_codes),
-            input_speed: kernel.input_speed,
-            output_speed: kernel.output_speed,
+            // Linux/x86-64 carries baud selectors in c_cflag rather than
+            // speed words. `tcgetattr` decodes them after the ioctl succeeds.
+            input_speed: 0,
+            output_speed: 0,
         }
     }
 }
@@ -101,8 +112,6 @@ impl Termios {
             local_modes: self.local_modes,
             line_discipline: self.line_discipline,
             special_codes: self.special_codes.0,
-            input_speed: self.input_speed,
-            output_speed: self.output_speed,
         }
     }
 }
@@ -171,7 +180,7 @@ impl Termios {
 /// control bytes.
 ///
 /// The tuple field stays private so callers can only address the bounded
-/// kernel-defined indices. This preserves the native Linux/AArch64 layout
+/// kernel-defined indices. This preserves the native Linux/x86-64 layout
 /// (`NCCS == 19`, one byte per code) without exposing a C `termios` value.
 #[repr(transparent)]
 #[derive(Clone)]
@@ -303,8 +312,8 @@ impl core::fmt::Debug for SpecialCodeIndex {
     }
 }
 
-// The ioctl representation is the Linux/AArch64 legacy `struct termios`:
-// four u32 flags, one line byte, 19 control bytes, and two u32 speeds.
+// The x86-64 ioctl representation is the legacy kernel record: four u32
+// flags, one line byte, and exactly 19 control bytes.
 const _: [(); 19] = [(); core::mem::size_of::<SpecialCodes>()];
 
 /// Timing of a terminal-attribute update.
@@ -348,10 +357,8 @@ pub struct Winsize {
 /// Obtains terminal attributes.
 #[inline]
 pub fn tcgetattr<Fd: AsFd>(fd: Fd) -> Result<Termios> {
-    // The legacy TCGETS request initializes the 36-byte prefix but leaves the
-    // two speed words untouched. Seed those words before issuing the ioctl so
-    // the complete Rust record is initialized even on kernels following that
-    // old ABI contract.
+    // On Linux/x86-64 this is the complete 36-byte record initialized by
+    // TCGETS. Baud rates are decoded from the c_cflag selectors below.
     let mut kernel = KernelTermios {
         input_modes: 0,
         output_modes: 0,
@@ -359,12 +366,10 @@ pub fn tcgetattr<Fd: AsFd>(fd: Fd) -> Result<Termios> {
         local_modes: 0,
         line_discipline: 0,
         special_codes: [0; 19],
-        input_speed: 0,
-        output_speed: 0,
     };
     let fd = fd.as_fd();
-    // SAFETY: `kernel` is the exact legacy Linux tty ABI, its speed words are
-    // initialized above, and the descriptor borrow remains live for the call.
+    // SAFETY: `kernel` is the exact complete Linux/x86-64 tty ioctl record
+    // and the descriptor borrow remains live for the call.
     unsafe {
         crabc_core::io::ioctl_raw(
             fd.as_raw_fd(),
@@ -374,12 +379,11 @@ pub fn tcgetattr<Fd: AsFd>(fd: Fd) -> Result<Termios> {
     }
     let mut termios = Termios::from(kernel);
     termios.output_speed = decode_speed(termios.control_modes & CBAUD).ok_or(Errno::RANGE)?;
+    // CIBAUD's zero selector is the distinct B0 input setting on Linux,
+    // rather than a request to substitute the output rate. Keep that native
+    // state observable through the Rust numeric-speed accessor as well.
     let input = (termios.control_modes & CIBAUD) >> IBSHIFT;
-    termios.input_speed = if input == 0 {
-        termios.output_speed
-    } else {
-        decode_speed(input).ok_or(Errno::RANGE)?
-    };
+    termios.input_speed = decode_speed(input).ok_or(Errno::RANGE)?;
     Ok(termios)
 }
 
@@ -444,17 +448,26 @@ pub fn tcsetwinsize<Fd: AsFd>(fd: Fd, size: Winsize) -> Result<()> {
 /// terminal and remains active until [`ioctl_tiocnxcl`] or terminal teardown.
 #[inline]
 pub fn ioctl_tiocexcl<Fd: AsFd>(fd: Fd) -> Result<()> {
-    // SAFETY: TIOCEXCL is a no-argument terminal setter request.
-    unsafe { crate::ioctl::ioctl(fd, crate::ioctl::NoArg::<TIOCEXCL>::new()) }
+    let fd = fd.as_fd();
+    // SAFETY: TIOCEXCL is a no-argument terminal request. This narrow helper
+    // intentionally does not expose a generic ioctl protocol to callers.
+    unsafe {
+        crabc_core::io::ioctl_raw(fd.as_raw_fd(), TIOCEXCL, core::ptr::null_mut())?;
+    }
+    Ok(())
 }
 
 /// Disables exclusive mode on a terminal.
 #[inline]
 pub fn ioctl_tiocnxcl<Fd: AsFd>(fd: Fd) -> Result<()> {
-    // SAFETY: TIOCNXCL is a no-argument terminal setter request.
-    unsafe { crate::ioctl::ioctl(fd, crate::ioctl::NoArg::<TIOCNXCL>::new()) }
+    let fd = fd.as_fd();
+    // SAFETY: TIOCNXCL is a no-argument terminal request with no memory
+    // payload. Its typed public surface remains this one operation.
+    unsafe {
+        crabc_core::io::ioctl_raw(fd.as_raw_fd(), TIOCNXCL, core::ptr::null_mut())?;
+    }
+    Ok(())
 }
-
 /// Returns the terminal foreground process group.
 #[inline]
 pub fn tcgetpgrp<Fd: AsFd>(fd: Fd) -> Result<Pid> {
@@ -539,7 +552,7 @@ pub fn ttyname<Fd: AsFd, B: Into<Vec<u8>>>(fd: Fd, reuse: B) -> Result<CString> 
     let fd = fd.as_fd();
     let mut buffer = reuse.into();
     buffer.clear();
-    buffer.reserve(crate::path::SMALL_PATH_BUFFER_SIZE);
+    buffer.reserve(fs::SMALL_PATH_BUFFER_SIZE);
 
     loop {
         match ttyname_raw(fd, buffer.spare_capacity_mut()) {

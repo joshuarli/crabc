@@ -29,7 +29,7 @@ fn legacy_epoll_create_and_masked_wait_use_direct_linux_seams() {
             .expect("masked epoll wait for readable pipe");
     assert_eq!(ready.len(), 1);
     #[cfg(target_arch = "aarch64")]
-    assert_eq!(ready[0].data.u64(), 0xfeed);
+    assert_eq!(ready[0].data().u64(), 0xfeed);
     #[cfg(target_arch = "x86_64")]
     assert_eq!(ready[0].data().u64(), 0xfeed);
 }

@@ -1,13 +1,24 @@
-//! Linux mount and unmount operations.
+//! Bounded Linux/x86-64 mount and unmount requests.
+//!
+//! This private facade owns only checked non-null source, target, and
+//! filesystem-type pathname conversion plus optional borrowed C-string data.
+//! It preserves direct Linux `mount(2)` and `umount2(2)` errors without a C
+//! ABI or thread-local `errno` boundary. Successful mount-namespace mutation,
+//! null source/type forms, arbitrary data pointers, propagation policy, and
+//! newer filesystem-descriptor mount APIs are not provided.
 
 use bitflags::bitflags;
 use core::ffi::CStr;
 
-use crate::path::{option_into_with_c_str, Arg};
+use crate::fs::PathArg;
 use crate::Result;
 
 bitflags! {
     /// Linux `MS_*` mount flags.
+    ///
+    /// These direct Linux bits are retained for the existing mount request
+    /// vocabulary. Bind, remount, propagation, and mount-namespace policy
+    /// are left to the kernel and the caller.
     #[repr(transparent)]
     #[derive(Copy, Clone, Debug, Eq, Hash, PartialEq)]
     pub struct MountFlags: u64 {
@@ -41,6 +52,9 @@ bitflags! {
 
 bitflags! {
     /// Linux `MNT_*` unmount flags.
+    ///
+    /// Detachment and namespace effects are whatever the kernel does for the
+    /// direct request.
     #[repr(transparent)]
     #[derive(Copy, Clone, Debug, Eq, Hash, PartialEq)]
     pub struct UnmountFlags: i32 {
@@ -52,34 +66,36 @@ bitflags! {
     }
 }
 
-/// Mounts a filesystem.
+/// Requests a Linux filesystem mount.
+///
+/// All three mandatory pathname-like arguments are non-null, byte-oriented,
+/// and checked for interior NUL bytes before the direct syscall. `data` is
+/// either null or a borrowed NUL-terminated C string. A successful request
+/// changes the calling process's mount namespace and is deliberately not a
+/// sandbox or namespace-management API.
 #[inline]
-pub fn mount<'a, Source: Arg, Target: Arg, Fs: Arg, Data: Into<Option<&'a CStr>>>(
+pub fn mount<'a, Source: PathArg, Target: PathArg, Fs: PathArg>(
     source: Source,
     target: Target,
     file_system_type: Fs,
     flags: MountFlags,
-    data: Data,
+    data: Option<&'a CStr>,
 ) -> Result<()> {
     source.into_with_c_str(|source| {
         target.into_with_c_str(|target| {
             file_system_type.into_with_c_str(|file_system_type| {
-                option_into_with_c_str(data.into(), |data| {
-                    crabc_core::mount::mount(
-                        Some(source),
-                        target,
-                        Some(file_system_type),
-                        flags.bits(),
-                        data,
-                    )
-                })
+                crabc_core::mount::mount(Some(source), target, Some(file_system_type), flags.bits(), data)
             })
         })
     })
 }
 
-/// Unmounts a filesystem.
+/// Requests a Linux unmount.
+///
+/// `target` is byte-oriented and checked for interior NUL bytes before the
+/// direct syscall. A successful request changes the calling process's mount
+/// namespace.
 #[inline]
-pub fn unmount<Target: Arg>(target: Target, flags: UnmountFlags) -> Result<()> {
+pub fn unmount<Target: PathArg>(target: Target, flags: UnmountFlags) -> Result<()> {
     target.into_with_c_str(|target| crabc_core::mount::umount2(target, flags.bits()))
 }

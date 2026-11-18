@@ -204,7 +204,7 @@ fn signal_case() {
 
     let realtime_set = set_for(process::Signal::RTMIN);
     assert_eq!(
-        signal::timed_wait(&realtime_set, Some(&crabc_rs::time::Timespec::default())).unwrap_err(),
+        signal::timed_wait(&realtime_set, Some(&crabc_rs::time::Timespec { tv_sec: 0, tv_nsec: 0 })).unwrap_err(),
         Errno::AGAIN,
     );
 }
@@ -422,6 +422,7 @@ fn spawn_case() {
         child
             .wait(process::WaitOptions::empty())
             .unwrap()
+            .reaped()
             .unwrap()
             .exit_status(),
         Some(0)

@@ -24,11 +24,14 @@ pub extern "C" fn crabc_rs_ppoll_direct_probe() -> i32 {
     let mut selected = signal::SignalSet::EMPTY;
     selected.insert(process::Signal::USR1);
 
+    #[cfg(target_arch = "aarch64")]
     let action = signal::SigAction::new(
         signal::SigHandler::Simple(ppoll_probe_handler),
         signal::SignalSet::EMPTY,
         signal::SigActionFlags::empty(),
     );
+    #[cfg(target_arch = "x86_64")]
+    let action = signal::SigAction::with_mask(signal::SigHandler::Simple(ppoll_probe_handler), signal::SignalSet::EMPTY, signal::SigActionFlags::empty());
     let old_action = match unsafe { signal::sigaction(process::Signal::USR1, Some(&action)) } {
         Ok(action) => action,
         Err(error) => return -error.raw(),
@@ -41,7 +44,7 @@ pub extern "C" fn crabc_rs_ppoll_direct_probe() -> i32 {
         return -error.raw();
     }
 
-    let timeout = time::Timespec::default();
+    let timeout = time::Timespec { tv_sec: 0, tv_nsec: 0 };
     let mut fds = [event::PollFd::new(&reader, event::PollFlags::IN)];
     if event::ppoll(&mut fds, Some(&timeout), Some(&selected)) != Ok(0) {
         return 1;

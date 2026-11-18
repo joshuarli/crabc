@@ -19,15 +19,12 @@ fn pipe_random_and_monotonic_clock_use_direct_kernel_contracts() {
     assert!(!random.is_empty());
 
     let resolution = time::clock_getres(time::ClockId::Monotonic);
-    #[cfg(target_arch = "x86_64")]
     let resolution = resolution.expect("clock query");
     assert!(resolution.tv_sec >= 0);
     assert!((0..1_000_000_000).contains(&resolution.tv_nsec));
     let before = time::clock_gettime(time::ClockId::Monotonic);
-    #[cfg(target_arch = "x86_64")]
     let before = before.expect("clock query");
     let after = time::clock_gettime(time::ClockId::Monotonic);
-    #[cfg(target_arch = "x86_64")]
     let after = after.expect("clock query");
     assert!(
         (after.tv_sec, after.tv_nsec) >= (before.tv_sec, before.tv_nsec),
@@ -45,9 +42,6 @@ fn eventfd_and_poll_report_direct_kernel_readiness() {
     );
 
     let mut fds = [event::PollFd::new(&counter, event::PollFlags::IN)];
-    #[cfg(not(target_arch = "x86_64"))]
-    let timeout = time::Timespec::default();
-    #[cfg(target_arch = "x86_64")]
     let timeout = time::Timespec { tv_sec: 0, tv_nsec: 0 };
     assert_eq!(
         event::poll(&mut fds, Some(&timeout)).expect("poll counter"),

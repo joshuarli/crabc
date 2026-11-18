@@ -34,7 +34,7 @@ pub extern "C" fn crabc_rs_signal_process_probe() -> i32 {
         return -error.raw();
     }
     let _ = signal::suspend(&set);
-    let _ = signal::timed_wait(&set, Some(&crabc_rs::time::Timespec::default()));
+    let _ = signal::timed_wait(&set, Some(&crabc_rs::time::Timespec { tv_sec: 0, tv_nsec: 0 }));
     if let Err(error) = signal::set_mask(&old_mask) {
         return -error.raw();
     }
@@ -45,11 +45,14 @@ pub extern "C" fn crabc_rs_signal_process_probe() -> i32 {
         return -error.raw();
     }
 
+    #[cfg(target_arch = "aarch64")]
     let action = signal::SigAction::new(
         signal::SigHandler::Default,
         signal::SignalSet::EMPTY,
         signal::SigActionFlags::empty(),
     );
+    #[cfg(target_arch = "x86_64")]
+    let action = signal::SigAction::with_mask(signal::SigHandler::Default, signal::SignalSet::EMPTY, signal::SigActionFlags::empty());
     if let Err(error) = unsafe { signal::sigaction(process::Signal::USR1, Some(&action)) } {
         return -error.raw();
     }

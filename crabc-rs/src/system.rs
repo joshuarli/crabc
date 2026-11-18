@@ -1,4 +1,8 @@
-//! Linux system identity and status information.
+//! Bounded Linux/x86-64 system identity and status observations.
+//!
+//! This module provides `uname(2)` and `sysinfo(2)` values with fixed
+//! x86-64 kernel layouts, plus an inotify descriptor and event-record
+//! boundary. Other system/runtime facilities are not part of the x86 facade.
 
 use core::ffi::CStr;
 
@@ -9,7 +13,8 @@ pub struct Uname(crabc_core::system::UtsName);
 impl Uname {
     #[inline]
     fn field(bytes: &[u8; 65]) -> &CStr {
-        // Linux's `new_utsname` fields are NUL-terminated fixed arrays.
+        // Linux initializes each `new_utsname` field as a fixed NUL-terminated
+        // byte array; the core boundary owns the exact output record.
         unsafe { CStr::from_ptr(bytes.as_ptr().cast()) }
     }
 
@@ -18,26 +23,31 @@ impl Uname {
     pub fn sysname(&self) -> &CStr {
         Self::field(&self.0.sysname)
     }
+
     /// Network node name.
     #[inline]
     pub fn nodename(&self) -> &CStr {
         Self::field(&self.0.nodename)
     }
+
     /// Kernel release.
     #[inline]
     pub fn release(&self) -> &CStr {
         Self::field(&self.0.release)
     }
+
     /// Kernel version.
     #[inline]
     pub fn version(&self) -> &CStr {
         Self::field(&self.0.version)
     }
+
     /// Kernel machine name.
     #[inline]
     pub fn machine(&self) -> &CStr {
         Self::field(&self.0.machine)
     }
+
     /// Linux NIS domain name.
     #[inline]
     pub fn domainname(&self) -> &CStr {
@@ -120,8 +130,7 @@ pub fn uname() -> Uname {
     match crabc_core::system::uname() {
         Ok(value) => Uname(value),
         // Linux treats uname as an infallible system-information operation;
-        // preserve Rustix's infallible public contract rather than inventing
-        // a recoverable branch for an impossible kernel failure.
+        // valid private output storage rules out the documented failure.
         Err(_) => panic!("Linux uname syscall failed"),
     }
 }
@@ -131,7 +140,7 @@ pub fn uname() -> Uname {
 pub fn sysinfo() -> Sysinfo {
     match crabc_core::system::sysinfo() {
         Ok(value) => Sysinfo::from(value),
-        // See uname above: Linux supplies this data for a running task.
+        // Valid private output storage rules out the documented failure.
         Err(_) => panic!("Linux sysinfo syscall failed"),
     }
 }
@@ -154,7 +163,7 @@ pub fn load_average() -> LoadAverages {
 pub mod inotify {
     use bitflags::bitflags;
 
-    use crate::path::Arg;
+    use crate::fs::PathArg;
     use crate::{AsFd, BorrowedFd, OwnedFd, Result};
 
     const EVENT_HEADER_SIZE: usize = 16;
@@ -210,7 +219,10 @@ pub mod inotify {
         }
     }
 
-    /// A watch identifier scoped to one [`Inotify`] descriptor.
+    /// A scalar watch identifier scoped to one inotify instance.
+    ///
+    /// Retaining this token does not keep the watch alive. Use it only with
+    /// the instance that produced it; it is not a borrow of that instance.
     #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
     #[repr(transparent)]
     pub struct WatchDescriptor(i32);
@@ -225,9 +237,10 @@ pub mod inotify {
 
     /// An owned Linux inotify descriptor.
     ///
-    /// Dropping this value closes the descriptor and removes all of its
-    /// watches. Watch descriptors cannot outlive the descriptor at the type
-    /// level because every mutating operation borrows this owner.
+    /// Dropping this value closes its descriptor. Watches and queued records
+    /// belong to the shared open file description, so duplicate descriptors
+    /// retain them until the final descriptor closes. Watch identifiers are
+    /// scalar tokens; their lifetime is not tied to this owner by the type.
     #[derive(Debug)]
     pub struct Inotify {
         fd: OwnedFd,
@@ -250,15 +263,20 @@ pub mod inotify {
 
         /// Adds a watch for a byte-oriented pathname.
         #[inline]
-        pub fn add_watch<P: Arg>(&self, path: P, mask: EventMask) -> Result<WatchDescriptor> {
+        pub fn add_watch<P: PathArg>(
+            &self,
+            path: P,
+            mask: EventMask,
+        ) -> Result<WatchDescriptor> {
             path.into_with_c_str(|path| {
                 crabc_core::inotify::add_watch(self.fd.as_raw_fd(), path, mask.bits())
                     .map(WatchDescriptor)
             })
         }
 
-        /// Removes one watch. Linux may already have removed it after an
-        /// `IGNORED` event, in which case it returns the direct `EINVAL`.
+        /// Removes one watch and queues its `IGNORED` event. Records queued
+        /// before removal remain readable. Linux may already have removed the
+        /// watch, in which case it returns the direct `EINVAL`.
         #[inline]
         pub fn remove_watch(&self, watch: WatchDescriptor) -> Result<()> {
             crabc_core::inotify::rm_watch(self.fd.as_raw_fd(), watch.0)
@@ -272,8 +290,9 @@ pub mod inotify {
 
         /// Reads and validates one kernel batch into caller-owned storage.
         ///
-        /// The returned iterator borrows `buffer`; each item either describes
-        /// one byte-preserving event or reports malformed record boundaries.
+        /// The returned iterator borrows only `buffer`, independently of this
+        /// descriptor and its watches. Each item either describes one
+        /// byte-preserving event or reports malformed record boundaries.
         /// A nonblocking descriptor reports `EAGAIN` before an iterator is
         /// created when no complete batch is available.
         #[inline]
@@ -440,6 +459,24 @@ pub mod inotify {
             assert!(event.mask().contains(EventMask::CREATE));
             assert_eq!(event.cookie(), 23);
             assert_eq!(event.name(), Some(b"x".as_slice()));
+            assert!(events.next().is_none());
+        }
+
+        #[test]
+        fn event_batch_retains_unknown_bits_and_descriptor_wide_records() {
+            let mut bytes = [0u8; EVENT_HEADER_SIZE];
+            bytes[0..4].copy_from_slice(&(-1_i32).to_ne_bytes());
+            bytes[4..8].copy_from_slice(&(0x0001_0000_u32).to_ne_bytes());
+            let mut events = Events {
+                bytes: &bytes,
+                offset: 0,
+                malformed: false,
+            };
+
+            let event = events.next().expect("one event").expect("valid event");
+            assert_eq!(event.watch(), None);
+            assert_eq!(event.mask().bits(), 0x0001_0000);
+            assert_eq!(event.name(), None);
             assert!(events.next().is_none());
         }
 

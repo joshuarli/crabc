@@ -47,10 +47,10 @@ fn native_nanosleep_preserves_eintr_and_remaining_duration() {
     let child = match unsafe { process::fork_raw() }.expect("fork interrupter") {
         process::ForkResult::Parent { child } => child,
         process::ForkResult::Child => {
-            let start = time::clock_gettime(ClockId::Monotonic);
+            let start = time::clock_gettime(ClockId::Monotonic).expect("clock query");
             let target = after_delay(start, 100_000_000);
             loop {
-                let now = time::clock_gettime(ClockId::Monotonic);
+                let now = time::clock_gettime(ClockId::Monotonic).expect("clock query");
                 if (now.tv_sec, now.tv_nsec) >= (target.tv_sec, target.tv_nsec) {
                     break;
                 }
