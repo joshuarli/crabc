@@ -7,34 +7,15 @@
 # checkout.
 set -u
 root=$(git rev-parse --show-toplevel)
-host_arch=$(uname -m) || exit
-case "$host_arch" in
-    x86_64)
-        arch=x86_64
-        platform=linux/amd64
-        expected_identity=linux/amd64
-        target_triple=x86_64-unknown-linux-musl
-        linker_variable=CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER
-        mold_gcc=/usr/local/bin/crabc-x86_64-mold-gcc
-        ;;
-    aarch64|arm64)
-        arch=aarch64
-        platform=linux/arm64
-        expected_identity=linux/arm64
-        target_triple=aarch64-unknown-linux-musl
-        linker_variable=CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_LINKER
-        mold_gcc=/usr/local/bin/crabc-aarch64-mold-gcc
-        ;;
-    *)
-        printf 'ERROR: unsupported host architecture %s\n' "$host_arch" >&2
-        exit 1
-        ;;
-esac
-work=$root/.work/$arch
+arch_config=$(python3 -B "$root/compat/x86_64/native_arch.py" "$(uname -m)") || exit
+eval "$arch_config"
+expected_identity=$platform
+mold_gcc=$linker
+work=$root/.work/$work_name
 if [ "$arch" = x86_64 ]; then
-    image=${CRABC_X86_64_CORE_IMAGE:-$(python3 -B "$root/compat/x86_64/core_image.py")} || exit
+    image=${CRABC_X86_64_CORE_IMAGE:-$image}
 else
-    image=${CRABC_AARCH64_CORE_IMAGE:-$(python3 -B "$root/compat/x86_64/core_image.py" aarch64)} || exit
+    image=${CRABC_AARCH64_CORE_IMAGE:-$image}
 fi
 if docker image inspect "$image" >/dev/null; then
     :

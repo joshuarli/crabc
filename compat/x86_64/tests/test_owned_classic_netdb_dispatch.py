@@ -53,6 +53,9 @@ docker() {
 GIT_METADATA_MOUNT=()
 IMAGE=mutable-tag
 PLATFORM=linux/amd64
+ARCH=x86_64
+TARGET_TRIPLE=x86_64-unknown-linux-musl
+LINKER_ENV=CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER=/usr/local/bin/crabc-x86_64-mold-gcc
 ROOT_DIR=/checkout
 TMP_DIR=/checkout/.work/tmp
 WORK_DIR=/checkout/.work/x86_64

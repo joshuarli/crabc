@@ -4,7 +4,10 @@ import platform
 import shlex
 import sys
 
-from core_image import core_image_id
+if __package__:
+    from .core_image import core_image_id
+else:
+    from core_image import core_image_id
 
 
 def native_arch(machine=None):
