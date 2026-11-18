@@ -21,6 +21,9 @@ loader.exec_module(shared)
 
 
 def execute(arguments):
+    manifest = shared.load_manifest(root / "share/crabc/manifest.json", "dynamic product manifest")
+    profile = shared.profile_from_manifest(manifest)
+    interpreter = "/lib/ld-crabc-aarch64-hardened.so.1" if profile is shared.NativeRuntimeProfile.HARDENED else "/lib/ld-crabc-aarch64.so.1"
     common = []
     quote_dirs = []
     dsos = []
@@ -83,7 +86,7 @@ def execute(arguments):
                 "--no-undefined", "--allow-shlib-undefined", "--enable-new-dtags", "-rpath", "/usr/lib",
                 "--exclude-libs=libcrabc-builtins.a"]
         if mode == "pie":
-            plan += ["-z", "dynamic-undefined-weak", "--dynamic-linker", "/lib/ld-crabc-aarch64.so.1", str(lib / "Scrt1.o")]
+            plan += ["-z", "dynamic-undefined-weak", "--dynamic-linker", interpreter, str(lib / "Scrt1.o")]
         else:
             plan += ["-soname", "<output-basename>"]
         plan += [str(lib / "crti.o"), shared.APPLICATION_OBJECTS, str(lib / "libcrabc-builtins.a"),
@@ -140,7 +143,7 @@ def execute(arguments):
             command.append("--export-dynamic")
         if mode == "pie":
             runtime.append(lib / "Scrt1.o")
-            command += ["-z", "dynamic-undefined-weak", "--dynamic-linker", "/lib/ld-crabc-aarch64.so.1", str(lib / "Scrt1.o")]
+            command += ["-z", "dynamic-undefined-weak", "--dynamic-linker", interpreter, str(lib / "Scrt1.o")]
         else:
             command += ["-soname", output.name]
         archive = lib / "libcrabc-builtins.a"
@@ -168,7 +171,7 @@ def execute(arguments):
             segments = subprocess.check_output(["/usr/bin/readelf", "-lW", str(output)], text=True)
             dynamic = subprocess.check_output(["/usr/bin/readelf", "-dW", str(output)], text=True)
             if ("AArch64" not in header or "DYN" not in header or "TEXTREL" in dynamic
-                    or (mode == "pie" and "/lib/ld-crabc-aarch64.so.1" not in segments)
+                    or (mode == "pie" and interpreter not in segments)
                     or (mode == "shared" and "INTERP" in segments)):
                 raise shared.DriverError("linked dynamic ELF does not match its native mode")
             record = {"schema": 2, "format": "crabc-aarch64-owned-dynamic-sysroot-v1", "mode": mode,

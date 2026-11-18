@@ -221,7 +221,8 @@ def validate(root: Path) -> dict:
     aliases_expected = {} if arm else profile.aliases
     if arm:
         required = {"usr/lib/libc.so", "usr/lib/crt1.o", "usr/lib/Scrt1.o", "usr/lib/crti.o", "usr/lib/crtn.o",
-                    "usr/lib/" + COMPILER_HELPER_ARCHIVE, "lib/ld-crabc-aarch64.so.1", "bin/crabc-cc-dynamic",
+                    "usr/lib/" + COMPILER_HELPER_ARCHIVE,
+                    ("lib/ld-crabc-aarch64-hardened.so.1" if profile is shared.NativeRuntimeProfile.HARDENED else "lib/ld-crabc-aarch64.so.1"), "bin/crabc-cc-dynamic",
                     "share/crabc/crabc_cc_static.py", "share/crabc/native_runtime_profile.py",
                     "share/crabc/crt.provenance.json", "share/crabc/crt.commands.json"}
     else:
@@ -229,7 +230,7 @@ def validate(root: Path) -> dict:
     target = "aarch64-unknown-linux-musl" if arm else shared.TARGET
     if not isinstance(record, dict) or type(record.get("schema")) is not int or record.get("schema") != 1 or record.get("format") != ("crabc-aarch64-owned-dynamic-sysroot-v1" if arm else FORMAT) or record.get("target") != target or record.get("symlinks") != aliases_expected:
         raise shared.DriverError("wrong installed dynamic product contract")
-    if arm and (profile is not shared.NativeRuntimeProfile.COMPATIBILITY or record.get("build_profile") != "release"
+    if arm and (record.get("build_profile") != "release"
                 or not isinstance(record.get("toolchain"), str) or not record["toolchain"]):
         raise shared.DriverError("unsupported aarch64 dynamic product profile")
     # Debug products keep their input fingerprint in the manifest; their
@@ -265,7 +266,7 @@ def validate(root: Path) -> dict:
                 data = elf.read(64)
             if len(data) < 64 or data[:6] != b"\x7fELF\x02\x01" or struct.unpack_from("<HH", data, 16) != (elf_type, 183):
                 raise shared.DriverError(f"installed aarch64 ELF differs: {name}")
-        if not os.path.samefile(root / "usr/lib/libc.so", root / "lib/ld-crabc-aarch64.so.1"):
+        if not os.path.samefile(root / "usr/lib/libc.so", root / ("lib/ld-crabc-aarch64-hardened.so.1" if profile is shared.NativeRuntimeProfile.HARDENED else "lib/ld-crabc-aarch64.so.1")):
             raise shared.DriverError("installed loader is not the merged libc")
     else:
         validate_loader_provenance(root, "share/crabc/loader.provenance.json", profile, record.get("build_profile"))

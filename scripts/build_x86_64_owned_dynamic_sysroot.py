@@ -1013,8 +1013,8 @@ def build_aarch64(output: Path, *, allocator_backend: str, lifecycle_test_audit:
     import tempfile
     if platform.system() != "Linux" or platform.machine() not in {"aarch64", "arm64"}:
         raise common.BuildError("aarch64 dynamic sysroot requires native Linux/aarch64")
-    if allocator_backend != common.DEFAULT_ALLOCATOR_BACKEND or lifecycle_test_audit or profile != "release" or hardening_profile is not common.NativeRuntimeProfile.COMPATIBILITY:
-        raise common.BuildError("aarch64 supports the accepted C backend and release compatibility profile")
+    if allocator_backend != common.DEFAULT_ALLOCATOR_BACKEND or lifecycle_test_audit or profile != "release":
+        raise common.BuildError("aarch64 supports the accepted C backend and release builds")
     output = common.validate_output_path(output)
     arch = common.native_arch("aarch64")
     work = ROOT / ".work" / arch["work_name"]
@@ -1040,7 +1040,7 @@ def build_aarch64(output: Path, *, allocator_backend: str, lifecycle_test_audit:
         flags = ["--config", f'target.{target}.rustflags=["-Ztls-model=initial-exec", "-Ctarget-feature=-outline-atomics"]']
         common.run([*cargo, "rustc", "--locked", "-p", "crabc-libc", "--lib", "--release", "--no-default-features", "--features", "x86-owned-dynamic-runtime", "--target", target, "--target-dir", str(stage / "cargo"), *common.STATIC_ARCHIVE_PROFILE, *flags, "--", "--cfg", "crabc_owned_static_sysroot", "--cfg", common.MIMALLOC_LIFECYCLE_RUST_CFG, "-C", "relocation-model=pic", "-C", "panic=abort", "-Ztls-model=initial-exec", "-Zmerge-functions=disabled"], environment=environment)
         crt = stage / "crt"
-        common.run([sys.executable, str(ROOT / "crt/build_x86_64.py"), "--architecture", "aarch64", "--owned-dynamic-sysroot", "--out-dir", str(crt)], environment=environment)
+        common.run([sys.executable, str(ROOT / "crt/build_x86_64.py"), "--architecture", "aarch64", "--owned-dynamic-sysroot", "--hardening-profile", hardening_profile.value, "--out-dir", str(crt)], environment=environment)
         builtins = stage / "libcrabc-builtins.a"
         common.run([sys.executable, str(ROOT / "builtins/build.py"), "--output", str(builtins), "--llvm-ar", str(tools / "llvm-ar"), "--llvm-nm", str(tools / "llvm-nm"), "--llvm-readelf", "/usr/bin/readelf", "--ld-lld", "/usr/bin/mold"], environment=environment)
         allocator, _ = common.compile_c_allocator(stage / "c-allocator", common.c_allocator_target_flags(), profile="release", architecture="aarch64")
@@ -1053,7 +1053,7 @@ def build_aarch64(output: Path, *, allocator_backend: str, lifecycle_test_audit:
         objects = stage / "objects"
         objects.mkdir()
         common.run([ar, "x", str(raw), *selected], cwd=objects, environment=environment)
-        common.run([*cargo, "rustc", "--locked", "-p", "crabc-ldso", "--release", "--target", target, "--target-dir", str(stage / "loader"), "--no-default-features", "--features", LOADER_FEATURE, *flags, "--", "--emit=obj"], environment=environment)
+        common.run([*cargo, "rustc", "--locked", "-p", "crabc-ldso", "--release", "--target", target, "--target-dir", str(stage / "loader"), "--no-default-features", "--features", LOADER_FEATURE, *flags, "--", "--emit=obj", *(["--cfg", "crabc_hardened"] if hardening_profile is common.NativeRuntimeProfile.HARDENED else [])], environment=environment)
         candidates = list((stage / "loader" / target / "release/build/crabc-ldso").glob("*/out/ldso.o"))
         if len(candidates) != 1:
             raise common.BuildError(f"expected one loader object, found {candidates}")
@@ -1070,7 +1070,7 @@ def build_aarch64(output: Path, *, allocator_backend: str, lifecycle_test_audit:
             common.copy_artifact(crt / name, library / name)
         common.copy_artifact(builtins, library / builtins.name)
         common.copy_regular_tree(ROOT / "include", installed / "usr/include")
-        interpreter = installed / "lib/ld-crabc-aarch64.so.1"
+        interpreter = installed / ("lib/ld-crabc-aarch64-hardened.so.1" if hardening_profile is common.NativeRuntimeProfile.HARDENED else "lib/ld-crabc-aarch64.so.1")
         interpreter.parent.mkdir()
         os.link(library / "libc.so", interpreter)
         common.copy_artifact(ROOT / "compat/x86_64/crabc_cc_aarch64_dynamic.py", installed / "bin/crabc-cc-dynamic")
