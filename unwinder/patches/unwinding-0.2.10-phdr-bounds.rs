@@ -15,7 +15,7 @@ use core::mem;
 use core::ops::Range;
 use core::slice;
 use gimli::{BaseAddresses, EhFrame, EhFrameHdr, Pointer, Reader, UnwindSection};
-#[cfg(not(target_arch = "x86_64"))]
+#[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
 use gimli::NativeEndian;
 use libc::{PF_R, PT_DYNAMIC, PT_GNU_EH_FRAME, PT_LOAD};
 
@@ -32,9 +32,9 @@ pub fn get_finder() -> &'static PhdrFinder {
 
 impl super::FDEFinder for PhdrFinder {
     fn find_fde(&self, pc: usize) -> Option<FDESearchResult> {
-        #[cfg(target_arch = "x86_64")]
+        #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
         return self.find_fde_checked(pc).ok().flatten();
-        #[cfg(not(target_arch = "x86_64"))]
+        #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
         {
         #[cfg(feature = "fde-phdr-aux")]
         if let Some(v) = search_aux_phdr(pc) {
@@ -49,14 +49,14 @@ impl super::FDEFinder for PhdrFinder {
     }
 
     fn find_fde_checked(&self, pc: usize) -> Result<Option<FDESearchResult>, gimli::Error> {
-        #[cfg(all(target_arch = "x86_64", feature = "fde-phdr-dl"))]
+        #[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "fde-phdr-dl"))]
         return search_dl_phdr_checked(pc);
         #[allow(unreachable_code)]
         Ok(self.find_fde(pc))
     }
 }
 
-#[cfg(all(feature = "fde-phdr-aux", not(target_arch = "x86_64")))]
+#[cfg(all(feature = "fde-phdr-aux", not(any(target_arch = "x86_64", target_arch = "aarch64"))))]
 fn search_aux_phdr(pc: usize) -> Option<FDESearchResult> {
     use libc::{AT_PHDR, AT_PHNUM, PT_PHDR, getauxval};
 
@@ -71,7 +71,7 @@ fn search_aux_phdr(pc: usize) -> Option<FDESearchResult> {
     }
 }
 
-#[cfg(all(feature = "fde-phdr-dl", not(target_arch = "x86_64")))]
+#[cfg(all(feature = "fde-phdr-dl", not(any(target_arch = "x86_64", target_arch = "aarch64"))))]
 fn search_dl_phdr(pc: usize) -> Option<FDESearchResult> {
     use core::ffi::c_void;
     use libc::{dl_iterate_phdr, dl_phdr_info};
@@ -102,7 +102,7 @@ fn search_dl_phdr(pc: usize) -> Option<FDESearchResult> {
     data.result
 }
 
-#[cfg(all(target_arch = "x86_64", feature = "fde-phdr-dl"))]
+#[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "fde-phdr-dl"))]
 fn search_dl_phdr_checked(pc: usize) -> Result<Option<FDESearchResult>, gimli::Error> {
     use core::ffi::c_void;
     use libc::{dl_iterate_phdr, dl_phdr_info};
@@ -184,13 +184,13 @@ unsafe fn dynamic_got(
         if record_end > dynamic.end {
             return None;
         }
-        #[cfg(target_arch = "x86_64")]
+        #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
         let record = {
             let mut bytes = [0u8; mem::size_of::<DynRecord>()];
             RemoteSlice::new(cursor, record_size, record_size).ok()?.read_slice(&mut bytes).ok()?;
             unsafe { (bytes.as_ptr() as *const DynRecord).read_unaligned() }
         };
-        #[cfg(not(target_arch = "x86_64"))]
+        #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
         let record = unsafe { (cursor as *const DynRecord).read_unaligned() };
         if record[0] == DT_NULL {
             return Some(None);
@@ -258,7 +258,7 @@ unsafe fn bounded_eh_frame(
     Some((start, unsafe { slice::from_raw_parts(start as *const u8, length) }))
 }
 
-#[cfg(not(target_arch = "x86_64"))]
+#[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
 fn search_phdr(phdrs: &[Elf_Phdr], base: usize, pc: usize) -> Option<FDESearchResult> {
     unsafe {
         let mut text = None;
@@ -333,7 +333,7 @@ fn search_phdr(phdrs: &[Elf_Phdr], base: usize, pc: usize) -> Option<FDESearchRe
     }
 }
 
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 fn search_phdr_checked(
     phdrs: &[Elf_Phdr], base: usize, pc: usize,
 ) -> Result<Option<FDESearchResult>, gimli::Error> {

@@ -101,3 +101,9 @@ provider.
 Handwritten dummy unwind symbols, an ambient unwinder, or a reduced fixture
 do not satisfy the contract. The broad transitive `libc` bindings and the
 lack of an identified upstream fuzz corpus remain audit concerns.
+
+The provider build selects its native target with `compat/x86_64/native_arch.py`.
+The AArch64 overlay uses the same bounded program-header discovery and
+fault-contained reads as x86-64. The pinned upstream AArch64 context indexes
+x0–x30, SP and v0–v31; it has no indexed PC slot. AArch64 runtime
+qualification remains pending the owned driver accepting provider objects.

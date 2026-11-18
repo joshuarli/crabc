@@ -31,11 +31,15 @@ use crate::abi::PersonalityRoutine;
 use crate::arch::*;
 use crate::util::*;
 
-// The selected x86 context stores integer registers 0..=16, MXCSR and FCW.
+// The upstream contexts index x86 integer, MXCSR and FCW registers, or
+// AArch64 x0-x30, SP and v0-v31. PC has no indexed context slot.
 // Validate metadata IDs before Index/IndexMut, whose upstream catch-all panics.
 fn validate_register(register: Register) -> Result<(), gimli::Error> {
     match register {
+        #[cfg(target_arch = "x86_64")]
         Register(0..=16) | gimli::X86_64::MXCSR | gimli::X86_64::FCW => Ok(()),
+        #[cfg(target_arch = "aarch64")]
+        Register(0..=31) | Register(64..=95) => Ok(()),
         _ => Err(gimli::Error::UnsupportedRegister(register.0 as u64)),
     }
 }
@@ -89,7 +93,14 @@ fn read_unwind_bytes(address: usize, bytes: &mut [u8]) -> Result<(), gimli::Erro
     }
 }
 
-#[cfg(not(target_arch = "x86_64"))]
+#[cfg(target_arch = "aarch64")]
+fn read_unwind_bytes(address: usize, bytes: &mut [u8]) -> Result<(), gimli::Error> {
+    use gimli::Reader;
+    let mut reader = RemoteSlice::new(address, bytes.len(), bytes.len())?;
+    reader.read_slice(bytes)
+}
+
+#[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
 fn read_unwind_bytes(address: usize, bytes: &mut [u8]) -> Result<(), gimli::Error> {
     // Preserve the existing caller-owned memory obligation outside the selected
     // x86 runtime; these targets have no fault-contained read in this overlay.
@@ -315,7 +326,7 @@ impl Frame {
         // The finder can retain bytes read during its callback. Check the
         // complete declared EH range after the callback before using a cached
         // rule, then guard every later read through the remote reader.
-        #[cfg(target_arch = "x86_64")]
+        #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
         fde_result.eh_frame.reader().probe_all()?;
         let mut unwinder = UnwindContext::<_, StoreOnStack>::new_in();
         let row = fde_result
