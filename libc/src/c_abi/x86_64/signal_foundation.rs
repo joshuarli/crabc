@@ -52,6 +52,7 @@ const _: [(); 8] = [(); core::mem::offset_of!(KernelSigAction, flags)];
 const _: [(); 16] = [(); core::mem::offset_of!(KernelSigAction, restorer)];
 const _: [(); 24] = [(); core::mem::offset_of!(KernelSigAction, mask)];
 
+#[cfg(target_arch = "x86_64")]
 core::arch::global_asm!(
     ".text",
     // Keep the leading no-op in the same position as musl's restore.s: it is
@@ -67,6 +68,9 @@ core::arch::global_asm!(
     ".size crabc_x86_64_signal_restorer, .-crabc_x86_64_signal_restorer",
     ".section .note.GNU-stack,\"\",@progbits",
 );
+
+#[cfg(target_arch = "aarch64")]
+core::arch::global_asm!(include_str!("signal_restore_aarch64.S"));
 
 unsafe extern "C" {
     fn crabc_x86_64_signal_restorer() -> !;
