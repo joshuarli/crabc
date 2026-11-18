@@ -25,6 +25,7 @@ compile_error!("the x86 C mempcpy leaf requires little-endian Linux/x86-64");
 // On entry rdi/rsi/rdx hold destination/source/count. Save the calculated
 // one-past return in callee-saved rbx across the direct memcpy call; the push
 // also restores the required 16-byte stack alignment before that call.
+#[cfg(target_arch = "x86_64")]
 core::arch::global_asm!(
     r#"
     .text
@@ -43,3 +44,11 @@ mempcpy:
     .section .note.GNU-stack,"",@progbits
     "#,
 );
+
+#[cfg(target_arch = "aarch64")]
+#[no_mangle]
+pub unsafe extern "C" fn mempcpy(dst: *mut u8, src: *const u8, len: usize) -> *mut u8 {
+    unsafe extern "C" { fn memcpy(dst: *mut u8, src: *const u8, len: usize) -> *mut u8; }
+    // SAFETY: the caller supplies valid nonoverlapping memcpy ranges.
+    unsafe { memcpy(dst, src, len); dst.add(len) }
+}
