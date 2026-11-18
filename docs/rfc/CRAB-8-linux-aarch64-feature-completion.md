@@ -300,6 +300,61 @@ scripts/lanes/rust-check.sh env CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_RUSTFLAGS
 Use `-Zbuild-std=std,panic_abort` for `crabc-rs`. The override drops
 `link-dead-code`, which breaks a source-built `compiler_builtins`.
 
+### Progress record (2026-11-18)
+
+Integration branch: `crab8/integration` (origin). Lanes branch from it and are
+cherry-picked back after review; nothing merges to main before final8.
+
+Done on arm64, each matching the `[musl_native]` oracle's stdout and status:
+static, static-PIE and dynamic PIE `hello`, static/static-PIE pthread+TLS,
+initial-exec and TLSDESC dynamic TLS from a DSO, and a `dlopen`ed TLSDESC
+module with rollback. The pinned libc-test suite through
+`compat/x86_64/owned_libc_test.py` passes 427 of 434. The remaining seven are
+accounted: `functional/crypt` is out of profile (`compat/crabc-rs/crypt-profile.md`);
+`functional/ipc_sem`, `functional/strptime` and `regression/statvfs` produce
+output identical to the oracle's in the chroot; `functional/wordexp` is the
+upstream-policy difference that `owned-wordexp-upstream-policy.md` already
+accounts on x86; `math/pow` and `math/powf` differ only where the oracle
+raises extra exception flags that crabc's finite-identity corrections remove.
+
+Structure now shared: `crabc-core` and `crabc-rs` have one module per concern
+with per-architecture `syscall`/`fenv` layers; libc uses one
+architecture-selected syscall table; every musl translation has a
+reproducible `_aarch64.S` from `compat/x86_64/generate_*.py --arch aarch64`;
+the TLS layout contract is `libc/src/c_abi/x86_64/aarch64_tls_layout.rs`
+(musl's ABI: DTV at TP-8, `canary_at_end` at TP-16); `compat/x86_64/native_arch.py`
+selects platform, image, triple, linker, oracle and work directory for the
+harness.
+
+Open, in dependency order:
+- Harness contracts for the remaining gate producers: loader family
+  (`owned_loader_family.py` x86 receipt guard; no aarch64 package corpus is
+  pinned), hardened runtime (static builder's hardened guard; aarch64 `rcrt1`
+  lacks the x86 hardened checks), resolver-network and Lua (package,
+  extraction, driver and ELF contracts), POSIX native inputs, ABI evidence,
+  Rust std/LTO (the static driver rejects rustc's `-Wl,--as-needed`;
+  `unwinder/owned_rust_link.py` is x86-only).
+- The three-mode fixture sweep over `tests/fixtures/*_test.c`.
+- x86 link and run of the converged tree on the x86 host (type-checked only
+  here).
+- Owner decision: binary128 soft-float rounding and exception fidelity
+  (`compiler_builtins` helpers versus libgcc's soft-fp).
+
+Host workflow: the VM clone is `~/crabc`, reachable from the Mac as git remote
+`a64` (`crabc@orb:crabc`) with `receive.denyCurrentBranch updateInstead`.
+`scripts/lanes/orb-vm-lane.sh <name> <commit>` creates the paired worktrees,
+and `scripts/lanes/orb-vm-run.sh <command...>` mirrors a Mac worktree into its
+VM worktree (git HEAD and index follow the Mac commit) and runs the command
+there; wrap builds in `scripts/lanes/rust-check.sh`. The pinned musl trees go
+in the VM's `~/crabc/.work/aarch64/musl-src/`: the `[musl]` release tarball
+(the generators' tree digest) and the `[musl_native]` snapshot (scanf and
+float-parse generators), both downloaded from `compat/upstreams.toml` and
+SHA-256 checked. `cargo check` does not assemble `global_asm!` text, so
+aarch64 acceptance uses `cargo build`. x86 is type-checked from the arm64
+image with `scripts/lanes/rust-check.sh env
+CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_RUSTFLAGS=-Ztls-model=initial-exec
+cargo check --locked -Zbuild-std=core,alloc --target x86_64-unknown-linux-musl`.
+
 ### Don't
 
 - Do not use `scripts/dev.sh` or the old `c_abi.rs` AArch64 suites as
