@@ -327,8 +327,23 @@ unsafe fn open_named_semaphore(name: *const c_char, flags: c_int, creation: Opti
 
 // Musl's `src/thread/sem_open.c` object.
 static_archive_member! { sem_open_source {
+    /// # Safety
+    /// The name must be a readable C string and O_CREAT requires a mode and initial value.
+    #[cfg(target_arch = "aarch64")]
+    #[no_mangle]
+    pub unsafe extern "C" fn sem_open(name: *const c_char, flags: c_int, mut arguments: ...) -> *mut c_void {
+        if flags & 0x40 == 0 {
+            // SAFETY: the caller supplies the name required by sem_open.
+            return unsafe { open_existing(name, flags) };
+        }
+        // SAFETY: O_CREAT requires a mode and initial semaphore value.
+        let (mode, value) = unsafe { (arguments.next_arg::<c_uint>(), arguments.next_arg::<c_uint>()) };
+        // SAFETY: the caller supplies both creation arguments.
+        unsafe { open_create(name, flags, mode, value) }
+    }
     // The two-or-four-argument sem_open entry; musl's sem_open.c also defines
     // sem_close.
+    #[cfg(target_arch = "x86_64")]
     core::arch::global_asm!(
         r#"
     .section .text.sem_open,"ax",@progbits
