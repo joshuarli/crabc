@@ -91,7 +91,11 @@ static void errors(const char *which) {
     else if(!strcmp(which,"directory")) {CHECK(unlink("/etc/passwd")==0); CHECK(mkdir("/etc/passwd",0700)==0);expected=EISDIR;}
     else if(!strcmp(which,"not-directory")) {CHECK(rename("/etc","/saved-etc")==0);int fd=open("/etc",O_WRONLY|O_CREAT,0600);CHECK(fd>=0 && !close(fd));expected=ENOTDIR;}
     else if(!strcmp(which,"read-error")) {filter(SYS_read,0x00050000|EIO);expected=EIO;}
-    else {filter(SYS_open,0x00050000|EACCES);filter(SYS_openat,0x00050000|EACCES);expected=EACCES;}
+    else {
+#ifdef SYS_open
+        filter(SYS_open,0x00050000|EACCES);
+#endif
+        filter(SYS_openat,0x00050000|EACCES);expected=EACCES;}
     struct passwd p,*r=(void*)1; char b[4096]; memset(b,0x5a,sizeof b); errno=0;
     CHECK(getpwnam_r("alpha",&p,b,sizeof b,&r)==expected && !r && errno==expected);
     for(unsigned i=0;i<sizeof b;i++) CHECK(b[i]==0x5a);

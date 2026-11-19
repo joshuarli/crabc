@@ -443,7 +443,9 @@ static void errors(const char *which)
         filter(SYS_read, 0x00050000 | EIO);
         expected = EIO;
     } else {
+#ifdef SYS_open
         filter(SYS_open, 0x00050000 | EACCES);
+#endif
         filter(SYS_openat, 0x00050000 | EACCES);
         expected = EACCES;
     }

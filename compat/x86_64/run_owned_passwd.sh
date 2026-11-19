@@ -21,7 +21,8 @@ readonly work="$(mktemp -d "$TMPDIR/owned-passwd.XXXXXX")"
 chmod a+rx "$work"
 printf 'passwd evidence: %s\n' "$work"
 readonly probe="$ROOT/compat/x86_64/owned_passwd_probe.c"
-readonly oracle_cc=/usr/local/bin/crabc-x86_64-musl-gcc
+eval "$(python3 -B "$ROOT/compat/x86_64/native_arch.py")"
+readonly oracle_cc="$oracle"
 readonly cases=(lookup ranges enumeration stream output missing directory not-directory read-error open-error local-only threads database-contract fork cancellation allocation)
 mkdir -p "$work/execution-root/etc"
 # Preserve the complete installed provider roster and musl's weak cursor alias.
@@ -83,7 +84,7 @@ for mode in pie non-pie; do
     for scenario in "${cases[@]}"; do
         for entry in kernel direct; do
             command=("/consumer-$mode")
-            if [ "$entry" = direct ]; then command=(/lib/ld-crabc-x86_64.so.1 "/consumer-$mode"); fi
+            if [ "$entry" = direct ]; then command=("/lib/ld-crabc-$arch.so.1" "/consumer-$mode"); fi
             timeout 30 chroot "$work/execution-root" "${command[@]}" "$scenario" owned >"$work/$mode-$entry-$scenario.stdout" 2>"$work/$mode-$entry-$scenario.stderr"
             cmp "$work/oracle-$scenario.stdout" "$work/$mode-$entry-$scenario.stdout"
             cmp "$work/oracle-$scenario.stderr" "$work/$mode-$entry-$scenario.stderr"
