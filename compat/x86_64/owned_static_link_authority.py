@@ -62,7 +62,8 @@ def elf_bytes(data):
     require(data[:7] == b'\x7fELF\x02\x01\x01', 'expected ELF64 little endian')
     elf = Elf.__new__(Elf)
     elf.data = data
-    require(elf.unpack('<H', 18)[0] == 62, 'expected native x86-64 ELF')
+    require(elf.unpack('<H', 18)[0] == (62 if ARCH == 'x86_64' else 183),
+            'expected native x86-64 ELF' if ARCH == 'x86_64' else 'expected native aarch64 ELF')
     elf.elf_type = elf.unpack('<H', 16)[0]
     offset = elf.unpack('<Q', 40)[0]
     size, count = elf.unpack('<HH', 58)
@@ -714,6 +715,21 @@ def _require_static_functions(map_path, executable, admitted, functions):
         linked = bytearray(final.data[output_offset:output_offset + size])
         require(len(original) == len(linked) == size, 'truncated mapped static function')
         for position, kind, addend, symbol in function_relocations[name]:
+            if ARCH == 'aarch64':
+                require(position % 4 == 0 and position + 4 <= size,
+                        'static relocation crosses a function boundary')
+                require(kind in (282, 283), f'unclassified mapped static relocation {kind} in {name}')
+                target, weak_undefined_zero_got = target_address(owner, symbol)
+                require(not weak_undefined_zero_got, 'unclassified static weak undefined relocation')
+                instruction = int.from_bytes(original[position:position + 4], 'little')
+                require(instruction & 0xfc000000 == (0x14000000 if kind == 282 else 0x94000000),
+                        'static branch relocation opcode differs')
+                value = target + addend - (address + position)
+                require(value % 4 == 0 and -(1 << 27) <= value < (1 << 27),
+                        'static branch relocation overflows displacement')
+                instruction = (instruction & 0xfc000000) | ((value >> 2) & 0x03ffffff)
+                original[position:position + 4] = instruction.to_bytes(4, 'little')
+                continue
             require(kind in (2, 4, 9, 22, 42), f'unclassified mapped static relocation {kind} in {name}')
             require(position + 4 <= size, 'static relocation crosses a function boundary')
             target, weak_undefined_zero_got = target_address(owner, symbol)

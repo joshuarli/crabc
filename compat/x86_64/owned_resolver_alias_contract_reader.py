@@ -122,7 +122,7 @@ INPUT_NAMES = (
     'oracle_compiler', 'oracle_archive', 'oracle_shared',
     'static_driver', 'static_manifest', 'static_libc', 'static_crt1', 'static_rcrt1', 'static_crti', 'static_crtn', 'static_builtins',
     'dynamic_driver', 'dynamic_libc', 'dynamic_loader', 'dynamic_crt1', 'dynamic_scrt1',
-    'dynamic_crti', 'dynamic_crtn', *(('dynamic_attach',) if ARCH == 'x86_64' else ()), 'dynamic_builtins', 'dynamic_manifest', 'dynamic_state',
+    'dynamic_crti', 'dynamic_crtn', 'dynamic_attach', 'dynamic_builtins', 'dynamic_manifest', 'dynamic_state',
     'product_report', 'static_preparation', 'elf_facts', 'base_inventory',
 )
 
@@ -606,7 +606,7 @@ def _product_paths(static_product: Path, dynamic_product: Path, product_report: 
         'dynamic_scrt1': dynamic_product / 'usr/lib/Scrt1.o',
         'dynamic_crti': dynamic_product / 'usr/lib/crti.o',
         'dynamic_crtn': dynamic_product / 'usr/lib/crtn.o',
-        **({'dynamic_attach': dynamic_product / 'usr/lib/crabc-dynamic-attach.o'} if ARCH == 'x86_64' else {}),
+        'dynamic_attach': dynamic_product / 'usr/lib/crabc-dynamic-attach.o',
         'dynamic_builtins': dynamic_product / 'usr/lib/libcrabc-builtins.a',
         'dynamic_manifest': dynamic_product / 'share/crabc/manifest.json',
         'dynamic_state': dynamic_product / 'share/crabc/dynamic-product-state.json',

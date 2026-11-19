@@ -255,7 +255,7 @@ class ResolverAliasProductAnchorTests(unittest.TestCase):
                 dynamic / 'share/crabc/manifest.json': b'dynamic-manifest',
                 dynamic / 'share/crabc/dynamic-product-state.json': b'dynamic-state',
                 dynamic / 'usr/lib/libc.so': b'candidate-libc',
-                dynamic / 'lib/ld-crabc-x86_64.so.1': b'candidate-loader',
+                dynamic / f'lib/ld-crabc-{resolver_reader.ARCH}.so.1': b'candidate-loader',
             }
             for path, content in files.items():
                 path.parent.mkdir(parents=True, exist_ok=True)
@@ -276,7 +276,7 @@ class ResolverAliasProductAnchorTests(unittest.TestCase):
                 'dynamic-manifest': dynamic / 'share/crabc/manifest.json',
                 'dynamic-state': dynamic / 'share/crabc/dynamic-product-state.json',
                 'candidate-libc': dynamic / 'usr/lib/libc.so',
-                'candidate-loader': dynamic / 'lib/ld-crabc-x86_64.so.1',
+                'candidate-loader': dynamic / f'lib/ld-crabc-{resolver_reader.ARCH}.so.1',
             }.items():
                 status = path.stat()
                 artifacts[name] = {
@@ -352,7 +352,7 @@ class ResolverAliasRunnerRuntimeModeTests(unittest.TestCase):
             parent.mkdir()
             parent.chmod(0o2755)
             dynamic = root / 'dynamic-product'
-            for relative in ('lib/ld-crabc-x86_64.so.1', 'usr/lib/libc.so'):
+            for relative in (f'lib/ld-crabc-{resolver_reader.ARCH}.so.1', 'usr/lib/libc.so'):
                 path = dynamic / relative
                 path.parent.mkdir(parents=True, exist_ok=True)
                 path.write_bytes(relative.encode('ascii'))
@@ -362,8 +362,8 @@ class ResolverAliasRunnerRuntimeModeTests(unittest.TestCase):
             executable.chmod(0o755)
             runtime = parent / 'runtime'
             subprocess.run([
-                'bash', '-c', 'DYNAMIC_PRODUCT="$1"\n' + setup + '\nprepare_dynamic_root "$2" "$3"',
-                'runner-runtime-mode', str(dynamic), str(runtime), str(executable),
+                'bash', '-c', 'DYNAMIC_PRODUCT="$1"; ARCH="$4"\n' + setup + '\nprepare_dynamic_root "$2" "$3"',
+                'runner-runtime-mode', str(dynamic), str(runtime), str(executable), resolver_reader.ARCH,
             ], check=True)
             for path in (runtime, runtime / 'lib', runtime / 'usr', runtime / 'usr/lib',
                          runtime / 'fixture', runtime / 'fixture/etc'):
@@ -436,7 +436,7 @@ class ResolverAliasRunnerInterfaceTests(unittest.TestCase):
                          ['static-contract.link.json', '-o', '/workspace/.work/receipt/outputs/static-contract'])
         self.assertEqual(expected['dynamic-normal-nopie-runtime'],
                          ['/usr/sbin/chroot', '/workspace/.work/receipt/roots/dynamic-non-pie',
-                          '/lib/ld-crabc-x86_64.so.1', '/contract', '/fixture'])
+                          f'/lib/ld-crabc-{resolver_reader.ARCH}.so.1', '/contract', '/fixture'])
 
 
 class ResolverAliasReceiptFilesystemTests(unittest.TestCase):
@@ -611,7 +611,7 @@ class ResolverAliasRuntimeRootTransitionTests(unittest.TestCase):
                 if artifact_name == 'fixture':
                     self._fixture(root)
                 else:
-                    self._write(root / 'lib/ld-crabc-x86_64.so.1', loader.read_bytes(), 0o755)
+                    self._write(root / f'lib/ld-crabc-{resolver_reader.ARCH}.so.1', loader.read_bytes(), 0o755)
                     self._write(root / 'usr/lib/libc.so', libc.read_bytes(), 0o755)
                     contract = work / f'outputs/{name}'
                     self._write(contract, name.encode('ascii'), 0o755)
@@ -830,7 +830,7 @@ class ResolverStaticFunctionAuthorityTests(unittest.TestCase):
         compiler, archiver, linker = shutil.which('cc'), shutil.which('ar'), shutil.which('mold')
         if compiler is None or archiver is None or linker is None:
             self.skipTest('native compiler, archiver, and mold are required')
-        parent = ROOT / '.work/x86_64/tmp'
+        parent = ROOT / f'.work/{resolver_reader.ARCH}/tmp'
         parent.mkdir(parents=True, exist_ok=True)
         with tempfile.TemporaryDirectory(dir=parent) as temporary:
             work = Path(temporary)
@@ -852,15 +852,15 @@ int main(void) {
     return res_mkquery() + res_send() + res_search() + res_querydomain();
 }
 ''')
-            entry_source.write_text('''.text
+            entry_asm = '''.text
 .globl _start
 .type _start,@function
 _start:
 call main
 ud2
 .size _start,.-_start
-''')
-            resolver_source.write_text('''.text
+'''
+            resolver_asm = '''.text
 .globl __res_mkquery
 .hidden __res_mkquery
 .type __res_mkquery,@function
@@ -899,7 +899,14 @@ res_querydomain:
 mov $4,%eax
 ret
 .size res_querydomain,.-res_querydomain
-''')
+'''
+            if resolver_reader.ARCH == 'aarch64':
+                entry_asm = entry_asm.replace('@function', '%function').replace('call main\nud2', 'bl main\nbrk #0')
+                resolver_asm = resolver_asm.replace('@function', '%function')
+                for value in range(1, 5):
+                    resolver_asm = resolver_asm.replace(f'mov ${value},%eax', f'mov w0, #{value}')
+            entry_source.write_text(entry_asm)
+            resolver_source.write_text(resolver_asm)
             subprocess.run([compiler, '-c', '-fno-pie', '-fno-stack-protector', '-ffunction-sections',
                             '-fdata-sections', str(application_source), '-o', str(application_object)],
                            check=True, capture_output=True)
@@ -941,6 +948,15 @@ ret
             divergent.write_bytes(contents)
             with self.assertRaisesRegex(StaticLinkAuthorityError, 'static map/source/final function location differs'):
                 require_static_functions(link_map, divergent, admitted, contracts)
+            main = image.symbol('main', dynamic=False)
+            section = image.sections[main['section']]
+            offset = section[4] + main['value'] - section[3]
+            changed_bytes = bytearray(executable.read_bytes())
+            changed_bytes[offset] ^= 1
+            altered = work / 'probe-altered-bytes'
+            altered.write_bytes(changed_bytes)
+            with self.assertRaisesRegex(StaticLinkAuthorityError, 'linked static function bytes differ'):
+                require_static_functions(link_map, altered, admitted, contracts)
             changed_source = [
                 StaticFunctionContract(contract.name, contract.input_owner,
                                        'GLOBAL' if contract.name == 'res_send' else contract.source_binding,

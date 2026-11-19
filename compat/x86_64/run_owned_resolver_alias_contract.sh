@@ -84,7 +84,7 @@ for path in (static / 'bin/crabc-cc', static / 'usr/lib/libc.a', static / 'usr/l
              static / 'usr/lib/libcrabc-builtins.a', dynamic / 'bin/crabc-cc-dynamic',
              dynamic / 'usr/lib/libc.so', dynamic / f'lib/ld-crabc-{sys.argv[9]}.so.1',
              dynamic / 'usr/lib/crt1.o', dynamic / 'usr/lib/Scrt1.o', dynamic / 'usr/lib/crti.o',
-             dynamic / 'usr/lib/crtn.o', *((dynamic / 'usr/lib/crabc-dynamic-attach.o',) if sys.argv[9] == 'x86_64' else ()),
+             dynamic / 'usr/lib/crtn.o', dynamic / 'usr/lib/crabc-dynamic-attach.o',
              dynamic / 'usr/lib/libcrabc-builtins.a'):
     if not path.is_file() or path.is_symlink():
         raise SystemExit(f'resolver alias selected product file is not physical: {path}')
