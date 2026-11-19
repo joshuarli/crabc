@@ -281,13 +281,13 @@ cross-target flags documented in CRAB-8.
 
 ## E. Test coverage
 
-40. **`crabc-rs/src/fs.rs:2258-2287`**: the `Stat` size, alignment and offset assertions are x86-only, with no aarch64 values. Raw kernel writes depend on that layout. The layout is correct today by hand calculation.
-41. **`crabc-rs/src/event.rs:270-279`**: the epoll `Event` layout assertions are x86-only. The aarch64 check compares two identical definitions, so it proves nothing.
-42. **crabc-rs tests**: the x86-only suites were not ported (`x86_64_mm`, epoll, poll, pselect, statat, memfd, child_*, process_kill, thread_kill, clock_nanosleep and others). The merged code now runs on aarch64 untested.
-43. **`ldso/src/x86_64_initial_graph.rs:4785` vs `:1241-1243`**: the self-relocation tests are x86-only, and the aarch64 bootstrap is never compiled under test.
-44. **ldso relocation tests**: no aarch64 version of the PC32 commit-after-preflight test, and no tests of dynamic TLSDESC or hardened TLSDESC RELRO.
-45. **`ldso/src/x86_64_initial_graph.rs:2523`**: the test lowers `tls_align` to 1 on aarch64.
-46. **`libc/.../descriptor_entry.rs:217`**: the x86 `O_DIRECTORY` value is `O_DIRECT` on aarch64, so that test case never runs there.
+40. **Closed; original finding:** **`crabc-rs/src/fs.rs:2258-2287`**: the `Stat` size, alignment and offset assertions are x86-only, with no aarch64 values. Raw kernel writes depend on that layout. The layout is correct today by hand calculation.
+41. **Closed; original finding:** **`crabc-rs/src/event.rs:270-279`**: the epoll `Event` layout assertions are x86-only. The aarch64 check compares two identical definitions, so it proves nothing.
+42. **Closed; original finding:** **crabc-rs tests**: the x86-only suites were not ported (`x86_64_mm`, epoll, poll, pselect, statat, memfd, child_*, process_kill, thread_kill, clock_nanosleep and others). The merged code now runs on aarch64 untested.
+43. **Closed; original finding:** **`ldso/src/x86_64_initial_graph.rs:4785` vs `:1241-1243`**: the self-relocation tests are x86-only, and the aarch64 bootstrap is never compiled under test.
+44. **Closed; original finding:** **ldso relocation tests**: no aarch64 version of the PC32 commit-after-preflight test, and no tests of dynamic TLSDESC or hardened TLSDESC RELRO.
+45. **Closed; original finding:** **`ldso/src/x86_64_initial_graph.rs:2523`**: the test lowers `tls_align` to 1 on aarch64.
+46. **Closed; original finding:** **`libc/.../descriptor_entry.rs:217`**: the x86 `O_DIRECTORY` value is `O_DIRECT` on aarch64, so that test case never runs there.
 47. **`compat/x86_64/tests/test_runner.py:8288-8317`**: the test of the "refuses emulation" branch was replaced with a Darwin case.
 48. **`compat/x86_64/tests/test_core_image_dispatch.py:30, 227, 275`**: all negative image-pin tests are x86-only.
 49. **`compat/x86_64/tests/test_aarch64_dynamic_non_pie.py:11, 33, 53`**: every test needs `CRABC_AARCH64_DYNAMIC_SYSROOT`, which nothing sets, so they always skip.
@@ -398,13 +398,13 @@ entries are closed by the commit that fixes them.
 | 37 | fixed | Preflight at `aarch64_bootstrap.rs:117-127`; test at `:240-251`. |
 | 38 | fixed (classification only) | `x86_64_deferred_relocations.rs:135-136, 158-164`; test at `x86_64_general_relocation_tests.rs:1434-1450`. End-to-end `dlerror` checking is still outstanding. |
 | 39 | fixed | The production dlopen path `deferred::relocate_new` (`x86_64_runtime_registry.rs:1011`; `x86_64_deferred_relocations.rs:70-88`) writes `tlsdesc_dynamic` with a retained record. The new aarch64 `relocate_runtime_objects` (`x86_64_general_relocation.rs:1117-1168`) is called only from tests. |
-| 40 | still open | `crabc-rs/src/fs.rs:2256-2285` asserts the layout on x86 only; the aarch64 `Stat` at `:2158` has none. |
-| 41 | still open | `crabc-rs/src/event.rs:271-280`. |
-| 42 | still open | `x86_64_mm`, epoll, poll, pselect, statat, child_options/ownership/interruption, process_kill, thread_kill, io, fs, pipe and the `signal_*` suites are all still `#![cfg(target_arch = "x86_64")]` with no counterpart. The `memfd.rs`, `clock_nanosleep.rs` and `sleep.rs` counterparts predate `337e6022`. |
-| 43 | partly fixed | `aarch64_bootstrap` is now compiled under test (`x86_64_initial_graph.rs:1241-1243`) with one test. The 16 self-relocation tests (`:4801`, `cfg(all(test, x86_64))`) have no aarch64 version. |
-| 44 | partly fixed | TLSDESC tests were added (`x86_64_general_relocation_tests.rs:1397-1450`). Still missing: an aarch64 runtime commit-after-preflight test (`:956-975` is x86-only) and a hardened TLSDESC RELRO test. `run_hardened_entry.sh:32-34` compiles the aarch64 TLS fixture with `-mtls-dialect=trad`, so that path is not exercised. |
-| 45 | still open | `x86_64_initial_graph.rs:2540`. |
-| 46 | still open | `descriptor_entry.rs:270`: `0x1_0000` is `O_DIRECT` on aarch64. |
+| 40 | fixed | `crabc-rs/src/fs.rs:2256` asserts the AArch64 kernel record against musl generic `bits/stat.h`. |
+| 41 | fixed | `crabc-rs/src/event.rs:271` asserts the native unpacked 16-byte record against musl `sys/epoll.h`. |
+| 42 | fixed | The original test targets run on AArch64 with native constants; the full `crabc-rs` test command passed. The formerly disabled `x86_64_mm` target alone adds 25 passing tests. |
+| 43 | fixed | `ldso/src/x86_64_initial_graph.rs:5105` exercises AArch64 bootstrap self-relocation in the loader test suite. |
+| 44 | fixed | `ldso/src/x86_64_general_relocation_tests.rs:1397` covers static and dynamic TLSDESC; `:1466` covers runtime preflight and `:1480` checks hardened RELRO pages. The focused hardened check passed; it is not an end-to-end hardened TLS fixture. |
+| 45 | fixed | `ldso/src/x86_64_initial_graph.rs:2548` uses 16-byte aligned images and variant-I placements. |
+| 46 | fixed | `libc/src/c_abi/x86_64/descriptor_entry.rs:270` selects the native AArch64 `O_DIRECTORY` value. |
 | 47 | still open | `test_runner.py:8284-8312` tests a Darwin host. The emulation-refusal branch at `dev-x86_64.sh:3264-3267` is untested; main's version of this test used Linux/aarch64. |
 | 48 | still open | `test_core_image_dispatch.py:30, 227` are x86-only; the aarch64 class at `:275` has positive cases only. |
 | 49 | partly fixed | Qualification prepare now sets the variable (`owned_dynamic_qualification.py:350`), but uses this suite in place of the x86 driver suite (see B7). Nothing else sets it. |
