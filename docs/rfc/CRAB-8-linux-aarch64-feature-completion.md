@@ -326,6 +326,14 @@ the TLS layout contract is `libc/src/c_abi/x86_64/aarch64_tls_layout.rs`
 selects platform, image, triple, linker, oracle and work directory for the
 harness.
 
+Milestone (2026-11-19, `cb9cfcd2d`): the materialized dynamic product cohort
+qualifies natively on arm64 — all 77 required cases pass for the installed,
+second-build and extracted products, and the qualification receipt publishes.
+The 34-case package corpus, the resolver/network gate and all 22
+`compat.abi-differential` steps also pass on arm64, and the A5 candidate's arm64
+dry run reports no preflight blockers. Independent audits of the port are
+tracked in `docs/evidence/crab8-aarch64-port-audit.md`.
+
 Open, in dependency order:
 - The seven-gate driver itself: `compat/x86_64/qualification_candidate.py` now
   takes its work root, oracle wrapper and image pin from `native_arch`; its
