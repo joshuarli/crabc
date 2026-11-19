@@ -99,6 +99,29 @@ edit invalidates it.
 
 ## Ordered qualification case
 
+On the native arm64 VM, prepare the candidate's pinned Lua and Rust std/LTO
+inputs from the worktree root with `scripts/lanes/prepare-worktree.sh`. The
+script verifies the Lua archive against `manifest.toml`, vendors the locked
+unwinder and consumer fixture dependencies, and writes these entries to
+`.work/aarch64/inputs.json`:
+
+```json
+{
+  "lua_source_build": {
+    "archive_seed": ".work/aarch64/lua-source-build-seed/lua-5.4.8.tar.gz"
+  },
+  "rust_std_lto": {
+    "provider_vendor": ".work/aarch64/rust-std-lto/provider-vendor",
+    "dependency_vendor": ".work/aarch64/rust-std-lto/dependency-vendor"
+  }
+}
+```
+
+From macOS, invoke the preparation through
+`scripts/lanes/orb-vm-run.sh scripts/lanes/prepare-worktree.sh`. These inputs
+do not replace the independently prepared static and dynamic product cohort
+receipts required by the consumers.
+
 `qualify_source_build.py` is the only case pinned by
 `compat/x86_64/qualification_source_build.json` for the ordered
 `consumer.source-build` qualification gate, selected with
