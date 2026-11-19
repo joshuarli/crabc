@@ -569,7 +569,9 @@ def _validate_cargo_link_receipt(context: Context, receipt: object, path: Path, 
         objects=final_objects, archives=final_archives, output=output, export_dynamic=False,
         rust_mode=requested_mode,
     )
-    if ARCH == "aarch64" and receipt["command"][1:2] == ["--fix-cortex-a53-843419"]:
+    # The pinned aarch64 musl target's gnu-cc pre-link arguments always
+    # include this erratum option.  Do not infer it from the receipt itself.
+    if ARCH == "aarch64":
         expected_command.insert(1, "--fix-cortex-a53-843419")
     require(receipt["command"] == list(map(str, expected_command)),
             "owned Rust Cargo final link argv differs")
