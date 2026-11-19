@@ -79,6 +79,14 @@ cmp "$work/expected-surface" "$work/base-surface" || fail 'source-runtime export
 cmp "$work/base-surface" "$work/feature-surface" || fail 'source-runtime rebuild export surface differs'
 cmp "$work/base-bindings" "$work/feature-bindings" || fail 'source-runtime rebuild bindings differ'
 archive="$work/source-libc.a"
+link_archive="$work/source-libc-runtime.a"
+cp "$archive" "$link_archive"
+ar t "$link_archive" | grep -E '^compiler_builtins-.+\.rcgu\.o$' > "$work/stock-compiler-builtins-members" ||
+    fail 'source-runtime archive lacks stock compiler_builtins members'
+xargs ar d "$link_archive" < "$work/stock-compiler-builtins-members"
+if ar t "$link_archive" | grep -Eq '^compiler_builtins-'; then
+    fail 'stock compiler_builtins members remain in the linked source-runtime archive'
+fi
 nm -A --defined-only "$archive" > "$work/archive-symbols"
 for symbol in fdiml exp10l; do
     grep -Eq "[[:space:]]T[[:space:]]${symbol}$" "$work/archive-symbols" || fail "archive lacks strong $symbol"
@@ -90,7 +98,7 @@ grep -Eq '[[:space:]]W[[:space:]]pow10l$' "$work/archive-symbols" || fail 'archi
     -c "$probe" -o "$work/freestanding.o"
 "$cc" -c compat/x86_64/libc_math_long_double_completion_aarch64_start.S -o "$work/start.o"
 freestanding_link=("$cc" -fuse-ld=bfd -nostdlib -static -no-pie -Wl,-e,_start,--no-undefined,--gc-sections,--trace
-    "$work/start.o" "$work/freestanding.o" -Wl,--start-group "$archive" \
+    "$work/start.o" "$work/freestanding.o" -Wl,--start-group "$link_archive" \
     "$work/product/usr/lib/libcrabc-builtins.a" -Wl,--end-group -o "$work/freestanding")
 record_math_argv "$work/freestanding-link.argv.json" "${freestanding_link[@]}"
 "${freestanding_link[@]}" > "$work/freestanding.trace"
@@ -101,17 +109,17 @@ readelf -rW "$work/freestanding" > "$work/freestanding.relocations"
 objdump -d "$work/freestanding" > "$work/freestanding.disassembly"
 awk '$4 == "FUNC" && ($5 == "GLOBAL" || $5 == "WEAK") { print $8 }' "$work/freestanding.symbols" |
     LC_ALL=C sort -u > "$work/freestanding.functions"
-printf '%s\n' _RINvNtNtCs1elpRbcHzVq_17compiler_builtins5float3add3addC4f128EB6_ \
-    _RINvNtNtCs1elpRbcHzVq_17compiler_builtins5float3div3divC4f128EB6_ \
-    _RINvNtNtCs1elpRbcHzVq_17compiler_builtins5float3mul3mulC4f128EB6_ \
+printf '%s\n' _RINvNtNtCsbJTFf11ssQ0_17compiler_builtins5float3add3addC4f128EB6_ \
+    _RINvNtNtCsbJTFf11ssQ0_17compiler_builtins5float3div3divC4f128EB6_ \
+    _RINvNtNtCsbJTFf11ssQ0_17compiler_builtins5float3mul3mulC4f128EB6_ \
     __addtf3 __divtf3 __eqtf2 __extenddftf2 __extendsftf2 __fesetround __fixtfsi \
-    __fpclassifyl __gttf2 __letf2 __lttf2 __multf3 __netf2 __subtf3 __trunctfdf2 __trunctfsf2 _start \
+    __fpclassifyl __getf2 __gttf2 __letf2 __lttf2 __multf3 __netf2 __subtf3 __trunctfdf2 __trunctfsf2 _start \
     crabc_x86_64_math_long_double_completion_probe exp10l exp2l fdiml feclearexcept \
     fegetenv fegetround feraiseexcept fesetenv fesetround fetestexcept modfl pow pow10l powl scalbnl |
     LC_ALL=C sort -u > "$work/freestanding.expected-functions"
 cmp "$work/freestanding.expected-functions" "$work/freestanding.functions" || fail 'freestanding function closure differs'
 for operation in 3add3add 3div3div 3mul3mul; do
-    grep -Eq "[[:space:]]FUNC[[:space:]]+GLOBAL[[:space:]]+HIDDEN[[:space:]]+[0-9]+[[:space:]]_RINvNtNtCs1elpRbcHzVq_17compiler_builtins5float${operation}C4f128EB6_$" \
+    grep -Eq "[[:space:]]FUNC[[:space:]]+GLOBAL[[:space:]]+HIDDEN[[:space:]]+[0-9]+[[:space:]]_RINvNtNtCsbJTFf11ssQ0_17compiler_builtins5float${operation}C4f128EB6_$" \
         "$work/freestanding.symbols" || fail "binary128 helper $operation is not hidden"
 done
 for symbol in fdiml exp10l; do
@@ -144,7 +152,7 @@ aggregate=CRABC_MATH_ELEMENTARY_FENV_SENSITIVE_AGGREGATE_FREESTANDING
     -c compat/x86_64/libc_math_elementary_fenv_sensitive_aggregate_probe.c -o "$work/aggregate.o"
 "$cc" -D"$aggregate" -c compat/x86_64/libc_math_long_double_completion_aarch64_start.S -o "$work/aggregate-start.o"
 aggregate_link=("$cc" -fuse-ld=bfd -nostdlib -static -no-pie -Wl,-e,_start,--no-undefined,--gc-sections,--trace
-    "$work/aggregate-start.o" "$work/aggregate.o" -Wl,--start-group "$archive" \
+    "$work/aggregate-start.o" "$work/aggregate.o" -Wl,--start-group "$link_archive" \
     "$work/product/usr/lib/libcrabc-builtins.a" -Wl,--end-group -o "$work/aggregate")
 record_math_argv "$work/aggregate-link.argv.json" "${aggregate_link[@]}"
 "${aggregate_link[@]}" > "$work/aggregate.trace"
@@ -155,18 +163,18 @@ readelf -rW "$work/aggregate" > "$work/aggregate.relocations"
 objdump -d "$work/aggregate" > "$work/aggregate.disassembly"
 awk '$4 == "FUNC" && ($5 == "GLOBAL" || $5 == "WEAK") { print $8 }' "$work/aggregate.symbols" |
     LC_ALL=C sort -u > "$work/aggregate.functions"
-printf '%s\n' _RINvNtNtCs1elpRbcHzVq_17compiler_builtins5float3add3addC4f128EB6_ \
-    _RINvNtNtCs1elpRbcHzVq_17compiler_builtins5float3div3divC4f128EB6_ \
-    _RINvNtNtCs1elpRbcHzVq_17compiler_builtins5float3mul3mulC4f128EB6_ \
+printf '%s\n' _RINvNtNtCsbJTFf11ssQ0_17compiler_builtins5float3add3addC4f128EB6_ \
+    _RINvNtNtCsbJTFf11ssQ0_17compiler_builtins5float3div3divC4f128EB6_ \
+    _RINvNtNtCsbJTFf11ssQ0_17compiler_builtins5float3mul3mulC4f128EB6_ \
     __addtf3 __divtf3 __eqtf2 __extenddftf2 __extendsftf2 __fesetround __fixtfsi __fpclassifyl \
-    __gttf2 __letf2 __lttf2 __multf3 __netf2 __subtf3 __trunctfdf2 __trunctfsf2 _start \
+    __getf2 __gttf2 __letf2 __lttf2 __multf3 __netf2 __subtf3 __trunctfdf2 __trunctfsf2 _start \
     crabc_x86_64_math_elementary_fenv_sensitive_aggregate_probe \
     exp10 exp10f exp10l exp2l fdim fdimf fdiml feclearexcept fegetenv fegetround \
     feraiseexcept fesetenv fetestexcept modfl nearbyint nearbyintf nearbyintl pow \
     pow10 pow10f pow10l powl rint rintf rintl scalbnl | LC_ALL=C sort -u > "$work/aggregate.expected-functions"
 cmp "$work/aggregate.expected-functions" "$work/aggregate.functions" || fail 'aggregate function closure differs'
 for operation in 3add3add 3div3div 3mul3mul; do
-    grep -Eq "[[:space:]]FUNC[[:space:]]+GLOBAL[[:space:]]+HIDDEN[[:space:]]+[0-9]+[[:space:]]_RINvNtNtCs1elpRbcHzVq_17compiler_builtins5float${operation}C4f128EB6_$" \
+    grep -Eq "[[:space:]]FUNC[[:space:]]+GLOBAL[[:space:]]+HIDDEN[[:space:]]+[0-9]+[[:space:]]_RINvNtNtCsbJTFf11ssQ0_17compiler_builtins5float${operation}C4f128EB6_$" \
         "$work/aggregate.symbols" || fail "aggregate binary128 helper $operation is not hidden"
 done
 for observer in 19observed_float_bits 20observed_double_bits; do
