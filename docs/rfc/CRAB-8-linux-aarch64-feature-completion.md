@@ -327,14 +327,22 @@ selects platform, image, triple, linker, oracle and work directory for the
 harness.
 
 Open, in dependency order:
-- Harness contracts for the remaining gate producers: loader family
-  (`owned_loader_family.py` x86 receipt guard; no aarch64 package corpus is
-  pinned), hardened runtime (static builder's hardened guard; aarch64 `rcrt1`
-  lacks the x86 hardened checks), resolver-network and Lua (package,
-  extraction, driver and ELF contracts), POSIX native inputs, ABI evidence,
-  Rust std/LTO (the static driver rejects rustc's `-Wl,--as-needed`;
-  `unwinder/owned_rust_link.py` is x86-only).
-- The three-mode fixture sweep over `tests/fixtures/*_test.c`.
+- The seven-gate driver itself: `compat/x86_64/qualification_candidate.py` now
+  takes its work root, oracle wrapper and image pin from `native_arch`; its
+  product cohort (static preparation, materialized dynamic qualification,
+  static/combined sysroot, CRT dynamic startup) is being made to run on arm64.
+  On arm64 the ledger rows' `.work/x86_64/` receipt paths map to
+  `.work/aarch64/`, and the canonical run is `--work .work/aarch64/feature-complete`.
+- Family producers still x86-bound: loader family readers, hardened entry
+  probes, `owned-wordexp` (the aarch64 candidate must reproduce the fixed x86
+  traces), dynamic Lua (driver `--application-dependency-file`), Rust provider
+  regressions, POSIX native aggregate, pthread/text/resolver/C-ABI families and
+  ABI evidence.
+- Package corpus: `compat/corpus/manifest.toml` already pins the 34-case
+  Alpine 3.24.1 AArch64 corpus by archive SHA-256. It needs staging and wiring
+  into the converged readers (`run_owned_package_corpus.sh`,
+  `owned_loader_corpus_evidence.py`, the dynamic qualification case); no new
+  pin is needed.
 - x86 link and run of the converged tree on the x86 host (type-checked only
   here).
 - Owner decision: binary128 soft-float rounding and exception fidelity
