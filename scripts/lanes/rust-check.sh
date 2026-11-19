@@ -83,9 +83,9 @@ else
     check --target "$target_triple" -p crabc-libc
     check --target "$target_triple" -p crabc-libc --features x86-owned-static-runtime
     check --target "$target_triple" -p crabc-libc --features x86-owned-dynamic-runtime
-    check --target "$target_triple" -p crabc-libc --features x86-owned-static-native-shadow
-    check --target "$target_triple" -p crabc-libc --features x86-owned-dynamic-native-shadow
-    check --target "$target_triple" -p crabc-mimalloc --all-targets
+    # The Rust allocator port (crabc-mimalloc and the native-shadow products)
+    # is frozen x86-64 work and is not ported to aarch64; the accepted C
+    # backend is the only aarch64 allocator.
     check --target "$target_triple" -p crabc-ldso --features x86_64-owned-dynamic-runtime
     check --target "$target_triple" -p crabc-core
     check --target "$target_triple" -p crabc-rs
