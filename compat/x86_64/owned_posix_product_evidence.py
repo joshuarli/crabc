@@ -51,7 +51,7 @@ DYNAMIC_PRODUCT_FORMAT = f"crabc-{ARCH_LABEL}-owned-dynamic-sysroot-v1"
 COMBINED_SYSROOT_FORMAT = f"crabc-{ARCH_LABEL}-owned-sysroot-v1"
 PRODUCT_MANIFEST = "share/crabc/manifest.json"
 PRODUCT_METADATA_PREFIX = "share/crabc/"
-SOURCE_NATIVE_IMAGE_MANIFEST = ROOT / "compat/x86_64/owned_resolver_alias_image_inputs.json"
+SOURCE_NATIVE_IMAGE_MANIFEST = ROOT / ("compat/x86_64/owned_resolver_alias_image_inputs_aarch64.json" if ARCH == "aarch64" else "compat/x86_64/owned_resolver_alias_image_inputs.json")
 COMBINED_UNINSTALLED_PAYLOAD = {"static": frozenset({"usr/lib/Scrt1.o"}), "dynamic": frozenset()}
 INTERPRETER = f"/lib/ld-crabc-{ARCH}.so.1"
 STATIC_DRIVER_STATUS = "planned-owned-static-product-seed-not-family-completion-not-public-support"
@@ -255,11 +255,7 @@ def _validate_compiler_records_against_source(records: dict[str, dict[str, str]]
 def validate_native_compiler_tool_records(value: object) -> dict[str, dict[str, str]]:
     if not isinstance(value, dict):
         _fail("native producer tools are malformed")
-    if ARCH == "aarch64":
-        from scripts.build_x86_64_owned_sysroot import resolve_pinned_producer_tools
-        expected = resolve_pinned_producer_tools("aarch64")
-    else:
-        expected = source_native_compiler_tool_records()
+    expected = source_native_compiler_tool_records()
     expected = {name: expected[name] for name in ("rustc_wrapper", "linker", "cargo_linker", "rustc")}
     for name, path_identity in expected.items():
         received = value.get(name)

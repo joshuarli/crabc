@@ -213,26 +213,11 @@ def checked_output(argv: Sequence[str | Path], description: str) -> str:
 
 
 def compiler_tool_records() -> dict[str, dict[str, str]]:
-    if ARCH == "x86_64":
-        return product_evidence.native_compiler_tool_records()
-    compiler = native_rustc.compiler_path()
-    paths = {"rustc_wrapper": native_build_tools.KACHE, "linker": native_build_tools.MOLD,
-             "cargo_linker": Path(ARCHITECTURE["linker"]), "rustc": compiler}
-    records = {}
-    for name, path in paths.items():
-        physical = product_evidence._physical_executable(path, f"native {name}")
-        require(physical == path, f"native {name} path is not physical")
-        records[name] = {"path": str(path), "sha256": product_evidence._sha256(path)}
-    records["rustc"]["sysroot"] = str(compiler.parent.parent)
-    return records
+    return product_evidence.native_compiler_tool_records()
 
 
 def validate_compiler_tool_records(value: object) -> dict[str, dict[str, str]]:
-    if ARCH == "x86_64":
-        return product_evidence.validate_native_compiler_tool_records(value)
-    expected = compiler_tool_records()
-    require(value == expected, "native compiler tool identities differ from the pinned image")
-    return expected
+    return product_evidence.validate_native_compiler_tool_records(value)
 
 
 def toolchain_identity(retained: Retained) -> dict[str, Any]:

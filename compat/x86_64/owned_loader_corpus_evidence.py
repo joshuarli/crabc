@@ -1190,12 +1190,7 @@ def _loader_producer_linker(value: object) -> dict[str, str]:
     _require(isinstance(linker["path"], str), "synthetic-loader producer linker path differs")
     product_reader = _product_reader()
     try:
-        if ARCH == "aarch64":
-            from scripts.build_x86_64_owned_sysroot import resolve_pinned_producer_tools
-            tool = resolve_pinned_producer_tools("aarch64")["linker"]
-            expected = {key: tool[key] for key in ("path", "sha256")}
-        else:
-            expected = product_reader.source_native_compiler_tool_records()["linker"]
+        expected = product_reader.source_native_compiler_tool_records()["linker"]
         path = product_reader._retained_linker(linker, expected)
     except product_reader.ProductEvidenceError as error:
         raise LoaderCorpusEvidenceError(f"synthetic-loader producer linker differs: {error}") from error
