@@ -198,6 +198,16 @@ class Aarch64DynamicNonPieTest(unittest.TestCase):
                                          "-o", work / "bad"], capture_output=True, text=True)
                 self.assertNotEqual(result.returncode, 0)
                 self.assertIn(expected, result.stderr)
+            search_dso = work / "search.so"
+            subprocess.run([driver, "-shared", leaf, "--application-runpath", "/fixture", "-o", search_dso], check=True)
+            receipt_path = Path(str(search_dso) + ".crabc-link.json")
+            receipt = json.loads(receipt_path.read_text())
+            receipt["unreviewed"] = True
+            receipt_path.write_text(json.dumps(receipt))
+            result = subprocess.run([driver, "-pie", main, "--application-dso", search_dso,
+                                     "-o", work / "bad-search"], capture_output=True, text=True)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("fields do not match", result.stderr)
 
     @unittest.skipUnless(os.environ.get("CRABC_AARCH64_DYNAMIC_SYSROOT") or CAN_BUILD, "requires a built aarch64 product")
     def test_posix_link_reader_rejects_tampered_native_receipt(self):

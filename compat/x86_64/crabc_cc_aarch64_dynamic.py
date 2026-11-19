@@ -173,31 +173,20 @@ def execute(arguments):
     for path in [*dso_inputs, *transitive_inputs]:
         if shared.rejects_runtime_object(path):
             raise shared.DriverError("unowned application DSO")
-        with path.open("rb") as stream:
-            data = stream.read(64)
-        if len(data) != 64 or data[:7] != b"\x7fELF\x02\x01\x01" or int.from_bytes(data[16:18], "little") != 3 or int.from_bytes(data[18:20], "little") != 183:
-            raise shared.DriverError(f"application DSO is not native ET_DYN: {path}")
-        segments = subprocess.check_output(["/usr/bin/readelf", "-lW", str(path)], text=True)
-        dynamic = subprocess.check_output(["/usr/bin/readelf", "-dW", str(path)], text=True)
-        if not re.fullmatch(r"[^/\x00]+\.so(?:\.[0-9]+)*", path.name) or path.name in ("libc.so", "ld-crabc-aarch64.so.1", "ld-musl-aarch64.so.1"):
-            raise shared.DriverError("unowned application DSO")
+        dynamic_shared.application_dso_basename(path, architecture="aarch64")
         if path.name in nodes or path in [node[0] for node in nodes.values()]:
             raise shared.DriverError("duplicate application DSO")
-        needed = re.findall(r"\(NEEDED\).*\[([^\]]+)\]", dynamic)
+        with tempfile.TemporaryDirectory(prefix="crabc-aarch64-dso-metadata-") as temporary:
+            _, needed, runpaths = dynamic_shared.dso_metadata_detail(path, Path(temporary), architecture="aarch64")
         nodes[path.name] = (path, needed)
-        runpaths = re.findall(r"\(RUNPATH\).*\[([^\]]*)\]", dynamic)
         if runpaths not in ([], ["/usr/lib"]):
             sidecar = Path(str(path) + ".crabc-link.json")
             shared.require_regular(sidecar, "application search path receipt")
             search = json.loads(sidecar.read_text())
-            if (search.get("manifest_sha256") != shared.sha256_file(root / "share/crabc/manifest.json")
-                    or runpaths != [dynamic_shared.dso_receipt_runpath(search, path, architecture="aarch64")]):
+            expected_path = dynamic_shared.dso_receipt_runpath(search, path, architecture="aarch64")
+            if (search["manifest_sha256"] != shared.sha256_file(root / "share/crabc/manifest.json")
+                    or runpaths != [expected_path]):
                 raise shared.DriverError("application DSO has an undeclared runtime search path")
-        if ("INTERP" in segments or "TEXTREL" in dynamic or "(RPATH)" in dynamic
-                or re.findall(r"\(SONAME\).*\[([^\]]+)\]", dynamic) != [path.name]
-                or any("/" in value for value in re.findall(r"\(NEEDED\).*\[([^\]]+)\]", dynamic))
-                ):
-            raise shared.DriverError(f"application DSO metadata is not admitted: {path}")
     provided, requirements = set(), {}
     with tempfile.TemporaryDirectory(prefix="crabc-aarch64-dso-symbols-") as temporary:
         for path in [lib / "libc.so", *(node[0] for node in nodes.values())]:

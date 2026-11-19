@@ -408,7 +408,7 @@ def dso_receipt_runpath(record: object, path: Path, *, architecture: str = "x86_
     return contract.path
 
 
-def dso_metadata_detail(path: Path, temporary: Path) -> tuple[str, list[str], list[str]]:
+def dso_metadata_detail(path: Path, temporary: Path, *, architecture: str = "x86_64") -> tuple[str, list[str], list[str]]:
     """Inspect one physical DSO without treating its dependencies as inputs.
 
     The detail form keeps the observed RUNPATH for schema-3 sidecar proof.
@@ -417,7 +417,10 @@ def dso_metadata_detail(path: Path, temporary: Path) -> tuple[str, list[str], li
     """
 
     data = path.read_bytes()
-    if len(data) < 64 or data[:7] != b"\x7fELF\x02\x01\x01" or int.from_bytes(data[16:18], "little") != 3 or int.from_bytes(data[18:20], "little") != 62:
+    if architecture not in ("x86_64", "aarch64"):
+        raise shared.DriverError("unsupported application DSO architecture")
+    machine = 62 if architecture == "x86_64" else 183
+    if len(data) < 64 or data[:7] != b"\x7fELF\x02\x01\x01" or int.from_bytes(data[16:18], "little") != 3 or int.from_bytes(data[18:20], "little") != machine:
         raise shared.DriverError(f"application DSO is not native ET_DYN: {path}")
     segments = run(["/usr/bin/readelf", "-lW", str(path)], temporary)
     dynamic = run(["/usr/bin/readelf", "-dW", str(path)], temporary)
@@ -437,7 +440,9 @@ def dso_metadata_detail(path: Path, temporary: Path) -> tuple[str, list[str], li
             record = json.loads(receipt.read_text())
         except (ValueError, OSError) as error:
             raise shared.DriverError(f"invalid application search path receipt: {error}") from error
-        if runpaths != [dso_receipt_runpath(record, path)]:
+        runpath = (dso_receipt_runpath(record, path) if architecture == "x86_64" else
+                   dso_receipt_runpath(record, path, architecture=architecture))
+        if runpaths != [runpath]:
             raise shared.DriverError("application DSO has an undeclared runtime search path")
     return path.name, needed, runpaths
 
