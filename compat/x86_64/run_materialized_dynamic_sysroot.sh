@@ -162,14 +162,14 @@ check_spawn_interposition() {
 check_non_pie() {
     local installed_root="$1" execution_root="$2" dependency="$3" name="$4"
     "$installed_root/bin/crabc-cc-dynamic" --dynamic-non-pie "$ROOT/compat/x86_64/owned_dynamic_consumer.c" \
-        --application-dso "$dependency" -o "$work/$name"
-    readelf -hW "$work/$name" >"$work/$name.header"
-    grep -Eq 'Type: +EXEC' "$work/$name.header"
-    readelf -lW "$work/$name" >"$work/$name.segments"
-    grep -Fq "/lib/ld-crabc-$native_arch.so.1" "$work/$name.segments"
-    cp "$work/$name" "$execution_root/non-pie"
-    timeout 20 chroot "$execution_root" /non-pie >"$work/$name.stdout"
-    cmp "$work/expected.stdout" "$work/$name.stdout"
+        --application-dso "$dependency" -o "$work/$name" || return 1
+    readelf -hW "$work/$name" >"$work/$name.header" || return 1
+    grep -Eq 'Type: +EXEC' "$work/$name.header" || return 1
+    readelf -lW "$work/$name" >"$work/$name.segments" || return 1
+    grep -Fq "/lib/ld-crabc-$native_arch.so.1" "$work/$name.segments" || return 1
+    cp "$work/$name" "$execution_root/non-pie" || return 1
+    timeout 20 chroot "$execution_root" /non-pie >"$work/$name.stdout" || return 1
+    cmp "$work/expected.stdout" "$work/$name.stdout" || return 1
 }
 if [ "$native_arch" = x86_64 ]; then
     python3 -B "$ROOT/compat/x86_64/owned_dynamic_qualification.py" prepare --work "$work"
@@ -202,11 +202,15 @@ check_basic_product() {
     cmp "$work/expected.stdout" "$consumer.stdout"
     cmp "$work/oracle.stdout" "$consumer.stdout"
     check_spawn_interposition "$product" "$execution_root" "spawn-$label"
-    check_non_pie "$product" "$execution_root" "$dependency" "non-pie-$label"
+    if [ "$native_arch" = aarch64 ]; then
+        check_non_pie "$product" "$execution_root" "$dependency" "non-pie-$label" || { basic_failure=1; basic_label_failure=1; }
+    else
+        check_non_pie "$product" "$execution_root" "$dependency" "non-pie-$label"
+    fi
 }
 
 check_runtime_suites() {
-    local label="$1" stop="$2" cases runtime_case
+    local label="$1" stop="$2" cases runtime_case failures=0
     cases="$(python3 -B - "$ROOT" <<'PYTHON'
 import sys
 sys.path.insert(0, sys.argv[1] + '/compat/x86_64')
@@ -222,9 +226,13 @@ PYTHON
             printf 'runtime suites stopped before %s/%s: another product failed\n' "$label" "$runtime_case"
             return 1
         fi
-        python3 -B "$ROOT/compat/x86_64/owned_dynamic_qualification.py" run \
-            --work "$work" --product "$label" --case "$runtime_case" || { : >"$stop"; return 1; }
+        if ! python3 -B "$ROOT/compat/x86_64/owned_dynamic_qualification.py" run \
+            --work "$work" --product "$label" --case "$runtime_case"; then
+            failures=1
+            if [ "$native_arch" = x86_64 ]; then : >"$stop"; return 1; fi
+        fi
     done <<<"$cases"
+    [ "$failures" -eq 0 ]
 }
 
 if [ "$supplied" -eq 0 ]; then
@@ -254,11 +262,18 @@ if [ "$explicit_work" -eq 1 ]; then
     export TMPDIR="$work/qualification-scratch/tmp"
 fi
 printf 'installed dynamic: allocation errno stdio threads\nordinary exit\n' >"$work/expected.stdout"
+basic_failure=0
 for label in installed second extracted; do
+    basic_label_failure=0
     check_basic_product "$work/$label" "$label"
-    printf 'materialized dynamic product: PASS (%s)\n' "$label"
+    if [ "$basic_label_failure" -eq 0 ]; then
+        printf 'materialized dynamic product: PASS (%s)\n' "$label"
+    else
+        printf 'materialized dynamic product: non-PIE check failed (%s)\n' "$label" >&2
+    fi
 done
 if [ "$action" = prepare ]; then
+    [ "$basic_failure" -eq 0 ] || { printf 'native non-PIE product check failed\n' >&2; exit 1; }
     next_case="$(python3 -B "$ROOT/compat/x86_64/owned_dynamic_qualification.py" next --work "$work")"
     printf 'materialized dynamic products prepared; next case: %s\n' "$next_case"
     exit 0
@@ -277,17 +292,18 @@ for label in installed second extracted; do
     cat "$suite_streams/$label.log"
 done
 rm -rf -- "$suite_streams"
-if [ "${#suite_failures[@]}" -ne 0 ]; then
-    printf 'materialized dynamic sysroot: runtime suites failed for: %s\n' "${suite_failures[*]}" >&2
-    exit 1
-fi
 if [ "$native_arch" = aarch64 ]; then
     corpus_failed=0
     for label in installed second extracted; do
         python3 -B "$ROOT/compat/x86_64/owned_dynamic_qualification.py" run \
             --work "$work" --product "$label" --case package-corpus || corpus_failed=1
     done
-    [ "$corpus_failed" -eq 0 ] || exit 1
+else
+    corpus_failed=0
+fi
+if [ "${#suite_failures[@]}" -ne 0 ] || [ "$basic_failure" -ne 0 ] || [ "$corpus_failed" -ne 0 ]; then
+    printf 'materialized dynamic sysroot: runtime suites or native product checks failed: %s\n' "${suite_failures[*]}" >&2
+    exit 1
 fi
 python3 -B "$ROOT/compat/x86_64/owned_dynamic_qualification.py" finish --work "$work"
 printf 'materialized dynamic sysroot: PASS (two clean builds and extracted initial/runtime graphs); evidence: %s\n' "$work"
