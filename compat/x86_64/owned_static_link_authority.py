@@ -199,7 +199,7 @@ def _static_undefined_bindings(executable):
                 # resolving its address to zero. Regular local metadata
                 # still requires the operand and dynamic-exposure checks;
                 # local binding alone does not establish an inert row.
-                require((row['name'] or ARCH == 'aarch64' and name == '.symtab' and row['binding'] == 'LOCAL')
+                require(row['name']
                         and (row['binding'] in ('GLOBAL', 'WEAK')
                              or name == '.symtab' and row['binding'] == 'LOCAL')
                         and row['value'] == row['size'] == 0, 'static undefined symbol metadata differs')

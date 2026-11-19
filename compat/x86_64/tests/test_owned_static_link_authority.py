@@ -646,11 +646,6 @@ class NativeAnonymousSymbolTests(unittest.TestCase):
             data = bytearray(image.data)
             data[offset:offset + 24] = bytes(24)
             binary.write_bytes(data)
-            if ARCH == 'aarch64':
-                proof = static_undefined_bindings(binary)
-                self.assertTrue(any(not row['symbol']['name'] for row in proof['inert_symtab_rows']))
-                struct.pack_into('<Q', data, offset + 8, 1)
-                binary.write_bytes(data)
             with self.assertRaisesRegex(StaticLinkAuthorityError, 'static undefined symbol metadata differs'):
                 static_undefined_bindings(binary)
 
