@@ -300,6 +300,11 @@ class LtoExecutionTests(unittest.TestCase):
 
 
 class NativeRouteTests(unittest.TestCase):
+    def setUp(self) -> None:
+        patch = mock.patch.object(GATE, "ARCH", "x86_64")
+        patch.start()
+        self.addCleanup(patch.stop)
+
     DISASSEMBLY = """
 0000000000001000 <crabc_rs_native_facade_getpid_witness>:
     1000:\tmov    $0x27,%eax
@@ -332,6 +337,18 @@ class NativeRouteTests(unittest.TestCase):
 
     def test_absent_anchor_is_not_a_route(self) -> None:
         self.assertFalse(GATE.inspect_native_route("")["direct_route_proven"])
+
+    def test_arm64_witness_requires_direct_syscalls_and_no_public_branch(self) -> None:
+        text = """0000000000001000 <crabc_rs_native_facade_getpid_witness>:
+    1000: mov w8, #172
+    1004: svc #0
+0000000000001010 <other>:
+    1010: mov x8, #64
+    1014: svc #0
+"""
+        with mock.patch.object(GATE, "ARCH", "aarch64"):
+            self.assertTrue(GATE.inspect_native_route(text)["direct_route_proven"])
+            self.assertFalse(GATE.inspect_native_route(text.replace("    1004: svc #0", "    1004: bl 2000 <getpid>\n    1008: svc #0"))["direct_route_proven"])
 
 
 class FixtureVendorTests(unittest.TestCase):

@@ -953,10 +953,19 @@ def inspect_native_route(disassembly: str) -> dict[str, Any]:
     witness = function_disassembly(disassembly, NATIVE_FACADE_WITNESS)
     if witness is None:
         return {"anchor_present": False, "direct_route_proven": False}
-    getpid = len(re.findall(x86_syscall_pattern(X86_SYSCALLS["getpid"]), witness))
-    write_direct = bool(re.search(x86_syscall_pattern(X86_SYSCALLS["write"]), disassembly))
+    if ARCH == "x86_64":
+        getpid_pattern = x86_syscall_pattern(X86_SYSCALLS["getpid"])
+        write_pattern = x86_syscall_pattern(X86_SYSCALLS["write"])
+        branch = r"(?:call|jmp)\w*"
+    else:
+        def arm_syscall(number: int) -> str:
+            return rf"\b(?:mov|movz|movk)\s+[wx]8,\s*#(?:0x{number:x}|{number})\b[\s\S]{{0,800}}?\bsvc(?:\s+#?0)?\b"
+        getpid_pattern, write_pattern = arm_syscall(172), arm_syscall(64)
+        branch = r"(?:bl|b)"
+    getpid = len(re.findall(getpid_pattern, witness))
+    write_direct = bool(re.search(write_pattern, disassembly))
     forbidden = [name for name in FORBIDDEN_WITNESS_CALLS
-                 if re.search(rf"\b(?:call|jmp)\w*\s+[^\n]*<{re.escape(name)}(?:@[^>]*)?>", witness)]
+                 if re.search(rf"\b{branch}\s+[^\n]*<{re.escape(name)}(?:@[^>]*)?>", witness)]
     return {
         "anchor_present": True,
         "witness_direct_getpid_syscalls": getpid,
