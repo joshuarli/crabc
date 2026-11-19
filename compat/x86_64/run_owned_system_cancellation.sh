@@ -4,7 +4,8 @@ set -euo pipefail
 ulimit -c 0
 
 readonly ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-readonly ORACLE_CC=/usr/local/bin/crabc-x86_64-musl-gcc
+eval "$(python3 -B "$ROOT/compat/x86_64/native_arch.py")"
+readonly ORACLE_CC="$oracle"
 readonly WITNESS="$ROOT/compat/x86_64/run_pthread_wait_witness.py"
 readonly PROBE="$ROOT/compat/x86_64/owned_system_cancellation_probe.c"
 readonly CHILD="$ROOT/compat/x86_64/owned_system_cancellation_child.c"
@@ -48,7 +49,7 @@ if [ -n "$provided_dynamic" ]; then
     provided_dynamic="$(realpath -e -- "$provided_dynamic")"
 fi
 
-[ "$(uname -sm)" = 'Linux x86_64' ]
+[ "$(uname -s)" = Linux ]
 # Validate supplied roots before creating the evidence directory. A replayed
 # product remains a physical checkout `.work` product, never an ambient tree.
 python3 -B - "$ROOT" "${TMPDIR:-}" "$provided_static" "$provided_dynamic" <<'PY_PRODUCTS'
@@ -109,7 +110,7 @@ run_direct_consumer() {
         if [ "$scenario" != normal ]; then arguments=("$scenario"); fi
         printf 'system cancellation running %s-direct/%s\n' "$label" "$scenario"
         run_witness_case "$execution_root" "$label-direct-$scenario" \
-            /lib/ld-crabc-x86_64.so.1 /consumer "${arguments[@]}"
+            "/lib/ld-crabc-$arch.so.1" /consumer "${arguments[@]}"
         compare_case "oracle-$scenario" "$label-direct-$scenario"
     done
 }
@@ -120,14 +121,15 @@ run_direct_consumer() {
 # static ET_EXEC/static PIE, and dynamic PIE/non-PIE entry paths.
 audit_canonical_objects() {
     local dynamic_product="$1"
-    python3 -B - "$dynamic_product" "$work" "$PROBE" "$CHILD" <<'PY_COMPILE'
+    python3 -B - "$dynamic_product" "$work" "$PROBE" "$CHILD" "$arch" <<'PY_COMPILE'
 from hashlib import sha256
 import json
 from pathlib import Path
 import subprocess
 import sys
 
-product, work, probe, child = map(Path, sys.argv[1:])
+product, work, probe, child = map(Path, sys.argv[1:5])
+arch = sys.argv[5]
 product = product.resolve()
 work = work.resolve()
 probe = probe.resolve()
@@ -196,7 +198,8 @@ for role, source, source_files, required_headers in roles:
     with relocation_path.open("wb") as output:
         subprocess.run(["/usr/bin/readelf", "-rW", str(object_path)], stdout=output, check=True, env=audit_environment)
     relocations = relocation_path.read_text(encoding="utf-8")
-    if "R_X86_64_32" in relocations or "R_X86_64_32S" in relocations:
+    forbidden = ("R_X86_64_32", "R_X86_64_32S") if arch == "x86_64" else ("R_AARCH64_ABS32", "R_AARCH64_ABS16")
+    if any(relocation in relocations for relocation in forbidden):
         raise SystemExit(f"system cancellation canonical {role} object is not PIE-relocatable")
     objects.append({
         "role": role,
