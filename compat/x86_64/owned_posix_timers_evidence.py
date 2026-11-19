@@ -27,6 +27,7 @@ import owned_dynamic_receipt as receipt_contract
 import installed_compiler_translation as translation_contract
 from owned_dynamic_fork_evidence import RetainedRuntimeInputs, recorded
 import owned_posix_product_evidence as product_evidence
+from native_arch import native_arch
 from owned_posix_product_evidence import (
     DYNAMIC_PRODUCT_FORMAT,
     ProductEvidenceError,
@@ -442,7 +443,7 @@ def _validate_tls_elf(output: Path, *, replay: RetainedRuntimeInputs | None = No
                       machine: str = "Advanced Micro Devices X86-64") -> tuple[str, list[str]]:
     if replay is not None:
         facts = product_evidence.retained_elf_facts(output)
-        if facts["machine"] != 62 or facts["type"] != 3:
+        if facts["machine"] != {"x86_64": 62, "aarch64": 183}[native_arch()["arch"]] or facts["type"] != 3:
             _fail("retained timer TLS DSO is not an x86-64 ET_DYN ELF")
         if not facts["dynamic"]:
             _fail("retained timer TLS DSO has no PT_DYNAMIC segment")
