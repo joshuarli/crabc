@@ -30,7 +30,7 @@ OUTPUTS = {'debug': 'loader-debug-abi-ok\n', 'copy': 'loader-debug-abi-ok\n', 'i
            'archive-default': '', 'archive-override': ''}
 WORKLOADS = [
     ('debug', 'loader_debug_abi_probe.c', ['-fPIC']),
-    ('copy', 'loader_debug_abi_probe.c', ['-fPIE', '-DDEBUG_COPY_REFERENCE']),
+    ('copy', 'loader_debug_abi_probe.c', ['-fno-pic' if ARCH == 'aarch64' else '-fPIE', '-DDEBUG_COPY_REFERENCE']),
     ('crt', 'loader_crt_abi_probe.c', ['-fPIC']),
     ('lifecycle', 'loader_crt_lifecycle_probe.c', ['-fPIC']),
     ('plugin', 'loader_debug_abi_plugin.c', ['-fPIC']),
