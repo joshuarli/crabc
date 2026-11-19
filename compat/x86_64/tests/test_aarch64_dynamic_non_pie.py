@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 import json
 import os
+import platform
 from pathlib import Path
 import subprocess
 import sys
@@ -8,8 +9,26 @@ import tempfile
 import unittest
 
 
+CAN_BUILD = platform.system() == "Linux" and platform.machine() in ("aarch64", "arm64") and Path("/opt/cargo/bin/rustup").is_file()
+
+
 class Aarch64DynamicNonPieTest(unittest.TestCase):
-    @unittest.skipUnless(os.environ.get("CRABC_AARCH64_DYNAMIC_SYSROOT"), "requires a built aarch64 product")
+    @classmethod
+    def setUpClass(cls):
+        if os.environ.get("CRABC_AARCH64_DYNAMIC_SYSROOT"):
+            return
+        if not CAN_BUILD:
+            return
+        root = Path(__file__).resolve().parents[3]
+        cls.product_dir = tempfile.TemporaryDirectory(dir=os.environ["TMPDIR"])
+        cls.addClassCleanup(cls.product_dir.cleanup)
+        product = Path(cls.product_dir.name) / "sysroot"
+        subprocess.run([sys.executable, "-B", str(root / "scripts/build_x86_64_owned_dynamic_sysroot.py"),
+                        "--architecture", "aarch64", "--output", str(product)], cwd=root, check=True)
+        os.environ["CRABC_AARCH64_DYNAMIC_SYSROOT"] = str(product)
+        cls.addClassCleanup(os.environ.pop, "CRABC_AARCH64_DYNAMIC_SYSROOT", None)
+
+    @unittest.skipUnless(os.environ.get("CRABC_AARCH64_DYNAMIC_SYSROOT") or CAN_BUILD, "requires a built aarch64 product")
     def test_posix_link_reader_rejects_tampered_native_receipt(self):
         root = Path(__file__).resolve().parents[3]
         sys.path.insert(0, str(root / "compat/x86_64"))
@@ -33,7 +52,7 @@ class Aarch64DynamicNonPieTest(unittest.TestCase):
             with self.assertRaises(evidence.ProductEvidenceError):
                 evidence.validate_retained_link(root, "/workspace", product, obj, binary, receipt, "pie", record["resolved_linker"])
 
-    @unittest.skipUnless(os.environ.get("CRABC_AARCH64_DYNAMIC_SYSROOT"), "requires a built aarch64 product")
+    @unittest.skipUnless(os.environ.get("CRABC_AARCH64_DYNAMIC_SYSROOT") or CAN_BUILD, "requires a built aarch64 product")
     def test_lazy_binding_requires_exact_runtime_imports(self):
         product = Path(os.environ["CRABC_AARCH64_DYNAMIC_SYSROOT"]).resolve(strict=True)
         driver = str(product / "bin/crabc-cc-dynamic")
@@ -57,7 +76,7 @@ class Aarch64DynamicNonPieTest(unittest.TestCase):
             self.assertEqual(receipt["binding"], "lazy")
             self.assertEqual(receipt["runtime_imports"], ["missing"])
 
-    @unittest.skipUnless(os.environ.get("CRABC_AARCH64_DYNAMIC_SYSROOT"), "requires a built aarch64 product")
+    @unittest.skipUnless(os.environ.get("CRABC_AARCH64_DYNAMIC_SYSROOT") or CAN_BUILD, "requires a built aarch64 product")
     def test_application_dependency_file(self):
         product = Path(os.environ["CRABC_AARCH64_DYNAMIC_SYSROOT"]).resolve(strict=True)
         driver = str(product / "bin/crabc-cc-dynamic")
@@ -79,7 +98,7 @@ class Aarch64DynamicNonPieTest(unittest.TestCase):
                 result = subprocess.run([driver, *args], capture_output=True, text=True)
                 self.assertNotEqual(result.returncode, 0)
 
-    @unittest.skipUnless(os.environ.get("CRABC_AARCH64_DYNAMIC_SYSROOT"), "requires a built aarch64 product")
+    @unittest.skipUnless(os.environ.get("CRABC_AARCH64_DYNAMIC_SYSROOT") or CAN_BUILD, "requires a built aarch64 product")
     def test_non_pie_receipt_and_execution(self):
         product = Path(os.environ["CRABC_AARCH64_DYNAMIC_SYSROOT"]).resolve(strict=True)
         with tempfile.TemporaryDirectory(dir=os.environ["TMPDIR"]) as tmp:
@@ -99,7 +118,7 @@ class Aarch64DynamicNonPieTest(unittest.TestCase):
             self.assertNotIn("usr/lib/Scrt1.o", receipt["owned_runtime_inputs"])
             subprocess.run([str(product / "lib/ld-crabc-aarch64.so.1"), str(binary)], check=True)
 
-    @unittest.skipUnless(os.environ.get("CRABC_AARCH64_DYNAMIC_SYSROOT"), "requires a built aarch64 product")
+    @unittest.skipUnless(os.environ.get("CRABC_AARCH64_DYNAMIC_SYSROOT") or CAN_BUILD, "requires a built aarch64 product")
     def test_transitive_application_dso_is_validation_only(self):
         product = Path(os.environ["CRABC_AARCH64_DYNAMIC_SYSROOT"]).resolve(strict=True)
         driver = str(product / "bin/crabc-cc-dynamic")
@@ -139,6 +158,29 @@ class Aarch64DynamicNonPieTest(unittest.TestCase):
                                       capture_output=True, text=True)
             self.assertNotEqual(tampered.returncode, 0)
             self.assertIn("dependency identities differ", tampered.stderr)
+
+    @unittest.skipUnless(os.environ.get("CRABC_AARCH64_DYNAMIC_SYSROOT") or CAN_BUILD, "requires a built aarch64 product")
+    def test_errno_alias_regression(self):
+        root = Path(__file__).resolve().parents[3]
+        subprocess.run(["bash", str(root / "compat/x86_64/tests/test_aarch64_errno_alias.sh"),
+                        os.environ["CRABC_AARCH64_DYNAMIC_SYSROOT"]], cwd=root, check=True)
+
+    @unittest.skipUnless(os.environ.get("CRABC_AARCH64_DYNAMIC_SYSROOT") or CAN_BUILD, "requires a built aarch64 product")
+    def test_dynamic_driver_regression(self):
+        root = Path(__file__).resolve().parents[3]
+        environment = {**os.environ, "CRABC_AARCH64_DYNAMIC_PRODUCT": os.environ["CRABC_AARCH64_DYNAMIC_SYSROOT"]}
+        subprocess.run([sys.executable, "-B", str(root / "compat/x86_64/test_aarch64_dynamic_driver.py")],
+                       cwd=root, env=environment, check=True)
+
+    @unittest.skipUnless(os.environ.get("CRABC_AARCH64_DYNAMIC_SYSROOT") or CAN_BUILD, "requires a built aarch64 product")
+    def test_tls_trace_regression(self):
+        root = Path(__file__).resolve().parents[3]
+        subprocess.run([sys.executable, "-B", str(root / "compat/x86_64/test_aarch64_tls_trace.py")], cwd=root, check=True)
+
+    @unittest.skipUnless(os.environ.get("CRABC_AARCH64_DYNAMIC_SYSROOT") or CAN_BUILD, "requires a built aarch64 product")
+    def test_default_runtime_regression(self):
+        root = Path(__file__).resolve().parents[3]
+        subprocess.run(["bash", str(root / "compat/x86_64/run_aarch64_default_runtime_regression.sh")], cwd=root, check=True)
 
 
 if __name__ == "__main__":
