@@ -192,6 +192,48 @@ aarch64 run itself.
 
 ## D. ldso / libc
 
+Follow-up on `lane/a4-product-fixes`:
+
+- 33: The proposed defect is disproved for direct entry. Pinned musl 1.2.6
+  `ldso/dynlink.c:1813,1860-1920` decodes auxv into a private array and
+  updates its private `AT_ENTRY`; it does not rewrite the initial-stack
+  `AT_EXECFN`. The native oracle fixture in `ff2ef2f28` observes the loader
+  pathname for both products. Consequently there is no failing-first test for
+  this claim. The existing x86 difference is documented in `parity.toml`.
+- 34: Fixed in `d29938707`; a synthetic auxiliary vector proves the mask even
+  when the test host does not advertise SME. The native oracle fixture checks
+  the exposed HWCAP values.
+- 35: Fixed in `4025b27e2`, with additional boundary cases in `e6667c701`.
+  The native fixture compares value bits and exception flags against musl in
+  all four rounding modes.
+- 36: Fixed in `d3c73cbaa`; the arm64 loader test rejects an out-of-range ID.
+- 37: Fixed in `ff71a1151`; the arm64 loader test checks that an earlier
+  target remains untouched when later RELA entries duplicate a target.
+- 38: Fixed in `b9b9c0028` and tested further in `63d42b791`; the loader test checks classification, with
+  end-to-end `dlerror` verification still outstanding.
+- 39: Fixed in `55cfab435`; the arm64 loader test checks the resolver and
+  retained module/offset record. The returned descriptor storage must outlive
+  the relocated objects and users of those descriptors.
+
+These notes do not claim campaign acceptance; the required aggregate and
+x86-selected-diff evidence must still be checked on the final source.
+The native libc-test aggregate on the built dynamic product reported 428
+passed and six runtime failures: `functional/crypt`, `functional/strptime`,
+`functional/wordexp`, `math/pow`, `math/powf`, and `regression/statvfs`.
+The pinned-musl side also failed for strptime, wordexp, powf and statvfs;
+crypt and pow need separate investigation outside this item set.
+
+The loader source tests were built with the `rustc --test` flags in
+`compat/x86_64/owned_dynamic_qualification.py:341-345`. On native arm64,
+the new tests for 34, 36, 37, 38 and 39 each exited 101 before its fix and
+0 after; the complete suite exited 0 with 153 passed. The product oracle was
+run with `scripts/lanes/orb-vm-run.sh scripts/lanes/rust-check.sh bash
+tests/fixtures/aarch64_product_oracle.sh .work/aarch64/product-fixes-sysroot
+.work/aarch64/product-oracle-3` and exited 0. Before the math fix, the
+same fixture's musl and candidate rounding output differed and `diff` exited
+1. The x86 loader and static/dynamic libc cargo checks passed with the
+cross-target flags documented in CRAB-8.
+
 33. **`ldso/src/x86_64_direct_entry.rs:106-107`**
     - The AT_EXECFN rewrite is now `#[cfg(target_arch = "x86_64")]` only. The two architectures diverge against one shared oracle, so one of them is wrong.
     - Qualifying-path.
