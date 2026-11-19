@@ -132,13 +132,15 @@ class Aarch64DynamicNonPieTest(unittest.TestCase):
                         receipt.symlink_to(original)
                     else:
                         os.link(original, receipt)
-                    result = subprocess.run([driver, "-pie", source, "-o", output], capture_output=True, text=True)
+                    result = subprocess.run([driver, "-pie", source, "-o", output], capture_output=True, text=True,
+                                            env={**os.environ, "CRABC_X86_64_RETAIN_LINK_EVIDENCE": "1"})
                     self.assertNotEqual(result.returncode, 0)
                     self.assertTrue("reserve dynamic link receipt" in result.stderr or "symlink" in result.stderr,
                                     result.stderr)
                     self.assertEqual(receipt.read_bytes(), b"existing receipt")
                     self.assertEqual(original.read_bytes(), b"existing receipt")
                     self.assertFalse(output.exists())
+                    self.assertEqual(list(work.glob("crabc-dynamic-link.*")), [])
             output = work / "new"
             result = subprocess.run([driver, "-pie", source, "-o", output], capture_output=True, text=True)
             self.assertNotEqual(result.returncode, 0)

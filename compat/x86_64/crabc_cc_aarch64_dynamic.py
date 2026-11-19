@@ -184,11 +184,12 @@ def execute(arguments):
             shared.validate_application_output(root, sidecar)
             shared.validate_application_output_disjoint(sidecar, (*raw_inputs, output))
     output.parent.mkdir(parents=True, exist_ok=True)
-    with ExitStack() as reservations, dynamic_shared.link_evidence_workspace(output.parent, retain=retain_evidence) as temporary:
+    with ExitStack() as reservations:
         if not invocation.compile_only:
             receipt_stream = reservations.enter_context(dynamic_shared.reserve_receipt(receipt_path))
             inspection_stream = reservations.enter_context(dynamic_shared.reserve_receipt(inspection_path))
             accept_map = reservations.enter_context(dynamic_shared.reserve_link_map(map_path))
+        temporary = reservations.enter_context(dynamic_shared.link_evidence_workspace(output.parent, retain=retain_evidence))
         sources = [shared.require_application_file(root, path, "source") for path in invocation.sources]
         objects_in = [shared.require_x86_64_relocatable_object(root, path, architecture="aarch64") for path in invocation.objects]
         dso_inputs = [shared.require_application_file(root, path, "DSO") for path in dsos]
