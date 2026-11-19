@@ -40,6 +40,13 @@ int main(void) {
     for (unsigned m=0; m<4; ++m) {
         if (fesetround(modes[m])) return 2;
         printf("mode %u\n", m);
+        const uint32_t fbits[] = {0, 0x80000000, 1, 0x007fffff, 0x00800000, 0x7f800000, 0xff800000, 0x7fc01234, 0x7f801234};
+        const uint64_t dbits[] = {0, UINT64_C(0x8000000000000000), 1, UINT64_C(0x000fffffffffffff), UINT64_C(0x0010000000000000), UINT64_C(0x7ff0000000000000), UINT64_C(0xfff0000000000000), UINT64_C(0x7ff8000000001234), UINT64_C(0x7ff0000000001234)};
+        for (unsigned i=0; i<sizeof fbits/sizeof *fbits; ++i) {
+            float fv; double dv; memcpy(&fv, &fbits[i], sizeof fv); memcpy(&dv, &dbits[i], sizeof dv);
+            volatile float f=fv; volatile double d=dv;
+            QUAD_OP("fromf32", (long double)f); QUAD_OP("fromf64", (long double)d);
+        }
         for (unsigned i=0; i<sizeof edges/sizeof *edges; ++i)
             for (unsigned j=0; j<sizeof edges/sizeof *edges; ++j) run(edges[i],edges[j]);
         for (unsigned i=0; i<4096; ++i) {

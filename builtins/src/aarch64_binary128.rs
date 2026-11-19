@@ -229,3 +229,82 @@ fn div_bits(a: u128, b: u128) -> u128 {
 pub extern "C" fn __multf3(a: f128, b: f128) -> f128 { f128::from_bits(mul_bits(a.to_bits(), b.to_bits())) }
 #[no_mangle]
 pub extern "C" fn __divtf3(a: f128, b: f128) -> f128 { f128::from_bits(div_bits(a.to_bits(), b.to_bits())) }
+
+fn int_quad(value: u128, sign: u128) -> f128 {
+    if value == 0 { return f128::from_bits(sign); }
+    let top = 127 - value.leading_zeros();
+    let sig = if top <= 115 { value << (115 - top) } else { jam(value, top - 115) };
+    f128::from_bits(pack(sign, 16383 + top as i32, sig))
+}
+
+#[no_mangle]
+pub extern "C" fn __floatsitf(x: i32) -> f128 { int_quad(x.unsigned_abs() as u128, if x < 0 { SIGN } else { 0 }) }
+#[no_mangle]
+pub extern "C" fn __floatunsitf(x: u32) -> f128 { int_quad(x as u128, 0) }
+#[no_mangle]
+pub extern "C" fn __floatditf(x: i64) -> f128 { int_quad(x.unsigned_abs() as u128, if x < 0 { SIGN } else { 0 }) }
+#[no_mangle]
+pub extern "C" fn __floatunditf(x: u64) -> f128 { int_quad(x as u128, 0) }
+#[no_mangle]
+pub extern "C" fn __floattitf(x: i128) -> f128 { int_quad(x.unsigned_abs(), if x < 0 { SIGN } else { 0 }) }
+#[no_mangle]
+pub extern "C" fn __floatuntitf(x: u128) -> f128 { int_quad(x, 0) }
+
+fn extend(bits: u64, frac_bits: u32, exp_bits: u32) -> f128 {
+    let sign = ((bits >> (frac_bits + exp_bits)) as u128) << 127;
+    let exp_mask = (1_u64 << exp_bits) - 1;
+    let exp = (bits >> frac_bits) & exp_mask;
+    let frac = bits & ((1_u64 << frac_bits) - 1);
+    if exp == exp_mask {
+        if frac == 0 { return f128::from_bits(sign | INF); }
+        if frac & (1_u64 << (frac_bits - 1)) == 0 { raise(1); }
+        return f128::from_bits(sign | INF | QUIET | ((frac as u128) << (112 - frac_bits)));
+    }
+    if exp == 0 && frac == 0 { return f128::from_bits(sign); }
+    let bias = (1_i32 << (exp_bits - 1)) - 1;
+    let (exp, frac) = if exp == 0 {
+        let top = 63 - frac.leading_zeros();
+        (1 - bias - (frac_bits - top) as i32, (frac as u128) << (112 - top))
+    } else { (exp as i32 - bias, (frac as u128) << (112 - frac_bits)) };
+    f128::from_bits(sign | (((exp + 16383) as u128) << 112) | (frac & FRAC))
+}
+
+#[no_mangle]
+pub extern "C" fn __extendsftf2(x: f32) -> f128 { extend(x.to_bits() as u64, 23, 8) }
+#[no_mangle]
+pub extern "C" fn __extenddftf2(x: f64) -> f128 { extend(x.to_bits(), 52, 11) }
+
+fn truncate(bits: u128, frac_bits: u32, exp_bits: u32) -> u64 {
+    let sign = ((bits >> 127) as u64) << (frac_bits + exp_bits);
+    let exp = ((bits >> 112) & 0x7fff) as i32;
+    let frac = bits & FRAC;
+    let max_exp = (1_u64 << exp_bits) - 1;
+    if exp == 0x7fff {
+        if frac == 0 { return sign | (max_exp << frac_bits); }
+        if frac & QUIET == 0 { raise(1); }
+        return sign | (max_exp << frac_bits) | ((frac >> (112-frac_bits)) as u64) | (1_u64 << (frac_bits-1));
+    }
+    if exp == 0 && frac == 0 { return sign; }
+    let (src_exp, src_sig) = normalized(bits);
+    let mut target_exp = src_exp - 16383 + ((1_i32 << (exp_bits - 1)) - 1);
+    let mut sig = jam(src_sig << 3, 112-frac_bits);
+    if target_exp < 1 { sig = jam(sig, (1-target_exp) as u32); target_exp = 1; }
+    let lost = sig & 7;
+    let mut mag = (sig >> 3) as u64;
+    let mode = round_mode();
+    let inc = match mode { 0 => lost > 4 || (lost == 4 && mag & 1 != 0), 1 => sign == 0 && lost != 0, 2 => sign != 0 && lost != 0, _ => false };
+    if inc { mag += 1; }
+    if mag >= 1_u64 << (frac_bits+1) { mag >>= 1; target_exp += 1; }
+    if target_exp >= max_exp as i32 {
+        raise(0x14);
+        let infinity = mode == 0 || (mode == 1 && sign == 0) || (mode == 2 && sign != 0);
+        return sign | if infinity { max_exp << frac_bits } else { (max_exp << frac_bits) - 1 };
+    }
+    let encoded = if target_exp == 1 && mag < 1_u64 << frac_bits { 0 } else { target_exp as u64 };
+    if lost != 0 { raise(0x10 | if encoded == 0 { 8 } else { 0 }); }
+    sign | (encoded << frac_bits) | (mag & ((1_u64 << frac_bits)-1))
+}
+#[no_mangle]
+pub extern "C" fn __trunctfsf2(x: f128) -> f32 { f32::from_bits(truncate(x.to_bits(), 23, 8) as u32) }
+#[no_mangle]
+pub extern "C" fn __trunctfdf2(x: f128) -> f64 { f64::from_bits(truncate(x.to_bits(), 52, 11)) }
