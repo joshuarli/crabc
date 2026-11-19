@@ -163,6 +163,15 @@ pub unsafe extern "C" fn allocate(output: *mut WorkerTlsAllocation) -> i32 {
         // SAFETY: The worker allocation reserves the x86 TCB guard word.
         unsafe { core::ptr::write(block.thread_pointer.add(40).cast::<usize>(), guard); }
     }
+    #[cfg(target_arch = "aarch64")]
+    {
+        let tp: usize;
+        // SAFETY: The current thread has an installed AArch64 TLS block.
+        unsafe { core::arch::asm!("mrs {}, tpidr_el0", out(reg) tp, options(nostack, readonly)); }
+        // SAFETY: Both thread records reserve the canary at TP - 16.
+        unsafe { core::ptr::write(block.thread_pointer.sub(16).cast::<usize>(),
+            core::ptr::read((tp - 16) as *const usize)); }
+    }
     let token = WorkerTlsAllocation { mapping: block.mapping,
         mapping_size: if embedded { 0 } else { block.mapping_byte_len },
         thread_pointer: block.thread_pointer, allocation_id: id };
