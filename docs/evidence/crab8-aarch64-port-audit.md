@@ -458,7 +458,7 @@ The facade correction leaves out-of-scope callers `crabc-rs/examples/ppoll_direc
 14. **Partly fixed (4fb39ef7e, d4d270a9d, add448dbd).** The ARM source-built helper archive now has exactly one member with recorded merge provenance; reproducibility, archive-free failures, retained definitions and direct transfers pass the native aggregate. The replayable shared aggregate report remains outstanding and the product change must be integrated with `a4-binary128`.
 15. **Partly fixed (42e2acf90).** ARM variadic dispatch no longer exports the four application-namespace helper names, and the corresponding allowances were removed. The anonymous-symbol exact roster remains open.
     - `native_abi_exports.py:152-160` accepts any `anon.*` symbol on aarch64, where x86 compares them exactly. The aarch64 delta is hardcoded in code (`:32-47`).
-16. **Partly fixed (f0f1a94b8, 15c0ca588).** The reader rejects nameless LOCAL undefined rows on both architectures and its ARM TLS corruption fixture passes natively.
+16. **Partly fixed (f0f1a94b8, 15c0ca588, 7a7890204).** ARM mold emits two actual all-zero local placeholders immediately after its section-symbol prefix; the reader admits only that exact pair and rejects the arbitrary fabricated row. It revalidated all 28 retained static outputs, and its ARM TLS corruption fixture passes natively.
     - `:514-573`: aarch64 merged-constant targets are not bound to the input's link-map contribution.
 17. **Closed (6205287aa).** Both architectures compare the resolver receipt with the independent shared `_static_link_plan`.
 18. **Closed (7415a7ca7).** ARM adopts the x86 DEFAULT private-alias visibility, and the native errno lifecycle producer passes.
