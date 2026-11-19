@@ -228,7 +228,9 @@ def _link_command(reader, objects, binary, mode, linker):
                 '-z', 'noexecstack', '-z', 'text', '--no-undefined', '--allow-shlib-undefined', '--enable-new-dtags',
                 '-rpath', '/usr/lib', '--exclude-libs=libcrabc-builtins.a', *receipt_contract.EXECUTABLE_WEAK_IMPORT_FLAGS,
                 '--dynamic-linker', sealed.INTERPRETER,
-                *(reader.recorded(path) for path in [entry, library / 'crti.o', *objects, library / 'libcrabc-builtins.a',
+                *(reader.recorded(path) for path in [entry, library / 'crti.o',
+                                                    *([library / 'crabc-dynamic-attach.o'] if mode != 'pie' else []),
+                                                    *objects, library / 'libcrabc-builtins.a',
                                                     library / 'libc.so', library / 'crtn.o']), '-o', reader.recorded(binary)]
     runtime = [library / ('Scrt1.o' if mode == 'pie' else 'crt1.o'), library / 'crabc-dynamic-attach.o',
                library / 'crti.o']
@@ -250,7 +252,7 @@ def _collect_link(reader, objects, binary, mode, tools):
     library = reader.product / 'usr/lib'
     runtime = [library / 'crti.o', library / 'libc.so', library / 'crtn.o',
                library / ('Scrt1.o' if mode == 'pie' else 'crt1.o')]
-    if sealed.ARCH == 'x86_64':
+    if sealed.ARCH == 'x86_64' or mode != 'pie':
         runtime.append(library / 'crabc-dynamic-attach.o')
     builtins = library / 'libcrabc-builtins.a'
     expected = {'format': 'crabc-aarch64-owned-dynamic-sysroot-v1' if sealed.ARCH == 'aarch64' else native.PRODUCT_FORMAT, 'mode': 'pie' if mode == 'pie' else 'exec',
