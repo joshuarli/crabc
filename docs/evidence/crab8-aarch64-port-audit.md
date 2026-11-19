@@ -466,7 +466,7 @@ The facade correction leaves out-of-scope callers `crabc-rs/examples/ppoll_direc
     - `:514-573`: aarch64 merged-constant targets are not bound to the input's link-map contribution.
 17. **Closed (6205287aa).** Both architectures compare the resolver receipt with the independent shared `_static_link_plan`.
 18. **errno alias visibility, rule 2.** `libc/src/c_abi/x86_64/errno.rs:62-65` makes the alias HIDDEN on aarch64, where x86 deliberately keeps it DEFAULT. The validator branches to match (`owned_errno_storage_lifecycle.py:907`).
-19. **`run_owned_ldso_lifecycle_cases.sh:84-87`**. On aarch64 the musl expectation strips the legacy init/fini letters. This divergence is not recorded in `parity.toml` (related to item 19).
+19. **Closed (67c2ddf6c).** The ARM DSO lifecycle transcript runs legacy DT_INIT/DT_FINI while pinned musl disables them through `NO_LEGACY_INITFINI`; the ledger records this observed difference without a musl-parity claim. The separate main-executable lifecycle probe remains item 19 above.
 20. **Closed (beac442c7, 71bc72983, 071098c93).** The ARM target is read from Cargo metadata, the builders receive the native architecture, and the provider audit checks ARM atomic and call instructions. The native `owned-rand` producer passed.
 
 ### Test-coverage
