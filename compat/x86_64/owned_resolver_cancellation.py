@@ -15,8 +15,10 @@ import sys
 
 from owned_classic_netdb import checked, fixture_module, physical
 import source_seal
+from native_arch import native_arch
 
 ROOT = Path(__file__).resolve().parents[2]
+NATIVE = native_arch()
 APIS = ('query', 'send', 'classic', 'modern', 'modern-dual', 'reverse')
 SCENARIOS = ('udp', 'tcp', 'pending', 'disabled', 'masked',
              'masked-udp', 'masked-tcp', 'disabled-udp', 'disabled-tcp',
@@ -51,7 +53,8 @@ PROVIDERS = frozenset(('res_query', 'res_send', 'gethostbyname_r', 'getaddrinfo'
 
 def prepare(work: Path) -> None:
     for kind, builder in (('static', 'build_x86_64_owned_sysroot.py'), ('dynamic', 'build_x86_64_owned_dynamic_sysroot.py')):
-        checked([sys.executable, '-B', ROOT / 'scripts' / builder, '--output', work / f'{kind}-sysroot'], work / f'{kind}-build.log')
+        architecture = [] if NATIVE['arch'] == 'x86_64' else ['--architecture', NATIVE['arch']]
+        checked([sys.executable, '-B', ROOT / 'scripts' / builder, *architecture, '--output', work / f'{kind}-sysroot'], work / f'{kind}-build.log')
 
 
 def providers(binary: Path, dynamic: bool, output: Path, *, local: bool = False) -> None:
@@ -118,7 +121,7 @@ def run(work: Path, static: Path | None, dynamic: Path | None) -> None:
     compile_mode = '--static-pie' if static is not None else '--dynamic-pie'
     checked([compiler, compile_mode, '-std=c11', '-fno-builtin', '-c', source, '-o', obj], work / 'compile.log')
     object_record = fixture.artifact_record(obj)
-    checked(['/usr/local/bin/crabc-x86_64-musl-gcc', '-static', '-fno-pie', '-no-pie', '-pthread', '-Wl,--export-dynamic', obj, '-o', work / 'oracle'], work / 'oracle-link.log')
+    checked([NATIVE['oracle'], '-static', '-fno-pie', '-no-pie', '-pthread', '-Wl,--export-dynamic', obj, '-o', work / 'oracle'], work / 'oracle-link.log')
     providers(work / 'oracle', False, work / 'oracle-symbols.txt')
     execution = work / 'execution-root'
     (execution / 'etc').mkdir(parents=True)
@@ -165,7 +168,7 @@ def run(work: Path, static: Path | None, dynamic: Path | None) -> None:
     transition_source = ROOT / 'compat/x86_64/owned_resolver_tcp_transition_probe.c'
     transition_obj = work / 'tcp-transition.o'
     checked([compiler, compile_mode, '-std=c11', '-fno-builtin', '-c', transition_source, '-o', transition_obj], work / 'tcp-transition-compile.log')
-    checked(['/usr/local/bin/crabc-x86_64-musl-gcc', '-static', '-fno-pie', '-no-pie', '-pthread', obj, transition_obj,
+    checked([NATIVE['oracle'], '-static', '-fno-pie', '-no-pie', '-pthread', obj, transition_obj,
              '-Wl,--wrap=setsockopt,--wrap=connect,--wrap=sendmsg', '-o', execution / 'oracle-tcp-transition'], work / 'tcp-transition-link.log')
     for fallback in (False, True):
         label = 'oracle-connect-transition' if fallback else 'oracle-fastopen-transition'
@@ -203,7 +206,7 @@ def run(work: Path, static: Path | None, dynamic: Path | None) -> None:
                 'elf': fixture.elf_audit(binary, mode='dynamic-'+mode, dynamic=True)}
             shutil.copy2(binary, execution / binary.name)
             execute('dynamic-'+mode+'-kernel', ['/'+binary.name])
-            execute('dynamic-'+mode+'-direct', ['/lib/ld-crabc-x86_64.so.1', '/'+binary.name])
+            execute('dynamic-'+mode+'-direct', [f"/lib/ld-crabc-{NATIVE['arch']}.so.1", '/'+binary.name])
     if source_seal.product_source_digest(ROOT) != source_sha256 or fixture.artifact_record(obj) != object_record:
         raise RuntimeError('DNS cancellation source or same application object changed during execution')
     for kind, path in (('static', static), ('dynamic', dynamic)):
