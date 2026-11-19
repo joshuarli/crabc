@@ -193,13 +193,27 @@ def _static_undefined_bindings(executable):
                     for row in rows), 'static binding symbol section index is invalid')
         table_rows[index] = rows
         tables.append({'index': index, 'name': name, 'row_count': len(rows)})
+        # Mold's ARM static outputs can place two all-zero local placeholders
+        # immediately after the complete section-symbol prefix.  They must be
+        # exactly that pair; an arbitrary unnamed undefined row is not inert
+        # evidence merely because its values are zero.
+        empty_rows = [number for number, row in enumerate(rows[1:], 1)
+                      if row['section'] == 0 and not row['name']]
+        if empty_rows:
+            section_count = len(final.sections)
+            require(ARCH == 'aarch64' and name == '.symtab'
+                    and empty_rows == [section_count, section_count + 1]
+                    and all(rows[i]['type'] == '3' and rows[i]['binding'] == 'LOCAL'
+                            and rows[i]['section'] == i for i in range(1, section_count))
+                    and all(final.data[table[4] + i * 24:table[4] + (i + 1) * 24] == bytes(24)
+                            for i in empty_rows), 'static undefined symbol metadata differs')
         for number, row in enumerate(rows[1:], 1):
             if row['section'] == 0:
                 # LLD can localize an undefined hidden weak symbol after
                 # resolving its address to zero. Regular local metadata
                 # still requires the operand and dynamic-exposure checks;
                 # local binding alone does not establish an inert row.
-                require(row['name']
+                require((row['name'] or number in empty_rows)
                         and (row['binding'] in ('GLOBAL', 'WEAK')
                              or name == '.symtab' and row['binding'] == 'LOCAL')
                         and row['value'] == row['size'] == 0, 'static undefined symbol metadata differs')
