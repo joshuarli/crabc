@@ -201,7 +201,8 @@ def audit_static_views(linkage: str, views: dict[str, str]) -> None:
             "incomplete static ELF inspection")
     header, segments, dynamic = views["header"], views["segments"], views["dynamic"]
     symbols, relocations = views["symbols"], views["relocations"]
-    require("Advanced Micro Devices X86-64" in header, "static consumer machine drifted")
+    arm = product_evidence.ARCH == "aarch64"
+    require(("AArch64" if arm else "Advanced Micro Devices X86-64") in header, "static consumer machine drifted")
     kind = "EXEC" if linkage == "static" else "DYN"
     require(re.search(r"Type:\s+" + kind + r"\s", header) is not None, "static ELF type drifted")
     require("INTERP" not in segments and "Requesting program interpreter" not in segments,
@@ -215,13 +216,18 @@ def audit_static_views(linkage: str, views: dict[str, str]) -> None:
                     not (fields[4] == "LOCAL" and fields[7] in static_product.MOLD_SYNTHETIC_UNDEFINED)
                     for line in symbols.splitlines()),
             "static consumer retains an unresolved symbol")
-    require(re.search(r"R_X86_64_(GLOB_DAT|JUMP_SLOT|TLSGD|TLSLD|TLSDESC|DTPMOD|DTPOFF)",
+    forbidden = (r"R_AARCH64_(GLOB_DAT|JUMP_SLOT|TLS|DTPMOD|DTPREL|TPREL)" if arm else
+                 r"R_X86_64_(GLOB_DAT|JUMP_SLOT|TLSGD|TLSLD|TLSDESC|DTPMOD|DTPOFF)")
+    require(re.search(forbidden,
                       relocations + symbols) is None, "static consumer retains dynamic relocation or TLS")
     if linkage == "static-pie":
         require(re.search(r"^\s*PHDR\s", segments, re.MULTILINE) is not None, "static PIE lacks PT_PHDR")
-        require(re.search(r"R_X86_64_GOTTPOFF|__tls_get_addr", relocations + symbols) is None,
+        initial_tls = r"R_AARCH64_TLSIE|__tls_get_addr" if arm else r"R_X86_64_GOTTPOFF|__tls_get_addr"
+        require(re.search(initial_tls, relocations + symbols) is None,
                 "static PIE retains unrelaxed initial TLS")
-        require(all(kind == "R_X86_64_RELATIVE" for kind in re.findall(r"R_X86_64_[A-Z0-9_]+", relocations)),
+        pattern = r"R_AARCH64_[A-Z0-9_]+" if arm else r"R_X86_64_[A-Z0-9_]+"
+        relative = "R_AARCH64_RELATIVE" if arm else "R_X86_64_RELATIVE"
+        require(all(kind == relative for kind in re.findall(pattern, relocations)),
                 "static PIE retains a non-relative relocation")
 
 
