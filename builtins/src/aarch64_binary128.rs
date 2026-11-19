@@ -314,8 +314,7 @@ pub extern "C" fn __trunctfdf2(x: f128) -> f64 { f64::from_bits(truncate(x.to_bi
 fn fix(bits: u128, width: u32, signed: bool) -> u128 {
     let sign = bits & SIGN != 0;
     let abs = bits & !SIGN;
-    let nan = abs > INF;
-    let negative = sign && !nan;
+    let negative = sign;
     let limit = if signed { 1_u128 << (width - 1) } else if width == 128 { u128::MAX } else { (1_u128 << width) - 1 };
     let invalid_value = if negative { if signed { limit } else { 0 } } else if signed { limit - 1 } else { limit };
     let exp = ((abs >> 112) & 0x7fff) as i32 - 16383;
