@@ -469,6 +469,23 @@ class OwnedPosixProductEvidenceTests(unittest.TestCase):
                 with self.assertRaises(evidence.ProductEvidenceError):
                     evidence._validate_static_product(self.static)
 
+    def test_arm_static_links_do_not_require_a_dynamic_profile(self) -> None:
+        receipt = self.put("static-link.json", b"{}")
+        manifest = self.static / "share/crabc/manifest.json"
+        with (mock.patch.object(evidence, "ARCH", "aarch64"),
+              mock.patch.object(evidence, "_validate_static_product", return_value=(manifest, {})),
+              mock.patch.object(evidence, "_validate_static_link_mode"),
+              mock.patch.object(evidence, "_validate_static_receipt", return_value="digest"),
+              mock.patch.object(evidence, "_validate_retained_static_receipt", return_value="digest"),
+              mock.patch.object(evidence, "_audit_elf") as audit,
+              mock.patch.object(evidence, "_audit_retained_elf") as retained_audit):
+            for linkage in ("static", "static-pie"):
+                self.assertEqual(evidence.validate_link(self.static, self.workload, self.executable, receipt, linkage)["linkage"], linkage)
+                self.assertEqual(evidence.validate_retained_link(self.root, "/workspace", self.static, self.workload,
+                                                                  self.executable, receipt, linkage, {})["linkage"], linkage)
+            self.assertEqual(audit.call_count, 2)
+            self.assertEqual(retained_audit.call_count, 2)
+
     def test_hardened_static_product_rejects_non_pie_link_evidence(self) -> None:
         path = self.static / "share/crabc/crt.provenance.json"
         crt = json.loads(path.read_text())
