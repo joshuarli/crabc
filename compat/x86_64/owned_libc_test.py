@@ -677,6 +677,9 @@ def driver_support(product: Path) -> dict[str, Any]:
     driver = physical(product / "bin/crabc-cc-dynamic", "installed dynamic driver", executable=True)
     static_helper = physical(product / "share/crabc/crabc_cc_static.py", "installed compiler helper")
     text = driver.read_text(encoding="utf-8", errors="replace")
+    if ARCH == "aarch64":
+        shared_driver = physical(product / "share/crabc/crabc_cc_owned_dynamic.py", "installed shared dynamic driver")
+        text += shared_driver.read_text(encoding="utf-8", errors="replace")
     helper_text = static_helper.read_text(encoding="utf-8", errors="replace")
     required = {
         "quote_include": "--application-quote-include-dir",
