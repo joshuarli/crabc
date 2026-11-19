@@ -4,7 +4,8 @@ set -euo pipefail
 ulimit -c 0
 
 readonly ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-readonly oracle_cc=/usr/local/bin/crabc-x86_64-musl-gcc
+eval "$(python3 -B "$ROOT/compat/x86_64/native_arch.py")"
+readonly oracle_cc="$oracle"
 readonly probe="$ROOT/compat/x86_64/owned_pthread_signal_probe.c"
 
 if ! { [ "$#" -eq 1 ] || { [ "$#" -eq 3 ] && [ "$1" = --static-sysroot ]; }; }; then
@@ -209,7 +210,7 @@ for mode in pie non-pie; do
     cp "$work/dynamic-$mode" "$execution_root/consumer-$mode"
     for entry in kernel direct; do
         if [ "$entry" = direct ]; then
-            command=(/lib/ld-crabc-x86_64.so.1 "/consumer-$mode")
+            command=("/lib/ld-crabc-$arch.so.1" "/consumer-$mode")
         else
             command=("/consumer-$mode")
         fi
