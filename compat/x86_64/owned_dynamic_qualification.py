@@ -624,7 +624,7 @@ def _run_case(work: Path, product: str, case: str, source: str, manifest: str,
         sys.modules[spec.name] = module
         try:
             spec.loader.exec_module(module)
-            corpus = module.load_aarch64_manifest(ROOT / "compat/corpus/manifest.toml")
+            corpus = module.load_manifest()
             module.input_identity(corpus, ROOT / ".work/aarch64/owned-package-corpus-input/apks", module.DEFAULT_INDEX)
         except Exception as error:
             raise QualificationError(f"package corpus input does not match its manifest: {error}") from error

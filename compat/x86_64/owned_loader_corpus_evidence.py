@@ -1313,16 +1313,6 @@ def _validate_corpus_tools(value: object) -> dict[str, Any]:
 
 def _validate_corpus_inputs(value: object, manifest: Any) -> None:
     inputs = _keys(value, {"verification_before", "after"}, "package-corpus inputs")
-    if getattr(manifest, "architecture", "x86_64") == "aarch64":
-        before = _keys(inputs["verification_before"], {"identity"}, "package-corpus input verification")
-        identity = _keys(before["identity"], {"directory", "archives"}, "package-corpus input identity")
-        _require(isinstance(identity["directory"], str) and Path(identity["directory"]).is_absolute(), "package-corpus input directory differs")
-        _require(isinstance(identity["archives"], dict) and set(identity["archives"]) == set(manifest.archive_roster), "package-corpus archive roster differs")
-        for name, digest in manifest.archive_roster.items():
-            _require(_keys(identity["archives"][name], {"sha256"}, "package-corpus archive")["sha256"] == digest,
-                     f"package-corpus archive {name} differs from frozen manifest")
-        _require(inputs["after"] == identity, "package-corpus inputs changed during execution")
-        return
     before = _keys(inputs["verification_before"], {"identity", "index_signature", "archive_signatures"},
                    "package-corpus input verification")
     identity = _keys(before["identity"], {"directory", "index", "archives"}, "package-corpus input identity")

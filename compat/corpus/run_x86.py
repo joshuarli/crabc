@@ -34,7 +34,7 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "compat/x86_64"))
 from native_arch import native_arch
 ARCH = native_arch()["arch"]
-MANIFEST = Path(__file__).with_name("manifest.toml" if ARCH == "aarch64" else "manifest-x86_64.toml")
+MANIFEST = Path(__file__).with_name(f"manifest-{ARCH}.toml")
 DEFAULT_INPUT = ROOT / f".work/{ARCH}/owned-package-corpus-input/apks"
 DEFAULT_INDEX = ROOT / f".work/{ARCH}/owned-package-corpus-input/index/main-{ARCH}.APKINDEX.tar.gz"
 DEFAULT_WORK = ROOT / f".work/{ARCH}/tmp/owned-package-corpus"
@@ -300,52 +300,14 @@ def _case_from_raw(raw: object, index: int, package_names: set[str]) -> CaseSpec
     return CaseSpec(case_id, tier, package, path, tuple(argv), stdin.encode("utf-8"), tuple(setup), cwd, stateful, relr)
 
 
-def load_aarch64_manifest(path: Path) -> ManifestSpec:
-    try:
-        raw_bytes = path.read_bytes()
-        raw = tomllib.loads(raw_bytes.decode("utf-8"))
-        support = tomllib.loads(path.with_name("manifest-x86_64.toml").read_text(encoding="utf-8"))
-    except (OSError, UnicodeDecodeError, tomllib.TOMLDecodeError) as error:
-        raise CorpusError(f"native corpus manifest is unreadable: {path}") from error
-    if (raw.get("schema"), raw.get("architecture"), raw.get("musl_version")) != (1, "aarch64", "1.2.6"):
-        fail("native corpus manifest identity drifted")
-    if not isinstance(raw.get("image"), str) or "@sha256:" not in raw["image"]:
-        fail("native corpus image is not digest pinned")
-    packages = raw.get("packages")
-    if not isinstance(packages, list) or len(packages) != 15:
-        fail("native corpus direct package roster drifted")
-    roster: dict[str, str] = {}
-    direct: dict[str, str] = {}
-    for item in packages:
-        if not isinstance(item, dict):
-            fail("native corpus package entry is invalid")
-        name, version, filename = item.get("name"), item.get("version"), item.get("filename")
-        if (not isinstance(name, str) or not isinstance(version, str) or not isinstance(filename, str)
-                or Path(filename).name != filename or filename != f"{name}-{version}.apk"
-                or name in direct or filename in roster):
-            fail("native corpus package identity is invalid")
-        direct[name] = version
-        roster[filename] = require_sha256(item.get("sha256"), f"archive digest {filename}")
-    cases = tuple(_case_from_raw(item, index, set(direct)) for index, item in enumerate(raw.get("cases", [])))
-    if len(cases) != 34 or len({case.id for case in cases}) != 34:
-        fail("native corpus source case roster drifted")
-    payload = support["payload"]
-    fixtures = {key: value.encode("utf-8") for key, value in support["fixtures"].items()}
-    return ManifestSpec(raw_bytes, roster, frozenset(), tuple(payload["package_library_dirs"]),
-                        tuple(payload["required_paths"]), fixtures, support["base_image_files"],
-                        cases, direct, path, "", raw["image"], "aarch64")
-
-
 def load_manifest(path: Path = MANIFEST) -> ManifestSpec:
     """Load the native package snapshot and exact shared workload semantics."""
-    if path == MANIFEST and ARCH == "aarch64":
-        return load_aarch64_manifest(path)
     try:
         raw_bytes = path.read_bytes()
         raw = tomllib.loads(raw_bytes.decode("utf-8"))
     except (OSError, UnicodeDecodeError, tomllib.TOMLDecodeError) as error:
         raise CorpusError(f"native corpus manifest is unreadable: {path}") from error
-    if raw.get("schema") != 1 or raw.get("architecture") != "x86_64" or raw.get("musl_version") != "1.2.6":
+    if raw.get("schema") != 1 or raw.get("architecture") != ARCH or raw.get("musl_version") != "1.2.6":
         fail("native corpus manifest identity drifted")
     if not isinstance(raw.get("image"), str) or "@sha256:" not in raw["image"]:
         fail("native corpus image is not digest pinned")
@@ -372,10 +334,10 @@ def load_manifest(path: Path = MANIFEST) -> ManifestSpec:
         if not isinstance(name, str) or Path(name).name != name or not name.endswith(".apk"):
             fail("native corpus archive roster has an unsafe filename")
         archive_roster[name] = require_sha256(digest, f"archive digest {name}")
-    if len(archive_roster) != 59:
+    if len(archive_roster) != (59 if ARCH == "x86_64" else 58):
         fail("native corpus archive roster count drifted")
     excluded_values = excluded.get("archives")
-    if excluded_values != ["musl-1.2.6-r2.apk"] or excluded_values[0] not in archive_roster:
+    if excluded_values != (["musl-1.2.6-r2.apk"] if ARCH == "x86_64" else []) or any(name not in archive_roster for name in excluded_values):
         fail("native corpus excluded libc archive contract drifted")
     source_text = workload.get("source_manifest")
     if not isinstance(source_text, str):
@@ -432,7 +394,7 @@ def load_manifest(path: Path = MANIFEST) -> ManifestSpec:
         if not all(isinstance(identity.get(key), int) and identity[key] >= 0 for key in ("mode", "uid", "gid")):
             fail("native corpus base image metadata is malformed")
         checked_base_files[base_path] = dict(identity)
-    return ManifestSpec(raw_bytes, archive_roster, frozenset(excluded_values), libraries, required, base_fixtures, checked_base_files, cases, dict(direct), source_manifest, index_signing_key, raw["image"])
+    return ManifestSpec(raw_bytes, archive_roster, frozenset(excluded_values), libraries, required, base_fixtures, checked_base_files, cases, dict(direct), source_manifest, index_signing_key, raw["image"], ARCH)
 
 
 def select_cases(manifest: ManifestSpec, tiers: Sequence[str], case_ids: Sequence[str] = ()) -> tuple[CaseSpec, ...]:
@@ -750,8 +712,6 @@ def source_identity(manifest: ManifestSpec) -> dict[str, object]:
             "manifest": _repository_source_identity(helper_manifest, "process-lifetime helper manifest"),
         },
     }
-    if manifest.architecture == "aarch64":
-        identity["payload_contract"] = _repository_source_identity(MANIFEST.with_name("manifest-x86_64.toml"), "payload contract")
     return identity
 
 
@@ -792,22 +752,7 @@ def input_identity(manifest: ManifestSpec, archive_dir: Path, index: Path) -> di
     could never be fetched again; it is identified by the observed bytes that
     this run verifies, and the post-execution identity must repeat them.
     """
-    if manifest.architecture == "aarch64" and not archive_dir.exists():
-        fail("missing pinned APK archives: " + ", ".join(sorted(manifest.archive_roster)))
     archive_dir = require_physical_directory(archive_dir, "APK archive directory")
-    if manifest.architecture == "aarch64":
-        entries = list(archive_dir.iterdir())
-        missing = sorted(set(manifest.archive_roster) - {entry.name for entry in entries})
-        if missing:
-            fail("missing pinned APK archives: " + ", ".join(missing))
-        require_exact_archive_roster((entry.name for entry in entries), manifest.archive_roster)
-        archives = {}
-        for name, expected in sorted(manifest.archive_roster.items()):
-            observed = sha256_file(archive_dir / name, f"APK archive {name}")
-            if observed != expected:
-                fail(f"APK archive digest differs: {name}")
-            archives[name] = {"sha256": observed}
-        return {"directory": str(archive_dir), "archives": archives}
     index_sha256 = sha256_file(index, "signed APK index")
     entries = list(archive_dir.iterdir())
     if any(entry.is_symlink() or not stat.S_ISREG(entry.lstat().st_mode) for entry in entries):
@@ -830,8 +775,6 @@ def input_identity(manifest: ManifestSpec, archive_dir: Path, index: Path) -> di
 def verify_inputs(manifest: ManifestSpec, archive_dir: Path, index: Path) -> dict[str, object]:
     """Verify signatures once, retaining the corresponding raw input identity."""
     identity = input_identity(manifest, archive_dir, index)
-    if manifest.architecture == "aarch64":
-        return {"identity": identity}
     archive_dir = Path(identity["directory"])
     verification: dict[str, dict[str, object]] = {}
     for name in sorted(manifest.archive_roster):
