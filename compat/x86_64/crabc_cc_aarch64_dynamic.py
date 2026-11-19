@@ -168,72 +168,73 @@ def execute(arguments):
         raise shared.DriverError("compile-only accepts no link options")
     if transitive_dsos and not dsos:
         raise shared.DriverError("transitive application DSOs require one direct --application-dso")
-    sources = [shared.require_application_file(root, path, "source") for path in invocation.sources]
-    objects_in = [shared.require_x86_64_relocatable_object(root, path, architecture="aarch64") for path in invocation.objects]
-    dso_inputs = [shared.require_application_file(root, path, "DSO") for path in dsos]
-    transitive_inputs = [shared.require_application_file(root, path, "DSO") for path in transitive_dsos]
-    nodes = {}
-    for path in [*dso_inputs, *transitive_inputs]:
-        if shared.rejects_runtime_object(path):
-            raise shared.DriverError("unowned application DSO")
-        dynamic_shared.application_dso_basename(path, architecture="aarch64")
-        if path.name in nodes or path in [node[0] for node in nodes.values()]:
-            raise shared.DriverError("duplicate application DSO")
-        with tempfile.TemporaryDirectory(prefix="crabc-aarch64-dso-metadata-") as temporary:
-            _, needed, runpaths = dynamic_shared.dso_metadata_detail(path, Path(temporary), architecture="aarch64")
-        nodes[path.name] = (path, needed)
-        if runpaths not in ([], ["/usr/lib"]):
-            sidecar = Path(str(path) + ".crabc-link.json")
-            shared.require_regular(sidecar, "application search path receipt")
-            search = json.loads(sidecar.read_text())
-            expected_path = dynamic_shared.dso_receipt_runpath(search, path, architecture="aarch64")
-            if (search["manifest_sha256"] != shared.sha256_file(root / "share/crabc/manifest.json")
-                    or runpaths != [expected_path]):
-                raise shared.DriverError("application DSO has an undeclared runtime search path")
-    provided, requirements = set(), {}
-    with tempfile.TemporaryDirectory(prefix="crabc-aarch64-dso-symbols-") as temporary:
-        for path in [lib / "libc.so", *(node[0] for node in nodes.values())]:
-            defined, required = dynamic_shared.dynamic_symbols(path, Path(temporary))
-            provided.update(defined)
-            requirements[path.name] = required
-    for path, needed in nodes.values():
-        if not set(needed) <= set(nodes) | {"libc.so"}:
-            raise shared.DriverError(f"undeclared transitive dependency of {path}")
-        if not transitive_inputs and requirements[path.name] - provided:
-            raise shared.DriverError("application DSOs have unresolved runtime imports")
-    if transitive_inputs:
-        graph = {}
-        for name, (path, needed) in nodes.items():
-            dynamic = subprocess.check_output(["/usr/bin/readelf", "-dW", str(path)], text=True)
-            runpaths = re.findall(r"\(RUNPATH\).*\[([^\]]*)\]", dynamic)
-            record, search, imports = dynamic_shared.application_dso_sidecar(root, path, runpaths, architecture="aarch64")
-            graph[name] = dynamic_shared.ApplicationDso(path, name, tuple(needed),
-                "direct" if path in dso_inputs else "transitive", record, search, imports)
-        dynamic_shared.validate_closure_graph(graph, [path.name for path in dso_inputs])
-        for node in graph.values():
-            dynamic_shared.validate_closure_sidecar(node, graph)
-        with tempfile.TemporaryDirectory(prefix="crabc-aarch64-dso-closure-") as temporary:
-            provided = dynamic_shared.validate_closure_runtime_imports(graph, Path(temporary), lib)
-    output = (invocation.output or (sources[0].with_suffix(".o") if invocation.compile_only else Path("a.out"))).absolute()
+    output = (invocation.output or (invocation.sources[0].with_suffix(".o") if invocation.compile_only else Path("a.out"))).absolute()
     shared.validate_application_output(root, output)
-    shared.validate_application_output_disjoint(output, (*sources, *objects_in, *dso_inputs, *transitive_inputs))
+    raw_inputs = (*invocation.sources, *invocation.objects, *dsos, *transitive_dsos)
+    shared.validate_application_output_disjoint(output, raw_inputs)
     dependency_output = None
     if dependency_file is not None:
         dependency_output = dependency_file.absolute()
         shared.validate_application_output(root, dependency_output)
-        shared.validate_application_output_disjoint(dependency_output, (*sources, *objects_in, output))
+        shared.validate_application_output_disjoint(dependency_output, (*invocation.sources, *invocation.objects, output))
     receipt_path = Path(str(output) + ".crabc-link.json")
     inspection_path, map_path = elf_inspection.sidecar_paths(output)
     if not invocation.compile_only:
         for sidecar in (receipt_path, inspection_path, map_path):
             shared.validate_application_output(root, sidecar)
-            shared.validate_application_output_disjoint(sidecar, (*sources, *objects_in, *dso_inputs, *transitive_inputs, output))
+            shared.validate_application_output_disjoint(sidecar, (*raw_inputs, output))
     output.parent.mkdir(parents=True, exist_ok=True)
     with ExitStack() as reservations, dynamic_shared.link_evidence_workspace(output.parent, retain=retain_evidence) as temporary:
         if not invocation.compile_only:
             receipt_stream = reservations.enter_context(dynamic_shared.reserve_receipt(receipt_path))
             inspection_stream = reservations.enter_context(dynamic_shared.reserve_receipt(inspection_path))
             accept_map = reservations.enter_context(dynamic_shared.reserve_link_map(map_path))
+        sources = [shared.require_application_file(root, path, "source") for path in invocation.sources]
+        objects_in = [shared.require_x86_64_relocatable_object(root, path, architecture="aarch64") for path in invocation.objects]
+        dso_inputs = [shared.require_application_file(root, path, "DSO") for path in dsos]
+        transitive_inputs = [shared.require_application_file(root, path, "DSO") for path in transitive_dsos]
+        nodes = {}
+        for path in [*dso_inputs, *transitive_inputs]:
+            if shared.rejects_runtime_object(path):
+                raise shared.DriverError("unowned application DSO")
+            dynamic_shared.application_dso_basename(path, architecture="aarch64")
+            if path.name in nodes or path in [node[0] for node in nodes.values()]:
+                raise shared.DriverError("duplicate application DSO")
+            with tempfile.TemporaryDirectory(prefix="crabc-aarch64-dso-metadata-") as metadata_temp:
+                _, needed, runpaths = dynamic_shared.dso_metadata_detail(path, Path(metadata_temp), architecture="aarch64")
+            nodes[path.name] = (path, needed)
+            if runpaths not in ([], ["/usr/lib"]):
+                sidecar = Path(str(path) + ".crabc-link.json")
+                shared.require_regular(sidecar, "application search path receipt")
+                search = json.loads(sidecar.read_text())
+                expected_path = dynamic_shared.dso_receipt_runpath(search, path, architecture="aarch64")
+                if (search["manifest_sha256"] != shared.sha256_file(root / "share/crabc/manifest.json")
+                        or runpaths != [expected_path]):
+                    raise shared.DriverError("application DSO has an undeclared runtime search path")
+        provided, requirements = set(), {}
+        with tempfile.TemporaryDirectory(prefix="crabc-aarch64-dso-symbols-") as symbols_temp:
+            for path in [lib / "libc.so", *(node[0] for node in nodes.values())]:
+                defined, required = dynamic_shared.dynamic_symbols(path, Path(symbols_temp))
+                provided.update(defined)
+                requirements[path.name] = required
+        for path, needed in nodes.values():
+            if not set(needed) <= set(nodes) | {"libc.so"}:
+                raise shared.DriverError(f"undeclared transitive dependency of {path}")
+            if not transitive_inputs and requirements[path.name] - provided:
+                raise shared.DriverError("application DSOs have unresolved runtime imports")
+        if transitive_inputs:
+            graph = {}
+            for name, (path, needed) in nodes.items():
+                dynamic = subprocess.check_output(["/usr/bin/readelf", "-dW", str(path)], text=True)
+                runpaths = re.findall(r"\(RUNPATH\).*\[([^\]]*)\]", dynamic)
+                record, search, imports = dynamic_shared.application_dso_sidecar(root, path, runpaths, architecture="aarch64")
+                graph[name] = dynamic_shared.ApplicationDso(path, name, tuple(needed),
+                    "direct" if path in dso_inputs else "transitive", record, search, imports)
+            dynamic_shared.validate_closure_graph(graph, [path.name for path in dso_inputs])
+            for node in graph.values():
+                dynamic_shared.validate_closure_sidecar(node, graph)
+            with tempfile.TemporaryDirectory(prefix="crabc-aarch64-dso-closure-") as closure_temp:
+                provided = dynamic_shared.validate_closure_runtime_imports(graph, Path(closure_temp), lib)
         objects = list(objects_in)
         for index, source in enumerate(sources):
             obj = output if invocation.compile_only else Path(temporary) / f"{index}.o"

@@ -128,6 +128,13 @@ class Aarch64DynamicNonPieTest(unittest.TestCase):
             source, output = work / "main.c", work / "main"
             source.write_text("int main(void) { return 0; }\n")
             receipt = Path(str(output) + ".crabc-link.json")
+            receipt.write_bytes(b"existing receipt")
+            with mock.patch.object(module.dynamic_shared, "dynamic_symbols") as inspect:
+                with self.assertRaises(module.shared.DriverError):
+                    module.execute(["-pie", str(source), "-o", str(output)])
+                inspect.assert_not_called()
+            self.assertEqual(receipt.read_bytes(), b"existing receipt")
+            receipt.unlink()
 
             def fail_link(*args, **kwargs):
                 self.assertEqual(receipt.read_bytes(), b"")
