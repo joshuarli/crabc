@@ -34,23 +34,26 @@ from scripts import native_build_tools
 from scripts.rust_toolchain import pinned_toolchain
 import native_rustc
 from native_runtime_profile import NativeRuntimeProfile
+from native_arch import native_arch
 
 
-TARGET = "x86_64-unknown-linux-musl"
-STATIC_FORMAT = "crabc-x86-64-sealed-static-driver-v1"
-STATIC_PRODUCT_FORMAT = "crabc-x86-64-owned-static-sysroot-v1"
-DYNAMIC_PRODUCT_FORMAT = "crabc-x86-64-owned-dynamic-sysroot-v1"
+ARCH = native_arch()["arch"]
+TARGET = f"{ARCH}-unknown-linux-musl"
+ARCH_LABEL = "x86-64" if ARCH == "x86_64" else ARCH
+STATIC_FORMAT = f"crabc-{ARCH_LABEL}-sealed-static-driver-v1"
+STATIC_PRODUCT_FORMAT = f"crabc-{ARCH_LABEL}-owned-static-sysroot-v1"
+DYNAMIC_PRODUCT_FORMAT = f"crabc-{ARCH_LABEL}-owned-dynamic-sysroot-v1"
 # A combined four-mode sysroot (scripts/build_x86_64_owned_combined_sysroot.py)
 # embeds each product manifest at share/crabc/<product>/manifest.json. Product
 # metadata may move only within share/crabc/; the static product's unlinked
 # Scrt1.o yields to the dynamic PIE entry. The installed drivers apply the same
 # rules before they run.
-COMBINED_SYSROOT_FORMAT = "crabc-x86-64-owned-sysroot-v1"
+COMBINED_SYSROOT_FORMAT = f"crabc-{ARCH_LABEL}-owned-sysroot-v1"
 PRODUCT_MANIFEST = "share/crabc/manifest.json"
 PRODUCT_METADATA_PREFIX = "share/crabc/"
 SOURCE_NATIVE_IMAGE_MANIFEST = ROOT / "compat/x86_64/owned_resolver_alias_image_inputs.json"
 COMBINED_UNINSTALLED_PAYLOAD = {"static": frozenset({"usr/lib/Scrt1.o"}), "dynamic": frozenset()}
-INTERPRETER = "/lib/ld-crabc-x86_64.so.1"
+INTERPRETER = f"/lib/ld-crabc-{ARCH}.so.1"
 STATIC_DRIVER_STATUS = "planned-owned-static-product-seed-not-family-completion-not-public-support"
 STATIC_CRT_OBJECTS = ("crt1.o", "Scrt1.o", "rcrt1.o", "crti.o", "crtn.o")
 STATIC_REQUIRED = (
@@ -73,7 +76,7 @@ DYNAMIC_REQUIRED = (
     "share/crabc/owned_dynamic_receipt.py",
     "share/crabc/owned_dynamic_elf.py",
     "share/crabc/producer-tools.json",
-    "lib/ld-crabc-x86_64.so.1",
+    INTERPRETER.lstrip("/"),
     "usr/lib/crt1.o",
     "usr/lib/Scrt1.o",
     "usr/lib/crti.o",
@@ -252,7 +255,12 @@ def _validate_compiler_records_against_source(records: dict[str, dict[str, str]]
 def validate_native_compiler_tool_records(value: object) -> dict[str, dict[str, str]]:
     if not isinstance(value, dict):
         _fail("native producer tools are malformed")
-    expected = source_native_compiler_tool_records()
+    if ARCH == "aarch64":
+        from scripts.build_x86_64_owned_sysroot import resolve_pinned_producer_tools
+        expected = resolve_pinned_producer_tools("aarch64")
+    else:
+        expected = source_native_compiler_tool_records()
+    expected = {name: expected[name] for name in ("rustc_wrapper", "linker", "cargo_linker", "rustc")}
     for name, path_identity in expected.items():
         received = value.get(name)
         keys = ("path", "sha256", "sysroot") if name == "rustc" else ("path", "sha256")
@@ -648,7 +656,7 @@ def _validate_product_tree(root: Path, product: str, files: dict[str, str], alia
         profile = NativeRuntimeProfile(combined["hardening_profile"])
     except (KeyError, TypeError, ValueError):
         _fail("combined product has an invalid native runtime profile")
-    if links != profile.aliases or combined.get("modes") != list(profile.combined_modes):
+    if links != profile.aliases_for_architecture(ARCH) or combined.get("modes") != list(profile.combined_modes):
         _fail("combined sysroot aliases or modes differ from its profile")
     _validate_payload_tree(root, installed, aliases=links)
     placements = combined["products"][product]["placements"]
@@ -667,35 +675,6 @@ def _validate_product_tree(root: Path, product: str, files: dict[str, str], alia
 
 def _validate_static_product_uncached(root: Path) -> tuple[Path, dict[str, str]]:
     manifest_path, manifest, combined = _product_manifest(root, "static", STATIC_PRODUCT_FORMAT)
-    if manifest.get("format") == "crabc-aarch64-owned-static-sysroot-v1":
-        if (manifest.get("schema"), manifest.get("target"), manifest.get("build_profile"), manifest.get("symlinks")) != (
-            1, "aarch64-unknown-linux-musl", "release", {}
-        ) or manifest.get("toolchain") != pinned_toolchain(ROOT):
-            _fail("aarch64 static product identity differs")
-        try:
-            profile = NativeRuntimeProfile(manifest["hardening_profile"])
-        except (KeyError, TypeError, ValueError):
-            _fail("aarch64 static product profile differs")
-        files = _payload_files(manifest.get("files"), "aarch64 static product manifest")
-        required = {"bin/crabc-cc", "share/crabc/crt.provenance.json", "share/crabc/crt.commands.json",
-                    "usr/lib/crt1.o", "usr/lib/rcrt1.o", "usr/lib/crti.o", "usr/lib/crtn.o",
-                    "usr/lib/libc.a", "usr/lib/libcrabc-builtins.a"}
-        if not required <= files.keys():
-            _fail("aarch64 static product omits runtime payload")
-        _validate_payload_tree(root, files, aliases={})
-        _physical_executable(root / "bin/crabc-cc", "aarch64 static product driver")
-        _physical_directory(root / "usr/include", "aarch64 static product headers")
-        import crabc_cc_static
-        try:
-            crabc_cc_static.validate_crt_provenance(root, "share/crabc/crt.provenance.json", profile)
-        except crabc_cc_static.DriverError as error:
-            raise ProductEvidenceError(str(error)) from error
-        for name in ("crt1.o", "rcrt1.o", "crti.o", "crtn.o"):
-            header = (root / "usr/lib" / name).read_bytes()[:20]
-            if len(header) != 20 or header[:7] != b"\x7fELF\x02\x01\x01" or header[16:20] != b"\x01\x00\xb7\x00":
-                _fail(f"aarch64 static product ELF differs: {name}")
-        _validate_link_input_modes(root, STATIC_LINK_INPUT_MODES, "static link input")
-        return manifest_path, files
     if (manifest.get("schema"), manifest.get("format"), manifest.get("target")) != (1, STATIC_PRODUCT_FORMAT, TARGET):
         _fail("static product manifest has the wrong product identity")
     try:
@@ -746,18 +725,11 @@ def _validate_static_product_uncached(root: Path) -> tuple[Path, dict[str, str]]
 
 def _validate_dynamic_product_uncached(root: Path) -> tuple[Path, dict[str, str]]:
     manifest_path, manifest, combined = _product_manifest(root, "dynamic", DYNAMIC_PRODUCT_FORMAT)
-    if manifest.get("format") == "crabc-aarch64-owned-dynamic-sysroot-v1":
-        import crabc_cc_owned_dynamic
-        try:
-            record = crabc_cc_owned_dynamic.validate(root)
-        except crabc_cc_owned_dynamic.shared.DriverError as error:
-            raise ProductEvidenceError(str(error)) from error
-        return manifest_path, _payload_files(record.get("files"), "aarch64 dynamic product manifest")
     try:
         profile = NativeRuntimeProfile(manifest["hardening_profile"])
     except (KeyError, TypeError, ValueError):
         _fail("dynamic product has an invalid native runtime profile")
-    aliases = profile.aliases
+    aliases = profile.aliases_for_architecture(ARCH)
     if (manifest.get("schema"), manifest.get("format"), manifest.get("target"), manifest.get("symlinks")) != (
         1, DYNAMIC_PRODUCT_FORMAT, TARGET, aliases
     ):
@@ -778,7 +750,8 @@ def _validate_dynamic_product_uncached(root: Path) -> tuple[Path, dict[str, str]
         if type(source) is not str or re.fullmatch(r"[0-9a-f]{64}", source) is None:
             _fail("debug dynamic product source digest is invalid")
     files = _payload_files(manifest.get("files"), "dynamic product manifest")
-    required = (set(DYNAMIC_REQUIRED) - {INTERPRETER.lstrip("/")}) | {profile.interpreter.lstrip("/")}
+    interpreter = profile.interpreter if ARCH == "x86_64" else ("/lib/ld-crabc-aarch64-hardened.so.1" if profile is NativeRuntimeProfile.HARDENED else INTERPRETER)
+    required = (set(DYNAMIC_REQUIRED) - {INTERPRETER.lstrip("/")}) | {interpreter.lstrip("/")}
     missing = sorted(required - set(files))
     if missing:
         _fail(f"dynamic product manifest omits required runtime payload: {missing[0]}")
@@ -803,7 +776,7 @@ def _validate_dynamic_product_uncached(root: Path) -> tuple[Path, dict[str, str]
     try:
         crabc_cc_owned_dynamic.validate_loader_provenance(root, loader_receipt,
                                                          crabc_cc_owned_dynamic.shared.NativeRuntimeProfile(profile.value),
-                                                         manifest.get("build_profile"))
+                                                         manifest.get("build_profile"), architecture=ARCH)
     except crabc_cc_static.DriverError as error:
         raise ProductEvidenceError(str(error)) from error
     _validate_link_input_modes(root, DYNAMIC_LINK_INPUT_MODES, "dynamic link input")

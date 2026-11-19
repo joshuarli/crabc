@@ -649,6 +649,7 @@ def rebuild_libc_archive(
     source: Path, output: Path, *, llvm_ar: str, llvm_nm: str,
     allocator_object: Path | None = None,
     llvm_objcopy: str | None = None, stock_runtime_libdir: Path | None = None,
+    architecture: str = "x86_64",
 ) -> dict[str, object]:
     """Rebuild from the already-attested target LLVM archive tools."""
 
@@ -657,7 +658,7 @@ def rebuild_libc_archive(
         for line in run([llvm_ar, "t", str(source)]).decode("utf-8", errors="replace").splitlines()
         if line
     )
-    selected, excluded = classify_libc_members(members)
+    selected, excluded = classify_libc_members(members, architecture=architecture)
     output.parent.mkdir(parents=True, exist_ok=True)
     rebound_runtime: list[dict[str, object]] = []
     with tempfile.TemporaryDirectory(prefix="x86-libc-members.", dir=output.parent) as temporary:
@@ -741,6 +742,7 @@ def rebuild_libc_archive(
             ],
             "native_compiler_rt": [
                 member for member in excluded if NATIVE_COMPILER_RT_MEMBER.fullmatch(member)
+                or (architecture == "aarch64" and re.fullmatch(r"[0-9a-f]+-(?:lse_[a-z0-9_]+|aarch64)\.o", member))
             ],
         },
         "required_defined_symbols": sorted(REQUIRED_LIBC_SYMBOLS),
@@ -1548,11 +1550,6 @@ def build_aarch64(output: Path, *, allocator_backend: str, lifecycle_test_audit:
     environment = deterministic_environment()
     environment.update({"CARGO_HOME": str(work / "cargo"), "TMPDIR": str(work / "tmp"),
                         arch["linker_variable"]: arch["linker"]})
-    skipped = ["x86 source seal and installed receipt validation", "x86 CRT entry and relocation audits",
-               "x86 libc member classification and symbol contract", "x86 allocator lifecycle and hidden-symbol audit",
-               "x86 dynamic CRT products"]
-    for item in skipped:
-        print("aarch64: skipped " + item, file=sys.stderr)
     with tempfile.TemporaryDirectory(prefix="owned-static-build-", dir=work) as temporary:
         stage = Path(temporary)
         cargo_dir = stage / "cargo"
@@ -1564,26 +1561,29 @@ def build_aarch64(output: Path, *, allocator_backend: str, lifecycle_test_audit:
         builtins = stage / "builtins/libcrabc-builtins.a"
         builtins.parent.mkdir()
         run([sys.executable, str(ROOT / "builtins/build.py"), "--output", str(builtins), "--llvm-ar", str(tools / "llvm-ar"), "--llvm-nm", str(tools / "llvm-nm"), "--llvm-readelf", "/usr/bin/readelf", "--ld-lld", "/usr/bin/mold", "--verify-reproducible"], environment=environment)
-        allocator, _ = compile_c_allocator(stage / "c-allocator", c_allocator_target_flags(), profile="release", architecture="aarch64")
+        allocator, allocator_record = compile_c_allocator(stage / "c-allocator", c_allocator_target_flags(), profile="release", architecture="aarch64")
         require_reviewed_hidden_list(allocator, architecture="aarch64")
         validate_crt_profile(crt, hardening_profile)
         raw = cargo_dir / target / "release/libc.a"
         ar = str(tools / "llvm-ar")
-        members = run([ar, "t", str(raw)], environment=environment).decode().splitlines()
-        selected, excluded = classify_libc_members(members, architecture="aarch64")
         lifecycle = owned_mimalloc_lifecycle_profile(c_allocator_target_flags(), cargo, allocator, raw,
                     llvm_nm=str(tools / "llvm-nm"), llvm_objdump=str(tools / "llvm-objdump"))
-        object_dir = stage / "objects"
-        object_dir.mkdir()
-        run([ar, "x", str(raw), *selected], cwd=object_dir, environment=environment)
         installed = stage / "installed"
         library = installed / "usr/lib"
         library.mkdir(parents=True)
-        run([ar, "rcsD", str(library / "libc.a"), *(str(object_dir / name) for name in selected), str(allocator)], environment=environment)
-        missing = sorted(REQUIRED_LIBC_SYMBOLS - archive_defined_symbols(str(tools / "llvm-nm"), library / "libc.a"))
-        if missing:
-            raise BuildError(f"reconstructed libc archive lacks selected runtime symbols: {missing}")
-        for name in ("crt1.o", "rcrt1.o", "crti.o", "crtn.o"):
+        objcopy = executable_identity(tools / "llvm-objcopy", "pinned Rust target llvm-objcopy", within=rust_sysroot)
+        libc_provenance = rebuild_libc_archive(
+            raw, library / "libc.a", llvm_ar=ar, llvm_nm=str(tools / "llvm-nm"),
+            allocator_object=allocator, llvm_objcopy=str(objcopy["path"]),
+            stock_runtime_libdir=rust_sysroot / "lib/rustlib" / target / "lib", architecture="aarch64")
+        libc_provenance["rust_runtime_duplicate_binding_tool"] = objcopy
+        libc_provenance["allocator_backend"] = {**allocator_record,
+            "target_flags": [flag.replace(str(ROOT), "$CRABC_SOURCE") for flag in c_allocator_target_flags()],
+            "lifecycle_profile": lifecycle}
+        libc_provenance["allocator_lifecycle_test_audit"] = lifecycle_test_audit
+        libc_provenance["dependency_graph"] = allocator_dependency_graph(
+            cargo[:4], "x86-owned-static-runtime", allocator_backend, environment, target=target)
+        for name in ("crt1.o", "rcrt1.o", "Scrt1.o", "crti.o", "crtn.o"):
             copy_artifact(crt / name, library / name)
         copy_artifact(builtins, library / builtins.name)
         header_provenance = install_header_tree(installed / "usr/include")
@@ -1591,16 +1591,38 @@ def build_aarch64(output: Path, *, allocator_backend: str, lifecycle_test_audit:
         install_static_driver(installed / "bin/crabc-cc")
         copy_artifact(crt / "objects.json", installed / "share/crabc/crt.provenance.json")
         copy_artifact(crt / "commands.json", installed / "share/crabc/crt.commands.json")
-        manifest_path = installed / "share/crabc/manifest.json"
+        metadata = installed / "share/crabc"
+        copy_artifact(builtins.with_suffix(".a.provenance.json"), metadata / "libcrabc-builtins.provenance.json")
+        write_json(metadata / "libc-static.provenance.json", libc_provenance)
+        producer_tools = resolve_pinned_producer_tools("aarch64")
+        normalized_cargo = [arg.replace(str(stage), "$CRABC_X86_BUILD").replace(str(ROOT), "$CRABC_SOURCE") for arg in cargo]
+        commands = build_commands_record(normalized_cargo, producer_tools, hardening_profile=hardening_profile)
+        commands["target"] = target
+        commands["commands"]["crt"].extend(["--architecture", "aarch64"])
+        write_json(metadata / "build.commands.json", commands)
+        manifest_path = metadata / "manifest.json"
         files = regular_file_hashes(installed)
         if source_seal.product_source_digest(ROOT) != source_before_build:
             raise BuildError("aarch64 static product source changed during build")
-        manifest = {"schema": 1, "format": "crabc-aarch64-owned-static-sysroot-v1", "target": target,
-                    "source_sha256": source_before_build,
-                    "toolchain": PINNED_TOOLCHAIN, "build_profile": profile,
-                    "hardening_profile": hardening_profile.value, "symlinks": {},
-                    "files": files, "skipped": skipped}
+        manifest = installed_manifest(files, producer_tools, allocator_backend=allocator_backend,
+                                      source_sha256=source_before_build, lifecycle_test_audit=lifecycle_test_audit,
+                                      hardening_profile=hardening_profile)
+        manifest["format"] = "crabc-aarch64-owned-static-sysroot-v1"
+        manifest["target"] = target
+        manifest["build_profile"] = profile
+        manifest["package"]["format"] = "crabc-aarch64-owned-static-sysroot-package/v1"
+        manifest["sealed_static_driver"]["format"] = "crabc-aarch64-sealed-static-driver-v1"
         write_json(manifest_path, manifest)
+        from compat.x86_64 import crabc_cc_static as static_driver
+        try:
+            expected = static_driver.static_product_payload_files(manifest, architecture="aarch64")
+            observed, links, other = static_driver.installed_tree(installed)
+            observed.pop("share/crabc/manifest.json", None)
+            if observed != expected or links or other:
+                raise static_driver.DriverError("installed static product roster differs")
+            static_driver.validate_crt_provenance(installed, "share/crabc/crt.provenance.json", hardening_profile)
+        except static_driver.DriverError as error:
+            raise BuildError(str(error)) from error
         remove_owned_output(output, format_name=manifest["format"], target=target)
         installed.replace(output)
         return manifest

@@ -737,28 +737,6 @@ def _read_product(root: Path, mode: str) -> tuple[Path, dict[str, str]]:
     import owned_posix_product_evidence as product  # pylint: disable=import-outside-toplevel
 
     root = physical_directory(root, f"owned {mode} product root")
-    if ARCH == "aarch64":
-        import crabc_cc_static as static_driver
-        import crabc_cc_owned_dynamic as dynamic_driver
-        try:
-            manifest = root / "share/crabc/manifest.json"
-            if mode == "dynamic":
-                record = dynamic_driver.validate(root)
-                files = record["files"]
-            else:
-                record = static_driver.load_manifest(manifest, "static product manifest")
-                if (record.get("schema"), record.get("format"), record.get("target")) != (
-                    1, "crabc-aarch64-owned-static-sysroot-v1", TARGET
-                ):
-                    raise static_driver.DriverError("wrong aarch64 static product identity")
-                files = static_driver.payload_hashes(record.get("files"), "aarch64 static manifest")
-                observed, links, other = static_driver.installed_tree(root)
-                observed.pop("share/crabc/manifest.json", None)
-                if observed != files or links or other:
-                    raise static_driver.DriverError("aarch64 static payload differs from manifest")
-            return manifest, files
-        except (static_driver.DriverError, KeyError) as error:
-            raise LinkError(f"invalid owned {mode} product: {error}") from error
     try:
         if mode == "static":
             return product._validate_static_product(root)

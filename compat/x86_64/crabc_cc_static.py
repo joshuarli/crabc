@@ -302,14 +302,16 @@ def profile_from_manifest(manifest: dict) -> NativeRuntimeProfile:
         raise DriverError("owned manifest has an invalid native runtime profile") from error
 
 
-def static_product_payload_files(manifest: dict) -> dict[str, str]:
+def static_product_payload_files(manifest: dict, *, architecture: str = "x86_64") -> dict[str, str]:
     """Validate one static product manifest record and return its payload.
 
     The installed driver can verify seal syntax and installed bytes; source
     identity is checked while the product is built and qualified.
     """
 
-    if manifest.get("format") != SYSROOT_FORMAT or manifest.get("target") != TARGET:
+    product_format = "crabc-aarch64-owned-static-sysroot-v1" if architecture == "aarch64" else SYSROOT_FORMAT
+    target = "aarch64-unknown-linux-musl" if architecture == "aarch64" else TARGET
+    if manifest.get("format") != product_format or manifest.get("target") != target:
         raise DriverError("owned manifest does not identify this x86 static sysroot")
     profile = profile_from_manifest(manifest)
     source_sha256 = manifest.get("source_sha256")
@@ -320,7 +322,8 @@ def static_product_payload_files(manifest: dict) -> dict[str, str]:
     driver = manifest.get("sealed_static_driver")
     if not isinstance(installed, dict) or installed.get("sealed_static_driver") != "bin/crabc-cc":
         raise DriverError("owned manifest does not bind the sealed static driver")
-    if not isinstance(driver, dict) or driver.get("format") != DRIVER_FORMAT:
+    driver_format = "crabc-aarch64-sealed-static-driver-v1" if architecture == "aarch64" else DRIVER_FORMAT
+    if not isinstance(driver, dict) or driver.get("format") != driver_format:
         raise DriverError("owned manifest sealed static driver record drifted")
     if driver.get("status") != "planned-owned-static-product-seed-not-family-completion-not-public-support":
         raise DriverError("owned manifest sealed static driver status drifted")
@@ -354,12 +357,15 @@ def combined_manifest_payload(root: Path, manifest: dict, *, architecture: str =
     files = payload_hashes(manifest.get("files"), "combined manifest")
     links = manifest.get("symlinks")
     products = manifest.get("products")
-    expected_aliases = {} if architecture == "aarch64" else profile.aliases
+    expected_aliases = profile.aliases_for_architecture(architecture)
     if links != expected_aliases or not isinstance(products, dict) or not isinstance(products.get("static"), dict):
         raise DriverError("owned combined manifest has no alias or product record")
     for link, target in links.items():
-        if (not isinstance(link, str) or not isinstance(target, str) or "/" in target
-                or target in {"", ".", ".."} or (Path(link).parent / target).as_posix() not in files):
+        if (not isinstance(link, str) or not isinstance(target, str)
+                or (architecture == "x86_64" and "/" in target)
+                or target in {"", ".", ".."} or os.path.isabs(target)
+                or os.path.normpath(str(Path(link).parent / target)).startswith("../")
+                or os.path.normpath(str(Path(link).parent / target)) not in files):
             raise DriverError(f"owned combined manifest has an unsafe alias: {link}")
     product = products["static"]
     placements = product.get("placements")
@@ -371,22 +377,19 @@ def combined_manifest_payload(root: Path, manifest: dict, *, architecture: str =
     dynamic_manifest = load_manifest(root / "share/crabc/dynamic/manifest.json", "embedded dynamic manifest")
     if profile_from_manifest(static_manifest) is not profile or profile_from_manifest(dynamic_manifest) is not profile:
         raise DriverError("owned combined product profiles differ")
+    embedded = static_product_payload_files(static_manifest, architecture=architecture)
     if architecture == "aarch64":
-        if (static_manifest.get("schema"), static_manifest.get("format"), static_manifest.get("target"),
-                static_manifest.get("build_profile"), static_manifest.get("symlinks")) != (1, static_format, target, "release", {}):
-            raise DriverError("owned combined arm64 static product identity differs")
-        if (dynamic_manifest.get("format"), dynamic_manifest.get("target"), dynamic_manifest.get("build_profile"),
-                dynamic_manifest.get("source_sha256")) != ("crabc-aarch64-owned-dynamic-sysroot-v1", target, "release", static_manifest.get("source_sha256")):
-            raise DriverError("owned combined arm64 product source or identity differs")
-        source = static_manifest.get("source_sha256")
-        if (not isinstance(source, str) or re.fullmatch(r"[0-9a-f]{64}", source) is None
-                or dynamic_manifest.get("schema") != 1 or dynamic_manifest.get("symlinks") != {}
-                or static_manifest.get("toolchain") != manifest.get("toolchain")
-                or dynamic_manifest.get("toolchain") != manifest.get("toolchain")):
-            raise DriverError("owned combined arm64 source or toolchain differs")
-        embedded = payload_hashes(static_manifest.get("files"), "arm64 embedded static product")
-    else:
-        embedded = static_product_payload_files(static_manifest)
+        dynamic = products.get("dynamic")
+        dynamic_placements = dynamic.get("placements") if isinstance(dynamic, dict) else None
+        state_path = dynamic_placements.get("share/crabc/dynamic-product-state.json") if isinstance(dynamic_placements, dict) else None
+        if not isinstance(state_path, str) or state_path not in files:
+            raise DriverError("owned combined dynamic state is missing")
+        state = load_manifest(root / state_path, "embedded dynamic state")
+        if (state.get("schema") != "crabc.x86_64-owned-dynamic-materialization/v1"
+                or state.get("source_sha256") != static_manifest.get("source_sha256")
+                or state.get("allocator_backend") != static_manifest.get("allocator_backend")
+                or state.get("allocator_lifecycle_test_audit") != static_manifest.get("allocator_lifecycle_test_audit")):
+            raise DriverError("owned combined product state differs")
     for relative, expected_hash in embedded.items():
         if relative not in placements:
             raise DriverError(f"owned combined sysroot does not place static payload: {relative}")
@@ -1241,7 +1244,7 @@ def execute_aarch64(root: Path, arguments: Sequence[str], manifest: dict) -> Non
             raise DriverError("combined arm64 CRT provenance is missing")
         validate_crt_provenance(root, placement, profile_from_manifest(manifest))
     else:
-        expected, expected_links = payload_hashes(manifest.get("files"), "aarch64 static manifest"), {}
+        expected, expected_links = static_product_payload_files(manifest, architecture="aarch64"), {}
     observed, links, other = installed_tree(root)
     observed.pop(MANIFEST_RELATIVE_PATH, None)
     if observed != expected or links != expected_links or other:

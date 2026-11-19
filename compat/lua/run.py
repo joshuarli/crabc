@@ -1241,18 +1241,15 @@ def owned_static_sysroot(path: Path) -> tuple[Path, Path, dict[str, Path], dict[
         manifest.get("schema"), manifest.get("format"), manifest.get("target")
     ) != (1, static_format, ARCHITECTURE["target_triple"]):
         raise RunnerError("manifest does not identify the owned x86 static sysroot")
-    if ARCH == "x86_64":
-        installed = manifest.get("installed")
-        driver = manifest.get("sealed_static_driver")
-        if not isinstance(installed, dict) or not isinstance(driver, dict):
-            raise RunnerError("owned x86 static sysroot manifest lacks installed-driver records")
-        if installed.get("sealed_static_driver") != "bin/crabc-cc" or driver.get("path") != "bin/crabc-cc":
-            raise RunnerError("owned x86 static sysroot manifest does not bind crabc-cc")
-        if driver.get("format") != driver_format:
-            raise RunnerError("owned x86 static sysroot driver format drifted")
-        files = installed.get("files")
-    else:
-        files = manifest.get("files")
+    installed = manifest.get("installed")
+    driver = manifest.get("sealed_static_driver")
+    if not isinstance(installed, dict) or not isinstance(driver, dict):
+        raise RunnerError("owned x86 static sysroot manifest lacks installed-driver records")
+    if installed.get("sealed_static_driver") != "bin/crabc-cc" or driver.get("path") != "bin/crabc-cc":
+        raise RunnerError("owned x86 static sysroot manifest does not bind crabc-cc")
+    if driver.get("format") != driver_format:
+        raise RunnerError("owned x86 static sysroot driver format drifted")
+    files = installed.get("files")
     if not isinstance(files, dict) or not files:
         raise RunnerError("owned x86 static sysroot manifest lacks payload hashes")
     expected_files: dict[str, str] = {}

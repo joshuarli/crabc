@@ -27,7 +27,7 @@ EXECUTABLE_PAYLOADS = frozenset({
 })
 
 
-ALIASES = {} if qualification.ARCH["arch"] == "aarch64" else driver.ALIASES
+ALIASES = driver.shared.NativeRuntimeProfile.COMPATIBILITY.aliases_for_architecture(qualification.ARCH["arch"])
 
 
 def package(root: Path, output: Path) -> None:

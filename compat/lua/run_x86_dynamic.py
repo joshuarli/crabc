@@ -37,6 +37,7 @@ sys.path.insert(0, str(ROOT / "compat/x86_64"))
 import owned_posix_product_evidence as product_evidence
 import owned_dynamic_receipt as receipt_contract
 from native_arch import native_arch
+from native_runtime_profile import NativeRuntimeProfile
 
 FIXTURES = LUA.FIXTURES
 MANIFEST = LUA.MANIFEST
@@ -90,7 +91,7 @@ def owned_dynamic_sysroot(path: Path) -> tuple[Path, Path, dict[str, Path], dict
         manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as error:
         raise LUA.RunnerError(f"invalid owned x86 dynamic sysroot manifest: {manifest_path}") from error
-    aliases = {_SHELL_COMPAT_ALIAS: f"ld-crabc-{ARCH}.so.1"} if ARCH == "x86_64" else {}
+    aliases = NativeRuntimeProfile.COMPATIBILITY.aliases_for_architecture(ARCH)
     if not isinstance(manifest, dict) or (
         manifest.get("schema"),
         manifest.get("format"),
@@ -1080,7 +1081,7 @@ def prepare_candidate_execution_root(
     source_root_entry = _entry_record(source_root, "candidate execution product root")
     expected_product = _tree_entries(source_root, "candidate execution product")
     alias = expected_product.get(_SHELL_COMPAT_ALIAS)
-    if alias != ({"type": "symlink", "target": f"ld-crabc-{ARCH}.so.1"} if ARCH == "x86_64" else None):
+    if alias != {"type": "symlink", "target": f"ld-crabc-{ARCH}.so.1"}:
         raise LUA.RunnerError("candidate execution product lacks the canonical shell compatibility alias")
     for relative in ("bin/sh", "application", "application/bin", "application/lib", "work"):
         if relative in expected_product:
@@ -1103,7 +1104,7 @@ def prepare_candidate_execution_root(
             raise LUA.RunnerError(f"candidate execution runtime copy drifted: {name}")
 
     alias_path = root / _SHELL_COMPAT_ALIAS
-    if ARCH == "x86_64" and (not alias_path.is_symlink() or os.readlink(alias_path) != f"ld-crabc-{ARCH}.so.1"):
+    if not alias_path.is_symlink() or os.readlink(alias_path) != f"ld-crabc-{ARCH}.so.1":
         raise LUA.RunnerError("candidate execution root did not preserve its initial shell compatibility alias")
     closure_loader = shell_loader_closure.get("qualified_loader")
     closure_command = shell_loader_closure.get("command")
@@ -1116,8 +1117,7 @@ def prepare_candidate_execution_root(
         or closure_command.get("status") != 0
     ):
         raise LUA.RunnerError("candidate execution root lacks the sealed external shell loader closure")
-    if ARCH == "x86_64":
-        alias_path.unlink()
+    alias_path.unlink()
     shell_loader_record = _copy_regular(shell_loader, alias_path, "qualified musl shell loader fixture")
     shell_record = _copy_regular(shell, root / "bin/sh", "external shell fixture")
 

@@ -85,7 +85,12 @@ class CombinedSysrootCompositionTests(unittest.TestCase):
         (self.dynamic / "lib/ld-crabc-x86_64.so.1").unlink()
         loader.write_bytes((self.dynamic / "usr/lib/libc.so").read_bytes())
         loader.chmod(0o755)
-        (self.dynamic / "share/crabc/dynamic-product-state.json").unlink()
+        (self.dynamic / "lib/ld-musl-aarch64.so.1").symlink_to("ld-crabc-aarch64.so.1")
+        (self.dynamic / "lib/libc.musl-aarch64.so.1").symlink_to("../usr/lib/libc.so")
+        state_path = self.dynamic / "share/crabc/dynamic-product-state.json"
+        state = json.loads(state_path.read_text())
+        state.update(allocator_backend="accepted-c", allocator_lifecycle_test_audit=False)
+        state_path.write_text(json.dumps(state))
         formats = {"static": "crabc-aarch64-owned-static-sysroot-v1",
                    "dynamic": "crabc-aarch64-owned-dynamic-sysroot-v1"}
         for name, root in (("static", self.static), ("dynamic", self.dynamic)):
@@ -93,9 +98,17 @@ class CombinedSysrootCompositionTests(unittest.TestCase):
             manifest = json.loads(manifest_path.read_text())
             files = {path: value[0] for path, value in combined.tree(root)[0].items()
                      if path != "share/crabc/manifest.json"}
-            manifest.update(format=formats[name], target="aarch64-unknown-linux-musl", files=files,
-                            source_sha256=self.source_sha256, build_profile="release", symlinks={})
-            manifest.pop("installed", None)
+            manifest.update(format=formats[name], target="aarch64-unknown-linux-musl", build_profile="release")
+            if name == "static":
+                manifest["installed"] = {"files": files, "sealed_static_driver": "bin/crabc-cc"}
+                manifest["sealed_static_driver"] = {"format": "crabc-aarch64-sealed-static-driver-v1",
+                    "path": "bin/crabc-cc", "status": "planned-owned-static-product-seed-not-family-completion-not-public-support",
+                    "modes": combined.NativeRuntimeProfile.COMPATIBILITY.static_modes}
+                manifest["allocator_backend"] = "accepted-c"
+                manifest["allocator_lifecycle_test_audit"] = False
+            else:
+                manifest["files"] = files
+                manifest["symlinks"] = combined.NativeRuntimeProfile.COMPATIBILITY.aliases_for_architecture("aarch64")
             manifest_path.write_text(json.dumps(manifest))
         with mock.patch.object(combined, "ARCH", {"arch": "aarch64"}), \
                 mock.patch.object(combined, "FORMAT", "crabc-aarch64-owned-sysroot-v1"), \
@@ -108,12 +121,12 @@ class CombinedSysrootCompositionTests(unittest.TestCase):
             import crabc_cc_static
             files, links = crabc_cc_static.combined_manifest_payload(output, record, architecture="aarch64")
             self.assertEqual(files, record["files"])
-            self.assertEqual(links, {})
-            dynamic_manifest = output / "share/crabc/dynamic/manifest.json"
-            changed = json.loads(dynamic_manifest.read_text())
+            self.assertEqual(links, combined.NativeRuntimeProfile.COMPATIBILITY.aliases_for_architecture("aarch64"))
+            state = output / record["products"]["dynamic"]["placements"]["share/crabc/dynamic-product-state.json"]
+            changed = json.loads(state.read_text())
             changed["source_sha256"] = "f" * 64
-            dynamic_manifest.write_text(json.dumps(changed))
-            with self.assertRaisesRegex(crabc_cc_static.DriverError, "source or identity differs"):
+            state.write_text(json.dumps(changed))
+            with self.assertRaisesRegex(crabc_cc_static.DriverError, "product state differs"):
                 crabc_cc_static.combined_manifest_payload(output, record, architecture="aarch64")
 
     def test_one_tree_owns_every_mode_input_once(self):

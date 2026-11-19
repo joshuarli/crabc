@@ -183,11 +183,12 @@ def link_evidence_workspace(parent: Path, *, retain: bool):
 
 
 def validate_loader_provenance(root: Path, receipt_path: str, profile: shared.NativeRuntimeProfile,
-                               build_profile: str) -> None:
+                               build_profile: str, *, architecture: str = "x86_64") -> None:
     receipt = shared.load_manifest(root / receipt_path, "loader provenance")
     artifact = receipt.get("artifact")
-    if (not isinstance(artifact, dict) or artifact.get("path") != profile.interpreter.lstrip("/")
-            or artifact.get("sha256") != shared.sha256_file(root / profile.interpreter.lstrip("/"))):
+    interpreter = profile.interpreter if architecture == "x86_64" else ("/lib/ld-crabc-aarch64-hardened.so.1" if profile is shared.NativeRuntimeProfile.HARDENED else "/lib/ld-crabc-aarch64.so.1")
+    if (not isinstance(artifact, dict) or artifact.get("path") != interpreter.lstrip("/")
+            or artifact.get("sha256") != shared.sha256_file(root / interpreter.lstrip("/"))):
         raise shared.DriverError("installed loader does not match its provenance")
     if build_profile == "debug" and receipt.get("build_profile") == "debug":
         arguments = receipt.get("compiler_command")
@@ -218,13 +219,16 @@ def validate(root: Path) -> dict:
         raise shared.DriverError(f"invalid dynamic manifest: {error}") from error
     profile = shared.profile_from_manifest(record)
     arm = record.get("format") == "crabc-aarch64-owned-dynamic-sysroot-v1"
-    aliases_expected = {} if arm else profile.aliases
+    aliases_expected = profile.aliases_for_architecture("aarch64") if arm else profile.aliases
     if arm:
         required = {"usr/lib/libc.so", "usr/lib/crt1.o", "usr/lib/Scrt1.o", "usr/lib/crti.o", "usr/lib/crtn.o",
                     "usr/lib/" + COMPILER_HELPER_ARCHIVE,
                     ("lib/ld-crabc-aarch64-hardened.so.1" if profile is shared.NativeRuntimeProfile.HARDENED else "lib/ld-crabc-aarch64.so.1"), "bin/crabc-cc-dynamic",
                     "share/crabc/crabc_cc_static.py", "share/crabc/native_runtime_profile.py",
-                    "share/crabc/crt.provenance.json", "share/crabc/crt.commands.json"}
+                    "share/crabc/crt.provenance.json", "share/crabc/crt.commands.json",
+                    "usr/lib/crabc-dynamic-attach.o", "share/crabc/producer-tools.json",
+                    "share/crabc/loader.provenance.json", "share/crabc/owned_dynamic_receipt.py",
+                    "share/crabc/owned_dynamic_elf.py"}
     else:
         required = (REQUIRED - {INTERPRETER.lstrip("/")}) | {profile.interpreter.lstrip("/")}
     target = "aarch64-unknown-linux-musl" if arm else shared.TARGET
@@ -268,8 +272,8 @@ def validate(root: Path) -> dict:
                 raise shared.DriverError(f"installed aarch64 ELF differs: {name}")
         if not os.path.samefile(root / "usr/lib/libc.so", root / ("lib/ld-crabc-aarch64-hardened.so.1" if profile is shared.NativeRuntimeProfile.HARDENED else "lib/ld-crabc-aarch64.so.1")):
             raise shared.DriverError("installed loader is not the merged libc")
-    else:
-        validate_loader_provenance(root, "share/crabc/loader.provenance.json", profile, record.get("build_profile"))
+    validate_loader_provenance(root, "share/crabc/loader.provenance.json", profile, record.get("build_profile"),
+                               architecture="aarch64" if arm else "x86_64")
     return record
 
 

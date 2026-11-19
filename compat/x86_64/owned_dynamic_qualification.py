@@ -236,17 +236,19 @@ def _materialization_product(product: Path) -> tuple[dict, dict | None, dict | N
             record = combined.validate(product)
         except combined.CompositionError as error:
             raise QualificationError(f"installed combined product invalid: {error}") from error
-        return read(product / record["products"]["dynamic"]["manifest"]), None, None
-    try:
-        manifest = driver.validate_installation(product)
-    except driver.shared.DriverError as error:
-        raise QualificationError(f"installed product invalid: {error}") from error
-    if manifest.get("format") == "crabc-aarch64-owned-dynamic-sysroot-v1":
-        return manifest, None, None
-    if manifest.get("format") == driver.COMBINED_FORMAT:
-        manifest = read(product / driver.COMBINED_PRODUCT_MANIFEST)
-    state = read(product / "share/crabc/dynamic-product-state.json")
-    provenance = read(product / "share/crabc/libc-shared.provenance.json")
+        placements = record["products"]["dynamic"]["placements"]
+        manifest = read(product / record["products"]["dynamic"]["manifest"])
+        state = read(product / placements["share/crabc/dynamic-product-state.json"])
+        provenance = read(product / placements["share/crabc/libc-shared.provenance.json"])
+    else:
+        try:
+            manifest = driver.validate_installation(product)
+        except driver.shared.DriverError as error:
+            raise QualificationError(f"installed product invalid: {error}") from error
+        if manifest.get("format") == driver.COMBINED_FORMAT:
+            manifest = read(product / driver.COMBINED_PRODUCT_MANIFEST)
+        state = read(product / "share/crabc/dynamic-product-state.json")
+        provenance = read(product / "share/crabc/libc-shared.provenance.json")
     require(set(state) == MATERIALIZATION_STATE_FIELDS, "materialization fields drifted")
     require(state.get("schema") == "crabc.x86_64-owned-dynamic-materialization/v1", "wrong materialization schema")
     require(state.get("payload_files") == {name: value for name, value in manifest["files"].items()
@@ -257,9 +259,6 @@ def _materialization_product(product: Path) -> tuple[dict, dict | None, dict | N
 
 def _product_identity_from_state(product: Path, manifest: dict, state: dict | None, provenance: dict | None,
                                  source_identity: str) -> str:
-    if manifest.get("format") == "crabc-aarch64-owned-dynamic-sysroot-v1":
-        require(manifest.get("source_sha256") == source_identity, "installed product source is stale")
-        return digest(product / "share/crabc/manifest.json")
     require(state is not None and provenance is not None, "materialization evidence is missing")
     require(state.get("source_sha256") == source_identity, "installed product source is stale")
     require(state.get("contracts") == contract_digests(), "installed product contracts are stale")

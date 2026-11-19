@@ -249,11 +249,12 @@ class OwnedDynamicQualificationTests(unittest.TestCase):
                 REAL_SOURCE_BOUND_PRODUCT_IDENTITY(product, self.source)
 
     def test_aarch64_product_identity_rejects_stale_source(self):
-        product = self.work / "installed"
-        manifest = {"format": "crabc-aarch64-owned-dynamic-sysroot-v1", "source_sha256": self.source}
+        product, manifest_path, manifest, validate = self.materialized_product("arm-product-identity")
+        manifest["format"] = "crabc-aarch64-owned-dynamic-sysroot-v1"
+        manifest_path.write_text(json.dumps(manifest))
         with mock.patch.object(driver, "validate_installation", return_value=manifest):
             self.assertEqual(REAL_SOURCE_BOUND_PRODUCT_IDENTITY(product, self.source),
-                             qualification.digest(product / "share/crabc/manifest.json"))
+                             qualification.digest(manifest_path))
             with self.assertRaisesRegex(qualification.QualificationError, "installed product source is stale"):
                 REAL_SOURCE_BOUND_PRODUCT_IDENTITY(product, "d" * 64)
 

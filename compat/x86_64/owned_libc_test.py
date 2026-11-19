@@ -28,6 +28,7 @@ import owned_dynamic_receipt as receipt_contract
 import owned_posix_product_evidence as product_evidence
 import installed_compiler_translation as translation_contract
 from native_arch import native_arch
+from native_runtime_profile import NativeRuntimeProfile
 
 sys.dont_write_bytecode = True
 
@@ -457,7 +458,13 @@ def validate_product(product: Path) -> dict[str, Any]:
         fail("supplied dynamic product manifest identity drifted")
     files = manifest.get("files")
     aliases = manifest.get("symlinks", {})
-    expected_aliases = {MUSL_INTERPRETER.lstrip("/"): Path(CANONICAL_INTERPRETER).name} if ARCH == "x86_64" else {}
+    if ARCH == "x86_64":
+        expected_aliases = {MUSL_INTERPRETER.lstrip("/"): Path(CANONICAL_INTERPRETER).name}
+    else:
+        try:
+            expected_aliases = NativeRuntimeProfile(manifest["hardening_profile"]).aliases_for_architecture(ARCH)
+        except (KeyError, ValueError, TypeError) as error:
+            raise EvidenceError("supplied dynamic product profile drifted") from error
     if not isinstance(files, dict) or aliases != expected_aliases:
         fail("supplied dynamic product manifest roster drifted")
     required = {
@@ -465,8 +472,7 @@ def validate_product(product: Path) -> dict[str, Any]:
         "usr/lib/crt1.o", "usr/lib/Scrt1.o", "usr/lib/crti.o", "usr/lib/crtn.o",
         "usr/lib/libcrabc-builtins.a", CANONICAL_INTERPRETER.lstrip("/"),
     }
-    if ARCH == "x86_64":
-        required.add("usr/lib/crabc-dynamic-attach.o")
+    required.add("usr/lib/crabc-dynamic-attach.o")
     if not required <= set(files):
         fail("supplied dynamic product omits required payload")
     observed_files: set[str] = set()

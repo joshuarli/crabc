@@ -302,8 +302,7 @@ def require_current_supplied_products(
         manifest = reader(root)[3]
         if reader is DYNAMIC.owned_dynamic_sysroot:
             QUALIFICATION.product_identity(root)
-            if LUA.ARCH == "x86_64":
-                manifest = {**manifest, **QUALIFICATION.read(root / "share/crabc/dynamic-product-state.json")}
+            manifest = {**manifest, **QUALIFICATION.read(root / "share/crabc/dynamic-product-state.json")}
         require(manifest.get("source_sha256") == source["source_sha256"],
                 "Lua qualification product uses different source")
         require(manifest.get("build_profile", "release") == "release",
@@ -312,9 +311,7 @@ def require_current_supplied_products(
             expected_format = ("crabc-aarch64-owned-dynamic-sysroot-v1" if reader is DYNAMIC.owned_dynamic_sysroot
                                else "crabc-aarch64-owned-static-sysroot-v1")
             require(manifest.get("format") == expected_format, "Lua qualification product architecture differs")
-            backends.add("accepted-c")
-        else:
-            backends.add(manifest.get("allocator_backend"))
+        backends.add(manifest.get("allocator_backend"))
     require(len(backends) == 1 and backends <= {"accepted-c", "native-shadow"},
             "Lua qualification products use different or invalid allocator backends")
 

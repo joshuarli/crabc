@@ -134,11 +134,6 @@ def require_matching_source_seals(static_manifest: dict, dynamic_manifest: dict,
     require(isinstance(static_source, str) and len(static_source) == 64
             and all(character in "0123456789abcdef" for character in static_source),
             "static product source seal is missing or invalid")
-    if ARCH["arch"] == "aarch64":
-        require(static_manifest.get("build_profile") == "release" and dynamic_manifest.get("build_profile") == "release",
-                "arm64 product profiles differ")
-        require(dynamic_manifest.get("source_sha256") == static_source, "static and dynamic product source seals differ")
-        return
     try:
         dynamic_state = json.loads(dynamic_state_payload)
     except (ValueError, UnicodeDecodeError) as error:
@@ -195,12 +190,10 @@ def plan(products: Mapping[str, Path]) -> dict:
     require(tuple(products) == PRODUCTS, "composition requires the static and dynamic products")
     trees = {name: tree(root) for name, root in products.items()}
     manifests = {name: product_manifest(root, name) for name, root in products.items()}
-    dynamic_state = b""
-    if ARCH["arch"] != "aarch64":
-        try:
-            dynamic_state = (products["dynamic"] / DYNAMIC_STATE).read_bytes()
-        except OSError as error:
-            raise CompositionError("dynamic product state is missing") from error
+    try:
+        dynamic_state = (products["dynamic"] / DYNAMIC_STATE).read_bytes()
+    except OSError as error:
+        raise CompositionError("dynamic product state is missing") from error
     require_matching_source_seals(manifests["static"], manifests["dynamic"], dynamic_state)
     toolchains = {record.get("toolchain") for record in manifests.values()}
     require(len(toolchains) == 1 and isinstance(next(iter(toolchains)), str),
@@ -343,7 +336,7 @@ def validate_component_claims(record: dict, embedded_payloads: Mapping[str, byte
                 f"combined package {name} manifest identity differs")
         manifests[name] = embedded
         installed = embedded.get("installed")
-        if name == "static" and ARCH["arch"] != "aarch64":
+        if name == "static":
             component_files = installed.get("files") if isinstance(installed, dict) else None
         else:
             component_files = embedded.get("files")
@@ -352,9 +345,8 @@ def validate_component_claims(record: dict, embedded_payloads: Mapping[str, byte
                         for path, digest in component_files.items()),
                 f"combined package {name} file roster differs")
         if name == "dynamic":
-            if ARCH["arch"] != "aarch64":
-                require(DYNAMIC_STATE in component_files,
-                        "dynamic product manifest omits its source-bound state")
+            require(DYNAMIC_STATE in component_files,
+                    "dynamic product manifest omits its source-bound state")
             require(embedded.get("symlinks") == record["symlinks"],
                     "combined package aliases differ from dynamic component")
         placements = component["placements"]
@@ -373,7 +365,7 @@ def validate_component_claims(record: dict, embedded_payloads: Mapping[str, byte
                     f"combined package {name} placement conflicts: {origin}")
             claims[destination] = digest
     require(claims == record["files"], "unclaimed package payload")
-    state_payload = b"" if ARCH["arch"] == "aarch64" else embedded_payloads.get(dynamic_state_destination(record))
+    state_payload = embedded_payloads.get(dynamic_state_destination(record))
     require(isinstance(state_payload, bytes), "combined package dynamic product state is missing")
     require_matching_source_seals(manifests["static"], manifests["dynamic"], state_payload)
 
@@ -398,13 +390,13 @@ def validate(root: Path) -> dict:
     require(links == record.get("symlinks"), "installed symlinks differ from the combined manifest")
     for path, target in links.items():
         resolved = PurePosixPath(path).parent / target
-        require("/" not in target and resolved.as_posix() in files, f"symlink escapes the payload: {path}")
+        resolved_name = os.path.normpath(resolved.as_posix())
+        require((ARCH["arch"] != "x86_64" or "/" not in target) and not resolved_name.startswith("../") and not resolved_name.startswith("/") and resolved_name in files, f"symlink escapes the payload: {path}")
     embedded = {f"{METADATA_PREFIX}{name}/manifest.json":
                 (root / f"{METADATA_PREFIX}{name}/manifest.json").read_bytes() for name in PRODUCTS}
-    if ARCH["arch"] != "aarch64":
-        state_destination = dynamic_state_destination(record)
-        embedded[state_destination] = (root / state_destination).read_bytes()
-    else:
+    state_destination = dynamic_state_destination(record)
+    embedded[state_destination] = (root / state_destination).read_bytes()
+    if ARCH["arch"] == "aarch64":
         loader = root / ("lib/ld-crabc-aarch64-hardened.so.1" if record["hardening_profile"] == "hardened" else "lib/ld-crabc-aarch64.so.1")
         require(os.path.samefile(loader, root / "usr/lib/libc.so"), "combined loader is not the merged libc")
     validate_component_claims(record, embedded)
@@ -463,8 +455,10 @@ def read_validated_package(package_path: Path) -> tuple[dict, dict[str, bytes]]:
         require(set(names) == {*record["files"], MANIFEST, *record["symlinks"]},
                 "combined package roster differs from its manifest")
         for path, target in record["symlinks"].items():
-            require(isinstance(target, str) and "/" not in target
-                    and (PurePosixPath(path).parent / target).as_posix() in record["files"],
+            require(isinstance(target, str) and not os.path.isabs(target)
+                    and (ARCH["arch"] != "x86_64" or "/" not in target)
+                    and not os.path.normpath(str(PurePosixPath(path).parent / target)).startswith("../")
+                    and os.path.normpath(str(PurePosixPath(path).parent / target)) in record["files"],
                     "unsafe package alias target")
         payloads: dict[str, bytes] = {}
         for member in members:
