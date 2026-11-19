@@ -71,6 +71,19 @@ class Aarch64DynamicNonPieTest(unittest.TestCase):
             self.assertTrue(objects[0].parent.name.startswith("crabc-dynamic-link."))
 
     @unittest.skipUnless(os.environ.get("CRABC_AARCH64_DYNAMIC_SYSROOT") or CAN_BUILD, "requires a built aarch64 product")
+    def test_link_plan_preserves_runpath_and_export_policy(self):
+        product = Path(os.environ["CRABC_AARCH64_DYNAMIC_SYSROOT"]).resolve(strict=True)
+        driver = product / "bin/crabc-cc-dynamic"
+        plan = json.loads(subprocess.check_output([driver, "-pie", "-rdynamic", "--application-runpath",
+                                                   "/app/lib:$ORIGIN/plugins", "--print-link-plan"], text=True))
+        self.assertEqual(plan["application_runpath"], "/app/lib:$ORIGIN/plugins")
+        self.assertIn("/app/lib:$ORIGIN/plugins", plan["linker"])
+        self.assertIn("--export-dynamic", plan["linker"])
+        result = subprocess.run([driver, "-shared", "-rdynamic", "--print-link-plan"], capture_output=True, text=True)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("-rdynamic", result.stderr)
+
+    @unittest.skipUnless(os.environ.get("CRABC_AARCH64_DYNAMIC_SYSROOT") or CAN_BUILD, "requires a built aarch64 product")
     def test_receipt_reservations_precede_translation_and_preserve_existing_files(self):
         product = Path(os.environ["CRABC_AARCH64_DYNAMIC_SYSROOT"]).resolve(strict=True)
         driver = product / "bin/crabc-cc-dynamic"

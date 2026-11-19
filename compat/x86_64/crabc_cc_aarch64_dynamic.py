@@ -131,6 +131,8 @@ def execute(arguments):
         raise shared.DriverError("hardened dynamic products require eager binding")
     if runtime_imports and (mode != "shared" or binding_mode != "lazy"):
         raise shared.DriverError("runtime imports require a lazy shared object")
+    if mode == "shared" and export_dynamic:
+        raise shared.DriverError("-rdynamic requires an executable")
     invocation = shared.parse_invocation(common)
     if invocation.compile_only and (rpath is not None or (runpath is not None and runpath != "/usr/lib")):
         raise shared.DriverError("compile-only accepts no application RUNPATH")
@@ -143,12 +145,14 @@ def execute(arguments):
     if invocation.link_receipt is not None:
         raise shared.DriverError("dynamic link receipt path is derived from -o")
     if invocation.print_link_plan:
-        if quote_dirs or dsos or transitive_dsos or rounding or export_dynamic or runpath is not None:
+        if dsos or transitive_dsos:
             raise shared.DriverError("link plan accepts no application inputs")
         plan = ["/usr/bin/mold", *(["-shared"] if mode == "shared" else ["-pie"] if mode == "pie" else []), "--hash-style=" + hash_style,
                 "--eh-frame-hdr", "-z", "relro", "-z", binding_mode, "-z", "noexecstack", "-z", "text",
-                *([] if runtime_imports else ["--no-undefined"]), "--allow-shlib-undefined", "--disable-new-dtags" if rpath is not None else "--enable-new-dtags", "-rpath", rpath if rpath is not None else "/usr/lib",
+                *([] if runtime_imports else ["--no-undefined"]), "--allow-shlib-undefined", "--disable-new-dtags" if rpath is not None else "--enable-new-dtags", "-rpath", rpath if rpath is not None else runpath or "/usr/lib",
                 "--exclude-libs=libcrabc-builtins.a"]
+        if export_dynamic:
+            plan.append("--export-dynamic")
         if mode != "shared":
             plan += ["-z", "dynamic-undefined-weak", "--dynamic-linker", interpreter, str(lib / ("Scrt1.o" if mode == "pie" else "crt1.o"))]
         else:
@@ -156,7 +160,7 @@ def execute(arguments):
         plan += [str(lib / "crti.o"), *([str(lib / "crabc-dynamic-attach.o")] if mode == "exec" else []), shared.APPLICATION_OBJECTS, str(lib / "libcrabc-builtins.a"),
                  str(lib / "libc.so"), str(lib / "crtn.o"), "-o", shared.OUTPUT]
         print(json.dumps({"format": "crabc-aarch64-owned-dynamic-sysroot-v1", "mode": mode, "binding": binding_mode,
-                          "runtime_imports": sorted(runtime_imports), "application_runpath": None if rpath is not None else "/usr/lib", "application_rpath": rpath,
+                          "runtime_imports": sorted(runtime_imports), "application_runpath": None if rpath is not None else runpath or "/usr/lib", "application_rpath": rpath,
                           "application_search_kind": "rpath" if rpath is not None else "runpath", "application_hash_style": hash_style, "linker": plan,
                           "campaign_complete": False}, sort_keys=True))
         return
@@ -164,8 +168,6 @@ def execute(arguments):
         raise shared.DriverError("compile-only accepts no link options")
     if transitive_dsos and not dsos:
         raise shared.DriverError("transitive application DSOs require one direct --application-dso")
-    if mode == "shared" and export_dynamic:
-        raise shared.DriverError("-rdynamic requires an executable")
     sources = [shared.require_application_file(root, path, "source") for path in invocation.sources]
     objects_in = [shared.require_x86_64_relocatable_object(root, path, architecture="aarch64") for path in invocation.objects]
     dso_inputs = [shared.require_application_file(root, path, "DSO") for path in dsos]
