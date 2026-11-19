@@ -52,6 +52,14 @@ class OwnedLoaderCorpusEvidenceTests(unittest.TestCase):
         self._make_product()
         self.expected_oracle = {"runtime_sha256": "", "compiler_wrapper_sha256": "a" * 64}
 
+    def test_aarch64_input_evidence_binds_the_pinned_archive_digests(self) -> None:
+        manifest = SimpleNamespace(architecture="aarch64", archive_roster={"package.apk": "a" * 64})
+        identity = {"directory": "/input/apks", "archives": {"package.apk": {"sha256": "a" * 64}}}
+        evidence._validate_corpus_inputs({"verification_before": {"identity": identity}, "after": identity}, manifest)
+        changed = {"directory": "/input/apks", "archives": {"package.apk": {"sha256": "b" * 64}}}
+        with self.assertRaisesRegex(evidence.LoaderCorpusEvidenceError, "differs from frozen manifest"):
+            evidence._validate_corpus_inputs({"verification_before": {"identity": changed}, "after": changed}, manifest)
+
     def _put(self, relative: str, contents: bytes, *, executable: bool = False) -> Path:
         path = self.product / relative
         path.parent.mkdir(parents=True, exist_ok=True)
