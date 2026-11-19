@@ -2784,6 +2784,11 @@ def source_snapshot() -> list[dict[str, str]]:
     ]
 
 
+def require_native_cleanup_host() -> None:
+    require((platform.system(), platform.machine()) == ("Linux", ARCH),
+            f"native Linux/{'x86-64' if ARCH == 'x86_64' else ARCH} required")
+
+
 def run_source_graph_preflight(provider_vendor_root: Path, output: Path | None = None) -> Path:
     """Exercise the generated provider workspace through Cargo without compiling it.
 
@@ -2793,7 +2798,7 @@ def run_source_graph_preflight(provider_vendor_root: Path, output: Path | None =
     linker, leaving the real source-built static round trip as the next judge.
     """
 
-    require((platform.system(), platform.machine()) == ("Linux", "x86_64"), "native Linux/x86-64 required")
+    require_native_cleanup_host()
     resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
     source_before = source_snapshot()
     WORK.mkdir(parents=True, exist_ok=True)
@@ -2873,7 +2878,7 @@ def run_source_graph_preflight(provider_vendor_root: Path, output: Path | None =
 def run_source_built_static(static_root: Path, provider_vendor_root: Path, output: Path | None = None) -> Path:
     """Run the smallest real source-built Rust std/provider round trip."""
 
-    require((platform.system(), platform.machine()) == ("Linux", "x86_64"), "native Linux/x86-64 required")
+    require_native_cleanup_host()
     resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
     source_before = source_snapshot()
     static = product_snapshot(static_root, "static")
@@ -2939,7 +2944,7 @@ def run_mixed_source_generated_compile_diagnostics(
     as mixed-source development diagnostics.
     """
 
-    require((platform.system(), platform.machine()) == ("Linux", "x86_64"), "native Linux/x86-64 required")
+    require_native_cleanup_host()
     resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
     source_before = source_snapshot()
     static = product_snapshot(static_root, "static")
