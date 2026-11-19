@@ -21,6 +21,12 @@ if "$cc" -nostdlib -static -no-pie -Wl,--no-undefined -Wl,-e,_start \
     printf 'archive-free helper link unexpectedly succeeded\n' >&2
     exit 1
 fi
+while IFS= read -r symbol; do
+    grep -Fq -- "$symbol" "$work/without.stderr" || {
+        printf 'archive-free failure did not name helper: %s\n' "$symbol" >&2
+        exit 1
+    }
+done < "$work/imports"
 "$cc" -nostdlib -static -no-pie -Wl,--no-undefined -Wl,-e,_start -Wl,--trace \
     "$work/start.o" "$work/candidate.o" "$archive" -o "$work/candidate" >"$work/link.trace"
 if grep -Eq 'libgcc|compiler-rt|libc\.a|/[Sr]?crt[^/[:space:]]*\.o' "$work/link.trace"; then
@@ -42,6 +48,18 @@ if awk '$NF != "_PROCEDURE_LINKAGE_TABLE_" && $NF != "__rela_iplt_start" && $NF 
     printf 'candidate retains unresolved symbols\n' >&2
     exit 1
 fi
+nm --defined-only "$work/candidate" > "$work/definitions"
+objdump --disassemble "$work/candidate" > "$work/disassembly"
+while IFS= read -r symbol; do
+    awk -v expected="$symbol" '$NF == expected { found=1 } END { exit !found }' "$work/definitions" || {
+        printf 'candidate did not retain helper: %s\n' "$symbol" >&2
+        exit 1
+    }
+    grep -Eq "[[:space:]]b(l)?[[:space:]]+[^[:cntrl:]]*<${symbol}>" "$work/disassembly" || {
+        printf 'candidate has no direct transfer to helper: %s\n' "$symbol" >&2
+        exit 1
+    }
+done < "$work/imports"
 "$cc" -std=c11 -O2 -fno-stack-protector -fno-pie -DCRABC_HELPER_REFERENCE \
     -c "$probe" -o "$work/reference.o"
 "$cc" -no-pie "$work/reference.o" -o "$work/reference"
