@@ -458,7 +458,7 @@ The facade correction leaves out-of-scope callers `crabc-rs/examples/ppoll_direc
     - x86 runs `validate_materialized_dynamic_product`, which includes `validate_installation` and `product_identity`.
     - aarch64 runs only `validate_dynamic_product_source`.
     - Cause: `compiler_helper_evidence.py:1392` hardcodes `.work/x86_64`.
-13. **`run_libc_math_long_double_completion_aarch64.sh` (66 lines) and `validate_libc_math_long_double_completion_aarch64.py:9-11`** form a parallel validator.
+13. **Partly fixed (e752b2c37).** The shared record validator now rejects binary128 value and flag differences under the revised rounding decision. The ARM producer still needs the x86 structural checks and awaits the `a4-binary128` runtime fix.
     - x86 does a byte-exact `cmp` against musl and checks the export surface, bindings, closure, TLS, ambient dependencies and an aggregate.
     - aarch64 checks only machine, static-ness, symbol presence and alias address, and allowlists flag and rounding differences.
     - The binary128 difference itself is owner-decided (CRAB-8 RFC, about `:358`); the dropped structural checks are not.
