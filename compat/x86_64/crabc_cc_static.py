@@ -19,6 +19,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 import shutil
 import stat
 import subprocess
@@ -334,7 +335,7 @@ def manifest_payload_files(root: Path) -> dict[str, str]:
     return static_product_payload_files(load_manifest(root / MANIFEST_RELATIVE_PATH, "manifest"))
 
 
-def combined_manifest_payload(root: Path, manifest: dict) -> tuple[dict[str, str], dict[str, str]]:
+def combined_manifest_payload(root: Path, manifest: dict, *, architecture: str = "x86_64") -> tuple[dict[str, str], dict[str, str]]:
     """Return the exact files and aliases of a combined tree embedding this product.
 
     The combined manifest owns the whole tree. The embedded static product
@@ -343,15 +344,18 @@ def combined_manifest_payload(root: Path, manifest: dict) -> tuple[dict[str, str
     product metadata and the one unlinked entry object named above.
     """
 
-    if manifest.get("schema") != 1 or manifest.get("target") != TARGET:
-        raise DriverError("owned manifest does not identify an x86 combined sysroot")
+    target = "aarch64-unknown-linux-musl" if architecture == "aarch64" else TARGET
+    if manifest.get("schema") != 1 or manifest.get("target") != target:
+        label = "arm64" if architecture == "aarch64" else "x86"
+        raise DriverError(f"owned manifest does not identify an {label} combined sysroot")
     profile = profile_from_manifest(manifest)
     if manifest.get("modes") != list(profile.combined_modes):
         raise DriverError("owned combined manifest modes differ from its profile")
     files = payload_hashes(manifest.get("files"), "combined manifest")
     links = manifest.get("symlinks")
     products = manifest.get("products")
-    if links != profile.aliases or not isinstance(products, dict) or not isinstance(products.get("static"), dict):
+    expected_aliases = {} if architecture == "aarch64" else profile.aliases
+    if links != expected_aliases or not isinstance(products, dict) or not isinstance(products.get("static"), dict):
         raise DriverError("owned combined manifest has no alias or product record")
     for link, target in links.items():
         if (not isinstance(link, str) or not isinstance(target, str) or "/" in target
@@ -359,14 +363,30 @@ def combined_manifest_payload(root: Path, manifest: dict) -> tuple[dict[str, str
             raise DriverError(f"owned combined manifest has an unsafe alias: {link}")
     product = products["static"]
     placements = product.get("placements")
-    if (product.get("format") != SYSROOT_FORMAT or product.get("manifest") != COMBINED_STATIC_MANIFEST
+    static_format = "crabc-aarch64-owned-static-sysroot-v1" if architecture == "aarch64" else SYSROOT_FORMAT
+    if (product.get("format") != static_format or product.get("manifest") != COMBINED_STATIC_MANIFEST
             or COMBINED_STATIC_MANIFEST not in files or not isinstance(placements, dict)):
         raise DriverError("owned combined sysroot does not embed this static product")
     static_manifest = load_manifest(root / COMBINED_STATIC_MANIFEST, "embedded static manifest")
     dynamic_manifest = load_manifest(root / "share/crabc/dynamic/manifest.json", "embedded dynamic manifest")
     if profile_from_manifest(static_manifest) is not profile or profile_from_manifest(dynamic_manifest) is not profile:
         raise DriverError("owned combined product profiles differ")
-    embedded = static_product_payload_files(static_manifest)
+    if architecture == "aarch64":
+        if (static_manifest.get("schema"), static_manifest.get("format"), static_manifest.get("target"),
+                static_manifest.get("build_profile"), static_manifest.get("symlinks")) != (1, static_format, target, "release", {}):
+            raise DriverError("owned combined arm64 static product identity differs")
+        if (dynamic_manifest.get("format"), dynamic_manifest.get("target"), dynamic_manifest.get("build_profile"),
+                dynamic_manifest.get("source_sha256")) != ("crabc-aarch64-owned-dynamic-sysroot-v1", target, "release", static_manifest.get("source_sha256")):
+            raise DriverError("owned combined arm64 product source or identity differs")
+        source = static_manifest.get("source_sha256")
+        if (not isinstance(source, str) or re.fullmatch(r"[0-9a-f]{64}", source) is None
+                or dynamic_manifest.get("schema") != 1 or dynamic_manifest.get("symlinks") != {}
+                or static_manifest.get("toolchain") != manifest.get("toolchain")
+                or dynamic_manifest.get("toolchain") != manifest.get("toolchain")):
+            raise DriverError("owned combined arm64 source or toolchain differs")
+        embedded = payload_hashes(static_manifest.get("files"), "arm64 embedded static product")
+    else:
+        embedded = static_product_payload_files(static_manifest)
     for relative, expected_hash in embedded.items():
         if relative not in placements:
             raise DriverError(f"owned combined sysroot does not place static payload: {relative}")
@@ -1212,10 +1232,18 @@ def execute(root: Path, invocation: Invocation) -> None:
 
 
 def execute_aarch64(root: Path, arguments: Sequence[str], manifest: dict) -> None:
-    expected = payload_hashes(manifest.get("files"), "aarch64 static manifest")
+    combined = manifest.get("format") == "crabc-aarch64-owned-sysroot-v1"
+    if combined:
+        expected, expected_links = combined_manifest_payload(root, manifest, architecture="aarch64")
+        placement = manifest["products"]["static"]["placements"].get("share/crabc/crt.provenance.json")
+        if not isinstance(placement, str):
+            raise DriverError("combined arm64 CRT provenance is missing")
+        validate_crt_provenance(root, placement, profile_from_manifest(manifest))
+    else:
+        expected, expected_links = payload_hashes(manifest.get("files"), "aarch64 static manifest"), {}
     observed, links, other = installed_tree(root)
     observed.pop(MANIFEST_RELATIVE_PATH, None)
-    if observed != expected or links or other:
+    if observed != expected or links != expected_links or other:
         raise DriverError("aarch64 installed sysroot payload differs from its manifest")
     cortex_flag = "-Wl,--fix-cortex-a53-843419"
     if arguments.count(cortex_flag) > 1:
@@ -1271,7 +1299,7 @@ def main(arguments: Sequence[str] | None = None) -> int:
     try:
         root = installed_root()
         manifest = load_manifest(root / MANIFEST_RELATIVE_PATH, "manifest")
-        if manifest.get("format") == "crabc-aarch64-owned-static-sysroot-v1":
+        if manifest.get("format") in ("crabc-aarch64-owned-static-sysroot-v1", "crabc-aarch64-owned-sysroot-v1"):
             if manifest.get("target") != "aarch64-unknown-linux-musl":
                 raise DriverError("aarch64 sysroot target mismatch")
             execute_aarch64(root, sys.argv[1:] if arguments is None else arguments, manifest)

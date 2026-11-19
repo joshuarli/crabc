@@ -102,9 +102,19 @@ class CombinedSysrootCompositionTests(unittest.TestCase):
                 mock.patch.object(combined, "TARGET", "aarch64-unknown-linux-musl"), \
                 mock.patch.object(combined, "PRODUCT_FORMATS", formats):
             output = self.root / "combined-arm"
-            combined.compose({"static": self.static, "dynamic": self.dynamic}, output)
+            record = combined.compose({"static": self.static, "dynamic": self.dynamic}, output)
             self.assertTrue(os.path.samefile(output / "lib/ld-crabc-aarch64.so.1", output / "usr/lib/libc.so"))
             combined.validate(output)
+            import crabc_cc_static
+            files, links = crabc_cc_static.combined_manifest_payload(output, record, architecture="aarch64")
+            self.assertEqual(files, record["files"])
+            self.assertEqual(links, {})
+            dynamic_manifest = output / "share/crabc/dynamic/manifest.json"
+            changed = json.loads(dynamic_manifest.read_text())
+            changed["source_sha256"] = "f" * 64
+            dynamic_manifest.write_text(json.dumps(changed))
+            with self.assertRaisesRegex(crabc_cc_static.DriverError, "source or identity differs"):
+                crabc_cc_static.combined_manifest_payload(output, record, architecture="aarch64")
 
     def test_one_tree_owns_every_mode_input_once(self):
         output = self.compose()
