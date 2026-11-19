@@ -1104,7 +1104,7 @@ def build_aarch64(output: Path, *, allocator_backend: str, lifecycle_test_audit:
             "excluded_members": [name for name in members if name not in selected],
             "allocator_backend": allocator_backend, "allocator_lifecycle_test_audit": lifecycle_test_audit,
             "accepted_allocator": accepted_allocator, "pinned_c_evidence": accepted_allocator, "native_allocator": None,
-            "dependency_graph": common.allocator_dependency_graph(cargo, "x86-owned-dynamic-runtime", allocator_backend, environment),
+            "dependency_graph": common.allocator_dependency_graph(cargo, "x86-owned-dynamic-runtime", allocator_backend, environment, target=target),
             "excluded_c_allocator": None, "allocator_flags": common.c_allocator_target_flags(),
             "allocator_lifecycle_profile": common.owned_mimalloc_lifecycle_profile(
                 common.c_allocator_target_flags(), libc_command, allocator, raw,
@@ -1112,9 +1112,11 @@ def build_aarch64(output: Path, *, allocator_backend: str, lifecycle_test_audit:
             "libc_command": [_normalized_loader_argument(arg, stage) for arg in libc_command],
             "libc_shared_link_command": [_normalized_loader_argument(arg, stage) for arg in libc_link_command],
             "shared_dynamic_list": shared_libc_dynamic_list(),
-            "shared_mimalloc_hidden_exports": shared_libc_mimalloc_hidden_exports(stage),
-            "shared_compiler_helper_archive": shared_libc_compiler_helper_archive_policy(),
-            "shared_errno_private_aliases": shared_libc_errno_private_aliases(stage),
+            "shared_mimalloc_hidden_exports": None,
+            "shared_compiler_helper_archive": {"source": _source_file_identity(ROOT / "builtins/build.py", "native compiler-helper producer"),
+                "archive": builtins.name, "members": common.run([ar, "t", str(builtins)], environment=environment).decode().splitlines(),
+                "linker_arguments": ["--whole-archive", builtins.name, "--no-whole-archive"]},
+            "shared_errno_private_aliases": None,
             "loader_imports": sorted(elf_imports(str(tools / "llvm-nm"), loader))})
         common.write_json(metadata / "producer-tools.json", common.resolve_pinned_producer_tools("aarch64"))
         common.write_json(metadata / "loader.provenance.json",

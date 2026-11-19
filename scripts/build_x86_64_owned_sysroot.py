@@ -883,12 +883,12 @@ EVIDENCE_SCOPE = "evidence-only-pinned-c-allocator-reference-never-a-production-
 
 
 def allocator_dependency_graph(cargo: list[str], features: str, allocator_backend: str,
-                               environment: dict[str, str]) -> dict[str, object]:
+                               environment: dict[str, str], *, target: str = TARGET) -> dict[str, object]:
     """Attest Cargo's selected target normal/build edges, excluding test oracles."""
     if allocator_backend not in ALLOCATOR_BACKENDS:
         raise BuildError("unknown owned allocator backend")
     command = [*cargo, "tree", "--locked", "--offline", "-p", "crabc-libc",
-               "--target", TARGET, "--no-default-features", "--features", features,
+               "--target", target, "--no-default-features", "--features", features,
                "--edges", "normal,build", "--prefix", "none", "--format", "{p}"]
     packages = sorted(set(run(command, environment=environment).decode().splitlines()))
     if any(line.startswith("libmimalloc-sys ") for line in packages):
@@ -896,7 +896,7 @@ def allocator_dependency_graph(cargo: list[str], features: str, allocator_backen
     native_selected = any(line.startswith("crabc-mimalloc ") for line in packages)
     if native_selected != (backend_selection(allocator_backend, False) == "native-shadow"):
         raise BuildError("x86 dependency graph selects an unexpected allocator")
-    return {"target": TARGET, "edges": ["normal", "build"], "features": features.split(","),
+    return {"target": target, "edges": ["normal", "build"], "features": features.split(","),
             "packages": [line.replace(str(ROOT), "$SOURCE") for line in packages],
             "native_allocator_selected": native_selected}
 
