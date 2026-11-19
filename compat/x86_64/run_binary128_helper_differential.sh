@@ -8,7 +8,7 @@ cp -a "$dynamic/lib" "$work/execution/"
 cp -a "$dynamic/usr/lib" "$work/execution/usr/"
 cc=/usr/local/bin/crabc-aarch64-musl-gcc
 inc="$($cc -print-file-name=include)"
-for probe in binary128_helper_probe binary128_compare_probe binary128_fix_probe binary128_stdio_probe; do
+for probe in binary128_helper_probe binary128_compare_probe binary128_fix_probe binary128_environment_probe binary128_stdio_probe; do
     source="$root/compat/x86_64/$probe.c"
     gcc -specs=/opt/musl-1.2.6/lib/musl-gcc.specs -std=c11 -static -no-pie -O0 -fno-builtin -frounding-math "$source" -lm -o "$work/$probe-oracle"
     "$work/$probe-oracle" > "$work/$probe-oracle.txt"
