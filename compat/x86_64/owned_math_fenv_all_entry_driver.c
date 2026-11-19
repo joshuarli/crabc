@@ -7,7 +7,7 @@
  * The scope includes elementary-long-double `sqrtl` and complex `csqrt*`.
  * It deliberately does not add the separate scalar sqrt/sqrtf fenv probe.
  */
-#if !defined(__linux__) || !defined(__x86_64__) || !defined(__LP64__) || \
+#if !defined(__linux__) || (!defined(__x86_64__) && !defined(__aarch64__)) || !defined(__LP64__) || \
 	!defined(__BYTE_ORDER__) || !defined(__ORDER_LITTLE_ENDIAN__) || \
 	__BYTE_ORDER__ != __ORDER_LITTLE_ENDIAN__
 #error "this fixture requires native Linux/x86-64 little-endian LP64"
@@ -213,8 +213,13 @@ static int observe_decimal_logarithms(struct worker_result *result)
 		return 0;
 	result->narrow_logarithms[2] = direct_log10f(-1.0f);
 	if (fetestexcept(ISO_EXCEPT) != (flags | FE_INVALID) ||
-		fegetenv(&after) != 0 || after.__control_word != before.__control_word ||
+		fegetenv(&after) != 0 ||
+#if defined(__aarch64__)
+		after.__fpcr != before.__fpcr)
+#else
+		after.__control_word != before.__control_word ||
 		(after.__mxcsr & ~UINT32_C(0x3f)) != (before.__mxcsr & ~UINT32_C(0x3f)))
+#endif
 		return 0;
 	return decimal_logarithms_match(result);
 }
@@ -232,12 +237,21 @@ static void *math_worker(void *argument)
 		return 0;
 	result->status = 1;
 	if (fegetenv(&environment) != 0 ||
+#if defined(__aarch64__)
+		(environment.__fpcr & 0xc00000) != FE_DOWNWARD ||
+#else
 		(environment.__control_word & 0x0c00) != FE_DOWNWARD ||
 		((environment.__mxcsr >> 3) & 0x0c00) != FE_UPWARD ||
+#endif
 		fetestexcept(ISO_EXCEPT) != FE_DIVBYZERO)
 		return result;
 	result->rounded = rintl(input);
-	if (nearbyintf(narrow) != 2.0f ||
+	if (nearbyintf(narrow) !=
+#if defined(__aarch64__)
+		1.0f ||
+#else
+		2.0f ||
+#endif
 		fetestexcept(ISO_EXCEPT) != (FE_DIVBYZERO | FE_INEXACT))
 		return result;
 	result->subnormal = fmal(minimum, 0.5L, 0.0L);
@@ -266,8 +280,12 @@ static int check_worker_environment(void)
 		status = 2;
 		goto restore;
 	}
+#if defined(__aarch64__)
+	split.__fpcr = (split.__fpcr & ~0xc00000) | FE_DOWNWARD;
+#else
 	split.__control_word = (split.__control_word & ~0x0c00) | FE_DOWNWARD;
 	split.__mxcsr = (split.__mxcsr & ~0x6000) | (FE_UPWARD << 3);
+#endif
 	if (fesetenv(&split) != 0 || feraiseexcept(FE_DIVBYZERO) != 0) {
 		status = 3;
 		goto restore;
@@ -310,8 +328,12 @@ static int check_worker_environment(void)
 			real.bits != UINT32_C(0x80000000) ||
 			imaginary.bits != UINT32_C(0x80000000) ||
 			fegetenv(&after) != 0 ||
+#if defined(__aarch64__)
+			(after.__fpcr & 0xc00000) != FE_DOWNWARD ||
+#else
 			(after.__control_word & 0x0c00) != FE_DOWNWARD ||
 			((after.__mxcsr >> 3) & 0x0c00) != FE_UPWARD ||
+#endif
 			fetestexcept(ISO_EXCEPT) != FE_DIVBYZERO)
 			status = 7;
 		free(result);

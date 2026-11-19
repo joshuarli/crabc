@@ -1,5 +1,5 @@
 /* Exact native Linux/x86-64 differential for the complete math.complex capability. */
-#if !defined(__linux__) || !defined(__x86_64__) || !defined(__LP64__) || \
+#if !defined(__linux__) || (!defined(__x86_64__) && !defined(__aarch64__)) || !defined(__LP64__) || \
 	!defined(__BYTE_ORDER__) || !defined(__ORDER_LITTLE_ENDIAN__) || \
 	__BYTE_ORDER__ != __ORDER_LITTLE_ENDIAN__
 #error "this fixture requires native Linux/x86-64 little-endian LP64"
@@ -14,12 +14,18 @@
 
 #pragma STDC FENV_ACCESS ON
 
+#if defined(__aarch64__)
+#define defined_arm64_long_double_precision 113
+#else
+#define defined_arm64_long_double_precision 64
+#endif
+
 _Static_assert(sizeof(float complex) == 8 && _Alignof(float complex) == 4,
 	"x86 float complex storage");
 _Static_assert(sizeof(double complex) == 16 && _Alignof(double complex) == 8,
 	"x86 double complex storage");
 _Static_assert(sizeof(long double) == 16 && _Alignof(long double) == 16 &&
-	LDBL_MANT_DIG == 64 && LDBL_MAX_EXP == 16384,
+	LDBL_MANT_DIG == (defined_arm64_long_double_precision) && LDBL_MAX_EXP == 16384,
 	"x86 binary80 storage");
 _Static_assert(sizeof(long double complex) == 32 &&
 	_Alignof(long double complex) == 16,
@@ -225,6 +231,15 @@ static long raw_write(const void *buffer, size_t length)
 {
 	const unsigned char *cursor = buffer;
 	while (length != 0) {
+#if defined(__aarch64__)
+		register long number __asm__("x8") = 64;
+		register long descriptor __asm__("x0") = 1;
+		register const void *address __asm__("x1") = cursor;
+		register size_t count __asm__("x2") = length;
+		__asm__ volatile ("svc 0" : "+r"(descriptor)
+			: "r"(number), "r"(address), "r"(count) : "memory");
+		number = descriptor;
+#else
 		register long number __asm__("rax") = 1;
 		register long descriptor __asm__("rdi") = 1;
 		register const void *address __asm__("rsi") = cursor;
@@ -232,6 +247,7 @@ static long raw_write(const void *buffer, size_t length)
 		__asm__ volatile ("syscall" : "+a"(number)
 			: "D"(descriptor), "S"(address), "d"(count)
 			: "rcx", "r11", "memory");
+#endif
 		if (number == -4) continue;
 		if (number <= 0 || (size_t)number > length) return -1;
 		cursor += number;
@@ -283,7 +299,7 @@ static int emit_double_real(uint16_t id, uint16_t index, int mode, double value)
 static int emit_long_real(uint16_t id, uint16_t index, int mode, long double value)
 {
 	union { long double value; unsigned char bytes[16]; } bits = { value };
-	unsigned char payload[48]; clear_value(payload); copy_bytes(payload, bits.bytes, 10);
+	unsigned char payload[48]; clear_value(payload); copy_bytes(payload, bits.bytes, LDBL_MANT_DIG == 113 ? 16 : 10);
 	return emit_record(id, index, mode, 3, payload);
 }
 
@@ -313,7 +329,7 @@ static int emit_long_complex(uint16_t id, uint16_t index, int mode,
 	union { long double value; unsigned char bytes[16]; } re = { __real__ value };
 	union { long double value; unsigned char bytes[16]; } im = { __imag__ value };
 	unsigned char payload[48]; clear_value(payload);
-	copy_bytes(payload, re.bytes, 10); copy_bytes(payload + 16, im.bytes, 10);
+	copy_bytes(payload, re.bytes, LDBL_MANT_DIG == 113 ? 16 : 10); copy_bytes(payload + 16, im.bytes, LDBL_MANT_DIG == 113 ? 16 : 10);
 	return emit_record(id, index, mode, 6, payload);
 }
 

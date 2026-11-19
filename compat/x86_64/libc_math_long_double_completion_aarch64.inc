@@ -72,7 +72,7 @@ static int emit(unsigned int function, unsigned int index, int rounding,
     return 0;
 }
 
-int main(void)
+int crabc_x86_64_math_long_double_completion_probe(void)
 {
     static const int modes[] = { FE_TONEAREST, FE_DOWNWARD, FE_UPWARD, FE_TOWARDZERO };
     const long double left[] = { 3, 1, -0.0L, 0.0L, HUGE_VALL, HUGE_VALL, -HUGE_VALL,
@@ -107,3 +107,10 @@ int main(void)
     }
     return fesetenv(&saved) != 0;
 }
+
+#ifndef CRABC_MATH_LONG_DOUBLE_COMPLETION_FREESTANDING
+int main(void)
+{
+    return crabc_x86_64_math_long_double_completion_probe();
+}
+#endif

@@ -5,7 +5,7 @@
  * type. Records contain exact binary32/binary64 payloads, the defined ten
  * bytes of binary80, integer/pointer outputs, and combined x87/MXCSR flags.
  */
-#if !defined(__linux__) || !defined(__x86_64__) || !defined(__LP64__) || \
+#if !defined(__linux__) || (!defined(__x86_64__) && !defined(__aarch64__)) || !defined(__LP64__) || \
 	!defined(__BYTE_ORDER__) || !defined(__ORDER_LITTLE_ENDIAN__) || \
 	__BYTE_ORDER__ != __ORDER_LITTLE_ENDIAN__
 #error "this fixture requires native Linux/x86-64 little-endian LP64"
@@ -19,9 +19,15 @@
 
 #pragma STDC FENV_ACCESS ON
 
+#if defined(__aarch64__)
+#define defined_arm64_long_double_precision 113
+#else
+#define defined_arm64_long_double_precision 64
+#endif
+
 _Static_assert(sizeof(long double) == 16 && _Alignof(long double) == 16,
 	"x86 binary80 storage");
-_Static_assert(LDBL_MANT_DIG == 64 && LDBL_MAX_EXP == 16384,
+_Static_assert(LDBL_MANT_DIG == (defined_arm64_long_double_precision) && LDBL_MAX_EXP == 16384,
 	"x86 binary80 format");
 _Static_assert(sizeof(long) == 8 && sizeof(long long) == 8, "x86 LP64 integers");
 
@@ -343,6 +349,15 @@ static long raw_write(const void *buffer, size_t length)
 {
 	const unsigned char *cursor = buffer;
 	while (length != 0) {
+#if defined(__aarch64__)
+		register long number __asm__("x8") = 64;
+		register long descriptor __asm__("x0") = 1;
+		register const void *address __asm__("x1") = cursor;
+		register size_t count __asm__("x2") = length;
+		__asm__ volatile ("svc 0" : "+r"(descriptor)
+			: "r"(number), "r"(address), "r"(count) : "memory");
+		number = descriptor;
+#else
 		register long number __asm__("rax") = 1;
 		register long descriptor __asm__("rdi") = 1;
 		register const void *address __asm__("rsi") = cursor;
@@ -350,6 +365,7 @@ static long raw_write(const void *buffer, size_t length)
 		__asm__ volatile ("syscall" : "+a"(number)
 			: "D"(descriptor), "S"(address), "d"(count)
 			: "rcx", "r11", "memory");
+#endif
 		if (number == -4) continue;
 		if (number <= 0 || (size_t)number > length) return -1;
 		cursor += number;
@@ -397,7 +413,7 @@ static int emit_long_double(uint16_t id, uint16_t index, int mode, int auxiliary
 	long double value)
 {
 	union { long double value; unsigned char bytes[16]; } bits = { value };
-	return emit_record(id, index, mode, auxiliary, bits.bytes, 10);
+	return emit_record(id, index, mode, auxiliary, bits.bytes, LDBL_MANT_DIG == 113 ? 16 : 10);
 }
 
 static int emit_integer(uint16_t id, uint16_t index, int mode, long long value)

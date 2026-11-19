@@ -9,10 +9,8 @@ set -euo pipefail
 ulimit -c 0
 
 readonly ROOT="$(cd -P "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-readonly ORACLE_CC=/usr/local/bin/crabc-x86_64-musl-gcc
-readonly INTERPRETER=/lib/ld-crabc-x86_64.so.1
 readonly COPIES="$ROOT/compat/x86_64/owned_crypt_runtime_evidence.py"
-readonly VALIDATOR="$ROOT/compat/x86_64/validate_owned_math_fenv_all_entry.py"
+VALIDATOR="$ROOT/compat/x86_64/validate_owned_math_fenv_all_entry.py"
 readonly CONTRACT="$ROOT/compat/x86_64/owned_math_fenv_all_entry_contract.py"
 readonly PROVIDER_EVIDENCE="$ROOT/compat/x86_64/owned_math_fenv_all_entry_evidence.py"
 readonly COVERAGE="$ROOT/compat/crabc-rs/coverage.toml"
@@ -50,7 +48,17 @@ done
 [ -z "$provided_static" ] || [ -n "$provided_dynamic" ] || usage
 
 [ "$(uname -s)" = Linux ] || fail 'requires native Linux'
-case "$(uname -m)" in x86_64|amd64) ;; *) fail "refuses emulation on $(uname -m)" ;; esac
+case "$(uname -m)" in
+    x86_64|amd64) native_arch=x86_64 ;;
+    aarch64|arm64) native_arch=aarch64 ;;
+    *) fail "refuses emulation on $(uname -m)" ;;
+esac
+readonly ORACLE_CC="/usr/local/bin/crabc-${native_arch}-musl-gcc"
+readonly INTERPRETER="/lib/ld-crabc-${native_arch}.so.1"
+if [ "$native_arch" = aarch64 ]; then
+    VALIDATOR="$ROOT/compat/x86_64/validate_owned_math_fenv_all_entry_aarch64.py"
+fi
+readonly VALIDATOR
 [ -n "${TMPDIR:-}" ] && [ -d "$TMPDIR" ] || fail 'requires checkout-local TMPDIR'
 
 # Reject lexical parent traversal and symlink hops before creating evidence.
@@ -139,6 +147,19 @@ for entry in "${ROLE_SOURCES[@]}"; do
 done
 SOURCES+=("$RUNNER" "$VALIDATOR" "$CONTRACT" "$PROVIDER_EVIDENCE" "$COPIES" "$COVERAGE" \
     "$COMPLEX_BASELINE")
+if [ "$native_arch" = aarch64 ]; then
+    SOURCES+=("$ROOT/compat/x86_64/libc_fenv_rounding_aarch64.inc" \
+        "$ROOT/compat/x86_64/libc_math_long_double_completion_aarch64.inc" \
+        "$ROOT/compat/x86_64/owned_fpclassify_signal_probe.c" \
+        "$ROOT/compat/x86_64/owned_acoshl_domain_probe.c" \
+        "$ROOT/compat/x86_64/owned_sqrtl_snan_probe.c" \
+        "$ROOT/compat/x86_64/owned_math_fenv_aarch64_reference.py" \
+        "$ROOT/compat/x86_64/owned_posix_product_evidence.py" \
+        "$ROOT/compat/x86_64/source_seal.py" \
+        "$ROOT/compat/x86_64/native_arch.py" \
+        "$ROOT/compat/x86_64/core_image.py" \
+        "$ROOT/compat/x86_64/validate_libc_math_long_double_completion_aarch64.py")
+fi
 
 capture() {
     local stem="$1" status=0
@@ -280,11 +301,26 @@ validate_records() {
 compare_oracle() {
     local stem="$1"
     validate_records "$stem"
-    cmp "$WORK/oracle-run.stdout" "$WORK/$stem.stdout" || fail "$stem stdout differs from pinned musl"
+    if [ "$native_arch" = aarch64 ]; then
+        python3 -B "$VALIDATOR" "$WORK/oracle-run.stdout" "$WORK/reference-run.stdout" "$WORK/$stem.stdout" || fail "$stem stdout differs from the native references"
+    else
+        cmp "$WORK/oracle-run.stdout" "$WORK/$stem.stdout" || fail "$stem stdout differs from pinned musl"
+    fi
     cmp "$WORK/oracle-run.stderr" "$WORK/$stem.stderr" || fail "$stem stderr differs from pinned musl"
     cmp "$WORK/oracle-run.status" "$WORK/$stem.status" || fail "$stem status differs from pinned musl"
 }
 
+reference_static=''
+if [ "$native_arch" = aarch64 ]; then
+    reference_static="$STATIC_PRODUCT"
+    if [ -z "$reference_static" ]; then
+        reference_static="$WORK/reference-static"
+        python3 -B "$ROOT/scripts/build_x86_64_owned_sysroot.py" --architecture aarch64 \
+            --output "$reference_static" >"$WORK/reference-static-build.json"
+    fi
+    capture reference-extract python3 -B "$ROOT/compat/x86_64/owned_math_fenv_aarch64_reference.py" \
+        extract "$ROOT" "$reference_static" "$DYNAMIC_PRODUCT" "$WORK/reference-objects"
+fi
 capture_tools "$WORK/tools-before.json"
 capture_seal source-product-before
 readonly COMPILER="$(resolve_tool compiler)"
@@ -319,7 +355,12 @@ for entry in "${ROLE_SOURCES[@]}"; do
     capture "compile-$role" "$DYNAMIC_PRODUCT/bin/crabc-cc-dynamic" "${arguments[@]}"
 done
 capture combine "$LINKER" -r -o "$WORK/workload.o" "${OBJECTS[@]}"
-sha256sum "${SOURCES[@]}" "${OBJECTS[@]}" "$WORK/workload.o" >"$WORK/source-objects-before.sha256"
+reference_inputs=()
+if [ "$native_arch" = aarch64 ]; then
+    reference_inputs=("$reference_static/share/crabc/manifest.json" "$reference_static/usr/lib/libc.a"
+        "$WORK/reference-objects/sqrtl.o" "$WORK/reference-objects/rintl.o" "$WORK/reference-objects/nearbyintl.o")
+fi
+sha256sum "${SOURCES[@]}" "${OBJECTS[@]}" "$WORK/workload.o" "${reference_inputs[@]}" >"$WORK/source-objects-before.sha256"
 
 capture workload-imports nm --undefined-only --format=posix "$WORK/workload.o"
 capture dynamic-provider-symbols readelf --dyn-syms -W "$DYNAMIC_PRODUCT/usr/lib/libc.so"
@@ -336,6 +377,17 @@ capture component-preflight "${provider_arguments[@]}"
 capture oracle-link "$ORACLE_CC" -std=c11 -static -fno-pie -no-pie "$WORK/workload.o" -lm -o "$WORK/oracle"
 capture oracle-run env -i LC_ALL=C LANG=C TZ=UTC "$WORK/oracle"
 validate_records oracle-run
+if [ "$native_arch" = aarch64 ]; then
+    capture reference-link "$ORACLE_CC" -std=c11 -static -fno-pie -no-pie -nodefaultlibs -Wl,--trace \
+        "$WORK/workload.o" "$WORK/reference-objects/sqrtl.o" "$WORK/reference-objects/rintl.o" \
+        "$WORK/reference-objects/nearbyintl.o" -Wl,--start-group -lc \
+        "$DYNAMIC_PRODUCT/usr/lib/libcrabc-builtins.a" -Wl,--end-group -o "$WORK/reference-oracle"
+    capture reference-trace python3 -B "$ROOT/compat/x86_64/owned_math_fenv_aarch64_reference.py" \
+        trace "$WORK/reference-link.stdout" "$WORK/workload.o" "$WORK/reference-objects" \
+        "$DYNAMIC_PRODUCT/usr/lib/libcrabc-builtins.a"
+    capture reference-run env -i LC_ALL=C LANG=C TZ=UTC "$WORK/reference-oracle"
+    validate_records reference-run
+fi
 
 if [ -n "$STATIC_PRODUCT" ]; then
     for mode in static static-pie; do
@@ -384,6 +436,10 @@ cmp "$WORK/tools-before.json" "$WORK/tools-after.json" || fail 'compiler/linker 
 capture_seal source-product-after
 cmp "$WORK/source-product-before.json" "$WORK/source-product-after.json" ||
     fail 'source or supplied product changed during execution'
+if [ "$native_arch" = aarch64 ]; then
+    capture reference-products-after python3 -B "$ROOT/compat/x86_64/owned_math_fenv_aarch64_reference.py" \
+        products "$ROOT" "$reference_static" "$DYNAMIC_PRODUCT"
+fi
 sha256sum -c "$WORK/source-objects-before.sha256" >"$WORK/source-objects-after.txt" ||
     fail 'source or installed-header objects changed during execution'
 capture component-collector "${provider_arguments[@]}"

@@ -19,7 +19,9 @@ import sys
 
 import owned_math_fenv_all_entry_contract as contract
 import installed_compiler_translation as translation_contract
+from native_arch import native_arch
 
+NATIVE = native_arch()
 SCHEMA = "crabc.x86_64-owned-math-fenv-all-entry-provider-evidence/v1"
 ALIAS_GROUPS = (
     ("exp10", "pow10"),
@@ -189,6 +191,13 @@ def validate_header_traces(work: Path, dynamic_product: Path) -> None:
     """Require every retained header trace to name installed headers only."""
 
     include = dynamic_product / "usr/include"
+    source_includes = {
+        "fenv-rounding": {Path(__file__).resolve().parent / "libc_fenv_rounding_aarch64.inc"},
+        "long-double-completion": {Path(__file__).resolve().parent / "libc_math_long_double_completion_aarch64.inc"},
+        "abi-boundary": {Path(__file__).resolve().parent / "owned_fpclassify_signal_probe.c",
+                         Path(__file__).resolve().parent / "owned_acoshl_domain_probe.c",
+                         Path(__file__).resolve().parent / "owned_sqrtl_snan_probe.c"},
+    } if NATIVE["arch"] == "aarch64" else {}
     observed: set[Path] = set()
     for role, _relative, _define in contract.OBJECT_ROLES:
         try:
@@ -197,7 +206,7 @@ def validate_header_traces(work: Path, dynamic_product: Path) -> None:
             raise EvidenceError(f"cannot read header trace for role {role}") from error
         require(paths, f"header trace has no installed headers for role {role}")
         for path in paths:
-            require(path.is_absolute() and path.is_relative_to(include),
+            require(path.is_absolute() and (path.is_relative_to(include) or path in source_includes.get(role, set())),
                     f"header trace escapes installed dynamic headers for role {role}: {path}")
             observed.add(path)
     require({include / name for name in INSTALLED_HEADERS}.issubset(observed),

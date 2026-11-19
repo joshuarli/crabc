@@ -25,7 +25,7 @@
  * raises a flag in the other unit, or writes errno changes a record even when
  * its return value matches.
  */
-#if !defined(__linux__) || !defined(__x86_64__) || !defined(__LP64__) || \
+#if !defined(__linux__) || (!defined(__x86_64__) && !defined(__aarch64__)) || !defined(__LP64__) || \
 	!defined(__BYTE_ORDER__) || !defined(__ORDER_LITTLE_ENDIAN__) || \
 	__BYTE_ORDER__ != __ORDER_LITTLE_ENDIAN__
 #error "this fixture requires native Linux/x86-64 little-endian LP64"
@@ -41,9 +41,24 @@
 #include <string.h>
 #include <unistd.h>
 
+#if defined(__aarch64__)
+#define CRABC_FPCLASSIFY_COMPOSED
+#include "owned_fpclassify_signal_probe.c"
+#define CRABC_ACOSHL_DOMAIN_COMPOSED
+#include "owned_acoshl_domain_probe.c"
+#define CRABC_SQRTL_SNAN_COMPOSED
+#include "owned_sqrtl_snan_probe.c"
+#endif
+
 #pragma STDC FENV_ACCESS ON
 
-_Static_assert(sizeof(long double) == 16 && LDBL_MANT_DIG == 64 &&
+_Static_assert(sizeof(long double) == 16 && LDBL_MANT_DIG ==
+#if defined(__aarch64__)
+	113
+#else
+	64
+#endif
+	&&
 	LDBL_MAX_EXP == 16384, "x86 binary80 storage");
 _Static_assert(sizeof(long double complex) == 32, "x86 binary80 complex storage");
 
@@ -67,8 +82,17 @@ struct __attribute__((packed)) boundary_record {
 	int32_t auxiliary;
 	int32_t signgam_value;
 	unsigned char value[32];
+#if defined(__aarch64__)
+	unsigned char operand[16];
+#endif
 };
-_Static_assert(sizeof(struct boundary_record) == 64, "stable boundary record");
+_Static_assert(sizeof(struct boundary_record) ==
+#if defined(__aarch64__)
+	80
+#else
+	64
+#endif
+	, "stable boundary record");
 
 enum value_kind {
 	KIND_FLOAT = 1, KIND_DOUBLE, KIND_LONG_DOUBLE, KIND_INT, KIND_LONG,
@@ -99,8 +123,15 @@ static long double binary80(uint16_t sign_exponent, uint64_t mantissa)
 {
 	union { long double value; unsigned char bytes[16]; } bits;
 	memset(bits.bytes, 0, sizeof(bits.bytes));
+#if defined(__aarch64__)
+	uint64_t upper = ((uint64_t)sign_exponent << 48) | ((mantissa & UINT64_C(0x7fffffffffffffff)) >> 15);
+	uint64_t lower = mantissa << 49;
+	memcpy(bits.bytes, &lower, sizeof(lower));
+	memcpy(bits.bytes + 8, &upper, sizeof(upper));
+#else
 	memcpy(bits.bytes, &mantissa, sizeof(mantissa));
 	memcpy(bits.bytes + 8, &sign_exponent, sizeof(sign_exponent));
+#endif
 	return bits.value;
 }
 
@@ -259,7 +290,14 @@ static long double dense_long_double(void)
 	 * normal numbers. */
 	uint64_t mantissa = subnormal ? (bits >> 1) | 1 : bits | UINT64_C(1) << 63;
 	uint16_t sign = (uint16_t)(dense_next() >> 63) << 15;
+#if defined(__aarch64__)
+	union { long double value; uint64_t words[2]; } result;
+	result.words[0] = (mantissa << 49) | (dense_next() & ((UINT64_C(1) << 49) - 1));
+	result.words[1] = ((uint64_t)(sign | exponent) << 48) | ((mantissa & UINT64_C(0x7fffffffffffffff)) >> 15);
+	return result.value;
+#else
 	return binary80((uint16_t)(sign | exponent), mantissa);
+#endif
 }
 
 static void load_dense_tables(void)
@@ -326,19 +364,29 @@ static void prepare(uint16_t function, uint16_t index, int mode)
  */
 static int finish(uint16_t kind, const void *value, size_t size, int auxiliary)
 {
+#if defined(__aarch64__)
+	uint64_t fpcr, fpsr;
+	__asm__ volatile ("mrs %0, fpcr" : "=r"(fpcr));
+	__asm__ volatile ("mrs %0, fpsr" : "=r"(fpsr));
+	pending.x87_control = 0;
+	pending.x87_status = (uint16_t)fpsr;
+	pending.x87_tag = (uint16_t)(fpsr >> 16);
+	pending.mxcsr = (uint32_t)fpcr;
+#else
 	struct { uint16_t control, r0, status, r1, tag, r2; uint32_t rest[4]; } x87;
 	uint32_t mxcsr;
 
 	__asm__ volatile ("fnstenv %0\n\tfldenv %0" : "=m"(x87) : : "memory");
 	__asm__ volatile ("stmxcsr %0" : "=m"(mxcsr) : : "memory");
-	pending.error = errno;
-	pending.signgam_value = signgam;
 	pending.x87_control = x87.control;
 	/* Keep exception, stack-fault and TOP fields; condition codes are not
 	 * part of the calling convention. */
 	pending.x87_status = (uint16_t)(x87.status & 0x38ff);
 	pending.x87_tag = x87.tag;
 	pending.mxcsr = mxcsr;
+#endif
+	pending.error = errno;
+	pending.signgam_value = signgam;
 	pending.kind = kind;
 	pending.auxiliary = auxiliary;
 	memcpy(pending.value, value, size);
@@ -359,14 +407,15 @@ static int finish_double(double value, int auxiliary)
 
 static int finish_long_double(long double value, int auxiliary)
 {
-	return finish(KIND_LONG_DOUBLE, &value, 10, auxiliary);
+	return finish(KIND_LONG_DOUBLE, &value, LDBL_MANT_DIG == 113 ? 16 : 10, auxiliary);
 }
 
 static int finish_long_double_pair(long double first, long double second)
 {
-	unsigned char bytes[20];
-	memcpy(bytes, &first, 10);
-	memcpy(bytes + 10, &second, 10);
+	unsigned char bytes[LDBL_MANT_DIG == 113 ? 32 : 20];
+	size_t width = LDBL_MANT_DIG == 113 ? 16 : 10;
+	memcpy(bytes, &first, width);
+	memcpy(bytes + width, &second, width);
 	return finish(KIND_LONG_DOUBLE_PAIR, bytes, sizeof(bytes), 0);
 }
 
@@ -537,6 +586,9 @@ static int run_l_l(l_l function)
 	function_id++;
 	FOR_CASES(values) {
 		PREPARE();
+#if defined(__aarch64__)
+		memcpy(pending.operand, &values[index], sizeof(values[index]));
+#endif
 		long double result = function(values[index]);
 		if (finish_long_double(result, 0) != 0) return -1;
 	}
@@ -1053,6 +1105,13 @@ int crabc_x86_64_math_abi_boundary_probe(void)
 
 	if (fegetenv(&caller) != 0)
 		return 1;
+#if defined(__aarch64__)
+	if (crabc_fpclassify_signal_probe() != 0 || crabc_acoshl_domain_probe() != 0 ||
+		crabc_sqrtl_snan_probe() != 0) {
+		(void)fesetenv(&caller);
+		return 4;
+	}
+#endif
 	initialize_values();
 	load_boundary_tables();
 	phase_bit = 0;
