@@ -191,7 +191,7 @@ static uintptr_t fs_self(void)
 {
 #if defined(__aarch64__)
     uintptr_t base = installed_thread_pointer();
-    return base && *(const uintptr_t *)(base - 8) ? base : 0;
+    return base ? *(const uintptr_t *)(base - 8) : 0;
 #else
     uintptr_t value;
     __asm__ volatile("mov %%fs:0, %0" : "=r"(value));
