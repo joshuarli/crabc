@@ -114,12 +114,6 @@ fn caller_owned_resolver_snapshot_rejects_invalid_configuration() {
 }
 
 #[test]
-fn resolver_snapshot_rejects_invalid_search_suffixes() {
-    assert!(ResolverConfig::from_bytes(b"nameserver 192.0.2.53\nsearch . example.test\n", b"").is_err());
-    assert!(ResolverConfig::from_bytes(b"search 192.0.2.1\n", b"").is_err());
-}
-
-#[test]
 fn resolver_search_candidates_follow_ndots_order() {
     let server = UdpSocket::bind("127.0.0.1:0").unwrap();
     let port = server.local_addr().unwrap().port();
@@ -235,8 +229,8 @@ fn resolver_completes_aaaa_answers_for_inet6() {
 }
 
 #[test]
-fn resolver_snapshot_reads_fixture_without_global_state() {
-    let config = ResolverConfig::from_bytes(include_bytes!("fixtures/resolv.conf"), include_bytes!("fixtures/hosts")).expect("fixture should load");
+fn resolver_system_snapshot_reads_direct_files_without_global_state() {
+    let config = ResolverConfig::from_system().expect("Linux resolver files should be readable");
     assert!(config.hosts().is_some());
     assert!(config.nameserver_count() <= 3);
     assert!(config.search_domains().len() <= 6);

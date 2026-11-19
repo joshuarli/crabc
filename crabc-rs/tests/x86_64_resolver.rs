@@ -391,6 +391,20 @@ fn x86_64_resolver_aaaa_and_timeout_map_through_the_facade() {
 }
 
 #[test]
+fn x86_64_resolver_system_snapshot_uses_direct_bounded_file_reads() {
+    let expected_hosts = HostDatabase::from_bytes(
+        &std::fs::read("/etc/hosts").expect("read fixture hosts snapshot"),
+    )
+    .expect("parse fixture hosts snapshot");
+    let config = ResolverConfig::from_system().expect("load direct resolver snapshots");
+    assert_eq!(config.hosts(), Some(&expected_hosts));
+    assert!(config.nameserver_count() <= 3);
+    assert!(config.search_domains().len() <= 6);
+    assert!(config.timeout_ms() > 0);
+    assert!(config.attempts() > 0);
+}
+
+#[test]
 fn x86_64_resolver_snapshot_loads_fixture_files() {
     let hosts = include_bytes!("fixtures/hosts");
     let expected_hosts = HostDatabase::from_bytes(hosts).expect("parse fixture hosts snapshot");
@@ -401,4 +415,15 @@ fn x86_64_resolver_snapshot_loads_fixture_files() {
     assert_eq!(config.search_domains(), &["example.test"]);
     assert!(config.timeout_ms() > 0);
     assert!(config.attempts() > 0);
+}
+
+#[test]
+fn x86_64_resolver_ignores_a_root_search_suffix() {
+    let config = ResolverConfig::from_bytes(b"nameserver 127.0.0.1\nsearch . example.test\n", b"")
+        .expect("a root search suffix is not a configuration error");
+    assert_eq!(config.search_domains(), &["example.test"]);
+    let config = ResolverConfig::from_bytes(b"nameserver 127.0.0.1\nsearch .\n", b"")
+        .expect("a lone root search suffix is not a configuration error");
+    assert!(config.search_domains().is_empty());
+    assert!(ResolverConfig::from_bytes(b"nameserver 127.0.0.1\nsearch 192.0.2.1\n", b"").is_err());
 }

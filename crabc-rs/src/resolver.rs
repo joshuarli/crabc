@@ -812,6 +812,9 @@ fn parse_resolv_conf(
                 }
                 config.search_domains.clear();
                 for field in &fields[1..] {
+                    if *field == b"." {
+                        continue;
+                    }
                     let domain =
                         core::str::from_utf8(field).map_err(|_| ResolveError::InvalidInput)?;
                     config.add_search_domain(domain)?;
