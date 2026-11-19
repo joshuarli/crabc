@@ -216,8 +216,6 @@ bitflags! {
         const BENEATH = 0x08;
         /// Treat the supplied directory as the root for this lookup.
         const IN_ROOT = 0x10;
-        /// Resolve only from cached path components.
-        const CACHED = 0x20;
         /// Preserve unrecognized kernel flag bits for direct validation.
         const _ = !0;
     }
@@ -4296,34 +4294,4 @@ pub fn readahead<Fd: AsFd>(fd: Fd, offset: u64, length: u64) -> Result<()> {
     }
 
     crabc_core::fs::readahead(fd.as_fd().as_raw_fd(), offset as i64, length as usize)
-}
-
-/// while a relative path deterministically fails with `EBADF`.
-pub const ABS: BorrowedFd<'static> =
-    // SAFETY: `-EBADF` is a documented Rustix convention for `*at` operations
-    // and `BorrowedFd::borrow_raw` accepts this narrowly scoped token.
-    unsafe { BorrowedFd::borrow_raw(-9) };
-
-/// Renames an entry and creates a whiteout at its old location.
-pub fn renameat_whiteout<P: PathArg, Q: PathArg, PFd: AsFd, QFd: AsFd>(
-    old_dirfd: PFd, old_path: P, new_dirfd: QFd, new_path: Q, flags: RenameFlags,
-) -> Result<()> {
-    let old_dirfd = old_dirfd.as_fd();
-    let new_dirfd = new_dirfd.as_fd();
-    old_path.into_with_c_str(|old_path| new_path.into_with_c_str(|new_path| {
-        crabc_core::fs::renameat2(old_dirfd.as_raw_fd(), old_path, new_dirfd.as_raw_fd(), new_path, flags.bits() | 4)
-    }))
-}
-
-/// Creates a hard link to the object referenced by an open descriptor.
-///
-/// Linux applies its `AT_EMPTY_PATH` capability and filesystem restrictions.
-pub fn linkat_from_fd<Fd: AsFd, P: PathArg, Dir: AsFd>(
-    source: Fd, directory: Dir, path: P,
-) -> Result<()> {
-    let source = source.as_fd();
-    let directory = directory.as_fd();
-    path.into_with_c_str(|path| {
-        crabc_core::fs::linkat(source.as_raw_fd(), c"", directory.as_raw_fd(), path, 0x1000)
-    })
 }

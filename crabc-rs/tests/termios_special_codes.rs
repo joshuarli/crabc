@@ -1,21 +1,5 @@
 use crabc_rs::{pty, termios};
 
-#[cfg(not(target_arch = "x86_64"))]
-fn pty_pair() -> (crabc_rs::OwnedFd, crabc_rs::OwnedFd) {
-    let master =
-        pty::openpt(pty::OpenptFlags::RDWR | pty::OpenptFlags::NOCTTY | pty::OpenptFlags::CLOEXEC)
-            .expect("open PTY master");
-    pty::grantpt(&master).expect("grant PTY");
-    pty::unlockpt(&master).expect("unlock PTY");
-    let slave = pty::ioctl_tiocgptpeer(
-        &master,
-        pty::OpenptFlags::RDWR | pty::OpenptFlags::NOCTTY | pty::OpenptFlags::CLOEXEC,
-    )
-    .expect("open PTY slave");
-    (master, slave)
-}
-
-#[cfg(target_arch = "x86_64")]
 fn pty_pair() -> (crabc_rs::OwnedFd, crabc_rs::OwnedFd) {
     pty::PtyPair::open(pty::OpenptFlags::RDWR | pty::OpenptFlags::NOCTTY | pty::OpenptFlags::CLOEXEC)
         .expect("open PTY pair")

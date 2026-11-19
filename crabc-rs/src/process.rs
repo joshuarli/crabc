@@ -48,8 +48,6 @@ pub type RawGid = u32;
 
 /// A non-zero Linux process or thread identifier.
 pub use crate::signal::{Pid, Signal};
-use crate::signal::SigInfo;
-use core::mem::MaybeUninit;
 use core::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
 /// Queries or requests Linux's raw program break.
@@ -2322,158 +2320,9 @@ mod tests {
     }
 }
 
-/// Waits for any child process state change.
-#[inline]
-pub fn wait(options: WaitOptions) -> Result<Option<(Pid, WaitStatus)>> {
-    wait_raw(-1, options)
-}
-
-/// Waits for one child. `None` uses Linux's current-process-group selection.
-#[inline]
-pub fn waitpid(pid: Option<Pid>, options: WaitOptions) -> Result<Option<(Pid, WaitStatus)>> {
-    wait_raw(pid.map_or(0, Pid::as_raw_pid), options)
-}
-
-/// Waits for a child in process group `pgid`.
-#[inline]
-pub fn waitpgid(pgid: Pid, options: WaitOptions) -> Result<Option<(Pid, WaitStatus)>> {
-    wait_raw(-pgid.as_raw_pid(), options)
-}
-
-#[inline]
-fn wait_raw(target: i32, options: WaitOptions) -> Result<Option<(Pid, WaitStatus)>> {
-    let mut status = 0_i32;
-    // SAFETY: `status` is writable Linux `int` storage and `target`/options
-    // retain the documented wait4/waitpid scalar encodings.
-    let pid = unsafe { crabc_core::process::wait4_raw(target, &mut status, options.bits())? };
-    if pid == 0 {
-        return Ok(None);
-    }
-    // Linux returns a positive child PID whenever wait4 reports a state.
-    Ok(Some((
-        unsafe { Pid::from_raw_unchecked(pid) },
-        WaitStatus(status),
-    )))
-}
-
-/// Target selection for Linux `waitid`.
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
-pub enum WaitId {
-    /// Wait on any child process.
-    All,
-    /// Wait on one child process.
-    Pid(Pid),
-    /// Wait on a process group. `None` means the caller's group.
-    Pgid(Option<Pid>),
-}
-
-bitflags! {
-    /// Options for Linux `waitid`.
-    #[repr(transparent)]
-    #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
-    pub struct WaitIdOptions: u32 {
-        /// Return immediately when no matching child has changed state.
-        const NOHANG = 0x0000_0001;
-        /// Report stopped children.
-        const STOPPED = 0x0000_0002;
-        /// Report exited children.
-        const EXITED = 0x0000_0004;
-        /// Report continued children.
-        const CONTINUED = 0x0000_0008;
-        /// Leave the matching child waitable after observing it.
-        const NOWAIT = 0x0100_0000;
-        /// Preserve future Linux option bits for kernel validation.
-        const _ = !0;
-    }
-}
-
-/// A typed `waitid` result backed by Linux's signal-information record.
-#[derive(Clone, Copy, Debug)]
-pub struct WaitIdStatus(SigInfo);
-
-impl WaitIdStatus {
-    /// Returns the process ID associated with the child-state report.
-    #[inline]
-    #[must_use]
-    pub fn pid(self) -> Option<Pid> {
-        self.0.sender_pid()
-    }
-
-    /// Returns the raw Linux child-state code.
-    #[inline]
-    #[must_use]
-    pub fn raw_code(self) -> i32 {
-        self.0.raw_code()
-    }
-
-    /// Returns whether the child exited normally.
-    #[inline]
-    #[must_use]
-    pub fn exited(self) -> bool {
-        self.raw_code() == 1
-    }
-
-    /// Returns whether a signal killed the child without a core dump.
-    #[inline]
-    #[must_use]
-    pub fn killed(self) -> bool {
-        self.raw_code() == 2
-    }
-
-    /// Returns whether a signal killed the child with a core dump.
-    #[inline]
-    #[must_use]
-    pub fn dumped(self) -> bool {
-        self.raw_code() == 3
-    }
-
-    /// Returns whether the child stopped.
-    #[inline]
-    #[must_use]
-    pub fn stopped(self) -> bool {
-        self.raw_code() == 5
-    }
-
-    /// Returns whether the child continued.
-    #[inline]
-    #[must_use]
-    pub fn continued(self) -> bool {
-        self.raw_code() == 6
-    }
-
-    /// Returns the exit status or signal number from the child report.
-    #[inline]
-    #[must_use]
-    pub fn status(self) -> i32 {
-        self.0.status()
-    }
-}
-
-/// Waits through Linux `waitid`.
-#[inline]
-pub fn waitid(target: WaitId, options: WaitIdOptions) -> Result<Option<WaitIdStatus>> {
-    let (kind, id) = match target {
-        WaitId::All => (0, 0),
-        WaitId::Pid(pid) => (1, pid.as_raw_pid() as u32),
-        WaitId::Pgid(pid) => (2, pid.map_or(0, Pid::as_raw_pid) as u32),
-    };
-    let mut info = MaybeUninit::<crabc_core::signal::SigInfo>::uninit();
-    // SAFETY: `info` is aligned writable Linux `siginfo_t` storage and the
-    // target/options values use the documented `waitid` encodings.
-    unsafe {
-        crabc_core::process::waitid_raw(kind, id, info.as_mut_ptr(), options.bits())?;
-        let info = SigInfo::from_core(info.assume_init());
-        if info.raw_signal() == 0 {
-            Ok(None)
-        } else {
-            Ok(Some(WaitIdStatus(info)))
-        }
-    }
-}
-
 /// The result of a raw Linux fork-equivalent clone.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
-pub enum ForkResult {
+enum ForkResult {
     /// The original process, carrying its new child ID.
     Parent { child: Pid },
     /// The child process.
@@ -2491,7 +2340,7 @@ pub enum ForkResult {
 /// Rust/std/C APIs. This primitive deliberately does not run atfork handlers
 /// or repair any C-runtime state.
 #[inline]
-pub unsafe fn fork_raw() -> Result<ForkResult> {
+unsafe fn fork_raw() -> Result<ForkResult> {
     match crabc_core::process::fork_raw()? {
         0 => Ok(ForkResult::Child),
         child => Ok(ForkResult::Parent {
@@ -2515,7 +2364,7 @@ pub unsafe fn fork_raw() -> Result<ForkResult> {
 /// not allocate, lock unrelated state, unwind, or invoke arbitrary Rust/C
 /// facilities from a child callback.
 #[inline]
-pub unsafe fn register_atfork(
+unsafe fn register_atfork(
     prepare: Option<unsafe extern "C" fn()>,
     parent: Option<unsafe extern "C" fn()>,
     child: Option<unsafe extern "C" fn()>,
@@ -2552,7 +2401,7 @@ pub unsafe fn register_atfork(
 /// invoke C ABI `pthread_atfork` callbacks: crabc-rs owns its direct native
 /// facade registry and never crosses the public C ABI to perform a syscall.
 #[inline]
-pub unsafe fn fork() -> Result<ForkResult> {
+unsafe fn fork() -> Result<ForkResult> {
     let has_handlers = unsafe { atfork_prepare() };
     let all_signals = !0_u64;
     let mut old_mask = 0_u64;
@@ -2674,82 +2523,52 @@ unsafe fn atfork_finish(is_child: bool) {
     atfork_unlock();
 }
 
-/// A caller-owned, allocation-free `execve` specification.
-///
-/// This is the no-alloc counterpart to [`PreparedExec`] and is useful when a
-/// program has already built stable C-string pointer arrays. It deliberately
-/// has no child descriptor or process-state actions; those higher-level
-/// facilities require parent-side owned preparation.
-#[derive(Clone, Copy, Debug)]
-pub struct BorrowedExec<'a> {
-    path: &'a core::ffi::CStr,
-    argv: &'a [*const u8],
-    envp: &'a [*const u8],
-}
+#[cfg(test)]
+mod atfork_tests {
+    use super::*;
+    use core::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 
-impl<'a> BorrowedExec<'a> {
-    /// Validates terminal null pointers for caller-owned `execve` arrays.
-    ///
-    /// # Safety
-    ///
-    /// Every non-null pointer in `argv` and `envp` must point to a readable
-    /// NUL-terminated byte string for the entire lifetime of this value. The
-    /// arrays must not be mutated while the value is used. `argv` must have a
-    /// non-null first entry and both arrays must end in one null pointer.
-    #[inline]
-    pub unsafe fn new(
-        path: &'a core::ffi::CStr,
-        argv: &'a [*const u8],
-        envp: &'a [*const u8],
-    ) -> Result<Self> {
-        if argv.len() < 2
-            || envp.is_empty()
-            || argv[0].is_null()
-            || !argv.last().is_some_and(|pointer| pointer.is_null())
-            || !envp.last().is_some_and(|pointer| pointer.is_null())
-        {
-            return Err(crate::Errno::INVAL);
-        }
-        Ok(Self { path, argv, envp })
+    static LOG: AtomicU64 = AtomicU64::new(0);
+    static LENGTH: AtomicUsize = AtomicUsize::new(0);
+
+    fn push(byte: u8) {
+        let offset = LENGTH.fetch_add(1, Ordering::SeqCst);
+        LOG.fetch_or((byte as u64) << (offset * 8), Ordering::SeqCst);
     }
+    unsafe extern "C" fn a_prepare() { push(b'A'); }
+    unsafe extern "C" fn b_prepare() { push(b'B'); }
+    unsafe extern "C" fn c_prepare() { push(b'C'); }
+    unsafe extern "C" fn a_finish() { push(b'a'); }
+    unsafe extern "C" fn b_finish() { push(b'b'); }
+    unsafe extern "C" fn c_finish() { push(b'c'); }
 
-    /// Executes the caller-owned specification in the current process.
-    #[inline]
-    pub fn exec(self) -> Result<core::convert::Infallible> {
-        // SAFETY: `BorrowedExec::new` documented and checked the array shape;
-        // its unsafe contract supplies the pointed-to C-string validity.
-        match unsafe {
-            crabc_core::process::execve_raw(
-                self.path.as_ptr().cast(),
-                self.argv.as_ptr(),
-                self.envp.as_ptr(),
-            )
-        } {
-            Err(error) => Err(error),
-            Ok(()) => panic!("Linux execve unexpectedly returned success"),
+    #[test]
+    fn atfork_callbacks_run_in_registration_order_after_reverse_preparation() {
+        // SAFETY: callbacks use only fixed atomics and return normally.
+        unsafe {
+            register_atfork(Some(a_prepare), Some(a_finish), Some(a_finish)).unwrap();
+            register_atfork(Some(b_prepare), Some(b_finish), Some(b_finish)).unwrap();
+            register_atfork(Some(c_prepare), Some(c_finish), Some(c_finish)).unwrap();
         }
+        let (reader, writer) = crabc_core::pipe::pipe2(0).unwrap();
+        // SAFETY: the child only writes its observation and exits immediately.
+        let child = match unsafe { fork() }.unwrap() {
+            ForkResult::Parent { child } => child,
+            ForkResult::Child => {
+                let bytes = LOG.load(Ordering::SeqCst).to_le_bytes();
+                let _ = crabc_core::io::write(writer, &bytes[..6]);
+                crabc_core::process::exit_immediately(0);
+            }
+        };
+        assert_eq!(&LOG.load(Ordering::SeqCst).to_le_bytes()[..6], b"CBAabc");
+        let mut bytes = [0u8; 6];
+        assert_eq!(crabc_core::io::read(reader, &mut bytes).unwrap(), bytes.len());
+        assert_eq!(&bytes, b"CBAabc");
+        let mut status = 0;
+        // SAFETY: status is writable and child is the process created above.
+        unsafe { crabc_core::process::wait4_raw(child.as_raw_pid(), &mut status, 0) }.unwrap();
+        assert_eq!(status, 0);
+        crabc_core::io::close(reader).unwrap();
+        crabc_core::io::close(writer).unwrap();
     }
-}
-
-
-
-/// Assigns a process group. `None` retains Linux's calling-process meaning.
-#[inline]
-pub fn setpgid(pid: Option<Pid>, pgid: Option<Pid>) -> Result<()> {
-    crabc_core::process::setpgid(pid.map_or(0, Pid::as_raw_pid), pgid.map_or(0, Pid::as_raw_pid))
-}
-
-/// Creates a new session and returns its ID.
-#[inline]
-pub fn setsid() -> Result<Pid> {
-    crabc_core::process::setsid().map(|pid| {
-        // A successful setsid result is always a positive process ID.
-        unsafe { Pid::from_raw_unchecked(pid) }
-    })
-}
-
-/// subject to Linux's process-group/session races and permission checks.
-#[inline]
-pub fn setpgrp() -> Result<()> {
-    setpgid(None, None)
 }

@@ -44,9 +44,9 @@ fn native_nanosleep_preserves_eintr_and_remaining_duration() {
         .expect("install direct interruption handler");
     let parent = process::getpid();
     let sleeper = thread::gettid();
-    let child = match unsafe { process::fork_raw() }.expect("fork interrupter") {
-        process::ForkResult::Parent { child } => child,
-        process::ForkResult::Child => {
+    let child = match crabc_core::process::fork_raw().map(crabc_rs::Pid::from_raw).expect("fork interrupter") {
+        Some(child) => child,
+        None => {
             let start = time::clock_gettime(ClockId::Monotonic).expect("clock query");
             let target = after_delay(start, 100_000_000);
             loop {
@@ -70,14 +70,13 @@ fn native_nanosleep_preserves_eintr_and_remaining_duration() {
 
     let requested = Duration::from_secs(2);
     let outcome = time::nanosleep(requested).expect("nanosleep syscall");
-    let status = process::waitpid(Some(child), process::WaitOptions::empty())
-        .expect("wait for interrupter")
-        .expect("interrupter status")
-        .1;
+    let mut status = 0;
+    // SAFETY: The status word is writable and the child is owned by this test.
+    unsafe { crabc_core::process::wait4_raw(child.as_raw_pid(), &mut status, 0) }.expect("reap child");
     unsafe { signal::sigaction(process::Signal::USR1, Some(&old_action)) }
         .expect("restore interruption handler");
 
-    assert_eq!(status.exit_status(), Some(0));
+    assert_eq!(status, 0);
     assert!(SIGNAL_DELIVERED.load(Ordering::SeqCst));
     match outcome {
         SleepOutcome::Interrupted { remaining } => {

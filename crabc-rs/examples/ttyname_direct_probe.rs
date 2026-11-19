@@ -19,21 +19,8 @@ fn panic(_: &core::panic::PanicInfo<'_>) -> ! {
 
 #[no_mangle]
 pub extern "C" fn crabc_rs_ttyname_direct_probe() -> i32 {
-    let master = match pty::openpt(OpenptFlags::RDWR | OpenptFlags::NOCTTY | OpenptFlags::CLOEXEC) {
-        Ok(fd) => fd,
-        Err(error) => return -error.raw(),
-    };
-    if let Err(error) = pty::grantpt(&master) {
-        return -error.raw();
-    }
-    if let Err(error) = pty::unlockpt(&master) {
-        return -error.raw();
-    }
-    let slave = match pty::ioctl_tiocgptpeer(
-        &master,
-        OpenptFlags::RDWR | OpenptFlags::NOCTTY | OpenptFlags::CLOEXEC,
-    ) {
-        Ok(fd) => fd,
+    let (master, slave) = match pty::PtyPair::open(OpenptFlags::RDWR | OpenptFlags::NOCTTY | OpenptFlags::CLOEXEC) {
+        Ok(pair) => pair.into_parts(),
         Err(error) => return -error.raw(),
     };
 

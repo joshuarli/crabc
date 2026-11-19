@@ -11,7 +11,7 @@
 
 use core::mem::MaybeUninit;
 
-use crabc_rs::process::{self, ForkResult};
+use crabc_rs::process;
 use crabc_rs::pty::{self, OpenptFlags, PtyPair};
 use crabc_rs::termios;
 
@@ -50,14 +50,16 @@ pub extern "C" fn crabc_rs_pty_session_direct_probe() -> i32 {
         return 1;
     }
 
-    let child = match unsafe { process::fork_raw() } {
-        Ok(ForkResult::Parent { child }) => child,
-        Ok(ForkResult::Child) => child_probe(&pair),
+    let child = match crabc_core::process::fork_raw().map(crabc_rs::Pid::from_raw) {
+        Ok(Some(child)) => child,
+        Ok(None) => child_probe(&pair),
         Err(error) => return -error.raw(),
     };
-    match process::waitpid(Some(child), process::WaitOptions::empty()) {
-        Ok(Some((_, status))) => status.exit_status().unwrap_or(13),
-        Ok(None) => 14,
+    let mut status = 0;
+    // SAFETY: status is writable and the child was created by this probe.
+    match unsafe { crabc_core::process::wait4_raw(child.as_raw_pid(), &mut status, 0) } {
+        Ok(_) if status & 0x7f == 0 => (status >> 8) & 0xff,
+        Ok(_) => 13,
         Err(error) => -error.raw(),
     }
 }
