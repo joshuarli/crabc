@@ -14,6 +14,9 @@
 
 mod x86_64_array_boundaries;
 mod x86_64_dynamic_startup;
+#[cfg(all(target_arch = "aarch64", crabc_owned_dynamic_runtime))]
+#[path = "../../libc/src/c_abi/x86_64/loader_tls_runtime_v1.rs"]
+mod loader_tls_runtime_v1;
 
 pub use x86_64_dynamic_startup::__crabc_x86_64_dynamic_start;
 

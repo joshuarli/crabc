@@ -24,7 +24,7 @@
 //! dependencies, and only when main construction completed. The private
 //! freestanding and legacy RuntimeV1 routes keep the CRT-owned array walk.
 
-#[cfg(crabc_dynamic_main_thread_runtime_v1)]
+#[cfg(any(crabc_dynamic_main_thread_runtime_v1, all(target_arch = "aarch64", crabc_owned_dynamic_runtime)))]
 use core::ffi::c_int;
 
 const MAX_INITIAL_POINTERS: usize = 1 << 20;
@@ -114,7 +114,7 @@ unsafe extern "C" {
     fn __crabc_x86_64_owned_crt_handoff_value() -> *const OwnedCrtHandoffV1;
     #[cfg(crabc_x86_64_combined_exec_entry)]
     fn __crabc_x86_64_attached_owned_crt_handoff() -> *const OwnedCrtHandoffV1;
-    #[cfg(crabc_dynamic_main_thread_runtime_v1)]
+    #[cfg(any(crabc_dynamic_main_thread_runtime_v1, all(target_arch = "aarch64", crabc_owned_dynamic_runtime)))]
     fn __crabc_x86_loader_tls_runtime_v1_attach() -> c_int;
 }
 
@@ -227,8 +227,9 @@ pub unsafe extern "C" fn __crabc_x86_64_dynamic_start(
     // directly, so this is neither a weak fallback nor a libc.so import. A
     // failed descriptor observation must stop before the dynamic libc sees
     // the six-argument startup boundary or any main-image callback runs.
-    #[cfg(crabc_dynamic_main_thread_runtime_v1)]
-    if unsafe { __crabc_x86_loader_tls_runtime_v1_attach() } != 0 {
+    #[cfg(any(crabc_dynamic_main_thread_runtime_v1, all(target_arch = "aarch64", crabc_owned_dynamic_runtime)))]
+    if (cfg!(target_arch = "x86_64") || !handoff.is_null())
+        && unsafe { __crabc_x86_loader_tls_runtime_v1_attach() } != 0 {
         startup_reject();
     }
     unsafe {

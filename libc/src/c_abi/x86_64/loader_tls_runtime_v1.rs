@@ -14,6 +14,10 @@
 #[cfg(not(all(target_os = "linux", any(target_arch = "x86_64", target_arch = "aarch64"), target_endian = "little")))]
 compile_error!("the x86 loader/libc TLS RuntimeV1 consumer requires little-endian Linux/x86-64");
 
+#[cfg(target_arch = "aarch64")]
+#[path = "aarch64_tls_layout.rs"]
+mod aarch64_tls_layout;
+
 use core::arch::{asm, global_asm};
 use core::ffi::c_int;
 use core::sync::atomic::{AtomicU8, Ordering};
@@ -81,7 +85,7 @@ global_asm!(
 // recognizes that record only for the main image and only for weak undefined
 // data; DSOs and strong/defined imports remain fail-closed in ldso before any
 // pointer reaches this consumer.
-#[cfg(not(crabc_loader_libc_tls_runtime_v1_static_mode))]
+#[cfg(all(target_arch = "x86_64", not(crabc_loader_libc_tls_runtime_v1_static_mode)))]
 global_asm!(
     ".section .text.__crabc_x86_loader_tls_runtime_v1_record,\"ax\",@progbits",
     ".weak __crabc_x86_64_loader_tls_runtime_v1",
@@ -92,6 +96,19 @@ global_asm!(
     "mov rax, qword ptr [rip + __crabc_x86_64_loader_tls_runtime_v1@GOTPCREL]",
     "ret",
     ".size __crabc_x86_loader_tls_runtime_v1_record, .-__crabc_x86_loader_tls_runtime_v1_record",
+);
+
+#[cfg(all(target_arch = "aarch64", not(crabc_loader_libc_tls_runtime_v1_static_mode)))]
+global_asm!(
+    ".section .text.__crabc_x86_loader_tls_runtime_v1_record,\"ax\",%progbits",
+    ".weak __crabc_x86_64_loader_tls_runtime_v1",
+    ".hidden __crabc_x86_loader_tls_runtime_v1_record",
+    ".global __crabc_x86_loader_tls_runtime_v1_record",
+    ".type __crabc_x86_loader_tls_runtime_v1_record,%function",
+    "__crabc_x86_loader_tls_runtime_v1_record:",
+    "adrp x0, :got:__crabc_x86_64_loader_tls_runtime_v1",
+    "ldr x0, [x0, :got_lo12:__crabc_x86_64_loader_tls_runtime_v1]",
+    "ret",
 );
 
 unsafe extern "C" {
@@ -191,7 +208,7 @@ unsafe fn observe_validated_loader_tls(record: &LoaderLibcTlsRuntimeV1) -> bool 
     #[cfg(target_arch = "x86_64")]
     let slot = (record.thread_pointer as usize).checked_add(core::mem::size_of::<usize>());
     #[cfg(target_arch = "aarch64")]
-    let slot = (record.thread_pointer as usize).checked_sub(super::super::aarch64_tls_layout::DTV_OFFSET_BELOW_TP);
+    let slot = (record.thread_pointer as usize).checked_sub(aarch64_tls_layout::DTV_OFFSET_BELOW_TP);
     let dtv_slot = match slot {
         Some(address) => address as *const usize,
         None => return false,
