@@ -411,7 +411,7 @@ entries are closed by the commit that fixes them.
 | 50 | fixed (48ce246c7) | The aarch64 route has forbidden-symbol, missing-witness, missing-syscall and instruction-spelling cases. |
 | 51 | still open | `unwinder/tests/provider_abi_frame.c:21-27`. |
 | 52 | still open | `test_owned_cleanup.py:182, 600, 922`; `test_owned_rust_link.py:46`. |
-| 53 | still open | `installed_crt_startup_evidence.py:387-389`. |
+| 53 | test coverage added (dee553461) | A test uses the existing source-order checker on the aarch64 attach branch and rejects missing or reordered operations. The production receipt checker still checks only the x86 branch. |
 | 54 | still open | `scripts/lanes/rust-check.sh:72-84`. |
 | 55 | still open | `prepare-worktree.sh:304-311`. |
 | 56 | fixed (d84f8ba79) | Native arm64 help is exercised without Docker in the image-dispatch test. |
