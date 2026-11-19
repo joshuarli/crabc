@@ -145,6 +145,7 @@ static_archive_member! { rintl_source {
     #[cfg(target_arch = "aarch64")]
     #[no_mangle]
     pub extern "C" fn rintl(x: f128) -> f128 {
+        unsafe extern "C" { fn feraiseexcept(mask: i32) -> i32; fn fegetround() -> i32; }
         let bits = x.to_bits();
         let exponent = (bits >> 112) & 0x7fff;
         if exponent >= 0x3fff + 112 {
@@ -161,13 +162,14 @@ static_archive_member! { rintl_source {
             (magnitude & !mask, magnitude & mask, 1u128 << (shift - 1), 1u128 << shift)
         };
         if remainder == 0 { return x; }
-        crabc_core::fenv::raise_exceptions(crabc_core::fenv::ExceptionFlags::INEXACT);
-        use crabc_core::fenv::RoundingMode;
-        let increment = match crabc_core::fenv::get_rounding() {
-            RoundingMode::Nearest => remainder > half || (remainder == half && truncated & unit != 0),
-            RoundingMode::Upward => sign == 0,
-            RoundingMode::Downward => sign != 0,
-            RoundingMode::TowardZero => false,
+        unsafe { feraiseexcept(16); }
+
+        let increment = match unsafe { fegetround() } {
+            0 => remainder > half || (remainder == half && truncated & unit != 0),
+            0x400000 => sign == 0,
+            0x800000 => sign != 0,
+            0xc00000 => false,
+            _ => false,
         };
         f128::from_bits(sign | if increment { truncated + unit } else { truncated })
     }
@@ -296,10 +298,11 @@ static_archive_member! { nearbyintl_source {
     #[cfg(target_arch = "aarch64")]
     #[no_mangle]
     pub extern "C" fn nearbyintl(x: f128) -> f128 {
-        let inexact = crabc_core::fenv::test_exceptions(crabc_core::fenv::ExceptionFlags::INEXACT);
+        unsafe extern "C" { fn fetestexcept(mask: i32) -> i32; fn feclearexcept(mask: i32) -> i32; }
+        let inexact = unsafe { fetestexcept(16) };
         let result = rintl(x);
-        if inexact.is_empty() {
-            crabc_core::fenv::clear_exceptions(crabc_core::fenv::ExceptionFlags::INEXACT);
+        if inexact == 0 {
+            unsafe { feclearexcept(16); }
         }
         result
     }

@@ -77,6 +77,7 @@ static_archive_member! { sqrtl_source {
     #[cfg(target_arch = "aarch64")]
     #[no_mangle]
     pub extern "C" fn sqrtl(x: f128) -> f128 {
+        unsafe extern "C" { fn feraiseexcept(mask: i32) -> i32; fn fegetround() -> i32; }
         const RSQRT: [u16; 128] = [
 0xb451,0xb2f0,0xb196,0xb044,0xaef9,0xadb6,0xac79,0xab43,
 0xaa14,0xa8eb,0xa7c8,0xa6aa,0xa592,0xa480,0xa373,0xa26b,
@@ -115,7 +116,7 @@ static_archive_member! { sqrtl_source {
             if ix << 1 == 0 { return x; }
             if ix == (0x7fffu128 << 112) { return x; }
             if ix >> 127 != 0 && (ix & ((1u128 << 127) - 1)) <= (0x7fffu128 << 112) {
-                crabc_core::fenv::raise_exceptions(crabc_core::fenv::ExceptionFlags::INVALID);
+                unsafe { feraiseexcept(1); }
                 return f128::from_bits((0x7fffu128 << 112) | ((1u128 << 112) - 1));
             }
             if top >= 0x7fff { return (x - x) / (x - x); }
@@ -157,12 +158,11 @@ static_archive_member! { sqrtl_source {
         sl = sl.wrapping_add(d1 >> 127);
         let mut bits = mkldbl(top, sl).to_bits();
         if d2 != 0 {
-            crabc_core::fenv::raise_exceptions(crabc_core::fenv::ExceptionFlags::INEXACT);
+            unsafe { feraiseexcept(16); }
             let negative = (d1 ^ d2) >> 127 != 0;
-            use crabc_core::fenv::RoundingMode;
-            match crabc_core::fenv::get_rounding() {
-                RoundingMode::Upward if !negative => bits += 1,
-                RoundingMode::Downward | RoundingMode::TowardZero if negative => bits -= 1,
+            match unsafe { fegetround() } {
+                0x400000 if !negative => bits += 1,
+                0x800000 | 0xc00000 if negative => bits -= 1,
                 _ => (),
             }
         }

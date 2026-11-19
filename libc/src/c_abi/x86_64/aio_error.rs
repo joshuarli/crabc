@@ -51,6 +51,7 @@ pub unsafe extern "C" fn aio_error(control_block: *const c_void) -> c_int {
     // debug precondition helper, preserving the archive-free closure while
     // retaining musl's volatile observation rather than adding an atomic
     // protocol.
+    #[cfg(target_arch = "x86_64")]
     unsafe {
         asm!(
             "mov {error:e}, dword ptr [{control_block} + {error_offset}]",
@@ -59,6 +60,10 @@ pub unsafe extern "C" fn aio_error(control_block: *const c_void) -> c_int {
             error = lateout(reg) error,
             options(nostack, preserves_flags, readonly),
         );
+    }
+    #[cfg(target_arch = "aarch64")]
+    unsafe {
+        asm!("ldr {error:w}, [{control_block}, #{error_offset}]", control_block = in(reg) control_block, error_offset = const AIOCB_ERR_OFFSET, error = lateout(reg) error, options(nostack, preserves_flags, readonly));
     }
     error & AIO_ERROR_MASK
 }
