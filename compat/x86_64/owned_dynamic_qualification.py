@@ -784,16 +784,18 @@ def base_evidence(work: Path, manifests: dict[str, str]) -> dict[str, str]:
             expected_path = source_mount.rstrip("/") + "/" + binary.relative_to(ROOT).as_posix()
             runtime = sorted("usr/lib/" + entry for entry in
                              (("crt1.o" if name.startswith("non-pie-") else "Scrt1.o"),
-                              "crabc-dynamic-attach.o", "crti.o", "libc.so", "libcrabc-builtins.a", "crtn.o"))
+                              *([] if ARCH["arch"] == "aarch64" and not name.startswith("non-pie-") else ["crabc-dynamic-attach.o"]),
+                              "crti.o", "libc.so", "libcrabc-builtins.a", "crtn.o"))
+            product_format = "crabc-aarch64-owned-dynamic-sysroot-v1" if ARCH["arch"] == "aarch64" else "crabc-x86-64-owned-dynamic-sysroot-v1"
             search = receipt_contract.validate(
-                receipt, format="crabc-x86-64-owned-dynamic-sysroot-v1", label="base dynamic link receipt",
+                receipt, format=product_format, label="base dynamic link receipt",
                 fail=lambda message: require(False, message),
             )
             receipt_contract.require_runpath(
                 search, "/usr/lib", label="base dynamic link receipt",
                 fail=lambda message: require(False, message),
             )
-            require(receipt.get("format") == "crabc-x86-64-owned-dynamic-sysroot-v1"
+            require(receipt.get("format") == product_format
                     and receipt.get("runtime_imports") == [] and receipt.get("output_path") == expected_path
                     and receipt.get("owned_runtime_inputs") == runtime, "base driver path or purity contract drifted")
             require(receipt.get("output_sha256") == digest(binary), "base executable receipt hash mismatch")
@@ -806,12 +808,13 @@ def base_evidence(work: Path, manifests: dict[str, str]) -> dict[str, str]:
             # canonical interpreter, mode and exact dependency roots.
             inspection_path, map_path = elf_inspection.sidecar_paths(binary)
             facts = elf_inspection.validate_record(
-                read(inspection_path), binary, output_format="crabc-x86-64-owned-dynamic-sysroot-v1",
+                read(inspection_path), binary, output_format=product_format,
                 fail=lambda message: require(False, f"base ELF inspection: {message}"),
                 recorded_path=lambda local: source_mount.rstrip("/") + "/" + local.relative_to(ROOT).as_posix(),
+                architecture=ARCH["arch"],
             )
             needed = ["libc.so"] if name.startswith("spawn-") else [f"lib{product}.so", "libc.so"]
-            require(facts["interpreter"] == "/lib/ld-crabc-x86_64.so.1" and facts["needed"] == needed
+            require(facts["interpreter"] == f"/lib/ld-crabc-{ARCH['arch']}.so.1" and facts["needed"] == needed
                     and facts["elf_type"] == ("ET_EXEC" if name.startswith("non-pie-") else "ET_DYN"),
                     "base executable inspection does not show its declared product shape")
             # The executable's replayed DT_NEEDED name must identify the
