@@ -3,6 +3,7 @@
 set -euo pipefail
 ulimit -c 0
 readonly ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+eval "$(python3 -B "$ROOT/compat/x86_64/native_arch.py")"
 [ "$#" -eq 1 ] || exit 2
 readonly installed="$1"
 python3 -B - "$ROOT" "${TMPDIR:-}" <<'PY'
@@ -15,7 +16,7 @@ PY
 work="$(mktemp -d "$TMPDIR/general-constructor-exit.XXXXXX")"
 readonly work
 readonly driver="$installed/bin/crabc-cc-dynamic"
-readonly oracle_cc=/usr/local/bin/crabc-x86_64-musl-gcc
+readonly oracle_cc="$oracle"
 mkdir "$work/oracle"
 "$driver" --dynamic-shared-object "$ROOT/compat/x86_64/general_dynamic_tls_plugin.c" -o "$work/libgrowth0.so"
 "$driver" --dynamic-shared-object "$ROOT/compat/x86_64/general_dynamic_constructor_exit_plugin.c" -o "$work/libconstructor-exit.so"
