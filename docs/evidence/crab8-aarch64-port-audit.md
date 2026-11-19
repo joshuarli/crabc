@@ -365,7 +365,7 @@ entries are closed by the commit that fixes them.
 
 | # | Status | Evidence |
 |---|---|---|
-| 1 | partly fixed | `owned_dynamic_qualification.py:231-278` now reads state and provenance and runs every check on aarch64. The aarch64 combined path still goes through `combined.validate`, which has no CRT or loader provenance check (`build_x86_64_owned_combined_sysroot.py:373-403`). The x86 combined path runs `validate_combined`, which checks both (`crabc_cc_owned_dynamic.py:339-341`). |
+| 1 | closed (20cedf91a, a10874975) | ARM combined qualification uses the shared installed-product reader, including CRT and loader provenance. The combined producer currently stops in the static suite on the two defects assigned to `a4-binary128` and `a4-robust-mutex`. |
 | 2 | closed (20cedf91a) | The ARM driver validates its installed product through the shared reader, requires an explicit dynamic mode, rejects static modes, checks direct DSO closure and imports, and supplies the provider set to final ELF inspection. |
 | 3 | fixed | `crabc_cc_owned_dynamic.py:223-231` (aarch64 required roster includes loader provenance and the receipt/ELF modules), `:262` (CRT provenance), `:275-276` (`validate_loader_provenance(architecture="aarch64")`). |
 | 4 | closed (d8ffc3bd5) | The shared product reader validates the full product and compares producer tools against the architecture-specific source image manifest. |
@@ -376,7 +376,7 @@ entries are closed by the commit that fixes them.
 | 10 | closed (58f2ddd16) | Incomplete development runs return failure on both architectures. |
 | 11 | kept by owner decision (not a defect) | Audit file `:16-19`; code unchanged at `qualification_candidate.py:559-561`. |
 | 12 | closed (6f7b05a3e) | ARM crypt and wordexp receipts use the shared independent link validator and its static-mode and dynamic-profile checks. |
-| 13 | still open | `static_product_contract.py:494-495`; `run_owned_static_sysroot.sh:526-527`; `crt/x86_64_owned_dynamic_startup.py:416-421`. |
+| 13 | closed (4fb39ef7e, f9c851282) | The ARM helper archive and both static and dynamic trace readers require the same exact `crabc-builtins.o` member. The ARM dynamic CRT producer passed 52 cells; static producer completion waits on item 15. |
 | 14 | closed (6c7d0cdb8) | The shared filesystem producer runs the native static, static-PIE, dynamic PIE and non-PIE modes and both dynamic entry paths. |
 | 15 | implementation added (4cc51d70a, 90b46ce83); acceptance waiting | The shared builder suite runs and passes on ARM. The static producer is waiting on positional-printf rounding in lane `a4-binary128` and process-shared robust-mutex lifecycle behavior in lane `a4-robust-mutex`; the producer remains red. |
 | 16 | closed (14c03612f) | ARM standalone and combined static manifests check the sealed driver, scope, non-selection and coverage claims. |
@@ -388,7 +388,7 @@ entries are closed by the commit that fixes them.
 | 26 | fixed | `compat/lua/run.py:1244-1252`: the driver binding is now architecture-independent. |
 | 27 | fixed | `build_x86_64_owned_combined_sysroot.py:124-174` (no aarch64 early return), `:193-197`, `:339-370`, `:397-398`. |
 | 28 | fixed | `unwinder/owned_rust_link.py:733-745` uses the shared `_validate_static_product`/`_validate_dynamic_product`. |
-| 29 | still open | `owned_rust_link.py:55-56` (`-static` admitted), `:917-918` (`-no-pie` then `-static-pie` allowed). Only the machine is checked (`:976`, `:1195`); ELF type is not. |
+| 29 | closed (ec53e67bc) | ARM rejects static and conflicting mode arguments and requires relocatable ELF objects. Native mixed-source and source-built static cleanup producers passed. |
 | 30 | closed (6c7d0cdb8) | The filesystem producer now copies the validated native product, including its aliases, for both dynamic execution routes. |
 | 31 | closed (63fc733ab) | ARM corpus extraction accepts the source-manifest signing key instead of arbitrary signature entries; the 34-case native corpus passes. |
 | 33 | fixed (aarch64 adopts the x86 behavior) | Since `74b86437a`, `ldso/src/x86_64_direct_entry.rs:106` applies the AT_EXECFN rewrite on both architectures, and `run_general_dynamic_cli.sh` checks it in both modes. The audit's follow-up note ("disproved") is now stale. |
@@ -410,7 +410,7 @@ entries are closed by the commit that fixes them.
 | 49 | fixed (b6236c919) | The native image builds a temporary aarch64 sysroot when none is supplied; all five original tests passed in the VM. |
 | 50 | fixed (48ce246c7) | The aarch64 route has forbidden-symbol, missing-witness, missing-syscall and instruction-spelling cases. |
 | 51 | fixed (9dd0450c3) | The aarch64 frame keeps x24–x28 and d8–d15 live and checks their values; the fixture compiled in the native image. |
-| 52 | partly fixed (9dd0450c3, 23c7b342d) | The arm64 launcher reader has a positive and negative ELF test, and the Rust linker materialization test passed natively. The two cleanup routines behind x86-only guards still require aarch64 producer support. |
+| 52 | closed (9dd0450c3, 23c7b342d, e017b84ed) | The launcher reader and Rust linker have native ARM checks. The source-graph preflight, static cleanup and mixed-source cleanup diagnostic all passed natively. |
 | 53 | test coverage added (dee553461) | A test uses the existing source-order checker on the aarch64 attach branch and rejects missing or reordered operations. The production receipt checker still checks only the x86 branch. |
 | 54 | implementation added (d84f8ba79) | The arm64 path now lists the full x86 crate and feature profiles with its native target. Native execution passed six profiles and failed the two frozen native-shadow profiles and `crabc-mimalloc --all-targets` on unresolved allocator source modules. |
 | 55 | implementation added (d84f8ba79) | The arm64 path invokes the corpus fetcher with `--architecture aarch64`; the existing prepare-worktree test fixture does not supply `native_arch.py`. |
@@ -456,14 +456,13 @@ The facade correction leaves out-of-scope callers `crabc-rs/examples/ppoll_direc
     - aarch64 checks only machine, static-ness, symbol presence and alias address, and allowlists flag and rounding differences.
     - The binary128 difference itself is owner-decided (CRAB-8 RFC, about `:358`); the dropped structural checks are not.
 14. **Partly fixed (4fb39ef7e, d4d270a9d, add448dbd).** The ARM source-built helper archive now has exactly one member with recorded merge provenance; reproducibility, archive-free failures, retained definitions and direct transfers pass the native aggregate. The replayable shared aggregate report remains outstanding and the product change must be integrated with `a4-binary128`.
-15. **Static export surface.**
-    - `source_runtime_libc.sh:68-75` allowlists the application-namespace names `ioctl_word`, `ioctl_no_argument`, `semctl_word` and `semctl_no_argument`.
+15. **Partly fixed (42e2acf90).** ARM variadic dispatch no longer exports the four application-namespace helper names, and the corresponding allowances were removed. The anonymous-symbol exact roster remains open.
     - `native_abi_exports.py:152-160` accepts any `anon.*` symbol on aarch64, where x86 compares them exactly. The aarch64 delta is hardcoded in code (`:32-47`).
-16. **`owned_static_link_authority.py:202`** admits nameless LOCAL undefined `.symtab` rows on aarch64. Its test fabricates the row (`test_owned_static_link_authority.py:631-656`).
+16. **Partly fixed (f0f1a94b8, 15c0ca588).** The reader rejects nameless LOCAL undefined rows on both architectures and its ARM TLS corruption fixture passes natively.
     - `:514-573`: aarch64 merged-constant targets are not bound to the input's link-map contribution.
 17. **Closed (6205287aa).** Both architectures compare the resolver receipt with the independent shared `_static_link_plan`.
 18. **Closed (7415a7ca7).** ARM adopts the x86 DEFAULT private-alias visibility, and the native errno lifecycle producer passes.
-19. **Closed (67c2ddf6c).** The ARM DSO lifecycle transcript runs legacy DT_INIT/DT_FINI while pinned musl disables them through `NO_LEGACY_INITFINI`; the ledger records this observed difference without a musl-parity claim. The separate main-executable lifecycle probe remains item 19 above.
+19. **Closed (67c2ddf6c).** The ARM DSO lifecycle transcript runs legacy DT_INIT/DT_FINI while pinned musl disables them through `NO_LEGACY_INITFINI`; the ledger records this observed difference without a musl-parity claim. The separate main-executable comparison is recorded in item 19 above.
 20. **Closed (beac442c7, 71bc72983, 071098c93).** The ARM target is read from Cargo metadata, the builders receive the native architecture, and the provider audit checks ARM atomic and call instructions. The native `owned-rand` producer passed.
 
 ### Test-coverage
