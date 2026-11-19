@@ -17,11 +17,14 @@ readonly LINKER_ENV="$linker_variable=$linker"
 readonly PINNED_IMAGE="$image"
 if [ "$ARCH" = x86_64 ]; then
     IMAGE="${CRABC_X86_64_CORE_IMAGE:-}"
+    BUILD_IMAGE="${CRABC_X86_64_CORE_IMAGE:-crabc-core-evidence:x86_64}"
+    DOCKERFILE="$ROOT_DIR/docker/Dockerfile.x86_64"
 else
     IMAGE="${CRABC_AARCH64_CORE_IMAGE:-}"
+    BUILD_IMAGE="${CRABC_AARCH64_CORE_IMAGE:-crabc-core-evidence:aarch64}"
+    DOCKERFILE="$ROOT_DIR/docker/Dockerfile.aarch64"
 fi
-readonly BUILD_IMAGE="${CRABC_X86_64_CORE_IMAGE:-crabc-core-evidence:x86_64}"
-readonly DOCKERFILE="$ROOT_DIR/docker/Dockerfile.x86_64"
+readonly BUILD_IMAGE DOCKERFILE
 readonly WORK_BOUNDARY="$ROOT_DIR/.work/$ARCH"
 normalize_absolute_path() {
     local path="${1#/}"

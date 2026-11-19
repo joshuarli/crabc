@@ -302,11 +302,12 @@ for relative in sys.argv[2:]:
 PY
 fi
 corpus=.work/$work_name/owned-package-corpus-input
-if [ "$work_name" = x86_64 ]; then
-    if [ ! -d "$root/$corpus/apks" ]; then
+if [ ! -d "$root/$corpus/apks" ]; then
+    if [ "$work_name" = x86_64 ]; then
         python3 -B "$root/compat/corpus/fetch_x86.py" ||
             printf 'prepare-worktree: x86 package-corpus input unavailable; run ./scripts/dev-x86_64.sh owned-package-corpus-input\n' >&2
+    else
+        python3 -B "$root/compat/corpus/fetch_x86.py" --architecture aarch64 ||
+            printf 'prepare-worktree: aarch64 package-corpus input unavailable\n' >&2
     fi
-else
-    printf 'prepare-worktree: x86 package-corpus input skipped on %s; the AArch64 corpus is not wired yet (CRAB-8 A4)\n' "$work_name" >&2
 fi
