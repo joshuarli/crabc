@@ -12,6 +12,15 @@ spec.loader.exec_module(builder)
 
 
 class DynamicEntryModes(unittest.TestCase):
+    def test_portable_crt_command_does_not_record_build_scratch(self):
+        source = builder.ROOT / "crt/src/x86_64_crt1.rs"
+        first = Path("/tmp/first/crt1.o")
+        second = Path("/tmp/second/crt1.o")
+        first_command = ["rustc", str(source), "-o", str(first)]
+        second_command = ["rustc", str(source), "-o", str(second)]
+        self.assertEqual(builder.portable_rustc_command(first_command, source, first),
+                         builder.portable_rustc_command(second_command, source, second))
+
     def test_every_mode_selects_the_one_conventional_crt1(self):
         # The static and dynamic products each install this crt1.o; the
         # combined-sysroot leaf proves the installed bytes are identical.

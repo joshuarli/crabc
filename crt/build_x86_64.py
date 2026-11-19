@@ -908,7 +908,7 @@ def build_aarch64(args: argparse.Namespace) -> dict[str, object]:
         if name in ("Scrt1", "rcrt1"):
             command[command.index("relocation-model=static")] = "relocation-model=pic"
         result = run_command(command, environment)
-        records.append(result)
+        records.append({**result, "command": portable_rustc_command(command, source, destination)})
         if result["returncode"]:
             raise BuildError(f"aarch64 CRT {name} failed: {result['stderr']}")
         data = destination.read_bytes()
