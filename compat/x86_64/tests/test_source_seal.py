@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import contextlib
+import importlib.util
 import io
 from pathlib import Path
 import shutil
@@ -10,6 +11,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from unittest import mock
 
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -70,6 +72,22 @@ class FixtureCheckout:
 
 
 class ProductDigestTests(unittest.TestCase):
+    def test_native_arm_driver_is_sealed_and_x86_input_set_is_unchanged(self):
+        import native_arch
+        name = "arm_source_seal_fixture"
+        spec = importlib.util.spec_from_file_location(name, ROOT / "compat/x86_64/source_seal.py")
+        module = importlib.util.module_from_spec(spec)
+        sys.modules[name] = module
+        try:
+            with mock.patch.object(native_arch, "native_arch", return_value=native_arch.native_arch("aarch64")):
+                spec.loader.exec_module(module)
+            self.assertIn("compat/x86_64/crabc_cc_aarch64_dynamic.py", module.PRODUCT_FILES)
+            self.assertEqual(module.GUARD_SCRATCH, ".work/aarch64/tmp")
+            self.assertEqual("compat/x86_64/crabc_cc_aarch64_dynamic.py" in source_seal.PRODUCT_FILES,
+                             source_seal.ARCH["arch"] == "aarch64")
+        finally:
+            del sys.modules[name]
+
     def setUp(self) -> None:
         self.checkout = FixtureCheckout(self)
         self.root = self.checkout.root

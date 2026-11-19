@@ -35,7 +35,13 @@ import sys
 import tempfile
 from typing import Callable, Iterable, Mapping, Sequence
 
+if __package__:
+    from .native_arch import native_arch
+else:
+    from native_arch import native_arch
+
 ROOT = Path(__file__).resolve().parents[2]
+ARCH = native_arch()
 PRODUCT_TREES = (
     ".cargo", "builtins", "crabc-core", "crabc-mimalloc", "crabc-rs", "crt", "docker", "include", "ldso",
     "libc", "unwinder",
@@ -57,7 +63,7 @@ PRODUCT_FILES = (
     "compat/x86_64/run_owned_ldso_initial_tls_cases.sh",
     "compat/x86_64/run_owned_ldso_runtime_v1_cases.sh",
     "rust-toolchain.toml",
-)
+) + (("compat/x86_64/crabc_cc_aarch64_dynamic.py",) if ARCH["arch"] == "aarch64" else ())
 PRODUCT_BUILDERS = (
     "compat/x86_64/owned_dynamic_package.py",
     "compat/x86_64/owned_static_sysroot_package.py",
@@ -73,7 +79,7 @@ PRODUCT_LAZY_MODULES = (
 PYTHON_SEARCH = ("compat/x86_64", "scripts", "")
 GUARD_EXCLUDED_TOP = frozenset({".git", ".work", "target"})
 GUARD_PINNED_CACHES = ("compat/allocator/.cache",)
-GUARD_SCRATCH = ".work/x86_64/tmp"
+GUARD_SCRATCH = f".work/{ARCH['work_name']}/tmp"
 
 
 class SourceSealError(RuntimeError):
