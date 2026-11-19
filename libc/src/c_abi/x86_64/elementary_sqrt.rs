@@ -117,7 +117,7 @@ static_archive_member! { sqrtl_source {
             if ix == (0x7fffu128 << 112) { return x; }
             if (ix & ((1u128 << 127) - 1)) > (0x7fffu128 << 112) {
                 if ix & (1u128 << 111) == 0 {
-                    crabc_core::fenv::raise_exceptions(crabc_core::fenv::ExceptionFlags::INVALID);
+                    unsafe { feraiseexcept(1); }
                 }
                 return f128::from_bits(ix | (1u128 << 111));
             }
