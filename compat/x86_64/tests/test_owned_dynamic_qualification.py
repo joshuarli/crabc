@@ -161,7 +161,9 @@ class OwnedDynamicQualificationTests(unittest.TestCase):
             "oracle": {"version": "musl-1.2.6", "runtime_sha256": oracle_files["runtime"],
                        "compiler_wrapper_sha256": oracle_files["compiler_wrapper"],
                        "pins_sha256": qualification.digest(pins), "files": oracle_files},
-            "checks": ["installed-driver", "owned-crt", "owned-loader-source", "pinned-musl-oracle"], "exit_status": 0,
+            "checks": (["installed-driver-aarch64", "owned-crt", "owned-crt-aarch64", "owned-loader-source", "pinned-musl-oracle"]
+                       if qualification.ARCH["arch"] == "aarch64" else
+                       ["installed-driver", "owned-crt", "owned-loader-source", "pinned-musl-oracle"]), "exit_status": 0,
         })
         for name in ("runtime.tar", "second-runtime.tar"):
             with tarfile.open(self.work / name, "w") as archive:
