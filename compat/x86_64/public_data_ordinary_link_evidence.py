@@ -30,6 +30,7 @@ if str(MODULE_DIR) not in sys.path:
     sys.path.insert(0, str(MODULE_DIR))
 
 import native_abi_inventory as inventory
+from native_arch import native_arch
 import owned_dynamic_qualification as qualification
 import source_seal
 import owned_posix_product_evidence as products
@@ -45,6 +46,12 @@ PROBE = ROOT / "compat/x86_64/public_data_ordinary_link_probe.c"
 CONTRACT = ROOT / "compat/x86_64/public-data-ordinary-link.toml"
 CONTRACT_SCHEMA = "crabc.x86_64-public-data-ordinary-link-contract/v1"
 TARGET = "x86_64-unknown-linux-musl"
+NATIVE = native_arch()
+ARCH = NATIVE["arch"]
+ORACLE_LOADER = f"/lib/ld-musl-{ARCH}.so.1"
+CANDIDATE_LOADER = f"/lib/ld-crabc-{ARCH}.so.1"
+ORACLE_COMPILER = NATIVE["oracle"]
+ELF_MACHINE = "Advanced Micro Devices X86-64" if ARCH == "x86_64" else "AArch64"
 OBJECT_FIELDS = {
     "id", "name", "sources", "artifacts", "type", "binding", "visibility", "size_bytes",
     "alignment_bytes", "alias_target", "declaration", "meaning", "c_abi_type",
@@ -61,10 +68,10 @@ EXECUTABLE_ELF_MODES = {
     "oracle-static": {"type": "EXEC", "interpreter": None},
     "static": {"type": "EXEC", "interpreter": None},
     "static-pie": {"type": "DYN", "interpreter": None},
-    "oracle-dynamic-pie": {"type": "DYN", "interpreter": "/lib/ld-musl-x86_64.so.1"},
-    "oracle-dynamic-non-pie": {"type": "EXEC", "interpreter": "/lib/ld-musl-x86_64.so.1"},
-    "dynamic-pie": {"type": "DYN", "interpreter": "/lib/ld-crabc-x86_64.so.1"},
-    "dynamic-non-pie": {"type": "EXEC", "interpreter": "/lib/ld-crabc-x86_64.so.1"},
+    "oracle-dynamic-pie": {"type": "DYN", "interpreter": ORACLE_LOADER},
+    "oracle-dynamic-non-pie": {"type": "EXEC", "interpreter": ORACLE_LOADER},
+    "dynamic-pie": {"type": "DYN", "interpreter": CANDIDATE_LOADER},
+    "dynamic-non-pie": {"type": "EXEC", "interpreter": CANDIDATE_LOADER},
 }
 EXECUTION_LABELS = (
     "oracle-static-run",
@@ -90,7 +97,7 @@ COMMAND_TIMEOUT_SECONDS = 60
 TERMINATION_GRACE_SECONDS = 3
 CHROOT_INVOCATION = Path("/usr/sbin/chroot")
 CHROOT_PHYSICAL = Path("/bin/coreutils")
-ORACLE_EXECUTION_INTERPRETER = "lib/ld-musl-x86_64.so.1"
+ORACLE_EXECUTION_INTERPRETER = ORACLE_LOADER.lstrip("/")
 ORACLE_EXECUTION_INTERPRETER_MODE = 0o755
 
 
@@ -505,7 +512,7 @@ def capture_tool_roster(root: Path, output: Path, static_product: Path, dynamic_
             "dynamic_driver": installed["dynamic-driver"],
             "compiler": installed["compiler"],
             "linker": installed["linker"],
-            "oracle_wrapper": fixed_image_tool_identity(Path("/usr/local/bin/crabc-x86_64-musl-gcc"), "pinned musl compiler wrapper"),
+            "oracle_wrapper": fixed_image_tool_identity(Path(ORACLE_COMPILER), "pinned musl compiler wrapper"),
             "env": fixed_image_tool_identity(Path("/usr/bin/env"), "environment reset tool"),
             "readelf": fixed_image_tool_identity(inventory.TOOL_PATHS["readelf"], "ELF reader"),
             "chroot": installed["chroot"],
@@ -575,7 +582,7 @@ def validate_tool_roster(root: Path, work: Path, inputs: Mapping[str, Any], tool
     expected_original = {
         "static_driver": mounted(root, static_product / "bin/crabc-cc"),
         "dynamic_driver": mounted(root, dynamic_product / "bin/crabc-cc-dynamic"),
-        "oracle_wrapper": "/usr/local/bin/crabc-x86_64-musl-gcc",
+        "oracle_wrapper": ORACLE_COMPILER,
         "env": "/usr/bin/env",
         "readelf": str(inventory.TOOL_PATHS["readelf"]),
         "chroot": str(CHROOT_PHYSICAL),
@@ -600,7 +607,7 @@ def validate_tool_roster(root: Path, work: Path, inputs: Mapping[str, Any], tool
     except inventory.InventoryError as error:
         raise PublicDataEvidenceError(f"ordinary-link native tool replay failed: {error}") from error
     oracle = result["oracle_wrapper"]["original"]
-    require(oracle["path"] == "/usr/local/bin/crabc-x86_64-musl-gcc",
+    require(oracle["path"] == ORACLE_COMPILER,
             "ordinary-link oracle compiler path differs")
     return result
 
@@ -693,7 +700,7 @@ def prepare_oracle_execution_root(root: Path, work: Path, oracle_root: Path) -> 
         target.parent.chmod(0o755)
         shutil.copy2(runtime, target)
         target.chmod(ORACLE_EXECUTION_INTERPRETER_MODE)
-        (oracle_root / "lib/libc.so").symlink_to("ld-musl-x86_64.so.1")
+        (oracle_root / "lib/libc.so").symlink_to(Path(ORACLE_LOADER).name)
     except OSError as error:
         raise PublicDataEvidenceError(f"cannot prepare oracle execution root: {error}") from error
     require(digest(runtime) == digest(target) and stat.S_IMODE(target.stat().st_mode) == ORACLE_EXECUTION_INTERPRETER_MODE,
@@ -721,7 +728,7 @@ def executable_observations(root: Path, work: Path) -> dict[str, Any]:
             raise PublicDataEvidenceError(f"cannot read retained {name} ELF view: {error}") from error
         require(re.search(r"^\s*Class:\s+ELF64\s*$", header, re.MULTILINE) is not None
                 and re.search(r"^\s*Data:\s+2's complement, little endian\s*$", header, re.MULTILINE) is not None
-                and re.search(r"^\s*Machine:\s+Advanced Micro Devices X86-64\s*$", header, re.MULTILINE) is not None,
+                and re.search(r"^\s*Machine:\s+" + re.escape(ELF_MACHINE) + r"\s*$", header, re.MULTILINE) is not None,
                 name + " ELF target differs")
         require(re.search(r"^\s*Type:\s+" + expected["type"] + r"(?:\s|\()", header, re.MULTILINE) is not None,
                 name + " ELF type differs")
@@ -817,10 +824,10 @@ def validate_execution_roots(root: Path, work: Path, dynamic_product: Path, reco
     oracle_tree = execution_tree(root, work / oracle["root"], "oracle execution root")
     validate_oracle_execution_interpreter(oracle_tree, runtime)
     require(same_json(oracle["tree"], oracle_tree), "oracle execution root bytes or roster differ")
-    expected_oracle_entries = {"lib", "lib/ld-musl-x86_64.so.1", "lib/libc.so", "consumer-pie", "consumer-non-pie"}
+    expected_oracle_entries = {"lib", ORACLE_LOADER.lstrip("/"), "lib/libc.so", "consumer-pie", "consumer-non-pie"}
     require(set(oracle_tree) == expected_oracle_entries, "oracle execution root contains undeclared payload")
     require(oracle_tree["lib/libc.so"] == {"kind": "symlink", "mode": oracle_tree["lib/libc.so"]["mode"],
-                                             "target": "ld-musl-x86_64.so.1"},
+                                             "target": Path(ORACLE_LOADER).name},
             "oracle execution libc alias differs")
     oracle_consumers = oracle["consumers"]
     require(type(oracle_consumers) is dict and set(oracle_consumers) == {"pie", "non-pie"},
@@ -974,7 +981,7 @@ class Collector:
         for mode in ("pie", "non-pie"):
             flags = ["-fPIE", "-pie"] if mode == "pie" else ["-no-pie"]
             self.run("oracle-dynamic-" + mode + "-link", [
-                oracle_cc, *flags, str(object_path), "-Wl,--dynamic-linker,/lib/ld-musl-x86_64.so.1",
+                oracle_cc, *flags, str(object_path), "-Wl,--dynamic-linker," + ORACLE_LOADER,
                 "-o", str(self.output / ("oracle-dynamic-" + mode))
             ])
             self.run("dynamic-" + mode + "-link", [tools["dynamic_driver"]["original"]["path"], "--dynamic-" + mode,
@@ -991,8 +998,8 @@ class Collector:
         candidate_root = self.output / "candidate-root"
         shutil.copytree(self.dynamic_product, candidate_root, symlinks=True)
         for owner, execution_root, interpreter in (
-            ("oracle", oracle_root, "/lib/ld-musl-x86_64.so.1"),
-            ("candidate", candidate_root, "/lib/ld-crabc-x86_64.so.1"),
+            ("oracle", oracle_root, ORACLE_LOADER),
+            ("candidate", candidate_root, CANDIDATE_LOADER),
         ):
             for mode in ("pie", "non-pie"):
                 binary = self.output / (("oracle-dynamic-" if owner == "oracle" else "dynamic-") + mode)
@@ -1018,7 +1025,7 @@ class Collector:
         return {
             "schema": SCHEMA,
             "status": "ordinary-link-evidence-unqualified",
-            "target": "x86_64-unknown-linux-musl",
+            "target": NATIVE["target_triple"],
             "image": image,
             "source_before": before,
             "source_after": after,
@@ -1213,7 +1220,7 @@ def expected_commands(root: Path, work: Path, inputs: Mapping[str, Any],
         flags = ["-fPIE", "-pie"] if mode == "pie" else ["-no-pie"]
         result["oracle-dynamic-" + mode + "-link"] = {"cwd": SOURCE_MOUNT, "argv": [
             oracle_wrapper, *flags, object_path,
-            "-Wl,--dynamic-linker,/lib/ld-musl-x86_64.so.1", "-o", output("oracle-dynamic-" + mode),
+            "-Wl,--dynamic-linker," + ORACLE_LOADER, "-o", output("oracle-dynamic-" + mode),
         ]}
         result["dynamic-" + mode + "-link"] = {"cwd": SOURCE_MOUNT, "argv": [
             dynamic_driver, "--dynamic-" + mode, object_path, "-o", output("dynamic-" + mode),
@@ -1224,8 +1231,8 @@ def expected_commands(root: Path, work: Path, inputs: Mapping[str, Any],
     for name in ("oracle-static", "static", "static-pie"):
         result[name + "-run"] = {"cwd": SOURCE_MOUNT, "argv": [env, "-i", output(name)]}
     for owner, root_name, interpreter in (
-        ("oracle", "oracle-root", "/lib/ld-musl-x86_64.so.1"),
-        ("candidate", "candidate-root", "/lib/ld-crabc-x86_64.so.1"),
+        ("oracle", "oracle-root", ORACLE_LOADER),
+        ("candidate", "candidate-root", CANDIDATE_LOADER),
     ):
         for mode in ("pie", "non-pie"):
             for entry in ("kernel", "direct"):
@@ -1332,7 +1339,7 @@ def validate_report(root: Path, report_path: Path) -> dict[str, Any]:
     }
     require(set(report) == expected_keys, "ordinary-link report fields differ")
     require(report["schema"] == SCHEMA and report["status"] == "ordinary-link-evidence-unqualified"
-            and report["target"] == "x86_64-unknown-linux-musl", "ordinary-link report boundary differs")
+            and report["target"] == NATIVE["target_triple"], "ordinary-link report boundary differs")
     require(IMAGE_PATTERN.fullmatch(report["image"]) is not None, "ordinary-link report image differs")
     work = report_path.parent
     before = report["source_before"]
