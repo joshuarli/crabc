@@ -837,14 +837,8 @@ def source_build_compiler_builtins(
 
 def archive_members(llvm_ar: str, archive: pathlib.Path) -> list[str]:
     members = [line for line in run((llvm_ar, "t", str(archive))).splitlines() if line]
-    if not members or members[0] != ARCHIVE_MEMBER:
-        raise BuildError(f"archive must begin with its crabc-owned member {ARCHIVE_MEMBER!r}, found {members!r}")
-    if len(members) == 1 or len(members) != len(set(members)):
-        raise BuildError("archive must contain unique crabc and source-built compiler_builtins members")
-    if any(not name.endswith(".o") for name in members):
-        raise BuildError(f"archive contained a non-object member: {members!r}")
-    if any(not name.startswith("compiler_builtins-") for name in members[1:]):
-        raise BuildError(f"archive contained an unclassified upstream member: {members!r}")
+    if members != [ARCHIVE_MEMBER]:
+        raise BuildError(f"archive must contain exactly {ARCHIVE_MEMBER!r}, found {members!r}")
     return members
 
 
@@ -938,14 +932,18 @@ def build_archive(
     output.parent.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix="crabc-builtins-", dir=output.parent) as temporary:
         stage = pathlib.Path(temporary)
-        local_object = stage / ARCHIVE_MEMBER
+        local_object = stage / "local-helpers.o"
         local_command = compiler_command(rustc, local_object)
         run(local_command)
         upstream = source_build_compiler_builtins(cargo=cargo, rustc=rustc, llvm_ar=llvm_ar, stage=stage)
         objects = [local_object, *upstream["members"]]
         member_facts = {path.name: elf_facts(llvm_readelf, path) for path in objects}
+        inputs_archive = stage / "source-members.a"
+        run((llvm_ar, "rcsD", str(inputs_archive), *(str(path) for path in objects)))
+        merged_object = stage / ARCHIVE_MEMBER
+        run((lld, "-r", "--whole-archive", str(inputs_archive), "--no-whole-archive", "-o", str(merged_object)))
         staged_archive = stage / output.name
-        run((llvm_ar, "rcsD", str(staged_archive), *(str(path) for path in objects)))
+        run((llvm_ar, "rcsD", str(staged_archive), str(merged_object)))
         members = archive_members(llvm_ar, staged_archive)
         defined = nm_symbols(llvm_nm, staged_archive, "--defined-only")
         assert_symbol_surface(defined)
@@ -978,13 +976,24 @@ def build_archive(
                 ],
             },
             {
+                "kind": "archive_source_built_members",
+                "command": [pathlib.Path(llvm_ar).name, "rcsD", "$CRABC_BUILTINS_STAGE/source-members.a",
+                            "$CRABC_BUILTINS_STAGE/local-helpers.o", *upstream_member_paths],
+            },
+            {
+                "kind": "merge_source_built_members",
+                "command": [pathlib.Path(lld).name, "-r", "--whole-archive",
+                            "$CRABC_BUILTINS_STAGE/source-members.a", "--no-whole-archive", "-o",
+                            "$CRABC_BUILTINS_STAGE/crabc-builtins.o"],
+                "inputs": ["$CRABC_BUILTINS_STAGE/local-helpers.o", *upstream_member_paths],
+            },
+            {
                 "kind": "create_deterministic_archive",
                 "command": [
                     pathlib.Path(llvm_ar).name,
                     "rcsD",
                     f"$CRABC_BUILTINS_OUT/{output.name}",
                     "$CRABC_BUILTINS_STAGE/crabc-builtins.o",
-                    *upstream_member_paths,
                 ],
             },
             {
