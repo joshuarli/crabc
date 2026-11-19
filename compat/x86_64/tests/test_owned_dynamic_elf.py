@@ -176,6 +176,8 @@ class FinalElfInspectionTests(unittest.TestCase):
         facts = elf.inspect(path, architecture="aarch64")
         elf.require_expected(facts, expectation(interpreter="/lib/ld-crabc-aarch64.so.1"))
         self.assertEqual(facts["machine"], "EM_AARCH64")
+        with self.assertRaisesRegex(elf.InspectionError, "inspection schema differs"):
+            elf.require_expected({**facts, "schema": elf.SCHEMA}, expectation(interpreter="/lib/ld-crabc-aarch64.so.1"))
         self.assertEqual(facts["relocations"], {"R_AARCH64_GLOB_DAT": 1, "R_AARCH64_JUMP_SLOT": 1,
                                                 "R_AARCH64_RELATIVE": 1})
         with self.assertRaises(elf.InspectionError):

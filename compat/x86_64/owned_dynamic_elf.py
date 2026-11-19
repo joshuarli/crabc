@@ -340,7 +340,9 @@ def require_expected(facts: Mapping[str, Any], expected: Expectation) -> None:
 
     mode = MODES.get(expected.mode)
     _require(mode is not None, f"unknown dynamic mode {expected.mode!r}")
-    _require(facts.get("schema") == SCHEMA, "inspection schema differs")
+    schemas = {"EM_X86_64": SCHEMA, "EM_AARCH64": "crabc.aarch64-owned-dynamic-elf-inspection/v2"}
+    _require(facts.get("machine") in schemas and facts.get("schema") == schemas[facts["machine"]],
+             "inspection schema differs")
     _require(facts["elf_type"] == mode["elf_type"], f"{expected.mode} output is not {mode['elf_type']}")
     if mode["interpreter"]:
         _require(facts["interpreter"] == expected.interpreter,
