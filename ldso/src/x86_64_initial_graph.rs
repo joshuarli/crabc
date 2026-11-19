@@ -2532,7 +2532,15 @@ mod tls_zero_tail_tests {
 
     #[test]
     fn initial_tls_keeps_file_prefix_and_zero_tail_in_both_backing_choices() {
+        #[cfg(target_arch = "x86_64")]
         let prefixes = [[0x5au8, 0x6b], [0xa5, 0xc3]];
+        #[cfg(target_arch = "aarch64")]
+        #[repr(align(16))]
+        struct Prefix([u8; 2]);
+        #[cfg(target_arch = "aarch64")]
+        let aligned = [Prefix([0x5a, 0x6b]), Prefix([0xa5, 0xc3])];
+        #[cfg(target_arch = "aarch64")]
+        let prefixes = [&aligned[0].0, &aligned[1].0];
         let objects: [Object; 2] = core::array::from_fn(|index| Object {
             tls_image: prefixes[index].as_ptr(),
             tls_filesz: prefixes[index].len(),
@@ -2555,7 +2563,10 @@ mod tls_zero_tail_tests {
                     unsafe { installed.thread_pointer.sub((index + 1) * 16) }
                 };
                 let image = unsafe { core::slice::from_raw_parts(destination, 16) };
+                #[cfg(target_arch = "x86_64")]
                 assert_eq!(&image[..2], prefix);
+                #[cfg(target_arch = "aarch64")]
+                assert_eq!(&image[..2], &prefix[..]);
                 assert!(image[2..].iter().all(|byte| *byte == 0));
                 assert_eq!(unsafe { core::ptr::read_unaligned(installed.dtv.add(index + 1)) }, destination as usize);
                 assert_eq!(unsafe { core::ptr::read_unaligned(module_sizes.add(index + 1)) }, 16);
@@ -5068,6 +5079,284 @@ mod self_relocate_tests {
     fn relative_rela_with_a_symbol_index_is_rejected() {
         let mut fixture = Fixture::new();
         fixture.rela_at(0, TARGET_OFF as u64, 8 | (1u64 << 32), 0x20);
+        fixture.dynamic(Some(24), None);
+        assert_eq!(fixture.run(), 0);
+        assert_eq!(fixture.word(TARGET_OFF), 0);
+    }
+
+    #[test]
+    fn relr_size_not_multiple_of_eight_is_rejected() {
+        let mut fixture = Fixture::new();
+        fixture.relr(&[TARGET_OFF as u64, 3]);
+        fixture.dynamic(None, Some((12, 8)));
+        assert_eq!(fixture.run(), 1);
+    }
+
+    #[test]
+    fn relr_bitmap_target_outside_writable_load_is_rejected() {
+        let mut fixture = Fixture::new();
+        fixture.relr(&[0xfe0, 1 | (1 << 5)]);
+        fixture.dynamic(None, Some((16, 8)));
+        assert_eq!(fixture.run(), 1);
+    }
+}
+
+#[cfg(all(test, target_arch = "aarch64"))]
+mod aarch64_self_relocate_tests {
+    extern crate std;
+
+    use std::vec;
+    use std::vec::Vec;
+
+    const RELA_OFF: usize = 0x100;
+    const RELR_OFF: usize = 0x300;
+    const DYNAMIC_OFF: usize = 0x500;
+    const TARGET_OFF: usize = 0x800;
+    const IMAGE_BYTES: usize = 0x1000;
+
+    struct Fixture {
+        words: Vec<u64>,
+        phdr: Vec<u8>,
+        dynamic: Vec<u64>,
+    }
+
+    impl Fixture {
+        fn new() -> Self {
+            Self {
+                words: vec![0u64; IMAGE_BYTES / 8],
+                phdr: load_phdr(0, IMAGE_BYTES as u64, 6),
+                dynamic: Vec::new(),
+            }
+        }
+
+        fn rela(&mut self, offset: u64, addend: i64) {
+            self.rela_at(0, offset, 1027, addend);
+        }
+
+        fn rela_at(&mut self, index: usize, offset: u64, info: u64, addend: i64) {
+            let at = RELA_OFF / 8 + index * 3;
+            self.words[at] = offset;
+            self.words[at + 1] = info;
+            self.words[at + 2] = addend as u64;
+        }
+
+        fn relr(&mut self, entries: &[u64]) {
+            let at = RELR_OFF / 8;
+            for (index, entry) in entries.iter().enumerate() {
+                self.words[at + index] = *entry;
+            }
+        }
+
+        fn dynamic(&mut self, rela: Option<u64>, relr: Option<(u64, u64)>) {
+            let mut entries = Vec::new();
+            if let Some(size) = rela {
+                entries.push(7); // DT_RELA
+                entries.push(RELA_OFF as u64);
+                entries.push(8); // DT_RELASZ
+                entries.push(size);
+                entries.push(9); // DT_RELAENT
+                entries.push(24);
+            }
+            if let Some((size, ent)) = relr {
+                entries.push(0x24); // DT_RELR
+                entries.push(RELR_OFF as u64);
+                entries.push(0x23); // DT_RELRSZ
+                entries.push(size);
+                entries.push(0x25); // DT_RELRENT
+                entries.push(ent);
+            }
+            entries.push(0);
+            entries.push(0);
+            let at = DYNAMIC_OFF / 8;
+            self.words[at..at + entries.len()].copy_from_slice(&entries);
+            self.dynamic = entries;
+        }
+
+        fn run(&self) -> u32 {
+            let dynamic = unsafe { self.words.as_ptr().add(DYNAMIC_OFF / 8) } as *const u8;
+            let dynamic_end = unsafe { dynamic.add(self.dynamic.len() * 8) };
+            self.run_with_dynamic(dynamic, dynamic_end)
+        }
+
+        fn run_with_dynamic(&self, dynamic: *const u8, dynamic_end: *const u8) -> u32 {
+            let base = self.words.as_ptr() as usize;
+            unsafe {
+                if super::aarch64_bootstrap::relocate(
+                    base, self.phdr.as_ptr() as usize, 1, dynamic as usize, dynamic_end as usize,
+                ).is_some() { 0 } else { 1 }
+            }
+        }
+
+        fn set_dynamic_value(&mut self, tag: u64, value: u64) {
+            let at = DYNAMIC_OFF / 8;
+            for index in (0..self.dynamic.len()).step_by(2) {
+                if self.words[at + index] == tag {
+                    self.words[at + index + 1] = value;
+                }
+            }
+        }
+
+        fn word(&self, offset: usize) -> u64 {
+            self.words[offset / 8]
+        }
+    }
+
+    fn load_phdr(start: u64, memsz: u64, flags: u32) -> Vec<u8> {
+        let mut phdr = vec![0u8; 56];
+        phdr[0..4].copy_from_slice(&1u32.to_le_bytes());
+        phdr[4..8].copy_from_slice(&flags.to_le_bytes());
+        phdr[16..24].copy_from_slice(&start.to_le_bytes());
+        phdr[40..48].copy_from_slice(&memsz.to_le_bytes());
+        phdr[48..56].copy_from_slice(&8u64.to_le_bytes());
+        phdr
+    }
+
+    #[test]
+    fn valid_rela_and_relr_apply_the_load_bias() {
+        let mut fixture = Fixture::new();
+        fixture.rela(TARGET_OFF as u64, 0x20);
+        fixture.relr(&[0x810, 3]);
+        fixture.dynamic(Some(24), Some((16, 8)));
+        let base = fixture.words.as_ptr() as usize;
+        let result = fixture.run();
+        assert_eq!(result, 0);
+        assert_eq!(fixture.word(TARGET_OFF), (base as u64).wrapping_add(0x20));
+        assert_eq!(fixture.word(0x810), base as u64);
+        assert_eq!(fixture.word(0x818), base as u64);
+    }
+
+    #[test]
+    fn bitmap_first_relr_is_rejected() {
+        let mut fixture = Fixture::new();
+        fixture.relr(&[1]);
+        fixture.dynamic(None, Some((8, 8)));
+        assert_eq!(fixture.run(), 1);
+    }
+
+    #[test]
+    fn bad_relrent_is_rejected() {
+        let mut fixture = Fixture::new();
+        fixture.relr(&[TARGET_OFF as u64]);
+        fixture.dynamic(None, Some((8, 4)));
+        assert_eq!(fixture.run(), 1);
+    }
+
+    #[test]
+    fn target_outside_writable_load_is_rejected() {
+        let mut fixture = Fixture::new();
+        fixture.rela(0x1200, 0x20);
+        fixture.dynamic(Some(24), None);
+        assert_eq!(fixture.run(), 1);
+        assert_eq!(fixture.word(TARGET_OFF), 0);
+    }
+
+    #[test]
+    fn target_overflow_is_rejected() {
+        let mut fixture = Fixture::new();
+        fixture.rela(u64::MAX - 7, 0x20);
+        fixture.dynamic(Some(24), None);
+        assert_eq!(fixture.run(), 1);
+    }
+
+    #[test]
+    fn unaligned_target_is_rejected() {
+        let mut fixture = Fixture::new();
+        fixture.rela(TARGET_OFF as u64 + 1, 0x20);
+        fixture.dynamic(Some(24), None);
+        assert_eq!(fixture.run(), 1);
+        assert_eq!(fixture.word(TARGET_OFF), 0);
+    }
+
+    #[test]
+    fn duplicate_relr_target_is_rejected() {
+        let mut fixture = Fixture::new();
+        fixture.relr(&[TARGET_OFF as u64, TARGET_OFF as u64]);
+        fixture.dynamic(None, Some((16, 8)));
+        assert_eq!(fixture.run(), 1);
+    }
+
+    #[test]
+    fn overlapping_tables_are_rejected() {
+        let mut fixture = Fixture::new();
+        fixture.dynamic(Some(24), Some((16, 8)));
+        // Move DT_RELR onto DT_RELA.
+        let at = DYNAMIC_OFF / 8;
+        for index in 0..fixture.dynamic.len() / 2 {
+            if fixture.words[at + index * 2] == 0x24 {
+                fixture.words[at + index * 2 + 1] = RELA_OFF as u64;
+            }
+        }
+        let entries = fixture.dynamic.clone();
+        fixture.dynamic = entries;
+        assert_eq!(fixture.run(), 1);
+    }
+
+    #[test]
+    fn table_outside_load_is_rejected() {
+        let mut fixture = Fixture::new();
+        fixture.rela(TARGET_OFF as u64, 0x20);
+        fixture.dynamic(Some(24), None);
+        // Point DT_RELA past the only PT_LOAD.
+        let at = DYNAMIC_OFF / 8;
+        fixture.words[at + 1] = 0x2000;
+        assert_eq!(fixture.run(), 1);
+        assert_eq!(fixture.word(TARGET_OFF), 0);
+    }
+
+    #[test]
+    fn target_overlapping_a_table_is_rejected() {
+        let mut fixture = Fixture::new();
+        fixture.rela(RELA_OFF as u64, 0x20);
+        fixture.dynamic(Some(24), None);
+        assert_eq!(fixture.run(), 1);
+    }
+
+    #[test]
+    fn dynamic_table_outside_a_readable_load_is_rejected() {
+        let mut fixture = Fixture::new();
+        fixture.rela(TARGET_OFF as u64, 0x20);
+        fixture.dynamic(Some(24), None);
+        let outside = unsafe { fixture.words.as_ptr().add(IMAGE_BYTES / 8) } as *const u8;
+        assert_eq!(fixture.run_with_dynamic(outside, unsafe { outside.add(16) }), 1);
+        assert_eq!(fixture.word(TARGET_OFF), 0);
+    }
+
+    #[test]
+    fn wrong_rela_entry_size_is_rejected() {
+        let mut fixture = Fixture::new();
+        fixture.rela(TARGET_OFF as u64, 0x20);
+        fixture.dynamic(Some(24), None);
+        fixture.set_dynamic_value(9, 8);
+        assert_eq!(fixture.run(), 1);
+        assert_eq!(fixture.word(TARGET_OFF), 0);
+    }
+
+    #[test]
+    fn duplicate_rela_target_is_rejected_before_writing() {
+        let mut fixture = Fixture::new();
+        fixture.rela_at(0, TARGET_OFF as u64, 1027, 0x20);
+        fixture.rela_at(1, TARGET_OFF as u64, 1027, 0x30);
+        fixture.dynamic(Some(48), None);
+        assert_eq!(fixture.word(RELA_OFF), TARGET_OFF as u64);
+        assert_eq!(fixture.word(RELA_OFF + 24), TARGET_OFF as u64);
+        assert_eq!(fixture.run(), 1);
+        assert_eq!(fixture.word(TARGET_OFF), 0);
+    }
+
+    #[test]
+    fn negative_rela_addend_is_applied() {
+        let mut fixture = Fixture::new();
+        fixture.rela(TARGET_OFF as u64, -0x20);
+        fixture.dynamic(Some(24), None);
+        let base = fixture.words.as_ptr() as usize;
+        assert_eq!(fixture.run(), 0);
+        assert_eq!(fixture.word(TARGET_OFF), (base as u64).wrapping_sub(0x20));
+    }
+
+    #[test]
+    fn relative_rela_with_a_symbol_index_is_rejected() {
+        let mut fixture = Fixture::new();
+        fixture.rela_at(0, TARGET_OFF as u64, 1027 | (1u64 << 32), 0x20);
         fixture.dynamic(Some(24), None);
         assert_eq!(fixture.run(), 0);
         assert_eq!(fixture.word(TARGET_OFF), 0);

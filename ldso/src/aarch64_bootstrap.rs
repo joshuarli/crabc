@@ -83,7 +83,7 @@ unsafe fn target(base: usize, phdr: usize, count: usize, offset: usize,
 }
 
 #[inline(always)]
-unsafe fn relocate(base: usize, phdr: usize, count: usize, dynamic: usize, dynamic_end: usize) -> Option<()> {
+pub(super) unsafe fn relocate(base: usize, phdr: usize, count: usize, dynamic: usize, dynamic_end: usize) -> Option<()> {
     // SAFETY: The program headers came from the kernel-mapped interpreter.
     if !unsafe { mapped(base, phdr, count, dynamic, dynamic_end, 4) } { return None; }
     let (mut rela, mut rela_size, mut rela_ent) = (0usize, 0usize, 0usize);
