@@ -971,8 +971,8 @@ def build_debug_payload(output: Path, stage: Path, *, allocator_backend: str, li
                          (inputs["builtins_provenance"], "builtins.provenance.json")):
         common.copy_artifact(source, metadata / name)
     common.write_json(metadata / "producer-tools.json", tools)
-    common.write_json(metadata / "libc-shared.elf.json", audit_shared_elf(library / "libc.so", architecture="aarch64"))
-    common.write_json(metadata / "loader.elf.json", audit_shared_elf(interpreter, architecture="aarch64"))
+    common.write_json(metadata / "libc-shared.elf.json", audit_shared_elf(library / "libc.so", architecture="x86_64"))
+    common.write_json(metadata / "loader.elf.json", audit_shared_elf(interpreter, architecture="x86_64"))
     common.write_json(metadata / "libc-shared.provenance.json", {**inputs["libc_provenance"],
         "shared_dynamic_list": dynamic_list, "shared_errno_private_aliases": errno_policy,
         "shared_mimalloc_hidden_exports": allocator_policy,
