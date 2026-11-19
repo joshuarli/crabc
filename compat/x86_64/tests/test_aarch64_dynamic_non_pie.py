@@ -9,6 +9,28 @@ import unittest
 
 class Aarch64DynamicNonPieTest(unittest.TestCase):
     @unittest.skipUnless(os.environ.get("CRABC_AARCH64_DYNAMIC_SYSROOT"), "requires a built aarch64 product")
+    def test_application_dependency_file(self):
+        product = Path(os.environ["CRABC_AARCH64_DYNAMIC_SYSROOT"]).resolve(strict=True)
+        driver = str(product / "bin/crabc-cc-dynamic")
+        with tempfile.TemporaryDirectory(dir=os.environ["TMPDIR"]) as tmp:
+            work = Path(tmp)
+            source, header, obj, dep = (work / name for name in ("main.c", "local.h", "main.o", "main.d"))
+            source.write_text('#include "local.h"\n#include <stddef.h>\nint x = VALUE;\n')
+            header.write_text('#define VALUE 1\n')
+            subprocess.run([driver, "-pie", "-c", str(source), "-o", str(obj),
+                            "--application-dependency-file", str(dep)], check=True)
+            content = dep.read_text()
+            self.assertIn(str(source), content)
+            self.assertIn(str(header), content)
+            self.assertIn(str(product / "usr/include/stddef.h"), content)
+            for args in (["-pie", str(source), "-o", str(work / "bin"), "--application-dependency-file", str(dep)],
+                         ["-pie", "-c", str(source), "-o", str(obj), "--application-dependency-file", str(source)],
+                         ["-pie", "-c", str(source), "-o", str(obj), "--application-dependency-file", str(dep),
+                          "--application-dependency-file", str(dep)]):
+                result = subprocess.run([driver, *args], capture_output=True, text=True)
+                self.assertNotEqual(result.returncode, 0)
+
+    @unittest.skipUnless(os.environ.get("CRABC_AARCH64_DYNAMIC_SYSROOT"), "requires a built aarch64 product")
     def test_non_pie_receipt_and_execution(self):
         product = Path(os.environ["CRABC_AARCH64_DYNAMIC_SYSROOT"]).resolve(strict=True)
         with tempfile.TemporaryDirectory(dir=os.environ["TMPDIR"]) as tmp:
