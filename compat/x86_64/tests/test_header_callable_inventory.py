@@ -87,6 +87,10 @@ class HeaderCallableInventoryTests(unittest.TestCase):
         )
         subprocess.run([str(executable)], check=True, cwd=ROOT)
 
+    def test_contract_uses_its_reviewed_pin_with_a_native_arm_uapi(self) -> None:
+        with patch.object(INVENTORY, "LINUX_UAPI_HEADER_MANIFEST_SHA256", "6bed459d713bc462619b7b5d79090faff2c63540814d5a8401397b49723df4f3"):
+            self.assertTrue(INVENTORY.load_contract().profiles)
+
     def test_installed_private_uapi_keeps_the_public_header_roster(self) -> None:
         scratch = ROOT / ".work/x86_64/header-callable-inventory-tests"
         scratch.mkdir(parents=True, exist_ok=True)
