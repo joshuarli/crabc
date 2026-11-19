@@ -116,6 +116,47 @@ class SourceBuildAdmissionTests(unittest.TestCase):
             with self.assertRaisesRegex(ADMISSION.LUA.RunnerError, "architecture differs"):
                 ADMISSION.require_current_supplied_products([Path("static")], [Path("dynamic")], source)
 
+    def test_aarch64_supplied_reports_are_admitted_and_replayed(self) -> None:
+        import run_x86_static_dispatch as static_runner
+        import run_x86_dynamic_supplied as dynamic_runner
+        with self.selected_reports() as (work, static, dynamic):
+            for product, fmt in ((work / "static/sysroot", "static"),
+                                 (work / "dynamic/sysroot", "dynamic"),
+                                 (work / "dynamic/extracted", "dynamic")):
+                path = product / "share/crabc/manifest.json"
+                manifest = json.loads(path.read_text())
+                manifest["format"] = f"crabc-aarch64-owned-{fmt}-sysroot-v1"
+                manifest.pop("allocator_backend")
+                path.write_text(json.dumps(manifest))
+            roots = {name: str(work / "static/sysroot") for name in static_runner.SUPPLIED_ROOTS}
+            context = {"checkout": str(ROOT), "preparation": {"path": str(static)}, "roots": roots,
+                       "archive_seed": {"path": str(static)}}
+            static.write_text(json.dumps({"supplied": context}))
+            report = json.loads(dynamic.read_text())
+            report["runner"] = "crabc-lua-native-x86-dynamic-supplied-cohort"
+            report["consumer_source_before"] = report["consumer_source_after"] = {"revision": "1" * 40}
+            report["dispatcher"].update({"state_root": str(dynamic.parent), "authoritative_report": str(dynamic)})
+            cohort = {"checkout": str(ROOT), "receipt": {"path": str(static)}, "source_sha256": "2" * 64,
+                      "roots": {label: {"path": str(work / "dynamic" / directory)}
+                                for label, directory in (("installed", "sysroot"), ("extracted", "extracted"))}}
+            report["dispatcher"]["cohort"] = cohort
+            report["reproducibility"]["contract"] = "identical Lua source artifacts through supplied installed and extracted dynamic roots"
+            for label in ("installed", "extracted"):
+                root = Path(cohort["roots"][label]["path"])
+                report[label]["environment"].update({"sysroot": str(root), "sysroot_manifest": json.loads(
+                    (root / "share/crabc/manifest.json").read_text())})
+            dynamic.write_text(json.dumps(report))
+            with (mock.patch.object(ADMISSION.LUA, "ARCH", "aarch64"),
+                  mock.patch.object(static_runner, "read_supplied"),
+                  mock.patch.object(dynamic_runner, "consumer_source_seal", return_value=report["consumer_source_before"]),
+                  mock.patch.object(dynamic_runner, "validate_cohort", return_value=(cohort, {})) as reader):
+                receipt = ADMISSION.write_receipt(work / "arm-admission", static_report=static, dynamic_report=dynamic)
+                ADMISSION.validate_receipt(ROOT, receipt)
+                self.assertEqual(reader.call_count, 2)
+                reader.return_value = ({**cohort, "source_sha256": "3" * 64}, {})
+                with self.assertRaisesRegex(ADMISSION.LUA.RunnerError, "cohort changed"):
+                    ADMISSION.validate_receipt(ROOT, receipt)
+
     def test_supplied_receipt_rechecks_cohort_and_raw_artifacts(self) -> None:
         import run_x86_static_dispatch as static_runner
         import run_x86_dynamic_supplied as dynamic_runner
