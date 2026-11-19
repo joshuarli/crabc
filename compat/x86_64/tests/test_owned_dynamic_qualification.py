@@ -36,7 +36,7 @@ class NativeCorpusTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory, \
                 mock.patch.object(qualification, "ARCH", native_arch.native_arch("aarch64")):
             work = Path(directory)
-            with self.assertRaisesRegex(qualification.QualificationError, "aarch64 package corpus is not pinned"):
+            with self.assertRaisesRegex(qualification.QualificationError, "missing pinned APK archives"):
                 qualification._run_case(work, "installed", "package-corpus", "source", "manifest")
             self.assertEqual(list(work.iterdir()), [])
 

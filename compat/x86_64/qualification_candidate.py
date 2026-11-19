@@ -584,8 +584,6 @@ def preflight(root: Path, context: Context, steps: Sequence[Step]) -> list[str]:
         if not (root / relative).is_dir():
             blockers.append(f"pinned source oracle is not seeded (the native container has no network): {relative}")
     try:
-        if ARCH["arch"] == "aarch64":
-            raise CandidateError("aarch64 package corpus is not pinned")
         _validate_package_corpus(root)
     except Exception as error:  # noqa: BLE001 - any corpus mismatch blocks native qualification
         blockers.append(f"package corpus input does not match its manifest: {error}")

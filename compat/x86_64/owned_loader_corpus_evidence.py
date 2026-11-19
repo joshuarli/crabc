@@ -1284,7 +1284,7 @@ def _corpus_oracle(value: object, expected_oracle: Mapping[str, object]) -> dict
     loader = _keys(oracle["loader"], {"path", "target", "resolved_path"}, "package-corpus oracle loader")
     source = _keys(oracle["source_manifest"], {"path", "sha256"}, "package-corpus oracle source manifest")
     root = oracle["root"].rstrip("/")
-    _require(runtime["path"] == root + "/lib/libc.so" and loader["path"] == root + "/lib/ld-musl-x86_64.so.1"
+    _require(runtime["path"] == root + "/lib/libc.so" and loader["path"] == root + _corpus().CANONICAL_INTERPRETER
              and loader["resolved_path"] == runtime["path"] and isinstance(loader["target"], str) and loader["target"],
              "package-corpus oracle runtime path differs")
     for item, description in ((runtime, "runtime"), (source, "source manifest")):
@@ -1313,6 +1313,16 @@ def _validate_corpus_tools(value: object) -> dict[str, Any]:
 
 def _validate_corpus_inputs(value: object, manifest: Any) -> None:
     inputs = _keys(value, {"verification_before", "after"}, "package-corpus inputs")
+    if getattr(manifest, "architecture", "x86_64") == "aarch64":
+        before = _keys(inputs["verification_before"], {"identity"}, "package-corpus input verification")
+        identity = _keys(before["identity"], {"directory", "archives"}, "package-corpus input identity")
+        _require(isinstance(identity["directory"], str) and Path(identity["directory"]).is_absolute(), "package-corpus input directory differs")
+        _require(isinstance(identity["archives"], dict) and set(identity["archives"]) == set(manifest.archive_roster), "package-corpus archive roster differs")
+        for name, digest in manifest.archive_roster.items():
+            _require(_keys(identity["archives"][name], {"sha256"}, "package-corpus archive")["sha256"] == digest,
+                     f"package-corpus archive {name} differs from frozen manifest")
+        _require(inputs["after"] == identity, "package-corpus inputs changed during execution")
+        return
     before = _keys(inputs["verification_before"], {"identity", "index_signature", "archive_signatures"},
                    "package-corpus input verification")
     identity = _keys(before["identity"], {"directory", "index", "archives"}, "package-corpus input identity")
@@ -1694,10 +1704,11 @@ def _validate_corpus_root(root: Path, value: object, expected_case: Any, arm: st
                  f"package-corpus {expected_case.id} {arm} {name} source differs")
         _digest(item["sha256"], f"package-corpus {expected_case.id} {arm} {name}")
     if arm == "candidate":
-        loader = recorded_path(checkout, source_mount, product / "lib/ld-crabc-x86_64.so.1")
+        arch = getattr(corpus, "ARCH", "x86_64")
+        loader = recorded_path(checkout, source_mount, product / f"lib/ld-crabc-{arch}.so.1")
         libc = recorded_path(checkout, source_mount, product / "usr/lib/libc.so")
         _require(runtime["loader"]["source"] == loader and runtime["loader"]["resolved_source"] == loader
-                 and runtime["loader"]["sha256"] == product_files["lib/ld-crabc-x86_64.so.1"],
+                 and runtime["loader"]["sha256"] == product_files[f"lib/ld-crabc-{arch}.so.1"],
                  f"package-corpus {expected_case.id} candidate loader differs from supplied product")
         _require(runtime["libc"]["source"] == libc and runtime["libc"]["resolved_source"] == libc
                  and runtime["libc"]["sha256"] == product_files["usr/lib/libc.so"],

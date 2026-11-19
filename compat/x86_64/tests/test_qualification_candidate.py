@@ -35,11 +35,12 @@ class PlanTests(unittest.TestCase):
         with mock.patch.object(candidate, "ARCH", arch), \
                 mock.patch.object(candidate, "WORK_PARENT", Path(".work/aarch64")), \
                 mock.patch.object(candidate.subprocess, "run", return_value=inspected) as run, \
-                mock.patch.object(candidate.source_seal, "seal", return_value={}):
+                mock.patch.object(candidate.source_seal, "seal", return_value={}), \
+                mock.patch.object(candidate, "_validate_package_corpus", side_effect=ValueError("missing pinned APK archives: gzip.apk")):
             blockers = candidate.preflight(ROOT, context, candidate.plan(through="static-products"))
         self.assertEqual(run.call_args.args[0][-1], arch["image"])
         self.assertFalse(any("core image is absent" in blocker for blocker in blockers))
-        self.assertTrue(any("aarch64 package corpus is not pinned" in blocker for blocker in blockers))
+        self.assertTrue(any("missing pinned APK archives: gzip.apk" in blocker for blocker in blockers))
 
     def test_families_run_in_ledger_dependency_order(self) -> None:
         steps = candidate.plan()

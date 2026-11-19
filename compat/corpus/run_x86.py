@@ -31,10 +31,13 @@ from typing import Any, Iterable, Mapping, Sequence
 
 
 ROOT = Path(__file__).resolve().parents[2]
-MANIFEST = Path(__file__).with_name("manifest-x86_64.toml")
-DEFAULT_INPUT = ROOT / ".work/x86_64/owned-package-corpus-input/apks"
-DEFAULT_INDEX = ROOT / ".work/x86_64/owned-package-corpus-input/index/main-x86_64.APKINDEX.tar.gz"
-DEFAULT_WORK = ROOT / ".work/x86_64/tmp/owned-package-corpus"
+sys.path.insert(0, str(ROOT / "compat/x86_64"))
+from native_arch import native_arch
+ARCH = native_arch()["arch"]
+MANIFEST = Path(__file__).with_name("manifest.toml" if ARCH == "aarch64" else "manifest-x86_64.toml")
+DEFAULT_INPUT = ROOT / f".work/{ARCH}/owned-package-corpus-input/apks"
+DEFAULT_INDEX = ROOT / f".work/{ARCH}/owned-package-corpus-input/index/main-{ARCH}.APKINDEX.tar.gz"
+DEFAULT_WORK = ROOT / f".work/{ARCH}/tmp/owned-package-corpus"
 PRIVATE_WORK_ROOT = ROOT / ".work"
 ORACLE_ROOT = Path("/opt/musl-1.2.6")
 APK = Path("/sbin/apk")
@@ -49,9 +52,9 @@ PRODUCT_FORMAT = "crabc-x86-64-owned-dynamic-sysroot-v1"
 COMBINED_PRODUCT_FORMAT = "crabc-x86-64-owned-sysroot-v1"
 STATIC_PRODUCT_FORMAT = "crabc-x86-64-owned-static-sysroot-v1"
 COMBINED_MODES = ("static-et-exec", "static-pie", "dynamic-pie", "dynamic-non-pie", "dynamic-shared-object")
-PRODUCT_ALIAS = {"lib/ld-musl-x86_64.so.1": "ld-crabc-x86_64.so.1"}
-CANONICAL_INTERPRETER = "/lib/ld-musl-x86_64.so.1"
-CANONICAL_LIBC = "/lib/libc.musl-x86_64.so.1"
+PRODUCT_ALIAS = {f"lib/ld-musl-{ARCH}.so.1": f"ld-crabc-{ARCH}.so.1"}
+CANONICAL_INTERPRETER = f"/lib/ld-musl-{ARCH}.so.1"
+CANONICAL_LIBC = f"/lib/libc.musl-{ARCH}.so.1"
 CASE_ENVIRONMENT = {"PATH": "/bin:/usr/bin", "HOME": "/root", "LC_ALL": "C", "LANG": "C", "TZ": "UTC"}
 SUPERVISOR_ENVIRONMENT = {"PATH": "/usr/bin:/bin", "LC_ALL": "C", "LANG": "C", "TZ": "UTC", "PYTHONNOUSERSITE": "1", "PYTHONSAFEPATH": "1"}
 
@@ -94,6 +97,7 @@ class ManifestSpec:
     source_manifest: Path
     index_signing_key: str
     image: str
+    architecture: str = "x86_64"
 
 
 @dataclasses.dataclass(frozen=True)
@@ -296,8 +300,46 @@ def _case_from_raw(raw: object, index: int, package_names: set[str]) -> CaseSpec
     return CaseSpec(case_id, tier, package, path, tuple(argv), stdin.encode("utf-8"), tuple(setup), cwd, stateful, relr)
 
 
+def load_aarch64_manifest(path: Path) -> ManifestSpec:
+    try:
+        raw_bytes = path.read_bytes()
+        raw = tomllib.loads(raw_bytes.decode("utf-8"))
+        support = tomllib.loads(path.with_name("manifest-x86_64.toml").read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, tomllib.TOMLDecodeError) as error:
+        raise CorpusError(f"native corpus manifest is unreadable: {path}") from error
+    if (raw.get("schema"), raw.get("architecture"), raw.get("musl_version")) != (1, "aarch64", "1.2.6"):
+        fail("native corpus manifest identity drifted")
+    if not isinstance(raw.get("image"), str) or "@sha256:" not in raw["image"]:
+        fail("native corpus image is not digest pinned")
+    packages = raw.get("packages")
+    if not isinstance(packages, list) or len(packages) != 15:
+        fail("native corpus direct package roster drifted")
+    roster: dict[str, str] = {}
+    direct: dict[str, str] = {}
+    for item in packages:
+        if not isinstance(item, dict):
+            fail("native corpus package entry is invalid")
+        name, version, filename = item.get("name"), item.get("version"), item.get("filename")
+        if (not isinstance(name, str) or not isinstance(version, str) or not isinstance(filename, str)
+                or Path(filename).name != filename or filename != f"{name}-{version}.apk"
+                or name in direct or filename in roster):
+            fail("native corpus package identity is invalid")
+        direct[name] = version
+        roster[filename] = require_sha256(item.get("sha256"), f"archive digest {filename}")
+    cases = tuple(_case_from_raw(item, index, set(direct)) for index, item in enumerate(raw.get("cases", [])))
+    if len(cases) != 34 or len({case.id for case in cases}) != 34:
+        fail("native corpus source case roster drifted")
+    payload = support["payload"]
+    fixtures = {key: value.encode("utf-8") for key, value in support["fixtures"].items()}
+    return ManifestSpec(raw_bytes, roster, frozenset(), tuple(payload["package_library_dirs"]),
+                        tuple(payload["required_paths"]), fixtures, support["base_image_files"],
+                        cases, direct, path, "", raw["image"], "aarch64")
+
+
 def load_manifest(path: Path = MANIFEST) -> ManifestSpec:
     """Load the native package snapshot and exact shared workload semantics."""
+    if path == MANIFEST and ARCH == "aarch64":
+        return load_aarch64_manifest(path)
     try:
         raw_bytes = path.read_bytes()
         raw = tomllib.loads(raw_bytes.decode("utf-8"))
@@ -619,8 +661,8 @@ def has_dynamic_tag(output: str, tag: str) -> bool:
 
 
 def require_native_environment() -> None:
-    if platform.system() != "Linux" or platform.machine().lower() not in {"x86_64", "amd64"}:
-        fail("native package corpus requires Linux/x86_64 without emulation")
+    if platform.system() != "Linux" or platform.machine().lower() not in ({"x86_64", "amd64"} if ARCH == "x86_64" else {"aarch64", "arm64"}):
+        fail(f"native package corpus requires Linux/{ARCH} without emulation")
     if os.geteuid() != 0:
         fail("native package corpus requires root for a private chroot")
 
@@ -629,7 +671,7 @@ def apk_identity() -> dict[str, object]:
     if not APK.is_file() or not KEYS.is_dir():
         fail("pinned Alpine apk verifier or keys are unavailable")
     version = subprocess.run([str(APK), "--version"], check=False, stdout=subprocess.PIPE, stderr=subprocess.PIPE).stdout.decode("utf-8", "replace").splitlines()
-    if not version or version[0] != "apk-tools 3.0.6-r0, compiled for x86_64.":
+    if not version or version[0] != f"apk-tools 3.0.6-r0, compiled for {ARCH}.":
         fail("pinned Alpine apk verifier version drifted")
     keys = {path.name: sha256_file(path, f"apk key {path.name}") for path in sorted(KEYS.glob("*.pub"))}
     if "alpine-devel@lists.alpinelinux.org-6165ee59.rsa.pub" not in keys:
@@ -645,7 +687,7 @@ def oracle_source_identity() -> dict[str, object]:
     """Bind both the pinned musl declaration and the actual interpreter bytes."""
     root = require_physical_directory(ORACLE_ROOT, "pinned musl root")
     runtime = root / "lib/libc.so"
-    loader = root / "lib/ld-musl-x86_64.so.1"
+    loader = root / f"lib/ld-musl-{ARCH}.so.1"
     try:
         if not loader.is_symlink() or loader.resolve(strict=True) != runtime:
             fail("pinned musl loader does not alias its physical libc")
@@ -699,7 +741,7 @@ def source_identity(manifest: ManifestSpec) -> dict[str, object]:
         LIFETIME_HELPER_MANIFEST,
         "process-lifetime helper manifest",
     )
-    return {
+    identity = {
         "runner": _repository_source_identity(Path(__file__), "native corpus runner"),
         "native_manifest": _repository_source_identity(MANIFEST, "native corpus manifest"),
         "workload_source": _repository_source_identity(manifest.source_manifest, "workload source manifest"),
@@ -708,6 +750,9 @@ def source_identity(manifest: ManifestSpec) -> dict[str, object]:
             "manifest": _repository_source_identity(helper_manifest, "process-lifetime helper manifest"),
         },
     }
+    if manifest.architecture == "aarch64":
+        identity["payload_contract"] = _repository_source_identity(MANIFEST.with_name("manifest-x86_64.toml"), "payload contract")
+    return identity
 
 
 def apk_metadata(archive: Path) -> dict[str, str]:
@@ -728,7 +773,7 @@ def apk_metadata(archive: Path) -> dict[str, str]:
         raise CorpusError(f"APK metadata is unreadable: {archive.name}") from error
     if not all(isinstance(fields.get(key), str) and fields[key] for key in ("pkgname", "pkgver", "arch")):
         fail(f"APK metadata identity is incomplete: {archive.name}")
-    if fields["arch"] not in {"x86_64", "noarch"} or archive.name != f"{fields['pkgname']}-{fields['pkgver']}.apk":
+    if fields["arch"] not in {ARCH, "noarch"} or archive.name != f"{fields['pkgname']}-{fields['pkgver']}.apk":
         fail(f"APK metadata identity differs from archive filename: {archive.name}")
     return {key: fields[key] for key in ("pkgname", "pkgver", "arch")}
 
@@ -747,7 +792,22 @@ def input_identity(manifest: ManifestSpec, archive_dir: Path, index: Path) -> di
     could never be fetched again; it is identified by the observed bytes that
     this run verifies, and the post-execution identity must repeat them.
     """
+    if manifest.architecture == "aarch64" and not archive_dir.exists():
+        fail("missing pinned APK archives: " + ", ".join(sorted(manifest.archive_roster)))
     archive_dir = require_physical_directory(archive_dir, "APK archive directory")
+    if manifest.architecture == "aarch64":
+        entries = list(archive_dir.iterdir())
+        missing = sorted(set(manifest.archive_roster) - {entry.name for entry in entries})
+        if missing:
+            fail("missing pinned APK archives: " + ", ".join(missing))
+        require_exact_archive_roster((entry.name for entry in entries), manifest.archive_roster)
+        archives = {}
+        for name, expected in sorted(manifest.archive_roster.items()):
+            observed = sha256_file(archive_dir / name, f"APK archive {name}")
+            if observed != expected:
+                fail(f"APK archive digest differs: {name}")
+            archives[name] = {"sha256": observed}
+        return {"directory": str(archive_dir), "archives": archives}
     index_sha256 = sha256_file(index, "signed APK index")
     entries = list(archive_dir.iterdir())
     if any(entry.is_symlink() or not stat.S_ISREG(entry.lstat().st_mode) for entry in entries):
@@ -770,6 +830,8 @@ def input_identity(manifest: ManifestSpec, archive_dir: Path, index: Path) -> di
 def verify_inputs(manifest: ManifestSpec, archive_dir: Path, index: Path) -> dict[str, object]:
     """Verify signatures once, retaining the corresponding raw input identity."""
     identity = input_identity(manifest, archive_dir, index)
+    if manifest.architecture == "aarch64":
+        return {"identity": identity}
     archive_dir = Path(identity["directory"])
     verification: dict[str, dict[str, object]] = {}
     for name in sorted(manifest.archive_roster):
@@ -818,7 +880,7 @@ def stage_application_payload(manifest: ManifestSpec, archive_dir: Path, destina
         candidate = destination / required_path.lstrip("/")
         if not candidate.exists() and not candidate.is_symlink():
             fail(f"finite application closure lacks required payload: {required_path}")
-    for forbidden in (CANONICAL_INTERPRETER, CANONICAL_LIBC, "/lib/libc.so", "/usr/lib/libc.musl-x86_64.so.1"):
+    for forbidden in (CANONICAL_INTERPRETER, CANONICAL_LIBC, "/lib/libc.so", f"/usr/lib/libc.musl-{ARCH}.so.1"):
         if (destination / forbidden.lstrip("/")).exists() or (destination / forbidden.lstrip("/")).is_symlink():
             fail("application APK closure supplies a foreign libc or loader")
 
@@ -929,7 +991,7 @@ def retain_completed_application_payload(manifest: ManifestSpec, payload: Path, 
     if payload.is_relative_to(completed) or completed.is_relative_to(payload):
         fail("completed execution root and application payload overlap")
     protected = {path.lstrip("/") for path in (
-        CANONICAL_INTERPRETER, CANONICAL_LIBC, "/lib/libc.so", "/usr/lib/libc.musl-x86_64.so.1",
+        CANONICAL_INTERPRETER, CANONICAL_LIBC, "/lib/libc.so", f"/usr/lib/libc.musl-{ARCH}.so.1",
         *manifest.base_fixtures, *manifest.base_image_files)}
     for source in payload.rglob("*"):
         original = source.lstat()
@@ -1003,7 +1065,7 @@ def audit_application_elf_closure(
                     raise CorpusError("package ELF has a non-ASCII SONAME") from error
                 if "/" in soname or not soname:
                     fail("package ELF SONAME is unsafe")
-                if soname == "libc.musl-x86_64.so.1":
+                if soname == f"libc.musl-{ARCH}.so.1":
                     if runtime is None:
                         providers[soname] = {"kind": "sealed-runtime", "path": CANONICAL_LIBC}
                     else:
@@ -1054,7 +1116,7 @@ def validate_combined_product(product: Path, manifest_path: Path, raw: dict[str,
                      "executables", "symlinks", "products"}
             or raw["hardening_profile"] != "compatibility"
             or type(raw["schema"]) is not int or raw["schema"] != 1
-            or raw["target"] != "x86_64-unknown-linux-musl"
+            or raw["target"] != f"{ARCH}-unknown-linux-musl"
             or not isinstance(raw["toolchain"], str) or not raw["toolchain"]
             or raw["modes"] != list(COMBINED_MODES) or raw["symlinks"] != PRODUCT_ALIAS):
         fail("supplied combined product identity drifted")
@@ -1147,7 +1209,7 @@ def validate_combined_product(product: Path, manifest_path: Path, raw: dict[str,
                 expected_files[expected_placement] = digest
     if expected_files != files:
         fail("supplied combined product payload is not exactly the embedded products")
-    required = {"lib/ld-crabc-x86_64.so.1", "usr/lib/libc.so"}
+    required = {f"lib/ld-crabc-{ARCH}.so.1", "usr/lib/libc.so"}
     if not required <= component_files["dynamic"].keys() or not required <= set(executables):
         fail("supplied combined product lacks selected dynamic runtime")
     return {"path": str(product), "manifest_sha256": sha256_file(manifest_path, "combined product manifest"),
@@ -1165,12 +1227,12 @@ def validate_product(product: Path) -> dict[str, object]:
         fail("supplied owned dynamic product identity drifted")
     if raw.get("format") == COMBINED_PRODUCT_FORMAT:
         return validate_combined_product(product, manifest_path, raw)
-    if (raw.get("schema"), raw.get("format"), raw.get("target"), raw.get("hardening_profile")) != (1, PRODUCT_FORMAT, "x86_64-unknown-linux-musl", "compatibility"):
+    if (raw.get("schema"), raw.get("format"), raw.get("target"), raw.get("hardening_profile")) != (1, PRODUCT_FORMAT, f"{ARCH}-unknown-linux-musl", "compatibility"):
         fail("supplied owned dynamic product identity drifted")
     files, aliases = raw.get("files"), raw.get("symlinks")
     if not isinstance(files, dict) or aliases != PRODUCT_ALIAS:
         fail("supplied owned dynamic product payload map drifted")
-    required = {"lib/ld-crabc-x86_64.so.1", "usr/lib/libc.so"}
+    required = {f"lib/ld-crabc-{ARCH}.so.1", "usr/lib/libc.so"}
     if not required <= set(files):
         fail("supplied owned dynamic product lacks loader or libc")
     checked: dict[str, str] = {}
@@ -1189,9 +1251,9 @@ def copy_runtime(root: Path, side: str, product: Path | None) -> dict[str, objec
     if side == "candidate":
         if product is None:
             fail("candidate runtime requires a supplied owned dynamic product")
-        loader, libc = product / "lib/ld-crabc-x86_64.so.1", product / "usr/lib/libc.so"
+        loader, libc = product / f"lib/ld-crabc-{ARCH}.so.1", product / "usr/lib/libc.so"
     elif side == "oracle":
-        loader, libc = ORACLE_ROOT / "lib/ld-musl-x86_64.so.1", ORACLE_ROOT / "lib/libc.so"
+        loader, libc = ORACLE_ROOT / f"lib/ld-musl-{ARCH}.so.1", ORACLE_ROOT / "lib/libc.so"
     else:
         fail("unknown runtime side")
     try:

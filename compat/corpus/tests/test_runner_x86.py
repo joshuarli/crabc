@@ -82,6 +82,20 @@ class NativeManifestTests(unittest.TestCase):
             self.assertIsNotNone(process.communicate.call_args.kwargs.get("timeout"))
             self.assertEqual(reap.call_count, 2)
 
+    def test_aarch64_input_checks_pinned_digests_without_an_index(self) -> None:
+        manifest = RUNNER.load_aarch64_manifest(RUNNER.ROOT / "compat/corpus/manifest.toml")
+        self.assertEqual(len(manifest.cases), 34)
+        self.assertEqual(len(manifest.archive_roster), 15)
+        with tempfile.TemporaryDirectory(dir=RUNNER.ROOT / ".work") as temporary:
+            directory = Path(temporary)
+            with self.assertRaisesRegex(RUNNER.CorpusError, "gzip-1.14-r2.apk"):
+                RUNNER.input_identity(manifest, directory, directory / "absent-index")
+            name = next(iter(manifest.archive_roster))
+            (directory / name).write_bytes(b"wrong bytes")
+            subset = dataclasses.replace(manifest, archive_roster={name: manifest.archive_roster[name]})
+            with self.assertRaisesRegex(RUNNER.CorpusError, "digest differs"):
+                RUNNER.input_identity(subset, directory, directory / "absent-index")
+
     def test_native_manifest_seals_the_unchanged_34_case_workload(self) -> None:
         with self.manifest.source_manifest.open("rb") as stream:
             source = tomllib.load(stream)

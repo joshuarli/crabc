@@ -14,6 +14,7 @@ from contextlib import contextmanager
 from contextvars import ContextVar
 import copy
 import hashlib
+import importlib.util
 import json
 import os
 import re
@@ -595,8 +596,6 @@ def validated_resume_state(work: Path, *, contents: bool = True) -> tuple[str, d
         require(not missing, "qualification receipt exists with missing cases")
         validate_receipt(receipt_path)
     require(source == source_seal.product_source_digest(ROOT), "source changed during resume validation")
-    if ARCH["arch"] == "aarch64":
-        missing.sort(key=lambda item: item[1] == "package-corpus")
     return source, manifests, tuple(missing)
 
 
@@ -617,8 +616,20 @@ def next_missing_case(work: Path) -> tuple[str, str] | None:
 
 def _run_case(work: Path, product: str, case: str, source: str, manifest: str,
               *, resume: bool = False) -> None:
-    require(not (ARCH["arch"] == "aarch64" and case == "package-corpus"),
-            "aarch64 package corpus is not pinned")
+    if ARCH["arch"] == "aarch64" and case == "package-corpus":
+        path = ROOT / "compat/corpus/run_x86.py"
+        spec = importlib.util.spec_from_file_location("dynamic_package_corpus_input", path)
+        require(spec is not None and spec.loader is not None, f"cannot load package corpus reader: {path}")
+        module = importlib.util.module_from_spec(spec)
+        sys.modules[spec.name] = module
+        try:
+            spec.loader.exec_module(module)
+            corpus = module.load_aarch64_manifest(ROOT / "compat/corpus/manifest.toml")
+            module.input_identity(corpus, ROOT / ".work/aarch64/owned-package-corpus-input/apks", module.DEFAULT_INDEX)
+        except Exception as error:
+            raise QualificationError(f"package corpus input does not match its manifest: {error}") from error
+        finally:
+            sys.modules.pop(spec.name, None)
     oracle = read(work / "qualification-prepare.json")["oracle"]
     require_live_oracle(work, oracle)
     if resume:
