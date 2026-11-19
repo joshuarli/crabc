@@ -413,12 +413,6 @@ def check_link_receipt(product: Path, output: Path, mode: str, objects: list[Pat
     require(isinstance(trace, list) and all(type(path) is str for path in trace),
             f"{output.name}: link trace is malformed")
     observed = product_evidence.semantic_link_trace(trace)
-    if ARCH["arch"] == "aarch64":
-        members = [line for line in observed if line.startswith(str(archive) + "(") and line.endswith(")")]
-        require(bool(members), f"{output.name}: helper archive supplied no members")
-        observed = [str(archive) if line in members else line for line in observed]
-        observed = [line for index, line in enumerate(observed) if line != str(archive) or index == 0 or observed[index - 1] != line]
-        expected_trace = [str(archive) if path == archive else str(path) for path in ordered]
     require(observed == expected_trace, f"{output.name}: link trace differs: {trace}")
     return {"runtime_inputs": receipt["owned_runtime_inputs"], "link_command": command, "link_trace": trace}
 

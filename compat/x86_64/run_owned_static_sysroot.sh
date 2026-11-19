@@ -523,8 +523,7 @@ for line in trace:
         saw["libc"] = True
     elif line.startswith(str(library / "libcrabc-builtins.a")):
         saw["builtins"] = True
-        if ("libcrabc-builtins.a(crabc-builtins.o)" in line
-                or (architecture == "aarch64" and "libcrabc-builtins.a(" in line and line.endswith(")"))):
+        if "libcrabc-builtins.a(crabc-builtins.o)" in line:
             saw["builtins_member"] = True
     elif line not in allowed_objects:
         fail(f"resolved final-link input escapes the owned set: {line}")

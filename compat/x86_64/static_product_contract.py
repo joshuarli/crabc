@@ -519,7 +519,7 @@ def inspect_case(report: Path, product: str, mode: str, case_path: str,
         match = runtime.fullmatch(line)
         require(match is not None, f"{label} link trace names an undeclared input: {line}")
         saw_builtins_member |= (match.group(2) == "libcrabc-builtins.a" and
-                                (ARCH["arch"] == "aarch64" or match.group(3) == "crabc-builtins.o"))
+                                match.group(3) == "crabc-builtins.o")
     require(saw_builtins_member, f"{label} did not extract the owned compiler-helper member")
 
     header = (base / "file-header").read_text(encoding="utf-8")
