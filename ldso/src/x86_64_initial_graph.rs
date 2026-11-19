@@ -2532,7 +2532,11 @@ mod tls_zero_tail_tests {
             let installed = unsafe { materialize_tls_in(&objects, 0, backing) }.unwrap();
             let module_sizes = unsafe { installed.dtv.add(installed.dtv_words) };
             for (index, prefix) in prefixes.iter().enumerate() {
-                let destination = unsafe { installed.thread_pointer.sub((index + 1) * 16) };
+                let destination = if cfg!(target_arch = "aarch64") {
+                    unsafe { installed.thread_pointer.add((index + 1) * 16) }
+                } else {
+                    unsafe { installed.thread_pointer.sub((index + 1) * 16) }
+                };
                 let image = unsafe { core::slice::from_raw_parts(destination, 16) };
                 assert_eq!(&image[..2], prefix);
                 assert!(image[2..].iter().all(|byte| *byte == 0));
@@ -3960,7 +3964,7 @@ mod readable_file_load_tests {
 
     #[test]
     fn mapper_rejects_program_headers_outside_file_backed_load() {
-        const SYS_MEMFD_CREATE: i64 = 319;
+        const SYS_MEMFD_CREATE: i64 = if cfg!(target_arch = "aarch64") { 279 } else { 319 };
         let fd = unsafe { syscall2(SYS_MEMFD_CREATE, b"phdr-boundary\0".as_ptr() as i64, 0) };
         assert!(fd >= 0);
         let mut image = [0u8; PAGE as usize];
@@ -3969,7 +3973,7 @@ mod readable_file_load_tests {
         image[5] = 1;
         image[6] = 1;
         image[16..18].copy_from_slice(&3u16.to_le_bytes());
-        image[18..20].copy_from_slice(&62u16.to_le_bytes());
+        image[18..20].copy_from_slice(&ELF_MACHINE.to_le_bytes());
         image[20..24].copy_from_slice(&1u32.to_le_bytes());
         image[32..40].copy_from_slice(&64u64.to_le_bytes());
         image[52..54].copy_from_slice(&64u16.to_le_bytes());
@@ -3992,7 +3996,7 @@ mod readable_file_load_tests {
 
     #[test]
     fn mapper_retains_first_file_backed_program_header_alias() {
-        const SYS_MEMFD_CREATE: i64 = 319;
+        const SYS_MEMFD_CREATE: i64 = if cfg!(target_arch = "aarch64") { 279 } else { 319 };
         const SYS_PWRITE64: i64 = 18;
         let fd = unsafe { syscall2(SYS_MEMFD_CREATE, b"phdr-alias\0".as_ptr() as i64, 0) };
         assert!(fd >= 0);
@@ -4002,7 +4006,7 @@ mod readable_file_load_tests {
         image[5] = 1;
         image[6] = 1;
         image[16..18].copy_from_slice(&3u16.to_le_bytes());
-        image[18..20].copy_from_slice(&62u16.to_le_bytes());
+        image[18..20].copy_from_slice(&ELF_MACHINE.to_le_bytes());
         image[20..24].copy_from_slice(&1u32.to_le_bytes());
         image[32..40].copy_from_slice(&64u64.to_le_bytes());
         image[52..54].copy_from_slice(&64u16.to_le_bytes());
@@ -4106,7 +4110,7 @@ mod readable_file_load_tests {
 
     #[test]
     fn mapper_zeroes_only_the_declared_file_page_tail() {
-        const SYS_MEMFD_CREATE: i64 = 319;
+        const SYS_MEMFD_CREATE: i64 = if cfg!(target_arch = "aarch64") { 279 } else { 319 };
         const SYS_PWRITE64: i64 = 18;
         let fd = unsafe { syscall2(SYS_MEMFD_CREATE, b"load-tail\0".as_ptr() as i64, 0) };
         assert!(fd >= 0);
@@ -4116,7 +4120,7 @@ mod readable_file_load_tests {
         image[4] = 2;
         image[5] = 1;
         image[16..18].copy_from_slice(&3u16.to_le_bytes());
-        image[18..20].copy_from_slice(&62u16.to_le_bytes());
+        image[18..20].copy_from_slice(&ELF_MACHINE.to_le_bytes());
         image[32..40].copy_from_slice(&64u64.to_le_bytes());
         image[54..56].copy_from_slice(&56u16.to_le_bytes());
         image[56..58].copy_from_slice(&2u16.to_le_bytes());
@@ -4182,7 +4186,7 @@ mod readable_file_load_tests {
     // its unaligned vaddr happens to reach.
     #[test]
     fn mapper_skips_zero_memory_load_without_overlaying_the_reservation() {
-        const SYS_MEMFD_CREATE: i64 = 319;
+        const SYS_MEMFD_CREATE: i64 = if cfg!(target_arch = "aarch64") { 279 } else { 319 };
         let fd = unsafe { syscall2(SYS_MEMFD_CREATE, b"empty-load\0".as_ptr() as i64, 0) };
         assert!(fd >= 0);
         let mut image = [0xa5u8; PAGE as usize];
@@ -4191,7 +4195,7 @@ mod readable_file_load_tests {
         image[4] = 2;
         image[5] = 1;
         image[16..18].copy_from_slice(&3u16.to_le_bytes());
-        image[18..20].copy_from_slice(&62u16.to_le_bytes());
+        image[18..20].copy_from_slice(&ELF_MACHINE.to_le_bytes());
         image[32..40].copy_from_slice(&64u64.to_le_bytes());
         image[54..56].copy_from_slice(&56u16.to_le_bytes());
         image[56..58].copy_from_slice(&3u16.to_le_bytes());
@@ -4268,7 +4272,7 @@ mod readable_file_load_tests {
         image[..4].copy_from_slice(b"\x7fELF");
         image[4..7].copy_from_slice(&[2, 1, 1]);
         image[16..18].copy_from_slice(&3u16.to_le_bytes());
-        image[18..20].copy_from_slice(&62u16.to_le_bytes());
+        image[18..20].copy_from_slice(&ELF_MACHINE.to_le_bytes());
         image[20..24].copy_from_slice(&1u32.to_le_bytes());
         image[32..40].copy_from_slice(&64u64.to_le_bytes());
         image[52..54].copy_from_slice(&64u16.to_le_bytes());
@@ -4317,7 +4321,7 @@ mod readable_file_load_tests {
         image[..4].copy_from_slice(b"\x7fELF");
         image[4..6].copy_from_slice(&[2, 1]);
         image[16..18].copy_from_slice(&3u16.to_le_bytes());
-        image[18..20].copy_from_slice(&62u16.to_le_bytes());
+        image[18..20].copy_from_slice(&ELF_MACHINE.to_le_bytes());
         image[32..40].copy_from_slice(&64u64.to_le_bytes());
         image[54..56].copy_from_slice(&56u16.to_le_bytes());
         image[56..58].copy_from_slice(&4u16.to_le_bytes());

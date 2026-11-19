@@ -158,12 +158,12 @@ mod tests {
             assert!(!is_linux_error(span));
             let lease = MappingLease { address: span, byte_len: PAGE };
             *(span as *mut u64) = 0x71ab_cdef_8934_5026;
-            let fd = syscall2(319, b"direct-entry-collision\0".as_ptr() as i64, 0);
+            let fd = syscall2(if cfg!(target_arch = "aarch64") { 279 } else { 319 }, b"direct-entry-collision\0".as_ptr() as i64, 0);
             assert!(fd >= 0);
             let mut elf = [0u8; 128];
             elf[..6].copy_from_slice(b"\x7fELF\x02\x01");
             elf[16..18].copy_from_slice(&2u16.to_le_bytes());
-            elf[18..20].copy_from_slice(&62u16.to_le_bytes());
+            elf[18..20].copy_from_slice(&ELF_MACHINE.to_le_bytes());
             elf[24..32].copy_from_slice(&(span as u64).to_le_bytes());
             elf[32..40].copy_from_slice(&64u64.to_le_bytes());
             elf[54..56].copy_from_slice(&56u16.to_le_bytes());
