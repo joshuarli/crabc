@@ -373,7 +373,14 @@ for variant in symbol-mutable.so symbol-glob.so symbol-jump.so; do
     rm "$compatible_root/symbol-mutable-marker"
 done
 "$compatibility/bin/crabc-cc-dynamic" --dynamic-pie "$root/compat/x86_64/compat_pc32_probe.c" -o "$compatible_root/symbol-pc32"
-timeout 20 chroot "$compatible_root" /symbol-pc32
+if [ "$arch" = aarch64 ]; then
+    status=0
+    timeout 20 chroot "$compatible_root" /symbol-pc32 || status=$?
+    [ "$status" -eq 1 ]
+    test ! -e "$compatible_root/symbol-mutable-marker"
+else
+    timeout 20 chroot "$compatible_root" /symbol-pc32
+fi
 "$compatibility/bin/crabc-cc-dynamic" --dynamic-pie "$root/compat/x86_64/compat_lazy_import_probe.c" -o "$compatible_root/lazy-import"
 timeout 20 chroot "$compatible_root" /lazy-import
 "$compatibility/bin/crabc-cc-dynamic" --dynamic-pie "$root/compat/x86_64/hardened_entry_probe.c" -o "$compatible_root/pie"
