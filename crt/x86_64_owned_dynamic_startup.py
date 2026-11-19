@@ -392,10 +392,10 @@ def check_link_receipt(product: Path, output: Path, mode: str, objects: list[Pat
         ordered = [library / "crti.o", *objects, archive, *dsos, library / "libc.so", library / "crtn.o"]
     else:
         entry = MODES[mode][1]
-        attachment = [] if ARCH["arch"] == "aarch64" else ["crabc-dynamic-attach.o"]
+        attachment = [] if ARCH["arch"] == "aarch64" and mode == "dynamic-pie" else ["crabc-dynamic-attach.o"]
         runtime = [entry, *attachment, "crti.o", "libc.so", "crtn.o", "libcrabc-builtins.a"]
-        ordered = [library / entry, *(library / name for name in attachment), library / "crti.o", *objects,
-                   archive, *dsos, library / "libc.so", library / "crtn.o"]
+        prefix = [library / entry, library / "crti.o", *(library / name for name in attachment)] if ARCH["arch"] == "aarch64" else [library / entry, *(library / name for name in attachment), library / "crti.o"]
+        ordered = [*prefix, *objects, archive, *dsos, library / "libc.so", library / "crtn.o"]
     require(receipt.get("output_sha256") == sha256(output), f"{output.name}: receipt does not bind the output")
     require(receipt.get("owned_runtime_inputs") == sorted(f"usr/lib/{name}" for name in runtime),
             f"{output.name}: owned runtime input roster differs")

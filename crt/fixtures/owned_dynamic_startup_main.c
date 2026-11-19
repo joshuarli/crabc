@@ -48,7 +48,11 @@ static int scenario(const char *name)
 static uintptr_t thread_canary(void)
 {
 	uintptr_t value;
+#if defined(__aarch64__)
+	__asm__ volatile("mrs %0, tpidr_el0\n\tldr %0, [%0, #-16]" : "=r"(value));
+#else
 	__asm__ volatile("mov %%fs:0x28, %0" : "=r"(value));
+#endif
 	return value;
 }
 
