@@ -20,6 +20,7 @@ import sys
 from typing import Any, Iterable, Mapping
 
 import owned_dynamic_receipt as receipt_contract
+from native_arch import native_arch
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -1332,12 +1333,13 @@ def _validate_corpus_inputs(value: object, manifest: Any) -> None:
     signatures = before["archive_signatures"]
     _require(isinstance(signatures, dict) and set(signatures) == set(manifest.archive_roster),
              "package-corpus archive signature roster differs")
+    package_arch = native_arch()["arch"] if sys.platform == "linux" else "x86_64"
     for name, item in signatures.items():
         metadata = _keys(item, {"metadata", "signature_stdout", "signature_stderr"}, "package-corpus archive signature")
         _require(isinstance(metadata["signature_stdout"], str) and isinstance(metadata["signature_stderr"], str),
                  "package-corpus archive signature stream differs")
         fields = _keys(metadata["metadata"], {"pkgname", "pkgver", "arch"}, "package-corpus archive metadata")
-        _require(fields["arch"] in {"x86_64", "noarch"} and name == f"{fields['pkgname']}-{fields['pkgver']}.apk",
+        _require(fields["arch"] in {package_arch, "noarch"} and name == f"{fields['pkgname']}-{fields['pkgver']}.apk",
                  "package-corpus archive metadata differs")
     _require(inputs["after"] == identity, "package-corpus inputs changed during execution")
 
