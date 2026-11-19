@@ -31,6 +31,9 @@ def load_module():
     return module
 
 
+NATIVE_ARCH = load_module().ARCH
+
+
 class OwnedClassicNetdbComponentReceiptTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
@@ -187,16 +190,16 @@ class OwnedClassicNetdbComponentReceiptTests(unittest.TestCase):
             with self.assertRaisesRegex(self.receipt.ReceiptError, "path differs"):
                 self.receipt.execution_artifacts(root, work, "dynamic-pie-direct", "host-numeric", record)
 
-    @unittest.skipUnless(os.getuid() == 0 and Path("/usr/local/bin/crabc-x86_64-musl-gcc").is_file(),
+    @unittest.skipUnless(os.getuid() == 0 and Path(f"/usr/local/bin/crabc-{NATIVE_ARCH}-musl-gcc").is_file(),
                          "requires the pinned compiler and an isolated unprivileged child")
     def test_source_recompile_uses_private_scratch_with_read_only_artifacts(self) -> None:
-        temporary = ROOT / ".work/x86_64/tmp"
+        temporary = ROOT / f".work/{NATIVE_ARCH}/tmp"
         temporary.mkdir(parents=True, exist_ok=True)
         original_mode = stat.S_IMODE(temporary.stat().st_mode)
         with tempfile.TemporaryDirectory(dir=temporary) as directory:
             work = Path(directory)
             workload = work / "workload.o"
-            compiler = "/usr/local/bin/crabc-x86_64-musl-gcc"
+            compiler = f"/usr/local/bin/crabc-{NATIVE_ARCH}-musl-gcc"
             source = work / "probe.c"
             source.write_text("int retained_probe(void) { return 73; }\n", encoding="utf-8")
             argv = [compiler, "-std=c11", "-fno-builtin", "-c", str(source), "-o", str(workload)]
