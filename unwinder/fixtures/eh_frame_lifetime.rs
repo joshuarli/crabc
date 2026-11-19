@@ -1,5 +1,8 @@
 //! EH-frame bytes removed after the discovery callback must not fault a later read.
 use std::ffi::c_void;
+
+const SP: u8 = if cfg!(target_arch = "aarch64") { 31 } else { 7 };
+const RA: u8 = if cfg!(target_arch = "aarch64") { 30 } else { 16 };
 use std::io::Write;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
@@ -77,7 +80,7 @@ unsafe fn write_frame(base: *mut u8, text: usize, extra_nops: usize) {
         (header.add(4) as *mut u64).write_unaligned((base as usize + EH_FRAME) as u64);
     }
     // CFA is RSP+8 and RIP is undefined, so a readable frame ends the stack.
-    let cie = [0, 0, 0, 0, 1, 0, 1, 0x78, 16, 0x0c, 7, 8, 0x07, 16];
+    let cie = [0, 0, 0, 0, 1, 0, 1, 0x78, RA, 0x0c, SP, 8, 0x07, RA];
     let mut frame = (cie.len() as u32).to_le_bytes().to_vec();
     frame.extend_from_slice(&cie);
     let fde_start = frame.len();

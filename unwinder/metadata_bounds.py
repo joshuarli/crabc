@@ -22,8 +22,10 @@ COMPAT = ROOT.parent / 'compat/x86_64'
 if str(COMPAT) not in sys.path:
     sys.path.insert(0, str(COMPAT))
 import native_rustc
+from native_arch import native_arch
 
-TARGET = 'x86_64-unknown-linux-musl'
+ARCH = native_arch()
+TARGET = ARCH['target_triple']
 EXPECTED_OUTPUT = 'truncated EH header rejected\n'
 PATCHES = {
     'src/util.rs': 'unwinder/patches/unwinding-0.2.10-remote-reader.rs',
@@ -121,7 +123,7 @@ def run_fixture(
     execution_log_name: str,
     description: str,
 ) -> Path:
-    runs = ROOT.parent / '.work/x86_64' / runs_name
+    runs = ROOT.parent / '.work' / ARCH['work_name'] / runs_name
     runs.mkdir(parents=True, exist_ok=True)
     output = Path(tempfile.mkdtemp(prefix='run-', dir=runs))
     output.chmod(0o755)

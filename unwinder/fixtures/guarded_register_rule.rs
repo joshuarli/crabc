@@ -1,5 +1,8 @@
 //! A register expression that names an unreadable page must fail the unwind phase.
 use std::ffi::c_void;
+
+const SP: u8 = if cfg!(target_arch = "aarch64") { 31 } else { 7 };
+const RA: u8 = if cfg!(target_arch = "aarch64") { 30 } else { 16 };
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 #[repr(C)]
@@ -65,7 +68,7 @@ unsafe fn write_frame(base: *mut u8, text: usize, instructions: &[u8]) {
         (header.add(4) as *mut u64).write_unaligned((base as usize + EH_FRAME) as u64);
     }
 
-    let mut cie = vec![0, 0, 0, 0, 1, 0, 1, 0x78, 16];
+    let mut cie = vec![0, 0, 0, 0, 1, 0, 1, 0x78, RA];
     cie.extend_from_slice(instructions);
     let mut frame = (cie.len() as u32).to_le_bytes().to_vec();
     frame.extend_from_slice(&cie);
@@ -86,11 +89,9 @@ unsafe fn run_case(case: &str) {
         let guarded = base.add(PAGE) as usize;
         let mut instructions = match case {
             "register-expression" => {
-                // CFA comes from RSP; DW_CFA_expression names unreadable RIP storage.
-                vec![0x0c, 7, 8, 0x10, 16, 9, 0x03]
+                vec![0x0c, SP, 8, 0x10, RA, 9, 0x03]
             }
             "register-offset" => {
-                // The CFA expression yields guard+8; RIP's offset is -8.
                 vec![0x0f, 9, 0x03]
             }
             "expression-memory" => {
@@ -102,8 +103,8 @@ unsafe fn run_case(case: &str) {
         let address = guarded + if case == "register-offset" { 8 } else { 0 };
         instructions.extend_from_slice(&(address as u64).to_le_bytes());
         match case {
-            "register-offset" => instructions.extend_from_slice(&[0x90, 1]),
-            "expression-memory" => instructions.extend_from_slice(&[0x94, 8, 0x07, 16]),
+            "register-offset" => instructions.extend_from_slice(&[0x80 | RA, 1]),
+            "expression-memory" => instructions.extend_from_slice(&[0x94, 8, 0x07, RA]),
             _ => (),
         }
         write_frame(base, text, &instructions);
