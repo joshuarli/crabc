@@ -956,7 +956,8 @@ def _declared_static_inputs(contract: list[str], workload: str) -> tuple[set[str
     conditional. A Rust-only native-shadow `libc.a` references no helper, so
     a helper-free application extracts nothing from it.
     """
-    inputs = contract[contract.index("_start") + 1:contract.index("-o")]
+    inputs = [item for item in contract[contract.index("_start") + 1:contract.index("-o")]
+              if item not in {"--start-group", "--end-group"}]
     direct = {workload if item == "<application-objects>" else item
               for item in inputs if not item.endswith(".a") and item not in {"--start-group", "--end-group"}}
     archives = [item for item in inputs if item.endswith(".a")]

@@ -688,6 +688,18 @@ class OwnedPosixProductEvidenceTests(unittest.TestCase):
         })
         return receipt
 
+    def test_arm_static_link_plan_binds_archive_group(self) -> None:
+        import crabc_cc_static
+        with mock.patch.object(evidence, "ARCH", "aarch64"):
+            plan = evidence._static_link_plan(self.static, "static")
+            self.assertEqual(plan, crabc_cc_static.owned_link_plan(self.static, crabc_cc_static.STATIC_ET_EXEC,
+                                                                   architecture="aarch64"))
+            direct, libc, conditional = evidence._declared_static_inputs(plan, str(self.workload))
+            self.assertNotIn("--start-group", direct)
+            self.assertNotIn("--end-group", direct)
+            self.assertEqual(libc, str(self.static / "usr/lib/libc.a"))
+            self.assertEqual(conditional, {str(self.static / "usr/lib/libcrabc-builtins.a")})
+
     def test_arm_non_pie_receipt_binds_attachment_object(self) -> None:
         receipt = self.dynamic_receipt("non-pie")
         record = json.loads(receipt.read_text())
