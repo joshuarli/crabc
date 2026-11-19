@@ -8333,6 +8333,7 @@ PY
         ;;
     owned-dynamic-fork)
         [ "$#" -eq 0 ] || fail "owned-dynamic-fork takes no arguments"
+        if [ "$ARCH" = aarch64 ]; then ensure_image; fi
         run_in_container bash /workspace/compat/x86_64/run_owned_dynamic_fork.sh
         ;;
     runtime-private-facades)

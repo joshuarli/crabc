@@ -17,6 +17,8 @@ readonly HEADER_CXX="$ROOT/compat/x86_64/owned_rand_header_abi_probe.cpp"
 readonly DSO_SOURCE="$ROOT/compat/x86_64/owned_rand_dso.c"
 readonly DSO_CONSUMER_SOURCE="$ROOT/compat/x86_64/owned_rand_dso_consumer.c"
 readonly INTERPRETER="/lib/ld-crabc-$arch.so.1"
+architecture_args=()
+[ "$arch" != aarch64 ] || architecture_args=(--architecture aarch64)
 readonly -a ORACLE_SCENARIOS=(core serialized-workers fork)
 readonly -a RAND_SYMBOLS=(rand srand)
 declare -a link_identity_records=()
@@ -420,6 +422,15 @@ manifest = (root / 'libc/Cargo.toml').read_text(encoding='utf-8')
 needle = 'rand_pcg = { version = "=0.10.2", default-features = false, optional = true }'
 if needle not in manifest or '"dep:rand_pcg",' not in manifest:
     raise SystemExit('owned rand feature/dependency declaration drifted')
+if arch == 'aarch64':
+    parsed_manifest = tomllib.loads(manifest)
+    targets = [target for target, config in parsed_manifest.get('target', {}).items()
+               if 'rand_pcg' in config.get('dependencies', {})]
+    if len(targets) != 1:
+        raise SystemExit('owned rand target dependency selection is not unique')
+    selected_target = targets[0]
+else:
+    selected_target = 'cfg(all(target_os = "linux", target_arch = "x86_64", target_endian = "little"))'
 
 def digest(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
@@ -431,8 +442,7 @@ record = {
         'rand_core': {'version': expected['rand_core'][0], 'checksum': expected['rand_core'][1], 'dependencies': []},
     },
     'selection': {
-        'target': ('cfg(all(target_os = "linux", any(target_arch = "x86_64", target_arch = "aarch64"), target_endian = "little"))'
-                   if arch == 'aarch64' else 'cfg(all(target_os = "linux", target_arch = "x86_64", target_endian = "little"))'),
+        'target': selected_target,
         'feature': 'x86-owned-static-runtime',
         'default_features': False,
         'optional': True,
@@ -457,7 +467,7 @@ PY
 audit_static_provider_artifact() {
     local archive="$1"
 
-    python3 -B - "$archive" "$work" <<'PY'
+    python3 -B - "$archive" "$work" "$arch" <<'PY'
 import hashlib
 import json
 from pathlib import Path
@@ -465,7 +475,8 @@ import re
 import subprocess
 import sys
 
-archive, work = map(Path, sys.argv[1:])
+archive, work = map(Path, sys.argv[1:3])
+architecture = sys.argv[3]
 def run(arguments, *, text=True):
     return subprocess.run(arguments, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
                           stderr=subprocess.PIPE, text=text, check=False)
@@ -518,13 +529,17 @@ for symbol in ('rand', 'srand'):
     if match is None:
         raise SystemExit(f'rand provider {symbol} is absent from the extracted object')
     disassembly = match.group(0)
-    if re.search(r'\bcall(?:[qwl])?\b', disassembly):
+    if re.search(r'\bcall(?:[qwl])?\b' if architecture == 'x86_64' else r'\bblr?\b', disassembly):
         raise SystemExit(f'rand provider {symbol} has an unexpected call edge')
     if re.search(r'__rust_|__rdl_|rand_core|rand_pcg|alloc', disassembly):
         raise SystemExit(f'rand provider {symbol} has an unexpected helper edge')
     (work / f'rand-provider-{symbol}.objdump').write_text(disassembly, encoding='utf-8')
     disassemblies[symbol] = hashlib.sha256(disassembly.encode()).hexdigest()
-if 'cmpxchg' not in (work / 'rand-provider-rand.objdump').read_text(encoding='utf-8'):
+rand_disassembly = (work / 'rand-provider-rand.objdump').read_text(encoding='utf-8')
+atomic_publish = ('cmpxchg' in rand_disassembly if architecture == 'x86_64' else
+                  bool(re.search(r'\bld(?:ax|x)r\b', rand_disassembly) and
+                       re.search(r'\bst(?:lx|x)r\b', rand_disassembly)))
+if not atomic_publish:
     raise SystemExit('rand provider lacks the atomic publish instruction')
 relocations = run(['readelf', '-rW', str(object_path)]).stdout
 (work / 'rand-provider-relocations.txt').write_text(relocations, encoding='utf-8')
@@ -700,7 +715,7 @@ run_dso_shared_stream() {
 # workload object consumed unchanged by the oracle and all normal product modes.
 if [ "$dynamic_was_supplied" -eq 0 ]; then
     python3 -B "$ROOT/scripts/build_x86_64_owned_dynamic_sysroot.py" \
-        --output "$work/dynamic-sysroot" >"$work/dynamic-build.json"
+        "${architecture_args[@]}" --output "$work/dynamic-sysroot" >"$work/dynamic-build.json"
     provided_dynamic="$work/dynamic-sysroot"
 fi
 readonly installed="$(realpath "$provided_dynamic")"
@@ -722,7 +737,7 @@ if [ "$expect_missing" -eq 1 ]; then
     # pinned musl, then attributes each absent provider to the owned links.
     run_oracle_scenarios
     python3 -B "$ROOT/scripts/build_x86_64_owned_sysroot.py" \
-        --output "$work/static-sysroot" >"$work/static-build.json"
+        "${architecture_args[@]}" --output "$work/static-sysroot" >"$work/static-build.json"
     for mode in static static-pie; do
         expect_missing_link "red-$mode" \
             "$work/static-sysroot/bin/crabc-cc" "-$mode" "$work/workload.o" \
@@ -744,7 +759,7 @@ if [ "$static_was_supplied" -eq 1 ]; then
     static_product="$provided_static"
 elif [ "$dynamic_was_supplied" -eq 0 ]; then
     python3 -B "$ROOT/scripts/build_x86_64_owned_sysroot.py" \
-        --output "$work/static-sysroot" >"$work/static-build.json"
+        "${architecture_args[@]}" --output "$work/static-sysroot" >"$work/static-build.json"
     static_product="$work/static-sysroot"
 fi
 if [ -n "$static_product" ]; then

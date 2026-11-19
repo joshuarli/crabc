@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
+. "$(dirname "${BASH_SOURCE[0]}")/source_runtime_libc.sh"
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cc=/usr/local/bin/crabc-aarch64-musl-gcc
 fail() { printf 'ERROR: aarch64 binary128 fdiml/exp10l: %s\n' "$*" >&2; exit 1; }
@@ -32,6 +33,11 @@ python3 -B scripts/build_x86_64_owned_sysroot.py --architecture aarch64 --output
 compiler_include="$($cc -print-file-name=include)"
 probe=compat/x86_64/libc_math_long_double_completion_probe.c
 header_probe=compat/x86_64/math_long_double_completion_header_abi_probe.cpp
+"$cc" -std=c11 -D_GNU_SOURCE -nostdinc -isystem "$compiler_include" \
+    -I"$work/product/usr/include" -E -H "$probe" > /dev/null 2> "$work/header.trace"
+for header in fenv.h float.h math.h stddef.h stdint.h features.h bits/alltypes.h; do
+    grep -Fq "$work/product/usr/include/$header" "$work/header.trace" || fail "fixture did not use installed $header"
+done
 "$cc" -std=c++17 -x c++ -D_GNU_SOURCE -fno-builtin -c "$header_probe" -o "$work/oracle-header.o"
 "$cc" -std=c++17 -x c++ -D_GNU_SOURCE -fno-builtin -nostdinc -isystem "$compiler_include" \
     -I"$work/product/usr/include" -c "$header_probe" -o "$work/candidate-header.o"
@@ -41,8 +47,10 @@ for object in "$work/oracle-header.o" "$work/candidate-header.o"; do
         grep -Eq "[[:space:]]${symbol}$" "$work/header-symbols" || fail "missing C++ declaration for $symbol"
     done
 done
-"$cc" -std=c11 -D_GNU_SOURCE -fno-builtin -frounding-math -Iinclude -static -no-pie \
-    "$probe" -lm -o "$work/oracle"
+oracle_link=("$cc" -std=c11 -D_GNU_SOURCE -fno-builtin -frounding-math -Iinclude -static -no-pie
+    "$probe" -lm -o "$work/oracle")
+record_math_argv "$work/oracle-link.argv.json" "${oracle_link[@]}"
+"${oracle_link[@]}"
 "$cc" -std=c11 -D_GNU_SOURCE -fno-builtin -frounding-math -nostdinc -isystem "$compiler_include" \
     -I"$work/product/usr/include" -c "$probe" -o "$work/candidate.o"
 "$work/product/bin/crabc-cc" "$work/candidate.o" -o "$work/candidate"
@@ -60,9 +68,137 @@ done
 exp="$(awk '$4 == "FUNC" && $8 == "exp10l" { print $2; exit }' "$work/symbols")"
 pow="$(awk '$4 == "FUNC" && $8 == "pow10l" { print $2; exit }' "$work/symbols")"
 [ -n "$exp" ] && [ "$exp" = "$pow" ] || fail 'exp10l/pow10l alias differs'
-"$work/oracle" > "$work/oracle.records"
-"$work/candidate" > "$work/candidate.records"
+build_source_runtime_libc "$work/base-libc.a" --retain-work "$work/source-runtime-baseline"
+build_source_runtime_libc "$work/source-libc.a" --retain-work "$work/source-runtime-feature"
+collect_math_global_surface "$work/base-libc.a" "$work/base-surface" "$work/base-members"
+collect_math_global_surface "$work/source-libc.a" "$work/feature-surface" "$work/feature-members"
+collect_math_global_bindings "$work/base-libc.a" "$work/base-bindings" "$work/base-binding-members"
+collect_math_global_bindings "$work/source-libc.a" "$work/feature-bindings" "$work/feature-binding-members"
+source_runtime_expected_static_surface "$root/compat/x86_64/static_c_abi_exports.txt" "$work/expected-surface" aarch64
+cmp "$work/expected-surface" "$work/base-surface" || fail 'source-runtime export surface differs'
+cmp "$work/base-surface" "$work/feature-surface" || fail 'source-runtime rebuild export surface differs'
+cmp "$work/base-bindings" "$work/feature-bindings" || fail 'source-runtime rebuild bindings differ'
+archive="$work/source-libc.a"
+nm -A --defined-only "$archive" > "$work/archive-symbols"
+for symbol in fdiml exp10l; do
+    grep -Eq "[[:space:]]T[[:space:]]${symbol}$" "$work/archive-symbols" || fail "archive lacks strong $symbol"
+done
+grep -Eq '[[:space:]]W[[:space:]]pow10l$' "$work/archive-symbols" || fail 'archive lacks weak pow10l'
+"$cc" -std=c11 -D_GNU_SOURCE -DCRABC_MATH_LONG_DOUBLE_COMPLETION_FREESTANDING \
+    -fno-builtin -frounding-math -ffreestanding -fno-stack-protector -fno-pie \
+    -nostdinc -isystem "$compiler_include" -I"$work/product/usr/include" \
+    -c "$probe" -o "$work/freestanding.o"
+"$cc" -c compat/x86_64/libc_math_long_double_completion_aarch64_start.S -o "$work/start.o"
+freestanding_link=("$cc" -fuse-ld=bfd -nostdlib -static -no-pie -Wl,-e,_start,--no-undefined,--gc-sections,--trace
+    "$work/start.o" "$work/freestanding.o" -Wl,--start-group "$archive" \
+    "$work/product/usr/lib/libcrabc-builtins.a" -Wl,--end-group -o "$work/freestanding")
+record_math_argv "$work/freestanding-link.argv.json" "${freestanding_link[@]}"
+"${freestanding_link[@]}" > "$work/freestanding.trace"
+readelf -sW "$work/freestanding" > "$work/freestanding.symbols"
+readelf -lW "$work/freestanding" > "$work/freestanding.program"
+readelf -dW "$work/freestanding" > "$work/freestanding.dynamic"
+readelf -rW "$work/freestanding" > "$work/freestanding.relocations"
+objdump -d "$work/freestanding" > "$work/freestanding.disassembly"
+awk '$4 == "FUNC" && ($5 == "GLOBAL" || $5 == "WEAK") { print $8 }' "$work/freestanding.symbols" |
+    LC_ALL=C sort -u > "$work/freestanding.functions"
+printf '%s\n' _RINvNtNtCs1elpRbcHzVq_17compiler_builtins5float3add3addC4f128EB6_ \
+    _RINvNtNtCs1elpRbcHzVq_17compiler_builtins5float3div3divC4f128EB6_ \
+    _RINvNtNtCs1elpRbcHzVq_17compiler_builtins5float3mul3mulC4f128EB6_ \
+    __addtf3 __divtf3 __eqtf2 __extenddftf2 __extendsftf2 __fesetround __fixtfsi \
+    __fpclassifyl __gttf2 __letf2 __lttf2 __multf3 __netf2 __subtf3 __trunctfdf2 __trunctfsf2 _start \
+    crabc_x86_64_math_long_double_completion_probe exp10l exp2l fdiml feclearexcept \
+    fegetenv fegetround feraiseexcept fesetenv fesetround fetestexcept modfl pow pow10l powl scalbnl |
+    LC_ALL=C sort -u > "$work/freestanding.expected-functions"
+cmp "$work/freestanding.expected-functions" "$work/freestanding.functions" || fail 'freestanding function closure differs'
+for operation in 3add3add 3div3div 3mul3mul; do
+    grep -Eq "[[:space:]]FUNC[[:space:]]+GLOBAL[[:space:]]+HIDDEN[[:space:]]+[0-9]+[[:space:]]_RINvNtNtCs1elpRbcHzVq_17compiler_builtins5float${operation}C4f128EB6_$" \
+        "$work/freestanding.symbols" || fail "binary128 helper $operation is not hidden"
+done
+for symbol in fdiml exp10l; do
+    grep -Eq "[[:space:]]FUNC[[:space:]]+GLOBAL[[:space:]]+DEFAULT[[:space:]]+[0-9]+[[:space:]]${symbol}$" \
+        "$work/freestanding.symbols" || fail "freestanding candidate lacks strong $symbol"
+done
+grep -Eq '[[:space:]]FUNC[[:space:]]+WEAK[[:space:]]+DEFAULT[[:space:]]+[0-9]+[[:space:]]pow10l$' \
+    "$work/freestanding.symbols" || fail 'freestanding candidate lacks weak pow10l'
+exp="$(awk '$4 == "FUNC" && $5 == "GLOBAL" && $6 == "DEFAULT" && $8 == "exp10l" { print $2; exit }' "$work/freestanding.symbols")"
+pow="$(awk '$4 == "FUNC" && $5 == "WEAK" && $6 == "DEFAULT" && $8 == "pow10l" { print $2; exit }' "$work/freestanding.symbols")"
+[ -n "$exp" ] && [ "$exp" = "$pow" ] || fail 'freestanding exp10l/pow10l alias differs'
+if awk '$7 == "UND" && NF >= 8 && !($5 == "LOCAL" && ($8 == "_PROCEDURE_LINKAGE_TABLE_" || $8 == "__rela_iplt_start" || $8 == "__rela_iplt_end")) { print }' "$work/freestanding.symbols" | grep . >/dev/null; then
+    fail 'freestanding candidate has unresolved symbols'
+fi
+if grep -Eq 'INTERP|[[:space:]]TLS[[:space:]]|Requesting program interpreter' "$work/freestanding.program" ||
+    grep -Eq '\((NEEDED|JMPREL|PLTGOT|TEXTREL)\)' "$work/freestanding.dynamic" ||
+    grep -Eq 'TLSGD|TLSLD|TLSDESC|DTPMOD|DTPREL|__tls_get_addr' "$work/freestanding.relocations" "$work/freestanding.disassembly"; then
+    fail 'freestanding candidate admits dynamic or TLS state'
+fi
+if grep -Eq 'libgcc|compiler-rt|libm\.so|/[Sr]?crt[^/[:space:]]*\.o' "$work/freestanding.trace"; then
+    fail 'freestanding candidate linked an ambient runtime'
+fi
+if grep -Eq 'crabc_core|mimalloc|float_parse|math_compat|libm\.so|libm-' \
+    "$work/freestanding.symbols" "$work/freestanding.disassembly"; then
+    fail 'freestanding candidate retained an ambient math or runtime dependency'
+fi
+aggregate=CRABC_MATH_ELEMENTARY_FENV_SENSITIVE_AGGREGATE_FREESTANDING
+"$cc" -std=c11 -D_GNU_SOURCE -D"$aggregate" -fno-builtin -frounding-math -ffreestanding \
+    -fno-stack-protector -fno-pie -nostdinc -isystem "$compiler_include" -I"$work/product/usr/include" \
+    -c compat/x86_64/libc_math_elementary_fenv_sensitive_aggregate_probe.c -o "$work/aggregate.o"
+"$cc" -D"$aggregate" -c compat/x86_64/libc_math_long_double_completion_aarch64_start.S -o "$work/aggregate-start.o"
+aggregate_link=("$cc" -fuse-ld=bfd -nostdlib -static -no-pie -Wl,-e,_start,--no-undefined,--gc-sections,--trace
+    "$work/aggregate-start.o" "$work/aggregate.o" -Wl,--start-group "$archive" \
+    "$work/product/usr/lib/libcrabc-builtins.a" -Wl,--end-group -o "$work/aggregate")
+record_math_argv "$work/aggregate-link.argv.json" "${aggregate_link[@]}"
+"${aggregate_link[@]}" > "$work/aggregate.trace"
+readelf -sW "$work/aggregate" > "$work/aggregate.symbols"
+readelf -lW "$work/aggregate" > "$work/aggregate.program"
+readelf -dW "$work/aggregate" > "$work/aggregate.dynamic"
+readelf -rW "$work/aggregate" > "$work/aggregate.relocations"
+objdump -d "$work/aggregate" > "$work/aggregate.disassembly"
+awk '$4 == "FUNC" && ($5 == "GLOBAL" || $5 == "WEAK") { print $8 }' "$work/aggregate.symbols" |
+    LC_ALL=C sort -u > "$work/aggregate.functions"
+printf '%s\n' _RINvNtNtCs1elpRbcHzVq_17compiler_builtins5float3add3addC4f128EB6_ \
+    _RINvNtNtCs1elpRbcHzVq_17compiler_builtins5float3div3divC4f128EB6_ \
+    _RINvNtNtCs1elpRbcHzVq_17compiler_builtins5float3mul3mulC4f128EB6_ \
+    __addtf3 __divtf3 __eqtf2 __extenddftf2 __extendsftf2 __fesetround __fixtfsi __fpclassifyl \
+    __gttf2 __letf2 __lttf2 __multf3 __netf2 __subtf3 __trunctfdf2 __trunctfsf2 _start \
+    crabc_x86_64_math_elementary_fenv_sensitive_aggregate_probe \
+    exp10 exp10f exp10l exp2l fdim fdimf fdiml feclearexcept fegetenv fegetround \
+    feraiseexcept fesetenv fetestexcept modfl nearbyint nearbyintf nearbyintl pow \
+    pow10 pow10f pow10l powl rint rintf rintl scalbnl | LC_ALL=C sort -u > "$work/aggregate.expected-functions"
+cmp "$work/aggregate.expected-functions" "$work/aggregate.functions" || fail 'aggregate function closure differs'
+for operation in 3add3add 3div3div 3mul3mul; do
+    grep -Eq "[[:space:]]FUNC[[:space:]]+GLOBAL[[:space:]]+HIDDEN[[:space:]]+[0-9]+[[:space:]]_RINvNtNtCs1elpRbcHzVq_17compiler_builtins5float${operation}C4f128EB6_$" \
+        "$work/aggregate.symbols" || fail "aggregate binary128 helper $operation is not hidden"
+done
+for observer in 19observed_float_bits 20observed_double_bits; do
+    grep -Eq "[[:space:]]FUNC[[:space:]]+LOCAL[[:space:]]+(DEFAULT|HIDDEN)[[:space:]]+[0-9]+[[:space:]]_RNvNtNtCs[0-9A-Za-z_]+_1c19x86_64_static_c_abi4fdim${observer}$" \
+        "$work/aggregate.symbols" || fail "aggregate lacks local fdim observer $observer"
+done
+for pair in exp10:pow10 exp10f:pow10f exp10l:pow10l; do
+    strong="${pair%%:*}"
+    weak="${pair##*:}"
+    strong_value="$(awk -v symbol="$strong" '$4 == "FUNC" && $5 == "GLOBAL" && $6 == "DEFAULT" && $8 == symbol { print $2; exit }' "$work/aggregate.symbols")"
+    weak_value="$(awk -v symbol="$weak" '$4 == "FUNC" && $5 == "WEAK" && $6 == "DEFAULT" && $8 == symbol { print $2; exit }' "$work/aggregate.symbols")"
+    [ -n "$strong_value" ] && [ "$strong_value" = "$weak_value" ] || fail "aggregate alias $pair differs"
+done
+for symbol in fdim fdimf fdiml rint rintf rintl nearbyint nearbyintf nearbyintl; do
+    grep -Eq "[[:space:]]FUNC[[:space:]]+GLOBAL[[:space:]]+DEFAULT[[:space:]]+[0-9]+[[:space:]]${symbol}$" \
+        "$work/aggregate.symbols" || fail "aggregate lacks strong $symbol"
+done
+if awk '$7 == "UND" && NF >= 8 && !($5 == "LOCAL" && ($8 == "_PROCEDURE_LINKAGE_TABLE_" || $8 == "__rela_iplt_start" || $8 == "__rela_iplt_end")) { print }' "$work/aggregate.symbols" | grep . >/dev/null ||
+    grep -Eq 'INTERP|[[:space:]]TLS[[:space:]]|Requesting program interpreter' "$work/aggregate.program" ||
+    grep -Eq '\((NEEDED|JMPREL|PLTGOT|TEXTREL)\)' "$work/aggregate.dynamic" ||
+    grep -Eq 'TLSGD|TLSLD|TLSDESC|DTPMOD|DTPREL|__tls_get_addr|crabc_core|mimalloc|float_parse|math_compat|libm\.so|libm-' \
+        "$work/aggregate.symbols" "$work/aggregate.relocations" "$work/aggregate.disassembly" ||
+    grep -Eq 'libgcc|compiler-rt|libm\.so|/[Sr]?crt[^/[:space:]]*\.o' "$work/aggregate.trace"; then
+    fail 'aggregate candidate has unowned linkage, TLS, or unresolved symbols'
+fi
+for kind in aggregate oracle candidate freestanding; do
+    record_math_argv "$work/$kind-run.argv.json" "$work/$kind"
+    run_math_recorded "$work/$kind.records" "$work/$kind.stderr" "$work/$kind.status" "$kind" "$work/$kind"
+done
+cmp "$work/candidate.records" "$work/freestanding.records" || fail 'freestanding candidate differs from installed product'
 python3 -B compat/x86_64/validate_libc_math_long_double_completion_aarch64.py \
     "$work/oracle.records" "$work/candidate.records"
+cmp "$work/oracle.records" "$work/candidate.records" || fail 'binary128 record bytes differ from pinned musl'
 python3 -B scripts/build_x86_64_owned_dynamic_sysroot.py --architecture aarch64 --output "$work/dynamic-product" >"$work/dynamic-build.log"
 bash compat/x86_64/run_binary128_helper_differential.sh "$work/product" "$work/dynamic-product" "$work/differential"

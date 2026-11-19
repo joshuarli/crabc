@@ -365,7 +365,9 @@ def audit_source() -> list[dict[str, str]]:
     for token in FORBIDDEN_SOURCE_TOKENS:
         if token != "asm!" and token in binary128_source.read_text(encoding="utf-8"):
             raise BuildError(f"forbidden source dependency or assembly facility: {token}")
-    production_inputs = (ROOT / "Cargo.toml", ROOT / "Cargo.lock", ROOT / "build.py", ROOT / "provenance.toml", SOURCE, complex_source, binary128_source)
+    production_inputs = (ROOT / "Cargo.toml", ROOT / "Cargo.lock", ROOT / "build.py", ROOT / "provenance.toml",
+                         ROOT / "aarch64-helper-exports.txt", ROOT / "aarch64-helper-symbols.txt", SOURCE, complex_source,
+                         binary128_source)
     return [
         {"path": path.relative_to(ROOT).as_posix(), "sha256": sha256(path)}
         for path in production_inputs
@@ -458,7 +460,7 @@ def portable_local_rustc_command(command: Sequence[str], object_path: pathlib.Pa
     normalized: list[str] = []
     for argument in command:
         if argument == str(object_path):
-            normalized.append("$CRABC_BUILTINS_STAGE/crabc-builtins.o")
+            normalized.append(f"$CRABC_BUILTINS_STAGE/{object_path.name}")
         elif argument == str(SOURCE):
             normalized.append("/crabc/builtins/src/lib.rs")
         elif argument == f"{ROOT}=crabc-builtins":
@@ -841,14 +843,8 @@ def source_build_compiler_builtins(
 
 def archive_members(llvm_ar: str, archive: pathlib.Path) -> list[str]:
     members = [line for line in run((llvm_ar, "t", str(archive))).splitlines() if line]
-    if not members or members[0] != ARCHIVE_MEMBER:
-        raise BuildError(f"archive must begin with its crabc-owned member {ARCHIVE_MEMBER!r}, found {members!r}")
-    if len(members) == 1 or len(members) != len(set(members)):
-        raise BuildError("archive must contain unique crabc and source-built compiler_builtins members")
-    if any(not name.endswith(".o") for name in members):
-        raise BuildError(f"archive contained a non-object member: {members!r}")
-    if any(not name.startswith("compiler_builtins-") for name in members[1:]):
-        raise BuildError(f"archive contained an unclassified upstream member: {members!r}")
+    if members != [ARCHIVE_MEMBER]:
+        raise BuildError(f"archive must contain exactly {ARCHIVE_MEMBER!r}, found {members!r}")
     return members
 
 
@@ -895,6 +891,14 @@ def ensure_no_absolute_build_paths(archive: pathlib.Path, paths: Sequence[pathli
 
 
 def assert_symbol_surface(defined: Sequence[str]) -> None:
+    contract = ROOT / "aarch64-helper-exports.txt"
+    if contract.is_symlink() or not contract.is_file():
+        raise BuildError("compiler helper export roster is missing or unsafe")
+    expected = contract.read_text(encoding="utf-8").splitlines()
+    if not expected or expected != sorted(set(expected)) or any(not symbol or symbol.strip() != symbol for symbol in expected):
+        raise BuildError("compiler helper export roster is malformed")
+    if list(defined) != expected:
+        raise BuildError("compiler helper export roster differs from the source-pinned contract")
     missing = sorted((set(EXPECTED_SYMBOLS) | OUTLINE_ATOMIC_SYMBOLS).difference(defined))
     if missing:
         raise BuildError(f"archive is missing required C compiler helpers: {missing!r}")
@@ -916,6 +920,24 @@ def assert_symbol_surface(defined: Sequence[str]) -> None:
         rejected.append(symbol)
     if rejected:
         raise BuildError(f"archive exports an unclassified non-Rust helper symbol: {sorted(rejected)!r}")
+
+
+def assert_symbol_metadata(llvm_readelf: str, artifact: pathlib.Path, defined: Sequence[str]) -> None:
+    """Check binding and visibility against the independent native source pin."""
+    contract = ROOT / "aarch64-helper-symbols.txt"
+    if contract.is_symlink() or not contract.is_file():
+        raise BuildError("compiler helper symbol metadata is missing or unsafe")
+    expected = contract.read_text(encoding="utf-8").splitlines()
+    if any(len(row.split()) != 4 for row in expected) or [row.split()[0] for row in expected] != list(defined):
+        raise BuildError("compiler helper symbol metadata contract is malformed")
+    names = set(defined)
+    actual: list[str] = []
+    for line in run((llvm_readelf, "--symbols", "--wide", str(artifact))).splitlines():
+        fields = line.split()
+        if len(fields) >= 8 and fields[-1] in names and fields[6] not in {"UND", "ABS"}:
+            actual.append(" ".join((fields[-1], *fields[3:6])))
+    if sorted(actual) != expected:
+        raise BuildError("compiler helper binding or visibility differs from the source-pinned contract")
 
 
 def closure_undefined_symbols(llvm_nm: str, lld: str, archive: pathlib.Path, stage: pathlib.Path) -> list[str]:
@@ -942,17 +964,22 @@ def build_archive(
     output.parent.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix="crabc-builtins-", dir=output.parent) as temporary:
         stage = pathlib.Path(temporary)
-        local_object = stage / ARCHIVE_MEMBER
+        local_object = stage / "local-helpers.o"
         local_command = compiler_command(rustc, local_object)
         run(local_command)
         upstream = source_build_compiler_builtins(cargo=cargo, rustc=rustc, llvm_ar=llvm_ar, stage=stage)
         objects = [local_object, *upstream["members"]]
         member_facts = {path.name: elf_facts(llvm_readelf, path) for path in objects}
+        inputs_archive = stage / "source-members.a"
+        run((llvm_ar, "rcsD", str(inputs_archive), *(str(path) for path in objects)))
+        merged_object = stage / ARCHIVE_MEMBER
+        run((lld, "-r", "--whole-archive", str(inputs_archive), "--no-whole-archive", "-o", str(merged_object)))
         staged_archive = stage / output.name
-        run((llvm_ar, "rcsD", str(staged_archive), *(str(path) for path in objects)))
+        run((llvm_ar, "rcsD", str(staged_archive), str(merged_object)))
         members = archive_members(llvm_ar, staged_archive)
         defined = nm_symbols(llvm_nm, staged_archive, "--defined-only")
         assert_symbol_surface(defined)
+        assert_symbol_metadata(llvm_readelf, staged_archive, defined)
         member_undefined = nm_symbols(llvm_nm, staged_archive, "--undefined-only")
         undefined = closure_undefined_symbols(llvm_nm, lld, staged_archive, stage)
         ensure_no_absolute_build_paths(staged_archive, (ROOT, stage, upstream_package_root(rustc)))
@@ -982,13 +1009,24 @@ def build_archive(
                 ],
             },
             {
+                "kind": "archive_source_built_members",
+                "command": [pathlib.Path(llvm_ar).name, "rcsD", "$CRABC_BUILTINS_STAGE/source-members.a",
+                            "$CRABC_BUILTINS_STAGE/local-helpers.o", *upstream_member_paths],
+            },
+            {
+                "kind": "merge_source_built_members",
+                "command": [pathlib.Path(lld).name, "-r", "--whole-archive",
+                            "$CRABC_BUILTINS_STAGE/source-members.a", "--no-whole-archive", "-o",
+                            "$CRABC_BUILTINS_STAGE/crabc-builtins.o"],
+                "inputs": ["$CRABC_BUILTINS_STAGE/local-helpers.o", *upstream_member_paths],
+            },
+            {
                 "kind": "create_deterministic_archive",
                 "command": [
                     pathlib.Path(llvm_ar).name,
                     "rcsD",
                     f"$CRABC_BUILTINS_OUT/{output.name}",
                     "$CRABC_BUILTINS_STAGE/crabc-builtins.o",
-                    *upstream_member_paths,
                 ],
             },
             {

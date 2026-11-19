@@ -34,6 +34,21 @@ def retained(root: Path, relative: str, payload: bytes) -> dict[str, object]:
 
 
 class ProbeAdmissionTests(unittest.TestCase):
+    def test_arm_product_requires_materialized_validation(self):
+        scratch = ROOT / ".work/aarch64/tmp"
+        scratch.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(dir=scratch) as temporary:
+            product = Path(temporary)
+            retained(product, "share/crabc/manifest.json", b"{}")
+            retained(product, "usr/lib/libc.so", b"libc")
+            with mock.patch.object(facades, "ARCH", "aarch64"), \
+                 mock.patch.object(facades, "WORK_ROOT", ROOT / ".work/aarch64"), \
+                 mock.patch.object(facades.compiler_helper, "validate_materialized_dynamic_product",
+                                   side_effect=facades.compiler_helper.CompilerHelperEvidenceError("invalid product")) as validate:
+                with self.assertRaisesRegex(facades.EvidenceError, "not source-matched"):
+                    facades.product_identity(product)
+                validate.assert_called_once_with(ROOT, product)
+
     def test_roster_keeps_each_frozen_probe_unchanged_and_every_facade_differential(self) -> None:
         frozen = {item.example for item in facades.PROBES if item.same_source_aarch64}
         self.assertEqual(frozen, {"loader_runtime_probe", "runtime_thread_probe", "cfile_direct_probe"})

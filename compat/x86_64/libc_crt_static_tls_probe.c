@@ -191,7 +191,11 @@ static uintptr_t fs_self(void)
 {
 #if defined(__aarch64__)
     uintptr_t base = installed_thread_pointer();
+#if defined(CRABC_CRT_STATIC_TLS_MUSL_REFERENCE)
     return base && *(const uintptr_t *)(base - 8) ? base : 0;
+#else
+    return base ? *(const uintptr_t *)(base - 8) : 0;
+#endif
 #else
     uintptr_t value;
     __asm__ volatile("mov %%fs:0, %0" : "=r"(value));

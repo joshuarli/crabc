@@ -176,7 +176,7 @@ class StaticProductSuiteTests(unittest.TestCase):
             libc.write_bytes(libc.read_bytes() + b"changed")
             changed_manifest_path = changed / PACKAGE.MANIFEST_RELATIVE_PATH
             changed_manifest = json.loads(changed_manifest_path.read_text())
-            changed_files = changed_manifest["files"] if ARCH == "aarch64" else changed_manifest["installed"]["files"]
+            changed_files = changed_manifest["installed"]["files"]
             changed_files["usr/lib/libc.a"] = sha(libc.read_bytes())
             changed_manifest_path.write_text(json.dumps(changed_manifest, sort_keys=True) + "\n")
             foreign = archive_dir / "foreign.tar.xz"

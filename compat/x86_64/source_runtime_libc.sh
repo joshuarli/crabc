@@ -70,7 +70,58 @@ source_runtime_expected_static_surface() {
     {
         grep -Ev '^(#|$)' "$contract" | awk -v arch="$arch" 'arch != "aarch64" || ($0 != "arch_prctl" && $0 != "ioperm" && $0 != "iopl")'
         if [ "$arch" = aarch64 ]; then
-            printf '%s\n' __sigsetjmp_tail crabc_x86_float_parse_shlim ioctl_no_argument ioctl_word semctl_no_argument semctl_word
+            printf '%s\n' __sigsetjmp_tail crabc_x86_float_parse_shlim
         fi
     } | LC_ALL=C sort -u >"$output"
 }
+
+# Exact source-runtime C export and binding inventories shared by math proofs.
+collect_math_global_surface() {
+	local archive_path="$1" output_path="$2" members_path="$3"
+	local -a members
+	mapfile -t members < <(ar t "$archive_path" | grep -E '^c\..+\.rcgu\.o$')
+	[ "${#members[@]}" -gt 0 ] || fail "archive has no crabc-libc object members"
+	mkdir "$members_path"
+	(
+		cd "$members_path"
+		ar x "$archive_path" "${members[@]}"
+		nm -g --defined-only --format=posix "${members[@]}"
+	) | awk '$2 ~ /^[TWDVBR]$/ && $1 !~ /^(_R|_ZN|DW\.ref\.|anon\.)/ && $1 != "crabc_x86_64_signal_restorer" && $1 != "__crabc_x86_pthread_clone" { print $1 }' |
+		sort -u >"$output_path"
+}
+
+collect_math_global_bindings() {
+	local archive_path="$1" output_path="$2" members_path="$3"
+	local -a members
+	mapfile -t members < <(ar t "$archive_path" | grep -E '^c\..+\.rcgu\.o$')
+	[ "${#members[@]}" -gt 0 ] || fail "archive has no crabc-libc object members"
+	mkdir "$members_path"
+	(
+		cd "$members_path"
+		ar x "$archive_path" "${members[@]}"
+		nm -g --defined-only --format=posix "${members[@]}"
+	) | awk '$2 ~ /^[TWDVBR]$/ && $1 !~ /^(_R|_ZN|DW\.ref\.|anon\.)/ && $1 != "crabc_x86_64_signal_restorer" && $1 != "__crabc_x86_pthread_clone" { print $1, $2 }' |
+		sort -u >"$output_path"
+}
+
+
+record_math_argv() {
+	local path="$1"
+	shift
+	python3 -B - "$path" "$@" <<'PY'
+import json
+from pathlib import Path
+import sys
+
+Path(sys.argv[1]).write_text(json.dumps(sys.argv[2:]) + "\n", encoding="utf-8")
+PY
+}
+
+run_math_recorded() {
+	local stdout_path="$1" stderr_path="$2" status_path="$3" label="$4" status=0
+	shift 4
+	"$@" >"$stdout_path" 2>"$stderr_path" || status=$?
+	printf '%s\n' "$status" >"$status_path"
+	[ "$status" -eq 0 ] || fail "$label exited with ${status}"
+}
+

@@ -523,8 +523,7 @@ for line in trace:
         saw["libc"] = True
     elif line.startswith(str(library / "libcrabc-builtins.a")):
         saw["builtins"] = True
-        if ("libcrabc-builtins.a(crabc-builtins.o)" in line
-                or (architecture == "aarch64" and "libcrabc-builtins.a(" in line and line.endswith(")"))):
+        if "libcrabc-builtins.a(crabc-builtins.o)" in line:
             saw["builtins_member"] = True
     elif line not in allowed_objects:
         fail(f"resolved final-link input escapes the owned set: {line}")
@@ -999,7 +998,9 @@ run_static_tbss() {
     audit_link_receipt "$installed_root" "$mode_root" "$mode" \
         "$mode_root/candidate" "$mode_root/link.receipt.json"
     candidate_output="$(env -i "$mode_root/candidate")" || fail "${label} TBSS candidate failed"
-    [ "$candidate_output" = 'initial-tbss=8192,worker=isolated' ] ||
+    local tbss_size=8192
+    [ "$ARCH" != aarch64 ] || tbss_size=131072
+    [ "$candidate_output" = "initial-tbss=${tbss_size},worker=isolated" ] ||
         fail "${label} TBSS candidate output drifted: $candidate_output"
 }
 
@@ -1784,12 +1785,7 @@ link_editor="$LINK_EDITOR"
 [ "$link_editor" = /usr/bin/mold ] && [ -x "$link_editor" ] || fail "requires the pinned native mold linker"
 
 bash "$ROOT_DIR/compat/x86_64/run_musl_oracle.sh" >/dev/null
-if [ "$ARCH" = x86_64 ]; then
-    builder_tests=scripts.tests.test_build_x86_64_owned_sysroot
-else
-    builder_tests=crt.tests.test_x86_64_dynamic_modes
-fi
-python3 -B -m unittest -v "$builder_tests" \
+python3 -B -m unittest -v scripts.tests.test_build_x86_64_owned_sysroot \
     compat.x86_64.tests.test_owned_static_sysroot_package \
     compat.x86_64.tests.test_owned_static_consumer_matrix \
     compat.x86_64.tests.test_static_product_suite

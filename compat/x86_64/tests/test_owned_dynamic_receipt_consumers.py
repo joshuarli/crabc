@@ -246,6 +246,25 @@ class OwnedDynamicReceiptConsumerTests(unittest.TestCase):
                         record, format=FORMAT, label="forged direct DSO receipt", fail=self._contract_failure,
                     )
 
+    def test_aarch64_receipts_reject_native_reserved_dso_names(self) -> None:
+        arm_format = "crabc-aarch64-owned-dynamic-sysroot-v1"
+        for schema in (1, 2, 3):
+            for name in ("libc.so", "ld-crabc-aarch64.so.1", "ld-musl-aarch64.so.1"):
+                with self.subTest(schema=schema, name=name):
+                    if schema == 3:
+                        record = json.loads(json.dumps(self._transitive_receipt()).replace("libroot.so", name))
+                    else:
+                        record = self._receipt(schema)
+                        dso = self.work / name
+                        record["application_dsos"] = {name: "a" * 64}
+                        record["input_receipts"].append({"path": str(dso), "sha256": "a" * 64})
+                        record["link_command"].append(str(dso))
+                        record["link_trace"].append(str(dso))
+                    record["format"] = arm_format
+                    with self.assertRaisesRegex(ValueError, "application DSO"):
+                        receipt_contract.validate(record, format=arm_format, label="ARM receipt",
+                                                  fail=self._contract_failure, allow_application_dso_closure=True)
+
     def test_schema_three_closure_requires_explicit_reader_admission_and_typed_roles(self) -> None:
         receipt = self._transitive_receipt()
         with self.assertRaisesRegex(ValueError, "application DSO closure"):

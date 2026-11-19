@@ -72,7 +72,7 @@ class NativeMathStreamTests(unittest.TestCase):
         oracle[7] = record + oracle[7][len(record):]
         reference[7] = changed + reference[7][len(record):]
         candidate[7] = reference[7]
-        with patch.object(stream.completion, 'compare'):
+        with patch.object(stream.completion, 'compare_aarch64'):
             with self.assertRaisesRegex(ValueError, 'stage 7 record 0'):
                 stream.compare(oracle, reference, candidate)
 

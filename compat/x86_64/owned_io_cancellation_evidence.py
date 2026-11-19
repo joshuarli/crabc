@@ -20,6 +20,7 @@ import subprocess
 import sys
 
 from owned_posix_product_evidence import ProductEvidenceError, validate_link
+import owned_posix_product_evidence as product_evidence
 import installed_compiler_translation as translation_contract
 import static_product_contract as static_product
 
@@ -137,8 +138,13 @@ def dependency_command(product: Path, source: Path, compiler: str) -> list[str]:
 
 def compile_identity(product: Path, source: Path, workload: Path, record: Path,
                      required_headers: list[str]) -> dict:
-    policy = installed_compiler(product)
-    compiler = policy.compiler()
+    if product_evidence.ARCH == "aarch64":
+        compiler_record = product_evidence.source_native_image_tool_record("/usr/bin/gcc")
+        compiler = compiler_record["path"]
+    else:
+        policy = installed_compiler(product)
+        compiler = policy.compiler()
+        compiler_record = {"path": compiler, "sha256": digest(Path(compiler).resolve())}
     dependencies = record.with_suffix(".dependencies")
     trace = record.with_suffix(".headers")
     status = record.with_suffix(".exit-status")
@@ -153,13 +159,17 @@ def compile_identity(product: Path, source: Path, workload: Path, record: Path,
                                *COMPILE_FLAGS, "-c", str(source), "-o", str(workload)],
             "dependency_command": dependency_command(product, source, compiler),
             "dependency_exit_status": 0, "required_headers": required_headers,
-            "compiler": {"path": compiler, "sha256": digest(Path(compiler).resolve())},
+            "compiler": compiler_record,
             "files": files, "dependencies": paths}
 
 
 def record_compile(product: Path, source: Path, workload: Path, record: Path,
                    required_headers: list[str]) -> None:
     policy = installed_compiler(product)
+    if product_evidence.ARCH == "aarch64":
+        expected = product_evidence.source_native_image_tool_record("/usr/bin/gcc")
+        require(policy.compiler() == expected["path"] and digest(Path(expected["path"])) == expected["sha256"],
+                "installed compiler differs from source image manifest")
     source_before, object_before = digest(source), digest(workload)
     command = dependency_command(product, source, policy.compiler())
     with record.with_suffix(".dependencies").open("xb") as output, record.with_suffix(".headers").open("xb") as errors:
@@ -191,7 +201,8 @@ def audit_static_views(linkage: str, views: dict[str, str]) -> None:
             "incomplete static ELF inspection")
     header, segments, dynamic = views["header"], views["segments"], views["dynamic"]
     symbols, relocations = views["symbols"], views["relocations"]
-    require("Advanced Micro Devices X86-64" in header, "static consumer machine drifted")
+    arm = product_evidence.ARCH == "aarch64"
+    require(("AArch64" if arm else "Advanced Micro Devices X86-64") in header, "static consumer machine drifted")
     kind = "EXEC" if linkage == "static" else "DYN"
     require(re.search(r"Type:\s+" + kind + r"\s", header) is not None, "static ELF type drifted")
     require("INTERP" not in segments and "Requesting program interpreter" not in segments,
@@ -205,13 +216,18 @@ def audit_static_views(linkage: str, views: dict[str, str]) -> None:
                     not (fields[4] == "LOCAL" and fields[7] in static_product.MOLD_SYNTHETIC_UNDEFINED)
                     for line in symbols.splitlines()),
             "static consumer retains an unresolved symbol")
-    require(re.search(r"R_X86_64_(GLOB_DAT|JUMP_SLOT|TLSGD|TLSLD|TLSDESC|DTPMOD|DTPOFF)",
+    forbidden = (r"R_AARCH64_(GLOB_DAT|JUMP_SLOT|TLS|DTPMOD|DTPREL|TPREL)" if arm else
+                 r"R_X86_64_(GLOB_DAT|JUMP_SLOT|TLSGD|TLSLD|TLSDESC|DTPMOD|DTPOFF)")
+    require(re.search(forbidden,
                       relocations + symbols) is None, "static consumer retains dynamic relocation or TLS")
     if linkage == "static-pie":
         require(re.search(r"^\s*PHDR\s", segments, re.MULTILINE) is not None, "static PIE lacks PT_PHDR")
-        require(re.search(r"R_X86_64_GOTTPOFF|__tls_get_addr", relocations + symbols) is None,
+        initial_tls = r"R_AARCH64_TLSIE|__tls_get_addr" if arm else r"R_X86_64_GOTTPOFF|__tls_get_addr"
+        require(re.search(initial_tls, relocations + symbols) is None,
                 "static PIE retains unrelaxed initial TLS")
-        require(all(kind == "R_X86_64_RELATIVE" for kind in re.findall(r"R_X86_64_[A-Z0-9_]+", relocations)),
+        pattern = r"R_AARCH64_[A-Z0-9_]+" if arm else r"R_X86_64_[A-Z0-9_]+"
+        relative = "R_AARCH64_RELATIVE" if arm else "R_X86_64_RELATIVE"
+        require(all(kind == relative for kind in re.findall(pattern, relocations)),
                 "static PIE retains a non-relative relocation")
 
 

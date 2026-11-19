@@ -29,6 +29,27 @@ SPEC.loader.exec_module(package)
 
 
 class OwnedStaticSysrootPackageTests(unittest.TestCase):
+    def test_static_scope_rejects_promoted_or_incomplete_claims(self):
+        manifest = {
+            "scope": "private-static-pthread-tls-consumer-slice-not-family-completion-not-public-support",
+            "not_selected": ["shared libc", "dynamic loader or PT_INTERP", "complete compiler-helper closure",
+                             "sysroot.static-tls family completion", "sysroot.owned-artifact family completion",
+                             "x86-64 promotion or public support"],
+            "sealed_static_driver": {
+                "path": "bin/crabc-cc",
+                "status": "planned-owned-static-product-seed-not-family-completion-not-public-support",
+                "modes": [{"id": "static-et-exec", "elf_type": "ET_EXEC", "crt_object": "crt1.o"},
+                          {"id": "static-pie", "elf_type": "ET_DYN", "crt_object": "rcrt1.o"}],
+                "not_proven_by_this_seed": ["declared static-product coverage suite"],
+            },
+        }
+        static_product_contract.validate_static_product_scope(manifest)
+        for key in ("scope", "not_selected", "sealed_static_driver"):
+            changed = copy.deepcopy(manifest)
+            del changed[key]
+            with self.subTest(key=key), self.assertRaises(static_product_contract.StaticProductError):
+                static_product_contract.validate_static_product_scope(changed)
+
     def test_arm_manifest_binds_native_target_and_payload_hashes(self):
         arm = {"arch": "aarch64", "target_triple": "aarch64-unknown-linux-musl"}
         required = package.REQUIRED_INSTALLED_PATHS

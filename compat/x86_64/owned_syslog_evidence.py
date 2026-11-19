@@ -204,10 +204,15 @@ def _installed_compiler_contract(installed: Path) -> tuple[Any, Path, Path]:
         '"-fPIC" if mode == "shared" else "-fPIE" if mode == "pie" else "-fno-pie",',
     )
     if ARCH == "aarch64":
+        shared_driver = _regular(installed / "share/crabc/crabc_cc_owned_dynamic.py", "installed shared dynamic driver")
+        source += shared_driver.read_text(encoding="utf-8")
         fragments = (
-            'SourceFileLoader("crabc_cc_static", str(root / "share/crabc/crabc_cc_static.py"))',
-            "quote_dirs = []", "rounding = False", "quote_dirs.append(path)",
-            'shared.run_checked([shared.compiler(), "-nostdinc",',
+            "import crabc_cc_static as shared", "import crabc_cc_owned_dynamic as dynamic_shared",
+            'dynamic_shared.parse_dynamic_arguments(arguments, architecture="aarch64")',
+            "quote_include_inputs = []", "rounding_math = False", "rounding_math = True",
+            "quote_include_inputs.append(Path(arguments[index]))", "for path in quote_inputs:",
+            "quote_dirs = []", "quote_dirs.append(directory)",
+            'dynamic_shared.run([shared.compiler(), "-nostdinc",',
             '*(v for path in quote_dirs for v in ("-iquote", str(path)))',
             '"-isystem", str(root / "usr/include"), *shared.HOSTED_TRANSLATION_FLAGS,',
             '*invocation.compiler_flags, *(["-frounding-math"] if rounding else []),',
@@ -271,6 +276,11 @@ def capture_installed_header_translation(
     ):
         _fail("owned syslog installed compiler environment drifted")
     compiler = _executable_identity(Path(selected_compiler), "installed compiler")
+    if ARCH == "aarch64":
+        import owned_posix_product_evidence as product_evidence
+        expected = product_evidence.source_native_image_tool_record("/usr/bin/gcc")
+        if {"path": str(compiler), "sha256": sha256_file(compiler)} != expected:
+            _fail("installed compiler differs from source image manifest")
     caller_flags = ["-std=c11", "-fno-builtin", "-fno-stack-protector"]
     quote_include_dirs: tuple[Path, ...] = ()
     rounding_math = False
@@ -353,6 +363,13 @@ def bind_workload_object(
         _fail("owned syslog initial workload source hash is invalid")
     if sha256_file(source_path) != initial_source_sha256:
         _fail("owned syslog workload source changed before binding")
+    if ARCH == "aarch64":
+        import owned_posix_product_evidence as product_evidence
+        translation = _json_object(Path(translation_record), "installed header translation record")
+        compiler = translation.get("compiler")
+        expected = product_evidence.source_native_image_tool_record("/usr/bin/gcc")
+        if compiler != {"selected_path": expected["path"], "resolved_path": expected["path"], "sha256": expected["sha256"]}:
+            _fail("installed compiler differs from source image manifest")
     identity = _expected_identity(Path(identity_path), workload_path)
     record = {
         "schema": 1,

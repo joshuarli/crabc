@@ -296,9 +296,8 @@ def _bootstrap_exact_roster(reader):
         'dynamic-pie.crabc-link.json', 'dynamic-non-pie.crabc-link.json',
         'dynamic-pie-payload.json', 'dynamic-non-pie-payload.json',
     }
-    if product_evidence.ARCH == 'x86_64':
-        for name in ('dynamic-pie', 'dynamic-non-pie'):
-            files.update(path.name for path in dynamic_elf.sidecar_paths(reader.leaf / name))
+    for name in ('dynamic-pie', 'dynamic-non-pie'):
+        files.update(path.name for path in dynamic_elf.sidecar_paths(reader.leaf / name))
     files.update(label + '.command.json' for label in BOOTSTRAP_COMMANDS)
     files.update(label + '.' + stream for label in BOOTSTRAP_COMMANDS
                  for stream in ('status', 'stdout', 'stderr'))
@@ -379,9 +378,18 @@ def _bootstrap_payload(reader, dynamic_product, mode, executable):
 
 
 def _bootstrap_elf_sidecars(reader, mode, executable):
+    inspection_path, link_map_path = dynamic_elf.sidecar_paths(executable)
+
+    def reject(message):
+        raise NativeObservationError('bootstrap ' + mode + ' ELF sidecar differs: ' + message)
+
+    facts = dynamic_elf.validate_record(
+        read_json(inspection_path), executable,
+        output_format=product_evidence.DYNAMIC_PRODUCT_FORMAT,
+        fail=reject, recorded_path=reader.recorded, architecture=product_evidence.ARCH,
+    )
     if product_evidence.ARCH == 'aarch64':
         try:
-            facts = dynamic_elf.inspect(executable, architecture='aarch64')
             dynamic_elf.require_expected(facts, dynamic_elf.Expectation(
                 mode='pie' if mode == 'dynamic-pie' else 'exec', interpreter=product_evidence.INTERPRETER,
                 needed=('libc.so',), soname=None, search_kind='runpath', search_path='/usr/lib',
@@ -389,17 +397,6 @@ def _bootstrap_elf_sidecars(reader, mode, executable):
             ))
         except dynamic_elf.InspectionError as error:
             raise NativeObservationError('bootstrap ' + mode + ' ELF inspection differs: ' + str(error)) from error
-        return {'facts': facts}
-    inspection_path, link_map_path = dynamic_elf.sidecar_paths(executable)
-
-    def reject(message):
-        raise NativeObservationError('bootstrap ' + mode + ' ELF sidecar differs: ' + message)
-
-    dynamic_elf.validate_record(
-        read_json(inspection_path), executable,
-        output_format=product_evidence.DYNAMIC_PRODUCT_FORMAT,
-        fail=reject, recorded_path=reader.recorded,
-    )
     return {
         'inspection': reader.identity(inspection_path),
         'link_map': reader.identity(link_map_path),

@@ -707,13 +707,8 @@ def static_receipt_audit(sysroot: Path, mode: str, object_file: Path, output: Pa
     expected.append({"role": "application", "path": str(object_file.resolve()), "sha256": sha256_file(object_file)})
     if data.get("input_receipts") != expected:
         raise RunnerError(f"static {mode} receipt does not bind the exact owned runtime and shared object")
-    if ARCH == "aarch64":
-        import crabc_cc_static
-        static_mode = crabc_cc_static.STATIC_PIE if mode == "--static-pie" else crabc_cc_static.STATIC_ET_EXEC
-        expected_plan = crabc_cc_static.owned_link_plan(sysroot, static_mode, architecture=ARCH)
-    else:
-        expected_plan = product_evidence._static_link_plan(
-            sysroot, "static-pie" if mode == "--static-pie" else "static")
+    expected_plan = product_evidence._static_link_plan(
+        sysroot, "static-pie" if mode == "--static-pie" else "static")
     if data.get("owned_link_contract") != expected_plan:
         raise RunnerError(f"static {mode} receipt owned link contract drifted")
     output_record = {"path": str(output), "sha256": sha256_file(output)}

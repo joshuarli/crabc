@@ -63,7 +63,8 @@ PRODUCT_FILES = (
     "compat/x86_64/run_owned_ldso_initial_tls_cases.sh",
     "compat/x86_64/run_owned_ldso_runtime_v1_cases.sh",
     "rust-toolchain.toml",
-) + (("compat/x86_64/crabc_cc_aarch64_dynamic.py",) if ARCH["arch"] == "aarch64" else ())
+) + (("compat/x86_64/crabc_cc_aarch64_dynamic.py",
+      "compat/x86_64/owned_resolver_alias_image_inputs_aarch64.json") if ARCH["arch"] == "aarch64" else ())
 PRODUCT_BUILDERS = (
     "compat/x86_64/owned_dynamic_package.py",
     "compat/x86_64/owned_static_sysroot_package.py",
@@ -75,7 +76,7 @@ PRODUCT_LAZY_MODULES = (
     "compat/x86_64/compiler_helper_evidence.py",
     "compat/x86_64/header_callable_inventory.py",
     "compat/x86_64/validate_loader_libc_tls_runtime_v1.py",
-)
+) + (("compat/x86_64/owned_posix_product_evidence.py",) if ARCH["arch"] == "aarch64" else ())
 PYTHON_SEARCH = ("compat/x86_64", "scripts", "")
 GUARD_EXCLUDED_TOP = frozenset({".git", ".work", "target"})
 GUARD_PINNED_CACHES = ("compat/allocator/.cache",)

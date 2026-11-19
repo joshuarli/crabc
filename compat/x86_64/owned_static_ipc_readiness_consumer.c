@@ -14,7 +14,7 @@
 #define _GNU_SOURCE 1
 #endif
 
-#if !defined(__linux__) || !defined(__x86_64__) || !defined(__LP64__) || \
+#if !defined(__linux__) || (!defined(__x86_64__) && !defined(__aarch64__)) || !defined(__LP64__) || \
     !defined(__BYTE_ORDER__) || !defined(__ORDER_LITTLE_ENDIAN__) || \
     __BYTE_ORDER__ != __ORDER_LITTLE_ENDIAN__
 #error "this consumer requires native Linux/x86-64 little-endian LP64"
@@ -40,8 +40,13 @@ _Static_assert(sizeof(socklen_t) == 4 && sizeof(ssize_t) == 8,
     "x86 socket scalar ABI");
 _Static_assert(sizeof(struct iovec) == 16 && _Alignof(struct iovec) == 8,
     "x86 scatter/gather ABI");
+#if defined(__aarch64__)
+_Static_assert(sizeof(struct epoll_event) == 16 && _Alignof(struct epoll_event) == 8,
+    "aarch64 epoll ABI");
+#else
 _Static_assert(sizeof(struct epoll_event) == 12 && _Alignof(struct epoll_event) == 1,
     "x86 packed epoll ABI");
+#endif
 
 static int bytes_equal(const void *left, const void *right, size_t length)
 {

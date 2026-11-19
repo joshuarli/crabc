@@ -314,7 +314,15 @@ def _validate_compile_audit(
     if record["command"] != _compile_command(role, driver, source, output, replay=replay):
         _fail(f"{role} compile command differs from the sealed timer invocation")
     helper = _physical(root / "share/crabc/crabc_cc_static.py", "installed compiler helper")
-    if replay is None:
+    if replay is None and native_arch()["arch"] == "aarch64":
+        try:
+            expected_compiler = product_evidence.source_native_image_tool_record("/usr/bin/gcc")
+        except product_evidence.ProductEvidenceError as error:
+            raise TimerEvidenceError("timer source image compiler pin is invalid") from error
+        if record["compiler"] != expected_compiler:
+            _fail(f"{role} compiler differs from source image manifest")
+        compiler_command = expected_compiler["path"]
+    elif replay is None:
         policy = _installed_compiler(root)
         compiler_command = policy.compiler()
         compiler = _physical(Path(compiler_command).resolve(strict=True), "installed compiler")
@@ -413,7 +421,12 @@ def _validate_shared_receipt(
     linker_record = _exact_object(record["resolved_linker"], {"path", "sha256"}, "timer TLS DSO linker")
     if not isinstance(linker_record["path"], str):
         _fail("timer TLS DSO linker path is malformed")
-    if replay is None:
+    if replay is None and native_arch()["arch"] == "aarch64":
+        try:
+            linker = Path(product_evidence._check_linker(linker_record, receipt))
+        except product_evidence.ProductEvidenceError as error:
+            raise TimerEvidenceError("timer linker differs from source image manifest") from error
+    elif replay is None:
         linker = _physical(Path(linker_record["path"]), "timer TLS DSO linker")
         if linker != product_evidence.native_build_tools.MOLD or not linker.lstat().st_mode & 0o111:
             _fail("timer TLS DSO linker is not the sealed mold executable")

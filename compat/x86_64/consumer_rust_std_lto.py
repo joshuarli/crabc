@@ -213,26 +213,11 @@ def checked_output(argv: Sequence[str | Path], description: str) -> str:
 
 
 def compiler_tool_records() -> dict[str, dict[str, str]]:
-    if ARCH == "x86_64":
-        return product_evidence.native_compiler_tool_records()
-    compiler = native_rustc.compiler_path()
-    paths = {"rustc_wrapper": native_build_tools.KACHE, "linker": native_build_tools.MOLD,
-             "cargo_linker": Path(ARCHITECTURE["linker"]), "rustc": compiler}
-    records = {}
-    for name, path in paths.items():
-        physical = product_evidence._physical_executable(path, f"native {name}")
-        require(physical == path, f"native {name} path is not physical")
-        records[name] = {"path": str(path), "sha256": product_evidence._sha256(path)}
-    records["rustc"]["sysroot"] = str(compiler.parent.parent)
-    return records
+    return product_evidence.native_compiler_tool_records()
 
 
 def validate_compiler_tool_records(value: object) -> dict[str, dict[str, str]]:
-    if ARCH == "x86_64":
-        return product_evidence.validate_native_compiler_tool_records(value)
-    expected = compiler_tool_records()
-    require(value == expected, "native compiler tool identities differ from the pinned image")
-    return expected
+    return product_evidence.validate_native_compiler_tool_records(value)
 
 
 def toolchain_identity(retained: Retained) -> dict[str, Any]:
@@ -584,7 +569,9 @@ def _validate_cargo_link_receipt(context: Context, receipt: object, path: Path, 
         objects=final_objects, archives=final_archives, output=output, export_dynamic=False,
         rust_mode=requested_mode,
     )
-    if ARCH == "aarch64" and receipt["command"][1:2] == ["--fix-cortex-a53-843419"]:
+    # The pinned aarch64 musl target's gnu-cc pre-link arguments always
+    # include this erratum option.  Do not infer it from the receipt itself.
+    if ARCH == "aarch64":
         expected_command.insert(1, "--fix-cortex-a53-843419")
     require(receipt["command"] == list(map(str, expected_command)),
             "owned Rust Cargo final link argv differs")
@@ -1519,13 +1506,6 @@ def main(argv: Sequence[str] | None = None) -> int:
     for condition in report["unmet_conditions"]:
         print(f"unmet: {condition}", file=sys.stderr)
     print(f"receipt: {path}")
-    if ARCH == "aarch64" and not report["qualifying"] and not report["allocator_evidence"] and not report["debug"]:
-        selected = arguments.select or list(SECTIONS)
-        expected = [f"{section} was not selected" for section in SECTIONS if section not in selected]
-        expected.append("development products are not a current-source installed/extracted cohort")
-        if report["unmet_conditions"] == expected:
-            print("aarch64 consumer.rust-std-lto: PASS (development only; receipt is not qualifying)")
-            return 0
     if report["passed"] and report["debug"]:
         print("x86 debug std and valid unwind consumers: PASS (development)")
         return 0

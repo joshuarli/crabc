@@ -405,7 +405,7 @@ def combined_manifest_payload(root: Path, manifest: dict, *, architecture: str =
     return files, links
 
 
-def validate_manifest_payload(root: Path) -> None:
+def validate_manifest_payload(root: Path, *, architecture: str = "x86_64") -> None:
     """Bind driver execution to the immutable installed regular-file payload.
 
     The tree is either this static product or a combined four-mode sysroot
@@ -414,10 +414,11 @@ def validate_manifest_payload(root: Path) -> None:
     """
 
     manifest = load_manifest(root / MANIFEST_RELATIVE_PATH, "manifest")
-    if manifest.get("format") == COMBINED_SYSROOT_FORMAT:
-        files, links = combined_manifest_payload(root, manifest)
+    combined_format = "crabc-aarch64-owned-sysroot-v1" if architecture == "aarch64" else COMBINED_SYSROOT_FORMAT
+    if manifest.get("format") == combined_format:
+        files, links = combined_manifest_payload(root, manifest, architecture=architecture)
     else:
-        files, links = static_product_payload_files(manifest), {}
+        files, links = static_product_payload_files(manifest, architecture=architecture), {}
     expected_files = set(files)
     observed_hashes, observed_links, other = installed_tree(root)
     observed_files = set(observed_hashes)
@@ -451,10 +452,10 @@ def validate_crt_provenance(root: Path, receipt_path: str, profile: NativeRuntim
         raise DriverError("invalid installed CRT provenance") from error
 
 
-def validate_installed_runtime(root: Path) -> NativeRuntimeProfile:
+def validate_installed_runtime(root: Path, *, architecture: str = "x86_64") -> NativeRuntimeProfile:
     """Fail before source translation if the installed static boundary is absent."""
 
-    validate_manifest_payload(root)
+    validate_manifest_payload(root, architecture=architecture)
     include = root / "usr" / "include"
     if not include.is_dir() or include.is_symlink():
         raise DriverError(f"owned installed headers are missing or unsafe: {include}")
@@ -462,10 +463,11 @@ def validate_installed_runtime(root: Path) -> NativeRuntimeProfile:
         require_regular(root / relative, relative)
     manifest = load_manifest(root / MANIFEST_RELATIVE_PATH, "manifest")
     receipt_path = "share/crabc/crt.provenance.json"
-    if manifest.get("format") == COMBINED_SYSROOT_FORMAT:
+    combined_format = "crabc-aarch64-owned-sysroot-v1" if architecture == "aarch64" else COMBINED_SYSROOT_FORMAT
+    if manifest.get("format") == combined_format:
         receipt_path = manifest["products"]["static"]["placements"].get(receipt_path)
         manifest = load_manifest(root / COMBINED_STATIC_MANIFEST, "embedded static manifest")
-    if not isinstance(receipt_path, str) or "share/crabc/crt.provenance.json" not in static_product_payload_files(manifest):
+    if not isinstance(receipt_path, str) or "share/crabc/crt.provenance.json" not in static_product_payload_files(manifest, architecture=architecture):
         raise DriverError("installed CRT provenance is not bound to the static product")
     profile = profile_from_manifest(manifest)
     validate_crt_provenance(root, receipt_path, profile)
@@ -1236,19 +1238,7 @@ def execute(root: Path, invocation: Invocation) -> None:
 
 
 def execute_aarch64(root: Path, arguments: Sequence[str], manifest: dict) -> None:
-    combined = manifest.get("format") == "crabc-aarch64-owned-sysroot-v1"
-    if combined:
-        expected, expected_links = combined_manifest_payload(root, manifest, architecture="aarch64")
-        placement = manifest["products"]["static"]["placements"].get("share/crabc/crt.provenance.json")
-        if not isinstance(placement, str):
-            raise DriverError("combined arm64 CRT provenance is missing")
-        validate_crt_provenance(root, placement, profile_from_manifest(manifest))
-    else:
-        expected, expected_links = static_product_payload_files(manifest, architecture="aarch64"), {}
-    observed, links, other = installed_tree(root)
-    observed.pop(MANIFEST_RELATIVE_PATH, None)
-    if observed != expected or links != expected_links or other:
-        raise DriverError("aarch64 installed sysroot payload differs from its manifest")
+    validate_installed_runtime(root, architecture="aarch64")
     cortex_flag = "-Wl,--fix-cortex-a53-843419"
     if arguments.count(cortex_flag) > 1:
         raise DriverError("duplicate cortex-a53 linker option")

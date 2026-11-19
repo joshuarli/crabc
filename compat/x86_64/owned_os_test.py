@@ -15,6 +15,7 @@ import hashlib
 import importlib.util
 import json
 import os
+import platform
 from pathlib import Path
 import shutil
 import shlex
@@ -814,6 +815,14 @@ def copied_tree(source: Path, destination: Path, *, discard_git: bool = False, b
         thaw_tree(destination)
 
 
+def copied_product(source: Path, destination: Path) -> None:
+    if platform.system() == "Linux" and platform.machine() == "aarch64":
+        from run_owned_calendar_component import copy_product
+        copy_product(source, destination)
+    else:
+        copied_tree(source, destination)
+
+
 def make_phases(suite: str, compile_jobs: int) -> tuple[tuple[str, str, int], ...]:
     """Return each suite's ordered ``(phase, upstream target, jobs)`` Make runs.
 
@@ -1264,7 +1273,7 @@ def prepare_compile_product(product: Path, destination: Path, product_roster: li
     for the collector's exact post-run comparison; do not relabel those roles
     merely to make this disposable copy read-only.
     """
-    copied_tree(product, destination)
+    copied_product(product, destination)
     copied_payload = tree_roster(destination)
     difference = roster_difference(product_roster, copied_payload)
     if not roster_matches(product_roster, copied_payload):
@@ -1278,7 +1287,7 @@ def prepare_compile_product(product: Path, destination: Path, product_roster: li
 def prepare_execution_root(product: Path, source: Path, destination: Path, suite: str, private_devpts: bool,
                            product_roster: list[dict[str, Any]]) -> dict[str, Any]:
     """Build the candidate-only root plus an explicitly separate musl shell."""
-    copied_tree(product, destination)
+    copied_product(product, destination)
     restore_roster_modes(destination, product_roster)
     copied_payload = tree_roster(destination)
     copied_difference = roster_difference(product_roster, copied_payload)

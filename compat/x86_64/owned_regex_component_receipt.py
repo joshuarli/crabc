@@ -182,20 +182,14 @@ def source_product_seal(root: Path, static: Path | None, dynamic: Path) -> dict[
         current_source = source_seal.product_source_digest(qualification.ROOT)
     except Exception as error:
         raise RegexReceiptError("current regex source digest is unreadable") from error
-    if qualification.ARCH["arch"] == "aarch64":
-        try:
-            products.validate_dynamic_product_source(dynamic, current_source)
-        except products.ProductEvidenceError as error:
-            raise RegexReceiptError(str(error)) from error
-    else:
-        state_path = physical_file(dynamic / "share/crabc/dynamic-product-state.json", "dynamic regex product state")
-        state = read_json(state_path, "dynamic regex product state")
-        require(isinstance(state, dict) and
-                state.get("schema") == "crabc.x86_64-owned-dynamic-materialization/v1" and
-                state.get("status") == "materialized-unqualified",
-                "dynamic regex product state differs")
-        require(state.get("source_sha256") == current_source,
-                "dynamic regex product source differs from current checkout")
+    state_path = physical_file(dynamic / "share/crabc/dynamic-product-state.json", "dynamic regex product state")
+    state = read_json(state_path, "dynamic regex product state")
+    require(isinstance(state, dict) and
+            state.get("schema") == "crabc.x86_64-owned-dynamic-materialization/v1" and
+            state.get("status") == "materialized-unqualified",
+            "dynamic regex product state differs")
+    require(state.get("source_sha256") == current_source,
+            "dynamic regex product source differs from current checkout")
     result: dict[str, object] = {
         "sources": {name: tracked_source_identity(root, relative) for name, relative in SOURCE_PATHS.items()},
         "dynamic": {"path": dynamic.relative_to(root).as_posix(), "manifest": identity(root, dynamic_manifest),

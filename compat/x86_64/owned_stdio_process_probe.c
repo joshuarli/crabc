@@ -8,6 +8,9 @@
 #include <unistd.h>
 #include <sys/wait.h>
 #include <sys/resource.h>
+#if defined(__aarch64__)
+#include <sys/syscall.h>
+#endif
 #include <pthread.h>
 
 #define CHECK(x) do { if (!(x)) { fprintf(stderr, "process:%d errno=%d\n", __LINE__, errno); return 1; } } while (0)
@@ -19,16 +22,31 @@ static void handler(int sig) { (void)sig; interrupted = 1; }
 struct filter_instruction { unsigned short code; unsigned char yes, no; unsigned value; };
 struct filter_program { unsigned short count; struct filter_instruction *instructions; };
 static long raw_prctl(long operation, long value, long pointer) {
+#if defined(__aarch64__)
+    register long number __asm__("x8") = SYS_prctl;
+    register long result __asm__("x0") = operation;
+    register long arg1 __asm__("x1") = value;
+    register long arg2 __asm__("x2") = pointer;
+    register long arg3 __asm__("x3") = 0;
+    register long arg4 __asm__("x4") = 0;
+    __asm__ volatile("svc 0" : "+r"(result) : "r"(number), "r"(arg1), "r"(arg2), "r"(arg3), "r"(arg4) : "memory", "cc");
+    return result;
+#else
     register long fourth __asm__("r10") = 0;
     register long fifth __asm__("r8") = 0;
     long result;
     __asm__ volatile("syscall" : "=a"(result) : "a"(157L), "D"(operation),
         "S"(value), "d"(pointer), "r"(fourth), "r"(fifth) : "rcx", "r11", "memory");
     return result;
+#endif
 }
 static int denied_exec(void) {
     struct filter_instruction instructions[] = {
+#if defined(__aarch64__)
+        {0x20, 0, 0, 0}, {0x15, 0, 1, SYS_execve},
+#else
         {0x20, 0, 0, 0}, {0x15, 0, 1, 59},
+#endif
         {0x06, 0, 0, 0x50000 | EACCES}, {0x06, 0, 0, 0x7fff0000}
     };
     struct filter_program program = {4, instructions};

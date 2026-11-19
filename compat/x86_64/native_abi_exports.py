@@ -30,21 +30,7 @@ DYNAMIC_CATEGORIES = (
 STATIC_CATEGORIES = ("extra", "missing", "class_differences")
 STATIC_ENTRY_KEYS = frozenset({"name", "nm_type", "count"})
 CLASS_DIFFERENCE_KEYS = frozenset({"name", "reference", "candidate"})
-ARM_STATIC_EXTRA = frozenset({
-    "__crabc_aarch64_prctl", "__crabc_aarch64_syscall", "__memcpy_fwd",
-    "crabc_aarch64_extended___invtrigl_R", "crabc_aarch64_extended___pio2_hi",
-    "crabc_aarch64_extended___pio2_lo", "ioctl_no_argument", "ioctl_word", "semctl_no_argument", "semctl_word",
-})
-X86_STATIC_EXTRA = frozenset({
-    "crabc_x86_math_acosh_provider_rsqrt_tab", "crabc_x86_math_asinh_data_rsqrt",
-    "crabc_x86_math_complex_internal_mulxc3", "crabc_x86_math_elementary_long_double_internal_p1evll",
-    "crabc_x86_math_elementary_long_double_internal_polevll", "crabc_x86_math_scalar_completion_provider_scalbn",
-    "crabc_x86_math_special_elementary_powl", "crabc_x86_math_special_elementary_round",
-    "crabc_x86_math_special_elementary_roundf", "crabc_x86_math_special_elementary_sinl",
-    "crabc_x86_math_special_internal_p1evll", "crabc_x86_math_special_internal_polevll",
-})
-ARM_STATIC_MISSING = frozenset({"__invtrigl_R", "__pio2_hi", "__pio2_lo", "__restore"})
-X86_STATIC_MISSING = frozenset({"__sigsetjmp_tail"})
+ARM_STATIC_DELTA = ROOT / "compat/x86_64/native-abi-exports-aarch64.json"
 
 
 class ExportsError(RuntimeError):
@@ -150,14 +136,28 @@ def differences(report_path: Path, *, tracked_path: Path | None = None) -> dict[
     tracked = load_tracked(tracked_path)
     current = project(load_report(report_path))
     if TARGET == "aarch64-unknown-linux-musl":
-        for category, removed, added in (("extra", X86_STATIC_EXTRA, ARM_STATIC_EXTRA),
-                                         ("missing", X86_STATIC_MISSING, ARM_STATIC_MISSING)):
+        try:
+            delta = inventory.read_json(ARM_STATIC_DELTA, "reviewed native ARM static delta")
+        except inventory.InventoryError as error:
+            raise ExportsError(f"reviewed native ARM static delta is invalid: {error}") from error
+        keys = {"schema", "target", "extra_add", "extra_remove", "missing_add", "missing_remove",
+                "anonymous_extra", "anonymous_missing"}
+        require(type(delta) is dict and set(delta) == keys and delta["schema"] == 1
+                and delta["target"] == TARGET, "reviewed native ARM static delta contract drifted")
+        for key in keys - {"schema", "target"}:
+            rows = delta[key]
+            require(type(rows) is list and all(type(name) is str and name for name in rows)
+                    and rows == sorted(set(rows)), f"reviewed native ARM {key} roster differs")
+            if key.startswith("anonymous_"):
+                require(all(name.startswith("anon.") for name in rows), "reviewed ARM anonymous roster differs")
+            else:
+                require(all(not name.startswith("anon.") for name in rows), "reviewed ARM named roster differs")
+        for category in ("extra", "missing"):
+            removed, added = set(delta[category + "_remove"]), set(delta[category + "_add"])
             baseline = set(tracked["static_archive"][category])
             require(removed <= baseline and not (added & baseline), f"reviewed x86 static {category} contract drifted")
-            tracked["static_archive"][category] = sorted(name for name in (baseline - removed) | added
-                                                          if not name.startswith("anon."))
-            current["static_archive"][category] = [name for name in current["static_archive"][category]
-                                                     if not name.startswith("anon.")]
+            baseline = {name for name in baseline if not name.startswith("anon.")}
+            tracked["static_archive"][category] = sorted((baseline - removed) | added | set(delta["anonymous_" + category]))
     changes = {}
     for group, categories in (("shared_dynamic", DYNAMIC_CATEGORIES), ("static_archive", STATIC_CATEGORIES)):
         for category in categories:

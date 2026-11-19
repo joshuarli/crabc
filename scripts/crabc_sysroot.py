@@ -644,6 +644,8 @@ def read_builtins_provenance(
     source_build_operation = operation_by_kind.get("source_build_compiler_builtins")
     local_operation = operation_by_kind.get("compile_local_helpers")
     archive_operation = operation_by_kind.get("create_deterministic_archive")
+    inputs_operation = operation_by_kind.get("archive_source_built_members")
+    merge_operation = operation_by_kind.get("merge_source_built_members")
     command_record_valid = (
         isinstance(commands, dict)
         and commands.get("schema") == SCHEMA_VERSION
@@ -656,6 +658,8 @@ def read_builtins_provenance(
             "compile_local_helpers",
             "source_build_compiler_builtins",
             "extract_source_built_members",
+            "archive_source_built_members",
+            "merge_source_built_members",
             "create_deterministic_archive",
             "audit_archive_surface",
         }
@@ -670,6 +674,14 @@ def read_builtins_provenance(
         and isinstance(source_build_operation.get("audit"), dict)
         and source_build_operation["audit"].get("native_build_commands") == []
         and source_build_operation["audit"].get("target_link_directives") == []
+        and isinstance(inputs_operation, dict)
+        and isinstance(inputs_operation.get("command"), list)
+        and "rcsD" in inputs_operation["command"]
+        and "$CRABC_BUILTINS_STAGE/source-members.a" in inputs_operation["command"]
+        and isinstance(merge_operation, dict)
+        and isinstance(merge_operation.get("command"), list)
+        and merge_operation["command"][1:] == ["-r", "--whole-archive", "$CRABC_BUILTINS_STAGE/source-members.a",
+                                                 "--no-whole-archive", "-o", "$CRABC_BUILTINS_STAGE/crabc-builtins.o"]
         and isinstance(archive_operation, dict)
         and isinstance(archive_operation.get("command"), list)
         and "rcsD" in archive_operation["command"]
@@ -695,9 +707,7 @@ def read_builtins_provenance(
         and REQUIRED_RUST_COMPILER_HELPERS.issubset(archive_symbols)
         and archive_record.get("undefined_symbols") == []
         and isinstance(archive_members, list)
-        and len(archive_members) > 1
-        and archive_members[0] == "crabc-builtins.o"
-        and all(isinstance(member, str) and member.startswith("compiler_builtins-") for member in archive_members[1:])
+        and archive_members == ["crabc-builtins.o"]
     )
     source_valid = (
         isinstance(selected_sources, list)

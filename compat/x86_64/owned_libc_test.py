@@ -544,7 +544,11 @@ def seal_candidate_product(source: Path, destination: Path, source_before: dict[
 
     if destination.exists() or destination.is_symlink():
         fail("sealed candidate product destination already exists")
-    shutil.copytree(source, destination, symlinks=True)
+    if ARCH == "aarch64":
+        from run_owned_calendar_component import copy_product
+        copy_product(source, destination)
+    else:
+        shutil.copytree(source, destination, symlinks=True)
     sealed = validate_product(destination)
     require_same_product_payload(source_before, sealed, "sealed candidate product copy")
     return sealed
@@ -673,6 +677,9 @@ def driver_support(product: Path) -> dict[str, Any]:
     driver = physical(product / "bin/crabc-cc-dynamic", "installed dynamic driver", executable=True)
     static_helper = physical(product / "share/crabc/crabc_cc_static.py", "installed compiler helper")
     text = driver.read_text(encoding="utf-8", errors="replace")
+    if ARCH == "aarch64":
+        shared_driver = physical(product / "share/crabc/crabc_cc_owned_dynamic.py", "installed shared dynamic driver")
+        text += shared_driver.read_text(encoding="utf-8", errors="replace")
     helper_text = static_helper.read_text(encoding="utf-8", errors="replace")
     required = {
         "quote_include": "--application-quote-include-dir",
@@ -914,9 +921,14 @@ def verify_candidate_receipt(
     linker = receipt["resolved_linker"]
     if not isinstance(linker, dict) or set(linker) != {"path", "sha256"}:
         fail("candidate dynamic link receipt linker identity drifted")
-    linker_path = physical(Path(linker["path"]), "candidate resolved linker", executable=True)
-    if linker["sha256"] != digest(linker_path):
-        fail("candidate dynamic link receipt linker hash drifted")
+    if ARCH == "aarch64":
+        if linker != product_evidence.source_native_compiler_tool_records()["linker"]:
+            fail("candidate dynamic link receipt linker differs from source image manifest")
+        linker_path = Path(linker["path"])
+    else:
+        linker_path = physical(Path(linker["path"]), "candidate resolved linker", executable=True)
+        if linker["sha256"] != digest(linker_path):
+            fail("candidate dynamic link receipt linker hash drifted")
     library = product / "usr/lib"
     link = [str(linker_path), *( ["-shared"] if shared_object else ["-pie"]), "--hash-style=sysv",
             "--eh-frame-hdr", "-z", "relro", "-z", "now", "-z", "noexecstack", "-z", "text", "--no-undefined",
@@ -962,7 +974,8 @@ def verify_candidate_receipt(
             fail("candidate dynamic link receipt trace has an unadmitted input")
     if seen != direct_text:
         fail("candidate dynamic link receipt trace omits a direct input")
-    return {"receipt": artifact(receipt_path, "candidate link receipt"), "linker": artifact(linker_path, "candidate linker"),
+    return {"receipt": artifact(receipt_path, "candidate link receipt"),
+            "linker": dict(linker) if ARCH == "aarch64" else artifact(linker_path, "candidate linker"),
             "link_command": link, "link_trace": trace}
 
 
@@ -1225,7 +1238,11 @@ def echo_fixture(
 def make_candidate_root(product: Path, destination: Path) -> None:
     if destination.exists() or destination.is_symlink():
         fail("candidate execution root already exists")
-    shutil.copytree(product, destination, symlinks=True)
+    if ARCH == "aarch64":
+        from run_owned_calendar_component import copy_product
+        copy_product(product, destination)
+    else:
+        shutil.copytree(product, destination, symlinks=True)
 
 
 def copied_oracle_runtime_record(

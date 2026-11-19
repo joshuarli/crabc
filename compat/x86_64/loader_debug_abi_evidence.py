@@ -208,6 +208,11 @@ def trace_events(text):
     return [list(row) for row in events]
 
 
+def musl_dynamic_legacy_absence(name):
+    return (ARCH == 'aarch64' and name.startswith('oracle-')
+            and ('-kernel-' in name or '-direct-' in name) and name.endswith('-lifecycle'))
+
+
 def expected_cases():
     result = set()
     for lane in ('oracle', 'candidate'):
@@ -315,7 +320,9 @@ def validate_report(path):
     require(set(report['executions']) == expected_cases(), 'incomplete execution roster')
     commands = json.loads(artifact(report['artifacts']['commands']).read_text())
     for command in commands:
-        require(command['status'] == 0, 'failed retained build/link command')
+        name = Path(command['stdout']['path']).name.removesuffix('.stdout')
+        require(command['status'] == (42 if musl_dynamic_legacy_absence(name) else 0),
+                'failed retained build/link command')
         artifact(command['stdout'])
         artifact(command['stderr'])
     for probe, source_name, flags in WORKLOADS:
@@ -332,7 +339,8 @@ def validate_report(path):
     for name, execution in report['executions'].items():
         observed = {key: value for key, value in execution.items() if key not in ('events', 'linked_input')}
         require(commands.count(observed) == 1, 'execution does not match retained command')
-        require(execution['status'] == 0, f'failed execution: {name}')
+        musl_without_legacy = musl_dynamic_legacy_absence(name)
+        require(execution['status'] == (42 if musl_without_legacy else 0), f'failed execution: {name}')
         parts = name.split('-')
         lane = parts[0]
         mode = 'non-pie' if parts[1:3] == ['non', 'pie'] else ('static-pie' if parts[1:3] == ['static', 'pie'] else parts[1])
@@ -357,7 +365,8 @@ def validate_report(path):
                     'trace does not observe the inspected loader export and libc pointer')
         else:
             probe = next(key for key in OUTPUTS if name.endswith('-' + key))
-            require(stdout == OUTPUTS[probe] and stderr == '', f'changed observable result: {name}')
+            require(stdout == ('' if musl_without_legacy else OUTPUTS[probe]) and stderr == '',
+                    f'changed observable result: {name}')
     static_root = artifact(report['artifacts']['static-manifest']).parents[2]
     override_object = artifact(report['artifacts']['override-object'])
     for archive in (static_root / 'usr/lib/libc.a', artifact(report['artifacts']['oracle-libc.a'])):
@@ -443,8 +452,10 @@ class Collector:
         return row
 
     def execute(self, name, command, probe, binary):
-        row = self.run(name, command)
-        require(artifact(row['stdout']).read_text() == OUTPUTS[probe], f'{name}: wrong output')
+        musl_without_legacy = probe == 'lifecycle' and musl_dynamic_legacy_absence(name)
+        row = self.run(name, command, expected=42 if musl_without_legacy else 0)
+        require(artifact(row['stdout']).read_text() == ('' if musl_without_legacy else OUTPUTS[probe]),
+                f'{name}: wrong output')
         if name.endswith('-trace'):
             row['events'] = trace_events(artifact(row['stderr']).read_text())
         else:

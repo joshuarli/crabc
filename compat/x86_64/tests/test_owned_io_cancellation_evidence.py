@@ -171,6 +171,23 @@ class IoCancellationEvidenceTests(unittest.TestCase):
             with self.subTest(form=form), self.assertRaises(evidence.EvidenceError):
                 evidence.audit_static_views("static", {**static, "relocations": "R_X86_64_" + form})
 
+    def test_native_arm_static_inspection_rejects_tls_and_nonrelative_relocations(self):
+        views = {
+            "header": "Type: DYN (Position-Independent Executable file)\nMachine: AArch64\n",
+            "segments": " PHDR 0 0 0 0 0 R 8\n",
+            "dynamic": "There is no dynamic section in this file.\n",
+            "symbols": "0: 0000000000000000 0 NOTYPE LOCAL DEFAULT UND\n",
+            "relocations": "000 000 R_AARCH64_RELATIVE 0\n",
+        }
+        with mock.patch.object(evidence.product_evidence, "ARCH", "aarch64"), \
+             mock.patch.object(evidence.static_product, "ARCH", {"arch": "aarch64"}):
+            evidence.audit_static_views("static-pie", views)
+            for relocation in ("R_AARCH64_GLOB_DAT", "R_AARCH64_JUMP_SLOT", "R_AARCH64_TLSDESC",
+                               "R_AARCH64_TLS_DTPMOD", "R_AARCH64_TLSIE_ADR_GOTTPREL_PAGE21",
+                               "R_AARCH64_ABS64"):
+                with self.subTest(relocation=relocation), self.assertRaises(evidence.EvidenceError):
+                    evidence.audit_static_views("static-pie", {**views, "relocations": relocation})
+
     def test_closed_roster_keeps_all_ten_sources_and_eight_local_witnesses(self):
         result = subprocess.check_output(["bash", "-c",
             'source "$1"; printf "%s\\n" "${OWNED_IO_CANCELLATION_PROBES[@]}"', "roster", str(ROSTER)], text=True)

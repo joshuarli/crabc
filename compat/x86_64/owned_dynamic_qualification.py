@@ -229,12 +229,9 @@ def _materialization_product(product: Path) -> tuple[dict, dict | None, dict | N
     import crabc_cc_owned_dynamic as driver
     manifest = read(product / "share/crabc/manifest.json")
     if manifest.get("format") == "crabc-aarch64-owned-sysroot-v1":
-        if str(ROOT) not in sys.path:
-            sys.path.insert(0, str(ROOT))
-        from scripts import build_x86_64_owned_combined_sysroot as combined
         try:
-            record = combined.validate(product)
-        except combined.CompositionError as error:
+            record = driver.validate_installation(product)
+        except driver.shared.DriverError as error:
             raise QualificationError(f"installed combined product invalid: {error}") from error
         placements = record["products"]["dynamic"]["placements"]
         manifest = read(product / record["products"]["dynamic"]["manifest"])
@@ -249,6 +246,12 @@ def _materialization_product(product: Path) -> tuple[dict, dict | None, dict | N
             manifest = read(product / driver.COMBINED_PRODUCT_MANIFEST)
         state = read(product / "share/crabc/dynamic-product-state.json")
         provenance = read(product / "share/crabc/libc-shared.provenance.json")
+    if manifest.get("format") == "crabc-aarch64-owned-dynamic-sysroot-v1":
+        import owned_posix_product_evidence as products
+        try:
+            products._validate_dynamic_product(product)
+        except products.ProductEvidenceError as error:
+            raise QualificationError(f"installed product source-pinned validation failed: {error}") from error
     require(set(state) == MATERIALIZATION_STATE_FIELDS, "materialization fields drifted")
     require(state.get("schema") == "crabc.x86_64-owned-dynamic-materialization/v1", "wrong materialization schema")
     require(state.get("payload_files") == {name: value for name, value in manifest["files"].items()
@@ -347,9 +350,16 @@ def prepare(work: Path) -> None:
     ]
     checks = ["installed-driver", "owned-crt", "owned-loader-source", "pinned-musl-oracle"]
     if ARCH["arch"] == "aarch64":
+        import owned_posix_product_evidence as products
+        tools = Path(products.source_native_compiler_tool_records()["rustc"]["sysroot"]) / "lib/rustlib" / ARCH["target_triple"] / "bin"
         commands[0] = ["env", f"CRABC_AARCH64_DYNAMIC_SYSROOT={work / 'installed'}",
                        "python3", "-B", "-m", "unittest", "discover", "-s",
                        str(ROOT / "compat/x86_64/tests"), "-p", "test_aarch64_dynamic_non_pie.py"]
+        commands.insert(1, ["env", f"PYTHONPATH={ROOT / 'compat/x86_64'}",
+                            "python3", "-B", "-m", "unittest", "-v", "test_owned_dynamic_shared"])
+        commands.insert(3, ["env", f"PATH={tools}:{os.environ.get('PATH', '')}",
+                            "python3", "-B", "-m", "unittest", "-v", "crt.tests.test_build"])
+        checks = ["installed-driver-aarch64", "installed-driver-shared", "owned-crt", "owned-crt-aarch64", "owned-loader-source", "pinned-musl-oracle"]
     log = work / "qualification-prepare.log"
     with log.open("xb") as output:
         os.fchmod(output.fileno(), stat.S_IMODE(os.fstat(output.fileno()).st_mode) | 0o444)
@@ -374,6 +384,8 @@ def preparation_evidence(work: Path, source: str) -> dict[str, str]:
     require(record["schema"] == SCHEMA and record["source_sha256"] == source and record["exit_status"] == 0,
             "missing or stale preparation evidence")
     checks = ["installed-driver", "owned-crt", "owned-loader-source", "pinned-musl-oracle"]
+    if ARCH["arch"] == "aarch64":
+        checks = ["installed-driver-aarch64", "installed-driver-shared", "owned-crt", "owned-crt-aarch64", "owned-loader-source", "pinned-musl-oracle"]
     require(record["checks"] == checks, "preparation checks incomplete")
     oracle_files = validate_oracle(work, record["oracle"])
     log = evidence_path(ROOT / record["log"])

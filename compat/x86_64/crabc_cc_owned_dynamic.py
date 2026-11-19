@@ -52,7 +52,7 @@ COMBINED_FORMAT = shared.COMBINED_SYSROOT_FORMAT
 COMBINED_PRODUCT_MANIFEST = "share/crabc/dynamic/manifest.json"
 
 
-def application_dso_basename(path: Path) -> str:
+def application_dso_basename(path: Path, *, architecture: str = "x86_64") -> str:
     """Admit ordinary application DSOs and numeric ELF ABI-version suffixes.
 
     A versioned library such as Lua's ``liblua.so.5.4`` remains an explicit
@@ -64,7 +64,7 @@ def application_dso_basename(path: Path) -> str:
     name = path.name
     if APPLICATION_DSO_BASENAME.fullmatch(name) is None:
         raise shared.DriverError("unowned application DSO")
-    if receipt_contract.is_reserved_application_dso_name(name):
+    if receipt_contract.is_reserved_application_dso_name(name, architecture=architecture):
         raise shared.DriverError("reserved application DSO")
     return name
 
@@ -135,14 +135,18 @@ def reserve_link_map(path: Path):
                 pass
 
 
-def final_elf_inspection(output: Path, expected: elf_inspection.Expectation, link_map: Path) -> dict:
+def final_elf_inspection(output: Path, expected: elf_inspection.Expectation, link_map: Path, *,
+                         architecture: str = "x86_64") -> dict:
     """Inspect one just-linked output before any caller can execute it.
 
     A rejected output is removed: linker has already replaced the requested path,
     and a runnable artifact without a receipt must not survive the failure.
     """
     try:
-        facts = elf_inspection.inspect(output)
+        if architecture not in ("x86_64", "aarch64"):
+            raise shared.DriverError("unsupported dynamic ELF architecture")
+        facts = (elf_inspection.inspect(output) if architecture == "x86_64" else
+                 elf_inspection.inspect(output, architecture=architecture))
         elf_inspection.require_expected(facts, expected)
     except (elf_inspection.InspectionError, OSError) as error:
         try:
@@ -150,7 +154,9 @@ def final_elf_inspection(output: Path, expected: elf_inspection.Expectation, lin
         except FileNotFoundError:
             pass
         raise shared.DriverError(f"final ELF inspection rejected {output}: {error}") from error
-    return elf_inspection.record(output, facts, expected, output_format=FORMAT, link_map=link_map)
+    return elf_inspection.record(output, facts, expected,
+                                 output_format=FORMAT if architecture == "x86_64" else "crabc-aarch64-owned-dynamic-sysroot-v1",
+                                 link_map=link_map)
 
 
 def retain_link_evidence() -> bool:
@@ -228,7 +234,7 @@ def validate(root: Path) -> dict:
                     "share/crabc/crt.provenance.json", "share/crabc/crt.commands.json",
                     "usr/lib/crabc-dynamic-attach.o", "share/crabc/producer-tools.json",
                     "share/crabc/loader.provenance.json", "share/crabc/owned_dynamic_receipt.py",
-                    "share/crabc/owned_dynamic_elf.py"}
+                    "share/crabc/owned_dynamic_elf.py", "share/crabc/crabc_cc_owned_dynamic.py"}
     else:
         required = (REQUIRED - {INTERPRETER.lstrip("/")}) | {profile.interpreter.lstrip("/")}
     target = "aarch64-unknown-linux-musl" if arm else shared.TARGET
@@ -290,16 +296,25 @@ def validate_combined(root: Path) -> dict:
     """
     record = json.loads((root / MANIFEST).read_text())
     profile = shared.profile_from_manifest(record)
-    required = (REQUIRED - {INTERPRETER.lstrip("/")}) | {profile.interpreter.lstrip("/")}
+    arm = record.get("format") == "crabc-aarch64-owned-sysroot-v1"
+    architecture = "aarch64" if arm else "x86_64"
+    target = "aarch64-unknown-linux-musl" if arm else shared.TARGET
+    product_format = "crabc-aarch64-owned-dynamic-sysroot-v1" if arm else FORMAT
+    aliases_expected = profile.aliases_for_architecture(architecture)
+    if arm:
+        interpreter = "lib/ld-crabc-aarch64-hardened.so.1" if profile is shared.NativeRuntimeProfile.HARDENED else "lib/ld-crabc-aarch64.so.1"
+        required = (REQUIRED - {INTERPRETER.lstrip("/")}) | {interpreter, "share/crabc/producer-tools.json", "share/crabc/crt.commands.json", "share/crabc/crabc_cc_owned_dynamic.py"}
+    else:
+        required = (REQUIRED - {INTERPRETER.lstrip("/")}) | {profile.interpreter.lstrip("/")}
     files, links = record.get("files"), record.get("symlinks")
     products = record.get("products")
-    if (type(record.get("schema")) is not int or record.get("schema") != 1 or record.get("target") != shared.TARGET
-            or not isinstance(files, dict) or links != profile.aliases or record.get("modes") != list(profile.combined_modes) or not isinstance(products, dict)
+    if (type(record.get("schema")) is not int or record.get("schema") != 1 or record.get("target") != target
+            or not isinstance(files, dict) or links != aliases_expected or record.get("modes") != list(profile.combined_modes) or not isinstance(products, dict)
             or not isinstance(products.get("dynamic"), dict)):
         raise shared.DriverError("wrong installed combined sysroot contract")
     product = products["dynamic"]
     placements = product.get("placements")
-    if (product.get("format") != FORMAT or product.get("manifest") != COMBINED_PRODUCT_MANIFEST
+    if (product.get("format") != product_format or product.get("manifest") != COMBINED_PRODUCT_MANIFEST
             or COMBINED_PRODUCT_MANIFEST not in files or not isinstance(placements, dict)):
         raise shared.DriverError("combined sysroot does not embed this dynamic product")
     hashes, aliases, other = shared.installed_tree(root)
@@ -307,7 +322,7 @@ def validate_combined(root: Path) -> dict:
         raise shared.DriverError(f"nonregular installed payload: {other[0]}")
     hashes.pop(MANIFEST, None)
     observed = set(hashes)
-    if observed != files.keys() or aliases != profile.aliases:
+    if observed != files.keys() or aliases != aliases_expected:
         raise shared.DriverError("installed payload differs from exact combined manifest roster")
     for relative, digest in files.items():
         if relative.startswith("/") or ".." in relative.split("/") or SHA256_DIGEST.fullmatch(str(digest)) is None:
@@ -319,8 +334,8 @@ def validate_combined(root: Path) -> dict:
     except (ValueError, OSError) as error:
         raise shared.DriverError(f"invalid embedded dynamic manifest: {error}") from error
     embedded_files = embedded.get("files") if isinstance(embedded, dict) else None
-    if (not isinstance(embedded_files, dict) or embedded.get("format") != FORMAT
-            or embedded.get("symlinks") != profile.aliases or not required <= embedded_files.keys()
+    if (not isinstance(embedded_files, dict) or embedded.get("format") != product_format
+            or embedded.get("symlinks") != aliases_expected or not required <= embedded_files.keys()
             or shared.profile_from_manifest(embedded) is not profile):
         raise shared.DriverError("wrong embedded dynamic product contract")
     static = shared.load_manifest(root / shared.COMBINED_STATIC_MANIFEST, "embedded static manifest")
@@ -329,7 +344,8 @@ def validate_combined(root: Path) -> dict:
     for relative, digest in embedded_files.items():
         placed = placements.get(relative)
         # Only product metadata may move, and only within share/crabc/.
-        movable = ((relative not in required or relative in {"share/crabc/crt.provenance.json", "share/crabc/loader.provenance.json"})
+        movable = ((relative not in required or relative in {"share/crabc/crt.provenance.json", "share/crabc/loader.provenance.json"}
+                    or (arm and relative in {"share/crabc/crt.commands.json", "share/crabc/producer-tools.json"}))
                    and relative.startswith(shared.PRODUCT_METADATA_PREFIX)
                    and isinstance(placed, str) and placed.startswith(shared.PRODUCT_METADATA_PREFIX))
         if placed != relative and not movable:
@@ -338,7 +354,9 @@ def validate_combined(root: Path) -> dict:
             raise shared.DriverError(f"combined sysroot does not install dynamic payload unchanged: {relative}")
     receipt = placements["share/crabc/crt.provenance.json"]
     shared.validate_crt_provenance(root, receipt, profile, "Scrt1.o")
-    validate_loader_provenance(root, placements["share/crabc/loader.provenance.json"], profile, embedded.get("build_profile"))
+    validate_loader_provenance(root, placements["share/crabc/loader.provenance.json"], profile, embedded.get("build_profile"), architecture=architecture)
+    if arm and not os.path.samefile(root / "usr/lib/libc.so", root / interpreter):
+        raise shared.DriverError("installed loader is not the merged libc")
     return record
 
 
@@ -356,7 +374,7 @@ def validate_installation(root: Path) -> dict:
         except (ValueError, OSError):
             record = None
         identity = record.get("format") if isinstance(record, dict) else None
-    return validate_combined(root) if identity == COMBINED_FORMAT else validate(root)
+    return validate_combined(root) if identity in (COMBINED_FORMAT, "crabc-aarch64-owned-sysroot-v1") else validate(root)
 
 
 def run(command: list[str], temporary: Path) -> str:
@@ -369,7 +387,7 @@ def run(command: list[str], temporary: Path) -> str:
     return result.stdout
 
 
-def dso_receipt_runpath(record: object, path: Path) -> str:
+def dso_receipt_runpath(record: object, path: Path, *, architecture: str = "x86_64") -> str:
     """Return an application DSO's RUNPATH from a closed declared receipt.
 
     Schema 1 retains its exact historical fields and an implicit SysV hash
@@ -384,7 +402,8 @@ def dso_receipt_runpath(record: object, path: Path) -> str:
         raise shared.DriverError(message)
 
     contract = receipt_contract.validate(
-        record, format=FORMAT, label="application DSO receipt", fail=fail,
+        record, format=FORMAT if architecture == "x86_64" else "crabc-aarch64-owned-dynamic-sysroot-v1",
+        label="application DSO receipt", fail=fail,
         allow_application_dso_closure=True,
     )
     if (record["mode"] != "shared" or record["output_sha256"] != shared.sha256_file(path)
@@ -395,7 +414,7 @@ def dso_receipt_runpath(record: object, path: Path) -> str:
     return contract.path
 
 
-def dso_metadata_detail(path: Path, temporary: Path) -> tuple[str, list[str], list[str]]:
+def dso_metadata_detail(path: Path, temporary: Path, *, architecture: str = "x86_64") -> tuple[str, list[str], list[str]]:
     """Inspect one physical DSO without treating its dependencies as inputs.
 
     The detail form keeps the observed RUNPATH for schema-3 sidecar proof.
@@ -404,7 +423,10 @@ def dso_metadata_detail(path: Path, temporary: Path) -> tuple[str, list[str], li
     """
 
     data = path.read_bytes()
-    if len(data) < 64 or data[:7] != b"\x7fELF\x02\x01\x01" or int.from_bytes(data[16:18], "little") != 3 or int.from_bytes(data[18:20], "little") != 62:
+    if architecture not in ("x86_64", "aarch64"):
+        raise shared.DriverError("unsupported application DSO architecture")
+    machine = 62 if architecture == "x86_64" else 183
+    if len(data) < 64 or data[:7] != b"\x7fELF\x02\x01\x01" or int.from_bytes(data[16:18], "little") != 3 or int.from_bytes(data[18:20], "little") != machine:
         raise shared.DriverError(f"application DSO is not native ET_DYN: {path}")
     segments = run(["/usr/bin/readelf", "-lW", str(path)], temporary)
     dynamic = run(["/usr/bin/readelf", "-dW", str(path)], temporary)
@@ -424,7 +446,9 @@ def dso_metadata_detail(path: Path, temporary: Path) -> tuple[str, list[str], li
             record = json.loads(receipt.read_text())
         except (ValueError, OSError) as error:
             raise shared.DriverError(f"invalid application search path receipt: {error}") from error
-        if runpaths != [dso_receipt_runpath(record, path)]:
+        runpath = (dso_receipt_runpath(record, path) if architecture == "x86_64" else
+                   dso_receipt_runpath(record, path, architecture=architecture))
+        if runpaths != [runpath]:
             raise shared.DriverError("application DSO has an undeclared runtime search path")
     return path.name, needed, runpaths
 
@@ -452,7 +476,7 @@ def receipt_failure(message: str) -> None:
 
 
 def application_dso_sidecar(
-    root: Path, path: Path, runpaths: list[str]
+    root: Path, path: Path, runpaths: list[str], *, architecture: str = "x86_64"
 ) -> tuple[dict[str, object], receipt_contract.SearchContract, frozenset[str]]:
     """Load the normal owned receipt which authorizes one closure DSO.
 
@@ -471,7 +495,8 @@ def application_dso_sidecar(
     if not isinstance(record, dict):
         raise shared.DriverError("application DSO closure receipt is not an object")
     search = receipt_contract.validate(
-        record, format=FORMAT, label="application DSO closure receipt", fail=receipt_failure,
+        record, format=FORMAT if architecture == "x86_64" else "crabc-aarch64-owned-dynamic-sysroot-v1",
+        label="application DSO closure receipt", fail=receipt_failure,
         allow_application_dso_closure=True,
     )
     if (record["mode"] != "shared" or record["output_path"] != str(path.resolve())
@@ -679,13 +704,9 @@ def application_quote_include_dir(root: Path, path: Path) -> Path:
     return resolved
 
 
-def execute(root: Path, arguments: list[str]) -> None:
-    record = validate_installation(root)
-    if record.get("format") == COMBINED_FORMAT:
-        record = shared.load_manifest(root / COMBINED_PRODUCT_MANIFEST, "embedded dynamic manifest")
-    profile = shared.profile_from_manifest(record)
-    interpreter = profile.interpreter
-    retain_evidence = retain_link_evidence()
+def parse_dynamic_arguments(arguments: list[str], *, architecture: str = "x86_64") -> tuple:
+    if architecture not in ("x86_64", "aarch64"):
+        raise shared.DriverError("unsupported dynamic argument architecture")
     mode = None
     binding = None
     application_runpath = None
@@ -745,7 +766,8 @@ def execute(root: Path, arguments: list[str]) -> None:
             path = Path(arguments[index])
             if shared.rejects_runtime_object(path):
                 raise shared.DriverError("unowned application DSO")
-            application_dso_basename(path)
+            (application_dso_basename(path) if architecture == "x86_64" else
+             application_dso_basename(path, architecture=architecture))
             dsos.append(path)
         elif argument == "--transitive-application-dso":
             index += 1
@@ -753,7 +775,8 @@ def execute(root: Path, arguments: list[str]) -> None:
             path = Path(arguments[index])
             if shared.rejects_runtime_object(path):
                 raise shared.DriverError("unowned transitive application DSO")
-            application_dso_basename(path)
+            (application_dso_basename(path) if architecture == "x86_64" else
+             application_dso_basename(path, architecture=architecture))
             transitive_dsos.append(path)
         elif argument == "--application-quote-include-dir":
             index += 1
@@ -778,6 +801,21 @@ def execute(root: Path, arguments: list[str]) -> None:
         else:
             common.append(argument)
         index += 1
+    return (mode, binding, application_runpath, application_rpath, application_hash_style,
+            application_hash_style_explicit, runtime_imports, dsos, transitive_dsos, common,
+            quote_include_inputs, dependency_file, rounding_math, export_dynamic)
+
+
+def execute(root: Path, arguments: list[str]) -> None:
+    record = validate_installation(root)
+    if record.get("format") == COMBINED_FORMAT:
+        record = shared.load_manifest(root / COMBINED_PRODUCT_MANIFEST, "embedded dynamic manifest")
+    profile = shared.profile_from_manifest(record)
+    interpreter = profile.interpreter
+    retain_evidence = retain_link_evidence()
+    (mode, binding, application_runpath, application_rpath, application_hash_style,
+     application_hash_style_explicit, runtime_imports, dsos, transitive_dsos, common,
+     quote_include_inputs, dependency_file, rounding_math, export_dynamic) = parse_dynamic_arguments(arguments)
     if mode is None: raise shared.DriverError("select --dynamic-pie, --dynamic-non-pie or --dynamic-shared-object")
     if profile is shared.NativeRuntimeProfile.HARDENED and mode == "exec":
         raise shared.DriverError("hardened dynamic products require PIE executables")

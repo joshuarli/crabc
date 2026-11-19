@@ -4,7 +4,7 @@ from pathlib import Path
 import struct
 import sys
 
-import validate_libc_math_long_double_completion_aarch64 as completion
+import validate_libc_math_long_double_completion as completion
 
 FRAME = struct.Struct('<IHHiII')
 ROUNDING = struct.Struct('<6H4I16s')
@@ -12,7 +12,7 @@ RECORDS = {7: struct.Struct('<HHIII32s'), 8: struct.Struct('<HHIIi16s'),
            9: struct.Struct('<HHIII48s'), 10: struct.Struct('<HHIHHHHIiii32s16s')}
 STAGES = ((1, 0), (2, 4 * 4 * 2 * 12 * 3 * ROUNDING.size),
           (3, 0), (4, 3408 * 40), (5, 1320 * 32),
-          (6, 244 * completion.RECORD.size), (7, 2764 * 48),
+          (6, 244 * completion.AARCH64_RECORD.size), (7, 2764 * 48),
           (8, 5544 * 32), (9, 7604 * 64), (10, 58984 * 80))
 
 
@@ -62,8 +62,8 @@ def compare(oracle, reference, actual):
     matches = {'musl': 0, 'owned-helpers': 0, 'domain-flags': 0}
     for stage, _ in STAGES:
         if stage == 6:
-            completion.compare(list(completion.RECORD.iter_unpack(oracle[stage])),
-                               list(completion.RECORD.iter_unpack(actual[stage])))
+            completion.compare_aarch64(list(completion.AARCH64_RECORD.iter_unpack(oracle[stage])),
+                               list(completion.AARCH64_RECORD.iter_unpack(actual[stage])))
             if reference[stage] != actual[stage]:
                 raise ValueError('binary128 completion differs from the owned-helper reference')
         elif stage in RECORDS:

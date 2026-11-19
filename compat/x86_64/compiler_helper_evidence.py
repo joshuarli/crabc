@@ -28,6 +28,7 @@ if str(MODULE_DIR) not in sys.path:
     sys.path.insert(0, str(MODULE_DIR))
 from loader_debug_abi_evidence import Elf, EvidenceError
 from static_product_contract import MOLD_SYNTHETIC_UNDEFINED
+from native_arch import native_arch
 
 ROOT = Path(__file__).resolve().parents[2]
 CONTRACT = Path("builtins/x86_64-helper-contract.toml")
@@ -1389,8 +1390,9 @@ def validate_materialized_dynamic_product(root: Path, product: Path) -> str:
 
     root = _physical_directory(root, "compiler-helper checkout")
     product = _physical_directory(product, "compiler-helper installed dynamic product")
-    require(product.is_relative_to(_physical_directory(root / ".work/x86_64", "compiler-helper checkout .work/x86_64")),
-            "compiler-helper installed dynamic product escapes checkout .work/x86_64")
+    work_root = root / ".work" / native_arch()["work_name"]
+    require(product.is_relative_to(_physical_directory(work_root, f"compiler-helper checkout {work_root.relative_to(root)}")),
+            f"compiler-helper installed dynamic product escapes checkout {work_root.relative_to(root)}")
     module_dir = Path(__file__).resolve().parent
     if str(module_dir) not in sys.path:
         sys.path.insert(0, str(module_dir))
@@ -1448,7 +1450,9 @@ def capture_oracle_compiler(output: Path, *, work: Path, compiler: Path) -> dict
     require(output.parent == work and output.name == "oracle-compiler.json" and not output.exists()
             and not output.is_symlink(), "compiler-helper oracle compiler record output differs")
     compiler = _physical_file(compiler, "compiler-helper pinned musl compiler")
-    require(compiler == Path(ORACLE_CC), "compiler-helper pinned musl compiler path differs")
+    architecture = native_arch()["arch"]
+    oracle_cc = ORACLE_CC if architecture == "x86_64" else native_arch(architecture)["oracle"]
+    require(compiler == Path(oracle_cc), "compiler-helper pinned musl compiler path differs")
     retained = work / "inputs" / "pinned-musl-compiler"
     require(not retained.exists() and not retained.is_symlink(), "compiler-helper retained oracle compiler already exists")
     # The collector runs in the pinned container; host replay needs traversal
@@ -1456,7 +1460,7 @@ def capture_oracle_compiler(output: Path, *, work: Path, compiler: Path) -> dict
     retained.parent.mkdir(mode=0o755)
     shutil.copyfile(compiler, retained)
     retained.chmod(compiler.stat().st_mode & 0o777)
-    record = {"schema": "crabc.x86_64-compiler-helper-oracle-compiler/v1",
+    record = {"schema": f"crabc.{architecture}-compiler-helper-oracle-compiler/v1",
               "original": _external_file_identity(compiler, "compiler-helper pinned musl compiler"),
               "retained": _work_identity(work, retained, "compiler-helper retained musl compiler")}
     output.write_text(canonical_json(record), encoding="utf-8")
@@ -1468,12 +1472,14 @@ def _oracle_compiler_record(work: Path, path: Path, *, verify_current: bool) -> 
     require(path.parent == work and path.name == "oracle-compiler.json",
             "compiler-helper oracle compiler record path differs")
     record = _read_json(path, "compiler-helper oracle compiler record")
+    architecture = native_arch()["arch"]
+    oracle_cc = ORACLE_CC if architecture == "x86_64" else native_arch(architecture)["oracle"]
     require(type(record) is dict and set(record) == {"schema", "original", "retained"}
-            and record["schema"] == "crabc.x86_64-compiler-helper-oracle-compiler/v1",
+            and record["schema"] == f"crabc.{architecture}-compiler-helper-oracle-compiler/v1",
             "compiler-helper oracle compiler record fields differ")
     original, retained = record["original"], record["retained"]
     require(type(original) is dict and set(original) == {"path", "sha256", "size", "mode"}
-            and original.get("path") == ORACLE_CC and type(original.get("sha256")) is str
+            and original.get("path") == oracle_cc and type(original.get("sha256")) is str
             and re.fullmatch(r"[0-9a-f]{64}", original["sha256"]) is not None
             and type(original.get("size")) is int and original["size"] > 0
             and type(original.get("mode")) is int and 0 <= original["mode"] <= 0o777,
@@ -1483,7 +1489,7 @@ def _oracle_compiler_record(work: Path, path: Path, *, verify_current: bool) -> 
             and original["mode"] == (retained_path.stat().st_mode & 0o777),
             "compiler-helper retained musl compiler differs from original")
     if verify_current:
-        require(same(original, _external_file_identity(Path(ORACLE_CC), "compiler-helper pinned musl compiler")),
+        require(same(original, _external_file_identity(Path(oracle_cc), "compiler-helper pinned musl compiler")),
                 "compiler-helper pinned musl compiler changed during aggregate execution")
     return record
 
@@ -1525,6 +1531,30 @@ def _product_source_identity(root: Path) -> dict[str, Any]:
     return value
 
 
+def _aggregate_native_contract(root: Path) -> dict[str, Any]:
+    path = Path(root) / "builtins/fixtures/aarch64_compiler_helper_imports.txt"
+    require(path.is_file() and not path.is_symlink(), "ARM helper import contract is unsafe")
+    names = path.read_text(encoding="utf-8").splitlines()
+    require(bool(names) and names == sorted(set(names)) and
+            all(re.fullmatch(r"__[A-Za-z0-9_]+", name) for name in names),
+            "ARM helper import contract differs")
+    return {"helpers": [{"name": name} for name in names]}
+
+
+def _aggregate_source_binding(root: Path, architecture: str, contract: Mapping[str, Any] | None = None) -> dict[str, Any]:
+    if architecture == "x86_64":
+        return source_binding(root, contract)
+    require(architecture == "aarch64", "aggregate architecture differs")
+    contract = _aggregate_native_contract(root) if contract is None else contract
+    paths = (Path("builtins/build.py"), Path("builtins/provenance.toml"),
+             Path("builtins/aarch64-helper-exports.txt"), Path("builtins/aarch64-helper-symbols.txt"),
+             Path("builtins/fixtures/aarch64_compiler_helper_imports.txt"),
+             Path("builtins/fixtures/aarch64_compiler_helper_aggregate_start.S"),
+             AGGREGATE_PROBE, AGGREGATE_RUNNER, Path("builtins/run_aarch64_compiler_helper_aggregate.sh"), READER)
+    return {"files": [file_identity(root, path) for path in paths],
+            "helper_names": list(helper_names(contract)), "target": "aarch64-unknown-linux-musl"}
+
+
 def capture_source(output: Path, *, root: Path = ROOT) -> dict[str, Any]:
     """Seal current producer and harness sources before a native runner starts."""
 
@@ -1535,7 +1565,9 @@ def capture_source(output: Path, *, root: Path = ROOT) -> dict[str, Any]:
     product_source = _product_source_identity(root)
     require(product_source["revision"] == checkout["revision"],
             "compiler-helper aggregate product source revision differs")
-    record = {"schema": SOURCE_SEAL_SCHEMA, "source": source_binding(root), "checkout": checkout,
+    architecture = native_arch()["arch"]
+    record = {"schema": SOURCE_SEAL_SCHEMA if architecture == "x86_64" else "crabc.aarch64-compiler-helper-source-seal/v1",
+              "source": _aggregate_source_binding(root, architecture), "checkout": checkout,
               "product_source": product_source}
     output.write_text(canonical_json(record), encoding="utf-8")
     return record
@@ -1544,9 +1576,11 @@ def capture_source(output: Path, *, root: Path = ROOT) -> dict[str, Any]:
 def _source_seal(path: Path, *, root: Path) -> dict[str, Any]:
     path = _physical_file(path, "compiler-helper source seal")
     record = _read_json(path, "compiler-helper source seal")
+    architecture = native_arch()["arch"]
+    schema = SOURCE_SEAL_SCHEMA if architecture == "x86_64" else "crabc.aarch64-compiler-helper-source-seal/v1"
     require(type(record) is dict and set(record) == {"schema", "source", "checkout", "product_source"}
-            and record["schema"] == SOURCE_SEAL_SCHEMA, "compiler-helper source seal fields differ")
-    require(same(record["source"], source_binding(root)) and same(record["checkout"], _checkout_identity(root))
+            and record["schema"] == schema, "compiler-helper source seal fields differ")
+    require(same(record["source"], _aggregate_source_binding(root, architecture)) and same(record["checkout"], _checkout_identity(root))
             and same(record["product_source"], _product_source_identity(root)),
             "compiler-helper source changed")
     return record
@@ -1595,7 +1629,8 @@ def _oracle_prefix() -> list[str]:
     result = ["env"]
     for name in ORACLE_UNSETS:
         result.extend(["-u", name])
-    result.append(ORACLE_CC)
+    architecture = native_arch()["arch"]
+    result.append(ORACLE_CC if architecture == "x86_64" else native_arch(architecture)["oracle"])
     return result
 
 
@@ -1629,6 +1664,15 @@ def _expected_command_argv(label: str, *, root: Path, work: Path, source_mount: 
         "reference-execute": [mounted("pinned-musl-reference")],
         "candidate-execute": [mounted("candidate")],
     }
+    if native_arch()["arch"] == "aarch64":
+        import owned_posix_product_evidence as products
+        tools_dir = products.source_native_compiler_tool_records()["rustc"]["sysroot"] + "/lib/rustlib/aarch64-unknown-linux-musl/bin"
+        exact["builder"] = ["python3", source(Path("builtins/build.py")), "--output", mounted("libcrabc-builtins.a"),
+                            "--llvm-ar", tools_dir + "/llvm-ar", "--llvm-nm", tools_dir + "/llvm-nm",
+                            "--llvm-readelf", "/usr/bin/readelf", "--ld-lld", "/usr/bin/mold", "--verify-reproducible",
+                            "--provenance", mounted("libcrabc-builtins.a.provenance.json")]
+        exact["start-compile"] = [*oracle, "-c", source(Path("builtins/fixtures/aarch64_compiler_helper_aggregate_start.S")),
+                                  "-o", mounted("aggregate-start.o")]
     return exact[label]
 
 
@@ -1704,6 +1748,7 @@ def _unresolved_names(undefined_listing: str) -> set[str]:
 
 def _validate_aggregate_observations(work: Path, contract: Mapping[str, Any], events: Sequence[Mapping[str, Any]],
                                      artifacts: Mapping[str, Any]) -> dict[str, Any]:
+    architecture = native_arch()["arch"]
     names = set(helper_names(contract))
     imports = {line.split()[-1] for line in _event_text(work, events, "candidate-imports", "stdout").splitlines()
                if line.split()}
@@ -1720,7 +1765,8 @@ def _validate_aggregate_observations(work: Path, contract: Mapping[str, Any], ev
             "aggregate candidate link admitted an ambient CRT or compiler runtime")
     header = _event_text(work, events, "candidate-header", "stdout")
     require("Type:                              EXEC (Executable file)" in header
-            and "Advanced Micro Devices X86-64" in header, "aggregate candidate ELF header differs")
+            and ("AArch64" if architecture == "aarch64" else "Advanced Micro Devices X86-64") in header,
+            "aggregate candidate ELF header differs")
     program_headers = _event_text(work, events, "candidate-program-headers", "stdout")
     require("INTERP" not in program_headers and not re.search(r"\bTLS\b", program_headers),
             "aggregate candidate program headers admit an interpreter or TLS")
@@ -1728,8 +1774,9 @@ def _validate_aggregate_observations(work: Path, contract: Mapping[str, Any], ev
     require(re.search(r"\((NEEDED|JMPREL|PLTGOT)\)", dynamic) is None,
             "aggregate candidate dynamic linkage differs")
     disassembly = _event_text(work, events, "candidate-disassembly", "stdout")
+    transfer = r"\bb(?:l)?" if architecture == "aarch64" else r"(?:call|jmp)\S*"
     direct = [name for name in names
-              if re.search(r"(?:call|jmp)\S*\s+[^\n]*<" + re.escape(name) + r">", disassembly)]
+              if re.search(transfer + r"\s+[^\n]*<" + re.escape(name) + r">", disassembly)]
     require(set(direct) == names, "aggregate candidate did not transfer to every helper")
     require(_event_bytes(work, events, "reference-execute", "stdout") == EXPECTED_TRANSCRIPT
             and _event_bytes(work, events, "candidate-execute", "stdout") == EXPECTED_TRANSCRIPT,
@@ -1893,25 +1940,40 @@ def _nm_defined_names(path: Path, *, extern_only: bool = True) -> set[str]:
             if len(line.split()) >= 2 and not line.endswith(":" )}
 
 
-def _live_artifact_observations(work: Path, contract: Mapping[str, Any], artifacts: Mapping[str, Any]) -> dict[str, Any]:
+def _live_artifact_observations(work: Path, contract: Mapping[str, Any], artifacts: Mapping[str, Any], *,
+                                architecture: str = "x86_64", archive_metadata: Mapping[str, str] | None = None) -> dict[str, Any]:
     """Bind archive/candidate identities to fresh ELF and symbol-table reads."""
 
     archive = _resolve_work_identity(work, artifacts["libcrabc-builtins.a"], "aggregate archive")
     candidate = _resolve_work_identity(work, artifacts["candidate"], "aggregate candidate")
     names = set(helper_names(contract))
-    require(_nm_defined_names(archive) == names, "retained compiler-helper archive definition roster differs")
+    require(architecture in {"x86_64", "aarch64"}, "aggregate architecture differs")
+    require((architecture == "x86_64" and archive_metadata is None) or
+            (architecture == "aarch64" and archive_metadata is not None and names <= set(archive_metadata)),
+            "aggregate archive metadata contract differs")
+    archive_names = names if archive_metadata is None else set(archive_metadata)
+    require(_nm_defined_names(archive) == archive_names, "retained compiler-helper archive definition roster differs")
     archive_symbols = _live_tool(["readelf", "-sW", str(archive)], "compiler-helper archive ELF")
+    if archive_metadata is not None:
+        observed: dict[str, str] = {}
+        for line in archive_symbols.splitlines():
+            fields = line.split()
+            if len(fields) >= 8 and fields[0].endswith(":") and fields[-1] in archive_names and fields[6] not in {"UND", "ABS"}:
+                require(fields[-1] not in observed, "duplicate retained archive symbol")
+                observed[fields[-1]] = " ".join(fields[3:6])
+        require(observed == archive_metadata, "retained compiler-helper archive metadata differs")
     rows: list[list[str]] = []
     for line in archive_symbols.splitlines():
         fields = line.split()
         if len(fields) >= 8 and fields[0].endswith(":") and fields[3:6] == ["FUNC", "GLOBAL", "DEFAULT"]:
             rows.append(fields)
     helper_rows = [fields for fields in rows if fields[-1] in names]
-    require(len(helper_rows) == len(names) and {fields[-1] for fields in helper_rows} == names
-            and {fields[6] for fields in helper_rows}.isdisjoint({"UND", "ABS"}),
-            "retained compiler-helper archive ELF metadata differs")
-    require({fields[-1] for fields in rows} == names,
-            "retained compiler-helper archive has an extra exported function")
+    if architecture == "x86_64":
+        require(len(helper_rows) == len(names) and {fields[-1] for fields in helper_rows} == names
+                and {fields[6] for fields in helper_rows}.isdisjoint({"UND", "ABS"}),
+                "retained compiler-helper archive ELF metadata differs")
+        require({fields[-1] for fields in rows} == names,
+                "retained compiler-helper archive has an extra exported function")
     candidate_definitions = _nm_defined_names(candidate, extern_only=False)
     require(names <= candidate_definitions, "retained aggregate candidate definitions differ")
     candidate_undefined = _live_tool(["nm", "--undefined-only", str(candidate)], "aggregate candidate undefined symbols")
@@ -1921,23 +1983,65 @@ def _live_artifact_observations(work: Path, contract: Mapping[str, Any], artifac
     dynamic = _live_tool(["readelf", "-dW", str(candidate)], "aggregate candidate dynamic section")
     disassembly = _live_tool(["objdump", "--disassemble", str(candidate)], "aggregate candidate disassembly")
     require("Type:                              EXEC (Executable file)" in header
-            and "Advanced Micro Devices X86-64" in header, "retained aggregate candidate ELF header differs")
+            and ("AArch64" if architecture == "aarch64" else "Advanced Micro Devices X86-64") in header,
+            "retained aggregate candidate ELF header differs")
     require("INTERP" not in program_headers and not re.search(r"\bTLS\b", program_headers),
             "retained aggregate candidate has an interpreter or TLS")
     require(re.search(r"\((NEEDED|JMPREL|PLTGOT)\)", dynamic) is None,
             "retained aggregate candidate dynamic linkage differs")
+    transfer = r"\bb(?:l)?" if architecture == "aarch64" else r"(?:call|jmp)\S*"
     direct = {name for name in names
-              if re.search(r"(?:call|jmp)\S*\s+[^\n]*<" + re.escape(name) + r">", disassembly)}
+              if re.search(transfer + r"\s+[^\n]*<" + re.escape(name) + r">", disassembly)}
     require(direct == names, "retained aggregate candidate direct helper transfers differ")
-    return {"archive": artifacts["libcrabc-builtins.a"], "candidate": artifacts["candidate"],
-            "archive_global_default_functions": list(helper_names(contract)),
-            "candidate_direct_transfers": list(helper_names(contract)), "candidate_elf_type": "EXEC",
-            "candidate_has_interpreter": False, "candidate_has_tls": False,
-            "candidate_has_dynamic_dependencies": False}
+    result = {"archive": artifacts["libcrabc-builtins.a"], "candidate": artifacts["candidate"],
+              "archive_global_default_functions": list(helper_names(contract)) if architecture == "x86_64"
+              else sorted(fields[-1] for fields in rows),
+              "candidate_direct_transfers": list(helper_names(contract)), "candidate_elf_type": "EXEC",
+              "candidate_has_interpreter": False, "candidate_has_tls": False,
+              "candidate_has_dynamic_dependencies": False}
+    if architecture == "aarch64":
+        result["archive_symbol_metadata"] = dict(archive_metadata)
+    return result
 
 
 def _provenance(path: Path, contract: Mapping[str, Any], archive_identity: Mapping[str, Any]) -> dict[str, Any]:
     value = _read_json(path, "compiler-helper archive provenance")
+    if native_arch()["arch"] == "aarch64":
+        require(type(value) is dict and set(value) == {"archive", "build", "component", "dependency_purity", "source"},
+                "ARM helper provenance fields differ")
+        archive, build, component, purity, source = (value[key] for key in
+                                                       ("archive", "build", "component", "dependency_purity", "source"))
+        require(type(archive) is dict and archive.get("members") == [ARCHIVE_MEMBER]
+                and archive.get("sha256") == archive_identity.get("sha256")
+                and archive.get("undefined_symbols") == [] and type(archive.get("defined_symbols")) is list,
+                "ARM helper archive provenance differs")
+        exports = (ROOT / "builtins/aarch64-helper-exports.txt").read_text().splitlines()
+        require(archive["defined_symbols"] == exports and set(helper_names(contract)) <= set(exports),
+                "ARM helper archive provenance roster differs")
+        require(component == {"name": "crabc-builtins", "target": "aarch64-unknown-linux-musl",
+                              "archive_member": ARCHIVE_MEMBER}, "ARM helper component differs")
+        require(type(build) is dict and build.get("reproducible") is True and type(build.get("exact_command_record")) is dict,
+                "ARM helper reproducibility differs")
+        command_record = build["exact_command_record"]
+        command_path = path.parent / "libcrabc-builtins.a.commands.json"
+        require(command_record == {"name": command_path.name, "sha256": digest(command_path)},
+                "ARM helper command provenance differs")
+        require(type(purity) is dict and purity.get("cargo_dependencies") == [] and purity.get("build_dependencies") == []
+                and all(purity.get(key) is False for key in ("links", "uses_alloc", "uses_unwinding",
+                    "requires_panic_runtime", "uses_native_source", "uses_native_assembly")),
+                "ARM helper dependency purity differs")
+        upstream = purity.get("upstream_source_build")
+        require(type(upstream) is dict and upstream.get("package") == "compiler_builtins"
+                and upstream.get("version") == "0.1.160" and upstream.get("disabled_features") == ["c", "mem"]
+                and upstream.get("native_build_commands") == [] and upstream.get("target_link_directives") == []
+                and upstream.get("prebuilt_compiler_builtins_input") is False,
+                "ARM source-built compiler helpers differ")
+        source_files = ("Cargo.toml", "Cargo.lock", "build.py", "provenance.toml", "aarch64-helper-exports.txt",
+                        "aarch64-helper-symbols.txt", "src/lib.rs", "src/aarch64_complex.rs")
+        expected_files = [{"path": name, "sha256": digest(ROOT / "builtins" / name)} for name in source_files]
+        require(type(source) is dict and source.get("languages") == ["Rust"] and source.get("files") == expected_files,
+                "ARM helper source provenance differs")
+        return value
     require(type(value) is dict and set(value) == {"schema", "target", "scope", "source", "contract", "archive", "reproducible"},
             "compiler-helper archive provenance fields differ")
     require(type(value["schema"]) is int and value["schema"] == 2 and type(value["target"]) is str
@@ -1966,9 +2070,10 @@ def _aggregate_record(work: Path, source_before: Path, events_path: Path, *, ima
                       verify_oracle_current: bool) -> dict[str, Any]:
     require(type(image) is str and IMAGE_PATTERN.fullmatch(image) is not None,
             "compiler-helper pinned image identity differs")
-    contract = load_contract(root)
+    architecture = native_arch()["arch"]
+    contract = load_contract(root) if architecture == "x86_64" else _aggregate_native_contract(root)
     before = _source_seal(source_before, root=root)
-    current = source_binding(root, contract)
+    current = _aggregate_source_binding(root, architecture, contract)
     current_checkout = _checkout_identity(root)
     current_product_source = _product_source_identity(root)
     require(same(before["source"], current) and same(before["checkout"], current_checkout)
@@ -1981,11 +2086,19 @@ def _aggregate_record(work: Path, source_before: Path, events_path: Path, *, ima
     provenance = _provenance(work / "libcrabc-builtins.a.provenance.json", contract,
                              artifacts["libcrabc-builtins.a"])
     observations = _validate_aggregate_observations(work, contract, events, artifacts)
-    live_artifacts = _live_artifact_observations(work, contract, artifacts)
+    if architecture == "aarch64":
+        metadata_rows = (root / "builtins/aarch64-helper-symbols.txt").read_text().splitlines()
+        require(all(len(row.split()) == 4 for row in metadata_rows), "ARM helper metadata contract differs")
+        metadata = {fields[0]: " ".join(fields[1:]) for row in metadata_rows if (fields := row.split())}
+        require(len(metadata) == len(metadata_rows), "ARM helper metadata contract has duplicates")
+        live_artifacts = _live_artifact_observations(work, contract, artifacts, architecture=architecture,
+                                                    archive_metadata=metadata)
+    else:
+        live_artifacts = _live_artifact_observations(work, contract, artifacts)
     return {
-        "schema": AGGREGATE_SCHEMA,
+        "schema": AGGREGATE_SCHEMA if architecture == "x86_64" else "crabc.aarch64-compiler-helper-aggregate/v1",
         "status": "compiler-helper-aggregate-evidence-unqualified",
-        "target": TARGET,
+        "target": TARGET if architecture == "x86_64" else "aarch64-unknown-linux-musl",
         "image": image,
         "source_mount": source_mount,
         "oracle_compiler": oracle,

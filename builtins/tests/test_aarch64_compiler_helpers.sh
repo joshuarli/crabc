@@ -21,6 +21,12 @@ if "$cc" -nostdlib -static -no-pie -Wl,--no-undefined -Wl,-e,_start \
     printf 'archive-free helper link unexpectedly succeeded\n' >&2
     exit 1
 fi
+while IFS= read -r symbol; do
+    grep -Fq -- "$symbol" "$work/without.stderr" || {
+        printf 'archive-free failure did not name helper: %s\n' "$symbol" >&2
+        exit 1
+    }
+done < "$work/imports"
 "$cc" -nostdlib -static -no-pie -Wl,--no-undefined -Wl,-e,_start -Wl,--trace \
     "$work/start.o" "$work/candidate.o" "$archive" -o "$work/candidate" >"$work/link.trace"
 if grep -Eq 'libgcc|compiler-rt|libc\.a|/[Sr]?crt[^/[:space:]]*\.o' "$work/link.trace"; then
@@ -42,6 +48,18 @@ if awk '$NF != "_PROCEDURE_LINKAGE_TABLE_" && $NF != "__rela_iplt_start" && $NF 
     printf 'candidate retains unresolved symbols\n' >&2
     exit 1
 fi
+nm --defined-only "$work/candidate" > "$work/definitions"
+objdump --disassemble "$work/candidate" > "$work/disassembly"
+while IFS= read -r symbol; do
+    awk -v expected="$symbol" '$NF == expected { found=1 } END { exit !found }' "$work/definitions" || {
+        printf 'candidate did not retain helper: %s\n' "$symbol" >&2
+        exit 1
+    }
+    grep -Eq "[[:space:]]b(l)?[[:space:]]+[^[:cntrl:]]*<${symbol}>" "$work/disassembly" || {
+        printf 'candidate has no direct transfer to helper: %s\n' "$symbol" >&2
+        exit 1
+    }
+done < "$work/imports"
 "$cc" -std=c11 -O2 -fno-stack-protector -fno-pie -DCRABC_HELPER_REFERENCE \
     -c "$probe" -o "$work/reference.o"
 "$cc" -no-pie "$work/reference.o" -o "$work/reference"
@@ -50,4 +68,24 @@ fi
 printf 'compiler-helper-aggregate-ok\n' >"$work/expected.stdout"
 cmp "$work/expected.stdout" "$work/reference.stdout"
 cmp "$work/reference.stdout" "$work/candidate.stdout"
+cp "$archive" "$work/libcrabc-builtins.a"
+PYTHONPATH="$root/compat/x86_64" python3 -B - "$root" "$work" <<'PY'
+import sys
+from pathlib import Path
+import compiler_helper_evidence as evidence
+
+root, work = map(Path, sys.argv[1:])
+names = (root / 'builtins/fixtures/aarch64_compiler_helper_imports.txt').read_text().splitlines()
+rows = (root / 'builtins/aarch64-helper-symbols.txt').read_text().splitlines()
+if not all(len(row.split()) == 4 for row in rows):
+    raise SystemExit('malformed ARM helper metadata')
+metadata = {parts[0]: ' '.join(parts[1:]) for row in rows if (parts := row.split())}
+if len(metadata) != len(rows):
+    raise SystemExit('duplicate ARM helper metadata')
+contract = {'helpers': [{'name': name} for name in names]}
+artifacts = {name: evidence._work_identity(work, work / name, name)
+             for name in ('libcrabc-builtins.a', 'candidate')}
+evidence._live_artifact_observations(work, contract, artifacts, architecture='aarch64',
+                                     archive_metadata=metadata)
+PY
 printf 'arm64 compiler helpers: PASS (%s)\n' "$work"

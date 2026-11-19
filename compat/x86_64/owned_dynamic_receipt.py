@@ -41,9 +41,13 @@ RESERVED_APPLICATION_DSO_NAMES = frozenset({
 })
 
 
-def is_reserved_application_dso_name(name: object) -> bool:
+def is_reserved_application_dso_name(name: object, *, architecture: str = "x86_64") -> bool:
     """Whether an application-node name conflicts with an owned runtime identity."""
 
+    if architecture == "aarch64":
+        return type(name) is str and name in {"libc.so", "ld-crabc-aarch64.so.1", "ld-musl-aarch64.so.1"}
+    if architecture != "x86_64":
+        raise ValueError("unsupported application DSO architecture")
     return type(name) is str and name in RESERVED_APPLICATION_DSO_NAMES
 
 
@@ -76,7 +80,7 @@ def _require(condition: bool, message: str, fail: Callable[[str], None]) -> None
 
 
 def _application_closure(
-    record: Mapping[str, Any], *, label: str, fail: Callable[[str], None]
+    record: Mapping[str, Any], *, label: str, fail: Callable[[str], None], architecture: str = "x86_64"
 ) -> tuple[ApplicationDso, ...]:
     """Validate the typed schema-3 closure without assuming an acyclic graph."""
 
@@ -92,7 +96,7 @@ def _application_closure(
     for name, digest in identities.items():
         _require(type(name) is str and _APPLICATION_DSO_BASENAME.fullmatch(name) is not None,
                  f"{label} application DSO identity is invalid", fail)
-        _require(not is_reserved_application_dso_name(name),
+        _require(not is_reserved_application_dso_name(name, architecture=architecture),
                  f"{label} application DSO name is reserved", fail)
         _require(type(digest) is str and _SHA256.fullmatch(digest) is not None,
                  f"{label} application DSO identity is invalid", fail)
@@ -175,7 +179,7 @@ def _application_closure(
 
 
 def _direct_application_inputs(
-    record: Mapping[str, Any], *, label: str, fail: Callable[[str], None]
+    record: Mapping[str, Any], *, label: str, fail: Callable[[str], None], architecture: str = "x86_64"
 ) -> None:
     """Bind each legacy direct DSO claim to its selected linker input."""
 
@@ -188,7 +192,7 @@ def _direct_application_inputs(
                  f"{label} link evidence is invalid", fail)
     for name, digest in identities.items():
         _require(type(name) is str and _APPLICATION_DSO_BASENAME.fullmatch(name) is not None
-                 and not is_reserved_application_dso_name(name)
+                 and not is_reserved_application_dso_name(name, architecture=architecture)
                  and type(digest) is str and _SHA256.fullmatch(digest) is not None,
                  f"{label} application DSO identity is invalid", fail)
         selected = [item for item in inputs if type(item) is dict
@@ -220,13 +224,14 @@ def validate(
     _require(set(record) == expected, f"{label} fields do not match declared schema {schema}", fail)
     _require(record["format"] == format, f"{label} format differs", fail)
 
+    architecture = "aarch64" if format == "crabc-aarch64-owned-dynamic-sysroot-v1" else "x86_64"
     closure: tuple[ApplicationDso, ...] = ()
     if schema == 3:
         _require(allow_application_dso_closure,
                  f"{label} does not admit an application DSO closure", fail)
-        closure = _application_closure(record, label=label, fail=fail)
+        closure = _application_closure(record, label=label, fail=fail, architecture=architecture)
     else:
-        _direct_application_inputs(record, label=label, fail=fail)
+        _direct_application_inputs(record, label=label, fail=fail, architecture=architecture)
 
     if schema == 1:
         path = record["application_runpath"]

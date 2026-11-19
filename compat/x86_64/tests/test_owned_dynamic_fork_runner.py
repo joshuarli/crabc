@@ -38,6 +38,34 @@ def load_evidence():
 
 
 class OwnedDynamicForkRunnerTests(unittest.TestCase):
+    def test_arm_retained_tool_snapshot_cannot_repin_itself(self):
+        evidence = load_evidence()
+        scratch = ROOT / '.work/x86_64/owned-dynamic-fork-runner-tests'
+        scratch.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(dir=scratch) as temporary:
+            root = Path(temporary)
+            work = root / '.work/receipt'
+            work.mkdir(parents=True)
+            shutil.copy2(ROOT / 'rust-toolchain.toml', root / 'rust-toolchain.toml')
+            tools, pins = {}, {}
+            for role, path in evidence.replay_tool_paths(root).items():
+                source = root / (role + '-source')
+                source.write_bytes(role.encode())
+                source.chmod(0o755)
+                tools[role] = evidence.inventory._snapshot_regular(work, source, 'inputs/tools/' + role, path)
+                pins[path] = {key: tools[role]['original'][key] for key in ('path', 'sha256')}
+            with patch.object(evidence, 'ARCH', 'aarch64'), \
+                 patch.object(evidence.product_evidence, 'source_native_image_tool_record', side_effect=pins.__getitem__):
+                evidence.RetainedRuntimeInputs(root, work, tools)
+                retained = work / tools['linker']['retained']['path']
+                retained.write_bytes(b'forged')
+                forged_hash = hashlib.sha256(b'forged').hexdigest()
+                for identity in (tools['linker']['original'], tools['linker']['retained']):
+                    identity['sha256'] = forged_hash
+                    identity['size'] = len(b'forged')
+                with self.assertRaisesRegex(evidence.EvidenceError, 'source image manifest'):
+                    evidence.RetainedRuntimeInputs(root, work, tools)
+
     def test_replay_elf_shape_uses_in_process_bytes_without_host_readelf(self):
         evidence = load_evidence()
         facts = {

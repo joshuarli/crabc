@@ -472,7 +472,9 @@ def extract_archive(archive: Path, root: Path) -> None:
     try:
         with tarfile.open(archive, "r:*") as stream:
             for member in stream:
-                if member.name in {".PKGINFO", ".SIGN.RSA.alpine-devel@lists.alpinelinux.org-6165ee59.rsa.pub"} or (ARCH == "aarch64" and member.name.startswith(".SIGN.")) or member.name.startswith(".post-") or member.name == ".trigger":
+                signing_key = ("alpine-devel@lists.alpinelinux.org-6165ee59.rsa.pub" if ARCH == "x86_64"
+                               else load_manifest().index_signing_key)
+                if member.name in {".PKGINFO", ".SIGN.RSA." + signing_key} or member.name.startswith(".post-") or member.name == ".trigger":
                     continue
                 destination = _destination(root, member.name.rstrip("/"))
                 if member.isdir():
@@ -637,7 +639,7 @@ def apk_identity() -> dict[str, object]:
     if not version or version[0] != f"apk-tools 3.0.6-r0, compiled for {ARCH}.":
         fail("pinned Alpine apk verifier version drifted")
     keys = {path.name: sha256_file(path, f"apk key {path.name}") for path in sorted(KEYS.glob("*.pub"))}
-    if ARCH == "x86_64" and "alpine-devel@lists.alpinelinux.org-6165ee59.rsa.pub" not in keys:
+    if ("alpine-devel@lists.alpinelinux.org-6165ee59.rsa.pub" if ARCH == "x86_64" else load_manifest().index_signing_key) not in keys:
         fail("pinned Alpine signing key is unavailable")
     readelf = Path("/usr/bin/readelf")
     if not readelf.is_file() or readelf.is_symlink():

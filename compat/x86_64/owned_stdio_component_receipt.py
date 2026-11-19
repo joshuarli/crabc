@@ -334,14 +334,8 @@ def validate_source_product_seals(
         products._validate_dynamic_product(dynamic)
     except Exception as error:
         raise ReceiptError("dynamic product validation failed") from error
-    if qualification.ARCH["arch"] == "aarch64":
-        try:
-            products.validate_dynamic_product_source(dynamic, source_seal.product_source_digest(qualification.ROOT))
-        except Exception as error:
-            raise ReceiptError(str(error)) from error
-    else:
-        state = strict_json(dynamic / "share/crabc/dynamic-product-state.json", "dynamic product materialization state")
-        validate_dynamic_state(dynamic, state)
+    state = strict_json(dynamic / "share/crabc/dynamic-product-state.json", "dynamic product materialization state")
+    validate_dynamic_state(dynamic, state)
     if static:
         static_product = directory(Path(product_paths["static"]), "static product")
         _product_seal(before_value["static"], static_product, "static")

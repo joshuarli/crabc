@@ -39,30 +39,7 @@ fi
 "$installed/bin/crabc-cc-dynamic" --dynamic-shared-object "$root/compat/x86_64/hardened_tls_failure_dso.c" -o "$image/usr/lib/tls-fault.so"
 "$installed/bin/crabc-cc-dynamic" --dynamic-shared-object "$root/compat/x86_64/hardened_import_provider.c" -o "$image/usr/lib/import-provider.so"
 "$installed/bin/crabc-cc-dynamic" --dynamic-shared-object --application-dso "$image/usr/lib/import-provider.so" "$root/compat/x86_64/hardened_import_probe.c" -o "$image/usr/lib/import-probe.so"
-if [ "$arch" = aarch64 ]; then
-    "$installed/bin/crabc-cc-dynamic" --dynamic-pie --application-dso "$image/usr/lib/import-probe.so" --application-dso "$image/usr/lib/import-provider.so" "$root/compat/x86_64/hardened_entry_probe.c" -o "$image/import-control"
-    python3 -B - "$image/import-control" <<'PYTHON'
-from pathlib import Path
-import struct
-import sys
-path = Path(sys.argv[1])
-data = bytearray(path.read_bytes())
-phoff, = struct.unpack_from('<Q', data, 32)
-phnum, = struct.unpack_from('<H', data, 56)
-headers = [struct.unpack_from('<IIQQQQQQ', data, phoff + 56 * i) for i in range(phnum)]
-dynamic = next(h for h in headers if h[0] == 2)
-entries = [dynamic[2] + 16 * i for i in range(dynamic[5] // 16)]
-strings = next(struct.unpack_from('<Q', data, p + 8)[0] for p in entries if struct.unpack_from('<Q', data, p)[0] == 5)
-strings = next(h[2] + strings - h[3] for h in headers if h[0] == 1 and h[3] <= strings < h[3] + h[5])
-needed = [p for p in entries if struct.unpack_from('<Q', data, p)[0] == 1 and data[strings + struct.unpack_from('<Q', data, p + 8)[0]:].startswith(b'import-provider.so\0')]
-assert len(needed) == 1
-end = next(p for p in entries if p > needed[0] and struct.unpack_from('<Q', data, p)[0] == 0)
-data[needed[0]:end] = data[needed[0]+16:end+16]
-path.write_bytes(data)
-PYTHON
-else
-    "$installed/bin/crabc-cc-dynamic" --dynamic-pie --application-dso "$image/usr/lib/import-probe.so" --transitive-application-dso "$image/usr/lib/import-provider.so" "$root/compat/x86_64/hardened_entry_probe.c" -o "$image/import-control"
-fi
+"$installed/bin/crabc-cc-dynamic" --dynamic-pie --application-dso "$image/usr/lib/import-probe.so" --transitive-application-dso "$image/usr/lib/import-provider.so" "$root/compat/x86_64/hardened_entry_probe.c" -o "$image/import-control"
 "$installed/bin/crabc-cc-dynamic" --dynamic-shared-object "$root/compat/x86_64/hardened_relro_dso.c" -o "$image/plugins/relative-only.so"
 "$installed/bin/crabc-cc-dynamic" --dynamic-pie --application-dso "$image/usr/lib/rejected-source.so" "$root/compat/x86_64/hardened_entry_probe.c" -o "$image/dependency"
 "$installed/bin/crabc-cc-dynamic" --dynamic-pie --application-dso "$image/plugins/relative-only.so" "$root/compat/x86_64/hardened_entry_probe.c" -o "$image/search-env"

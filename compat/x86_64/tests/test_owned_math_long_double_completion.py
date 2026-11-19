@@ -5,6 +5,7 @@ from __future__ import annotations
 
 from pathlib import Path
 import stat
+import importlib.util
 import subprocess
 import tempfile
 import unittest
@@ -259,6 +260,27 @@ class OwnedMathLongDoubleCompletionTests(unittest.TestCase):
                 f"usage: {RUNNER} [--static-sysroot STATIC_SYSROOT] DYNAMIC_SYSROOT\n",
             )
 
+
+
+class NativeBinary128RecordsTests(unittest.TestCase):
+    def test_rejects_changed_values_and_exception_flags(self):
+        spec = importlib.util.spec_from_file_location("completion_records", VALIDATOR)
+        validator = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(validator)
+        records = [(function, index, mode, 0, 0, mode, mode, bytes(16))
+                   for mode in validator.AARCH64_MODES
+                   for function, count in ((1, 13), (2, 24), (3, 24))
+                   for index in range(count)]
+        self.assertEqual(validator.compare_aarch64(records, list(records)), 0)
+        for field, value in ((3, 16), (7, bytes([1]) + bytes(15))):
+            changed = list(records)
+            row = list(changed[0])
+            row[field] = value
+            if field == 3:
+                row[4] = value
+            changed[0] = tuple(row)
+            with self.subTest(field=field), self.assertRaisesRegex(ValueError, "result or flags differ"):
+                validator.compare_aarch64(records, changed)
 
 if __name__ == "__main__":
     unittest.main()

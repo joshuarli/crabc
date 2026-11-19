@@ -13,6 +13,9 @@
  */
 
 #include <errno.h>
+#if defined(__aarch64__)
+#include <fcntl.h>
+#endif
 #include <malloc.h>
 #include <pthread.h>
 #include <signal.h>
@@ -24,7 +27,7 @@
 #include <sys/wait.h>
 #include <unistd.h>
 
-#if !defined(__linux__) || !defined(__x86_64__) || !defined(__LP64__) || \
+#if !defined(__linux__) || (!defined(__x86_64__) && !defined(__aarch64__)) || !defined(__LP64__) || \
     !defined(__BYTE_ORDER__) || !defined(__ORDER_LITTLE_ENDIAN__) || \
     __BYTE_ORDER__ != __ORDER_LITTLE_ENDIAN__
 #error "allocator-basic-runtime-v1 requires native Linux/x86-64 little-endian LP64"
@@ -570,17 +573,31 @@ static int append_path(char *output, size_t capacity, const char *base,
         append_text(output, capacity, &length, suffix);
 }
 
+#if defined(__aarch64__)
+#define fixture_unlink(path) syscall(SYS_unlinkat, AT_FDCWD, path, 0)
+#define fixture_rmdir(path) syscall(SYS_unlinkat, AT_FDCWD, path, AT_REMOVEDIR)
+#define fixture_mkdir(path, mode) syscall(SYS_mkdirat, AT_FDCWD, path, mode)
+#define fixture_symlink(target, path) syscall(SYS_symlinkat, target, AT_FDCWD, path)
+#define FIXTURE_ROOT ".work/aarch64/owned-static-runtime-"
+#else
+#define fixture_unlink(path) syscall(SYS_unlink, path)
+#define fixture_rmdir(path) syscall(SYS_rmdir, path)
+#define fixture_mkdir(path, mode) syscall(SYS_mkdir, path, mode)
+#define fixture_symlink(target, path) syscall(SYS_symlink, target, path)
+#define FIXTURE_ROOT ".work/x86_64/owned-static-runtime-"
+#endif
+
 static void remove_realpath_fixture(const char *root, const char *target,
     const char *nested, const char *link, const char *absolute_link,
     const char *trailing_link, const char *loop)
 {
-    (void)syscall(SYS_unlink, link);
-    (void)syscall(SYS_unlink, absolute_link);
-    (void)syscall(SYS_unlink, trailing_link);
-    (void)syscall(SYS_unlink, loop);
-    (void)syscall(SYS_rmdir, nested);
-    (void)syscall(SYS_rmdir, target);
-    (void)syscall(SYS_rmdir, root);
+    (void)fixture_unlink(link);
+    (void)fixture_unlink(absolute_link);
+    (void)fixture_unlink(trailing_link);
+    (void)fixture_unlink(loop);
+    (void)fixture_rmdir(nested);
+    (void)fixture_rmdir(target);
+    (void)fixture_rmdir(root);
 }
 
 /* This is deliberately run below a disposable child: it creates a tiny
@@ -613,7 +630,7 @@ static int realpath_support_probe(void)
 
     root[0] = '\0';
     if (!append_text(root, sizeof(root), &root_length,
-            ".work/x86_64/owned-static-runtime-") ||
+            FIXTURE_ROOT) ||
         !append_decimal(root, sizeof(root), &root_length,
             (unsigned long)syscall(SYS_getpid)) ||
         !append_path(target, sizeof(target), root, "/target") ||
@@ -629,21 +646,21 @@ static int realpath_support_probe(void)
         !append_path(missing, sizeof(missing), root, "/missing"))
         return 1;
 
-    if (syscall(SYS_mkdir, root, 0700L) != 0)
+    if (fixture_mkdir(root, 0700L) != 0)
         return 2;
-    if (syscall(SYS_mkdir, target, 0700L) != 0) {
+    if (fixture_mkdir(target, 0700L) != 0) {
         result = 3;
         goto cleanup;
     }
-    if (syscall(SYS_mkdir, nested, 0700L) != 0) {
+    if (fixture_mkdir(nested, 0700L) != 0) {
         result = 4;
         goto cleanup;
     }
-    if (syscall(SYS_symlink, "target/nested/..", link) != 0) {
+    if (fixture_symlink("target/nested/..", link) != 0) {
         result = 5;
         goto cleanup;
     }
-    if (syscall(SYS_symlink, "loop", loop) != 0) {
+    if (fixture_symlink("loop", loop) != 0) {
         result = 6;
         goto cleanup;
     }
@@ -665,11 +682,11 @@ static int realpath_support_probe(void)
         result = 8;
         goto cleanup;
     }
-    if (syscall(SYS_symlink, expected, absolute_link) != 0) {
+    if (fixture_symlink(expected, absolute_link) != 0) {
         result = 9;
         goto cleanup;
     }
-    if (syscall(SYS_symlink, "target/", trailing_link) != 0) {
+    if (fixture_symlink("target/", trailing_link) != 0) {
         result = 10;
         goto cleanup;
     }
@@ -886,6 +903,13 @@ static int owned_static_runtime_support_probe(void)
 
 static long raw_stdout_write(const void *buffer, size_t length)
 {
+#if defined(__aarch64__)
+    register long result __asm__("x0") = 1;
+    register const void *address __asm__("x1") = buffer;
+    register size_t count __asm__("x2") = length;
+    register long number __asm__("x8") = SYS_write;
+    __asm__ volatile("svc 0" : "+r"(result) : "r"(address), "r"(count), "r"(number) : "memory");
+#else
     long result;
 
     __asm__ volatile(
@@ -893,6 +917,7 @@ static long raw_stdout_write(const void *buffer, size_t length)
         : "=a"(result)
         : "a"(1L), "D"(1L), "S"(buffer), "d"(length)
         : "rcx", "r11", "memory");
+#endif
     return result;
 }
 
