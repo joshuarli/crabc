@@ -356,7 +356,7 @@ def dynamic_manifest(sysroot: Path) -> dict[str, object]:
         artifact = physical_regular(sysroot / relative, f"dynamic sysroot payload {relative}")
         if sha256_file(artifact) != digest:
             raise RunnerError(f"dynamic sysroot payload hash drifted: {relative}")
-    for required in ("bin/crabc-cc-dynamic", f"lib/ld-crabc-{ARCH}.so.1", "usr/lib/libc.so", "usr/lib/libcrabc-builtins.a", "usr/lib/crt1.o", "usr/lib/Scrt1.o", "usr/lib/crti.o", "usr/lib/crtn.o", *(("usr/lib/crabc-dynamic-attach.o",) if ARCH == "x86_64" else ())):
+    for required in ("bin/crabc-cc-dynamic", f"lib/ld-crabc-{ARCH}.so.1", "usr/lib/libc.so", "usr/lib/libcrabc-builtins.a", "usr/lib/crt1.o", "usr/lib/Scrt1.o", "usr/lib/crti.o", "usr/lib/crtn.o", "usr/lib/crabc-dynamic-attach.o"):
         physical_regular(sysroot / required, f"dynamic sysroot required payload {required}", executable=required.startswith(("bin/", "lib/")))
     return manifest
 
@@ -764,7 +764,7 @@ def dynamic_receipt_audit(sysroot: Path, mode: str, object_file: Path, output: P
           sha256_file(sysroot / "share/crabc/manifest.json"), {}):
         raise RunnerError(f"dynamic {mode} receipt contract drifted")
     library = sysroot / "usr/lib"
-    runtime = [library / "crti.o", library / "libc.so", library / "crtn.o", library / selected[1], *([library / "crabc-dynamic-attach.o"] if ARCH == "x86_64" else [])]
+    runtime = [library / "crti.o", library / "libc.so", library / "crtn.o", library / selected[1], *([library / "crabc-dynamic-attach.o"] if ARCH == "x86_64" or mode == "--dynamic-non-pie" else [])]
     archive = library / "libcrabc-builtins.a"
     expected_inputs = [{"path": str(path), "sha256": sha256_file(path)} for path in [*runtime, object_file.resolve(), archive]]
     if data.get("input_receipts") != expected_inputs:

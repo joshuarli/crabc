@@ -143,7 +143,7 @@ class ResolverNetworkComponentReceiptTests(unittest.TestCase):
             root = Path(directory)
             names = ("bin/crabc-cc-dynamic", "lib/ld-crabc-aarch64.so.1", "usr/lib/libc.so",
                      "usr/lib/libcrabc-builtins.a", "usr/lib/crt1.o", "usr/lib/Scrt1.o",
-                     "usr/lib/crti.o", "usr/lib/crtn.o")
+                     "usr/lib/crti.o", "usr/lib/crtn.o", "usr/lib/crabc-dynamic-attach.o")
             files = {}
             for name in names:
                 path = root / name
