@@ -1,4 +1,4 @@
-#if defined(__x86_64__)
+#if defined(__x86_64__) || defined(__aarch64__)
 /* Linux/x86-64 System V IPC permission record from pinned musl. */
 struct ipc_perm {
 	key_t __ipc_perm_key;

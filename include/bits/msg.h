@@ -1,4 +1,4 @@
-#if defined(__x86_64__)
+#if defined(__x86_64__) || defined(__aarch64__)
 struct msqid_ds {
 	struct ipc_perm msg_perm;
 	time_t msg_stime;

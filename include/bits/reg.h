@@ -1,4 +1,5 @@
 #if defined(__x86_64__)
+#if defined(__x86_64__)
 /* Linux/x86-64 ptrace user-register indices from musl 1.2.6. */
 #define R15      0
 #define R14      1
@@ -27,4 +28,8 @@
 #define ES       24
 #define FS       25
 #define GS       26
+#endif
+#elif defined(__aarch64__)
+/* musl 1.2.6 generic/bits/reg.h, MIT licensed. */
+
 #endif
