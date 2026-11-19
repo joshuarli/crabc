@@ -362,7 +362,7 @@ def resolve_pinned_producer_tools(architecture: str = "x86_64") -> dict[str, obj
         "rustup": executable_identity(rustup, "pinned rustup"),
         "rustc_wrapper": executable_identity(native_build_tools.KACHE, "pinned kache"),
         "linker": executable_identity(native_build_tools.MOLD, "image mold"),
-        "cargo_linker": executable_identity(Path(arch["linker"]), "image mold GCC driver"),
+        "cargo_linker": executable_identity(native_build_tools.CARGO_LINKER, "image mold GCC driver"),
         "rustc": {
             **executable_identity(sysroot / "bin/rustc", "pinned physical rustc", within=sysroot),
             "sysroot": str(sysroot),
