@@ -166,6 +166,21 @@ class FinalElfInspectionTests(unittest.TestCase):
         self.assertEqual(facts["gnu_stack_flags"], [elf.PF_R | elf.PF_W])
         self.assertEqual((facts["relro_segments"], facts["tls"]), (1, None))
 
+    def test_arm64_executable_requires_native_machine_and_relocations(self):
+        data = bytearray(build_image(interpreter="/lib/ld-crabc-aarch64.so.1",
+                                     relocations=(1027, 1025), plt=(1026,)))
+        struct.pack_into("<H", data, 18, 183)
+        path = self.write("arm64-output", bytes(data))
+        with self.assertRaises(elf.InspectionError):
+            elf.inspect(path)
+        facts = elf.inspect(path, architecture="aarch64")
+        elf.require_expected(facts, expectation(interpreter="/lib/ld-crabc-aarch64.so.1"))
+        self.assertEqual(facts["machine"], "EM_AARCH64")
+        self.assertEqual(facts["relocations"], {"R_AARCH64_GLOB_DAT": 1, "R_AARCH64_JUMP_SLOT": 1,
+                                                "R_AARCH64_RELATIVE": 1})
+        with self.assertRaises(elf.InspectionError):
+            elf.inspect(self.write("x86-output", build_image()), architecture="aarch64")
+
     def test_shared_object_and_non_pie_executable_have_their_own_shape(self):
         shared = build_image(interpreter=None, soname="libplugin.so", flags_1=elf.DF_1_NOW, tls=True)
         facts = self.check(shared, expectation(mode="shared", soname="libplugin.so"))

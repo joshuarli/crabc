@@ -53,7 +53,13 @@ RELOCATION_NAMES = {
     7: "R_X86_64_JUMP_SLOT", 8: "R_X86_64_RELATIVE", 16: "R_X86_64_DTPMOD64",
     17: "R_X86_64_DTPOFF64", 18: "R_X86_64_TPOFF64",
 }
-EXECUTABLE_ONLY_RELOCATIONS = frozenset({"R_X86_64_COPY"})
+AARCH64_RELOCATION_NAMES = {
+    0: "R_AARCH64_NONE", 257: "R_AARCH64_ABS64", 1024: "R_AARCH64_COPY",
+    1025: "R_AARCH64_GLOB_DAT", 1026: "R_AARCH64_JUMP_SLOT", 1027: "R_AARCH64_RELATIVE",
+    1028: "R_AARCH64_TLS_DTPMOD64", 1029: "R_AARCH64_TLS_DTPREL64",
+    1030: "R_AARCH64_TLS_TPREL64", 1031: "R_AARCH64_TLSDESC",
+}
+EXECUTABLE_ONLY_RELOCATIONS = frozenset({"R_X86_64_COPY", "R_AARCH64_COPY"})
 MODES = {
     "pie": {"elf_type": "ET_DYN", "interpreter": True},
     "exec": {"elf_type": "ET_EXEC", "interpreter": True},
@@ -145,7 +151,7 @@ def _symbol_count(image: _Image, loads, tags: Mapping[int, list[int]]) -> int:
 
 
 def _relocations(image: _Image, loads, tags: Mapping[int, list[int]], address_tag: int,
-                 size_tag: int) -> list[str]:
+                 size_tag: int, relocation_names: Mapping[int, str]) -> list[str]:
     if address_tag not in tags:
         _require(size_tag not in tags, "relocation size has no table")
         return []
@@ -158,8 +164,8 @@ def _relocations(image: _Image, loads, tags: Mapping[int, list[int]], address_ta
     for index in range(size // 24):
         _, info, _ = image.unpack("<QQq", offset + 24 * index)
         kind = info & 0xFFFFFFFF
-        _require(kind in RELOCATION_NAMES, f"unadmitted dynamic relocation kind {kind}")
-        kinds.append(RELOCATION_NAMES[kind])
+        _require(kind in relocation_names, f"unadmitted dynamic relocation kind {kind}")
+        kinds.append(relocation_names[kind])
     return kinds
 
 
@@ -202,7 +208,7 @@ def require_unwind_table_header(facts: Mapping[str, Any]) -> None:
              if facts["eh_frame"] else "output without .eh_frame has a PT_GNU_EH_FRAME")
 
 
-def inspect(path: Path) -> dict[str, Any]:
+def inspect(path: Path, *, architecture: str = "x86_64") -> dict[str, Any]:
     """Return the canonical structural facts of one final ELF64 x86-64 image."""
 
     data = Path(path).read_bytes()
@@ -211,7 +217,10 @@ def inspect(path: Path) -> dict[str, Any]:
     _require(data[4] == 2 and data[5] == 1 and data[6] == 1, "output is not ELF64 little-endian version 1")
     (elf_type, machine, _, entry, phoff, _, _, header_size, phentsize, phnum,
      _, _, _) = image.unpack("<HHIQQQIHHHHHH", 16)
-    _require(machine == EM_X86_64, "output is not EM_X86_64")
+    _require(architecture in {"x86_64", "aarch64"}, "unsupported ELF architecture")
+    machine_name = "EM_X86_64" if architecture == "x86_64" else "EM_AARCH64"
+    _require(machine == (EM_X86_64 if architecture == "x86_64" else 183), f"output is not {machine_name}")
+    relocation_names = RELOCATION_NAMES if architecture == "x86_64" else AARCH64_RELOCATION_NAMES
     _require(elf_type in (ET_EXEC, ET_DYN), "output is neither ET_EXEC nor ET_DYN")
     _require(header_size == 64 and phentsize == 56 and phnum > 0, "program header table is invalid")
 
@@ -268,9 +277,10 @@ def inspect(path: Path) -> dict[str, Any]:
     _require(tags.get(DT_PLTREL, [DT_RELA]) == [DT_RELA], "PLT relocations are not RELA")
     _require(tags.get(DT_SYMENT, [24]) == [24] and tags.get(DT_RELAENT, [24]) == [24],
              "dynamic entry sizes differ from ELF64")
-    ordinary = _relocations(image, loads, tags, DT_RELA, DT_RELASZ)
-    plt = _relocations(image, loads, tags, DT_JMPREL, DT_PLTRELSZ)
-    _require(all(kind == "R_X86_64_JUMP_SLOT" for kind in plt), "PLT table has a non-JUMP_SLOT relocation")
+    ordinary = _relocations(image, loads, tags, DT_RELA, DT_RELASZ, relocation_names)
+    plt = _relocations(image, loads, tags, DT_JMPREL, DT_PLTRELSZ, relocation_names)
+    jump_slot = "R_X86_64_JUMP_SLOT" if architecture == "x86_64" else "R_AARCH64_JUMP_SLOT"
+    _require(all(kind == jump_slot for kind in plt), "PLT table has a non-JUMP_SLOT relocation")
     relr_entries = 0
     if DT_RELR in tags or DT_RELRSZ in tags:
         _require(tags.get(DT_RELRENT, [8]) == [8] and len(tags.get(DT_RELRSZ, [])) == 1,
@@ -296,7 +306,7 @@ def inspect(path: Path) -> dict[str, Any]:
     return {
         "schema": SCHEMA,
         "elf_type": "ET_EXEC" if elf_type == ET_EXEC else "ET_DYN",
-        "machine": "EM_X86_64",
+        "machine": machine_name,
         "entry": entry,
         "interpreter": interpreters[0] if interpreters else None,
         "needed": [name(value) for value in tags.get(DT_NEEDED, [])],
