@@ -1,3 +1,4 @@
+#if defined(__x86_64__) || defined(__aarch64__)
 #ifndef	_NETINET_IN_H
 #define	_NETINET_IN_H
 #ifdef __cplusplus
@@ -414,4 +415,5 @@ struct ip6_mtuinfo {
 }
 #endif
 
+#endif
 #endif
