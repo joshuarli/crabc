@@ -673,6 +673,26 @@ fn general_relr_exceeds_legacy_table_and_target_limits_like_musl() {
 }
 
 #[test]
+#[cfg(feature = "x86_64-owned-dynamic-runtime")]
+fn interpreter_relative_relocations_preserve_bootstrap_state() {
+    let mut image = Image::new();
+    image.rela(0x1000, R_X86_64_RELATIVE, 0, 0x1000);
+    image.rela(0x1008, R_64, 0, 0);
+    image.data[0] = 0xfeed;
+    image.data[1] = 0;
+    image.data[2] = 0xbeef;
+    let relr = [0x1010u64];
+    let mut object = image.object(true);
+    object.interpreter_self = true;
+    object.relr = relr.as_ptr().cast();
+    object.relrsz = 8;
+    assert!(unsafe { apply_resolved_word_relocations(&object, &[123, 456]) }.is_some());
+    assert_eq!(image.data[0], 0xfeed);
+    assert_eq!(image.data[1], 456);
+    assert_eq!(image.data[2], 0xbeef);
+}
+
+#[test]
 fn runtime_relocation_scope_grows_past_initial_capacity_and_never_rewrites_retained_objects() {
     let mut images: self::std::vec::Vec<Image> = (0..40).map(|_| Image::new()).collect();
     for (index, image) in images.iter_mut().enumerate() {
