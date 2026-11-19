@@ -420,6 +420,15 @@ manifest = (root / 'libc/Cargo.toml').read_text(encoding='utf-8')
 needle = 'rand_pcg = { version = "=0.10.2", default-features = false, optional = true }'
 if needle not in manifest or '"dep:rand_pcg",' not in manifest:
     raise SystemExit('owned rand feature/dependency declaration drifted')
+if arch == 'aarch64':
+    parsed_manifest = tomllib.loads(manifest)
+    targets = [target for target, config in parsed_manifest.get('target', {}).items()
+               if 'rand_pcg' in config.get('dependencies', {})]
+    if len(targets) != 1:
+        raise SystemExit('owned rand target dependency selection is not unique')
+    selected_target = targets[0]
+else:
+    selected_target = 'cfg(all(target_os = "linux", target_arch = "x86_64", target_endian = "little"))'
 
 def digest(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
@@ -431,8 +440,7 @@ record = {
         'rand_core': {'version': expected['rand_core'][0], 'checksum': expected['rand_core'][1], 'dependencies': []},
     },
     'selection': {
-        'target': ('cfg(all(target_os = "linux", any(target_arch = "x86_64", target_arch = "aarch64"), target_endian = "little"))'
-                   if arch == 'aarch64' else 'cfg(all(target_os = "linux", target_arch = "x86_64", target_endian = "little"))'),
+        'target': selected_target,
         'feature': 'x86-owned-static-runtime',
         'default_features': False,
         'optional': True,
