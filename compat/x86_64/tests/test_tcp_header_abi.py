@@ -21,7 +21,8 @@ class TcpHeaderAbiTests(unittest.TestCase):
         header = TCP_HEADER.read_text(encoding="utf-8")
 
         self.assertTrue(header.startswith("#ifndef _NETINET_TCP_H\n"))
-        self.assertIn("#if defined(__x86_64__)\n", header)
+        self.assertNotIn("__x86_64__", header)
+        self.assertNotIn("__aarch64__", header)
         self.assertIn("#include <features.h>\n", header)
         self.assertIn("#define TCP_NODELAY 1\n", header)
         self.assertIn("#define TCP_TX_DELAY     37\n", header)
@@ -33,11 +34,7 @@ class TcpHeaderAbiTests(unittest.TestCase):
         self.assertIn("struct tcp_repair_window {\n", header)
         self.assertIn("struct tcp_zerocopy_receive {\n", header)
 
-        self.assertEqual(header.count("#define TCP_NODELAY 1\n"), 2)
-        self.assertIn(
-            "#else\n#define TCP_NODELAY 1\n#endif\n\n#endif\n",
-            header,
-        )
+        self.assertEqual(header.count("#define TCP_NODELAY 1\n"), 1)
 
     def test_probes_cover_unconditional_and_gated_tcp_abi(self) -> None:
         c_probe = C_PROBE.read_text(encoding="utf-8")
