@@ -351,3 +351,6 @@ pub(crate) unsafe fn syscall6(
     }
     result
 }
+
+pub(crate) const SYS_DUP2: usize = 33;
+pub(crate) const SYS_POLL: usize = 7;

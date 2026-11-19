@@ -377,14 +377,10 @@ static_archive_member! { fchown_source {
         pathname_lifecycle::procfdname(&mut procfd_path, descriptor);
         // SAFETY: the fixed local procfd pathname remains valid through chown.
         c_status(unsafe {
-            raw_syscall::syscall5(
-                raw_syscall::SYS_FCHOWNAT,
-                -100,
-                procfd_path.as_ptr() as i64,
-                i64::from(user),
-                i64::from(group),
-                0,
-            )
+            #[cfg(target_arch = "x86_64")]
+            { raw_syscall::syscall3(raw_syscall::SYS_CHOWN, procfd_path.as_ptr() as i64, i64::from(user), i64::from(group)) }
+            #[cfg(target_arch = "aarch64")]
+            { raw_syscall::syscall5(raw_syscall::SYS_FCHOWNAT, -100, procfd_path.as_ptr() as i64, i64::from(user), i64::from(group), 0) }
         })
     }
 }}
@@ -438,13 +434,10 @@ static_archive_member! { mknod_source {
     ) -> c_int {
         // SAFETY: the caller owns the raw pathname/mode/dev_t request.
         c_status(unsafe {
-            raw_syscall::syscall4(
-                raw_syscall::SYS_MKNODAT,
-                -100,
-                path as usize as i64,
-                i64::from(mode),
-                device as i64,
-            )
+            #[cfg(target_arch = "x86_64")]
+            { raw_syscall::syscall3(raw_syscall::SYS_MKNOD, path as usize as i64, i64::from(mode), device as i64) }
+            #[cfg(target_arch = "aarch64")]
+            { raw_syscall::syscall4(raw_syscall::SYS_MKNODAT, -100, path as usize as i64, i64::from(mode), device as i64) }
         })
     }
 }}

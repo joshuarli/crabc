@@ -276,6 +276,13 @@ pub unsafe fn poll_raw(
     nfds: usize,
     timeout_ms: i32,
 ) -> Result<usize> {
+    #[cfg(target_arch = "x86_64")]
+    {
+        // SAFETY: The caller supplies the pollfd storage documented above.
+        return decode(unsafe { syscall3(crate::syscall::SYS_POLL, fds as usize, nfds, timeout_ms as usize) });
+    }
+    #[cfg(target_arch = "aarch64")]
+    {
     let timeout = crate::time::KernelTimespec {
         tv_sec: (timeout_ms / 1000) as i64,
         tv_nsec: ((timeout_ms % 1000) * 1_000_000) as i64,
@@ -283,6 +290,7 @@ pub unsafe fn poll_raw(
     let timeout_ptr = if timeout_ms < 0 { core::ptr::null() } else { &timeout };
     // SAFETY: The caller supplies the pollfd storage; the local timeout remains live.
     unsafe { ppoll_raw(fds.cast(), nfds, timeout_ptr.cast(), core::ptr::null(), crate::signal::KERNEL_SIGSET_SIZE) }
+    }
 }
 
 /// Waits for readiness through the Linux `ppoll` syscall.

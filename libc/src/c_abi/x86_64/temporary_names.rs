@@ -106,13 +106,10 @@ unsafe fn pathname_is_absent(pathname: *const c_char) -> bool {
     // SAFETY: the caller supplies the complete pathname; output is one
     // writable byte exactly as the musl source's compound literal.
     let result = unsafe {
-        raw_syscall::syscall4(
-            raw_syscall::SYS_READLINKAT,
-            -100,
-            pathname as usize as i64,
-            output.as_mut_ptr() as usize as i64,
-            1,
-        )
+        #[cfg(target_arch = "x86_64")]
+        { raw_syscall::syscall3(raw_syscall::SYS_READLINK, pathname as usize as i64, output.as_mut_ptr() as usize as i64, 1) }
+        #[cfg(target_arch = "aarch64")]
+        { raw_syscall::syscall4(raw_syscall::SYS_READLINKAT, -100, pathname as usize as i64, output.as_mut_ptr() as usize as i64, 1) }
     };
     result == -i64::from(ENOENT)
 }

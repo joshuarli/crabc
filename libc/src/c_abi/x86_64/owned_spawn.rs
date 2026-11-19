@@ -75,6 +75,9 @@ unsafe fn duplicate_to(old: i64, new: i64) -> i64 {
 
 unsafe fn open_path(path: *const u8, flags: i64, mode: i64) -> i64 {
     // SAFETY: the caller supplies the terminated file-action pathname.
+    #[cfg(target_arch = "x86_64")]
+    unsafe { sys::syscall3(sys::SYS_OPEN, path as i64, flags, mode) }
+    #[cfg(target_arch = "aarch64")]
     unsafe { sys::syscall4(sys::SYS_OPENAT, -100, path as i64, flags, mode) }
 }
 

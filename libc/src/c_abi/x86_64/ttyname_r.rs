@@ -127,13 +127,10 @@ unsafe fn readlink_name(
     // SAFETY: the caller owns the procfd pathname and nonzero caller-buffer
     // contract; the zero-capacity branch owns the private one-byte scratch.
     let result = unsafe {
-        raw_syscall::syscall4(
-            raw_syscall::SYS_READLINKAT,
-            -100,
-            path as usize as i64,
-            kernel_name as usize as i64,
-            kernel_capacity as i64,
-        )
+        #[cfg(target_arch = "x86_64")]
+        { raw_syscall::syscall3(raw_syscall::SYS_READLINK, path as usize as i64, kernel_name as usize as i64, kernel_capacity as i64) }
+        #[cfg(target_arch = "aarch64")]
+        { raw_syscall::syscall4(raw_syscall::SYS_READLINKAT, -100, path as usize as i64, kernel_name as usize as i64, kernel_capacity as i64) }
     };
     if let Some(error) = syscall_errno(result) {
         return Err(error);

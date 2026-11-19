@@ -75,6 +75,25 @@ fn invalid_argument() -> c_int {
 }
 
 #[inline]
+#[cfg(target_arch = "x86_64")]
+fn retry_dup2(old_descriptor: c_int, new_descriptor: c_int) -> i64 {
+    loop {
+        // SAFETY: both arguments are scalar Linux descriptor words. The
+        // kernel owns atomic replacement and validates their current state.
+        let result = unsafe {
+            raw_syscall::syscall2(
+                raw_syscall::SYS_DUP2,
+                i64::from(old_descriptor),
+                i64::from(new_descriptor),
+            )
+        };
+        if result != -EBUSY {
+            return result;
+        }
+    }
+}
+
+#[cfg(target_arch = "aarch64")]
 fn retry_dup2(old_descriptor: c_int, new_descriptor: c_int) -> i64 {
     // musl 1.2.6 src/unistd/dup2.c checks an identical descriptor via F_GETFD.
     if old_descriptor == new_descriptor {
@@ -586,12 +605,25 @@ static_archive_member! { pipe_source {
     /// endpoint synchronization; this leaf adds no stream or SIGPIPE policy.
     #[no_mangle]
     pub unsafe extern "C" fn pipe(file_descriptors: *mut c_int) -> c_int {
+        #[cfg(target_arch = "x86_64")]
+        {
+        // SAFETY: the caller supplies the raw two-int writable output region.
+        let result = unsafe {
+            raw_syscall::syscall1(raw_syscall::SYS_PIPE, file_descriptors as usize as i64)
+        };
+        c_status(result)
+
+        }
+        #[cfg(target_arch = "aarch64")]
+        {
         // SAFETY: the caller supplies the raw two-int writable output region.
         let result = unsafe {
             // musl 1.2.6 src/unistd/pipe.c uses pipe2 with zero flags.
             raw_syscall::syscall2(raw_syscall::SYS_PIPE2, file_descriptors as usize as i64, 0)
         };
         c_status(result)
+
+        }
     }
 }}
 
