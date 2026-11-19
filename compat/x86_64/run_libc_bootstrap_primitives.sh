@@ -319,7 +319,9 @@ observations.collect_bootstrap_primitives(
     work, static_product=static, dynamic_product=dynamic,
 )
 PY
-    printf 'x86 installed crabc-libc bootstrap primitives: PASS (four sealed links, six execution modes); evidence: %s\n' "$work_dir"
+    label=x86
+    [ "$arch" = x86_64 ] || label="$arch"
+    printf '%s installed crabc-libc bootstrap primitives: PASS (four sealed links, six execution modes); evidence: %s\n' "$label" "$work_dir"
     exit 0
 fi
 
