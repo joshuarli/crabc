@@ -1100,6 +1100,7 @@ unsafe fn validate_initial_private_imports(
 /// mutation lock. `indices` contains only valid object indices and follows the
 /// admitted global-plus-dependency lookup order. New mappings are writable;
 /// their module IDs are monotonic, and only initial modules have IE placement.
+#[cfg(not(all(target_arch = "aarch64", crabc_general_initial_tls_materialization_v1)))]
 pub(super) unsafe fn relocate_runtime_objects(
     objects: &[Object], indices: &[usize], first_new: usize, static_tls_count: usize,
 ) -> Option<()> {
@@ -1111,6 +1112,58 @@ pub(super) unsafe fn relocate_runtime_objects(
         unsafe { apply_word_relocations(&scope, objects, owner) }?;
     }
     Some(())
+}
+
+#[cfg(all(target_arch = "aarch64", crabc_general_initial_tls_materialization_v1))]
+/// # Safety
+/// The returned descriptor storage must outlive every relocated object and
+/// every thread that can execute its TLS descriptors.
+pub(super) unsafe fn relocate_runtime_objects(
+    objects: &[Object], indices: &[usize], first_new: usize, static_tls_count: usize,
+) -> Option<super::x86_64_runtime_memory::LoaderBuffer<[usize; 2]>> {
+    if first_new == 0 || first_new > objects.len() || indices.iter().any(|index| *index >= objects.len()) { return None; }
+    let scope = SymbolScope { indices, module_count: objects.iter().map(|object| object.tls_module_id).max().unwrap_or(0),
+        static_tls_count, initial: false };
+    let mut capacity = 0usize;
+    for owner in first_new..objects.len() {
+        unsafe { preflight_object(&scope, objects, owner) }?;
+        capacity = capacity.checked_add(objects[owner].relasz / ELF64_RELA_SIZE)?
+            .checked_add(objects[owner].pltrelsz / ELF64_RELA_SIZE)?;
+    }
+    let mut records = super::x86_64_runtime_memory::LoaderBuffer::new(capacity, [0usize; 2])?;
+    let mut next = 0usize;
+    for owner in first_new..objects.len() {
+        let object = &objects[owner];
+        for (table, bytes) in [(object.rela, object.relasz), (object.jmprel, object.pltrelsz)] {
+            for index in 0..bytes / ELF64_RELA_SIZE {
+                let entry = unsafe { table.add(index * ELF64_RELA_SIZE) };
+                let info = unsafe { read_u64(entry.add(8)) };
+                let kind = info as u32;
+                if kind == R_NONE || kind == R_COPY { continue; }
+                let offset = unsafe { read_u64(entry) };
+                let addend = unsafe { read_i64(entry.add(16)) };
+                let value = unsafe { word_resolution(&scope, objects, owner, offset, kind,
+                    (info >> 32) as usize, addend, false) }??;
+                let address = runtime_address(object.base, offset)?;
+                if kind == R_X86_64_TLSDESC {
+                    if let Some(coordinates) = unsafe { dynamic_tlsdesc_coordinates(&scope, objects, owner,
+                        (info >> 32) as usize, addend) }? {
+                        let record = records.as_mut_slice().get_mut(next)?;
+                        *record = coordinates;
+                        unsafe {
+                            core::ptr::write_unaligned(address as *mut u64, tlsdesc_dynamic as *const () as u64);
+                            core::ptr::write_unaligned((address + 8) as *mut u64, record as *mut [usize; 2] as u64);
+                        }
+                        next += 1;
+                        continue;
+                    }
+                }
+                unsafe { write_resolved_word(address, kind, value); }
+            }
+        }
+        unsafe { apply_relr_table(object) }?;
+    }
+    Some(records)
 }
 
 #[cfg(feature = "x86_64-owned-dynamic-runtime")]

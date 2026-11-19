@@ -1398,6 +1398,21 @@ fn tlsdesc_static_checks_both_words_and_returns_tp_offset() {
 
 #[cfg(target_arch = "aarch64")]
 #[test]
+fn runtime_tlsdesc_uses_dynamic_descriptor() {
+    let mut image = Image::new();
+    image.rela(IMAGE_DATA as u64, R_X86_64_TLSDESC, 0, 4);
+    let mut object = image.object(true);
+    object.tls_module_id = 1;
+    object.tls_memsz = 16;
+    let objects = [EMPTY_OBJECT, object];
+    let records = unsafe { relocate_runtime_objects(&objects, &[0, 1], 1, 0) }.unwrap();
+    assert_eq!(image.data[0], tlsdesc_dynamic as *const () as u64);
+    assert_eq!(image.data[1], records.as_slice().as_ptr() as u64);
+    assert_eq!(records.as_slice()[0], [1, 4]);
+}
+
+#[cfg(target_arch = "aarch64")]
+#[test]
 fn tlsdesc_is_not_an_unsupported_dlopen_relocation() {
     let mut image = Image::new();
     image.rela(IMAGE_DATA as u64, R_X86_64_TLSDESC, 0, 0);
