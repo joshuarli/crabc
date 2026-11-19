@@ -131,8 +131,9 @@ pub(in super::super) unsafe fn diagnose_new<'a>(objects: &'a [Object], indices: 
                 let name = if symbol == 0 { &[][..] } else { unsafe { symbol_name(object, symbol) }.unwrap_or(&[]) };
                 let mut definer = None;
                 if symbol != 0 {
-                    let tls = matches!(kind, R_X86_64_DTPMOD64 | R_X86_64_DTPOFF64 | R_X86_64_TPOFF64)
-                        || (cfg!(target_arch = "aarch64") && kind == R_X86_64_TLSDESC);
+                    let tls = matches!(kind, R_X86_64_DTPMOD64 | R_X86_64_DTPOFF64 | R_X86_64_TPOFF64);
+                    #[cfg(target_arch = "aarch64")]
+                    let tls = tls || kind == R_X86_64_TLSDESC;
                     match unsafe { lookup_result(&scope, objects, owner, symbol, tls, kind == R_COPY, kind == R_X86_64_JUMP_SLOT) } {
                         Some(SymbolLookup::MissingStrong) => {
                             if deferrable && matches!(kind, R_X86_64_GLOB_DAT | R_X86_64_JUMP_SLOT) { continue; }
@@ -148,9 +149,16 @@ pub(in super::super) unsafe fn diagnose_new<'a>(objects: &'a [Object], indices: 
                         return Some(RelocationFailure::InitialExecTls { owner, symbol: name, definer: module });
                     }
                 }
+                #[cfg(target_arch = "x86_64")]
                 if !matches!(kind, R_64 | R_X86_64_PC32 | R_COPY | R_X86_64_GLOB_DAT | R_X86_64_JUMP_SLOT | R_X86_64_RELATIVE
                     | R_X86_64_DTPMOD64 | R_X86_64_DTPOFF64 | R_X86_64_TPOFF64)
-                    && !(cfg!(target_arch = "aarch64") && kind == R_X86_64_TLSDESC)
+                {
+                    return Some(RelocationFailure::UnsupportedType { owner, kind });
+                }
+                #[cfg(target_arch = "aarch64")]
+                if !matches!(kind, R_64 | R_X86_64_PC32 | R_COPY | R_X86_64_GLOB_DAT | R_X86_64_JUMP_SLOT | R_X86_64_RELATIVE
+                    | R_X86_64_DTPMOD64 | R_X86_64_DTPOFF64 | R_X86_64_TPOFF64)
+                    && kind != R_X86_64_TLSDESC
                 {
                     return Some(RelocationFailure::UnsupportedType { owner, kind });
                 }
