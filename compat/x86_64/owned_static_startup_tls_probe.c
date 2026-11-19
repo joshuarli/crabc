@@ -8,8 +8,8 @@
  * and are covered by the sibling TLS probe.
  */
 
-#if !defined(__linux__) || !defined(__x86_64__) || !defined(__LP64__)
-#error "this fixture requires native Linux/x86-64 LP64"
+#if !defined(__linux__) || (!defined(__x86_64__) && !defined(__aarch64__)) || !defined(__LP64__)
+#error "this fixture requires native Linux x86-64 or aarch64 LP64"
 #endif
 
 #include <errno.h>
@@ -32,5 +32,15 @@ int main(void)
         return 2;
     if (((uintptr_t)&initial_tls_alignment_probe & (tls_alignment - 1)) != 0)
         return 3;
+#if defined(__aarch64__)
+    char output[] = "hi 0000000000000000\n";
+    uintptr_t thread_pointer = (uintptr_t)__builtin_thread_pointer();
+    for (unsigned int index = 0; index < 16; ++index) {
+        unsigned int digit = (thread_pointer >> ((15 - index) * 4)) & 15;
+        output[3 + index] = "0123456789abcdef"[digit];
+    }
+    return write(1, output, sizeof(output) - 1) == sizeof(output) - 1 ? 0 : 3;
+#else
     return write(1, "hi\n", 3) == 3 ? 0 : 3;
+#endif
 }

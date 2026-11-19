@@ -301,20 +301,24 @@ audit_static_initial_tls_installation() {
     "$installed_root/bin/crabc-cc" "$mode" -std=c11 -O2 \
         "$ROOT_DIR/compat/x86_64/owned_static_startup_tls_probe.c" -o "$candidate"
     readelf --program-headers --wide "$candidate" >"$program_headers"
-    if output="$(env -i strace -f -qq -e trace=mmap,mremap,brk,arch_prctl \
+    local trace_calls=mmap,mremap,brk,arch_prctl
+    if [ "$ARCH" = aarch64 ]; then trace_calls=mmap,mremap,brk; fi
+    if output="$(env -i strace -f -qq -e "trace=$trace_calls" \
         -o "$trace" "$candidate")"; then
         :
     else
         status=$?
         fail "static initial TLS startup candidate (${mode}) exited ${status}"
     fi
-    [ "$output" = hi ] || fail "static initial TLS startup candidate (${mode}) output drifted: $output"
-    python3 - "$mode" "$program_headers" "$trace" <<'PY'
+    if [ "$ARCH" = x86_64 ]; then
+        [ "$output" = hi ] || fail "static initial TLS startup candidate (${mode}) output drifted: $output"
+    fi
+    python3 - "$mode" "$program_headers" "$trace" "$ARCH" "$output" <<'PY'
 import re
 import sys
 from pathlib import Path
 
-mode, program_headers, trace_path = sys.argv[1:]
+mode, program_headers, trace_path, architecture, output = sys.argv[1:]
 load = re.compile(
     r"^\s*LOAD\s+(0x[0-9a-f]+)\s+(0x[0-9a-f]+)\s+(0x[0-9a-f]+)\s+"
     r"(0x[0-9a-f]+)\s+(0x[0-9a-f]+)\s+([RWE ]+?)\s+(0x[0-9a-f]+)$")
@@ -325,14 +329,21 @@ for line in Path(program_headers).read_text(encoding="utf-8", errors="replace").
         start = int(match.group(2), 16)
         writable.append((start, start + int(match.group(5), 16)))
 trace = Path(trace_path).read_text(encoding="utf-8", errors="replace").splitlines()
-installed = [index for index, line in enumerate(trace) if "arch_prctl(ARCH_SET_FS," in line]
-if len(installed) != 1:
-    raise SystemExit(f"{mode} static TLS install count is {len(installed)}, not 1")
-for line in trace[:installed[0]]:
+if architecture == "aarch64":
+    match = re.fullmatch(r"hi ([0-9a-f]{16})", output)
+    if match is None:
+        raise SystemExit(f"{mode} static TLS thread pointer observation differs: {output!r}")
+    thread_pointer = int(match.group(1), 16)
+    before_install = trace
+else:
+    installed = [index for index, line in enumerate(trace) if "arch_prctl(ARCH_SET_FS," in line]
+    if len(installed) != 1:
+        raise SystemExit(f"{mode} static TLS install count is {len(installed)}, not 1")
+    before_install = trace[:installed[0]]
+    thread_pointer = int(re.search(r"ARCH_SET_FS, (0x[0-9a-f]+)", trace[installed[0]]).group(1), 16)
+for line in before_install:
     if re.search(r"\b(mmap|mremap|brk)\(", line):
         raise SystemExit(f"{mode} static TLS install mapped memory first: {line.strip()}")
-thread_pointer = int(
-    re.search(r"ARCH_SET_FS, (0x[0-9a-f]+)", trace[installed[0]]).group(1), 16)
 if mode == "-static" and not any(start <= thread_pointer < end for start, end in writable):
     raise SystemExit(
         f"{mode} static TLS thread pointer {thread_pointer:#x} is outside a writable PT_LOAD")
