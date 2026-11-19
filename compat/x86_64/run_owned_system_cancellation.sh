@@ -4,8 +4,6 @@ set -euo pipefail
 ulimit -c 0
 
 readonly ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-eval "$(python3 -B "$ROOT/compat/x86_64/native_arch.py")"
-readonly ORACLE_CC="$oracle"
 readonly WITNESS="$ROOT/compat/x86_64/run_pthread_wait_witness.py"
 readonly PROBE="$ROOT/compat/x86_64/owned_system_cancellation_probe.c"
 readonly CHILD="$ROOT/compat/x86_64/owned_system_cancellation_child.c"
@@ -42,6 +40,8 @@ while [ "$#" -gt 0 ]; do
             ;;
     esac
 done
+eval "$(python3 -B "$ROOT/compat/x86_64/native_arch.py")"
+readonly ORACLE_CC="$oracle"
 if [ -n "$provided_static" ]; then
     provided_static="$(realpath -e -- "$provided_static")"
 fi
