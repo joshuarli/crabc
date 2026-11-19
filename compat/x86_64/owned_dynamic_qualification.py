@@ -349,9 +349,11 @@ def prepare(work: Path) -> None:
         commands[0] = ["env", f"CRABC_AARCH64_DYNAMIC_SYSROOT={work / 'installed'}",
                        "python3", "-B", "-m", "unittest", "discover", "-s",
                        str(ROOT / "compat/x86_64/tests"), "-p", "test_aarch64_dynamic_non_pie.py"]
-        commands.insert(2, ["env", f"PATH={tools}:{os.environ.get('PATH', '')}",
+        commands.insert(1, ["env", f"PYTHONPATH={ROOT / 'compat/x86_64'}",
+                            "python3", "-B", "-m", "unittest", "-v", "test_owned_dynamic_shared"])
+        commands.insert(3, ["env", f"PATH={tools}:{os.environ.get('PATH', '')}",
                             "python3", "-B", "-m", "unittest", "-v", "crt.tests.test_build"])
-        checks = ["installed-driver-aarch64", "owned-crt", "owned-crt-aarch64", "owned-loader-source", "pinned-musl-oracle"]
+        checks = ["installed-driver-aarch64", "installed-driver-shared", "owned-crt", "owned-crt-aarch64", "owned-loader-source", "pinned-musl-oracle"]
     log = work / "qualification-prepare.log"
     with log.open("xb") as output:
         os.fchmod(output.fileno(), stat.S_IMODE(os.fstat(output.fileno()).st_mode) | 0o444)
@@ -377,7 +379,7 @@ def preparation_evidence(work: Path, source: str) -> dict[str, str]:
             "missing or stale preparation evidence")
     checks = ["installed-driver", "owned-crt", "owned-loader-source", "pinned-musl-oracle"]
     if ARCH["arch"] == "aarch64":
-        checks = ["installed-driver-aarch64", "owned-crt", "owned-crt-aarch64", "owned-loader-source", "pinned-musl-oracle"]
+        checks = ["installed-driver-aarch64", "installed-driver-shared", "owned-crt", "owned-crt-aarch64", "owned-loader-source", "pinned-musl-oracle"]
     require(record["checks"] == checks, "preparation checks incomplete")
     oracle_files = validate_oracle(work, record["oracle"])
     log = evidence_path(ROOT / record["log"])

@@ -233,6 +233,21 @@ class Aarch64DynamicNonPieTest(unittest.TestCase):
                     self.assertFalse(rejected.exists())
 
     @unittest.skipUnless(os.environ.get("CRABC_AARCH64_DYNAMIC_SYSROOT") or CAN_BUILD, "requires a built aarch64 product")
+    def test_native_shared_libc_keeps_helper_and_errno_policies_private(self):
+        root = Path(__file__).resolve().parents[3]
+        product = Path(os.environ["CRABC_AARCH64_DYNAMIC_SYSROOT"]).resolve(strict=True)
+        provenance = json.loads((product / "share/crabc/libc-shared.provenance.json").read_text())
+        command = provenance["libc_shared_link_command"]
+        self.assertIn("--exclude-libs=libcrabc-builtins.a", command)
+        self.assertNotIn("-Bsymbolic", command)
+        self.assertNotIn("-Bsymbolic-functions", command)
+        self.assertEqual(provenance["shared_errno_private_aliases"]["members"], ["___errno_location"])
+        exports = set((root / "builtins/aarch64-helper-exports.txt").read_text().splitlines())
+        listing = subprocess.check_output(["readelf", "--dyn-syms", "-W", product / "usr/lib/libc.so"], text=True)
+        defined = {fields[-1] for line in listing.splitlines() if len(fields := line.split()) >= 8
+                   and fields[0].endswith(":") and fields[6] != "UND"}
+        self.assertEqual(defined & exports, set())
+    @unittest.skipUnless(os.environ.get("CRABC_AARCH64_DYNAMIC_SYSROOT") or CAN_BUILD, "requires a built aarch64 product")
     def test_native_builder_rejects_existing_output_before_tool_resolution(self):
         root = Path(__file__).resolve().parents[3]
         sys.path.insert(0, str(root / "scripts"))
@@ -498,6 +513,7 @@ class Aarch64DynamicNonPieTest(unittest.TestCase):
         root = Path(__file__).resolve().parents[3]
         sys.path.insert(0, str(root / "compat/x86_64"))
         import owned_posix_product_evidence as evidence
+        import owned_libc_test
         product = Path(os.environ["CRABC_AARCH64_DYNAMIC_SYSROOT"]).resolve(strict=True)
         driver = str(product / "bin/crabc-cc-dynamic")
         with tempfile.TemporaryDirectory(dir=os.environ["TMPDIR"]) as tmp:
@@ -510,6 +526,14 @@ class Aarch64DynamicNonPieTest(unittest.TestCase):
             record = json.loads(receipt.read_text())
             evidence.validate_link(product, obj, binary, receipt, "pie")
             evidence.validate_retained_link(root, "/workspace", product, obj, binary, receipt, "pie", record["resolved_linker"])
+            arguments = dict(product=product, output=binary, receipt_path=receipt, objects=[obj],
+                             application_dsos=[], shared_object=False, runpath="/usr/lib", export_dynamic=False)
+            self.assertEqual(owned_libc_test.verify_candidate_receipt(**arguments)["link_trace"], record["link_trace"])
+            record["link_trace"].append("trace: /foreign/runtime.o")
+            receipt.write_text(json.dumps(record))
+            with self.assertRaisesRegex(owned_libc_test.EvidenceError, "unadmitted input"):
+                owned_libc_test.verify_candidate_receipt(**arguments)
+            record["link_trace"].pop()
             record["link_command"].insert(1, "--allow-multiple-definition")
             receipt.write_text(json.dumps(record))
             with self.assertRaises(evidence.ProductEvidenceError):
