@@ -236,7 +236,7 @@ fn resolver_completes_aaaa_answers_for_inet6() {
 
 #[test]
 fn resolver_snapshot_reads_fixture_without_global_state() {
-    let config = ResolverConfig::from_bytes(b"nameserver 127.0.0.1\nsearch example.test\n", b"127.0.0.1 localhost\n").expect("fixture should load");
+    let config = ResolverConfig::from_bytes(include_bytes!("fixtures/resolv.conf"), include_bytes!("fixtures/hosts")).expect("fixture should load");
     assert!(config.hosts().is_some());
     assert!(config.nameserver_count() <= 3);
     assert!(config.search_domains().len() <= 6);
