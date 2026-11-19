@@ -683,6 +683,21 @@ class CargoConsumerLinkContract(unittest.TestCase):
                 self.parse(self.arguments(mode="-pie", extra=("-static-pie",)))
             with self.assertRaises(linker.LinkError):
                 self.parse(self.arguments(mode="-static-pie", extra=("-static",)))
+            with self.assertRaises(linker.LinkError):
+                self.parse(self.arguments(mode="-static", unwind="-lunwind"))
+            with self.assertRaises(linker.LinkError):
+                self.parse(self.arguments(mode="-static", unwind="-lunwind", extra=("-static-pie",)))
+            with self.assertRaises(linker.LinkError):
+                self.parse(self.arguments(mode="-static-pie", unwind="-lunwind", extra=("-static", "-no-pie")))
+
+    def test_arm64_rustc_static_spelling_selects_the_requested_static_pie(self):
+        rustc_static = self.arguments(mode="-static", unwind="-lunwind", extra=("-static-pie",))
+        rustc_static.insert(rustc_static.index("-static") + 1, "-no-pie")
+        with patch.object(linker, "ARCH", "aarch64"):
+            self.assertEqual(self.parse(rustc_static)["rust_mode"], "static-pie")
+        with patch.object(linker, "ARCH", "x86_64"):
+            with self.assertRaises(linker.LinkError):
+                self.parse(rustc_static)
 
     def test_arm64_cargo_object_requires_relocatable_elf(self):
         obj = Path(self.temporary.name) / "input.o"

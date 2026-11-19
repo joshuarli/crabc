@@ -898,6 +898,7 @@ def parse_cargo_arguments(
     compiler_builtins: Path | None = None
     output: Path | None = None
     rust_mode: str | None = None
+    rustc_static: str | None = None
     index = 0
     while index < len(arguments):
         argument = arguments[index]
@@ -914,8 +915,15 @@ def parse_cargo_arguments(
                 output = confined_output(value, cargo_profile_root / "build")
             else:
                 search_paths.append(confined(value, [cargo_profile_root, stock_root], "Rust search path", directory=True))
+        elif (ARCH == "aarch64" and argument == "-static" and rust_mode is None and rustc_static is None
+              and index < len(arguments) and arguments[index] == "-no-pie"):
+            # The pinned aarch64-unknown-linux-musl target spells crt-static
+            # executables `-static -no-pie`; the consumer gate requests the
+            # owned static-PIE link with an explicit trailing `-static-pie`.
+            index += 1
+            rustc_static = "static"
         elif argument in {"-pie", "-static-pie"}:
-            if rust_mode is not None:
+            if rust_mode is not None or (rustc_static is not None and argument != "-static-pie"):
                 raise LinkError("duplicate or conflicting Rust executable mode")
             rust_mode = argument.removeprefix("-")
         elif argument.startswith("-Wl,-plugin-opt="):
@@ -947,6 +955,8 @@ def parse_cargo_arguments(
             objects.append(path)
         else:
             raise LinkError(f"unrecognized Rust link argument: {argument}")
+    if rustc_static is not None and rust_mode != "static-pie":
+        raise LinkError("rustc static executable spelling lacks the requested static-PIE link")
     if output is None or rust_mode is None or not objects:
         raise LinkError("expected output, Rust executable mode, and Rust objects")
     # A no-std consumer may request no native library at all; the product's
