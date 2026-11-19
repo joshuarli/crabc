@@ -509,3 +509,5 @@ The facade correction leaves out-of-scope callers `crabc-rs/examples/ppoll_direc
 | Test-coverage | 21–26 | 6 |
 | Development-only | — | 0 |
 | **Total** | | **26** |
+
+Correction to re-audit B3: main defines `pub struct Signal` in `crabc-rs/src/process.rs`, so `process::Signal` is main's public API; the converged `pub use crate::signal::{Pid, Signal}` preserves it and stays (main's `compat/rustix/source/pause.rs` and example probes use it). Not a defect.

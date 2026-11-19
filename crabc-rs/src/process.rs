@@ -47,7 +47,7 @@ pub type RawUid = u32;
 pub type RawGid = u32;
 
 /// A non-zero Linux process or thread identifier.
-pub use crate::signal::Pid;
+pub use crate::signal::{Pid, Signal};
 #[cfg(target_arch = "aarch64")]
 use core::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
