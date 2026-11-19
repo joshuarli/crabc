@@ -2,25 +2,15 @@
 #include <unistd.h>
 
 static int phase;
-#if defined(__aarch64__)
-static int legacy_ran;
-#endif
 
 __attribute__((used, noinline)) static void legacy_init(void)
 {
     if (phase != 0) _Exit(41);
     phase = 1;
-#if defined(__aarch64__)
-    legacy_ran = 1;
-#endif
 }
 __attribute__((constructor)) static void constructor(void)
 {
-#if defined(__aarch64__)
-    if (phase != 0 && phase != 1) _Exit(42);
-#else
     if (phase != 1) _Exit(42);
-#endif
     phase = 2;
 }
 static void registered_exit(void)
@@ -32,12 +22,6 @@ __attribute__((destructor)) static void destructor(void)
 {
     if (phase != 4) _Exit(45);
     phase = 5;
-#if defined(__aarch64__)
-    if (!legacy_ran) {
-        static const char message[] = "loader-crt-lifecycle-ok\n";
-        if (write(1, message, sizeof message - 1) != sizeof message - 1) _Exit(47);
-    }
-#endif
 }
 __attribute__((used, noinline)) static void legacy_fini(void)
 {
