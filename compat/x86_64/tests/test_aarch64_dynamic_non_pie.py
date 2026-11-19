@@ -322,6 +322,12 @@ class Aarch64DynamicNonPieTest(unittest.TestCase):
             self.assertIn("duplicate application DSO", missing.stderr)
             receipt_path = Path(str(middle_so) + ".crabc-link.json")
             middle_receipt = json.loads(receipt_path.read_text())
+            receipt_path.write_text(json.dumps({**middle_receipt, "unreviewed": True}))
+            extra = subprocess.run([driver, "-pie", str(main), "--application-dso", str(middle_so),
+                                    "--transitive-application-dso", str(leaf_so), "-o", str(work / "extra")],
+                                   capture_output=True, text=True)
+            self.assertNotEqual(extra.returncode, 0)
+            self.assertIn("fields do not match", extra.stderr)
             middle_receipt["application_dsos"]["leaf.so"] = "0" * 64
             receipt_path.write_text(json.dumps(middle_receipt))
             tampered = subprocess.run([driver, "-pie", str(main), "--application-dso", str(middle_so),

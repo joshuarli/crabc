@@ -190,11 +190,8 @@ def execute(arguments):
             sidecar = Path(str(path) + ".crabc-link.json")
             shared.require_regular(sidecar, "application search path receipt")
             search = json.loads(sidecar.read_text())
-            if (search.get("mode") != "shared" or search.get("output_path") != str(path)
-                    or search.get("output_sha256") != shared.sha256_file(path)
-                    or search.get("manifest_sha256") != shared.sha256_file(root / "share/crabc/manifest.json")
-                    or search.get("application_search_kind") != "runpath"
-                    or runpaths != [search.get("application_runpath")]):
+            if (search.get("manifest_sha256") != shared.sha256_file(root / "share/crabc/manifest.json")
+                    or runpaths != [dynamic_shared.dso_receipt_runpath(search, path, architecture="aarch64")]):
                 raise shared.DriverError("application DSO has an undeclared runtime search path")
         if ("INTERP" in segments or "TEXTREL" in dynamic or "(RPATH)" in dynamic
                 or re.findall(r"\(SONAME\).*\[([^\]]+)\]", dynamic) != [path.name]
@@ -210,64 +207,21 @@ def execute(arguments):
     for path, needed in nodes.values():
         if not set(needed) <= set(nodes) | {"libc.so"}:
             raise shared.DriverError(f"undeclared transitive dependency of {path}")
-        if requirements[path.name] - provided:
+        if not transitive_inputs and requirements[path.name] - provided:
             raise shared.DriverError("application DSOs have unresolved runtime imports")
     if transitive_inputs:
-        names = set(nodes)
-        def reachable(roots, omit=None):
-            reached = set()
-            pending = list(roots)
-            while pending:
-                name = pending.pop()
-                if name != omit and name not in reached:
-                    reached.add(name)
-                    pending.extend(child for child in nodes[name][1] if child in nodes)
-            return reached
-        if reachable(path.name for path in dso_inputs) != names:
-            raise shared.DriverError("application DSO closure has an unreachable declared node")
-        for path, needed in nodes.values():
-            if len(needed) != len(set(needed)) or not set(needed) <= names | {"libc.so"}:
-                raise shared.DriverError("application DSO closure is incomplete or duplicated")
-            receipt = Path(str(path) + ".crabc-link.json")
-            shared.require_regular(receipt, "application DSO closure receipt")
-            record = json.loads(receipt.read_text())
-            if (record.get("format") != "crabc-aarch64-owned-dynamic-sysroot-v1"
-                    or record.get("mode") != "shared" or record.get("output_path") != str(path)
-                    or record.get("output_sha256") != shared.sha256_file(path)
-                    or record.get("manifest_sha256") != shared.sha256_file(root / "share/crabc/manifest.json")
-                    or record.get("binding") != "now" or record.get("campaign_complete") is not False
-                    or record.get("application_search_kind") != "runpath"
-                    or record.get("runtime_imports") != []
-                    or record.get("owned_runtime_inputs") != sorted("usr/lib/" + name for name in ("crti.o", "libc.so", "crtn.o", "libcrabc-builtins.a"))):
-                raise shared.DriverError("application DSO closure receipt does not bind its product")
-            observed_dynamic = subprocess.check_output(["/usr/bin/readelf", "-dW", str(path)], text=True)
-            if re.findall(r"\(RUNPATH\).*\[([^\]]*)\]", observed_dynamic) != [record.get("application_runpath")]:
-                raise shared.DriverError("application DSO closure receipt search path differs")
-            if requirements[path.name] - provided:
-                raise shared.DriverError("application DSO has unresolved runtime imports")
-            children = {name for name in needed if name in nodes}
-            expected = children if record.get("schema") == 2 else reachable(children, omit=path.name)
-            identities = {name: shared.sha256_file(nodes[name][0]) for name in expected}
-            if record.get("schema") not in (2, 3) or record.get("application_dsos") != identities:
-                raise shared.DriverError("application DSO closure receipt dependency identities differ")
-            command, trace, inputs = record.get("link_command", []), record.get("link_trace", []), record.get("input_receipts", [])
-            if not isinstance(command, list) or not isinstance(trace, list) or not isinstance(inputs, list):
-                raise shared.DriverError("invalid application DSO closure evidence")
-            trace = [line.removeprefix("trace: ") for line in trace]
-            forbidden = {str(node[0]) for name, node in nodes.items() if name not in expected and name != path.name}
-            if any(item in forbidden for item in [*command, *trace]):
-                raise shared.DriverError("application DSO closure receipt linked an undeclared graph node")
-            if record["schema"] == 3:
-                if record.get("application_dso_roles") != {name: "direct" if name in children else "transitive" for name in expected} or record.get("application_dso_needed") != {name: nodes[name][1] for name in expected}:
-                    raise shared.DriverError("application DSO closure receipt graph differs")
-            for name in expected:
-                child = str(nodes[name][0])
-                role = "direct-application-dso" if name in children else "transitive-application-dso"
-                entry = {"path": child, "sha256": identities[name]}
-                if record["schema"] == 3:
-                    entry.update(role=role, name=name)
-                if inputs.count(entry) != 1 or command.count(child) != (1 if name in children else 0) or trace.count(child) != (1 if name in children else 0):
-                    raise shared.DriverError("application DSO closure receipt does not bind its dependency")
+        graph = {}
+        for name, (path, needed) in nodes.items():
+            dynamic = subprocess.check_output(["/usr/bin/readelf", "-dW", str(path)], text=True)
+            runpaths = re.findall(r"\(RUNPATH\).*\[([^\]]*)\]", dynamic)
+            record, search, imports = dynamic_shared.application_dso_sidecar(root, path, runpaths, architecture="aarch64")
+            graph[name] = dynamic_shared.ApplicationDso(path, name, tuple(needed),
+                "direct" if path in dso_inputs else "transitive", record, search, imports)
+        dynamic_shared.validate_closure_graph(graph, [path.name for path in dso_inputs])
+        for node in graph.values():
+            dynamic_shared.validate_closure_sidecar(node, graph)
+        with tempfile.TemporaryDirectory(prefix="crabc-aarch64-dso-closure-") as temporary:
+            provided = dynamic_shared.validate_closure_runtime_imports(graph, Path(temporary), lib)
     output = (invocation.output or (sources[0].with_suffix(".o") if invocation.compile_only else Path("a.out"))).absolute()
     shared.validate_application_output(root, output)
     shared.validate_application_output_disjoint(output, (*sources, *objects_in, *dso_inputs, *transitive_inputs))

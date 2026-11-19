@@ -381,7 +381,7 @@ def run(command: list[str], temporary: Path) -> str:
     return result.stdout
 
 
-def dso_receipt_runpath(record: object, path: Path) -> str:
+def dso_receipt_runpath(record: object, path: Path, *, architecture: str = "x86_64") -> str:
     """Return an application DSO's RUNPATH from a closed declared receipt.
 
     Schema 1 retains its exact historical fields and an implicit SysV hash
@@ -396,7 +396,8 @@ def dso_receipt_runpath(record: object, path: Path) -> str:
         raise shared.DriverError(message)
 
     contract = receipt_contract.validate(
-        record, format=FORMAT, label="application DSO receipt", fail=fail,
+        record, format=FORMAT if architecture == "x86_64" else "crabc-aarch64-owned-dynamic-sysroot-v1",
+        label="application DSO receipt", fail=fail,
         allow_application_dso_closure=True,
     )
     if (record["mode"] != "shared" or record["output_sha256"] != shared.sha256_file(path)
@@ -464,7 +465,7 @@ def receipt_failure(message: str) -> None:
 
 
 def application_dso_sidecar(
-    root: Path, path: Path, runpaths: list[str]
+    root: Path, path: Path, runpaths: list[str], *, architecture: str = "x86_64"
 ) -> tuple[dict[str, object], receipt_contract.SearchContract, frozenset[str]]:
     """Load the normal owned receipt which authorizes one closure DSO.
 
@@ -483,7 +484,8 @@ def application_dso_sidecar(
     if not isinstance(record, dict):
         raise shared.DriverError("application DSO closure receipt is not an object")
     search = receipt_contract.validate(
-        record, format=FORMAT, label="application DSO closure receipt", fail=receipt_failure,
+        record, format=FORMAT if architecture == "x86_64" else "crabc-aarch64-owned-dynamic-sysroot-v1",
+        label="application DSO closure receipt", fail=receipt_failure,
         allow_application_dso_closure=True,
     )
     if (record["mode"] != "shared" or record["output_path"] != str(path.resolve())
