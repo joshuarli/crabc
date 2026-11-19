@@ -12,10 +12,10 @@
 #define _GNU_SOURCE 1
 #endif
 
-#if !defined(__linux__) || !defined(__x86_64__) || !defined(__LP64__) || \
+#if !defined(__linux__) || !(defined(__x86_64__) || defined(__aarch64__)) || !defined(__LP64__) || \
     !defined(__BYTE_ORDER__) || !defined(__ORDER_LITTLE_ENDIAN__) || \
     __BYTE_ORDER__ != __ORDER_LITTLE_ENDIAN__
-#error "this consumer requires native Linux/x86-64 little-endian LP64"
+#error "this consumer requires native Linux x86-64 or AArch64 little-endian LP64"
 #endif
 
 #include <errno.h>
@@ -29,8 +29,13 @@ _Static_assert(sizeof(long) == 8 && sizeof(void *) == 8,
     "x86 LP64 scalar widths");
 _Static_assert(sizeof(clockid_t) == 4,
     "musl x86-64 clockid_t ABI");
-_Static_assert(SYS_gettid == 186,
-    "x86 pthread CPU-clock consumer uses gettid=186");
+_Static_assert(SYS_gettid ==
+#if defined(__aarch64__)
+    178,
+#else
+    186,
+#endif
+    "native pthread CPU-clock consumer uses the gettid syscall");
 _Static_assert(__builtin_types_compatible_p(__typeof__(&pthread_getcpuclockid),
     int (*)(pthread_t, clockid_t *)), "pthread_getcpuclockid declaration");
 
@@ -63,12 +68,28 @@ static long raw_syscall0(long number)
 {
     long result;
 
+#if defined(__aarch64__)
+    register long x8 __asm__("x8") = number;
+    register long x0 __asm__("x0");
+    __asm__ volatile("svc 0" : "=r"(x0) : "r"(x8) : "memory");
+    result = x0;
+#else
     __asm__ volatile(
         "syscall"
         : "=a"(result)
         : "a"(number)
         : "rcx", "r11", "memory");
+#endif
     return result;
+}
+
+static void cpu_relax(void)
+{
+#if defined(__aarch64__)
+    __asm__ volatile("yield" ::: "memory");
+#else
+    __asm__ volatile("pause" ::: "memory");
+#endif
 }
 
 /* Linux's per-thread CPU clock is (~tid << 3) | 6.  Retain the unsigned
@@ -114,7 +135,7 @@ static int wait_until_set(const volatile int *value)
     for (spins = 0; spins != 100000000UL; ++spins) {
         if (__atomic_load_n(value, __ATOMIC_ACQUIRE) != 0)
             return 0;
-        __asm__ volatile("pause" ::: "memory");
+        cpu_relax();
     }
     return 1;
 }
@@ -131,13 +152,13 @@ static void *holding_worker(void *opaque)
     state->self_status = check_cpu_clock(pthread_self(), state->task_id, E2BIG);
     __atomic_store_n(&state->ready, 1, __ATOMIC_RELEASE);
     while (!__atomic_load_n(&group->start_cross, __ATOMIC_ACQUIRE))
-        __asm__ volatile("pause" ::: "memory");
+        cpu_relax();
     if (!__atomic_load_n(&group->abort_cross, __ATOMIC_ACQUIRE))
         state->peer_status = check_cpu_clock(group->threads[peer],
             group->workers[peer].task_id, EDOM);
     __atomic_store_n(&state->cross_done, 1, __ATOMIC_RELEASE);
     while (!__atomic_load_n(&group->release, __ATOMIC_ACQUIRE))
-        __asm__ volatile("pause" ::: "memory");
+        cpu_relax();
     return state;
 }
 
