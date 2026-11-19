@@ -14,7 +14,10 @@ import struct
 import subprocess
 import sys
 
+from native_arch import native_arch
+
 ROOT = Path(__file__).resolve().parents[2]
+ARCH = native_arch()['arch'] if sys.platform == 'linux' else 'x86_64'
 ORACLE = Path('/opt/musl-1.2.6/lib/libc.so')
 CC = '/usr/local/bin/crabc-x86_64-musl-gcc'
 INTERPRETER = '/lib/ld-crabc-x86_64.so.1'
@@ -65,7 +68,8 @@ class Elf:
         self.data = data
         require(self.data[:7] == b'\x7fELF\x02\x01\x01', 'expected ELF64 little endian')
         self.elf_type = self.unpack('<H', 16)[0]
-        require(self.unpack('<H', 18)[0] == 62, 'expected native x86-64 ELF')
+        require(self.unpack('<H', 18)[0] == {'x86_64': 62, 'aarch64': 183}[ARCH],
+                f'expected native {ARCH} ELF')
         self.entry = self.unpack('<Q', 24)[0]
         phoff = self.unpack('<Q', 32)[0]
         phsize, phcount = self.unpack('<HH', 54)

@@ -70,6 +70,16 @@ class ElfMetadataTests(unittest.TestCase):
             struct.pack_into('<H', self.image, 800 + 2 * index, 1)
         self.path.write_bytes(self.image)
 
+    def test_native_aarch64_machine_is_checked(self):
+        struct.pack_into('<H', self.image, 18, 183)
+        self.path.write_bytes(self.image)
+        with mock.patch.object(evidence, 'ARCH', 'aarch64'):
+            evidence.Elf(self.path)
+            struct.pack_into('<H', self.image, 18, 62)
+            self.path.write_bytes(self.image)
+            with self.assertRaises(evidence.EvidenceError):
+                evidence.Elf(self.path)
+
     def test_exact_pointer_object_and_weak_defaults_are_read_from_elf(self):
         rows = evidence.public_metadata(self.path)
         self.assertEqual(rows['_dl_debug_addr']['size'], 8)
