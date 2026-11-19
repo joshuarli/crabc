@@ -20,7 +20,7 @@ import owned_dynamic_receipt as receipt_contract
 RUNNERS = {
     "io-cancellation": (
         ROOT / "compat/x86_64/run_owned_dynamic_io_cancellation.sh",
-        'python3 -B - "$ROOT" "$installed" "$mode" "$candidate" "$interpreter" <<\'PY\'\n',
+        'python3 -B - "$ROOT" "$installed" "$mode" "$candidate" "$interpreter" "$object" "$arch" <<\'PY\'\n',
     ),
     "process-control": (
         ROOT / "compat/x86_64/run_owned_process_control.sh",
@@ -33,11 +33,11 @@ RUNNERS = {
     "syslog": (
         ROOT / "compat/x86_64/run_owned_syslog.sh",
         'python3 -B - "$ROOT" "$family" "$mode" "$candidate" "$receipt" \\\n'
-        '        "$candidate.provider-symbols" "$provider" <<\'PY\'\n',
+        '        "$candidate.provider-symbols" "$provider" "$arch" <<\'PY\'\n',
     ),
     "error-reporting": (
         ROOT / "compat/x86_64/run_owned_error_reporting.sh",
-        'python3 -B - "$ROOT" "$family" "$mode" "$candidate" "$receipt" "$candidate.provider-symbols" <<\'PY\'\n',
+        'python3 -B - "$ROOT" "$family" "$mode" "$candidate" "$receipt" "$candidate.provider-symbols" "$arch" <<\'PY\'\n',
     ),
 }
 
@@ -174,11 +174,11 @@ class OwnedDynamicReceiptConsumerTests(unittest.TestCase):
         runner, anchor = RUNNERS[label]
         self.receipt_path.write_text(json.dumps(receipt), encoding="utf-8")
         arguments = {
-            "io-cancellation": [ROOT, self.product, "pie", self.candidate, INTERPRETER],
+            "io-cancellation": [ROOT, self.product, "pie", self.candidate, INTERPRETER, self.object, "x86_64"],
             "process-control": [ROOT, self.product, self.candidate, "pie", self.object, self.receipt_path],
             "driver-source-inputs": [ROOT, self.receipt_path, self.candidate],
-            "syslog": [ROOT, "dynamic", "pie", self.candidate, self.receipt_path, self.provider, self.provider],
-            "error-reporting": [ROOT, "dynamic", "pie", self.candidate, self.receipt_path, self.provider],
+            "syslog": [ROOT, "dynamic", "pie", self.candidate, self.receipt_path, self.provider, self.provider, "x86_64"],
+            "error-reporting": [ROOT, "dynamic", "pie", self.candidate, self.receipt_path, self.provider, "x86_64"],
         }[label]
         return subprocess.run(
             ["python3", "-B", "-c", self._block(runner, anchor), *(str(item) for item in arguments)],
@@ -190,6 +190,36 @@ class OwnedDynamicReceiptConsumerTests(unittest.TestCase):
             with self.subTest(label=label):
                 result = self._run(label, self._receipt(2))
                 self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_aarch64_inline_audits_validate_receipts_and_machine(self) -> None:
+        record = {**self._receipt(2), "format": "crabc-aarch64-owned-dynamic-sysroot-v1"}
+        self.receipt_path.write_text(json.dumps(record), encoding="utf-8")
+        self.candidate.with_suffix(".header").write_text("Machine: AArch64\nType: DYN\n")
+        self.candidate.with_suffix(".segments").write_text(
+            "Requesting program interpreter: /lib/ld-crabc-aarch64.so.1]\n"
+        )
+        for label in ("syslog", "error-reporting"):
+            runner, anchor = RUNNERS[label]
+            args = [ROOT, "dynamic", "pie", self.candidate, self.receipt_path, self.provider]
+            if label == "syslog":
+                args.append(self.provider)
+            args.append("aarch64")
+            command = [sys.executable, "-B", "-c", self._block(runner, anchor), *map(str, args)]
+            with self.subTest(label=label):
+                result = subprocess.run(command, cwd=ROOT, capture_output=True, text=True)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.receipt_path.write_text(json.dumps({**record, "application_hash_style": "gnu"}))
+                result = subprocess.run(command, cwd=ROOT, capture_output=True, text=True)
+                self.assertNotEqual(result.returncode, 0)
+                self.receipt_path.write_text(json.dumps(record))
+        runner, anchor = RUNNERS["io-cancellation"]
+        result = subprocess.run(
+            [sys.executable, "-B", "-c", self._block(runner, anchor), str(ROOT),
+             str(self.product), "pie", str(self.candidate), "/lib/ld-crabc-aarch64.so.1",
+             str(self.object), "aarch64"], cwd=ROOT, capture_output=True, text=True,
+        )
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("ProductEvidenceError", result.stderr)
 
     def test_legacy_schema_one_receipt_remains_accepted_by_the_common_contract(self) -> None:
         for label in RUNNERS:
