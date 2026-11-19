@@ -366,7 +366,7 @@ entries are closed by the commit that fixes them.
 | # | Status | Evidence |
 |---|---|---|
 | 1 | partly fixed | `owned_dynamic_qualification.py:231-278` now reads state and provenance and runs every check on aarch64. The aarch64 combined path still goes through `combined.validate`, which has no CRT or loader provenance check (`build_x86_64_owned_combined_sysroot.py:373-403`). The x86 combined path runs `validate_combined`, which checks both (`crabc_cc_owned_dynamic.py:339-341`). |
-| 2 | partly fixed | (b) Final ELF inspection and sidecars are added at `crabc_cc_aarch64_dynamic.py:374-388`, but with `provided_symbols=None` at `:382` (x86 passes the provided set, `:975`). (d) Fixed: the exact `needed` check is `owned_dynamic_elf.py:353`. (a) Still open: `:26` only loads the manifest; there is no `validate_installation`. (c) Still open: the DT_NEEDED and unresolved-import checks exist only inside `if transitive_inputs:` (`:197-246`). (e) Still open: `-static`, `-static-pie` and `--static-et-exec` fall through to `common` (`:113-114`); x86 rejects them at `:776-777`. (f) Still open: `:116` defaults the mode to PIE. |
+| 2 | closed (20cedf91a) | The ARM driver validates its installed product through the shared reader, requires an explicit dynamic mode, rejects static modes, checks direct DSO closure and imports, and supplies the provider set to final ELF inspection. |
 | 3 | fixed | `crabc_cc_owned_dynamic.py:223-231` (aarch64 required roster includes loader provenance and the receipt/ELF modules), `:262` (CRT provenance), `:275-276` (`validate_loader_provenance(architecture="aarch64")`). |
 | 4 | closed (d8ffc3bd5) | The shared product reader validates the full product and compares producer tools against the architecture-specific source image manifest. |
 | 5 | still open | `owned_posix_static_products.py:184` hardcodes `"accepted-c"`; `:205-208` skips the backend agreement check and substitutes a hash of `crt.commands.json` for `producer_tools`. |
@@ -447,7 +447,7 @@ The facade correction leaves out-of-scope callers `crabc-rs/examples/ppoll_direc
    - Both architectures record the same check labels (`:348, :376`), so the records cannot be told apart.
 8. **Closed (d8ffc3bd5): producer-tool identities are checked against the architecture-specific source pin.**
    - The shared product and loader readers use the same source-pinned records.
-9. **`crabc_cc_aarch64_dynamic.py:382`** (`cae54fa4b`) passes `provided_symbols=None`, so `require_expected` (`owned_dynamic_elf.py:378-381`) skips the unresolved-import check. x86 passes the provided set.
+9. **Closed (20cedf91a).** Final ELF inspection receives the shared dynamic-symbol provider set on ARM.
 10. **`owned_posix_native_observations.py:299-301, 381-392`**.
     - x86 replays the retained sidecars with `validate_record`.
     - aarch64 inspects the live ELF and drops the sidecars from the exact file roster, although the driver now writes them.
