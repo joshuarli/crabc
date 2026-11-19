@@ -1254,11 +1254,17 @@ pub unsafe extern "C" fn x86_64_initial_graph_run(sp: usize, ldso_base: usize) -
 }
 
 
+#[cfg(target_arch = "aarch64")]
+#[path = "aarch64_auxv.rs"]
+mod aarch64_auxv;
+
 unsafe fn auxv_main(sp: usize) -> Option<(*const u8, usize, u64)> {
     let argc = *(sp as *const usize);
     let mut cursor = (sp + 8 + (argc + 1) * 8) as *const usize;
     while !(*cursor).eq(&0) { cursor = cursor.add(1); }
     cursor = cursor.add(1);
+    #[cfg(target_arch = "aarch64")]
+    if !unsafe { aarch64_auxv::mask(cursor as *mut usize, 4096) } { return None; }
     let mut phdr = 0usize;
     let mut phnum = 0usize;
     let mut entry = 0u64;
@@ -1272,6 +1278,17 @@ unsafe fn auxv_main(sp: usize) -> Option<(*const u8, usize, u64)> {
         cursor = cursor.add(2);
     }
     if phdr == 0 || phnum == 0 || phnum > MAX_PHDRS || entry == 0 { None } else { Some((phdr as *const u8, phnum, entry)) }
+}
+
+#[cfg(all(test, target_arch = "aarch64"))]
+#[test]
+fn startup_masks_unsupported_aarch64_hwcap() {
+    let mut stack = [0usize, 0, 0, 3, 1, 5, 1, 9, 1, 16, usize::MAX,
+        26, usize::MAX, 29, usize::MAX, 30, usize::MAX, 0, 0];
+    assert!(unsafe { auxv_main(stack.as_mut_ptr() as usize) }.is_some());
+    assert_eq!(stack[10], (1usize << 42) - 1);
+    assert_eq!(stack[12], !((0xffusize << 23) | (0x3fusize << 37) | (0x3fusize << 57)));
+    assert_eq!(&stack[13..17], &[1, 0, 1, 0]);
 }
 
 unsafe fn main_load_bias(phdr: *const u8, phnum: usize) -> Option<u64> {
