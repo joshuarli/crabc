@@ -368,10 +368,10 @@ entries are closed by the commit that fixes them.
 | 1 | closed (20cedf91a, a10874975) | ARM combined qualification uses the shared installed-product reader, including CRT and loader provenance. The combined producer currently stops in the static suite on the two defects assigned to `a4-binary128` and `a4-robust-mutex`. |
 | 2 | closed (20cedf91a) | The ARM driver validates its installed product through the shared reader, requires an explicit dynamic mode, rejects static modes, checks direct DSO closure and imports, and supplies the provider set to final ELF inspection. |
 | 3 | fixed | `crabc_cc_owned_dynamic.py:223-231` (aarch64 required roster includes loader provenance and the receipt/ELF modules), `:262` (CRT provenance), `:275-276` (`validate_loader_provenance(architecture="aarch64")`). |
-| 4 | closed (d8ffc3bd5) | The shared product reader validates the full product and compares producer tools against the architecture-specific source image manifest. |
+| 4 | closed (d8ffc3bd5, 6df81ff3e) | The shared product reader validates the full product and compares producer and retained link tools against the architecture-specific source image manifest. |
 | 5 | closed (373b8589b) | Static preparation reads each product’s allocator backend and producer tools from its manifest and checks backend agreement. |
 | 6 | closed (a04b647dd) | Both native static drivers use the same installed-payload, required-path and CRT-provenance checks. The ARM builder suite passes all 47 tests. |
-| 8 | closed (d8ffc3bd5) | The shared reader binds compiler identities to the architecture-specific source image manifest. |
+| 8 | closed (d8ffc3bd5, 6df81ff3e) | The shared reader binds compiler and linker identities to the architecture-specific source image manifest. |
 | 9 | closed (5217695e8) | The ARM expected link command requires the Cortex-A53 erratum option independently of the receipt; the pinned Rust target specification supplies it as a `gnu-cc` pre-link argument. |
 | 10 | closed (58f2ddd16) | Incomplete development runs return failure on both architectures. |
 | 11 | kept by owner decision (not a defect) | Audit file `:16-19`; code unchanged at `qualification_candidate.py:559-561`. |
@@ -441,9 +441,9 @@ The facade correction leaves out-of-scope callers `crabc-rs/examples/ppoll_direc
 
 ### Qualifying-path
 
-7. **Partly fixed (7721f05e0, e502e1956, dae8e2693, cafd0d61a, cdb534d17).** ARM qualification runs its native CRT builder and installed-driver suites. The driver now shares inode-aware early receipt reservation and native DSO name validation; native tests cover existing and replaced receipts and reserved names. The x86 suite has 59 cases and still needs equivalent ARM coverage for its remaining behaviors.
-8. **Closed (d8ffc3bd5): producer-tool identities are checked against the architecture-specific source pin.**
-   - The shared product and loader readers use the same source-pinned records.
+7. **Closed (7721f05e0, e1a82791f, 20fb45ee7, 14e998799, 8536d915f, d220afec5, 842970115).** ARM uses the shared argument parser, DSO and receipt readers, tool runner, reservations and final ELF inspection. Qualification runs 44 shared x86 cases and native equivalents for the 15 x86-ELF-specific cases, plus native CRT tests; all passed, including a real combined-product build and all dynamic link modes. Distinct check labels retain the two suites.
+8. **Closed (d8ffc3bd5, 6df81ff3e): producer-tool identities are checked against the architecture-specific source pin.**
+   - Shared product, link, fork, timer, filesystem, syslog, cancellation, signal, wordexp and libc-test evidence checks bind their ARM tool identities to the source manifest.
 9. **Closed (20cedf91a).** Final ELF inspection receives the shared dynamic-symbol provider set on ARM.
 10. **Closed (8b711e8ba).** ARM replays the retained sidecars with the shared reader and includes them in the exact file roster.
 11. **Closed (846c71e67).** All four component receipts use the same materialization state and source checks as x86.
