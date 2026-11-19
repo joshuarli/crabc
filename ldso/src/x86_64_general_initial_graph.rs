@@ -535,7 +535,7 @@ unsafe fn rollback_initial_tls_state(
 #[cfg(feature = "x86_64-owned-dynamic-runtime")]
 const CANONICAL_LIBC_ALIAS_SUFFIXES: [&[u8]; 2] = [
     b"/usr/lib/libc.so",
-    b"/lib/libc.musl-x86_64.so.1",
+    if cfg!(target_arch = "aarch64") { b"/lib/libc.musl-aarch64.so.1" } else { b"/lib/libc.musl-x86_64.so.1" },
 ];
 
 #[cfg(feature = "x86_64-owned-dynamic-runtime")]
@@ -890,10 +890,9 @@ unsafe fn canonical_self_name(identity: ObjectIdentity) -> Option<super::x86_64_
 /// reserved name elsewhere is a second identity and fails closed.
 #[cfg(feature = "x86_64-owned-dynamic-runtime")]
 pub(crate) unsafe fn canonical_libc_path(path: &[u8]) -> bool {
-    const SUFFIXES: [&[u8]; 2] = [b"/usr/lib/libc.so", b"/lib/libc.musl-x86_64.so.1"];
     let prefix = unsafe { x86_64_library_search::installation_prefix() };
     for root in [b"".as_slice(), prefix] {
-        for suffix in SUFFIXES {
+        for suffix in CANONICAL_LIBC_ALIAS_SUFFIXES {
             if path.len() == root.len() + suffix.len()
                 && path.starts_with(root) && path.ends_with(suffix)
             {
@@ -1082,6 +1081,13 @@ unsafe fn unmap_object(object: &Object) {
 #[cfg(all(test, feature = "x86_64-owned-dynamic-runtime"))]
 mod canonical_libc_tests {
     use super::*;
+
+    #[test]
+    #[cfg(target_arch = "aarch64")]
+    fn native_libc_alias_is_canonical() {
+        assert!(unsafe { canonical_libc_path(b"/lib/libc.musl-aarch64.so.1") });
+        assert!(!unsafe { canonical_libc_path(b"/other/libc.musl-aarch64.so.1") });
+    }
 
     const MAIN: ObjectIdentity = ObjectIdentity { device: 1, inode: 1 };
     const LIBC: ObjectIdentity = ObjectIdentity { device: 1, inode: 2 };

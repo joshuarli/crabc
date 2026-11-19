@@ -941,10 +941,10 @@ fn runtime_pc32_relocation_commits_four_bytes_only_after_all_new_objects_preflig
     first.rela(0x1001, R_X86_64_PC32, 1, -4);
     late.rela(0x1000 + IMAGE_DATA_BYTES as u64 - 2, R_X86_64_PC32, 0, 0);
     let objects = [main.object(false), first.object(true), late.object(true)];
-    assert!(unsafe { deferred::relocate_new(&objects, &[0, 1, 2], 1, 0, false) }.is_none());
+    assert!(unsafe { deferred::relocate_new(&objects, &[0, 1, 2], 1, 0, false, #[cfg(all(target_arch = "aarch64", crabc_general_initial_tls_materialization_v1))] &mut []) }.is_none());
     assert_eq!(first.data[0], 0xaabbccdd11223344);
 
-    assert!(unsafe { deferred::relocate_new(&objects[..2], &[0, 1], 1, 0, false) }.is_some());
+    assert!(unsafe { deferred::relocate_new(&objects[..2], &[0, 1], 1, 0, false, #[cfg(all(target_arch = "aarch64", crabc_general_initial_tls_materialization_v1))] &mut []) }.is_some());
     let displacement = (main.object(false).base + 0x1000).wrapping_sub(4)
         .wrapping_sub(first.object(true).base + 0x1001) as u32;
     let mut expected = 0xaabbccdd11223344u64.to_le_bytes();
