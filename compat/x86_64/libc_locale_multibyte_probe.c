@@ -21,9 +21,14 @@
 #endif
 
 _Static_assert(sizeof(wchar_t) == 4, "x86 wchar_t width");
+#if defined(__x86_64__)
 _Static_assert((wchar_t)-1 < 0, "x86 wchar_t signedness");
 _Static_assert(CHAR_MAX == 127 && CHAR_MIN == -128,
     "x86 plain char is signed");
+#elif defined(__aarch64__)
+_Static_assert((wchar_t)-1 > 0, "AArch64 wchar_t signedness");
+_Static_assert(CHAR_MAX == 255 && CHAR_MIN == 0, "AArch64 plain char is unsigned");
+#endif
 _Static_assert(sizeof(wint_t) == 4, "x86 wint_t width");
 _Static_assert(sizeof(mbstate_t) == 8, "x86 mbstate_t size");
 _Static_assert(_Alignof(mbstate_t) == 4, "x86 mbstate_t alignment");

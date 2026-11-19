@@ -36,6 +36,7 @@ static int local_streq(const char *left, const char *right)
 
 static long raw_write(int descriptor, const void *buffer, size_t length)
 {
+#if defined(__x86_64__)
     long result;
     __asm__ volatile(
         "syscall"
@@ -43,6 +44,14 @@ static long raw_write(int descriptor, const void *buffer, size_t length)
         : "a"(1L), "D"((long)descriptor), "S"((long)buffer), "d"((long)length)
         : "rcx", "r11", "memory");
     return result;
+#elif defined(__aarch64__)
+    register long result __asm__("x0") = descriptor;
+    register const void *arg1 __asm__("x1") = buffer;
+    register size_t arg2 __asm__("x2") = length;
+    register long number __asm__("x8") = 64;
+    __asm__ volatile("svc 0" : "+r"(result) : "r"(arg1), "r"(arg2), "r"(number) : "memory", "cc");
+    return result;
+#endif
 }
 
 static int write_all(const char *buffer, size_t length)
