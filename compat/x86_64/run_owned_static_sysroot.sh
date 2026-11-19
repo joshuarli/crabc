@@ -160,7 +160,7 @@ from pathlib import Path
 
 manifest = Path(sys.argv[1])
 record = json.loads(manifest.read_text(encoding="utf-8"))
-if record.get("format") == "crabc-x86-64-owned-sysroot-v1":
+if record.get("format") in ("crabc-x86-64-owned-sysroot-v1", "crabc-aarch64-owned-sysroot-v1"):
     manifest = manifest.parent / "static" / "manifest.json"
 print(manifest)
 PY
