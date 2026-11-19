@@ -141,26 +141,6 @@ base_archive_globals="$work_dir/base-archive-globals"
 base_archive_readelf="$work_dir/base-archive-readelf"
 feature_archive_readelf="$work_dir/feature-archive-readelf"
 
-record_argv() {
-	local path="$1"
-	shift
-	python3 -B - "$path" "$@" <<'PY'
-import json
-from pathlib import Path
-import sys
-
-Path(sys.argv[1]).write_text(json.dumps(sys.argv[2:]) + "\n", encoding="utf-8")
-PY
-}
-
-run_recorded() {
-	local stdout_path="$1" stderr_path="$2" status_path="$3" label="$4" status=0
-	shift 4
-	"$@" >"$stdout_path" 2>"$stderr_path" || status=$?
-	printf '%s\n' "$status" >"$status_path"
-	[ "$status" -eq 0 ] || fail "$label exited with ${status}"
-}
-
 cleanup_successful_default_work() {
 	if [ -z "$retained_output" ]; then
 		if ! rm -rf -- "$work_dir"; then
@@ -181,10 +161,10 @@ done
 reference_link=("$ORACLE_CC" -std=c11 -D_GNU_SOURCE -I"$ROOT_DIR/include" -fno-builtin
 	-frounding-math -fno-stack-protector
 	compat/x86_64/libc_math_long_double_completion_probe.c -lm -o "$reference")
-record_argv "$work_dir/oracle-link.argv.json" "${reference_link[@]}"
+record_math_argv "$work_dir/oracle-link.argv.json" "${reference_link[@]}"
 "${reference_link[@]}"
-record_argv "$work_dir/oracle-run.argv.json" "$reference"
-run_recorded "$reference_output" "$work_dir/reference.stderr" "$work_dir/reference.status" \
+record_math_argv "$work_dir/oracle-run.argv.json" "$reference"
+run_math_recorded "$reference_output" "$work_dir/reference.stderr" "$work_dir/reference.status" \
 	"pinned-musl binary80 fixture" "$reference"
 python3 "$ROOT_DIR/compat/x86_64/validate_libc_math_long_double_completion.py" "$reference_output" ||
 	fail "pinned-musl record contract failed"
@@ -243,7 +223,7 @@ candidate_link=("$ORACLE_CC" -fuse-ld=bfd -std=c11 -D_GNU_SOURCE -DCRABC_MATH_LO
 	-Wl,--no-undefined -Wl,--gc-sections \
 	compat/x86_64/libc_math_long_double_completion_probe.c \
 	compat/x86_64/libc_math_long_double_completion_start.S "$archive" -o "$candidate")
-record_argv "$work_dir/consumer-link.argv.json" "${candidate_link[@]}"
+record_math_argv "$work_dir/consumer-link.argv.json" "${candidate_link[@]}"
 "${candidate_link[@]}"
 readelf --symbols --wide "$candidate" >"$candidate_symbols"
 awk '$4 == "FUNC" && ($5 == "GLOBAL" || $5 == "WEAK") { print $8 }' \
@@ -298,8 +278,8 @@ for instruction in fldt fstpt fsubp f2xm1 fscale; do
 		fail "candidate lacks required x87 binary80 ${instruction} path"
 done
 
-record_argv "$work_dir/consumer-run.argv.json" "$candidate"
-run_recorded "$candidate_output" "$work_dir/candidate.stderr" "$work_dir/candidate.status" \
+record_math_argv "$work_dir/consumer-run.argv.json" "$candidate"
+run_math_recorded "$candidate_output" "$work_dir/candidate.stderr" "$work_dir/candidate.status" \
 	"freestanding binary80 fixture" "$candidate"
 python3 "$ROOT_DIR/compat/x86_64/validate_libc_math_long_double_completion.py" "$candidate_output" ||
 	fail "candidate record contract failed"
@@ -318,7 +298,7 @@ fi
 	compat/x86_64/libc_math_elementary_fenv_sensitive_aggregate_probe.c \
 	compat/x86_64/libc_math_elementary_fenv_sensitive_aggregate_start.S \
 	"$archive" -o "$aggregate_candidate")
-record_argv "$work_dir/aggregate-link.argv.json" "${aggregate_link[@]}"
+record_math_argv "$work_dir/aggregate-link.argv.json" "${aggregate_link[@]}"
 "${aggregate_link[@]}"
 readelf --symbols --wide "$aggregate_candidate" >"$aggregate_symbols"
 readelf --program-headers --wide "$aggregate_candidate" >"$aggregate_headers"
@@ -370,8 +350,8 @@ if grep -Eq 'crabc_core|mimalloc|float_parse|math_compat|libm\.so|libm-' \
 	"$aggregate_symbols" "$aggregate_disassembly"; then
 	fail "aggregate candidate selects an ambient math/runtime dependency"
 fi
-record_argv "$work_dir/aggregate-run.argv.json" "$aggregate_candidate"
-run_recorded "$work_dir/aggregate.stdout" "$work_dir/aggregate.stderr" "$work_dir/aggregate.status" \
+record_math_argv "$work_dir/aggregate-run.argv.json" "$aggregate_candidate"
+run_math_recorded "$work_dir/aggregate.stdout" "$work_dir/aggregate.stderr" "$work_dir/aggregate.status" \
 	"freestanding all-provider aggregate fixture" "$aggregate_candidate"
 
 printf 'x86 binary80 fdiml/exp10l/pow10l: PASS (%s records)\n' \

@@ -104,3 +104,24 @@ collect_math_global_bindings() {
 		sort -u >"$output_path"
 }
 
+
+record_math_argv() {
+	local path="$1"
+	shift
+	python3 -B - "$path" "$@" <<'PY'
+import json
+from pathlib import Path
+import sys
+
+Path(sys.argv[1]).write_text(json.dumps(sys.argv[2:]) + "\n", encoding="utf-8")
+PY
+}
+
+run_math_recorded() {
+	local stdout_path="$1" stderr_path="$2" status_path="$3" label="$4" status=0
+	shift 4
+	"$@" >"$stdout_path" 2>"$stderr_path" || status=$?
+	printf '%s\n' "$status" >"$status_path"
+	[ "$status" -eq 0 ] || fail "$label exited with ${status}"
+}
+

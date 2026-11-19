@@ -33,6 +33,11 @@ python3 -B scripts/build_x86_64_owned_sysroot.py --architecture aarch64 --output
 compiler_include="$($cc -print-file-name=include)"
 probe=compat/x86_64/libc_math_long_double_completion_probe.c
 header_probe=compat/x86_64/math_long_double_completion_header_abi_probe.cpp
+"$cc" -std=c11 -D_GNU_SOURCE -nostdinc -isystem "$compiler_include" \
+    -I"$work/product/usr/include" -E -H "$probe" > /dev/null 2> "$work/header.trace"
+for header in fenv.h float.h math.h stddef.h stdint.h features.h bits/alltypes.h; do
+    grep -Fq "$work/product/usr/include/$header" "$work/header.trace" || fail "fixture did not use installed $header"
+done
 "$cc" -std=c++17 -x c++ -D_GNU_SOURCE -fno-builtin -c "$header_probe" -o "$work/oracle-header.o"
 "$cc" -std=c++17 -x c++ -D_GNU_SOURCE -fno-builtin -nostdinc -isystem "$compiler_include" \
     -I"$work/product/usr/include" -c "$header_probe" -o "$work/candidate-header.o"
@@ -42,8 +47,10 @@ for object in "$work/oracle-header.o" "$work/candidate-header.o"; do
         grep -Eq "[[:space:]]${symbol}$" "$work/header-symbols" || fail "missing C++ declaration for $symbol"
     done
 done
-"$cc" -std=c11 -D_GNU_SOURCE -fno-builtin -frounding-math -Iinclude -static -no-pie \
-    "$probe" -lm -o "$work/oracle"
+oracle_link=("$cc" -std=c11 -D_GNU_SOURCE -fno-builtin -frounding-math -Iinclude -static -no-pie
+    "$probe" -lm -o "$work/oracle")
+record_math_argv "$work/oracle-link.argv.json" "${oracle_link[@]}"
+"${oracle_link[@]}"
 "$cc" -std=c11 -D_GNU_SOURCE -fno-builtin -frounding-math -nostdinc -isystem "$compiler_include" \
     -I"$work/product/usr/include" -c "$probe" -o "$work/candidate.o"
 "$work/product/bin/crabc-cc" "$work/candidate.o" -o "$work/candidate"
@@ -82,9 +89,11 @@ grep -Eq '[[:space:]]W[[:space:]]pow10l$' "$work/archive-symbols" || fail 'archi
     -nostdinc -isystem "$compiler_include" -I"$work/product/usr/include" \
     -c "$probe" -o "$work/freestanding.o"
 "$cc" -c compat/x86_64/libc_math_long_double_completion_aarch64_start.S -o "$work/start.o"
-"$cc" -fuse-ld=bfd -nostdlib -static -no-pie -Wl,-e,_start,--no-undefined,--gc-sections,--trace \
+freestanding_link=("$cc" -fuse-ld=bfd -nostdlib -static -no-pie -Wl,-e,_start,--no-undefined,--gc-sections,--trace
     "$work/start.o" "$work/freestanding.o" -Wl,--start-group "$archive" \
-    "$work/product/usr/lib/libcrabc-builtins.a" -Wl,--end-group -o "$work/freestanding" > "$work/freestanding.trace"
+    "$work/product/usr/lib/libcrabc-builtins.a" -Wl,--end-group -o "$work/freestanding")
+record_math_argv "$work/freestanding-link.argv.json" "${freestanding_link[@]}"
+"${freestanding_link[@]}" > "$work/freestanding.trace"
 readelf -sW "$work/freestanding" > "$work/freestanding.symbols"
 readelf -lW "$work/freestanding" > "$work/freestanding.program"
 readelf -dW "$work/freestanding" > "$work/freestanding.dynamic"
@@ -131,9 +140,11 @@ aggregate=CRABC_MATH_ELEMENTARY_FENV_SENSITIVE_AGGREGATE_FREESTANDING
     -fno-stack-protector -fno-pie -nostdinc -isystem "$compiler_include" -I"$work/product/usr/include" \
     -c compat/x86_64/libc_math_elementary_fenv_sensitive_aggregate_probe.c -o "$work/aggregate.o"
 "$cc" -D"$aggregate" -c compat/x86_64/libc_math_long_double_completion_aarch64_start.S -o "$work/aggregate-start.o"
-"$cc" -fuse-ld=bfd -nostdlib -static -no-pie -Wl,-e,_start,--no-undefined,--gc-sections,--trace \
+aggregate_link=("$cc" -fuse-ld=bfd -nostdlib -static -no-pie -Wl,-e,_start,--no-undefined,--gc-sections,--trace
     "$work/aggregate-start.o" "$work/aggregate.o" -Wl,--start-group "$archive" \
-    "$work/product/usr/lib/libcrabc-builtins.a" -Wl,--end-group -o "$work/aggregate" > "$work/aggregate.trace"
+    "$work/product/usr/lib/libcrabc-builtins.a" -Wl,--end-group -o "$work/aggregate")
+record_math_argv "$work/aggregate-link.argv.json" "${aggregate_link[@]}"
+"${aggregate_link[@]}" > "$work/aggregate.trace"
 readelf -sW "$work/aggregate" > "$work/aggregate.symbols"
 readelf -lW "$work/aggregate" > "$work/aggregate.program"
 readelf -dW "$work/aggregate" > "$work/aggregate.dynamic"
@@ -178,10 +189,10 @@ if awk '$7 == "UND" && NF >= 8 && !($5 == "LOCAL" && ($8 == "_PROCEDURE_LINKAGE_
     grep -Eq 'libgcc|compiler-rt|libm\.so|/[Sr]?crt[^/[:space:]]*\.o' "$work/aggregate.trace"; then
     fail 'aggregate candidate has unowned linkage, TLS, or unresolved symbols'
 fi
-"$work/aggregate" || fail 'aggregate candidate failed'
-"$work/oracle" > "$work/oracle.records"
-"$work/candidate" > "$work/candidate.records"
-"$work/freestanding" > "$work/freestanding.records"
+for kind in aggregate oracle candidate freestanding; do
+    record_math_argv "$work/$kind-run.argv.json" "$work/$kind"
+    run_math_recorded "$work/$kind.records" "$work/$kind.stderr" "$work/$kind.status" "$kind" "$work/$kind"
+done
 cmp "$work/candidate.records" "$work/freestanding.records" || fail 'freestanding candidate differs from installed product'
 python3 -B compat/x86_64/validate_libc_math_long_double_completion_aarch64.py \
     "$work/oracle.records" "$work/candidate.records"
