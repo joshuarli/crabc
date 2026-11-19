@@ -118,6 +118,17 @@ class OwnedClassicNetdbComponentReceiptTests(unittest.TestCase):
         with mock.patch.dict(os.environ, {"CRABC_CLASSIC_NETDB_IMAGE_ID": self.receipt.PINNED_IMAGE}):
             self.assertEqual(self.receipt.require_collection_image(), self.receipt.PINNED_IMAGE)
 
+    def test_arm64_manifest_binds_native_pinned_tools(self) -> None:
+        native = self.receipt.native_arch("aarch64")
+        manifest = "compat/x86_64/owned_classic_netdb_image_inputs_aarch64.json"
+        toolchain = Path("/opt/rustup/toolchains") / f"{self.receipt.TOOLCHAIN}-{native['target_triple']}"
+        with mock.patch.object(self.receipt, "NATIVE", native), \
+             mock.patch.object(self.receipt, "IMAGE_MANIFEST", manifest), \
+             mock.patch.object(self.receipt, "TOOLCHAIN_ROOT", toolchain):
+            inputs = self.receipt.trusted_image_manifest(ROOT)["files"]
+        self.assertIn(native["oracle"], inputs)
+        self.assertIn(str(toolchain / "bin/rustc"), inputs)
+
     def test_producer_rejects_an_unbound_image_before_product_or_fixture_access(self) -> None:
         import owned_classic_netdb as producer
 
