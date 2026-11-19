@@ -3997,7 +3997,7 @@ mod readable_file_load_tests {
     #[test]
     fn mapper_retains_first_file_backed_program_header_alias() {
         const SYS_MEMFD_CREATE: i64 = if cfg!(target_arch = "aarch64") { 279 } else { 319 };
-        const SYS_PWRITE64: i64 = 18;
+        const SYS_PWRITE64: i64 = if cfg!(target_arch = "aarch64") { 68 } else { 18 };
         let fd = unsafe { syscall2(SYS_MEMFD_CREATE, b"phdr-alias\0".as_ptr() as i64, 0) };
         assert!(fd >= 0);
         let mut image = [0u8; PAGE as usize];
@@ -4111,7 +4111,7 @@ mod readable_file_load_tests {
     #[test]
     fn mapper_zeroes_only_the_declared_file_page_tail() {
         const SYS_MEMFD_CREATE: i64 = if cfg!(target_arch = "aarch64") { 279 } else { 319 };
-        const SYS_PWRITE64: i64 = 18;
+        const SYS_PWRITE64: i64 = if cfg!(target_arch = "aarch64") { 68 } else { 18 };
         let fd = unsafe { syscall2(SYS_MEMFD_CREATE, b"load-tail\0".as_ptr() as i64, 0) };
         assert!(fd >= 0);
         let mut image = [0xa5u8; PAGE as usize];
