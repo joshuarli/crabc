@@ -1016,10 +1016,6 @@ def validate_shared_alias_link_policy(value: object, description: str) -> dict[s
 
     if not isinstance(value, dict):
         fail(f"{description} provenance is malformed")
-    if ARCH == "aarch64":
-        if value.get("shared_errno_private_aliases") is not None:
-            fail(f"{description} arm64 alias policy differs")
-        return {"policy": "hidden-symbol-definition", "symbol": ALIAS}
     aliases = require_exact_mapping(
         value.get("shared_errno_private_aliases"),
         {"source", "member_count", "members", "linker_policy", "linker_script_sha256"},
