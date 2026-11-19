@@ -2,10 +2,10 @@
 """Same installed-header object through owned DNS cancellation entry modes."""
 from __future__ import annotations
 import argparse
-import errno
 import fcntl
 import json
 import os
+import re
 from pathlib import Path
 import shutil
 import socket
@@ -38,8 +38,13 @@ ORDINARY_ERRNO_DIFFERENCES = frozenset(('disabled', 'disabled-udp', 'disabled-tc
 # exclusion: both oracle and owned values must stay in this exact finite set,
 # while every non-errno observation remains identical.
 SOURCE_LATER_ERRNOS = {
-    ('modern-dual', 'masked-dual-mixed-tcp'): frozenset((errno.ECANCELED, errno.EAGAIN)),
-    ('modern-dual', 'masked-udp-to-tcp'): frozenset((errno.ECANCELED, errno.EAGAIN)),
+    (api, scenario): frozenset(
+        int(re.search(r'^#define\s+' + name + r'\s+(\d+)\s*$',
+                      (ROOT / 'include/bits/errno.h').read_text(), re.MULTILINE).group(1))
+        for name in ('ECANCELED', 'EAGAIN')
+    )
+    for api, scenario in (('modern-dual', 'masked-dual-mixed-tcp'),
+                          ('modern-dual', 'masked-udp-to-tcp'))
 }
 PROVIDERS = frozenset(('res_query', 'res_send', 'gethostbyname_r', 'getaddrinfo', 'getnameinfo'))
 
