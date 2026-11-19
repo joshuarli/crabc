@@ -164,6 +164,17 @@ class NativeStaticContracts(unittest.TestCase):
         self.temporary = Path(tempfile.mkdtemp(prefix="lua-", dir=self.scratch_root))
         self.addCleanup(self.cleanup)
 
+    def test_arm64_dynamic_uses_owned_dynamic_product(self) -> None:
+        with mock.patch.object(sys, "path", [str(RUNNER.LUA_ROOT), *sys.path]):
+            import run_x86_dynamic as dynamic
+        args = RUNNER.parse_args(["--target", "aarch64-dynamic", "--sysroot", "/product",
+                                  "--work-root", "/work", "--offline"])
+        with (mock.patch.object(RUNNER, "require_native_aarch64"),
+              mock.patch.object(dynamic, "run_dynamic_lane", return_value={"passed": True}) as lane):
+            self.assertTrue(RUNNER.run_aarch64_dynamic(args)["passed"])
+        lane.assert_called_once_with(sysroot_path=Path("/product"), work_root=Path("/work"), cache=RUNNER.CACHE,
+                                     offline=True, jobs=args.jobs, timeout=args.timeout, manifest_path=args.manifest)
+
     def test_arm64_static_elf_rejects_foreign_relocations(self) -> None:
         with mock.patch.object(RUNNER, "ARCH", "aarch64"):
             facts = dict(header="Machine: AArch64\nType: DYN", program_headers="", dynamic="",

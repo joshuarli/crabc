@@ -1693,10 +1693,11 @@ def run_dynamic_lane(
     jobs: int,
     timeout: float,
     build_profile: str = "release",
+    manifest_path: Path = MANIFEST,
 ) -> dict[str, object]:
     require_native_x86_64()
     root = LUA.native_work_root(work_root)
-    manifest = LUA.load_manifest(MANIFEST)
+    manifest = LUA.load_manifest(manifest_path)
     archive = LUA.fetch_archive(manifest, offline, cache)
     sysroot, wrapper, runtime, installed_manifest = owned_dynamic_sysroot(sysroot_path)
     if build_profile == "debug" and installed_manifest.get("build_profile") != "debug":
@@ -1707,7 +1708,7 @@ def run_dynamic_lane(
         "runner": "crabc-lua-native-x86-dynamic-source-build" + ("-debug" if build_profile == "debug" else ""),
         "result": "fail",
         "passed": False,
-        "manifest": {"path": str(MANIFEST), "sha256": LUA.sha256_file(MANIFEST), "contents": manifest},
+        "manifest": {"path": str(manifest_path), "sha256": LUA.sha256_file(manifest_path), "contents": manifest},
         "source_archive": LUA.artifact_record(archive),
         "work_directory": str(lane),
         "environment": {

@@ -484,6 +484,16 @@ class NativeDynamicReceiptTests(unittest.TestCase):
             with self.subTest(schema=schema):
                 self.assertEqual(self.audit(self.record(schema))["status"], "passed")
 
+    def test_aarch64_receipt_binds_the_native_runtime_and_trace(self) -> None:
+        record = self.record(2)
+        record["format"] = "crabc-aarch64-owned-dynamic-sysroot-v1"
+        with (mock.patch.object(RUNNER, "ARCH", "aarch64"),
+              mock.patch.object(RUNNER, "FORMAT", record["format"])):
+            self.assertEqual(self.audit(record)["status"], "passed")
+            record["input_receipts"][0]["sha256"] = "0" * 64
+            with self.assertRaisesRegex(RUNNER.LUA.RunnerError, "input receipt drifted"):
+                self.audit(record)
+
     def test_audit_accepts_mold_trace_prefix_and_archive_member_without_rewriting_receipt(self) -> None:
         record = self.record(2)
         raw_trace = [f"trace: {line}" for line in record["link_trace"]]

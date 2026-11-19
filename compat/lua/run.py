@@ -2291,47 +2291,12 @@ def run_x86_static_dispatch(
 
 def run_aarch64_dynamic(args: argparse.Namespace) -> dict[str, object]:
     require_native_aarch64()
-    manifest = load_manifest(args.manifest)
-    archive = fetch_archive(manifest, args.offline)
-    sysroot, wrapper, runtime, installed_manifest = owned_sysroot(args.sysroot)
-    report: dict[str, object] = {
-        "schema_version": 1,
-        "runner": "crabc-lua-owned-sysroot",
-        "result": "fail",
-        "passed": False,
-        "manifest": {"path": str(args.manifest), "sha256": sha256_file(args.manifest), "contents": manifest},
-        "source_archive": artifact_record(archive),
-        "environment": {
-            "platform": platform.platform(),
-            "machine": platform.machine(),
-            "kernel": platform.release(),
-            "sysroot": str(sysroot),
-            "compiler_wrapper": str(wrapper),
-            "owned_runtime_inputs": {name: artifact_record(path) for name, path in runtime.items()},
-            "sysroot_manifest": installed_manifest,
-            "musl_root": str(MUSL_ROOT),
-            "musl_role": "pinned execution oracle only; never a candidate build or link input",
-            "timeout_seconds": args.timeout,
-        },
-    }
-    try:
-        with tempfile.TemporaryDirectory(prefix="crabc-lua-") as temporary:
-            graph = build_graph(manifest, sysroot, Path(temporary), args.timeout)
-            report["build"] = graph["records"]
-            workloads = run_workloads(graph, Path(temporary), args.timeout)
-            report["workloads"] = workloads
-            maps = workloads["candidate_maps"]
-            assert isinstance(maps, dict)
-            if maps.get("status") != "passed":
-                raise RunnerError(f"candidate runtime mapping isolation failed: {maps.get('errors')}")
-            source = workloads["source"]
-            bytecode = workloads["bytecode"]
-            assert isinstance(source, dict) and isinstance(bytecode, dict)
-            report["passed"] = source.get("passed") is True and bytecode.get("passed") is True
-            report["result"] = "pass" if report["passed"] else "fail"
-    except RunnerError as error:
-        report["error"] = str(error)
-    return report
+    import run_x86_dynamic as dynamic
+
+    return dynamic.run_dynamic_lane(
+        sysroot_path=args.sysroot, work_root=args.work_root, cache=CACHE,
+        offline=args.offline, jobs=args.jobs, timeout=args.timeout, manifest_path=args.manifest,
+    )
 
 
 def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
@@ -2360,9 +2325,8 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     args = parser.parse_args(argv)
     if not math.isfinite(args.timeout) or args.timeout <= 0 or args.timeout > 300:
         parser.error("--timeout must be > 0 and <= 300")
-    if args.target == "x86_64-static":
-        if args.jobs < 1 or args.jobs > MAX_JOBS:
-            parser.error(f"--jobs must be an integer from 1 through {MAX_JOBS}")
+    if args.jobs < 1 or args.jobs > MAX_JOBS:
+        parser.error(f"--jobs must be an integer from 1 through {MAX_JOBS}")
     if args.target == "aarch64-dynamic" and args.mode:
         parser.error("--mode is available only with --target x86_64-static")
     if args.target == "aarch64-dynamic" and args.build_profile != "release":

@@ -308,7 +308,13 @@ def require_current_supplied_products(
                 "Lua qualification product uses different source")
         require(manifest.get("build_profile", "release") == "release",
                 "Lua qualification requires release products")
-        backends.add(manifest.get("allocator_backend"))
+        if LUA.ARCH == "aarch64":
+            expected_format = ("crabc-aarch64-owned-dynamic-sysroot-v1" if reader is DYNAMIC.owned_dynamic_sysroot
+                               else "crabc-aarch64-owned-static-sysroot-v1")
+            require(manifest.get("format") == expected_format, "Lua qualification product architecture differs")
+            backends.add("accepted-c")
+        else:
+            backends.add(manifest.get("allocator_backend"))
     require(len(backends) == 1 and backends <= {"accepted-c", "native-shadow"},
             "Lua qualification products use different or invalid allocator backends")
 
