@@ -13,7 +13,9 @@ if [ -z "$product" ]; then
     work="$(mktemp -d "$TMPDIR/owned-crt-dynamic-product.XXXXXX")"
     # Supplied-product replays resolve this path from the host.
     chmod a+rx "$work"
-    python3 -B "$ROOT/scripts/build_x86_64_owned_dynamic_sysroot.py" --output "$work/dynamic-sysroot" \
+    architecture_arguments=()
+    if [ "$(uname -m)" = aarch64 ]; then architecture_arguments=(--architecture aarch64); fi
+    python3 -B "$ROOT/scripts/build_x86_64_owned_dynamic_sysroot.py" "${architecture_arguments[@]}" --output "$work/dynamic-sysroot" \
         >"$work/dynamic-build.json"
     printf 'owned dynamic CRT startup product: %s\n' "$work/dynamic-sysroot"
     product="$work/dynamic-sysroot"

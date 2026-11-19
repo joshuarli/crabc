@@ -42,6 +42,7 @@ COMPAT_MODULE_DIR = ROOT / "compat/x86_64"
 if str(COMPAT_MODULE_DIR) not in sys.path:
     sys.path.insert(0, str(COMPAT_MODULE_DIR))
 import owned_posix_product_evidence as product_evidence
+from native_arch import native_arch
 
 FIXTURES = ROOT / "crt" / "fixtures"
 MAIN_SOURCE = FIXTURES / "owned_dynamic_startup_main.c"
@@ -53,9 +54,10 @@ DEPENDENCY = "libowned-startup-dependency.so"
 PLUGIN = "libowned-startup-plugin.so"
 SCHEMA = "crabc.x86_64-owned-crt-dynamic-startup/v1"
 
-INTERPRETER = "/lib/ld-crabc-x86_64.so.1"
-ORACLE_COMPILER = Path("/usr/local/bin/crabc-x86_64-musl-gcc")
-ORACLE_INTERPRETER = Path("/opt/musl-1.2.6/lib/ld-musl-x86_64.so.1")
+ARCH = native_arch()
+INTERPRETER = f"/lib/ld-crabc-{ARCH['arch']}.so.1"
+ORACLE_COMPILER = Path(ARCH["oracle"])
+ORACLE_INTERPRETER = Path(f"/opt/musl-1.2.6/lib/ld-musl-{ARCH['arch']}.so.1")
 CHROOT = "/usr/sbin/chroot"
 TIMEOUT = "/usr/bin/timeout"
 # Frame pointers make each callback's own frame alignment observable.
@@ -322,7 +324,8 @@ def parse_elf(path: Path) -> ElfImage:
 def require_hardened_dynamic_image(path: Path, image: ElfImage) -> None:
     """Every installed-driver output keeps RELRO, NOW, no TEXTREL and a NX stack."""
 
-    require(image.machine == 62, f"{path.name}: not EM_X86_64")
+    expected_machine = 62 if ARCH["arch"] == "x86_64" else 183
+    require(image.machine == expected_machine, f"{path.name}: ELF machine differs from native architecture")
     stacks = [flags for kind, flags, *_rest in image.segments if kind == PT_GNU_STACK]
     require(len(stacks) == 1 and stacks[0] & PF_X == 0, f"{path.name}: executable or missing GNU stack")
     require(any(kind == PT_GNU_RELRO for kind, *_rest in image.segments), f"{path.name}: missing GNU RELRO")
