@@ -158,6 +158,7 @@ if [ "$native_arch" = aarch64 ]; then
         "$ROOT/compat/x86_64/source_seal.py" \
         "$ROOT/compat/x86_64/native_arch.py" \
         "$ROOT/compat/x86_64/core_image.py" \
+        "$ROOT/compat/x86_64/validate_libc_math_long_double_completion.py" \
         "$ROOT/compat/x86_64/validate_libc_math_long_double_completion_aarch64.py")
 fi
 
