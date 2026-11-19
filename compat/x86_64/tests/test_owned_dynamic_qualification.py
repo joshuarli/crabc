@@ -20,13 +20,25 @@ from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(ROOT / "compat/x86_64"))
-import owned_dynamic_qualification as qualification
+import native_arch
+with mock.patch.object(native_arch, "native_arch", return_value=native_arch.native_arch("x86_64")):
+    import owned_dynamic_qualification as qualification
 import crabc_cc_owned_dynamic as driver
 
 REAL_PRODUCT_IDENTITY = qualification.product_identity
 REAL_SOURCE_BOUND_PRODUCT_IDENTITY = qualification._product_identity
 REAL_SOURCE_DIGEST = qualification.source_seal.product_source_digest
 REAL_VALIDATE_ELF_INSPECTION = qualification.elf_inspection.validate_record
+
+
+class NativeCorpusTests(unittest.TestCase):
+    def test_arm64_corpus_case_fails_without_creating_receipt(self):
+        with tempfile.TemporaryDirectory() as directory, \
+                mock.patch.object(qualification, "ARCH", native_arch.native_arch("aarch64")):
+            work = Path(directory)
+            with self.assertRaisesRegex(qualification.QualificationError, "aarch64 package corpus is not pinned"):
+                qualification._run_case(work, "installed", "package-corpus", "source", "manifest")
+            self.assertEqual(list(work.iterdir()), [])
 
 
 class OwnedDynamicQualificationTests(unittest.TestCase):

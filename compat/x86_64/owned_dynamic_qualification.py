@@ -28,11 +28,13 @@ import tomllib
 import owned_dynamic_elf as elf_inspection
 import owned_dynamic_receipt as receipt_contract
 import source_seal
+from native_arch import native_arch
 
 ROOT = Path(__file__).resolve().parents[2]
 SCHEMA = "crabc.x86_64-owned-dynamic-qualification/v1"
 PRODUCTS = ("installed", "second", "extracted")
-PUBLICATION = ROOT / ".work/x86_64/owned-dynamic-qualification.json"
+ARCH = native_arch()
+PUBLICATION = ROOT / ".work" / ARCH["work_name"] / "owned-dynamic-qualification.json"
 MATERIALIZATION_ALLOCATOR_BACKEND = "accepted-c"
 # Materialized products can record only a backend selected by the owned builder.
 MATERIALIZATION_ALLOCATOR_BACKENDS = frozenset({
@@ -144,7 +146,7 @@ CONTRACTS = ("compat/x86_64/dynamic-product.toml", "compat/x86_64/loader-libc-tl
 
 ORACLE_FILES = {
     "runtime": Path("/opt/musl-1.2.6/lib/libc.so"),
-    "compiler_wrapper": Path("/usr/local/bin/crabc-x86_64-musl-gcc"),
+    "compiler_wrapper": Path(ARCH["oracle"]),
     "specs": Path("/opt/musl-1.2.6/lib/musl-gcc.specs"),
     "source_manifest": Path("/opt/musl-1.2.6/.crabc-oracle"),
     "specs_manifest": Path("/opt/musl-1.2.6/.crabc-musl-gcc-specs.sha256"),
@@ -297,11 +299,11 @@ def validate_oracle(work: Path, oracle: dict) -> dict[str, str]:
         require(digest(directory / name) == expected, "oracle retained file identity differs")
     require(oracle["runtime_sha256"] == files["runtime"]
             and oracle["compiler_wrapper_sha256"] == files["compiler_wrapper"], "oracle identity differs from retained bytes")
-    require(files["compiler_wrapper"] == digest(ROOT / "docker/x86_64-musl-oracle-gcc"), "oracle compiler wrapper differs from pinned source")
+    require(files["compiler_wrapper"] == digest(ROOT / f"docker/{ARCH['arch']}-musl-oracle-gcc"), "oracle compiler wrapper differs from pinned source")
     pins = tomllib.loads((ROOT / "compat/upstreams.toml").read_text())["musl_native"]
     expected_manifest = ("format=crabc-pinned-musl-oracle-v1\n"
                          f"version={pins['version']}\nsource_sha256={pins['sha256']}\n"
-                         f"fallback_revision={pins['fallback_revision']}\narchitecture=x86_64\n")
+                         f"fallback_revision={pins['fallback_revision']}\narchitecture={ARCH['arch']}\n")
     require((directory / "source_manifest").read_text() == expected_manifest, "oracle source verification manifest drifted")
     require((directory / "specs_manifest").read_text() == f"{files['specs']}  /opt/musl-1.2.6/lib/musl-gcc.specs\n", "oracle specs verification manifest drifted")
     return {relative(directory / name): value for name, value in files.items()}
@@ -613,6 +615,8 @@ def next_missing_case(work: Path) -> tuple[str, str] | None:
 
 def _run_case(work: Path, product: str, case: str, source: str, manifest: str,
               *, resume: bool = False) -> None:
+    require(not (ARCH["arch"] == "aarch64" and case == "package-corpus"),
+            "aarch64 package corpus is not pinned")
     oracle = read(work / "qualification-prepare.json")["oracle"]
     require_live_oracle(work, oracle)
     if resume:
