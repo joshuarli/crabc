@@ -382,7 +382,7 @@ entries are closed by the commit that fixes them.
 | 16 | closed (14c03612f) | ARM standalone and combined static manifests check the sealed driver, scope, non-selection and coverage claims. |
 | 17 | closed (415415ce2) | The crypt producer runs the native musl oracle probe on both architectures. |
 | 18 | closed (d90065635) | The hardened entry test uses the driver’s transitive DSO option on both architectures. |
-| 19 | closed (64622c067, 972221b38) | The owned ARM lifecycle probe requires phase 1 and its finalizer. Native comparison passed on the owned loader; pinned musl dynamic execution exits 42 because it omits legacy hooks, while pinned musl static execution passes. The retained oracle reader checks that exact dynamic result. |
+| 19 | closed (64622c067, 972221b38, d9e006df8) | The owned ARM lifecycle probe requires phase 1 and its finalizer. Native comparison passed on the owned loader; pinned musl dynamic execution exits 42 because it omits legacy hooks, while pinned musl static execution passes. The retained oracle reader checks that exact dynamic result. |
 | 20 | closed (dc7c7d024, 8d8544d89) | The owned ARM TLS probe compares the word at TP-8 to TP; the musl reference uses its distinct DTV placement. |
 | 25 | fixed | `compat/lua/source_build_admission.py:302-316` reads the state file. The test no longer removes `allocator_backend`. |
 | 26 | fixed | `compat/lua/run.py:1244-1252`: the driver binding is now architecture-independent. |
