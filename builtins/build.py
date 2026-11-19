@@ -454,7 +454,7 @@ def portable_local_rustc_command(command: Sequence[str], object_path: pathlib.Pa
     normalized: list[str] = []
     for argument in command:
         if argument == str(object_path):
-            normalized.append("$CRABC_BUILTINS_STAGE/crabc-builtins.o")
+            normalized.append(f"$CRABC_BUILTINS_STAGE/{object_path.name}")
         elif argument == str(SOURCE):
             normalized.append("/crabc/builtins/src/lib.rs")
         elif argument == f"{ROOT}=crabc-builtins":
