@@ -390,7 +390,7 @@ entries are closed by the commit that fixes them.
 | 28 | fixed | `unwinder/owned_rust_link.py:733-745` uses the shared `_validate_static_product`/`_validate_dynamic_product`. |
 | 29 | still open | `owned_rust_link.py:55-56` (`-static` admitted), `:917-918` (`-no-pie` then `-static-pie` allowed). Only the machine is checked (`:976`, `:1195`); ELF type is not. |
 | 30 | closed (6c7d0cdb8) | The filesystem producer now copies the validated native product, including its aliases, for both dynamic execution routes. |
-| 31 | still open | `compat/corpus/run_x86.py:475`. |
+| 31 | closed (63fc733ab) | ARM corpus extraction accepts the source-manifest signing key instead of arbitrary signature entries; the 34-case native corpus passes. |
 | 33 | fixed (aarch64 adopts the x86 behavior) | Since `74b86437a`, `ldso/src/x86_64_direct_entry.rs:106` applies the AT_EXECFN rewrite on both architectures, and `run_general_dynamic_cli.sh` checks it in both modes. The audit's follow-up note ("disproved") is now stale. |
 | 34 | fixed | `ldso/src/aarch64_auxv.rs`, called from `x86_64_initial_graph.rs:1258-1267` and `static_tls.rs:33-34,963`; test at `:1283-1292`. |
 | 35 | fixed | `fenv_rounding.rs:147-172` (explicit rounding mode and inexact flag); `elementary_sqrt.rs:114-121, 155-169`. |
@@ -450,10 +450,7 @@ The facade correction leaves out-of-scope callers `crabc-rs/examples/ppoll_direc
 9. **Closed (20cedf91a).** Final ELF inspection receives the shared dynamic-symbol provider set on ARM.
 10. **Closed (8b711e8ba).** ARM replays the retained sidecars with the shared reader and includes them in the exact file roster.
 11. **Closed (846c71e67).** All four component receipts use the same materialization state and source checks as x86.
-12. **`runtime_private_facades.py:313-314`**.
-    - x86 runs `validate_materialized_dynamic_product`, which includes `validate_installation` and `product_identity`.
-    - aarch64 runs only `validate_dynamic_product_source`.
-    - Cause: `compiler_helper_evidence.py:1392` hardcodes `.work/x86_64`.
+12. **Closed (1fac44bd1).** Both architectures use the shared materialized-product reader and native work root; the ARM facade producer passed all 24 executions.
 13. **Partly fixed (e752b2c37).** The shared record validator now rejects binary128 value and flag differences under the revised rounding decision. The ARM producer still needs the x86 structural checks and awaits the `a4-binary128` runtime fix.
     - x86 does a byte-exact `cmp` against musl and checks the export surface, bindings, closure, TLS, ambient dependencies and an aggregate.
     - aarch64 checks only machine, static-ness, symbol presence and alias address, and allowlists flag and rounding differences.
@@ -465,7 +462,7 @@ The facade correction leaves out-of-scope callers `crabc-rs/examples/ppoll_direc
 16. **`owned_static_link_authority.py:202`** admits nameless LOCAL undefined `.symtab` rows on aarch64. Its test fabricates the row (`test_owned_static_link_authority.py:631-656`).
     - `:514-573`: aarch64 merged-constant targets are not bound to the input's link-map contribution.
 17. **Closed (6205287aa).** Both architectures compare the resolver receipt with the independent shared `_static_link_plan`.
-18. **errno alias visibility, rule 2.** `libc/src/c_abi/x86_64/errno.rs:62-65` makes the alias HIDDEN on aarch64, where x86 deliberately keeps it DEFAULT. The validator branches to match (`owned_errno_storage_lifecycle.py:907`).
+18. **Closed (7415a7ca7).** ARM adopts the x86 DEFAULT private-alias visibility, and the native errno lifecycle producer passes.
 19. **Closed (67c2ddf6c).** The ARM DSO lifecycle transcript runs legacy DT_INIT/DT_FINI while pinned musl disables them through `NO_LEGACY_INITFINI`; the ledger records this observed difference without a musl-parity claim. The separate main-executable lifecycle probe remains item 19 above.
 20. **Closed (beac442c7, 71bc72983, 071098c93).** The ARM target is read from Cargo metadata, the builders receive the native architecture, and the provider audit checks ARM atomic and call instructions. The native `owned-rand` producer passed.
 
