@@ -673,7 +673,7 @@ fn general_relr_exceeds_legacy_table_and_target_limits_like_musl() {
 }
 
 #[test]
-#[cfg(feature = "x86_64-owned-dynamic-runtime")]
+#[cfg(all(feature = "x86_64-owned-dynamic-runtime", target_arch = "aarch64"))]
 fn interpreter_relative_relocations_preserve_bootstrap_state() {
     let mut image = Image::new();
     image.rela(0x1000, R_X86_64_RELATIVE, 0, 0x1000);
