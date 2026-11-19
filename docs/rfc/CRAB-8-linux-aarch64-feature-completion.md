@@ -363,12 +363,14 @@ Open, in dependency order:
   workload source `manifest.toml` and the x86 contract stay unchanged.
 - x86 link and run of the converged tree on the x86 host (type-checked only
   here).
-- Decided (2026-11-18, owner-delegated): binary128 arithmetic stays on the
-  owned `compiler_builtins` helpers. libgcc's soft-fp would be an ambient GCC
-  runtime input, which the owned-sysroot invariant forbids. The helpers'
-  round-to-nearest, no-exception-flag behavior for `long double` arithmetic is
-  a recorded known difference from musl+libgcc; libc-test's `long double`
-  cases pass with it.
+- Revised (2026-11-19, owner-delegated): binary128 `long double` arithmetic
+  must honor the FPCR rounding mode and raise FPSR exception flags. The earlier
+  choice (compiler_builtins helpers, round-to-nearest only, recorded as a known
+  difference) leaked into user-visible output: musl's float formatter uses
+  `long double` arithmetic, so `snprintf("%.0f", -0.5)` under `FE_DOWNWARD`
+  printed `-0` where musl prints `-1`. The owned builtins provide
+  rounding-mode-aware binary128 helpers, differentially tested against
+  musl + libgcc soft-fp; libgcc itself stays out of the owned sysroot.
 
 Host workflow: the VM clone is `~/crabc`, reachable from the Mac as git remote
 `a64` (`crabc@orb:crabc`) with `receive.denyCurrentBranch updateInstead`.
