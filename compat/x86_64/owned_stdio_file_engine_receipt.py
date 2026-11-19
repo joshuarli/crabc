@@ -1096,6 +1096,39 @@ def validate_allocator_plt(libc: Path) -> None:
         definitions = re.findall(rf"^\s*\d+:\s+([0-9a-f]+)\s+\d+\s+FUNC\s+LOCAL\s+HIDDEN\s+\d+\s+{tail}$", symbols, re.MULTILINE)
         require(len(definitions) == 1, f"FILE allocator {name} tail is not hidden")
         assembly = _elf_output("objdump", "-d", "--disassemble=" + tail, str(libc))
+        if ARCH == "aarch64":
+            branch = re.search(r"^\s*([0-9a-f]+):\s+([0-9a-f]{8})\s+b\s+([0-9a-f]+)\b", assembly, re.MULTILINE)
+            require(branch is not None, f"FILE allocator {name} tail does not select public PLT")
+            origin, instruction, shown = (int(value, 16) for value in branch.groups())
+            require(origin == int(definitions[0], 16), f"FILE allocator {name} tail entry differs")
+            require(instruction >> 26 == 0b000101, f"FILE allocator {name} tail instruction differs")
+            displacement = instruction & 0x3ffffff
+            if displacement & (1 << 25):
+                displacement -= 1 << 26
+            target = origin + displacement * 4
+            require(target == shown, f"FILE allocator {name} tail target differs")
+            stub = _elf_output("objdump", "-d", "-j", ".plt", f"--start-address={target}",
+                               f"--stop-address={target + 16}", str(libc))
+            instructions = re.findall(r"^\s*([0-9a-f]+):\s+([0-9a-f]{8})\s+", stub, re.MULTILINE)
+            require(len(instructions) == 4 and [int(row[0], 16) for row in instructions] ==
+                    [target + offset for offset in (0, 4, 8, 12)], f"FILE allocator {name} PLT stub differs")
+            adrp, ldr, add, br = (int(row[1], 16) for row in instructions)
+            require(adrp & 0x9f00001f == 0x90000010 and ldr & 0xffc003ff == 0xf9400211
+                    and add & 0xffc003ff == 0x91000210 and br == 0xd61f0220,
+                    f"FILE allocator {name} PLT stub differs")
+            page = ((adrp >> 29) & 3) | (((adrp >> 5) & 0x7ffff) << 2)
+            if page & (1 << 20):
+                page -= 1 << 21
+            offset = ((ldr >> 10) & 0xfff) * 8
+            require((add >> 10) & 0xfff == offset, f"FILE allocator {name} PLT slot differs")
+            slot = (target & ~0xfff) + page * 4096 + offset
+            rows = re.findall(rf"^\s*{slot:016x}\s+([0-9a-f]{{16}})\s+(R_AARCH64_JUMP_SLOT)\s+\S+\s+(\S+)\s+\+\s+(\S+)\s*$", relocations, re.MULTILINE)
+            require(len(rows) == 1 and rows[0][1:] == ("R_AARCH64_JUMP_SLOT", name, "0"),
+                    f"FILE allocator {name} PLT relocation differs")
+            symbol_index = int(rows[0][0], 16) >> 32
+            definition = re.findall(rf"^\s*{symbol_index}:\s+[0-9a-f]+\s+\d+\s+FUNC\s+(?:GLOBAL|WEAK)\s+DEFAULT\s+\d+\s+{name}$", dynamic_symbols, re.MULTILINE)
+            require(len(definition) == 1, f"FILE allocator {name} dynamic symbol is not preemptible")
+            continue
         jump = re.search(r"^\s*([0-9a-f]+):\s+e9 ((?:[0-9a-f]{2} ){3}[0-9a-f]{2})\s+jmp\s+([0-9a-f]+)\b", assembly, re.MULTILINE)
         require(jump is not None, f"FILE allocator {name} tail does not select public PLT")
         origin = int(jump.group(1), 16)

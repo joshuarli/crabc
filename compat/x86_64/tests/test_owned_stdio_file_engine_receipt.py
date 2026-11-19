@@ -806,9 +806,17 @@ class OwnedStdioFileEngineReceiptTests(unittest.TestCase):
             if arguments[2].startswith("--disassemble="):
                 name = arguments[2].split("=")[-1].removeprefix("__crabc_x86_stdio_cabi_")
                 address = 0x100 + names.index(name) * 0x20
+                if receipt.ARCH == "aarch64":
+                    return f"{address:x}: 14000004 b {address + 16:x} <{name}@plt>\n"
                 return f"{address:x}: e9 0b 00 00 00 jmp {address + 16:x} <{name}@plt>\n"
             address = int(arguments[6].split("=")[-1])
             index = (address - 0x110) // 0x20
+            if receipt.ARCH == "aarch64":
+                offset = index * 8
+                return (f"{address:x}: b0000010 adrp x16, 1000\n"
+                        f"{address+4:x}: {0xf9400211 | (index << 10):08x} ldr x17, [x16, #{offset}]\n"
+                        f"{address+8:x}: {0x91000210 | (offset << 10):08x} add x16, x16, #{offset}\n"
+                        f"{address+12:x}: d61f0220 br x17\n")
             displacement = 0x1000 + index * 8 - address - 6
             encoded = " ".join(f"{b:02x}" for b in struct.pack("<i", displacement))
             return f"{address:x}: ff 25 {encoded} jmp *0x0(%rip)\n"
@@ -817,7 +825,8 @@ class OwnedStdioFileEngineReceiptTests(unittest.TestCase):
         if arguments[1] == "--dyn-syms" and "--use-dynamic" in arguments:
             return "".join(f"{index + 1}: 0000000000001234 5 FUNC GLOBAL DEFAULT 10 {name}\n" for index, name in enumerate(names))
         if arguments[1] == "-rW":
-            return "".join(f"{0x1000 + index * 8:016x} {((index + 1) << 32) | 7:016x} R_X86_64_JUMP_SLOT 00000000 {name} + 0\n"
+            kind = "R_AARCH64_JUMP_SLOT" if receipt.ARCH == "aarch64" else "R_X86_64_JUMP_SLOT"
+            return "".join(f"{0x1000 + index * 8:016x} {((index + 1) << 32) | 7:016x} {kind} 00000000 {name} + 0\n"
                            for index, name in enumerate(names))
         if arguments[1] == "-sW":
             return "".join(f"{index}: {0x100 + index * 0x20:016x} 5 FUNC LOCAL HIDDEN 9 __crabc_x86_stdio_cabi_{name}\n" for index, name in enumerate(names))
@@ -828,7 +837,7 @@ class OwnedStdioFileEngineReceiptTests(unittest.TestCase):
         def foreign(*arguments: str) -> str:
             value = original(*arguments)
             if arguments[0] == "objdump" and arguments[2].endswith("_malloc"):
-                return value.replace("e9 0b", "e9 0a")
+                return value.replace("14000004", "14000003") if receipt.ARCH == "aarch64" else value.replace("e9 0b", "e9 0a")
             return value
         with mock.patch.object(receipt, "_elf_output", side_effect=foreign):
             with self.assertRaisesRegex(receipt.ReceiptError, "malloc tail target differs"):
@@ -875,7 +884,46 @@ class OwnedStdioFileEngineReceiptTests(unittest.TestCase):
 
 
 class AllocatorPltProofTests(unittest.TestCase):
+    def arm_fixture(self, got: bool) -> None:
+        import subprocess
+        with tempfile.TemporaryDirectory(dir=ROOT / '.work') as directory:
+            root = Path(directory)
+            source = root / 'fixture.s'
+            source.write_text('\n'.join(
+                f'.globl __crabc_x86_stdio_cabi_{name}\n.hidden __crabc_x86_stdio_cabi_{name}\n'
+                f'.type __crabc_x86_stdio_cabi_{name},%function\n'
+                f'__crabc_x86_stdio_cabi_{name}: b {name}'
+                for name in ('malloc', 'realloc', 'free')) + '\n' +
+                ('adrp x0, :got:malloc\nldr x0, [x0, :got_lo12:malloc]\n' if got else '') +
+                '\n'.join(f'.globl {name}\n.type {name},%function\n{name}: ret'
+                          for name in ('malloc', 'realloc', 'free')) + '\n')
+            libc = root / 'libc.so'
+            subprocess.run(['cc', '-shared', '-fuse-ld=mold', '-nostdlib', '-Wl,-z,now', '-o', str(libc), str(source)], check=True)
+            receipt.validate_allocator_plt(libc)
+            body = libc.read_bytes()
+            relocations = subprocess.check_output(['readelf', '-rW', '--use-dynamic', str(libc)], text=True)
+            row = re.search(r'^([0-9a-f]{16})\s+([0-9a-f]{16})\s+R_AARCH64_JUMP_SLOT\s+\S+\s+malloc\s+\+ 0$', relocations, re.MULTILINE)
+            self.assertIsNotNone(row)
+            record = struct.pack('<QQq', int(row.group(1), 16), int(row.group(2), 16), 0)
+            self.assertEqual(body.count(record), 1)
+            for info in ((int(row.group(2), 16) & ~0xffffffff) | 1, int(row.group(2), 16) ^ (1 << 32)):
+                libc.write_bytes(body.replace(record, struct.pack('<QQq', int(row.group(1), 16), info, 0), 1))
+                with self.assertRaises(receipt.ReceiptError):
+                    receipt.validate_allocator_plt(libc)
+            libc.write_bytes(body)
+            assembly = subprocess.check_output(['objdump', '-d', '--disassemble=__crabc_x86_stdio_cabi_malloc', str(libc)], text=True)
+            match = re.search(r'^\s*[0-9a-f]+:\s+([0-9a-f]{8})\s+b\s+', assembly, re.MULTILINE)
+            self.assertIsNotNone(match)
+            instruction = struct.pack('<I', int(match.group(1), 16))
+            self.assertEqual(body.count(instruction), 1)
+            libc.write_bytes(body.replace(instruction, struct.pack('<I', int(match.group(1), 16) + 1), 1))
+            with self.assertRaises(receipt.ReceiptError):
+                receipt.validate_allocator_plt(libc)
+
     def test_real_mold_plt_and_wrong_slot(self) -> None:
+        if receipt.ARCH == "aarch64":
+            self.arm_fixture(True)
+            return
         import subprocess
         with tempfile.TemporaryDirectory(dir=ROOT / '.work') as directory:
             root = Path(directory)
@@ -961,6 +1009,9 @@ free: ret
                 receipt.validate_allocator_plt(libc)
 
     def test_real_mold_jump_slot(self) -> None:
+        if receipt.ARCH == "aarch64":
+            self.arm_fixture(False)
+            return
         import subprocess
         with tempfile.TemporaryDirectory(dir=ROOT / '.work') as directory:
             root = Path(directory)
