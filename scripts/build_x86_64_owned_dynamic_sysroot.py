@@ -1032,6 +1032,8 @@ def build_aarch64(output: Path, *, allocator_backend: str, lifecycle_test_audit:
     work = ROOT / ".work" / arch["work_name"]
     if not output.is_relative_to(work):
         raise common.BuildError("aarch64 output must be under .work/aarch64")
+    if output.exists() or output.is_symlink():
+        raise common.BuildError("dynamic output already exists; choose a fresh owned output")
     output.parent.mkdir(parents=True, exist_ok=True)
     target = arch["target_triple"]
     source_before_build = source_seal.product_source_digest(ROOT)
@@ -1041,7 +1043,7 @@ def build_aarch64(output: Path, *, allocator_backend: str, lifecycle_test_audit:
     environment = common.deterministic_environment()
     environment.update({"CARGO_HOME": str(work / "cargo"), "TMPDIR": str(work / "tmp"),
                         arch["linker_variable"]: arch["linker"]})
-    with tempfile.TemporaryDirectory(prefix="owned-dynamic-build-", dir=work) as temporary:
+    with tempfile.TemporaryDirectory(prefix="owned-dynamic-build-", dir=output.parent) as temporary:
         stage = Path(temporary)
         cargo = [rustup, "run", common.PINNED_TOOLCHAIN, "cargo"]
         loader_flags = loader_rustflags(hardening_profile, architecture="aarch64")
@@ -1169,8 +1171,10 @@ def build_aarch64(output: Path, *, allocator_backend: str, lifecycle_test_audit:
             installed_driver.validate(installed)
         except installed_driver.shared.DriverError as error:
             raise common.BuildError(str(error)) from error
-        common.remove_owned_output(output, format_name=manifest["format"], target=target)
-        installed.replace(output)
+        try:
+            shared_package.publish_noreplace(installed, output, "dynamic sysroot output")
+        except shared_package.PackageError as error:
+            raise common.BuildError(str(error)) from error
 
 
 def main() -> int:

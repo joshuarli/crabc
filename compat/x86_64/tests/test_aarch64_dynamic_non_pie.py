@@ -152,6 +152,24 @@ class Aarch64DynamicNonPieTest(unittest.TestCase):
                     self.assertFalse(rejected.exists())
 
     @unittest.skipUnless(os.environ.get("CRABC_AARCH64_DYNAMIC_SYSROOT") or CAN_BUILD, "requires a built aarch64 product")
+    def test_native_builder_rejects_existing_output_before_tool_resolution(self):
+        root = Path(__file__).resolve().parents[3]
+        sys.path.insert(0, str(root / "scripts"))
+        import build_x86_64_owned_dynamic_sysroot as builder
+        with tempfile.TemporaryDirectory(dir=os.environ["TMPDIR"]) as directory:
+            output = Path(directory) / "occupied"
+            output.mkdir()
+            marker = output / "existing"
+            marker.write_bytes(b"existing product")
+            with mock.patch.object(builder.common, "pinned_rustup", side_effect=AssertionError("tool invoked")) as tool:
+                with self.assertRaisesRegex(builder.common.BuildError, "output already exists"):
+                    builder.build_aarch64(output, allocator_backend=builder.common.DEFAULT_ALLOCATOR_BACKEND,
+                                          lifecycle_test_audit=False, profile="release",
+                                          hardening_profile=builder.common.NativeRuntimeProfile.COMPATIBILITY)
+                tool.assert_not_called()
+            self.assertEqual(marker.read_bytes(), b"existing product")
+
+    @unittest.skipUnless(os.environ.get("CRABC_AARCH64_DYNAMIC_SYSROOT") or CAN_BUILD, "requires a built aarch64 product")
     def test_receipt_reservations_precede_translation_and_preserve_existing_files(self):
         product = Path(os.environ["CRABC_AARCH64_DYNAMIC_SYSROOT"]).resolve(strict=True)
         driver = product / "bin/crabc-cc-dynamic"
