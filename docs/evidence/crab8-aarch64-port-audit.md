@@ -260,10 +260,8 @@ cross-target flags documented in CRAB-8.
     - aarch64 dynamic startup lacks musl's HWCAP/HWCAP2 SME masking, which the aarch64 static path does (`static_tls.rs:954-978`).
     - Qualifying-path.
 
-35. **`fenv_rounding.rs:147-158, 282-290` and `elementary_sqrt.rs:79-158`** (unconfirmed)
-    - aarch64 `rintl`, `nearbyintl` and `sqrtl` likely ignore the rounding mode and the inexact flag, because they go through soft-float compiler_builtins.
-    - Quick check: after `fesetround(FE_UPWARD)`, `rintl(2.5L)` should return 3 and raise `FE_INEXACT`.
-    - Qualifying-path.
+35. **Closed (1893d7e07, 88b7f88fb). `fenv_rounding.rs` and `elementary_sqrt.rs`**
+    - Native binary128 rounding uses the caller's mode and raises the required flags. The pinned-musl differential covers all four modes, subnormals, exact and inexact results; a separate signaling-NaN probe verifies `sqrtl` quieting, payload and sign preservation, and `FE_INVALID`.
 
 36. **`ldso/src/aarch64_initial_tls.rs:69-76`**
     - The per-object `tls_module_id < dtv_words` re-check (x86 `:2482`) is missing.
