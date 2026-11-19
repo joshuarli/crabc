@@ -68,4 +68,24 @@ done < "$work/imports"
 printf 'compiler-helper-aggregate-ok\n' >"$work/expected.stdout"
 cmp "$work/expected.stdout" "$work/reference.stdout"
 cmp "$work/reference.stdout" "$work/candidate.stdout"
+cp "$archive" "$work/libcrabc-builtins.a"
+PYTHONPATH="$root/compat/x86_64" python3 -B - "$root" "$work" <<'PY'
+import sys
+from pathlib import Path
+import compiler_helper_evidence as evidence
+
+root, work = map(Path, sys.argv[1:])
+names = (root / 'builtins/fixtures/aarch64_compiler_helper_imports.txt').read_text().splitlines()
+rows = (root / 'builtins/aarch64-helper-symbols.txt').read_text().splitlines()
+if not all(len(row.split()) == 4 for row in rows):
+    raise SystemExit('malformed ARM helper metadata')
+metadata = {parts[0]: ' '.join(parts[1:]) for row in rows if (parts := row.split())}
+if len(metadata) != len(rows):
+    raise SystemExit('duplicate ARM helper metadata')
+contract = {'helpers': [{'name': name} for name in names]}
+artifacts = {name: evidence._work_identity(work, work / name, name)
+             for name in ('libcrabc-builtins.a', 'candidate')}
+evidence._live_artifact_observations(work, contract, artifacts, architecture='aarch64',
+                                     archive_metadata=metadata)
+PY
 printf 'arm64 compiler helpers: PASS (%s)\n' "$work"

@@ -1895,25 +1895,40 @@ def _nm_defined_names(path: Path, *, extern_only: bool = True) -> set[str]:
             if len(line.split()) >= 2 and not line.endswith(":" )}
 
 
-def _live_artifact_observations(work: Path, contract: Mapping[str, Any], artifacts: Mapping[str, Any]) -> dict[str, Any]:
+def _live_artifact_observations(work: Path, contract: Mapping[str, Any], artifacts: Mapping[str, Any], *,
+                                architecture: str = "x86_64", archive_metadata: Mapping[str, str] | None = None) -> dict[str, Any]:
     """Bind archive/candidate identities to fresh ELF and symbol-table reads."""
 
     archive = _resolve_work_identity(work, artifacts["libcrabc-builtins.a"], "aggregate archive")
     candidate = _resolve_work_identity(work, artifacts["candidate"], "aggregate candidate")
     names = set(helper_names(contract))
-    require(_nm_defined_names(archive) == names, "retained compiler-helper archive definition roster differs")
+    require(architecture in {"x86_64", "aarch64"}, "aggregate architecture differs")
+    require((architecture == "x86_64" and archive_metadata is None) or
+            (architecture == "aarch64" and archive_metadata is not None and names <= set(archive_metadata)),
+            "aggregate archive metadata contract differs")
+    archive_names = names if archive_metadata is None else set(archive_metadata)
+    require(_nm_defined_names(archive) == archive_names, "retained compiler-helper archive definition roster differs")
     archive_symbols = _live_tool(["readelf", "-sW", str(archive)], "compiler-helper archive ELF")
+    if archive_metadata is not None:
+        observed: dict[str, str] = {}
+        for line in archive_symbols.splitlines():
+            fields = line.split()
+            if len(fields) >= 8 and fields[0].endswith(":") and fields[-1] in archive_names and fields[6] not in {"UND", "ABS"}:
+                require(fields[-1] not in observed, "duplicate retained archive symbol")
+                observed[fields[-1]] = " ".join(fields[3:6])
+        require(observed == archive_metadata, "retained compiler-helper archive metadata differs")
     rows: list[list[str]] = []
     for line in archive_symbols.splitlines():
         fields = line.split()
         if len(fields) >= 8 and fields[0].endswith(":") and fields[3:6] == ["FUNC", "GLOBAL", "DEFAULT"]:
             rows.append(fields)
     helper_rows = [fields for fields in rows if fields[-1] in names]
-    require(len(helper_rows) == len(names) and {fields[-1] for fields in helper_rows} == names
-            and {fields[6] for fields in helper_rows}.isdisjoint({"UND", "ABS"}),
-            "retained compiler-helper archive ELF metadata differs")
-    require({fields[-1] for fields in rows} == names,
-            "retained compiler-helper archive has an extra exported function")
+    if architecture == "x86_64":
+        require(len(helper_rows) == len(names) and {fields[-1] for fields in helper_rows} == names
+                and {fields[6] for fields in helper_rows}.isdisjoint({"UND", "ABS"}),
+                "retained compiler-helper archive ELF metadata differs")
+        require({fields[-1] for fields in rows} == names,
+                "retained compiler-helper archive has an extra exported function")
     candidate_definitions = _nm_defined_names(candidate, extern_only=False)
     require(names <= candidate_definitions, "retained aggregate candidate definitions differ")
     candidate_undefined = _live_tool(["nm", "--undefined-only", str(candidate)], "aggregate candidate undefined symbols")
@@ -1923,13 +1938,15 @@ def _live_artifact_observations(work: Path, contract: Mapping[str, Any], artifac
     dynamic = _live_tool(["readelf", "-dW", str(candidate)], "aggregate candidate dynamic section")
     disassembly = _live_tool(["objdump", "--disassemble", str(candidate)], "aggregate candidate disassembly")
     require("Type:                              EXEC (Executable file)" in header
-            and "Advanced Micro Devices X86-64" in header, "retained aggregate candidate ELF header differs")
+            and ("AArch64" if architecture == "aarch64" else "Advanced Micro Devices X86-64") in header,
+            "retained aggregate candidate ELF header differs")
     require("INTERP" not in program_headers and not re.search(r"\bTLS\b", program_headers),
             "retained aggregate candidate has an interpreter or TLS")
     require(re.search(r"\((NEEDED|JMPREL|PLTGOT)\)", dynamic) is None,
             "retained aggregate candidate dynamic linkage differs")
+    transfer = r"\bb(?:l)?" if architecture == "aarch64" else r"(?:call|jmp)\S*"
     direct = {name for name in names
-              if re.search(r"(?:call|jmp)\S*\s+[^\n]*<" + re.escape(name) + r">", disassembly)}
+              if re.search(transfer + r"\s+[^\n]*<" + re.escape(name) + r">", disassembly)}
     require(direct == names, "retained aggregate candidate direct helper transfers differ")
     return {"archive": artifacts["libcrabc-builtins.a"], "candidate": artifacts["candidate"],
             "archive_global_default_functions": list(helper_names(contract)),
