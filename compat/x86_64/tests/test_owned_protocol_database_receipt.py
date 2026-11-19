@@ -44,7 +44,7 @@ class OwnedProtocolDatabaseReceiptTests(unittest.TestCase):
             f"{arm}-{mode}" for arm in producer.ARMS for mode in producer.ENTRY_MODES
         }})
         self.assertEqual(len(matrix), 19)
-        self.assertEqual(matrix["installed-dynamic-pie-direct"][1], ["/lib/ld-crabc-x86_64.so.1", "/workload"])
+        self.assertEqual(matrix["installed-dynamic-pie-direct"][1], [f"/lib/ld-crabc-{producer.ARCH}.so.1", "/workload"])
 
     def test_receipt_source_map_selects_proto_c_provider_not_system_parser(self) -> None:
         sources = producer.source_records()
@@ -131,7 +131,7 @@ class OwnedProtocolDatabaseReceiptTests(unittest.TestCase):
         evidence = self.work / "evidence"
         evidence.mkdir()
         archive = Path("/opt/musl-1.2.6/lib/libc.a")
-        compiler_root = Path("/usr/lib/gcc/x86_64-alpine-linux-musl/15.2.0")
+        compiler_root = Path(f"/usr/lib/gcc/{producer.ARCH}-alpine-linux-musl/15.2.0")
         owner_members = {name: "proto.lo" for name in producer.PROVIDERS}
         owner_members.update({"strcmp": "strcmp.lo", "strlen": "strlen.lo"})
         owners = {name: f"{archive}({member})" for name, member in owner_members.items()}
@@ -153,7 +153,7 @@ class OwnedProtocolDatabaseReceiptTests(unittest.TestCase):
         ]
         trace = evidence / "oracle.trace"
         trace.write_text("\n".join(trace_rows) + "\n", encoding="utf-8")
-        scratch_root = self.work / ".work/x86_64/tmp"
+        scratch_root = self.work / f".work/{producer.ARCH}/tmp"
         evidence.chmod(0o555)
 
         def check_scratch(path: Path, _executable: Path, admitted: object, _contracts: object) -> None:
@@ -238,10 +238,10 @@ class OwnedProtocolDatabaseReceiptTests(unittest.TestCase):
         archive.write_bytes(b"current image archive")
         compiler = self.work / "musl-gcc"
         compiler.write_bytes(b"compiler fixture")
-        manifest_path = self.work / "compat/x86_64/owned_resolver_network_image_inputs.json"
+        manifest_path = self.work / producer.ORACLE_IMAGE_MANIFEST
         manifest_path.parent.mkdir(parents=True)
         manifest_path.write_text(json.dumps({
-            "schema": "crabc.x86_64-owned-resolver-network-image-inputs/v1",
+            "schema": f"crabc.{producer.ARCH}-owned-resolver-network-image-inputs/v1",
             "files": {str(archive): {
                 "path": str(archive), "sha256": hashlib.sha256(archive.read_bytes()).hexdigest(),
                 "size": archive.stat().st_size, "mode": stat.S_IMODE(archive.stat().st_mode),
