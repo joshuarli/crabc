@@ -4,6 +4,8 @@ from pathlib import Path
 import struct
 import sys
 
+from native_arch import native_arch
+
 MARKER = b"LATEPHDR"
 PAGE = 4096
 PHDR_SIZE = 56
@@ -21,8 +23,8 @@ def main() -> None:
         if path.is_symlink() or not path.resolve().is_relative_to(work):
             raise SystemExit("late PHDR artifacts must remain in checkout .work")
     image = bytearray(source.read_bytes())
-    if image[:6] != b"\x7fELF\x02\x01" or struct.unpack_from("<H", image, 18)[0] != 62:
-        raise SystemExit("expected little-endian ELF64 x86-64")
+    if image[:6] != b"\x7fELF\x02\x01" or struct.unpack_from("<H", image, 18)[0] != {"x86_64": 62, "aarch64": 183}[native_arch()["arch"]]:
+        raise SystemExit("expected native little-endian ELF64")
     phoff = struct.unpack_from("<Q", image, 32)[0]
     phentsize, phnum = struct.unpack_from("<HH", image, 54)
     size = phnum * PHDR_SIZE

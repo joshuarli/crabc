@@ -2,6 +2,7 @@
 set -euo pipefail
 ulimit -c 0
 readonly ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+eval "$(python3 -B "$ROOT/compat/x86_64/native_arch.py")"
 [ "$#" -eq 1 ] || exit 2
 readonly installed="$1" source="$ROOT/compat/x86_64/general_dynamic_elf_scope.c"
 case "${TMPDIR:-}" in "$ROOT"/.work/*) ;; *) exit 2;; esac
@@ -12,17 +13,17 @@ for arm in oracle candidate; do
     mkdir -p "$root/lib" "$root/usr/lib"
     if [ "$arm" = candidate ]; then
         cp -a "$installed/." "$root/"
-        interpreter=/lib/ld-crabc-x86_64.so.1
+        interpreter=/lib/ld-crabc-${arch}.so.1
     else
-        cp /opt/musl-1.2.6/lib/libc.so "$root/lib/ld-musl-x86_64.so.1"
+        cp /opt/musl-1.2.6/lib/libc.so "$root/lib/ld-musl-${arch}.so.1"
         cp /opt/musl-1.2.6/lib/libc.so "$root/usr/lib/libc.so"
-        interpreter=/lib/ld-musl-x86_64.so.1
+        interpreter=/lib/ld-musl-${arch}.so.1
     fi
     for provider in a b; do
         if [ "$arm" = candidate ]; then
             "$installed/bin/crabc-cc-dynamic" --dynamic-shared-object "-DPROVIDER_${provider^^}" "$source" -o "$root/usr/lib/libelf_$provider.so"
         else
-            /usr/local/bin/crabc-x86_64-musl-gcc -fPIC -shared "-DPROVIDER_${provider^^}" "$source" -Wl,-soname,"libelf_$provider.so" -o "$root/usr/lib/libelf_$provider.so"
+            "$oracle" -fPIC -shared "-DPROVIDER_${provider^^}" "$source" -Wl,-soname,"libelf_$provider.so" -o "$root/usr/lib/libelf_$provider.so"
         fi
     done
     readelf --dyn-syms -W "$root/usr/lib/libelf_a.so" >"$work/$arm-a.symbols"
@@ -54,17 +55,17 @@ PY_SYMBOLS
                 if [ "$arm" = candidate ]; then
                     "$installed/bin/crabc-cc-dynamic" "--dynamic-$mode" "${flags[@]}" "$source" "${dependencies[@]}" -o "$root/$name"
                 else
-                    /usr/local/bin/crabc-x86_64-musl-gcc -fPIE "-${mode/non-pie/no-pie}" "${flags[@]}" "$source" -Wl,--dynamic-linker,"$interpreter",-rpath,/usr/lib,--no-as-needed "${dependencies[@]}" -o "$root/$name"
+                    "$oracle" -fPIE "-${mode/non-pie/no-pie}" "${flags[@]}" "$source" -Wl,--dynamic-linker,"$interpreter",-rpath,/usr/lib,--no-as-needed "${dependencies[@]}" -o "$root/$name"
                 fi
                 timeout 20 chroot "$root" "/$name" >"$work/$arm-$name.stdout" 2>"$work/$arm-$name.stderr"
                 if [ "$arm" = candidate ]; then
                     cmp "$work/oracle-$name.stdout" "$work/candidate-$name.stdout"
                     # The product alias must execute the owned loader both as a
                     # direct command and as the actual kernel PT_INTERP target.
-                    [ "$(readlink "$root/lib/ld-musl-x86_64.so.1")" = ld-crabc-x86_64.so.1 ]
-                    timeout 20 chroot "$root" /lib/ld-musl-x86_64.so.1 "/$name" >"$work/alias-direct-$name.stdout"
+                    [ "$(readlink "$root/lib/ld-musl-${arch}.so.1")" = ld-crabc-${arch}.so.1 ]
+                    timeout 20 chroot "$root" /lib/ld-musl-${arch}.so.1 "/$name" >"$work/alias-direct-$name.stdout"
                     cmp "$work/oracle-$name.stdout" "$work/alias-direct-$name.stdout"
-                    python3 - "$root/$name" "$root/$name-alias" <<'PY_ALIAS'
+                    python3 - "$root/$name" "$root/$name-alias" "$arch" <<'PY_ALIAS'
 import pathlib
 import struct
 import sys
@@ -81,8 +82,8 @@ for index in range(phnum):
         interpreters.append((offset, size))
 assert len(interpreters) == 1
 at, size = interpreters[0]
-assert image[at:at + size].rstrip(b"\0") == b"/lib/ld-crabc-x86_64.so.1"
-alias = b"/lib/ld-musl-x86_64.so.1\0"
+assert image[at:at + size].rstrip(b"\0") == f"/lib/ld-crabc-{sys.argv[3]}.so.1".encode()
+alias = f"/lib/ld-musl-{sys.argv[3]}.so.1\0".encode()
 assert len(alias) <= size
 image[at:at + size] = alias.ljust(size, b"\0")
 output = pathlib.Path(sys.argv[2])
@@ -100,12 +101,12 @@ readonly unique_source="$ROOT/compat/x86_64/general_dynamic_unique_scope.c"
 for arm in oracle candidate; do
     root="$work/$arm"
     if [ "$arm" = candidate ]; then
-        interpreter=/lib/ld-crabc-x86_64.so.1
+        interpreter=/lib/ld-crabc-${arch}.so.1
         "$installed/bin/crabc-cc-dynamic" --dynamic-shared-object -DUNIQUE_PROVIDER \
             "$unique_source" -o "$root/usr/lib/libelf_unique.so"
     else
-        interpreter=/lib/ld-musl-x86_64.so.1
-        /usr/local/bin/crabc-x86_64-musl-gcc -fPIC -shared -DUNIQUE_PROVIDER \
+        interpreter=/lib/ld-musl-${arch}.so.1
+        "$oracle" -fPIC -shared -DUNIQUE_PROVIDER \
             "$unique_source" -Wl,-soname,libelf_unique.so -o "$root/usr/lib/libelf_unique.so"
     fi
     readelf --dyn-syms -W "$root/usr/lib/libelf_unique.so" >"$work/$arm-unique.symbols"
@@ -113,7 +114,7 @@ for arm in oracle candidate; do
     awk '$1 == "elf_unique" && $2 == "u" { found = 1 }
         END { exit !found }' "$work/$arm-unique.nm"
     readelf -rW "$root/usr/lib/libelf_unique.so" >"$work/$arm-unique.relocations"
-    awk '$3 == "R_X86_64_GLOB_DAT" && $5 == "elf_unique" { found = 1 }
+    awk -v reloc="R_${arch^^}_GLOB_DAT" '$3 == reloc && $5 == "elf_unique" { found = 1 }
         END { exit !found }' "$work/$arm-unique.relocations"
     for mode in pie non-pie; do
         for phase in initial runtime; do
@@ -130,7 +131,7 @@ for arm in oracle candidate; do
                 "$installed/bin/crabc-cc-dynamic" "--dynamic-$mode" "$unique_source" \
                     "${dependencies[@]}" -o "$root/$name"
             else
-                /usr/local/bin/crabc-x86_64-musl-gcc -fPIE "-${mode/non-pie/no-pie}" \
+                "$oracle" -fPIE "-${mode/non-pie/no-pie}" \
                     "$unique_source" -Wl,--dynamic-linker,"$interpreter",-rpath,/usr/lib \
                     "${dependencies[@]}" -o "$root/$name"
             fi
@@ -147,12 +148,12 @@ for arm in oracle candidate; do
     root="$work/$arm"
     mkdir -p "$work/$arm-unmutated"
     if [ "$arm" = candidate ]; then
-        interpreter=/lib/ld-crabc-x86_64.so.1
+        interpreter=/lib/ld-crabc-${arch}.so.1
         "$installed/bin/crabc-cc-dynamic" --dynamic-shared-object -DPHDR_PROVIDER \
             "$late_source" -o "$work/$arm-unmutated/libphdr-late.so"
     else
-        interpreter=/lib/ld-musl-x86_64.so.1
-        /usr/local/bin/crabc-x86_64-musl-gcc -fPIC -shared -DPHDR_PROVIDER \
+        interpreter=/lib/ld-musl-${arch}.so.1
+        "$oracle" -fPIC -shared -DPHDR_PROVIDER \
             "$late_source" -Wl,-soname,libphdr-late.so \
             -o "$work/$arm-unmutated/libphdr-late.so"
     fi
@@ -174,7 +175,7 @@ for arm in oracle candidate; do
                 "$installed/bin/crabc-cc-dynamic" "--dynamic-$mode" "$late_source" \
                     "${dependencies[@]}" -o "$root/$name"
             else
-                /usr/local/bin/crabc-x86_64-musl-gcc -fPIE "-${mode/non-pie/no-pie}" \
+                "$oracle" -fPIE "-${mode/non-pie/no-pie}" \
                     "$late_source" -Wl,--dynamic-linker,"$interpreter",-rpath,/usr/lib \
                     "${dependencies[@]}" -o "$root/$name"
             fi

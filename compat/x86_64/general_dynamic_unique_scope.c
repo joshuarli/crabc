@@ -8,7 +8,11 @@
  * provider's own GOT reference also tests relocation of that binding. */
 __asm__(".pushsection .data\n"
         ".globl elf_unique\n"
+#if defined(__aarch64__)
+        ".type elf_unique, %gnu_unique_object\n"
+#else
         ".type elf_unique, @gnu_unique_object\n"
+#endif
         ".size elf_unique, 4\n"
         "elf_unique: .long 73\n"
         ".popsection\n");
