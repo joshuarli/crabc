@@ -25,8 +25,9 @@ class DirentHeaderAbiTests(unittest.TestCase):
         sys_dir = SYS_DIR_HEADER.read_text(encoding="utf-8")
 
         self.assertIn("#include <bits/dirent.h>", dirent)
-        x86_dirent = dirent.split("#if defined(__x86_64__)", 1)[1].split("#else", 1)[0]
-        self.assertNotIn("struct dirent {", x86_dirent)
+        self.assertNotIn("struct dirent {", dirent)
+        self.assertNotIn("__x86_64__", dirent)
+        self.assertNotIn("__aarch64__", dirent)
         self.assertEqual(
             bits_dirent,
             "#define _DIRENT_HAVE_D_RECLEN\n"
@@ -41,7 +42,6 @@ class DirentHeaderAbiTests(unittest.TestCase):
             "};\n",
         )
         self.assertIn(
-            "#if defined(__x86_64__)\n"
             "/* Keep the historical AArch64 guard isolated from musl's x86 public form. */\n"
             "#undef _CRABC_SYS_DIR_H\n"
             "#include <dirent.h>\n"
