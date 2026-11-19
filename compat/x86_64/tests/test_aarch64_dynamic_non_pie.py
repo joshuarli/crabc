@@ -84,6 +84,35 @@ class Aarch64DynamicNonPieTest(unittest.TestCase):
         self.assertIn("-rdynamic", result.stderr)
 
     @unittest.skipUnless(os.environ.get("CRABC_AARCH64_DYNAMIC_SYSROOT") or CAN_BUILD, "requires a built aarch64 product")
+    def test_translation_uses_sealed_headers_and_uncompressed_debug(self):
+        product = Path(os.environ["CRABC_AARCH64_DYNAMIC_SYSROOT"]).resolve(strict=True)
+        driver = product / "bin/crabc-cc-dynamic"
+        with tempfile.TemporaryDirectory(dir=os.environ["TMPDIR"]) as directory:
+            work = Path(directory)
+            include = work / "include"
+            include.mkdir()
+            (include / "local.h").write_text("#define LOCAL_VALUE 7\n")
+            source, output = work / "main.c", work / "main.o"
+            source.write_text('#include "local.h"\n#ifndef _REENTRANT\n#error no pthread\n#endif\n'
+                              'int value = LOCAL_VALUE;\n')
+            subprocess.run([driver, "-pie", "-c", "-g", "-pthread", "-frounding-math",
+                            "--application-quote-include-dir", include, source, "-o", output], check=True)
+            sections = subprocess.check_output(["readelf", "-SW", output], text=True)
+            info = next(line for line in sections.splitlines() if ".debug_info " in line)
+            self.assertNotIn(" C ", info)
+            link = work / "include-link"
+            link.symlink_to(include)
+            for options in (("--application-quote-include-dir", str(link)),
+                            ("--application-quote-include-dir", str(product / "usr/include")),
+                            ("-gz=zlib",), ("-lpthread",), ("-I", str(include))):
+                with self.subTest(options=options):
+                    bad = work / "bad.o"
+                    result = subprocess.run([driver, "-pie", "-c", "-g", *options, source, "-o", bad],
+                                            capture_output=True, text=True)
+                    self.assertNotEqual(result.returncode, 0)
+                    self.assertFalse(bad.exists())
+
+    @unittest.skipUnless(os.environ.get("CRABC_AARCH64_DYNAMIC_SYSROOT") or CAN_BUILD, "requires a built aarch64 product")
     def test_receipt_reservations_precede_translation_and_preserve_existing_files(self):
         product = Path(os.environ["CRABC_AARCH64_DYNAMIC_SYSROOT"]).resolve(strict=True)
         driver = product / "bin/crabc-cc-dynamic"
