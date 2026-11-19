@@ -1398,6 +1398,15 @@ fn tlsdesc_static_checks_both_words_and_returns_tp_offset() {
 
 #[cfg(target_arch = "aarch64")]
 #[test]
+fn tlsdesc_is_not_an_unsupported_dlopen_relocation() {
+    let mut image = Image::new();
+    image.rela(IMAGE_DATA as u64, R_X86_64_TLSDESC, 0, 0);
+    let objects = [EMPTY_OBJECT, image.object(false)];
+    assert!(unsafe { deferred::diagnose_new(&objects, &[0, 1], 1, 0, false) }.is_none());
+}
+
+#[cfg(target_arch = "aarch64")]
+#[test]
 fn x86_pc32_relocation_is_rejected_before_writes() {
     let mut image = Image::new();
     image.data[0] = 0x1122334455667788;
