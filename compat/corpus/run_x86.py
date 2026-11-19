@@ -48,11 +48,11 @@ LIFETIME_HELPER_MANIFEST = ROOT / "compat/x86_64/generate_qualification_manifest
 TIERS = ("A", "B", "C", "D")
 TIMEOUT_SECONDS = 12
 SCHEMA = "crabc.x86_64-owned-package-corpus/v3"
-PRODUCT_FORMAT = "crabc-x86-64-owned-dynamic-sysroot-v1"
+PRODUCT_FORMAT = f"crabc-{'x86-64' if ARCH == 'x86_64' else ARCH}-owned-dynamic-sysroot-v1"
 COMBINED_PRODUCT_FORMAT = "crabc-x86-64-owned-sysroot-v1"
 STATIC_PRODUCT_FORMAT = "crabc-x86-64-owned-static-sysroot-v1"
 COMBINED_MODES = ("static-et-exec", "static-pie", "dynamic-pie", "dynamic-non-pie", "dynamic-shared-object")
-PRODUCT_ALIAS = {f"lib/ld-musl-{ARCH}.so.1": f"ld-crabc-{ARCH}.so.1"}
+PRODUCT_ALIAS = {f"lib/ld-musl-{ARCH}.so.1": f"ld-crabc-{ARCH}.so.1"} if ARCH == "x86_64" else {}
 CANONICAL_INTERPRETER = f"/lib/ld-musl-{ARCH}.so.1"
 CANONICAL_LIBC = f"/lib/libc.musl-{ARCH}.so.1"
 CASE_ENVIRONMENT = {"PATH": "/bin:/usr/bin", "HOME": "/root", "LC_ALL": "C", "LANG": "C", "TZ": "UTC"}
@@ -509,7 +509,7 @@ def extract_archive(archive: Path, root: Path) -> None:
     try:
         with tarfile.open(archive, "r:*") as stream:
             for member in stream:
-                if member.name in {".PKGINFO", ".SIGN.RSA.alpine-devel@lists.alpinelinux.org-6165ee59.rsa.pub"} or member.name.startswith(".post-") or member.name == ".trigger":
+                if member.name in {".PKGINFO", ".SIGN.RSA.alpine-devel@lists.alpinelinux.org-6165ee59.rsa.pub"} or (ARCH == "aarch64" and member.name.startswith(".SIGN.")) or member.name.startswith(".post-") or member.name == ".trigger":
                     continue
                 destination = _destination(root, member.name.rstrip("/"))
                 if member.isdir():
