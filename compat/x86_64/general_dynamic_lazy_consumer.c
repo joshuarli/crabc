@@ -49,7 +49,11 @@ static uintptr_t *pending_slot(void *handle, const char *name)
         for (size_t index = 0; index < sizes[table] / sizeof(Elf64_Rela); ++index) {
             Elf64_Rela *relocation = &tables[table][index];
             unsigned type = ELF64_R_TYPE(relocation->r_info);
+#if defined(__aarch64__)
+            if ((type == R_AARCH64_GLOB_DAT || type == R_AARCH64_JUMP_SLOT)
+#else
             if ((type == R_X86_64_GLOB_DAT || type == R_X86_64_JUMP_SLOT)
+#endif
                 && !strcmp(strings + symbols[ELF64_R_SYM(relocation->r_info)].st_name, name))
                 return (void *)(map->l_addr + relocation->r_offset);
         }
@@ -62,7 +66,11 @@ static uintptr_t *pending_slot(void *handle, const char *name)
  * qualification. It runs only after the selected worker has joined. */
 static int read_only(uintptr_t *slot)
 {
+#if defined(__aarch64__)
+    long child = syscall(SYS_clone, SIGCHLD, 0, 0, 0, 0);
+#else
     long child = syscall(SYS_fork);
+#endif
     if (!child) {
         *(volatile uintptr_t *)slot = 0;
         syscall(SYS_exit, 90);
