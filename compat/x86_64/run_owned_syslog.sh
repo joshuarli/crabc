@@ -156,7 +156,7 @@ def require(value, message):
 
 expected_format = (
     ('crabc-aarch64-owned-dynamic-sysroot-v1' if arch == 'aarch64' else 'crabc-x86-64-owned-dynamic-sysroot-v1')
-    if family == 'dynamic' else 'crabc-x86-64-sealed-static-driver-v1'
+    if family == 'dynamic' else ('crabc-aarch64-sealed-static-driver-v1' if arch == 'aarch64' else 'crabc-x86-64-sealed-static-driver-v1')
 )
 if family == 'dynamic':
     require(isinstance(receipt, dict), 'dynamic receipt is not an object')
