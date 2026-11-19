@@ -115,6 +115,30 @@ class Aarch64DynamicNonPieTest(unittest.TestCase):
                     self.assertFalse(bad.exists())
 
     @unittest.skipUnless(os.environ.get("CRABC_AARCH64_DYNAMIC_SYSROOT") or CAN_BUILD, "requires a built aarch64 product")
+    def test_weak_data_import_keeps_native_dynamic_got_relocation(self):
+        root = Path(__file__).resolve().parents[3]
+        sys.path.insert(0, str(root / "compat/x86_64"))
+        import owned_dynamic_elf
+        product = Path(os.environ["CRABC_AARCH64_DYNAMIC_SYSROOT"]).resolve(strict=True)
+        driver = product / "bin/crabc-cc-dynamic"
+        with tempfile.TemporaryDirectory(dir=os.environ["TMPDIR"]) as directory:
+            work = Path(directory)
+            source, obj = work / "main.c", work / "main.o"
+            source.write_text('extern int fixture_weak_data __attribute__((weak));\n'
+                              '__asm__(".type fixture_weak_data,%object");\n'
+                              'int main(void) { return &fixture_weak_data != 0; }\n')
+            subprocess.run(["gcc", "-fPIC", "-c", source, "-o", obj], check=True)
+            for mode in ("pie", "non-pie"):
+                with self.subTest(mode=mode):
+                    output = work / mode
+                    subprocess.run([driver, "--dynamic-" + mode, obj, "-o", output], check=True)
+                    facts = owned_dynamic_elf.inspect(output, architecture="aarch64")
+                    self.assertEqual(facts["weak_undefined_symbols"], ["fixture_weak_data"])
+                    symbols = subprocess.check_output(["readelf", "--dyn-syms", "-rW", output], text=True)
+                    self.assertRegex(symbols, r"R_AARCH64_GLOB_DAT\s+0+ fixture_weak_data \+ 0")
+                    self.assertRegex(symbols, r"OBJECT\s+WEAK\s+DEFAULT\s+UND fixture_weak_data")
+
+    @unittest.skipUnless(os.environ.get("CRABC_AARCH64_DYNAMIC_SYSROOT") or CAN_BUILD, "requires a built aarch64 product")
     def test_native_package_round_trip_and_malformed_archives(self):
         sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
         import owned_dynamic_package as package
@@ -210,6 +234,17 @@ class Aarch64DynamicNonPieTest(unittest.TestCase):
             self.assertNotEqual(result.returncode, 0)
             self.assertFalse(Path(str(output) + ".crabc-link.json").exists())
             self.assertFalse(output.exists())
+            sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+            import owned_dynamic_elf
+            for index in (0, 1):
+                output = work / ("sidecar-" + str(index))
+                sidecar = owned_dynamic_elf.sidecar_paths(output)[index]
+                sidecar.write_bytes(b"existing sidecar")
+                result = subprocess.run([driver, "-pie", source, "-o", output], capture_output=True, text=True)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertEqual(sidecar.read_bytes(), b"existing sidecar")
+                self.assertFalse(Path(str(output) + ".crabc-link.json").exists())
+                self.assertFalse(output.exists())
 
     @unittest.skipUnless(os.environ.get("CRABC_AARCH64_DYNAMIC_SYSROOT") or CAN_BUILD, "requires a built aarch64 product")
     def test_failed_link_preserves_replaced_receipt_inode(self):
