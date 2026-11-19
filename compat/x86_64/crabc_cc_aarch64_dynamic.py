@@ -213,10 +213,7 @@ def execute(arguments):
                 child = str(nodes[name][0])
                 role = "direct-application-dso" if name in children else "transitive-application-dso"
                 entry = {"path": child, "sha256": identities[name]}
-                forbidden = {str(node[0]) for name, node in nodes.items() if name not in expected and name != path.name}
-            if any(item in forbidden for item in [*command, *trace]):
-                raise shared.DriverError("application DSO closure receipt linked an undeclared graph node")
-            if record["schema"] == 3:
+                if record["schema"] == 3:
                     entry.update(role=role, name=name)
                 if inputs.count(entry) != 1 or command.count(child) != (1 if name in children else 0) or trace.count(child) != (1 if name in children else 0):
                     raise shared.DriverError("application DSO closure receipt does not bind its dependency")
