@@ -21,6 +21,7 @@ lib = root / "usr/lib"
 def execute(arguments):
     manifest = dynamic_shared.validate_installation(root)
     profile = shared.profile_from_manifest(manifest)
+    retain_evidence = dynamic_shared.retain_link_evidence()
     interpreter = "/lib/ld-crabc-aarch64-hardened.so.1" if profile is shared.NativeRuntimeProfile.HARDENED else "/lib/ld-crabc-aarch64.so.1"
     common = []
     quote_dirs = []
@@ -225,7 +226,8 @@ def execute(arguments):
         for sidecar in (receipt_path, inspection_path, map_path):
             shared.validate_application_output(root, sidecar)
             shared.validate_application_output_disjoint(sidecar, (*sources, *objects_in, *dso_inputs, *transitive_inputs, output))
-    with ExitStack() as reservations, tempfile.TemporaryDirectory(prefix="crabc-aarch64-dynamic-") as temporary:
+    output.parent.mkdir(parents=True, exist_ok=True)
+    with ExitStack() as reservations, dynamic_shared.link_evidence_workspace(output.parent, retain=retain_evidence) as temporary:
         if not invocation.compile_only:
             receipt_stream = reservations.enter_context(dynamic_shared.reserve_receipt(receipt_path))
             inspection_stream = reservations.enter_context(dynamic_shared.reserve_receipt(inspection_path))

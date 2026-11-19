@@ -47,6 +47,30 @@ class Aarch64DynamicNonPieTest(unittest.TestCase):
                                     "unowned application DSO" in result.stderr, result.stderr)
 
     @unittest.skipUnless(os.environ.get("CRABC_AARCH64_DYNAMIC_SYSROOT") or CAN_BUILD, "requires a built aarch64 product")
+    def test_link_evidence_requires_exact_opt_in_and_retains_source_object(self):
+        product = Path(os.environ["CRABC_AARCH64_DYNAMIC_SYSROOT"]).resolve(strict=True)
+        driver = product / "bin/crabc-cc-dynamic"
+        with tempfile.TemporaryDirectory(dir=os.environ["TMPDIR"]) as directory:
+            work = Path(directory)
+            source, output = work / "main.c", work / "main"
+            source.write_text("int main(void) { return 0; }\n")
+            for value in ("", "0", "true", "retain"):
+                with self.subTest(value=value):
+                    result = subprocess.run([driver, "-pie", source, "-o", output], capture_output=True, text=True,
+                                            env={**os.environ, "CRABC_X86_64_RETAIN_LINK_EVIDENCE": value})
+                    self.assertNotEqual(result.returncode, 0)
+                    self.assertIn("retain link evidence", result.stderr)
+                    self.assertFalse(output.exists())
+            subprocess.run([driver, "-pie", source, "-o", output], check=True,
+                           env={**os.environ, "CRABC_X86_64_RETAIN_LINK_EVIDENCE": "1"})
+            receipt = json.loads(Path(str(output) + ".crabc-link.json").read_text())
+            objects = [Path(item["path"]) for item in receipt["input_receipts"]
+                       if item["path"].endswith("/0.o")]
+            self.assertEqual(len(objects), 1)
+            self.assertTrue(objects[0].is_file())
+            self.assertTrue(objects[0].parent.name.startswith("crabc-dynamic-link."))
+
+    @unittest.skipUnless(os.environ.get("CRABC_AARCH64_DYNAMIC_SYSROOT") or CAN_BUILD, "requires a built aarch64 product")
     def test_receipt_reservations_precede_translation_and_preserve_existing_files(self):
         product = Path(os.environ["CRABC_AARCH64_DYNAMIC_SYSROOT"]).resolve(strict=True)
         driver = product / "bin/crabc-cc-dynamic"
