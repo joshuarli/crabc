@@ -1040,12 +1040,13 @@ def build_aarch64(output: Path, *, allocator_backend: str, lifecycle_test_audit:
         stage = Path(temporary)
         cargo = [rustup, "run", common.PINNED_TOOLCHAIN, "cargo"]
         flags = ["--config", f'target.{target}.rustflags=["-Ztls-model=initial-exec", "-Ctarget-feature=-outline-atomics"]']
-        common.run([*cargo, "rustc", "--locked", "-p", "crabc-libc", "--lib", "--release", "--no-default-features", "--features", "x86-owned-dynamic-runtime", "--target", target, "--target-dir", str(stage / "cargo"), *common.STATIC_ARCHIVE_PROFILE, *flags, "--", "--cfg", "crabc_owned_static_sysroot", "--cfg", common.MIMALLOC_LIFECYCLE_RUST_CFG, "-C", "relocation-model=pic", "-C", "panic=abort", "-Ztls-model=initial-exec", "-Zmerge-functions=disabled"], environment=environment)
+        libc_command = [*cargo, "rustc", "--locked", "-p", "crabc-libc", "--lib", "--release", "--no-default-features", "--features", "x86-owned-dynamic-runtime", "--target", target, "--target-dir", str(stage / "cargo"), *common.STATIC_ARCHIVE_PROFILE, *flags, "--", "--cfg", "crabc_owned_static_sysroot", "--cfg", common.MIMALLOC_LIFECYCLE_RUST_CFG, "-C", "relocation-model=pic", "-C", "panic=abort", "-Ztls-model=initial-exec", "-Zmerge-functions=disabled"]
+        common.run(libc_command, environment=environment)
         crt = stage / "crt"
         common.run([sys.executable, str(ROOT / "crt/build_x86_64.py"), "--architecture", "aarch64", "--owned-dynamic-sysroot", "--hardening-profile", hardening_profile.value, "--out-dir", str(crt)], environment=environment)
         builtins = stage / "libcrabc-builtins.a"
         common.run([sys.executable, str(ROOT / "builtins/build.py"), "--output", str(builtins), "--llvm-ar", str(tools / "llvm-ar"), "--llvm-nm", str(tools / "llvm-nm"), "--llvm-readelf", "/usr/bin/readelf", "--ld-lld", "/usr/bin/mold"], environment=environment)
-        allocator, _ = common.compile_c_allocator(stage / "c-allocator", common.c_allocator_target_flags(), profile="release", architecture="aarch64")
+        allocator, accepted_allocator = common.compile_c_allocator(stage / "c-allocator", common.c_allocator_target_flags(), profile="release", architecture="aarch64")
         raw = stage / "cargo" / target / "release/libc.a"
         ar = str(tools / "llvm-ar")
         members = common.run([ar, "t", str(raw)], environment=environment).decode().splitlines()
@@ -1098,6 +1099,23 @@ def build_aarch64(output: Path, *, allocator_backend: str, lifecycle_test_audit:
         common.copy_artifact(crt / "objects.json", installed / "share/crabc/crt.provenance.json")
         common.copy_artifact(crt / "commands.json", installed / "share/crabc/crt.commands.json")
         metadata = installed / "share/crabc"
+        common.write_json(metadata / "libc-shared.provenance.json", {
+            "selected_members": {name: common.sha256_file(objects / name) for name in selected},
+            "excluded_members": [name for name in members if name not in selected],
+            "allocator_backend": allocator_backend, "allocator_lifecycle_test_audit": lifecycle_test_audit,
+            "accepted_allocator": accepted_allocator, "pinned_c_evidence": accepted_allocator, "native_allocator": None,
+            "dependency_graph": common.allocator_dependency_graph(cargo, "x86-owned-dynamic-runtime", allocator_backend, environment),
+            "excluded_c_allocator": None, "allocator_flags": common.c_allocator_target_flags(),
+            "allocator_lifecycle_profile": common.owned_mimalloc_lifecycle_profile(
+                common.c_allocator_target_flags(), libc_command, allocator, raw,
+                llvm_nm=str(tools / "llvm-nm"), llvm_objdump=str(tools / "llvm-objdump")),
+            "libc_command": [_normalized_loader_argument(arg, stage) for arg in libc_command],
+            "libc_shared_link_command": [_normalized_loader_argument(arg, stage) for arg in libc_link_command],
+            "shared_dynamic_list": shared_libc_dynamic_list(),
+            "shared_mimalloc_hidden_exports": shared_libc_mimalloc_hidden_exports(stage),
+            "shared_compiler_helper_archive": shared_libc_compiler_helper_archive_policy(),
+            "shared_errno_private_aliases": shared_libc_errno_private_aliases(stage),
+            "loader_imports": sorted(elf_imports(str(tools / "llvm-nm"), loader))})
         common.write_json(metadata / "producer-tools.json", common.resolve_pinned_producer_tools("aarch64"))
         common.write_json(metadata / "loader.provenance.json",
                           loader_provenance(stage, loader_command, environment.get("RUSTFLAGS", ""), loader, interpreter,
