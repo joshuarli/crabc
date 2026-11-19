@@ -120,6 +120,9 @@ for symbol in fdiml exp10l; do
 done
 grep -Eq '[[:space:]]FUNC[[:space:]]+WEAK[[:space:]]+DEFAULT[[:space:]]+[0-9]+[[:space:]]pow10l$' \
     "$work/freestanding.symbols" || fail 'freestanding candidate lacks weak pow10l'
+exp="$(awk '$4 == "FUNC" && $5 == "GLOBAL" && $6 == "DEFAULT" && $8 == "exp10l" { print $2; exit }' "$work/freestanding.symbols")"
+pow="$(awk '$4 == "FUNC" && $5 == "WEAK" && $6 == "DEFAULT" && $8 == "pow10l" { print $2; exit }' "$work/freestanding.symbols")"
+[ -n "$exp" ] && [ "$exp" = "$pow" ] || fail 'freestanding exp10l/pow10l alias differs'
 if awk '$7 == "UND" && NF >= 8 && !($5 == "LOCAL" && ($8 == "_PROCEDURE_LINKAGE_TABLE_" || $8 == "__rela_iplt_start" || $8 == "__rela_iplt_end")) { print }' "$work/freestanding.symbols" | grep . >/dev/null; then
     fail 'freestanding candidate has unresolved symbols'
 fi
