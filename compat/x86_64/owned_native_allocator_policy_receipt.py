@@ -419,7 +419,7 @@ def _check_dynamic_link(retained: Path, hashes: dict[str, str], program: str, mo
         "libcrabc-builtins.a": "dynamic-builtins",
         f"object-{name}.o": f"object-{name}",
     }
-    if ARCH == "x86_64":
+    if ARCH == "x86_64" or mode != "pie":
         runtime["crabc-dynamic-attach.o"] = "dynamic-attach"
     inputs = record.get("input_receipts")
     _require(isinstance(inputs, list) and len(inputs) == len(runtime) and
@@ -440,7 +440,7 @@ def _check_dynamic_link(retained: Path, hashes: dict[str, str], program: str, mo
             trace,
             initial_objects=[by_name[basename]["path"] for basename in (
                 "Scrt1.o" if mode == "pie" else "crt1.o",
-                *(["crabc-dynamic-attach.o"] if ARCH == "x86_64" else []), "crti.o", f"object-{name}.o",
+                *(["crabc-dynamic-attach.o"] if ARCH == "x86_64" or mode != "pie" else []), "crti.o", f"object-{name}.o",
             )],
             archives=[(by_name["libcrabc-builtins.a"]["path"], (retained / "dynamic-builtins").read_bytes())],
             final_objects=[by_name[basename]["path"] for basename in ("libc.so", "crtn.o")],
