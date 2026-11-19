@@ -29,5 +29,7 @@ int main(void) {
         run("sqrtl-subnormal", sqrtl, 0x1p-16494L);
         run("sqrtl-exact", sqrtl, 4.0L);
         run("sqrtl-negative", sqrtl, -1.0L);
+        run("sqrtl-zero", sqrtl, -0.0L);
+        run("sqrtl-infinity", sqrtl, INFINITY);
     }
 }
