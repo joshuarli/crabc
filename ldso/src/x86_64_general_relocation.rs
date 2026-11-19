@@ -861,14 +861,14 @@ unsafe fn apply_resolved_word_relocations(object: &Object, values: &[u64]) -> Op
             let kind = unsafe { read_u64(entry.add(8)) } as u32;
             if kind == R_NONE || kind == R_COPY { continue; }
             let value = *values.next()?;
-            if object.interpreter_self && kind == R_X86_64_RELATIVE { continue; }
+            if cfg!(target_arch = "aarch64") && object.interpreter_self && kind == R_X86_64_RELATIVE { continue; }
             let address = runtime_address(object.base, unsafe { read_u64(entry) })?;
             // SAFETY: The complete object was preflighted before relocation.
             unsafe { write_resolved_word(address, kind, value); }
         }
     }
     if values.next().is_some() { return None; }
-    if object.interpreter_self { Some(()) } else { unsafe { apply_relr_table(object) } }
+    if cfg!(target_arch = "aarch64") && object.interpreter_self { Some(()) } else { unsafe { apply_relr_table(object) } }
 }
 
 unsafe fn apply_word_relocations(scope: &SymbolScope<'_>, objects: &[Object], owner: usize) -> Option<()> {
