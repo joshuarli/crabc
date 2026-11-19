@@ -11,6 +11,10 @@
 #error "the oracle probe requires its canonical pinned libc path"
 #endif
 
+#ifndef CRABC_MUSL_ORACLE_ARCH
+#define CRABC_MUSL_ORACLE_ARCH "x86_64"
+#endif
+
 int main(void)
 {
     char line[4096];
