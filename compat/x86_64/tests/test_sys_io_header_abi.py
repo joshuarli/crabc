@@ -39,13 +39,15 @@ class SysIoHeaderAbiTests(unittest.TestCase):
         public_header = PUBLIC_HEADER.read_text(encoding="utf-8")
         self.assertIn('#ifdef __cplusplus\nextern "C" {\n#endif', public_header)
         self.assertIn("#include <features.h>", public_header)
-        self.assertIn("#if defined(__x86_64__)\n#include <bits/io.h>\n#endif", public_header)
+        self.assertIn("#if defined(__x86_64__) || defined(__aarch64__)\n#include <bits/io.h>\n#endif", public_header)
         self.assertIn("int iopl(int);", public_header)
         self.assertIn("int ioperm(unsigned long, unsigned long, int);", public_header)
 
         inline_header = INLINE_HEADER.read_text(encoding="utf-8")
         self.assertIn("arch/x86_64/bits/io.h", inline_header)
         self.assertIn("#if defined(__x86_64__)", inline_header)
+        aarch64 = inline_header.split("#elif defined(__aarch64__)\n", 1)[1]
+        self.assertEqual(aarch64, "/* musl 1.2.6 generic/bits/io.h, MIT licensed. */\n\n#endif\n")
         for name in INLINE_NAMES:
             self.assertIn(f" {name}(", inline_header)
         for phrase in (
