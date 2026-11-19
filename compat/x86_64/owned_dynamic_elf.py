@@ -59,7 +59,7 @@ AARCH64_RELOCATION_NAMES = {
     1028: "R_AARCH64_TLS_DTPMOD64", 1029: "R_AARCH64_TLS_DTPREL64",
     1030: "R_AARCH64_TLS_TPREL64", 1031: "R_AARCH64_TLSDESC",
 }
-EXECUTABLE_ONLY_RELOCATIONS = frozenset({"R_X86_64_COPY", "R_AARCH64_COPY"})
+EXECUTABLE_ONLY_RELOCATIONS = frozenset({"R_X86_64_COPY"})
 MODES = {
     "pie": {"elf_type": "ET_DYN", "interpreter": True},
     "exec": {"elf_type": "ET_EXEC", "interpreter": True},
@@ -370,7 +370,8 @@ def require_expected(facts: Mapping[str, Any], expected: Expectation) -> None:
     _require(facts["writable_executable_loads"] == 0, "output has a writable executable PT_LOAD")
     require_unwind_table_header(facts)
     if expected.mode == "shared":
-        _require(not EXECUTABLE_ONLY_RELOCATIONS & set(facts["relocations"]),
+        forbidden = frozenset({"R_AARCH64_COPY"}) if facts.get("machine") == "EM_AARCH64" else EXECUTABLE_ONLY_RELOCATIONS
+        _require(not forbidden & set(facts["relocations"]),
                  "shared object has an executable-only COPY relocation")
     if expected.provided_symbols is not None:
         unresolved = set(facts["undefined_symbols"]) - expected.provided_symbols
