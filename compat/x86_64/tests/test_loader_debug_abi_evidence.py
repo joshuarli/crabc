@@ -55,7 +55,7 @@ class ElfMetadataTests(unittest.TestCase):
         self.path = Path(self.directory.name) / 'libc.so'
         self.image = bytearray(1024)
         self.image[:7] = b'\x7fELF\x02\x01\x01'
-        struct.pack_into('<H', self.image, 18, 62)
+        struct.pack_into('<H', self.image, 18, {'x86_64': 62, 'aarch64': 183}[evidence.ARCH])
         struct.pack_into('<Q', self.image, 40, 64)
         struct.pack_into('<HH', self.image, 58, 64, 4)
         struct.pack_into('<IIQQQQIIQQ', self.image, 128, 0, 11, 0, 0, 512, 120, 2, 0, 8, 24)
@@ -139,7 +139,7 @@ class SuppliedProductModeTests(unittest.TestCase):
             self.dynamic / 'share/crabc/manifest.json': b'dynamic-manifest',
             self.dynamic / 'share/crabc/dynamic-product-state.json': b'dynamic-state',
             self.dynamic / 'usr/lib/libc.so': b'candidate-libc',
-            self.dynamic / 'lib/ld-crabc-x86_64.so.1': b'candidate-loader',
+            self.dynamic / evidence.INTERPRETER.lstrip('/'): b'candidate-loader',
         }.items():
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_bytes(contents)
@@ -169,15 +169,18 @@ class SuppliedProductModeTests(unittest.TestCase):
                                               validate_installed_runtime=mock.Mock())
         qualification = types.SimpleNamespace(QualificationError=RuntimeError,
                                               product_identity=mock.Mock(return_value='a' * 64))
+        product_evidence = types.SimpleNamespace(ProductEvidenceError=RuntimeError, _validate_static_product=mock.Mock())
         with mock.patch.dict(sys.modules, {
             'crabc_cc_static': static_driver,
             'owned_dynamic_qualification': qualification,
+            'owned_posix_product_evidence': product_evidence,
         }):
             before = evidence._product_records(self.static, self.dynamic, 'supplied')
             (self.dynamic / 'share/crabc/dynamic-product-state.json').write_bytes(b'changed-dynamic-state')
             after = evidence._product_records(self.static, self.dynamic, 'supplied')
         self.assertNotEqual(before, after)
-        self.assertEqual(static_driver.validate_installed_runtime.call_count, 2)
+        validator = product_evidence._validate_static_product if evidence.ARCH == "aarch64" else static_driver.validate_installed_runtime
+        self.assertEqual(validator.call_count, 2)
         self.assertEqual(qualification.product_identity.call_count, 2)
 
     def test_supplied_mode_rejects_the_existing_current_source_product_validator_failure(self):
@@ -188,13 +191,16 @@ class SuppliedProductModeTests(unittest.TestCase):
             product_identity=mock.Mock(side_effect=RuntimeError('installed product source is stale')),
         )
         output = self.root / 'output'
+        product_evidence = types.SimpleNamespace(ProductEvidenceError=RuntimeError, _validate_static_product=mock.Mock())
         with mock.patch.dict(sys.modules, {
             'crabc_cc_static': static_driver,
             'owned_dynamic_qualification': qualification,
+            'owned_posix_product_evidence': product_evidence,
         }), self.assertRaisesRegex(evidence.EvidenceError, 'current supplied product contract differs'):
             evidence.Collector(output, self.static, self.dynamic)
         self.assertFalse(output.exists())
-        static_driver.validate_installed_runtime.assert_called_once_with(self.static)
+        validator = product_evidence._validate_static_product if evidence.ARCH == "aarch64" else static_driver.validate_installed_runtime
+        validator.assert_called_once_with(self.static)
         qualification.product_identity.assert_called_once_with(self.dynamic)
 
     def test_collect_cli_forwards_the_complete_supplied_pair_to_the_existing_collector(self):
