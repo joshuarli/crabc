@@ -416,9 +416,11 @@ def _check_dynamic_link(retained: Path, hashes: dict[str, str], program: str, mo
     runtime = {
         "crti.o": "dynamic-crti", "libc.so": "dynamic-libc", "crtn.o": "dynamic-crtn",
         "Scrt1.o" if mode == "pie" else "crt1.o": "dynamic-scrt1" if mode == "pie" else "dynamic-crt1",
-        "crabc-dynamic-attach.o": "dynamic-attach", "libcrabc-builtins.a": "dynamic-builtins",
+        "libcrabc-builtins.a": "dynamic-builtins",
         f"object-{name}.o": f"object-{name}",
     }
+    if ARCH == "x86_64":
+        runtime["crabc-dynamic-attach.o"] = "dynamic-attach"
     inputs = record.get("input_receipts")
     _require(isinstance(inputs, list) and len(inputs) == len(runtime) and
              all(isinstance(item, dict) and set(item) == {"path", "sha256"} for item in inputs),
@@ -437,7 +439,8 @@ def _check_dynamic_link(retained: Path, hashes: dict[str, str], program: str, mo
         mold_link_trace.validate_trace(
             trace,
             initial_objects=[by_name[basename]["path"] for basename in (
-                "Scrt1.o" if mode == "pie" else "crt1.o", "crabc-dynamic-attach.o", "crti.o", f"object-{name}.o",
+                "Scrt1.o" if mode == "pie" else "crt1.o",
+                *(["crabc-dynamic-attach.o"] if ARCH == "x86_64" else []), "crti.o", f"object-{name}.o",
             )],
             archives=[(by_name["libcrabc-builtins.a"]["path"], (retained / "dynamic-builtins").read_bytes())],
             final_objects=[by_name[basename]["path"] for basename in ("libc.so", "crtn.o")],

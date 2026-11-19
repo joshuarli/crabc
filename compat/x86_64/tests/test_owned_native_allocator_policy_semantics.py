@@ -287,10 +287,11 @@ class PolicyReceiptTests(unittest.TestCase):
                     "crti.o": "dynamic-crti", "libc.so": "dynamic-libc", "crtn.o": "dynamic-crtn",
                     "Scrt1.o" if mode == "pie" else "crt1.o":
                         "dynamic-scrt1" if mode == "pie" else "dynamic-crt1",
-                    "crabc-dynamic-attach.o": "dynamic-attach",
                     "libcrabc-builtins.a": "dynamic-builtins",
                     f"object-{name}.o": f"object-{name}",
                 }
+                if policy.ARCH == "x86_64":
+                    runtime["crabc-dynamic-attach.o"] = "dynamic-attach"
                 inputs = [{"path": f"/work/usr/lib/{basename}" if not basename.startswith("object-")
                            else f"/work/{basename}",
                            "sha256": "0" * 64 if bad_dynamic_input and name == "dynamic-non-pie-policy"
@@ -305,7 +306,8 @@ class PolicyReceiptTests(unittest.TestCase):
                     "link_trace": ["trace: " + next(item["path"] for item in inputs if Path(item["path"]).name == basename)
                                    + ("(builtins.o)" if basename == "libcrabc-builtins.a" else "")
                                    for basename in ("Scrt1.o" if mode == "pie" else "crt1.o",
-                                                    "crabc-dynamic-attach.o", "crti.o", f"object-{name}.o",
+                                                    *(["crabc-dynamic-attach.o"] if policy.ARCH == "x86_64" else []),
+                                                    "crti.o", f"object-{name}.o",
                                                     "libcrabc-builtins.a", "libc.so", "crtn.o")],
                 })
                 record(f"elf-{name}", {
