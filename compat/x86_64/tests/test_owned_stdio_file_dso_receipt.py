@@ -33,7 +33,7 @@ class FileDsoReceiptTests(unittest.TestCase):
             (dynamic / "bin/crabc-cc-dynamic").write_bytes(b"dynamic driver")
             (dynamic / "usr/lib/libc.so").write_bytes(b"shared libc")
             (dynamic / "lib").mkdir()
-            (dynamic / "lib/ld-crabc-x86_64.so.1").write_bytes(b"loader")
+            (dynamic / f"lib/ld-crabc-{receipt.ARCH}.so.1").write_bytes(b"loader")
             source = {"revision": "fixture", "content_sha256": "a" * 64}
             for name in ("source-before.json", "source-after.json"):
                 (preparation.parent / name).write_text(json.dumps(source))
@@ -78,7 +78,8 @@ class FileDsoReceiptTests(unittest.TestCase):
                 '"stream.orientation-byte", "stream.orientation-wide", '
                 '"stream.pushback"]\n')
             (raw / f"{case}.strace").write_text(
-                'unlink("/scratch/stream") = 0\n'
+                ('unlink("/scratch/stream") = 0\n' if receipt.ARCH == 'x86_64' else
+                 'unlinkat(AT_FDCWD, "/scratch/stream", 0) = 0\n') +
                 'fcntl(3, F_GETFD) = -1 EBADF (Bad file descriptor)\n'
                 'write(3, "\\xe2\\x82\\xac", 3) = 3\n'
                 'write(4, "dso-before\\n", 11) = 11\n'

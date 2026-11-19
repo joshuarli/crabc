@@ -9,13 +9,18 @@ import sys
 import tempfile
 import unittest
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from native_arch import native_arch
+
+ARCH = native_arch()["arch"]
+
 ROOT = Path(__file__).resolve().parents[3]
 DISPATCHER = ROOT / "scripts/dev-x86_64.sh"
 
 
 class OwnedStdioFileEngineDispatchTests(unittest.TestCase):
     def setUp(self) -> None:
-        scratch = ROOT / ".work/x86_64/tmp"
+        scratch = ROOT / f".work/{ARCH}/tmp"
         scratch.mkdir(parents=True, exist_ok=True)
         self.temporary = tempfile.TemporaryDirectory(dir=scratch)
         self.addCleanup(self.temporary.cleanup)
@@ -26,12 +31,15 @@ class OwnedStdioFileEngineDispatchTests(unittest.TestCase):
         self.static.mkdir(parents=True)
         self.dynamic.mkdir()
         self.capture = self.work / "docker.jsonl"
+        uname = self.work / "uname"
+        uname.write_text(f'#!/bin/sh\ncase "$1" in -s) echo Linux ;; -m) echo {ARCH} ;; *) /usr/bin/uname "$@" ;; esac\n')
+        uname.chmod(0o755)
         docker = self.work / "docker"
         docker.write_text(
             f"#!{sys.executable}\n"
             "import json, os, sys\n"
             "with open(os.environ['DISPATCH_CAPTURE'], 'a') as out: out.write(json.dumps(sys.argv[1:])+'\\n')\n"
-            "if sys.argv[1:3] == ['image', 'inspect']: print('linux/amd64')\n"
+            f"if sys.argv[1:3] == ['image', 'inspect']: print('linux/{'arm64' if ARCH == 'aarch64' else 'amd64'}')\n"
             "elif sys.argv[1] != 'run': raise SystemExit('unexpected Docker operation')\n"
         )
         docker.chmod(0o755)
@@ -58,7 +66,7 @@ class OwnedStdioFileEngineDispatchTests(unittest.TestCase):
         # supplied-product contract is exactly two positional paths.
         self.assertEqual(argv[-4:], [
             "bash", "/workspace/compat/x86_64/run_owned_stdio_file_engine.sh",
-            "/workspace/.work/x86_64/static-product", "/workspace/.work/x86_64/dynamic-product",
+            f"/workspace/.work/{ARCH}/static-product", f"/workspace/.work/{ARCH}/dynamic-product",
         ])
 
     def test_no_pair_lets_the_runner_build_current_products(self) -> None:

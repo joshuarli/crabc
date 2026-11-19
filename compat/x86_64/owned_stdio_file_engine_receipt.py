@@ -32,17 +32,22 @@ import owned_dynamic_qualification as qualification
 import source_seal
 import owned_posix_product_evidence as products
 import owned_stdio_file_dso_receipt as dso
+from native_arch import native_arch
+
+ARCH = native_arch()["arch"]
+MACHINE = {"x86_64": 62, "aarch64": 183}[ARCH]
+MACHINE_LABEL = {"x86_64": "x86-64", "aarch64": "aarch64"}[ARCH]
 
 SCHEMA = "crabc.x86_64-owned-stdio-file-engine/v1"
-ORACLE_COMPILER = "/usr/local/bin/crabc-x86_64-musl-gcc"
+ORACLE_COMPILER = native_arch()["oracle"]
 ORACLE_RUNTIME = Path("/opt/musl-1.2.6/lib/libc.so")
 COPIES_PATH = HERE / "owned_crypt_runtime_evidence.py"
-INTERPRETER = "/lib/ld-crabc-x86_64.so.1"
+INTERPRETER = f"/lib/ld-crabc-{ARCH}.so.1"
 # The process probe needs a shell.  These are explicit pinned-image control
 # inputs, resolved to physical files before any receipt validation; they never
 # stand in for a supplied product loader or libc.
 CONTROL_BUSYBOX = Path(os.path.realpath("/bin/busybox"))
-CONTROL_LOADER = Path(os.path.realpath("/lib/ld-musl-x86_64.so.1"))
+CONTROL_LOADER = Path(os.path.realpath(f"/lib/ld-musl-{ARCH}.so.1"))
 CONTROL_APPLETS = ("sh", "cat", "sleep")
 # The mount helpers are invoked through their fixed applet paths.  The separate
 # physical identities below bind the resolved bytes (BusyBox provides these
@@ -156,7 +161,7 @@ INTERPOSITION_ARTIFACTS = (
       for mode in ("pie", "non-pie") for entry in ("kernel", "direct")),
     *(f"candidate-{mode}-{entry}-root/usr/lib/libc.so" for mode in ("pie", "non-pie")
       for entry in ("kernel", "direct")),
-    *(f"oracle-{mode}-{entry}-root/lib/ld-musl-x86_64.so.1" for mode in ("pie", "non-pie")
+    *(f"oracle-{mode}-{entry}-root/lib/ld-musl-{ARCH}.so.1" for mode in ("pie", "non-pie")
       for entry in ("kernel", "direct")),
 )
 # The frozen AArch64 capability ledger names each credited capability's exact
@@ -178,7 +183,7 @@ extern char **environ;
 int main(int argc, char **argv)
 {{
     char *command[argc + 3];
-    command[0] = "/control/ld-musl-x86_64.so.1";
+    command[0] = "/control/ld-musl-{ARCH}.so.1";
     command[1] = "/control/busybox";
     command[2] = "{applet}";
     for (int index = 1; index < argc; index++)
@@ -555,7 +560,7 @@ def validate_control_material(work: Path, report: Mapping[str, Any], tools: Mapp
         busybox = check_identity(work, stage["busybox"], "control " + linkage + " BusyBox stage")
         loader = check_identity(work, stage["loader"], "control " + linkage + " loader stage")
         require(busybox == root / "control/busybox", "control " + linkage + " BusyBox stage path differs")
-        require(loader == root / "control/ld-musl-x86_64.so.1", "control " + linkage + " loader stage path differs")
+        require(loader == root / f"control/ld-musl-{ARCH}.so.1", "control " + linkage + " loader stage path differs")
         _same_bytes_metadata(busybox, regular(Path(str(tools["control_busybox"]["path"])), "pinned control BusyBox"),
                              "control " + linkage + " BusyBox stage")
         _same_bytes_metadata(loader, regular(Path(str(tools["control_loader"]["path"])), "pinned control loader"),
@@ -750,8 +755,8 @@ def undefined_symbols(path: Path) -> set[str]:
             f"{path.name} is not a little-endian ELF64 object")
     (e_type, e_machine, _version, _entry, _phoff, shoff, _flags, _ehsize, _phentsize, _phnum,
      shentsize, shnum, _shstrndx) = struct.unpack_from("<HHIQQQIHHHHHH", data, 16)
-    require(e_type == 1 and e_machine == 62 and shentsize == 64 and shnum > 0
-            and shoff + shnum * shentsize <= len(data), f"{path.name} is not an x86-64 relocatable object")
+    require(e_type == 1 and e_machine == MACHINE and shentsize == 64 and shnum > 0
+            and shoff + shnum * shentsize <= len(data), f"{path.name} is not an {MACHINE_LABEL} relocatable object")
     sections = [struct.unpack_from("<IIQQQQIIQQ", data, shoff + index * shentsize) for index in range(shnum)]
     names: set[str] = set()
     tables = 0
@@ -869,7 +874,7 @@ def validate_process_proc(work: Path, report: Mapping[str, Any], tools: Mapping[
         require(type(inside) is dict and set(inside) == {"command", "status", "stdout", "stderr"},
                 "process " + linkage + " proc inside namespace fields differ")
         same([inside["command"], inside["status"], namespace["matched"]],
-             [["/usr/sbin/chroot", str(root), "/control/ld-musl-x86_64.so.1", "/control/busybox", "readlink", "/proc/self/ns/pid"], 0, True],
+             [["/usr/sbin/chroot", str(root), f"/control/ld-musl-{ARCH}.so.1", "/control/busybox", "readlink", "/proc/self/ns/pid"], 0, True],
              "process " + linkage + " proc namespace command differs")
         _snapshot(inside["stdout"], (outside + "\n").encode(), "process " + linkage + " proc namespace stdout")
         _snapshot(inside["stderr"], b"", "process " + linkage + " proc namespace stderr")
@@ -1065,7 +1070,7 @@ def validate_commands(checkout: Path, work: Path, report: Mapping[str, Any], sou
                         and files[stem + ".stderr"].read_bytes() == b"",
                         f"allocator interposition {stem} raw execution differs")
             candidate_root = f"candidate-{mode}-{entry}-root/usr/lib/libc.so"
-            oracle_root = f"oracle-{mode}-{entry}-root/lib/ld-musl-x86_64.so.1"
+            oracle_root = f"oracle-{mode}-{entry}-root/lib/ld-musl-{ARCH}.so.1"
             require(digest(files[candidate_root]) == digest(libc),
                     f"allocator interposition {mode} {entry} libc copy differs")
             require(digest(files[oracle_root]) == digest(ORACLE_RUNTIME),
@@ -1091,6 +1096,40 @@ def validate_allocator_plt(libc: Path) -> None:
         definitions = re.findall(rf"^\s*\d+:\s+([0-9a-f]+)\s+\d+\s+FUNC\s+LOCAL\s+HIDDEN\s+\d+\s+{tail}$", symbols, re.MULTILINE)
         require(len(definitions) == 1, f"FILE allocator {name} tail is not hidden")
         assembly = _elf_output("objdump", "-d", "--disassemble=" + tail, str(libc))
+        if ARCH == "aarch64":
+            branch = re.search(r"^\s*([0-9a-f]+):\s+([0-9a-f]{8})\s+b\s+([0-9a-f]+)\b", assembly, re.MULTILINE)
+            require(branch is not None, f"FILE allocator {name} tail does not select public PLT")
+            origin, instruction, shown = (int(value, 16) for value in branch.groups())
+            require(origin == int(definitions[0], 16), f"FILE allocator {name} tail entry differs")
+            require(instruction >> 26 == 0b000101, f"FILE allocator {name} tail instruction differs")
+            displacement = instruction & 0x3ffffff
+            if displacement & (1 << 25):
+                displacement -= 1 << 26
+            target = origin + displacement * 4
+            require(target == shown, f"FILE allocator {name} tail target differs")
+            stub = _elf_output("objdump", "-d", "-j", ".plt", "-j", ".plt.got", f"--start-address={target}",
+                               f"--stop-address={target + 16}", str(libc))
+            instructions = re.findall(r"^\s*([0-9a-f]+):\s+([0-9a-f]{8})\s+", stub, re.MULTILINE)
+            require(len(instructions) == 4 and [int(row[0], 16) for row in instructions] ==
+                    [target + offset for offset in (0, 4, 8, 12)], f"FILE allocator {name} PLT stub differs")
+            adrp, ldr, add, br = (int(row[1], 16) for row in instructions)
+            got = add == 0xd61f0220 and br == 0xd4207d00
+            require(adrp & 0x9f00001f == 0x90000010 and ldr & 0xffc003ff == 0xf9400211
+                    and (got or (add & 0xffc003ff == 0x91000210 and br == 0xd61f0220)),
+                    f"FILE allocator {name} PLT stub differs")
+            page = ((adrp >> 29) & 3) | (((adrp >> 5) & 0x7ffff) << 2)
+            if page & (1 << 20):
+                page -= 1 << 21
+            offset = ((ldr >> 10) & 0xfff) * 8
+            require(got or (add >> 10) & 0xfff == offset, f"FILE allocator {name} PLT slot differs")
+            slot = (target & ~0xfff) + page * 4096 + offset
+            rows = re.findall(rf"^\s*{slot:016x}\s+([0-9a-f]{{16}})\s+(R_AARCH64_(?:JUMP_SLOT|GLOB_DAT))\s+\S+\s+(\S+)\s+\+\s+(\S+)\s*$", relocations, re.MULTILINE)
+            require(len(rows) == 1 and rows[0][1:] == (("R_AARCH64_GLOB_DAT" if got else "R_AARCH64_JUMP_SLOT"), name, "0"),
+                    f"FILE allocator {name} PLT relocation differs")
+            symbol_index = int(rows[0][0], 16) >> 32
+            definition = re.findall(rf"^\s*{symbol_index}:\s+[0-9a-f]+\s+\d+\s+FUNC\s+(?:GLOBAL|WEAK)\s+DEFAULT\s+\d+\s+{name}$", dynamic_symbols, re.MULTILINE)
+            require(len(definition) == 1, f"FILE allocator {name} dynamic symbol is not preemptible")
+            continue
         jump = re.search(r"^\s*([0-9a-f]+):\s+e9 ((?:[0-9a-f]{2} ){3}[0-9a-f]{2})\s+jmp\s+([0-9a-f]+)\b", assembly, re.MULTILINE)
         require(jump is not None, f"FILE allocator {name} tail does not select public PLT")
         origin = int(jump.group(1), 16)

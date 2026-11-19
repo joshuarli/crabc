@@ -51,6 +51,10 @@ ROOT = HERE.parents[1]
 if str(HERE) not in sys.path:
     sys.path.insert(0, str(HERE))
 
+from native_arch import native_arch
+
+ARCH = native_arch()["arch"]
+
 import core_image
 import owned_posix_product_evidence as products
 import owned_posix_static_products as static_products
@@ -79,7 +83,7 @@ RETAINED_BYTES = (b"dso-before\ndso-after\n", EXIT_PAYLOAD, EXIT_MARKER,
                   b"main-worker", b"main-before\nmain-after\n", b"replacement!", b"beforetail",
                   b"M:dso", b"\xe2\x82\xac\xce\xbb", b"abcdef")
 FULL_SINK = {"kind": "character-device", "mode": 0o666, "major": 1, "minor": 7}
-ORACLE_CC = Path("/usr/local/bin/crabc-x86_64-musl-gcc")
+ORACLE_CC = Path(native_arch()["oracle"])
 ORACLE_ARCHIVE = Path("/opt/musl-1.2.6/lib/libc.a")
 ORACLE_LIBC = Path("/opt/musl-1.2.6/lib/libc.so")
 TOOLS = {
@@ -230,7 +234,7 @@ def selected_products(root: Path, preparation: Path, static: Path, dynamic: Path
         "dynamic": {"path": dynamic.relative_to(root).as_posix(), "manifest": file_identity(root, dynamic_manifest),
                     "state": file_identity(root, dynamic / "share/crabc/dynamic-product-state.json"),
                     "libc": file_identity(root, dynamic / "usr/lib/libc.so"),
-                    "loader": file_identity(root, dynamic / "lib/ld-crabc-x86_64.so.1"),
+                    "loader": file_identity(root, dynamic / f"lib/ld-crabc-{ARCH}.so.1"),
                     "driver": file_identity(root, dynamic / "bin/crabc-cc-dynamic")},
     }
 
@@ -260,7 +264,7 @@ def commands(root: Path, work: Path, static: Path, dynamic: Path) -> dict[str, l
     }
     for mode, oracle_flags in (("pie", ["-fPIE", "-pie"]), ("non-pie", ["-fno-pie", "-no-pie"])):
         result[f"oracle-{mode}-link"] = [oracle, *oracle_flags,
-            "-Wl,--dynamic-linker,/lib/ld-musl-x86_64.so.1", str(main_object),
+            f"-Wl,--dynamic-linker,/lib/ld-musl-{ARCH}.so.1", str(main_object),
             "-L" + str(oracle_dso.parent), "-Wl,-rpath,/usr/lib", "-l:libfile-dso.so",
             "-o", str(work / f"oracle-{mode}")]
         result[f"candidate-{mode}-link"] = [dynamic_driver, "--dynamic-" + mode,
@@ -287,8 +291,8 @@ def case_command(work: Path, case: str) -> list[str]:
     root = work / "execution-roots" / case
     entry = case.rsplit("-", 1)[1]
     if entry == "direct":
-        interpreter = ("/lib/ld-musl-x86_64.so.1" if case.startswith("oracle-") else
-                       "/lib/ld-crabc-x86_64.so.1")
+        interpreter = (f"/lib/ld-musl-{ARCH}.so.1" if case.startswith("oracle-") else
+                       f"/lib/ld-crabc-{ARCH}.so.1")
         target = [str(TOOLS["chroot"]), str(root), interpreter, "/consumer", "/scratch/stream"]
     else:
         target = [str(TOOLS["chroot"]), str(root), "/consumer", "/scratch/stream"]
@@ -326,8 +330,8 @@ def make_root(work: Path, case: str, dynamic: Path) -> None:
             (execution / "usr/lib").mkdir(parents=True)
             for directory in (execution / "lib", execution / "usr", execution / "usr/lib"):
                 directory.chmod(0o755)
-            shutil.copy2(ORACLE_LIBC, execution / "lib/ld-musl-x86_64.so.1")
-            (execution / "lib/libc.so").symlink_to("ld-musl-x86_64.so.1")
+            shutil.copy2(ORACLE_LIBC, execution / f"lib/ld-musl-{ARCH}.so.1")
+            (execution / "lib/libc.so").symlink_to(f"ld-musl-{ARCH}.so.1")
             shutil.copy2(work / "oracle/libfile-dso.so", execution / "usr/lib/libfile-dso.so")
     (execution / "scratch").mkdir()
     (execution / "scratch").chmod(0o755)
@@ -376,8 +380,8 @@ def expected_root(work: Path, case: str, dynamic: Path) -> dict[str, object]:
         expected = {"lib": {"kind": "directory", "mode": 0o755},
                     "usr": {"kind": "directory", "mode": 0o755},
                     "usr/lib": {"kind": "directory", "mode": 0o755},
-                    "lib/libc.so": {"kind": "symlink", "target": "ld-musl-x86_64.so.1"},
-                    "lib/ld-musl-x86_64.so.1": {"kind": "file", "mode": 0o755,
+                    "lib/libc.so": {"kind": "symlink", "target": f"ld-musl-{ARCH}.so.1"},
+                    f"lib/ld-musl-{ARCH}.so.1": {"kind": "file", "mode": 0o755,
                         "size": libc.stat().st_size, "sha256": digest(libc)},
                     "usr/lib/libfile-dso.so": {"kind": "file", "mode": stat.S_IMODE(dso.stat().st_mode),
                         "size": dso.stat().st_size, "sha256": digest(dso)}}
@@ -413,7 +417,9 @@ def audit_runtime(work: Path, dynamic: Path) -> None:
                         for name, contents in zip(RETAINED_PATHS, RETAINED_BYTES)),
                 f"{case} retained pathname bytes differ")
         trace = (raw / f"{case}.strace").read_text(encoding="utf-8")
-        require(re.search(r'unlink\("/scratch/stream"\)\s+=\s+0', trace) is not None,
+        unlink = (r'unlink\("/scratch/stream"\)' if ARCH == "x86_64" else
+                  r'unlinkat\(AT_FDCWD, "/scratch/stream", 0\)')
+        require(re.search(unlink + r'\s+=\s+0', trace) is not None,
                 f"{case} did not unlink the main-owned pathname")
         require(re.search(r'fcntl\([0-9]+, F_GETFD\)\s+=\s+-1 EBADF', trace) is not None,
                 f"{case} did not observe a closed descriptor")
@@ -534,9 +540,9 @@ def audit_elf(work: Path) -> None:
         require(re.search(r"Type:\s+" + elf_type + r"\b", header) is not None,
                 f"{role} ELF type differs")
         if dynamic_main and role.startswith("oracle-"):
-            require("/lib/ld-musl-x86_64.so.1" in segments, f"{role} musl interpreter differs")
+            require(f"/lib/ld-musl-{ARCH}.so.1" in segments, f"{role} musl interpreter differs")
         elif dynamic_main and role.startswith("candidate-"):
-            require("/lib/ld-crabc-x86_64.so.1" in segments, f"{role} owned interpreter differs")
+            require(f"/lib/ld-crabc-{ARCH}.so.1" in segments, f"{role} owned interpreter differs")
         else:
             require("Requesting program interpreter" not in segments, f"{role} acquired an interpreter")
         if role.endswith(".so"):
@@ -636,7 +642,7 @@ def validate(root: Path, report_path: Path) -> dict[str, object]:
     require(set(report) == {"schema", "status", "image", "inputs", "source_files", "oracle_files",
                             "plan", "files"}, "FILE DSO receipt fields differ")
     require(report["schema"] == SCHEMA and report["status"] == "component-verified"
-            and report["image"] == core_image.CORE_IMAGE_REFERENCE,
+            and report["image"] == core_image.core_image_id(ARCH),
             "FILE DSO receipt status or pinned image differs")
     selected = report["inputs"]
     preparation = root / selected["preparation"]["path"]
@@ -663,9 +669,9 @@ def validate(root: Path, report_path: Path) -> dict[str, object]:
 
 
 def collect(root: Path, output: Path, preparation: Path, static: Path, dynamic: Path) -> Path:
-    require(sys.platform == "linux" and os.uname().machine == "x86_64", "native x86-64 required")
+    require(sys.platform == "linux", "native Linux required")
     require(os.environ.get("LC_ALL") == "C", "C locale required")
-    require(os.environ.get("CRABC_X86_PUBLIC_DATA_IMAGE_ID") == core_image.CORE_IMAGE_REFERENCE,
+    require(os.environ.get("CRABC_X86_PUBLIC_DATA_IMAGE_ID") == core_image.core_image_id(ARCH),
             "pinned core image identity required")
     require(output.is_absolute() and ".." not in output.parts
             and output.is_relative_to(root / ".work") and not output.exists()
@@ -690,7 +696,7 @@ def collect(root: Path, output: Path, preparation: Path, static: Path, dynamic: 
     static_products.make_retained_evidence_readable(output)
     complete_plan = list(plan) + list(CASES)
     write_new(output / "report.json", {"schema": SCHEMA, "status": "component-verified",
-        "image": core_image.CORE_IMAGE_REFERENCE, "inputs": selected, "source_files": sources,
+        "image": core_image.core_image_id(ARCH), "inputs": selected, "source_files": sources,
         "oracle_files": oracle, "plan": complete_plan, "files": files(output)})
     validate(root, output / "report.json")
     return output / "report.json"

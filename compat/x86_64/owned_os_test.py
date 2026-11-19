@@ -29,6 +29,7 @@ import uuid
 from typing import Any, Iterable, Sequence
 
 import owned_os_test_aio_suspend_source as aio_suspend_source
+from native_arch import native_arch
 
 ROOT = Path(__file__).resolve().parents[2]
 HERE = ROOT / "compat/x86_64"
@@ -37,7 +38,8 @@ OS_TEST_TREE = "68fd4eef88d0e52b55c7cc2a73659b1e439d33fe"
 DEFAULT_SUITES = (
     "include", "namespace", "basic", "io", "limits", "malloc", "process", "pty", "signal", "stdio",
 )
-MUSL_COMPILER = "/usr/local/bin/crabc-x86_64-musl-gcc"
+ARCH = native_arch()["arch"]
+MUSL_COMPILER = native_arch()["oracle"]
 COMPILE_ONLY_SUITES = frozenset({"include", "namespace"})
 # One whole-suite Make bound, used only as a hang guard: os-test's run.sh has no
 # per-case limit. The owned side compiles each case twice, scans dependencies
@@ -735,8 +737,8 @@ def install_execution_wrapper(output: Path, source_root: Path, runtime_root: Pat
     # The frozen helper invokes a nested path from the suite directory, e.g.
     # ``basic/dirent/readdir`` from ``basic``. Do not turn that nested pathname
     # into the process cwd: several tests open suite-relative fixtures.
-    inside = "cd " + shlex.quote("/work/" + suite_directory) + " && exec " + shlex.quote("/lib/ld-crabc-x86_64.so.1") + " " + shlex.quote("/work/" + str(relative))
-    wrapper = "#!/bin/sh\nexec /usr/sbin/chroot " + shlex.quote(str(runtime_root)) + " /control/ld-musl-x86_64.so.1 /control/busybox sh -c " + shlex.quote(inside) + "\n"
+    inside = "cd " + shlex.quote("/work/" + suite_directory) + " && exec " + shlex.quote(f"/lib/ld-crabc-{ARCH}.so.1") + " " + shlex.quote("/work/" + str(relative))
+    wrapper = "#!/bin/sh\nexec /usr/sbin/chroot " + shlex.quote(str(runtime_root)) + f" /control/ld-musl-{ARCH}.so.1 /control/busybox sh -c " + shlex.quote(inside) + "\n"
     output.write_text(wrapper)
     os.chmod(output, 0o755)
     return {"runtime_path": str(mirrored), "runtime_sha256": sha256(mirrored), "host_wrapper": str(output),
@@ -1036,7 +1038,7 @@ def mount_private_proc(destination: Path, private: dict[str, Any]) -> None:
                            {"private_proc": private})
 
     outside = container_pid_namespace()
-    witness_command = [PRIVATE_PROC_WITNESS_CHROOT, str(destination), "/control/ld-musl-x86_64.so.1",
+    witness_command = [PRIVATE_PROC_WITNESS_CHROOT, str(destination), f"/control/ld-musl-{ARCH}.so.1",
                        "/control/busybox", "readlink", "/proc/self/ns/pid"]
     witness_status, witness_stdout, witness_stderr = run_capture(
         witness_command, {"PATH": "/usr/bin:/bin", "LC_ALL": "C"},
