@@ -19,8 +19,8 @@ from native_arch import native_arch
 ROOT = Path(__file__).resolve().parents[2]
 ARCH = native_arch()['arch'] if sys.platform == 'linux' else 'x86_64'
 ORACLE = Path('/opt/musl-1.2.6/lib/libc.so')
-CC = '/usr/local/bin/crabc-x86_64-musl-gcc'
-INTERPRETER = '/lib/ld-crabc-x86_64.so.1'
+CC = f'/usr/local/bin/crabc-{ARCH}-musl-gcc'
+INTERPRETER = f'/lib/ld-crabc-{ARCH}.so.1'
 SCHEMA = 'crabc.x86_64-loader-debug-crt-abi/v1'
 PUBLIC = {'_dl_debug_addr': ('OBJECT', 'GLOBAL', 8),
           '_dl_debug_state': ('FUNC', 'WEAK', None),
@@ -130,7 +130,7 @@ class Elf:
             require(section[9] == 24 and section[5] % 24 == 0, 'malformed RELA table')
             for offset in range(0, section[5], 24):
                 destination, info, addend = self.unpack('<QQq', section[4] + offset)
-                if info & 0xffffffff == 5 and self.symbol_row(section[6], info >> 32)['name'] == name:
+                if info & 0xffffffff == (1024 if ARCH == 'aarch64' else 5) and self.symbol_row(section[6], info >> 32)['name'] == name:
                     rows.append({'destination': destination, 'addend': addend})
         return rows
 
@@ -138,7 +138,7 @@ class Elf:
 def loader_hook_metadata(dynamic_product):
     """Read the public libc hook and, for the merged image, the loader's local hook."""
     libc_path = dynamic_product / 'usr/lib/libc.so'
-    loader_path = dynamic_product / 'lib/ld-crabc-x86_64.so.1'
+    loader_path = dynamic_product / INTERPRETER.lstrip('/')
     public = Elf(libc_path).symbol('_dl_debug_state')
     require(public['type'] == 'FUNC' and public['binding'] == 'WEAK'
             and public['visibility'] == 'DEFAULT' and public['version_index'] in (0, 1),
@@ -283,7 +283,7 @@ def _product_records(static, dynamic, mode):
             'manifest': record(dynamic / 'share/crabc/manifest.json'),
             'state': record(dynamic / 'share/crabc/dynamic-product-state.json'),
             'libc': record(dynamic / 'usr/lib/libc.so'),
-            'loader': record(dynamic / 'lib/ld-crabc-x86_64.so.1'),
+            'loader': record(dynamic / INTERPRETER.lstrip('/')),
         },
     }
 
@@ -474,8 +474,8 @@ class Collector:
             self.keep('oracle-' + name, saved)
         if self.supplied_products is None:
             static, dynamic = [self.output / value for value in ('static-product', 'dynamic-product')]
-            self.run('build-static', ['python3', '-B', ROOT / 'scripts/build_x86_64_owned_sysroot.py', '--output', static])
-            self.run('build-dynamic', ['python3', '-B', ROOT / 'scripts/build_x86_64_owned_dynamic_sysroot.py', '--output', dynamic])
+            self.run('build-static', ['python3', '-B', ROOT / 'scripts/build_x86_64_owned_sysroot.py', *(['--architecture', 'aarch64'] if ARCH == 'aarch64' else []), '--output', static])
+            self.run('build-dynamic', ['python3', '-B', ROOT / 'scripts/build_x86_64_owned_dynamic_sysroot.py', *(['--architecture', 'aarch64'] if ARCH == 'aarch64' else []), '--output', dynamic])
             products = _product_records(static, dynamic, 'self-built')
         else:
             static = ROOT / self.supplied_products['static']['path']
@@ -492,7 +492,7 @@ class Collector:
         self.keep('static-manifest', static / 'share/crabc/manifest.json')
         self.keep('dynamic-manifest', dynamic / 'share/crabc/manifest.json')
         self.keep('dynamic-state', dynamic / 'share/crabc/dynamic-product-state.json')
-        self.keep('candidate-loader', dynamic / 'lib/ld-crabc-x86_64.so.1')
+        self.keep('candidate-loader', dynamic / INTERPRETER.lstrip('/'))
         objects = {}
         for probe, source_name, flags in WORKLOADS:
             objects[probe] = self.output / (probe + '.o')
@@ -518,7 +518,7 @@ class Collector:
                 provider = execution_root / ORACLE.relative_to('/')
                 provider.parent.mkdir(parents=True)
                 shutil.copy2(ORACLE, provider)
-                interpreter = '/opt/musl-1.2.6/lib/ld-musl-x86_64.so.1'
+                interpreter = f'/opt/musl-1.2.6/lib/ld-musl-{ARCH}.so.1'
                 loader = execution_root / interpreter.lstrip('/')
                 loader.symlink_to('libc.so')
                 hook = Elf(provider).symbol('_dl_debug_state')
