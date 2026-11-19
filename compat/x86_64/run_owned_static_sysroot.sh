@@ -999,7 +999,9 @@ run_static_tbss() {
     audit_link_receipt "$installed_root" "$mode_root" "$mode" \
         "$mode_root/candidate" "$mode_root/link.receipt.json"
     candidate_output="$(env -i "$mode_root/candidate")" || fail "${label} TBSS candidate failed"
-    [ "$candidate_output" = 'initial-tbss=8192,worker=isolated' ] ||
+    local tbss_size=8192
+    [ "$ARCH" != aarch64 ] || tbss_size=131072
+    [ "$candidate_output" = "initial-tbss=${tbss_size},worker=isolated" ] ||
         fail "${label} TBSS candidate output drifted: $candidate_output"
 }
 
