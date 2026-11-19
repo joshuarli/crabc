@@ -19,7 +19,10 @@ readonly work
 chmod 0755 "$work"
 trap 'printf "owned loader runtime TLS: FAIL; evidence: %s\n" "$work" >&2' ERR
 readonly driver="$installed/bin/crabc-cc-dynamic"
-readonly oracle_cc=/usr/local/bin/crabc-x86_64-musl-gcc
+eval "$(python3 -B "$ROOT/compat/x86_64/native_arch.py")"
+readonly oracle_cc="$oracle"
+readonly interpreter="/lib/ld-crabc-${arch}.so.1"
+if [ "$arch" = aarch64 ]; then tls_relocation='R_AARCH64_(TLS_DTPMOD|TLS_DTPREL|TLSDESC)'; else tls_relocation='R_X86_64_(DTPMOD64|DTPOFF64|TLSGD)'; fi
 readonly source="$ROOT/compat/x86_64"
 mkdir "$work/oracle"
 for row in 'one 101' 'two 202'; do
@@ -31,7 +34,7 @@ for row in 'one 101' 'two 202'; do
         -Wl,-z,now,-soname,"libowned-runtime-tls-$name.so" \
         -o "$work/oracle/libowned-runtime-tls-$name.so"
     readelf -rW "$work/libowned-runtime-tls-$name.so" >"$work/$name.relocations"
-    grep -Eq 'R_X86_64_(DTPMOD64|DTPOFF64|TLSGD)' "$work/$name.relocations"
+    grep -Eq "$tls_relocation" "$work/$name.relocations"
     readelf -Ws "$work/libowned-runtime-tls-$name.so" >"$work/$name.symbols"
     awk '$4 == "TLS" && $7 != "UND" && $8 == "tls_value" { found = 1 }
         END { exit !found }' "$work/$name.symbols"
@@ -47,7 +50,7 @@ for mode in --dynamic-pie --dynamic-non-pie; do
     "$oracle_cc" "${oracle_flags[@]}" "$source/owned_loader_runtime_tls_main.c" \
         -ldl -pthread -o "$work/oracle/$name"
     readelf -lW "$work/$name" >"$work/$name.segments"
-    grep -Fq '/lib/ld-crabc-x86_64.so.1' "$work/$name.segments"
+    grep -Fq "$interpreter" "$work/$name.segments"
     cp "$work/$name" "$work/execution-root/$name"
     candidate=0 oracle=0
     timeout 30 chroot "$work/execution-root" "/$name" >"$work/$name.candidate.stdout" \
