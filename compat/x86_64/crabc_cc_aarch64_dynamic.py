@@ -401,7 +401,8 @@ def execute(arguments):
 
 
 
-try:
-    execute(sys.argv[1:])
-except (shared.DriverError, OSError, ValueError, subprocess.SubprocessError) as error:
-    sys.exit(f"crabc-cc-dynamic: {error}")
+if __name__ == "__main__":
+    try:
+        execute(sys.argv[1:])
+    except (shared.DriverError, OSError, ValueError, subprocess.SubprocessError) as error:
+        sys.exit(f"crabc-cc-dynamic: {error}")

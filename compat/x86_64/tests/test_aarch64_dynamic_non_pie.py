@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
 import hashlib
+import importlib.machinery
+import importlib.util
 import json
 import os
 import platform
@@ -9,6 +11,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from unittest import mock
 
 
 CAN_BUILD = platform.system() == "Linux" and platform.machine() in ("aarch64", "arm64") and Path("/opt/cargo/bin/rustup").is_file()
@@ -62,6 +65,32 @@ class Aarch64DynamicNonPieTest(unittest.TestCase):
             self.assertNotEqual(result.returncode, 0)
             self.assertFalse(Path(str(output) + ".crabc-link.json").exists())
             self.assertFalse(output.exists())
+
+    @unittest.skipUnless(os.environ.get("CRABC_AARCH64_DYNAMIC_SYSROOT") or CAN_BUILD, "requires a built aarch64 product")
+    def test_failed_link_preserves_replaced_receipt_inode(self):
+        product = Path(os.environ["CRABC_AARCH64_DYNAMIC_SYSROOT"]).resolve(strict=True)
+        loader = importlib.machinery.SourceFileLoader("arm_driver_test", str(product / "bin/crabc-cc-dynamic"))
+        spec = importlib.util.spec_from_loader(loader.name, loader)
+        module = importlib.util.module_from_spec(spec)
+        loader.exec_module(module)
+        with tempfile.TemporaryDirectory(dir=os.environ["TMPDIR"]) as directory:
+            work = Path(directory)
+            source, output = work / "main.c", work / "main"
+            source.write_text("int main(void) { return 0; }\n")
+            receipt = Path(str(output) + ".crabc-link.json")
+
+            def fail_link(*args, **kwargs):
+                self.assertEqual(receipt.read_bytes(), b"")
+                receipt.unlink()
+                receipt.write_bytes(b"competing receipt")
+                raise subprocess.CalledProcessError(1, args[0])
+
+            with mock.patch.object(module.shared, "run_checked"), \
+                 mock.patch.object(module.dynamic_shared, "dynamic_symbols", return_value=(set(), set())), \
+                 mock.patch.object(module.subprocess, "run", side_effect=fail_link):
+                with self.assertRaises(subprocess.CalledProcessError):
+                    module.execute(["-pie", str(source), "-o", str(output)])
+            self.assertEqual(receipt.read_bytes(), b"competing receipt")
 
     @unittest.skipUnless(os.environ.get("CRABC_AARCH64_DYNAMIC_SYSROOT") or CAN_BUILD, "requires a built aarch64 product")
     def test_resealed_crt_and_loader_provenance_drift_is_rejected(self):
