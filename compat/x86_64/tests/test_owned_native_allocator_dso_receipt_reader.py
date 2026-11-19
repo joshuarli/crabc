@@ -173,7 +173,7 @@ class OwnedNativeAllocatorDsoReceiptReaderTests(unittest.TestCase):
                 for name in reader.PRODUCTS:
                     (products / name).write_bytes(b"retained product")
                 (products / "dynamic-manifest").write_text(json.dumps({
-                    "target": "x86_64-unknown-linux-musl", "files": {},
+                    "target": f"{reader.ARCH}-unknown-linux-musl", "files": {},
                 }))
                 (products / "dynamic-product-state").write_text(json.dumps({"allocator_backend": backend}))
                 (products / "dynamic-libc-provenance").write_text(json.dumps({

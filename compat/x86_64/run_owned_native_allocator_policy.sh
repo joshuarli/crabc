@@ -163,9 +163,9 @@ receipt_products+=(
 if [ -f "$work/static-build.json" ]; then receipt_products+=("static-build=$work/static-build.json"); fi
 if [ -f "$work/dynamic-build.json" ]; then receipt_products+=("dynamic-build=$work/dynamic-build.json"); fi
 
-mkdir -p "$work/host-cwd/.work/x86_64"
+mkdir -p "$work/host-cwd/.work/$arch"
 cp -a "$dynamic_sysroot" "$work/execution-root"
-mkdir -p "$work/execution-root/run/.work/x86_64"
+mkdir -p "$work/execution-root/run/.work/$arch"
 readonly enter_root=(python3 -B -c 'import os, sys; os.chroot(sys.argv[1]); os.chdir("/run"); os.execv(sys.argv[2], sys.argv[2:])'
     "$work/execution-root")
 
