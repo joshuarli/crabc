@@ -9,13 +9,18 @@ import sys
 import tempfile
 import unittest
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from native_arch import native_arch
+
+ARCH = native_arch()["arch"]
+
 ROOT = Path(__file__).resolve().parents[3]
 DISPATCHER = ROOT / "scripts/dev-x86_64.sh"
 
 
 class OwnedStdioFileEngineDispatchTests(unittest.TestCase):
     def setUp(self) -> None:
-        scratch = ROOT / ".work/x86_64/tmp"
+        scratch = ROOT / f".work/{ARCH}/tmp"
         scratch.mkdir(parents=True, exist_ok=True)
         self.temporary = tempfile.TemporaryDirectory(dir=scratch)
         self.addCleanup(self.temporary.cleanup)
@@ -58,7 +63,7 @@ class OwnedStdioFileEngineDispatchTests(unittest.TestCase):
         # supplied-product contract is exactly two positional paths.
         self.assertEqual(argv[-4:], [
             "bash", "/workspace/compat/x86_64/run_owned_stdio_file_engine.sh",
-            "/workspace/.work/x86_64/static-product", "/workspace/.work/x86_64/dynamic-product",
+            f"/workspace/.work/{ARCH}/static-product", f"/workspace/.work/{ARCH}/dynamic-product",
         ])
 
     def test_no_pair_lets_the_runner_build_current_products(self) -> None:

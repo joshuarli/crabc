@@ -417,7 +417,9 @@ def audit_runtime(work: Path, dynamic: Path) -> None:
                         for name, contents in zip(RETAINED_PATHS, RETAINED_BYTES)),
                 f"{case} retained pathname bytes differ")
         trace = (raw / f"{case}.strace").read_text(encoding="utf-8")
-        require(re.search(r'unlink\("/scratch/stream"\)\s+=\s+0', trace) is not None,
+        unlink = (r'unlink\("/scratch/stream"\)' if ARCH == "x86_64" else
+                  r'unlinkat\(AT_FDCWD, "/scratch/stream", 0\)')
+        require(re.search(unlink + r'\s+=\s+0', trace) is not None,
                 f"{case} did not unlink the main-owned pathname")
         require(re.search(r'fcntl\([0-9]+, F_GETFD\)\s+=\s+-1 EBADF', trace) is not None,
                 f"{case} did not observe a closed descriptor")
