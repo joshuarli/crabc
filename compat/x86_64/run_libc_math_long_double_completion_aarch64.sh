@@ -71,7 +71,7 @@ grep -Eq '[[:space:]]W[[:space:]]pow10l$' "$work/archive-symbols" || fail 'archi
     -nostdinc -isystem "$compiler_include" -I"$work/product/usr/include" \
     -c "$probe" -o "$work/freestanding.o"
 "$cc" -c compat/x86_64/libc_math_long_double_completion_aarch64_start.S -o "$work/start.o"
-"$cc" -nostdlib -static -no-pie -Wl,-e,_start,--no-undefined,--gc-sections,--trace \
+"$cc" -nostdlib -static -no-pie -Wl,-e,_start,--no-undefined,--gc-sections,--trace,--export-dynamic \
     "$work/start.o" "$work/freestanding.o" -Wl,--start-group "$archive" \
     "$work/product/usr/lib/libcrabc-builtins.a" -Wl,--end-group -o "$work/freestanding" > "$work/freestanding.trace"
 readelf -sW "$work/freestanding" > "$work/freestanding.symbols"
@@ -79,6 +79,20 @@ readelf -lW "$work/freestanding" > "$work/freestanding.program"
 readelf -dW "$work/freestanding" > "$work/freestanding.dynamic"
 readelf -rW "$work/freestanding" > "$work/freestanding.relocations"
 objdump -d "$work/freestanding" > "$work/freestanding.disassembly"
+awk '$4 == "FUNC" && ($5 == "GLOBAL" || $5 == "WEAK") { print $8 }' "$work/freestanding.symbols" |
+    LC_ALL=C sort -u > "$work/freestanding.functions"
+printf '%s\n' __addoti4 __divdc3 __divsc3 __divtc3 __ffsti2 __fpclassifyl __muldc3 __mulsc3 \
+    __multc3 __parityti2 __popcountdi2 __popcountti2 __suboti4 _start \
+    crabc_x86_64_math_long_double_completion_probe exp10l exp2l fabs fdiml feclearexcept \
+    fegetenv fegetround feraiseexcept fesetenv fesetround fetestexcept modfl pow pow10l powl scalbnl |
+    LC_ALL=C sort -u > "$work/freestanding.expected-functions"
+cmp "$work/freestanding.expected-functions" "$work/freestanding.functions" || fail 'freestanding function closure differs'
+for symbol in fdiml exp10l; do
+    grep -Eq "[[:space:]]FUNC[[:space:]]+GLOBAL[[:space:]]+DEFAULT[[:space:]]+[0-9]+[[:space:]]${symbol}$" \
+        "$work/freestanding.symbols" || fail "freestanding candidate lacks strong $symbol"
+done
+grep -Eq '[[:space:]]FUNC[[:space:]]+WEAK[[:space:]]+DEFAULT[[:space:]]+[0-9]+[[:space:]]pow10l$' \
+    "$work/freestanding.symbols" || fail 'freestanding candidate lacks weak pow10l'
 if awk '$7 == "UND" && NF >= 8 && !($5 == "LOCAL" && ($8 == "_PROCEDURE_LINKAGE_TABLE_" || $8 == "__rela_iplt_start" || $8 == "__rela_iplt_end")) { print }' "$work/freestanding.symbols" | grep . >/dev/null; then
     fail 'freestanding candidate has unresolved symbols'
 fi
@@ -89,6 +103,10 @@ if grep -Eq 'INTERP|[[:space:]]TLS[[:space:]]|Requesting program interpreter' "$
 fi
 if grep -Eq 'libgcc|compiler-rt|libm\.so|/[Sr]?crt[^/[:space:]]*\.o' "$work/freestanding.trace"; then
     fail 'freestanding candidate linked an ambient runtime'
+fi
+if grep -Eq 'crabc_core|mimalloc|float_parse|math_compat|libm\.so|libm-' \
+    "$work/freestanding.symbols" "$work/freestanding.disassembly"; then
+    fail 'freestanding candidate retained an ambient math or runtime dependency'
 fi
 "$work/oracle" > "$work/oracle.records"
 "$work/candidate" > "$work/candidate.records"
