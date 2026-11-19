@@ -1,7 +1,6 @@
 """Installed POSIX timer runner product and callback-loaded TLS boundaries."""
 from pathlib import Path
 import os
-import shlex
 import subprocess
 import sys
 import tempfile
@@ -320,10 +319,7 @@ class OwnedPosixTimersTests(unittest.TestCase):
             tools.mkdir()
             python = tools / "python3"
             python.write_text(
-                "#!/bin/sh\n"
-                f"if [ \"$1\" = -B ] && [ \"$2\" = {shlex.quote(str(ROOT / 'compat/x86_64/native_arch.py'))} ]; then\n"
-                f"  exec {shlex.quote(sys.executable)} \"$@\"\n"
-                "fi\nexit 79\n",
+                "#!/bin/sh\nexit 79\n",
                 encoding="utf-8",
             )
             python.chmod(0o755)

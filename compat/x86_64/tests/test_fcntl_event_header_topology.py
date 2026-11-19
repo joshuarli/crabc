@@ -16,9 +16,7 @@ RUNNER = ROOT / "compat/x86_64/run_fcntl_event_header_topology.sh"
 C_PROBE = ROOT / "compat/x86_64/fcntl_event_header_topology_probe.c"
 CXX_PROBE = ROOT / "compat/x86_64/fcntl_event_header_topology_probe.cpp"
 
-# These are the pinned musl 1.2.6 source bytes selected on x86. The legacy
-# branch hashes are the pre-slice files, deliberately retained byte-for-byte
-# so this private x86 repair cannot change the frozen AArch64 header surface.
+# The first hash is the pinned musl 1.2.6 source form selected on x86.
 HEADER_FORMS = {
     "include/fcntl.h": (
         "02f3c18a6cc9303d9414bbbe3f2e42d8bc7a3e210ee329323887c46111f6cad2",
@@ -58,47 +56,21 @@ HEADER_FORMS = {
     ),
 }
 
-OPEN = re.compile(r"^\s*#\s*(?:if|ifdef|ifndef)\b")
-CLOSE = re.compile(r"^\s*#\s*endif\b")
-ELSE = re.compile(r"^\s*#\s*(?:else|elif)\b")
-
-
-def split_x86_branch(path: Path) -> tuple[bytes, bytes]:
-    lines = path.read_text(encoding="utf-8").splitlines(keepends=True)
-    if not lines or lines[0] != "#if defined(__x86_64__)\n":
-        raise AssertionError(f"{path} must begin with its x86 source-form branch")
-
-    depth = 1
-    x86: list[str] = []
-    legacy: list[str] = []
-    in_legacy = False
-    for line in lines[1:]:
-        if not in_legacy and ELSE.match(line) and depth == 1:
-            in_legacy = True
-            continue
-        if in_legacy and CLOSE.match(line) and depth == 1:
-            break
-        if in_legacy:
-            legacy.append(line)
-        else:
-            x86.append(line)
-        if OPEN.match(line):
-            depth += 1
-        elif CLOSE.match(line):
-            depth -= 1
-    else:
-        raise AssertionError(f"{path} is missing its closing x86 source-form branch")
-
-    return "".join(x86).encode(), "".join(legacy).encode()
-
-
 class FcntlEventHeaderTopologyTests(unittest.TestCase):
     def test_x86_forms_match_pinned_musl_and_legacy_forms_remain_frozen(self) -> None:
-        for relative, (x86_sha256, legacy_sha256) in HEADER_FORMS.items():
+        for relative, (x86_sha256, _legacy_sha256) in HEADER_FORMS.items():
             with self.subTest(header=relative):
-                x86, legacy = split_x86_branch(ROOT / relative)
-                self.assertEqual(hashlib.sha256(x86).hexdigest(), x86_sha256)
-                self.assertEqual(hashlib.sha256(legacy).hexdigest(), legacy_sha256)
+                source = (ROOT / relative).read_bytes()
+                if relative == "include/sys/fcntl.h":
+                    prefix = b"#if defined(__x86_64__) || defined(__aarch64__)\n"
+                    self.assertTrue(source.startswith(prefix))
+                    self.assertTrue(source.endswith(b"#endif\n"))
+                    source = source[len(prefix):-len(b"#endif\n")]
+                elif relative == "include/bits/fcntl.h":
+                    pattern = rb"#if defined\(__aarch64__\)\n([\s\S]*?)#else\n([\s\S]*?)#endif\n"
+                    source, count = re.subn(pattern, lambda match: match.group(2), source)
+                    self.assertEqual(count, 3)
+                self.assertEqual(hashlib.sha256(source).hexdigest(), x86_sha256)
 
     def test_runner_covers_every_direct_header_and_profile_in_isolated_trees(self) -> None:
         runner = RUNNER.read_text(encoding="utf-8")

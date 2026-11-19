@@ -30,7 +30,7 @@ X86_MUSL_MACROS = """\
 class RebootHeaderSourceFormTests(unittest.TestCase):
     def test_x86_branch_keeps_the_exact_pinned_musl_public_macro_form(self) -> None:
         header = HEADER.read_text(encoding="utf-8")
-        self.assertIn(X86_MUSL_MACROS, header)
+        self.assertEqual(header.split("#endif\n\n", 1)[1].split("\n\nint reboot", 1)[0].strip(), X86_MUSL_MACROS.strip())
         self.assertNotIn("LINUX_REBOOT_", header)
         self.assertNotIn("__x86_64__", header)
         self.assertNotIn("__aarch64__", header)

@@ -53,6 +53,7 @@ class PthreadHeaderSourceFormTests(unittest.TestCase):
         self.assertNotIn("__aarch64__", header)
         self.assertIn("#if _REDIR_TIME64", x86_form)
         self.assertIn("\tstruct {\n\t\ttime_t __reserved1;\n\t\tlong __reserved2;\n\t} __reserved2[2];", x86_form)
+        self.assertEqual(header.splitlines()[23], "\tstruct {")
         self.assertIn("#else\n\tstruct {\n\t\ttime_t __reserved1;", header)
 
     def test_direct_c_and_cpp_probes_name_layout_linkage_and_signal_ownership(self) -> None:
