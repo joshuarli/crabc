@@ -5,6 +5,7 @@ import json
 import os
 import platform
 import shutil
+import struct
 import sys
 import tempfile
 import tomllib
@@ -21,6 +22,18 @@ WORK = Path(__file__).parents[2] / ".work/x86_64/unwinder-output-tests"
 
 
 class OwnedCleanupContract(unittest.TestCase):
+    def test_arm64_elf_reader_rejects_foreign_or_truncated_tables(self):
+        data = bytearray(128)
+        struct.pack_into("<16sHHIQQQIHHHHHH", data, 0, b"\x7fELF\x02\x01\x01", 3, 183, 1,
+                         0, 0, 64, 0, 64, 56, 0, 64, 1, 0)
+        self.assertEqual(owned_cleanup.Aarch64Elf._from_bytes(bytes(data)).elf_type, 3)
+        foreign = bytearray(data)
+        struct.pack_into("<H", foreign, 18, 62)
+        with self.assertRaises(ValueError):
+            owned_cleanup.Aarch64Elf._from_bytes(bytes(foreign))
+        with self.assertRaises(ValueError):
+            owned_cleanup.Aarch64Elf._from_bytes(bytes(data[:80]))
+
     def test_installed_backtrace_requires_bounded_frames_in_linked_code(self):
         static = ("backtrace static-nested thread=100 status=5 cutoff=3 cutoff_frames=3 "
                   "target=150:100:200 host=none pcs=120,130,300")

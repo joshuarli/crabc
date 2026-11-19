@@ -621,7 +621,7 @@ def inspect_elf(context: Context, path: Path, *, dynamic: bool, needed_dsos: Seq
     defined = checked_output([context.tool("llvm-nm"), "--defined-only", path], "llvm-nm defined")
     needed = re.findall(r"\(NEEDED\)\s+Shared library: \[([^]]+)\]", dynamic_section)
     interpreter = re.search(r"Requesting program interpreter: ([^]]+)\]", segments)
-    unwind = owned_cleanup.cleanup._unwind_symbols(path, defined, provider_build.UNWIND_ABI)
+    unwind = owned_cleanup.unwind_symbols(path, defined, provider_build.UNWIND_ABI)
     problems = []
     machine = "Advanced Micro Devices X86-64" if ARCH == "x86_64" else "AArch64"
     if machine not in header or not re.search(r"Type:\s+DYN", header):
