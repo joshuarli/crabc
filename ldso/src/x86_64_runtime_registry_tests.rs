@@ -276,8 +276,8 @@ fn failed_tls_load_rolls_back_before_successful_growth_and_retained_reopen() {
         let image = [31u8];
         let mut initial = [EMPTY_OBJECT; 32];
         initial[0] = Object { role: ObjectRole::Main, tls_image: image.as_ptr(),
-            tls_filesz: 1, tls_memsz: 16, tls_align: if cfg!(target_arch = "aarch64") { 1 } else { 16 }, tls_module_id: 1,
-            tls_offset_below_tp: 16, ..EMPTY_OBJECT };
+            tls_filesz: 1, tls_memsz: 16, tls_align: 16, tls_module_id: 1,
+            tls_offset_below_tp: if cfg!(target_arch = "aarch64") { 16 + (image.as_ptr() as usize & 15) } else { 16 }, ..EMPTY_OBJECT };
         let block = materialize_initial_tls(&initial, 0)?;
         let original = *block.dtv.add(1) as *mut u8;
         *original = 97;

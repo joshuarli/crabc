@@ -226,7 +226,7 @@ mod tests {
             let image = [31u8];
             let mut initial = [EMPTY_OBJECT; 32];
             initial[0] = Object { tls_image: image.as_ptr(), tls_filesz: 1, tls_memsz: 16,
-                tls_align: if cfg!(target_arch = "aarch64") { 1 } else { 16 }, tls_module_id: 1, tls_offset_below_tp: 16, ..EMPTY_OBJECT };
+                tls_align: 16, tls_module_id: 1, tls_offset_below_tp: if cfg!(target_arch = "aarch64") { 16 + (image.as_ptr() as usize & 15) } else { 16 }, ..EMPTY_OBJECT };
             let first = materialize_initial_tls(&initial, 0)?;
             let second = materialize_initial_tls(&initial, 0)?;
             *(*first.dtv.add(1) as *mut u8) = 97;
@@ -273,7 +273,7 @@ mod tests {
         let image = [31u8];
         let mut initial = [EMPTY_OBJECT; 32];
         initial[0] = Object { tls_image: image.as_ptr(), tls_filesz: 1, tls_memsz: 16,
-            tls_align: if cfg!(target_arch = "aarch64") { 1 } else { 16 }, tls_module_id: 1, tls_offset_below_tp: 16, ..EMPTY_OBJECT };
+            tls_align: 16, tls_module_id: 1, tls_offset_below_tp: if cfg!(target_arch = "aarch64") { 16 + (image.as_ptr() as usize & 15) } else { 16 }, ..EMPTY_OBJECT };
         let first = unsafe { materialize_initial_tls(&initial, 0) }?;
         let second = unsafe { materialize_initial_tls(&initial, 0) }?;
         let modules = [initial[0], Object { tls_image: image.as_ptr(), tls_filesz: 1,
@@ -309,7 +309,7 @@ mod tests {
         let image = [23u8, 29];
         let mut modules = [EMPTY_OBJECT; 32];
         modules[0] = Object { tls_image: image.as_ptr(), tls_filesz: 2, tls_memsz: 16,
-            tls_align: if cfg!(target_arch = "aarch64") { 1 } else { 16 }, tls_module_id: 1, tls_offset_below_tp: 16, ..EMPTY_OBJECT };
+            tls_align: 16, tls_module_id: 1, tls_offset_below_tp: if cfg!(target_arch = "aarch64") { 16 + (image.as_ptr() as usize & 15) } else { 16 }, ..EMPTY_OBJECT };
         let block = unsafe { materialize_initial_tls(&modules, 0) }.unwrap();
         unsafe { PreparedTlsView::prepare(block.thread_pointer, &modules).unwrap().publish(block.thread_pointer); }
         let tp = block.thread_pointer as usize;
@@ -342,7 +342,7 @@ mod tests {
         let image = [1u8];
         let mut initial = [EMPTY_OBJECT; 32];
         initial[0] = Object { tls_image: image.as_ptr(), tls_filesz: 1, tls_memsz: 16,
-            tls_align: if cfg!(target_arch = "aarch64") { 1 } else { 16 }, tls_module_id: 1, tls_offset_below_tp: 16, ..EMPTY_OBJECT };
+            tls_align: 16, tls_module_id: 1, tls_offset_below_tp: if cfg!(target_arch = "aarch64") { 16 + (image.as_ptr() as usize & 15) } else { 16 }, ..EMPTY_OBJECT };
         let block = unsafe { materialize_initial_tls(&initial, 0) }.unwrap();
         let module = Object { tls_image: image.as_ptr(), tls_filesz: 1, tls_memsz: 32,
             tls_align: 64, tls_module_id: 2, ..EMPTY_OBJECT };
@@ -366,8 +366,8 @@ mod tests {
         let later_image = [29u8, 31];
         let mut initial = [EMPTY_OBJECT; 32];
         initial[0] = Object { tls_image: initial_image.as_ptr(), tls_filesz: 2,
-            tls_memsz: 32, tls_align: if cfg!(target_arch = "aarch64") { 1 } else { 16 }, tls_module_id: 1,
-            tls_offset_below_tp: 32, ..EMPTY_OBJECT };
+            tls_memsz: 32, tls_align: 16, tls_module_id: 1,
+            tls_offset_below_tp: if cfg!(target_arch = "aarch64") { 16 + (initial_image.as_ptr() as usize & 15) } else { 32 }, ..EMPTY_OBJECT };
         let runtime = Object { tls_image: runtime_image.as_ptr(), tls_filesz: 3,
             tls_memsz: 129, tls_align: 4096, tls_module_id: 2, ..EMPTY_OBJECT };
         let later = Object { tls_image: later_image.as_ptr(), tls_filesz: 2,
@@ -447,7 +447,7 @@ mod tests {
         let image = [17u8, 19];
         let mut initial = [EMPTY_OBJECT; 32];
         initial[0] = Object { tls_image: image.as_ptr(), tls_filesz: 2, tls_memsz: 16,
-            tls_align: if cfg!(target_arch = "aarch64") { 1 } else { 16 }, tls_module_id: 1, tls_offset_below_tp: 16, ..EMPTY_OBJECT };
+            tls_align: 16, tls_module_id: 1, tls_offset_below_tp: if cfg!(target_arch = "aarch64") { 16 + (image.as_ptr() as usize & 15) } else { 16 }, ..EMPTY_OBJECT };
         let block = unsafe { materialize_initial_tls(&initial, 0) }.unwrap();
         let original = unsafe { *block.dtv.add(1) };
         unsafe { *(original as *mut u8) = 99; }
@@ -586,8 +586,8 @@ mod timer_reset_tests {
         let image = [11u8, 13, 17, 19];
         let mut initial = [EMPTY_OBJECT; 32];
         initial[0] = Object { tls_image: image.as_ptr(), tls_filesz: image.len(),
-            tls_memsz: 32, tls_align: if cfg!(target_arch = "aarch64") { 1 } else { 16 }, tls_module_id: 1,
-            tls_offset_below_tp: 32, ..EMPTY_OBJECT };
+            tls_memsz: 32, tls_align: 16, tls_module_id: 1,
+            tls_offset_below_tp: if cfg!(target_arch = "aarch64") { 16 + (image.as_ptr() as usize & 15) } else { 32 }, ..EMPTY_OBJECT };
         let block = unsafe { materialize_initial_tls(&initial, 0) }.unwrap();
         let tp = block.thread_pointer;
         let current = unsafe { *block.dtv.add(1) } as *mut u8;
@@ -614,8 +614,8 @@ mod timer_reset_tests {
         let later_image = [17u8, 19, 23];
         let mut initial = [EMPTY_OBJECT; 32];
         initial[0] = Object { tls_image: first_image.as_ptr(), tls_filesz: 2,
-            tls_memsz: 32, tls_align: if cfg!(target_arch = "aarch64") { 1 } else { 16 }, tls_module_id: 1,
-            tls_offset_below_tp: 32, ..EMPTY_OBJECT };
+            tls_memsz: 32, tls_align: 16, tls_module_id: 1,
+            tls_offset_below_tp: if cfg!(target_arch = "aarch64") { 16 + (first_image.as_ptr() as usize & 15) } else { 32 }, ..EMPTY_OBJECT };
         let block = unsafe { materialize_initial_tls(&initial, 0) }.unwrap();
         let tp = block.thread_pointer;
         let first = unsafe { *block.dtv.add(1) } as *mut u8;

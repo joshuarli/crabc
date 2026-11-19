@@ -219,7 +219,7 @@ mod tests {
         let aligned_image = [21u8, 22, 23];
         let mut objects = [EMPTY_OBJECT; 32];
         objects[0] = Object { tls_image: image.as_ptr(), tls_filesz: image.len(),
-            tls_memsz: 32, tls_align: if cfg!(target_arch = "aarch64") { 1 } else { 16 }, tls_module_id: 1, tls_offset_below_tp: 32,
+            tls_memsz: 32, tls_align: 16, tls_module_id: 1, tls_offset_below_tp: if cfg!(target_arch = "aarch64") { 16 + (image.as_ptr() as usize & 15) } else { 32 },
             ..EMPTY_OBJECT };
         // A TLS-free object between providers must not consume a DTV ID.
         objects[2] = Object { tls_image: aligned_image.as_ptr(), tls_filesz: aligned_image.len(),
@@ -238,7 +238,7 @@ mod tests {
                 <= if cfg!(target_arch = "aarch64") { block.thread_pointer as usize - 32 } else { block.thread_pointer as usize - 4096 });
             assert_eq!(unsafe { *block.dtv }, 2);
             let expected = |offset| if cfg!(target_arch = "aarch64") { block.thread_pointer as usize + offset } else { block.thread_pointer as usize - offset };
-            assert_eq!(unsafe { *block.dtv.add(1) }, expected(32));
+            assert_eq!(unsafe { *block.dtv.add(1) }, expected(objects[0].tls_offset_below_tp));
             assert_eq!(unsafe { *block.dtv.add(2) }, expected(objects[2].tls_offset_below_tp));
             let second_image = unsafe { *block.dtv.add(2) } as *const u8;
             assert_eq!(unsafe { core::slice::from_raw_parts(second_image, 3) }, aligned_image);
@@ -275,8 +275,8 @@ mod tests {
             let runtime_image = [17u8, 19];
             let mut initial = [EMPTY_OBJECT; 32];
             initial[0] = Object { tls_image: image.as_ptr(), tls_filesz: 2,
-                tls_memsz: 32, tls_align: if cfg!(target_arch = "aarch64") { 1 } else { 16 }, tls_module_id: 1,
-                tls_offset_below_tp: 32, ..EMPTY_OBJECT };
+                tls_memsz: 32, tls_align: 16, tls_module_id: 1,
+                tls_offset_below_tp: if cfg!(target_arch = "aarch64") { 16 + (image.as_ptr() as usize & 15) } else { 32 }, ..EMPTY_OBJECT };
             let runtime = Object { tls_image: runtime_image.as_ptr(), tls_filesz: 2,
                 tls_memsz: 97, tls_align: 64, tls_module_id: 2, ..EMPTY_OBJECT };
             let modules = [initial[0], runtime,
@@ -365,7 +365,7 @@ mod tests {
         let image = [11u8, 12, 13, 14];
         let mut objects = [EMPTY_OBJECT; 32];
         objects[0] = Object { tls_image: image.as_ptr(), tls_filesz: image.len(),
-            tls_memsz: 32, tls_align: if cfg!(target_arch = "aarch64") { 1 } else { 16 }, tls_module_id: 1, tls_offset_below_tp: 32,
+            tls_memsz: 32, tls_align: 16, tls_module_id: 1, tls_offset_below_tp: if cfg!(target_arch = "aarch64") { 16 + (image.as_ptr() as usize & 15) } else { 32 },
             ..EMPTY_OBJECT };
         objects[2] = Object { tls_image: image.as_ptr(), tls_filesz: image.len(),
             tls_memsz: 129, tls_align: 4096, tls_module_id: 2, tls_offset_below_tp: 4096 + if cfg!(target_arch = "aarch64") { image.as_ptr() as usize & 4095 } else { 0 },
