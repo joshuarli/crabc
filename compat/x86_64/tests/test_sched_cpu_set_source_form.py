@@ -16,27 +16,16 @@ C_PROBE = ROOT / "compat" / "x86_64" / "sched_cpu_set_source_form_probe.c"
 CXX_PROBE = ROOT / "compat" / "x86_64" / "sched_cpu_set_source_form_probe.cpp"
 DISPATCHER = ROOT / "scripts" / "dev-x86_64.sh"
 
-X86_MARKER = "#if defined(__x86_64__) /* pinned-musl cpu_set_t form; the AArch64 form stays frozen */\n"
 X86_FORM = "typedef struct cpu_set_t { unsigned long __bits[128/sizeof(long)]; } cpu_set_t;\n"
-NON_X86_SEPARATOR = "#else /* AArch64 frozen cpu_set_t form */\n"
-FROZEN_NON_X86_FORM = """\
-typedef struct cpu_set_t {
-    unsigned long __bits[128 / sizeof(long)];
-} cpu_set_t;
-"""
 
 
 class SchedCpuSetSourceFormTests(unittest.TestCase):
     def test_x86_cpu_set_t_uses_the_exact_pinned_musl_source_form(self) -> None:
         header = HEADER.read_text(encoding="utf-8")
-        _, marker, after_marker = header.partition(X86_MARKER)
-        self.assertTrue(marker, "sched.h lacks the selected x86 cpu_set_t branch")
-        x86_form, separator, after_separator = after_marker.partition(NON_X86_SEPARATOR)
-        self.assertTrue(separator, "sched.h lacks the frozen non-x86 cpu_set_t branch")
-        self.assertEqual(x86_form, X86_FORM)
-        non_x86_form, closer, _ = after_separator.partition("#endif\n\nint __sched_cpucount")
-        self.assertTrue(closer, "sched.h lacks the cpu_set_t architecture-branch closer")
-        self.assertEqual(non_x86_form, FROZEN_NON_X86_FORM)
+        self.assertIn(X86_FORM + "\nint __sched_cpucount", header)
+        self.assertEqual(header.count("typedef struct cpu_set_t"), 1)
+        self.assertNotIn("__x86_64__", header)
+        self.assertNotIn("__aarch64__", header)
 
     def test_direct_c_and_cpp_probes_pin_cpu_set_visibility_without_runtime_work(self) -> None:
         for probe_path in (C_PROBE, CXX_PROBE):
