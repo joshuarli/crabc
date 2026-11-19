@@ -394,7 +394,7 @@ def profile_reader(work, mount, product, root):
     return native.Reader(work, mount, product, root)
 
 
-def aarch64_link_identity(root, product, obj, binary, receipt_path, mode):
+def aarch64_link_identity(root, product, obj, binary, receipt_path, mode, *, relative_output=True):
     import crabc_cc_static as compiler
     root, product, obj, binary, receipt_path = map(Path, (root, product, obj, binary, receipt_path))
     receipt = native.read_json(receipt_path)
@@ -407,7 +407,7 @@ def aarch64_link_identity(root, product, obj, binary, receipt_path, mode):
                     'resolved_linker': {'path': '/usr/bin/mold', 'sha256': native.digest(Path('/usr/bin/mold'))},
                     'owned_link_contract': compiler.owned_link_plan(product, spec, architecture='aarch64'),
                     'input_receipts': compiler.receipt_input_records(product, spec, [obj], receipt_path),
-                    'output': {'path': binary.name, 'sha256': native.digest(binary)},
+                    'output': {'path': binary.name if relative_output else str(binary), 'sha256': native.digest(binary)},
                     'map': {'path': receipt_path.with_suffix('.map').name, 'sha256': native.digest(receipt_path.with_suffix('.map'))},
                     'trace': {'path': receipt_path.with_suffix('.trace').name, 'sha256': native.digest(receipt_path.with_suffix('.trace'))}}
         same(receipt, expected, 'aarch64 static link receipt')
