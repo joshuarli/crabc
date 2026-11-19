@@ -17,6 +17,7 @@ from unittest.mock import Mock, patch
 
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(ROOT / "compat/x86_64"))
 GENERATOR_PATH = ROOT / "compat" / "x86_64" / "generate_qualification_manifest.py"
 RUNNER_PATH = ROOT / "compat" / "x86_64" / "run_qualification_manifest.py"
 
