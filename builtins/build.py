@@ -361,7 +361,8 @@ def audit_source() -> list[dict[str, str]]:
             if token in text:
                 raise BuildError(f"forbidden source dependency or assembly facility: {token}")
 
-    production_inputs = (ROOT / "Cargo.toml", ROOT / "Cargo.lock", ROOT / "build.py", ROOT / "provenance.toml", SOURCE, complex_source)
+    production_inputs = (ROOT / "Cargo.toml", ROOT / "Cargo.lock", ROOT / "build.py", ROOT / "provenance.toml",
+                         ROOT / "aarch64-helper-exports.txt", SOURCE, complex_source)
     return [
         {"path": path.relative_to(ROOT).as_posix(), "sha256": sha256(path)}
         for path in production_inputs
@@ -885,6 +886,14 @@ def ensure_no_absolute_build_paths(archive: pathlib.Path, paths: Sequence[pathli
 
 
 def assert_symbol_surface(defined: Sequence[str]) -> None:
+    contract = ROOT / "aarch64-helper-exports.txt"
+    if contract.is_symlink() or not contract.is_file():
+        raise BuildError("compiler helper export roster is missing or unsafe")
+    expected = contract.read_text(encoding="utf-8").splitlines()
+    if not expected or expected != sorted(set(expected)) or any(not symbol or symbol.strip() != symbol for symbol in expected):
+        raise BuildError("compiler helper export roster is malformed")
+    if list(defined) != expected:
+        raise BuildError("compiler helper export roster differs from the source-pinned contract")
     missing = sorted((set(EXPECTED_SYMBOLS) | OUTLINE_ATOMIC_SYMBOLS).difference(defined))
     if missing:
         raise BuildError(f"archive is missing required C compiler helpers: {missing!r}")

@@ -35,7 +35,7 @@ class BuildContractTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary:
             root = pathlib.Path(temporary)
             (root / "src").mkdir()
-            for name in ("Cargo.toml", "Cargo.lock", "build.py", "provenance.toml"):
+            for name in ("Cargo.toml", "Cargo.lock", "build.py", "provenance.toml", "aarch64-helper-exports.txt"):
                 (root / name).write_bytes((ROOT / name).read_bytes())
             source = root / "src/lib.rs"
             source.write_text('#![no_std]\n#[cfg(target_arch = "x86_64")]\nmod x86_64_binary80;\n')
@@ -45,7 +45,7 @@ class BuildContractTests(unittest.TestCase):
             with mock.patch.object(BUILD, "ROOT", root), mock.patch.object(BUILD, "SOURCE", source):
                 inputs = BUILD.audit_source()
                 self.assertEqual([row["path"] for row in inputs],
-                                 ["Cargo.toml", "Cargo.lock", "build.py", "provenance.toml", "src/lib.rs", "src/aarch64_complex.rs"])
+                                 ["Cargo.toml", "Cargo.lock", "build.py", "provenance.toml", "aarch64-helper-exports.txt", "src/lib.rs", "src/aarch64_complex.rs"])
                 command = BUILD.compiler_command(("mock-rustc",), root / "owned.o")
                 self.assertIn(BUILD.TARGET, command)
                 self.assertIn(str(source), command)
@@ -63,11 +63,19 @@ class BuildContractTests(unittest.TestCase):
         self.assertTrue(symbols)
         self.assertFalse(any("mem" in symbol or "atomic" in symbol for symbol in symbols))
 
+    def test_complete_export_roster_rejects_missing_and_extra_symbols(self) -> None:
+        names = (BUILD.ROOT / "aarch64-helper-exports.txt").read_text().splitlines()
+        BUILD.assert_symbol_surface(names)
+        with self.assertRaisesRegex(BUILD.BuildError, "export roster differs"):
+            BUILD.assert_symbol_surface(names[1:])
+        with self.assertRaisesRegex(BUILD.BuildError, "export roster differs"):
+            BUILD.assert_symbol_surface(sorted([*names, "__unreviewed_helper"]))
+
     def test_source_audit_records_the_production_inputs(self) -> None:
         sources = BUILD.audit_source()
         self.assertEqual(
             [entry["path"] for entry in sources],
-            ["Cargo.toml", "Cargo.lock", "build.py", "provenance.toml", "src/lib.rs", "src/aarch64_complex.rs"],
+            ["Cargo.toml", "Cargo.lock", "build.py", "provenance.toml", "aarch64-helper-exports.txt", "src/lib.rs", "src/aarch64_complex.rs"],
         )
 
     def test_compiler_command_disables_outline_atomics_and_unwinding(self) -> None:
