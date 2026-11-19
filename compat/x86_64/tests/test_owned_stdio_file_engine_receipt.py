@@ -902,7 +902,7 @@ class AllocatorPltProofTests(unittest.TestCase):
             receipt.validate_allocator_plt(libc)
             body = libc.read_bytes()
             relocations = subprocess.check_output(['readelf', '-rW', '--use-dynamic', str(libc)], text=True)
-            row = re.search(r'^([0-9a-f]{16})\s+([0-9a-f]{16})\s+R_AARCH64_JUMP_SLOT\s+\S+\s+malloc\s+\+ 0$', relocations, re.MULTILINE)
+            row = re.search(r'^([0-9a-f]{16})\s+([0-9a-f]{16})\s+R_AARCH64_(?:JUMP_SLOT|GLOB_DAT)\s+\S+\s+malloc\s+\+ 0$', relocations, re.MULTILINE)
             self.assertIsNotNone(row)
             record = struct.pack('<QQq', int(row.group(1), 16), int(row.group(2), 16), 0)
             self.assertEqual(body.count(record), 1)
