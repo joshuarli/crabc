@@ -199,6 +199,13 @@ class Aarch64DynamicNonPieTest(unittest.TestCase):
                 builder.shared_package.publish_noreplace(staged, output, "dynamic sysroot output")
             self.assertEqual(marker.read_bytes(), b"existing product")
             self.assertEqual((staged / "candidate").read_bytes(), b"candidate product")
+            failed = Path(directory) / "failed"
+            with mock.patch.object(builder.common, "run", side_effect=builder.common.BuildError("isolated build failure")):
+                with self.assertRaisesRegex(builder.common.BuildError, "isolated build failure"):
+                    builder.build_aarch64(failed, allocator_backend=builder.common.DEFAULT_ALLOCATOR_BACKEND,
+                                          lifecycle_test_audit=False, profile="release",
+                                          hardening_profile=builder.common.NativeRuntimeProfile.COMPATIBILITY)
+            self.assertFalse(failed.exists())
 
     @unittest.skipUnless(os.environ.get("CRABC_AARCH64_DYNAMIC_SYSROOT") or CAN_BUILD, "requires a built aarch64 product")
     def test_receipt_reservations_precede_translation_and_preserve_existing_files(self):
