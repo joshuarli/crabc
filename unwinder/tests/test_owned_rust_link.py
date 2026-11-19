@@ -43,12 +43,12 @@ class OwnedRustLinkContract(unittest.TestCase):
                                   "--plugin-opt=mcpu=x86-64", "--trace", "/owned/consumer.o",
                                   "/owned/libstd.rlib", "-o", "/owned/consumer.lto.o"])
 
-    @unittest.skipUnless(platform.machine() == "x86_64", "requires native x86-64 linker fixture")
+    @unittest.skipUnless(platform.machine() in ("x86_64", "aarch64"), "requires native linker fixture")
     @unittest.skipUnless(Path("/opt/cargo/bin/rustup").is_file() and Path("/usr/bin/mold").is_file(), "requires pinned native image")
     def test_bitcode_archive_materializes_before_mold_preserving_call_behavior(self):
         from scripts.rust_toolchain import pinned_toolchain
         repository = Path(__file__).resolve().parents[2]
-        sysroot = Path("/opt/rustup/toolchains") / f"{pinned_toolchain(repository)}-x86_64-unknown-linux-musl"
+        sysroot = Path("/opt/rustup/toolchains") / f"{pinned_toolchain(repository)}-{linker.TARGET}"
         scratch = repository / ".work/tmp"
         scratch.mkdir(parents=True, exist_ok=True)
         with tempfile.TemporaryDirectory(dir=scratch) as temporary:
@@ -62,7 +62,10 @@ class OwnedRustLinkContract(unittest.TestCase):
             archive = work / "libvalues.rlib"
             subprocess.run([str(sysroot / "lib/rustlib" / linker.TARGET / "bin/llvm-ar"), "rcs", str(archive), str(bitcode)], check=True)
             caller = work / "caller.c"
-            caller.write_text('extern int lto_value(int); __attribute__((noreturn)) void _start(void) { long status = lto_value(6) == 7 ? 0 : 1; __asm__ volatile("syscall" : : "a"(60L), "D"(status) : "rcx", "r11", "memory"); __builtin_unreachable(); }\n')
+            if platform.machine() == "aarch64":
+                caller.write_text('extern int lto_value(int); __attribute__((noreturn)) void _start(void) { register long status __asm__("x0") = lto_value(6) == 7 ? 0 : 1; register long call __asm__("x8") = 93; __asm__ volatile("svc #0" : : "r"(status), "r"(call) : "memory"); __builtin_unreachable(); }\n')
+            else:
+                caller.write_text('extern int lto_value(int); __attribute__((noreturn)) void _start(void) { long status = lto_value(6) == 7 ? 0 : 1; __asm__ volatile("syscall" : : "a"(60L), "D"(status) : "rcx", "r11", "memory"); __builtin_unreachable(); }\n')
             caller_object = work / "caller.o"
             subprocess.run(["/usr/bin/gcc", "-fno-pie", "-fno-stack-protector", "-ffreestanding", "-c", str(caller), "-o", str(caller_object)], check=True)
             executable = work / "consumer"
