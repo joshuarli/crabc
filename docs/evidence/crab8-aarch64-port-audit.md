@@ -372,7 +372,7 @@ entries are closed by the commit that fixes them.
 | 5 | closed (373b8589b) | Static preparation reads each product’s allocator backend and producer tools from its manifest and checks backend agreement. |
 | 6 | closed (a04b647dd) | Both native static drivers use the same installed-payload, required-path and CRT-provenance checks. The ARM builder suite passes all 47 tests. |
 | 8 | closed (d8ffc3bd5) | The shared reader binds compiler identities to the architecture-specific source image manifest. |
-| 9 | still open | `consumer_rust_std_lto.py:587-588`. |
+| 9 | closed (5217695e8) | The ARM expected link command requires the Cortex-A53 erratum option independently of the receipt; the pinned Rust target specification supplies it as a `gnu-cc` pre-link argument. |
 | 10 | closed (58f2ddd16) | Incomplete development runs return failure on both architectures. |
 | 11 | kept by owner decision (not a defect) | Audit file `:16-19`; code unchanged at `qualification_candidate.py:559-561`. |
 | 12 | closed (6f7b05a3e) | ARM crypt and wordexp receipts use the shared independent link validator and its static-mode and dynamic-profile checks. |
@@ -382,7 +382,7 @@ entries are closed by the commit that fixes them.
 | 16 | closed (14c03612f) | ARM standalone and combined static manifests check the sealed driver, scope, non-selection and coverage claims. |
 | 17 | closed (415415ce2) | The crypt producer runs the native musl oracle probe on both architectures. |
 | 18 | closed (d90065635) | The hardened entry test uses the driver’s transitive DSO option on both architectures. |
-| 19 | still open | `loader_crt_lifecycle_probe.c:19-24, 35-41`. |
+| 19 | closed (64622c067, 972221b38) | The owned ARM lifecycle probe requires phase 1 and its finalizer. Native comparison passed on the owned loader; pinned musl dynamic execution exits 42 because it omits legacy hooks, while pinned musl static execution passes. The retained oracle reader checks that exact dynamic result. |
 | 20 | closed (dc7c7d024, 8d8544d89) | The owned ARM TLS probe compares the word at TP-8 to TP; the musl reference uses its distinct DTV placement. |
 | 25 | fixed | `compat/lua/source_build_admission.py:302-316` reads the state file. The test no longer removes `allocator_backend`. |
 | 26 | fixed | `compat/lua/run.py:1244-1252`: the driver binding is now architecture-independent. |
