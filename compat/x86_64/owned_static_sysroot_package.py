@@ -141,7 +141,9 @@ def publish_noreplace(staged: Path, destination: Path, description: str) -> None
     system = os.uname()
     syscalls = {"x86_64": 316, "amd64": 316, "aarch64": 276, "arm64": 276}
     if system.sysname != "Linux" or system.machine not in syscalls:
-        raise PackageError("atomic package publication requires native Linux renameat2")
+        message = ("atomic package publication requires Linux/x86-64 renameat2"
+                   if ARCH["arch"] == "x86_64" else "atomic package publication requires Linux/aarch64 renameat2")
+        raise PackageError(message)
     try:
         libc = ctypes.CDLL(None, use_errno=True)
         syscall = libc.syscall
@@ -185,7 +187,8 @@ def manifest_payload_hashes(manifest: object) -> dict[str, str]:
     arm = ARCH["arch"] == "aarch64"
     expected_format = "crabc-aarch64-owned-static-sysroot-v1" if arm else SYSROOT_FORMAT
     if manifest.get("format") != expected_format or manifest.get("target") != ARCH["target_triple"]:
-        raise PackageError("installed manifest does not identify the native owned static sysroot")
+        label = "aarch64" if arm else "x86"
+        raise PackageError(f"installed manifest does not identify the {label} owned static sysroot")
     source_sha256 = manifest.get("source_sha256")
     if (not isinstance(source_sha256, str) or len(source_sha256) != 64
             or any(character not in "0123456789abcdef" for character in source_sha256)):
