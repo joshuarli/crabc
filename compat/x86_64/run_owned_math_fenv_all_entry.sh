@@ -150,6 +150,7 @@ SOURCES+=("$RUNNER" "$VALIDATOR" "$CONTRACT" "$PROVIDER_EVIDENCE" "$COPIES" "$CO
 if [ "$native_arch" = aarch64 ]; then
     SOURCES+=("$ROOT/compat/x86_64/libc_fenv_rounding_aarch64.inc" \
         "$ROOT/compat/x86_64/libc_math_long_double_completion_aarch64.inc" \
+        "$ROOT/compat/x86_64/libc_math_long_double_completion_aarch64_start.S" \
         "$ROOT/compat/x86_64/owned_fpclassify_signal_probe.c" \
         "$ROOT/compat/x86_64/owned_acoshl_domain_probe.c" \
         "$ROOT/compat/x86_64/owned_sqrtl_snan_probe.c" \
