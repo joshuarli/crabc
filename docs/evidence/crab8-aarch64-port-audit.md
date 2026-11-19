@@ -412,7 +412,7 @@ entries are closed by the commit that fixes them.
 | 51 | fixed (9dd0450c3) | The aarch64 frame keeps x24–x28 and d8–d15 live and checks their values; the fixture compiled in the native image. |
 | 52 | partly fixed (9dd0450c3, 23c7b342d) | The arm64 launcher reader has a positive and negative ELF test, and the Rust linker materialization test passed natively. The two cleanup routines behind x86-only guards still require aarch64 producer support. |
 | 53 | test coverage added (dee553461) | A test uses the existing source-order checker on the aarch64 attach branch and rejects missing or reordered operations. The production receipt checker still checks only the x86 branch. |
-| 54 | implementation added (d84f8ba79) | The arm64 path now lists the full x86 crate and feature profiles with its native target; native execution is pending. |
+| 54 | implementation added (d84f8ba79) | The arm64 path now lists the full x86 crate and feature profiles with its native target. Native execution passed six profiles and failed the two frozen native-shadow profiles and `crabc-mimalloc --all-targets` on unresolved allocator source modules. |
 | 55 | implementation added (d84f8ba79) | The arm64 path invokes the corpus fetcher with `--architecture aarch64`; the existing prepare-worktree test fixture does not supply `native_arch.py`. |
 | 56 | fixed (d84f8ba79) | Native arm64 help is exercised without Docker in the image-dispatch test. |
 | 57 | fixed (d84f8ba79) | Native arm64 selects `Dockerfile.aarch64` and an aarch64 tag; the test captures build arguments without building an image. |
