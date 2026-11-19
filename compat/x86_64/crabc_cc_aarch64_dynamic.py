@@ -30,6 +30,9 @@ def execute(arguments):
     transitive_dsos = []
     mode = None
     runpath = None
+    rpath = None
+    hash_style = "sysv"
+    hash_explicit = False
     dependency_file = None
     rounding = False
     export_dynamic = False
@@ -56,12 +59,18 @@ def execute(arguments):
                 raise shared.DriverError("invalid or duplicate runtime import")
             else:
                 runtime_imports.add(value)
+        elif arg == "--application-hash-style":
+            index += 1
+            if index == len(arguments) or hash_explicit or arguments[index] not in ("sysv", "gnu", "both"):
+                raise shared.DriverError("select one application hash style: sysv, gnu, or both")
+            hash_style = arguments[index]
+            hash_explicit = True
         elif arg == "-o":
             index += 1
             if index == len(arguments):
                 raise shared.DriverError("-o requires an output path")
             common.extend((arg, arguments[index]))
-        elif arg in ("--application-quote-include-dir", "--application-runpath", "--application-dso", "--transitive-application-dso"):
+        elif arg in ("--application-quote-include-dir", "--application-runpath", "--application-rpath", "--application-dso", "--transitive-application-dso"):
             index += 1
             if index == len(arguments) or arguments[index].startswith("-"):
                 raise shared.DriverError(f"{arg} requires a value")
@@ -73,10 +82,13 @@ def execute(arguments):
                 if not path.is_dir() or shared.is_within_installed_root(root, path) or path in quote_dirs:
                     raise shared.DriverError("application quote include is missing, duplicated, or unsafe")
                 quote_dirs.append(path)
-            elif arg == "--application-runpath":
-                if runpath is not None or not value or len(value.encode()) >= 4096 or "\0" in value:
-                    raise shared.DriverError("invalid application RUNPATH")
-                runpath = value
+            elif arg in ("--application-runpath", "--application-rpath"):
+                if runpath is not None or rpath is not None or not value or len(value.encode()) >= 4096 or "\0" in value:
+                    raise shared.DriverError("invalid application search path")
+                if arg == "--application-rpath":
+                    rpath = value
+                else:
+                    runpath = value
             elif arg == "--transitive-application-dso":
                 transitive_dsos.append(Path(value))
             else:
@@ -100,6 +112,8 @@ def execute(arguments):
             common.append(arg)
         index += 1
     mode = mode or "pie"
+    if rpath is not None and mode == "shared":
+        raise shared.DriverError("--application-rpath requires a dynamic executable link")
     binding_mode = binding_mode or "now"
     if profile is shared.NativeRuntimeProfile.HARDENED and mode == "exec":
         raise shared.DriverError("hardened dynamic product requires PIE")
@@ -108,6 +122,10 @@ def execute(arguments):
     if runtime_imports and (mode != "shared" or binding_mode != "lazy"):
         raise shared.DriverError("runtime imports require a lazy shared object")
     invocation = shared.parse_invocation(common)
+    if invocation.compile_only and (rpath is not None or (runpath is not None and runpath != "/usr/lib")):
+        raise shared.DriverError("compile-only accepts no application RUNPATH")
+    if invocation.compile_only and hash_explicit:
+        raise shared.DriverError("compile-only accepts no application hash style")
     if invocation.compile_only and (runtime_imports or binding_mode != "now"):
         raise shared.DriverError("compile-only accepts no binding/import contract")
     if dependency_file is not None and not invocation.compile_only:
@@ -117,9 +135,9 @@ def execute(arguments):
     if invocation.print_link_plan:
         if quote_dirs or dsos or transitive_dsos or rounding or export_dynamic or runpath is not None:
             raise shared.DriverError("link plan accepts no application inputs")
-        plan = ["/usr/bin/mold", *(["-shared"] if mode == "shared" else ["-pie"] if mode == "pie" else []), "--hash-style=sysv",
+        plan = ["/usr/bin/mold", *(["-shared"] if mode == "shared" else ["-pie"] if mode == "pie" else []), "--hash-style=" + hash_style,
                 "--eh-frame-hdr", "-z", "relro", "-z", binding_mode, "-z", "noexecstack", "-z", "text",
-                *([] if runtime_imports else ["--no-undefined"]), "--allow-shlib-undefined", "--enable-new-dtags", "-rpath", "/usr/lib",
+                *([] if runtime_imports else ["--no-undefined"]), "--allow-shlib-undefined", "--disable-new-dtags" if rpath is not None else "--enable-new-dtags", "-rpath", rpath if rpath is not None else "/usr/lib",
                 "--exclude-libs=libcrabc-builtins.a"]
         if mode != "shared":
             plan += ["-z", "dynamic-undefined-weak", "--dynamic-linker", interpreter, str(lib / ("Scrt1.o" if mode == "pie" else "crt1.o"))]
@@ -128,8 +146,8 @@ def execute(arguments):
         plan += [str(lib / "crti.o"), *([str(lib / "crabc-dynamic-attach.o")] if mode == "exec" else []), shared.APPLICATION_OBJECTS, str(lib / "libcrabc-builtins.a"),
                  str(lib / "libc.so"), str(lib / "crtn.o"), "-o", shared.OUTPUT]
         print(json.dumps({"format": "crabc-aarch64-owned-dynamic-sysroot-v1", "mode": mode, "binding": binding_mode,
-                          "runtime_imports": sorted(runtime_imports), "application_runpath": "/usr/lib", "application_rpath": None,
-                          "application_search_kind": "runpath", "application_hash_style": "sysv", "linker": plan,
+                          "runtime_imports": sorted(runtime_imports), "application_runpath": None if rpath is not None else "/usr/lib", "application_rpath": rpath,
+                          "application_search_kind": "rpath" if rpath is not None else "runpath", "application_hash_style": hash_style, "linker": plan,
                           "campaign_complete": False}, sort_keys=True))
         return
     if invocation.compile_only and (dsos or transitive_dsos or runpath is not None or export_dynamic):
@@ -271,9 +289,9 @@ def execute(arguments):
         shared.validate_application_output(root, receipt_path)
         shared.validate_application_output_disjoint(receipt_path, (*sources, *objects_in, *dso_inputs, *transitive_inputs, output))
         runtime = [lib / name for name in ("crti.o", "libc.so", "crtn.o")]
-        command = ["/usr/bin/mold", *(["-shared"] if mode == "shared" else ["-pie"] if mode == "pie" else []), "--hash-style=sysv",
+        command = ["/usr/bin/mold", *(["-shared"] if mode == "shared" else ["-pie"] if mode == "pie" else []), "--hash-style=" + hash_style,
                    "--eh-frame-hdr", "-z", "relro", "-z", binding_mode, "-z", "noexecstack", "-z", "text", *([] if runtime_imports else ["--no-undefined"]),
-                   "--allow-shlib-undefined", "--enable-new-dtags", "-rpath", runpath or "/usr/lib",
+                   "--allow-shlib-undefined", "--disable-new-dtags" if rpath is not None else "--enable-new-dtags", "-rpath", rpath if rpath is not None else runpath or "/usr/lib",
                    "--exclude-libs=libcrabc-builtins.a"]
         if export_dynamic:
             command.append("--export-dynamic")
@@ -340,8 +358,8 @@ def execute(arguments):
                 if unresolved - provided != runtime_imports:
                     raise shared.DriverError("linked runtime imports differ from declared contract")
             record = {"schema": 2, "format": "crabc-aarch64-owned-dynamic-sysroot-v1", "mode": mode,
-                      "binding": binding_mode, "runtime_imports": sorted(runtime_imports), "application_runpath": runpath or "/usr/lib",
-                      "application_rpath": None, "application_search_kind": "runpath", "application_hash_style": "sysv",
+                      "binding": binding_mode, "runtime_imports": sorted(runtime_imports), "application_runpath": None if rpath is not None else runpath or "/usr/lib",
+                      "application_rpath": rpath, "application_search_kind": "rpath" if rpath is not None else "runpath", "application_hash_style": hash_style,
                       "output_path": str(output.resolve()), "output_sha256": shared.sha256_file(output),
                       "manifest_sha256": shared.sha256_file(root / "share/crabc/manifest.json"),
                       "application_dsos": {path.name: shared.sha256_file(path) for path in dso_inputs},
