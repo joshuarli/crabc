@@ -688,6 +688,26 @@ class OwnedPosixProductEvidenceTests(unittest.TestCase):
         })
         return receipt
 
+    def test_retained_static_link_uses_product_machine(self) -> None:
+        receipt = self.static_receipt()
+        manifest = self.static / "share/crabc/manifest.json"
+        value = json.loads(manifest.read_text())
+        value["target"] = "aarch64-unknown-linux-musl"
+        self.write_json(manifest, value)
+        image = bytearray(sealed_elf("static"))
+        struct.pack_into("<H", image, 18, 183)
+        self.executable.write_bytes(image)
+        with mock.patch.object(evidence, "_validate_static_product", return_value=(manifest, {})), \
+                mock.patch.object(evidence, "_validate_static_link_mode"), \
+                mock.patch.object(evidence, "_validate_retained_static_receipt", return_value="a" * 64):
+            evidence.validate_retained_link(self.root, "/workspace", self.static, self.workload,
+                                            self.executable, receipt, "static", {})
+            struct.pack_into("<H", image, 18, 62)
+            self.executable.write_bytes(image)
+            with self.assertRaisesRegex(evidence.ProductEvidenceError, "architecture or header"):
+                evidence.validate_retained_link(self.root, "/workspace", self.static, self.workload,
+                                                self.executable, receipt, "static", {})
+
     def test_arm_static_link_plan_binds_archive_group(self) -> None:
         import crabc_cc_static
         with mock.patch.object(evidence, "ARCH", "aarch64"):

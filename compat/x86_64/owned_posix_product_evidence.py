@@ -1481,6 +1481,7 @@ def validate_retained_link(root: Path, source_mount: str, product: Path, workloa
             checkout, source_mount, product_path, workload_path, executable_path, receipt_path, linkage, linker
         )
         product_format = STATIC_PRODUCT_FORMAT
+        arm = _json_object(manifest, "static product manifest").get("target") == "aarch64-unknown-linux-musl"
     else:
         manifest, _ = _validate_dynamic_product(product_path)
         profile = _dynamic_profile(product_path, linkage)
@@ -1556,6 +1557,7 @@ def _validate_link(
             root, workload_paths[0], executable_path, receipt_path, linkage
         )
         product_format = STATIC_PRODUCT_FORMAT
+        arm = _json_object(manifest, "static product manifest").get("target") == "aarch64-unknown-linux-musl"
     else:
         manifest, _ = _validate_dynamic_product(root)
         profile = _dynamic_profile(root, linkage)
