@@ -50,7 +50,7 @@ DRIVER_FORMAT = "crabc-x86-64-sealed-static-driver-v1"
 MANIFEST_RELATIVE_PATH = Path("share/crabc/manifest.json")
 REQUIRED_CRT_OBJECTS = (
     "usr/lib/crt1.o",
-    *(("usr/lib/Scrt1.o",) if ARCH["arch"] == "x86_64" else ()),
+    "usr/lib/Scrt1.o",
     "usr/lib/rcrt1.o",
     "usr/lib/crti.o",
     "usr/lib/crtn.o",
@@ -195,33 +195,33 @@ def manifest_payload_hashes(manifest: object) -> dict[str, str]:
         raise PackageError("installed manifest source seal is missing or invalid")
     if source_sha256 != source_seal.product_source_digest(ROOT):
         raise PackageError("installed manifest source seal differs from the current checkout")
-    if arm:
-        if (manifest.get("schema"), manifest.get("build_profile"), manifest.get("symlinks")) != (1, "release", {}):
-            raise PackageError("aarch64 static product identity differs")
-        files = manifest.get("files")
-    else:
-        package = manifest.get("package")
-        if package != {"format": PACKAGE_FORMAT, "archive_root": ARCHIVE_ROOT}:
-            raise PackageError("installed manifest private package contract drifted")
-        installed = manifest.get("installed")
-        if not isinstance(installed, Mapping):
-            raise PackageError("installed manifest lacks its installed-file record")
-        expected_installed = {
-            "headers": "usr/include",
-            "crt_objects": list(REQUIRED_CRT_OBJECTS),
-            "static_libc": "usr/lib/libc.a",
-            "bounded_compiler_helpers": "usr/lib/libcrabc-builtins.a",
-            "sealed_static_driver": "bin/crabc-cc",
-        }
-        for key, expected in expected_installed.items():
-            if installed.get(key) != expected:
-                raise PackageError(f"installed manifest {key} record drifted")
-        driver = manifest.get("sealed_static_driver")
-        if not isinstance(driver, Mapping) or driver.get("format") != DRIVER_FORMAT:
-            raise PackageError("installed manifest sealed static driver record drifted")
-        if driver.get("path") != "bin/crabc-cc":
-            raise PackageError("installed manifest sealed static driver path drifted")
-        files = installed.get("files")
+    if arm and (manifest.get("schema"), manifest.get("build_profile")) != (1, "release"):
+        raise PackageError("aarch64 static product identity differs")
+    package = manifest.get("package")
+    archive_root = "crabc-aarch64-owned-static-sysroot" if arm else ARCHIVE_ROOT
+    package_format = "crabc-aarch64-owned-static-sysroot-package/v1" if arm else PACKAGE_FORMAT
+    if package != {"format": package_format, "archive_root": archive_root}:
+        raise PackageError("installed manifest private package contract drifted")
+    installed = manifest.get("installed")
+    if not isinstance(installed, Mapping):
+        raise PackageError("installed manifest lacks its installed-file record")
+    expected_installed = {
+        "headers": "usr/include",
+        "crt_objects": list(REQUIRED_CRT_OBJECTS),
+        "static_libc": "usr/lib/libc.a",
+        "bounded_compiler_helpers": "usr/lib/libcrabc-builtins.a",
+        "sealed_static_driver": "bin/crabc-cc",
+    }
+    for key, expected in expected_installed.items():
+        if installed.get(key) != expected:
+            raise PackageError(f"installed manifest {key} record drifted")
+    driver = manifest.get("sealed_static_driver")
+    driver_format = "crabc-aarch64-sealed-static-driver-v1" if arm else DRIVER_FORMAT
+    if not isinstance(driver, Mapping) or driver.get("format") != driver_format:
+        raise PackageError("installed manifest sealed static driver record drifted")
+    if driver.get("path") != "bin/crabc-cc":
+        raise PackageError("installed manifest sealed static driver path drifted")
+    files = installed.get("files")
     if not isinstance(files, Mapping) or not files:
         raise PackageError("installed manifest lacks payload hashes")
     result: dict[str, str] = {}

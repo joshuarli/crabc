@@ -31,15 +31,20 @@ SPEC.loader.exec_module(package)
 class OwnedStaticSysrootPackageTests(unittest.TestCase):
     def test_arm_manifest_binds_native_target_and_payload_hashes(self):
         arm = {"arch": "aarch64", "target_triple": "aarch64-unknown-linux-musl"}
-        required = tuple(path for path in package.REQUIRED_INSTALLED_PATHS if not path.endswith("Scrt1.o"))
+        required = package.REQUIRED_INSTALLED_PATHS
+        files = {path: "b" * 64 for path in required}
         manifest = {"schema": 1, "format": "crabc-aarch64-owned-static-sysroot-v1",
                     "target": arm["target_triple"], "source_sha256": "a" * 64,
-                    "build_profile": "release", "symlinks": {},
-                    "files": {path: "b" * 64 for path in required}}
+                    "build_profile": "release",
+                    "package": {"format": "crabc-aarch64-owned-static-sysroot-package/v1",
+                                "archive_root": "crabc-aarch64-owned-static-sysroot"},
+                    "installed": {"headers": "usr/include", "crt_objects": list(package.REQUIRED_CRT_OBJECTS),
+                                  "static_libc": "usr/lib/libc.a", "bounded_compiler_helpers": "usr/lib/libcrabc-builtins.a",
+                                  "sealed_static_driver": "bin/crabc-cc", "files": files},
+                    "sealed_static_driver": {"format": "crabc-aarch64-sealed-static-driver-v1", "path": "bin/crabc-cc"}}
         with mock.patch.object(package, "ARCH", arm), \
-                mock.patch.object(package, "REQUIRED_INSTALLED_PATHS", required), \
                 mock.patch.object(package.source_seal, "product_source_digest", return_value="a" * 64):
-            self.assertEqual(package.manifest_payload_hashes(manifest), manifest["files"])
+            self.assertEqual(package.manifest_payload_hashes(manifest), files)
             manifest["target"] = "x86_64-unknown-linux-musl"
             with self.assertRaises(package.PackageError):
                 package.manifest_payload_hashes(manifest)
@@ -91,9 +96,11 @@ class OwnedStaticSysrootPackageTests(unittest.TestCase):
             },
         }
         if package.ARCH["arch"] == "aarch64":
-            manifest = {"schema": 1, "format": "crabc-aarch64-owned-static-sysroot-v1",
-                        "target": package.ARCH["target_triple"], "source_sha256": manifest["source_sha256"],
-                        "build_profile": "release", "symlinks": {}, "files": payload}
+            manifest.update({"schema": 1, "format": "crabc-aarch64-owned-static-sysroot-v1",
+                             "target": package.ARCH["target_triple"], "build_profile": "release"})
+            manifest["package"] = {"format": "crabc-aarch64-owned-static-sysroot-package/v1",
+                                   "archive_root": "crabc-aarch64-owned-static-sysroot"}
+            manifest["sealed_static_driver"]["format"] = "crabc-aarch64-sealed-static-driver-v1"
         manifest_path = root / "share" / "crabc" / "manifest.json"
         manifest_path.parent.mkdir(parents=True)
         manifest_path.write_text(
