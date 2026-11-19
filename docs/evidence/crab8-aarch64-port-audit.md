@@ -356,3 +356,156 @@ Closed at `9cb1f8d49`: the full Mac x86-shim run of `compat/x86_64/tests` has no
 failing test name absent from the `58eb7704d` base (245 versus 251 at base).
 Header source-form tests assert the converged shared bodies; every x86
 exact-musl assertion is kept.
+
+# Re-audit at 4f20155a5 (2026-11-19)
+
+Independent read-only re-check of every item above not marked closed, plus new
+weakening since `337e6022`. This section supersedes the per-item status above;
+entries are closed by the commit that fixes them.
+
+## A. Status of the open audit items
+
+| # | Status | Evidence |
+|---|---|---|
+| 1 | partly fixed | `owned_dynamic_qualification.py:231-278` now reads state and provenance and runs every check on aarch64. The aarch64 combined path still goes through `combined.validate`, which has no CRT or loader provenance check (`build_x86_64_owned_combined_sysroot.py:373-403`). The x86 combined path runs `validate_combined`, which checks both (`crabc_cc_owned_dynamic.py:339-341`). |
+| 2 | partly fixed | (b) Final ELF inspection and sidecars are added at `crabc_cc_aarch64_dynamic.py:374-388`, but with `provided_symbols=None` at `:382` (x86 passes the provided set, `:975`). (d) Fixed: the exact `needed` check is `owned_dynamic_elf.py:353`. (a) Still open: `:26` only loads the manifest; there is no `validate_installation`. (c) Still open: the DT_NEEDED and unresolved-import checks exist only inside `if transitive_inputs:` (`:197-246`). (e) Still open: `-static`, `-static-pie` and `--static-et-exec` fall through to `common` (`:113-114`); x86 rejects them at `:776-777`. (f) Still open: `:116` defaults the mode to PIE. |
+| 3 | fixed | `crabc_cc_owned_dynamic.py:223-231` (aarch64 required roster includes loader provenance and the receipt/ELF modules), `:262` (CRT provenance), `:275-276` (`validate_loader_provenance(architecture="aarch64")`). |
+| 4 | partly fixed | The short-circuits are gone (`owned_posix_product_evidence.py:676-723, 726-783, 852-869`). On aarch64, `validate_native_compiler_tool_records` (`:258-260`) compares against live `resolve_pinned_producer_tools("aarch64")`. `SOURCE_NATIVE_IMAGE_MANIFEST` (`:54`) is still the x86 JSON, although `owned_resolver_alias_image_inputs_aarch64.json` exists. |
+| 5 | still open | `owned_posix_static_products.py:184` hardcodes `"accepted-c"`; `:205-208` skips the backend agreement check and substitutes a hash of `crt.commands.json` for `producer_tools`. |
+| 6 | partly fixed | Standalone now uses `static_product_payload_files(arch)` (`crabc_cc_static.py:1247`); combined validates its embedded static manifest (`:380`). Standalone aarch64 still has no `validate_crt_provenance` (only combined, `:1245`), no `usr/include` check and no `REQUIRED_RUNTIME_PATHS` check (x86: `:454-472`). |
+| 8 | still open | `consumer_rust_std_lto.py:215-235` hashes the live tools. The aarch64 source pin is now available. |
+| 9 | still open | `consumer_rust_std_lto.py:587-588`. |
+| 10 | still open | `consumer_rust_std_lto.py:1522-1528`. |
+| 11 | kept by owner decision (not a defect) | Audit file `:16-19`; code unchanged at `qualification_candidate.py:559-561`. |
+| 12 | still open | `owned_crypt_profile.py:397-429` is unchanged: the expected receipt is built from the producer's own `receipt_input_records`/`owned_link_plan` (`:408-409`), with no `_validate_static_link_mode` and no `_dynamic_profile`. Callers are unchanged (`run_owned_crypt_runtime.sh:404-405`, `owned_crypt_runtime_evidence.py:470,529`, `owned_wordexp_evidence.py:892,1677`). The shared `validate_link` and `validate_retained_link` now accept aarch64 (`owned_posix_product_evidence.py:1477-1496, 1550-1571`). |
+| 13 | still open | `static_product_contract.py:494-495`; `run_owned_static_sysroot.sh:526-527`; `crt/x86_64_owned_dynamic_startup.py:416-421`. |
+| 14 | still open | `run_owned_posix_filesystem.sh:204-233` (`exit 0` at `:233`). |
+| 15 | still open | `run_owned_static_sysroot.sh:1787-1791`. `scripts/tests/test_build_x86_64_owned_sysroot.py` has no x86 skip and contains aarch64 cases (`:280`). |
+| 16 | partly fixed | `static_product_contract.py:307-334` now checks the sealed driver's path, status and modes for standalone. The scope phrases, `not_selected` and `not_proven_by_this_seed` assertions are still x86-only (`run_owned_static_sysroot.sh:200-240`). The nested static manifest in a combined product gets no sealed-driver checks. |
+| 17 | still open | `run_owned_crypt_runtime.sh:104-108`. |
+| 18 | still open | `run_hardened_entry.sh:41-60` still patches out DT_NEEDED, although the aarch64 driver now supports `--transitive-application-dso` (`crabc_cc_aarch64_dynamic.py:94-95, 197-269`; tested in `test_aarch64_dynamic_non_pie.py:103-141`). |
+| 19 | still open | `loader_crt_lifecycle_probe.c:19-24, 35-41`. |
+| 20 | still open | `libc_crt_static_tls_probe.c:190-194`. |
+| 25 | fixed | `compat/lua/source_build_admission.py:302-316` reads the state file. The test no longer removes `allocator_backend`. |
+| 26 | fixed | `compat/lua/run.py:1244-1252`: the driver binding is now architecture-independent. |
+| 27 | fixed | `build_x86_64_owned_combined_sysroot.py:124-174` (no aarch64 early return), `:193-197`, `:339-370`, `:397-398`. |
+| 28 | fixed | `unwinder/owned_rust_link.py:733-745` uses the shared `_validate_static_product`/`_validate_dynamic_product`. |
+| 29 | still open | `owned_rust_link.py:55-56` (`-static` admitted), `:917-918` (`-no-pie` then `-static-pie` allowed). Only the machine is checked (`:976`, `:1195`); ELF type is not. |
+| 30 | partly fixed | The corpus, Lua, resolver-network and libc-test readers use `aliases_for_architecture`. `run_owned_posix_filesystem.sh:215` still passes `{}` aliases (part of item 14). |
+| 31 | still open | `compat/corpus/run_x86.py:475`. |
+| 33 | fixed (aarch64 adopts the x86 behavior) | Since `74b86437a`, `ldso/src/x86_64_direct_entry.rs:106` applies the AT_EXECFN rewrite on both architectures, and `run_general_dynamic_cli.sh` checks it in both modes. The audit's follow-up note ("disproved") is now stale. |
+| 34 | fixed | `ldso/src/aarch64_auxv.rs`, called from `x86_64_initial_graph.rs:1258-1267` and `static_tls.rs:33-34,963`; test at `:1283-1292`. |
+| 35 | fixed | `fenv_rounding.rs:147-172` (explicit rounding mode and inexact flag); `elementary_sqrt.rs:114-121, 155-169`. |
+| 36 | fixed | `aarch64_initial_tls.rs:71`; test at `:98-104`. |
+| 37 | fixed | Preflight at `aarch64_bootstrap.rs:117-127`; test at `:240-251`. |
+| 38 | fixed (classification only) | `x86_64_deferred_relocations.rs:135-136, 158-164`; test at `x86_64_general_relocation_tests.rs:1434-1450`. End-to-end `dlerror` checking is still outstanding. |
+| 39 | fixed | The production dlopen path `deferred::relocate_new` (`x86_64_runtime_registry.rs:1011`; `x86_64_deferred_relocations.rs:70-88`) writes `tlsdesc_dynamic` with a retained record. The new aarch64 `relocate_runtime_objects` (`x86_64_general_relocation.rs:1117-1168`) is called only from tests. |
+| 40 | still open | `crabc-rs/src/fs.rs:2256-2285` asserts the layout on x86 only; the aarch64 `Stat` at `:2158` has none. |
+| 41 | still open | `crabc-rs/src/event.rs:271-280`. |
+| 42 | still open | `x86_64_mm`, epoll, poll, pselect, statat, child_options/ownership/interruption, process_kill, thread_kill, io, fs, pipe and the `signal_*` suites are all still `#![cfg(target_arch = "x86_64")]` with no counterpart. The `memfd.rs`, `clock_nanosleep.rs` and `sleep.rs` counterparts predate `337e6022`. |
+| 43 | partly fixed | `aarch64_bootstrap` is now compiled under test (`x86_64_initial_graph.rs:1241-1243`) with one test. The 16 self-relocation tests (`:4801`, `cfg(all(test, x86_64))`) have no aarch64 version. |
+| 44 | partly fixed | TLSDESC tests were added (`x86_64_general_relocation_tests.rs:1397-1450`). Still missing: an aarch64 runtime commit-after-preflight test (`:956-975` is x86-only) and a hardened TLSDESC RELRO test. `run_hardened_entry.sh:32-34` compiles the aarch64 TLS fixture with `-mtls-dialect=trad`, so that path is not exercised. |
+| 45 | still open | `x86_64_initial_graph.rs:2540`. |
+| 46 | still open | `descriptor_entry.rs:270`: `0x1_0000` is `O_DIRECT` on aarch64. |
+| 47 | still open | `test_runner.py:8284-8312` tests a Darwin host. The emulation-refusal branch at `dev-x86_64.sh:3264-3267` is untested; main's version of this test used Linux/aarch64. |
+| 48 | still open | `test_core_image_dispatch.py:30, 227` are x86-only; the aarch64 class at `:275` has positive cases only. |
+| 49 | partly fixed | Qualification prepare now sets the variable (`owned_dynamic_qualification.py:350`), but uses this suite in place of the x86 driver suite (see B7). Nothing else sets it. |
+| 50 | still open | `test_consumer_rust_std_lto.py:341-351`. |
+| 51 | still open | `unwinder/tests/provider_abi_frame.c:21-27`. |
+| 52 | still open | `test_owned_cleanup.py:182, 600, 922`; `test_owned_rust_link.py:46`. |
+| 53 | still open | `installed_crt_startup_evidence.py:387-389`. |
+| 54 | still open | `scripts/lanes/rust-check.sh:72-84`. |
+| 55 | still open | `prepare-worktree.sh:304-311`. |
+| 56 | still open | `dev-x86_64.sh:6154`. |
+| 57 | still open | `dev-x86_64.sh:23-24`. |
+| 58 | still open | `event.rs:1, 56, 257, 703-705` say "Linux/x86-64" in shared code; `fs.rs:2669` documents statx as "syscall 332". |
+
+The follow-up note's commit hashes for items 34–39 (`d29938707`, `4025b27e2`, `e6667c701`, `d3c73cbaa`, `ff71a1151`, `b9b9c0028`, `63d42b791`, `55cfab435`, `ff2ef2f28`) are not ancestors of HEAD. The patch-identical commits that did land are `422a66733`, `1893d7e07`, `b40471590`, `b71489007`, `c86c7426d`, `f27f7c2e2`, `639e47fb5`, `86e33b818` and `1ce2c5579`.
+
+### B. New weakening since 337e6022
+
+### x86-change
+
+1. **`scripts/build_x86_64_owned_dynamic_sysroot.py:974-975`** (`90e68512b`). `build_debug_payload` builds the x86 debug product (reached from `:616`) but calls `audit_shared_elf(..., architecture="aarch64")` on x86 `libc.so` and the loader.
+   - Before: the x86 debug product was checked for `R_X86_64_32/32S`.
+   - After: it is checked for `R_AARCH64_ABS16/32` (`:93`), which never matches on x86.
+   - Effect: the guard is off for x86 debug dynamic products; release builds are unaffected.
+2. **`ldso/src/x86_64_general_relocation.rs:864, 871`** (`ffc9bc0f2`). There is no `cfg`: `interpreter_self` objects now skip RELATIVE relocations and the RELR table on x86 as well.
+   - This probably fixes a latent defect on main, but unlike item 63 it is not recorded as a main fix and not limited to aarch64.
+3. **`crabc-rs/src/process.rs:50`** adds `pub use crate::signal::{Pid, Signal}`; main exports only `Pid`. This is a public API addition left over from item 60.
+4. **`crabc-rs/src/process.rs:2332-2400`**. The private `register_atfork`/`fork` and the atfork registry are compiled on x86 with only test callers.
+   - The product-level `atfork_case` test was replaced by a unit test of this unused registry.
+5. **`compat/x86_64/ldso_general_initial_tls_main.c:112, 115, 129`**. Thresholds in the x86-compiled block changed with no architecture guard (`<5`→`<4`, `<`→`<=`, `dtv[0]`→`dtv[0]+1`).
+   - No observable effect: on x86 the result is masked at `:147`, while aarch64 checks `!= 1` at `:145`.
+6. **`owned_system_cancellation_probe.c:33-34, 86, 150-154`** adds an unguarded wait loop and `CHECK(interrupt_seen)`. This changes the x86 workload; it strengthens the test rather than weakening it.
+
+### Qualifying-path
+
+7. **`owned_dynamic_qualification.py:349-352`** (`0a6486c09`).
+   - x86's `installed-driver` judge is `test_owned_dynamic_driver.py` (about 52 tests).
+   - aarch64 substitutes `test_aarch64_dynamic_non_pie.py` (5 tests), and the `owned-crt` judge exercises only x86 CRT tables.
+   - Both architectures record the same check labels (`:348, :376`), so the records cannot be told apart.
+8. **Producer-tool identity is checked against the live image instead of the source pin.**
+   - `owned_posix_product_evidence.py:54, 258-260`, which feeds every product reader (part of item 4).
+   - `owned_loader_corpus_evidence.py:1193-1198`.
+9. **`crabc_cc_aarch64_dynamic.py:382`** (`cae54fa4b`) passes `provided_symbols=None`, so `require_expected` (`owned_dynamic_elf.py:378-381`) skips the unresolved-import check. x86 passes the provided set.
+10. **`owned_posix_native_observations.py:299-301, 381-392`**.
+    - x86 replays the retained sidecars with `validate_record`.
+    - aarch64 inspects the live ELF and drops the sidecars from the exact file roster, although the driver now writes them.
+11. **Four component receipts** (`owned_locale_component_receipt.py:181-191`, `owned_numeric_calendar_component_receipt.py:178`, `owned_regex_component_receipt.py:187`, `owned_stdio_component_receipt.py:339`).
+    - aarch64 uses `validate_dynamic_product_source`, which drops the `status == "materialized-unqualified"` check.
+    - It also admits debug products through `validate_debug_product_source`.
+12. **`runtime_private_facades.py:313-314`**.
+    - x86 runs `validate_materialized_dynamic_product`, which includes `validate_installation` and `product_identity`.
+    - aarch64 runs only `validate_dynamic_product_source`.
+    - Cause: `compiler_helper_evidence.py:1392` hardcodes `.work/x86_64`.
+13. **`run_libc_math_long_double_completion_aarch64.sh` (66 lines) and `validate_libc_math_long_double_completion_aarch64.py:9-11`** form a parallel validator.
+    - x86 does a byte-exact `cmp` against musl and checks the export surface, bindings, closure, TLS, ambient dependencies and an aggregate.
+    - aarch64 checks only machine, static-ness, symbol presence and alias address, and allowlists flag and rounding differences.
+    - The binary128 difference itself is owner-decided (CRAB-8 RFC, about `:358`); the dropped structural checks are not.
+14. **`builtins/run_aarch64_compiler_helper_aggregate.sh`** (23 lines) against the x86 runner `:89-174`.
+    - Dropped: the provenance checks (`members == ['crabc-builtins.o']`, reproducibility); the check that an archive-free link fails naming each helper; the checks that each helper definition is retained and called directly; and the aggregate report.
+    - It also takes its tools directory from the ambient `rustc --print sysroot` (`:13`).
+15. **Static export surface.**
+    - `source_runtime_libc.sh:68-75` allowlists the application-namespace names `ioctl_word`, `ioctl_no_argument`, `semctl_word` and `semctl_no_argument`.
+    - `native_abi_exports.py:152-160` accepts any `anon.*` symbol on aarch64, where x86 compares them exactly. The aarch64 delta is hardcoded in code (`:32-47`).
+16. **`owned_static_link_authority.py:202`** admits nameless LOCAL undefined `.symtab` rows on aarch64. Its test fabricates the row (`test_owned_static_link_authority.py:631-656`).
+    - `:514-573`: aarch64 merged-constant targets are not bound to the input's link-map contribution.
+17. **`compat/resolver-network/run_x86_64.py:710-713`**. aarch64 compares the receipt against the driver's own `owned_link_plan` instead of the independent `_static_link_plan`. This is the item 12 pattern.
+18. **errno alias visibility, rule 2.** `libc/src/c_abi/x86_64/errno.rs:62-65` makes the alias HIDDEN on aarch64, where x86 deliberately keeps it DEFAULT. The validator branches to match (`owned_errno_storage_lifecycle.py:907`).
+19. **`run_owned_ldso_lifecycle_cases.sh:84-87`**. On aarch64 the musl expectation strips the legacy init/fini letters. This divergence is not recorded in `parity.toml` (related to item 19).
+20. **`run_owned_rand.sh:434-435`** records a hardcoded `selection.target`. Low; nothing consumes it.
+
+### Test-coverage
+
+21. **`compat/x86_64/tests/test_fcntl_event_header_topology.py:66-101`** fails at HEAD. It requires the first line to be `#if defined(__x86_64__)`, so the musl hashes for 9 headers are not enforced by any passing test.
+    - It already failed at base `58eb7704d`, so the audit's closure note missed it.
+    - The x86 view of `bits/fcntl.h` is byte-identical to musl (sha256 `3526dbb8…`), so x86 itself is unchanged.
+22. **`test_reboot_header_source_form.py:33`** went from exact equality to containment.
+23. **`test_pthread_header_source_form.py:56`** went from an exact line position to containment.
+24. **`test_owned_posix_timers.py:321-327`**. The fake `python3` now passes `native_arch.py` through, so the test can no longer detect architecture setup running before argument validation.
+25. **Tests nothing runs**:
+    - `compat/x86_64/tests/test_aarch64_errno_alias.sh`
+    - `compat/x86_64/test_aarch64_dynamic_driver.py`
+    - `compat/x86_64/test_aarch64_tls_trace.py`
+    - `compat/x86_64/run_aarch64_default_runtime_regression.sh`
+26. **`libc_bootstrap_primitives_probe.c:41-50`**. The aarch64 branch omits the `SIGUSR1`/`SIG_SETMASK` and `fenv_t` offset assertions.
+
+**Header tests:** apart from 21–23, no x86 header assertion was lost; each rewritten assertion was checking the deleted aarch64 branch, or now covers the whole file. A preprocessing diff of all 108 headers before and after shows the x86 view is unchanged, except for comments and one `#error` wording change in `include/fenv.h:11`.
+
+### Already on main, and not in the audit
+
+- `loader_libc_general_tls_runtime_v1_main.c:116-118` returns 1 on success, but `main` treats any nonzero result as an error (`:151-152`). So the x86 exact-DTV check can pass only when it fails.
+- `ldso_general_initial_tls_main.c:147`: the x86 product-layout checks are inert (same masking as B5).
+- Both aarch64 drivers omit `-isystem usr/include/crabc-linux-uapi` (`crabc_cc_static.py:1279`, `crabc_cc_aarch64_dynamic.py:282-286`), although the aarch64 builder installs it. This fails closed.
+- The aarch64 static driver silently strips `-no-pie` (`crabc_cc_static.py:1257-1259`); x86 rejects it (`:168`).
+
+### Counts
+
+| Severity | B entries | Count |
+|---|---|---|
+| x86-change | 1–6 (two of them fixture-only) | 6 |
+| Qualifying-path | 7–20 | 14 |
+| Test-coverage | 21–26 | 6 |
+| Development-only | — | 0 |
+| **Total** | | **26** |
