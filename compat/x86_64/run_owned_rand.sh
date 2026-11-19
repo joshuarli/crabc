@@ -9,13 +9,14 @@ set -euo pipefail
 ulimit -c 0
 
 readonly ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-readonly ORACLE_CC=/usr/local/bin/crabc-x86_64-musl-gcc
+eval "$(python3 -B "$ROOT/compat/x86_64/native_arch.py")"
+readonly ORACLE_CC="$oracle"
 readonly PROBE="$ROOT/compat/x86_64/owned_rand_probe.c"
 readonly HEADER_C="$ROOT/compat/x86_64/owned_rand_header_abi_probe.c"
 readonly HEADER_CXX="$ROOT/compat/x86_64/owned_rand_header_abi_probe.cpp"
 readonly DSO_SOURCE="$ROOT/compat/x86_64/owned_rand_dso.c"
 readonly DSO_CONSUMER_SOURCE="$ROOT/compat/x86_64/owned_rand_dso_consumer.c"
-readonly INTERPRETER=/lib/ld-crabc-x86_64.so.1
+readonly INTERPRETER="/lib/ld-crabc-$arch.so.1"
 readonly -a ORACLE_SCENARIOS=(core serialized-workers fork)
 readonly -a RAND_SYMBOLS=(rand srand)
 declare -a link_identity_records=()
@@ -30,7 +31,7 @@ fail() {
     exit 1
 }
 
-[ "$(uname -sm)" = 'Linux x86_64' ] || fail 'requires native Linux/x86-64'
+[ "$(uname -s)" = Linux ] || fail 'requires native Linux'
 
 expect_missing=0
 provided_static=''
@@ -394,14 +395,15 @@ PY
 }
 
 write_dependency_audit() {
-    python3 -B - "$ROOT" "$work" <<'PY'
+    python3 -B - "$ROOT" "$work" "$arch" <<'PY'
 import hashlib
 import json
 from pathlib import Path
 import tomllib
 import sys
 
-root, work = map(Path, sys.argv[1:])
+root, work = map(Path, sys.argv[1:3])
+arch = sys.argv[3]
 lock = tomllib.loads((root / 'Cargo.lock').read_text(encoding='utf-8'))
 packages = {item['name']: item for item in lock['package']}
 expected = {
@@ -429,7 +431,8 @@ record = {
         'rand_core': {'version': expected['rand_core'][0], 'checksum': expected['rand_core'][1], 'dependencies': []},
     },
     'selection': {
-        'target': 'cfg(all(target_os = "linux", target_arch = "x86_64", target_endian = "little"))',
+        'target': ('cfg(all(target_os = "linux", any(target_arch = "x86_64", target_arch = "aarch64"), target_endian = "little"))'
+                   if arch == 'aarch64' else 'cfg(all(target_os = "linux", target_arch = "x86_64", target_endian = "little"))'),
         'feature': 'x86-owned-static-runtime',
         'default_features': False,
         'optional': True,
