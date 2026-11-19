@@ -10,6 +10,7 @@ use core::ffi::CStr;
 use crabc_rs::fs::{self, ChownFlags};
 use crabc_rs::process;
 
+#[cfg(not(feature = "std"))]
 #[panic_handler]
 fn panic(_: &core::panic::PanicInfo<'_>) -> ! {
     loop {}

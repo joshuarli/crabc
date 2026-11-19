@@ -12,6 +12,7 @@ use core::mem::size_of;
 use crabc_rs::pty::{self, OpenptFlags};
 use crabc_rs::termios::{self, SpecialCodeIndex};
 
+#[cfg(not(feature = "std"))]
 #[panic_handler]
 fn panic(_: &core::panic::PanicInfo<'_>) -> ! {
     loop {}

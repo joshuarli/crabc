@@ -4,6 +4,7 @@
 
 use crabc_rs::process::{self, SchedulerPolicy};
 
+#[cfg(not(feature = "std"))]
 #[panic_handler]
 fn panic(_: &core::panic::PanicInfo<'_>) -> ! {
     loop {}

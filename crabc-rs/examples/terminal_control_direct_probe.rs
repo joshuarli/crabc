@@ -14,6 +14,7 @@ use crabc_rs::pty::{self, OpenptFlags};
 use crabc_rs::termios;
 use crabc_rs::OwnedFd;
 
+#[cfg(not(feature = "std"))]
 #[panic_handler]
 fn panic(_: &core::panic::PanicInfo<'_>) -> ! {
     loop {}

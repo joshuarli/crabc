@@ -14,6 +14,7 @@ use crabc_rs::fs::{
 };
 
 #[cfg(not(feature = "std"))]
+#[cfg(not(feature = "std"))]
 #[panic_handler]
 fn panic(_: &core::panic::PanicInfo<'_>) -> ! {
     loop {}

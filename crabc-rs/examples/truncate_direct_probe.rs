@@ -11,6 +11,7 @@ use crabc_rs::Errno;
 
 const PATH: &[u8] = b"/tmp/crabc-rs-native-truncate-probe";
 
+#[cfg(not(feature = "std"))]
 #[panic_handler]
 fn panic(_: &core::panic::PanicInfo<'_>) -> ! {
     loop {}

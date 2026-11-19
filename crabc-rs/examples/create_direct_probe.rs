@@ -11,6 +11,7 @@ use crabc_rs::fs::{self, Mode};
 use crabc_rs::io;
 use crabc_rs::Errno;
 
+#[cfg(not(feature = "std"))]
 #[panic_handler]
 fn panic(_: &core::panic::PanicInfo<'_>) -> ! {
     loop {}

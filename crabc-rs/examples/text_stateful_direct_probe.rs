@@ -7,6 +7,7 @@ use core::cmp::Ordering;
 use crabc_rs::path::{basename_bytes, dirname_bytes};
 use crabc_rs::text::{compare_versions, split_fields, tokens, CStrBuilder, CStrWrite};
 
+#[cfg(not(feature = "std"))]
 #[panic_handler]
 fn panic(_: &core::panic::PanicInfo<'_>) -> ! {
     loop {}

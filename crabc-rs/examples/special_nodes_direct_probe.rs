@@ -10,6 +10,7 @@ use core::ffi::CStr;
 
 use crabc_rs::fs::{self, FileType, Mode, CWD, FIFO_DEVICE};
 
+#[cfg(not(feature = "std"))]
 #[panic_handler]
 fn panic(_: &core::panic::PanicInfo<'_>) -> ! {
     loop {}

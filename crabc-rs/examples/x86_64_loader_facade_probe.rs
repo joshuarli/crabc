@@ -12,6 +12,7 @@ use core::ptr::NonNull;
 
 use crabc_rs::dl::{Library, LoadedImageSnapshot, LoaderText, OpenFlags};
 
+#[cfg(not(feature = "std"))]
 #[panic_handler]
 fn panic(_: &core::panic::PanicInfo<'_>) -> ! {
     // SAFETY: `ud2` raises SIGILL, ending this probe process immediately.

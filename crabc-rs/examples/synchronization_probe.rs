@@ -5,6 +5,7 @@
 use crabc_rs::sync::{Barrier, Condvar, Mutex, Once, RwLock, Semaphore};
 use crabc_rs::time::Timespec;
 
+#[cfg(not(feature = "std"))]
 #[panic_handler]
 fn panic(_: &core::panic::PanicInfo<'_>) -> ! {
     loop {}

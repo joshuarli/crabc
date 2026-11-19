@@ -5,6 +5,7 @@
 
 use crabc_rs::net::{parse_ipv4_legacy, Ipv4Addr};
 
+#[cfg(not(feature = "std"))]
 #[panic_handler]
 fn panic(_: &core::panic::PanicInfo<'_>) -> ! {
     loop {}
