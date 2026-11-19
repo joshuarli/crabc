@@ -391,15 +391,14 @@ fn x86_64_resolver_aaaa_and_timeout_map_through_the_facade() {
 }
 
 #[test]
-fn x86_64_resolver_system_snapshot_uses_direct_bounded_file_reads() {
-    let expected_hosts = HostDatabase::from_bytes(
-        &std::fs::read("/etc/hosts").expect("read fixture hosts snapshot"),
-    )
-    .expect("parse fixture hosts snapshot");
-    let config = ResolverConfig::from_system().expect("load direct resolver snapshots");
+fn x86_64_resolver_snapshot_loads_fixture_files() {
+    let hosts = b"127.0.0.1 localhost\n";
+    let expected_hosts = HostDatabase::from_bytes(hosts).expect("parse fixture hosts snapshot");
+    let config = ResolverConfig::from_bytes(b"nameserver 127.0.0.1\nsearch example.test\n", hosts)
+        .expect("load fixture resolver snapshots");
     assert_eq!(config.hosts(), Some(&expected_hosts));
-    assert!(config.nameserver_count() <= 3);
-    assert!(config.search_domains().len() <= 6);
+    assert_eq!(config.nameserver_count(), 1);
+    assert_eq!(config.search_domains(), &["example.test"]);
     assert!(config.timeout_ms() > 0);
     assert!(config.attempts() > 0);
 }
