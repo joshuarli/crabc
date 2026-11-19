@@ -69,7 +69,7 @@ const _: () = {
 // The static-mode variant must contain no weak loader import at all. It is
 // used only by the no-PT_INTERP negative fixture and returns null before any
 // `%fs`-relative memory access can occur.
-#[cfg(crabc_loader_libc_tls_runtime_v1_static_mode)]
+#[cfg(all(target_arch = "x86_64", crabc_loader_libc_tls_runtime_v1_static_mode))]
 global_asm!(
     ".section .text.__crabc_x86_loader_tls_runtime_v1_record,\"ax\",@progbits",
     ".hidden __crabc_x86_loader_tls_runtime_v1_record",
@@ -77,6 +77,18 @@ global_asm!(
     ".type __crabc_x86_loader_tls_runtime_v1_record,@function",
     "__crabc_x86_loader_tls_runtime_v1_record:",
     "xor eax, eax",
+    "ret",
+    ".size __crabc_x86_loader_tls_runtime_v1_record, .-__crabc_x86_loader_tls_runtime_v1_record",
+);
+
+#[cfg(all(target_arch = "aarch64", crabc_loader_libc_tls_runtime_v1_static_mode))]
+global_asm!(
+    ".section .text.__crabc_x86_loader_tls_runtime_v1_record,\"ax\",%progbits",
+    ".hidden __crabc_x86_loader_tls_runtime_v1_record",
+    ".global __crabc_x86_loader_tls_runtime_v1_record",
+    ".type __crabc_x86_loader_tls_runtime_v1_record,%function",
+    "__crabc_x86_loader_tls_runtime_v1_record:",
+    "mov x0, xzr",
     "ret",
     ".size __crabc_x86_loader_tls_runtime_v1_record, .-__crabc_x86_loader_tls_runtime_v1_record",
 );
