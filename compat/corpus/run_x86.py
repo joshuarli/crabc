@@ -674,7 +674,7 @@ def apk_identity() -> dict[str, object]:
     if not version or version[0] != f"apk-tools 3.0.6-r0, compiled for {ARCH}.":
         fail("pinned Alpine apk verifier version drifted")
     keys = {path.name: sha256_file(path, f"apk key {path.name}") for path in sorted(KEYS.glob("*.pub"))}
-    if "alpine-devel@lists.alpinelinux.org-6165ee59.rsa.pub" not in keys:
+    if ARCH == "x86_64" and "alpine-devel@lists.alpinelinux.org-6165ee59.rsa.pub" not in keys:
         fail("pinned Alpine signing key is unavailable")
     readelf = Path("/usr/bin/readelf")
     if not readelf.is_file() or readelf.is_symlink():
@@ -1526,11 +1526,11 @@ def main(argv: Sequence[str] | None = None) -> int:
         if not arguments.quiet:
             sys.stdout.write(encoded)
         print(f"owned package corpus evidence: {evidence}", file=sys.stderr)
-        print(f"owned x86_64 package corpus: status: {'pass' if report['passed'] else 'fail'}", file=sys.stderr)
-        print(f"owned x86_64 package corpus: report: {destination}", file=sys.stderr)
+        print(f"owned {ARCH} package corpus: status: {'pass' if report['passed'] else 'fail'}", file=sys.stderr)
+        print(f"owned {ARCH} package corpus: report: {destination}", file=sys.stderr)
         return 0 if report["passed"] else 1
     except CorpusError as error:
-        print(f"owned x86_64 package corpus: {error}", file=sys.stderr)
+        print(f"owned {ARCH} package corpus: {error}", file=sys.stderr)
         return 2
 
 
