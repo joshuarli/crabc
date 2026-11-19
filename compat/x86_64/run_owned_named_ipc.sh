@@ -3,7 +3,8 @@
 set -euo pipefail
 ulimit -c 0
 readonly ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-readonly oracle_cc=/usr/local/bin/crabc-x86_64-musl-gcc
+eval "$(python3 -B "$ROOT/compat/x86_64/native_arch.py")"
+readonly oracle_cc="$oracle"
 readonly probe="$ROOT/compat/x86_64/owned_named_ipc_probe.c"
 readonly witness="$ROOT/compat/x86_64/run_pthread_wait_witness.py"
 [ "$#" -le 1 ] || { printf 'usage: %s [DYNAMIC_SYSROOT]\n' "$0" >&2; exit 2; }
@@ -52,7 +53,7 @@ for mode in pie non-pie; do
     cp "$work/dynamic-$mode" "$work/$mode-root/consumer"
     for entry in kernel direct; do
         command=(/consumer)
-        if [ "$entry" = direct ]; then command=(/lib/ld-crabc-x86_64.so.1 /consumer); fi
+        if [ "$entry" = direct ]; then command=("/lib/ld-crabc-$arch.so.1" /consumer); fi
         timeout 35 python3 -B "$witness" "$work/$mode-root" "${command[@]}" >"$work/$mode-$entry.stdout"
         cmp "$work/oracle.stdout" "$work/$mode-$entry.stdout"
     done
