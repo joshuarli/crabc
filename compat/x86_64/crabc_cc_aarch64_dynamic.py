@@ -263,17 +263,11 @@ def execute(arguments):
         archive = lib / "libcrabc-builtins.a"
         if runtime_imports:
             object_provided, required = {*provided, "_GLOBAL_OFFSET_TABLE_"}, set()
-            for path in [*objects, archive, lib / "libc.so", *dso_inputs]:
-                symbols = subprocess.check_output(["/usr/bin/readelf", "-sW", str(path)], text=True)
-                for line in symbols.splitlines():
-                    fields = line.split()
-                    if len(fields) < 8 or not fields[0].endswith(":") or fields[4] not in ("GLOBAL", "WEAK"):
-                        continue
-                    section, name = fields[6:8]
-                    if section == "UND" and fields[4] == "GLOBAL" and path in objects:
-                        required.add(name)
-                    elif section != "UND":
-                        object_provided.add(name)
+            for path in [*objects, archive]:
+                definitions, imports = dynamic_shared.dynamic_symbols(path, temporary, object_symbols=True)
+                object_provided.update(definitions)
+                if path in objects:
+                    required.update(imports)
             if required - object_provided != runtime_imports:
                 raise shared.DriverError(f"runtime imports differ from exact unresolved object symbols: {sorted(required - object_provided)}")
         command += [str(lib / "crti.o"), *(str(path) for path in attachment), *(str(path) for path in objects), str(archive),
@@ -305,12 +299,7 @@ def execute(arguments):
                     or (mode == "shared" and "INTERP" in segments)):
                 raise shared.DriverError("linked dynamic ELF does not match its native mode")
             if runtime_imports:
-                symbols = subprocess.check_output(["/usr/bin/readelf", "--dyn-syms", "-W", str(output)], text=True)
-                unresolved = set()
-                for line in symbols.splitlines():
-                    fields = line.split()
-                    if len(fields) >= 8 and fields[0].endswith(":") and fields[4] == "GLOBAL" and fields[6] == "UND":
-                        unresolved.add(fields[7])
+                _, unresolved = dynamic_shared.dynamic_symbols(output, temporary)
                 if unresolved - provided != runtime_imports:
                     raise shared.DriverError("linked runtime imports differ from declared contract")
             try:

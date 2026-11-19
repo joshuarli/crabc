@@ -293,6 +293,16 @@ class Aarch64DynamicNonPieTest(unittest.TestCase):
             receipt = json.loads(Path(str(output) + ".crabc-link.json").read_text())
             self.assertEqual(receipt["binding"], "lazy")
             self.assertEqual(receipt["runtime_imports"], ["missing"])
+            source.write_text("extern int missing(void); static int impl(void) { return 0; }\n"
+                              "static void *resolve(void) { return impl; }\n"
+                              "int witness(void) __attribute__((ifunc(\"resolve\")));\n"
+                              "int call(void) { return missing(); }\n")
+            obj = work / "ifunc.o"
+            subprocess.run(["gcc", "-fPIC", "-c", source, "-o", obj], check=True)
+            result = subprocess.run([driver, "-shared", "--binding", "lazy", "--runtime-import", "missing",
+                                     obj, "-o", work / "ifunc.so"], capture_output=True, text=True)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("IFUNC", result.stderr)
 
     @unittest.skipUnless(os.environ.get("CRABC_AARCH64_DYNAMIC_SYSROOT") or CAN_BUILD, "requires a built aarch64 product")
     def test_application_dependency_file(self):
