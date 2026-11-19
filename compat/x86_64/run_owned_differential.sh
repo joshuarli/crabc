@@ -5,7 +5,8 @@ ulimit -c 0
 
 readonly ROOT="$(cd -P "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 readonly HELPER="$ROOT/compat/x86_64/owned_differential_evidence.py"
-readonly ORACLE_CC=/usr/local/bin/crabc-x86_64-musl-gcc
+eval "$(python3 -B "$ROOT/compat/x86_64/native_arch.py")"
+readonly ORACLE_CC="$oracle"
 readonly CASES=(foundational string-memory allocator fd-filesystem stdio-fdopen)
 
 usage() {
@@ -44,10 +45,10 @@ if [ -n "$provided_static" ]; then
     provided_static="$(realpath -e -- "$provided_static")"
 fi
 provided_dynamic="$(realpath -e -- "$provided_dynamic")"
-temporary="$(realpath -e -- "${TMPDIR:-$ROOT/.work/x86_64/tmp}")"
+temporary="$(realpath -e -- "${TMPDIR:-$ROOT/.work/$arch/tmp}")"
 readonly temporary
 
-[ "$(uname -sm)" = 'Linux x86_64' ]
+[ "$(uname -s)" = Linux ] && [ "$(uname -m)" = "$arch" ]
 input_arguments=(
     validate-inputs --root "$ROOT" --temporary "$temporary" --dynamic "$provided_dynamic"
 )
@@ -166,7 +167,7 @@ run_dynamic_case() {
             "$work/copies/$case-dynamic-$mode-$entry-executable.json" \
             "$work/copies/$case-dynamic-$mode-$entry-root-pre.json"
         if [ "$entry" = direct ]; then
-            run_in_root "$root" "$prefix" /lib/ld-crabc-x86_64.so.1 /consumer
+            run_in_root "$root" "$prefix" /lib/ld-crabc-${arch}.so.1 /consumer
         else
             run_in_root "$root" "$prefix" /consumer
         fi

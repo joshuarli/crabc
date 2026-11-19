@@ -28,6 +28,7 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "compat/x86_64"))
 import owned_posix_product_evidence as product_evidence
 import installed_compiler_translation as translation_contract
+from native_arch import native_arch
 
 
 CASES = ("foundational", "string-memory", "allocator", "fd-filesystem", "stdio-fdopen")
@@ -44,7 +45,7 @@ ORACLE_LINK_SCHEMA = "crabc.owned-differential-musl-link/v1"
 COPY_SCHEMA = "crabc.owned-differential-copy/v1"
 OBSERVATION_SCHEMA = "crabc.owned-differential-observation/v1"
 SUMMARY_SCHEMA = "crabc.owned-differential-summary/v1"
-ORACLE_COMPILER = Path("/usr/local/bin/crabc-x86_64-musl-gcc")
+ORACLE_COMPILER = Path(native_arch()["oracle"])
 ORACLE_LIBC = Path("/opt/musl-1.2.6/lib/libc.a")
 
 
