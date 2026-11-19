@@ -507,7 +507,8 @@ def validate_timer_tls_dso(
     object_path = _physical(object_path, "timer TLS object")
     output = _physical(output, "timer TLS DSO")
     receipt_hash = _validate_shared_receipt(root, manifest, object_path, output, receipt, replay=replay)
-    soname, needed = _validate_tls_elf(output, replay=replay)
+    machine = "Advanced Micro Devices X86-64" if native_arch()["arch"] == "x86_64" else "AArch64"
+    soname, needed = _validate_tls_elf(output, replay=replay, machine=machine)
     return {
         "schema": TIMER_TLS_AUDIT_SCHEMA,
         "product": recorded(root, replay),

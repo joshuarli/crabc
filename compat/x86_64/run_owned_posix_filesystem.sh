@@ -212,7 +212,10 @@ root = audit.require_directory(Path(sys.argv[2]), "aarch64 dynamic product")
 manifest = audit.read_object(root / audit.MANIFEST_RELATIVE, "aarch64 dynamic manifest")
 if manifest.get("format") != "crabc-aarch64-owned-dynamic-sysroot-v1" or manifest.get("target") != "aarch64-unknown-linux-musl":
     audit.fail("aarch64 dynamic product identity drifted")
-audit.validate_payload(root, audit.checked_files(manifest.get("files"), "aarch64 dynamic manifest"), {}, "aarch64 dynamic product")
+aliases = {"lib/ld-musl-aarch64.so.1": "ld-crabc-aarch64.so.1", "lib/libc.musl-aarch64.so.1": "../usr/lib/libc.so"}
+if manifest.get("symlinks") != aliases:
+    audit.fail("aarch64 dynamic product aliases drifted")
+audit.validate_payload(root, audit.checked_files(manifest.get("files"), "aarch64 dynamic manifest"), aliases, "aarch64 dynamic product")
 PY_ARM_PRODUCT
     step=link-aarch64-oracle
     "$ORACLE_CC" -static -fno-pie -no-pie -pthread -Wl,--export-dynamic "$PROBE" -o "$work/oracle"
