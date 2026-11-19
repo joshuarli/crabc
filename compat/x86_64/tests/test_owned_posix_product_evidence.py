@@ -732,14 +732,16 @@ class OwnedPosixProductEvidenceTests(unittest.TestCase):
         command[attach_index], command[crti_index] = crti, attach
         self.write_json(receipt, record)
         manifest = self.dynamic / "share/crabc/manifest.json"
-        with mock.patch.object(evidence, "_dynamic_profile", return_value=evidence.NativeRuntimeProfile.COMPATIBILITY):
-            evidence._validate_aarch64_dynamic_receipt(self.dynamic, (self.workload,), self.executable,
-                                                        receipt, "non-pie", manifest, str(self.linker), str)
+        with mock.patch.object(evidence, "_dynamic_profile", return_value=evidence.NativeRuntimeProfile.COMPATIBILITY), \
+                mock.patch.object(evidence, "ARCH", "aarch64"), \
+                mock.patch.object(evidence, "DYNAMIC_PRODUCT_FORMAT", "crabc-aarch64-owned-dynamic-sysroot-v1"):
+            evidence._validate_dynamic_receipt_for_workloads(self.dynamic, (self.workload,), self.executable,
+                                                             receipt, "non-pie", manifest)
             record["owned_runtime_inputs"].remove("usr/lib/crabc-dynamic-attach.o")
             self.write_json(receipt, record)
             with self.assertRaisesRegex(evidence.ProductEvidenceError, "owned runtime roster differs"):
-                evidence._validate_aarch64_dynamic_receipt(self.dynamic, (self.workload,), self.executable,
-                                                            receipt, "non-pie", manifest, str(self.linker), str)
+                evidence._validate_dynamic_receipt_for_workloads(self.dynamic, (self.workload,), self.executable,
+                                                                 receipt, "non-pie", manifest)
 
     def static_plan(self, crt: str, pie: bool) -> list[str]:
         library = self.static / "usr/lib"

@@ -1491,7 +1491,6 @@ def validate_retained_link(root: Path, source_mount: str, product: Path, workloa
             linker, export_dynamic=export_dynamic,
         )
         product_format = "crabc-aarch64-owned-dynamic-sysroot-v1" if arm else DYNAMIC_PRODUCT_FORMAT
-    arm = ARCH == "aarch64"
     interpreter = (profile.interpreter.replace("x86_64", ARCH)
                    if linkage in {"pie", "non-pie"} else INTERPRETER)
     _audit_retained_elf(executable_path, linkage, interpreter, arm=arm)
@@ -1567,7 +1566,6 @@ def _validate_link(
             export_dynamic=export_dynamic,
         )
         product_format = "crabc-aarch64-owned-dynamic-sysroot-v1" if arm else DYNAMIC_PRODUCT_FORMAT
-    arm = ARCH == "aarch64"
     interpreter = (profile.interpreter.replace("x86_64", ARCH)
                    if linkage in {"pie", "non-pie"} else INTERPRETER)
     _audit_elf(executable_path, linkage, interpreter, arm=arm)
