@@ -296,8 +296,9 @@ def _bootstrap_exact_roster(reader):
         'dynamic-pie.crabc-link.json', 'dynamic-non-pie.crabc-link.json',
         'dynamic-pie-payload.json', 'dynamic-non-pie-payload.json',
     }
-    for name in ('dynamic-pie', 'dynamic-non-pie'):
-        files.update(path.name for path in dynamic_elf.sidecar_paths(reader.leaf / name))
+    if product_evidence.ARCH == 'x86_64':
+        for name in ('dynamic-pie', 'dynamic-non-pie'):
+            files.update(path.name for path in dynamic_elf.sidecar_paths(reader.leaf / name))
     files.update(label + '.command.json' for label in BOOTSTRAP_COMMANDS)
     files.update(label + '.' + stream for label in BOOTSTRAP_COMMANDS
                  for stream in ('status', 'stdout', 'stderr'))
@@ -378,6 +379,17 @@ def _bootstrap_payload(reader, dynamic_product, mode, executable):
 
 
 def _bootstrap_elf_sidecars(reader, mode, executable):
+    if product_evidence.ARCH == 'aarch64':
+        try:
+            facts = dynamic_elf.inspect(executable, architecture='aarch64')
+            dynamic_elf.require_expected(facts, dynamic_elf.Expectation(
+                mode='pie' if mode == 'dynamic-pie' else 'exec', interpreter=product_evidence.INTERPRETER,
+                needed=('libc.so',), soname=None, search_kind='runpath', search_path='/usr/lib',
+                binding='now', hash_style='sysv', runtime_imports=frozenset(), provided_symbols=None,
+            ))
+        except dynamic_elf.InspectionError as error:
+            raise NativeObservationError('bootstrap ' + mode + ' ELF inspection differs: ' + str(error)) from error
+        return {'facts': facts}
     inspection_path, link_map_path = dynamic_elf.sidecar_paths(executable)
 
     def reject(message):
