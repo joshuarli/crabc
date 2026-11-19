@@ -205,6 +205,26 @@ def incongruent_dynamic_elf() -> bytes:
     return bytes(data)
 
 
+class SourcePinnedProducerToolsTests(unittest.TestCase):
+    def test_retained_tools_use_source_pins_without_live_image_tools(self) -> None:
+        for arch in ("x86_64", "aarch64"):
+            with self.subTest(arch=arch), \
+                 mock.patch.object(evidence, "TARGET", f"{arch}-unknown-linux-musl"), \
+                 mock.patch.object(evidence, "SOURCE_NATIVE_IMAGE_MANIFEST", ROOT / "compat/x86_64" / (
+                     "owned_resolver_alias_image_inputs_aarch64.json" if arch == "aarch64"
+                     else "owned_resolver_alias_image_inputs.json")), \
+                 mock.patch.object(evidence.native_build_tools, "CARGO_LINKER", Path(f"/usr/local/bin/crabc-{arch}-mold-gcc")), \
+                 mock.patch.object(evidence.native_rustc, "compiler_path", side_effect=AssertionError("live compiler accessed")), \
+                 mock.patch.object(evidence, "_physical_executable", side_effect=AssertionError("live tool accessed")):
+                expected = evidence.source_native_compiler_tool_records()
+                self.assertEqual(evidence.validate_native_compiler_tool_records(expected), expected)
+                for name in expected:
+                    altered = copy.deepcopy(expected)
+                    altered[name]["sha256"] = "0" * 64
+                    with self.subTest(tool=name), self.assertRaises(evidence.ProductEvidenceError):
+                        evidence.validate_native_compiler_tool_records(altered)
+
+
 class OwnedPosixProductEvidenceTests(unittest.TestCase):
     """Use files with injected ELF inspections; this is not a native build test."""
 
