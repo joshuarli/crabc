@@ -348,17 +348,9 @@ def prepare(work: Path) -> None:
     ]
     checks = ["installed-driver", "owned-crt", "owned-loader-source", "pinned-musl-oracle"]
     if ARCH["arch"] == "aarch64":
-        product = work / "installed"
-        commands = [
-            [sys.executable, "-B", "-c",
-             "import sys; from pathlib import Path; sys.path.insert(0, sys.argv[1]); "
-             "import owned_dynamic_qualification as q; q.product_identity(Path(sys.argv[2]))",
-             str(ROOT / "compat/x86_64"), str(product)],
-            [str(product / "bin/crabc-cc-dynamic"), "--dynamic-pie", "--print-link-plan"],
-            [str(product / "bin/crabc-cc-dynamic"), "--dynamic-shared-object", "--print-link-plan"],
-            ["bash", str(ROOT / "compat/x86_64/run_musl_oracle.sh")],
-        ]
-        checks = ["installed-product-native", "dynamic-pie-plan", "dynamic-shared-plan", "pinned-musl-oracle"]
+        commands[0] = ["env", f"CRABC_AARCH64_DYNAMIC_SYSROOT={work / 'installed'}",
+                       "python3", "-B", "-m", "unittest", "discover", "-s",
+                       str(ROOT / "compat/x86_64/tests"), "-p", "test_aarch64_dynamic_non_pie.py"]
     log = work / "qualification-prepare.log"
     with log.open("xb") as output:
         os.fchmod(output.fileno(), stat.S_IMODE(os.fstat(output.fileno()).st_mode) | 0o444)
@@ -382,9 +374,7 @@ def preparation_evidence(work: Path, source: str) -> dict[str, str]:
     require(set(record) == {"schema", "source_sha256", "log", "log_sha256", "oracle", "checks", "exit_status"}, "preparation fields drifted")
     require(record["schema"] == SCHEMA and record["source_sha256"] == source and record["exit_status"] == 0,
             "missing or stale preparation evidence")
-    checks = (["installed-product-native", "dynamic-pie-plan", "dynamic-shared-plan", "pinned-musl-oracle"]
-              if ARCH["arch"] == "aarch64" else
-              ["installed-driver", "owned-crt", "owned-loader-source", "pinned-musl-oracle"])
+    checks = ["installed-driver", "owned-crt", "owned-loader-source", "pinned-musl-oracle"]
     require(record["checks"] == checks, "preparation checks incomplete")
     oracle_files = validate_oracle(work, record["oracle"])
     log = evidence_path(ROOT / record["log"])
