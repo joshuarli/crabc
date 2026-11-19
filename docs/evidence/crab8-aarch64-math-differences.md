@@ -27,7 +27,10 @@ the reference agrees with it.
 ### Reference composition
 
 `owned_math_fenv_aarch64_reference.py` extracts exactly `sqrtl`, `rintl` and
-`nearbyintl` from the candidate `libc.a`. They stay in the reference because
+`nearbyintl` from the candidate `libc.a`. They are inert in this workload. A
+reference linked from the same `workload.o` with only pinned musl `libc.a` and
+the candidate `libcrabc-builtins.a` produced a stream byte-identical to the
+substituted reference. They stay, because they cannot affect acceptance and
 their own correctness is checked against pristine musl, not against the
 reference:
 
@@ -112,9 +115,13 @@ It calls `__multf3`, `__subtf3`, `__addtf3`, `__unordtf2` and, for a NaN
 product, `__multc3` from `libcrabc-builtins.a`. musl's oracle gets those
 helpers from libgcc. The reference keeps musl's own `cpowl` object and replaces
 only the compiler runtime, and it reproduces all 20 candidate records bit for
-bit. The NaN choice therefore comes from the selected binary128 helpers. Their
-`__multc3` is the compiler-rt 22.1.3 `multc3.c` translation recorded in
-`builtins/UPSTREAM.md`.
+bit. The NaN choice therefore comes from the selected binary128 helpers.
+`compat/x86_64/run_binary128_helper_differential.sh` passes on the same
+products. It matches the candidate's binary128 add, subtract, multiply,
+divide, narrowing and ordered comparisons with libgcc bit for bit, including
+signed NaN operands with payloads, in all four rounding modes. It does not
+cover `__multc3`, which is the compiler-rt 22.1.3 `multc3.c` translation
+recorded in `builtins/UPSTREAM.md`.
 
 **Justification.** IEEE 754-2019 §6.3 states that "For all other operations,
 this standard does not specify the sign bit of a NaN result, even when there is
