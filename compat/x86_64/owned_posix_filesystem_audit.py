@@ -223,6 +223,10 @@ def require_linker(record: object, label: str) -> Path:
     expected_hash = record.get("sha256")
     if not isinstance(path_text, str) or not isinstance(expected_hash, str):
         fail(f"{label} has malformed linker identity")
+    if NATIVE["arch"] == "aarch64":
+        if record != product_evidence.source_native_compiler_tool_records()["linker"]:
+            fail(f"{label} linker differs from source image manifest")
+        return Path(path_text)
     linker = require_resolved_regular(Path(path_text), f"{label} resolved linker")
     if linker != product_evidence.native_build_tools.MOLD or digest(linker) != expected_hash:
         fail(f"{label} linker identity drifted")

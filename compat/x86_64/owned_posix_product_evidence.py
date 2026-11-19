@@ -245,6 +245,21 @@ def source_native_compiler_tool_records() -> dict[str, dict[str, str]]:
     return records
 
 
+def source_native_image_tool_record(path: str) -> dict[str, str]:
+    if not isinstance(path, str) or not Path(path).is_absolute() or ".." in Path(path).parts:
+        _fail("source-native image tool path is malformed")
+    try:
+        manifest = json.loads(SOURCE_NATIVE_IMAGE_MANIFEST.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as error:
+        raise ProductEvidenceError("source-native image tool manifest is unreadable") from error
+    files = manifest.get("files") if isinstance(manifest, dict) else None
+    value = files.get(path) if isinstance(files, dict) else None
+    if (not isinstance(value, dict) or value.get("path") != path or
+            not isinstance(value.get("sha256"), str) or not SHA256.fullmatch(value["sha256"])):
+        _fail("source-native image manifest omits tool")
+    return {"path": path, "sha256": value["sha256"]}
+
+
 def _validate_compiler_records_against_source(records: dict[str, dict[str, str]]) -> None:
     expected = source_native_compiler_tool_records()
     for name, identity in expected.items():
@@ -920,6 +935,11 @@ def _check_file_record(value: object, receipt: Path, expected: Path, description
 
 def _check_linker(value: object, receipt: Path) -> str:
     record = _require_keys(value, {"path", "sha256"}, "resolved linker")
+    if ARCH == "aarch64":
+        expected = source_native_compiler_tool_records()["linker"]
+        if record != expected:
+            _fail("resolved linker differs from source image manifest")
+        return expected["path"]
     linker = _recorded_file(record["path"], receipt, "resolved linker")
     if linker != native_build_tools.MOLD:
         _fail("resolved linker is not the pinned mold")
@@ -1288,6 +1308,8 @@ def _retained_linker(value: object, tool: object) -> str:
         _fail("retained linker identity is malformed")
     if record != expected:
         _fail("resolved linker differs from retained tool seal")
+    if ARCH == "aarch64" and expected != source_native_compiler_tool_records()["linker"]:
+        _fail("retained linker differs from source image manifest")
     return path
 
 

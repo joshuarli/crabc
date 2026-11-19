@@ -110,6 +110,13 @@ class RetainedRuntimeInputs:
             original = self.tools[role]["original"]
             if type(original["mode"]) is not int or not original["mode"] & 0o111:
                 fail("retained tool original was not executable")
+            if ARCH == "aarch64":
+                try:
+                    expected = product_evidence.source_native_image_tool_record(path)
+                except product_evidence.ProductEvidenceError as error:
+                    raise EvidenceError("dynamic-fork evidence: source image tool pin is invalid") from error
+                if {key: original[key] for key in ("path", "sha256")} != expected:
+                    fail("retained tool differs from source image manifest: " + role)
 
     def recorded(self, path: Path) -> str:
         path = physical(path, "retained checkout input", directory=Path(path).is_dir())
@@ -510,7 +517,12 @@ def audit_receipt(product: Path, manifest: Path, output: Path, object_path: Path
     if record.get("application_dsos") != expected_dsos:
         fail("dynamic producer receipt application_dsos drifted")
     linker_record = require_keys(record.get("resolved_linker"), {"path", "sha256"}, "resolved linker")
-    if replay is None:
+    if replay is None and ARCH == "aarch64":
+        try:
+            linker_path = Path(product_evidence._check_linker(linker_record, Path(str(output) + ".crabc-link.json")))
+        except product_evidence.ProductEvidenceError as error:
+            raise EvidenceError("dynamic-fork evidence: producer linker differs from source pin") from error
+    elif replay is None:
         linker_path = physical(Path(str(linker_record["path"])), "resolved linker")
         if linker_path != product_evidence.native_build_tools.MOLD or not linker_path.stat().st_mode & 0o111:
             fail("dynamic producer receipt linker is not the pinned mold executable")

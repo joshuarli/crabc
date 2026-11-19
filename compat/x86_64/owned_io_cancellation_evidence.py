@@ -20,6 +20,7 @@ import subprocess
 import sys
 
 from owned_posix_product_evidence import ProductEvidenceError, validate_link
+import owned_posix_product_evidence as product_evidence
 import installed_compiler_translation as translation_contract
 import static_product_contract as static_product
 
@@ -137,8 +138,13 @@ def dependency_command(product: Path, source: Path, compiler: str) -> list[str]:
 
 def compile_identity(product: Path, source: Path, workload: Path, record: Path,
                      required_headers: list[str]) -> dict:
-    policy = installed_compiler(product)
-    compiler = policy.compiler()
+    if product_evidence.ARCH == "aarch64":
+        compiler_record = product_evidence.source_native_image_tool_record("/usr/bin/gcc")
+        compiler = compiler_record["path"]
+    else:
+        policy = installed_compiler(product)
+        compiler = policy.compiler()
+        compiler_record = {"path": compiler, "sha256": digest(Path(compiler).resolve())}
     dependencies = record.with_suffix(".dependencies")
     trace = record.with_suffix(".headers")
     status = record.with_suffix(".exit-status")
@@ -153,13 +159,17 @@ def compile_identity(product: Path, source: Path, workload: Path, record: Path,
                                *COMPILE_FLAGS, "-c", str(source), "-o", str(workload)],
             "dependency_command": dependency_command(product, source, compiler),
             "dependency_exit_status": 0, "required_headers": required_headers,
-            "compiler": {"path": compiler, "sha256": digest(Path(compiler).resolve())},
+            "compiler": compiler_record,
             "files": files, "dependencies": paths}
 
 
 def record_compile(product: Path, source: Path, workload: Path, record: Path,
                    required_headers: list[str]) -> None:
     policy = installed_compiler(product)
+    if product_evidence.ARCH == "aarch64":
+        expected = product_evidence.source_native_image_tool_record("/usr/bin/gcc")
+        require(policy.compiler() == expected["path"] and digest(Path(expected["path"])) == expected["sha256"],
+                "installed compiler differs from source image manifest")
     source_before, object_before = digest(source), digest(workload)
     command = dependency_command(product, source, policy.compiler())
     with record.with_suffix(".dependencies").open("xb") as output, record.with_suffix(".headers").open("xb") as errors:

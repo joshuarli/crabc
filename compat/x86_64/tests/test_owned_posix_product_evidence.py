@@ -206,6 +206,21 @@ def incongruent_dynamic_elf() -> bytes:
 
 
 class SourcePinnedProducerToolsTests(unittest.TestCase):
+    def test_arm_linker_receipts_require_the_source_pin_without_live_tools(self) -> None:
+        expected = {"path": "/usr/bin/mold", "sha256": "a" * 64}
+        with mock.patch.object(evidence, "ARCH", "aarch64"), \
+             mock.patch.object(evidence.native_build_tools, "MOLD", Path(expected["path"])), \
+             mock.patch.object(evidence, "source_native_compiler_tool_records", return_value={"linker": expected}), \
+             mock.patch.object(evidence, "_physical_executable", side_effect=AssertionError("live tool accessed")), \
+             mock.patch.object(evidence, "_recorded_file", side_effect=AssertionError("live tool accessed")):
+            self.assertEqual(evidence._check_linker(expected, ROOT / "receipt"), expected["path"])
+            self.assertEqual(evidence._retained_linker(expected, expected), expected["path"])
+            forged = {**expected, "sha256": "b" * 64}
+            with self.assertRaises(evidence.ProductEvidenceError):
+                evidence._check_linker(forged, ROOT / "receipt")
+            with self.assertRaises(evidence.ProductEvidenceError):
+                evidence._retained_linker(forged, forged)
+
     def test_retained_tools_use_source_pins_without_live_image_tools(self) -> None:
         for arch in ("x86_64", "aarch64"):
             with self.subTest(arch=arch), \
@@ -744,6 +759,7 @@ class OwnedPosixProductEvidenceTests(unittest.TestCase):
         receipt = self.dynamic_receipt("non-pie")
         record = json.loads(receipt.read_text())
         record["format"] = "crabc-aarch64-owned-dynamic-sysroot-v1"
+        record["resolved_linker"] = dict(self.compiler_tools["linker"])
         command = record["link_command"]
         command[command.index("--dynamic-linker") + 1] = "/lib/ld-crabc-aarch64.so.1"
         attach = str(self.dynamic / "usr/lib/crabc-dynamic-attach.o")

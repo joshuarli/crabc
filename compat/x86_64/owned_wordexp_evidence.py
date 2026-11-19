@@ -903,9 +903,13 @@ def _link_validate(root: Path, work: Path, product: Path, workload: Path, execut
     linker = receipt_value.get("resolved_linker")
     if not isinstance(linker, dict) or set(linker) != {"path", "sha256"}:
         fail(f"{label} link receipt linker is malformed")
-    linker_path = _physical(Path(linker["path"]), f"{label} resolved linker", directory=False)
-    if linker != {"path": str(linker_path), "sha256": _sha(linker_path)}:
-        fail(f"{label} resolved linker identity differs")
+    if ARCH == "aarch64":
+        if linker != products.source_native_compiler_tool_records()["linker"]:
+            fail(f"{label} resolved linker differs from source image manifest")
+    else:
+        linker_path = _physical(Path(linker["path"]), f"{label} resolved linker", directory=False)
+        if linker != {"path": str(linker_path), "sha256": _sha(linker_path)}:
+            fail(f"{label} resolved linker identity differs")
     return {"linkage": linkage, "executable": _checkout_identity(root, executable, f"{label} executable"),
             "receipt": _checkout_identity(root, receipt, f"{label} link receipt"),
             "validated": _checkout_identity(root, path, f"{label} retained link validation"),

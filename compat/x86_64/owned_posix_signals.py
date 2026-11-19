@@ -89,6 +89,11 @@ def same_observation(reference, candidate):
 
 
 def compile_workload(product, work):
+    if ARCHITECTURE["arch"] == "aarch64":
+        compiler = compiler_contract.compiler()
+        expected = product_evidence.source_native_image_tool_record("/usr/bin/gcc")
+        if {"path": compiler, "sha256": digest(compiler)} != expected:
+            raise ValueError("signal compiler differs from source image manifest")
     source = HERE / "owned_posix_signals_probe.c"
     output = work / "workload.o"
     dependencies = work / "workload.d"
