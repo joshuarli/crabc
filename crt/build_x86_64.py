@@ -923,7 +923,12 @@ def build_aarch64(args: argparse.Namespace) -> dict[str, object]:
     target = native_arch("aarch64")["target_triple"]
     physical_sysroot = selected_nightly_sysroot(version, sysroot, environment, target)
     compiler = native_build_tools.compile_command(physical_sysroot / "bin/rustc")
-    records = []
+    records = [{"kind": "toolchain", **version}, {"kind": "sysroot", **sysroot}]
+    compiler_tools = {
+        "wrapper": {"path": compiler[0], "sha256": sha256_file(Path(compiler[0]))},
+        "rustc": {"path": compiler[1], "sha256": sha256_file(Path(compiler[1]))},
+    }
+    objdump = physical_sysroot / "lib/rustlib" / target / "bin/llvm-objdump"
     objects = {}
     names = ("crt1", "rcrt1", "crti", "crtn", "Scrt1")
     for name in names:
@@ -941,7 +946,8 @@ def build_aarch64(args: argparse.Namespace) -> dict[str, object]:
         if name in ("Scrt1", "rcrt1"):
             command[command.index("relocation-model=static")] = "relocation-model=pic"
         result = run_command(command, environment)
-        records.append({**result, "command": portable_rustc_command(command, source, destination)})
+        records.append({"kind": "compile", "object": destination.name, **result,
+                        "command": portable_rustc_command(command, source, destination)})
         if result["returncode"]:
             raise BuildError(f"aarch64 CRT {name} failed: {result['stderr']}")
         spec = next(item for item in selected_objects(args) if item.name == destination.name)
@@ -951,13 +957,35 @@ def build_aarch64(args: argparse.Namespace) -> dict[str, object]:
                 for symbol in spec.undefined_symbols))
         inspection = inspect_object(spec, destination, hardening_profile=args.hardening_profile, machine=183)
         if name in ("crt1", "rcrt1", "Scrt1"):
-            inspection["entry_machine_contract"] = audit_aarch64_entry(spec, destination)
-        inspection["source"] = source.name
+            machine = audit_aarch64_entry(spec, destination)
+            disassembly_command = [str(objdump), "-d", "--disassemble-symbols=_start", str(destination)]
+            disassembly = run_command(disassembly_command, environment)
+            if disassembly["returncode"] != 0:
+                raise BuildError(f"{destination}: llvm-objdump could not disassemble _start")
+            normalized = disassembly["stdout"].replace(str(destination), f"$CRABC_CRT_AARCH64_OUT/{destination.name}")
+            normalized_stderr = disassembly["stderr"].replace(str(destination), f"$CRABC_CRT_AARCH64_OUT/{destination.name}")
+            machine["disassembly_sha256"] = hashlib.sha256(normalized.encode()).hexdigest()
+            machine["required_instructions"] = (["mov x15, sp", "and sp, x15, -16", "svc"] if name == "rcrt1"
+                                                  else ["mov x1, x0", "mov x0, sp", "align sp"])
+            if name != "rcrt1":
+                machine["loader_finalizer"] = "authenticated-owned-x0-or-kernel-null" if name == "crt1" else "authenticated-owned-x0"
+            records.append({"kind": "machine_entry_audit", "object": destination.name,
+                "command": [objdump.name, "-d", "--disassemble-symbols=_start", f"$CRABC_CRT_AARCH64_OUT/{destination.name}"],
+                "returncode": disassembly["returncode"], "stdout_sha256": machine["disassembly_sha256"],
+                "stderr_sha256": hashlib.sha256(normalized_stderr.encode()).hexdigest()})
+            inspection["entry_machine_contract"] = machine
+        inspection.update({"source": "/crabc/crt/src/" + source.name, "source_languages": ["Rust"],
+                           "compiler_tools": compiler_tools, "producer": portable_rustc_command(command, source, destination)})
         objects[destination.name] = inspection
     if len({objects[name]["sha256"] for name in ("crt1.o", "rcrt1.o", "Scrt1.o")}) != 3:
         raise BuildError("CRT entry objects must differ")
     write_json(output / "commands.json", records)
-    report = {"schema": 1, "target": target, "hardening_profile": args.hardening_profile.value, "objects": objects}
+    report = {"schema": 1, "target": target, "scope": "bounded-static-and-private-dynamic-startup",
+              "profile": args.profile, "hardening_profile": args.hardening_profile.value,
+              "dynamic_main_thread_runtime_v1": args.dynamic_main_thread_runtime_v1,
+              "general_dynamic_lifecycle": args.general_dynamic_lifecycle,
+              "owned_dynamic_sysroot": args.owned_dynamic_sysroot, "toolchain": PINNED_TOOLCHAIN,
+              "objects": objects, "commands": {"name": "commands.json", "sha256": sha256_file(output / "commands.json")}}
     write_json(output / "objects.json", report)
     return report
 
