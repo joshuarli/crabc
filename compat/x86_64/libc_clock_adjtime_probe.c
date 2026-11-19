@@ -7,10 +7,10 @@
  * -1/errno conversion only, not authority, discipline, state, or policy.
  */
 
-#if !defined(__linux__) || !defined(__x86_64__) || !defined(__LP64__) || \
+#if !defined(__linux__) || (!defined(__x86_64__) && !defined(__aarch64__)) || !defined(__LP64__) || \
     !defined(__BYTE_ORDER__) || !defined(__ORDER_LITTLE_ENDIAN__) || \
     __BYTE_ORDER__ != __ORDER_LITTLE_ENDIAN__
-#error "this fixture requires native Linux/x86-64 little-endian LP64"
+#error "this fixture requires native Linux/x86-64 or Linux/AArch64 little-endian LP64"
 #endif
 
 /* CLOCK_MONOTONIC is a POSIX <time.h> name.  This self-contained C body
@@ -33,7 +33,11 @@ _Static_assert(sizeof(struct timex) == 208 && _Alignof(struct timex) == 8,
 _Static_assert(offsetof(struct timex, time) == 72 &&
     offsetof(struct timex, tai) == 160 &&
     offsetof(struct timex, __padding) == 164, "x86 timex field offsets");
+#if defined(__x86_64__)
 _Static_assert(SYS_clock_adjtime == 305, "x86 clock_adjtime syscall number");
+#elif defined(__aarch64__)
+_Static_assert(SYS_clock_adjtime == 266, "arm64 clock_adjtime syscall number");
+#endif
 _Static_assert(CLOCK_REALTIME == 0 && CLOCK_MONOTONIC == 1,
     "selected non-mutating clock IDs");
 _Static_assert(__builtin_types_compatible_p(__typeof__(&clock_adjtime),
