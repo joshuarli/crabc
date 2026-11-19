@@ -136,6 +136,36 @@ class ResolverNetworkComponentReceiptTests(unittest.TestCase):
         })
         self.assertIn(f"{self.reader.pinned_toolchain(ROOT)}-{self.reader.ARCH}-", str(self.reader.RUSTC))
 
+    def test_arm_dynamic_product_requires_both_native_aliases(self) -> None:
+        import hashlib
+        runner = self.reader.load_runner(ROOT)
+        with tempfile.TemporaryDirectory(dir=ROOT / ".work") as directory:
+            root = Path(directory)
+            names = ("bin/crabc-cc-dynamic", "lib/ld-crabc-aarch64.so.1", "usr/lib/libc.so",
+                     "usr/lib/libcrabc-builtins.a", "usr/lib/crt1.o", "usr/lib/Scrt1.o",
+                     "usr/lib/crti.o", "usr/lib/crtn.o")
+            files = {}
+            for name in names:
+                path = root / name
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_bytes(name.encode())
+                path.chmod(0o755)
+                files[name] = hashlib.sha256(path.read_bytes()).hexdigest()
+            aliases = {"lib/ld-musl-aarch64.so.1": "ld-crabc-aarch64.so.1",
+                       "lib/libc.musl-aarch64.so.1": "../usr/lib/libc.so"}
+            for name, target in aliases.items():
+                (root / name).symlink_to(target)
+            manifest = root / "share/crabc/manifest.json"
+            manifest.parent.mkdir(parents=True)
+            manifest.write_text(json.dumps({"schema": 1, "format": "crabc-aarch64-owned-dynamic-sysroot-v1",
+                                            "target": "aarch64-unknown-linux-musl", "symlinks": aliases, "files": files}))
+            with mock.patch.object(runner, "ARCH", "aarch64"), \
+                    mock.patch.object(runner, "DYNAMIC_FORMAT", "crabc-aarch64-owned-dynamic-sysroot-v1"):
+                self.assertEqual(runner.dynamic_manifest(root)["symlinks"], aliases)
+                (root / "lib/libc.musl-aarch64.so.1").unlink()
+                with self.assertRaises(runner.RunnerError):
+                    runner.dynamic_manifest(root)
+
     def test_image_input_authentication_rejects_content_mode_alias_and_search_path_drift(self) -> None:
         (ROOT / ".work").mkdir(exist_ok=True)
         with tempfile.TemporaryDirectory(dir=ROOT / ".work") as directory:

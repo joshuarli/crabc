@@ -326,6 +326,8 @@ def dynamic_manifest(sysroot: Path) -> dict[str, object]:
     except (OSError, json.JSONDecodeError) as error:
         raise RunnerError("dynamic sysroot manifest is unreadable") from error
     aliases = {f"lib/ld-musl-{ARCH}.so.1": f"ld-crabc-{ARCH}.so.1"}
+    if ARCH == "aarch64":
+        aliases["lib/libc.musl-aarch64.so.1"] = "../usr/lib/libc.so"
     if not isinstance(manifest, dict) or (
         manifest.get("schema"), manifest.get("format"), manifest.get("target"), manifest.get("symlinks")
     ) != (1, DYNAMIC_FORMAT, f"{ARCH}-unknown-linux-musl", aliases):
