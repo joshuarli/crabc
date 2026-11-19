@@ -10,7 +10,7 @@ const KERNEL_BRK_CHILD: &str = "CRABC_RS_X86_64_KERNEL_BRK_CHILD";
 const VM_POLICY_CHILD: &str = "CRABC_RS_X86_64_MEMORY_VM_CHILD";
 
 #[test]
-fn linux_kernel_brk_queries_and_replays_without_allocator_mutation() {
+fn x86_64_kernel_brk_queries_and_replays_without_allocator_mutation() {
     if std::env::var_os(KERNEL_BRK_CHILD).is_some() {
         let current = unsafe { process::kernel_brk(core::ptr::null_mut()) }
             .expect("Linux brk query is a direct pointer result");
@@ -28,7 +28,7 @@ fn linux_kernel_brk_queries_and_replays_without_allocator_mutation() {
     let output = Command::new(std::env::current_exe().expect("locate test binary"))
         .args([
             "--exact",
-            "linux_kernel_brk_queries_and_replays_without_allocator_mutation",
+            "x86_64_kernel_brk_queries_and_replays_without_allocator_mutation",
             "--nocapture",
         ])
         .env(KERNEL_BRK_CHILD, "1")
@@ -43,7 +43,7 @@ fn linux_kernel_brk_queries_and_replays_without_allocator_mutation() {
 }
 
 #[test]
-fn linux_mlockall_flags_are_the_closed_linux_vocabulary() {
+fn x86_64_mlockall_flags_are_the_closed_linux_vocabulary() {
     assert_eq!(mm::MlockAllFlags::CURRENT.bits(), 0x1);
     assert_eq!(mm::MlockAllFlags::FUTURE.bits(), 0x2);
     assert_eq!(mm::MlockAllFlags::ONFAULT.bits(), 0x4);
@@ -52,7 +52,7 @@ fn linux_mlockall_flags_are_the_closed_linux_vocabulary() {
 }
 
 #[test]
-fn linux_mlockall_is_child_contained_and_unlocked_after_success() {
+fn x86_64_mlockall_is_child_contained_and_unlocked_after_success() {
     if std::env::var_os(VM_POLICY_CHILD).is_some() {
         match mm::mlockall(mm::MlockAllFlags::CURRENT) {
             Ok(()) => mm::munlockall().expect("undo successful process-wide lock"),
@@ -70,7 +70,7 @@ fn linux_mlockall_is_child_contained_and_unlocked_after_success() {
     let output = Command::new(std::env::current_exe().expect("locate test binary"))
         .args([
             "--exact",
-            "linux_mlockall_is_child_contained_and_unlocked_after_success",
+            "x86_64_mlockall_is_child_contained_and_unlocked_after_success",
             "--nocapture",
         ])
         .env(VM_POLICY_CHILD, "1")
@@ -85,7 +85,7 @@ fn linux_mlockall_is_child_contained_and_unlocked_after_success() {
 }
 
 #[test]
-fn linux_remap_file_pages_keeps_legacy_anonymous_error_typed() {
+fn x86_64_remap_file_pages_keeps_legacy_anonymous_error_typed() {
     let mapping = unsafe {
         mm::mmap_anonymous(
             core::ptr::null_mut(),

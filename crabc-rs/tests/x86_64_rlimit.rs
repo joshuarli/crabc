@@ -34,7 +34,7 @@ fn assert_limit_invariant(resource: Resource, limit: Rlimit) {
 }
 
 #[test]
-fn linux_getrlimit_reads_all_pinned_resources_with_valid_ordering() {
+fn x86_64_getrlimit_reads_all_pinned_resources_with_valid_ordering() {
     for (raw, &resource) in RESOURCES.iter().enumerate() {
         assert_eq!(resource.as_raw(), raw as u32);
         let limit = process::getrlimit(resource).expect("read Linux resource limit");
@@ -43,7 +43,7 @@ fn linux_getrlimit_reads_all_pinned_resources_with_valid_ordering() {
 }
 
 #[test]
-fn linux_getrlimit_is_read_only_and_stable() {
+fn x86_64_getrlimit_is_read_only_and_stable() {
     let first = process::getrlimit(Resource::Nofile).expect("read open-file limit");
     let second = process::getrlimit(Resource::Nofile).expect("read open-file limit again");
     assert_eq!(first, second);

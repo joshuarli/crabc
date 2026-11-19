@@ -7,7 +7,7 @@ use crabc_core::time::{KernelItimerval, KernelItimervalTimeval};
 use crabc_rs::time::{getitimer, GetitimerError, IntervalTimerKind};
 
 #[test]
-fn linux_getitimer_wire_records_and_selectors_match_linux() {
+fn x86_64_getitimer_wire_records_and_selectors_match_linux() {
     assert_eq!(size_of::<KernelItimervalTimeval>(), 16);
     assert_eq!(align_of::<KernelItimervalTimeval>(), 8);
     assert_eq!(offset_of!(KernelItimervalTimeval, tv_sec), 0);
@@ -23,7 +23,7 @@ fn linux_getitimer_wire_records_and_selectors_match_linux() {
 }
 
 #[test]
-fn linux_getitimer_reads_every_closed_kind_without_mutating_timer_state() {
+fn x86_64_getitimer_reads_every_closed_kind_without_mutating_timer_state() {
     // These are read-only queries. Do not assume an embedding process left
     // any timer disarmed, and do not use setitimer to manufacture a state.
     for kind in [
@@ -40,7 +40,7 @@ fn linux_getitimer_reads_every_closed_kind_without_mutating_timer_state() {
 }
 
 #[test]
-fn linux_getitimer_keeps_kernel_errors_separate_from_validation() {
+fn x86_64_getitimer_keeps_kernel_errors_separate_from_validation() {
     let mut value = MaybeUninit::<KernelItimerval>::uninit();
     // SAFETY: This is writable storage for the exact x86 Linux output record.
     // Selector 3 is intentionally invalid and must leave the result unread.

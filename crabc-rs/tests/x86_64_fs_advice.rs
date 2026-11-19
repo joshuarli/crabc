@@ -47,7 +47,7 @@ fn borrow_file(file: &std::fs::File) -> crabc_rs::BorrowedFd<'_> {
 }
 
 #[test]
-fn linux_filesystem_advice_uses_linux_values_and_preserves_position() {
+fn x86_64_filesystem_advice_uses_linux_values_and_preserves_position() {
     assert_eq!(Advice::Normal as u32, 0);
     assert_eq!(Advice::Random as u32, 1);
     assert_eq!(Advice::Sequential as u32, 2);
@@ -78,7 +78,7 @@ fn linux_filesystem_advice_uses_linux_values_and_preserves_position() {
 }
 
 #[test]
-fn linux_readahead_preserves_position_and_reports_kernel_errors() {
+fn x86_64_readahead_preserves_position_and_reports_kernel_errors() {
     let (mut file, _cleanup) = fixture();
     file.seek(SeekFrom::Start(23))
         .expect("position readahead fixture");
@@ -93,7 +93,7 @@ fn linux_readahead_preserves_position_and_reports_kernel_errors() {
 }
 
 #[test]
-fn linux_filesystem_advice_rejects_signed_range_overflow() {
+fn x86_64_filesystem_advice_rejects_signed_range_overflow() {
     let (file, _cleanup) = fixture();
     let too_large = i64::MAX as u64 + 1;
     assert_eq!(

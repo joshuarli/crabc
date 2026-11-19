@@ -72,7 +72,7 @@ impl AsFd for TrackingFd<'_> {
 }
 
 #[test]
-fn linux_copy_file_range_stages_offsets_and_preserves_position_modes() {
+fn x86_64_copy_file_range_stages_offsets_and_preserves_position_modes() {
     let (input, output, _cleanup) = copy_file_range_fixture();
     assert_eq!(
         io::write(borrow_file(&input), b"0123456789")
@@ -257,7 +257,7 @@ fn linux_copy_file_range_stages_offsets_and_preserves_position_modes() {
 }
 
 #[test]
-fn linux_copy_file_range_rejects_unrepresentable_ranges_before_as_fd() {
+fn x86_64_copy_file_range_rejects_unrepresentable_ranges_before_as_fd() {
     let (input, output, _cleanup) = copy_file_range_fixture();
     assert_eq!(
         io::write(borrow_file(&input), b"input").expect("seed copy range input"),
@@ -394,7 +394,7 @@ fn linux_copy_file_range_rejects_unrepresentable_ranges_before_as_fd() {
 }
 
 #[test]
-fn linux_copy_file_range_keeps_offsets_staged_on_kernel_error() {
+fn x86_64_copy_file_range_keeps_offsets_staged_on_kernel_error() {
     let (input, output, _cleanup) = copy_file_range_fixture();
     let directory = std::fs::File::open(std::env::temp_dir())
         .expect("open directory copy_file_range error fixture");

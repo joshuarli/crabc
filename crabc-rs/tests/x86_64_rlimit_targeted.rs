@@ -13,7 +13,7 @@ const READY_MARKER: &str = "CRABC_RLIMIT_TARGETED_READY ";
 // The direct x86 slice admits read-only `process::getrlimit_for` with either
 // PID zero or one explicit live target; mutation remains separately bounded.
 #[test]
-fn linux_getrlimit_for_explicit_current_pid_matches_zero() {
+fn x86_64_getrlimit_for_explicit_current_pid_matches_zero() {
     let implicit = process::getrlimit_for(None, Resource::Nofile)
         .expect("read current open-file limit through implicit PID");
     let direct = process::getrlimit(Resource::Nofile).expect("read current open-file limit");
@@ -25,7 +25,7 @@ fn linux_getrlimit_for_explicit_current_pid_matches_zero() {
 }
 
 #[test]
-fn linux_getrlimit_for_missing_pid_preserves_esrch() {
+fn x86_64_getrlimit_for_missing_pid_preserves_esrch() {
     let missing = process::Pid::from_raw(i32::MAX).expect("i32::MAX is non-zero");
     assert_eq!(
         process::getrlimit_for(Some(missing), Resource::Nofile),
@@ -34,7 +34,7 @@ fn linux_getrlimit_for_missing_pid_preserves_esrch() {
 }
 
 #[test]
-fn linux_getrlimit_for_reads_a_distinct_live_child_limit() {
+fn x86_64_getrlimit_for_reads_a_distinct_live_child_limit() {
     if std::env::var_os(LIVE_CHILD_CASE).is_some() {
         live_child_limit_case();
         return;
@@ -45,7 +45,7 @@ fn linux_getrlimit_for_reads_a_distinct_live_child_limit() {
     let mut child = Command::new(std::env::current_exe().expect("locate test binary"))
         .args([
             "--exact",
-            "linux_getrlimit_for_reads_a_distinct_live_child_limit",
+            "x86_64_getrlimit_for_reads_a_distinct_live_child_limit",
             "--nocapture",
         ])
         .env(LIVE_CHILD_CASE, "1")

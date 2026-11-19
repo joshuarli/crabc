@@ -5,7 +5,7 @@ use core::mem::{align_of, offset_of, size_of};
 use crabc_rs::time::{self, ClockId, Timespec, NANOS_PER_SECOND};
 
 #[test]
-fn linux_timespec_record_matches_linux_wire_shape() {
+fn x86_64_timespec_record_matches_linux_wire_shape() {
     assert_eq!(size_of::<Timespec>(), 16);
     assert_eq!(align_of::<Timespec>(), 8);
     assert_eq!(offset_of!(Timespec, tv_sec), 0);
@@ -28,7 +28,7 @@ fn linux_timespec_record_matches_linux_wire_shape() {
 }
 
 #[test]
-fn linux_clock_queries_have_native_normalized_results() {
+fn x86_64_clock_queries_have_native_normalized_results() {
     let resolution = time::clock_getres(ClockId::Monotonic).expect("monotonic resolution");
     assert!(resolution.tv_sec >= 0);
     assert!((0..i64::from(NANOS_PER_SECOND)).contains(&resolution.tv_nsec));
@@ -43,7 +43,7 @@ fn linux_clock_queries_have_native_normalized_results() {
 }
 
 #[test]
-fn linux_realtime_millis_truncates_a_normalized_realtime_observation() {
+fn x86_64_realtime_millis_truncates_a_normalized_realtime_observation() {
     let before = time::clock_gettime(ClockId::Realtime).expect("realtime before");
     let observed = time::realtime_millis().expect("realtime milliseconds");
     let after = time::clock_gettime(ClockId::Realtime).expect("realtime after");
@@ -57,7 +57,7 @@ fn linux_realtime_millis_truncates_a_normalized_realtime_observation() {
 }
 
 #[test]
-fn linux_time_returns_whole_seconds_within_surrounding_realtime_reads() {
+fn x86_64_time_returns_whole_seconds_within_surrounding_realtime_reads() {
     let before = time::clock_gettime(ClockId::Realtime).expect("realtime before");
     let observed = time::time().expect("whole-second realtime query");
     let after = time::clock_gettime(ClockId::Realtime).expect("realtime after");
@@ -71,7 +71,7 @@ fn linux_time_returns_whole_seconds_within_surrounding_realtime_reads() {
 }
 
 #[test]
-fn linux_process_cpu_time_is_a_nonnegative_duration() {
+fn x86_64_process_cpu_time_is_a_nonnegative_duration() {
     let before = time::process_cpu_time();
     let mut checksum = 0u64;
     for value in 0..500_000u64 {

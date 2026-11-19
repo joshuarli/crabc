@@ -22,7 +22,7 @@ fn allocation_fixture() -> OwnedFd {
 }
 
 #[test]
-fn linux_posix_fallocate_extends_without_moving_position() {
+fn x86_64_posix_fallocate_extends_without_moving_position() {
     let file = allocation_fixture();
     assert_eq!(io::write(&file, b"crabc-x8").expect("seed allocation fixture"), 8);
 
@@ -59,7 +59,7 @@ fn linux_posix_fallocate_extends_without_moving_position() {
 }
 
 #[test]
-fn linux_posix_fallocate_rejects_unrepresentable_ranges_before_borrowing_fd() {
+fn x86_64_posix_fallocate_rejects_unrepresentable_ranges_before_borrowing_fd() {
     let file = allocation_fixture();
     let borrowed = Cell::new(false);
 
@@ -100,7 +100,7 @@ fn linux_posix_fallocate_rejects_unrepresentable_ranges_before_borrowing_fd() {
 }
 
 #[test]
-fn linux_posix_fallocate_forwards_zero_length_to_linux() {
+fn x86_64_posix_fallocate_forwards_zero_length_to_linux() {
     let file = allocation_fixture();
 
     // Linux's direct fallocate mode-zero syscall rejects length zero. The
@@ -110,7 +110,7 @@ fn linux_posix_fallocate_forwards_zero_length_to_linux() {
 }
 
 #[test]
-fn linux_posix_fallocate_raw_closed_descriptor_reports_ebadf() {
+fn x86_64_posix_fallocate_raw_closed_descriptor_reports_ebadf() {
     let file = allocation_fixture();
     let raw = file.into_raw_fd();
     crabc_core::io::close(raw).expect("close posix_fallocate EBADF fixture");

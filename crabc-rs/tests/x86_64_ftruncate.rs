@@ -24,7 +24,7 @@ impl AsFd for TrackingFd<'_> {
 }
 
 #[test]
-fn linux_ftruncate_extends_with_zeroes_and_truncates_memfd_size() {
+fn x86_64_ftruncate_extends_with_zeroes_and_truncates_memfd_size() {
     let file = anonymous_regular_file();
     assert_eq!(io::write(&file, b"ABCD").expect("seed memory file"), 4);
     assert_eq!(fs::fstat(&file).expect("stat seeded memory file").st_size, 4);
@@ -53,7 +53,7 @@ fn linux_ftruncate_extends_with_zeroes_and_truncates_memfd_size() {
 }
 
 #[test]
-fn linux_ftruncate_rejects_lengths_outside_signed_loff_t_before_borrowing() {
+fn x86_64_ftruncate_rejects_lengths_outside_signed_loff_t_before_borrowing() {
     let file = anonymous_regular_file();
     assert_eq!(io::write(&file, b"ABCD").expect("seed regular file"), 4);
 
@@ -81,7 +81,7 @@ fn linux_ftruncate_rejects_lengths_outside_signed_loff_t_before_borrowing() {
 }
 
 #[test]
-fn linux_ftruncate_keeps_non_regular_descriptor_errors_direct() {
+fn x86_64_ftruncate_keeps_non_regular_descriptor_errors_direct() {
     let (reader, _writer) = pipe::pipe().expect("create pipe for ftruncate error boundary");
     assert_eq!(
         fs::ftruncate(&reader, 0),

@@ -2,7 +2,7 @@
 use crabc_rs::time::{self, CalendarTime, UnixTime, NANOS_PER_SECOND};
 
 #[test]
-fn linux_direct_wall_clock_is_microsecond_normalized_and_utc_reversible() {
+fn x86_64_direct_wall_clock_is_microsecond_normalized_and_utc_reversible() {
     let now = time::wall_clock().expect("direct Linux gettimeofday wall-clock query");
 
     assert!(now.nanoseconds() < NANOS_PER_SECOND);
@@ -19,7 +19,7 @@ fn linux_direct_wall_clock_is_microsecond_normalized_and_utc_reversible() {
 }
 
 #[test]
-fn linux_civil_values_keep_invalid_states_out_of_the_public_api() {
+fn x86_64_civil_values_keep_invalid_states_out_of_the_public_api() {
     assert!(UnixTime::from_parts(-1, NANOS_PER_SECOND - 1).is_some());
     assert!(UnixTime::from_parts(0, NANOS_PER_SECOND).is_none());
     assert_eq!(

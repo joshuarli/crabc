@@ -26,7 +26,7 @@ impl Drop for ShmName {
 }
 
 #[test]
-fn linux_shm_owns_cloexec_descriptors_and_unlink_after_open_lifetime() {
+fn x86_64_shm_owns_cloexec_descriptors_and_unlink_after_open_lifetime() {
     let name = ShmName::new("lifetime");
     let descriptor = crabc_rs::shm::open(
         name.as_str(),
@@ -83,7 +83,7 @@ fn linux_shm_owns_cloexec_descriptors_and_unlink_after_open_lifetime() {
 }
 
 #[test]
-fn linux_shm_normalizes_before_the_no_alloc_input_boundary() {
+fn x86_64_shm_normalizes_before_the_no_alloc_input_boundary() {
     let mut name = [b'x'; 255];
     let suffix = std::process::id().to_string();
     name[255 - suffix.len()..].copy_from_slice(suffix.as_bytes());
@@ -120,7 +120,7 @@ fn linux_shm_normalizes_before_the_no_alloc_input_boundary() {
 }
 
 #[test]
-fn linux_shm_preserves_the_direct_no_follow_policy() {
+fn x86_64_shm_preserves_the_direct_no_follow_policy() {
     let target = ShmName::new("nofollow-target");
     let link = ShmName::new("nofollow-link");
     let target_descriptor = crabc_rs::shm::open(
@@ -154,7 +154,7 @@ fn linux_shm_preserves_the_direct_no_follow_policy() {
 }
 
 #[test]
-fn linux_shm_validates_posix_names_before_the_direct_syscall() {
+fn x86_64_shm_validates_posix_names_before_the_direct_syscall() {
     for name in ["", "/", "///", ".", "..", "/.", "/..", "/contains/slash"] {
         assert!(
             matches!(

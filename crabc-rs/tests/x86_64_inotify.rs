@@ -38,7 +38,7 @@ where
 }
 
 #[test]
-fn linux_inotify_owns_nonblocking_cloexec_watches_and_byte_events() {
+fn x86_64_inotify_owns_nonblocking_cloexec_watches_and_byte_events() {
     let directory = temporary_directory("events");
     std::fs::create_dir(&directory).expect("create isolated directory");
 
@@ -77,7 +77,7 @@ fn linux_inotify_owns_nonblocking_cloexec_watches_and_byte_events() {
 }
 
 #[test]
-fn linux_inotify_preserves_direct_validation_and_noalloc_path_boundaries() {
+fn x86_64_inotify_preserves_direct_validation_and_noalloc_path_boundaries() {
     assert!(matches!(
         Inotify::new(CreateFlags::from_bits_retain(0x0000_0001)),
         Err(Errno::INVAL)
@@ -105,7 +105,7 @@ fn linux_inotify_preserves_direct_validation_and_noalloc_path_boundaries() {
 }
 
 #[test]
-fn linux_inotify_duplicate_retains_watch_and_batch_after_owner_drop() {
+fn x86_64_inotify_duplicate_retains_watch_and_batch_after_owner_drop() {
     use core::mem::MaybeUninit;
     use crabc_rs::event::epoll;
     use crabc_rs::time::Timespec;

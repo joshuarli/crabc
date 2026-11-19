@@ -17,7 +17,7 @@ fn borrow(file: &std::fs::File) -> BorrowedFd<'_> {
 }
 
 #[test]
-fn linux_namespace_lifecycle_is_descriptor_relative() {
+fn x86_64_namespace_lifecycle_is_descriptor_relative() {
     let root = format!(
         "/tmp/crabc-x86-namespace-{}-{}",
         std::process::id(),

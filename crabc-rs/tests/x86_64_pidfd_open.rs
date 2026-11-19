@@ -3,7 +3,7 @@ use crabc_rs::process::{self, Pid, PidfdFlags};
 use crabc_rs::Errno;
 
 #[test]
-fn linux_pidfd_open_owns_a_descriptor_and_applies_nonblock() {
+fn x86_64_pidfd_open_owns_a_descriptor_and_applies_nonblock() {
     assert_eq!(PidfdFlags::NONBLOCK.bits(), 0x0000_0800);
 
     let pidfd = match process::pidfd_open(process::getpid(), PidfdFlags::NONBLOCK) {
@@ -22,7 +22,7 @@ fn linux_pidfd_open_owns_a_descriptor_and_applies_nonblock() {
 }
 
 #[test]
-fn linux_pidfd_open_preserves_kernel_errors() {
+fn x86_64_pidfd_open_preserves_kernel_errors() {
     match process::pidfd_open(process::getpid(), PidfdFlags::empty()) {
         Ok(pidfd) => drop(pidfd),
         Err(Errno::NOSYS) => {

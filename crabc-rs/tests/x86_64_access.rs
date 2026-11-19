@@ -43,7 +43,7 @@ fn borrow(file: &File) -> BorrowedFd<'_> {
 }
 
 #[test]
-fn linux_access_checks_existing_and_missing_paths() {
+fn x86_64_access_checks_existing_and_missing_paths() {
     let (_cleanup, root, _directory) = fixture_root();
     let record = root.join("record");
     let missing = root.join("missing");
@@ -57,7 +57,7 @@ fn linux_access_checks_existing_and_missing_paths() {
 }
 
 #[test]
-fn linux_accessat_is_descriptor_relative_and_handles_dangling_symlinks() {
+fn x86_64_accessat_is_descriptor_relative_and_handles_dangling_symlinks() {
     let (_cleanup, _root, directory) = fixture_root();
     let directory = borrow(&directory);
 
@@ -106,7 +106,7 @@ fn linux_accessat_is_descriptor_relative_and_handles_dangling_symlinks() {
 }
 
 #[test]
-fn linux_accessat_distinguishes_real_and_effective_credentials_child_contained() {
+fn x86_64_accessat_distinguishes_real_and_effective_credentials_child_contained() {
     if std::env::var_os(CREDENTIAL_CHILD).is_some() {
         // This exact credential split must run in a child: setresuid changes
         // the calling kernel task, and the native x86 runner deliberately
@@ -148,7 +148,7 @@ fn linux_accessat_distinguishes_real_and_effective_credentials_child_contained()
     let output = Command::new(std::env::current_exe().expect("locate test binary"))
         .args([
             "--exact",
-            "linux_accessat_distinguishes_real_and_effective_credentials_child_contained",
+            "x86_64_accessat_distinguishes_real_and_effective_credentials_child_contained",
             "--nocapture",
         ])
         .env(CREDENTIAL_CHILD, "1")
@@ -164,7 +164,7 @@ fn linux_accessat_distinguishes_real_and_effective_credentials_child_contained()
 }
 
 #[test]
-fn linux_access_rejects_unknown_modes_flags_and_invalid_paths() {
+fn x86_64_access_rejects_unknown_modes_flags_and_invalid_paths() {
     let (_cleanup, _root, directory) = fixture_root();
     let directory = borrow(&directory);
 

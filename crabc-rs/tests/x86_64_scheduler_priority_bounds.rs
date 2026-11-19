@@ -2,7 +2,7 @@
 use crabc_rs::process::{self, SchedulerPolicy};
 
 #[test]
-fn linux_scheduler_priority_bounds_match_linux_policy_values() {
+fn x86_64_scheduler_priority_bounds_match_linux_policy_values() {
     let policies = [
         (SchedulerPolicy::Other, (0, 0)),
         (SchedulerPolicy::Fifo, (1, 99)),
@@ -18,7 +18,7 @@ fn linux_scheduler_priority_bounds_match_linux_policy_values() {
 }
 
 #[test]
-fn linux_scheduler_priority_bounds_are_stable_read_only_observations() {
+fn x86_64_scheduler_priority_bounds_are_stable_read_only_observations() {
     for policy in [
         SchedulerPolicy::Other,
         SchedulerPolicy::Fifo,

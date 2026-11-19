@@ -10,7 +10,7 @@ use core::ffi::CStr;
 use crabc_rs::{mount, process, Errno};
 
 #[test]
-fn linux_mount_basic_checks_paths_and_preserves_direct_missing_target_errors() {
+fn x86_64_mount_basic_checks_paths_and_preserves_direct_missing_target_errors() {
     let missing = format!(
         "/crabc-rs-x86-mount-missing-{}",
         process::getpid().as_raw_pid()

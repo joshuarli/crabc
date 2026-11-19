@@ -2,7 +2,7 @@
 use crabc_rs::process;
 
 #[test]
-fn linux_process_group_and_session_observations_are_typed_and_stable() {
+fn x86_64_process_group_and_session_observations_are_typed_and_stable() {
     let pid = process::getpid();
     assert!(pid.as_raw_pid() > 0);
 

@@ -10,7 +10,7 @@ fn flags() -> pty::OpenptFlags {
 }
 
 #[test]
-fn linux_pair_requires_read_write_before_touching_devpts() {
+fn x86_64_pair_requires_read_write_before_touching_devpts() {
     assert!(matches!(
         pty::PtyPair::open(pty::OpenptFlags::NOCTTY | pty::OpenptFlags::CLOEXEC),
         Err(Errno::INVAL)
@@ -18,7 +18,7 @@ fn linux_pair_requires_read_write_before_touching_devpts() {
 }
 
 #[test]
-fn linux_grantpt_validates_a_non_pty_descriptor() {
+fn x86_64_grantpt_validates_a_non_pty_descriptor() {
     let null = fs::open(
         "/dev/null",
         fs::OFlags::RDWR | fs::OFlags::CLOEXEC,
@@ -33,7 +33,7 @@ fn linux_grantpt_validates_a_non_pty_descriptor() {
 }
 
 #[test]
-fn linux_pair_owns_both_descriptors_and_resolves_slave_name() {
+fn x86_64_pair_owns_both_descriptors_and_resolves_slave_name() {
     let pair = pty::PtyPair::open(flags()).expect("open owned PTY pair");
 
     let mut storage = [MaybeUninit::uninit(); 32];
@@ -54,7 +54,7 @@ fn linux_pair_owns_both_descriptors_and_resolves_slave_name() {
 }
 
 #[test]
-fn linux_ptsname_into_rejects_short_caller_storage() {
+fn x86_64_ptsname_into_rejects_short_caller_storage() {
     let pair = pty::PtyPair::open(flags()).expect("open owned PTY pair");
     let mut storage = [MaybeUninit::uninit(); 4];
 
@@ -65,7 +65,7 @@ fn linux_ptsname_into_rejects_short_caller_storage() {
 }
 
 #[test]
-fn linux_slave_output_reaches_its_owned_master() {
+fn x86_64_slave_output_reaches_its_owned_master() {
     let pair = pty::PtyPair::open(flags()).expect("open owned PTY pair");
 
     assert_eq!(

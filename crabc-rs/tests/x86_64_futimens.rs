@@ -63,7 +63,7 @@ fn assert_current_times(stat: fs::Stat, before: time::Timespec, after: time::Tim
 }
 
 #[test]
-fn linux_futimens_uses_the_kernel_timespec_layout_and_sentinels() {
+fn x86_64_futimens_uses_the_kernel_timespec_layout_and_sentinels() {
     assert_eq!(size_of::<Timespec>(), 16);
     assert_eq!(align_of::<Timespec>(), 8);
     assert_eq!(size_of::<Timestamps>(), 32);
@@ -116,7 +116,7 @@ fn linux_futimens_uses_the_kernel_timespec_layout_and_sentinels() {
 }
 
 #[test]
-fn linux_futimes_converts_microseconds_and_rejects_before_borrowing() {
+fn x86_64_futimes_converts_microseconds_and_rejects_before_borrowing() {
     let file = timestamp_fixture();
     let explicit = [
         Timeval {
@@ -167,7 +167,7 @@ fn linux_futimes_converts_microseconds_and_rejects_before_borrowing() {
 }
 
 #[test]
-fn linux_futimens_keeps_kernel_validation_and_state_atomicity_direct() {
+fn x86_64_futimens_keeps_kernel_validation_and_state_atomicity_direct() {
     let file = timestamp_fixture();
     let before = Timestamps {
         last_access: Timespec {

@@ -18,7 +18,7 @@ use crabc_rs::{AsFd, BorrowedFd, Errno, Result};
 
 const CWD_TIMESTAMP_CHILD: &str = "CRABC_RS_X86_64_TIMESTAMP_CWD_CHILD";
 const CWD_TIMESTAMP_CHILD_TEST: &str =
-    "linux_utimes_and_utime_resolve_cwd_relative_links_in_a_child";
+    "x86_64_utimes_and_utime_resolve_cwd_relative_links_in_a_child";
 const CWD_TIMESTAMP_SENTINEL_NAME: &str = ".crabc-x86-timestamp-child";
 const CWD_TIMESTAMP_SENTINEL_CONTENTS: &[u8] = b"crabc x86 timestamp child\n";
 // Filesystems may store timestamps at a coarser resolution than the realtime
@@ -186,7 +186,7 @@ fn is_timestamp_cwd_child() -> bool {
 }
 
 #[test]
-fn linux_utimensat_and_legacy_directory_wrappers_preserve_link_selection() {
+fn x86_64_utimensat_and_legacy_directory_wrappers_preserve_link_selection() {
     let fixture = TimestampPathFixture::new();
     let direct_follow = Timestamps {
         last_access: Timespec {
@@ -322,7 +322,7 @@ fn linux_utimensat_and_legacy_directory_wrappers_preserve_link_selection() {
 }
 
 #[test]
-fn linux_timestamp_path_wrappers_preflight_closed_flags_and_microseconds() {
+fn x86_64_timestamp_path_wrappers_preflight_closed_flags_and_microseconds() {
     let fixture = TimestampPathFixture::new();
     let times = Timestamps {
         last_access: Timespec {
@@ -423,7 +423,7 @@ fn linux_timestamp_path_wrappers_preflight_closed_flags_and_microseconds() {
 }
 
 #[test]
-fn linux_utimes_and_utime_resolve_cwd_relative_links_in_a_child() {
+fn x86_64_utimes_and_utime_resolve_cwd_relative_links_in_a_child() {
     if is_timestamp_cwd_child() {
         timestamp_cwd_child();
         return;
@@ -450,7 +450,7 @@ fn linux_utimes_and_utime_resolve_cwd_relative_links_in_a_child() {
 }
 
 #[test]
-fn linux_timestamp_cwd_child_ignores_unbound_inherited_marker() {
+fn x86_64_timestamp_cwd_child_ignores_unbound_inherited_marker() {
     let output = Command::new(std::env::current_exe().expect("locate test binary"))
         .args(["--exact", CWD_TIMESTAMP_CHILD_TEST, "--nocapture"])
         .env(CWD_TIMESTAMP_CHILD, "1")

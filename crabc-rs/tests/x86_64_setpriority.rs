@@ -7,11 +7,11 @@ use crabc_rs::{
 };
 
 #[test]
-fn linux_setpriority_is_child_contained_and_keeps_targets_typed() {
+fn x86_64_setpriority_is_child_contained_and_keeps_targets_typed() {
     let output = Command::new(std::env::current_exe().expect("locate test binary"))
         .args([
             "--exact",
-            "linux_setpriority_child_mutates_only_the_calling_process",
+            "x86_64_setpriority_child_mutates_only_the_calling_process",
             "--ignored",
             "--nocapture",
         ])
@@ -28,7 +28,7 @@ fn linux_setpriority_is_child_contained_and_keeps_targets_typed() {
 
 #[test]
 #[ignore = "the parent regression invokes this test only in a subprocess"]
-fn linux_setpriority_child_mutates_only_the_calling_process() {
+fn x86_64_setpriority_child_mutates_only_the_calling_process() {
     assert_eq!(
         crabc_core::process::setpriority_raw(99, 0, Priority::DEFAULT.as_raw()),
         Err(Errno::INVAL),

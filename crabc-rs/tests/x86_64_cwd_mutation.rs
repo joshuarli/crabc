@@ -17,7 +17,7 @@ const CWD_MUTATION_CHILD: &str = "CRABC_RS_X86_64_CWD_MUTATION_CHILD";
 /// process-global Linux state, so this makes a failing assertion unable to
 /// perturb the parent harness or its other test binaries.
 #[test]
-fn linux_cwd_mutation_is_child_contained_and_descriptor_restorable() {
+fn x86_64_cwd_mutation_is_child_contained_and_descriptor_restorable() {
     if std::env::var_os(CWD_MUTATION_CHILD).is_some() {
         cwd_mutation_child();
         return;
@@ -26,7 +26,7 @@ fn linux_cwd_mutation_is_child_contained_and_descriptor_restorable() {
     let output = Command::new(std::env::current_exe().expect("locate test binary"))
         .args([
             "--exact",
-            "linux_cwd_mutation_is_child_contained_and_descriptor_restorable",
+            "x86_64_cwd_mutation_is_child_contained_and_descriptor_restorable",
             "--nocapture",
         ])
         .env(CWD_MUTATION_CHILD, "1")

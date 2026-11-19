@@ -64,7 +64,7 @@ impl AsFd for TrackingFd<'_> {
 }
 
 #[test]
-fn linux_sendfile_preserves_explicit_input_position_and_advances_shared_position() {
+fn x86_64_sendfile_preserves_explicit_input_position_and_advances_shared_position() {
     let (input, output, _cleanup) = sendfile_fixture();
     assert_eq!(
         io::write(borrow_file(&input), b"0123456789").expect("seed sendfile input"),
@@ -163,7 +163,7 @@ fn linux_sendfile_preserves_explicit_input_position_and_advances_shared_position
 }
 
 #[test]
-fn linux_sendfile_rejects_unrepresentable_explicit_offsets_before_the_syscall() {
+fn x86_64_sendfile_rejects_unrepresentable_explicit_offsets_before_the_syscall() {
     let (input, output, _cleanup) = sendfile_fixture();
     assert_eq!(
         io::write(borrow_file(&input), b"input").expect("seed sendfile input"),
@@ -212,7 +212,7 @@ fn linux_sendfile_rejects_unrepresentable_explicit_offsets_before_the_syscall() 
 }
 
 #[test]
-fn linux_sendfile_closed_input_descriptor_reports_ebadf_at_the_raw_seam() {
+fn x86_64_sendfile_closed_input_descriptor_reports_ebadf_at_the_raw_seam() {
     let (input, output, _cleanup) = sendfile_fixture();
     let raw_input = input.into_raw_fd();
     crabc_core::io::close(raw_input).expect("close sendfile EBADF input fixture");

@@ -25,7 +25,7 @@ impl AsFd for TrackingFd<'_> {
 }
 
 #[test]
-fn linux_file_position_observes_seek_tell_truncate_and_sync_on_memfd() {
+fn x86_64_file_position_observes_seek_tell_truncate_and_sync_on_memfd() {
     let file = anonymous_regular_file();
     assert_eq!(io::write(&file, b"0123456789").expect("seed memory file"), 10);
     assert_eq!(fs::tell(&file).expect("tell after write"), 10);
@@ -60,7 +60,7 @@ fn linux_file_position_observes_seek_tell_truncate_and_sync_on_memfd() {
 }
 
 #[test]
-fn linux_file_position_finds_sparse_memfd_data_and_holes() {
+fn x86_64_file_position_finds_sparse_memfd_data_and_holes() {
     let file = anonymous_regular_file();
 
     assert_eq!(
@@ -79,7 +79,7 @@ fn linux_file_position_finds_sparse_memfd_data_and_holes() {
 }
 
 #[test]
-fn linux_file_position_forwards_unrepresentable_absolute_offsets_to_linux() {
+fn x86_64_file_position_forwards_unrepresentable_absolute_offsets_to_linux() {
     let file = anonymous_regular_file();
     let too_large = i64::MAX as u64 + 1;
 
@@ -106,7 +106,7 @@ fn linux_file_position_forwards_unrepresentable_absolute_offsets_to_linux() {
 }
 
 #[test]
-fn linux_file_position_keeps_non_seekable_descriptor_errors_direct() {
+fn x86_64_file_position_keeps_non_seekable_descriptor_errors_direct() {
     let (reader, _writer) = pipe::pipe().expect("create a pipe");
     assert_eq!(
         fs::tell(&reader),

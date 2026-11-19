@@ -58,7 +58,7 @@ fn borrow(file: &File) -> BorrowedFd<'_> {
 }
 
 #[test]
-fn linux_readlinkat_returns_exact_non_nul_target_and_preserves_suffix() {
+fn x86_64_readlinkat_returns_exact_non_nul_target_and_preserves_suffix() {
     let (_cleanup, directory) = fixture_root();
     let mut storage = [MaybeUninit::new(UNTOUCHED); 16];
     let (target, untouched) = fs::readlinkat_raw(borrow(&directory), "symbolic", &mut storage)
@@ -72,7 +72,7 @@ fn linux_readlinkat_returns_exact_non_nul_target_and_preserves_suffix() {
 }
 
 #[test]
-fn linux_readlinkat_truncates_a_short_output_buffer() {
+fn x86_64_readlinkat_truncates_a_short_output_buffer() {
     let (_cleanup, directory) = fixture_root();
     let mut storage = [MaybeUninit::new(UNTOUCHED); 3];
     let (target, untouched) = fs::readlinkat_raw(borrow(&directory), "symbolic", &mut storage)
@@ -84,7 +84,7 @@ fn linux_readlinkat_truncates_a_short_output_buffer() {
 }
 
 #[test]
-fn linux_readlinkat_rejects_a_zero_length_output_buffer() {
+fn x86_64_readlinkat_rejects_a_zero_length_output_buffer() {
     let (_cleanup, directory) = fixture_root();
     let mut storage = [MaybeUninit::<u8>::uninit(); 0];
 
@@ -95,7 +95,7 @@ fn linux_readlinkat_rejects_a_zero_length_output_buffer() {
 }
 
 #[test]
-fn linux_readlinkat_propagates_kernel_errors_and_path_validation() {
+fn x86_64_readlinkat_propagates_kernel_errors_and_path_validation() {
     let (_cleanup, directory) = fixture_root();
     let directory = borrow(&directory);
     let mut storage = [MaybeUninit::<u8>::uninit(); 16];
@@ -121,7 +121,7 @@ fn linux_readlinkat_propagates_kernel_errors_and_path_validation() {
 
 #[cfg(feature = "alloc")]
 #[test]
-fn linux_owned_readlink_retries_an_exact_capacity_non_utf8_target() {
+fn x86_64_owned_readlink_retries_an_exact_capacity_non_utf8_target() {
     let (cleanup, directory) = fixture_root();
     let mut expected = vec![b'x'; fs::SMALL_PATH_BUFFER_SIZE];
     expected[17] = 0xff;

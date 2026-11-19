@@ -35,7 +35,7 @@ fn borrow(file: &std::fs::File) -> BorrowedFd<'_> {
 }
 
 #[test]
-fn linux_openat2_transfers_an_owned_descriptor_and_preserves_the_directory() {
+fn x86_64_openat2_transfers_an_owned_descriptor_and_preserves_the_directory() {
     let fixture = Fixture::new();
     let directory = fixture.directory();
     let file = fs::openat2(borrow(&directory), "inside", fs::OFlags::RDONLY | fs::OFlags::CLOEXEC,
@@ -50,7 +50,7 @@ fn linux_openat2_transfers_an_owned_descriptor_and_preserves_the_directory() {
 }
 
 #[test]
-fn linux_openat2_applies_symlink_beneath_and_explicit_root_resolution() {
+fn x86_64_openat2_applies_symlink_beneath_and_explicit_root_resolution() {
     let fixture = Fixture::new();
     let directory = fixture.directory();
     let fd = borrow(&directory);
@@ -66,7 +66,7 @@ fn linux_openat2_applies_symlink_beneath_and_explicit_root_resolution() {
 }
 
 #[test]
-fn linux_openat2_retains_kernel_validation_instead_of_an_openat_fallback() {
+fn x86_64_openat2_retains_kernel_validation_instead_of_an_openat_fallback() {
     let fixture = Fixture::new();
     let directory = fixture.directory();
     let fd = borrow(&directory);

@@ -51,7 +51,7 @@ impl Drop for Mapping {
 /// Exercises the selected anonymous mapping ownership transition without
 /// widening the x86 facade into fixed mappings, remapping, or VM policy.
 #[test]
-fn linux_memory_mapping_preserves_protection_and_unique_unmap_lifetime() {
+fn x86_64_memory_mapping_preserves_protection_and_unique_unmap_lifetime() {
     let mapping = Mapping::anonymous();
     let byte = mapping.pointer.cast::<u8>();
 
@@ -85,7 +85,7 @@ fn linux_memory_mapping_preserves_protection_and_unique_unmap_lifetime() {
 /// Exercises the descriptor-borrowing map form and its closed x86 flag
 /// vocabulary without selecting a C file-mapping ABI.
 #[test]
-fn linux_memory_mapping_file_backed_boundary_and_direct_errors_are_precise() {
+fn x86_64_memory_mapping_file_backed_boundary_and_direct_errors_are_precise() {
     let file = fs::memfd_create(
         b"crabc-rs-x86-memory-mapping",
         fs::MemfdFlags::CLOEXEC,

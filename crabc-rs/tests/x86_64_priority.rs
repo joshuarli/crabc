@@ -6,7 +6,7 @@ fn assert_priority(priority: Priority) {
 }
 
 #[test]
-fn linux_priority_types_and_targets_are_closed() {
+fn x86_64_priority_types_and_targets_are_closed() {
     assert_eq!(Priority::MIN.as_raw(), -20);
     assert_eq!(Priority::DEFAULT.as_raw(), 0);
     assert_eq!(Priority::MAX.as_raw(), 19);
@@ -28,7 +28,7 @@ fn linux_priority_types_and_targets_are_closed() {
 }
 
 #[test]
-fn linux_getpriority_translates_the_nonnegative_kernel_encoding() {
+fn x86_64_getpriority_translates_the_nonnegative_kernel_encoding() {
     let raw = crabc_core::process::getpriority_raw(0, 0)
         .expect("read the Linux getpriority syscall result");
     assert!((1..=40).contains(&raw));
@@ -40,7 +40,7 @@ fn linux_getpriority_translates_the_nonnegative_kernel_encoding() {
 }
 
 #[test]
-fn linux_getpriority_supports_process_group_and_user_targets_read_only() {
+fn x86_64_getpriority_supports_process_group_and_user_targets_read_only() {
     let pid = process::getpid();
     let pgid = process::getpgid(None).expect("read the current process group");
     let effective_uid = process::geteuid();
@@ -75,7 +75,7 @@ fn linux_getpriority_supports_process_group_and_user_targets_read_only() {
 }
 
 #[test]
-fn linux_getpriority_reports_missing_process_as_srch() {
+fn x86_64_getpriority_reports_missing_process_as_srch() {
     let missing = Pid::from_raw(i32::MAX).expect("i32::MAX is a non-zero typed PID");
     assert_eq!(
         process::getpriority_process(Some(missing)),

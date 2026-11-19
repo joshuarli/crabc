@@ -19,7 +19,7 @@ fn pair() -> pty::PtyPair {
 }
 
 #[test]
-fn linux_terminal_attributes_queue_special_codes_and_window_size_round_trip() {
+fn x86_64_terminal_attributes_queue_special_codes_and_window_size_round_trip() {
     let pair = pair();
     let original = termios::tcgetattr(pair.slave()).expect("read PTY attributes");
     assert!(termios::isatty(pair.slave()));
@@ -98,7 +98,7 @@ fn linux_terminal_attributes_queue_special_codes_and_window_size_round_trip() {
 }
 
 #[test]
-fn linux_terminal_name_and_exclusive_mode_are_typed_and_bounded() {
+fn x86_64_terminal_name_and_exclusive_mode_are_typed_and_bounded() {
     let pair = pair();
     let mut storage = [MaybeUninit::uninit(); 128];
     let name = termios::ttyname_into(pair.slave(), &mut storage).expect("name PTY slave");
@@ -122,7 +122,7 @@ fn linux_terminal_name_and_exclusive_mode_are_typed_and_bounded() {
 
 #[cfg(feature = "alloc")]
 #[test]
-fn linux_terminal_name_reuses_owned_storage() {
+fn x86_64_terminal_name_reuses_owned_storage() {
     let pair = pair();
     let expected = pty::ptsname(pair.master(), Vec::new()).expect("name PTY master peer");
     let first = termios::ttyname(pair.slave(), b"stale-name".to_vec())
@@ -134,7 +134,7 @@ fn linux_terminal_name_reuses_owned_storage() {
 }
 
 #[test]
-fn linux_terminal_operations_reject_non_tty_descriptors() {
+fn x86_64_terminal_operations_reject_non_tty_descriptors() {
     let (reader, _writer) = pipe::pipe().expect("create non-terminal fixture");
     let attributes = termios::tcgetattr(pair().slave()).expect("read disposable attributes");
 
@@ -175,7 +175,7 @@ fn session_child(pair: &pty::PtyPair) -> ! {
 }
 
 #[test]
-fn linux_explicit_session_handoff_is_confined_to_a_child() {
+fn x86_64_explicit_session_handoff_is_confined_to_a_child() {
     let pair = pair();
     let child = raw_process::fork_raw().expect("fork isolated terminal child");
     if child == 0 {

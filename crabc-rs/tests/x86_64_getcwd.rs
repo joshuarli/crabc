@@ -18,7 +18,7 @@ const UNTOUCHED: u8 = 0xa5;
 const GETCWD_ALLOC_CHILD: &str = "CRABC_RS_X86_64_GETCWD_ALLOC_CHILD";
 
 #[test]
-fn linux_getcwd_returns_exact_current_directory_and_preserves_suffix() {
+fn x86_64_getcwd_returns_exact_current_directory_and_preserves_suffix() {
     let expected = std::env::current_dir().expect("read the test current directory");
     let expected = std::os::unix::ffi::OsStrExt::as_bytes(expected.as_os_str());
 
@@ -35,7 +35,7 @@ fn linux_getcwd_returns_exact_current_directory_and_preserves_suffix() {
 }
 
 #[test]
-fn linux_getcwd_reports_range_for_one_byte_buffer() {
+fn x86_64_getcwd_reports_range_for_one_byte_buffer() {
     let mut storage = [MaybeUninit::<u8>::uninit(); 1];
     match process::getcwd(&mut storage) {
         Ok(_) => panic!("a one-byte getcwd buffer must be too small"),
@@ -44,7 +44,7 @@ fn linux_getcwd_reports_range_for_one_byte_buffer() {
 }
 
 #[test]
-fn linux_getcwd_reports_range_for_empty_buffer() {
+fn x86_64_getcwd_reports_range_for_empty_buffer() {
     let mut storage = [MaybeUninit::<u8>::uninit(); 0];
     match process::getcwd(&mut storage) {
         Ok(_) => panic!("a zero-byte getcwd buffer must not succeed"),
@@ -54,7 +54,7 @@ fn linux_getcwd_reports_range_for_empty_buffer() {
 
 #[cfg(feature = "alloc")]
 #[test]
-fn linux_getcwd_alloc_retries_for_a_path_beyond_the_stack_buffer() {
+fn x86_64_getcwd_alloc_retries_for_a_path_beyond_the_stack_buffer() {
     if std::env::var_os(GETCWD_ALLOC_CHILD).is_some() {
         getcwd_alloc_long_path_child();
         return;
@@ -64,7 +64,7 @@ fn linux_getcwd_alloc_retries_for_a_path_beyond_the_stack_buffer() {
     let output = Command::new(std::env::current_exe().expect("locate test binary"))
         .args([
             "--exact",
-            "linux_getcwd_alloc_retries_for_a_path_beyond_the_stack_buffer",
+            "x86_64_getcwd_alloc_retries_for_a_path_beyond_the_stack_buffer",
             "--nocapture",
         ])
         .env(GETCWD_ALLOC_CHILD, "1")

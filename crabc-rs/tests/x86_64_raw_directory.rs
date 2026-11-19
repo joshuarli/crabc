@@ -47,7 +47,7 @@ fn borrowed(file: &File) -> BorrowedFd<'_> {
 }
 
 #[test]
-fn linux_raw_dir_preserves_unaligned_buffer_borrowed_names_and_small_buffer_error() {
+fn x86_64_raw_dir_preserves_unaligned_buffer_borrowed_names_and_small_buffer_error() {
     let (cleanup, directory, long_name) = fixture();
 
     let mut unaligned = [MaybeUninit::uninit(); 4097];

@@ -2,7 +2,7 @@
 use crabc_rs::system;
 
 #[test]
-fn linux_uname_returns_linux_fixed_record_fields() {
+fn x86_64_uname_returns_linux_fixed_record_fields() {
     let value = system::uname();
     assert_eq!(value.sysname().to_bytes(), b"Linux");
     assert!(!value.nodename().to_bytes().is_empty());
@@ -13,7 +13,7 @@ fn linux_uname_returns_linux_fixed_record_fields() {
 }
 
 #[test]
-fn linux_sysinfo_and_load_average_are_native_observations() {
+fn x86_64_sysinfo_and_load_average_are_native_observations() {
     let before = system::sysinfo();
     let after = system::sysinfo();
     assert!(before.uptime >= 0);

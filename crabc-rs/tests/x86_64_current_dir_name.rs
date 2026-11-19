@@ -97,7 +97,7 @@ fn read_current_dir_name(pwd: Option<&CStr>) -> Vec<u8> {
 }
 
 #[test]
-fn linux_current_dir_name_preserves_valid_logical_pwd_spelling() {
+fn x86_64_current_dir_name_preserves_valid_logical_pwd_spelling() {
     let fixture = LogicalCwdFixture::new();
 
     assert_eq!(
@@ -107,7 +107,7 @@ fn linux_current_dir_name_preserves_valid_logical_pwd_spelling() {
 }
 
 #[test]
-fn linux_current_dir_name_falls_back_for_invalid_pwd_snapshots() {
+fn x86_64_current_dir_name_falls_back_for_invalid_pwd_snapshots() {
     let fixture = LogicalCwdFixture::new();
     let expected = physical_cwd_bytes();
     let mismatch = CString::new(fixture.root().join("other").as_os_str().as_bytes())
@@ -124,7 +124,7 @@ fn linux_current_dir_name_falls_back_for_invalid_pwd_snapshots() {
 }
 
 #[test]
-fn linux_current_dir_name_preserves_validated_non_utf8_pwd_bytes() {
+fn x86_64_current_dir_name_preserves_validated_non_utf8_pwd_bytes() {
     let fixture = LogicalCwdFixture::new();
     let physical = fixture
         .root()
@@ -146,7 +146,7 @@ fn linux_current_dir_name_preserves_validated_non_utf8_pwd_bytes() {
 }
 
 #[test]
-fn linux_current_dir_name_reports_range_without_falling_back() {
+fn x86_64_current_dir_name_reports_range_without_falling_back() {
     let fixture = LogicalCwdFixture::new();
     let mut storage = [MaybeUninit::<u8>::uninit(); 1];
 
@@ -157,7 +157,7 @@ fn linux_current_dir_name_reports_range_without_falling_back() {
 
 #[cfg(feature = "alloc")]
 #[test]
-fn linux_current_dir_name_alloc_returns_logical_and_physical_results() {
+fn x86_64_current_dir_name_alloc_returns_logical_and_physical_results() {
     let fixture = LogicalCwdFixture::new();
 
     let logical = process::get_current_dir_name_alloc(Some(fixture.logical_pwd()), vec![0; 2])

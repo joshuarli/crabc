@@ -7,11 +7,11 @@ use crabc_rs::{
 };
 
 #[test]
-fn linux_fs_credentials_are_child_contained_and_keep_the_query_sentinel_typed() {
+fn x86_64_fs_credentials_are_child_contained_and_keep_the_query_sentinel_typed() {
     let output = Command::new(std::env::current_exe().expect("locate test binary"))
         .args([
             "--exact",
-            "linux_fs_credentials_child_queries_and_requests_current_identity",
+            "x86_64_fs_credentials_child_queries_and_requests_current_identity",
             "--ignored",
             "--nocapture",
         ])
@@ -28,7 +28,7 @@ fn linux_fs_credentials_are_child_contained_and_keep_the_query_sentinel_typed() 
 
 #[test]
 #[ignore = "the parent regression invokes this test only in a subprocess"]
-fn linux_fs_credentials_child_queries_and_requests_current_identity() {
+fn x86_64_fs_credentials_child_queries_and_requests_current_identity() {
     assert_eq!(
         unsafe { process::set_fs_uid(Some(Uid::from_raw(u32::MAX))) },
         Err(Errno::INVAL),

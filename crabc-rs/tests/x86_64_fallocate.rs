@@ -30,7 +30,7 @@ fn seed(file: &OwnedFd) {
 }
 
 #[test]
-fn linux_fallocate_allocate_and_keep_size_preserve_data_and_position() {
+fn x86_64_fallocate_allocate_and_keep_size_preserve_data_and_position() {
     let file = allocation_fixture();
     seed(&file);
 
@@ -57,7 +57,7 @@ fn linux_fallocate_allocate_and_keep_size_preserve_data_and_position() {
 }
 
 #[test]
-fn linux_fallocate_punch_hole_keep_size_zeroes_data() {
+fn x86_64_fallocate_punch_hole_keep_size_zeroes_data() {
     let file = allocation_fixture();
     seed(&file);
 
@@ -80,7 +80,7 @@ fn linux_fallocate_punch_hole_keep_size_zeroes_data() {
 }
 
 #[test]
-fn linux_fallocate_zero_range_preserves_position_and_size_modes_when_supported() {
+fn x86_64_fallocate_zero_range_preserves_position_and_size_modes_when_supported() {
     let file = allocation_fixture();
     seed(&file);
 
@@ -115,7 +115,7 @@ fn linux_fallocate_zero_range_preserves_position_and_size_modes_when_supported()
 }
 
 #[test]
-fn linux_fallocate_rejects_unknown_modes_and_bad_combinations_before_borrowing() {
+fn x86_64_fallocate_rejects_unknown_modes_and_bad_combinations_before_borrowing() {
     let file = allocation_fixture();
     for flags in [
         FallocateFlags::from_bits_retain(0x04),
@@ -148,7 +148,7 @@ fn linux_fallocate_rejects_unknown_modes_and_bad_combinations_before_borrowing()
 }
 
 #[test]
-fn linux_fallocate_raw_closed_descriptor_reports_ebadf() {
+fn x86_64_fallocate_raw_closed_descriptor_reports_ebadf() {
     let file = allocation_fixture();
     let raw = file.into_raw_fd();
     crabc_core::io::close(raw).expect("close fallocate EBADF fixture");

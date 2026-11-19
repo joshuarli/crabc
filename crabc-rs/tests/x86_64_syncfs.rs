@@ -36,7 +36,7 @@ fn borrow_file(file: &std::fs::File) -> BorrowedFd<'_> {
 }
 
 #[test]
-fn linux_syncfs_requests_descriptor_associated_filesystem_writeback_for_a_live_regular_file() {
+fn x86_64_syncfs_requests_descriptor_associated_filesystem_writeback_for_a_live_regular_file() {
     let (mut file, _cleanup) = regular_file_fixture();
     file.write_all(b"syncfs")
         .expect("dirty regular-file syncfs fixture");
@@ -57,7 +57,7 @@ fn linux_syncfs_requests_descriptor_associated_filesystem_writeback_for_a_live_r
 }
 
 #[test]
-fn linux_syncfs_accepts_a_live_pipe_descriptor() {
+fn x86_64_syncfs_accepts_a_live_pipe_descriptor() {
     let (reader, _writer) = crabc_rs::pipe::pipe().expect("create pipefs syncfs fixture");
 
     // Linux associates pipe descriptors with pipefs, so this is a successful
@@ -67,7 +67,7 @@ fn linux_syncfs_accepts_a_live_pipe_descriptor() {
 }
 
 #[test]
-fn linux_syncfs_raw_seam_reports_ebadf_after_descriptor_close() {
+fn x86_64_syncfs_raw_seam_reports_ebadf_after_descriptor_close() {
     let (file, _cleanup) = regular_file_fixture();
     let raw = file.into_raw_fd();
     crabc_core::io::close(raw).expect("close syncfs EBADF fixture");

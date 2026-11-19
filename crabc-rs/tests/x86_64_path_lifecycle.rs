@@ -9,7 +9,7 @@ fn mode(bits: u32) -> Mode {
 }
 
 #[test]
-fn linux_path_lifecycle_is_descriptor_relative_and_typed() {
+fn x86_64_path_lifecycle_is_descriptor_relative_and_typed() {
     let root = format!(
         "/tmp/crabc-x86-path-lifecycle-{}-{}",
         std::process::id(),

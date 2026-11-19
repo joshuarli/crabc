@@ -40,7 +40,7 @@ fn fixture() -> (RemoveDirectoryOnDrop, String) {
 }
 
 #[test]
-fn linux_dir_rewind_and_seek_discard_buffered_records() {
+fn x86_64_dir_rewind_and_seek_discard_buffered_records() {
     let (_cleanup, root) = fixture();
     let mut storage = [MaybeUninit::uninit(); 4096];
     let mut stream = Dir::open(root.as_str(), &mut storage).expect("open directory stream");

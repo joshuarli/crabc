@@ -4,7 +4,7 @@ use crabc_rs::thread;
 const LINUX_CPU_SETSIZE: usize = 1024;
 
 #[test]
-fn linux_gettid_is_positive_stable_and_thread_specific() {
+fn x86_64_gettid_is_positive_stable_and_thread_specific() {
     let caller = thread::gettid();
     assert!(caller.as_raw_pid() > 0);
     assert_eq!(thread::gettid(), caller);
@@ -25,7 +25,7 @@ fn linux_gettid_is_positive_stable_and_thread_specific() {
 }
 
 #[test]
-fn linux_sched_getcpu_returns_a_linux_cpu_id() {
+fn x86_64_sched_getcpu_returns_a_linux_cpu_id() {
     let caller_cpu = thread::sched_getcpu();
     assert!(caller_cpu < LINUX_CPU_SETSIZE);
 
@@ -36,7 +36,7 @@ fn linux_sched_getcpu_returns_a_linux_cpu_id() {
 }
 
 #[test]
-fn linux_sched_yield_is_a_successful_infallible_operation() {
+fn x86_64_sched_yield_is_a_successful_infallible_operation() {
     // The public operation follows Linux's infallible scheduler-yield shape;
     // repeated calls exercise the direct syscall without exposing an errno
     // channel that the API intentionally does not have.

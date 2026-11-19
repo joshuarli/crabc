@@ -27,7 +27,7 @@ fn deadline_after(now: time::Timespec, nanoseconds: i64) -> time::Timespec {
 }
 
 #[test]
-fn linux_timerfd_records_and_constants_match_linux() {
+fn x86_64_timerfd_records_and_constants_match_linux() {
     assert_eq!(size_of::<time::Itimerspec>(), 32);
     assert_eq!(align_of::<time::Itimerspec>(), 8);
     assert_eq!(offset_of!(time::Itimerspec, it_interval), 0);
@@ -50,7 +50,7 @@ fn linux_timerfd_records_and_constants_match_linux() {
 }
 
 #[test]
-fn linux_timerfd_forwards_unknown_flags_and_exposes_linux_clock_selection() {
+fn x86_64_timerfd_forwards_unknown_flags_and_exposes_linux_clock_selection() {
     let future_create = time::TimerfdFlags::from_bits(0x0000_0001)
         .expect("unknown creation bits must remain representable for Linux");
     assert!(matches!(
@@ -88,7 +88,7 @@ fn linux_timerfd_forwards_unknown_flags_and_exposes_linux_clock_selection() {
 }
 
 #[test]
-fn linux_timerfd_create_applies_descriptor_flags_and_starts_disarmed() {
+fn x86_64_timerfd_create_applies_descriptor_flags_and_starts_disarmed() {
     let timer = time::timerfd_create(
         time::TimerfdClockId::Monotonic,
         time::TimerfdFlags::NONBLOCK | time::TimerfdFlags::CLOEXEC,
@@ -107,7 +107,7 @@ fn linux_timerfd_create_applies_descriptor_flags_and_starts_disarmed() {
 }
 
 #[test]
-fn linux_timerfd_relative_arm_epoll_read_and_disarm_preserve_the_lifecycle() {
+fn x86_64_timerfd_relative_arm_epoll_read_and_disarm_preserve_the_lifecycle() {
     let timer = time::timerfd_create(
         time::TimerfdClockId::Monotonic,
         time::TimerfdFlags::NONBLOCK,
@@ -164,7 +164,7 @@ fn linux_timerfd_relative_arm_epoll_read_and_disarm_preserve_the_lifecycle() {
 }
 
 #[test]
-fn linux_timerfd_accepts_monotonic_absolute_deadlines() {
+fn x86_64_timerfd_accepts_monotonic_absolute_deadlines() {
     let timer = time::timerfd_create(time::TimerfdClockId::Monotonic, time::TimerfdFlags::empty())
         .expect("create timerfd");
     let now = time::clock_gettime(time::ClockId::Monotonic).expect("read monotonic clock");
@@ -200,7 +200,7 @@ fn linux_timerfd_accepts_monotonic_absolute_deadlines() {
 }
 
 #[test]
-fn linux_timerfd_preserves_periodic_settings_and_accepts_realtime_cancel_on_set() {
+fn x86_64_timerfd_preserves_periodic_settings_and_accepts_realtime_cancel_on_set() {
     let periodic_timer = time::timerfd_create(
         time::TimerfdClockId::Monotonic,
         time::TimerfdFlags::empty(),
@@ -252,7 +252,7 @@ fn linux_timerfd_preserves_periodic_settings_and_accepts_realtime_cancel_on_set(
 }
 
 #[test]
-fn linux_timerfd_rejects_invalid_records_and_descriptor_kinds() {
+fn x86_64_timerfd_rejects_invalid_records_and_descriptor_kinds() {
     let timer = time::timerfd_create(time::TimerfdClockId::Monotonic, time::TimerfdFlags::empty())
         .expect("create timerfd");
     let invalid_nanoseconds = time::Itimerspec {

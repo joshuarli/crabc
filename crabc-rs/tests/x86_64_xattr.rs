@@ -54,11 +54,11 @@ fn list_contains(list: &[u8], name: &[u8]) -> bool {
 }
 
 #[test]
-fn linux_xattr_empty_fills_never_expose_query_sizes_as_initialized_storage() {
+fn x86_64_xattr_empty_fills_never_expose_query_sizes_as_initialized_storage() {
     let output = Command::new(std::env::current_exe().expect("locate test binary"))
         .args([
             "--exact",
-            "linux_xattr_empty_fill_child_checks_all_path_and_descriptor_forms",
+            "x86_64_xattr_empty_fill_child_checks_all_path_and_descriptor_forms",
             "--ignored",
             "--nocapture",
         ])
@@ -75,7 +75,7 @@ fn linux_xattr_empty_fills_never_expose_query_sizes_as_initialized_storage() {
 
 #[test]
 #[ignore = "the parent regression invokes this test only in a subprocess"]
-fn linux_xattr_empty_fill_child_checks_all_path_and_descriptor_forms() {
+fn x86_64_xattr_empty_fill_child_checks_all_path_and_descriptor_forms() {
     let (_cleanup, file, path) = fixture();
     fs::setxattr(path.as_str(), PATH_ATTRIBUTE, b"value", fs::XattrFlags::CREATE)
         .expect("the native xattr regression fixture must support user attributes");
@@ -183,7 +183,7 @@ fn linux_xattr_empty_fill_child_checks_all_path_and_descriptor_forms() {
 }
 
 #[test]
-fn linux_xattr_size_queries_preserve_target_selection_and_growth_errors() {
+fn x86_64_xattr_size_queries_preserve_target_selection_and_growth_errors() {
     let (cleanup, file, path) = fixture();
     fs::setxattr(path.as_str(), PATH_ATTRIBUTE, b"value", fs::XattrFlags::CREATE)
         .expect("the native xattr regression fixture must support user attributes");
@@ -224,7 +224,7 @@ fn linux_xattr_size_queries_preserve_target_selection_and_growth_errors() {
 }
 
 #[test]
-fn linux_xattr_preserves_path_nofollow_fd_and_caller_buffer_contracts() {
+fn x86_64_xattr_preserves_path_nofollow_fd_and_caller_buffer_contracts() {
     let (_cleanup, file, path) = fixture();
     let value = b"path\0bytes";
 

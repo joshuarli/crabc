@@ -41,11 +41,11 @@ fn reversible_core_limit(original: Rlimit) -> Rlimit {
 }
 
 #[test]
-fn linux_setrlimit_is_child_contained_and_validates_before_the_syscall() {
+fn x86_64_setrlimit_is_child_contained_and_validates_before_the_syscall() {
     let output = Command::new(std::env::current_exe().expect("locate test binary"))
         .args([
             "--exact",
-            "linux_setrlimit_child_mutates_and_restores",
+            "x86_64_setrlimit_child_mutates_and_restores",
             "--ignored",
             "--nocapture",
         ])
@@ -62,7 +62,7 @@ fn linux_setrlimit_is_child_contained_and_validates_before_the_syscall() {
 
 #[test]
 #[ignore = "the parent regression invokes this test only in a subprocess"]
-fn linux_setrlimit_child_mutates_and_restores() {
+fn x86_64_setrlimit_child_mutates_and_restores() {
     assert_eq!(
         process::setrlimit(
             Resource::Core,

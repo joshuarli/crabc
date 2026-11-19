@@ -4,7 +4,7 @@ use crabc_rs::io::{self, FdFlags};
 use crabc_rs::Errno;
 
 #[test]
-fn linux_eventfd_nonblock_cloexec_accumulates_resets_and_reports_eagain() {
+fn x86_64_eventfd_nonblock_cloexec_accumulates_resets_and_reports_eagain() {
     let counter = event::eventfd(
         0,
         EventfdFlags::NONBLOCK | EventfdFlags::CLOEXEC,
@@ -32,7 +32,7 @@ fn linux_eventfd_nonblock_cloexec_accumulates_resets_and_reports_eagain() {
 }
 
 #[test]
-fn linux_eventfd_semaphore_reads_one_and_decrements() {
+fn x86_64_eventfd_semaphore_reads_one_and_decrements() {
     let counter = event::eventfd(0, EventfdFlags::NONBLOCK | EventfdFlags::SEMAPHORE)
         .expect("create a nonblocking semaphore eventfd");
 
@@ -44,7 +44,7 @@ fn linux_eventfd_semaphore_reads_one_and_decrements() {
 }
 
 #[test]
-fn linux_eventfd_rejects_the_all_ones_counter_record() {
+fn x86_64_eventfd_rejects_the_all_ones_counter_record() {
     let counter = event::eventfd(0, EventfdFlags::NONBLOCK)
         .expect("create a nonblocking eventfd counter");
 

@@ -27,14 +27,14 @@ fn assert_usage_is_kernel_canonical(usage: ResourceUsage) {
 }
 
 #[test]
-fn linux_resource_usage_target_vocabulary_matches_linux() {
+fn x86_64_resource_usage_target_vocabulary_matches_linux() {
     assert_eq!(ResourceUsageTarget::SelfProcess.as_raw(), 0);
     assert_eq!(ResourceUsageTarget::Children.as_raw(), -1);
     assert_eq!(ResourceUsageTarget::Thread.as_raw(), 1);
 }
 
 #[test]
-fn linux_getrusage_reads_each_closed_target() {
+fn x86_64_getrusage_reads_each_closed_target() {
     for target in [
         ResourceUsageTarget::SelfProcess,
         ResourceUsageTarget::Children,
@@ -46,7 +46,7 @@ fn linux_getrusage_reads_each_closed_target() {
 }
 
 #[test]
-fn linux_getrusage_is_read_only_and_counters_do_not_decrease() {
+fn x86_64_getrusage_is_read_only_and_counters_do_not_decrease() {
     let first = process::getrusage(ResourceUsageTarget::SelfProcess)
         .expect("read initial Linux resource usage");
 

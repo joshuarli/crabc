@@ -7,7 +7,7 @@ use crabc_rs::{process, thread, Errno};
 const CHILD_PROBE: &str = "CRABC_RS_X86_64_THREAD_CREDENTIALS_CHILD";
 
 #[test]
-fn linux_thread_credential_setters_preserve_linux_no_change_and_typed_sentinels() {
+fn x86_64_thread_credential_setters_preserve_linux_no_change_and_typed_sentinels() {
     if env::var_os(CHILD_PROBE).is_some() {
         // The all-ones words exercise Linux's no-change operation. This runs
         // only in a child so the parent test process never changes its
@@ -63,7 +63,7 @@ fn linux_thread_credential_setters_preserve_linux_no_change_and_typed_sentinels(
     let output = Command::new(env::current_exe().expect("locate test binary"))
         .args([
             "--exact",
-            "linux_thread_credential_setters_preserve_linux_no_change_and_typed_sentinels",
+            "x86_64_thread_credential_setters_preserve_linux_no_change_and_typed_sentinels",
             "--nocapture",
         ])
         .env(CHILD_PROBE, "1")

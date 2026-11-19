@@ -14,7 +14,7 @@ use crabc_rs::time::{
 use crabc_rs::{AsFd, Errno};
 
 #[test]
-fn linux_advanced_clock_ids_are_validated_and_direct() {
+fn x86_64_advanced_clock_ids_are_validated_and_direct() {
     assert_eq!(ClockId::try_from(3), Ok(ClockId::ThreadCPUTime));
     assert_eq!(ClockId::try_from(11), Ok(ClockId::Tai));
     assert_eq!(ClockId::try_from(10), Err(Errno::INVAL));
@@ -55,7 +55,7 @@ fn linux_advanced_clock_ids_are_validated_and_direct() {
 }
 
 #[test]
-fn linux_clock_settime_preflights_and_never_mutates_realtime() {
+fn x86_64_clock_settime_preflights_and_never_mutates_realtime() {
     assert_eq!(
         time::clock_settime(
             ClockId::Monotonic,
@@ -78,7 +78,7 @@ fn linux_clock_settime_preflights_and_never_mutates_realtime() {
 }
 
 #[test]
-fn linux_posix_timer_owns_a_sigev_none_lifecycle() {
+fn x86_64_posix_timer_owns_a_sigev_none_lifecycle() {
     let zero = TimerSpec::new(Duration::ZERO, Duration::ZERO).expect("zero timer specification");
     assert!(TimerSpec::new(Duration::from_secs(i64::MAX as u64 + 1), Duration::ZERO).is_none());
 

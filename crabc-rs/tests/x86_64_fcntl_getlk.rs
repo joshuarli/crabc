@@ -70,7 +70,7 @@ fn child_record_lock_case() -> bool {
 }
 
 #[test]
-fn linux_fcntl_getlk_matches_the_linux_flock_record_and_unlocked_query() {
+fn x86_64_fcntl_getlk_matches_the_linux_flock_record_and_unlocked_query() {
     assert_eq!(size_of::<crabc_core::process::KernelFlock>(), 32);
     assert_eq!(align_of::<crabc_core::process::KernelFlock>(), 8);
     assert_eq!(offset_of!(crabc_core::process::KernelFlock, l_type), 0);
@@ -91,7 +91,7 @@ fn linux_fcntl_getlk_matches_the_linux_flock_record_and_unlocked_query() {
 }
 
 #[test]
-fn linux_fcntl_getlk_reports_a_conflicting_record_lock() {
+fn x86_64_fcntl_getlk_reports_a_conflicting_record_lock() {
     if child_record_lock_case() {
         return;
     }
@@ -103,7 +103,7 @@ fn linux_fcntl_getlk_reports_a_conflicting_record_lock() {
     let mut child = Command::new(std::env::current_exe().expect("locate test binary"))
         .args([
             "--exact",
-            "linux_fcntl_getlk_reports_a_conflicting_record_lock",
+            "x86_64_fcntl_getlk_reports_a_conflicting_record_lock",
             "--nocapture",
         ])
         .env(CHILD_LOCK_CASE, "1")
@@ -181,7 +181,7 @@ fn linux_fcntl_getlk_reports_a_conflicting_record_lock() {
 }
 
 #[test]
-fn linux_current_record_lock_checks_ranges_without_moving_the_offset() {
+fn x86_64_current_record_lock_checks_ranges_without_moving_the_offset() {
     let (file, _cleanup) = fixture_file();
     // SAFETY: The file remains open throughout all borrowed operations.
     let fd = unsafe { BorrowedFd::borrow_raw(std::os::fd::AsRawFd::as_raw_fd(&file)) };
@@ -199,7 +199,7 @@ fn linux_current_record_lock_checks_ranges_without_moving_the_offset() {
 }
 
 #[test]
-fn linux_fcntl_getlk_rejects_undefined_input_and_unrepresentable_offsets() {
+fn x86_64_fcntl_getlk_rejects_undefined_input_and_unrepresentable_offsets() {
     let (file, _cleanup) = fixture_file();
     // SAFETY: `file` remains open and is not closed through another alias for
     // the duration of these immediate borrowed descriptor observations.

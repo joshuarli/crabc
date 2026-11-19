@@ -13,7 +13,7 @@ fn assert_structurally_sound(observation: ProcessTimes) {
 }
 
 #[test]
-fn linux_times_reads_validated_tick_accounting_without_a_clock_rate() {
+fn x86_64_times_reads_validated_tick_accounting_without_a_clock_rate() {
     let first = process::times().expect("Linux times syscall");
     assert_structurally_sound(first);
 

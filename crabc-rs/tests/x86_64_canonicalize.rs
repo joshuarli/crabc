@@ -74,7 +74,7 @@ fn canonical_into(path: &[u8]) -> Vec<u8> {
 }
 
 #[test]
-fn linux_canonicalize_into_is_physical_byte_preserving_and_noalloc() {
+fn x86_64_canonicalize_into_is_physical_byte_preserving_and_noalloc() {
     let fixture = CanonicalFixture::new();
     let alias_path = fixture.root().join("alias/to-real/./child/../child/file");
     let expected = fixture.root().join("real/child/file");
@@ -108,7 +108,7 @@ fn linux_canonicalize_into_is_physical_byte_preserving_and_noalloc() {
 }
 
 #[test]
-fn linux_canonicalize_into_anchors_relative_paths_to_physical_cwd() {
+fn x86_64_canonicalize_into_anchors_relative_paths_to_physical_cwd() {
     let cwd = std::env::current_dir().expect("read physical test current directory");
     assert_eq!(canonical_into(b"."), cwd.as_os_str().as_bytes());
     assert_eq!(
@@ -121,7 +121,7 @@ fn linux_canonicalize_into_anchors_relative_paths_to_physical_cwd() {
 }
 
 #[test]
-fn linux_canonicalize_into_reports_kernel_and_boundary_errors() {
+fn x86_64_canonicalize_into_reports_kernel_and_boundary_errors() {
     let fixture = CanonicalFixture::new();
     let mut output = [MaybeUninit::new(UNTOUCHED); native_fs::CANONICAL_PATH_MAX];
 
@@ -181,7 +181,7 @@ fn linux_canonicalize_into_reports_kernel_and_boundary_errors() {
 
 #[cfg(feature = "alloc")]
 #[test]
-fn linux_canonicalize_returns_owned_nul_terminated_byte_path() {
+fn x86_64_canonicalize_returns_owned_nul_terminated_byte_path() {
     let fixture = CanonicalFixture::new();
     let expected = fixture.root().join("real/child/file");
     let actual = native_fs::canonicalize(
@@ -197,7 +197,7 @@ fn linux_canonicalize_returns_owned_nul_terminated_byte_path() {
 }
 
 #[test]
-fn linux_canonicalize_accepts_an_existing_c_string_input() {
+fn x86_64_canonicalize_accepts_an_existing_c_string_input() {
     let path = CStr::from_bytes_with_nul(b"/tmp\0").expect("static pathname is NUL-terminated");
     let mut output = [MaybeUninit::uninit(); native_fs::CANONICAL_PATH_MAX];
     let (initialized, _) = native_fs::canonicalize_into(path, &mut output)

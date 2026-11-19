@@ -8,7 +8,7 @@ use crabc_rs::thread;
 use crabc_rs::Errno;
 
 #[test]
-fn linux_sched_rr_get_interval_returns_a_stable_canonical_duration() {
+fn x86_64_sched_rr_get_interval_returns_a_stable_canonical_duration() {
     let first = thread::sched_rr_get_interval(None)
         .expect("read the calling task's scheduler interval");
     let second = thread::sched_rr_get_interval(None)
@@ -20,7 +20,7 @@ fn linux_sched_rr_get_interval_returns_a_stable_canonical_duration() {
 }
 
 #[test]
-fn linux_sched_rr_get_interval_accepts_live_self_and_distinct_task_selectors() {
+fn x86_64_sched_rr_get_interval_accepts_live_self_and_distinct_task_selectors() {
     let (ready_sender, ready_receiver) = mpsc::channel();
     let (release_sender, release_receiver) = mpsc::channel();
     let worker = std_thread::spawn(move || {
@@ -58,7 +58,7 @@ fn linux_sched_rr_get_interval_accepts_live_self_and_distinct_task_selectors() {
 }
 
 #[test]
-fn linux_sched_rr_get_interval_preserves_missing_task_error() {
+fn x86_64_sched_rr_get_interval_preserves_missing_task_error() {
     let missing = Pid::from_raw(i32::MAX).expect("i32::MAX is a non-zero typed PID");
 
     assert_eq!(

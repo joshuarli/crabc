@@ -47,7 +47,7 @@ fn borrowed(file: &File) -> BorrowedFd<'_> {
 }
 
 #[test]
-fn linux_dir_owns_close_on_exec_descriptor_and_preserves_byte_names() {
+fn x86_64_dir_owns_close_on_exec_descriptor_and_preserves_byte_names() {
     let (_cleanup, root, directory, byte_name) = fixture();
 
     let mut storage = [MaybeUninit::uninit(); 4096];
@@ -95,7 +95,7 @@ fn linux_dir_owns_close_on_exec_descriptor_and_preserves_byte_names() {
 }
 
 #[test]
-fn linux_dir_reports_small_buffer_error_once_and_then_stops() {
+fn x86_64_dir_reports_small_buffer_error_once_and_then_stops() {
     let (_cleanup, root, _directory, _byte_name) = fixture();
     let mut storage = [MaybeUninit::uninit(); 1];
     let mut stream = Dir::open(root.as_str(), &mut storage).expect("open owned directory stream");
@@ -114,7 +114,7 @@ fn linux_dir_reports_small_buffer_error_once_and_then_stops() {
 }
 
 #[test]
-fn linux_dirfd_stream_and_open_file_survive_rename_and_unlink() {
+fn x86_64_dirfd_stream_and_open_file_survive_rename_and_unlink() {
     let (_cleanup, root, _host_directory, byte_name) = fixture();
     let parent = fs::open(root.as_str(), OFlags::RDONLY | OFlags::DIRECTORY | OFlags::CLOEXEC,
         Mode::empty()).unwrap();

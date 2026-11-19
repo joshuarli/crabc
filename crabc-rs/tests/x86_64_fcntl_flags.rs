@@ -2,7 +2,7 @@
 use crabc_rs::{fs, io, pipe, Errno};
 
 #[test]
-fn linux_fcntl_status_flags_match_the_native_abi() {
+fn x86_64_fcntl_status_flags_match_the_native_abi() {
     assert_eq!(fs::OFlags::ACCMODE.bits(), 0x0020_0003);
     assert_eq!(fs::OFlags::RWMODE.bits(), 0x0000_0003);
     assert!((fs::OFlags::PATH & fs::OFlags::RWMODE).is_empty());
@@ -46,7 +46,7 @@ fn linux_fcntl_status_flags_match_the_native_abi() {
 }
 
 #[test]
-fn linux_fcntl_status_flags_share_open_file_description_and_restore() {
+fn x86_64_fcntl_status_flags_share_open_file_description_and_restore() {
     let (reader, _writer) = pipe::pipe().expect("create status-flags pipe");
     let duplicate = io::dup(&reader).expect("duplicate status-flags pipe");
     let initial = fs::fcntl_getfl(&reader).expect("read initial status flags");
@@ -94,7 +94,7 @@ fn linux_fcntl_status_flags_share_open_file_description_and_restore() {
 }
 
 #[test]
-fn linux_fcntl_status_flags_reject_closed_descriptor() {
+fn x86_64_fcntl_status_flags_reject_closed_descriptor() {
     let (reader, _writer) = pipe::pipe().expect("create EBADF fixture");
     let raw = reader.into_raw_fd();
     crabc_core::io::close(raw).expect("close EBADF fixture");

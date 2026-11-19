@@ -28,7 +28,7 @@ fn parse_id_fields(value: &str) -> [u32; 4] {
 }
 
 #[test]
-fn linux_process_and_parent_ids_are_typed_and_stable() {
+fn x86_64_process_and_parent_ids_are_typed_and_stable() {
     let pid = process::getpid();
     assert_eq!(pid.as_raw_pid() as u32, std::process::id());
     assert_eq!(process::getpid(), pid);
@@ -42,7 +42,7 @@ fn linux_process_and_parent_ids_are_typed_and_stable() {
 }
 
 #[test]
-fn linux_scalar_and_saved_identity_queries_match_proc_status() {
+fn x86_64_scalar_and_saved_identity_queries_match_proc_status() {
     let (uid, gid) = proc_status_ids();
     assert_eq!(process::getuid().as_raw(), uid[0]);
     assert_eq!(process::geteuid().as_raw(), uid[1]);
@@ -80,13 +80,13 @@ fn exit_immediately_child() -> ! {
 }
 
 #[test]
-fn linux_exit_immediately_ends_the_thread_group_without_destructors() {
+fn x86_64_exit_immediately_ends_the_thread_group_without_destructors() {
     if std::env::var_os(EXIT_CHILD).is_some() {
         exit_immediately_child();
     }
     let started = std::time::Instant::now();
     let output = std::process::Command::new(std::env::current_exe().expect("locate this test binary"))
-        .args(["--exact", "linux_exit_immediately_ends_the_thread_group_without_destructors", "--nocapture"])
+        .args(["--exact", "x86_64_exit_immediately_ends_the_thread_group_without_destructors", "--nocapture"])
         .env(EXIT_CHILD, "1")
         .output()
         .expect("re-execute the exit child");

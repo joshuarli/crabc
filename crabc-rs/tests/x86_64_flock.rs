@@ -74,7 +74,7 @@ fn spawn_child_exclusive_lock(path: &std::path::Path) -> (Child, ChildStdout) {
     let mut child = Command::new(std::env::current_exe().expect("locate test binary"))
         .args([
             "--exact",
-            "linux_flock_nonblocking_contention_uses_an_independent_open_file_description",
+            "x86_64_flock_nonblocking_contention_uses_an_independent_open_file_description",
             "--nocapture",
         ])
         .env(CHILD_LOCK_CASE, "1")
@@ -106,7 +106,7 @@ fn spawn_child_exclusive_lock(path: &std::path::Path) -> (Child, ChildStdout) {
 }
 
 #[test]
-fn linux_flock_exposes_the_linux_operation_values() {
+fn x86_64_flock_exposes_the_linux_operation_values() {
     assert_eq!(fs::FlockOperation::LockShared as u32, 0x01);
     assert_eq!(fs::FlockOperation::LockExclusive as u32, 0x02);
     assert_eq!(fs::FlockOperation::Unlock as u32, 0x08);
@@ -116,7 +116,7 @@ fn linux_flock_exposes_the_linux_operation_values() {
 }
 
 #[test]
-fn linux_flock_shares_duplicates_and_allows_independent_shared_locks() {
+fn x86_64_flock_shares_duplicates_and_allows_independent_shared_locks() {
     let (first, path, _cleanup) = flock_fixture();
     let second = independently_open(&path);
     let contender = independently_open(&path);
@@ -145,7 +145,7 @@ fn linux_flock_shares_duplicates_and_allows_independent_shared_locks() {
 }
 
 #[test]
-fn linux_flock_nonblocking_contention_uses_an_independent_open_file_description() {
+fn x86_64_flock_nonblocking_contention_uses_an_independent_open_file_description() {
     if child_holds_exclusive_lock() {
         return;
     }
@@ -178,7 +178,7 @@ fn linux_flock_nonblocking_contention_uses_an_independent_open_file_description(
 }
 
 #[test]
-fn linux_flock_raw_invalid_operation_and_closed_descriptor_errors_are_direct() {
+fn x86_64_flock_raw_invalid_operation_and_closed_descriptor_errors_are_direct() {
     let (file, _path, _cleanup) = flock_fixture();
     assert_eq!(
         crabc_core::fs::flock(file.as_raw_fd(), 0),

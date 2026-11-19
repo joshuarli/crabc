@@ -19,7 +19,7 @@ fn proc_supplementary_groups() -> Vec<u32> {
 }
 
 #[test]
-fn linux_getgroups_query_and_fill_match_the_current_credential_snapshot() {
+fn x86_64_getgroups_query_and_fill_match_the_current_credential_snapshot() {
     let expected = proc_supplementary_groups();
     let count = process::getgroups_count().expect("query Linux supplementary-group count");
     assert_eq!(count, expected.len());
@@ -37,7 +37,7 @@ fn linux_getgroups_query_and_fill_match_the_current_credential_snapshot() {
 }
 
 #[test]
-fn linux_getgroups_reports_only_the_initialized_maybe_uninit_prefix() {
+fn x86_64_getgroups_reports_only_the_initialized_maybe_uninit_prefix() {
     let count = process::getgroups_count().expect("query Linux supplementary-group count");
     let mut groups = vec![MaybeUninit::<Gid>::uninit(); count];
     let untouched_sentinel = Gid::from_raw(u32::MAX);
@@ -53,7 +53,7 @@ fn linux_getgroups_reports_only_the_initialized_maybe_uninit_prefix() {
 }
 
 #[test]
-fn linux_getgroups_rejects_an_undersized_buffer_without_changing_credentials() {
+fn x86_64_getgroups_rejects_an_undersized_buffer_without_changing_credentials() {
     let count = process::getgroups_count().expect("query Linux supplementary-group count");
     if count == 0 {
         return;
@@ -68,11 +68,11 @@ fn linux_getgroups_rejects_an_undersized_buffer_without_changing_credentials() {
 }
 
 #[test]
-fn linux_getgroups_empty_fill_keeps_the_count_query_out_of_buffer_results() {
+fn x86_64_getgroups_empty_fill_keeps_the_count_query_out_of_buffer_results() {
     let output = Command::new(std::env::current_exe().expect("locate test binary"))
         .args([
             "--exact",
-            "linux_getgroups_empty_fill_child_checks_nonempty_and_empty_lists",
+            "x86_64_getgroups_empty_fill_child_checks_nonempty_and_empty_lists",
             "--ignored",
             "--nocapture",
         ])
@@ -120,7 +120,7 @@ fn set_child_groups(groups: &[u32]) {
 
 #[test]
 #[ignore = "the parent regression invokes this test only in a subprocess"]
-fn linux_getgroups_empty_fill_child_checks_nonempty_and_empty_lists() {
+fn x86_64_getgroups_empty_fill_child_checks_nonempty_and_empty_lists() {
     set_child_groups(&[0]);
     assert_eq!(process::getgroups_count(), Ok(1));
 

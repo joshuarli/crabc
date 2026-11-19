@@ -59,7 +59,7 @@ fn has(mask: u32, field: StatxFlags) -> bool {
 }
 
 #[test]
-fn linux_statx_record_uses_the_linux_256_byte_abi() {
+fn x86_64_statx_record_uses_the_linux_256_byte_abi() {
     assert_eq!(size_of::<StatxTimestamp>(), 16);
     assert_eq!(align_of::<StatxTimestamp>(), 8);
     assert_eq!(offset_of!(StatxTimestamp, tv_sec), 0);
@@ -96,7 +96,7 @@ fn linux_statx_record_uses_the_linux_256_byte_abi() {
 }
 
 #[test]
-fn linux_statx_observes_descriptor_relative_metadata_only_when_masked_in() {
+fn x86_64_statx_observes_descriptor_relative_metadata_only_when_masked_in() {
     let (_cleanup, _root, directory, record) = fixture();
     let legacy = fs::fstat(borrowed(&record)).expect("fstat statx fixture file");
     let observed = fs::statx(
@@ -154,7 +154,7 @@ fn linux_statx_observes_descriptor_relative_metadata_only_when_masked_in() {
 }
 
 #[test]
-fn linux_statx_keeps_operation_specific_nofollow_and_empty_path_semantics() {
+fn x86_64_statx_keeps_operation_specific_nofollow_and_empty_path_semantics() {
     let (_cleanup, root, directory, _record) = fixture();
 
     let followed = fs::statx(
@@ -198,7 +198,7 @@ fn linux_statx_keeps_operation_specific_nofollow_and_empty_path_semantics() {
 }
 
 #[test]
-fn linux_statx_preserves_direct_validation_and_bounded_path_contracts() {
+fn x86_64_statx_preserves_direct_validation_and_bounded_path_contracts() {
     let (_cleanup, _root, directory, _record) = fixture();
     let directory = borrowed(&directory);
 
