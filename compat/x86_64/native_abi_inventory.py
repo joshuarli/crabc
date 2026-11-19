@@ -552,7 +552,8 @@ def parse_elf_sections(raw: str) -> dict[str, Any]:
     require(count is not None and saw_columns and saw_legend, "incomplete section header output")
     require(len(legend) == 4
             and tuple(line.strip() for line in legend[:3]) == _PINNED_SECTION_FLAG_LEGEND_PREFIX
-            and legend[3].strip() in _PINNED_SECTION_FLAG_LEGEND_ENDINGS,
+            and legend[3].strip() in (_PINNED_SECTION_FLAG_LEGEND_ENDINGS if ARCH == "x86_64" else (
+                "D (mbind), p (processor specific)", "R (retain), D (mbind), p (processor specific)")),
             "incomplete or changed pinned readelf section flag legend")
     require([row["index"] for row in sections] == list(range(count)),
             "readelf section rows are missing, duplicated, reordered, or truncated")

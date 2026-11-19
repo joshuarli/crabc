@@ -829,6 +829,12 @@ class NativeAbiCompleteSymbolFactsTests(unittest.TestCase):
             with self.subTest(legend=modified), self.assertRaises(inventory.InventoryError):
                 inventory.parse_elf_sections("".join(prefix + modified))
 
+    def test_arm_readelf_flag_legends_are_native_and_complete(self) -> None:
+        for ending in ("D (mbind), p (processor specific)", "R (retain), D (mbind), p (processor specific)"):
+            raw = SECTIONS.replace("D (mbind), l (large), p (processor specific)", ending)
+            with self.subTest(ending=ending), mock.patch.object(inventory, "ARCH", "aarch64"):
+                self.assertEqual(inventory.parse_elf_sections(raw)["flag_legend"][-1].strip(), ending)
+
     def test_both_observed_pinned_flag_legend_endings_preserve_raw_lines(self) -> None:
         # The pinned native archive displays R (retain) for its GNU ABI members,
         # and omits that entry for the symbol-free member. Both are complete.
