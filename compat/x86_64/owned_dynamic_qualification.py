@@ -246,6 +246,12 @@ def _materialization_product(product: Path) -> tuple[dict, dict | None, dict | N
             manifest = read(product / driver.COMBINED_PRODUCT_MANIFEST)
         state = read(product / "share/crabc/dynamic-product-state.json")
         provenance = read(product / "share/crabc/libc-shared.provenance.json")
+    if manifest.get("format") == "crabc-aarch64-owned-dynamic-sysroot-v1":
+        import owned_posix_product_evidence as products
+        try:
+            products._validate_dynamic_product(product)
+        except products.ProductEvidenceError as error:
+            raise QualificationError(f"installed product source-pinned validation failed: {error}") from error
     require(set(state) == MATERIALIZATION_STATE_FIELDS, "materialization fields drifted")
     require(state.get("schema") == "crabc.x86_64-owned-dynamic-materialization/v1", "wrong materialization schema")
     require(state.get("payload_files") == {name: value for name, value in manifest["files"].items()

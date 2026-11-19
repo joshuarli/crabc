@@ -437,6 +437,34 @@ class Aarch64DynamicNonPieTest(unittest.TestCase):
                     self.assertFalse(output.exists())
 
     @unittest.skipUnless(os.environ.get("CRABC_AARCH64_DYNAMIC_SYSROOT") or CAN_BUILD, "requires a built aarch64 product")
+    def test_qualification_rejects_resealed_producer_tool_drift(self):
+        sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+        import owned_dynamic_qualification as qualification
+        product = Path(os.environ["CRABC_AARCH64_DYNAMIC_SYSROOT"]).resolve(strict=True)
+        with tempfile.TemporaryDirectory(dir=os.environ["TMPDIR"]) as directory:
+            copy = Path(directory) / "product"
+            shutil.copytree(product, copy, symlinks=True)
+            loader = copy / "lib/ld-crabc-aarch64.so.1"
+            loader.unlink()
+            os.link(copy / "usr/lib/libc.so", loader)
+            tool_path = copy / "share/crabc/producer-tools.json"
+            tools = json.loads(tool_path.read_text())
+            tools["linker"]["sha256"] = "0" * 64
+            tool_path.write_text(json.dumps(tools))
+            tool_hash = hashlib.sha256(tool_path.read_bytes()).hexdigest()
+            state_path = copy / "share/crabc/dynamic-product-state.json"
+            state = json.loads(state_path.read_text())
+            state["payload_files"]["share/crabc/producer-tools.json"] = tool_hash
+            state_path.write_text(json.dumps(state))
+            manifest_path = copy / "share/crabc/manifest.json"
+            manifest = json.loads(manifest_path.read_text())
+            manifest["files"]["share/crabc/producer-tools.json"] = tool_hash
+            manifest["files"]["share/crabc/dynamic-product-state.json"] = hashlib.sha256(state_path.read_bytes()).hexdigest()
+            manifest_path.write_text(json.dumps(manifest))
+            with self.assertRaisesRegex(qualification.QualificationError, "source-pinned validation"):
+                qualification.product_identity(copy)
+
+    @unittest.skipUnless(os.environ.get("CRABC_AARCH64_DYNAMIC_SYSROOT") or CAN_BUILD, "requires a built aarch64 product")
     def test_driver_rejects_target_input_injection_before_compiling(self):
         product = Path(os.environ["CRABC_AARCH64_DYNAMIC_SYSROOT"]).resolve(strict=True)
         with tempfile.TemporaryDirectory(dir=os.environ["TMPDIR"]) as temporary:

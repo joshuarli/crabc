@@ -254,11 +254,17 @@ class OwnedDynamicQualificationTests(unittest.TestCase):
         product, manifest_path, manifest, validate = self.materialized_product("arm-product-identity")
         manifest["format"] = "crabc-aarch64-owned-dynamic-sysroot-v1"
         manifest_path.write_text(json.dumps(manifest))
-        with mock.patch.object(driver, "validate_installation", return_value=manifest):
+        import owned_posix_product_evidence as products
+        with mock.patch.object(driver, "validate_installation", return_value=manifest), \
+             mock.patch.object(products, "_validate_dynamic_product") as pinned:
             self.assertEqual(REAL_SOURCE_BOUND_PRODUCT_IDENTITY(product, self.source),
                              qualification.digest(manifest_path))
+            pinned.assert_called_with(product)
             with self.assertRaisesRegex(qualification.QualificationError, "installed product source is stale"):
                 REAL_SOURCE_BOUND_PRODUCT_IDENTITY(product, "d" * 64)
+            pinned.side_effect = products.ProductEvidenceError("producer pin differs")
+            with self.assertRaisesRegex(qualification.QualificationError, "producer pin differs"):
+                REAL_SOURCE_BOUND_PRODUCT_IDENTITY(product, self.source)
 
     def test_run_case_rejects_source_mutation_during_the_leaf(self):
         source = self.root / "tracked-source.c"
