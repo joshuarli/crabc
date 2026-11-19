@@ -26,6 +26,12 @@ class Aarch64DynamicOptions(unittest.TestCase):
                 dynamic = subprocess.check_output(["readelf", "-dW", output], text=True)
                 facts = elf.inspect(output, architecture="aarch64")
                 self.assertEqual(facts["machine"], "EM_AARCH64")
+                inspection_path, link_map = elf.sidecar_paths(output)
+                inspected = json.loads(inspection_path.read_text())
+                self.assertEqual(inspected["facts"], facts)
+                self.assertTrue(link_map.stat().st_size)
+                elf.validate_record(inspected, output, output_format="crabc-aarch64-owned-dynamic-sysroot-v1",
+                                    fail=self.fail, architecture="aarch64")
                 self.assertTrue(all(tag in dynamic for tag in expected))
                 self.assertIn("(RPATH)", dynamic)
                 self.assertNotIn("(RUNPATH)", dynamic)

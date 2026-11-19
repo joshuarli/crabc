@@ -12,6 +12,8 @@ import tempfile
 
 sys.dont_write_bytecode = True
 root = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(root / "share/crabc"))
+import owned_dynamic_elf as elf_inspection
 lib = root / "usr/lib"
 loader = importlib.machinery.SourceFileLoader("crabc_cc_static", str(root / "share/crabc/crabc_cc_static.py"))
 spec = importlib.util.spec_from_loader(loader.name, loader)
@@ -321,9 +323,21 @@ def execute(arguments):
                 raise shared.DriverError(f"runtime imports differ from exact unresolved object symbols: {sorted(required - provided)}")
         command += [str(lib / "crti.o"), *(str(path) for path in attachment), *(str(path) for path in objects), str(archive),
                     *(str(path) for path in dso_inputs), str(lib / "libc.so"), str(lib / "crtn.o"), "-o", str(output)]
+        inspection_path, map_path = elf_inspection.sidecar_paths(output)
+        for sidecar in (inspection_path, map_path):
+            shared.validate_application_output(root, sidecar)
+            shared.validate_application_output_disjoint(sidecar, (*sources, *objects_in, *dso_inputs, *transitive_inputs, output, receipt_path))
         descriptor = os.open(receipt_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o644)
+        inspection_fd = map_fd = -1
+        map_reserved = inspection_reserved = False
         try:
-            completed = subprocess.run([*command[:-2], "--trace", *command[-2:]], text=True,
+            inspection_fd = os.open(inspection_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o644)
+            inspection_reserved = True
+            map_fd = os.open(map_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o644)
+            map_reserved = True
+            os.close(map_fd)
+            map_fd = -1
+            completed = subprocess.run([*command[:-2], "--trace", f"-Map={map_path}", *command[-2:]], text=True,
                                        stdout=subprocess.PIPE, check=True, env=shared.clean_environment())
             trace = completed.stdout.splitlines()
             direct = [*runtime, *objects, *dso_inputs]
@@ -357,6 +371,21 @@ def execute(arguments):
                         unresolved.add(fields[7])
                 if unresolved - provided != runtime_imports:
                     raise shared.DriverError("linked runtime imports differ from declared contract")
+            try:
+                facts = elf_inspection.inspect(output, architecture="aarch64")
+                expected = elf_inspection.Expectation(
+                    mode=mode, interpreter=interpreter, needed=(*(path.name for path in dso_inputs), "libc.so"),
+                    soname=output.name if mode == "shared" else None,
+                    search_kind="rpath" if rpath is not None else "runpath",
+                    search_path=rpath if rpath is not None else runpath or "/usr/lib",
+                    binding=binding_mode, hash_style=hash_style,
+                    runtime_imports=frozenset(runtime_imports), provided_symbols=None,
+                )
+                elf_inspection.require_expected(facts, expected)
+                inspection = elf_inspection.record(output, facts, expected,
+                    output_format="crabc-aarch64-owned-dynamic-sysroot-v1", link_map=map_path)
+            except (elf_inspection.InspectionError, OSError) as error:
+                raise shared.DriverError(f"final ELF inspection rejected {output}: {error}") from error
             record = {"schema": 2, "format": "crabc-aarch64-owned-dynamic-sysroot-v1", "mode": mode,
                       "binding": binding_mode, "runtime_imports": sorted(runtime_imports), "application_runpath": None if rpath is not None else runpath or "/usr/lib",
                       "application_rpath": rpath, "application_search_kind": "rpath" if rpath is not None else "runpath", "application_hash_style": hash_style,
@@ -376,6 +405,10 @@ def execute(arguments):
                     [{"role": "linker-input", "path": str(path), "sha256": shared.sha256_file(path)} for path in [*runtime, *objects, archive]]
                     + [{"role": record["application_dso_roles"][name] + "-application-dso", "name": name,
                         "path": str(path), "sha256": shared.sha256_file(path)} for name, (path, _) in nodes.items()])
+            with os.fdopen(inspection_fd, "w", encoding="utf-8") as stream:
+                inspection_fd = -1
+                json.dump(inspection, stream, indent=2, sort_keys=True)
+                stream.write("\n")
             with os.fdopen(descriptor, "w", encoding="utf-8") as stream:
                 descriptor = -1
                 json.dump(record, stream, indent=2, sort_keys=True)
@@ -383,7 +416,15 @@ def execute(arguments):
         except BaseException:
             if descriptor != -1:
                 os.close(descriptor)
+            if inspection_fd != -1:
+                os.close(inspection_fd)
+            if map_fd != -1:
+                os.close(map_fd)
             receipt_path.unlink(missing_ok=True)
+            if inspection_reserved:
+                inspection_path.unlink(missing_ok=True)
+            if map_reserved:
+                map_path.unlink(missing_ok=True)
             output.unlink(missing_ok=True)
             raise
 
