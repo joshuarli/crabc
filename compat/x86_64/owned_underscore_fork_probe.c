@@ -123,7 +123,11 @@ static void error_cases(void) {
     struct instruction { unsigned short code; unsigned char yes, no; unsigned value; };
     struct program { unsigned short length; struct instruction *instructions; };
     struct instruction instructions[] = {
+#if defined(__aarch64__)
+        {0x20, 0, 0, 0}, {0x15, 1, 0, SYS_clone},
+#else
         {0x20, 0, 0, 0}, {0x15, 1, 0, SYS_fork},
+#endif
         {0x06, 0, 0, 0x7fff0000}, {0x06, 0, 0, 0x00050000 | EAGAIN},
     };
     struct program filter = {sizeof instructions / sizeof *instructions, instructions};
