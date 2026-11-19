@@ -11,5 +11,9 @@ if not temporary.is_dir() or temporary.resolve() != temporary or not temporary.i
 PY
 work="$(mktemp -d "$TMPDIR/owned-dynamic-fork.XXXXXX")"
 readonly work
-python3 -B "$ROOT/scripts/build_x86_64_owned_dynamic_sysroot.py" --output "$work/installed"
+if [ "$(uname -m)" = aarch64 ]; then
+    python3 -B "$ROOT/scripts/build_x86_64_owned_dynamic_sysroot.py" --architecture aarch64 --output "$work/installed"
+else
+    python3 -B "$ROOT/scripts/build_x86_64_owned_dynamic_sysroot.py" --output "$work/installed"
+fi
 bash "$ROOT/compat/x86_64/run_general_dynamic_fork.sh" "$work/installed"
