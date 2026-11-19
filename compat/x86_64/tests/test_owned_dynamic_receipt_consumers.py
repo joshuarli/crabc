@@ -24,7 +24,7 @@ RUNNERS = {
     ),
     "process-control": (
         ROOT / "compat/x86_64/run_owned_process_control.sh",
-        'python3 -B - "$ROOT" "$product" "$consumer" "$mode" "$object" "$receipt" <<\'PY\'\n',
+        'python3 -B - "$ROOT" "$product" "$consumer" "$mode" "$object" "$receipt" "$arch" <<\'PY\'\n',
     ),
     "driver-source-inputs": (
         ROOT / "compat/x86_64/run_owned_dynamic_driver_source_inputs.sh",
@@ -175,7 +175,7 @@ class OwnedDynamicReceiptConsumerTests(unittest.TestCase):
         self.receipt_path.write_text(json.dumps(receipt), encoding="utf-8")
         arguments = {
             "io-cancellation": [ROOT, self.product, "pie", self.candidate, INTERPRETER, self.object, "x86_64"],
-            "process-control": [ROOT, self.product, self.candidate, "pie", self.object, self.receipt_path],
+            "process-control": [ROOT, self.product, self.candidate, "pie", self.object, self.receipt_path, "x86_64"],
             "driver-source-inputs": [ROOT, self.receipt_path, self.candidate],
             "syslog": [ROOT, "dynamic", "pie", self.candidate, self.receipt_path, self.provider, self.provider, "x86_64"],
             "error-reporting": [ROOT, "dynamic", "pie", self.candidate, self.receipt_path, self.provider, "x86_64"],
