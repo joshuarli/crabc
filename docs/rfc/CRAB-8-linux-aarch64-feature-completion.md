@@ -338,11 +338,17 @@ Open, in dependency order:
   traces), dynamic Lua (driver `--application-dependency-file`), Rust provider
   regressions, POSIX native aggregate, pthread/text/resolver/C-ABI families and
   ABI evidence.
-- Package corpus: `compat/corpus/manifest.toml` already pins the 34-case
-  Alpine 3.24.1 AArch64 corpus by archive SHA-256. It needs staging and wiring
-  into the converged readers (`run_owned_package_corpus.sh`,
-  `owned_loader_corpus_evidence.py`, the dynamic qualification case); no new
-  pin is needed.
+- Package corpus: `compat/corpus/manifest.toml` pins the 34-case Alpine
+  3.24.1 AArch64 corpus by archive SHA-256, and the converged readers now
+  stage and validate it on arm64. The 20 cases whose archives are still
+  available match pinned musl byte for byte (stdout, stderr, status) through
+  the converged dynamic product. Seven pinned archives (curl 8.21.0-r0,
+  git 2.54.0-r0, gzip 1.14-r2, openssh-client-default 10.3_p1-r0,
+  openssl 3.5.7-r0, python3 3.14.7-r1, sqlite 3.53.2-r0) now return 404 from
+  dl-cdn and mirrors for both architectures, because Alpine drops superseded
+  builds, and their binaries also need libacl, libmagic, libpcre2 and libzstd,
+  which the pinned image lacks. Owner input: a byte-identical copy of those
+  archives, or a re-pin of the frozen corpus (both architectures).
 - x86 link and run of the converged tree on the x86 host (type-checked only
   here).
 - Owner decision: binary128 soft-float rounding and exception fidelity
