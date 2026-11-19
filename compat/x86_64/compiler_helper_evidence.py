@@ -1993,11 +1993,15 @@ def _live_artifact_observations(work: Path, contract: Mapping[str, Any], artifac
     direct = {name for name in names
               if re.search(transfer + r"\s+[^\n]*<" + re.escape(name) + r">", disassembly)}
     require(direct == names, "retained aggregate candidate direct helper transfers differ")
-    return {"archive": artifacts["libcrabc-builtins.a"], "candidate": artifacts["candidate"],
-            "archive_global_default_functions": list(helper_names(contract)),
-            "candidate_direct_transfers": list(helper_names(contract)), "candidate_elf_type": "EXEC",
-            "candidate_has_interpreter": False, "candidate_has_tls": False,
-            "candidate_has_dynamic_dependencies": False}
+    result = {"archive": artifacts["libcrabc-builtins.a"], "candidate": artifacts["candidate"],
+              "archive_global_default_functions": list(helper_names(contract)) if architecture == "x86_64"
+              else sorted(fields[-1] for fields in rows),
+              "candidate_direct_transfers": list(helper_names(contract)), "candidate_elf_type": "EXEC",
+              "candidate_has_interpreter": False, "candidate_has_tls": False,
+              "candidate_has_dynamic_dependencies": False}
+    if architecture == "aarch64":
+        result["archive_symbol_metadata"] = dict(archive_metadata)
+    return result
 
 
 def _provenance(path: Path, contract: Mapping[str, Any], archive_identity: Mapping[str, Any]) -> dict[str, Any]:
