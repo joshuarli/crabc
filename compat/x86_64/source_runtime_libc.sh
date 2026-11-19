@@ -28,6 +28,8 @@ build_source_runtime_libc() {
     local output="$1"
     shift
     local root="$_source_runtime_libc_root"
+    local work_name
+    work_name="$(python3 -B "$root/compat/x86_64/native_arch.py" | sed -n "s/^work_name=//p")"
     local retained_work=""
     if [ "${1:-}" = "--retain-work" ]; then
         [ "$#" -ge 2 ] && [ -n "$2" ] || { printf 'build_source_runtime_libc: --retain-work requires a path\n' >&2; return 2; }
@@ -35,11 +37,11 @@ build_source_runtime_libc() {
         shift 2
         case "$retained_work" in
             /*) ;;
-            *) retained_work="$root/.work/x86_64/$retained_work" ;;
+            *) retained_work="$root/.work/$work_name/$retained_work" ;;
         esac
     fi
     local private archive
-    mkdir -p "$root/.work/x86_64/tmp"
+    mkdir -p "$root/.work/$work_name/tmp"
     if [ -n "$retained_work" ]; then
         if ! archive="$(python3 "$root/compat/x86_64/native_static_source_runtime_closure.py" build \
             --work "$retained_work" --print-archive "$@")"; then
@@ -51,7 +53,7 @@ build_source_runtime_libc() {
         cp -- "$retained_work/receipt.json" "$output.source-runtime.json"
         return 0
     fi
-    private="$(mktemp -d "$root/.work/x86_64/tmp/source-runtime-libc.XXXXXX")"
+    private="$(mktemp -d "$root/.work/$work_name/tmp/source-runtime-libc.XXXXXX")"
     if ! archive="$(python3 "$root/compat/x86_64/native_static_source_runtime_closure.py" build \
         --work "tmp/${private##*/}/graph" --print-archive "$@")"; then
         printf 'source-runtime libc build failed; evidence retained: %s\n' "$private" >&2
