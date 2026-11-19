@@ -352,7 +352,11 @@ def prepare(work: Path) -> None:
     if ARCH["arch"] == "aarch64":
         import owned_posix_product_evidence as products
         tools = Path(products.source_native_compiler_tool_records()["rustc"]["sysroot"]) / "lib/rustlib" / ARCH["target_triple"] / "bin"
-        commands[0] = ["env", f"CRABC_AARCH64_DYNAMIC_SYSROOT={work / 'installed'}",
+        native_product = work / "installed"
+        combined = read(native_product / "share/crabc/manifest.json").get("format") == "crabc-aarch64-owned-sysroot-v1"
+        if combined:
+            native_product = work / "native-dynamic"
+        commands[0] = ["env", f"CRABC_AARCH64_DYNAMIC_SYSROOT={native_product}",
                        "python3", "-B", "-m", "unittest", "discover", "-s",
                        str(ROOT / "compat/x86_64/tests"), "-p", "test_aarch64_dynamic_non_pie.py"]
         commands.insert(1, ["env", f"PYTHONPATH={ROOT / 'compat/x86_64'}",
@@ -360,6 +364,9 @@ def prepare(work: Path) -> None:
         commands.insert(3, ["env", f"PATH={tools}:{os.environ.get('PATH', '')}",
                             "python3", "-B", "-m", "unittest", "-v", "crt.tests.test_build"])
         checks = ["installed-driver-aarch64", "installed-driver-shared", "owned-crt", "owned-crt-aarch64", "owned-loader-source", "pinned-musl-oracle"]
+        if combined:
+            commands.insert(0, ["python3", "-B", str(ROOT / "scripts/build_x86_64_owned_dynamic_sysroot.py"),
+                                "--architecture", "aarch64", "--output", str(native_product)])
     log = work / "qualification-prepare.log"
     with log.open("xb") as output:
         os.fchmod(output.fileno(), stat.S_IMODE(os.fstat(output.fileno()).st_mode) | 0o444)
