@@ -175,7 +175,11 @@ static int exercise_fifo(enum operation op, const char *path, int directory, int
     CHECK(!mkfifo(path,0600));
     struct state s={.operation=op,.fd=-1,.directory=directory,.opened=-1,.path=path,.fifo=1,.state_after=-1};
     pthread_t thread; CHECK(!pthread_create(&thread,NULL,worker,&s));
+#if defined(__aarch64__)
+    long number=SYS_openat;
+#else
     long number=op==OPEN_RELATIVE ? SYS_openat : SYS_open;
+#endif
     CHECK(wait_in_syscall(&s,number));
     int peer=-1;
     if (!signal_mode) {
