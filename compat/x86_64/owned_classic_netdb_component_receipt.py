@@ -33,7 +33,9 @@ from native_build_tools import MOLD
 if str(HERE) not in sys.path:
     sys.path.insert(0, str(HERE))
 import core_image
+from native_arch import native_arch
 
+ARCH = native_arch()["arch"]
 SOURCE_MOUNT = "/workspace"
 SCHEMA = "crabc.x86_64-owned-classic-netdb-products/v1"
 COMPONENT = "classic-netdb"
@@ -85,11 +87,11 @@ DYNAMIC_CELLS = (
     "dynamic-non-pie-direct",
 )
 FULL_CELLS = ("static", "static-pie", *DYNAMIC_CELLS)
-PINNED_IMAGE = core_image.CORE_IMAGE_REFERENCE
+PINNED_IMAGE = "crabc-core-evidence@" + core_image.core_image_id(ARCH)
 IMAGE_MARKER = "CRABC_CLASSIC_NETDB_IMAGE_ID"
-IMAGE_MANIFEST = "compat/x86_64/owned_classic_netdb_image_inputs.json"
+IMAGE_MANIFEST = "compat/x86_64/owned_classic_netdb_image_inputs" + ("" if ARCH == "x86_64" else "_aarch64") + ".json"
 TOOLCHAIN = pinned_toolchain(ROOT)
-TOOLCHAIN_ROOT = Path("/opt/rustup/toolchains") / f"{TOOLCHAIN}-x86_64-unknown-linux-musl"
+TOOLCHAIN_ROOT = Path("/opt/rustup/toolchains") / f"{TOOLCHAIN}-{ARCH}-unknown-linux-musl"
 LINKER_PATH = MOLD
 SOURCE_PATHS = {
     "producer": "compat/x86_64/owned_classic_netdb.py",
@@ -282,11 +284,11 @@ def require_collection_image() -> str:
 def trusted_image_manifest(root: Path) -> dict[str, object]:
     value = read_json(checkout_file(root, IMAGE_MANIFEST, "classic-netdb image manifest"), "classic-netdb image manifest")
     require(isinstance(value, dict) and set(value) == {"schema", "files"} and
-            value.get("schema") == "crabc.x86_64-owned-classic-netdb-image-inputs/v1" and
+            value.get("schema") == f"crabc.{ARCH}-owned-classic-netdb-image-inputs/v1" and
             isinstance(value.get("files"), dict),
             "classic-netdb current image manifest differs")
     for path in (str(TOOLCHAIN_ROOT / "bin/rustc"), str(LINKER_PATH),
-                 "/usr/bin/readelf", "/usr/bin/nm", "/usr/bin/gcc", "/usr/local/bin/crabc-x86_64-musl-gcc"):
+                 "/usr/bin/readelf", "/usr/bin/nm", "/usr/bin/gcc", f"/usr/local/bin/crabc-{ARCH}-musl-gcc"):
         require(path in value["files"], f"classic-netdb image manifest omits {path}")
     return value
 
@@ -300,7 +302,7 @@ def tool_record(path: Path, description: str) -> dict[str, object]:
 def tool_roster(root: Path, dynamic: Path, static: Path | None) -> dict[str, object]:
     image = trusted_image_manifest(root)
     tools = {
-        "oracle": tool_record(Path("/usr/local/bin/crabc-x86_64-musl-gcc"), "pinned musl compiler"),
+        "oracle": tool_record(Path(f"/usr/local/bin/crabc-{ARCH}-musl-gcc"), "pinned musl compiler"),
         "compiler": tool_record(Path("/usr/bin/gcc"), "pinned header compiler"),
         "linker": tool_record(LINKER_PATH, "pinned mold linker"),
         "readelf": tool_record(Path("/usr/bin/readelf"), "pinned ELF reader"),
@@ -438,7 +440,7 @@ def execution_artifacts(root: Path, work: Path, entry: str, case: str,
     elif entry.endswith("-kernel"):
         expected_argv = ["/consumer", case]
     else:
-        expected_argv = ["/lib/ld-crabc-x86_64.so.1", "/consumer", case]
+        expected_argv = [f"/lib/ld-crabc-{ARCH}.so.1", "/consumer", case]
     argv = parse_argv(artifact_bytes(root, record, "argv", work, label), "execution")
     require(argv == expected_argv, f"execution argv differs: {entry}/{case}")
     require(artifact_bytes(root, record, "status", work, label) == b"0\n",
@@ -481,7 +483,7 @@ def validate_source_object(root: Path, work: Path, workload: Path, compile_argv:
     """Bind the retained object bytes to the selected source and installed compiler."""
     require(compile_argv[-2:] == ["-o", mounted(root, workload)], "classic-netdb compile output differs")
     # Retained artifacts may be mounted read-only.
-    scratch_root = root / ".work/x86_64/tmp"
+    scratch_root = root / f".work/{ARCH}/tmp"
     scratch_root.mkdir(parents=True, exist_ok=True)
     scratch_root = physical(scratch_root, "classic-netdb verifier scratch", directory=True)
     with tempfile.TemporaryDirectory(prefix="classic-netdb-source-recompile-", dir=scratch_root) as scratch:
@@ -580,7 +582,7 @@ def validate_report(root: Path, report_path: Path, *, require_static: bool = Fal
     work = report_path.parent
     workload = assert_identity(root, report["workload"], "classic-netdb installed-header object", expected=work / "workload.o")
     data = workload.read_bytes()
-    require(data[:7] == b"\x7fELF\x02\x01\x01" and data[16:20] == b"\x01\x00>\x00", "classic-netdb workload is not x86-64 ET_REL")
+    require(data[:7] == b"\x7fELF\x02\x01\x01" and data[16:20] == (b"\x01\x00>\x00" if ARCH == "x86_64" else b"\x01\x00\xb7\x00"), "classic-netdb workload is not x86-64 ET_REL")
 
     commands = report["commands"]
     expected_commands = command_plan(root, work, static_product, dynamic, current_tools, mode)

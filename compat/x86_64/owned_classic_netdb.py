@@ -16,6 +16,7 @@ import sys
 import owned_classic_netdb_component_receipt as receipt
 
 ROOT = Path(__file__).resolve().parents[2]
+ARCH = receipt.ARCH
 # The receipt owns this closed roster.  Keeping the producer on the same
 # tuple prevents prose or a second list from silently dropping a scenario.
 CASES = receipt.CASES
@@ -68,7 +69,7 @@ def checked(arguments: list[str | Path], log: Path, *, cwd: Path = ROOT, journal
 
 def prepare(work: Path) -> None:
     for kind, builder in (('static', 'build_x86_64_owned_sysroot.py'), ('dynamic', 'build_x86_64_owned_dynamic_sysroot.py')):
-        checked([sys.executable, '-B', ROOT / 'scripts' / builder, '--output', work / f'{kind}-sysroot'], work / f'{kind}-build.log')
+        checked([sys.executable, '-B', ROOT / 'scripts' / builder, *([] if ARCH == 'x86_64' else ['--architecture', ARCH]), '--output', work / f'{kind}-sysroot'], work / f'{kind}-build.log')
 
 
 def fixture_module():
@@ -131,7 +132,7 @@ def run(work: Path, static: Path | None, dynamic: Path) -> None:
             journal=journal, label='header-trace')
     checked([compiler, *flags, '-std=c11', '-fno-builtin', '-c', source, '-o', obj], work / 'compile.log',
             journal=journal, label='compile')
-    checked(['/usr/local/bin/crabc-x86_64-musl-gcc', '-static', '-fno-pie', '-no-pie', '-pthread', '-Wl,--export-dynamic', obj, '-o', work / 'oracle'],
+    checked([f'/usr/local/bin/crabc-{ARCH}-musl-gcc', '-static', '-fno-pie', '-no-pie', '-pthread', '-Wl,--export-dynamic', obj, '-o', work / 'oracle'],
             work / 'oracle-link.log', journal=journal, label='oracle-link')
     symbols(work / 'oracle', False, work / 'oracle-symbols.txt', journal, 'oracle-symbols')
     root = work / 'execution-root'
@@ -214,7 +215,7 @@ def run(work: Path, static: Path | None, dynamic: Path) -> None:
             payload_record.write_bytes(receipt.canonical(payload))
             payload_before.write_bytes(receipt.canonical(payload))
             execute(dynamic_root, 'dynamic-' + dynamic_mode + '-kernel', ['/consumer'])
-            execute(dynamic_root, 'dynamic-' + dynamic_mode + '-direct', ['/lib/ld-crabc-x86_64.so.1', '/consumer'])
+            execute(dynamic_root, 'dynamic-' + dynamic_mode + '-direct', [f'/lib/ld-crabc-{ARCH}.so.1', '/consumer'])
             payload_after = work / f'dynamic-{dynamic_mode}-execution-payload-after.json'
             payload_after.write_bytes(receipt.canonical(receipt.payload_record(dynamic, dynamic_root, binary, consumer)))
             payloads[dynamic_mode] = {'record': receipt.identity(ROOT, payload_record),

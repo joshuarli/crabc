@@ -98,11 +98,11 @@ class OwnedClassicNetdbComponentReceiptTests(unittest.TestCase):
         files = manifest["files"]
         self.assertEqual(
             files[str(self.receipt.TOOLCHAIN_ROOT / "bin/rustc")]["sha256"],
-            "228e24592d38da145ce4064b14e4bcfdd13cd3e2623bdbdcec45f37d16ef7b3b",
+            ("228e24592d38da145ce4064b14e4bcfdd13cd3e2623bdbdcec45f37d16ef7b3b" if self.receipt.ARCH == "x86_64" else "7b86bf473e0dc8f27041f0ff10bff1ad7db90ea62ce1ed6a90b0fbbc81c6259b"),
         )
         self.assertEqual(
             files[str(self.receipt.LINKER_PATH)]["sha256"],
-            "3cfef61deb864534e48ec37ef22d613a43a8764454bcf852a1181fb588daec2f",
+            ("3cfef61deb864534e48ec37ef22d613a43a8764454bcf852a1181fb588daec2f" if self.receipt.ARCH == "x86_64" else "2f694c9ecbfe99aad11d0ef00a15708cf74b82a0a8dfc9760037fa2917263b28"),
         )
 
     def test_collection_admits_only_the_observed_current_image(self) -> None:
@@ -149,7 +149,7 @@ class OwnedClassicNetdbComponentReceiptTests(unittest.TestCase):
             self.receipt.validate_association_difference(value)
 
     def test_execution_evidence_binds_argv_and_file_positions(self) -> None:
-        scratch = ROOT / ".work/x86_64/tmp/classic-netdb-reader-tests"
+        scratch = ROOT / f".work/{self.receipt.ARCH}/tmp/classic-netdb-reader-tests"
         scratch.mkdir(parents=True, exist_ok=True)
         with tempfile.TemporaryDirectory(dir=scratch) as directory:
             root = Path(directory)
@@ -157,7 +157,7 @@ class OwnedClassicNetdbComponentReceiptTests(unittest.TestCase):
             work.mkdir()
             label = "dynamic-pie-direct-host-numeric"
             data = {
-                "argv": b'["/lib/ld-crabc-x86_64.so.1","/consumer","host-numeric"]\n',
+                "argv": f'["/lib/ld-crabc-{self.receipt.ARCH}.so.1","/consumer","host-numeric"]\n'.encode(),
                 "stdout": b"classic netdb scenario passed\n",
                 "stderr": b"",
                 "status": b"0\n",
@@ -224,7 +224,7 @@ class OwnedClassicNetdbComponentReceiptTests(unittest.TestCase):
                 temporary.chmod(original_mode)
 
     def test_self_consistent_workload_identity_requires_source_recompile(self) -> None:
-        scratch = ROOT / ".work/x86_64/tmp/classic-netdb-reader-tests"
+        scratch = ROOT / f".work/{self.receipt.ARCH}/tmp/classic-netdb-reader-tests"
         scratch.mkdir(parents=True, exist_ok=True)
         with tempfile.TemporaryDirectory(dir=scratch) as directory:
             root = Path(directory)
