@@ -102,6 +102,9 @@ class NativeResolverNetworkRunnerTests(unittest.TestCase):
         with tempfile.TemporaryDirectory(prefix="resolver-run-root-", dir=runner.ROOT / ".work") as directory:
             parent = Path(directory)
             parent.chmod(0o2755)
+            control = parent / 'control'
+            control.mkdir()
+            inherited_setgid = control.stat().st_mode & stat.S_ISGID
             arguments = argparse.Namespace(work_root=parent, report=Path("latest.json"))
             patches = (
                 mock.patch.object(runner.component_receipt, "authenticate_image_inputs"),
@@ -121,7 +124,7 @@ class NativeResolverNetworkRunnerTests(unittest.TestCase):
             self.assertEqual(report["error"], "stop after run-root creation")
             self.assertIsNone(published)
             self.assertEqual(mode & 0o777, 0o755)
-            self.assertTrue(mode & stat.S_ISGID)
+            self.assertEqual(mode & stat.S_ISGID, inherited_setgid)
 
     def test_runner_requires_explicit_prepared_sysroots(self) -> None:
         with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
