@@ -133,7 +133,8 @@ class Aarch64DynamicNonPieTest(unittest.TestCase):
                     output = work / mode
                     subprocess.run([driver, "--dynamic-" + mode, obj, "-o", output], check=True)
                     facts = owned_dynamic_elf.inspect(output, architecture="aarch64")
-                    self.assertEqual(facts["weak_undefined_symbols"], ["fixture_weak_data"])
+                    self.assertEqual(facts["weak_undefined_symbols"], [
+                        "__crabc_x86_64_loader_tls_runtime_v1", "__crabc_x86_64_owned_crt_handoff", "fixture_weak_data"])
                     symbols = subprocess.check_output(["readelf", "--dyn-syms", "-rW", output], text=True)
                     self.assertRegex(symbols, r"R_AARCH64_GLOB_DAT\s+0+ fixture_weak_data \+ 0")
                     self.assertRegex(symbols, r"OBJECT\s+WEAK\s+DEFAULT\s+UND fixture_weak_data")
@@ -273,15 +274,16 @@ class Aarch64DynamicNonPieTest(unittest.TestCase):
             self.assertEqual(receipt.read_bytes(), b"existing receipt")
             receipt.unlink()
 
-            def fail_link(*args, **kwargs):
+            def fail_link(command, temporary):
+                if command[0].endswith("gcc"):
+                    return ""
                 self.assertEqual(receipt.read_bytes(), b"")
                 receipt.unlink()
                 receipt.write_bytes(b"competing receipt")
-                raise subprocess.CalledProcessError(1, args[0])
+                raise subprocess.CalledProcessError(1, command)
 
-            with mock.patch.object(module.shared, "run_checked"), \
-                 mock.patch.object(module.dynamic_shared, "dynamic_symbols", return_value=(set(), set())), \
-                 mock.patch.object(module.subprocess, "run", side_effect=fail_link):
+            with mock.patch.object(module.dynamic_shared, "dynamic_symbols", return_value=(set(), set())), \
+                 mock.patch.object(module.dynamic_shared, "run", side_effect=fail_link):
                 with self.assertRaises(subprocess.CalledProcessError):
                     module.execute(["-pie", str(source), "-o", str(output)])
             self.assertEqual(receipt.read_bytes(), b"competing receipt")

@@ -226,7 +226,7 @@ def execute(arguments):
         if transitive_inputs:
             graph = {}
             for name, (path, needed) in nodes.items():
-                dynamic = subprocess.check_output(["/usr/bin/readelf", "-dW", str(path)], text=True)
+                dynamic = dynamic_shared.run(["/usr/bin/readelf", "-dW", str(path)], temporary)
                 runpaths = re.findall(r"\(RUNPATH\).*\[([^\]]*)\]", dynamic)
                 record, search, imports = dynamic_shared.application_dso_sidecar(root, path, runpaths, architecture="aarch64")
                 graph[name] = dynamic_shared.ApplicationDso(path, name, tuple(needed),
@@ -239,11 +239,11 @@ def execute(arguments):
         objects = list(objects_in)
         for index, source in enumerate(sources):
             obj = output if invocation.compile_only else Path(temporary) / f"{index}.o"
-            shared.run_checked([shared.compiler(), "-nostdinc", *(v for path in quote_dirs for v in ("-iquote", str(path))),
+            dynamic_shared.run([shared.compiler(), "-nostdinc", *(v for path in quote_dirs for v in ("-iquote", str(path))),
                                 "-isystem", str(root / "usr/include"), *shared.HOSTED_TRANSLATION_FLAGS,
                                 *invocation.compiler_flags, *(["-frounding-math"] if rounding else []),
                                 *(["-MD", "-MF", str(dependency_output)] if dependency_output is not None else []),
-                   "-fPIC" if mode == "shared" else "-fPIE" if mode == "pie" else "-fno-pie", "-c", str(source), "-o", str(obj)])
+                   "-fPIC" if mode == "shared" else "-fPIE" if mode == "pie" else "-fno-pie", "-c", str(source), "-o", str(obj)], temporary)
             objects.append(obj)
         if invocation.compile_only:
             return
@@ -275,9 +275,7 @@ def execute(arguments):
         command += [str(lib / "crti.o"), *(str(path) for path in attachment), *(str(path) for path in objects), str(archive),
                     *(str(path) for path in dso_inputs), str(lib / "libc.so"), str(lib / "crtn.o"), "-o", str(output)]
         try:
-            completed = subprocess.run([*command[:-2], "--trace", f"-Map={map_path}", *command[-2:]], text=True,
-                                       stdout=subprocess.PIPE, check=True, env=shared.clean_environment())
-            trace = completed.stdout.splitlines()
+            trace = dynamic_shared.run([*command[:-2], "--trace", f"-Map={map_path}", *command[-2:]], temporary).splitlines()
             direct = [*runtime, *objects, *dso_inputs]
             direct_text = {str(path) for path in direct}
             seen = set()
@@ -291,9 +289,9 @@ def execute(arguments):
                     raise shared.DriverError(f"unadmitted dynamic link trace input: {line}")
             if seen != direct_text:
                 raise shared.DriverError("dynamic link trace omitted an explicit input")
-            header = subprocess.check_output(["/usr/bin/readelf", "-hW", str(output)], text=True)
-            segments = subprocess.check_output(["/usr/bin/readelf", "-lW", str(output)], text=True)
-            dynamic = subprocess.check_output(["/usr/bin/readelf", "-dW", str(output)], text=True)
+            header = dynamic_shared.run(["/usr/bin/readelf", "-hW", str(output)], temporary)
+            segments = dynamic_shared.run(["/usr/bin/readelf", "-lW", str(output)], temporary)
+            dynamic = dynamic_shared.run(["/usr/bin/readelf", "-dW", str(output)], temporary)
             if ("AArch64" not in header or ("EXEC" if mode == "exec" else "DYN") not in header or "TEXTREL" in dynamic
                     or (binding_mode == "lazy" and re.search(r"\(BIND_NOW\)|\(FLAGS(?:_1)?\).*\bNOW\b", dynamic))
                     or (binding_mode == "now" and not re.search(r"\(BIND_NOW\)|\(FLAGS(?:_1)?\).*\bNOW\b", dynamic))
