@@ -60,7 +60,39 @@ done
 exp="$(awk '$4 == "FUNC" && $8 == "exp10l" { print $2; exit }' "$work/symbols")"
 pow="$(awk '$4 == "FUNC" && $8 == "pow10l" { print $2; exit }' "$work/symbols")"
 [ -n "$exp" ] && [ "$exp" = "$pow" ] || fail 'exp10l/pow10l alias differs'
+archive="$work/product/usr/lib/libc.a"
+nm -A --defined-only "$archive" > "$work/archive-symbols"
+for symbol in fdiml exp10l; do
+    grep -Eq "[[:space:]]T[[:space:]]${symbol}$" "$work/archive-symbols" || fail "archive lacks strong $symbol"
+done
+grep -Eq '[[:space:]]W[[:space:]]pow10l$' "$work/archive-symbols" || fail 'archive lacks weak pow10l'
+"$cc" -std=c11 -D_GNU_SOURCE -DCRABC_MATH_LONG_DOUBLE_COMPLETION_FREESTANDING \
+    -fno-builtin -frounding-math -ffreestanding -fno-stack-protector -fno-pie \
+    -nostdinc -isystem "$compiler_include" -I"$work/product/usr/include" \
+    -c "$probe" -o "$work/freestanding.o"
+"$cc" -c compat/x86_64/libc_math_long_double_completion_aarch64_start.S -o "$work/start.o"
+"$cc" -nostdlib -static -no-pie -Wl,-e,_start,--no-undefined,--gc-sections,--trace \
+    "$work/start.o" "$work/freestanding.o" -Wl,--start-group "$archive" \
+    "$work/product/usr/lib/libcrabc-builtins.a" -Wl,--end-group -o "$work/freestanding" > "$work/freestanding.trace"
+readelf -sW "$work/freestanding" > "$work/freestanding.symbols"
+readelf -lW "$work/freestanding" > "$work/freestanding.program"
+readelf -dW "$work/freestanding" > "$work/freestanding.dynamic"
+readelf -rW "$work/freestanding" > "$work/freestanding.relocations"
+objdump -d "$work/freestanding" > "$work/freestanding.disassembly"
+if awk '$7 == "UND" && NF >= 8 && !($5 == "LOCAL" && ($8 == "_PROCEDURE_LINKAGE_TABLE_" || $8 == "__rela_iplt_start" || $8 == "__rela_iplt_end")) { print }' "$work/freestanding.symbols" | grep . >/dev/null; then
+    fail 'freestanding candidate has unresolved symbols'
+fi
+if grep -Eq 'INTERP|[[:space:]]TLS[[:space:]]|Requesting program interpreter' "$work/freestanding.program" ||
+    grep -Eq '\((NEEDED|JMPREL|PLTGOT|TEXTREL)\)' "$work/freestanding.dynamic" ||
+    grep -Eq 'TLSGD|TLSLD|TLSDESC|DTPMOD|DTPREL|__tls_get_addr' "$work/freestanding.relocations" "$work/freestanding.disassembly"; then
+    fail 'freestanding candidate admits dynamic or TLS state'
+fi
+if grep -Eq 'libgcc|compiler-rt|libm\.so|/[Sr]?crt[^/[:space:]]*\.o' "$work/freestanding.trace"; then
+    fail 'freestanding candidate linked an ambient runtime'
+fi
 "$work/oracle" > "$work/oracle.records"
 "$work/candidate" > "$work/candidate.records"
+"$work/freestanding" > "$work/freestanding.records"
+cmp "$work/candidate.records" "$work/freestanding.records" || fail 'freestanding candidate differs from installed product'
 python3 -B compat/x86_64/validate_libc_math_long_double_completion_aarch64.py \
     "$work/oracle.records" "$work/candidate.records"
