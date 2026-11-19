@@ -10,7 +10,8 @@ set -euo pipefail
 . "$(dirname "${BASH_SOURCE[0]}")/source_runtime_libc.sh"
 
 readonly ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-readonly ORACLE_CC=/usr/local/bin/crabc-x86_64-musl-gcc
+eval "$(python3 -B "$ROOT_DIR/compat/x86_64/native_arch.py")"
+readonly ORACLE_CC="$oracle"
 readonly FEATURE=x86-signal-legacy-aliases
 readonly STATIC_C_ABI_EXPORTS="$ROOT_DIR/compat/x86_64/static_c_abi_exports.txt"
 readonly STATIC_C_ABI_ROOT="$ROOT_DIR/libc/src/c_abi/x86_64/static_c_abi.rs"
@@ -24,7 +25,7 @@ fail() {
 require_native_linux_x86_64() {
     [ "$(uname -s)" = Linux ] || fail "requires native Linux"
     case "$(uname -m)" in
-        x86_64|amd64) ;;
+        x86_64|amd64|aarch64|arm64) ;;
         *) fail "refuses emulation on $(uname -m)" ;;
     esac
 }
@@ -109,8 +110,8 @@ work_dir="$(mktemp -d /tmp/crabc-x86-64-libc-signal-legacy-aliases.XXXXXX)"
 trap 'rm -rf -- "$work_dir"' EXIT
 base_target="$work_dir/base-target"
 feature_target="$work_dir/feature-target"
-base_archive="$base_target/x86_64-unknown-linux-musl/debug/libc.a"
-archive="$feature_target/x86_64-unknown-linux-musl/debug/libc.a"
+base_archive="$base_target/$target_triple/debug/libc.a"
+archive="$feature_target/$target_triple/debug/libc.a"
 reference="$work_dir/musl-signal-legacy-aliases-reference"
 candidate="$work_dir/crabc-static-signal-legacy-aliases-candidate"
 musl_archive="$($ORACLE_CC -print-file-name=libc.a)"
@@ -165,11 +166,11 @@ done
 # The default archive remains the frozen selected-static surface. The private
 # feature can add only the two musl signal.c aliases, with no binding change to
 # existing names.
-build_source_runtime_libc "$base_target/x86_64-unknown-linux-musl/debug/libc.a"
+build_source_runtime_libc "$base_target/$target_triple/debug/libc.a"
 [ -f "$base_archive" ] || fail "cargo did not emit the unfeatured x86 archive"
 collect_global_surface "$base_archive" "$base_surface" "$work_dir/base-members"
 collect_global_bindings "$base_archive" "$base_bindings" "$work_dir/base-binding-members"
-grep -Ev '^(#|$)' "$STATIC_C_ABI_EXPORTS" | LC_ALL=C sort -u >"$expected_surface"
+source_runtime_expected_static_surface "$STATIC_C_ABI_EXPORTS" "$expected_surface" "$arch"
 if ! cmp -s "$expected_surface" "$base_surface"; then
     diff -u "$expected_surface" "$base_surface" >&2 || true
     fail "unfeatured selected-static C ABI export surface drifted"
@@ -180,7 +181,7 @@ for alias in "${EXPECTED_ADDITIONS[@]}"; do
     fi
 done
 
-build_source_runtime_libc "$feature_target/x86_64-unknown-linux-musl/debug/libc.a" \
+build_source_runtime_libc "$feature_target/$target_triple/debug/libc.a" \
     --features "$FEATURE"
 [ -f "$archive" ] || fail "cargo did not emit the opt-in x86 archive"
 collect_global_surface "$archive" "$feature_surface" "$work_dir/feature-members"
@@ -254,8 +255,12 @@ if grep -Eq 'TLSGD|TLSLD|TLSDESC|GOTTPOFF|DTPMOD(64)?|DTPOFF(32|64)?|__tls_get_a
     fail "candidate retains dynamic TLS or an ambient runtime fallback"
 fi
 objdump -d --disassemble=__errno_location "$candidate" >"$errno_disassembly"
-grep -Eq '%fs:0x0|%fs:-' "$errno_disassembly" ||
+grep -Eq "$([ "$arch" = aarch64 ] && printf 'tpidr_el0' || printf '%%fs:0x0|%%fs:-')" "$errno_disassembly" ||
     fail "candidate errno does not use direct initial TLS"
 
 "$candidate" || fail "freestanding legacy signal-alias candidate failed"
-printf 'x86 static crabc-libc signal legacy aliases: PASS\n'
+if [ "$arch" = x86_64 ]; then
+    printf 'x86 static crabc-libc signal legacy aliases: PASS\n'
+else
+    printf '%s static crabc-libc signal legacy aliases: PASS\n' "$arch"
+fi
