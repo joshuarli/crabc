@@ -609,7 +609,6 @@ pub struct SigAction {
     handler: Option<SigHandler>,
     mask: SignalSet,
     flags: SigActionFlags,
-    #[cfg(target_arch = "x86_64")]
     queried_kernel: Option<crabc_core::signal::KernelSigAction>,
 }
 
@@ -633,6 +632,7 @@ impl SigAction {
             handler,
             mask,
             flags,
+            queried_kernel: None,
         }
     }
 
@@ -714,6 +714,9 @@ impl SigAction {
     #[cfg(target_arch = "aarch64")]
     #[inline]
     fn kernel(self) -> crabc_core::signal::KernelSigAction {
+        if let Some(action) = self.queried_kernel {
+            return action;
+        }
         let (handler, siginfo) = match self.handler {
             SigHandler::Default => (SIG_DFL, false),
             SigHandler::Ignore => (SIG_IGN, false),
@@ -776,6 +779,7 @@ impl SigAction {
             handler,
             mask: SignalSet(action.mask & !(1_u64 << 31) & !(1_u64 << 32) & !(1_u64 << 33)),
             flags: SigActionFlags::from_bits_retain(action.flags & !SA_RESTORER),
+            queried_kernel: Some(action),
         }
     }
 
@@ -1157,7 +1161,7 @@ pub fn queue_process(pid: Pid, signal: Signal, value: i32) -> Result<()> {
 /// after its thread exits. The metadata carries `SI_QUEUE` and the sender's
 /// process ID and user ID, rather than the sender's thread ID. Kernel errors
 /// are returned directly without reading or changing C `errno`.
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "aarch64", target_arch = "x86_64"))]
 #[inline]
 pub fn queue_thread(tid: Pid, signal: Signal, value: i32) -> Result<()> {
     let tgid = calling_pid_raw();

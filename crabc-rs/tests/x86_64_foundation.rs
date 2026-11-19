@@ -1,4 +1,3 @@
-#![cfg(target_arch = "x86_64")]
 
 use core::arch::global_asm;
 use core::mem::MaybeUninit;
@@ -23,12 +22,22 @@ unsafe extern "C" fn usr1_handler(_: Signal) {
 // This private test trampoline is deliberately distinct from crabc-rs's
 // restorer. It lets the raw-action round-trip prove that a queried action keeps
 // its original `SA_RESTORER` address rather than replacing it with crabc-rs's.
+#[cfg(target_arch = "x86_64")]
 global_asm!(
     ".global crabc_rs_x86_foundation_restorer",
     ".type crabc_rs_x86_foundation_restorer,@function",
     "crabc_rs_x86_foundation_restorer:",
     "mov rax, 15",
     "syscall",
+);
+
+#[cfg(target_arch = "aarch64")]
+global_asm!(
+    ".global crabc_rs_x86_foundation_restorer",
+    ".type crabc_rs_x86_foundation_restorer,%function",
+    "crabc_rs_x86_foundation_restorer:",
+    "mov x8, #139",
+    "svc #0",
 );
 
 unsafe extern "C" {
@@ -221,7 +230,10 @@ fn x86_64_direct_signal_and_ioctl_foundation_uses_only_admitted_capabilities() {
     // restorer remain linked until the raw restoration guard runs.
     let queried = unsafe { signal::sigaction(Signal::USR1, None) }
         .expect("query x86-64 action through crabc-rs");
+    #[cfg(target_arch = "x86_64")]
     assert!(queried.handler().is_some());
+    #[cfg(target_arch = "aarch64")]
+    assert!(matches!(queried.handler(), SigHandler::Simple(_)));
     // SAFETY: `queried` retains the exact compact record returned above.
     unsafe { signal::sigaction(Signal::USR1, Some(&queried)) }
         .expect("reinstall queried x86-64 action");
@@ -231,6 +243,8 @@ fn x86_64_direct_signal_and_ioctl_foundation_uses_only_admitted_capabilities() {
     SIMPLE_HANDLER_RAN.store(false, Ordering::SeqCst);
     let action = SigAction::new(
         SigHandler::Simple(usr1_handler),
+        #[cfg(target_arch = "aarch64")]
+        signal::SignalSet::EMPTY,
         SigActionFlags::from_bits_retain(0x0000_0004),
     );
     assert_eq!(action.flags().bits() & 0x0000_0004, 0);
