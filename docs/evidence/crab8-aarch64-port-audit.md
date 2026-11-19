@@ -462,7 +462,7 @@ The facade correction leaves out-of-scope callers `crabc-rs/examples/ppoll_direc
     - x86 does a byte-exact `cmp` against musl and checks the export surface, bindings, closure, TLS, ambient dependencies and an aggregate.
     - aarch64 checks only machine, static-ness, symbol presence and alias address, and allowlists flag and rounding differences.
     - The binary128 difference itself is owner-decided (CRAB-8 RFC, about `:358`); the dropped structural checks are not.
-14. **`builtins/run_aarch64_compiler_helper_aggregate.sh`** (23 lines) against the x86 runner `:89-174`.
+14. **Open — archive producer dependency.** `builtins/build.py:838-847, 941-950` requires and emits one `crabc-builtins.o` followed by source-built `compiler_builtins-*.o` members; the requested shared aggregate contract requires exactly `crabc-builtins.o`. A native `mold -r --whole-archive` experiment produced one member and passed the helper fixture, but integrating that product-format change and its provenance with `a4-binary128` remains outstanding. The ARM aggregate also needs the shared structural checks and replayable aggregate report.
     - Dropped: the provenance checks (`members == ['crabc-builtins.o']`, reproducibility); the check that an archive-free link fails naming each helper; the checks that each helper definition is retained and called directly; and the aggregate report.
     - It also takes its tools directory from the ambient `rustc --print sysroot` (`:13`).
 15. **Static export surface.**
