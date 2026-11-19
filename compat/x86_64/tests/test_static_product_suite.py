@@ -126,7 +126,7 @@ class StaticProductSuiteTests(unittest.TestCase):
         with tempfile.TemporaryDirectory(dir=scratch) as temporary:
             report = Path(temporary)
             files = {"usr/lib/libc.a": "a" * 64}
-            manifest = {"files": files} if ARCH == "aarch64" else {"installed": {"files": files}}
+            manifest = {"installed": {"files": files}}
             manifest_path = report / "products/primary/manifest.json"
             manifest_path.parent.mkdir(parents=True)
             manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
@@ -246,7 +246,7 @@ class StaticProductSuiteTests(unittest.TestCase):
             ("0000000000203ff8  0000000000000008 " + ("R_AARCH64_RELATIVE" if ARCH == "aarch64" else "R_X86_64_RELATIVE") + " 2011d0\n") if pie
             else "There are no relocations in this file.\n"), encoding="utf-8")
         observed = {"candidate": candidate, "link.receipt.map": sha(b"map"), "symbols": sha(b"symbols")}
-        return observed, ({"files": files} if ARCH == "aarch64" else {"installed": {"files": files}})
+        return observed, {"installed": {"files": files}}
 
     def inspect(self, product: str, mode: str, **defects) -> None:
         with tempfile.TemporaryDirectory() as temporary:

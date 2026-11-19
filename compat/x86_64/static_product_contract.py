@@ -283,7 +283,7 @@ def validate_tree_manifest(report: Path, product: str, manifest: Mapping[str, An
 
     require(product in ("primary", "reproduction"), "unknown installed tree digest product")
     installed = manifest.get("installed")
-    files = manifest.get("files") if ARCH["arch"] == "aarch64" else (installed.get("files") if isinstance(installed, Mapping) else None)
+    files = installed.get("files") if isinstance(installed, Mapping) else None
     require(isinstance(files, Mapping) and files, f"{product} installed manifest has no file roster")
     expected: set[str] = set()
     for relative, value in files.items():
@@ -488,7 +488,7 @@ def inspect_case(report: Path, product: str, mode: str, case_path: str,
             and mode_record.get("elf_type") == elf_type and mode_record.get("crt_object") == entry
             and mode_record.get("interpreter") == "absent", f"{label} link mode drifted")
     installed_record = manifest.get("installed")
-    installed = manifest.get("files") if ARCH["arch"] == "aarch64" else (installed_record.get("files") if isinstance(installed_record, Mapping) else None)
+    installed = installed_record.get("files") if isinstance(installed_record, Mapping) else None
     require(isinstance(installed, Mapping), "installed manifest has no file roster")
     records = link.get("input_receipts")
     require(isinstance(records, list) and len(records) == 8, f"{label} input roster size drifted")
