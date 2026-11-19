@@ -108,6 +108,7 @@ NON_ELF_METADATA = {
 if inventory.ARCH == 'aarch64':
     NON_ELF_METADATA = {**NON_ELF_METADATA, 'candidate-dynamic': (
         *NON_ELF_METADATA['candidate-dynamic'], 'share/crabc/headers.provenance.json',
+        'share/crabc/crabc_cc_owned_dynamic.py',
     )}
 
 
