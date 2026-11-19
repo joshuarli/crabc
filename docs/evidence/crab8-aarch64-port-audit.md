@@ -451,10 +451,7 @@ The facade correction leaves out-of-scope callers `crabc-rs/examples/ppoll_direc
 10. **Closed (8b711e8ba).** ARM replays the retained sidecars with the shared reader and includes them in the exact file roster.
 11. **Closed (846c71e67).** All four component receipts use the same materialization state and source checks as x86.
 12. **Closed (1fac44bd1).** Both architectures use the shared materialized-product reader and native work root; the ARM facade producer passed all 24 executions.
-13. **Partly fixed (e752b2c37).** The shared record validator now rejects binary128 value and flag differences under the revised rounding decision. The ARM producer still needs the x86 structural checks and awaits the `a4-binary128` runtime fix.
-    - x86 does a byte-exact `cmp` against musl and checks the export surface, bindings, closure, TLS, ambient dependencies and an aggregate.
-    - aarch64 checks only machine, static-ness, symbol presence and alias address, and allowlists flag and rounding differences.
-    - The binary128 difference itself is owner-decided (CRAB-8 RFC, about `:358`); the dropped structural checks are not.
+13. **Closed (e752b2c37, 29544e80f, 1367deb86, 9340419b9, 47fab1469, 449a37999).** ARM compares the same two source-runtime export surfaces and bindings, audits the exact freestanding and aggregate function closures, aliases, TLS, dependencies and retained commands, and requires byte-exact musl records. The native structural checks pass; the producer still exits 1 on binary128 rounding, assigned to `a4-binary128`.
 14. **Partly fixed (4fb39ef7e, d4d270a9d, add448dbd).** The ARM source-built helper archive now has exactly one member with recorded merge provenance; reproducibility, archive-free failures, retained definitions and direct transfers pass the native aggregate. The replayable shared aggregate report remains outstanding and the product change must be integrated with `a4-binary128`.
 15. **Partly fixed (42e2acf90).** ARM variadic dispatch no longer exports the four application-namespace helper names, and the corresponding allowances were removed. The anonymous-symbol exact roster remains open.
     - `native_abi_exports.py:152-160` accepts any `anon.*` symbol on aarch64, where x86 compares them exactly. The aarch64 delta is hardcoded in code (`:32-47`).
