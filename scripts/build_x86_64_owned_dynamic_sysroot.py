@@ -178,7 +178,7 @@ def shared_libc_dynamic_list() -> dict[str, object]:
     }
 
 
-def shared_libc_mimalloc_hidden_exports(stage: Path) -> dict[str, object]:
+def shared_libc_mimalloc_hidden_exports(stage: Path, *, architecture: str = "x86_64") -> dict[str, object]:
     """Materialize the exact local-only list for this one shared libc link.
 
     The pinned mimalloc v3.5.0 member retains all of these global
@@ -201,6 +201,10 @@ def shared_libc_mimalloc_hidden_exports(stage: Path) -> dict[str, object]:
             or any(re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", member) is None for member in members)
             or members != tuple(sorted(set(members)))):
         raise common.BuildError("native libc mimalloc hidden-export list member/order contract differs")
+    if architecture == "aarch64":
+        members = tuple(sorted((*members, *common.AARCH64_MIMALLOC_EXTRA_HIDDEN)))
+    elif architecture != "x86_64":
+        raise common.BuildError("unknown allocator architecture")
     script = stage / "libc-mimalloc-hidden.exports"
     script.write_text("{\n  local:\n" + "".join(f"    {member};\n" for member in members) + "};\n",
                       encoding="utf-8")
@@ -462,7 +466,7 @@ def loader_provenance(
     interpreter_name = (Path(hardening_profile.interpreter).name if architecture == "x86_64" else
                         "ld-crabc-aarch64-hardened.so.1" if hardening_profile is common.NativeRuntimeProfile.HARDENED else "ld-crabc-aarch64.so.1")
     if (not isinstance(hardening_profile, common.NativeRuntimeProfile)
-            or (architecture == "x86_64" and rustflags != loader_rustflags(hardening_profile))
+            or rustflags != loader_rustflags(hardening_profile, architecture=architecture)
             or installed_artifact.name != interpreter_name):
         raise common.BuildError("loader profile, flags and interpreter path differ")
     dependencies = dependencies_override or (stage / "loader" / common.TARGET / "release" / "libldso.d")
@@ -526,9 +530,13 @@ def loader_provenance(
     }
 
 
-def loader_rustflags(profile: common.NativeRuntimeProfile) -> str:
+def loader_rustflags(profile: common.NativeRuntimeProfile, *, architecture: str = "x86_64") -> str:
     if not isinstance(profile, common.NativeRuntimeProfile):
         raise common.BuildError("unknown dynamic hardening profile")
+    if architecture == "aarch64":
+        return "-Ztls-model=initial-exec -Ctarget-feature=-outline-atomics"
+    if architecture != "x86_64":
+        raise common.BuildError("unknown loader architecture")
     flags = dynamic_product_contract.LOADER_RUSTFLAGS
     return flags + " --cfg crabc_hardened" if profile is common.NativeRuntimeProfile.HARDENED else flags
 
@@ -1039,7 +1047,8 @@ def build_aarch64(output: Path, *, allocator_backend: str, lifecycle_test_audit:
     with tempfile.TemporaryDirectory(prefix="owned-dynamic-build-", dir=work) as temporary:
         stage = Path(temporary)
         cargo = [rustup, "run", common.PINNED_TOOLCHAIN, "cargo"]
-        flags = ["--config", f'target.{target}.rustflags=["-Ztls-model=initial-exec", "-Ctarget-feature=-outline-atomics"]']
+        loader_flags = loader_rustflags(hardening_profile, architecture="aarch64")
+        flags = ["--config", f'target.{target}.rustflags=[{", ".join(json.dumps(flag) for flag in loader_flags.split())}]']
         libc_command = [*cargo, "rustc", "--locked", "-p", "crabc-libc", "--lib", "--release", "--no-default-features", "--features", "x86-owned-dynamic-runtime", "--target", target, "--target-dir", str(stage / "cargo"), *common.STATIC_ARCHIVE_PROFILE, *flags, "--", "--cfg", "crabc_owned_static_sysroot", "--cfg", common.MIMALLOC_LIFECYCLE_RUST_CFG, "-C", "relocation-model=pic", "-C", "panic=abort", "-Ztls-model=initial-exec", "-Zmerge-functions=disabled"]
         common.run(libc_command, environment=environment)
         crt = stage / "crt"
@@ -1069,7 +1078,12 @@ def build_aarch64(output: Path, *, allocator_backend: str, lifecycle_test_audit:
         library.mkdir(parents=True)
         private = stage / "private.exports"
         private.write_text("{ local: __crabc_x86_64_*; };\n")
-        libc_link_command = ["/usr/bin/mold", "-shared", "--no-undefined", "--hash-style=sysv", "--eh-frame-hdr", "-soname", "libc.so", f"--dynamic-list={SHARED_LIBC_DYNAMIC_LIST}", f"--version-script={private}", "-z", "relro", "-z", "now", "-z", "noexecstack", "-z", "text", "-e", "_start", *(str(objects / name) for name in selected), str(allocator), str(loader), "--whole-archive", str(builtins), "--no-whole-archive", "-o", str(library / "libc.so")]
+        common.require_reviewed_hidden_list(allocator, architecture="aarch64")
+        mimalloc_policy = shared_libc_mimalloc_hidden_exports(stage, architecture="aarch64")
+        errno_policy = shared_libc_errno_private_aliases(stage)
+        from compat.x86_64 import compiler_helper_evidence
+        helper_policy = compiler_helper_evidence.SHARED_LIBC_METADATA
+        libc_link_command = ["/usr/bin/mold", "-shared", "--no-undefined", "--hash-style=sysv", "--eh-frame-hdr", "-soname", "libc.so", f"--dynamic-list={SHARED_LIBC_DYNAMIC_LIST}", f"--version-script={private}", f"--version-script={stage / 'libc-mimalloc-hidden.exports'}", f"--version-script={stage / 'libc-errno-private.exports'}", helper_policy["linker_option"], "-z", "relro", "-z", "now", "-z", "noexecstack", "-z", "text", "-z", "pack-relative-relocs", "-e", "_start", *(str(objects / name) for name in selected), str(allocator), str(loader), "--whole-archive", str(builtins), "--no-whole-archive", "-o", str(library / "libc.so")]
         common.run(libc_link_command, environment=environment)
         for name in ("crt1.o", "Scrt1.o", "crti.o", "crtn.o"):
             common.copy_artifact(crt / name, library / name)
@@ -1088,10 +1102,11 @@ def build_aarch64(output: Path, *, allocator_backend: str, lifecycle_test_audit:
             attachment_objects.append(obj)
         common.run(["/usr/bin/mold", "-r", *(str(obj) for obj in attachment_objects),
                     "-o", str(library / "crabc-dynamic-attach.o")], environment=environment)
-        common.copy_regular_tree(ROOT / "include", installed / "usr/include")
+        header_provenance = common.install_header_tree(installed / "usr/include")
         interpreter = installed / ("lib/ld-crabc-aarch64-hardened.so.1" if hardening_profile is common.NativeRuntimeProfile.HARDENED else "lib/ld-crabc-aarch64.so.1")
         interpreter.parent.mkdir()
         os.link(library / "libc.so", interpreter)
+        aliases = hardening_profile.aliases_for_architecture("aarch64")
         common.copy_artifact(ROOT / "compat/x86_64/crabc_cc_aarch64_dynamic.py", installed / "bin/crabc-cc-dynamic")
         (installed / "bin/crabc-cc-dynamic").chmod(0o755)
         common.copy_artifact(common.STATIC_DRIVER_SOURCE, installed / "share/crabc/crabc_cc_static.py")
@@ -1112,17 +1127,20 @@ def build_aarch64(output: Path, *, allocator_backend: str, lifecycle_test_audit:
             "libc_command": [_normalized_loader_argument(arg, stage) for arg in libc_command],
             "libc_shared_link_command": [_normalized_loader_argument(arg, stage) for arg in libc_link_command],
             "shared_dynamic_list": shared_libc_dynamic_list(),
-            "shared_mimalloc_hidden_exports": None,
+            "shared_mimalloc_hidden_exports": mimalloc_policy,
             "shared_compiler_helper_archive": {"source": _source_file_identity(ROOT / "builtins/build.py", "native compiler-helper producer"),
                 "archive": builtins.name, "members": common.run([ar, "t", str(builtins)], environment=environment).decode().splitlines(),
                 "linker_arguments": ["--whole-archive", builtins.name, "--no-whole-archive"]},
-            "shared_errno_private_aliases": None,
+            "shared_errno_private_aliases": errno_policy,
             "loader_imports": sorted(line.split()[-1] for line in common.run(
                 [str(tools / "llvm-nm"), "--undefined-only", str(loader)], environment=environment).decode().splitlines()
                 if len(line.split()) >= 2)})
+        common.write_json(metadata / "headers.provenance.json", header_provenance)
+        common.write_json(metadata / "libc-shared.elf.json", audit_shared_elf(library / "libc.so"))
+        common.write_json(metadata / "loader.elf.json", audit_shared_elf(interpreter))
         common.write_json(metadata / "producer-tools.json", common.resolve_pinned_producer_tools("aarch64"))
         common.write_json(metadata / "loader.provenance.json",
-                          loader_provenance(stage, loader_command, environment.get("RUSTFLAGS", ""), loader, interpreter,
+                          loader_provenance(stage, loader_command, loader_flags, loader, interpreter,
                                             hardening_profile, merged=True, dependencies_override=candidates[0].with_suffix(".d"),
                                             merged_link_command=libc_link_command, architecture="aarch64"))
         if source_seal.product_source_digest(ROOT) != source_before_build:
@@ -1140,17 +1158,12 @@ def build_aarch64(output: Path, *, allocator_backend: str, lifecycle_test_audit:
             "qualification": qualification.MATERIALIZATION_QUALIFICATION})
         manifest = {"schema": 1, "format": "crabc-aarch64-owned-dynamic-sysroot-v1", "target": target,
                     "toolchain": common.PINNED_TOOLCHAIN, "build_profile": profile,
-                    "hardening_profile": hardening_profile.value, "source_sha256": source_before_build, "symlinks": {},
+                    "hardening_profile": hardening_profile.value, "source_sha256": source_before_build, "symlinks": aliases,
                     "files": common.regular_file_hashes(installed), "skipped": skipped}
         common.write_json(installed / "share/crabc/manifest.json", manifest)
-        if output.exists():
-            try:
-                old = json.loads((output / "share/crabc/manifest.json").read_text())
-            except (OSError, ValueError) as error:
-                raise common.BuildError("refusing to replace unrecognized aarch64 sysroot") from error
-            if old.get("format") != manifest["format"]:
-                raise common.BuildError("refusing to replace unrecognized aarch64 sysroot")
-            shutil.rmtree(output)
+        for alias, target_path in aliases.items():
+            (installed / alias).symlink_to(target_path)
+        common.remove_owned_output(output, format_name=manifest["format"], target=target)
         installed.replace(output)
 
 

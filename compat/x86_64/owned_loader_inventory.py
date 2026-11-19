@@ -221,7 +221,7 @@ def validate_loader_provenance(product: Path, record: object) -> None:
             "--config", f'target.{TARGET}.rustflags=["-Ztls-model=initial-exec", "-Ctarget-feature=-outline-atomics"]',
             "--", "--emit=obj",
         ]
-    require(cargo["argv"] == expected_argv and cargo["rustflags"] == ("" if ARCH == "aarch64" else dynamic_product_contract.LOADER_RUSTFLAGS),
+    require(cargo["argv"] == expected_argv and cargo["rustflags"] == ("-Ztls-model=initial-exec -Ctarget-feature=-outline-atomics" if ARCH == "aarch64" else dynamic_product_contract.LOADER_RUSTFLAGS),
             "loader Cargo command or RUSTFLAGS differ")
     compiler_object = record["compiler_object"]
     require(isinstance(compiler_object, dict) and set(compiler_object) == {"path", "sha256", "size"}

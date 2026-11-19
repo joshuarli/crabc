@@ -135,6 +135,26 @@ aarch64 run itself.
 
 ## C. Builders, scripts, Lua, corpus, CRT, unwinder
 
+Builder lane evidence (incomplete): the native C allocator object defines
+`_mi_cpu_movsb_max` and `_mi_cpu_stosb_max` in addition to the x86 reviewed
+list. The AArch64 link policy makes both local; a `readelf --dyn-syms` check
+on the compatibility build found neither in its dynamic exports. The native
+static and dynamic builders completed with the current partial audits, but
+both still report skipped checks and do not close items 21–24.
+
+Full CRT inspection exposed an external source dependency: the AArch64
+`crt1.o` produced from `crt/src/x86_64_crt1.rs` lacks
+`.note.crabc.owned-crt`, which `inspect_object` requires for the conventional
+entry. That file's combined-entry note and handoff are guarded for x86-64;
+the AArch64 entry currently branches only to static startup. The builder
+cannot supply the missing product behavior without changes to that source,
+which is outside this lane's writable paths. Full CRT inspection remains open.
+
+The shared UAPI marker reader now selects AArch64 image pins, the loader
+inventory binds the recorded AArch64 flags, and the archive classifier accepts
+native outline-atomics members only on AArch64. The remaining evidence and
+acceptance work below stays open.
+
 21. **`scripts/build_x86_64_owned_sysroot.py:1520-1585`** (static builder)
     - It skips: libc member classification and the required-symbol contract, the allocator hidden-symbol and lifecycle audit, CRT profile validation, the pinned UAPI header install (it copies `include/` raw instead), reproducible builtins, and the `allocator_backend`, `installed` and `sealed_static_driver` manifest fields.
     - Qualifying-path.

@@ -479,8 +479,10 @@ def validate_output_path(path: Path) -> Path:
     return output
 
 
-def remove_owned_output(path: Path) -> None:
+def remove_owned_output(path: Path, *, format_name: str = FORMAT, target: str = TARGET) -> None:
     if not path.exists():
+        if target != TARGET and path.is_symlink():
+            raise BuildError(f"refusing to replace non-directory output: {path}")
         return
     if path.is_symlink() or not path.is_dir():
         raise BuildError(f"refusing to replace non-directory output: {path}")
@@ -489,7 +491,7 @@ def remove_owned_output(path: Path) -> None:
         record = json.loads(manifest.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as error:
         raise BuildError(f"refusing to replace unrecognized output: {path}") from error
-    if record.get("format") != FORMAT or record.get("target") != TARGET:
+    if record.get("format") != format_name or record.get("target") != target:
         raise BuildError(f"refusing to replace unrecognized output: {path}")
     shutil.rmtree(path)
 
@@ -561,7 +563,7 @@ def install_header_tree(destination: Path) -> dict[str, object]:
 
 
 def classify_libc_members(
-    members: Sequence[str],
+    members: Sequence[str], *, architecture: str = "x86_64",
 ) -> tuple[tuple[str, ...], tuple[str, ...]]:
     if not members or len(set(members)) != len(members):
         raise BuildError("Cargo libc archive has an empty or duplicate member roster")
@@ -586,12 +588,14 @@ def classify_libc_members(
     excluded = tuple(member for member in members if member not in selected)
     if not any(LIBC_MEMBER.fullmatch(member) for member in selected):
         raise BuildError("Cargo libc archive has no crabc Rust object members")
+    aarch64_compiler_rt = re.compile(r"^[0-9a-f]+-(?:lse_[a-z0-9_]+|aarch64)\.o$") if architecture == "aarch64" else re.compile(r"(?!)")
     unexpected = tuple(
         member
         for member in excluded
         if STOCK_COMPILER_BUILTINS_MEMBER.fullmatch(member) is None
         and STOCK_RUST_CORE_MEMBER.fullmatch(member) is None
         and NATIVE_COMPILER_RT_MEMBER.fullmatch(member) is None
+        and aarch64_compiler_rt.fullmatch(member) is None
     )
     if unexpected:
         raise BuildError(
@@ -1011,10 +1015,17 @@ def compile_c_allocator(work: Path, c_flags: Sequence[str], *, profile: str, arc
     }
 
 
-def require_reviewed_hidden_list(object_path: Path) -> list[str]:
+AARCH64_MIMALLOC_EXTRA_HIDDEN = ("_mi_cpu_movsb_max", "_mi_cpu_stosb_max")
+
+
+def require_reviewed_hidden_list(object_path: Path, *, architecture: str = "x86_64") -> list[str]:
     """The reviewed shared-libc local list is exactly the object's default-visibility definitions."""
 
     reviewed = (ROOT / "libc/src/c_abi/x86_64/owned_mimalloc_hidden.list").read_text(encoding="utf-8").split()
+    if architecture == "aarch64":
+        reviewed.extend(AARCH64_MIMALLOC_EXTRA_HIDDEN)
+    elif architecture != "x86_64":
+        raise BuildError("unknown allocator architecture")
     defined = default_visibility_definitions(object_path)
     if defined != sorted(reviewed):
         raise BuildError("the C allocator's default-visibility definitions differ from the reviewed hidden list")
@@ -1552,14 +1563,16 @@ def build_aarch64(output: Path, *, allocator_backend: str, lifecycle_test_audit:
         run([sys.executable, str(ROOT / "crt/build_x86_64.py"), "--architecture", "aarch64", "--hardening-profile", hardening_profile.value, "--out-dir", str(crt)], environment=environment)
         builtins = stage / "builtins/libcrabc-builtins.a"
         builtins.parent.mkdir()
-        run([sys.executable, str(ROOT / "builtins/build.py"), "--output", str(builtins), "--llvm-ar", str(tools / "llvm-ar"), "--llvm-nm", str(tools / "llvm-nm"), "--llvm-readelf", "/usr/bin/readelf", "--ld-lld", "/usr/bin/mold"], environment=environment)
+        run([sys.executable, str(ROOT / "builtins/build.py"), "--output", str(builtins), "--llvm-ar", str(tools / "llvm-ar"), "--llvm-nm", str(tools / "llvm-nm"), "--llvm-readelf", "/usr/bin/readelf", "--ld-lld", "/usr/bin/mold", "--verify-reproducible"], environment=environment)
         allocator, _ = compile_c_allocator(stage / "c-allocator", c_allocator_target_flags(), profile="release", architecture="aarch64")
+        require_reviewed_hidden_list(allocator, architecture="aarch64")
+        validate_crt_profile(crt, hardening_profile)
         raw = cargo_dir / target / "release/libc.a"
         ar = str(tools / "llvm-ar")
         members = run([ar, "t", str(raw)], environment=environment).decode().splitlines()
-        selected = [name for name in members if LIBC_MEMBER.fullmatch(name)]
-        if not selected or len(set(selected)) != len(selected):
-            raise BuildError("aarch64 libc has no unique crabc object members")
+        selected, excluded = classify_libc_members(members, architecture="aarch64")
+        lifecycle = owned_mimalloc_lifecycle_profile(c_allocator_target_flags(), cargo, allocator, raw,
+                    llvm_nm=str(tools / "llvm-nm"), llvm_objdump=str(tools / "llvm-objdump"))
         object_dir = stage / "objects"
         object_dir.mkdir()
         run([ar, "x", str(raw), *selected], cwd=object_dir, environment=environment)
@@ -1567,10 +1580,14 @@ def build_aarch64(output: Path, *, allocator_backend: str, lifecycle_test_audit:
         library = installed / "usr/lib"
         library.mkdir(parents=True)
         run([ar, "rcsD", str(library / "libc.a"), *(str(object_dir / name) for name in selected), str(allocator)], environment=environment)
+        missing = sorted(REQUIRED_LIBC_SYMBOLS - archive_defined_symbols(str(tools / "llvm-nm"), library / "libc.a"))
+        if missing:
+            raise BuildError(f"reconstructed libc archive lacks selected runtime symbols: {missing}")
         for name in ("crt1.o", "rcrt1.o", "crti.o", "crtn.o"):
             copy_artifact(crt / name, library / name)
         copy_artifact(builtins, library / builtins.name)
-        copy_regular_tree(ROOT / "include", installed / "usr/include")
+        header_provenance = install_header_tree(installed / "usr/include")
+        write_json(installed / "share/crabc/headers.provenance.json", header_provenance)
         install_static_driver(installed / "bin/crabc-cc")
         copy_artifact(crt / "objects.json", installed / "share/crabc/crt.provenance.json")
         copy_artifact(crt / "commands.json", installed / "share/crabc/crt.commands.json")
@@ -1584,15 +1601,7 @@ def build_aarch64(output: Path, *, allocator_backend: str, lifecycle_test_audit:
                     "hardening_profile": hardening_profile.value, "symlinks": {},
                     "files": files, "skipped": skipped}
         write_json(manifest_path, manifest)
-        if output.exists():
-            old = output / "share/crabc/manifest.json"
-            try:
-                record = json.loads(old.read_text())
-            except (OSError, ValueError) as error:
-                raise BuildError("refusing to replace unrecognized aarch64 sysroot") from error
-            if record.get("format") != manifest["format"]:
-                raise BuildError("refusing to replace unrecognized aarch64 sysroot")
-            shutil.rmtree(output)
+        remove_owned_output(output, format_name=manifest["format"], target=target)
         installed.replace(output)
         return manifest
 

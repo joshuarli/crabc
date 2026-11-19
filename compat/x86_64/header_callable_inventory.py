@@ -58,7 +58,22 @@ MUSL_PIN = tomllib.loads((ROOT / "compat/upstreams.toml").read_text(encoding="ut
 MUSL_SOURCE_SHA256 = MUSL_PIN["sha256"]
 LINUX_UAPI_VERSION = "5.10"
 LINUX_UAPI_SOURCE_SHA256 = "dcdf99e43e98330d925016985bfbc7b83c66d367b714b2de0cbbfcbf83d8ca43"
-LINUX_UAPI_HEADER_MANIFEST_SHA256 = "00cdc98ceb35926f68dc57dc0d84a989a6df4f60f84b1ae5981b54bb1088eb0e"
+from native_arch import native_arch
+
+ARCH = native_arch()["arch"]
+if ARCH == "aarch64":
+    import re
+    dockerfile = (ROOT / "docker/Dockerfile.aarch64").read_text(encoding="utf-8")
+    def docker_arg(name: str) -> str:
+        matches = re.findall(r"^ARG " + re.escape(name) + r"=([^\s]+)$", dockerfile, re.MULTILINE)
+        if len(matches) != 1:
+            raise ValueError(f"expected one Dockerfile ARG {name}")
+        return matches[0]
+    LINUX_UAPI_VERSION = docker_arg("LINUX_UAPI_VERSION")
+    LINUX_UAPI_SOURCE_SHA256 = docker_arg("LINUX_UAPI_SHA256")
+    LINUX_UAPI_HEADER_MANIFEST_SHA256 = docker_arg("LINUX_UAPI_HEADER_MANIFEST_SHA256")
+else:
+    LINUX_UAPI_HEADER_MANIFEST_SHA256 = "00cdc98ceb35926f68dc57dc0d84a989a6df4f60f84b1ae5981b54bb1088eb0e"
 MUSL_ORACLE_MARKER = {
     "format": "crabc-pinned-musl-oracle-v1",
     "version": MUSL_VERSION,
@@ -70,9 +85,9 @@ LINUX_UAPI_MARKER = {
     "format": "crabc-linux-uapi-v1",
     "version": LINUX_UAPI_VERSION,
     "source_sha256": LINUX_UAPI_SOURCE_SHA256,
-    "architecture": "x86_64",
-    "install_arch": "x86",
-    "header_count": "935",
+    "architecture": ARCH,
+    "install_arch": "arm64" if ARCH == "aarch64" else "x86",
+    "header_count": docker_arg("LINUX_UAPI_HEADER_COUNT") if ARCH == "aarch64" else "935",
     "header_manifest_sha256": LINUX_UAPI_HEADER_MANIFEST_SHA256,
 }
 

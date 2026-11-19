@@ -277,6 +277,15 @@ class BuildX86OwnedSysrootTests(unittest.TestCase):
             ),
         )
 
+    def test_aarch64_compiler_rt_members_are_excluded_only_for_aarch64(self) -> None:
+        members = ("c.one.rcgu.o", "compiler_builtins-abc.rcgu.o", "45c91108d938afe8-addvdi3.o",
+                   "7fe4ddd815fa1580-lse_cas1_acq_rel.o", "e487abff90d50251-aarch64.o")
+        selected, excluded = builder.classify_libc_members(members, architecture="aarch64")
+        self.assertEqual(selected, members[:1])
+        self.assertEqual(excluded, members[1:])
+        with self.assertRaises(builder.BuildError):
+            builder.classify_libc_members(members)
+
     def test_libc_member_classification_fails_closed_on_foreign_runtime_input(self) -> None:
         with self.assertRaisesRegex(builder.BuildError, "unclassified target-runtime"):
             builder.classify_libc_members(
