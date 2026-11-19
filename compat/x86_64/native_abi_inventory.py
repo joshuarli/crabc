@@ -1385,25 +1385,25 @@ def _product_record(root: Path, *, logical_root: str, kind: str) -> dict[str, ob
             },
         }
     else:
-        alias = root / "lib/ld-musl-x86_64.so.1"
+        alias = root / f"lib/ld-musl-{ARCH}.so.1"
         try:
             mode = alias.lstat().st_mode
             target = os.readlink(alias)
         except OSError as error:
             raise InventoryError("dynamic product loader alias is unreadable") from error
         require(stat.S_ISLNK(mode), "dynamic product loader alias is not a symlink")
-        require(target == "ld-crabc-x86_64.so.1", "dynamic product loader alias target drifted")
+        require(target == f"ld-crabc-{ARCH}.so.1", "dynamic product loader alias target drifted")
         selection = {
             "libc_shared": file_record(
                 root / "usr/lib/libc.so",
                 logical_path=_logical_child(logical_root, "usr/lib/libc.so"),
             ),
             "loader": file_record(
-                root / "lib/ld-crabc-x86_64.so.1",
-                logical_path=_logical_child(logical_root, "lib/ld-crabc-x86_64.so.1"),
+                root / f"lib/ld-crabc-{ARCH}.so.1",
+                logical_path=_logical_child(logical_root, f"lib/ld-crabc-{ARCH}.so.1"),
             ),
             "loader_alias": {
-                "path": _logical_child(logical_root, "lib/ld-musl-x86_64.so.1"),
+                "path": _logical_child(logical_root, f"lib/ld-musl-{ARCH}.so.1"),
                 "target": target,
             },
         }
@@ -2415,8 +2415,8 @@ def collect_inventory(
         candidate_loader = _inspect_shared(
             output_root,
             name="candidate-loader",
-            artifact_path=dynamic_product / "lib/ld-crabc-x86_64.so.1",
-            logical_artifact=_logical_child(str(DYNAMIC_PRODUCT_PATH), "lib/ld-crabc-x86_64.so.1"),
+            artifact_path=dynamic_product / f"lib/ld-crabc-{ARCH}.so.1",
+            logical_artifact=_logical_child(str(DYNAMIC_PRODUCT_PATH), f"lib/ld-crabc-{ARCH}.so.1"),
             tool_records=tool_records,
             commands=commands,
             require_public_symbols=False,
@@ -3010,7 +3010,7 @@ def validate_report(
                 output_root,
                 commands=commands,
                 name="candidate-loader",
-                artifact=_logical_child(str(DYNAMIC_PRODUCT_PATH), "lib/ld-crabc-x86_64.so.1"),
+                artifact=_logical_child(str(DYNAMIC_PRODUCT_PATH), f"lib/ld-crabc-{ARCH}.so.1"),
                 artifact_identity=dynamic_selection["loader"],
                 tool_records=tool_records,
                 require_public_symbols=False,

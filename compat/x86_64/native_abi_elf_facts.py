@@ -106,19 +106,8 @@ NON_ELF_METADATA = {
 
 
 if inventory.ARCH == 'aarch64':
-    ARTIFACTS = tuple(item for item in ARTIFACTS if item.key != 'static-Scrt1.o')
-    NON_ELF_METADATA = {**NON_ELF_METADATA, 'candidate-static': tuple(
-        name for name in NON_ELF_METADATA['candidate-static']
-        if name in {'share/crabc/crt.commands.json', 'share/crabc/crt.provenance.json'}
-    )}
-    NON_ELF_REQUIRED = {**NON_ELF_REQUIRED, 'candidate-dynamic': tuple(
-        name for name in NON_ELF_REQUIRED['candidate-dynamic']
-        if name not in {'share/crabc/owned_dynamic_receipt.py', 'share/crabc/owned_dynamic_elf.py'}
-    )}
-    NON_ELF_METADATA = {**NON_ELF_METADATA, 'candidate-dynamic': tuple(
-        name for name in NON_ELF_METADATA['candidate-dynamic']
-        if name not in {'share/crabc/libc-shared.elf.json', 'share/crabc/loader.elf.json',
-                        'share/crabc/builtins.provenance.json'}
+    NON_ELF_METADATA = {**NON_ELF_METADATA, 'candidate-dynamic': (
+        *NON_ELF_METADATA['candidate-dynamic'], 'share/crabc/headers.provenance.json',
     )}
 
 
@@ -133,8 +122,6 @@ def _installed_header_placements(payload_files: Mapping[str, str]) -> set[str]:
     tree = inventory._header_tree_identity(ROOT / 'include')
     prefix = 'usr/include/crabc-linux-uapi/'
     exported = {name[len(prefix):]: digest for name, digest in payload_files.items() if name.startswith(prefix)}
-    if inventory.ARCH == 'aarch64' and not exported:
-        return {'usr/' + row['path'] for row in tree['files']}
     manifest = ''.join(f'{digest}  ./{name}\n' for name, digest in sorted(exported.items()))
     require(hashlib.sha256(manifest.encode('utf-8')).hexdigest()
             == (header_authority.LINUX_UAPI_MARKER["header_manifest_sha256"]
@@ -183,14 +170,6 @@ def _require_product_artifact_rosters(base: Mapping[str, Any]) -> None:
         ('candidate-static', inventory.product_evidence.STATIC_REQUIRED),
         ('candidate-dynamic', inventory.product_evidence.DYNAMIC_REQUIRED),
     ):
-        if inventory.ARCH == 'aarch64' and owner == 'candidate-static':
-            contract = tuple(name for name in contract if name != 'usr/lib/Scrt1.o')
-        if inventory.ARCH == 'aarch64' and owner == 'candidate-dynamic':
-            contract = tuple(name for name in contract if name not in {
-                'share/crabc/owned_dynamic_receipt.py', 'share/crabc/owned_dynamic_elf.py',
-            })
-            contract = tuple(name.replace('ld-crabc-x86_64.so.1', 'ld-crabc-aarch64.so.1')
-                             for name in contract)
         elf = [item.relative for item in ARTIFACTS if item.owner == owner]
         expected = [*elf, *NON_ELF_REQUIRED[owner]]
         require(len(expected) == len(set(expected)) and len(contract) == len(set(contract))
