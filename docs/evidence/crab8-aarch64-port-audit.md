@@ -478,12 +478,12 @@ The facade correction leaves out-of-scope callers `crabc-rs/examples/ppoll_direc
 
 ### Test-coverage
 
-21. **`compat/x86_64/tests/test_fcntl_event_header_topology.py:66-101`** fails at HEAD. It requires the first line to be `#if defined(__x86_64__)`, so the musl hashes for 9 headers are not enforced by any passing test.
+21. **Closed (2b5b4c94a):** The nine pinned musl hashes are enforced against the converged x86 forms. Previously `compat/x86_64/tests/test_fcntl_event_header_topology.py:66-101` failed at HEAD. It required the first line to be `#if defined(__x86_64__)`, so the hashes were not enforced by a passing test.
     - It already failed at base `58eb7704d`, so the audit's closure note missed it.
     - The x86 view of `bits/fcntl.h` is byte-identical to musl (sha256 `3526dbb8…`), so x86 itself is unchanged.
-22. **`test_reboot_header_source_form.py:33`** went from exact equality to containment.
-23. **`test_pthread_header_source_form.py:56`** went from an exact line position to containment.
-24. **`test_owned_posix_timers.py:321-327`**. The fake `python3` now passes `native_arch.py` through, so the test can no longer detect architecture setup running before argument validation.
+22. **Closed (2b5b4c94a):** `test_reboot_header_source_form.py` compares the complete macro block exactly.
+23. **Closed (2b5b4c94a):** `test_pthread_header_source_form.py` checks the exact converged source coordinate.
+24. **Closed (2b5b4c94a):** `test_owned_posix_timers.py` rejects every Python invocation while checking parser usage, including architecture setup.
 25. **Tests nothing runs**:
     - `compat/x86_64/tests/test_aarch64_errno_alias.sh`
     - `compat/x86_64/test_aarch64_dynamic_driver.py`
