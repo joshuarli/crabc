@@ -485,6 +485,18 @@ class ExecutionTests(unittest.TestCase):
 
 
 class AttachmentTests(unittest.TestCase):
+    def test_arm64_maps_only_the_x86_work_prefix(self) -> None:
+        context = candidate.Context(ROOT, ROOT / ".work/aarch64/feature-complete", {}, dry_run=True)
+        steps = candidate.plan()
+        with mock.patch.object(candidate, "ARCH", native_arch.native_arch("aarch64")), \
+                mock.patch.object(candidate, "WORK_PARENT", Path(".work/aarch64")):
+            records = candidate.attachments(ROOT, context, steps)
+        self.assertEqual(len(records), 4)
+        self.assertTrue(all(record["state"] == "attached" for record in records))
+        self.assertTrue(all(record["row_receipt"].startswith(".work/x86_64/") for record in records))
+        with mock.patch.object(candidate, "ARCH", native_arch.native_arch("x86_64")):
+            self.assertTrue(all(record["state"] == "mismatch" for record in candidate.attachments(ROOT, context, steps)))
+
     def test_a_row_naming_another_receipt_is_a_preflight_blocker(self) -> None:
         with tempfile.TemporaryDirectory(dir=ROOT / ".work") as temporary:
             root = Path(temporary)

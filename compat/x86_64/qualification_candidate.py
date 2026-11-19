@@ -556,9 +556,12 @@ def attachments(root: Path, context: Context, steps: Sequence[Step]) -> list[dic
                    if isinstance(entry, dict) and entry.get("command") == command]
         require(len(entries) == 1, f"{family} has no single native evidence row for {command}")
         named = entries[0].get("receipt")
+        comparable = named
+        if ARCH["arch"] == "aarch64" and isinstance(named, str) and named.startswith(".work/x86_64/"):
+            comparable = f"{WORK_PARENT}/" + named.removeprefix(".work/x86_64/")
         result.append({"family": family, "step": step.id, "receipt": produced,
                        "row_receipt": named,
-                       "state": "unattached" if named is None else "attached" if named == produced else "mismatch"})
+                       "state": "unattached" if named is None else "attached" if comparable == produced else "mismatch"})
     return result
 
 
