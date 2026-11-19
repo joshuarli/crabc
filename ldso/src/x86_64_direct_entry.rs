@@ -103,7 +103,6 @@ pub(super) unsafe fn prepare(sp: usize, ldso_base: usize) -> (Object, usize) {
                 5 => *aux.add(1) = main.phnum,
                 7 => *aux.add(1) = ldso_base,
                 9 => *aux.add(1) = main.entry as usize,
-                #[cfg(target_arch = "x86_64")]
                 31 => *aux.add(1) = program_pointer,
                 _ => {}
             }
