@@ -127,7 +127,7 @@ class NativeManifestTests(unittest.TestCase):
         changed = {name for name, version in self.manifest.direct_packages.items() if version != source_versions[name]}
         deltas = tomllib.loads(RUNNER.MANIFEST.read_text())["native_version_deltas"]
         self.assertEqual(len(self.manifest.archive_roster), 59)
-        self.assertEqual(self.manifest.excluded_archives, {"musl-1.2.6-r2.apk"})
+        self.assertEqual(self.manifest.excluded_archives, {"musl-1.2.6-r3.apk"})
         self.assertEqual(set(deltas), changed)
         for name in changed:
             self.assertEqual(deltas[name], {"aarch64": source_versions[name], "x86_64": self.manifest.direct_packages[name]})
@@ -137,9 +137,9 @@ class NativeManifestTests(unittest.TestCase):
             package["name"]: package["version"]
             for package in tomllib.loads(self.manifest.source_manifest.read_text())["packages"]
         }
-        package_name = "git"
+        package_name = "zstd"
         current = self.manifest.direct_packages[package_name]
-        updated = "2.54.1-r0"
+        updated = "1.5.7-r3"
         manifest_text = RUNNER.MANIFEST.read_text()
         self.assertIn(f'{package_name} = "{current}"', manifest_text)
         manifest_text = manifest_text.replace(f'{package_name} = "{current}"', f'{package_name} = "{updated}"', 1)

@@ -67,9 +67,9 @@ bytes, so all case IDs, argv, setup, stateful cases, and DT_RELR obligations
 remain exactly those frozen workloads. It does not transfer an AArch64 result
 or claim package-source equivalence. All 59 archive pins match package records
 in one signed v3.24 index; the 59 package names and all 34 workloads remain
-unchanged. The direct-package version deltas from AArch64 are gzip `1.14-r3`,
-sqlite `3.53.4-r0`, curl `8.22.0-r0`, openssl `3.5.9-r0`,
-openssh-client-default `10.3_p1-r1`, and python3 `3.14.8-r0`.
+unchanged. The direct-package version deltas from AArch64 are gzip `1.15-r0`,
+sqlite `3.53.4-r0`, curl `8.23.0-r0`, openssl `3.5.9-r1`,
+openssh-client-default `10.3_p1-r2`, git `2.54.1-r0`, and python3 `3.14.10-r1`.
 
 The native runner takes a supplied, already-built owned dynamic product. It
 does not build a replacement product. Before any private execution it verifies

@@ -338,7 +338,7 @@ def load_manifest(path: Path = MANIFEST) -> ManifestSpec:
     if len(archive_roster) != (59 if ARCH == "x86_64" else 58):
         fail("native corpus archive roster count drifted")
     excluded_values = excluded.get("archives")
-    if excluded_values != (["musl-1.2.6-r2.apk"] if ARCH == "x86_64" else []) or any(name not in archive_roster for name in excluded_values):
+    if excluded_values != (["musl-1.2.6-r3.apk"] if ARCH == "x86_64" else []) or any(name not in archive_roster for name in excluded_values):
         fail("native corpus excluded libc archive contract drifted")
     source_text = workload.get("source_manifest")
     if not isinstance(source_text, str):
