@@ -29,6 +29,7 @@ import owned_crypt_profile as crypt
 import owned_atomic_addressable_profile as atomic
 import owned_math_oracle_defects as math_oracle
 import owned_wordexp_upstream_policy as wordexp_policy
+from native_arch import native_arch
 
 ROOT = Path(__file__).resolve().parents[2]
 SCHEMA = 'crabc.x86_64-owned-posix-native-execution/v2'
@@ -80,7 +81,7 @@ SHARED_SOURCES = (*crypt.SOURCES, *atomic.SOURCES, *wordexp_policy.wordexp.SOURC
     'compat/x86_64/owned_posix_family_observations.py',
     'compat/x86_64/owned_posix_static_products.py',
     'compat/x86_64/owned_dynamic_qualification.py',
-    'compat/upstreams.toml', 'rust-toolchain.toml', 'docker/Dockerfile.x86_64',
+    'compat/upstreams.toml', 'rust-toolchain.toml', f"docker/Dockerfile.{native_arch()['arch']}",
 )
 # Family admission is deliberately a consuming phase over the two existing
 # execution receipts. It does not rerun either producer and cannot turn a
@@ -103,9 +104,10 @@ write_new = family.static_products.write_new
 
 
 def require_execution_environment():
-    require(platform.system() == 'Linux' and platform.machine() == 'x86_64'
+    require(platform.system() == 'Linux' and platform.machine().lower() in
+            ({'x86_64', 'amd64'} if native_arch()['arch'] == 'x86_64' else {'aarch64', 'arm64'})
             and sys.byteorder == 'little' and os.geteuid() == 0,
-            'native execution requires the pinned Linux/x86-64 root environment')
+            'native execution requires the pinned native Linux root environment')
 
 
 def require_live_oracle(work, oracle):
