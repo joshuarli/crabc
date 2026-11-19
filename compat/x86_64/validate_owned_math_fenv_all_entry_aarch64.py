@@ -15,6 +15,28 @@ STAGES = ((1, 0), (2, 4 * 4 * 2 * 12 * 3 * ROUNDING.size),
           (6, 244 * completion.AARCH64_RECORD.size), (7, 2764 * 48),
           (8, 5544 * 32), (9, 7604 * 64), (10, 58984 * 80))
 
+INVALID, OVERFLOW, UNDERFLOW, INEXACT = 1, 4, 8, 16
+SIGN = 1 << 127
+MAGNITUDE = SIGN - 1
+FRACTION = (1 << 112) - 1
+QUIET = 1 << 111
+INFINITY = 0x7fff << 112
+ONE = 0x3fff << 112
+BINARY64_MAX = (0x43fe << 112) | (((1 << 52) - 1) << 60)
+BINARY64_MIN = 0x3c01 << 112
+ACOSHL, CPOWL = 1, 185
+LONG_DOUBLE, LONG_DOUBLE_PAIR = 3, 9
+# The l_values operands of libc_math_elementary_long_double_probe.c, by case index.
+ELEMENTARY_OPERANDS = (
+    SIGN | INFINITY, SIGN | (0x7ffe << 112) | FRACTION, 0xc002 << 112, 0xc000 << 112,
+    0xbfff8 << 108, 0xbfff << 112, 0xbffe << 112, SIGN | 1, SIGN, 0, 1, 1 << 112,
+    0x3ffd << 112, 0x3ffe << 112, ONE, 0x3fff8 << 108, 0x4000 << 112, 0x4002 << 112,
+    (0x7ffe << 112) | FRACTION, INFINITY, INFINITY | QUIET | 0x1234)
+# Boundary cpowl cases of libc_math_abi_boundary_probe.c whose complex product
+# has two NaN factors: l_complex rows 0, 1, 4, 5 and 6 as z (through clogl) and
+# rows 4 and 5 as c.
+CPOWL_NAN_PRODUCT_CASES = frozenset((0x000, 0x001, 0x004, 0x005, 0x006, 0x104, 0x105))
+
 
 def read(path):
     data = Path(path).read_bytes()
@@ -48,18 +70,62 @@ def read(path):
     return bodies
 
 
-def domain_flag_correction(oracle, reference, actual):
-    if actual[0] != 1 or actual[4] != 1 or oracle[4] != 17 or reference[4] != 17:
+def is_nan(bits):
+    return bits & MAGNITUDE > INFINITY
+
+
+def narrowing_exceptions(bits):
+    magnitude = bits & MAGNITUDE
+    exponent = magnitude >> 112
+    if magnitude == 0 or exponent == 0x7fff:
+        return 0
+    significand = (magnitude & FRACTION) | ((exponent != 0) << 112)
+    trailing = (significand & -significand).bit_length() - 1
+    scale = max(exponent, 1) - 0x3fff - 112 + trailing
+    if magnitude <= BINARY64_MAX and significand >> trailing < 1 << 53 and scale >= -1074:
+        return 0
+    return (INEXACT | (OVERFLOW if magnitude > BINARY64_MAX else 0)
+            | (UNDERFLOW if magnitude < BINARY64_MIN else 0))
+
+
+def acoshl_domain_flags(stage, musl, reference, candidate):
+    if stage == 7 and candidate[4] == 1 and candidate[1] < len(ELEMENTARY_OPERANDS):
+        operand, flags, value = ELEMENTARY_OPERANDS[candidate[1]], 3, 5
+    elif stage == 10 and candidate[6] == LONG_DOUBLE:
+        operand, flags, value = int.from_bytes(candidate[12], 'little'), 4, 11
+    else:
         return False
-    if actual[:4] != oracle[:4] or actual[5:] != oracle[5:] or reference != oracle:
+    if candidate[0] != ACOSHL or reference != musl or is_nan(operand):
         return False
-    bits = int.from_bytes(actual[-1], 'little')
-    magnitude = bits & ((1 << 127) - 1)
-    return magnitude < (0x7fff << 112) and (bits >> 127 != 0 or magnitude < (0x3fff << 112))
+    if operand & SIGN == 0 and operand >= ONE:
+        return False
+    if any(index != flags and musl[index] != candidate[index] for index in range(len(musl))):
+        return False
+    permitted = INVALID | narrowing_exceptions(operand)
+    return (is_nan(int.from_bytes(candidate[value][:16], 'little')) and candidate[flags] == INVALID
+            and musl[flags] & INVALID != 0 and musl[flags] & ~permitted == 0)
+
+
+def cpowl_nan_propagation(stage, musl, reference, candidate):
+    if (stage != 10 or candidate[0] != CPOWL or candidate[6] != LONG_DOUBLE_PAIR
+            or candidate[1] not in CPOWL_NAN_PRODUCT_CASES or reference != candidate):
+        return False
+    if musl[:11] != candidate[:11] or musl[12] != candidate[12]:
+        return False
+    for offset in (0, 16):
+        expected, actual = (int.from_bytes(record[11][offset:offset + 16], 'little')
+                            for record in (musl, candidate))
+        if expected != actual and not all(is_nan(bits) and bits & QUIET for bits in (expected, actual)):
+            return False
+    return True
+
+
+CONTRACTS = (('acoshl-domain-flags', acoshl_domain_flags),
+             ('cpowl-nan-propagation', cpowl_nan_propagation))
 
 
 def compare(oracle, reference, actual):
-    matches = {'musl': 0, 'owned-helpers': 0, 'domain-flags': 0}
+    matches = dict.fromkeys(('musl', *(name for name, _ in CONTRACTS)), 0)
     for stage, _ in STAGES:
         if stage == 6:
             completion.compare_aarch64(list(completion.AARCH64_RECORD.iter_unpack(oracle[stage])),
@@ -81,12 +147,13 @@ def compare(oracle, reference, actual):
                     raise ValueError(f'stage {stage} record {ordinal} corrected reference differs from musl')
                 if candidate == musl:
                     matches['musl'] += 1
-                elif not protected and candidate == helper:
-                    matches['owned-helpers'] += 1
-                elif not protected and stage == 10 and domain_flag_correction(musl, helper, candidate):
-                    matches['domain-flags'] += 1
-                else:
-                    raise ValueError(f'stage {stage} record {ordinal} differs from both references: {candidate[:3]}')
+                    continue
+                name = next((name for name, contract in CONTRACTS
+                             if contract(stage, musl, helper, candidate)), None)
+                if name is None:
+                    raise ValueError(f'stage {stage} record {ordinal} differs from pinned musl '
+                                     f'outside every difference contract: {candidate[:3]}')
+                matches[name] += 1
         elif oracle[stage] != actual[stage] or oracle[stage] != reference[stage]:
             raise ValueError(f'stage {stage} differs from the pinned oracle')
     return matches
