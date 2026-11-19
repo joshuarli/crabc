@@ -322,7 +322,7 @@ impl Batch<'_> {
         let query = unsafe { self.slots[slot].query() };
         let address = self.servers[server];
         // Source ignores every UDP send result, including MASKED ECANCELED.
-        let _ = unsafe { self.cp(44, [self.pfd[self.count].fd as i64, query.as_ptr() as i64,
+        let _ = unsafe { self.cp(raw_syscall::SYS_SENDTO, [self.pfd[self.count].fd as i64, query.as_ptr() as i64,
             query.len() as i64, MSG_NOSIGNAL, address.bytes.as_ptr() as i64,
             address.length as i64]) };
     }
@@ -352,7 +352,7 @@ impl Batch<'_> {
         unsafe { pthread_cancel::pthread_setcancelstate(DISABLE, ptr::null_mut()); }
         self.resume_state = DISABLE;
         let address = self.servers[server];
-        let fd = match self.raw(41, [self.socket_family as i64, SOCK_STREAM|SOCK_NONBLOCK|SOCK_CLOEXEC, 0,0,0,0]) {
+        let fd = match self.raw(raw_syscall::SYS_SOCKET, [self.socket_family as i64, SOCK_STREAM|SOCK_NONBLOCK|SOCK_CLOEXEC, 0,0,0,0]) {
             Ok(fd) => fd as c_int,
             Err(_) => {
                 unsafe { pthread_cancel::pthread_setcancelstate(self.entry_state, ptr::null_mut()); }
@@ -364,7 +364,7 @@ impl Batch<'_> {
         self.pfd[slot] = PollFd { fd, events: POLLOUT, revents: 0 };
         let enabled: c_int = 1;
         let mut started = false;
-        if self.raw(54, [fd as i64, 6, TCP_FASTOPEN_CONNECT, &enabled as *const c_int as i64,
+        if self.raw(raw_syscall::SYS_SETSOCKOPT, [fd as i64, 6, TCP_FASTOPEN_CONNECT, &enabled as *const c_int as i64,
             core::mem::size_of::<c_int>() as i64, 0]).is_ok() {
             let query_pointer = self.slots[slot].query;
             let query_length = self.slots[slot].query_length;
@@ -374,7 +374,7 @@ impl Batch<'_> {
                 Iovec { base: query.as_ptr().cast_mut(), length: query.len() }];
             let mut message = Message::connected(&iovecs);
             message.name = address.bytes.as_ptr(); message.name_length = address.length;
-            match self.raw(46, [fd as i64, &message as *const Message as i64, MSG_FASTOPEN|MSG_NOSIGNAL,0,0,0]) {
+            match self.raw(raw_syscall::SYS_SENDMSG, [fd as i64, &message as *const Message as i64, MSG_FASTOPEN|MSG_NOSIGNAL,0,0,0]) {
                 Ok(length) => {
                     self.slots[slot].qpos = length;
                     if length == query_length + 2 { self.pfd[slot].events = POLLIN; }
@@ -385,7 +385,7 @@ impl Batch<'_> {
             }
         }
         if !started {
-            match self.raw(42, [fd as i64, address.bytes.as_ptr() as i64, address.length as i64,0,0,0]) {
+            match self.raw(raw_syscall::SYS_CONNECT, [fd as i64, address.bytes.as_ptr() as i64, address.length as i64,0,0,0]) {
                 Ok(_) => started = true,
                 Err(error) if error == Errno::INPROGRESS => started = true,
                 Err(_) => (),
@@ -409,7 +409,7 @@ impl Batch<'_> {
             // Unlike the strict core, input flags are zero.  The copied prefix
             // is bounded by the output buffer even when the kernel reports
             // MSG_TRUNC, and only then can selected C fall back to TCP.
-            let received = unsafe { self.cp(47, [self.pfd[self.count].fd as i64,
+            let received = unsafe { self.cp(raw_syscall::SYS_RECVMSG, [self.pfd[self.count].fd as i64,
                 &mut message as *mut Message as i64, 0,0,0,0]) };
             let received = match received { Cp::Complete(length) => length, Cp::Failed(_) | Cp::Masked => break };
             if received < 4 || received > length { continue; }
@@ -466,7 +466,7 @@ impl Batch<'_> {
             1
         };
         let message = Message::connected(&iovecs[..count]);
-        match unsafe { self.cp(46, [self.pfd[slot].fd as i64, &message as *const Message as i64, MSG_NOSIGNAL,0,0,0]) } {
+        match unsafe { self.cp(raw_syscall::SYS_SENDMSG, [self.pfd[slot].fd as i64, &message as *const Message as i64, MSG_NOSIGNAL,0,0,0]) } {
             Cp::Complete(length) => {
                 self.slots[slot].qpos += length;
                 if self.slots[slot].qpos == query_length+2 { self.pfd[slot].events = POLLIN; }
@@ -493,7 +493,7 @@ impl Batch<'_> {
             1
         };
         let mut message = Message::connected(&iovecs[..count]);
-        let received = match unsafe { self.cp(47, [self.pfd[slot].fd as i64, &mut message as *mut Message as i64, 0,0,0,0]) } {
+        let received = match unsafe { self.cp(raw_syscall::SYS_RECVMSG, [self.pfd[slot].fd as i64, &mut message as *mut Message as i64, 0,0,0,0]) } {
             Cp::Complete(length) if length != 0 => length,
             Cp::Complete(_) | Cp::Failed(_) | Cp::Masked => return false,
         };
@@ -530,7 +530,13 @@ impl Batch<'_> {
             }
             let wait = previous.wrapping_add(interval).wrapping_sub(time).min(c_int::MAX as u64) as i64;
             let pollfds = self.pfd.as_mut_ptr();
-            let polled = unsafe { self.cp(7, [pollfds as i64, (self.count+1) as i64, wait,0,0,0]) };
+            #[cfg(target_arch = "x86_64")]
+            let polled = unsafe { self.cp(raw_syscall::SYS_POLL, [pollfds as i64, (self.count+1) as i64, wait,0,0,0]) };
+            #[cfg(target_arch = "aarch64")]
+            let polled = {
+                let deadline = Timespec { seconds: wait / 1000, nanoseconds: (wait % 1000) * 1_000_000 };
+                unsafe { self.cp(raw_syscall::SYS_PPOLL, [pollfds as i64, (self.count+1) as i64, &deadline as *const Timespec as i64,0,0,0]) }
+            };
             let positive = matches!(polled, Cp::Complete(count) if count != 0);
             if !positive { time = self.time_ms(); continue; }
             let events: [i16; 3] = core::array::from_fn(|index| self.pfd[index].revents);
