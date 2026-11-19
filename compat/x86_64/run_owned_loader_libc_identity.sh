@@ -160,8 +160,22 @@ build_consumer() {
     local root="$1" library_search_path="$2" consumer_search_path="$3"
     "$driver" --dynamic-shared-object -DIDENTITY_DSO --application-runpath "$library_search_path" \
         "$source" -o "$root/plugins/libcli.so"
-    "$driver" "--dynamic-$mode" --application-runpath "$consumer_search_path" \
-        "$source" --application-dso "$root/plugins/libcli.so" -o "$root/consumer"
+    local link_dso="$root/plugins/libcli.so"
+    if [ "$arch" = aarch64 ] && [ "$library_search_path" != /usr/lib ]; then
+        local link_directory="$work/$mode-$case_name-link"
+        mkdir -p "$link_directory"
+        link_dso="$link_directory/libcli.so"
+        "$driver" --dynamic-shared-object -DIDENTITY_DSO --application-runpath /usr/lib \
+            "$source" -o "$link_dso"
+        assert_needed "$link_dso" libc.so link-library
+    fi
+    if [ "$arch" = x86_64 ]; then
+        "$driver" "--dynamic-$mode" --application-runpath "$consumer_search_path" \
+            "$source" --application-dso "$root/plugins/libcli.so" -o "$root/consumer"
+    else
+        "$driver" "--dynamic-$mode" --application-runpath "$consumer_search_path" \
+            "$source" --application-dso "$link_dso" -o "$root/consumer"
+    fi
     assert_needed "$root/plugins/libcli.so" libc.so library
     assert_needed "$root/consumer" libcli.so consumer
     assert_needed "$root/consumer" libc.so consumer
