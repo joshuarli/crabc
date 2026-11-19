@@ -53,7 +53,7 @@ CANONICAL_FLAGS = frozenset({
     "-Wl,-z,relro,-z,now", "-Wl,-O1", "-Wl,--strip-debug",
 })
 if ARCH == "aarch64":
-    CANONICAL_FLAGS = CANONICAL_FLAGS | {"-static", "-Wl,--fix-cortex-a53-843419"}
+    CANONICAL_FLAGS = CANONICAL_FLAGS | {"-Wl,--fix-cortex-a53-843419"}
 METADATA_MEMBERS = frozenset({"lib.rmeta", "lib.rmeta-link"})
 RUST_CDYLIB_EXPORTS = (
     "crabc_owned_cleanup_dso",
@@ -914,8 +914,8 @@ def parse_cargo_arguments(
                 output = confined_output(value, cargo_profile_root / "build")
             else:
                 search_paths.append(confined(value, [cargo_profile_root, stock_root], "Rust search path", directory=True))
-        elif argument in ({"-pie", "-static-pie", "-no-pie"} if ARCH == "aarch64" else {"-pie", "-static-pie"}):
-            if rust_mode is not None and not (ARCH == "aarch64" and rust_mode == "no-pie" and argument == "-static-pie"):
+        elif argument in {"-pie", "-static-pie"}:
+            if rust_mode is not None:
                 raise LinkError("duplicate or conflicting Rust executable mode")
             rust_mode = argument.removeprefix("-")
         elif argument.startswith("-Wl,-plugin-opt="):
@@ -973,7 +973,8 @@ def _cargo_input_kind(path: Path) -> str:
     header = path.read_bytes()[:20]
     if header[:4] == BITCODE_MAGIC:
         return "llvm-bitcode"
-    if header[:4] == b"\x7fELF" and header[18:20] == ELF_MACHINE:
+    if (header[:4] == b"\x7fELF" and header[18:20] == ELF_MACHINE
+            and (ARCH != "aarch64" or header[16:18] == b"\x01\x00")):
         return f"elf-{ARCH}"
     raise LinkError(f"Cargo Rust object is neither {ELF_DESCRIPTION} ELF nor LLVM bitcode: {path}")
 
@@ -1192,7 +1193,8 @@ def link(arguments: list[str]) -> None:
     assert version_script is None or isinstance(version_script, Path)
     input_records: list[dict[str, object]] = []
     for object_path in objects:
-        if object_path.read_bytes()[:20][18:20] != ELF_MACHINE:
+        header = object_path.read_bytes()[:20]
+        if header[18:20] != ELF_MACHINE or (ARCH == "aarch64" and header[16:18] != b"\x01\x00"):
             raise LinkError(f"Rust application object is not {ELF_DESCRIPTION} ELF: {object_path}")
         input_records.append(_record_input(object_path))
     for archive in archives:

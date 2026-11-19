@@ -675,12 +675,28 @@ class CargoConsumerLinkContract(unittest.TestCase):
         with self.assertRaisesRegex(linker.LinkError, "linker-plugin option"):
             self.parse(self.arguments(extra=("-Wl,-plugin-opt=O3,-plugin-opt=-load=/tmp/pass.so",)))
 
-    def test_arm64_explicit_static_pie_overrides_rustc_no_pie(self):
+    def test_arm64_rejects_conflicting_static_pie_modes(self):
         with patch.object(linker, "ARCH", "aarch64"):
-            parsed = self.parse(self.arguments(mode="-no-pie", unwind="-lunwind", extra=("-static-pie",)))
-            self.assertEqual(parsed["rust_mode"], "static-pie")
+            with self.assertRaises(linker.LinkError):
+                self.parse(self.arguments(mode="-no-pie", unwind="-lunwind", extra=("-static-pie",)))
             with self.assertRaises(linker.LinkError):
                 self.parse(self.arguments(mode="-pie", extra=("-static-pie",)))
+            with self.assertRaises(linker.LinkError):
+                self.parse(self.arguments(mode="-static-pie", extra=("-static",)))
+
+    def test_arm64_cargo_object_requires_relocatable_elf(self):
+        obj = Path(self.temporary.name) / "input.o"
+        header = bytearray(20)
+        header[:4] = b"\x7fELF"
+        header[16:18] = b"\x01\x00"
+        header[18:20] = b"\xb7\x00"
+        obj.write_bytes(header)
+        with patch.object(linker, "ARCH", "aarch64"), patch.object(linker, "ELF_MACHINE", b"\xb7\x00"):
+            self.assertEqual(linker._cargo_input_kind(obj), "elf-aarch64")
+            header[16:18] = b"\x03\x00"
+            obj.write_bytes(header)
+            with self.assertRaises(linker.LinkError):
+                linker._cargo_input_kind(obj)
 
     def test_foreign_inputs_and_request_spellings_are_rejected(self):
         ambient = Path(self.temporary.name) / "libgcc_eh.a"
