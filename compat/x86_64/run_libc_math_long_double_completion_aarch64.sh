@@ -71,7 +71,7 @@ grep -Eq '[[:space:]]W[[:space:]]pow10l$' "$work/archive-symbols" || fail 'archi
     -nostdinc -isystem "$compiler_include" -I"$work/product/usr/include" \
     -c "$probe" -o "$work/freestanding.o"
 "$cc" -c compat/x86_64/libc_math_long_double_completion_aarch64_start.S -o "$work/start.o"
-"$cc" -nostdlib -static -no-pie -Wl,-e,_start,--no-undefined,--gc-sections,--trace,--export-dynamic \
+"$cc" -fuse-ld=bfd -nostdlib -static -no-pie -Wl,-e,_start,--no-undefined,--gc-sections,--trace \
     "$work/start.o" "$work/freestanding.o" -Wl,--start-group "$archive" \
     "$work/product/usr/lib/libcrabc-builtins.a" -Wl,--end-group -o "$work/freestanding" > "$work/freestanding.trace"
 readelf -sW "$work/freestanding" > "$work/freestanding.symbols"
@@ -81,9 +81,14 @@ readelf -rW "$work/freestanding" > "$work/freestanding.relocations"
 objdump -d "$work/freestanding" > "$work/freestanding.disassembly"
 awk '$4 == "FUNC" && ($5 == "GLOBAL" || $5 == "WEAK") { print $8 }' "$work/freestanding.symbols" |
     LC_ALL=C sort -u > "$work/freestanding.functions"
-printf '%s\n' __addoti4 __divdc3 __divsc3 __divtc3 __ffsti2 __fpclassifyl __muldc3 __mulsc3 \
-    __multc3 __parityti2 __popcountdi2 __popcountti2 __suboti4 _start \
-    crabc_x86_64_math_long_double_completion_probe exp10l exp2l fabs fdiml feclearexcept \
+printf '%s\n' _RINvNtNtCsbJTFf11ssQ0_17compiler_builtins5float3add3addC4f128EB6_ \
+    _RINvNtNtCsbJTFf11ssQ0_17compiler_builtins5float3div3divC4f128EB6_ \
+    _RINvNtNtCsbJTFf11ssQ0_17compiler_builtins5float3mul3mulC4f128EB6_ \
+    __addtf3 __divtf3 __eqtf2 __extenddftf2 __extendsftf2 __fesetround __fixtfsi \
+    __fpclassifyl __gttf2 __letf2 __lttf2 __multf3 __netf2 __subtf3 __trunctfdf2 __trunctfsf2 _start \
+    crabc_x86_64_math_long_double_completion_probe crabc_x86_math_pow_provider_invalid \
+    crabc_x86_math_pow_provider_oflow crabc_x86_math_pow_provider_uflow crabc_x86_math_pow_provider_xflow \
+    exp10l exp2l fabs fdiml feclearexcept \
     fegetenv fegetround feraiseexcept fesetenv fesetround fetestexcept modfl pow pow10l powl scalbnl |
     LC_ALL=C sort -u > "$work/freestanding.expected-functions"
 cmp "$work/freestanding.expected-functions" "$work/freestanding.functions" || fail 'freestanding function closure differs'
@@ -113,7 +118,7 @@ aggregate=CRABC_MATH_ELEMENTARY_FENV_SENSITIVE_AGGREGATE_FREESTANDING
     -fno-stack-protector -fno-pie -nostdinc -isystem "$compiler_include" -I"$work/product/usr/include" \
     -c compat/x86_64/libc_math_elementary_fenv_sensitive_aggregate_probe.c -o "$work/aggregate.o"
 "$cc" -D"$aggregate" -c compat/x86_64/libc_math_long_double_completion_aarch64_start.S -o "$work/aggregate-start.o"
-"$cc" -nostdlib -static -no-pie -Wl,-e,_start,--no-undefined,--gc-sections,--trace,--export-dynamic \
+"$cc" -fuse-ld=bfd -nostdlib -static -no-pie -Wl,-e,_start,--no-undefined,--gc-sections,--trace \
     "$work/aggregate-start.o" "$work/aggregate.o" -Wl,--start-group "$archive" \
     "$work/product/usr/lib/libcrabc-builtins.a" -Wl,--end-group -o "$work/aggregate" > "$work/aggregate.trace"
 readelf -sW "$work/aggregate" > "$work/aggregate.symbols"
