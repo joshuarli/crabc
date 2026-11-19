@@ -125,7 +125,7 @@ def execute(arguments):
             plan += ["-z", "dynamic-undefined-weak", "--dynamic-linker", interpreter, str(lib / ("Scrt1.o" if mode == "pie" else "crt1.o"))]
         else:
             plan += ["-soname", "<output-basename>"]
-        plan += [str(lib / "crti.o"), shared.APPLICATION_OBJECTS, str(lib / "libcrabc-builtins.a"),
+        plan += [str(lib / "crti.o"), *([str(lib / "crabc-dynamic-attach.o")] if mode == "exec" else []), shared.APPLICATION_OBJECTS, str(lib / "libcrabc-builtins.a"),
                  str(lib / "libc.so"), str(lib / "crtn.o"), "-o", shared.OUTPUT]
         print(json.dumps({"format": "crabc-aarch64-owned-dynamic-sysroot-v1", "mode": mode, "binding": binding_mode,
                           "runtime_imports": sorted(runtime_imports), "application_runpath": "/usr/lib", "application_rpath": None,
@@ -283,6 +283,8 @@ def execute(arguments):
             command += ["-z", "dynamic-undefined-weak", "--dynamic-linker", interpreter, str(entry)]
         else:
             command += ["-soname", output.name]
+        attachment = [lib / "crabc-dynamic-attach.o"] if mode == "exec" else []
+        runtime.extend(attachment)
         archive = lib / "libcrabc-builtins.a"
         if runtime_imports:
             provided, required = {"_GLOBAL_OFFSET_TABLE_"}, set()
@@ -299,7 +301,7 @@ def execute(arguments):
                         provided.add(name)
             if required - provided != runtime_imports:
                 raise shared.DriverError(f"runtime imports differ from exact unresolved object symbols: {sorted(required - provided)}")
-        command += [str(lib / "crti.o"), *(str(path) for path in objects), str(archive),
+        command += [str(lib / "crti.o"), *(str(path) for path in attachment), *(str(path) for path in objects), str(archive),
                     *(str(path) for path in dso_inputs), str(lib / "libc.so"), str(lib / "crtn.o"), "-o", str(output)]
         descriptor = os.open(receipt_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o644)
         try:
