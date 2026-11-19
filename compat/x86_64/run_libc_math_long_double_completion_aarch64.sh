@@ -64,5 +64,5 @@ pow="$(awk '$4 == "FUNC" && $8 == "pow10l" { print $2; exit }' "$work/symbols")"
 "$work/candidate" > "$work/candidate.records"
 python3 -B compat/x86_64/validate_libc_math_long_double_completion_aarch64.py \
     "$work/oracle.records" "$work/candidate.records"
-python3 -B scripts/build_x86_64_owned_dynamic_sysroot.py --architecture aarch64 --output "$work/dynamic" >"$work/dynamic-build.log"
-bash compat/x86_64/run_binary128_helper_differential.sh "$work/product" "$work/dynamic" "$work/differential"
+python3 -B scripts/build_x86_64_owned_dynamic_sysroot.py --architecture aarch64 --output "$work/dynamic-product" >"$work/dynamic-build.log"
+bash compat/x86_64/run_binary128_helper_differential.sh "$work/product" "$work/dynamic-product" "$work/differential"
