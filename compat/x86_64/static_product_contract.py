@@ -496,7 +496,7 @@ def validate_archive_replay(report: Path, archives: Mapping[str, str], manifest:
     require(archives["primary.tar.xz"] == archives["reproduction.tar.xz"],
             "independent static packages differ")
 
-    scratch = evidence_directory(ROOT / ".work/x86_64/tmp")
+    scratch = evidence_directory(WORK_PARENT / "tmp")
     scratch.mkdir(parents=True, exist_ok=True)
     try:
         with tempfile.TemporaryDirectory(prefix=".verify-static-product.", dir=scratch) as temporary:
