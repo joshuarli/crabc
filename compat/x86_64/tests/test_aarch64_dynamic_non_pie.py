@@ -344,7 +344,7 @@ class Aarch64DynamicNonPieTest(unittest.TestCase):
                                        "--transitive-application-dso", str(leaf_so), "-o", str(work / "tampered")],
                                       capture_output=True, text=True)
             self.assertNotEqual(tampered.returncode, 0)
-            self.assertIn("dependency identities differ", tampered.stderr)
+            self.assertIn("application DSO input identity differs", tampered.stderr)
 
     @unittest.skipUnless(os.environ.get("CRABC_AARCH64_DYNAMIC_SYSROOT") or CAN_BUILD, "requires a built aarch64 product")
     def test_errno_alias_regression(self):
