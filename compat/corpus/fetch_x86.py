@@ -139,12 +139,61 @@ def install(relative: str, expected: str | None, url: str, seed: Path | None, re
         temporary.unlink(missing_ok=True)
 
 
+def fetch_aarch64(arguments: argparse.Namespace) -> int:
+    global INPUT
+    if arguments.refresh_index or arguments.mirror_base_url:
+        raise FetchError("aarch64 corpus uses only manifest-pinned archive URLs")
+    INPUT = Path(".work/aarch64/owned-package-corpus-input")
+    manifest_path = Path(__file__).with_name("manifest.toml")
+    with manifest_path.open("rb") as stream:
+        manifest = tomllib.load(stream)
+    if manifest.get("schema") != 1 or manifest.get("architecture") != "aarch64":
+        raise FetchError("aarch64 corpus manifest identity differs")
+    packages = manifest["packages"]
+    roster = {item["filename"]: item["sha256"] for item in packages}
+    if len(roster) != len(packages) or any(Path(name).name != name for name in roster):
+        raise FetchError("aarch64 corpus archive roster is invalid")
+    base = manifest["repository"]["base_url"].rstrip("/")
+    seed = primary_input()
+    errors = []
+    origins: dict[str, int] = {}
+    for name, expected in sorted(roster.items()):
+        try:
+            origin = install(f"apks/{name}", expected, f"{base}/{name}", seed)
+            origins[origin] = origins.get(origin, 0) + 1
+        except (FetchError, OSError) as error:
+            errors.append(f"{name}: {base}/{name}: {error}")
+    archive_directory = ROOT / INPUT / "apks"
+    extra = sorted(set(os.listdir(archive_directory)) - set(roster)) if archive_directory.is_dir() else []
+    if extra:
+        errors.append(f"unpinned archives present: {', '.join(extra)}")
+    image = manifest["image"]
+    if "@sha256:" not in image:
+        errors.append("image is not digest pinned")
+    else:
+        result = subprocess.run(["docker", "pull", image], check=False)
+        if result.returncode:
+            errors.append(f"pinned image pull failed: {image}")
+    if errors:
+        for error in errors:
+            print(f"aarch64 corpus input: FAIL: {error}", file=sys.stderr)
+        return 1
+    summary = ", ".join(f"{count} {origin}" for origin, count in sorted(origins.items()))
+    print(f"aarch64 corpus input: PASS ({len(roster)} pinned archives: {summary}); input: {INPUT}")
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    parser.add_argument("--architecture", choices=("x86_64", "aarch64"), default={"arm64": "aarch64", "aarch64": "aarch64", "x86_64": "x86_64", "amd64": "x86_64"}.get(subprocess.check_output(["uname", "-m"], text=True).strip().lower()))
     parser.add_argument("--refresh-index", action="store_true", help="download a new index snapshot")
     parser.add_argument("--mirror-base-url", action="append", default=[],
                         help="HTTPS repository containing the same exact pinned APK filenames; repeatable")
     arguments = parser.parse_args(argv)
+    if arguments.architecture is None:
+        parser.error("unsupported native architecture")
+    if arguments.architecture == "aarch64":
+        return fetch_aarch64(arguments)
     mirrors = tuple(base.rstrip("/") for base in arguments.mirror_base_url)
     for base in mirrors:
         parsed = urllib.parse.urlsplit(base)
