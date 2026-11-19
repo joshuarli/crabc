@@ -1238,7 +1238,7 @@ global_asm!(
     options(att_syntax),
 );
 
-#[cfg(all(not(test), target_arch = "aarch64"))]
+#[cfg(target_arch = "aarch64")]
 #[path = "aarch64_bootstrap.rs"]
 mod aarch64_bootstrap;
 
