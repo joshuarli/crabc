@@ -904,7 +904,7 @@ def validate_symbol_artifacts(
     validate_shared_symbols(
         read_text(paths["candidate-shared-symbols.txt"], "candidate shared symbols"),
         read_text(paths["candidate-dynamic-symbols.txt"], "candidate dynamic symbols"),
-        "candidate shared library", alias_visibility="HIDDEN" if ARCH == "aarch64" else "DEFAULT",
+        "candidate shared library", alias_visibility="DEFAULT",
     )
     return paths
 

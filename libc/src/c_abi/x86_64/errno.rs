@@ -59,11 +59,6 @@ core::arch::global_asm!(
     ".set ___errno_location, __errno_location",
 );
 
-#[cfg(all(crabc_x86_allocator_runtime, crabc_x86_dynamic_runtime, target_arch = "aarch64"))]
-core::arch::global_asm!(
-    ".hidden ___errno_location",
-);
-
 /// Publish one Linux error number in the calling thread's C `errno` slot.
 ///
 /// This stays private to the x86 C-runtime foundation: public callers reach
