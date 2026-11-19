@@ -406,14 +406,14 @@ entries are closed by the commit that fixes them.
 | 45 | fixed | `ldso/src/x86_64_initial_graph.rs:2548` uses 16-byte aligned images and variant-I placements. |
 | 46 | fixed | `libc/src/c_abi/x86_64/descriptor_entry.rs:270` selects the native AArch64 `O_DIRECTORY` value. |
 | 47 | still open | `test_runner.py:8284-8312` tests a Darwin host. The emulation-refusal branch at `dev-x86_64.sh:3264-3267` is untested; main's version of this test used Linux/aarch64. |
-| 48 | still open | `test_core_image_dispatch.py:30, 227` are x86-only; the aarch64 class at `:275` has positive cases only. |
+| 48 | fixed (d84f8ba79) | The arm64 image test rejects a missing pin, inspection errors and an incorrect image architecture without running or building. |
 | 49 | fixed (b6236c919) | The native image builds a temporary aarch64 sysroot when none is supplied; all five original tests passed in the VM. |
 | 50 | fixed (48ce246c7) | The aarch64 route has forbidden-symbol, missing-witness, missing-syscall and instruction-spelling cases. |
-| 51 | still open | `unwinder/tests/provider_abi_frame.c:21-27`. |
-| 52 | still open | `test_owned_cleanup.py:182, 600, 922`; `test_owned_rust_link.py:46`. |
+| 51 | fixed (9dd0450c3) | The aarch64 frame keeps x24–x28 and d8–d15 live and checks their values; the fixture compiled in the native image. |
+| 52 | partly fixed (9dd0450c3, 23c7b342d) | The arm64 launcher reader has a positive and negative ELF test, and the Rust linker materialization test passed natively. The two cleanup routines behind x86-only guards still require aarch64 producer support. |
 | 53 | test coverage added (dee553461) | A test uses the existing source-order checker on the aarch64 attach branch and rejects missing or reordered operations. The production receipt checker still checks only the x86 branch. |
-| 54 | still open | `scripts/lanes/rust-check.sh:72-84`. |
-| 55 | still open | `prepare-worktree.sh:304-311`. |
+| 54 | implementation added (d84f8ba79) | The arm64 path now lists the full x86 crate and feature profiles with its native target; native execution is pending. |
+| 55 | implementation added (d84f8ba79) | The arm64 path invokes the corpus fetcher with `--architecture aarch64`; the existing prepare-worktree test fixture does not supply `native_arch.py`. |
 | 56 | fixed (d84f8ba79) | Native arm64 help is exercised without Docker in the image-dispatch test. |
 | 57 | fixed (d84f8ba79) | Native arm64 selects `Dockerfile.aarch64` and an aarch64 tag; the test captures build arguments without building an image. |
 | 58 | still open | `event.rs:1, 56, 257, 703-705` say "Linux/x86-64" in shared code; `fs.rs:2669` documents statx as "syscall 332". |
