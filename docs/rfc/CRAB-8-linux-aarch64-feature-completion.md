@@ -347,12 +347,20 @@ Open, in dependency order:
   openssl 3.5.7-r0, python3 3.14.7-r1, sqlite 3.53.2-r0) now return 404 from
   dl-cdn and mirrors for both architectures, because Alpine drops superseded
   builds, and their binaries also need libacl, libmagic, libpcre2 and libzstd,
-  which the pinned image lacks. Owner input: a byte-identical copy of those
-  archives, or a re-pin of the frozen corpus (both architectures).
+  which the pinned image lacks. Decided (2026-11-18, owner-delegated): add
+  `compat/corpus/manifest-aarch64.toml`, the AArch64 counterpart of
+  `manifest-x86_64.toml`. It pins current v3.24 aarch64 direct-package versions
+  and their complete solved non-libc closure by SHA-256, with provenance from the
+  signed index under a pinned key, and records `native_version_deltas`. The
+  workload source `manifest.toml` and the x86 contract stay unchanged.
 - x86 link and run of the converged tree on the x86 host (type-checked only
   here).
-- Owner decision: binary128 soft-float rounding and exception fidelity
-  (`compiler_builtins` helpers versus libgcc's soft-fp).
+- Decided (2026-11-18, owner-delegated): binary128 arithmetic stays on the
+  owned `compiler_builtins` helpers. libgcc's soft-fp would be an ambient GCC
+  runtime input, which the owned-sysroot invariant forbids. The helpers'
+  round-to-nearest, no-exception-flag behavior for `long double` arithmetic is
+  a recorded known difference from musl+libgcc; libc-test's `long double`
+  cases pass with it.
 
 Host workflow: the VM clone is `~/crabc`, reachable from the Mac as git remote
 `a64` (`crabc@orb:crabc`) with `receive.denyCurrentBranch updateInstead`.
