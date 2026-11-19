@@ -1,6 +1,7 @@
 #include <fenv.h>
 #include <float.h>
 #include <math.h>
+#include <stddef.h>
 #include <stdint.h>
 #include <unistd.h>
 

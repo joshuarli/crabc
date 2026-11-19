@@ -196,3 +196,4 @@ done
 cmp "$work/candidate.records" "$work/freestanding.records" || fail 'freestanding candidate differs from installed product'
 python3 -B compat/x86_64/validate_libc_math_long_double_completion_aarch64.py \
     "$work/oracle.records" "$work/candidate.records"
+cmp "$work/oracle.records" "$work/candidate.records" || fail 'binary128 record bytes differ from pinned musl'
