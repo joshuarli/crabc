@@ -8,8 +8,9 @@ readonly ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 readonly PROBE="$ROOT/compat/x86_64/owned_mimalloc_startup_errno_probe.c"
 readonly LAZY_PROBE="$ROOT/compat/x86_64/owned_mimalloc_lazy_init_probe.c"
 readonly SUCCESS_PROBE="$ROOT/compat/x86_64/owned_success_errno_probe.c"
-readonly ORACLE_CC=/usr/local/bin/crabc-x86_64-musl-gcc
-readonly INTERPRETER=/lib/ld-crabc-x86_64.so.1
+eval "$(python3 -B "$ROOT/compat/x86_64/native_arch.py")"
+readonly ORACLE_CC="$oracle"
+readonly INTERPRETER=/lib/ld-crabc-${arch}.so.1
 readonly CHROOT="$(command -v chroot)"
 
 usage() {
@@ -214,7 +215,7 @@ run_dynamic_mode() {
     for entry in kernel direct; do
         root="$work/dynamic-$mode-$entry-root"
         mkdir -p "$root/lib" "$root/usr/lib" "$root/work"
-        cp "$product/lib/ld-crabc-x86_64.so.1" "$root/lib/ld-crabc-x86_64.so.1"
+        cp "$product/lib/ld-crabc-${arch}.so.1" "$root/lib/ld-crabc-${arch}.so.1"
         cp "$product/usr/lib/libc.so" "$root/usr/lib/libc.so"
         cp "$candidate" "$root/work/probe"
         if [ "$entry" = direct ]; then
@@ -230,7 +231,7 @@ run_dynamic_mode() {
         root="$work/success-dynamic-$mode-$entry-root"
         populate_success_root "$root"
         mkdir -p "$root/lib" "$root/usr/lib"
-        cp "$product/lib/ld-crabc-x86_64.so.1" "$root/lib/ld-crabc-x86_64.so.1"
+        cp "$product/lib/ld-crabc-${arch}.so.1" "$root/lib/ld-crabc-${arch}.so.1"
         cp "$product/usr/lib/libc.so" "$root/usr/lib/libc.so"
         cp "$work/success-dynamic-$mode" "$root/work/probe"
         if [ "$entry" = direct ]; then
@@ -266,7 +267,7 @@ run_lazy_probe_matrix() {
         for entry in kernel direct; do
             root="$work/lazy-dynamic-$mode-$entry-root"
             mkdir -p "$root/lib" "$root/usr/lib" "$root/work"
-            cp "$dynamic_product/lib/ld-crabc-x86_64.so.1" "$root/lib/ld-crabc-x86_64.so.1"
+            cp "$dynamic_product/lib/ld-crabc-${arch}.so.1" "$root/lib/ld-crabc-${arch}.so.1"
             cp "$dynamic_product/usr/lib/libc.so" "$root/usr/lib/libc.so"
             cp "$work/lazy-dynamic-$mode" "$root/work/probe"
             for probe_mode in "${probe_modes[@]}"; do
@@ -300,7 +301,7 @@ run_lazy_probe_matrix() {
 run_captured oracle-dynamic "$work/oracle-dynamic"
 run_captured oracle-static "$work/oracle-static"
 
-"$ORACLE_CC" -std=c11 -Wl,--dynamic-linker,/lib/ld-musl-x86_64.so.1 "$SUCCESS_PROBE" \
+"$ORACLE_CC" -std=c11 -Wl,--dynamic-linker,/lib/ld-musl-${arch}.so.1 "$SUCCESS_PROBE" \
     -o "$work/success-oracle-dynamic"
 "$ORACLE_CC" -std=c11 -static -fno-pie -no-pie "$SUCCESS_PROBE" -o "$work/success-oracle-static"
 "$work/success-oracle-static" --list >"$work/success-cases"
@@ -312,8 +313,8 @@ success_transcript "$root" oracle-static /work/probe
 root="$work/success-oracle-dynamic-root"
 populate_success_root "$root"
 mkdir -p "$root/lib"
-cp /opt/musl-1.2.6/lib/libc.so "$root/lib/ld-musl-x86_64.so.1"
-ln -s ld-musl-x86_64.so.1 "$root/lib/libc.so"
+cp /opt/musl-1.2.6/lib/libc.so "$root/lib/ld-musl-${arch}.so.1"
+ln -s ld-musl-${arch}.so.1 "$root/lib/libc.so"
 cp "$work/success-oracle-dynamic" "$root/work/probe"
 success_transcript "$root" oracle-dynamic /work/probe
 
@@ -391,7 +392,7 @@ receipt_products+=(
     "input-dynamic-libc-provenance=$provided_dynamic/share/crabc/libc-shared.provenance.json"
     "input-dynamic-loader-provenance=$provided_dynamic/share/crabc/loader.provenance.json"
     "input-dynamic-libc=$provided_dynamic/usr/lib/libc.so"
-    "input-dynamic-loader=$provided_dynamic/lib/ld-crabc-x86_64.so.1"
+    "input-dynamic-loader=$provided_dynamic/lib/ld-crabc-${arch}.so.1"
     "program-startup-oracle-static=$work/oracle-static"
     "program-startup-oracle-dynamic=$work/oracle-dynamic"
     "program-success-oracle-static=$work/success-oracle-static"
