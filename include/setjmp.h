@@ -28,8 +28,18 @@ typedef jmp_buf sigjmp_buf;
 #endif
 
 #else
-typedef unsigned long jmp_buf[22];
-typedef unsigned long sigjmp_buf[40];
+#include <features.h>
+typedef unsigned long __jmp_buf[22];
+typedef struct __jmp_buf_tag {
+	__jmp_buf __jb;
+	unsigned long __fl;
+	unsigned long __ss[128 / sizeof(long)];
+} jmp_buf[1];
+#if defined(_POSIX_SOURCE) || defined(_POSIX_C_SOURCE) \
+ || defined(_XOPEN_SOURCE) || defined(_GNU_SOURCE) \
+ || defined(_BSD_SOURCE)
+typedef jmp_buf sigjmp_buf;
+#endif
 #endif
 
 #if defined(__GNUC__) && (__GNUC__ > 4 || (__GNUC__ == 4 && __GNUC_MINOR__ >= 1))
@@ -58,9 +68,7 @@ int _setjmp(jmp_buf) __setjmp_attr;
 _Noreturn void _longjmp(jmp_buf, int);
 #endif
 
-#if defined(__x86_64__)
 #define setjmp setjmp
-#endif
 
 #undef __setjmp_attr
 

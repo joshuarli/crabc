@@ -66,13 +66,11 @@ typedef struct __res_state {
 #define _PATH_RESCONF "/etc/resolv.conf"
 #endif
 
-#if defined(__x86_64__)
 struct res_sym {
     int number;
     char *name;
     char *humanname;
 };
-#endif
 
 #define RES_F_VC 0x00000001
 #define RES_F_CONN 0x00000002
@@ -130,10 +128,8 @@ int res_search(const char *, int, int, unsigned char *, int);
 int res_mkquery(int, const char *, int, int, const unsigned char *, int, const unsigned char *, unsigned char *, int);
 int res_send(const unsigned char *, int, unsigned char *, int);
 int dn_comp(const char *, unsigned char *, int, unsigned char **, unsigned char **);
-#if defined(__x86_64__)
 int dn_expand(const unsigned char *, const unsigned char *, const unsigned char *, char *, int);
 int dn_skipname(const unsigned char *, const unsigned char *);
-#endif
 
 #ifdef __cplusplus
 }

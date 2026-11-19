@@ -2,7 +2,7 @@
 #define _THREADS_H
 
 #include <features.h>
-#if defined(__x86_64__)
+#if 1
 #include <time.h>
 
 #ifdef __cplusplus
@@ -21,32 +21,6 @@ typedef void (*tss_dtor_t)(void *);
 #define __NEED_cnd_t
 #define __NEED_mtx_t
 #include <bits/alltypes.h>
-
-#else
-#include <sys/types.h>
-#include <time.h>
-
-/* C11 synchronization objects intentionally have their own record types.
- * They share musl's storage layout with the pthread objects but must not be
- * C type aliases: generic C code may use that distinction for overloads and
- * compile-time interface checks. */
-#define __NEED_cnd_t
-#define __NEED_mtx_t
-#include <bits/alltypes.h>
-
-#ifdef __cplusplus
-extern "C" {
-#endif
-
-typedef pthread_t thrd_t;
-typedef pthread_once_t once_flag;
-typedef pthread_key_t tss_t;
-typedef int (*thrd_start_t)(void *);
-typedef void (*tss_dtor_t)(void *);
-
-#ifndef __cplusplus
-#define thread_local _Thread_local
-#endif
 
 #endif
 
