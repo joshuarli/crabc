@@ -172,12 +172,21 @@ def require_elf(path, linkage):
 
 
 def link_command(reader, obj, binary, mode, linker):
+    if ARCH == 'aarch64':
+        import owned_atomic_addressable_profile as atomic
+        return atomic._link_command(reader, [obj], binary, mode, linker)
     return products._dynamic_link_command(
         Path(reader.recorded(reader.product)), Path(reader.recorded(obj)), Path(reader.recorded(binary)), mode, linker,
     )
 
 
 def collect_link(reader, obj, binary, receipt_path, mode):
+    if ARCH == 'aarch64':
+        import owned_atomic_addressable_profile as atomic
+        tools = native.read_json(reader.leaf / 'profile-tools-before.json')
+        record = atomic._collect_link(reader, [obj], binary, mode, tools)
+        record['object'] = record.pop('objects')[0]
+        return record
     receipt = native.read_json(receipt_path)
     search = receipt_contract.validate(
         receipt, format=native.PRODUCT_FORMAT, label='crypt sealed link receipt', fail=lambda message: require(False, message)
@@ -321,7 +330,7 @@ def extend(root, work, product):
     vectors = work / 'vectors'
     vectors.mkdir()
     (vectors / 'observer.c').write_bytes(generated_observer(root))
-    reader = native.Reader(work, str(root), product, root)
+    reader = profile_reader(work, str(root), product, root)
     commands = vector_commands(reader, live_tools(product)['compiler']['path'])
     try:
         for label in ('dependencies', 'compile', 'oracle-link'):
@@ -335,7 +344,10 @@ def extend(root, work, product):
             binary = vectors / ('dynamic-'+mode+'-consumer')
             command = [str(product/'bin/crabc-cc-dynamic'),'--dynamic-'+mode,str(vectors/'workload.o'),'-o',str(binary)]
             run_command(root, work, 'vector-link-'+mode, command, ENVIRONMENT)
-            products.validate_link(product, vectors/'workload.o', binary, Path(str(binary)+'.crabc-link.json'), mode)
+            if ARCH == 'aarch64':
+                aarch64_link_identity(root, product, vectors/'workload.o', binary, Path(str(binary)+'.crabc-link.json'), mode)
+            else:
+                products.validate_link(product, vectors/'workload.o', binary, Path(str(binary)+'.crabc-link.json'), mode)
             execution = vectors / ('dynamic-'+mode+'-root')
             shutil.copytree(product, execution, symlinks=True)
             shutil.copyfile(binary, execution/'consumer')
@@ -372,7 +384,49 @@ def _reader(root, work, product=None):
     if product is not None:
         same(str(selected), str(family.physical(root, product)), 'crypt companion selected product')
     products._validate_dynamic_product(selected)
-    return native.Reader(work, request['source_mount'], selected, root)
+    return profile_reader(work, request['source_mount'], selected, root)
+
+
+def profile_reader(work, mount, product, root):
+    if ARCH == 'aarch64':
+        import owned_atomic_addressable_profile as atomic
+        return atomic.Aarch64Reader(work, mount, product, root)
+    return native.Reader(work, mount, product, root)
+
+
+def aarch64_link_identity(root, product, obj, binary, receipt_path, mode):
+    import crabc_cc_static as compiler
+    root, product, obj, binary, receipt_path = map(Path, (root, product, obj, binary, receipt_path))
+    receipt = native.read_json(receipt_path)
+    if mode in ('static', 'static-pie'):
+        manifest, _ = products._validate_static_product(product)
+        spec = compiler.static_mode('static-et-exec' if mode == 'static' else 'static-pie')
+        expected = {'schema': 1, 'format': 'crabc-aarch64-sealed-static-driver-v1',
+                    'target': 'aarch64-unknown-linux-musl',
+                    'mode': {'id': spec.identifier, 'elf_type': spec.elf_type, 'crt_object': spec.crt_object, 'interpreter': 'absent'},
+                    'resolved_linker': {'path': '/usr/bin/mold', 'sha256': native.digest(Path('/usr/bin/mold'))},
+                    'owned_link_contract': compiler.owned_link_plan(product, spec, architecture='aarch64'),
+                    'input_receipts': compiler.receipt_input_records(product, spec, [obj], receipt_path),
+                    'output': {'path': binary.name, 'sha256': native.digest(binary)},
+                    'map': {'path': receipt_path.with_suffix('.map').name, 'sha256': native.digest(receipt_path.with_suffix('.map'))},
+                    'trace': {'path': receipt_path.with_suffix('.trace').name, 'sha256': native.digest(receipt_path.with_suffix('.trace'))}}
+        same(receipt, expected, 'aarch64 static link receipt')
+        contract = [item for item in expected['owned_link_contract'] if item not in ('--start-group', '--end-group')]
+        products._check_static_trace_lines(receipt_path.with_suffix('.trace').read_text().splitlines(),
+                                           contract, str(obj), 'aarch64 static link trace')
+        facts = elf_facts(binary)
+        same([facts['type'], facts['interpreters'], facts['needed'], facts['textrel']],
+             [2 if mode == 'static' else 3, [], [], False], 'aarch64 static executable ELF')
+        fmt = 'crabc-aarch64-owned-static-sysroot-v1'
+    else:
+        manifest, _ = products._validate_dynamic_product(product)
+        reader = profile_reader(receipt_path.parent, str(root), product, root)
+        import owned_atomic_addressable_profile as atomic
+        atomic._collect_link(reader, [obj], binary, mode, live_tools(product))
+        fmt = 'crabc-aarch64-owned-dynamic-sysroot-v1'
+    return {'linkage': mode, 'product': str(product), 'product_format': fmt,
+            'product_manifest_sha256': native.digest(manifest), 'workload_sha256': native.digest(obj),
+            'executable_sha256': native.digest(binary), 'receipt_sha256': native.digest(receipt_path)}
 
 
 def collect_command(reader, label, command, *, raw_stdout=None, environment=ENVIRONMENT):
@@ -404,8 +458,12 @@ def collect_static_entries(reader, linker):
         require(not product.is_relative_to(reader.leaf), 'crypt static product must remain outside observations')
         require(selected is None or product == selected, 'crypt static modes use different products')
         selected = product
-        linked = products.validate_retained_link(reader.root, str(reader.mount), product, reader.leaf/'workload.o',
-            reader.leaf/(mode+'-consumer'), reader.leaf/(mode+'.receipt.json'), mode, linker)
+        if ARCH == 'aarch64':
+            linked = aarch64_link_identity(reader.root, product, reader.leaf/'workload.o',
+                reader.leaf/(mode+'-consumer'), reader.leaf/(mode+'.receipt.json'), mode)
+        else:
+            linked = products.validate_retained_link(reader.root, str(reader.mount), product, reader.leaf/'workload.o',
+                reader.leaf/(mode+'-consumer'), reader.leaf/(mode+'.receipt.json'), mode, linker)
         linked['product'] = reader.recorded(product)
         same(recorded, linked, 'crypt independently recorded static product link')
         entries[mode] = {'link': linked, 'execution': collect_command(reader, mode,
@@ -502,8 +560,13 @@ def collect(root, work, *, product=None):
         same(native.read_json(work/('profile-source-'+phase+'.json')), source, 'crypt source before/after seal')
         same(native.read_json(work/('profile-product-'+phase+'.json')), payload, 'crypt product before/after seal')
         same(native.read_json(work/('profile-tools-'+phase+'.json')), tools, 'crypt tools before/after seal')
-    oracle = native._libc_oracle(reader, {'oracle': {phase:native.read_json(work/('profile-oracle-'+phase+'.json'))
-                                                   for phase in ('before','after')}})
+    phases = {phase:native.read_json(work/('profile-oracle-'+phase+'.json')) for phase in ('before','after')}
+    if ARCH == 'aarch64':
+        same(phases['before'], phases['after'], 'crypt pinned oracle across execution')
+        oracle = phases['before']
+        same(oracle, live_oracle(), 'crypt pinned native oracle identity')
+    else:
+        oracle = native._libc_oracle(reader, {'oracle': phases})
     import run_qualification_manifest as qualification
     for name, item in oracle['files'].items():
         path = work/'profile-oracle'/name
@@ -535,7 +598,7 @@ def collect(root, work, *, product=None):
             linked = collect_link(reader,obj,binary,Path(str(binary)+'.crabc-link.json'),mode)
             same(linked['linker'], tools['linker'], 'crypt unchanged pinned linker')
             if role == 'abi':
-                expected_identity = {'linkage':mode,'product':reader.recorded(product),'product_format':native.PRODUCT_FORMAT,
+                expected_identity = {'linkage':mode,'product':reader.recorded(product),'product_format':('crabc-aarch64-owned-dynamic-sysroot-v1' if ARCH == 'aarch64' else native.PRODUCT_FORMAT),
                     'product_manifest_sha256':native.digest(reader.manifest),'workload_sha256':native.digest(obj),
                     'executable_sha256':native.digest(binary),'receipt_sha256':native.digest(Path(str(binary)+'.crabc-link.json'))}
                 same(native.read_json(work/('dynamic-'+mode+'-link-evidence.json')),expected_identity,'crypt independently recorded product link')
