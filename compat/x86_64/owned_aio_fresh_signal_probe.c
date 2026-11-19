@@ -144,11 +144,11 @@ static int child_attempt(int child_event_descriptor)
 {
 	int descriptors[2];
 	struct sigaction action;
-	struct aiocb control = { 0 };
+	static struct aiocb control;
 	struct sender senders[sender_count];
 	pthread_t threads[sender_count];
 	sigset_t empty_mask;
-	char byte;
+	static char byte;
 
 	atomic_store_explicit(&senders_ready, 0, memory_order_relaxed);
 	atomic_store_explicit(&senders_started, 0, memory_order_relaxed);
