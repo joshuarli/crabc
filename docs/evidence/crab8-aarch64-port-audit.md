@@ -369,7 +369,7 @@ entries are closed by the commit that fixes them.
 | 2 | closed (20cedf91a) | The ARM driver validates its installed product through the shared reader, requires an explicit dynamic mode, rejects static modes, checks direct DSO closure and imports, and supplies the provider set to final ELF inspection. |
 | 3 | fixed | `crabc_cc_owned_dynamic.py:223-231` (aarch64 required roster includes loader provenance and the receipt/ELF modules), `:262` (CRT provenance), `:275-276` (`validate_loader_provenance(architecture="aarch64")`). |
 | 4 | closed (d8ffc3bd5) | The shared product reader validates the full product and compares producer tools against the architecture-specific source image manifest. |
-| 5 | still open | `owned_posix_static_products.py:184` hardcodes `"accepted-c"`; `:205-208` skips the backend agreement check and substitutes a hash of `crt.commands.json` for `producer_tools`. |
+| 5 | closed (373b8589b) | Static preparation reads each product’s allocator backend and producer tools from its manifest and checks backend agreement. |
 | 6 | partly fixed | Standalone now uses `static_product_payload_files(arch)` (`crabc_cc_static.py:1247`); combined validates its embedded static manifest (`:380`). Standalone aarch64 still has no `validate_crt_provenance` (only combined, `:1245`), no `usr/include` check and no `REQUIRED_RUNTIME_PATHS` check (x86: `:454-472`). |
 | 8 | closed (d8ffc3bd5) | The shared reader binds compiler identities to the architecture-specific source image manifest. |
 | 9 | still open | `consumer_rust_std_lto.py:587-588`. |
@@ -377,13 +377,13 @@ entries are closed by the commit that fixes them.
 | 11 | kept by owner decision (not a defect) | Audit file `:16-19`; code unchanged at `qualification_candidate.py:559-561`. |
 | 12 | still open | `owned_crypt_profile.py:397-429` is unchanged: the expected receipt is built from the producer's own `receipt_input_records`/`owned_link_plan` (`:408-409`), with no `_validate_static_link_mode` and no `_dynamic_profile`. Callers are unchanged (`run_owned_crypt_runtime.sh:404-405`, `owned_crypt_runtime_evidence.py:470,529`, `owned_wordexp_evidence.py:892,1677`). The shared `validate_link` and `validate_retained_link` now accept aarch64 (`owned_posix_product_evidence.py:1477-1496, 1550-1571`). |
 | 13 | still open | `static_product_contract.py:494-495`; `run_owned_static_sysroot.sh:526-527`; `crt/x86_64_owned_dynamic_startup.py:416-421`. |
-| 14 | still open | `run_owned_posix_filesystem.sh:204-233` (`exit 0` at `:233`). |
+| 14 | closed (6c7d0cdb8) | The shared filesystem producer runs the native static, static-PIE, dynamic PIE and non-PIE modes and both dynamic entry paths. |
 | 15 | implementation added (4cc51d70a, 90b46ce83); acceptance waiting | The shared builder suite runs and passes on ARM. The static producer is waiting on positional-printf rounding in lane `a4-binary128` and process-shared robust-mutex lifecycle behavior in lane `a4-robust-mutex`; the producer remains red. |
 | 16 | partly fixed | `static_product_contract.py:307-334` now checks the sealed driver's path, status and modes for standalone. The scope phrases, `not_selected` and `not_proven_by_this_seed` assertions are still x86-only (`run_owned_static_sysroot.sh:200-240`). The nested static manifest in a combined product gets no sealed-driver checks. |
-| 17 | still open | `run_owned_crypt_runtime.sh:104-108`. |
-| 18 | still open | `run_hardened_entry.sh:41-60` still patches out DT_NEEDED, although the aarch64 driver now supports `--transitive-application-dso` (`crabc_cc_aarch64_dynamic.py:94-95, 197-269`; tested in `test_aarch64_dynamic_non_pie.py:103-141`). |
+| 17 | closed (415415ce2) | The crypt producer runs the native musl oracle probe on both architectures. |
+| 18 | closed (d90065635) | The hardened entry test uses the driver’s transitive DSO option on both architectures. |
 | 19 | still open | `loader_crt_lifecycle_probe.c:19-24, 35-41`. |
-| 20 | still open | `libc_crt_static_tls_probe.c:190-194`. |
+| 20 | closed (dc7c7d024, 8d8544d89) | The owned ARM TLS probe compares the word at TP-8 to TP; the musl reference uses its distinct DTV placement. |
 | 25 | fixed | `compat/lua/source_build_admission.py:302-316` reads the state file. The test no longer removes `allocator_backend`. |
 | 26 | fixed | `compat/lua/run.py:1244-1252`: the driver binding is now architecture-independent. |
 | 27 | fixed | `build_x86_64_owned_combined_sysroot.py:124-174` (no aarch64 early return), `:193-197`, `:339-370`, `:397-398`. |
