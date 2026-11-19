@@ -142,38 +142,36 @@ on the compatibility build found neither in its dynamic exports. The native
 static and dynamic builders completed with the current partial audits, but
 both still report skipped checks and do not close items 21–24.
 
-Full CRT inspection exposed an external source dependency: the AArch64
-`crt1.o` produced from `crt/src/x86_64_crt1.rs` lacks
-`.note.crabc.owned-crt`, which `inspect_object` requires for the conventional
-entry. That file's combined-entry note and handoff are guarded for x86-64;
-the AArch64 entry currently branches only to static startup. The builder
-cannot supply the missing product behavior without changes to that source,
-which is outside this lane's writable paths. Full CRT inspection remains open.
+The builder evidence and CRT entry are closed by `82215a948`, `208112188`,
+`25bc87bd1`, `e8ca28be4`, `23529590d` and `bc9e714d2`. On the native
+AArch64 image the static, dynamic and hardened builders passed; their
+manifest fields and CRT and loader provenance validated. The dynamic export
+set matched the native musl names adjusted by the reviewed x86 export delta
+(1,658 names; no extras or omissions). The combined product and dynamic
+package validated, all nine product-reader checks passed, and static,
+static-PIE, dynamic PIE, dynamic non-PIE and hardened hello programs ran.
+The 34-case corpus passed. The libc-test run recorded 428 passed and six
+runtime failures and exited 1; its aggregate remains incomplete.
 
-The shared UAPI marker reader now selects AArch64 image pins, the loader
-inventory binds the recorded AArch64 flags, and the archive classifier accepts
-native outline-atomics members only on AArch64. The remaining evidence and
-acceptance work below stays open.
+21. **Closed — static builder evidence.** The native build applies the shared
+    archive classification, symbol and duplicate-binding checks, allocator
+    lifecycle and hidden-symbol checks, CRT inspection, pinned UAPI install and
+    reproducible builtins. Its manifest carries the x86 field set with native
+    identities.
 
-21. **`scripts/build_x86_64_owned_sysroot.py:1520-1585`** (static builder)
-    - It skips: libc member classification and the required-symbol contract, the allocator hidden-symbol and lifecycle audit, CRT profile validation, the pinned UAPI header install (it copies `include/` raw instead), reproducible builtins, and the `allocator_backend`, `installed` and `sealed_static_driver` manifest fields.
-    - Qualifying-path.
+22. **Closed — dynamic builder evidence.** The native build audits both
+    shared ELF views and unresolved symbols, applies the reviewed allocator,
+    errno and compiler-helper visibility policies and validates the installed
+    driver. Its loader and libc are one image and replacement is guarded.
 
-22. **`scripts/build_x86_64_owned_dynamic_sysroot.py:1011-1155`** (dynamic builder)
-    - There is no `audit_shared_elf` and no unexpected-undefined check.
-    - The libc.so link has none of x86's hidden mimalloc/errno version scripts, `--exclude-libs` or pack-relative-relocs. The reviewer inferred from the link command that mimalloc and builtins definitions are left global.
-    - The driver is never validated, and an existing output is removed with `rmtree`.
-    - Qualifying-path.
+23. **Closed — loader flags.** The native producer binds the selected flags to
+    loader provenance, and the native loader inventory reader validated that
+    provenance.
 
-23. **`build_x86_64_owned_dynamic_sysroot.py:465`**
-    - `architecture == "x86_64" and rustflags != ...` skips the loader rustflags binding on aarch64.
-    - `owned_loader_inventory.py:217-225` then expects `rustflags == ""` and a hardcoded argv.
-    - Qualifying-path.
-
-24. **`crt/build_x86_64.py:883-922`**
-    - On aarch64, the only per-object check left is `(ET_REL, 183)`.
-    - All of `inspect_object` is gone: GNU-stack, `.rustc`, the `_start` and undefined-symbol boundaries, the owned-CRT note, and the requirement that crt1, rcrt1 and Scrt1 differ.
-    - Qualifying-path.
+24. **Closed — CRT object inspection.** All five native objects pass the
+    shared section, symbol, stack and owned-note inspection; the three entry
+    objects differ and their entry handoffs and relocation contracts are
+    checked.
 
 25. **`compat/lua/source_build_admission.py:305-317`**
     - aarch64 does `backends.add("accepted-c")` unconditionally and never reads the state file.
@@ -197,18 +195,19 @@ acceptance work below stays open.
     - `-no-pie` followed by `-static-pie` is allowed, and ELF type is not checked.
     - Qualifying-path.
 
-30. **The musl compatibility alias is hardcoded to `{}`.** Sites: `compat/corpus/run_x86.py:55`, `compat/lua/run_x86_dynamic.py:93, 1083, 1106, 1119`, `owned_dynamic_package.py:30`, `owned_libc_test.py` (`validate_product`) and the builders.
-    - x86 derives `profile.aliases`.
-    - Qualifying-path, moderate.
+30. **Partially closed — builder and named product readers.** The builders
+    and the assigned corpus, Lua, dynamic package and libc-test readers use
+    the native compatibility aliases. The broader audit item remains open for
+    any other consumers not covered by this lane.
 
 31. **`compat/corpus/run_x86.py:474`**
     - aarch64 skips any `.SIGN.*` file instead of the named key. `apk verify` still runs.
     - Qualifying-path, low.
 
-32. **`crt/src/x86_64_crt1.rs:176-193`**
-    - The aarch64 static `_start` branches straight to static-PIE start.
-    - It loses x86's check that rejects a finalizer register without a handoff, or a handoff without the register.
-    - Qualifying-path, low.
+32. **Closed — conventional entry handoff.** The AArch64 entry forwards its
+    finalizer register to the shared startup owner. Native static fixtures
+    with a register but no handoff and with a handoff but no register each
+    exited 127 before application entry.
 
 ## D. ldso / libc
 
