@@ -7,7 +7,7 @@ purpose = "C-linkable compiler helper archive for the crabc Linux/AArch64 sysroo
 [implementation]
 source_languages = ["Rust"]
 upstream = "crabc Rust helpers plus the source-built compiler_builtins 0.1.160 selected from the pinned rust-src component"
-rust_sources = ["src/lib.rs", "pinned rust-src compiler-builtins/compiler-builtins/src/**/*.rs", "pinned rust-src compiler-builtins/libm/src/math/support/**/*.rs"]
+rust_sources = ["src/lib.rs", "src/aarch64_binary128.rs", "pinned rust-src compiler-builtins/compiler-builtins/src/**/*.rs", "pinned rust-src compiler-builtins/libm/src/math/support/**/*.rs"]
 native_sources = []
 build_dependencies = []
 normal_dependencies = []

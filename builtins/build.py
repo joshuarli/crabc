@@ -361,7 +361,11 @@ def audit_source() -> list[dict[str, str]]:
             if token in text:
                 raise BuildError(f"forbidden source dependency or assembly facility: {token}")
 
-    production_inputs = (ROOT / "Cargo.toml", ROOT / "Cargo.lock", ROOT / "build.py", ROOT / "provenance.toml", SOURCE, complex_source)
+    binary128_source = SOURCE.with_name("aarch64_binary128.rs")
+    for token in FORBIDDEN_SOURCE_TOKENS:
+        if token != "asm!" and token in binary128_source.read_text(encoding="utf-8"):
+            raise BuildError(f"forbidden source dependency or assembly facility: {token}")
+    production_inputs = (ROOT / "Cargo.toml", ROOT / "Cargo.lock", ROOT / "build.py", ROOT / "provenance.toml", SOURCE, complex_source, binary128_source)
     return [
         {"path": path.relative_to(ROOT).as_posix(), "sha256": sha256(path)}
         for path in production_inputs

@@ -122,6 +122,9 @@ pub struct ComplexQuad {
 #[cfg(target_arch = "aarch64")]
 mod aarch64_complex;
 
+#[cfg(target_arch = "aarch64")]
+mod aarch64_binary128;
+
 // SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
 // LLVM compiler-rt 22.1.3 lib/builtins/multc3.c.
 #[cfg(target_arch = "aarch64")]

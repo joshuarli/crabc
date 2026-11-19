@@ -40,12 +40,13 @@ class BuildContractTests(unittest.TestCase):
             source = root / "src/lib.rs"
             source.write_text('#![no_std]\n#[cfg(target_arch = "x86_64")]\nmod x86_64_binary80;\n')
             (root / "src/aarch64_complex.rs").write_text((ROOT / "src/aarch64_complex.rs").read_text())
+            (root / "src/aarch64_binary128.rs").write_text((ROOT / "src/aarch64_binary128.rs").read_text())
             module = root / "src/x86_64_binary80.rs"
             module.write_text('core::arch::global_asm!(r#".text\n"#, options(att_syntax));\n')
             with mock.patch.object(BUILD, "ROOT", root), mock.patch.object(BUILD, "SOURCE", source):
                 inputs = BUILD.audit_source()
                 self.assertEqual([row["path"] for row in inputs],
-                                 ["Cargo.toml", "Cargo.lock", "build.py", "provenance.toml", "src/lib.rs", "src/aarch64_complex.rs"])
+                                 ["Cargo.toml", "Cargo.lock", "build.py", "provenance.toml", "src/lib.rs", "src/aarch64_complex.rs", "src/aarch64_binary128.rs"])
                 command = BUILD.compiler_command(("mock-rustc",), root / "owned.o")
                 self.assertIn(BUILD.TARGET, command)
                 self.assertIn(str(source), command)
@@ -67,7 +68,7 @@ class BuildContractTests(unittest.TestCase):
         sources = BUILD.audit_source()
         self.assertEqual(
             [entry["path"] for entry in sources],
-            ["Cargo.toml", "Cargo.lock", "build.py", "provenance.toml", "src/lib.rs", "src/aarch64_complex.rs"],
+            ["Cargo.toml", "Cargo.lock", "build.py", "provenance.toml", "src/lib.rs", "src/aarch64_complex.rs", "src/aarch64_binary128.rs"],
         )
 
     def test_compiler_command_disables_outline_atomics_and_unwinding(self) -> None:
