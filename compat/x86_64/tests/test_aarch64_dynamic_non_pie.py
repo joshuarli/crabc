@@ -2,6 +2,7 @@
 import hashlib
 import importlib.machinery
 import importlib.util
+import io
 import json
 import os
 import platform
@@ -9,6 +10,7 @@ import shutil
 from pathlib import Path
 import subprocess
 import sys
+import tarfile
 import tempfile
 import unittest
 from unittest import mock
@@ -111,6 +113,43 @@ class Aarch64DynamicNonPieTest(unittest.TestCase):
                                             capture_output=True, text=True)
                     self.assertNotEqual(result.returncode, 0)
                     self.assertFalse(bad.exists())
+
+    @unittest.skipUnless(os.environ.get("CRABC_AARCH64_DYNAMIC_SYSROOT") or CAN_BUILD, "requires a built aarch64 product")
+    def test_native_package_round_trip_and_malformed_archives(self):
+        sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+        import owned_dynamic_package as package
+        product = Path(os.environ["CRABC_AARCH64_DYNAMIC_SYSROOT"]).resolve(strict=True)
+        with tempfile.TemporaryDirectory(dir=os.environ["TMPDIR"]) as directory:
+            work = Path(directory)
+            one, two, extracted = work / "one.tar", work / "two.tar", work / "extracted"
+            package.package(product, one)
+            package.package(product, two)
+            self.assertEqual(one.read_bytes(), two.read_bytes())
+            package.extract(one, extracted)
+            self.assertEqual(package.driver.validate(product), package.driver.validate(extracted))
+            for name in ("../escape", "/escape", "duplicate"):
+                with self.subTest(name=name):
+                    archive_path, rejected = work / ("bad-" + name.replace("/", "_")), work / "rejected"
+                    with tarfile.open(archive_path, "w") as archive:
+                        entry = tarfile.TarInfo(name)
+                        entry.size = 1
+                        archive.addfile(entry, io.BytesIO(b"x"))
+                        if name == "duplicate":
+                            archive.addfile(entry, io.BytesIO(b"x"))
+                    with self.assertRaises(package.driver.shared.DriverError):
+                        package.extract(archive_path, rejected)
+                    self.assertFalse(rejected.exists())
+            for index, value in enumerate(([], None, "manifest", 7, True)):
+                with self.subTest(manifest=value):
+                    archive_path, rejected = work / ("bad-manifest-" + str(index)), work / "rejected"
+                    payload = json.dumps(value).encode()
+                    with tarfile.open(archive_path, "w") as archive:
+                        entry = tarfile.TarInfo("share/crabc/manifest.json")
+                        entry.size = len(payload)
+                        archive.addfile(entry, io.BytesIO(payload))
+                    with self.assertRaises(package.driver.shared.DriverError):
+                        package.extract(archive_path, rejected)
+                    self.assertFalse(rejected.exists())
 
     @unittest.skipUnless(os.environ.get("CRABC_AARCH64_DYNAMIC_SYSROOT") or CAN_BUILD, "requires a built aarch64 product")
     def test_receipt_reservations_precede_translation_and_preserve_existing_files(self):
