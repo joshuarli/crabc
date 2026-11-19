@@ -68,6 +68,10 @@ pub(super) unsafe fn materialize_tls_in_layout(objects: &[Object], ownership_pre
         (dtv as *mut usize).write(layout.module_count);
         for object in objects {
             if object.tls_memsz == 0 { continue; }
+            if object.tls_module_id == 0 || object.tls_module_id >= layout.dtv_words {
+                if builtin.is_none() { syscall2(SYS_MUNMAP, mapping, layout.mapping_size as i64); }
+                return None;
+            }
             let destination = (tp + object.tls_offset_below_tp) as *mut u8;
             if object.tls_filesz != 0 { core::ptr::copy_nonoverlapping(object.tls_image, destination, object.tls_filesz); }
             core::ptr::write_bytes(destination.add(object.tls_filesz), 0, object.tls_memsz - object.tls_filesz);
@@ -86,6 +90,18 @@ mod tests {
 
     #[repr(align(4096))]
     struct Storage([u8; 4096]);
+
+    #[test]
+    fn materialization_rejects_module_outside_dtv() {
+        let image = [1u8];
+        let object = Object { tls_image: image.as_ptr(), tls_filesz: 1, tls_memsz: 1,
+            tls_align: 1, tls_module_id: 1, tls_offset_below_tp: 16, ..EMPTY_OBJECT };
+        let mut storage = Storage([0; 4096]);
+        let layout = unsafe { initial_tls_block_layout(&[object], 0) }.unwrap();
+        let invalid = Object { tls_module_id: layout.dtv_words, ..object };
+        assert!(unsafe { materialize_tls_in_layout(&[invalid], 0, &layout,
+            Some((storage.0.as_mut_ptr(), storage.0.len()))) }.is_none());
+    }
 
     #[test]
     fn initial_record_and_image_follow_aarch64_variant_i() {
