@@ -262,7 +262,7 @@ def run_variant(work: Path, product: Path, source: Path, roster: list[dict[str, 
         for name in SOURCE_CASES:
             candidate = capture(
                 work, Path("execution") / variant / f"{name}.candidate",
-                [os_test.PRIVATE_PROC_WITNESS_CHROOT, str(runtime), "/lib/ld-crabc-x86_64.so.1",
+                [os_test.PRIVATE_PROC_WITNESS_CHROOT, str(runtime), f"/lib/ld-crabc-{os_test.ARCH}.so.1",
                  f"/work/basic/unistd/{name}"], environment, timeout,
             )
             musl = capture(
