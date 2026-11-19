@@ -43,13 +43,15 @@ import tomllib
 from typing import Callable, Mapping, Sequence
 
 import source_seal
+from native_arch import native_arch
 
 
 ROOT = Path(__file__).resolve().parents[2]
 SCHEMA = "crabc.x86_64-qualification-candidate/v4"
 DISPATCHER = "./scripts/dev-x86_64.sh"
 MOUNT = "/workspace"
-WORK_PARENT = Path(".work/x86_64")
+ARCH = native_arch()
+WORK_PARENT = Path(".work") / ARCH["work_name"]
 PAIRS = {"primary": "installed", "reproduction": "second", "extracted": "extracted"}
 # Each static/dynamic product pair supplies all text, math, locale, and stdio
 # component reports before their aggregate can be admitted.
@@ -65,11 +67,11 @@ TEXT_PRODUCERS = (
     ("calendar", "owned-calendar-component", "owned-calendar-products.json"),
 )
 SOURCE_ORACLES = (
-    ".work/x86_64/source-oracles/os-test-5e9456d510612f83b6ec8b1a0c06d6b1303a2512",
-    ".work/x86_64/source-oracles/laputa-libc-test-68edb8bd73dab8147ee54c8bec638f4d2b3cff37",
+    f"{WORK_PARENT}/source-oracles/os-test-5e9456d510612f83b6ec8b1a0c06d6b1303a2512",
+    f"{WORK_PARENT}/source-oracles/laputa-libc-test-68edb8bd73dab8147ee54c8bec638f4d2b3cff37",
 )
-PACKAGE_CORPUS_INPUT = ".work/x86_64/owned-package-corpus-input/apks"
-PACKAGE_CORPUS_INDEX = ".work/x86_64/owned-package-corpus-input/index/main-x86_64.APKINDEX.tar.gz"
+PACKAGE_CORPUS_INPUT = f"{WORK_PARENT}/owned-package-corpus-input/apks"
+PACKAGE_CORPUS_INDEX = f"{WORK_PARENT}/owned-package-corpus-input/index/main-{ARCH['work_name']}.APKINDEX.tar.gz"
 INPUT_KEYS = {
     "lua_source_build": ("archive_seed",),
     "rust_std_lto": ("provider_vendor", "dependency_vendor"),
@@ -144,7 +146,7 @@ class Context:
         return value
 
     def template(self, value: str) -> str:
-        return value.format(work=self.rel(self.work), name=self.work.name)
+        return value.format(work=self.rel(self.work), name=self.work.name, work_parent=WORK_PARENT.as_posix())
 
     def static_pair(self, label: str) -> str:
         preparation = self.out("static-products", "preparation")
@@ -275,7 +277,7 @@ def _plan(profile: str = "correctness") -> tuple[Step, ...]:
         Step("publish-dynamic-product", "cohort",
              lambda c: ["python3", "-B", "compat/x86_64/owned_dynamic_qualification.py", "publish", "--receipt",
                         c.out("dynamic-products", "qualification")],
-             (Output("publication", fixed=".work/x86_64/owned-dynamic-qualification.json"),), fresh=()),
+             (Output("publication", fixed=f"{WORK_PARENT}/owned-dynamic-qualification.json"),), fresh=()),
         # libc.posix-runtime: matrix, four companions, native aggregate, admission.
         Step("posix-family", "libc.posix-runtime",
              lambda c: _d("owned-posix-family", *c.cohort(), "--output", c.template("{work}/out/posix-family")),
@@ -355,37 +357,37 @@ def _plan(profile: str = "correctness") -> tuple[Step, ...]:
         Step("publish-static-product", "sysroot.static-tls",
              lambda c: ["python3", "-B", "compat/x86_64/static_product_contract.py", "publish", "--receipt",
                         c.out("static-sysroot", "receipt")],
-             (Output("publication", fixed=".work/x86_64/owned-static-qualification.json"),), fresh=()),
+             (Output("publication", fixed=f"{WORK_PARENT}/owned-static-qualification.json"),), fresh=()),
         Step("combined-sysroot", "sysroot.owned-artifact", lambda c: _d("owned-combined-sysroot")),
         # compat.abi-differential: one current-source evidence set.
         Step("abi-inventory", "compat.abi-differential",
              lambda c: _d("native-abi-inventory", "collect", *c.products(),
-                          "--output", c.template(".work/x86_64/native-abi-inventory/candidate-{name}")),
-             (Output("report", fixed=".work/x86_64/native-abi-inventory/candidate-{name}/report.json"),),
-             fresh=(".work/x86_64/native-abi-inventory/candidate-{name}",)),
+                          "--output", c.template(f"{WORK_PARENT}/native-abi-inventory/candidate-{{name}}")),
+             (Output("report", fixed=f"{WORK_PARENT}/native-abi-inventory/candidate-{{name}}/report.json"),),
+             fresh=(f"{WORK_PARENT}/native-abi-inventory/candidate-{{name}}",)),
         Step("abi-elf-facts", "compat.abi-differential",
              lambda c: _d("native-abi-elf-facts", "collect", "--base-inventory", c.out("abi-inventory", "report"),
                           *c.products(), "--output", c.template("{work}/out/abi-elf-facts")),
              (Output("report", fixed="{work}/out/abi-elf-facts/report.json"),)),
         Step("abi-declarations", "compat.abi-differential",
              lambda c: _d("header-declaration-inventory", "collect", "--output",
-                          c.template(".work/x86_64/header-declaration-inventory/candidate-{name}"), "--workers", "8"),
-             (Output("report", fixed=".work/x86_64/header-declaration-inventory/candidate-{name}/report.json"),),
-             fresh=(".work/x86_64/header-declaration-inventory/candidate-{name}",)),
+                          c.template(f"{WORK_PARENT}/header-declaration-inventory/candidate-{{name}}"), "--workers", "8"),
+             (Output("report", fixed=f"{WORK_PARENT}/header-declaration-inventory/candidate-{{name}}/report.json"),),
+             fresh=(f"{WORK_PARENT}/header-declaration-inventory/candidate-{{name}}",)),
         Step("abi-public-data", "compat.abi-differential",
              lambda c: _d("public-data-ordinary-link", "collect", *c.products(),
-                          "--output", c.template(".work/x86_64/public-data-ordinary-link/candidate-{name}")),
-             (Output("report", fixed=".work/x86_64/public-data-ordinary-link/candidate-{name}/report.json"),),
-             fresh=(".work/x86_64/public-data-ordinary-link/candidate-{name}",)),
+                          "--output", c.template(f"{WORK_PARENT}/public-data-ordinary-link/candidate-{{name}}")),
+             (Output("report", fixed=f"{WORK_PARENT}/public-data-ordinary-link/candidate-{{name}}/report.json"),),
+             fresh=(f"{WORK_PARENT}/public-data-ordinary-link/candidate-{{name}}",)),
         Step("abi-evidence", "compat.abi-differential",
              lambda c: _d("abi-differential-evidence", "assemble", *c.products(),
                           "--native-abi-inventory", c.out("abi-inventory", "report"),
                           "--native-abi-elf-facts", c.out("abi-elf-facts", "report"),
                           "--header-declaration-inventory", c.out("abi-declarations", "report"),
                           "--public-data-ordinary-link", c.out("abi-public-data", "report"),
-                          "--output", c.template(".work/x86_64/abi-differential/candidate-{name}")),
-             (Output("receipt", fixed=".work/x86_64/abi-differential/candidate-{name}/abi-evidence.json"),),
-             fresh=(".work/x86_64/abi-differential/candidate-{name}",),
+                          "--output", c.template(f"{WORK_PARENT}/abi-differential/candidate-{{name}}")),
+             (Output("receipt", fixed=f"{WORK_PARENT}/abi-differential/candidate-{{name}}/abi-evidence.json"),),
+             fresh=(f"{WORK_PARENT}/abi-differential/candidate-{{name}}",),
              publishes=("compat.abi-differential", "abi-evidence")),
         # Caller-visible behavior probes on the selected products.
         Step("abi-bootstrap-primitives", "compat.abi-differential",
@@ -564,16 +566,14 @@ def preflight(root: Path, context: Context, steps: Sequence[Step]) -> list[str]:
     """Name every condition that would stop the run before its first step."""
 
     blockers = []
-    import core_image
-
-    selected_image = os.environ.get("CRABC_X86_64_CORE_IMAGE", core_image.CORE_IMAGE_ID)
-    if selected_image != core_image.CORE_IMAGE_ID:
+    selected_image = os.environ.get("CRABC_X86_64_CORE_IMAGE", ARCH["image"])
+    if selected_image != ARCH["image"]:
         blockers.append("qualification requires the pinned core image; development image override is selected")
     try:
         inspected = subprocess.run(["docker", "image", "inspect", "--format", "{{.Id}} {{.Os}}/{{.Architecture}}",
-                                    core_image.CORE_IMAGE_ID], capture_output=True, text=True, check=False)
-        if inspected.returncode != 0 or inspected.stdout.strip() != core_image.CORE_IMAGE_ID + " linux/amd64":
-            blockers.append("pinned native linux/amd64 core image is absent or has a different identity")
+                                    ARCH["image"]], capture_output=True, text=True, check=False)
+        if inspected.returncode != 0 or inspected.stdout.strip() != ARCH["image"] + " " + ARCH["platform"]:
+            blockers.append(f"pinned native {ARCH['platform']} core image is absent or has a different identity")
     except OSError as error:
         blockers.append(f"pinned native core image cannot be inspected: {error}")
     try:
@@ -584,6 +584,8 @@ def preflight(root: Path, context: Context, steps: Sequence[Step]) -> list[str]:
         if not (root / relative).is_dir():
             blockers.append(f"pinned source oracle is not seeded (the native container has no network): {relative}")
     try:
+        if ARCH["arch"] == "aarch64":
+            raise CandidateError("aarch64 package corpus is not pinned")
         _validate_package_corpus(root)
     except Exception as error:  # noqa: BLE001 - any corpus mismatch blocks native qualification
         blockers.append(f"package corpus input does not match its manifest: {error}")
@@ -789,10 +791,8 @@ def execute(root: Path, work: Path, inputs: Mapping[str, Mapping[str, object]], 
     sealed = _sealed(root, source)
     work.mkdir(parents=True, exist_ok=True)
     candidate = work / "candidate.json"
-    import core_image
-
     identity = {"schema": SCHEMA, "product_sha256": sealed["content_sha256"],
-                "core_image": os.environ.get("CRABC_X86_64_CORE_IMAGE", core_image.CORE_IMAGE_ID)}
+                "core_image": os.environ.get("CRABC_X86_64_CORE_IMAGE", ARCH["image"])}
     if candidate.exists():
         retained = json.loads(candidate.read_text(encoding="utf-8"))
         require(isinstance(retained, dict) and set(retained) == {*identity, "input_seals"},
@@ -919,7 +919,7 @@ def dry_run(root: Path, work: Path, inputs: Mapping[str, Mapping[str, object]],
 def _work(root: Path, value: Path) -> Path:
     path = Path(os.path.abspath(value if value.is_absolute() else root / value))
     require(path.is_relative_to(root / WORK_PARENT) and path != root / WORK_PARENT,
-            "candidate --work must be below this checkout's .work/x86_64")
+            f"candidate --work must be below this checkout's {WORK_PARENT}")
     require(path.parent.is_dir() and path.parent.resolve() == path.parent, "candidate --work parent is not physical")
     require(path.resolve() == path, "candidate --work must be physical")
     return path

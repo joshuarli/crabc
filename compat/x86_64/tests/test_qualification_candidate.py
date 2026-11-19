@@ -17,7 +17,9 @@ from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(ROOT / "compat/x86_64"))
-import qualification_candidate as candidate  # noqa: E402
+import native_arch  # noqa: E402
+with mock.patch.object(native_arch, "native_arch", return_value=native_arch.native_arch("x86_64")):
+    import qualification_candidate as candidate  # noqa: E402
 import qualification_gates as gates  # noqa: E402
 
 
@@ -26,6 +28,19 @@ HARNESS_FIX = {**SOURCE, "revision": "b" * 40}
 
 
 class PlanTests(unittest.TestCase):
+    def test_arm64_preflight_selects_native_image_and_reports_corpus(self) -> None:
+        arch = native_arch.native_arch("aarch64")
+        context = candidate.Context(ROOT, ROOT / ".work/aarch64/candidate", {}, dry_run=True)
+        inspected = subprocess.CompletedProcess([], 0, arch["image"] + " linux/arm64\n", "")
+        with mock.patch.object(candidate, "ARCH", arch), \
+                mock.patch.object(candidate, "WORK_PARENT", Path(".work/aarch64")), \
+                mock.patch.object(candidate.subprocess, "run", return_value=inspected) as run, \
+                mock.patch.object(candidate.source_seal, "seal", return_value={}):
+            blockers = candidate.preflight(ROOT, context, candidate.plan(through="static-products"))
+        self.assertEqual(run.call_args.args[0][-1], arch["image"])
+        self.assertFalse(any("core image is absent" in blocker for blocker in blockers))
+        self.assertTrue(any("aarch64 package corpus is not pinned" in blocker for blocker in blockers))
+
     def test_families_run_in_ledger_dependency_order(self) -> None:
         steps = candidate.plan()
         rows = candidate._ledger_rows(ROOT)
