@@ -1117,7 +1117,9 @@ def build_aarch64(output: Path, *, allocator_backend: str, lifecycle_test_audit:
                 "archive": builtins.name, "members": common.run([ar, "t", str(builtins)], environment=environment).decode().splitlines(),
                 "linker_arguments": ["--whole-archive", builtins.name, "--no-whole-archive"]},
             "shared_errno_private_aliases": None,
-            "loader_imports": sorted(elf_imports(str(tools / "llvm-nm"), loader))})
+            "loader_imports": sorted(line.split()[-1] for line in common.run(
+                [str(tools / "llvm-nm"), "--undefined-only", str(loader)], environment=environment).decode().splitlines()
+                if len(line.split()) >= 2)})
         common.write_json(metadata / "producer-tools.json", common.resolve_pinned_producer_tools("aarch64"))
         common.write_json(metadata / "loader.provenance.json",
                           loader_provenance(stage, loader_command, environment.get("RUSTFLAGS", ""), loader, interpreter,
