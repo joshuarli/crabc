@@ -1519,13 +1519,6 @@ def main(argv: Sequence[str] | None = None) -> int:
     for condition in report["unmet_conditions"]:
         print(f"unmet: {condition}", file=sys.stderr)
     print(f"receipt: {path}")
-    if ARCH == "aarch64" and not report["qualifying"] and not report["allocator_evidence"] and not report["debug"]:
-        selected = arguments.select or list(SECTIONS)
-        expected = [f"{section} was not selected" for section in SECTIONS if section not in selected]
-        expected.append("development products are not a current-source installed/extracted cohort")
-        if report["unmet_conditions"] == expected:
-            print("aarch64 consumer.rust-std-lto: PASS (development only; receipt is not qualifying)")
-            return 0
     if report["passed"] and report["debug"]:
         print("x86 debug std and valid unwind consumers: PASS (development)")
         return 0
