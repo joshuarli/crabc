@@ -30,8 +30,8 @@ const NAME_MAX: usize = 255;
 const O_CREAT: c_int = 0x40;
 const O_EXCL: c_int = 0x80;
 const O_LARGEFILE: c_int = super::raw_syscall::O_LARGEFILE as c_int;
-const OBJECT_FLAGS: c_int = 2 | 0x20000 | 0x80000 | 0x800; // RDWR/NOFOLLOW/CLOEXEC/NONBLOCK
-const SHM_FLAGS: c_int = 0x20000 | 0x80000 | 0x800;
+const OBJECT_FLAGS: c_int = 2 | super::raw_syscall::O_NOFOLLOW as c_int | 0x80000 | 0x800;
+const SHM_FLAGS: c_int = super::raw_syscall::O_NOFOLLOW as c_int | 0x80000 | 0x800;
 const AT_FDCWD: i64 = -100;
 static SEM_OPEN_LOCK: AtomicI32 = AtomicI32::new(0);
 
