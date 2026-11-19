@@ -43,6 +43,18 @@ int main(void) {
         for (unsigned i=0; i<sizeof edges/sizeof *edges; ++i)
             for (unsigned j=0; j<sizeof edges/sizeof *edges; ++j) run(edges[i],edges[j]);
         for (unsigned i=0; i<4096; ++i) {
+            uint64_t high = next();
+            quad a={.u={next(),high}}, b={.u={next(),(high & UINT64_C(0xffff000000000000)) | (next() & UINT64_C(0x0000ffffffffffff))}};
+            run(a,b);
+        }
+        for (unsigned i=1; i<=115; ++i) {
+            quad a={.u={0,UINT64_C(0x3fff000000000000)}};
+            quad b={.u={0,((uint64_t)(0x3fff-i)) << 48}};
+            run(a,b);
+            b.u.hi |= UINT64_C(0x8000000000000000);
+            run(a,b);
+        }
+        for (unsigned i=0; i<4096; ++i) {
             quad a={.u={next(),next()}}, b={.u={next(),next()}};
             run(a,b);
             volatile int32_t si=(int32_t)next(); volatile uint32_t ui=(uint32_t)next();
