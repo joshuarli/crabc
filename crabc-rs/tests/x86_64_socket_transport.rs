@@ -1,4 +1,3 @@
-#![cfg(target_arch = "x86_64")]
 
 use core::mem::MaybeUninit;
 
@@ -286,12 +285,18 @@ fn udp_error_queue_sender() -> crabc_rs::OwnedFd {
     let result: isize;
     // SAFETY: the fixed x86 Linux setsockopt request enables IP_RECVERR using
     // a live four-byte integer. No production generic-option API is added.
+    #[cfg(target_arch = "x86_64")]
     unsafe {
         core::arch::asm!("syscall", inlateout("rax") 54usize => result,
             in("rdi") crabc_rs::AsRawFd::as_raw_fd(&sender) as usize,
             in("rsi") 0usize, in("rdx") 11usize,
             in("r10") &enabled as *const i32, in("r8") 4usize,
             lateout("rcx") _, lateout("r11") _, options(nostack));
+    }
+    #[cfg(target_arch = "aarch64")]
+    unsafe {
+        core::arch::asm!("svc 0", in("x8") 208usize, inlateout("x0") crabc_rs::AsRawFd::as_raw_fd(&sender) as isize => result,
+            in("x1") 0usize, in("x2") 11usize, in("x3") &enabled as *const i32, in("x4") 4usize, options(nostack));
     }
     assert_eq!(result, 0);
     net::send(&sender, b"abcdefgh", net::SendFlags::empty()).unwrap();
