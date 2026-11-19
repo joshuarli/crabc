@@ -29,6 +29,7 @@ import sys
 import tempfile
 from typing import Any, Mapping
 import source_seal
+from native_arch import native_arch
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -362,7 +363,7 @@ def _recompile_workload(root: Path, work: Path, static: Path) -> None:
     compiler = physical_file(static / "bin/crabc-cc", "selected static cancellation compiler")
     source = physical_file(root / SOURCE, "cancellation workload source")
     workload = physical_file(work / "workload.o", "cancellation workload object")
-    scratch = root / ".work/x86_64/tmp"
+    scratch = root / f".work/{native_arch()['arch']}/tmp"
     scratch.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix="resolver-cancellation-source-", dir=scratch) as temporary:
         rebuilt = Path(temporary) / "workload.o"
