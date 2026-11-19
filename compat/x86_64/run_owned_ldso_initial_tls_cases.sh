@@ -106,11 +106,8 @@ cc -fPIC -shared -nostdlib -ftls-model=global-dynamic "${tls_dialect[@]}" \
     -o "$consumer_dir/libconsumer.so"
 
 cc -O2 -fPIE -ftls-model=global-dynamic -DCRABC_PRODUCT_TLS_LAYOUT -c "$MAIN" -o "$work/main.o"
-musl_main="$work/main.o"
-if [ "$arch" = aarch64 ]; then
-    cc -O2 -fPIE -ftls-model=global-dynamic -c "$MAIN" -o "$work/main-musl.o"
-    musl_main="$work/main-musl.o"
-fi
+cc -O2 -fPIE -ftls-model=global-dynamic -c "$MAIN" -o "$work/main-musl.o"
+musl_main="$work/main-musl.o"
 deps=(-L"$left_dir" -L"$right_dir" -L"$shared_dir" -L"$consumer_dir"
       -Wl,--no-as-needed -l:libleft.so -l:libright.so -l:libshared.so -l:libconsumer.so)
 cc -nostdlib -fPIE -pie -ftls-model=global-dynamic -Wl,--hash-style=sysv -Wl,-z,now \
