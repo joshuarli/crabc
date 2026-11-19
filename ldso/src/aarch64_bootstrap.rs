@@ -1,8 +1,10 @@
 //! AArch64 early entry and self-relocation, based on musl 1.2.6
 //! `arch/aarch64/crt_arch.h` and `ldso/dlstart.c`.
 
+#[cfg(not(test))]
 use core::arch::global_asm;
 
+#[cfg(not(test))]
 global_asm!(
     ".text",
     ".global _start",
@@ -114,17 +116,23 @@ unsafe fn relocate(base: usize, phdr: usize, count: usize, dynamic: usize, dynam
         || overlap(rela, rela_end, relr, relr_end) { return None; }
     p = rela;
     while p < rela_end {
+        if unsafe { word(p + 8) } == 1027 {
+            let offset = unsafe { word(p) };
+            let mut q = p + 24;
+            while q < rela_end {
+                if unsafe { word(q + 8) == 1027 && word(q) == offset } { return None; }
+                q += 24;
+            }
+        }
+        p += 24;
+    }
+    p = rela;
+    while p < rela_end {
         // SAFETY: The complete RELA table was admitted above.
         let (offset, info, addend) = unsafe { (word(p), word(p + 8), word(p + 16)) };
         if info == 1027 {
             // SAFETY: target verifies the writable mapping and metadata exclusion.
             let address = unsafe { target(base, phdr, count, offset, rela, rela_end, relr, relr_end) }?;
-            let mut q = p + 24;
-            while q < rela_end {
-                // SAFETY: q remains inside the admitted RELA table.
-                if unsafe { word(q + 8) == 1027 && word(q) == offset } { return None; }
-                q += 24;
-            }
             let value = if (addend as isize) < 0 { base.checked_sub((addend as isize).unsigned_abs())? }
                 else { base.checked_add(addend)? };
             if value > isize::MAX as usize { return None; }
@@ -185,6 +193,7 @@ unsafe fn relocate(base: usize, phdr: usize, count: usize, dynamic: usize, dynam
     Some(())
 }
 
+#[cfg(not(test))]
 #[no_mangle]
 unsafe extern "C" fn __crabc_aarch64_bootstrap(sp: usize, base: usize) -> ! {
     // SAFETY: Linux enters with a mapped ELF header and its program headers.
@@ -218,4 +227,27 @@ unsafe extern "C" fn __crabc_aarch64_bootstrap(sp: usize, base: usize) -> ! {
     }
     // SAFETY: Linux exit terminates this process after a failed bootstrap.
     unsafe { core::arch::asm!("svc #0", in("x8") 93usize, in("x0") 127usize, options(noreturn)); }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[repr(align(8))]
+    struct Image([u64; 128]);
+
+    #[test]
+    fn duplicate_rela_does_not_write_earlier_target() {
+        let mut image = Image([0; 128]);
+        let base = image.0.as_mut_ptr() as usize;
+        let phdr = base;
+        image.0[0] = 1 | (6u64 << 32);
+        image.0[5] = 1024;
+        image.0[8..16].copy_from_slice(&[7, 256, 8, 72, 9, 24, 0, 0]);
+        image.0[32..41].copy_from_slice(&[512, 1027, 1, 520, 1027, 2, 520, 1027, 3]);
+        image.0[64] = 99;
+        let result = unsafe { relocate(base, phdr, 1, base + 64, base + 128) };
+        assert!(result.is_none());
+        assert_eq!(image.0[64], 99);
+    }
 }
