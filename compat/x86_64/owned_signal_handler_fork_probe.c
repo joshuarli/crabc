@@ -14,12 +14,22 @@
 #include <stdint.h>
 #include <time.h>
 
+#if defined(__aarch64__)
+#define FORK_SYSCALL SYS_clone
+#else
+#define FORK_SYSCALL SYS_fork
+#endif
+
 static volatile sig_atomic_t called, child_pid, fork_error;
 static int raw, direct, queued;
 static void handler(int signal) {
     (void)signal;
     errno=0;
+#if defined(__aarch64__)
+    pid_t child=raw ? (pid_t)syscall(SYS_clone,SIGCHLD,0,0,0,0) : fork();
+#else
     pid_t child=raw ? (pid_t)syscall(SYS_fork) : fork();
+#endif
     if(child==0) _exit(0);
     fork_error=errno; child_pid=child; called=1;
 }
@@ -95,7 +105,7 @@ static pthread_t fork_target;
 static void *fork_under_listener(void *unused) {
     (void)unused;
     struct filter { unsigned short code;unsigned char yes,no;unsigned value; } instructions[]={
-        {0x20,0,0,0},{0x15,0,1,SYS_fork},{0x06,0,0,0x7fc00000},{0x06,0,0,0x7fff0000}};
+        {0x20,0,0,0},{0x15,0,1,FORK_SYSCALL},{0x06,0,0,0x7fc00000},{0x06,0,0,0x7fff0000}};
     struct { unsigned short count;struct filter *instructions; } program={4,instructions};
     if(syscall(SYS_prctl,38,1,0,0,0)) _exit(40);
     long listener=syscall(SYS_seccomp,1,8,&program);
@@ -121,7 +131,7 @@ static int kill_during_fork_case(void) {
     while(fork_listener<0) ;
     struct { uint64_t id;uint32_t pid,flags;int nr;uint32_t arch;uint64_t pc,args[6]; } notification;
     memset(&notification,0,sizeof notification);
-    if(syscall(SYS_ioctl,fork_listener,0xc0502100UL,&notification) || notification.nr!=SYS_fork)return 44;
+    if(syscall(SYS_ioctl,fork_listener,0xc0502100UL,&notification) || notification.nr!=FORK_SYSCALL)return 44;
     kill_go=1;
     struct timespec pause={0,1000000};
     for(int waited=0;waited<2000 && !kill_done;waited++) nanosleep(&pause,NULL);

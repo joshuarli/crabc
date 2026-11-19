@@ -3,6 +3,7 @@
 set -euo pipefail
 ulimit -c 0
 readonly ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+eval "$(python3 -B "$ROOT/compat/x86_64/native_arch.py")"
 usage() {
     printf 'usage: %s [[--static-sysroot STATIC_SYSROOT] DYNAMIC_SYSROOT]\n' "$0" >&2
     exit 2
@@ -132,8 +133,8 @@ compare() {
     cmp "$work/oracle-raise-race.stdout" "$work/$label-raise-race.stdout"
     cmp "$work/oracle-raise-race.stderr" "$work/$label-raise-race.stderr"
 }
-/usr/local/bin/crabc-x86_64-musl-gcc -static -fno-pie -no-pie -pthread "$work/workload.o" -o "$work/root/oracle"
-/usr/local/bin/crabc-x86_64-musl-gcc -static -fno-pie -no-pie -pthread "$work/raise-race.o" "$work/print.o" -o "$work/root/oracle-raise-race"
+"$oracle" -static -fno-pie -no-pie -pthread "$work/workload.o" -o "$work/root/oracle"
+"$oracle" -static -fno-pie -no-pie -pthread "$work/raise-race.o" "$work/print.o" -o "$work/root/oracle-raise-race"
 for scenario in "${cases[@]}"; do observe "oracle-$scenario" /oracle "$scenario"; done
 observe oracle-raise-race /oracle-raise-race
 if [ "$build_static" -eq 1 ]; then
@@ -153,7 +154,7 @@ for mode in pie non-pie; do
     "$provided_dynamic/bin/crabc-cc-dynamic" "--dynamic-$mode" "$work/workload.o" -o "$work/root/dynamic-$mode"
     "$provided_dynamic/bin/crabc-cc-dynamic" "--dynamic-$mode" "$work/raise-race.o" "$work/print.o" -o "$work/root/dynamic-$mode-raise-race"
     compare "$mode-kernel" "/dynamic-$mode" "/dynamic-$mode-raise-race"
-    compare "$mode-direct" "/dynamic-$mode" "/dynamic-$mode-raise-race" /lib/ld-crabc-x86_64.so.1
+    compare "$mode-direct" "/dynamic-$mode" "/dynamic-$mode-raise-race" "/lib/ld-crabc-$arch.so.1"
 done
 sha256sum -c "$work/input.sha256" >"$work/input-verified.txt"
 printf 'owned signal-handler fork: PASS (early delivery, inherited masks, clone failure, kill during fork, pinned raise-race); evidence: %s\n' "$work"
