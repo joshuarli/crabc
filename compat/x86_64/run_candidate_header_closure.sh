@@ -50,7 +50,7 @@ validate_profile_contract() {
     [ "${#PROFILES[@]}" -eq "$EXPECTED_PROFILE_COUNT" ] ||
         fail "profile count drifted: expected $EXPECTED_PROFILE_COUNT, got ${#PROFILES[@]}"
     for profile in "${PROFILES[@]}"; do
-        if [[ -v "observed_profiles[$profile]" ]]; then
+        if [[ ${observed_profiles[$profile]+present} ]]; then
             fail "profile list contains duplicate $profile"
         fi
         observed_profiles["$profile"]=1
@@ -67,7 +67,7 @@ validate_oracle_not_applicable_contract() {
             *.h:*) profile="${row#*:}" ;;
             *) fail "invalid oracle-not-applicable row: $row" ;;
         esac
-        if [[ -v "declared_rows[$row]" ]]; then
+        if [[ ${declared_rows[$row]+present} ]]; then
             fail "oracle-not-applicable row is duplicated: $row"
         fi
         declared_rows["$row"]=1
