@@ -322,16 +322,22 @@ mod tests {
     unsafe fn write_faults(address: *mut u64) -> bool {
         // Only a raw store and SYS_exit in the child; no inherited libc/TLS
         // owner is entered. Its parent retains the loader lock and mapping.
+        #[cfg(target_arch = "x86_64")]
         let child = unsafe { syscall1(57, 0) };
+        #[cfg(target_arch = "aarch64")]
+        let child = unsafe { syscall6(220, 17, 0, 0, 0, 0, 0) };
         if child == 0 {
             let no_core = [0u64; 2];
+            #[cfg(target_arch = "x86_64")]
             unsafe { syscall2(160, 4, no_core.as_ptr() as i64); }
-            unsafe { core::ptr::write_volatile(address, 0); syscall1(60, 90); core::hint::unreachable_unchecked(); }
+            #[cfg(target_arch = "aarch64")]
+            unsafe { syscall4(261, 0, 4, no_core.as_ptr() as i64, 0); }
+            unsafe { core::ptr::write_volatile(address, 0); syscall1(SYS_EXIT, 90); core::hint::unreachable_unchecked(); }
         }
         let mut status = 0i32;
         let waited = if child > 0 {
             loop {
-                let result = unsafe { syscall4(61, child, core::ptr::addr_of_mut!(status) as i64, 0, 0) };
+                let result = unsafe { syscall4(if cfg!(target_arch = "aarch64") { 260 } else { 61 }, child, core::ptr::addr_of_mut!(status) as i64, 0, 0) };
                 if result != -4 { break result; }
             }
         } else { child };
