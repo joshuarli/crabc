@@ -91,11 +91,18 @@ static uintptr_t provider_base(const struct stat *provider)
     while (fgets(line, sizeof line, maps)) {
         unsigned long start, end, offset, inode;
         unsigned device_major, device_minor;
-        if (sscanf(line, "%lx-%lx %7s %lx %x:%x %lu", &start, &end,
-                   permissions, &offset, &device_major, &device_minor, &inode) != 7)
+        int path_offset = 0;
+        if (sscanf(line, "%lx-%lx %7s %lx %x:%x %lu %n", &start, &end,
+                   permissions, &offset, &device_major, &device_minor, &inode, &path_offset) != 7)
             fail("debugger maps row");
-        if (offset == 0 && inode == provider->st_ino
-            && device_major == major(provider->st_dev) && device_minor == minor(provider->st_dev)) {
+        int same_device = device_major == major(provider->st_dev) && device_minor == minor(provider->st_dev);
+        if (!same_device && path_offset && line[path_offset] == '/') {
+            char *name = line + path_offset;
+            name[strcspn(name, "\n")] = 0;
+            struct stat mapped;
+            same_device = stat(name, &mapped) == 0 && mapped.st_dev == provider->st_dev && mapped.st_ino == provider->st_ino;
+        }
+        if (offset == 0 && inode == provider->st_ino && same_device) {
             if (result) fail("debugger ambiguous provider");
             result = start;
         }
