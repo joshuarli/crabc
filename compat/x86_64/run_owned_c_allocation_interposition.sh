@@ -10,10 +10,11 @@ set -euo pipefail
 ulimit -c 0
 
 readonly ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-readonly ORACLE_CC=/usr/local/bin/crabc-x86_64-musl-gcc
+eval "$(python3 -B "$ROOT/compat/x86_64/native_arch.py")"
+readonly ORACLE_CC="$oracle"
 readonly PROBE="$ROOT/compat/x86_64/owned_c_allocation_interposition_probe.c"
-readonly CRABC_INTERPRETER=/lib/ld-crabc-x86_64.so.1
-readonly MUSL_INTERPRETER=/lib/ld-musl-x86_64.so.1
+readonly CRABC_INTERPRETER="/lib/ld-crabc-$arch.so.1"
+readonly MUSL_INTERPRETER="/lib/ld-musl-$arch.so.1"
 readonly PASSWD_RECORD='crabc:x:64:64:Crabc:/home/crabc:/bin/sh'
 readonly -a scenarios=(asprintf passwd lio host timezone)
 
@@ -21,7 +22,7 @@ readonly -a scenarios=(asprintf passwd lio host timezone)
     printf 'usage: %s [DYNAMIC_SYSROOT]\n' "$0" >&2
     exit 2
 }
-[ "$(uname -sm)" = 'Linux x86_64' ]
+[ "$(uname -s)" = Linux ]
 
 provided_dynamic="${1:-}"
 if [ -n "$provided_dynamic" ]; then
@@ -59,7 +60,10 @@ readonly provider="$installed/usr/lib/libc.so"
 readelf -rW "$provider" >"$work/provider.relocations"
 readelf -sW "$provider" >"$work/provider.symbols"
 objdump -d --no-show-raw-insn "$provider" >"$work/provider.disassembly"
-awk '$3 == "R_X86_64_GLOB_DAT" && $5 == "malloc" { found = 1 } END { exit !found }' \
+relocation=R_X86_64_GLOB_DAT
+branch='jmp'
+if [ "$arch" = aarch64 ]; then relocation=R_AARCH64_GLOB_DAT; branch='b'; fi
+awk -v relocation="$relocation" '$3 == relocation && $5 == "malloc" { found = 1 } END { exit !found }' \
     "$work/provider.relocations" || {
     printf 'owned C allocator interposition: vasprintf malloc boundary is absent\n' >&2
     exit 1
@@ -69,9 +73,9 @@ awk '$4 == "FUNC" && $5 == "LOCAL" && $6 == "HIDDEN" && $8 == "__crabc_x86_passw
     printf 'owned C allocator interposition: passwd public-free tail is absent\n' >&2
     exit 1
 }
-awk '
+awk -v branch="$branch" '
     /<__crabc_x86_passwd_cabi_free>:/ { in_tail = 1; next }
-    in_tail && /jmp.*<free@plt>/ { found = 1; exit }
+    in_tail && (branch == "jmp" ? $2 ~ /^jmp/ : $2 == branch) && /<free@plt>/ { found = 1; exit }
     in_tail && /^[[:xdigit:]]+ <.*>:/ { exit }
     END { exit !found }
 ' "$work/provider.disassembly" || {
@@ -85,9 +89,9 @@ for boundary in malloc free; do
         printf 'owned C allocator interposition: AIO public %s tail is absent\n' "$boundary" >&2
         exit 1
     }
-    awk -v name="$name" -v boundary="$boundary" '
+    awk -v name="$name" -v boundary="$boundary" -v branch="$branch" '
         $0 ~ "<" name ">:" { in_tail = 1; next }
-        in_tail && $0 ~ "jmp.*<" boundary "@plt>" { found = 1; exit }
+        in_tail && (branch == "jmp" ? $2 ~ /^jmp/ : $2 == branch) && ($0 ~ "<" boundary "@plt>" || (branch == "b" && boundary == "malloc" && index($0, "<malloc$pltgot>"))) { found = 1; exit }
         in_tail && /^[[:xdigit:]]+ <.*>:/ { exit }
         END { exit !found }
     ' "$work/provider.disassembly" || {
@@ -102,9 +106,9 @@ for boundary in malloc free; do
         printf 'owned C allocator interposition: host-cache public %s tail is absent\n' "$boundary" >&2
         exit 1
     }
-    awk -v name="$name" -v boundary="$boundary" '
+    awk -v name="$name" -v boundary="$boundary" -v branch="$branch" '
         $0 ~ "<" name ">:" { in_tail = 1; next }
-        in_tail && $0 ~ "jmp.*<" boundary "@plt>" { found = 1; exit }
+        in_tail && (branch == "jmp" ? $2 ~ /^jmp/ : $2 == branch) && ($0 ~ "<" boundary "@plt>" || (branch == "b" && boundary == "malloc" && index($0, "<malloc$pltgot>"))) { found = 1; exit }
         in_tail && /^[[:xdigit:]]+ <.*>:/ { exit }
         END { exit !found }
     ' "$work/provider.disassembly" || {
@@ -148,7 +152,7 @@ prepare_oracle_root() {
     write_passwd "$root"
     cp "$executable" "$root/consumer"
     cp /opt/musl-1.2.6/lib/libc.so "$root$MUSL_INTERPRETER"
-    ln -s ld-musl-x86_64.so.1 "$root/lib/libc.so"
+    ln -s "ld-musl-$arch.so.1" "$root/lib/libc.so"
 }
 
 prepare_candidate_root() {
