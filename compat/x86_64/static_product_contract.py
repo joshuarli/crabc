@@ -44,12 +44,14 @@ from typing import Any
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
 from compat.x86_64 import source_seal
+from compat.x86_64.native_arch import native_arch
 
 CONTRACT_PATH = ROOT / "compat" / "x86_64" / "static-product.toml"
 CONTRACT_SCHEMA = "crabc.x86_64-owned-static-product/v1"
 RECEIPT_SCHEMA = "crabc.x86_64-owned-static-qualification/v1"
-PUBLICATION = ROOT / ".work" / "x86_64" / "owned-static-qualification.json"
-REPORT_ROOT = ROOT / ".work" / "x86_64" / "reports" / "owned-static-product"
+WORK_PARENT = ROOT / ".work" / native_arch()["work_name"]
+PUBLICATION = WORK_PARENT / "owned-static-qualification.json"
+REPORT_ROOT = WORK_PARENT / "reports" / "owned-static-product"
 OWNER_FAMILY = "sysroot.static-tls"
 PRODUCTS = ("primary", "extracted")
 MODE_PATHS = ("static-et-exec", "static-pie")
