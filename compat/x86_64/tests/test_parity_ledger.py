@@ -3413,7 +3413,7 @@ class X86ParityLedgerTests(unittest.TestCase):
             "crabc-rs/src/fs.rs",
             "crabc-rs/src/raw_dir.rs",
             "crabc-rs/src/pattern.rs",
-            "crabc-rs/tests/linux_glob.rs",
+            "crabc-rs/tests/x86_64_glob.rs",
             "crabc-rs/examples/glob_direct_probe.rs",
             "compat/x86_64/verify_glob_direct.sh",
         ):
@@ -6547,37 +6547,37 @@ class X86ParityLedgerTests(unittest.TestCase):
         self.assertIn("crabc-core/src/thread.rs", direct["source_owners"])
         self.assertIn("crabc-core/src/io.rs", direct["source_owners"])
         for source_owner in (
-            "crabc-rs/tests/linux_posix_fallocate.rs",
-            "crabc-rs/tests/linux_fallocate.rs",
-            "crabc-rs/tests/linux_ftruncate.rs",
-            "crabc-rs/tests/linux_futimens.rs",
-            "crabc-rs/tests/linux_timestamp_paths.rs",
-            "crabc-rs/tests/linux_fcntl_flags.rs",
-            "crabc-rs/tests/linux_flock.rs",
-            "crabc-rs/tests/linux_sendfile.rs",
-            "crabc-rs/tests/linux_copy_file_range.rs",
+            "crabc-rs/tests/x86_64_posix_fallocate.rs",
+            "crabc-rs/tests/x86_64_fallocate.rs",
+            "crabc-rs/tests/x86_64_ftruncate.rs",
+            "crabc-rs/tests/x86_64_futimens.rs",
+            "crabc-rs/tests/x86_64_timestamp_paths.rs",
+            "crabc-rs/tests/x86_64_fcntl_flags.rs",
+            "crabc-rs/tests/x86_64_flock.rs",
+            "crabc-rs/tests/x86_64_sendfile.rs",
+            "crabc-rs/tests/x86_64_copy_file_range.rs",
             "crabc-rs/tests/x86_64_epoll.rs",
             "crabc-rs/tests/x86_64_pselect.rs",
-            "crabc-rs/tests/linux_file_position.rs",
+            "crabc-rs/tests/x86_64_file_position.rs",
             "crabc-rs/tests/x86_64_sync.rs",
-            "crabc-rs/tests/linux_syncfs.rs",
+            "crabc-rs/tests/x86_64_syncfs.rs",
             "crabc-rs/tests/x86_64_sync_file_range.rs",
             "crabc-rs/tests/x86_64_memfd.rs",
-            "crabc-rs/tests/linux_thread_credentials.rs",
-            "crabc-rs/tests/linux_fs_credentials.rs",
-            "crabc-rs/tests/linux_getgroups.rs",
-            "crabc-rs/tests/linux_getitimer.rs",
-            "crabc-rs/tests/linux_timerfd.rs",
-            "crabc-rs/tests/linux_getcwd.rs",
-            "crabc-rs/tests/linux_current_dir_name.rs",
+            "crabc-rs/tests/x86_64_thread_credentials.rs",
+            "crabc-rs/tests/x86_64_fs_credentials.rs",
+            "crabc-rs/tests/x86_64_getgroups.rs",
+            "crabc-rs/tests/x86_64_getitimer.rs",
+            "crabc-rs/tests/x86_64_timerfd.rs",
+            "crabc-rs/tests/x86_64_getcwd.rs",
+            "crabc-rs/tests/x86_64_current_dir_name.rs",
             "crabc-rs/tests/x86_64_clock_nanosleep.rs",
-            "crabc-rs/tests/linux_sched_rr_interval.rs",
+            "crabc-rs/tests/x86_64_sched_rr_interval.rs",
             "crabc-rs/tests/x86_64_sched_affinity.rs",
             "crabc-rs/tests/x86_64_sched_setaffinity.rs",
-            "crabc-rs/tests/linux_setpriority.rs",
-            "crabc-rs/tests/linux_rlimit.rs",
-            "crabc-rs/tests/linux_rlimit_targeted.rs",
-            "crabc-rs/tests/linux_setrlimit.rs",
+            "crabc-rs/tests/x86_64_setpriority.rs",
+            "crabc-rs/tests/x86_64_rlimit.rs",
+            "crabc-rs/tests/x86_64_rlimit_targeted.rs",
+            "crabc-rs/tests/x86_64_setrlimit.rs",
             "crabc-rs/tests/x86_64_umask.rs",
             "compat/x86_64/run_x86_ftruncate_reference.sh",
             "compat/x86_64/x86_ftruncate_reference_probe.c",
@@ -6635,14 +6635,14 @@ class X86ParityLedgerTests(unittest.TestCase):
             "compat/x86_64/x86_rlimit_reference_probe.c",
             "compat/x86_64/run_x86_rlimit_targeted_reference.sh",
             "compat/x86_64/x86_rlimit_targeted_reference_probe.c",
-            "crabc-rs/tests/linux_rusage.rs",
+            "crabc-rs/tests/x86_64_rusage.rs",
             "compat/x86_64/run_x86_rusage_reference.sh",
             "compat/x86_64/x86_rusage_reference_probe.c",
             "compat/x86_64/run_x86_setrlimit_reference.sh",
             "compat/x86_64/x86_setrlimit_reference_probe.c",
             "compat/x86_64/run_x86_umask_reference.sh",
             "compat/x86_64/x86_umask_reference_probe.c",
-            "crabc-rs/tests/linux_times.rs",
+            "crabc-rs/tests/x86_64_times.rs",
             "compat/x86_64/run_x86_times_reference.sh",
             "compat/x86_64/x86_times_reference_probe.c",
         ):
@@ -6958,7 +6958,7 @@ class X86ParityLedgerTests(unittest.TestCase):
             "crabc-core/src/mm.rs",
             "crabc-core/src/syscall.rs",
             "crabc-rs/src/mm.rs",
-            "crabc-rs/tests/linux_memory_mapping.rs",
+            "crabc-rs/tests/x86_64_memory_mapping.rs",
             "crabc-rs/examples/mapping_direct_probe.rs",
             "compat/x86_64/run_x86_mapping_reference.sh",
             "compat/x86_64/x86_mapping_reference_probe.c",
@@ -7022,7 +7022,7 @@ class X86ParityLedgerTests(unittest.TestCase):
             "crabc-rs/src/lib.rs",
             "crabc-rs/src/mm.rs",
             "crabc-rs/src/process.rs",
-            "crabc-rs/tests/linux_memory_vm.rs",
+            "crabc-rs/tests/x86_64_memory_vm.rs",
             "crabc-rs/examples/memory_vm_direct_probe.rs",
             "crabc-rs/Cargo.toml",
             "compat/x86_64/run_x86_memory_vm_reference.sh",
@@ -7104,7 +7104,7 @@ class X86ParityLedgerTests(unittest.TestCase):
             "crabc-rs/src/lib.rs",
             "crabc-rs/src/fs.rs",
             "crabc-rs/src/pty.rs",
-            "crabc-rs/tests/linux_pty_basic.rs",
+            "crabc-rs/tests/x86_64_pty_basic.rs",
             "crabc-rs/examples/pty_basic_direct_probe.rs",
             "crabc-rs/Cargo.toml",
             "compat/x86_64/run_x86_pty_basic_reference.sh",
@@ -7179,7 +7179,7 @@ class X86ParityLedgerTests(unittest.TestCase):
             "crabc-core/src/syscall.rs",
             "crabc-rs/src/pty.rs",
             "crabc-rs/src/termios.rs",
-            "crabc-rs/tests/linux_terminal.rs",
+            "crabc-rs/tests/x86_64_terminal.rs",
             "crabc-rs/examples/x86_64_terminal_direct_probe.rs",
             "compat/x86_64/run_x86_terminal_reference.sh",
             "compat/x86_64/x86_terminal_reference_probe.c",
@@ -7403,7 +7403,7 @@ class X86ParityLedgerTests(unittest.TestCase):
             "crabc-core/src/syscall.rs",
             "crabc-rs/src/lib.rs",
             "crabc-rs/src/mount.rs",
-            "crabc-rs/tests/linux_mount.rs",
+            "crabc-rs/tests/x86_64_mount.rs",
             "crabc-rs/examples/mount_direct_probe.rs",
             "crabc-rs/Cargo.toml",
             "compat/x86_64/run_x86_mount_reference.sh",
@@ -7456,9 +7456,9 @@ class X86ParityLedgerTests(unittest.TestCase):
         for source_owner in (
             "crabc-core/src/fs.rs",
             "crabc-rs/src/fs.rs",
-            "crabc-rs/tests/linux_path_lifecycle.rs",
-            "crabc-rs/tests/linux_namespace.rs",
-            "crabc-rs/tests/linux_readlink.rs",
+            "crabc-rs/tests/x86_64_path_lifecycle.rs",
+            "crabc-rs/tests/x86_64_namespace.rs",
+            "crabc-rs/tests/x86_64_readlink.rs",
             "crabc-rs/examples/path_core_owned_direct_probe.rs",
             "compat/x86_64/run_x86_path_lifecycle_reference.sh",
             "compat/x86_64/run_x86_readlinkat_reference.sh",
@@ -7478,7 +7478,7 @@ class X86ParityLedgerTests(unittest.TestCase):
             "crabc-core/src/fs.rs",
             "crabc-core/src/syscall.rs",
             "crabc-rs/src/fs.rs",
-            "crabc-rs/tests/linux_xattr.rs",
+            "crabc-rs/tests/x86_64_xattr.rs",
             "crabc-rs/examples/xattr_direct_probe.rs",
             "compat/x86_64/run_x86_xattr_reference.sh",
             "compat/x86_64/x86_xattr_reference_probe.c",
@@ -7504,9 +7504,9 @@ class X86ParityLedgerTests(unittest.TestCase):
         for source_owner in (
             "crabc-rs/src/raw_dir.rs",
             "crabc-rs/src/fs.rs",
-            "crabc-rs/tests/linux_raw_directory.rs",
-            "crabc-rs/tests/linux_directory.rs",
-            "crabc-rs/tests/linux_directory_position.rs",
+            "crabc-rs/tests/x86_64_raw_directory.rs",
+            "crabc-rs/tests/x86_64_directory.rs",
+            "crabc-rs/tests/x86_64_directory_position.rs",
             "crabc-rs/examples/directory_direct_probe.rs",
             "crabc-rs/examples/directory_position_direct_probe.rs",
             "compat/x86_64/run_x86_directory_reference.sh",
@@ -7569,7 +7569,7 @@ class X86ParityLedgerTests(unittest.TestCase):
             "crabc-core/src/fs.rs",
             "crabc-core/src/syscall.rs",
             "crabc-rs/src/fs.rs",
-            "crabc-rs/tests/linux_statx.rs",
+            "crabc-rs/tests/x86_64_statx.rs",
             "crabc-rs/examples/statx_direct_probe.rs",
             "compat/x86_64/run_x86_statx_reference.sh",
             "compat/x86_64/x86_statx_reference_probe.c",
@@ -7622,8 +7622,8 @@ class X86ParityLedgerTests(unittest.TestCase):
             "crabc-rs/src/lib.rs",
             "crabc-rs/src/fs.rs",
             "crabc-rs/src/process.rs",
-            "crabc-rs/tests/linux_canonicalize.rs",
-            "crabc-rs/tests/linux_cwd_mutation.rs",
+            "crabc-rs/tests/x86_64_canonicalize.rs",
+            "crabc-rs/tests/x86_64_cwd_mutation.rs",
             "crabc-rs/examples/fs_canonicalize_direct_probe.rs",
             "crabc-rs/examples/process_cwd_direct_probe.rs",
             "compat/x86_64/run_x86_cwd_canonicalize_reference.sh",
@@ -7714,7 +7714,7 @@ class X86ParityLedgerTests(unittest.TestCase):
             "crabc-core/src/fs.rs",
             "crabc-core/src/syscall.rs",
             "crabc-rs/src/shm.rs",
-            "crabc-rs/tests/linux_shm.rs",
+            "crabc-rs/tests/x86_64_shm.rs",
             "crabc-rs/examples/shm_direct_probe.rs",
             "compat/x86_64/run_x86_shm_reference.sh",
             "compat/x86_64/x86_shm_reference_probe.c",
@@ -7774,7 +7774,7 @@ class X86ParityLedgerTests(unittest.TestCase):
             "crabc-core/src/syscall.rs",
             "crabc-rs/src/lib.rs",
             "crabc-rs/src/system.rs",
-            "crabc-rs/tests/linux_inotify.rs",
+            "crabc-rs/tests/x86_64_inotify.rs",
             "crabc-rs/examples/inotify_direct_probe.rs",
             "crabc-rs/Cargo.toml",
             "compat/x86_64/run_x86_inotify_reference.sh",
@@ -7842,7 +7842,7 @@ class X86ParityLedgerTests(unittest.TestCase):
             "crabc-rs/UPSTREAM.md",
             "crabc-rs/src/time.rs",
             "crabc-rs/src/timezone.rs",
-            "crabc-rs/tests/linux_calendar_time.rs",
+            "crabc-rs/tests/x86_64_calendar_time.rs",
             "crabc-rs/tests/time.rs",
             "crabc-rs/tests/calendar_utc.rs",
             "crabc-rs/tests/calendar_local.rs",
@@ -7916,7 +7916,7 @@ class X86ParityLedgerTests(unittest.TestCase):
             "crabc-core/src/time.rs",
             "crabc-core/src/tests.rs",
             "crabc-rs/src/time.rs",
-            "crabc-rs/tests/linux_advanced_time.rs",
+            "crabc-rs/tests/x86_64_advanced_time.rs",
             "crabc-rs/examples/time_dynamic_direct_probe.rs",
             "crabc-rs/examples/process_clock_id_direct_probe.rs",
             "crabc-rs/examples/time_settime_direct_probe.rs",
@@ -7998,29 +7998,29 @@ class X86ParityLedgerTests(unittest.TestCase):
             "compat/x86_64/x86_epoll_reference_probe.c", remaining["source_owners"]
         )
         for source_owner in (
-            "crabc-rs/tests/linux_posix_fallocate.rs",
-            "crabc-rs/tests/linux_fallocate.rs",
+            "crabc-rs/tests/x86_64_posix_fallocate.rs",
+            "crabc-rs/tests/x86_64_fallocate.rs",
             "compat/x86_64/run_x86_posix_fallocate_reference.sh",
             "compat/x86_64/x86_posix_fallocate_reference_probe.c",
             "compat/x86_64/run_x86_fallocate_reference.sh",
             "compat/x86_64/x86_fallocate_reference_probe.c",
-            "crabc-rs/tests/linux_futimens.rs",
-            "crabc-rs/tests/linux_timestamp_paths.rs",
+            "crabc-rs/tests/x86_64_futimens.rs",
+            "crabc-rs/tests/x86_64_timestamp_paths.rs",
             "compat/x86_64/run_x86_timestamp_reference.sh",
             "compat/x86_64/x86_timestamp_reference_probe.c",
-            "crabc-rs/tests/linux_flock.rs",
+            "crabc-rs/tests/x86_64_flock.rs",
             "compat/x86_64/run_x86_flock_reference.sh",
             "compat/x86_64/x86_flock_reference_probe.c",
-            "crabc-rs/tests/linux_sendfile.rs",
+            "crabc-rs/tests/x86_64_sendfile.rs",
             "compat/x86_64/run_x86_sendfile_reference.sh",
             "compat/x86_64/x86_sendfile_reference_probe.c",
-            "crabc-rs/tests/linux_copy_file_range.rs",
+            "crabc-rs/tests/x86_64_copy_file_range.rs",
             "compat/x86_64/run_x86_copy_file_range_reference.sh",
             "compat/x86_64/x86_copy_file_range_reference_probe.c",
             "crabc-rs/tests/x86_64_sync.rs",
             "compat/x86_64/run_x86_sync_reference.sh",
             "compat/x86_64/x86_sync_reference_probe.c",
-            "crabc-rs/tests/linux_syncfs.rs",
+            "crabc-rs/tests/x86_64_syncfs.rs",
             "compat/x86_64/run_x86_syncfs_reference.sh",
             "compat/x86_64/x86_syncfs_reference_probe.c",
             "crabc-rs/tests/x86_64_sync_file_range.rs",
@@ -8028,15 +8028,15 @@ class X86ParityLedgerTests(unittest.TestCase):
             "compat/x86_64/x86_sync_file_range_reference_probe.c",
         ):
             self.assertNotIn(source_owner, remaining["source_owners"])
-        self.assertIn("crabc-rs/tests/linux_timerfd.rs", direct["source_owners"])
+        self.assertIn("crabc-rs/tests/x86_64_timerfd.rs", direct["source_owners"])
         self.assertNotIn(
-            "crabc-rs/tests/linux_timerfd.rs", remaining["source_owners"]
+            "crabc-rs/tests/x86_64_timerfd.rs", remaining["source_owners"]
         )
         self.assertNotIn(
             "crabc-rs/tests/x86_64_pselect.rs", remaining["source_owners"]
         )
         self.assertNotIn(
-            "crabc-rs/tests/linux_rlimit_targeted.rs", remaining["source_owners"]
+            "crabc-rs/tests/x86_64_rlimit_targeted.rs", remaining["source_owners"]
         )
         self.assertNotIn(
             "compat/x86_64/run_x86_rlimit_targeted_reference.sh",
@@ -8047,13 +8047,13 @@ class X86ParityLedgerTests(unittest.TestCase):
             remaining["source_owners"],
         )
         self.assertNotIn(
-            "crabc-rs/tests/linux_rusage.rs", remaining["source_owners"]
+            "crabc-rs/tests/x86_64_rusage.rs", remaining["source_owners"]
         )
         self.assertNotIn(
-            "crabc-rs/tests/linux_getgroups.rs", remaining["source_owners"]
+            "crabc-rs/tests/x86_64_getgroups.rs", remaining["source_owners"]
         )
         self.assertNotIn(
-            "crabc-rs/tests/linux_getitimer.rs", remaining["source_owners"]
+            "crabc-rs/tests/x86_64_getitimer.rs", remaining["source_owners"]
         )
         self.assertIn("crabc-rs/tests/x86_64_setitimer.rs", direct["source_owners"])
         self.assertNotIn(
@@ -8122,7 +8122,7 @@ class X86ParityLedgerTests(unittest.TestCase):
             remaining["source_owners"],
         )
         self.assertIn("compat/x86_64/x86_statat_reference_probe.c", remaining["source_owners"])
-        self.assertNotIn("crabc-rs/tests/linux_getcwd.rs", remaining["source_owners"])
+        self.assertNotIn("crabc-rs/tests/x86_64_getcwd.rs", remaining["source_owners"])
         self.assertNotIn(
             "compat/x86_64/run_x86_getcwd_reference.sh", remaining["source_owners"]
         )
@@ -8131,7 +8131,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         )
         self.assertIn("crabc-core/src/fs.rs", remaining["source_owners"])
         self.assertIn("crabc-rs/src/fs.rs", remaining["source_owners"])
-        self.assertIn("crabc-rs/tests/linux_readlink.rs", remaining["source_owners"])
+        self.assertIn("crabc-rs/tests/x86_64_readlink.rs", remaining["source_owners"])
         self.assertIn("compat/x86_64/run_x86_readlinkat_reference.sh", remaining["source_owners"])
         self.assertIn("compat/x86_64/x86_readlinkat_reference_probe.c", remaining["source_owners"])
         self.assertIn("crabc-core/src/io.rs", remaining["source_owners"])
@@ -8140,7 +8140,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         self.assertNotIn("compat/x86_64/run_x86_memfd_reference.sh", remaining["source_owners"])
         self.assertNotIn("compat/x86_64/x86_memfd_reference_probe.c", remaining["source_owners"])
         self.assertNotIn("crabc-core/src/thread.rs", remaining["source_owners"])
-        self.assertNotIn("crabc-rs/tests/linux_sched_rr_interval.rs", remaining["source_owners"])
+        self.assertNotIn("crabc-rs/tests/x86_64_sched_rr_interval.rs", remaining["source_owners"])
         self.assertNotIn("crabc-rs/src/thread.rs", remaining["source_owners"])
         self.assertNotIn("compat/x86_64/run_x86_sched_rr_interval_reference.sh", remaining["source_owners"])
         self.assertNotIn("compat/x86_64/x86_sched_rr_interval_reference_probe.c", remaining["source_owners"])
@@ -8183,10 +8183,10 @@ class X86ParityLedgerTests(unittest.TestCase):
         self.assertIn("filesystem.path-metadata", direct["capabilities"])
         self.assertNotIn("filesystem.path-metadata", remaining["capabilities"])
         self.assertIn(
-            "crabc-rs/tests/linux_current_dir_name.rs", direct["source_owners"]
+            "crabc-rs/tests/x86_64_current_dir_name.rs", direct["source_owners"]
         )
         self.assertNotIn(
-            "crabc-rs/tests/linux_current_dir_name.rs", remaining["source_owners"]
+            "crabc-rs/tests/x86_64_current_dir_name.rs", remaining["source_owners"]
         )
         self.assertEqual(remaining["status"], "foundation-verified")
         self.assertIn("thread.scheduler-rr-interval", direct["capabilities"])
