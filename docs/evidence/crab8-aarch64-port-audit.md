@@ -441,10 +441,7 @@ The facade correction leaves out-of-scope callers `crabc-rs/examples/ppoll_direc
 
 ### Qualifying-path
 
-7. **`owned_dynamic_qualification.py:349-352`** (`0a6486c09`).
-   - x86's `installed-driver` judge is `test_owned_dynamic_driver.py` (about 52 tests).
-   - aarch64 substitutes `test_aarch64_dynamic_non_pie.py` (5 tests), and the `owned-crt` judge exercises only x86 CRT tables.
-   - Both architectures record the same check labels (`:348, :376`), so the records cannot be told apart.
+7. **Partly fixed (7721f05e0, e502e1956).** ARM qualification now runs and separately labels its native CRT builder suite, and its installed-driver suite has 13 passing native cases including resealed provenance and input injection. The shared x86 suite has 59 cases; 18 fail on ARM because its native fixtures construct and require x86 ELF, so its remaining behaviors still need native coverage.
 8. **Closed (d8ffc3bd5): producer-tool identities are checked against the architecture-specific source pin.**
    - The shared product and loader readers use the same source-pinned records.
 9. **Closed (20cedf91a).** Final ELF inspection receives the shared dynamic-symbol provider set on ARM.
