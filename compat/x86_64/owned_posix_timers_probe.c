@@ -31,11 +31,16 @@ static int dynamic_tls;
 static const char *plugin_path = "/libtimer-tls.so";
 static atomic_int plugin_visits;
 static void *plugin_initialized_address, *plugin_zeroed_address, *plugin_dtv;
-/* The x86-64 thread pointer's DTV word stays live across callback resets. */
 static void *current_dtv(void)
 {
     void *dtv;
+#if defined(__aarch64__)
+    void *tp;
+    __asm__("mrs %0, tpidr_el0" : "=r"(tp));
+    dtv = *(void **)((char *)tp - 8);
+#else
     __asm__("movq %%fs:8, %0" : "=r"(dtv));
+#endif
     return dtv;
 }
 static void destructor(void *value)

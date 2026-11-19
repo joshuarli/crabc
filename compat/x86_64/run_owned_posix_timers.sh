@@ -4,11 +4,12 @@
 set -euo pipefail
 ulimit -c 0
 readonly ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-readonly oracle_cc=/usr/local/bin/crabc-x86_64-musl-gcc
+eval "$(python3 -B "$ROOT/compat/x86_64/native_arch.py")"
+readonly oracle_cc="$oracle"
 readonly probe="$ROOT/compat/x86_64/owned_posix_timers_probe.c"
 readonly tls_source="$ROOT/compat/x86_64/owned_posix_timers_tls.c"
 readonly timer_evidence="$ROOT/compat/x86_64/owned_posix_timers_evidence.py"
-readonly interpreter=/lib/ld-crabc-x86_64.so.1
+readonly interpreter="/lib/ld-crabc-$arch.so.1"
 declare -a link_identity_records=()
 application_compile_identity=''
 
