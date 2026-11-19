@@ -23,103 +23,9 @@ def execute(arguments):
     profile = shared.profile_from_manifest(manifest)
     retain_evidence = dynamic_shared.retain_link_evidence()
     interpreter = "/lib/ld-crabc-aarch64-hardened.so.1" if profile is shared.NativeRuntimeProfile.HARDENED else "/lib/ld-crabc-aarch64.so.1"
-    common = []
-    quote_dirs = []
-    dsos = []
-    transitive_dsos = []
-    mode = None
-    runpath = None
-    rpath = None
-    hash_style = "sysv"
-    hash_explicit = False
-    dependency_file = None
-    rounding = False
-    export_dynamic = False
-    binding_mode = None
-    runtime_imports = set()
-    index = 0
-    while index < len(arguments):
-        arg = arguments[index]
-        if arg in ("--dynamic-pie", "-pie", "--dynamic-non-pie", "-no-pie", "--dynamic-shared-object", "-shared"):
-            if mode is not None:
-                raise shared.DriverError("select exactly one dynamic mode")
-            mode = ("shared" if arg in ("--dynamic-shared-object", "-shared") else
-                    "exec" if arg in ("--dynamic-non-pie", "-no-pie") else "pie")
-        elif arg in ("--binding", "--runtime-import"):
-            index += 1
-            if index == len(arguments):
-                raise shared.DriverError(f"missing {arg} value")
-            value = arguments[index]
-            if arg == "--binding":
-                if binding_mode is not None or value not in ("now", "lazy"):
-                    raise shared.DriverError("select one binding: now or lazy")
-                binding_mode = value
-            elif not re.fullmatch(r"[A-Za-z_][A-Za-z_0-9]*", value) or value in runtime_imports:
-                raise shared.DriverError("invalid or duplicate runtime import")
-            else:
-                runtime_imports.add(value)
-        elif arg == "--application-hash-style":
-            index += 1
-            if index == len(arguments) or hash_explicit or arguments[index] not in ("sysv", "gnu", "both"):
-                raise shared.DriverError("select one application hash style: sysv, gnu, or both")
-            hash_style = arguments[index]
-            hash_explicit = True
-        elif arg == "-o":
-            index += 1
-            if index == len(arguments):
-                raise shared.DriverError("-o requires an output path")
-            common.extend((arg, arguments[index]))
-        elif arg in ("--application-quote-include-dir", "--application-runpath", "--application-rpath", "--application-dso", "--transitive-application-dso"):
-            index += 1
-            if index == len(arguments) or arguments[index].startswith("-"):
-                raise shared.DriverError(f"{arg} requires a value")
-            value = arguments[index]
-            if arg == "--application-quote-include-dir":
-                path = Path(value)
-                shared.reject_existing_symlink_components(path, "application quote include")
-                path = shared.resolved_path(path, "application quote include")
-                if not path.is_dir() or shared.is_within_installed_root(root, path) or path in quote_dirs:
-                    raise shared.DriverError("application quote include is missing, duplicated, or unsafe")
-                quote_dirs.append(path)
-            elif arg in ("--application-runpath", "--application-rpath"):
-                if runpath is not None or rpath is not None or not value or len(value.encode()) >= 4096 or "\0" in value:
-                    raise shared.DriverError("invalid application search path")
-                if arg == "--application-rpath":
-                    rpath = value
-                else:
-                    runpath = value
-            elif arg == "--transitive-application-dso":
-                path = Path(value)
-                if shared.rejects_runtime_object(path):
-                    raise shared.DriverError("unowned transitive application DSO")
-                dynamic_shared.application_dso_basename(path, architecture="aarch64")
-                transitive_dsos.append(path)
-            else:
-                path = Path(value)
-                if shared.rejects_runtime_object(path):
-                    raise shared.DriverError("unowned application DSO")
-                dynamic_shared.application_dso_basename(path, architecture="aarch64")
-                dsos.append(path)
-        elif arg == "--application-dependency-file":
-            index += 1
-            if index == len(arguments) or arguments[index].startswith("-") or dependency_file is not None:
-                raise shared.DriverError("--application-dependency-file requires one output path")
-            dependency_file = Path(arguments[index])
-        elif arg in ("-static", "-static-pie", "--static-et-exec", "--static-pie"):
-            raise shared.DriverError("static linkage is not a dynamic mode")
-        elif arg == "-frounding-math":
-            if rounding:
-                raise shared.DriverError("duplicate rounding mode")
-            rounding = True
-        elif arg == "-rdynamic":
-            if export_dynamic:
-                raise shared.DriverError("duplicate export mode")
-            export_dynamic = True
-        elif arg.endswith(".so") and not arg.startswith("-"):
-            dsos.append(Path(arg))
-        else:
-            common.append(arg)
-        index += 1
+    (mode, binding_mode, runpath, rpath, hash_style, hash_explicit, runtime_imports,
+     dsos, transitive_dsos, common, quote_inputs, dependency_file, rounding,
+     export_dynamic) = dynamic_shared.parse_dynamic_arguments(arguments, architecture="aarch64")
     if mode is None:
         raise shared.DriverError("select --dynamic-pie, --dynamic-non-pie or --dynamic-shared-object")
     if rpath is not None and mode == "shared":
@@ -144,6 +50,14 @@ def execute(arguments):
         raise shared.DriverError("--application-dependency-file is available only for a compile-only invocation")
     if invocation.link_receipt is not None:
         raise shared.DriverError("dynamic link receipt path is derived from -o")
+    if invocation.print_link_plan and (quote_inputs or rounding):
+        raise shared.DriverError("link plan accepts no application translation options")
+    quote_dirs = []
+    for path in quote_inputs:
+        directory = dynamic_shared.application_quote_include_dir(root, path)
+        if directory in quote_dirs:
+            raise shared.DriverError("duplicate application quote include directory")
+        quote_dirs.append(directory)
     if invocation.print_link_plan:
         if dsos or transitive_dsos:
             raise shared.DriverError("link plan accepts no application inputs")
@@ -164,7 +78,7 @@ def execute(arguments):
                           "application_search_kind": "rpath" if rpath is not None else "runpath", "application_hash_style": hash_style, "linker": plan,
                           "campaign_complete": False}, sort_keys=True))
         return
-    if invocation.compile_only and (dsos or transitive_dsos or runpath is not None or export_dynamic):
+    if invocation.compile_only and (dsos or transitive_dsos or export_dynamic):
         raise shared.DriverError("compile-only accepts no link options")
     if transitive_dsos and not dsos:
         raise shared.DriverError("transitive application DSOs require one direct --application-dso")

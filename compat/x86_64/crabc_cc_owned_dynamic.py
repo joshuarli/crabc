@@ -704,13 +704,9 @@ def application_quote_include_dir(root: Path, path: Path) -> Path:
     return resolved
 
 
-def execute(root: Path, arguments: list[str]) -> None:
-    record = validate_installation(root)
-    if record.get("format") == COMBINED_FORMAT:
-        record = shared.load_manifest(root / COMBINED_PRODUCT_MANIFEST, "embedded dynamic manifest")
-    profile = shared.profile_from_manifest(record)
-    interpreter = profile.interpreter
-    retain_evidence = retain_link_evidence()
+def parse_dynamic_arguments(arguments: list[str], *, architecture: str = "x86_64") -> tuple:
+    if architecture not in ("x86_64", "aarch64"):
+        raise shared.DriverError("unsupported dynamic argument architecture")
     mode = None
     binding = None
     application_runpath = None
@@ -770,7 +766,8 @@ def execute(root: Path, arguments: list[str]) -> None:
             path = Path(arguments[index])
             if shared.rejects_runtime_object(path):
                 raise shared.DriverError("unowned application DSO")
-            application_dso_basename(path)
+            (application_dso_basename(path) if architecture == "x86_64" else
+             application_dso_basename(path, architecture=architecture))
             dsos.append(path)
         elif argument == "--transitive-application-dso":
             index += 1
@@ -778,7 +775,8 @@ def execute(root: Path, arguments: list[str]) -> None:
             path = Path(arguments[index])
             if shared.rejects_runtime_object(path):
                 raise shared.DriverError("unowned transitive application DSO")
-            application_dso_basename(path)
+            (application_dso_basename(path) if architecture == "x86_64" else
+             application_dso_basename(path, architecture=architecture))
             transitive_dsos.append(path)
         elif argument == "--application-quote-include-dir":
             index += 1
@@ -803,6 +801,21 @@ def execute(root: Path, arguments: list[str]) -> None:
         else:
             common.append(argument)
         index += 1
+    return (mode, binding, application_runpath, application_rpath, application_hash_style,
+            application_hash_style_explicit, runtime_imports, dsos, transitive_dsos, common,
+            quote_include_inputs, dependency_file, rounding_math, export_dynamic)
+
+
+def execute(root: Path, arguments: list[str]) -> None:
+    record = validate_installation(root)
+    if record.get("format") == COMBINED_FORMAT:
+        record = shared.load_manifest(root / COMBINED_PRODUCT_MANIFEST, "embedded dynamic manifest")
+    profile = shared.profile_from_manifest(record)
+    interpreter = profile.interpreter
+    retain_evidence = retain_link_evidence()
+    (mode, binding, application_runpath, application_rpath, application_hash_style,
+     application_hash_style_explicit, runtime_imports, dsos, transitive_dsos, common,
+     quote_include_inputs, dependency_file, rounding_math, export_dynamic) = parse_dynamic_arguments(arguments)
     if mode is None: raise shared.DriverError("select --dynamic-pie, --dynamic-non-pie or --dynamic-shared-object")
     if profile is shared.NativeRuntimeProfile.HARDENED and mode == "exec":
         raise shared.DriverError("hardened dynamic products require PIE executables")

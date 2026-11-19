@@ -84,6 +84,9 @@ class Aarch64DynamicNonPieTest(unittest.TestCase):
         result = subprocess.run([driver, "-shared", "-rdynamic", "--print-link-plan"], capture_output=True, text=True)
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("-rdynamic", result.stderr)
+        result = subprocess.run([driver, "-pie", "-frounding-math", "--print-link-plan"], capture_output=True, text=True)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("translation options", result.stderr)
 
     @unittest.skipUnless(os.environ.get("CRABC_AARCH64_DYNAMIC_SYSROOT") or CAN_BUILD, "requires a built aarch64 product")
     def test_translation_uses_sealed_headers_and_uncompressed_debug(self):
