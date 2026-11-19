@@ -135,14 +135,18 @@ def reserve_link_map(path: Path):
                 pass
 
 
-def final_elf_inspection(output: Path, expected: elf_inspection.Expectation, link_map: Path) -> dict:
+def final_elf_inspection(output: Path, expected: elf_inspection.Expectation, link_map: Path, *,
+                         architecture: str = "x86_64") -> dict:
     """Inspect one just-linked output before any caller can execute it.
 
     A rejected output is removed: linker has already replaced the requested path,
     and a runnable artifact without a receipt must not survive the failure.
     """
     try:
-        facts = elf_inspection.inspect(output)
+        if architecture not in ("x86_64", "aarch64"):
+            raise shared.DriverError("unsupported dynamic ELF architecture")
+        facts = (elf_inspection.inspect(output) if architecture == "x86_64" else
+                 elf_inspection.inspect(output, architecture=architecture))
         elf_inspection.require_expected(facts, expected)
     except (elf_inspection.InspectionError, OSError) as error:
         try:
@@ -150,7 +154,9 @@ def final_elf_inspection(output: Path, expected: elf_inspection.Expectation, lin
         except FileNotFoundError:
             pass
         raise shared.DriverError(f"final ELF inspection rejected {output}: {error}") from error
-    return elf_inspection.record(output, facts, expected, output_format=FORMAT, link_map=link_map)
+    return elf_inspection.record(output, facts, expected,
+                                 output_format=FORMAT if architecture == "x86_64" else "crabc-aarch64-owned-dynamic-sysroot-v1",
+                                 link_map=link_map)
 
 
 def retain_link_evidence() -> bool:

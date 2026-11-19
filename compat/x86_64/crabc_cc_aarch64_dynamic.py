@@ -303,21 +303,15 @@ def execute(arguments):
                 _, unresolved = dynamic_shared.dynamic_symbols(output, temporary)
                 if unresolved - provided != runtime_imports:
                     raise shared.DriverError("linked runtime imports differ from declared contract")
-            try:
-                facts = elf_inspection.inspect(output, architecture="aarch64")
-                expected = elf_inspection.Expectation(
-                    mode=mode, interpreter=interpreter, needed=(*(path.name for path in dso_inputs), "libc.so"),
-                    soname=output.name if mode == "shared" else None,
-                    search_kind="rpath" if rpath is not None else "runpath",
-                    search_path=rpath if rpath is not None else runpath or "/usr/lib",
-                    binding=binding_mode, hash_style=hash_style,
-                    runtime_imports=frozenset(runtime_imports), provided_symbols=frozenset(provided),
-                )
-                elf_inspection.require_expected(facts, expected)
-                inspection = elf_inspection.record(output, facts, expected,
-                    output_format="crabc-aarch64-owned-dynamic-sysroot-v1", link_map=map_path)
-            except (elf_inspection.InspectionError, OSError) as error:
-                raise shared.DriverError(f"final ELF inspection rejected {output}: {error}") from error
+            expected = elf_inspection.Expectation(
+                mode=mode, interpreter=interpreter, needed=(*(path.name for path in dso_inputs), "libc.so"),
+                soname=output.name if mode == "shared" else None,
+                search_kind="rpath" if rpath is not None else "runpath",
+                search_path=rpath if rpath is not None else runpath or "/usr/lib",
+                binding=binding_mode, hash_style=hash_style,
+                runtime_imports=frozenset(runtime_imports), provided_symbols=frozenset(provided),
+            )
+            inspection = dynamic_shared.final_elf_inspection(output, expected, map_path, architecture="aarch64")
             record = {"schema": 2, "format": "crabc-aarch64-owned-dynamic-sysroot-v1", "mode": mode,
                       "binding": binding_mode, "runtime_imports": sorted(runtime_imports), "application_runpath": None if rpath is not None else runpath or "/usr/lib",
                       "application_rpath": rpath, "application_search_kind": "rpath" if rpath is not None else "runpath", "application_hash_style": hash_style,

@@ -177,6 +177,13 @@ class Aarch64DynamicNonPieTest(unittest.TestCase):
                 with self.assertRaises(subprocess.CalledProcessError):
                     module.execute(["-pie", str(source), "-o", str(output)])
             self.assertEqual(receipt.read_bytes(), b"competing receipt")
+            output = work / "rejected"
+            with mock.patch.object(module.dynamic_shared, "final_elf_inspection",
+                                   side_effect=module.shared.DriverError("rejected linked ELF")):
+                with self.assertRaisesRegex(module.shared.DriverError, "rejected linked ELF"):
+                    module.execute(["-pie", str(source), "-o", str(output)])
+            self.assertFalse(output.exists())
+            self.assertFalse(Path(str(output) + ".crabc-link.json").exists())
 
     @unittest.skipUnless(os.environ.get("CRABC_AARCH64_DYNAMIC_SYSROOT") or CAN_BUILD, "requires a built aarch64 product")
     def test_resealed_crt_and_loader_provenance_drift_is_rejected(self):
@@ -329,12 +336,11 @@ class Aarch64DynamicNonPieTest(unittest.TestCase):
             receipt = json.loads(Path(str(output) + ".crabc-link.json").read_text())
             self.assertEqual(receipt["binding"], "lazy")
             self.assertEqual(receipt["runtime_imports"], ["missing"])
-            source.write_text("extern int missing(void); static int impl(void) { return 0; }\n"
-                              "static void *resolve(void) { return impl; }\n"
-                              "int witness(void) __attribute__((ifunc(\"resolve\")));\n"
-                              "int call(void) { return missing(); }\n")
+            assembly = work / "ifunc.S"
+            assembly.write_text(".text\n.globl witness\n.type witness,%gnu_indirect_function\n"
+                                "witness: ret\n.globl call\n.type call,%function\ncall: b missing\n")
             obj = work / "ifunc.o"
-            subprocess.run(["gcc", "-fPIC", "-c", source, "-o", obj], check=True)
+            subprocess.run(["gcc", "-fPIC", "-c", assembly, "-o", obj], check=True)
             result = subprocess.run([driver, "-shared", "--binding", "lazy", "--runtime-import", "missing",
                                      obj, "-o", work / "ifunc.so"], capture_output=True, text=True)
             self.assertNotEqual(result.returncode, 0)
