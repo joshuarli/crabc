@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+import runpy
 import shutil
 import sys
 import tempfile
@@ -225,6 +226,13 @@ class OwnedResolverFamilyTests(unittest.TestCase):
         second = family.execution_layout(Path(".work/x86_64/r2-b/out/resolver-family"))
         self.assertNotEqual(first["network_report"], second["network_report"])
         self.assertEqual(first, family.execution_layout(Path(".work/x86_64/r2-a/out/resolver-family")))
+
+    def test_aarch64_layout_uses_native_report_directory(self) -> None:
+        with mock.patch("native_arch.native_arch", return_value={"arch": "aarch64"}):
+            native = runpy.run_path(str(ROOT / "compat/x86_64/owned_resolver_family.py"))
+        self.assertEqual(native["EXECUTION_WORK"], Path(".work/aarch64"))
+        layout = native["execution_layout"](Path(".work/aarch64/run"))
+        self.assertTrue(layout["network_report"].startswith("compat/reports/resolver-network/aarch64/"))
 
     def test_plan_fixes_a_fresh_layout_and_request_for_the_supplied_cohort(self) -> None:
         import owned_resolver_family_cohort as cohort
