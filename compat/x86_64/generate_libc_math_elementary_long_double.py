@@ -242,6 +242,7 @@ def main() -> int:
     ]
     if args.arch == "aarch64":
         blocks = [line.replace("x86-64", "aarch64").replace("binary80", "binary128") for line in blocks]
+        blocks = [line.replace("in math_scalar_corrections.py", "in the generator and math_scalar_corrections.py") for line in blocks]
         blocks.insert(1, " * AArch64 translation generated with the pinned musl compiler.")
     with tempfile.TemporaryDirectory(prefix="crabc-math-elementary-long-double-generate.") as temp:
         temp_root = Path(temp)
@@ -249,6 +250,26 @@ def main() -> int:
             assembly = temp_root / f"{index:03}.s"
             original = (source_root / relative).read_text()
             corrected = corrected_source(relative, original)
+            if args.arch == "aarch64" and relative == "src/math/acoshl.c":
+                old = "// TODO: broken implementation to make things compile\nlong double acoshl(long double x)\n{\n\treturn acosh(x);\n}"
+                new = '''#include <fenv.h>
+long double acoshl(long double x)
+{
+    union ldshape u = {x};
+    uint64_t magnitude = u.i2.hi & UINT64_C(0x7fffffffffffffff);
+    if ((magnitude < UINT64_C(0x7fff000000000000) ||
+         (magnitude == UINT64_C(0x7fff000000000000) && u.i2.lo == 0)) &&
+        ((u.i2.hi >> 63) || magnitude < UINT64_C(0x3fff000000000000))) {
+        feraiseexcept(FE_INVALID);
+        u.i2.hi = UINT64_C(0x7fff800000000000);
+        u.i2.lo = 0;
+        return u.f;
+    }
+    return acosh(x);
+}'''
+                if corrected.count(old) != 1:
+                    raise SystemExit("pinned aarch64 acoshl source anchor drifted")
+                corrected = corrected.replace(old, new)
             input_path = architecture_source(source_root, relative, args.arch)
             if corrected != original:
                 input_path = temp_root / f"{index:03}.c"
