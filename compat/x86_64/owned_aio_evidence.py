@@ -28,9 +28,9 @@ import owned_crypt_runtime_evidence as copies
 import installed_compiler_translation as translation_contract
 import owned_posix_product_evidence as products
 import owned_dynamic_qualification as qualification
-import run_qualification_manifest as native_qualification
 import owned_os_test_aio_suspend_source as os_test_aio_suspend
 
+ARCH = qualification.ARCH
 SCHEMA = "crabc.x86_64-owned-aio-receipts/v1"
 EXPECTED_SCHEMA = "crabc.x86_64-owned-aio-expected-native-inputs/v1"
 SOURCE_MOUNT = "/workspace"
@@ -120,7 +120,7 @@ SOURCES = tuple(PROBES.values()) + (
     "compat/x86_64/owned_posix_product_evidence.py", "compat/x86_64/owned_crypt_runtime_evidence.py",
     "compat/x86_64/owned_dynamic_qualification.py", "compat/x86_64/run_qualification_manifest.py",
     "compat/x86_64/run_musl_oracle.sh", "compat/x86_64/musl_oracle.py",
-    "compat/upstreams.toml", "docker/x86_64-musl-oracle-gcc", "docs/evidence/x86-owned-aio.md",
+    "compat/upstreams.toml", f"docker/{ARCH['arch']}-musl-oracle-gcc", "docs/evidence/x86-owned-aio.md",
 )
 TOOL_NAMES = ("dynamic-driver", "compiler", "linker", "oracle-compiler", "chroot", "timeout")
 
@@ -241,7 +241,7 @@ def _driver_tools(dynamic: Path, static: Path | None) -> dict[str, Any]:
         "dynamic-driver": _tool(dynamic / "bin/crabc-cc-dynamic", "installed dynamic driver"),
         "compiler": _tool(compiler, "installed compiler"),
         "linker": _tool(linker, "installed linker"),
-        "oracle-compiler": _tool(Path("/usr/local/bin/crabc-x86_64-musl-gcc"), "pinned musl compiler"),
+        "oracle-compiler": _tool(Path(ARCH["oracle"]), "pinned musl compiler"),
         "chroot": _tool(Path("/usr/sbin/chroot"), "chroot"),
         "timeout": _tool(Path("/usr/bin/timeout"), "timeout"),
     }
@@ -265,7 +265,7 @@ def _oracle(root: Path, work: Path) -> dict[str, Any]:
     except qualification.QualificationError as error:
         raise EvidenceError(f"pinned musl qualification input unavailable: {error}") from error
     libc_a = Path("/opt/musl-1.2.6/lib/libc.a")
-    loader = Path(native_qualification.MUSL_RUNTIME_PATHS["loader"])
+    loader = Path(f"/opt/musl-1.2.6/lib/ld-musl-{ARCH['arch']}.so.1")
     return {"qualification": qualified, "static-libc": _tool(libc_a, "pinned musl static libc"),
             "loader": _tool(loader, "pinned musl loader")}
 
@@ -277,7 +277,7 @@ def _oracle_after(work: Path, before: Mapping[str, Any]) -> dict[str, Any]:
         raise EvidenceError(f"pinned musl oracle changed during AIO collection: {error}") from error
     return {"qualification": before["qualification"],
             "static-libc": _tool(Path("/opt/musl-1.2.6/lib/libc.a"), "post-run pinned musl static libc"),
-            "loader": _tool(Path(native_qualification.MUSL_RUNTIME_PATHS["loader"]), "post-run pinned musl loader")}
+            "loader": _tool(Path(f"/opt/musl-1.2.6/lib/ld-musl-{ARCH['arch']}.so.1"), "post-run pinned musl loader")}
 
 def _input(root: Path, work: Path, dynamic: Path, static: Path | None, tools: Mapping[str, Any], oracle: Mapping[str, Any]) -> dict[str, Any]:
     return {"sources": {name: _identity(root, root / name, f"AIO source {name}") for name in SOURCES},
@@ -291,12 +291,12 @@ def command_environment(root: Path, work: Path) -> dict[str, str]:
 
 def expected_native_input(tools: Mapping[str, Any], oracle: Mapping[str, Any]) -> dict[str, Any]:
     expected = {name: tools[name] for name in TOOL_NAMES}
-    return {"schema": EXPECTED_SCHEMA, "target": "x86_64-unknown-linux-musl", "tools": expected,
+    return {"schema": EXPECTED_SCHEMA, "target": ARCH["target_triple"], "tools": expected,
             "oracle": {"qualification": oracle["qualification"], "static-libc": oracle["static-libc"], "loader": oracle["loader"]}}
 
 def _same_expected(expected: object, tools: Mapping[str, Any], oracle: Mapping[str, Any]) -> None:
     value = _exact(expected, {"schema", "target", "tools", "oracle"}, "external native input seal")
-    if value["schema"] != EXPECTED_SCHEMA or value["target"] != "x86_64-unknown-linux-musl":
+    if value["schema"] != EXPECTED_SCHEMA or value["target"] != ARCH["target_triple"]:
         fail("external native input identity differs")
     if value != expected_native_input(tools, oracle):
         fail("report native tool or oracle identity differs from external input seal")
@@ -405,7 +405,7 @@ def _check_input(root: Path, work: Path, value: object, *, after: bool) -> tuple
         if not isinstance(digest, str) or len(digest) != 64 or _sha(oracle_dir / name) != digest:
             fail("AIO retained musl qualification bytes differ")
     pins = _physical(root / "compat/upstreams.toml", "caller musl pins", directory=False)
-    wrapper = _physical(root / "docker/x86_64-musl-oracle-gcc", "caller oracle wrapper", directory=False)
+    wrapper = _physical(root / f"docker/{ARCH['arch']}-musl-oracle-gcc", "caller oracle wrapper", directory=False)
     if qualification_value["pins_sha256"] != _sha(pins) or qualification_value["compiler_wrapper_sha256"] != _sha(wrapper):
         fail("AIO retained musl qualification pin differs")
     try:
@@ -413,7 +413,7 @@ def _check_input(root: Path, work: Path, value: object, *, after: bool) -> tuple
     except (OSError, UnicodeDecodeError, tomllib.TOMLDecodeError, KeyError) as error:
         raise EvidenceError("caller musl pins are malformed") from error
     manifest = ("format=crabc-pinned-musl-oracle-v1\n" f"version={musl['version']}\nsource_sha256={musl['sha256']}\n"
-                f"fallback_revision={musl['fallback_revision']}\narchitecture=x86_64\n")
+                f"fallback_revision={musl['fallback_revision']}\narchitecture={ARCH['arch']}\n")
     if (oracle_dir / "source_manifest").read_text(encoding="utf-8") != manifest:
         fail("AIO retained musl source manifest differs")
     _tool_record(oracle["static-libc"], "AIO retained static musl oracle")
@@ -732,7 +732,7 @@ def _execution_argv(root: Path, work: Path, rootmode: str, consumer: str, route:
     deadline = _deadline(consumer)
     argv = ["/usr/bin/timeout", deadline, "/usr/sbin/chroot", mounted]
     if rootmode.startswith("dynamic-") and route == "direct":
-        argv += ["/lib/ld-crabc-x86_64.so.1", program]
+        argv += [f"/lib/ld-crabc-{ARCH['arch']}.so.1", program]
     else: argv.append(program)
     if arguments: argv += arguments.split()
     if consumer == "fd-reuse": argv.append("512")
