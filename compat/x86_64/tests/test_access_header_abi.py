@@ -25,10 +25,9 @@ class AccessHeaderAbiTests(unittest.TestCase):
 
         self.assertIn("int access(const char *, int);", header)
         self.assertIn("int faccessat(int, const char *, int, int);", header)
-        self.assertIn(
-            "#ifdef _GNU_SOURCE\nint eaccess(const char *, int);\nint euidaccess(const char *, int);\n#endif",
-            header,
-        )
+        gnu = header.split("#ifdef _GNU_SOURCE\n", 1)[1].split("\n#endif", 1)[0]
+        self.assertIn("int eaccess(const char *, int);", gnu)
+        self.assertIn("int euidaccess(const char *, int);", gnu)
         self.assertNotIn(
             "#if defined(_GNU_SOURCE) || defined(_BSD_SOURCE)\nint eaccess",
             header,
