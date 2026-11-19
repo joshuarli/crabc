@@ -81,14 +81,9 @@ readelf -rW "$work/freestanding" > "$work/freestanding.relocations"
 objdump -d "$work/freestanding" > "$work/freestanding.disassembly"
 awk '$4 == "FUNC" && ($5 == "GLOBAL" || $5 == "WEAK") { print $8 }' "$work/freestanding.symbols" |
     LC_ALL=C sort -u > "$work/freestanding.functions"
-printf '%s\n' _RINvNtNtCsbJTFf11ssQ0_17compiler_builtins5float3add3addC4f128EB6_ \
-    _RINvNtNtCsbJTFf11ssQ0_17compiler_builtins5float3div3divC4f128EB6_ \
-    _RINvNtNtCsbJTFf11ssQ0_17compiler_builtins5float3mul3mulC4f128EB6_ \
-    __addtf3 __divtf3 __eqtf2 __extenddftf2 __extendsftf2 __fesetround __fixtfsi \
+printf '%s\n' __addtf3 __divtf3 __eqtf2 __extenddftf2 __extendsftf2 __fesetround __fixtfsi \
     __fpclassifyl __gttf2 __letf2 __lttf2 __multf3 __netf2 __subtf3 __trunctfdf2 __trunctfsf2 _start \
-    crabc_x86_64_math_long_double_completion_probe crabc_x86_math_pow_provider_invalid \
-    crabc_x86_math_pow_provider_oflow crabc_x86_math_pow_provider_uflow crabc_x86_math_pow_provider_xflow \
-    exp10l exp2l fabs fdiml feclearexcept \
+    crabc_x86_64_math_long_double_completion_probe exp10l exp2l fabs fdiml feclearexcept \
     fegetenv fegetround feraiseexcept fesetenv fesetround fetestexcept modfl pow pow10l powl scalbnl |
     LC_ALL=C sort -u > "$work/freestanding.expected-functions"
 cmp "$work/freestanding.expected-functions" "$work/freestanding.functions" || fail 'freestanding function closure differs'
@@ -126,6 +121,19 @@ readelf -lW "$work/aggregate" > "$work/aggregate.program"
 readelf -dW "$work/aggregate" > "$work/aggregate.dynamic"
 readelf -rW "$work/aggregate" > "$work/aggregate.relocations"
 objdump -d "$work/aggregate" > "$work/aggregate.disassembly"
+awk '$4 == "FUNC" && ($5 == "GLOBAL" || $5 == "WEAK") { print $8 }' "$work/aggregate.symbols" |
+    LC_ALL=C sort -u > "$work/aggregate.functions"
+printf '%s\n' __addtf3 __divtf3 __eqtf2 __extenddftf2 __extendsftf2 __fesetround __fixtfsi __fpclassifyl \
+    __gttf2 __letf2 __lttf2 __multf3 __netf2 __subtf3 __trunctfdf2 __trunctfsf2 _start \
+    crabc_x86_64_math_elementary_fenv_sensitive_aggregate_probe \
+    exp10 exp10f exp10l exp2 exp2f exp2l fabs fdim fdimf fdiml feclearexcept fegetenv fegetround \
+    feraiseexcept fesetenv fetestexcept modf modff modfl nearbyint nearbyintf nearbyintl pow \
+    pow10 pow10f pow10l powl rint rintf rintl scalbnl | LC_ALL=C sort -u > "$work/aggregate.expected-functions"
+cmp "$work/aggregate.expected-functions" "$work/aggregate.functions" || fail 'aggregate function closure differs'
+for observer in 19observed_float_bits 20observed_double_bits; do
+    grep -Eq "[[:space:]]FUNC[[:space:]]+LOCAL[[:space:]]+(DEFAULT|HIDDEN)[[:space:]]+[0-9]+[[:space:]]_RNvNtNtCs[0-9A-Za-z_]+_1c19x86_64_static_c_abi4fdim${observer}$" \
+        "$work/aggregate.symbols" || fail "aggregate lacks local fdim observer $observer"
+done
 for pair in exp10:pow10 exp10f:pow10f exp10l:pow10l; do
     strong="${pair%%:*}"
     weak="${pair##*:}"
