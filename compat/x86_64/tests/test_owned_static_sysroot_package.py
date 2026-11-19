@@ -90,6 +90,10 @@ class OwnedStaticSysrootPackageTests(unittest.TestCase):
                 "archive_root": package.ARCHIVE_ROOT,
             },
         }
+        if package.ARCH["arch"] == "aarch64":
+            manifest = {"schema": 1, "format": "crabc-aarch64-owned-static-sysroot-v1",
+                        "target": package.ARCH["target_triple"], "source_sha256": manifest["source_sha256"],
+                        "build_profile": "release", "symlinks": {}, "files": payload}
         manifest_path = root / "share" / "crabc" / "manifest.json"
         manifest_path.parent.mkdir(parents=True)
         manifest_path.write_text(
@@ -97,7 +101,7 @@ class OwnedStaticSysrootPackageTests(unittest.TestCase):
         )
 
     def test_rehashed_foreign_or_missing_source_seal_cannot_be_packaged_or_extracted(self) -> None:
-        scratch = ROOT / ".work/x86_64/tmp"
+        scratch = ROOT / ".work" / package.ARCH["work_name"] / "tmp"
         scratch.mkdir(parents=True, exist_ok=True)
         with tempfile.TemporaryDirectory(dir=scratch) as temporary:
             workspace = Path(temporary)
@@ -159,7 +163,7 @@ class OwnedStaticSysrootPackageTests(unittest.TestCase):
             self.assertFalse(any(path.is_symlink() for path in extracted.rglob("*")))
 
     def test_extraction_rejects_forged_member_modes(self) -> None:
-        scratch = ROOT / ".work/x86_64/tmp"
+        scratch = ROOT / ".work" / package.ARCH["work_name"] / "tmp"
         scratch.mkdir(parents=True, exist_ok=True)
         with tempfile.TemporaryDirectory(dir=scratch) as temporary:
             workspace = Path(temporary)
@@ -191,7 +195,7 @@ class OwnedStaticSysrootPackageTests(unittest.TestCase):
                 package.create_archive(source, workspace / "nonexecutable-driver.tar.xz")
 
     def test_extraction_rejects_noncanonical_tar_encoding(self) -> None:
-        scratch = ROOT / ".work/x86_64/tmp"
+        scratch = ROOT / ".work" / package.ARCH["work_name"] / "tmp"
         scratch.mkdir(parents=True, exist_ok=True)
         with tempfile.TemporaryDirectory(dir=scratch) as temporary:
             workspace = Path(temporary)
@@ -231,7 +235,7 @@ class OwnedStaticSysrootPackageTests(unittest.TestCase):
                     self.assertFalse(destination.exists())
 
     def test_extraction_rejects_noncanonical_xz_wrapper(self) -> None:
-        scratch = ROOT / ".work/x86_64/tmp"
+        scratch = ROOT / ".work" / package.ARCH["work_name"] / "tmp"
         scratch.mkdir(parents=True, exist_ok=True)
         with tempfile.TemporaryDirectory(dir=scratch) as temporary:
             workspace = Path(temporary)
@@ -254,7 +258,7 @@ class OwnedStaticSysrootPackageTests(unittest.TestCase):
                     self.assertFalse(destination.exists())
 
     def test_writer_pax_long_path_remains_extractable(self) -> None:
-        scratch = ROOT / ".work/x86_64/tmp"
+        scratch = ROOT / ".work" / package.ARCH["work_name"] / "tmp"
         scratch.mkdir(parents=True, exist_ok=True)
         with tempfile.TemporaryDirectory(dir=scratch) as temporary:
             workspace = Path(temporary)
@@ -265,7 +269,8 @@ class OwnedStaticSysrootPackageTests(unittest.TestCase):
             (source / relative).write_bytes(payload)
             manifest_path = source / package.MANIFEST_RELATIVE_PATH
             manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-            manifest["installed"]["files"][relative.as_posix()] = hashlib.sha256(payload).hexdigest()
+            manifest_files = manifest["files"] if package.ARCH["arch"] == "aarch64" else manifest["installed"]["files"]
+            manifest_files[relative.as_posix()] = hashlib.sha256(payload).hexdigest()
             manifest_path.write_text(json.dumps(manifest, sort_keys=True) + "\n", encoding="utf-8")
             archive = workspace / "long-path.tar.xz"
             package.create_archive(source, archive)
