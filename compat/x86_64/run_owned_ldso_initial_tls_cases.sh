@@ -10,6 +10,7 @@ set -euo pipefail
 
 readonly ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 . "$(dirname "${BASH_SOURCE[0]}")/native_build_environment.sh"
+eval "$(python3 -B "$ROOT_DIR/compat/x86_64/native_arch.py")"
 readonly PRODUCT="${1:?usage: $0 DYNAMIC-SYSROOT}"
 readonly MAIN="$ROOT_DIR/compat/x86_64/ldso_general_initial_tls_main.c"
 readonly LEFT="$ROOT_DIR/compat/x86_64/ldso_general_initial_tls_left.c"
@@ -18,16 +19,16 @@ readonly SHARED="$ROOT_DIR/compat/x86_64/ldso_general_initial_tls_shared.c"
 readonly CONSUMER="$ROOT_DIR/compat/x86_64/ldso_general_initial_tls_consumer.c"
 readonly CAPACITY="$ROOT_DIR/compat/x86_64/ldso_general_initial_tls_capacity.c"
 readonly TRACE="$ROOT_DIR/compat/x86_64/ldso_general_initial_tls_trace.c"
-readonly MUSL_LOADER="/opt/musl-1.2.6/lib/ld-musl-x86_64.so.1"
+readonly MUSL_LOADER="/opt/musl-1.2.6/lib/ld-musl-${arch}.so.1"
 readonly MUSL_LIBC="/opt/musl-1.2.6/lib/libc.so"
-readonly ORACLE_CC="/usr/local/bin/crabc-x86_64-musl-gcc"
+readonly ORACLE_CC="$oracle"
 
 fail() {
     printf 'ERROR: initial TLS product: %s\n' "$*" >&2
     exit 1
 }
 
-if [ "$(uname -s)" != Linux ] || [ "$(uname -m)" != x86_64 ]; then
+if [ "$(uname -s)" != Linux ] || [ "$(uname -m)" != "$arch" ]; then
     printf '%s\n' 'ERROR: initial-TLS evidence requires native Linux/x86-64' >&2
     exit 2
 fi
@@ -48,11 +49,11 @@ fixtures="$root/fixtures"
 oracle_fixtures="$oracle_root/fixtures"
 cp -a "$PRODUCT" "$root"
 mkdir -p "$fixtures" "$oracle_root/lib" "$oracle_root/usr/lib" "$oracle_fixtures"
-cp "$MUSL_LOADER" "$oracle_root/lib/ld-musl-x86_64.so.1"
+cp "$MUSL_LOADER" "$oracle_root/lib/ld-musl-${arch}.so.1"
 cp "$MUSL_LIBC" "$oracle_root/usr/lib/libc.so"
-chmod 0755 "$oracle_root/lib/ld-musl-x86_64.so.1" "$oracle_root/usr/lib/libc.so"
+chmod 0755 "$oracle_root/lib/ld-musl-${arch}.so.1" "$oracle_root/usr/lib/libc.so"
 
-loader="$root/lib/ld-crabc-x86_64.so.1"
+loader="$root/lib/ld-crabc-${arch}.so.1"
 [ "$(readelf -h "$loader" | awk '/Type:/{print $2}')" = DYN ] ||
     fail 'installed loader is not ET_DYN'
 if readelf -dW "$loader" | grep -E '\(NEEDED\)|\(INTERP\)' >/dev/null; then
@@ -74,18 +75,32 @@ right_dir="$fixtures/right"
 shared_dir="$fixtures/shared"
 consumer_dir="$fixtures/consumer"
 mkdir "$left_dir" "$right_dir" "$shared_dir" "$consumer_dir"
-cc -fPIC -shared -nostdlib -ftls-model=global-dynamic -mtls-dialect=gnu \
+tls_dialect=(-mtls-dialect=gnu)
+module_relocation=R_X86_64_DTPMOD64
+offset_relocation=R_X86_64_DTPOFF64
+reloc_prefix=R_X86_64
+thread_relocation=R_X86_64_TPOFF64
+if [ "$arch" = aarch64 ]; then
+    tls_dialect=(-mtls-dialect=trad)
+    module_relocation=R_AARCH64_TLS_DTPMOD64
+    offset_relocation=R_AARCH64_TLS_DTPREL64
+    reloc_prefix=R_AARCH64
+    thread_relocation=R_AARCH64_TLS_TPREL64
+fi
+attachment=("$PRODUCT/usr/lib/crabc-dynamic-attach.o")
+if [ "$arch" = aarch64 ]; then attachment=(); fi
+cc -fPIC -shared -nostdlib -ftls-model=global-dynamic "${tls_dialect[@]}" \
     -Wl,--hash-style=sysv -Wl,-z,now -Wl,-soname,libshared.so \
     "$SHARED" -o "$shared_dir/libshared.so"
-cc -fPIC -shared -nostdlib -ftls-model=global-dynamic -mtls-dialect=gnu \
+cc -fPIC -shared -nostdlib -ftls-model=global-dynamic "${tls_dialect[@]}" \
     -Wl,--hash-style=sysv -Wl,-z,now -Wl,-soname,libleft.so -Wl,-rpath,/fixtures/shared \
     "$LEFT" -L"$shared_dir" -Wl,--no-as-needed -l:libshared.so \
     -o "$left_dir/libleft.so"
-cc -fPIC -shared -nostdlib -ftls-model=global-dynamic -mtls-dialect=gnu \
+cc -fPIC -shared -nostdlib -ftls-model=global-dynamic "${tls_dialect[@]}" \
     -Wl,--hash-style=sysv -Wl,-z,now -Wl,-soname,libright.so -Wl,-rpath,/fixtures/shared \
     "$RIGHT" -L"$shared_dir" -Wl,--no-as-needed -l:libshared.so \
     -o "$right_dir/libright.so"
-cc -fPIC -shared -nostdlib -ftls-model=global-dynamic -mtls-dialect=gnu \
+cc -fPIC -shared -nostdlib -ftls-model=global-dynamic "${tls_dialect[@]}" \
     -Wl,--hash-style=sysv -Wl,-z,now -Wl,-soname,libconsumer.so -Wl,-rpath,/fixtures/shared \
     "$CONSUMER" -L"$shared_dir" -Wl,--no-as-needed -l:libshared.so \
     -o "$consumer_dir/libconsumer.so"
@@ -94,14 +109,14 @@ cc -O2 -fPIE -ftls-model=global-dynamic -DCRABC_PRODUCT_TLS_LAYOUT -c "$MAIN" -o
 deps=(-L"$left_dir" -L"$right_dir" -L"$shared_dir" -L"$consumer_dir"
       -Wl,--no-as-needed -l:libleft.so -l:libright.so -l:libshared.so -l:libconsumer.so)
 cc -nostdlib -fPIE -pie -ftls-model=global-dynamic -Wl,--hash-style=sysv -Wl,-z,now \
-    -Wl,--dynamic-linker,/lib/ld-crabc-x86_64.so.1 -Wl,-rpath,/fixtures/left:/fixtures/right:/fixtures/shared:/fixtures/consumer \
+    -Wl,--dynamic-linker,/lib/ld-crabc-${arch}.so.1 -Wl,-rpath,/fixtures/left:/fixtures/right:/fixtures/shared:/fixtures/consumer \
     -Wl,-rpath-link,"$left_dir" -Wl,-rpath-link,"$right_dir" -Wl,-rpath-link,"$shared_dir" -Wl,-rpath-link,"$consumer_dir" \
     "$PRODUCT/usr/lib/Scrt1.o" "$PRODUCT/usr/lib/crti.o" "$work/main.o" \
-    "$PRODUCT/usr/lib/crabc-dynamic-attach.o" -L"$PRODUCT/usr/lib" -lc \
+    "${attachment[@]}" -L"$PRODUCT/usr/lib" -lc \
     "$PRODUCT/usr/lib/libcrabc-builtins.a" "$PRODUCT/usr/lib/crtn.o" \
     "${deps[@]}" -o "$fixtures/main-crabc"
 "$ORACLE_CC" -O2 -fPIE -pie -Wl,--hash-style=sysv -Wl,-z,now \
-    -Wl,--dynamic-linker,/lib/ld-musl-x86_64.so.1 -Wl,-rpath,/fixtures/left:/fixtures/right:/fixtures/shared:/fixtures/consumer \
+    -Wl,--dynamic-linker,/lib/ld-musl-${arch}.so.1 -Wl,-rpath,/fixtures/left:/fixtures/right:/fixtures/shared:/fixtures/consumer \
     "$work/main.o" "${deps[@]}" -o "$fixtures/main-musl"
 cp -a "$fixtures/." "$oracle_fixtures/"
 
@@ -128,7 +143,7 @@ if readelf -lW "$consumer_dir/libconsumer.so" | grep ' TLS ' >/dev/null; then
 fi
 consumer_relocations="$(readelf -rW "$consumer_dir/libconsumer.so")"
 for symbol in general_shared_tls general_shared_tbss; do
-    for relocation in R_X86_64_DTPMOD64 R_X86_64_DTPOFF64; do
+    for relocation in "$module_relocation" "$offset_relocation"; do
         grep -E "${relocation}.*${symbol}([[:space:]]|$)" <<<"$consumer_relocations" >/dev/null ||
             fail "consumer lacks named $relocation for $symbol"
     done
@@ -136,7 +151,7 @@ for symbol in general_shared_tls general_shared_tbss; do
         fail "consumer lacks an undefined TLS import for $symbol"
     fi
 done
-if grep -E 'R_X86_64_(TPOFF64|TPOFF32|GOTTPOFF|TLSDESC|GOTPC32_TLSDESC|TLSDESC_CALL)' <<<"$consumer_relocations" >/dev/null; then
+if { [ "$arch" = x86_64 ] && grep -E 'R_X86_64_(TPOFF64|TPOFF32|GOTTPOFF|TLSDESC|GOTPC32_TLSDESC|TLSDESC_CALL)' <<<"$consumer_relocations"; } || { [ "$arch" = aarch64 ] && grep -E 'R_AARCH64_(TLS_TPREL|TLSDESC)' <<<"$consumer_relocations"; }; then
     fail 'consumer escaped the GNU dynamic-TLS relocation profile'
 fi
 
@@ -157,16 +172,16 @@ fi
 
 for binary in "$fixtures/main-crabc" "$left_dir/libleft.so" "$right_dir/libright.so" "$shared_dir/libshared.so"; do
     readelf -lW "$binary" | grep ' TLS ' >/dev/null || fail "fixture lacks PT_TLS: $binary"
-    if readelf -rW "$binary" | awk '/R_X86_64_/ { if ($3 != "R_X86_64_RELATIVE" && $3 != "R_X86_64_GLOB_DAT" && $3 != "R_X86_64_JUMP_SLOT" && $3 != "R_X86_64_DTPMOD64" && $3 != "R_X86_64_DTPOFF64" && $3 != "R_X86_64_TPOFF64") exit 1 }'; then :; else
+    if readelf -rW "$binary" | awk -v p="$reloc_prefix" -v m="$module_relocation" -v o="$offset_relocation" -v t="$thread_relocation" 'index($3,p "_") == 1 { if ($3 != p "_RELATIVE" && $3 != p "_GLOB_DAT" && $3 != p "_JUMP_SLOT" && $3 != m && $3 != o && $3 != t) exit 1 }'; then :; else
         fail "fixture escaped the initial GNU-Dynamic relocation profile: $binary"
     fi
 done
 relocations="$(readelf -rW "$fixtures/main-crabc" "$left_dir/libleft.so" "$right_dir/libright.so" "$shared_dir/libshared.so" "$consumer_dir/libconsumer.so")"
-for relocation in R_X86_64_DTPMOD64 R_X86_64_DTPOFF64; do
+for relocation in "$module_relocation" "$offset_relocation"; do
     grep "$relocation" <<<"$relocations" >/dev/null || fail "fixture did not exercise $relocation"
 done
 grep '__tls_get_addr' <<<"$relocations" >/dev/null || fail 'fixture did not call __tls_get_addr'
-if grep -E 'R_X86_64_(TLSDESC|GOTPC32_TLSDESC|TLSDESC_CALL)' <<<"$relocations" >/dev/null; then
+if { [ "$arch" = x86_64 ] && grep -E 'R_X86_64_(TLSDESC|GOTPC32_TLSDESC|TLSDESC_CALL)' <<<"$relocations"; } || { [ "$arch" = aarch64 ] && grep -E 'R_AARCH64_TLSDESC' <<<"$relocations"; }; then
     fail 'fixture escaped the explicit DTPMOD64/DTPOFF64-only TLS boundary'
 fi
 require_zero_offset_tls_symbol() {
@@ -182,8 +197,8 @@ require_zero_offset_tls_symbol "$right_dir/libright.so" general_right_tls
 
 main_crabc_interpreter="$(readelf -lW "$fixtures/main-crabc" | sed -n 's/.*Requesting program interpreter: \(.*\)].*/\1/p')"
 main_musl_interpreter="$(readelf -lW "$fixtures/main-musl" | sed -n 's/.*Requesting program interpreter: \(.*\)].*/\1/p')"
-[ "$main_crabc_interpreter" = /lib/ld-crabc-x86_64.so.1 ] || fail 'candidate PT_INTERP drifted'
-[ "$main_musl_interpreter" = /lib/ld-musl-x86_64.so.1 ] || fail 'musl reference PT_INTERP drifted'
+[ "$main_crabc_interpreter" = /lib/ld-crabc-${arch}.so.1 ] || fail 'candidate PT_INTERP drifted'
+[ "$main_musl_interpreter" = /lib/ld-musl-${arch}.so.1 ] || fail 'musl reference PT_INTERP drifted'
 
 chroot "$oracle_root" /fixtures/main-musl >/dev/null
 chroot "$root" /fixtures/main-crabc >/dev/null
@@ -308,8 +323,11 @@ printf '\377\377\377\377\377\377\377\177' | dd of="$shared_binary" bs=1 seek=$((
 expect_candidate_rejection_before_fs graph tls-overflow
 mv "$shared_binary.valid" "$shared_binary"
 
-rela_info_offset="$(rela_info_offset_for_type "$shared_binary" 16)" || fail 'fixture has no DTPMOD64 relocation to mutate'
-for mutation in unsupported:65535 tpoff32:23 tlsdesc:36; do
+module_kind=16
+mutations=(unsupported:65535 tpoff32:23 tlsdesc:36)
+if [ "$arch" = aarch64 ]; then module_kind=1028; mutations=(unsupported:65535 abs32:258 tlsdesc-instruction:562); fi
+rela_info_offset="$(rela_info_offset_for_type "$shared_binary" "$module_kind")" || fail 'fixture has no DTPMOD64 relocation to mutate'
+for mutation in "${mutations[@]}"; do
     label="${mutation%%:*}"
     kind="${mutation##*:}"
     cp "$shared_binary" "$shared_binary.valid"

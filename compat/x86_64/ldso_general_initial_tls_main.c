@@ -27,6 +27,19 @@ struct crabc_tls_index {
 extern void *__tls_get_addr(const struct crabc_tls_index *index);
 #endif
 
+#if defined(__aarch64__)
+static unsigned long fs_self(void) {
+    unsigned long value;
+    __asm__ volatile("mrs %0, tpidr_el0" : "=r"(value));
+    return value;
+}
+static unsigned long *fs_dtv(void) {
+    unsigned long *value;
+    __asm__ volatile("mrs %0, tpidr_el0\n\tldr %0, [%0, #-8]" : "=r"(value));
+    return value;
+}
+static int read_thread_base(unsigned long *base) { *base = fs_self(); return 0; }
+#else
 static long syscall2(long number, long one, long two) {
     long result;
     __asm__ volatile("syscall" : "=a"(result) : "a"(number), "D"(one), "S"(two) : "rcx", "r11", "memory");
@@ -45,6 +58,9 @@ static unsigned long *fs_dtv(void) {
     return value;
 }
 
+static int read_thread_base(unsigned long *base) { return syscall2(158, 0x1003, (long)base); }
+#endif
+
 static int candidate_dtv_has_one_loader_order_slot_per_tls_image(void) {
 #if defined(CRABC_GENERAL_INITIAL_TLS_CANDIDATE)
     unsigned long fs_base = 0;
@@ -61,7 +77,7 @@ static int candidate_dtv_has_one_loader_order_slot_per_tls_image(void) {
     void *resolved_shared = __tls_get_addr(&shared_tls);
     void *resolved_right = __tls_get_addr(&right_tls);
 
-    if (syscall2(158, 0x1003, (long)&fs_base) != 0
+    if (read_thread_base(&fs_base) != 0
         || fs_base == 0
         || fs_base != fs_self()
         || dtv == 0
@@ -90,7 +106,7 @@ static int candidate_dtv_has_one_loader_order_slot_per_tls_image(void) {
         general_shared_tls_address(),
         general_right_tls_address(),
     };
-    if (syscall2(158, 0x1003, (long)&fs_base) != 0) return 60;
+    if (read_thread_base(&fs_base) != 0) return 60;
     if (fs_base == 0 || fs_base != fs_self()) return 61;
     if (dtv == 0) return 62;
     if (dtv[0] < 5) return 63;
