@@ -397,7 +397,8 @@ class PolicyReceiptTests(unittest.TestCase):
         receipt_path = self.publish()
         target = receipt_path.parent / "products/link-dynamic-pie-basic"
         link = json.loads(target.read_text())
-        link["link_trace"][4] = link["link_trace"][4].replace("builtins.o", "foreign.o")
+        index = next(i for i, row in enumerate(link["link_trace"]) if "builtins.o" in row)
+        link["link_trace"][index] = link["link_trace"][index].replace("builtins.o", "foreign.o")
         target.write_text(json.dumps(link))
         record = json.loads(receipt_path.read_text())
         record["products"]["link-dynamic-pie-basic"] = {"sha256": digest(target), "size": target.stat().st_size}
