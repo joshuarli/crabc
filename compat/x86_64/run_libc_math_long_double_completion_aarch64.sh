@@ -101,7 +101,7 @@ printf '%s\n' _RINvNtNtCs1elpRbcHzVq_17compiler_builtins5float3add3addC4f128EB6_
     fegetenv fegetround feraiseexcept fesetenv fesetround fetestexcept modfl pow pow10l powl scalbnl |
     LC_ALL=C sort -u > "$work/freestanding.expected-functions"
 cmp "$work/freestanding.expected-functions" "$work/freestanding.functions" || fail 'freestanding function closure differs'
-for operation in add3add div3div mul3mul; do
+for operation in 3add3add 3div3div 3mul3mul; do
     grep -Eq "[[:space:]]FUNC[[:space:]]+GLOBAL[[:space:]]+HIDDEN[[:space:]]+[0-9]+[[:space:]]_RINvNtNtCs1elpRbcHzVq_17compiler_builtins5float${operation}C4f128EB6_$" \
         "$work/freestanding.symbols" || fail "binary128 helper $operation is not hidden"
 done
@@ -141,13 +141,20 @@ readelf -rW "$work/aggregate" > "$work/aggregate.relocations"
 objdump -d "$work/aggregate" > "$work/aggregate.disassembly"
 awk '$4 == "FUNC" && ($5 == "GLOBAL" || $5 == "WEAK") { print $8 }' "$work/aggregate.symbols" |
     LC_ALL=C sort -u > "$work/aggregate.functions"
-printf '%s\n' __addtf3 __divtf3 __eqtf2 __extenddftf2 __extendsftf2 __fesetround __fixtfsi __fpclassifyl \
+printf '%s\n' _RINvNtNtCs1elpRbcHzVq_17compiler_builtins5float3add3addC4f128EB6_ \
+    _RINvNtNtCs1elpRbcHzVq_17compiler_builtins5float3div3divC4f128EB6_ \
+    _RINvNtNtCs1elpRbcHzVq_17compiler_builtins5float3mul3mulC4f128EB6_ \
+    __addtf3 __divtf3 __eqtf2 __extenddftf2 __extendsftf2 __fesetround __fixtfsi __fpclassifyl \
     __gttf2 __letf2 __lttf2 __multf3 __netf2 __subtf3 __trunctfdf2 __trunctfsf2 _start \
     crabc_x86_64_math_elementary_fenv_sensitive_aggregate_probe \
-    exp10 exp10f exp10l exp2 exp2f exp2l fabs fdim fdimf fdiml feclearexcept fegetenv fegetround \
-    feraiseexcept fesetenv fetestexcept modf modff modfl nearbyint nearbyintf nearbyintl pow \
+    exp10 exp10f exp10l exp2l fdim fdimf fdiml feclearexcept fegetenv fegetround \
+    feraiseexcept fesetenv fetestexcept modfl nearbyint nearbyintf nearbyintl pow \
     pow10 pow10f pow10l powl rint rintf rintl scalbnl | LC_ALL=C sort -u > "$work/aggregate.expected-functions"
 cmp "$work/aggregate.expected-functions" "$work/aggregate.functions" || fail 'aggregate function closure differs'
+for operation in 3add3add 3div3div 3mul3mul; do
+    grep -Eq "[[:space:]]FUNC[[:space:]]+GLOBAL[[:space:]]+HIDDEN[[:space:]]+[0-9]+[[:space:]]_RINvNtNtCs1elpRbcHzVq_17compiler_builtins5float${operation}C4f128EB6_$" \
+        "$work/aggregate.symbols" || fail "aggregate binary128 helper $operation is not hidden"
+done
 for observer in 19observed_float_bits 20observed_double_bits; do
     grep -Eq "[[:space:]]FUNC[[:space:]]+LOCAL[[:space:]]+(DEFAULT|HIDDEN)[[:space:]]+[0-9]+[[:space:]]_RNvNtNtCs[0-9A-Za-z_]+_1c19x86_64_static_c_abi4fdim${observer}$" \
         "$work/aggregate.symbols" || fail "aggregate lacks local fdim observer $observer"
