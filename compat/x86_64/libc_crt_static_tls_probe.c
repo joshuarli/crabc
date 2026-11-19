@@ -7,10 +7,10 @@
  * a private composition artifact, not a general x86 startup or pthread ABI.
  */
 
-#if !defined(__linux__) || !defined(__x86_64__) || !defined(__LP64__) || \
+#if !defined(__linux__) || (!defined(__x86_64__) && !defined(__aarch64__)) || !defined(__LP64__) || \
     !defined(__BYTE_ORDER__) || !defined(__ORDER_LITTLE_ENDIAN__) || \
     __BYTE_ORDER__ != __ORDER_LITTLE_ENDIAN__
-#error "this fixture requires native Linux/x86-64 little-endian LP64"
+#error "this fixture requires native little-endian Linux x86-64 or aarch64 LP64"
 #endif
 
 #include <errno.h>
@@ -29,9 +29,13 @@ static uintptr_t process_guard;
 
 static uintptr_t stack_guard(void)
 {
+#if defined(__aarch64__)
+    return *(const uintptr_t *)((uintptr_t)__builtin_thread_pointer() - 16);
+#else
     uintptr_t guard;
     __asm__ volatile("mov %%fs:40, %0" : "=r"(guard));
     return guard;
+#endif
 }
 
 static int initial_stack_guard_holds(void)
@@ -129,6 +133,13 @@ static int check_static_stdio_exit_override(void)
 
 static void emit(char value)
 {
+#if defined(__aarch64__)
+    register long number __asm__("x8") = 64;
+    register long result __asm__("x0") = 1;
+    register const char *bytes __asm__("x1") = &value;
+    register long count __asm__("x2") = 1;
+    __asm__ volatile("svc 0" : "+r"(result) : "r"(number), "r"(bytes), "r"(count) : "memory", "cc");
+#else
     register long result __asm__("rax") = 1;
     register long descriptor __asm__("rdi") = 1;
     register const char *bytes __asm__("rsi") = &value;
@@ -138,21 +149,31 @@ static void emit(char value)
         : "+a"(result)
         : "D"(descriptor), "S"(bytes), "d"(count)
         : "rcx", "r11", "memory");
+#endif
 }
 
 static void reject(unsigned long status) __attribute__((noreturn));
 
 static void reject(unsigned long status)
 {
+#if defined(__aarch64__)
+    register unsigned long number __asm__("x8") = 94;
+    register unsigned long code __asm__("x0") = status;
+    __asm__ volatile("svc 0" : : "r"(number), "r"(code) : "memory", "cc");
+#else
     register unsigned long number __asm__("rax") = 231;
     register unsigned long code __asm__("rdi") = status;
 
     __asm__ volatile("syscall" : "+a"(number) : "D"(code) : "rcx", "r11", "memory");
+#endif
     __builtin_unreachable();
 }
 
 static uintptr_t installed_thread_pointer(void)
 {
+#if defined(__aarch64__)
+    return (uintptr_t)__builtin_thread_pointer();
+#else
     uintptr_t base = 0;
     register long result __asm__("rax") = 158;
     register long operation __asm__("rdi") = 0x1003;
@@ -163,14 +184,19 @@ static uintptr_t installed_thread_pointer(void)
         : "D"(operation), "S"(destination)
         : "rcx", "r11", "memory");
     return result == 0 ? base : 0;
+#endif
 }
 
 static uintptr_t fs_self(void)
 {
+#if defined(__aarch64__)
+    uintptr_t base = installed_thread_pointer();
+    return base && *(const uintptr_t *)(base - 8) ? base : 0;
+#else
     uintptr_t value;
-
     __asm__ volatile("mov %%fs:0, %0" : "=r"(value));
     return value;
+#endif
 }
 
 static int initial_values_hold(void)
