@@ -15,10 +15,10 @@
  * boundary only after its own TLS/TCB composition is materialized.
  */
 
-#if !defined(__linux__) || !defined(__x86_64__) || !defined(__LP64__) || \
+#if !defined(__linux__) || (!defined(__x86_64__) && !defined(__aarch64__)) || !defined(__LP64__) || \
     !defined(__BYTE_ORDER__) || !defined(__ORDER_LITTLE_ENDIAN__) || \
     __BYTE_ORDER__ != __ORDER_LITTLE_ENDIAN__
-#error "this consumer requires native Linux/x86-64 little-endian LP64"
+#error "this consumer requires native little-endian Linux x86-64 or aarch64 LP64"
 #endif
 
 #include <errno.h>
@@ -72,7 +72,11 @@ static int crabc_main_exit_pipe = -1;
 
 static void spin_pause(void)
 {
+#if defined(__aarch64__)
+    __asm__ volatile("yield" ::: "memory");
+#else
     __asm__ volatile("pause" ::: "memory");
+#endif
 }
 
 static int wait_for_nonzero(const volatile int *value)
@@ -1199,11 +1203,20 @@ static int run_robust_mutex_owner_death(void)
  * SIGCANCEL in the child's saved mask even when its creator blocked it. */
 static long raw_kernel_signal_mask(long how, const uint64_t *set, uint64_t *old)
 {
+#if defined(__aarch64__)
+    register long result __asm__("x0") = how;
+    register const uint64_t *input __asm__("x1") = set;
+    register uint64_t *output __asm__("x2") = old;
+    register long size __asm__("x3") = 8;
+    register long number __asm__("x8") = 135;
+    __asm__ volatile("svc 0" : "+r"(result) : "r"(number), "r"(input), "r"(output), "r"(size) : "memory", "cc");
+#else
     register long size __asm__("r10") = 8;
     long result;
     __asm__ volatile("syscall" : "=a"(result)
         : "a"(14L), "D"(how), "S"(set), "d"(old), "r"(size)
         : "rcx", "r11", "memory");
+#endif
     return result;
 }
 
