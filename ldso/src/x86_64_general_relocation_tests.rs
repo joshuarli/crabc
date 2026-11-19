@@ -36,6 +36,7 @@ fn binding_slots_require_relro_in_hardened_profile() {
 #[test]
 fn symbol_address_slots_require_relro_in_hardened_profile() {
     for kind in [R_64, R_X86_64_PC32] {
+        if cfg!(target_arch = "aarch64") && kind == R_X86_64_PC32 { continue; }
         let mut image = Image::new();
         image.symbol(1, 1, 2, 0, 1, IMAGE_DATA as u64, 8);
         image.rela(IMAGE_DATA as u64, kind, 1, 0);
@@ -904,6 +905,7 @@ fn invalid_later_object_relocation_cannot_commit_earlier_main_or_dependency_writ
     assert_eq!(main.data[0], 0xaaaa); assert_eq!(provider.data[0], 0xbbbb);
 }
 
+#[cfg(target_arch = "x86_64")]
 #[test]
 fn pc32_relocation_writes_four_bytes_and_preflights_the_whole_graph() {
     let mut main = Image::new(); let mut provider = Image::new();
@@ -931,7 +933,7 @@ fn pc32_relocation_writes_four_bytes_and_preflights_the_whole_graph() {
     assert_eq!(main.data[1], 0);
 }
 
-#[cfg(feature = "x86_64-owned-dynamic-runtime")]
+#[cfg(all(target_arch = "x86_64", feature = "x86_64-owned-dynamic-runtime"))]
 #[test]
 fn runtime_pc32_relocation_commits_four_bytes_only_after_all_new_objects_preflight() {
     let mut main = Image::new(); let mut first = Image::new(); let mut late = Image::new();
@@ -1392,4 +1394,16 @@ fn tlsdesc_static_checks_both_words_and_returns_tp_offset() {
         image.relocations[0][0] = (IMAGE_DATA + IMAGE_DATA_BYTES - 8) as u64;
         assert!(preflight_object(&scope, &[object], 0).is_none());
     }
+}
+
+#[cfg(target_arch = "aarch64")]
+#[test]
+fn x86_pc32_relocation_is_rejected_before_writes() {
+    let mut image = Image::new();
+    image.data[0] = 0x1122334455667788;
+    image.rela(0x1000, R_X86_64_PC32, 0, 0);
+    let mut objects = [EMPTY_OBJECT; TEST_OBJECTS];
+    objects[0] = image.object(false);
+    assert!(unsafe { relocate_initial_graph(&graph(1), &objects) }.is_none());
+    assert_eq!(image.data[0], 0x1122334455667788);
 }
