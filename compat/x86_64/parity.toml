@@ -20240,6 +20240,11 @@ oracle = [{ kind = "elf-abi", source = "System V AMD64 psABI and Linux ELF ABI",
 capabilities = []
 status = "foundation-verified"
 
+# Native aarch64 lifecycle observation: the owned loader runs legacy DT_INIT
+# and DT_FINI in the DSO matrix, while pinned musl 1.2.6 sets
+# NO_LEGACY_INITFINI in arch/aarch64/reloc.h and omits those callbacks.
+# The differential retains both transcripts; it does not claim musl parity for
+# those legacy callbacks.
 [[family]]
 id = "ldso.dynamic-runtime"
 order = 130
