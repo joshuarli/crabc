@@ -194,8 +194,8 @@ python3 "$ROOT_DIR/compat/x86_64/validate_libc_math_long_double_completion.py" "
 build_source_runtime_libc "$base_target/x86_64-unknown-linux-musl/debug/libc.a" \
 	--retain-work "$work_dir/source-runtime-baseline"
 [ -f "$base_archive" ] || fail "cargo did not emit the unfeatured x86 archive"
-collect_global_surface "$base_archive" "$base_surface" "$work_dir/base-members"
-collect_global_bindings "$base_archive" "$base_bindings" "$work_dir/base-binding-members"
+collect_math_global_surface "$base_archive" "$base_surface" "$work_dir/base-members"
+collect_math_global_bindings "$base_archive" "$base_bindings" "$work_dir/base-binding-members"
 nm -A --defined-only "$base_archive" >"$base_archive_symbols"
 nm -A -g --defined-only "$base_archive" >"$base_archive_globals"
 readelf --symbols --wide "$base_archive" >"$base_archive_readelf"
@@ -208,8 +208,8 @@ fi
 build_source_runtime_libc "$feature_target/x86_64-unknown-linux-musl/debug/libc.a" \
 	--retain-work "$work_dir/source-runtime-feature"
 [ -f "$archive" ] || fail "cargo did not emit the default binary80 archive"
-collect_global_surface "$archive" "$feature_surface" "$work_dir/feature-members"
-collect_global_bindings "$archive" "$feature_bindings" "$work_dir/feature-binding-members"
+collect_math_global_surface "$archive" "$feature_surface" "$work_dir/feature-members"
+collect_math_global_bindings "$archive" "$feature_bindings" "$work_dir/feature-binding-members"
 readelf --symbols --wide "$archive" >"$feature_archive_readelf"
 comm -13 "$base_surface" "$feature_surface" >"$observed_additions"
 if [ -s "$observed_additions" ]; then

@@ -76,7 +76,7 @@ source_runtime_expected_static_surface() {
 }
 
 # Exact source-runtime C export and binding inventories shared by math proofs.
-collect_global_surface() {
+collect_math_global_surface() {
 	local archive_path="$1" output_path="$2" members_path="$3"
 	local -a members
 	mapfile -t members < <(ar t "$archive_path" | grep -E '^c\..+\.rcgu\.o$')
@@ -90,7 +90,7 @@ collect_global_surface() {
 		sort -u >"$output_path"
 }
 
-collect_global_bindings() {
+collect_math_global_bindings() {
 	local archive_path="$1" output_path="$2" members_path="$3"
 	local -a members
 	mapfile -t members < <(ar t "$archive_path" | grep -E '^c\..+\.rcgu\.o$')
