@@ -1,7 +1,7 @@
 #ifndef _MQUEUE_H
 #define _MQUEUE_H
 
-#if defined(__x86_64__)
+#if 1
 #include <features.h>
 
 #define __NEED_size_t
@@ -10,8 +10,6 @@
 #define __NEED_time_t
 #define __NEED_struct_timespec
 #include <bits/alltypes.h>
-#else
-#include <sys/types.h>
 #endif
 
 struct sigevent;

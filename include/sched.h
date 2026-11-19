@@ -4,7 +4,6 @@
 extern "C" {
 #endif
 
-#if defined(__x86_64__) /* pinned-musl 1.2.6 x86-64 sched_param source form */
 #include <features.h>
 #define __NEED_struct_timespec
 #define __NEED_pid_t
@@ -29,28 +28,6 @@ struct sched_param {
 #endif
 	int __reserved3;
 };
-#else /* frozen AArch64 public header */
-#include <sys/types.h>
-#include <time.h>
-
-/* This reserve is public ABI, even though the currently implemented
- * scheduling calls consume only sched_priority.  Keep the musl 1.2.6
- * LP64 layout so a struct sched_param crosses pthread and sched boundaries
- * with the same size and alignment as the C/POSIX oracle. */
-struct sched_param {
-    int sched_priority;
-    int __reserved1;
-#if defined(_REDIR_TIME64) && _REDIR_TIME64
-    long __reserved2[4];
-#else
-    struct {
-        time_t __reserved1;
-        long __reserved2;
-    } __reserved2[2];
-#endif
-    int __reserved3;
-};
-#endif
 
 #define SCHED_OTHER 0
 #define SCHED_FIFO 1
@@ -73,13 +50,7 @@ void *(memset)(void *, int, size_t);
 void *(calloc)(size_t, size_t);
 void (free)(void *);
 
-#if defined(__x86_64__) /* pinned-musl cpu_set_t form; the AArch64 form stays frozen */
 typedef struct cpu_set_t { unsigned long __bits[128/sizeof(long)]; } cpu_set_t;
-#else /* AArch64 frozen cpu_set_t form */
-typedef struct cpu_set_t {
-    unsigned long __bits[128 / sizeof(long)];
-} cpu_set_t;
-#endif
 
 int __sched_cpucount(size_t, const cpu_set_t *);
 #define CPU_COUNT_S(size,set) __sched_cpucount(size,set)
@@ -88,11 +59,7 @@ int __sched_cpucount(size_t, const cpu_set_t *);
 
 #define CPU_SET_S(i, size, set) __CPU_op_S(i, size, set, |=)
 #define CPU_CLR_S(i, size, set) __CPU_op_S(i, size, set, &=~)
-#if defined(__x86_64__)
 #define CPU_ISSET_S(i, size, set) (!!__CPU_op_S(i, size, set, &))
-#else
-#define CPU_ISSET_S(i, size, set) __CPU_op_S(i, size, set, &)
-#endif
 
 #define __CPU_op_func_S(func, op) \
 static __inline void __CPU_##func##_S(size_t __size, cpu_set_t *__dest, \

@@ -76,7 +76,14 @@ int __flt_rounds(void);
 
 #else
 #define FLT_RADIX        2
-#define FLT_ROUNDS       1
+#ifdef __cplusplus
+extern "C" {
+#endif
+int __flt_rounds(void);
+#ifdef __cplusplus
+}
+#endif
+#define FLT_ROUNDS       (__flt_rounds())
 #define FLT_EVAL_METHOD  0
 /* The supported AArch64 ABI passes long double as IEEE-754 binary128. */
 #define DECIMAL_DIG      36
