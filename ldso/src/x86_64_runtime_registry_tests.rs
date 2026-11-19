@@ -59,7 +59,7 @@ fn lazy_request_keeps_unresolved_import_only_in_compatibility_profile() {
     let directory = std::path::Path::new(".work/tmp/loader-lazy-profile");
     std::fs::create_dir_all(directory).unwrap();
     let output = directory.join("plugin.so");
-    let status = std::process::Command::new("/usr/local/bin/crabc-x86_64-musl-gcc")
+    let status = std::process::Command::new(if cfg!(target_arch = "aarch64") { "/usr/local/bin/crabc-aarch64-musl-gcc" } else { "/usr/local/bin/crabc-x86_64-musl-gcc" })
         .args(["-O0", "-nostdlib", "-fPIC", "-shared", "-Wl,--hash-style=sysv,-z,now,-z,noexecstack",
                "compat/x86_64/general_dynamic_lazy_plugin.c", "-o"])
         .arg(&output).status().unwrap();
@@ -120,7 +120,7 @@ fn full_path_reserved_basename_loads_a_real_libm_soname() {
     let source = directory.join("libm.c");
     std::fs::write(&source, "int libm_probe(void) { return 7; }\n").unwrap();
     let output = directory.join("libm.so.6");
-    let status = std::process::Command::new("/usr/local/bin/crabc-x86_64-musl-gcc")
+    let status = std::process::Command::new(if cfg!(target_arch = "aarch64") { "/usr/local/bin/crabc-aarch64-musl-gcc" } else { "/usr/local/bin/crabc-x86_64-musl-gcc" })
         .args(["-O0", "-nostdlib", "-fPIC", "-shared", "-Wl,--hash-style=sysv,-soname,libm.so.6"])
         .arg(&source).arg("-o").arg(&output)
         .status().unwrap();
@@ -163,7 +163,7 @@ fn local_dependency_scope_promotes_without_repeating_reentrant_constructor() {
     static MISSING_PATH: AtomicPtr<u8> = AtomicPtr::new(core::ptr::null_mut());
 
     fn compile(source: &str, output: &std::path::Path, arguments: &[&str]) {
-        let status = std::process::Command::new("/usr/local/bin/crabc-x86_64-musl-gcc")
+        let status = std::process::Command::new(if cfg!(target_arch = "aarch64") { "/usr/local/bin/crabc-aarch64-musl-gcc" } else { "/usr/local/bin/crabc-x86_64-musl-gcc" })
             .args(["-O0", "-nostdlib", "-fPIC", "-shared", "-Wl,--hash-style=sysv"])
             .arg(source).args(arguments).arg("-o").arg(output).status().unwrap();
         assert!(status.success(), "scope fixture compilation failed");
@@ -249,7 +249,7 @@ fn failed_tls_load_rolls_back_before_successful_growth_and_retained_reopen() {
     static MISSING: AtomicPtr<u8> = AtomicPtr::new(core::ptr::null_mut());
 
     fn compile(source: &str, output: &std::path::Path) {
-        let status = std::process::Command::new("/usr/local/bin/crabc-x86_64-musl-gcc")
+        let status = std::process::Command::new(if cfg!(target_arch = "aarch64") { "/usr/local/bin/crabc-aarch64-musl-gcc" } else { "/usr/local/bin/crabc-x86_64-musl-gcc" })
             .args(["-O0", "-nostdlib", "-fPIC", "-shared", "-Wl,--hash-style=sysv"])
             .arg(source).arg("-o").arg(output).status().unwrap();
         assert!(status.success(), "TLS fixture compilation failed");
@@ -262,7 +262,7 @@ fn failed_tls_load_rolls_back_before_successful_growth_and_retained_reopen() {
         let mut used = 0;
         let result = loop {
             if used == bytes.len() { break None; }
-            let count = unsafe { syscall3(0, fd, bytes.as_mut_ptr().add(used) as i64,
+            let count = unsafe { syscall3(SYS_READ, fd, bytes.as_mut_ptr().add(used) as i64,
                 (bytes.len() - used) as i64) };
             if count < 0 { break None; }
             if count == 0 { break Some(bytes[..used].windows(needle.len()).any(|part| part == needle)); }
@@ -276,7 +276,7 @@ fn failed_tls_load_rolls_back_before_successful_growth_and_retained_reopen() {
         let image = [31u8];
         let mut initial = [EMPTY_OBJECT; 32];
         initial[0] = Object { role: ObjectRole::Main, tls_image: image.as_ptr(),
-            tls_filesz: 1, tls_memsz: 16, tls_align: 16, tls_module_id: 1,
+            tls_filesz: 1, tls_memsz: 16, tls_align: if cfg!(target_arch = "aarch64") { 1 } else { 16 }, tls_module_id: 1,
             tls_offset_below_tp: 16, ..EMPTY_OBJECT };
         let block = materialize_initial_tls(&initial, 0)?;
         let original = *block.dtv.add(1) as *mut u8;
@@ -683,7 +683,7 @@ fn iteration_callbacks_open_close_reopen_and_extend_retained_object_traversal() 
     std::fs::create_dir_all(directory).unwrap();
     let compile = |source: &str, file: &str| {
         let output = directory.join(file);
-        assert!(std::process::Command::new("/usr/local/bin/crabc-x86_64-musl-gcc")
+        assert!(std::process::Command::new(if cfg!(target_arch = "aarch64") { "/usr/local/bin/crabc-aarch64-musl-gcc" } else { "/usr/local/bin/crabc-x86_64-musl-gcc" })
             .args(["-O0", "-nostdlib", "-fPIC", "-shared", "-Wl,--hash-style=sysv"])
             .arg(source).arg("-o").arg(&output).status().unwrap().success());
         std::ffi::CString::new(std::fs::canonicalize(output).unwrap().as_os_str()

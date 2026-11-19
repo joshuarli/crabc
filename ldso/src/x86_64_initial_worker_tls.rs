@@ -219,7 +219,7 @@ mod tests {
         let aligned_image = [21u8, 22, 23];
         let mut objects = [EMPTY_OBJECT; 32];
         objects[0] = Object { tls_image: image.as_ptr(), tls_filesz: image.len(),
-            tls_memsz: 32, tls_align: 16, tls_module_id: 1, tls_offset_below_tp: 32,
+            tls_memsz: 32, tls_align: if cfg!(target_arch = "aarch64") { 1 } else { 16 }, tls_module_id: 1, tls_offset_below_tp: 32,
             ..EMPTY_OBJECT };
         // A TLS-free object between providers must not consume a DTV ID.
         objects[2] = Object { tls_image: aligned_image.as_ptr(), tls_filesz: aligned_image.len(),
@@ -273,7 +273,7 @@ mod tests {
             let runtime_image = [17u8, 19];
             let mut initial = [EMPTY_OBJECT; 32];
             initial[0] = Object { tls_image: image.as_ptr(), tls_filesz: 2,
-                tls_memsz: 32, tls_align: 16, tls_module_id: 1,
+                tls_memsz: 32, tls_align: if cfg!(target_arch = "aarch64") { 1 } else { 16 }, tls_module_id: 1,
                 tls_offset_below_tp: 32, ..EMPTY_OBJECT };
             let runtime = Object { tls_image: runtime_image.as_ptr(), tls_filesz: 2,
                 tls_memsz: 97, tls_align: 64, tls_module_id: 2, ..EMPTY_OBJECT };
@@ -363,7 +363,7 @@ mod tests {
         let image = [11u8, 12, 13, 14];
         let mut objects = [EMPTY_OBJECT; 32];
         objects[0] = Object { tls_image: image.as_ptr(), tls_filesz: image.len(),
-            tls_memsz: 32, tls_align: 16, tls_module_id: 1, tls_offset_below_tp: 32,
+            tls_memsz: 32, tls_align: if cfg!(target_arch = "aarch64") { 1 } else { 16 }, tls_module_id: 1, tls_offset_below_tp: 32,
             ..EMPTY_OBJECT };
         objects[2] = Object { tls_image: image.as_ptr(), tls_filesz: image.len(),
             tls_memsz: 129, tls_align: 4096, tls_module_id: 2, tls_offset_below_tp: 4096,
