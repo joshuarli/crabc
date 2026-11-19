@@ -81,6 +81,10 @@ int main(void) {
             QUAD_OP("i128", (long double)sw); QUAD_OP("u128", (long double)uw);
             volatile double d=(double)sl; volatile float f=(float)si;
             QUAD_OP("fromf32", (long double)f); QUAD_OP("fromf64", (long double)d);
+            uint32_t random_f=(uint32_t)next(); uint64_t random_d=next(); float rf; double rd;
+            memcpy(&rf,&random_f,sizeof rf); memcpy(&rd,&random_d,sizeof rd);
+            volatile float vf=rf; volatile double vd=rd;
+            QUAD_OP("fromf32", (long double)vf); QUAD_OP("fromf64", (long double)vd);
             volatile long double v=(long double)(int32_t)next() / 16.0L;
             INT_OP("toi32", int32_t, (int32_t)v); INT_OP("tou32", uint32_t, (uint32_t)(v < 0 ? -v : v));
             INT_OP("toi64", int64_t, (int64_t)v); INT_OP("tou64", uint64_t, (uint64_t)(v < 0 ? -v : v));
