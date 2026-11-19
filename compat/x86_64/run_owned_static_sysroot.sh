@@ -1784,12 +1784,7 @@ link_editor="$LINK_EDITOR"
 [ "$link_editor" = /usr/bin/mold ] && [ -x "$link_editor" ] || fail "requires the pinned native mold linker"
 
 bash "$ROOT_DIR/compat/x86_64/run_musl_oracle.sh" >/dev/null
-if [ "$ARCH" = x86_64 ]; then
-    builder_tests=scripts.tests.test_build_x86_64_owned_sysroot
-else
-    builder_tests=crt.tests.test_x86_64_dynamic_modes
-fi
-python3 -B -m unittest -v "$builder_tests" \
+python3 -B -m unittest -v scripts.tests.test_build_x86_64_owned_sysroot \
     compat.x86_64.tests.test_owned_static_sysroot_package \
     compat.x86_64.tests.test_owned_static_consumer_matrix \
     compat.x86_64.tests.test_static_product_suite
