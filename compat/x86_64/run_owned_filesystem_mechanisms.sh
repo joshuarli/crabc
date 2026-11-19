@@ -3,7 +3,8 @@
 set -euo pipefail
 ulimit -c 0
 readonly ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-readonly ORACLE_CC=/usr/local/bin/crabc-x86_64-musl-gcc
+eval "$(python3 -B "$ROOT/compat/x86_64/native_arch.py")"
+readonly ORACLE_CC="$oracle"
 readonly PROBE="$ROOT/compat/x86_64/owned_filesystem_mechanisms_probe.c"
 [ "$#" -le 1 ] || { printf 'usage: %s [DYNAMIC_SYSROOT]\n' "$0" >&2; exit 2; }
 
@@ -114,7 +115,7 @@ for mode in pie non-pie; do
         cp -a "$installed" "$root"
         cp "$work/consumer-$mode" "$root/consumer"
         if [ "$entry" = direct ]; then
-            run_in_root "$root" "$work/$mode-$entry.stdout" /lib/ld-crabc-x86_64.so.1 /consumer
+            run_in_root "$root" "$work/$mode-$entry.stdout" "/lib/ld-crabc-$arch.so.1" /consumer
         else
             run_in_root "$root" "$work/$mode-$entry.stdout" /consumer
         fi
