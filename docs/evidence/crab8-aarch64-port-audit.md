@@ -407,15 +407,15 @@ entries are closed by the commit that fixes them.
 | 46 | fixed | `libc/src/c_abi/x86_64/descriptor_entry.rs:270` selects the native AArch64 `O_DIRECTORY` value. |
 | 47 | still open | `test_runner.py:8284-8312` tests a Darwin host. The emulation-refusal branch at `dev-x86_64.sh:3264-3267` is untested; main's version of this test used Linux/aarch64. |
 | 48 | still open | `test_core_image_dispatch.py:30, 227` are x86-only; the aarch64 class at `:275` has positive cases only. |
-| 49 | partly fixed | Qualification prepare now sets the variable (`owned_dynamic_qualification.py:350`), but uses this suite in place of the x86 driver suite (see B7). Nothing else sets it. |
-| 50 | still open | `test_consumer_rust_std_lto.py:341-351`. |
+| 49 | fixed (b6236c919) | The native image builds a temporary aarch64 sysroot when none is supplied; all five original tests passed in the VM. |
+| 50 | fixed (48ce246c7) | The aarch64 route has forbidden-symbol, missing-witness, missing-syscall and instruction-spelling cases. |
 | 51 | still open | `unwinder/tests/provider_abi_frame.c:21-27`. |
 | 52 | still open | `test_owned_cleanup.py:182, 600, 922`; `test_owned_rust_link.py:46`. |
 | 53 | still open | `installed_crt_startup_evidence.py:387-389`. |
 | 54 | still open | `scripts/lanes/rust-check.sh:72-84`. |
 | 55 | still open | `prepare-worktree.sh:304-311`. |
-| 56 | still open | `dev-x86_64.sh:6154`. |
-| 57 | still open | `dev-x86_64.sh:23-24`. |
+| 56 | fixed (d84f8ba79) | Native arm64 help is exercised without Docker in the image-dispatch test. |
+| 57 | fixed (d84f8ba79) | Native arm64 selects `Dockerfile.aarch64` and an aarch64 tag; the test captures build arguments without building an image. |
 | 58 | still open | `event.rs:1, 56, 257, 703-705` say "Linux/x86-64" in shared code; `fs.rs:2669` documents statx as "syscall 332". |
 
 The follow-up note's commit hashes for items 34–39 (`d29938707`, `4025b27e2`, `e6667c701`, `d3c73cbaa`, `ff71a1151`, `b9b9c0028`, `63d42b791`, `55cfab435`, `ff2ef2f28`) are not ancestors of HEAD. The patch-identical commits that did land are `422a66733`, `1893d7e07`, `b40471590`, `b71489007`, `c86c7426d`, `f27f7c2e2`, `639e47fb5`, `86e33b818` and `1ce2c5579`.
