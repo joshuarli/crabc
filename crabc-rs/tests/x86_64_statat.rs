@@ -1,4 +1,3 @@
-#![cfg(target_arch = "x86_64")]
 
 use core::ffi::CStr;
 use std::fs::{self as std_fs, File, OpenOptions};

@@ -1,4 +1,3 @@
-#![cfg(target_arch = "x86_64")]
 
 use core::mem::{align_of, offset_of, size_of};
 use core::sync::atomic::{AtomicBool, Ordering};

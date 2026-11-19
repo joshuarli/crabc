@@ -1,4 +1,3 @@
-#![cfg(target_arch = "x86_64")]
 
 use core::sync::atomic::{AtomicBool, AtomicI32, Ordering};
 

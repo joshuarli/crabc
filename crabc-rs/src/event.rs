@@ -268,6 +268,14 @@ pub mod epoll {
         data: EventData,
     }
 
+    #[cfg(target_arch = "aarch64")]
+    const _: () = {
+        assert!(size_of::<Event>() == 16);
+        assert!(core::mem::align_of::<Event>() == 8);
+        assert!(core::mem::offset_of!(Event, flags) == 0);
+        assert!(core::mem::offset_of!(Event, data) == 8);
+    };
+
     #[cfg(target_arch = "x86_64")]
     const _: () = assert!(size_of::<Event>() == 12);
     #[cfg(target_arch = "x86_64")]

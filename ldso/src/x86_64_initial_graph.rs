@@ -2537,7 +2537,7 @@ mod tls_zero_tail_tests {
             tls_image: prefixes[index].as_ptr(),
             tls_filesz: prefixes[index].len(),
             tls_memsz: 16,
-            tls_align: if cfg!(target_arch = "aarch64") { 1 } else { 8 },
+            tls_align: if cfg!(target_arch = "aarch64") { 16 } else { 8 },
             tls_module_id: index + 1,
             tls_offset_below_tp: (index + 1) * 16,
             ..EMPTY_OBJECT

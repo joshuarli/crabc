@@ -2253,6 +2253,32 @@ pub struct Stat {
     __unused: [i64; 3],
 }
 
+#[cfg(target_arch = "aarch64")]
+const _: () = {
+    assert!(core::mem::size_of::<Stat>() == 128);
+    assert!(core::mem::align_of::<Stat>() == 8);
+    assert!(core::mem::offset_of!(Stat, st_dev) == 0);
+    assert!(core::mem::offset_of!(Stat, st_ino) == 8);
+    assert!(core::mem::offset_of!(Stat, st_mode) == 16);
+    assert!(core::mem::offset_of!(Stat, st_nlink) == 20);
+    assert!(core::mem::offset_of!(Stat, st_uid) == 24);
+    assert!(core::mem::offset_of!(Stat, st_gid) == 28);
+    assert!(core::mem::offset_of!(Stat, st_rdev) == 32);
+    assert!(core::mem::offset_of!(Stat, __pad1) == 40);
+    assert!(core::mem::offset_of!(Stat, st_size) == 48);
+    assert!(core::mem::offset_of!(Stat, st_blksize) == 56);
+    assert!(core::mem::offset_of!(Stat, __pad2) == 60);
+    assert!(core::mem::offset_of!(Stat, st_blocks) == 64);
+    assert!(core::mem::offset_of!(Stat, st_atime) == 72);
+    assert!(core::mem::offset_of!(Stat, st_atime_nsec) == 80);
+    assert!(core::mem::offset_of!(Stat, st_mtime) == 88);
+    assert!(core::mem::offset_of!(Stat, st_mtime_nsec) == 96);
+    assert!(core::mem::offset_of!(Stat, st_ctime) == 104);
+    assert!(core::mem::offset_of!(Stat, st_ctime_nsec) == 112);
+    assert!(core::mem::offset_of!(Stat, __unused4) == 120);
+    assert!(core::mem::offset_of!(Stat, __unused5) == 124);
+};
+
 #[cfg(target_arch = "x86_64")]
 const _: [(); 144] = [(); core::mem::size_of::<Stat>()];
 #[cfg(target_arch = "x86_64")]

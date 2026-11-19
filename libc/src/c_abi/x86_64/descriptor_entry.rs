@@ -267,7 +267,7 @@ mod tests {
         for (flags, consumes_mode) in [
             (0, false),
             (O_CLOEXEC, false),
-            (0x1_0000, false), // O_DIRECTORY alone does not create a file.
+            (if cfg!(target_arch = "aarch64") { 0x4000 } else { 0x1_0000 }, false), // O_DIRECTORY alone does not create a file.
             (0x40_0000, false), // The unnamed-file bit needs O_DIRECTORY too.
             (O_CREAT, true),
             (O_TMPFILE, true),
