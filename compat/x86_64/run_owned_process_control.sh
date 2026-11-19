@@ -378,7 +378,7 @@ import sys
 
 path = Path(sys.argv[1])
 manifest = json.loads(path.read_text(encoding="utf-8"))
-files = manifest["files"] if sys.argv[2] == "aarch64" else manifest["installed"]["files"]
+files = manifest["installed"]["files"]
 files["usr/lib/libc.a"] = "0" * 64
 path.write_text(json.dumps(manifest, sort_keys=True, separators=(",", ":")) + "\n", encoding="utf-8")
 PY_MANIFEST
