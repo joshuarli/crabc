@@ -194,13 +194,17 @@ class OwnedProtocolDatabaseReceiptTests(unittest.TestCase):
             provider_lines.extend((f".globl {name}", f".type {name},@function", f"{name}:",
                                    "call strcmp", "call strlen", "ret", f".size {name},.-{name}"))
         provider_lines.extend((".globl _start", ".type _start,@function", "_start: ret", ".size _start,.-_start"))
-        provider_source.write_text("\n".join(provider_lines) + "\n", encoding="utf-8")
-        target_source.write_text(
+        provider_asm = "\n".join(provider_lines) + "\n"
+        target_asm = (
             ".text\n.globl strcmp\n.type strcmp,@function\nstrcmp: mov $7,%eax\nret\n"
             ".size strcmp,.-strcmp\n.globl strlen\n.type strlen,@function\nstrlen: mov $9,%eax\nret\n"
-            ".size strlen,.-strlen\n",
-            encoding="utf-8",
+            ".size strlen,.-strlen\n"
         )
+        if producer.ARCH == "aarch64":
+            provider_asm = provider_asm.replace("@function", "%function").replace("call ", "bl ")
+            target_asm = target_asm.replace("@function", "%function").replace("mov $7,%eax", "mov w0, #7").replace("mov $9,%eax", "mov w0, #9")
+        provider_source.write_text(provider_asm, encoding="utf-8")
+        target_source.write_text(target_asm, encoding="utf-8")
         subprocess.run((compiler, "-c", provider_source, "-o", provider_object), check=True,
                        capture_output=True)
         subprocess.run((compiler, "-c", target_source, "-o", target_object), check=True,

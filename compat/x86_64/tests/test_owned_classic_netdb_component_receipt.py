@@ -241,6 +241,7 @@ class OwnedClassicNetdbComponentReceiptTests(unittest.TestCase):
             source.parent.mkdir(parents=True)
             source.write_text("int probe(void) { return 1; }\n", encoding="utf-8")
             compiler = work / "compiler"
+            machine = b"\x3e" if self.receipt.ARCH == "x86_64" else b"\xb7"
             compiler.write_text(
                 '#!/bin/sh\nwhile [ "$1" != -o ]; do shift; done\n'
                 'shift\nprintf "\\177ELF\\002\\001\\001\\000\\000\\000\\000\\000\\000\\000\\000\\000\\001\\000>\\000source" > "$1"\n',
@@ -248,7 +249,7 @@ class OwnedClassicNetdbComponentReceiptTests(unittest.TestCase):
             )
             compiler.chmod(0o755)
             workload = work / "workload.o"
-            workload.write_bytes(b"\x7fELF\x02\x01\x01" + b"\0" * 9 + b"\x01\0>\0transplanted")
+            workload.write_bytes(b"\x7fELF\x02\x01\x01" + b"\0" * 9 + b"\x01\0" + machine + b"\0transplanted")
             manifest = root / ".work/image.json"
             manifest.write_text("{}\n", encoding="utf-8")
             seal = {"sources": {"probe": "selected"}}
