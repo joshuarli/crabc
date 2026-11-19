@@ -2,7 +2,8 @@
 set -euo pipefail
 ulimit -c 0
 readonly ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-readonly oracle_cc=/usr/local/bin/crabc-x86_64-musl-gcc
+eval "$(python3 -B "$ROOT/compat/x86_64/native_arch.py")"
+readonly oracle_cc="$oracle"
 readonly programs=(basic observability policy)
 readonly receipt_runner=owned-native-allocator-policy
 readonly case_timeout=120
@@ -130,7 +131,7 @@ receipt_products+=(
     "dynamic-libc-provenance=$dynamic_sysroot/share/crabc/libc-shared.provenance.json"
     "dynamic-driver=$dynamic_sysroot/bin/crabc-cc-dynamic"
     "dynamic-libc=$work/execution-root/usr/lib/libc.so"
-    "dynamic-loader=$work/execution-root/lib/ld-crabc-x86_64.so.1"
+    "dynamic-loader=$work/execution-root/lib/ld-crabc-${arch}.so.1"
     "dynamic-crt1=$dynamic_sysroot/usr/lib/crt1.o"
     "dynamic-scrt1=$dynamic_sysroot/usr/lib/Scrt1.o"
     "dynamic-crti=$dynamic_sysroot/usr/lib/crti.o"
@@ -308,7 +309,7 @@ for program in "${programs[@]}"; do
         cp "$work/dynamic-$mode-$program.exe" "$work/execution-root/consumer-$mode-$program"
         receipt_products+=("dynamic-$mode-$program=$work/execution-root/consumer-$mode-$program")
         run_case "kernel-$mode" "$program" "${enter_root[@]}" "/consumer-$mode-$program"
-        run_case "direct-$mode" "$program" "${enter_root[@]}" /lib/ld-crabc-x86_64.so.1 \
+        run_case "direct-$mode" "$program" "${enter_root[@]}" /lib/ld-crabc-${arch}.so.1 \
             "/consumer-$mode-$program"
     done
 done

@@ -15,6 +15,9 @@ import native_shadow_receipt as shared
 import source_seal
 import mold_link_trace
 import owned_posix_product_evidence as product_evidence
+from native_arch import native_arch
+
+ARCH = native_arch()["arch"]
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -32,7 +35,7 @@ PRODUCT_PATHS = {
     "dynamic-product-state": "share/crabc/dynamic-product-state.json",
     "dynamic-libc-provenance": "share/crabc/libc-shared.provenance.json",
     "dynamic-libc": "usr/lib/libc.so",
-    "dynamic-loader": "lib/ld-crabc-x86_64.so.1",
+    "dynamic-loader": f"lib/ld-crabc-{ARCH}.so.1",
     "dynamic-driver": "bin/crabc-cc-dynamic",
     "dynamic-builtins": "usr/lib/libcrabc-builtins.a",
 }
@@ -87,7 +90,7 @@ def elf(path: Path, expected_type: str) -> tuple[str, str, str, dict[str, tuple[
     header = readelf(path, "-h")
     require("Class:                             ELF64" in header
             and "Data:                              2's complement, little endian" in header
-            and "Machine:                           Advanced Micro Devices X86-64" in header,
+            and ("Machine:                           Advanced Micro Devices X86-64" if ARCH == "x86_64" else "Machine:                           AArch64") in header,
             f"{path.name} has the wrong ELF ABI")
     match = re.search(r"^\s*Type:\s+(\w+)", header, re.M)
     require(match is not None and match.group(1) == expected_type, f"{path.name} has the wrong ELF type")
@@ -162,7 +165,7 @@ def check_dso_link(root: Path, directory: Path, receipt: shared.Receipt,
         require(record["product"] is None and record["sidecar"] is None
                 and isinstance(tools, dict) and set(tools) == {"gcc", "specs"},
                 f"{name} oracle link tools differ")
-        tool_path = "/usr/local/bin/crabc-x86_64-musl-gcc"
+        tool_path = native_arch()["oracle"]
         check_link_identity(inputs["tool"], tool_path, products["oracle-wrapper"], f"{name} wrapper")
         check_link_identity(inputs["libc"], "/opt/musl-1.2.6/lib/libc.so",
                             products["musl-libc"], f"{name} libc")
@@ -281,7 +284,7 @@ def read_native_allocator_dso_receipt(
     manifest = json_file(directory / "products/dynamic-manifest")
     state = json_file(directory / "products/dynamic-product-state")
     provenance = json_file(directory / "products/dynamic-libc-provenance")
-    require(manifest.get("target") == "x86_64-unknown-linux-musl"
+    require(manifest.get("target") == f"{ARCH}-unknown-linux-musl"
             and isinstance(manifest.get("files"), dict), "dynamic manifest identity differs")
     dynamic_backend(root, state, provenance)
     require(state.get("schema") == "crabc.x86_64-owned-dynamic-materialization/v1"
@@ -333,8 +336,8 @@ def read_native_allocator_dso_receipt(
             require(set(needed(dynamic)) == {"libdso-initial.so", "libc.so"}
                     and len(needed(dynamic)) == 2 and "libdso-plugin.so" not in needed(dynamic),
                     f"{name} initial-DSO linkage differs")
-            expected_interpreter = ("/opt/musl-1.2.6/lib/ld-musl-x86_64.so.1" if arm == "oracle"
-                                    else "/lib/ld-crabc-x86_64.so.1")
+            expected_interpreter = (f"/opt/musl-1.2.6/lib/ld-musl-{ARCH}.so.1" if arm == "oracle"
+                                    else f"/lib/ld-crabc-{ARCH}.so.1")
             require(interpreter(headers) == [expected_interpreter], f"{name} interpreter identity differs")
             require(all(symbol in symbols and symbols[symbol][3] == "UND"
                         for symbol in ("dso_api_initial", "dlopen", "dlsym", "dlclose"))

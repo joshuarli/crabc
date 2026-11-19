@@ -8,10 +8,12 @@ import json
 from pathlib import Path
 import subprocess
 
+from native_arch import native_arch
+
 
 ROOT = Path(__file__).resolve().parents[2]
 SCHEMA = "crabc.x86_64-owned-native-allocator-dso-link/v1"
-ORACLE_WRAPPER = Path("/usr/local/bin/crabc-x86_64-musl-gcc")
+ORACLE_WRAPPER = Path(native_arch()["oracle"])
 ORACLE_GCC = Path("/usr/bin/gcc")
 ORACLE_SPECS = Path("/opt/musl-1.2.6/lib/musl-gcc.specs")
 ORACLE_LIBC = Path("/opt/musl-1.2.6/lib/libc.so")

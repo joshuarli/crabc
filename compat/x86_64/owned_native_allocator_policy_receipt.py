@@ -17,6 +17,10 @@ from installed_allocator_backend import static_and_dynamic_backend
 import owned_dynamic_elf
 import mold_link_trace
 import source_seal
+from native_arch import native_arch
+
+ARCH = native_arch()["arch"]
+ARCH_LABEL = "x86-64" if ARCH == "x86_64" else ARCH
 
 
 RUNNER = "owned-native-allocator-policy"
@@ -88,7 +92,7 @@ def _elf_mode(path: Path) -> tuple[int, str | None]:
     data = path.read_bytes()
     _require(len(data) >= 64 and data[:7] == b"\x7fELF\x02\x01\x01", f"{path.name} is not ELF64 x86-64")
     kind, machine = struct.unpack_from("<HH", data, 16)
-    _require(machine == 62, f"{path.name} is not x86-64")
+    _require(machine == (62 if ARCH == "x86_64" else 183), f"{path.name} is not x86-64")
     phoff = struct.unpack_from("<Q", data, 32)[0]
     phentsize, phnum = struct.unpack_from("<HH", data, 54)
     _require(phentsize == 56 and phnum > 0 and phoff + phentsize * phnum <= len(data),
@@ -204,7 +208,7 @@ def _check_products(root: Path, read: native_shadow_receipt.Receipt) -> None:
                  f"static manifest does not identify {name}")
     for name, installed_path in (
         ("dynamic-libc", "usr/lib/libc.so"),
-        ("dynamic-loader", "lib/ld-crabc-x86_64.so.1"),
+        ("dynamic-loader", f"lib/ld-crabc-{ARCH}.so.1"),
         ("dynamic-libc-provenance", "share/crabc/libc-shared.provenance.json"),
         ("dynamic-product-state", "share/crabc/dynamic-product-state.json"),
         ("dynamic-driver", "bin/crabc-cc-dynamic"),
@@ -241,7 +245,7 @@ def _check_products(root: Path, read: native_shadow_receipt.Receipt) -> None:
             name = f"dynamic-{kind}-{program}"
             elf_type, interpreter = _elf_mode(product / name)
             _require(elf_type == (3 if kind == "pie" else 2) and
-                     interpreter == "/lib/ld-crabc-x86_64.so.1",
+                     interpreter == f"/lib/ld-crabc-{ARCH}.so.1",
                      f"{name} has a wrong dynamic ELF link mode")
             try:
                 facts = owned_dynamic_elf.inspect(product / name)
@@ -361,8 +365,8 @@ def _check_static_link(retained: Path, hashes: dict[str, str], program: str, mod
              declared.get("elf_type") == ("ET_EXEC" if mode == "static" else "ET_DYN") and
              declared.get("crt_object") == ("crt1.o" if mode == "static" else "rcrt1.o") and
              declared.get("interpreter") == "absent", f"{name} static link mode differs")
-    _require(record.get("schema") == 1 and record.get("format") == "crabc-x86-64-sealed-static-driver-v1" and
-             record.get("target") == "x86_64-unknown-linux-musl", f"{name} static link receipt differs")
+    _require(record.get("schema") == 1 and record.get("format") == f"crabc-{ARCH_LABEL}-sealed-static-driver-v1" and
+             record.get("target") == f"{ARCH}-unknown-linux-musl", f"{name} static link receipt differs")
     _require(isinstance(record.get("output"), dict) and
              record["output"].get("sha256") == hashes[name] and
              Path(str(record["output"].get("path"))).name == f"{name}.exe",

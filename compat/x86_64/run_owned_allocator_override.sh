@@ -2,7 +2,8 @@
 set -euo pipefail
 ulimit -c 0
 readonly ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-readonly oracle_cc=/usr/local/bin/crabc-x86_64-musl-gcc
+eval "$(python3 -B "$ROOT/compat/x86_64/native_arch.py")"
+readonly oracle_cc="$oracle"
 readonly probe="$ROOT/compat/x86_64/owned_allocator_override_probe.c"
 readonly scenarios=(full trio)
 readonly receipt_runner=owned-allocator-override
@@ -116,7 +117,7 @@ receipt_products+=(
     "dynamic-product-state=$dynamic_sysroot/share/crabc/dynamic-product-state.json"
     "dynamic-libc-provenance=$dynamic_sysroot/share/crabc/libc-shared.provenance.json"
     "dynamic-libc=$dynamic_sysroot/usr/lib/libc.so"
-    "dynamic-loader=$dynamic_sysroot/lib/ld-crabc-x86_64.so.1"
+    "dynamic-loader=$dynamic_sysroot/lib/ld-crabc-${arch}.so.1"
 )
 if [ -f "$work/static-build.json" ]; then receipt_products+=("static-build=$work/static-build.json"); fi
 if [ -f "$work/dynamic-build.json" ]; then receipt_products+=("dynamic-build=$work/dynamic-build.json"); fi
@@ -163,7 +164,7 @@ for scenario in "${scenarios[@]}"; do
         receipt_products+=("dynamic-$mode-$scenario=$work/dynamic-$mode-$scenario.exe")
         cp "$work/dynamic-$mode-$scenario.exe" "$work/execution-root/consumer-$mode-$scenario"
         run_case "kernel-$mode" "$scenario" chroot "$work/execution-root" "/consumer-$mode-$scenario"
-        run_case "direct-$mode" "$scenario" chroot "$work/execution-root" /lib/ld-crabc-x86_64.so.1 \
+        run_case "direct-$mode" "$scenario" chroot "$work/execution-root" /lib/ld-crabc-${arch}.so.1 \
             "/consumer-$mode-$scenario"
     done
 done
@@ -189,7 +190,7 @@ for scenario in "${scenarios[@]}"; do
             -o "$work/execution-root/consumer-dso-$mode-$scenario"
         receipt_products+=("dso-client-$mode-$scenario=$work/execution-root/consumer-dso-$mode-$scenario")
         run_case "kernel-$mode" "dso-$scenario" chroot "$work/execution-root" "/consumer-dso-$mode-$scenario"
-        run_case "direct-$mode" "dso-$scenario" chroot "$work/execution-root" /lib/ld-crabc-x86_64.so.1 \
+        run_case "direct-$mode" "dso-$scenario" chroot "$work/execution-root" /lib/ld-crabc-${arch}.so.1 \
             "/consumer-dso-$mode-$scenario"
     done
 done
