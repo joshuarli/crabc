@@ -122,7 +122,7 @@ class OwnedClassicNetdbComponentReceiptTests(unittest.TestCase):
         native = self.receipt.native_arch("aarch64")
         manifest = "compat/x86_64/owned_classic_netdb_image_inputs_aarch64.json"
         toolchain = Path("/opt/rustup/toolchains") / f"{self.receipt.TOOLCHAIN}-{native['target_triple']}"
-        with mock.patch.object(self.receipt, "NATIVE", native), \
+        with mock.patch.object(self.receipt, "ARCH", "aarch64"), \
              mock.patch.object(self.receipt, "IMAGE_MANIFEST", manifest), \
              mock.patch.object(self.receipt, "TOOLCHAIN_ROOT", toolchain):
             inputs = self.receipt.trusted_image_manifest(ROOT)["files"]
