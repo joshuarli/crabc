@@ -1595,10 +1595,14 @@ def build_aarch64(output: Path, *, allocator_backend: str, lifecycle_test_audit:
         copy_artifact(builtins.with_suffix(".a.provenance.json"), metadata / "libcrabc-builtins.provenance.json")
         write_json(metadata / "libc-static.provenance.json", libc_provenance)
         producer_tools = resolve_pinned_producer_tools("aarch64")
-        normalized_cargo = [arg.replace(str(stage), "$CRABC_X86_BUILD").replace(str(ROOT), "$CRABC_SOURCE") for arg in cargo]
+        normalized_cargo = [arg.replace(str(stage), "$CRABC_AARCH64_BUILD").replace(str(ROOT), "$CRABC_SOURCE") for arg in cargo]
         commands = build_commands_record(normalized_cargo, producer_tools, hardening_profile=hardening_profile)
         commands["target"] = target
-        commands["commands"]["crt"].extend(["--architecture", "aarch64"])
+        commands["commands"]["crt"] = ["python3", "crt/build_x86_64.py", "--architecture", "aarch64",
+                                        "--hardening-profile", hardening_profile.value, "--out-dir", "$CRABC_AARCH64_BUILD/crt"]
+        commands["commands"]["builtins"] = ["python3", "builtins/build.py", "--output", "$CRABC_AARCH64_BUILD/builtins/libcrabc-builtins.a",
+            "--llvm-ar", str(tools / "llvm-ar"), "--llvm-nm", str(tools / "llvm-nm"),
+            "--llvm-readelf", "/usr/bin/readelf", "--ld-lld", "/usr/bin/mold", "--verify-reproducible"]
         write_json(metadata / "build.commands.json", commands)
         manifest_path = metadata / "manifest.json"
         files = regular_file_hashes(installed)
@@ -1611,6 +1615,8 @@ def build_aarch64(output: Path, *, allocator_backend: str, lifecycle_test_audit:
         manifest["target"] = target
         manifest["build_profile"] = profile
         manifest["package"]["format"] = "crabc-aarch64-owned-static-sysroot-package/v1"
+        manifest["package"]["archive_root"] = "crabc-aarch64-owned-static-sysroot"
+        manifest["sealed_static_driver"]["not_proven_by_this_seed"][-1] = "aarch64 promotion or public support"
         manifest["sealed_static_driver"]["format"] = "crabc-aarch64-sealed-static-driver-v1"
         write_json(manifest_path, manifest)
         from compat.x86_64 import crabc_cc_static as static_driver
