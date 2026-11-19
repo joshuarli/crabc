@@ -119,6 +119,9 @@ pub struct ComplexQuad {
     pub imaginary: f128,
 }
 
+#[cfg(target_arch = "aarch64")]
+mod aarch64_complex;
+
 // SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
 // LLVM compiler-rt 22.1.3 lib/builtins/multc3.c.
 #[cfg(target_arch = "aarch64")]
@@ -873,7 +876,6 @@ pub extern "C" fn __popcountti2(value: Uint128) -> i32 {
 ///
 /// Keep this in the owned helper archive so baseline CPUs without POPCNT do
 /// not import libgcc. The existing 128-bit helper uses the same LLVM primitive.
-#[cfg(target_arch = "x86_64")]
 #[unsafe(no_mangle)]
 pub extern "C" fn __popcountdi2(value: u64) -> i32 {
     value.count_ones() as i32

@@ -8,6 +8,9 @@
 set -euo pipefail
 
 readonly ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+if [ "$(uname -m)" = aarch64 ]; then
+    exec bash "$ROOT_DIR/builtins/run_aarch64_compiler_helper_aggregate.sh" "$@"
+fi
 readonly ORACLE_CC=/usr/local/bin/crabc-x86_64-musl-gcc
 readonly BUILDER="${ROOT_DIR}/builtins/build_x86_64.py"
 readonly CONTRACT="${ROOT_DIR}/builtins/x86_64-helper-contract.toml"

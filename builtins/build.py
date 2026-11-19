@@ -354,11 +354,14 @@ def audit_source() -> list[dict[str, str]]:
     rust_source = SOURCE.read_text(encoding="utf-8")
     if "#![no_std]" not in rust_source:
         raise BuildError("compiler helper source must remain no_std")
-    for token in FORBIDDEN_SOURCE_TOKENS:
-        if token in rust_source:
-            raise BuildError(f"forbidden source dependency or assembly facility: {token}")
+    complex_source = SOURCE.with_name("aarch64_complex.rs")
+    for source in (SOURCE, complex_source):
+        text = source.read_text(encoding="utf-8")
+        for token in FORBIDDEN_SOURCE_TOKENS:
+            if token in text:
+                raise BuildError(f"forbidden source dependency or assembly facility: {token}")
 
-    production_inputs = (ROOT / "Cargo.toml", ROOT / "Cargo.lock", ROOT / "build.py", ROOT / "provenance.toml", SOURCE)
+    production_inputs = (ROOT / "Cargo.toml", ROOT / "Cargo.lock", ROOT / "build.py", ROOT / "provenance.toml", SOURCE, complex_source)
     return [
         {"path": path.relative_to(ROOT).as_posix(), "sha256": sha256(path)}
         for path in production_inputs
@@ -741,6 +744,17 @@ def source_build_compiler_builtins(
     probe = write_source_build_probe(stage)
     flags = source_build_rustflags(stage, upstream)
     environment = source_build_environment(stage, flags)
+    # The pinned rust-src distribution includes the locked Cargo vendor tree.
+    # Use it directly so this build also works in the networkless ABI runner.
+    vendor = upstream.parent.parent / "vendor"
+    if not vendor.is_dir():
+        raise BuildError("pinned rust-src vendor tree is unavailable")
+    cargo_home = pathlib.Path(environment["CARGO_HOME"])
+    cargo_home.mkdir(parents=True, exist_ok=True)
+    (cargo_home / "config.toml").write_text(
+        '[source.crates-io]\nreplace-with = "rust-src"\n'
+        '[source.rust-src]\ndirectory = ' + json.dumps(str(vendor)) + '\n'
+        '[net]\noffline = true\n', encoding="utf-8")
     target_dir = pathlib.Path(environment["CARGO_TARGET_DIR"])
     pathlib.Path(environment["TMPDIR"]).mkdir(parents=True, exist_ok=True)
     command = [
