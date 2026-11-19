@@ -22,6 +22,9 @@ from typing import Any
 
 
 sys.dont_write_bytecode = True
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from native_arch import native_arch
+ARCH = native_arch()["arch"]
 
 WORKLOAD_BINDING_FORMAT = "crabc-x86-64-owned-syslog-workload-binding-v1"
 HEADER_TRANSLATION_FORMAT = "crabc-x86-64-owned-syslog-header-translation-v1"
@@ -200,6 +203,16 @@ def _installed_compiler_contract(installed: Path) -> tuple[Any, Path, Path]:
         '*invocation.compiler_flags, *(["-frounding-math"] if rounding_math else []),',
         '"-fPIC" if mode == "shared" else "-fPIE" if mode == "pie" else "-fno-pie",',
     )
+    if ARCH == "aarch64":
+        fragments = (
+            'SourceFileLoader("crabc_cc_static", str(root / "share/crabc/crabc_cc_static.py"))',
+            "quote_dirs = []", "rounding = False", "quote_dirs.append(path)",
+            'shared.run_checked([shared.compiler(), "-nostdinc",',
+            '*(v for path in quote_dirs for v in ("-iquote", str(path)))',
+            '"-isystem", str(root / "usr/include"), *shared.HOSTED_TRANSLATION_FLAGS,',
+            '*invocation.compiler_flags, *(["-frounding-math"] if rounding else []),',
+            '"-fPIC" if mode == "shared" else "-fPIE" if mode == "pie" else "-fno-pie",',
+        )
     if not all(fragment in source for fragment in fragments):
         _fail("owned syslog installed dynamic compiler composition drifted")
     specification = importlib.util.spec_from_file_location(
