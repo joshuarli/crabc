@@ -147,13 +147,29 @@ static_archive_member! { rintl_source {
     pub extern "C" fn rintl(x: f128) -> f128 {
         let bits = x.to_bits();
         let exponent = (bits >> 112) & 0x7fff;
-        let sign = bits >> 127;
         if exponent >= 0x3fff + 112 {
             return x;
         }
-        let toint = f128::from_bits((0x3fffu128 + 112) << 112);
-        let y = if sign != 0 { x - toint + toint } else { x + toint - toint };
-        if y == 0.0f128 { 0.0f128 * x } else { y }
+        let sign = bits & (1u128 << 127);
+        let magnitude = bits & !(1u128 << 127);
+        if magnitude == 0 { return x; }
+        let (truncated, remainder, half, unit) = if exponent < 0x3fff {
+            (0, magnitude, 0x3ffeu128 << 112, 0x3fffu128 << 112)
+        } else {
+            let shift = (0x3fff + 112 - exponent) as u32;
+            let mask = (1u128 << shift) - 1;
+            (magnitude & !mask, magnitude & mask, 1u128 << (shift - 1), 1u128 << shift)
+        };
+        if remainder == 0 { return x; }
+        crabc_core::fenv::raise_exceptions(crabc_core::fenv::ExceptionFlags::INEXACT);
+        use crabc_core::fenv::RoundingMode;
+        let increment = match crabc_core::fenv::get_rounding() {
+            RoundingMode::Nearest => remainder > half || (remainder == half && truncated & unit != 0),
+            RoundingMode::Upward => sign == 0,
+            RoundingMode::Downward => sign != 0,
+            RoundingMode::TowardZero => false,
+        };
+        f128::from_bits(sign | if increment { truncated + unit } else { truncated })
     }
 
     #[cfg(target_arch = "x86_64")]
