@@ -910,6 +910,41 @@ class OwnedCleanupContract(unittest.TestCase):
             fixture["linked"], "Cargo host build-script linker output",
         ))
 
+    def test_arm64_host_link_launcher_checks_elf_and_trusted_bytes(self):
+        root = Path(self.temporary.name)
+        profile = root / "profile"
+        host = profile / "host"
+        directory = host / "build" / "fixture"
+        directory.mkdir(parents=True)
+        linked = directory / "build-script"
+        real = linked.with_name(linked.name + ".kache-real")
+        real.write_bytes(b"real build script")
+        real.chmod(0o755)
+        launcher = bytearray(192)
+        struct.pack_into("<16sHHIQQQIHHHHHH", launcher, 0, b"\x7fELF\x02\x01\x01", 2, 183, 1,
+                         0x400000, 64, 128, 0, 64, 56, 1, 64, 1, 0)
+        struct.pack_into("<IIQQQQQQ", launcher, 64, 1, 1, 0, 0x400000, 0, 192, 192, 4096)
+        linked.write_bytes(launcher)
+        linked.chmod(0o755)
+        shim = profile / ".kache-build-script-shims" / ("a" * 32) / "kache"
+        shim.parent.mkdir(parents=True)
+        shim.write_bytes(b"prefix" + launcher + b"suffix")
+        shim.chmod(0o755)
+        (directory / ".kache-launch").write_bytes(
+            (real.name + "\0.kache-build-script-shims/" + "a" * 32 + "/kache\0" +
+             os.path.relpath(profile, directory) + "/\0").encode())
+        output = {"path": str(linked), "sha256": owned_cleanup.digest(real)}
+        with mock.patch.object(owned_cleanup, "ARCH", "aarch64"), \
+             mock.patch.object(owned_cleanup.native_rustc.native_build_tools, "KACHE", shim):
+            self.assertTrue(owned_cleanup._host_link_output_matches(output, linked, host))
+            for offset, value in ((18, 62), (16, 3)):
+                bad = bytearray(launcher)
+                struct.pack_into("<H", bad, offset, value)
+                linked.write_bytes(bad)
+                self.assertFalse(owned_cleanup._host_link_output_matches(output, linked, host))
+            linked.write_bytes(launcher[:-1])
+            self.assertFalse(owned_cleanup._host_link_output_matches(output, linked, host))
+
     def test_host_build_link_retained_copy_survives_cargo_deleting_transient_input(self):
         fixture = self.host_build_fixture()
         retained = Path(fixture["receipt_record"]["link_inputs"][0]["retained_path"])
