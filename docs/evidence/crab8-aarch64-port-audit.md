@@ -340,3 +340,13 @@ cross-target flags documented in CRAB-8.
 | Development-only | 7 | 10, 39, 54–58 |
 | Test-coverage | 14 | 40–53 |
 | x86 behavior changed | 6 | 59–64 |
+
+## x86 harness tests after convergence (open)
+
+A full Mac run of `compat/x86_64/tests` under an x86 `uname` shim at
+`a15041c68` has 54 failing test names that pass at `58eb7704d`: about 37
+header source-form tests that still assert the deleted frozen-AArch64 header
+branches or pre-convergence x86 source spelling (x86 preprocessed output is
+byte-identical), and about 17 runner, receipt and parser tests touched by the
+aarch64 runner ports. All arm64 checks pass at this commit (libc-test 428/434,
+34-case corpus, 675 crabc-rs tests, 154 loader tests, x86 type-checks).
