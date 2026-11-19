@@ -25,7 +25,7 @@ from unittest import mock
 SOURCE_DIR = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(SOURCE_DIR))
 
-from loader_debug_abi_evidence import Elf
+from loader_debug_abi_evidence import ARCH, Elf
 from owned_syscall_alias_authority import archive_members, require_static_function_map
 from owned_syscall_alias_contract_reader import ALIASES
 from owned_static_link_authority import (
@@ -70,11 +70,18 @@ class MoldStaticFunctionTests(unittest.TestCase):
         with tempfile.TemporaryDirectory(dir=parent) as temporary:
             root = Path(temporary)
             source, obj, executable, link_map = (root / name for name in ('tls.s', 'tls.o', 'tls', 'tls.map'))
-            source.write_text('.section .tdata,"awT",@progbits\n.globl fixture_tls\n.type fixture_tls,@tls_object\n'
+            arm = ('.section .tdata,"awT",%progbits\n.globl fixture_tls\n.type fixture_tls,%tls_object\n'
+                   'fixture_tls: .quad 1\n.size fixture_tls,8\n.text\n.globl selected\n'
+                   '.type selected,%function\nselected: adrp x0,:gottprel:fixture_tls\n'
+                   'ldr x0,[x0,:gottprel_lo12:fixture_tls]\nret\n'
+                   '.size selected,.-selected\n.globl _start\n.type _start,%function\n_start: ret\n'
+                   '.size _start,.-_start\n')
+            x86 = ('.section .tdata,"awT",@progbits\n.globl fixture_tls\n.type fixture_tls,@tls_object\n'
                               'fixture_tls: .quad 1\n.size fixture_tls,8\n.text\n.globl selected\n'
                               '.type selected,@function\nselected: mov fixture_tls@gottpoff(%rip),%rax\nret\n'
                               '.size selected,.-selected\n.globl _start\n.type _start,@function\n_start: ret\n'
                               '.size _start,.-_start\n')
+            source.write_text(arm if ARCH == 'aarch64' else x86)
             subprocess.run([compiler, '-c', str(source), '-o', str(obj)], check=True, capture_output=True)
             subprocess.run([linker, '-static', '--no-relax', '-e', '_start', '-Map=' + str(link_map), str(obj), '-o', str(executable)],
                            check=True, capture_output=True)
