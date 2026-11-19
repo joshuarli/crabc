@@ -74,3 +74,33 @@ source_runtime_expected_static_surface() {
         fi
     } | LC_ALL=C sort -u >"$output"
 }
+
+# Exact source-runtime C export and binding inventories shared by math proofs.
+collect_global_surface() {
+	local archive_path="$1" output_path="$2" members_path="$3"
+	local -a members
+	mapfile -t members < <(ar t "$archive_path" | grep -E '^c\..+\.rcgu\.o$')
+	[ "${#members[@]}" -gt 0 ] || fail "archive has no crabc-libc object members"
+	mkdir "$members_path"
+	(
+		cd "$members_path"
+		ar x "$archive_path" "${members[@]}"
+		nm -g --defined-only --format=posix "${members[@]}"
+	) | awk '$2 ~ /^[TWDVBR]$/ && $1 !~ /^(_R|_ZN|DW\.ref\.|anon\.)/ && $1 != "crabc_x86_64_signal_restorer" && $1 != "__crabc_x86_pthread_clone" { print $1 }' |
+		sort -u >"$output_path"
+}
+
+collect_global_bindings() {
+	local archive_path="$1" output_path="$2" members_path="$3"
+	local -a members
+	mapfile -t members < <(ar t "$archive_path" | grep -E '^c\..+\.rcgu\.o$')
+	[ "${#members[@]}" -gt 0 ] || fail "archive has no crabc-libc object members"
+	mkdir "$members_path"
+	(
+		cd "$members_path"
+		ar x "$archive_path" "${members[@]}"
+		nm -g --defined-only --format=posix "${members[@]}"
+	) | awk '$2 ~ /^[TWDVBR]$/ && $1 !~ /^(_R|_ZN|DW\.ref\.|anon\.)/ && $1 != "crabc_x86_64_signal_restorer" && $1 != "__crabc_x86_pthread_clone" { print $1, $2 }' |
+		sort -u >"$output_path"
+}
+

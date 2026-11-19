@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
+. "$(dirname "${BASH_SOURCE[0]}")/source_runtime_libc.sh"
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cc=/usr/local/bin/crabc-aarch64-musl-gcc
 fail() { printf 'ERROR: aarch64 binary128 fdiml/exp10l: %s\n' "$*" >&2; exit 1; }
@@ -60,7 +61,17 @@ done
 exp="$(awk '$4 == "FUNC" && $8 == "exp10l" { print $2; exit }' "$work/symbols")"
 pow="$(awk '$4 == "FUNC" && $8 == "pow10l" { print $2; exit }' "$work/symbols")"
 [ -n "$exp" ] && [ "$exp" = "$pow" ] || fail 'exp10l/pow10l alias differs'
-archive="$work/product/usr/lib/libc.a"
+build_source_runtime_libc "$work/base-libc.a" --retain-work "$work/source-runtime-baseline"
+build_source_runtime_libc "$work/source-libc.a" --retain-work "$work/source-runtime-feature"
+collect_global_surface "$work/base-libc.a" "$work/base-surface" "$work/base-members"
+collect_global_surface "$work/source-libc.a" "$work/feature-surface" "$work/feature-members"
+collect_global_bindings "$work/base-libc.a" "$work/base-bindings" "$work/base-binding-members"
+collect_global_bindings "$work/source-libc.a" "$work/feature-bindings" "$work/feature-binding-members"
+source_runtime_expected_static_surface "$root/compat/x86_64/static_c_abi_exports.txt" "$work/expected-surface" aarch64
+cmp "$work/expected-surface" "$work/base-surface" || fail 'source-runtime export surface differs'
+cmp "$work/base-surface" "$work/feature-surface" || fail 'source-runtime rebuild export surface differs'
+cmp "$work/base-bindings" "$work/feature-bindings" || fail 'source-runtime rebuild bindings differ'
+archive="$work/source-libc.a"
 nm -A --defined-only "$archive" > "$work/archive-symbols"
 for symbol in fdiml exp10l; do
     grep -Eq "[[:space:]]T[[:space:]]${symbol}$" "$work/archive-symbols" || fail "archive lacks strong $symbol"
