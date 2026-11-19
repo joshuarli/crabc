@@ -108,6 +108,39 @@ if grep -Eq 'crabc_core|mimalloc|float_parse|math_compat|libm\.so|libm-' \
     "$work/freestanding.symbols" "$work/freestanding.disassembly"; then
     fail 'freestanding candidate retained an ambient math or runtime dependency'
 fi
+aggregate=CRABC_MATH_ELEMENTARY_FENV_SENSITIVE_AGGREGATE_FREESTANDING
+"$cc" -std=c11 -D_GNU_SOURCE -D"$aggregate" -fno-builtin -frounding-math -ffreestanding \
+    -fno-stack-protector -fno-pie -nostdinc -isystem "$compiler_include" -I"$work/product/usr/include" \
+    -c compat/x86_64/libc_math_elementary_fenv_sensitive_aggregate_probe.c -o "$work/aggregate.o"
+"$cc" -D"$aggregate" -c compat/x86_64/libc_math_long_double_completion_aarch64_start.S -o "$work/aggregate-start.o"
+"$cc" -nostdlib -static -no-pie -Wl,-e,_start,--no-undefined,--gc-sections,--trace,--export-dynamic \
+    "$work/aggregate-start.o" "$work/aggregate.o" -Wl,--start-group "$archive" \
+    "$work/product/usr/lib/libcrabc-builtins.a" -Wl,--end-group -o "$work/aggregate" > "$work/aggregate.trace"
+readelf -sW "$work/aggregate" > "$work/aggregate.symbols"
+readelf -lW "$work/aggregate" > "$work/aggregate.program"
+readelf -dW "$work/aggregate" > "$work/aggregate.dynamic"
+readelf -rW "$work/aggregate" > "$work/aggregate.relocations"
+objdump -d "$work/aggregate" > "$work/aggregate.disassembly"
+for pair in exp10:pow10 exp10f:pow10f exp10l:pow10l; do
+    strong="${pair%%:*}"
+    weak="${pair##*:}"
+    strong_value="$(awk -v symbol="$strong" '$4 == "FUNC" && $5 == "GLOBAL" && $6 == "DEFAULT" && $8 == symbol { print $2; exit }' "$work/aggregate.symbols")"
+    weak_value="$(awk -v symbol="$weak" '$4 == "FUNC" && $5 == "WEAK" && $6 == "DEFAULT" && $8 == symbol { print $2; exit }' "$work/aggregate.symbols")"
+    [ -n "$strong_value" ] && [ "$strong_value" = "$weak_value" ] || fail "aggregate alias $pair differs"
+done
+for symbol in fdim fdimf fdiml rint rintf rintl nearbyint nearbyintf nearbyintl; do
+    grep -Eq "[[:space:]]FUNC[[:space:]]+GLOBAL[[:space:]]+DEFAULT[[:space:]]+[0-9]+[[:space:]]${symbol}$" \
+        "$work/aggregate.symbols" || fail "aggregate lacks strong $symbol"
+done
+if awk '$7 == "UND" && NF >= 8 && !($5 == "LOCAL" && ($8 == "_PROCEDURE_LINKAGE_TABLE_" || $8 == "__rela_iplt_start" || $8 == "__rela_iplt_end")) { print }' "$work/aggregate.symbols" | grep . >/dev/null ||
+    grep -Eq 'INTERP|[[:space:]]TLS[[:space:]]|Requesting program interpreter' "$work/aggregate.program" ||
+    grep -Eq '\((NEEDED|JMPREL|PLTGOT|TEXTREL)\)' "$work/aggregate.dynamic" ||
+    grep -Eq 'TLSGD|TLSLD|TLSDESC|DTPMOD|DTPREL|__tls_get_addr|crabc_core|mimalloc|float_parse|math_compat|libm\.so|libm-' \
+        "$work/aggregate.symbols" "$work/aggregate.relocations" "$work/aggregate.disassembly" ||
+    grep -Eq 'libgcc|compiler-rt|libm\.so|/[Sr]?crt[^/[:space:]]*\.o' "$work/aggregate.trace"; then
+    fail 'aggregate candidate has unowned linkage, TLS, or unresolved symbols'
+fi
+"$work/aggregate" || fail 'aggregate candidate failed'
 "$work/oracle" > "$work/oracle.records"
 "$work/candidate" > "$work/candidate.records"
 "$work/freestanding" > "$work/freestanding.records"
