@@ -900,10 +900,12 @@ def audit_aarch64_entry(spec: ObjectSpec, path: Path) -> dict[str, object]:
         if entry != expected:
             raise BuildError(f"{path}: conventional entry register handoff differs")
     elif spec.name == "Scrt1.o":
-        if not entry.startswith(bytes.fromhex("e10300aae0030091")) or not entry.endswith(bytes.fromhex("00000094000020d4")):
+        expected = bytes.fromhex("e10300aae0030091e903009129ed7c923f010091fd031faa00000094000020d4")
+        if entry != expected:
             raise BuildError(f"{path}: dynamic entry register handoff differs")
-    elif bytes.fromhex("010000d4") not in entry:
-        raise BuildError(f"{path}: static PIE entry lacks syscall")
+    elif (not entry.startswith(bytes.fromhex("ef030091fd031faafe031faaffed7c92"))
+          or bytes.fromhex("010000d4") not in entry):
+        raise BuildError(f"{path}: static PIE entry lacks aligned stack or syscall")
     return {"status": "verified", "entry_contract": spec.entry_contract,
             "entry_symbol_size": start.size, "entry_relocation_types": [relocations[0].relocation_type],
             "direct_handoff_symbol": handoff, "no_early_got_or_tls_relocation": True,
