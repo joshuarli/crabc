@@ -525,7 +525,8 @@ def plan_record(root: Path, mode: StaticMode, *, architecture: str = "x86_64") -
         },
         "headers": str(root / "usr" / "include"),
         "owned_target_inputs": [
-            str(root / "usr" / relative) for relative in REQUIRED_RUNTIME_PATHS
+            str(root / relative) if architecture == "aarch64" else str(root / "usr" / relative)
+            for relative in REQUIRED_RUNTIME_PATHS
         ],
         "rejected_ambient_target_inputs": [
             "headers",

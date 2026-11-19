@@ -36,6 +36,12 @@ import build_x86_64_owned_combined_sysroot as combined  # noqa: E402
 
 
 class BuildX86OwnedSysrootTests(unittest.TestCase):
+    def test_arm64_link_plan_names_the_installed_runtime_paths(self):
+        root = Path("/owned")
+        plan = driver.plan_record(root, driver.STATIC_ET_EXEC, architecture="aarch64")
+        self.assertEqual(plan["owned_target_inputs"],
+                         [str(root / name) for name in driver.REQUIRED_RUNTIME_PATHS])
+
     def test_crt_profile_and_object_must_match_product(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
