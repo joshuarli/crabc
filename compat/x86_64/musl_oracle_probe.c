@@ -33,6 +33,6 @@ int main(void)
     if (!saw_pinned_libc || saw_glibc)
         return 12;
 
-    printf("pinned musl x86_64 runtime: %s\n", CRABC_MUSL_ORACLE_LIBC_PATH);
+    printf("pinned musl %s runtime: %s\n", CRABC_MUSL_ORACLE_ARCH, CRABC_MUSL_ORACLE_LIBC_PATH);
     return 0;
 }
