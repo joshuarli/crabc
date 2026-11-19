@@ -212,7 +212,6 @@ from owned_dynamic_qualification import ARCH, CASES
 cases = list(CASES)
 if ARCH['arch'] == 'aarch64':
     cases.remove('package-corpus')
-    cases.append('package-corpus')
 print('\n'.join(cases))
 PYTHON
 )"
@@ -276,6 +275,14 @@ rm -rf -- "$suite_streams"
 if [ "${#suite_failures[@]}" -ne 0 ]; then
     printf 'materialized dynamic sysroot: runtime suites failed for: %s\n' "${suite_failures[*]}" >&2
     exit 1
+fi
+if [ "$native_arch" = aarch64 ]; then
+    corpus_failed=0
+    for label in installed second extracted; do
+        python3 -B "$ROOT/compat/x86_64/owned_dynamic_qualification.py" run \
+            --work "$work" --product "$label" --case package-corpus || corpus_failed=1
+    done
+    [ "$corpus_failed" -eq 0 ] || exit 1
 fi
 python3 -B "$ROOT/compat/x86_64/owned_dynamic_qualification.py" finish --work "$work"
 printf 'materialized dynamic sysroot: PASS (two clean builds and extracted initial/runtime graphs); evidence: %s\n' "$work"
