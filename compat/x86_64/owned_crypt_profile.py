@@ -25,6 +25,7 @@ import owned_posix_native_dispositions as dispositions
 import owned_crypt_runtime_evidence as copies
 import owned_dynamic_receipt as receipt_contract
 import owned_posix_product_evidence as products
+from native_arch import native_arch
 
 ROOT = Path(__file__).resolve().parents[2]
 SCHEMA = 'crabc.x86_64-owned-crypt-profile/v1'
@@ -41,8 +42,9 @@ SOURCES = (*dispositions.PROFILE_SOURCES, ABI_SOURCE,
 ENVIRONMENT = {'LC_ALL': 'C', 'PATH': '/usr/bin:/bin', 'SOURCE_DATE_EPOCH': '1', 'TZ': 'UTC'}
 RUNTIME_ENVIRONMENT = {'PATH': '/usr/sbin:/usr/bin:/sbin:/bin', 'LC_ALL': 'C', 'TZ': 'UTC'}
 MODES = dispositions.DYNAMIC_MODES
-ORACLE_CC = '/usr/local/bin/crabc-x86_64-musl-gcc'
-INTERPRETER = '/lib/ld-crabc-x86_64.so.1'
+ARCH = native_arch()['arch'] if sys.platform.startswith('linux') else 'x86_64'
+ORACLE_CC = f'/usr/local/bin/crabc-{ARCH}-musl-gcc'
+INTERPRETER = f'/lib/ld-crabc-{ARCH}.so.1'
 ABI_FLAGS = ['-std=c11', '-D_GNU_SOURCE', '-DCRABC_X86_CRYPT_CANDIDATE', '-fno-builtin', '-fno-stack-protector']
 VECTOR_FLAGS = ['-std=c11', '-D_GNU_SOURCE', '-fno-builtin', '-fno-stack-protector']
 
@@ -111,7 +113,7 @@ def elf_facts(path):
     require(part(0, 7) == b'\x7fELF\x02\x01\x01', 'crypt artifact is not ELF64 little-endian')
     header = unpack('<HHIQQQIHHHHHH', 16)
     kind, machine, version, _, phoff, shoff, _, ehsize, phsize, phnum, shsize, shnum, _ = header
-    require(machine == 62 and version == 1 and ehsize == 64 and (phnum == 0 or phsize == 56)
+    require(machine == (62 if ARCH == 'x86_64' else 183) and version == 1 and ehsize == 64 and (phnum == 0 or phsize == 56)
             and (shnum == 0 or shsize == 64), 'crypt ELF architecture or header contract differs')
     require(phnum < 65536 and shnum < 65536, 'crypt ELF table count differs')
     def cstring(blob, offset):
@@ -158,7 +160,8 @@ def require_elf(path, linkage):
     require(not facts['textrel'], 'crypt ELF has text relocations')
     if linkage == 'object':
         same(facts['type'], 1, 'crypt installed source object type')
-        require(not any(kind in (10, 11) for kind in facts['relocations']), 'crypt object has absolute 32-bit relocations')
+        absolute_32 = (10, 11) if ARCH == 'x86_64' else (258,)
+        require(not any(kind in absolute_32 for kind in facts['relocations']), 'crypt object has absolute 32-bit relocations')
     elif linkage == 'oracle':
         same([facts['type'], facts['interpreters'], facts['needed']], [2, [], []], 'crypt pinned static oracle ELF')
     else:

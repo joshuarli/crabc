@@ -59,6 +59,25 @@ class AtomicAddressableProfileError(RuntimeError):
 require, same, keys = native.require, native.same, native.keys
 
 
+class Aarch64Reader(native.Reader):
+    def __init__(self, leaf, mount, product, root):
+        self.root = native.physical(root, directory=True)
+        require(isinstance(mount, str) and Path(mount).is_absolute() and '..' not in Path(mount).parts
+                and str(Path(mount)) == mount, 'invalid source mount')
+        self.mount = Path(mount)
+        self.leaf = native.physical(leaf, directory=True)
+        self.product = native.physical(product, directory=True)
+        for path in (self.leaf, self.product):
+            require(path.is_relative_to(self.root / '.work') and path != self.root / '.work',
+                    'component evidence and products must be physical checkout .work children')
+        require(not self.product.is_relative_to(self.leaf), 'supplied product cannot be a leaf execution copy')
+        self.manifest = self.product / 'share/crabc/manifest.json'
+        manifest = native.read_json(self.manifest)
+        same({key: manifest.get(key) for key in ('schema', 'format', 'target')},
+             {'schema': 1, 'format': 'crabc-aarch64-owned-dynamic-sysroot-v1',
+              'target': 'aarch64-unknown-linux-musl'}, 'dynamic product identity')
+
+
 def source_records(root):
     return {path: {'path': path, 'sha256': native.digest(root / path),
                    'mode': (root / path).stat().st_mode} for path in SOURCES}
@@ -137,7 +156,8 @@ def _reader(root, work, product=None):
     if product is not None:
         same(str(selected), str(family.physical(root, product)), 'atomic companion selected product')
     products._validate_dynamic_product(selected)
-    return native.Reader(work, request['source_mount'], selected, root)
+    reader = Aarch64Reader if sealed.ARCH == 'aarch64' else native.Reader
+    return reader(work, request['source_mount'], selected, root)
 
 
 def _command(root, work, label, command):
@@ -202,6 +222,14 @@ def _cxx_undefined(raw):
 
 def _link_command(reader, objects, binary, mode, linker):
     library = reader.product / 'usr/lib'
+    if sealed.ARCH == 'aarch64':
+        entry = library / ('Scrt1.o' if mode == 'pie' else 'crt1.o')
+        return [linker, *(('-pie',) if mode == 'pie' else ()), '--hash-style=sysv', '--eh-frame-hdr', '-z', 'relro', '-z', 'now',
+                '-z', 'noexecstack', '-z', 'text', '--no-undefined', '--allow-shlib-undefined', '--enable-new-dtags',
+                '-rpath', '/usr/lib', '--exclude-libs=libcrabc-builtins.a', *receipt_contract.EXECUTABLE_WEAK_IMPORT_FLAGS,
+                '--dynamic-linker', sealed.INTERPRETER,
+                *(reader.recorded(path) for path in [entry, library / 'crti.o', *objects, library / 'libcrabc-builtins.a',
+                                                    library / 'libc.so', library / 'crtn.o']), '-o', reader.recorded(binary)]
     runtime = [library / ('Scrt1.o' if mode == 'pie' else 'crt1.o'), library / 'crabc-dynamic-attach.o',
                library / 'crti.o']
     return [linker, *(('-pie',) if mode == 'pie' else ()), '--hash-style=sysv', '--eh-frame-hdr', '-z', 'relro', '-z', 'now',
@@ -216,14 +244,16 @@ def _collect_link(reader, objects, binary, mode, tools):
     receipt_path = Path(str(binary) + '.crabc-link.json')
     receipt = native.read_json(receipt_path)
     search = receipt_contract.validate(
-        receipt, format=native.PRODUCT_FORMAT, label='atomic sealed link receipt',
+        receipt, format=('crabc-aarch64-owned-dynamic-sysroot-v1' if sealed.ARCH == 'aarch64' else native.PRODUCT_FORMAT), label='atomic sealed link receipt',
         fail=lambda message: require(False, message),
     )
     library = reader.product / 'usr/lib'
     runtime = [library / 'crti.o', library / 'libc.so', library / 'crtn.o',
-               library / ('Scrt1.o' if mode == 'pie' else 'crt1.o'), library / 'crabc-dynamic-attach.o']
+               library / ('Scrt1.o' if mode == 'pie' else 'crt1.o')]
+    if sealed.ARCH == 'x86_64':
+        runtime.append(library / 'crabc-dynamic-attach.o')
     builtins = library / 'libcrabc-builtins.a'
-    expected = {'format': native.PRODUCT_FORMAT, 'mode': 'pie' if mode == 'pie' else 'exec',
+    expected = {'format': 'crabc-aarch64-owned-dynamic-sysroot-v1' if sealed.ARCH == 'aarch64' else native.PRODUCT_FORMAT, 'mode': 'pie' if mode == 'pie' else 'exec',
         'binding': 'now', 'runtime_imports': [], 'application_runpath': '/usr/lib', 'application_dsos': {},
         'campaign_complete': False, 'output_path': reader.recorded(binary), 'output_sha256': native.digest(binary),
         'manifest_sha256': native.digest(reader.manifest),
