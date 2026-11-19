@@ -91,7 +91,7 @@ class OwnedCalendarComponentReceiptTests(unittest.TestCase):
         header = bytearray(64)
         header[:16] = b"\x7fELF\x02\x01\x01" + b"\0" * 9
         header[16:18] = etype.to_bytes(2, "little")
-        header[18:20] = (62).to_bytes(2, "little")
+        header[18:20] = (183 if self.module.qualification.ARCH["arch"] == "aarch64" else 62).to_bytes(2, "little")
         return self.write(relative, bytes(header), mode=0o755)
 
     def relative(self, path: Path) -> str:
@@ -643,13 +643,13 @@ class OwnedCalendarRunnerProductCopyTests(unittest.TestCase):
             libc = product / "usr/lib/libc.so"
             libc.write_bytes(b"\x7fELF shared libc and loader")
             libc.chmod(0o755)
-            os.link(libc, product / "lib/ld-crabc-x86_64.so.1")
+            os.link(libc, product / runner.receipt.INTERPRETER.lstrip("/"))
             (product / "usr/lib/libc.so.6").symlink_to("libc.so")
             root = base / "root"
             runner.copy_product(product, root)
             self.assertTrue(runner.receipt.same_materialized_product_tree(
                 runner.family.snapshot(root), runner.family.snapshot(product)))
-            self.assertTrue(os.path.samefile(root / "usr/lib/libc.so", root / "lib/ld-crabc-x86_64.so.1"))
+            self.assertTrue(os.path.samefile(root / "usr/lib/libc.so", root / runner.receipt.INTERPRETER.lstrip("/")))
             self.assertFalse(os.path.samefile(root / "usr/lib/libc.so", libc))
             self.assertEqual((root / "usr/lib/libc.so.6").readlink(), Path("libc.so"))
 

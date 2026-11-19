@@ -74,6 +74,9 @@ unsafe fn wide_length(mut string: *const Wchar) -> usize {
 
 #[inline]
 fn compare_units(left: Wchar, right: Wchar) -> c_int {
+    // Linux/AArch64 `wchar_t` is unsigned; Linux/x86-64 `wchar_t` is signed.
+    #[cfg(target_arch = "aarch64")]
+    let (left, right) = (left as u32, right as u32);
     if left < right {
         -1
     } else if left > right {
