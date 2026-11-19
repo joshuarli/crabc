@@ -1221,8 +1221,12 @@ def execute_aarch64(root: Path, arguments: Sequence[str], manifest: dict) -> Non
     if arguments.count(cortex_flag) > 1:
         raise DriverError("duplicate cortex-a53 linker option")
     fix_cortex = cortex_flag in arguments
-    static_pie = "-static-pie" in arguments or "--static-pie" in arguments
-    invocation = parse_invocation([arg for arg in arguments if arg not in {"-no-pie", "-static-pie", "--static-pie", cortex_flag}])
+    profile = profile_from_manifest(manifest)
+    if "-no-pie" in arguments and profile is NativeRuntimeProfile.HARDENED:
+        raise DriverError("hardened static products require static PIE")
+    invocation = parse_invocation([arg for arg in arguments if arg not in {"-no-pie", cortex_flag}],
+                                  hardening_profile=profile)
+    static_pie = invocation.mode is STATIC_PIE
     if fix_cortex and (invocation.compile_only or invocation.print_link_plan):
         raise DriverError("cortex-a53 linker option requires a link")
     static_mode = STATIC_PIE if static_pie else STATIC_ET_EXEC
