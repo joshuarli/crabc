@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 from pathlib import Path
 import subprocess
+import sys
 import tempfile
 import unittest
 
@@ -82,7 +83,12 @@ class OwnedPthreadSignalRunnerTests(unittest.TestCase):
         self.assertIn('audit_link "$static_sysroot" "$work/$mode" "$work/$mode.receipt.json" "$mode"', source)
         self.assertIn('audit_link "$dynamic_sysroot" "$work/dynamic-$mode"', source)
         self.assertIn('for entry in kernel direct; do', source)
-        self.assertIn('/lib/ld-crabc-x86_64.so.1 "/consumer-$mode"', source)
+        self.assertIn('"/lib/ld-crabc-$arch.so.1" "/consumer-$mode"', source)
+        for machine in ("x86_64", "aarch64"):
+            settings = subprocess.check_output(
+                [sys.executable, "-B", str(ROOT / "compat/x86_64/native_arch.py"), machine], text=True
+            )
+            self.assertIn(f"arch={machine}\n", settings)
         self.assertIn('"$output" 2>"${output%.stdout}.stderr"', source)
         self.assertIn('"${output%.stdout}.status"', source)
         self.assertIn('for suffix in stdout stderr status; do', source)
