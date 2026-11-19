@@ -43,6 +43,7 @@ enum {
     CRABC_PARALLEL_DETACHED_ROUNDS = 48,
     CRABC_SIMULTANEOUS_LAST_EXIT_WORKERS = 8,
     CRABC_CANCELED_SENTINEL = 0x56a71c2d,
+    CRABC_ATFORK_ORDER_SLOTS = 2,
 };
 
 _Static_assert(sizeof(pthread_attr_t) == 56 && _Alignof(pthread_attr_t) == 8,
@@ -67,7 +68,7 @@ _Static_assert(__builtin_types_compatible_p(__typeof__(&pthread_atfork),
 static _Alignas(4096) unsigned char crabc_caller_stack[CRABC_PRIVATE_STACK_SIZE];
 static pthread_key_t crabc_teardown_key;
 static volatile int crabc_atfork_count;
-static volatile int crabc_atfork_order[2];
+static volatile int crabc_atfork_order[CRABC_ATFORK_ORDER_SLOTS];
 static int crabc_main_exit_pipe = -1;
 
 static void spin_pause(void)
@@ -410,19 +411,26 @@ static int c11_worker(void *opaque)
     return value;
 }
 
+/* These handlers stay registered for the process lifetime, so every later
+ * fork re-enters them. They must never write past the two slots this task
+ * records: an unguarded `count++` would spill the literal ordering marker into
+ * whatever the linker placed after the array. */
 static void atfork_prepare(void)
 {
-    crabc_atfork_order[crabc_atfork_count++] = 1;
+    if (crabc_atfork_count < CRABC_ATFORK_ORDER_SLOTS)
+        crabc_atfork_order[crabc_atfork_count++] = 1;
 }
 
 static void atfork_parent(void)
 {
-    crabc_atfork_order[crabc_atfork_count++] = 2;
+    if (crabc_atfork_count < CRABC_ATFORK_ORDER_SLOTS)
+        crabc_atfork_order[crabc_atfork_count++] = 2;
 }
 
 static void atfork_child(void)
 {
-    crabc_atfork_order[crabc_atfork_count++] = 3;
+    if (crabc_atfork_count < CRABC_ATFORK_ORDER_SLOTS)
+        crabc_atfork_order[crabc_atfork_count++] = 3;
 }
 
 static int run_attr_and_cancellation(void)
@@ -933,10 +941,27 @@ static int run_atfork_after_worker_teardown(void)
             _Exit(91);
         _Exit(0);
     }
-    if (child < 0 || crabc_atfork_count != 2 || crabc_atfork_order[0] != 1 ||
-        crabc_atfork_order[1] != 2 || waitpid(child, &status, 0) != child ||
+    if (child < 0 || crabc_atfork_count != CRABC_ATFORK_ORDER_SLOTS ||
+        crabc_atfork_order[0] != 1 || crabc_atfork_order[1] != 2 ||
+        waitpid(child, &status, 0) != child ||
         !WIFEXITED(status) || WEXITSTATUS(status) != 0)
         return 2;
+    /* The handlers remain registered, so a later fork must not extend the
+     * recorded order past its two slots. An overflow here writes past the
+     * array into whatever the linker placed next. */
+    child = fork();
+    if (child == 0) {
+        if (crabc_atfork_count != CRABC_ATFORK_ORDER_SLOTS ||
+            crabc_atfork_order[0] != 1 || crabc_atfork_order[1] != 2)
+            _Exit(92);
+        _Exit(0);
+    }
+    if (child < 0 || waitpid(child, &status, 0) != child ||
+        !WIFEXITED(status) || WEXITSTATUS(status) != 0)
+        return 3;
+    if (crabc_atfork_count != CRABC_ATFORK_ORDER_SLOTS ||
+        crabc_atfork_order[0] != 1 || crabc_atfork_order[1] != 2)
+        return 4;
     return 0;
 }
 
