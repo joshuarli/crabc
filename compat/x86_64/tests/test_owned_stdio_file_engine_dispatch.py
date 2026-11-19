@@ -31,12 +31,15 @@ class OwnedStdioFileEngineDispatchTests(unittest.TestCase):
         self.static.mkdir(parents=True)
         self.dynamic.mkdir()
         self.capture = self.work / "docker.jsonl"
+        uname = self.work / "uname"
+        uname.write_text(f'#!/bin/sh\ncase "$1" in -s) echo Linux ;; -m) echo {ARCH} ;; *) /usr/bin/uname "$@" ;; esac\n')
+        uname.chmod(0o755)
         docker = self.work / "docker"
         docker.write_text(
             f"#!{sys.executable}\n"
             "import json, os, sys\n"
             "with open(os.environ['DISPATCH_CAPTURE'], 'a') as out: out.write(json.dumps(sys.argv[1:])+'\\n')\n"
-            "if sys.argv[1:3] == ['image', 'inspect']: print('linux/amd64')\n"
+            f"if sys.argv[1:3] == ['image', 'inspect']: print('linux/{'arm64' if ARCH == 'aarch64' else 'amd64'}')\n"
             "elif sys.argv[1] != 'run': raise SystemExit('unexpected Docker operation')\n"
         )
         docker.chmod(0o755)
