@@ -11,7 +11,8 @@ ulimit -c 0
 
 readonly ROOT="$(cd -P "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 readonly RUNNER="$ROOT/compat/x86_64/run_owned_calendar_component.py"
-readonly DOWNLOAD="$ROOT/.work/x86_64/calendar-tzif-input-2025b/download"
+eval "$(python3 -B "$ROOT/compat/x86_64/native_arch.py")"
+readonly DOWNLOAD="$ROOT/.work/$arch/calendar-tzif-input-2025b/download"
 
 usage() {
     printf 'usage: %s [--static-sysroot STATIC_SYSROOT DYNAMIC_SYSROOT]\n' "$0" >&2
@@ -37,7 +38,7 @@ case "$#" in
 esac
 
 [ "$(uname -s)" = Linux ] || fail 'requires native Linux'
-case "$(uname -m)" in x86_64|amd64) ;; *) fail "refuses emulation on $(uname -m)" ;; esac
+case "$(uname -m)" in x86_64|amd64|aarch64|arm64) ;; *) fail "refuses emulation on $(uname -m)" ;; esac
 [ -n "${TMPDIR:-}" ] || fail 'requires checkout-local TMPDIR'
 [ -n "${CRABC_X86_CALENDAR_IMAGE_ID:-}" ] || fail 'requires the dispatcher-observed image identity'
 [ -f "$RUNNER" ] || fail 'missing calendar component producer'
@@ -53,9 +54,11 @@ printf 'owned calendar component launcher: %s\n' "$WORK"
 if [ -z "$provided_dynamic" ]; then
     provided_static="$WORK/static-product"
     provided_dynamic="$WORK/dynamic-product"
-    python3 -B "$ROOT/scripts/build_x86_64_owned_sysroot.py" --output "$provided_static" \
+    arch_args=()
+    [ "$arch" = x86_64 ] || arch_args=(--architecture "$arch")
+    python3 -B "$ROOT/scripts/build_x86_64_owned_sysroot.py" "${arch_args[@]}" --output "$provided_static" \
         >"$WORK/static-build.json"
-    python3 -B "$ROOT/scripts/build_x86_64_owned_dynamic_sysroot.py" --output "$provided_dynamic" \
+    python3 -B "$ROOT/scripts/build_x86_64_owned_dynamic_sysroot.py" "${arch_args[@]}" --output "$provided_dynamic" \
         >"$WORK/dynamic-build.json"
 fi
 

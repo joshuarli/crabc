@@ -35,10 +35,10 @@ import core_image
 SCHEMA = "crabc.x86_64-owned-calendar-products/v1"
 SOURCE_MOUNT = "/workspace"
 # Reports from any other core-evidence image are not admitted.
-PINNED_IMAGE_ID = core_image.CORE_IMAGE_ID
+PINNED_IMAGE_ID = core_image.core_image_id(products.ARCH)
 SCOPE = ("time.clock-calendar",)
 FULL_MODE = "full-six-mode"
-INTERPRETER = "/lib/ld-crabc-x86_64.so.1"
+INTERPRETER = products.INTERPRETER
 EXECUTION_CELLS = (
     "static-et-exec", "static-pie", "dynamic-pie-kernel", "dynamic-pie-direct",
     "dynamic-non-pie-kernel", "dynamic-non-pie-direct",
@@ -309,7 +309,7 @@ def tool_roster(root: Path, static_product: Path, dynamic_product: Path) -> dict
     try:
         spec.loader.exec_module(module)
         return {
-            "oracle": recorded_tool_identity(root, Path("/usr/local/bin/crabc-x86_64-musl-gcc"), "pinned musl compiler"),
+            "oracle": recorded_tool_identity(root, Path(qualification.ARCH["oracle"]), "pinned musl compiler"),
             "static_driver": recorded_tool_identity(root, static_product / "bin/crabc-cc", "static compiler driver"),
             "dynamic_driver": recorded_tool_identity(root, dynamic_product / "bin/crabc-cc-dynamic", "dynamic compiler driver"),
             "compiler": recorded_tool_identity(root, Path(module.compiler()), "resolved compiler"),
@@ -350,7 +350,8 @@ def header_trace_paths(stderr: bytes) -> tuple[str, ...]:
 def check_elf_rel(path: Path) -> None:
     data = path.read_bytes()
     require(len(data) >= 20 and data[:7] == b"\x7fELF\x02\x01\x01" and data[16:18] == b"\x01\x00" and
-            data[18:20] == b">\x00", "installed-header calendar workload is not an x86-64 ELF relocatable object")
+            data[18:20] == (b"\xb7\x00" if products.ARCH == "aarch64" else b">\x00"),
+            "installed-header calendar workload is not a native ELF relocatable object")
 
 
 def parse_argv(raw: bytes, label: str) -> list[str]:

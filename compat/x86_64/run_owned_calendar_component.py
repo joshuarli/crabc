@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Produce one full six-cell installed clock/calendar component receipt.
 
-Run this leaf only inside the pinned native x86-64 image.  It consumes supplied,
+Run this leaf only inside the pinned native image.  It consumes supplied,
 already-qualified static and dynamic products; it never builds or mutates them.
 Each candidate cell gets a fresh chroot root containing a byte-bound copy of the
 product (for dynamic entries), the linked object consumer, and sealed TZif
@@ -263,8 +263,8 @@ def readable_tree(path: Path) -> None:
 def prepare_tzif_input(args: argparse.Namespace) -> int:
     if args.image_id != receipt.PINNED_IMAGE_ID:
         fail("calendar TZif preparation requires the immutable pinned core image ID")
-    if os.uname().sysname != "Linux" or os.uname().machine not in {"x86_64", "amd64"}:
-        fail("calendar TZif preparation requires native Linux/x86-64 and refuses emulation")
+    if os.uname().sysname != "Linux" or os.uname().machine not in {"x86_64", "amd64", "aarch64", "arm64"}:
+        fail("calendar TZif preparation requires native Linux and refuses emulation")
     output = fresh_work_directory(args.output, "calendar TZif input output")
     tzcode = checked_archive(args.tzcode_archive, "tzcode")
     tzdata = checked_archive(args.tzdata_archive, "tzdata")
@@ -398,8 +398,8 @@ def prepare_parser() -> argparse.ArgumentParser:
 def collect_component(args: argparse.Namespace) -> int:
     if args.image_id != receipt.PINNED_IMAGE_ID:
         fail("calendar receipt requires the immutable pinned core image ID")
-    if os.uname().sysname != "Linux" or os.uname().machine not in {"x86_64", "amd64"}:
-        fail("calendar receipt requires native Linux/x86-64 and refuses emulation")
+    if os.uname().sysname != "Linux" or os.uname().machine not in {"x86_64", "amd64", "aarch64", "arm64"}:
+        fail("calendar receipt requires native Linux and refuses emulation")
     temporary = os.environ.get("TMPDIR")
     if not temporary:
         fail("calendar receipt requires checkout-local TMPDIR")
