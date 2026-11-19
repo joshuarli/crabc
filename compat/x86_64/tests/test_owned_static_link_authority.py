@@ -705,6 +705,18 @@ ret
                             '-Map=' + str(link_map), str(obj), '-o', str(binary)], check=True, capture_output=True)
             contract = StaticFunctionContract('_start', str(obj), 'GLOBAL', 'DEFAULT', 'LOCAL', 'DEFAULT')
             require_static_functions(link_map, binary, {str(obj): obj}, [contract])
+            other_source, other_obj = root / 'other.s', root / 'other.o'
+            other_source.write_text('.section .rodata.str1.8,"aMS",%progbits,1\n'
+                                    '.asciz "selected-string"\n')
+            subprocess.run(['/usr/bin/cc', '-c', str(other_source), '-o', str(other_obj)],
+                           check=True, capture_output=True)
+            ambiguous, ambiguous_map = root / 'ambiguous', root / 'ambiguous.map'
+            subprocess.run(['/usr/bin/mold', '-static', '--no-dynamic-linker', '-e', '_start',
+                            '-Map=' + str(ambiguous_map), str(obj), str(other_obj), '-o', str(ambiguous)],
+                           check=True, capture_output=True)
+            with self.assertRaisesRegex(StaticLinkAuthorityError, 'unique traced input owner'):
+                require_static_functions(ambiguous_map, ambiguous,
+                                         {str(obj): obj, str(other_obj): other_obj}, [contract])
             image = Elf(binary)
             symbol = image.symbol('_start', dynamic=False)
             section = image.sections[symbol['section']]

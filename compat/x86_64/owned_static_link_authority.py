@@ -342,6 +342,7 @@ def _require_static_functions(map_path, executable, admitted, functions):
     wanted = set(contracts)
     mapped = {}
     contributions = {}
+    output_sections = {}
     map_symbols = {}
     owner = None
     contribution = None
@@ -371,6 +372,8 @@ def _require_static_functions(map_path, executable, admitted, functions):
             require(key not in contributions, 'duplicate static input section contribution')
             contributions[key] = contribution
         elif name.startswith('.'):
+            if ARCH == 'aarch64':
+                output_sections.setdefault(name, []).append((address, size))
             owner, contribution = None, None
         else:
             if owner in images and contribution is not None:
@@ -543,6 +546,16 @@ def _require_static_functions(map_path, executable, admitted, functions):
             require(len(outputs) == 1 and outputs[0][1] == 1 and outputs[0][2] & 3 == 2,
                     'merged string output differs')
             output = outputs[0]
+            require(output_sections.get(section_name(source, section)) == [(output[3], output[5])],
+                    'merged target output is not bound to the link map')
+            owners = set()
+            for candidate, image in images.items():
+                for source_section in image.sections:
+                    if (source_section[1] == 1 and source_section[2] & 0x10
+                            and section_name(image, source_section) == section_name(source, section)
+                            and value in image.data[source_section[4]:source_section[4] + source_section[5]]):
+                        owners.add(candidate)
+            require(owners == {owner}, 'merged target lacks a unique traced input owner')
             data = final.data[output[4]:output[4] + output[5]]
             candidates = []
             cursor = 0
