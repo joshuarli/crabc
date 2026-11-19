@@ -49,7 +49,8 @@ from compat.x86_64.native_arch import native_arch
 CONTRACT_PATH = ROOT / "compat" / "x86_64" / "static-product.toml"
 CONTRACT_SCHEMA = "crabc.x86_64-owned-static-product/v1"
 RECEIPT_SCHEMA = "crabc.x86_64-owned-static-qualification/v1"
-WORK_PARENT = ROOT / ".work" / native_arch()["work_name"]
+ARCH = native_arch()
+WORK_PARENT = ROOT / ".work" / ARCH["work_name"]
 PUBLICATION = WORK_PARENT / "owned-static-qualification.json"
 REPORT_ROOT = WORK_PARENT / "reports" / "owned-static-product"
 OWNER_FAMILY = "sysroot.static-tls"
@@ -282,7 +283,7 @@ def validate_tree_manifest(report: Path, product: str, manifest: Mapping[str, An
 
     require(product in ("primary", "reproduction"), "unknown installed tree digest product")
     installed = manifest.get("installed")
-    files = installed.get("files") if isinstance(installed, Mapping) else None
+    files = manifest.get("files") if ARCH["arch"] == "aarch64" else (installed.get("files") if isinstance(installed, Mapping) else None)
     require(isinstance(files, Mapping) and files, f"{product} installed manifest has no file roster")
     expected: set[str] = set()
     for relative, value in files.items():
@@ -342,7 +343,7 @@ def collect(work_dir: Path, started_source: str) -> Path:
         files[name] = copy_file(source_path, report / name)
 
     for product, tree in (("primary", "primary"), ("reproduction", "reproduction"),
-                          ("extracted", "extracted-tree/crabc-x86_64-owned-static-sysroot")):
+                          ("extracted", f"extracted-tree/crabc-{ARCH['arch']}-owned-static-sysroot")):
         retain(work_dir / tree / INSTALLED_MANIFEST, f"products/{product}/manifest.json")
     require_product_source({product: read_json(report / "products" / product / "manifest.json")
                             for product in ("primary", "reproduction", "extracted")}, source)
@@ -418,8 +419,9 @@ def inspect_case(report: Path, product: str, mode: str, case_path: str,
     require(re.fullmatch(r"[0-9a-f]{64}", candidate) is not None and candidate == observed["candidate"],
             f"{label} candidate digest differs from the observed executable")
     link = read_json(base / "link.receipt.json")
-    require(link.get("format") == "crabc-x86-64-sealed-static-driver-v1"
-            and link.get("target") == "x86_64-unknown-linux-musl", f"{label} link receipt format drifted")
+    expected_format = "crabc-aarch64-sealed-static-driver-v1" if ARCH["arch"] == "aarch64" else "crabc-x86-64-sealed-static-driver-v1"
+    require(link.get("format") == expected_format
+            and link.get("target") == ARCH["target_triple"], f"{label} link receipt format drifted")
     require(link.get("output") == {"path": "candidate", "sha256": candidate}, f"{label} link output drifted")
     require(link.get("map", {}).get("sha256") == observed["link.receipt.map"]
             and link.get("trace", {}).get("sha256") == digest(base / "link.receipt.trace"),
@@ -429,7 +431,7 @@ def inspect_case(report: Path, product: str, mode: str, case_path: str,
             and mode_record.get("elf_type") == elf_type and mode_record.get("crt_object") == entry
             and mode_record.get("interpreter") == "absent", f"{label} link mode drifted")
     installed_record = manifest.get("installed")
-    installed = installed_record.get("files") if isinstance(installed_record, Mapping) else None
+    installed = manifest.get("files") if ARCH["arch"] == "aarch64" else (installed_record.get("files") if isinstance(installed_record, Mapping) else None)
     require(isinstance(installed, Mapping), "installed manifest has no file roster")
     records = link.get("input_receipts")
     require(isinstance(records, list) and len(records) == 8, f"{label} input roster size drifted")
@@ -447,7 +449,7 @@ def inspect_case(report: Path, product: str, mode: str, case_path: str,
     # root inside the runner's private work tree; application objects must
     # come from this case's own consumer directory.
     trace = [line.removeprefix("trace: ") for line in (base / "link.receipt.trace").read_text(encoding="utf-8").splitlines() if line]
-    tree = r"primary" if product == "primary" else r"extracted-tree/crabc-x86_64-owned-static-sysroot"
+    tree = r"primary" if product == "primary" else f"extracted-tree/crabc-{ARCH['arch']}-owned-static-sysroot"
     work = r"/[^()]*/crabc-x86-64-owned-static-sysroot\.[A-Za-z0-9]+"
     runtime = re.compile(work + "/" + tree + r"/usr/lib/(" + re.escape(entry)
                          + r"|crti\.o|crtn\.o|(libc\.a|libcrabc-builtins\.a)\(([^()/]+)\))")
@@ -459,11 +461,13 @@ def inspect_case(report: Path, product: str, mode: str, case_path: str,
             continue
         match = runtime.fullmatch(line)
         require(match is not None, f"{label} link trace names an undeclared input: {line}")
-        saw_builtins_member |= match.group(2) == "libcrabc-builtins.a" and match.group(3) == "crabc-builtins.o"
+        saw_builtins_member |= (match.group(2) == "libcrabc-builtins.a" and
+                                (ARCH["arch"] == "aarch64" or match.group(3) == "crabc-builtins.o"))
     require(saw_builtins_member, f"{label} did not extract the owned compiler-helper member")
 
     header = (base / "file-header").read_text(encoding="utf-8")
-    require(re.search(r"Machine:\s+Advanced Micro Devices X86-64", header) is not None, f"{label} is not EM_X86_64")
+    machine = "AArch64" if ARCH["arch"] == "aarch64" else "Advanced Micro Devices X86-64"
+    require(re.search(r"Machine:\s+" + machine, header) is not None, f"{label} ELF machine differs")
     require(re.search(r"Type:\s+" + ("DYN" if pie else "EXEC") + r"\b", header) is not None,
             f"{label} ELF type is not {elf_type}")
     rows = [line.split() for line in (base / "program-headers").read_text(encoding="utf-8").splitlines()]
@@ -478,8 +482,9 @@ def inspect_case(report: Path, product: str, mode: str, case_path: str,
     dynamic = (base / "dynamic").read_text(encoding="utf-8")
     validate_static_dynamic_tags(dynamic, rows, pie, label)
     relocations = (base / "relocations").read_text(encoding="utf-8")
-    kinds = set(re.findall(r"\bR_X86_64_[A-Z0-9_]+", relocations))
-    require(kinds <= ({"R_X86_64_RELATIVE"} if pie else set()),
+    kinds = set(re.findall(r"\bR_(?:X86_64|AARCH64)_[A-Z0-9_]+", relocations))
+    relative = "R_AARCH64_RELATIVE" if ARCH["arch"] == "aarch64" else "R_X86_64_RELATIVE"
+    require(kinds <= ({relative} if pie else set()),
             f"{label} retains non-relative dynamic relocations: {sorted(kinds)}")
 
 
@@ -543,7 +548,8 @@ def validate_receipt(path: Path) -> dict[str, Any]:
     require_product_source(manifests, receipt["source_sha256"])
     require(manifests["primary"] == manifests["reproduction"] == manifests["extracted"],
             "installed manifests differ across clean builds and extraction")
-    require(manifests["primary"].get("format") == "crabc-x86-64-owned-static-sysroot-v1",
+    expected_format = "crabc-aarch64-owned-static-sysroot-v1" if ARCH["arch"] == "aarch64" else "crabc-x86-64-owned-static-sysroot-v1"
+    require(manifests["primary"].get("format") == expected_format,
             "installed manifest format drifted")
     for product in ("primary", "reproduction"):
         validate_tree_manifest(report, product, manifests[product])

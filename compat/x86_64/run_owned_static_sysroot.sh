@@ -27,7 +27,9 @@ unset CPATH C_INCLUDE_PATH CPLUS_INCLUDE_PATH OBJC_INCLUDE_PATH LIBRARY_PATH \
     COMPILER_PATH GCC_EXEC_PREFIX LD_LIBRARY_PATH LD_PRELOAD || true
 
 readonly ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-readonly ORACLE_CC=/usr/local/bin/crabc-x86_64-musl-gcc
+ARCH="$(python3 -B -c 'import sys; sys.path.insert(0, sys.argv[1]); from native_arch import native_arch; print(native_arch()["arch"])' "$ROOT_DIR/compat/x86_64")"
+export ARCH
+readonly ORACLE_CC=/usr/local/bin/crabc-${ARCH}-musl-gcc
 readonly LINK_EDITOR="$(python3 -c 'import sys; sys.path.insert(0, sys.argv[1]); from scripts import native_build_tools; print(native_build_tools.MOLD)' "$ROOT_DIR")"
 readonly BUILDER="$ROOT_DIR/scripts/build_x86_64_owned_sysroot.py"
 readonly PACKAGE="$ROOT_DIR/compat/x86_64/owned_static_sysroot_package.py"
@@ -53,7 +55,7 @@ require_tool() {
 require_native_linux_x86_64() {
     [ "$(uname -s)" = Linux ] || fail "requires native Linux"
     case "$(uname -m)" in
-        x86_64|amd64) ;;
+        x86_64|amd64|aarch64|arm64) ;;
         *) fail "refuses emulation on $(uname -m)" ;;
     esac
 }
@@ -182,6 +184,20 @@ audit_installed_tree() {
         while IFS= read -r path; do
             fail "installed tree contains a symlink: ${path#"$root"/}"
         done < <(find "$root" -type l -print)
+    fi
+    if [ "$ARCH" = aarch64 ]; then
+        python3 -B - "$ROOT_DIR" "$root" <<'PY'
+import sys
+from pathlib import Path
+sys.path.insert(0, sys.argv[1] + "/compat/x86_64")
+import owned_posix_product_evidence as evidence
+import source_seal
+root = Path(sys.argv[2])
+manifest, _ = evidence._validate_static_product_uncached(root)
+if evidence._json_object(manifest, "static manifest").get("source_sha256") != source_seal.product_source_digest(Path(sys.argv[1])):
+    raise SystemExit("static product source differs")
+PY
+        return
     fi
     python3 - "$manifest" <<'PY'
 import json
@@ -403,9 +419,12 @@ except (OSError, json.JSONDecodeError) as error:
     fail(f"sealed driver receipt is unreadable: {error}")
 if not isinstance(receipt, dict):
     fail("sealed driver receipt is not an object")
-if receipt.get("schema") != 1 or receipt.get("format") != "crabc-x86-64-sealed-static-driver-v1":
+import os
+architecture = os.environ["ARCH"]
+expected_format = "crabc-aarch64-sealed-static-driver-v1" if architecture == "aarch64" else "crabc-x86-64-sealed-static-driver-v1"
+if receipt.get("schema") != 1 or receipt.get("format") != expected_format:
     fail("sealed driver receipt schema or format drifted")
-if receipt.get("target") != "x86_64-unknown-linux-musl":
+if receipt.get("target") != architecture + "-unknown-linux-musl":
     fail("sealed driver receipt target drifted")
 resolved_linker = receipt.get("resolved_linker")
 if not isinstance(resolved_linker, dict) or set(resolved_linker) != {"path", "sha256"}:
@@ -471,8 +490,10 @@ expected_contract = [
     str(library / expected[2]),
     str(library / "crti.o"),
     "<application-objects>",
+    *(["--start-group"] if architecture == "aarch64" else []),
     str(library / "libc.a"),
     str(library / "libcrabc-builtins.a"),
+    *(["--end-group"] if architecture == "aarch64" else []),
     str(library / "crtn.o"),
     "-o",
     "<output>",
@@ -495,7 +516,8 @@ for line in trace:
         saw["libc"] = True
     elif line.startswith(str(library / "libcrabc-builtins.a")):
         saw["builtins"] = True
-        if "libcrabc-builtins.a(crabc-builtins.o)" in line:
+        if ("libcrabc-builtins.a(crabc-builtins.o)" in line
+                or (architecture == "aarch64" and "libcrabc-builtins.a(" in line and line.endswith(")"))):
             saw["builtins_member"] = True
     elif line not in allowed_objects:
         fail(f"resolved final-link input escapes the owned set: {line}")
@@ -594,8 +616,10 @@ assert_final_static_image() {
     local minimum_tls_alignment="${8:-4096}"
     local tls_count tls_filesz tls_memsz tls_alignment
 
-    grep -Eq 'Machine:[[:space:]]+Advanced Micro Devices X86-64' "$file_header" ||
-        fail "${mode} candidate is not EM_X86_64"
+    local machine='Advanced Micro Devices X86-64'
+    if [ "$ARCH" = aarch64 ]; then machine=AArch64; fi
+    grep -Eq "Machine:[[:space:]]+$machine" "$file_header" ||
+        fail "${mode} candidate has the wrong ELF machine"
     case "$mode" in
         -static)
             grep -Eq 'Type:[[:space:]]+EXEC[[:space:]]+\(Executable file\)' "$file_header" ||
@@ -679,15 +703,21 @@ PY
     fi
     grep -Eq '[[:space:]]__udivti3$' "$symbols" ||
         fail "${mode} candidate lacks the owned __udivti3 helper"
-    if grep -Eq 'R_X86_64_(GLOB_DAT|JUMP_SLOT|TLSGD|TLSLD|TLSDESC|DTPMOD|DTPOFF)' \
-        "$relocations" "$symbols"; then
+    local dynamic_relocations='R_X86_64_(GLOB_DAT|JUMP_SLOT|TLSGD|TLSLD|TLSDESC|DTPMOD|DTPOFF)'
+    if [ "$ARCH" = aarch64 ]; then
+        dynamic_relocations='R_AARCH64_(GLOB_DAT|JUMP_SLOT|TLS|TLSDESC)'
+    fi
+    if grep -Eq "$dynamic_relocations" "$relocations" "$symbols"; then
         fail "${mode} candidate retains a dynamic relocation or dynamic TLS form"
     fi
     if [ "$mode" = -static-pie ]; then
         if grep -Eq 'R_X86_64_GOTTPOFF|__tls_get_addr' "$relocations"; then
             fail "static PIE candidate retained an unrelaxed initial-TLS access"
         fi
-        awk '$3 ~ /^R_X86_64_/ && $3 != "R_X86_64_RELATIVE" { exit 1 }' "$relocations" ||
+        local relocation_prefix=R_X86_64_ relative_relocation=R_X86_64_RELATIVE
+        if [ "$ARCH" = aarch64 ]; then relocation_prefix=R_AARCH64_ relative_relocation=R_AARCH64_RELATIVE; fi
+        awk -v prefix="$relocation_prefix" -v relative="$relative_relocation" \
+            'index($3, prefix) == 1 && $3 != relative { exit 1 }' "$relocations" ||
             fail "static PIE candidate retains a non-relative relocation"
     fi
     [ -x "$candidate" ] || chmod 755 "$candidate"
@@ -1758,8 +1788,10 @@ if [ "$supplied" -eq 1 ]; then
 else
     primary="$work_dir/primary"
     reproduction="$work_dir/reproduction"
-    python3 "$BUILDER" --output "$primary" >"$work_dir/primary-build.json"
-    python3 "$BUILDER" --output "$reproduction" >"$work_dir/reproduction-build.json"
+    architecture_arguments=()
+    if [ "$ARCH" = aarch64 ]; then architecture_arguments=(--architecture aarch64); fi
+    python3 "$BUILDER" "${architecture_arguments[@]}" --output "$primary" >"$work_dir/primary-build.json"
+    python3 "$BUILDER" "${architecture_arguments[@]}" --output "$reproduction" >"$work_dir/reproduction-build.json"
 fi
 audit_installed_tree "$primary"
 audit_installed_tree "$reproduction"
@@ -1776,7 +1808,7 @@ if [ "$supplied" -eq 0 ]; then
         fail "two clean owned-static packages are not byte-identical"
     python3 "$PACKAGE" extract --archive "$work_dir/primary.tar.xz" \
         --destination "$work_dir/extracted-tree" >/dev/null
-    extracted="$work_dir/extracted-tree/crabc-x86_64-owned-static-sysroot"
+    extracted="$work_dir/extracted-tree/crabc-${ARCH}-owned-static-sysroot"
 fi
 write_tree_manifest "$extracted" "$work_dir/extracted-tree.sha256"
 cmp "$work_dir/primary-tree.sha256" "$work_dir/extracted-tree.sha256" ||
