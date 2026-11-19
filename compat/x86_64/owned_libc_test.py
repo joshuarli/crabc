@@ -544,7 +544,11 @@ def seal_candidate_product(source: Path, destination: Path, source_before: dict[
 
     if destination.exists() or destination.is_symlink():
         fail("sealed candidate product destination already exists")
-    shutil.copytree(source, destination, symlinks=True)
+    if ARCH == "aarch64":
+        from run_owned_calendar_component import copy_product
+        copy_product(source, destination)
+    else:
+        shutil.copytree(source, destination, symlinks=True)
     sealed = validate_product(destination)
     require_same_product_payload(source_before, sealed, "sealed candidate product copy")
     return sealed
@@ -1225,7 +1229,11 @@ def echo_fixture(
 def make_candidate_root(product: Path, destination: Path) -> None:
     if destination.exists() or destination.is_symlink():
         fail("candidate execution root already exists")
-    shutil.copytree(product, destination, symlinks=True)
+    if ARCH == "aarch64":
+        from run_owned_calendar_component import copy_product
+        copy_product(product, destination)
+    else:
+        shutil.copytree(product, destination, symlinks=True)
 
 
 def copied_oracle_runtime_record(
