@@ -115,11 +115,16 @@ static_archive_member! { sqrtl_source {
         if top.wrapping_sub(1) >= 0x7fff - 1 {
             if ix << 1 == 0 { return x; }
             if ix == (0x7fffu128 << 112) { return x; }
+            if (ix & ((1u128 << 127) - 1)) > (0x7fffu128 << 112) {
+                if ix & (1u128 << 111) == 0 {
+                    crabc_core::fenv::raise_exceptions(crabc_core::fenv::ExceptionFlags::INVALID);
+                }
+                return f128::from_bits(ix | (1u128 << 111));
+            }
             if ix >> 127 != 0 && (ix & ((1u128 << 127) - 1)) <= (0x7fffu128 << 112) {
                 unsafe { feraiseexcept(1); }
                 return f128::from_bits((0x7fffu128 << 112) | ((1u128 << 112) - 1));
             }
-            if top >= 0x7fff { return (x - x) / (x - x); }
             ix = (x * f128::from_bits((0x3fffu128 + 112) << 112)).to_bits();
             top = (ix >> 112) as u64;
             top = top.wrapping_sub(112);
