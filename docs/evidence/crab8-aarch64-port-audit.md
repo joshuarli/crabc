@@ -424,18 +424,20 @@ The follow-up note's commit hashes for items 34–39 (`d29938707`, `4025b27e2`, 
 
 ### x86-change
 
-1. **`scripts/build_x86_64_owned_dynamic_sysroot.py:974-975`** (`90e68512b`). `build_debug_payload` builds the x86 debug product (reached from `:616`) but calls `audit_shared_elf(..., architecture="aarch64")` on x86 `libc.so` and the loader.
+1. **Closed (`b53febc2b`).** **`scripts/build_x86_64_owned_dynamic_sysroot.py:974-975`** (`90e68512b`). `build_debug_payload` builds the x86 debug product (reached from `:616`) but calls `audit_shared_elf(..., architecture="aarch64")` on x86 `libc.so` and the loader.
    - Before: the x86 debug product was checked for `R_X86_64_32/32S`.
    - After: it is checked for `R_AARCH64_ABS16/32` (`:93`), which never matches on x86.
-   - Effect: the guard is off for x86 debug dynamic products; release builds are unaffected.
-2. **`ldso/src/x86_64_general_relocation.rs:864, 871`** (`ffc9bc0f2`). There is no `cfg`: `interpreter_self` objects now skip RELATIVE relocations and the RELR table on x86 as well.
-   - This probably fixes a latent defect on main, but unlike item 63 it is not recorded as a main fix and not limited to aarch64.
-3. **`crabc-rs/src/process.rs:50`** adds `pub use crate::signal::{Pid, Signal}`; main exports only `Pid`. This is a public API addition left over from item 60.
-4. **`crabc-rs/src/process.rs:2332-2400`**. The private `register_atfork`/`fork` and the atfork registry are compiled on x86 with only test callers.
-   - The product-level `atfork_case` test was replaced by a unit test of this unused registry.
-5. **`compat/x86_64/ldso_general_initial_tls_main.c:112, 115, 129`**. Thresholds in the x86-compiled block changed with no architecture guard (`<5`→`<4`, `<`→`<=`, `dtv[0]`→`dtv[0]+1`).
-   - No observable effect: on x86 the result is masked at `:147`, while aarch64 checks `!= 1` at `:145`.
-6. **`owned_system_cancellation_probe.c:33-34, 86, 150-154`** adds an unguarded wait loop and `CHECK(interrupt_seen)`. This changes the x86 workload; it strengthens the test rather than weakening it.
+   - The x86 debug path now passes `x86_64`; the AArch64 producer continues to pass `aarch64`.
+2. **Closed (`55e593347`).** **`ldso/src/x86_64_general_relocation.rs:864, 871`** (`ffc9bc0f2`). There is no `cfg`: `interpreter_self` objects now skip RELATIVE relocations and the RELR table on x86 as well.
+   - The skip is now AArch64-only; no x86 double-relocation defect was demonstrated.
+3. **Closed in assigned paths (`24b8b435c`); external callers remain.** **`crabc-rs/src/process.rs:50`** adds `pub use crate::signal::{Pid, Signal}`; main exports only `Pid`. This is a public API addition left over from item 60.
+4. **Closed (`24b8b435c`).** **`crabc-rs/src/process.rs:2332-2400`**. The private `register_atfork`/`fork` and the atfork registry are compiled on x86 with only test callers.
+   - The AArch64 public atfork API and product-level `atfork_case` are restored; the registry is not compiled on x86.
+5. **Closed (`c4cdd2af5`), main fixture defect fixed.** **`compat/x86_64/ldso_general_initial_tls_main.c:112, 115, 129`**. Thresholds in the x86-compiled block changed with no architecture guard (`<5`→`<4`, `<`→`<=`, `dtv[0]`→`dtv[0]+1`).
+   - The layout records a module count at slot zero and allocates count plus one words (`ldso/src/x86_64_initial_graph.rs:2396,2491`); scanning through the count and using count plus one for an absent module strengthens the fixture. The masked result is now checked on x86.
+6. **Closed (`e371a10e5`).** **`owned_system_cancellation_probe.c:33-34, 86, 150-154`** adds an unguarded wait loop and `CHECK(interrupt_seen)`. This changes the x86 workload; it strengthens the test rather than weakening it.
+
+The facade correction leaves out-of-scope callers `crabc-rs/examples/ppoll_direct_probe.rs`, `crabc-rs/examples/signal_process_probe.rs`, and `compat/rustix/source/pause.rs` referring to `process::Signal`; they need the `signal::Signal` path.
 
 ### Qualifying-path
 
@@ -493,8 +495,8 @@ The follow-up note's commit hashes for items 34–39 (`d29938707`, `4025b27e2`, 
 
 ### Already on main, and not in the audit
 
-- `loader_libc_general_tls_runtime_v1_main.c:116-118` returns 1 on success, but `main` treats any nonzero result as an error (`:151-152`). So the x86 exact-DTV check can pass only when it fails.
-- `ldso_general_initial_tls_main.c:147`: the x86 product-layout checks are inert (same masking as B5).
+- **Fixed (`c4cdd2af5`), x86 execution unverified:** `loader_libc_general_tls_runtime_v1_main.c:116-118` returned 1 on success, but `main` treats any nonzero result as an error (`:151-152`). So the x86 exact-DTV check can pass only when it fails.
+- **Fixed (`c4cdd2af5`), x86 execution unverified:** `ldso_general_initial_tls_main.c:147`: the x86 product-layout checks were inert (same masking as B5).
 - Both aarch64 drivers omit `-isystem usr/include/crabc-linux-uapi` (`crabc_cc_static.py:1279`, `crabc_cc_aarch64_dynamic.py:282-286`), although the aarch64 builder installs it. This fails closed.
 - The aarch64 static driver silently strips `-no-pie` (`crabc_cc_static.py:1257-1259`); x86 rejects it (`:168`).
 
