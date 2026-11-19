@@ -256,7 +256,7 @@ fn failed_tls_load_rolls_back_before_successful_growth_and_retained_reopen() {
     }
 
     unsafe fn mapped_file(needle: &[u8]) -> Option<bool> {
-        let fd = unsafe { syscall4(257, -100, b"/proc/self/maps\0".as_ptr() as i64, 0, 0) };
+        let fd = unsafe { syscall4(SYS_OPENAT, -100, b"/proc/self/maps\0".as_ptr() as i64, 0, 0) };
         if fd < 0 { return None; }
         let mut bytes = [0u8; 65536];
         let mut used = 0;
