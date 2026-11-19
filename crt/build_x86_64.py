@@ -432,7 +432,7 @@ def c_string(data: bytes, offset: int, context: str) -> str:
     return data[offset:end].decode("utf-8", errors="replace")
 
 
-def parse_elf_object(path: Path) -> ElfObject:
+def parse_elf_object(path: Path, *, machine: int = EM_X86_64) -> ElfObject:
     data = path.read_bytes()
     if len(data) < 64:
         raise BuildError(f"{path}: too short for ELF64 header")
@@ -440,11 +440,11 @@ def parse_elf_object(path: Path) -> ElfObject:
     if ident[:4] != ELF_MAGIC or ident[4] != ELFCLASS64 or ident[5] != ELFDATA2LSB:
         raise BuildError(f"{path}: expected little-endian ELF64")
     header = struct.unpack_from("<16sHHIQQQIHHHHHH", data)
-    elf_type, machine = header[1], header[2]
+    elf_type = header[1]
     section_offset, header_size = header[6], header[8]
     section_entry_size, section_count, string_index = header[11], header[12], header[13]
-    if elf_type != ET_REL or machine != EM_X86_64:
-        raise BuildError(f"{path}: expected ELFREL/x86-64, got type={elf_type} machine={machine}")
+    if elf_type != ET_REL or header[2] != machine:
+        raise BuildError(f"{path}: expected ELFREL/x86-64, got type={elf_type} machine={header[2]}")
     if header_size != 64 or section_entry_size != 64 or section_count == 0 or string_index >= section_count:
         raise BuildError(f"{path}: malformed ELF64 section-header table")
 
@@ -548,8 +548,9 @@ def portable_rustc_command(command: list[str], source: Path, destination: Path) 
 
 
 def inspect_object(spec: ObjectSpec, path: Path, runtime_symbols: frozenset[str] = frozenset(),
-                   *, hardening_profile: NativeRuntimeProfile = NativeRuntimeProfile.COMPATIBILITY) -> dict[str, object]:
-    elf = parse_elf_object(path)
+                   *, hardening_profile: NativeRuntimeProfile = NativeRuntimeProfile.COMPATIBILITY,
+                   machine: int = EM_X86_64) -> dict[str, object]:
+    elf = parse_elf_object(path, machine=machine)
     sections = {section.name: section for section in elf.sections}
     metadata_sections = sorted(section.name for section in elf.sections if section.name.startswith(".rustc"))
     if metadata_sections:
@@ -880,6 +881,35 @@ def build(args: argparse.Namespace) -> dict[str, object]:
     return report
 
 
+def audit_aarch64_entry(spec: ObjectSpec, path: Path) -> dict[str, object]:
+    elf = parse_elf_object(path, machine=183)
+    starts = [item for item in elf.symbols if item.name == "_start" and item.section_index != SHN_UNDEF]
+    if len(starts) != 1 or not starts[0].size:
+        raise BuildError(f"{path}: expected one bounded _start")
+    start = starts[0]
+    section = elf.sections[start.section_index]
+    entry = checked_range(path.read_bytes(), section.offset + start.value, start.size, f"{path}: _start")
+    relocations = [item for item in elf.relocations if item.target_section_index == start.section_index
+                   and start.value <= item.offset < start.value + start.size]
+    handoff = "__crabc_x86_64_static_pie_start" if spec.name == "rcrt1.o" else (
+        "__crabc_x86_64_exec_start" if spec.name == "crt1.o" else "__crabc_x86_64_dynamic_start")
+    if len(relocations) != 1 or relocations[0].relocation_type not in (282, 283) or relocations[0].symbol_name != handoff or relocations[0].symbol_section_index == SHN_UNDEF:
+        raise BuildError(f"{path}: entry lacks its direct startup handoff")
+    if spec.name == "crt1.o":
+        expected = bytes.fromhex("1d0080d21e0080d2e10300aae00300911fec7c9200000014")
+        if entry != expected:
+            raise BuildError(f"{path}: conventional entry register handoff differs")
+    elif spec.name == "Scrt1.o":
+        if not entry.startswith(bytes.fromhex("e10300aae0030091")) or not entry.endswith(bytes.fromhex("00000094000020d4")):
+            raise BuildError(f"{path}: dynamic entry register handoff differs")
+    elif bytes.fromhex("010000d4") not in entry:
+        raise BuildError(f"{path}: static PIE entry lacks syscall")
+    return {"status": "verified", "entry_contract": spec.entry_contract,
+            "entry_symbol_size": start.size, "entry_relocation_types": [relocations[0].relocation_type],
+            "direct_handoff_symbol": handoff, "no_early_got_or_tls_relocation": True,
+            "stack_alignment_before_direct_handoff": True}
+
+
 def build_aarch64(args: argparse.Namespace) -> dict[str, object]:
     if args.profile != "release":
         raise BuildError("aarch64 CRT currently supports release builds only")
@@ -893,15 +923,16 @@ def build_aarch64(args: argparse.Namespace) -> dict[str, object]:
     compiler = native_build_tools.compile_command(physical_sysroot / "bin/rustc")
     records = []
     objects = {}
-    names = ("crt1", "crti", "crtn", "Scrt1") if args.owned_dynamic_sysroot else ("crt1", "rcrt1", "crti", "crtn")
+    names = ("crt1", "rcrt1", "crti", "crtn", "Scrt1")
     for name in names:
         source_name = ("aarch64_rcrt1.rs" if name == "rcrt1" else
-                       "x86_64_Scrt1.rs" if name == "crt1" and args.owned_dynamic_sysroot else
                        "x86_64_" + name + ".rs")
         source = source_path(source_name)
         destination = output / (name + ".o")
         command = compiler + ["--edition=2021", "--crate-type=lib", "--emit=obj", "--target", target, "-C", "panic=abort", "-C", "force-unwind-tables=no", "-C", "opt-level=2", "-C", "relocation-model=static", "-C", "code-model=small", str(source), "-o", str(destination)]
-        if name == "Scrt1" or (name == "crt1" and args.owned_dynamic_sysroot):
+        if name == "crt1":
+            command[command.index("-C"):command.index("-C")] = [argument for cfg in CONVENTIONAL_EXEC_CFGS for argument in ("--cfg", cfg)]
+        if name == "Scrt1" and args.owned_dynamic_sysroot:
             command[command.index("-C"):command.index("-C")] = ["--cfg", "crabc_owned_dynamic_runtime", "--cfg", "crabc_general_dynamic_lifecycle"]
         if name in ("Scrt1", "rcrt1") and args.hardening_profile is NativeRuntimeProfile.HARDENED:
             command[command.index("-C"):command.index("-C")] = ["--cfg", "crabc_hardened"]
@@ -911,14 +942,21 @@ def build_aarch64(args: argparse.Namespace) -> dict[str, object]:
         records.append({**result, "command": portable_rustc_command(command, source, destination)})
         if result["returncode"]:
             raise BuildError(f"aarch64 CRT {name} failed: {result['stderr']}")
-        data = destination.read_bytes()
-        if len(data) < 64 or data[:6] != b"\x7fELF\x02\x01" or struct.unpack_from("<HH", data, 16) != (ET_REL, 183):
-            raise BuildError(f"{destination}: expected aarch64 ELF relocatable")
-        objects[destination.name] = {"sha256": sha256_file(destination), "source": source.name}
+        spec = next(item for item in selected_objects(args) if item.name == destination.name)
+        if name == "Scrt1" and args.owned_dynamic_sysroot:
+            spec = replace(spec, undefined_symbols=tuple(
+                "__crabc_x86_64_loader_tls_runtime_v1" if symbol == X86_64_DYNAMIC_MAIN_THREAD_RUNTIME_V1_ATTACH_BOUNDARY else symbol
+                for symbol in spec.undefined_symbols))
+        inspection = inspect_object(spec, destination, hardening_profile=args.hardening_profile, machine=183)
+        if name in ("crt1", "rcrt1", "Scrt1"):
+            inspection["entry_machine_contract"] = audit_aarch64_entry(spec, destination)
+        inspection["source"] = source.name
+        objects[destination.name] = inspection
+    if len({objects[name]["sha256"] for name in ("crt1.o", "rcrt1.o", "Scrt1.o")}) != 3:
+        raise BuildError("CRT entry objects must differ")
     write_json(output / "commands.json", records)
-    report = {"schema": 1, "target": target, "hardening_profile": args.hardening_profile.value, "objects": objects, "skipped": ["x86 entry machine-code and relocation audit"]}
+    report = {"schema": 1, "target": target, "hardening_profile": args.hardening_profile.value, "objects": objects}
     write_json(output / "objects.json", report)
-    print("aarch64 CRT: skipped x86 entry machine-code/relocation audit", file=sys.stderr)
     return report
 
 

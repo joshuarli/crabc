@@ -82,6 +82,27 @@ core::arch::global_asm!(
     ".size __crabc_x86_loader_tls_runtime_v1_attach, .-__crabc_x86_loader_tls_runtime_v1_attach",
 );
 
+#[cfg(all(target_arch = "aarch64", crabc_x86_64_combined_exec_entry))]
+core::arch::global_asm!(
+    ".section .text.__crabc_x86_static_tls_bootstrap,\"ax\",%progbits",
+    ".weak __crabc_x86_static_tls_bootstrap",
+    ".hidden __crabc_x86_static_tls_bootstrap",
+    ".type __crabc_x86_static_tls_bootstrap,%function",
+    "__crabc_x86_static_tls_bootstrap:", "mov w0, #1", "ret",
+    ".section .text.__crabc_x86_64_attached_owned_crt_handoff,\"ax\",%progbits",
+    ".weak __crabc_x86_64_attached_owned_crt_handoff",
+    ".hidden __crabc_x86_64_attached_owned_crt_handoff",
+    ".type __crabc_x86_64_attached_owned_crt_handoff,%function",
+    "__crabc_x86_64_attached_owned_crt_handoff:", "mov x0, #0", "ret",
+    ".section .text.__crabc_x86_loader_tls_runtime_v1_attach,\"ax\",%progbits",
+    ".weak __crabc_x86_loader_tls_runtime_v1_attach",
+    ".type __crabc_x86_loader_tls_runtime_v1_attach,%function",
+    "__crabc_x86_loader_tls_runtime_v1_attach:", "mov w0, #1", "ret",
+    ".section .note.crabc.owned-crt,\"a\",%note",
+    ".balign 4", ".long 6", ".long 4", ".long 0x43525401",
+    ".asciz \"CRABC\"", ".balign 4", ".long 1", ".balign 4",
+);
+
 // The owned interpreter admits a dynamic main image's owned entry only by
 // this private revision-one marker. A static executable carries it inertly.
 #[cfg(all(target_arch = "x86_64", crabc_x86_64_combined_exec_entry))]
@@ -174,7 +195,26 @@ pub unsafe extern "C" fn __crabc_x86_64_exec_start(
 }
 
 // musl 1.2.6 arch/aarch64/crt_arch.h, MIT license.
-#[cfg(target_arch = "aarch64")]
+#[cfg(all(target_arch = "aarch64", crabc_x86_64_combined_exec_entry))]
+core::arch::global_asm!(
+    r#"
+    .section .text._start,"ax",%progbits
+    .global _start
+    .type _start,%function
+_start:
+    mov x29, #0
+    mov x30, #0
+    mov x1, x0
+    mov x0, sp
+    and sp, x0, #-16
+    b {startup}
+    .size _start, .-_start
+    .section .note.GNU-stack,"",%progbits
+"#,
+    startup = sym __crabc_x86_64_exec_start,
+);
+
+#[cfg(all(target_arch = "aarch64", not(crabc_x86_64_combined_exec_entry)))]
 core::arch::global_asm!(
     r#"
     .section .text._start,"ax",%progbits
