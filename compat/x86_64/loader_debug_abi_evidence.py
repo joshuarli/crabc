@@ -265,11 +265,15 @@ def _product_records(static, dynamic, mode):
             'static and dynamic product roots overlap')
     import crabc_cc_static
     import owned_dynamic_qualification as qualification
+    import owned_posix_product_evidence as product_evidence
 
     try:
-        crabc_cc_static.validate_installed_runtime(static)
+        if ARCH == "aarch64":
+            product_evidence._validate_static_product(static)
+        else:
+            crabc_cc_static.validate_installed_runtime(static)
         qualification.product_identity(dynamic)
-    except (crabc_cc_static.DriverError, qualification.QualificationError, OSError, ValueError) as error:
+    except (crabc_cc_static.DriverError, qualification.QualificationError, product_evidence.ProductEvidenceError, OSError, ValueError) as error:
         raise EvidenceError(f'current supplied product contract differs: {error}') from error
     require(mode in ('self-built', 'supplied'), 'loader-debug product mode differs')
     return {
