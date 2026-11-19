@@ -248,7 +248,7 @@ def _check_products(root: Path, read: native_shadow_receipt.Receipt) -> None:
                      interpreter == f"/lib/ld-crabc-{ARCH}.so.1",
                      f"{name} has a wrong dynamic ELF link mode")
             try:
-                facts = owned_dynamic_elf.inspect(product / name)
+                facts = owned_dynamic_elf.inspect(product / name, architecture=ARCH)
             except owned_dynamic_elf.InspectionError as error:
                 raise native_shadow_receipt.ReceiptError(f"{RUNNER}: {name}: {error}") from error
             _require(facts["needed"] == ["libc.so"] and not facts["symbol_versioning"],
@@ -448,7 +448,7 @@ def _check_dynamic_link(retained: Path, hashes: dict[str, str], program: str, mo
     _require(inspection.get("output_sha256") == hashes[name] and
              inspection.get("link_map", {}).get("sha256") == hashes[f"map-{name}"] and
              inspection.get("declared", {}).get("mode") == link_mode and
-             inspection.get("facts") == owned_dynamic_elf.inspect(retained / name),
+             inspection.get("facts") == owned_dynamic_elf.inspect(retained / name, architecture=ARCH),
              f"{name} ELF inspection or link map differs from the executed product")
     object_main = _application_main_symbol(retained / f"object-{name}", binding="GLOBAL")
     map_main = _application_map_main(retained / f"map-{name}", f"object-{name}.o", main_size=object_main[1])
