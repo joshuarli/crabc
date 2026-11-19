@@ -308,3 +308,39 @@ fn truncate(bits: u128, frac_bits: u32, exp_bits: u32) -> u64 {
 pub extern "C" fn __trunctfsf2(x: f128) -> f32 { f32::from_bits(truncate(x.to_bits(), 23, 8) as u32) }
 #[no_mangle]
 pub extern "C" fn __trunctfdf2(x: f128) -> f64 { f64::from_bits(truncate(x.to_bits(), 52, 11)) }
+
+fn fix(bits: u128, width: u32, signed: bool) -> u128 {
+    let sign = bits & SIGN != 0;
+    let abs = bits & !SIGN;
+    let nan = abs > INF;
+    let negative = sign && !nan;
+    let limit = if signed { 1_u128 << (width - 1) } else if width == 128 { u128::MAX } else { (1_u128 << width) - 1 };
+    let invalid_value = if negative { if signed { limit } else { 0 } } else if signed { limit - 1 } else { limit };
+    let exp = ((abs >> 112) & 0x7fff) as i32 - 16383;
+    if abs >= INF || exp >= 128 { raise(1); return if negative && signed { invalid_value.wrapping_neg() } else { invalid_value }; }
+    if abs == 0 { return 0; }
+    if exp < 0 { raise(0x10); return 0; }
+    let sig = (abs & FRAC) | ONE;
+    let (magnitude, lost) = if exp >= 112 {
+        (sig << (exp - 112), false)
+    } else {
+        let shift = (112 - exp) as u32;
+        (sig >> shift, (sig << (128 - shift)) != 0)
+    };
+    let invalid = if signed { if negative { magnitude > limit } else { magnitude >= limit } } else { (negative && magnitude != 0) || magnitude > limit };
+    if invalid { raise(1); return if negative && signed { invalid_value.wrapping_neg() } else { invalid_value }; }
+    if lost { raise(0x10); }
+    if negative { magnitude.wrapping_neg() } else { magnitude }
+}
+#[no_mangle]
+pub extern "C" fn __fixtfsi(x: f128) -> i32 { fix(x.to_bits(), 32, true) as i32 }
+#[no_mangle]
+pub extern "C" fn __fixunstfsi(x: f128) -> u32 { fix(x.to_bits(), 32, false) as u32 }
+#[no_mangle]
+pub extern "C" fn __fixtfdi(x: f128) -> i64 { fix(x.to_bits(), 64, true) as i64 }
+#[no_mangle]
+pub extern "C" fn __fixunstfdi(x: f128) -> u64 { fix(x.to_bits(), 64, false) as u64 }
+#[no_mangle]
+pub extern "C" fn __fixtfti(x: f128) -> i128 { fix(x.to_bits(), 128, true) as i128 }
+#[no_mangle]
+pub extern "C" fn __fixunstfti(x: f128) -> u128 { fix(x.to_bits(), 128, false) }
