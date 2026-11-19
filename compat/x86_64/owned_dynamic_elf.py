@@ -304,7 +304,7 @@ def inspect(path: Path, *, architecture: str = "x86_64") -> dict[str, Any]:
             defined.add(symbol)
 
     return {
-        "schema": SCHEMA,
+        "schema": SCHEMA if architecture == "x86_64" else "crabc.aarch64-owned-dynamic-elf-inspection/v2",
         "elf_type": "ET_EXEC" if elf_type == ET_EXEC else "ET_DYN",
         "machine": machine_name,
         "entry": entry,

@@ -16,7 +16,7 @@ import hashlib
 from pathlib import Path
 import re
 
-from loader_debug_abi_evidence import Elf, EvidenceError
+from loader_debug_abi_evidence import ARCH, Elf, EvidenceError
 import owned_dynamic_elf
 
 
@@ -198,8 +198,9 @@ def _static_undefined_bindings(executable):
                 # resolving its address to zero. Regular local metadata
                 # still requires the operand and dynamic-exposure checks;
                 # local binding alone does not establish an inert row.
-                require(row['name'] and (row['binding'] in ('GLOBAL', 'WEAK')
-                                        or name == '.symtab' and row['binding'] == 'LOCAL')
+                require((row['name'] or ARCH == 'aarch64' and name == '.symtab' and row['binding'] == 'LOCAL')
+                        and (row['binding'] in ('GLOBAL', 'WEAK')
+                             or name == '.symtab' and row['binding'] == 'LOCAL')
                         and row['value'] == row['size'] == 0, 'static undefined symbol metadata differs')
                 undefined.append({'table_index': index, 'table': name, 'symbol_index': number, 'symbol': row})
     require(any(row['name'] == '.symtab' for row in tables), 'static binding regular symbol table is missing')
@@ -267,7 +268,7 @@ def _static_undefined_bindings(executable):
         require(names[index] == '.dynamic' and section[9] == 16 and section[5] % 16 == 0
                 and (section[4], section[3], section[5]) == (program[2], program[3], program[5]),
                 'static PIE dynamic section and segment differ')
-        facts = owned_dynamic_elf.inspect(executable)
+        facts = owned_dynamic_elf.inspect(executable, architecture=ARCH)
         require(facts['flags_1_pie'] and facts['interpreter'] is None and facts['needed'] == [],
                 'static PIE requires an external runtime')
         tags = []

@@ -626,3 +626,30 @@ class OwnedStaticLinkAuthorityMergedConstantTests(unittest.TestCase):
             binary.write_bytes(changed)
             with self.assertRaisesRegex(ValueError, "merged static target lacks its unique selected constant"):
                 self.prove(binary=binary)
+
+@unittest.skipUnless(Path('/opt/musl-1.2.6/.crabc-oracle').is_file(), 'requires the pinned native image')
+class NativeAnonymousSymbolTests(unittest.TestCase):
+    def test_unnamed_local_undefined_rows_remain_bounded(self):
+        from loader_debug_abi_evidence import ARCH
+        scratch = SOURCE_DIR.parents[1] / f'.work/{ARCH}/tmp'
+        scratch.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(dir=scratch) as directory:
+            root = Path(directory)
+            source, binary = root / 'main.c', root / 'main'
+            source.write_text('int main(void) { return 0; }\n')
+            subprocess.run(['/usr/bin/gcc', '-specs=/opt/musl-1.2.6/lib/musl-gcc.specs',
+                            '-static', '-no-pie', str(source), '-o', str(binary)], check=True, capture_output=True)
+            image = Elf(binary)
+            table = next(row for row in image.sections if row[1] == 2)
+            self.assertGreater(table[7], 1)
+            offset = table[4] + 24
+            data = bytearray(image.data)
+            data[offset:offset + 24] = bytes(24)
+            binary.write_bytes(data)
+            if ARCH == 'aarch64':
+                proof = static_undefined_bindings(binary)
+                self.assertTrue(any(not row['symbol']['name'] for row in proof['inert_symtab_rows']))
+                struct.pack_into('<Q', data, offset + 8, 1)
+                binary.write_bytes(data)
+            with self.assertRaisesRegex(StaticLinkAuthorityError, 'static undefined symbol metadata differs'):
+                static_undefined_bindings(binary)
