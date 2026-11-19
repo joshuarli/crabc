@@ -252,9 +252,9 @@ aarch64 run itself.
 60. **crabc-rs public API grew on x86**: public `fork`, `register_atfork`, `wait*`, `setsid` and others.
     - New unsafe `mmap_with_flags`, `mmap_anonymous_with_flags` and `mprotect_with_flags` (`mm.rs:628-655`) skip `checked_map_bits` and `checked_protection_bits`.
     - Also new: `renameat_whiteout`, `ResolveFlags::CACHED` (needs kernel 5.12) and `ioctl_tiocgptpeer`.
-61. **Legacy syscalls replaced on x86 too.** In libc and crabc-core, `poll`/`select`/`pause`/`access`/`open`/`chown`/`mkdir`/`pipe`/`dup2`/`fork` now go through the `*at`/`p*`/`dup3`/`clone` forms. musl x86_64 uses the legacy calls. `owned_spawn.rs:67-74` shows the cfg pattern that keeps them.
+61. **Closed (9740ef25d).** **Legacy syscalls replaced on x86 too.** In libc and crabc-core, `poll`/`select`/`pause`/`access`/`open`/`chown`/`mkdir`/`pipe`/`dup2`/`fork` now go through the `*at`/`p*`/`dup3`/`clone` forms. musl x86_64 uses the legacy calls. `owned_spawn.rs:67-74` shows the cfg pattern that keeps them.
 62. **Closed (982403342).** **Renamed crabc-rs tests break the x86 harness**: 37 `--test x86_64_*` references in `dev-x86_64.sh` (for example `:4482, 4523`), assertions in `test_runner.py:1827/1905`, and `compat/crabc-rs/coverage.toml:2895-2977`. They fail loudly, but the x86 evidence commands are broken.
-63. **Closed (f07d4793e):** The parent selected main’s search-domain contract on both architectures; the resolver library matches main and the test uses a fixture. Original finding: **`crabc-rs/src/resolver.rs:815-855`**: invalid search domains are now skipped instead of rejecting the file, on both architectures. This was intentional, but it goes beyond musl, which keeps IP-literal entries.
+63. **Closed (f07d4793e, 46cf8ec78):** The parent selected main’s search-domain contract on both architectures; the resolver library matches main and the test uses a fixture. Original finding: **`crabc-rs/src/resolver.rs:815-855`**: invalid search domains are now skipped instead of rejecting the file, on both architectures. This was intentional, but it goes beyond musl, which keeps IP-literal entries.
 64. **Closed (0a7c7e68c).** **`compat/x86_64/loader_debug_abi_trace.c:94-104`**: the new path-stat fallback also applies on x86. Borderline.
 
 ## Equivalent or not findings
