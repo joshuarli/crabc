@@ -895,10 +895,13 @@ def build_aarch64(args: argparse.Namespace) -> dict[str, object]:
     objects = {}
     names = ("crt1", "crti", "crtn", "Scrt1") if args.owned_dynamic_sysroot else ("crt1", "rcrt1", "crti", "crtn")
     for name in names:
-        source = source_path("aarch64_rcrt1.rs" if name == "rcrt1" else "x86_64_" + name + ".rs")
+        source_name = ("aarch64_rcrt1.rs" if name == "rcrt1" else
+                       "x86_64_Scrt1.rs" if name == "crt1" and args.owned_dynamic_sysroot else
+                       "x86_64_" + name + ".rs")
+        source = source_path(source_name)
         destination = output / (name + ".o")
         command = compiler + ["--edition=2021", "--crate-type=lib", "--emit=obj", "--target", target, "-C", "panic=abort", "-C", "force-unwind-tables=no", "-C", "opt-level=2", "-C", "relocation-model=static", "-C", "code-model=small", str(source), "-o", str(destination)]
-        if name == "Scrt1":
+        if name == "Scrt1" or (name == "crt1" and args.owned_dynamic_sysroot):
             command[command.index("-C"):command.index("-C")] = ["--cfg", "crabc_owned_dynamic_runtime", "--cfg", "crabc_general_dynamic_lifecycle"]
         if name in ("Scrt1", "rcrt1") and args.hardening_profile is NativeRuntimeProfile.HARDENED:
             command[command.index("-C"):command.index("-C")] = ["--cfg", "crabc_hardened"]
