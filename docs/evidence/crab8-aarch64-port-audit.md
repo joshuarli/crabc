@@ -375,11 +375,11 @@ entries are closed by the commit that fixes them.
 | 9 | still open | `consumer_rust_std_lto.py:587-588`. |
 | 10 | closed (58f2ddd16) | Incomplete development runs return failure on both architectures. |
 | 11 | kept by owner decision (not a defect) | Audit file `:16-19`; code unchanged at `qualification_candidate.py:559-561`. |
-| 12 | still open | `owned_crypt_profile.py:397-429` is unchanged: the expected receipt is built from the producer's own `receipt_input_records`/`owned_link_plan` (`:408-409`), with no `_validate_static_link_mode` and no `_dynamic_profile`. Callers are unchanged (`run_owned_crypt_runtime.sh:404-405`, `owned_crypt_runtime_evidence.py:470,529`, `owned_wordexp_evidence.py:892,1677`). The shared `validate_link` and `validate_retained_link` now accept aarch64 (`owned_posix_product_evidence.py:1477-1496, 1550-1571`). |
+| 12 | closed (6f7b05a3e) | ARM crypt and wordexp receipts use the shared independent link validator and its static-mode and dynamic-profile checks. |
 | 13 | still open | `static_product_contract.py:494-495`; `run_owned_static_sysroot.sh:526-527`; `crt/x86_64_owned_dynamic_startup.py:416-421`. |
 | 14 | closed (6c7d0cdb8) | The shared filesystem producer runs the native static, static-PIE, dynamic PIE and non-PIE modes and both dynamic entry paths. |
 | 15 | implementation added (4cc51d70a, 90b46ce83); acceptance waiting | The shared builder suite runs and passes on ARM. The static producer is waiting on positional-printf rounding in lane `a4-binary128` and process-shared robust-mutex lifecycle behavior in lane `a4-robust-mutex`; the producer remains red. |
-| 16 | partly fixed | `static_product_contract.py:307-334` now checks the sealed driver's path, status and modes for standalone. The scope phrases, `not_selected` and `not_proven_by_this_seed` assertions are still x86-only (`run_owned_static_sysroot.sh:200-240`). The nested static manifest in a combined product gets no sealed-driver checks. |
+| 16 | closed (14c03612f) | ARM standalone and combined static manifests check the sealed driver, scope, non-selection and coverage claims. |
 | 17 | closed (415415ce2) | The crypt producer runs the native musl oracle probe on both architectures. |
 | 18 | closed (d90065635) | The hardened entry test uses the driver’s transitive DSO option on both architectures. |
 | 19 | still open | `loader_crt_lifecycle_probe.c:19-24, 35-41`. |
@@ -389,7 +389,7 @@ entries are closed by the commit that fixes them.
 | 27 | fixed | `build_x86_64_owned_combined_sysroot.py:124-174` (no aarch64 early return), `:193-197`, `:339-370`, `:397-398`. |
 | 28 | fixed | `unwinder/owned_rust_link.py:733-745` uses the shared `_validate_static_product`/`_validate_dynamic_product`. |
 | 29 | still open | `owned_rust_link.py:55-56` (`-static` admitted), `:917-918` (`-no-pie` then `-static-pie` allowed). Only the machine is checked (`:976`, `:1195`); ELF type is not. |
-| 30 | partly fixed | The corpus, Lua, resolver-network and libc-test readers use `aliases_for_architecture`. `run_owned_posix_filesystem.sh:215` still passes `{}` aliases (part of item 14). |
+| 30 | closed (6c7d0cdb8) | The filesystem producer now copies the validated native product, including its aliases, for both dynamic execution routes. |
 | 31 | still open | `compat/corpus/run_x86.py:475`. |
 | 33 | fixed (aarch64 adopts the x86 behavior) | Since `74b86437a`, `ldso/src/x86_64_direct_entry.rs:106` applies the AT_EXECFN rewrite on both architectures, and `run_general_dynamic_cli.sh` checks it in both modes. The audit's follow-up note ("disproved") is now stale. |
 | 34 | fixed | `ldso/src/aarch64_auxv.rs`, called from `x86_64_initial_graph.rs:1258-1267` and `static_tls.rs:33-34,963`; test at `:1283-1292`. |
@@ -448,12 +448,8 @@ The facade correction leaves out-of-scope callers `crabc-rs/examples/ppoll_direc
 8. **Closed (d8ffc3bd5): producer-tool identities are checked against the architecture-specific source pin.**
    - The shared product and loader readers use the same source-pinned records.
 9. **Closed (20cedf91a).** Final ELF inspection receives the shared dynamic-symbol provider set on ARM.
-10. **`owned_posix_native_observations.py:299-301, 381-392`**.
-    - x86 replays the retained sidecars with `validate_record`.
-    - aarch64 inspects the live ELF and drops the sidecars from the exact file roster, although the driver now writes them.
-11. **Four component receipts** (`owned_locale_component_receipt.py:181-191`, `owned_numeric_calendar_component_receipt.py:178`, `owned_regex_component_receipt.py:187`, `owned_stdio_component_receipt.py:339`).
-    - aarch64 uses `validate_dynamic_product_source`, which drops the `status == "materialized-unqualified"` check.
-    - It also admits debug products through `validate_debug_product_source`.
+10. **Closed (8b711e8ba).** ARM replays the retained sidecars with the shared reader and includes them in the exact file roster.
+11. **Closed (846c71e67).** All four component receipts use the same materialization state and source checks as x86.
 12. **`runtime_private_facades.py:313-314`**.
     - x86 runs `validate_materialized_dynamic_product`, which includes `validate_installation` and `product_identity`.
     - aarch64 runs only `validate_dynamic_product_source`.
@@ -462,9 +458,7 @@ The facade correction leaves out-of-scope callers `crabc-rs/examples/ppoll_direc
     - x86 does a byte-exact `cmp` against musl and checks the export surface, bindings, closure, TLS, ambient dependencies and an aggregate.
     - aarch64 checks only machine, static-ness, symbol presence and alias address, and allowlists flag and rounding differences.
     - The binary128 difference itself is owner-decided (CRAB-8 RFC, about `:358`); the dropped structural checks are not.
-14. **Open — archive producer dependency.** `builtins/build.py:838-847, 941-950` requires and emits one `crabc-builtins.o` followed by source-built `compiler_builtins-*.o` members; the requested shared aggregate contract requires exactly `crabc-builtins.o`. A native `mold -r --whole-archive` experiment produced one member and passed the helper fixture, but integrating that product-format change and its provenance with `a4-binary128` remains outstanding. The ARM aggregate also needs the shared structural checks and replayable aggregate report.
-    - Dropped: the provenance checks (`members == ['crabc-builtins.o']`, reproducibility); the check that an archive-free link fails naming each helper; the checks that each helper definition is retained and called directly; and the aggregate report.
-    - It also takes its tools directory from the ambient `rustc --print sysroot` (`:13`).
+14. **Partly fixed (4fb39ef7e, d4d270a9d, add448dbd).** The ARM source-built helper archive now has exactly one member with recorded merge provenance; reproducibility, archive-free failures, retained definitions and direct transfers pass the native aggregate. The replayable shared aggregate report remains outstanding and the product change must be integrated with `a4-binary128`.
 15. **Static export surface.**
     - `source_runtime_libc.sh:68-75` allowlists the application-namespace names `ioctl_word`, `ioctl_no_argument`, `semctl_word` and `semctl_no_argument`.
     - `native_abi_exports.py:152-160` accepts any `anon.*` symbol on aarch64, where x86 compares them exactly. The aarch64 delta is hardcoded in code (`:32-47`).
