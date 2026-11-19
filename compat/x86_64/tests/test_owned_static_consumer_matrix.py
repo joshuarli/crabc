@@ -19,9 +19,11 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(ROOT / "compat/x86_64"))
+from native_arch import native_arch
 HELPER = ROOT / "compat" / "x86_64" / "owned_static_consumer_matrix.py"
 RUNNER = ROOT / "compat" / "x86_64" / "run_owned_static_sysroot.sh"
-SCRATCH_ROOT = ROOT / ".work" / "x86_64" / "owned-static-consumer-matrix-tests"
+SCRATCH_ROOT = ROOT / ".work" / native_arch()["work_name"] / "owned-static-consumer-matrix-tests"
 
 
 class OwnedStaticConsumerMatrixTests(unittest.TestCase):
