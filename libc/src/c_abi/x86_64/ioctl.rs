@@ -58,13 +58,13 @@ ioctl:
 );
 
 #[cfg(target_arch = "aarch64")]
-core::arch::global_asm!(include_str!("ioctl_aarch64.S"));
+core::arch::global_asm!(include_str!("ioctl_aarch64.S"),
+    no_argument = sym ioctl_no_argument, word = sym ioctl_word);
 
 /// Forward one admitted no-vararg Linux request with an explicit zero word.
 ///
 /// The public assembly entry is the only caller.  Keeping this as a normal
 /// two-argument function ensures Rust never observes an absent C vararg.
-#[cfg_attr(target_arch = "aarch64", no_mangle)]
 #[inline(never)]
 unsafe extern "C" fn ioctl_no_argument(file_descriptor: c_int, request: c_int) -> c_int {
     if request != FIOCLEX && request != FIONCLEX {
@@ -90,7 +90,6 @@ unsafe extern "C" fn ioctl_no_argument(file_descriptor: c_int, request: c_int) -
 /// helper is therefore called only from the public assembly three-word path;
 /// callers of all other request forms must supply an explicit pointer or
 /// integer word exactly as their chosen Linux request requires.
-#[cfg_attr(target_arch = "aarch64", no_mangle)]
 #[inline(never)]
 unsafe extern "C" fn ioctl_word(
     file_descriptor: c_int,

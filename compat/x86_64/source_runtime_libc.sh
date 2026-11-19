@@ -70,7 +70,7 @@ source_runtime_expected_static_surface() {
     {
         grep -Ev '^(#|$)' "$contract" | awk -v arch="$arch" 'arch != "aarch64" || ($0 != "arch_prctl" && $0 != "ioperm" && $0 != "iopl")'
         if [ "$arch" = aarch64 ]; then
-            printf '%s\n' __sigsetjmp_tail crabc_x86_float_parse_shlim ioctl_no_argument ioctl_word semctl_no_argument semctl_word
+            printf '%s\n' __sigsetjmp_tail crabc_x86_float_parse_shlim
         fi
     } | LC_ALL=C sort -u >"$output"
 }

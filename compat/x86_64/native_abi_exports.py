@@ -33,7 +33,7 @@ CLASS_DIFFERENCE_KEYS = frozenset({"name", "reference", "candidate"})
 ARM_STATIC_EXTRA = frozenset({
     "__crabc_aarch64_prctl", "__crabc_aarch64_syscall", "__memcpy_fwd",
     "crabc_aarch64_extended___invtrigl_R", "crabc_aarch64_extended___pio2_hi",
-    "crabc_aarch64_extended___pio2_lo", "ioctl_no_argument", "ioctl_word", "semctl_no_argument", "semctl_word",
+    "crabc_aarch64_extended___pio2_lo",
 })
 X86_STATIC_EXTRA = frozenset({
     "crabc_x86_math_acosh_provider_rsqrt_tab", "crabc_x86_math_asinh_data_rsqrt",

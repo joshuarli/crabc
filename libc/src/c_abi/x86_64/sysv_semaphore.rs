@@ -128,7 +128,8 @@ semctl:
 );
 
 #[cfg(target_arch = "aarch64")]
-core::arch::global_asm!(include_str!("semctl_aarch64.S"));
+core::arch::global_asm!(include_str!("semctl_aarch64.S"),
+    no_argument = sym semctl_no_argument, word = sym semctl_word);
 
 // Musl's `src/ipc/semget.c` object.
 static_archive_member! { semget_source {
@@ -232,7 +233,6 @@ static_archive_member! { semtimedop_source {
 /// syscall word for the known no-vararg forms; establishing it also preserves
 /// musl's zero-initialized union for unknown commands without treating an
 /// absent C vararg register as input.
-#[cfg_attr(target_arch = "aarch64", no_mangle)]
 #[inline(never)]
 unsafe extern "C" fn semctl_no_argument(
     semaphore_id: c_int,
@@ -257,7 +257,6 @@ unsafe extern "C" fn semctl_no_argument(
 /// argument in `rcx`; this fixed helper then moves it to Linux's `r10` slot.
 /// Pointers, `SETVAL` integer values, command selection, and all pointed-to
 /// storage remain caller-owned according to the selected `sys/sem.h` ABI.
-#[cfg_attr(target_arch = "aarch64", no_mangle)]
 #[inline(never)]
 unsafe extern "C" fn semctl_word(
     semaphore_id: c_int,
