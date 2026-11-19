@@ -653,3 +653,62 @@ class NativeAnonymousSymbolTests(unittest.TestCase):
                 binary.write_bytes(data)
             with self.assertRaisesRegex(StaticLinkAuthorityError, 'static undefined symbol metadata differs'):
                 static_undefined_bindings(binary)
+
+@unittest.skipUnless(Path('/opt/musl-1.2.6/.crabc-oracle').is_file(), 'requires the pinned native image')
+class NativeArmAddressAuthorityTests(unittest.TestCase):
+    def test_selected_address_and_tls_relocations_are_byte_bound(self):
+        from loader_debug_abi_evidence import ARCH
+        if ARCH != 'aarch64':
+            self.skipTest('requires native AArch64 relocation instructions')
+        scratch = SOURCE_DIR.parents[1] / '.work/aarch64/tmp'
+        scratch.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(dir=scratch) as directory:
+            root = Path(directory)
+            source, obj, binary, link_map = (root / name for name in ('probe.s', 'probe.o', 'probe', 'probe.map'))
+            source.write_text('''
+.section .rodata.str1.8,"aMS",%progbits,1
+.p2align 3
+.Lstr: .asciz "selected-string"
+.section .rodata.cst16,"aM",%progbits,16
+.p2align 4
+.Lconstant: .quad 0x12345678,0x87654321
+.section .tdata,"awT",%progbits
+.p2align 3
+.globl selected_tls
+.type selected_tls,%tls_object
+selected_tls: .quad 23
+.size selected_tls,.-selected_tls
+.data
+.globl selected_data
+.type selected_data,%object
+selected_data: .quad 42
+.size selected_data,.-selected_data
+.text
+.globl _start
+.type _start,%function
+_start:
+adrp x0,.Lstr
+add x0,x0,:lo12:.Lstr
+adrp x1,.Lconstant
+ldr q1,[x1,:lo12:.Lconstant]
+adrp x2,:gottprel:selected_tls
+ldr x2,[x2,:gottprel_lo12:selected_tls]
+adrp x3,:got:selected_data
+ldr x3,[x3,:got_lo12:selected_data]
+ret
+.size _start,.-_start
+''')
+            subprocess.run(['/usr/bin/cc', '-c', str(source), '-o', str(obj)], check=True, capture_output=True)
+            subprocess.run(['/usr/bin/mold', '-static', '--no-dynamic-linker', '-e', '_start',
+                            '-Map=' + str(link_map), str(obj), '-o', str(binary)], check=True, capture_output=True)
+            contract = StaticFunctionContract('_start', str(obj), 'GLOBAL', 'DEFAULT', 'LOCAL', 'DEFAULT')
+            require_static_functions(link_map, binary, {str(obj): obj}, [contract])
+            image = Elf(binary)
+            symbol = image.symbol('_start', dynamic=False)
+            section = image.sections[symbol['section']]
+            offset = section[4] + symbol['value'] - section[3]
+            changed = bytearray(binary.read_bytes())
+            changed[offset + 4] ^= 4
+            binary.write_bytes(changed)
+            with self.assertRaises(StaticLinkAuthorityError):
+                require_static_functions(link_map, binary, {str(obj): obj}, [contract])
