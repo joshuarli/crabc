@@ -229,12 +229,9 @@ def _materialization_product(product: Path) -> tuple[dict, dict | None, dict | N
     import crabc_cc_owned_dynamic as driver
     manifest = read(product / "share/crabc/manifest.json")
     if manifest.get("format") == "crabc-aarch64-owned-sysroot-v1":
-        if str(ROOT) not in sys.path:
-            sys.path.insert(0, str(ROOT))
-        from scripts import build_x86_64_owned_combined_sysroot as combined
         try:
-            record = combined.validate(product)
-        except combined.CompositionError as error:
+            record = driver.validate_installation(product)
+        except driver.shared.DriverError as error:
             raise QualificationError(f"installed combined product invalid: {error}") from error
         placements = record["products"]["dynamic"]["placements"]
         manifest = read(product / record["products"]["dynamic"]["manifest"])

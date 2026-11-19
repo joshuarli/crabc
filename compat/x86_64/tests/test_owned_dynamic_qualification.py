@@ -617,6 +617,14 @@ class OwnedDynamicQualificationTests(unittest.TestCase):
             with self.assertRaisesRegex(qualification.QualificationError, "payload binding"):
                 REAL_SOURCE_BOUND_PRODUCT_IDENTITY(product, self.source)
 
+    def test_arm_combined_product_rejects_invalid_installed_provenance(self):
+        product = self.work / "arm-combined"
+        self.put("arm-combined/share/crabc/manifest.json", {"format": "crabc-aarch64-owned-sysroot-v1"})
+        with mock.patch.object(driver, "validate_installation", side_effect=driver.shared.DriverError("bad loader provenance")) as validate:
+            with self.assertRaisesRegex(qualification.QualificationError, "bad loader provenance"):
+                qualification._materialization_product(product)
+        validate.assert_called_once_with(product)
+
     def test_receipt_reuse_and_outside_validation(self):
         receipt = qualification.collect(self.work)
         path = self.put("qualification.json", receipt)
