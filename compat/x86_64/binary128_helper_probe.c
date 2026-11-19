@@ -19,7 +19,13 @@ static const quad edges[] = {
     {.u={0,UINT64_C(0x7fff000000000000)}},
     {.u={0,UINT64_C(0xffff000000000000)}},
     {.u={0x1234,UINT64_C(0x7fff800000000000)}},
-    {.u={0x5678,UINT64_C(0x7fff000000000000)}}
+    {.u={0x5678,UINT64_C(0x7fff000000000000)}},
+    {.u={0x9999,UINT64_C(0xffff800000000000)}},
+    {.u={0x9999,UINT64_C(0x7fff800000000000)}},
+    {.u={0x7777,UINT64_C(0xffff000000000000)}},
+    {.u={UINT64_MAX,UINT64_C(0x0000ffffffffffff)}},
+    {.u={UINT64_MAX,UINT64_C(0x3ffeffffffffffff)}},
+    {.u={1,UINT64_C(0x3fff000000000000)}}
 };
 static void result(const char *name, quad q) {
     int flags = fetestexcept(FE_ALL_EXCEPT);

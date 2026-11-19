@@ -87,6 +87,7 @@ fn pack(sign: u128, mut exp: i32, mut sig: u128) -> u128 {
     }
     let mode = round_mode();
     let discarded = sig & 7;
+    let tiny = exp == 1 && sig < ONE << 3;
     let mut mag = sig >> 3;
     let increment = match mode {
         0 => discarded > 4 || (discarded == 4 && mag & 1 != 0),
@@ -102,7 +103,7 @@ fn pack(sign: u128, mut exp: i32, mut sig: u128) -> u128 {
         return sign | if infinity { INF } else { INF - 1 };
     }
     let encoded = if exp == 1 && mag < ONE { 0 } else { exp as u128 };
-    if discarded != 0 { raise(0x10 | if encoded == 0 { 8 } else { 0 }); }
+    if discarded != 0 { raise(0x10 | if tiny { 8 } else { 0 }); }
     sign | (encoded << 112) | (mag & FRAC)
 }
 
@@ -290,6 +291,7 @@ fn truncate(bits: u128, frac_bits: u32, exp_bits: u32) -> u64 {
     let mut sig = jam(src_sig << 3, 112-frac_bits);
     if target_exp < 1 { sig = jam(sig, (1-target_exp) as u32); target_exp = 1; }
     let lost = sig & 7;
+    let tiny = target_exp == 1 && sig < 1_u128 << (frac_bits + 3);
     let mut mag = (sig >> 3) as u64;
     let mode = round_mode();
     let inc = match mode { 0 => lost > 4 || (lost == 4 && mag & 1 != 0), 1 => sign == 0 && lost != 0, 2 => sign != 0 && lost != 0, _ => false };
@@ -301,7 +303,7 @@ fn truncate(bits: u128, frac_bits: u32, exp_bits: u32) -> u64 {
         return sign | if infinity { max_exp << frac_bits } else { (max_exp << frac_bits) - 1 };
     }
     let encoded = if target_exp == 1 && mag < 1_u64 << frac_bits { 0 } else { target_exp as u64 };
-    if lost != 0 { raise(0x10 | if encoded == 0 { 8 } else { 0 }); }
+    if lost != 0 { raise(0x10 | if tiny { 8 } else { 0 }); }
     sign | (encoded << frac_bits) | (mag & ((1_u64 << frac_bits)-1))
 }
 #[no_mangle]
