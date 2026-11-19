@@ -178,7 +178,7 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--rebuilt-sysroot", type=Path)
     parser.add_argument("--extracted-sysroot", type=Path)
     parser.add_argument("--archive-seed", type=Path)
-    parser.add_argument("--work-root", type=Path, default=LUA.DEFAULT_X86_STATIC_WORK_ROOT.with_name("lua-static-supplied"))
+    parser.add_argument("--work-root", type=Path, default=LUA.ROOT / ".work" / native_arch()["work_name"] / "lua-static-supplied")
     parser.add_argument("--read", type=Path, help="recheck a retained supplied-mode report")
     parser.add_argument("--replay", action="store_true", help="also execute all retained source and bytecode workloads")
     args = parser.parse_args(argv)

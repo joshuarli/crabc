@@ -124,7 +124,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                  "dynamic-installed-sysroot", "dynamic-extracted-sysroot", "archive-seed")
     for name in cohort_arguments:
         parser.add_argument("--" + name, type=Path)
-    parser.add_argument("--work-root", type=Path, default=LUA.ROOT / ".work/x86_64/lua-source-build-supplied")
+    parser.add_argument("--work-root", type=Path, default=LUA.ROOT / ".work" / LUA.ARCHITECTURE["work_name"] / "lua-source-build-supplied")
     args = parser.parse_args(argv)
     selected = [getattr(args, name.replace("-", "_")) for name in cohort_arguments]
     if any(value is not None for value in selected) and not all(value is not None for value in selected):

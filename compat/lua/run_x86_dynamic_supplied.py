@@ -28,7 +28,7 @@ import source_build_admission as ADMISSION  # noqa: E402
 
 
 ROOT = LUA.ROOT
-DEFAULT_WORK_ROOT = ROOT / ".work/x86_64/lua-dynamic-supplied"
+DEFAULT_WORK_ROOT = ROOT / ".work" / LUA.ARCHITECTURE["work_name"] / "lua-dynamic-supplied"
 SOURCE_INPUTS = (
     Path(__file__).resolve(),
     ROOT / "compat/lua/run.py",
