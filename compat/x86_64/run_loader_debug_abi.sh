@@ -3,7 +3,8 @@
 set -euo pipefail
 ulimit -c 0
 readonly ROOT="$(cd -P "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-[ "$(uname -sm)" = 'Linux x86_64' ]
+[ "$(uname -s)" = Linux ]
+python3 -B "$ROOT/compat/x86_64/native_arch.py" >/dev/null
 [ "$(id -u)" -eq 0 ]
 python3 -B - "$ROOT" "${TMPDIR:-}" <<'PY'
 from pathlib import Path
