@@ -166,7 +166,7 @@ if (manifest.get("format") != f"crabc-{format_name}-owned-static-sysroot-v1" or
         manifest.get("target") != f"{arch}-unknown-linux-musl"):
     fail("manifest identity drifted")
 installed = manifest.get("installed")
-payload = manifest.get("files") if arch == "aarch64" else installed.get("files") if isinstance(installed, dict) else None
+payload = installed.get("files") if isinstance(installed, dict) else None
 if not isinstance(payload, dict):
     fail("manifest payload roster drifted")
 if not isinstance(receipt, dict):
@@ -432,7 +432,7 @@ receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
 manifest = root / "share/crabc/manifest.json"
 expected_runtime = sorted("usr/lib/" + entry for entry in (
     "Scrt1.o" if mode == "pie" else "crt1.o",
-    *(["crabc-dynamic-attach.o"] if arch == "x86_64" else []), "crti.o", "libc.so", "libcrabc-builtins.a", "crtn.o",
+    *(["crabc-dynamic-attach.o"] if arch == "x86_64" or mode == "non-pie" else []), "crti.o", "libc.so", "libcrabc-builtins.a", "crtn.o",
 ))
 if not isinstance(receipt, dict):
     raise SystemExit("process-control dynamic receipt is not an object")
