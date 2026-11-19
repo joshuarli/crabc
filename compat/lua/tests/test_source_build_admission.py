@@ -97,6 +97,25 @@ class SourceBuildAdmissionTests(unittest.TestCase):
             ):
                 yield work, static_report, dynamic_report
 
+    def test_aarch64_supplied_products_bind_source_and_formats(self) -> None:
+        source = {"source_sha256": "a" * 64}
+        static = {"format": "crabc-aarch64-owned-static-sysroot-v1", **source, "build_profile": "release"}
+        dynamic = {"format": "crabc-aarch64-owned-dynamic-sysroot-v1", **source, "build_profile": "release"}
+        def product(manifest):
+            return lambda root: (root, None, None, manifest)
+        with (mock.patch.object(ADMISSION.LUA, "ARCH", "aarch64"),
+              mock.patch.object(ADMISSION.LUA, "owned_static_sysroot", side_effect=product(static)),
+              mock.patch.object(ADMISSION.DYNAMIC, "owned_dynamic_sysroot", side_effect=product(dynamic)),
+              mock.patch.object(ADMISSION.QUALIFICATION, "product_identity")):
+            ADMISSION.require_current_supplied_products([Path("static")], [Path("dynamic")], source)
+            dynamic["source_sha256"] = "b" * 64
+            with self.assertRaisesRegex(ADMISSION.LUA.RunnerError, "different source"):
+                ADMISSION.require_current_supplied_products([Path("static")], [Path("dynamic")], source)
+            dynamic["source_sha256"] = source["source_sha256"]
+            dynamic["format"] = static["format"]
+            with self.assertRaisesRegex(ADMISSION.LUA.RunnerError, "architecture differs"):
+                ADMISSION.require_current_supplied_products([Path("static")], [Path("dynamic")], source)
+
     def test_supplied_receipt_rechecks_cohort_and_raw_artifacts(self) -> None:
         import run_x86_static_dispatch as static_runner
         import run_x86_dynamic_supplied as dynamic_runner
