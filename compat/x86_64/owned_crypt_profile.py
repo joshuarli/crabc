@@ -395,38 +395,9 @@ def profile_reader(work, mount, product, root):
 
 
 def aarch64_link_identity(root, product, obj, binary, receipt_path, mode, *, relative_output=True):
-    import crabc_cc_static as compiler
-    root, product, obj, binary, receipt_path = map(Path, (root, product, obj, binary, receipt_path))
-    receipt = native.read_json(receipt_path)
-    if mode in ('static', 'static-pie'):
-        manifest, _ = products._validate_static_product(product)
-        spec = compiler.static_mode('static-et-exec' if mode == 'static' else 'static-pie')
-        expected = {'schema': 1, 'format': 'crabc-aarch64-sealed-static-driver-v1',
-                    'target': 'aarch64-unknown-linux-musl',
-                    'mode': {'id': spec.identifier, 'elf_type': spec.elf_type, 'crt_object': spec.crt_object, 'interpreter': 'absent'},
-                    'resolved_linker': {'path': '/usr/bin/mold', 'sha256': native.digest(Path('/usr/bin/mold'))},
-                    'owned_link_contract': compiler.owned_link_plan(product, spec, architecture='aarch64'),
-                    'input_receipts': compiler.receipt_input_records(product, spec, [obj], receipt_path),
-                    'output': {'path': binary.name if relative_output else str(binary), 'sha256': native.digest(binary)},
-                    'map': {'path': receipt_path.with_suffix('.map').name, 'sha256': native.digest(receipt_path.with_suffix('.map'))},
-                    'trace': {'path': receipt_path.with_suffix('.trace').name, 'sha256': native.digest(receipt_path.with_suffix('.trace'))}}
-        same(receipt, expected, 'aarch64 static link receipt')
-        contract = [item for item in expected['owned_link_contract'] if item not in ('--start-group', '--end-group')]
-        products._check_static_trace_lines(receipt_path.with_suffix('.trace').read_text().splitlines(),
-                                           contract, str(obj), 'aarch64 static link trace')
-        facts = elf_facts(binary)
-        same([facts['type'], facts['interpreters'], facts['needed'], facts['textrel']],
-             [2 if mode == 'static' else 3, [], [], False], 'aarch64 static executable ELF')
-        fmt = 'crabc-aarch64-owned-static-sysroot-v1'
-    else:
-        manifest, _ = products._validate_dynamic_product(product)
-        reader = profile_reader(receipt_path.parent, str(root), product, root)
-        import owned_atomic_addressable_profile as atomic
-        atomic._collect_link(reader, [obj], binary, mode, live_tools(product))
-        fmt = 'crabc-aarch64-owned-dynamic-sysroot-v1'
-    return {'linkage': mode, 'product': str(product), 'product_format': fmt,
-            'product_manifest_sha256': native.digest(manifest), 'workload_sha256': native.digest(obj),
-            'executable_sha256': native.digest(binary), 'receipt_sha256': native.digest(receipt_path)}
+    # The shared reader reconstructs the input roster and link plan independently
+    # and enforces the selected product's static or dynamic profile.
+    return products.validate_link(Path(product), Path(obj), Path(binary), Path(receipt_path), mode)
 
 
 def collect_command(reader, label, command, *, raw_stdout=None, environment=ENVIRONMENT):
