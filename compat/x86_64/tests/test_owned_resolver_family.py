@@ -237,8 +237,8 @@ class OwnedResolverFamilyTests(unittest.TestCase):
     def test_plan_fixes_a_fresh_layout_and_request_for_the_supplied_cohort(self) -> None:
         import owned_resolver_family_cohort as cohort
 
-        (ROOT / ".work/x86_64/tmp").mkdir(parents=True, exist_ok=True)
-        parent = Path(tempfile.mkdtemp(prefix="resolver-family-plan.", dir=ROOT / ".work/x86_64/tmp"))
+        (ROOT / family.EXECUTION_WORK / "tmp").mkdir(parents=True, exist_ok=True)
+        parent = Path(tempfile.mkdtemp(prefix="resolver-family-plan.", dir=ROOT / family.EXECUTION_WORK / "tmp"))
         self.addCleanup(shutil.rmtree, parent)
         preparation = self._file("preparation.json")
         qualification = self._file("qualification.json")
@@ -256,7 +256,7 @@ class OwnedResolverFamilyTests(unittest.TestCase):
                 family.plan_execution(ROOT, preparation, qualification, parent / "absent")
             elsewhere = self.work / "elsewhere"
             elsewhere.mkdir()
-            with self.assertRaisesRegex(family.ResolverFamilyError, r"below checkout \.work/x86_64"):
+            with self.assertRaisesRegex(family.ResolverFamilyError, rf"below checkout \.work/{family.ARCH}"):
                 family.plan_execution(ROOT, preparation, qualification, elsewhere)
             self.assertEqual(canonical.call_count, 1, "invalid outputs must fail before cohort replay")
 
@@ -279,7 +279,7 @@ class OwnedResolverFamilyTests(unittest.TestCase):
             "static_preparation": self._relative(preparation),
             "dynamic_qualification": self._relative(qualification),
         })
-        self.assertTrue(layout["network_report"].startswith("compat/reports/resolver-network/x86_64/"))
+        self.assertTrue(layout["network_report"].startswith(f"compat/reports/resolver-network/{family.ARCH}/"))
         self.assertTrue(network_report.parent.is_dir() and not network_report.exists())
         for name in ("classic_work", "cancellation_work"):
             self.assertTrue((ROOT / layout[name]).is_dir(), name)

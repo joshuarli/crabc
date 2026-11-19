@@ -52,6 +52,17 @@ class ResolverNetworkComponentReceiptTests(unittest.TestCase):
     def setUpClass(cls) -> None:
         cls.reader = load_reader()
 
+    def test_aarch64_pinned_image_manifest_has_native_tool_roster(self) -> None:
+        import native_arch
+        from scripts import native_build_tools
+        with mock.patch.object(native_arch, "native_arch", return_value=native_arch.native_arch("aarch64")), \
+                mock.patch.object(native_build_tools, "CARGO_LINKER", Path("/usr/local/bin/crabc-aarch64-mold-gcc")):
+            reader = load_reader()
+        manifest = reader.trusted_image_manifest(ROOT)
+        self.assertEqual(manifest["schema"], "crabc.aarch64-owned-resolver-network-image-inputs/v1")
+        self.assertIn("/usr/local/bin/crabc-aarch64-musl-gcc", manifest["files"])
+        self.assertNotIn("/usr/local/bin/crabc-x86_64-musl-gcc", manifest["files"])
+
     def test_legacy_summary_only_report_cannot_establish_a_physical_receipt(self) -> None:
         with self.assertRaisesRegex(self.reader.ReceiptError, "physical receipt"):
             self.reader.validate_report_document({"schema_version": 1})
@@ -119,11 +130,11 @@ class ResolverNetworkComponentReceiptTests(unittest.TestCase):
     def test_current_image_manifest_tracks_the_repository_toolchain_and_exact_roster(self) -> None:
         manifest = self.reader.trusted_image_manifest(ROOT)
         self.assertEqual(set(manifest['files']), {
-            '/usr/local/bin/crabc-x86_64-musl-gcc', '/usr/bin/python3', '/usr/bin/readelf', '/usr/sbin/chroot',
+            f'/usr/local/bin/crabc-{self.reader.ARCH}-musl-gcc', '/usr/bin/python3', '/usr/bin/readelf', '/usr/sbin/chroot',
             *(str(path) for path in self.reader.COMPILER_ORACLE_INPUTS.values()),
             str(self.reader.RUSTC),
         })
-        self.assertIn(f"{self.reader.pinned_toolchain(ROOT)}-x86_64-", str(self.reader.RUSTC))
+        self.assertIn(f"{self.reader.pinned_toolchain(ROOT)}-{self.reader.ARCH}-", str(self.reader.RUSTC))
 
     def test_image_input_authentication_rejects_content_mode_alias_and_search_path_drift(self) -> None:
         (ROOT / ".work").mkdir(exist_ok=True)
