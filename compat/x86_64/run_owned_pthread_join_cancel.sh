@@ -3,7 +3,8 @@
 set -euo pipefail
 ulimit -c 0
 readonly ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-readonly oracle_cc=/usr/local/bin/crabc-x86_64-musl-gcc
+eval "$(python3 -B "$ROOT/compat/x86_64/native_arch.py")"
+readonly oracle_cc="$oracle"
 readonly musl_libc=/opt/musl-1.2.6/lib/libc.a
 readonly probe="$ROOT/compat/x86_64/owned_pthread_join_cancel_probe.c"
 readonly -a scenarios=(try-status timed-status timed-exited-invalid ownership-transfer tsd-exit entry blocked disabled masked cleanup-rejoin timed-entry timed-blocked timed-disabled timed-masked try-pending-busy try-pending-exited)
@@ -101,7 +102,7 @@ for mode in pie non-pie; do
             "/consumer-$mode" "$scenario"
         cmp "$work/oracle-$scenario.stdout" "$work/dynamic-$mode-$scenario.stdout"
         run_case 0 "$work/execution-root" "$work/direct-$mode-$scenario.stdout" \
-            /lib/ld-crabc-x86_64.so.1 "/consumer-$mode" "$scenario"
+            "/lib/ld-crabc-$arch.so.1" "/consumer-$mode" "$scenario"
         cmp "$work/oracle-$scenario.stdout" "$work/direct-$mode-$scenario.stdout"
     done
 done
