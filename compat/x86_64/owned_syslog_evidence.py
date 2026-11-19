@@ -204,9 +204,14 @@ def _installed_compiler_contract(installed: Path) -> tuple[Any, Path, Path]:
         '"-fPIC" if mode == "shared" else "-fPIE" if mode == "pie" else "-fno-pie",',
     )
     if ARCH == "aarch64":
+        shared_driver = _regular(installed / "share/crabc/crabc_cc_owned_dynamic.py", "installed shared dynamic driver")
+        source += shared_driver.read_text(encoding="utf-8")
         fragments = (
-            'SourceFileLoader("crabc_cc_static", str(root / "share/crabc/crabc_cc_static.py"))',
-            "quote_dirs = []", "rounding = False", "quote_dirs.append(path)",
+            "import crabc_cc_static as shared", "import crabc_cc_owned_dynamic as dynamic_shared",
+            'dynamic_shared.parse_dynamic_arguments(arguments, architecture="aarch64")',
+            "quote_include_inputs = []", "rounding_math = False", "rounding_math = True",
+            "quote_include_inputs.append(Path(arguments[index]))", "for path in quote_inputs:",
+            "quote_dirs = []", "quote_dirs.append(path)",
             'shared.run_checked([shared.compiler(), "-nostdinc",',
             '*(v for path in quote_dirs for v in ("-iquote", str(path)))',
             '"-isystem", str(root / "usr/include"), *shared.HOSTED_TRANSLATION_FLAGS,',
