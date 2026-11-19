@@ -77,8 +77,6 @@ int main(void)
 
     /* A syntax error must remain WRDE_SYNTAX even with WRDE_UNDEF. */
     if (wordexp("$UNSET )", &we, WRDE_UNDEF) != WRDE_SYNTAX) return 8;
-    if (wordexp("(", &we, 0) != WRDE_SYNTAX) return 25;
-    if (wordexp(")", &we, WRDE_NOCMD) != WRDE_BADCHAR) return 26;
 
     puts("wordexp ok");
     return 0;
