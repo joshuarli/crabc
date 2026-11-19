@@ -5,7 +5,6 @@
 extern "C" {
 #endif
 
-#if defined(__x86_64__)
 #include <features.h>
 
 #define __NEED_mode_t
@@ -16,39 +15,19 @@ extern "C" {
 #endif
 
 #include <bits/alltypes.h>
-#else
-#include <sys/types.h>
-#endif
 
-/* Pinned x86 musl uses decimal protection literals; preserve frozen AArch64 forms. */
-#if defined(__x86_64__)
 #define PROT_READ   1
 #define PROT_WRITE  2
 #define PROT_EXEC   4
 #define PROT_NONE   0
-#else
-#define PROT_READ   0x1
-#define PROT_WRITE  0x2
-#define PROT_EXEC   0x4
-#define PROT_NONE   0x0
-#endif
 
 #define MAP_SHARED    0x01
 #define MAP_PRIVATE   0x02
 #define MAP_FIXED     0x10
 #define MAP_ANON      0x20
 #define MAP_ANONYMOUS MAP_ANON
-/* x86 musl spacing is stringification-visible; retain the frozen other target form. */
-#if defined(__x86_64__)
 #define MAP_FAILED    ((void *) -1)
-#else
-#define MAP_FAILED    ((void *)-1)
-#endif
 
-#if defined(__x86_64__)
-/* Staged source-only Linux/x86-64 mapping declarations. Keep this extension
- * set separate from the existing AArch64 public header until each target has
- * its own complete C ABI admission. */
 #define MAP_SHARED_VALIDATE 0x03
 #define MAP_TYPE            0x0f
 #define MAP_NORESERVE       0x4000
@@ -84,7 +63,6 @@ extern "C" {
 
 #define PROT_GROWSDOWN 0x01000000
 #define PROT_GROWSUP   0x02000000
-#endif
 
 void *mmap(void *, size_t, int, int, int, off_t);
 int munmap(void *, size_t);
@@ -96,7 +74,7 @@ int munlockall(void);
 int msync(void *, size_t, int);
 int posix_madvise(void *, size_t, int);
 
-#if (defined(__x86_64__) || defined(__aarch64__)) && (defined(_GNU_SOURCE) || defined(_BSD_SOURCE))
+#if defined(_GNU_SOURCE) || defined(_BSD_SOURCE)
 #define MADV_NORMAL      0
 #define MADV_RANDOM      1
 #define MADV_SEQUENTIAL  2
@@ -125,23 +103,15 @@ int posix_madvise(void *, size_t, int);
 #endif
 
 #ifdef _GNU_SOURCE
-#if defined(__x86_64__)
 #define MREMAP_MAYMOVE 1
 #define MREMAP_FIXED 2
 #define MREMAP_DONTUNMAP 4
-#endif
 int mlock2(const void *, size_t, unsigned);
 int remap_file_pages(void *, size_t, int, size_t, int);
-#if defined(__x86_64__)
 #define MLOCK_ONFAULT 0x01
-#else
-#define MLOCK_ONFAULT 0x01U
-#endif
-#if defined(__x86_64__)
 #define MFD_CLOEXEC 0x0001U
 #define MFD_ALLOW_SEALING 0x0002U
 #define MFD_HUGETLB 0x0004U
-#endif
 #endif
 
 #define MS_ASYNC 1
@@ -149,10 +119,7 @@ int remap_file_pages(void *, size_t, int, size_t, int);
 #define MS_SYNC 4
 #define MCL_CURRENT 1
 #define MCL_FUTURE 2
-/* Select musl's public literal only for the staged x86 header surface. */
-#if defined(__x86_64__)
 #define MCL_ONFAULT 4
-#endif
 #define POSIX_MADV_NORMAL 0
 #define POSIX_MADV_RANDOM 1
 #define POSIX_MADV_SEQUENTIAL 2
@@ -162,17 +129,17 @@ int remap_file_pages(void *, size_t, int, size_t, int);
 int shm_open(const char *, int, mode_t);
 int shm_unlink(const char *);
 
-#if defined(__x86_64__) && defined(_GNU_SOURCE)
+#if defined(_GNU_SOURCE)
 void *mremap(void *, size_t, size_t, int, ...);
 int memfd_create(const char *, unsigned);
 #endif
 
-#if (defined(__x86_64__) || defined(__aarch64__)) && (defined(_GNU_SOURCE) || defined(_BSD_SOURCE))
+#if defined(_GNU_SOURCE) || defined(_BSD_SOURCE)
 int madvise(void *, size_t, int);
 int mincore(void *, size_t, unsigned char *);
 #endif
 
-#if defined(__x86_64__) && defined(_LARGEFILE64_SOURCE)
+#if defined(_LARGEFILE64_SOURCE)
 #define mmap64 mmap
 #define off64_t off_t
 #endif

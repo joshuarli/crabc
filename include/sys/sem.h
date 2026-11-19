@@ -6,7 +6,6 @@ extern "C" {
 #endif
 
 #include <features.h>
-#if defined(__x86_64__)
 #define __NEED_size_t
 #define __NEED_pid_t
 #define __NEED_time_t
@@ -16,12 +15,8 @@ extern "C" {
 #include <bits/alltypes.h>
 
 #include <sys/ipc.h>
-#if defined(__x86_64__)
+#if defined(__x86_64__) || defined(__aarch64__)
 #include <bits/sem.h>
-#endif
-#else
-#include <sys/ipc.h>
-#include <sys/types.h>
 #endif
 
 #define SEM_UNDO	0x1000
@@ -33,19 +28,6 @@ extern "C" {
 #define SETVAL		16
 #define SETALL		17
 
-#if !defined(__x86_64__)
-struct semid_ds {
-	struct ipc_perm sem_perm;
-	time_t sem_otime;
-	long __unused1;
-	time_t sem_ctime;
-	long __unused2;
-	unsigned short sem_nsems;
-	char __sem_nsems_pad[sizeof(long)-sizeof(short)];
-	long __unused3;
-	long __unused4;
-};
-#endif
 
 #define _SEM_SEMUN_UNDEFINED 1
 

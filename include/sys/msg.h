@@ -7,7 +7,7 @@ extern "C" {
 
 #include <features.h>
 #include <sys/ipc.h>
-#if defined(__x86_64__)
+#if defined(__x86_64__) || defined(__aarch64__)
 #define __NEED_pid_t
 #define __NEED_key_t
 #define __NEED_time_t
@@ -15,29 +15,12 @@ extern "C" {
 #define __NEED_ssize_t
 
 #include <bits/alltypes.h>
-#else
-#include <sys/types.h>
 #endif
 
 typedef unsigned long msgqnum_t;
 typedef unsigned long msglen_t;
 
-#if defined(__x86_64__)
 #include <bits/msg.h>
-#else
-struct msqid_ds {
-	struct ipc_perm msg_perm;
-	time_t msg_stime;
-	time_t msg_rtime;
-	time_t msg_ctime;
-	unsigned long msg_cbytes;
-	msgqnum_t msg_qnum;
-	msglen_t msg_qbytes;
-	pid_t msg_lspid;
-	pid_t msg_lrpid;
-	unsigned long __unused[2];
-};
-#endif
 
 #define __msg_cbytes msg_cbytes
 

@@ -16,7 +16,6 @@ extern "C" {
 #define __swap_successes swap_successes
 #endif
 
-#if defined(__x86_64__)
 #define __NEED_time_t
 #define __NEED_size_t
 #define __NEED_pid_t
@@ -24,42 +23,11 @@ extern "C" {
 #include <bits/alltypes.h>
 
 #include <sys/ipc.h>
-#if defined(__x86_64__)
+#if defined(__x86_64__) || defined(__aarch64__)
 #include <bits/shm.h>
 #endif
-#else
-#include <sys/ipc.h>
-#include <sys/types.h>
-#endif
 
-#if !defined(__x86_64__)
-#define SHMLBA 4096
-#endif
 
-#if !defined(__x86_64__)
-struct shmid_ds {
-	struct ipc_perm shm_perm;
-	size_t shm_segsz;
-	time_t shm_atime;
-	time_t shm_dtime;
-	time_t shm_ctime;
-	pid_t shm_cpid;
-	pid_t shm_lpid;
-	unsigned long shm_nattch;
-	unsigned long __pad1;
-	unsigned long __pad2;
-};
-
-struct shminfo {
-	unsigned long shmmax, shmmin, shmmni, shmseg, shmall, __unused[4];
-};
-
-struct shm_info {
-	int __used_ids;
-	unsigned long shm_tot, shm_rss, shm_swp;
-	unsigned long __swap_attempts, __swap_successes;
-};
-#endif
 
 #define SHM_R 0400
 #define SHM_W 0200
