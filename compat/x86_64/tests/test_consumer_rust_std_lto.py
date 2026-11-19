@@ -349,6 +349,15 @@ class NativeRouteTests(unittest.TestCase):
         with mock.patch.object(GATE, "ARCH", "aarch64"):
             self.assertTrue(GATE.inspect_native_route(text)["direct_route_proven"])
             self.assertFalse(GATE.inspect_native_route(text.replace("    1004: svc #0", "    1004: bl 2000 <getpid>\n    1008: svc #0"))["direct_route_proven"])
+            for callee in ("getpid@plt", "__errno_location"):
+                with self.subTest(callee=callee):
+                    branch = f"    1004: bl 2000 <{callee}>\n    1008: svc #0"
+                    self.assertFalse(GATE.inspect_native_route(text.replace("    1004: svc #0", branch))["direct_route_proven"])
+            self.assertFalse(GATE.inspect_native_route("")["direct_route_proven"])
+            self.assertFalse(GATE.inspect_native_route(text.replace("mov w8, #172", "mov w8, #171"))["direct_route_proven"])
+            self.assertFalse(GATE.inspect_native_route(text.replace("mov x8, #64", "mov x8, #63"))["direct_route_proven"])
+            llvm = text.replace("mov w8, #172", "movz w8, #0xac").replace("mov x8, #64", "movz x8, #0x40")
+            self.assertTrue(GATE.inspect_native_route(llvm)["direct_route_proven"])
 
 
 class FixtureVendorTests(unittest.TestCase):
