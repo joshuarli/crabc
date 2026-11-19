@@ -33,6 +33,26 @@ def generate_related(root, compiler, includes, names, environment, output_dir):
                 if stem == "float_parse_musl_support":
                     text = re.sub(r"(?m)^(\s*)\.global(\s+crabc_x86_float_parse_)(?!shlim\b)", r"\1.local\2", text)
                 blocks.extend((f"/* musl-1.2.6/{relative} */", text))
+            if stem == "float_parse_musl_support":
+                blocks.append('''\n.text
+.type crabc_x86_float_parse_uflow,%function
+crabc_x86_float_parse_uflow:
+    ldr x3, [x0, 64]
+    cbz x3, 1f
+    stp x29, x30, [sp, -32]!
+    add x1, sp, 16
+    mov x2, 1
+    blr x3
+    cmp x0, 1
+    b.ne 2f
+    ldrb w0, [sp, 16]
+    ldp x29, x30, [sp], 32
+    ret
+2:  ldp x29, x30, [sp], 32
+1:  mov w0, -1
+    ret
+.size crabc_x86_float_parse_uflow, .-crabc_x86_float_parse_uflow
+''')
             (output_dir / f"{stem}_aarch64.S").write_text("\n".join(blocks))
 
 
@@ -61,6 +81,8 @@ def main():
         "fabsl": "crabc_x86_float_parse_fabsl",
         "fmodl": "crabc_x86_float_parse_fmodl",
     }
+    if args.arch == "aarch64":
+        names["__uflow"] = "crabc_x86_float_parse_uflow"
     includes = ("src/include", "src/internal", f"arch/{args.arch}", "arch/generic")
     with tempfile.TemporaryDirectory(prefix="owned-float-parse.", dir=environment["TMPDIR"]) as temporary:
         assembly = Path(temporary) / "floatscan.S"

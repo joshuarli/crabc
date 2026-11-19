@@ -38,7 +38,7 @@ crabc_x86_float_parse_shgetc:
 	cmp	x3, 0
 	ccmp	x3, x20, 0, ne
 	ble	.Lcrabc_float_parse_musl_support_0_8
-	bl	__uflow
+	bl	crabc_x86_float_parse_uflow
 	ldr	x1, [x19, 8]
 	ldr	x2, [x19, 88]
 	tbnz	w0, #31, .Lcrabc_float_parse_musl_support_0_8
@@ -71,7 +71,7 @@ crabc_x86_float_parse_shgetc:
 	stp	x1, x0, [x19, 184]
 	b	.Lcrabc_float_parse_musl_support_0_7
 	.size	crabc_x86_float_parse_shgetc, .-crabc_x86_float_parse_shgetc
-	.protected	__uflow
+	.protected	crabc_x86_float_parse_uflow
 	.section	.note.GNU-stack,"",@progbits
 
 /* musl-1.2.6/src/math/scalbn.c */
@@ -438,3 +438,23 @@ crabc_x86_float_parse_fmodl:
 	.global	__multf3
 	.global	__eqtf2
 	.section	.note.GNU-stack,"",@progbits
+
+
+.text
+.type crabc_x86_float_parse_uflow,%function
+crabc_x86_float_parse_uflow:
+    ldr x3, [x0, 64]
+    cbz x3, 1f
+    stp x29, x30, [sp, -32]!
+    add x1, sp, 16
+    mov x2, 1
+    blr x3
+    cmp x0, 1
+    b.ne 2f
+    ldrb w0, [sp, 16]
+    ldp x29, x30, [sp], 32
+    ret
+2:  ldp x29, x30, [sp], 32
+1:  mov w0, -1
+    ret
+.size crabc_x86_float_parse_uflow, .-crabc_x86_float_parse_uflow
