@@ -17,6 +17,8 @@ readonly HEADER_CXX="$ROOT/compat/x86_64/owned_rand_header_abi_probe.cpp"
 readonly DSO_SOURCE="$ROOT/compat/x86_64/owned_rand_dso.c"
 readonly DSO_CONSUMER_SOURCE="$ROOT/compat/x86_64/owned_rand_dso_consumer.c"
 readonly INTERPRETER="/lib/ld-crabc-$arch.so.1"
+architecture_args=()
+[ "$arch" != aarch64 ] || architecture_args=(--architecture aarch64)
 readonly -a ORACLE_SCENARIOS=(core serialized-workers fork)
 readonly -a RAND_SYMBOLS=(rand srand)
 declare -a link_identity_records=()
@@ -708,7 +710,7 @@ run_dso_shared_stream() {
 # workload object consumed unchanged by the oracle and all normal product modes.
 if [ "$dynamic_was_supplied" -eq 0 ]; then
     python3 -B "$ROOT/scripts/build_x86_64_owned_dynamic_sysroot.py" \
-        --output "$work/dynamic-sysroot" >"$work/dynamic-build.json"
+        "${architecture_args[@]}" --output "$work/dynamic-sysroot" >"$work/dynamic-build.json"
     provided_dynamic="$work/dynamic-sysroot"
 fi
 readonly installed="$(realpath "$provided_dynamic")"
@@ -730,7 +732,7 @@ if [ "$expect_missing" -eq 1 ]; then
     # pinned musl, then attributes each absent provider to the owned links.
     run_oracle_scenarios
     python3 -B "$ROOT/scripts/build_x86_64_owned_sysroot.py" \
-        --output "$work/static-sysroot" >"$work/static-build.json"
+        "${architecture_args[@]}" --output "$work/static-sysroot" >"$work/static-build.json"
     for mode in static static-pie; do
         expect_missing_link "red-$mode" \
             "$work/static-sysroot/bin/crabc-cc" "-$mode" "$work/workload.o" \
@@ -752,7 +754,7 @@ if [ "$static_was_supplied" -eq 1 ]; then
     static_product="$provided_static"
 elif [ "$dynamic_was_supplied" -eq 0 ]; then
     python3 -B "$ROOT/scripts/build_x86_64_owned_sysroot.py" \
-        --output "$work/static-sysroot" >"$work/static-build.json"
+        "${architecture_args[@]}" --output "$work/static-sysroot" >"$work/static-build.json"
     static_product="$work/static-sysroot"
 fi
 if [ -n "$static_product" ]; then
