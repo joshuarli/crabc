@@ -23,7 +23,6 @@ set -euo pipefail
 ulimit -c 0
 
 readonly ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-readonly ORACLE_CC=/usr/local/bin/crabc-x86_64-musl-gcc
 readonly PROBE="$ROOT/compat/x86_64/owned_credentials_profile_probe.c"
 
 usage() {
@@ -71,12 +70,14 @@ require_native_linux_x86_64() {
         exit 1
     }
     case "$(uname -m)" in
-        x86_64|amd64) ;;
+        x86_64|amd64|aarch64|arm64) ;;
         *) printf 'owned credentials profile refuses emulation on %s\n' "$(uname -m)" >&2; exit 1 ;;
     esac
 }
 
 require_native_linux_x86_64
+eval "$(python3 -B "$ROOT/compat/x86_64/native_arch.py")"
+readonly ORACLE_CC="$oracle"
 [ -x "$ORACLE_CC" ] || {
     printf 'owned credentials profile requires pinned musl compiler\n' >&2
     exit 1
@@ -308,7 +309,7 @@ run_candidate() {
 
     cp "$consumer" "$root/consumer"
     if [ "$entry" = direct ]; then
-        command=(/lib/ld-crabc-x86_64.so.1 /consumer)
+        command=(/lib/ld-crabc-${arch}.so.1 /consumer)
     fi
     for scenario in direct aliases; do
         run_in_user_namespace_root "$root" \
