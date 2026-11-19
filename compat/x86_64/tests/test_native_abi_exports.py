@@ -9,6 +9,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -104,6 +105,18 @@ class NativeAbiExportsTests(unittest.TestCase):
         passed, output = self.check(value)
         self.assertTrue(passed, output)
         self.assertIn("match", output)
+
+    def test_arm_inventory_uses_reviewed_x86_delta(self) -> None:
+        value = report(shared_extra=[dynamic("tgkill")], static_extra=[static("owned")])
+        self.seed(value)
+        value["target"] = "aarch64-unknown-linux-musl"
+        with patch.object(exports, "TARGET", "aarch64-unknown-linux-musl"):
+            passed, output = self.check(value)
+            self.assertTrue(passed, output)
+            value["triage"]["shared_dynamic"]["extra"] = []
+            passed, output = self.check(value)
+            self.assertFalse(passed, output)
+            self.assertIn("shared_dynamic.extra", output)
 
     def test_new_static_extra_fails(self) -> None:
         self.seed(report(static_extra=[static("owned")]))

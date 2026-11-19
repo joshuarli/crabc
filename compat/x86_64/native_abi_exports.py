@@ -127,7 +127,7 @@ def load_tracked(path: Path | None = None) -> dict[str, Any]:
     except inventory.InventoryError as error:
         raise ExportsError(f"reviewed native x86 export delta is invalid: {error}") from error
     value = inventory.require_exact_keys(value, {"schema", "target", "shared_dynamic", "static_archive"}, "reviewed native x86 export delta")
-    require(value["schema"] == SCHEMA and value["target"] == TARGET, "reviewed native x86 export delta contract drifted")
+    require(value["schema"] == SCHEMA and value["target"] == "x86_64-unknown-linux-musl", "reviewed native x86 export delta contract drifted")
     return _categories(value["shared_dynamic"], value["static_archive"], "reviewed delta", from_report=False)
 
 
@@ -169,6 +169,7 @@ def check(report_path: Path, *, tracked_path: Path | None = None, stream: Any = 
 
 
 def update(report_path: Path, *, tracked_path: Path | None = None) -> Path:
+    require(TARGET == "x86_64-unknown-linux-musl", "reviewed x86 export delta requires native x86 collection")
     tracked_path = TRACKED_PATH if tracked_path is None else tracked_path
     tracked = {"schema": SCHEMA, "target": TARGET, **project(load_report(report_path))}
     try:
