@@ -304,6 +304,30 @@ def validate_tree_manifest(report: Path, product: str, manifest: Mapping[str, An
             and set(rows) == expected, f"{product} installed tree digest rows differ from the manifest")
 
 
+def validate_static_product_scope(manifest: Mapping[str, Any]) -> None:
+    scope = manifest.get("scope", "")
+    require(isinstance(scope, str) and all(phrase in scope for phrase in (
+        "private-static-pthread-tls-consumer-slice", "not-family-completion", "not-public-support")),
+        "static product scope differs")
+    omitted = manifest.get("not_selected")
+    require(isinstance(omitted, list) and all(item in omitted for item in (
+        "shared libc", "dynamic loader or PT_INTERP", "complete compiler-helper closure",
+        "sysroot.static-tls family completion", "sysroot.owned-artifact family completion",
+        "x86-64 promotion or public support")) and "distribution archive or extracted smoke" not in omitted,
+        "static product non-selection differs")
+    driver = manifest.get("sealed_static_driver")
+    require(isinstance(driver, dict) and driver.get("path") == "bin/crabc-cc"
+            and driver.get("status") == "planned-owned-static-product-seed-not-family-completion-not-public-support"
+            and driver.get("modes") == [
+                {"id": "static-et-exec", "elf_type": "ET_EXEC", "crt_object": "crt1.o"},
+                {"id": "static-pie", "elf_type": "ET_DYN", "crt_object": "rcrt1.o"}],
+            "static product sealed driver differs")
+    unproven = driver.get("not_proven_by_this_seed")
+    require(isinstance(unproven, list) and "declared static-product coverage suite" in unproven
+            and "two-clean-build and extracted-install product reproducibility" not in unproven,
+            "static product coverage claims differ")
+
+
 def validate_native_static_product(root: Path) -> None:
     import owned_posix_product_evidence as evidence
 
@@ -311,7 +335,9 @@ def validate_native_static_product(root: Path) -> None:
     manifest = read_json(root / "share/crabc/manifest.json")
     if manifest.get("format") != "crabc-aarch64-owned-sysroot-v1":
         path, _ = evidence._validate_static_product_uncached(root)
-        require(read_json(path).get("source_sha256") == source_seal.product_source_digest(ROOT),
+        static = read_json(path)
+        validate_static_product_scope(static)
+        require(static.get("source_sha256") == source_seal.product_source_digest(ROOT),
                 "static product source differs")
         return
     from scripts import build_x86_64_owned_combined_sysroot as combined
@@ -320,6 +346,7 @@ def validate_native_static_product(root: Path) -> None:
     record = combined.validate(root)
     component = record["products"]["static"]
     static = read_json(root / component["manifest"])
+    validate_static_product_scope(static)
     require(static.get("source_sha256") == source_seal.product_source_digest(ROOT), "static product source differs")
     placement = component["placements"].get("share/crabc/crt.provenance.json")
     require(isinstance(placement, str), "static CRT provenance is missing")
