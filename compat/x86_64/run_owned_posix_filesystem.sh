@@ -136,6 +136,17 @@ PYTHON
 audit_consumer() {
     local family="$1" mode="$2" candidate="$3" receipt="$4" product="$5" object="$6"
 
+    if [ "$arch" = aarch64 ]; then
+        python3 -B - "$ROOT" "$product" "$object" "$candidate" "$receipt" "$mode" <<'PY_ARM_LINK'
+import sys
+from pathlib import Path
+sys.path.insert(0, str(Path(sys.argv[1]) / "compat/x86_64"))
+from owned_posix_product_evidence import validate_link
+product, workload, candidate, receipt = map(Path, sys.argv[2:6])
+validate_link(product, workload, candidate, receipt, sys.argv[6])
+PY_ARM_LINK
+        return
+    fi
     if [ "$family" = static ]; then
         python3 -B "$AUDITOR" audit-static "$product" "$mode" "$object" "$candidate" "$receipt"
     else
@@ -201,40 +212,6 @@ if [ -z "$provided_dynamic" ]; then
     provided_dynamic="$work/dynamic-sysroot"
 fi
 readonly installed="$provided_dynamic"
-if [ "$arch" = aarch64 ]; then
-    step=validate-aarch64-product
-    python3 -B - "$ROOT" "$installed" <<'PY_ARM_PRODUCT'
-import sys
-from pathlib import Path
-sys.path.insert(0, str(Path(sys.argv[1]) / "compat/x86_64"))
-import owned_posix_filesystem_audit as audit
-root = audit.require_directory(Path(sys.argv[2]), "aarch64 dynamic product")
-manifest = audit.read_object(root / audit.MANIFEST_RELATIVE, "aarch64 dynamic manifest")
-if manifest.get("format") != "crabc-aarch64-owned-dynamic-sysroot-v1" or manifest.get("target") != "aarch64-unknown-linux-musl":
-    audit.fail("aarch64 dynamic product identity drifted")
-aliases = {"lib/ld-musl-aarch64.so.1": "ld-crabc-aarch64.so.1", "lib/libc.musl-aarch64.so.1": "../usr/lib/libc.so"}
-if manifest.get("symlinks") != aliases:
-    audit.fail("aarch64 dynamic product aliases drifted")
-audit.validate_payload(root, audit.checked_files(manifest.get("files"), "aarch64 dynamic manifest"), aliases, "aarch64 dynamic product")
-PY_ARM_PRODUCT
-    step=link-aarch64-oracle
-    "$ORACLE_CC" -static -fno-pie -no-pie -pthread -Wl,--export-dynamic "$PROBE" -o "$work/oracle"
-    step=link-aarch64-dynamic
-    "$installed/bin/crabc-cc-dynamic" "$PROBE" -o "$work/dynamic"
-    mkdir -p "$work/oracle-root/tmp"
-    cp "$work/oracle" "$work/oracle-root/consumer"
-    cp -a "$installed/." "$work/dynamic-root/"
-    cp "$work/dynamic" "$work/dynamic-root/consumer"
-    for scenario in "${cases[@]}"; do
-        run_in_root "$work/oracle-root" "$work/oracle-$scenario.stdout" /consumer "$scenario"
-        run_in_root "$work/dynamic-root" "$work/dynamic-$scenario.stdout" /consumer "$scenario"
-        cmp "$work/oracle-$scenario.stdout" "$work/dynamic-$scenario.stdout"
-        cmp "$work/oracle-$scenario.stderr" "$work/dynamic-$scenario.stderr"
-        cmp "$work/oracle-$scenario.status" "$work/dynamic-$scenario.status"
-    done
-    printf 'owned POSIX filesystem aarch64 dynamic behavioral component: PASS; x86 receipt and static-mode audits not claimed; evidence: %s\n' "$work"
-    exit 0
-fi
 python3 -B "$AUDITOR" validate-dynamic-product "$installed"
 step=compile-installed-object
 "$installed/bin/crabc-cc-dynamic" --dynamic-pie -std=c11 -fno-builtin \
@@ -303,7 +280,7 @@ for mode in pie non-pie; do
     for scenario in "${cases[@]}"; do
         for entry in kernel direct; do
             if [ "$entry" = direct ]; then
-                command=(/lib/ld-crabc-x86_64.so.1 /consumer "$scenario")
+                command=("/lib/ld-crabc-${arch}.so.1" /consumer "$scenario")
             else
                 command=(/consumer "$scenario")
             fi

@@ -22,7 +22,9 @@ from typing import Any, Mapping
 
 import owned_dynamic_receipt as receipt_contract
 import owned_posix_product_evidence as product_evidence
+from native_arch import native_arch
 
+NATIVE = native_arch()
 
 STATIC_FORMAT = "crabc-x86-64-owned-static-sysroot-v1"
 DYNAMIC_FORMAT = "crabc-x86-64-owned-dynamic-sysroot-v1"
@@ -158,6 +160,12 @@ def validate_static_product(product: Path) -> Path:
     """Validate the complete static product before its receipt is trusted."""
 
     root = require_directory(product, "static product")
+    if NATIVE["arch"] == "aarch64":
+        try:
+            product_evidence._validate_static_product(root)
+        except product_evidence.ProductEvidenceError as error:
+            raise AuditError(f"static product rejected: {error}") from error
+        return root
     manifest_path = root / MANIFEST_RELATIVE
     manifest = read_object(manifest_path, "static manifest")
     if manifest.get("schema") != 1 or manifest.get("format") != STATIC_FORMAT:
