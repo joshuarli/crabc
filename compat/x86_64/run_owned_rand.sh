@@ -467,7 +467,7 @@ PY
 audit_static_provider_artifact() {
     local archive="$1"
 
-    python3 -B - "$archive" "$work" <<'PY'
+    python3 -B - "$archive" "$work" "$arch" <<'PY'
 import hashlib
 import json
 from pathlib import Path
@@ -475,7 +475,8 @@ import re
 import subprocess
 import sys
 
-archive, work = map(Path, sys.argv[1:])
+archive, work = map(Path, sys.argv[1:3])
+architecture = sys.argv[3]
 def run(arguments, *, text=True):
     return subprocess.run(arguments, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
                           stderr=subprocess.PIPE, text=text, check=False)
@@ -528,13 +529,17 @@ for symbol in ('rand', 'srand'):
     if match is None:
         raise SystemExit(f'rand provider {symbol} is absent from the extracted object')
     disassembly = match.group(0)
-    if re.search(r'\bcall(?:[qwl])?\b', disassembly):
+    if re.search(r'\bcall(?:[qwl])?\b' if architecture == 'x86_64' else r'\bblr?\b', disassembly):
         raise SystemExit(f'rand provider {symbol} has an unexpected call edge')
     if re.search(r'__rust_|__rdl_|rand_core|rand_pcg|alloc', disassembly):
         raise SystemExit(f'rand provider {symbol} has an unexpected helper edge')
     (work / f'rand-provider-{symbol}.objdump').write_text(disassembly, encoding='utf-8')
     disassemblies[symbol] = hashlib.sha256(disassembly.encode()).hexdigest()
-if 'cmpxchg' not in (work / 'rand-provider-rand.objdump').read_text(encoding='utf-8'):
+rand_disassembly = (work / 'rand-provider-rand.objdump').read_text(encoding='utf-8')
+atomic_publish = ('cmpxchg' in rand_disassembly if architecture == 'x86_64' else
+                  bool(re.search(r'\bld(?:ax|x)r\b', rand_disassembly) and
+                       re.search(r'\bst(?:lx|x)r\b', rand_disassembly)))
+if not atomic_publish:
     raise SystemExit('rand provider lacks the atomic publish instruction')
 relocations = run(['readelf', '-rW', str(object_path)]).stdout
 (work / 'rand-provider-relocations.txt').write_text(relocations, encoding='utf-8')
