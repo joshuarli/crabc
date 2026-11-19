@@ -3,6 +3,7 @@
 set -euo pipefail
 ulimit -c 0
 readonly ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+eval "$(python3 -B "$ROOT/compat/x86_64/native_arch.py")"
 usage() {
     printf 'usage: %s [--static-sysroot STATIC_SYSROOT] [DYNAMIC_SYSROOT]\n' "$0" >&2
     exit 2
@@ -47,7 +48,7 @@ readonly work="$(mktemp -d "$TMPDIR/owned-signal-helpers.XXXXXX")"
 chmod a+rx "$work"
 printf 'signal helpers evidence: %s\n' "$work"
 readonly probe="$ROOT/compat/x86_64/owned_signal_helpers_probe.c"
-readonly oracle_cc=/usr/local/bin/crabc-x86_64-musl-gcc
+readonly oracle_cc="$oracle"
 readonly cases=(actions fork-action-mask interrupt failed-interrupt restart partial-action pause-query-failure pause-threaded cancellation reporting partial-reporting)
 # Musl's historical entry points are overridable weak aliases, not merely
 # functions that happen to forward to signal. Retain binding/address evidence.
@@ -178,19 +179,19 @@ for mode in pie non-pie; do
     for scenario in "${cases[@]}"; do
         for entry in kernel direct; do
             command=("/consumer-$mode")
-            if [ "$entry" = direct ]; then command=(/lib/ld-crabc-x86_64.so.1 "/consumer-$mode"); fi
+            if [ "$entry" = direct ]; then command=("/lib/ld-crabc-$arch.so.1" "/consumer-$mode"); fi
             observe "$work/$mode-$entry-$scenario" chroot "$work/execution-root" "${command[@]}" "$scenario"
             compare "$work/oracle-$scenario" "$work/$mode-$entry-$scenario"
         done
     done
 done
-python3 -B - "$work" "$provided_static" "$provided_dynamic" "${cases[@]}" <<'PY_RECORD'
+python3 -B - "$work" "$provided_static" "$provided_dynamic" "$oracle_cc" "${cases[@]}" <<'PY_RECORD'
 import hashlib
 import json
 from pathlib import Path
 import sys
-work, static, dynamic = Path(sys.argv[1]), sys.argv[2], Path(sys.argv[3])
-scenarios = sys.argv[4:]
+work, static, dynamic, oracle = Path(sys.argv[1]), sys.argv[2], Path(sys.argv[3]), Path(sys.argv[4])
+scenarios = sys.argv[5:]
 def digest(path): return hashlib.sha256(Path(path).read_bytes()).hexdigest()
 compiled = json.loads((work / 'compile.json').read_text())
 if digest(work / 'workload.o') != compiled['object_sha256']:
@@ -215,8 +216,8 @@ for mode in modes:
         comparisons.append({'mode': mode, 'scenario': scenario, 'artifacts': artifacts})
 record = {'schema': 'crabc.x86_64-owned-signal-helpers/v1', 'workload_object_sha256': compiled['object_sha256'],
           'compile_receipt_sha256': digest(work / 'compile.json'), 'links': links, 'comparisons': comparisons,
-          'oracle_link_command': ['/usr/local/bin/crabc-x86_64-musl-gcc', '-static', '-fno-pie', '-no-pie', '-pthread', str(work / 'workload.o'), '-o', str(work / 'oracle')],
-          'oracle': {str(path): digest(path) for path in (Path('/usr/local/bin/crabc-x86_64-musl-gcc'), Path('/opt/musl-1.2.6/lib/libc.a'), work / 'oracle')},
+          'oracle_link_command': [str(oracle), '-static', '-fno-pie', '-no-pie', '-pthread', str(work / 'workload.o'), '-o', str(work / 'oracle')],
+          'oracle': {str(path): digest(path) for path in (oracle, Path('/opt/musl-1.2.6/lib/libc.a'), work / 'oracle')},
           'static_product_manifest_sha256': digest(Path(static) / 'share/crabc/manifest.json') if static else None,
           'dynamic_product_manifest_sha256': digest(dynamic / 'share/crabc/manifest.json')}
 (work / 'signal-helpers.json').write_text(json.dumps(record, indent=2, sort_keys=True) + '\n')
