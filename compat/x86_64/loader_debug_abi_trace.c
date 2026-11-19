@@ -96,12 +96,14 @@ static uintptr_t provider_base(const struct stat *provider)
                    permissions, &offset, &device_major, &device_minor, &inode, &path_offset) != 7)
             fail("debugger maps row");
         int same_device = device_major == major(provider->st_dev) && device_minor == minor(provider->st_dev);
+#if defined(__aarch64__)
         if (!same_device && path_offset && line[path_offset] == '/') {
             char *name = line + path_offset;
             name[strcspn(name, "\n")] = 0;
             struct stat mapped;
             same_device = stat(name, &mapped) == 0 && mapped.st_dev == provider->st_dev && mapped.st_ino == provider->st_ino;
         }
+#endif
         if (offset == 0 && inode == provider->st_ino && same_device) {
             if (result) fail("debugger ambiguous provider");
             result = start;
