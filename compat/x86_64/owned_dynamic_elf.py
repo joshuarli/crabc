@@ -411,7 +411,8 @@ def record(path: Path, facts: Mapping[str, Any], expected: Expectation, *, outpu
 
 def validate_record(value: Mapping[str, Any], path: Path, *, output_format: str,
                     fail: Callable[[str], None],
-                    recorded_path: Callable[[Path], str] = lambda local: str(local.resolve())
+                    recorded_path: Callable[[Path], str] = lambda local: str(local.resolve()),
+                    architecture: str = "x86_64"
                     ) -> Mapping[str, Any]:
     """Replay one retained sidecar against its physical output and link map.
 
@@ -430,7 +431,7 @@ def validate_record(value: Mapping[str, Any], path: Path, *, output_format: str,
           "ELF inspection sidecar fields differ")
     check(value["schema"] == SCHEMA and value["format"] == output_format, "ELF inspection identity differs")
     try:
-        facts = inspect(path)
+        facts = inspect(path, architecture=architecture)
     except (InspectionError, OSError) as error:
         check(False, f"retained output cannot be inspected: {error}")
     check(value["facts"] == facts, "ELF inspection sidecar differs from the retained output")

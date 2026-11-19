@@ -7,6 +7,8 @@ import subprocess
 import tempfile
 import unittest
 
+import owned_dynamic_elf as elf
+
 
 class Aarch64DynamicOptions(unittest.TestCase):
     def test_search_and_hash_choices(self):
@@ -22,6 +24,8 @@ class Aarch64DynamicOptions(unittest.TestCase):
                 subprocess.run([driver, "--dynamic-pie", "--application-hash-style", style,
                                 "--application-rpath", "/fixture", source, "-o", output], check=True)
                 dynamic = subprocess.check_output(["readelf", "-dW", output], text=True)
+                facts = elf.inspect(output, architecture="aarch64")
+                self.assertEqual(facts["machine"], "EM_AARCH64")
                 self.assertTrue(all(tag in dynamic for tag in expected))
                 self.assertIn("(RPATH)", dynamic)
                 self.assertNotIn("(RUNPATH)", dynamic)
