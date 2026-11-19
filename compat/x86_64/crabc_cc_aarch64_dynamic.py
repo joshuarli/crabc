@@ -34,10 +34,11 @@ def execute(arguments):
     index = 0
     while index < len(arguments):
         arg = arguments[index]
-        if arg in ("--dynamic-pie", "-pie", "--dynamic-shared-object", "-shared"):
+        if arg in ("--dynamic-pie", "-pie", "--dynamic-non-pie", "-no-pie", "--dynamic-shared-object", "-shared"):
             if mode is not None:
                 raise shared.DriverError("select exactly one dynamic mode")
-            mode = "shared" if arg in ("--dynamic-shared-object", "-shared") else "pie"
+            mode = ("shared" if arg in ("--dynamic-shared-object", "-shared") else
+                    "exec" if arg in ("--dynamic-non-pie", "-no-pie") else "pie")
         elif arg == "-o":
             index += 1
             if index == len(arguments):
@@ -75,18 +76,20 @@ def execute(arguments):
             common.append(arg)
         index += 1
     mode = mode or "pie"
+    if profile is shared.NativeRuntimeProfile.HARDENED and mode == "exec":
+        raise shared.DriverError("hardened dynamic product requires PIE")
     invocation = shared.parse_invocation(common)
     if invocation.link_receipt is not None:
         raise shared.DriverError("dynamic link receipt path is derived from -o")
     if invocation.print_link_plan:
         if quote_dirs or dsos or rounding or export_dynamic or runpath is not None:
             raise shared.DriverError("link plan accepts no application inputs")
-        plan = ["/usr/bin/mold", "-shared" if mode == "shared" else "-pie", "--hash-style=sysv",
+        plan = ["/usr/bin/mold", *(["-shared"] if mode == "shared" else ["-pie"] if mode == "pie" else []), "--hash-style=sysv",
                 "--eh-frame-hdr", "-z", "relro", "-z", "now", "-z", "noexecstack", "-z", "text",
                 "--no-undefined", "--allow-shlib-undefined", "--enable-new-dtags", "-rpath", "/usr/lib",
                 "--exclude-libs=libcrabc-builtins.a"]
-        if mode == "pie":
-            plan += ["-z", "dynamic-undefined-weak", "--dynamic-linker", interpreter, str(lib / "Scrt1.o")]
+        if mode != "shared":
+            plan += ["-z", "dynamic-undefined-weak", "--dynamic-linker", interpreter, str(lib / ("Scrt1.o" if mode == "pie" else "crt1.o"))]
         else:
             plan += ["-soname", "<output-basename>"]
         plan += [str(lib / "crti.o"), shared.APPLICATION_OBJECTS, str(lib / "libcrabc-builtins.a"),
@@ -127,7 +130,7 @@ def execute(arguments):
             shared.run_checked([shared.compiler(), "-nostdinc", *(v for path in quote_dirs for v in ("-iquote", str(path))),
                                 "-isystem", str(root / "usr/include"), *shared.HOSTED_TRANSLATION_FLAGS,
                                 *invocation.compiler_flags, *(["-frounding-math"] if rounding else []),
-                                "-fPIC" if mode == "shared" else "-fPIE", "-c", str(source), "-o", str(obj)])
+                   "-fPIC" if mode == "shared" else "-fPIE" if mode == "pie" else "-fno-pie", "-c", str(source), "-o", str(obj)])
             objects.append(obj)
         if invocation.compile_only:
             return
@@ -135,15 +138,16 @@ def execute(arguments):
         shared.validate_application_output(root, receipt_path)
         shared.validate_application_output_disjoint(receipt_path, (*sources, *objects_in, *dso_inputs, output))
         runtime = [lib / name for name in ("crti.o", "libc.so", "crtn.o")]
-        command = ["/usr/bin/mold", "-shared" if mode == "shared" else "-pie", "--hash-style=sysv",
+        command = ["/usr/bin/mold", *(["-shared"] if mode == "shared" else ["-pie"] if mode == "pie" else []), "--hash-style=sysv",
                    "--eh-frame-hdr", "-z", "relro", "-z", "now", "-z", "noexecstack", "-z", "text", "--no-undefined",
                    "--allow-shlib-undefined", "--enable-new-dtags", "-rpath", runpath or "/usr/lib",
                    "--exclude-libs=libcrabc-builtins.a"]
         if export_dynamic:
             command.append("--export-dynamic")
-        if mode == "pie":
-            runtime.append(lib / "Scrt1.o")
-            command += ["-z", "dynamic-undefined-weak", "--dynamic-linker", interpreter, str(lib / "Scrt1.o")]
+        if mode != "shared":
+            entry = lib / ("Scrt1.o" if mode == "pie" else "crt1.o")
+            runtime.append(entry)
+            command += ["-z", "dynamic-undefined-weak", "--dynamic-linker", interpreter, str(entry)]
         else:
             command += ["-soname", output.name]
         archive = lib / "libcrabc-builtins.a"
@@ -170,8 +174,8 @@ def execute(arguments):
             header = subprocess.check_output(["/usr/bin/readelf", "-hW", str(output)], text=True)
             segments = subprocess.check_output(["/usr/bin/readelf", "-lW", str(output)], text=True)
             dynamic = subprocess.check_output(["/usr/bin/readelf", "-dW", str(output)], text=True)
-            if ("AArch64" not in header or "DYN" not in header or "TEXTREL" in dynamic
-                    or (mode == "pie" and interpreter not in segments)
+            if ("AArch64" not in header or ("EXEC" if mode == "exec" else "DYN") not in header or "TEXTREL" in dynamic
+                    or (mode != "shared" and interpreter not in segments)
                     or (mode == "shared" and "INTERP" in segments)):
                 raise shared.DriverError("linked dynamic ELF does not match its native mode")
             record = {"schema": 2, "format": "crabc-aarch64-owned-dynamic-sysroot-v1", "mode": mode,
