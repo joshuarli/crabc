@@ -10,6 +10,10 @@ import sys
 from typing import Mapping
 
 import native_shadow_receipt as shared
+from native_arch import native_arch
+
+NATIVE = native_arch()
+ARCH = NATIVE["arch"]
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -19,7 +23,7 @@ PARAMETERS = {
     "ORACLE": "pinned-musl", "PRODUCT": "supplied-dynamic-sysroot",
 }
 PRODUCT_PATHS = {
-    "dynamic-loader": "lib/ld-crabc-x86_64.so.1",
+    "dynamic-loader": f"lib/ld-crabc-{ARCH}.so.1",
     "dynamic-libc": "usr/lib/libc.so",
     "dynamic-driver": "bin/crabc-cc-dynamic",
     "dynamic-driver-shared": "share/crabc/crabc_cc_static.py",
@@ -100,11 +104,11 @@ def _read_loader_synthetic_receipt(
     require([case["id"] for case in receipt.cases] == [*roster, "runner"], "workload roster is incomplete or reordered")
     raw_receipt = json_file(receipt.path)
     work = raw_receipt.get("work")
-    require(isinstance(work, str) and Path(work).parent == Path(".work/x86_64")
+    require(isinstance(work, str) and Path(work).parent == Path(".work") / NATIVE["work_name"]
             and Path(work).name.startswith("owned-loader-synthetic."), "workload directory is invalid")
     report = json_file(directory / "logs/report.json")
     require(report.get("schema") == 2 and report.get("runner") == "compat/ldso/run_x86.py"
-            and report.get("architecture") == "x86_64", "loader report identity differs")
+            and report.get("architecture") == ARCH, "loader report identity differs")
     require(report.get("component_complete") is True and report.get("selected_passed") is True
             and report.get("family_complete") is False, "loader report is not a completed component")
     require(report.get("selected") == roster and isinstance(report.get("cases"), dict)
@@ -121,7 +125,7 @@ def _read_loader_synthetic_receipt(
     manifest = json_file(directory / "products/dynamic-manifest")
     provenance = json_file(directory / "products/dynamic-libc-provenance")
     state = json_file(directory / "products/dynamic-product-state")
-    require(manifest.get("target") == "x86_64-unknown-linux-musl"
+    require(manifest.get("target") == NATIVE["target_triple"]
             and isinstance(manifest.get("files"), dict), "installed product manifest differs")
     require(provenance.get("allocator_backend") == "native-shadow"
             and state.get("allocator_backend") == "native-shadow", "product backend differs")
@@ -135,7 +139,7 @@ def _read_loader_synthetic_receipt(
             require(manifest["files"].get(relative) == record["sha256"], f"{name} differs from installed manifest")
     oracle = report["oracle_before"]
     require(oracle.get("libc") == "/opt/musl-1.2.6/lib/libc.so"
-            and oracle.get("compiler") == "/usr/local/bin/crabc-x86_64-musl-gcc"
+            and oracle.get("compiler") == NATIVE["oracle"]
             and oracle.get("libc_sha256") == products["pinned-musl-libc"]["sha256"]
             and oracle.get("compiler_sha256") == products["pinned-musl-compiler"]["sha256"],
             "pinned musl identity differs")
@@ -225,7 +229,7 @@ def _read_loader_synthetic_receipt(
                     source = baseline.get(relative) if arm == "candidate" else None
                     if source and source.get("kind") == "file" and source.get("sha256") == entry.get("sha256"):
                         continue
-                    if arm == "oracle" and relative in {"lib/ld-musl-x86_64.so.1", "usr/lib/libc.so"}:
+                    if arm == "oracle" and relative in {f"lib/ld-musl-{ARCH}.so.1", "usr/lib/libc.so"}:
                         require(entry.get("sha256") == oracle["libc_sha256"], f"{name} oracle libc differs")
                         continue
                     mapped = fixture_by_path.get(path)

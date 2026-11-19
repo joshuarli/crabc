@@ -26,6 +26,9 @@ if backend != "native-shadow":
 
 sys.path.insert(0, str(root / "compat/x86_64"))
 from native_shadow_receipt import receipt_directory, source_seal, write_receipt
+from native_arch import native_arch
+
+arch = native_arch()
 
 receipt_runner = "owned-loader-synthetic"
 latest = receipt_directory(root, receipt_runner)
@@ -42,7 +45,7 @@ evidence = [line[len(prefix):] for line in completed.stdout.splitlines() if line
 if len(evidence) != 1:
     raise SystemExit(completed.returncode or 1)
 work = Path(os.fsdecode(evidence[0]))
-if work.parent != root / ".work/x86_64" or not work.is_dir() or work.is_symlink():
+if work.parent != root / ".work" / arch["work_name"] or not work.is_dir() or work.is_symlink():
     raise SystemExit("owned-loader-synthetic: unsafe evidence directory")
 (work / "runner.stdout").write_bytes(completed.stdout)
 (work / "runner.stderr").write_bytes(completed.stderr)
@@ -66,7 +69,7 @@ cases.append(("runner", completed.returncode,
               [work / "runner.stdout", work / "runner.stderr", work / "runner.status", work / "report.json"]))
 
 products = {
-    "dynamic-loader": product / "lib/ld-crabc-x86_64.so.1",
+    "dynamic-loader": product / "lib" / f"ld-crabc-{arch['arch']}.so.1",
     "dynamic-libc": product / "usr/lib/libc.so",
     "dynamic-driver": product / "bin/crabc-cc-dynamic",
     "dynamic-driver-shared": product / "share/crabc/crabc_cc_static.py",
@@ -79,7 +82,7 @@ products = {
     "dynamic-attach": product / "usr/lib/crabc-dynamic-attach.o",
     "dynamic-builtins": product / "usr/lib/libcrabc-builtins.a",
     "pinned-musl-libc": Path("/opt/musl-1.2.6/lib/libc.so"),
-    "pinned-musl-compiler": Path("/usr/local/bin/crabc-x86_64-musl-gcc"),
+    "pinned-musl-compiler": Path(arch["oracle"]),
 }
 baseline = {entry["path"]: entry for entry in report["product_before"]["entries"]}
 oracle_libc = report["oracle_before"]["libc_sha256"]
@@ -104,7 +107,7 @@ for name in selected:
                 if hashlib.sha256(path.read_bytes()).hexdigest() == original["sha256"]:
                     continue
         if relative.parts[0] == "oracle-root" and arm_path in {
-            "lib/ld-musl-x86_64.so.1", "usr/lib/libc.so",
+            f"lib/ld-musl-{arch['arch']}.so.1", "usr/lib/libc.so",
         } and hashlib.sha256(path.read_bytes()).hexdigest() == oracle_libc:
             continue
         product_name = f"fixture-{name}-{index:04d}"
