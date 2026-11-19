@@ -1358,17 +1358,17 @@ fn initial_exec_and_dynamic_offsets_share_retained_module_coordinates_and_checke
     for addend in [-8, 0, 4, 56] {
         let offset = 8 + addend;
         assert_eq!(unsafe { word_value(&scope, &objects, 0, R_X86_64_DTPOFF64, 1, addend) }, Some(offset as u64));
-        assert_eq!(unsafe { word_value(&scope, &objects, 0, R_X86_64_TPOFF64, 1, addend) }, Some((offset - 8192) as u64));
+        assert_eq!(unsafe { word_value(&scope, &objects, 0, R_X86_64_TPOFF64, 1, addend) }, Some((if cfg!(target_arch = "aarch64") { offset + 8192 } else { offset - 8192 }) as u64));
     }
     assert_eq!(unsafe { word_value(&scope, &objects, 0, R_X86_64_DTPMOD64, 1, 0) }, Some(2));
-    assert_eq!(unsafe { word_value(&scope, &objects, 1, R_X86_64_TPOFF64, 0, 8) }, Some((-8184i64) as u64));
+    assert_eq!(unsafe { word_value(&scope, &objects, 1, R_X86_64_TPOFF64, 0, 8) }, Some((if cfg!(target_arch = "aarch64") { 8200i64 } else { -8184i64 }) as u64));
     for addend in [-9, 57, i64::MAX, i64::MIN] {
         assert!(unsafe { word_value(&scope, &objects, 0, R_X86_64_TPOFF64, 1, addend) }.is_none());
     }
     provider.symbol(1, 6, 1, 0, 1, 60, 8);
     assert!(unsafe { word_value(&scope, &objects, 0, R_X86_64_TPOFF64, 1, 0) }.is_none());
     provider.symbol(1, 6, 1, 0, 1, 8, 8);
-    objects[1].tls_offset_below_tp = 32;
+    objects[1].tls_offset_below_tp = if cfg!(target_arch = "aarch64") { 8 } else { 32 };
     assert!(unsafe { word_value(&scope, &objects, 0, R_X86_64_TPOFF64, 1, 0) }.is_none());
     objects[1].tls_offset_below_tp = 8192; objects[1].tls_module_id = 0;
     assert!(unsafe { word_value(&scope, &objects, 0, R_X86_64_TPOFF64, 1, 0) }.is_none());

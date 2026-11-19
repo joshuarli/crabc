@@ -110,16 +110,19 @@ pub(super) unsafe fn isolated_mapping_probe(probe: unsafe fn(&RuntimeGuard) -> b
     // As the product fork transaction does, keep the pool lock across the raw
     // fork so a concurrent test thread's pool update is never half-copied.
     AllocationGuard::retain_for_fork();
+    #[cfg(target_arch = "x86_64")]
     let pid = unsafe { syscall1(57, 0) };
+    #[cfg(target_arch = "aarch64")]
+    let pid = unsafe { syscall6(220, 17, 0, 0, 0, 0, 0) };
     unsafe { AllocationGuard::complete_fork(); }
     if pid == 0 {
         let result = unsafe { probe(&guard) };
-        unsafe { syscall1(60, if result { 0 } else { 1 }); core::hint::unreachable_unchecked(); }
+        unsafe { syscall1(SYS_EXIT, if result { 0 } else { 1 }); core::hint::unreachable_unchecked(); }
     }
     let mut status = -1i32;
     let waited = if pid > 0 {
         loop {
-            let result = unsafe { syscall4(61, pid, core::ptr::addr_of_mut!(status) as i64, 0, 0) };
+            let result = unsafe { syscall4(if cfg!(target_arch = "aarch64") { 260 } else { 61 }, pid, core::ptr::addr_of_mut!(status) as i64, 0, 0) };
             if result != -4 { break result; }
         }
     } else { pid };

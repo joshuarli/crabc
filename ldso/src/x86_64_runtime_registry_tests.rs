@@ -31,7 +31,7 @@ unsafe fn page() -> Option<*mut u8> {
 
 unsafe fn mapped(address: *mut u8) -> bool {
     let mut residency = 0u8;
-    unsafe { syscall3(27, address as i64, PAGE as i64, core::ptr::addr_of_mut!(residency) as i64) == 0 }
+    unsafe { syscall3(if cfg!(target_arch = "aarch64") { 232 } else { 27 }, address as i64, PAGE as i64, core::ptr::addr_of_mut!(residency) as i64) == 0 }
 }
 
 fn identity(number: u64) -> ObjectIdentity { ObjectIdentity { device: 1, inode: number } }

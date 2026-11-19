@@ -255,7 +255,7 @@ mod tests {
     fn retired_worker_generations_are_reclaimed_before_survivor_and_late_worker_growth() {
         unsafe fn resident(address: usize) -> bool {
             let mut residency = 0u8;
-            unsafe { syscall3(27, address as i64, 1,
+            unsafe { syscall3(if cfg!(target_arch = "aarch64") { 232 } else { 27 }, address as i64, 1,
                 core::ptr::addr_of_mut!(residency) as i64) == 0 }
         }
         unsafe fn register(block: InstalledInitialTls) -> WorkerTlsAllocation {
@@ -388,7 +388,7 @@ mod tests {
     fn embedded_worker_token_release_keeps_the_caller_span_mapped() {
         unsafe fn resident(address: usize) -> bool {
             let mut residency = 0u8;
-            unsafe { syscall3(27, address as i64, 1, core::ptr::addr_of_mut!(residency) as i64) == 0 }
+            unsafe { syscall3(if cfg!(target_arch = "aarch64") { 232 } else { 27 }, address as i64, 1, core::ptr::addr_of_mut!(residency) as i64) == 0 }
         }
         let span = unsafe { syscall6(SYS_MMAP, 0, PAGE as i64, PROT_READ | PROT_WRITE,
             MAP_PRIVATE | MAP_ANONYMOUS, -1, 0) };
