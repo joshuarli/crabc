@@ -15,6 +15,9 @@ import unittest
 
 ROOT = Path(__file__).resolve().parents[3]
 WORK = ROOT / ".work/calendar-component-dispatch-tests"
+ARCH = subprocess.check_output(["uname", "-m"], text=True).strip()
+ARCH = "aarch64" if ARCH in {"aarch64", "arm64"} else "x86_64"
+PLATFORM = "linux/arm64" if ARCH == "aarch64" else "linux/amd64"
 IMAGE_ID = "sha256:" + "c" * 64
 
 
@@ -40,7 +43,7 @@ class OwnedCalendarComponentDispatchTests(unittest.TestCase):
         (self.checkout / "compat/x86_64").mkdir(parents=True, exist_ok=True)
         shutil.copy2(ROOT / "compat/x86_64/core_image.py", self.checkout / "compat/x86_64/core_image.py")
         shutil.copy2(ROOT / "compat/x86_64/native_arch.py", self.checkout / "compat/x86_64/native_arch.py")
-        self.work = self.checkout / ".work/x86_64"
+        self.work = self.checkout / f".work/{ARCH}"
         self.work.mkdir(parents=True)
         self.static = self.work / "products/static product"
         self.dynamic = self.work / "products/dynamic product"
@@ -59,6 +62,9 @@ class OwnedCalendarComponentDispatchTests(unittest.TestCase):
         )
         binaries = self.work / "bin"
         binaries.mkdir()
+        uname = binaries / "uname"
+        uname.write_text(f"#!/bin/sh\ncase \"$1\" in -s) echo Linux ;; -m) echo {ARCH} ;; *) /usr/bin/uname \"$@\" ;; esac\n", encoding="utf-8")
+        uname.chmod(0o755)
         docker = binaries / "docker"
         docker.write_text(
             f"#!{sys.executable}\n"
@@ -68,7 +74,7 @@ class OwnedCalendarComponentDispatchTests(unittest.TestCase):
             "    log.write(json.dumps(['docker', *args]) + '\\n')\n"
             "if args[:2] == ['image', 'inspect']:\n"
             "    fmt = args[args.index('--format') + 1] if '--format' in args else ''\n"
-            f"    print({IMAGE_ID!r} if fmt == '{{{{.Id}}}}' else 'linux/amd64')\n"
+            f"    print({IMAGE_ID!r} if fmt == '{{{{.Id}}}}' else {PLATFORM!r})\n"
             "    raise SystemExit(0)\n"
             "if args[:1] != ['run']:\n"
             "    raise SystemExit('unexpected Docker operation')\n",
@@ -98,12 +104,12 @@ class OwnedCalendarComponentDispatchTests(unittest.TestCase):
         cases = (
             ((), []),
             (("--static-sysroot", str(self.static), str(self.dynamic)),
-             ["--static-sysroot", "/workspace/.work/x86_64/products/static product",
-              "/workspace/.work/x86_64/products/dynamic product"]),
+             ["--static-sysroot", f"/workspace/.work/{ARCH}/products/static product",
+              f"/workspace/.work/{ARCH}/products/dynamic product"]),
             (("--static-sysroot", str(self.static.relative_to(self.checkout)),
               str(self.dynamic.relative_to(self.checkout))),
-             ["--static-sysroot", "/workspace/.work/x86_64/products/static product",
-              "/workspace/.work/x86_64/products/dynamic product"]),
+             ["--static-sysroot", f"/workspace/.work/{ARCH}/products/static product",
+              f"/workspace/.work/{ARCH}/products/dynamic product"]),
         )
         for arguments, forwarded in cases:
             with self.subTest(arguments=arguments):
@@ -128,7 +134,7 @@ class OwnedCalendarComponentDispatchTests(unittest.TestCase):
                 self.assertFalse(any(value.startswith("--cap-add=SYS_TIME") for value in run))
                 mounts = [run[index + 1] for index, value in enumerate(run[:-1]) if value == "--volume"]
                 self.assertIn(f"{self.checkout}:/workspace", mounts)
-                self.assertIn(f"{self.work}:/workspace/.work/x86_64", mounts)
+                self.assertIn(f"{self.work}:/workspace/.work/{ARCH}", mounts)
 
     def test_incomplete_or_escaping_products_fail_before_any_effect(self) -> None:
         outside = Path(tempfile.mkdtemp(dir=WORK))

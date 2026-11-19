@@ -26,6 +26,7 @@ import stat
 import tomllib
 from typing import Any, Mapping
 
+from native_arch import native_arch
 import owned_c_abi_compat_family_cohort as cohort
 import owned_posix_family_execution as family
 import source_seal
@@ -39,7 +40,7 @@ FAMILY = "libc.c-abi-compat"
 ROSTER = Path("compat/x86_64/c-abi-compat-family.toml")
 LEDGER = Path("compat/x86_64/parity.toml")
 DISPATCHER = "./scripts/dev-x86_64.sh"
-EXECUTION_WORK = Path(".work/x86_64")
+EXECUTION_WORK = Path(".work") / native_arch()["arch"]
 PRODUCT_SCOPES = {
     "static-and-dynamic": ("static", "static-pie", "pie", "non-pie"),
     "dynamic": ("pie", "non-pie"),
@@ -320,7 +321,7 @@ def execute(root: Path, work: Path, static_preparation: Path, dynamic_qualificat
     root = root.resolve(strict=True)
     work = Path(os.path.abspath(root / work))
     require(work.is_relative_to(root / EXECUTION_WORK) and work != root / EXECUTION_WORK,
-            "c-abi-compat family output must be below checkout .work/x86_64")
+            f"c-abi-compat family output must be below checkout {EXECUTION_WORK}")
     require(not work.exists() and not work.is_symlink(), "c-abi-compat family output must be fresh")
     roster = load_roster(root)
     request = {
