@@ -30,6 +30,7 @@ def execute(arguments):
     transitive_dsos = []
     mode = None
     runpath = None
+    dependency_file = None
     rounding = False
     export_dynamic = False
     index = 0
@@ -65,6 +66,11 @@ def execute(arguments):
                 transitive_dsos.append(Path(value))
             else:
                 dsos.append(Path(value))
+        elif arg == "--application-dependency-file":
+            index += 1
+            if index == len(arguments) or arguments[index].startswith("-") or dependency_file is not None:
+                raise shared.DriverError("--application-dependency-file requires one output path")
+            dependency_file = Path(arguments[index])
         elif arg == "-frounding-math":
             if rounding:
                 raise shared.DriverError("duplicate rounding mode")
@@ -82,6 +88,8 @@ def execute(arguments):
     if profile is shared.NativeRuntimeProfile.HARDENED and mode == "exec":
         raise shared.DriverError("hardened dynamic product requires PIE")
     invocation = shared.parse_invocation(common)
+    if dependency_file is not None and not invocation.compile_only:
+        raise shared.DriverError("--application-dependency-file is available only for a compile-only invocation")
     if invocation.link_receipt is not None:
         raise shared.DriverError("dynamic link receipt path is derived from -o")
     if invocation.print_link_plan:
@@ -220,6 +228,11 @@ def execute(arguments):
     output = (invocation.output or (sources[0].with_suffix(".o") if invocation.compile_only else Path("a.out"))).absolute()
     shared.validate_application_output(root, output)
     shared.validate_application_output_disjoint(output, (*sources, *objects_in, *dso_inputs, *transitive_inputs))
+    dependency_output = None
+    if dependency_file is not None:
+        dependency_output = dependency_file.absolute()
+        shared.validate_application_output(root, dependency_output)
+        shared.validate_application_output_disjoint(dependency_output, (*sources, *objects_in, output))
     with tempfile.TemporaryDirectory(prefix="crabc-aarch64-dynamic-") as temporary:
         objects = list(objects_in)
         for index, source in enumerate(sources):
@@ -227,6 +240,7 @@ def execute(arguments):
             shared.run_checked([shared.compiler(), "-nostdinc", *(v for path in quote_dirs for v in ("-iquote", str(path))),
                                 "-isystem", str(root / "usr/include"), *shared.HOSTED_TRANSLATION_FLAGS,
                                 *invocation.compiler_flags, *(["-frounding-math"] if rounding else []),
+                                *(["-MD", "-MF", str(dependency_output)] if dependency_output is not None else []),
                    "-fPIC" if mode == "shared" else "-fPIE" if mode == "pie" else "-fno-pie", "-c", str(source), "-o", str(obj)])
             objects.append(obj)
         if invocation.compile_only:
