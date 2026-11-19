@@ -3,9 +3,10 @@
 set -euo pipefail
 ulimit -c 0
 readonly ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-readonly oracle_cc=/usr/local/bin/crabc-x86_64-musl-gcc
+eval "$(python3 -B "$ROOT/compat/x86_64/native_arch.py")"
+readonly oracle_cc="$oracle"
 readonly witness="$ROOT/compat/x86_64/run_pthread_wait_witness.py"
-readonly interpreter=/lib/ld-crabc-x86_64.so.1
+readonly interpreter="/lib/ld-crabc-$arch.so.1"
 readonly evidence="$ROOT/compat/x86_64/owned_io_cancellation_evidence.py"
 source "$ROOT/compat/x86_64/owned_io_cancellation_fixtures.sh"
 usage() {
@@ -33,7 +34,7 @@ while [ "$#" -gt 0 ]; do
             ;;
     esac
 done
-[ "$(uname -sm)" = 'Linux x86_64' ]
+[ "$(uname -s)" = Linux ]
 python3 -B - "$ROOT" "${TMPDIR:-}" "$provided_dynamic" "$provided_static" <<'PY'
 from pathlib import Path
 import sys
@@ -72,7 +73,7 @@ if [ -n "$provided_static" ]; then mkdir "$work/static-execution-root"; fi
 # A descriptor opened read-only before chroot supplies /proc observations.
 # This private root contains only the owned product, consumers, and scratch;
 # no host loader, libc, shell, or executable search directory is mounted.
-for runtime in lib/ld-crabc-x86_64.so.1 usr/lib/libc.so; do
+for runtime in "lib/ld-crabc-$arch.so.1" usr/lib/libc.so; do
     cmp "$installed/$runtime" "$execution_root/$runtime"
     readelf -dW "$installed/$runtime" >"$work/$(basename "$runtime").dynamic"
     if grep -Eq '\(NEEDED\)|\(TEXTREL\)' "$work/$(basename "$runtime").dynamic"; then
@@ -112,15 +113,20 @@ audit_dynamic_consumer() {
     readelf -lW "$candidate" >"$candidate.segments"
     readelf -dW "$candidate" >"$candidate.dynamic"
     readelf --dyn-syms -W "$candidate" >"$candidate.symbols"
-    python3 -B - "$ROOT" "$installed" "$mode" "$candidate" "$interpreter" <<'PY'
+    python3 -B - "$ROOT" "$installed" "$mode" "$candidate" "$interpreter" "$object" "$arch" <<'PY'
 import hashlib
 import json
 import re
 import sys
 from pathlib import Path
-source_root, root, mode, candidate_text, interpreter = sys.argv[1:]
+source_root, root, mode, candidate_text, interpreter, object_text, arch = sys.argv[1:]
 sys.path.insert(0, str(Path(source_root) / "compat/x86_64"))
 import owned_dynamic_receipt as receipt_contract
+if arch == 'aarch64':
+    from owned_posix_product_evidence import validate_link
+    validate_link(Path(root), Path(object_text), Path(candidate_text),
+                  Path(candidate_text + '.crabc-link.json'), mode)
+    raise SystemExit(0)
 
 root, candidate = Path(root), Path(candidate_text)
 def digest(path):
