@@ -17,17 +17,12 @@ C_PROBE = ROOT / "compat" / "x86_64" / "pthread_header_source_form_probe.c"
 CXX_PROBE = ROOT / "compat" / "x86_64" / "pthread_header_source_form_probe.cpp"
 DISPATCHER = ROOT / "scripts" / "dev-x86_64.sh"
 
-PTHREAD_X86_MARKER = "#if defined(__x86_64__) /* pinned-musl 1.2.6 x86-64 direct-header source form */\n"
-PTHREAD_X86_END = "\n#else /* frozen AArch64 public header */\n"
-SCHED_X86_MARKER = "#if defined(__x86_64__) /* pinned-musl 1.2.6 x86-64 sched_param source form */\n"
-SCHED_X86_END = "\n#else /* frozen AArch64 public header */\n"
-
-
 class PthreadHeaderSourceFormTests(unittest.TestCase):
     def test_x86_pthread_branch_keeps_pinned_direct_forms_and_signal_boundary(self) -> None:
         header = PTHREAD_HEADER.read_text(encoding="utf-8")
-        self.assertIn(PTHREAD_X86_MARKER, header)
-        x86_form = header.split(PTHREAD_X86_MARKER, 1)[1].split(PTHREAD_X86_END, 1)[0]
+        x86_form = header
+        self.assertNotIn("__x86_64__", header)
+        self.assertNotIn("__aarch64__", header)
 
         for required in (
             "#include <features.h>",
@@ -51,25 +46,14 @@ class PthreadHeaderSourceFormTests(unittest.TestCase):
         self.assertNotIn("pthread_kill", x86_form)
         self.assertNotIn("#include <signal.h>", x86_form)
 
-    def test_non_x86_pthread_branch_retains_the_frozen_legacy_surface(self) -> None:
-        header = PTHREAD_HEADER.read_text(encoding="utf-8")
-        legacy_form = header.split(PTHREAD_X86_END, 1)[1]
-        for required in (
-            "#include <sys/types.h>",
-            "#ifndef _PTHREAD_TYPES_DEFINED",
-            "void pthread_exit(void *) __attribute__((__noreturn__));",
-            "int pthread_sigmask(int, const sigset_t *__restrict, sigset_t *__restrict);",
-            "int pthread_kill(pthread_t, int);",
-        ):
-            self.assertIn(required, legacy_form)
-
     def test_x86_sched_param_source_coordinate_matches_the_pinned_transitive_form(self) -> None:
         header = SCHED_HEADER.read_text(encoding="utf-8")
-        self.assertIn(SCHED_X86_MARKER, header)
-        x86_form = header.split(SCHED_X86_MARKER, 1)[1].split(SCHED_X86_END, 1)[0]
+        x86_form = header
+        self.assertNotIn("__x86_64__", header)
+        self.assertNotIn("__aarch64__", header)
         self.assertIn("#if _REDIR_TIME64", x86_form)
         self.assertIn("\tstruct {\n\t\ttime_t __reserved1;\n\t\tlong __reserved2;\n\t} __reserved2[2];", x86_form)
-        self.assertEqual(header.splitlines()[24], "\tstruct {")
+        self.assertIn("#else\n\tstruct {\n\t\ttime_t __reserved1;", header)
 
     def test_direct_c_and_cpp_probes_name_layout_linkage_and_signal_ownership(self) -> None:
         c_probe = C_PROBE.read_text(encoding="utf-8")
