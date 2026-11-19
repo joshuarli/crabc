@@ -14,13 +14,11 @@ set -euo pipefail
 ulimit -c 0
 
 readonly ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-readonly ORACLE_CC=/usr/local/bin/crabc-x86_64-musl-gcc
 readonly MUSL_LIB=/opt/musl-1.2.6/lib
 readonly PROBE="$ROOT/compat/x86_64/owned_process_globals_probe.c"
 readonly LAUNCHER="$ROOT/compat/x86_64/libc_process_globals_empty_argv_launcher.c"
 readonly AUDIT="$ROOT/compat/x86_64/owned_c_abi_provider_closure.py"
 readonly -a CLOSURE=(--capability process.globals)
-readonly INTERPRETER=/lib/ld-crabc-x86_64.so.1
 declare -a link_identity_records=()
 
 usage() {
@@ -57,6 +55,9 @@ while [ "$#" -gt 0 ]; do
 done
 # Both products are required: the roster is a static and shared closure.
 [ "$static_was_supplied" -eq "$dynamic_was_supplied" ] || usage
+eval "$(python3 -B "$ROOT/compat/x86_64/native_arch.py")"
+readonly ORACLE_CC="$oracle"
+readonly INTERPRETER=/lib/ld-crabc-${arch}.so.1
 if [ "$static_was_supplied" -eq 1 ]; then
     provided_static="$(realpath -e "$provided_static")"
     provided_dynamic="$(realpath -e "$provided_dynamic")"
@@ -216,7 +217,7 @@ make_root() {
         musl)
             mkdir -p "$root$MUSL_LIB"
             cp "$MUSL_LIB/libc.so" "$root$MUSL_LIB/libc.so"
-            ln -s libc.so "$root$MUSL_LIB/ld-musl-x86_64.so.1"
+            ln -s libc.so "$root$MUSL_LIB/ld-musl-${arch}.so.1"
             ;;
         owned) cp -a "$installed" "$root" ;;
     esac

@@ -17,6 +17,10 @@ from installed_allocator_backend import static_and_dynamic_backend
 import owned_dynamic_elf
 import mold_link_trace
 import source_seal
+from native_arch import native_arch
+
+ARCH = native_arch()["arch"]
+ARCH_LABEL = "x86-64" if ARCH == "x86_64" else ARCH
 
 
 RUNNER = "owned-native-allocator-policy"
@@ -88,7 +92,7 @@ def _elf_mode(path: Path) -> tuple[int, str | None]:
     data = path.read_bytes()
     _require(len(data) >= 64 and data[:7] == b"\x7fELF\x02\x01\x01", f"{path.name} is not ELF64 x86-64")
     kind, machine = struct.unpack_from("<HH", data, 16)
-    _require(machine == 62, f"{path.name} is not x86-64")
+    _require(machine == (62 if ARCH == "x86_64" else 183), f"{path.name} is not x86-64")
     phoff = struct.unpack_from("<Q", data, 32)[0]
     phentsize, phnum = struct.unpack_from("<HH", data, 54)
     _require(phentsize == 56 and phnum > 0 and phoff + phentsize * phnum <= len(data),
@@ -204,7 +208,7 @@ def _check_products(root: Path, read: native_shadow_receipt.Receipt) -> None:
                  f"static manifest does not identify {name}")
     for name, installed_path in (
         ("dynamic-libc", "usr/lib/libc.so"),
-        ("dynamic-loader", "lib/ld-crabc-x86_64.so.1"),
+        ("dynamic-loader", f"lib/ld-crabc-{ARCH}.so.1"),
         ("dynamic-libc-provenance", "share/crabc/libc-shared.provenance.json"),
         ("dynamic-product-state", "share/crabc/dynamic-product-state.json"),
         ("dynamic-driver", "bin/crabc-cc-dynamic"),
@@ -241,10 +245,10 @@ def _check_products(root: Path, read: native_shadow_receipt.Receipt) -> None:
             name = f"dynamic-{kind}-{program}"
             elf_type, interpreter = _elf_mode(product / name)
             _require(elf_type == (3 if kind == "pie" else 2) and
-                     interpreter == "/lib/ld-crabc-x86_64.so.1",
+                     interpreter == f"/lib/ld-crabc-{ARCH}.so.1",
                      f"{name} has a wrong dynamic ELF link mode")
             try:
-                facts = owned_dynamic_elf.inspect(product / name)
+                facts = owned_dynamic_elf.inspect(product / name, architecture=ARCH)
             except owned_dynamic_elf.InspectionError as error:
                 raise native_shadow_receipt.ReceiptError(f"{RUNNER}: {name}: {error}") from error
             _require(facts["needed"] == ["libc.so"] and not facts["symbol_versioning"],
@@ -361,8 +365,8 @@ def _check_static_link(retained: Path, hashes: dict[str, str], program: str, mod
              declared.get("elf_type") == ("ET_EXEC" if mode == "static" else "ET_DYN") and
              declared.get("crt_object") == ("crt1.o" if mode == "static" else "rcrt1.o") and
              declared.get("interpreter") == "absent", f"{name} static link mode differs")
-    _require(record.get("schema") == 1 and record.get("format") == "crabc-x86-64-sealed-static-driver-v1" and
-             record.get("target") == "x86_64-unknown-linux-musl", f"{name} static link receipt differs")
+    _require(record.get("schema") == 1 and record.get("format") == f"crabc-{ARCH_LABEL}-sealed-static-driver-v1" and
+             record.get("target") == f"{ARCH}-unknown-linux-musl", f"{name} static link receipt differs")
     _require(isinstance(record.get("output"), dict) and
              record["output"].get("sha256") == hashes[name] and
              Path(str(record["output"].get("path"))).name == f"{name}.exe",
@@ -412,9 +416,11 @@ def _check_dynamic_link(retained: Path, hashes: dict[str, str], program: str, mo
     runtime = {
         "crti.o": "dynamic-crti", "libc.so": "dynamic-libc", "crtn.o": "dynamic-crtn",
         "Scrt1.o" if mode == "pie" else "crt1.o": "dynamic-scrt1" if mode == "pie" else "dynamic-crt1",
-        "crabc-dynamic-attach.o": "dynamic-attach", "libcrabc-builtins.a": "dynamic-builtins",
+        "libcrabc-builtins.a": "dynamic-builtins",
         f"object-{name}.o": f"object-{name}",
     }
+    if ARCH == "x86_64" or mode != "pie":
+        runtime["crabc-dynamic-attach.o"] = "dynamic-attach"
     inputs = record.get("input_receipts")
     _require(isinstance(inputs, list) and len(inputs) == len(runtime) and
              all(isinstance(item, dict) and set(item) == {"path", "sha256"} for item in inputs),
@@ -433,7 +439,9 @@ def _check_dynamic_link(retained: Path, hashes: dict[str, str], program: str, mo
         mold_link_trace.validate_trace(
             trace,
             initial_objects=[by_name[basename]["path"] for basename in (
-                "Scrt1.o" if mode == "pie" else "crt1.o", "crabc-dynamic-attach.o", "crti.o", f"object-{name}.o",
+                "Scrt1.o" if mode == "pie" else "crt1.o",
+                *(["crabc-dynamic-attach.o"] if ARCH == "x86_64" else []), "crti.o",
+                *(["crabc-dynamic-attach.o"] if ARCH == "aarch64" and mode != "pie" else []), f"object-{name}.o",
             )],
             archives=[(by_name["libcrabc-builtins.a"]["path"], (retained / "dynamic-builtins").read_bytes())],
             final_objects=[by_name[basename]["path"] for basename in ("libc.so", "crtn.o")],
@@ -444,7 +452,7 @@ def _check_dynamic_link(retained: Path, hashes: dict[str, str], program: str, mo
     _require(inspection.get("output_sha256") == hashes[name] and
              inspection.get("link_map", {}).get("sha256") == hashes[f"map-{name}"] and
              inspection.get("declared", {}).get("mode") == link_mode and
-             inspection.get("facts") == owned_dynamic_elf.inspect(retained / name),
+             inspection.get("facts") == owned_dynamic_elf.inspect(retained / name, architecture=ARCH),
              f"{name} ELF inspection or link map differs from the executed product")
     object_main = _application_main_symbol(retained / f"object-{name}", binding="GLOBAL")
     map_main = _application_map_main(retained / f"map-{name}", f"object-{name}.o", main_size=object_main[1])

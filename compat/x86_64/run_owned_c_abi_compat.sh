@@ -16,12 +16,13 @@ set -euo pipefail
 ulimit -c 0
 
 readonly ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-readonly oracle_cc=/usr/local/bin/crabc-x86_64-musl-gcc
+eval "$(python3 -B "$ROOT/compat/x86_64/native_arch.py")"
+readonly oracle_cc="$oracle"
 readonly probe="$ROOT/compat/x86_64/owned_c_abi_compat_probe.c"
 readonly interposition_probe="$ROOT/compat/x86_64/owned_c_abi_compat_interposition_probe.c"
 readonly gettext_interposition_probe="$ROOT/compat/x86_64/owned_c_abi_compat_gettext_interposition_probe.c"
-readonly interpreter=/lib/ld-crabc-x86_64.so.1
-readonly musl_interpreter=/lib/ld-musl-x86_64.so.1
+readonly interpreter=/lib/ld-crabc-${arch}.so.1
+readonly musl_interpreter=/lib/ld-musl-${arch}.so.1
 readonly closure="$ROOT/compat/x86_64/owned_c_abi_provider_closure.py"
 readonly musl_lib=/opt/musl-1.2.6/lib
 readonly -a closure_capabilities=(
@@ -89,7 +90,7 @@ if [ "$static_was_supplied" -eq 1 ] && [ "$dynamic_was_supplied" -eq 1 ] &&
         [ "$provided_static" = "$provided_dynamic" ]; then
     usage
 fi
-[ "$(uname -sm)" = 'Linux x86_64' ] || fail 'requires native Linux/x86-64'
+[ "$(uname -s)" = Linux ] || fail 'requires native Linux'
 
 python3 -B - "$ROOT" "${TMPDIR:-}" "$provided_static" "$provided_dynamic" <<'PY'
 from pathlib import Path
@@ -485,7 +486,7 @@ for mode in pie non-pie; do
     oracle_root="$work/interpose-oracle-$mode-root"
     mkdir -p "$oracle_root/lib"
     cp /opt/musl-1.2.6/lib/libc.so "$oracle_root$musl_interpreter"
-    ln -s ld-musl-x86_64.so.1 "$oracle_root/lib/libc.so"
+    ln -s ld-musl-${arch}.so.1 "$oracle_root/lib/libc.so"
     cp "$work/interpose-oracle-$mode" "$oracle_root/consumer"
     candidate_root="$work/interpose-candidate-$mode-root"
     mkdir -p "$candidate_root"
@@ -518,7 +519,7 @@ for mode in pie non-pie; do
     candidate_root="$work/gettext-dso-candidate-$mode-root"
     mkdir -p "$oracle_root/lib" "$oracle_root/usr/lib" "$candidate_root"
     cp /opt/musl-1.2.6/lib/libc.so "$oracle_root$musl_interpreter"
-    ln -s ld-musl-x86_64.so.1 "$oracle_root/lib/libc.so"
+    ln -s ld-musl-${arch}.so.1 "$oracle_root/lib/libc.so"
     oracle_provider="$oracle_root/usr/lib/libgettext-override.so"
     candidate_provider="$work/libgettext-override-$mode.so"
     step="link pinned-musl gettext DSO $mode"

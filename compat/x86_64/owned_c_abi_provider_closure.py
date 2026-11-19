@@ -40,6 +40,10 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable, Mapping, Sequence
 
+from native_arch import native_arch
+
+COPY_RELOCATION = "R_X86_64_COPY" if native_arch()["arch"] == "x86_64" else "R_AARCH64_COPY"
+
 ROOT = Path(__file__).resolve().parents[2]
 COVERAGE = ROOT / "compat" / "crabc-rs" / "coverage.toml"
 
@@ -50,7 +54,7 @@ _SYMBOL_ROW = re.compile(
 )
 _FILE_ROW = re.compile(r"^File: .*\((?P<member>[^()]+)\)\s*$")
 _RELOCATION_ROW = re.compile(
-    r"^\s*[0-9a-fA-F]+\s+[0-9a-fA-F]+\s+(?P<type>R_X86_64_\w+)\s+"
+    r"^\s*[0-9a-fA-F]+\s+[0-9a-fA-F]+\s+(?P<type>R_(?:X86_64|AARCH64)_\w+)\s+"
     r"[0-9a-fA-F]+\s+(?P<name>[^\s+]+)"
 )
 
@@ -200,7 +204,7 @@ def parse_copy_relocations(transcript: str) -> set[str]:
     names: set[str] = set()
     for raw in transcript.splitlines():
         match = _RELOCATION_ROW.match(raw)
-        if match is not None and match["type"] == "R_X86_64_COPY":
+        if match is not None and match["type"] == COPY_RELOCATION:
             names.add(match["name"].partition("@")[0])
     return names
 
@@ -422,7 +426,7 @@ def audit_copy_executable(
         f"{label} executable COPY alias partition {_describe(have)} differs from libc.so {_describe(want)}",
     )
     for group in want:
-        require(group & copies, f"{label} executable has no R_X86_64_COPY for {sorted(group)}")
+        require(group & copies, f"{label} executable has no {COPY_RELOCATION} for {sorted(group)}")
     return {"copied": sorted(copies & set(objects)), "groups": len(want)}
 
 
