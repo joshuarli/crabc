@@ -382,7 +382,7 @@ impl<'fd> PreparedExec<'fd> {
                 return Err(error);
             }
         };
-        match unsafe { fork() } {
+        match unsafe { fork_raw() } {
             Err(error) => {
                 let _ = crabc_core::io::close(reader);
                 let _ = crabc_core::io::close(writer);
