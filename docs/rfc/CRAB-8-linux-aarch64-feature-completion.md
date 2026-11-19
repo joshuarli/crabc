@@ -370,7 +370,11 @@ Open, in dependency order:
   `long double` arithmetic, so `snprintf("%.0f", -0.5)` under `FE_DOWNWARD`
   printed `-0` where musl prints `-1`. The owned builtins provide
   rounding-mode-aware binary128 helpers, differentially tested against
-  musl + libgcc soft-fp; libgcc itself stays out of the owned sysroot.
+  musl + libgcc soft-fp; libgcc itself stays out of the owned sysroot. Where libgcc's soft-fp and the AArch64 tininess rule
+  disagree (the largest subnormal times 1 + 2^-112 under round-to-nearest gives
+  the smallest normal with underflow and inexact in libgcc), the pinned oracle
+  governs. Implemented in `builtins/src/aarch64_binary128.rs`; the long-double
+  completion evidence now reports zero differences with no allowlist.
 
 Host workflow: the VM clone is `~/crabc`, reachable from the Mac as git remote
 `a64` (`crabc@orb:crabc`) with `receive.denyCurrentBranch updateInstead`.
