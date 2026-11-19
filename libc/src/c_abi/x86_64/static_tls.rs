@@ -29,6 +29,10 @@ use core::sync::atomic::{AtomicI32, AtomicU8, AtomicUsize, Ordering};
 
 use super::{pthread_identity, raw_syscall};
 
+#[cfg(target_arch = "aarch64")]
+#[path = "../../../../ldso/src/aarch64_auxv.rs"]
+mod aarch64_auxv;
+
 const AT_NULL: usize = 0;
 const AT_PHDR: usize = 3;
 const AT_PHENT: usize = 4;
@@ -956,26 +960,7 @@ unsafe fn arch_set_fs(thread_pointer: usize, initial_stack: *const usize) -> boo
     let Some(auxv) = (unsafe { auxiliary_vector_from_initial_stack(initial_stack) }) else { return false };
     // SAFETY: the caller has initialized the thread's live TLS allocation.
     unsafe { core::arch::asm!("msr tpidr_el0, {}", in(reg) thread_pointer, options(nostack, preserves_flags)); }
-    // musl 1.2.6 src/thread/aarch64/__set_thread_area.c masks unsupported SME and future features.
-    for index in 0..MAX_AUXV_ENTRIES {
-        let entry = auxv.wrapping_add(index * 2) as *mut usize;
-        // SAFETY: bootstrap validated the terminated auxiliary vector on the writable initial stack.
-        let kind = unsafe { core::ptr::read(entry) };
-        if kind == AT_NULL { return true; }
-        let mask = match kind {
-            16 => !((!0usize) << 42),
-            26 => !(((0xffusize) << 23) | ((0x3fusize) << 37) | ((0x3fusize) << 57)),
-            29 | 30 => {
-                // SAFETY: this entry and its value are writable initial-stack words.
-                unsafe { core::ptr::write(entry, 1); core::ptr::write(entry.add(1), 0); }
-                continue;
-            }
-            _ => continue,
-        };
-        // SAFETY: this entry's value is a writable initial-stack word.
-        unsafe { let value = entry.add(1); core::ptr::write(value, core::ptr::read(value) & mask); }
-    }
-    false
+    unsafe { aarch64_auxv::mask(auxv as *mut usize, MAX_AUXV_ENTRIES) }
 }
 
 #[inline]
