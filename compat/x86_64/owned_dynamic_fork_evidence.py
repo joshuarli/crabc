@@ -28,16 +28,19 @@ import owned_dynamic_receipt as receipt_contract
 import installed_compiler_translation as translation_contract
 import native_abi_inventory as inventory
 import owned_posix_product_evidence as product_evidence
+from native_arch import native_arch
 
 
 ROOT = Path(__file__).resolve().parents[2]
-PRODUCT_FORMAT = "crabc-x86-64-owned-dynamic-sysroot-v1"
-TARGET = "x86_64-unknown-linux-musl"
-INTERPRETER = "/lib/ld-crabc-x86_64.so.1"
+NATIVE = native_arch()
+ARCH = NATIVE["arch"]
+PRODUCT_FORMAT = "crabc-aarch64-owned-dynamic-sysroot-v1" if ARCH == "aarch64" else "crabc-x86-64-owned-dynamic-sysroot-v1"
+TARGET = NATIVE["target_triple"]
+INTERPRETER = f"/lib/ld-crabc-{ARCH}.so.1"
 COMPILE_SCHEMA = "crabc.dynamic-fork-compile/v1"
 ORACLE_PRODUCTS_SCHEMA = "crabc.dynamic-fork-oracle-products/v1"
 EXECUTION_PAYLOAD_SCHEMA = "crabc.dynamic-fork-execution-payload/v1"
-ORACLE_COMPILER = Path("/usr/local/bin/crabc-x86_64-musl-gcc")
+ORACLE_COMPILER = Path(NATIVE["oracle"])
 
 
 def replay_tool_paths(checkout: Path) -> dict[str, str]:
@@ -400,11 +403,14 @@ def expected_base(product: Path, output: Path, mode: str, object_path: Path, dso
     command.append("--exclude-libs=libcrabc-builtins.a")
     if mode != "shared":
         entry = library / ("Scrt1.o" if mode == "pie" else "crt1.o")
-        runtime += [entry, library / "crabc-dynamic-attach.o"]
-        command += [*receipt_contract.EXECUTABLE_WEAK_IMPORT_FLAGS, "--dynamic-linker", INTERPRETER, recorded(entry, replay), recorded(library / "crabc-dynamic-attach.o", replay)]
+        attachment = [library / "crabc-dynamic-attach.o"] if ARCH == "x86_64" or mode == "exec" else []
+        runtime += [entry, *attachment]
+        command += [*receipt_contract.EXECUTABLE_WEAK_IMPORT_FLAGS, "--dynamic-linker", INTERPRETER, recorded(entry, replay)]
+        if ARCH == "x86_64":
+            command += [recorded(path, replay) for path in attachment]
     else:
         command += ["-soname", output.name]
-    command += [recorded(library / "crti.o", replay), recorded(object_path, replay),
+    command += [recorded(library / "crti.o", replay), *([recorded(path, replay) for path in attachment] if mode != "shared" and ARCH == "aarch64" else []), recorded(object_path, replay),
                 recorded(library / "libcrabc-builtins.a", replay), *(recorded(path, replay) for path in dsos),
                 recorded(library / "libc.so", replay), recorded(library / "crtn.o", replay),
                 "-o", recorded(output, replay)]
@@ -427,7 +433,7 @@ def _audit_linked_elf(output: Path, mode: str, expected_needed: tuple[str, ...],
         header, programs, dynamic = readelf(output, "-hW"), readelf(output, "-lW"), readelf(output, "-dW")
         if re.search(rf"^\s*Type:\s+{expected_type}(?:\s|\()", header, re.MULTILINE) is None:
             fail("linked output ELF type drifted")
-        if re.search(r"^\s*Machine:\s+Advanced Micro Devices X86-64\s*$", header, re.MULTILINE) is None:
+        if re.search(r"^\s*Machine:\s+" + re.escape("AArch64" if ARCH == "aarch64" else "Advanced Micro Devices X86-64") + r"\s*$", header, re.MULTILINE) is None:
             fail("linked output is not x86-64")
         if "TEXTREL" in dynamic or re.search(r"\(RPATH\)", dynamic):
             fail("linked output has forbidden text relocation or RPATH")
@@ -451,7 +457,7 @@ def _audit_linked_elf(output: Path, mode: str, expected_needed: tuple[str, ...],
 
     facts = product_evidence.retained_elf_facts(output)
     expected_kind = 3 if expected_type == "DYN" else 2
-    if facts["machine"] != 62 or facts["type"] != expected_kind:
+    if facts["machine"] != (183 if ARCH == "aarch64" else 62) or facts["type"] != expected_kind:
         fail("retained linked output ELF type drifted")
     if not facts["dynamic"]:
         fail("retained linked output has no PT_DYNAMIC segment")
@@ -516,7 +522,9 @@ def audit_receipt(product: Path, manifest: Path, output: Path, object_path: Path
     library = product / "usr/lib"
     runtime = [library / "crti.o", library / "libc.so", library / "crtn.o"]
     if mode != "shared":
-        runtime += [library / ("Scrt1.o" if mode == "pie" else "crt1.o"), library / "crabc-dynamic-attach.o"]
+        runtime += [library / ("Scrt1.o" if mode == "pie" else "crt1.o")]
+        if ARCH == "x86_64" or mode == "exec":
+            runtime.append(library / "crabc-dynamic-attach.o")
     expected_runtime = sorted(path.relative_to(product).as_posix() for path in [*runtime, library / "libcrabc-builtins.a"])
     if record.get("owned_runtime_inputs") != expected_runtime:
         fail("dynamic producer receipt runtime input roster drifted")
@@ -1076,7 +1084,4 @@ def main(argv: list[str] | None = None) -> int:
 
 
 if __name__ == "__main__":
-    from native_arch import native_arch
-    if native_arch()["arch"] != "x86_64":
-        raise SystemExit("owned_dynamic_fork_evidence: x86-64 receipt or ELF contract is unavailable on aarch64")
     raise SystemExit(main())
