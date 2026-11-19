@@ -812,7 +812,9 @@ fn parse_resolv_conf(
                 }
                 config.search_domains.clear();
                 for field in &fields[1..] {
-                    push_configured_search_domain(config, field)?;
+                    let domain =
+                        core::str::from_utf8(field).map_err(|_| ResolveError::InvalidInput)?;
+                    config.add_search_domain(domain)?;
                 }
                 search_seen = true;
             }
@@ -822,7 +824,9 @@ fn parse_resolv_conf(
                 }
                 if !search_seen {
                     config.search_domains.clear();
-                    push_configured_search_domain(config, fields[1])?;
+                    let domain =
+                        core::str::from_utf8(fields[1]).map_err(|_| ResolveError::InvalidInput)?;
+                    config.add_search_domain(domain)?;
                 }
             }
             b"options" => {
@@ -834,24 +838,6 @@ fn parse_resolv_conf(
         }
     }
     Ok(())
-}
-
-// musl 1.2.6 copies resolv.conf search domains verbatim
-// (src/network/resolvconf.c); a suffix that cannot form a query, such as the
-// root `.`, only fails its own lookup (src/network/lookup_name.c), so the
-// configuration still loads.
-fn push_configured_search_domain(
-    config: &mut ResolverConfig,
-    field: &[u8],
-) -> core::result::Result<(), ResolveError> {
-    let Ok(domain) = core::str::from_utf8(field) else {
-        return Ok(());
-    };
-    let domain = domain.trim_end_matches('.');
-    if !valid_domain(domain) || IpAddress::parse(domain.as_bytes()).is_some() {
-        return Ok(());
-    }
-    config.add_search_domain(domain)
 }
 
 fn parse_resolver_option(
