@@ -9,17 +9,18 @@ set -euo pipefail
 
 readonly ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 . "$(dirname "${BASH_SOURCE[0]}")/native_build_environment.sh"
+eval "$(python3 -B "$ROOT_DIR/compat/x86_64/native_arch.py")"
 readonly PRODUCT="${1:?usage: $0 DYNAMIC-SYSROOT [--evidence-parent DIR]}"
 readonly START="$ROOT_DIR/compat/x86_64/ldso_initial_graph_start.S"
 readonly LEAF="$ROOT_DIR/compat/x86_64/ldso_initial_graph_leaf.c"
 readonly MID="$ROOT_DIR/compat/x86_64/ldso_initial_graph_mid.c"
 readonly MAIN="$ROOT_DIR/compat/x86_64/ldso_initial_graph_main.c"
 readonly ORACLE_MAIN="$ROOT_DIR/compat/x86_64/ldso_initial_graph_oracle_main.c"
-readonly MUSL_LOADER="/opt/musl-1.2.6/lib/ld-musl-x86_64.so.1"
+readonly MUSL_LOADER="/opt/musl-1.2.6/lib/ld-musl-${arch}.so.1"
 readonly MUSL_LIBC="/opt/musl-1.2.6/lib/libc.so"
-readonly ORACLE_CC="/usr/local/bin/crabc-x86_64-musl-gcc"
+readonly ORACLE_CC="$oracle"
 
-if [ "$(uname -s)" != Linux ] || [ "$(uname -m)" != x86_64 ]; then
+if [ "$(uname -s)" != Linux ] || [ "$(uname -m)" != "$arch" ]; then
     printf '%s\n' 'ERROR: initial-graph evidence requires native Linux/x86-64' >&2
     exit 2
 fi
@@ -42,9 +43,9 @@ fixtures="$root/fixtures"
 oracle_fixtures="$oracle_root/fixtures"
 cp -a "$PRODUCT" "$root"
 mkdir -p "$fixtures" "$oracle_root/lib" "$oracle_root/usr/lib" "$oracle_fixtures"
-cp "$MUSL_LOADER" "$oracle_root/lib/ld-musl-x86_64.so.1"
+cp "$MUSL_LOADER" "$oracle_root/lib/ld-musl-${arch}.so.1"
 cp "$MUSL_LIBC" "$oracle_root/usr/lib/libc.so"
-chmod 0755 "$oracle_root/lib/ld-musl-x86_64.so.1" "$oracle_root/usr/lib/libc.so"
+chmod 0755 "$oracle_root/lib/ld-musl-${arch}.so.1" "$oracle_root/usr/lib/libc.so"
 
 fail() {
     printf 'ERROR: initial-graph product: %s\n' "$*" >&2
@@ -54,7 +55,7 @@ fail() {
 # The installed loader is a complete runtime, so its retained ELF facts differ
 # from the retired bootstrap interpreter: it owns PT_TLS and packed RELR and
 # must publish complete metadata for both instead of omitting them.
-loader="$root/lib/ld-crabc-x86_64.so.1"
+loader="$root/lib/ld-crabc-${arch}.so.1"
 [ "$(readelf -h "$loader" | awk '/Type:/{print $2}')" = DYN ] ||
     fail 'installed loader is not ET_DYN'
 if readelf -dW "$loader" | grep -E '\(NEEDED\)|\(INTERP\)' >/dev/null; then
@@ -92,9 +93,16 @@ relr_byte_len="$(readelf -dW "$loader" | awk '
 if ! readelf -dW "$loader" | grep -E '\(RELRENT\)[[:space:]]+8 \(bytes\)' >/dev/null; then
     fail 'installed loader RELR entry size drifted'
 fi
-if readelf -rW "$loader" | awk '
-    /R_X86_64_/ && $3 != "R_X86_64_RELATIVE" && $3 != "R_X86_64_GLOB_DAT" &&
-    $3 != "R_X86_64_JUMP_SLOT" && $3 != "R_X86_64_TPOFF64" { exit 1 }
+if [ "$arch" = aarch64 ]; then
+    reloc_prefix=R_AARCH64
+    tls_relocation=R_AARCH64_TLS_TPREL64
+else
+    reloc_prefix=R_X86_64
+    tls_relocation=R_X86_64_TPOFF64
+fi
+if readelf -rW "$loader" | awk -v prefix="$reloc_prefix" -v tls="$tls_relocation" '
+    index($3, prefix "_") == 1 && $3 != prefix "_RELATIVE" && $3 != prefix "_GLOB_DAT" &&
+    $3 != prefix "_JUMP_SLOT" && $3 != tls { exit 1 }
 '; then :; else
     fail 'installed loader relocation classes escaped the product profile'
 fi
@@ -122,15 +130,17 @@ cc -O2 -fPIE -c "$MAIN" -o "$work/main.o"
 cc -O2 -fPIE -c "$START" -o "$work/start.o"
 cc -O2 -fPIE -c "$ORACLE_MAIN" -o "$work/oracle-main.o"
 
+attachment=("$PRODUCT/usr/lib/crabc-dynamic-attach.o")
+if [ "$arch" = aarch64 ]; then attachment=(); fi
 cc -nostdlib -fPIE -pie -ftls-model=global-dynamic -Wl,--hash-style=sysv -Wl,-z,now \
-    -Wl,--dynamic-linker,/lib/ld-crabc-x86_64.so.1 -Wl,-rpath,/fixtures -Wl,-rpath-link,"$fixtures" \
+    -Wl,--dynamic-linker,/lib/ld-crabc-${arch}.so.1 -Wl,-rpath,/fixtures -Wl,-rpath-link,"$fixtures" \
     "$PRODUCT/usr/lib/Scrt1.o" "$PRODUCT/usr/lib/crti.o" \
-    "$work/main.o" "$work/main-tls.o" "$PRODUCT/usr/lib/crabc-dynamic-attach.o" \
+    "$work/main.o" "$work/main-tls.o" "${attachment[@]}" \
     -L"$PRODUCT/usr/lib" -lc "$PRODUCT/usr/lib/libcrabc-builtins.a" "$PRODUCT/usr/lib/crtn.o" \
     -L"$fixtures" -Wl,--no-as-needed -l:libmid.so -o "$fixtures/main-crabc"
 
 "$ORACLE_CC" -O2 -fPIE -pie -Wl,--hash-style=sysv -Wl,-z,now \
-    -Wl,--dynamic-linker,/lib/ld-musl-x86_64.so.1 -Wl,-rpath,/fixtures -Wl,-rpath-link,"$fixtures" \
+    -Wl,--dynamic-linker,/lib/ld-musl-${arch}.so.1 -Wl,-rpath,/fixtures -Wl,-rpath-link,"$fixtures" \
     "$work/oracle-main.o" -L"$fixtures" -Wl,--no-as-needed -l:libmid.so \
     -o "$fixtures/main-musl"
 
@@ -138,8 +148,8 @@ cp -a "$fixtures/." "$oracle_fixtures/"
 
 main_crabc_interpreter="$(readelf -lW "$fixtures/main-crabc" | sed -n 's/.*Requesting program interpreter: \(.*\)].*/\1/p')"
 main_musl_interpreter="$(readelf -lW "$fixtures/main-musl" | sed -n 's/.*Requesting program interpreter: \(.*\)].*/\1/p')"
-[ "$main_crabc_interpreter" = /lib/ld-crabc-x86_64.so.1 ] || fail 'candidate PT_INTERP drifted'
-[ "$main_musl_interpreter" = /lib/ld-musl-x86_64.so.1 ] || fail 'musl reference PT_INTERP drifted'
+[ "$main_crabc_interpreter" = /lib/ld-crabc-${arch}.so.1 ] || fail 'candidate PT_INTERP drifted'
+[ "$main_musl_interpreter" = /lib/ld-musl-${arch}.so.1 ] || fail 'musl reference PT_INTERP drifted'
 
 for binary in "$fixtures/main-crabc" "$fixtures/main-musl" "$fixtures/libmid.so"; do
     if ! readelf -dW "$binary" | grep -F 'Library runpath: [/fixtures]' >/dev/null; then
@@ -169,12 +179,12 @@ for binary in "$fixtures/main-musl" "$fixtures/main-crabc" "$fixtures/libmid.so"
     fi
 done
 for binary in "$fixtures/libmid.so" "$fixtures/libleaf.so"; do
-    if readelf -rW "$binary" | awk '/R_X86_64_/ { if ($3 != "R_X86_64_RELATIVE" && $3 != "R_X86_64_GLOB_DAT" && $3 != "R_X86_64_JUMP_SLOT") exit 1 }'; then :; else
+    if readelf -rW "$binary" | awk -v p="$reloc_prefix" 'index($3,p "_") == 1 { if ($3 != p "_RELATIVE" && $3 != p "_GLOB_DAT" && $3 != p "_JUMP_SLOT") exit 1 }'; then :; else
         fail "fixture escaped the relocation whitelist: $binary"
     fi
 done
 relocations="$(readelf -rW "$fixtures/main-crabc" "$fixtures/libmid.so" "$fixtures/libleaf.so")"
-for relocation in R_X86_64_RELATIVE R_X86_64_GLOB_DAT R_X86_64_JUMP_SLOT; do
+for relocation in "${reloc_prefix}_RELATIVE" "${reloc_prefix}_GLOB_DAT" "${reloc_prefix}_JUMP_SLOT"; do
     if ! grep "$relocation" <<<"$relocations" >/dev/null; then
         fail "fixture did not exercise $relocation"
     fi
@@ -377,7 +387,8 @@ mv "$work/libleaf-valid.so" "$fixtures/libleaf.so"
 cp "$fixtures/libmid.so" "$work/libmid-valid.so"
 rela_offset="$(objdump -h "$fixtures/libmid.so" | awk '$2 == ".rela.dyn" { print "0x" $6 }')"
 [ -n "$rela_offset" ] || fail 'fixture has no .rela.dyn table to mutate'
-printf '\005\000\000\000\000\000\000\000' | dd of="$fixtures/libmid.so" bs=1 seek=$((rela_offset + 8)) conv=notrunc status=none
+if [ "$arch" = aarch64 ]; then copy_relocation='\000\004\000\000\000\000\000\000'; else copy_relocation='\005\000\000\000\000\000\000\000'; fi
+printf '%b' "$copy_relocation" | dd of="$fixtures/libmid.so" bs=1 seek=$((rela_offset + 8)) conv=notrunc status=none
 expect_candidate_rejection reloc 'R_X86_64_COPY relocation'
 mv "$work/libmid-valid.so" "$fixtures/libmid.so"
 
