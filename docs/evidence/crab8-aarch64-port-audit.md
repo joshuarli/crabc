@@ -484,7 +484,7 @@ The facade correction leaves out-of-scope callers `crabc-rs/examples/ppoll_direc
 22. **Closed (2b5b4c94a):** `test_reboot_header_source_form.py` compares the complete macro block exactly.
 23. **Closed (2b5b4c94a):** `test_pthread_header_source_form.py` checks the exact converged source coordinate.
 24. **Closed (2b5b4c94a):** `test_owned_posix_timers.py` rejects every Python invocation while checking parser usage, including architecture setup.
-25. **Tests nothing runs**:
+25. **Closed (b6236c919):** The aarch64 dynamic suite invokes all four tests below; all nine suite cases passed in the native VM after preparing the locked offline vendor. Previously, nothing ran:
     - `compat/x86_64/tests/test_aarch64_errno_alias.sh`
     - `compat/x86_64/test_aarch64_dynamic_driver.py`
     - `compat/x86_64/test_aarch64_tls_trace.py`
