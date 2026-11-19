@@ -2520,7 +2520,7 @@ mod tls_zero_tail_tests {
             tls_image: prefixes[index].as_ptr(),
             tls_filesz: prefixes[index].len(),
             tls_memsz: 16,
-            tls_align: 8,
+            tls_align: if cfg!(target_arch = "aarch64") { 1 } else { 8 },
             tls_module_id: index + 1,
             tls_offset_below_tp: (index + 1) * 16,
             ..EMPTY_OBJECT
@@ -3987,7 +3987,7 @@ mod readable_file_load_tests {
         phdr[32..40].copy_from_slice(&0x100u64.to_le_bytes());
         phdr[40..48].copy_from_slice(&0x100u64.to_le_bytes());
         assert_eq!(unsafe { syscall3(SYS_WRITE, fd, image.as_ptr() as i64, PAGE as i64) }, PAGE as i64);
-        assert_eq!(unsafe { syscall3(8, fd, 0, 0) }, 0);
+        assert_eq!(unsafe { syscall3(if cfg!(target_arch = "aarch64") { 62 } else { 8 }, fd, 0, 0) }, 0);
         let status = unsafe { FileStatus::of_fd(fd) }.unwrap();
         assert!(matches!(unsafe { map_elf_with_status(fd, &status, false, true,
             ObjectRole::Library) }, Err(ENOEXEC)));
@@ -4042,7 +4042,7 @@ mod readable_file_load_tests {
         assert_eq!(unsafe { syscall3(SYS_WRITE, fd, image.as_ptr() as i64, PAGE as i64) }, PAGE as i64);
         // Production opens one descriptor per image; this probe reuses the
         // descriptor, so rewind the sequential header read before every map.
-        const SYS_LSEEK: i64 = 8;
+        const SYS_LSEEK: i64 = if cfg!(target_arch = "aarch64") { 62 } else { 8 };
         let rewind = || assert_eq!(unsafe { syscall3(SYS_LSEEK, fd, 0, 0) }, 0);
         rewind();
         let status = unsafe { FileStatus::of_fd(fd) }.unwrap();
@@ -4148,7 +4148,7 @@ mod readable_file_load_tests {
         image[0x340..0x348].copy_from_slice(&[1, 0, 0, 0, 1, 0, 0, 0]);
         image[0x348..0x350].fill(0);
         assert_eq!(unsafe { syscall3(SYS_WRITE, fd, image.as_ptr() as i64, PAGE as i64) }, PAGE as i64);
-        const SYS_LSEEK: i64 = 8;
+        const SYS_LSEEK: i64 = if cfg!(target_arch = "aarch64") { 62 } else { 8 };
         let rewind = || assert_eq!(unsafe { syscall3(SYS_LSEEK, fd, 0, 0) }, 0);
         rewind();
         let status = unsafe { FileStatus::of_fd(fd) }.unwrap();
@@ -4228,7 +4228,7 @@ mod readable_file_load_tests {
         image[0x340..0x348].copy_from_slice(&[1, 0, 0, 0, 1, 0, 0, 0]);
         image[0x348..0x350].fill(0);
         assert_eq!(unsafe { syscall3(SYS_WRITE, fd, image.as_ptr() as i64, PAGE as i64) }, PAGE as i64);
-        assert_eq!(unsafe { syscall3(8, fd, 0, 0) }, 0);
+        assert_eq!(unsafe { syscall3(if cfg!(target_arch = "aarch64") { 62 } else { 8 }, fd, 0, 0) }, 0);
         let status = unsafe { FileStatus::of_fd(fd) }.unwrap();
         let object = unsafe { map_elf_with_status(fd, &status, false, true, ObjectRole::Library) }.unwrap();
         assert_eq!(object.map_span_byte_len, 0x5000);
