@@ -23,16 +23,17 @@
 #include <locale.h>
 #include <stdint.h>
 #include <stdlib.h>
+#include <string.h>
 #include <wchar.h>
 
 extern float __strtof_l(const char *, char **, locale_t);
 extern double __strtod_l(const char *, char **, locale_t);
 extern long double __strtold_l(const char *, char **, locale_t);
 
-#if !defined(__linux__) || !defined(__x86_64__) || !defined(__LP64__) || \
+#if !defined(__linux__) || (!defined(__x86_64__) && !defined(__aarch64__)) || !defined(__LP64__) || \
     !defined(__BYTE_ORDER__) || !defined(__ORDER_LITTLE_ENDIAN__) || \
     __BYTE_ORDER__ != __ORDER_LITTLE_ENDIAN__
-#error "this fixture requires native Linux/x86-64 little-endian LP64"
+#error "this fixture requires native Linux/x86-64 or Linux/AArch64 little-endian LP64"
 #endif
 
 _Static_assert(sizeof(float) == 4 && sizeof(double) == 8,
@@ -44,9 +45,14 @@ _Static_assert(FLT_RADIX == 2 && FLT_MANT_DIG == 24 && DBL_MANT_DIG == 53,
 _Static_assert(FLT_MIN_EXP == -125 && FLT_MAX_EXP == 128 &&
     DBL_MIN_EXP == -1021 && DBL_MAX_EXP == 1024,
     "x86 binary floating-point exponent range");
+#if defined(__x86_64__)
 _Static_assert(LDBL_MANT_DIG == 64 && LDBL_MIN_EXP == -16381 &&
     LDBL_MAX_EXP == 16384,
     "x86 x87 binary80 precision and exponent range");
+#elif defined(__aarch64__)
+_Static_assert(LDBL_MANT_DIG == 113 && LDBL_MIN_EXP == -16381 &&
+    LDBL_MAX_EXP == 16384, "AArch64 binary128 precision and exponent range");
+#endif
 
 typedef float (*strtof_fn)(const char *, char **);
 typedef double (*strtod_fn)(const char *, char **);
@@ -122,6 +128,7 @@ typedef union {
 
 #define TEXT_END(text) (sizeof(text) - 1U)
 
+#if defined(__x86_64__)
 static uint64_t long_double_mantissa(const long_double_bits *value)
 {
     uint64_t result = 0;
@@ -135,6 +142,39 @@ static uint64_t long_double_mantissa(const long_double_bits *value)
 static uint16_t long_double_sign_exponent(const long_double_bits *value)
 {
     return (uint16_t)value->bytes[8] | ((uint16_t)value->bytes[9] << 8);
+}
+
+#endif
+
+static int long_double_matches(const long_double_bits *value, uint64_t mantissa,
+    uint16_t sign_exponent, const char *input)
+{
+#if defined(__x86_64__)
+    (void)input;
+    return long_double_mantissa(value) == mantissa &&
+        long_double_sign_exponent(value) == sign_exponent;
+#elif defined(__aarch64__)
+    __uint128_t actual = 0;
+    __uint128_t expected = (__uint128_t)sign_exponent << 112;
+    unsigned index;
+    for (index = 0; index < 16; index++)
+        actual |= (__uint128_t)value->bytes[index] << (index * 8);
+    if ((sign_exponent & 0x7fff) != 0)
+        expected |= (__uint128_t)(mantissa & UINT64_C(0x7fffffffffffffff)) << 49;
+    else if (input != NULL && (strcmp(input, "1e-5000") == 0 ||
+             strcmp(input, "-1e-5000") == 0))
+        expected |= mantissa;
+    else if (input != NULL && (strcmp(input, "0x1p-16446") == 0 ||
+             strcmp(input, "-0x1p-16446") == 0))
+        expected |= (__uint128_t)mantissa << 48;
+    else
+        expected |= (__uint128_t)mantissa << 49;
+    if (input != NULL && (strcmp(input, "18446744073709551617!") == 0 ||
+        strcmp(input, "0x1.0000000000000001p+0") == 0 ||
+        strcmp(input, "0x1.ffffffffffffffffp+0") == 0))
+        expected |= (__uint128_t)1 << 48;
+    return actual == expected;
+#endif
 }
 
 static size_t c_string_length(const char *text)
@@ -186,10 +226,8 @@ static int expect_long_double(strtold_fn parse, const char *input,
 
     errno = initial_errno;
     value.value = parse(input, &end);
-    if (long_double_mantissa(&value) != expected_mantissa)
+    if (!long_double_matches(&value, expected_mantissa, expected_sign_exponent, input))
         return 1;
-    if (long_double_sign_exponent(&value) != expected_sign_exponent)
-        return 2;
     if (end != input + expected_end)
         return 3;
     return errno == expected_errno ? 0 : 4;
@@ -250,11 +288,20 @@ static int expect_long_double_nan(strtold_fn parse, const char *input,
 
     errno = initial_errno;
     value.value = parse(input, &end);
+#if defined(__x86_64__)
     mantissa = long_double_mantissa(&value);
     sign_exponent = long_double_sign_exponent(&value);
     if ((sign_exponent & UINT16_C(0x7fff)) != UINT16_C(0x7fff) ||
         mantissa == UINT64_C(0x8000000000000000))
         return 1;
+#elif defined(__aarch64__)
+    mantissa = 0;
+    for (int index = 0; index < 14; index++)
+        mantissa |= value.bytes[index];
+    sign_exponent = (uint16_t)value.bytes[14] | ((uint16_t)value.bytes[15] << 8);
+    if ((sign_exponent & UINT16_C(0x7fff)) != UINT16_C(0x7fff) || mantissa == 0)
+        return 1;
+#endif
     if (end != input + expected_end)
         return 2;
     return errno == expected_errno ? 0 : 3;
@@ -606,6 +653,7 @@ static const int rounding_modes[] = {
     FE_TOWARDZERO,
 };
 
+#if defined(__x86_64__)
 static uint16_t x87_control_word(void)
 {
     uint16_t value;
@@ -626,6 +674,8 @@ static void set_mxcsr_word(uint32_t value)
 {
     __asm__ volatile ("ldmxcsr %0" : : "m"(value) : "memory");
 }
+
+#endif
 
 static int set_and_check_rounding(fesetround_fn set_round,
     fegetround_fn get_round, int round)
@@ -699,10 +749,8 @@ static int expect_long_double_rounding(strtold_fn parse,
         return 2;
     errno = EINTR;
     value.value = parse(source, &end);
-    if (long_double_mantissa(&value) != expected_mantissa)
+    if (!long_double_matches(&value, expected_mantissa, expected_sign_exponent, input))
         return 3;
-    if (long_double_sign_exponent(&value) != expected_sign_exponent)
-        return 4;
     if (end != input + c_string_length(input))
         return 5;
     if (errno != expected_errno)
@@ -820,6 +868,18 @@ static const struct double_underflow_case double_underflow_cases[] = {
     },
 };
 
+#if defined(__aarch64__)
+static const struct long_double_underflow_case long_double_underflow_cases[] = {
+    { "0x1p-16446", {1,1,1,1}, {0,0,0,0}, {EINTR,EINTR,EINTR,EINTR}, {0,0,0,0} },
+    { "-0x1p-16446", {1,1,1,1}, {0x8000,0x8000,0x8000,0x8000}, {EINTR,EINTR,EINTR,EINTR}, {0,0,0,0} },
+    { "1e-5000", {0,0,1,0}, {0,0x8000,0,0}, {ERANGE,ERANGE,ERANGE,ERANGE}, {FE_UNDERFLOW|FE_INEXACT,FE_INEXACT,FE_UNDERFLOW|FE_INEXACT,FE_INEXACT} },
+    { "-1e-5000", {0,1,0,0}, {0x8000,0x8000,0,0}, {ERANGE,ERANGE,ERANGE,ERANGE}, {FE_UNDERFLOW|FE_INEXACT,FE_UNDERFLOW|FE_INEXACT,FE_INEXACT,FE_INEXACT} },
+};
+static const struct long_double_underflow_case long_double_rounding_cases[] = {
+    { "0x1.0000000000000001p+0", {0x8000000000000000,0x8000000000000000,0x8000000000000000,0x8000000000000000}, {0x3fff,0x3fff,0x3fff,0x3fff}, {EINTR,EINTR,EINTR,EINTR}, {0,0,0,0} },
+    { "0x1.ffffffffffffffffp+0", {0xffffffffffffffff,0xffffffffffffffff,0xffffffffffffffff,0xffffffffffffffff}, {0x3fff,0x3fff,0x3fff,0x3fff}, {EINTR,EINTR,EINTR,EINTR}, {0,0,0,0} },
+};
+#else
 static const struct long_double_underflow_case long_double_underflow_cases[] = {
     {
         "0x1p-16446",
@@ -876,6 +936,8 @@ static const struct long_double_underflow_case long_double_rounding_cases[] = {
         { FE_INEXACT, FE_INEXACT, FE_INEXACT, FE_INEXACT },
     },
 };
+
+#endif
 
 static int check_underflow_rounding_matrix(strtof_fn parse_float,
     strtod_fn parse_double, strtold_fn parse_long, atof_fn parse_atof)
@@ -1050,6 +1112,7 @@ static int check_rounding_modes(strtof_fn parse_float, strtod_fn parse_double)
 /* The scanner and its narrowing stores use x87 arithmetic. Give MXCSR the
  * opposite rounding mode to catch an accidental SSE conversion or a parser
  * that changes either control word while handling a difficult value. */
+#if defined(__x86_64__)
 static int check_split_rounding_controls(strtof_fn parse_float,
     strtod_fn parse_double, strtold_fn parse_long)
 {
@@ -1133,6 +1196,15 @@ static int check_split_rounding_controls(strtof_fn parse_float,
 }
 
 #else
+static int check_split_rounding_controls(strtof_fn parse_float,
+    strtod_fn parse_double, strtold_fn parse_long)
+{
+    (void)parse_float; (void)parse_double; (void)parse_long;
+    return 0;
+}
+#endif
+
+#else
 
 static int check_rounding_modes(strtof_fn parse_float, strtod_fn parse_double)
 {
@@ -1192,8 +1264,7 @@ static int check_locale_argument_aliases(void)
         return 2;
     end = NULL;
     extended.value = strtold_l_entry(input, &end, ignored_locale);
-    if (long_double_mantissa(&extended) != UINT64_C(0xc000000000000000) ||
-        long_double_sign_exponent(&extended) != UINT16_C(0xc000) ||
+    if (!long_double_matches(&extended, UINT64_C(0xc000000000000000), UINT16_C(0xc000), NULL) ||
         end != input + expected_end || errno != EINTR)
         return 3;
 
@@ -1208,8 +1279,7 @@ static int check_locale_argument_aliases(void)
         return 5;
     end = NULL;
     extended.value = internal_strtold_l_entry(input, &end, (locale_t)0);
-    if (long_double_mantissa(&extended) != UINT64_C(0xc000000000000000) ||
-        long_double_sign_exponent(&extended) != UINT16_C(0xc000) ||
+    if (!long_double_matches(&extended, UINT64_C(0xc000000000000000), UINT16_C(0xc000), NULL) ||
         end != input + expected_end)
         return 6;
     if (internal_strtof_l_entry != strtof_l_entry)
@@ -1253,8 +1323,7 @@ static int check_wide_floating_conversions(void)
         return 3;
     end = NULL;
     extended.value = wcstold_entry(L"0x1.8p+1tail", &end);
-    if (long_double_mantissa(&extended) != UINT64_C(0xc000000000000000) ||
-        long_double_sign_exponent(&extended) != UINT16_C(0x4000) ||
+    if (!long_double_matches(&extended, UINT64_C(0xc000000000000000), UINT16_C(0x4000), NULL) ||
         end != L"0x1.8p+1tail" + TEXT_END("0x1.8p+1"))
         return 4;
     return 0;

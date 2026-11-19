@@ -39,8 +39,8 @@ SCHEMA = "crabc.x86_64-owned-text-locale-numeric-receipt/v1"
 REPORT_SCHEMA = "crabc.x86_64-owned-text-locale-numeric/v1"
 PAIR_NAMES = tuple(family.PAIRS)
 EXECUTION_CELLS = contract.EXECUTION_CELLS
-ORACLE_CC = Path("/usr/local/bin/crabc-x86_64-musl-gcc")
-INTERPRETER = "/lib/ld-crabc-x86_64.so.1"
+ORACLE_CC = Path(f"/usr/local/bin/crabc-{product_evidence.ARCH}-musl-gcc")
+INTERPRETER = product_evidence.INTERPRETER
 # Every consumer starts with the same locale and timezone, including chroot
 # launches. An absolute host tool path avoids adding PATH to that environment.
 EXECUTION_ENVIRONMENT = ("env", "-i", "LC_ALL=C", "LANG=C", "TZ=UTC")
@@ -344,7 +344,8 @@ def check_elf_rel(path: Path, label: str) -> None:
     except OSError as error:
         raise ReceiptError(f"cannot read {label}") from error
     require(len(data) >= 20 and data[:7] == b"\x7fELF\x02\x01\x01" and data[16:18] == b"\x01\x00"
-            and data[18:20] == b">\x00", f"{label} is not an x86-64 ET_REL object")
+            and data[18:20] == (183 if product_evidence.ARCH == "aarch64" else 62).to_bytes(2, "little"),
+            f"{label} is not a {product_evidence.ARCH} ET_REL object")
 
 
 def expected_command_stems() -> tuple[str, ...]:
