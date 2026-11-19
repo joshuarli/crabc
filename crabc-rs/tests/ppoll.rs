@@ -3,18 +3,18 @@
 
 use crabc_rs::{event, io, pipe, process, signal, time};
 
-unsafe extern "C" fn ppoll_signal_handler(_: process::Signal) {}
+unsafe extern "C" fn ppoll_signal_handler(_: signal::Signal) {}
 
 fn child_ppoll_case(reader: &crabc_rs::OwnedFd, result: &crabc_rs::OwnedFd) -> ! {
     let mut selected = signal::SignalSet::EMPTY;
-    selected.insert(process::Signal::USR1);
+    selected.insert(signal::Signal::USR1);
 
     let action = signal::SigAction::new(
         signal::SigHandler::Simple(ppoll_signal_handler),
         signal::SignalSet::EMPTY,
         signal::SigActionFlags::empty(),
     );
-    let old_action = match unsafe { signal::sigaction(process::Signal::USR1, Some(&action)) } {
+    let old_action = match unsafe { signal::sigaction(signal::Signal::USR1, Some(&action)) } {
         Ok(action) => action,
         Err(_) => child_report(result, 1),
     };
@@ -22,7 +22,7 @@ fn child_ppoll_case(reader: &crabc_rs::OwnedFd, result: &crabc_rs::OwnedFd) -> !
         Ok(mask) => mask,
         Err(_) => child_report(result, 2),
     };
-    if signal::raise(process::Signal::USR1).is_err() {
+    if signal::raise(signal::Signal::USR1).is_err() {
         child_report(result, 3);
     }
 
@@ -32,7 +32,7 @@ fn child_ppoll_case(reader: &crabc_rs::OwnedFd, result: &crabc_rs::OwnedFd) -> !
         child_report(result, 4);
     }
     if !signal::pending()
-        .map(|pending| pending.contains(process::Signal::USR1))
+        .map(|pending| pending.contains(signal::Signal::USR1))
         .unwrap_or(false)
     {
         child_report(result, 5);
@@ -48,7 +48,7 @@ fn child_ppoll_case(reader: &crabc_rs::OwnedFd, result: &crabc_rs::OwnedFd) -> !
         child_report(result, 6);
     }
     if !signal::current_mask()
-        .map(|mask| mask.contains(process::Signal::USR1))
+        .map(|mask| mask.contains(signal::Signal::USR1))
         .unwrap_or(false)
     {
         child_report(result, 7);
@@ -57,7 +57,7 @@ fn child_ppoll_case(reader: &crabc_rs::OwnedFd, result: &crabc_rs::OwnedFd) -> !
     if signal::set_mask(&old_mask).is_err() {
         child_report(result, 8);
     }
-    if unsafe { signal::sigaction(process::Signal::USR1, Some(&old_action)) }.is_err() {
+    if unsafe { signal::sigaction(signal::Signal::USR1, Some(&old_action)) }.is_err() {
         child_report(result, 9);
     }
     child_report(result, 0)

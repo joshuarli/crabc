@@ -9,7 +9,7 @@ use crabc_rs::{process, signal, thread};
 
 static SIGNAL_DELIVERED: AtomicBool = AtomicBool::new(false);
 
-unsafe extern "C" fn interrupt_handler(_: process::Signal) {
+unsafe extern "C" fn interrupt_handler(_: signal::Signal) {
     SIGNAL_DELIVERED.store(true, Ordering::SeqCst);
 }
 
@@ -40,7 +40,7 @@ fn native_nanosleep_preserves_eintr_and_remaining_duration() {
         signal::SignalSet::EMPTY,
         signal::SigActionFlags::empty(),
     );
-    let old_action = unsafe { signal::sigaction(process::Signal::USR1, Some(&action)) }
+    let old_action = unsafe { signal::sigaction(signal::Signal::USR1, Some(&action)) }
         .expect("install direct interruption handler");
     let parent = process::getpid();
     let sleeper = thread::gettid();
@@ -58,7 +58,7 @@ fn native_nanosleep_preserves_eintr_and_remaining_duration() {
             if crabc_core::process::tgkill(
                 parent.as_raw_pid(),
                 sleeper.as_raw_pid(),
-                process::Signal::USR1.as_raw(),
+                signal::Signal::USR1.as_raw(),
             )
             .is_err()
             {
@@ -73,7 +73,7 @@ fn native_nanosleep_preserves_eintr_and_remaining_duration() {
     let mut status = 0;
     // SAFETY: The status word is writable and the child is owned by this test.
     unsafe { crabc_core::process::wait4_raw(child.as_raw_pid(), &mut status, 0) }.expect("reap child");
-    unsafe { signal::sigaction(process::Signal::USR1, Some(&old_action)) }
+    unsafe { signal::sigaction(signal::Signal::USR1, Some(&old_action)) }
         .expect("restore interruption handler");
 
     assert_eq!(status, 0);

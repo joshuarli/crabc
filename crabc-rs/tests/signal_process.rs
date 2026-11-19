@@ -2,21 +2,61 @@
 
 use std::ffi::CStr;
 use std::process::Command;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 
 use crabc_rs::{io, pipe, process, signal, Errno};
 
 static ATFORK_LOG: AtomicU64 = AtomicU64::new(0);
+static ATFORK_LEN: AtomicUsize = AtomicUsize::new(0);
 
-unsafe extern "C" fn usr2_handler(_: process::Signal) {
+unsafe extern "C" fn atfork_a_prepare() {
+    atfork_push(b'A');
+}
+unsafe extern "C" fn atfork_a_parent() {
+    atfork_push(b'a');
+}
+unsafe extern "C" fn atfork_a_child() {
+    atfork_push(b'a');
+}
+unsafe extern "C" fn atfork_b_prepare() {
+    atfork_push(b'B');
+}
+unsafe extern "C" fn atfork_b_parent() {
+    atfork_push(b'b');
+}
+unsafe extern "C" fn atfork_b_child() {
+    atfork_push(b'b');
+}
+unsafe extern "C" fn atfork_c_prepare() {
+    atfork_push(b'C');
+}
+unsafe extern "C" fn atfork_c_parent() {
+    atfork_push(b'c');
+}
+unsafe extern "C" fn atfork_c_child() {
+    atfork_push(b'c');
+}
+
+unsafe extern "C" fn usr2_handler(_: signal::Signal) {
     ATFORK_LOG.store(u64::from_le_bytes(*b"handler!"), Ordering::SeqCst);
 }
 
 unsafe extern "C" fn usr2_info_handler(
-    _: process::Signal,
+    _: signal::Signal,
     _: *mut signal::SigInfo,
     _: *mut core::ffi::c_void,
 ) {
+}
+
+fn atfork_push(byte: u8) {
+    let offset = ATFORK_LEN.fetch_add(1, Ordering::SeqCst);
+    assert!(offset < 8, "atfork test log exceeded fixed capacity");
+    ATFORK_LOG.fetch_or((byte as u64) << (offset * 8), Ordering::SeqCst);
+}
+
+fn atfork_log() -> Vec<u8> {
+    let length = ATFORK_LEN.load(Ordering::SeqCst);
+    ATFORK_LOG.load(Ordering::SeqCst).to_le_bytes()[..length].to_vec()
 }
 
 #[test]
@@ -28,6 +68,7 @@ fn signal_process() {
             "realtime" => realtime_case(),
             "process-control" => process_control_case(),
             "fork-wait" => fork_wait_case(),
+            "atfork" => atfork_case(),
             "spawn" => spawn_case(),
             "waitid" => waitid_case(),
             other => panic!("unknown child case {other}"),
@@ -41,6 +82,7 @@ fn signal_process() {
         "realtime",
         "process-control",
         "fork-wait",
+        "atfork",
         "spawn",
         "waitid",
     ] {
@@ -61,20 +103,20 @@ fn signal_process() {
 
 fn signal_case() {
     let mut set = signal::SignalSet::EMPTY;
-    set.insert(process::Signal::USR1);
-    assert!(set.contains(process::Signal::USR1));
-    assert!(!set.contains(process::Signal::USR2));
-    assert!(!signal::SignalSet::full().contains(unsafe { process::Signal::from_raw_unchecked(32) }));
-    assert!(!signal::SignalSet::full().contains(unsafe { process::Signal::from_raw_unchecked(33) }));
-    assert!(!signal::SignalSet::full().contains(unsafe { process::Signal::from_raw_unchecked(34) }));
-    assert_eq!(process::Signal::from_named_raw(32), None);
-    assert_eq!(process::Signal::from_named_raw(33), None);
-    assert_eq!(process::Signal::from_named_raw(34), None);
+    set.insert(signal::Signal::USR1);
+    assert!(set.contains(signal::Signal::USR1));
+    assert!(!set.contains(signal::Signal::USR2));
+    assert!(!signal::SignalSet::full().contains(unsafe { signal::Signal::from_raw_unchecked(32) }));
+    assert!(!signal::SignalSet::full().contains(unsafe { signal::Signal::from_raw_unchecked(33) }));
+    assert!(!signal::SignalSet::full().contains(unsafe { signal::Signal::from_raw_unchecked(34) }));
+    assert_eq!(signal::Signal::from_named_raw(32), None);
+    assert_eq!(signal::Signal::from_named_raw(33), None);
+    assert_eq!(signal::Signal::from_named_raw(34), None);
     assert_eq!(
-        process::Signal::from_named_raw(35),
-        Some(process::Signal::RTMIN)
+        signal::Signal::from_named_raw(35),
+        Some(signal::Signal::RTMIN)
     );
-    assert!(process::Signal::RTMIN.is_realtime());
+    assert!(signal::Signal::RTMIN.is_realtime());
 
     let (ready_reader, ready_writer) = pipe::pipe().expect("create signal readiness pipe");
     let (result_reader, result_writer) = pipe::pipe().expect("create signal result pipe");
@@ -87,8 +129,8 @@ fn signal_case() {
                 .expect("read initial pending set")
                 .is_empty());
             let (received, info) = signal::wait_info(&set).expect("receive queued signal");
-            assert_eq!(received, process::Signal::USR1);
-            assert_eq!(info.signal(), Some(process::Signal::USR1));
+            assert_eq!(received, signal::Signal::USR1);
+            assert_eq!(info.signal(), Some(signal::Signal::USR1));
             assert_eq!(
                 info.sender_pid(),
                 Some(process::getppid().expect("visible parent"))
@@ -104,7 +146,7 @@ fn signal_case() {
         io::read(&ready_reader, &mut ready[..]).expect("wait for signal child"),
         1
     );
-    signal::queue_process(child, process::Signal::USR1, 0x1a2b_3c4d)
+    signal::queue_process(child, signal::Signal::USR1, 0x1a2b_3c4d)
         .expect("queue signal to isolated blocked child");
     let mut queued = [0_u8; 4];
     assert_eq!(
@@ -126,14 +168,14 @@ fn signal_case() {
         !action.flags().contains(signal::SigActionFlags::SIGINFO),
         "a one-argument handler cannot use the SA_SIGINFO calling convention",
     );
-    let old = unsafe { signal::sigaction(process::Signal::USR2, Some(&action)) }
+    let old = unsafe { signal::sigaction(signal::Signal::USR2, Some(&action)) }
         .expect("install direct handler");
-    signal::raise(process::Signal::USR2).expect("raise on current thread");
+    signal::raise(signal::Signal::USR2).expect("raise on current thread");
     assert_eq!(
         ATFORK_LOG.load(Ordering::SeqCst).to_le_bytes(),
         *b"handler!"
     );
-    unsafe { signal::sigaction(process::Signal::USR2, Some(&old)) }
+    unsafe { signal::sigaction(signal::Signal::USR2, Some(&old)) }
         .expect("restore direct handler");
 
     let info_action = signal::SigAction::new(
@@ -156,7 +198,7 @@ fn signal_case() {
     assert_eq!(observed.size(), stack.size());
     unsafe { signal::sigaltstack(Some(&previous)) }.expect("restore alternate stack");
 
-    let realtime_set = set_for(process::Signal::RTMIN);
+    let realtime_set = set_for(signal::Signal::RTMIN);
     assert_eq!(
         signal::timed_wait(&realtime_set, Some(&crabc_rs::time::Timespec { tv_sec: 0, tv_nsec: 0 })).unwrap_err(),
         Errno::AGAIN,
@@ -165,7 +207,7 @@ fn signal_case() {
 
 fn signal_fd_case() {
     let mut set = signal::SignalSet::EMPTY;
-    set.insert(process::Signal::USR1);
+    set.insert(signal::Signal::USR1);
     let (ready_reader, ready_writer) = pipe::pipe().expect("create signalfd readiness pipe");
     let (result_reader, result_writer) = pipe::pipe().expect("create signalfd result pipe");
     let child = match crabc_core::process::fork_raw().map(crabc_rs::Pid::from_raw).expect("fork isolated signalfd reader") {
@@ -177,7 +219,7 @@ fn signal_fd_case() {
             crabc_core::io::write(ready_writer.as_raw_fd(), b"r")
                 .expect("announce signalfd reader");
             let info = signal::read_signalfd(&descriptor).expect("read queued signalfd event");
-            assert_eq!(info.signal(), Some(process::Signal::USR1));
+            assert_eq!(info.signal(), Some(signal::Signal::USR1));
             assert_eq!(
                 info.sender_pid(),
                 Some(process::getppid().expect("visible parent"))
@@ -193,7 +235,7 @@ fn signal_fd_case() {
         io::read(&ready_reader, &mut ready[..]).expect("wait for signalfd child"),
         1
     );
-    signal::queue_process(child, process::Signal::USR1, 0x4d3c_2b1a)
+    signal::queue_process(child, signal::Signal::USR1, 0x4d3c_2b1a)
         .expect("queue signal for signalfd child");
     let mut queued = [0_u8; 4];
     assert_eq!(
@@ -208,7 +250,7 @@ fn signal_fd_case() {
 }
 
 fn realtime_case() {
-    let realtime = process::Signal::RTMIN;
+    let realtime = signal::Signal::RTMIN;
     let set = set_for(realtime);
     let (ready_reader, ready_writer) = pipe::pipe().expect("create realtime readiness pipe");
     let (result_reader, result_writer) = pipe::pipe().expect("create realtime result pipe");
@@ -288,6 +330,49 @@ fn fork_wait_case() {
     assert_eq!(status, 42 << 8);
     // SAFETY: status is writable and -1 selects any child.
     assert_eq!(unsafe { crabc_core::process::wait4_raw(-1, &mut status, 1) }.unwrap_err(), Errno::CHILD);
+}
+
+fn atfork_case() {
+    ATFORK_LOG.store(0, Ordering::SeqCst);
+    ATFORK_LEN.store(0, Ordering::SeqCst);
+    unsafe {
+        process::register_atfork(
+            Some(atfork_a_prepare),
+            Some(atfork_a_parent),
+            Some(atfork_a_child),
+        )
+        .expect("register first atfork callback");
+        process::register_atfork(
+            Some(atfork_b_prepare),
+            Some(atfork_b_parent),
+            Some(atfork_b_child),
+        )
+        .expect("register second atfork callback");
+        process::register_atfork(
+            Some(atfork_c_prepare),
+            Some(atfork_c_parent),
+            Some(atfork_c_child),
+        )
+        .expect("register third atfork callback");
+    }
+    let (reader, writer) = pipe::pipe().expect("create atfork observation pipe");
+    let child = match unsafe { process::fork() }.expect("native atfork fork") {
+        process::ForkResult::Parent { child } => child,
+        process::ForkResult::Child => {
+            let bytes = atfork_log();
+            let _ = crabc_core::io::write(writer.as_raw_fd(), &bytes);
+            process::exit_immediately(0)
+        }
+    };
+    assert_eq!(atfork_log(), b"CBAabc");
+    drop(writer);
+    let mut child_log = [0_u8; 6];
+    let read = io::read(&reader, &mut child_log[..]).expect("read child atfork log");
+    assert_eq!(read, child_log.len());
+    assert_eq!(&child_log, b"CBAabc");
+    let mut status = 0;
+    unsafe { crabc_core::process::wait4_raw(child.as_raw_pid(), &mut status, 0) }.expect("reap atfork child");
+    assert_eq!(status, 0);
 }
 
 fn spawn_case() {
@@ -375,7 +460,7 @@ fn waitid_case() {
     assert_eq!(i32::from_ne_bytes(info.bytes[24..28].try_into().unwrap()), 19);
 }
 
-fn set_for(signal: process::Signal) -> signal::SignalSet {
+fn set_for(signal: signal::Signal) -> signal::SignalSet {
     let mut set = signal::SignalSet::EMPTY;
     set.insert(signal);
     set

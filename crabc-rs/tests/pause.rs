@@ -7,7 +7,7 @@ use crabc_rs::{event, io, pipe, process, signal, time, Errno};
 
 static ALARM_SEEN: AtomicBool = AtomicBool::new(false);
 
-unsafe extern "C" fn alarm_handler(_: process::Signal) {
+unsafe extern "C" fn alarm_handler(_: signal::Signal) {
     ALARM_SEEN.store(true, Ordering::Relaxed);
 }
 
@@ -19,7 +19,7 @@ fn child_pause_case(result: &crabc_rs::OwnedFd) -> ! {
         signal::SignalSet::EMPTY,
         signal::SigActionFlags::empty(),
     );
-    let old_action = match unsafe { signal::sigaction(process::Signal::ALARM, Some(&action)) } {
+    let old_action = match unsafe { signal::sigaction(signal::Signal::ALARM, Some(&action)) } {
         Ok(action) => action,
         Err(_) => child_report(result, 1),
     };
@@ -45,7 +45,7 @@ fn child_pause_case(result: &crabc_rs::OwnedFd) -> ! {
         && signal::set_mask(&old_mask).is_ok()
         // SAFETY: `old_action` was returned by the successful installation
         // above and remains valid in this isolated child.
-        && unsafe { signal::sigaction(process::Signal::ALARM, Some(&old_action)).is_ok() };
+        && unsafe { signal::sigaction(signal::Signal::ALARM, Some(&old_action)).is_ok() };
     if !cleanup_ok {
         child_report(result, 6);
     }
@@ -99,7 +99,7 @@ fn pause_blocks_in_an_isolated_child_until_handler_delivery_and_cleans_up() {
             }
         })
         .unwrap_or_else(|| {
-            let _ = process::kill_process(child, process::Signal::KILL);
+            let _ = process::kill_process(child, signal::Signal::KILL);
             let mut status = 0;
             // SAFETY: status is writable and the child belongs to this test.
             unsafe { crabc_core::process::wait4_raw(child.as_raw_pid(), &mut status, 0) }

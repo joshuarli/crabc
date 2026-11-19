@@ -47,7 +47,8 @@ pub type RawUid = u32;
 pub type RawGid = u32;
 
 /// A non-zero Linux process or thread identifier.
-pub use crate::signal::{Pid, Signal};
+pub use crate::signal::Pid;
+#[cfg(target_arch = "aarch64")]
 use core::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
 /// Queries or requests Linux's raw program break.
@@ -2320,9 +2321,11 @@ mod tests {
     }
 }
 
+mod native_fork {
+    use super::*;
 /// The result of a raw Linux fork-equivalent clone.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
-enum ForkResult {
+pub enum ForkResult {
     /// The original process, carrying its new child ID.
     Parent { child: Pid },
     /// The child process.
@@ -2340,7 +2343,7 @@ enum ForkResult {
 /// Rust/std/C APIs. This primitive deliberately does not run atfork handlers
 /// or repair any C-runtime state.
 #[inline]
-unsafe fn fork_raw() -> Result<ForkResult> {
+pub unsafe fn fork_raw() -> Result<ForkResult> {
     match crabc_core::process::fork_raw()? {
         0 => Ok(ForkResult::Child),
         child => Ok(ForkResult::Parent {
@@ -2350,6 +2353,16 @@ unsafe fn fork_raw() -> Result<ForkResult> {
     }
 }
 
+}
+#[cfg(target_arch = "aarch64")]
+pub use native_fork::{fork_raw, ForkResult};
+
+#[cfg(target_arch = "x86_64")]
+use native_fork::{fork_raw, ForkResult};
+
+#[cfg(target_arch = "aarch64")]
+mod native_atfork {
+    use super::*;
 /// Registers callbacks around `fork` and prepared `spawn` operations.
 ///
 /// Prepare callbacks run in reverse registration order; parent and child
@@ -2364,7 +2377,7 @@ unsafe fn fork_raw() -> Result<ForkResult> {
 /// not allocate, lock unrelated state, unwind, or invoke arbitrary Rust/C
 /// facilities from a child callback.
 #[inline]
-unsafe fn register_atfork(
+pub unsafe fn register_atfork(
     prepare: Option<unsafe extern "C" fn()>,
     parent: Option<unsafe extern "C" fn()>,
     child: Option<unsafe extern "C" fn()>,
@@ -2401,7 +2414,7 @@ unsafe fn register_atfork(
 /// invoke C ABI `pthread_atfork` callbacks: crabc-rs owns its direct native
 /// facade registry and never crosses the public C ABI to perform a syscall.
 #[inline]
-unsafe fn fork() -> Result<ForkResult> {
+pub unsafe fn fork() -> Result<ForkResult> {
     let has_handlers = unsafe { atfork_prepare() };
     let all_signals = !0_u64;
     let mut old_mask = 0_u64;
@@ -2523,52 +2536,6 @@ unsafe fn atfork_finish(is_child: bool) {
     atfork_unlock();
 }
 
-#[cfg(test)]
-mod atfork_tests {
-    use super::*;
-    use core::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
-
-    static LOG: AtomicU64 = AtomicU64::new(0);
-    static LENGTH: AtomicUsize = AtomicUsize::new(0);
-
-    fn push(byte: u8) {
-        let offset = LENGTH.fetch_add(1, Ordering::SeqCst);
-        LOG.fetch_or((byte as u64) << (offset * 8), Ordering::SeqCst);
-    }
-    unsafe extern "C" fn a_prepare() { push(b'A'); }
-    unsafe extern "C" fn b_prepare() { push(b'B'); }
-    unsafe extern "C" fn c_prepare() { push(b'C'); }
-    unsafe extern "C" fn a_finish() { push(b'a'); }
-    unsafe extern "C" fn b_finish() { push(b'b'); }
-    unsafe extern "C" fn c_finish() { push(b'c'); }
-
-    #[test]
-    fn atfork_callbacks_run_in_registration_order_after_reverse_preparation() {
-        // SAFETY: callbacks use only fixed atomics and return normally.
-        unsafe {
-            register_atfork(Some(a_prepare), Some(a_finish), Some(a_finish)).unwrap();
-            register_atfork(Some(b_prepare), Some(b_finish), Some(b_finish)).unwrap();
-            register_atfork(Some(c_prepare), Some(c_finish), Some(c_finish)).unwrap();
-        }
-        let (reader, writer) = crabc_core::pipe::pipe2(0).unwrap();
-        // SAFETY: the child only writes its observation and exits immediately.
-        let child = match unsafe { fork() }.unwrap() {
-            ForkResult::Parent { child } => child,
-            ForkResult::Child => {
-                let bytes = LOG.load(Ordering::SeqCst).to_le_bytes();
-                let _ = crabc_core::io::write(writer, &bytes[..6]);
-                crabc_core::process::exit_immediately(0);
-            }
-        };
-        assert_eq!(&LOG.load(Ordering::SeqCst).to_le_bytes()[..6], b"CBAabc");
-        let mut bytes = [0u8; 6];
-        assert_eq!(crabc_core::io::read(reader, &mut bytes).unwrap(), bytes.len());
-        assert_eq!(&bytes, b"CBAabc");
-        let mut status = 0;
-        // SAFETY: status is writable and child is the process created above.
-        unsafe { crabc_core::process::wait4_raw(child.as_raw_pid(), &mut status, 0) }.unwrap();
-        assert_eq!(status, 0);
-        crabc_core::io::close(reader).unwrap();
-        crabc_core::io::close(writer).unwrap();
-    }
 }
+#[cfg(target_arch = "aarch64")]
+pub use native_atfork::{fork, register_atfork};
