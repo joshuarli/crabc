@@ -643,13 +643,13 @@ class OwnedCalendarRunnerProductCopyTests(unittest.TestCase):
             libc = product / "usr/lib/libc.so"
             libc.write_bytes(b"\x7fELF shared libc and loader")
             libc.chmod(0o755)
-            os.link(libc, product / self.module.INTERPRETER.lstrip("/"))
+            os.link(libc, product / runner.receipt.INTERPRETER.lstrip("/"))
             (product / "usr/lib/libc.so.6").symlink_to("libc.so")
             root = base / "root"
             runner.copy_product(product, root)
             self.assertTrue(runner.receipt.same_materialized_product_tree(
                 runner.family.snapshot(root), runner.family.snapshot(product)))
-            self.assertTrue(os.path.samefile(root / "usr/lib/libc.so", root / self.module.INTERPRETER.lstrip("/")))
+            self.assertTrue(os.path.samefile(root / "usr/lib/libc.so", root / runner.receipt.INTERPRETER.lstrip("/")))
             self.assertFalse(os.path.samefile(root / "usr/lib/libc.so", libc))
             self.assertEqual((root / "usr/lib/libc.so.6").readlink(), Path("libc.so"))
 
