@@ -107,8 +107,13 @@ class NativeAbiExportsTests(unittest.TestCase):
         self.assertIn("match", output)
 
     def test_arm_inventory_uses_reviewed_x86_delta(self) -> None:
-        value = report(shared_extra=[dynamic("tgkill")], static_extra=[static("owned")])
-        self.seed(value)
+        original = report(shared_extra=[dynamic("tgkill")],
+                          static_extra=[static(name) for name in sorted(exports.X86_STATIC_EXTRA)],
+                          static_missing=[static(name) for name in sorted(exports.X86_STATIC_MISSING)])
+        self.seed(original)
+        value = report(shared_extra=[dynamic("tgkill")],
+                       static_extra=[static(name) for name in sorted(exports.ARM_STATIC_EXTRA)],
+                       static_missing=[static(name) for name in sorted(exports.ARM_STATIC_MISSING)])
         value["target"] = "aarch64-unknown-linux-musl"
         with patch.object(exports, "TARGET", "aarch64-unknown-linux-musl"):
             passed, output = self.check(value)

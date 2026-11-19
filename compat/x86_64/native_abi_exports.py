@@ -30,6 +30,21 @@ DYNAMIC_CATEGORIES = (
 STATIC_CATEGORIES = ("extra", "missing", "class_differences")
 STATIC_ENTRY_KEYS = frozenset({"name", "nm_type", "count"})
 CLASS_DIFFERENCE_KEYS = frozenset({"name", "reference", "candidate"})
+ARM_STATIC_EXTRA = frozenset({
+    "__crabc_aarch64_prctl", "__crabc_aarch64_syscall", "__memcpy_fwd",
+    "crabc_aarch64_extended___invtrigl_R", "crabc_aarch64_extended___pio2_hi",
+    "crabc_aarch64_extended___pio2_lo", "ioctl_no_argument", "ioctl_word", "semctl_no_argument", "semctl_word",
+})
+X86_STATIC_EXTRA = frozenset({
+    "crabc_x86_math_acosh_provider_rsqrt_tab", "crabc_x86_math_asinh_data_rsqrt",
+    "crabc_x86_math_complex_internal_mulxc3", "crabc_x86_math_elementary_long_double_internal_p1evll",
+    "crabc_x86_math_elementary_long_double_internal_polevll", "crabc_x86_math_scalar_completion_provider_scalbn",
+    "crabc_x86_math_special_elementary_powl", "crabc_x86_math_special_elementary_round",
+    "crabc_x86_math_special_elementary_roundf", "crabc_x86_math_special_elementary_sinl",
+    "crabc_x86_math_special_internal_p1evll", "crabc_x86_math_special_internal_polevll",
+})
+ARM_STATIC_MISSING = frozenset({"__invtrigl_R", "__pio2_hi", "__pio2_lo", "__restore"})
+X86_STATIC_MISSING = frozenset({"__sigsetjmp_tail"})
 
 
 class ExportsError(RuntimeError):
@@ -134,6 +149,15 @@ def load_tracked(path: Path | None = None) -> dict[str, Any]:
 def differences(report_path: Path, *, tracked_path: Path | None = None) -> dict[str, dict[str, list[Any]]]:
     tracked = load_tracked(tracked_path)
     current = project(load_report(report_path))
+    if TARGET == "aarch64-unknown-linux-musl":
+        for category, removed, added in (("extra", X86_STATIC_EXTRA, ARM_STATIC_EXTRA),
+                                         ("missing", X86_STATIC_MISSING, ARM_STATIC_MISSING)):
+            baseline = set(tracked["static_archive"][category])
+            require(removed <= baseline and not (added & baseline), f"reviewed x86 static {category} contract drifted")
+            tracked["static_archive"][category] = sorted(name for name in (baseline - removed) | added
+                                                          if not name.startswith("anon."))
+            current["static_archive"][category] = [name for name in current["static_archive"][category]
+                                                     if not name.startswith("anon.")]
     changes = {}
     for group, categories in (("shared_dynamic", DYNAMIC_CATEGORIES), ("static_archive", STATIC_CATEGORIES)):
         for category in categories:
