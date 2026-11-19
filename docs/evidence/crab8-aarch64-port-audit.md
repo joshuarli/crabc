@@ -341,7 +341,7 @@ cross-target flags documented in CRAB-8.
 | Test-coverage | 14 | 40–53 |
 | x86 behavior changed | 6 | 59–64 |
 
-## x86 harness tests after convergence (open)
+## x86 harness tests after convergence (closed)
 
 A full Mac run of `compat/x86_64/tests` under an x86 `uname` shim at
 `a15041c68` has 54 failing test names that pass at `58eb7704d`: about 37
@@ -350,3 +350,8 @@ branches or pre-convergence x86 source spelling (x86 preprocessed output is
 byte-identical), and about 17 runner, receipt and parser tests touched by the
 aarch64 runner ports. All arm64 checks pass at this commit (libc-test 428/434,
 34-case corpus, 675 crabc-rs tests, 154 loader tests, x86 type-checks).
+
+Closed at `9cb1f8d49`: the full Mac x86-shim run of `compat/x86_64/tests` has no
+failing test name absent from the `58eb7704d` base (245 versus 251 at base).
+Header source-form tests assert the converged shared bodies; every x86
+exact-musl assertion is kept.
