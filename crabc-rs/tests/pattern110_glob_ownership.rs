@@ -1,4 +1,4 @@
-#![cfg(all(target_arch = "x86_64", feature = "alloc"))]
+#![cfg(feature = "alloc")]
 
 use std::fs;
 use std::os::unix::ffi::OsStrExt;

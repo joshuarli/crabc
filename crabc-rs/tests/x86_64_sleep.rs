@@ -1,4 +1,3 @@
-#![cfg(target_arch = "x86_64")]
 
 use core::sync::atomic::{AtomicBool, Ordering};
 use core::time::Duration;
@@ -68,6 +67,8 @@ fn x86_64_nanosleep_preserves_eintr_and_remaining_duration() {
     let selected = signal::Signal::USR1;
     let action = signal::SigAction::new(
         signal::SigHandler::Simple(interrupt_handler),
+        #[cfg(target_arch = "aarch64")]
+        signal::SignalSet::EMPTY,
         signal::SigActionFlags::empty(),
     );
     // SAFETY: The handler is static and remains installed until restored

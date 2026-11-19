@@ -1,4 +1,3 @@
-#![cfg(target_arch = "x86_64")]
 
 use core::time::Duration;
 use std::process::Command;
@@ -48,7 +47,7 @@ fn isolated_setitimer_case() {
         .is_none()
     );
 
-    let ignore_alarm = SigAction::new(SigHandler::Ignore, SigActionFlags::empty());
+    let ignore_alarm = SigAction::new(SigHandler::Ignore, #[cfg(target_arch = "aarch64")] crabc_rs::signal::SignalSet::EMPTY, SigActionFlags::empty());
     // SAFETY: This short-lived child owns the temporary ignored disposition;
     // `SIGALRM` has no Rust handler pointer or lifetime to uphold.
     let old_alarm = unsafe { signal::sigaction(Signal::ALARM, Some(&ignore_alarm)) }

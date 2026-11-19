@@ -1,4 +1,4 @@
-#![cfg(all(target_arch = "x86_64", feature = "alloc"))]
+#![cfg(feature = "alloc")]
 
 //! Native x86-64 contract for strict, owned conventional account snapshots.
 //!

@@ -129,6 +129,8 @@ fn x86_64_pselect_temporarily_installs_and_restores_the_signal_mask() {
         unsafe { signal::sigaction(selected_signal, None) }.expect("query SIGUSR1 action");
     let action = signal::SigAction::new(
         signal::SigHandler::Simple(pselect_signal_handler),
+        #[cfg(target_arch = "aarch64")]
+        signal::SignalSet::EMPTY,
         signal::SigActionFlags::empty(),
     );
     // SAFETY: The handler is a static function with the x86-64 restorer owned

@@ -1,4 +1,3 @@
-#![cfg(target_arch = "x86_64")]
 
 use crabc_rs::{io, pipe, Errno};
 
@@ -6,7 +5,10 @@ use crabc_rs::{io, pipe, Errno};
 fn x86_64_direct_pipe_uses_the_native_packet_mode_flag() {
     // Linux/x86-64's `O_DIRECT` is 0x4000. 0x10000 is the AArch64 value and
     // would be an unrelated x86 open flag rather than a packet-mode request.
+    #[cfg(target_arch = "x86_64")]
     assert_eq!(pipe::PipeFlags::DIRECT.bits(), 0x0000_4000);
+    #[cfg(target_arch = "aarch64")]
+    assert_eq!(pipe::PipeFlags::DIRECT.bits(), 0x0001_0000);
 
     let flags = pipe::PipeFlags::DIRECT | pipe::PipeFlags::NONBLOCK | pipe::PipeFlags::CLOEXEC;
     let (reader, writer) = pipe::pipe_with(flags).expect("create x86-64 packet-mode pipe");

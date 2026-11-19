@@ -1,4 +1,3 @@
-#![cfg(target_arch = "x86_64")]
 
 use core::time::Duration;
 use core::sync::atomic::{AtomicBool, Ordering};
@@ -54,6 +53,8 @@ fn install_interruption_handler(
 ) -> RestoreInterruptionSignal {
     let action = signal::SigAction::new(
         signal::SigHandler::Simple(handler),
+        #[cfg(target_arch = "aarch64")]
+        signal::SignalSet::EMPTY,
         signal::SigActionFlags::empty(),
     );
     // SAFETY: The handler is static and remains installed through the returned

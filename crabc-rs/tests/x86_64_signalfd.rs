@@ -1,4 +1,3 @@
-#![cfg(target_arch = "x86_64")]
 
 use core::mem::{size_of, MaybeUninit};
 use crabc_rs::{event, io, pipe, signal, time::Timespec, AsFd, Errno};
