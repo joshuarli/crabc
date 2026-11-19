@@ -35,7 +35,7 @@ class BuildContractTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary:
             root = pathlib.Path(temporary)
             (root / "src").mkdir()
-            for name in ("Cargo.toml", "Cargo.lock", "build.py", "provenance.toml", "aarch64-helper-exports.txt"):
+            for name in ("Cargo.toml", "Cargo.lock", "build.py", "provenance.toml", "aarch64-helper-exports.txt", "aarch64-helper-symbols.txt"):
                 (root / name).write_bytes((ROOT / name).read_bytes())
             source = root / "src/lib.rs"
             source.write_text('#![no_std]\n#[cfg(target_arch = "x86_64")]\nmod x86_64_binary80;\n')
@@ -45,7 +45,7 @@ class BuildContractTests(unittest.TestCase):
             with mock.patch.object(BUILD, "ROOT", root), mock.patch.object(BUILD, "SOURCE", source):
                 inputs = BUILD.audit_source()
                 self.assertEqual([row["path"] for row in inputs],
-                                 ["Cargo.toml", "Cargo.lock", "build.py", "provenance.toml", "aarch64-helper-exports.txt", "src/lib.rs", "src/aarch64_complex.rs"])
+                                 ["Cargo.toml", "Cargo.lock", "build.py", "provenance.toml", "aarch64-helper-exports.txt", "aarch64-helper-symbols.txt", "src/lib.rs", "src/aarch64_complex.rs"])
                 command = BUILD.compiler_command(("mock-rustc",), root / "owned.o")
                 self.assertIn(BUILD.TARGET, command)
                 self.assertIn(str(source), command)
@@ -75,8 +75,19 @@ class BuildContractTests(unittest.TestCase):
         sources = BUILD.audit_source()
         self.assertEqual(
             [entry["path"] for entry in sources],
-            ["Cargo.toml", "Cargo.lock", "build.py", "provenance.toml", "aarch64-helper-exports.txt", "src/lib.rs", "src/aarch64_complex.rs"],
+            ["Cargo.toml", "Cargo.lock", "build.py", "provenance.toml", "aarch64-helper-exports.txt", "aarch64-helper-symbols.txt", "src/lib.rs", "src/aarch64_complex.rs"],
         )
+
+    def test_symbol_metadata_rejects_visibility_drift(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = pathlib.Path(temporary)
+            (root / "aarch64-helper-symbols.txt").write_text("__helper FUNC WEAK HIDDEN\n")
+            with mock.patch.object(BUILD, "ROOT", root), mock.patch.object(BUILD, "run") as run:
+                run.return_value = "  1: 0 4 FUNC WEAK HIDDEN 1 __helper\n"
+                BUILD.assert_symbol_metadata("readelf", root / "archive.a", ["__helper"])
+                run.return_value = "  1: 0 4 FUNC GLOBAL DEFAULT 1 __helper\n"
+                with self.assertRaisesRegex(BUILD.BuildError, "binding or visibility differs"):
+                    BUILD.assert_symbol_metadata("readelf", root / "archive.a", ["__helper"])
 
     def test_compiler_command_disables_outline_atomics_and_unwinding(self) -> None:
         command = BUILD.compiler_command(("rustc",), pathlib.Path("/tmp/crabc-builtins.o"))

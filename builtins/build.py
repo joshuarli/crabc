@@ -362,7 +362,7 @@ def audit_source() -> list[dict[str, str]]:
                 raise BuildError(f"forbidden source dependency or assembly facility: {token}")
 
     production_inputs = (ROOT / "Cargo.toml", ROOT / "Cargo.lock", ROOT / "build.py", ROOT / "provenance.toml",
-                         ROOT / "aarch64-helper-exports.txt", SOURCE, complex_source)
+                         ROOT / "aarch64-helper-exports.txt", ROOT / "aarch64-helper-symbols.txt", SOURCE, complex_source)
     return [
         {"path": path.relative_to(ROOT).as_posix(), "sha256": sha256(path)}
         for path in production_inputs
@@ -917,6 +917,24 @@ def assert_symbol_surface(defined: Sequence[str]) -> None:
         raise BuildError(f"archive exports an unclassified non-Rust helper symbol: {sorted(rejected)!r}")
 
 
+def assert_symbol_metadata(llvm_readelf: str, artifact: pathlib.Path, defined: Sequence[str]) -> None:
+    """Check binding and visibility against the independent native source pin."""
+    contract = ROOT / "aarch64-helper-symbols.txt"
+    if contract.is_symlink() or not contract.is_file():
+        raise BuildError("compiler helper symbol metadata is missing or unsafe")
+    expected = contract.read_text(encoding="utf-8").splitlines()
+    if any(len(row.split()) != 4 for row in expected) or [row.split()[0] for row in expected] != list(defined):
+        raise BuildError("compiler helper symbol metadata contract is malformed")
+    names = set(defined)
+    actual: list[str] = []
+    for line in run((llvm_readelf, "--symbols", "--wide", str(artifact))).splitlines():
+        fields = line.split()
+        if len(fields) >= 8 and fields[-1] in names and fields[6] not in {"UND", "ABS"}:
+            actual.append(" ".join((fields[-1], *fields[3:6])))
+    if sorted(actual) != expected:
+        raise BuildError("compiler helper binding or visibility differs from the source-pinned contract")
+
+
 def closure_undefined_symbols(llvm_nm: str, lld: str, archive: pathlib.Path, stage: pathlib.Path) -> list[str]:
     """Resolve every member once to distinguish internal from external U refs."""
 
@@ -956,6 +974,7 @@ def build_archive(
         members = archive_members(llvm_ar, staged_archive)
         defined = nm_symbols(llvm_nm, staged_archive, "--defined-only")
         assert_symbol_surface(defined)
+        assert_symbol_metadata(llvm_readelf, staged_archive, defined)
         member_undefined = nm_symbols(llvm_nm, staged_archive, "--undefined-only")
         undefined = closure_undefined_symbols(llvm_nm, lld, staged_archive, stage)
         ensure_no_absolute_build_paths(staged_archive, (ROOT, stage, upstream_package_root(rustc)))
