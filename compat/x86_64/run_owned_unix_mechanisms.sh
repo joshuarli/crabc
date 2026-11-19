@@ -4,7 +4,8 @@ set -euo pipefail
 ulimit -c 0
 
 readonly ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-readonly ORACLE_CC=/usr/local/bin/crabc-x86_64-musl-gcc
+eval "$(python3 -B "$ROOT/compat/x86_64/native_arch.py")"
+readonly ORACLE_CC="$oracle"
 readonly PROBE="$ROOT/compat/x86_64/owned_unix_mechanisms_probe.c"
 readonly PROVIDER_SOURCE="$ROOT/libc/src/c_abi/x86_64/owned_unix_mechanisms.rs"
 
@@ -159,7 +160,7 @@ for mode in pie non-pie; do
     for scenario in "${cases[@]}"; do
         for entry in kernel direct; do
             if [ "$entry" = direct ]; then
-                command=(/lib/ld-crabc-x86_64.so.1 "/consumer-$mode" "$scenario")
+                command=(/lib/ld-crabc-${arch}.so.1 "/consumer-$mode" "$scenario")
             else
                 command=("/consumer-$mode" "$scenario")
             fi
@@ -173,13 +174,13 @@ done
 sha256sum -c "$work/source-before.sha256" >"$work/source-after-execution.txt"
 sha256sum -c "$work/object-before.sha256" >"$work/object-after-execution.txt"
 python3 -B - "$work" "$PROBE" "$PROVIDER_SOURCE" \
-    "$ROOT/compat/x86_64/run_owned_unix_mechanisms.sh" "$provided_dynamic" <<'PY'
+    "$ROOT/compat/x86_64/run_owned_unix_mechanisms.sh" "$provided_dynamic" "$arch" <<'PY'
 import hashlib
 import json
 from pathlib import Path
 import sys
 
-work, probe, provider, runner, product = map(Path, sys.argv[1:])
+work, probe, provider, runner, product = map(Path, sys.argv[1:6])
 def identity(path):
     path = path.resolve(strict=True)
     if not path.is_file():
@@ -193,9 +194,9 @@ executed = sorted(path for path in (work / "execution-root").iterdir()
                   if path.name == "oracle" or path.name.startswith("consumer-"))
 outputs = sorted([*work.glob("*.stdout"), *work.glob("*.stderr")])
 installed_provider = identity(product / "usr/lib/libc.so")
-installed_interpreter = identity(product / "lib/ld-crabc-x86_64.so.1")
+installed_interpreter = identity(product / f"lib/ld-crabc-{sys.argv[6]}.so.1")
 executed_provider = identity(work / "execution-root/usr/lib/libc.so")
-executed_interpreter = identity(work / "execution-root/lib/ld-crabc-x86_64.so.1")
+executed_interpreter = identity(work / f"execution-root/lib/ld-crabc-{sys.argv[6]}.so.1")
 for installed, copied in ((installed_provider, executed_provider),
                           (installed_interpreter, executed_interpreter)):
     if installed["sha256"] != copied["sha256"]:
