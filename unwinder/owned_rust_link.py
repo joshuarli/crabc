@@ -774,10 +774,9 @@ def _product_inputs(root: Path, mode: str, *, static_pie: bool = False) -> list[
             library / ("rcrt1.o" if static_pie else "crt1.o"), library / "crti.o", library / "libc.a",
             library / "libcrabc-builtins.a", library / "crtn.o",
         ]
-    return [
-        library / "Scrt1.o", library / "crti.o", library / "crabc-dynamic-attach.o",
-        library / "libc.so", library / "libcrabc-builtins.a", library / "crtn.o",
-    ]
+    return [library / "Scrt1.o", library / "crti.o",
+            *([library / "crabc-dynamic-attach.o"] if ARCH == "x86_64" else []),
+            library / "libc.so", library / "libcrabc-builtins.a", library / "crtn.o"]
 
 
 def link_command(
@@ -809,7 +808,7 @@ def link_command(
             "--allow-shlib-undefined", "-z", "text", "-z", "noexecstack", "-z", "relro", "-z", "now",
             *( ["--version-script", str(version_script)] if version_script is not None else [] ),
             "--trace", "-o", str(output), str(runtime[1]), *map(str, objects), *rust_inputs,
-            str(runtime[3]), str(runtime[4]), str(runtime[5]),
+            *map(str, runtime[-3:]),
         ]
     if rust_mode not in {"executable", "pie", "no-pie"}:
         raise LinkError(f"unsupported Rust link mode: {rust_mode}")
@@ -825,8 +824,8 @@ def link_command(
         "--allow-shlib-undefined", "-z", "text", "-z", "noexecstack", "-z", "relro", "-z", "now",
         *owned_dynamic_receipt.EXECUTABLE_WEAK_IMPORT_FLAGS,
         "--dynamic-linker", INTERPRETER, *( ["--export-dynamic"] if export_dynamic else [] ),
-        "--trace", "-o", str(output), str(runtime[0]), str(runtime[1]), str(runtime[2]),
-        *map(str, objects), *rust_inputs, str(runtime[3]), str(runtime[4]), str(runtime[5]),
+        "--trace", "-o", str(output), *map(str, runtime[:-3]),
+        *map(str, objects), *rust_inputs, *map(str, runtime[-3:]),
     ]
 
 

@@ -155,7 +155,7 @@ class DebugRouteTests(unittest.TestCase):
                            output={'path': str(output), 'sha256': GATE.hashlib.sha256(b'linked').hexdigest()})
             context = SimpleNamespace(toolchain={'native_compiler_tools': {}}, products={
                 'development': {'static': {'root': '/selected/static'}, 'dynamic': {'root': '/selected/dynamic'}}})
-            with mock.patch.object(GATE.product_evidence, 'validate_native_compiler_tool_records', return_value={'linker': linker}), \
+            with mock.patch.object(GATE, 'validate_compiler_tool_records', return_value={'linker': linker}), \
                  mock.patch.object(GATE.owned_rust_link, 'link_command', return_value=[]), \
                  mock.patch.object(GATE.owned_rust_link, '_product_inputs', return_value=[]), \
                  mock.patch.object(GATE.owned_rust_link, 'validate_trace'):
@@ -270,7 +270,7 @@ class LtoExecutionTests(unittest.TestCase):
                                    cargo_home=output / "cargo", consumer="primary",
                                    products={"primary": {"static": {"root": str(output / "static")},
                                                          "dynamic": {"root": str(output / "dynamic")}}})
-            for name in ("lib/ld-crabc-x86_64.so.1", "usr/lib/libc.so"):
+            for name in (f"lib/ld-crabc-{GATE.ARCH}.so.1", "usr/lib/libc.so"):
                 artifact = output / "dynamic" / name
                 artifact.parent.mkdir(parents=True, exist_ok=True)
                 artifact.write_bytes(b"dynamic runtime")
@@ -295,7 +295,7 @@ class LtoExecutionTests(unittest.TestCase):
             self.assertEqual(report["lanes"]["D"]["execution"]["runtime_files"], [])
             self.assertTrue(report["lanes"]["D"]["ir"]["installed_libc_selected"])
             static_root = output / "gates/lto/D/root-run"
-            self.assertFalse((static_root / "lib/ld-crabc-x86_64.so.1").exists())
+            self.assertFalse((static_root / f"lib/ld-crabc-{GATE.ARCH}.so.1").exists())
             self.assertFalse((static_root / "usr/lib/libc.so").exists())
 
 

@@ -31,6 +31,7 @@ COMPAT = Path(__file__).resolve().parent.parent / "compat/x86_64"
 if str(COMPAT) not in sys.path:
     sys.path.insert(0, str(COMPAT))
 import native_rustc
+from native_arch import native_arch
 
 import cleanup
 import build
@@ -39,8 +40,10 @@ import owned_rust_link
 
 ROOT = Path(__file__).resolve().parent
 CHECKOUT = ROOT.parent
-WORK = CHECKOUT / ".work/x86_64/owned-rust-std-cleanup"
-TARGET = "x86_64-unknown-linux-musl"
+ARCHITECTURE = native_arch()
+ARCH = ARCHITECTURE["arch"]
+WORK = CHECKOUT / ".work" / ARCHITECTURE["work_name"] / "owned-rust-std-cleanup"
+TARGET = ARCHITECTURE["target_triple"]
 FIXTURE = ROOT / "fixtures/cleanup.rs"
 BUILD_STD_FIXTURE = ROOT / "fixtures/build_std_cleanup"
 BUILD_STD_DSO_FIXTURE = ROOT / "fixtures/cleanup_dso"
@@ -2346,7 +2349,7 @@ def compile_source_built_mode(
         "CRABC_OWNED_RUST_CARGO_TARGET_ROOT": str(target),
         "CARGO_TERM_COLOR": "never",
         "CARGO_ENCODED_RUSTFLAGS": "\x1f".join(SOURCE_BUILD_RUSTFLAGS),
-        "CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER": str(ROOT / "owned_rust_link.py"),
+        ARCHITECTURE["linker_variable"]: str(ROOT / "owned_rust_link.py"),
         "CRABC_OWNED_RUST_LINK_MODE": mode,
         "CRABC_OWNED_RUST_PRODUCT": str(root),
         "CRABC_OWNED_RUST_SOURCE_BUILT_LIBDIR": str(source_library_root),
@@ -2597,7 +2600,7 @@ def execute_mode(mode: str, consumer: dict[str, Any], dynamic_root: Path, output
     if mode == "static":
         command: list[str | Path] = [binary]
     else:
-        loader = physical(dynamic_root / "lib/ld-crabc-x86_64.so.1", "owned dynamic loader", executable=True)
+        loader = physical(dynamic_root / f"lib/ld-crabc-{ARCH}.so.1", "owned dynamic loader", executable=True)
         command = [loader, "--library-path", dynamic_root / "usr/lib", binary]
     result = subprocess.run([str(item) for item in command], env=environment, text=True,
                             stdout=subprocess.PIPE, stderr=subprocess.PIPE)
@@ -2622,7 +2625,7 @@ def execute_dso_mode(consumer: dict[str, Any], dynamic_root: Path, output: Path)
 
     plugin = Path(consumer["plugin"]["binary"]["path"])
     binary = Path(consumer["binary"]["path"])
-    loader = physical(dynamic_root / "lib/ld-crabc-x86_64.so.1", "owned dynamic loader", executable=True)
+    loader = physical(dynamic_root / f"lib/ld-crabc-{ARCH}.so.1", "owned dynamic loader", executable=True)
     library_path = f"{plugin.parent}:{dynamic_root / 'usr/lib'}"
     command: list[str | Path] = [loader, "--library-path", library_path, binary]
     result = subprocess.run([str(item) for item in command], env=clean_environment(), text=True,
@@ -2883,7 +2886,9 @@ def run_debug(static_root: Path, dynamic_root: Path, provider: dict[str, Any], o
 
 
 def run(static_root: Path, dynamic_root: Path, provider_vendor_root: Path, output: Path | None = None) -> Path:
-    require((platform.system(), platform.machine()) == ("Linux", "x86_64"), "native Linux/x86-64 required")
+    require(platform.system() == "Linux" and platform.machine() in
+            ({"x86_64", "amd64"} if ARCH == "x86_64" else {"aarch64", "arm64"}),
+            f"native Linux/{'x86-64' if ARCH == 'x86_64' else 'aarch64'} required")
     # Retain failed executions through their logs, never checkout-root cores.
     resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
     source_before = source_snapshot()
