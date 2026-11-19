@@ -19,10 +19,19 @@
 #include <sys/un.h>
 #include "owned_cancellation_proc_witness.h"
 
+#if defined(__aarch64__)
+_Static_assert(offsetof(ucontext_t,uc_mcontext.pc)==440,
+    "owned SIGCANCEL PC window requires the pinned aarch64 ucontext PC slot");
+_Static_assert(offsetof(ucontext_t,uc_sigmask)==40,
+    "owned SIGCANCEL restores the kernel signal-mask prefix");
+#define CRABC_POLL_SYSCALL SYS_ppoll
+#else
 _Static_assert(offsetof(ucontext_t,uc_mcontext.gregs[REG_RIP])==168,
     "owned SIGCANCEL PC window requires the pinned x86 ucontext RIP slot");
 _Static_assert(offsetof(ucontext_t,uc_sigmask)==296,
     "owned SIGCANCEL restores the kernel signal-mask prefix");
+#define CRABC_POLL_SYSCALL SYS_poll
+#endif
 
 /* Pinned musl pthread_cancel.c + x86_64/syscall_cp.s: cancellation must
  * interrupt a task actually blocked in the kernel, not merely observe a flag
@@ -211,7 +220,7 @@ static int exercise_ordinary_signal(enum signal_operation operation, int restart
             CHECK(errno==EAGAIN && !fcntl(state.fd,F_SETFL,flags));
         }
     }
-    const long numbers[]={SYS_read,SYS_write,SYS_poll,SYS_accept};
+    const long numbers[]={SYS_read,SYS_write,CRABC_POLL_SYSCALL,SYS_accept};
     pthread_t worker; void *joined=(void *)1;
     CHECK(!pthread_create(&worker,NULL,signal_worker,&state));
     CHECK(signal_syscall_ready(&state,numbers[operation]));
