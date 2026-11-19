@@ -190,12 +190,8 @@ audit_installed_tree() {
 import sys
 from pathlib import Path
 sys.path.insert(0, sys.argv[1] + "/compat/x86_64")
-import owned_posix_product_evidence as evidence
-import source_seal
-root = Path(sys.argv[2])
-manifest, _ = evidence._validate_static_product_uncached(root)
-if evidence._json_object(manifest, "static manifest").get("source_sha256") != source_seal.product_source_digest(Path(sys.argv[1])):
-    raise SystemExit("static product source differs")
+import static_product_contract
+static_product_contract.validate_native_static_product(Path(sys.argv[2]))
 PY
         return
     fi

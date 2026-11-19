@@ -304,6 +304,36 @@ def validate_tree_manifest(report: Path, product: str, manifest: Mapping[str, An
             and set(rows) == expected, f"{product} installed tree digest rows differ from the manifest")
 
 
+def validate_native_static_product(root: Path) -> None:
+    import owned_posix_product_evidence as evidence
+
+    root = evidence_directory(root)
+    manifest = read_json(root / "share/crabc/manifest.json")
+    if manifest.get("format") != "crabc-aarch64-owned-sysroot-v1":
+        path, _ = evidence._validate_static_product_uncached(root)
+        require(read_json(path).get("source_sha256") == source_seal.product_source_digest(ROOT),
+                "static product source differs")
+        return
+    from scripts import build_x86_64_owned_combined_sysroot as combined
+    import crabc_cc_static
+
+    record = combined.validate(root)
+    component = record["products"]["static"]
+    static = read_json(root / component["manifest"])
+    require(static.get("source_sha256") == source_seal.product_source_digest(ROOT), "static product source differs")
+    placement = component["placements"].get("share/crabc/crt.provenance.json")
+    require(isinstance(placement, str), "static CRT provenance is missing")
+    profile = crabc_cc_static.NativeRuntimeProfile(record["hardening_profile"])
+    crabc_cc_static.validate_crt_provenance(root, placement, profile)
+    evidence._physical_executable(root / "bin/crabc-cc", "static product driver")
+    evidence._physical_directory(root / "usr/include", "static product headers")
+    evidence._validate_link_input_modes(root, evidence.STATIC_LINK_INPUT_MODES, "static link input")
+    for name in ("crt1.o", "rcrt1.o", "crti.o", "crtn.o"):
+        header = (root / "usr/lib" / name).read_bytes()[:20]
+        require(len(header) == 20 and header[:7] == b"\x7fELF\x02\x01\x01"
+                and header[16:20] == b"\x01\x00\xb7\x00", f"arm64 static ELF differs: {name}")
+
+
 def evidence_directory(path: Path) -> Path:
     path = path.absolute()
     require(path.resolve() == path and path.is_relative_to(ROOT / ".work"),
