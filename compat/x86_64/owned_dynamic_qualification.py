@@ -595,6 +595,8 @@ def validated_resume_state(work: Path, *, contents: bool = True) -> tuple[str, d
         require(not missing, "qualification receipt exists with missing cases")
         validate_receipt(receipt_path)
     require(source == source_seal.product_source_digest(ROOT), "source changed during resume validation")
+    if ARCH["arch"] == "aarch64":
+        missing.sort(key=lambda item: item[1] == "package-corpus")
     return source, manifests, tuple(missing)
 
 
