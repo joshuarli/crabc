@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+import hashlib
 import json
 import os
 import platform
@@ -28,6 +29,53 @@ class Aarch64DynamicNonPieTest(unittest.TestCase):
                         "--architecture", "aarch64", "--output", str(product)], cwd=root, check=True)
         os.environ["CRABC_AARCH64_DYNAMIC_SYSROOT"] = str(product)
         cls.addClassCleanup(os.environ.pop, "CRABC_AARCH64_DYNAMIC_SYSROOT", None)
+
+    @unittest.skipUnless(os.environ.get("CRABC_AARCH64_DYNAMIC_SYSROOT") or CAN_BUILD, "requires a built aarch64 product")
+    def test_resealed_crt_and_loader_provenance_drift_is_rejected(self):
+        product = Path(os.environ["CRABC_AARCH64_DYNAMIC_SYSROOT"]).resolve(strict=True)
+        with tempfile.TemporaryDirectory(dir=os.environ["TMPDIR"]) as temporary:
+            work = Path(temporary)
+            source = work / "main.c"
+            source.write_text("int main(void) { return 0; }\n")
+            for name in ("crt.provenance.json", "loader.provenance.json"):
+                with self.subTest(name=name):
+                    copy = work / name
+                    shutil.copytree(product, copy, symlinks=True)
+                    loader = copy / "lib/ld-crabc-aarch64.so.1"
+                    loader.unlink()
+                    os.link(copy / "usr/lib/libc.so", loader)
+                    relative = "share/crabc/" + name
+                    path = copy / relative
+                    value = json.loads(path.read_text())
+                    if name.startswith("crt"):
+                        value["hardening_profile"] = "hardened"
+                    else:
+                        value["artifact"]["sha256"] = "0" * 64
+                    path.write_text(json.dumps(value))
+                    manifest_path = copy / "share/crabc/manifest.json"
+                    manifest = json.loads(manifest_path.read_text())
+                    manifest["files"][relative] = hashlib.sha256(path.read_bytes()).hexdigest()
+                    manifest_path.write_text(json.dumps(manifest))
+                    output = work / (name + ".o")
+                    result = subprocess.run([copy / "bin/crabc-cc-dynamic", "--dynamic-pie", "-c", source,
+                                             "-o", output], capture_output=True, text=True)
+                    self.assertNotEqual(result.returncode, 0, result.stderr)
+                    self.assertFalse(output.exists())
+
+    @unittest.skipUnless(os.environ.get("CRABC_AARCH64_DYNAMIC_SYSROOT") or CAN_BUILD, "requires a built aarch64 product")
+    def test_driver_rejects_target_input_injection_before_compiling(self):
+        product = Path(os.environ["CRABC_AARCH64_DYNAMIC_SYSROOT"]).resolve(strict=True)
+        with tempfile.TemporaryDirectory(dir=os.environ["TMPDIR"]) as temporary:
+            work = Path(temporary)
+            source = work / "main.c"
+            source.write_text("int main(void) { return 0; }\n")
+            for option in ("--sysroot=/", "-nostdinc", "-Wl,--dynamic-linker,/tmp/loader", "-L/tmp", "-lc"):
+                with self.subTest(option=option):
+                    output = work / "injected.o"
+                    result = subprocess.run([product / "bin/crabc-cc-dynamic", "--dynamic-pie", "-c", option,
+                                             source, "-o", output], capture_output=True, text=True)
+                    self.assertNotEqual(result.returncode, 0, result.stderr)
+                    self.assertFalse(output.exists())
 
     @unittest.skipUnless(os.environ.get("CRABC_AARCH64_DYNAMIC_SYSROOT") or CAN_BUILD, "requires a built aarch64 product")
     def test_driver_rejects_unsealed_payload_and_static_or_implicit_modes(self):
