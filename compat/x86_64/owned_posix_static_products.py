@@ -21,6 +21,7 @@ import tempfile
 
 import owned_static_sysroot_package as package
 import source_seal
+from native_arch import native_arch
 
 ROOT = Path(__file__).resolve().parents[2]
 SCHEMA = "crabc.x86_64-owned-posix-static-preparation/v1"
@@ -111,6 +112,8 @@ def commands(root: Path, work: Path, allocator_backend: str = "accepted-c") -> d
     result = {}
     for label in ("primary", "reproduction"):
         result[f"{label}-build"] = [*GUARD, "python3", "-B", PRODUCER, "--output", f"{base}/products/{label}"]
+        if native_arch()["arch"] == "aarch64":
+            result[f"{label}-build"].extend(("--architecture", "aarch64"))
         if allocator_backend == "native-shadow":
             result[f"{label}-build"].extend(("--allocator-backend", allocator_backend))
     for label in ("primary", "reproduction"):
@@ -213,7 +216,7 @@ def collect(root: Path, work: Path) -> dict:
             "independent package archive bytes differ")
     # A completed run may be container-root-owned and intentionally not
     # host-writable. Only new disposable validation scratch needs write access.
-    scratch = physical(root, root / ".work/x86_64/tmp")
+    scratch = physical(root, root / ".work" / native_arch()["work_name"] / "tmp")
     scratch.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix=".verify-static-package.", dir=scratch) as temporary:
         extracted = package.extract_archive(work / "archives/primary.tar.xz", Path(temporary) / "extraction")

@@ -10,6 +10,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from unittest import mock
 
 import product_fixture
 
@@ -21,6 +22,18 @@ import owned_static_sysroot_package as package
 spec = importlib.util.spec_from_file_location("package_fixtures", Path(__file__).with_name("test_owned_static_sysroot_package.py"))
 fixtures = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(fixtures)
+
+
+class NativeCommandTests(unittest.TestCase):
+    def test_build_commands_select_arm64_without_changing_x86(self):
+        work = ROOT / ".work/aarch64/command-test"
+        with mock.patch.object(preparation, "native_arch", return_value={"arch": "aarch64"}):
+            commands = preparation.commands(ROOT, work)
+        for label in ("primary", "reproduction"):
+            self.assertEqual(commands[f"{label}-build"][-2:], ["--architecture", "aarch64"])
+        with mock.patch.object(preparation, "native_arch", return_value={"arch": "x86_64"}):
+            commands = preparation.commands(ROOT, work)
+        self.assertNotIn("--architecture", commands["primary-build"])
 
 
 class StaticPreparationTests(unittest.TestCase):
