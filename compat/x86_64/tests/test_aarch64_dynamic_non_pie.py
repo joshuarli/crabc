@@ -168,6 +168,13 @@ class Aarch64DynamicNonPieTest(unittest.TestCase):
                                           hardening_profile=builder.common.NativeRuntimeProfile.COMPATIBILITY)
                 tool.assert_not_called()
             self.assertEqual(marker.read_bytes(), b"existing product")
+            staged = Path(directory) / "staged"
+            staged.mkdir()
+            (staged / "candidate").write_bytes(b"candidate product")
+            with self.assertRaises(builder.shared_package.PackageError):
+                builder.shared_package.publish_noreplace(staged, output, "dynamic sysroot output")
+            self.assertEqual(marker.read_bytes(), b"existing product")
+            self.assertEqual((staged / "candidate").read_bytes(), b"candidate product")
 
     @unittest.skipUnless(os.environ.get("CRABC_AARCH64_DYNAMIC_SYSROOT") or CAN_BUILD, "requires a built aarch64 product")
     def test_receipt_reservations_precede_translation_and_preserve_existing_files(self):
