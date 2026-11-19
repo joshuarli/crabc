@@ -33,6 +33,8 @@ def execute(arguments):
     dependency_file = None
     rounding = False
     export_dynamic = False
+    binding_mode = None
+    runtime_imports = set()
     index = 0
     while index < len(arguments):
         arg = arguments[index]
@@ -41,6 +43,19 @@ def execute(arguments):
                 raise shared.DriverError("select exactly one dynamic mode")
             mode = ("shared" if arg in ("--dynamic-shared-object", "-shared") else
                     "exec" if arg in ("--dynamic-non-pie", "-no-pie") else "pie")
+        elif arg in ("--binding", "--runtime-import"):
+            index += 1
+            if index == len(arguments):
+                raise shared.DriverError(f"missing {arg} value")
+            value = arguments[index]
+            if arg == "--binding":
+                if binding_mode is not None or value not in ("now", "lazy"):
+                    raise shared.DriverError("select one binding: now or lazy")
+                binding_mode = value
+            elif not re.fullmatch(r"[A-Za-z_][A-Za-z_0-9]*", value) or value in runtime_imports:
+                raise shared.DriverError("invalid or duplicate runtime import")
+            else:
+                runtime_imports.add(value)
         elif arg == "-o":
             index += 1
             if index == len(arguments):
@@ -85,9 +100,16 @@ def execute(arguments):
             common.append(arg)
         index += 1
     mode = mode or "pie"
+    binding_mode = binding_mode or "now"
     if profile is shared.NativeRuntimeProfile.HARDENED and mode == "exec":
         raise shared.DriverError("hardened dynamic product requires PIE")
+    if profile is shared.NativeRuntimeProfile.HARDENED and binding_mode != "now":
+        raise shared.DriverError("hardened dynamic products require eager binding")
+    if runtime_imports and (mode != "shared" or binding_mode != "lazy"):
+        raise shared.DriverError("runtime imports require a lazy shared object")
     invocation = shared.parse_invocation(common)
+    if invocation.compile_only and (runtime_imports or binding_mode != "now"):
+        raise shared.DriverError("compile-only accepts no binding/import contract")
     if dependency_file is not None and not invocation.compile_only:
         raise shared.DriverError("--application-dependency-file is available only for a compile-only invocation")
     if invocation.link_receipt is not None:
@@ -96,8 +118,8 @@ def execute(arguments):
         if quote_dirs or dsos or transitive_dsos or rounding or export_dynamic or runpath is not None:
             raise shared.DriverError("link plan accepts no application inputs")
         plan = ["/usr/bin/mold", *(["-shared"] if mode == "shared" else ["-pie"] if mode == "pie" else []), "--hash-style=sysv",
-                "--eh-frame-hdr", "-z", "relro", "-z", "now", "-z", "noexecstack", "-z", "text",
-                "--no-undefined", "--allow-shlib-undefined", "--enable-new-dtags", "-rpath", "/usr/lib",
+                "--eh-frame-hdr", "-z", "relro", "-z", binding_mode, "-z", "noexecstack", "-z", "text",
+                *([] if runtime_imports else ["--no-undefined"]), "--allow-shlib-undefined", "--enable-new-dtags", "-rpath", "/usr/lib",
                 "--exclude-libs=libcrabc-builtins.a"]
         if mode != "shared":
             plan += ["-z", "dynamic-undefined-weak", "--dynamic-linker", interpreter, str(lib / ("Scrt1.o" if mode == "pie" else "crt1.o"))]
@@ -105,8 +127,8 @@ def execute(arguments):
             plan += ["-soname", "<output-basename>"]
         plan += [str(lib / "crti.o"), shared.APPLICATION_OBJECTS, str(lib / "libcrabc-builtins.a"),
                  str(lib / "libc.so"), str(lib / "crtn.o"), "-o", shared.OUTPUT]
-        print(json.dumps({"format": "crabc-aarch64-owned-dynamic-sysroot-v1", "mode": mode, "binding": "now",
-                          "runtime_imports": [], "application_runpath": "/usr/lib", "application_rpath": None,
+        print(json.dumps({"format": "crabc-aarch64-owned-dynamic-sysroot-v1", "mode": mode, "binding": binding_mode,
+                          "runtime_imports": sorted(runtime_imports), "application_runpath": "/usr/lib", "application_rpath": None,
                           "application_search_kind": "runpath", "application_hash_style": "sysv", "linker": plan,
                           "campaign_complete": False}, sort_keys=True))
         return
@@ -250,7 +272,7 @@ def execute(arguments):
         shared.validate_application_output_disjoint(receipt_path, (*sources, *objects_in, *dso_inputs, *transitive_inputs, output))
         runtime = [lib / name for name in ("crti.o", "libc.so", "crtn.o")]
         command = ["/usr/bin/mold", *(["-shared"] if mode == "shared" else ["-pie"] if mode == "pie" else []), "--hash-style=sysv",
-                   "--eh-frame-hdr", "-z", "relro", "-z", "now", "-z", "noexecstack", "-z", "text", "--no-undefined",
+                   "--eh-frame-hdr", "-z", "relro", "-z", binding_mode, "-z", "noexecstack", "-z", "text", *([] if runtime_imports else ["--no-undefined"]),
                    "--allow-shlib-undefined", "--enable-new-dtags", "-rpath", runpath or "/usr/lib",
                    "--exclude-libs=libcrabc-builtins.a"]
         if export_dynamic:
@@ -262,6 +284,21 @@ def execute(arguments):
         else:
             command += ["-soname", output.name]
         archive = lib / "libcrabc-builtins.a"
+        if runtime_imports:
+            provided, required = {"_GLOBAL_OFFSET_TABLE_"}, set()
+            for path in [*objects, archive, lib / "libc.so", *dso_inputs]:
+                symbols = subprocess.check_output(["/usr/bin/readelf", "-sW", str(path)], text=True)
+                for line in symbols.splitlines():
+                    fields = line.split()
+                    if len(fields) < 8 or not fields[0].endswith(":") or fields[4] not in ("GLOBAL", "WEAK"):
+                        continue
+                    section, name = fields[6:8]
+                    if section == "UND" and fields[4] == "GLOBAL" and path in objects:
+                        required.add(name)
+                    elif section != "UND":
+                        provided.add(name)
+            if required - provided != runtime_imports:
+                raise shared.DriverError(f"runtime imports differ from exact unresolved object symbols: {sorted(required - provided)}")
         command += [str(lib / "crti.o"), *(str(path) for path in objects), str(archive),
                     *(str(path) for path in dso_inputs), str(lib / "libc.so"), str(lib / "crtn.o"), "-o", str(output)]
         descriptor = os.open(receipt_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o644)
@@ -286,11 +323,22 @@ def execute(arguments):
             segments = subprocess.check_output(["/usr/bin/readelf", "-lW", str(output)], text=True)
             dynamic = subprocess.check_output(["/usr/bin/readelf", "-dW", str(output)], text=True)
             if ("AArch64" not in header or ("EXEC" if mode == "exec" else "DYN") not in header or "TEXTREL" in dynamic
+                    or (binding_mode == "lazy" and re.search(r"\(BIND_NOW\)|\(FLAGS(?:_1)?\).*\bNOW\b", dynamic))
+                    or (binding_mode == "now" and not re.search(r"\(BIND_NOW\)|\(FLAGS(?:_1)?\).*\bNOW\b", dynamic))
                     or (mode != "shared" and interpreter not in segments)
                     or (mode == "shared" and "INTERP" in segments)):
                 raise shared.DriverError("linked dynamic ELF does not match its native mode")
+            if runtime_imports:
+                symbols = subprocess.check_output(["/usr/bin/readelf", "--dyn-syms", "-W", str(output)], text=True)
+                unresolved = set()
+                for line in symbols.splitlines():
+                    fields = line.split()
+                    if len(fields) >= 8 and fields[0].endswith(":") and fields[4] == "GLOBAL" and fields[6] == "UND":
+                        unresolved.add(fields[7])
+                if unresolved - provided != runtime_imports:
+                    raise shared.DriverError("linked runtime imports differ from declared contract")
             record = {"schema": 2, "format": "crabc-aarch64-owned-dynamic-sysroot-v1", "mode": mode,
-                      "binding": "now", "runtime_imports": [], "application_runpath": runpath or "/usr/lib",
+                      "binding": binding_mode, "runtime_imports": sorted(runtime_imports), "application_runpath": runpath or "/usr/lib",
                       "application_rpath": None, "application_search_kind": "runpath", "application_hash_style": "sysv",
                       "output_path": str(output.resolve()), "output_sha256": shared.sha256_file(output),
                       "manifest_sha256": shared.sha256_file(root / "share/crabc/manifest.json"),
@@ -316,6 +364,7 @@ def execute(arguments):
             if descriptor != -1:
                 os.close(descriptor)
             receipt_path.unlink(missing_ok=True)
+            output.unlink(missing_ok=True)
             raise
 
 

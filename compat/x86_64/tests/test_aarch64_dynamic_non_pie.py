@@ -9,6 +9,30 @@ import unittest
 
 class Aarch64DynamicNonPieTest(unittest.TestCase):
     @unittest.skipUnless(os.environ.get("CRABC_AARCH64_DYNAMIC_SYSROOT"), "requires a built aarch64 product")
+    def test_lazy_binding_requires_exact_runtime_imports(self):
+        product = Path(os.environ["CRABC_AARCH64_DYNAMIC_SYSROOT"]).resolve(strict=True)
+        driver = str(product / "bin/crabc-cc-dynamic")
+        with tempfile.TemporaryDirectory(dir=os.environ["TMPDIR"]) as tmp:
+            work = Path(tmp)
+            source = work / "plugin.c"
+            source.write_text("extern int missing(void); int call(void) { return missing(); }\n")
+            for args in (["--binding", "lazy"], ["--binding", "lazy", "--runtime-import", "wrong"],
+                         ["--binding", "now", "--runtime-import", "missing"],
+                         ["--binding", "lazy", "--binding", "now"]):
+                output = work / "bad.so"
+                result = subprocess.run([driver, "-shared", *args, str(source), "-o", str(output)], capture_output=True)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertFalse(Path(str(output) + ".crabc-link.json").exists())
+            output = work / "plugin.so"
+            subprocess.run([driver, "-shared", "--binding", "lazy", "--runtime-import", "missing",
+                            str(source), "-o", str(output)], check=True)
+            dynamic = subprocess.check_output(["readelf", "-dW", str(output)], text=True)
+            self.assertNotIn("BIND_NOW", dynamic)
+            receipt = json.loads(Path(str(output) + ".crabc-link.json").read_text())
+            self.assertEqual(receipt["binding"], "lazy")
+            self.assertEqual(receipt["runtime_imports"], ["missing"])
+
+    @unittest.skipUnless(os.environ.get("CRABC_AARCH64_DYNAMIC_SYSROOT"), "requires a built aarch64 product")
     def test_application_dependency_file(self):
         product = Path(os.environ["CRABC_AARCH64_DYNAMIC_SYSROOT"]).resolve(strict=True)
         driver = str(product / "bin/crabc-cc-dynamic")
