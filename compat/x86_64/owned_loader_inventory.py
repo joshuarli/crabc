@@ -36,9 +36,9 @@ from native_arch import native_arch
 ARCH = native_arch()["arch"]
 SCHEMA = "crabc.x86_64-owned-loader-inventory/v1"
 PROVENANCE_SCHEMA = "crabc.x86_64-owned-loader-provenance/v1"
-TARGET = "x86_64-unknown-linux-musl"
-LOADER_PATH = "lib/ld-crabc-x86_64.so.1"
-LOADER_ALIAS_PATH = "lib/ld-musl-x86_64.so.1"
+TARGET = f"{ARCH}-unknown-linux-musl"
+LOADER_PATH = f"lib/ld-crabc-{ARCH}.so.1"
+LOADER_ALIAS_PATH = f"lib/ld-musl-{ARCH}.so.1"
 LIBC_PATH = "usr/lib/libc.so"
 LOADER_PROVENANCE_PATH = "share/crabc/loader.provenance.json"
 LOADER_FEATURE = "x86_64-owned-dynamic-runtime"
@@ -62,7 +62,7 @@ RAW_STREAMS = (
     ("dynamic_symbols", ("--dyn-syms", "--wide")),
 )
 SUBJECTS = ("musl-loader", "candidate-loader", "candidate-libc")
-MUSL_LOADER_PATH = "lib/ld-musl-x86_64.so.1"
+MUSL_LOADER_PATH = f"lib/ld-musl-{ARCH}.so.1"
 
 _RELOC_SECTION = re.compile(
     r"^Relocation section '([^']+)'[^\n]*contains (\d+) entr(?:y|ies)"
@@ -214,7 +214,14 @@ def validate_loader_provenance(product: Path, record: object) -> None:
         "--target", TARGET, "--target-dir", "$BUILD/loader", "--no-default-features", "--features", LOADER_FEATURE,
         "--", "--emit=obj",
     ]
-    require(cargo["argv"] == expected_argv and cargo["rustflags"] == dynamic_product_contract.LOADER_RUSTFLAGS,
+    if ARCH == "aarch64":
+        expected_argv = [
+            rustup_path, "run", PINNED_TOOLCHAIN, "cargo", "rustc", "--locked", "-p", "crabc-ldso", "--release",
+            "--target", TARGET, "--target-dir", "$BUILD/loader", "--no-default-features", "--features", LOADER_FEATURE,
+            "--config", f'target.{TARGET}.rustflags=["-Ztls-model=initial-exec", "-Ctarget-feature=-outline-atomics"]',
+            "--", "--emit=obj",
+        ]
+    require(cargo["argv"] == expected_argv and cargo["rustflags"] == ("" if ARCH == "aarch64" else dynamic_product_contract.LOADER_RUSTFLAGS),
             "loader Cargo command or RUSTFLAGS differ")
     compiler_object = record["compiler_object"]
     require(isinstance(compiler_object, dict) and set(compiler_object) == {"path", "sha256", "size"}
@@ -256,20 +263,25 @@ def validate_loader_provenance(product: Path, record: object) -> None:
 def capture_bindings(product: Path) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any]]:
     product, product_relative = evidence_path(product, "supplied product")
     manifest, provenance = load_loader_provenance(product)
-    alias = product / LOADER_ALIAS_PATH
-    require(alias.is_symlink() and os.readlink(alias) == Path(LOADER_PATH).name,
-            "supplied product loader alias differs")
-    try:
-        require(alias.resolve(strict=True) == (product / LOADER_PATH).resolve(strict=True),
-                "supplied product loader alias does not resolve to its loader")
-    except OSError as error:
-        raise InventoryError("supplied product loader alias cannot be resolved") from error
+    alias = product / (LIBC_PATH if ARCH == "aarch64" else LOADER_ALIAS_PATH)
+    if ARCH == "aarch64":
+        require(os.path.samefile(alias, product / LOADER_PATH), "supplied merged loader and libc differ")
+        alias_record = {"path": LIBC_PATH, "target": LOADER_PATH}
+    else:
+        require(alias.is_symlink() and os.readlink(alias) == Path(LOADER_PATH).name,
+                "supplied product loader alias differs")
+        try:
+            require(alias.resolve(strict=True) == (product / LOADER_PATH).resolve(strict=True),
+                    "supplied product loader alias does not resolve to its loader")
+        except OSError as error:
+            raise InventoryError("supplied product loader alias cannot be resolved") from error
+        alias_record = {"path": LOADER_ALIAS_PATH, "target": os.readlink(alias)}
     product_snapshot = {
         "root": product_relative,
         "manifest_sha256": digest(product / "share/crabc/manifest.json", "product manifest"),
         "state": product_identity(product, "share/crabc/dynamic-product-state.json", "product state"),
         "loader": product_identity(product, LOADER_PATH, "installed loader"),
-        "loader_alias": {"path": LOADER_ALIAS_PATH, "target": os.readlink(alias)},
+        "loader_alias": alias_record,
         "libc": product_identity(product, LIBC_PATH, "installed libc"),
         "loader_provenance": product_identity(product, LOADER_PROVENANCE_PATH, "loader compiler provenance"),
     }

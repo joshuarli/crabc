@@ -455,13 +455,15 @@ def loader_provenance(
     installed_artifact: Path,
     hardening_profile: common.NativeRuntimeProfile = common.NativeRuntimeProfile.COMPATIBILITY,
     *, merged: bool = False, dependencies_override: Path | None = None,
-    merged_link_command: list[str] | None = None,
+    merged_link_command: list[str] | None = None, architecture: str = "x86_64",
 ) -> dict[str, object]:
     """Bind the installed loader to Cargo's selected source closure and config."""
 
+    interpreter_name = (Path(hardening_profile.interpreter).name if architecture == "x86_64" else
+                        "ld-crabc-aarch64-hardened.so.1" if hardening_profile is common.NativeRuntimeProfile.HARDENED else "ld-crabc-aarch64.so.1")
     if (not isinstance(hardening_profile, common.NativeRuntimeProfile)
-            or rustflags != loader_rustflags(hardening_profile)
-            or installed_artifact.name != Path(hardening_profile.interpreter).name):
+            or (architecture == "x86_64" and rustflags != loader_rustflags(hardening_profile))
+            or installed_artifact.name != interpreter_name):
         raise common.BuildError("loader profile, flags and interpreter path differ")
     dependencies = dependencies_override or (stage / "loader" / common.TARGET / "release" / "libldso.d")
     expected_dependency_artifact = dependencies.with_name(LOADER_DEPENDENCY_ARTIFACT)
@@ -488,7 +490,7 @@ def loader_provenance(
         _source_file_identity(ROOT / "compat/x86_64/dynamic_product_contract.py", "loader compiler policy"),
     ]
     installed = {
-        "path": hardening_profile.interpreter.lstrip("/"),
+        "path": "lib/" + interpreter_name,
         "sha256": common.sha256_file(installed_artifact),
         "mode": stat.S_IMODE(installed_details.st_mode),
     }
@@ -511,7 +513,7 @@ def loader_provenance(
         merged_link = None
     return {
         "schema": LOADER_PROVENANCE_SCHEMA,
-        "target": common.TARGET,
+        "target": common.native_arch(architecture)["target_triple"],
         "artifact": installed,
         "cargo": {
             "argv": [_normalized_loader_argument(argument, stage) for argument in command],
@@ -1053,7 +1055,8 @@ def build_aarch64(output: Path, *, allocator_backend: str, lifecycle_test_audit:
         objects = stage / "objects"
         objects.mkdir()
         common.run([ar, "x", str(raw), *selected], cwd=objects, environment=environment)
-        common.run([*cargo, "rustc", "--locked", "-p", "crabc-ldso", "--release", "--target", target, "--target-dir", str(stage / "loader"), "--no-default-features", "--features", LOADER_FEATURE, *flags, "--", "--emit=obj", *(["--cfg", "crabc_hardened"] if hardening_profile is common.NativeRuntimeProfile.HARDENED else [])], environment=environment)
+        loader_command = [*cargo, "rustc", "--locked", "-p", "crabc-ldso", "--release", "--target", target, "--target-dir", str(stage / "loader"), "--no-default-features", "--features", LOADER_FEATURE, *flags, "--", "--emit=obj", *(["--cfg", "crabc_hardened"] if hardening_profile is common.NativeRuntimeProfile.HARDENED else [])]
+        common.run(loader_command, environment=environment)
         candidates = list((stage / "loader" / target / "release/build/crabc-ldso").glob("*/out/ldso.o"))
         if len(candidates) != 1:
             raise common.BuildError(f"expected one loader object, found {candidates}")
@@ -1065,10 +1068,25 @@ def build_aarch64(output: Path, *, allocator_backend: str, lifecycle_test_audit:
         library.mkdir(parents=True)
         private = stage / "private.exports"
         private.write_text("{ local: __crabc_x86_64_*; };\n")
-        common.run(["/usr/bin/mold", "-shared", "--no-undefined", "--hash-style=sysv", "--eh-frame-hdr", "-soname", "libc.so", f"--dynamic-list={SHARED_LIBC_DYNAMIC_LIST}", f"--version-script={private}", "-z", "relro", "-z", "now", "-z", "noexecstack", "-z", "text", "-e", "_start", *(str(objects / name) for name in selected), str(allocator), str(loader), "--whole-archive", str(builtins), "--no-whole-archive", "-o", str(library / "libc.so")], environment=environment)
+        libc_link_command = ["/usr/bin/mold", "-shared", "--no-undefined", "--hash-style=sysv", "--eh-frame-hdr", "-soname", "libc.so", f"--dynamic-list={SHARED_LIBC_DYNAMIC_LIST}", f"--version-script={private}", "-z", "relro", "-z", "now", "-z", "noexecstack", "-z", "text", "-e", "_start", *(str(objects / name) for name in selected), str(allocator), str(loader), "--whole-archive", str(builtins), "--no-whole-archive", "-o", str(library / "libc.so")]
+        common.run(libc_link_command, environment=environment)
         for name in ("crt1.o", "Scrt1.o", "crti.o", "crtn.o"):
             common.copy_artifact(crt / name, library / name)
         common.copy_artifact(builtins, library / builtins.name)
+        attachment_parts = stage / "dynamic-attachment"
+        attachment_parts.mkdir()
+        attachment_objects = []
+        for source, name in ((ROOT / "libc/src/c_abi/x86_64/owned_dynamic_attachment.rs", "libc-attachment"),
+                             (ROOT / "crt/src/x86_64_owned_crt_handoff_attachment.rs", "crt-handoff-reader")):
+            obj = attachment_parts / (name + ".o")
+            common.run([*common.native_build_tools.compile_command(rust_sysroot / "bin/rustc"),
+                        "--edition=2021", "--crate-name", name.replace("-", "_"), "--crate-type", "lib",
+                        "--emit=obj", "--target", target, "-C", "opt-level=2", "-C", "panic=abort",
+                        "-C", "relocation-model=pic", "--remap-path-prefix", f"{ROOT}=/crabc",
+                        str(source), "-o", str(obj)], environment=environment)
+            attachment_objects.append(obj)
+        common.run(["/usr/bin/mold", "-r", *(str(obj) for obj in attachment_objects),
+                    "-o", str(library / "crabc-dynamic-attach.o")], environment=environment)
         common.copy_regular_tree(ROOT / "include", installed / "usr/include")
         interpreter = installed / ("lib/ld-crabc-aarch64-hardened.so.1" if hardening_profile is common.NativeRuntimeProfile.HARDENED else "lib/ld-crabc-aarch64.so.1")
         interpreter.parent.mkdir()
@@ -1079,8 +1097,25 @@ def build_aarch64(output: Path, *, allocator_backend: str, lifecycle_test_audit:
         common.copy_artifact(common.NATIVE_PROFILE_SOURCE, installed / common.NATIVE_PROFILE_PATH)
         common.copy_artifact(crt / "objects.json", installed / "share/crabc/crt.provenance.json")
         common.copy_artifact(crt / "commands.json", installed / "share/crabc/crt.commands.json")
+        metadata = installed / "share/crabc"
+        common.write_json(metadata / "producer-tools.json", common.resolve_pinned_producer_tools("aarch64"))
+        common.write_json(metadata / "loader.provenance.json",
+                          loader_provenance(stage, loader_command, environment.get("RUSTFLAGS", ""), loader, interpreter,
+                                            hardening_profile, merged=True, dependencies_override=candidates[0].with_suffix(".d"),
+                                            merged_link_command=libc_link_command, architecture="aarch64"))
         if source_seal.product_source_digest(ROOT) != source_before_build:
             raise common.BuildError("aarch64 dynamic product source changed during build")
+        payload_files = common.regular_file_hashes(installed)
+        common.write_json(metadata / "dynamic-product-state.json", {
+            "schema": "crabc.x86_64-owned-dynamic-materialization/v1",
+            "status": "materialized-unqualified", "source_sha256": source_before_build,
+            "allocator_backend": allocator_backend, "allocator_lifecycle_test_audit": lifecycle_test_audit,
+            "allocator_promoted": False, "contracts": qualification.contract_digests(), "payload_files": payload_files,
+            "runtime_v1_published": False, "campaign_complete": False, "public_support": False,
+            "modes": (["dynamic-pie", "dynamic-non-pie", "dynamic-shared-object"]
+                      if hardening_profile is common.NativeRuntimeProfile.COMPATIBILITY else ["dynamic-pie", "dynamic-shared-object"]),
+            "runtime_profile": qualification.MATERIALIZATION_PROFILE,
+            "qualification": qualification.MATERIALIZATION_QUALIFICATION})
         manifest = {"schema": 1, "format": "crabc-aarch64-owned-dynamic-sysroot-v1", "target": target,
                     "toolchain": common.PINNED_TOOLCHAIN, "build_profile": profile,
                     "hardening_profile": hardening_profile.value, "source_sha256": source_before_build, "symlinks": {},

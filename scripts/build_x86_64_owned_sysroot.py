@@ -330,26 +330,28 @@ def pinned_rustc_version(rustup: Path) -> dict[str, str]:
     }
 
 
-def pinned_target_tool(path_root: Path, name: str) -> dict[str, str]:
+def pinned_target_tool(path_root: Path, name: str, target: str = TARGET) -> dict[str, str]:
     """Resolve a target LLVM binary only underneath the selected nightly sysroot."""
 
     if name not in PINNED_TARGET_TOOLS:
         raise BuildError(f"unrecognized pinned LLVM target tool: {name}")
-    path = path_root / "lib" / "rustlib" / TARGET / "bin" / name
+    path = path_root / "lib" / "rustlib" / target / "bin" / name
     return executable_identity(path, f"pinned Rust target tool {name}", within=path_root)
 
 
-def resolve_pinned_producer_tools() -> dict[str, object]:
+def resolve_pinned_producer_tools(architecture: str = "x86_64") -> dict[str, object]:
     """Resolve and fingerprint every Rust/LLVM producer used by this builder."""
 
     rustup = pinned_rustup()
     sysroot = pinned_rustc_sysroot(rustup)
+    arch = native_arch(architecture)
+    target = arch["target_triple"]
     return {
         "schema": 1,
         "toolchain": PINNED_TOOLCHAIN,
-        "target": TARGET,
+        "target": target,
         "selection": {
-            "cargo_home": "$CRABC_SOURCE/.work/x86_64/cargo",
+            "cargo_home": f"$CRABC_SOURCE/.work/{architecture}/cargo",
             "rustup_home": str(PINNED_RUSTUP_HOME),
             "path": f"{PINNED_CARGO_HOME / 'bin'}:{FIXED_HOST_BUILD_PATH}",
             "rustup_bin": str(PINNED_CARGO_HOME / "bin"),
@@ -360,14 +362,14 @@ def resolve_pinned_producer_tools() -> dict[str, object]:
         "rustup": executable_identity(rustup, "pinned rustup"),
         "rustc_wrapper": executable_identity(native_build_tools.KACHE, "pinned kache"),
         "linker": executable_identity(native_build_tools.MOLD, "image mold"),
-        "cargo_linker": executable_identity(native_build_tools.CARGO_LINKER, "image mold GCC driver"),
+        "cargo_linker": executable_identity(Path(arch["linker"]), "image mold GCC driver"),
         "rustc": {
             **executable_identity(sysroot / "bin/rustc", "pinned physical rustc", within=sysroot),
             "sysroot": str(sysroot),
             "version": pinned_rustc_version(rustup),
         },
         "llvm_target_tools": {
-            name: pinned_target_tool(sysroot, name) for name in PINNED_TARGET_TOOLS
+            name: pinned_target_tool(sysroot, name, target) for name in PINNED_TARGET_TOOLS
         },
     }
 
