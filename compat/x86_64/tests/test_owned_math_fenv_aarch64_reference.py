@@ -1,4 +1,5 @@
 import sys
+import os
 import tempfile
 import unittest
 from pathlib import Path
@@ -8,6 +9,24 @@ import owned_math_fenv_aarch64_reference as reference
 
 
 class ReferenceTraceTests(unittest.TestCase):
+    def test_output_is_new_and_confined_to_physical_work_tree(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            work = root / '.work'
+            work.mkdir()
+            (work / 'parent').mkdir()
+            fd = reference.create_output(root, work / 'parent' / 'result')
+            os.close(fd)
+            with self.assertRaises(FileExistsError):
+                reference.create_output(root, work / 'parent' / 'result')
+            with self.assertRaises(ValueError):
+                reference.create_output(root, root / 'outside')
+            with self.assertRaises(ValueError):
+                reference.create_output(root, work / '..' / 'outside')
+            (work / 'link').symlink_to(work / 'parent', target_is_directory=True)
+            with self.assertRaises(OSError):
+                reference.create_output(root, work / 'link' / 'escape')
+
     def test_requires_owned_inputs_and_rejects_ambient_runtime(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
