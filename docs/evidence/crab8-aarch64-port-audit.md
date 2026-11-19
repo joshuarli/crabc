@@ -328,7 +328,8 @@ cross-target flags documented in CRAB-8.
   - The two aarch64 oracle checks (wordexp and crypt) use the strong `pinned_musl_identity`.
   - The thread-pointer and TLS-offset translations are correct for the aarch64 layout.
 - **Closed (`15c44b8b8`, `58e5615a5`, `231c19023`)**: `header_declaration_inventory` collects and validates native arm64 declarations; `owned_errno_storage_lifecycle` and `runtime_private_facades` pass on the converged products.
-- **Unported but fails closed**: `owned_dynamic_fork_evidence`, `owned_public_data_variable_runtime`, `consumer_static_pie_lto`, `consumer_native_facade_lto`, resolver-network and Lua dynamic dispatch.
+- **Closed (`be551fae7`, `8f6f97cdc`, `ac49f0855`)**: `owned_public_data_variable_runtime` collects and replays the native arm64 installed-product matrix.
+- **Unported but fails closed**: `owned_dynamic_fork_evidence`, `consumer_static_pie_lto`, `consumer_native_facade_lto`, resolver-network and Lua dynamic dispatch.
 - **Shipped but never linked**: `usr/lib/crabc-dynamic-attach.o` is built and installed on aarch64, but no aarch64 link uses it. aarch64 `Scrt1` attaches directly instead.
 - **Forced static-PIE**: `consumer_rust_std_lto.py:416` forces static-PIE for the owned-static lane. That is probably equivalent, depending on rustc's default for the aarch64 musl target.
 - **Not in this branch**: `signal.rs` `queue_thread` (x86-only) and the aarch64 `SigAction` mask and restorer loss were already on main. Dropping `PreparedExec::exec` on aarch64 aligns with x86 but needs an owner decision.
