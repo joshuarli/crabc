@@ -4,6 +4,7 @@
 set -euo pipefail
 ulimit -c 0
 readonly ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+eval "$(python3 -B "$ROOT/compat/x86_64/native_arch.py")"
 [ "$#" -le 1 ] || { printf 'usage: %s [DYNAMIC_SYSROOT]\n' "$0" >&2; exit 2; }
 python3 -B - "$ROOT" "${TMPDIR:-}" "${1:-}" <<'PY'
 from pathlib import Path
@@ -28,7 +29,7 @@ readonly installed="$(realpath -e "$provided_dynamic")"
 "$installed/bin/crabc-cc-dynamic" --dynamic-pie -std=c11 -fno-builtin \
     -c "$ROOT/compat/x86_64/owned_pthread_spin_probe.c" -o "$work/workload.o"
 mkdir "$work/oracle-root"
-/usr/local/bin/crabc-x86_64-musl-gcc -static -fno-pie -no-pie -pthread "$work/workload.o" -o "$work/oracle-root/consumer"
+"$oracle" -static -fno-pie -no-pie -pthread "$work/workload.o" -o "$work/oracle-root/consumer"
 timeout 30 env -i PATH="$PATH" chroot "$work/oracle-root" /consumer >"$work/oracle.stdout" 2>"$work/oracle.stderr"
 grep -qx owned-pthread-spin-ok "$work/oracle.stdout"
 
@@ -52,7 +53,7 @@ for mode in pie non-pie; do
     cp "$work/consumer-$mode" "$work/$mode-root/consumer"
     for entry in kernel direct; do
         command=(/consumer)
-        if [ "$entry" = direct ]; then command=(/lib/ld-crabc-x86_64.so.1 /consumer); fi
+        if [ "$entry" = direct ]; then command=("/lib/ld-crabc-$arch.so.1" /consumer); fi
         timeout 30 env -i PATH="$PATH" chroot "$work/$mode-root" "${command[@]}" \
             >"$work/$mode-$entry.stdout" 2>"$work/$mode-$entry.stderr"
         cmp "$work/oracle.stdout" "$work/$mode-$entry.stdout"
