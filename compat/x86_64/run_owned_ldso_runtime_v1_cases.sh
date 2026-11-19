@@ -161,7 +161,6 @@ build_consumer "$work/libconsumer-static.a" --cfg crabc_loader_libc_tls_runtime_
 build_main_crt() {
     local output="$1" mode="$2" extra="$3"
     local -a defines=() extra_args=()
-    [ "$arch" != aarch64 ] || defines+=(-DCRABC_PRODUCT_TLS_LAYOUT)
     [ "$mode" = reject ] && defines+=(-DCRABC_GENERAL_RUNTIME_V1_REJECT)
     [ -n "$extra" ] && extra_args=("$extra")
     cc -nostdlib -fPIE -pie -fno-stack-protector -ffreestanding \
