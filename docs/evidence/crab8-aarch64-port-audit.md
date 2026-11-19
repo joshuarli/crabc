@@ -64,9 +64,8 @@ aarch64 run itself.
    - The combined path uses bare `payload_hashes` (`:376-388`).
    - Qualifying-path.
 
-7. **`owned_static_sysroot_package.py:198-201`**
-   - aarch64 drops the package contract, the `installed` record and the sealed-driver record checks. Only schema, build profile and symlinks remain.
-   - Qualifying-path.
+7. **`owned_static_sysroot_package.py` — closed**
+   - The aarch64 reader checks the architecture-specific package identity, installed-file record and sealed-driver format and path, alongside the source seal and payload hashes.
 
 8. **`consumer_rust_std_lto.py:215-235`**
    - x86: compiler tool hashes are bound to the source-pinned `owned_resolver_alias_image_inputs.json` (`_validate_compiler_records_against_source`).

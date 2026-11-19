@@ -147,7 +147,7 @@ def run(args: argparse.Namespace) -> tuple[dict[str, object], Path]:
     dynamic_package_one = state / "dynamic-one.tar"
     dynamic_package_two = state / "dynamic-two.tar"
     static_extraction = state / "static-extraction"
-    static_extracted = static_extraction / "crabc-x86_64-owned-static-sysroot"
+    static_extracted = static_extraction / f"crabc-{ARCH}-owned-static-sysroot"
     dynamic_extracted = state / "dynamic-extraction"
     report: dict[str, object] = {
         "schema_version": 1,
@@ -175,8 +175,6 @@ def run(args: argparse.Namespace) -> tuple[dict[str, object], Path]:
             ("static-extract", [sys.executable, "-B", str(static_package), "extract", "--archive", str(static_package_one), "--destination", str(static_extraction)], static_extracted, "directory"),
             ("dynamic-extract", [sys.executable, "-B", str(dynamic_package), "extract", str(dynamic_package_one), str(dynamic_extracted)], dynamic_extracted, "directory"),
         ):
-            if ARCH != "x86_64" and label == "static-package-one":
-                raise PreparationError("aarch64 resolver-network package and extracted-product contracts are unavailable")
             record = command_record(command, timeout=args.timeout)
             report["steps"][label] = record
             if record["status"] != 0:

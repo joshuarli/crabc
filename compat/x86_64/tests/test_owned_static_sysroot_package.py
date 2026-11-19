@@ -276,7 +276,7 @@ class OwnedStaticSysrootPackageTests(unittest.TestCase):
             (source / relative).write_bytes(payload)
             manifest_path = source / package.MANIFEST_RELATIVE_PATH
             manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-            manifest_files = manifest["files"] if package.ARCH["arch"] == "aarch64" else manifest["installed"]["files"]
+            manifest_files = manifest["installed"]["files"]
             manifest_files[relative.as_posix()] = hashlib.sha256(payload).hexdigest()
             manifest_path.write_text(json.dumps(manifest, sort_keys=True) + "\n", encoding="utf-8")
             archive = workspace / "long-path.tar.xz"
