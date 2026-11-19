@@ -2,7 +2,6 @@
 """Compile native AArch64 dynamic applications against the installed crabc sysroot."""
 from contextlib import ExitStack
 import json
-import os
 from pathlib import Path
 import re
 import subprocess

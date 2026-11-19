@@ -143,6 +143,59 @@ class Aarch64DynamicNonPieTest(unittest.TestCase):
                     self.assertRegex(symbols, r"OBJECT\s+WEAK\s+DEFAULT\s+UND fixture_weak_data")
 
     @unittest.skipUnless(os.environ.get("CRABC_AARCH64_DYNAMIC_SYSROOT") or CAN_BUILD, "requires a built aarch64 product")
+    def test_nonconforming_native_outputs_are_not_published(self):
+        product = Path(os.environ["CRABC_AARCH64_DYNAMIC_SYSROOT"]).resolve(strict=True)
+        driver = product / "bin/crabc-cc-dynamic"
+        sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+        import owned_dynamic_elf
+        with tempfile.TemporaryDirectory(dir=os.environ["TMPDIR"]) as directory:
+            work = Path(directory)
+            ifunc = ('static int chosen(void) { return 7; }\n'
+                     '__attribute__((used)) static void *pick(void) { return (void *)chosen; }\n'
+                     '__asm__(".globl leaf\\n.type leaf, %gnu_indirect_function\\n.set leaf, pick\\n");\n')
+            cases = {
+                "ifunc.so": ("-shared", ifunc),
+                "irelative": ("-pie", ifunc + "extern int leaf(void); int main(void) { return leaf(); }\n"),
+                "rwx": ("-no-pie", '__asm__(".section .crabc_rwx,\\\"awx\\\",%progbits\\n.byte 0\\n.text\\n");\n'
+                        "int main(void) { return 0; }\n"),
+            }
+            for name, (mode, text) in cases.items():
+                with self.subTest(name=name):
+                    source, output = work / (name + ".c"), work / name
+                    source.write_text(text)
+                    result = subprocess.run([driver, mode, source, "-o", output], capture_output=True, text=True)
+                    self.assertNotEqual(result.returncode, 0, result.stderr)
+                    self.assertIn("final ELF inspection rejected", result.stderr)
+                    for path in (output, Path(str(output) + ".crabc-link.json"),
+                                 *owned_dynamic_elf.sidecar_paths(output)):
+                        self.assertFalse(path.exists(), path)
+
+    @unittest.skipUnless(os.environ.get("CRABC_AARCH64_DYNAMIC_SYSROOT") or CAN_BUILD, "requires a built aarch64 product")
+    def test_relink_detects_old_sidecars_without_aliasing_prospective_output(self):
+        product = Path(os.environ["CRABC_AARCH64_DYNAMIC_SYSROOT"]).resolve(strict=True)
+        driver = product / "bin/crabc-cc-dynamic"
+        sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+        import owned_dynamic_elf
+        with tempfile.TemporaryDirectory(dir=os.environ["TMPDIR"]) as directory:
+            work = Path(directory)
+            source, output = work / "source.c", work / "libsearch.so"
+            source.write_text("int search(void) { return 11; }\n")
+            command = [driver, "-shared", "--application-runpath", "/usr/lib", source, "-o", output]
+            subprocess.run(command, check=True)
+            moved = work / "moved"
+            moved.mkdir()
+            for path in (output, Path(str(output) + ".crabc-link.json")):
+                path.replace(moved / path.name)
+            second = subprocess.run(command, capture_output=True, text=True)
+            self.assertNotEqual(second.returncode, 0)
+            self.assertNotIn("alias check is unsafe", second.stderr)
+            self.assertIn("cannot reserve dynamic link receipt", second.stderr)
+            self.assertFalse(output.exists())
+            for path in owned_dynamic_elf.sidecar_paths(output):
+                path.replace(moved / path.name)
+            subprocess.run(command, check=True)
+
+    @unittest.skipUnless(os.environ.get("CRABC_AARCH64_DYNAMIC_SYSROOT") or CAN_BUILD, "requires a built aarch64 product")
     def test_native_package_round_trip_and_malformed_archives(self):
         sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
         import owned_dynamic_package as package
@@ -210,6 +263,44 @@ class Aarch64DynamicNonPieTest(unittest.TestCase):
                                           lifecycle_test_audit=False, profile="release",
                                           hardening_profile=builder.common.NativeRuntimeProfile.COMPATIBILITY)
             self.assertFalse(failed.exists())
+
+    @unittest.skipUnless(os.environ.get("CRABC_AARCH64_DYNAMIC_SYSROOT") or CAN_BUILD, "requires a built aarch64 product")
+    def test_combined_native_product_validates_and_links_all_dynamic_modes(self):
+        root = Path(__file__).resolve().parents[3]
+        sys.path.insert(0, str(root / "scripts"))
+        import build_x86_64_owned_combined_sysroot as combined
+        import crabc_cc_owned_dynamic as driver
+        product = Path(os.environ["CRABC_AARCH64_DYNAMIC_SYSROOT"]).resolve(strict=True)
+        with tempfile.TemporaryDirectory(dir=os.environ["TMPDIR"]) as directory:
+            work = Path(directory)
+            static, installed = work / "static", work / "combined"
+            subprocess.run([sys.executable, "-B", str(root / "scripts/build_x86_64_owned_sysroot.py"),
+                            "--architecture", "aarch64", "--output", str(static)], cwd=root, check=True,
+                           stdout=subprocess.DEVNULL)
+            combined.compose({"static": static, "dynamic": product}, installed)
+            driver.validate_installation(installed)
+            source = work / "main.c"
+            source.write_text("int main(void) { return 0; }\n")
+            for mode in ("pie", "non-pie", "shared-object"):
+                with self.subTest(mode=mode):
+                    output = work / ("output-" + mode)
+                    subprocess.run([installed / "bin/crabc-cc-dynamic", "--dynamic-" + mode,
+                                    source, "-o", output], check=True)
+                    self.assertTrue(output.is_file())
+            manifest = installed / "share/crabc/manifest.json"
+            original = manifest.read_bytes()
+            try:
+                record = json.loads(original)
+                record["hardening_profile"] = "hardened"
+                manifest.write_text(json.dumps(record))
+                with self.assertRaises(driver.shared.DriverError):
+                    driver.validate_installation(installed)
+            finally:
+                manifest.write_bytes(original)
+            foreign = installed / "usr/lib/unreviewed.o"
+            foreign.write_bytes(b"unexpected payload")
+            with self.assertRaises(driver.shared.DriverError):
+                driver.validate_installation(installed)
 
     @unittest.skipUnless(os.environ.get("CRABC_AARCH64_DYNAMIC_SYSROOT") or CAN_BUILD, "requires a built aarch64 product")
     def test_receipt_reservations_precede_translation_and_preserve_existing_files(self):
