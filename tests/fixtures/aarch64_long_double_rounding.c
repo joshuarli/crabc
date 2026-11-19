@@ -21,8 +21,12 @@ int main(void) {
         run("rintl", rintl, 2.5L);
         run("rintl-small", rintl, 0.5L);
         run("rintl-negative", rintl, -2.5L);
+        run("rintl-large", rintl, 0x1.0000000000000000000000000001p111L);
         run("nearbyintl", nearbyintl, -2.5L);
+        run("nearbyintl-small", nearbyintl, -0.5L);
         run("sqrtl", sqrtl, 2.0L);
+        run("sqrtl-neighbor", sqrtl, 0x1.0000000000000000000000000001p0L);
+        run("sqrtl-subnormal", sqrtl, 0x1p-16494L);
         run("sqrtl-exact", sqrtl, 4.0L);
         run("sqrtl-negative", sqrtl, -1.0L);
     }
