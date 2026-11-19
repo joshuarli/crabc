@@ -3,7 +3,6 @@
 set -euo pipefail
 ulimit -c 0
 readonly ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-eval "$(python3 -B "$ROOT/compat/x86_64/native_arch.py")"
 [ "$#" -le 1 ] || { printf 'usage: %s [DYNAMIC_SYSROOT]\n' "$0" >&2; exit 2; }
 provided_dynamic="${1:-}"
 python3 -B - "$ROOT" "${TMPDIR:-}" "$provided_dynamic" <<'PY'
@@ -53,7 +52,7 @@ compare() {
     cmp "$work/candidate-tzif-last.expected" "$work/$label-tzif-last.stdout"
     [ ! -s "$work/$label-tzif-last.stderr" ]
 }
-"$oracle" -static -fno-pie -no-pie "$work/workload.o" -o "$work/root/oracle"
+/usr/local/bin/crabc-x86_64-musl-gcc -static -fno-pie -no-pie "$work/workload.o" -o "$work/root/oracle"
 observe oracle 0 /oracle
 printf '0 end=3 isdst=0\n1 end=3 isdst=1\n2 end=7 isdst=-1\n3 end=7 isdst=-1\n4 end=7 isdst=-1\n5 end=7 isdst=-1\n' >"$work/candidate-zone-delimiters.expected"
 observe oracle-zone-delimiters 0 /oracle zone-delimiters
@@ -80,7 +79,7 @@ cp -a "$provided_dynamic/." "$work/root/"
 for mode in pie non-pie; do
     "$provided_dynamic/bin/crabc-cc-dynamic" "--dynamic-$mode" "$work/workload.o" -o "$work/root/dynamic-$mode"
     compare "$mode-kernel" "/dynamic-$mode"
-    compare "$mode-direct" "/lib/ld-crabc-$arch.so.1" "/dynamic-$mode"
+    compare "$mode-direct" /lib/ld-crabc-x86_64.so.1 "/dynamic-$mode"
 done
 sha256sum -c "$work/input.sha256" >"$work/input-verified.txt"
 printf 'owned strptime: PASS (calendar parsing, bounded zone read, TZif state changes); evidence: %s\n' "$work"

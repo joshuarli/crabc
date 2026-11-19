@@ -3,7 +3,6 @@
 set -euo pipefail
 ulimit -c 0
 readonly ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-eval "$(python3 -B "$ROOT/compat/x86_64/native_arch.py")"
 [ "$#" -le 1 ] || { printf 'usage: %s [DYNAMIC_SYSROOT]\n' "$0" >&2; exit 2; }
 provided_dynamic="${1:-}"
 python3 -B - "$ROOT" "${TMPDIR:-}" "$provided_dynamic" <<'PY'
@@ -41,7 +40,7 @@ compare() {
     cmp "$work/oracle.stdout" "$work/$label.stdout"
     cmp "$work/oracle.stderr" "$work/$label.stderr"
 }
-"$oracle" -static -fno-pie -no-pie "$work/workload.o" -o "$work/root/oracle"
+/usr/local/bin/crabc-x86_64-musl-gcc -static -fno-pie -no-pie "$work/workload.o" -o "$work/root/oracle"
 observe oracle /oracle
 [ "$(wc -l <"$work/oracle.stdout")" -eq 11 ] && [ ! -s "$work/oracle.stderr" ]
 if [ "$build_static" -eq 1 ]; then
@@ -54,7 +53,7 @@ cp -a "$provided_dynamic/." "$work/root/"
 for mode in pie non-pie; do
     "$provided_dynamic/bin/crabc-cc-dynamic" "--dynamic-$mode" "$work/workload.o" -o "$work/root/dynamic-$mode"
     compare "$mode-kernel" "/dynamic-$mode"
-    compare "$mode-direct" "/lib/ld-crabc-$arch.so.1" "/dynamic-$mode"
+    compare "$mode-direct" /lib/ld-crabc-x86_64.so.1 "/dynamic-$mode"
 done
 sha256sum -c "$work/input.sha256" >"$work/input-verified.txt"
 printf 'owned getdate: PASS (one object; template errors, persistent fields, cancellation state); evidence: %s\n' "$work"
