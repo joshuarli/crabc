@@ -10,7 +10,6 @@ set -euo pipefail
 ulimit -c 0
 
 readonly ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-readonly ORACLE_CC=/usr/local/bin/crabc-x86_64-musl-gcc
 readonly EVIDENCE="$ROOT/compat/x86_64/owned_static_fork_evidence.py"
 readonly CHROOT="$(command -v chroot)"
 
@@ -24,6 +23,8 @@ case "$2" in
     -*) usage ;;
 esac
 readonly PROVIDED_STATIC="$(realpath -e -- "$2")"
+eval "$(python3 -B "$ROOT/compat/x86_64/native_arch.py")"
+readonly ORACLE_CC="$oracle"
 
 # Reject path escapes and a missing checkout-managed scratch directory before
 # a supplied driver or any mutable evidence path is used. The driver plans
@@ -60,10 +61,14 @@ readonly STATIC_DRIVER="$PROVIDED_STATIC/bin/crabc-cc"
     printf 'owned POSIX static fork: missing specialized evidence helper\n' >&2
     exit 1
 }
-[ "$(uname -sm)" = 'Linux x86_64' ] || {
-    printf 'owned POSIX static fork: requires native Linux/x86-64\n' >&2
-    exit 1
-}
+case "$(uname -sm)" in
+    'Linux x86_64') readonly ELF_MACHINE='Advanced Micro Devices X86-64' ;;
+    'Linux aarch64') readonly ELF_MACHINE='AArch64' ;;
+    *)
+        printf 'owned POSIX static fork: requires native Linux/x86-64 or Linux/AArch64\n' >&2
+        exit 1
+        ;;
+esac
 
 # These are read-only preflight calls. The sealed driver verifies every
 # installed payload hash before it emits either plan, so no malformed supplied
@@ -139,14 +144,15 @@ audit_musl_static_image() {
     readelf -hW "$candidate" >"$candidate.header"
     readelf -lW "$candidate" >"$candidate.segments"
     readelf -dW "$candidate" >"$candidate.dynamic"
-    python3 -B - "$candidate.header" "$candidate.segments" "$candidate.dynamic" <<'PY'
+    python3 -B - "$ELF_MACHINE" "$candidate.header" "$candidate.segments" "$candidate.dynamic" <<'PY'
 from pathlib import Path
 import re
 import sys
 
-header, segments, dynamic = (Path(path).read_text(encoding="utf-8") for path in sys.argv[1:])
-if re.search(r"^\s*Machine:\s+Advanced Micro Devices X86-64\s*$", header, re.MULTILINE) is None:
-    raise SystemExit("owned POSIX static fork musl oracle is not an x86-64 ELF")
+machine = sys.argv[1]
+header, segments, dynamic = (Path(path).read_text(encoding="utf-8") for path in sys.argv[2:])
+if re.search(r"^\s*Machine:\s+" + re.escape(machine) + r"\s*$", header, re.MULTILINE) is None:
+    raise SystemExit(f"owned POSIX static fork musl oracle is not a {machine} ELF")
 if re.search(r"^\s*Type:\s+EXEC(?:\s| \()", header, re.MULTILINE) is None:
     raise SystemExit("owned POSIX static fork musl oracle is not ET_EXEC")
 if re.search(r"^\s*INTERP\b", segments, re.MULTILINE) is not None:

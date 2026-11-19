@@ -225,7 +225,7 @@ class OwnedPosixStaticForkTests(unittest.TestCase):
             identity = {
                 "linkage": linkage,
                 "product": str(product),
-                "product_format": "crabc-x86-64-owned-static-sysroot-v1",
+                "product_format": evidence.STATIC_PRODUCT_FORMAT,
                 "product_manifest_sha256": self._digest(product / "share/crabc/manifest.json"),
                 "workload_sha256": self._digest(workload),
                 "executable_sha256": self._digest(directory / "consumer"),

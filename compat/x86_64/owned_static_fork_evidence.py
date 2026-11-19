@@ -21,6 +21,9 @@ import sys
 from types import SimpleNamespace
 from typing import Any, Sequence
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from native_arch import native_arch
+
 
 COMPILE_FORMAT = "crabc.x86_64-owned-posix-static-fork-compile/v2"
 WORKLOAD_FORMAT = "crabc.x86_64-owned-posix-static-fork-workload/v2"
@@ -44,6 +47,8 @@ COMPILE_FIELDS = {
     "evidence_helper",
     "headers",
 }
+_ARCH = native_arch()["arch"]
+STATIC_PRODUCT_FORMAT = f"crabc-{'x86-64' if _ARCH == 'x86_64' else _ARCH}-owned-static-sysroot-v1"
 SHA256_HEX = frozenset("0123456789abcdef")
 STATIC_SOURCE_FLAGS = ("-std=c11",)
 PINNED_CLEAN_ENV = {
@@ -480,7 +485,7 @@ def load_identity(path: Path, linkage: str, workload_hash: str, product: Path) -
         fail(f"{linkage} link identity fields drifted")
     if record.get("linkage") != linkage or record.get("product") != str(product):
         fail(f"{linkage} link identity boundary drifted")
-    if record.get("product_format") != "crabc-x86-64-owned-static-sysroot-v1":
+    if record.get("product_format") != STATIC_PRODUCT_FORMAT:
         fail(f"{linkage} link identity product format drifted")
     if record.get("workload_sha256") != workload_hash:
         fail(f"{linkage} link identity does not bind the immutable object")
