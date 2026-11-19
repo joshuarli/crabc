@@ -16,7 +16,6 @@ C_PROBE = ROOT / "compat" / "x86_64" / "reboot_header_source_form_probe.c"
 CXX_PROBE = ROOT / "compat" / "x86_64" / "reboot_header_source_form_probe.cpp"
 DISPATCHER = ROOT / "scripts" / "dev-x86_64.sh"
 
-X86_MARKER = "#if defined(__x86_64__) /* pinned-musl form; the AArch64 branch stays frozen */\n"
 X86_MUSL_MACROS = """\
 #define RB_AUTOBOOT     0x01234567
 #define RB_HALT_SYSTEM  0xcdef0123
@@ -31,24 +30,10 @@ X86_MUSL_MACROS = """\
 class RebootHeaderSourceFormTests(unittest.TestCase):
     def test_x86_branch_keeps_the_exact_pinned_musl_public_macro_form(self) -> None:
         header = HEADER.read_text(encoding="utf-8")
-        self.assertIn(X86_MARKER, header)
-        x86_form = header.split(X86_MARKER, 1)[1].split("\n#else\n", 1)[0]
-        self.assertEqual(x86_form.strip(), X86_MUSL_MACROS.strip())
-        self.assertNotIn("LINUX_REBOOT_", x86_form)
-
-    def test_non_x86_branch_retains_the_frozen_legacy_reboot_surface(self) -> None:
-        header = HEADER.read_text(encoding="utf-8")
-        legacy_form = header.split("\n#else\n", 1)[1].split("\n#endif\n", 1)[0]
-        for macro in (
-            "LINUX_REBOOT_MAGIC1",
-            "LINUX_REBOOT_MAGIC2",
-            "LINUX_REBOOT_CMD_RESTART",
-            "LINUX_REBOOT_CMD_RESTART2",
-            "LINUX_REBOOT_CMD_KEXEC",
-            "RB_AUTOBOOT     LINUX_REBOOT_CMD_RESTART",
-            "RB_KEXEC        LINUX_REBOOT_CMD_KEXEC",
-        ):
-            self.assertIn(macro, legacy_form)
+        self.assertIn(X86_MUSL_MACROS, header)
+        self.assertNotIn("LINUX_REBOOT_", header)
+        self.assertNotIn("__x86_64__", header)
+        self.assertNotIn("__aarch64__", header)
 
     def test_direct_c_and_cpp_probes_name_visibility_and_linkage_invariants(self) -> None:
         for probe_path in (C_PROBE, CXX_PROBE):

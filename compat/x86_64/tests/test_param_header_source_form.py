@@ -59,40 +59,14 @@ X86_MUSL_PARAM_FORM = """\
 class ParamHeaderSourceFormTests(unittest.TestCase):
     def test_x86_param_branch_retains_the_complete_pinned_musl_source_form(self) -> None:
         header = PARAM_HEADER.read_text(encoding="utf-8")
-        marker = "#if defined(__x86_64__)\n"
-        x86_form = header.split(marker, 1)[1].split("#else\n", 1)[0]
+        self.assertEqual(header, X86_MUSL_PARAM_FORM)
+        self.assertNotIn("__x86_64__", header)
+        self.assertNotIn("__aarch64__", header)
 
-        self.assertEqual(x86_form, X86_MUSL_PARAM_FORM)
-
-    def test_non_x86_param_branch_retains_the_frozen_legacy_source_form(self) -> None:
-        header = PARAM_HEADER.read_text(encoding="utf-8")
-        legacy_form = header.split("#else\n", 1)[1]
-
-        for required in (
-            "#ifndef _CRABC_SYS_PARAM_H",
-            "#define _CRABC_SYS_PARAM_H",
-            "#include <sys/resource.h>",
-            "#include <endian.h>",
-            "#include <limits.h>",
-            "#define MIN(a, b) (((a) < (b)) ? (a) : (b))",
-            "#define __bitop(x, i, operation) ((x)[(i) / 8] operation (1 << (i) % 8))",
-            "#define powerof2(n) (!(((n) - 1) & (n)))",
-        ):
-            self.assertIn(required, legacy_form)
-
-    def test_resource_child_selector_is_an_x86_only_source_spelling_change(self) -> None:
+    def test_resource_child_selector_is_shared(self) -> None:
         header = RESOURCE_HEADER.read_text(encoding="utf-8")
-
-        self.assertIn(
-            "#define RUSAGE_SELF 0\n"
-            "#if defined(__x86_64__)\n"
-            "#define RUSAGE_CHILDREN (-1)\n"
-            "#else\n"
-            "#define RUSAGE_CHILDREN -1\n"
-            "#endif\n"
-            "#define RUSAGE_THREAD 1",
-            header,
-        )
+        self.assertIn("#define RUSAGE_SELF 0\n#define RUSAGE_CHILDREN (-1)\n#define RUSAGE_THREAD 1", header)
+        self.assertEqual(header.count("#define RUSAGE_CHILDREN"), 1)
 
     def test_direct_c_and_cpp_probes_cover_param_and_direct_resource_boundaries(self) -> None:
         for probe_path in (C_PROBE, CXX_PROBE):
