@@ -17,10 +17,11 @@ readonly RAW_HEADER_COMPILER=/usr/bin/gcc
 readonly READELF=/usr/bin/readelf
 readonly TIMEOUT=/usr/bin/timeout
 readonly CHROOT=/usr/sbin/chroot
-readonly ORACLE_CC=/usr/local/bin/crabc-x86_64-musl-gcc
+readonly ARCH="$(python3 -B -c 'import sys; sys.path.insert(0, sys.argv[1]); from native_arch import native_arch; print(native_arch()["arch"])' "$(dirname "${BASH_SOURCE[0]}")")"
+readonly ORACLE_CC="/usr/local/bin/crabc-${ARCH}-musl-gcc"
 readonly MUSL_ARCHIVE=/opt/musl-1.2.6/lib/libc.a
 readonly MUSL_SHARED=/opt/musl-1.2.6/lib/libc.so
-readonly IMAGE="$(python3 -B -c 'import sys; sys.path.insert(0, sys.argv[1]); import core_image; print(core_image.CORE_IMAGE_REFERENCE)' "$(dirname "${BASH_SOURCE[0]}")")"
+readonly IMAGE="$(python3 -B -c 'import sys; sys.path.insert(0, sys.argv[1]); from native_arch import native_arch; print("crabc-core-evidence@" + native_arch()["image"])' "$(dirname "${BASH_SOURCE[0]}")")"
 
 fail() { printf 'owned resolver alias receipt: %s\n' "$*" >&2; exit 1; }
 
@@ -53,7 +54,7 @@ for value in "$STATIC_PRODUCT" "$DYNAMIC_PRODUCT" "$STATIC_PREPARATION" "$PRODUC
 done
 
 python3 -B - "$ROOT" "$STATIC_PRODUCT" "$DYNAMIC_PRODUCT" "$STATIC_PREPARATION" \
-    "$PRODUCT_REPORT" "$ELF_FACTS" "$BASE_INVENTORY" "$RECEIPT_DIR" <<'PY'
+    "$PRODUCT_REPORT" "$ELF_FACTS" "$BASE_INVENTORY" "$RECEIPT_DIR" "$ARCH" <<'PY'
 from pathlib import Path
 import os
 import stat
@@ -81,9 +82,9 @@ static, dynamic = values[:2]
 for path in (static / 'bin/crabc-cc', static / 'usr/lib/libc.a', static / 'usr/lib/crt1.o',
              static / 'usr/lib/rcrt1.o', static / 'usr/lib/crti.o', static / 'usr/lib/crtn.o',
              static / 'usr/lib/libcrabc-builtins.a', dynamic / 'bin/crabc-cc-dynamic',
-             dynamic / 'usr/lib/libc.so', dynamic / 'lib/ld-crabc-x86_64.so.1',
+             dynamic / 'usr/lib/libc.so', dynamic / f'lib/ld-crabc-{sys.argv[9]}.so.1',
              dynamic / 'usr/lib/crt1.o', dynamic / 'usr/lib/Scrt1.o', dynamic / 'usr/lib/crti.o',
-             dynamic / 'usr/lib/crtn.o', dynamic / 'usr/lib/crabc-dynamic-attach.o',
+             dynamic / 'usr/lib/crtn.o', *((dynamic / 'usr/lib/crabc-dynamic-attach.o',) if sys.argv[9] == 'x86_64' else ()),
              dynamic / 'usr/lib/libcrabc-builtins.a'):
     if not path.is_file() or path.is_symlink():
         raise SystemExit(f'resolver alias selected product file is not physical: {path}')
@@ -92,7 +93,7 @@ if static == dynamic or static in dynamic.parents or dynamic in static.parents:
 PY
 
 [ "$(uname -s)" = Linux ] || fail 'requires native Linux'
-case "$(uname -m)" in x86_64|amd64) ;; *) fail "refuses emulation on $(uname -m)" ;; esac
+case "$(uname -m)" in x86_64|amd64|aarch64|arm64) ;; *) fail "refuses emulation on $(uname -m)" ;; esac
 [ "$(id -u)" -eq 0 ] || fail 'requires root for the local resolver fixture chroot'
 for tool in cp mkdir python3 rm; do command -v "$tool" >/dev/null || fail "missing tool: $tool"; done
 [ "${CRABC_RESOLVER_ALIAS_IMAGE_ID:-}" = "$IMAGE" ] ||
@@ -111,7 +112,7 @@ readonly BASE_INVENTORY="$(realpath -e "$BASE_INVENTORY")"
 readonly RECEIPT_DIR="$(realpath -m "$RECEIPT_DIR")"
 readonly STATIC_DRIVER="$STATIC_PRODUCT/bin/crabc-cc"
 readonly DYNAMIC_DRIVER="$DYNAMIC_PRODUCT/bin/crabc-cc-dynamic"
-readonly DYNAMIC_LOADER=/lib/ld-crabc-x86_64.so.1
+readonly DYNAMIC_LOADER="/lib/ld-crabc-${ARCH}.so.1"
 
 mkdir "$RECEIPT_DIR"
 readonly WORK="$RECEIPT_DIR"
@@ -165,7 +166,7 @@ prepare_dynamic_root() {
     local root="$1" executable="$2"
     mkdir -p "$root/lib" "$root/usr/lib" "$root/fixture"
     chmod 00755 "$root" "$root/lib" "$root/usr" "$root/usr/lib" "$root/fixture"
-    cp "$DYNAMIC_PRODUCT/lib/ld-crabc-x86_64.so.1" "$root/lib/ld-crabc-x86_64.so.1"
+    cp "$DYNAMIC_PRODUCT/lib/ld-crabc-${ARCH}.so.1" "$root/lib/ld-crabc-${ARCH}.so.1"
     cp "$DYNAMIC_PRODUCT/usr/lib/libc.so" "$root/usr/lib/libc.so"
     cp "$executable" "$root/contract"
     prepare_fixture "$root/fixture"

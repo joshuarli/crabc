@@ -1,0 +1,71 @@
+{
+  "files": {
+    "/opt/musl-1.2.6/lib/libc.a": {
+      "mode": 420,
+      "path": "/opt/musl-1.2.6/lib/libc.a",
+      "sha256": "e11cb421db51bcf84060df27da5a83f392434c4b7101992b62de09a7707d2c62",
+      "size": 2765106
+    },
+    "/opt/musl-1.2.6/lib/libc.so": {
+      "mode": 493,
+      "path": "/opt/musl-1.2.6/lib/libc.so",
+      "sha256": "27bfcc8ae1a18dcf2ce4894691b14a187cfbd5aa637257cabdc45bd2df576594",
+      "size": 873288
+    },
+    "/opt/rustup/toolchains/nightly-2026-09-15-aarch64-unknown-linux-musl/bin/rustc": {
+      "mode": 493,
+      "path": "/opt/rustup/toolchains/nightly-2026-09-15-aarch64-unknown-linux-musl/bin/rustc",
+      "sha256": "7b86bf473e0dc8f27041f0ff10bff1ad7db90ea62ce1ed6a90b0fbbc81c6259b",
+      "size": 72288
+    },
+    "/usr/bin/gcc": {
+      "mode": 493,
+      "path": "/usr/bin/gcc",
+      "sha256": "0e56242014fe7ce934e73b2495b801785fcf7d78ad7131e8ec086b1884ee1d07",
+      "size": 2102032
+    },
+    "/usr/bin/mold": {
+      "mode": 493,
+      "path": "/usr/bin/mold",
+      "sha256": "2f694c9ecbfe99aad11d0ef00a15708cf74b82a0a8dfc9760037fa2917263b28",
+      "size": 19471864
+    },
+    "/usr/bin/readelf": {
+      "mode": 493,
+      "path": "/usr/bin/readelf",
+      "sha256": "05a494b0257cd2ec3a0e2ffec6e0ab29922c97854614e3cbd35626ce1ca7ae4d",
+      "size": 797552
+    },
+    "/usr/bin/timeout": {
+      "mode": 493,
+      "path": "/bin/coreutils",
+      "sha256": "ddb337e2c85916b1c2130218a4441a768f30271282b0790faa09361e92725d04",
+      "size": 1194824
+    },
+    "/usr/local/bin/crabc-aarch64-mold-gcc": {
+      "mode": 493,
+      "path": "/usr/local/bin/crabc-aarch64-mold-gcc",
+      "sha256": "e749b8a2b54742cac6e770ee82bcd647a23cc0e6855a25f1f2c06aabeeaa7127",
+      "size": 47
+    },
+    "/usr/local/bin/crabc-aarch64-musl-gcc": {
+      "mode": 493,
+      "path": "/usr/local/bin/crabc-aarch64-musl-gcc",
+      "sha256": "6d0cd1906d9df0c0a54867d779aa8b1133ed5fb7af6ce286ca3c8ff19201e837",
+      "size": 579
+    },
+    "/usr/local/bin/kache": {
+      "mode": 493,
+      "path": "/usr/local/bin/kache",
+      "sha256": "b9590c7c2e1d5b235ab5b9df0030c972c45ac87d8eab5355ebf4948ee00ada85",
+      "size": 22374872
+    },
+    "/usr/sbin/chroot": {
+      "mode": 493,
+      "path": "/bin/coreutils",
+      "sha256": "ddb337e2c85916b1c2130218a4441a768f30271282b0790faa09361e92725d04",
+      "size": 1194824
+    }
+  },
+  "schema": "crabc.aarch64-owned-resolver-alias-image-inputs/v1"
+}
