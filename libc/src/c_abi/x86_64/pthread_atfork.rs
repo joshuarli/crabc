@@ -85,10 +85,29 @@ type AtforkHook = unsafe extern "C" fn();
 /// syscall wrapper inlining after lifecycle composition changes elsewhere.
 #[inline(always)]
 unsafe fn raw_selected_fork() -> i64 {
+    #[cfg(target_arch = "x86_64")]
+    {
+    let result: i64;
+    // SAFETY: SYS_fork has no argument registers. Linux returns the child's
+    // PID in the parent, zero in the child, or one negative errno value.
+    unsafe {
+        core::arch::asm!(
+            "syscall",
+            inlateout("rax") 57_i64 => result,
+            lateout("rcx") _,
+            lateout("r11") _,
+            options(nostack),
+        );
+    }
+    result
+    }
+    #[cfg(target_arch = "aarch64")]
+    {
     // musl 1.2.6 src/process/_Fork.c uses clone(SIGCHLD, 0) when
     // the architecture lacks fork. Linux ignores the remaining arguments.
     // SAFETY: no stack or pointer arguments are passed to this fork-like clone.
     unsafe { super::raw_syscall::syscall2(super::raw_syscall::SYS_CLONE, 17, 0) }
+    }
 }
 
 // Musl's `src/thread/pthread_atfork.c` object: the handler list, its lock,

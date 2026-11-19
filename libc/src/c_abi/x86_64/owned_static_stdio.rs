@@ -575,13 +575,10 @@ static_archive_member! { tmpfile_source {
 
             // SAFETY: path is NUL-terminated and remains live through the syscall.
             let descriptor = unsafe {
-                raw_syscall::syscall4(
-                    raw_syscall::SYS_OPENAT,
-                    -100,
-                    path.as_ptr() as usize as i64,
-                    i64::from(O_RDWR | O_CREAT | O_EXCL | O_LARGEFILE),
-                    0o600,
-                )
+                #[cfg(target_arch = "x86_64")]
+                { raw_syscall::syscall3(raw_syscall::SYS_OPEN, path.as_ptr() as usize as i64, i64::from(O_RDWR | O_CREAT | O_EXCL | O_LARGEFILE), 0o600) }
+                #[cfg(target_arch = "aarch64")]
+                { raw_syscall::syscall4(raw_syscall::SYS_OPENAT, -100, path.as_ptr() as usize as i64, i64::from(O_RDWR | O_CREAT | O_EXCL | O_LARGEFILE), 0o600) }
             };
             if descriptor < 0 {
                 last_open_error = (-descriptor) as c_int;
@@ -591,7 +588,12 @@ static_archive_member! { tmpfile_source {
             if descriptor > i64::from(c_int::MAX) {
                 // SAFETY: path is NUL-terminated and remains live through the syscall.
                 let _ = unsafe {
-                    raw_syscall::syscall3(raw_syscall::SYS_UNLINKAT, -100, path.as_ptr() as usize as i64, 0)
+                    {
+                        #[cfg(target_arch = "x86_64")]
+                        { raw_syscall::syscall1(raw_syscall::SYS_UNLINK, path.as_ptr() as usize as i64) }
+                        #[cfg(target_arch = "aarch64")]
+                        { raw_syscall::syscall3(raw_syscall::SYS_UNLINKAT, -100, path.as_ptr() as usize as i64, 0) }
+                    }
                 };
                 let _ = unsafe { raw_syscall::syscall1(raw_syscall::SYS_CLOSE, descriptor) };
                 unsafe { errno::set_errno(EOVERFLOW) };
@@ -600,7 +602,12 @@ static_archive_member! { tmpfile_source {
 
             // SAFETY: path is NUL-terminated and remains live through the syscall.
             let unlink_status = unsafe {
-                raw_syscall::syscall3(raw_syscall::SYS_UNLINKAT, -100, path.as_ptr() as usize as i64, 0)
+                {
+                        #[cfg(target_arch = "x86_64")]
+                        { raw_syscall::syscall1(raw_syscall::SYS_UNLINK, path.as_ptr() as usize as i64) }
+                        #[cfg(target_arch = "aarch64")]
+                        { raw_syscall::syscall3(raw_syscall::SYS_UNLINKAT, -100, path.as_ptr() as usize as i64, 0) }
+                    }
             };
             if unlink_status < 0 {
                 let unlink_error = (-unlink_status) as c_int;

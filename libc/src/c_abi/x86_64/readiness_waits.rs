@@ -130,6 +130,36 @@ static_archive_member! { poll_source {
         count: usize,
         timeout_milliseconds: c_int,
     ) -> c_int {
+        #[cfg(target_arch = "x86_64")]
+        {
+        // SAFETY: the caller owns the complete Linux poll-array contract. The
+        // scalar count and timeout retain their x86 C ABI words exactly.
+        #[cfg(crabc_x86_owned_runtime)]
+        let result = unsafe {
+            crate::x86_64_static_c_abi::pthread_cancel::syscall_cp(
+                raw_syscall::SYS_POLL,
+                file_descriptors as usize as i64,
+                count as i64,
+                i64::from(timeout_milliseconds),
+                0,
+                0,
+                0,
+            )
+        };
+        #[cfg(not(crabc_x86_owned_runtime))]
+        let result = unsafe {
+            raw_syscall::syscall3(
+                raw_syscall::SYS_POLL,
+                file_descriptors as usize as i64,
+                count as i64,
+                i64::from(timeout_milliseconds),
+            )
+        };
+        c_status(result)
+
+        }
+        #[cfg(target_arch = "aarch64")]
+        {
         let timeout = Timespec {
             seconds: i64::from(timeout_milliseconds / 1000),
             nanoseconds: i64::from(timeout_milliseconds % 1000) * 1_000_000,
@@ -145,6 +175,8 @@ static_archive_member! { poll_source {
         let result = unsafe { raw_syscall::syscall5(raw_syscall::SYS_PPOLL,
             file_descriptors as i64, count as i64, timeout_pointer, 0, KERNEL_SIGSET_SIZE as i64) };
         c_status(result)
+
+        }
     }
 }}
 
@@ -234,6 +266,66 @@ static_archive_member! { select_source {
         exceptional: *mut c_void,
         timeout: *mut c_void,
     ) -> c_int {
+        #[cfg(target_arch = "x86_64")]
+        {
+        let mut timeout_storage = Timeval {
+            seconds: 0,
+            microseconds: 0,
+        };
+        let timeout_pointer = if timeout.is_null() {
+            0
+        } else {
+            // SAFETY: the caller supplies one readable public timeval. Preserve
+            // musl's local copy before its explicit negative-value validation.
+            let requested = unsafe { core::ptr::read_unaligned(timeout.cast::<Timeval>()) };
+            if requested.seconds < 0 || requested.microseconds < 0 {
+                return c_status(-EINVAL);
+            }
+
+            // This is the direct x86 `SYS_select` branch of musl's source: carry
+            // whole microseconds into seconds, saturating the public time_t range
+            // before a signed addition could overflow.
+            if requested.microseconds / MICROSECONDS_PER_SECOND > MAX_TIME - requested.seconds {
+                timeout_storage.seconds = MAX_TIME;
+                timeout_storage.microseconds = MICROSECONDS_PER_SECOND - 1;
+            } else {
+                timeout_storage.seconds =
+                    requested.seconds + requested.microseconds / MICROSECONDS_PER_SECOND;
+                timeout_storage.microseconds = requested.microseconds % MICROSECONDS_PER_SECOND;
+            }
+            &mut timeout_storage as *mut Timeval as usize as i64
+        };
+
+        // SAFETY: the caller owns all descriptor-set extents and syscall-visible
+        // storage. Linux takes its fourth and fifth arguments in x86 r10/r8.
+        #[cfg(crabc_x86_owned_runtime)]
+        let result = unsafe {
+            crate::x86_64_static_c_abi::pthread_cancel::syscall_cp(
+                raw_syscall::SYS_SELECT,
+                i64::from(count),
+                readable as usize as i64,
+                writable as usize as i64,
+                exceptional as usize as i64,
+                timeout_pointer,
+                0,
+            )
+        };
+        #[cfg(not(crabc_x86_owned_runtime))]
+        let result = unsafe {
+            raw_syscall::syscall5(
+                raw_syscall::SYS_SELECT,
+                i64::from(count),
+                readable as usize as i64,
+                writable as usize as i64,
+                exceptional as usize as i64,
+                timeout_pointer,
+            )
+        };
+        c_status(result)
+
+        }
+        #[cfg(target_arch = "aarch64")]
+        {
         let mut timeout_storage = Timespec {
             seconds: 0,
             nanoseconds: 0,
@@ -289,6 +381,8 @@ static_archive_member! { select_source {
             )
         };
         c_status(result)
+
+        }
     }
 }}
 
@@ -368,6 +462,28 @@ static_archive_member! { pause_source {
     /// legacy fixtures retain the direct Linux syscall.
     #[no_mangle]
     pub extern "C" fn pause() -> c_int {
+        #[cfg(target_arch = "x86_64")]
+        {
+        // SAFETY: pause has no user arguments and Linux owns all wait state.
+        #[cfg(crabc_x86_owned_runtime)]
+        let result = unsafe {
+            crate::x86_64_static_c_abi::pthread_cancel::syscall_cp(
+                raw_syscall::SYS_PAUSE,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+            )
+        };
+        #[cfg(not(crabc_x86_owned_runtime))]
+        let result = unsafe { raw_syscall::syscall0(raw_syscall::SYS_PAUSE) };
+        c_status(result)
+
+        }
+        #[cfg(target_arch = "aarch64")]
+        {
         // SAFETY: pause has no user arguments and Linux owns all wait state.
         #[cfg(crabc_x86_owned_runtime)]
         let result = unsafe {
@@ -384,6 +500,8 @@ static_archive_member! { pause_source {
         #[cfg(not(crabc_x86_owned_runtime))]
         let result = unsafe { raw_syscall::syscall5(raw_syscall::SYS_PPOLL, 0, 0, 0, 0, 0) };
         c_status(result)
+
+        }
     }
 }}
 

@@ -43,6 +43,24 @@ pub unsafe extern "C" fn lchown(
     owner: c_uint,
     group: c_uint,
 ) -> c_int {
+        #[cfg(target_arch = "x86_64")]
+        {
+    // SAFETY: Linux/x86-64 `lchown=94` receives the caller-owned path, uid,
+    // and gid words in rdi/rsi/rdx. The direct request owns final-symlink
+    // no-follow semantics without a selected fchownat fallback.
+    let result = unsafe {
+        raw_syscall::syscall3(
+            raw_syscall::SYS_LCHOWN,
+            path as usize as i64,
+            i64::from(owner),
+            i64::from(group),
+        )
+    };
+    c_status(result)
+
+        }
+        #[cfg(target_arch = "aarch64")]
+        {
     // musl 1.2.6 src/unistd/lchown.c uses this generic fchownat form.
     // SAFETY: the caller supplies the path and the kernel validates its arguments.
     let result = unsafe {
@@ -56,4 +74,6 @@ pub unsafe extern "C" fn lchown(
         )
     };
     c_status(result)
-}
+
+        }
+    }

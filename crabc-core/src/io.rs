@@ -67,6 +67,13 @@ pub fn dup3(fd: RawFd, new_fd: RawFd, flags: u32) -> Result<()> {
 /// `9fa28ece75d8a2191de7c5bb53bed224c5947417`.
 #[inline]
 pub fn dup2(fd: RawFd, new_fd: RawFd) -> Result<()> {
+    #[cfg(target_arch = "x86_64")]
+    {
+        // SAFETY: Linux validates the scalar descriptor arguments.
+        return decode(unsafe { crate::syscall::syscall2(crate::syscall::SYS_DUP2, fd as usize, new_fd as usize) }).map(|_| ());
+    }
+    #[cfg(target_arch = "aarch64")]
+    {
     if fd == new_fd {
         return fcntl_getfd(fd).map(|_| ());
     }
@@ -75,6 +82,7 @@ pub fn dup2(fd: RawFd, new_fd: RawFd) -> Result<()> {
             Err(crate::Errno::BUSY) => continue,
             result => return result,
         }
+    }
     }
 }
 
