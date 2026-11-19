@@ -171,7 +171,9 @@ check_non_pie() {
     timeout 20 chroot "$execution_root" /non-pie >"$work/$name.stdout"
     cmp "$work/expected.stdout" "$work/$name.stdout"
 }
-python3 -B "$ROOT/compat/x86_64/owned_dynamic_qualification.py" prepare --work "$work"
+if [ "$native_arch" = x86_64 ]; then
+    python3 -B "$ROOT/compat/x86_64/owned_dynamic_qualification.py" prepare --work "$work"
+fi
 /usr/local/bin/crabc-$native_arch-musl-gcc -fPIC -shared "$ROOT/compat/x86_64/owned_dynamic_dependency.c" \
     -Wl,-soname,liboracle-dependency.so -o "$work/liboracle-dependency.so"
 /usr/local/bin/crabc-$native_arch-musl-gcc -fPIE -pie "$ROOT/compat/x86_64/owned_dynamic_consumer.c" \
@@ -238,6 +240,9 @@ if [ "$supplied" -eq 0 ]; then
     "${guard[@]}" python3 -B "$ROOT/compat/x86_64/owned_dynamic_package.py" package "$work/installed" "$work/runtime.tar"
     "${guard[@]}" python3 -B "$ROOT/compat/x86_64/owned_dynamic_package.py" package "$work/second" "$work/second-runtime.tar"
     "${guard[@]}" python3 -B "$ROOT/compat/x86_64/owned_dynamic_package.py" extract "$work/runtime.tar" "$work/extracted"
+fi
+if [ "$native_arch" = aarch64 ]; then
+    python3 -B "$ROOT/compat/x86_64/owned_dynamic_qualification.py" prepare --work "$work"
 fi
 cmp "$work/installed/share/crabc/manifest.json" "$work/second/share/crabc/manifest.json"
 cmp "$work/runtime.tar" "$work/second-runtime.tar"

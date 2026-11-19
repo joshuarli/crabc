@@ -336,6 +336,19 @@ def prepare(work: Path) -> None:
         [str(work / "loader-tests")],
         ["bash", str(ROOT / "compat/x86_64/run_musl_oracle.sh")],
     ]
+    checks = ["installed-driver", "owned-crt", "owned-loader-source", "pinned-musl-oracle"]
+    if ARCH["arch"] == "aarch64":
+        product = work / "installed"
+        commands = [
+            [sys.executable, "-B", "-c",
+             "import sys; from pathlib import Path; sys.path.insert(0, sys.argv[1]); "
+             "import crabc_cc_owned_dynamic as d; d.validate_installation(Path(sys.argv[2]))",
+             str(ROOT / "compat/x86_64"), str(product)],
+            [str(product / "bin/crabc-cc-dynamic"), "--dynamic-pie", "--print-link-plan"],
+            [str(product / "bin/crabc-cc-dynamic"), "--dynamic-shared-object", "--print-link-plan"],
+            ["bash", str(ROOT / "compat/x86_64/run_musl_oracle.sh")],
+        ]
+        checks = ["installed-product-native", "dynamic-pie-plan", "dynamic-shared-plan", "pinned-musl-oracle"]
     log = work / "qualification-prepare.log"
     with log.open("xb") as output:
         os.fchmod(output.fileno(), stat.S_IMODE(os.fstat(output.fileno()).st_mode) | 0o444)
@@ -348,7 +361,7 @@ def prepare(work: Path) -> None:
     write_new(work / "qualification-prepare.json", {
         "schema": SCHEMA, "source_sha256": source, "log": relative(log), "log_sha256": digest(log),
         "oracle": oracle,
-        "checks": ["installed-driver", "owned-crt", "owned-loader-source", "pinned-musl-oracle"],
+        "checks": checks,
         "exit_status": 0,
     })
 
@@ -359,7 +372,10 @@ def preparation_evidence(work: Path, source: str) -> dict[str, str]:
     require(set(record) == {"schema", "source_sha256", "log", "log_sha256", "oracle", "checks", "exit_status"}, "preparation fields drifted")
     require(record["schema"] == SCHEMA and record["source_sha256"] == source and record["exit_status"] == 0,
             "missing or stale preparation evidence")
-    require(record["checks"] == ["installed-driver", "owned-crt", "owned-loader-source", "pinned-musl-oracle"], "preparation checks incomplete")
+    checks = (["installed-product-native", "dynamic-pie-plan", "dynamic-shared-plan", "pinned-musl-oracle"]
+              if ARCH["arch"] == "aarch64" else
+              ["installed-driver", "owned-crt", "owned-loader-source", "pinned-musl-oracle"])
+    require(record["checks"] == checks, "preparation checks incomplete")
     oracle_files = validate_oracle(work, record["oracle"])
     log = evidence_path(ROOT / record["log"])
     require(log == work / "qualification-prepare.log" and digest(log) == record["log_sha256"], "preparation log is stale")
