@@ -360,7 +360,8 @@ capture combine "$LINKER" -r -o "$WORK/workload.o" "${OBJECTS[@]}"
 reference_inputs=()
 if [ "$native_arch" = aarch64 ]; then
     reference_inputs=("$reference_static/share/crabc/manifest.json" "$reference_static/usr/lib/libc.a"
-        "$WORK/reference-objects/sqrtl.o" "$WORK/reference-objects/rintl.o" "$WORK/reference-objects/nearbyintl.o")
+        "$WORK/reference-objects/acoshl.o" "$WORK/reference-objects/sqrtl.o" "$WORK/reference-objects/rintl.o"
+        "$WORK/reference-objects/nearbyintl.o")
 fi
 sha256sum "${SOURCES[@]}" "${OBJECTS[@]}" "$WORK/workload.o" "${reference_inputs[@]}" >"$WORK/source-objects-before.sha256"
 
@@ -381,8 +382,8 @@ capture oracle-run env -i LC_ALL=C LANG=C TZ=UTC "$WORK/oracle"
 validate_records oracle-run
 if [ "$native_arch" = aarch64 ]; then
     capture reference-link "$ORACLE_CC" -std=c11 -static -fno-pie -no-pie -nodefaultlibs -Wl,--trace \
-        "$WORK/workload.o" "$WORK/reference-objects/sqrtl.o" "$WORK/reference-objects/rintl.o" \
-        "$WORK/reference-objects/nearbyintl.o" -Wl,--start-group -lc \
+        "$WORK/workload.o" "$WORK/reference-objects/acoshl.o" "$WORK/reference-objects/sqrtl.o" \
+        "$WORK/reference-objects/rintl.o" "$WORK/reference-objects/nearbyintl.o" -Wl,--start-group -lc \
         "$DYNAMIC_PRODUCT/usr/lib/libcrabc-builtins.a" -Wl,--end-group -o "$WORK/reference-oracle"
     capture reference-trace python3 -B "$ROOT/compat/x86_64/owned_math_fenv_aarch64_reference.py" \
         trace "$WORK/reference-link.stdout" "$WORK/workload.o" "$WORK/reference-objects" \

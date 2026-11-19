@@ -9,7 +9,7 @@ import sys
 import owned_posix_product_evidence as products
 import source_seal
 
-SYMBOLS = ('sqrtl', 'rintl', 'nearbyintl')
+SYMBOLS = ('acoshl', 'sqrtl', 'rintl', 'nearbyintl')
 
 
 def run(*args):
