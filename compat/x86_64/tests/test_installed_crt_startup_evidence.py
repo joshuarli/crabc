@@ -853,6 +853,24 @@ int main(void) {
         )
         with self.assertRaises(reader.StartupEvidenceError):reader.descriptor_runtime_source_order(changed)
 
+    def test_arm64_descriptor_attachment_precedes_libc_startup(self):
+        sources = reader.descriptor_runtime_source_bytes(reader.ROOT)
+        crt = sources['crt/src/x86_64_dynamic_startup.rs'].decode('utf-8')
+        start = crt.index('pub unsafe extern "C" fn __crabc_x86_64_dynamic_start(')
+        end = crt.index('\n#[no_mangle]\npub unsafe extern "C" fn __crabc_x86_64_dynamic_executable_init', start)
+        startup = crt[start:end]
+        cfg = '#[cfg(all(target_arch = "aarch64", crabc_owned_dynamic_runtime))]'
+        startup = startup[startup.index(cfg):]
+        attach = 'if !handoff.is_null() && unsafe { __crabc_x86_loader_tls_runtime_v1_attach() } != 0'
+        expected = (cfg, attach, 'startup_reject();', '__libc_start_main(')
+        reader._runtime_order(startup, expected, 'aarch64 CRT attachment')
+        for missing in expected:
+            with self.subTest(missing=missing), self.assertRaises(reader.StartupEvidenceError):
+                reader._runtime_order(startup.replace(missing, '', 1), expected, 'aarch64 CRT attachment')
+        late = startup.replace(attach, '', 1).replace('__libc_start_main(', '__libc_start_main(\n' + attach, 1)
+        with self.assertRaises(reader.StartupEvidenceError):
+            reader._runtime_order(late, expected, 'aarch64 CRT attachment')
+
     def test_descriptor_runtime_source_order_requires_each_named_local_consumer_body(self):
         """The final-byte roster names all three source-level admission bodies."""
         sources=reader.descriptor_runtime_source_bytes(reader.ROOT)
