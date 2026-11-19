@@ -17,7 +17,7 @@
 #define _GNU_SOURCE 1
 #endif
 
-#if !defined(__linux__) || !defined(__x86_64__) || !defined(__LP64__)
+#if !defined(__linux__) || (!defined(__x86_64__) && !defined(__aarch64__)) || !defined(__LP64__)
 #error "owned static startup publication requires native Linux/x86-64 LP64"
 #endif
 
