@@ -11,7 +11,8 @@ set -euo pipefail
 export LC_ALL=C
 
 readonly ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-readonly ORACLE_CC=/usr/local/bin/crabc-x86_64-musl-gcc
+eval "$(python3 -B "$ROOT_DIR/compat/x86_64/native_arch.py")"
+readonly ORACLE_CC="$oracle"
 readonly STATIC_C_ABI_EXPORTS="$ROOT_DIR/compat/x86_64/static_c_abi_exports.txt"
 readonly AARCH64_STATIC_ABI="$ROOT_DIR/compat/abi/musl-1.2.6/aarch64/libc.a.static.tsv"
 readonly SOURCE="$ROOT_DIR/libc/src/c_abi/x86_64/sethostent.rs"
@@ -107,7 +108,7 @@ assert_static_candidate_closure() {
 
 [ "$(uname -s)" = Linux ] || fail "requires native Linux"
 case "$(uname -m)" in
-    x86_64|amd64) ;;
+    x86_64|amd64|aarch64|arm64) ;;
     *) fail "requires native x86-64" ;;
 esac
 for tool in ar awk cargo cmp comm diff grep mkdir mktemp nm objdump readelf rustup sort; do
@@ -127,7 +128,7 @@ grep -Fqx $'setnetent\tent.lo\tW\tWEAK\t0\t4' "$AARCH64_STATIC_ABI" ||
 work_dir="$(mktemp -d /tmp/crabc-x86-64-libc-sethostent.XXXXXX)"
 trap 'rm -rf -- "$work_dir"' EXIT
 baseline_target="$work_dir/cargo-baseline"
-baseline_archive="$baseline_target/x86_64-unknown-linux-musl/debug/libc.a"
+baseline_archive="$baseline_target/$target_triple/debug/libc.a"
 selected_archive="$work_dir/libcrabc-sethostent.a"
 reference="$work_dir/musl-sethostent-reference"
 candidate="$work_dir/crabc-static-sethostent-candidate"
@@ -167,10 +168,10 @@ done
     -I "$ROOT_DIR/include" "$PROBE" -o "$reference"
 "$reference" || fail "pinned-musl sethostent fixture failed"
 
-build_source_runtime_libc "$baseline_target/x86_64-unknown-linux-musl/debug/libc.a"
+build_source_runtime_libc "$baseline_target/$target_triple/debug/libc.a"
 [ -f "$baseline_archive" ] || fail "cargo did not emit the default x86 static libc archive"
 collect_global_surface "$baseline_archive" "$baseline_symbols" "$work_dir/baseline-members"
-grep -Ev '^(#|$)' "$STATIC_C_ABI_EXPORTS" | LC_ALL=C sort -u >"$expected_symbols"
+source_runtime_expected_static_surface "$STATIC_C_ABI_EXPORTS" "$expected_symbols" "$arch"
 if ! cmp -s "$expected_symbols" "$baseline_symbols"; then
     diff -u "$expected_symbols" "$baseline_symbols" >&2 || true
     fail "default static C ABI export surface drifted"
@@ -210,7 +211,7 @@ grep -Eq '[[:space:]]W[[:space:]]setnetent$' <(nm -A --defined-only "$sethostent
     fail "sethostent owner lacks its weak alias"
 readelf --relocs --wide "$sethostent_object" >"$owner_relocations"
 objdump -dr --disassemble=sethostent "$sethostent_object" >"$owner_disassembly"
-if grep -Eq '[[:space:]](call|syscall)([[:space:]]|$)|TLSGD|TLSLD|TLSDESC|GOTTPOFF|DTPMOD(64)?|__tls_get_addr|crabc_core|mimalloc|sha_crypt' \
+if grep -Eq '[[:space:]](call|syscall|bl|blr|svc)([[:space:]]|$)|TLSGD|TLSLD|TLSDESC|GOTTPOFF|DTPMOD(64)?|__tls_get_addr|crabc_core|mimalloc|sha_crypt' \
     "$owner_relocations" "$owner_disassembly"; then
     fail "sethostent code section selects a call, TLS, syscall, or an unowned runtime"
 fi
@@ -230,7 +231,7 @@ net_address="$(nm --defined-only --format=posix "$candidate" | awk -v allow="$FI
 objdump -d --disassemble=sethostent "$candidate" >"$sethostent_disassembly"
 grep -Eq '[[:space:]]ret([[:space:]]|$)' "$sethostent_disassembly" ||
     fail "sethostent lacks its no-op return"
-if grep -Eq '[[:space:]](call|syscall)([[:space:]]|$)' "$sethostent_disassembly"; then
+if grep -Eq '[[:space:]](call|syscall|bl|blr|svc)([[:space:]]|$)' "$sethostent_disassembly"; then
     fail "sethostent unexpectedly performs a call or syscall"
 fi
 "$candidate" || fail "freestanding sethostent fixture failed"
@@ -256,4 +257,8 @@ if nm --defined-only --format=posix "$override_candidate" |
 fi
 "$override_candidate" || fail "freestanding setnetent override fixture failed"
 
-printf 'x86 static libc sethostent/setnetent: PASS\n'
+if [ "$arch" = x86_64 ]; then
+    printf 'x86 static libc sethostent/setnetent: PASS\n'
+else
+    printf '%s static libc sethostent/setnetent: PASS\n' "$arch"
+fi
