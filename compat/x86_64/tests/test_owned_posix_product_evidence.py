@@ -688,6 +688,27 @@ class OwnedPosixProductEvidenceTests(unittest.TestCase):
         })
         return receipt
 
+    def test_arm_non_pie_receipt_binds_attachment_object(self) -> None:
+        receipt = self.dynamic_receipt("non-pie")
+        record = json.loads(receipt.read_text())
+        record["format"] = "crabc-aarch64-owned-dynamic-sysroot-v1"
+        command = record["link_command"]
+        command[command.index("--dynamic-linker") + 1] = "/lib/ld-crabc-aarch64.so.1"
+        attach = str(self.dynamic / "usr/lib/crabc-dynamic-attach.o")
+        crti = str(self.dynamic / "usr/lib/crti.o")
+        attach_index, crti_index = command.index(attach), command.index(crti)
+        command[attach_index], command[crti_index] = crti, attach
+        self.write_json(receipt, record)
+        manifest = self.dynamic / "share/crabc/manifest.json"
+        with mock.patch.object(evidence, "_dynamic_profile", return_value=evidence.NativeRuntimeProfile.COMPATIBILITY):
+            evidence._validate_aarch64_dynamic_receipt(self.dynamic, (self.workload,), self.executable,
+                                                        receipt, "non-pie", manifest, str(self.linker), str)
+            record["owned_runtime_inputs"].remove("usr/lib/crabc-dynamic-attach.o")
+            self.write_json(receipt, record)
+            with self.assertRaisesRegex(evidence.ProductEvidenceError, "owned runtime roster differs"):
+                evidence._validate_aarch64_dynamic_receipt(self.dynamic, (self.workload,), self.executable,
+                                                            receipt, "non-pie", manifest, str(self.linker), str)
+
     def static_plan(self, crt: str, pie: bool) -> list[str]:
         library = self.static / "usr/lib"
         return [
