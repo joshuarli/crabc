@@ -10,12 +10,24 @@
 static volatile int active;
 static long parent_pid;
 static long raw_pid(void) {
+#if defined(__aarch64__)
+    register long result __asm__("x0");
+    register long call __asm__("x8") = 172;
+    __asm__ volatile("svc 0" : "=r"(result) : "r"(call) : "memory", "cc");
+#else
     long result;
     __asm__ volatile("syscall" : "=a"(result) : "a"(39L) : "rcx","r11","memory");
+#endif
     return result;
 }
 static void reject(int status) {
+#if defined(__aarch64__)
+    register long argument __asm__("x0") = status;
+    register long call __asm__("x8") = 94;
+    __asm__ volatile("svc 0" : : "r"(argument), "r"(call) : "memory", "cc");
+#else
     __asm__ volatile("syscall" : : "a"(231L),"D"((long)status) : "rcx","r11","memory");
+#endif
     __builtin_unreachable();
 }
 #ifdef CRABC_SPAWN_ELF_INTERPOSITION
