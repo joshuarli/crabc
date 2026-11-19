@@ -52,7 +52,7 @@ COMBINED_FORMAT = shared.COMBINED_SYSROOT_FORMAT
 COMBINED_PRODUCT_MANIFEST = "share/crabc/dynamic/manifest.json"
 
 
-def application_dso_basename(path: Path) -> str:
+def application_dso_basename(path: Path, *, architecture: str = "x86_64") -> str:
     """Admit ordinary application DSOs and numeric ELF ABI-version suffixes.
 
     A versioned library such as Lua's ``liblua.so.5.4`` remains an explicit
@@ -64,7 +64,7 @@ def application_dso_basename(path: Path) -> str:
     name = path.name
     if APPLICATION_DSO_BASENAME.fullmatch(name) is None:
         raise shared.DriverError("unowned application DSO")
-    if receipt_contract.is_reserved_application_dso_name(name):
+    if receipt_contract.is_reserved_application_dso_name(name, architecture=architecture):
         raise shared.DriverError("reserved application DSO")
     return name
 

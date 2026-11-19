@@ -34,6 +34,19 @@ class Aarch64DynamicNonPieTest(unittest.TestCase):
         cls.addClassCleanup(os.environ.pop, "CRABC_AARCH64_DYNAMIC_SYSROOT", None)
 
     @unittest.skipUnless(os.environ.get("CRABC_AARCH64_DYNAMIC_SYSROOT") or CAN_BUILD, "requires a built aarch64 product")
+    def test_dso_declarations_validate_native_reserved_names_before_planning(self):
+        product = Path(os.environ["CRABC_AARCH64_DYNAMIC_SYSROOT"]).resolve(strict=True)
+        driver = product / "bin/crabc-cc-dynamic"
+        for option in ("--application-dso", "--transitive-application-dso"):
+            for name in ("libc.so", "ld-crabc-aarch64.so.1", "ld-musl-aarch64.so.1", "libapp.so.5beta"):
+                with self.subTest(option=option, name=name):
+                    result = subprocess.run([driver, "-pie", option, "/tmp/" + name, "--print-link-plan"],
+                                            capture_output=True, text=True)
+                    self.assertNotEqual(result.returncode, 0)
+                    self.assertTrue("reserved application DSO" in result.stderr or
+                                    "unowned application DSO" in result.stderr, result.stderr)
+
+    @unittest.skipUnless(os.environ.get("CRABC_AARCH64_DYNAMIC_SYSROOT") or CAN_BUILD, "requires a built aarch64 product")
     def test_receipt_reservations_precede_translation_and_preserve_existing_files(self):
         product = Path(os.environ["CRABC_AARCH64_DYNAMIC_SYSROOT"]).resolve(strict=True)
         driver = product / "bin/crabc-cc-dynamic"

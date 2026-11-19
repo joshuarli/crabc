@@ -88,9 +88,17 @@ def execute(arguments):
                 else:
                     runpath = value
             elif arg == "--transitive-application-dso":
-                transitive_dsos.append(Path(value))
+                path = Path(value)
+                if shared.rejects_runtime_object(path):
+                    raise shared.DriverError("unowned transitive application DSO")
+                dynamic_shared.application_dso_basename(path, architecture="aarch64")
+                transitive_dsos.append(path)
             else:
-                dsos.append(Path(value))
+                path = Path(value)
+                if shared.rejects_runtime_object(path):
+                    raise shared.DriverError("unowned application DSO")
+                dynamic_shared.application_dso_basename(path, architecture="aarch64")
+                dsos.append(path)
         elif arg == "--application-dependency-file":
             index += 1
             if index == len(arguments) or arguments[index].startswith("-") or dependency_file is not None:
