@@ -227,9 +227,12 @@ pub unsafe extern "C" fn __crabc_x86_64_dynamic_start(
     // directly, so this is neither a weak fallback nor a libc.so import. A
     // failed descriptor observation must stop before the dynamic libc sees
     // the six-argument startup boundary or any main-image callback runs.
-    #[cfg(any(crabc_dynamic_main_thread_runtime_v1, all(target_arch = "aarch64", crabc_owned_dynamic_runtime)))]
-    if (cfg!(target_arch = "x86_64") || !handoff.is_null())
-        && unsafe { __crabc_x86_loader_tls_runtime_v1_attach() } != 0 {
+    #[cfg(all(target_arch = "x86_64", crabc_dynamic_main_thread_runtime_v1))]
+    if unsafe { __crabc_x86_loader_tls_runtime_v1_attach() } != 0 {
+        startup_reject();
+    }
+    #[cfg(all(target_arch = "aarch64", crabc_owned_dynamic_runtime))]
+    if !handoff.is_null() && unsafe { __crabc_x86_loader_tls_runtime_v1_attach() } != 0 {
         startup_reject();
     }
     unsafe {
