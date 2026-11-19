@@ -413,6 +413,8 @@ def cargo_consumer(
     target = lane / "target"
     target.mkdir()
     rustflags = list(flags)
+    if ARCH == "aarch64" and link == "owned-static":
+        rustflags += ["-C", "relocation-model=pic", "-C", "link-arg=-static-pie"]
     environment = {
         **tool_environment(),
         "CARGO_HOME": str(context.cargo_home),

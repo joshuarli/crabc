@@ -936,8 +936,8 @@ def parse_cargo_arguments(
                 output = confined_output(value, cargo_profile_root / "build")
             else:
                 search_paths.append(confined(value, [cargo_profile_root, stock_root], "Rust search path", directory=True))
-        elif argument in {"-pie", "-static-pie"}:
-            if rust_mode is not None:
+        elif argument in ({"-pie", "-static-pie", "-no-pie"} if ARCH == "aarch64" else {"-pie", "-static-pie"}):
+            if rust_mode is not None and not (ARCH == "aarch64" and rust_mode == "no-pie" and argument == "-static-pie"):
                 raise LinkError("duplicate or conflicting Rust executable mode")
             rust_mode = argument.removeprefix("-")
         elif argument.startswith("-Wl,-plugin-opt="):

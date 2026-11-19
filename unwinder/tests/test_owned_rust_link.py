@@ -672,6 +672,13 @@ class CargoConsumerLinkContract(unittest.TestCase):
         with self.assertRaisesRegex(linker.LinkError, "linker-plugin option"):
             self.parse(self.arguments(extra=("-Wl,-plugin-opt=O3,-plugin-opt=-load=/tmp/pass.so",)))
 
+    def test_arm64_explicit_static_pie_overrides_rustc_no_pie(self):
+        with patch.object(linker, "ARCH", "aarch64"):
+            parsed = self.parse(self.arguments(mode="-no-pie", unwind="-lunwind", extra=("-static-pie",)))
+            self.assertEqual(parsed["rust_mode"], "static-pie")
+            with self.assertRaises(linker.LinkError):
+                self.parse(self.arguments(mode="-pie", extra=("-static-pie",)))
+
     def test_foreign_inputs_and_request_spellings_are_rejected(self):
         ambient = Path(self.temporary.name) / "libgcc_eh.a"
         ambient.write_bytes(b"archive")
