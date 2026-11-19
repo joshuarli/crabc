@@ -8,6 +8,7 @@ use crabc_rs::mm::{
 
 const PAGE_SIZE: usize = 4096;
 
+#[cfg(not(feature = "std"))]
 #[panic_handler]
 fn panic(_: &core::panic::PanicInfo<'_>) -> ! {
     loop {}

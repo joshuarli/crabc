@@ -9,6 +9,7 @@ use core::ffi::CStr;
 use crabc_rs::{mount, process, pty, shm, system, thread};
 
 #[cfg(not(feature = "std"))]
+#[cfg(not(feature = "std"))]
 #[panic_handler]
 fn panic(_: &core::panic::PanicInfo<'_>) -> ! {
     loop {}

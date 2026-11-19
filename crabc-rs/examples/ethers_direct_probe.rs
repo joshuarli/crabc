@@ -6,6 +6,7 @@
 use crabc_rs::net::ethers::{parse_line, EthernetLine, Ipv6Constants};
 use crabc_rs::net::Ipv6Addr;
 
+#[cfg(not(feature = "std"))]
 #[panic_handler]
 fn panic(_: &core::panic::PanicInfo<'_>) -> ! {
     loop {}

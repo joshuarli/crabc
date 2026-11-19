@@ -4,6 +4,7 @@
 
 use crabc_rs::net::{NetworkU16, NetworkU32};
 
+#[cfg(not(feature = "std"))]
 #[panic_handler]
 fn panic(_: &core::panic::PanicInfo<'_>) -> ! {
     loop {}

@@ -6,6 +6,7 @@
 use core::sync::atomic::AtomicU32;
 use crabc_rs::thread::futex::{self, Flags};
 
+#[cfg(not(feature = "std"))]
 #[panic_handler]
 fn panic(_: &core::panic::PanicInfo<'_>) -> ! {
     loop {}

@@ -8,6 +8,7 @@ use core::ffi::CStr;
 use crabc_rs::fs::Mode;
 use crabc_rs::ipc::{self, CreateFlags, MessagePriority, OpenFlags, QueueAttributes};
 
+#[cfg(not(feature = "std"))]
 #[panic_handler]
 fn panic(_: &core::panic::PanicInfo<'_>) -> ! {
     loop {}

@@ -6,6 +6,7 @@ use core::time::Duration;
 
 use crabc_rs::time::{nanosleep, SleepError, SleepOutcome};
 
+#[cfg(not(feature = "std"))]
 #[panic_handler]
 fn panic(_: &core::panic::PanicInfo<'_>) -> ! {
     loop {}

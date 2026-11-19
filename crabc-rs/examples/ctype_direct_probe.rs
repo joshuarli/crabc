@@ -7,6 +7,7 @@ use crabc_rs::text::{
     is_space, is_xdigit, to_ascii, to_lower, to_upper, AsciiClass,
 };
 
+#[cfg(not(feature = "std"))]
 #[panic_handler]
 fn panic(_: &core::panic::PanicInfo<'_>) -> ! {
     loop {}

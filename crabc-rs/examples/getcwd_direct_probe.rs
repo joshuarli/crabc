@@ -8,6 +8,7 @@ use crabc_rs::process;
 
 const PROBE_PATH_CAPACITY: usize = 4096;
 
+#[cfg(not(feature = "std"))]
 #[panic_handler]
 fn panic(_: &core::panic::PanicInfo<'_>) -> ! {
     loop {}

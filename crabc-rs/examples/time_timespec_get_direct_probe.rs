@@ -4,6 +4,7 @@
 
 use crabc_rs::time::{timespec_get, NANOS_PER_SECOND};
 
+#[cfg(not(feature = "std"))]
 #[panic_handler]
 fn panic(_: &core::panic::PanicInfo<'_>) -> ! {
     loop {}

@@ -10,6 +10,7 @@ use crabc_rs::fs::{self, Mode, OFlags};
 const INPUT_PATH: &[u8] = b"/tmp/crabc-rs-native-copy-file-range-probe-input";
 const OUTPUT_PATH: &[u8] = b"/tmp/crabc-rs-native-copy-file-range-probe-output";
 
+#[cfg(not(feature = "std"))]
 #[panic_handler]
 fn panic(_: &core::panic::PanicInfo<'_>) -> ! {
     loop {}

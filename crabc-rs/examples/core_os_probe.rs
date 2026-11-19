@@ -12,6 +12,7 @@ use core::mem::MaybeUninit;
 use crabc_rs::{event, mm, net, pipe, rand, time};
 
 #[cfg(not(feature = "std"))]
+#[cfg(not(feature = "std"))]
 #[panic_handler]
 fn panic(_: &core::panic::PanicInfo<'_>) -> ! {
     loop {}

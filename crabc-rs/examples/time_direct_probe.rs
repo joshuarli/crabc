@@ -7,6 +7,7 @@
 
 use crabc_rs::time::{wall_clock, NANOS_PER_SECOND};
 
+#[cfg(not(feature = "std"))]
 #[panic_handler]
 fn panic(_: &core::panic::PanicInfo<'_>) -> ! {
     loop {}

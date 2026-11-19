@@ -9,6 +9,7 @@ use crabc_rs::fs::{self, Mode, OFlags};
 use crabc_rs::process;
 use crabc_rs::OwnedFd;
 
+#[cfg(not(feature = "std"))]
 #[panic_handler]
 fn panic(_: &core::panic::PanicInfo<'_>) -> ! {
     loop {}

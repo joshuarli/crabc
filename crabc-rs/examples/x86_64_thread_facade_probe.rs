@@ -57,6 +57,7 @@ unsafe impl GlobalAlloc for ProbeAllocator {
 #[global_allocator]
 static ALLOCATOR: ProbeAllocator = ProbeAllocator;
 
+#[cfg(not(feature = "std"))]
 #[panic_handler]
 fn panic(_: &core::panic::PanicInfo<'_>) -> ! {
     // SAFETY: `ud2` raises SIGILL, ending this probe process immediately.

@@ -14,6 +14,7 @@ use crabc_rs::pty::{OpenptFlags, PtyPair};
 use crabc_rs::termios::{self, Action, OptionalActions, QueueSelector, SpecialCodeIndex};
 use crabc_rs::process::Pid;
 
+#[cfg(not(feature = "std"))]
 #[panic_handler]
 fn panic(_: &core::panic::PanicInfo<'_>) -> ! {
     loop {}

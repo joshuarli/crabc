@@ -15,6 +15,7 @@ use crabc_rs::process::{self, ForkResult};
 use crabc_rs::pty::{self, OpenptFlags, PtyPair};
 use crabc_rs::termios;
 
+#[cfg(not(feature = "std"))]
 #[panic_handler]
 fn panic(_: &core::panic::PanicInfo<'_>) -> ! {
     loop {}

@@ -10,6 +10,7 @@ use core::mem::MaybeUninit;
 use crabc_rs::rand::{getentropy, GETENTROPY_MAX_LENGTH};
 use crabc_rs::Errno;
 
+#[cfg(not(feature = "std"))]
 #[panic_handler]
 fn panic(_: &core::panic::PanicInfo<'_>) -> ! {
     loop {}

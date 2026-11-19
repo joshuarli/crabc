@@ -11,6 +11,7 @@ use crabc_rs::process::{self, Gid};
 
 const PROBE_GROUP_CAPACITY: usize = 64;
 
+#[cfg(not(feature = "std"))]
 #[panic_handler]
 fn panic(_: &core::panic::PanicInfo<'_>) -> ! {
     loop {}

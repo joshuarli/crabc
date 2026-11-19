@@ -13,6 +13,7 @@ use core::ffi::{c_char, c_int};
 use crabc_rs::cfile::{CFile, FileMode, SeekFrom};
 use crabc_rs::Errno;
 
+#[cfg(not(feature = "std"))]
 #[panic_handler]
 fn panic(_: &core::panic::PanicInfo<'_>) -> ! {
     // SAFETY: `ud2` raises SIGILL, ending this probe process immediately.
