@@ -12,6 +12,8 @@ ulimit -c 0
 readonly ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 eval "$(python3 -B "$ROOT/compat/x86_64/native_arch.py")"
 readonly ORACLE_CC="$oracle"
+architecture_args=()
+if [ "$arch" != x86_64 ]; then architecture_args=(--architecture "$arch"); fi
 readonly PROBE="$ROOT/compat/x86_64/owned_stdio_allocator_interposition_probe.c"
 readonly CRABC_INTERPRETER="/lib/ld-crabc-$arch.so.1"
 readonly MUSL_INTERPRETER="/lib/ld-musl-$arch.so.1"
@@ -47,7 +49,7 @@ printf 'owned stdio allocator interposition evidence: %s\n' "$work"
 bash "$ROOT/compat/x86_64/run_musl_oracle.sh" >/dev/null
 if [ -z "$provided_dynamic" ]; then
     python3 -B "$ROOT/scripts/build_x86_64_owned_dynamic_sysroot.py" \
-        --output "$work/installed" >"$work/dynamic-build.json"
+        "${architecture_args[@]}" --output "$work/installed" >"$work/dynamic-build.json"
     provided_dynamic="$work/installed"
 fi
 readonly installed="$provided_dynamic"

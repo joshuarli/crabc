@@ -46,7 +46,7 @@ ENGINE_MODEL_TRANSCRIPT = b"".join(
     f"scenario {index} lines=1 digest=12345678\n".encode() for index in range(16384))
 
 
-def elf_object(undefined: tuple[str, ...], defined: tuple[str, ...] = (), machine: int = 62) -> bytes:
+def elf_object(undefined: tuple[str, ...], defined: tuple[str, ...] = (), machine: int = receipt.MACHINE) -> bytes:
     """Minimal ELF64 ET_REL: null, .strtab and .symtab sections only."""
     names = [*undefined, *defined]
     strings = b"\0" + b"".join(name.encode() + b"\0" for name in names)
@@ -262,7 +262,7 @@ class ReceiptFixture:
             (root / "control").mkdir(parents=True)
             (root / "bin").mkdir()
             (root / "scratch").mkdir()
-            staged = {"busybox": root / "control/busybox", "loader": root / "control/ld-musl-x86_64.so.1"}
+            staged = {"busybox": root / "control/busybox", "loader": root / f"control/ld-musl-{receipt.ARCH}.so.1"}
             for key, source in (("busybox", self.control_busybox), ("loader", self.control_loader)):
                 staged[key].write_bytes(source.read_bytes())
                 staged[key].chmod(stat.S_IMODE(source.stat().st_mode))
@@ -388,7 +388,7 @@ class ReceiptFixture:
                 "reservation": {"empty": True, "mode": 0o755},
                 "mount": {"command": [str(receipt.CONTROL_PROC_MOUNT_COMMAND), "-t", "proc", "-o", "ro,nosuid,nodev,noexec", "proc", str(target)],
                           "status": 0, "stdout": snapshot(b""), "stderr": snapshot(b""), "target": str(target)},
-                "namespace": {"outside": outside, "inside": {"command": ["/usr/sbin/chroot", str(root), "/control/ld-musl-x86_64.so.1", "/control/busybox", "readlink", "/proc/self/ns/pid"],
+                "namespace": {"outside": outside, "inside": {"command": ["/usr/sbin/chroot", str(root), f"/control/ld-musl-{receipt.ARCH}.so.1", "/control/busybox", "readlink", "/proc/self/ns/pid"],
                               "status": 0, "stdout": snapshot((outside + "\n").encode()), "stderr": snapshot(b"")}, "matched": True},
                 "unmount": {"command": [str(receipt.CONTROL_PROC_UMOUNT_COMMAND), str(target)], "status": 0,
                             "stdout": snapshot(b""), "stderr": snapshot(b"")},
@@ -606,8 +606,8 @@ class OwnedStdioFileEngineReceiptTests(unittest.TestCase):
         path = self.fixture.work / "probe.o"
         path.write_bytes(elf_object(("getc", "stdout"), defined=("fgetc",)))
         self.assertEqual(receipt.undefined_symbols(path), {"getc", "stdout"})
-        path.write_bytes(elf_object(("getc",), machine=183))
-        with self.assertRaisesRegex(receipt.ReceiptError, "not an x86-64 relocatable object"):
+        path.write_bytes(elf_object(("getc",), machine=183 if receipt.MACHINE == 62 else 62))
+        with self.assertRaisesRegex(receipt.ReceiptError, f"not an {receipt.MACHINE_LABEL} relocatable object"):
             receipt.undefined_symbols(path)
         path.write_bytes(b"getc object\n")
         with self.assertRaisesRegex(receipt.ReceiptError, "not a little-endian ELF64 object"):
@@ -769,7 +769,7 @@ class OwnedStdioFileEngineReceiptTests(unittest.TestCase):
                 body = b""
             elif name.endswith("/usr/lib/libc.so"):
                 body = libc.read_bytes()
-            elif name.endswith("/lib/ld-musl-x86_64.so.1"):
+            elif name.endswith(f"/lib/ld-musl-{receipt.ARCH}.so.1"):
                 body = self.fixture.control_loader.read_bytes()
             elif name.endswith("/consumer"):
                 role, mode = name.split("-", 2)[:2]

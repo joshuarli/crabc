@@ -32,17 +32,22 @@ import owned_dynamic_qualification as qualification
 import source_seal
 import owned_posix_product_evidence as products
 import owned_stdio_file_dso_receipt as dso
+from native_arch import native_arch
+
+ARCH = native_arch()["arch"]
+MACHINE = {"x86_64": 62, "aarch64": 183}[ARCH]
+MACHINE_LABEL = {"x86_64": "x86-64", "aarch64": "aarch64"}[ARCH]
 
 SCHEMA = "crabc.x86_64-owned-stdio-file-engine/v1"
-ORACLE_COMPILER = "/usr/local/bin/crabc-x86_64-musl-gcc"
+ORACLE_COMPILER = native_arch()["oracle"]
 ORACLE_RUNTIME = Path("/opt/musl-1.2.6/lib/libc.so")
 COPIES_PATH = HERE / "owned_crypt_runtime_evidence.py"
-INTERPRETER = "/lib/ld-crabc-x86_64.so.1"
+INTERPRETER = f"/lib/ld-crabc-{ARCH}.so.1"
 # The process probe needs a shell.  These are explicit pinned-image control
 # inputs, resolved to physical files before any receipt validation; they never
 # stand in for a supplied product loader or libc.
 CONTROL_BUSYBOX = Path(os.path.realpath("/bin/busybox"))
-CONTROL_LOADER = Path(os.path.realpath("/lib/ld-musl-x86_64.so.1"))
+CONTROL_LOADER = Path(os.path.realpath(f"/lib/ld-musl-{ARCH}.so.1"))
 CONTROL_APPLETS = ("sh", "cat", "sleep")
 # The mount helpers are invoked through their fixed applet paths.  The separate
 # physical identities below bind the resolved bytes (BusyBox provides these
@@ -156,7 +161,7 @@ INTERPOSITION_ARTIFACTS = (
       for mode in ("pie", "non-pie") for entry in ("kernel", "direct")),
     *(f"candidate-{mode}-{entry}-root/usr/lib/libc.so" for mode in ("pie", "non-pie")
       for entry in ("kernel", "direct")),
-    *(f"oracle-{mode}-{entry}-root/lib/ld-musl-x86_64.so.1" for mode in ("pie", "non-pie")
+    *(f"oracle-{mode}-{entry}-root/lib/ld-musl-{ARCH}.so.1" for mode in ("pie", "non-pie")
       for entry in ("kernel", "direct")),
 )
 # The frozen AArch64 capability ledger names each credited capability's exact
@@ -178,7 +183,7 @@ extern char **environ;
 int main(int argc, char **argv)
 {{
     char *command[argc + 3];
-    command[0] = "/control/ld-musl-x86_64.so.1";
+    command[0] = "/control/ld-musl-{ARCH}.so.1";
     command[1] = "/control/busybox";
     command[2] = "{applet}";
     for (int index = 1; index < argc; index++)
@@ -555,7 +560,7 @@ def validate_control_material(work: Path, report: Mapping[str, Any], tools: Mapp
         busybox = check_identity(work, stage["busybox"], "control " + linkage + " BusyBox stage")
         loader = check_identity(work, stage["loader"], "control " + linkage + " loader stage")
         require(busybox == root / "control/busybox", "control " + linkage + " BusyBox stage path differs")
-        require(loader == root / "control/ld-musl-x86_64.so.1", "control " + linkage + " loader stage path differs")
+        require(loader == root / f"control/ld-musl-{ARCH}.so.1", "control " + linkage + " loader stage path differs")
         _same_bytes_metadata(busybox, regular(Path(str(tools["control_busybox"]["path"])), "pinned control BusyBox"),
                              "control " + linkage + " BusyBox stage")
         _same_bytes_metadata(loader, regular(Path(str(tools["control_loader"]["path"])), "pinned control loader"),
@@ -750,8 +755,8 @@ def undefined_symbols(path: Path) -> set[str]:
             f"{path.name} is not a little-endian ELF64 object")
     (e_type, e_machine, _version, _entry, _phoff, shoff, _flags, _ehsize, _phentsize, _phnum,
      shentsize, shnum, _shstrndx) = struct.unpack_from("<HHIQQQIHHHHHH", data, 16)
-    require(e_type == 1 and e_machine == 62 and shentsize == 64 and shnum > 0
-            and shoff + shnum * shentsize <= len(data), f"{path.name} is not an x86-64 relocatable object")
+    require(e_type == 1 and e_machine == MACHINE and shentsize == 64 and shnum > 0
+            and shoff + shnum * shentsize <= len(data), f"{path.name} is not an {MACHINE_LABEL} relocatable object")
     sections = [struct.unpack_from("<IIQQQQIIQQ", data, shoff + index * shentsize) for index in range(shnum)]
     names: set[str] = set()
     tables = 0
@@ -869,7 +874,7 @@ def validate_process_proc(work: Path, report: Mapping[str, Any], tools: Mapping[
         require(type(inside) is dict and set(inside) == {"command", "status", "stdout", "stderr"},
                 "process " + linkage + " proc inside namespace fields differ")
         same([inside["command"], inside["status"], namespace["matched"]],
-             [["/usr/sbin/chroot", str(root), "/control/ld-musl-x86_64.so.1", "/control/busybox", "readlink", "/proc/self/ns/pid"], 0, True],
+             [["/usr/sbin/chroot", str(root), f"/control/ld-musl-{ARCH}.so.1", "/control/busybox", "readlink", "/proc/self/ns/pid"], 0, True],
              "process " + linkage + " proc namespace command differs")
         _snapshot(inside["stdout"], (outside + "\n").encode(), "process " + linkage + " proc namespace stdout")
         _snapshot(inside["stderr"], b"", "process " + linkage + " proc namespace stderr")
@@ -1065,7 +1070,7 @@ def validate_commands(checkout: Path, work: Path, report: Mapping[str, Any], sou
                         and files[stem + ".stderr"].read_bytes() == b"",
                         f"allocator interposition {stem} raw execution differs")
             candidate_root = f"candidate-{mode}-{entry}-root/usr/lib/libc.so"
-            oracle_root = f"oracle-{mode}-{entry}-root/lib/ld-musl-x86_64.so.1"
+            oracle_root = f"oracle-{mode}-{entry}-root/lib/ld-musl-{ARCH}.so.1"
             require(digest(files[candidate_root]) == digest(libc),
                     f"allocator interposition {mode} {entry} libc copy differs")
             require(digest(files[oracle_root]) == digest(ORACLE_RUNTIME),

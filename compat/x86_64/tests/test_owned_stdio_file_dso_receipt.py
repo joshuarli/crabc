@@ -33,7 +33,7 @@ class FileDsoReceiptTests(unittest.TestCase):
             (dynamic / "bin/crabc-cc-dynamic").write_bytes(b"dynamic driver")
             (dynamic / "usr/lib/libc.so").write_bytes(b"shared libc")
             (dynamic / "lib").mkdir()
-            (dynamic / "lib/ld-crabc-x86_64.so.1").write_bytes(b"loader")
+            (dynamic / f"lib/ld-crabc-{receipt.ARCH}.so.1").write_bytes(b"loader")
             source = {"revision": "fixture", "content_sha256": "a" * 64}
             for name in ("source-before.json", "source-after.json"):
                 (preparation.parent / name).write_text(json.dumps(source))

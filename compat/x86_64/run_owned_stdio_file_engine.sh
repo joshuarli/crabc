@@ -4,15 +4,18 @@ set -euo pipefail
 ulimit -c 0
 
 readonly ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-readonly ORACLE_CC=/usr/local/bin/crabc-x86_64-musl-gcc
+eval "$(python3 -B "$ROOT/compat/x86_64/native_arch.py")"
+readonly ORACLE_CC="$oracle"
+architecture_args=()
+if [ "$arch" != x86_64 ]; then architecture_args=(--architecture "$arch"); fi
 readonly RUNNER="$ROOT/compat/x86_64/run_owned_stdio_file_engine.sh"
 readonly READER="$ROOT/compat/x86_64/owned_stdio_file_engine_receipt.py"
 readonly ALLOCATOR_PROBE="$ROOT/compat/x86_64/owned_stdio_allocator_interposition_probe.c"
 readonly ALLOCATOR_RUNNER="$ROOT/compat/x86_64/run_owned_stdio_allocator_interposition.sh"
 readonly COPIES="$ROOT/compat/x86_64/owned_crypt_runtime_evidence.py"
-readonly INTERPRETER=/lib/ld-crabc-x86_64.so.1
+readonly INTERPRETER=/lib/ld-crabc-$arch.so.1
 readonly CONTROL_BUSYBOX="$(realpath -e /bin/busybox)"
-readonly CONTROL_LOADER="$(realpath -e /lib/ld-musl-x86_64.so.1)"
+readonly CONTROL_LOADER="$(realpath -e /lib/ld-musl-$arch.so.1)"
 readonly CONTROL_MOUNT="$(realpath -e /bin/mount)"
 readonly CONTROL_UMOUNT="$(realpath -e /bin/umount)"
 readonly COMMON_FLAGS=(-std=c11 -D_GNU_SOURCE -pthread -fno-builtin -fno-stack-protector)
@@ -32,7 +35,6 @@ case "$#" in
     *) usage ;;
 esac
 [ "$(uname -s)" = Linux ] || fail 'requires native Linux'
-case "$(uname -m)" in x86_64|amd64) ;; *) fail "refuses emulation on $(uname -m)" ;; esac
 [ -n "${TMPDIR:-}" ] || fail 'requires checkout-local TMPDIR'
 [ -x "$ORACLE_CC" ] && [ -x "$CONTROL_BUSYBOX" ] && [ -x "$CONTROL_LOADER" ] &&
     [ -x "$CONTROL_MOUNT" ] && [ -x "$CONTROL_UMOUNT" ] || fail 'missing pinned control tool'
@@ -75,9 +77,9 @@ printf 'owned FILE engine evidence: %s\n' "$WORK"
 if [ -z "$supplied_dynamic" ]; then
     supplied_static="$WORK/static-product"
     supplied_dynamic="$WORK/dynamic-product"
-    python3 -B "$ROOT/scripts/build_x86_64_owned_sysroot.py" --output "$supplied_static" \
+    python3 -B "$ROOT/scripts/build_x86_64_owned_sysroot.py" "${architecture_args[@]}" --output "$supplied_static" \
         >"$WORK/static-build.json"
-    python3 -B "$ROOT/scripts/build_x86_64_owned_dynamic_sysroot.py" --output "$supplied_dynamic" \
+    python3 -B "$ROOT/scripts/build_x86_64_owned_dynamic_sysroot.py" "${architecture_args[@]}" --output "$supplied_dynamic" \
         >"$WORK/dynamic-build.json"
 fi
 readonly STATIC_PRODUCT="$supplied_static"
@@ -326,7 +328,7 @@ install_control_stage() {
     stage="$(control_stage_root "$linkage")"
     mkdir -p "$stage/control" "$stage/bin"
     cp -p "$CONTROL_BUSYBOX" "$stage/control/busybox"
-    cp -p "$CONTROL_LOADER" "$stage/control/ld-musl-x86_64.so.1"
+    cp -p "$CONTROL_LOADER" "$stage/control/ld-musl-$arch.so.1"
     for applet in sh cat sleep; do cp -p "$WORK/control-$applet-$linkage" "$stage/bin/$applet"; done
 }
 install_control_runtime() {
@@ -336,13 +338,13 @@ install_control_runtime() {
     for applet in sh cat sleep; do [ ! -e "$root/bin/$applet" ] || fail "process root already has /bin/$applet"; done
     mkdir -p "$root/control" "$root/bin" "$root/dev"
     cp -p "$stage/control/busybox" "$root/control/busybox"
-    cp -p "$stage/control/ld-musl-x86_64.so.1" "$root/control/ld-musl-x86_64.so.1"
+    cp -p "$stage/control/ld-musl-$arch.so.1" "$root/control/ld-musl-$arch.so.1"
     for applet in sh cat sleep; do cp -p "$stage/bin/$applet" "$root/bin/$applet"; done
     mknod -m 666 "$root/dev/null" c 1 3
 }
 remove_control_runtime() {
     local root="$1"
-    rm -f "$root/bin/sh" "$root/bin/cat" "$root/bin/sleep" "$root/control/busybox" "$root/control/ld-musl-x86_64.so.1" "$root/dev/null"
+    rm -f "$root/bin/sh" "$root/bin/cat" "$root/bin/sleep" "$root/control/busybox" "$root/control/ld-musl-$arch.so.1" "$root/dev/null"
     rmdir "$root/control" "$root/dev"
 }
 for linkage in oracle static static-pie pie non-pie; do install_control_stage "$linkage"; done
@@ -618,7 +620,7 @@ control = {'sources': {applet: artifact(work / f'control-{applet}.c') for applet
                      for applet in receipt.CONTROL_APPLETS},
            'staged': {mode: {name: artifact(path) for name, path in {
                          'busybox': work / f'process-control-{mode if mode != "static-pie" else "static-pie"}-stage/control/busybox',
-                         'loader': work / f'process-control-{mode if mode != "static-pie" else "static-pie"}-stage/control/ld-musl-x86_64.so.1',
+                         'loader': work / f'process-control-{mode if mode != "static-pie" else "static-pie"}-stage/control/ld-musl-{receipt.ARCH}.so.1',
                          **{applet: work / f'process-control-{mode if mode != "static-pie" else "static-pie"}-stage/bin/{applet}' for applet in receipt.CONTROL_APPLETS},
                        }.items()} for mode in ('oracle', 'static', 'static-pie', 'pie', 'non-pie')}}
 record = {
