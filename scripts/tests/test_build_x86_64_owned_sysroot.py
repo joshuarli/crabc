@@ -229,6 +229,32 @@ class BuildX86OwnedSysrootTests(unittest.TestCase):
         )
         return installed
 
+    def test_arm_static_driver_validates_crt_and_required_runtime_before_planning(self):
+        for mutation in ("crt", "header", "runtime"):
+            with self.subTest(mutation=mutation), tempfile.TemporaryDirectory() as temporary:
+                root = Path(temporary) / "product"
+                self.materialize_static_driver_sysroot(root)
+                manifest_path = root / "share/crabc/manifest.json"
+                manifest = json.loads(manifest_path.read_text())
+                manifest["format"] = "crabc-aarch64-owned-static-sysroot-v1"
+                manifest["target"] = "aarch64-unknown-linux-musl"
+                manifest["sealed_static_driver"]["format"] = "crabc-aarch64-sealed-static-driver-v1"
+                if mutation == "crt":
+                    path = root / "share/crabc/crt.provenance.json"
+                    receipt = json.loads(path.read_text())
+                    receipt["objects"]["rcrt1.o"]["sha256"] = "0" * 64
+                    builder.write_json(path, receipt)
+                elif mutation == "header":
+                    (root / "usr/include/stdint.h").unlink()
+                    (root / "usr/include").rmdir()
+                else:
+                    (root / "usr/lib/libc.a").unlink()
+                manifest["installed"]["files"] = builder.regular_file_hashes(
+                    root, exclude=frozenset({driver.MANIFEST_RELATIVE_PATH}))
+                builder.write_json(manifest_path, manifest)
+                with self.assertRaises(driver.DriverError):
+                    driver.validate_installed_runtime(root, architecture="aarch64")
+
     def test_static_c_abi_root_uses_complete_complex_leaf_without_legacy_projection(self) -> None:
         """The installed libc build must not define cproj* from two x86 leaves."""
 
@@ -1090,7 +1116,7 @@ class BuildX86OwnedSysrootTests(unittest.TestCase):
                 )
                 self.assertEqual(completed.returncode, 1)
                 self.assertEqual(completed.stdout, "")
-                self.assertIn(("payload differs" if label in ("link", "alias") else expected_error) if ARCH == "aarch64" else expected_error, completed.stderr)
+                self.assertIn(expected_error, completed.stderr)
 
     def test_static_driver_rejects_ambient_runtime_injection_before_invocation(self) -> None:
         for arguments in (
