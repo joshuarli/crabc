@@ -1,7 +1,5 @@
 #!/usr/bin/env python3
 """Compile native AArch64 dynamic applications against the installed crabc sysroot."""
-import importlib.machinery
-import importlib.util
 import json
 import os
 from pathlib import Path
@@ -13,17 +11,14 @@ import tempfile
 sys.dont_write_bytecode = True
 root = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(root / "share/crabc"))
+import crabc_cc_static as shared
 import owned_dynamic_elf as elf_inspection
+import crabc_cc_owned_dynamic as dynamic_shared
 lib = root / "usr/lib"
-loader = importlib.machinery.SourceFileLoader("crabc_cc_static", str(root / "share/crabc/crabc_cc_static.py"))
-spec = importlib.util.spec_from_loader(loader.name, loader)
-shared = importlib.util.module_from_spec(spec)
-sys.modules[loader.name] = shared
-loader.exec_module(shared)
 
 
 def execute(arguments):
-    manifest = shared.load_manifest(root / "share/crabc/manifest.json", "dynamic product manifest")
+    manifest = dynamic_shared.validate_installation(root)
     profile = shared.profile_from_manifest(manifest)
     interpreter = "/lib/ld-crabc-aarch64-hardened.so.1" if profile is shared.NativeRuntimeProfile.HARDENED else "/lib/ld-crabc-aarch64.so.1"
     common = []
@@ -100,6 +95,8 @@ def execute(arguments):
             if index == len(arguments) or arguments[index].startswith("-") or dependency_file is not None:
                 raise shared.DriverError("--application-dependency-file requires one output path")
             dependency_file = Path(arguments[index])
+        elif arg in ("-static", "-static-pie", "--static-et-exec", "--static-pie"):
+            raise shared.DriverError("static linkage is not a dynamic mode")
         elif arg == "-frounding-math":
             if rounding:
                 raise shared.DriverError("duplicate rounding mode")
@@ -113,7 +110,8 @@ def execute(arguments):
         else:
             common.append(arg)
         index += 1
-    mode = mode or "pie"
+    if mode is None:
+        raise shared.DriverError("select --dynamic-pie, --dynamic-non-pie or --dynamic-shared-object")
     if rpath is not None and mode == "shared":
         raise shared.DriverError("--application-rpath requires a dynamic executable link")
     binding_mode = binding_mode or "now"
@@ -194,6 +192,17 @@ def execute(arguments):
                 or any("/" in value for value in re.findall(r"\(NEEDED\).*\[([^\]]+)\]", dynamic))
                 ):
             raise shared.DriverError(f"application DSO metadata is not admitted: {path}")
+    provided, requirements = set(), {}
+    with tempfile.TemporaryDirectory(prefix="crabc-aarch64-dso-symbols-") as temporary:
+        for path in [lib / "libc.so", *(node[0] for node in nodes.values())]:
+            defined, required = dynamic_shared.dynamic_symbols(path, Path(temporary))
+            provided.update(defined)
+            requirements[path.name] = required
+    for path, needed in nodes.values():
+        if not set(needed) <= set(nodes) | {"libc.so"}:
+            raise shared.DriverError(f"undeclared transitive dependency of {path}")
+        if requirements[path.name] - provided:
+            raise shared.DriverError("application DSOs have unresolved runtime imports")
     if transitive_inputs:
         names = set(nodes)
         def reachable(roots, omit=None):
@@ -207,23 +216,6 @@ def execute(arguments):
             return reached
         if reachable(path.name for path in dso_inputs) != names:
             raise shared.DriverError("application DSO closure has an unreachable declared node")
-        provided, requirements = set(), {}
-        for path in [lib / "libc.so", *(node[0] for node in nodes.values())]:
-            defined, required = set(), set()
-            symbols = subprocess.check_output(["/usr/bin/readelf", "--dyn-syms", "-W", str(path)], text=True)
-            for line in symbols.splitlines():
-                fields = line.split()
-                if len(fields) < 8 or not fields[0].endswith(":") or fields[4] not in ("GLOBAL", "WEAK"):
-                    continue
-                kind, binding, visibility, section, name = fields[3:8]
-                if "@" in name or kind == "IFUNC":
-                    raise shared.DriverError("symbol versions and IFUNC are not admitted")
-                if section == "UND" and binding == "GLOBAL":
-                    required.add(name)
-                elif section != "UND" and visibility in ("DEFAULT", "PROTECTED"):
-                    defined.add(name)
-            provided.update(defined)
-            requirements[path.name] = required
         for path, needed in nodes.values():
             if len(needed) != len(set(needed)) or not set(needed) <= names | {"libc.so"}:
                 raise shared.DriverError("application DSO closure is incomplete or duplicated")
@@ -307,7 +299,7 @@ def execute(arguments):
         runtime.extend(attachment)
         archive = lib / "libcrabc-builtins.a"
         if runtime_imports:
-            provided, required = {"_GLOBAL_OFFSET_TABLE_"}, set()
+            object_provided, required = {*provided, "_GLOBAL_OFFSET_TABLE_"}, set()
             for path in [*objects, archive, lib / "libc.so", *dso_inputs]:
                 symbols = subprocess.check_output(["/usr/bin/readelf", "-sW", str(path)], text=True)
                 for line in symbols.splitlines():
@@ -318,9 +310,9 @@ def execute(arguments):
                     if section == "UND" and fields[4] == "GLOBAL" and path in objects:
                         required.add(name)
                     elif section != "UND":
-                        provided.add(name)
-            if required - provided != runtime_imports:
-                raise shared.DriverError(f"runtime imports differ from exact unresolved object symbols: {sorted(required - provided)}")
+                        object_provided.add(name)
+            if required - object_provided != runtime_imports:
+                raise shared.DriverError(f"runtime imports differ from exact unresolved object symbols: {sorted(required - object_provided)}")
         command += [str(lib / "crti.o"), *(str(path) for path in attachment), *(str(path) for path in objects), str(archive),
                     *(str(path) for path in dso_inputs), str(lib / "libc.so"), str(lib / "crtn.o"), "-o", str(output)]
         inspection_path, map_path = elf_inspection.sidecar_paths(output)
@@ -379,7 +371,7 @@ def execute(arguments):
                     search_kind="rpath" if rpath is not None else "runpath",
                     search_path=rpath if rpath is not None else runpath or "/usr/lib",
                     binding=binding_mode, hash_style=hash_style,
-                    runtime_imports=frozenset(runtime_imports), provided_symbols=None,
+                    runtime_imports=frozenset(runtime_imports), provided_symbols=frozenset(provided),
                 )
                 elf_inspection.require_expected(facts, expected)
                 inspection = elf_inspection.record(output, facts, expected,

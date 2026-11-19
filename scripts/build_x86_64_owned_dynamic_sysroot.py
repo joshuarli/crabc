@@ -1113,7 +1113,7 @@ def build_aarch64(output: Path, *, allocator_backend: str, lifecycle_test_audit:
         common.copy_artifact(crt / "objects.json", installed / "share/crabc/crt.provenance.json")
         common.copy_artifact(crt / "commands.json", installed / "share/crabc/crt.commands.json")
         common.copy_artifact(stage / "builtins.json", installed / "share/crabc/builtins.provenance.json")
-        for module in ("owned_dynamic_receipt.py", "owned_dynamic_elf.py"):
+        for module in ("owned_dynamic_receipt.py", "owned_dynamic_elf.py", "crabc_cc_owned_dynamic.py"):
             common.copy_artifact(ROOT / "compat/x86_64" / module, installed / "share/crabc" / module)
         metadata = installed / "share/crabc"
         common.write_json(metadata / "libc-shared.provenance.json", {

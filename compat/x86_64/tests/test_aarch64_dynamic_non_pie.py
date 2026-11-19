@@ -2,6 +2,7 @@
 import json
 import os
 import platform
+import shutil
 from pathlib import Path
 import subprocess
 import sys
@@ -27,6 +28,53 @@ class Aarch64DynamicNonPieTest(unittest.TestCase):
                         "--architecture", "aarch64", "--output", str(product)], cwd=root, check=True)
         os.environ["CRABC_AARCH64_DYNAMIC_SYSROOT"] = str(product)
         cls.addClassCleanup(os.environ.pop, "CRABC_AARCH64_DYNAMIC_SYSROOT", None)
+
+    @unittest.skipUnless(os.environ.get("CRABC_AARCH64_DYNAMIC_SYSROOT") or CAN_BUILD, "requires a built aarch64 product")
+    def test_driver_rejects_unsealed_payload_and_static_or_implicit_modes(self):
+        product = Path(os.environ["CRABC_AARCH64_DYNAMIC_SYSROOT"]).resolve(strict=True)
+        with tempfile.TemporaryDirectory(dir=os.environ["TMPDIR"]) as temporary:
+            work = Path(temporary)
+            driver = product / "bin/crabc-cc-dynamic"
+            source = work / "main.c"
+            source.write_text("int main(void) { return 0; }\n")
+            for arguments in ([str(source)], ["-static", str(source)], ["-static-pie", str(source)],
+                              ["--static-et-exec", str(source)], ["--static-pie", str(source)]):
+                result = subprocess.run([driver, *arguments, "-o", work / "out"], capture_output=True, text=True)
+                self.assertNotEqual(result.returncode, 0, arguments)
+            copy = work / "product"
+            shutil.copytree(product, copy, symlinks=True)
+            loader = copy / "lib/ld-crabc-aarch64.so.1"
+            loader.unlink()
+            os.link(copy / "usr/lib/libc.so", loader)
+            with (copy / "usr/include/stddef.h").open("ab") as target:
+                target.write(b"tampered")
+            result = subprocess.run([copy / "bin/crabc-cc-dynamic", "-pie", "-c", source,
+                                     "-o", work / "tampered.o"], capture_output=True, text=True)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("payload hash mismatch", result.stderr)
+            self.assertFalse((work / "tampered.o").exists())
+
+    @unittest.skipUnless(os.environ.get("CRABC_AARCH64_DYNAMIC_SYSROOT") or CAN_BUILD, "requires a built aarch64 product")
+    def test_direct_dso_rejects_undeclared_dependencies_and_unresolved_imports(self):
+        product = Path(os.environ["CRABC_AARCH64_DYNAMIC_SYSROOT"]).resolve(strict=True)
+        with tempfile.TemporaryDirectory(dir=os.environ["TMPDIR"]) as temporary:
+            work = Path(temporary)
+            leaf, middle, missing, main = (work / name for name in ("leaf.c", "middle.c", "missing.c", "main.c"))
+            leaf.write_text("int leaf(void) { return 7; }\n")
+            middle.write_text("int leaf(void); int middle(void) { return leaf(); }\n")
+            missing.write_text("int absent(void); int call(void) { return absent(); }\n")
+            main.write_text("int main(void) { return 0; }\n")
+            driver = product / "bin/crabc-cc-dynamic"
+            leaf_so, middle_so, missing_so = (work / name for name in ("leaf.so", "middle.so", "missing.so"))
+            subprocess.run([driver, "-shared", leaf, "-o", leaf_so], check=True)
+            subprocess.run([driver, "-shared", middle, "--application-dso", leaf_so, "-o", middle_so], check=True)
+            subprocess.run(["gcc", "-shared", "-fPIC", "-nostdlib", "-Wl,-soname,missing.so", missing,
+                            "-o", missing_so], check=True)
+            for dso, expected in ((middle_so, "undeclared transitive"), (missing_so, "unresolved runtime imports")):
+                result = subprocess.run([driver, "-pie", main, "--application-dso", dso,
+                                         "-o", work / "bad"], capture_output=True, text=True)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn(expected, result.stderr)
 
     @unittest.skipUnless(os.environ.get("CRABC_AARCH64_DYNAMIC_SYSROOT") or CAN_BUILD, "requires a built aarch64 product")
     def test_posix_link_reader_rejects_tampered_native_receipt(self):
