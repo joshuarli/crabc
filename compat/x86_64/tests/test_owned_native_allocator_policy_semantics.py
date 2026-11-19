@@ -306,8 +306,8 @@ class PolicyReceiptTests(unittest.TestCase):
                     "link_trace": ["trace: " + next(item["path"] for item in inputs if Path(item["path"]).name == basename)
                                    + ("(builtins.o)" if basename == "libcrabc-builtins.a" else "")
                                    for basename in ("Scrt1.o" if mode == "pie" else "crt1.o",
-                                                    *(["crabc-dynamic-attach.o"] if policy.ARCH == "x86_64" or mode != "pie" else []),
-                                                    "crti.o", f"object-{name}.o",
+                                                    *(["crabc-dynamic-attach.o"] if policy.ARCH == "x86_64" else []),
+                                                    "crti.o", *(["crabc-dynamic-attach.o"] if policy.ARCH == "aarch64" and mode != "pie" else []), f"object-{name}.o",
                                                     "libcrabc-builtins.a", "libc.so", "crtn.o")],
                 })
                 record(f"elf-{name}", {
