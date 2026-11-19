@@ -34,5 +34,8 @@ def load_tests(loader, tests, pattern):
         not replacements or not set(replacements) <= native_names for replacements in NATIVE_EQUIVALENTS.values()
     ):
         raise RuntimeError("native dynamic driver equivalence roster differs")
+    if any(getattr(getattr(native.Aarch64DynamicNonPieTest, name), "__unittest_skip__", False)
+           for replacements in NATIVE_EQUIVALENTS.values() for name in replacements):
+        raise RuntimeError("native dynamic driver equivalent is skipped")
     return unittest.TestSuite(reference.InstalledDynamicDriverTests(name)
                               for name in sorted(reference_names - set(NATIVE_EQUIVALENTS)))
