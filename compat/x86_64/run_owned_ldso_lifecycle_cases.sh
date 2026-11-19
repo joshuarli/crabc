@@ -3,13 +3,14 @@
 set -euo pipefail
 readonly ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 . "$(dirname "${BASH_SOURCE[0]}")/native_build_environment.sh"
+eval "$(python3 -B "$ROOT/compat/x86_64/native_arch.py")"
 readonly PRODUCT="${1:?usage: $0 DYNAMIC-SYSROOT}"
 readonly FIXTURES="$ROOT/compat/x86_64"
-readonly MUSL_LOADER="/opt/musl-1.2.6/lib/ld-musl-x86_64.so.1"
+readonly MUSL_LOADER="/opt/musl-1.2.6/lib/ld-musl-$arch.so.1"
 readonly MUSL_LIBC="/opt/musl-1.2.6/lib/libc.so"
-readonly ORACLE_CC="/usr/local/bin/crabc-x86_64-musl-gcc"
+readonly ORACLE_CC="$oracle"
 
-[ "$(uname -sm)" = 'Linux x86_64' ]
+[ "$(uname -s)" = Linux ]
 [ -d "$PRODUCT" ] || { printf 'ERROR: installed product missing: %s\n' "$PRODUCT" >&2; exit 2; }
 case "${TMPDIR:-}" in "$ROOT"/.work/*) ;; *) exit 2 ;; esac
 bash "$FIXTURES/run_musl_oracle.sh" >/dev/null
@@ -22,14 +23,14 @@ fixtures="$root/fixtures"
 oracle_fixtures="$oracle_root/fixtures"
 cp -a "$PRODUCT" "$root"
 mkdir -p "$fixtures" "$oracle_root/lib" "$oracle_root/usr/lib" "$oracle_fixtures"
-cp "$MUSL_LOADER" "$oracle_root/lib/ld-musl-x86_64.so.1"
+cp "$MUSL_LOADER" "$oracle_root/lib/ld-musl-$arch.so.1"
 cp "$MUSL_LIBC" "$oracle_root/usr/lib/libc.so"
 mkdir -p "$oracle_root/opt/musl-1.2.6/lib"
-cp "$MUSL_LOADER" "$oracle_root/opt/musl-1.2.6/lib/ld-musl-x86_64.so.1"
-chmod 0755 "$oracle_root/lib/ld-musl-x86_64.so.1" "$oracle_root/usr/lib/libc.so" \
-    "$oracle_root/opt/musl-1.2.6/lib/ld-musl-x86_64.so.1"
+cp "$MUSL_LOADER" "$oracle_root/opt/musl-1.2.6/lib/ld-musl-$arch.so.1"
+chmod 0755 "$oracle_root/lib/ld-musl-$arch.so.1" "$oracle_root/usr/lib/libc.so" \
+    "$oracle_root/opt/musl-1.2.6/lib/ld-musl-$arch.so.1"
 
-loader="$root/lib/ld-crabc-x86_64.so.1"
+loader="$root/lib/ld-crabc-$arch.so.1"
 readelf -hW "$loader" | grep -F 'DYN' >/dev/null
 if readelf -dW "$loader" | grep -E '\(NEEDED\)|\(INTERP\)' >/dev/null \
     || readelf -lW "$loader" | grep ' INTERP ' >/dev/null \
@@ -53,12 +54,14 @@ build_node right 77 right_anchor -DHAS_DEPENDENCY -L"$fixtures" -Wl,--no-as-need
 cc -O2 -fPIE -c "$FIXTURES/general_loader_lifecycle_main.c" -o "$work/main.o"
 build_applications() {
     local first="$1" second="$2"
+    local -a attach=()
+    if [ "$arch" = x86_64 ]; then attach=("$PRODUCT/usr/lib/crabc-dynamic-attach.o"); fi
     cp -a "$fixtures/." "$oracle_fixtures/"
     cc -nostdlib -fPIE -pie -Wl,--hash-style=sysv -Wl,-z,now -Wl,-E \
-        -Wl,--dynamic-linker,/lib/ld-crabc-x86_64.so.1 -Wl,-rpath,/fixtures \
+        -Wl,--dynamic-linker,/lib/ld-crabc-$arch.so.1 -Wl,-rpath,/fixtures \
         -Wl,-rpath-link,"$fixtures" \
         "$PRODUCT/usr/lib/Scrt1.o" "$PRODUCT/usr/lib/crti.o" "$work/main.o" \
-        "$PRODUCT/usr/lib/crabc-dynamic-attach.o" -L"$PRODUCT/usr/lib" -lc \
+        "${attach[@]}" -L"$PRODUCT/usr/lib" -lc \
         "$PRODUCT/usr/lib/libcrabc-builtins.a" "$PRODUCT/usr/lib/crtn.o" \
         -L"$fixtures" -Wl,--no-as-needed -l:"$first.so" -l:"$second.so" \
         -o "$fixtures/candidate"
@@ -77,7 +80,12 @@ run_case() {
         printf 'ERROR: candidate lifecycle order drifted: %s\n' "$actual" >&2
         exit 1
     }
-    [ "$actual" = "$oracle" ] || {
+    local expected_oracle="$expected"
+    # Pinned musl aarch64 defines NO_LEGACY_INITFINI in arch/aarch64/reloc.h.
+    if [ "$arch" = aarch64 ]; then
+        expected_oracle="$(printf '%s' "$expected" | tr -d 'AGMFLR')"
+    fi
+    [ "$oracle" = "$expected_oracle" ] || {
         printf 'ERROR: candidate lifecycle order differs from musl: candidate=%s musl=%s\n' \
             "$actual" "$oracle" >&2
         exit 1
