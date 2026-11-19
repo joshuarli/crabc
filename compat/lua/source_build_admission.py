@@ -35,7 +35,7 @@ import owned_dynamic_qualification as QUALIFICATION
 
 STATIC_REPORT = LUA.DEFAULT_X86_STATIC_REPORT
 DYNAMIC_REPORT = DYNAMIC.DEFAULT_REPORT
-WORK = ROOT / ".work/x86_64"
+WORK = ROOT / ".work" / LUA.ARCHITECTURE["work_name"]
 RECEIPT_SCHEMA = "crabc.x86_64-lua-source-build-admission/v1"
 RECEIPT_NAME = "admission.json"
 GATE = "consumer.source-build"
@@ -302,7 +302,8 @@ def require_current_supplied_products(
         manifest = reader(root)[3]
         if reader is DYNAMIC.owned_dynamic_sysroot:
             QUALIFICATION.product_identity(root)
-            manifest = {**manifest, **QUALIFICATION.read(root / "share/crabc/dynamic-product-state.json")}
+            if LUA.ARCH == "x86_64":
+                manifest = {**manifest, **QUALIFICATION.read(root / "share/crabc/dynamic-product-state.json")}
         require(manifest.get("source_sha256") == source["source_sha256"],
                 "Lua qualification product uses different source")
         require(manifest.get("build_profile", "release") == "release",

@@ -29,6 +29,24 @@ sys.modules[SPEC.name] = RUNNER
 SPEC.loader.exec_module(RUNNER)
 
 
+def setUpModule() -> None:
+    global x86_fixtures
+    x86_fixtures = [
+        mock.patch.object(RUNNER, "ARCH", "x86_64"),
+        mock.patch.object(RUNNER, "CANONICAL_INTERPRETER", "/lib/ld-crabc-x86_64.so.1"),
+        mock.patch.object(RUNNER, "FORMAT", "crabc-x86-64-owned-dynamic-sysroot-v1"),
+        mock.patch.object(RUNNER, "_SHELL_COMPAT_ALIAS", "lib/ld-musl-x86_64.so.1"),
+        mock.patch.object(RUNNER.LUA, "ARCHITECTURE", RUNNER.native_arch("x86_64")),
+    ]
+    for patch in x86_fixtures:
+        patch.start()
+
+
+def tearDownModule() -> None:
+    for patch in reversed(x86_fixtures):
+        patch.stop()
+
+
 class NativeDynamicDispatcherTests(unittest.TestCase):
     """Exercise publication and installed/extracted lane acceptance contracts."""
 

@@ -32,6 +32,9 @@ class SuppliedDynamicLuaTests(unittest.TestCase):
     scratch_root = ROOT / ".work/x86_64" / "lua-dynamic-supplied-host-tests"
 
     def setUp(self) -> None:
+        patch = mock.patch.object(RUNNER.LUA, "ARCHITECTURE", RUNNER.LUA.native_arch("x86_64"))
+        patch.start()
+        self.addCleanup(patch.stop)
         self.scratch_root.mkdir(parents=True, exist_ok=True)
         self.temporary = Path(tempfile.mkdtemp(prefix="supplied-", dir=self.scratch_root))
         self.state_parent = self.temporary / "state-parent"

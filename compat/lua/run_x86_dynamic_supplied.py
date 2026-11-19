@@ -383,7 +383,7 @@ def replay_report(path: Path, *, state_parent: Path = DEFAULT_WORK_ROOT,
     """Check retained inputs and raw results, then reproduce both consumer arms."""
 
     path = LUA.require_physical_regular_file(Path(os.path.abspath(path)), "supplied Lua report")
-    require(path.is_relative_to(ROOT / ".work/x86_64"), "supplied Lua report is outside private work")
+    require(path.is_relative_to(ROOT / ".work" / LUA.ARCHITECTURE["work_name"]), "supplied Lua report is outside private work")
     try:
         report = json.loads(path.read_text())
         require(report["runner"] == "crabc-lua-native-x86-dynamic-supplied-cohort"

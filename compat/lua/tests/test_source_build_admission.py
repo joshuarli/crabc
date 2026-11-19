@@ -26,6 +26,12 @@ SPEC.loader.exec_module(ADMISSION)
 
 class SourceBuildAdmissionTests(unittest.TestCase):
 
+    def setUp(self) -> None:
+        for patch in (mock.patch.object(ADMISSION, "WORK", ROOT / ".work/x86_64"),
+                      mock.patch.object(ADMISSION.LUA, "ARCH", "x86_64")):
+            patch.start()
+            self.addCleanup(patch.stop)
+
     @contextlib.contextmanager
     def selected_reports(self):
         ADMISSION.WORK.mkdir(parents=True, exist_ok=True)
