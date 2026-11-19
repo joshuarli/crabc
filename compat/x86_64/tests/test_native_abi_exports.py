@@ -107,17 +107,27 @@ class NativeAbiExportsTests(unittest.TestCase):
         self.assertIn("match", output)
 
     def test_arm_inventory_uses_reviewed_x86_delta(self) -> None:
+        delta = json.loads(exports.ARM_STATIC_DELTA.read_text())
         original = report(shared_extra=[dynamic("tgkill")],
-                          static_extra=[static(name) for name in sorted(exports.X86_STATIC_EXTRA)],
-                          static_missing=[static(name) for name in sorted(exports.X86_STATIC_MISSING)])
+                          static_extra=[static(name) for name in delta["extra_remove"]],
+                          static_missing=[static(name) for name in delta["missing_remove"]])
         self.seed(original)
         value = report(shared_extra=[dynamic("tgkill")],
-                       static_extra=[static(name) for name in sorted(exports.ARM_STATIC_EXTRA)],
-                       static_missing=[static(name) for name in sorted(exports.ARM_STATIC_MISSING)])
+                       static_extra=[static(name) for name in delta["extra_add"] + delta["anonymous_extra"]],
+                       static_missing=[static(name) for name in delta["missing_add"] + delta["anonymous_missing"]])
         value["target"] = "aarch64-unknown-linux-musl"
         with patch.object(exports, "TARGET", "aarch64-unknown-linux-musl"):
             passed, output = self.check(value)
             self.assertTrue(passed, output)
+            value["triage"]["static_archive"]["extra"].append(static("anon.unreviewed"))
+            passed, output = self.check(value)
+            self.assertFalse(passed, output)
+            self.assertIn("anon.unreviewed", output)
+            value["triage"]["static_archive"]["extra"].pop()
+            value["triage"]["static_archive"]["extra"].pop()
+            passed, output = self.check(value)
+            self.assertFalse(passed, output)
+            self.assertIn("static_archive.extra", output)
             value["triage"]["shared_dynamic"]["extra"] = []
             passed, output = self.check(value)
             self.assertFalse(passed, output)
