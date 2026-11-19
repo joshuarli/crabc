@@ -3,11 +3,36 @@ import json
 import os
 from pathlib import Path
 import subprocess
+import sys
 import tempfile
 import unittest
 
 
 class Aarch64DynamicNonPieTest(unittest.TestCase):
+    @unittest.skipUnless(os.environ.get("CRABC_AARCH64_DYNAMIC_SYSROOT"), "requires a built aarch64 product")
+    def test_posix_link_reader_rejects_tampered_native_receipt(self):
+        root = Path(__file__).resolve().parents[3]
+        sys.path.insert(0, str(root / "compat/x86_64"))
+        import owned_posix_product_evidence as evidence
+        product = Path(os.environ["CRABC_AARCH64_DYNAMIC_SYSROOT"]).resolve(strict=True)
+        driver = str(product / "bin/crabc-cc-dynamic")
+        with tempfile.TemporaryDirectory(dir=os.environ["TMPDIR"]) as tmp:
+            work = Path(tmp)
+            source, obj, binary = (work / name for name in ("main.c", "main.o", "main"))
+            source.write_text("int main(void) { return 0; }\n")
+            subprocess.run([driver, "-pie", "-c", str(source), "-o", str(obj)], check=True)
+            subprocess.run([driver, "-pie", str(obj), "-o", str(binary)], check=True)
+            receipt = Path(str(binary) + ".crabc-link.json")
+            record = json.loads(receipt.read_text())
+            evidence.validate_link(product, obj, binary, receipt, "pie")
+            evidence.validate_retained_link(root, "/workspace", product, obj, binary, receipt, "pie", record["resolved_linker"])
+            record["link_command"].insert(1, "--allow-multiple-definition")
+            receipt.write_text(json.dumps(record))
+            with self.assertRaises(evidence.ProductEvidenceError):
+                evidence.validate_link(product, obj, binary, receipt, "pie")
+            with self.assertRaises(evidence.ProductEvidenceError):
+                evidence.validate_retained_link(root, "/workspace", product, obj, binary, receipt, "pie", record["resolved_linker"])
+
     @unittest.skipUnless(os.environ.get("CRABC_AARCH64_DYNAMIC_SYSROOT"), "requires a built aarch64 product")
     def test_lazy_binding_requires_exact_runtime_imports(self):
         product = Path(os.environ["CRABC_AARCH64_DYNAMIC_SYSROOT"]).resolve(strict=True)

@@ -305,7 +305,7 @@ def validate_native_rustc_command(argv: object, producer_tools: object | None = 
     return list(argv)
 
 
-def retained_elf_facts(path: Path) -> dict[str, object]:
+def retained_elf_facts(path: Path, *, machine_id: int = 62) -> dict[str, object]:
     """Read the bounded ELF facts needed by command-free host replay.
 
     Native collection keeps its established ``readelf`` checks. A host cannot
@@ -331,7 +331,7 @@ def retained_elf_facts(path: Path) -> dict[str, object]:
     kind, machine, version, _entry, phoff, _shoff, _flags, ehsize, phsize, phnum, _shsize, _shnum, _shstrndx = unpack(
         "<HHIQQQIHHHHHH", 16
     )
-    if machine != 62 or version != 1 or ehsize != 64 or (phnum and phsize != 56):
+    if machine != machine_id or version != 1 or ehsize != 64 or (phnum and phsize != 56):
         _fail("retained ELF architecture or header contract differs")
     if kind not in (2, 3) or phnum >= 65536:
         _fail("retained ELF type or table count differs")
@@ -1193,6 +1193,61 @@ def _validate_dynamic_receipt_for_workloads(
     return _sha256(receipt)
 
 
+def _validate_aarch64_dynamic_receipt(
+    product: Path, workloads: tuple[Path, ...], executable: Path, receipt: Path, linkage: str,
+    manifest: Path, linker: str, recorded, *, export_dynamic: bool = False,
+) -> str:
+    record = _json_object(receipt, "dynamic link receipt")
+    search = receipt_contract.validate(record, format="crabc-aarch64-owned-dynamic-sysroot-v1",
+                                       label="dynamic link receipt", fail=_fail)
+    mode = LINKAGES[linkage]
+    if (record["mode"] != mode["receipt_mode"] or record["binding"] != "now"
+            or record["runtime_imports"] != [] or record["application_dsos"] != {}
+            or record["campaign_complete"] is not False):
+        _fail("dynamic link receipt admits foreign runtime imports or DSOs")
+    receipt_contract.require_runpath(search, "/usr/lib", label="dynamic link receipt", fail=_fail)
+    if record["output_path"] != recorded(executable):
+        _fail("dynamic output path differs from this evidence invocation")
+    _require_digest(record["output_sha256"], _sha256(executable), "dynamic output")
+    _require_digest(record["manifest_sha256"], _sha256(manifest), "dynamic product manifest")
+    library = product / "usr/lib"
+    entry = library / str(mode["crt"])
+    runtime = [library / "crti.o", library / "libc.so", library / "crtn.o", entry]
+    archive = library / "libcrabc-builtins.a"
+    if record["owned_runtime_inputs"] != sorted(path.relative_to(product).as_posix() for path in [*runtime, archive]):
+        _fail("dynamic link receipt owned runtime roster differs")
+    inputs = [*runtime, *workloads, archive]
+    if not isinstance(record["input_receipts"], list) or len(record["input_receipts"]) != len(inputs):
+        _fail("dynamic link receipt has the wrong input roster")
+    for item, path in zip(record["input_receipts"], inputs):
+        item = _require_keys(item, {"path", "sha256"}, "dynamic input receipt")
+        if item["path"] != recorded(path):
+            _fail("dynamic link receipt input path differs")
+        _require_digest(item["sha256"], _sha256(path), "dynamic input")
+    interpreter = ("/lib/ld-crabc-aarch64-hardened.so.1" if _dynamic_profile(product, linkage) is NativeRuntimeProfile.HARDENED
+                   else "/lib/ld-crabc-aarch64.so.1")
+    command = [linker, *(["-pie"] if linkage == "pie" else []), "--hash-style=sysv", "--eh-frame-hdr",
+               "-z", "relro", "-z", "now", "-z", "noexecstack", "-z", "text", "--no-undefined",
+               "--allow-shlib-undefined", "--enable-new-dtags", "-rpath", "/usr/lib", "--exclude-libs=libcrabc-builtins.a"]
+    if export_dynamic:
+        command.append("--export-dynamic")
+    command += ["-z", "dynamic-undefined-weak", "--dynamic-linker", interpreter, recorded(entry),
+                recorded(library / "crti.o"), *(recorded(path) for path in workloads), recorded(archive),
+                recorded(library / "libc.so"), recorded(library / "crtn.o"), "-o", recorded(executable)]
+    if record["link_command"] != command:
+        _fail("dynamic link command differs from the sealed product contract")
+    trace = record["link_trace"]
+    if not isinstance(trace, list) or not all(isinstance(item, str) for item in trace):
+        _fail("dynamic link trace is not a string list")
+    direct = {recorded(path) for path in [*runtime, *workloads]}
+    archive_name = recorded(archive)
+    lines = semantic_link_trace(trace)
+    if (any(line not in direct and line != archive_name and not (line.startswith(archive_name + "(") and line.endswith(")")) for line in lines)
+            or not direct <= set(lines)):
+        _fail("dynamic link trace admits foreign or missing inputs")
+    return _sha256(receipt)
+
+
 def _readelf(path: Path) -> dict[str, str]:
     """Capture just the three stable ELF views consumed by the receipt audit."""
 
@@ -1211,14 +1266,15 @@ def _readelf(path: Path) -> dict[str, str]:
     return result
 
 
-def _audit_elf(executable: Path, linkage: str, interpreter: str = INTERPRETER) -> None:
+def _audit_elf(executable: Path, linkage: str, interpreter: str = INTERPRETER, *, arm: bool = False) -> None:
     inspection = _readelf(executable)
     if set(inspection) != {"header", "program", "dynamic"} or not all(isinstance(value, str) for value in inspection.values()):
         _fail("readelf inspection is incomplete")
     header, program, dynamic = inspection["header"], inspection["program"], inspection["dynamic"]
     mode = LINKAGES[linkage]
-    if re.search(r"^\s*Machine:\s+Advanced Micro Devices X86-64\s*$", header, re.MULTILINE) is None:
-        _fail("linked executable is not an x86-64 ELF")
+    machine = "AArch64" if arm else "Advanced Micro Devices X86-64"
+    if re.search(rf"^\s*Machine:\s+{machine}\s*$", header, re.MULTILINE) is None:
+        _fail("linked executable is not an aarch64 ELF" if arm else "linked executable is not an x86-64 ELF")
     if re.search(rf"^\s*Type:\s+{mode['readelf_type']}(?:\s|\()", header, re.MULTILINE) is None:
         _fail("linked executable ELF type differs from the requested linkage")
     if re.search(r"\bTEXTREL\b", dynamic):
@@ -1242,12 +1298,12 @@ def _audit_elf(executable: Path, linkage: str, interpreter: str = INTERPRETER) -
         _fail("dynamic linked executable search path differs from the owned runtime")
 
 
-def _audit_retained_elf(executable: Path, linkage: str, interpreter: str = INTERPRETER) -> None:
+def _audit_retained_elf(executable: Path, linkage: str, interpreter: str = INTERPRETER, *, arm: bool = False) -> None:
     """Validate replayed link output without invoking a host ELF tool."""
-    facts = retained_elf_facts(executable)
+    facts = retained_elf_facts(executable, machine_id=183 if arm else 62)
     mode = LINKAGES[linkage]
     expected_type = 3 if mode["readelf_type"] == "DYN" else 2
-    if facts["machine"] != 62 or facts["type"] != expected_type:
+    if facts["machine"] != (183 if arm else 62) or facts["type"] != expected_type:
         _fail("retained linked executable ELF type differs from requested linkage")
     if facts["textrel"]:
         _fail("retained linked executable has DT_TEXTREL")
@@ -1511,12 +1567,24 @@ def validate_retained_link(root: Path, source_mount: str, product: Path, workloa
     else:
         manifest, _ = _validate_dynamic_product(product_path)
         profile = _dynamic_profile(product_path, linkage)
-        receipt_hash = _validate_retained_dynamic_receipt(
-            checkout, source_mount, product_path, workload_path, executable_path, receipt_path, linkage, manifest,
-            linker, export_dynamic=export_dynamic,
-        )
-        product_format = DYNAMIC_PRODUCT_FORMAT
-    _audit_retained_elf(executable_path, linkage, profile.interpreter if linkage in {"pie", "non-pie"} else INTERPRETER)
+        arm = _json_object(manifest, "dynamic product manifest").get("target") == "aarch64-unknown-linux-musl"
+        if arm:
+            record = _json_object(receipt_path, "dynamic link receipt")
+            retained_linker = _retained_linker(record.get("resolved_linker"), linker)
+            recorded = lambda path: _retained_recorded(checkout, source_mount, path, "dynamic link input")
+            receipt_hash = _validate_aarch64_dynamic_receipt(product_path, (workload_path,), executable_path,
+                                                              receipt_path, linkage, manifest, retained_linker, recorded,
+                                                              export_dynamic=export_dynamic)
+        else:
+            receipt_hash = _validate_retained_dynamic_receipt(
+                checkout, source_mount, product_path, workload_path, executable_path, receipt_path, linkage, manifest,
+                linker, export_dynamic=export_dynamic,
+            )
+        product_format = "crabc-aarch64-owned-dynamic-sysroot-v1" if arm else DYNAMIC_PRODUCT_FORMAT
+    arm = linkage in {"pie", "non-pie"} and arm
+    interpreter = (("/lib/ld-crabc-aarch64-hardened.so.1" if profile is NativeRuntimeProfile.HARDENED else "/lib/ld-crabc-aarch64.so.1")
+                   if arm else profile.interpreter if linkage in {"pie", "non-pie"} else INTERPRETER)
+    _audit_retained_elf(executable_path, linkage, interpreter, arm=arm)
     return {
         "linkage": linkage,
         "product": str(product_path),
@@ -1582,12 +1650,22 @@ def _validate_link(
     else:
         manifest, _ = _validate_dynamic_product(root)
         profile = _dynamic_profile(root, linkage)
-        receipt_hash = _validate_dynamic_receipt_for_workloads(
-            root, workload_paths, executable_path, receipt_path, linkage, manifest,
-            export_dynamic=export_dynamic,
-        )
-        product_format = DYNAMIC_PRODUCT_FORMAT
-    _audit_elf(executable_path, linkage, profile.interpreter if linkage in {"pie", "non-pie"} else INTERPRETER)
+        arm = _json_object(manifest, "dynamic product manifest").get("target") == "aarch64-unknown-linux-musl"
+        if arm:
+            record = _json_object(receipt_path, "dynamic link receipt")
+            linker = _check_linker(record.get("resolved_linker"), receipt_path)
+            receipt_hash = _validate_aarch64_dynamic_receipt(root, workload_paths, executable_path, receipt_path,
+                                                              linkage, manifest, linker, str, export_dynamic=export_dynamic)
+        else:
+            receipt_hash = _validate_dynamic_receipt_for_workloads(
+                root, workload_paths, executable_path, receipt_path, linkage, manifest,
+                export_dynamic=export_dynamic,
+            )
+        product_format = "crabc-aarch64-owned-dynamic-sysroot-v1" if arm else DYNAMIC_PRODUCT_FORMAT
+    arm = linkage in {"pie", "non-pie"} and arm
+    interpreter = (("/lib/ld-crabc-aarch64-hardened.so.1" if profile is NativeRuntimeProfile.HARDENED else "/lib/ld-crabc-aarch64.so.1")
+                   if arm else profile.interpreter if linkage in {"pie", "non-pie"} else INTERPRETER)
+    _audit_elf(executable_path, linkage, interpreter, arm=arm)
     return {
         "linkage": linkage,
         "product": str(root),
