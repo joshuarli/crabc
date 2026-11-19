@@ -5,8 +5,6 @@ ulimit -c 0
 
 readonly ROOT="$(cd -P "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 readonly HELPER="$ROOT/compat/x86_64/owned_differential_evidence.py"
-eval "$(python3 -B "$ROOT/compat/x86_64/native_arch.py")"
-readonly ORACLE_CC="$oracle"
 readonly CASES=(foundational string-memory allocator fd-filesystem stdio-fdopen)
 
 usage() {
@@ -45,6 +43,8 @@ if [ -n "$provided_static" ]; then
     provided_static="$(realpath -e -- "$provided_static")"
 fi
 provided_dynamic="$(realpath -e -- "$provided_dynamic")"
+eval "$(python3 -B "$ROOT/compat/x86_64/native_arch.py")"
+readonly ORACLE_CC="$oracle"
 temporary="$(realpath -e -- "${TMPDIR:-$ROOT/.work/$arch/tmp}")"
 readonly temporary
 
