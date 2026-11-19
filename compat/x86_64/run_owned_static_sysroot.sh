@@ -1702,13 +1702,20 @@ fi
 # Use the producer's checked checkout-state boundary for compiler scratch and
 # test fixtures too, even when called directly inside the pinned container.
 # The dispatcher still binds legacy /tmp spellings for older runners.
-TMPDIR="$(python3 -B - "$ROOT_DIR" <<'PY'
+TMPDIR="$(python3 -B - "$ROOT_DIR" "$ARCH" <<'PY'
 import sys
+from pathlib import Path
 
-sys.path.insert(0, sys.argv[1] + "/scripts")
-from build_x86_64_owned_sysroot import deterministic_environment
-
-print(deterministic_environment()["TMPDIR"])
+root = Path(sys.argv[1])
+if sys.argv[2] == "aarch64":
+    path = root / ".work/aarch64/tmp"
+    if path.resolve() != path or not path.is_dir():
+        raise SystemExit("native static scratch must be a physical directory")
+    print(path)
+else:
+    sys.path.insert(0, sys.argv[1] + "/scripts")
+    from build_x86_64_owned_sysroot import deterministic_environment
+    print(deterministic_environment()["TMPDIR"])
 PY
 )"
 export TMPDIR
