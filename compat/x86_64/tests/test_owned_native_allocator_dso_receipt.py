@@ -38,7 +38,8 @@ class OwnedNativeAllocatorDsoReceiptTests(unittest.TestCase):
         dynamic = os.environ.get("CRABC_DSO_DYNAMIC_SYSROOT")
         if dynamic:
             command.append(dynamic)
-        completed = subprocess.run(command, cwd=ROOT, capture_output=True, text=True, timeout=900)
+        completed = subprocess.run(command, cwd=ROOT, capture_output=True, text=True, timeout=900,
+                                   env={**os.environ, "TMPDIR": str(ROOT / f".work/{ARCH}/tmp")})
         self.assertEqual(completed.returncode, 0, completed.stdout + completed.stderr)
         match = EVIDENCE.search(completed.stdout)
         self.assertIsNotNone(match, completed.stdout)

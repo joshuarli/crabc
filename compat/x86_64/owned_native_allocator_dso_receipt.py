@@ -261,7 +261,7 @@ def read_native_allocator_dso_receipt(
     require(set(receipt.products) in (PRODUCTS, PRODUCTS | {"dynamic-build"}), "product roster differs")
     raw = json_file(receipt.path)
     work = raw.get("work")
-    require(isinstance(work, str) and Path(work).parent == Path(".work/x86_64/tmp")
+    require(isinstance(work, str) and Path(work).parent == Path(f".work/{ARCH}/tmp")
             and Path(work).name.startswith("owned-native-allocator-dso."), "work directory differs")
 
     records = {case["id"]: case for case in receipt.cases}

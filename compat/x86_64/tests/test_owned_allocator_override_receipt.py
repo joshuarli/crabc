@@ -37,7 +37,8 @@ class OwnedAllocatorOverrideReceiptTests(unittest.TestCase):
         if static or dynamic:
             self.assertTrue(static and dynamic)
             command.extend(("--static-sysroot", static, dynamic))
-        completed = subprocess.run(command, cwd=ROOT, capture_output=True, text=True, timeout=900)
+        completed = subprocess.run(command, cwd=ROOT, capture_output=True, text=True, timeout=900,
+                                   env={**os.environ, "TMPDIR": str(ROOT / f".work/{ARCH}/tmp")})
         self.assertEqual(completed.returncode, 0, completed.stdout + completed.stderr)
         match = EVIDENCE.search(completed.stdout)
         self.assertIsNotNone(match, completed.stdout)
