@@ -96,11 +96,11 @@ aarch64 run itself.
 
 ## B. Shell scripts, C probes, tests
 
-14. **`run_owned_posix_filesystem.sh:204-233`**
+14. **Closed (f8bbc0ea9). `run_owned_posix_filesystem.sh:204-233`**
     - x86: static and static-PIE, dynamic PIE and non-PIE, kernel and direct-loader entry, receipt and symbol audits, one shared workload object.
     - aarch64: runs one default-mode dynamic binary through the kernel only, prints PASS and does `exit 0`.
     - This is a qualification case (`owned_dynamic_qualification.py:121`), so the exit 0 counts as a pass.
-    - Qualifying-path.
+    - On arm64, the shared product and link readers now validate the same installed object across static, static-PIE, dynamic PIE and non-PIE, with kernel and direct-loader dynamic entry. The supplied-product run passed all six modes.
 
 15. **`run_owned_static_sysroot.sh:1787-1792`**
     - x86 runs the builder tests `scripts.tests.test_build_x86_64_owned_sysroot`.
