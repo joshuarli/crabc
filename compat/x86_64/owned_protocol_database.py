@@ -323,11 +323,25 @@ def _oracle_provider_map(map_path: Path, owners: Mapping[str, str]) -> bytes:
                    if line.split() and line.split()[-1] == input_row]
         require(len(matches) == 1, f"pinned musl link map does not select one {name} input")
         index = matches[0]
-        require(index + 1 < len(lines) and lines[index + 1].split()
-                and lines[index + 1].split()[-1] == name,
-                f"pinned musl link map does not bind {name} to its selected input")
-        require(index in selected_indices and index + 1 in selected_indices,
-                f"pinned musl link map omits the selected {name} rows")
+        if ARCH == "x86_64":
+            require(index + 1 < len(lines) and lines[index + 1].split()
+                    and lines[index + 1].split()[-1] == name,
+                    f"pinned musl link map does not bind {name} to its selected input")
+            require(index in selected_indices and index + 1 in selected_indices,
+                    f"pinned musl link map omits the selected {name} rows")
+        else:
+            symbol_rows = []
+            for following in range(index + 1, len(lines)):
+                fields = lines[following].split()
+                if not fields or fields[-1].startswith(".") or ":(" in fields[-1]:
+                    break
+                if fields[-1] == name:
+                    symbol_rows.append(following)
+                elif re.fullmatch(r"\$[xd](?:\.[0-9]+)?", fields[-1]) is None:
+                    break
+            require(len(symbol_rows) == 1, f"pinned musl link map does not bind {name} to its selected input")
+            require(index in selected_indices and symbol_rows[0] in selected_indices,
+                    f"pinned musl link map omits the selected {name} rows")
     selected = [lines[0], *(lines[index] for index in sorted(selected_indices))]
     return ("\n".join(selected) + "\n").encode("utf-8")
 

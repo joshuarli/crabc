@@ -127,6 +127,22 @@ class OwnedProtocolDatabaseReceiptTests(unittest.TestCase):
         with self.assertRaisesRegex(producer.ProtocolDatabaseError, "does not select one endprotoent input"):
             producer._oracle_provider_map(link_map, owners)
 
+    def test_arm_oracle_map_accepts_only_mapping_symbols_before_provider(self) -> None:
+        owner = "/opt/musl-1.2.6/lib/libc.a(proto.lo)"
+        owners = {name: owner for name in producer.PROVIDERS}
+        rows = ["VMA Size Align Out In Symbol"]
+        for index, name in enumerate(producer.PROVIDERS, start=1):
+            rows.extend((f"0x{index * 16:x} 16 1 {owner}:(.text.{name})",
+                         f"0x{index * 16:x} 0 0 $x", f"0x{index * 16:x} 0 0 {name}"))
+        link_map = self.work / "oracle-arm.map"
+        link_map.write_text("\n".join(rows) + "\n", encoding="utf-8")
+        with mock.patch.object(producer, "ARCH", "aarch64"):
+            self.assertEqual(producer._oracle_provider_map(link_map, owners), link_map.read_bytes())
+            rows[2] = "0x10 0 0 foreign"
+            link_map.write_text("\n".join(rows) + "\n", encoding="utf-8")
+            with self.assertRaisesRegex(producer.ProtocolDatabaseError, "does not bind"):
+                producer._oracle_provider_map(link_map, owners)
+
     def test_oracle_provider_authority_keeps_temporary_map_outside_report_tree(self) -> None:
         evidence = self.work / "evidence"
         evidence.mkdir()
