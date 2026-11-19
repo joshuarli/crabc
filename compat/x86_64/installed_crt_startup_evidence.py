@@ -345,8 +345,10 @@ def descriptor_runtime_source_order(sources):
     consumer=_runtime_source_text(sources,'libc/src/c_abi/x86_64/loader_tls_runtime_v1.rs')
     _runtime_order(builder,('LOADER_FEATURE = "x86_64-owned-dynamic-runtime"',
                             '"--features",\n                      LOADER_FEATURE'), 'dynamic builder')
+    release_builder=_runtime_region(builder,'def build(output: Path,','\ndef build_debug_payload(',
+                                    'release dynamic builder')
     attachment_compile=_runtime_region(
-        builder,
+        release_builder,
         'run([*common.native_build_tools.compile_command(rust_sysroot / "bin/rustc"),',
         '\n    (library / "crabc-dynamic-attach.o").chmod(0o644)',
         'selected attachment compile route',
@@ -382,8 +384,13 @@ def descriptor_runtime_source_order(sources):
                                  'or (args.dynamic_main_thread_runtime_v1 and spec.name == "Scrt1.o")',
                                  'str(source)'), 'dynamic CRT compile')
     startup=_runtime_region(crt,'pub unsafe extern "C" fn __crabc_x86_64_dynamic_start(','\n#[no_mangle]\npub unsafe extern "C" fn __crabc_x86_64_dynamic_executable_init','dynamic CRT startup')
+    attachment=_runtime_region(startup,'if unsafe { __crabc_x86_loader_tls_runtime_v1_attach() } != 0',
+                               '\n    #[cfg(all(target_arch = "aarch64", crabc_owned_dynamic_runtime))]',
+                               'dynamic CRT attachment')
+    _runtime_order(attachment,('if unsafe { __crabc_x86_loader_tls_runtime_v1_attach() } != 0',
+                               'startup_reject();'), 'dynamic CRT attachment')
     _runtime_order(startup,('if unsafe { __crabc_x86_loader_tls_runtime_v1_attach() } != 0',
-                            'startup_reject();','__libc_start_main('), 'dynamic CRT attachment')
+                            '__libc_start_main('), 'dynamic CRT attachment order')
     publisher=_runtime_region(tls,'unsafe fn publish_reserved_loader_tls_runtime_v1(installed: InstalledInitialTls) {','\n\nimpl GeneralInitialTlsState {','RuntimeV1 publisher')
     require(_runtime_source_code(publisher)==PUBLISHER_SOURCE_TEMPLATE,'RuntimeV1 publisher write/store template differs')
     implementation='impl GeneralInitialTlsState {\n'
