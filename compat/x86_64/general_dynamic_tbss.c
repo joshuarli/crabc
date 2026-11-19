@@ -4,7 +4,12 @@
 
 /* PT_TLS has no initialized prefix. Its 8 KiB per-thread zero fill is not
  * required to occupy bytes in any PT_LOAD of the executable. */
-static _Alignas(4096) _Thread_local volatile unsigned char initial_zero[8192];
+#if defined(__aarch64__)
+#define TBSS_SIZE 131072
+#else
+#define TBSS_SIZE 8192
+#endif
+static _Alignas(4096) _Thread_local volatile unsigned char initial_zero[TBSS_SIZE];
 struct worker_result { uintptr_t address; int error; };
 
 static int check_zero(void) {
@@ -33,6 +38,10 @@ int main(void) {
     if (pthread_create(&thread, 0, worker, &result) || pthread_join(thread, 0)) return 2;
     if (result.error || result.address == (uintptr_t)initial_zero) return 3;
     if (initial_zero[0] != 19 || initial_zero[sizeof initial_zero - 1] != 23) return 4;
+#if defined(__aarch64__)
+    puts("initial-tbss=131072,worker=isolated");
+#else
     puts("initial-tbss=8192,worker=isolated");
+#endif
     return 0;
 }

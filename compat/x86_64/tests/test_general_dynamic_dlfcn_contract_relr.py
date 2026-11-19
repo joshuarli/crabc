@@ -18,7 +18,8 @@ SPEC.loader.exec_module(PACKER_MODULE)
 DT_NULL, DT_RELA, DT_RELASZ = 0, 7, 8
 DT_RUNPATH, DT_SONAME = 29, 14
 DT_RELRSZ, DT_RELR, DT_RELRENT, DT_RELACOUNT = 35, 36, 37, 0x6FFFFFF9
-PT_LOAD, PT_DYNAMIC, R_X86_64_RELATIVE = 1, 2, 8
+PT_LOAD, PT_DYNAMIC = 1, 2
+NATIVE_RELATIVE = PACKER_MODULE.RELATIVE
 
 
 def load_headers(image):
@@ -113,7 +114,7 @@ class GeneralDynamicRelrPackerTests(unittest.TestCase):
         ]
         leading_count = next(
             (index for index, (_, info, _) in enumerate(relocations)
-             if info != R_X86_64_RELATIVE), len(relocations)
+             if info != NATIVE_RELATIVE), len(relocations)
         )
         self.assertGreater(leading_count, 0)
         self.assertLess(leading_count, len(relocations))
@@ -148,7 +149,7 @@ class GeneralDynamicRelrPackerTests(unittest.TestCase):
         count = 0
         while count * 24 < entries[DT_RELASZ]:
             _, info, _ = struct.unpack_from("<QQq", malformed, table + count * 24)
-            if info != R_X86_64_RELATIVE:
+            if info != NATIVE_RELATIVE:
                 break
             count += 1
         first_null = next(at for at, tag, _ in rows if tag == DT_NULL)
@@ -164,7 +165,7 @@ class GeneralDynamicRelrPackerTests(unittest.TestCase):
         count = 0
         while count * 24 < entries[DT_RELASZ]:
             _, info, _ = struct.unpack_from("<QQq", image, table + count * 24)
-            if info != R_X86_64_RELATIVE:
+            if info != NATIVE_RELATIVE:
                 break
             count += 1
         first_null = next(at for at, tag, _ in rows if tag == DT_NULL)
