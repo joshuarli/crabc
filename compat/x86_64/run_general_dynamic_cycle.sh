@@ -3,6 +3,7 @@
 set -euo pipefail
 ulimit -c 0
 readonly ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+eval "$(python3 -B "$ROOT/compat/x86_64/native_arch.py")"
 [ "$#" -eq 1 ] || exit 2
 readonly installed="$1" source="$ROOT/compat/x86_64/general_dynamic_cycle.c"
 case "${TMPDIR:-}" in "$ROOT"/.work/*) ;; *) exit 2;; esac
@@ -17,7 +18,7 @@ build_library() {
         for dependency in "$@"; do dependencies+=(--application-dso "$dependency"); done
         "$installed/bin/crabc-cc-dynamic" --dynamic-shared-object "-DCYCLE_$kind" "$source" "${dependencies[@]}" -o "$output"
     else
-        /usr/local/bin/crabc-x86_64-musl-gcc -fPIC -shared "-DCYCLE_$kind" "$source" \
+        "$oracle" -fPIC -shared "-DCYCLE_$kind" "$source" \
             -Wl,-soname,"$(basename "$output")",-rpath,/usr/lib,--no-as-needed "$@" -o "$output"
     fi
 }
@@ -27,11 +28,11 @@ for arm in oracle candidate; do
     mkdir -p "$root/lib" "$root/usr/lib" "$work/$arm-seed"
     if [ "$arm" = candidate ]; then
         cp -a "$installed/." "$root/"
-        interpreter=/lib/ld-crabc-x86_64.so.1
+        interpreter="/lib/ld-crabc-$arch.so.1"
     else
-        cp /opt/musl-1.2.6/lib/libc.so "$root/lib/ld-musl-x86_64.so.1"
+        cp /opt/musl-1.2.6/lib/libc.so "$root/lib/ld-musl-$arch.so.1"
         cp /opt/musl-1.2.6/lib/libc.so "$root/usr/lib/libc.so"
-        interpreter=/lib/ld-musl-x86_64.so.1
+        interpreter="/lib/ld-musl-$arch.so.1"
     fi
     # The seed contributes only the future A SONAME during B's link. It is
     # outside the execution root; the final A/B pair closes the real cycle.
@@ -52,8 +53,8 @@ for arm in oracle candidate; do
                 "$installed/bin/crabc-cc-dynamic" "--dynamic-$mode" "$source" \
                     --application-dso "${dsos[0]}" --application-dso "${dsos[1]}" -o "$root/$name"
             else
-                /usr/local/bin/crabc-x86_64-musl-gcc -fPIE "-${mode/non-pie/no-pie}" "$source" \
-                    -Wl,--dynamic-linker,/lib/ld-musl-x86_64.so.1,-rpath,/usr/lib,--no-as-needed "${dsos[@]}" -o "$root/$name"
+                "$oracle" -fPIE "-${mode/non-pie/no-pie}" "$source" \
+                    -Wl,--dynamic-linker,"$interpreter",-rpath,/usr/lib,--no-as-needed "${dsos[@]}" -o "$root/$name"
             fi
             for entry in interp direct; do
                 command=("/$name")
