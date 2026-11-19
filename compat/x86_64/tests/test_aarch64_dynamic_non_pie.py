@@ -31,6 +31,39 @@ class Aarch64DynamicNonPieTest(unittest.TestCase):
         cls.addClassCleanup(os.environ.pop, "CRABC_AARCH64_DYNAMIC_SYSROOT", None)
 
     @unittest.skipUnless(os.environ.get("CRABC_AARCH64_DYNAMIC_SYSROOT") or CAN_BUILD, "requires a built aarch64 product")
+    def test_receipt_reservations_precede_translation_and_preserve_existing_files(self):
+        product = Path(os.environ["CRABC_AARCH64_DYNAMIC_SYSROOT"]).resolve(strict=True)
+        driver = product / "bin/crabc-cc-dynamic"
+        with tempfile.TemporaryDirectory(dir=os.environ["TMPDIR"]) as directory:
+            work = Path(directory)
+            source = work / "invalid.c"
+            source.write_text("this is not C\n")
+            for kind in ("regular", "symlink", "hardlink"):
+                with self.subTest(kind=kind):
+                    output = work / kind
+                    receipt = Path(str(output) + ".crabc-link.json")
+                    original = work / (kind + ".original")
+                    original.write_bytes(b"existing receipt")
+                    if kind == "regular":
+                        receipt.write_bytes(b"existing receipt")
+                    elif kind == "symlink":
+                        receipt.symlink_to(original)
+                    else:
+                        os.link(original, receipt)
+                    result = subprocess.run([driver, "-pie", source, "-o", output], capture_output=True, text=True)
+                    self.assertNotEqual(result.returncode, 0)
+                    self.assertTrue("reserve dynamic link receipt" in result.stderr or "symlink" in result.stderr,
+                                    result.stderr)
+                    self.assertEqual(receipt.read_bytes(), b"existing receipt")
+                    self.assertEqual(original.read_bytes(), b"existing receipt")
+                    self.assertFalse(output.exists())
+            output = work / "new"
+            result = subprocess.run([driver, "-pie", source, "-o", output], capture_output=True, text=True)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertFalse(Path(str(output) + ".crabc-link.json").exists())
+            self.assertFalse(output.exists())
+
+    @unittest.skipUnless(os.environ.get("CRABC_AARCH64_DYNAMIC_SYSROOT") or CAN_BUILD, "requires a built aarch64 product")
     def test_resealed_crt_and_loader_provenance_drift_is_rejected(self):
         product = Path(os.environ["CRABC_AARCH64_DYNAMIC_SYSROOT"]).resolve(strict=True)
         with tempfile.TemporaryDirectory(dir=os.environ["TMPDIR"]) as temporary:

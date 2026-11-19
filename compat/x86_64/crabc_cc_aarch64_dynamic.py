@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Compile native AArch64 dynamic applications against the installed crabc sysroot."""
+from contextlib import ExitStack
 import json
 import os
 from pathlib import Path
@@ -267,7 +268,17 @@ def execute(arguments):
         dependency_output = dependency_file.absolute()
         shared.validate_application_output(root, dependency_output)
         shared.validate_application_output_disjoint(dependency_output, (*sources, *objects_in, output))
-    with tempfile.TemporaryDirectory(prefix="crabc-aarch64-dynamic-") as temporary:
+    receipt_path = Path(str(output) + ".crabc-link.json")
+    inspection_path, map_path = elf_inspection.sidecar_paths(output)
+    if not invocation.compile_only:
+        for sidecar in (receipt_path, inspection_path, map_path):
+            shared.validate_application_output(root, sidecar)
+            shared.validate_application_output_disjoint(sidecar, (*sources, *objects_in, *dso_inputs, *transitive_inputs, output))
+    with ExitStack() as reservations, tempfile.TemporaryDirectory(prefix="crabc-aarch64-dynamic-") as temporary:
+        if not invocation.compile_only:
+            receipt_stream = reservations.enter_context(dynamic_shared.reserve_receipt(receipt_path))
+            inspection_stream = reservations.enter_context(dynamic_shared.reserve_receipt(inspection_path))
+            accept_map = reservations.enter_context(dynamic_shared.reserve_link_map(map_path))
         objects = list(objects_in)
         for index, source in enumerate(sources):
             obj = output if invocation.compile_only else Path(temporary) / f"{index}.o"
@@ -279,9 +290,6 @@ def execute(arguments):
             objects.append(obj)
         if invocation.compile_only:
             return
-        receipt_path = Path(str(output) + ".crabc-link.json")
-        shared.validate_application_output(root, receipt_path)
-        shared.validate_application_output_disjoint(receipt_path, (*sources, *objects_in, *dso_inputs, *transitive_inputs, output))
         runtime = [lib / name for name in ("crti.o", "libc.so", "crtn.o")]
         command = ["/usr/bin/mold", *(["-shared"] if mode == "shared" else ["-pie"] if mode == "pie" else []), "--hash-style=" + hash_style,
                    "--eh-frame-hdr", "-z", "relro", "-z", binding_mode, "-z", "noexecstack", "-z", "text", *([] if runtime_imports else ["--no-undefined"]),
@@ -315,20 +323,7 @@ def execute(arguments):
                 raise shared.DriverError(f"runtime imports differ from exact unresolved object symbols: {sorted(required - object_provided)}")
         command += [str(lib / "crti.o"), *(str(path) for path in attachment), *(str(path) for path in objects), str(archive),
                     *(str(path) for path in dso_inputs), str(lib / "libc.so"), str(lib / "crtn.o"), "-o", str(output)]
-        inspection_path, map_path = elf_inspection.sidecar_paths(output)
-        for sidecar in (inspection_path, map_path):
-            shared.validate_application_output(root, sidecar)
-            shared.validate_application_output_disjoint(sidecar, (*sources, *objects_in, *dso_inputs, *transitive_inputs, output, receipt_path))
-        descriptor = os.open(receipt_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o644)
-        inspection_fd = map_fd = -1
-        map_reserved = inspection_reserved = False
         try:
-            inspection_fd = os.open(inspection_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o644)
-            inspection_reserved = True
-            map_fd = os.open(map_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o644)
-            map_reserved = True
-            os.close(map_fd)
-            map_fd = -1
             completed = subprocess.run([*command[:-2], "--trace", f"-Map={map_path}", *command[-2:]], text=True,
                                        stdout=subprocess.PIPE, check=True, env=shared.clean_environment())
             trace = completed.stdout.splitlines()
@@ -397,26 +392,10 @@ def execute(arguments):
                     [{"role": "linker-input", "path": str(path), "sha256": shared.sha256_file(path)} for path in [*runtime, *objects, archive]]
                     + [{"role": record["application_dso_roles"][name] + "-application-dso", "name": name,
                         "path": str(path), "sha256": shared.sha256_file(path)} for name, (path, _) in nodes.items()])
-            with os.fdopen(inspection_fd, "w", encoding="utf-8") as stream:
-                inspection_fd = -1
-                json.dump(inspection, stream, indent=2, sort_keys=True)
-                stream.write("\n")
-            with os.fdopen(descriptor, "w", encoding="utf-8") as stream:
-                descriptor = -1
-                json.dump(record, stream, indent=2, sort_keys=True)
-                stream.write("\n")
+            accept_map()
+            inspection_stream(json.dumps(inspection, indent=2, sort_keys=True) + "\n")
+            receipt_stream(json.dumps(record, indent=2, sort_keys=True) + "\n")
         except BaseException:
-            if descriptor != -1:
-                os.close(descriptor)
-            if inspection_fd != -1:
-                os.close(inspection_fd)
-            if map_fd != -1:
-                os.close(map_fd)
-            receipt_path.unlink(missing_ok=True)
-            if inspection_reserved:
-                inspection_path.unlink(missing_ok=True)
-            if map_reserved:
-                map_path.unlink(missing_ok=True)
             output.unlink(missing_ok=True)
             raise
 
