@@ -29,6 +29,21 @@ SPEC.loader.exec_module(package)
 
 
 class OwnedStaticSysrootPackageTests(unittest.TestCase):
+    def test_arm_manifest_binds_native_target_and_payload_hashes(self):
+        arm = {"arch": "aarch64", "target_triple": "aarch64-unknown-linux-musl"}
+        required = tuple(path for path in package.REQUIRED_INSTALLED_PATHS if not path.endswith("Scrt1.o"))
+        manifest = {"schema": 1, "format": "crabc-aarch64-owned-static-sysroot-v1",
+                    "target": arm["target_triple"], "source_sha256": "a" * 64,
+                    "build_profile": "release", "symlinks": {},
+                    "files": {path: "b" * 64 for path in required}}
+        with mock.patch.object(package, "ARCH", arm), \
+                mock.patch.object(package, "REQUIRED_INSTALLED_PATHS", required), \
+                mock.patch.object(package.source_seal, "product_source_digest", return_value="a" * 64):
+            self.assertEqual(package.manifest_payload_hashes(manifest), manifest["files"])
+            manifest["target"] = "x86_64-unknown-linux-musl"
+            with self.assertRaises(package.PackageError):
+                package.manifest_payload_hashes(manifest)
+
     def populate_tree(self, root: Path) -> None:
         (root / "bin").mkdir(parents=True)
         (root / "usr" / "include").mkdir(parents=True)

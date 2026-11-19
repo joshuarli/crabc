@@ -180,7 +180,8 @@ def collect(root: Path, work: Path) -> dict:
     require(primary_manifest.get("build_profile", "release") == "release"
             and primary_manifest.get("allocator_lifecycle_test_audit", False) is False,
             "static preparation requires a release product without lifecycle test audit")
-    allocator_backend = primary_manifest.get("allocator_backend")
+    arm = native_arch()["arch"] == "aarch64"
+    allocator_backend = "accepted-c" if arm else primary_manifest.get("allocator_backend")
     require(type(allocator_backend) is str and allocator_backend in ALLOCATOR_BACKENDS,
             "unsupported or absent preparation allocator backend")
     expected_commands = commands(root, work, allocator_backend)
@@ -200,13 +201,20 @@ def collect(root: Path, work: Path) -> dict:
         tree = tree_identity(product)
         manifest_path = product / package.MANIFEST_RELATIVE_PATH
         manifest = read(manifest_path)
-        require(isinstance(manifest, dict) and manifest.get("allocator_backend") == allocator_backend,
-                f"allocator backend differs from primary: {label}")
-        require(isinstance(manifest.get("producer_tools"), dict) and manifest["producer_tools"],
-                f"producer tool provenance absent: {label}")
+        require(isinstance(manifest, dict), f"invalid manifest: {label}")
+        if arm:
+            import owned_posix_product_evidence
+            owned_posix_product_evidence._validate_static_product_uncached(product)
+            producer_tools = {"crt_commands_sha256": package.sha256_file(product / "share/crabc/crt.commands.json")}
+        else:
+            require(manifest.get("allocator_backend") == allocator_backend,
+                    f"allocator backend differs from primary: {label}")
+            producer_tools = manifest.get("producer_tools")
+            require(isinstance(producer_tools, dict) and producer_tools,
+                    f"producer tool provenance absent: {label}")
         require(isinstance(manifest.get("toolchain"), str), f"toolchain provenance absent: {label}")
         products[label] = {"path": relative(root, product), "manifest": file_identity(root, manifest_path),
-                           "tree": tree, "producer_tools": manifest["producer_tools"], "toolchain": manifest["toolchain"]}
+                           "tree": tree, "producer_tools": producer_tools, "toolchain": manifest["toolchain"]}
     primary = products["primary"]
     for label in ("reproduction", "extracted"):
         require(products[label]["tree"] == primary["tree"], f"product differs from primary: {label}")
