@@ -101,11 +101,7 @@ readonly work="$(mktemp -d "$TMPDIR/owned-crypt-runtime.XXXXXX")"
 chmod a+rx "$work"
 printf 'owned crypt runtime evidence: %s\n' "$work"
 
-if [ "$NATIVE_ARCH" = x86_64 ]; then
-    bash "$ROOT/compat/x86_64/run_musl_oracle.sh" >/dev/null
-else
-    PYTHONPATH="$ROOT/compat/x86_64" python3 -B -c 'import owned_libc_test; owned_libc_test.pinned_musl_identity()'
-fi
+bash "$ROOT/compat/x86_64/run_musl_oracle.sh" >/dev/null
 
 # Disposable products are siblings of the evidence leaf, never children: the
 # profile reader rejects a product inside the leaf because leaf children are
