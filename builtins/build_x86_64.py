@@ -86,6 +86,9 @@ def native_source_definitions(source: Path) -> dict[str, str]:
     definitions: dict[str, str] = {}
     pattern = re.compile(r'pub\s+(?:unsafe\s+)?extern\s+"C"\s+fn\s+(__\w+)\s*\((.*?)\)\s*->\s*([\w:<>]+)', re.S)
     for match in pattern.finditer(text):
+        attributes = re.search(r'(?:^[ \t]*#\[[^\n]*\][ \t]*\n)*\Z', text[:match.start()], re.M).group(0)
+        if '#[cfg(target_arch = "aarch64")]' in attributes:
+            continue
         name = match.group(1)
         _require(name not in definitions, f"duplicate native helper definition: {name}")
         definitions[name] = " ".join(match.group(0).split())
