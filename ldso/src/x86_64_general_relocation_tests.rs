@@ -1418,6 +1418,15 @@ fn tlsdesc_is_not_an_unsupported_dlopen_relocation() {
     image.rela(IMAGE_DATA as u64, R_X86_64_TLSDESC, 0, 0);
     let objects = [EMPTY_OBJECT, image.object(false)];
     assert!(unsafe { deferred::diagnose_new(&objects, &[0, 1], 1, 0, false) }.is_none());
+
+    let mut provider = Image::new();
+    provider.symbol(1, 1, 1, 0, 1, IMAGE_DATA as u64, 8);
+    let mut consumer = Image::new();
+    consumer.symbol(1, 6, 1, 0, 0, 0, 0);
+    consumer.rela(IMAGE_DATA as u64, R_X86_64_TLSDESC, 1, 0);
+    let objects = [provider.object(false), consumer.object(true)];
+    assert!(matches!(unsafe { deferred::diagnose_new(&objects, &[0, 1], 1, 0, false) },
+        Some(deferred::RelocationFailure::MissingSymbol { owner: 1, symbol: b"value" })));
 }
 
 #[cfg(target_arch = "aarch64")]
