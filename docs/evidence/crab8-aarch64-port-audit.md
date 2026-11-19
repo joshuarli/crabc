@@ -441,7 +441,7 @@ The facade correction leaves out-of-scope callers `crabc-rs/examples/ppoll_direc
 
 ### Qualifying-path
 
-7. **Partly fixed (7721f05e0, e502e1956).** ARM qualification now runs and separately labels its native CRT builder suite, and its installed-driver suite has 13 passing native cases including resealed provenance and input injection. The shared x86 suite has 59 cases; 18 fail on ARM because its native fixtures construct and require x86 ELF, so its remaining behaviors still need native coverage.
+7. **Partly fixed (7721f05e0, e502e1956, dae8e2693, cafd0d61a, cdb534d17).** ARM qualification runs its native CRT builder and installed-driver suites. The driver now shares inode-aware early receipt reservation and native DSO name validation; native tests cover existing and replaced receipts and reserved names. The x86 suite has 59 cases and still needs equivalent ARM coverage for its remaining behaviors.
 8. **Closed (d8ffc3bd5): producer-tool identities are checked against the architecture-specific source pin.**
    - The shared product and loader readers use the same source-pinned records.
 9. **Closed (20cedf91a).** Final ELF inspection receives the shared dynamic-symbol provider set on ARM.
