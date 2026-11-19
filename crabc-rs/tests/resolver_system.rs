@@ -114,10 +114,9 @@ fn caller_owned_resolver_snapshot_rejects_invalid_configuration() {
 }
 
 #[test]
-fn resolver_snapshot_skips_a_root_search_suffix_like_musl() {
-    let config = ResolverConfig::from_bytes(b"nameserver 192.0.2.53\nsearch . example.test\n", b"")
-        .expect("musl loads a root search suffix");
-    assert_eq!(config.search_domains(), &["example.test"]);
+fn resolver_snapshot_rejects_invalid_search_suffixes() {
+    assert!(ResolverConfig::from_bytes(b"nameserver 192.0.2.53\nsearch . example.test\n", b"").is_err());
+    assert!(ResolverConfig::from_bytes(b"search 192.0.2.1\n", b"").is_err());
 }
 
 #[test]
@@ -236,8 +235,8 @@ fn resolver_completes_aaaa_answers_for_inet6() {
 }
 
 #[test]
-fn resolver_system_snapshot_reads_direct_files_without_global_state() {
-    let config = ResolverConfig::from_system().expect("Linux resolver files should be readable");
+fn resolver_snapshot_reads_fixture_without_global_state() {
+    let config = ResolverConfig::from_bytes(b"nameserver 127.0.0.1\nsearch example.test\n", b"127.0.0.1 localhost\n").expect("fixture should load");
     assert!(config.hosts().is_some());
     assert!(config.nameserver_count() <= 3);
     assert!(config.search_domains().len() <= 6);
