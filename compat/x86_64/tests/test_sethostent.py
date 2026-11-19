@@ -139,7 +139,7 @@ class SetHostEntTests(unittest.TestCase):
         family = next(
             family for family in ledger["family"] if family["id"] == "libc.c-abi-compat"
         )
-        self.assertEqual("planned", family["status"])
+        self.assertEqual("foundation-verified", family["status"])
         artifact = next(
             record
             for record in family["verified_artifact"]
