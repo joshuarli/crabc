@@ -35,7 +35,7 @@ import owned_dynamic_elf as dynamic_elf
 
 ROOT = Path(__file__).resolve().parents[2]
 MODES = ('pie-kernel', 'pie-direct', 'non-pie-kernel', 'non-pie-direct')
-PRODUCT_FORMAT = 'crabc-x86-64-owned-dynamic-sysroot-v1'
+PRODUCT_FORMAT = product_evidence.DYNAMIC_PRODUCT_FORMAT
 COMPONENTS = ('differential', 'signal-process', 'pthread-stress', 'os-test', 'libc-test')
 LIBC_TEST_REVISION = '68edb8bd73dab8147ee54c8bec638f4d2b3cff37'
 LIBC_TEST_TREE = '4f7a5373652c6534b0fbafb58fe3fed1489f3b3b'
@@ -46,7 +46,7 @@ OS_TEST_COMPILE_JOBS = 8
 BOOTSTRAP_SOURCE = ROOT / 'compat/x86_64/libc_bootstrap_primitives_probe.c'
 BOOTSTRAP_JUMP_SOURCE = ROOT / 'libc/src/c_abi/x86_64/setjmp.rs'
 BOOTSTRAP_SOURCE_MOUNT = '/workspace'
-BOOTSTRAP_ORACLE_COMPILER = '/usr/local/bin/crabc-x86_64-musl-gcc'
+BOOTSTRAP_ORACLE_COMPILER = f'/usr/local/bin/crabc-{product_evidence.ARCH}-musl-gcc'
 BOOTSTRAP_HEADERS = (
     'errno.h', 'fenv.h', 'setjmp.h', 'bits/setjmp.h', 'features.h', 'signal.h',
     'bits/alltypes.h', 'bits/signal.h', 'string.h', 'strings.h', 'sys/mman.h',
@@ -142,7 +142,7 @@ class Reader:
         manifest = read_json(self.manifest)
         require(isinstance(manifest, dict), 'dynamic manifest is not an object')
         same({key: manifest.get(key) for key in ('schema', 'format', 'target')},
-             {'schema': 1, 'format': PRODUCT_FORMAT, 'target': 'x86_64-unknown-linux-musl'}, 'dynamic product identity')
+             {'schema': 1, 'format': PRODUCT_FORMAT, 'target': product_evidence.TARGET}, 'dynamic product identity')
 
     def recorded(self, path):
         path = Path(path).absolute()
@@ -272,7 +272,7 @@ def _bootstrap_expected_commands(reader, static_product, dynamic_product):
         for route in ('kernel', 'direct'):
             argv = [*runtime_env, '/usr/sbin/chroot', reader.recorded(execution_root)]
             if route == 'direct':
-                argv.extend(('/lib/ld-crabc-x86_64.so.1', '/consumer'))
+                argv.extend((product_evidence.INTERPRETER, '/consumer'))
             else:
                 argv.append('/consumer')
             commands['run-' + mode + '-' + route] = argv
