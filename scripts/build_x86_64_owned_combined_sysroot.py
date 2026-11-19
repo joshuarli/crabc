@@ -41,9 +41,11 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "compat/x86_64"))
 import owned_static_sysroot_package as shared_package
 from native_runtime_profile import NativeRuntimeProfile
+from native_arch import native_arch
 
-FORMAT = "crabc-x86-64-owned-sysroot-v1"
-TARGET = "x86_64-unknown-linux-musl"
+ARCH = native_arch()
+FORMAT = "crabc-aarch64-owned-sysroot-v1" if ARCH["arch"] == "aarch64" else "crabc-x86-64-owned-sysroot-v1"
+TARGET = ARCH["target_triple"]
 MANIFEST = "share/crabc/manifest.json"
 DYNAMIC_STATE = "share/crabc/dynamic-product-state.json"
 DYNAMIC_STATE_SCHEMA = "crabc.x86_64-owned-dynamic-materialization/v1"
@@ -54,8 +56,8 @@ PRODUCT_BUILDERS = {
     "dynamic": "scripts/build_x86_64_owned_dynamic_sysroot.py",
 }
 PRODUCT_FORMATS = {
-    "static": "crabc-x86-64-owned-static-sysroot-v1",
-    "dynamic": "crabc-x86-64-owned-dynamic-sysroot-v1",
+    "static": "crabc-aarch64-owned-static-sysroot-v1" if ARCH["arch"] == "aarch64" else "crabc-x86-64-owned-static-sysroot-v1",
+    "dynamic": "crabc-aarch64-owned-dynamic-sysroot-v1" if ARCH["arch"] == "aarch64" else "crabc-x86-64-owned-dynamic-sysroot-v1",
 }
 # Installed modules imported by an installed driver. They are runtime files,
 # not relocatable metadata, even though they live below share/crabc/.
@@ -132,6 +134,11 @@ def require_matching_source_seals(static_manifest: dict, dynamic_manifest: dict,
     require(isinstance(static_source, str) and len(static_source) == 64
             and all(character in "0123456789abcdef" for character in static_source),
             "static product source seal is missing or invalid")
+    if ARCH["arch"] == "aarch64":
+        require(static_manifest.get("build_profile") == "release" and dynamic_manifest.get("build_profile") == "release",
+                "arm64 product profiles differ")
+        require(dynamic_manifest.get("source_sha256") == static_source, "static and dynamic product source seals differ")
+        return
     try:
         dynamic_state = json.loads(dynamic_state_payload)
     except (ValueError, UnicodeDecodeError) as error:
@@ -188,10 +195,12 @@ def plan(products: Mapping[str, Path]) -> dict:
     require(tuple(products) == PRODUCTS, "composition requires the static and dynamic products")
     trees = {name: tree(root) for name, root in products.items()}
     manifests = {name: product_manifest(root, name) for name, root in products.items()}
-    try:
-        dynamic_state = (products["dynamic"] / DYNAMIC_STATE).read_bytes()
-    except OSError as error:
-        raise CompositionError("dynamic product state is missing") from error
+    dynamic_state = b""
+    if ARCH["arch"] != "aarch64":
+        try:
+            dynamic_state = (products["dynamic"] / DYNAMIC_STATE).read_bytes()
+        except OSError as error:
+            raise CompositionError("dynamic product state is missing") from error
     require_matching_source_seals(manifests["static"], manifests["dynamic"], dynamic_state)
     toolchains = {record.get("toolchain") for record in manifests.values()}
     require(len(toolchains) == 1 and isinstance(next(iter(toolchains)), str),
@@ -264,6 +273,15 @@ def manifest_record(decision: Mapping) -> dict:
     }
 
 
+def restore_native_loader_link(root: Path, record: Mapping) -> None:
+    loader = root / ("lib/ld-crabc-aarch64-hardened.so.1" if record["hardening_profile"] == "hardened" else "lib/ld-crabc-aarch64.so.1")
+    libc = root / "usr/lib/libc.so"
+    require(loader.is_file() and libc.is_file() and sha256_file(loader) == sha256_file(libc),
+            "combined loader bytes differ from libc")
+    loader.unlink()
+    os.link(libc, loader)
+
+
 def compose(products: Mapping[str, Path], output: Path) -> dict:
     """Materialize one composed tree at a fresh private path."""
 
@@ -280,6 +298,8 @@ def compose(products: Mapping[str, Path], output: Path) -> dict:
         path.parent.mkdir(parents=True, exist_ok=True)
         path.symlink_to(target)
     record = manifest_record(decision)
+    if ARCH["arch"] == "aarch64":
+        restore_native_loader_link(output, record)
     (output / MANIFEST).write_text(json.dumps(record, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     (output / MANIFEST).chmod(0o644)
     validate(output)
@@ -323,7 +343,7 @@ def validate_component_claims(record: dict, embedded_payloads: Mapping[str, byte
                 f"combined package {name} manifest identity differs")
         manifests[name] = embedded
         installed = embedded.get("installed")
-        if name == "static":
+        if name == "static" and ARCH["arch"] != "aarch64":
             component_files = installed.get("files") if isinstance(installed, dict) else None
         else:
             component_files = embedded.get("files")
@@ -332,8 +352,9 @@ def validate_component_claims(record: dict, embedded_payloads: Mapping[str, byte
                         for path, digest in component_files.items()),
                 f"combined package {name} file roster differs")
         if name == "dynamic":
-            require(DYNAMIC_STATE in component_files,
-                    "dynamic product manifest omits its source-bound state")
+            if ARCH["arch"] != "aarch64":
+                require(DYNAMIC_STATE in component_files,
+                        "dynamic product manifest omits its source-bound state")
             require(embedded.get("symlinks") == record["symlinks"],
                     "combined package aliases differ from dynamic component")
         placements = component["placements"]
@@ -352,7 +373,7 @@ def validate_component_claims(record: dict, embedded_payloads: Mapping[str, byte
                     f"combined package {name} placement conflicts: {origin}")
             claims[destination] = digest
     require(claims == record["files"], "unclaimed package payload")
-    state_payload = embedded_payloads.get(dynamic_state_destination(record))
+    state_payload = b"" if ARCH["arch"] == "aarch64" else embedded_payloads.get(dynamic_state_destination(record))
     require(isinstance(state_payload, bytes), "combined package dynamic product state is missing")
     require_matching_source_seals(manifests["static"], manifests["dynamic"], state_payload)
 
@@ -378,12 +399,15 @@ def validate(root: Path) -> dict:
     for path, target in links.items():
         resolved = PurePosixPath(path).parent / target
         require("/" not in target and resolved.as_posix() in files, f"symlink escapes the payload: {path}")
-    state_destination = dynamic_state_destination(record)
-    validate_component_claims(record, {
-        **{f"{METADATA_PREFIX}{name}/manifest.json":
-           (root / f"{METADATA_PREFIX}{name}/manifest.json").read_bytes() for name in PRODUCTS},
-        state_destination: (root / state_destination).read_bytes(),
-    })
+    embedded = {f"{METADATA_PREFIX}{name}/manifest.json":
+                (root / f"{METADATA_PREFIX}{name}/manifest.json").read_bytes() for name in PRODUCTS}
+    if ARCH["arch"] != "aarch64":
+        state_destination = dynamic_state_destination(record)
+        embedded[state_destination] = (root / state_destination).read_bytes()
+    else:
+        loader = root / ("lib/ld-crabc-aarch64-hardened.so.1" if record["hardening_profile"] == "hardened" else "lib/ld-crabc-aarch64.so.1")
+        require(os.path.samefile(loader, root / "usr/lib/libc.so"), "combined loader is not the merged libc")
+    validate_component_claims(record, embedded)
     return record
 
 
@@ -475,6 +499,8 @@ def extract(package_path: Path, output: Path) -> None:
         for relative, target in record["symlinks"].items():
             (staged / relative).parent.mkdir(parents=True, exist_ok=True)
             (staged / relative).symlink_to(target)
+        if ARCH["arch"] == "aarch64":
+            restore_native_loader_link(staged, record)
         validate(staged)
         shared_package.publish_noreplace(staged, output, "combined extraction output")
 
@@ -508,6 +534,7 @@ def build(output: Path, *, hardening_profile: NativeRuntimeProfile = NativeRunti
     for name, builder in PRODUCT_BUILDERS.items():
         with (stage / f"{name}.log").open("xb") as log:
             completed = subprocess.run([sys.executable, "-B", str(ROOT / builder), "--output", str(products[name]),
+                                        *(["--architecture", "aarch64"] if ARCH["arch"] == "aarch64" else []),
                                         "--hardening-profile", hardening_profile.value],
                                        cwd=ROOT, stdout=log, stderr=subprocess.STDOUT, check=False)
         require(completed.returncode == 0, f"{name} product build failed; log: {stage / (name + '.log')}")

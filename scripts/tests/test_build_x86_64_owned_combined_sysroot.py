@@ -11,6 +11,7 @@ import sys
 import tarfile
 import tempfile
 import unittest
+from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "scripts"))
@@ -77,6 +78,33 @@ class CombinedSysrootCompositionTests(unittest.TestCase):
         output = self.root / name
         combined.compose({"static": self.static, "dynamic": self.dynamic}, output)
         return output
+
+    def test_arm64_composition_binds_sources_and_restores_loader_hard_link(self):
+        loader = self.dynamic / "lib/ld-crabc-aarch64.so.1"
+        (self.dynamic / "lib/ld-musl-x86_64.so.1").unlink()
+        (self.dynamic / "lib/ld-crabc-x86_64.so.1").unlink()
+        loader.write_bytes((self.dynamic / "usr/lib/libc.so").read_bytes())
+        loader.chmod(0o755)
+        (self.dynamic / "share/crabc/dynamic-product-state.json").unlink()
+        formats = {"static": "crabc-aarch64-owned-static-sysroot-v1",
+                   "dynamic": "crabc-aarch64-owned-dynamic-sysroot-v1"}
+        for name, root in (("static", self.static), ("dynamic", self.dynamic)):
+            manifest_path = root / "share/crabc/manifest.json"
+            manifest = json.loads(manifest_path.read_text())
+            files = {path: value[0] for path, value in combined.tree(root)[0].items()
+                     if path != "share/crabc/manifest.json"}
+            manifest.update(format=formats[name], target="aarch64-unknown-linux-musl", files=files,
+                            source_sha256=self.source_sha256, build_profile="release", symlinks={})
+            manifest.pop("installed", None)
+            manifest_path.write_text(json.dumps(manifest))
+        with mock.patch.object(combined, "ARCH", {"arch": "aarch64"}), \
+                mock.patch.object(combined, "FORMAT", "crabc-aarch64-owned-sysroot-v1"), \
+                mock.patch.object(combined, "TARGET", "aarch64-unknown-linux-musl"), \
+                mock.patch.object(combined, "PRODUCT_FORMATS", formats):
+            output = self.root / "combined-arm"
+            combined.compose({"static": self.static, "dynamic": self.dynamic}, output)
+            self.assertTrue(os.path.samefile(output / "lib/ld-crabc-aarch64.so.1", output / "usr/lib/libc.so"))
+            combined.validate(output)
 
     def test_one_tree_owns_every_mode_input_once(self):
         output = self.compose()
