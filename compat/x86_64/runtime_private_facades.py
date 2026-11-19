@@ -44,12 +44,17 @@ import native_abi_inventory as inventory
 import compiler_helper_evidence as compiler_helper
 import owned_posix_timers_evidence as timer_evidence
 import owned_posix_product_evidence as product_evidence
+import source_seal
+from native_arch import native_arch
 
 
 ROOT = Path(__file__).resolve().parents[2]
-TARGET = "x86_64-unknown-linux-musl"
-INTERPRETER = "/lib/ld-crabc-x86_64.so.1"
-SCHEMA = "crabc.x86_64-runtime-private-facades/v2"
+ARCH = native_arch()["arch"]
+TARGET = native_arch()["target_triple"]
+INTERPRETER = f"/lib/ld-crabc-{ARCH}.so.1"
+SCHEMA = f"crabc.{ARCH}-runtime-private-facades/v2"
+WORK_ROOT = ROOT / ".work" / native_arch()["work_name"]
+ARM_FORMAT = "crabc-aarch64-owned-dynamic-sysroot-v1"
 PRIVATE_RUNTIME = "__crabc_runtime_v1"
 FEATURES = ("runtime-loader", "runtime-thread-alloc", "runtime-stdio")
 REPORT_FIELDS = {
@@ -63,6 +68,9 @@ LIMITS = (
 )
 EXPECTED_PACKAGES = ("bitflags", "crabc-core", "crabc-rs")
 MEMORY_PRIMITIVES = frozenset({"memcpy", "memmove", "memset", "memcmp", "bcmp"})
+ARCH_HELPERS = {"x86_64": frozenset(), "aarch64": frozenset({
+    "__aarch64_cas8_relax", "__aarch64_ldadd8_acq_rel", "__aarch64_ldadd8_rel",
+})}
 FORBIDDEN_IMPORTS = frozenset({
     "dlopen", "dlsym", "dlclose", "dlerror", "dladdr", "dlinfo", "dl_iterate_phdr",
     "pthread_create", "pthread_join", "pthread_detach", "pthread_self", "pthread_cancel",
@@ -250,7 +258,7 @@ def admit_probe_symbols(probe: Probe, undefined: list[str], defined: list[str]) 
     forbidden = sorted(FORBIDDEN_IMPORTS.intersection(undefined))
     if forbidden:
         fail(f"{probe.example} imports public C ABI/errno symbols: {forbidden}")
-    unexpected = sorted(set(undefined) - {PRIVATE_RUNTIME} - MEMORY_PRIMITIVES - probe.fixture_imports)
+    unexpected = sorted(set(undefined) - {PRIVATE_RUNTIME} - MEMORY_PRIMITIVES - ARCH_HELPERS[ARCH] - probe.fixture_imports)
     if unexpected:
         fail(f"{probe.example} has undeclared imports: {unexpected}")
     missing_entries = sorted(probe.entries - set(defined))
@@ -263,8 +271,9 @@ def admit_probe_symbols(probe: Probe, undefined: list[str], defined: list[str]) 
 
 def inspect_probe(tools: dict[str, str], probe: Probe, obj: Path, work: Path) -> dict[str, object]:
     header = run([tools["readobj"], "--file-headers", str(obj)])
-    if "Format: elf64-x86-64" not in header or "Type: Relocatable" not in header:
-        fail(f"{obj.name} is not an x86-64 ELF relocatable object")
+    elf_format = {"x86_64": "elf64-x86-64", "aarch64": "elf64-littleaarch64"}[ARCH]
+    if f"Format: {elf_format}" not in header or "Type: Relocatable" not in header:
+        fail(f"{obj.name} is not an {ARCH} ELF relocatable object")
     undefined = symbols(tools["nm"], obj, "--undefined-only")
     defined = symbols(tools["nm"], obj, "--defined-only", "--extern-only")
     admit_probe_symbols(probe, undefined, defined)
@@ -298,11 +307,17 @@ def source_identity() -> dict[str, object]:
 
 def product_identity(installed: Path) -> dict[str, object]:
     if (installed.is_symlink() or not installed.is_dir() or installed.resolve() != installed
-            or not installed.is_relative_to(ROOT / ".work/x86_64")):
-        fail("dynamic product must be a physical installed product below checkout .work/x86_64")
+            or not installed.is_relative_to(WORK_ROOT)):
+        fail(f"dynamic product must be a physical installed product below checkout {WORK_ROOT}")
     try:
-        compiler_helper.validate_materialized_dynamic_product(ROOT, installed)
-    except compiler_helper.CompilerHelperEvidenceError as error:
+        if ARCH == "aarch64":
+            product_evidence._validate_dynamic_product(installed)
+            manifest = json.loads((installed / "share/crabc/manifest.json").read_text())
+            if manifest.get("source_sha256") != source_seal.product_source_digest(ROOT):
+                fail("installed dynamic product source differs")
+        else:
+            compiler_helper.validate_materialized_dynamic_product(ROOT, installed)
+    except (compiler_helper.CompilerHelperEvidenceError, product_evidence.ProductEvidenceError) as error:
         raise EvidenceError(f"installed dynamic product is not source-matched: {error}") from error
     manifest_path = installed / "share/crabc/manifest.json"
     manifest = artifact_identity(manifest_path, installed)
@@ -488,8 +503,9 @@ def validate_report(report_path: Path, *, expected_source: dict[str, object],
             timer_evidence._validate_shared_receipt(
                 dynamic_product, dynamic_product / "share/crabc/manifest.json",
                 object_path, artifact, receipt,
+                **({"product_format": ARM_FORMAT} if ARCH == "aarch64" else {}),
             )
-            timer_evidence._validate_tls_elf(artifact)
+            timer_evidence._validate_tls_elf(artifact, **({"machine": "AArch64"} if ARCH == "aarch64" else {}))
         except timer_evidence.TimerEvidenceError as error:
             raise EvidenceError(f"RuntimeV1 DSO link receipt differs: {name}: {error}") from error
     executable_roles = {
@@ -555,8 +571,8 @@ def validate_report(report_path: Path, *, expected_source: dict[str, object],
 
 
 def run_evidence(supplied: Path | None) -> Path:
-    if platform.system() != "Linux" or platform.machine().lower() not in {"x86_64", "amd64"}:
-        fail("runtime private facades require native Linux/x86-64")
+    if platform.system() != "Linux":
+        fail("runtime private facades require native Linux")
     temporary = Path(os.environ.get("TMPDIR", ""))
     if not temporary.is_dir() or temporary.resolve() != temporary or not temporary.is_relative_to(ROOT / ".work"):
         fail("TMPDIR must be a physical checkout .work directory")
@@ -566,17 +582,17 @@ def run_evidence(supplied: Path | None) -> Path:
     print(f"runtime private facades evidence: {work}", flush=True)
     if supplied is None:
         product_work = Path(tempfile.mkdtemp(
-            prefix="runtime-private-facades-product.", dir=ROOT / ".work/x86_64"
+            prefix="runtime-private-facades-product.", dir=WORK_ROOT
         ))
         installed = product_work / "installed"
         run([sys.executable, "-B", str(ROOT / "scripts/build_x86_64_owned_dynamic_sysroot.py"),
-             "--output", str(installed)], cwd=ROOT)
+             *([] if ARCH == "x86_64" else ["--architecture", ARCH]), "--output", str(installed)], cwd=ROOT)
     else:
         installed = Path(os.path.abspath(supplied))
         if (supplied.is_symlink() or installed.resolve() != installed
                 or not (installed / "bin/crabc-cc-dynamic").is_file()
-                or not installed.is_relative_to(ROOT / ".work/x86_64")):
-            fail("supplied dynamic sysroot must be an installed product below checkout .work/x86_64")
+                or not installed.is_relative_to(WORK_ROOT)):
+            fail(f"supplied dynamic sysroot must be an installed product below checkout {WORK_ROOT}")
     selected_product = product_identity(installed)
     libc = installed / "usr/lib/libc.so"
     channel = pinned_channel()
@@ -640,7 +656,4 @@ def main(argv: list[str] | None = None) -> int:
 
 
 if __name__ == "__main__":
-    from native_arch import native_arch
-    if native_arch()["arch"] != "x86_64":
-        raise SystemExit("runtime_private_facades: x86-64 receipt or ELF contract is unavailable on aarch64")
     raise SystemExit(main())

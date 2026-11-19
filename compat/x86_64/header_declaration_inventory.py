@@ -41,13 +41,15 @@ if str(MODULE_DIRECTORY) not in sys.path:
 
 import header_abi_matrix as abi_matrix
 import header_callable_inventory as callable_inventory
+from native_arch import native_arch
 
 
-SCHEMA = "crabc.x86_64-header-declaration-inventory/v1"
-RAW_ARTIFACT_SCHEMA = "crabc.x86_64-header-declaration-inventory-raw/v1"
-VALIDATION_SCHEMA = "crabc.x86_64-header-declaration-inventory-validation/v1"
-TARGET = "x86_64-unknown-linux-musl"
-PLATFORM = "Linux/x86-64 little-endian"
+ARCH = native_arch()["arch"]
+SCHEMA = f"crabc.{ARCH}-header-declaration-inventory/v1"
+RAW_ARTIFACT_SCHEMA = f"crabc.{ARCH}-header-declaration-inventory-raw/v1"
+VALIDATION_SCHEMA = f"crabc.{ARCH}-header-declaration-inventory-validation/v1"
+TARGET = native_arch()["target_triple"]
+PLATFORM = f"Linux/{'x86-64' if ARCH == 'x86_64' else 'aarch64'} little-endian"
 ORACLE = "Pinned musl 1.2.6"
 COLLECTOR_ID = "raw-declaration-occurrences-v1"
 DEFAULT_WORKERS = 4
@@ -321,7 +323,7 @@ def safe_relative_path(value: object, location: str) -> Path:
 def physical_output_directory(path: Path) -> Path:
     """Create one fresh evidence directory under the checkout's ignored work root."""
     path = path if path.is_absolute() else ROOT / path
-    work_root = abi_matrix.physical_x86_work_directory("header-declaration-inventory")
+    work_root = abi_matrix.physical_x86_work_directory("header-declaration-inventory", architecture=ARCH)
     try:
         relative = path.relative_to(work_root)
     except ValueError as error:
@@ -2712,9 +2714,6 @@ def main(arguments: Sequence[str] | None = None) -> int:
 
 
 if __name__ == "__main__":
-    from native_arch import native_arch
-    if native_arch()["arch"] != "x86_64":
-        raise SystemExit("header_declaration_inventory: x86-64 receipt or ELF contract is unavailable on aarch64")
     try:
         raise SystemExit(main())
     except HeaderDeclarationInventoryError as error:

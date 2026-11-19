@@ -9,13 +9,15 @@ fi
 ulimit -c 0
 
 readonly ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-readonly ORACLE_CC=/usr/local/bin/crabc-x86_64-musl-gcc
+eval "$(python3 -B "$ROOT/compat/x86_64/native_arch.py")"
+readonly ORACLE_CC="$oracle"
 readonly MUSL_LIB=/opt/musl-1.2.6/lib/libc.so
 readonly MUSL_ARCHIVE=/opt/musl-1.2.6/lib/libc.a
 readonly CONTRACT_SOURCE="$ROOT/compat/x86_64/owned_stdio_alias_contract_probe.c"
 readonly OVERRIDE_SOURCE="$ROOT/compat/x86_64/owned_stdio_alias_override_probe.c"
 readonly PROTECTED_SOURCE="$ROOT/compat/x86_64/owned_stdio_protected_runtime_probe.c"
-readonly INTERPRETER=/lib/ld-crabc-x86_64.so.1
+readonly INTERPRETER="/lib/ld-crabc-$arch.so.1"
+readonly MUSL_INTERPRETER="/lib/ld-musl-$arch.so.1"
 
 usage() {
     printf 'usage: %s STATIC_SYSROOT DYNAMIC_SYSROOT\n' "$0" >&2
@@ -29,7 +31,6 @@ fail() {
 
 [ "$#" -eq 2 ] || usage
 [ "$(uname -s)" = Linux ] || fail 'requires native Linux'
-case "$(uname -m)" in x86_64|amd64) ;; *) fail "refuses emulation on $(uname -m)" ;; esac
 [ -n "${TMPDIR:-}" ] || fail 'requires checkout-local TMPDIR'
 for tool in chroot cmp python3 realpath timeout; do
     command -v "$tool" >/dev/null || fail "missing $tool"
@@ -114,15 +115,15 @@ run oracle-override "$WORK/oracle-override" "$WORK/oracle-override-path"
 [ ! -s "$WORK/oracle-override.stderr" ] || fail 'pinned musl override emitted stderr'
 
 run oracle-protected-link "$ORACLE_CC" -std=c11 -pthread -Wl,--export-dynamic \
-    -Wl,--dynamic-linker,/lib/ld-musl-x86_64.so.1 \
+    "-Wl,--dynamic-linker,$MUSL_INTERPRETER" \
     "$WORK/protected.o" -ldl -o "$WORK/oracle-protected"
 oracle_root="$WORK/oracle-protected-root"
 mkdir -p "$oracle_root/lib" "$oracle_root/usr/lib"
-cp "$MUSL_LIB" "$oracle_root/lib/ld-musl-x86_64.so.1"
+cp "$MUSL_LIB" "$oracle_root$MUSL_INTERPRETER"
 cp "$MUSL_LIB" "$oracle_root/usr/lib/libc.so"
 cp "$WORK/oracle-protected" "$oracle_root/protected"
 run oracle-protected-kernel chroot "$oracle_root" /protected
-run oracle-protected-direct chroot "$oracle_root" /lib/ld-musl-x86_64.so.1 /protected
+run oracle-protected-direct chroot "$oracle_root" "$MUSL_INTERPRETER" /protected
 same_transcript oracle-protected-kernel oracle-protected-direct
 
 for mode in static static-pie; do

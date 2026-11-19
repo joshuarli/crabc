@@ -14,7 +14,10 @@ export LC_ALL="$COMMAND_LOCALE"
 umask 022
 
 readonly ROOT="$(cd -P "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-readonly ORACLE_CC=/usr/local/bin/crabc-x86_64-musl-gcc
+eval "$(python3 -B "$ROOT/compat/x86_64/native_arch.py")"
+readonly ORACLE_CC="$oracle"
+readonly MUSL_INTERPRETER="/lib/ld-musl-$arch.so.1"
+readonly INTERPRETER="/lib/ld-crabc-$arch.so.1"
 readonly PROBE="$ROOT/compat/x86_64/locale_alias_contract_probe.c"
 readonly TIMEOUT=/usr/bin/timeout
 readonly TIMEOUT_SECONDS=20
@@ -56,7 +59,6 @@ done
 [ -n "$static_product" ] && [ -n "$dynamic_product" ] || usage
 
 [ "$(/bin/uname -s)" = Linux ] || fail 'requires native Linux'
-case "$(/bin/uname -m)" in x86_64|amd64) ;; *) fail "requires native x86-64, got $(/bin/uname -m)" ;; esac
 [ -n "${TMPDIR:-}" ] || fail 'requires explicit checkout-local TMPDIR'
 [ -x "$ORACLE_CC" ] || fail 'missing pinned musl compiler'
 [ -f "$PROBE" ] || fail 'missing probe'
@@ -168,7 +170,7 @@ for mode in pie non-pie; do
         oracle_flags=(-rdynamic -no-pie)
     fi
     capture "oracle-dynamic-$mode-link" "$ORACLE_CC" "${oracle_flags[@]}" "$work/probe.o" \
-        -Wl,--dynamic-linker,/lib/ld-musl-x86_64.so.1 -o "$work/oracle-dynamic-$mode"
+        "-Wl,--dynamic-linker,$MUSL_INTERPRETER" -o "$work/oracle-dynamic-$mode"
     capture "candidate-dynamic-$mode-link" "$dynamic_product/bin/crabc-cc-dynamic" "--dynamic-$mode" \
         -rdynamic "$work/probe.o" -o "$work/candidate-dynamic-$mode"
 done
@@ -203,8 +205,8 @@ done
 prepare_oracle_root() {
     local root="$1"
     /bin/mkdir -p "$root/lib"
-    /bin/cp /opt/musl-1.2.6/lib/libc.so "$root/lib/ld-musl-x86_64.so.1"
-    /bin/ln -s ld-musl-x86_64.so.1 "$root/lib/libc.so"
+    /bin/cp /opt/musl-1.2.6/lib/libc.so "$root$MUSL_INTERPRETER"
+    /bin/ln -s "${MUSL_INTERPRETER##*/}" "$root/lib/libc.so"
     for mode in pie non-pie; do
         /bin/cp "$work/oracle-dynamic-$mode" "$root/consumer-$mode"
     done
@@ -230,9 +232,9 @@ for mode in pie non-pie; do
             capture "candidate-dynamic-$mode-$entry" /usr/sbin/chroot "$candidate_root" "/consumer-$mode"
         else
             capture "oracle-dynamic-$mode-$entry" /usr/sbin/chroot "$oracle_root" \
-                /lib/ld-musl-x86_64.so.1 "/consumer-$mode"
+                "$MUSL_INTERPRETER" "/consumer-$mode"
             capture "candidate-dynamic-$mode-$entry" /usr/sbin/chroot "$candidate_root" \
-                /lib/ld-crabc-x86_64.so.1 "/consumer-$mode"
+                "$INTERPRETER" "/consumer-$mode"
         fi
         /usr/bin/cmp "$work/oracle-dynamic-$mode-$entry.stdout" \
             "$work/candidate-dynamic-$mode-$entry.stdout"

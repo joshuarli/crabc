@@ -9,9 +9,10 @@ set -euo pipefail
 ulimit -c 0
 
 readonly ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-readonly ORACLE_CC=/usr/local/bin/crabc-x86_64-musl-gcc
+eval "$(python3 -B "$ROOT/compat/x86_64/native_arch.py")"
+readonly ORACLE_CC="$oracle"
 readonly PROBE="$ROOT/compat/x86_64/owned_bsd_random_probe.c"
-readonly INTERPRETER=/lib/ld-crabc-x86_64.so.1
+readonly INTERPRETER="/lib/ld-crabc-$arch.so.1"
 readonly -a BSD_RANDOM_SYMBOLS=(random srandom initstate setstate)
 readonly -a ORACLE_SCENARIOS=(core state fork-active)
 # These are invariant witnesses rather than ordered traces. Musl executes
@@ -29,7 +30,7 @@ fail() {
     exit 1
 }
 
-[ "$(uname -sm)" = 'Linux x86_64' ] || fail 'requires native Linux/x86-64'
+[ "$(uname -s)" = Linux ] || fail 'requires native Linux'
 [ -x "$ORACLE_CC" ] || fail 'missing pinned musl compiler'
 [ -n "${TMPDIR:-}" ] && [ -d "$TMPDIR" ] || fail 'TMPDIR must be checkout-local .work storage'
 
@@ -117,7 +118,7 @@ chmod a+rx "$work"
 snapshot_source() {
     local destination="$1"
 
-    python3 -B - "$destination" "$ROOT" <<'PY'
+    python3 -B - "$destination" "$ROOT" "$arch" <<'PY'
 import hashlib
 import json
 import os
@@ -126,7 +127,8 @@ import stat
 import subprocess
 import sys
 
-destination, root = map(Path, sys.argv[1:])
+destination, root = map(Path, sys.argv[1:3])
+arch = sys.argv[3]
 def git(*arguments):
     return subprocess.check_output(['git', '-C', str(root), *arguments])
 def digest(path):
@@ -148,7 +150,7 @@ selected = [
     'libc/src/c_abi/x86_64/bsd_random.rs',
 ]
 record = {
-    'schema': 'crabc.x86_64-owned-bsd-random-source-snapshot/v1',
+    'schema': f'crabc.{arch}-owned-bsd-random-source-snapshot/v1',
     'revision': git('rev-parse', 'HEAD').decode().strip(),
     'status': git('status', '--porcelain=v1', '--untracked-files=all').decode(),
     'tree_sha256': whole_tree.hexdigest(),
@@ -165,19 +167,19 @@ write_product_input_receipt() {
         static_role=extracted-static
         dynamic_role=extracted-dynamic
     fi
-    python3 -B - "$destination" "$static_product" "$dynamic_product" "$static_role" "$dynamic_role" <<'PY'
+    python3 -B - "$destination" "$static_product" "$dynamic_product" "$static_role" "$dynamic_role" "$arch" <<'PY'
 import hashlib
 import json
 from pathlib import Path
 import sys
 
 destination, static, dynamic = map(Path, sys.argv[1:4])
-static_role, dynamic_role = sys.argv[4:]
+static_role, dynamic_role, arch = sys.argv[4:]
 def digest(path):
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 destination.write_text(json.dumps({
-    'schema': 'crabc.x86_64-owned-bsd-random-product-inputs/v1',
+    'schema': f'crabc.{arch}-owned-bsd-random-product-inputs/v1',
     'roles': {'static': static_role, 'dynamic': dynamic_role},
     'products': {
         'static': {'path': str(static), 'manifest_sha256': digest(static / 'share/crabc/manifest.json')},
@@ -369,13 +371,14 @@ cmp "$work/source-before.json" "$work/source-after.json" ||
     fail 'source revision, content, or worktree status changed during evidence'
 
 python3 -B - "$work/source-receipt.json" "$ROOT" "$PROBE" "$work/workload.o" \
-    "$work/source-before.json" "$work/source-after.json" "$work/product-inputs.json" <<'PY'
+    "$work/source-before.json" "$work/source-after.json" "$work/product-inputs.json" "$arch" <<'PY'
 import hashlib
 import json
 from pathlib import Path
 import sys
 
-output, root, probe, workload, before_path, after_path, product_inputs_path = map(Path, sys.argv[1:])
+output, root, probe, workload, before_path, after_path, product_inputs_path = map(Path, sys.argv[1:8])
+arch = sys.argv[8]
 def digest(path):
     return hashlib.sha256(path.read_bytes()).hexdigest()
 before = json.loads(before_path.read_text(encoding='utf-8'))
@@ -384,7 +387,7 @@ products = json.loads(product_inputs_path.read_text(encoding='utf-8'))
 if before != after:
     raise SystemExit('owned BSD random source snapshots differ')
 output.write_text(json.dumps({
-    'schema': 'crabc.x86_64-owned-bsd-random-source/v1',
+    'schema': f'crabc.{arch}-owned-bsd-random-source/v1',
     'root_source': {
         'before': before,
         'after': after,

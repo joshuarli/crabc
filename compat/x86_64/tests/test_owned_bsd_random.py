@@ -34,7 +34,7 @@ class OwnedBsdRandomContracts(unittest.TestCase):
     def test_runner_retains_same_object_musl_and_all_owned_product_routes(self) -> None:
         source = RUNNER.read_text(encoding="utf-8")
         for boundary in (
-            "crabc-x86_64-musl-gcc", "owned_posix_product_evidence",
+            "native_arch.py", "owned_posix_product_evidence",
             "--static-sysroot", "static-et-exec", "static-pie", "--dynamic-$mode",
             "ORACLE_SCENARIOS=(core state fork-active)",
             "INVARIANT_SCENARIOS=(concurrent-random concurrent-state)",

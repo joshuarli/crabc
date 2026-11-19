@@ -8,15 +8,16 @@ set -euo pipefail
 ulimit -c 0
 
 readonly ROOT="$(cd -P "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-readonly ORACLE_CC=/usr/local/bin/crabc-x86_64-musl-gcc
+eval "$(python3 -B "$ROOT/compat/x86_64/native_arch.py")"
+readonly ORACLE_CC="$oracle"
 readonly MUSL_ROOT=/opt/musl-1.2.6
 readonly MUSL_LIB="$MUSL_ROOT/lib/libc.so"
 readonly MUSL_ARCHIVE="$MUSL_ROOT/lib/libc.a"
-readonly MUSL_LOADER="$MUSL_ROOT/lib/ld-musl-x86_64.so.1"
+readonly MUSL_LOADER="$MUSL_ROOT/lib/ld-musl-$arch.so.1"
 readonly CONTRACT_SOURCE="$ROOT/compat/x86_64/owned_string_temporary_alias_contract_probe.c"
 readonly OVERRIDE_SOURCE="$ROOT/compat/x86_64/owned_string_temporary_alias_override_probe.c"
 readonly READER_DIR="$ROOT/compat/x86_64"
-readonly INTERPRETER=/lib/ld-crabc-x86_64.so.1
+readonly INTERPRETER="/lib/ld-crabc-$arch.so.1"
 readonly STATIC_BUILDER="$ROOT/scripts/build_x86_64_owned_sysroot.py"
 readonly DYNAMIC_BUILDER="$ROOT/scripts/build_x86_64_owned_dynamic_sysroot.py"
 
@@ -32,7 +33,6 @@ fail() {
 
 [ "$#" -eq 0 ] || [ "$#" -eq 2 ] || usage
 [ "$(uname -s)" = Linux ] || fail 'requires native Linux'
-case "$(uname -m)" in x86_64|amd64) ;; *) fail "refuses emulation on $(uname -m)" ;; esac
 for tool in chroot cmp cp git python3 readelf realpath sha256sum timeout; do
     command -v "$tool" >/dev/null || fail "missing $tool"
 done
@@ -44,6 +44,9 @@ for source in "$CONTRACT_SOURCE" "$OVERRIDE_SOURCE" \
     [ -f "$source" ] || fail "missing source $source"
 done
 
+if [ "$arch" = aarch64 ]; then
+    TMPDIR="$ROOT/.work/$work_name/tmp"
+else
 TMPDIR="$(python3 -B - "$ROOT" <<'PY'
 import sys
 
@@ -53,6 +56,7 @@ from build_x86_64_owned_sysroot import deterministic_environment
 print(deterministic_environment()['TMPDIR'])
 PY
 )"
+fi
 export TMPDIR
 python3 -B - "$ROOT" "$TMPDIR" <<'PY'
 from pathlib import Path
@@ -189,8 +193,10 @@ if [ "$#" -eq 0 ]; then
     PRODUCTS_SUPPLIED=0
     STATIC_PRODUCT="$WORK/static-product"
     DYNAMIC_PRODUCT="$WORK/dynamic-product"
-    run static-build python3 -B "$STATIC_BUILDER" --output "$STATIC_PRODUCT"
-    run dynamic-build python3 -B "$DYNAMIC_BUILDER" --output "$DYNAMIC_PRODUCT"
+    build_arch=()
+    [ "$arch" = x86_64 ] || build_arch=(--architecture "$arch")
+    run static-build python3 -B "$STATIC_BUILDER" "${build_arch[@]}" --output "$STATIC_PRODUCT"
+    run dynamic-build python3 -B "$DYNAMIC_BUILDER" "${build_arch[@]}" --output "$DYNAMIC_PRODUCT"
 else
     PRODUCTS_SUPPLIED=1
     STATIC_PRODUCT="$(realpath -e "$1")"

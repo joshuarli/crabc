@@ -5,12 +5,14 @@ ulimit -c 0
 umask 022
 
 readonly ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-readonly ORACLE_CC=/usr/local/bin/crabc-x86_64-musl-gcc
+eval "$(python3 -B "$ROOT/compat/x86_64/native_arch.py")"
+readonly ORACLE_CC="$oracle"
 readonly MUSL_LIB=/opt/musl-1.2.6/lib/libc.so
 readonly MUSL_ARCHIVE=/opt/musl-1.2.6/lib/libc.a
 readonly CONTRACT_SOURCE="$ROOT/compat/x86_64/owned_syscall_alias_contract_probe.c"
 readonly OVERRIDE_SOURCE="$ROOT/compat/x86_64/owned_syscall_alias_override_probe.c"
-readonly INTERPRETER=/lib/ld-crabc-x86_64.so.1
+readonly INTERPRETER="/lib/ld-crabc-$arch.so.1"
+readonly MUSL_INTERPRETER="/lib/ld-musl-$arch.so.1"
 
 usage() {
     printf 'usage: %s STATIC_SYSROOT DYNAMIC_SYSROOT\n' "$0" >&2
@@ -24,7 +26,6 @@ fail() {
 
 [ "$#" -eq 2 ] || usage
 [ "$(uname -s)" = Linux ] || fail 'requires native Linux'
-case "$(uname -m)" in x86_64|amd64) ;; *) fail "refuses emulation on $(uname -m)" ;; esac
 [ -n "${TMPDIR:-}" ] || fail 'requires checkout-local TMPDIR'
 for tool in chroot cmp python3 realpath timeout; do
     command -v "$tool" >/dev/null 2>&1 || fail "missing $tool"
@@ -149,25 +150,25 @@ for mode in pie non-pie; do
     esac
     run "oracle-dynamic-$mode-contract-link" "$ORACLE_CC" \
         "${oracle_flags[@]}" "$WORK/contract.o" \
-        -Wl,--dynamic-linker,/lib/ld-musl-x86_64.so.1 -o "$WORK/oracle-dynamic-$mode-contract"
+        "-Wl,--dynamic-linker,$MUSL_INTERPRETER" -o "$WORK/oracle-dynamic-$mode-contract"
     run "oracle-dynamic-$mode-override-link" "$ORACLE_CC" \
         "${oracle_flags[@]}" "$WORK/override.o" \
-        -Wl,--export-dynamic -Wl,--dynamic-linker,/lib/ld-musl-x86_64.so.1 \
+        -Wl,--export-dynamic "-Wl,--dynamic-linker,$MUSL_INTERPRETER" \
         -o "$WORK/oracle-dynamic-$mode-override"
     oracle_root="$WORK/oracle-dynamic-$mode-root"
     mkdir -p "$oracle_root/lib" "$oracle_root/usr/lib" "$oracle_root/scratch"
-    cp "$MUSL_LIB" "$oracle_root/lib/ld-musl-x86_64.so.1"
+    cp "$MUSL_LIB" "$oracle_root$MUSL_INTERPRETER"
     cp "$MUSL_LIB" "$oracle_root/usr/lib/libc.so"
     cp "$WORK/regular" "$oracle_root/scratch/regular"
     cp "$WORK/oracle-dynamic-$mode-contract" "$oracle_root/contract"
     cp "$WORK/oracle-dynamic-$mode-override" "$oracle_root/override"
     run "oracle-dynamic-$mode-contract-kernel" chroot "$oracle_root" /contract /scratch/regular
     same_transcript oracle-contract "oracle-dynamic-$mode-contract-kernel"
-    run "oracle-dynamic-$mode-contract-direct" chroot "$oracle_root" /lib/ld-musl-x86_64.so.1 /contract /scratch/regular
+    run "oracle-dynamic-$mode-contract-direct" chroot "$oracle_root" "$MUSL_INTERPRETER" /contract /scratch/regular
     same_transcript oracle-contract "oracle-dynamic-$mode-contract-direct"
     run "oracle-dynamic-$mode-override-kernel" chroot "$oracle_root" /override /scratch/regular shared
     same_transcript oracle-override "oracle-dynamic-$mode-override-kernel"
-    run "oracle-dynamic-$mode-override-direct" chroot "$oracle_root" /lib/ld-musl-x86_64.so.1 /override /scratch/regular shared
+    run "oracle-dynamic-$mode-override-direct" chroot "$oracle_root" "$MUSL_INTERPRETER" /override /scratch/regular shared
     same_transcript oracle-override "oracle-dynamic-$mode-override-direct"
 done
 

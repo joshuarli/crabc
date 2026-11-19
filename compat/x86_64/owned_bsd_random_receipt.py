@@ -18,11 +18,13 @@ import sys
 import tempfile
 
 import owned_posix_product_evidence as products
+from native_arch import native_arch
 
 
 ROOT = Path(__file__).resolve().parents[2]
-SCHEMA = "crabc.x86_64-owned-bsd-random-receipt/v2"
-ORACLE_CC = Path("/usr/local/bin/crabc-x86_64-musl-gcc")
+ARCH = native_arch()["arch"]
+SCHEMA = f"crabc.{ARCH}-owned-bsd-random-receipt/v2"
+ORACLE_CC = Path(native_arch()["oracle"])
 ORACLE_GCC = Path("/usr/bin/gcc")
 ORACLE_SPECS = Path("/opt/musl-1.2.6/lib/musl-gcc.specs")
 ORACLE_LINK_FLAGS = ("-static", "-fno-pie", "-no-pie", "-pthread")
@@ -215,7 +217,7 @@ def source_snapshot() -> dict[str, object]:
         tree.update(raw_name + b"\0" + str(stat.S_IMODE(mode)).encode() + b"\0")
         tree.update(hashlib.sha256(data).digest())
     return {
-        "schema": "crabc.x86_64-owned-bsd-random-source-snapshot/v1",
+        "schema": f"crabc.{ARCH}-owned-bsd-random-source-snapshot/v1",
         "revision": git("rev-parse", "HEAD").decode().strip(),
         "status": git("status", "--porcelain=v1", "--untracked-files=all").decode(),
         "tree_sha256": tree.hexdigest(),
@@ -229,7 +231,7 @@ def source_and_products(work: Path) -> dict[str, Path]:
     require(before == after == source_snapshot(), "source snapshot differs from current checkout")
     source = read_json(work / "source-receipt.json")
     require(type(source) is dict and set(source) == {"schema", "root_source", "inputs", "products"}
-            and source["schema"] == "crabc.x86_64-owned-bsd-random-source/v1", "source receipt shape differs")
+            and source["schema"] == f"crabc.{ARCH}-owned-bsd-random-source/v1", "source receipt shape differs")
     require(source["root_source"] == {"before": before, "after": after, "unchanged": True}, "source receipt snapshots differ")
     inputs = source["inputs"]
     expected = {"probe": SOURCE_NAMES[0], "runner": SOURCE_NAMES[1], "reader": SOURCE_NAMES[2],
@@ -249,7 +251,7 @@ def source_and_products(work: Path) -> dict[str, Path]:
     products_record = read_json(work / "product-inputs.json")
     require(source["products"] == products_record, "source receipt product reference differs")
     require(type(products_record) is dict and set(products_record) == {"schema", "roles", "products", "extracted_provenance"}
-            and products_record["schema"] == "crabc.x86_64-owned-bsd-random-product-inputs/v1",
+            and products_record["schema"] == f"crabc.{ARCH}-owned-bsd-random-product-inputs/v1",
             "product input shape differs")
     roles = products_record["roles"]
     require(roles in ({"static": "provided-static", "dynamic": "provided-dynamic"},
@@ -357,7 +359,7 @@ def validate_report(report_path: Path, *, static_product: Path | None = None,
                 require((work / f"{label}.{suffix}").read_bytes() == (work / f"oracle-{scenario}.{suffix}").read_bytes(),
                         f"{label} differs from pinned musl: {suffix}")
         if replay:
-            entry = "/lib/ld-crabc-x86_64.so.1" if "-direct-" in label else None
+            entry = f"/lib/ld-crabc-{ARCH}.so.1" if "-direct-" in label else None
             argv = ["chroot", str(root)]
             if entry:
                 argv.append(entry)

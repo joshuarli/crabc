@@ -34,15 +34,18 @@ if str(MODULE_DIR) not in sys.path:
 import owned_posix_product_evidence as product_evidence
 import owned_dynamic_qualification as dynamic_materialization
 import source_seal
+from native_arch import native_arch
 
 
-SCHEMA = "crabc.x86_64-native-abi-inventory/v1"
-TARGET = "x86_64-unknown-linux-musl"
+ARCH = native_arch()["arch"]
+ELF_MACHINE = "Advanced Micro Devices X86-64" if ARCH == "x86_64" else "AArch64"
+SCHEMA = f"crabc.{ARCH}-native-abi-inventory/v1"
+TARGET = native_arch()["target_triple"]
 MUSL_ROOT = Path("/opt/musl-1.2.6")
 STATIC_PRODUCT_PATH = Path("/inputs/static-product")
 DYNAMIC_PRODUCT_PATH = Path("/inputs/dynamic-product")
 STATIC_PREPARATION_PATH = Path("/inputs/static-preparation.json")
-CANONICAL_WORK_ROOT = Path("/workspace/.work/x86_64")
+CANONICAL_WORK_ROOT = Path("/workspace/.work") / ARCH
 REPORT_NAME = "report.json"
 RAW_DIRECTORY = "raw"
 INPUT_DIRECTORY = "inputs"
@@ -69,8 +72,8 @@ MUSL_REGULAR_FILES = (
     ".crabc-oracle",
     ".crabc-musl-gcc-specs.sha256",
 )
-MUSL_LOADER = "lib/ld-musl-x86_64.so.1"
-MUSL_COMPILER = Path("/usr/local/bin/crabc-x86_64-musl-gcc")
+MUSL_LOADER = f"lib/ld-musl-{ARCH}.so.1"
+MUSL_COMPILER = Path(native_arch()["oracle"])
 SOURCE_FILES = (
     "compat/x86_64/run_musl_oracle.sh",
     "compat/x86_64/musl_oracle.py",
@@ -89,8 +92,8 @@ SOURCE_FILES = (
     "compat/x86_64/dynamic-product-state.json",
     "compat/x86_64/loader-libc-tls-runtime-v1.toml",
     "compat/upstreams.toml",
-    "docker/Dockerfile.x86_64",
-    "docker/x86_64-musl-oracle-gcc",
+    f"docker/Dockerfile.{'x86_64' if ARCH == 'x86_64' else 'aarch64'}",
+    f"docker/{ARCH}-musl-oracle-gcc",
     "scripts/dev-x86_64.sh",
 )
 
@@ -737,10 +740,10 @@ def _archive_block_outcome(member: str, lines: list[str]) -> dict[str, str]:
     required = {
         "Class": "ELF64",
         "Data": "2's complement, little endian",
-        "Machine": "Advanced Micro Devices X86-64",
+        "Machine": ELF_MACHINE,
     }
     if all(values.get(key) == expected for key, expected in required.items()):
-        return {"member": member, "outcome": "x86_64-elf"}
+        return {"member": member, "outcome": f"{ARCH}-elf"}
     detail = "; ".join(f"{key}={values.get(key, '<absent>')}" for key in sorted(required))
     return {"member": member, "outcome": "unsupported", "detail": detail}
 
@@ -1064,7 +1067,7 @@ def _readelf_header(raw: str, description: str) -> dict[str, str]:
     require(saw_header, f"{description} has no ELF header")
     require(fields.get("Class") == "ELF64", f"{description} is not ELF64")
     require(fields.get("Data") == "2's complement, little endian", f"{description} is not little-endian")
-    require(fields.get("Machine") == "Advanced Micro Devices X86-64", f"{description} is not x86-64")
+    require(fields.get("Machine") == ELF_MACHINE, f"{description} is not {ARCH}")
     require("Type" in fields, f"{description} lacks ELF type")
     return {
         field: fields[field]
@@ -1992,7 +1995,7 @@ def _snapshot_musl_inputs(output_root: Path) -> dict[str, object]:
     compiler = _snapshot_regular(
         output_root,
         MUSL_COMPILER,
-        "inputs/toolchain/crabc-x86_64-musl-gcc",
+        f"inputs/toolchain/crabc-{ARCH}-musl-gcc",
         str(MUSL_COMPILER),
     )
     oracle_manifests = _validate_oracle_manifests_live()
@@ -2092,7 +2095,7 @@ def _validate_musl_inputs(
         record["compiler_wrapper"],
         "pinned musl compiler wrapper",
         expected_original_path=str(MUSL_COMPILER),
-        expected_retained_path="inputs/toolchain/crabc-x86_64-musl-gcc",
+        expected_retained_path=f"inputs/toolchain/crabc-{ARCH}-musl-gcc",
     )
     _validate_oracle_manifests_retained(output_root, record, source_records)
 
@@ -2213,7 +2216,7 @@ def _inspect_archive(
     complete = (
         headers_command["returncode"] == 0
         and not headers_stderr
-        and all(item["outcome"] == "x86_64-elf" for item in member_outcomes)
+        and all(item["outcome"] == f"{ARCH}-elf" for item in member_outcomes)
     )
     binding_outcomes = [
         {
@@ -2264,14 +2267,15 @@ def _ensure_collection_paths(
 
 def _require_native_collection_context() -> None:
     require(platform.system() == "Linux", "collection requires a native Linux execution context")
-    require(platform.machine() in {"x86_64", "amd64"}, "collection requires native x86-64 execution")
+    require(platform.machine().lower() in ({"x86_64", "amd64"} if ARCH == "x86_64" else {"aarch64", "arm64"}),
+            f"collection requires native {ARCH} execution")
     require(ROOT == Path("/workspace"), "collection requires the fixed /workspace checkout")
     require(Path.cwd() == Path("/workspace"), "collection requires /workspace as its execution root")
 
 
 def _fresh_output_root(output_root: Path, work_root: Path) -> Path:
     require(output_root.is_absolute(), "inventory output must be absolute")
-    require(work_root == CANONICAL_WORK_ROOT, "inventory work root must be fixed /workspace/.work/x86_64")
+    require(work_root == CANONICAL_WORK_ROOT, f"inventory work root must be fixed {CANONICAL_WORK_ROOT}")
     work_root = physical_directory(work_root, "inventory work root")
     try:
         output_root.relative_to(work_root)
@@ -2589,7 +2593,7 @@ def _parse_oracle_manifest(raw: str, pin: Mapping[str, str]) -> dict[str, str]:
             "version": pin["version"],
             "source_sha256": pin["sha256"],
             "fallback_revision": pin["fallback_revision"],
-            "architecture": "x86_64",
+            "architecture": ARCH,
         },
         "pinned musl oracle manifest disagrees with repository pin",
     )
@@ -2636,7 +2640,7 @@ def _validate_oracle_manifests_live() -> dict[str, object]:
     specs = MUSL_ROOT / "lib/musl-gcc.specs"
     specs_manifest = (MUSL_ROOT / ".crabc-musl-gcc-specs.sha256").read_text(encoding="utf-8")
     wrapper = physical_regular(MUSL_COMPILER, "pinned musl compiler wrapper").read_bytes()
-    wrapper_source = physical_regular(ROOT / "docker/x86_64-musl-oracle-gcc", "repository oracle wrapper").read_bytes()
+    wrapper_source = physical_regular(ROOT / f"docker/{ARCH}-musl-oracle-gcc", "repository oracle wrapper").read_bytes()
     return {
         "repository_pin": pin,
         "oracle_manifest": _parse_oracle_manifest(oracle, pin),
@@ -2667,7 +2671,7 @@ def _validate_oracle_manifests_retained(
     source_wrapper = _source_retained_bytes(
         output_root,
         source_records,
-        "docker/x86_64-musl-oracle-gcc",
+        f"docker/{ARCH}-musl-oracle-gcc",
     )
     _validate_oracle_source_wrapper(source_wrapper, wrapper)
     require(record.get("compiler_wrapper_matches_repository_source") is True, "pinned compiler wrapper/source binding drifted")
@@ -2826,7 +2830,7 @@ def _replay_archive(
     complete = (
         header_command["returncode"] == 0
         and not headers_stderr
-        and all(item["outcome"] == "x86_64-elf" for item in outcomes)
+        and all(item["outcome"] == f"{ARCH}-elf" for item in outcomes)
     )
     binding_outcomes = [
         {

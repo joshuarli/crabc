@@ -34,7 +34,7 @@
 #define _GNU_SOURCE 1
 #endif
 
-#if !defined(__linux__) || !defined(__x86_64__) || !defined(__LP64__) || \
+#if !defined(__linux__) || (!defined(__x86_64__) && !defined(__aarch64__)) || !defined(__LP64__) || \
     !defined(__BYTE_ORDER__) || !defined(__ORDER_LITTLE_ENDIAN__) || \
     __BYTE_ORDER__ != __ORDER_LITTLE_ENDIAN__
 #error "this workload requires native Linux/x86-64 little-endian LP64"
@@ -66,10 +66,17 @@ _Static_assert(sizeof(int) == 4 && sizeof(long) == 8 && sizeof(pid_t) == 4,
     "x86 process-control scalar ABI");
 _Static_assert(sizeof(posix_spawnattr_t) == 336 &&
     _Alignof(posix_spawnattr_t) == 8, "x86 posix_spawnattr ABI");
+#if defined(__aarch64__)
+_Static_assert(SYS_read == 63 && SYS_write == 64 && SYS_close == 57 &&
+    SYS_clone == 220 && SYS_exit == 93 && SYS_wait4 == 260 &&
+    SYS_execveat == 281 && SYS_prctl == 167,
+    "aarch64 process-control fixture syscalls");
+#else
 _Static_assert(SYS_read == 0 && SYS_write == 1 && SYS_close == 3 &&
     SYS_fork == 57 && SYS_exit == 60 && SYS_wait4 == 61 &&
     SYS_execveat == 322 && SYS_prctl == 157,
     "x86 process-control fixture syscalls");
+#endif
 _Static_assert(__builtin_types_compatible_p(__typeof__(&execl),
     int (*)(const char *, const char *, ...)), "execl declaration");
 _Static_assert(__builtin_types_compatible_p(__typeof__(&execle),
@@ -120,6 +127,24 @@ _Static_assert(__builtin_types_compatible_p(__typeof__(&waitid),
 _Static_assert(__builtin_types_compatible_p(__typeof__(&waitpid),
     pid_t (*)(pid_t, int *, int)), "waitpid declaration");
 
+#if defined(__aarch64__)
+static long raw_syscall5(long number, long a, long b, long c, long d, long e)
+{
+    register long x0 __asm__("x0") = a;
+    register long x1 __asm__("x1") = b;
+    register long x2 __asm__("x2") = c;
+    register long x3 __asm__("x3") = d;
+    register long x4 __asm__("x4") = e;
+    register long x8 __asm__("x8") = number;
+    __asm__ volatile("svc #0" : "+r"(x0) : "r"(x1), "r"(x2), "r"(x3), "r"(x4), "r"(x8) : "memory", "cc");
+    return x0;
+}
+static long raw_syscall0(long n) { return raw_syscall5(n, 0, 0, 0, 0, 0); }
+static long raw_syscall1(long n, long a) { return raw_syscall5(n, a, 0, 0, 0, 0); }
+static long raw_syscall2(long n, long a, long b) { return raw_syscall5(n, a, b, 0, 0, 0); }
+static long raw_syscall3(long n, long a, long b, long c) { return raw_syscall5(n, a, b, c, 0, 0); }
+static long raw_syscall4(long n, long a, long b, long c, long d) { return raw_syscall5(n, a, b, c, d, 0); }
+#else
 static long raw_syscall0(long number)
 {
     long result;
@@ -179,6 +204,7 @@ static long raw_syscall5(long number, long argument1, long argument2,
         : "rcx", "r11", "memory");
     return result;
 }
+#endif
 
 static void raw_exit(int status) __attribute__((noreturn));
 
@@ -190,7 +216,11 @@ static void raw_exit(int status)
 
 static __attribute__((noinline, returns_twice)) long raw_fork(void)
 {
+#if defined(__aarch64__)
+    return raw_syscall5(SYS_clone, SIGCHLD, 0, 0, 0, 0);
+#else
     return raw_syscall0(SYS_fork);
+#endif
 }
 
 static int raw_close(int descriptor)
@@ -200,7 +230,20 @@ static int raw_close(int descriptor)
 
 static int raw_pipe(int descriptors[2])
 {
+#if defined(__aarch64__)
+    return (int)raw_syscall2(SYS_pipe2, (long)descriptors, 0);
+#else
     return (int)raw_syscall1(SYS_pipe, (long)descriptors);
+#endif
+}
+
+static long raw_getpgrp(void)
+{
+#if defined(__aarch64__)
+    return raw_syscall1(SYS_getpgid, 0);
+#else
+    return raw_syscall0(SYS_getpgrp);
+#endif
 }
 
 static int raw_read_full(int descriptor, void *destination, size_t length)
@@ -1210,7 +1253,7 @@ static int check_observation_configuration(void)
     if (getpid() != raw_syscall0(SYS_getpid) || getppid() != raw_syscall0(SYS_getppid) ||
         getuid() != (uid_t)raw_syscall0(SYS_getuid) || getgid() != (gid_t)raw_syscall0(SYS_getgid) ||
         geteuid() != (uid_t)raw_syscall0(SYS_geteuid) || getegid() != (gid_t)raw_syscall0(SYS_getegid) ||
-        getpgrp() != raw_syscall0(SYS_getpgrp) || getpgid(0) != raw_syscall1(SYS_getpgid, 0) ||
+        getpgrp() != raw_getpgrp() || getpgid(0) != raw_syscall1(SYS_getpgid, 0) ||
         getsid(0) != raw_syscall1(SYS_getsid, 0) || errno != EDOM)
         return 1;
     fill_bytes(&name, 0xa5, sizeof name);fill_bytes(&direct_name, 0xa5, sizeof direct_name);

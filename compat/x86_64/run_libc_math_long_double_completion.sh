@@ -4,6 +4,9 @@ set -euo pipefail
 . "$(dirname "${BASH_SOURCE[0]}")/source_runtime_libc.sh"
 
 readonly ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+if [ "$(uname -m)" = aarch64 ]; then
+	exec bash "$ROOT_DIR/compat/x86_64/run_libc_math_long_double_completion_aarch64.sh" "$@"
+fi
 readonly ORACLE_CC=/usr/local/bin/crabc-x86_64-musl-gcc
 readonly EXPECTED_ADDITIONS=(exp10l fdiml pow10l)
 # The final executable has only this source-closed binary80 computation,

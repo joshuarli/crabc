@@ -945,7 +945,7 @@ def _static_link_plan(root: Path, linkage: str) -> list[str]:
         Path(native_build_tools.MOLD).name, "-static", *(["-pie"] if linkage == "static-pie" else []),
         "--no-dynamic-linker", "--no-undefined", "--eh-frame-hdr", "--gc-sections", "-z", "relro", "-z", "now",
         "-e", "_start", str(library / mode["crt"]), str(library / "crti.o"),
-        "<application-objects>", str(library / "libc.a"), str(library / "libcrabc-builtins.a"),
+        "<application-objects>", *(["--start-group"] if ARCH == "aarch64" else []), str(library / "libc.a"), str(library / "libcrabc-builtins.a"), *(["--end-group"] if ARCH == "aarch64" else []),
         str(library / "crtn.o"), "-o", "<output>",
     ]
 
@@ -962,7 +962,7 @@ def _declared_static_inputs(contract: list[str], workload: str) -> tuple[set[str
     """
     inputs = contract[contract.index("_start") + 1:contract.index("-o")]
     direct = {workload if item == "<application-objects>" else item
-              for item in inputs if not item.endswith(".a")}
+              for item in inputs if not item.endswith(".a") and item not in {"--start-group", "--end-group"}}
     archives = [item for item in inputs if item.endswith(".a")]
     libc = next((item for item in archives if Path(item).name == "libc.a"), None)
     if libc is None:
@@ -1072,8 +1072,8 @@ def _dynamic_link_command_for_workloads(
     if export_dynamic:
         command.append("--export-dynamic")
     command.extend((*receipt_contract.EXECUTABLE_WEAK_IMPORT_FLAGS, "--dynamic-linker",
-        interpreter, str(library / entry), str(library / "crabc-dynamic-attach.o"),
-        str(library / "crti.o"), *(str(workload) for workload in workloads), str(library / "libcrabc-builtins.a"),
+        interpreter, str(library / entry), *([str(library / "crabc-dynamic-attach.o")] if ARCH == "x86_64" else []),
+        str(library / "crti.o"), *([str(library / "crabc-dynamic-attach.o")] if ARCH == "aarch64" and linkage == "non-pie" else []), *(str(workload) for workload in workloads), str(library / "libcrabc-builtins.a"),
         str(library / "libc.so"), str(library / "crtn.o"), "-o", str(executable)))
     return command
 
@@ -1084,7 +1084,7 @@ def _validate_dynamic_trace(value: object, root: Path, workloads: tuple[Path, ..
     library = root / "usr/lib"
     entry = str(library / str(LINKAGES[linkage]["crt"]))
     direct = {
-        entry, str(library / "crabc-dynamic-attach.o"), str(library / "crti.o"),
+        entry, *([str(library / "crabc-dynamic-attach.o")] if ARCH == "x86_64" or linkage == "non-pie" else []), str(library / "crti.o"),
         *(str(workload) for workload in workloads),
         str(library / "libc.so"), str(library / "crtn.o"),
     }
@@ -1138,7 +1138,7 @@ def _validate_dynamic_receipt_for_workloads(
     entry = str(mode["crt"])
     runtime = [
         library / "crti.o", library / "libc.so", library / "crtn.o", library / entry,
-        library / "crabc-dynamic-attach.o",
+        *([library / "crabc-dynamic-attach.o"] if ARCH == "x86_64" or linkage == "non-pie" else []),
     ]
     archive = library / "libcrabc-builtins.a"
     expected_roster = sorted(path.relative_to(root).as_posix() for path in [*runtime, archive])
@@ -1160,64 +1160,9 @@ def _validate_dynamic_receipt_for_workloads(
     linker = _check_linker(record["resolved_linker"], receipt)
     if record["link_command"] != _dynamic_link_command_for_workloads(
             root, workloads, executable, linkage, linker, export_dynamic=export_dynamic,
-            interpreter=_dynamic_profile(root, linkage).interpreter):
+            interpreter=_dynamic_profile(root, linkage).interpreter.replace("x86_64", ARCH)):
         _fail("dynamic link command differs from the sealed product contract")
     _validate_dynamic_trace(record["link_trace"], root, workloads, linkage)
-    return _sha256(receipt)
-
-
-def _validate_aarch64_dynamic_receipt(
-    product: Path, workloads: tuple[Path, ...], executable: Path, receipt: Path, linkage: str,
-    manifest: Path, linker: str, recorded, *, export_dynamic: bool = False,
-) -> str:
-    record = _json_object(receipt, "dynamic link receipt")
-    search = receipt_contract.validate(record, format="crabc-aarch64-owned-dynamic-sysroot-v1",
-                                       label="dynamic link receipt", fail=_fail)
-    mode = LINKAGES[linkage]
-    if (record["mode"] != mode["receipt_mode"] or record["binding"] != "now"
-            or record["runtime_imports"] != [] or record["application_dsos"] != {}
-            or record["campaign_complete"] is not False):
-        _fail("dynamic link receipt admits foreign runtime imports or DSOs")
-    receipt_contract.require_runpath(search, "/usr/lib", label="dynamic link receipt", fail=_fail)
-    if record["output_path"] != recorded(executable):
-        _fail("dynamic output path differs from this evidence invocation")
-    _require_digest(record["output_sha256"], _sha256(executable), "dynamic output")
-    _require_digest(record["manifest_sha256"], _sha256(manifest), "dynamic product manifest")
-    library = product / "usr/lib"
-    entry = library / str(mode["crt"])
-    runtime = [library / "crti.o", library / "libc.so", library / "crtn.o", entry]
-    archive = library / "libcrabc-builtins.a"
-    if record["owned_runtime_inputs"] != sorted(path.relative_to(product).as_posix() for path in [*runtime, archive]):
-        _fail("dynamic link receipt owned runtime roster differs")
-    inputs = [*runtime, *workloads, archive]
-    if not isinstance(record["input_receipts"], list) or len(record["input_receipts"]) != len(inputs):
-        _fail("dynamic link receipt has the wrong input roster")
-    for item, path in zip(record["input_receipts"], inputs):
-        item = _require_keys(item, {"path", "sha256"}, "dynamic input receipt")
-        if item["path"] != recorded(path):
-            _fail("dynamic link receipt input path differs")
-        _require_digest(item["sha256"], _sha256(path), "dynamic input")
-    interpreter = ("/lib/ld-crabc-aarch64-hardened.so.1" if _dynamic_profile(product, linkage) is NativeRuntimeProfile.HARDENED
-                   else "/lib/ld-crabc-aarch64.so.1")
-    command = [linker, *(["-pie"] if linkage == "pie" else []), "--hash-style=sysv", "--eh-frame-hdr",
-               "-z", "relro", "-z", "now", "-z", "noexecstack", "-z", "text", "--no-undefined",
-               "--allow-shlib-undefined", "--enable-new-dtags", "-rpath", "/usr/lib", "--exclude-libs=libcrabc-builtins.a"]
-    if export_dynamic:
-        command.append("--export-dynamic")
-    command += ["-z", "dynamic-undefined-weak", "--dynamic-linker", interpreter, recorded(entry),
-                recorded(library / "crti.o"), *(recorded(path) for path in workloads), recorded(archive),
-                recorded(library / "libc.so"), recorded(library / "crtn.o"), "-o", recorded(executable)]
-    if record["link_command"] != command:
-        _fail("dynamic link command differs from the sealed product contract")
-    trace = record["link_trace"]
-    if not isinstance(trace, list) or not all(isinstance(item, str) for item in trace):
-        _fail("dynamic link trace is not a string list")
-    direct = {recorded(path) for path in [*runtime, *workloads]}
-    archive_name = recorded(archive)
-    lines = semantic_link_trace(trace)
-    if (any(line not in direct and line != archive_name and not (line.startswith(archive_name + "(") and line.endswith(")")) for line in lines)
-            or not direct <= set(lines)):
-        _fail("dynamic link trace admits foreign or missing inputs")
     return _sha256(receipt)
 
 
@@ -1435,7 +1380,7 @@ def _retained_dynamic_command(root: Path, source_mount: str, product: Path, work
         command.append("--export-dynamic")
     command.extend((*receipt_contract.EXECUTABLE_WEAK_IMPORT_FLAGS, "--dynamic-linker", interpreter,
         *(recorded(path, "dynamic link input") for path in (
-            library / entry, library / "crabc-dynamic-attach.o", library / "crti.o", workload,
+            library / entry, *([library / "crabc-dynamic-attach.o"] if ARCH == "x86_64" else []), library / "crti.o", *([library / "crabc-dynamic-attach.o"] if ARCH == "aarch64" and linkage == "non-pie" else []), workload,
             library / "libcrabc-builtins.a", library / "libc.so", library / "crtn.o",
         )), "-o", recorded(executable, "dynamic output")))
     return command
@@ -1449,7 +1394,7 @@ def _validate_retained_dynamic_trace(value: object, root: Path, source_mount: st
     recorded = lambda path, description: _retained_recorded(root, source_mount, path, description)
     direct = {
         recorded(library / str(LINKAGES[linkage]["crt"]), "dynamic CRT"),
-        recorded(library / "crabc-dynamic-attach.o", "dynamic attach object"),
+        *([recorded(library / "crabc-dynamic-attach.o", "dynamic attach object")] if ARCH == "x86_64" or linkage == "non-pie" else []),
         recorded(library / "crti.o", "dynamic CRT"), recorded(workload, "dynamic workload"),
         recorded(library / "libc.so", "dynamic libc"), recorded(library / "crtn.o", "dynamic CRT"),
     }
@@ -1482,7 +1427,7 @@ def _validate_retained_dynamic_receipt(root: Path, source_mount: str, product: P
     library = product / "usr/lib"
     runtime = [
         library / "crti.o", library / "libc.so", library / "crtn.o", library / str(mode["crt"]),
-        library / "crabc-dynamic-attach.o",
+        *([library / "crabc-dynamic-attach.o"] if ARCH == "x86_64" or linkage == "non-pie" else []),
     ]
     archive = library / "libcrabc-builtins.a"
     expected_roster = sorted(path.relative_to(product).as_posix() for path in [*runtime, archive])
@@ -1499,7 +1444,7 @@ def _validate_retained_dynamic_receipt(root: Path, source_mount: str, product: P
     retained_linker = _retained_linker(record["resolved_linker"], linker)
     if record["link_command"] != _retained_dynamic_command(
             root, source_mount, product, workload, executable, linkage, retained_linker,
-            export_dynamic=export_dynamic, interpreter=_dynamic_profile(product, linkage).interpreter):
+            export_dynamic=export_dynamic, interpreter=_dynamic_profile(product, linkage).interpreter.replace("x86_64", ARCH)):
         _fail("retained dynamic link command differs")
     _validate_retained_dynamic_trace(record["link_trace"], root, source_mount, product, workload, linkage)
     return _sha256(receipt)
@@ -1541,20 +1486,12 @@ def validate_retained_link(root: Path, source_mount: str, product: Path, workloa
         manifest, _ = _validate_dynamic_product(product_path)
         profile = _dynamic_profile(product_path, linkage)
         arm = _json_object(manifest, "dynamic product manifest").get("target") == "aarch64-unknown-linux-musl"
-        if arm:
-            record = _json_object(receipt_path, "dynamic link receipt")
-            retained_linker = _retained_linker(record.get("resolved_linker"), linker)
-            recorded = lambda path: _retained_recorded(checkout, source_mount, path, "dynamic link input")
-            receipt_hash = _validate_aarch64_dynamic_receipt(product_path, (workload_path,), executable_path,
-                                                              receipt_path, linkage, manifest, retained_linker, recorded,
-                                                              export_dynamic=export_dynamic)
-        else:
-            receipt_hash = _validate_retained_dynamic_receipt(
-                checkout, source_mount, product_path, workload_path, executable_path, receipt_path, linkage, manifest,
-                linker, export_dynamic=export_dynamic,
-            )
+        receipt_hash = _validate_retained_dynamic_receipt(
+            checkout, source_mount, product_path, workload_path, executable_path, receipt_path, linkage, manifest,
+            linker, export_dynamic=export_dynamic,
+        )
         product_format = "crabc-aarch64-owned-dynamic-sysroot-v1" if arm else DYNAMIC_PRODUCT_FORMAT
-    arm = linkage in {"pie", "non-pie"} and arm
+    arm = ARCH == "aarch64"
     interpreter = (("/lib/ld-crabc-aarch64-hardened.so.1" if profile is NativeRuntimeProfile.HARDENED else "/lib/ld-crabc-aarch64.so.1")
                    if arm else profile.interpreter if linkage in {"pie", "non-pie"} else INTERPRETER)
     _audit_retained_elf(executable_path, linkage, interpreter, arm=arm)
@@ -1624,18 +1561,12 @@ def _validate_link(
         manifest, _ = _validate_dynamic_product(root)
         profile = _dynamic_profile(root, linkage)
         arm = _json_object(manifest, "dynamic product manifest").get("target") == "aarch64-unknown-linux-musl"
-        if arm:
-            record = _json_object(receipt_path, "dynamic link receipt")
-            linker = _check_linker(record.get("resolved_linker"), receipt_path)
-            receipt_hash = _validate_aarch64_dynamic_receipt(root, workload_paths, executable_path, receipt_path,
-                                                              linkage, manifest, linker, str, export_dynamic=export_dynamic)
-        else:
-            receipt_hash = _validate_dynamic_receipt_for_workloads(
-                root, workload_paths, executable_path, receipt_path, linkage, manifest,
-                export_dynamic=export_dynamic,
-            )
+        receipt_hash = _validate_dynamic_receipt_for_workloads(
+            root, workload_paths, executable_path, receipt_path, linkage, manifest,
+            export_dynamic=export_dynamic,
+        )
         product_format = "crabc-aarch64-owned-dynamic-sysroot-v1" if arm else DYNAMIC_PRODUCT_FORMAT
-    arm = linkage in {"pie", "non-pie"} and arm
+    arm = ARCH == "aarch64"
     interpreter = (("/lib/ld-crabc-aarch64-hardened.so.1" if profile is NativeRuntimeProfile.HARDENED else "/lib/ld-crabc-aarch64.so.1")
                    if arm else profile.interpreter if linkage in {"pie", "non-pie"} else INTERPRETER)
     _audit_elf(executable_path, linkage, interpreter, arm=arm)

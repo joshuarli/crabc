@@ -368,11 +368,11 @@ def _shared_link_command(root: Path, object_path: Path, output: Path, linker: Pa
     ]
 
 
-def _validate_shared_metadata(record: dict[str, Any]) -> None:
+def _validate_shared_metadata(record: dict[str, Any], *, product_format: str = DYNAMIC_PRODUCT_FORMAT) -> None:
     """Require one exact receipt version for the callback-loaded DSO."""
 
     search = receipt_contract.validate(
-        record, format=DYNAMIC_PRODUCT_FORMAT, label="timer TLS DSO receipt", fail=_fail
+        record, format=product_format, label="timer TLS DSO receipt", fail=_fail
     )
     if type(record["campaign_complete"]) is not bool:
         _fail("timer TLS DSO receipt campaign state must be a boolean")
@@ -385,12 +385,13 @@ def _validate_shared_metadata(record: dict[str, Any]) -> None:
 
 
 def _validate_shared_receipt(
-    root: Path, manifest: Path, object_path: Path, output: Path, receipt: Path, *, replay: RetainedRuntimeInputs | None = None
+    root: Path, manifest: Path, object_path: Path, output: Path, receipt: Path, *, replay: RetainedRuntimeInputs | None = None,
+    product_format: str = DYNAMIC_PRODUCT_FORMAT,
 ) -> str:
     receipt = _physical(receipt, "timer TLS DSO receipt")
     output = _physical(output, "timer TLS DSO")
     record = _json(receipt, "timer TLS DSO receipt")
-    _validate_shared_metadata(record)
+    _validate_shared_metadata(record, product_format=product_format)
     if record["output_path"] != recorded(output, replay):
         _fail("timer TLS DSO receipt output path differs from this evidence invocation")
     if record["output_sha256"] != _sha256(output):
@@ -437,7 +438,8 @@ def _validate_shared_receipt(
     return _sha256(receipt)
 
 
-def _validate_tls_elf(output: Path, *, replay: RetainedRuntimeInputs | None = None) -> tuple[str, list[str]]:
+def _validate_tls_elf(output: Path, *, replay: RetainedRuntimeInputs | None = None,
+                      machine: str = "Advanced Micro Devices X86-64") -> tuple[str, list[str]]:
     if replay is not None:
         facts = product_evidence.retained_elf_facts(output)
         if facts["machine"] != 62 or facts["type"] != 3:
@@ -452,8 +454,8 @@ def _validate_tls_elf(output: Path, *, replay: RetainedRuntimeInputs | None = No
             _fail("retained timer TLS DSO SONAME, NEEDED, or RUNPATH differs from the callback contract")
         return facts["sonames"][0], facts["needed"]
     header, program, dynamic = (_readelf(output, option) for option in ("-hW", "-lW", "-dW"))
-    if re.search(r"^\s*Machine:\s+Advanced Micro Devices X86-64\s*$", header, re.MULTILINE) is None:
-        _fail("timer TLS DSO is not an x86-64 ELF")
+    if re.search(rf"^\s*Machine:\s+{re.escape(machine)}\s*$", header, re.MULTILINE) is None:
+        _fail(f"timer TLS DSO is not a {machine} ELF")
     if re.search(r"^\s*Type:\s+DYN(?:\s|\()", header, re.MULTILINE) is None:
         _fail("timer TLS DSO is not ET_DYN")
     if re.search(r"^\s*INTERP\b", program, re.MULTILINE) is not None:

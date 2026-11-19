@@ -1,3 +1,6 @@
+#if defined(__aarch64__)
+#include "libc_math_long_double_completion_aarch64.inc"
+#else
 /*
  * Native Linux/x86-64 binary80 fdiml/exp10l/pow10l differential.
  *
@@ -466,4 +469,5 @@ int main(void)
 {
 	return crabc_x86_64_math_long_double_completion_probe();
 }
+#endif
 #endif

@@ -8,7 +8,8 @@
 set -euo pipefail
 
 readonly ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-readonly ORACLE_CC=/usr/local/bin/crabc-x86_64-musl-gcc
+eval "$(python3 -B "$ROOT_DIR/compat/x86_64/native_arch.py")"
+readonly ORACLE_CC="$oracle"
 readonly C_PROBE="$ROOT_DIR/compat/x86_64/signal_legacy_aliases_header_abi_probe.c"
 readonly CXX_PROBE="$ROOT_DIR/compat/x86_64/signal_legacy_aliases_header_abi_probe.cpp"
 
@@ -19,10 +20,6 @@ fail() {
 
 require_native_linux_x86_64() {
     [ "$(uname -s)" = Linux ] || fail "requires native Linux"
-    case "$(uname -m)" in
-        x86_64|amd64) ;;
-        *) fail "refuses emulation on $(uname -m)" ;;
-    esac
 }
 
 compile_gnu() {
