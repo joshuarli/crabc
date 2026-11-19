@@ -10,11 +10,12 @@ set -euo pipefail
 ulimit -c 0
 
 readonly ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-readonly ORACLE_CC=/usr/local/bin/crabc-x86_64-musl-gcc
+eval "$(python3 -B "$ROOT/compat/x86_64/native_arch.py")"
+readonly ORACLE_CC="$oracle"
 readonly PROBE="$ROOT/compat/x86_64/owned_account_files_probe.c"
 readonly HEADER_C="$ROOT/compat/x86_64/owned_account_files_header_abi_probe.c"
 readonly HEADER_CXX="$ROOT/compat/x86_64/owned_account_files_header_abi_probe.cpp"
-readonly INTERPRETER=/lib/ld-crabc-x86_64.so.1
+readonly INTERPRETER="/lib/ld-crabc-$arch.so.1"
 readonly -a SCENARIOS=(
     symbols fields early tcb tcb-denied global stream read-error workers
     cancellation noops usershell cuserid identity-fields identity-lifetime

@@ -285,7 +285,11 @@ static void shadow_tcb_denied(void)
     struct spwd record;
     struct spwd *result = (void *)1;
     char buffer[512];
+#ifdef SYS_open
     install_filter(SYS_open, 0x00050000 | EACCES);
+#else
+    install_filter(SYS_openat, 0x00050000 | EACCES);
+#endif
     errno = EDOM;
     CHECK(getspnam_r("alpha", &record, buffer, sizeof buffer, &result) == EACCES);
     CHECK(result == NULL && errno == EACCES);
