@@ -122,7 +122,9 @@ static_archive_member! { __fpclassifyf_source {
     #[cfg(target_arch = "aarch64")]
     #[no_mangle]
     pub extern "C" fn __fpclassifyf(x: f32) -> i32 {
-        let bits = x.to_bits();
+        let bits: u32;
+        // SAFETY: FMOV copies the argument bits without changing floating-point state.
+        unsafe { core::arch::asm!("fmov {bits:w}, {value:s}", bits = out(reg) bits, value = in(vreg) x, options(pure, nomem, nostack)); }
         let e = (bits >> 23) & 0xff;
         if e == 0 { return if (bits << 1) != 0 { 3 } else { 2 }; }
         if e == 0xff { return if (bits << 9) != 0 { 0 } else { 1 }; }
@@ -174,7 +176,9 @@ static_archive_member! { __fpclassify_source {
     #[cfg(target_arch = "aarch64")]
     #[no_mangle]
     pub extern "C" fn __fpclassify(x: f64) -> i32 {
-        let bits = x.to_bits();
+        let bits: u64;
+        // SAFETY: FMOV copies the argument bits without changing floating-point state.
+        unsafe { core::arch::asm!("fmov {bits}, {value:d}", bits = out(reg) bits, value = in(vreg) x, options(pure, nomem, nostack)); }
         let e = (bits >> 52) & 0x7ff;
         if e == 0 { return if (bits << 1) != 0 { 3 } else { 2 }; }
         if e == 0x7ff { return if (bits << 12) != 0 { 0 } else { 1 }; }
