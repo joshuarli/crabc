@@ -6,6 +6,7 @@ from __future__ import annotations
 import os
 from pathlib import Path
 import subprocess
+import sys
 import tempfile
 import unittest
 
@@ -106,13 +107,22 @@ class OwnedEnvironmentLifecycleTests(unittest.TestCase):
             "--dynamic-pie",
             "--dynamic-$mode",
             "for mode in pie non-pie",
-            "/lib/ld-crabc-x86_64.so.1",
+            'readonly INTERPRETER="/lib/ld-crabc-$arch.so.1"',
             "chroot",
             "cmp",
             "provided_dynamic",
             "owned-environment-lifecycle",
         ):
             self.assertIn(required, runner)
+        for machine, expected in (("x86_64", "/lib/ld-crabc-x86_64.so.1"),
+                                  ("aarch64", "/lib/ld-crabc-aarch64.so.1")):
+            settings = subprocess.check_output(
+                [sys.executable, "-B", str(ROOT / "compat/x86_64/native_arch.py"), machine],
+                text=True,
+            )
+            arch = next(line.split("=", 1)[1] for line in settings.splitlines()
+                        if line.startswith("arch="))
+            self.assertEqual(f"/lib/ld-crabc-{arch}.so.1", expected)
         self.assertIn("environment-lifecycle", catalog)
         self.assertIn("run_owned_environment_lifecycle.sh", catalog)
 
