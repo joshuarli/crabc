@@ -370,7 +370,7 @@ entries are closed by the commit that fixes them.
 | 3 | fixed | `crabc_cc_owned_dynamic.py:223-231` (aarch64 required roster includes loader provenance and the receipt/ELF modules), `:262` (CRT provenance), `:275-276` (`validate_loader_provenance(architecture="aarch64")`). |
 | 4 | closed (d8ffc3bd5) | The shared product reader validates the full product and compares producer tools against the architecture-specific source image manifest. |
 | 5 | closed (373b8589b) | Static preparation reads each product’s allocator backend and producer tools from its manifest and checks backend agreement. |
-| 6 | partly fixed | Standalone now uses `static_product_payload_files(arch)` (`crabc_cc_static.py:1247`); combined validates its embedded static manifest (`:380`). Standalone aarch64 still has no `validate_crt_provenance` (only combined, `:1245`), no `usr/include` check and no `REQUIRED_RUNTIME_PATHS` check (x86: `:454-472`). |
+| 6 | closed (a04b647dd) | Both native static drivers use the same installed-payload, required-path and CRT-provenance checks. The ARM builder suite passes all 47 tests. |
 | 8 | closed (d8ffc3bd5) | The shared reader binds compiler identities to the architecture-specific source image manifest. |
 | 9 | still open | `consumer_rust_std_lto.py:587-588`. |
 | 10 | closed (58f2ddd16) | Incomplete development runs return failure on both architectures. |
@@ -470,10 +470,10 @@ The facade correction leaves out-of-scope callers `crabc-rs/examples/ppoll_direc
     - `native_abi_exports.py:152-160` accepts any `anon.*` symbol on aarch64, where x86 compares them exactly. The aarch64 delta is hardcoded in code (`:32-47`).
 16. **`owned_static_link_authority.py:202`** admits nameless LOCAL undefined `.symtab` rows on aarch64. Its test fabricates the row (`test_owned_static_link_authority.py:631-656`).
     - `:514-573`: aarch64 merged-constant targets are not bound to the input's link-map contribution.
-17. **`compat/resolver-network/run_x86_64.py:710-713`**. aarch64 compares the receipt against the driver's own `owned_link_plan` instead of the independent `_static_link_plan`. This is the item 12 pattern.
+17. **Closed (6205287aa).** Both architectures compare the resolver receipt with the independent shared `_static_link_plan`.
 18. **errno alias visibility, rule 2.** `libc/src/c_abi/x86_64/errno.rs:62-65` makes the alias HIDDEN on aarch64, where x86 deliberately keeps it DEFAULT. The validator branches to match (`owned_errno_storage_lifecycle.py:907`).
 19. **`run_owned_ldso_lifecycle_cases.sh:84-87`**. On aarch64 the musl expectation strips the legacy init/fini letters. This divergence is not recorded in `parity.toml` (related to item 19).
-20. **`run_owned_rand.sh:434-435`** records a hardcoded `selection.target`. Low; nothing consumes it.
+20. **Closed (beac442c7, 71bc72983, 071098c93).** The ARM target is read from Cargo metadata, the builders receive the native architecture, and the provider audit checks ARM atomic and call instructions. The native `owned-rand` producer passed.
 
 ### Test-coverage
 
