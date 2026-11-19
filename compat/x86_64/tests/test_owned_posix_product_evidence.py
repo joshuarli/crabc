@@ -1283,6 +1283,17 @@ class OwnedPosixProductEvidenceTests(unittest.TestCase):
         with self.assertRaises(evidence.ProductEvidenceError):
             evidence._validate_dynamic_product(product)
 
+    def test_arm_release_source_uses_materialization_state(self) -> None:
+        state = self.dynamic / "share/crabc/dynamic-product-state.json"
+        self.write_json(state, {"schema": "crabc.x86_64-owned-dynamic-materialization/v1", "source_sha256": "a" * 64})
+        manifest = self.dynamic / "share/crabc/manifest.json"
+        record = {"format": "crabc-aarch64-owned-dynamic-sysroot-v1", "build_profile": "release"}
+        with (mock.patch.object(evidence, "_validate_dynamic_product"),
+              mock.patch.object(evidence, "_product_manifest", return_value=(manifest, record, None))):
+            evidence.validate_dynamic_product_source(self.dynamic, "a" * 64)
+            with self.assertRaisesRegex(evidence.ProductEvidenceError, "source differs"):
+                evidence.validate_dynamic_product_source(self.dynamic, "b" * 64)
+
     def test_release_product_source_uses_sealed_materialization_state(self) -> None:
         state_path = self.dynamic / "share/crabc/dynamic-product-state.json"
         self.write_json(state_path, {

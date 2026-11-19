@@ -311,10 +311,7 @@ def product_identity(installed: Path) -> dict[str, object]:
         fail(f"dynamic product must be a physical installed product below checkout {WORK_ROOT}")
     try:
         if ARCH == "aarch64":
-            product_evidence._validate_dynamic_product(installed)
-            manifest = json.loads((installed / "share/crabc/manifest.json").read_text())
-            if manifest.get("source_sha256") != source_seal.product_source_digest(ROOT):
-                fail("installed dynamic product source differs")
+            product_evidence.validate_dynamic_product_source(installed, source_seal.product_source_digest(ROOT))
         else:
             compiler_helper.validate_materialized_dynamic_product(ROOT, installed)
     except (compiler_helper.CompilerHelperEvidenceError, product_evidence.ProductEvidenceError) as error:

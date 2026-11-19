@@ -852,10 +852,6 @@ def _dynamic_metadata_path(root: Path, combined: dict | None, relative: str) -> 
 def validate_dynamic_product_source(root: Path, source_sha256: str) -> None:
     _validate_dynamic_product(root)
     _, manifest, combined = _product_manifest(root, "dynamic", DYNAMIC_PRODUCT_FORMAT)
-    if manifest.get("format") == "crabc-aarch64-owned-dynamic-sysroot-v1":
-        if manifest.get("source_sha256") != source_sha256:
-            _fail("dynamic product source differs from current checkout")
-        return
     if manifest.get("build_profile") == "debug":
         validate_debug_product_source(root, source_sha256)
         return
@@ -1306,8 +1302,10 @@ def _retained_static_plan(root: Path, source_mount: str, product: Path, linkage:
         "--no-dynamic-linker", "--no-undefined", "--eh-frame-hdr", "--gc-sections", "-z", "relro", "-z", "now",
         "-e", "_start", _retained_recorded(root, source_mount, library / mode["crt"], "static CRT"),
         _retained_recorded(root, source_mount, library / "crti.o", "static CRT"),
-        "<application-objects>", _retained_recorded(root, source_mount, library / "libc.a", "static libc"),
+        "<application-objects>", *(["--start-group"] if ARCH == "aarch64" else []),
+        _retained_recorded(root, source_mount, library / "libc.a", "static libc"),
         _retained_recorded(root, source_mount, library / "libcrabc-builtins.a", "static builtins"),
+        *(["--end-group"] if ARCH == "aarch64" else []),
         _retained_recorded(root, source_mount, library / "crtn.o", "static CRT"), "-o", "<output>",
     ]
 
