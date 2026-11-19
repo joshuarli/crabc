@@ -156,3 +156,76 @@ fn add_bits(a: u128, b: u128, subtract: bool) -> u128 {
 pub extern "C" fn __addtf3(a: f128, b: f128) -> f128 { f128::from_bits(add_bits(a.to_bits(), b.to_bits(), false)) }
 #[no_mangle]
 pub extern "C" fn __subtf3(a: f128, b: f128) -> f128 { f128::from_bits(add_bits(a.to_bits(), b.to_bits(), true)) }
+
+fn normalized(bits: u128) -> (i32, u128) {
+    let exponent = ((bits >> 112) & 0x7fff) as i32;
+    let mut fraction = bits & FRAC;
+    if exponent != 0 { return (exponent, fraction | ONE); }
+    let shift = fraction.leading_zeros() - ONE.leading_zeros();
+    fraction <<= shift;
+    (1 - shift as i32, fraction)
+}
+
+fn product(a: u128, b: u128) -> (u128, u128) {
+    let mask = u64::MAX as u128;
+    let a0 = a & mask;
+    let a1 = a >> 64;
+    let b0 = b & mask;
+    let b1 = b >> 64;
+    let p0 = a0 * b0;
+    let p1 = a0 * b1;
+    let p2 = a1 * b0;
+    let (lo, c1) = p0.overflowing_add(p1 << 64);
+    let (lo, c2) = lo.overflowing_add(p2 << 64);
+    let hi = a1 * b1 + (p1 >> 64) + (p2 >> 64) + c1 as u128 + c2 as u128;
+    (hi, lo)
+}
+
+fn mul_bits(a: u128, b: u128) -> u128 {
+    if let Some(n) = nan(a, b) { return n; }
+    let aa = a & !SIGN;
+    let bb = b & !SIGN;
+    let sign = (a ^ b) & SIGN;
+    if aa == INF || bb == INF {
+        if aa == 0 || bb == 0 { raise(1); return INF | FRAC; }
+        return sign | INF;
+    }
+    if aa == 0 || bb == 0 { return sign; }
+    let (ae, av) = normalized(a);
+    let (be, bv) = normalized(b);
+    let (hi, lo) = product(av, bv);
+    let high = hi & (1_u128 << (225 - 128)) != 0;
+    let shift = if high { 110 } else { 109 };
+    let sig = (hi << (128 - shift)) | (lo >> shift) | ((lo << (128 - shift) != 0) as u128);
+    pack(sign, ae + be - 16383 + high as i32, sig)
+}
+
+fn div_bits(a: u128, b: u128) -> u128 {
+    if let Some(n) = nan(a, b) { return n; }
+    let aa = a & !SIGN;
+    let bb = b & !SIGN;
+    let sign = (a ^ b) & SIGN;
+    if (aa == INF && bb == INF) || (aa == 0 && bb == 0) { raise(1); return INF | FRAC; }
+    if aa == INF { return sign | INF; }
+    if bb == INF { return sign; }
+    if bb == 0 { raise(2); return sign | INF; }
+    if aa == 0 { return sign; }
+    let (ae, mut av) = normalized(a);
+    let (be, bv) = normalized(b);
+    let mut exp = ae - be + 16383;
+    if av < bv { av <<= 1; exp -= 1; }
+    let mut rem = av - bv;
+    let mut quotient = 1_u128;
+    for _ in 0..115 {
+        rem <<= 1;
+        quotient <<= 1;
+        if rem >= bv { rem -= bv; quotient |= 1; }
+    }
+    quotient |= (rem != 0) as u128;
+    pack(sign, exp, quotient)
+}
+
+#[no_mangle]
+pub extern "C" fn __multf3(a: f128, b: f128) -> f128 { f128::from_bits(mul_bits(a.to_bits(), b.to_bits())) }
+#[no_mangle]
+pub extern "C" fn __divtf3(a: f128, b: f128) -> f128 { f128::from_bits(div_bits(a.to_bits(), b.to_bits())) }
