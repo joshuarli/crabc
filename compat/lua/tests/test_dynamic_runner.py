@@ -219,6 +219,21 @@ class NativeDynamicSysrootInputTests(unittest.TestCase):
         with self.assertRaisesRegex(RUNNER.LUA.RunnerError, "payload roster drifted"):
             RUNNER.owned_dynamic_sysroot(self.temporary)
 
+    def test_arm64_dynamic_elf_requires_its_machine_and_loader(self) -> None:
+        def readelf(_path: Path, option: str) -> str:
+            return {"-h": "Machine: AArch64\nType: DYN", "-lW": "/lib/ld-crabc-aarch64.so.1",
+                    "-dW": "", "-rW": ""}[option]
+        artifact = self.temporary / "lua"
+        artifact.write_bytes(b"test")
+        with (mock.patch.object(RUNNER, "ARCH", "aarch64"),
+              mock.patch.object(RUNNER, "CANONICAL_INTERPRETER", "/lib/ld-crabc-aarch64.so.1"),
+              mock.patch.object(RUNNER.LUA, "readelf", side_effect=readelf)):
+            self.assertEqual(RUNNER.dynamic_elf(artifact, executable=True, label="lua")["header"],
+                             "Machine: AArch64\nType: DYN")
+            with mock.patch.object(RUNNER.LUA, "readelf", return_value="Machine: Advanced Micro Devices X86-64\nType: DYN"):
+                with self.assertRaises(RUNNER.LUA.RunnerError):
+                    RUNNER.dynamic_elf(artifact, executable=True, label="lua")
+
 
 class NativeDynamicHeaderSelectionTests(unittest.TestCase):
     """The installed dynamic driver records the actual selected public headers."""
