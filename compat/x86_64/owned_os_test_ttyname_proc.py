@@ -352,7 +352,7 @@ def parse_arguments(arguments: list[str]) -> argparse.Namespace:
     parser.add_argument("--timeout", type=float, default=20.0,
                         help="per compiler, linker, mount witness, or target run timeout in seconds (default: 20)")
     parser.add_argument("--os-test-root", type=Path,
-                        default=ROOT / ".work/x86_64/source-oracles" / f"os-test-{os_test.OS_TEST_REVISION}")
+                        default=ROOT / ".work" / os_test.ARCH / "source-oracles" / f"os-test-{os_test.OS_TEST_REVISION}")
     parser.add_argument("dynamic_sysroot")
     return parser.parse_args(arguments)
 

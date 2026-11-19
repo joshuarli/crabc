@@ -1542,7 +1542,7 @@ def parse_arguments(arguments: list[str]) -> argparse.Namespace:
     parser.add_argument("--compile-jobs", type=int, default=8,
                         help="bounded parallel jobs for compile phases; tests always run serially (default: 8)")
     parser.add_argument("--os-test-root", type=Path,
-                        default=ROOT / ".work/x86_64/source-oracles" / f"os-test-{OS_TEST_REVISION}")
+                        default=ROOT / ".work" / ARCH / "source-oracles" / f"os-test-{OS_TEST_REVISION}")
     parser.add_argument("dynamic_sysroot", nargs="?")
     values, remainder = parser.parse_known_args(arguments)
     if values.adapter:
