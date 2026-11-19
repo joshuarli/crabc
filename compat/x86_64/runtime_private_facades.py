@@ -310,10 +310,7 @@ def product_identity(installed: Path) -> dict[str, object]:
             or not installed.is_relative_to(WORK_ROOT)):
         fail(f"dynamic product must be a physical installed product below checkout {WORK_ROOT}")
     try:
-        if ARCH == "aarch64":
-            product_evidence.validate_dynamic_product_source(installed, source_seal.product_source_digest(ROOT))
-        else:
-            compiler_helper.validate_materialized_dynamic_product(ROOT, installed)
+        compiler_helper.validate_materialized_dynamic_product(ROOT, installed)
     except (compiler_helper.CompilerHelperEvidenceError, product_evidence.ProductEvidenceError) as error:
         raise EvidenceError(f"installed dynamic product is not source-matched: {error}") from error
     manifest_path = installed / "share/crabc/manifest.json"

@@ -28,6 +28,7 @@ if str(MODULE_DIR) not in sys.path:
     sys.path.insert(0, str(MODULE_DIR))
 from loader_debug_abi_evidence import Elf, EvidenceError
 from static_product_contract import MOLD_SYNTHETIC_UNDEFINED
+from native_arch import native_arch
 
 ROOT = Path(__file__).resolve().parents[2]
 CONTRACT = Path("builtins/x86_64-helper-contract.toml")
@@ -1389,8 +1390,9 @@ def validate_materialized_dynamic_product(root: Path, product: Path) -> str:
 
     root = _physical_directory(root, "compiler-helper checkout")
     product = _physical_directory(product, "compiler-helper installed dynamic product")
-    require(product.is_relative_to(_physical_directory(root / ".work/x86_64", "compiler-helper checkout .work/x86_64")),
-            "compiler-helper installed dynamic product escapes checkout .work/x86_64")
+    work_root = root / ".work" / native_arch()["work_name"]
+    require(product.is_relative_to(_physical_directory(work_root, f"compiler-helper checkout {work_root.relative_to(root)}")),
+            f"compiler-helper installed dynamic product escapes checkout {work_root.relative_to(root)}")
     module_dir = Path(__file__).resolve().parent
     if str(module_dir) not in sys.path:
         sys.path.insert(0, str(module_dir))
