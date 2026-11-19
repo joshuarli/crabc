@@ -11,7 +11,9 @@ consumer_arguments=()
 [ -z "$ordinary" ] || consumer_arguments+=("$ordinary")
 [[ "$extra" =~ ^[0-9]+$ ]] && [ "$extra" -ge 1 ] && [ "$extra" -le 96 ] || exit 2
 readonly driver="$installed/bin/crabc-cc-dynamic"
-readonly oracle_cc=/usr/local/bin/crabc-x86_64-musl-gcc
+eval "$(python3 -B "$root/compat/x86_64/native_arch.py")"
+readonly oracle_cc="$oracle"
+readonly interpreter="/lib/ld-crabc-${arch}.so.1"
 case "${TMPDIR:-}" in "$root"/.work/*) ;; *) echo 'TMPDIR must be within the checkout .work directory' >&2; exit 2 ;; esac
 
 ulimit -c 0
@@ -107,7 +109,7 @@ for mode in --dynamic-pie --dynamic-non-pie; do
         >"$work/$name.oracle.stdout" 2>"$work/$name.oracle.stderr"
     for entry in kernel direct; do
         command=("/$name")
-        [ "$entry" = kernel ] || command=(/lib/ld-crabc-x86_64.so.1 "/$name")
+        [ "$entry" = kernel ] || command=("$interpreter" "/$name")
         LD_LIBRARY_PATH=/opt/plugins:/usr/lib timeout 30 chroot "$work/candidate-root" \
             "${command[@]}" "$extra" /usr/lib/libgraph-ab.so "${consumer_arguments[@]}" \
             >"$work/$name.$entry.stdout" 2>"$work/$name.$entry.stderr"
