@@ -129,9 +129,9 @@ static int exact_general_initial_dtv(void) {
         || resolved_right != general_right_tls_address()
         || (void *)dtv[4] != resolved_right
         || __tls_get_addr(&absent_tls) != 0) {
-        return 0;
+        return 1;
     }
-    return 1;
+    return 0;
 #endif
 }
 #endif

@@ -141,11 +141,7 @@ int main(void) {
        evidence rather than an invalid constructor-order differential. */
     if (general_shared_constructor_stage_value() != 7) return 40;
 #endif
-#if defined(__aarch64__) && defined(CRABC_PRODUCT_TLS_LAYOUT)
     if (candidate_dtv_has_one_loader_order_slot_per_tls_image() != 1) return 41;
-#else
-    if (!candidate_dtv_has_one_loader_order_slot_per_tls_image()) return 41;
-#endif
     if (general_main_tbss != 0 || general_shared_tbss_value() != 0) return 42;
     if (general_left_initial_value() != 30) return 43;
     if (general_right_initial_value() != 40) return 44;
