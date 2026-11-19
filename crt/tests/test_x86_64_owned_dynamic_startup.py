@@ -14,6 +14,7 @@ import json
 import sys
 import tempfile
 import unittest
+from unittest import mock
 from pathlib import Path
 
 
@@ -57,6 +58,21 @@ class InstalledLinkReceiptTests(unittest.TestCase):
     def check(self) -> dict[str, object]:
         Path(str(self.output) + ".crabc-link.json").write_text(json.dumps(self.receipt))
         return startup.check_link_receipt(self.product, self.output, "dynamic-pie", [self.object], [self.dso])
+
+    def test_arm64_trace_requires_native_archive_members_and_order(self) -> None:
+        attachment = str(self.library / "crabc-dynamic-attach.o")
+        archive = str(self.library / "libcrabc-builtins.a")
+        self.receipt["owned_runtime_inputs"].remove("usr/lib/crabc-dynamic-attach.o")
+        self.receipt["link_command"].remove(attachment)
+        self.receipt["link_trace"].remove(attachment)
+        index = self.receipt["link_trace"].index(archive + "(crabc-builtins.o)")
+        self.receipt["link_trace"][index:index + 1] = [archive + "(one.o)", archive + "(two.o)"]
+        with mock.patch.object(startup, "ARCH", {"arch": "aarch64"}):
+            self.check()
+            self.receipt["link_trace"].remove(archive + "(one.o)")
+            self.receipt["link_trace"].remove(archive + "(two.o)")
+            with self.assertRaisesRegex(startup.EvidenceError, "helper archive supplied no members"):
+                self.check()
 
     def test_exact_installed_input_order_and_member_trace_are_admitted(self) -> None:
         self.assertEqual(self.check()["link_trace"], self.receipt["link_trace"])
