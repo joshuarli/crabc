@@ -227,6 +227,14 @@ def _product_identity(product: Path, source_identity: str) -> str:
 
 def _materialization_product(product: Path) -> tuple[dict, dict | None, dict | None]:
     import crabc_cc_owned_dynamic as driver
+    manifest = read(product / "share/crabc/manifest.json")
+    if manifest.get("format") == "crabc-aarch64-owned-sysroot-v1":
+        from scripts import build_x86_64_owned_combined_sysroot as combined
+        try:
+            record = combined.validate(product)
+        except combined.CompositionError as error:
+            raise QualificationError(f"installed combined product invalid: {error}") from error
+        return read(product / record["products"]["dynamic"]["manifest"]), None, None
     try:
         manifest = driver.validate_installation(product)
     except driver.shared.DriverError as error:
@@ -342,7 +350,7 @@ def prepare(work: Path) -> None:
         commands = [
             [sys.executable, "-B", "-c",
              "import sys; from pathlib import Path; sys.path.insert(0, sys.argv[1]); "
-             "import crabc_cc_owned_dynamic as d; d.validate_installation(Path(sys.argv[2]))",
+             "import owned_dynamic_qualification as q; q.product_identity(Path(sys.argv[2]))",
              str(ROOT / "compat/x86_64"), str(product)],
             [str(product / "bin/crabc-cc-dynamic"), "--dynamic-pie", "--print-link-plan"],
             [str(product / "bin/crabc-cc-dynamic"), "--dynamic-shared-object", "--print-link-plan"],
