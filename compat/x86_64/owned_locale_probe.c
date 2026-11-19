@@ -26,10 +26,10 @@
 #define CRABC_LOCALE_ENVIRONMENT_NO_MAIN
 #include "libc_locale_environment_probe.c"
 
-#if !defined(__linux__) || !defined(__x86_64__) || !defined(__LP64__) || \
+#if !defined(__linux__) || !(defined(__x86_64__) || defined(__aarch64__)) || !defined(__LP64__) || \
     !defined(__BYTE_ORDER__) || !defined(__ORDER_LITTLE_ENDIAN__) || \
     __BYTE_ORDER__ != __ORDER_LITTLE_ENDIAN__
-#error "this fixture requires native Linux/x86-64 little-endian LP64"
+#error "this fixture requires native Linux x86-64 or AArch64 little-endian LP64"
 #endif
 
 _Static_assert(sizeof(wchar_t) == 4, "x86 wchar_t width");
@@ -84,7 +84,13 @@ static int check_lconv(void)
 
     return value != NULL && text_equal(value->decimal_point, ".") &&
         text_equal(value->thousands_sep, "") && text_equal(value->grouping, "") &&
-        value->int_frac_digits == CHAR_MAX && value->frac_digits == CHAR_MAX;
+        value->int_frac_digits == CHAR_MAX && value->frac_digits == CHAR_MAX &&
+        value->p_cs_precedes == CHAR_MAX && value->p_sep_by_space == CHAR_MAX &&
+        value->n_cs_precedes == CHAR_MAX && value->n_sep_by_space == CHAR_MAX &&
+        value->p_sign_posn == CHAR_MAX && value->n_sign_posn == CHAR_MAX &&
+        value->int_p_cs_precedes == CHAR_MAX && value->int_p_sep_by_space == CHAR_MAX &&
+        value->int_n_cs_precedes == CHAR_MAX && value->int_n_sep_by_space == CHAR_MAX &&
+        value->int_p_sign_posn == CHAR_MAX && value->int_n_sign_posn == CHAR_MAX;
 }
 
 static int check_locale_core(locale_t *c_locale, locale_t *utf8_locale)
