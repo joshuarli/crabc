@@ -4,6 +4,11 @@ A small Rust `no_std` Unix runtime: a libc, a dynamic linker, owned
 application CRT and compiler helpers, and `crabc-rs`, an idiomatic Rust facade
 over the same OS mechanisms.
 
+The goal is exact modern Unix behavior without an unlimited historical libc
+surface. The compatibility oracle is the exact `[musl_native]` snapshot in
+[`compat/upstreams.toml`](compat/upstreams.toml); glibc is neither an oracle
+nor a fallback.
+
 ## Current work
 
 The [active plan](plan.md) records development and qualification status.
@@ -29,7 +34,10 @@ no non-Linux libc.
 
 ## Runtime hardening
 
-The [compatibility profile](COMPATIBILITY-PROFILE.md#runtime-hardening-profiles) describes the selected hardening profiles.
+A separately built hardened profile (PIE, non-executable stacks, W^X, RELRO,
+eager binding, explicit library search) is a completion requirement, not a
+shipped feature. The [compatibility profile](COMPATIBILITY-PROFILE.md#runtime-hardening-profiles)
+defines it.
 
 ## Compatibility
 

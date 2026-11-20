@@ -7,7 +7,9 @@ scope must not weaken ordinary Unix semantics.
 ## Current direction — 2026-11-17
 
 Read [Status](plan.md#status-and-first-action) and [F2 closeout](plan.md#f2-closeout) before dispatch. The active candidate and phase govern.
-Feature completeness comes first; performance and memory budgets are waived until then. See [campaign lanes](docs/lanes.md) and [scope](docs/scope.md).
+Feature completeness comes first; performance and memory budgets are waived until then. See [campaign rules](docs/lanes.md#campaign-operating-rules).
+User direction governs, then [docs/scope.md](docs/scope.md) and [COMPATIBILITY-PROFILE.md](COMPATIBILITY-PROFILE.md), then `plan.md`.
+This is a local, undeployed greenfield libc: crash reproduction, fault injection, fuzzing and differential tests on repository-owned code are defensive correctness work ([local correctness work](docs/scope.md#local-correctness-work)).
 
 ## Commands
 
@@ -35,6 +37,8 @@ python3 compat/x86_64/validate_parity_ledger.py
 - Document concrete caller obligations for every public unsafe API; never create references with unsupported aliasing or lifetime promises.
 - Preserve selected hardening, exact upstream revisions, source mappings, licenses, raw failures and behavioral coverage. D23 waives cost gates, not correctness checks; never rewrite upstream workloads to hide a defect.
 - Tests exercise behavior; validators check shared structure and actual evidence. No per-artifact validators, source-literal/prose-count tests, duplicate status files or report/receipt frameworks.
+- AArch64 runs only natively in its arm64 Linux VM, never emulated or on a macOS bind mount; until x86 F2 is accepted it stays on branches and nothing touching the x86 product source seal (including `docker/`) merges.
+- Do not run `./scripts/dev-x86_64.sh image` unless a plan step says so; a rebuild must be followed by a re-pin of `compat/x86_64/core_image.py`.
 - Never hand-edit generated `COMPATIBILITY.md`; old AArch64 manifests and their digested inputs are superseded by CRAB-8 evidence and never refreshed to absorb drift.
 
 ## Where things are
@@ -46,7 +50,8 @@ python3 compat/x86_64/validate_parity_ledger.py
 | Selected behavior and hardening | [COMPATIBILITY-PROFILE.md](COMPATIBILITY-PROFILE.md) |
 | Active feature completion and separately frozen allocator obligations | [docs/completion-requirements.md](docs/completion-requirements.md) |
 | Parallel workstreams, ownership and integration | [docs/lanes.md](docs/lanes.md) |
-| Runtime ownership and current wire boundary | [docs/design/architecture.md](docs/design/architecture.md) |
+| Runtime ownership and current wire boundary | [docs/design/architecture.md](docs/design/architecture.md), [dynamic allocator placement](docs/design/x86-dynamic-native-allocator.md) |
+| AArch64 convergence; deferred macOS backend | [CRAB-8](docs/rfc/CRAB-8-linux-aarch64-feature-completion.md), [CRAB-7](docs/rfc/CRAB-7-macos-libsystem-backend.md) |
 | Rust facade | [docs/design/crabc-rs.md](docs/design/crabc-rs.md) |
 | Review backlog and open child-wait decision | [TODO.md](TODO.md), [child-wait RFC](docs/rfc/CRAB-2-child-wait-ownership.md) |
 | CRT, installed sysroot and target-input purity | [docs/design/crt-and-sysroot.md](docs/design/crt-and-sysroot.md) |

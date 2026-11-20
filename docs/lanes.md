@@ -256,19 +256,7 @@ AArch64 work stays on branches; nothing touching the x86 product source seal
 
 ## Check environments
 
-Builds and native tests run inside the pinned native x86 images. Use focused
-checks for the selected feature and C-backend integration; do not launch the
-frozen Rust allocator qualification commands.
-
-```sh
-scripts/lanes/rust-check.sh cargo check -q --locked -p <non-allocator-crate>
-python3 -B scripts/test_python.py --module <dispatcher_test.py>
-scripts/lanes/rust-check.sh python3 -B scripts/test_python.py --module <toolchain_test.py>
-python3 compat/x86_64/validate_parity_ledger.py
-./scripts/dev-x86_64.sh campaign-status
-./scripts/dev-x86_64.sh qualification-candidate --work .work/x86_64/feature-complete --profile correctness
-./scripts/dev-x86_64.sh --help
-```
+The commands are listed in [AGENTS.md](../AGENTS.md#commands).
 
 Python harness modules have two homes. Modules that drive the dispatcher or
 container launcher (`*_dispatch*`, promotion phases, the resolver network
