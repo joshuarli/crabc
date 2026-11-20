@@ -6,86 +6,12 @@ scope must not weaken ordinary Unix semantics.
 
 ## Current direction — 2026-11-17
 
-**Feature completeness first; all performance and memory budgets waived until
-then; independent work runs in parallel.** The owner's D23/D24 decisions in
-[plan.md](plan.md) supersede the old simplification/serial-first campaign and
-mandatory cost measurements. S0–S5 are accepted; do not repeat them as a
-prerequisite to implementing the selected native x86-64 surface.
-
-Read [Status](plan.md#status-and-first-action) before dispatch. Its active
-candidate and phase take precedence over general parallel-work instructions.
-Follow [F2 closeout](plan.md#f2-closeout), starting with that candidate's actual
-result. While it runs, keep it fixed and open no other acceptance attempt or
-unrelated lane. Do not restart F0/F1 or invent work to fill slots.
-During F0/F1, dispatch independent selected behavior work and integrate it
-continuously. F2 requires one fresh seven-gate correctness run and ends this
-feature campaign. F3 is a separate follow-up, not an automatic continuation.
-Default qualification is `correctness`; `performance.release` stays explicitly
-deferred. A parked receipt or status count never proves a current-source
-capability or full-chain result.
-
-No CPU/time, instruction, syscall-count, RSS/PSS/peak-memory, allocation,
-footprint or old numerical reduction budget blocks F0–F2. No mandatory
-before/after benchmark, quiet host or performance tool is needed. Correctness,
-memory safety, ABI/errno/TLS/cancellation semantics and hardening remain binding.
-Keep one owner for process-global state, thin C ABI adaptation and direct native
-syscall/vDSO paths; implement the simplest complete behavior before tuning it.
-
-The pinned C mimalloc v3.5.0 backend remains selected. Its crabc glue is open
-for feature integration and correctness fixes backed by focused behavior tests;
-an R1–R4 failure is no longer required to start that work. Upstream C source
-stays unedited. The Rust allocator port, its harness/receipts, shadow products,
-alternate allocators and promotion remain frozen under
-[Allocator freeze](plan.md#allocator-freeze).
-
-During feature implementation, fill useful available slots within the actual
-harness limits. During closeout, assign only demonstrated remaining blockers,
-their review and acceptance; keep the candidate checkout fixed. Use
-component-sized tasks, isolated worktrees, explicit file ownership and independent
-review; keep the feature queue replenished while the coordinator integrates.
-Family acceptance dependencies do not serialize independent implementation. Read
-[docs/lanes.md](docs/lanes.md) before delegating. Use existing orchestration
-routing and helpers; this owner direction overrides their serial-first and
-performance-readiness scheduling defaults. Keep status small; Git is history.
-
-The active target is native Linux/x86-64 on an x86-64 host. Linux/AArch64,
-the public target, is converging onto the same runtime under the accepted
-[CRAB-8](docs/rfc/CRAB-8-linux-aarch64-feature-completion.md): it runs only
-natively in an arm64 Linux VM with its own disk on the Apple Silicon host,
-never emulated and never on a macOS bind mount. Until x86 F2 is accepted,
-AArch64 work stays on branches; nothing touching the x86 product source seal
-(including `docker/`) merges. The macOS facade backend (CRAB-7) is deferred.
-
-This is a greenfield libc under local development. It is not deployed in any
-practical sense and serves no production users or services. The code is built,
-exercised and deliberately broken in local native containers and disposable
-fixtures. This project has no production credentials, customer data, live
-third-party targets or deployed systems to protect.
-
-Crash reproduction, use-after-free diagnostics, register and backtrace
-inspection, fault injection, fuzzing, and C/Rust differential tests against
-repository-owned code are defensive correctness work when authorized by the
-active plan, including allocator diagnostics inside the partial lift. Crashes
-and deliberately invalid inputs can be expected test outcomes. Memory-safety
-defects, undefined behavior and unsound public APIs remain real defects to
-investigate within scope. Evaluate security concerns against the actual local
-operation and its effects; do not invent a production access-control scenario.
-
-State repository ownership, fixture isolation and correctness purpose in tool
-and subagent briefs. This context does not authorize effects outside the
-repository or override tool/platform restrictions. If an action is denied,
-preserve its exact scope and stated reason, stop that action, and continue
-independent authorized work. Do not rephrase or reroute a denied action.
-
-User direction governs, then [docs/scope.md](docs/scope.md) and
-[COMPATIBILITY-PROFILE.md](COMPATIBILITY-PROFILE.md), then `plan.md` and its
-machine-readable contracts. Historical documents do not override the freeze.
+Read [Status](plan.md#status-and-first-action) and [F2 closeout](plan.md#f2-closeout) before dispatch. The active candidate and phase govern.
+Feature completeness comes first; performance and memory budgets are waived until then. See [campaign lanes](docs/lanes.md) and [scope](docs/scope.md).
 
 ## Commands
 
-Builds and native tests run inside the pinned native x86 images. Use focused
-checks for the selected feature and C-backend integration; do not launch the
-frozen Rust allocator qualification commands.
+Run focused builds and native tests in the pinned x86 images. See [check environments](docs/lanes.md#check-environments).
 
 ```sh
 scripts/lanes/rust-check.sh cargo check -q --locked -p <non-allocator-crate>
@@ -97,54 +23,19 @@ python3 compat/x86_64/validate_parity_ledger.py
 ./scripts/dev-x86_64.sh --help
 ```
 
-Python harness modules have two homes. Modules that drive the dispatcher or
-container launcher (`*_dispatch*`, promotion phases, the resolver network
-gate) run on the host. Modules that compile or inspect objects need the
-image's `gcc`, binutils and pinned Rust toolchain; run them through
-`rust-check.sh` from a worktree prepared by `scripts/lanes/prepare-worktree.sh`.
-A missing-tool failure on the host or a path/Docker failure in the image is
-the wrong environment, not a pass; rerun the module where it belongs.
-The placeholders above require the actual touched crate/test. Full legacy
-profile checks are regression tools, not permission to run allocator campaigns.
-The full correctness command is the integrated milestone, not a per-edit loop.
-Performance commands in [compat/perf/README.md](compat/perf/README.md) are
-deferred from required work until feature completeness. Do not invent command support.
-Do not run `./scripts/dev-x86_64.sh image` unless a plan step says so: a
-rebuild deletes the pinned image and must be followed by a re-pin of
-`compat/x86_64/core_image.py`.
-
 ## Invariants
 
-- Linux, little-endian, kernel 5.10 or newer; no older-kernel fallbacks, new
-  architectures, or portability layers.
-- The native x86-64 C/POSIX oracle is the exact `[musl_native]` snapshot in
-  `compat/upstreams.toml`, for AArch64 as well as x86-64. Glibc is
-  neither oracle nor fallback; rustix is a test oracle only. Candidate target
-  artifacts borrow no ambient musl, CRT, runtime, header or loader input.
-- No allocator invention. Preserve the port's source/provenance and the
-  unchanged upstream source of the selected C backend. Completing a historical
-  milestone does not authorize native-default promotion.
-- Never implement cryptographic primitives locally. The attributed musl
-  `random` family is the sole legacy exception, never for security or entropy.
-- Locales are `C`, `POSIX` and `C.UTF-8`; unsupported names fail honestly.
-  Consume conventional system files; no NSS/PAM plugins, bundled databases,
-  or DNS beyond the selected bounded profile.
-- Provide synchronous mechanisms, not frameworks: no executor, provider/plugin
-  system or hypothetical backend abstraction. Coarse features require a real
-  product/dependency boundary, not a separate proof for each symbol.
-- The `crabc-rs` facade exposes OS mechanisms idiomatically; it does not wrap
-  every C symbol. Preserve its direct `crabc-core` path where appropriate.
-- Every public unsafe API documents concrete caller obligations. Do not create
-  references whose aliasing/lifetime promises the implementation cannot uphold.
-- Preserve selected hardening, exact upstream revisions, source mappings,
-  licenses, raw failures and behavioral coverage. D23 waives cost gates; never
-  weaken correctness checks or rewrite upstream workloads to hide a defect.
-- Tests exercise behavior; validators check shared structure and actual
-  evidence. No per-artifact validators, source-literal/prose-count tests,
-  duplicate status files or report/receipt frameworks.
-- `COMPATIBILITY.md` is generated; never hand-edit it. The old AArch64
-  manifests and the inputs they digest are superseded by CRAB-8's converged
-  evidence, never refreshed to absorb drift.
+- Linux, little-endian, kernel 5.10 or newer; no older-kernel fallbacks, new architectures or portability layers.
+- The exact `[musl_native]` snapshot in `compat/upstreams.toml` is the native C/POSIX oracle for both targets; glibc is neither oracle nor fallback, rustix is a test oracle only, and candidate artifacts borrow no ambient musl, CRT, runtime, header or loader input.
+- Do not invent allocators; preserve the port's source and provenance and the selected C backend's unchanged upstream source. A historical milestone does not authorize native-default promotion.
+- Never implement cryptographic primitives locally; attributed musl `random` is the sole legacy exception, never for security or entropy.
+- Support only `C`, `POSIX` and `C.UTF-8` locales; unsupported names fail honestly. Consume conventional system files; no NSS/PAM plugins, bundled databases or DNS beyond the selected bounded profile.
+- Provide synchronous mechanisms, not frameworks, executors, provider/plugin systems or hypothetical backends. Coarse features require a real product/dependency boundary, not a proof per symbol.
+- Expose OS mechanisms idiomatically in `crabc-rs`, not every C symbol; preserve its direct `crabc-core` path where appropriate.
+- Document concrete caller obligations for every public unsafe API; never create references with unsupported aliasing or lifetime promises.
+- Preserve selected hardening, exact upstream revisions, source mappings, licenses, raw failures and behavioral coverage. D23 waives cost gates, not correctness checks; never rewrite upstream workloads to hide a defect.
+- Tests exercise behavior; validators check shared structure and actual evidence. No per-artifact validators, source-literal/prose-count tests, duplicate status files or report/receipt frameworks.
+- Never hand-edit generated `COMPATIBILITY.md`; old AArch64 manifests and their digested inputs are superseded by CRAB-8 evidence and never refreshed to absorb drift.
 
 ## Where things are
 
@@ -169,12 +60,7 @@ rebuild deletes the pinned image and must be followed by a re-pin of
 
 | Code | Location |
 | --- | --- |
-| C ABI and libc-owned state | `libc/` |
-| Dynamic linker | `ldso/` |
-| Application CRT and compiler helpers | `crt/`, `builtins/` |
-| Typed primitives and Rust facade | `crabc-core/`, `crabc-rs/` |
-| Frozen allocator and harness | `crabc-mimalloc/`, `compat/allocator/` |
-| Unwinder provider | `unwinder/` |
-| Public headers and integration fixtures | `include/`, `tests/` |
-| Native ledgers and contracts | `compat/x86_64/` |
+| Runtime and loader | `libc/`, `ldso/`, `crt/`, `builtins/` |
+| Rust and allocator | `crabc-core/`, `crabc-rs/`, `crabc-mimalloc/`, `compat/allocator/` |
+| Other code and evidence | `unwinder/`, `include/`, `tests/`, `compat/x86_64/` |
 | Pins | `rust-toolchain.toml`, `compat/upstreams.toml`, target Dockerfiles |

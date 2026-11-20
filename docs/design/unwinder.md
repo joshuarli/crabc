@@ -2,7 +2,7 @@
 
 Build and run commands: [`unwinder/README.md`](../../unwinder/README.md).
 The provider is not qualified: the producer records `qualified: false`.
-AArch64 remains paused.
+AArch64 convergence follows [CRAB-8](../rfc/CRAB-8-linux-aarch64-feature-completion.md).
 
 ## Why a provider exists
 
