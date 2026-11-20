@@ -54,6 +54,7 @@ PRODUCT_METADATA_PREFIX = "share/crabc/"
 SOURCE_NATIVE_IMAGE_MANIFEST = ROOT / ("compat/x86_64/owned_resolver_alias_image_inputs_aarch64.json" if ARCH == "aarch64" else "compat/x86_64/owned_resolver_alias_image_inputs.json")
 COMBINED_UNINSTALLED_PAYLOAD = {"static": frozenset({"usr/lib/Scrt1.o"}), "dynamic": frozenset()}
 INTERPRETER = f"/lib/ld-crabc-{ARCH}.so.1"
+NATIVE_ELF_MACHINE = 183 if ARCH == "aarch64" else 62
 STATIC_DRIVER_STATUS = "planned-owned-static-product-seed-not-family-completion-not-public-support"
 STATIC_CRT_OBJECTS = ("crt1.o", "Scrt1.o", "rcrt1.o", "crti.o", "crtn.o")
 STATIC_REQUIRED = (
@@ -324,7 +325,7 @@ def validate_native_rustc_command(argv: object, producer_tools: object | None = 
     return list(argv)
 
 
-def retained_elf_facts(path: Path, *, machine_id: int = 62) -> dict[str, object]:
+def retained_elf_facts(path: Path, *, machine_id: int = NATIVE_ELF_MACHINE) -> dict[str, object]:
     """Read the bounded ELF facts needed by command-free host replay.
 
     Native collection keeps its established ``readelf`` checks. A host cannot

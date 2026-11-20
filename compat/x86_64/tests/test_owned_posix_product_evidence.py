@@ -328,7 +328,7 @@ class OwnedPosixProductEvidenceTests(unittest.TestCase):
     def test_retained_elf_reader_parses_rehashed_dynamic_metadata_without_a_host_tool(self) -> None:
         path = self.put("shared", sealed_shared_elf("libfixture.so"))
         with mock.patch.object(evidence.subprocess, "run", side_effect=AssertionError("host ELF tool ran")):
-            facts = evidence.retained_elf_facts(path)
+            facts = evidence.retained_elf_facts(path, machine_id=62)
         self.assertEqual(
             facts,
             {"type": 3, "machine": 62, "interpreters": ["/lib/ld-crabc-x86_64.so.1"],
@@ -336,9 +336,18 @@ class OwnedPosixProductEvidenceTests(unittest.TestCase):
              "sonames": ["libfixture.so"], "textrel": False},
         )
 
+    def test_retained_elf_reader_defaults_to_the_native_machine(self) -> None:
+        native, foreign = (183, 62) if evidence.ARCH == "aarch64" else (62, 183)
+        image = bytearray(sealed_shared_elf("libfixture.so"))
+        struct.pack_into("<H", image, 18, native)
+        self.assertEqual(evidence.retained_elf_facts(self.put("native", bytes(image)))["machine"], native)
+        struct.pack_into("<H", image, 18, foreign)
+        with self.assertRaisesRegex(evidence.ProductEvidenceError, "architecture or header"):
+            evidence.retained_elf_facts(self.put("foreign", bytes(image)))
+
     def test_retained_elf_reader_uses_pt_dynamic_over_a_forged_dynamic_section(self) -> None:
         path = self.put("forged-section", loader_dynamic_elf(flags=4))
-        facts = evidence.retained_elf_facts(path)
+        facts = evidence.retained_elf_facts(path, machine_id=62)
         self.assertEqual(facts["needed"], ["libforeign.so"])
         self.assertEqual(facts["rpaths"], ["/bad"])
         self.assertEqual(facts["runpaths"], [])
@@ -349,7 +358,7 @@ class OwnedPosixProductEvidenceTests(unittest.TestCase):
 
     def test_retained_elf_reader_uses_pt_dynamic_without_section_headers(self) -> None:
         path = self.put("sectionless", loader_dynamic_elf(section_headers=False, interpreter=True))
-        facts = evidence.retained_elf_facts(path)
+        facts = evidence.retained_elf_facts(path, machine_id=62)
         self.assertEqual(facts["needed"], ["libforeign.so"])
         self.assertEqual(facts["rpaths"], ["/bad"])
         with self.assertRaisesRegex(evidence.ProductEvidenceError, "foreign DT_NEEDED"):
@@ -361,11 +370,11 @@ class OwnedPosixProductEvidenceTests(unittest.TestCase):
             ("flags", loader_dynamic_elf(flags=4)),
         ):
             with self.subTest(name=name):
-                self.assertTrue(evidence.retained_elf_facts(self.put(name, payload))["textrel"])
+                self.assertTrue(evidence.retained_elf_facts(self.put(name, payload), machine_id=62)["textrel"])
 
     def test_retained_elf_reader_rejects_nonzero_dynamic_entries_after_dt_null(self) -> None:
         with self.assertRaisesRegex(evidence.ProductEvidenceError, "terminator"):
-            evidence.retained_elf_facts(self.put("post-null", loader_dynamic_elf(post_null=True)))
+            evidence.retained_elf_facts(self.put("post-null", loader_dynamic_elf(post_null=True)), machine_id=62)
 
     def test_retained_elf_reader_rejects_missing_or_duplicate_pt_dynamic(self) -> None:
         for name, count in (("missing", 0), ("duplicate", 2)):
@@ -376,7 +385,7 @@ class OwnedPosixProductEvidenceTests(unittest.TestCase):
                         evidence._audit_retained_elf(path, "pie")
                 else:
                     with self.assertRaisesRegex(evidence.ProductEvidenceError, "PT_DYNAMIC"):
-                        evidence.retained_elf_facts(path)
+                        evidence.retained_elf_facts(path, machine_id=62)
 
     def test_retained_elf_reader_rejects_dynamic_string_tables_without_one_load_mapping(self) -> None:
         cases = {
@@ -385,17 +394,17 @@ class OwnedPosixProductEvidenceTests(unittest.TestCase):
         }
         for name, payload in cases.items():
             with self.subTest(name=name), self.assertRaisesRegex(evidence.ProductEvidenceError, "string table"):
-                evidence.retained_elf_facts(self.put(name, payload))
+                evidence.retained_elf_facts(self.put(name, payload), machine_id=62)
 
     def test_retained_elf_reader_rejects_pt_dynamic_offset_not_mapped_from_its_virtual_address(self) -> None:
         path = self.put("incongruent-dynamic", incongruent_dynamic_elf())
         with self.assertRaisesRegex(evidence.ProductEvidenceError, "PT_DYNAMIC.*mapping"):
-            evidence.retained_elf_facts(path)
+            evidence.retained_elf_facts(path, machine_id=62)
 
     def test_retained_static_pie_allows_self_relocation_dynamic_metadata(self) -> None:
         path = self.put("static-pie-self-relocation", loader_dynamic_elf(self_relocation_only=True))
         self.assertEqual(
-            evidence.retained_elf_facts(path),
+            evidence.retained_elf_facts(path, machine_id=62),
             {"type": 3, "machine": 62, "interpreters": [], "dynamic": True,
              "needed": [], "runpaths": [], "rpaths": [], "sonames": [], "textrel": False},
         )
