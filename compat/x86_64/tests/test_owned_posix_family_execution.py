@@ -227,6 +227,30 @@ class FamilyExecutionTests(unittest.TestCase):
         (fixture / 'z-directory').chmod(0o755)
         self.assertNotEqual(execution.snapshot(fixture)['z-directory'], observed['z-directory'])
 
+    def test_digest_reuses_unchanged_files_and_rehashes_rewritten_ones(self):
+        path = self.work / 'payload'
+        path.write_bytes(b'payload')
+        with patch.object(execution, 'RACY_WINDOW_NS', -1), patch.dict(execution._DIGESTS, clear=True):
+            first = execution.digest(path)
+            self.assertEqual(first, hashlib.sha256(b'payload').hexdigest())
+            with patch.object(Path, 'open', side_effect=AssertionError('unchanged file reread')):
+                self.assertEqual(execution.digest(path), first)
+            recorded = path.stat()
+            path.write_bytes(b'changed')
+            os.utime(path, ns=(recorded.st_atime_ns, recorded.st_mtime_ns))
+            self.assertEqual(execution.digest(path), hashlib.sha256(b'changed').hexdigest())
+            replacement = self.work / 'replacement'
+            replacement.write_bytes(b'payload')
+            os.replace(replacement, path)
+            self.assertEqual(execution.digest(path), first)
+
+    def test_digest_does_not_reuse_files_changed_within_the_racy_window(self):
+        path = self.work / 'payload'
+        path.write_bytes(b'payload')
+        with patch.dict(execution._DIGESTS, clear=True):
+            execution.digest(path)
+            self.assertEqual(execution._DIGESTS, {})
+
     def test_declared_leaf_must_be_unique_and_inside_exact_step_scratch(self):
         step = self.work / 'leaf'
         (step / 'tmp/retained').mkdir(parents=True)

@@ -24,6 +24,7 @@ import signal
 import stat
 import subprocess
 import sys
+import time
 from typing import Mapping
 
 import owned_posix_static_products as static_products
@@ -54,13 +55,31 @@ def physical(root: Path, path: Path) -> Path:
         raise ExecutionError(str(error)) from error
 
 
+# Filesystem timestamps are coarser than a write, so a file changed within this
+# window of being hashed could change again without a visible stat difference.
+RACY_WINDOW_NS = 2_000_000_000
+_DIGESTS: dict[tuple[int, int, int, int, int], str] = {}
+
+
+def _stat_key(metadata: os.stat_result) -> tuple[int, int, int, int, int]:
+    return (metadata.st_dev, metadata.st_ino, metadata.st_size, metadata.st_mtime_ns, metadata.st_ctime_ns)
+
+
 def digest(path: Path) -> str:
     require(path.is_file() and not path.is_symlink(), f'missing physical file: {path}')
+    key = _stat_key(path.lstat())
+    if (known := _DIGESTS.get(key)) is not None:
+        return known
+    started = time.time_ns()
     value = hashlib.sha256()
     with path.open('rb') as stream:
         while block := stream.read(1024 * 1024):
             value.update(block)
-    return value.hexdigest()
+        opened = _stat_key(os.fstat(stream.fileno()))
+    result = value.hexdigest()
+    if opened == key and started - max(key[3], key[4]) > RACY_WINDOW_NS:
+        _DIGESTS[key] = result
+    return result
 
 
 def file_identity(root: Path, path: Path) -> dict:
