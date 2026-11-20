@@ -350,7 +350,7 @@ class QualificationManifestTests(unittest.TestCase):
         report["promotion_chain"][1]["state"] = "planned"
         with patch.object(qualification, "load_contract", return_value=report), patch.object(
             qualification, "write_or_check"
-        ), patch.object(runner, "require_native_linux_x86_64") as native, patch.object(
+        ), patch.object(runner, "require_native_linux") as native, patch.object(
             runner, "execute_chain_case"
         ) as execute:
             with self.assertRaisesRegex(runner.QualificationRunError, "planned dependencies: compat.posix-process"):

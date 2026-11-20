@@ -22,6 +22,11 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+if str(Path(__file__).resolve().parent) not in sys.path:
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+from native_arch import native_arch
+
 
 ROOT = Path(__file__).resolve().parents[2]
 CONTRACT_PATH = ROOT / "compat" / "x86_64" / "qualification_posix_abi.json"
@@ -31,7 +36,9 @@ EXPECTED_TARGET = "Linux/x86-64 little-endian"
 CASE_RECEIPT_SCHEMA = "crabc.x86_64-qualification-case-receipt/v1"
 RUST_BIN_DIRECTORY = "/opt/cargo/bin"
 RUSTUP_HOME = "/opt/rustup"
-CARGO_HOME = "/workspace/.work/x86_64/cargo"
+NATIVE = native_arch()
+WORK_DIRECTORY = f"/workspace/.work/{NATIVE['work_name']}"
+CARGO_HOME = f"{WORK_DIRECTORY}/cargo"
 TRUSTED_PATH = \
     RUST_BIN_DIRECTORY + ":/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 RECEIPT_ROOT_ENVIRONMENT = "CRABC_QUALIFICATION_RECEIPT_ROOT"
@@ -251,8 +258,8 @@ def controlled_environment() -> dict[str, str]:
         "PATH": TRUSTED_PATH,
         "RUSTUP_HOME": RUSTUP_HOME,
         "CARGO_HOME": CARGO_HOME,
-        "CRABC_WORK_DIR": "/workspace/.work/x86_64",
-        "TMPDIR": "/workspace/.work/x86_64/tmp",
+        "CRABC_WORK_DIR": WORK_DIRECTORY,
+        "TMPDIR": f"{WORK_DIRECTORY}/tmp",
         "LC_ALL": "C",
         "LANG": "C",
         "TZ": "UTC",
@@ -532,10 +539,11 @@ def run_case(case: Case, receipt_root: Path | None = None, order: int | None = N
     return receipt_path
 
 
-def require_native_linux_x86_64() -> None:
+def require_native_linux() -> None:
     if platform.system() != "Linux":
         raise EvidenceError("qualification admission requires native Linux")
-    if platform.machine().lower() not in {"x86_64", "amd64"}:
+    native_machines = {"x86_64": {"x86_64", "amd64"}, "aarch64": {"aarch64", "arm64"}}
+    if platform.machine().lower() not in native_machines[NATIVE["arch"]]:
         raise EvidenceError(
             f"qualification admission refuses emulation on {platform.machine()}"
         )
@@ -554,7 +562,7 @@ def main() -> int:
         print(f"x86 qualification POSIX/ABI contract: PASS ({len(cases)} cases)")
         return 0
 
-    require_native_linux_x86_64()
+    require_native_linux()
     receipt_root = receipt_root_from_environment()
     for order, case in enumerate(cases, start=1):
         run_case(case, receipt_root, order if receipt_root is not None else None)
