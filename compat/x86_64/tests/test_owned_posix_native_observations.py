@@ -38,6 +38,15 @@ MODES = ('pie-kernel', 'pie-direct', 'non-pie-kernel', 'non-pie-direct')
 
 
 class NativeObservationsTests(unittest.TestCase):
+    def test_binary80_math_oracle_defects_apply_only_to_x86_64(self):
+        import importlib
+        try:
+            for arch, expected in (('x86_64', {'math/fmal', 'math/powf'}), ('aarch64', {'math/powf'})):
+                with self.subTest(arch=arch), patch.object(native, 'ARCH', arch):
+                    self.assertEqual(set(importlib.reload(math_oracle_defects).ORACLE_DEFECTS), expected)
+        finally:
+            importlib.reload(math_oracle_defects)
+
     def test_pie_entry_objects_follow_each_architecture_sealed_link(self):
         library = Path('/product/usr/lib')
         for arch, expected in (('x86_64', ['Scrt1.o', 'crabc-dynamic-attach.o']), ('aarch64', ['Scrt1.o'])):
