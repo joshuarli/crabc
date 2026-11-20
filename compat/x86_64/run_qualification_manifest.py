@@ -39,15 +39,17 @@ from pathlib import Path
 from typing import Any, Iterator
 
 import generate_qualification_manifest as manifest
+from native_arch import native_arch
 import source_seal
 
 
 ROOT = Path(__file__).resolve().parents[2]
 TRUSTED_PATH = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+_NATIVE = native_arch()
 MUSL_RUNTIME_PATHS = {
-    "compiler_wrapper": "/usr/local/bin/crabc-x86_64-musl-gcc",
+    "compiler_wrapper": _NATIVE["oracle"],
     "libc": "/opt/musl-1.2.6/lib/libc.so",
-    "loader": "/opt/musl-1.2.6/lib/ld-musl-x86_64.so.1",
+    "loader": f"/opt/musl-1.2.6/lib/ld-musl-{_NATIVE['arch']}.so.1",
     "specs": "/opt/musl-1.2.6/lib/musl-gcc.specs",
     "source_manifest": "/opt/musl-1.2.6/.crabc-oracle",
     "specs_manifest": "/opt/musl-1.2.6/.crabc-musl-gcc-specs.sha256",

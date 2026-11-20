@@ -19,10 +19,12 @@ import owned_posix_product_evidence as product_evidence
 import owned_pthread_stress_source as source_profile
 
 ROOT = Path(__file__).resolve().parents[2]
+from native_arch import native_arch
+
 HERE = ROOT / "compat/x86_64"
 SOURCE = ROOT / "tests/fixtures/pthread_stress_test.c"
 IO_CANCELLATION_SOURCE = HERE / "owned_io_cancellation_probe.c"
-ORACLE = Path("/usr/local/bin/crabc-x86_64-musl-gcc")
+ORACLE = Path(native_arch()["oracle"])
 FLAGS = ["-std=c11", "-O2", "-D_POSIX_C_SOURCE=200809L", "-fno-builtin"]
 USAGE = "usage: run_owned_pthread_stress.sh [--static-sysroot STATIC_SYSROOT] [--iterations N] [--timeout SECONDS] [--source-profile native-v1|frozen] DYNAMIC_SYSROOT"
 
@@ -298,7 +300,7 @@ def run(arguments):
         commands.update({mode: ["/" + mode] for mode in ("static", "static-pie")})
     for mode in ("pie", "non-pie"):
         commands[mode + "-kernel"] = ["/dynamic-" + mode]
-        commands[mode + "-direct"] = ["/lib/ld-crabc-x86_64.so.1", "/dynamic-" + mode]
+        commands[mode + "-direct"] = [f"/lib/ld-crabc-{native_arch()['arch']}.so.1", "/dynamic-" + mode]
     audit_identities(compiled_object)
     consumed = identities([*provenance, workload, work / "compile.json", *binaries,
                            work / "dependencies.d", work / "preprocessor.i",
