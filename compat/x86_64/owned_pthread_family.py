@@ -21,11 +21,16 @@ import tomllib
 from typing import Any
 
 import owned_posix_family_execution as family
+from native_arch import native_arch
 
 ROOT = Path(__file__).resolve().parents[2]
 SCHEMA = "crabc.x86_64-owned-pthread-family/v1"
 ROSTER_SCHEMA = "crabc.x86_64-owned-pthread-family-roster/v1"
 ROSTER_PATH = ROOT / "compat/x86_64/pthread-family.toml"
+NATIVE = native_arch()
+ORACLE_COMPILER = NATIVE["oracle"]
+INTERPRETER = f"/lib/ld-crabc-{NATIVE['arch']}.so.1"
+ORACLE_INTERPRETER = f"/opt/musl-1.2.6/lib/ld-musl-{NATIVE['arch']}.so.1"
 
 @dataclass(frozen=True)
 class WorkerFixture:
@@ -723,7 +728,7 @@ def _tool_roster(root: Path, value: object, static_product: Path, dynamic_produc
         require(result[role] == {"path": _mounted(root, path, source_mount),
                                  "sha256": expected["sha256"], "size": expected["size"]},
                 "composition installed driver seal differs")
-    require(result["oracle"]["path"] == "/usr/local/bin/crabc-x86_64-musl-gcc",
+    require(result["oracle"]["path"] == ORACLE_COMPILER,
             "composition oracle compiler tool differs")
     require(Path(result["compiler"]["path"]).name == "gcc"
             and Path(result["linker"]["path"]) == _pinned_target_linker(root),
@@ -747,7 +752,7 @@ def _expected_commands(root: Path, leaf: Path, static_product: Path, dynamic_pro
     return {
         "compile": [f"{dynamic_mount}/bin/crabc-cc-dynamic", "--dynamic-pie", "-std=c11", "-D_GNU_SOURCE",
                     "-fno-builtin", "-c", source, "-o", executable("workload.o")],
-        "oracle-link": ["/usr/local/bin/crabc-x86_64-musl-gcc", "-std=c11", "-D_GNU_SOURCE", "-pthread",
+        "oracle-link": [ORACLE_COMPILER, "-std=c11", "-D_GNU_SOURCE", "-pthread",
                         executable("workload.o"), "-o", executable("oracle")],
         "oracle": ["env", "-i", executable("oracle")],
         "static-link": [f"{static_mount}/bin/crabc-cc", "-static", "--link-receipt",
@@ -766,13 +771,13 @@ def _expected_commands(root: Path, leaf: Path, static_product: Path, dynamic_pro
         "dynamic-pie-validate": ["python3", "-B", "-", source_mount, dynamic_mount, executable("workload.o"),
                                  executable("dynamic-pie"), executable("dynamic-pie.crabc-link.json"), "pie"],
         "dynamic-pie-kernel": ["chroot", executable("dynamic-root"), "/consumer-pie"],
-        "dynamic-pie-direct": ["chroot", executable("dynamic-root"), "/lib/ld-crabc-x86_64.so.1", "/consumer-pie"],
+        "dynamic-pie-direct": ["chroot", executable("dynamic-root"), INTERPRETER, "/consumer-pie"],
         "dynamic-non-pie-link": [f"{dynamic_mount}/bin/crabc-cc-dynamic", "--dynamic-non-pie", "-std=c11",
                                  executable("workload.o"), "-o", executable("dynamic-non-pie")],
         "dynamic-non-pie-validate": ["python3", "-B", "-", source_mount, dynamic_mount, executable("workload.o"),
                                      executable("dynamic-non-pie"), executable("dynamic-non-pie.crabc-link.json"), "non-pie"],
         "dynamic-non-pie-kernel": ["chroot", executable("dynamic-root"), "/consumer-non-pie"],
-        "dynamic-non-pie-direct": ["chroot", executable("dynamic-root"), "/lib/ld-crabc-x86_64.so.1", "/consumer-non-pie"],
+        "dynamic-non-pie-direct": ["chroot", executable("dynamic-root"), INTERPRETER, "/consumer-non-pie"],
     }
 
 
@@ -782,7 +787,7 @@ def _validate_oracle(report: object, oracle: object, tools: dict[str, dict[str, 
     require(isinstance(oracle, dict) and isinstance(oracle.get("files"), dict),
             "POSIX matrix oracle identity differs")
     expected = {
-        "compiler": ("/usr/local/bin/crabc-x86_64-musl-gcc", oracle.get("compiler_wrapper_sha256")),
+        "compiler": (ORACLE_COMPILER, oracle.get("compiler_wrapper_sha256")),
         "runtime": ("/opt/musl-1.2.6/lib/libc.so", oracle.get("runtime_sha256")),
         "pin": ("/opt/musl-1.2.6/.crabc-oracle", oracle["files"].get("source_manifest")),
     }
@@ -1050,7 +1055,7 @@ def _lifecycle_tool_roster(root: Path, value: object, static_product: Path,
         "path": _mounted(root, driver, source_mount),
         "sha256": driver_identity["sha256"], "size": driver_identity["size"],
     }, "static lifecycle driver differs from the supplied product")
-    require(result["oracle"]["path"] == "/usr/local/bin/crabc-x86_64-musl-gcc"
+    require(result["oracle"]["path"] == ORACLE_COMPILER
             and Path(result["compiler"]["path"]).name == "gcc"
             and result["linker"]["path"] == str(_pinned_target_linker(root)),
             "static lifecycle pinned target linker or native tool selection differs")
@@ -1097,9 +1102,9 @@ def _static_lifecycle_report(root: Path, leaf: Path, static_product: Path,
     try:
         oracle_elf = products.retained_elf_facts(oracle_executable)
     except products.ProductEvidenceError as error:
-        raise PthreadFamilyError("static lifecycle pinned-musl executable is not a valid x86-64 ELF") from error
+        raise PthreadFamilyError("static lifecycle pinned-musl executable is not a valid native ELF") from error
     require(oracle_elf["type"] == 3 and oracle_elf["dynamic"]
-            and oracle_elf["interpreters"] == ["/opt/musl-1.2.6/lib/ld-musl-x86_64.so.1"]
+            and oracle_elf["interpreters"] == [ORACLE_INTERPRETER]
             and "libc.so" in oracle_elf["needed"],
             "static lifecycle pinned-musl executable has the wrong runtime binding")
 
