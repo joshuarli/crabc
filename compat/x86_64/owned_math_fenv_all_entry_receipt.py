@@ -31,6 +31,9 @@ import owned_posix_product_evidence as product_evidence
 import native_static_source_runtime_closure as source_runtime
 import validate_libc_math_long_double_completion as binary80_stream
 import validate_owned_math_fenv_all_entry as stream
+import validate_owned_math_fenv_all_entry_aarch64 as aarch64_stream
+import owned_math_fenv_aarch64_reference as aarch64_reference
+from native_arch import native_arch
 
 SCHEMA = "crabc.x86_64-owned-math-fenv-all-entry-receipt/v1"
 REPORT_SCHEMA = "crabc.x86_64-owned-math-fenv-all-entry/v1"
@@ -49,10 +52,23 @@ EXECUTION_CELLS = (
     ("dynamic-non-pie-kernel", "dynamic-non-pie-kernel"),
     ("dynamic-non-pie-direct", "dynamic-non-pie-direct"),
 )
-ORACLE_CC = Path("/usr/local/bin/crabc-x86_64-musl-gcc")
-INTERPRETER = "/lib/ld-crabc-x86_64.so.1"
+NATIVE = native_arch()
+ARM = NATIVE["arch"] == "aarch64"
+ORACLE_CC = Path(NATIVE["oracle"])
+INTERPRETER = f"/lib/ld-crabc-{NATIVE['arch']}.so.1"
 RUNNER = Path("compat/x86_64/run_owned_math_fenv_all_entry.sh")
-VALIDATOR = Path("compat/x86_64/validate_owned_math_fenv_all_entry.py")
+VALIDATOR = Path("compat/x86_64/validate_owned_math_fenv_all_entry_aarch64.py" if ARM
+                 else "compat/x86_64/validate_owned_math_fenv_all_entry.py")
+REFERENCE = Path("compat/x86_64/owned_math_fenv_aarch64_reference.py")
+AARCH64_SOURCES = tuple(Path("compat/x86_64") / name for name in (
+    "libc_fenv_rounding_aarch64.inc", "libc_math_long_double_completion_aarch64.inc",
+    "libc_math_long_double_completion_aarch64_start.S", "owned_fpclassify_signal_probe.c",
+    "owned_acoshl_domain_probe.c", "owned_sqrtl_snan_probe.c", REFERENCE.name,
+    "owned_posix_product_evidence.py", "source_seal.py", "native_arch.py", "core_image.py",
+    "validate_libc_math_long_double_completion.py", "validate_libc_math_long_double_completion_aarch64.py",
+))
+REFERENCE_COMMANDS = ("reference-extract", "reference-link", "reference-trace", "reference-run",
+                      "reference-products-after")
 PROVIDER = Path("compat/x86_64/owned_math_fenv_all_entry_evidence.py")
 COPIES = Path("compat/x86_64/owned_crypt_runtime_evidence.py")
 CONTRACT = Path("compat/x86_64/owned_math_fenv_all_entry_contract.py")
@@ -86,6 +102,7 @@ def direct_sources() -> tuple[Path, ...]:
     return (
         *(Path(relative) for _role, relative, _define in contract.OBJECT_ROLES),
         RUNNER, VALIDATOR, CONTRACT, PROVIDER, COPIES, COVERAGE, COMPLEX_BASELINE,
+        *(AARCH64_SOURCES if ARM else ()),
     )
 
 
@@ -102,6 +119,8 @@ def expected_command_stems() -> set[str]:
         result.update({f"{prefix}-link", f"{prefix}-validate", f"{prefix}-copy-before",
                        f"{prefix}-copy-audit-before", f"{prefix}-kernel", f"{prefix}-direct",
                        f"{prefix}-copy-audit-after"})
+    if ARM:
+        result.update(REFERENCE_COMMANDS)
     return result
 
 
@@ -642,12 +661,22 @@ def require_argv(paths: dict[str, Path], label: str, expected: list[str]) -> Non
     require(command_argv(paths, label) == expected, f"{label} argv differs")
 
 
-def output_matches_oracle(paths: dict[str, Path], label: str, oracle: dict[str, Path]) -> None:
-    try:
-        stream.validate_bytes(paths["stdout"].read_bytes())
-    except stream.ValidationError as error:
-        raise ReceiptError(f"{label} math/fenv stream differs: {error}") from error
-    require(paths["stdout"].read_bytes() == oracle["stdout"].read_bytes()
+def output_matches_oracle(paths: dict[str, Path], label: str, oracle: dict[str, Path],
+                          reference: dict[str, Path] | None = None) -> None:
+    if reference is None:
+        try:
+            stream.validate_bytes(paths["stdout"].read_bytes())
+        except stream.ValidationError as error:
+            raise ReceiptError(f"{label} math/fenv stream differs: {error}") from error
+        same_stdout = paths["stdout"].read_bytes() == oracle["stdout"].read_bytes()
+    else:
+        try:
+            aarch64_stream.compare(aarch64_stream.read(oracle["stdout"]), aarch64_stream.read(reference["stdout"]),
+                                   aarch64_stream.read(paths["stdout"]))
+        except ValueError as error:
+            raise ReceiptError(f"{label} math/fenv stream differs: {error}") from error
+        same_stdout = True
+    require(same_stdout
             and paths["stderr"].read_bytes() == oracle["stderr"].read_bytes()
             and paths["status"].read_bytes() == oracle["status"].read_bytes(),
             f"{label} raw result differs from the pinned musl oracle")
@@ -764,6 +793,31 @@ def validate_execution_commands(root: Path, paths: dict[str, dict[str, Path]], w
                      ["chroot", str(execution_root), "/consumer"])
         require_argv(paths[f"{prefix}-direct"], f"{prefix} direct",
                      ["chroot", str(execution_root), INTERPRETER, "/consumer"])
+    if ARM:
+        reference = str(root / REFERENCE)
+        objects_directory = work / "reference-objects"
+        builtins = str(dynamic / "usr/lib/libcrabc-builtins.a")
+        require_argv(paths["reference-extract"], "reference extract", [
+            "python3", "-B", reference, "extract", str(root), str(static), str(dynamic), str(objects_directory),
+        ])
+        require_argv(paths["reference-link"], "reference link", [
+            str(ORACLE_CC), "-std=c11", "-static", "-fno-pie", "-no-pie", "-nodefaultlibs", "-Wl,--trace",
+            str(work / "workload.o"), *(str(objects_directory / f"{name}.o") for name in aarch64_reference.SYMBOLS),
+            "-Wl,--start-group", "-lc", builtins, "-Wl,--end-group", "-o", str(work / "reference-oracle"),
+        ])
+        require_argv(paths["reference-trace"], "reference trace", [
+            "python3", "-B", reference, "trace", str(paths["reference-link"]["stdout"]), str(work / "workload.o"),
+            str(objects_directory), builtins,
+        ])
+        try:
+            aarch64_reference.validate_trace(paths["reference-link"]["stdout"], work / "workload.o",
+                                             objects_directory, Path(builtins))
+        except ValueError as error:
+            raise ReceiptError(f"reference link trace differs: {error}") from error
+        require_argv(paths["reference-run"], "reference run",
+                     ["env", "-i", "LC_ALL=C", "LANG=C", "TZ=UTC", str(work / "reference-oracle")])
+        require_argv(paths["reference-products-after"], "reference products after",
+                     ["python3", "-B", reference, "products", str(root), str(static), str(dynamic)])
 
 
 def validate_report(root: Path, path: Path, expected_products: dict[str, Path]) -> tuple[dict[str, Any], dict[str, bytes]]:
@@ -829,13 +883,19 @@ def validate_report(root: Path, path: Path, expected_products: dict[str, Path]) 
     for mode in ("pie", "non-pie"):
         validate_dynamic_payload(root, command_paths, payloads, work, dynamic, mode)
     oracle = command_paths["oracle-run"]
+    reference = command_paths["reference-run"] if ARM else None
     try:
-        stream.validate_bytes(oracle["stdout"].read_bytes())
-    except stream.ValidationError as error:
+        if reference is None:
+            stream.validate_bytes(oracle["stdout"].read_bytes())
+        else:
+            aarch64_stream.read(oracle["stdout"])
+            aarch64_stream.read(reference["stdout"])
+    except (stream.ValidationError, ValueError) as error:
         raise ReceiptError(f"pinned musl oracle math/fenv stream differs: {error}") from error
     require(not oracle["stderr"].read_bytes(), "pinned musl oracle emitted stderr")
+    require(reference is None or not reference["stderr"].read_bytes(), "owned-helper reference emitted stderr")
     for _cell, stem in EXECUTION_CELLS:
-        output_matches_oracle(command_paths[stem], stem, oracle)
+        output_matches_oracle(command_paths[stem], stem, oracle, reference)
     return report, {name: object_paths[name].read_bytes()
                     for name, _relative, _define in contract.OBJECT_ROLES}
 
