@@ -1,7 +1,8 @@
 # Owned application CRT and sysroot
 
-This page specifies the Linux/AArch64 sysroot, which is paused; native
-x86-64 is the active target and builds its static and dynamic sysroots through
+This page specifies the existing Linux/AArch64 sysroot. Its replacement is
+covered by [CRAB-8](../rfc/CRAB-8-linux-aarch64-feature-completion.md). Native
+x86-64 builds its static and dynamic sysroots through
 `scripts/dev-x86_64.sh` (the `crt/` and `builtins/` directories carry the x86
 builders). The ownership model, startup ABI shape and purity rules below carry
 over; the commands, paths and instruction-level details are AArch64's.

@@ -1,8 +1,8 @@
 # Runtime ownership architecture
 
 `crabc` has seven runtime and evidence layers with deliberately narrow ownership
-boundaries. Native Linux/x86-64 is the active target; AArch64 is paused and
-preserved.
+boundaries. Native Linux/x86-64 is the active target; AArch64 is converging
+on branches under [CRAB-8](../rfc/CRAB-8-linux-aarch64-feature-completion.md).
 
 1. `crabc-core` owns stateless typed Linux kernel and vDSO operations
    (syscalls, thread pointer, vDSO, floating-point state, raw signals). It has
@@ -67,7 +67,7 @@ errors remain values rather than C `errno` side effects.
 Within `libc`, `libc/src/lib.rs` is the target and linkage composition root.
 It selects `c_abi/x86_64/static_c_abi.rs` for both static and owned dynamic
 x86-64 compositions, with distinct startup/TLS ownership, and `c_abi.rs` for
-paused AArch64. These C ABI owners retain layouts, TLS errno, stdio, pthread,
+the existing AArch64 composition. These C ABI owners retain layouts, TLS errno, stdio, pthread,
 locale and process state. Independently owned C ABI leaves remain private
 modules with explicit imports.
 
@@ -92,7 +92,7 @@ harness-local READMEs describe each evidence runner.
 The [selected profiles](../../COMPATIBILITY-PROFILE.md#runtime-hardening-profiles)
 define observable policy; [plan.md](../../plan.md#runtime-hardening) is the
 only implementation sequence. The following ownership and protection
-requirements apply to active native x86-64. They do not change the paused
+requirements apply to active native x86-64. They do not change the existing
 AArch64 CRT specification.
 
 **Build on existing mechanisms.** The x86 loader already rejects textrel

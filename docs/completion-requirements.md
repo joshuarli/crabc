@@ -13,7 +13,8 @@ implementation, integration or feature acceptance. Memory safety, ownership,
 required cleanup, ABI, liveness and hardening remain correctness requirements.
 The Rust allocator port requirements below are preserved for a separately
 authorized restart; that frozen port is neither counted as complete nor a
-prerequisite for the active runtime milestone. AArch64 remains paused.
+prerequisite for the active runtime milestone. AArch64 convergence proceeds on
+branches under [CRAB-8](rfc/CRAB-8-linux-aarch64-feature-completion.md).
 
 ## Feature-completion exit criteria
 

@@ -6,30 +6,18 @@ over the same OS mechanisms.
 
 The goal is exact modern Unix behavior without an unlimited historical libc
 surface. The compatibility oracle is the exact `[musl_native]` snapshot in
-[`compat/upstreams.toml`](compat/upstreams.toml) for active x86-64; paused
-AArch64 retains `[musl]` 1.2.6. Glibc is neither an oracle nor a fallback.
-Filesystem, process, signal, thread/TLS, socket, memory,
-stdio, resolver and loader semantics are meant to be rigorous. The Rust facade
-exposes useful OS capabilities rather than a wrapper for every C symbol.
+[`compat/upstreams.toml`](compat/upstreams.toml); glibc is neither an oracle
+nor a fallback.
 
 ## Current work
 
-The [active plan](plan.md) prioritizes complete selected native x86-64 behavior
-with parallel implementation and review. Performance and memory-usage gates are
-waived until feature completeness; correctness, memory safety, ABI compatibility
-and hardening remain required. Default qualification runs seven correctness
-gates and defers performance. The pinned C mimalloc integration is open for
-correctness work; the Rust allocator port and its promotion remain frozen.
-The campaign is now at [F2 closeout](plan.md#f2-closeout); the plan's current
-winddown remains in effect pending owner resume. Accept the retained candidate
-or repair its demonstrated blockers, then stop at the feature milestone.
-Performance qualification is a separate follow-up.
+The [active plan](plan.md) records development and qualification status.
 
 ## Support
 
 | Target | Status |
 | --- | --- |
-| Linux/AArch64, little-endian, kernel 5.10+ | Supported; development paused |
+| Linux/AArch64, little-endian, kernel 5.10+ | Supported; converging onto the native runtime on branches |
 | Linux/x86-64, little-endian, kernel 5.10+ | In development, not yet supported |
 
 Nothing else is a target: no other architectures, no 32-bit or big-endian,
@@ -44,21 +32,12 @@ no non-Linux libc.
   to the same mechanisms, independent of the C ABI. Its `std` and `alloc`
   features add standard-library integration.
 
-The allocator is the upstream C mimalloc implementation. The source-faithful
-Rust port of mimalloc v3.5.0 is retained but its development and qualification
-are paused under the [allocator freeze](plan.md#allocator-freeze).
-
 ## Runtime hardening
 
-Native x86-64 hardening remains required before qualification and public
-promotion: a separately built hardened profile will require PIE, non-executable
-stacks, page-level W^X, effective RELRO, eager binding, and explicit library
-search rules. Existing compatibility products retain their selected behavior.
-This is a completion requirement, not a claim that the profile has shipped.
-The [compatibility profile](COMPATIBILITY-PROFILE.md#runtime-hardening-profiles)
-defines the restrictions; [plan.md](plan.md#runtime-hardening) owns sequencing.
-The performance waiver preserves this requirement and does not claim release
-qualification.
+A separately built hardened profile (PIE, non-executable stacks, W^X, RELRO,
+eager binding, explicit library search) is a completion requirement, not a
+shipped feature. The [compatibility profile](COMPATIBILITY-PROFILE.md#runtime-hardening-profiles)
+defines it.
 
 ## Compatibility
 
