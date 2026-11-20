@@ -345,6 +345,34 @@ class ProductIdentityTests(unittest.TestCase):
 
 
 class PrivatePayloadTests(unittest.TestCase):
+    def test_concurrently_created_parent_is_admitted_and_link_is_still_rejected(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            boundary = Path(temporary).resolve() / ".work"
+            boundary.mkdir()
+            real_mkdir = Path.mkdir
+
+            def racing_mkdir(path: Path, *args: object, **kwargs: object) -> None:
+                if path.name == "shared":
+                    real_mkdir(path, mode=0o755)
+                real_mkdir(path, *args, **kwargs)
+
+            with mock.patch.object(RUNNER, "PRIVATE_WORK_ROOT", boundary), \
+                    mock.patch.object(Path, "mkdir", racing_mkdir):
+                work = RUNNER.private_campaign_parent(boundary / "shared")
+            self.assertTrue(work.is_dir())
+
+            (boundary / "elsewhere").mkdir()
+
+            def linking_mkdir(path: Path, *args: object, **kwargs: object) -> None:
+                if path.name == "linked":
+                    path.symlink_to(boundary / "elsewhere", target_is_directory=True)
+                real_mkdir(path, *args, **kwargs)
+
+            with mock.patch.object(RUNNER, "PRIVATE_WORK_ROOT", boundary), \
+                    mock.patch.object(Path, "mkdir", linking_mkdir):
+                with self.assertRaises(RUNNER.CorpusError):
+                    RUNNER.private_campaign_parent(boundary / "linked")
+
     def test_created_evidence_parents_are_readable_without_changing_existing_private_parents(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             boundary = Path(temporary) / ".work"

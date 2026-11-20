@@ -211,6 +211,8 @@ def _private_directory(path: Path, label: str, *, dedicated: bool) -> Path:
             continue
         try:
             current.mkdir(mode=0o755)
+        except FileExistsError:
+            pass
         except OSError as error:
             raise CorpusError(f"cannot create {label}: {current}") from error
         require_physical_directory(current, label)
