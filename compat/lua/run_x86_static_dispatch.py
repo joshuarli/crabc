@@ -71,7 +71,8 @@ def run_supplied(args: argparse.Namespace) -> tuple[dict, Path]:
     report = {"schema_version": 2, "runner": "crabc-lua-native-x86-static-source-build",
               "passed": False, "result": "fail", "supplied": {"state_root": str(state)}, "products": {}}
     try:
-        status = subprocess.run(["git", "status", "--porcelain", "--untracked-files=no"],
+        status = subprocess.run(["git", "-c", f"safe.directory={LUA.ROOT}", "status", "--porcelain",
+                                 "--untracked-files=no"],
                                 cwd=LUA.ROOT, check=True, capture_output=True).stdout
         if status:
             raise LUA.RunnerError("Lua static consumer source is not clean")

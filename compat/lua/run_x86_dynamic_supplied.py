@@ -50,12 +50,12 @@ def consumer_source_seal() -> dict[str, object]:
 
     try:
         status = subprocess.run(
-            ["git", "status", "--porcelain", "--untracked-files=no"],
+            ["git", "-c", f"safe.directory={ROOT}", "status", "--porcelain", "--untracked-files=no"],
             cwd=ROOT, check=True, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
             stderr=subprocess.PIPE, text=True,
         )
         revision = subprocess.run(
-            ["git", "rev-parse", "HEAD"], cwd=ROOT, check=True, stdin=subprocess.DEVNULL,
+            ["git", "-c", f"safe.directory={ROOT}", "rev-parse", "HEAD"], cwd=ROOT, check=True, stdin=subprocess.DEVNULL,
             stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
         )
     except (OSError, subprocess.CalledProcessError) as error:
