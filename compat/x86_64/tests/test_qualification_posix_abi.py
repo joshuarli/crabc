@@ -20,6 +20,7 @@ assert SPEC is not None and SPEC.loader is not None
 qualification = importlib.util.module_from_spec(SPEC)
 sys.modules[SPEC.name] = qualification
 SPEC.loader.exec_module(qualification)
+from native_arch import native_arch  # noqa: E402
 
 
 class QualificationPosixAbiTests(unittest.TestCase):
@@ -101,7 +102,7 @@ class QualificationPosixAbiTests(unittest.TestCase):
     def test_receipt_mode_has_fixed_rust_paths_and_per_case_artifact_directory(self) -> None:
         environment = qualification.controlled_environment()
         self.assertEqual(environment["RUSTUP_HOME"], "/opt/rustup")
-        self.assertEqual(environment["CARGO_HOME"], "/workspace/.work/x86_64/cargo")
+        self.assertEqual(environment["CARGO_HOME"], f"/workspace/.work/{native_arch()['work_name']}/cargo")
         self.assertEqual(environment["PATH"].split(":")[0], "/opt/cargo/bin")
 
         same_object = qualification.load_contract()[0]
