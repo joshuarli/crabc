@@ -532,12 +532,7 @@ def collect(root, work, *, product=None):
         same(native.read_json(work/('profile-product-'+phase+'.json')), payload, 'crypt product before/after seal')
         same(native.read_json(work/('profile-tools-'+phase+'.json')), tools, 'crypt tools before/after seal')
     phases = {phase:native.read_json(work/('profile-oracle-'+phase+'.json')) for phase in ('before','after')}
-    if ARCH == 'aarch64':
-        same(phases['before'], phases['after'], 'crypt pinned oracle across execution')
-        oracle = phases['before']
-        same(oracle, live_oracle(), 'crypt pinned native oracle identity')
-    else:
-        oracle = native._libc_oracle(reader, {'oracle': phases})
+    oracle = native._libc_oracle(reader, {'oracle': phases})
     import run_qualification_manifest as qualification
     for name, item in oracle['files'].items():
         path = work/'profile-oracle'/name
