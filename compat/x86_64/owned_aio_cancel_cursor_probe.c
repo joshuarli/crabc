@@ -26,6 +26,7 @@
 
 enum {
 	concurrent_rounds = 32,
+	concurrent_witness_rounds = 512,
 	late_initial_count = 32,
 	late_rounds = 32,
 };
@@ -113,7 +114,8 @@ static void *cancel_all(void *argument)
 /* Run one pair and say whether both caller results observed live cancellation.
  * The checked request state is stronger than result alone; a scheduler may let
  * a second caller arrive after the first has completed and legitimately report
- * AIO_ALLDONE, so the outer loop requires at least one real joined witness. */
+ * AIO_ALLDONE, so the outer loop checks every round and continues past the
+ * fixed rounds until it observes at least one real joined witness. */
 static int concurrent_round(int all_and_target, int *joined_witness)
 {
 	char bytes[2] = { 'a', 'b' };
@@ -172,7 +174,8 @@ static int test_concurrent(int all_and_target)
 {
 	int joined_witness = 0;
 
-	for (int round = 0; round < concurrent_rounds; round++)
+	for (int round = 0; round < concurrent_witness_rounds
+		&& (round < concurrent_rounds || !joined_witness); round++)
 		if (concurrent_round(all_and_target, &joined_witness))
 			return -1;
 	return joined_witness ? 0 : -1;
