@@ -52,6 +52,7 @@ defines it.
 ## Contributing
 
 Developer documentation starts at [AGENTS.md](AGENTS.md).
+[Build and install the owned products](docs/build-and-install.md).
 
 ## License
 
