@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Native harness architecture settings."""
+from pathlib import Path
 import subprocess
 import shlex
 import sys
@@ -7,6 +8,9 @@ import sys
 if __package__:
     from .core_image import core_image_id
 else:
+    if __name__ == "__main__":
+        # Qualification cases run with PYTHONSAFEPATH=1, which omits the script directory.
+        sys.path.insert(0, str(Path(__file__).resolve().parent))
     from core_image import core_image_id
 
 
