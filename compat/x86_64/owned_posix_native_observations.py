@@ -1956,7 +1956,7 @@ def _os_product_copy(reader, suite, control, baseline, contract):
     same(control['root'], reader.recorded(runtime), 'os-test runtime root')
     same(control['product_copy_difference'], empty, 'os-test runtime product copy equality')
     same(control['product_manifest_sha256'], digest(reader.manifest), 'os-test runtime product manifest')
-    same(control['candidate_loader_sha256'], digest(reader.product / 'lib/ld-crabc-x86_64.so.1'), 'os-test runtime loader binding')
+    same(control['candidate_loader_sha256'], digest(reader.product / f'lib/ld-crabc-{ARCH}.so.1'), 'os-test runtime loader binding')
     controls = reader.leaf / 'records' / (suite + '.execution-control-additions.json')
     reader.relative_artifact(control['control_additions'], controls)
     _os_private_proc(reader, suite, control['private_proc'], runtime, controls, contract)
