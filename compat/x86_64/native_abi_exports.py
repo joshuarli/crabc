@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import sys
 from pathlib import Path
 from typing import Any, Mapping, Sequence
@@ -24,6 +25,7 @@ TRACKED_PATH = ROOT / "compat/x86_64/native-abi-exports.json"
 DYNAMIC_KEYS = ("name", "version", "version_default", "type", "binding", "visibility")
 DATA_TYPES = frozenset({"OBJECT", "TLS"})
 RUST_V0_PREFIX = "_R"
+LLVM_PROMOTION_SUFFIX = re.compile(r"\.llvm\.[0-9]+$")
 DYNAMIC_CATEGORIES = (
     "extra", "missing", "compatibility_differences", "data_size_differences", "version_differences",
 )
@@ -68,6 +70,10 @@ def _dynamic_entry(row: object, description: str, *, from_report: bool) -> dict[
     return entry
 
 
+def _static_name(name: str) -> str:
+    return LLVM_PROMOTION_SUFFIX.sub("", name) if name.startswith("anon.") else name
+
+
 def _static_names(rows: object, description: str, *, from_report: bool) -> list[str]:
     require(isinstance(rows, list), f"{description} must be a list")
     if from_report:
@@ -78,7 +84,7 @@ def _static_names(rows: object, description: str, *, from_report: bool) -> list[
             names.append(row["name"])
         rows = names
     require(all(isinstance(name, str) and name for name in rows), f"{description} entries are malformed")
-    return sorted({name for name in rows if not name.startswith(RUST_V0_PREFIX)})
+    return sorted({_static_name(name) for name in rows if not name.startswith(RUST_V0_PREFIX)})
 
 
 def _objects(value: object, description: str, *, keys: frozenset[str] | None = None) -> list[dict[str, Any]]:
@@ -157,7 +163,8 @@ def differences(report_path: Path, *, tracked_path: Path | None = None) -> dict[
             baseline = set(tracked["static_archive"][category])
             require(removed <= baseline and not (added & baseline), f"reviewed x86 static {category} contract drifted")
             baseline = {name for name in baseline if not name.startswith("anon.")}
-            tracked["static_archive"][category] = sorted((baseline - removed) | added | set(delta["anonymous_" + category]))
+            anonymous = set(map(_static_name, delta["anonymous_" + category]))
+            tracked["static_archive"][category] = sorted((baseline - removed) | added | anonymous)
     changes = {}
     for group, categories in (("shared_dynamic", DYNAMIC_CATEGORIES), ("static_archive", STATIC_CATEGORIES)):
         for category in categories:

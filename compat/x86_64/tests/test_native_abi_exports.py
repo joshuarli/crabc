@@ -162,6 +162,17 @@ class NativeAbiExportsTests(unittest.TestCase):
         self.assertTrue(passed, output)
         self.assertNotIn("_Rchurn", self.tracked_path.read_text(encoding="utf-8"))
 
+    def test_llvm_promotion_suffix_of_anonymous_static_extra_is_ignored(self) -> None:
+        self.seed(report(static_extra=[static("owned"), static("anon.0b65.0.llvm.18065665657365612692")]))
+        passed, output = self.check(report(static_extra=[static("owned"), static("anon.0b65.0.llvm.17626645863537651630")]))
+        self.assertTrue(passed, output)
+        passed, output = self.check(report(static_extra=[static("owned"), static("anon.0b65.1.llvm.17626645863537651630")]))
+        self.assertFalse(passed, output)
+        self.assertIn("anon.0b65.1", output)
+        passed, output = self.check(report(static_extra=[static("owned")]))
+        self.assertFalse(passed, output)
+        self.assertIn("anon.0b65.0", output)
+
     def test_measurement_differences_are_not_gated(self) -> None:
         self.seed(report(shared_extra=[dynamic("tgkill")]))
         passed, output = self.check(
