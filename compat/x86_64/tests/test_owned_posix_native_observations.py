@@ -38,6 +38,12 @@ MODES = ('pie-kernel', 'pie-direct', 'non-pie-kernel', 'non-pie-direct')
 
 
 class NativeObservationsTests(unittest.TestCase):
+    def test_pie_entry_objects_follow_each_architecture_sealed_link(self):
+        library = Path('/product/usr/lib')
+        for arch, expected in (('x86_64', ['Scrt1.o', 'crabc-dynamic-attach.o']), ('aarch64', ['Scrt1.o'])):
+            with self.subTest(arch=arch), patch.object(native, 'ARCH', arch):
+                self.assertEqual(native._pie_entry_objects(library), [library / name for name in expected])
+
     def setUp(self):
         temporary = ROOT / '.work/x86_64/native-observation-tests'
         temporary.mkdir(parents=True, exist_ok=True)

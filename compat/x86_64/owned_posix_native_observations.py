@@ -909,7 +909,7 @@ def _libc_test_link(reader, phase, *, unit, side, objects, contract, product, ou
         library = product / 'usr/lib'
         runtime = [library / name for name in ('crti.o', 'libc.so', 'crtn.o')]
         if not shared:
-            runtime += [library / 'Scrt1.o', library / 'crabc-dynamic-attach.o']
+            runtime += _pie_entry_objects(library)
         builtins = library / 'libcrabc-builtins.a'
         same(receipt['input_receipts'], [reader.binding(path) for path in [*runtime, *objects, *dsos, builtins]],
              'libc-test canonical object and product link graph')
@@ -930,8 +930,7 @@ def _libc_test_link(reader, phase, *, unit, side, objects, contract, product, ou
         if shared:
             sealed += ['-soname', output.name]
         else:
-            sealed += [*receipt_contract.EXECUTABLE_WEAK_IMPORT_FLAGS, '--dynamic-linker', f'/lib/ld-crabc-{ARCH}.so.1', reader.recorded(library / 'Scrt1.o'),
-                       reader.recorded(library / 'crabc-dynamic-attach.o')]
+            sealed += [*receipt_contract.EXECUTABLE_WEAK_IMPORT_FLAGS, '--dynamic-linker', f'/lib/ld-crabc-{ARCH}.so.1', *map(reader.recorded, _pie_entry_objects(library))]
         sealed += [reader.recorded(path) for path in [library / 'crti.o', *objects, builtins, *dsos,
                                                        library / 'libc.so', library / 'crtn.o']]
         sealed += ['-o', reader.recorded(output)]
@@ -1438,6 +1437,10 @@ def _libc_test(reader):
                          limits={'runtime_case_seconds': 5, 'outer_timeout_seconds': 20})
 
 
+def _pie_entry_objects(library):
+    return [library / 'Scrt1.o', *([library / 'crabc-dynamic-attach.o'] if ARCH == 'x86_64' else [])]
+
+
 def _os_snapshot(value, data=None):
     keys(value, ('text', 'sha256', 'byte_length'), 'os-test stream snapshot')
     require(isinstance(value['text'], str), 'os-test stream text is malformed')
@@ -1464,7 +1467,7 @@ def _os_sealed_link(reader, *, binary, receipt_path, shared, output, workload_pa
     library = product / 'usr/lib'
     runtime = [library / name for name in ('crti.o', 'libc.so', 'crtn.o')]
     if not shared:
-        runtime += [library / 'Scrt1.o', library / 'crabc-dynamic-attach.o']
+        runtime += _pie_entry_objects(library)
     builtins = library / 'libcrabc-builtins.a'
     workload = {'path': workload_path, 'sha256': digest(retained_object)}
     same(receipt['input_receipts'], [*(reader.binding(path) for path in runtime), workload, reader.binding(builtins)],
@@ -1481,8 +1484,7 @@ def _os_sealed_link(reader, *, binary, receipt_path, shared, output, workload_pa
     if shared:
         command += ['-soname', Path(output).name]
     else:
-        command += [*receipt_contract.EXECUTABLE_WEAK_IMPORT_FLAGS, '--dynamic-linker', f'/lib/ld-crabc-{ARCH}.so.1', reader.recorded(library / 'Scrt1.o'),
-                    reader.recorded(library / 'crabc-dynamic-attach.o')]
+        command += [*receipt_contract.EXECUTABLE_WEAK_IMPORT_FLAGS, '--dynamic-linker', f'/lib/ld-crabc-{ARCH}.so.1', *map(reader.recorded, _pie_entry_objects(library))]
     command += [reader.recorded(library / 'crti.o'), workload_path, reader.recorded(builtins),
                 reader.recorded(library / 'libc.so'), reader.recorded(library / 'crtn.o'), '-o', output]
     same(receipt['link_command'], command, 'os-test canonical sealed link command')
