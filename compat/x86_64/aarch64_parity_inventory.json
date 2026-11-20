@@ -1561,7 +1561,7 @@
         "differential"
       ],
       "capability_count": 0,
-      "contract_state": "selected-private",
+      "contract_state": "implemented-foundation",
       "id": "compat.abi-differential",
       "verified_artifact_count": 1,
       "verified_slice_count": 0
@@ -1574,7 +1574,7 @@
         "signal-process"
       ],
       "capability_count": 0,
-      "contract_state": "selected-private",
+      "contract_state": "implemented-foundation",
       "id": "compat.posix-process",
       "verified_artifact_count": 1,
       "verified_slice_count": 0
@@ -1584,7 +1584,7 @@
         "resolver-network"
       ],
       "capability_count": 0,
-      "contract_state": "missing",
+      "contract_state": "implemented-foundation",
       "id": "compat.resolver-network",
       "verified_artifact_count": 0,
       "verified_slice_count": 0
@@ -1596,7 +1596,7 @@
         "corpus"
       ],
       "capability_count": 0,
-      "contract_state": "missing",
+      "contract_state": "implemented-foundation",
       "id": "compat.loader-corpus",
       "verified_artifact_count": 0,
       "verified_slice_count": 0
@@ -1609,7 +1609,7 @@
         "lto-native-facade"
       ],
       "capability_count": 0,
-      "contract_state": "selected-private",
+      "contract_state": "implemented-foundation",
       "id": "consumer.rust-std-lto",
       "verified_artifact_count": 2,
       "verified_slice_count": 0
@@ -1619,7 +1619,7 @@
         "lua"
       ],
       "capability_count": 0,
-      "contract_state": "missing",
+      "contract_state": "implemented-foundation",
       "id": "consumer.source-build",
       "verified_artifact_count": 0,
       "verified_slice_count": 0
@@ -1631,7 +1631,7 @@
         "dashboard"
       ],
       "capability_count": 0,
-      "contract_state": "missing",
+      "contract_state": "implemented-foundation",
       "id": "capability.accounting",
       "verified_artifact_count": 0,
       "verified_slice_count": 0
@@ -1649,9 +1649,8 @@
     }
   ],
   "family_state_counts": {
-    "implemented-foundation": 18,
-    "missing": 5,
-    "selected-private": 3
+    "implemented-foundation": 25,
+    "missing": 1
   },
   "frozen_baseline": {
     "aarch64_inputs": {
