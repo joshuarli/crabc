@@ -1,5 +1,5 @@
 Prefix: CRAB
-Next: 19
+Next: 21
 
 ### CRAB-6 · P2 · Unreproduced fork-child SIGEV_THREAD timer wait failure
 
@@ -19,7 +19,6 @@ Next: 19
 - **Fix with:** test-audit
 - **Effort:** L
 
-
 ### CRAB-10 · P2 · Architecture facts are hard-coded across hundreds of harness files
 
 - **Area:** Qualification harness / AArch64 convergence
@@ -30,7 +29,6 @@ Next: 19
 - **Effort:** L
 - **Design:** docs/rfc/CRAB-8-linux-aarch64-feature-completion.md
 
-
 ### CRAB-17 · P2 · Concurrent or recursive exit runs handlers and finalizers twice or truncates output
 
 - **Area:** Process exit lifecycle
@@ -39,7 +37,6 @@ Next: 19
 - **Recommendation:** Add one exit gate shared by both compositions, matching musl: CAS a static owner tid before __funcs_on_exit, crash on recursion, pause forever on contention; remove the dynamic _Exit fallback. Add a native differential case with two threads exiting while stdout is buffered.
 - **Fix with:** lifecycle-concurrency
 - **Effort:** S
-
 
 ### CRAB-18 · P2 · Setuid processes honor MIMALLOC_* environment options
 
@@ -50,7 +47,6 @@ Next: 19
 - **Fix with:** os-boundaries
 - **Effort:** S
 
-
 ### CRAB-11 · P3 · pthread_getspecific takes a process-wide spin lock
 
 - **Area:** Thread-specific data
@@ -59,7 +55,6 @@ Next: 19
 - **Recommendation:** Make current-thread get/set lock-free over the existing per-thread atomics, rejecting deleted keys with a per-key generation as musl does; keep a futex lock only for key create/delete.
 - **Fix with:** lifecycle-concurrency
 - **Effort:** M
-
 
 ### CRAB-12 · P3 · crabc-rs owns a second process-global atfork registry
 
@@ -70,7 +65,6 @@ Next: 19
 - **Fix with:** api-surface-and-module-boundaries
 - **Effort:** M
 
-
 ### CRAB-13 · P3 · Stopping a candidate leaves its dispatcher and containers running
 
 - **Area:** Qualification candidate lifecycle
@@ -79,7 +73,6 @@ Next: 19
 - **Recommendation:** Run the dispatcher in its own process group, forward SIGTERM/SIGINT to it and to named containers, and verify termination before a resume may reuse a step's outputs.
 - **Fix with:** lifecycle-concurrency
 - **Effort:** M
-
 
 ### CRAB-14 · P3 · Rust consumer timeout can hang on a surviving child
 
@@ -90,7 +83,6 @@ Next: 19
 - **Fix with:** lifecycle-concurrency
 - **Effort:** S
 
-
 ### CRAB-15 · P3 · Rebuilding the pinned images is not reproducible
 
 - **Area:** Build environment
@@ -100,6 +92,23 @@ Next: 19
 - **Fix with:** none
 - **Effort:** M
 
+### CRAB-19 · P3 · Cross-revision candidate resume cannot pass the qualification chain
+
+- **Area:** Qualification harness
+- **Where:** compat/x86_64/owned_posix_family_execution.py `revalidate_receipt` (whole-receipt `same_json` against a recollection whose `inputs.source` is `source_seal.seal(root)`); same full-equality pattern in `owned_pthread_family.validate_receipt` and other family readers; contract in compat/x86_64/source_seal.py `seal` docstring and compat/x86_64/qualification_candidate.py module docstring
+- **Problem:** `qualification_candidate.py` resumes steps across revisions with the same product source, and `source_seal.seal` says seals compare with `same_product`, never by revision. But family readers recollect a receipt and compare it with the retained one by full JSON equality, and the recollection embeds the current revision. A resumed run therefore fails at the gate readers: the 2026-11-20 x86 trial (steps 00-56 at 30db5b770, the rest at aae1b553a) stopped at step 84 `qualification-chain` with `compat.posix-process` evidence[0] `ExecutionError: family execution receipt changed`, and the only differing field was `inputs/source/revision`. Fresh single-revision runs are unaffected, so acceptance still works, but the plan relies on same-source resume for development completion.
+- **Recommendation:** In each revalidating reader, require `source_seal.same_product` for embedded seals and compare the rest of the receipt with the retained revision substituted; add a regression that revalidates a receipt after moving HEAD to a different commit with identical product source.
+- **Fix with:** none
+- **Effort:** M
+
+### CRAB-20 · P3 · Acceptance candidate needs an undocumented gate-family declaration commit
+
+- **Area:** Qualification procedure
+- **Where:** plan.md `F2 closeout` step 5; compat/x86_64/qualification-chain.md `Gate conditions` (prerequisite-families); compat/x86_64/parity.toml chain families; final6 commit a5c32dfe2 and lane/a5-final 5be77042f
+- **Problem:** `prerequisite-families` requires every earlier chain gate family to be `foundation-verified`, but on main and the integration branch all seven chain families are `planned`. A candidate built from them fails at step 84 `qualification-chain` (compat.posix-process: compat.abi-differential planned). Final6 carried a provisional `declare the complete correctness candidate` commit for this; final7 (961b2fca6) did not and would have failed the same way. Neither the plan nor the chain doc says the candidate branch must carry that declaration.
+- **Recommendation:** State in the F2 closeout procedure and qualification-chain.md that the acceptance candidate branch carries the provisional chain-family declaration (statuses foundation-verified, evidence verified, regenerated aarch64_parity_inventory.json) and that it integrates only after that fresh candidate is accepted.
+- **Fix with:** none
+- **Effort:** S
 
 ### CRAB-16 · P4 · Public unsafe functions lack a Safety section
 
