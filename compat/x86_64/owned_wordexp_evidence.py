@@ -1676,11 +1676,7 @@ def _validate_report(root: Path, report_path: Path, expected_native_inputs: obje
             actual_linker = receipt_value.get("resolved_linker")
             if item["linker"] != sealed_linker or actual_linker != sealed_linker:
                 fail("wordexp retained link selected an unsealed linker")
-            if ARCH == 'aarch64':
-                import owned_crypt_profile
-                observed = owned_crypt_profile.aarch64_link_identity(root, product, workload, executable, receipt, linkage, relative_output=False)
-            else:
-                observed = products.validate_retained_link(root, SOURCE_MOUNT, product, workload, executable, receipt, linkage, actual_linker)
+            observed = products.validate_retained_link(root, SOURCE_MOUNT, product, workload, executable, receipt, linkage, actual_linker)
         except (products.ProductEvidenceError, OSError, UnicodeDecodeError, json.JSONDecodeError) as error:
             raise EvidenceError(f"wordexp retained {name} link is invalid: {error}") from error
         try:

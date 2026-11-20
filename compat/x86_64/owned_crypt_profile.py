@@ -429,12 +429,8 @@ def collect_static_entries(reader, linker):
         require(not product.is_relative_to(reader.leaf), 'crypt static product must remain outside observations')
         require(selected is None or product == selected, 'crypt static modes use different products')
         selected = product
-        if ARCH == 'aarch64':
-            linked = aarch64_link_identity(reader.root, product, reader.leaf/'workload.o',
-                reader.leaf/(mode+'-consumer'), reader.leaf/(mode+'.receipt.json'), mode)
-        else:
-            linked = products.validate_retained_link(reader.root, str(reader.mount), product, reader.leaf/'workload.o',
-                reader.leaf/(mode+'-consumer'), reader.leaf/(mode+'.receipt.json'), mode, linker)
+        linked = products.validate_retained_link(reader.root, str(reader.mount), product, reader.leaf/'workload.o',
+            reader.leaf/(mode+'-consumer'), reader.leaf/(mode+'.receipt.json'), mode, linker)
         linked['product'] = reader.recorded(product)
         same(recorded, linked, 'crypt independently recorded static product link')
         entries[mode] = {'link': linked, 'execution': collect_command(reader, mode,
