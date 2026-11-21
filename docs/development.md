@@ -21,7 +21,7 @@ The Docker daemon must be running and reachable by your user, and it must use
 the containerd image store (the default for new Docker 29 installs), because
 that store gives the loaded image the ID pinned in `compat/x86_64/core_image.py`.
 
-COLD_BUILD_COST
+A cold setup downloads about 805 MB of locked image inputs and builds the image from them; its wall time on a fresh host has not been measured yet.
 
 ## Host packages
 
