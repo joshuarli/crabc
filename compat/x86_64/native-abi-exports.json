@@ -190,6 +190,7 @@
     ],
     "extra": [
       "_ZSt15get_new_handlerv",
+      "__crabc_allocator_environ",
       "__crabc_owned_clone_raw",
       "__crabc_owned_printf_float",
       "__crabc_owned_printf_promote",
