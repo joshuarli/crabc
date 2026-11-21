@@ -8033,6 +8033,7 @@ PY
         ;;
     owned-exit-gate)
         [ "$#" -eq 0 ] || fail "owned-exit-gate takes no arguments"
+        ensure_image
         run_in_chroot_cap_container bash /workspace/compat/x86_64/run_owned_exit_gate.sh
         ;;
     owned-quick-exit)
