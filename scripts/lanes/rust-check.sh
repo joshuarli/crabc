@@ -7,7 +7,8 @@
 # checkout.
 set -u
 root=$(git rev-parse --show-toplevel)
-arch_config=$(python3 -B "$root/compat/x86_64/native_arch.py" "$(uname -m)") || exit
+script_root=$(CDPATH= cd -- "$(dirname -- "$0")/../.." && pwd) || exit
+arch_config=$(python3 -B "$script_root/compat/x86_64/native_arch.py" "$(uname -m)") || exit
 eval "$arch_config"
 expected_identity=$platform
 mold_gcc=$linker
