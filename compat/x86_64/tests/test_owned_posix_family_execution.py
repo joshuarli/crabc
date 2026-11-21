@@ -402,6 +402,22 @@ class FamilyMatrixTests(unittest.TestCase):
         with self.assertRaisesRegex(execution.ExecutionError, 'product roster'):
             execution.collect(self.root, self.run)
 
+    def test_a_receipt_revalidates_at_another_revision_of_the_same_product_source(self):
+        path = self.execute()
+        moved = {**self.source, 'revision': '3' * 40}
+        self.inputs['source'] = moved
+        execution.source_seal.seal.return_value = moved
+        record = execution.revalidate_receipt(self.root, path)
+        self.assertEqual(record['inputs']['source'], moved)
+
+    def test_a_receipt_rejects_another_product_source(self):
+        path = self.execute()
+        changed = {'revision': '3' * 40, 'content_sha256': '4' * 64}
+        self.inputs['source'] = changed
+        execution.source_seal.seal.return_value = changed
+        with self.assertRaisesRegex(execution.ExecutionError, 'execution source changed'):
+            execution.revalidate_receipt(self.root, path)
+
     def test_one_product_recompiles_a_different_object_and_cannot_seal(self):
         runner = self.root / 'runner.sh'
         runner.write_text(runner.read_text() +

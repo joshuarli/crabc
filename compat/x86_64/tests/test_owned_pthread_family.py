@@ -941,6 +941,30 @@ class PthreadPhaseInputTests(unittest.TestCase):
             family.collect(self.root, self.work)
             self.assertEqual(len(calls), 3)
 
+    def _receipt_at_revision(self, source: dict[str, str]) -> dict[str, object]:
+        calls: list[Path] = []
+        with self._phase_patches(self._matrix_roster(), calls, forbid_input_products=True):
+            receipt = self.work / "receipt.json"
+            receipt.write_text(json.dumps(family.collect(self.root, self.work)), encoding="utf-8")
+
+        def recollected_matrix(_root: Path, path: Path) -> dict[str, object]:
+            matrix = family.family.read(path)
+            matrix["inputs"]["source"] = source
+            return matrix
+
+        with self._phase_patches(self._matrix_roster(), calls, forbid_input_products=True,
+                                 source_identity=lambda _root: source), \
+                patch.object(family.family, "validate_receipt", side_effect=recollected_matrix):
+            return family.validate_receipt(self.root, receipt)
+
+    def test_a_receipt_revalidates_at_another_revision_of_the_same_product_source(self) -> None:
+        record = self._receipt_at_revision({**self.source, "revision": "3" * 40})
+        self.assertEqual(record["inputs"]["source"], self.source)
+
+    def test_a_receipt_rejects_another_product_source(self) -> None:
+        with self.assertRaisesRegex(family.PthreadFamilyError, "POSIX matrix receipt changed"):
+            self._receipt_at_revision({"revision": "3" * 40, "content_sha256": "4" * 64})
+
     def test_collect_rejects_a_retained_product_mutation_at_the_phase_end(self) -> None:
         calls: list[Path] = []
         original_matrix_cells = family.matrix_cells
