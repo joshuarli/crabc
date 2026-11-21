@@ -1,5 +1,5 @@
 Prefix: CRAB
-Next: 21
+Next: 22
 
 ### CRAB-6 · P2 · Unreproduced fork-child SIGEV_THREAD timer wait failure
 
@@ -55,3 +55,12 @@ Next: 21
 - **Recommendation:** Record resolved package versions in the image build and pin them (or the repository snapshot), and keep an exported copy of each pinned image so recovery does not depend on a rebuild.
 - **Fix with:** none
 - **Effort:** M
+
+### CRAB-21 · P3 · Two readers still reject a same-source cross-revision resume
+
+- **Area:** Qualification harness
+- **Where:** compat/x86_64/owned_resolver_alias_contract_reader.py `_source_identity`; compat/x86_64/owned_resolver_family.py `_validate_admission_sources`; compat/x86_64/compiler_helper_evidence.py `_source_seal`, `_aggregate_record`
+- **Problem:** The CRAB-19 fix (`source_seal.same_evidence`) lets readers accept a recollected seal that differs only in revision, but these readers bind a retained git revision outside the seal pattern (`selected_source {revision, tree, source_sha256}` and `checkout {revision, clean}`) and compare it with the current HEAD. A resumed candidate whose later steps run at a different revision with the same product source therefore still fails at the resolver alias and compiler-helper readers. Not reproduced in a full run.
+- **Recommendation:** Record a product-source seal in these receipts and compare it with `same_product`, keeping the tree/clean checks, then add the same move-HEAD regression the CRAB-19 tests use.
+- **Fix with:** none
+- **Effort:** S
