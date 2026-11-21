@@ -108,31 +108,41 @@ class StaticProductContractTests(unittest.TestCase):
                 "implemented-unqualified",
             ),
         )
-        for name, mutate, error in mutations:
-            with self.subTest(name=name):
-                contract = self.contract_data()
-                mutate(contract)
-                with self.assertRaisesRegex(ledger.LedgerError, error):
-                    ledger.validate_static_product_contract(contract, families)
+        # validate_ledger checks contract structure without receipts by
+        # default; the receipt-bound admission is not under test here.
+        token = ledger._require_receipts.set(False)
+        try:
+            for name, mutate, error in mutations:
+                with self.subTest(name=name):
+                    contract = self.contract_data()
+                    mutate(contract)
+                    with self.assertRaisesRegex(ledger.LedgerError, error):
+                        ledger.validate_static_product_contract(contract, families)
+        finally:
+            ledger._require_receipts.reset(token)
 
     def test_static_families_cannot_reach_dynamic_startup(self) -> None:
         data = self.ledger_data()
         families = self.families(data)
         families["sysroot.static-tls"]["depends_on"].append("crt.dynamic-startup")
 
-        with self.assertRaisesRegex(
-            ledger.LedgerError,
-            "sysroot.static-tls must depend on the owned-static product prerequisites",
-        ):
-            ledger.validate_static_product_contract(self.contract_data(), families)
+        token = ledger._require_receipts.set(False)
+        try:
+            with self.assertRaisesRegex(
+                ledger.LedgerError,
+                "sysroot.static-tls must depend on the owned-static product prerequisites",
+            ):
+                ledger.validate_static_product_contract(self.contract_data(), families)
 
-        families["sysroot.static-tls"]["depends_on"].pop()
-        families["crt.static-pie"]["depends_on"].append("crt.dynamic-startup")
-        with self.assertRaisesRegex(
-            ledger.LedgerError,
-            "static family crt.static-pie must not depend on crt.dynamic-startup",
-        ):
-            ledger.validate_static_product_contract(self.contract_data(), families)
+            families["sysroot.static-tls"]["depends_on"].pop()
+            families["crt.static-pie"]["depends_on"].append("crt.dynamic-startup")
+            with self.assertRaisesRegex(
+                ledger.LedgerError,
+                "static family crt.static-pie must not depend on crt.dynamic-startup",
+            ):
+                ledger.validate_static_product_contract(self.contract_data(), families)
+        finally:
+            ledger._require_receipts.reset(token)
 
     def test_static_tls_family_evidence_is_the_product_gate_and_needs_a_receipt(self) -> None:
         data = self.ledger_data()
@@ -147,6 +157,7 @@ class StaticProductContractTests(unittest.TestCase):
         families = self.families(self.ledger_data())
         families["sysroot.static-tls"]["status"] = "foundation-verified"
         families["sysroot.static-tls"]["native_evidence"][0]["state"] = "verified"
+        families["libc.posix-runtime"]["status"] = "planned"
         with self.assertRaisesRegex(ledger.LedgerError, "cannot complete before libc.posix-runtime"):
             ledger.validate_static_product_contract(self.contract_data(), families)
 
