@@ -47,15 +47,6 @@ Next: 22
 - **Fix with:** api-surface-and-module-boundaries
 - **Effort:** M
 
-### CRAB-15 · P3 · Rebuilding the pinned images is not reproducible
-
-- **Area:** Build environment
-- **Where:** docker/Dockerfile.x86_64:34-51; docker/Dockerfile:26-42; compat/x86_64/core_image.py
-- **Problem:** Base images are digest-pinned but `apk add` installs gcc, binutils and other tools by unversioned name, so recovering a lost image (as happened when the x86 host changed and the image was rebuilt and re-pinned) yields whatever the Alpine mirror serves that day. The re-pinned image ID then differs, and toolchain drift can change native results with no record of the resolved versions.
-- **Recommendation:** Record resolved package versions in the image build and pin them (or the repository snapshot), and keep an exported copy of each pinned image so recovery does not depend on a rebuild.
-- **Fix with:** none
-- **Effort:** M
-
 ### CRAB-21 · P3 · Two readers still reject a same-source cross-revision resume
 
 - **Area:** Qualification harness

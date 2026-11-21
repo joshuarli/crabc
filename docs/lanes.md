@@ -271,5 +271,29 @@ The full correctness command is the integrated milestone, not a per-edit loop.
 Performance commands in [compat/perf/README.md](../compat/perf/README.md) are
 deferred from required work until feature completeness. Do not invent command support.
 Do not run `./scripts/dev-x86_64.sh image` unless a plan step says so: a
-rebuild deletes the pinned image and must be followed by a re-pin of
+rebuild changes the image ID and must be followed by a re-pin of
 `compat/x86_64/core_image.py`.
+
+### Reproducible core image
+
+`./scripts/dev-x86_64.sh image` builds the x86-64 core-evidence image from
+`docker/image/sources.lock.json`, not from `docker build`. `docker/image/build.py`
+runs inside the digest-pinned builder recorded in the lock and works in two
+phases so the network boundary is real: `fetch` downloads and verifies every
+locked input, then `assemble` runs with the network off, installs the exact
+locked `.apk` closure into a chroot offline (apk verifies each package
+signature), installs the pinned Rust toolchain from a loopback dist server that
+serves only locked files, and builds the pinned musl trees and Linux 5.10 UAPI
+headers. It emits a normalized rootfs tar and a single-layer OCI layout whose
+manifest digest is the image ID, then loads it.
+
+Two cold builds from the same lock produce the same image ID;
+`./scripts/dev-x86_64.sh image-repro` builds twice into fresh output roots and
+fails unless the IDs match. Every byte comes from the lock: the Alpine
+minirootfs per stage, each stage's resolved `.apk` closure, the Rust channel
+manifest and component archives, the native musl oracle source, kache, and the
+Linux UAPI source. `docker/image/lock.py` regenerates the lock deliberately
+(network required) from `docker/image/mirrors.json`, `compat/upstreams.toml`
+and `rust-toolchain.toml`, and stages every locked file under `.work/image-mirror`
+for publishing. Mirror templates in `mirrors.json` are tried before each
+input's upstream URL. Do not hand-edit the lock.
