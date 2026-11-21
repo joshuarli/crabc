@@ -117,7 +117,12 @@ selected blocker remains.
 5. **Freeze the acceptance candidate.** Finish the permitted diagnostic path
    and known repairs before a fresh attempt. Inspect the candidate's `--dry-run`
    output for blockers using the actual seeded inputs and intended work path.
-   A dry-run exit of zero alone is not readiness. Use the existing
+   A dry-run exit of zero alone is not readiness. The candidate branch is the
+   integration head plus one provisional declaration commit: the seven chain
+   families in `compat/x86_64/parity.toml` set to `foundation-verified` with
+   verified evidence, and the regenerated `aarch64_parity_inventory.json`
+   (pattern: `5be77042f`). Without it, `prerequisite-families` fails step 84.
+   That commit integrates only after its fresh candidate is accepted. Use the existing
    `./scripts/dev-x86_64.sh qualification-candidate --work .work/x86_64/feature-complete --profile correctness`
    with the actual `--inputs` file. A fresh attempt uses an isolated prepared
    checkout with the ledger's expected relative receipt paths; preserve earlier

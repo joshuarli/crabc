@@ -54,7 +54,11 @@ result (`complete_profile` is true only when the profile's last gate passed).
 `qualification_gates.py` evaluates one gate as named conditions:
 
 - `prerequisite-families` lists every transitive `depends_on` family and every
-  earlier chain gate that is not `foundation-verified`.
+  earlier chain gate that is not `foundation-verified`. Integrated source keeps
+  the chain families `planned`, so an acceptance candidate branch carries one
+  provisional commit declaring them `foundation-verified` (with verified
+  evidence and a regenerated `aarch64_parity_inventory.json`); it integrates
+  only after that fresh candidate is accepted.
 - `evidence[N]` covers each `native_evidence` command of the gate family. A
   command needs a registered reader; a prose placeholder or unregistered
   command is itself the unmet condition. Readers call the leaf's own validator:

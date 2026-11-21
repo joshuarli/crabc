@@ -101,15 +101,6 @@ Next: 21
 - **Fix with:** none
 - **Effort:** M
 
-### CRAB-20 · P3 · Acceptance candidate needs an undocumented gate-family declaration commit
-
-- **Area:** Qualification procedure
-- **Where:** plan.md `F2 closeout` step 5; compat/x86_64/qualification-chain.md `Gate conditions` (prerequisite-families); compat/x86_64/parity.toml chain families; final6 commit a5c32dfe2 and lane/a5-final 5be77042f
-- **Problem:** `prerequisite-families` requires every earlier chain gate family to be `foundation-verified`, but on main and the integration branch all seven chain families are `planned`. A candidate built from them fails at step 84 `qualification-chain` (compat.posix-process: compat.abi-differential planned). Final6 carried a provisional `declare the complete correctness candidate` commit for this; final7 (961b2fca6) did not and would have failed the same way. Neither the plan nor the chain doc says the candidate branch must carry that declaration.
-- **Recommendation:** State in the F2 closeout procedure and qualification-chain.md that the acceptance candidate branch carries the provisional chain-family declaration (statuses foundation-verified, evidence verified, regenerated aarch64_parity_inventory.json) and that it integrates only after that fresh candidate is accepted.
-- **Fix with:** none
-- **Effort:** S
-
 ### CRAB-16 · P4 · Public unsafe functions lack a Safety section
 
 - **Area:** Rust facade API documentation
@@ -118,4 +109,3 @@ Next: 21
 - **Recommendation:** Move the obligations under `# Safety` headings and enable clippy::missing_safety_doc for crabc-rs and crabc-core.
 - **Fix with:** none
 - **Effort:** S
-
