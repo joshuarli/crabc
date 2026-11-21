@@ -10,9 +10,8 @@
 //! 9fa28ece75d8a2191de7c5bb53bed224c5947417, under musl's MIT license:
 //! src/env/__libc_start_main.c makes libc.secure true when the last
 //! AT_SECURE value is nonzero or the final AT_UID/AT_EUID or
-//! AT_GID/AT_EGID values differ. The cache exists solely for
-//! super::secure_environment::secure_getenv and super::issetugid, not
-//! privilege management,
+//! AT_GID/AT_EGID values differ. The cache also gates allocator environment
+//! options; it does not provide privilege management,
 //! descriptor hygiene, credential mutation, loader policy, or process
 //! lifecycle.
 

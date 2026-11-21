@@ -38,15 +38,6 @@ Next: 21
 - **Fix with:** lifecycle-concurrency
 - **Effort:** S
 
-### CRAB-18 · P2 · Setuid processes honor MIMALLOC_* environment options
-
-- **Area:** Allocator glue / privileged execution
-- **Where:** libc/src/c_abi/x86_64/native_mimalloc_lifecycle.rs:85-98; scripts/build_x86_64_owned_sysroot.py:933; COMPATIBILITY-PROFILE.md:67
-- **Problem:** COMPATIBILITY-PROFILE requires secure execution to preserve environment filtering. crabc's mimalloc glue hands upstream _mi_prim_getenv the live C environ with no AT_SECURE check, and the build defines no MI_USE_ENVIRON override, so a setuid program reads MIMALLOC_VERBOSE/SHOW_STATS/SHOW_ERRORS (printing heap addresses to stderr) and reserve/large-page policy from an untrusted caller. The musl oracle's allocator reads no environment. The v3.5.0 prim.c path is inferred from the pinned glue comment and the libmimalloc-sys v2 source; a setuid fixture has not been run (unproven at runtime).
-- **Recommendation:** In runtime_source_environment, return an empty environment vector when the cached secure-execution state is set, leaving upstream source unedited; add a secure-mode fixture with MIMALLOC_VERBOSE=1 that must print nothing.
-- **Fix with:** os-boundaries
-- **Effort:** S
-
 ### CRAB-11 · P3 · pthread_getspecific takes a process-wide spin lock
 
 - **Area:** Thread-specific data
