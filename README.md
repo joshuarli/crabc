@@ -51,7 +51,8 @@ defines it.
 
 ## Contributing
 
-Developer documentation starts at [AGENTS.md](AGENTS.md).
+Set up a development host with [docs/development.md](docs/development.md)
+(`scripts/setup-dev`). Developer documentation starts at [AGENTS.md](AGENTS.md).
 [Build and install the owned products](docs/build-and-install.md).
 
 ## License

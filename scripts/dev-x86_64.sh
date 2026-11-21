@@ -209,7 +209,8 @@ Native Linux/x86-64 staged-foundation evidence commands:
   qualification-candidate --work DIR [--profile correctness|full] [--inputs FILE] [--through STEP] [--dry-run]  build one cohort, run family aggregates and selected gate producers; defaults to correctness with performance deferred until feature completion; restartable on revisions with the same product source
   routine-c-abi-matrix <family-id>  run checked routine C ABI evidence for one family
   headers-layouts-aggregate  run finite non-promoting header accounting evidence
-  image  build the pinned Linux/amd64 core-evidence image
+  image  build the pinned Linux/amd64 core-evidence image from the sources lock
+  image-repro  build that image twice into fresh roots and require one image ID
   perf-c {plan|run|collect|check|counts} ...  native supplied-product C performance adapter in the pinned core image
   perf-c-test  run focused native C-performance adapter and supplemental-fixture smoke tests in that image
   perf-c-memory-smoke <dynamic-product> <work-dir>  run the bounded native observer/cgroup collector smoke; never a scorecard result
@@ -3272,12 +3273,99 @@ require_native_linux_x86_64_host() {
     esac
 }
 
+image_builder() {
+    python3 -B - "$ROOT_DIR" <<'PY_IMAGE_BUILDER'
+import json, sys
+from pathlib import Path
+lock = Path(sys.argv[1]) / "docker/image/sources.lock.json"
+for item in json.loads(lock.read_text())["inputs"]:
+    if item.get("name") == "python-builder":
+        print(item["image"])
+        break
+else:
+    raise SystemExit("sources lock records no python-builder")
+PY_IMAGE_BUILDER
+}
+
+image_build_root() {
+    # A fresh build root per invocation keeps the cache and staging private to
+    # the run, so a cold build never inherits bytes from an earlier one. The
+    # builder runs as root, so a previous root-owned tree is cleared through a
+    # container before the new one is created.
+    local name="$1"
+    local directory="$WORK_DIR/image-build/$name"
+    if [ -e "$directory" ] && ! rm -rf "$directory" 2>/dev/null; then
+        docker run --rm --volume "$directory:/build" \
+            alpine:3.24.1@sha256:79ff19e9084a00eece421b2523fb93e22d730e2c0e525905de047e848e56d95f \
+            sh -c 'find /build -mindepth 1 -maxdepth 1 -exec rm -rf {} +'
+        rm -rf "$directory"
+    fi
+    mkdir -p "$directory/cache" "$directory/staging" "$directory/out"
+    printf '%s\n' "$directory"
+}
+
+run_image_builder() {
+    local builder="$1"
+    local build_root="$2"
+    local network="$3"
+    shift 3
+    docker run --rm --platform "$PLATFORM" --network "$network" \
+        --volume "$ROOT_DIR:/workspace:ro" \
+        --volume "$build_root:/build" \
+        --volume /var/run/docker.sock:/var/run/docker.sock \
+        --workdir /workspace \
+        "$builder" python3 -B /workspace/docker/image/build.py \
+            --cache /build/cache "$@"
+}
+
 build_image() {
-    docker build \
-        --platform "$PLATFORM" \
-        --tag "$BUILD_IMAGE" \
-        --file "$DOCKERFILE" \
-        "$ROOT_DIR"
+    # The x86-64 image is built by docker/image/build.py from the committed
+    # sources lock, not by `docker build`: every input is fetched and verified
+    # from the lock, so two cold builds produce the same image ID. The aarch64
+    # path still uses its Dockerfile.
+    if [ "$ARCH" != x86_64 ]; then
+        docker build \
+            --platform "$PLATFORM" \
+            --tag "$BUILD_IMAGE" \
+            --file "$DOCKERFILE" \
+            "$ROOT_DIR"
+        return
+    fi
+    local builder build_root
+    builder="$(image_builder)" || exit 2
+    build_root="$(image_build_root "build-$$")" || exit 2
+    run_image_builder "$builder" "$build_root" bridge fetch
+    # Load by content ID only. The build never tags or retags an existing image;
+    # selecting the new image is done by ID (or by re-pinning core_image.py).
+    run_image_builder "$builder" "$build_root" none assemble \
+        --staging /build/staging --out /build/out \
+        --mold-gcc /workspace/docker/x86_64-mold-gcc \
+        --musl-oracle-gcc /workspace/docker/x86_64-musl-oracle-gcc \
+        --load
+}
+
+check_image_reproducibility() {
+    local builder first second first_id second_id
+    builder="$(image_builder)" || exit 2
+    first="$(image_build_root repro-a)" || exit 2
+    second="$(image_build_root repro-b)" || exit 2
+    run_image_builder "$builder" "$first" bridge fetch
+    run_image_builder "$builder" "$second" bridge fetch
+    first_id="$(run_image_builder "$builder" "$first" none assemble \
+        --staging /build/staging --out /build/out \
+        --mold-gcc /workspace/docker/x86_64-mold-gcc \
+        --musl-oracle-gcc /workspace/docker/x86_64-musl-oracle-gcc |
+        sed -n 's/^IMAGE_ID //p')"
+    second_id="$(run_image_builder "$builder" "$second" none assemble \
+        --staging /build/staging --out /build/out \
+        --mold-gcc /workspace/docker/x86_64-mold-gcc \
+        --musl-oracle-gcc /workspace/docker/x86_64-musl-oracle-gcc |
+        sed -n 's/^IMAGE_ID //p')"
+    [ -n "$first_id" ] && [ -n "$second_id" ] || fail "image build printed no image ID"
+    if [ "$first_id" != "$second_id" ]; then
+        fail "image is not reproducible: $first_id != $second_id"
+    fi
+    printf 'reproducible image ID: %s\n' "$first_id"
 }
 
 ensure_image() {
@@ -6291,7 +6379,7 @@ case "$command" in
     pthread-header-source-form) ;;
     atomic-addressable-abi) ;;
     project-header-extension-policy) ;;
-    image|musl-oracle|header-abi-reference|public-header-surface|header-abi-project|mm-abi-reference|mapping-reference|memory-vm-reference|pty-basic-reference|terminal-reference|mlock-reference|msync-reference|mincore-reference|fs-advice-reference|memfd-reference|ftruncate-reference|statfs-reference|timestamp-reference|path-lifecycle-reference|namespace-reference|path-core-reference|xattr-reference|directory-reference|temporary-object-reference|statx-reference|cwd-canonicalize-reference|root-change-reference|mount-reference|thread-kill-reference|signal-altstack-reference|signal-thread-queue-reference|ipc-reference|shm-reference|inotify-reference|socket-transport-reference|interface-device-reference|resolver-transport-reference|resolver-facade-reference|netdb-reference|users-databases-reference|posix-fallocate-reference|fallocate-reference|file-position-reference|sync-reference|syncfs-reference|sync-file-range-reference|rand-reference|time-abi-reference|time-observation-reference|calendar-time-reference|advanced-time-reference|relative-sleep-reference|clock-nanosleep-reference|getitimer-reference|setitimer-reference|timerfd-reference|pselect-reference|poll-reference|ppoll-reference|epoll-reference|process-identity-reference|child-ownership-reference|getgroups-reference|process-session-reference|pidfd-open-reference|fcntl-getlk-reference|fcntl-status-reference|flock-reference|sendfile-reference|copy-file-range-reference|scheduler-priority-bounds-reference|rr-interval-reference|sched-affinity-reference|sched-affinity-set-reference|priority-reference|setpriority-reference|rlimit-reference|rlimit-targeted-reference|setrlimit-reference|umask-reference|rusage-reference|times-reference|fstat-reference|statat-reference|getcwd-reference|readlinkat-reference|access-reference|system-reference|thread-reference|thread-credentials-reference|fs-credentials-reference|core|facade|facade-record-owning|libc-syscall|libc-errno-tls|libc-stat-compat|libc-credentials|libc-bootstrap-primitives|libc-signal-control|libc-signal-execution|libc-static-tls-v1|libc-crt-static-tls|libc-pthread-create-join-tls|libc-c11-lifecycle|libc-c11-plain-sync|libc-pthread-c11-once|libc-pthread-c11-tsd|libc-pthread-tls-aggregate|libc-pthread-cancel-deferred|libc-pthread-atfork|libc-thrd-sleep|libc-pthread-mutex-normal|libc-pthread-rwlock|libc-pthread-cond-private|libc-termios-control|libc-process-context|libc-environment|libc-descriptor-io|libc-descriptor-lifecycle|libc-timestamp-updates|libc-process-resources|libc-socket-transport|libc-socket-messages|libc-thread-pointer|libc-foundation|libc-fenv|libc-math-complex|libc-elementary-sqrt-fenv|libc-math-x87-extended|libc-math-long-double-completion|libc-math-elementary-fenv-sensitive|libc-memory|libc-setjmp|libc-atomic|libc-clone-raw|libc-signal-altstack|libc-signal-foundation|libc-stack-chk-fail) ;;
+    image|image-repro|musl-oracle|header-abi-reference|public-header-surface|header-abi-project|mm-abi-reference|mapping-reference|memory-vm-reference|pty-basic-reference|terminal-reference|mlock-reference|msync-reference|mincore-reference|fs-advice-reference|memfd-reference|ftruncate-reference|statfs-reference|timestamp-reference|path-lifecycle-reference|namespace-reference|path-core-reference|xattr-reference|directory-reference|temporary-object-reference|statx-reference|cwd-canonicalize-reference|root-change-reference|mount-reference|thread-kill-reference|signal-altstack-reference|signal-thread-queue-reference|ipc-reference|shm-reference|inotify-reference|socket-transport-reference|interface-device-reference|resolver-transport-reference|resolver-facade-reference|netdb-reference|users-databases-reference|posix-fallocate-reference|fallocate-reference|file-position-reference|sync-reference|syncfs-reference|sync-file-range-reference|rand-reference|time-abi-reference|time-observation-reference|calendar-time-reference|advanced-time-reference|relative-sleep-reference|clock-nanosleep-reference|getitimer-reference|setitimer-reference|timerfd-reference|pselect-reference|poll-reference|ppoll-reference|epoll-reference|process-identity-reference|child-ownership-reference|getgroups-reference|process-session-reference|pidfd-open-reference|fcntl-getlk-reference|fcntl-status-reference|flock-reference|sendfile-reference|copy-file-range-reference|scheduler-priority-bounds-reference|rr-interval-reference|sched-affinity-reference|sched-affinity-set-reference|priority-reference|setpriority-reference|rlimit-reference|rlimit-targeted-reference|setrlimit-reference|umask-reference|rusage-reference|times-reference|fstat-reference|statat-reference|getcwd-reference|readlinkat-reference|access-reference|system-reference|thread-reference|thread-credentials-reference|fs-credentials-reference|core|facade|facade-record-owning|libc-syscall|libc-errno-tls|libc-stat-compat|libc-credentials|libc-bootstrap-primitives|libc-signal-control|libc-signal-execution|libc-static-tls-v1|libc-crt-static-tls|libc-pthread-create-join-tls|libc-c11-lifecycle|libc-c11-plain-sync|libc-pthread-c11-once|libc-pthread-c11-tsd|libc-pthread-tls-aggregate|libc-pthread-cancel-deferred|libc-pthread-atfork|libc-thrd-sleep|libc-pthread-mutex-normal|libc-pthread-rwlock|libc-pthread-cond-private|libc-termios-control|libc-process-context|libc-environment|libc-descriptor-io|libc-descriptor-lifecycle|libc-timestamp-updates|libc-process-resources|libc-socket-transport|libc-socket-messages|libc-thread-pointer|libc-foundation|libc-fenv|libc-math-complex|libc-elementary-sqrt-fenv|libc-math-x87-extended|libc-math-long-double-completion|libc-math-elementary-fenv-sensitive|libc-memory|libc-setjmp|libc-atomic|libc-clone-raw|libc-signal-altstack|libc-signal-foundation|libc-stack-chk-fail) ;;
     libc-math-elementary-long-double) ;;
     ldso-static-dlfcn) ;;
     general-dynamic-dlopen) ;;
@@ -6781,6 +6869,11 @@ case "$command" in
     image)
         [ "$#" -eq 0 ] || fail "image takes no arguments"
         build_image
+        ;;
+    image-repro)
+        [ "$#" -eq 0 ] || fail "image-repro takes no arguments"
+        [ "$ARCH" = x86_64 ] || fail "image-repro applies to the x86-64 image only"
+        check_image_reproducibility
         ;;
     musl-oracle)
         [ "$#" -eq 0 ] || fail "musl-oracle takes no arguments"

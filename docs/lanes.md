@@ -269,5 +269,48 @@ The full correctness command is the integrated milestone, not a per-edit loop.
 Performance commands in [compat/perf/README.md](../compat/perf/README.md) are
 deferred from required work until feature completeness. Do not invent command support.
 Do not run `./scripts/dev-x86_64.sh image` unless a plan step says so: a
-rebuild deletes the pinned image and must be followed by a re-pin of
+rebuild changes the image ID and must be followed by a re-pin of
 `compat/x86_64/core_image.py`.
+
+### Reproducible core image
+
+`./scripts/dev-x86_64.sh image` builds the x86-64 core-evidence image from
+`docker/image/sources.lock.json`, not from `docker build`. `docker/image/build.py`
+runs inside the digest-pinned builder recorded in the lock and works in two
+phases so the network boundary is real: `fetch` downloads and verifies every
+locked input, then `assemble` runs with the network off, installs the exact
+locked `.apk` closure into a chroot offline (apk verifies each package
+signature), installs the pinned Rust toolchain from a loopback dist server that
+serves only locked files, and builds the pinned musl trees and Linux 5.10 UAPI
+headers. It emits a normalized rootfs tar and a single-layer OCI layout whose
+manifest digest is the image ID, then loads it.
+
+Two cold builds from the same lock produce the same image ID;
+`./scripts/dev-x86_64.sh image-repro` builds twice into fresh output roots and
+fails unless the IDs match. Every byte comes from the lock: the Alpine
+minirootfs per stage, each stage's resolved `.apk` closure, the Rust channel
+manifest and component archives, the native musl oracle source, kache, and the
+Linux UAPI source. `docker/image/lock.py` regenerates the lock deliberately
+(network required) from `compat/upstreams.toml` and `rust-toolchain.toml`. Do
+not hand-edit the lock.
+
+`build.py` reads the lock and fetches through the pinned
+[buildlib](https://github.com/laputa-systems/buildlib) wheel. Each input lists
+two content-addressed mirrors before its upstream URL, because upstream Alpine
+drops superseded package revisions: the stuff OCI blob store
+(`https://oci-blobs.17166969.xyz/sha256/<hex>`) and the `core-image-inputs`
+release of joshuarli/crabc (assets named by hex digest). Releases in this
+repository are immutable, so a regenerated lock publishes a new release under a
+new tag and updates `MIRROR_TEMPLATES` in `lock.py` to match. Publish the inputs
+from `lock.py`'s cache before building from the new lock; a fetch that reaches
+the stuff mirror before the upload caches a 404 there (STUF-104), and buildlib
+then falls through to the next URL.
+
+```sh
+python3 -B docker/image/lock.py --cache .work/tmp/image-lock-cache
+python3 -B docker/image/mirror.py --cache .work/tmp/image-lock-cache --out .work/tmp/image-inputs
+stuff publish oci --layout .work/tmp/image-inputs --repository crabc/image-inputs --tag x86_64
+gh release create <tag> --repo joshuarli/crabc --draft --latest=false --title "Core image inputs" --notes ...
+gh release upload <tag> .work/tmp/image-inputs/blobs/sha256/* --repo joshuarli/crabc
+gh release edit <tag> --repo joshuarli/crabc --draft=false --latest=false
+```
