@@ -31,11 +31,18 @@ import owned_dynamic_qualification as qualification
 import installed_compiler_translation as translation_contract
 import owned_posix_product_evidence as products
 import run_qualification_manifest as native_qualification
+from native_arch import native_arch
 
+ARCH = native_arch()['arch'] if sys.platform.startswith('linux') else 'x86_64'
+MUSL_LOADER = f'lib/ld-musl-{ARCH}.so.1'
+CRABC_LOADER = f'/lib/ld-crabc-{ARCH}.so.1'
+ORACLE_PATHS = dict(native_qualification.MUSL_RUNTIME_PATHS)
+ORACLE_PATHS['compiler_wrapper'] = f'/usr/local/bin/crabc-{ARCH}-musl-gcc'
+ORACLE_PATHS['loader'] = f'/opt/musl-1.2.6/{MUSL_LOADER}'
 SCHEMA = "crabc.x86_64-owned-wordexp-products/v5"
 EXPECTED_INPUT_SCHEMA = "crabc.x86_64-owned-wordexp-expected-native-inputs/v1"
 SOURCE_MOUNT = "/workspace"
-TARGET = "x86_64-unknown-linux-musl"
+TARGET = f"{ARCH}-unknown-linux-musl"
 PROBE = "compat/x86_64/owned_wordexp_probe.c"
 POSIX_PROBE = "compat/x86_64/owned_wordexp_posix_probe.c"
 ENGINE_PROBE = "compat/x86_64/owned_wordexp_engine_probe.c"
@@ -66,6 +73,8 @@ SOURCES = (PROBE, POSIX_PROBE, ENGINE_PROBE, SOURCE_POLICY_PROBE, QUOTE_MATRIX_P
            "compat/x86_64/owned_dynamic_qualification.py", "compat/x86_64/run_qualification_manifest.py",
            "compat/x86_64/run_musl_oracle.sh", "compat/x86_64/musl_oracle.py",
            "compat/upstreams.toml", "docker/x86_64-musl-oracle-gcc")
+if ARCH == 'aarch64':
+    SOURCES = tuple('docker/aarch64-musl-oracle-gcc' if item == 'docker/x86_64-musl-oracle-gcc' else item for item in SOURCES)
 SHELL_CASES = ("normal", "missing", "inaccessible", "invalid")
 NULL_FIXTURE_NAME = "null"
 NULL_FIXTURE_PATH = "dev/null"
@@ -514,8 +523,8 @@ def _mounted_environment(root: Path, work: Path) -> dict[str, str]:
 
 
 def _native_requirements() -> None:
-    if os.uname().sysname != "Linux" or os.uname().machine not in {"x86_64", "amd64"}:
-        fail("requires native Linux/x86-64")
+    if os.uname().sysname != "Linux":
+        fail("requires native Linux")
     if os.geteuid() != 0:
         fail("requires root for private chroot execution roots")
     if ROOT != Path(SOURCE_MOUNT):
@@ -626,14 +635,14 @@ def _shell_dependencies(work: Path, shell: Path, ldd: str) -> tuple[list[tuple[s
     except (OSError, UnicodeDecodeError) as error:
         raise EvidenceError("controlled shell ldd output is not text") from error
     closure = _ldd_closure_candidates(text)
-    if closure != (Path("/lib/ld-musl-x86_64.so.1"),):
+    if closure != (Path('/') / MUSL_LOADER,):
         fail("controlled shell ldd closure differs from the one pinned loader fixture")
     # ``ldd`` establishes the shell's required in-root pathname. The pinned
     # qualification loader supplies those bytes, so the fixture never imports
     # Alpine's bootstrap loader just because it ran the observation command.
-    loader = _physical(Path(os.path.realpath(native_qualification.MUSL_RUNTIME_PATHS["loader"])),
+    loader = _physical(Path(os.path.realpath(ORACLE_PATHS["loader"])),
                        "pinned musl shell loader", directory=False)
-    return [("lib/ld-musl-x86_64.so.1", loader)], record
+    return [(MUSL_LOADER, loader)], record
 
 
 def _prepare_fixture_source(work: Path, ldd: str) -> tuple[Path, dict[str, str], dict[str, str], dict[str, Any], dict[str, Any], dict[str, Any]]:
@@ -739,7 +748,7 @@ def _installed_tool_roster(dynamic: Path, static: Path | None) -> dict[str, dict
         "dynamic-driver": _tool_identity(dynamic / "bin/crabc-cc-dynamic", "installed dynamic driver"),
         "compiler": _tool_identity(compiler, "pinned source compiler"),
         "linker": _tool_identity(linker, "installed linker"),
-        "oracle-compiler": _tool_identity(Path("/usr/local/bin/crabc-x86_64-musl-gcc"), "pinned musl oracle compiler"),
+        "oracle-compiler": _tool_identity(Path(ORACLE_PATHS['compiler_wrapper']), "pinned musl oracle compiler"),
         "chroot": _tool_identity(Path("/usr/sbin/chroot"), "chroot"),
         "timeout": _tool_identity(Path("/usr/bin/timeout"), "timeout"),
         "ldd": _tool_identity(Path("/usr/bin/ldd"), "ldd"),
@@ -799,7 +808,7 @@ def _expected_oracle_identity(oracle: Mapping[str, Any]) -> dict[str, Any]:
     oracle = _exact_dict(oracle, {"qualification", "loader", "static_libc"}, "wordexp oracle input")
     qualification_input = _qualification_identity(oracle["qualification"], "wordexp pinned oracle identity")
     loader = _exact_dict(oracle["loader"], {"source_path", "identity"}, "wordexp pinned musl loader")
-    if loader["source_path"] != native_qualification.MUSL_RUNTIME_PATHS["loader"]:
+    if loader["source_path"] != ORACLE_PATHS["loader"]:
         fail("wordexp pinned musl loader source path differs")
     _validate_tool_record(loader["identity"], "wordexp pinned musl loader identity")
     static_libc = _exact_dict(oracle["static_libc"], {"native", "retained"}, "wordexp static oracle libc")
@@ -830,7 +839,7 @@ def validate_expected_native_input(value: object, tools: Mapping[str, Any], orac
                                   "wordexp expected native oracle")
     _qualification_identity(expected_oracle["qualification"], "wordexp expected pinned oracle identity")
     loader = _exact_dict(expected_oracle["loader"], {"source_path", "identity"}, "wordexp expected pinned loader")
-    if loader["source_path"] != native_qualification.MUSL_RUNTIME_PATHS["loader"]:
+    if loader["source_path"] != ORACLE_PATHS["loader"]:
         fail("wordexp expected pinned loader source path differs")
     _validate_tool_record(loader["identity"], "wordexp expected pinned loader identity")
     _validate_tool_record(expected_oracle["static_libc"], "wordexp expected static oracle libc")
@@ -878,7 +887,11 @@ def _link_validate(root: Path, work: Path, product: Path, workload: Path, execut
                    linkage: str, label: str) -> dict[str, Any]:
     receipt = Path(str(executable) + ".crabc-link.json")
     try:
-        validated = products.validate_link(product, workload, executable, receipt, linkage)
+        if ARCH == 'aarch64':
+            import owned_crypt_profile
+            validated = owned_crypt_profile.aarch64_link_identity(root, product, workload, executable, receipt, linkage, relative_output=False)
+        else:
+            validated = products.validate_link(product, workload, executable, receipt, linkage)
     except products.ProductEvidenceError as error:
         raise EvidenceError(f"{label} installed link validation failed: {error}") from error
     path = work / "links" / f"{label}.validated.json"
@@ -1046,7 +1059,7 @@ def _run_wordexp_case(work: Path, root: Path, *, label: str, mode: str, case: st
     for alias_name, alias_path in tuple(product_aliases.items()):
         if alias_path in replaced_aliases:
             del product_aliases[alias_name]
-    if replaced_aliases and set(replaced_aliases) != {"lib/ld-musl-x86_64.so.1"}:
+    if replaced_aliases and set(replaced_aliases) != {MUSL_LOADER}:
         fail("external shell fixture replaced an unexpected product alias")
     execution_record = record_execution_root(
         execution, product_files=product_files, product_aliases=product_aliases,
@@ -1056,7 +1069,7 @@ def _run_wordexp_case(work: Path, root: Path, *, label: str, mode: str, case: st
     def invocation(program: str, direct: bool) -> list[str]:
         prefix = ["/usr/bin/timeout", "20", "/usr/sbin/chroot", str(execution)]
         if direct:
-            prefix += ["/lib/ld-crabc-x86_64.so.1", f"/{program}"]
+            prefix += [CRABC_LOADER, f"/{program}"]
         else:
             prefix += [f"/{program}"]
         return prefix + list(arguments)
@@ -1093,18 +1106,46 @@ def _validate_header_trace(root: Path, trace: Path, dynamic: Path) -> dict[str, 
 def _capture_oracle_inputs(work: Path) -> dict[str, Any]:
     """Capture the shared independently pinned musl oracle before linking."""
     try:
-        qualified = qualification.capture_oracle(work)
-        qualification.require_live_oracle(work, qualified)
+        if ARCH == 'aarch64':
+            import owned_libc_test
+            owned_libc_test.pinned_musl_identity()
+            paths = dict(qualification.ORACLE_FILES)
+            paths['compiler_wrapper'] = Path(ORACLE_PATHS['compiler_wrapper'])
+            destination = work / 'qualification-oracle'
+            destination.mkdir()
+            for name, path in paths.items():
+                _copy_regular(path, destination / name, 'pinned oracle ' + name)
+            files = {name: _sha(destination / name) for name in paths}
+            qualified = {'version': 'musl-1.2.6', 'runtime_sha256': files['runtime'],
+                         'compiler_wrapper_sha256': files['compiler_wrapper'],
+                         'pins_sha256': _sha(ROOT / 'compat/upstreams.toml'), 'files': files}
+            _require_live_oracle(work, qualified)
+        else:
+            qualified = qualification.capture_oracle(work)
+            qualification.require_live_oracle(work, qualified)
     except qualification.QualificationError as error:
         raise EvidenceError(f"pinned musl qualification input is unavailable: {error}") from error
     source = _physical(Path("/opt/musl-1.2.6/lib/libc.a"), "pinned musl static libc", directory=False)
-    loader_path = Path(native_qualification.MUSL_RUNTIME_PATHS["loader"])
+    loader_path = Path(ORACLE_PATHS["loader"])
     loader = {"source_path": str(loader_path), "identity": _tool_identity(loader_path, "pinned musl loader")}
     retained = work / "pinned-musl-static-libc.a"
     _copy_regular(source, retained, "pinned musl static libc")
     return {"qualification": qualified, "loader": loader,
             "static_libc": {"native": _tool_identity(source, "pinned musl static libc"),
                             "retained": _checkout_identity(ROOT, retained, "retained pinned musl static libc")}}
+
+
+def _require_live_oracle(work: Path, oracle: dict) -> None:
+    if ARCH == 'x86_64':
+        qualification.require_live_oracle(work, oracle)
+        return
+    import owned_libc_test
+    owned_libc_test.pinned_musl_identity()
+    _validate_retained_oracle(ROOT, work, oracle)
+    paths = dict(qualification.ORACLE_FILES)
+    paths['compiler_wrapper'] = Path(ORACLE_PATHS['compiler_wrapper'])
+    if {name: _sha(path) for name, path in paths.items()} != oracle['files']:
+        fail('live pinned oracle differs from retained inputs')
 
 
 def _publish_report(report_path: Path, report: dict, expected_native_inputs: dict) -> None:
@@ -1193,12 +1234,12 @@ def collect(dynamic: Path | None, static: Path | None) -> Path:
                                                   fixture_source=fixture_source, fixture_files=fixture_files,
                                                   fixture_devices=fixture_devices)
         try:
-            qualification.require_live_oracle(work, oracle_inputs["qualification"])
+            _require_live_oracle(work, oracle_inputs["qualification"])
         except qualification.QualificationError as error:
             raise EvidenceError(f"pinned musl oracle changed during collection: {error}") from error
         if _tool_identity(Path("/opt/musl-1.2.6/lib/libc.a"), "post-run pinned musl static libc") != oracle_inputs["static_libc"]["native"]:
             fail("pinned musl static libc changed during collection")
-        if _tool_identity(Path(native_qualification.MUSL_RUNTIME_PATHS["loader"]), "post-run pinned musl loader") != oracle_inputs["loader"]["identity"]:
+        if _tool_identity(Path(ORACLE_PATHS["loader"]), "post-run pinned musl loader") != oracle_inputs["loader"]["identity"]:
             fail("pinned musl loader changed during collection")
         after = _input_seal(ROOT, dynamic, static, _installed_tool_roster(dynamic, static), oracle_inputs,
                             _fixture_record(ROOT, fixture_source, fixture_files, fixture_devices, fixture_records,
@@ -1234,12 +1275,12 @@ def capture_expected_native_inputs(dynamic: Path, static: Path | None) -> Path:
         oracle = _capture_oracle_inputs(work)
         expected = expected_native_input_seal(tools, oracle)
         try:
-            qualification.require_live_oracle(work, oracle["qualification"])
+            _require_live_oracle(work, oracle["qualification"])
         except qualification.QualificationError as error:
             raise EvidenceError(f"pinned musl oracle changed during expected input capture: {error}") from error
         if _tool_identity(Path("/opt/musl-1.2.6/lib/libc.a"), "post-capture pinned musl static libc") != oracle["static_libc"]["native"]:
             fail("pinned musl static libc changed during expected input capture")
-        if _tool_identity(Path(native_qualification.MUSL_RUNTIME_PATHS["loader"]), "post-capture pinned musl loader") != oracle["loader"]["identity"]:
+        if _tool_identity(Path(ORACLE_PATHS["loader"]), "post-capture pinned musl loader") != oracle["loader"]["identity"]:
             fail("pinned musl loader changed during expected input capture")
         if expected != expected_native_input_seal(_installed_tool_roster(dynamic, static), oracle):
             fail("native tool or oracle input changed during expected input capture")
@@ -1271,7 +1312,7 @@ def _validate_retained_oracle(root: Path, work: Path, value: object) -> dict[str
     oracle = _qualification_identity(value, "wordexp retained pinned oracle")
     files = oracle["files"]
     pins_path = _physical(root / "compat/upstreams.toml", "wordexp caller upstream pins", directory=False)
-    wrapper_path = _physical(root / "docker/x86_64-musl-oracle-gcc", "wordexp caller oracle wrapper", directory=False)
+    wrapper_path = _physical(root / f"docker/{ARCH}-musl-oracle-gcc", "wordexp caller oracle wrapper", directory=False)
     if oracle["pins_sha256"] != _sha(pins_path):
         fail("wordexp retained pinned oracle pin identity differs")
     directory = _physical(work / "qualification-oracle", "wordexp retained pinned oracle directory", directory=True)
@@ -1290,7 +1331,7 @@ def _validate_retained_oracle(root: Path, work: Path, value: object) -> dict[str
         raise EvidenceError("wordexp caller upstream pins are malformed") from error
     expected_manifest = ("format=crabc-pinned-musl-oracle-v1\n"
                          f"version={pins['version']}\nsource_sha256={pins['sha256']}\n"
-                         f"fallback_revision={pins['fallback_revision']}\narchitecture=x86_64\n")
+                         f"fallback_revision={pins['fallback_revision']}\narchitecture={ARCH}\n")
     if (directory / "source_manifest").read_text(encoding="utf-8") != expected_manifest:
         fail("wordexp retained oracle source manifest differs")
     if (directory / "specs_manifest").read_text(encoding="utf-8") != f"{files['specs']}  /opt/musl-1.2.6/lib/musl-gcc.specs\n":
@@ -1374,10 +1415,10 @@ def _fixture_from_seal(root: Path, work: Path, value: object, tools: Mapping[str
         fail("wordexp retained fixture shell differs from its sealed source tool")
     loader_record = _exact_dict(oracle["loader"], {"source_path", "identity"}, "wordexp pinned musl loader")
     loader = _validate_tool_record(loader_record["identity"], "wordexp pinned musl loader identity")
-    expected_loader = Path(native_qualification.MUSL_RUNTIME_PATHS["loader"])
+    expected_loader = Path(ORACLE_PATHS["loader"])
     if loader_record["source_path"] != str(expected_loader):
         fail("wordexp retained fixture loader source path differs")
-    if dependencies != ["dependency:0"] or paths["dependency:0"] != "lib/ld-musl-x86_64.so.1":
+    if dependencies != ["dependency:0"] or paths["dependency:0"] != MUSL_LOADER:
         fail("wordexp retained fixture loader closure differs")
     dependency = files["dependency:0"]
     if dependency["sha256"] != loader["sha256"] or dependency["mode"] != loader["mode"]:
@@ -1434,13 +1475,13 @@ def _validate_input_seal(root: Path, work: Path, value: object) -> tuple[Path, P
     oracle = _exact_dict(value["oracle"], {"qualification", "loader", "static_libc"}, "wordexp pinned oracle input")
     _validate_retained_oracle(root, work, oracle["qualification"])
     oracle_compiler = tools["oracle-compiler"]
-    expected_wrapper = native_qualification.MUSL_RUNTIME_PATHS["compiler_wrapper"]
+    expected_wrapper = ORACLE_PATHS["compiler_wrapper"]
     if oracle_compiler["path"] != expected_wrapper or oracle_compiler["sha256"] != oracle["qualification"]["compiler_wrapper_sha256"]:
         fail("wordexp oracle compiler differs from the independently pinned wrapper")
     loader_record = _exact_dict(oracle["loader"], {"source_path", "identity"}, "wordexp pinned musl loader")
     loader = _validate_tool_record(loader_record["identity"], "wordexp pinned musl loader identity")
-    if (loader_record["source_path"] != native_qualification.MUSL_RUNTIME_PATHS["loader"]
-            or loader["path"] != native_qualification.MUSL_RUNTIME_PATHS["libc"]
+    if (loader_record["source_path"] != ORACLE_PATHS["loader"]
+            or loader["path"] != ORACLE_PATHS["libc"]
             or loader["sha256"] != oracle["qualification"]["runtime_sha256"]):
         fail("wordexp pinned loader differs from the qualified musl runtime")
     static_libc = _exact_dict(oracle["static_libc"], {"native", "retained"}, "wordexp static oracle libc")
@@ -1470,15 +1511,16 @@ def _expected_execution_maps(dynamic: Path | None, fixture_paths: Mapping[str, s
                          **{f"product:{name}": name for name in source_product_files
                             if name != "share/crabc/manifest.json"}}
         product_aliases = {f"product:{name}": name for name in source_product_aliases}
-        expected_override = ["lib/ld-musl-x86_64.so.1"]
+        expected_override = [MUSL_LOADER] if MUSL_LOADER in source_product_aliases else []
         if overrides != expected_override:
             fail("wordexp dynamic external alias override differs")
-        for name, relative in tuple(product_aliases.items()):
-            if relative == expected_override[0]:
-                del product_aliases[name]
-                break
-        else:
-            fail("wordexp dynamic product has no expected shell-loader alias")
+        if expected_override:
+            for name, relative in tuple(product_aliases.items()):
+                if relative == expected_override[0]:
+                    del product_aliases[name]
+                    break
+            else:
+                fail("wordexp dynamic product has no expected shell-loader alias")
     elif overrides != [] or source_product_files or source_product_aliases:
         fail("wordexp static execution has dynamic product inputs")
     if dict(fixture_devices) != {NULL_FIXTURE_NAME: NULL_FIXTURE_PATH}:
@@ -1630,7 +1672,11 @@ def _validate_report(root: Path, report_path: Path, expected_native_inputs: obje
             actual_linker = receipt_value.get("resolved_linker")
             if item["linker"] != sealed_linker or actual_linker != sealed_linker:
                 fail("wordexp retained link selected an unsealed linker")
-            observed = products.validate_retained_link(root, SOURCE_MOUNT, product, workload, executable, receipt, linkage, actual_linker)
+            if ARCH == 'aarch64':
+                import owned_crypt_profile
+                observed = owned_crypt_profile.aarch64_link_identity(root, product, workload, executable, receipt, linkage, relative_output=False)
+            else:
+                observed = products.validate_retained_link(root, SOURCE_MOUNT, product, workload, executable, receipt, linkage, actual_linker)
         except (products.ProductEvidenceError, OSError, UnicodeDecodeError, json.JSONDecodeError) as error:
             raise EvidenceError(f"wordexp retained {name} link is invalid: {error}") from error
         try:
@@ -1682,7 +1728,7 @@ def _validate_report(root: Path, report_path: Path, expected_native_inputs: obje
             program = "/" + MODE_SPECS[mode][2]
             expected_candidate = ["/usr/bin/timeout", "20", "/usr/sbin/chroot", mounted_execution]
             if mode.endswith("-direct"):
-                expected_candidate += ["/lib/ld-crabc-x86_64.so.1", program]
+                expected_candidate += [CRABC_LOADER, program]
             else:
                 expected_candidate += [program]
             expected_candidate += suffix
@@ -1752,7 +1798,4 @@ def main() -> int:
 
 
 if __name__ == "__main__":
-    from native_arch import native_arch
-    if native_arch()["arch"] != "x86_64":
-        raise SystemExit("owned_wordexp_evidence: x86-64 receipt or ELF contract is unavailable on aarch64")
     raise SystemExit(main())
