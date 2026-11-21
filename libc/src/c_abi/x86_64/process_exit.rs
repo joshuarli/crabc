@@ -23,8 +23,46 @@
 
 use core::ffi::{c_int, c_void};
 use core::ptr::{addr_of_mut, null_mut};
-#[cfg(crabc_x86_owned_runtime)]
 use core::sync::atomic::{AtomicI32, Ordering};
+
+static EXIT_OWNER: AtomicI32 = AtomicI32::new(0);
+
+pub(super) fn enter_exit_gate() {
+    let tid: i64;
+    // SAFETY: gettid takes no arguments and returns the current Linux task ID.
+    unsafe {
+        #[cfg(target_arch = "x86_64")]
+        core::arch::asm!("syscall", inlateout("rax") 186_i64 => tid, lateout("rcx") _, lateout("r11") _, options(nostack));
+        #[cfg(target_arch = "aarch64")]
+        core::arch::asm!("svc 0", in("x8") 178_i64, lateout("x0") tid, options(nostack));
+    }
+    if tid <= 0 {
+        crash_exit();
+    }
+    match EXIT_OWNER.compare_exchange(0, tid as i32, Ordering::SeqCst, Ordering::SeqCst) {
+        Ok(_) => (),
+        Err(owner) if owner == tid as i32 => crash_exit(),
+        Err(_) => loop {
+            // SAFETY: pause waits for a signal and takes no arguments.
+            unsafe {
+                #[cfg(target_arch = "x86_64")]
+                core::arch::asm!("syscall", inlateout("rax") 34_i64 => _, lateout("rcx") _, lateout("r11") _, options(nostack));
+                #[cfg(target_arch = "aarch64")]
+                core::arch::asm!("svc 0", in("x8") 73_i64, inlateout("x0") 0_i64 => _, in("x1") 0_i64, in("x2") 0_i64, in("x3") 0_i64, in("x4") 0_i64, options(nostack));
+            }
+        },
+    }
+}
+
+fn crash_exit() -> ! {
+    // SAFETY: musl a_crash deliberately terminates recursive exit by signal.
+    unsafe {
+        #[cfg(target_arch = "x86_64")]
+        core::arch::asm!("hlt", options(noreturn));
+        #[cfg(target_arch = "aarch64")]
+        core::arch::asm!("mov x16, #0", "strb wzr, [x16]", "brk #0x3e8", options(noreturn));
+    }
+}
 
 // musl atexit.c `static volatile int lock[1]`, which fork reaches through
 // the weak `__atexit_lockptr` so that linking fork never links atexit.o. The

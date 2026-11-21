@@ -34,8 +34,7 @@
 //! It is not a general x86 libc startup implementation. In particular,
 //! `rtld_fini` is rejected because this static-only leaf has no loaded-object
 //! graph, `__cxa_finalize` is intentionally a no-op like musl's compatibility
-//! entry point, and the fixed registry neither promises concurrent
-//! registration nor reentrant-exit semantics.
+//! entry point, and the fixture registry does not promise concurrent registration.
 
 #[cfg(not(all(target_os = "linux", any(target_arch = "x86_64", target_arch = "aarch64"), target_endian = "little")))]
 compile_error!("x86 static startup requires little-endian Linux/x86-64");
@@ -119,14 +118,18 @@ static_archive_member! { exit_source {
     /// The owned product follows musl `exit`: handlers, then ELF finalizers,
     /// then buffered stdio, then `_Exit`. Never inlined, so that
     /// `__libc_start_main` reaches an application's own `exit` as musl's does.
+    ///
+    /// # Safety
+    /// Registered callbacks and their arguments must remain valid through dispatch.
+    /// Recursive exit terminates by signal; concurrent callers wait for termination.
     #[inline(never)]
     #[no_mangle]
     pub unsafe extern "C" fn exit(status: c_int) -> ! {
+        process_exit::enter_exit_gate();
         unsafe { __funcs_on_exit() };
         #[cfg(crabc_x86_owned_runtime)]
         {
-            // SAFETY: ordinary exit is not concurrent or reentrant here (see
-            // __funcs_on_exit); take the callback so it runs at most once.
+            // SAFETY: the exit gate grants one thread exclusive finalization ownership.
             let fini = unsafe { core::ptr::replace(core::ptr::addr_of_mut!(EXECUTABLE_FINI), None) };
             if let Some(fini) = fini { unsafe { fini() }; }
             unsafe { __stdio_exit() };

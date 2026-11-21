@@ -13,8 +13,6 @@
 //! success marker participates in this runtime. The shared pthread owner also
 //! enters this exit path after the unique final-task transition, preserving
 //! cleanup/TSD ordering and loader TLS lifetime when main exits first.
-//! Concurrent registration and recursive ordinary exit remain outside this
-//! startup owner's caller contract.
 
 use core::ffi::{c_char, c_int};
 use core::sync::atomic::{AtomicU8, Ordering};
@@ -27,7 +25,6 @@ const AT_RANDOM: usize = 25;
 const VACANT: u8 = 0;
 const STARTING: u8 = 1;
 const READY: u8 = 2;
-const EXITING: u8 = 3;
 
 type MainFunction = unsafe extern "C" fn(c_int, *const *const c_char, *const *const c_char) -> c_int;
 type LifecycleFunction = unsafe extern "C" fn();
@@ -217,16 +214,17 @@ pub unsafe extern "C" fn __libc_start_main(
 ///
 /// # Safety
 /// The selected dynamic startup must have reached READY, and registrations
-/// and callbacks must remain valid. Callers must serialize registration/exit;
-/// concurrent and recursive exit are not admitted lifecycle operations here.
+/// and callbacks must remain valid. Recursive exit terminates by signal; a
+/// concurrent exit caller waits while the owner completes termination.
 #[no_mangle]
 pub unsafe extern "C" fn exit(status: c_int) -> ! {
-    if PROCESS_STATE.compare_exchange(READY, EXITING, Ordering::AcqRel, Ordering::Acquire).is_err() {
-        immediate_termination::_Exit(status);
-    }
+    process_exit::enter_exit_gate();
+    let _ = PROCESS_STATE.load(Ordering::Acquire);
     unsafe { process_exit::__funcs_on_exit() };
+    // SAFETY: startup published the callbacks and the gate grants exclusive finalization.
     let executable = unsafe { core::ptr::replace(core::ptr::addr_of_mut!(EXECUTABLE_FINI), None) };
     if let Some(callback) = executable { unsafe { callback() }; }
+    // SAFETY: the same exit owner exclusively takes the loader callback.
     let loader = unsafe { core::ptr::replace(core::ptr::addr_of_mut!(LOADER_FINI), None) };
     if let Some(callback) = loader { unsafe { callback() }; }
     #[cfg(crabc_x86_dynamic_runtime)]

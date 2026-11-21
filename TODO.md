@@ -29,15 +29,6 @@ Next: 21
 - **Effort:** L
 - **Design:** docs/rfc/CRAB-8-linux-aarch64-feature-completion.md
 
-### CRAB-17 · P2 · Concurrent or recursive exit runs handlers and finalizers twice or truncates output
-
-- **Area:** Process exit lifecycle
-- **Where:** libc/src/c_abi/x86_64/static_startup.rs:124-134; libc/src/c_abi/x86_64/dynamic_main_thread_runtime_v1_lifecycle.rs:209-228; libc/src/c_abi/x86_64/process_exit.rs:215-243
-- **Problem:** musl 1.2.6 exit (oracle src/exit/exit.c) takes a static exit_lock CAS on the caller's tid: a recursive exit crashes and a second thread pauses forever. crabc's static exit has no gate, so two threads both drain __funcs_on_exit (which drops its lock around callbacks), both take EXECUTABLE_FINI through a non-atomic ptr::replace on a static mut (a Rust data race; C++ destructors can run twice), and either can _exit while the other is mid-handler. The dynamic exit's failed READY->EXITING CAS calls _Exit(status) immediately, killing the first exiting thread mid-flush and losing buffered stdout with the second caller's status. Reachable whenever a worker thread calls exit while main returns, or an atexit handler calls exit.
-- **Recommendation:** Add one exit gate shared by both compositions, matching musl: CAS a static owner tid before __funcs_on_exit, crash on recursion, pause forever on contention; remove the dynamic _Exit fallback. Add a native differential case with two threads exiting while stdout is buffered.
-- **Fix with:** lifecycle-concurrency
-- **Effort:** S
-
 ### CRAB-11 · P3 · pthread_getspecific takes a process-wide spin lock
 
 - **Area:** Thread-specific data
