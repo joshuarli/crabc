@@ -17,9 +17,9 @@ for mode in static static-pie; do
     cmp "$work/oracle.stdout" "$work/$mode.stdout"
 done
 for mode in pie non-pie; do
-    "$work/dynamic-product/bin/crabc-cc-dynamic" "--dynamic-$mode" "$work/probe.o" -o "$work/consumer"
+    "$work/dynamic-product/bin/crabc-cc-dynamic" "--dynamic-$mode" "$work/probe.o" -o "$work/consumer-$mode"
     cp -a "$work/dynamic-product" "$work/root-$mode"
-    cp "$work/consumer" "$work/root-$mode/consumer"
+    cp "$work/consumer-$mode" "$work/root-$mode/consumer"
     for entry in kernel direct; do
         if [ "$entry" = kernel ]; then
             timeout 60 chroot "$work/root-$mode" /consumer | tee "$work/$mode-$entry.stdout"
