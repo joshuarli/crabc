@@ -25,7 +25,11 @@ extern uintptr_t __stack_chk_guard;
 static void emit(char c) { if (write(1,&c,1)!=1) _Exit(90); }
 #ifdef CRABC_HARDENED_PROBE
 static int stack_is_nonexecutable(void) {
+    #if defined(__aarch64__)
+    volatile unsigned char code[]={0xc0,0x03,0x5f,0xd6};
+#else
     volatile unsigned char code[]={0xc3};
+#endif
     pid_t child=fork();
     if (!child) { ((void (*)(void))(uintptr_t)code)(); _Exit(0); }
     int status=0;
@@ -38,7 +42,13 @@ static void state(void) {
     if (!random || !getenv("CRABC_STARTUP") || strcmp(getenv("CRABC_STARTUP"),"yes")) _Exit(91);
     for (unsigned i=0;i<sizeof expected;i++) expected|=(uintptr_t)random[i]<<(8*i);
     expected&=~(uintptr_t)0xff00;
+#if defined(__aarch64__)
+    uintptr_t tp;
+    __asm__ volatile("mrs %0,tpidr_el0":"=r"(tp));
+    guard=*(const uintptr_t *)(tp-16);
+#else
     __asm__ volatile("mov %%fs:40,%0":"=r"(guard));
+#endif
     if (!guard || guard!=expected || __stack_chk_guard!=expected || initial!=17 || zero!=0 || errno!=0) _Exit(92);
 #ifdef CRABC_HARDENED_PROBE
     if (!stack_is_nonexecutable()) _Exit(114);
@@ -70,8 +80,13 @@ __attribute__((used,noinline)) static void legacy_fini(void) {
  * malformed in-memory main ELF. It deliberately omits only process-startup
  * sections; installed probes never define this harness-only macro. */
 #ifndef CRABC_STARTUP_PROBE_WIRE_HARNESS
+#if defined(__aarch64__)
+__asm__(".pushsection .init,\"ax\",%progbits\nbl legacy_init\n.popsection\n"
+        ".pushsection .fini,\"ax\",%progbits\nbl legacy_fini\n.popsection\n");
+#else
 __asm__(".pushsection .init,\"ax\",@progbits\ncall legacy_init\n.popsection\n"
         ".pushsection .fini,\"ax\",@progbits\ncall legacy_fini\n.popsection\n");
+#endif
 #endif
 static void handler(void) { if (phase!=3) _Exit(98); phase=4; emit('A'); }
 
@@ -204,7 +219,12 @@ static int wires(struct dl_phdr_info *info,size_t size,void *opaque) {
         int c=!strcmp(name,"__crabc_x86_64_loader_conventional_startup_v1");
         int d=main_image && !strcmp(name,"__crabc_x86_64_loader_tls_runtime_v1");
         if (!h && !c && !d) continue;
-        if (ELF64_R_TYPE(rela[n].r_info)!=R_X86_64_GLOB_DAT || rela[n].r_addend
+#if defined(__aarch64__)
+        const unsigned glob_dat=R_AARCH64_GLOB_DAT;
+#else
+        const unsigned glob_dat=R_X86_64_GLOB_DAT;
+#endif
+        if (ELF64_R_TYPE(rela[n].r_info)!=glob_dat || rela[n].r_addend
             || syms[si].st_shndx!=SHN_UNDEF) _Exit(101);
         uintptr_t value=*(const uintptr_t *)(info->dlpi_addr+rela[n].r_offset);
         if (h) {
@@ -239,8 +259,13 @@ static void observe(const char *mode) {
             || ((const uint32_t *)q)[3]!=32 || !q[2] || !q[3]) _Exit(106);
         const struct loader_tls_descriptor *d=(const struct loader_tls_descriptor *)s.descriptor;
         uintptr_t tp,dtv;
+#if defined(__aarch64__)
+        __asm__ volatile("mrs %0,tpidr_el0":"=r"(tp));
+        dtv=*(const uintptr_t *)(tp-8);
+#else
         __asm__ volatile("mov %%fs:0,%0":"=r"(tp));
         __asm__ volatile("mov %%fs:8,%0":"=r"(dtv));
+#endif
         if ((uintptr_t)d%_Alignof(struct loader_tls_descriptor)
             || d->magic!=UINT64_C(0x43524142435f5451) || d->version!=1 || d->abi_size!=72
             || d->process_mode!=2 || d->owner!=1 || atomic_load_explicit(&d->state,memory_order_acquire)!=2
@@ -255,8 +280,13 @@ static void observe(const char *mode) {
     } else if (!strcmp(mode,"conventional")) {
         if (s.handoffs || s.conventional || s.descriptors) _Exit(108);
         uintptr_t tp,dtv;
+#if defined(__aarch64__)
+        __asm__ volatile("mrs %0,tpidr_el0":"=r"(tp));
+        dtv=*(const uintptr_t *)(tp-8);
+#else
         __asm__ volatile("mov %%fs:0,%0":"=r"(tp));
         __asm__ volatile("mov %%fs:8,%0":"=r"(dtv));
+#endif
         if (!conventional_record_valid(conventional_record(),tp,dtv,0)) _Exit(117);
         emit('V');
     } else if (!strcmp(mode,"default")) {
