@@ -545,9 +545,16 @@ ownership boundary in `crabc-rs/src/process.rs`: parent-owned C-string
 and pointer preparation, `FdAction::{close, dup2}`, bounded `SpawnOptions`, a
 `CLOEXEC` error pipe relocated away from requested `dup2` targets, and the
 ownership-returning `Child::wait`. Its internal fork-equivalent clone exists
-only inside `PreparedExec::spawn`; it does not expose generic x86 `fork`,
-direct `exec`, `waitpid`, `waitid`, any-child selection, C process APIs or
-`errno` TLS. The
+only inside `PreparedExec::spawn`. On both x86-64 and AArch64 the facade
+exposes no generic `fork` and owns no atfork registry: `process::fork_raw` is
+the raw clone with no prepare/parent/child callbacks or runtime-state repair,
+public on AArch64 and private to prepared exec on x86-64. Process-global
+`pthread_atfork` state belongs to libc, so a caller needing fork callback
+ordering uses libc `fork`/`pthread_atfork`; a facade-local registry could not
+run C handlers on the facade fork, ran no facade handler from C `fork`, existed
+once per linked facade copy, and could deadlock on re-entrant registration.
+The facade also does not expose direct `exec`, `waitpid`, `waitid`, any-child
+selection, C process APIs or `errno` TLS. The
 native raw/pinned-musl child lifecycle evidence is a private parity slice, not
 public x86 platform support.
 

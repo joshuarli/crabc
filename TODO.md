@@ -38,15 +38,6 @@ Next: 22
 - **Fix with:** lifecycle-concurrency
 - **Effort:** M
 
-### CRAB-12 · P3 · crabc-rs owns a second process-global atfork registry
-
-- **Area:** Process-global state ownership
-- **Where:** crabc-rs/src/process.rs:1890-1924,1941-1965,1985-2069; docs/design/architecture.md:36
-- **Problem:** architecture.md says neither crabc-core nor crabc-rs may own libc or loader singleton state, but crabc-rs keeps its own static-mut atfork table and spin lock. C pthread_atfork handlers do not run on crabc_rs::process::fork and facade handlers do not run on C fork, each linked copy of crabc-rs has its own table, and a prepare callback that registers another handler spins forever on the non-reentrant lock.
-- **Recommendation:** Route facade atfork registration to libc's single registry through the existing RuntimeV1 bridge; otherwise document the split semantics and single-copy requirement in the public API and architecture.md.
-- **Fix with:** api-surface-and-module-boundaries
-- **Effort:** M
-
 ### CRAB-15 · P3 · Rebuilding the pinned images is not reproducible
 
 - **Area:** Build environment

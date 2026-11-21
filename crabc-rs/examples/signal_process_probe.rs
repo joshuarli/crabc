@@ -1,7 +1,8 @@
 //! Link-free assembly probe for the signal/process direct boundary.
 //!
-//! The archive makes the native Linux/AArch64 signal, fork, exec, wait, and
-//! atfork seams reachable without a public C ABI or TLS errno transition.
+//! The archive makes the native Linux/AArch64 signal, fork, exec, and wait
+//! seams reachable without a public C ABI or TLS errno transition. Fork here is
+//! the raw crabc-core clone; the facade owns no atfork registry.
 
 #![cfg_attr(not(feature = "std"), no_std)]
 

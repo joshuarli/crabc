@@ -2837,10 +2837,10 @@ kind = "semantic"
 symbols = ["__fork_handler", "__funcs_on_exit"]
 classification = "abi-only"
 status = "documented"
-why_no_native_operation = "These are C callback registries used by fork/exit internals; native process APIs must own their own lifecycle rather than expose libc callback lists."
+why_no_native_operation = "These are C callback registries used by fork/exit internals. The crabc-rs facade exposes no atfork registry and no generic fork on either architecture, so it cannot own this process-global libc lifecycle state; callers needing fork callback ordering use libc fork/pthread_atfork."
 reviewed = "rust-std"
 review_evidence = ["libc/src/pthread_atfork.rs", "libc/src/c_abi.rs"]
-rationale = "The private helper exports do not complete public fork or exit semantics."
+rationale = "The private helper exports do not complete public fork or exit semantics, and the facade deliberately defers this process-global registry to libc rather than duplicating it."
 
 [[capability]]
 id = "thread.pthread-c11"
