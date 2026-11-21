@@ -135,6 +135,17 @@ aarch64 run itself.
 
 ## C. Builders, scripts, Lua, corpus, CRT, unwinder
 
+Builder lane follow-up (incomplete): the shared UAPI inventory reader in
+`compat/x86_64/header_callable_inventory.py:330-350` requires the x86 marker
+and rejects the native AArch64 image's marker. It needs authenticated AArch64
+marker and header-manifest facts before the common installer can succeed.
+The loader inventory in `compat/x86_64/owned_loader_inventory.py:217-225`
+must also bind the AArch64 Cargo flags recorded by the producer. The static
+builder's shared archive classifier rejects the native compiler-rt members
+`7fe4ddd815fa1580-lse_*.o` and `e487abff90d50251-aarch64.o`; their provenance
+and exclusion classes need architecture-aware classification. These items
+remain open pending native validation and the outstanding builder audits.
+
 21. **`scripts/build_x86_64_owned_sysroot.py:1520-1585`** (static builder)
     - It skips: libc member classification and the required-symbol contract, the allocator hidden-symbol and lifecycle audit, CRT profile validation, the pinned UAPI header install (it copies `include/` raw instead), reproducible builtins, and the `allocator_backend`, `installed` and `sealed_static_driver` manifest fields.
     - Qualifying-path.
