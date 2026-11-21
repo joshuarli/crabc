@@ -3,11 +3,13 @@ set -euo pipefail
 ulimit -c 0
 readonly ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 eval "$(python3 -B "$ROOT/compat/x86_64/native_arch.py")"
+architecture_args=()
+[ "$arch" != aarch64 ] || architecture_args=(--architecture aarch64)
 readonly work="$(mktemp -d "$TMPDIR/owned-exit-gate.XXXXXX")"
 chmod a+rx "$work"
 printf 'owned exit gate evidence: %s\n' "$work"
-python3 -B "$ROOT/scripts/build_x86_64_owned_dynamic_sysroot.py" --output "$work/dynamic-product" >"$work/dynamic-build.json"
-python3 -B "$ROOT/scripts/build_x86_64_owned_sysroot.py" --output "$work/static-product" >"$work/static-build.json"
+python3 -B "$ROOT/scripts/build_x86_64_owned_dynamic_sysroot.py" "${architecture_args[@]}" --output "$work/dynamic-product" >"$work/dynamic-build.json"
+python3 -B "$ROOT/scripts/build_x86_64_owned_sysroot.py" "${architecture_args[@]}" --output "$work/static-product" >"$work/static-build.json"
 "$work/dynamic-product/bin/crabc-cc-dynamic" --dynamic-pie -std=c11 -fno-builtin -c "$ROOT/compat/x86_64/owned_exit_gate_probe.c" -o "$work/probe.o"
 "$oracle" -static -fno-pie -no-pie "$work/probe.o" -o "$work/oracle"
 timeout 60 "$work/oracle" | tee "$work/oracle.stdout"

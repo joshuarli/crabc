@@ -1,9 +1,11 @@
 #define _GNU_SOURCE
+#include <elf.h>
 #include <errno.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <sys/ptrace.h>
 #include <sys/types.h>
+#include <sys/uio.h>
 #include <sys/user.h>
 #include <sys/wait.h>
 #include <unistd.h>
@@ -27,8 +29,15 @@ int main(int argc, char **argv) {
     int status;
     if (waitpid(child, &status, 0) != child || !WIFSTOPPED(status)) return 1;
     struct user_regs_struct regs;
-    if (ptrace(PTRACE_GETREGS, child, 0, &regs)) { perror("ptrace registers"); return 1; }
+    struct iovec io = { &regs, sizeof regs };
+    if (ptrace(PTRACE_GETREGSET, child, (void *)NT_PRSTATUS, &io) || io.iov_len != sizeof regs) {
+        perror("ptrace registers"); return 1;
+    }
+#if defined(__aarch64__)
+    unsigned long p = regs.sp;
+#else
     unsigned long p = regs.rsp;
+#endif
     unsigned long count = read_word(child, p);
     p += (count + 2) * sizeof(long);
     while (read_word(child, p)) p += sizeof(long);
