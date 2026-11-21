@@ -683,7 +683,7 @@ class X86ParityLedgerTests(unittest.TestCase):
     def test_allocator_wrapper_stays_mixed_runtime_and_non_promoting(self) -> None:
         data = self.data()
         family = self.family(data, "libc.posix-runtime")
-        self.assertEqual(family["status"], "planned")
+        self.assertEqual(family["status"], "foundation-verified")
         artifacts = family["verified_artifact"]
         assert isinstance(artifacts, list)
         artifact = next(
@@ -779,7 +779,7 @@ class X86ParityLedgerTests(unittest.TestCase):
     def test_allocator_observability_is_exact_and_non_promoting(self) -> None:
         data = self.data()
         family = self.family(data, "libc.c-abi-compat")
-        self.assertEqual(family["status"], "planned")
+        self.assertEqual(family["status"], "foundation-verified")
         slices = family["verified_slice"]
         assert isinstance(slices, list)
         slice_entry = next(
@@ -829,7 +829,7 @@ class X86ParityLedgerTests(unittest.TestCase):
     def test_stack_check_failure_stays_a_private_terminal_archive_pair(self) -> None:
         data = self.data()
         family = self.family(data, "libc.c-abi-compat")
-        self.assertEqual(family["status"], "planned")
+        self.assertEqual(family["status"], "foundation-verified")
         artifacts = family["verified_artifact"]
         assert isinstance(artifacts, list)
         artifact = next(
@@ -3244,6 +3244,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         evidence = family["native_evidence"]
         assert isinstance(evidence, list) and isinstance(evidence[0], dict)
         evidence[0]["state"] = "verified"
+        evidence[0].pop("receipt", None)
         with self.assertRaisesRegex(ledger.LedgerError, "needs a family admission receipt"):
             ledger.require_posix_runtime_family_admission(family)
 
@@ -3284,7 +3285,7 @@ class X86ParityLedgerTests(unittest.TestCase):
     def test_math_log2_remains_a_closed_non_capability_artifact(self) -> None:
         data = self.data()
         text_math = self.family(data, "libc.text-math-locale-stdio")
-        self.assertEqual(text_math["status"], "planned")
+        self.assertEqual(text_math["status"], "foundation-verified")
         artifacts = text_math["verified_artifact"]
         assert isinstance(artifacts, list) and len(artifacts) == 77
         artifact = next(
@@ -3450,7 +3451,7 @@ class X86ParityLedgerTests(unittest.TestCase):
             {evidence["command"] for evidence in errno_tls["native_evidence"]},
         )
         posix_runtime = self.family(data, "libc.posix-runtime")
-        self.assertEqual(posix_runtime["status"], "planned")
+        self.assertEqual(posix_runtime["status"], "foundation-verified")
         headers_layouts = self.family(data, "libc.headers-layouts")
         self.assertIn(
             "./scripts/dev-x86_64.sh header-abi socket-messages",
@@ -6472,8 +6473,8 @@ class X86ParityLedgerTests(unittest.TestCase):
             "./scripts/dev-x86_64.sh libc-readiness-waits",
             {evidence["command"] for evidence in headers_layouts["native_evidence"]},
         )
-        self.assertEqual(self.family(data, "ldso.dynamic-runtime")["status"], "planned")
-        self.assertEqual(self.family(data, "sysroot.owned-artifact")["status"], "planned")
+        self.assertEqual(self.family(data, "ldso.dynamic-runtime")["status"], "foundation-verified")
+        self.assertEqual(self.family(data, "sysroot.owned-artifact")["status"], "foundation-verified")
         for capability in (
             "io.readiness-poll",
             "io.readiness-ppoll",
@@ -8341,7 +8342,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         self.assertIn("process.supplementary-groups", direct["capabilities"])
         self.assertNotIn("process.supplementary-groups", remaining["capabilities"])
         pthread_tls = self.family(data, "libc.pthread-tls")
-        self.assertEqual(pthread_tls["status"], "planned")
+        self.assertEqual(pthread_tls["status"], "foundation-verified")
         self.assertIn("libc/src/c_abi/x86_64/atomic.rs", pthread_tls["source_owners"])
         self.assertIn("libc/src/c_abi/x86_64/clone.rs", pthread_tls["source_owners"])
         self.assertIn(
@@ -8464,6 +8465,7 @@ class X86ParityLedgerTests(unittest.TestCase):
     def test_pthread_family_admission_keeps_leaf_view_non_promoting(self) -> None:
         data = self.data()
         family = self.family(data, "libc.pthread-tls")
+        family["status"] = "planned"
         planned = ledger.pthread_runtime_private_artifact_view(family, None)
         self.assertIs(planned, family)
         family["status"] = "foundation-verified"
@@ -8572,6 +8574,8 @@ class X86ParityLedgerTests(unittest.TestCase):
         data = self.data()
         resolver = self.family(data, "libc.resolver")
         posix = self.family(data, "libc.posix-runtime")
+        resolver["status"] = "planned"
+        resolver["native_evidence"][2].pop("receipt", None)
         self.assertIsNone(ledger.require_resolver_family_admission(resolver, posix, None))
         self.assertIs(ledger.resolver_private_artifact_view(resolver, None), resolver)
         attached = copy.deepcopy(resolver)
@@ -8653,6 +8657,8 @@ class X86ParityLedgerTests(unittest.TestCase):
         data = self.data()
         family = self.family(data, "libc.c-abi-compat")
         posix = self.family(data, "libc.posix-runtime")
+        family["status"] = "planned"
+        family["native_evidence"][0].pop("receipt", None)
         self.assertIsNone(ledger.require_c_abi_compat_family_admission(family, posix, None))
         attached = copy.deepcopy(family)
         attached["native_evidence"][0]["receipt"] = ".work/x86_64/c-abi-compat-family/assessment.json"
@@ -8969,8 +8975,11 @@ class X86ParityLedgerTests(unittest.TestCase):
     def test_stdio_installed_file_engine_slice_is_bound_to_the_engine_receipt(self) -> None:
         data = self.data()
         family = self.family(data, "libc.text-math-locale-stdio")
-        self.assertEqual(family["status"], "planned")
-        ledger.require_stdio_installed_file_engine_slice(family)
+        self.assertEqual(family["status"], "foundation-verified")
+        admission = {"source": "admitted"}
+        ledger.require_stdio_installed_file_engine_slice(
+            ledger.text_math_locale_stdio_private_artifact_view(family, admission)
+        )
 
         def changed(mutate) -> dict[str, object]:
             changed_data = self.data()
@@ -8981,7 +8990,7 @@ class X86ParityLedgerTests(unittest.TestCase):
                 if entry["id"] == "stdio.installed-file-engine"
             )
             mutate(selected)
-            return changed_family
+            return ledger.text_math_locale_stdio_private_artifact_view(changed_family, admission)
 
         cases = (
             (lambda entry: entry.__setitem__("capabilities", [*entry["capabilities"], "stdio.fopen64-alias"]),
