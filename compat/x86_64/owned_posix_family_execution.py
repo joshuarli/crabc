@@ -636,7 +636,7 @@ def revalidate_receipt(root: Path, path: Path) -> dict:
     path = physical(root, path)
     require(path.name == 'execution.json', 'expected execution.json receipt')
     observed = collect(root, path.parent)
-    require(same_json(read(path), observed), 'family execution receipt changed')
+    require(source_seal.same_evidence(read(path), observed), 'family execution receipt changed')
     return observed
 
 

@@ -858,7 +858,7 @@ def private_case_receipts(transaction: Path) -> list[dict[str, object]]:
             "source_before": source,
             "source_after": source,
         }
-        if any(record.get(name) != value for name, value in expected.items()):
+        if any(not source_seal.same_evidence(record.get(name), value) for name, value in expected.items()):
             raise QualificationRunError(f"private case receipt drifted: {case.identifier}")
         if set(record) != set(expected) | {
             "started_at_unix_ns",

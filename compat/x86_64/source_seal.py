@@ -25,6 +25,7 @@ import argparse
 import ast
 from dataclasses import dataclass
 import hashlib
+import json
 import os
 from pathlib import Path
 import re
@@ -235,6 +236,38 @@ def same_product(left: object, right: object) -> bool:
         return content if isinstance(content, str) and re.fullmatch(r"[0-9a-f]{64}", content) else None
 
     return digest(left) is not None and digest(left) == digest(right)
+
+
+def _is_seal(value: object) -> bool:
+    return (isinstance(value, Mapping) and isinstance(value.get("revision"), str)
+            and re.fullmatch(r"[0-9a-f]{40}|[0-9a-f]{64}", value["revision"]) is not None
+            and "content_sha256" in value)
+
+
+def _with_retained_revisions(retained: object, observed: object) -> object:
+    if isinstance(retained, Mapping) and isinstance(observed, Mapping):
+        if _is_seal(retained) and _is_seal(observed) and same_product(retained, observed):
+            observed = {**observed, "revision": retained["revision"]}
+        return {key: _with_retained_revisions(retained[key], value) if key in retained else value
+                for key, value in observed.items()}
+    if isinstance(retained, list) and isinstance(observed, (list, tuple)) and len(retained) == len(observed):
+        return [_with_retained_revisions(left, right) for left, right in zip(retained, observed)]
+    return observed
+
+
+def same_evidence(retained: object, observed: object) -> bool:
+    """Whether a retained JSON record equals its recollection at this checkout.
+
+    Values compare as JSON, including scalar types. Every source seal in the
+    recollection (a mapping with a commit `revision` and a `content_sha256`)
+    must name the same product as the seal at the same place in the retained
+    record and agree on every other field; only its revision may differ.
+    """
+
+    def text(value: object) -> str:
+        return json.dumps(value, sort_keys=True, allow_nan=False)
+
+    return text(retained) == text(_with_retained_revisions(retained, observed))
 
 
 # ---------------------------------------------------------------------------

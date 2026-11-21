@@ -697,8 +697,9 @@ def audit_supplied_planned_profile(*, product_root: Path, profile: str, output: 
             raw = output / name
             provider_require(raw.is_file() and hashlib.sha256(raw.read_bytes()).hexdigest() == record["sha256"],
                              f"planned raw artifact changed: {name}")
-        provider_require(json.loads((output / "inputs.json").read_text()) == {"source": source, "tools": tool_inputs,
-            "manifest_sha256": hashlib.sha256(manifest_path.read_bytes()).hexdigest(), "payload": payload},
+        provider_require(source_seal.same_evidence(json.loads((output / "inputs.json").read_text()), {
+            "source": source, "tools": tool_inputs,
+            "manifest_sha256": hashlib.sha256(manifest_path.read_bytes()).hexdigest(), "payload": payload}),
                          "planned binding product, compiler or include inputs changed")
         record = json.loads(link.read_text())
         product_evidence.validate_retained_link(ROOT, "/workspace", product_root, workload,

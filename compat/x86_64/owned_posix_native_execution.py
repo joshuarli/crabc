@@ -600,7 +600,7 @@ def validate_admission_receipt(root, path):
     path = family.physical(root, path)
     require(path.name == 'family-admission.json', 'expected family-admission.json receipt')
     observed = collect_admission(root, path.parent)
-    require(same_json(read(path), observed), 'POSIX family admission receipt changed')
+    require(source_seal.same_evidence(read(path), observed), 'POSIX family admission receipt changed')
     return observed
 
 
@@ -620,7 +620,7 @@ def collect_component(root, work, index, component, inputs, product, source_moun
         {'invocation.json', 'stdout', 'stderr', 'status', 'tmp'},
         {'invocation.json', 'stdout', 'stderr', 'status', 'tmp', 'receipt.json'}), 'component step roster differs')
     start = work / 'sequence' / f'{index:02d}-{component.id}.json'
-    require(same_json(read(start), sequence_record(index, component, predecessor, inputs)),
+    require(source_seal.same_evidence(read(start), sequence_record(index, component, predecessor, inputs)),
             'component sequence predecessor or inputs changed')
     expected_invocation = family.invocation(Path(source_mount),
         component_command(root, component, product, source_mount), family.case_environment(root, step, source_mount))
@@ -718,7 +718,7 @@ def _collect(root, work):
     for index, component in enumerate(COMPONENTS):
         observed = collect_component(root, work, index, component, inputs, product, request['source_mount'], predecessor)
         path = work / 'runs' / component.id / 'receipt.json'
-        require(same_json(read(path), observed), 'native component receipt changed: ' + component.id)
+        require(source_seal.same_evidence(read(path), observed), 'native component receipt changed: ' + component.id)
         components[component.id] = observed
         predecessor = family.file_identity(root, path)
     guard(root, inputs, product)
@@ -829,7 +829,7 @@ def validate_receipt(root, path):
     path = family.physical(root, path)
     require(path.name == 'native-execution.json', 'expected native-execution.json receipt')
     observed = collect(root, path.parent)
-    require(same_json(read(path), observed), 'native aggregate receipt changed')
+    require(source_seal.same_evidence(read(path), observed), 'native aggregate receipt changed')
     return observed
 
 
@@ -838,7 +838,7 @@ def validate_receipt_with_matrix(root, path):
     path = family.physical(root, path)
     require(path.name == 'native-execution.json', 'expected native-execution.json receipt')
     observed, matrix = _collect(root, path.parent)
-    require(same_json(read(path), observed), 'native aggregate receipt changed')
+    require(source_seal.same_evidence(read(path), observed), 'native aggregate receipt changed')
     return observed, matrix
 
 

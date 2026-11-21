@@ -751,7 +751,7 @@ def validate_assessment(root: Path, assessment_path: Path) -> dict[str, object]:
     request = _relative_file(root, request_record["path"], "resolver family assessment request", below_work=True)
     require(_identity(root, request) == request_record, "resolver family assessment request changed")
     reconstructed = collect(root, request.relative_to(root))
-    require(retained == reconstructed, "resolver family assessment does not reconstruct")
+    require(source_seal.same_evidence(retained, reconstructed), "resolver family assessment does not reconstruct")
     return reconstructed
 
 
@@ -946,7 +946,7 @@ def _validate_admission_cohort(root: Path, request: Path, components: Mapping[st
         rebound = _resolver_family_cohort_reader(root, cohort_paths, replays)
     except (OSError, ValueError, KeyError, TypeError, RuntimeError) as error:
         raise ResolverFamilyError(f"resolver family assessment cohort binding differs: {error}") from error
-    require(components["resolver-family-cohort"].get("result") == rebound,
+    require(source_seal.same_evidence(components["resolver-family-cohort"].get("result"), rebound),
             "resolver family assessment cohort binding differs")
     try:
         _validate_admission_sources(root, replays, rebound["source"])

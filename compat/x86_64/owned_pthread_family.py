@@ -596,7 +596,7 @@ def _require_prevalidated_trees_current(root: Path, baseline: _PrevalidatedPthre
                              baseline.dynamic_case_artifacts.case_identities)
             and case_artifacts.artifact_roots == baseline.dynamic_case_artifacts.artifact_roots,
             "pthread family dynamic case artifact roster changed during POSIX validation")
-    require(family.same_json(products.evidence["source"], baseline.source_identity),
+    require(family.source_seal.same_evidence(products.evidence["source"], baseline.source_identity),
             "pthread family source changed during POSIX validation")
     require(family.same_json(products.evidence["oracle"], baseline.oracle),
             "pthread family oracle changed during POSIX validation")
@@ -627,7 +627,7 @@ def _validated_phase_inputs(root: Path, request: object,
     matrix_path, validated_matrix = validate_request(root, request)
     matrix = _require_matrix_contract(validated_matrix)
     current_matrix = family.read(matrix_path)
-    require(family.same_json(current_matrix, matrix), "pthread family POSIX matrix receipt changed after validation")
+    require(family.source_seal.same_evidence(current_matrix, matrix), "pthread family POSIX matrix receipt changed after validation")
     matrix = _require_matrix_contract(current_matrix)
     matrix_identity = family.file_identity(root, matrix_path)
     request_identity = _current_identity(root, matrix["request"], "POSIX execution request")
@@ -1317,7 +1317,7 @@ def validate_receipt(root: Path, path: Path) -> dict[str, Any]:
     path = family.physical(root, path)
     require(path.name == "receipt.json", "pthread family receipt must be named receipt.json")
     observed = collect(root, path.parent)
-    require(family.same_json(family.read(path), observed), "pthread family receipt changed")
+    require(family.source_seal.same_evidence(family.read(path), observed), "pthread family receipt changed")
     return observed
 
 

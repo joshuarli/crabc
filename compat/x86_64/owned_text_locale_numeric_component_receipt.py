@@ -1057,7 +1057,7 @@ def validate(root: Path, receipt: object) -> dict[str, object]:
         require(digest(report) == item["report_sha256"], f"{pair} report hash differs")
         reports[pair] = report
     observed = collect(root, root / inputs["static_preparation"], root / inputs["dynamic_qualification"], reports)
-    require(family.same_json(receipt, observed), "aggregate receipt differs from reconstructed evidence")
+    require(source_seal.same_evidence(receipt, observed), "aggregate receipt differs from reconstructed evidence")
     return observed
 
 
