@@ -13,6 +13,7 @@ ___environ
 __aio_atfork
 __clock_gettime
 __clock_nanosleep
+__crabc_allocator_environ
 __crabc_x86_fixed_graph_dlfcn_record
 __crabc_x86_gettext_cabi_dgettext
 __crabc_x86_gettext_cabi_dngettext
