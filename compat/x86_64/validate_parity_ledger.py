@@ -2368,7 +2368,6 @@ class LedgerError(ValueError):
 
 VerifiedArtifactCacheEntry = tuple[
     object,
-    str,
     tuple[Mapping[str, Any], ...],
 ]
 
@@ -8083,18 +8082,18 @@ def require_verified_artifacts(
     """
     if value is None:
         return []
+    require(
+        status in {"planned", "foundation-verified"},
+        f"{location} is allowed only on a planned or foundation-verified family",
+    )
     cache = _verified_artifact_cache.get()
     cache_key = id(value)
     if cache is not None:
         cached = cache.get(cache_key)
         if cached is not None:
-            cached_value, cached_status, cached_records = cached
-            if cached_value is value and cached_status == status:
+            cached_value, cached_records = cached
+            if cached_value is value:
                 return list(cached_records)
-    require(
-        status in {"planned", "foundation-verified"},
-        f"{location} is allowed only on a planned or foundation-verified family",
-    )
     require(isinstance(value, list) and value, f"{location} must be a non-empty array")
     records: list[Mapping[str, Any]] = []
     for index, entry in enumerate(value):
@@ -8136,7 +8135,7 @@ def require_verified_artifacts(
     if cache is not None:
         # Cache only after every structural predicate and source-owner path
         # has succeeded, retaining `value` to make the identity key unambiguous.
-        cache[cache_key] = (value, status, tuple(records))
+        cache[cache_key] = (value, tuple(records))
     return records
 
 
