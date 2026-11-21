@@ -47,15 +47,6 @@ Next: 21
 - **Fix with:** api-surface-and-module-boundaries
 - **Effort:** M
 
-### CRAB-13 · P3 · Stopping a candidate leaves its dispatcher and containers running
-
-- **Area:** Qualification candidate lifecycle
-- **Where:** compat/x86_64/qualification_candidate.py:763-765; scripts/dev-x86_64.sh:3295
-- **Problem:** _run waits on the dispatcher with subprocess.run and installs no signal handling or process-group ownership; the dispatcher runs `docker run --rm` against writable checkout mounts. Killing only the candidate process (as nohup-launched runs are stopped) leaves the container writing into the work tree while a resume renames and reuses those output paths, so a resumed run can mix outputs. Not reproduced.
-- **Recommendation:** Run the dispatcher in its own process group, forward SIGTERM/SIGINT to it and to named containers, and verify termination before a resume may reuse a step's outputs.
-- **Fix with:** lifecycle-concurrency
-- **Effort:** M
-
 ### CRAB-15 · P3 · Rebuilding the pinned images is not reproducible
 
 - **Area:** Build environment

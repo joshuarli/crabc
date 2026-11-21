@@ -29,6 +29,7 @@ is not worth the contention it adds to timing-limited leaves.
 from __future__ import annotations
 
 import argparse
+import contextlib
 from dataclasses import dataclass, field
 import hashlib
 import importlib.util
@@ -37,8 +38,10 @@ import os
 from pathlib import Path
 import re
 import shutil
+import signal
 import subprocess
 import sys
+import time
 import tomllib
 from typing import Callable, Mapping, Sequence
 
@@ -763,9 +766,95 @@ Runner = Callable[[list[str], Path, Path], int]
 Source = Callable[[Path], Mapping[str, str]]
 
 
+STOP_SIGNALS = (signal.SIGTERM, signal.SIGINT)
+STOP_GRACE = 30.0
+
+
+def _checkout_containers() -> set[str]:
+    """Running containers with a bind mount of this checkout; the dispatcher labels none."""
+
+    try:
+        listed = subprocess.run(["docker", "ps", "--quiet", "--no-trunc"],
+                                capture_output=True, text=True, check=False)
+        if listed.returncode != 0 or not listed.stdout.split():
+            return set()
+        inspected = subprocess.run(["docker", "inspect", *listed.stdout.split()],
+                                   capture_output=True, text=True, check=False)
+        records = json.loads(inspected.stdout or "[]")
+    except (OSError, json.JSONDecodeError):
+        return set()
+    return {record["Id"] for record in records
+            if any(Path(mount.get("Source", "/")).is_relative_to(ROOT) for mount in record.get("Mounts") or ())}
+
+
+def _group_alive(group: int) -> bool:
+    """Whether the group holds a member this user can still signal (macOS reports exiting members as EPERM)."""
+
+    try:
+        os.killpg(group, 0)
+    except (ProcessLookupError, PermissionError):
+        return False
+    return True
+
+
+def _signal_group(group: int, signum: int) -> None:
+    with contextlib.suppress(ProcessLookupError, PermissionError):
+        os.killpg(group, signum)
+
+
+def _end_group(process: subprocess.Popen[bytes]) -> None:
+    """Wait for the signalled dispatcher group to exit, then kill what remains."""
+
+    for final in (False, True):
+        deadline = time.monotonic() + STOP_GRACE
+        while time.monotonic() < deadline:
+            process.poll()
+            if process.returncode is not None and not _group_alive(process.pid):
+                return
+            time.sleep(0.05)
+        if not final:
+            _signal_group(process.pid, signal.SIGKILL)
+    raise CandidateError(f"dispatcher process group {process.pid} survived SIGKILL")
+
+
 def _run(argv: list[str], stdout: Path, stderr: Path) -> int:
-    with stdout.open("wb") as out, stderr.open("wb") as err:
-        return subprocess.run(argv, cwd=ROOT, stdin=subprocess.DEVNULL, stdout=out, stderr=err, check=False).returncode
+    """Run one dispatcher in its own process group; a stop signal ends the group and its containers."""
+
+    stopping: list[int] = []
+    group: list[int] = []
+
+    def stop(signum: int, _frame: object) -> None:
+        if not stopping:
+            stopping.append(signum)
+            if group:
+                _signal_group(group[0], signum)
+
+    previous = {signum: signal.signal(signum, stop) for signum in STOP_SIGNALS}
+    try:
+        before = _checkout_containers()
+        if stopping:
+            return 128 + stopping[0]
+        with stdout.open("wb") as out, stderr.open("wb") as err:
+            process = subprocess.Popen(argv, cwd=ROOT, stdin=subprocess.DEVNULL, stdout=out, stderr=err,
+                                       process_group=0)
+        group.append(process.pid)
+        if stopping:
+            _signal_group(process.pid, stopping[0])
+        while not stopping and process.returncode is None:
+            with contextlib.suppress(subprocess.TimeoutExpired):
+                process.wait(timeout=0.5)
+        if stopping:
+            _end_group(process)
+            started = _checkout_containers() - before
+            if started:
+                subprocess.run(["docker", "stop", *sorted(started)], stdin=subprocess.DEVNULL,
+                               stdout=subprocess.DEVNULL, check=False)
+            remaining = _checkout_containers() & started
+            require(not remaining, f"containers {sorted(remaining)} survived the stopped dispatcher")
+    finally:
+        for signum, handler in previous.items():
+            signal.signal(signum, handler)
+    return 128 + stopping[0] if stopping else process.returncode
 
 
 def _sealed(root: Path, source: Source) -> dict[str, str]:

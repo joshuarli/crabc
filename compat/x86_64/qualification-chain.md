@@ -348,6 +348,17 @@ stops the run; `NAME/summary.json` names the step and every step not run. A
 reused step is still re-read by every later reader; a reader that still
 compares revisions refuses it and stops the run.
 
+Each dispatcher runs in its own process group. SIGTERM or SIGINT to the
+candidate is forwarded to that group; the candidate waits for the group to
+exit (30 seconds, then SIGKILL), runs `docker stop` on every running container
+that bind-mounts this checkout and was not running when the step started, and
+records the step `failed` with status 128 plus the signal number. The
+dispatcher labels no container, so a container another process starts from the
+same checkout during that step is stopped too. The interrupted step has no
+completion record, so a resume sets it aside and reruns it. Only a signal the
+candidate can catch gets this cleanup; SIGKILL to the candidate leaves the
+dispatcher running.
+
 `NAME/summary.json` is `fresh` only when every completed step ran at the final
 revision. **F2 feature-completion acceptance requires one complete, fresh run**: a run that
 completes on steps reused from another revision is development evidence only
