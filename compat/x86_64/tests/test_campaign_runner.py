@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import copy
+import importlib
 import io
 import json
 import subprocess
@@ -131,6 +132,9 @@ class CampaignRunnerTests(unittest.TestCase):
         gate = {'state': 'ready', 'pass': False, 'machine_gate_defined': True,
                 'machine_gate_command': campaign_report.PROMOTION_RUNNER_COMMAND}
         value = {'gates': {'promotion': gate}, 'families': []}
+        # The builder probes the host architecture when imported; load it
+        # before subprocess.run is replaced.
+        importlib.import_module('scripts.build_x86_64_owned_sysroot')
         with mock.patch.object(campaign_runner.subprocess, 'run') as run:
             with self.assertRaisesRegex(campaign_runner.CampaignRunnerError, 'explicit qualification receipt'):
                 campaign_runner.execute_gate(value, 'promotion')
