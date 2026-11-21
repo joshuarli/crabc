@@ -6319,7 +6319,7 @@ case "$command" in
     owned-system-cancellation) ;;
     owned-rand) ;;
     owned-pthread-signal|owned-dynamic-spawn|owned-atfork-registry|owned-fmtmsg|owned-c-abi-compat|owned-utmpx|owned-process-trio|owned-underscore-fork|owned-native-allocator-fork|owned-native-worker-lifecycle|owned-native-allocator-stress|owned-native-allocator-worker-transfer|owned-allocator-override|owned-native-allocator-policy|owned-aio|owned-process-control|owned-signal-helpers|owned-posix-signals|owned-pty|owned-passwd|owned-account-files|owned-locale|owned-wordexp|owned-wordexp-expected-inputs|owned-stdio|owned-stdio-file-engine|owned-numeric-calendar|owned-math-fenv-all-entry|owned-calendar-component|owned-text-locale-numeric-component|owned-posix-filesystem|owned-nftw-relative-base|owned-unix-mechanisms|owned-posix-composition|owned-regex) ;;
-    owned-assert|owned-legacy-time|owned-environment-lifecycle|owned-linux-control|owned-kernel-residual|owned-quick-exit|owned-filesystem-mechanisms|owned-credentials-profile|owned-vm-mechanisms|owned-group|owned-mount-table|owned-pattern|owned-glob-sequence|owned-wcsftime|owned-strfmon|owned-native-allocator-dso) ;;
+    owned-assert|owned-legacy-time|owned-environment-lifecycle|owned-linux-control|owned-kernel-residual|owned-exit-gate|owned-quick-exit|owned-filesystem-mechanisms|owned-credentials-profile|owned-vm-mechanisms|owned-group|owned-mount-table|owned-pattern|owned-glob-sequence|owned-wcsftime|owned-strfmon|owned-native-allocator-dso) ;;
     owned-process-globals) ;;
     owned-pthread-spin) ;;
     owned-syslog) ;;
