@@ -446,6 +446,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   owned-error-reporting  qualify owned perror and err(3) reporting against musl
   owned-static-replacement [STATIC_SYSROOT]  link application replacements of libc functions through the installed static archive against musl
   owned-stdio-allocator-interposition [DYNAMIC_SYSROOT]  qualify dynamic FILE allocation ownership against musl
+  mimalloc-secure-environment  test allocator options under secure execution
   owned-mimalloc-startup-errno [--static-sysroot STATIC_SYSROOT] [DYNAMIC_SYSROOT]  qualify allocator lifecycle and successful-call errno preservation against musl
   owned-signal-handler-fork  qualify early worker signal delivery and fork against musl
   owned-c-allocation-interposition [DYNAMIC_SYSROOT]  qualify caller and passwd allocation ownership against musl
@@ -6321,7 +6322,7 @@ case "$command" in
     owned-process-globals) ;;
     owned-pthread-spin) ;;
     owned-syslog) ;;
-    owned-error-reporting|owned-static-replacement|owned-stdio-allocator-interposition|owned-mimalloc-startup-errno|owned-signal-handler-fork|owned-c-allocation-interposition) ;;
+    mimalloc-secure-environment|owned-error-reporting|owned-static-replacement|owned-stdio-allocator-interposition|owned-mimalloc-startup-errno|owned-signal-handler-fork|owned-c-allocation-interposition) ;;
     owned-io-cancellation) ;;
     owned-resolver-network|owned-classic-netdb|owned-resolver-cancellation|owned-protocol-database|owned-resolver-family) ;;
     owned-c-abi-compat-family) ;;
@@ -8122,6 +8123,11 @@ PY
         [ "$#" -le 1 ] || fail "owned-stdio-allocator-interposition accepts at most one dynamic sysroot"
         ensure_image
         run_in_chroot_cap_container bash /workspace/compat/x86_64/run_owned_stdio_allocator_interposition.sh "$@"
+        ;;
+    mimalloc-secure-environment)
+        [ "$#" -eq 0 ] || fail "mimalloc-secure-environment takes no arguments"
+        ensure_image
+        run_in_chroot_cap_container bash /workspace/compat/x86_64/run_mimalloc_secure_environment.sh
         ;;
     owned-mimalloc-startup-errno)
         ensure_image
