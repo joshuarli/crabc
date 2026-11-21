@@ -53,10 +53,16 @@ integration milestone, not a setup check.
 
 ## AArch64
 
-The AArch64 core image is still built from `docker/Dockerfile.aarch64` and is
-not reproducible. It runs only natively on arm64 Linux:
-`./scripts/dev-x86_64.sh image` there builds it, and the result must be pinned
-in `compat/x86_64/core_image.py` before use. See
+AArch64 runs only natively in arm64 Linux, never emulated or on a macOS bind
+mount. On an Apple Silicon Mac, use an OrbStack arm64 Linux VM and keep the
+clone on the VM's own disk. Put the work directory (`.work/aarch64`) on an ext4
+volume with at least about 40M inodes (for example a loop-mounted image made
+with `mkfs.ext4 -i 8192`); btrfs reports zero free inodes, which the harness
+rejects. The AArch64 core image is still built from `docker/Dockerfile.aarch64`
+and is not reproducible: `./scripts/dev-x86_64.sh image` in the VM builds it,
+and the result must match the `AARCH64_CORE_IMAGE_ID` pin in
+`compat/x86_64/core_image.py` or be re-pinned. The native musl source oracle is
+fetched as described in
 [CRAB-8](rfc/CRAB-8-linux-aarch64-feature-completion.md).
 
 ## Optional
