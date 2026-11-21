@@ -219,7 +219,6 @@ pub unsafe extern "C" fn __libc_start_main(
 #[no_mangle]
 pub unsafe extern "C" fn exit(status: c_int) -> ! {
     process_exit::enter_exit_gate();
-    let _ = PROCESS_STATE.load(Ordering::Acquire);
     unsafe { process_exit::__funcs_on_exit() };
     // SAFETY: startup published the callbacks and the gate grants exclusive finalization.
     let executable = unsafe { core::ptr::replace(core::ptr::addr_of_mut!(EXECUTABLE_FINI), None) };

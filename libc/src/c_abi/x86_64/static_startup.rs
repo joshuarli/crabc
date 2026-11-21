@@ -34,7 +34,7 @@
 //! It is not a general x86 libc startup implementation. In particular,
 //! `rtld_fini` is rejected because this static-only leaf has no loaded-object
 //! graph, `__cxa_finalize` is intentionally a no-op like musl's compatibility
-//! entry point, and the fixture registry does not promise concurrent registration.
+//! entry point, and the fixed registry does not promise concurrent registration.
 
 #[cfg(not(all(target_os = "linux", any(target_arch = "x86_64", target_arch = "aarch64"), target_endian = "little")))]
 compile_error!("x86 static startup requires little-endian Linux/x86-64");
