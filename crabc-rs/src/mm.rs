@@ -45,20 +45,7 @@ bitflags! {
         const WRITE = 0x2;
         /// `PROT_EXEC`.
         const EXEC = 0x4;
-        /// Extend protection changes down a growing mapping.
-        const GROWSDOWN = 0x0100_0000;
-        /// Extend protection changes up a growing mapping.
-        const GROWSUP = 0x0200_0000;
-        /// Permit atomic semaphore operations.
-        const SEM = 0x8;
-        /// Enable branch target identification.
-        #[cfg(target_arch = "aarch64")]
-        const BTI = 0x10;
-        /// Enable memory tagging.
-        #[cfg(target_arch = "aarch64")]
-        const MTE = 0x20;
-        /// Retain kernel-defined flags.
-        const _ = !0;
+
     }
 }
 
@@ -71,22 +58,7 @@ bitflags! {
         const SHARED = 0x01;
         /// `MAP_PRIVATE`.
         const PRIVATE = 0x02;
-        /// Replace mappings at the specified address.
-        const FIXED = 0x10;
-        /// Map at the specified address only if the range is vacant.
-        const FIXED_NOREPLACE = 0x0010_0000;
-        /// Permit a stack mapping to grow downward.
-        const GROWSDOWN = 0x0100;
-        /// Lock the mapping in memory.
-        const LOCKED = 0x2000;
-        /// Do not reserve swap space.
-        const NORESERVE = 0x4000;
-        /// Populate page tables during mapping.
-        const POPULATE = 0x8000;
-        /// Identify a stack mapping.
-        const STACK = 0x0002_0000;
-        /// Retain kernel-defined flags.
-        const _ = !0;
+
     }
 }
 
@@ -617,39 +589,4 @@ pub unsafe fn mincore(ptr: *mut c_void, len: usize, residency: &mut [u8]) -> Res
     // SAFETY: The length check proves Linux cannot write beyond the supplied
     // slice on Linux/x86-64's 4096-byte base page ABI.
     unsafe { crabc_core::mm::mincore_raw(ptr.cast(), len, residency.as_mut_ptr()) }
-}
-
-/// Creates a file-backed mapping using Linux mapping flags directly.
-///
-/// # Safety
-/// The caller must own the affected address range, including any mappings
-/// replaced by `FIXED`, and uphold the lifetime, aliasing, backing-file and
-/// alignment obligations of [`mmap`].
-pub unsafe fn mmap_with_flags<Fd: AsFd>(
-    ptr: *mut c_void, len: usize, prot: ProtFlags, flags: MapFlags, fd: Fd, offset: u64,
-) -> Result<*mut c_void> {
-    let fd = fd.as_fd();
-    unsafe { crabc_core::mm::mmap_raw(ptr.cast(), len, prot.bits(), flags.bits(), fd.as_raw_fd(), offset).map(|p| p.cast()) }
-}
-
-/// Creates an anonymous mapping using Linux mapping flags directly.
-///
-/// # Safety
-/// The caller must own the affected range, including mappings replaced by
-/// `FIXED`, and uphold the lifetime, aliasing and alignment obligations of
-/// [`mmap_anonymous`].
-pub unsafe fn mmap_anonymous_with_flags(
-    ptr: *mut c_void, len: usize, prot: ProtFlags, flags: MapFlags,
-) -> Result<*mut c_void> {
-    unsafe { crabc_core::mm::mmap_raw(ptr.cast(), len, prot.bits(), flags.bits() | MAP_ANONYMOUS, -1, 0).map(|p| p.cast()) }
-}
-
-/// Changes mapping protection using Linux protection flags directly.
-///
-/// # Safety
-/// The caller must own every page affected, including any extension selected
-/// by a grow flag, coordinate concurrent accesses, and ensure no references
-/// violate the resulting protection or aliasing rules.
-pub unsafe fn mprotect_with_flags(ptr: *mut c_void, len: usize, flags: MprotectFlags) -> Result<()> {
-    unsafe { crabc_core::mm::mprotect_raw(ptr.cast(), len, flags.bits()) }
 }

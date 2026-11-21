@@ -57,17 +57,17 @@ fn controlling_terminal_child(pair: &pty::PtyPair) -> ! {
 #[test]
 fn explicit_session_handoff_isolated_in_child() {
     let pair = pty::PtyPair::open(flags()).expect("open owned PTY pair");
-    let child = match unsafe { process::fork_raw() }.expect("fork session child") {
-        process::ForkResult::Parent { child } => child,
-        process::ForkResult::Child => controlling_terminal_child(&pair),
+    let child = match crabc_core::process::fork_raw().map(crabc_rs::Pid::from_raw).expect("fork session child") {
+        Some(child) => child,
+        None => controlling_terminal_child(&pair),
     };
 
-    let (_, status) = process::waitpid(Some(child), process::WaitOptions::empty())
-        .expect("reap session child")
-        .expect("session child status");
+    let mut status = 0;
+    // SAFETY: The status word is writable and the child is owned by this test.
+    unsafe { crabc_core::process::wait4_raw(child.as_raw_pid(), &mut status, 0) }.expect("reap child");
     assert_eq!(
-        status.exit_status(),
-        Some(0),
+        status,
+        0,
         "session child status: {status:?}"
     );
 }

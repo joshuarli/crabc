@@ -2,7 +2,7 @@
 
 use core::ffi::CStr;
 
-use crabc_rs::fs::{self, Mode, OFlags, ABS, CWD};
+use crabc_rs::fs::{self, Mode, OFlags, CWD};
 use crabc_rs::io;
 use crabc_rs::ioctl::{self, opcode, Direction, Getter};
 use crabc_rs::{AsFd, AsRawFd, Errno, FromRawFd, IntoRawFd, OwnedFd};
@@ -97,10 +97,10 @@ fn path_arguments_reject_interior_nuls_without_utf8_loss() {
     .expect_err("a borrowed C string remains accepted");
     assert_eq!(missing, Errno::NOENT);
 
-    let absolute = fs::openat(ABS, "/dev/null", OFlags::RDONLY, Mode::empty())
+    let absolute = fs::openat(unsafe { crabc_rs::BorrowedFd::borrow_raw(-9) }, "/dev/null", OFlags::RDONLY, Mode::empty())
         .expect("ABS permits only absolute paths");
     drop(absolute);
-    let relative = fs::openat(ABS, "dev/null", OFlags::RDONLY, Mode::empty())
+    let relative = fs::openat(unsafe { crabc_rs::BorrowedFd::borrow_raw(-9) }, "dev/null", OFlags::RDONLY, Mode::empty())
         .expect_err("ABS rejects a relative path through the kernel");
     assert_eq!(relative, Errno::BADF);
 }

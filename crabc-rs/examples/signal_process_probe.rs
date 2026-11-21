@@ -65,22 +65,21 @@ pub extern "C" fn crabc_rs_signal_process_probe() -> i32 {
     let path = unsafe { CStr::from_bytes_with_nul_unchecked(b"/bin/true\0") };
     let argv = [path.as_ptr().cast(), core::ptr::null()];
     let envp = [core::ptr::null()];
-    let executable = match unsafe { process::BorrowedExec::new(path, &argv, &envp) } {
-        Ok(executable) => executable,
-        Err(error) => return -error.raw(),
-    };
-    let _ = executable.exec();
+    // SAFETY: the path and null-terminated arrays remain live for the syscall.
+    let _ = unsafe { crabc_core::process::execve_raw(path.as_ptr().cast(), argv.as_ptr(), envp.as_ptr()) };
 
-    match unsafe { process::fork_raw() } {
-        Ok(process::ForkResult::Parent { child }) => {
-            let _ = process::waitpid(Some(child), process::WaitOptions::NOHANG);
-            let _ = process::waitid(
-                process::WaitId::Pid(child),
-                process::WaitIdOptions::EXITED | process::WaitIdOptions::NOHANG,
-            );
+    match crabc_core::process::fork_raw().map(crabc_rs::Pid::from_raw) {
+        Ok(Some(child)) => {
+            let mut status = 0;
+            let mut info = crabc_core::signal::SigInfo::zeroed();
+            // SAFETY: status and info are writable syscall outputs.
+            unsafe {
+                let _ = crabc_core::process::wait4_raw(child.as_raw_pid(), &mut status, 1);
+                let _ = crabc_core::process::waitid_raw(1, child.as_raw_pid() as u32, &mut info, 5);
+            }
             0
         }
-        Ok(process::ForkResult::Child) => process::exit_immediately(0),
+        Ok(None) => process::exit_immediately(0),
         Err(error) => -error.raw(),
     }
 }

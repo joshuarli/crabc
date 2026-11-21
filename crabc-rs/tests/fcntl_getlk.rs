@@ -34,14 +34,14 @@ fn fcntl_getlk_reports_unlocked_and_parent_process_lock() {
         .expect("acquire parent-associated record lock");
 
     let parent = process::getpid();
-    let child = match unsafe { process::fork_raw() }.expect("fork lock observer") {
-        process::ForkResult::Parent { child } => child,
-        process::ForkResult::Child => child_observes_parent_lock(&file, parent),
+    let child = match crabc_core::process::fork_raw().map(crabc_rs::Pid::from_raw).expect("fork lock observer") {
+        Some(child) => child,
+        None => child_observes_parent_lock(&file, parent),
     };
-    let (_, status) = process::waitpid(Some(child), process::WaitOptions::empty())
-        .expect("wait for lock observer")
-        .expect("lock observer changed state");
-    assert_eq!(status.exit_status(), Some(0));
+    let mut status = 0;
+    // SAFETY: The status word is writable and the child is owned by this test.
+    unsafe { crabc_core::process::wait4_raw(child.as_raw_pid(), &mut status, 0) }.expect("reap child");
+    assert_eq!(status, 0);
     fs::fcntl_lock(&file, fs::FlockOperation::Unlock).expect("release parent lock");
     assert_eq!(
         process::fcntl_getlk(&file, &query).expect("query unlocked memfd"),

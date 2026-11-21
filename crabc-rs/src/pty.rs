@@ -300,20 +300,3 @@ fn pty_number<Fd: AsFd>(fd: Fd) -> Result<i32> {
     }
     Ok(number)
 }
-
-/// Opens the slave side directly through `TIOCGPTPEER`.
-#[inline]
-pub fn ioctl_tiocgptpeer<Fd: AsFd>(fd: Fd, flags: OpenptFlags) -> Result<OwnedFd> {
-    let fd = fd.as_fd();
-    // SAFETY: TIOCGPTPEER encodes `O_*` flags in the ioctl argument word and
-    // returns a newly-owned descriptor as its successful integer result.
-    let raw = unsafe {
-        crabc_core::io::ioctl_raw(
-            fd.as_raw_fd(),
-            TIOCGPTPEER,
-            flags.bits() as usize as *mut u8,
-        )?
-    };
-    // SAFETY: a successful TIOCGPTPEER result is a newly allocated fd.
-    Ok(unsafe { OwnedFd::from_raw_fd(raw) })
-}

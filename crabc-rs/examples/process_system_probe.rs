@@ -25,13 +25,13 @@ pub extern "C" fn crabc_rs_process_system_probe() -> i32 {
     if let Err(error) = process::getpgid(None) {
         return -error.raw();
     }
-    if let Err(error) = process::setpgid(None, None) {
+    if let Err(error) = crabc_core::process::setpgid(0, 0) {
         return -error.raw();
     }
     if let Err(error) = process::getsid(None) {
         return -error.raw();
     }
-    let _ = process::setsid();
+    let _ = crabc_core::process::setsid();
     let _ = thread::gettid();
     thread::sched_yield();
 

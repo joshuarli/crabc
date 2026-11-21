@@ -2,40 +2,11 @@
 
 use std::ffi::CStr;
 use std::process::Command;
-use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use crabc_rs::{io, pipe, process, signal, Errno};
 
 static ATFORK_LOG: AtomicU64 = AtomicU64::new(0);
-static ATFORK_LEN: AtomicUsize = AtomicUsize::new(0);
-
-unsafe extern "C" fn atfork_a_prepare() {
-    atfork_push(b'A');
-}
-unsafe extern "C" fn atfork_a_parent() {
-    atfork_push(b'a');
-}
-unsafe extern "C" fn atfork_a_child() {
-    atfork_push(b'a');
-}
-unsafe extern "C" fn atfork_b_prepare() {
-    atfork_push(b'B');
-}
-unsafe extern "C" fn atfork_b_parent() {
-    atfork_push(b'b');
-}
-unsafe extern "C" fn atfork_b_child() {
-    atfork_push(b'b');
-}
-unsafe extern "C" fn atfork_c_prepare() {
-    atfork_push(b'C');
-}
-unsafe extern "C" fn atfork_c_parent() {
-    atfork_push(b'c');
-}
-unsafe extern "C" fn atfork_c_child() {
-    atfork_push(b'c');
-}
 
 unsafe extern "C" fn usr2_handler(_: process::Signal) {
     ATFORK_LOG.store(u64::from_le_bytes(*b"handler!"), Ordering::SeqCst);
@@ -48,17 +19,6 @@ unsafe extern "C" fn usr2_info_handler(
 ) {
 }
 
-fn atfork_push(byte: u8) {
-    let offset = ATFORK_LEN.fetch_add(1, Ordering::SeqCst);
-    assert!(offset < 8, "atfork test log exceeded fixed capacity");
-    ATFORK_LOG.fetch_or((byte as u64) << (offset * 8), Ordering::SeqCst);
-}
-
-fn atfork_log() -> Vec<u8> {
-    let length = ATFORK_LEN.load(Ordering::SeqCst);
-    ATFORK_LOG.load(Ordering::SeqCst).to_le_bytes()[..length].to_vec()
-}
-
 #[test]
 fn signal_process() {
     if let Ok(case) = std::env::var("CRABC_RS_SIGNAL_PROCESS_CASE") {
@@ -68,7 +28,6 @@ fn signal_process() {
             "realtime" => realtime_case(),
             "process-control" => process_control_case(),
             "fork-wait" => fork_wait_case(),
-            "atfork" => atfork_case(),
             "spawn" => spawn_case(),
             "waitid" => waitid_case(),
             other => panic!("unknown child case {other}"),
@@ -82,7 +41,6 @@ fn signal_process() {
         "realtime",
         "process-control",
         "fork-wait",
-        "atfork",
         "spawn",
         "waitid",
     ] {
@@ -120,9 +78,9 @@ fn signal_case() {
 
     let (ready_reader, ready_writer) = pipe::pipe().expect("create signal readiness pipe");
     let (result_reader, result_writer) = pipe::pipe().expect("create signal result pipe");
-    let child = match unsafe { process::fork_raw() }.expect("fork isolated signal waiter") {
-        process::ForkResult::Parent { child } => child,
-        process::ForkResult::Child => {
+    let child = match crabc_core::process::fork_raw().map(crabc_rs::Pid::from_raw).expect("fork isolated signal waiter") {
+        Some(child) => child,
+        None => {
             let old_mask = signal::block(&set).expect("block SIGUSR1 in isolated child");
             crabc_core::io::write(ready_writer.as_raw_fd(), b"r").expect("announce signal waiter");
             assert!(signal::pending()
@@ -154,14 +112,10 @@ fn signal_case() {
         4
     );
     assert_eq!(i32::from_ne_bytes(queued), 0x1a2b_3c4d);
-    assert_eq!(
-        process::waitpid(Some(child), process::WaitOptions::empty())
-            .expect("reap signal child")
-            .expect("signal child status")
-            .1
-            .exit_status(),
-        Some(0),
-    );
+    let mut status = 0;
+    // SAFETY: status is writable and the child belongs to this test.
+    unsafe { crabc_core::process::wait4_raw(child.as_raw_pid(), &mut status, 0) }.expect("reap child");
+    assert_eq!(status, 0);
 
     let action = signal::SigAction::new(
         signal::SigHandler::Simple(usr2_handler),
@@ -214,9 +168,9 @@ fn signal_fd_case() {
     set.insert(process::Signal::USR1);
     let (ready_reader, ready_writer) = pipe::pipe().expect("create signalfd readiness pipe");
     let (result_reader, result_writer) = pipe::pipe().expect("create signalfd result pipe");
-    let child = match unsafe { process::fork_raw() }.expect("fork isolated signalfd reader") {
-        process::ForkResult::Parent { child } => child,
-        process::ForkResult::Child => {
+    let child = match crabc_core::process::fork_raw().map(crabc_rs::Pid::from_raw).expect("fork isolated signalfd reader") {
+        Some(child) => child,
+        None => {
             let old_mask = signal::block(&set).expect("block signalfd signal in child");
             let descriptor = signal::signalfd(&set, signal::SignalFdFlags::CLOEXEC)
                 .expect("create native signalfd");
@@ -247,14 +201,10 @@ fn signal_fd_case() {
         4
     );
     assert_eq!(i32::from_ne_bytes(queued), 0x4d3c_2b1a);
-    assert_eq!(
-        process::waitpid(Some(child), process::WaitOptions::empty())
-            .expect("reap signalfd child")
-            .expect("signalfd child status")
-            .1
-            .exit_status(),
-        Some(0),
-    );
+    let mut status = 0;
+    // SAFETY: status is writable and the child belongs to this test.
+    unsafe { crabc_core::process::wait4_raw(child.as_raw_pid(), &mut status, 0) }.expect("reap child");
+    assert_eq!(status, 0);
 }
 
 fn realtime_case() {
@@ -262,9 +212,9 @@ fn realtime_case() {
     let set = set_for(realtime);
     let (ready_reader, ready_writer) = pipe::pipe().expect("create realtime readiness pipe");
     let (result_reader, result_writer) = pipe::pipe().expect("create realtime result pipe");
-    let child = match unsafe { process::fork_raw() }.expect("fork realtime waiter") {
-        process::ForkResult::Parent { child } => child,
-        process::ForkResult::Child => {
+    let child = match crabc_core::process::fork_raw().map(crabc_rs::Pid::from_raw).expect("fork realtime waiter") {
+        Some(child) => child,
+        None => {
             let old_mask = signal::block(&set).expect("block realtime signal");
             crabc_core::io::write(ready_writer.as_raw_fd(), b"r")
                 .expect("announce realtime waiter");
@@ -290,20 +240,16 @@ fn realtime_case() {
         4
     );
     assert_eq!(i32::from_ne_bytes(queued), 0x1234_5678);
-    assert_eq!(
-        process::waitpid(Some(child), process::WaitOptions::empty())
-            .expect("reap realtime child")
-            .expect("realtime child status")
-            .1
-            .exit_status(),
-        Some(0),
-    );
+    let mut status = 0;
+    // SAFETY: status is writable and the child belongs to this test.
+    unsafe { crabc_core::process::wait4_raw(child.as_raw_pid(), &mut status, 0) }.expect("reap child");
+    assert_eq!(status, 0);
 }
 
 fn process_control_case() {
-    let child = match unsafe { process::fork_raw() }.expect("fork process-control child") {
-        process::ForkResult::Parent { child } => child,
-        process::ForkResult::Child => {
+    let child = match crabc_core::process::fork_raw().map(crabc_rs::Pid::from_raw).expect("fork process-control child") {
+        Some(child) => child,
+        None => {
             let pid = process::getpid();
             assert_eq!(
                 process::getpgid(None).expect("read initial process group"),
@@ -315,7 +261,7 @@ fn process_control_case() {
                     .as_raw_pid()
                     > 0
             );
-            assert_eq!(process::setsid().expect("create isolated session"), pid);
+            assert_eq!(crabc_core::process::setsid().expect("create isolated session"), pid.as_raw_pid());
             assert_eq!(
                 process::getpgid(None).expect("read session process group"),
                 pid
@@ -325,76 +271,23 @@ fn process_control_case() {
             process::exit_immediately(0)
         }
     };
-    assert_eq!(
-        process::waitpid(Some(child), process::WaitOptions::empty())
-            .expect("reap process-control child")
-            .expect("process-control child status")
-            .1
-            .exit_status(),
-        Some(0),
-    );
+    let mut status = 0;
+    // SAFETY: status is writable and the child belongs to this test.
+    unsafe { crabc_core::process::wait4_raw(child.as_raw_pid(), &mut status, 0) }.expect("reap child");
+    assert_eq!(status, 0);
 }
 
 fn fork_wait_case() {
-    let child = match unsafe { process::fork_raw() }.expect("raw direct fork") {
-        process::ForkResult::Parent { child } => child,
-        process::ForkResult::Child => process::exit_immediately(42),
+    let child = match crabc_core::process::fork_raw().map(crabc_rs::Pid::from_raw).expect("raw direct fork") {
+        Some(child) => child,
+        None => process::exit_immediately(42),
     };
-    let (_, status) = process::waitpid(Some(child), process::WaitOptions::empty())
-        .expect("wait for raw-fork child")
-        .expect("raw-fork child must report a status");
-    assert!(status.exited());
-    assert_eq!(status.exit_status(), Some(42));
-    assert!(!status.signaled());
-
-    assert_eq!(
-        process::wait(process::WaitOptions::NOHANG).unwrap_err(),
-        Errno::CHILD
-    );
-}
-
-fn atfork_case() {
-    ATFORK_LOG.store(0, Ordering::SeqCst);
-    ATFORK_LEN.store(0, Ordering::SeqCst);
-    unsafe {
-        process::register_atfork(
-            Some(atfork_a_prepare),
-            Some(atfork_a_parent),
-            Some(atfork_a_child),
-        )
-        .expect("register first atfork callback");
-        process::register_atfork(
-            Some(atfork_b_prepare),
-            Some(atfork_b_parent),
-            Some(atfork_b_child),
-        )
-        .expect("register second atfork callback");
-        process::register_atfork(
-            Some(atfork_c_prepare),
-            Some(atfork_c_parent),
-            Some(atfork_c_child),
-        )
-        .expect("register third atfork callback");
-    }
-    let (reader, writer) = pipe::pipe().expect("create atfork observation pipe");
-    let child = match unsafe { process::fork() }.expect("native atfork fork") {
-        process::ForkResult::Parent { child } => child,
-        process::ForkResult::Child => {
-            let bytes = atfork_log();
-            let _ = crabc_core::io::write(writer.as_raw_fd(), &bytes);
-            process::exit_immediately(0)
-        }
-    };
-    assert_eq!(atfork_log(), b"CBAabc");
-    drop(writer);
-    let mut child_log = [0_u8; 6];
-    let read = io::read(&reader, &mut child_log[..]).expect("read child atfork log");
-    assert_eq!(read, child_log.len());
-    assert_eq!(&child_log, b"CBAabc");
-    let (_, status) = process::waitpid(Some(child), process::WaitOptions::empty())
-        .expect("reap atfork child")
-        .expect("atfork child status");
-    assert_eq!(status.exit_status(), Some(0));
+    let mut status = 0;
+    // SAFETY: status is writable and the child belongs to this test.
+    unsafe { crabc_core::process::wait4_raw(child.as_raw_pid(), &mut status, 0) }.expect("reap child");
+    assert_eq!(status, 42 << 8);
+    // SAFETY: status is writable and -1 selects any child.
+    assert_eq!(unsafe { crabc_core::process::wait4_raw(-1, &mut status, 1) }.unwrap_err(), Errno::CHILD);
 }
 
 fn spawn_case() {
@@ -470,16 +363,16 @@ fn spawn_case() {
 }
 
 fn waitid_case() {
-    let child = match unsafe { process::fork_raw() }.expect("fork waitid child") {
-        process::ForkResult::Parent { child } => child,
-        process::ForkResult::Child => process::exit_immediately(19),
+    let child = match crabc_core::process::fork_raw().map(crabc_rs::Pid::from_raw).expect("fork waitid child") {
+        Some(child) => child,
+        None => process::exit_immediately(19),
     };
-    let status = process::waitid(process::WaitId::Pid(child), process::WaitIdOptions::EXITED)
-        .expect("waitid child exit")
-        .expect("waitid must report child status");
-    assert_eq!(status.pid(), Some(child));
-    assert!(status.exited());
-    assert_eq!(status.status(), 19);
+    let mut info = crabc_core::signal::SigInfo::zeroed();
+    // SAFETY: info is writable and the child belongs to this test.
+    unsafe { crabc_core::process::waitid_raw(1, child.as_raw_pid() as u32, &mut info, 4) }.expect("waitid child exit");
+    assert_eq!(i32::from_ne_bytes(info.bytes[8..12].try_into().unwrap()), 1);
+    assert_eq!(i32::from_ne_bytes(info.bytes[16..20].try_into().unwrap()), child.as_raw_pid());
+    assert_eq!(i32::from_ne_bytes(info.bytes[24..28].try_into().unwrap()), 19);
 }
 
 fn set_for(signal: process::Signal) -> signal::SignalSet {

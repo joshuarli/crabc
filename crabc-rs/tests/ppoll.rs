@@ -73,9 +73,9 @@ fn ppoll_temporarily_installs_signal_mask_and_preserves_legacy_poll() {
     let (reader, writer) = pipe::pipe().expect("create poll fixture pipe");
     let (result_reader, result_writer) = pipe::pipe().expect("create result pipe");
 
-    let child = match unsafe { process::fork_raw() }.expect("fork isolated ppoll case") {
-        process::ForkResult::Parent { child } => child,
-        process::ForkResult::Child => child_ppoll_case(&reader, &result_writer),
+    let child = match crabc_core::process::fork_raw().map(crabc_rs::Pid::from_raw).expect("fork isolated ppoll case") {
+        Some(child) => child,
+        None => child_ppoll_case(&reader, &result_writer),
     };
     drop(writer);
     drop(result_writer);
@@ -90,10 +90,10 @@ fn ppoll_temporarily_installs_signal_mask_and_preserves_legacy_poll() {
         "isolated ppoll case failed at step {}",
         status[0]
     );
-    let (_, wait_status) = process::waitpid(Some(child), process::WaitOptions::empty())
-        .expect("wait for isolated ppoll child")
-        .expect("isolated ppoll child changed state");
-    assert_eq!(wait_status.exit_status(), Some(0));
+    let mut wait_status = 0;
+    // SAFETY: The status word is writable and the child is owned by this test.
+    unsafe { crabc_core::process::wait4_raw(child.as_raw_pid(), &mut wait_status, 0) }.expect("reap child");
+    assert_eq!(wait_status, 0);
 }
 
 #[test]

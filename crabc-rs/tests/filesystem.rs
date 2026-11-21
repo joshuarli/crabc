@@ -6,8 +6,6 @@ use crabc_rs::fs::{
     Timespec, Timestamps, XattrFlags, CWD,
 };
 use crabc_rs::fs::{LinkAtFlags, TimestampAtFlags, UnlinkAtFlags};
-#[cfg(target_arch = "aarch64")]
-use crabc_rs::fs::ABS;
 use crabc_rs::{Errno, Result};
 
 static SCRATCH_SEQUENCE: AtomicUsize = AtomicUsize::new(0);
@@ -65,11 +63,11 @@ fn statat_fstat_and_unlinkat_share_direct_metadata_contract() {
         assert_eq!(fs::stat(&absolute).unwrap().st_ino, by_fd.st_ino);
         #[cfg(target_arch = "aarch64")]
         {
-            let by_absolute = fs::statat(ABS, &absolute, AtFlags::empty())
+            let by_absolute = fs::statat(unsafe { crabc_rs::BorrowedFd::borrow_raw(-9) }, &absolute, AtFlags::empty())
                 .expect("ABS accepts an absolute metadata path");
             assert_eq!(by_absolute.st_ino, by_fd.st_ino);
             assert_eq!(
-                fs::statat(ABS, "record", AtFlags::empty()).unwrap_err(),
+                fs::statat(unsafe { crabc_rs::BorrowedFd::borrow_raw(-9) }, "record", AtFlags::empty()).unwrap_err(),
                 Errno::BADF,
             );
         }
