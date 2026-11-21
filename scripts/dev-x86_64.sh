@@ -411,6 +411,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   owned-system-cancellation [--static-sysroot STATIC_SYSROOT] [DYNAMIC_SYSROOT]  qualify isolated system/pclose cancellation and child wait ownership
   owned-dynamic-spawn [--static-sysroot STATIC_SYSROOT] [DYNAMIC_SYSROOT]  qualify installed dynamic spawn semantics against musl
   owned-assert  test installed C assertion diagnostics and termination
+  owned-exit-gate   qualify concurrent and recursive exit against musl
   owned-quick-exit  qualify installed C11 at_quick_exit/quick_exit semantics against musl
   owned-legacy-time  qualify installed legacy interval-timer and safe clock-adjustment C behavior
   owned-environment-lifecycle [--static-sysroot STATIC_SYSROOT] [DYNAMIC_SYSROOT]  qualify installed POSIX environment lifecycle against musl
@@ -8029,6 +8030,10 @@ PY
         [ "$#" -eq 0 ] || fail "owned-assert takes no arguments"
         ensure_image
         run_in_chroot_cap_container bash /workspace/compat/x86_64/run_owned_assert.sh
+        ;;
+    owned-exit-gate)
+        [ "$#" -eq 0 ] || fail "owned-exit-gate takes no arguments"
+        run_in_chroot_cap_container bash /workspace/compat/x86_64/run_owned_exit_gate.sh
         ;;
     owned-quick-exit)
         [ "$#" -eq 0 ] || fail "owned-quick-exit takes no arguments"
