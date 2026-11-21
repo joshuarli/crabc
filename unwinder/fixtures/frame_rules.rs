@@ -1,5 +1,8 @@
 //! CFI and DWARF expression failures must return a phase error, not panic or fault.
 use std::ffi::c_void;
+
+const SP: u8 = if cfg!(target_arch = "aarch64") { 31 } else { 7 };
+const RA: u8 = if cfg!(target_arch = "aarch64") { 30 } else { 16 };
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 #[repr(C)]
@@ -71,7 +74,7 @@ unsafe fn write_header(header: *mut u8, eh_frame: usize) {
 
 // Build a CIE with caller-selected CFI instructions and a matching FDE.
 unsafe fn write_frame(eh_frame: *mut u8, text: usize, instructions: &[u8]) {
-    let mut cie = vec![0, 0, 0, 0, 1, 0, 1, 0x78, 16];
+    let mut cie = vec![0, 0, 0, 0, 1, 0, 1, 0x78, RA];
     cie.extend_from_slice(instructions);
     let mut bytes = (cie.len() as u32).to_le_bytes().to_vec();
     bytes.extend_from_slice(&cie);
@@ -88,7 +91,7 @@ fn cfa_expression(expression: &[u8]) -> Vec<u8> {
     // DW_CFA_def_cfa_expression followed by undefined return address.
     let mut instructions = vec![0x0f, expression.len() as u8];
     instructions.extend_from_slice(expression);
-    instructions.extend_from_slice(&[0x07, 16]);
+    instructions.extend_from_slice(&[0x07, RA]);
     instructions
 }
 
@@ -99,13 +102,13 @@ unsafe fn run_case(case: &str) {
         let text = (_Unwind_RaiseException as usize) & !(PAGE - 1);
         let (instructions, expected) = match case {
             "unsupported-cfa-register" => (vec![0x0c, 127, 8], FATAL_PHASE1_ERROR),
-            "unsupported-rule-register" => (vec![0x0c, 7, 8, 0x09, 16, 127], FATAL_PHASE1_ERROR),
-            "unsupported-destination-register" => (vec![0x0c, 7, 8, 0x07, 127], FATAL_PHASE1_ERROR),
+            "unsupported-rule-register" => (vec![0x0c, SP, 8, 0x09, RA, 127], FATAL_PHASE1_ERROR),
+            "unsupported-destination-register" => (vec![0x0c, SP, 8, 0x07, 127], FATAL_PHASE1_ERROR),
             "unsupported-expression-register" => (cfa_expression(&[0x92, 127, 0]), FATAL_PHASE1_ERROR),
             "unsupported-frame-base" => (cfa_expression(&[0x91, 0]), FATAL_PHASE1_ERROR),
             "unsupported-result" => (cfa_expression(&[0x30, 0x9f]), FATAL_PHASE1_ERROR),
             "expression-loop" => (cfa_expression(&[0x2f, 0xfd, 0xff]), FATAL_PHASE1_ERROR),
-            "valid-register-arithmetic" => (cfa_expression(&[0x77, 0, 0x38, 0x22]), END_OF_STACK),
+            "valid-register-arithmetic" => (cfa_expression(&[0x70 + SP, 0, 0x38, 0x22]), END_OF_STACK),
             "memory-width-1" | "memory-width-2" | "memory-width-3" | "memory-width-4"
             | "memory-width-5" | "memory-width-6" | "memory-width-7" | "memory-width-8" => {
                 let width: usize = case.rsplit('-').next().unwrap().parse().unwrap();

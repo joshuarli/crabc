@@ -1,5 +1,7 @@
 //! A PT_DYNAMIC table without a terminator must not read across a guard page.
 use std::ffi::c_void;
+
+const RA: u8 = if cfg!(target_arch = "aarch64") { 30 } else { 16 };
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 #[repr(C)]
@@ -77,14 +79,14 @@ unsafe fn write_dynamic(record: *mut u8, tag: usize, value: usize) {
 
 unsafe fn write_eh_frame(eh_frame: *mut u8, pc: usize) {
     unsafe {
-        // CIE: version 1, empty augmentation, code/data alignment 1/-8, RA=16.
+        // CIE: version 1, empty augmentation, code/data alignment 1/-8.
         (eh_frame as *mut u32).write_unaligned(9);
         (eh_frame.add(4) as *mut u32).write_unaligned(0);
         eh_frame.add(8).write(1);
         eh_frame.add(9).write(0);
         eh_frame.add(10).write(1);
         eh_frame.add(11).write(0x78);
-        eh_frame.add(12).write(16);
+        eh_frame.add(12).write(RA);
         // FDE refers back to the CIE and covers the fixture lookup PC.
         let fde = eh_frame.add(13);
         (fde as *mut u32).write_unaligned(20);
@@ -105,7 +107,7 @@ unsafe fn write_got_eh_frame(eh_frame: *mut u8) {
         eh_frame.add(11).write(0);
         eh_frame.add(12).write(1);
         eh_frame.add(13).write(0x78);
-        eh_frame.add(14).write(16);
+        eh_frame.add(14).write(RA);
         eh_frame.add(15).write(1);
         eh_frame.add(16).write(0x30);
         let fde = eh_frame.add(17);
