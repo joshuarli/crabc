@@ -31,13 +31,16 @@ class InstalledHeaderTreeClosureTests(unittest.TestCase):
             scratch.mkdir(parents=True)
             runner = harness / RUNNER.name
             shutil.copy2(RUNNER, runner)
-            shutil.copy2(ROOT / "compat/x86_64/musl_oracle.py", harness / "musl_oracle.py")
+            for name in ("musl_oracle.py", "native_arch.py", "core_image.py"):
+                shutil.copy2(ROOT / "compat/x86_64" / name, harness / name)
             shutil.copy2(ROOT / "compat/upstreams.toml", project / "compat/upstreams.toml")
             for name in ("musl_oracle_probe.c", "public_headers.txt", "header_cxx_closure.cpp"):
                 (harness / name).write_text("")
             oracle = (ROOT / "compat/x86_64/run_musl_oracle.sh").read_text()
             # Execute the actual oracle preflight, stopping before native tools.
-            oracle = oracle.split("require_native_linux_x86_64\nrequire_tool readelf", 1)[0]
+            preflight, marker, _ = oracle.partition("require_native_linux\nrequire_tool readelf")
+            self.assertTrue(marker, "oracle runner no longer starts its native checks as expected")
+            oracle = preflight
             (harness / "run_musl_oracle.sh").write_text(oracle)
             (harness / "run_linux_5_10_uapi.sh").write_text("#!/bin/sh\nexit 0\n")
             candidate = harness / "run_candidate_header_closure.sh"
