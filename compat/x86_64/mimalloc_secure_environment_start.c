@@ -43,6 +43,7 @@ int main(int argc, char **argv) {
         perror("ptrace write"); return 1;
     }
     if (ptrace(PTRACE_DETACH, child, 0, 0)) { perror("ptrace detach"); return 1; }
-    if (waitpid(child, &status, 0) != child || !WIFEXITED(status)) return 1;
+    if (waitpid(child, &status, 0) != child) { perror("waitpid"); return 1; }
+    if (!WIFEXITED(status)) { fprintf(stderr, "probe terminated: status=%d\n", status); return 1; }
     return WEXITSTATUS(status);
 }
