@@ -9,6 +9,7 @@
 //! standard-library integration points as they are added, while the separate
 //! `alloc` feature is reserved for APIs that need owned allocation.
 #![no_std]
+#![deny(clippy::missing_safety_doc)]
 
 // Runtime-owned features stay behind their own features until their native
 // boundaries exist.

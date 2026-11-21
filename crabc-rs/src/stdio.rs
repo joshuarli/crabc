@@ -126,6 +126,12 @@ pub const fn stdin() -> BorrowedFd<'static> {
 }
 
 /// `STDIN_FILENO`—standard input, borrowed in a no-std process.
+///
+/// # Safety
+///
+/// Descriptor 0 must be open, and no owner may close it or replace it (for
+/// example with `dup2`) for the rest of the process, because the returned
+/// borrow is `'static`.
 #[cfg(not(feature = "std"))]
 #[inline]
 pub const unsafe fn stdin() -> BorrowedFd<'static> {
@@ -143,6 +149,12 @@ pub const fn stdout() -> BorrowedFd<'static> {
 }
 
 /// `STDOUT_FILENO`—standard output, borrowed in a no-std process.
+///
+/// # Safety
+///
+/// Descriptor 1 must be open, and no owner may close it or replace it (for
+/// example with `dup2`) for the rest of the process, because the returned
+/// borrow is `'static`.
 #[cfg(not(feature = "std"))]
 #[inline]
 pub const unsafe fn stdout() -> BorrowedFd<'static> {
@@ -160,6 +172,12 @@ pub const fn stderr() -> BorrowedFd<'static> {
 }
 
 /// `STDERR_FILENO`—standard error, borrowed in a no-std process.
+///
+/// # Safety
+///
+/// Descriptor 2 must be open, and no owner may close it or replace it (for
+/// example with `dup2`) for the rest of the process, because the returned
+/// borrow is `'static`.
 #[cfg(not(feature = "std"))]
 #[inline]
 pub const unsafe fn stderr() -> BorrowedFd<'static> {

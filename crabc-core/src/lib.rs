@@ -8,6 +8,7 @@
 
 #![no_std]
 #![deny(unsafe_op_in_unsafe_fn)]
+#![deny(clippy::missing_safety_doc)]
 #![cfg_attr(miri, feature(thread_local))]
 
 #[cfg(test)]
