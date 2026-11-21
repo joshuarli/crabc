@@ -3,10 +3,16 @@ set -euo pipefail
 ulimit -c 0
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 eval "$(python3 -B "$ROOT/compat/x86_64/native_arch.py")"
-build_args=(--allocator-backend native-shadow)
-[ "$arch" != aarch64 ] || build_args=(--architecture aarch64)
 work="$(mktemp -d "$TMPDIR/mimalloc-secure-environment.XXXXXX")"
 printf 'mimalloc secure environment evidence: %s\n' "$work"
+run_backend() {
+local backend="$1"
+local build_args=()
+[ "$arch" != aarch64 ] || build_args+=(--architecture aarch64)
+[ "$backend" != native-shadow ] || build_args+=(--allocator-backend native-shadow)
+work="$base_work/$backend"
+mkdir -p "$work"
+printf 'backend: %s\n' "$backend"
 python3 -B "$ROOT/scripts/build_x86_64_owned_sysroot.py" "${build_args[@]}" --output "$work/static-product" >"$work/static-build.json"
 python3 -B "$ROOT/scripts/build_x86_64_owned_dynamic_sysroot.py" "${build_args[@]}" --output "$work/dynamic-product" >"$work/dynamic-build.json"
 cc -O2 "$ROOT/compat/x86_64/mimalloc_secure_environment_start.c" -o "$work/start"
@@ -14,7 +20,6 @@ cc -O2 "$ROOT/compat/x86_64/mimalloc_secure_environment_start.c" -o "$work/start
 "$work/dynamic-product/bin/crabc-cc-dynamic" --dynamic-pie -fno-builtin -c "$ROOT/compat/x86_64/mimalloc_secure_environment_probe.c" -o "$work/probe.o"
 (cd "$work" && "$work/static-product/bin/crabc-cc" -static --link-receipt static-link.json probe.o -o static)
 "$work/dynamic-product/bin/crabc-cc-dynamic" --dynamic-pie "$work/probe.o" -o "$work/dynamic"
-result=0
 for mode in oracle static dynamic; do
     root="$work/$mode-root"
     mkdir -p "$root/work" "$root/lib" "$root/usr/lib"
@@ -40,5 +45,10 @@ for mode in oracle static dynamic; do
         fi
     done
 done
+}
+base_work="$work"
+result=0
+run_backend default
+if [ "$arch" = x86_64 ]; then run_backend native-shadow; fi
 if [ "$result" -eq 0 ]; then echo 'mimalloc secure environment: PASS'; else echo 'mimalloc secure environment: FAIL' >&2; fi
 exit "$result"
