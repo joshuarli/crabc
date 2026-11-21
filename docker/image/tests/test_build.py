@@ -152,63 +152,9 @@ class ImageIdentityTests(unittest.TestCase):
 
 
 class LockParsingTests(unittest.TestCase):
-    def test_entry_urls_rejects_non_https(self) -> None:
-        with self.assertRaises(SystemExit):
-            build.entry_urls({"name": "x", "urls": ["http://example.test/file"]})
-
-    def test_entry_filename_falls_back_to_url_basename(self) -> None:
-        item = {"name": "x", "urls": ["https://example.test/a/b/file.tgz"]}
-        self.assertEqual(build.entry_filename(item), "file.tgz")
-
-    def test_entry_filename_prefers_explicit_filename(self) -> None:
-        item = {"name": "x", "filename": "pinned.tgz",
-                "urls": ["https://example.test/a/b/other.tgz"]}
-        self.assertEqual(build.entry_filename(item), "pinned.tgz")
-
-    def test_read_lock_rejects_wrong_schema(self) -> None:
-        with tempfile.TemporaryDirectory() as directory:
-            path = Path(directory) / "lock.json"
-            path.write_text(json.dumps({"schema_version": 2, "inputs": []}), encoding="utf-8")
-            with self.assertRaises(SystemExit):
-                build.read_lock(path)
-
-    def test_read_lock_requires_inputs_list(self) -> None:
-        with tempfile.TemporaryDirectory() as directory:
-            path = Path(directory) / "lock.json"
-            path.write_text(json.dumps({"schema_version": 1}), encoding="utf-8")
-            with self.assertRaises(SystemExit):
-                build.read_lock(path)
-
     def test_lock_entry_names_the_missing_input(self) -> None:
         with self.assertRaises(SystemExit):
             build.lock_entry([{"name": "present"}], "absent")
-
-
-class FetchVerificationTests(unittest.TestCase):
-    def test_pinned_bytes_are_reused_without_network(self) -> None:
-        with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
-            payload = b"locked-bytes"
-            cached = root / "input" / "file.bin"
-            cached.parent.mkdir(parents=True)
-            cached.write_bytes(payload)
-            import hashlib
-
-            item = {"name": "input", "filename": "file.bin",
-                    "sha256": hashlib.sha256(payload).hexdigest(),
-                    "size": len(payload), "urls": ["https://example.test/file.bin"]}
-            self.assertEqual(build.fetch_verified(item, root), cached)
-
-    def test_digest_mismatch_is_rejected_before_use(self) -> None:
-        with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
-            cached = root / "input" / "file.bin"
-            cached.parent.mkdir(parents=True)
-            cached.write_bytes(b"tampered")
-            item = {"name": "input", "filename": "file.bin", "sha256": "0" * 64,
-                    "size": 8, "urls": ["https://example.test/file.bin"]}
-            with self.assertRaises(SystemExit):
-                build.fetch_verified(item, root)
 
 
 if __name__ == "__main__":

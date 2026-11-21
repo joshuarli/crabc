@@ -41,7 +41,7 @@ OCI_IMAGE_INDEX = "application/vnd.oci.image.index.v1+json"
 OCI_IMAGE_MANIFEST = "application/vnd.oci.image.manifest.v1+json"
 OCI_IMAGE_CONFIG = "application/vnd.oci.image.config.v1+json"
 OCI_LAYER_TAR_GZIP = "application/vnd.oci.image.layer.v1.tar+gzip"
-BUILD_USER_AGENT = "laputa-buildlib/0.1"
+BUILDLIB_INPUT = "laputa-buildlib"
 
 IMAGE_ENV = [
     "PATH=/opt/cargo/bin:/opt/musl-1.2.6/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
@@ -89,14 +89,47 @@ def digest_file(path: Path) -> tuple[str, int]:
     return "sha256:" + digest.hexdigest(), size
 
 
-def read_lock(path: Path) -> list[dict]:
+def bootstrap_buildlib(lock: Path, cache: Path):
+    """Import buildlib from the wheel pinned in the lock, fetching it on first use."""
+    document = json.loads(lock.read_text(encoding="utf-8"))
+    pin = next((item for item in document.get("inputs", [])
+                if isinstance(item, dict) and item.get("name") == BUILDLIB_INPUT), None)
+    if pin is None:
+        raise SystemExit(f"{lock}: sources lock has no {BUILDLIB_INPUT} input")
+    wheel = cache / pin["name"] / pin["filename"]
+    if not wheel.is_file() or digest_file(wheel)[0] != "sha256:" + pin["sha256"]:
+        import urllib.request
+
+        wheel.parent.mkdir(parents=True, exist_ok=True)
+        part = wheel.with_name(wheel.name + ".part")
+        try:
+            for url in pin["urls"]:
+                try:
+                    with urllib.request.urlopen(url, timeout=120) as response:
+                        part.write_bytes(response.read())
+                except OSError:
+                    continue
+                if digest_file(part)[0] == "sha256:" + pin["sha256"]:
+                    part.replace(wheel)
+                    break
+            else:
+                raise SystemExit(f"no URL served the {BUILDLIB_INPUT} wheel pinned in {lock}")
+        finally:
+            part.unlink(missing_ok=True)
+    sys.path.insert(0, str(wheel))
+    from buildlib import locks
+
+    return locks
+
+
+def read_lock(locks, path: Path) -> tuple[list[dict], dict]:
+    """Validate the lock with buildlib; return its raw entries and its Inputs by name."""
+    try:
+        sources = locks.load_sources(path)
+    except locks.LockError as error:
+        raise SystemExit(str(error)) from error
     document = json.loads(path.read_text(encoding="utf-8"))
-    if not isinstance(document, dict) or document.get("schema_version") != 1:
-        raise SystemExit(f"{path}: schema_version must be 1")
-    inputs = document.get("inputs")
-    if not isinstance(inputs, list):
-        raise SystemExit(f"{path}: inputs must be a list")
-    return [item for item in inputs if isinstance(item, dict)]
+    return document["inputs"], {item.name: item for item in sources.inputs}
 
 
 def lock_entry(inputs: list[dict], name: str) -> dict:
@@ -106,21 +139,8 @@ def lock_entry(inputs: list[dict], name: str) -> dict:
     raise SystemExit(f"sources lock has no input named {name!r}")
 
 
-def entry_urls(item: dict) -> list[str]:
-    urls = [item["url"]] if "url" in item else item.get("urls")
-    if not isinstance(urls, list) or not urls:
-        raise SystemExit(f"{item.get('name')}: urls must be a nonempty list")
-    for url in urls:
-        if not isinstance(url, str) or not url.startswith("https://"):
-            raise SystemExit(f"{item.get('name')}: every URL must be https, found {url!r}")
-    return list(urls)
-
-
 def entry_filename(item: dict) -> str:
-    filename = item.get("filename")
-    if isinstance(filename, str) and filename:
-        return filename
-    return entry_urls(item)[0].rsplit("/", 1)[-1]
+    return item["filename"]
 
 
 def cache_path(cache: Path, item: dict) -> Path:
@@ -129,82 +149,31 @@ def cache_path(cache: Path, item: dict) -> Path:
     return cache / item["name"] / entry_filename(item)
 
 
-def fetch_verified(item: dict, cache: Path) -> Path:
-    destination = cache_path(cache, item)
-    expected = "sha256:" + item["sha256"]
-    pinned_size = item.get("size")
-    if destination.is_file() and not destination.is_symlink():
-        actual, actual_size = digest_file(destination)
-        if actual == expected and (pinned_size is None or actual_size == pinned_size):
-            return destination
-    import time
-    import urllib.error
-    import urllib.request
-
-    destination.parent.mkdir(parents=True, exist_ok=True)
-    failures = []
-    for url in entry_urls(item):
-        # A mirror may answer with a transient origin error; retry a few times
-        # before treating the URL as down, and never accept unpinned bytes.
-        for attempt in range(3):
-            staging = destination.with_name(destination.name + ".part")
-            try:
-                request = urllib.request.Request(url, headers={"User-Agent": BUILD_USER_AGENT})
-                with urllib.request.urlopen(request, timeout=300) as response, staging.open("wb") as out:
-                    shutil.copyfileobj(response, out, 1 << 20)
-                actual, actual_size = digest_file(staging)
-                if pinned_size is not None and actual_size != pinned_size:
-                    raise ValueError(f"{url} served {actual_size} bytes, pinned {pinned_size}")
-                if actual != expected:
-                    raise ValueError(f"{url} served {actual}, pinned {expected}")
-                staging.replace(destination)
-                return destination
-            except urllib.error.HTTPError as error:
-                if error.code < 500 or attempt == 2:
-                    failures.append(str(error))
-                    break
-                time.sleep(2 * (attempt + 1))
-            except (OSError, ValueError) as error:
-                failures.append(str(error))
-                break
-            finally:
-                staging.unlink(missing_ok=True)
-    raise SystemExit(f"{item['name']}: no URL served the pinned bytes: " + "; ".join(failures))
-
-
 def fetch(args: argparse.Namespace) -> None:
     """Download and verify every lock input; the only phase allowed to use the network."""
-    inputs = read_lock(Path(args.lock))
     cache = Path(args.cache)
-    cache.mkdir(parents=True, exist_ok=True)
-    # The wheel supplies buildlib itself; validate the lock through its reader
-    # before trusting the pins, then fetch each input through the retrying
-    # downloader so a flaky mirror yields a clear failure rather than a bad byte.
-    wheel = fetch_verified(lock_entry(inputs, "laputa-buildlib"), cache)
-    sys.path.insert(0, str(wheel))
-    from buildlib import locks
-
-    locks.load_sources(Path(args.lock))
+    locks = bootstrap_buildlib(Path(args.lock), cache)
+    inputs, pinned = read_lock(locks, Path(args.lock))
     for item in inputs:
         if item.get("role") == "builder":
             continue
-        fetch_verified(item, cache)
+        try:
+            locks.fetch_input(pinned[item["name"]], cache_path(cache, item), timeout=300)
+        except locks.FetchError as error:
+            raise SystemExit(str(error)) from error
 
 
-def verify_cache(inputs: list[dict], cache: Path) -> dict[str, Path]:
+def verify_cache(locks, inputs: list[dict], pinned: dict, cache: Path) -> dict[str, Path]:
     """Re-verify the staged cache after network isolation; no fetching happens here."""
     resolved = {}
     for item in inputs:
         if item.get("role") == "builder":
             continue
         path = cache_path(cache, item)
-        if not path.is_file() or path.is_symlink():
-            raise SystemExit(f"{item['name']}: expected a staged regular file at {path}")
-        actual, actual_size = digest_file(path)
-        if actual != "sha256:" + item["sha256"]:
-            raise SystemExit(f"{item['name']}: staged bytes differ from the lock")
-        if item.get("size") is not None and actual_size != item["size"]:
-            raise SystemExit(f"{item['name']}: staged size differs from the lock")
+        try:
+            locks.verify_file(path, pinned[item["name"]])
+        except locks.FetchError as error:
+            raise SystemExit(f"staged input differs from the lock: {error}") from error
         resolved[item["name"]] = path
     return resolved
 
@@ -603,9 +572,10 @@ def musl_oracle_manifest(inputs: list[dict]) -> str:
 
 
 def assemble(args: argparse.Namespace) -> None:
-    inputs = read_lock(Path(args.lock))
     cache = Path(args.cache)
-    resolved = verify_cache(inputs, cache)
+    locks = bootstrap_buildlib(Path(args.lock), cache)
+    inputs, pinned = read_lock(locks, Path(args.lock))
+    resolved = verify_cache(locks, inputs, pinned, cache)
     channel = lock_entry(inputs, "rust-channel-manifest").get("channel")
     if not channel:
         raise SystemExit("rust-channel-manifest records no channel")

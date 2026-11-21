@@ -1,4 +1,4 @@
-"""Regenerate docker/image/sources.lock.json and the mirror staging tree.
+"""Regenerate docker/image/sources.lock.json from the pinned bases and upstreams.
 
 The lock pins every byte the x86-64 core-evidence image consumes: the Alpine
 minirootfs for each stage, every .apk in each stage's resolved closure, the Rust
@@ -12,10 +12,12 @@ package's exact URL is then confirmed by content, so a package served by a
 different mirror than expected fails loudly instead of pinning a guess.
 
 The document follows the shared build-repository contract (buildlib
-schema_version 1). Every input carries `urls`: optional mirror templates from
-docker/image/mirrors.json followed by the upstream URL that served the bytes.
+schema_version 1). Every input carries `urls`: the two content-addressed
+mirrors that docker/image/mirror.py publishes, then the upstream URL that served
+the bytes. Upstream Alpine drops superseded package revisions, so the mirrors are
+what keeps an old lock buildable.
 
-Usage: lock.py [--output docker/image/sources.lock.json] [--mirror DIR]
+Usage: lock.py [--output docker/image/sources.lock.json]
 """
 from __future__ import annotations
 
@@ -33,7 +35,6 @@ from datetime import date
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
-MIRRORS = ROOT / "docker/image/mirrors.json"
 UPSTREAMS = ROOT / "compat/upstreams.toml"
 TOOLCHAIN = ROOT / "rust-toolchain.toml"
 
@@ -51,6 +52,10 @@ BUILDLIB_URL = ("https://pypi.17166969.xyz/current/wheels/"
                 "laputa_buildlib-0.1.0-py3-none-any.whl")
 BUILDLIB_SHA256 = "edd102a1713c903f93e19b10036983d123dd76fa1b04a0e5f3c5070f00a95383"
 BUILDLIB_VERSION = "0.1.0"
+MIRROR_TEMPLATES = (
+    "https://oci-blobs.17166969.xyz/sha256/{sha256}",
+    "https://github.com/joshuarli/crabc/releases/download/image-inputs/{sha256}",
+)
 
 MAIN_WORLD = ["bash", "binutils", "build-base", "clang", "ca-certificates",
               "coreutils", "curl", "git", "perf", "python3", "mold", "rsync",
@@ -79,16 +84,8 @@ def download(url: str, destination: Path, *, user_agent: str = "crabc-lock/1") -
     return destination
 
 
-def mirror_urls(sha256: str, filename: str) -> list[str]:
-    templates = json.loads(MIRRORS.read_text(encoding="utf-8")).get("templates", [])
-    if not isinstance(templates, list):
-        raise SystemExit("mirrors templates must be a list")
-    urls = []
-    for template in templates:
-        if not isinstance(template, str) or "{filename}" not in template:
-            raise SystemExit(f"mirror template must contain {{filename}}: {template!r}")
-        urls.append(template.replace("{filename}", filename).replace("{sha256}", sha256))
-    return urls
+def mirror_urls(sha256: str) -> list[str]:
+    return [template.format(sha256=sha256) for template in MIRROR_TEMPLATES]
 
 
 def make_entry(name: str, version: str, url: str, path: Path, *, role: str,
@@ -99,7 +96,7 @@ def make_entry(name: str, version: str, url: str, path: Path, *, role: str,
         "version": version,
         "sha256": digest,
         "size": path.stat().st_size,
-        "urls": mirror_urls(digest, path.name) + [url],
+        "urls": mirror_urls(digest) + [url],
         "filename": path.name,
         "role": role,
     }
@@ -302,30 +299,15 @@ def build_lock(scratch: Path) -> dict:
     return {"schema_version": 1, "inputs": inputs}
 
 
-def stage_mirror(lock: dict, scratch: Path, destination: Path) -> None:
-    destination.mkdir(parents=True, exist_ok=True)
-    for item in lock["inputs"]:
-        if "filename" not in item:
-            continue
-        found = next(scratch.rglob(item["filename"]), None)
-        if found is None:
-            raise SystemExit(f"cannot stage {item['filename']} into the mirror tree")
-        shutil.copy2(found, destination / item["filename"])
-
-
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--output", type=Path, default=ROOT / "docker/image/sources.lock.json")
-    # Staged bytes are disposable and large; keep them under the ignored .work
-    # tree for the parent to publish, never in the checkout.
-    parser.add_argument("--mirror", type=Path, default=ROOT / ".work/image-mirror")
     args = parser.parse_args()
-    with tempfile.TemporaryDirectory(prefix="crabc-lock-") as directory:
-        scratch = Path(directory)
-        lock = build_lock(scratch)
+    scratch_root = ROOT / ".work/tmp"
+    scratch_root.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(prefix="crabc-lock-", dir=scratch_root) as directory:
+        lock = build_lock(Path(directory))
         args.output.write_text(json.dumps(lock, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-        if args.mirror:
-            stage_mirror(lock, scratch, args.mirror)
     print(f"wrote {args.output} ({len(lock['inputs'])} inputs)")
     return 0
 

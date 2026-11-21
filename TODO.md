@@ -1,5 +1,5 @@
 Prefix: CRAB
-Next: 22
+Next: 23
 
 ### CRAB-6 · P2 · Unreproduced fork-child SIGEV_THREAD timer wait failure
 
@@ -45,6 +45,15 @@ Next: 22
 - **Problem:** architecture.md says neither crabc-core nor crabc-rs may own libc or loader singleton state, but crabc-rs keeps its own static-mut atfork table and spin lock. C pthread_atfork handlers do not run on crabc_rs::process::fork and facade handlers do not run on C fork, each linked copy of crabc-rs has its own table, and a prepare callback that registers another handler spins forever on the non-reentrant lock.
 - **Recommendation:** Route facade atfork registration to libc's single registry through the existing RuntimeV1 bridge; otherwise document the split semantics and single-copy requirement in the public API and architecture.md.
 - **Fix with:** api-surface-and-module-boundaries
+- **Effort:** M
+
+### CRAB-22 · P3 · Evidence readers still take x86 image pins from the retired Dockerfile
+
+- **Area:** Core image / qualification inputs
+- **Where:** docker/Dockerfile.x86_64; compat/x86_64/validate_parity_ledger.py:181,4321; compat/x86_64/header_callable_inventory.py:71; compat/x86_64/native_abi_inventory.py:95; compat/x86_64/owned_posix_native_execution.py:84; compat/x86_64/parity.toml (`source_owners`)
+- **Problem:** `docker/image/build.py` now builds the x86 image from `docker/image/sources.lock.json`, but the parity ledger, header inventories and evidence-input digests still read UAPI and Alpine pins from `Dockerfile.x86_64`, which no build consumes. The two records can drift without any check failing.
+- **Recommendation:** Move each reader to the lock (or to `build.py`'s constants), then delete `Dockerfile.x86_64` and its `source_owners` entries in one change, refreshing the affected evidence inputs.
+- **Fix with:** single-source-of-truth
 - **Effort:** M
 
 ### CRAB-21 · P3 · Two readers still reject a same-source cross-revision resume
