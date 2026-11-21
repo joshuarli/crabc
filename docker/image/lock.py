@@ -17,7 +17,7 @@ mirrors that docker/image/mirror.py publishes, then the upstream URL that served
 the bytes. Upstream Alpine drops superseded package revisions, so the mirrors are
 what keeps an old lock buildable.
 
-Usage: lock.py [--output docker/image/sources.lock.json]
+Usage: lock.py --cache DIR [--output docker/image/sources.lock.json]
 """
 from __future__ import annotations
 
@@ -54,7 +54,7 @@ BUILDLIB_SHA256 = "edd102a1713c903f93e19b10036983d123dd76fa1b04a0e5f3c5070f00a95
 BUILDLIB_VERSION = "0.1.0"
 MIRROR_TEMPLATES = (
     "https://oci-blobs.17166969.xyz/sha256/{sha256}",
-    "https://github.com/joshuarli/crabc/releases/download/image-inputs/{sha256}",
+    "https://github.com/joshuarli/crabc/releases/download/core-image-inputs/{sha256}",
 )
 
 MAIN_WORLD = ["bash", "binutils", "build-base", "clang", "ca-certificates",
@@ -84,6 +84,9 @@ def download(url: str, destination: Path, *, user_agent: str = "crabc-lock/1") -
     return destination
 
 
+STAGED_PATH = "_staged_path"
+
+
 def mirror_urls(sha256: str) -> list[str]:
     return [template.format(sha256=sha256) for template in MIRROR_TEMPLATES]
 
@@ -99,6 +102,7 @@ def make_entry(name: str, version: str, url: str, path: Path, *, role: str,
         "urls": mirror_urls(digest) + [url],
         "filename": path.name,
         "role": role,
+        STAGED_PATH: path,
     }
     if purpose:
         item["purpose"] = purpose
@@ -299,16 +303,32 @@ def build_lock(scratch: Path) -> dict:
     return {"schema_version": 1, "inputs": inputs}
 
 
+def stage_cache(inputs: list[dict], cache: Path) -> None:
+    """Keep each downloaded input as cache/<name>/<filename>, the layout build.py and mirror.py read."""
+    for item in inputs:
+        source = item.pop(STAGED_PATH, None)
+        if source is None:
+            continue
+        destination = cache / item["name"] / item["filename"]
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(source, destination)
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--output", type=Path, default=ROOT / "docker/image/sources.lock.json")
+    parser.add_argument("--cache", type=Path, required=True,
+                        help="new directory that receives every locked input for mirror.py")
     args = parser.parse_args()
+    if args.cache.exists():
+        raise SystemExit(f"{args.cache} already exists; pass a new directory")
     scratch_root = ROOT / ".work/tmp"
     scratch_root.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix="crabc-lock-", dir=scratch_root) as directory:
         lock = build_lock(Path(directory))
+        stage_cache(lock["inputs"], args.cache)
         args.output.write_text(json.dumps(lock, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-    print(f"wrote {args.output} ({len(lock['inputs'])} inputs)")
+    print(f"wrote {args.output} ({len(lock['inputs'])} inputs) and {args.cache}")
     return 0
 
 

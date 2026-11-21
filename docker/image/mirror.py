@@ -24,6 +24,7 @@ from pathlib import Path
 ARTIFACT_TYPE = "application/vnd.crabc.image-inputs.v1"
 EMPTY_CONFIG = b"{}"
 EMPTY_CONFIG_TYPE = "application/vnd.oci.empty.v1+json"
+INDEX_TYPE = "application/vnd.oci.image.index.v1+json"
 LAYER_TYPE = "application/octet-stream"
 MANIFEST_TYPE = "application/vnd.oci.image.manifest.v1+json"
 
@@ -87,6 +88,7 @@ def stage(lock: Path, cache: Path, out: Path) -> str:
     (out / "oci-layout").write_bytes(canonical({"imageLayoutVersion": "1.0.0"}))
     (out / "index.json").write_bytes(canonical({
         "schemaVersion": 2,
+        "mediaType": INDEX_TYPE,
         "manifests": [{"mediaType": MANIFEST_TYPE, "digest": "sha256:" + manifest_hex,
                        "size": len(manifest), "artifactType": ARTIFACT_TYPE}],
     }))

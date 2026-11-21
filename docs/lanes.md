@@ -300,14 +300,19 @@ not hand-edit the lock.
 [buildlib](https://github.com/laputa-systems/buildlib) wheel. Each input lists
 two content-addressed mirrors before its upstream URL, because upstream Alpine
 drops superseded package revisions: the stuff OCI blob store
-(`https://oci-blobs.17166969.xyz/sha256/<hex>`) and the `image-inputs` release
-of joshuarli/crabc (assets named by hex digest). After regenerating the lock,
-publish the new inputs before committing it:
+(`https://oci-blobs.17166969.xyz/sha256/<hex>`) and the `core-image-inputs`
+release of joshuarli/crabc (assets named by hex digest). Releases in this
+repository are immutable, so a regenerated lock publishes a new release under a
+new tag and updates `MIRROR_TEMPLATES` in `lock.py` to match. Publish the inputs
+from `lock.py`'s cache before building from the new lock; a fetch that reaches
+the stuff mirror before the upload caches a 404 there (STUF-104), and buildlib
+then falls through to the next URL.
 
 ```sh
-./scripts/dev-x86_64.sh image          # leaves .work/x86_64/image-build/build-<pid>/cache
-python3 -B docker/image/mirror.py --cache .work/x86_64/image-build/build-<pid>/cache \
-    --out .work/tmp/image-inputs
+python3 -B docker/image/lock.py --cache .work/tmp/image-lock-cache
+python3 -B docker/image/mirror.py --cache .work/tmp/image-lock-cache --out .work/tmp/image-inputs
 stuff publish oci --layout .work/tmp/image-inputs --repository crabc/image-inputs --tag x86_64
-gh release upload image-inputs .work/tmp/image-inputs/blobs/sha256/* --repo joshuarli/crabc
+gh release create <tag> --repo joshuarli/crabc --draft --latest=false --title "Core image inputs" --notes ...
+gh release upload <tag> .work/tmp/image-inputs/blobs/sha256/* --repo joshuarli/crabc
+gh release edit <tag> --repo joshuarli/crabc --draft=false --latest=false
 ```
