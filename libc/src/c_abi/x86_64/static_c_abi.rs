@@ -598,6 +598,8 @@ mod legacy_des_compat;
 mod legacy_misc;
 #[path = "secure_environment.rs"]
 mod secure_environment;
+#[path = "allocator_environment.rs"]
+mod allocator_environment;
 #[path = "child_reaping.rs"]
 mod child_reaping;
 #[path = "wait_extensions.rs"]

@@ -25,24 +25,6 @@ use core::{ffi::c_char, ptr};
 
 use super::{environment, startup_security};
 
-core::arch::global_asm!(".hidden __crabc_allocator_environ");
-
-unsafe extern "C" {
-    static mut environ: *mut *mut c_char;
-}
-
-static mut EMPTY_ENVIRONMENT: [*mut c_char; 1] = [ptr::null_mut()];
-static mut EMPTY_ENVIRONMENT_POINTER: *mut *mut c_char = core::ptr::addr_of_mut!(EMPTY_ENVIRONMENT).cast();
-
-#[no_mangle]
-pub extern "C" fn __crabc_allocator_environ() -> *mut *mut *mut c_char {
-    if startup_security::is_secure() {
-        core::ptr::addr_of_mut!(EMPTY_ENVIRONMENT_POINTER)
-    } else {
-        core::ptr::addr_of_mut!(environ)
-    }
-}
-
 /// Return an environment value only when static startup was not secure.
 ///
 /// The returned pointer is borrowed from environment::getenv under that
