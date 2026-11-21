@@ -129,9 +129,8 @@ pub const fn stdin() -> BorrowedFd<'static> {
 ///
 /// # Safety
 ///
-/// Descriptor 0 must be open, and no owner may close it or replace it (for
-/// example with `dup2`) for the rest of the process, because the returned
-/// borrow is `'static`.
+/// Descriptor 0 must be open and must stay open for the rest of the
+/// process, because the returned borrow is `'static`.
 #[cfg(not(feature = "std"))]
 #[inline]
 pub const unsafe fn stdin() -> BorrowedFd<'static> {
@@ -152,9 +151,8 @@ pub const fn stdout() -> BorrowedFd<'static> {
 ///
 /// # Safety
 ///
-/// Descriptor 1 must be open, and no owner may close it or replace it (for
-/// example with `dup2`) for the rest of the process, because the returned
-/// borrow is `'static`.
+/// Descriptor 1 must be open and must stay open for the rest of the
+/// process, because the returned borrow is `'static`.
 #[cfg(not(feature = "std"))]
 #[inline]
 pub const unsafe fn stdout() -> BorrowedFd<'static> {
@@ -175,9 +173,8 @@ pub const fn stderr() -> BorrowedFd<'static> {
 ///
 /// # Safety
 ///
-/// Descriptor 2 must be open, and no owner may close it or replace it (for
-/// example with `dup2`) for the rest of the process, because the returned
-/// borrow is `'static`.
+/// Descriptor 2 must be open and must stay open for the rest of the
+/// process, because the returned borrow is `'static`.
 #[cfg(not(feature = "std"))]
 #[inline]
 pub const unsafe fn stderr() -> BorrowedFd<'static> {
