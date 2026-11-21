@@ -1,0 +1,4 @@
+{
+  "comment": "Optional mirror bases tried before each input's upstream URL. {filename} and {sha256} are substituted. Keep this empty until a mirror is published; the upstream URL in sources.lock.json always follows the templates.",
+  "templates": []
+}
