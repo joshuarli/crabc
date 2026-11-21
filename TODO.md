@@ -56,15 +56,6 @@ Next: 21
 - **Fix with:** lifecycle-concurrency
 - **Effort:** M
 
-### CRAB-14 · P3 · Rust consumer timeout can hang on a surviving child
-
-- **Area:** Rust std consumer qualification
-- **Where:** compat/rust-std/run.py:236-240; compat/rust-std/fixtures/src/main.rs:133; compat/rust-std/dependent-fixture/src/main.rs:136
-- **Problem:** On timeout run_binary kills only the immediate binary and then calls process.communicate() with no timeout. Both fixtures spawn children that inherit the pipes, so a stuck descendant keeps the pipes open and the timeout handler never returns, turning one timed-out case into a hung consumer gate. Not reproduced.
-- **Recommendation:** Start each case in its own process group, kill the group on timeout, and bound the post-kill communicate.
-- **Fix with:** lifecycle-concurrency
-- **Effort:** S
-
 ### CRAB-15 · P3 · Rebuilding the pinned images is not reproducible
 
 - **Area:** Build environment

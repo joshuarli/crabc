@@ -19,6 +19,7 @@ import os
 import platform
 import resource
 import shutil
+import signal
 import stat
 import subprocess
 import sys
@@ -39,6 +40,7 @@ TARGET = "aarch64-unknown-linux-musl"
 TOOLCHAIN = pinned_toolchain(ROOT)
 MUSL_VERSION = "1.2.6"
 MUSL_ROOT = Path(f"/opt/musl-{MUSL_VERSION}")
+POST_KILL_DRAIN_SECONDS = 5.0
 
 
 class RunnerError(RuntimeError):
@@ -229,16 +231,32 @@ def run_binary(
             stderr=subprocess.PIPE,
             preexec_fn=disable_core_dump,
             close_fds=True,
+            start_new_session=True,
         )
     except OSError as error:
         return ProcessResult(f"EXEC_ERROR:{error.errno or 'unknown'}", b"", str(error).encode())
     try:
         stdout, stderr = process.communicate(timeout=timeout)
-    except subprocess.TimeoutExpired as error:
-        process.kill()
-        stdout, stderr = process.communicate()
-        return ProcessResult("TIMEOUT", stdout or error.stdout or b"", stderr or error.stderr or b"", True)
+    except subprocess.TimeoutExpired:
+        return ProcessResult("TIMEOUT", *kill_session(process), True)
     return ProcessResult(process.returncode, stdout, stderr)
+
+
+def kill_session(process: subprocess.Popen[bytes]) -> tuple[bytes, bytes]:
+    try:
+        os.killpg(process.pid, signal.SIGKILL)
+    except ProcessLookupError:
+        pass
+    try:
+        stdout, stderr = process.communicate(timeout=POST_KILL_DRAIN_SECONDS)
+    except subprocess.TimeoutExpired as error:
+        stdout, stderr = error.stdout or b"", error.stderr or b""
+        for stream in (process.stdout, process.stderr):
+            if stream is not None:
+                stream.close()
+        process.kill()
+        process.wait()
+    return stdout or b"", stderr or b""
 
 
 def readelf(binary: Path, *arguments: str) -> str:
