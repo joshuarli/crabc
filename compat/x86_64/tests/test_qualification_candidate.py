@@ -8,9 +8,11 @@ import json
 import os
 from pathlib import Path
 import shutil
+import signal
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 from unittest import mock
 
@@ -225,6 +227,53 @@ class PlanTests(unittest.TestCase):
         )
 
 
+FAKE_DOCKER = """\
+import json, os, sys
+state = os.environ["FAKE_DOCKER_STATE"]
+with open(os.path.join(state, "log"), "a", encoding="utf-8") as log:
+    log.write(" ".join(sys.argv[1:]) + "\\n")
+with open(os.path.join(state, "running"), encoding="utf-8") as handle:
+    running = dict(line.split(" ", 1) for line in handle.read().splitlines())
+command, ids = sys.argv[1], sys.argv[2:]
+if command == "ps":
+    print("\\n".join(running))
+elif command == "inspect":
+    print(json.dumps([{"Id": id, "Mounts": [{"Source": running[id]}]} for id in ids if id in running]))
+elif command == "stop":
+    with open(os.path.join(state, "running"), "w", encoding="utf-8") as handle:
+        handle.writelines(f"{id} {source}\\n" for id, source in running.items() if id not in ids)
+"""
+FAKE_DISPATCHER = """\
+echo "new $CANDIDATE_ROOT" >> "$FAKE_DOCKER_STATE/running"
+(trap '' TERM; exec sleep 300) &
+echo $! > "$FAKE_DOCKER_STATE/grandchild.tmp"
+mv "$FAKE_DOCKER_STATE/grandchild.tmp" "$FAKE_DOCKER_STATE/grandchild"
+wait
+"""
+CANDIDATE_CHILD = """\
+import os, sys
+from pathlib import Path
+from unittest import mock
+sys.path.insert(0, sys.argv[1])
+import qualification_candidate as candidate
+root, work, dispatcher = Path(sys.argv[2]), Path(sys.argv[3]), sys.argv[4]
+source = {"revision": "a" * 40, "content_sha256": "c" * 64}
+with mock.patch.object(candidate, "preflight", return_value=[]), \\
+        mock.patch.object(candidate, "STOP_GRACE", 1.0, create=True):
+    candidate.execute(root, work, {}, through="static-products", source=lambda _root: source,
+                      runner=lambda _argv, stdout, stderr: candidate._run(["bash", dispatcher], stdout, stderr))
+"""
+
+
+def _alive(pid: int) -> bool:
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    state = subprocess.run(["ps", "-o", "stat=", "-p", str(pid)], capture_output=True, text=True, check=False)
+    return not state.stdout.strip().startswith("Z")
+
+
 class ExecutionTests(unittest.TestCase):
     """Run the real plan against a runner that fakes each producer's outputs."""
 
@@ -350,6 +399,47 @@ class ExecutionTests(unittest.TestCase):
         self.assertNotIn("posix-native", self.calls)
         failed = [path.name for path in (self.work / "steps").iterdir() if ".failed-" in path.name]
         self.assertEqual(len(failed), 1)
+
+    def test_a_stopped_candidate_ends_its_dispatcher_group_and_containers(self) -> None:
+        state = self.root / "docker"
+        bin_directory = state / "bin"
+        bin_directory.mkdir(parents=True)
+        docker = bin_directory / "docker"
+        docker.write_text(f"#!{sys.executable}\n" + FAKE_DOCKER, encoding="utf-8")
+        docker.chmod(0o755)
+        (state / "running").write_text(f"old {ROOT}\nother /elsewhere\n", encoding="utf-8")
+        dispatcher = state / "dispatcher.sh"
+        dispatcher.write_text(FAKE_DISPATCHER, encoding="utf-8")
+        environment = {**os.environ, "PATH": f"{bin_directory}{os.pathsep}{os.environ['PATH']}",
+                       "FAKE_DOCKER_STATE": str(state), "CANDIDATE_ROOT": str(ROOT)}
+        child = subprocess.Popen([sys.executable, "-B", "-c", CANDIDATE_CHILD, str(ROOT / "compat/x86_64"),
+                                  str(self.root), str(self.work), str(dispatcher)],
+                                 cwd=ROOT, env=environment, start_new_session=True)
+        self.addCleanup(lambda: child.poll() is None and os.killpg(child.pid, signal.SIGKILL))
+        pidfile = state / "grandchild"
+        deadline = time.monotonic() + 30
+        while not pidfile.exists() and time.monotonic() < deadline and child.poll() is None:
+            time.sleep(0.05)
+        self.assertTrue(pidfile.exists(), "fake dispatcher never started")
+        grandchild = int(pidfile.read_text(encoding="ascii"))
+        self.addCleanup(lambda: _alive(grandchild) and os.kill(grandchild, signal.SIGKILL))
+
+        child.send_signal(signal.SIGTERM)
+        child.wait(timeout=30)
+        self.assertFalse(_alive(grandchild), "dispatcher grandchild outlived the candidate")
+        stops = [line.split()[1:] for line in (state / "log").read_text(encoding="utf-8").splitlines()
+                 if line.startswith("stop")]
+        self.assertEqual(stops, [["new"]])
+        self.assertNotEqual(child.returncode, 0)
+
+        summary = json.loads((self.work / "summary.json").read_text(encoding="utf-8"))
+        self.assertEqual(summary["steps"][-1]["status"], "failed")
+        self.assertEqual(summary["steps"][-1]["exit_status"], 128 + signal.SIGTERM)
+        self.assertFalse((self.work / "steps/00-static-products/record.json").exists())
+        resumed = self._execute(through="static-products")
+        self.assertNotIn("error", resumed)
+        self.assertEqual(self.calls, ["static-products"])
+        self.assertTrue((self.work / "steps/00-static-products.failed-1/stdout").is_file())
 
     def test_changed_output_or_another_product_source_fails_closed(self) -> None:
         self.assertTrue(self._execute(through="posix-family")["steps"])
